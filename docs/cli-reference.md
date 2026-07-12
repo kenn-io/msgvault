@@ -630,9 +630,20 @@ msgvault backup restore [snapshot] --target <dir> [flags]
 | `--repo <dir>` | Backup repository directory |
 | `--target <dir>` | Directory to restore into (required) |
 | `--overwrite` | Allow restoring into a non-empty target directory |
+| `--loose-attachments` | Restore attachments as individual loose files instead of installing compatible packs |
 | `--force-unlock` | Break a stale exclusive repository lock before restoring |
 | `--jobs N` | Concurrent pack readers; `0` uses one per CPU |
 
+By default, restore installs compatible repository packs directly into the
+restored attachment store. Every selected attachment is still read and
+SHA-256 verified; entries that exceed the target store's maintenance limits,
+or packs that use an incompatible representation, are restored loose instead.
+The summary reports the resulting packed/loose split and any fallback reasons.
+
+Use `--loose-attachments` for downgrade or recovery. Restore into a fresh
+target with that flag to guarantee a fully loose result. An overwritten target
+can retain uncataloged old pack files, and `unpack-attachments` processes only
+cataloged packs, so overwrite cannot currently make the same guarantee.
 Restoring into the live archive home of a running daemon is refused. See
 [Backup](/usage/backup/) for repository format, scheduling, verification, and
 privacy details.

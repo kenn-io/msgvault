@@ -7,10 +7,13 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 	"text/tabwriter"
 
 	"github.com/spf13/cobra"
 	"go.kenn.io/kit/backup"
+	"go.kenn.io/kit/packstore"
 	"go.kenn.io/msgvault/internal/attachmentstore"
 	"go.kenn.io/msgvault/internal/backupapp"
 	"go.kenn.io/msgvault/internal/daemonclient"
@@ -35,11 +38,12 @@ var (
 	backupVerifyForceUnlock bool
 	backupVerifyJobs        int
 
-	backupRestoreRepo        string
-	backupRestoreTarget      string
-	backupRestoreOverwrite   bool
-	backupRestoreForceUnlock bool
-	backupRestoreJobs        int
+	backupRestoreRepo             string
+	backupRestoreTarget           string
+	backupRestoreOverwrite        bool
+	backupRestoreForceUnlock      bool
+	backupRestoreJobs             int
+	backupRestoreLooseAttachments bool
 
 	// backupCreateProgress selects backup create's progress rendering mode:
 	// auto (default), bar, or plain. It is hidden/undocumented — see
@@ -225,41 +229,91 @@ func runBackupRestore(cmd *cobra.Command, args []string) error {
 	renderer := newBackupProgressRenderer(cmd.OutOrStdout(), progressModeAuto)
 	defer renderer.finish()
 	res, err := backup.Restore(cmd.Context(), r, backupapp.New(Version), backup.RestoreOptions{
-		SnapshotID:  snapshotID,
-		TargetDir:   backupRestoreTarget,
-		Overwrite:   backupRestoreOverwrite,
-		Jobs:        backupRestoreJobs,
-		ForceUnlock: backupRestoreForceUnlock,
-		Progress:    renderer.handle,
+		SnapshotID:    snapshotID,
+		TargetDir:     backupRestoreTarget,
+		Overwrite:     backupRestoreOverwrite,
+		Jobs:          backupRestoreJobs,
+		ForceUnlock:   backupRestoreForceUnlock,
+		Progress:      renderer.handle,
+		PackedContent: backupRestorePackedContentTarget(backupRestoreLooseAttachments),
 	})
 	if err != nil {
 		return fmt.Errorf("restoring snapshot: %w", err)
 	}
-	if err := clearRestoredPackMetadata(res.DBPath); err != nil {
-		return err
+	if backupRestoreLooseAttachments {
+		if err := clearRestoredPackMetadata(res.DBPath); err != nil {
+			return err
+		}
 	}
-	out := cmd.OutOrStdout()
-	_, _ = fmt.Fprintf(out, "Restored snapshot %s to %s\n", res.SnapshotID, backupRestoreTarget)
-	_, _ = fmt.Fprintf(out, "Database: %s (%s)\n", res.DBPath, formatSize(res.DBBytes))
-	_, _ = fmt.Fprintf(out, "Attachments: %d (%s)\n", res.AttachmentBlobs, formatSize(res.AttachmentBytes))
-	_, _ = fmt.Fprintf(out, "Pack metadata cleared: attachments were restored as loose files; 'msgvault pack-attachments' will re-pack them\n")
+	return printBackupRestoreSummary(cmd.OutOrStdout(), backupRestoreTarget, res, backupRestoreLooseAttachments)
+}
+
+func backupRestorePackedContentTarget(loose bool) backup.PackedContentTarget {
+	if loose {
+		return nil
+	}
+	return backupapp.NewPackedRestoreTarget(packstore.DefaultLimits())
+}
+
+func printBackupRestoreSummary(w io.Writer, target string, res *backup.RestoreResult, explicitLoose bool) error {
+	if res == nil {
+		return errors.New("backup restore result is nil")
+	}
+	lines := []string{
+		fmt.Sprintf("Restored snapshot %s to %s\n", res.SnapshotID, target),
+		fmt.Sprintf("Database: %s (%s)\n", res.DBPath, formatSize(res.DBBytes)),
+		fmt.Sprintf("Attachments: %d (%s); %d packed in %d pack(s), %d loose\n",
+			res.AttachmentBlobs, formatSize(res.AttachmentBytes), res.PackedAttachmentBlobs,
+			res.AttachmentPacks, res.LooseAttachmentBlobs),
+	}
+	if len(res.PackFallbacks) > 0 {
+		counts := make(map[string]int)
+		for _, fallback := range res.PackFallbacks {
+			counts[string(fallback.Reason)]++
+		}
+		keys := make([]string, 0, len(counts))
+		for reason := range counts {
+			keys = append(keys, reason)
+		}
+		sort.Strings(keys)
+		parts := make([]string, len(keys))
+		for i, reason := range keys {
+			parts[i] = fmt.Sprintf("%s=%d", reason, counts[reason])
+		}
+		lines = append(lines, "Pack fallbacks: "+strings.Join(parts, ", ")+"\n")
+	}
+	if res.LooseAttachmentBlobs > 0 {
+		if explicitLoose {
+			lines = append(lines,
+				"Pack metadata cleared: attachments were restored as loose files by request; 'msgvault pack-attachments' will pack eligible blobs\n")
+		} else {
+			lines = append(lines, fmt.Sprintf(
+				"%d attachment blob(s) remain loose; 'msgvault pack-attachments' can pack eligible blobs later\n",
+				res.LooseAttachmentBlobs))
+		}
+	}
 	if res.ExtrasFiles > 0 {
-		_, _ = fmt.Fprintf(out, "Extras files: %d\n", res.ExtrasFiles)
+		lines = append(lines, fmt.Sprintf("Extras files: %d\n", res.ExtrasFiles))
 	}
-	_, _ = fmt.Fprintf(out, "Proof: integrity_check ok, manifest stats match\n")
-	_, _ = fmt.Fprintf(out, "Duration: %.1fs\n", res.Duration.Seconds())
+	lines = append(lines,
+		"Proof: integrity_check ok, manifest stats match\n",
+		fmt.Sprintf("Duration: %.1fs\n", res.Duration.Seconds()))
+	for _, line := range lines {
+		if _, err := io.WriteString(w, line); err != nil {
+			return fmt.Errorf("write backup restore output: %w", err)
+		}
+	}
 	return nil
 }
 
 // clearRestoredPackMetadata opens the just-restored database and deletes all
-// attachment_pack_index/attachment_packs rows. Restore materializes
-// attachment blobs as loose canonical files only — production pack files are
-// never part of a snapshot — so pack metadata carried in the restored DB
-// would point at packs that do not exist: reads of previously packed blobs
-// would fail, and worse, a later pack-attachments run would not re-pack those
-// "already indexed" hashes while its sweep deleted their restored loose files.
-// Clearing the two tables yields a genuinely fully-unpacked vault that
-// pack-attachments re-packs from scratch.
+// attachment_pack_index/attachment_packs rows for an explicit
+// --loose-attachments restore. Kit's nil packed target materializes attachment
+// blobs as loose files only, so metadata carried in the restored DB would point
+// at packs that do not exist: reads of previously packed blobs would fail, and
+// worse, a later pack-attachments run would not re-pack those "already indexed"
+// hashes while its sweep deleted their restored loose files. Clearing the two
+// tables yields the fully-unpacked vault the user requested.
 //
 // The snapshot may predate the pack tables; ClearAttachmentPackMetadata checks
 // for them and does nothing when absent, avoiding unrelated schema migrations
@@ -540,6 +594,8 @@ func init() {
 	backupRestoreCmd.Flags().BoolVar(&backupRestoreOverwrite, "overwrite", false, "Allow restoring into a non-empty target directory")
 	backupRestoreCmd.Flags().BoolVar(&backupRestoreForceUnlock, "force-unlock", false, "Break a stale exclusive repository lock before restoring")
 	backupRestoreCmd.Flags().IntVar(&backupRestoreJobs, "jobs", 0, "Concurrent pack readers (default: one per CPU; use 1 for serial reads on spinning disks or NAS shares)")
+	backupRestoreCmd.Flags().BoolVar(&backupRestoreLooseAttachments, "loose-attachments", false,
+		"Restore attachments as loose files instead of installing compatible packs")
 
 	backupCmd.AddCommand(backupInitCmd)
 	backupCmd.AddCommand(backupCreateCmd)

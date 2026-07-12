@@ -84,19 +84,37 @@ Verification takes a shared lock, so multiple verifies can run concurrently, but
 
 For repositories on spinning disks or NAS shares, `--jobs 1` reads packs strictly one at a time instead of the default one-reader-per-CPU parallelism; `create` accepts the same flag for its attachment reads and changed-page packing.
 
-### `backup restore --target DIR [SNAPSHOT] [--overwrite]`
+### `backup restore --target DIR [SNAPSHOT] [--overwrite] [--loose-attachments]`
 
-Materializes a snapshot (the latest by default) into `--target` as a complete archive home — `msgvault.db`, the `attachments/` tree with every file at the storage path the database records for it, and any captured extras (deletions manifests, config, tokens) at their original relative paths with their recorded file modes. Point msgvault at the restored directory, or swap it into place, to use it.
+Materializes a snapshot (the latest by default) into `--target` as a complete archive home — `msgvault.db`, the attachment store, and any captured extras (deletions manifests, config, tokens) at their original relative paths with their recorded file modes. Point msgvault at the restored directory, or swap it into place, to use it.
+
+By default, compatible immutable repository packs are copied directly into the
+attachment store. This avoids creating thousands of individual files,
+especially on Windows, without skipping content verification: restore reads
+and SHA-256 verifies every selected attachment before granting the restored
+database authority to read it from a pack. An attachment is restored as a
+loose file when it exceeds the target store's configured maintenance limit, or
+when its repository pack is structurally valid but uses an incompatible
+representation. The completed archive may therefore be packed or mixed; the
+command summary reports packed and loose counts plus aggregate fallback
+reasons. Corruption remains a hard failure and is never treated as a
+compatibility fallback.
 
 Restore does not trust itself: every database page is checked against the snapshot's page-hash map as it is written, every blob read re-derives its SHA-256 identity, and after materialization the restored database must pass SQLite's `PRAGMA integrity_check` and reproduce the manifest's recorded stats (message, conversation, and attachment counts, date range) through exactly the queries capture ran inside the freeze. Any mismatch fails the restore rather than reporting success.
 
-- The target must not exist or must be an empty directory; `--overwrite` permits restoring into a non-empty one. Overwrite **merges**: the database and its SQLite `-wal`/`-shm` sidecars are removed first (a stale WAL would otherwise be replayed over the restored database on its first open), restored files replace same-named ones, and files the snapshot does not carry are left in place. To guarantee the target contains exactly the snapshot and nothing else, restore into a fresh directory.
+- The target must not exist or must be an empty directory; `--overwrite` permits restoring into a non-empty one. Overwrite **merges**: the database and its SQLite `-wal`/`-shm` sidecars are removed first (a stale WAL would otherwise be replayed over the restored database on its first open), restored files replace same-named ones, and unrelated loose files the snapshot does not carry are left in place. Packed authority is replaced by the snapshot's catalog, so normal maintenance can reclaim old packs containing only non-snapshot content. To guarantee the target contains exactly the snapshot and nothing else, restore into a fresh directory.
+- `--loose-attachments` disables direct pack installation and materializes every attachment as an individual file. On an overwritten target, pre-existing pack files can remain uncataloged and can still be discovered by later maintenance; `unpack-attachments` processes only cataloged packs and does not remove those leftovers. A fresh target is therefore the only restore path that currently guarantees a fully loose archive.
 - Restoring into the live archive home of a *running* daemon is refused outright — stop the daemon first or restore elsewhere.
 - Restoring an old backup onto a newer msgvault goes through normal schema migration the first time the restored database is opened, the same path as any upgrade.
 - `--jobs 1` serializes pack reads for repositories on spinning disks or NAS shares.
 - The proof's `integrity_check` reads the entire restored database single-threaded inside SQLite, so on large archives the proof stage runs for a while after materialization finishes; the progress line keeps counting elapsed time while it does.
 
 Restore takes a shared repository lock: it can run alongside verifies, never during a `create`.
+
+Direct pack installation still reads and hashes the selected attachment bytes.
+Its performance benefit comes primarily from eliminating per-attachment file
+creation, directory updates, and antivirus scans rather than from avoiding
+repository read I/O.
 
 ## Configuration
 

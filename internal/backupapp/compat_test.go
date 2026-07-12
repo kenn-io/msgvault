@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/kit/backup"
+	"go.kenn.io/kit/packstore"
 	"go.kenn.io/msgvault/internal/backupapp"
 )
 
@@ -144,11 +145,15 @@ func TestRestoreCompatFixture(t *testing.T) {
 
 	target := t.TempDir()
 	res, err := backup.Restore(context.Background(), r, backupapp.New("test"), backup.RestoreOptions{
-		TargetDir: filepath.Join(target, "restored"),
+		TargetDir:     filepath.Join(target, "restored"),
+		PackedContent: backupapp.NewPackedRestoreTarget(packstore.DefaultLimits()),
 	})
 	require.NoError(err)
 	assert.Equal(snaps[1].SnapshotID, res.SnapshotID)
 	assert.Equal(int64(3), res.AttachmentBlobs)
+	assert.Equal(int64(3), res.PackedAttachmentBlobs)
+	assert.Zero(res.LooseAttachmentBlobs)
+	assert.Positive(res.AttachmentPacks)
 
 	// Mirror the engine's sqliteURIDSN shape: absolute, slash-separated,
 	// slash-rooted — a raw Windows drive-letter path would otherwise be
@@ -172,4 +177,7 @@ func TestRestoreCompatFixture(t *testing.T) {
 	var messages int64
 	require.NoError(db.QueryRow("SELECT COUNT(*) FROM messages").Scan(&messages))
 	assert.Equal(int64(3), messages)
+	var packMappings int64
+	require.NoError(db.QueryRow("SELECT COUNT(*) FROM attachment_pack_index").Scan(&packMappings))
+	assert.Equal(int64(3), packMappings)
 }

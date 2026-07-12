@@ -26,6 +26,12 @@ All notable changes to msgvault, grouped by release.
 
 **Improvements**
 
+- Backup restore now installs compatible attachment packs directly instead of
+  recreating every blob as an individual file, substantially reducing file
+  creation overhead on Windows and large archives. Selected content remains
+  SHA-256 verified, incompatible or oversized entries fall back safely to
+  loose files, and `--loose-attachments` preserves the explicit downgrade and
+  recovery path.
 - Metadata and body search scopes are enforced consistently across SQLite,
   PostgreSQL, DuckDB, and daemon-backed MCP sessions. Metadata result counts
   and aggregate statistics use the same predicate, and body-search snippets

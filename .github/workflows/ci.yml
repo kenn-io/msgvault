@@ -139,6 +139,40 @@ jobs:
           name: msgvault-windows-amd64
           path: msgvault.exe
 
+  test-windows-pack-restore:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+
+      - name: Install sqlite3 dev headers
+        shell: pwsh
+        run: |
+          C:\msys64\usr\bin\pacman.exe -S --noconfirm --needed mingw-w64-x86_64-sqlite3
+
+      - name: Measure packed and loose restore layouts
+        shell: pwsh
+        env:
+          CGO_ENABLED: "1"
+          CGO_CFLAGS: "-IC:/msys64/mingw64/include -fgnu89-inline"
+          CGO_LDFLAGS: "-Wl,--allow-multiple-definition"
+        run: |
+          go test -tags "fts5 sqlite_vec" ./internal/backupapp `
+            -run '^$' -bench '^BenchmarkBackupRestoreLayouts$' -benchtime=1x -count=3 `
+            2>&1 | Tee-Object -FilePath pack-restore-benchmark.txt
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: msgvault-windows-pack-restore-benchmark
+          path: pack-restore-benchmark.txt
+          if-no-files-found: ignore
+
   # pgvector lane: runs every pgvector-tagged test against a live
   # pgvector/pgvector image — backend, embed queue/worker/enqueue, hybrid
   # filter, scheduler embed-job, and serve/search CLI. The `pgvector` build
