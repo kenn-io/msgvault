@@ -1320,14 +1320,8 @@ func (h *handlers) vectorMatchesInMessage(
 		), nil
 	}
 
-	active, err := h.backend.ActiveGeneration(ctx)
+	active, err := vector.ResolveActiveForFingerprint(ctx, h.backend, h.vectorCfg.GenerationFingerprint())
 	if err != nil {
-		if r := translateVectorErr(err); r != nil {
-			return r, nil
-		}
-		return mcp.NewToolResultError(fmt.Sprintf("active generation: %v", err)), nil
-	}
-	if _, err := vector.ResolveActiveForFingerprint(ctx, h.backend, h.vectorCfg.GenerationFingerprint()); err != nil {
 		if r := translateVectorErr(err); r != nil {
 			return r, nil
 		}

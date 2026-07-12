@@ -2731,6 +2731,63 @@ func TestSearchInMessage_VectorNilMessage(t *testing.T) {
 	assert.Contains(t, resultText(t, r), "message not found")
 }
 
+func TestSearchInMessage_VectorScoresResolvedGeneration(t *testing.T) {
+	cfg := testSimilarVectorConfig()
+	first := testSimilarActiveGeneration(cfg)
+	second := first
+	second.ID++
+	backend := &fakeBackend{
+		activeSequence: []vector.Generation{first, second},
+	}
+	engine := hybrid.NewEngine(backend, nil, realEmbedder{dim: 4}, hybrid.Config{
+		ExpectedFingerprint: cfg.GenerationFingerprint(), RRFK: 60, KPerSignal: 10,
+	})
+	h := &handlers{
+		engine: &querytest.MockEngine{Messages: map[int64]*query.MessageDetail{
+			42: testutil.NewMessageDetail(42).WithBodyText("semantic body").BuildPtr(),
+		}},
+		hybridEngine: engine,
+		backend:      backend,
+		vectorCfg:    cfg,
+	}
+
+	runTool[paginatedInMessageMatches](t, "search_in_message", h.searchInMessage, map[string]any{
+		"id":    float64(42),
+		"query": "semantic",
+		"mode":  searchModeVector,
+	})
+
+	assert.Equal(t, 1, backend.activeCalls, "active generation must be resolved once")
+	assert.Equal(t, backend.lastActive.ID, backend.chunkGen, "chunk scoring generation")
+}
+
+func TestSearchInMessage_VectorClassifiesInitialBuild(t *testing.T) {
+	cfg := testSimilarVectorConfig()
+	building := testSimilarActiveGeneration(cfg)
+	building.State = vector.GenerationBuilding
+	backend := &fakeBackend{
+		activeErr: vector.ErrNoActiveGeneration,
+		building:  &building,
+	}
+	engine := hybrid.NewEngine(backend, nil, realEmbedder{dim: 4}, hybrid.Config{
+		ExpectedFingerprint: cfg.GenerationFingerprint(), RRFK: 60, KPerSignal: 10,
+	})
+	h := &handlers{
+		engine:       &querytest.MockEngine{},
+		hybridEngine: engine,
+		backend:      backend,
+		vectorCfg:    cfg,
+	}
+
+	r := runToolExpectError(t, "search_in_message", h.searchInMessage, map[string]any{
+		"id":    float64(42),
+		"query": "semantic",
+		"mode":  searchModeVector,
+	})
+
+	assert.Contains(t, resultText(t, r), "index_building")
+}
+
 func TestListMessagesConversationID(t *testing.T) {
 	var captured query.MessageFilter
 	eng := &querytest.MockEngine{
@@ -2961,26 +3018,29 @@ func TestStageDeletion(t *testing.T) {
 // optional fields so the get_stats tests can populate them. Methods
 // not otherwise configured return errors and should not be called.
 type fakeBackend struct {
-	loadVec      []float32
-	loadErr      error
-	loadCalls    int
-	active       vector.Generation
-	activeErr    error
-	activeCalls  int
-	searchHits   []vector.Hit
-	searchErr    error
-	searchCalls  int
-	searchGen    vector.GenerationID
-	searchFilter vector.Filter
-	fusedHits    []vector.FusedHit
-	fusedErr     error
-	fusedCalls   int
-	building     *vector.Generation
-	buildingErr  error
-	stats        map[vector.GenerationID]vector.Stats
-	statsErr     error
-	chunkHits    map[int64][]vector.ChunkHit
-	chunkErr     error
+	loadVec        []float32
+	loadErr        error
+	loadCalls      int
+	active         vector.Generation
+	activeErr      error
+	activeCalls    int
+	activeSequence []vector.Generation
+	lastActive     vector.Generation
+	searchHits     []vector.Hit
+	searchErr      error
+	searchCalls    int
+	searchGen      vector.GenerationID
+	searchFilter   vector.Filter
+	fusedHits      []vector.FusedHit
+	fusedErr       error
+	fusedCalls     int
+	building       *vector.Generation
+	buildingErr    error
+	stats          map[vector.GenerationID]vector.Stats
+	statsErr       error
+	chunkHits      map[int64][]vector.ChunkHit
+	chunkErr       error
+	chunkGen       vector.GenerationID
 }
 
 func (f *fakeBackend) LoadVector(_ context.Context, _ int64) ([]float32, error) {
@@ -2994,7 +3054,13 @@ func (f *fakeBackend) EmbeddedMessageCount(_ context.Context, _ vector.Generatio
 	return 0, errors.New("not implemented")
 }
 func (f *fakeBackend) ActiveGeneration(_ context.Context) (vector.Generation, error) {
+	call := f.activeCalls
 	f.activeCalls++
+	if call < len(f.activeSequence) {
+		f.lastActive = f.activeSequence[call]
+		return f.lastActive, nil
+	}
+	f.lastActive = f.active
 	return f.active, f.activeErr
 }
 func (f *fakeBackend) Search(_ context.Context, gen vector.GenerationID, _ []float32, _ int, filter vector.Filter) ([]vector.Hit, error) {
@@ -3003,7 +3069,8 @@ func (f *fakeBackend) Search(_ context.Context, gen vector.GenerationID, _ []flo
 	f.searchFilter = filter
 	return f.searchHits, f.searchErr
 }
-func (f *fakeBackend) ScoreMessageChunks(_ context.Context, _ vector.GenerationID, messageID int64, _ []float32) ([]vector.ChunkHit, error) {
+func (f *fakeBackend) ScoreMessageChunks(_ context.Context, gen vector.GenerationID, messageID int64, _ []float32) ([]vector.ChunkHit, error) {
+	f.chunkGen = gen
 	if f.chunkErr != nil {
 		return nil, f.chunkErr
 	}
