@@ -148,6 +148,9 @@ Between snapshots, msgvault keeps a per-page hash map of the database. At backup
 
 This is the scenario `backup` exists for: a drive dies, or you're setting up msgvault on a new Mac, Linux box, or Windows PC, and you need the archive back exactly as it was.
 
+!!! note "Windows: use `$HOME`, not `~`"
+    The examples below are written for a Unix shell, where the shell expands `~` before msgvault sees it. PowerShell does not expand `~` in arguments to native programs, and msgvault does not expand it either — a literal `~` in `--target` creates a directory actually named `~` under the current directory. On Windows, run the examples in PowerShell with `$HOME\.msgvault` and `$HOME\Backups\msgvault` in place of the `~/` paths; the Windows tabs below show the exact commands.
+
 1. **Install msgvault**, but don't run any command that touches `~/.msgvault` yet — no `init-db`, no `add-account`. Restoring works best into a directory that doesn't exist yet; see the footgun below for why.
 2. **Get the repository onto the new machine.** However you synced it off-site — `rclone`, `rsync`, a cloud-drive client, an external drive — copy or mount it locally:
    ```bash
@@ -158,16 +161,27 @@ This is the scenario `backup` exists for: a drive dies, or you're setting up msg
    msgvault backup list --repo ~/Backups/msgvault
    ```
    There's no `config.toml` on this machine yet, so pass `--repo` explicitly here and below rather than relying on `[backup] repo`.
-4. **Restore into the default location** — `~/.msgvault` on macOS and Linux, `%USERPROFILE%\.msgvault` on Windows:
-   ```bash
-   msgvault backup restore --repo ~/Backups/msgvault --target ~/.msgvault
-   ```
-   Since nothing has touched `~/.msgvault` yet, the directory doesn't exist and restore creates it fresh — the path that guarantees the target ends up with exactly the snapshot's contents (see `--overwrite` above for what changes once the target already exists).
-5. **Check for a restored config.** If the snapshot was taken with `--include-config`, the restore just placed the *old machine's* `config.toml` into `~/.msgvault` — and settings in it can point msgvault away from the archive you just restored: an absolute `[data] data_dir` naming a path from the old machine, or a remote server URL that sends `tui` to a server instead of the local database. Open it and remove or update anything machine-specific:
-   ```bash
-   cat ~/.msgvault/config.toml
-   ```
-   If the snapshot did not capture config, there is nothing to check — msgvault's defaults already point at `~/.msgvault`.
+4. **Restore into the default location**, `~/.msgvault`:
+
+    === "macOS / Linux"
+
+        ```bash
+        msgvault backup restore --repo ~/Backups/msgvault --target ~/.msgvault
+        ```
+
+    === "Windows (PowerShell)"
+
+        ```powershell
+        msgvault backup restore --repo $HOME\Backups\msgvault --target $HOME\.msgvault
+        ```
+
+    Since nothing has touched `~/.msgvault` yet, the directory doesn't exist and restore creates it fresh — the path that guarantees the target ends up with exactly the snapshot's contents (see `--overwrite` above for what changes once the target already exists).
+5. **Check for a restored config.** If the snapshot was taken with `--include-config`, the restore just placed the *old machine's* `config.toml` into `~/.msgvault` — and settings in it can point msgvault away from the archive you just restored. Open it and remove or update anything machine-specific before running other commands:
+    - `[data] database_url` — takes precedence over `data_dir`; a restored absolute SQLite path or PostgreSQL DSN sends every command to the old machine's database, not the restored one.
+    - `[data] data_dir` — an absolute path from the old machine points at a directory that doesn't exist here.
+    - `[remote] url` — sends `tui` to a remote server instead of the local archive.
+
+    If the snapshot did not capture config, there is nothing to check — msgvault's defaults already point at `~/.msgvault`.
 6. **Use it.** `msgvault stats` and `msgvault tui` read `~/.msgvault` by default on every platform, so once no leftover config overrides that, the restored archive is the active one.
 
 ### Footgun: restoring over an existing msgvault
@@ -177,15 +191,23 @@ This is the scenario `backup` exists for: a drive dies, or you're setting up msg
 !!! warning "A non-empty `~/.msgvault` is not a blank slate"
     If `~/.msgvault` already has anything in it — a `config.toml` left over from once running `msgvault init-db` to try something, tokens for an account the snapshot doesn't include, loose attachment files from an earlier experiment — restoring with `--overwrite` layers the snapshot on top rather than replacing the directory outright. The previous `msgvault.db` is removed and replaced, but unrelated files the snapshot doesn't carry are left in place. The result is a target that is *not* provably identical to the snapshot, which defeats the point of restoring in the first place.
 
-    Check before you restore:
-    ```bash
-    ls -la ~/.msgvault
-    ```
-    If it's non-empty and you're not deliberately merging, move it aside rather than deleting it — it may be an archive you still want:
-    ```bash
-    mv ~/.msgvault ~/.msgvault.bak
-    msgvault backup restore --repo ~/Backups/msgvault --target ~/.msgvault
-    ```
+    Check before you restore, and if the directory is non-empty and you're not deliberately merging, move it aside rather than deleting it — it may be an archive you still want:
+
+    === "macOS / Linux"
+
+        ```bash
+        ls -la ~/.msgvault
+        mv ~/.msgvault ~/.msgvault.bak
+        msgvault backup restore --repo ~/Backups/msgvault --target ~/.msgvault
+        ```
+
+    === "Windows (PowerShell)"
+
+        ```powershell
+        Get-ChildItem -Force $HOME\.msgvault
+        Move-Item $HOME\.msgvault $HOME\.msgvault.bak
+        msgvault backup restore --repo $HOME\Backups\msgvault --target $HOME\.msgvault
+        ```
 
 ## Deleted and Purged Messages
 
