@@ -3,127 +3,37 @@ package mcp
 import (
 	"sort"
 	"strings"
-	"unicode/utf8"
 
-	"go.kenn.io/msgvault/internal/vector"
-	"go.kenn.io/msgvault/internal/vector/embed"
+	"go.kenn.io/msgvault/internal/vector/chunkmatch"
 )
 
 // messageMatch is the unified excerpt shape for search_in_message and
-// search_message_bodies (keyword, vector, and hybrid). char_offset is a byte
-// offset into raw body_text for get_message center_at. score is set for vector
+// search_message_bodies (keyword, vector, and hybrid). Keyword matches always
+// carry a raw-body char_offset and line. Vector locations are omitted when
+// preprocessing prevents an exact raw-body mapping. score is set for vector
 // chunk matches only.
 type messageMatch struct {
-	CharOffset int      `json:"char_offset"`
+	CharOffset *int     `json:"char_offset,omitempty"`
 	Snippet    string   `json:"snippet"`
-	Line       int      `json:"line"`
+	Line       *int     `json:"line,omitempty"`
 	Score      *float64 `json:"score,omitempty"`
 }
 
-func embedPreprocessConfig(cfg vector.Config) embed.PreprocessConfig {
-	return embed.PreprocessConfig{
-		StripQuotes:        cfg.Preprocess.StripQuotesEnabled(),
-		StripSignatures:    cfg.Preprocess.StripSignaturesEnabled(),
-		StripHTML:          cfg.Preprocess.StripHTMLEnabled(),
-		StripBase64:        cfg.Preprocess.StripBase64Enabled(),
-		StripURLTracking:   cfg.Preprocess.StripURLTrackingEnabled(),
-		CollapseWhitespace: cfg.Preprocess.CollapseWhitespaceEnabled(),
+func messageMatchesFromChunks(matches []chunkmatch.Match) []messageMatch {
+	if len(matches) == 0 {
+		return nil
 	}
-}
-
-func preprocessedEmbedText(subject, body string, cfg vector.Config) string {
-	txt, _ := embed.Preprocess(subject, body, 0, embedPreprocessConfig(cfg))
-	return txt
-}
-
-func subjectPrefixRuneCount(subject string) int {
-	if subject == "" {
-		return 0
-	}
-	return utf8.RuneCountInString("Subject: " + subject + "\n\n")
-}
-
-func runeSliceByOffsets(s string, startRune, endRune int) string {
-	if s == "" || startRune < 0 || endRune <= startRune {
-		return ""
-	}
-	startByte := runeOffsetToByteOffset(s, startRune)
-	endByte := runeOffsetToByteOffset(s, endRune)
-	if startByte >= len(s) {
-		return ""
-	}
-	if endByte > len(s) {
-		endByte = len(s)
-	}
-	return s[startByte:endByte]
-}
-
-func runeOffsetToByteOffset(s string, runeOffset int) int {
-	if runeOffset <= 0 {
-		return 0
-	}
-	walked := 0
-	for i := range s {
-		if walked >= runeOffset {
-			return i
-		}
-		walked++
-	}
-	return len(s)
-}
-
-func chunkHitsToMatches(
-	preprocessed, body string,
-	prefixRunes int,
-	hits []vector.ChunkHit,
-	minScore float64,
-	maxMatches int,
-) ([]messageMatch, bool) {
-	if len(hits) == 0 || maxMatches <= 0 {
-		return nil, false
-	}
-	var matches []messageMatch
-	for _, h := range hits {
-		if h.Score < minScore {
-			continue
-		}
-		chunkText := runeSliceByOffsets(preprocessed, h.ChunkCharStart, h.ChunkCharEnd)
-		if chunkText == "" {
-			continue
-		}
-		start, end := contextWindow(len(chunkText), 0, 0, searchContextChars)
-		snip := bodyByteSlice(chunkText, start, end)
-
-		bodyRuneStart := h.ChunkCharStart - prefixRunes
-		charOff := 0
-		if bodyRuneStart >= 0 {
-			charOff = runeOffsetToByteOffset(body, bodyRuneStart)
-		}
-
-		score := h.Score
-		matches = append(matches, messageMatch{
-			CharOffset: charOff,
-			Snippet:    snip,
-			Line:       lineNumberAt(body, charOff),
+	out := make([]messageMatch, len(matches))
+	for i, match := range matches {
+		score := match.Score
+		out[i] = messageMatch{
+			CharOffset: match.CharOffset,
+			Snippet:    match.Snippet,
+			Line:       match.Line,
 			Score:      &score,
-		})
-		if len(matches) >= maxMatches {
-			qualifying := countAboveMin(hits, minScore)
-			return matches, qualifying > maxMatches
 		}
 	}
-	qualifying := countAboveMin(hits, minScore)
-	return matches, qualifying > len(matches)
-}
-
-func countAboveMin(hits []vector.ChunkHit, minScore float64) int {
-	n := 0
-	for _, h := range hits {
-		if h.Score >= minScore {
-			n++
-		}
-	}
-	return n
+	return out
 }
 
 // extractContextChar returns up to contextChars of body text centered on each
@@ -216,16 +126,19 @@ func extractContextMatches(body string, terms []string, contextChars int) []mess
 				continue
 			}
 			seen[start] = struct{}{}
+			charOffset := pos
+			line := lineNumberAt(body, pos)
 			matches = append(matches, messageMatch{
-				CharOffset: pos,
+				CharOffset: &charOffset,
 				Snippet:    bodyByteSlice(body, start, end),
-				Line:       lineNumberAt(body, pos),
+				Line:       &line,
 			})
 		}
 	}
 	if len(matches) == 0 {
 		for _, snip := range snippets {
-			matches = append(matches, messageMatch{Snippet: snip, Line: 1})
+			charOffset, line := 0, 1
+			matches = append(matches, messageMatch{CharOffset: &charOffset, Snippet: snip, Line: &line})
 		}
 	}
 	return matches
@@ -248,10 +161,11 @@ func bodyContextSnippetsToMatches(body string, snippets []string, truncated bool
 				line = lineNumberAt(body, idx)
 			}
 		}
+		charOffsetCopy, lineCopy := charOffset, line
 		matches = append(matches, messageMatch{
-			CharOffset: charOffset,
+			CharOffset: &charOffsetCopy,
 			Snippet:    snippet,
-			Line:       line,
+			Line:       &lineCopy,
 		})
 	}
 	return matches, truncated

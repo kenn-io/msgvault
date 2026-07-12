@@ -256,6 +256,7 @@ func cliHybridSearchFromGenerated(resp generated.HybridSearchResponse) (*CLIHybr
 		ReturnedCount:    int(resp.Returned),
 		ScopeLabel:       stringValue(resp.ScopeLabel),
 		ScopeSourceCount: intValue(resp.ScopeSourceCount),
+		HasMore:          resp.HasMore,
 	}, nil
 }
 
@@ -269,10 +270,22 @@ func cliHybridSearchResultFromGenerated(item generated.HybridSearchItem) (CLIHyb
 		sentAt = parsed
 	}
 	out := CLIHybridSearchResult{
-		ID:        item.ID,
-		Subject:   item.Subject,
-		FromEmail: stringValue(item.FromEmail),
-		SentAt:    sentAt,
+		ID:               item.ID,
+		Subject:          item.Subject,
+		FromEmail:        stringValue(item.FromEmail),
+		SentAt:           sentAt,
+		MatchesTruncated: boolValue(item.MatchesTruncated),
+	}
+	if len(item.Matches) > 0 {
+		out.Matches = make([]CLIHybridSearchMatch, len(item.Matches))
+		for i, match := range item.Matches {
+			out.Matches[i] = CLIHybridSearchMatch{
+				CharOffset: optionalIntFromInt64(match.CharOffset),
+				Snippet:    match.Snippet,
+				Line:       optionalIntFromInt64(match.Line),
+				Score:      match.Score,
+			}
+		}
 	}
 	if out.FromEmail == "" {
 		out.FromEmail = item.From
@@ -589,6 +602,22 @@ func optionalBool(value bool) *bool {
 		return nil
 	}
 	return &value
+}
+
+func optionalFloat32(value float64) *float32 {
+	if value == 0 {
+		return nil
+	}
+	v := float32(value)
+	return &v
+}
+
+func optionalIntFromInt64(value *int64) *int {
+	if value == nil {
+		return nil
+	}
+	v := int(*value)
+	return &v
 }
 
 func optionalPositiveInt64(value int) *int64 {

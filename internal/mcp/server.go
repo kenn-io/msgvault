@@ -218,7 +218,7 @@ const (
 		"Bare domains on from:/to: match any address at that domain. Multiple terms are ANDed. " +
 		"Not supported: negation (-), OR, or parentheses grouping."
 	searchMetadataFreeTextDoc = "Free text matches subject, snippet, and sender/recipient metadata only (not bodies). " +
-		"Use search_message_bodies for full-body keyword, vector, or hybrid search."
+		"Use search_message_bodies for body keywords or semantic_search_messages for vector/hybrid search."
 	searchMetadataPaginationDoc = "Results are ordered newest-first (by sent date); there is no sort parameter — " +
 		"use before:/after: to scope a date range. " +
 		"Paginate with offset/limit (default limit 20, max 50). " +
@@ -233,7 +233,7 @@ func searchMetadataTool() mcp.Tool {
 
 	return mcp.NewTool(ToolSearchMetadata,
 		mcp.WithDescription(searchIntro+searchMetadataPaginationDoc+
-			"For full message body keyword, vector, or hybrid search, use search_message_bodies."),
+			"For body keywords use search_message_bodies; for vector/hybrid search use semantic_search_messages."),
 		mcp.WithReadOnlyHintAnnotation(true),
 		mcp.WithString("query",
 			mcp.Required(),
@@ -300,10 +300,11 @@ func semanticSearchMessagesTool(vectorAvailable bool) mcp.Tool {
 			),
 		)
 	}
-	searchIntro := "Semantic (embedding) search over message bodies. " +
-		"Returns body chunks ranked by similarity to the query — unbounded, so there is no total; " +
-		"page on has_more and raise min_score to prune low-relevance hits. " +
-		"Each hit includes matches — embedded body chunks ranked by semantic similarity (up to 5 per message), with score when explain=true. " +
+	searchIntro := "Semantic (embedding) search over each preprocessed message subject and body. " +
+		"Returns messages ranked by similarity to the query — there is no exact total, so page on has_more. " +
+		"Each hit includes matches — embedded subject/body chunks ranked by semantic similarity (up to 5 per message), each with a score. " +
+		"Vector char_offset and line locations may be omitted because preprocessing usually prevents exact raw-body mapping; use snippet terms with search_in_message keyword mode when navigation is needed. " +
+		"min_score filters chunk excerpts only; it does not remove or reorder ranked messages. " +
 		"Requires at least one free-text term (used to embed); filter-only queries must use search_metadata. " +
 		"Known Gmail operators (from:, subject:, label:, etc.) apply as metadata filters only. " +
 		searchMetadataOperatorDoc + " "
@@ -314,8 +315,7 @@ func semanticSearchMessagesTool(vectorAvailable bool) mcp.Tool {
 		mcp.WithDescription(searchIntro+
 			"mode=vector for pure semantic search or mode=hybrid to fuse BM25 and vector ranking via RRF. "+
 			"Paginate with offset/limit (default limit 20, max 50). Response: data, returned, offset, has_more, mode, pool_saturated, generation. "+
-			"total is not available (matches are unbounded by similarity); use has_more to page. "+
-			"Watch the minimum score across returned hits to estimate how many more useful results remain, and raise min_score to cut noise."),
+			"total is not available; use has_more to page."),
 		mcp.WithReadOnlyHintAnnotation(true),
 		mcp.WithString("query",
 			mcp.Required(),
@@ -332,7 +332,7 @@ func semanticSearchMessagesTool(vectorAvailable bool) mcp.Tool {
 			mcp.Description("Include per-signal scores in the response (for debugging or ranking inspection)"),
 		),
 		mcp.WithNumber("min_score",
-			mcp.Description("Minimum chunk similarity score (0–1) for matches (default 0)"),
+			mcp.Description("Minimum chunk similarity score for included match excerpts (default 0); does not filter ranked messages"),
 		),
 	)
 }
@@ -400,8 +400,8 @@ func searchInMessageTool(vectorInMessageAvailable bool) mcp.Tool {
 	if vectorInMessageAvailable {
 		desc = "Find matches within one message body. Default mode=keyword finds literal term occurrences. " +
 			"mode=vector scores each embedded chunk by semantic similarity to the query (best first, with score on each match). " +
-			"Each match includes char_offset (byte offset into body_text), snippet, and line. " +
-			"Use char_offset with get_message center_at to read a larger window around any match."
+			"Keyword matches include raw-body char_offset and line. Vector matches always include snippet and score; char_offset and line may be omitted after preprocessing. " +
+			"Use a present char_offset with get_message center_at to read a larger window around the match."
 	}
 
 	opts := []mcp.ToolOption{

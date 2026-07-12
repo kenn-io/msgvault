@@ -49,11 +49,11 @@ The MCP server exposes the following tools to connected AI clients:
 |---|---|---|
 | `search_metadata` | Search message metadata with a subset of Gmail query syntax (not full Gmail compatibility). Matches subject, snippet, and sender/recipient metadata, not message bodies. | `query` (string, required), `limit` (int), `offset` (int), `account` (string) |
 | `search_message_bodies` | Keyword full-text search inside message bodies. Returns `matches` excerpts (up to 5 per message), ordered newest-first. | `query` (string, required), `limit` (int), `offset` (int), `account` (string) |
-| `semantic_search_messages` | Semantic (embedding) search inside message bodies when [vector search](/usage/vector-search/) is configured. Returns body chunks ranked by similarity. | `query` (string, required), `mode` (string: `vector`/`hybrid`, default `hybrid`), `explain` (bool), `min_score` (number), `limit` (int), `offset` (int), `account` (string) |
+| `semantic_search_messages` | Semantic search over preprocessed message subjects and bodies when [vector search](/usage/vector-search/) is configured. Returns scored chunk excerpts; `min_score` filters excerpts, not ranked messages. | `query` (string, required), `mode` (string: `vector`/`hybrid`, default `hybrid`), `explain` (bool), `min_score` (number), `limit` (int), `offset` (int), `account` (string) |
 | `find_similar_messages` | Nearest-neighbor search from a seed message's embedding. Requires vector search to be configured and an active index generation. | `message_id` (int, required), `limit` (int), `account` (string), `message_type` (string), `after` (string), `before` (string), `has_attachment` (bool) |
 | `search_by_domains` | Find messages where any participant (`from`, `to`, or `cc`) belongs to one of several domains, regardless of direction. | `domains` (comma-separated string, required), `limit` (int), `offset` (int), `after` (string), `before` (string) |
 | `get_message` | Get message details with windowed body paging | `id` (int, required), `offset` (int), `center_at` (int), `max_chars` (int), `body_format` (string: `auto`/`text`/`html`), `full_body` (bool) |
-| `list_messages` | List messages with filters | `from` (string), `to` (string), `label` (string), `after` (string), `before` (string), `has_attachment` (bool), `limit` (int), `offset` (int), `account` (string) |
+| `list_messages` | List messages with filters | `from` (string), `to` (string), `label` (string), `after` (string), `before` (string), `has_attachment` (bool), `conversation_id` (int), `limit` (int), `offset` (int), `account` (string) |
 | `get_attachment` | Get attachment content by ID | `attachment_id` (int) |
 | `export_attachment` | Save attachment to filesystem | `attachment_id` (int), `destination` (string) |
 | `get_stats` | Archive overview statistics. Includes vector index state when configured. | — |
@@ -96,7 +96,7 @@ Supported operators: `from:`, `to:`, `cc:`, `bcc:`, `subject:`, `label:` (or `l:
 
 Not supported: negation (`-has:attachment`), `OR`, or parentheses grouping.
 
-Free text in `search_metadata` matches subject, snippet, and sender/recipient metadata only. Use `search_message_bodies` for keyword body search or `semantic_search_messages` for vector/hybrid body search; both require at least one free-text term. Keyword matches literal words; semantic returns ranked chunks.
+Free text in `search_metadata` matches subject, snippet, and sender/recipient metadata only. Use `search_message_bodies` for keyword body search or `semantic_search_messages` for vector/hybrid search over preprocessed subject and body content; both require at least one free-text term. Keyword matches literal words; semantic returns ranked messages with scored chunk excerpts. Because preprocessing normally rewrites message text, semantic excerpts commonly omit `char_offset` and `line`; use distinctive snippet terms with keyword `search_in_message` when raw-body navigation is needed.
 
 ### `aggregate` response
 
@@ -113,7 +113,7 @@ All `group_by` values return a JSON array of objects with these fields:
 | `AttachmentCount` | Number of attachments |
 | `TotalUnique` | Total number of distinct groups (same on every row) |
 
-`semantic_search_messages` is only registered when the server starts with vector search configured; calling it without vector search returns `vector_not_enabled`. `search_message_bodies` is always available. Vector and hybrid queries require at least one free-text term (operator-only queries return `missing_free_text`). They support `offset`/`limit` pagination inside the configured hybrid ranking window; when `[vector.search].max_page_size_hybrid` is positive, an `offset` at or beyond that cap returns `pagination_limit`. For deeper pagination, adjust `[vector.search].max_page_size_hybrid`.
+`semantic_search_messages` is always registered so callers receive actionable discovery guidance. Without vector search it exposes a reduced schema and calls return `vector_not_enabled`; with vector search it advertises the full vector parameters. `search_message_bodies` is always available. Vector and hybrid queries require at least one free-text term (operator-only queries return `missing_free_text`). They support `offset`/`limit` pagination inside the configured hybrid ranking window; when `[vector.search].max_page_size_hybrid` is positive, an `offset` at or beyond that cap returns `pagination_limit`. `min_score` filters returned chunk excerpts only and does not remove ranked messages. For deeper pagination, adjust `[vector.search].max_page_size_hybrid`.
 
 In `semantic_search_messages` (vector/hybrid), the paginated response also includes
 top-level `mode`, `pool_saturated`, and `generation` fields. When

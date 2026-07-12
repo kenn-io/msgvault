@@ -105,10 +105,13 @@ func (s daemonMCPHybridSearcher) SearchHybrid(
 	req mcpserver.HybridSearchRequest,
 ) (*mcpserver.HybridSearchResult, error) {
 	resp, err := s.client.GetCLIHybridSearch(ctx, daemonclient.CLIHybridSearchRequest{
-		Query:   req.Query,
-		Account: req.Account,
-		Mode:    req.Mode,
-		Limit:   req.Limit,
+		Query:          req.Query,
+		Account:        req.Account,
+		Mode:           req.Mode,
+		Limit:          req.Limit,
+		Offset:         req.Offset,
+		IncludeMatches: req.IncludeMatches,
+		MinScore:       req.MinScore,
 	})
 	if err != nil {
 		return nil, err
@@ -119,17 +122,31 @@ func (s daemonMCPHybridSearcher) SearchHybrid(
 
 	hits := make([]mcpserver.HybridSearchHit, len(resp.Results))
 	for i, hit := range resp.Results {
-		hits[i] = mcpserver.HybridSearchHit{
-			ID:             hit.ID,
-			RRFScore:       hit.RRFScore,
-			BM25Score:      hit.BM25Score,
-			VectorScore:    hit.VectorScore,
-			SubjectBoosted: hit.SubjectBoosted,
+		out := mcpserver.HybridSearchHit{
+			ID:               hit.ID,
+			RRFScore:         hit.RRFScore,
+			BM25Score:        hit.BM25Score,
+			VectorScore:      hit.VectorScore,
+			SubjectBoosted:   hit.SubjectBoosted,
+			MatchesTruncated: hit.MatchesTruncated,
 		}
+		if len(hit.Matches) > 0 {
+			out.Matches = make([]mcpserver.HybridSearchMatch, len(hit.Matches))
+			for j, match := range hit.Matches {
+				out.Matches[j] = mcpserver.HybridSearchMatch{
+					CharOffset: match.CharOffset,
+					Snippet:    match.Snippet,
+					Line:       match.Line,
+					Score:      match.Score,
+				}
+			}
+		}
+		hits[i] = out
 	}
 	return &mcpserver.HybridSearchResult{
 		Hits:          hits,
 		PoolSaturated: resp.PoolSaturated,
+		HasMore:       resp.HasMore,
 		Generation: mcpserver.HybridGeneration{
 			ID:          resp.Generation.ID,
 			Model:       resp.Generation.Model,

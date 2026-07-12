@@ -399,8 +399,17 @@ type SearchMessagesQuery struct {
 	// PageSize Page size (default 20, max 100; out-of-range values are clamped). Non-numeric values are rejected with 400.
 	PageSize *int64 `json:"page_size,omitempty"`
 
+	// Offset Zero-based ranking offset for vector or hybrid search (default 0)
+	Offset *int64 `json:"offset,omitempty"`
+
 	// Explain Include score explanation when mode is vector or hybrid
 	Explain *bool `json:"explain,omitempty"`
+
+	// IncludeMatches Include scored semantic chunk excerpts for vector or hybrid results
+	IncludeMatches *bool `json:"include_matches,omitempty"`
+
+	// MinScore Minimum chunk score for included excerpts; does not filter ranked messages
+	MinScore *float32 `json:"min_score,omitempty"`
 
 	// MessageType Message type filter; repeat or comma-separate for multiple values
 	MessageType *string `json:"message_type,omitempty"`

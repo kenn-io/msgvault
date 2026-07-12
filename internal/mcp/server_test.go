@@ -1058,10 +1058,12 @@ func TestSearchMessageBodies_HybridUsesDaemonSearcher(t *testing.T) {
 			gotReq = req
 			return &HybridSearchResult{
 				Hits: []HybridSearchHit{
-					{ID: 101},
-					{ID: 102, RRFScore: &rrf, SubjectBoosted: true},
-					{ID: 103},
+					{
+						ID: 102, RRFScore: &rrf, SubjectBoosted: true,
+						Matches: []HybridSearchMatch{{Snippet: "quarterly plan", Score: 0.88}},
+					},
 				},
+				HasMore:       true,
 				PoolSaturated: true,
 				Generation: hybridGenerationSummary{
 					ID:          7,
@@ -1075,18 +1077,22 @@ func TestSearchMessageBodies_HybridUsesDaemonSearcher(t *testing.T) {
 	}
 
 	resp := runTool[searchMessageBodiesResponse](t, "semantic_search_messages", h.semanticSearchMessages, map[string]any{
-		"query":   "quarterly plan",
-		"mode":    searchModeHybrid,
-		"account": "alice@example.com",
-		"limit":   float64(1),
-		"offset":  float64(1),
-		"explain": true,
+		"query":     "quarterly plan",
+		"mode":      searchModeHybrid,
+		"account":   "alice@example.com",
+		"limit":     float64(1),
+		"offset":    float64(1),
+		"explain":   true,
+		"min_score": float64(0.75),
 	})
 
 	assert.Equal("quarterly plan", gotReq.Query, "query")
 	assert.Equal(searchModeHybrid, gotReq.Mode, "mode")
 	assert.Equal("alice@example.com", gotReq.Account, "account")
-	assert.Equal(3, gotReq.Limit, "fetch limit")
+	assert.Equal(1, gotReq.Limit, "page limit")
+	assert.Equal(1, gotReq.Offset, "page offset")
+	assert.True(gotReq.IncludeMatches, "include matches")
+	assert.InDelta(0.75, gotReq.MinScore, 0.001, "min score")
 	assert.Equal(searchModeHybrid, resp.Mode, "response mode")
 	assert.True(resp.HasMore, "has_more")
 	require.Len(resp.Data, 1, "data")
@@ -1094,6 +1100,10 @@ func TestSearchMessageBodies_HybridUsesDaemonSearcher(t *testing.T) {
 	require.NotNil(resp.Data[0].Score, "score")
 	assert.Equal(&rrf, resp.Data[0].Score.RRF, "rrf")
 	assert.True(resp.Data[0].Score.SubjectBoosted, "subject boosted")
+	require.Len(resp.Data[0].Matches, 1, "matches")
+	assert.Equal("quarterly plan", resp.Data[0].Matches[0].Snippet, "match snippet")
+	require.NotNil(resp.Data[0].Matches[0].Score, "match score")
+	assert.InDelta(0.88, *resp.Data[0].Matches[0].Score, 0.001, "match score")
 	assert.Equal(int64(7), resp.Generation.ID, "generation")
 }
 
@@ -2569,6 +2579,8 @@ func TestAccountFilter(t *testing.T) {
 
 func TestSearchInMessage(t *testing.T) {
 	t.Run("reports line and centered snippet", func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
 		body := "line one\nline two has the resistor value should be 5.1k ohms\nline three"
 		eng := &querytest.MockEngine{
 			Messages: map[int64]*query.MessageDetail{
@@ -2581,9 +2593,10 @@ func TestSearchInMessage(t *testing.T) {
 			"id":    float64(10),
 			"query": "resistor",
 		})
-		require.Len(t, resp.Data, 1, "matches")
-		assert.Equal(t, 2, resp.Data[0].Line, "line")
-		assert.Contains(t, resp.Data[0].Snippet, "resistor")
+		require.Len(resp.Data, 1, "matches")
+		require.NotNil(resp.Data[0].Line, "line")
+		assert.Equal(2, *resp.Data[0].Line, "line")
+		assert.Contains(resp.Data[0].Snippet, "resistor")
 	})
 
 	t.Run("long quoted line", func(t *testing.T) {
@@ -3114,6 +3127,9 @@ func TestSemanticSearchMessagesTool_AdvertisesVectorParams(t *testing.T) {
 	assert.Contains(enabled.InputSchema.Properties, "explain", "vectorAvailable=true: semantic tool is missing 'explain' parameter")
 	assert.Contains(enabled.InputSchema.Properties, "min_score", "vectorAvailable=true: semantic tool is missing 'min_score' parameter")
 	assert.Contains(enabled.Description, "free-text", "vectorAvailable=true: semantic tool description should call out the free-text requirement, got: %q", enabled.Description)
+	assert.Contains(enabled.Description, "subject and body", "semantic scope should match the embedding corpus")
+	assert.Contains(enabled.Description, "chunk excerpts only", "min_score should not claim to filter ranked messages")
+	assert.Contains(enabled.Description, "may be omitted", "vector locations should document expected omission")
 }
 
 // TestSearchInMessageTool_AdvertisesVectorModeWhenConfigured guards the
@@ -3159,6 +3175,7 @@ func TestSearchMetadataTool_DocumentsQuerySyntax(t *testing.T) {
 		assert.Contains(desc, want, "description missing %q", want)
 	}
 	assert.NotContains(desc, "Gmail-like", "description should not over-promise Gmail compatibility")
+	assert.Contains(desc, "semantic_search_messages", "metadata guidance should name the semantic tool")
 
 	queryDesc := toolPropertyDescription(tool, "query")
 	assert.Contains(queryDesc, "supported operators", "query param should reference operator docs")

@@ -21,6 +21,7 @@ import (
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/vector"
+	"go.kenn.io/msgvault/internal/vector/chunkmatch"
 	"go.kenn.io/msgvault/internal/vector/hybrid"
 )
 
@@ -139,24 +140,37 @@ type HybridSearcher interface {
 }
 
 type HybridSearchRequest struct {
-	Query   string
-	Mode    string
-	Account string
-	Limit   int
+	Query          string
+	Mode           string
+	Account        string
+	Limit          int
+	Offset         int
+	IncludeMatches bool
+	MinScore       float64
+}
+
+type HybridSearchMatch struct {
+	CharOffset *int
+	Snippet    string
+	Line       *int
+	Score      float64
 }
 
 type HybridSearchHit struct {
-	ID             int64
-	RRFScore       *float64
-	BM25Score      *float64
-	VectorScore    *float64
-	SubjectBoosted bool
+	ID               int64
+	RRFScore         *float64
+	BM25Score        *float64
+	VectorScore      *float64
+	SubjectBoosted   bool
+	Matches          []HybridSearchMatch
+	MatchesTruncated bool
 }
 
 type HybridSearchResult struct {
 	Hits          []HybridSearchHit
 	PoolSaturated bool
 	Generation    HybridGeneration
+	HasMore       bool
 }
 
 type SimilarSearcher interface {
@@ -749,7 +763,6 @@ func (h *handlers) searchMessageBodiesHybridViaSearcher(
 ) (*mcp.CallToolResult, error) {
 	limit := searchLimitArg(args)
 	offset := limitArg(args, "offset", 0)
-	requestedEnd := offset + limit
 
 	freeText := strings.Join(parsed.TextTerms, " ")
 	if freeText == "" {
@@ -761,10 +774,13 @@ func (h *handlers) searchMessageBodiesHybridViaSearcher(
 
 	account, _ := args["account"].(string)
 	result, err := h.hybridSearcher.SearchHybrid(ctx, HybridSearchRequest{
-		Query:   queryStr,
-		Mode:    mode,
-		Account: account,
-		Limit:   requestedEnd + 1,
+		Query:          queryStr,
+		Mode:           mode,
+		Account:        account,
+		Limit:          limit,
+		Offset:         offset,
+		IncludeMatches: true,
+		MinScore:       floatArg(args, "min_score", 0),
 	})
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("search failed: %v", err)), nil
@@ -774,12 +790,8 @@ func (h *handlers) searchMessageBodiesHybridViaSearcher(
 	}
 
 	hits := result.Hits
-	hasMore := len(hits) > requestedEnd
-	var pageHits []HybridSearchHit
-	if offset < len(hits) {
-		end := min(requestedEnd, len(hits))
-		pageHits = hits[offset:end]
-	}
+	hasMore := result.HasMore
+	pageHits := hits
 
 	hitIDs := make([]int64, len(pageHits))
 	for i, hit := range pageHits {
@@ -812,6 +824,19 @@ func (h *handlers) searchMessageBodiesHybridViaSearcher(
 				SubjectBoosted: hit.SubjectBoosted,
 			}
 		}
+		if len(hit.Matches) > 0 {
+			item.Matches = make([]messageMatch, len(hit.Matches))
+			for i, match := range hit.Matches {
+				score := match.Score
+				item.Matches[i] = messageMatch{
+					CharOffset: match.CharOffset,
+					Snippet:    match.Snippet,
+					Line:       match.Line,
+					Score:      &score,
+				}
+			}
+		}
+		item.MatchesTruncated = hit.MatchesTruncated
 		items = append(items, item)
 	}
 
@@ -1262,13 +1287,11 @@ func (h *handlers) attachVectorChunkMatches(
 		if err != nil {
 			continue
 		}
-		preprocessed := preprocessedEmbedText(msg.Subject, msg.BodyText, h.vectorCfg)
-		prefixRunes := subjectPrefixRuneCount(msg.Subject)
-		matches, truncated := chunkHitsToMatches(
-			preprocessed, msg.BodyText, prefixRunes,
-			chunkHits, minScore, maxContextSnippets,
+		matches, truncated := chunkmatch.Build(
+			msg.Subject, msg.BodyText, h.vectorCfg, chunkHits,
+			minScore, maxContextSnippets, searchContextChars,
 		)
-		items[i].Matches = matches
+		items[i].Matches = messageMatchesFromChunks(matches)
 		items[i].MatchesTruncated = truncated
 	}
 }
@@ -1327,12 +1350,11 @@ func (h *handlers) vectorMatchesInMessage(
 		return mcp.NewToolResultError(fmt.Sprintf("score chunks: %v", err)), nil
 	}
 
-	preprocessed := preprocessedEmbedText(msg.Subject, msg.BodyText, h.vectorCfg)
-	prefixRunes := subjectPrefixRuneCount(msg.Subject)
-	allMatches, _ := chunkHitsToMatches(
-		preprocessed, msg.BodyText, prefixRunes,
-		chunkHits, minScore, len(chunkHits),
+	chunkMatches, _ := chunkmatch.Build(
+		msg.Subject, msg.BodyText, h.vectorCfg, chunkHits,
+		minScore, len(chunkHits), searchContextChars,
 	)
+	allMatches := messageMatchesFromChunks(chunkMatches)
 
 	total := int64(len(allMatches))
 	if offset >= len(allMatches) {
@@ -1410,10 +1432,12 @@ func findTermMatches(body, term string) []messageMatch {
 		pos := searchFrom + idx
 		searchFrom = pos + 1
 		start, end := contextWindow(len(body), pos, termLen, searchContextChars)
+		charOffset := pos
+		line := lineNumberAt(body, pos)
 		matches = append(matches, messageMatch{
-			CharOffset: pos,
+			CharOffset: &charOffset,
 			Snippet:    bodyByteSlice(body, start, end),
-			Line:       lineNumberAt(body, pos),
+			Line:       &line,
 		})
 	}
 	return matches
