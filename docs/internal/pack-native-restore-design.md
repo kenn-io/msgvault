@@ -425,6 +425,49 @@ Required functional hardening is:
 6. explicit loose restore; and
 7. integrity and manifest-statistics proof after every restored layout.
 
+### Primary-host hardening results (2026-07-11)
+
+The primary-host gate ran on macOS/APFS against an isolated corpus built from
+46,060 distinct real attachment blobs (7.6 GiB raw). The database catalog was
+synthetic and contained no account or message content. The installed binary,
+live database, and live attachment files were never modified. The verified
+repository held the corpus in 203 packs totaling 6.7 GiB.
+
+Order-balanced restores compared `origin/main` at `5464711e` with this branch
+at the Kit v0.7.0 pin (`885d10f7`):
+
+| Layout | Order 1 | Order 2 | Destination files | Peak RSS |
+| --- | ---: | ---: | ---: | ---: |
+| Main loose | 176.5 s | 168.5 s | 46,060 | 227-239 MiB |
+| Branch packed | 16.5 s | 13.8 s | 203 | 301-303 MiB |
+
+Both layouts restored and proved the same 46,060 blobs and manifest statistics.
+The mean packed restore was 11.4 times faster on this filesystem. As designed,
+the improvement came from avoiding per-blob destination creation rather than
+from skipping source reads or SHA-256 verification.
+
+Functional hardening also passed:
+
+- the five largest blobs plus a representative small blob re-hashed correctly;
+- an uppercase alias read byte-identically through the raw API, CLI export, and
+  MCP;
+- backup capture over the packed target and full verification covered all
+  7.7 GiB with zero problems;
+- interruption after ten pack publications left no visible database, and
+  overwrite retry completed with exactly 203 packs and 46,060 mappings;
+- a forced readonly staged catalog failed after pack publication with no
+  visible database, and retry completed with the same exact authority;
+- unpack restored all 46,060 loose blobs, an independent full SHA-256 pass had
+  zero mismatches, and repacking restored the 203-pack layout; and
+- a post-repack backup and a subsequent incremental packed backup both fully
+  verified. The incremental capture completed in 8.1 seconds.
+
+Production-path benchmarks (`-count=10`) found no statistically significant
+main-to-branch change in loose reads, warm or concurrent packed reads, packed
+backup capture, pack time, or repack time. Read and maintenance geomeans moved
+by +1.34% and +1.19%, respectively, within noise. Repack added 0.02% allocated
+bytes and 0.69% allocations, which is not material.
+
 Native Windows CI is mandatory. Before merge, record destination file counts
 and elapsed time for loose and pack-native restore on a representative native
 Windows archive. If a suitable existing archive is unavailable, use a
