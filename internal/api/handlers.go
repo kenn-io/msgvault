@@ -27,6 +27,7 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
 	"go.kenn.io/msgvault/internal/vector/chunkmatch"
+	"go.kenn.io/msgvault/internal/vector/embed"
 	"go.kenn.io/msgvault/internal/vector/hybrid"
 	"golang.org/x/oauth2"
 )
@@ -1023,7 +1024,7 @@ func (s *Server) enrichHybridMatches(
 			continue
 		}
 		matches, truncated := chunkmatch.Build(
-			msg.Subject, msg.Body, cfg, hits, minScore,
+			msg.Subject, embeddingBodyText(msg), cfg, hits, minScore,
 			maxHybridMatches, hybridMatchSnippetLen,
 		)
 		items[i].Matches = make([]hybridSearchMatch, len(matches))
@@ -1037,6 +1038,16 @@ func (s *Server) enrichHybridMatches(
 		}
 		items[i].MatchesTruncated = truncated
 	}
+}
+
+func embeddingBodyText(msg *APIMessage) string {
+	body := embed.BodyTextForEmbedding(msg.BodyText, msg.BodyHTML)
+	if body == "" {
+		// Preserve compatibility with MessageStore implementations that only
+		// populate the legacy selected Body field.
+		return msg.Body
+	}
+	return body
 }
 
 func (s *Server) handleSimilarSearch(w http.ResponseWriter, r *http.Request) {

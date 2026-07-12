@@ -5069,6 +5069,15 @@ func TestHandleSearch_HybridFilterOnlyReturnsBadRequest(t *testing.T) {
 	assert.Equal(t, "missing_free_text", errResp.Error, "error")
 }
 
+func TestEmbeddingBodyText_HTMLOnlyUsesEmbeddingCorpus(t *testing.T) {
+	msg := &APIMessage{
+		Body:     "<p>semantic <strong>needle</strong></p>",
+		BodyHTML: "<p>semantic <strong>needle</strong></p>",
+	}
+
+	assert.Equal(t, "semantic needle", embeddingBodyText(msg))
+}
+
 func TestHandleSearch_VectorMessageTypeParamReachesFilter(t *testing.T) {
 	store := &mockStore{
 		messages: []APIMessage{{

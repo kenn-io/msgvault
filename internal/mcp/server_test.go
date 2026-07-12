@@ -337,6 +337,43 @@ func TestSearchMetadata_NonPositiveLimitUsesDefault(t *testing.T) {
 	}
 }
 
+func TestSearchMessagesCompatibilityDispatchesMetadata(t *testing.T) {
+	eng := &querytest.MockEngine{
+		SearchFastResults: []query.MessageSummary{
+			testutil.NewMessageSummary(3).WithSubject("legacy metadata result").Build(),
+		},
+		SearchFastCountFunc: func(context.Context, *search.Query, query.MessageFilter) (int64, error) {
+			return 1, nil
+		},
+	}
+	h := newTestHandlers(eng)
+
+	resp := runTool[paginatedSearchMessages](t, "search_messages", h.searchMessages, map[string]any{"query": "meeting"})
+	require.Len(t, resp.Data, 1)
+	assert.Equal(t, int64(3), resp.Data[0].ID)
+	assert.Equal(t, int64(1), resp.Total)
+}
+
+func TestSearchMessagesCompatibilityDispatchesSemanticMode(t *testing.T) {
+	called := false
+	h := &handlers{
+		engine: &querytest.MockEngine{},
+		hybridSearcher: hybridSearcherFunc(func(_ context.Context, req HybridSearchRequest) (*HybridSearchResult, error) {
+			called = true
+			assert.Equal(t, searchModeHybrid, req.Mode)
+			return &HybridSearchResult{Generation: HybridGeneration{State: "active"}}, nil
+		}),
+	}
+
+	resp := runTool[searchMessageBodiesResponse](t, "search_messages", h.searchMessages, map[string]any{
+		"query": "semantic terms",
+		"mode":  searchModeHybrid,
+	})
+
+	assert.True(t, called)
+	assert.Equal(t, searchModeHybrid, resp.Mode)
+}
+
 func TestSearchMessageBodies(t *testing.T) {
 	var genericCalled bool
 	eng := &querytest.MockEngine{
@@ -375,17 +412,16 @@ func TestSearchMessageBodies(t *testing.T) {
 	t.Run("sets matches_truncated when excerpts exceed cap", func(t *testing.T) {
 		require := require.New(t)
 		assert := assert.New(t)
-		var body strings.Builder
-		for range 7 {
-			body.WriteString("needle")
-			body.WriteString(strings.Repeat("x", 400))
+		snippets := make([]string, 7)
+		for i := range snippets {
+			snippets[i] = "needle context " + strings.Repeat("x", i)
 		}
 		eng := &querytest.MockEngine{
-			SearchResults: []query.MessageSummary{
-				testutil.NewMessageSummary(3).WithSubject("Many hits").Build(),
-			},
-			Messages: map[int64]*query.MessageDetail{
-				3: testutil.NewMessageDetail(3).WithBodyText(body.String()).BuildPtr(),
+			SearchMessageBodiesFunc: func(context.Context, *search.Query, int, int) ([]query.MessageSummary, error) {
+				return []query.MessageSummary{withBodySearchContext(
+					testutil.NewMessageSummary(3).WithSubject("Many hits").Build(),
+					snippets, false,
+				)}, nil
 			},
 		}
 		h := newTestHandlers(eng)
@@ -466,12 +502,17 @@ func TestSearchMessageBodies(t *testing.T) {
 					[]string{body[:searchContextChars]}, true,
 				)}, nil
 			},
+			GetMessageFunc: func(context.Context, int64) (*query.MessageDetail, error) {
+				return nil, errors.New("GetMessage must not be called for backend-provided snippets")
+			},
 		}
 		resp := runTool[paginatedSearchMessages](t, "search_message_bodies",
 			newTestHandlers(fallback).searchMessageBodies, map[string]any{"query": "mismatchneedle"})
 		require.Len(resp.Data, 1, "fallback hit")
 		require.Len(resp.Data[0].Matches, 1, "fallback context")
 		assert.Equal(body[:searchContextChars], resp.Data[0].Matches[0].Snippet)
+		assert.Nil(resp.Data[0].Matches[0].CharOffset, "location is unavailable without body hydration")
+		assert.Nil(resp.Data[0].Matches[0].Line, "location is unavailable without body hydration")
 		assert.True(resp.Data[0].MatchesTruncated)
 	})
 
@@ -1125,6 +1166,29 @@ func TestSearchMessageBodies_HybridDaemonFilterOnlyGuidance(t *testing.T) {
 	assert.Contains(t, text, "search_metadata", "filter-only guidance")
 	assert.NotContains(t, text, "mode=fts", "mode=fts is not a valid mode for search_message_bodies")
 	assert.False(t, searcherCalled, "filter-only query must fail before remote search")
+}
+
+func TestAttachVectorChunkMatches_HTMLOnlyUsesEmbeddingCorpus(t *testing.T) {
+	const messageID = int64(42)
+	backend := &fakeBackend{chunkHits: map[int64][]vector.ChunkHit{
+		messageID: {{ChunkCharStart: 0, ChunkCharEnd: len("semantic needle"), Score: 0.9}},
+	}}
+	h := &handlers{
+		engine: &querytest.MockEngine{Messages: map[int64]*query.MessageDetail{
+			messageID: testutil.NewMessageDetail(messageID).
+				WithSubject("").
+				WithBodyText("").
+				WithBodyHTML("<p>semantic <strong>needle</strong></p>").BuildPtr(),
+		}},
+		backend:   backend,
+		vectorCfg: vector.Config{},
+	}
+	items := []searchMessageItem{{MessageSummary: query.MessageSummary{ID: messageID}}}
+
+	h.attachVectorChunkMatches(context.Background(), 1, []float32{1}, items, 0)
+
+	require.Len(t, items[0].Matches, 1)
+	assert.Equal(t, "semantic needle", items[0].Matches[0].Snippet)
 }
 
 // newHybridHandlersForErrorTest wires a real hybrid.Engine around the
@@ -3109,6 +3173,19 @@ func TestSearchMessageBodiesTool_KeywordOnly(t *testing.T) {
 	assert.NotContains(tool.InputSchema.Properties, "min_score", "keyword tool must not advertise 'min_score'")
 	assert.False(strings.Contains(tool.Description, "mode=vector") || strings.Contains(tool.Description, "mode=hybrid"),
 		"keyword tool description mentions vector modes: %q", tool.Description)
+}
+
+func TestSearchMessagesTool_DeprecatedCompatibilitySchema(t *testing.T) {
+	assert := assert.New(t)
+	tool := searchMessagesTool(true)
+
+	assert.Equal(ToolSearchMessages, tool.Name)
+	assert.Contains(tool.Description, "Deprecated")
+	assert.Contains(tool.Description, "search_metadata")
+	assert.Contains(tool.Description, "semantic_search_messages")
+	assert.Contains(tool.InputSchema.Properties, "mode")
+	assert.Contains(tool.InputSchema.Properties, "explain")
+	assert.Contains(tool.InputSchema.Properties, "min_score")
 }
 
 // TestSemanticSearchMessagesTool_AdvertisesVectorParams guards the companion

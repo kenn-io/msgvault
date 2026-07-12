@@ -145,27 +145,17 @@ func extractContextMatches(body string, terms []string, contextChars int) []mess
 }
 
 // bodyContextSnippetsToMatches converts backend-provided body context snippets
-// into messageMatch values. When body is provided, the snippet's byte offset
-// and line are computed from the body text; otherwise offsets are zeroed.
-func bodyContextSnippetsToMatches(body string, snippets []string, truncated bool) ([]messageMatch, bool) {
+// into messageMatch values. Body-search backends do not expose source offsets,
+// so locations remain absent rather than triggering per-result body hydration.
+func bodyContextSnippetsToMatches(snippets []string, truncated bool) ([]messageMatch, bool) {
 	matches := make([]messageMatch, 0, len(snippets))
 	for _, snippet := range snippets {
 		if len(matches) >= maxContextSnippets {
 			truncated = true
 			break
 		}
-		charOffset, line := 0, 1
-		if body != "" {
-			if idx := strings.Index(body, snippet); idx >= 0 {
-				charOffset = idx
-				line = lineNumberAt(body, idx)
-			}
-		}
-		charOffsetCopy, lineCopy := charOffset, line
 		matches = append(matches, messageMatch{
-			CharOffset: &charOffsetCopy,
-			Snippet:    snippet,
-			Line:       &lineCopy,
+			Snippet: snippet,
 		})
 	}
 	return matches, truncated

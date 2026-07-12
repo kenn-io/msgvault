@@ -14,10 +14,11 @@ All notable changes to msgvault, grouped by release.
   agents the search, attachment, and analytics CLI workflows.
   `msgvault skills uninstall` removes them.
 - MCP message search now separates metadata and body search:
-  `search_messages` searches metadata when `mode` is omitted, while
-  `search_message_bodies` performs body-only full-text search with bounded
-  context around each match. Explicit `vector` and `hybrid` modes remain on
-  `search_messages` when vector search is configured.
+  `search_metadata` searches metadata, `search_message_bodies` performs
+  body-only full-text search with bounded context around each match, and
+  `semantic_search_messages` owns explicit `vector` and `hybrid` modes.
+  The former combined `search_messages` tool remains as a deprecated
+  compatibility wrapper during migration.
 - MCP `list_messages` accepts a `conversation_id` filter for listing one
   conversation or thread.
 - The daemon HTTP API schema is now 1.3.0 and supports `scope=body` on deep

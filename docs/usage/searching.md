@@ -121,8 +121,9 @@ created them before the column existed.
 
 The same message-type scoping is available in HTTP search via the
 `message_type` query parameter. In MCP, include a `message_type:` operator in
-the `search_messages` query; `find_similar_messages` accepts a `message_type`
-parameter.
+the `search_metadata`, `search_message_bodies`, or
+`semantic_search_messages` query; `find_similar_messages` accepts a
+`message_type` parameter.
 
 ## JSON Output
 

@@ -17,6 +17,7 @@ import (
 
 // Tool name constants.
 const (
+	ToolSearchMessages         = "search_messages"
 	ToolSearchMetadata         = "search_metadata"
 	ToolSearchMessageBodies    = "search_message_bodies"
 	ToolSemanticSearchMessages = "semantic_search_messages"
@@ -84,8 +85,8 @@ type ServeOptions struct {
 	SimilarSearcher  SimilarSearcher
 	DataDir          string
 
-	// HybridEngine is optional. When nil, search_message_bodies rejects
-	// mode=vector and mode=hybrid with a vector_not_enabled error.
+	// HybridEngine is optional. When nil, semantic_search_messages rejects
+	// vector/hybrid searches with a vector_not_enabled error.
 	HybridEngine *hybrid.Engine
 	// VectorCfg should already have ApplyDefaults() called on it.
 	// The handler reads Search.MaxPageSizeHybridClamp() at request
@@ -127,6 +128,7 @@ func newMCPServer(opts ServeOptions) *server.MCPServer {
 	// HybridSearcher. The production CLI only wires the daemon searcher, so
 	// gate the vector mode advertisement on the actual capability.
 	vectorInMessageAvailable := opts.HybridEngine != nil && opts.Backend != nil
+	s.AddTool(searchMessagesTool(vectorAvailable), h.searchMessages)
 	s.AddTool(searchMetadataTool(), h.searchMetadata)
 	s.AddTool(searchMessageBodiesTool(), h.searchMessageBodies)
 	s.AddTool(semanticSearchMessagesTool(vectorAvailable), h.semanticSearchMessages)
@@ -245,6 +247,40 @@ func searchMetadataTool() mcp.Tool {
 	)
 }
 
+// searchMessagesTool preserves the pre-split search_messages contract for
+// existing MCP clients. New clients should use search_metadata for metadata
+// queries and semantic_search_messages for vector/hybrid queries.
+func searchMessagesTool(vectorAvailable bool) mcp.Tool {
+	description := "Deprecated compatibility tool; use search_metadata when mode is omitted and semantic_search_messages for mode=vector or mode=hybrid. " +
+		searchMetadataOperatorDoc + " " + searchMetadataFreeTextDoc + " " + searchMetadataPaginationDoc
+	opts := []mcp.ToolOption{
+		mcp.WithDescription(description),
+		mcp.WithReadOnlyHintAnnotation(true),
+		mcp.WithString("query",
+			mcp.Required(),
+			mcp.Description("Search query; omit mode for metadata search or set mode=vector|hybrid for semantic search"),
+		),
+		withAccount(),
+		withLimit("20"),
+		withOffset(),
+	}
+	if vectorAvailable {
+		opts = append(opts,
+			mcp.WithString("mode",
+				mcp.Description("Search mode: vector or hybrid. Omit for metadata search."),
+				mcp.Enum(searchModeVector, searchModeHybrid),
+			),
+			mcp.WithBoolean("explain",
+				mcp.Description("Include per-signal scores for vector/hybrid results"),
+			),
+			mcp.WithNumber("min_score",
+				mcp.Description("Minimum semantic score for returned chunk excerpts; does not filter ranked messages"),
+			),
+		)
+	}
+	return mcp.NewTool(ToolSearchMessages, opts...)
+}
+
 // searchMessageBodiesTool is the keyword-only body search. It is deliberately
 // separate from semanticSearchMessagesTool: keyword results are term-delimited
 // (a finite set of messages containing the query), date-ordered, and can report
@@ -254,7 +290,8 @@ func searchMetadataTool() mcp.Tool {
 func searchMessageBodiesTool() mcp.Tool {
 	searchIntro := "Keyword full-text search over message bodies. " +
 		"Returns messages whose body text contains the query terms, newest-first, " +
-		"each with matches — up to 5 excerpt snippets (char_offset + line) centered on each matched term. " +
+		"each with matches — up to 5 excerpt snippets centered on matched terms. " +
+		"Backend excerpts may omit char_offset and line when efficient source locations are unavailable; use search_in_message when exact locations are needed. " +
 		"When matches_truncated is true on a hit, more than 5 excerpts matched — use search_in_message or get_message to read the full body. " +
 		"Known Gmail operators (from:, subject:, label:, etc.) apply as metadata filters only and do not satisfy the free-text requirement. " +
 		"Filter-only queries such as from:alice are rejected — use search_metadata for filter-only queries. " +

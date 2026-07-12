@@ -22,6 +22,7 @@ import (
 	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/vector"
 	"go.kenn.io/msgvault/internal/vector/chunkmatch"
+	"go.kenn.io/msgvault/internal/vector/embed"
 	"go.kenn.io/msgvault/internal/vector/hybrid"
 )
 
@@ -340,6 +341,23 @@ type searchMessageItem struct {
 	Score            *hybridScoreBreakdown `json:"score,omitempty"`
 }
 
+// searchMessages preserves the legacy combined search tool while clients
+// migrate to the split tools. An omitted mode retains metadata-search
+// semantics; vector and hybrid modes delegate to semantic_search_messages.
+func (h *handlers) searchMessages(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	mode, _ := req.GetArguments()["mode"].(string)
+	switch mode {
+	case "":
+		return h.searchMetadata(ctx, req)
+	case searchModeVector, searchModeHybrid:
+		return h.semanticSearchMessages(ctx, req)
+	default:
+		return mcp.NewToolResultError(
+			fmt.Sprintf("invalid mode %q: must be %s or %s (or omit for metadata search)", mode, searchModeVector, searchModeHybrid),
+		), nil
+	}
+}
+
 // searchMetadata searches message metadata only (subject, sender, recipients,
 // labels, dates). Use search_message_bodies for full-body keyword, vector, or
 // hybrid search.
@@ -484,29 +502,16 @@ func (h *handlers) searchMessageBodies(ctx context.Context, req mcp.CallToolRequ
 	data := make([]searchMessageItem, 0, len(results))
 	for _, r := range results {
 		item := searchMessageItem{MessageSummary: r}
-		msg, err := h.engine.GetMessage(ctx, r.ID)
-		var body string
-		if err == nil && msg != nil {
-			body = msg.BodyText
-		}
 		switch {
 		case len(r.BodyContextSnippets) > 0:
-			item.Matches, item.MatchesTruncated = bodyContextSnippetsToMatches(body, r.BodyContextSnippets, r.BodyContextSnippetsTruncated)
+			item.Matches, item.MatchesTruncated = bodyContextSnippetsToMatches(r.BodyContextSnippets, r.BodyContextSnippetsTruncated)
 		case r.BodyContextSnippetsTruncated:
 			item.Matches = nil
 			item.MatchesTruncated = true
 		default:
-			if body == "" {
-				return mcp.NewToolResultError(fmt.Sprintf(
-					"body context unavailable for message %d: search backend returned no context", r.ID,
-				)), nil
-			}
-			matches := extractContextMatches(body, q.TextTerms, searchContextChars)
-			if len(matches) > maxContextSnippets {
-				item.MatchesTruncated = true
-				matches = matches[:maxContextSnippets]
-			}
-			item.Matches = matches
+			return mcp.NewToolResultError(fmt.Sprintf(
+				"body context unavailable for message %d: search backend returned no context", r.ID,
+			)), nil
 		}
 		data = append(data, item)
 	}
@@ -1288,7 +1293,7 @@ func (h *handlers) attachVectorChunkMatches(
 			continue
 		}
 		matches, truncated := chunkmatch.Build(
-			msg.Subject, msg.BodyText, h.vectorCfg, chunkHits,
+			msg.Subject, embed.BodyTextForEmbedding(msg.BodyText, msg.BodyHTML), h.vectorCfg, chunkHits,
 			minScore, maxContextSnippets, searchContextChars,
 		)
 		items[i].Matches = messageMatchesFromChunks(matches)
@@ -1351,7 +1356,7 @@ func (h *handlers) vectorMatchesInMessage(
 	}
 
 	chunkMatches, _ := chunkmatch.Build(
-		msg.Subject, msg.BodyText, h.vectorCfg, chunkHits,
+		msg.Subject, embed.BodyTextForEmbedding(msg.BodyText, msg.BodyHTML), h.vectorCfg, chunkHits,
 		minScore, len(chunkHits), searchContextChars,
 	)
 	allMatches := messageMatchesFromChunks(chunkMatches)
