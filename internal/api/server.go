@@ -121,7 +121,7 @@ type AccountStatus = scheduler.AccountStatus
 // loose storage. Implemented by the daemon attachment store. Not-found errors satisfy
 // errors.Is(err, fs.ErrNotExist).
 type AttachmentBlobStore interface {
-	Open(hash string) (io.ReadSeekCloser, int64, error)
+	OpenStream(ctx context.Context, hash string) (io.ReadCloser, int64, error)
 }
 
 // Server represents the HTTP API server.

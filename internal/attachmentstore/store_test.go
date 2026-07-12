@@ -2,6 +2,8 @@ package attachmentstore_test
 
 import (
 	"context"
+	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -63,6 +65,19 @@ func TestUppercaseHashReadsLooseAndPackedContent(t *testing.T) {
 			require.NoError(err)
 			require.NoError(reader.Close())
 			assert.Equal(content, got)
+
+			stream, streamSize, err := blobs.OpenStream(context.Background(), uppercase)
+			require.NoError(err)
+			streamed, readErr := io.ReadAll(stream)
+			require.NoError(errors.Join(readErr, stream.Close()))
+			assert.Equal(int64(len(content)), streamSize)
+			assert.Equal(content, streamed)
+
+			incomplete, _, err := blobs.OpenStream(context.Background(), uppercase)
+			require.NoError(err)
+			_, err = incomplete.Read(make([]byte, 1))
+			require.NoError(err)
+			require.ErrorIs(incomplete.Close(), pack.ErrVerificationIncomplete)
 
 			bounded, boundedSize, err := blobs.ReadBounded(uppercase, int64(len(content)))
 			require.NoError(err)

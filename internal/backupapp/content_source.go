@@ -14,7 +14,7 @@ import (
 
 // BlobStore is the production mixed-storage read contract used by capture.
 type BlobStore interface {
-	Open(hash string) (io.ReadSeekCloser, int64, error)
+	OpenStream(ctx context.Context, hash string) (io.ReadCloser, int64, error)
 }
 
 // NewContentSource returns a backup.ContentSource that serves attachment
@@ -35,7 +35,8 @@ type blobSource struct {
 	attachmentsDir string
 }
 
-// Open implements backup.ContentSource. ref.Hash is validated by blobs.Open
+// Open implements backup.ContentSource. ref.Hash is validated by
+// blobs.OpenStream
 // before any slicing: the [:2] slices below run only after Open returned
 // fs.ErrNotExist, which a malformed hash never produces (its validation
 // error does not satisfy fs.ErrNotExist).
@@ -43,7 +44,7 @@ func (s *blobSource) Open(ctx context.Context, ref backup.ContentRef) (io.ReadCl
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	r, _, err := s.blobs.Open(ref.Hash)
+	r, _, err := s.blobs.OpenStream(ctx, ref.Hash)
 	if err == nil {
 		return r, nil
 	}
@@ -64,7 +65,7 @@ func (s *blobSource) Open(ctx context.Context, ref backup.ContentRef) (io.ReadCl
 			// The packer may have committed the blob's pack mapping and
 			// removed this legacy file after the initial blob-store lookup.
 			// Retry once so the now-authoritative packed location wins.
-			r, _, retryErr := s.blobs.Open(ref.Hash)
+			r, _, retryErr := s.blobs.OpenStream(ctx, ref.Hash)
 			if retryErr == nil {
 				return r, nil
 			}

@@ -53,6 +53,21 @@ func (s *Store) Open(hash string) (io.ReadSeekCloser, int64, error) {
 	return reader, size, nil
 }
 
+// OpenStream returns a verified sequential reader without buffering the whole
+// attachment. Callers must consume it through EOF (or use the Kit-specific
+// verification methods) and must observe the Close error.
+func (s *Store) OpenStream(ctx context.Context, hash string) (io.ReadCloser, int64, error) {
+	parsed, err := parseHash(hash)
+	if err != nil {
+		return nil, 0, fmt.Errorf("parse attachment stream hash: %w", err)
+	}
+	reader, size, err := s.store.OpenStream(ctx, parsed)
+	if err != nil {
+		return nil, 0, fmt.Errorf("open attachment stream %s: %w", hash, err)
+	}
+	return reader, size, nil
+}
+
 // ReadBounded preserves msgvault's maintenance reader interface.
 func (s *Store) ReadBounded(hash string, maxBytes int64) ([]byte, int64, error) {
 	parsed, err := parseHash(hash)
@@ -85,10 +100,10 @@ func (s *Store) RetirePack(packID string) error {
 	return nil
 }
 
-// Opener adapts Open for export consumers.
+// Opener adapts verified streaming reads for export consumers.
 func (s *Store) Opener() export.AttachmentOpener {
 	return func(hash string) (io.ReadCloser, error) {
-		reader, _, err := s.Open(hash)
+		reader, _, err := s.OpenStream(context.Background(), hash)
 		return reader, err
 	}
 }
