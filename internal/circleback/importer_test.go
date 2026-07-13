@@ -1344,11 +1344,34 @@ func TestImport_SkipsKnownOldMeetingWhenSearchSummaryOmitsCreatedAt(t *testing.T
 		transcripts:    map[string]json.RawMessage{},
 		orderedIDs:     []string{"current", "old"},
 	}
-	imp, _ := newTestImporter(t, f)
+	imp, st := newTestImporter(t, f)
 
 	first, err := imp.Import(context.Background(), ImportOptions{Identifier: "alice@example.com"})
 	require.NoError(err)
 	require.EqualValues(2, first.MeetingsAdded)
+
+	var oldMessageID int64
+	require.NoError(st.DB().QueryRow(st.Rebind(`
+		SELECT id FROM messages WHERE source_id = ? AND source_message_id = ?`),
+		first.SourceID, "meeting:old",
+	).Scan(&oldMessageID))
+	require.NoError(st.UpsertAttachment(
+		oldMessageID,
+		"Old meeting (recording)",
+		"",
+		"https://cdn.example.com/old.mp4",
+		"",
+		0,
+	))
+	require.NoError(st.UpsertAttachment(
+		oldMessageID,
+		"Archived notes",
+		"text/plain",
+		"blobs/archived-notes",
+		"archived-notes-hash",
+		42,
+	))
+	require.NoError(st.RecomputeMessageAttachmentStats(oldMessageID))
 
 	f.searchMeetings["old"] = json.RawMessage(`{
 		"id":"old",
@@ -1360,11 +1383,29 @@ func TestImport_SkipsKnownOldMeetingWhenSearchSummaryOmitsCreatedAt(t *testing.T
 
 	second, err := imp.Import(context.Background(), ImportOptions{Identifier: "alice@example.com"})
 	require.NoError(err)
-	assert.EqualValues(0, second.MeetingsUpdated)
+	assert.EqualValues(1, second.MeetingsUpdated,
+		"legacy recording attachment cleanup must invalidate derived caches")
 	assert.NotContains(f.readIDs, "old",
 		"archived creation time should avoid hydrating an old known meeting")
 	assert.NotContains(f.transcriptIDs, "old",
 		"an old known meeting must be filtered before transcript retrieval")
+
+	var hasAttachments bool
+	var attachmentCount, attachmentRows int
+	var remainingPath string
+	require.NoError(st.DB().QueryRow(st.Rebind(`
+		SELECT has_attachments, attachment_count FROM messages WHERE id = ?`),
+		oldMessageID,
+	).Scan(&hasAttachments, &attachmentCount))
+	require.NoError(st.DB().QueryRow(st.Rebind(`
+		SELECT COUNT(*), MAX(storage_path) FROM attachments WHERE message_id = ?`),
+		oldMessageID,
+	).Scan(&attachmentRows, &remainingPath))
+	assert.True(hasAttachments)
+	assert.Equal(1, attachmentCount)
+	assert.Equal(1, attachmentRows)
+	assert.Equal("blobs/archived-notes", remainingPath,
+		"local archived attachments must survive the URL cleanup")
 }
 
 func TestImport_SearchDateBounds(t *testing.T) {

@@ -2596,3 +2596,59 @@ func (s *Store) ReplaceMessageLinkAttachments(messageID int64, refs []Attachment
 	return s.replaceMessageAttachmentsWhere(messageID,
 		`storage_path LIKE 'http://%' OR storage_path LIKE 'https://%'`, false, refs)
 }
+
+// RemoveSourceLinkAttachments removes URL-backed attachment rows owned by one
+// source and refreshes the affected messages' denormalized attachment flags.
+// The operation is atomic so importers can count the repaired messages as one
+// cache-invalidating sync mutation without exposing partially cleaned rows.
+func (s *Store) RemoveSourceLinkAttachments(sourceID int64) (int64, error) {
+	var messageIDs []int64
+	err := s.withTx(func(tx *loggedTx) error {
+		rows, err := tx.Query(`
+			SELECT DISTINCT m.id
+			FROM messages m
+			JOIN attachments a ON a.message_id = m.id
+			WHERE m.source_id = ?
+			  AND (LOWER(a.storage_path) LIKE 'http://%'
+			       OR LOWER(a.storage_path) LIKE 'https://%')
+			ORDER BY m.id
+		`, sourceID)
+		if err != nil {
+			return fmt.Errorf("list source link attachments: %w", err)
+		}
+		for rows.Next() {
+			var messageID int64
+			if err := rows.Scan(&messageID); err != nil {
+				_ = rows.Close()
+				return fmt.Errorf("scan source link attachment message: %w", err)
+			}
+			messageIDs = append(messageIDs, messageID)
+		}
+		if err := rows.Err(); err != nil {
+			_ = rows.Close()
+			return fmt.Errorf("iterate source link attachment messages: %w", err)
+		}
+		if err := rows.Close(); err != nil {
+			return fmt.Errorf("close source link attachment rows: %w", err)
+		}
+
+		for _, messageID := range messageIDs {
+			if _, err := tx.Exec(`
+				DELETE FROM attachments
+				WHERE message_id = ?
+				  AND (LOWER(storage_path) LIKE 'http://%'
+				       OR LOWER(storage_path) LIKE 'https://%')
+			`, messageID); err != nil {
+				return fmt.Errorf("delete source link attachments for message %d: %w", messageID, err)
+			}
+			if err := recomputeMessageAttachmentStatsWith(tx, messageID); err != nil {
+				return fmt.Errorf("refresh attachment stats for message %d: %w", messageID, err)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return 0, err
+	}
+	return int64(len(messageIDs)), nil
+}

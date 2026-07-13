@@ -684,6 +684,29 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (*ImportSum
 	if cancelIfDone(1) {
 		return sum, err
 	}
+	cleanedLinks, cleanupErr := imp.store.RemoveSourceLinkAttachments(src.ID)
+	if cleanupErr != nil {
+		sum.Errors++
+		err = fmt.Errorf("remove expired recording attachments: %w", cleanupErr)
+		return sum, err
+	}
+	if cleanedLinks > 0 {
+		sum.MeetingsUpdated += cleanedLinks
+		if checkpointErr := imp.store.UpdateSyncCheckpoint(syncID, &store.Checkpoint{
+			MessagesProcessed: sum.MeetingsProcessed,
+			MessagesAdded:     sum.MeetingsAdded,
+			MessagesUpdated:   sum.MeetingsUpdated,
+			ErrorsCount:       sum.Errors,
+		}); checkpointErr != nil {
+			sum.Errors++
+			err = fmt.Errorf("checkpoint recording attachment cleanup: %w", checkpointErr)
+			return sum, err
+		}
+		progress(fmt.Sprintf("removed expired recording attachments from %d archived meetings", cleanedLinks))
+	}
+	if cancelIfDone(1) {
+		return sum, err
+	}
 	if recomputeErr := imp.store.RecomputeConversationStats(src.ID); recomputeErr != nil {
 		sum.Errors++
 		hardErrors = append(hardErrors, fmt.Errorf("recompute conversation stats: %w", recomputeErr))
