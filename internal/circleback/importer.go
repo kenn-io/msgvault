@@ -34,7 +34,7 @@ const (
 	unknownTranscriptRetrySpan = 48 * time.Hour
 	// Bump when canonical rendering or persistence rules change so existing
 	// rows receive one repair refresh under the new rules.
-	circlebackSnapshotVersion = 1
+	circlebackSnapshotVersion = 2 // v2: do not persist expiring recording URLs as attachments
 )
 
 // meetingSource is the narrow client surface the importer needs (satisfied
@@ -123,12 +123,12 @@ func schedulePendingTranscript(m *Meeting, now time.Time, previous *pendingTrans
 	}
 
 	scheduledAt := m.ScheduledAt()
-	if retryUntil.IsZero() {
-		if scheduledAt.IsZero() {
+	if scheduledAt.IsZero() {
+		if retryUntil.IsZero() {
 			retryUntil = now.Add(unknownTranscriptRetrySpan)
-		} else {
-			retryUntil = scheduledAt.Add(transcriptRetryWindow)
 		}
+	} else if scheduledDeadline := scheduledAt.Add(transcriptRetryWindow); scheduledDeadline.After(retryUntil) {
+		retryUntil = scheduledDeadline
 	}
 	if !retryUntil.After(now) {
 		return pendingTranscript{}, false
@@ -1035,17 +1035,6 @@ func (imp *Importer) ingestMeeting(
 		fromIDs = []int64{senderID}
 		fromNames = []string{organizerName}
 	}
-	// The recording URL (valid ~24h) is stored as a link attachment anyway:
-	// the row records THAT a recording exists and re-syncs refresh the URL;
-	// metadata.recording_url_fetched_at flags staleness. Downloading the
-	// media is future work.
-	var links []store.AttachmentRef
-	if m.RecordingURL != "" {
-		links = append(links, store.AttachmentRef{
-			Filename:    title + " (recording)",
-			StoragePath: m.RecordingURL,
-		})
-	}
 	fts := &store.FTSDoc{
 		Subject:  title,
 		Body:     body,
@@ -1070,7 +1059,6 @@ func (imp *Importer) ingestMeeting(
 		},
 		PreserveLabels:         true,
 		ReplaceLinkAttachments: true,
-		LinkAttachments:        links,
 		FTS:                    fts,
 	}); err != nil {
 		return false, false, fmt.Errorf("persist meeting: %w", err)

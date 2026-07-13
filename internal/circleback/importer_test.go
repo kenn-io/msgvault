@@ -436,7 +436,7 @@ func TestRetrySchedule(t *testing.T) {
 			name: "repeated omission retains deadline and advances cadence",
 			meeting: Meeting{
 				ID:        "repeat",
-				StartTime: "2026-07-08T10:00:00Z",
+				StartTime: "2026-07-03T12:00:00Z",
 			},
 			previous: &pendingTranscript{
 				MeetingID:     "repeat",
@@ -446,6 +446,21 @@ func TestRetrySchedule(t *testing.T) {
 			wantPending: true,
 			wantNext:    "2026-07-09T18:00:00Z",
 			wantUntil:   "2026-07-10T12:00:00Z",
+		},
+		{
+			name: "postponed meeting extends retry deadline",
+			meeting: Meeting{
+				ID:        "postponed",
+				StartTime: "2026-07-20T10:00:00Z",
+			},
+			previous: &pendingTranscript{
+				MeetingID:     "postponed",
+				NextAttemptAt: "2026-07-09T12:00:00Z",
+				RetryUntil:    "2026-07-10T12:00:00Z",
+			},
+			wantPending: true,
+			wantNext:    "2026-07-09T18:00:00Z",
+			wantUntil:   "2026-07-27T10:00:00Z",
 		},
 		{
 			name: "deadline schedules a terminal maintenance transition",
@@ -1087,8 +1102,8 @@ func TestImport_RoundTrip(t *testing.T) {
 	assert.Equal("Design Review", subject)
 	assert.Contains(sentAt, "2026-06-10")
 	assert.True(fromMe, "organizer alice IS the account identifier")
-	assert.True(hasAttachments, "recording link must update message attachment metadata")
-	assert.Equal(1, attachmentCount)
+	assert.False(hasAttachments, "expiring recording URLs must not become durable attachments")
+	assert.Equal(0, attachmentCount)
 
 	// Conversation.
 	var convType string
@@ -1114,12 +1129,12 @@ func TestImport_RoundTrip(t *testing.T) {
 		msgID).Scan(&toCount))
 	assert.Equal(2, toCount, "name-only attendee must not become a recipient")
 
-	// Recording URL as a link attachment.
-	var attFilename, attPath string
+	// The short-lived recording URL remains in provider metadata but is not
+	// represented as a durable attachment.
+	var recordingAttachments int
 	require.NoError(st.DB().QueryRow(st.Rebind(`
-		SELECT filename, storage_path FROM attachments WHERE message_id = ?`), msgID).Scan(&attFilename, &attPath))
-	assert.Equal("Design Review (recording)", attFilename)
-	assert.Equal("https://cdn.example.com/rec/42.mp4", attPath)
+		SELECT COUNT(*) FROM attachments WHERE message_id = ?`), msgID).Scan(&recordingAttachments))
+	assert.Zero(recordingAttachments)
 
 	// Metadata.
 	metaNS, err := st.GetMessageMetadata(msgID)
@@ -1131,6 +1146,7 @@ func TestImport_RoundTrip(t *testing.T) {
 	assert.Equal("42", meta.MeetingID)
 	assert.EqualValues(2700, meta.DurationSeconds)
 	assert.Equal("https://meet.example.com/design", meta.MeetingURL)
+	assert.Equal("https://cdn.example.com/rec/42.mp4", meta.RecordingURL)
 	assert.Equal("2026-07-09T12:00:00Z", meta.RecordingFetchedAt)
 	require.Len(meta.ActionItems, 1)
 	assert.Equal("Update mockups", meta.ActionItems[0].Title)

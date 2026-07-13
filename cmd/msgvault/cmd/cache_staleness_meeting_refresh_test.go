@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -115,6 +116,21 @@ func TestCacheNeedsBuild_CirclebackRefresh(t *testing.T) {
 	staleness = cacheNeedsBuild(dbPath, analyticsDir)
 	require.True(staleness.NeedsBuild, "Circleback refresh must invalidate cache: %+v", staleness)
 	require.True(staleness.FullRebuild, "Circleback refresh requires full rebuild: %+v", staleness)
+
+	rebuilt, err := buildCache(dbPath, analyticsDir, false)
+	require.NoError(err)
+	require.False(rebuilt.Skipped, "direct build-cache must honor existing-message mutations")
+
+	duckDB, err := sql.Open("duckdb", "")
+	require.NoError(err)
+	t.Cleanup(func() { _ = duckDB.Close() })
+	var cachedSubject string
+	require.NoError(duckDB.QueryRow(`
+		SELECT subject
+		FROM read_parquet(?, hive_partitioning=true)
+		WHERE id = ?
+	`, filepath.Join(analyticsDir, "messages", "**", "*.parquet"), refreshedID).Scan(&cachedSubject))
+	assert.Equal("Refreshed Meeting", cachedSubject)
 }
 
 type cacheRefreshGranolaAPI struct {

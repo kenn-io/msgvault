@@ -211,10 +211,10 @@ them with `--probe`, then run `--full` after decoder support is updated.
 
 In addition to the shared fields above: action items (title, assignee,
 status), insights, and tags land in the message metadata and body; the
-meeting recording link is stored as a URL attachment. Note Circleback
-recording URLs expire after ~24 hours — the link is refreshed on every
-sync, and `recording_url_fetched_at` in the metadata records when it was
-last valid. Downloading recording media is not yet supported.
+meeting recording URL and `recording_url_fetched_at` remain in the archived
+provider metadata. Circleback recording URLs expire after about 24 hours, so
+msgvault does not expose them as durable attachments. Downloading and archiving
+recording media is not yet supported.
 
 ## Searching
 

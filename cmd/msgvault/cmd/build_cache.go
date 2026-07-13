@@ -253,6 +253,8 @@ func buildCache(dbPath, analyticsDir string, fullRebuild bool) (*buildResult, er
 
 	// Load sync state for incremental updates
 	var lastMessageID int64
+	var previousState syncState
+	var hasPreviousState bool
 	if !fullRebuild {
 		if data, err := os.ReadFile(stateFile); err == nil {
 			var state syncState
@@ -264,6 +266,8 @@ func buildCache(dbPath, analyticsDir string, fullRebuild bool) (*buildResult, er
 					fullRebuild = true
 					lastMessageID = 0
 				} else {
+					previousState = state
+					hasPreviousState = true
 					lastMessageID = state.LastMessageID
 				}
 			}
@@ -335,6 +339,17 @@ func buildCache(dbPath, analyticsDir string, fullRebuild bool) (*buildResult, er
 	exportableMaxID := int64(0)
 	if maxExportableMessageID.Valid {
 		exportableMaxID = maxExportableMessageID.Int64
+	}
+
+	if !fullRebuild && hasPreviousState && hasSyncRunsTable > 0 {
+		updatesChanged := syncCounters.updates != previousState.LastCacheUpdateCount
+		coveredAdditionsChanged := syncCounters.additions != previousState.LastCacheAdditionCount &&
+			maxID <= previousState.LastMessageID
+		if updatesChanged || coveredAdditionsChanged {
+			fmt.Println("Existing cached messages changed. Forcing full rebuild...")
+			fullRebuild = true
+			lastMessageID = 0
+		}
 	}
 
 	// Check for missing required parquet tables independently of whether
