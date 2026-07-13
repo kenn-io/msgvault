@@ -17,12 +17,12 @@ import (
 	"sync"
 	"time"
 
-	_ "github.com/duckdb/duckdb-go/v2" // DuckDB driver (database/sql)
-	_ "github.com/mattn/go-sqlite3"    // SQLite driver (database/sql)
+	_ "github.com/mattn/go-sqlite3" // SQLite driver (database/sql)
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/cacheops"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/duckdbdriver"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/store"
 )
@@ -308,7 +308,7 @@ func buildCache(dbPath, analyticsDir string, fullRebuild bool) (*buildResult, er
 	}
 
 	// Open DuckDB for the actual export
-	db, err := sql.Open("duckdb", "")
+	db, err := duckdbdriver.Open("")
 	if err != nil {
 		return nil, fmt.Errorf("open duckdb: %w", err)
 	}

@@ -27,6 +27,9 @@ All notable changes to msgvault, grouped by release.
 
 **Improvements**
 
+- Windows releases include a native ARM64 package. DuckDB's upstream Go
+  bindings do not yet ship a Windows ARM64 library, so this build uses the
+  existing live SQLite analytics path instead of Parquet acceleration.
 - Backup restore now installs compatible attachment packs directly instead of
   recreating every blob as an individual file, substantially reducing file
   creation overhead on Windows and large archives. Selected content remains

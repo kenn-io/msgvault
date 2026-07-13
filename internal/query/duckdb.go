@@ -15,9 +15,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	_ "github.com/duckdb/duckdb-go/v2" // DuckDB driver (database/sql)
 	"golang.org/x/sync/semaphore"
 
+	"go.kenn.io/msgvault/internal/duckdbdriver"
 	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/store"
 )
@@ -109,7 +109,7 @@ func NewDuckDBEngine(analyticsDir string, sqlitePath string, sqliteDB *sql.DB, o
 		opt = opts[0]
 	}
 	// Open in-memory DuckDB
-	db, err := sql.Open("duckdb", "")
+	db, err := duckdbdriver.Open("")
 	if err != nil {
 		return nil, fmt.Errorf("open duckdb: %w", err)
 	}

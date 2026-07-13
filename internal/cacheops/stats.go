@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	_ "github.com/duckdb/duckdb-go/v2" // DuckDB driver (database/sql)
+	"go.kenn.io/msgvault/internal/duckdbdriver"
 )
 
 const (
@@ -58,7 +58,7 @@ func CollectStats(analyticsDir string) (*CacheStats, error) {
 		return &CacheStats{Status: StatusNoCacheData}, nil
 	}
 
-	db, err := sql.Open("duckdb", "")
+	db, err := duckdbdriver.Open("")
 	if err != nil {
 		return nil, fmt.Errorf("open duckdb: %w", err)
 	}

@@ -148,7 +148,15 @@ jobs:
           path: dist/*.tar.gz
 
   build-windows:
-    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goarch: amd64
+            runner: windows-latest
+          - goarch: arm64
+            runner: windows-11-arm
+    runs-on: ${{ matrix.runner }}
     defaults:
       run:
         shell: bash
@@ -163,16 +171,52 @@ jobs:
       # arrow-go/v18's cdata helpers need GNU89 inline semantics on
       # MinGW; see .github/workflows/ci.yml for details.
       - name: Install sqlite3 dev headers
+        if: matrix.goarch == 'amd64'
         shell: pwsh
         run: |
           C:\msys64\usr\bin\pacman.exe -S --noconfirm --needed mingw-w64-x86_64-sqlite3
 
+      - name: Setup llvm-mingw and sqlite3 headers
+        if: matrix.goarch == 'arm64'
+        shell: pwsh
+        env:
+          # Self-contained ARM64 MinGW toolchain for cgo. The archive is pinned
+          # by version and digest so release builds do not execute unverified
+          # compiler binaries.
+          LLVM_MINGW_VERSION: "20260602"
+          LLVM_MINGW_NAME: llvm-mingw-20260602-ucrt-aarch64
+          LLVM_MINGW_SHA256: cb5c20fbe1808e31ada5cbe4efd9daa2fee19c91dac6ec5ca1ac46a9c7247e37
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $zip = Join-Path $env:RUNNER_TEMP 'llvm-mingw.zip'
+          $url = "https://github.com/mstorsjo/llvm-mingw/releases/download/$env:LLVM_MINGW_VERSION/$env:LLVM_MINGW_NAME.zip"
+          Invoke-WebRequest -Uri $url -OutFile $zip
+          $actual = (Get-FileHash -Path $zip -Algorithm SHA256).Hash
+          if ($actual -ne $env:LLVM_MINGW_SHA256) {
+            throw "Checksum mismatch for $url`n  expected $env:LLVM_MINGW_SHA256`n  actual   $actual"
+          }
+          7z x $zip -o"$env:RUNNER_TEMP" | Out-Null
+
+          $bin = Join-Path $env:RUNNER_TEMP "$env:LLVM_MINGW_NAME\bin"
+          $cc = Join-Path $bin 'aarch64-w64-mingw32-clang.exe'
+          if (-not (Test-Path $cc)) { throw "CC not found at $cc" }
+          Add-Content -Path $env:GITHUB_PATH -Value $bin
+          Add-Content -Path $env:GITHUB_ENV -Value "CC=$cc"
+
+          # sqlite-vec includes sqlite3.h while compiling as SQLITE_CORE. Use
+          # the header bundled with go-sqlite3 so it exactly matches the SQLite
+          # amalgamation linked into this binary.
+          $sqliteModule = go list -m -f '{{.Dir}}' github.com/mattn/go-sqlite3
+          $include = Join-Path $env:RUNNER_TEMP 'sqlite-include'
+          New-Item -ItemType Directory -Path $include -Force | Out-Null
+          Copy-Item (Join-Path $sqliteModule 'sqlite3-binding.h') (Join-Path $include 'sqlite3.h')
+
       - name: Build
         env:
           GOOS: windows
-          GOARCH: amd64
+          GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: '1'
-          CGO_CFLAGS: "-IC:/msys64/mingw64/include -fgnu89-inline"
+          CGO_CFLAGS: "${{ matrix.goarch == 'arm64' && format('-I{0}/sqlite-include -fgnu89-inline', runner.temp) || '-IC:/msys64/mingw64/include -fgnu89-inline' }}"
           CGO_LDFLAGS: "-Wl,--allow-multiple-definition"
         run: |
           VERSION="${GITHUB_REF#refs/tags/v}"
@@ -188,14 +232,14 @@ jobs:
           echo "$SMOKE_OUT" | grep -q "v${VERSION}" || { echo "FATAL: version output doesn't match tag"; exit 1; }
 
           # Package as zip
-          ARCHIVE="msgvault_${VERSION}_windows_amd64.zip"
+          ARCHIVE="msgvault_${VERSION}_windows_${{ matrix.goarch }}.zip"
           cd dist
           powershell -Command "Compress-Archive -Path msgvault.exe -DestinationPath '$ARCHIVE'"
           rm msgvault.exe
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: msgvault-windows-amd64
+          name: msgvault-windows-${{ matrix.goarch }}
           path: dist/*.zip
 
   release:
