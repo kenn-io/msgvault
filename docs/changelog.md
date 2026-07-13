@@ -27,6 +27,8 @@ All notable changes to msgvault, grouped by release.
 
 **Improvements**
 
+- Windows releases include a native ARM64 package with full DuckDB analytics
+  and Parquet cache support.
 - Backup restore now installs compatible attachment packs directly instead of
   recreating every blob as an individual file, substantially reducing file
   creation overhead on Windows and large archives. Selected content remains

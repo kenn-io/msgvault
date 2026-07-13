@@ -148,7 +148,15 @@ jobs:
           path: dist/*.tar.gz
 
   build-windows:
-    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goarch: amd64
+            runner: windows-latest
+          - goarch: arm64
+            runner: windows-11-arm
+    runs-on: ${{ matrix.runner }}
     defaults:
       run:
         shell: bash
@@ -163,23 +171,128 @@ jobs:
       # arrow-go/v18's cdata helpers need GNU89 inline semantics on
       # MinGW; see .github/workflows/ci.yml for details.
       - name: Install sqlite3 dev headers
+        if: matrix.goarch == 'amd64'
         shell: pwsh
         run: |
           C:\msys64\usr\bin\pacman.exe -S --noconfirm --needed mingw-w64-x86_64-sqlite3
 
+      - name: Setup llvm-mingw and sqlite3 headers
+        if: matrix.goarch == 'arm64'
+        shell: pwsh
+        env:
+          # Self-contained ARM64 MinGW toolchain for cgo. The archive is pinned
+          # by version and digest so release builds do not execute unverified
+          # compiler binaries.
+          LLVM_MINGW_VERSION: "20260602"
+          LLVM_MINGW_NAME: llvm-mingw-20260602-ucrt-aarch64
+          LLVM_MINGW_SHA256: cb5c20fbe1808e31ada5cbe4efd9daa2fee19c91dac6ec5ca1ac46a9c7247e37
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $zip = Join-Path $env:RUNNER_TEMP 'llvm-mingw.zip'
+          $url = "https://github.com/mstorsjo/llvm-mingw/releases/download/$env:LLVM_MINGW_VERSION/$env:LLVM_MINGW_NAME.zip"
+          Invoke-WebRequest -Uri $url -OutFile $zip
+          $actual = (Get-FileHash -Path $zip -Algorithm SHA256).Hash
+          if ($actual -ne $env:LLVM_MINGW_SHA256) {
+            throw "Checksum mismatch for $url`n  expected $env:LLVM_MINGW_SHA256`n  actual   $actual"
+          }
+          7z x $zip -o"$env:RUNNER_TEMP" | Out-Null
+
+          $bin = Join-Path $env:RUNNER_TEMP "$env:LLVM_MINGW_NAME\bin"
+          $cc = Join-Path $bin 'aarch64-w64-mingw32-clang.exe'
+          if (-not (Test-Path $cc)) { throw "CC not found at $cc" }
+          Add-Content -Path $env:GITHUB_PATH -Value $bin
+          Add-Content -Path $env:GITHUB_ENV -Value "CC=$cc"
+
+          # sqlite-vec includes sqlite3.h while compiling as SQLITE_CORE. Use
+          # the header bundled with go-sqlite3 so it exactly matches the SQLite
+          # amalgamation linked into this binary.
+          $sqliteModule = (go mod download -json github.com/mattn/go-sqlite3 | ConvertFrom-Json).Dir
+          if (-not $sqliteModule) { throw 'go-sqlite3 module directory not found' }
+          $include = Join-Path $env:RUNNER_TEMP 'sqlite-include'
+          New-Item -ItemType Directory -Path $include -Force | Out-Null
+          Copy-Item (Join-Path $sqliteModule 'sqlite3-binding.h') (Join-Path $include 'sqlite3.h')
+
+
+      - name: Build static DuckDB for ARM64
+        if: matrix.goarch == 'arm64'
+        shell: pwsh
+        env:
+          # duckdb-go v2.10504.0 uses DuckDB 1.5.4. Pin the source commit so
+          # the release remains reproducible even if the tag is moved.
+          DUCKDB_VERSION: "1.5.4"
+          DUCKDB_COMMIT: 08e34c447bae34eaee3723cac61f2878b6bdf787
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $source = Join-Path $env:RUNNER_TEMP "duckdb-$env:DUCKDB_VERSION"
+          git clone --depth 1 --branch "v$env:DUCKDB_VERSION" https://github.com/duckdb/duckdb.git $source
+          $actualCommit = (git -C $source rev-parse HEAD).Trim()
+          if ($actualCommit -ne $env:DUCKDB_COMMIT) {
+            throw "DuckDB source mismatch: expected $env:DUCKDB_COMMIT, got $actualCommit"
+          }
+
+          $build = Join-Path $source 'build\arm64-static'
+          $cc = (Get-Command aarch64-w64-mingw32-clang.exe).Source
+          $cxx = (Get-Command aarch64-w64-mingw32-clang++.exe).Source
+          $ar = (Get-Command llvm-ar.exe).Source
+          $ranlib = (Get-Command llvm-ranlib.exe).Source
+          cmake -S $source -B $build -G Ninja `
+            -DCMAKE_BUILD_TYPE=Release `
+            "-DCMAKE_C_COMPILER=$cc" `
+            "-DCMAKE_CXX_COMPILER=$cxx" `
+            "-DCMAKE_AR=$ar" `
+            "-DCMAKE_RANLIB=$ranlib" `
+            -DBUILD_SHELL=OFF `
+            -DBUILD_UNITTESTS=OFF `
+            '-DBUILD_EXTENSIONS=parquet;json;icu;autocomplete'
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+          # Build only the static targets. Building the default target also
+          # produces loadable extensions, which are not part of this binary.
+          $env:CMAKE_BUILD_PARALLEL_LEVEL = '2'
+          cmake --build $build --target `
+            duckdb_static `
+            parquet_extension `
+            json_extension `
+            icu_extension `
+            autocomplete_extension `
+            core_functions_extension `
+            duckdb_generated_extension_loader
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+          # Combine DuckDB, its statically linked extensions, and third-party
+          # dependencies into the single archive consumed by duckdb-go.
+          $bundle = Join-Path $build 'libduckdb_bundle.a'
+          $libs = @(
+            Get-Item (Join-Path $build 'src\libduckdb_static.a')
+            Get-Item (Join-Path $build 'extension\libduckdb_generated_extension_loader.a')
+            Get-ChildItem (Join-Path $build 'extension') -Recurse -Filter 'lib*_extension.a'
+            Get-ChildItem (Join-Path $build 'third_party') -Recurse -Filter 'libduckdb_*.a'
+          ) | Sort-Object FullName -Unique
+          $mri = @("CREATE $($bundle.Replace('\', '/'))")
+          foreach ($lib in $libs) {
+            $mri += "ADDLIB $($lib.FullName.Replace('\', '/'))"
+          }
+          $mri += 'SAVE'
+          $mri += 'END'
+          $mri -join "`n" | & $ar -M
+          if ($LASTEXITCODE -ne 0 -or -not (Test-Path $bundle)) {
+            throw 'Failed to create the static DuckDB bundle'
+          }
+
       - name: Build
         env:
           GOOS: windows
-          GOARCH: amd64
+          GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: '1'
-          CGO_CFLAGS: "-IC:/msys64/mingw64/include -fgnu89-inline"
-          CGO_LDFLAGS: "-Wl,--allow-multiple-definition"
+          CGO_CFLAGS: "${{ matrix.goarch == 'arm64' && format('-I{0}/sqlite-include -fgnu89-inline', runner.temp) || '-IC:/msys64/mingw64/include -fgnu89-inline' }}"
+          CGO_LDFLAGS: "${{ matrix.goarch == 'arm64' && format('-L{0}/duckdb-1.5.4/build/arm64-static -lduckdb_bundle -lws2_32 -lwsock32 -lrstrtmgr -lstdc++ -lm --static -Wl,--allow-multiple-definition', runner.temp) || '-Wl,--allow-multiple-definition' }}"
+          GO_TAGS: "${{ matrix.goarch == 'arm64' && 'fts5 sqlite_vec duckdb_use_static_lib' || 'fts5 sqlite_vec' }}"
         run: |
           VERSION="${GITHUB_REF#refs/tags/v}"
 
           mkdir -p dist
           LDFLAGS="-s -w -X go.kenn.io/msgvault/cmd/msgvault/cmd.Version=v${VERSION} -X go.kenn.io/msgvault/cmd/msgvault/cmd.Commit=$(printf '%s' "$GITHUB_SHA" | cut -c1-8) -X go.kenn.io/msgvault/cmd/msgvault/cmd.BuildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-          go build -tags "fts5 sqlite_vec" -trimpath -ldflags="$LDFLAGS" -o dist/msgvault.exe ./cmd/msgvault
+          go build -tags "$GO_TAGS" -trimpath -ldflags="$LDFLAGS" -o dist/msgvault.exe ./cmd/msgvault
 
           # Smoke test
           echo "--- Smoke test ---"
@@ -187,15 +300,24 @@ jobs:
           echo "$SMOKE_OUT"
           echo "$SMOKE_OUT" | grep -q "v${VERSION}" || { echo "FATAL: version output doesn't match tag"; exit 1; }
 
+          # Exercise the production DuckDB cache path on the native ARM64
+          # runner, not just DLL loading and CLI startup.
+          if [[ "${{ matrix.goarch }}" == "arm64" ]]; then
+            SMOKE_HOME="$RUNNER_TEMP/msgvault-duckdb-smoke"
+            dist/msgvault.exe --home "$SMOKE_HOME" init-db
+            dist/msgvault.exe --home "$SMOKE_HOME" build-cache --full-rebuild
+            dist/msgvault.exe --home "$SMOKE_HOME" serve stop || true
+          fi
+
           # Package as zip
-          ARCHIVE="msgvault_${VERSION}_windows_amd64.zip"
+          ARCHIVE="msgvault_${VERSION}_windows_${{ matrix.goarch }}.zip"
           cd dist
           powershell -Command "Compress-Archive -Path msgvault.exe -DestinationPath '$ARCHIVE'"
           rm msgvault.exe
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: msgvault-windows-amd64
+          name: msgvault-windows-${{ matrix.goarch }}
           path: dist/*.zip
 
   release:
@@ -240,6 +362,7 @@ jobs:
             unzip -q "$archive" -d "$tmpdir"
             test -f "$tmpdir/msgvault.exe" || { echo "FATAL: msgvault.exe missing from $archive"; exit 1; }
             file "$tmpdir/msgvault.exe"
+            test ! -f "$tmpdir/duckdb.dll" || { echo "FATAL: unexpected duckdb.dll in $archive"; exit 1; }
             rm -rf "$tmpdir"
             echo "  OK"
           done
