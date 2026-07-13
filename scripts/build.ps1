@@ -69,6 +69,34 @@ function Find-Executable {
     return $null
 }
 
+function Get-WindowsHostArchitecture {
+    $hostArchitecture = $null
+    try {
+        $hostArchitecture = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString()
+    } catch {
+        # RuntimeInformation is unavailable on older Windows PowerShell.
+    }
+
+    if ($hostArchitecture) {
+        switch ($hostArchitecture) {
+            'X64' { return 'amd64' }
+            'Arm64' { return 'arm64' }
+            'X86' { return '386' }
+            'Arm' { return 'arm' }
+            default { throw "Unsupported Windows host architecture: $hostArchitecture" }
+        }
+    }
+
+    # This fallback is only used for host detection, never Go's target
+    # settings, so an inherited GOARCH cannot affect the result.
+    switch ($env:PROCESSOR_ARCHITECTURE) {
+        'AMD64' { return 'amd64' }
+        'ARM64' { return 'arm64' }
+        'x86' { return '386' }
+        default { throw 'Unable to detect the Windows host architecture.' }
+    }
+}
+
 function Add-CgoFlag {
     param(
         [Parameter(Mandatory = $true)]
@@ -336,7 +364,7 @@ try {
     }
 
     if (-not $Architecture) {
-        $Architecture = (Invoke-Checked go env GOARCH | Out-String).Trim()
+        $Architecture = Get-WindowsHostArchitecture
     }
     if ($Architecture -notin @('amd64', 'arm64')) {
         throw "Unsupported Windows architecture: $Architecture (expected amd64 or arm64)"
