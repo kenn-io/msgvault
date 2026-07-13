@@ -366,6 +366,24 @@ func imapFolderStateOptions(s *store.Store, src *store.Source, forceRescan bool)
 	return []imaplib.Option{imaplib.WithFolderStates(states)}
 }
 
+func saveIMAPFolderState(s *store.Store, src *store.Source, mailbox string, st imaplib.FolderState) {
+	err := s.UpsertIMAPFolderStates(src.ID, []store.IMAPFolderState{{
+		Mailbox:     mailbox,
+		UIDValidity: st.UIDValidity,
+		UIDNext:     st.UIDNext,
+	}})
+	if err != nil {
+		logger.Warn("failed to save IMAP folder state",
+			"source", src.Identifier, "mailbox", mailbox, "error", err)
+	}
+}
+
+func imapFolderStateSaveOption(s *store.Store, src *store.Source) imaplib.Option {
+	return imaplib.WithFolderStateSave(func(mailbox string, st imaplib.FolderState) {
+		saveIMAPFolderState(s, src, mailbox, st)
+	})
+}
+
 // saveIMAPFolderStates persists the per-mailbox states observed during
 // listing, but only after a sync that completed cleanly: an
 // interrupted, truncated (--limit), or partly failed run must not
@@ -387,16 +405,8 @@ func saveIMAPFolderStates(s *store.Store, src *store.Source, apiClient gmail.API
 	if len(observed) == 0 {
 		return
 	}
-	states := make([]store.IMAPFolderState, 0, len(observed))
 	for mailbox, st := range observed {
-		states = append(states, store.IMAPFolderState{
-			Mailbox:     mailbox,
-			UIDValidity: st.UIDValidity,
-			UIDNext:     st.UIDNext,
-		})
-	}
-	if err := s.UpsertIMAPFolderStates(src.ID, states); err != nil {
-		logger.Warn("failed to save IMAP folder states", "source", src.Identifier, "error", err)
+		saveIMAPFolderState(s, src, mailbox, st)
 	}
 }
 
@@ -408,7 +418,10 @@ func runFullSync(ctx context.Context, s *store.Store, getOAuthMgr func(string) (
 	// completed run still saves fresh watermarks afterwards.
 	imapOpts := imapFolderStateOptions(s, src, syncNoResume)
 	if src.SourceType == sourceTypeIMAP {
-		imapOpts = append(imapOpts, imaplib.WithListProgress(progress.OnIMAPListProgress))
+		imapOpts = append(imapOpts,
+			imaplib.WithListProgress(progress.OnIMAPListProgress),
+			imapFolderStateSaveOption(s, src),
+		)
 	}
 	apiClient, err := buildAPIClient(ctx, src, getOAuthMgr, nil, imapOpts...)
 	if err != nil {

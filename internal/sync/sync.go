@@ -64,6 +64,10 @@ type Syncer struct {
 	opts     *Options
 }
 
+type messageAcknowledger interface {
+	AcknowledgeMessages(context.Context, []string)
+}
+
 // New creates a new Syncer.
 func New(client gmail.API, store *store.Store, opts *Options) *Syncer {
 	if opts == nil {
@@ -151,10 +155,11 @@ func (s *Syncer) initSyncState(sourceID int64) (*syncState, error) {
 
 // batchResult holds the result of processing a batch.
 type batchResult struct {
-	processed  int64
-	added      int64
-	skipped    int64
-	oldestDate time.Time
+	processed    int64
+	added        int64
+	skipped      int64
+	oldestDate   time.Time
+	acknowledged []string
 }
 
 // processBatch processes a single batch of messages from a list response.
@@ -184,7 +189,9 @@ func (s *Syncer) processBatch(ctx context.Context, syncID, sourceID int64, listR
 	for _, id := range messageIDs {
 		if _, exists := existingMap[id]; !exists {
 			newIDs = append(newIDs, id)
+			continue
 		}
+		result.acknowledged = append(result.acknowledged, id)
 	}
 
 	result.processed = int64(len(messageIDs))
@@ -208,6 +215,7 @@ func (s *Syncer) processBatch(ctx context.Context, syncID, sourceID int64, listR
 					s.logger.Debug("skipping message deleted before fetch", "id", newIDs[i])
 					s.recordSyncItem(syncID, newIDs[i], syncItemPhaseFetch, store.SyncRunItemStatusSkipped, syncItemKindGmailNotFound, fetch.Err)
 					result.skipped++
+					result.acknowledged = append(result.acknowledged, newIDs[i])
 					continue
 				}
 				errMsg := syncItemErrorMessage(fetch.Err, errRawBatchMissing.Error())
@@ -221,6 +229,7 @@ func (s *Syncer) processBatch(ctx context.Context, syncID, sourceID int64, listR
 			// Distinct from []byte{} which is a genuine empty body.
 			if raw.Raw == nil {
 				result.skipped++
+				result.acknowledged = append(result.acknowledged, newIDs[i])
 				continue
 			}
 
@@ -242,6 +251,7 @@ func (s *Syncer) processBatch(ctx context.Context, syncID, sourceID int64, listR
 			if err != nil {
 				if errors.Is(err, errDuplicateRFC822) {
 					result.skipped++
+					result.acknowledged = append(result.acknowledged, newIDs[i])
 					continue
 				}
 				s.logger.Warn("failed to ingest message", "id", raw.ID, "error", err)
@@ -251,6 +261,7 @@ func (s *Syncer) processBatch(ctx context.Context, syncID, sourceID int64, listR
 			}
 
 			result.added++
+			result.acknowledged = append(result.acknowledged, newIDs[i])
 			summary.BytesDownloaded += int64(len(raw.Raw))
 		}
 
@@ -360,6 +371,9 @@ func (s *Syncer) Full(ctx context.Context, email string) (summary *gmail.SyncSum
 
 		state.checkpoint.MessagesProcessed += result.processed
 		state.checkpoint.MessagesAdded += result.added
+		if ack, ok := s.client.(messageAcknowledger); ok && len(result.acknowledged) > 0 {
+			ack.AcknowledgeMessages(ctx, result.acknowledged)
+		}
 
 		// Report current position date before progress (so UI shows consistent state)
 		if !result.oldestDate.IsZero() {

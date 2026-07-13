@@ -43,6 +43,15 @@ func (b *batchErrorAPI) GetMessagesRawBatchWithErrors(_ context.Context, _ []str
 	return nil, errors.New("batch fetch unavailable")
 }
 
+type acknowledgingAPI struct {
+	*gmail.MockAPI
+	acknowledged []string
+}
+
+func (a *acknowledgingAPI) AcknowledgeMessages(_ context.Context, messageIDs []string) {
+	a.acknowledged = append(a.acknowledged, messageIDs...)
+}
+
 func TestFullSync_PanicReturnsError(t *testing.T) {
 	env := newTestEnv(t)
 	seedMessages(env, 1, 12345, "msg1")
@@ -189,6 +198,27 @@ func TestFullSyncCanceledKeepsRunResumable(t *testing.T) {
 	assert.Equal("page_1", summary.ResumedFromToken, "resume picks up at the saved page token")
 	assert.Equal(int64(4), summary.MessagesAdded, "resumed summary carries pre-cancellation progress")
 	assertMessageCount(t, env.Store, 4)
+}
+
+func TestFullSyncAcknowledgesOnlySafelyHandledMessages(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	env := newTestEnv(t)
+
+	ackClient := &acknowledgingAPI{MockAPI: env.Mock}
+	env.Syncer = New(ackClient, env.Store, DefaultOptions())
+
+	env.Mock.Profile.MessagesTotal = 2
+	env.Mock.Profile.HistoryID = 12345
+	env.Mock.MessagePages = [][]string{{"msg-ok", "msg-fail"}}
+	env.Mock.AddMessage("msg-ok", testMIME(), []string{"INBOX"})
+	env.Mock.GetMessageError["msg-fail"] = errors.New("temporary fetch failure")
+
+	summary, err := env.Syncer.Full(env.Context, testEmail)
+	require.NoError(err, "full sync")
+
+	assert.Equal(int64(1), summary.Errors, "errors")
+	assert.Equal([]string{"msg-ok"}, ackClient.acknowledged)
 }
 
 func TestFullSyncWithErrors(t *testing.T) {

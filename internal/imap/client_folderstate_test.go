@@ -111,6 +111,11 @@ type listProgressCall struct {
 	found, unchanged int
 }
 
+type folderStateSave struct {
+	mailbox string
+	state   FolderState
+}
+
 func TestListMessages_ReportsListProgress(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -205,4 +210,32 @@ func TestListMessages_AllMailboxRecordsFolderStatesForNoopResync(t *testing.T) {
 	assert.Empty(ids, "unchanged folders must not be re-enumerated when an All Mail folder exists")
 	assert.Equal(saved, second.ObservedFolderStates())
 	assert.Nil(second.msgIDToLabels, "a no-op resync must not build the All Mail label map")
+}
+
+func TestAcknowledgeMessagesFlushesFolderStateWhenFolderComplete(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	addr, _ := testutil.StartIMAPMemServer(t, map[string]int{"INBOX": 2, "Archive": 1})
+
+	var saved []folderStateSave
+	client := newTestClient(t, addr, WithFolderStateSave(func(mailbox string, state FolderState) {
+		saved = append(saved, folderStateSave{mailbox: mailbox, state: state})
+	}))
+	require.Len(listAllMessages(t, client), 3)
+
+	client.AcknowledgeMessages(context.Background(), []string{"INBOX|1"})
+	assert.Empty(saved, "folder state must not be saved until every listed UID in the folder is handled")
+
+	client.AcknowledgeMessages(context.Background(), []string{"INBOX|2"})
+	require.Len(saved, 1)
+	assert.Equal("INBOX", saved[0].mailbox)
+	assert.Equal(client.ObservedFolderStates()["INBOX"], saved[0].state)
+
+	client.AcknowledgeMessages(context.Background(), []string{"Archive|1"})
+	require.Len(saved, 2)
+	assert.Equal("Archive", saved[1].mailbox)
+	assert.Equal(client.ObservedFolderStates()["Archive"], saved[1].state)
+
+	client.AcknowledgeMessages(context.Background(), []string{"INBOX|2"})
+	assert.Len(saved, 2, "duplicate acknowledgements must not save a folder twice")
 }

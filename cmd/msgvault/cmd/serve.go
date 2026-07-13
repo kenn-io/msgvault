@@ -1417,7 +1417,9 @@ func runScheduledGmailSync(ctx context.Context, email string, src *store.Source,
 // on because IMAP page tokens are numeric offsets that don't survive
 // across processes (see syncfull.go).
 func runScheduledIMAPSync(ctx context.Context, src *store.Source, s *store.Store) (*gmail.SyncSummary, error) {
-	apiClient, err := buildAPIClient(ctx, src, nil, nil, imapFolderStateOptions(s, src, false)...)
+	imapOpts := imapFolderStateOptions(s, src, false)
+	imapOpts = append(imapOpts, imapFolderStateSaveOption(s, src))
+	apiClient, err := buildAPIClient(ctx, src, nil, nil, imapOpts...)
 	if err != nil {
 		return nil, fmt.Errorf("build IMAP client: %w", err)
 	}

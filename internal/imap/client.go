@@ -80,6 +80,11 @@ type Client struct {
 
 	priorFolderStates    map[string]FolderState // saved states from the last completed sync
 	observedFolderStates map[string]FolderState // states captured during this session's listing
+	folderStateSave      func(string, FolderState)
+	pendingFolderStates  map[string]FolderState
+	pendingFolderCounts  map[string]int
+	pendingMessageFolder map[string]string
+	completedFolders     map[string]bool
 
 	// listProgress, when set, is invoked during message-list
 	// enumeration: once with done=0 after the mailbox list is known,
@@ -551,6 +556,8 @@ func (c *Client) buildMessageListCache(ctx context.Context) error {
 			c.messageListCache = []gmailapi.MessageID{}
 			return nil
 		}
+	} else {
+		c.clearFolderAcknowledgements()
 	}
 
 	labelMapComplete := true
@@ -579,9 +586,13 @@ func (c *Client) buildMessageListCache(ctx context.Context) error {
 	listOne := func(mailbox string) bool {
 		var minUID imap.UID
 		var observed *FolderState
+		var trackState FolderState
+		var canTrackFolder bool
 		if trackFolders && c.allMailFolder == "" {
 			if status, ok := folderStatuses[mailbox]; ok {
 				observed = &status
+				trackState = status
+				canTrackFolder = true
 				if prior, ok := c.priorFolderStates[mailbox]; ok &&
 					prior.UIDValidity == status.UIDValidity &&
 					prior.UIDNext <= status.UIDNext {
@@ -596,6 +607,11 @@ func (c *Client) buildMessageListCache(ctx context.Context) error {
 					minUID = imap.UID(prior.UIDNext)
 				}
 			}
+		} else if trackFolders && c.allMailFolder != "" {
+			if status, ok := folderStatuses[mailbox]; ok {
+				trackState = status
+				canTrackFolder = true
+			}
 		}
 
 		uids, err := c.enumerateMailbox(ctx, mailbox, minUID)
@@ -605,6 +621,9 @@ func (c *Client) buildMessageListCache(ctx context.Context) error {
 		}
 		if observed != nil {
 			c.observedFolderStates[mailbox] = *observed
+		}
+		if canTrackFolder {
+			c.trackFolderMessages(mailbox, trackState, uids)
 		}
 		for _, uid := range uids {
 			messages = append(messages, gmailapi.MessageID{
@@ -638,6 +657,7 @@ func (c *Client) buildMessageListCache(ctx context.Context) error {
 			}
 		} else {
 			c.observedFolderStates = nil
+			c.clearFolderAcknowledgements()
 		}
 	}
 	if unchangedFolders > 0 {

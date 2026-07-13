@@ -29,6 +29,12 @@ func WithFolderStates(states map[string]FolderState) Option {
 	return func(c *Client) { c.priorFolderStates = states }
 }
 
+// WithFolderStateSave sets a callback that is invoked after all listed
+// messages for a mailbox have been safely handled by the syncer.
+func WithFolderStateSave(fn func(string, FolderState)) Option {
+	return func(c *Client) { c.folderStateSave = fn }
+}
+
 // ObservedFolderStates returns the per-mailbox states captured during
 // the last message-list enumeration, for persistence after a completed
 // sync. Mailboxes whose STATUS or enumeration failed are absent, so
@@ -65,6 +71,71 @@ func (c *Client) observeFolderStates(
 		}
 	}
 	return states, unchanged
+}
+
+func (c *Client) trackFolderMessages(
+	mailbox string, state FolderState, uids []imap.UID,
+) {
+	if c.folderStateSave == nil || len(uids) == 0 {
+		return
+	}
+	if c.pendingFolderStates == nil {
+		c.pendingFolderStates = make(map[string]FolderState)
+		c.pendingFolderCounts = make(map[string]int)
+		c.pendingMessageFolder = make(map[string]string)
+		c.completedFolders = make(map[string]bool)
+	}
+	c.pendingFolderStates[mailbox] = state
+	c.pendingFolderCounts[mailbox] += len(uids)
+	for _, uid := range uids {
+		c.pendingMessageFolder[compositeID(mailbox, uid)] = mailbox
+	}
+}
+
+func (c *Client) clearFolderAcknowledgements() {
+	c.pendingFolderStates = nil
+	c.pendingFolderCounts = nil
+	c.pendingMessageFolder = nil
+	c.completedFolders = nil
+}
+
+// AcknowledgeMessages records message IDs that the syncer safely
+// handled. When every listed message in a folder has been acknowledged,
+// the folder state callback is invoked with that folder's watermark.
+func (c *Client) AcknowledgeMessages(_ context.Context, messageIDs []string) {
+	var completed []struct {
+		mailbox string
+		state   FolderState
+	}
+
+	c.mu.Lock()
+	if c.folderStateSave != nil {
+		for _, id := range messageIDs {
+			mailbox, ok := c.pendingMessageFolder[id]
+			if !ok {
+				continue
+			}
+			delete(c.pendingMessageFolder, id)
+			c.pendingFolderCounts[mailbox]--
+			if c.pendingFolderCounts[mailbox] > 0 || c.completedFolders[mailbox] {
+				continue
+			}
+			c.completedFolders[mailbox] = true
+			completed = append(completed, struct {
+				mailbox string
+				state   FolderState
+			}{mailbox: mailbox, state: c.pendingFolderStates[mailbox]})
+		}
+	}
+	save := c.folderStateSave
+	c.mu.Unlock()
+
+	if save == nil {
+		return
+	}
+	for _, item := range completed {
+		save(item.mailbox, item.state)
+	}
 }
 
 // statusFolder fetches UIDVALIDITY and UIDNEXT for a mailbox via
