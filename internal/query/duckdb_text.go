@@ -100,13 +100,13 @@ func (e *DuckDBEngine) buildTextFilterConditions(
 		conditions = append(conditions,
 			"msg.sent_at >= CAST(? AS TIMESTAMP)")
 		args = append(args,
-			filter.After.Format("2006-01-02 15:04:05"))
+			duckDBDateParam(*filter.After))
 	}
 	if filter.Before != nil {
 		conditions = append(conditions,
 			"msg.sent_at < CAST(? AS TIMESTAMP)")
 		args = append(args,
-			filter.Before.Format("2006-01-02 15:04:05"))
+			duckDBDateParam(*filter.Before))
 	}
 
 	return strings.Join(conditions, " AND "), args
@@ -289,13 +289,13 @@ func (e *DuckDBEngine) TextAggregate(
 		conditions = append(conditions,
 			"msg.sent_at >= CAST(? AS TIMESTAMP)")
 		args = append(args,
-			opts.After.Format("2006-01-02 15:04:05"))
+			duckDBDateParam(*opts.After))
 	}
 	if opts.Before != nil {
 		conditions = append(conditions,
 			"msg.sent_at < CAST(? AS TIMESTAMP)")
 		args = append(args,
-			opts.Before.Format("2006-01-02 15:04:05"))
+			duckDBDateParam(*opts.Before))
 	}
 
 	// Search filter on key columns.

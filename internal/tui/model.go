@@ -617,14 +617,24 @@ func (m Model) loadSearchWithOffset(queryStr string, offset int, appendResults b
 				// Fetch aggregate stats (size, attachments) for the search results
 				// on the initial page load so the header metrics are accurate.
 				if err == nil && !appendResults {
-					statsOpts := query.StatsOptions{
-						SourceID:              m.searchFilter.SourceID,
-						WithAttachmentsOnly:   m.searchFilter.WithAttachmentsOnly,
-						HideDeletedFromSource: m.searchFilter.HideDeletedFromSource,
-						SearchQuery:           queryStr,
-						GroupBy:               m.viewType,
+					statsOpts, noMatches := deepSearchStatsOptions(mergedQuery, m.viewType)
+					if noMatches {
+						stats = &query.TotalStats{}
+					} else {
+						var statsErr error
+						stats, statsErr = m.engine.GetTotalStats(ctx, statsOpts)
+						if statsErr != nil {
+							slog.Warn("tui deep search stats failed",
+								"query_len", len(queryStr),
+								"error", statsErr.Error(),
+							)
+							fallbackCount := totalCount
+							if fallbackCount < 0 {
+								fallbackCount = int64(len(results))
+							}
+							stats = &query.TotalStats{MessageCount: fallbackCount}
+						}
 					}
-					stats, _ = m.engine.GetTotalStats(ctx, statsOpts)
 				}
 			}
 
@@ -644,6 +654,35 @@ func (m Model) loadSearchWithOffset(queryStr string, offset int, appendResults b
 			}
 		},
 	)
+}
+
+// deepSearchStatsOptions derives stats from the already-merged query used for
+// deep results. Search.Query cannot represent SenderName, RecipientName,
+// ConversationID, or empty aggregate buckets; MergeFilterIntoQuery deliberately
+// leaves those unsupported contexts out of both paths. A non-nil empty account
+// scope is the shared match-nothing signal for conflicting message types or an
+// explicitly empty collection.
+func deepSearchStatsOptions(merged *search.Query, groupBy query.ViewType) (query.StatsOptions, bool) {
+	opts := query.StatsOptions{
+		SearchQuery: search.Format(merged),
+		SearchScope: true,
+		GroupBy:     groupBy,
+	}
+	if merged == nil {
+		return opts, false
+	}
+	if merged.AccountIDs != nil && len(merged.AccountIDs) == 0 {
+		return opts, true
+	}
+	if len(merged.AccountIDs) == 1 {
+		sourceID := merged.AccountIDs[0]
+		opts.SourceID = &sourceID
+	} else if len(merged.AccountIDs) > 1 {
+		opts.SourceIDs = append([]int64(nil), merged.AccountIDs...)
+	}
+	opts.WithAttachmentsOnly = merged.HasAttachment != nil && *merged.HasAttachment
+	opts.HideDeletedFromSource = merged.HideDeleted
+	return opts, false
 }
 
 // buildMessageFilter constructs a MessageFilter from the current model state.

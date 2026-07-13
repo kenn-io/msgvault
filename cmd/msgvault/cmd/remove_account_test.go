@@ -19,6 +19,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/kit/daemon"
 	"go.kenn.io/msgvault/internal/attachmentstore"
+	"go.kenn.io/msgvault/internal/circleback"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/microsoft"
 	"go.kenn.io/msgvault/internal/oauth"
@@ -686,6 +687,43 @@ func TestRemoveAccountCmd_TeamsRemovesGraphToken(t *testing.T) {
 
 	_, err = os.Stat(tokenPath)
 	assert.True(t, os.IsNotExist(err), "Graph token file should be removed for teams source")
+}
+
+func TestRemoveAccountCmd_CirclebackRemovesToken(t *testing.T) {
+	require := require.New(t)
+	tmpDir := t.TempDir()
+	dbPath := tmpDir + "/msgvault.db"
+	tokensDir := filepath.Join(tmpDir, "tokens")
+	require.NoError(os.MkdirAll(tokensDir, 0700), "mkdir tokens")
+
+	s, err := store.Open(dbPath)
+	require.NoError(err, "open store")
+	require.NoError(s.InitSchema(), "init schema")
+	_, err = s.GetOrCreateSource(sourceTypeCircleback, "tok@example.com")
+	require.NoError(err, "create source")
+	require.NoError(s.Close(), "close store")
+
+	mgr := circleback.NewManager("", tokensDir, nil)
+	tokenPath := mgr.TokenPath("tok@example.com")
+	require.NoError(os.WriteFile(tokenPath, []byte(`{}`), 0600), "write circleback token")
+
+	savedCfg := cfg
+	t.Cleanup(func() { cfg = savedCfg })
+	cfg = &config.Config{
+		HomeDir: tmpDir,
+		Data:    config.DataConfig{DataDir: tmpDir},
+	}
+
+	root := newTestRootCmd()
+	root.AddCommand(newRemoveAccountLocalTestCmd())
+	root.SetArgs([]string{
+		"remove-account", "tok@example.com", "--yes", "--type", sourceTypeCircleback,
+	})
+
+	require.NoError(root.Execute(), "remove-account")
+
+	_, err = os.Stat(tokenPath)
+	assert.True(t, os.IsNotExist(err), "token file should be removed for Circleback source")
 }
 
 func TestRemoveAccountCmd_NonGmailSkipsToken(t *testing.T) {

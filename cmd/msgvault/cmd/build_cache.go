@@ -37,13 +37,26 @@ const buildCacheDaemonSubprocessEnv = "MSGVAULT_DAEMON_BUILD_CACHE_PARENT_PID"
 // files (_last_sync.json, parquet directories) can corrupt the cache.
 var buildCacheMu sync.Mutex
 
+// buildCacheAfterSnapshotHook is a deterministic test seam for writes that
+// race with cache construction after its source watermark is captured.
+var buildCacheAfterSnapshotHook func()
+
+// buildCacheBeforeStateWriteHook is a deterministic test seam for source
+// mutations that finish after table COPY operations but before cache state is
+// persisted.
+var buildCacheBeforeStateWriteHook func()
+
 // cacheSchemaVersion tracks the Parquet schema layout. Bump this whenever
 // columns are added/removed/renamed in the COPY queries below so that
 // incremental builds automatically trigger a full rebuild instead of
 // producing Parquet files with mismatched schemas.
-const cacheSchemaVersion = 6 // v6: exclude calendar_event rows + their junctions from the email Parquet
+const cacheSchemaVersion = 9 // v9: split append and update freshness watermarks
 
-func sentNonCalendarMessageWhere(alias string) string {
+// sentCacheExportMessageWhere identifies rows eligible for the searchable
+// Parquet cache. Calendar events are the sole archived message type excluded
+// from this dataset; analytics eligibility is enforced separately by the
+// query engine.
+func sentCacheExportMessageWhere(alias string) string {
 	qualifier := ""
 	if alias != "" {
 		qualifier = alias + "."
@@ -59,7 +72,7 @@ func exportableMessageWhere(alias string) string {
 	if alias != "" {
 		qualifier = alias + "."
 	}
-	return sentNonCalendarMessageWhere(alias) + " AND " + qualifier + "deleted_at IS NULL"
+	return sentCacheExportMessageWhere(alias) + " AND " + qualifier + "deleted_at IS NULL"
 }
 
 func cacheLiveMessageWhere(alias string) string {
@@ -76,6 +89,28 @@ type syncState struct {
 	LastSyncAt             time.Time `json:"last_sync_at"`
 	SchemaVersion          int       `json:"schema_version,omitempty"`
 	LastCompletedSyncRunID int64     `json:"last_completed_sync_run_id,omitempty"`
+	LastCacheAdditionCount int64     `json:"last_cache_addition_count,omitempty"`
+	LastCacheUpdateCount   int64     `json:"last_cache_update_count,omitempty"`
+}
+
+type cacheSyncCounters struct {
+	additions int64
+	updates   int64
+}
+
+func readCacheSyncCounters(db *sql.DB) (cacheSyncCounters, error) {
+	var counters cacheSyncCounters
+	err := db.QueryRow(`
+		SELECT
+			COALESCE(SUM(COALESCE(sr.messages_added, 0)), 0),
+			COALESCE(SUM(COALESCE(sr.messages_updated, 0)), 0)
+		FROM sync_runs sr
+		JOIN sources src ON src.id = sr.source_id
+		WHERE sr.status IN ('completed', 'failed')
+		  AND sr.completed_at IS NOT NULL
+		  AND src.source_type <> ?
+	`, sourceTypeCalendar).Scan(&counters.additions, &counters.updates)
+	return counters, err
 }
 
 var buildCacheCmd = &cobra.Command{
@@ -205,6 +240,10 @@ func buildCache(dbPath, analyticsDir string, fullRebuild bool) (*buildResult, er
 	buildCacheMu.Lock()
 	defer buildCacheMu.Unlock()
 
+	// Record the freshness boundary before reading any source metadata. A sync
+	// or deletion that finishes after this instant may not be represented by
+	// the bounded export and must invalidate the cache on the next check.
+	cacheWatermark := time.Now().UTC().Truncate(time.Second)
 	stateFile := filepath.Join(analyticsDir, "_last_sync.json")
 
 	// Create output directory
@@ -242,6 +281,7 @@ func buildCache(dbPath, analyticsDir string, fullRebuild bool) (*buildResult, er
 	var maxMessageID sql.NullInt64
 	var maxExportableMessageID sql.NullInt64
 	var lastCompletedSyncRunID int64
+	var syncCounters cacheSyncCounters
 	// Use indexed query: id is PRIMARY KEY, sent_at has an index
 	maxIDQuery := `SELECT MAX(id) FROM messages WHERE sent_at IS NOT NULL`
 	if err := sqliteDB.QueryRow(maxIDQuery).Scan(&maxMessageID); err != nil {
@@ -250,8 +290,12 @@ func buildCache(dbPath, analyticsDir string, fullRebuild bool) (*buildResult, er
 		}
 		return nil, fmt.Errorf("get max message id: %w", err)
 	}
-	maxExportableIDQuery := "SELECT MAX(id) FROM messages WHERE " + exportableMessageWhere("")
-	if err := sqliteDB.QueryRow(maxExportableIDQuery).Scan(&maxExportableMessageID); err != nil {
+	maxID := int64(0)
+	if maxMessageID.Valid {
+		maxID = maxMessageID.Int64
+	}
+	maxExportableIDQuery := "SELECT MAX(id) FROM messages WHERE " + exportableMessageWhere("") + " AND id <= ?"
+	if err := sqliteDB.QueryRow(maxExportableIDQuery, maxID).Scan(&maxExportableMessageID); err != nil {
 		if closeErr := sqliteDB.Close(); closeErr != nil {
 			return nil, fmt.Errorf("get max exportable message id: %w; close sqlite: %w", err, closeErr)
 		}
@@ -277,15 +321,17 @@ func buildCache(dbPath, analyticsDir string, fullRebuild bool) (*buildResult, er
 			}
 			return nil, fmt.Errorf("get last completed sync run id: %w", err)
 		}
+		if syncCounters, err = readCacheSyncCounters(sqliteDB); err != nil {
+			if closeErr := sqliteDB.Close(); closeErr != nil {
+				return nil, fmt.Errorf("get cache sync counters: %w; close sqlite: %w", err, closeErr)
+			}
+			return nil, fmt.Errorf("get cache sync counters: %w", err)
+		}
 	}
 	if err := sqliteDB.Close(); err != nil {
 		return nil, fmt.Errorf("close sqlite after metadata check: %w", err)
 	}
 
-	maxID := int64(0)
-	if maxMessageID.Valid {
-		maxID = maxMessageID.Int64
-	}
 	exportableMaxID := int64(0)
 	if maxExportableMessageID.Valid {
 		exportableMaxID = maxExportableMessageID.Int64
@@ -305,6 +351,9 @@ func buildCache(dbPath, analyticsDir string, fullRebuild bool) (*buildResult, er
 
 	if maxID <= lastMessageID && !fullRebuild {
 		return &buildResult{Skipped: true}, nil
+	}
+	if buildCacheAfterSnapshotHook != nil {
+		buildCacheAfterSnapshotHook()
 	}
 
 	// Open DuckDB for the actual export
@@ -346,30 +395,24 @@ func buildCache(dbPath, analyticsDir string, fullRebuild bool) (*buildResult, er
 	}
 	buildStart := time.Now()
 
-	// Capture deletion watermark before export starts. Any deletion
-	// with deleted_from_source_at after this timestamp may not be
-	// reflected in the exported Parquet data and will trigger a
-	// cache rebuild on the next freshness check.
-	cacheWatermark := time.Now().UTC().Truncate(time.Second)
-
 	// Build WHERE clause for incremental exports
-	idFilter := ""
+	idFilter := fmt.Sprintf(" AND TRY_CAST(m.id AS BIGINT) <= %d", maxID)
 	if !fullRebuild && lastMessageID > 0 {
-		idFilter = fmt.Sprintf(" AND m.id > %d", lastMessageID)
+		idFilter += fmt.Sprintf(" AND TRY_CAST(m.id AS BIGINT) > %d", lastMessageID)
 	}
 
-	// calendarJunctionExclusion keeps calendar-event junction rows (notably
-	// attendee participants in message_recipients) out of the email aggregate
-	// Parquet, matching the message_type exclusion on the messages COPY below.
-	// Without it, attendees would surface in Sender/Recipient/Domain aggregates
-	// even though their parent event rows are excluded, and the per-view counts
-	// would no longer reconcile with the email-gated stats header.
-	calendarJunctionExclusion := "TRY_CAST(message_id AS BIGINT) NOT IN (SELECT CAST(id AS BIGINT) FROM sqlite_db.messages WHERE COALESCE(message_type, '') = 'calendar_event')"
+	// Junction rows are searchable exactly when their parent message is
+	// exportable. This includes meeting attendees and excludes calendar
+	// invitees, hidden rows, and messages without a timestamp.
+	exportableJunctionWhere := fmt.Sprintf(
+		"TRY_CAST(message_id AS BIGINT) IN (SELECT CAST(m.id AS BIGINT) FROM sqlite_db.messages m WHERE %s AND TRY_CAST(m.id AS BIGINT) <= %d)",
+		exportableMessageWhere("m"), maxID,
+	)
 	junctionFilter := func(incremental string) string {
 		if incremental != "" {
-			return incremental + " AND " + calendarJunctionExclusion
+			return incremental + " AND " + exportableJunctionWhere
 		}
-		return " WHERE " + calendarJunctionExclusion
+		return " WHERE " + exportableJunctionWhere
 	}
 
 	// Junction tables (message_recipients, message_labels, attachments) need
@@ -569,12 +612,18 @@ func buildCache(dbPath, analyticsDir string, fullRebuild bool) (*buildResult, er
 			COALESCE(TRY_CAST(source_conversation_id AS VARCHAR), '') as source_conversation_id,
 			COALESCE(TRY_CAST(title AS VARCHAR), '') as title,
 			COALESCE(TRY_CAST(conversation_type AS VARCHAR), 'email') as conversation_type
-		FROM sqlite_db.conversations
+		FROM sqlite_db.conversations c
+		WHERE EXISTS (
+			SELECT 1 FROM sqlite_db.messages m
+			WHERE m.conversation_id = c.id
+			  AND `+exportableMessageWhere("m")+`
+			  AND TRY_CAST(m.id AS BIGINT) <= %d
+		)
 	) TO '%s/conversations.parquet' (
 		FORMAT PARQUET,
 		COMPRESSION 'zstd'
 	)
-	`, escapedConversationsDir)); err != nil {
+	`, maxID, escapedConversationsDir)); err != nil {
 		return nil, fmt.Errorf("export conversations: %w", err)
 	}
 
@@ -595,6 +644,35 @@ func buildCache(dbPath, analyticsDir string, fullRebuild bool) (*buildResult, er
 			return nil, fmt.Errorf("export produced 0 parquet rows from exportable messages through id %d; cache state not updated", exportableMaxID)
 		}
 	}
+	if buildCacheBeforeStateWriteHook != nil {
+		buildCacheBeforeStateWriteHook()
+	}
+	discardAttempt := func(cause error) error {
+		closeErr := db.Close()
+		removeErr := os.RemoveAll(analyticsDir)
+		return errors.Join(cause, closeErr, removeErr)
+	}
+	if hasSyncRunsTable > 0 {
+		checkDB, openErr := sql.Open("sqlite3", dbPath+"?mode=ro")
+		if openErr != nil {
+			return nil, discardAttempt(fmt.Errorf("reopen sqlite for cache consistency check: %w", openErr))
+		}
+		currentCounters, counterErr := readCacheSyncCounters(checkDB)
+		closeErr := checkDB.Close()
+		if counterErr != nil {
+			return nil, discardAttempt(fmt.Errorf("recheck cache sync counters: %w", counterErr))
+		}
+		if closeErr != nil {
+			return nil, discardAttempt(fmt.Errorf("close sqlite after cache consistency check: %w", closeErr))
+		}
+		if currentCounters != syncCounters {
+			return nil, discardAttempt(fmt.Errorf(
+				"sync counters changed during cache export (additions %d→%d, updates %d→%d); retry",
+				syncCounters.additions, currentCounters.additions,
+				syncCounters.updates, currentCounters.updates,
+			))
+		}
+	}
 
 	// Save sync state using the pre-export watermark so any deletion
 	// that occurs during or after the build is detected as stale.
@@ -603,6 +681,8 @@ func buildCache(dbPath, analyticsDir string, fullRebuild bool) (*buildResult, er
 		LastSyncAt:             cacheWatermark,
 		SchemaVersion:          cacheSchemaVersion,
 		LastCompletedSyncRunID: lastCompletedSyncRunID,
+		LastCacheAdditionCount: syncCounters.additions,
+		LastCacheUpdateCount:   syncCounters.updates,
 	}
 	stateData, err := json.Marshal(state)
 	if err != nil {

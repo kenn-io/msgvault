@@ -1031,6 +1031,8 @@ func cliRunCommandAllowed(args []string) bool {
 	case "add-account",
 		"add-beeper",
 		"add-calendar",
+		"add-circleback",
+		"add-granola",
 		"add-imap",
 		"add-o365",
 		"add-synctech-sms-drive",
@@ -1060,6 +1062,8 @@ func cliRunCommandAllowed(args []string) bool {
 		"show-deletion",
 		"sync-beeper",
 		"sync-calendar",
+		"sync-circleback",
+		"sync-granola",
 		"sync-synctech-sms",
 		"sync-teams":
 		return true

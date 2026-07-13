@@ -1238,6 +1238,291 @@ func TestGetTotalStatsWithSearchQuery(t *testing.T) {
 	assert.Equal(int64(10000+5000), stats.AttachmentSize, "SearchQuery=Hello attachment size")
 }
 
+func TestGetTotalStats_SearchScope(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	env := newTestEnv(t)
+
+	meetingID := env.AddMessage(dbtest.MessageOpts{
+		Subject:      "cross-type stats needle",
+		MessageType:  "meeting_transcript",
+		SizeEstimate: 420,
+		SentAt:       "2024-04-01 10:00:00",
+	})
+
+	defaultStats := env.MustGetTotalStats(StatsOptions{})
+	assert.Equal(int64(5), defaultStats.MessageCount, "default analytics remain email-only")
+	assert.Equal(int64(8000), defaultStats.TotalSize, "default analytics size")
+
+	defaultSearchStats := env.MustGetTotalStats(StatsOptions{SearchQuery: "cross-type stats needle"})
+	assert.Zero(defaultSearchStats.MessageCount, "ordinary analytics search excludes meetings")
+
+	searchStats := env.MustGetTotalStats(StatsOptions{
+		SearchQuery: "cross-type stats needle",
+		SearchScope: true,
+	})
+	assert.Equal(int64(1), searchStats.MessageCount, "search-scope message count")
+	assert.Equal(int64(420), searchStats.TotalSize, "search-scope total size")
+
+	searchResult, err := env.Engine.SearchFastWithStats(
+		env.Ctx,
+		search.Parse("cross-type stats needle"),
+		"cross-type stats needle",
+		MessageFilter{},
+		ViewSenders,
+		100,
+		0,
+	)
+	require.NoError(err, "SearchFastWithStats")
+	require.NotNil(searchResult.Stats, "SearchFastWithStats stats")
+	require.Len(searchResult.Messages, 1, "SearchFastWithStats messages")
+	assert.Equal(meetingID, searchResult.Messages[0].ID, "meeting search result")
+	assert.Equal(searchResult.TotalCount, searchStats.MessageCount, "search/stats count agreement")
+	assert.Equal(searchResult.Stats.TotalSize, searchStats.TotalSize, "search/stats size agreement")
+}
+
+func TestGetTotalStats_SearchScopeCountsMatchingLabelsAndSources(t *testing.T) {
+	const meetingTranscriptType = "meeting_transcript"
+
+	env := newTestEnv(t)
+	source2 := env.AddSource(dbtest.SourceOpts{
+		Identifier: "second@example.com", DisplayName: "Second Account",
+	})
+	source3 := env.AddSource(dbtest.SourceOpts{
+		Identifier: "third@example.com", DisplayName: "Third Account",
+	})
+	conversation2 := env.AddConversation(dbtest.ConversationOpts{
+		SourceID: source2, Title: "Second Conversation",
+	})
+	conversation3 := env.AddConversation(dbtest.ConversationOpts{
+		SourceID: source3, Title: "Third Conversation",
+	})
+	label1A := env.AddLabel(dbtest.LabelOpts{SourceID: 1, Name: "Scoped First A"})
+	label1B := env.AddLabel(dbtest.LabelOpts{SourceID: 1, Name: "Scoped First B"})
+	label2 := env.AddLabel(dbtest.LabelOpts{SourceID: source2, Name: "Scoped Second"})
+	label3 := env.AddLabel(dbtest.LabelOpts{SourceID: source3, Name: "Scoped Third"})
+	message1 := env.AddMessage(dbtest.MessageOpts{
+		Subject: "ordinary first subject", MessageType: meetingTranscriptType,
+		SizeEstimate: 110, HasAttachments: true,
+	})
+	message2 := env.AddMessage(dbtest.MessageOpts{
+		SourceID: source2, ConversationID: conversation2,
+		Subject: "ordinary second subject", MessageType: meetingTranscriptType, SizeEstimate: 220,
+	})
+	message3 := env.AddMessage(dbtest.MessageOpts{
+		SourceID: source3, ConversationID: conversation3,
+		Subject: "ordinary third subject", MessageType: meetingTranscriptType,
+		SizeEstimate: 330, HasAttachments: true,
+	})
+	env.AddMessageLabel(message1, label1A)
+	env.AddMessageLabel(message1, label1B)
+	env.AddMessageLabel(message2, label2)
+	env.AddMessageLabel(message3, label3)
+	for _, fixture := range []struct {
+		messageID int64
+		body      string
+	}{
+		{messageID: message1, body: "scopedbodyneedle appears only in the first body"},
+		{messageID: message2, body: "ordinary nonmatching second body"},
+		{messageID: message3, body: "scopedbodyneedle appears only in the third body"},
+	} {
+		_, err := env.DB.Exec(
+			`INSERT INTO message_bodies (message_id, body_text) VALUES (?, ?)`,
+			fixture.messageID, fixture.body,
+		)
+		require.NoError(t, err, "insert searchable body")
+	}
+	for _, fixture := range []struct {
+		messageID int64
+		size      int64
+		path      string
+	}{
+		{messageID: message1, size: 11, path: "01/first"},
+		{messageID: message3, size: 33, path: "03/third"},
+	} {
+		_, err := env.DB.Exec(`
+			INSERT INTO attachments (message_id, filename, mime_type, size, storage_path)
+			VALUES (?, 'transcript.txt', 'text/plain', ?, ?)
+		`, fixture.messageID, fixture.size, fixture.path)
+		require.NoError(t, err, "insert attachment")
+	}
+	env.EnableFTS()
+
+	engines := []struct {
+		name   string
+		engine Engine
+	}{
+		{name: "sqlite", engine: env.Engine},
+		{name: "duckdb sqlite delegation", engine: &DuckDBEngine{sqliteEngine: env.Engine}},
+	}
+	for _, tc := range engines {
+		t.Run(tc.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			stats, err := tc.engine.GetTotalStats(env.Ctx, StatsOptions{
+				SearchQuery: "scopedbodyneedle",
+				SearchScope: true,
+				SourceIDs:   []int64{1, source2},
+			})
+			require.NoError(err)
+			assert.Equal(int64(1), stats.MessageCount, "matching messages")
+			assert.Equal(int64(110), stats.TotalSize, "matching message size")
+			assert.Equal(int64(1), stats.AttachmentCount, "matching attachments")
+			assert.Equal(int64(11), stats.AttachmentSize, "matching attachment size")
+			assert.Equal(int64(2), stats.LabelCount, "labels on matching messages")
+			assert.Equal(int64(1), stats.AccountCount, "sources containing matching messages")
+
+			stats, err = tc.engine.GetTotalStats(env.Ctx, StatsOptions{
+				SourceID:    &source2,
+				SourceIDs:   []int64{1, source3},
+				SearchQuery: "scopedbodyneedle",
+				SearchScope: true,
+			})
+			require.NoError(err)
+			assert.Equal(int64(2), stats.MessageCount, "multi-source scope overrides single source")
+			assert.Equal(int64(440), stats.TotalSize)
+			assert.Equal(int64(2), stats.AttachmentCount)
+			assert.Equal(int64(44), stats.AttachmentSize)
+			assert.Equal(int64(3), stats.LabelCount)
+			assert.Equal(int64(2), stats.AccountCount)
+
+			source1 := int64(1)
+			emptyStats, err := tc.engine.GetTotalStats(env.Ctx, StatsOptions{
+				SearchQuery: "scopedbodyneedle",
+				SearchScope: true,
+				SourceID:    &source1,
+				SourceIDs:   []int64{},
+			})
+			require.NoError(err)
+			assert.Zero(emptyStats.MessageCount)
+			assert.Zero(emptyStats.TotalSize)
+			assert.Zero(emptyStats.AttachmentCount)
+			assert.Zero(emptyStats.AttachmentSize)
+			assert.Zero(emptyStats.LabelCount)
+			assert.Zero(emptyStats.AccountCount)
+		})
+	}
+}
+
+func TestGetTotalStats_FilteredCountsMatchDuckDBPopulation(t *testing.T) {
+	env := newTestEnv(t)
+	source2 := env.AddSource(dbtest.SourceOpts{Identifier: "second@example.com"})
+	source3 := env.AddSource(dbtest.SourceOpts{Identifier: "third@example.com"})
+	conversation2 := env.AddConversation(dbtest.ConversationOpts{SourceID: source2, Title: "Second"})
+	conversation3 := env.AddConversation(dbtest.ConversationOpts{SourceID: source3, Title: "Third"})
+	label1A := env.AddLabel(dbtest.LabelOpts{SourceID: 1, Name: "Filtered First A"})
+	label1B := env.AddLabel(dbtest.LabelOpts{SourceID: 1, Name: "Filtered First B"})
+	label2 := env.AddLabel(dbtest.LabelOpts{SourceID: source2, Name: "Filtered Second"})
+	label3 := env.AddLabel(dbtest.LabelOpts{SourceID: source3, Name: "Filtered Third"})
+	message1 := env.AddMessage(dbtest.MessageOpts{Subject: "filterpopulationneedle first"})
+	message2 := env.AddMessage(dbtest.MessageOpts{
+		SourceID: source2, ConversationID: conversation2, Subject: "ordinary second",
+	})
+	message3 := env.AddMessage(dbtest.MessageOpts{
+		SourceID: source3, ConversationID: conversation3, Subject: "filterpopulationneedle third",
+	})
+	env.AddMessageLabel(message1, label1A)
+	env.AddMessageLabel(message1, label1B)
+	env.AddMessageLabel(message2, label2)
+	env.AddMessageLabel(message3, label3)
+
+	builder := NewTestDataBuilder(t)
+	duckSource1 := builder.AddSource("first@example.com")
+	duckSource2 := builder.AddSource("second@example.com")
+	duckSource3 := builder.AddSource("third@example.com")
+	duckLabel1A := builder.AddLabel("Filtered First A")
+	duckLabel1B := builder.AddLabel("Filtered First B")
+	duckLabel2 := builder.AddLabel("Filtered Second")
+	duckLabel3 := builder.AddLabel("Filtered Third")
+	duckMessage1 := builder.AddMessage(MessageOpt{SourceID: duckSource1, Subject: "filterpopulationneedle first"})
+	duckMessage2 := builder.AddMessage(MessageOpt{SourceID: duckSource2, Subject: "ordinary second"})
+	duckMessage3 := builder.AddMessage(MessageOpt{SourceID: duckSource3, Subject: "filterpopulationneedle third"})
+	builder.AddMessageLabel(duckMessage1, duckLabel1A)
+	builder.AddMessageLabel(duckMessage1, duckLabel1B)
+	builder.AddMessageLabel(duckMessage2, duckLabel2)
+	builder.AddMessageLabel(duckMessage3, duckLabel3)
+	builder.SetEmptyAttachments()
+	duckEngine := builder.BuildEngine()
+
+	tests := []struct {
+		name         string
+		opts         StatsOptions
+		wantMessages int64
+		wantLabels   int64
+		wantAccounts int64
+	}{
+		{
+			name:         "default-scope search query",
+			opts:         StatsOptions{SearchQuery: "filterpopulationneedle"},
+			wantMessages: 2, wantLabels: 3, wantAccounts: 2,
+		},
+		{
+			name:         "default-scope source IDs",
+			opts:         StatsOptions{SourceIDs: []int64{source2}},
+			wantMessages: 1, wantLabels: 1, wantAccounts: 1,
+		},
+		{
+			name: "explicit empty source IDs",
+			opts: StatsOptions{SourceIDs: []int64{}},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			sqliteStats, err := env.Engine.GetTotalStats(env.Ctx, tc.opts)
+			require.NoError(err)
+			duckStats, err := duckEngine.GetTotalStats(env.Ctx, tc.opts)
+			require.NoError(err)
+
+			for name, stats := range map[string]*TotalStats{"sqlite": sqliteStats, "duckdb": duckStats} {
+				assert.Equal(tc.wantMessages, stats.MessageCount, name+" messages")
+				assert.Equal(tc.wantLabels, stats.LabelCount, name+" labels")
+				assert.Equal(tc.wantAccounts, stats.AccountCount, name+" accounts")
+			}
+		})
+	}
+}
+
+func TestSearchFastWithStats_SourceIDsMultiAndEmptyScopes(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	env := newTestEnv(t)
+	source2 := env.AddSource(dbtest.SourceOpts{Identifier: "second@example.com"})
+	source3 := env.AddSource(dbtest.SourceOpts{Identifier: "third@example.com"})
+	conversation2 := env.AddConversation(dbtest.ConversationOpts{SourceID: source2, Title: "Second"})
+	conversation3 := env.AddConversation(dbtest.ConversationOpts{SourceID: source3, Title: "Third"})
+	message1 := env.AddMessage(dbtest.MessageOpts{Subject: "fastsourceneedle first"})
+	message2 := env.AddMessage(dbtest.MessageOpts{
+		SourceID: source2, ConversationID: conversation2, Subject: "fastsourceneedle second",
+	})
+	env.AddMessage(dbtest.MessageOpts{
+		SourceID: source3, ConversationID: conversation3, Subject: "fastsourceneedle excluded",
+	})
+	env.EnableFTS()
+	q := search.Parse("fastsourceneedle")
+
+	result, err := env.Engine.SearchFastWithStats(env.Ctx, q, "fastsourceneedle",
+		MessageFilter{SourceIDs: []int64{1, source2}}, ViewSenders, 50, 0)
+	require.NoError(err)
+	gotIDs := make([]int64, len(result.Messages))
+	for i := range result.Messages {
+		gotIDs[i] = result.Messages[i].ID
+	}
+	assert.ElementsMatch([]int64{message1, message2}, gotIDs)
+	assert.Equal(int64(2), result.TotalCount)
+	require.NotNil(result.Stats)
+	assert.Equal(int64(2), result.Stats.MessageCount)
+
+	empty, err := env.Engine.SearchFastWithStats(env.Ctx, q, "fastsourceneedle",
+		MessageFilter{SourceIDs: []int64{}}, ViewSenders, 50, 0)
+	require.NoError(err)
+	assert.Empty(empty.Messages)
+	assert.Zero(empty.TotalCount)
+	require.NotNil(empty.Stats)
+	assert.Zero(empty.Stats.MessageCount)
+}
+
 func TestGetTotalStatsWithSearchQuery_MessageTypeFilter(t *testing.T) {
 	assert := assert.New(t)
 	env := newTestEnv(t)

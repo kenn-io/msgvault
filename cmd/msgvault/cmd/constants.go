@@ -3,12 +3,14 @@ package cmd
 // Source-type identifiers stored in sources.source_type and matched against
 // when dispatching sync/import logic per account kind.
 const (
-	sourceTypeGmail    = "gmail"
-	sourceTypeIMAP     = "imap"
-	sourceTypeMbox     = "mbox"
-	sourceTypeTeams    = "teams"
-	sourceTypeCalendar = "gcal"
-	sourceTypeBeeper   = "beeper"
+	sourceTypeGmail      = "gmail"
+	sourceTypeIMAP       = "imap"
+	sourceTypeMbox       = "mbox"
+	sourceTypeTeams      = "teams"
+	sourceTypeCalendar   = "gcal"
+	sourceTypeBeeper     = "beeper"
+	sourceTypeGranola    = "granola"
+	sourceTypeCircleback = "circleback"
 )
 
 // Analytics dataset / SQLite table names: the Parquet subdirectory under

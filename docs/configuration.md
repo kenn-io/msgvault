@@ -337,6 +337,69 @@ max_media_mb = 100                # per-attachment download cap (MiB)
 | `media` | `true` | Download attachment bytes (failed downloads retry via `backfill-beeper-media`) |
 | `max_media_mb` | `100` | Per-attachment download cap in MiB (over-cap media leaves a retry marker) |
 
+### Granola Sources
+
+Granola meeting-notes sync is configured with top-level `[[granola]]` entries.
+Each entry is one Granola account. `identifier` is a stable source label;
+`account_email` is the primary identity used for organizer attribution.
+`msgvault serve` runs it on the given cron schedule. Register the account
+first with `msgvault add-granola`. See
+[Meeting Transcripts](/usage/meetings/).
+
+```toml
+[[granola]]
+identifier = "work"              # stable label; defaults to "default" for a single entry
+account_email = "you@example.com" # required unless identifier is an email address
+api_key = "grn_..."              # from the desktop app's settings (Business plan)
+schedule = "0 */6 * * *"         # 5-field cron, no seconds
+enabled = true
+```
+
+| Key | Default | Description |
+|---|---|---|
+| `identifier` | `default` (single entry) | Source name used by `sync-granola <identifier>` and scheduler logs |
+| `account_email` | email-shaped `identifier` | Normalized primary account identity used for `is_from_me`; required when `identifier` is an arbitrary label |
+| `api_key` | (required) | Granola API key (`grn_…`) |
+| `schedule` | — | Cron expression used by `msgvault serve` |
+| `enabled` | `false` | Whether the source is daemon-scheduled |
+
+Config loading preserves `identifier` and rejects labels without an effective
+email, instructing you to add `account_email`. `msgvault add-granola` confirms
+the primary identity even if aliases already exist. Manage aliases with
+`msgvault identity add <identifier> <email>`, then run
+`msgvault sync-granola <identifier> --full` after identity changes to repair
+existing meeting attribution. A scheduled source must still be registered in
+the archive; removing it prevents the scheduler from silently recreating it.
+
+### Circleback Sources
+
+Circleback meeting sync is configured with top-level `[[circleback]]`
+entries. Authentication is browser OAuth (`msgvault add-circleback`); no
+secret lives in the config file. See
+[Meeting Transcripts](/usage/meetings/).
+
+```toml
+[[circleback]]
+identifier = "work"              # stable label/token key; defaults to "default" for one entry
+account_email = "you@example.com" # required unless identifier is an email address
+schedule = "30 */6 * * *"        # 5-field cron, no seconds
+enabled = true
+```
+
+| Key | Default | Description |
+|---|---|---|
+| `identifier` | `default` (single entry) | Source name used by `sync-circleback <identifier>`, the token filename, and scheduler logs |
+| `account_email` | email-shaped `identifier` | Normalized primary account identity used for `is_from_me`; required when `identifier` is an arbitrary label |
+| `endpoint` | production | MCP endpoint override (testing only) |
+| `schedule` | — | Cron expression used by `msgvault serve` |
+| `enabled` | `false` | Whether the source is daemon-scheduled |
+
+Config loading and alias repair follow the same rules as Granola: preserve the
+label, add `account_email`, manage aliases with `msgvault identity`, and run
+`msgvault sync-circleback <identifier> --full` after identity changes.
+Circleback OAuth always confirms the primary identity; there is no identity
+opt-out flag.
+
 ### `[vector]`
 
 Top-level toggle and backend marker for semantic/hybrid search. SQLite vector search requires a build with `sqlite_vec` support (default via `make build`). PostgreSQL vector search requires a build with the `pgvector` tag and a PostgreSQL `[data].database_url`. See [Vector Search](/usage/vector-search/) for prerequisites, initial embedding, and the full workflow.

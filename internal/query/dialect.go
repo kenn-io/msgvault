@@ -16,6 +16,7 @@ package query
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"go.kenn.io/msgvault/internal/sqldialect"
 	"go.kenn.io/msgvault/internal/sqliteutil"
@@ -23,6 +24,12 @@ import (
 )
 
 type messageBodyContextBackend uint8
+
+const queryTimestampLayout = "2006-01-02 15:04:05.999999999"
+
+func queryTimeUTC(value time.Time) time.Time {
+	return value.UTC()
+}
 
 const (
 	messageBodyContextSQLite messageBodyContextBackend = iota
@@ -105,6 +112,9 @@ type Dialect interface {
 	// connection; PostgreSQL uses its collation-aware LOWER implementation.
 	UnicodeLowerExpression(expr string) string
 
+	// DateParam normalizes an instant for the backend timestamp representation.
+	DateParam(value time.Time) any
+
 	// messageBodyContextBackend selects the backend-native highlighter used to
 	// extract exact context for body-index hits.
 	messageBodyContextBackend() messageBodyContextBackend
@@ -119,6 +129,10 @@ func (SQLiteQueryDialect) BoolTrueExpr(col string) string { return col + " = 1" 
 
 func (SQLiteQueryDialect) UnicodeLowerExpression(expr string) string {
 	return sqliteutil.UnicodeLowerFunction + "(" + expr + ")"
+}
+
+func (SQLiteQueryDialect) DateParam(value time.Time) any {
+	return queryTimeUTC(value).Format(queryTimestampLayout)
 }
 
 func (SQLiteQueryDialect) messageBodyContextBackend() messageBodyContextBackend {
@@ -212,6 +226,10 @@ func (PostgreSQLQueryDialect) BoolTrueExpr(col string) string { return col }
 
 func (PostgreSQLQueryDialect) UnicodeLowerExpression(expr string) string {
 	return "LOWER(" + expr + ")"
+}
+
+func (PostgreSQLQueryDialect) DateParam(value time.Time) any {
+	return queryTimeUTC(value)
 }
 
 func (PostgreSQLQueryDialect) messageBodyContextBackend() messageBodyContextBackend {

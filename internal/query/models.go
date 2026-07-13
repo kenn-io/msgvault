@@ -352,5 +352,6 @@ type StatsOptions struct {
 	WithAttachmentsOnly   bool     // only count messages with attachments
 	HideDeletedFromSource bool     // exclude messages where deleted_from_source_at IS NOT NULL
 	SearchQuery           string   // when set, stats reflect only messages matching this search
+	SearchScope           bool     // include all message types when SearchQuery has no explicit message_type
 	GroupBy               ViewType // when set, search filters on this view's key columns instead of subject+sender
 }

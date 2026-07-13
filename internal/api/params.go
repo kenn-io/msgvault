@@ -75,6 +75,28 @@ func queryInt64(r *http.Request, name string) (value int64, ok bool, err error) 
 	return value, true, nil
 }
 
+// queryInt64s parses a repeated or comma-separated 64-bit integer query
+// parameter. ok is false when absent; a present empty or non-numeric element
+// returns a paramError rather than silently widening the requested scope.
+func queryInt64s(r *http.Request, name string) (values []int64, ok bool, err error) {
+	rawValues, ok := r.URL.Query()[name]
+	if !ok {
+		return nil, false, nil
+	}
+	for _, raw := range rawValues {
+		for part := range strings.SplitSeq(raw, ",") {
+			part = strings.TrimSpace(part)
+			value, convErr := strconv.ParseInt(part, 10, 64)
+			if convErr != nil {
+				return nil, false, newParamError(name,
+					fmt.Sprintf("query parameter %q must contain only integers, got %q", name, part))
+			}
+			values = append(values, value)
+		}
+	}
+	return values, true, nil
+}
+
 // queryBool parses a boolean query parameter. ok is false when absent; a
 // present but unparseable value returns a paramError.
 func queryBool(r *http.Request, name string) (value bool, ok bool, err error) {

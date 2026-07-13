@@ -210,6 +210,118 @@ media backfill.
 
 ---
 
+## add-granola
+
+Register a configured Granola account and validate its API key with a live
+API call.
+
+```bash
+msgvault add-granola [identifier]
+```
+
+Reads the key from the matching `[[granola]]` entry in `config.toml`. With a
+single configured entry the identifier may be omitted. Granola API keys are
+created in the desktop app's settings and require a Business plan. The command
+also confirms the source's effective `account_email`, even when other aliases
+already exist. Meeting-source identity confirmation is mandatory.
+
+After adding the account, sync it with `msgvault sync-granola`. If you later
+change `account_email` or add/remove an alias with `msgvault identity`, run
+`msgvault sync-granola <identifier> --full` to repair existing `is_from_me`
+attribution.
+
+---
+
+## sync-granola
+
+Sync Granola meeting notes and transcripts.
+
+```bash
+msgvault sync-granola [identifier]
+msgvault sync-granola --limit 5
+msgvault sync-granola --full --after 2024-01-01
+```
+
+Incremental by default: only notes updated since the last successful run are
+fetched. With no identifier, every configured `[[granola]]` source is synced.
+Re-fetched notes are upserted in place, so `--full` repairs existing rows
+without creating duplicates. A partial run with one or more failed notes is
+recorded and returned as an error without advancing the successful cursor. If
+other notes were added or updated first, the cache is refreshed before the
+error is returned. Scheduled sync refuses a configured source that has been
+removed from the archive and directs you to run `add-granola` again.
+
+| Flag | Default | Description |
+|---|---|---|
+| `--limit` | `0` | Maximum notes per run (`0` = unlimited) |
+| `--after` | — | Full-sync only notes created after this date (YYYY-MM-DD; implies `--full`) |
+| `--full` | `false` | Ignore stored cursor and re-fetch every note |
+
+See [Meeting Transcripts](/usage/meetings/) for setup and what gets stored.
+
+---
+
+## add-circleback
+
+Authorize a configured Circleback account using browser OAuth (their MCP
+server uses OAuth with dynamic client registration).
+
+```bash
+msgvault add-circleback [identifier]
+```
+
+The token is stored under `tokens/circleback_<identifier>.json`. With a
+single configured `[[circleback]]` entry the identifier may be omitted. The
+command always confirms the source's effective `account_email`; there is no
+identity opt-out flag.
+
+Circleback redirects OAuth to `localhost:8090`. A CLI configured for a remote
+daemon refuses to proxy this command: run it on the daemon host, where the
+token is stored. Over SSH, use `ssh -L 8090:localhost:8090 user@daemon-host`,
+run `msgvault --local add-circleback <identifier>` in that remote shell, and
+open the printed authorization URL in your local browser if necessary. On the
+daemon host, `--local` selects that host's archive; on a workstation it would
+target a separate local archive.
+
+After adding the account, sync it with `msgvault sync-circleback`. Run a
+`--full` sync after changing the primary email or confirmed aliases.
+
+---
+
+## sync-circleback
+
+Sync Circleback meetings, notes, action items, and transcripts.
+
+```bash
+msgvault sync-circleback [identifier]
+msgvault sync-circleback --limit 5
+msgvault sync-circleback --full --after 2024-01-01
+msgvault sync-circleback --probe
+```
+
+Incremental by default: each run searches from 48 hours before the newest
+previously seen meeting so late edits flow in; re-fetched meetings are
+upserted in place. With no identifier, every configured `[[circleback]]`
+source is synced. Missing or recognized-empty transcripts enter a bounded
+`pending` state and retry every six hours, normally until seven days after the
+scheduled meeting time (48 hours when no usable time exists). Expired retries
+become `unavailable`; a later `--full` run can check them again.
+
+Due transcript retries are maintenance work and run outside the new-meeting
+limit. Provider, contract, missing-result, ingest, archive-recovery, and
+cancellation failures fail the sync and preserve the prior successful cursor.
+
+| Flag | Default | Description |
+|---|---|---|
+| `--limit` | `0` | Maximum newly searched meetings; due maintenance items are additional (`0` = unlimited) |
+| `--after` | — | Full-sync only meetings after this date (YYYY-MM-DD; implies `--full`) |
+| `--full` | `false` | Ignore stored cursor and re-fetch every meeting |
+| `--probe` | `false` | Print the MCP tool inventory and a sample result instead of syncing |
+
+See [Meeting Transcripts](/usage/meetings/) for setup and what gets stored.
+
+---
+
 ## backfill-teams-media
 
 Re-fetch Microsoft Teams inline hosted-content media for already imported
@@ -668,6 +780,12 @@ msgvault search <query> [flags]
 | `--message-type` | Limit results to one or more message types, e.g. `email`, `teams`, `calendar_event`, `sms` |
 | `--mode` | Search mode: `fts` (default), `vector`, or `hybrid`. `vector` and `hybrid` require vector search to be configured. |
 | `--explain` | Include per-signal scores (RRF, BM25, vector) in the output. Only applies to `--mode vector` and `--mode hybrid`. |
+
+Without an explicit message-type filter, search intentionally returns all
+matching cached message types, including meeting transcripts and chats.
+Ordinary aggregate views and statistics still default to email-only; use
+`--message-type` (or `message_type:` in the query) when you need an explicit
+search scope.
 
 `--mode vector` and `--mode hybrid` require at least one free-text term in the query (filter-only queries use `--mode fts`). They do not support pagination (`--offset` is rejected), so bump `--limit` to retrieve a larger candidate pool instead. See [Searching](/usage/searching/) for the operator reference and [Vector Search](/usage/vector-search/) for semantic setup.
 

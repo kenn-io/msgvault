@@ -1,0 +1,54 @@
+{
+  "id": "not_Ab12Cd34Ef56Gh",
+  "object": "note",
+  "title": "Quarterly Planning Review",
+  "owner": {
+    "name": "Alice Smith",
+    "email": "alice@example.com"
+  },
+  "created_at": "2026-06-01T15:02:11Z",
+  "updated_at": "2026-06-01T16:45:00Z",
+  "web_url": "https://notes.example.com/d/f3e45e0f-24cc-480b-9a6c-8b1f5e3d7a2c",
+  "calendar_event": {
+    "event_title": "Quarterly Planning Review",
+    "invitees": [
+      {"email": "alice@example.com"},
+      {"email": "bob@example.com"},
+      {"email": "carol@example.com"}
+    ],
+    "organiser": "bob@example.com",
+    "calendar_event_id": "evt_2su99n6iiik37_20260601T150000Z",
+    "scheduled_start_time": "2026-06-01T15:00:00Z",
+    "scheduled_end_time": "2026-06-01T16:00:00Z"
+  },
+  "attendees": [
+    {"name": "Alice Smith", "email": "alice@example.com"},
+    {"name": "Bob Jones", "email": "bob@example.com"},
+    {"name": null, "email": "carol@example.com"}
+  ],
+  "folder_membership": [
+    {"id": "fol_4y6LduVdwSKC27", "object": "folder", "name": "Planning", "parent_folder_id": null}
+  ],
+  "summary_text": "The team reviewed the quarterly plan and agreed on three priorities.",
+  "summary_markdown": "## Quarterly Planning Review\n\n- Agreed on **three priorities**\n- Budget approved",
+  "transcript": [
+    {
+      "speaker": {"source": "microphone", "name": "Alice Smith"},
+      "text": "Let's get started with the quarterly review.",
+      "start_time": "2026-06-01T15:02:30Z",
+      "end_time": "2026-06-01T15:02:35Z"
+    },
+    {
+      "speaker": {"source": "speaker", "name": "Bob Jones"},
+      "text": "Sounds good. I have the budget numbers ready.",
+      "start_time": "2026-06-01T15:03:41Z",
+      "end_time": "2026-06-01T15:03:47Z"
+    },
+    {
+      "speaker": {"source": "speaker", "diarization_label": "Speaker C"},
+      "text": "The deadline for phase one is July fifteenth.",
+      "start_time": "2026-06-01T16:04:02Z",
+      "end_time": "2026-06-01T16:04:09Z"
+    }
+  ]
+}

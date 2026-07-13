@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -192,7 +193,7 @@ func optionalTimeRFC3339(value *time.Time) *string {
 	if value == nil {
 		return nil
 	}
-	out := value.Format(time.RFC3339)
+	out := value.UTC().Format(time.RFC3339Nano)
 	return &out
 }
 
@@ -333,6 +334,7 @@ func fastSearchQuery(queryStr string, filter query.MessageFilter, statsGroupBy q
 		TimeGranularity: fields.TimeGranularity,
 		ConversationID:  fields.ConversationID,
 		SourceID:        fields.SourceID,
+		SourceIds:       append([]int64(nil), filter.SourceIDs...),
 		AttachmentsOnly: fields.AttachmentsOnly,
 		HideDeleted:     fields.HideDeleted,
 		After:           fields.After,
@@ -346,8 +348,12 @@ func fastSearchQuery(queryStr string, filter query.MessageFilter, statsGroupBy q
 }
 
 func fastSearchScopedQueryString(q *search.Query, queryStr string, filter query.MessageFilter) (string, bool) {
+	baseQueryStr := queryStr
+	if q != nil {
+		baseQueryStr = search.Format(q)
+	}
 	if filter.MessageType == "" {
-		return queryStr, false
+		return baseQueryStr, false
 	}
 
 	var queryTypes []string
@@ -359,15 +365,15 @@ func fastSearchScopedQueryString(q *search.Query, queryStr string, filter query.
 		return "", true
 	}
 	if q == nil {
-		if queryStr == "" {
+		if baseQueryStr == "" {
 			return "message_type:" + filter.MessageType, false
 		}
-		return strings.TrimSpace("message_type:" + filter.MessageType + " " + queryStr), false
+		return strings.TrimSpace("message_type:" + filter.MessageType + " " + baseQueryStr), false
 	}
 
 	scoped := *q
 	scoped.MessageTypes = messageTypes
-	return buildSearchQueryString(&scoped), false
+	return search.Format(&scoped), false
 }
 
 func deepSearchQuery(queryStr string, q *search.Query, limit, offset int) (*generated.DeepSearchQuery, error) {
@@ -791,8 +797,13 @@ func (e *Engine) GetAttachmentsByHash(context.Context, string) ([]query.Attachme
 
 // Search performs full-text search including message body.
 func (e *Engine) Search(ctx context.Context, q *search.Query, limit, offset int) ([]query.MessageSummary, error) {
-	// Build query string from search.Query
-	queryStr := buildSearchQueryString(q)
+	if err := validateParsedSearchQuery(q); err != nil {
+		return nil, err
+	}
+	if hasExplicitEmptyAccountScope(q) {
+		return []query.MessageSummary{}, nil
+	}
+	queryStr := search.Format(q)
 	if queryStr == "" {
 		return nil, nil
 	}
@@ -818,10 +829,16 @@ func (e *Engine) Search(ctx context.Context, q *search.Query, limit, offset int)
 // against older daemons that ignore the additive query parameter and would
 // otherwise return generic composite-search false positives.
 func (e *Engine) SearchMessageBodies(ctx context.Context, q *search.Query, limit, offset int) ([]query.MessageSummary, error) {
+	if err := validateParsedSearchQuery(q); err != nil {
+		return nil, err
+	}
 	if q == nil || len(q.TextTerms) == 0 {
 		return nil, errors.New("message body search requires at least one free-text term")
 	}
-	queryStr := buildSearchQueryString(q)
+	if hasExplicitEmptyAccountScope(q) {
+		return []query.MessageSummary{}, nil
+	}
+	queryStr := search.Format(q)
 	queryParams, err := deepSearchQuery(queryStr, q, limit, offset)
 	if err != nil {
 		return nil, err
@@ -842,7 +859,7 @@ func (e *Engine) SearchMessageBodies(ctx context.Context, q *search.Query, limit
 
 // SearchFast searches message metadata only (no body text).
 func (e *Engine) SearchFast(ctx context.Context, q *search.Query, filter query.MessageFilter, limit, offset int) ([]query.MessageSummary, error) {
-	result, err := e.SearchFastWithStats(ctx, q, buildSearchQueryString(q), filter, query.ViewSenders, limit, offset)
+	result, err := e.SearchFastWithStats(ctx, q, "", filter, query.ViewSenders, limit, offset)
 	if err != nil {
 		return nil, err
 	}
@@ -852,7 +869,7 @@ func (e *Engine) SearchFast(ctx context.Context, q *search.Query, filter query.M
 // SearchFastCount returns the total count of messages matching a search query.
 func (e *Engine) SearchFastCount(ctx context.Context, q *search.Query, filter query.MessageFilter) (int64, error) {
 	// Use SearchFastWithStats with limit 0 to get count only
-	result, err := e.SearchFastWithStats(ctx, q, buildSearchQueryString(q), filter, query.ViewSenders, 0, 0)
+	result, err := e.SearchFastWithStats(ctx, q, "", filter, query.ViewSenders, 0, 0)
 	if err != nil {
 		return 0, err
 	}
@@ -863,6 +880,12 @@ func (e *Engine) SearchFastCount(ctx context.Context, q *search.Query, filter qu
 // total count, and aggregate stats in a single operation.
 func (e *Engine) SearchFastWithStats(ctx context.Context, q *search.Query, queryStr string,
 	filter query.MessageFilter, statsGroupBy query.ViewType, limit, offset int) (*query.SearchFastResult, error) {
+	if err := validateParsedSearchQuery(q); err != nil {
+		return nil, err
+	}
+	if filter.SourceIDs != nil && len(filter.SourceIDs) == 0 {
+		return &query.SearchFastResult{Stats: &query.TotalStats{}}, nil
+	}
 	scopedQueryStr, noMatches := fastSearchScopedQueryString(q, queryStr, filter)
 	if noMatches {
 		return &query.SearchFastResult{Stats: &query.TotalStats{}}, nil
@@ -875,6 +898,10 @@ func (e *Engine) SearchFastWithStats(ctx context.Context, q *search.Query, query
 	})
 	if err != nil {
 		return nil, err
+	}
+	if len(filter.SourceIDs) > 0 &&
+		!slices.Equal(normalizedSourceIDs(filter.SourceIDs), normalizedSourceIDs(resp.JSON200.AppliedSourceIds)) {
+		return nil, errors.New("daemon did not confirm fast-search source IDs; upgrade the daemon to API schema 1.6.0 or newer")
 	}
 	return &query.SearchFastResult{
 		Messages:   messageSummariesFromGenerated(resp.JSON200.Messages),
@@ -1008,13 +1035,18 @@ func (e *Engine) GetTextStats(ctx context.Context, opts query.TextStatsOptions) 
 
 // GetTotalStats returns overall database statistics.
 func (e *Engine) GetTotalStats(ctx context.Context, opts query.StatsOptions) (*query.TotalStats, error) {
+	if opts.SourceIDs != nil && len(opts.SourceIDs) == 0 {
+		return &query.TotalStats{}, nil
+	}
 	resp, err := APIResponse(e.store, func(client *apiclient.Client) (*generated.GetTotalStatsResp, error) {
 		return client.GetTotalStatsWithResponse(ctx, &generated.GetTotalStatsRequestOptions{
 			Query: &generated.GetTotalStatsQuery{
 				SourceID:        opts.SourceID,
+				SourceIds:       append([]int64(nil), opts.SourceIDs...),
 				AttachmentsOnly: optionalBool(opts.WithAttachmentsOnly),
 				HideDeleted:     optionalBool(opts.HideDeletedFromSource),
 				SearchQuery:     optionalString(opts.SearchQuery),
+				SearchScope:     optionalBool(opts.SearchScope),
 				GroupBy:         optionalStatsGroupBy(opts.GroupBy),
 			},
 		})
@@ -1022,62 +1054,35 @@ func (e *Engine) GetTotalStats(ctx context.Context, opts query.StatsOptions) (*q
 	if err != nil {
 		return nil, err
 	}
+	if opts.SearchScope && (resp.JSON200.AppliedSearchScope == nil || !*resp.JSON200.AppliedSearchScope) {
+		return nil, errors.New("daemon did not confirm total-stats search scope; upgrade the daemon to API schema 1.5.0 or newer")
+	}
+	if len(opts.SourceIDs) > 0 &&
+		!slices.Equal(normalizedSourceIDs(opts.SourceIDs), normalizedSourceIDs(resp.JSON200.AppliedSourceIds)) {
+		return nil, errors.New("daemon did not confirm total-stats source IDs; upgrade the daemon to API schema 1.5.0 or newer")
+	}
 	return totalStatsFromGenerated(resp.JSON200), nil
 }
 
-// buildSearchQueryString reconstructs a search query string from a parsed Query.
-// This is needed because the API expects the raw query string.
-func buildSearchQueryString(q *search.Query) string {
+func validateParsedSearchQuery(q *search.Query) error {
 	if q == nil {
-		return ""
+		return nil
 	}
+	if err := q.Err(); err != nil {
+		return fmt.Errorf("invalid search query: %w", err)
+	}
+	return nil
+}
 
-	var parts []string
+func normalizedSourceIDs(ids []int64) []int64 {
+	if ids == nil {
+		return nil
+	}
+	normalized := append([]int64(nil), ids...)
+	slices.Sort(normalized)
+	return slices.Compact(normalized)
+}
 
-	parts = append(parts, q.TextTerms...)
-	for _, addr := range q.FromAddrs {
-		parts = append(parts, "from:"+addr)
-	}
-	for _, addr := range q.ToAddrs {
-		parts = append(parts, "to:"+addr)
-	}
-	for _, addr := range q.CcAddrs {
-		parts = append(parts, "cc:"+addr)
-	}
-	for _, addr := range q.BccAddrs {
-		parts = append(parts, "bcc:"+addr)
-	}
-	for _, term := range q.SubjectTerms {
-		parts = append(parts, "subject:"+term)
-	}
-	for _, label := range q.Labels {
-		parts = append(parts, "label:"+label)
-	}
-	for _, typ := range q.MessageTypes {
-		parts = append(parts, "message_type:"+typ)
-	}
-	if q.HasAttachment != nil && *q.HasAttachment {
-		parts = append(parts, "has:attachment")
-	}
-	if q.BeforeDate != nil {
-		parts = append(parts, "before:"+q.BeforeDate.Format("2006-01-02"))
-	}
-	if q.AfterDate != nil {
-		parts = append(parts, "after:"+q.AfterDate.Format("2006-01-02"))
-	}
-	if q.LargerThan != nil {
-		parts = append(parts, fmt.Sprintf("larger:%d", *q.LargerThan))
-	}
-	if q.SmallerThan != nil {
-		parts = append(parts, fmt.Sprintf("smaller:%d", *q.SmallerThan))
-	}
-
-	var result strings.Builder
-	for i, part := range parts {
-		if i > 0 {
-			result.WriteString(" ")
-		}
-		result.WriteString(part)
-	}
-	return result.String()
+func hasExplicitEmptyAccountScope(q *search.Query) bool {
+	return q != nil && q.AccountIDs != nil && len(q.AccountIDs) == 0
 }

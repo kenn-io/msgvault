@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"net/mail"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -176,22 +177,24 @@ func (b *BackupConfig) Validate() error {
 }
 
 type Config struct {
-	Data        DataConfig        `toml:"data"`
-	Log         LogConfig         `toml:"log"`
-	OAuth       OAuthConfig       `toml:"oauth"`
-	Microsoft   MicrosoftConfig   `toml:"microsoft"`
-	Sync        SyncConfig        `toml:"sync"`
-	Chat        ChatConfig        `toml:"chat"`
-	Server      ServerConfig      `toml:"server"`
-	Analytics   AnalyticsConfig   `toml:"analytics"`
-	Remote      RemoteConfig      `toml:"remote"`
-	Vector      vector.Config     `toml:"vector"`
-	Identity    IdentityConfig    `toml:"identity"`
-	Accounts    []AccountSchedule `toml:"accounts"`
-	SynctechSMS SynctechSMSConfig `toml:"synctech_sms"`
-	GCal        []GCalSource      `toml:"gcal"`
-	Beeper      BeeperConfig      `toml:"beeper"`
-	Backup      BackupConfig      `toml:"backup"`
+	Data        DataConfig         `toml:"data"`
+	Log         LogConfig          `toml:"log"`
+	OAuth       OAuthConfig        `toml:"oauth"`
+	Microsoft   MicrosoftConfig    `toml:"microsoft"`
+	Sync        SyncConfig         `toml:"sync"`
+	Chat        ChatConfig         `toml:"chat"`
+	Server      ServerConfig       `toml:"server"`
+	Analytics   AnalyticsConfig    `toml:"analytics"`
+	Remote      RemoteConfig       `toml:"remote"`
+	Vector      vector.Config      `toml:"vector"`
+	Identity    IdentityConfig     `toml:"identity"`
+	Accounts    []AccountSchedule  `toml:"accounts"`
+	SynctechSMS SynctechSMSConfig  `toml:"synctech_sms"`
+	GCal        []GCalSource       `toml:"gcal"`
+	Beeper      BeeperConfig       `toml:"beeper"`
+	Granola     []GranolaSource    `toml:"granola"`
+	Circleback  []CirclebackSource `toml:"circleback"`
+	Backup      BackupConfig       `toml:"backup"`
 
 	// Computed paths (not from config file)
 	HomeDir    string `toml:"-"`
@@ -470,6 +473,10 @@ func Load(path, homeDir string) (*Config, error) {
 	}
 	cfg.applySynctechSMSDefaults()
 	cfg.applyGCalDefaults()
+	cfg.applyMeetingSourceDefaults()
+	if err := cfg.validateMeetingSources(); err != nil {
+		return nil, err
+	}
 
 	return cfg, nil
 }
@@ -758,6 +765,179 @@ func (c *Config) GetGCalSource(name string) *GCalSource {
 func (c *Config) ScheduledGCalSources() []GCalSource {
 	var out []GCalSource
 	for _, src := range c.GCal {
+		if src.Enabled && src.Schedule != "" {
+			out = append(out, src)
+		}
+	}
+	return out
+}
+
+// GranolaSource is one configured Granola account. Each entry is a top-level
+// [[granola]] table.
+type GranolaSource struct {
+	Identifier   string `toml:"identifier"`    // stable source label for add-/sync-granola; defaults to "default" for a single entry
+	AccountEmail string `toml:"account_email"` // primary account identity; optional only when Identifier is an email
+	APIKey       string `toml:"api_key"`       // grn_… key from the desktop app's settings (Business plan)
+	Schedule     string `toml:"schedule"`      // 5-field cron; empty = not daemon-scheduled
+	Enabled      bool   `toml:"enabled"`
+}
+
+// EffectiveAccountEmail returns the normalized primary identity configured
+// for this source. An email-shaped identifier remains a compatibility
+// fallback, while labels require an explicit account_email.
+func (s GranolaSource) EffectiveAccountEmail() (string, error) {
+	return effectiveMeetingAccountEmail("granola", s.Identifier, s.AccountEmail)
+}
+
+// CirclebackSource is one configured Circleback account. Each entry is a
+// top-level [[circleback]] table. Authentication is OAuth (add-circleback);
+// no secret lives in the config file.
+type CirclebackSource struct {
+	Identifier   string `toml:"identifier"`    // stable source label for add-/sync-circleback; defaults to "default" for a single entry
+	AccountEmail string `toml:"account_email"` // primary account identity; optional only when Identifier is an email
+	Endpoint     string `toml:"endpoint"`      // MCP endpoint override; empty = production
+	Schedule     string `toml:"schedule"`      // 5-field cron; empty = not daemon-scheduled
+	Enabled      bool   `toml:"enabled"`
+}
+
+// EffectiveAccountEmail returns the normalized primary identity configured
+// for this source. An email-shaped identifier remains a compatibility
+// fallback, while labels require an explicit account_email.
+func (s CirclebackSource) EffectiveAccountEmail() (string, error) {
+	return effectiveMeetingAccountEmail("circleback", s.Identifier, s.AccountEmail)
+}
+
+func effectiveMeetingAccountEmail(kind, identifier, configured string) (string, error) {
+	if strings.TrimSpace(configured) != "" {
+		if email, ok := normalizedMeetingAccountEmail(configured); ok {
+			return email, nil
+		}
+		return "", fmt.Errorf("[[%s]] identifier %q has invalid account_email %q; preserve the identifier and set account_email to the account's email address",
+			kind, identifier, configured)
+	}
+	if email, ok := normalizedMeetingAccountEmail(identifier); ok {
+		return email, nil
+	}
+	return "", fmt.Errorf("[[%s]] identifier %q is a source label, not an account email; preserve identifier = %q and add account_email = \"you@example.com\"",
+		kind, identifier, identifier)
+}
+
+func normalizedMeetingAccountEmail(value string) (string, bool) {
+	email := strings.ToLower(strings.TrimSpace(value))
+	if email == "" || strings.ContainsAny(email, " \t\r\n") {
+		return "", false
+	}
+	parsed, err := mail.ParseAddress(email)
+	if err != nil || parsed.Name != "" || !strings.EqualFold(parsed.Address, email) {
+		return "", false
+	}
+	return email, true
+}
+
+// applyMeetingSourceDefaults normalizes [[granola]]/[[circleback]] entries: a
+// single entry with no identifier becomes "default" so the CLI argument can
+// be omitted in the common one-account case.
+func (c *Config) applyMeetingSourceDefaults() {
+	if len(c.Granola) == 1 && c.Granola[0].Identifier == "" {
+		c.Granola[0].Identifier = "default"
+	}
+	if len(c.Circleback) == 1 && c.Circleback[0].Identifier == "" {
+		c.Circleback[0].Identifier = "default"
+	}
+}
+
+// validateMeetingSources rejects [[granola]]/[[circleback]] lists with empty
+// or duplicate identifiers — the identifier keys the source row and token
+// file, so a collision would silently merge two accounts.
+func (c *Config) validateMeetingSources() error {
+	check := func(kind string, ids []string) error {
+		seen := map[string]bool{}
+		for _, id := range ids {
+			key := strings.ToLower(id)
+			if key == "" {
+				return fmt.Errorf("[[%s]]: every entry needs an identifier when more than one is configured", kind)
+			}
+			if seen[key] {
+				return fmt.Errorf("[[%s]]: duplicate identifier %q", kind, id)
+			}
+			seen[key] = true
+		}
+		return nil
+	}
+	granolaIDs := make([]string, len(c.Granola))
+	for i, s := range c.Granola {
+		granolaIDs[i] = s.Identifier
+	}
+	if err := check("granola", granolaIDs); err != nil {
+		return err
+	}
+	for i := range c.Granola {
+		email, err := c.Granola[i].EffectiveAccountEmail()
+		if err != nil {
+			return err
+		}
+		if strings.TrimSpace(c.Granola[i].AccountEmail) != "" {
+			c.Granola[i].AccountEmail = email
+		}
+	}
+	circlebackIDs := make([]string, len(c.Circleback))
+	for i, s := range c.Circleback {
+		circlebackIDs[i] = s.Identifier
+	}
+	if err := check("circleback", circlebackIDs); err != nil {
+		return err
+	}
+	for i := range c.Circleback {
+		email, err := c.Circleback[i].EffectiveAccountEmail()
+		if err != nil {
+			return err
+		}
+		if strings.TrimSpace(c.Circleback[i].AccountEmail) != "" {
+			c.Circleback[i].AccountEmail = email
+		}
+	}
+	return nil
+}
+
+// GetGranolaSource returns the configured Granola source matching identifier
+// (case-insensitive), or nil.
+func (c *Config) GetGranolaSource(identifier string) *GranolaSource {
+	for _, src := range c.Granola {
+		if strings.EqualFold(src.Identifier, identifier) {
+			cp := src
+			return &cp
+		}
+	}
+	return nil
+}
+
+// ScheduledGranolaSources returns enabled Granola sources with a cron schedule.
+func (c *Config) ScheduledGranolaSources() []GranolaSource {
+	var out []GranolaSource
+	for _, src := range c.Granola {
+		if src.Enabled && src.Schedule != "" {
+			out = append(out, src)
+		}
+	}
+	return out
+}
+
+// GetCirclebackSource returns the configured Circleback source matching
+// identifier (case-insensitive), or nil.
+func (c *Config) GetCirclebackSource(identifier string) *CirclebackSource {
+	for _, src := range c.Circleback {
+		if strings.EqualFold(src.Identifier, identifier) {
+			cp := src
+			return &cp
+		}
+	}
+	return nil
+}
+
+// ScheduledCirclebackSources returns enabled Circleback sources with a cron schedule.
+func (c *Config) ScheduledCirclebackSources() []CirclebackSource {
+	var out []CirclebackSource
+	for _, src := range c.Circleback {
 		if src.Enabled && src.Schedule != "" {
 			out = append(out, src)
 		}

@@ -529,16 +529,21 @@ func rawRouteParameters(operationID string) []*huma.Param {
 	case "getTotalStats":
 		return []*huma.Param{
 			queryIntegerParam("source_id", "Source ID"),
+			queryIntegerArrayParam("source_ids", "Source IDs; repeat the parameter for multiple sources"),
 			queryBooleanParam("attachments_only", "Only include messages with attachments"),
 			queryBooleanParam("hide_deleted", "Exclude deleted messages"),
 			queryStringParam("search_query", "Search query", false),
+			queryBooleanParam("search_scope", "Include all message types when the search has no explicit message_type"),
 			queryStringParam("group_by", "Aggregate view type for grouping", false),
 		}
 	case "fastSearch":
-		return append([]*huma.Param{
+		params := append([]*huma.Param{
 			queryStringParam("q", "Search query", true),
 			queryStringParam("view_type", "Stats grouping view type", false),
 		}, messageFilterParams()...)
+		return append(params,
+			queryIntegerArrayParam("source_ids", "Source IDs; repeat the parameter for multiple sources"),
+		)
 	case "deepSearch":
 		return append([]*huma.Param{
 			queryStringParam("q", "Search query", true),
@@ -687,6 +692,12 @@ func queryStringParam(name, doc string, required bool) *huma.Param {
 func queryIntegerParam(name, doc string) *huma.Param {
 	p := param(name, "query", huma.TypeInteger, doc, false)
 	p.Schema.Format = "int64"
+	return p
+}
+
+func queryIntegerArrayParam(name, doc string) *huma.Param {
+	p := param(name, "query", huma.TypeArray, doc, false)
+	p.Schema.Items = &huma.Schema{Type: huma.TypeInteger, Format: "int64"}
 	return p
 }
 

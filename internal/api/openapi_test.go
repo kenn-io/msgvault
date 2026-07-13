@@ -63,6 +63,57 @@ func TestOpenAPIYAMLDeterministic(t *testing.T) {
 	assert.Equal(t, string(first), string(second), "OpenAPI YAML should be deterministic")
 }
 
+func TestOpenAPITotalStatsDocumentsSearchScope(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	doc := OpenAPIDocument()
+	op := doc.Paths["/api/v1/stats/total"].Get
+	require.NotNil(op, "getTotalStats operation")
+
+	foundSearchScope := false
+	foundSourceIDs := false
+	for _, param := range op.Parameters {
+		switch param.Name {
+		case "search_scope":
+			assert.Equal("query", param.In, "search_scope location")
+			require.NotNil(param.Schema, "search_scope schema")
+			assert.Equal("boolean", param.Schema.Type, "search_scope type")
+			foundSearchScope = true
+		case "source_ids":
+			assert.Equal("query", param.In, "source_ids location")
+			require.NotNil(param.Schema, "source_ids schema")
+			assert.Equal("array", param.Schema.Type, "source_ids type")
+			require.NotNil(param.Schema.Items, "source_ids item schema")
+			assert.Equal("integer", param.Schema.Items.Type, "source_ids item type")
+			foundSourceIDs = true
+		}
+	}
+	assert.True(foundSearchScope, "search_scope query parameter documented")
+	assert.True(foundSourceIDs, "source_ids query parameter documented")
+}
+
+func TestOpenAPIFastSearchDocumentsSourceIDs(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	doc := OpenAPIDocument()
+	op := doc.Paths["/api/v1/search/fast"].Get
+	require.NotNil(op, "fastSearch operation")
+	for _, param := range op.Parameters {
+		if param.Name != "source_ids" {
+			continue
+		}
+		assert.Equal("query", param.In)
+		require.NotNil(param.Schema)
+		assert.Equal("array", param.Schema.Type)
+		require.NotNil(param.Schema.Items)
+		assert.Equal("integer", param.Schema.Items.Type)
+		return
+	}
+	assert.Fail("source_ids query parameter is not documented for fastSearch")
+}
+
 func TestOpenAPIBinaryRoutesDocumentJSONErrors(t *testing.T) {
 	doc := OpenAPIDocument()
 	routes := map[string]struct {

@@ -4224,6 +4224,85 @@ func TestHandleTotalStats(t *testing.T) {
 	assert.Equal(int64(5000000), resp.TotalSize, "total_size")
 }
 
+func TestHandleTotalStatsSearchScope(t *testing.T) {
+	tests := []struct {
+		name            string
+		target          string
+		wantSearchScope bool
+		wantSourceIDs   []int64
+		wantEchoScope   bool
+	}{
+		{
+			name:            "search scope enabled",
+			target:          "/api/v1/stats/total?search_query=meeting&search_scope=true&source_ids=8&source_ids=7&source_ids=8",
+			wantSearchScope: true,
+			wantSourceIDs:   []int64{7, 8},
+			wantEchoScope:   true,
+		},
+		{
+			name:   "search scope omitted",
+			target: "/api/v1/stats/total?search_query=meeting",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+
+			var gotOpts query.StatsOptions
+			engine := &querytest.MockEngine{
+				GetTotalStatsFunc: func(_ context.Context, opts query.StatsOptions) (*query.TotalStats, error) {
+					gotOpts = opts
+					return &query.TotalStats{}, nil
+				},
+			}
+			srv := newTestServerWithEngine(t, engine)
+
+			req := httptest.NewRequest(http.MethodGet, tt.target, nil)
+			w := httptest.NewRecorder()
+			srv.Router().ServeHTTP(w, req)
+
+			require.Equal(http.StatusOK, w.Code, "status (body: %s)", w.Body.String())
+			assert.Equal("meeting", gotOpts.SearchQuery, "search query")
+			assert.Equal(tt.wantSearchScope, gotOpts.SearchScope, "search scope")
+			assert.Equal(tt.wantSourceIDs, gotOpts.SourceIDs, "source IDs")
+
+			var response map[string]any
+			require.NoError(json.NewDecoder(w.Body).Decode(&response), "decode response")
+			if tt.wantEchoScope {
+				assert.Equal(true, response["applied_search_scope"], "search-scope echo")
+				assert.Equal([]any{float64(7), float64(8)}, response["applied_source_ids"], "source IDs echo")
+			} else {
+				assert.NotContains(response, "applied_search_scope", "default response remains compatible")
+				assert.NotContains(response, "applied_source_ids", "default response remains compatible")
+			}
+		})
+	}
+}
+
+func TestHandleTotalStatsRejectsInvalidSearchQueryBeforeEngine(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	called := false
+	engine := &querytest.MockEngine{
+		GetTotalStatsFunc: func(context.Context, query.StatsOptions) (*query.TotalStats, error) {
+			called = true
+			return &query.TotalStats{}, nil
+		},
+	}
+	srv := newTestServerWithEngine(t, engine)
+	w := doGet(srv, "/api/v1/stats/total?search_query="+url.QueryEscape("needle before:not-a-date"))
+
+	require.Equal(http.StatusBadRequest, w.Code, "body: %s", w.Body.String())
+	var resp ErrorResponse
+	require.NoError(json.NewDecoder(w.Body).Decode(&resp))
+	assert.Equal("invalid_query", resp.Error)
+	assert.Contains(resp.Message, "before")
+	assert.False(called, "invalid stats search must not reach engine")
+}
+
 func TestHandleFastSearch(t *testing.T) {
 	assert := assert.New(t)
 	engine := &querytest.MockEngine{
@@ -4254,6 +4333,28 @@ func TestHandleFastSearch(t *testing.T) {
 
 	assert.Equal("invoice", resp.Query, "query")
 	assert.Len(resp.Messages, 1, "messages count")
+}
+
+func TestHandleFastSearchForwardsSourceIDs(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	var gotFilter query.MessageFilter
+	engine := &querytest.MockEngine{
+		SearchFastWithStatsFunc: func(_ context.Context, _ *search.Query, _ string,
+			filter query.MessageFilter, _ query.ViewType, _, _ int) (*query.SearchFastResult, error) {
+			gotFilter = filter
+			return &query.SearchFastResult{Stats: &query.TotalStats{}}, nil
+		},
+	}
+	srv := newTestServerWithEngine(t, engine)
+	w := doGet(srv, "/api/v1/search/fast?q=needle&source_ids=8&source_ids=7&source_ids=8")
+
+	require.Equal(http.StatusOK, w.Code, "body: %s", w.Body.String())
+	assert.Equal([]int64{7, 8}, gotFilter.SourceIDs)
+	var response map[string]any
+	require.NoError(json.NewDecoder(w.Body).Decode(&response))
+	assert.Equal([]any{float64(7), float64(8)}, response["applied_source_ids"])
 }
 
 func TestHandleFastSearchMissingQuery(t *testing.T) {

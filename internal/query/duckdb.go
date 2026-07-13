@@ -31,6 +31,10 @@ import (
 // instead of piling up.
 const duckDBQueryConcurrency = 2
 
+func duckDBDateParam(value time.Time) string {
+	return queryTimeUTC(value).Format(queryTimestampLayout)
+}
+
 // DuckDBEngine implements Engine using DuckDB for fast Parquet queries.
 // It uses a hybrid approach:
 //   - DuckDB with Parquet for fast aggregate queries
@@ -747,11 +751,11 @@ func (e *DuckDBEngine) buildNonTextSearchConditions(q *search.Query, keyColumns 
 	// Date filters from search query
 	if q.AfterDate != nil {
 		conditions = append(conditions, "msg.sent_at >= CAST(? AS TIMESTAMP)")
-		args = append(args, q.AfterDate.Format("2006-01-02 15:04:05"))
+		args = append(args, duckDBDateParam(*q.AfterDate))
 	}
 	if q.BeforeDate != nil {
 		conditions = append(conditions, "msg.sent_at < CAST(? AS TIMESTAMP)")
-		args = append(args, q.BeforeDate.Format("2006-01-02 15:04:05"))
+		args = append(args, duckDBDateParam(*q.BeforeDate))
 	}
 
 	// Size filters
@@ -844,17 +848,20 @@ func (e *DuckDBEngine) buildWhereClause(opts AggregateOptions, keyColumns ...str
 	var conditions []string
 	var args []any
 
+	if !hasExplicitMessageTypeSearch(opts.SearchQuery) {
+		conditions = append(conditions, emailOnlyFilterMsg)
+	}
 	conditions = append(conditions, store.LiveMessagesWhere("msg", opts.HideDeletedFromSource))
 	conditions, args = appendSourceFilter(conditions, args, "msg.", opts.SourceID, opts.SourceIDs)
 
 	if opts.After != nil {
 		conditions = append(conditions, "msg.sent_at >= CAST(? AS TIMESTAMP)")
-		args = append(args, opts.After.Format("2006-01-02 15:04:05"))
+		args = append(args, duckDBDateParam(*opts.After))
 	}
 
 	if opts.Before != nil {
 		conditions = append(conditions, "msg.sent_at < CAST(? AS TIMESTAMP)")
-		args = append(args, opts.Before.Format("2006-01-02 15:04:05"))
+		args = append(args, duckDBDateParam(*opts.Before))
 	}
 
 	if opts.WithAttachmentsOnly {
@@ -1059,12 +1066,12 @@ func (e *DuckDBEngine) buildFilterConditions(filter MessageFilter) (string, []an
 
 	if filter.After != nil {
 		conditions = append(conditions, "msg.sent_at >= CAST(? AS TIMESTAMP)")
-		args = append(args, filter.After.Format("2006-01-02 15:04:05"))
+		args = append(args, duckDBDateParam(*filter.After))
 	}
 
 	if filter.Before != nil {
 		conditions = append(conditions, "msg.sent_at < CAST(? AS TIMESTAMP)")
-		args = append(args, filter.Before.Format("2006-01-02 15:04:05"))
+		args = append(args, duckDBDateParam(*filter.Before))
 	}
 
 	if filter.WithAttachmentsOnly {
@@ -1289,6 +1296,9 @@ func (e *DuckDBEngine) SubAggregate(ctx context.Context, filter MessageFilter, g
 		filter.HideDeletedFromSource = true
 	}
 	where, args := e.buildFilterConditions(filter)
+	if strings.TrimSpace(filter.MessageType) == "" && !hasExplicitMessageTypeSearch(opts.SearchQuery) {
+		where += " AND " + emailOnlyFilterMsg
+	}
 
 	// Add opts-based conditions (source_id, date range, attachment filter)
 	if opts.SourceID != nil {
@@ -1297,11 +1307,11 @@ func (e *DuckDBEngine) SubAggregate(ctx context.Context, filter MessageFilter, g
 	}
 	if opts.After != nil {
 		where += " AND msg.sent_at >= CAST(? AS TIMESTAMP)"
-		args = append(args, opts.After.Format("2006-01-02 15:04:05"))
+		args = append(args, duckDBDateParam(*opts.After))
 	}
 	if opts.Before != nil {
 		where += " AND msg.sent_at < CAST(? AS TIMESTAMP)"
-		args = append(args, opts.Before.Format("2006-01-02 15:04:05"))
+		args = append(args, duckDBDateParam(*opts.Before))
 	}
 	if opts.WithAttachmentsOnly {
 		where += " AND msg.has_attachments = true"
@@ -1353,8 +1363,17 @@ func (e *DuckDBEngine) executeAggregateQuery(ctx context.Context, query string, 
 	return results, nil
 }
 
-// GetTotalStats returns overall statistics from Parquet.
+// GetTotalStats returns overall statistics from the engine that owns the
+// requested search semantics, falling back to Parquet analytics otherwise.
 func (e *DuckDBEngine) GetTotalStats(ctx context.Context, opts StatsOptions) (*TotalStats, error) {
+	// Deep Search delegates to the direct SQLite engine for body-aware FTS.
+	// Search-scoped stats must use that same engine when available so a body-only
+	// match cannot appear in results while disappearing from totals. Cache-only
+	// engines retain the Parquet metadata fallback below.
+	if opts.SearchScope && e.sqliteEngine != nil {
+		return e.sqliteEngine.GetTotalStats(ctx, opts)
+	}
+
 	release, err := e.acquireQuerySlot(ctx)
 	if err != nil {
 		return nil, err
@@ -1365,14 +1384,9 @@ func (e *DuckDBEngine) GetTotalStats(ctx context.Context, opts StatsOptions) (*T
 
 	var conditions []string
 	var args []any
-	hasExplicitMessageTypes := false
-	if opts.SearchQuery != "" {
-		q := search.Parse(opts.SearchQuery)
-		hasExplicitMessageTypes = len(q.MessageTypes) > 0
-	}
-
-	// Restrict to email messages only; NULL and '' handle pre-message_type data.
-	if !hasExplicitMessageTypes {
+	// Generic analytics default to email; search-result stats opt into the
+	// broader search scope. NULL and '' are legacy email rows.
+	if shouldDefaultStatsToEmail(opts) {
 		conditions = append(conditions, emailOnlyFilterMsg)
 	}
 	conditions = append(conditions, store.LiveMessagesWhere("msg", opts.HideDeletedFromSource))
@@ -1876,11 +1890,11 @@ func (e *DuckDBEngine) Search(ctx context.Context, q *search.Query, limit, offse
 	// Date range filters
 	if q.AfterDate != nil {
 		conditions = append(conditions, "m.sent_at >= CAST(? AS TIMESTAMP)")
-		args = append(args, q.AfterDate.Format("2006-01-02 15:04:05"))
+		args = append(args, duckDBDateParam(*q.AfterDate))
 	}
 	if q.BeforeDate != nil {
 		conditions = append(conditions, "m.sent_at < CAST(? AS TIMESTAMP)")
-		args = append(args, q.BeforeDate.Format("2006-01-02 15:04:05"))
+		args = append(args, duckDBDateParam(*q.BeforeDate))
 	}
 
 	// Size filters
@@ -2152,11 +2166,11 @@ func (e *DuckDBEngine) GetGmailIDsByFilter(ctx context.Context, filter MessageFi
 
 	if filter.After != nil {
 		conditions = append(conditions, "msg.sent_at >= ?")
-		args = append(args, *filter.After)
+		args = append(args, queryTimeUTC(*filter.After))
 	}
 	if filter.Before != nil {
 		conditions = append(conditions, "msg.sent_at < ?")
-		args = append(args, *filter.Before)
+		args = append(args, queryTimeUTC(*filter.Before))
 	}
 
 	// Build query — JOIN src to scope to Gmail sources authoritatively.
@@ -2836,18 +2850,15 @@ func (e *DuckDBEngine) buildSearchConditions(q *search.Query, filter MessageFilt
 			conditions = append(conditions, condition)
 			args = append(args, conditionArgs...)
 		}
-	default:
-		// Restrict to email messages only; NULL and '' handle pre-message_type data.
-		conditions = append(conditions, emailOnlyFilterMsg)
 	}
 	conditions, args = appendSourceFilter(conditions, args, "msg.", filter.SourceID, filter.SourceIDs)
 	if filter.After != nil {
 		conditions = append(conditions, "msg.sent_at >= CAST(? AS TIMESTAMP)")
-		args = append(args, filter.After.Format("2006-01-02 15:04:05"))
+		args = append(args, duckDBDateParam(*filter.After))
 	}
 	if filter.Before != nil {
 		conditions = append(conditions, "msg.sent_at < CAST(? AS TIMESTAMP)")
-		args = append(args, filter.Before.Format("2006-01-02 15:04:05"))
+		args = append(args, duckDBDateParam(*filter.Before))
 	}
 	if filter.WithAttachmentsOnly {
 		conditions = append(conditions, "msg.has_attachments = true")
@@ -2992,11 +3003,11 @@ func (e *DuckDBEngine) buildSearchConditions(q *search.Query, filter MessageFilt
 	// Date range filters
 	if q.AfterDate != nil {
 		conditions = append(conditions, "msg.sent_at >= CAST(? AS TIMESTAMP)")
-		args = append(args, q.AfterDate.Format("2006-01-02 15:04:05"))
+		args = append(args, duckDBDateParam(*q.AfterDate))
 	}
 	if q.BeforeDate != nil {
 		conditions = append(conditions, "msg.sent_at < CAST(? AS TIMESTAMP)")
-		args = append(args, q.BeforeDate.Format("2006-01-02 15:04:05"))
+		args = append(args, duckDBDateParam(*q.BeforeDate))
 	}
 
 	// Size filters

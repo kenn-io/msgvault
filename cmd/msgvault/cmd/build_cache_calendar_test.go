@@ -108,6 +108,12 @@ func TestBuildCache_ExcludesCalendarEvents(t *testing.T) {
 	require.NoError(duckdb.QueryRow(
 		`SELECT COUNT(*) FROM read_parquet(?) WHERE participant_id = ?`, recPattern, carolID).Scan(&carolRows))
 	assert.Equal(1, carolRows, "email recipient must still be exported")
+
+	var calendarConversationRows int
+	require.NoError(duckdb.QueryRow(
+		`SELECT COUNT(*) FROM read_parquet(?) WHERE conversation_type = 'calendar'`,
+		filepath.Join(analyticsDir, "conversations", "*.parquet")).Scan(&calendarConversationRows))
+	assert.Equal(0, calendarConversationRows, "calendar conversation must not leak into conversations Parquet")
 }
 
 func TestBuildCache_AllCalendarEventsWritesEmptyCacheState(t *testing.T) {

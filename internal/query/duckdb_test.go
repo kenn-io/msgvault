@@ -18,6 +18,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/search"
+	"go.kenn.io/msgvault/internal/testutil/dbtest"
 )
 
 // newParquetEngine creates a DuckDBEngine backed by the standard Parquet test data.
@@ -1253,6 +1254,213 @@ func TestDuckDBEngine_GetTotalStats_MessageTypeFilter(t *testing.T) {
 	assert.Equal(int64(2000), stats.TotalSize, "TotalSize")
 }
 
+func TestDuckDBEngine_GetTotalStats_SearchScope(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	b := NewTestDataBuilder(t)
+	b.AddSource("test@example.com")
+	b.AddMessage(MessageOpt{
+		Subject:      "ordinary email",
+		MessageType:  messageTypeEmail,
+		SizeEstimate: 100,
+	})
+	meetingID := b.AddMessage(MessageOpt{
+		Subject:      "cross-type stats needle",
+		MessageType:  "meeting_transcript",
+		SizeEstimate: 420,
+	})
+	b.AddAttachment(meetingID, 84, "transcript.txt")
+	engine := b.BuildEngine()
+	ctx := context.Background()
+
+	defaultStats, err := engine.GetTotalStats(ctx, StatsOptions{})
+	require.NoError(err, "GetTotalStats default")
+	assert.Equal(int64(1), defaultStats.MessageCount, "default analytics remain email-only")
+	assert.Equal(int64(100), defaultStats.TotalSize, "default analytics size")
+
+	defaultSearchStats, err := engine.GetTotalStats(ctx, StatsOptions{SearchQuery: "cross-type stats needle"})
+	require.NoError(err, "GetTotalStats default search scope")
+	assert.Zero(defaultSearchStats.MessageCount, "ordinary analytics search excludes meetings")
+
+	searchStats, err := engine.GetTotalStats(ctx, StatsOptions{
+		SearchQuery: "cross-type stats needle",
+		SearchScope: true,
+	})
+	require.NoError(err, "GetTotalStats search scope")
+	assert.Equal(int64(1), searchStats.MessageCount, "search-scope message count")
+	assert.Equal(int64(420), searchStats.TotalSize, "search-scope total size")
+	assert.Equal(int64(1), searchStats.AttachmentCount, "search-scope attachment count")
+	assert.Equal(int64(84), searchStats.AttachmentSize, "search-scope attachment size")
+
+	searchResult, err := engine.SearchFastWithStats(
+		ctx,
+		search.Parse("cross-type stats needle"),
+		"cross-type stats needle",
+		MessageFilter{},
+		ViewSenders,
+		100,
+		0,
+	)
+	require.NoError(err, "SearchFastWithStats")
+	require.NotNil(searchResult.Stats, "SearchFastWithStats stats")
+	assert.Equal(searchResult.TotalCount, searchStats.MessageCount, "search/stats count agreement")
+	assert.Equal(searchResult.Stats.TotalSize, searchStats.TotalSize, "search/stats size agreement")
+	assert.Equal(searchResult.Stats.AttachmentCount, searchStats.AttachmentCount, "search/stats attachment count agreement")
+	assert.Equal(searchResult.Stats.AttachmentSize, searchStats.AttachmentSize, "search/stats attachment size agreement")
+}
+
+func TestDuckDBEngine_GetTotalStats_SearchScopeUsesDeepSearchEngine(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	env := newTestEnv(t)
+	meetingID := env.AddMessage(dbtest.MessageOpts{
+		Subject:      "ordinary meeting subject",
+		MessageType:  "meeting_transcript",
+		SizeEstimate: 420,
+		SentAt:       "2024-04-01 10:00:00",
+	})
+	_, err := env.DB.Exec(
+		`INSERT INTO message_bodies (message_id, body_text) VALUES (?, ?)`,
+		meetingID,
+		"spokenonlyneedle appears only in the transcript body",
+	)
+	require.NoError(err, "insert transcript body")
+	env.EnableFTS()
+
+	b := NewTestDataBuilder(t)
+	b.AddSource("test@example.com")
+	b.AddMessage(MessageOpt{
+		Subject:      "ordinary cached meeting subject",
+		Snippet:      "ordinary cached preview",
+		MessageType:  "meeting_transcript",
+		SizeEstimate: 420,
+	})
+	b.SetEmptyAttachments()
+	analyticsDir, cleanup := b.Build()
+	t.Cleanup(cleanup)
+	engine, err := NewDuckDBEngine(analyticsDir, "", env.DB)
+	require.NoError(err, "NewDuckDBEngine")
+	t.Cleanup(func() { _ = engine.Close() })
+	ctx := context.Background()
+
+	deepResults, err := engine.Search(ctx, search.Parse("spokenonlyneedle"), 100, 0)
+	require.NoError(err, "deep Search")
+	require.Len(deepResults, 1, "body-only deep result")
+	assert.Equal(meetingID, deepResults[0].ID, "body-only meeting ID")
+
+	stats, err := engine.GetTotalStats(ctx, StatsOptions{
+		SearchQuery: "spokenonlyneedle",
+		SearchScope: true,
+	})
+	require.NoError(err, "GetTotalStats search scope")
+	assert.Equal(int64(len(deepResults)), stats.MessageCount, "deep result/stats count agreement")
+	assert.Equal(int64(420), stats.TotalSize, "body-only meeting stats size")
+}
+
+func TestDuckDBEngine_DefaultAnalyticsExcludeNonEmailMessages(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	b := NewTestDataBuilder(t)
+	b.AddSource("test@example.com")
+
+	typedSender := b.AddParticipant("typed@email.example", "email.example", "Typed Email")
+	typedRecipient := b.AddParticipant("typed-recipient@email.example", "email.example", "Typed Recipient")
+	legacySender := b.AddParticipant("legacy@legacy.example", "legacy.example", "Legacy Email")
+	legacyRecipient := b.AddParticipant("legacy-recipient@legacy.example", "legacy.example", "Legacy Recipient")
+	meetingSender := b.AddParticipant("organizer@meeting.example", "meeting.example", "Meeting Organizer")
+	meetingRecipient := b.AddParticipant("attendee@meeting.example", "meeting.example", "Meeting Attendee")
+	chatSender := b.AddParticipant("sender@chat.example", "chat.example", "Chat Sender")
+	chatRecipient := b.AddParticipant("recipient@chat.example", "chat.example", "Chat Recipient")
+
+	typedLabel := b.AddLabel("Typed Email Label")
+	legacyLabel := b.AddLabel("Legacy Email Label")
+	meetingLabel := b.AddLabel("Meeting Label")
+	chatLabel := b.AddLabel("Chat Label")
+
+	typedEmail := b.AddMessage(MessageOpt{Subject: "typed email", MessageType: "email", SizeEstimate: 100})
+	legacyEmail := b.AddMessage(MessageOpt{Subject: "legacy email", MessageType: "", SizeEstimate: 200})
+	meeting := b.AddMessage(MessageOpt{Subject: "meeting", MessageType: "meeting_transcript", SizeEstimate: 300})
+	chat := b.AddMessage(MessageOpt{Subject: "chat", MessageType: "whatsapp", SizeEstimate: 400})
+
+	b.AddFrom(typedEmail, typedSender, "Typed Email")
+	b.AddTo(typedEmail, typedRecipient, "Typed Recipient")
+	b.AddFrom(legacyEmail, legacySender, "Legacy Email")
+	b.AddTo(legacyEmail, legacyRecipient, "Legacy Recipient")
+	b.AddFrom(meeting, meetingSender, "Meeting Organizer")
+	b.AddTo(meeting, meetingRecipient, "Meeting Attendee")
+	b.AddFrom(chat, chatSender, "Chat Sender")
+	b.AddTo(chat, chatRecipient, "Chat Recipient")
+
+	b.AddMessageLabel(typedEmail, typedLabel)
+	b.AddMessageLabel(legacyEmail, legacyLabel)
+	b.AddMessageLabel(meeting, meetingLabel)
+	b.AddMessageLabel(chat, chatLabel)
+
+	engine := b.BuildEngine()
+	ctx := context.Background()
+	defaultOpts := DefaultAggregateOptions()
+
+	senders, err := engine.Aggregate(ctx, ViewSenders, defaultOpts)
+	require.NoError(err)
+	assertAggregateCounts(t, senders, map[string]int64{
+		"typed@email.example":   1,
+		"legacy@legacy.example": 1,
+	})
+
+	recipients, err := engine.Aggregate(ctx, ViewRecipients, defaultOpts)
+	require.NoError(err)
+	assertAggregateCounts(t, recipients, map[string]int64{
+		"typed-recipient@email.example":   1,
+		"legacy-recipient@legacy.example": 1,
+	})
+
+	domains, err := engine.Aggregate(ctx, ViewDomains, defaultOpts)
+	require.NoError(err)
+	assertAggregateCounts(t, domains, map[string]int64{
+		"email.example":  1,
+		"legacy.example": 1,
+	})
+
+	labels, err := engine.Aggregate(ctx, ViewLabels, defaultOpts)
+	require.NoError(err)
+	assertAggregateCounts(t, labels, map[string]int64{
+		"Typed Email Label":  1,
+		"Legacy Email Label": 1,
+	})
+
+	subaggregate, err := engine.SubAggregate(ctx, MessageFilter{}, ViewSenders, defaultOpts)
+	require.NoError(err)
+	assertAggregateCounts(t, subaggregate, map[string]int64{
+		"typed@email.example":   1,
+		"legacy@legacy.example": 1,
+	})
+	whitespaceSubaggregate, err := engine.SubAggregate(ctx, MessageFilter{MessageType: "   "}, ViewSenders, defaultOpts)
+	require.NoError(err)
+	assertAggregateCounts(t, whitespaceSubaggregate, map[string]int64{
+		"typed@email.example":   1,
+		"legacy@legacy.example": 1,
+	})
+
+	stats, err := engine.GetTotalStats(ctx, StatsOptions{})
+	require.NoError(err)
+	assert.Equal(int64(2), stats.MessageCount, "default total message count")
+	assert.Equal(int64(300), stats.TotalSize, "default total size")
+
+	meetingOpts := DefaultAggregateOptions()
+	meetingOpts.SearchQuery = "message_type:meeting_transcript"
+	meetingSenders, err := engine.Aggregate(ctx, ViewSenders, meetingOpts)
+	require.NoError(err)
+	assertAggregateCounts(t, meetingSenders, map[string]int64{"organizer@meeting.example": 1})
+	meetingSubaggregate, err := engine.SubAggregate(ctx, MessageFilter{}, ViewSenders, meetingOpts)
+	require.NoError(err)
+	assertAggregateCounts(t, meetingSubaggregate, map[string]int64{"organizer@meeting.example": 1})
+
+	meetingStats, err := engine.GetTotalStats(ctx, StatsOptions{SearchQuery: "message_type:meeting_transcript"})
+	require.NoError(err)
+	assert.Equal(int64(1), meetingStats.MessageCount, "explicit meeting total message count")
+	assert.Equal(int64(300), meetingStats.TotalSize, "explicit meeting total size")
+}
+
 func TestDuckDBEngine_SearchFastMessageTypeFilter(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -1368,6 +1576,134 @@ func TestDuckDBEngine_ListMessages_DateFilter(t *testing.T) {
 	results, err = engine.ListMessages(ctx, MessageFilter{After: &feb1, Before: &mar1})
 	require.NoError(err, "ListMessages with After+Before")
 	assert.Len(results, 2, "Feb range")
+}
+
+func TestDuckDBOffsetDateBoundsMatchSQLite(t *testing.T) {
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "offset-bounds.db")
+	var db *sql.DB
+	{
+		require := require.New(t)
+		var err error
+		db, err = sql.Open("sqlite3", dbPath)
+		require.NoError(err)
+		t.Cleanup(func() { _ = db.Close() })
+		schema, err := os.ReadFile("../store/schema.sql")
+		require.NoError(err)
+		_, err = db.Exec(string(schema))
+		require.NoError(err)
+		_, err = db.Exec(`
+		INSERT INTO sources (id, source_type, identifier) VALUES (1, 'gmail', 'offset@example.com');
+		INSERT INTO participants (id, email_address, display_name, domain)
+			VALUES (1, 'sender@offset.example', 'Offset Sender', 'offset.example');
+		INSERT INTO conversations (id, source_id, source_conversation_id, conversation_type, title)
+			VALUES (1, 1, 'offset-thread', 'email_thread', 'Offset Bounds');
+		INSERT INTO messages (
+			id, conversation_id, source_id, source_message_id, message_type,
+			sent_at, subject, snippet, size_estimate, has_attachments, attachment_count
+		) VALUES
+			(1, 1, 1, 'before-bound', 'email', '2024-01-15 14:30:00', 'before bound', '', 100, 0, 0),
+			(2, 1, 1, 'inside-bound', 'email', '2024-01-15 15:30:00', 'inside bound', '', 200, 0, 0),
+			(3, 1, 1, 'at-upper-bound', 'email', '2024-01-15 16:30:00', 'upper bound', '', 300, 0, 0);
+		INSERT INTO message_recipients (message_id, participant_id, recipient_type, display_name)
+			VALUES (1, 1, 'from', 'Offset Sender'), (2, 1, 'from', 'Offset Sender'), (3, 1, 'from', 'Offset Sender');
+	`)
+		require.NoError(err)
+	}
+
+	queryString := "after:2024-01-15T10:30:00-05:00 before:2024-01-15T11:30:00-05:00"
+	parsed := search.Parse(queryString)
+	{
+		require := require.New(t)
+		require.NoError(parsed.Err())
+		require.NotNil(parsed.AfterDate)
+		require.NotNil(parsed.BeforeDate)
+	}
+	sqliteEngine := NewSQLiteEngine(db)
+
+	builder := NewTestDataBuilder(t)
+	sourceID := builder.AddSource("offset@example.com")
+	for _, fixture := range []struct {
+		subject string
+		sentAt  time.Time
+		size    int64
+	}{
+		{subject: "before bound", sentAt: time.Date(2024, 1, 15, 14, 30, 0, 0, time.UTC), size: 100},
+		{subject: "inside bound", sentAt: time.Date(2024, 1, 15, 15, 30, 0, 0, time.UTC), size: 200},
+		{subject: "upper bound", sentAt: time.Date(2024, 1, 15, 16, 30, 0, 0, time.UTC), size: 300},
+	} {
+		builder.AddMessage(MessageOpt{
+			SourceID: sourceID, Subject: fixture.subject, SentAt: fixture.sentAt, SizeEstimate: fixture.size,
+		})
+	}
+	builder.SetEmptyAttachments()
+	parquetEngine := builder.BuildEngine()
+
+	t.Run("search fallback", func(t *testing.T) {
+		want, err := sqliteEngine.Search(ctx, parsed, 50, 0)
+		require.NoError(t, err)
+		assertSubjects(t, want, "inside bound")
+
+		duckSearch, err := NewDuckDBEngine("", dbPath, nil)
+		require.NoError(t, err)
+		defer func() { _ = duckSearch.Close() }()
+		if !duckSearch.hasSQLite() {
+			t.Skip("DuckDB sqlite_scanner extension unavailable")
+		}
+		got, err := duckSearch.Search(ctx, parsed, 50, 0)
+		require.NoError(t, err)
+		assertSubjects(t, got, "inside bound")
+	})
+
+	t.Run("fast", func(t *testing.T) {
+		want, err := sqliteEngine.SearchFast(ctx, parsed, MessageFilter{}, 50, 0)
+		require.NoError(t, err)
+		assertSubjects(t, want, "inside bound")
+		got, err := parquetEngine.SearchFast(ctx, parsed, MessageFilter{}, 50, 0)
+		require.NoError(t, err)
+		assertSubjects(t, got, "inside bound")
+	})
+
+	t.Run("domains", func(t *testing.T) {
+		want, err := sqliteEngine.SearchByDomains(ctx, []string{"offset.example"}, parsed.AfterDate, parsed.BeforeDate, 50, 0)
+		require.NoError(t, err)
+		assertSubjects(t, want, "inside bound")
+
+		delegatingEngine := &DuckDBEngine{sqliteEngine: sqliteEngine}
+		got, err := delegatingEngine.SearchByDomains(ctx, []string{"offset.example"}, parsed.AfterDate, parsed.BeforeDate, 50, 0)
+		require.NoError(t, err)
+		assertSubjects(t, got, "inside bound")
+	})
+
+	t.Run("stats", func(t *testing.T) {
+		require := require.New(t)
+		assert := assert.New(t)
+		opts := StatsOptions{SearchQuery: queryString, SearchScope: true}
+		want, err := sqliteEngine.GetTotalStats(ctx, opts)
+		require.NoError(err)
+		got, err := parquetEngine.GetTotalStats(ctx, opts)
+		require.NoError(err)
+		assert.Equal(int64(1), want.MessageCount)
+		assert.Equal(want.MessageCount, got.MessageCount)
+		assert.Equal(want.TotalSize, got.TotalSize)
+	})
+
+	t.Run("aggregate", func(t *testing.T) {
+		require := require.New(t)
+		assert := assert.New(t)
+		opts := DefaultAggregateOptions()
+		opts.After = parsed.AfterDate
+		opts.Before = parsed.BeforeDate
+		opts.TimeGranularity = TimeDay
+		want, err := sqliteEngine.Aggregate(ctx, ViewTime, opts)
+		require.NoError(err)
+		got, err := parquetEngine.Aggregate(ctx, ViewTime, opts)
+		require.NoError(err)
+		require.Len(want, 1)
+		require.Len(got, 1)
+		assert.Equal(int64(1), want[0].Count)
+		assert.Equal(want[0].Count, got[0].Count)
+	})
 }
 
 // TestDuckDBEngine_SearchFast_DateFilter verifies that after:/before: in search

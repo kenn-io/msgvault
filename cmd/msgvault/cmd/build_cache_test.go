@@ -386,6 +386,212 @@ func TestBuildCache_IncrementalExport(t *testing.T) {
 	assert.Equal(int64(7), state.LastMessageID)
 }
 
+func TestBuildCache_SnapshotUpperBoundPreventsDuplicateIncrementalRows(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	tmpDir := setupTestSQLite(t)
+	dbPath := filepath.Join(tmpDir, "test.db")
+	analyticsDir := filepath.Join(tmpDir, "analytics")
+
+	buildCacheAfterSnapshotHook = func() {
+		db, err := sql.Open("sqlite3", dbPath)
+		require.NoError(err)
+		defer func() { require.NoError(db.Close()) }()
+		_, err = db.Exec(`
+			INSERT INTO messages (id, source_id, source_message_id, conversation_id, subject, snippet, sent_at, size_estimate, has_attachments)
+			VALUES (6, 1, 'msg6', 105, 'Racing Message', 'Preview 6', '2024-03-15 10:00:00', 1200, 1);
+			INSERT INTO conversations (id, source_id, source_conversation_id, title)
+			VALUES (105, 1, 'thread105', 'Racing Thread');
+			INSERT INTO message_recipients (message_id, participant_id, recipient_type, display_name)
+			VALUES (6, 1, 'from', 'Alice Smith'), (6, 2, 'to', 'Bob Jones');
+			INSERT INTO message_labels (message_id, label_id) VALUES (6, 1);
+			INSERT INTO attachments (message_id, filename, mime_type, size)
+			VALUES (6, 'racing.txt', 'text/plain', 100);
+		`)
+		require.NoError(err)
+	}
+	t.Cleanup(func() { buildCacheAfterSnapshotHook = nil })
+
+	first, err := buildCache(dbPath, analyticsDir, false)
+	require.NoError(err)
+	assert.Equal(int64(5), first.MaxMessageID, "state watermark is the captured all-message maximum")
+	assert.Equal(int64(5), first.ExportedCount, "first build excludes rows newer than its captured snapshot")
+
+	buildCacheAfterSnapshotHook = nil
+	second, err := buildCache(dbPath, analyticsDir, false)
+	require.NoError(err)
+	assert.Equal(int64(6), second.MaxMessageID)
+	assert.Equal(int64(6), second.ExportedCount, "next incremental build exports the racing row once")
+
+	duckdb, err := sql.Open("duckdb", "")
+	require.NoError(err)
+	defer func() { _ = duckdb.Close() }()
+
+	assertUnique := func(table, idColumn string, id int64) {
+		t.Helper()
+		var rows, distinctRows int64
+		pattern := filepath.ToSlash(filepath.Join(analyticsDir, table, "*.parquet"))
+		if table == tableMessages {
+			pattern = filepath.ToSlash(filepath.Join(analyticsDir, table, "**", "*.parquet"))
+		}
+		require.NoError(duckdb.QueryRow(
+			"SELECT COUNT(*), COUNT(DISTINCT "+idColumn+") FROM read_parquet(?) WHERE "+idColumn+" = ?",
+			pattern, id,
+		).Scan(&rows, &distinctRows))
+		assert.Equal(int64(1), rows, "%s row count", table)
+		assert.Equal(int64(1), distinctRows, "%s distinct row count", table)
+	}
+	assertUnique(tableMessages, "id", 6)
+	assertUnique("message_labels", "message_id", 6)
+	assertUnique(tableAttachments, "message_id", 6)
+	assertUnique(tableConversations, "id", 105)
+
+	var recipientRows int64
+	require.NoError(duckdb.QueryRow(
+		`SELECT COUNT(*) FROM read_parquet(?) WHERE message_id = 6`,
+		filepath.ToSlash(filepath.Join(analyticsDir, "message_recipients", "*.parquet")),
+	).Scan(&recipientRows))
+	assert.Equal(int64(2), recipientRows, "recipient junctions exported once")
+}
+
+func TestBuildCache_RejectsTerminalAdditionDuringExport(t *testing.T) {
+	for _, terminalStatus := range []string{"completed", "failed"} {
+		t.Run(terminalStatus, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			tmpDir := setupTestSQLite(t)
+			dbPath := filepath.Join(tmpDir, "test.db")
+			analyticsDir := filepath.Join(tmpDir, "analytics")
+			_, err := buildCache(dbPath, analyticsDir, false)
+			require.NoError(err)
+
+			db, err := sql.Open("sqlite3", dbPath)
+			require.NoError(err)
+			_, err = db.Exec(`
+				INSERT INTO conversations (id, source_id, source_conversation_id, title)
+				VALUES (105, 1, 'thread105', 'Partial Meeting');
+				INSERT INTO messages (
+					id, source_id, source_message_id, conversation_id,
+					subject, snippet, sent_at, size_estimate, message_type
+				) VALUES (
+					6, 1, 'meeting-partial', 105,
+					'Partial Meeting', 'Parent persisted first',
+					'2026-07-12 10:00:00', 500, 'meeting_transcript'
+				);
+				CREATE TABLE sync_runs (
+					id INTEGER PRIMARY KEY,
+					source_id INTEGER,
+					started_at DATETIME,
+					completed_at DATETIME,
+					status TEXT,
+					messages_processed INTEGER,
+					messages_added INTEGER,
+					messages_updated INTEGER,
+					errors_count INTEGER
+				);
+				INSERT INTO sync_runs (
+					id, source_id, started_at, status,
+					messages_processed, messages_added, messages_updated, errors_count
+				) VALUES (1, 1, datetime('now'), 'running', 1, 0, 0, 0);
+			`)
+			require.NoError(err)
+			require.NoError(db.Close())
+
+			buildCacheBeforeStateWriteHook = func() {
+				hookDB, hookErr := sql.Open("sqlite3", dbPath)
+				require.NoError(hookErr)
+				defer func() { require.NoError(hookDB.Close()) }()
+				_, hookErr = hookDB.Exec(`
+					INSERT INTO message_recipients (message_id, participant_id, recipient_type, display_name)
+					VALUES (6, 1, 'from', 'Alice Smith'), (6, 2, 'to', 'Bob Jones');
+					INSERT INTO message_labels (message_id, label_id) VALUES (6, 1);
+					INSERT INTO attachments (message_id, filename, mime_type, size)
+					VALUES (6, 'late.txt', 'text/plain', 100);
+					UPDATE sync_runs
+					SET status = ?, completed_at = datetime('now'), messages_added = 1
+					WHERE id = 1;
+				`, terminalStatus)
+				require.NoError(hookErr)
+			}
+			t.Cleanup(func() { buildCacheBeforeStateWriteHook = nil })
+
+			_, err = buildCache(dbPath, analyticsDir, false)
+			require.Error(err)
+			assert.Contains(err.Error(), "sync counters changed during cache export")
+			buildCacheBeforeStateWriteHook = nil
+			_, statErr := os.Stat(analyticsDir)
+			assert.True(os.IsNotExist(statErr), "racing incremental output must be discarded")
+
+			_, err = buildCache(dbPath, analyticsDir, false)
+			require.NoError(err)
+			fresh := cacheNeedsBuild(dbPath, analyticsDir)
+			require.False(fresh.NeedsBuild, "retry must capture the terminal addition: %+v", fresh)
+
+			duckdb, err := sql.Open("duckdb", "")
+			require.NoError(err)
+			defer func() { _ = duckdb.Close() }()
+			var recipientRows, attachmentRows int64
+			require.NoError(duckdb.QueryRow(
+				`SELECT COUNT(*) FROM read_parquet(?) WHERE message_id = 6`,
+				filepath.ToSlash(filepath.Join(analyticsDir, "message_recipients", "*.parquet")),
+			).Scan(&recipientRows))
+			require.NoError(duckdb.QueryRow(
+				`SELECT COUNT(*) FROM read_parquet(?) WHERE message_id = 6`,
+				filepath.ToSlash(filepath.Join(analyticsDir, "attachments", "*.parquet")),
+			).Scan(&attachmentRows))
+			assert.Equal(int64(2), recipientRows, "full rebuild captures late recipients")
+			assert.Equal(int64(1), attachmentRows, "full rebuild captures late attachment")
+		})
+	}
+}
+
+func TestCacheNeedsBuild_AddOnlySyncUsesIncrementalBuild(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	tmpDir := setupTestSQLite(t)
+	dbPath := filepath.Join(tmpDir, "test.db")
+	analyticsDir := filepath.Join(tmpDir, "analytics")
+
+	_, err := buildCache(dbPath, analyticsDir, false)
+	require.NoError(err)
+
+	db, err := sql.Open("sqlite3", dbPath)
+	require.NoError(err)
+	defer func() { require.NoError(db.Close()) }()
+	_, err = db.Exec(`
+		CREATE TABLE sync_runs (
+			id INTEGER PRIMARY KEY,
+			source_id INTEGER,
+			started_at DATETIME,
+			completed_at DATETIME,
+			status TEXT,
+			messages_processed INTEGER,
+			messages_added INTEGER,
+			messages_updated INTEGER,
+			errors_count INTEGER
+		);
+		INSERT INTO conversations (id, source_id, source_conversation_id, title)
+		VALUES (105, 1, 'thread105', 'New Thread');
+		INSERT INTO messages (
+			id, source_id, source_message_id, conversation_id,
+			subject, snippet, sent_at, size_estimate, message_type
+		) VALUES (
+			6, 1, 'msg6', 105, 'New Message', 'Preview',
+			'2026-07-12 10:00:00', 500, 'email'
+		);
+		INSERT INTO sync_runs (
+			id, source_id, started_at, completed_at, status,
+			messages_processed, messages_added, messages_updated, errors_count
+		) VALUES (1, 1, datetime('now'), datetime('now'), 'completed', 1, 1, 0, 0);
+	`)
+	require.NoError(err)
+
+	got := cacheNeedsBuild(dbPath, analyticsDir)
+	assert.True(got.NeedsBuild, "new message must invalidate cache: %+v", got)
+	assert.True(got.HasNew, "new message must use the ID boundary: %+v", got)
+	assert.False(got.FullRebuild, "append-only sync must remain incremental: %+v", got)
+}
+
 // TestBuildCache_SkipsWhenNoNewMessages tests that export is skipped when no new messages.
 func TestBuildCache_SkipsWhenNoNewMessages(t *testing.T) {
 	tmpDir := setupTestSQLite(t)
@@ -1240,6 +1446,24 @@ func TestBuildCache_ZeroMessagesNoRepeatedRebuilds(t *testing.T) {
 	assert.True(result2.Skipped, "expected second build to be skipped (no new messages), but it ran")
 }
 
+func TestBuildCacheSnapshotPredicateAcceptsCSVStringIDs(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	db, err := sql.Open("duckdb", "")
+	require.NoError(err)
+	defer func() { require.NoError(db.Close()) }()
+
+	var count int
+	err = db.QueryRow(`
+		SELECT COUNT(*)
+		FROM (VALUES ('1'), ('2'), ('not-an-id')) AS m(id)
+		WHERE TRY_CAST(m.id AS BIGINT) <= 2
+	`).Scan(&count)
+
+	require.NoError(err)
+	assert.Equal(2, count)
+}
+
 // writeSyncState writes a _last_sync.json file to the analytics directory.
 func writeSyncState(t *testing.T, analyticsDir string, lastMessageID int64) {
 	t.Helper()
@@ -1523,6 +1747,157 @@ func TestCacheNeedsBuild_LabelOnlySyncRequiresFullRebuild(t *testing.T) {
 	require.Contains(got.Reason, "updated", "cacheNeedsBuild() reason")
 }
 
+func TestCacheNeedsBuild_CalendarOnlyUpdateDoesNotRebuild(t *testing.T) {
+	require := require.New(t)
+	tmpDir := setupTestSQLiteEmpty(t)
+	dbPath := filepath.Join(tmpDir, "test.db")
+	analyticsDir := filepath.Join(tmpDir, "analytics")
+
+	writeSyncState(t, analyticsDir, 0)
+	createFakeParquet(t, analyticsDir)
+
+	db, err := sql.Open("sqlite3", dbPath)
+	require.NoError(err)
+	defer func() { _ = db.Close() }()
+	_, err = db.Exec(`
+		INSERT INTO sources (id, source_type, identifier) VALUES (2, 'gcal', 'user@example.com/primary');
+		CREATE TABLE sync_runs (
+			id INTEGER PRIMARY KEY,
+			source_id INTEGER,
+			started_at DATETIME,
+			completed_at DATETIME,
+			status TEXT,
+			messages_processed INTEGER,
+			messages_added INTEGER,
+			messages_updated INTEGER,
+			errors_count INTEGER
+		);
+		INSERT INTO sync_runs (
+			id, source_id, started_at, completed_at, status,
+			messages_processed, messages_added, messages_updated, errors_count
+		) VALUES (1, 2, datetime('now'), datetime('now'), 'completed', 1, 0, 1, 0);
+	`)
+	require.NoError(err)
+
+	got := cacheNeedsBuild(dbPath, analyticsDir)
+	require.False(got.NeedsBuild, "calendar-only update must not invalidate searchable cache: %+v", got)
+}
+
+func TestCacheNeedsBuild_UpdatedSyncCompletionOrderAndFailure(t *testing.T) {
+	tests := []struct {
+		name      string
+		status    string
+		runID     int64
+		completed time.Time
+	}{
+		{
+			name:      "older run id completes after cache build",
+			status:    "completed",
+			runID:     10,
+			completed: time.Date(2026, 3, 18, 12, 1, 0, 0, time.UTC),
+		},
+		{
+			name:      "failed run persisted a successful refresh",
+			status:    "failed",
+			runID:     12,
+			completed: time.Date(2026, 3, 18, 12, 1, 0, 0, time.UTC),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require := require.New(t)
+			tmpDir := setupTestSQLiteEmpty(t)
+			dbPath := filepath.Join(tmpDir, "test.db")
+			analyticsDir := filepath.Join(tmpDir, "analytics")
+			stateTime := time.Date(2026, 3, 18, 12, 0, 0, 0, time.UTC)
+			require.NoError(os.MkdirAll(analyticsDir, 0755))
+			state := syncState{
+				LastMessageID:          0,
+				LastSyncAt:             stateTime,
+				LastCompletedSyncRunID: 11,
+				SchemaVersion:          cacheSchemaVersion,
+			}
+			data, err := json.Marshal(state)
+			require.NoError(err)
+			require.NoError(os.WriteFile(filepath.Join(analyticsDir, "_last_sync.json"), data, 0644))
+			createFakeParquet(t, analyticsDir)
+
+			db, err := sql.Open("sqlite3", dbPath)
+			require.NoError(err)
+			defer func() { _ = db.Close() }()
+			_, err = db.Exec(`
+				CREATE TABLE sync_runs (
+					id INTEGER PRIMARY KEY,
+					source_id INTEGER,
+					started_at DATETIME,
+					completed_at DATETIME,
+					status TEXT,
+					messages_processed INTEGER,
+					messages_added INTEGER,
+					messages_updated INTEGER,
+					errors_count INTEGER
+				)
+			`)
+			require.NoError(err)
+			_, err = db.Exec(`
+				INSERT INTO sync_runs (
+					id, source_id, started_at, completed_at, status,
+					messages_processed, messages_added, messages_updated, errors_count
+				) VALUES (?, 1, ?, ?, ?, 1, 0, 1, 0)
+			`, tt.runID, stateTime.Add(-time.Minute), tt.completed, tt.status)
+			require.NoError(err)
+
+			got := cacheNeedsBuild(dbPath, analyticsDir)
+			require.True(got.NeedsBuild, "updated terminal run must invalidate cache: %+v", got)
+			require.True(got.FullRebuild, "updated terminal run requires full rebuild: %+v", got)
+		})
+	}
+}
+
+func TestCacheNeedsBuild_UpdateCounterDecreaseRequiresRebuild(t *testing.T) {
+	require := require.New(t)
+	tmpDir := setupTestSQLiteEmpty(t)
+	dbPath := filepath.Join(tmpDir, "test.db")
+	analyticsDir := filepath.Join(tmpDir, "analytics")
+	require.NoError(os.MkdirAll(analyticsDir, 0755))
+	state := syncState{
+		LastSyncAt:           time.Now(),
+		SchemaVersion:        cacheSchemaVersion,
+		LastCacheUpdateCount: 2,
+	}
+	data, err := json.Marshal(state)
+	require.NoError(err)
+	require.NoError(os.WriteFile(filepath.Join(analyticsDir, "_last_sync.json"), data, 0644))
+	createFakeParquet(t, analyticsDir)
+
+	db, err := sql.Open("sqlite3", dbPath)
+	require.NoError(err)
+	defer func() { _ = db.Close() }()
+	_, err = db.Exec(`
+		CREATE TABLE sync_runs (
+			id INTEGER PRIMARY KEY,
+			source_id INTEGER,
+			started_at DATETIME,
+			completed_at DATETIME,
+			status TEXT,
+			messages_processed INTEGER,
+			messages_added INTEGER,
+			messages_updated INTEGER,
+			errors_count INTEGER
+		);
+		INSERT INTO sync_runs (
+			id, source_id, started_at, completed_at, status,
+			messages_processed, messages_added, messages_updated, errors_count
+		) VALUES (1, 1, datetime('now'), datetime('now'), 'completed', 1, 0, 1, 0);
+	`)
+	require.NoError(err)
+
+	got := cacheNeedsBuild(dbPath, analyticsDir)
+	require.True(got.NeedsBuild, "mutation watermark decrease must invalidate cache: %+v", got)
+	require.True(got.FullRebuild, "mutation watermark decrease requires full rebuild: %+v", got)
+}
+
 func TestCacheNeedsBuild_IgnoresAlreadyProcessedUpdatedSyncRun(t *testing.T) {
 	require := require.New(t)
 	tmpDir := setupTestSQLiteEmpty(t)
@@ -1536,6 +1911,7 @@ func TestCacheNeedsBuild_IgnoresAlreadyProcessedUpdatedSyncRun(t *testing.T) {
 		LastMessageID:          5,
 		LastSyncAt:             stateTime,
 		LastCompletedSyncRunID: 7,
+		LastCacheUpdateCount:   2,
 		SchemaVersion:          cacheSchemaVersion,
 	}
 	data, err := json.Marshal(state)

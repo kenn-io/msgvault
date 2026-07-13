@@ -386,6 +386,31 @@ func (s *Store) FailSync(syncID int64, errMsg string) error {
 	return err
 }
 
+// FailSyncWithCheckpoint marks a sync failed while preserving its last
+// in-memory progress counters in the same statement. Importers use this when a
+// prior checkpoint UPDATE itself failed, so the terminal row still records how
+// much work and how many item errors occurred when failure finalization remains
+// reachable.
+func (s *Store) FailSyncWithCheckpoint(syncID int64, errMsg string, cp *Checkpoint) error {
+	if cp == nil {
+		return s.FailSync(syncID, errMsg)
+	}
+	_, err := s.db.Exec(fmt.Sprintf(`
+		UPDATE sync_runs
+		SET status = 'failed',
+		    completed_at = %s,
+		    error_message = ?,
+		    cursor_before = ?,
+		    messages_processed = ?,
+		    messages_added = ?,
+		    messages_updated = ?,
+		    errors_count = ?
+		WHERE id = ?
+	`, s.dialect.Now()), errMsg, cp.PageToken, cp.MessagesProcessed,
+		cp.MessagesAdded, cp.MessagesUpdated, cp.ErrorsCount, syncID)
+	return err
+}
+
 // GetActiveSync returns the most recent running sync for a source, if any.
 func (s *Store) GetActiveSync(sourceID int64) (*SyncRun, error) {
 	row := s.db.QueryRow(`

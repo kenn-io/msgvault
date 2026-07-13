@@ -16,7 +16,7 @@ type cacheStaleness struct {
 	NeedsBuild  bool
 	HasNew      bool // new messages since last build
 	HasDeleted  bool // deletions since last build
-	HasUpdated  bool // existing messages mutated since last build
+	HasUpdated  bool // updates or additions within the cached ID boundary require repair
 	FullRebuild bool // must rewrite all shards (not incremental)
 	Reason      string
 }
@@ -31,7 +31,7 @@ func deletedSinceBuildCountSQL() string {
 		SELECT COUNT(*) FROM messages
 		WHERE deleted_from_source_at IS NOT NULL
 		  AND deleted_from_source_at >= ?
-		  AND ` + sentNonCalendarMessageWhere("")
+		  AND ` + sentCacheExportMessageWhere("")
 }
 
 // hiddenSinceBuildCountSQL counts exportable messages dedup-hidden since the
@@ -43,7 +43,7 @@ func hiddenSinceBuildCountSQL() string {
 		WHERE deleted_at IS NOT NULL
 		  AND deleted_at >= ?
 		  AND deleted_from_source_at IS NULL
-		  AND ` + sentNonCalendarMessageWhere("")
+		  AND ` + sentCacheExportMessageWhere("")
 }
 
 // cacheNeedsBuild checks if the analytics cache needs to be built or
@@ -192,24 +192,39 @@ func cacheNeedsBuild(dbPath, analyticsDir string) cacheStaleness {
 		}
 	}
 	if hasSyncRunsTable > 0 {
-		var updatedSinceBuild int64
-		err = db.DB().QueryRow(`
-			SELECT COALESCE(SUM(messages_updated), 0) FROM sync_runs
-			WHERE status = 'completed'
-			  AND completed_at IS NOT NULL
-			  AND id > ?
-		`, state.LastCompletedSyncRunID).Scan(&updatedSinceBuild)
+		counters, counterErr := readCacheSyncCounters(db.DB())
+		err = counterErr
 		if err != nil {
 			return cacheStaleness{
 				NeedsBuild: true, FullRebuild: true,
 				Reason: "cannot verify sync history",
 			}
 		}
-		if updatedSinceBuild > 0 {
+		if counters.updates != state.LastCacheUpdateCount {
 			result.HasUpdated = true
 			result.FullRebuild = true
-			reasons = append(reasons,
-				fmt.Sprintf("%d updated messages", updatedSinceBuild))
+			if updateDelta := counters.updates - state.LastCacheUpdateCount; updateDelta > 0 {
+				reasons = append(reasons,
+					fmt.Sprintf("%d updated messages", updateDelta))
+			} else {
+				reasons = append(reasons, fmt.Sprintf(
+					"cache update watermark changed from %d to %d",
+					state.LastCacheUpdateCount, counters.updates))
+			}
+		}
+		if counters.additions != state.LastCacheAdditionCount {
+			// A larger message ID gives the incremental exporter an exact lower
+			// boundary for ordinary append-only syncs. If the ID boundary did not
+			// move (or history moved backwards), the changed addition counter may
+			// describe related rows for a parent already present in Parquet, so a
+			// full rebuild is the only safe repair.
+			if counters.additions < state.LastCacheAdditionCount || maxLiveID <= state.LastMessageID {
+				result.HasUpdated = true
+				result.FullRebuild = true
+				reasons = append(reasons, fmt.Sprintf(
+					"cache addition watermark changed from %d to %d within message boundary %d",
+					state.LastCacheAdditionCount, counters.additions, state.LastMessageID))
+			}
 		}
 	}
 

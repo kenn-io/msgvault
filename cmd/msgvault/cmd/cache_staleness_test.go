@@ -1,14 +1,81 @@
 package cmd
 
 import (
+	"database/sql"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
+
+func TestCacheNeedsBuild_MeetingMutation(t *testing.T) {
+	tests := []struct {
+		name          string
+		messageType   string
+		mutationField string
+		wantStale     bool
+	}{
+		{name: "meeting source deletion", messageType: "meeting_transcript", mutationField: "deleted_from_source_at", wantStale: true},
+		{name: "meeting dedup hide", messageType: "meeting_transcript", mutationField: "deleted_at", wantStale: true},
+		{name: "calendar source deletion", messageType: "calendar_event", mutationField: "deleted_from_source_at", wantStale: false},
+		{name: "calendar dedup hide", messageType: "calendar_event", mutationField: "deleted_at", wantStale: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require := require.New(t)
+			tmp := t.TempDir()
+			dbPath := filepath.Join(tmp, "msgvault.db")
+			analyticsDir := filepath.Join(tmp, "analytics")
+
+			st, err := store.Open(dbPath)
+			require.NoError(err)
+			require.NoError(st.InitSchema())
+			src, err := st.GetOrCreateSource("test", "user@example.com")
+			require.NoError(err)
+			convID, err := st.EnsureConversationWithType(src.ID, "thread-1", "email_thread", "Thread")
+			require.NoError(err)
+			_, err = st.UpsertMessage(&store.Message{
+				ConversationID:  convID,
+				SourceID:        src.ID,
+				SourceMessageID: "email-1",
+				MessageType:     "email",
+				SentAt:          sql.NullTime{Time: time.Date(2025, 1, 1, 10, 0, 0, 0, time.UTC), Valid: true},
+			})
+			require.NoError(err)
+			mutationID, err := st.UpsertMessage(&store.Message{
+				ConversationID:  convID,
+				SourceID:        src.ID,
+				SourceMessageID: "mutated-1",
+				MessageType:     tt.messageType,
+				SentAt:          sql.NullTime{Time: time.Date(2025, 1, 2, 10, 0, 0, 0, time.UTC), Valid: true},
+			})
+			require.NoError(err)
+			require.NoError(st.Close())
+
+			_, err = buildCache(dbPath, analyticsDir, false)
+			require.NoError(err)
+
+			st, err = store.Open(dbPath)
+			require.NoError(err)
+			_, err = st.DB().Exec(
+				"UPDATE messages SET "+tt.mutationField+" = ? WHERE id = ?",
+				time.Now().UTC().Add(time.Minute).Format("2006-01-02 15:04:05"), mutationID,
+			)
+			require.NoError(err)
+			require.NoError(st.Close())
+
+			got := cacheNeedsBuild(dbPath, analyticsDir)
+			assert.Equal(t, tt.wantStale, got.NeedsBuild, "cache staleness: %+v", got)
+			assert.Equal(t, tt.wantStale, got.FullRebuild, "full rebuild: %+v", got)
+		})
+	}
+}
 
 func explainQueryPlan(t *testing.T, s *store.Store, sql string, args ...any) string {
 	t.Helper()

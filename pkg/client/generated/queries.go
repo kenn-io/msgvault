@@ -584,6 +584,9 @@ type FastSearchQuery struct {
 
 	// Direction Sort direction: asc or desc
 	Direction *string `json:"direction,omitempty"`
+
+	// SourceIds Source IDs; repeat the parameter for multiple sources
+	SourceIds []int64 `json:"source_ids,omitempty"`
 }
 
 func (f FastSearchQuery) Validate() error {
@@ -622,6 +625,9 @@ type GetTotalStatsQuery struct {
 	// SourceID Source ID
 	SourceID *int64 `json:"source_id,omitempty"`
 
+	// SourceIds Source IDs; repeat the parameter for multiple sources
+	SourceIds []int64 `json:"source_ids,omitempty"`
+
 	// AttachmentsOnly Only include messages with attachments
 	AttachmentsOnly *bool `json:"attachments_only,omitempty"`
 
@@ -630,6 +636,9 @@ type GetTotalStatsQuery struct {
 
 	// SearchQuery Search query
 	SearchQuery *string `json:"search_query,omitempty"`
+
+	// SearchScope Include all message types when the search has no explicit message_type
+	SearchScope *bool `json:"search_scope,omitempty"`
 
 	// GroupBy Aggregate view type for grouping
 	GroupBy *string `json:"group_by,omitempty"`

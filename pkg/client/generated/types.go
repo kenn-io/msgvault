@@ -1466,10 +1466,11 @@ type ScoreBreakdown struct {
 }
 
 type SearchFastResponse struct {
-	Messages   []MessageSummary    `json:"messages,omitempty" validate:"required"`
-	Query      string              `json:"query" validate:"required"`
-	Stats      *TotalStatsResponse `json:"stats,omitempty"`
-	TotalCount int64               `json:"total_count"`
+	AppliedSourceIds []int64             `json:"applied_source_ids,omitempty"`
+	Messages         []MessageSummary    `json:"messages,omitempty" validate:"required"`
+	Query            string              `json:"query" validate:"required"`
+	Stats            *TotalStatsResponse `json:"stats,omitempty"`
+	TotalCount       int64               `json:"total_count"`
 }
 
 func (s SearchFastResponse) Validate() error {
@@ -1921,14 +1922,16 @@ func (t TokenUploadRequest) Validate() error {
 }
 
 type TotalStatsResponse struct {
-	AccountCount          int64 `json:"account_count"`
-	ActiveMessages        int64 `json:"active_messages"`
-	AttachmentCount       int64 `json:"attachment_count"`
-	AttachmentSize        int64 `json:"attachment_size"`
-	LabelCount            int64 `json:"label_count"`
-	MessageCount          int64 `json:"message_count"`
-	SourceDeletedMessages int64 `json:"source_deleted_messages"`
-	TotalSize             int64 `json:"total_size"`
+	AccountCount          int64   `json:"account_count"`
+	ActiveMessages        int64   `json:"active_messages"`
+	AppliedSearchScope    *bool   `json:"applied_search_scope,omitempty"`
+	AppliedSourceIds      []int64 `json:"applied_source_ids,omitempty"`
+	AttachmentCount       int64   `json:"attachment_count"`
+	AttachmentSize        int64   `json:"attachment_size"`
+	LabelCount            int64   `json:"label_count"`
+	MessageCount          int64   `json:"message_count"`
+	SourceDeletedMessages int64   `json:"source_deleted_messages"`
+	TotalSize             int64   `json:"total_size"`
 }
 
 type UpdateRequest struct {

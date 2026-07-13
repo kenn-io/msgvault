@@ -35,12 +35,29 @@ type RecipientSet struct {
 // MessagePersistData bundles everything needed to atomically
 // persist a message and its related rows in a single transaction.
 type MessagePersistData struct {
-	Message    *Message
-	BodyText   sql.NullString
-	BodyHTML   sql.NullString
-	RawMIME    []byte
-	Recipients []RecipientSet
-	LabelIDs   []int64
+	Message                *Message
+	Conversation           *ConversationPersistData
+	Metadata               *sql.NullString
+	BodyText               sql.NullString
+	BodyHTML               sql.NullString
+	RawMIME                []byte
+	RawFormat              string
+	Recipients             []RecipientSet
+	LabelIDs               []int64
+	PreserveLabels         bool
+	ReplaceLinkAttachments bool
+	LinkAttachments        []AttachmentRef
+	FTS                    *FTSDoc
+}
+
+// ConversationPersistData optionally makes conversation identity, title, and
+// membership part of PersistMessage's transaction. When absent, PersistMessage
+// uses Message.ConversationID as before.
+type ConversationPersistData struct {
+	SourceConversationID string
+	ConversationType     string
+	Title                string
+	Participants         []ConversationParticipantRef
 }
 
 // Message represents a message in the database.
@@ -100,11 +117,15 @@ func (s *Store) MessageExistsBatch(sourceID int64, sourceMessageIDs []string) (m
 // JSONB cast on PG (?::JSONB) and a bare ? on SQLite, so a JSON string binds in
 // both backends.
 func (s *Store) SetMessageMetadata(messageID int64, metadata sql.NullString) error {
-	_, err := s.db.Exec(fmt.Sprintf(`
+	return setMessageMetadataWith(s.db, s.dialect, messageID, metadata)
+}
+
+func setMessageMetadataWith(q querier, dialect Dialect, messageID int64, metadata sql.NullString) error {
+	_, err := q.Exec(fmt.Sprintf(`
 		UPDATE messages
 		SET metadata = %s
 		WHERE id = ?
-	`, s.dialect.JSONBindExpr()), metadata, messageID)
+	`, dialect.JSONBindExpr()), metadata, messageID)
 	if err != nil {
 		return fmt.Errorf("set message metadata (id=%d): %w", messageID, err)
 	}
@@ -429,6 +450,10 @@ func (s *Store) UpsertMessageRaw(messageID int64, rawData []byte) error {
 }
 
 func upsertMessageRaw(q querier, messageID int64, rawData []byte) error {
+	return upsertMessageRawWithFormat(q, messageID, rawData, "mime")
+}
+
+func upsertMessageRawWithFormat(q querier, messageID int64, rawData []byte, format string) error {
 	// Compress with zlib
 	var compressed bytes.Buffer
 	w := zlib.NewWriter(&compressed)
@@ -441,12 +466,12 @@ func upsertMessageRaw(q querier, messageID int64, rawData []byte) error {
 
 	_, err := q.Exec(`
 		INSERT INTO message_raw (message_id, raw_data, raw_format, compression)
-		VALUES (?, ?, 'mime', 'zlib')
+		VALUES (?, ?, ?, 'zlib')
 		ON CONFLICT(message_id) DO UPDATE SET
 			raw_data = excluded.raw_data,
 			raw_format = excluded.raw_format,
 			compression = excluded.compression
-	`, messageID, compressed.Bytes())
+	`, messageID, compressed.Bytes(), format)
 	return err
 }
 
@@ -474,16 +499,47 @@ func (s *Store) GetMessageRaw(messageID int64) ([]byte, error) {
 	return compressed, nil
 }
 
-// PersistMessage atomically stores a message plus its body, raw MIME,
-// recipients, and labels in a single transaction. Returns the message ID.
+// PersistMessage atomically stores a message and its requested related
+// snapshots in one transaction. Existing email callers persist body, raw MIME,
+// recipients, and labels; non-email callers can additionally include
+// conversation state, metadata, URL-backed attachments, and FTS.
 func (s *Store) PersistMessage(data *MessagePersistData) (int64, error) {
+	if data == nil || data.Message == nil {
+		return 0, errors.New("persist message requires a message")
+	}
 	var messageID int64
 	err := s.withTx(func(tx *loggedTx) error {
-		id, err := upsertMessageWith(tx, s.dialect, data.Message)
+		message := data.Message
+		if data.Conversation != nil {
+			conversationID, err := ensureConversationWithType(
+				tx, s.dialect, data.Message.SourceID,
+				data.Conversation.SourceConversationID,
+				data.Conversation.ConversationType,
+				data.Conversation.Title,
+			)
+			if err != nil {
+				return fmt.Errorf("ensure conversation: %w", err)
+			}
+			if err := replaceConversationParticipantsTx(
+				tx, s.dialect, conversationID, data.Conversation.Participants,
+			); err != nil {
+				return fmt.Errorf("replace conversation participants: %w", err)
+			}
+			messageCopy := *data.Message
+			messageCopy.ConversationID = conversationID
+			message = &messageCopy
+		}
+
+		id, err := upsertMessageWith(tx, s.dialect, message)
 		if err != nil {
 			return fmt.Errorf("upsert message: %w", err)
 		}
 		messageID = id
+		if data.Metadata != nil {
+			if err := setMessageMetadataWith(tx, s.dialect, messageID, *data.Metadata); err != nil {
+				return fmt.Errorf("set metadata: %w", err)
+			}
+		}
 
 		if err := upsertMessageBody(
 			tx, s.dialect, s.fts5Available, messageID, data.BodyText, data.BodyHTML,
@@ -492,8 +548,12 @@ func (s *Store) PersistMessage(data *MessagePersistData) (int64, error) {
 		}
 
 		if len(data.RawMIME) > 0 {
-			if err := upsertMessageRaw(tx, messageID, data.RawMIME); err != nil {
-				return fmt.Errorf("store raw: %w", err)
+			rawFormat := data.RawFormat
+			if rawFormat == "" {
+				rawFormat = "mime"
+			}
+			if err := upsertMessageRawWithFormat(tx, messageID, data.RawMIME, rawFormat); err != nil {
+				return fmt.Errorf("upsert raw: %w", err)
 			}
 		}
 
@@ -503,10 +563,30 @@ func (s *Store) PersistMessage(data *MessagePersistData) (int64, error) {
 			}
 		}
 
-		if err := replaceMessageLabelsTx(tx, messageID, data.LabelIDs); err != nil {
-			return fmt.Errorf("store labels: %w", err)
+		if !data.PreserveLabels {
+			if err := replaceMessageLabelsTx(tx, messageID, data.LabelIDs); err != nil {
+				return fmt.Errorf("store labels: %w", err)
+			}
 		}
-
+		if data.ReplaceLinkAttachments {
+			if err := replaceMessageAttachmentsWhereTx(
+				tx, s.dialect, messageID,
+				`storage_path LIKE 'http://%' OR storage_path LIKE 'https://%'`,
+				false, data.LinkAttachments,
+			); err != nil {
+				return fmt.Errorf("replace link attachments: %w", err)
+			}
+			if err := recomputeMessageAttachmentStatsWith(tx, messageID); err != nil {
+				return fmt.Errorf("recompute attachment stats: %w", err)
+			}
+		}
+		if data.FTS != nil && s.fts5Available {
+			fts := *data.FTS
+			fts.MessageID = messageID
+			if err := s.dialect.FTSUpsert(tx, fts); err != nil {
+				return fmt.Errorf("upsert fts: %w", err)
+			}
+		}
 		return nil
 	})
 	return messageID, err
@@ -1570,9 +1650,13 @@ func (s *Store) forEachHostedContentBody(query string, sourceID int64, fn func(m
 // a non-empty title — preserves the prior behavior of not blanking out
 // stored titles when re-syncs pass an empty value.
 func (s *Store) EnsureConversationWithType(sourceID int64, sourceConversationID, conversationType, title string) (int64, error) {
-	now := s.dialect.Now()
+	return ensureConversationWithType(s.db, s.dialect, sourceID, sourceConversationID, conversationType, title)
+}
+
+func ensureConversationWithType(q querier, dialect Dialect, sourceID int64, sourceConversationID, conversationType, title string) (int64, error) {
+	now := dialect.Now()
 	var id int64
-	err := s.db.QueryRow(fmt.Sprintf(`
+	err := q.QueryRow(fmt.Sprintf(`
 		INSERT INTO conversations (source_id, source_conversation_id, conversation_type, title, created_at, updated_at)
 		VALUES (?, ?, ?, ?, %s, %s)
 		ON CONFLICT (source_id, source_conversation_id) DO UPDATE
@@ -2142,20 +2226,24 @@ type ConversationParticipantRef struct {
 // membership with a complete source snapshot.
 func (s *Store) ReplaceConversationParticipants(conversationID int64, participants []ConversationParticipantRef) error {
 	return s.withTx(func(tx *loggedTx) error {
-		if _, err := tx.Exec(`DELETE FROM conversation_participants WHERE conversation_id = ?`, conversationID); err != nil {
+		return replaceConversationParticipantsTx(tx, s.dialect, conversationID, participants)
+	})
+}
+
+func replaceConversationParticipantsTx(tx *loggedTx, dialect Dialect, conversationID int64, participants []ConversationParticipantRef) error {
+	if _, err := tx.Exec(`DELETE FROM conversation_participants WHERE conversation_id = ?`, conversationID); err != nil {
+		return err
+	}
+	for _, participant := range participants {
+		if participant.ParticipantID == 0 {
+			continue
+		}
+		if _, err := tx.Exec(dialect.InsertOrIgnore(fmt.Sprintf(`INSERT OR IGNORE INTO conversation_participants (conversation_id, participant_id, role, joined_at)
+			VALUES (?, ?, ?, %s)`, dialect.Now())), conversationID, participant.ParticipantID, participant.Role); err != nil {
 			return err
 		}
-		for _, participant := range participants {
-			if participant.ParticipantID == 0 {
-				continue
-			}
-			if _, err := tx.Exec(s.dialect.InsertOrIgnore(fmt.Sprintf(`INSERT OR IGNORE INTO conversation_participants (conversation_id, participant_id, role, joined_at)
-				VALUES (?, ?, ?, %s)`, s.dialect.Now())), conversationID, participant.ParticipantID, participant.Role); err != nil {
-				return err
-			}
-		}
-		return nil
-	})
+	}
+	return nil
 }
 
 // UpsertReaction inserts or ignores a reaction.
@@ -2194,25 +2282,7 @@ func (s *Store) ReplaceReactions(messageID int64, reactions []ReactionRef) error
 // UpsertMessageRawWithFormat stores compressed raw data with an explicit format.
 // Unlike UpsertMessageRaw (which hardcodes 'mime'), this accepts the format as a parameter.
 func (s *Store) UpsertMessageRawWithFormat(messageID int64, rawData []byte, format string) error {
-	// Compress with zlib
-	var compressed bytes.Buffer
-	w := zlib.NewWriter(&compressed)
-	if _, err := w.Write(rawData); err != nil {
-		return fmt.Errorf("compress: %w", err)
-	}
-	if err := w.Close(); err != nil {
-		return fmt.Errorf("close compressor: %w", err)
-	}
-
-	_, err := s.db.Exec(`
-		INSERT INTO message_raw (message_id, raw_data, raw_format, compression)
-		VALUES (?, ?, ?, 'zlib')
-		ON CONFLICT(message_id) DO UPDATE SET
-			raw_data = excluded.raw_data,
-			raw_format = excluded.raw_format,
-			compression = excluded.compression
-	`, messageID, compressed.Bytes(), format)
-	return err
+	return upsertMessageRawWithFormat(s.db, messageID, rawData, format)
 }
 
 // AttachmentPathsUniqueToSource returns local content and thumbnail paths for
@@ -2323,7 +2393,11 @@ func (s *Store) UpsertAttachment(messageID int64, filename, mimeType, storagePat
 // RecomputeMessageAttachmentStats refreshes the denormalized attachment flags
 // on one message from its current attachment rows.
 func (s *Store) RecomputeMessageAttachmentStats(messageID int64) error {
-	_, err := s.db.Exec(`
+	return recomputeMessageAttachmentStatsWith(s.db, messageID)
+}
+
+func recomputeMessageAttachmentStatsWith(q querier, messageID int64) error {
+	_, err := q.Exec(`
 		UPDATE messages
 		SET has_attachments = (SELECT COUNT(*) FROM attachments WHERE message_id = ?) > 0,
 		    attachment_count = (SELECT COUNT(*) FROM attachments WHERE message_id = ?)
@@ -2351,25 +2425,29 @@ type AttachmentRef struct {
 // (and, when requireHash is set, an empty ContentHash) are skipped.
 func (s *Store) replaceMessageAttachmentsWhere(messageID int64, deleteWhere string, requireHash bool, refs []AttachmentRef) error {
 	return s.withTx(func(tx *loggedTx) error {
-		if _, err := tx.Exec(`DELETE FROM attachments WHERE message_id = ? AND (`+deleteWhere+`)`, messageID); err != nil {
+		return replaceMessageAttachmentsWhereTx(tx, s.dialect, messageID, deleteWhere, requireHash, refs)
+	})
+}
+
+func replaceMessageAttachmentsWhereTx(tx *loggedTx, dialect Dialect, messageID int64, deleteWhere string, requireHash bool, refs []AttachmentRef) error {
+	if _, err := tx.Exec(`DELETE FROM attachments WHERE message_id = ? AND (`+deleteWhere+`)`, messageID); err != nil {
+		return err
+	}
+	for _, ref := range refs {
+		if ref.StoragePath == "" || (requireHash && ref.ContentHash == "") {
+			continue
+		}
+		if _, err := tx.Exec(fmt.Sprintf(`
+			INSERT INTO attachments (message_id, filename, mime_type, storage_path, content_hash, size, source_attachment_id,
+				media_type, width, height, duration_ms, created_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, %s)
+			ON CONFLICT (message_id, content_hash) WHERE content_hash IS NOT NULL AND content_hash != '' DO NOTHING
+		`, dialect.Now()), messageID, ref.Filename, ref.MimeType, ref.StoragePath, ref.ContentHash, int64(ref.Size), ref.SourceAttachmentID,
+			nullIfEmpty(ref.MediaType), nullIfZero(ref.Width), nullIfZero(ref.Height), nullIfZero(ref.DurationMS)); err != nil {
 			return err
 		}
-		for _, ref := range refs {
-			if ref.StoragePath == "" || (requireHash && ref.ContentHash == "") {
-				continue
-			}
-			if _, err := tx.Exec(fmt.Sprintf(`
-				INSERT INTO attachments (message_id, filename, mime_type, storage_path, content_hash, size, source_attachment_id,
-					media_type, width, height, duration_ms, created_at)
-				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, %s)
-				ON CONFLICT (message_id, content_hash) WHERE content_hash IS NOT NULL AND content_hash != '' DO NOTHING
-			`, s.dialect.Now()), messageID, ref.Filename, ref.MimeType, ref.StoragePath, ref.ContentHash, int64(ref.Size), ref.SourceAttachmentID,
-				nullIfEmpty(ref.MediaType), nullIfZero(ref.Width), nullIfZero(ref.Height), nullIfZero(ref.DurationMS)); err != nil {
-				return err
-			}
-		}
-		return nil
-	})
+	}
+	return nil
 }
 
 func nullIfEmpty(s string) sql.NullString {

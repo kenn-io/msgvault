@@ -97,6 +97,13 @@ func resetSearchFlags() {
 	searchCmd.Flags().VisitAll(func(f *pflag.Flag) { f.Changed = false })
 }
 
+func TestSearchCmd_HelpMentionsMeetingTranscripts(t *testing.T) {
+	assert.Contains(t, searchCmd.Long, "meeting_transcript", "operator help")
+	messageTypeFlag := searchCmd.Flags().Lookup("message-type")
+	require.NotNil(t, messageTypeFlag)
+	assert.Contains(t, messageTypeFlag.Usage, "meeting_transcript", "flag help")
+}
+
 func TestSummaryFromDisplayFallsBackForPhoneMessages(t *testing.T) {
 	tests := []struct {
 		name string

@@ -353,9 +353,36 @@ func splitOperatorToken(token string) (op, value string, ok bool) {
 // unquote removes surrounding double quotes from a string if present.
 func unquote(s string) string {
 	if len(s) >= 2 && s[0] == '"' && s[len(s)-1] == '"' {
-		return s[1 : len(s)-1]
+		return unescapeQuotedValue(s[1 : len(s)-1])
 	}
 	return s
+}
+
+func unescapeQuotedValue(s string) string {
+	var result strings.Builder
+	escaped := false
+	for _, char := range s {
+		if escaped {
+			switch char {
+			case '\\', '"':
+				result.WriteRune(char)
+			default:
+				result.WriteRune('\\')
+				result.WriteRune(char)
+			}
+			escaped = false
+			continue
+		}
+		if char == '\\' {
+			escaped = true
+			continue
+		}
+		result.WriteRune(char)
+	}
+	if escaped {
+		result.WriteRune('\\')
+	}
+	return result.String()
 }
 
 // isQuotedPhrase returns true if the token is a double-quoted phrase.
@@ -374,9 +401,16 @@ func tokenize(queryStr string) []string {
 	afterColon := false
 	// Track if this quoted section started as op:"value" (quote immediately after colon)
 	opQuoted := false
+	escaped := false
 
 	for _, char := range queryStr {
-		if (char == '"' || char == '\'') && !inQuotes {
+		if inQuotes && escaped {
+			current.WriteRune(char)
+			escaped = false
+		} else if inQuotes && char == '\\' {
+			current.WriteRune(char)
+			escaped = true
+		} else if (char == '"' || char == '\'') && !inQuotes {
 			// Start of quoted section
 			inQuotes = true
 			quoteChar = char
@@ -429,9 +463,11 @@ func tokenize(queryStr string) []string {
 	return tokens
 }
 
-// parseDate parses date strings like YYYY-MM-DD or YYYY/MM/DD.
+// parseDate parses exact RFC3339 timestamps and date-only forms.
 func parseDate(value string) *time.Time {
 	formats := []string{
+		time.RFC3339Nano,
+		time.RFC3339,
 		"2006-01-02",
 		"2006/01/02",
 		"01/02/2006",
@@ -441,7 +477,6 @@ func parseDate(value string) *time.Time {
 	value = strings.TrimSpace(value)
 	for _, format := range formats {
 		if t, err := time.Parse(format, value); err == nil {
-			t = t.UTC()
 			return &t
 		}
 	}

@@ -581,6 +581,47 @@ func TestEngineSearchByDomainsUsesGeneratedClientAdapter(t *testing.T) {
 	assert.Equal("alice@example.com", results[0].FromEmail, "FromEmail")
 }
 
+func TestEngineTimeFiltersPreserveUTCNanoseconds(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	after := time.Date(2024, 1, 15, 10, 30, 15, 123456789,
+		time.FixedZone("UTC-5", -5*60*60))
+	before := time.Date(2024, 1, 16, 18, 45, 30, 987654321,
+		time.FixedZone("UTC+2", 2*60*60))
+	wantAfter := after.UTC().Format(time.RFC3339Nano)
+	wantBefore := before.UTC().Format(time.RFC3339Nano)
+	seen := make(map[string]bool)
+
+	store := newGeneratedClientAdapterStore(t, func(w http.ResponseWriter, r *http.Request) {
+		seen[r.URL.Path] = true
+		assert.Equal(wantAfter, r.URL.Query().Get("after"), "after for %s", r.URL.Path)
+		assert.Equal(wantBefore, r.URL.Query().Get("before"), "before for %s", r.URL.Path)
+		switch r.URL.Path {
+		case "/api/v1/aggregates":
+			writeJSONResponse(t, w, map[string]any{"view_type": "senders", "rows": []map[string]any{}})
+		case "/api/v1/search/domains":
+			writeJSONResponse(t, w, map[string]any{
+				"count": 0, "has_more": false, "offset": 0, "limit": 10,
+				"messages": []map[string]any{},
+			})
+		default:
+			assert.Fail("unexpected request path", r.URL.Path)
+			http.Error(w, "unexpected path", http.StatusInternalServerError)
+		}
+	})
+	engine := NewEngineAdapter(store)
+
+	_, err := engine.Aggregate(context.Background(), query.ViewSenders, query.AggregateOptions{
+		After: &after, Before: &before,
+	})
+	require.NoError(err)
+	_, err = engine.SearchByDomains(context.Background(), []string{"example.com"}, &after, &before, 10, 0)
+	require.NoError(err)
+	assert.True(seen["/api/v1/aggregates"])
+	assert.True(seen["/api/v1/search/domains"])
+}
+
 func TestFindSimilarMessagesUsesGeneratedClientAdapter(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -737,6 +778,7 @@ func TestEngineGetTotalStatsUsesGeneratedClientAdapter(t *testing.T) {
 		assert.Equal("true", r.URL.Query().Get("attachments_only"), "attachments_only")
 		assert.Equal("true", r.URL.Query().Get("hide_deleted"), "hide_deleted")
 		assert.Equal("urgent", r.URL.Query().Get("search_query"), "search_query")
+		assert.Equal("true", r.URL.Query().Get("search_scope"), "search_scope")
 		assert.Equal("labels", r.URL.Query().Get("group_by"), "group_by")
 		writeJSONResponse(t, w, map[string]any{
 			"message_count":           5,
@@ -747,6 +789,7 @@ func TestEngineGetTotalStatsUsesGeneratedClientAdapter(t *testing.T) {
 			"attachment_size":         25,
 			"label_count":             3,
 			"account_count":           1,
+			"applied_search_scope":    true,
 		})
 	})
 
@@ -757,6 +800,7 @@ func TestEngineGetTotalStatsUsesGeneratedClientAdapter(t *testing.T) {
 		WithAttachmentsOnly:   true,
 		HideDeletedFromSource: true,
 		SearchQuery:           "urgent",
+		SearchScope:           true,
 		GroupBy:               query.ViewLabels,
 	})
 	require.NoError(err, "GetTotalStats")
@@ -766,6 +810,118 @@ func TestEngineGetTotalStatsUsesGeneratedClientAdapter(t *testing.T) {
 	assert.Equal(int64(1), stats.SourceDeletedMessageCount, "source-deleted breakdown must survive the adapter")
 	assert.Equal(int64(25), stats.AttachmentSize)
 	assert.Equal(int64(1), stats.AccountCount)
+}
+
+func TestEngineGetTotalStatsOmitsSearchScopeByDefault(t *testing.T) {
+	store := newGeneratedClientAdapterStore(t, func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/api/v1/stats/total", r.URL.Path, "path")
+		_, hasSearchScope := r.URL.Query()["search_scope"]
+		assert.False(t, hasSearchScope, "default stats must not opt into search scope")
+		writeJSONResponse(t, w, map[string]any{"message_count": 5})
+	})
+
+	engine := NewEngineAdapter(store)
+	stats, err := engine.GetTotalStats(context.Background(), query.StatsOptions{SearchQuery: "urgent"})
+	require.NoError(t, err, "GetTotalStats")
+	require.NotNil(t, stats, "stats")
+	assert.Equal(t, int64(5), stats.MessageCount)
+}
+
+func TestEngineGetTotalStatsForwardsSourceIDs(t *testing.T) {
+	store := newGeneratedClientAdapterStore(t, func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/api/v1/stats/total", r.URL.Path, "path")
+		assert.ElementsMatch(t, []string{"8", "7", "8"}, r.URL.Query()["source_ids"], "source_ids")
+		writeJSONResponse(t, w, map[string]any{
+			"message_count":        2,
+			"applied_search_scope": true,
+			"applied_source_ids":   []int64{7, 8},
+		})
+	})
+
+	engine := NewEngineAdapter(store)
+	stats, err := engine.GetTotalStats(context.Background(), query.StatsOptions{
+		SourceIDs:   []int64{8, 7, 8},
+		SearchQuery: "urgent",
+		SearchScope: true,
+	})
+	require.NoError(t, err, "GetTotalStats")
+	require.NotNil(t, stats, "stats")
+	assert.Equal(t, int64(2), stats.MessageCount)
+}
+
+func TestEngineGetTotalStatsRequiresCapabilityEchoes(t *testing.T) {
+	tests := []struct {
+		name string
+		opts query.StatsOptions
+		want string
+	}{
+		{
+			name: "search scope",
+			opts: query.StatsOptions{SearchQuery: "urgent", SearchScope: true},
+			want: "search scope",
+		},
+		{
+			name: "source IDs",
+			opts: query.StatsOptions{SourceIDs: []int64{7, 8}},
+			want: "source IDs",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+
+			store := newGeneratedClientAdapterStore(t, func(w http.ResponseWriter, _ *http.Request) {
+				writeJSONResponse(t, w, map[string]any{"message_count": 99})
+			})
+			engine := NewEngineAdapter(store)
+
+			stats, err := engine.GetTotalStats(context.Background(), tc.opts)
+			require.Error(err, "unconfirmed opt-in must fail closed")
+			assert.Nil(stats)
+			assert.Contains(err.Error(), tc.want)
+			assert.Contains(err.Error(), "upgrade")
+		})
+	}
+}
+
+func TestEngineGetTotalStatsRejectsMismatchedSourceIDEcho(t *testing.T) {
+	store := newGeneratedClientAdapterStore(t, func(w http.ResponseWriter, _ *http.Request) {
+		writeJSONResponse(t, w, map[string]any{
+			"message_count": 99, "applied_source_ids": []int64{7, 9},
+		})
+	})
+	engine := NewEngineAdapter(store)
+
+	stats, err := engine.GetTotalStats(context.Background(), query.StatsOptions{
+		SourceIDs: []int64{7, 8},
+	})
+	require.Error(t, err, "mismatched source echo must fail closed")
+	assert.Nil(t, stats)
+	assert.Contains(t, err.Error(), "source IDs")
+}
+
+func TestEngineGetTotalStatsExplicitEmptySourceIDsSkipsHTTP(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	called := false
+	store := newGeneratedClientAdapterStore(t, func(w http.ResponseWriter, _ *http.Request) {
+		called = true
+		writeJSONResponse(t, w, map[string]any{"message_count": 99})
+	})
+	engine := NewEngineAdapter(store)
+
+	stats, err := engine.GetTotalStats(context.Background(), query.StatsOptions{
+		SourceIDs:   []int64{},
+		SearchQuery: "urgent",
+		SearchScope: true,
+	})
+	require.NoError(err, "GetTotalStats")
+	require.NotNil(stats, "stats")
+	assert.Zero(stats.MessageCount, "explicit empty source scope")
+	assert.False(called, "explicit empty source scope must skip HTTP")
 }
 
 func TestEngineGetMessageCarriesAttachmentContentHash(t *testing.T) {
@@ -962,6 +1118,227 @@ func TestEngineSearchUsesGeneratedClientAdapter(t *testing.T) {
 	assert.Equal("sms", msgs[0].MessageType)
 }
 
+func TestEngineDeepSearchAndStatsUseSameQuotedQuery(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	var deepQuery string
+	var statsQuery string
+	store := newGeneratedClientAdapterStore(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/search/deep":
+			deepQuery = r.URL.Query().Get("q")
+			writeJSONResponse(t, w, map[string]any{
+				"query":    deepQuery,
+				"messages": []map[string]any{},
+				"count":    0,
+				"has_more": false,
+				"offset":   0,
+				"limit":    10,
+			})
+		case "/api/v1/stats/total":
+			statsQuery = r.URL.Query().Get("search_query")
+			writeJSONResponse(t, w, map[string]any{
+				"message_count": 0, "applied_search_scope": true,
+			})
+		default:
+			assert.Fail("unexpected request path", r.URL.Path)
+		}
+	})
+	engine := NewEngineAdapter(store)
+	q := &search.Query{
+		TextTerms: []string{"meeting notes"},
+		Labels:    []string{`Project "Review"`},
+	}
+
+	_, err := engine.Search(context.Background(), q, 10, 0)
+	require.NoError(err, "Search")
+	_, err = engine.GetTotalStats(context.Background(), query.StatsOptions{
+		SearchQuery: search.Format(q),
+		SearchScope: true,
+	})
+	require.NoError(err, "GetTotalStats")
+
+	require.NotEmpty(deepQuery, "deep query")
+	assert.Equal(statsQuery, deepQuery, "deep results and stats query serialization")
+	assert.Equal(q.TextTerms, search.Parse(deepQuery).TextTerms, "deep text terms")
+	assert.Equal(q.Labels, search.Parse(deepQuery).Labels, "deep labels")
+}
+
+func TestEngineDeepSearchExplicitEmptyScopeSkipsHTTP(t *testing.T) {
+	queries := []struct {
+		name  string
+		query *search.Query
+	}{
+		{
+			name: "message type conflict",
+			query: query.MergeFilterIntoQuery(
+				search.Parse("message_type:email needle"),
+				query.MessageFilter{MessageType: "sms"},
+			),
+		},
+		{
+			name: "empty collection",
+			query: query.MergeFilterIntoQuery(
+				search.Parse("needle"),
+				query.MessageFilter{SourceIDs: []int64{}},
+			),
+		},
+	}
+	methods := []struct {
+		name string
+		run  func(*Engine, *search.Query) ([]query.MessageSummary, error)
+	}{
+		{
+			name: "composite search",
+			run: func(engine *Engine, q *search.Query) ([]query.MessageSummary, error) {
+				return engine.Search(context.Background(), q, 10, 0)
+			},
+		},
+		{
+			name: "body search",
+			run: func(engine *Engine, q *search.Query) ([]query.MessageSummary, error) {
+				return engine.SearchMessageBodies(context.Background(), q, 10, 0)
+			},
+		},
+	}
+
+	for _, queryCase := range queries {
+		for _, method := range methods {
+			t.Run(queryCase.name+"/"+method.name, func(t *testing.T) {
+				called := false
+				store := newGeneratedClientAdapterStore(t, func(w http.ResponseWriter, r *http.Request) {
+					called = true
+					writeJSONResponse(t, w, map[string]any{
+						"query":    r.URL.Query().Get("q"),
+						"scope":    r.URL.Query().Get("scope"),
+						"messages": []map[string]any{},
+						"count":    0,
+						"has_more": false,
+						"offset":   0,
+						"limit":    10,
+					})
+				})
+				engine := NewEngineAdapter(store)
+
+				messages, err := method.run(engine, queryCase.query)
+				require.NoError(t, err)
+				assert.Empty(t, messages)
+				assert.False(t, called, "explicit empty scope must skip HTTP")
+			})
+		}
+	}
+}
+
+func TestEngineSearchMethodsRejectParsedQueryErrorsBeforeHTTP(t *testing.T) {
+	tests := []struct {
+		name string
+		run  func(*Engine, *search.Query) error
+	}{
+		{
+			name: "composite",
+			run: func(engine *Engine, q *search.Query) error {
+				_, err := engine.Search(context.Background(), q, 10, 0)
+				return err
+			},
+		},
+		{
+			name: "body",
+			run: func(engine *Engine, q *search.Query) error {
+				_, err := engine.SearchMessageBodies(context.Background(), q, 10, 0)
+				return err
+			},
+		},
+		{
+			name: "fast with stats",
+			run: func(engine *Engine, q *search.Query) error {
+				_, err := engine.SearchFastWithStats(context.Background(), q, "needle before:not-a-date",
+					query.MessageFilter{}, query.ViewSenders, 10, 0)
+				return err
+			},
+		},
+		{
+			name: "fast",
+			run: func(engine *Engine, q *search.Query) error {
+				_, err := engine.SearchFast(context.Background(), q, query.MessageFilter{}, 10, 0)
+				return err
+			},
+		},
+		{
+			name: "fast count",
+			run: func(engine *Engine, q *search.Query) error {
+				_, err := engine.SearchFastCount(context.Background(), q, query.MessageFilter{})
+				return err
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+
+			called := false
+			store := newGeneratedClientAdapterStore(t, func(w http.ResponseWriter, _ *http.Request) {
+				called = true
+				writeJSONResponse(t, w, map[string]any{
+					"query":       "needle",
+					"messages":    []map[string]any{},
+					"count":       0,
+					"has_more":    false,
+					"offset":      0,
+					"limit":       10,
+					"total_count": 0,
+					"stats":       map[string]any{"message_count": 0},
+				})
+			})
+			engine := NewEngineAdapter(store)
+			q := search.Parse("needle before:not-a-date")
+			require.Error(q.Err(), "fixture has a parsed restrictive-operator error")
+
+			err := tc.run(engine, q)
+			require.Error(err)
+			assert.Contains(err.Error(), "invalid search query")
+			assert.Contains(err.Error(), "before")
+			assert.False(called, "invalid parsed query must skip HTTP")
+		})
+	}
+}
+
+func TestEngineSearchPreservesExactTimeBounds(t *testing.T) {
+	after := time.Date(2024, 2, 1, 10, 30, 15, 123456789,
+		time.FixedZone("UTC-5", -5*60*60))
+	before := time.Date(2024, 3, 1, 0, 0, 0, 0,
+		time.FixedZone("UTC+2", 2*60*60))
+	store := newGeneratedClientAdapterStore(t, func(w http.ResponseWriter, r *http.Request) {
+		got := search.Parse(r.URL.Query().Get("q"))
+		if !assert.NoError(t, got.Err()) ||
+			!assert.NotNil(t, got.AfterDate) ||
+			!assert.NotNil(t, got.BeforeDate) {
+			http.Error(w, "invalid exact-time query", http.StatusBadRequest)
+			return
+		}
+		assert.True(t, after.Equal(*got.AfterDate), "after instant")
+		assert.True(t, before.Equal(*got.BeforeDate), "before instant")
+		_, wantAfterOffset := after.Zone()
+		_, gotAfterOffset := got.AfterDate.Zone()
+		_, wantBeforeOffset := before.Zone()
+		_, gotBeforeOffset := got.BeforeDate.Zone()
+		assert.Equal(t, wantAfterOffset, gotAfterOffset, "after timezone offset")
+		assert.Equal(t, wantBeforeOffset, gotBeforeOffset, "before timezone offset")
+		writeJSONResponse(t, w, map[string]any{
+			"query": r.URL.Query().Get("q"), "messages": []map[string]any{},
+			"count": 0, "has_more": false, "offset": 0, "limit": 10,
+		})
+	})
+	engine := NewEngineAdapter(store)
+
+	_, err := engine.Search(context.Background(), &search.Query{
+		TextTerms: []string{"needle"}, AfterDate: &after, BeforeDate: &before,
+	}, 10, 0)
+	require.NoError(t, err)
+}
+
 func TestEngineSearchMessageBodiesForwardsAndRequiresScopeEcho(t *testing.T) {
 	assert := assert.New(t)
 	store := newGeneratedClientAdapterStore(t, func(w http.ResponseWriter, r *http.Request) {
@@ -1144,6 +1521,153 @@ func TestEngineSearchFastWithStatsUsesGeneratedClientAdapter(t *testing.T) {
 	require.NotNil(result.Stats, "stats")
 	assert.Equal(int64(2048), result.Stats.TotalSize)
 	assert.Equal(int64(512), result.Stats.AttachmentSize)
+}
+
+func TestEngineSearchFastWithStatsForwardsSourceIDs(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	store := newGeneratedClientAdapterStore(t, func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal([]string{"7", "8"}, r.URL.Query()["source_ids"])
+		writeJSONResponse(t, w, map[string]any{
+			"query": "needle",
+			"messages": []map[string]any{
+				{"id": 71, "sent_at": "2024-01-15T10:30:00Z", "labels": []string{}, "size_bytes": 1},
+				{"id": 82, "sent_at": "2024-01-16T10:30:00Z", "labels": []string{}, "size_bytes": 1},
+			},
+			"total_count":        2,
+			"applied_source_ids": []int64{7, 8},
+			"stats":              map[string]any{"message_count": 2, "account_count": 2},
+		})
+	})
+	engine := NewEngineAdapter(store)
+
+	result, err := engine.SearchFastWithStats(context.Background(), search.Parse("needle"), "needle",
+		query.MessageFilter{SourceIDs: []int64{7, 8}}, query.ViewSenders, 10, 0)
+	require.NoError(err)
+	require.Len(result.Messages, 2)
+	assert.ElementsMatch([]int64{71, 82}, []int64{result.Messages[0].ID, result.Messages[1].ID})
+	assert.Equal(int64(2), result.TotalCount)
+	require.NotNil(result.Stats)
+	assert.Equal(int64(2), result.Stats.MessageCount)
+	assert.Equal(int64(2), result.Stats.AccountCount)
+}
+
+func TestEngineSearchFastWithStatsRequiresSourceIDEcho(t *testing.T) {
+	tests := []struct {
+		name string
+		echo any
+	}{
+		{name: "missing"},
+		{name: "mismatch", echo: []int64{7, 9}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+
+			store := newGeneratedClientAdapterStore(t, func(w http.ResponseWriter, _ *http.Request) {
+				response := map[string]any{
+					"query": "needle", "messages": []map[string]any{}, "total_count": 0,
+					"stats": map[string]any{"message_count": 0},
+				}
+				if tc.echo != nil {
+					response["applied_source_ids"] = tc.echo
+				}
+				writeJSONResponse(t, w, response)
+			})
+			engine := NewEngineAdapter(store)
+
+			result, err := engine.SearchFastWithStats(context.Background(), search.Parse("needle"), "needle",
+				query.MessageFilter{SourceIDs: []int64{7, 8}}, query.ViewSenders, 10, 0)
+			require.Error(err, "unconfirmed fast source scope must fail closed")
+			assert.Nil(result)
+			assert.Contains(err.Error(), "source IDs")
+			assert.Contains(err.Error(), "upgrade")
+		})
+	}
+}
+
+func TestEngineFastSearchExplicitEmptySourceIDsSkipsHTTP(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	called := false
+	store := newGeneratedClientAdapterStore(t, func(w http.ResponseWriter, _ *http.Request) {
+		called = true
+		writeJSONResponse(t, w, map[string]any{"total_count": 99})
+	})
+	engine := NewEngineAdapter(store)
+	filter := query.MessageFilter{SourceIDs: []int64{}}
+	q := search.Parse("needle")
+
+	messages, err := engine.SearchFast(context.Background(), q, filter, 10, 0)
+	require.NoError(err)
+	assert.Empty(messages)
+	count, err := engine.SearchFastCount(context.Background(), q, filter)
+	require.NoError(err)
+	assert.Zero(count)
+	result, err := engine.SearchFastWithStats(context.Background(), q, "needle", filter, query.ViewSenders, 10, 0)
+	require.NoError(err)
+	require.NotNil(result.Stats)
+	assert.Zero(result.TotalCount)
+	assert.Zero(result.Stats.MessageCount)
+	assert.False(called, "explicit empty source scope must skip HTTP")
+}
+
+func TestEngineSearchFastWithStatsUsesCanonicalParsedQuery(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	q := &search.Query{
+		TextTerms: []string{"meeting notes"},
+		Labels:    []string{`Project "Review"`},
+	}
+	wantQuery := search.Format(q)
+	store := newGeneratedClientAdapterStore(t, func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal("/api/v1/search/fast", r.URL.Path, "path")
+		gotQuery := r.URL.Query().Get("q")
+		assert.Equal(wantQuery, gotQuery, "parsed query is authoritative")
+		parsed := search.Parse(gotQuery)
+		assert.Equal(q.TextTerms, parsed.TextTerms, "text terms")
+		assert.Equal(q.Labels, parsed.Labels, "labels")
+		writeJSONResponse(t, w, map[string]any{
+			"query":       gotQuery,
+			"total_count": 1,
+			"stats": map[string]any{
+				"message_count": 1,
+				"total_size":    2048,
+			},
+			"messages": []map[string]any{{
+				"id":         84,
+				"subject":    "Project Review meeting notes",
+				"from":       "alice@example.com",
+				"from_email": "alice@example.com",
+				"sent_at":    "2024-01-15T10:30:00Z",
+				"snippet":    "matching result",
+				"labels":     []string{`Project "Review"`},
+				"size_bytes": 2048,
+			}},
+		})
+	})
+	engine := NewEngineAdapter(store)
+
+	result, err := engine.SearchFastWithStats(
+		context.Background(),
+		q,
+		`lossy query label:Wrong`,
+		query.MessageFilter{},
+		query.ViewSenders,
+		10,
+		0,
+	)
+	require.NoError(err, "SearchFastWithStats")
+	require.Len(result.Messages, 1, "messages")
+	assert.Equal(int64(84), result.Messages[0].ID)
+	assert.Equal(int64(1), result.TotalCount)
+	require.NotNil(result.Stats, "stats")
+	assert.Equal(int64(1), result.Stats.MessageCount)
+	assert.Equal(int64(2048), result.Stats.TotalSize)
 }
 
 func TestEngineSearchFastWithStatsMergesFilterMessageTypeIntoQuery(t *testing.T) {

@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -1801,22 +1802,25 @@ type AggregateRowJSON struct {
 // SourceDeletedMessages break that total into its two populations so a client
 // can label it rather than guess which semantic the number carries.
 type TotalStatsResponse struct {
-	MessageCount          int64 `json:"message_count"`
-	ActiveMessages        int64 `json:"active_messages"`
-	SourceDeletedMessages int64 `json:"source_deleted_messages"`
-	TotalSize             int64 `json:"total_size"`
-	AttachmentCount       int64 `json:"attachment_count"`
-	AttachmentSize        int64 `json:"attachment_size"`
-	LabelCount            int64 `json:"label_count"`
-	AccountCount          int64 `json:"account_count"`
+	MessageCount          int64   `json:"message_count"`
+	ActiveMessages        int64   `json:"active_messages"`
+	SourceDeletedMessages int64   `json:"source_deleted_messages"`
+	TotalSize             int64   `json:"total_size"`
+	AttachmentCount       int64   `json:"attachment_count"`
+	AttachmentSize        int64   `json:"attachment_size"`
+	LabelCount            int64   `json:"label_count"`
+	AccountCount          int64   `json:"account_count"`
+	AppliedSearchScope    *bool   `json:"applied_search_scope,omitempty"`
+	AppliedSourceIDs      []int64 `json:"applied_source_ids,omitempty"`
 }
 
 // SearchFastResponse represents fast search results with stats.
 type SearchFastResponse struct {
-	Query      string              `json:"query"`
-	Messages   []MessageSummary    `json:"messages"`
-	TotalCount int64               `json:"total_count"`
-	Stats      *TotalStatsResponse `json:"stats,omitempty"`
+	Query            string              `json:"query"`
+	Messages         []MessageSummary    `json:"messages"`
+	TotalCount       int64               `json:"total_count"`
+	Stats            *TotalStatsResponse `json:"stats,omitempty"`
+	AppliedSourceIDs []int64             `json:"applied_source_ids,omitempty"`
 }
 
 type TextConversationRow struct {
@@ -2911,14 +2915,37 @@ func (s *Server) handleTotalStats(w http.ResponseWriter, r *http.Request) {
 	} else if ok {
 		opts.SourceID = &id
 	}
-	if r.URL.Query().Get("attachments_only") == "true" {
-		opts.WithAttachmentsOnly = true
+	if ids, ok, err := queryInt64s(r, "source_ids"); err != nil {
+		s.rejectBadParam(w, err)
+		return
+	} else if ok {
+		opts.SourceIDs = normalizeSourceIDs(ids)
 	}
-	if r.URL.Query().Get("hide_deleted") == "true" {
-		opts.HideDeletedFromSource = true
+	if enabled, ok, err := queryBool(r, "attachments_only"); err != nil {
+		s.rejectBadParam(w, err)
+		return
+	} else if ok {
+		opts.WithAttachmentsOnly = enabled
+	}
+	if enabled, ok, err := queryBool(r, "hide_deleted"); err != nil {
+		s.rejectBadParam(w, err)
+		return
+	} else if ok {
+		opts.HideDeletedFromSource = enabled
 	}
 	if v := r.URL.Query().Get("search_query"); v != "" {
+		q := search.Parse(v)
+		if err := q.Err(); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_query", err.Error())
+			return
+		}
 		opts.SearchQuery = v
+	}
+	if enabled, ok, err := queryBool(r, "search_scope"); err != nil {
+		s.rejectBadParam(w, err)
+		return
+	} else if ok {
+		opts.SearchScope = enabled
 	}
 	if v := r.URL.Query().Get("group_by"); v != "" {
 		viewType, ok := parseViewType(v)
@@ -2939,7 +2966,25 @@ func (s *Server) handleTotalStats(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, toTotalStatsResponse(stats))
+	response := toTotalStatsResponse(stats)
+	if response != nil {
+		if opts.SearchScope {
+			response.AppliedSearchScope = &opts.SearchScope
+		}
+		if opts.SourceIDs != nil {
+			response.AppliedSourceIDs = append([]int64(nil), opts.SourceIDs...)
+		}
+	}
+	writeJSON(w, http.StatusOK, response)
+}
+
+func normalizeSourceIDs(ids []int64) []int64 {
+	if ids == nil {
+		return nil
+	}
+	normalized := append([]int64(nil), ids...)
+	slices.Sort(normalized)
+	return slices.Compact(normalized)
 }
 
 // handleFastSearch performs fast metadata search (subject, sender, recipient).
@@ -2960,6 +3005,12 @@ func (s *Server) handleFastSearch(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		s.rejectBadParam(w, err)
 		return
+	}
+	if ids, ok, err := queryInt64s(r, "source_ids"); err != nil {
+		s.rejectBadParam(w, err)
+		return
+	} else if ok {
+		filter.SourceIDs = normalizeSourceIDs(ids)
 	}
 	q := search.Parse(queryStr)
 	if err := q.Err(); err != nil {
@@ -3019,10 +3070,11 @@ func (s *Server) handleFastSearch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, SearchFastResponse{
-		Query:      queryStr,
-		Messages:   summaries,
-		TotalCount: result.TotalCount,
-		Stats:      toTotalStatsResponse(result.Stats),
+		Query:            queryStr,
+		Messages:         summaries,
+		TotalCount:       result.TotalCount,
+		Stats:            toTotalStatsResponse(result.Stats),
+		AppliedSourceIDs: append([]int64(nil), filter.SourceIDs...),
 	})
 }
 

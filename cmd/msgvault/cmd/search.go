@@ -48,7 +48,7 @@ Supported operators:
   newer_than:  Relative date
   larger:      Size filter (5M, 100K)
   smaller:     Size filter
-  message_type: Message type filter (sms, mms, whatsapp, teams, email)
+  message_type: Message type filter (sms, mms, whatsapp, teams, email, meeting_transcript)
 
 Bare words and "quoted phrases" perform full-text search.
 
@@ -284,5 +284,5 @@ func init() {
 	searchCmd.Flags().StringVar(&searchMode, "mode", "fts", "Search mode: fts|vector|hybrid")
 	searchCmd.Flags().BoolVar(&searchExplain, "explain", false, "Include per-signal scores in output (hybrid/vector modes)")
 	searchCmd.Flags().StringSliceVar(&searchMessageTypes, "message-type", nil,
-		"Limit results to message type(s), e.g. email, sms, calendar_event")
+		"Limit results to message type(s), e.g. email, sms, calendar_event, meeting_transcript")
 }

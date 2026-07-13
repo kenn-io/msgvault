@@ -62,7 +62,7 @@ func sqliteDirection(d SortDirection) string {
 
 // buildSQLiteTextFilterConditions builds WHERE conditions from a TextFilter.
 // All conditions use the m. prefix for the messages table.
-func buildSQLiteTextFilterConditions(filter TextFilter) (string, []any) {
+func buildSQLiteTextFilterConditions(d Dialect, filter TextFilter) (string, []any) {
 	conditions := []string{textMsgTypeFilter()}
 	var args []any
 
@@ -141,11 +141,11 @@ func buildSQLiteTextFilterConditions(filter TextFilter) (string, []any) {
 	}
 	if filter.After != nil {
 		conditions = append(conditions, "m.sent_at >= ?")
-		args = append(args, filter.After.Format("2006-01-02 15:04:05"))
+		args = append(args, d.DateParam(*filter.After))
 	}
 	if filter.Before != nil {
 		conditions = append(conditions, "m.sent_at < ?")
-		args = append(args, filter.Before.Format("2006-01-02 15:04:05"))
+		args = append(args, d.DateParam(*filter.Before))
 	}
 
 	return strings.Join(conditions, " AND "), args
@@ -155,7 +155,7 @@ func buildSQLiteTextFilterConditions(filter TextFilter) (string, []any) {
 func (e *SQLiteEngine) ListConversations(
 	ctx context.Context, filter TextFilter,
 ) ([]ConversationRow, error) {
-	where, args := buildSQLiteTextFilterConditions(filter)
+	where, args := buildSQLiteTextFilterConditions(e.dialect, filter)
 
 	// Sort clause.
 	var orderBy string
@@ -327,11 +327,11 @@ func (e *SQLiteEngine) TextAggregate(
 	}
 	if opts.After != nil {
 		conditions = append(conditions, "m.sent_at >= ?")
-		args = append(args, opts.After.Format("2006-01-02 15:04:05"))
+		args = append(args, e.dialect.DateParam(*opts.After))
 	}
 	if opts.Before != nil {
 		conditions = append(conditions, "m.sent_at < ?")
-		args = append(args, opts.Before.Format("2006-01-02 15:04:05"))
+		args = append(args, e.dialect.DateParam(*opts.Before))
 	}
 	if opts.SearchQuery != "" {
 		likeTerm := "%" + escapeSQLiteLike(opts.SearchQuery) + "%"
@@ -367,7 +367,7 @@ func (e *SQLiteEngine) TextAggregate(
 func (e *SQLiteEngine) ListConversationMessages(
 	ctx context.Context, convID int64, filter TextFilter,
 ) ([]MessageSummary, error) {
-	where, args := buildSQLiteTextFilterConditions(filter)
+	where, args := buildSQLiteTextFilterConditions(e.dialect, filter)
 	where += " AND m.conversation_id = ?"
 	args = append(args, convID)
 

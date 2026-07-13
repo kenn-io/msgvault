@@ -60,6 +60,10 @@ func TestInvalidQueryParamsReturn400(t *testing.T) {
 		{"aggregate source_id not numeric", "/api/v1/aggregates?view_type=senders&source_id=abc", "invalid_source_id", "source_id"},
 		{"stats group_by bogus", "/api/v1/stats/total?group_by=bogus", "invalid_group_by", "group_by"},
 		{"stats source_id not numeric", "/api/v1/stats/total?source_id=abc", "invalid_source_id", "source_id"},
+		{"stats source_ids not numeric", "/api/v1/stats/total?source_ids=1&source_ids=abc", "invalid_source_ids", "source_ids"},
+		{"stats attachments_only not boolean", "/api/v1/stats/total?attachments_only=perhaps", "invalid_attachments_only", "attachments_only"},
+		{"stats hide_deleted not boolean", "/api/v1/stats/total?hide_deleted=perhaps", "invalid_hide_deleted", "hide_deleted"},
+		{"stats search_scope not boolean", "/api/v1/stats/total?search_scope=perhaps", "invalid_search_scope", "search_scope"},
 		{"filter conversation_id not numeric", "/api/v1/messages/filter?conversation_id=abc", "invalid_conversation_id", "conversation_id"},
 		{"filter sort bogus", "/api/v1/messages/filter?sort=bogus", "invalid_sort", "sort"},
 		{"filter direction bogus", "/api/v1/messages/filter?direction=sideways", "invalid_direction", "direction"},
@@ -87,7 +91,7 @@ func TestValidQueryParamsAccepted(t *testing.T) {
 	targets := []string{
 		"/api/v1/aggregates?view_type=senders&after=2024-01-01&before=2024-02-01&sort=count&direction=asc&limit=5&source_id=1",
 		"/api/v1/aggregates?view_type=time&time_granularity=day",
-		"/api/v1/stats/total?group_by=domains&source_id=1&hide_deleted=true",
+		"/api/v1/stats/total?group_by=domains&source_ids=1&source_ids=2&hide_deleted=true",
 		"/api/v1/messages/filter?conversation_id=5&sort=date&direction=desc&empty_targets=labels",
 		"/api/v1/messages?page=2&page_size=10",
 	}

@@ -1,13 +1,16 @@
 package tui
 
 import (
+	"context"
 	"errors"
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/query"
+	"go.kenn.io/msgvault/internal/search"
 )
 
 // =============================================================================
@@ -57,6 +60,170 @@ func TestNew_OverridesLimits(t *testing.T) {
 
 	assert.Equal(t, 100, model.aggregateLimit)
 	assert.Equal(t, 50, model.threadMessageLimit)
+}
+
+func TestDeepSearchStatsOptions_EnableSearchScope(t *testing.T) {
+	t.Run("deep search stats use merged representable scope", func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
+		engine := newMockEngine(MockConfig{})
+		tracker := &statsTracker{result: &query.TotalStats{}}
+		tracker.install(engine)
+		model := New(engine, Options{DataDir: "/tmp/test", Version: "test"})
+		model.searchMode = searchModeDeep
+		after := time.Date(2024, 2, 1, 0, 0, 0, 0, time.UTC)
+		before := time.Date(2024, 3, 1, 0, 0, 0, 0, time.UTC)
+		model.searchFilter = query.MessageFilter{
+			Sender:                "alice@example.com",
+			Recipient:             "bob@example.com",
+			Domain:                "example.com",
+			Label:                 "Project Review",
+			MessageType:           "meeting_transcript",
+			SourceIDs:             []int64{7, 8},
+			After:                 &after,
+			Before:                &before,
+			WithAttachmentsOnly:   true,
+			HideDeletedFromSource: true,
+		}
+
+		cmd := model.loadSearch("cross-type stats needle")
+		require.NotNil(cmd, "loadSearch command")
+		msg := cmd()
+		require.IsType(searchResultsMsg{}, msg)
+		require.Equal(1, tracker.callCount, "deep search stats call count")
+		assert.True(tracker.lastOpts.SearchScope, "deep search stats use search scope")
+		assert.Nil(tracker.lastOpts.SourceID, "multi-source scope does not collapse to one source")
+		assert.Equal([]int64{7, 8}, tracker.lastOpts.SourceIDs, "merged source scope")
+		assert.True(tracker.lastOpts.WithAttachmentsOnly, "merged attachment scope")
+		assert.True(tracker.lastOpts.HideDeletedFromSource, "merged deletion scope")
+
+		formatted := search.Parse(tracker.lastOpts.SearchQuery)
+		assert.Equal([]string{"cross-type", "stats", "needle"}, formatted.TextTerms)
+		assert.ElementsMatch([]string{"alice@example.com", "@example.com"}, formatted.FromAddrs)
+		assert.Equal([]string{"bob@example.com"}, formatted.ToAddrs)
+		assert.Equal([]string{"Project Review"}, formatted.Labels)
+		assert.Equal([]string{"meeting_transcript"}, formatted.MessageTypes)
+		require.NotNil(formatted.AfterDate, "merged after date")
+		require.NotNil(formatted.BeforeDate, "merged before date")
+		assert.Equal(after, *formatted.AfterDate)
+		assert.Equal(before, *formatted.BeforeDate)
+	})
+
+	t.Run("conflicting message types short-circuit stats", func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
+		engine := newMockEngine(MockConfig{})
+		tracker := &statsTracker{result: &query.TotalStats{MessageCount: 99}}
+		tracker.install(engine)
+		model := New(engine, Options{DataDir: "/tmp/test", Version: "test"})
+		model.searchMode = searchModeDeep
+		model.searchFilter = query.MessageFilter{MessageType: "sms"}
+
+		cmd := model.loadSearch("message_type:email conflictneedle")
+		require.NotNil(cmd, "loadSearch command")
+		msg := cmd()
+		result, ok := msg.(searchResultsMsg)
+		require.True(ok, "expected searchResultsMsg, got %T", msg)
+		assert.Zero(tracker.callCount, "conflicting scope skips stats query")
+		require.NotNil(result.stats, "conflicting scope zero stats")
+		assert.Zero(result.stats.MessageCount, "conflicting scope stats count")
+	})
+
+	t.Run("aggregate analytics stats", func(t *testing.T) {
+		require := require.New(t)
+		engine := newMockEngine(MockConfig{})
+		tracker := &statsTracker{result: &query.TotalStats{}}
+		tracker.install(engine)
+		model := New(engine, Options{DataDir: "/tmp/test", Version: "test"})
+		model.searchQuery = "cross-type stats needle"
+
+		cmd := model.loadData()
+		require.NotNil(cmd, "loadData command")
+		msg := cmd()
+		require.IsType(dataLoadedMsg{}, msg)
+		require.Equal(1, tracker.callCount, "aggregate analytics stats call count")
+		assert.False(t, tracker.lastOpts.SearchScope, "aggregate analytics retain default scope")
+	})
+
+	t.Run("ordinary total stats", func(t *testing.T) {
+		require := require.New(t)
+		engine := newMockEngine(MockConfig{})
+		tracker := &statsTracker{result: &query.TotalStats{}}
+		tracker.install(engine)
+		model := New(engine, Options{DataDir: "/tmp/test", Version: "test"})
+
+		cmd := model.loadStats()
+		require.NotNil(cmd, "loadStats command")
+		msg := cmd()
+		require.IsType(statsLoadedMsg{}, msg)
+		require.Equal(1, tracker.callCount, "ordinary stats call count")
+		assert.False(t, tracker.lastOpts.SearchScope, "ordinary stats retain default scope")
+	})
+}
+
+func TestDeepSearchStatsFailureClearsStaleContextStats(t *testing.T) {
+	tests := []struct {
+		name         string
+		messages     []query.MessageSummary
+		wantTotal    int64
+		wantMsgCount int64
+	}{
+		{
+			name:         "short page keeps known result count",
+			messages:     []query.MessageSummary{{ID: 42, Subject: "matching result"}},
+			wantTotal:    1,
+			wantMsgCount: 1,
+		},
+		{
+			name:         "full page keeps loaded count when total is unknown",
+			messages:     makeMessages(searchPageSize),
+			wantTotal:    -1,
+			wantMsgCount: searchPageSize,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			engine := newMockEngine(MockConfig{Messages: tc.messages})
+			engine.GetTotalStatsFunc = func(context.Context, query.StatsOptions) (*query.TotalStats, error) {
+				return nil, errors.New("stats unavailable")
+			}
+			model := New(engine, Options{DataDir: "/tmp/test", Version: "test"})
+			model.searchMode = searchModeDeep
+			model.contextStats = &query.TotalStats{
+				MessageCount:    99,
+				TotalSize:       12345,
+				AttachmentCount: 7,
+				LabelCount:      3,
+				AccountCount:    2,
+			}
+
+			cmd := model.loadSearch("matching")
+			require.NotNil(cmd, "loadSearch command")
+			msg, ok := cmd().(searchResultsMsg)
+			require.True(ok, "expected searchResultsMsg")
+			require.NoError(msg.err, "successful results survive stats failure")
+			assert.Equal(tc.wantTotal, msg.totalCount)
+			require.NotNil(msg.stats, "stats failure produces explicit fallback stats")
+			assert.Equal(tc.wantMsgCount, msg.stats.MessageCount)
+			assert.Zero(msg.stats.TotalSize)
+			assert.Zero(msg.stats.AttachmentCount)
+			assert.Zero(msg.stats.LabelCount)
+			assert.Zero(msg.stats.AccountCount)
+
+			model.searchRequestID = msg.requestID
+			updated, _ := model.Update(msg)
+			got := asModel(t, updated)
+			require.NotNil(got.contextStats)
+			assert.Equal(tc.wantMsgCount, got.contextStats.MessageCount)
+			assert.Zero(got.contextStats.TotalSize)
+			assert.Zero(got.contextStats.AttachmentCount)
+			assert.Zero(got.contextStats.LabelCount)
+			assert.Zero(got.contextStats.AccountCount)
+			assert.Len(got.messages, len(tc.messages), "successful search results are preserved")
+		})
+	}
 }
 
 // =============================================================================

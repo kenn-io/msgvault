@@ -12,6 +12,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/beeper"
+	"go.kenn.io/msgvault/internal/circleback"
 	imaplib "go.kenn.io/msgvault/internal/imap"
 	"go.kenn.io/msgvault/internal/microsoft"
 	"go.kenn.io/msgvault/internal/oauth"
@@ -237,6 +238,13 @@ func runRemoveAccountLocal(cmd *cobra.Command, args []string) error {
 					"Warning: could not remove Beeper token: %v\n", err,
 				)
 			}
+		}
+	case sourceTypeCircleback:
+		circlebackMgr := circleback.NewManager("", cfg.TokensDir(), logger)
+		if err := circlebackMgr.DeleteToken(source.Identifier); err != nil {
+			fmt.Fprintf(os.Stderr,
+				"Warning: could not remove Circleback token: %v\n", err,
+			)
 		}
 	case sourceTypeIMAP:
 		if source.SyncConfig.Valid && source.SyncConfig.String != "" {

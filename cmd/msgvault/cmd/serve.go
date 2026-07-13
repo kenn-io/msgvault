@@ -288,6 +288,53 @@ func runServe(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	// Meeting sources (Granola/Circleback) mirror the gcal treatment: warn
+	// when enabled but unscheduled, then register the scheduled ones.
+	for _, src := range cfg.Granola {
+		if src.Enabled && src.Schedule == "" {
+			logger.Warn("granola source is enabled but has no schedule — the daemon will not sync it; its freshness will eventually go stale",
+				"source", src.Identifier,
+				"hint", `set a cron schedule (e.g. "0 */6 * * *") on the [[granola]] entry`)
+		}
+	}
+	for _, src := range cfg.ScheduledGranolaSources() {
+		source := src
+		jobName := "granola:" + source.Identifier
+		if err := sched.AddJob(scheduler.Job{
+			Name:     jobName,
+			Schedule: source.Schedule,
+			Run: func(ctx context.Context) error {
+				return runConfiguredGranolaSync(ctx, s, source)
+			},
+		}); err != nil {
+			logger.Error("failed to schedule granola source", "source", source.Identifier, "error", err)
+		} else {
+			logger.Info("scheduled granola source", "source", source.Identifier, "schedule", source.Schedule)
+		}
+	}
+	for _, src := range cfg.Circleback {
+		if src.Enabled && src.Schedule == "" {
+			logger.Warn("circleback source is enabled but has no schedule — the daemon will not sync it; its freshness will eventually go stale",
+				"source", src.Identifier,
+				"hint", `set a cron schedule (e.g. "30 */6 * * *") on the [[circleback]] entry`)
+		}
+	}
+	for _, src := range cfg.ScheduledCirclebackSources() {
+		source := src
+		jobName := "circleback:" + source.Identifier
+		if err := sched.AddJob(scheduler.Job{
+			Name:     jobName,
+			Schedule: source.Schedule,
+			Run: func(ctx context.Context) error {
+				return runConfiguredCirclebackSync(ctx, s, source)
+			},
+		}); err != nil {
+			logger.Error("failed to schedule circleback source", "source", source.Identifier, "error", err)
+		} else {
+			logger.Info("scheduled circleback source", "source", source.Identifier, "schedule", source.Schedule)
+		}
+	}
+
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 

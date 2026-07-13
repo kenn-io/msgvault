@@ -55,6 +55,119 @@ func TestDuckDBSearchFast_AllFromParticipantsMetadata(t *testing.T) {
 	assert.Equal(int64(len(messages)), count, "result/count agreement")
 }
 
+func TestDuckDBSearchFast_UnscopedIncludesCachedMessageTypes(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	b := NewTestDataBuilder(t)
+	b.AddSource("test@example.com")
+
+	messageTypes := []string{
+		messageTypeEmail,
+		"meeting_transcript",
+		messageTypeSMS,
+		"whatsapp",
+		"imessage",
+		"teams",
+	}
+	wantIDs := make([]int64, 0, len(messageTypes))
+	var wantSize int64
+	for i, messageType := range messageTypes {
+		size := int64((i + 1) * 100)
+		wantIDs = append(wantIDs, b.AddMessage(MessageOpt{
+			Subject:      "cachewide needle " + messageType,
+			MessageType:  messageType,
+			SizeEstimate: size,
+		}))
+		wantSize += size
+	}
+	b.AddMessage(MessageOpt{
+		Subject:      "unrelated email",
+		MessageType:  messageTypeEmail,
+		SizeEstimate: 9999,
+	})
+	b.SetEmptyAttachments()
+	engine := b.BuildEngine()
+	ctx := context.Background()
+
+	q := search.Parse("cachewide needle")
+	messages, err := engine.SearchFast(ctx, q, MessageFilter{}, 50, 0)
+	require.NoError(err, "SearchFast")
+	assertMessageIDs(t, messages, wantIDs)
+
+	count, err := engine.SearchFastCount(ctx, q, MessageFilter{})
+	require.NoError(err, "SearchFastCount")
+	assert.Equal(int64(len(wantIDs)), count, "unscoped result/count agreement")
+
+	result, err := engine.SearchFastWithStats(ctx, q, "cachewide needle", MessageFilter{}, ViewSenders, 50, 0)
+	require.NoError(err, "SearchFastWithStats")
+	assertMessageIDs(t, result.Messages, wantIDs)
+	assert.Equal(int64(len(wantIDs)), result.TotalCount, "combined total count")
+	require.NotNil(result.Stats, "combined stats")
+	assert.Equal(int64(len(wantIDs)), result.Stats.MessageCount, "combined stats count")
+	assert.Equal(wantSize, result.Stats.TotalSize, "combined stats size")
+
+	queryScoped, err := engine.SearchFast(
+		ctx,
+		search.Parse("message_type:meeting_transcript cachewide needle"),
+		MessageFilter{},
+		50,
+		0,
+	)
+	require.NoError(err, "SearchFast query-scoped")
+	require.Len(queryScoped, 1, "query message type remains authoritative")
+	assert.Equal("meeting_transcript", queryScoped[0].MessageType)
+	explicitResult, err := engine.SearchFastWithStats(
+		ctx,
+		search.Parse("message_type:meeting_transcript cachewide needle"),
+		"message_type:meeting_transcript cachewide needle",
+		MessageFilter{},
+		ViewSenders,
+		50,
+		0,
+	)
+	require.NoError(err, "SearchFastWithStats explicit scope after unscoped cache")
+	require.Len(explicitResult.Messages, 1, "explicit cached message scope")
+	assert.Equal(int64(1), explicitResult.TotalCount, "explicit cached count")
+	require.NotNil(explicitResult.Stats, "explicit cached stats")
+	assert.Equal(int64(1), explicitResult.Stats.MessageCount, "explicit cached stats count")
+
+	filterScoped, err := engine.SearchFast(
+		ctx,
+		q,
+		MessageFilter{MessageType: messageTypeSMS},
+		50,
+		0,
+	)
+	require.NoError(err, "SearchFast filter-scoped")
+	require.Len(filterScoped, 1, "filter message type remains authoritative")
+	assert.Equal(messageTypeSMS, filterScoped[0].MessageType)
+
+	conflictingQuery := search.Parse("message_type:meeting_transcript cachewide needle")
+	conflictingFilter := MessageFilter{MessageType: messageTypeSMS}
+	conflicting, err := engine.SearchFast(ctx, conflictingQuery, conflictingFilter, 50, 0)
+	require.NoError(err, "SearchFast conflicting scopes")
+	assert.Empty(conflicting, "conflicting explicit scopes")
+
+	conflictingCount, err := engine.SearchFastCount(ctx, conflictingQuery, conflictingFilter)
+	require.NoError(err, "SearchFastCount conflicting scopes")
+	assert.Zero(conflictingCount, "conflicting explicit scope count")
+
+	conflictingResult, err := engine.SearchFastWithStats(
+		ctx,
+		conflictingQuery,
+		"message_type:meeting_transcript cachewide needle",
+		conflictingFilter,
+		ViewSenders,
+		50,
+		0,
+	)
+	require.NoError(err, "SearchFastWithStats conflicting scopes after explicit cache")
+	assert.Empty(conflictingResult.Messages, "conflicting cached messages")
+	assert.Zero(conflictingResult.TotalCount, "conflicting cached count")
+	require.NotNil(conflictingResult.Stats, "conflicting cached stats")
+	assert.Zero(conflictingResult.Stats.MessageCount, "conflicting cached stats count")
+}
+
 func TestDuckDBSearchMessageBodies_DelegatesToDirectSQLite(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

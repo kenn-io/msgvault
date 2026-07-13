@@ -1735,6 +1735,12 @@ components:
       type: object
     SearchFastResponse:
       properties:
+        applied_source_ids:
+          items:
+            format: int64
+            type: integer
+          nullable: true
+          type: array
         messages:
           items:
             $ref: "#/components/schemas/MessageSummary"
@@ -2211,6 +2217,14 @@ components:
         active_messages:
           format: int64
           type: integer
+        applied_search_scope:
+          type: boolean
+        applied_source_ids:
+          items:
+            format: int64
+            type: integer
+          nullable: true
+          type: array
         attachment_count:
           format: int64
           type: integer
@@ -2276,7 +2290,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 1.4.0
+  version: 1.6.0
 openapi: 3.0.3
 paths:
   /api/ping:
@@ -4913,6 +4927,14 @@ paths:
           name: direction
           schema:
             type: string
+        - description: Source IDs; repeat the parameter for multiple sources
+          in: query
+          name: source_ids
+          schema:
+            items:
+              format: int64
+              type: integer
+            type: array
       responses:
         "200":
           content:
@@ -5049,6 +5071,14 @@ paths:
           schema:
             format: int64
             type: integer
+        - description: Source IDs; repeat the parameter for multiple sources
+          in: query
+          name: source_ids
+          schema:
+            items:
+              format: int64
+              type: integer
+            type: array
         - description: Only include messages with attachments
           in: query
           name: attachments_only
@@ -5064,6 +5094,11 @@ paths:
           name: search_query
           schema:
             type: string
+        - description: Include all message types when the search has no explicit message_type
+          in: query
+          name: search_scope
+          schema:
+            type: boolean
         - description: Aggregate view type for grouping
           in: query
           name: group_by

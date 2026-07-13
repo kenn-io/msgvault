@@ -151,6 +151,7 @@ func IsTextMessageType(mt string) bool {
 var KnownMessageTypes = []string{
 	messageTypeEmail,
 	"calendar_event",
+	"meeting_transcript",
 	messageTypeSMS,
 	"mms",
 	"whatsapp",
