@@ -5,6 +5,8 @@ description: Build, test, lint, and code conventions.
 
 ## Build
 
+### macOS and Linux
+
 ```bash
 # Debug build
 make build
@@ -15,6 +17,41 @@ make build-release
 # Install to ~/.local/bin or GOPATH
 make install
 ```
+
+### Windows
+
+Use the PowerShell build helper from the repository root. It provides the same
+debug and release builds as the Make targets and selects the host architecture
+automatically:
+
+```powershell
+# Debug build (equivalent to make build)
+.\scripts\build.ps1
+
+# Optimized, stripped build (equivalent to make build-release)
+.\scripts\build.ps1 -Release
+```
+
+Go and [MSYS2](https://www.msys2.org/) are required because msgvault uses CGO.
+Install the compiler for your Windows architecture:
+
+```powershell
+# Windows AMD64 (run from PowerShell)
+C:\msys64\usr\bin\pacman.exe -S --needed mingw-w64-x86_64-toolchain
+```
+
+For Windows ARM64, install CMake and Ninja from an MSYS2 CLANGARM64 shell:
+
+```bash
+pacman -S --needed mingw-w64-clang-aarch64-cmake \
+  mingw-w64-clang-aarch64-ninja
+```
+
+The first ARM64 build downloads a checksum-verified LLVM-MinGW toolchain,
+compiles the pinned DuckDB native library, and caches both under
+`%LOCALAPPDATA%\msgvault\build-cache`; subsequent builds reuse them. Set
+`MSGVAULT_BUILD_CACHE` to use another cache location, or pass `-RebuildDuckDB`
+to rebuild the cached library.
 
 ## Test
 
