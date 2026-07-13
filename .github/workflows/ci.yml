@@ -188,10 +188,9 @@ jobs:
         include:
           - name: cli
             package: ./cmd/msgvault/cmd
-          - name: sync
+          - name: sync-vector-embed
             package: ./internal/sync
-          - name: vector-embed
-            package: ./internal/vector/embed
+            package2: ./internal/vector/embed
           - name: vector-sqlite
             package: ./internal/vector/sqlitevec
     runs-on: windows-latest
@@ -214,11 +213,16 @@ jobs:
           CGO_CFLAGS: "-IC:/msys64/mingw64/include -fgnu89-inline"
           CGO_LDFLAGS: "-Wl,--allow-multiple-definition"
         run: |
-          ./scripts/test-package-shards.ps1 `
-            -Package '${{ matrix.package }}' `
-            -ShardCount 4 `
-            -Tags "fts5 sqlite_vec" `
-            -Timeout 20m
+          $packages = @('${{ matrix.package }}', '${{ matrix.package2 }}') |
+            Where-Object { $_ }
+          foreach ($package in $packages) {
+            ./scripts/test-package-shards.ps1 `
+              -Package $package `
+              -ShardCount 4 `
+              -Tags "fts5 sqlite_vec" `
+              -Timeout 20m
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
 
   test-windows-pack-restore:
     runs-on: windows-latest
