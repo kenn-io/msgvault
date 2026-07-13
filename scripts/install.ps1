@@ -344,22 +344,6 @@ function Install-Msgvault {
 
         Move-Item $binaryFile.FullName $destPath -Force
 
-        # Native Windows ARM64 releases dynamically link DuckDB. Install the
-        # release DLL beside the executable so Windows can resolve it without
-        # requiring a system-wide DuckDB installation.
-        $duckdbFile = Get-ChildItem -Path $tmpDir -Recurse -Filter 'duckdb.dll' | Select-Object -First 1
-        $duckdbDestPath = Join-Path $installDir 'duckdb.dll'
-        if ($duckdbFile) {
-            if (Test-Path $duckdbDestPath) {
-                Remove-Item $duckdbDestPath -Force
-            }
-            Move-Item $duckdbFile.FullName $duckdbDestPath -Force
-        } elseif (Test-Path $duckdbDestPath) {
-            # Remove a DLL left by an ARM64 install when replacing it with a
-            # self-contained release for another architecture.
-            Remove-Item $duckdbDestPath -Force
-        }
-
         Write-Host ""
         Write-Info "Installation complete!"
         Write-Host ""

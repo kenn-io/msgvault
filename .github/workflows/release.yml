@@ -176,7 +176,7 @@ jobs:
         run: |
           C:\msys64\usr\bin\pacman.exe -S --noconfirm --needed mingw-w64-x86_64-sqlite3
 
-      - name: Setup llvm-mingw, sqlite3 headers, and DuckDB
+      - name: Setup llvm-mingw and sqlite3 headers
         if: matrix.goarch == 'arm64'
         shell: pwsh
         env:
@@ -186,11 +186,6 @@ jobs:
           LLVM_MINGW_VERSION: "20260602"
           LLVM_MINGW_NAME: llvm-mingw-20260602-ucrt-aarch64
           LLVM_MINGW_SHA256: cb5c20fbe1808e31ada5cbe4efd9daa2fee19c91dac6ec5ca1ac46a9c7247e37
-          # duckdb-go v2.10504.0 uses DuckDB 1.5.4. DuckDB publishes a
-          # native Windows ARM64 library even though duckdb-go-bindings does
-          # not include that architecture in its prebuilt Go modules.
-          DUCKDB_VERSION: "1.5.4"
-          DUCKDB_SHA256: 8056a9fc58a7c0ced9ebd5eb804e1bd2caf0e1ffb6711c8bd0c3ac0558a7da7f
         run: |
           $ErrorActionPreference = 'Stop'
           $zip = Join-Path $env:RUNNER_TEMP 'llvm-mingw.zip'
@@ -217,23 +212,72 @@ jobs:
           New-Item -ItemType Directory -Path $include -Force | Out-Null
           Copy-Item (Join-Path $sqliteModule 'sqlite3-binding.h') (Join-Path $include 'sqlite3.h')
 
-          # Link duckdb-go against DuckDB's official ARM64 DLL/import library.
-          # The DLL is packaged beside msgvault.exe below.
-          $duckdbZip = Join-Path $env:RUNNER_TEMP 'duckdb-arm64.zip'
-          $duckdbURL = "https://github.com/duckdb/duckdb/releases/download/v$env:DUCKDB_VERSION/libduckdb-windows-arm64.zip"
-          Invoke-WebRequest -Uri $duckdbURL -OutFile $duckdbZip
-          $duckdbActual = (Get-FileHash -Path $duckdbZip -Algorithm SHA256).Hash
-          if ($duckdbActual -ne $env:DUCKDB_SHA256) {
-            throw "Checksum mismatch for $duckdbURL`n  expected $env:DUCKDB_SHA256`n  actual   $duckdbActual"
+
+      - name: Build static DuckDB for ARM64
+        if: matrix.goarch == 'arm64'
+        shell: pwsh
+        env:
+          # duckdb-go v2.10504.0 uses DuckDB 1.5.4. Pin the source commit so
+          # the release remains reproducible even if the tag is moved.
+          DUCKDB_VERSION: "1.5.4"
+          DUCKDB_COMMIT: 08e34c447bae34eaee3723cac61f2878b6bdf787
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $source = Join-Path $env:RUNNER_TEMP "duckdb-$env:DUCKDB_VERSION"
+          git clone --depth 1 --branch "v$env:DUCKDB_VERSION" https://github.com/duckdb/duckdb.git $source
+          $actualCommit = (git -C $source rev-parse HEAD).Trim()
+          if ($actualCommit -ne $env:DUCKDB_COMMIT) {
+            throw "DuckDB source mismatch: expected $env:DUCKDB_COMMIT, got $actualCommit"
           }
-          $duckdbDir = Join-Path $env:RUNNER_TEMP 'duckdb-arm64'
-          Expand-Archive -Path $duckdbZip -DestinationPath $duckdbDir -Force
-          foreach ($file in @('duckdb.dll', 'duckdb.lib')) {
-            if (-not (Test-Path (Join-Path $duckdbDir $file))) {
-              throw "$file missing from $duckdbURL"
-            }
+
+          $build = Join-Path $source 'build\arm64-static'
+          $cc = (Get-Command aarch64-w64-mingw32-clang.exe).Source
+          $cxx = (Get-Command aarch64-w64-mingw32-clang++.exe).Source
+          $ar = (Get-Command llvm-ar.exe).Source
+          $ranlib = (Get-Command llvm-ranlib.exe).Source
+          cmake -S $source -B $build -G Ninja `
+            -DCMAKE_BUILD_TYPE=Release `
+            "-DCMAKE_C_COMPILER=$cc" `
+            "-DCMAKE_CXX_COMPILER=$cxx" `
+            "-DCMAKE_AR=$ar" `
+            "-DCMAKE_RANLIB=$ranlib" `
+            -DBUILD_SHELL=OFF `
+            -DBUILD_UNITTESTS=OFF `
+            '-DBUILD_EXTENSIONS=parquet;json;icu;autocomplete'
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+          # Build only the static targets. Building the default target also
+          # produces loadable extensions, which are not part of this binary.
+          $env:CMAKE_BUILD_PARALLEL_LEVEL = '2'
+          cmake --build $build --target `
+            duckdb_static `
+            parquet_extension `
+            json_extension `
+            icu_extension `
+            autocomplete_extension `
+            core_functions_extension `
+            duckdb_generated_extension_loader
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+          # Combine DuckDB, its statically linked extensions, and third-party
+          # dependencies into the single archive consumed by duckdb-go.
+          $bundle = Join-Path $build 'libduckdb_bundle.a'
+          $libs = @(
+            Get-Item (Join-Path $build 'src\libduckdb_static.a')
+            Get-Item (Join-Path $build 'extension\libduckdb_generated_extension_loader.a')
+            Get-ChildItem (Join-Path $build 'extension') -Recurse -Filter 'lib*_extension.a'
+            Get-ChildItem (Join-Path $build 'third_party') -Recurse -Filter 'libduckdb_*.a'
+          ) | Sort-Object FullName -Unique
+          $mri = @("CREATE $($bundle.Replace('\', '/'))")
+          foreach ($lib in $libs) {
+            $mri += "ADDLIB $($lib.FullName.Replace('\', '/'))"
           }
-          Add-Content -Path $env:GITHUB_PATH -Value $duckdbDir
+          $mri += 'SAVE'
+          $mri += 'END'
+          $mri -join "`n" | & $ar -M
+          if ($LASTEXITCODE -ne 0 -or -not (Test-Path $bundle)) {
+            throw 'Failed to create the static DuckDB bundle'
+          }
 
       - name: Build
         env:
@@ -241,18 +285,14 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: '1'
           CGO_CFLAGS: "${{ matrix.goarch == 'arm64' && format('-I{0}/sqlite-include -fgnu89-inline', runner.temp) || '-IC:/msys64/mingw64/include -fgnu89-inline' }}"
-          CGO_LDFLAGS: "${{ matrix.goarch == 'arm64' && format('-L{0}/duckdb-arm64 -lduckdb -Wl,--allow-multiple-definition', runner.temp) || '-Wl,--allow-multiple-definition' }}"
-          GO_TAGS: "${{ matrix.goarch == 'arm64' && 'fts5 sqlite_vec duckdb_use_lib' || 'fts5 sqlite_vec' }}"
+          CGO_LDFLAGS: "${{ matrix.goarch == 'arm64' && format('-L{0}/duckdb-1.5.4/build/arm64-static -lduckdb_bundle -lws2_32 -lwsock32 -lrstrtmgr -lstdc++ -lm --static -Wl,--allow-multiple-definition', runner.temp) || '-Wl,--allow-multiple-definition' }}"
+          GO_TAGS: "${{ matrix.goarch == 'arm64' && 'fts5 sqlite_vec duckdb_use_static_lib' || 'fts5 sqlite_vec' }}"
         run: |
           VERSION="${GITHUB_REF#refs/tags/v}"
 
           mkdir -p dist
           LDFLAGS="-s -w -X go.kenn.io/msgvault/cmd/msgvault/cmd.Version=v${VERSION} -X go.kenn.io/msgvault/cmd/msgvault/cmd.Commit=$(printf '%s' "$GITHUB_SHA" | cut -c1-8) -X go.kenn.io/msgvault/cmd/msgvault/cmd.BuildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           go build -tags "$GO_TAGS" -trimpath -ldflags="$LDFLAGS" -o dist/msgvault.exe ./cmd/msgvault
-
-          if [[ "${{ matrix.goarch }}" == "arm64" ]]; then
-            cp "$RUNNER_TEMP/duckdb-arm64/duckdb.dll" dist/
-          fi
 
           # Smoke test
           echo "--- Smoke test ---"
@@ -272,12 +312,8 @@ jobs:
           # Package as zip
           ARCHIVE="msgvault_${VERSION}_windows_${{ matrix.goarch }}.zip"
           cd dist
-          if [[ "${{ matrix.goarch }}" == "arm64" ]]; then
-            powershell -Command "Compress-Archive -Path msgvault.exe,duckdb.dll -DestinationPath '$ARCHIVE'"
-          else
-            powershell -Command "Compress-Archive -Path msgvault.exe -DestinationPath '$ARCHIVE'"
-          fi
-          rm -f msgvault.exe duckdb.dll
+          powershell -Command "Compress-Archive -Path msgvault.exe -DestinationPath '$ARCHIVE'"
+          rm msgvault.exe
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -326,10 +362,7 @@ jobs:
             unzip -q "$archive" -d "$tmpdir"
             test -f "$tmpdir/msgvault.exe" || { echo "FATAL: msgvault.exe missing from $archive"; exit 1; }
             file "$tmpdir/msgvault.exe"
-            if echo "$archive" | grep -q "windows_arm64"; then
-              test -f "$tmpdir/duckdb.dll" || { echo "FATAL: duckdb.dll missing from $archive"; exit 1; }
-              file "$tmpdir/duckdb.dll"
-            fi
+            test ! -f "$tmpdir/duckdb.dll" || { echo "FATAL: unexpected duckdb.dll in $archive"; exit 1; }
             rm -rf "$tmpdir"
             echo "  OK"
           done
