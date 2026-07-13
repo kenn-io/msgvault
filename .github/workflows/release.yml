@@ -176,7 +176,7 @@ jobs:
         run: |
           C:\msys64\usr\bin\pacman.exe -S --noconfirm --needed mingw-w64-x86_64-sqlite3
 
-      - name: Setup llvm-mingw and sqlite3 headers
+      - name: Setup llvm-mingw, sqlite3 headers, and DuckDB
         if: matrix.goarch == 'arm64'
         shell: pwsh
         env:
@@ -186,6 +186,11 @@ jobs:
           LLVM_MINGW_VERSION: "20260602"
           LLVM_MINGW_NAME: llvm-mingw-20260602-ucrt-aarch64
           LLVM_MINGW_SHA256: cb5c20fbe1808e31ada5cbe4efd9daa2fee19c91dac6ec5ca1ac46a9c7247e37
+          # duckdb-go v2.10504.0 uses DuckDB 1.5.4. DuckDB publishes a
+          # native Windows ARM64 library even though duckdb-go-bindings does
+          # not include that architecture in its prebuilt Go modules.
+          DUCKDB_VERSION: "1.5.4"
+          DUCKDB_SHA256: 8056a9fc58a7c0ced9ebd5eb804e1bd2caf0e1ffb6711c8bd0c3ac0558a7da7f
         run: |
           $ErrorActionPreference = 'Stop'
           $zip = Join-Path $env:RUNNER_TEMP 'llvm-mingw.zip'
@@ -212,19 +217,42 @@ jobs:
           New-Item -ItemType Directory -Path $include -Force | Out-Null
           Copy-Item (Join-Path $sqliteModule 'sqlite3-binding.h') (Join-Path $include 'sqlite3.h')
 
+          # Link duckdb-go against DuckDB's official ARM64 DLL/import library.
+          # The DLL is packaged beside msgvault.exe below.
+          $duckdbZip = Join-Path $env:RUNNER_TEMP 'duckdb-arm64.zip'
+          $duckdbURL = "https://github.com/duckdb/duckdb/releases/download/v$env:DUCKDB_VERSION/libduckdb-windows-arm64.zip"
+          Invoke-WebRequest -Uri $duckdbURL -OutFile $duckdbZip
+          $duckdbActual = (Get-FileHash -Path $duckdbZip -Algorithm SHA256).Hash
+          if ($duckdbActual -ne $env:DUCKDB_SHA256) {
+            throw "Checksum mismatch for $duckdbURL`n  expected $env:DUCKDB_SHA256`n  actual   $duckdbActual"
+          }
+          $duckdbDir = Join-Path $env:RUNNER_TEMP 'duckdb-arm64'
+          Expand-Archive -Path $duckdbZip -DestinationPath $duckdbDir -Force
+          foreach ($file in @('duckdb.dll', 'duckdb.lib')) {
+            if (-not (Test-Path (Join-Path $duckdbDir $file))) {
+              throw "$file missing from $duckdbURL"
+            }
+          }
+          Add-Content -Path $env:GITHUB_PATH -Value $duckdbDir
+
       - name: Build
         env:
           GOOS: windows
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: '1'
           CGO_CFLAGS: "${{ matrix.goarch == 'arm64' && format('-I{0}/sqlite-include -fgnu89-inline', runner.temp) || '-IC:/msys64/mingw64/include -fgnu89-inline' }}"
-          CGO_LDFLAGS: "-Wl,--allow-multiple-definition"
+          CGO_LDFLAGS: "${{ matrix.goarch == 'arm64' && format('-L{0}/duckdb-arm64 -lduckdb -Wl,--allow-multiple-definition', runner.temp) || '-Wl,--allow-multiple-definition' }}"
+          GO_TAGS: "${{ matrix.goarch == 'arm64' && 'fts5 sqlite_vec duckdb_use_lib' || 'fts5 sqlite_vec' }}"
         run: |
           VERSION="${GITHUB_REF#refs/tags/v}"
 
           mkdir -p dist
           LDFLAGS="-s -w -X go.kenn.io/msgvault/cmd/msgvault/cmd.Version=v${VERSION} -X go.kenn.io/msgvault/cmd/msgvault/cmd.Commit=$(printf '%s' "$GITHUB_SHA" | cut -c1-8) -X go.kenn.io/msgvault/cmd/msgvault/cmd.BuildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-          go build -tags "fts5 sqlite_vec" -trimpath -ldflags="$LDFLAGS" -o dist/msgvault.exe ./cmd/msgvault
+          go build -tags "$GO_TAGS" -trimpath -ldflags="$LDFLAGS" -o dist/msgvault.exe ./cmd/msgvault
+
+          if [[ "${{ matrix.goarch }}" == "arm64" ]]; then
+            cp "$RUNNER_TEMP/duckdb-arm64/duckdb.dll" dist/
+          fi
 
           # Smoke test
           echo "--- Smoke test ---"
@@ -232,11 +260,24 @@ jobs:
           echo "$SMOKE_OUT"
           echo "$SMOKE_OUT" | grep -q "v${VERSION}" || { echo "FATAL: version output doesn't match tag"; exit 1; }
 
+          # Exercise the production DuckDB cache path on the native ARM64
+          # runner, not just DLL loading and CLI startup.
+          if [[ "${{ matrix.goarch }}" == "arm64" ]]; then
+            SMOKE_HOME="$RUNNER_TEMP/msgvault-duckdb-smoke"
+            dist/msgvault.exe --home "$SMOKE_HOME" init-db
+            dist/msgvault.exe --home "$SMOKE_HOME" build-cache --full-rebuild
+            dist/msgvault.exe --home "$SMOKE_HOME" serve stop || true
+          fi
+
           # Package as zip
           ARCHIVE="msgvault_${VERSION}_windows_${{ matrix.goarch }}.zip"
           cd dist
-          powershell -Command "Compress-Archive -Path msgvault.exe -DestinationPath '$ARCHIVE'"
-          rm msgvault.exe
+          if [[ "${{ matrix.goarch }}" == "arm64" ]]; then
+            powershell -Command "Compress-Archive -Path msgvault.exe,duckdb.dll -DestinationPath '$ARCHIVE'"
+          else
+            powershell -Command "Compress-Archive -Path msgvault.exe -DestinationPath '$ARCHIVE'"
+          fi
+          rm -f msgvault.exe duckdb.dll
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -285,6 +326,10 @@ jobs:
             unzip -q "$archive" -d "$tmpdir"
             test -f "$tmpdir/msgvault.exe" || { echo "FATAL: msgvault.exe missing from $archive"; exit 1; }
             file "$tmpdir/msgvault.exe"
+            if echo "$archive" | grep -q "windows_arm64"; then
+              test -f "$tmpdir/duckdb.dll" || { echo "FATAL: duckdb.dll missing from $archive"; exit 1; }
+              file "$tmpdir/duckdb.dll"
+            fi
             rm -rf "$tmpdir"
             echo "  OK"
           done
