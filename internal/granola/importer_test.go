@@ -26,6 +26,7 @@ type fakeAPI struct {
 	fail                map[string]bool   // note ID -> serve 404
 	orderedIDs          []string
 	respectUpdatedAfter bool
+	respectCreatedAfter bool
 	hasMore             bool
 	cursor              string
 }
@@ -53,15 +54,28 @@ func (f *fakeAPI) handler() http.Handler {
 					return
 				}
 			}
+			var createdAfter time.Time
+			if raw := r.URL.Query().Get("created_after"); raw != "" {
+				var err error
+				createdAfter, err = time.Parse(time.RFC3339, raw)
+				if err != nil {
+					http.Error(w, err.Error(), http.StatusBadRequest)
+					return
+				}
+			}
 			for _, id := range ids {
 				raw := f.notes[id]
-				if f.respectUpdatedAfter && !updatedAfter.IsZero() {
+				if (f.respectUpdatedAfter && !updatedAfter.IsZero()) ||
+					(f.respectCreatedAfter && !createdAfter.IsZero()) {
 					var note NoteSummary
 					if err := json.Unmarshal(raw, &note); err != nil {
 						http.Error(w, err.Error(), http.StatusInternalServerError)
 						return
 					}
 					if !note.UpdatedAt.After(updatedAfter) {
+						continue
+					}
+					if f.respectCreatedAfter && !createdAfter.IsZero() && !note.CreatedAt.After(createdAfter) {
 						continue
 					}
 				}
@@ -518,6 +532,86 @@ func TestImport_LimitDoesNotAdvanceCursor(t *testing.T) {
 	var count int
 	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&count))
 	assert.Equal(2, count, "normal incremental run must still import the older note")
+}
+
+func TestImport_BoundedFullPreservesIncrementalCursor(t *testing.T) {
+	tests := []struct {
+		name                string
+		opts                ImportOptions
+		respectCreatedAfter bool
+	}{
+		{
+			name: "created-after bound",
+			opts: ImportOptions{
+				Full:         true,
+				CreatedAfter: time.Date(2026, 6, 2, 0, 0, 0, 0, time.UTC),
+			},
+			respectCreatedAfter: true,
+		},
+		{
+			name: "limit",
+			opts: ImportOptions{
+				Full:  true,
+				Limit: 1,
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			olderID := "not_Ab12Cd34Ef56Gh"
+			newerID := "not_Zz98Yy87Xx76Wv"
+			api := &fakeAPI{
+				notes: map[string][]byte{
+					olderID: loadFixture(t, "note_full.json"),
+					newerID: loadFixture(t, "note_no_calendar.json"),
+				},
+				orderedIDs: []string{newerID, olderID},
+			}
+			imp, st := newTestImporter(t, api)
+
+			first, err := imp.Import(context.Background(), ImportOptions{Identifier: "alice@example.com"})
+			require.NoError(err)
+			cursorOf := func() string {
+				var encoded string
+				require.NoError(st.DB().QueryRow(st.Rebind(`
+					SELECT cursor_after FROM sync_runs
+					WHERE source_id = ? AND status = 'completed'
+					ORDER BY id DESC LIMIT 1`), first.SourceID).Scan(&encoded))
+				var state syncState
+				require.NoError(json.Unmarshal([]byte(encoded), &state))
+				return state.UpdatedAfter
+			}
+			priorCursor := cursorOf()
+			require.Equal("2026-06-02T09:50:00Z", priorCursor)
+
+			api.mu.Lock()
+			api.notes[olderID] = []byte(strings.Replace(
+				string(api.notes[olderID]), "2026-06-01T16:45:00Z", "2026-06-05T12:00:00Z", 1,
+			))
+			api.notes[newerID] = []byte(strings.Replace(
+				string(api.notes[newerID]), "2026-06-02T09:50:00Z", "2026-06-10T12:00:00Z", 1,
+			))
+			api.respectCreatedAfter = tt.respectCreatedAfter
+			api.mu.Unlock()
+
+			tt.opts.Identifier = "alice@example.com"
+			_, err = imp.Import(context.Background(), tt.opts)
+			require.NoError(err)
+			assert.Equal(priorCursor, cursorOf(), "partial full traversal must retain the established incremental cursor")
+
+			api.mu.Lock()
+			api.respectCreatedAfter = false
+			api.respectUpdatedAfter = true
+			api.mu.Unlock()
+			incremental, err := imp.Import(context.Background(), ImportOptions{Identifier: "alice@example.com"})
+			require.NoError(err)
+			assert.EqualValues(2, incremental.NotesUpdated,
+				"the next incremental run must still see updates on both sides of the full-sync bound")
+			assert.Equal("2026-06-10T12:00:00Z", cursorOf())
+		})
+	}
 }
 
 func TestImport_IncompletePageWithoutCursorFails(t *testing.T) {

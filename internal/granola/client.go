@@ -122,7 +122,7 @@ func (c *Client) ListNotes(ctx context.Context, p ListNotesParams) (*ListNotesOu
 		q.Set("created_before", p.CreatedBefore.UTC().Format(time.RFC3339))
 	}
 	if !p.UpdatedAfter.IsZero() {
-		q.Set("updated_after", p.UpdatedAfter.UTC().Format(time.RFC3339))
+		q.Set("updated_after", p.UpdatedAfter.UTC().Format(time.RFC3339Nano))
 	}
 	if p.FolderID != "" {
 		q.Set("folder_id", p.FolderID)

@@ -81,10 +81,8 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (*ImportSum
 	}
 
 	var state syncState
-	if !opts.Full {
-		if prev, perr := imp.store.GetLastSuccessfulSync(src.ID); perr == nil && prev != nil && prev.CursorAfter.Valid {
-			_ = json.Unmarshal([]byte(prev.CursorAfter.String), &state)
-		}
+	if prev, perr := imp.store.GetLastSuccessfulSync(src.ID); perr == nil && prev != nil && prev.CursorAfter.Valid {
+		_ = json.Unmarshal([]byte(prev.CursorAfter.String), &state)
 	}
 
 	syncID, err := imp.store.StartSync(src.ID, SourceType)
@@ -103,7 +101,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (*ImportSum
 	}()
 
 	params := ListNotesParams{PageSize: maxPageSize}
-	if state.UpdatedAfter != "" {
+	if !opts.Full && state.UpdatedAfter != "" {
 		if t, terr := time.Parse(time.RFC3339Nano, state.UpdatedAfter); terr == nil {
 			params.UpdatedAfter = t
 		}
@@ -117,8 +115,8 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (*ImportSum
 	// had zero fetch errors — a failed note would otherwise be skipped
 	// forever. Re-fetching a few notes on the retry is free (upsert dedup).
 	var maxUpdated time.Time
-	if !params.UpdatedAfter.IsZero() {
-		maxUpdated = params.UpdatedAfter
+	if state.UpdatedAfter != "" {
+		maxUpdated, _ = time.Parse(time.RFC3339Nano, state.UpdatedAfter)
 	}
 
 	err = imp.forEachNote(ctx, src.ID, accountIdentities, params, opts, sum, func(n *Note) {
@@ -146,11 +144,13 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (*ImportSum
 		return sum, err
 	}
 
-	// A limited run deliberately leaves notes unprocessed, so it cannot
-	// establish a safe incremental baseline even when every processed note
-	// succeeded. The next unbounded run must traverse from the prior cursor.
+	// A limited or created-after full run deliberately leaves notes
+	// unprocessed, so it cannot establish a safe incremental baseline even
+	// when every processed note succeeded. The next unbounded run must
+	// traverse from the prior cursor.
 	cursor := state.UpdatedAfter
-	if opts.Limit == 0 && !maxUpdated.IsZero() {
+	boundedFull := opts.Full && !opts.CreatedAfter.IsZero()
+	if opts.Limit == 0 && !boundedFull && !maxUpdated.IsZero() {
 		cursor = maxUpdated.UTC().Format(time.RFC3339Nano)
 	}
 	if err = imp.store.CompleteSync(syncID, syncState{UpdatedAfter: cursor}.marshal()); err != nil {

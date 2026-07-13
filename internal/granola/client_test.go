@@ -34,7 +34,7 @@ func TestListNotes_ParamsAndPagination(t *testing.T) {
 	defer srv.Close()
 
 	c := NewClient(srv.URL, "grn_testkey")
-	updatedAfter := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
+	updatedAfter := time.Date(2026, 5, 1, 0, 0, 0, 123456789, time.UTC)
 
 	page1, err := c.ListNotes(context.Background(), ListNotesParams{UpdatedAfter: updatedAfter, PageSize: 30})
 	require.NoError(err)
@@ -52,8 +52,8 @@ func TestListNotes_ParamsAndPagination(t *testing.T) {
 	assert.Empty(page2.Cursor, "null cursor decodes to empty string")
 
 	require.Len(calls, 2)
-	assert.Equal("page_size=30&updated_after=2026-05-01T00%3A00%3A00Z", calls[0])
-	assert.Equal("cursor=c2&page_size=30&updated_after=2026-05-01T00%3A00%3A00Z", calls[1])
+	assert.Equal("page_size=30&updated_after=2026-05-01T00%3A00%3A00.123456789Z", calls[0])
+	assert.Equal("cursor=c2&page_size=30&updated_after=2026-05-01T00%3A00%3A00.123456789Z", calls[1])
 }
 
 func TestGetNote_DecodesAndKeepsRaw(t *testing.T) {
