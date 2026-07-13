@@ -1316,6 +1316,41 @@ func TestImport_RefreshesKnownBackfillWhenSearchSummaryOmitsCreatedAt(t *testing
 	assert.Equal("Backfilled meeting refreshed", subject)
 }
 
+func TestImport_SkipsKnownOldMeetingWhenSearchSummaryOmitsCreatedAt(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := &fakeSource{
+		meetings: map[string]json.RawMessage{
+			"current": meetingFixture(t, "current", "2026-06-12T09:00:00Z", "2026-06-12T09:00:00Z", "2026-06-12T10:00:00Z"),
+			"old":     meetingFixture(t, "old", "2026-05-01T09:00:00Z", "2026-05-01T09:00:00Z", "2026-05-01T10:00:00Z"),
+		},
+		searchMeetings: map[string]json.RawMessage{},
+		transcripts:    map[string]json.RawMessage{},
+		orderedIDs:     []string{"current", "old"},
+	}
+	imp, _ := newTestImporter(t, f)
+
+	first, err := imp.Import(context.Background(), ImportOptions{Identifier: "alice@example.com"})
+	require.NoError(err)
+	require.EqualValues(2, first.MeetingsAdded)
+
+	f.searchMeetings["old"] = json.RawMessage(`{
+		"id":"old",
+		"startTime":"2026-05-01T09:00:00Z",
+		"endTime":"2026-05-01T10:00:00Z"
+	}`)
+	f.readIDs = nil
+	f.transcriptIDs = nil
+
+	second, err := imp.Import(context.Background(), ImportOptions{Identifier: "alice@example.com"})
+	require.NoError(err)
+	assert.EqualValues(0, second.MeetingsUpdated)
+	assert.NotContains(f.readIDs, "old",
+		"archived creation time should avoid hydrating an old known meeting")
+	assert.NotContains(f.transcriptIDs, "old",
+		"an old known meeting must be filtered before transcript retrieval")
+}
+
 func TestImport_SearchDateBounds(t *testing.T) {
 	t.Run("incremental discovery is unbounded", func(t *testing.T) {
 		assert := assert.New(t)

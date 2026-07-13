@@ -640,8 +640,19 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (*ImportSum
 				continue
 			}
 			if !opts.Full {
-				_, exists := existingPage["meeting:"+id]
+				existingID, exists := existingPage["meeting:"+id]
 				created := parseFlexibleTime(meeting.CreatedAt)
+				if exists && created.IsZero() {
+					var archivedErr error
+					created, archivedErr = imp.archivedMeetingCreatedAt(existingID)
+					if archivedErr != nil {
+						sum.Errors++
+						hardErrors = append(hardErrors,
+							fmt.Errorf("meeting %s: read archived creation time: %w", id, archivedErr))
+						err = errors.Join(hardErrors...)
+						return sum, err
+					}
+				}
 				if exists && !refreshCreatedAfter.IsZero() && !created.IsZero() && created.Before(refreshCreatedAfter) {
 					continue
 				}
@@ -715,6 +726,25 @@ func (imp *Importer) archivedTranscriptState(msgID int64) (transcriptState, erro
 		return "", nil
 	}
 	return decodeArchivedTranscriptState(metaNS.String), nil
+}
+
+func (imp *Importer) archivedMeetingCreatedAt(msgID int64) (time.Time, error) {
+	metaNS, err := imp.store.GetMessageMetadata(msgID)
+	if err != nil {
+		return time.Time{}, err
+	}
+	if !metaNS.Valid || metaNS.String == "" {
+		return time.Time{}, nil
+	}
+	return decodeArchivedMeetingCreatedAt(metaNS.String), nil
+}
+
+func decodeArchivedMeetingCreatedAt(encoded string) time.Time {
+	var meta meetingMetadata
+	if json.Unmarshal([]byte(encoded), &meta) != nil {
+		return time.Time{}
+	}
+	return parseFlexibleTime(meta.CreatedAt)
 }
 
 func decodeArchivedTranscriptState(encoded string) transcriptState {
