@@ -84,7 +84,7 @@ Verification takes a shared lock, so multiple verifies can run concurrently, but
 
 For repositories on spinning disks or NAS shares, `--jobs 1` reads packs strictly one at a time instead of the default one-reader-per-CPU parallelism; `create` accepts the same flag for its attachment reads and changed-page packing.
 
-### `backup restore --target DIR [SNAPSHOT] [--overwrite] [--loose-attachments]`
+### `backup restore --target DIR [SNAPSHOT] [--overwrite] [--integrity-check] [--loose-attachments]`
 
 Materializes a snapshot (the latest by default) into `--target` as a complete archive home — `msgvault.db`, the attachment store, and any captured extras (deletions manifests, config, tokens) at their original relative paths with their recorded file modes. Point msgvault at the restored directory, or swap it into place, to use it.
 
@@ -100,14 +100,14 @@ command summary reports packed and loose counts plus aggregate fallback
 reasons. Corruption remains a hard failure and is never treated as a
 compatibility fallback.
 
-Restore does not trust itself: every database page is checked against the snapshot's page-hash map as it is written, every blob read re-derives its SHA-256 identity, and after materialization the restored database must pass SQLite's `PRAGMA integrity_check` and reproduce the manifest's recorded stats (message, conversation, and attachment counts, date range) through exactly the queries capture ran inside the freeze. Any mismatch fails the restore rather than reporting success.
+Restore does not trust itself: every database page is checked against the snapshot's page-hash map as it is written, every blob read re-derives its SHA-256 identity, and after materialization the restored database must reproduce the manifest's recorded stats (message, conversation, and attachment counts, date range) through exactly the queries capture ran inside the freeze. Any mismatch fails the restore rather than reporting success.
 
 - The target must not exist or must be an empty directory; `--overwrite` permits restoring into a non-empty one. Overwrite **merges**: the database and its SQLite `-wal`/`-shm` sidecars are removed first (a stale WAL would otherwise be replayed over the restored database on its first open), restored files replace same-named ones, and unrelated loose files the snapshot does not carry are left in place. Packed authority is replaced by the snapshot's catalog, so normal maintenance can reclaim old packs containing only non-snapshot content. To guarantee the target contains exactly the snapshot and nothing else, restore into a fresh directory.
 - `--loose-attachments` disables direct pack installation and materializes every attachment as an individual file. On an overwritten target, pre-existing pack files can remain uncataloged and can still be discovered by later maintenance; `unpack-attachments` processes only cataloged packs and does not remove those leftovers. A fresh target is therefore the only restore path that currently guarantees a fully loose archive.
 - Restoring into the live archive home of a *running* daemon is refused outright — stop the daemon first or restore elsewhere.
 - Restoring an old backup onto a newer msgvault goes through normal schema migration the first time the restored database is opened, the same path as any upgrade.
 - `--jobs 1` serializes pack reads for repositories on spinning disks or NAS shares.
-- The proof's `integrity_check` reads the entire restored database single-threaded inside SQLite, so on large archives the proof stage runs for a while after materialization finishes; the progress line keeps counting elapsed time while it does.
+- `--integrity-check` adds SQLite's full `PRAGMA integrity_check` after materialization. It reads the entire restored database single-threaded and can take much longer than the default hash and manifest-statistics verification on large archives; the `SQLite check` progress line keeps counting elapsed time while it runs.
 
 Restore takes a shared repository lock: it can run alongside verifies, never during a `create`.
 

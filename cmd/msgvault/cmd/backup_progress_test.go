@@ -125,7 +125,7 @@ func TestBackupProgressRenderer_ElapsedSuffix(t *testing.T) {
 }
 
 // TestBackupProgressRenderer_IdleTickerKeepsElapsedCounting pins the fix for
-// silent long stages (integrity_check during restore's proof): with no new
+// silent long stages (SQLite's integrity check): with no new
 // events arriving, the open TTY line must keep redrawing with fresh elapsed
 // time instead of sitting frozen, and finish() must stop the ticker.
 func TestBackupProgressRenderer_IdleTickerKeepsElapsedCounting(t *testing.T) {
@@ -137,7 +137,7 @@ func TestBackupProgressRenderer_IdleTickerKeepsElapsedCounting(t *testing.T) {
 
 	var buf bytes.Buffer
 	r := newTestBackupProgressRenderer(t, &buf, progressModeTTY)
-	r.handle(backup.ProgressEvent{Stage: backup.ProgressStageProof, Done: 0, Total: 2})
+	r.handle(backup.ProgressEvent{Stage: backup.ProgressStageIntegrityCheck, Done: 0, Total: 1})
 	r.mu.Lock()
 	r.stageStart = time.Now().Add(-10 * time.Second)
 	buf.Reset()
@@ -308,10 +308,27 @@ func TestBackupProgressRenderer_DefaultWriterIsStdout(t *testing.T) {
 // future refactor can't silently change its type without breaking this file.
 var _ time.Duration = backupProgressTickInterval
 
+func TestBackupProgressRenderer_NamesDatabaseChecks(t *testing.T) {
+	assert := assert.New(t)
+	withZeroBackupProgressTick(t)
+
+	var buf bytes.Buffer
+	r := newTestBackupProgressRenderer(t, &buf, progressModePlain)
+	r.handle(backup.ProgressEvent{
+		Stage: backup.ProgressStageIntegrityCheck, Done: 1, Total: 1, Final: true,
+	})
+	r.handle(backup.ProgressEvent{
+		Stage: backup.ProgressStageRestoreStats, Done: 1, Total: 1, Final: true,
+	})
+
+	assert.Contains(buf.String(), "SQLite check: 1/1")
+	assert.Contains(buf.String(), "database stats: 1/1")
+	assert.NotContains(buf.String(), "proof")
+}
+
 // TestBackupProgressRenderer_IdleTickerRepaintsThrottledEvent pins that an
 // event suppressed by the render throttle still updates the counts the idle
-// ticker repaints: a quick proof 1/2 arriving inside the throttle window
-// must not leave the line stuck on 0/2 through the long stats comparison.
+// ticker repaints.
 func TestBackupProgressRenderer_IdleTickerRepaintsThrottledEvent(t *testing.T) {
 	require := require.New(t)
 	oldInterval := backupProgressTickInterval
@@ -323,11 +340,11 @@ func TestBackupProgressRenderer_IdleTickerRepaintsThrottledEvent(t *testing.T) {
 
 	var buf bytes.Buffer
 	r := newTestBackupProgressRenderer(t, &buf, progressModeTTY)
-	r.handle(backup.ProgressEvent{Stage: backup.ProgressStageProof, Done: 0, Total: 2})
+	r.handle(backup.ProgressEvent{Stage: backup.ProgressStageScan, Done: 0, Total: 2})
 	r.mu.Lock()
 	r.lastRender = time.Now() // pin the throttle window open around the next event
 	r.mu.Unlock()
-	r.handle(backup.ProgressEvent{Stage: backup.ProgressStageProof, Done: 1, Total: 2})
+	r.handle(backup.ProgressEvent{Stage: backup.ProgressStageScan, Done: 1, Total: 2})
 	r.mu.Lock()
 	require.NotContains(buf.String(), "1/2", "second event should have been throttled")
 	r.mu.Unlock()

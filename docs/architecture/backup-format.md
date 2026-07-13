@@ -37,14 +37,14 @@ restore error, not a reason to fall back.
 Publication ordering keeps the visible archive safe: loose fallback bytes and
 verified pack files are durable before one transaction replaces the staged
 database's pack records and selected mappings. That transaction runs after
-database page materialization and before `PRAGMA integrity_check` and manifest
-statistics prove the restored database. The database is published only after
-the final catalog passes that proof. A crash can leave an unauthorized pack
+database page materialization and before the manifest-statistics comparison
+and optional `PRAGMA integrity_check`. The database is published only after
+the final catalog passes those enabled checks. A crash can leave an unauthorized pack
 file, but cannot publish a mapping to an absent pack; retries remain
 idempotent whether normal maintenance later adopts, removes, or retains the
 orphan.
 
-Restore is self-proving, in layers. During materialization every blob read re-derives its SHA-256 identity (the pack reader's normal contract) and every database page is additionally checked against the snapshot's page-hash map before it is written — so a page-map bug cannot silently place correct bytes at the wrong offset. After materialization the restored database must pass `PRAGMA integrity_check` and reproduce the manifest's recorded stats through exactly the queries capture ran inside the freeze window; the end-to-end test further proves the restored file is byte-identical to the live database as it existed at capture time, including for parent snapshots restored from an incremental chain. All files, and the directory entries naming them, are fsynced before restore reports success. Pack reads are grouped by pack with a `--jobs` worker bound (1 = strictly serial for spinning-disk repositories); serial and parallel restores produce byte-identical content. Restoring an old backup onto a newer msgvault goes through normal schema migration at first open, the same path as any upgrade.
+Restore is self-verifying, in layers. During materialization every blob read re-derives its SHA-256 identity (the pack reader's normal contract) and every database page is additionally checked against the snapshot's page-hash map before it is written — so a page-map bug cannot silently place correct bytes at the wrong offset. After materialization the restored database reproduces the manifest's recorded stats through exactly the queries capture ran inside the freeze window. Passing `--integrity-check` additionally requires the staged database to pass SQLite's full `PRAGMA integrity_check`; msgvault omits that scan by default because it can dominate restore time for large databases without replacing the always-on cryptographic checks. The end-to-end test further proves the restored file is byte-identical to the live database as it existed at capture time, including for parent snapshots restored from an incremental chain. All files, and the directory entries naming them, are fsynced before restore reports success. Pack reads are grouped by pack with a `--jobs` worker bound (1 = strictly serial for spinning-disk repositories); serial and parallel restores produce byte-identical content. Restoring an old backup onto a newer msgvault goes through normal schema migration at first open, the same path as any upgrade.
 
 `--loose-attachments` leaves the optional importer disabled and clears restored
 pack metadata after publication, preserving the downgrade/recovery path. A

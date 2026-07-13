@@ -242,7 +242,7 @@ Set `repo` under `[backup]` in `config.toml` to omit `--repo` from every
 command after `init`.
 
 See the [Backup guide](https://msgvault.io/usage/backup/) for repository format,
-secret-handling flags, restore proof, and operating recommendations.
+secret-handling flags, restore verification, and operating recommendations.
 
 ### Packed Attachment Storage
 

@@ -61,7 +61,7 @@ func BenchmarkBackupRestoreLayouts(b *testing.B) {
 		b.Run(layout.name, func(b *testing.B) {
 			b.ReportAllocs()
 			b.SetBytes(totalBytes)
-			var attachmentDuration, proofDuration, totalDuration time.Duration
+			var attachmentDuration, databaseCheckDuration, totalDuration time.Duration
 			var looseFiles, packFiles, packedBlobs, looseBlobs int64
 			b.ResetTimer()
 			for range b.N {
@@ -103,9 +103,9 @@ func BenchmarkBackupRestoreLayouts(b *testing.B) {
 					require.Equal(b, int64(benchmarkRestoreBlobs), res.LooseAttachmentBlobs)
 				}
 				assertRestoredBenchmarkBytes(b, res.DBPath, filepath.Join(target, "attachments"), expected)
-				attach, proof := timer.durations()
+				attach, databaseChecks := timer.durations()
 				attachmentDuration += attach
-				proofDuration += proof
+				databaseCheckDuration += databaseChecks
 				totalDuration += elapsed
 				looseFiles += filesLoose
 				packFiles += filesPacked
@@ -118,7 +118,7 @@ func BenchmarkBackupRestoreLayouts(b *testing.B) {
 			b.ReportMetric(float64(packedBlobs)/iterations, "packed_blobs/op")
 			b.ReportMetric(float64(looseBlobs)/iterations, "loose_blobs/op")
 			b.ReportMetric(float64(attachmentDuration.Microseconds())/1000/iterations, "attachment_ms/op")
-			b.ReportMetric(float64(proofDuration.Microseconds())/1000/iterations, "proof_ms/op")
+			b.ReportMetric(float64(databaseCheckDuration.Microseconds())/1000/iterations, "database_checks_ms/op")
 			b.ReportMetric(float64(totalDuration.Microseconds())/1000/iterations, "total_ms/op")
 			b.ReportMetric(float64(totalBytes)/(1<<20), "attachment_MiB/op")
 			b.ReportMetric(
@@ -130,11 +130,11 @@ func BenchmarkBackupRestoreLayouts(b *testing.B) {
 }
 
 type restoreStageTimer struct {
-	mu              sync.Mutex
-	attachmentStart time.Time
-	attachment      time.Duration
-	proofStart      time.Time
-	proof           time.Duration
+	mu                 sync.Mutex
+	attachmentStart    time.Time
+	attachment         time.Duration
+	databaseCheckStart time.Time
+	databaseChecks     time.Duration
 }
 
 func (t *restoreStageTimer) handle(event backup.ProgressEvent) {
@@ -149,12 +149,16 @@ func (t *restoreStageTimer) handle(event backup.ProgressEvent) {
 		if event.Final {
 			t.attachment = now.Sub(t.attachmentStart)
 		}
-	case backup.ProgressStageProof:
-		if t.proofStart.IsZero() {
-			t.proofStart = now
+	case backup.ProgressStageIntegrityCheck:
+		if t.databaseCheckStart.IsZero() {
+			t.databaseCheckStart = now
+		}
+	case backup.ProgressStageRestoreStats:
+		if t.databaseCheckStart.IsZero() {
+			t.databaseCheckStart = now
 		}
 		if event.Final {
-			t.proof = now.Sub(t.proofStart)
+			t.databaseChecks = now.Sub(t.databaseCheckStart)
 		}
 	default:
 		return
@@ -164,7 +168,7 @@ func (t *restoreStageTimer) handle(event backup.ProgressEvent) {
 func (t *restoreStageTimer) durations() (time.Duration, time.Duration) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	return t.attachment, t.proof
+	return t.attachment, t.databaseChecks
 }
 
 func deterministicRestoreBlob(index, size int) []byte {
