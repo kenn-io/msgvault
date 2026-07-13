@@ -33,7 +33,11 @@ import (
 // existing messages element schema remains stable. Omitted scope keeps the
 // existing composite search contract.
 // Additive (minor bump): the major-version compatibility gate stays at 1.
-const APISchemaVersion = "1.3.0"
+//
+// 1.4.0: vector/hybrid search adds offset pagination, has_more, and opt-in
+// scored chunk matches. Additive (minor bump): existing summary-only callers
+// retain their request and response behavior.
+const APISchemaVersion = "1.4.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.

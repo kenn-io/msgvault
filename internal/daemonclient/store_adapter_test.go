@@ -940,6 +940,7 @@ func TestGetCLISearch_Success(t *testing.T) {
 
 func TestGetCLIHybridSearch_Success(t *testing.T) {
 	assert := assert.New(t)
+	require := require.New(t)
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal("/api/v1/search", r.URL.Path, "path")
 		assert.Equal("lunch", r.URL.Query().Get("q"), "query")
@@ -948,12 +949,16 @@ func TestGetCLIHybridSearch_Success(t *testing.T) {
 		assert.Equal("Important", r.URL.Query().Get("collection"), "collection query")
 		assert.Equal("sms", r.URL.Query().Get("message_type"), "message_type query")
 		assert.Equal("25", r.URL.Query().Get("page_size"), "page_size query")
+		assert.Equal("5", r.URL.Query().Get("offset"), "offset query")
+		assert.Equal("true", r.URL.Query().Get("include_matches"), "include_matches query")
+		assert.Equal("0.75", r.URL.Query().Get("min_score"), "min_score query")
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{
 			"query": "lunch",
 			"mode": "vector",
-			"returned": 1,
-			"pool_saturated": false,
+				"returned": 1,
+				"pool_saturated": false,
+				"has_more": true,
 			"scope_label": "Important",
 			"scope_source_count": 2,
 			"took_ms": 12,
@@ -975,7 +980,13 @@ func TestGetCLIHybridSearch_Success(t *testing.T) {
 				"has_attachments": false,
 				"labels": ["INBOX"],
 				"to": ["bob@example.com"],
-				"size_bytes": 512,
+					"size_bytes": 512,
+					"matches": [{
+						"char_offset": 0,
+						"line": 1,
+						"snippet": "Lunch tomorrow",
+						"score": 0.88
+					}],
 				"score": {
 					"rrf": 0.5,
 					"bm25": 1.25,
@@ -991,16 +1002,19 @@ func TestGetCLIHybridSearch_Success(t *testing.T) {
 	resp, err := s.GetCLIHybridSearch(
 		context.Background(),
 		CLIHybridSearchRequest{
-			Query:        "lunch",
-			Collection:   "Important",
-			MessageTypes: []string{"sms"},
-			Mode:         "vector",
-			Limit:        25,
+			Query:          "lunch",
+			Collection:     "Important",
+			MessageTypes:   []string{"sms"},
+			Mode:           "vector",
+			Limit:          25,
+			Offset:         5,
+			IncludeMatches: true,
+			MinScore:       0.75,
 		},
 	)
-	require.NoError(t, err, "GetCLIHybridSearch")
+	require.NoError(err, "GetCLIHybridSearch")
 
-	require.Len(t, resp.Results, 1, "Results")
+	require.Len(resp.Results, 1, "Results")
 	assert.Equal(int64(42), resp.Results[0].ID, "result ID")
 	assert.Equal("Lunch", resp.Results[0].Subject, "result Subject")
 	assert.Equal("alice@example.com", resp.Results[0].FromEmail, "result FromEmail")
@@ -1017,6 +1031,13 @@ func TestGetCLIHybridSearch_Success(t *testing.T) {
 	assert.Equal(int64(7), resp.Generation.ID, "Generation.ID")
 	assert.Equal("Important", resp.ScopeLabel, "ScopeLabel")
 	assert.Equal(2, resp.ScopeSourceCount, "ScopeSourceCount")
+	assert.True(resp.HasMore, "HasMore")
+	require.Len(resp.Results[0].Matches, 1, "Matches")
+	require.NotNil(resp.Results[0].Matches[0].CharOffset, "CharOffset")
+	require.NotNil(resp.Results[0].Matches[0].Line, "Line")
+	assert.Equal(0, *resp.Results[0].Matches[0].CharOffset, "CharOffset")
+	assert.Equal(1, *resp.Results[0].Matches[0].Line, "Line")
+	assert.InDelta(0.88, resp.Results[0].Matches[0].Score, 1e-9, "match Score")
 }
 
 func TestGetCLIHybridSearchUsesGeneratedClientAdapter(t *testing.T) {

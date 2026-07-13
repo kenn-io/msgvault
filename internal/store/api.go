@@ -67,6 +67,8 @@ type APIMessage struct {
 	SizeEstimate         int64
 	DeletedAt            *time.Time
 	Body                 string
+	BodyText             string
+	BodyHTML             string
 	Headers              map[string]string
 	Attachments          []APIAttachment
 }
@@ -257,10 +259,12 @@ func (s *Store) GetMessageContext(ctx context.Context, id int64) (*APIMessage, e
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return nil, fmt.Errorf("get message body: %w", err)
 	}
-	if bodyText.Valid {
-		m.Body = bodyText.String
-	} else if bodyHTML.Valid {
-		m.Body = bodyHTML.String
+	m.BodyText = nullStringValue(bodyText)
+	m.BodyHTML = nullStringValue(bodyHTML)
+	if m.BodyText != "" {
+		m.Body = m.BodyText
+	} else {
+		m.Body = m.BodyHTML
 	}
 
 	// Get attachments

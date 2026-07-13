@@ -14,10 +14,10 @@ vectors locally. SQLite archives store vectors in `vectors.db`.
 PostgreSQL archives store them in pgvector tables inside the same
 database as the message archive.
 
-When vector search is enabled, the `search` command, the HTTP
-`/api/v1/search` endpoint, and the MCP `search_messages` tool all
-accept `mode=vector` (pure semantic) and `mode=hybrid` (BM25 +
-vector fused with Reciprocal Rank Fusion). A separate MCP tool,
+When vector search is enabled, the `search` command and HTTP
+`/api/v1/search` endpoint accept `mode=vector` (pure semantic) and
+`mode=hybrid` (BM25 + vector fused with Reciprocal Rank Fusion). The MCP
+equivalent is `semantic_search_messages`. A separate MCP tool,
 `find_similar_messages`, returns nearest-neighbor messages for a
 given seed. The vectors and archive stay local, but embedding work is
 performed by the endpoint in your config. If that endpoint is hosted
@@ -388,8 +388,10 @@ filtering.
 
 **MCP tools:**
 
-- `search_messages` searches metadata when `mode` is omitted and accepts
-  explicit `vector` or `hybrid` modes plus an `explain` argument. It
+- `search_metadata` searches subject, sender/recipient, label, date, and other
+  metadata fields.
+- `semantic_search_messages` accepts explicit `vector` or `hybrid` modes plus
+  `explain` and `min_score` arguments. It
   paginates with `offset` and `limit`; for vector/hybrid modes, pagination
   is limited to the configured
   `[vector.search].max_page_size_hybrid` ranking window when that cap
@@ -401,6 +403,9 @@ filtering.
 - `find_similar_messages` takes a seed `message_id` and returns
   nearest neighbors (excluding the seed itself). Optional `account`,
   `after`, `before`, `has_attachment` filters.
+- `search_messages` is a deprecated compatibility wrapper that dispatches to
+  `search_metadata` when mode is omitted and `semantic_search_messages` for
+  vector/hybrid modes.
 
 ## Model Rotation
 
@@ -440,7 +445,7 @@ body keywords.
 | `missing_free_text` | `mode=vector` or `mode=hybrid` used with a filter-only query (no free text to embed). | Add free-text terms to `q`, or use the appropriate non-vector fallback. |
 | `index_scope_mismatch` | The active vector generation was built for selected message types and the query is unscoped or asks for a type outside that scope. | Add a compatible `message_type` filter, use the appropriate non-vector fallback, or rebuild an unscoped generation. |
 | `pagination_unsupported` | HTTP request asked for `page>1` with `mode=vector|hybrid`. | Use `page=1` with a larger `page_size` instead. |
-| `pagination_limit` | MCP `search_messages` asked for an `offset` at or beyond a positive `[vector.search].max_page_size_hybrid` cap in `mode=vector|hybrid`. | Omit `mode` for metadata search, use `search_message_bodies` for body keywords, request an earlier vector page, or raise/disable the hybrid page-size cap. |
+| `pagination_limit` | MCP `semantic_search_messages` asked for an `offset` at or beyond a positive `[vector.search].max_page_size_hybrid` cap. | Use `search_metadata` for metadata search, use `search_message_bodies` for body keywords, request an earlier vector page, or raise/disable the hybrid page-size cap. |
 | `invalid_mode` | The requested mode is not supported by that surface. | Use `fts`, `vector`, or `hybrid` on the CLI or HTTP; use `vector`, `hybrid`, or omitted `mode` in MCP. |
 | `embedding_timeout` | The embedding endpoint did not respond before the request deadline (transient: slow/cold model, network blip). | Retry; if persistent, raise `[vector.embeddings].timeout` or use a faster endpoint. |
 

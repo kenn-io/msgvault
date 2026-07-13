@@ -1297,6 +1297,13 @@ components:
             type: string
           nullable: true
           type: array
+        matches:
+          items:
+            $ref: "#/components/schemas/HybridSearchMatch"
+          nullable: true
+          type: array
+        matches_truncated:
+          type: boolean
         message_type:
           type: string
         score:
@@ -1328,10 +1335,29 @@ components:
         - has_attachments
         - size_bytes
       type: object
+    HybridSearchMatch:
+      properties:
+        char_offset:
+          format: int64
+          type: integer
+        line:
+          format: int64
+          type: integer
+        score:
+          format: double
+          type: number
+        snippet:
+          type: string
+      required:
+        - snippet
+        - score
+      type: object
     HybridSearchResponse:
       properties:
         generation:
           $ref: "#/components/schemas/HybridGenerationSummary"
+        has_more:
+          type: boolean
         mode:
           type: string
         pool_saturated:
@@ -1359,6 +1385,7 @@ components:
         - mode
         - returned
         - pool_saturated
+        - has_more
         - generation
         - took_ms
         - results
@@ -2249,7 +2276,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 1.3.0
+  version: 1.4.0
 openapi: 3.0.3
 paths:
   /api/ping:
@@ -4524,11 +4551,27 @@ paths:
           schema:
             format: int64
             type: integer
+        - description: Zero-based ranking offset for vector or hybrid search (default 0)
+          in: query
+          name: offset
+          schema:
+            format: int64
+            type: integer
         - description: Include score explanation when mode is vector or hybrid
           in: query
           name: explain
           schema:
             type: boolean
+        - description: Include scored semantic chunk excerpts for vector or hybrid results
+          in: query
+          name: include_matches
+          schema:
+            type: boolean
+        - description: Minimum chunk score for included excerpts; does not filter ranked messages
+          in: query
+          name: min_score
+          schema:
+            type: number
         - description: Message type filter; repeat or comma-separate for multiple values
           in: query
           name: message_type

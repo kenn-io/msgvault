@@ -1075,25 +1075,27 @@ func (h HybridGenerationSummary) Validate() error {
 }
 
 type HybridSearchItem struct {
-	Bcc             []string        `json:"bcc,omitempty"`
-	Cc              []string        `json:"cc,omitempty"`
-	ConversationID  *int64          `json:"conversation_id,omitempty"`
-	DeletedAt       *string         `json:"deleted_at,omitempty"`
-	From            string          `json:"from" validate:"required"`
-	FromEmail       *string         `json:"from_email,omitempty"`
-	FromName        *string         `json:"from_name,omitempty"`
-	FromPhone       *string         `json:"from_phone,omitempty"`
-	HasAttachments  bool            `json:"has_attachments"`
-	ID              int64           `json:"id"`
-	Labels          []string        `json:"labels,omitempty" validate:"required"`
-	MessageType     *string         `json:"message_type,omitempty"`
-	Score           *ScoreBreakdown `json:"score,omitempty"`
-	SentAt          string          `json:"sent_at" validate:"required"`
-	SizeBytes       int64           `json:"size_bytes"`
-	Snippet         string          `json:"snippet" validate:"required"`
-	SourceMessageID *string         `json:"source_message_id,omitempty"`
-	Subject         string          `json:"subject" validate:"required"`
-	To              []string        `json:"to,omitempty" validate:"required"`
+	Bcc              []string            `json:"bcc,omitempty"`
+	Cc               []string            `json:"cc,omitempty"`
+	ConversationID   *int64              `json:"conversation_id,omitempty"`
+	DeletedAt        *string             `json:"deleted_at,omitempty"`
+	From             string              `json:"from" validate:"required"`
+	FromEmail        *string             `json:"from_email,omitempty"`
+	FromName         *string             `json:"from_name,omitempty"`
+	FromPhone        *string             `json:"from_phone,omitempty"`
+	HasAttachments   bool                `json:"has_attachments"`
+	ID               int64               `json:"id"`
+	Labels           []string            `json:"labels,omitempty" validate:"required"`
+	Matches          []HybridSearchMatch `json:"matches,omitempty"`
+	MatchesTruncated *bool               `json:"matches_truncated,omitempty"`
+	MessageType      *string             `json:"message_type,omitempty"`
+	Score            *ScoreBreakdown     `json:"score,omitempty"`
+	SentAt           string              `json:"sent_at" validate:"required"`
+	SizeBytes        int64               `json:"size_bytes"`
+	Snippet          string              `json:"snippet" validate:"required"`
+	SourceMessageID  *string             `json:"source_message_id,omitempty"`
+	Subject          string              `json:"subject" validate:"required"`
+	To               []string            `json:"to,omitempty" validate:"required"`
 }
 
 func (h HybridSearchItem) Validate() error {
@@ -1103,6 +1105,13 @@ func (h HybridSearchItem) Validate() error {
 	}
 	if err := typesValidator.Var(h.Labels, "required"); err != nil {
 		errors = errors.Append("Labels", err)
+	}
+	for i, item := range h.Matches {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Matches[%d]", i), err)
+			}
+		}
 	}
 	if h.Score != nil {
 		if v, ok := any(h.Score).(runtime.Validator); ok {
@@ -1129,8 +1138,20 @@ func (h HybridSearchItem) Validate() error {
 	return errors
 }
 
+type HybridSearchMatch struct {
+	CharOffset *int64  `json:"char_offset,omitempty"`
+	Line       *int64  `json:"line,omitempty"`
+	Score      float64 `json:"score"`
+	Snippet    string  `json:"snippet" validate:"required"`
+}
+
+func (h HybridSearchMatch) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(h))
+}
+
 type HybridSearchResponse struct {
 	Generation       HybridGenerationSummary `json:"generation"`
+	HasMore          bool                    `json:"has_more"`
 	Mode             string                  `json:"mode" validate:"required"`
 	PoolSaturated    bool                    `json:"pool_saturated"`
 	Query            string                  `json:"query" validate:"required"`

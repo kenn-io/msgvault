@@ -11,7 +11,6 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
 )
@@ -644,10 +643,7 @@ func (w *Worker) embedBatch(ctx context.Context, ids []int64) (embedBatchResult,
 		// Fall back to HTML-to-text when the plaintext body is empty —
 		// HTML-only messages would otherwise get subject-only embeddings
 		// and have materially worse semantic recall.
-		body := bodyText
-		if body == "" && bodyHTML != "" {
-			body = mime.StripHTML(bodyHTML)
-		}
+		body := BodyTextForEmbedding(bodyText, bodyHTML)
 		// Sized to give Preprocess a generous-but-bounded budget: the
 		// chunker emits at most maxSpansPerMessage * MaxInputChars
 		// runes of *post-sanitize* output, and sanitize routinely

@@ -26,6 +26,8 @@ import (
 	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
+	"go.kenn.io/msgvault/internal/vector/chunkmatch"
+	"go.kenn.io/msgvault/internal/vector/embed"
 	"go.kenn.io/msgvault/internal/vector/hybrid"
 	"golang.org/x/oauth2"
 )
@@ -160,6 +162,11 @@ const (
 	AnalyticsModePostgres    = "postgres"
 )
 
+const (
+	maxHybridMatches      = 5
+	hybridMatchSnippetLen = 300
+)
+
 type HealthResponse struct {
 	Status    string           `json:"status"`
 	Vector    *VectorHealth    `json:"vector,omitempty"`
@@ -287,6 +294,7 @@ type hybridSearchResponse struct {
 	Mode             string                  `json:"mode"`
 	Returned         int                     `json:"returned"`
 	PoolSaturated    bool                    `json:"pool_saturated"`
+	HasMore          bool                    `json:"has_more"`
 	Generation       hybridGenerationSummary `json:"generation"`
 	TookMS           int64                   `json:"took_ms"`
 	ScopeLabel       string                  `json:"scope_label,omitempty"`
@@ -320,7 +328,16 @@ type hybridGenerationSummary struct {
 type hybridSearchItem struct {
 	MessageSummary
 
-	Score *scoreBreakdown `json:"score,omitempty"`
+	Score            *scoreBreakdown     `json:"score,omitempty"`
+	Matches          []hybridSearchMatch `json:"matches,omitempty"`
+	MatchesTruncated bool                `json:"matches_truncated,omitempty"`
+}
+
+type hybridSearchMatch struct {
+	CharOffset *int    `json:"char_offset,omitempty"`
+	Snippet    string  `json:"snippet"`
+	Line       *int    `json:"line,omitempty"`
+	Score      float64 `json:"score"`
 }
 
 // scoreBreakdown exposes fused-score components for debugging. BM25,
@@ -703,6 +720,25 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 				"mode=vector|hybrid only supports page=1")
 			return
 		}
+		offset, _, err := queryInt(r, "offset")
+		if err != nil {
+			s.rejectBadParam(w, err)
+			return
+		}
+		if offset < 0 {
+			s.rejectBadParam(w, newParamError("offset", "query parameter \"offset\" must be non-negative"))
+			return
+		}
+		includeMatches, _, err := queryBool(r, "include_matches")
+		if err != nil {
+			s.rejectBadParam(w, err)
+			return
+		}
+		minScore, _, err := queryFloat(r, "min_score")
+		if err != nil {
+			s.rejectBadParam(w, err)
+			return
+		}
 		pageSize, ok, err := queryInt(r, "page_size")
 		if err != nil {
 			s.rejectBadParam(w, err)
@@ -712,10 +748,17 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 			pageSize = 20
 		}
 		_, _, vectorCfg := s.vectorComponents()
-		if maxPage := vectorCfg.Search.MaxPageSizeHybridClamp(); maxPage > 0 && pageSize > maxPage {
-			pageSize = maxPage
+		if maxPage := vectorCfg.Search.MaxPageSizeHybridClamp(); maxPage > 0 {
+			if offset >= maxPage {
+				writeError(w, http.StatusBadRequest, "pagination_limit",
+					fmt.Sprintf("offset %d exceeds hybrid ranking window (max %d)", offset, maxPage))
+				return
+			}
+			if offset+pageSize > maxPage {
+				pageSize = maxPage - offset
+			}
 		}
-		s.handleHybridSearch(w, r, query, parsedQuery, mode, explain, pageSize, scope)
+		s.handleHybridSearch(w, r, query, parsedQuery, mode, explain, offset, pageSize, includeMatches, minScore, scope)
 		return
 	}
 
@@ -804,10 +847,11 @@ func parseSearchQueryRequest(r *http.Request, query string) *search.Query {
 // through the message store.
 func (s *Server) handleHybridSearch(
 	w http.ResponseWriter, r *http.Request,
-	q string, parsed *search.Query, mode string, explain bool, pageSize int,
+	q string, parsed *search.Query, mode string, explain bool,
+	offset, pageSize int, includeMatches bool, minScore float64,
 	scope cliScope,
 ) {
-	hybridEngine, _, _ := s.vectorComponents()
+	hybridEngine, backend, vectorCfg := s.vectorComponents()
 	if hybridEngine == nil {
 		s.writeVectorUnavailable(w)
 		return
@@ -839,11 +883,15 @@ func (s *Server) handleHybridSearch(
 		return
 	}
 
+	fetchLimit := offset + pageSize + 1
+	if maxPage := vectorCfg.Search.MaxPageSizeHybridClamp(); maxPage > 0 && fetchLimit > maxPage {
+		fetchLimit = maxPage
+	}
 	req := hybrid.SearchRequest{
 		Mode:         hybrid.Mode(mode),
 		FreeText:     freeText,
 		Filter:       filter,
-		Limit:        pageSize,
+		Limit:        fetchLimit,
 		SubjectTerms: subjectTerms,
 		Explain:      explain,
 	}
@@ -872,13 +920,18 @@ func (s *Server) handleHybridSearch(
 		return
 	}
 
+	pageStart := min(offset, len(hits))
+	pageEnd := min(pageStart+pageSize, len(hits))
+	hasMore := pageEnd < len(hits)
+	pageHits := hits[pageStart:pageEnd]
+
 	// Bulk-hydrate to avoid the per-hit GetMessage N+1: a single
 	// summary lookup pulls the base fields + recipients + labels for
 	// the whole hit set in 5 SQL round-trips, regardless of len(hits).
-	// Body and attachments are intentionally skipped — the search
-	// response only needs MessageSummary.
-	hitIDs := make([]int64, len(hits))
-	for i, h := range hits {
+	// Body and attachments are skipped on the default summary-only path.
+	// Opt-in match enrichment below fetches bodies only for the returned page.
+	hitIDs := make([]int64, len(pageHits))
+	for i, h := range pageHits {
 		hitIDs[i] = h.MessageID
 	}
 	summaries, err := s.getMessagesSummariesByIDs(r.Context(), hitIDs)
@@ -893,8 +946,8 @@ func (s *Server) handleHybridSearch(
 	for _, m := range summaries {
 		byID[m.ID] = m
 	}
-	items := make([]hybridSearchItem, 0, len(hits))
-	for _, h := range hits {
+	items := make([]hybridSearchItem, 0, len(pageHits))
+	for _, h := range pageHits {
 		msg, ok := byID[h.MessageID]
 		if !ok {
 			// Hit referred to a row that disappeared between Search
@@ -922,12 +975,16 @@ func (s *Server) handleHybridSearch(
 		}
 		items = append(items, item)
 	}
+	if includeMatches {
+		s.enrichHybridMatches(ctx, backend, vectorCfg, meta.Generation.ID, meta.QueryVector, items, minScore)
+	}
 
 	writeJSON(w, http.StatusOK, hybridSearchResponse{
 		Query:            q,
 		Mode:             mode,
 		Returned:         len(items),
 		PoolSaturated:    meta.PoolSaturated,
+		HasMore:          hasMore,
 		ScopeLabel:       scope.displayName(),
 		ScopeSourceCount: len(scope.sourceIDs()),
 		Generation: hybridGenerationSummary{
@@ -940,6 +997,57 @@ func (s *Server) handleHybridSearch(
 		TookMS:  time.Since(start).Milliseconds(),
 		Results: items,
 	})
+}
+
+func (s *Server) enrichHybridMatches(
+	ctx context.Context,
+	backend vector.Backend,
+	cfg vector.Config,
+	genID vector.GenerationID,
+	queryVec []float32,
+	items []hybridSearchItem,
+	minScore float64,
+) {
+	scorer, ok := backend.(vector.ChunkScoringBackend)
+	if !ok || len(queryVec) == 0 {
+		return
+	}
+	for i := range items {
+		msg, err := s.getMessage(ctx, items[i].ID)
+		if err != nil || msg == nil {
+			s.logger.Warn("hydrate hybrid match body failed", "message_id", items[i].ID, "error", err)
+			continue
+		}
+		hits, err := scorer.ScoreMessageChunks(ctx, genID, msg.ID, queryVec)
+		if err != nil {
+			s.logger.Warn("score hybrid match chunks failed", "message_id", items[i].ID, "error", err)
+			continue
+		}
+		matches, truncated := chunkmatch.Build(
+			msg.Subject, embeddingBodyText(msg), cfg, hits, minScore,
+			maxHybridMatches, hybridMatchSnippetLen,
+		)
+		items[i].Matches = make([]hybridSearchMatch, len(matches))
+		for j, match := range matches {
+			items[i].Matches[j] = hybridSearchMatch{
+				CharOffset: match.CharOffset,
+				Snippet:    match.Snippet,
+				Line:       match.Line,
+				Score:      match.Score,
+			}
+		}
+		items[i].MatchesTruncated = truncated
+	}
+}
+
+func embeddingBodyText(msg *APIMessage) string {
+	body := embed.BodyTextForEmbedding(msg.BodyText, msg.BodyHTML)
+	if body == "" {
+		// Preserve compatibility with MessageStore implementations that only
+		// populate the legacy selected Body field.
+		return msg.Body
+	}
+	return body
 }
 
 func (s *Server) handleSimilarSearch(w http.ResponseWriter, r *http.Request) {

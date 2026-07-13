@@ -5069,6 +5069,15 @@ func TestHandleSearch_HybridFilterOnlyReturnsBadRequest(t *testing.T) {
 	assert.Equal(t, "missing_free_text", errResp.Error, "error")
 }
 
+func TestEmbeddingBodyText_HTMLOnlyUsesEmbeddingCorpus(t *testing.T) {
+	msg := &APIMessage{
+		Body:     "<p>semantic <strong>needle</strong></p>",
+		BodyHTML: "<p>semantic <strong>needle</strong></p>",
+	}
+
+	assert.Equal(t, "semantic needle", embeddingBodyText(msg))
+}
+
 func TestHandleSearch_VectorMessageTypeParamReachesFilter(t *testing.T) {
 	store := &mockStore{
 		messages: []APIMessage{{
@@ -5360,6 +5369,75 @@ func TestHandleSearch_HybridUsesBulkHydration(t *testing.T) {
 		"GetMessagesSummariesByIDs call count, want 1 (single bulk lookup)")
 	wantIDs := []int64{1, 2, 3}
 	require.Equal(wantIDs, store.getSummariesByIDsLastIDs, "getSummariesByIDs last ids")
+}
+
+func TestHandleSearch_VectorMatchEnrichmentIsOptInAndPageAware(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	store := &mockStore{
+		messages: []APIMessage{
+			{ID: 1, Subject: "first", Body: "first body"},
+			{ID: 2, Subject: "second", Body: "second body"},
+			{ID: 3, Subject: "third", Body: "third body"},
+			{ID: 4, Subject: "probe", Body: "probe body"},
+		},
+	}
+	backend := &fakeVectorBackend{
+		active: &vector.Generation{
+			ID: 1, Model: "fake", Dimension: 4,
+			Fingerprint: "fake:4", State: vector.GenerationActive,
+		},
+		searchHits: []vector.Hit{
+			{MessageID: 1, Score: 0.95, Rank: 1},
+			{MessageID: 2, Score: 0.90, Rank: 2},
+			{MessageID: 3, Score: 0.85, Rank: 3},
+			{MessageID: 4, Score: 0.80, Rank: 4},
+		},
+		chunkHits: map[int64][]vector.ChunkHit{
+			2: {{ChunkCharStart: 0, ChunkCharEnd: 11, Score: 0.9}},
+			3: {{ChunkCharStart: 0, ChunkCharEnd: 10, Score: 0.7}},
+			4: {{ChunkCharStart: 0, ChunkCharEnd: 10, Score: 0.95}},
+		},
+	}
+	engine := hybrid.NewEngine(backend, nil, realEmbedder{dim: 4}, hybrid.Config{
+		ExpectedFingerprint: "fake:4", RRFK: 60, KPerSignal: 10,
+	})
+	srv := NewServerWithOptions(ServerOptions{
+		Config:       &config.Config{Server: config.ServerConfig{APIPort: 8080}},
+		Store:        store,
+		HybridEngine: engine,
+		Backend:      backend,
+		Logger:       testLogger(),
+	})
+
+	req := httptest.NewRequest(http.MethodGet,
+		"/api/v1/search?q=body&mode=vector&offset=1&page_size=2&include_matches=true&min_score=0.8", nil)
+	w := httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+
+	require.Equal(http.StatusOK, w.Code, "status (body: %s)", w.Body.String())
+	var resp struct {
+		HasMore bool `json:"has_more"`
+		Results []struct {
+			ID      int64 `json:"id"`
+			Matches []struct {
+				Snippet string  `json:"snippet"`
+				Score   float64 `json:"score"`
+			} `json:"matches"`
+		} `json:"results"`
+	}
+	require.NoError(json.NewDecoder(w.Body).Decode(&resp), "decode")
+	assert.True(resp.HasMore, "probe hit should set has_more")
+	require.Len(resp.Results, 2, "page results")
+	assert.Equal(int64(2), resp.Results[0].ID, "first page id")
+	assert.Equal(int64(3), resp.Results[1].ID, "second page id")
+	require.Len(resp.Results[0].Matches, 1, "high-score excerpts")
+	assert.InDelta(0.9, resp.Results[0].Matches[0].Score, 0.001, "match score")
+	assert.Empty(resp.Results[1].Matches, "low-score excerpts")
+	assert.Equal([]int64{2, 3}, store.getSummariesByIDsLastIDs, "summary hydration ids")
+	assert.Equal(int32(2), store.getMessageCalls.Load(), "body hydration calls")
+	assert.Equal([]int64{2, 3}, backend.chunkScoreIDs, "chunk scoring ids")
+	assert.Equal(4, backend.searchLimit, "ranking prefix includes one probe")
 }
 
 func TestHandleSimilarSearchUsesVectorBackend(t *testing.T) {
@@ -5701,14 +5779,17 @@ func TestHandleQuery_SQLiteEngine503(t *testing.T) {
 // that need canned ANN hits set searchHits/searchErr; Stats and the
 // generation-resolution paths use the other fields.
 type fakeVectorBackend struct {
-	active       *vector.Generation
-	building     *vector.Generation
-	stats        vector.Stats
-	loadVec      []float32
-	loadErr      error
-	searchHits   []vector.Hit
-	searchErr    error
-	searchFilter vector.Filter
+	active        *vector.Generation
+	building      *vector.Generation
+	stats         vector.Stats
+	loadVec       []float32
+	loadErr       error
+	searchHits    []vector.Hit
+	searchErr     error
+	searchFilter  vector.Filter
+	searchLimit   int
+	chunkHits     map[int64][]vector.ChunkHit
+	chunkScoreIDs []int64
 }
 
 func (f *fakeVectorBackend) CreateGeneration(_ context.Context, _ string, _ int, _ string) (vector.GenerationID, error) {
@@ -5733,10 +5814,17 @@ func (f *fakeVectorBackend) Upsert(_ context.Context, _ vector.GenerationID, _ [
 	return errors.New("not implemented")
 }
 func (f *fakeVectorBackend) Search(
-	_ context.Context, _ vector.GenerationID, _ []float32, _ int, filter vector.Filter,
+	_ context.Context, _ vector.GenerationID, _ []float32, limit int, filter vector.Filter,
 ) ([]vector.Hit, error) {
 	f.searchFilter = filter
+	f.searchLimit = limit
 	return f.searchHits, f.searchErr
+}
+func (f *fakeVectorBackend) ScoreMessageChunks(
+	_ context.Context, _ vector.GenerationID, messageID int64, _ []float32,
+) ([]vector.ChunkHit, error) {
+	f.chunkScoreIDs = append(f.chunkScoreIDs, messageID)
+	return f.chunkHits[messageID], nil
 }
 func (f *fakeVectorBackend) Delete(_ context.Context, _ vector.GenerationID, _ []int64) error {
 	return errors.New("not implemented")

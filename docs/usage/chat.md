@@ -47,8 +47,10 @@ The MCP server exposes the following tools to connected AI clients:
 
 | Tool | Description | Parameters |
 |---|---|---|
-| `search_messages` | With `mode` omitted, search message metadata using Gmail-like query syntax. When [vector search](/usage/vector-search/) is configured, `vector` and `hybrid` modes are also available. | `query` (string, required), `mode` (string: `vector`/`hybrid`, vector configuration only), `explain` (bool, vector configuration only), `limit` (int), `offset` (int), `account` (string) |
-| `search_message_bodies` | Search only message bodies with full-text keywords and return up to five 300-byte context snippets per message. | `query` (string, required), `limit` (int), `offset` (int), `account` (string) |
+| `search_messages` | Deprecated compatibility wrapper. Omitted mode dispatches to `search_metadata`; `vector`/`hybrid` dispatch to `semantic_search_messages`. | `query` (string, required), `mode` (string: `vector`/`hybrid`), `explain` (bool), `min_score` (number), `limit` (int), `offset` (int), `account` (string) |
+| `search_metadata` | Search message metadata with a subset of Gmail query syntax (not full Gmail compatibility). Matches subject, snippet, and sender/recipient metadata, not message bodies. | `query` (string, required), `limit` (int), `offset` (int), `account` (string) |
+| `search_message_bodies` | Keyword full-text search inside message bodies. Returns `matches` excerpts (up to 5 per message), ordered newest-first. Backend excerpts may omit `char_offset` and `line`; use `search_in_message` when exact locations are needed. | `query` (string, required), `limit` (int), `offset` (int), `account` (string) |
+| `semantic_search_messages` | Semantic search over preprocessed message subjects and bodies when [vector search](/usage/vector-search/) is configured. Returns scored chunk excerpts; `min_score` filters excerpts, not ranked messages. | `query` (string, required), `mode` (string: `vector`/`hybrid`, default `hybrid`), `explain` (bool), `min_score` (number), `limit` (int), `offset` (int), `account` (string) |
 | `find_similar_messages` | Nearest-neighbor search from a seed message's embedding. Requires vector search to be configured and an active index generation. | `message_id` (int, required), `limit` (int), `account` (string), `message_type` (string), `after` (string), `before` (string), `has_attachment` (bool) |
 | `search_by_domains` | Find messages where any participant (`from`, `to`, or `cc`) belongs to one of several domains, regardless of direction. | `domains` (comma-separated string, required), `limit` (int), `offset` (int), `after` (string), `before` (string) |
 | `get_message` | Get message details with windowed body paging | `id` (int, required), `offset` (int), `center_at` (int), `max_chars` (int), `body_format` (string: `auto`/`text`/`html`), `full_body` (bool) |
@@ -56,10 +58,10 @@ The MCP server exposes the following tools to connected AI clients:
 | `get_attachment` | Get attachment content by ID | `attachment_id` (int) |
 | `export_attachment` | Save attachment to filesystem | `attachment_id` (int), `destination` (string) |
 | `get_stats` | Archive overview statistics. Includes vector index state when configured. | — |
-| `aggregate` | Grouped statistics (top senders, domains, labels, time series) | `group_by` (string: sender/recipient/domain/label/time), `limit` (int), `after` (string), `before` (string), `account` (string) |
+| `aggregate` | Grouped statistics (top senders, domains, labels, or message volume by calendar year) | `group_by` (string: sender/recipient/domain/label/time), `limit` (int), `after` (string), `before` (string), `account` (string) |
 | `stage_deletion` | Stage messages for deletion (creates manifest only) | `query` (string) OR structured filters: `from` (string), `domain` (string), `label` (string), `after` (string), `before` (string), `has_attachment` (bool); optional: `account` (string) |
 
-`search_messages` and `list_messages` return paginated JSON:
+`search_metadata`, `search_message_bodies`, `semantic_search_messages`, and `list_messages` return paginated JSON. `search_metadata` reports an exact `total`; `search_message_bodies`, `semantic_search_messages`, and `list_messages` return `total = -1` because they do not run a separate count query:
 
 ```json
 {
@@ -71,22 +73,13 @@ The MCP server exposes the following tools to connected AI clients:
 }
 ```
 
-Use `offset` and `limit` to request subsequent pages. `search_messages`,
-`search_message_bodies`, and `list_messages` default to `limit = 20` and
-cap it at 50. Metadata-only `search_messages` reports an exact `total`.
-`search_message_bodies`, vector/hybrid search, and `list_messages` use
-`total = -1`; use `has_more` as their pagination signal.
-
-`search_messages` accepts msgvault's local subset of Gmail-like syntax.
-When `mode` is omitted, free text matches subject, snippet, sender, and
-recipient metadata, never message bodies. Use `search_message_bodies` for
-body keywords; it accepts operators such as `from:` and `label:` as filters
-but still requires at least one free-text term. Context extraction has a fixed
-request-wide work budget; when matches fall outside it, or additional contexts
-are omitted by the five-snippet cap, `context_snippets_truncated` is `true` and
-`context_snippets` may be empty.
-Gmail-only operators such as `list:` are rejected because msgvault does not
-index `List-ID` locally; use Gmail-side validation for those checks.
+Use `offset` and `limit` to request subsequent pages. `search_metadata`,
+`search_message_bodies`, `semantic_search_messages`, and `list_messages` default to `limit = 20` and
+cap it at 50. `search_message_bodies`, `semantic_search_messages`, and `list_messages` use this
+`total = -1` shape because they do not run a separate count query.
+`search_metadata` accepts msgvault's local subset of Gmail-like syntax.
+Gmail-only operators such as `list:` are rejected because msgvault does
+not index `List-ID` locally; use Gmail-side validation for those checks.
 To restrict mixed archives to values such as `email`, `calendar_event`,
 `teams`, `sms`, or `mms`, include a `message_type:` operator in the query
 (for example `message_type:teams incident review`). `find_similar_messages`
@@ -98,19 +91,32 @@ slice of the body plus `body_length`, `body_returned`, `offset`, and
 `has_more`, so unusually large messages are paged across calls instead of
 being returned in a single response.
 
-`find_similar_messages` is only registered when the server starts with vector
-search configured. `search_messages` is always available: omit `mode` for
-metadata search, or set `mode=vector` or `mode=hybrid` when vector search is
-configured. Explicit `mode=fts` is not accepted by the MCP tool. Vector and
-hybrid queries require at least one free-text term (operator-only queries
-return `missing_free_text`). They support `offset`/`limit` pagination inside
-the configured hybrid ranking window; when
-`[vector.search].max_page_size_hybrid` is positive, an `offset` at or beyond
-that cap returns `pagination_limit`. For deeper non-vector pagination, omit
-`mode` to search metadata or use `search_message_bodies` for body keywords;
-alternatively adjust the vector ranking cap.
+### `search_metadata` and `search_message_bodies` / `semantic_search_messages` query syntax
 
-In `mode=vector` and `mode=hybrid`, the paginated response also includes
+Supported operators: `from:`, `to:`, `cc:`, `bcc:`, `subject:`, `label:` (or `l:`), `has:attachment`, `before:`/`after:` (YYYY-MM-DD), `older_than:`/`newer_than:` (e.g. `7d`, `2w`, `1m`, `1y`), `larger:`/`smaller:` (e.g. `5M`). Bare domains on `from:`/`to:` match any address at that domain. Multiple terms are ANDed.
+
+Not supported: negation (`-has:attachment`), `OR`, or parentheses grouping.
+
+Free text in `search_metadata` matches subject, snippet, and sender/recipient metadata only. Use `search_message_bodies` for keyword body search or `semantic_search_messages` for vector/hybrid search over preprocessed subject and body content; both require at least one free-text term. Keyword matches literal words; semantic returns ranked messages with scored chunk excerpts. Keyword backend excerpts omit `char_offset` and `line` when the search backend does not provide efficient locations; semantic excerpts also commonly omit them because preprocessing rewrites message text. Use distinctive snippet terms with keyword `search_in_message` when raw-body navigation is needed.
+
+### `aggregate` response
+
+`group_by=time` buckets messages by **calendar year** only. Each row's `Key` is a year string (e.g. `"2024"`). Month or day granularity is not available via MCP.
+
+All `group_by` values return a JSON array of objects with these fields:
+
+| Field | Description |
+|---|---|
+| `Key` | Grouping value (email, domain, label name, or year) |
+| `Count` | Number of messages in the group |
+| `TotalSize` | Sum of `size_estimate` in bytes |
+| `AttachmentSize` | Sum of attachment sizes in bytes |
+| `AttachmentCount` | Number of attachments |
+| `TotalUnique` | Total number of distinct groups (same on every row) |
+
+`semantic_search_messages` is always registered so callers receive actionable discovery guidance. Without vector search it exposes a reduced schema and calls return `vector_not_enabled`; with vector search it advertises the full vector parameters. `search_message_bodies` and the deprecated `search_messages` compatibility wrapper are always available. Vector and hybrid queries require at least one free-text term (operator-only queries return `missing_free_text`). They support `offset`/`limit` pagination inside the configured hybrid ranking window; when `[vector.search].max_page_size_hybrid` is positive, an `offset` at or beyond that cap returns `pagination_limit`. `min_score` filters returned chunk excerpts only and does not remove ranked messages. For deeper pagination, adjust `[vector.search].max_page_size_hybrid`.
+
+In `semantic_search_messages` (vector/hybrid), the paginated response also includes
 top-level `mode`, `pool_saturated`, and `generation` fields. When
 `explain = true`, each item in `data` may include a `score` object with
 the fused ranking components.

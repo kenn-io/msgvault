@@ -22,6 +22,7 @@ import (
 
 // Compile-time check that *Backend satisfies vector.Backend.
 var _ vector.Backend = (*Backend)(nil)
+var _ vector.ChunkScoringBackend = (*Backend)(nil)
 
 // annOverFetchFactor multiplies k for the inner ANN scan so that after
 // GROUP BY dedup across multi-chunk messages, at least k distinct
@@ -1269,4 +1270,58 @@ func (b *Backend) EmbeddedMessageCount(ctx context.Context, gen vector.Generatio
 		return 0, fmt.Errorf("count embedded messages: %w", err)
 	}
 	return n, nil
+}
+
+// ScoreMessageChunks scores every embedded chunk of messageID in gen
+// against queryVec. Results are sorted by score descending (best first).
+func (b *Backend) ScoreMessageChunks(ctx context.Context, gen vector.GenerationID, messageID int64, queryVec []float32) ([]vector.ChunkHit, error) {
+	if len(queryVec) == 0 {
+		return nil, errors.New("score message chunks: empty query vector")
+	}
+
+	var dim int
+	err := b.db.QueryRowContext(ctx,
+		`SELECT dimension FROM index_generations WHERE id = $1`, int64(gen)).Scan(&dim)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, fmt.Errorf("%w: %d", vector.ErrUnknownGeneration, gen)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("lookup generation %d: %w", gen, err)
+	}
+	if len(queryVec) != dim {
+		return nil, fmt.Errorf("%w: query has %d dims, gen has %d",
+			vector.ErrDimensionMismatch, len(queryVec), dim)
+	}
+
+	stmt := fmt.Sprintf(`
+		SELECT chunk_index, chunk_char_start, chunk_char_end,
+		       (embedding::vector(%d)) <=> $3::vector AS distance
+		  FROM embeddings
+		 WHERE generation_id = $1 AND message_id = $2
+		 ORDER BY distance ASC, chunk_index ASC`, dim)
+
+	rows, err := b.db.QueryContext(ctx, stmt, int64(gen), messageID, vectorLiteral(queryVec))
+	if err != nil {
+		return nil, fmt.Errorf("score message chunks: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var hits []vector.ChunkHit
+	for rows.Next() {
+		var idx, start, end int
+		var dist float64
+		if err := rows.Scan(&idx, &start, &end, &dist); err != nil {
+			return nil, fmt.Errorf("scan chunk row: %w", err)
+		}
+		hits = append(hits, vector.ChunkHit{
+			ChunkIndex:     idx,
+			ChunkCharStart: start,
+			ChunkCharEnd:   end,
+			Score:          1.0 - dist,
+		})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate chunk rows: %w", err)
+	}
+	return hits, nil
 }

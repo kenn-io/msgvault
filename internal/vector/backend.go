@@ -123,6 +123,23 @@ type Hit struct {
 	Rank      int     // 1-based rank within this signal
 }
 
+// ChunkHit scores one embedded chunk against a query vector.
+// ChunkCharStart/ChunkCharEnd are rune offsets into the preprocessed
+// embed text (subject prefix + body), matching embeddings.chunk_char_*.
+type ChunkHit struct {
+	ChunkIndex     int
+	ChunkCharStart int
+	ChunkCharEnd   int
+	Score          float64 // backend-native; higher is better (1 - distance)
+}
+
+// ChunkScoringBackend scores every embedded chunk of a message against a
+// query vector. sqlitevec and pgvector backends implement this.
+type ChunkScoringBackend interface {
+	Backend
+	ScoreMessageChunks(ctx context.Context, gen GenerationID, messageID int64, queryVec []float32) ([]ChunkHit, error)
+}
+
 // Stats reports the size of one generation (or 0 for totals).
 type Stats struct {
 	EmbeddingCount int64

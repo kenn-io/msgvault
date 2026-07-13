@@ -122,3 +122,8 @@ func (b *Backend) ResetWatermarkBelow(_ context.Context, _ int64) error {
 func (b *Backend) EmbeddedMessageCount(_ context.Context, _ vector.GenerationID) (int64, error) {
 	return 0, ErrNotBuilt
 }
+
+// ScoreMessageChunks is a stub that always returns ErrNotBuilt.
+func (b *Backend) ScoreMessageChunks(_ context.Context, _ vector.GenerationID, _ int64, _ []float32) ([]vector.ChunkHit, error) {
+	return nil, ErrNotBuilt
+}

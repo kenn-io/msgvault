@@ -169,12 +169,15 @@ type CLISearch struct {
 }
 
 type CLIHybridSearchRequest struct {
-	Query        string
-	Account      string
-	Collection   string
-	MessageTypes []string
-	Mode         string
-	Limit        int
+	Query          string
+	Account        string
+	Collection     string
+	MessageTypes   []string
+	Mode           string
+	Limit          int
+	Offset         int
+	IncludeMatches bool
+	MinScore       float64
 }
 
 type CLIHybridSearch struct {
@@ -184,6 +187,7 @@ type CLIHybridSearch struct {
 	ReturnedCount    int
 	ScopeLabel       string
 	ScopeSourceCount int
+	HasMore          bool
 }
 
 type CLIHybridGeneration struct {
@@ -195,14 +199,23 @@ type CLIHybridGeneration struct {
 }
 
 type CLIHybridSearchResult struct {
-	ID             int64
-	Subject        string
-	FromEmail      string
-	SentAt         time.Time
-	RRFScore       *float64
-	BM25Score      *float64
-	VectorScore    *float64
-	SubjectBoosted bool
+	ID               int64
+	Subject          string
+	FromEmail        string
+	SentAt           time.Time
+	RRFScore         *float64
+	BM25Score        *float64
+	VectorScore      *float64
+	SubjectBoosted   bool
+	Matches          []CLIHybridSearchMatch
+	MatchesTruncated bool
+}
+
+type CLIHybridSearchMatch struct {
+	CharOffset *int
+	Snippet    string
+	Line       *int
+	Score      float64
 }
 
 type SimilarSearchRequest struct {
@@ -633,13 +646,16 @@ func (c *Client) GetCLIHybridSearch(
 	resp, err := APIResponse(c, func(client *apiclient.Client) (*generated.SearchMessagesResp, error) {
 		return client.SearchMessagesWithResponse(ctx, &generated.SearchMessagesRequestOptions{
 			Query: &generated.SearchMessagesQuery{
-				Q:           req.Query,
-				Mode:        optionalString(req.Mode),
-				Explain:     optionalBool(true),
-				Account:     optionalString(req.Account),
-				Collection:  optionalString(req.Collection),
-				MessageType: optionalMessageTypes(req.MessageTypes),
-				PageSize:    optionalPositiveInt64(req.Limit),
+				Q:              req.Query,
+				Mode:           optionalString(req.Mode),
+				Explain:        optionalBool(true),
+				Account:        optionalString(req.Account),
+				Collection:     optionalString(req.Collection),
+				MessageType:    optionalMessageTypes(req.MessageTypes),
+				PageSize:       optionalPositiveInt64(req.Limit),
+				Offset:         optionalPositiveInt64(req.Offset),
+				IncludeMatches: optionalBool(req.IncludeMatches),
+				MinScore:       optionalFloat32(req.MinScore),
 			},
 		})
 	})

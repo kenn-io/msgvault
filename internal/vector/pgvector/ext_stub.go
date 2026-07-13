@@ -107,6 +107,11 @@ func (b *Backend) EmbeddedMessageCount(_ context.Context, _ vector.GenerationID)
 	return 0, ErrNotBuilt
 }
 
+// ScoreMessageChunks always returns ErrNotBuilt in non-pgvector builds.
+func (b *Backend) ScoreMessageChunks(_ context.Context, _ vector.GenerationID, _ int64, _ []float32) ([]vector.ChunkHit, error) {
+	return nil, ErrNotBuilt
+}
+
 // Compile-time check that the stub matches the vector.Backend
 // interface. Keeping the assertion here means changes to the interface
 // break stub and real builds in lockstep.

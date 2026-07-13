@@ -90,6 +90,21 @@ func queryBool(r *http.Request, name string) (value bool, ok bool, err error) {
 	return value, true, nil
 }
 
+// queryFloat parses a floating-point query parameter. ok is false when absent;
+// a present but non-numeric value returns a paramError.
+func queryFloat(r *http.Request, name string) (value float64, ok bool, err error) {
+	raw := r.URL.Query().Get(name)
+	if raw == "" {
+		return 0, false, nil
+	}
+	value, convErr := strconv.ParseFloat(raw, 64)
+	if convErr != nil {
+		return 0, false, newParamError(name,
+			fmt.Sprintf("query parameter %q must be a number, got %q", name, raw))
+	}
+	return value, true, nil
+}
+
 // queryDate parses an RFC3339 or YYYY-MM-DD date parameter, normalized to UTC.
 // ok is false when the parameter is absent; a present but unparseable value
 // returns a paramError.

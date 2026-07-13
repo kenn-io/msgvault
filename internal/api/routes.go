@@ -486,7 +486,10 @@ func rawRouteParameters(operationID string) []*huma.Param {
 			queryStringParam("mode", "Search mode: fts, vector, or hybrid", false),
 			queryIntegerParam("page", "One-based page number (default 1; values below 1 are clamped to 1). Non-numeric values are rejected with 400."),
 			queryIntegerParam("page_size", "Page size (default 20, max 100; out-of-range values are clamped). Non-numeric values are rejected with 400."),
+			queryIntegerParam("offset", "Zero-based ranking offset for vector or hybrid search (default 0)"),
 			queryBooleanParam("explain", "Include score explanation when mode is vector or hybrid"),
+			queryBooleanParam("include_matches", "Include scored semantic chunk excerpts for vector or hybrid results"),
+			queryNumberParam("min_score", "Minimum chunk score for included excerpts; does not filter ranked messages"),
 			queryStringParam("message_type", "Message type filter; repeat or comma-separate for multiple values", false),
 		}, scopeParams()...)
 	case "getAggregates":
@@ -695,6 +698,10 @@ func queryRequiredIntegerParam(name, doc string) *huma.Param {
 
 func queryBooleanParam(name, doc string) *huma.Param {
 	return param(name, "query", huma.TypeBoolean, doc, false)
+}
+
+func queryNumberParam(name, doc string) *huma.Param {
+	return param(name, "query", huma.TypeNumber, doc, false)
 }
 
 func param(name, in, typ, doc string, required bool) *huma.Param {

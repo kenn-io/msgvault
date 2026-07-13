@@ -17,25 +17,27 @@ import (
 
 // Tool name constants.
 const (
-	ToolSearchMessages      = "search_messages"
-	ToolSearchMessageBodies = "search_message_bodies"
-	ToolGetMessage          = "get_message"
-	ToolGetAttachment       = "get_attachment"
-	ToolExportAttachment    = "export_attachment"
-	ToolListMessages        = "list_messages"
-	ToolGetStats            = "get_stats"
-	ToolAggregate           = "aggregate"
-	ToolStageDeletion       = "stage_deletion"
-	ToolSearchByDomains     = "search_by_domains"
-	ToolFindSimilarMessages = "find_similar_messages"
-	ToolSearchInMessage     = "search_in_message"
+	ToolSearchMessages         = "search_messages"
+	ToolSearchMetadata         = "search_metadata"
+	ToolSearchMessageBodies    = "search_message_bodies"
+	ToolSemanticSearchMessages = "semantic_search_messages"
+	ToolGetMessage             = "get_message"
+	ToolGetAttachment          = "get_attachment"
+	ToolExportAttachment       = "export_attachment"
+	ToolListMessages           = "list_messages"
+	ToolGetStats               = "get_stats"
+	ToolAggregate              = "aggregate"
+	ToolStageDeletion          = "stage_deletion"
+	ToolSearchByDomains        = "search_by_domains"
+	ToolFindSimilarMessages    = "find_similar_messages"
+	ToolSearchInMessage        = "search_in_message"
 )
 
-// search_messages mode values (wire format).
+// search_message_bodies/search_in_message mode values (wire format).
 const (
-	searchModeFTS    = "fts"
-	searchModeVector = "vector"
-	searchModeHybrid = "hybrid"
+	searchModeKeyword = "keyword"
+	searchModeVector  = "vector"
+	searchModeHybrid  = "hybrid"
 )
 
 // Common argument helpers for recurring tool option definitions.
@@ -72,7 +74,7 @@ func withAccount() mcp.ToolOption {
 
 // ServeOptions configures an MCP server. Only Engine is required; the
 // HybridEngine and VectorCfg fields enable the vector/hybrid modes on
-// the search_messages tool, and Backend additionally enables the
+// the search_message_bodies tool, and Backend additionally enables the
 // find_similar_messages tool.
 type ServeOptions struct {
 	Engine           query.Engine
@@ -83,8 +85,8 @@ type ServeOptions struct {
 	SimilarSearcher  SimilarSearcher
 	DataDir          string
 
-	// HybridEngine is optional. When nil, search_messages rejects
-	// mode=vector and mode=hybrid with a vector_not_enabled error.
+	// HybridEngine is optional. When nil, semantic_search_messages rejects
+	// vector/hybrid searches with a vector_not_enabled error.
 	HybridEngine *hybrid.Engine
 	// VectorCfg should already have ApplyDefaults() called on it.
 	// The handler reads Search.MaxPageSizeHybridClamp() at request
@@ -121,11 +123,18 @@ func newMCPServer(opts ServeOptions) *server.MCPServer {
 	}
 
 	vectorAvailable := opts.HybridEngine != nil || opts.HybridSearcher != nil
+	// search_in_message mode=vector needs the in-process vector components
+	// (HybridEngine + Backend as ChunkScoringBackend), not just the daemon
+	// HybridSearcher. The production CLI only wires the daemon searcher, so
+	// gate the vector mode advertisement on the actual capability.
+	vectorInMessageAvailable := opts.HybridEngine != nil && opts.Backend != nil
 	s.AddTool(searchMessagesTool(vectorAvailable), h.searchMessages)
+	s.AddTool(searchMetadataTool(), h.searchMetadata)
 	s.AddTool(searchMessageBodiesTool(), h.searchMessageBodies)
+	s.AddTool(semanticSearchMessagesTool(vectorAvailable), h.semanticSearchMessages)
 	s.AddTool(getMessageTool(), h.getMessage)
 	s.AddTool(getAttachmentTool(), h.getAttachment)
-	s.AddTool(searchInMessageTool(), h.searchInMessage)
+	s.AddTool(searchInMessageTool(vectorInMessageAvailable), h.searchInMessage)
 	s.AddTool(exportAttachmentTool(), h.exportAttachment)
 	s.AddTool(listMessagesTool(), h.listMessages)
 	s.AddTool(getStatsTool(), h.getStats)
@@ -202,68 +211,166 @@ func ServeHTTPWithOptions(ctx context.Context, opts ServeOptions, addr string) e
 	}
 }
 
-func searchMessagesTool(vectorAvailable bool) mcp.Tool {
-	if !vectorAvailable {
-		return mcp.NewTool(ToolSearchMessages,
-			mcp.WithDescription("Search email metadata (subject, sender, recipients, labels, dates) using Gmail-like query syntax. "+
-				"Supports from:, to:, subject:, label:, has:attachment, before:, after:, and free text (matched against subject, snippet, sender, and recipient metadata; never body). "+
-				"Gmail-only operators such as list: are rejected because msgvault does not index List-ID locally. "+
-				"For full message body keyword search, use search_message_bodies instead. "+
-				"Paginate with offset/limit (default limit 20, max 50). Response: data, total, returned, offset, has_more."),
-			mcp.WithReadOnlyHintAnnotation(true),
-			mcp.WithString("query",
-				mcp.Required(),
-				mcp.Description("Gmail-style search query (e.g. 'from:alice subject:meeting after:2024-01-01')"),
-			),
-			withAccount(),
-			withLimit("20"),
-			withOffset(),
-		)
-	}
-	return mcp.NewTool(ToolSearchMessages,
-		mcp.WithDescription("Search email metadata (subject, sender, recipients, labels, dates) using Gmail-like query syntax. "+
-			"Supports from:, to:, subject:, label:, has:attachment, before:, after:, and free text (matched against subject, snippet, sender, and recipient metadata; never body). "+
-			"Gmail-only operators such as list: are rejected because msgvault does not index List-ID locally. "+
-			"For full message body keyword search, use search_message_bodies instead. "+
-			"Paginate with offset/limit (default limit 20, max 50). Response: data, total, returned, offset, has_more. "+
-			"Vector search is configured: set mode=vector for pure semantic search or mode=hybrid to fuse BM25 and vector ranking via RRF. "+
-			"Vector/hybrid require free-text terms; filter-only queries must omit mode. "+
-			"total=-1 means the full match count is unknown — use has_more. "+
-			"Vector/hybrid ranking depth is capped by max_page_size_hybrid in config."),
+// Shared search_metadata schema text. The parser implements a subset of Gmail
+// syntax — not full Gmail compatibility. Keep this in sync with
+// internal/search/parser.go and the SearchFast path in handlers.go.
+const (
+	searchMetadataOperatorDoc = "Supported operators: from:, to:, cc:, bcc:, subject:, label: (or l:), has:attachment, " +
+		"before:/after: (YYYY-MM-DD), older_than:/newer_than: (e.g. 7d, 2w, 1m, 1y), larger:/smaller: (e.g. 5M). " +
+		"Bare domains on from:/to: match any address at that domain. Multiple terms are ANDed. " +
+		"Not supported: negation (-), OR, or parentheses grouping."
+	searchMetadataFreeTextDoc = "Free text matches subject, snippet, and sender/recipient metadata only (not bodies). " +
+		"Use search_message_bodies for body keywords or semantic_search_messages for vector/hybrid search."
+	searchMetadataPaginationDoc = "Results are ordered newest-first (by sent date); there is no sort parameter — " +
+		"use before:/after: to scope a date range. " +
+		"Paginate with offset/limit (default limit 20, max 50). " +
+		"Response: data, total, returned, offset, has_more."
+)
+
+func searchMetadataTool() mcp.Tool {
+	searchIntro := "Search message metadata using a subset of Gmail query syntax (not full Gmail compatibility). " +
+		searchMetadataOperatorDoc + " " + searchMetadataFreeTextDoc + " "
+	queryDesc := "Search query (e.g. 'from:alice subject:meeting after:2024-01-01'). " +
+		"See tool description for supported operators and limitations."
+
+	return mcp.NewTool(ToolSearchMetadata,
+		mcp.WithDescription(searchIntro+searchMetadataPaginationDoc+
+			"For body keywords use search_message_bodies; for vector/hybrid search use semantic_search_messages."),
 		mcp.WithReadOnlyHintAnnotation(true),
 		mcp.WithString("query",
 			mcp.Required(),
-			mcp.Description("Gmail-style search query (e.g. 'from:alice subject:meeting after:2024-01-01'); mode=vector|hybrid require at least one free-text term"),
+			mcp.Description(queryDesc),
+		),
+		withAccount(),
+		withLimit("20"),
+		withOffset(),
+	)
+}
+
+// searchMessagesTool preserves the pre-split search_messages contract for
+// existing MCP clients. New clients should use search_metadata for metadata
+// queries and semantic_search_messages for vector/hybrid queries.
+func searchMessagesTool(vectorAvailable bool) mcp.Tool {
+	description := "Deprecated compatibility tool; use search_metadata when mode is omitted and semantic_search_messages for mode=vector or mode=hybrid. " +
+		searchMetadataOperatorDoc + " " + searchMetadataFreeTextDoc + " " + searchMetadataPaginationDoc
+	opts := []mcp.ToolOption{
+		mcp.WithDescription(description),
+		mcp.WithReadOnlyHintAnnotation(true),
+		mcp.WithString("query",
+			mcp.Required(),
+			mcp.Description("Search query; omit mode for metadata search or set mode=vector|hybrid for semantic search"),
+		),
+		withAccount(),
+		withLimit("20"),
+		withOffset(),
+	}
+	if vectorAvailable {
+		opts = append(opts,
+			mcp.WithString("mode",
+				mcp.Description("Search mode: vector or hybrid. Omit for metadata search."),
+				mcp.Enum(searchModeVector, searchModeHybrid),
+			),
+			mcp.WithBoolean("explain",
+				mcp.Description("Include per-signal scores for vector/hybrid results"),
+			),
+			mcp.WithNumber("min_score",
+				mcp.Description("Minimum semantic score for returned chunk excerpts; does not filter ranked messages"),
+			),
+		)
+	}
+	return mcp.NewTool(ToolSearchMessages, opts...)
+}
+
+// searchMessageBodiesTool is the keyword-only body search. It is deliberately
+// separate from semanticSearchMessagesTool: keyword results are term-delimited
+// (a finite set of messages containing the query), date-ordered, and can report
+// an exact total, whereas semantic results are threshold-delimited (unbounded,
+// score-ordered, no total). Splitting the tools keeps each contract honest and
+// removes the mode/explain/min_score params that only ever applied to semantic.
+func searchMessageBodiesTool() mcp.Tool {
+	searchIntro := "Keyword full-text search over message bodies. " +
+		"Returns messages whose body text contains the query terms, newest-first, " +
+		"each with matches — up to 5 excerpt snippets centered on matched terms. " +
+		"Backend excerpts may omit char_offset and line when efficient source locations are unavailable; use search_in_message when exact locations are needed. " +
+		"When matches_truncated is true on a hit, more than 5 excerpts matched — use search_in_message or get_message to read the full body. " +
+		"Known Gmail operators (from:, subject:, label:, etc.) apply as metadata filters only and do not satisfy the free-text requirement. " +
+		"Filter-only queries such as from:alice are rejected — use search_metadata for filter-only queries. " +
+		"Unrecognized word:value tokens (e.g. RXD2:V2) are treated as literal body text, not filters. " +
+		"Query syntax: space-separated words are ANDed (each must appear somewhere in the body); " +
+		"a double-quoted phrase is one exact phrase (e.g. \"RXD2 V2\"); OR and NOT are not supported. " +
+		searchMetadataOperatorDoc + " "
+	queryDesc := "Body search query with at least one free-text term (bare word or quoted phrase). " +
+		"Gmail operators (from:, subject:, etc.) are metadata filters, not body search — " +
+		"subject:test alone is rejected; combine with body terms (from:alice budget) or use search_metadata for filter-only queries. " +
+		"Unrecognized word:value tokens (RXD2:V2) are literal text. " +
+		"Space-separated words are ANDed; double quotes match an exact phrase; OR/NOT unsupported."
+
+	return mcp.NewTool(ToolSearchMessageBodies,
+		mcp.WithDescription(searchIntro+
+			"Results are ordered newest-first (by sent date). "+
+			"Paginate with offset/limit (default limit 20, max 50). Response: data, returned, offset, has_more. "+
+			"Body search does not return a total; use has_more to detect more pages."),
+		mcp.WithReadOnlyHintAnnotation(true),
+		mcp.WithString("query",
+			mcp.Required(),
+			mcp.Description(queryDesc),
+		),
+		withAccount(),
+		withLimit("20"),
+		withOffset(),
+	)
+}
+
+// semanticSearchMessagesTool is the vector/hybrid body search. See the note on
+// searchMessageBodiesTool: this tool owns the score-ordered, unbounded contract
+// (mode/explain/min_score, and the mode/pool_saturated/generation response fields)
+// that would be dead weight on the keyword tool.
+func semanticSearchMessagesTool(vectorAvailable bool) mcp.Tool {
+	if !vectorAvailable {
+		return mcp.NewTool(ToolSemanticSearchMessages,
+			mcp.WithDescription("Semantic (embedding) search over message bodies is unavailable: "+
+				"vector search is not configured on this server."),
+			mcp.WithReadOnlyHintAnnotation(true),
+			mcp.WithString("query",
+				mcp.Required(),
+				mcp.Description("Free-text query to embed (requires at least one free-text term)"),
+			),
+		)
+	}
+	searchIntro := "Semantic (embedding) search over each preprocessed message subject and body. " +
+		"Returns messages ranked by similarity to the query — there is no exact total, so page on has_more. " +
+		"Each hit includes matches — embedded subject/body chunks ranked by semantic similarity (up to 5 per message), each with a score. " +
+		"Vector char_offset and line locations may be omitted because preprocessing usually prevents exact raw-body mapping; use snippet terms with search_in_message keyword mode when navigation is needed. " +
+		"min_score filters chunk excerpts only; it does not remove or reorder ranked messages. " +
+		"Requires at least one free-text term (used to embed); filter-only queries must use search_metadata. " +
+		"Known Gmail operators (from:, subject:, label:, etc.) apply as metadata filters only. " +
+		searchMetadataOperatorDoc + " "
+	queryDesc := "Free-text query to embed (requires at least one free-text term). " +
+		"Gmail operators are metadata filters, not body search; combine with body terms or use search_metadata for filter-only queries."
+
+	return mcp.NewTool(ToolSemanticSearchMessages,
+		mcp.WithDescription(searchIntro+
+			"mode=vector for pure semantic search or mode=hybrid to fuse BM25 and vector ranking via RRF. "+
+			"Paginate with offset/limit (default limit 20, max 50). Response: data, returned, offset, has_more, mode, pool_saturated, generation. "+
+			"total is not available; use has_more to page."),
+		mcp.WithReadOnlyHintAnnotation(true),
+		mcp.WithString("query",
+			mcp.Required(),
+			mcp.Description(queryDesc),
 		),
 		withAccount(),
 		withLimit("20"),
 		withOffset(),
 		mcp.WithString("mode",
-			mcp.Description("Search mode: vector (semantic only) or hybrid (BM25 + vector fused via RRF). Omit for metadata search."),
+			mcp.Description("Search mode: vector (semantic only) or hybrid (BM25 + vector fused via RRF). Defaults to hybrid when omitted."),
 			mcp.Enum(searchModeVector, searchModeHybrid),
 		),
 		mcp.WithBoolean("explain",
 			mcp.Description("Include per-signal scores in the response (for debugging or ranking inspection)"),
 		),
-	)
-}
-
-func searchMessageBodiesTool() mcp.Tool {
-	return mcp.NewTool(ToolSearchMessageBodies,
-		mcp.WithDescription("Search message bodies by keyword using exact body-only full-text search (FTS). Returns messages whose body text contains the search terms, "+
-			"plus context_snippets — short excerpts (up to 5 per message, 300 bytes each) centered on each matched term. "+
-			"A hit outside the bounded context-extraction budget has no excerpt and sets context_snippets_truncated=true. "+
-			"Requires at least one free-text term; use search_messages for filter-only queries (from:, label:, etc.). "+
-			"Paginate with offset/limit (default limit 20, max 50). Response: data, returned, offset, has_more. "+
-			"(total is not available for body search; use has_more to detect more pages.)"),
-		mcp.WithReadOnlyHintAnnotation(true),
-		mcp.WithString("query",
-			mcp.Required(),
-			mcp.Description("Search query with at least one free-text term (e.g. 'quarterly report' or 'from:alice budget')"),
+		mcp.WithNumber("min_score",
+			mcp.Description("Minimum chunk similarity score for included match excerpts (default 0); does not filter ranked messages"),
 		),
-		withAccount(),
-		withLimit("20"),
-		withOffset(),
 	)
 }
 
@@ -323,10 +430,19 @@ func exportAttachmentTool() mcp.Tool {
 	)
 }
 
-func searchInMessageTool() mcp.Tool {
-	return mcp.NewTool(ToolSearchInMessage,
-		mcp.WithDescription("Find all occurrences of a term within one message body. Returns each match with a character-centered snippet, line number, and char_offset (byte offset into body_text). "+
-			"Use char_offset with get_message center_at to read a larger window around any match."),
+func searchInMessageTool(vectorInMessageAvailable bool) mcp.Tool {
+	desc := "Find matches within one message body. Default mode=keyword finds literal term occurrences. " +
+		"Each match includes char_offset (byte offset into body_text), snippet, and line. " +
+		"Use char_offset with get_message center_at to read a larger window around any match."
+	if vectorInMessageAvailable {
+		desc = "Find matches within one message body. Default mode=keyword finds literal term occurrences. " +
+			"mode=vector scores each embedded chunk by semantic similarity to the query (best first, with score on each match). " +
+			"Keyword matches include raw-body char_offset and line. Vector matches always include snippet and score; char_offset and line may be omitted after preprocessing. " +
+			"Use a present char_offset with get_message center_at to read a larger window around the match."
+	}
+
+	opts := []mcp.ToolOption{
+		mcp.WithDescription(desc),
 		mcp.WithReadOnlyHintAnnotation(true),
 		mcp.WithNumber("id",
 			mcp.Required(),
@@ -334,18 +450,32 @@ func searchInMessageTool() mcp.Tool {
 		),
 		mcp.WithString("query",
 			mcp.Required(),
-			mcp.Description("Term to find in the message body"),
+			mcp.Description("Search query (keyword term, or semantic query when mode=vector)"),
 		),
 		mcp.WithNumber("limit",
 			mcp.Description("Maximum matches to return (default 10)"),
 		),
 		withOffset(),
-	)
+	}
+	if vectorInMessageAvailable {
+		opts = append(opts,
+			mcp.WithString("mode",
+				mcp.Description("Search mode: keyword (default, literal term) or vector (semantic chunk scoring)"),
+				mcp.Enum(searchModeKeyword, searchModeVector),
+			),
+			mcp.WithNumber("min_score",
+				mcp.Description("Minimum chunk similarity score (0–1) when mode=vector (default 0)"),
+			),
+		)
+	}
+	return mcp.NewTool(ToolSearchInMessage, opts...)
 }
 
 func listMessagesTool() mcp.Tool {
 	return mcp.NewTool(ToolListMessages,
-		mcp.WithDescription("List messages with optional filters. Returns message summaries sorted by date. "+
+		mcp.WithDescription("List messages with optional filters, newest-first. "+
+			"Pass conversation_id to enumerate a thread's messages, then call get_message(id) per message to read bodies — "+
+			"there is deliberately no bulk body fetch, to avoid loading huge threads into the context window. "+
 			"Paginate with offset/limit (default limit 20, max 50). Response: data, total, returned, offset, has_more. "+
 			"total=-1 because the full count is not computed; use has_more for paging."),
 		mcp.WithReadOnlyHintAnnotation(true),
@@ -381,11 +511,12 @@ func getStatsTool() mcp.Tool {
 
 func aggregateTool() mcp.Tool {
 	return mcp.NewTool(ToolAggregate,
-		mcp.WithDescription("Get grouped statistics (e.g. top senders, domains, labels, or message volume over time)."),
+		mcp.WithDescription("Get grouped statistics (top senders, recipients, domains, labels, or message volume by calendar year). "+
+			"Returns a JSON array of objects with fields Key, Count, TotalSize, AttachmentSize, AttachmentCount, and TotalUnique."),
 		mcp.WithReadOnlyHintAnnotation(true),
 		mcp.WithString("group_by",
 			mcp.Required(),
-			mcp.Description("Dimension to group by"),
+			mcp.Description("Dimension to group by. When 'time', buckets are by calendar year only (Key is a year string like \"2024\")."),
 			mcp.Enum("sender", "recipient", "domain", "label", "time"),
 		),
 		withAccount(),

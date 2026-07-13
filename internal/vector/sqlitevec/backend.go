@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"sort"
 	"strings"
 	"time"
 
@@ -25,6 +26,7 @@ const sqliteDatetimeFormat = "2006-01-02 15:04:05"
 
 // Compile-time check that *Backend satisfies the vector.Backend interface.
 var _ vector.Backend = (*Backend)(nil)
+var _ vector.ChunkScoringBackend = (*Backend)(nil)
 
 // Options configures how Open establishes a Backend.
 type Options struct {
@@ -1471,4 +1473,84 @@ func (b *Backend) EmbeddedMessageCount(ctx context.Context, gen vector.Generatio
 		return 0, fmt.Errorf("count live embedded messages: %w", err)
 	}
 	return n, nil
+}
+
+// ScoreMessageChunks scores every embedded chunk of messageID in gen
+// against queryVec. Results are sorted by score descending (best first).
+func (b *Backend) ScoreMessageChunks(ctx context.Context, gen vector.GenerationID, messageID int64, queryVec []float32) ([]vector.ChunkHit, error) {
+	if len(queryVec) == 0 {
+		return nil, errors.New("score message chunks: empty query vector")
+	}
+
+	var dim int
+	err := b.db.QueryRowContext(ctx,
+		`SELECT dimension FROM index_generations WHERE id = ?`, int64(gen)).Scan(&dim)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, fmt.Errorf("%w: %d", vector.ErrUnknownGeneration, gen)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("lookup generation %d: %w", gen, err)
+	}
+	if len(queryVec) != dim {
+		return nil, fmt.Errorf("%w: query has %d dims, gen has %d",
+			vector.ErrDimensionMismatch, len(queryVec), dim)
+	}
+	vecTable := VectorTableName(dim)
+
+	q := fmt.Sprintf(`
+		SELECT e.chunk_index, e.chunk_char_start, e.chunk_char_end, v.embedding
+		  FROM embeddings e
+		  JOIN %s v ON v.embedding_id = e.embedding_id
+		 WHERE v.generation_id = ?
+		   AND e.message_id = ?
+		 ORDER BY e.chunk_index ASC`, vecTable)
+
+	rows, err := b.db.QueryContext(ctx, q, int64(gen), messageID)
+	if err != nil {
+		return nil, fmt.Errorf("load message chunks: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var hits []vector.ChunkHit
+	for rows.Next() {
+		var idx, start, end int
+		var blob []byte
+		if err := rows.Scan(&idx, &start, &end, &blob); err != nil {
+			return nil, fmt.Errorf("scan chunk row: %w", err)
+		}
+		vec, err := blobToFloat32(blob, dim)
+		if err != nil {
+			return nil, fmt.Errorf("decode chunk %d vector: %w", idx, err)
+		}
+		dist := l2Distance(vec, queryVec)
+		hits = append(hits, vector.ChunkHit{
+			ChunkIndex:     idx,
+			ChunkCharStart: start,
+			ChunkCharEnd:   end,
+			Score:          1.0 - dist,
+		})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate chunk rows: %w", err)
+	}
+
+	sort.Slice(hits, func(i, j int) bool {
+		if hits[i].Score != hits[j].Score {
+			return hits[i].Score > hits[j].Score
+		}
+		return hits[i].ChunkIndex < hits[j].ChunkIndex
+	})
+	return hits, nil
+}
+
+// l2Distance returns the Euclidean distance between two equal-length
+// vectors. sqlite-vec's MATCH distance uses L2, so this keeps
+// within-message chunk scores aligned with corpus search scores.
+func l2Distance(a, b []float32) float64 {
+	var sum float64
+	for i := range a {
+		d := float64(a[i] - b[i])
+		sum += d * d
+	}
+	return math.Sqrt(sum)
 }
