@@ -206,7 +206,8 @@ jobs:
           # sqlite-vec includes sqlite3.h while compiling as SQLITE_CORE. Use
           # the header bundled with go-sqlite3 so it exactly matches the SQLite
           # amalgamation linked into this binary.
-          $sqliteModule = go list -m -f '{{.Dir}}' github.com/mattn/go-sqlite3
+          $sqliteModule = (go mod download -json github.com/mattn/go-sqlite3 | ConvertFrom-Json).Dir
+          if (-not $sqliteModule) { throw 'go-sqlite3 module directory not found' }
           $include = Join-Path $env:RUNNER_TEMP 'sqlite-include'
           New-Item -ItemType Directory -Path $include -Force | Out-Null
           Copy-Item (Join-Path $sqliteModule 'sqlite3-binding.h') (Join-Path $include 'sqlite3.h')
