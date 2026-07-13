@@ -35,6 +35,9 @@ func TestBackupRestorePackedTargetSelection(t *testing.T) {
 	flag := backupRestoreCmd.Flags().Lookup("loose-attachments")
 	require.NotNil(t, flag)
 	assert.Equal("false", flag.DefValue)
+	integrityFlag := backupRestoreCmd.Flags().Lookup("integrity-check")
+	require.NotNil(t, integrityFlag)
+	assert.Equal("false", integrityFlag.DefValue)
 }
 
 func TestRunBackupRestorePackedDefaultAndExplicitLooseCleanup(t *testing.T) {
@@ -92,6 +95,7 @@ func TestRunBackupRestorePackedDefaultAndExplicitLooseCleanup(t *testing.T) {
 	savedForceUnlock := backupRestoreForceUnlock
 	savedJobs := backupRestoreJobs
 	savedLoose := backupRestoreLooseAttachments
+	savedIntegrityCheck := backupRestoreIntegrityCheck
 	t.Cleanup(func() {
 		cfg = savedCfg
 		backupRestoreRepo = savedRepo
@@ -100,6 +104,7 @@ func TestRunBackupRestorePackedDefaultAndExplicitLooseCleanup(t *testing.T) {
 		backupRestoreForceUnlock = savedForceUnlock
 		backupRestoreJobs = savedJobs
 		backupRestoreLooseAttachments = savedLoose
+		backupRestoreIntegrityCheck = savedIntegrityCheck
 	})
 	cfg = &config.Config{Data: config.DataConfig{DataDir: filepath.Join(t.TempDir(), "live")}}
 	backupRestoreRepo = repoPath
@@ -109,22 +114,27 @@ func TestRunBackupRestorePackedDefaultAndExplicitLooseCleanup(t *testing.T) {
 
 	backupRestoreTarget = filepath.Join(t.TempDir(), "packed-target")
 	backupRestoreLooseAttachments = false
+	backupRestoreIntegrityCheck = false
 	var packedOutput bytes.Buffer
 	packedCmd := &cobra.Command{Use: "restore"}
 	packedCmd.SetContext(ctx)
 	packedCmd.SetOut(&packedOutput)
 	require.NoError(runBackupRestore(packedCmd, nil))
 	assert.Contains(packedOutput.String(), "1 packed in 1 pack(s), 0 loose")
+	assert.Contains(packedOutput.String(), "page and blob hashes verified; manifest stats match")
+	assert.NotContains(packedOutput.String(), "SQLite integrity_check")
 	assertRestoredCLIBlob(t, backupRestoreTarget, hash, content, true)
 
 	backupRestoreTarget = filepath.Join(t.TempDir(), "loose-target")
 	backupRestoreLooseAttachments = true
+	backupRestoreIntegrityCheck = true
 	var looseOutput bytes.Buffer
 	looseCmd := &cobra.Command{Use: "restore"}
 	looseCmd.SetContext(ctx)
 	looseCmd.SetOut(&looseOutput)
 	require.NoError(runBackupRestore(looseCmd, nil))
 	assert.Contains(looseOutput.String(), "Pack metadata cleared")
+	assert.Contains(looseOutput.String(), "SQLite integrity_check ok")
 	assertRestoredCLIBlob(t, backupRestoreTarget, hash, content, false)
 }
 
@@ -205,6 +215,10 @@ func TestPrintBackupRestoreSummaryReportsPackedMixedAndLooseLayouts(t *testing.T
 		t.Run(tt.name, func(t *testing.T) {
 			var out bytes.Buffer
 			require.NoError(t, printBackupRestoreSummary(&out, "/target", &tt.result, tt.looseFlag))
+			assert.Contains(t, out.String(), "Verification: page and blob hashes verified")
+			assert.NotContains(t, out.String(), "Proof:")
+			assert.Equal(t, tt.result.DatabaseIntegrityChecked,
+				strings.Contains(out.String(), "SQLite integrity_check ok"))
 			for _, want := range tt.contains {
 				assert.Contains(t, out.String(), want)
 			}
