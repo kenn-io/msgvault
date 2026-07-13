@@ -71,6 +71,11 @@ func TestCacheNeedsBuild_CirclebackRefresh(t *testing.T) {
 	require.NoError(st.DB().QueryRow(`SELECT id FROM messages WHERE source_message_id = 'meeting:refresh-1'`).Scan(&originalID))
 	_, err = buildCache(dbPath, analyticsDir, false)
 	require.NoError(err)
+	noOp, err := imp.Import(context.Background(), circleback.ImportOptions{Identifier: "alice@example.com"})
+	require.NoError(err)
+	assert.EqualValues(0, noOp.MeetingsUpdated)
+	staleness := cacheNeedsBuild(dbPath, analyticsDir)
+	assert.False(staleness.NeedsBuild, "identical Circleback overlap must not invalidate cache: %+v", staleness)
 
 	source.meeting.Name = "Refreshed Meeting"
 	source.meeting.Notes = "Refreshed meeting notes"
@@ -107,7 +112,7 @@ func TestCacheNeedsBuild_CirclebackRefresh(t *testing.T) {
 	assert.Equal(1, recipientCount, "refresh replaces stale attendees")
 	assert.Equal("carol@example.com", recipient)
 
-	staleness := cacheNeedsBuild(dbPath, analyticsDir)
+	staleness = cacheNeedsBuild(dbPath, analyticsDir)
 	require.True(staleness.NeedsBuild, "Circleback refresh must invalidate cache: %+v", staleness)
 	require.True(staleness.FullRebuild, "Circleback refresh requires full rebuild: %+v", staleness)
 }

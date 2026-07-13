@@ -1,11 +1,15 @@
 package circleback
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"sort"
 	"strings"
 	"time"
@@ -17,17 +21,20 @@ import (
 // readBatchSize bounds ReadMeetings/GetTranscripts payloads.
 const readBatchSize = 5
 
-// rescanOverlap is how far the incremental window reaches back before the
-// stored watermark. Circleback's MCP tools expose search, not a change feed,
-// so late-arriving notes and action-item edits within the overlap are picked
-// up on the next run; upsert dedup makes the re-reads free. Edits to
-// meetings older than the overlap require --full.
+// rescanOverlap is how far the incremental creation-time refresh window
+// reaches back before the stored watermark. Incremental discovery itself is
+// unbounded because Circleback only exposes scheduled-date search filters;
+// every unknown ID is hydrated, while known IDs outside this overlap are
+// skipped. Edits to older known meetings require --full.
 const rescanOverlap = 48 * time.Hour
 
 const (
 	transcriptRetryCadence     = 6 * time.Hour
 	transcriptRetryWindow      = 7 * 24 * time.Hour
 	unknownTranscriptRetrySpan = 48 * time.Hour
+	// Bump when canonical rendering or persistence rules change so existing
+	// rows receive one repair refresh under the new rules.
+	circlebackSnapshotVersion = 1
 )
 
 // meetingSource is the narrow client surface the importer needs (satisfied
@@ -280,13 +287,14 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (*ImportSum
 	}
 
 	searchStart := ""
+	var refreshCreatedAfter time.Time
 	if opts.Full {
 		if !opts.CreatedAfter.IsZero() {
 			searchStart = opts.CreatedAfter.UTC().Format(time.DateOnly)
 		}
 	} else if state.CreatedAfter != "" {
 		if t, terr := time.Parse(time.RFC3339, state.CreatedAfter); terr == nil {
-			searchStart = t.Add(-rescanOverlap).UTC().Format(time.DateOnly)
+			refreshCreatedAfter = t.Add(-rescanOverlap)
 		}
 	}
 
@@ -457,8 +465,8 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (*ImportSum
 						if cancelIfDone(1) {
 							return err
 						}
-						added, ingErr := imp.ingestMeeting(
-							src.ID, opts.Identifier, accountIdentities, m, nil, transcriptStateUnavailable,
+						added, changed, ingErr := imp.ingestMeeting(
+							src.ID, opts.Identifier, accountIdentities, m, nil, transcriptStateUnavailable, opts.Full,
 						)
 						if ingErr != nil {
 							hardErr := fmt.Errorf("meeting %s: ingest unavailable refresh failed: %w", m.ID, ingErr)
@@ -469,7 +477,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (*ImportSum
 						}
 						if added {
 							sum.MeetingsAdded++
-						} else {
+						} else if changed {
 							sum.MeetingsUpdated++
 						}
 						if ct := m.CreatedTime(); ct.After(maxCreated) {
@@ -537,7 +545,9 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (*ImportSum
 					if cancelIfDone(1) {
 						return err
 					}
-					added, ingErr := imp.ingestMeeting(src.ID, opts.Identifier, accountIdentities, m, tr, desiredState)
+					added, changed, ingErr := imp.ingestMeeting(
+						src.ID, opts.Identifier, accountIdentities, m, tr, desiredState, opts.Full,
+					)
 					if ingErr != nil {
 						hardErr := fmt.Errorf("meeting %s: ingest failed: %w", m.ID, ingErr)
 						sum.Errors++
@@ -547,7 +557,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (*ImportSum
 					}
 					if added {
 						sum.MeetingsAdded++
-					} else {
+					} else if changed {
 						sum.MeetingsUpdated++
 					}
 					if ct := m.CreatedTime(); ct.After(maxCreated) {
@@ -593,6 +603,19 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (*ImportSum
 		if len(page) == 0 {
 			break
 		}
+		pageSMIDs := make([]string, 0, len(page))
+		for i := range page {
+			if id := string(page[i].ID); id != "" {
+				pageSMIDs = append(pageSMIDs, "meeting:"+id)
+			}
+		}
+		existingPage, lookupErr := imp.store.MessageExistsBatch(src.ID, pageSMIDs)
+		if lookupErr != nil {
+			sum.Errors++
+			hardErrors = append(hardErrors, fmt.Errorf("lookup search page %d meetings: %w", pageIndex, lookupErr))
+			err = errors.Join(hardErrors...)
+			return sum, err
+		}
 
 		newOnPage := 0
 		limitReached := false
@@ -615,6 +638,13 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (*ImportSum
 			}
 			if _, pending := pendingByID[id]; pending && !opts.Full {
 				continue
+			}
+			if !opts.Full {
+				_, exists := existingPage["meeting:"+id]
+				created := meeting.CreatedTime()
+				if exists && !refreshCreatedAfter.IsZero() && !created.IsZero() && created.Before(refreshCreatedAfter) {
+					continue
+				}
 			}
 			searchedIDs = append(searchedIDs, id)
 			processedIDs[id] = struct{}{}
@@ -786,6 +816,7 @@ type meetingMetadata struct {
 	TranscriptState    transcriptState     `json:"transcript_state,omitempty"`
 	TranscriptSegments int                 `json:"transcript_segments,omitempty"`
 	AccountID          string              `json:"account_identifier,omitempty"`
+	SnapshotHash       string              `json:"snapshot_hash,omitempty"`
 }
 
 type metaActionItem struct {
@@ -795,9 +826,71 @@ type metaActionItem struct {
 	DueDate  string `json:"due_date,omitempty"`
 }
 
+func circlebackSnapshotHash(
+	m *Meeting,
+	tr *Transcript,
+	identifier string,
+	fromMe bool,
+	state transcriptState,
+) (string, error) {
+	meetingJSON, err := canonicalProviderJSON(m.Raw, m)
+	if err != nil {
+		return "", fmt.Errorf("canonicalize meeting: %w", err)
+	}
+	var transcriptJSON json.RawMessage
+	if tr != nil {
+		transcriptJSON, err = canonicalProviderJSON(tr.Raw, tr)
+		if err != nil {
+			return "", fmt.Errorf("canonicalize transcript: %w", err)
+		}
+	}
+	payload, err := json.Marshal(struct {
+		Version         int             `json:"version"`
+		Meeting         json.RawMessage `json:"meeting"`
+		Transcript      json.RawMessage `json:"transcript,omitempty"`
+		TranscriptState transcriptState `json:"transcript_state,omitempty"`
+		AccountID       string          `json:"account_identifier,omitempty"`
+		IsFromMe        bool            `json:"is_from_me"`
+	}{
+		Version:         circlebackSnapshotVersion,
+		Meeting:         meetingJSON,
+		Transcript:      transcriptJSON,
+		TranscriptState: state,
+		AccountID:       identifier,
+		IsFromMe:        fromMe,
+	})
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(payload)
+	return hex.EncodeToString(sum[:]), nil
+}
+
+func canonicalProviderJSON(raw json.RawMessage, fallback any) (json.RawMessage, error) {
+	if len(bytes.TrimSpace(raw)) == 0 {
+		return json.Marshal(fallback)
+	}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	var decoded any
+	if err := decoder.Decode(&decoded); err != nil {
+		return nil, err
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return nil, errors.New("provider JSON contains multiple values")
+		}
+		return nil, err
+	}
+	return json.Marshal(decoded)
+}
+
 // ingestMeeting persists one meeting through the canonical write path.
 // Idempotent via UpsertMessage's ON CONFLICT(source_id, source_message_id).
-// Returns whether the message row was newly inserted.
+// Returns whether the message row was newly inserted and whether the
+// persisted archive changed. Existing rows with an identical stable snapshot
+// are left untouched so no-op overlap reads do not invalidate derived caches.
 func (imp *Importer) ingestMeeting(
 	sourceID int64,
 	identifier string,
@@ -805,29 +898,48 @@ func (imp *Importer) ingestMeeting(
 	m *Meeting,
 	tr *Transcript,
 	desiredTranscriptState transcriptState,
-) (bool, error) {
+	force bool,
+) (bool, bool, error) {
 	if string(m.ID) == "" {
-		return false, errors.New("meeting has no id")
+		return false, false, errors.New("meeting has no id")
 	}
 	smid := "meeting:" + string(m.ID)
 
 	existing, err := imp.store.MessageExistsBatch(sourceID, []string{smid})
 	if err != nil {
-		return false, fmt.Errorf("lookup existing meeting: %w", err)
+		return false, false, fmt.Errorf("lookup existing meeting: %w", err)
 	}
-	_, existed := existing[smid]
+	existingID, existed := existing[smid]
 
 	organizerEmail, organizerName := "", ""
 	if m.Organizer != nil {
 		organizerEmail = normalizeEmail(m.Organizer.Email)
 		organizerName = m.Organizer.Name
 	}
+	fromMe := organizerEmail != "" && accountIdentities.Contains(organizerEmail)
+	snapshotHash, err := circlebackSnapshotHash(
+		m, tr, identifier, fromMe, desiredTranscriptState,
+	)
+	if err != nil {
+		return false, false, fmt.Errorf("hash meeting snapshot: %w", err)
+	}
+	if existed && !force {
+		metadata, metadataErr := imp.store.GetMessageMetadata(existingID)
+		if metadataErr != nil {
+			return false, false, fmt.Errorf("read existing meeting metadata: %w", metadataErr)
+		}
+		var archived meetingMetadata
+		if metadata.Valid && json.Unmarshal([]byte(metadata.String), &archived) == nil &&
+			archived.SnapshotHash == snapshotHash {
+			return false, false, nil
+		}
+	}
 
 	var senderID int64
 	if organizerEmail != "" {
 		id, err := imp.store.EnsureParticipant(organizerEmail, organizerName, emailDomain(organizerEmail))
 		if err != nil {
-			return false, fmt.Errorf("organizer participant: %w", err)
+			return false, false, fmt.Errorf("organizer participant: %w", err)
 		}
 		senderID = id
 	}
@@ -845,7 +957,7 @@ func (imp *Importer) ingestMeeting(
 		}
 		pid, err := imp.store.EnsureParticipant(email, a.Name, emailDomain(email))
 		if err != nil {
-			return false, fmt.Errorf("attendee participant: %w", err)
+			return false, false, fmt.Errorf("attendee participant: %w", err)
 		}
 		attendeeIDs = append(attendeeIDs, pid)
 		attendeeNames = append(attendeeNames, a.Name)
@@ -859,7 +971,6 @@ func (imp *Importer) ingestMeeting(
 	}
 
 	body := buildBody(m, tr)
-	fromMe := organizerEmail != "" && accountIdentities.Contains(organizerEmail)
 	sentAt := m.StartedAt().UTC()
 
 	message := &store.Message{
@@ -875,16 +986,16 @@ func (imp *Importer) ingestMeeting(
 	}
 
 	metaJSON, err := json.Marshal(imp.buildMetadata(
-		m, tr, identifier, organizerEmail, desiredTranscriptState,
+		m, tr, identifier, organizerEmail, desiredTranscriptState, snapshotHash,
 	))
 	if err != nil {
-		return false, fmt.Errorf("marshal metadata: %w", err)
+		return false, false, fmt.Errorf("marshal metadata: %w", err)
 	}
 	metadata := sql.NullString{String: string(metaJSON), Valid: true}
 
 	raw, err := composeRaw(m, tr)
 	if err != nil {
-		return false, fmt.Errorf("compose raw: %w", err)
+		return false, false, fmt.Errorf("compose raw: %w", err)
 	}
 	// Replace recipients unconditionally so re-syncs clear stale rows
 	// (calsync precedent).
@@ -932,10 +1043,10 @@ func (imp *Importer) ingestMeeting(
 		LinkAttachments:        links,
 		FTS:                    fts,
 	}); err != nil {
-		return false, fmt.Errorf("persist meeting: %w", err)
+		return false, false, fmt.Errorf("persist meeting: %w", err)
 	}
 
-	return !existed, nil
+	return !existed, true, nil
 }
 
 func (imp *Importer) buildMetadata(
@@ -944,6 +1055,7 @@ func (imp *Importer) buildMetadata(
 	identifier string,
 	organizerEmail string,
 	desiredTranscriptState transcriptState,
+	snapshotHash string,
 ) meetingMetadata {
 	meta := meetingMetadata{
 		Platform:        SourceType,
@@ -958,6 +1070,7 @@ func (imp *Importer) buildMetadata(
 		Tags:            m.Tags,
 		TranscriptState: desiredTranscriptState,
 		AccountID:       identifier,
+		SnapshotHash:    snapshotHash,
 	}
 	if m.RecordingURL != "" {
 		meta.RecordingFetchedAt = imp.now().UTC().Format(time.RFC3339)

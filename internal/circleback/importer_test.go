@@ -83,7 +83,7 @@ func (f *fakeSource) SearchMeetings(_ context.Context, start, _ string, pageInde
 			return nil, err
 		}
 		m.Raw = raw
-		if f.respectSearchStart && !searchStart.IsZero() && m.CreatedTime().Before(searchStart) {
+		if f.respectSearchStart && !searchStart.IsZero() && m.ScheduledAt().Before(searchStart) {
 			continue
 		}
 		out = append(out, m)
@@ -842,7 +842,7 @@ func TestImport_LegacyCreatedAfterOnlyCursorRemainsCompatible(t *testing.T) {
 	_, err := imp.Import(context.Background(), ImportOptions{Identifier: "alice@example.com"})
 
 	require.NoError(err)
-	assert.Equal("2026-07-07", f.lastSearchStart)
+	assert.Empty(f.lastSearchStart, "legacy creation cursors must not become scheduled-date filters")
 	state := lastCirclebackState(t, st, prior.SourceID)
 	assert.Equal("2026-07-09T11:00:00Z", state.CreatedAfter)
 	assert.Empty(state.PendingTranscripts)
@@ -1168,12 +1168,13 @@ func TestImport_IdempotentRefreshAndWatermark(t *testing.T) {
 	}
 	require.Equal("2026-06-10T17:05:00Z", cursorOf())
 
-	// Second run: search starts 48h before the watermark; nothing added.
+	// Second run: discovery remains unbounded, but an identical overlap row is
+	// neither added nor counted as an update.
 	sum2, err := imp.Import(context.Background(), ImportOptions{Identifier: "alice@example.com"})
 	require.NoError(err)
 	assert.EqualValues(0, sum2.MeetingsAdded)
-	assert.EqualValues(1, sum2.MeetingsUpdated, "successful existing-row upsert counts as an update")
-	assert.Equal("2026-06-08", f.lastSearchStart, "48h overlap widened to its UTC day floor")
+	assert.EqualValues(0, sum2.MeetingsUpdated, "identical overlap rows are no-op refreshes")
+	assert.Empty(f.lastSearchStart, "incremental discovery is not bounded by scheduled date")
 
 	var count int
 	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&count))
@@ -1230,8 +1231,45 @@ func TestImport_IdempotentRefreshAndWatermark(t *testing.T) {
 	assert.Equal(0, attachmentCount)
 }
 
-func TestImport_SearchDateBoundsUseUTCDayFloor(t *testing.T) {
-	t.Run("incremental overlap", func(t *testing.T) {
+func TestImport_IncrementalDiscoversBackfilledMeetingBeforeScheduledOverlap(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := &fakeSource{
+		meetings: map[string]json.RawMessage{
+			"current": meetingFixture(t, "current", "2026-06-10T17:05:00Z", "2026-06-10T17:00:00Z", "2026-06-10T18:00:00Z"),
+		},
+		transcripts:        map[string]json.RawMessage{},
+		orderedIDs:         []string{"current"},
+		respectSearchStart: true,
+	}
+	imp, st := newTestImporter(t, f)
+
+	first, err := imp.Import(context.Background(), ImportOptions{Identifier: "alice@example.com"})
+	require.NoError(err)
+	require.EqualValues(1, first.MeetingsAdded)
+
+	f.meetings["backfill"] = meetingFixture(
+		t,
+		"backfill",
+		"2026-06-12T09:00:00Z",
+		"2026-05-01T09:00:00Z",
+		"2026-05-01T10:00:00Z",
+	)
+	f.orderedIDs = []string{"current", "backfill"}
+
+	second, err := imp.Import(context.Background(), ImportOptions{Identifier: "alice@example.com"})
+	require.NoError(err)
+	assert.EqualValues(1, second.MeetingsAdded,
+		"incremental discovery must not hide newly created meetings behind a scheduled-date filter")
+	assert.Empty(f.lastSearchStart, "incremental discovery must enumerate all meeting IDs")
+
+	existing, err := st.MessageExistsBatch(first.SourceID, []string{"meeting:backfill"})
+	require.NoError(err)
+	assert.Contains(existing, "meeting:backfill")
+}
+
+func TestImport_SearchDateBounds(t *testing.T) {
+	t.Run("incremental discovery is unbounded", func(t *testing.T) {
 		assert := assert.New(t)
 		require := require.New(t)
 		f := &fakeSource{
@@ -1245,8 +1283,8 @@ func TestImport_SearchDateBoundsUseUTCDayFloor(t *testing.T) {
 		_, err = imp.Import(context.Background(), ImportOptions{Identifier: "alice@example.com"})
 		require.NoError(err)
 
-		assert.Equal("2026-06-08", f.lastSearchStart,
-			"48-hour overlap from 2026-06-10T17:05Z must floor to the start of its UTC day")
+		assert.Empty(f.lastSearchStart,
+			"a creation watermark must not be sent as a scheduled-date lower bound")
 	})
 
 	t.Run("created after", func(t *testing.T) {
@@ -1852,11 +1890,12 @@ func TestIngestMeeting_RawFailureRollsBackCanonicalRefresh(t *testing.T) {
 	recoveredTranscript, err := decodeTranscript(json.RawMessage(transcript42))
 	require.NoError(err)
 
-	added, err := imp.ingestMeeting(
-		initial.SourceID, "alice@example.com", nil, &refreshed, recoveredTranscript, transcriptStatePresent,
+	added, changed, err := imp.ingestMeeting(
+		initial.SourceID, "alice@example.com", nil, &refreshed, recoveredTranscript, transcriptStatePresent, false,
 	)
 	require.Error(err)
 	assert.False(added)
+	assert.False(changed)
 	assert.Contains(err.Error(), "upsert raw")
 	assert.Equal(before, circlebackPersistenceSnapshot(t, st, msgID),
 		"a late canonical write failure must roll back the message and every related row")
@@ -1879,7 +1918,7 @@ func TestImport_MessageLookupFailureMarksSyncFailed(t *testing.T) {
 	sum, importErr := imp.Import(context.Background(), ImportOptions{Identifier: "alice@example.com"})
 	require.Error(importErr)
 	require.NotNil(sum)
-	assert.Contains(importErr.Error(), "lookup existing meetings")
+	assert.Contains(importErr.Error(), "lookup search page")
 	latest, err := st.GetLatestSync(src.ID)
 	require.NoError(err)
 	assert.Equal(store.SyncStatusFailed, latest.Status)

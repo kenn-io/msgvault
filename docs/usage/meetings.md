@@ -174,14 +174,16 @@ instead of the configured remote.
 
 ```bash
 msgvault sync-circleback                     # all configured accounts
-msgvault sync-circleback --limit 5           # smoke test
+msgvault sync-circleback --limit 5           # limited validation sync
 msgvault sync-circleback --full              # re-fetch everything
 msgvault sync-circleback --probe             # print tool inventory + sample result
 ```
 
-Each incremental run searches from 48 hours before the newest previously
-seen meeting, so late edits to notes and action items flow in; re-fetched
-meetings are upserted in place. Edits to older meetings are picked up by
+Each incremental run enumerates meeting IDs without a scheduled-date bound,
+so a newly created backfill is discovered even when the meeting happened long
+ago. Unknown meetings and known meetings created within the 48-hour refresh
+overlap are fetched in detail. Identical snapshots are skipped without
+invalidating the search cache; edits to older known meetings are picked up by
 `--full`.
 
 Circleback can publish notes before its transcript is ready. A recognized

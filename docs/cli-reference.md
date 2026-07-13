@@ -299,13 +299,15 @@ msgvault sync-circleback --full --after 2024-01-01
 msgvault sync-circleback --probe
 ```
 
-Incremental by default: each run searches from 48 hours before the newest
-previously seen meeting so late edits flow in; re-fetched meetings are
-upserted in place. With no identifier, every configured `[[circleback]]`
-source is synced. Missing or recognized-empty transcripts enter a bounded
-`pending` state and retry every six hours, normally until seven days after the
-scheduled meeting time (48 hours when no usable time exists). Expired retries
-become `unavailable`; a later `--full` run can check them again.
+Incremental by default: each run enumerates meeting IDs without a date bound
+so newly created backfills are discovered even when their scheduled date is
+old. Unknown meetings and known meetings created within the 48-hour refresh
+overlap are fetched in detail; unchanged snapshots are skipped without
+invalidating the search cache. With no identifier, every configured
+`[[circleback]]` source is synced. Missing or recognized-empty transcripts
+enter a bounded `pending` state and retry every six hours, normally until seven
+days after the scheduled meeting time (48 hours when no usable time exists).
+Expired retries become `unavailable`; a later `--full` run can check them again.
 
 Due transcript retries are maintenance work and run outside the new-meeting
 limit. Provider, contract, missing-result, ingest, archive-recovery, and
