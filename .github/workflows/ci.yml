@@ -132,12 +132,43 @@ jobs:
           CGO_ENABLED: "1"
           CGO_CFLAGS: "-IC:/msys64/mingw64/include -fgnu89-inline"
           CGO_LDFLAGS: "-Wl,--allow-multiple-definition"
-        run: go test -timeout 20m -tags "fts5 sqlite_vec" ./...
+        run: |
+          $packages = go list -tags "fts5 sqlite_vec" ./... |
+            Where-Object { $_ -ne "go.kenn.io/msgvault/cmd/msgvault/cmd" }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          go test -timeout 20m -tags "fts5 sqlite_vec" $packages
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: msgvault-windows-amd64
           path: msgvault.exe
+
+  test-windows-cli:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+
+      - name: Install sqlite3 dev headers
+        shell: pwsh
+        run: |
+          C:\msys64\usr\bin\pacman.exe -S --noconfirm --needed mingw-w64-x86_64-sqlite3
+
+      - name: Test CLI package in isolated shards
+        shell: pwsh
+        env:
+          CGO_ENABLED: "1"
+          CGO_CFLAGS: "-IC:/msys64/mingw64/include -fgnu89-inline"
+          CGO_LDFLAGS: "-Wl,--allow-multiple-definition"
+        run: |
+          ./scripts/test-package-shards.ps1 `
+            -Package ./cmd/msgvault/cmd `
+            -ShardCount 4 `
+            -Tags "fts5 sqlite_vec" `
+            -Timeout 20m
 
   test-windows-pack-restore:
     runs-on: windows-latest
