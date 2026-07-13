@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"path/filepath"
 	"strconv"
 	"time"
 
@@ -43,6 +44,14 @@ type DaemonRuntime struct {
 }
 
 func daemonRuntimeStore(dataDir string) daemon.RuntimeStore {
+	// RuntimeStore rejects a symlink as its directory even when the target is
+	// a private directory owned by the current user. Resolve existing data-dir
+	// symlinks so supported MSGVAULT_HOME layouts keep working while the store
+	// still validates the canonical target. Leave unresolved paths unchanged so
+	// RuntimeStore preserves its existing errors for dangling or invalid paths.
+	if resolved, err := filepath.EvalSymlinks(dataDir); err == nil {
+		dataDir = resolved
+	}
 	return daemon.RuntimeStore{Dir: dataDir}
 }
 
