@@ -213,17 +213,19 @@ func TestPrintBackupRestoreSummaryReportsPackedMixedAndLooseLayouts(t *testing.T
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
 			var out bytes.Buffer
-			require.NoError(t, printBackupRestoreSummary(&out, "/target", &tt.result, tt.looseFlag))
-			assert.Contains(t, out.String(), "Verification: page and blob hashes verified")
-			assert.NotContains(t, out.String(), "Proof:")
-			assert.Equal(t, tt.result.DatabaseIntegrityChecked,
+			require.NoError(printBackupRestoreSummary(&out, "/target", &tt.result, tt.looseFlag))
+			assert.Contains(out.String(), "Verification: page and blob hashes verified")
+			assert.NotContains(out.String(), "Proof:")
+			assert.Equal(tt.result.DatabaseIntegrityChecked,
 				strings.Contains(out.String(), "SQLite integrity_check ok"))
 			for _, want := range tt.contains {
-				assert.Contains(t, out.String(), want)
+				assert.Contains(out.String(), want)
 			}
 			for _, unwanted := range tt.notContains {
-				assert.NotContains(t, out.String(), unwanted)
+				assert.NotContains(out.String(), unwanted)
 			}
 		})
 	}
