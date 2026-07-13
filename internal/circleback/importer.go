@@ -641,7 +641,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (*ImportSum
 			}
 			if !opts.Full {
 				_, exists := existingPage["meeting:"+id]
-				created := meeting.CreatedTime()
+				created := parseFlexibleTime(meeting.CreatedAt)
 				if exists && !refreshCreatedAfter.IsZero() && !created.IsZero() && created.Before(refreshCreatedAfter) {
 					continue
 				}

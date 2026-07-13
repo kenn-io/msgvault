@@ -19,6 +19,7 @@ import (
 // fakeSource is an in-memory meetingSource with per-call failure switches.
 type fakeSource struct {
 	meetings           map[string]json.RawMessage // id -> meeting JSON
+	searchMeetings     map[string]json.RawMessage // optional search-only summary JSON
 	transcripts        map[string]json.RawMessage // id -> transcript JSON
 	searchErr          error
 	readErr            error
@@ -78,6 +79,9 @@ func (f *fakeSource) SearchMeetings(_ context.Context, start, _ string, pageInde
 	}
 	for _, id := range ids {
 		raw := f.meetings[id]
+		if summary, ok := f.searchMeetings[id]; ok {
+			raw = summary
+		}
 		var m Meeting
 		if err := json.Unmarshal(raw, &m); err != nil {
 			return nil, err
@@ -1266,6 +1270,50 @@ func TestImport_IncrementalDiscoversBackfilledMeetingBeforeScheduledOverlap(t *t
 	existing, err := st.MessageExistsBatch(first.SourceID, []string{"meeting:backfill"})
 	require.NoError(err)
 	assert.Contains(existing, "meeting:backfill")
+}
+
+func TestImport_RefreshesKnownBackfillWhenSearchSummaryOmitsCreatedAt(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	const id = "backfill"
+	f := &fakeSource{
+		meetings: map[string]json.RawMessage{
+			id: meetingFixture(t, id, "2026-06-12T09:00:00Z", "2026-05-01T09:00:00Z", "2026-05-01T10:00:00Z"),
+		},
+		searchMeetings: map[string]json.RawMessage{},
+		transcripts:    map[string]json.RawMessage{},
+		orderedIDs:     []string{id},
+	}
+	imp, st := newTestImporter(t, f)
+
+	first, err := imp.Import(context.Background(), ImportOptions{Identifier: "alice@example.com"})
+	require.NoError(err)
+	require.EqualValues(1, first.MeetingsAdded)
+
+	f.meetings[id] = json.RawMessage(`{
+		"id":"backfill",
+		"name":"Backfilled meeting refreshed",
+		"createdAt":"2026-06-12T09:00:00Z",
+		"startTime":"2026-05-01T09:00:00Z",
+		"endTime":"2026-05-01T10:00:00Z"
+	}`)
+	f.searchMeetings[id] = json.RawMessage(`{
+		"id":"backfill",
+		"startTime":"2026-05-01T09:00:00Z",
+		"endTime":"2026-05-01T10:00:00Z"
+	}`)
+
+	second, err := imp.Import(context.Background(), ImportOptions{Identifier: "alice@example.com"})
+	require.NoError(err)
+	assert.EqualValues(1, second.MeetingsUpdated,
+		"missing summary creation time must fail open to hydration")
+
+	var subject string
+	require.NoError(st.DB().QueryRow(st.Rebind(
+		`SELECT subject FROM messages WHERE source_id = ? AND source_message_id = ?`),
+		first.SourceID, "meeting:"+id,
+	).Scan(&subject))
+	assert.Equal("Backfilled meeting refreshed", subject)
 }
 
 func TestImport_SearchDateBounds(t *testing.T) {
