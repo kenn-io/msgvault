@@ -163,7 +163,9 @@ func TestSyncCmd_SingleSourceNoAmbiguity(t *testing.T) {
 	root.AddCommand(testCmd)
 	root.SetArgs([]string{"sync", "solo@example.com"})
 
+	getOutput := captureStdout(t)
 	err = root.Execute()
+	output := getOutput()
 	require.Error(err, "expected error (no IMAP config)")
 
 	errMsg := err.Error()
@@ -173,6 +175,10 @@ func TestSyncCmd_SingleSourceNoAmbiguity(t *testing.T) {
 
 	// Should NOT hit legacy fallback (source exists in DB).
 	assert.NotContains(errMsg, "no source found", "should not hit legacy fallback path")
+	assert.Contains(output, "uses folder-based sync",
+		"IMAP note should describe folder-based watermarks; output:\n%s", output)
+	assert.NotContains(output, "does not support incremental sync",
+		"IMAP note should not imply every sync is a full rescan; output:\n%s", output)
 }
 
 // TestSyncCmd_MboxIdentifierDoesNotFallback verifies that an

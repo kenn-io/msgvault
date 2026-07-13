@@ -28,8 +28,8 @@ var syncIncrementalCmd = &cobra.Command{
 This is faster than a full sync as it only fetches changes since the last sync.
 Requires a prior full sync to establish the history ID baseline.
 
-IMAP accounts do not support incremental sync, so they are automatically
-synced using a full sync instead.
+IMAP accounts use folder-based sync. Unchanged folders are skipped when
+UIDVALIDITY/UIDNEXT watermarks are available.
 
 If no email is specified, syncs all accounts that have credentials configured.
 Accounts without tokens or history IDs are skipped.
@@ -166,12 +166,12 @@ func runSyncIncrementalLocal(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Sync IMAP sources via full sync.
+	// Sync IMAP sources via folder-based full sync.
 	for _, src := range imapTargets {
 		if ctx.Err() != nil {
 			break
 		}
-		fmt.Printf("Note: IMAP account %s does not support incremental sync. Running full sync.\n\n", src.Identifier)
+		fmt.Printf("Note: IMAP account %s uses folder-based sync. Unchanged folders are skipped when watermarks are available.\n\n", src.Identifier)
 		if err := runFullSync(ctx, s, getOAuthMgr, src); err != nil {
 			syncErrors = append(syncErrors, fmt.Sprintf("%s: %v", src.Identifier, err))
 		}
