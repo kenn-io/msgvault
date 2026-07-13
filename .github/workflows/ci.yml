@@ -133,8 +133,14 @@ jobs:
           CGO_CFLAGS: "-IC:/msys64/mingw64/include -fgnu89-inline"
           CGO_LDFLAGS: "-Wl,--allow-multiple-definition"
         run: |
+          $shardedPackages = @(
+            "go.kenn.io/msgvault/cmd/msgvault/cmd"
+            "go.kenn.io/msgvault/internal/sync"
+            "go.kenn.io/msgvault/internal/vector/embed"
+            "go.kenn.io/msgvault/internal/vector/sqlitevec"
+          )
           $packages = go list -tags "fts5 sqlite_vec" ./... |
-            Where-Object { $_ -ne "go.kenn.io/msgvault/cmd/msgvault/cmd" }
+            Where-Object { $_ -notin $shardedPackages }
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           go test -timeout 20m -tags "fts5 sqlite_vec" $packages
 
@@ -143,7 +149,20 @@ jobs:
           name: msgvault-windows-amd64
           path: msgvault.exe
 
-  test-windows-cli:
+  test-windows-sharded:
+    name: test-windows-sharded (${{ matrix.name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: cli
+            package: ./cmd/msgvault/cmd
+          - name: sync
+            package: ./internal/sync
+          - name: vector-embed
+            package: ./internal/vector/embed
+          - name: vector-sqlite
+            package: ./internal/vector/sqlitevec
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -157,7 +176,7 @@ jobs:
         run: |
           C:\msys64\usr\bin\pacman.exe -S --noconfirm --needed mingw-w64-x86_64-sqlite3
 
-      - name: Test CLI package in isolated shards
+      - name: Test package in isolated shards
         shell: pwsh
         env:
           CGO_ENABLED: "1"
@@ -165,7 +184,7 @@ jobs:
           CGO_LDFLAGS: "-Wl,--allow-multiple-definition"
         run: |
           ./scripts/test-package-shards.ps1 `
-            -Package ./cmd/msgvault/cmd `
+            -Package '${{ matrix.package }}' `
             -ShardCount 4 `
             -Tags "fts5 sqlite_vec" `
             -Timeout 20m
