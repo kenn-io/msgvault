@@ -181,3 +181,28 @@ func TestListMessages_DateFilterDisablesFolderTracking(t *testing.T) {
 	assert.Nil(second.ObservedFolderStates(),
 		"date-filtered runs must not record folder states")
 }
+
+func TestListMessages_AllMailboxRecordsFolderStatesForNoopResync(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	addr, _ := testutil.StartIMAPMemServer(t, map[string]int{"All Mail": 2, "Projects": 1})
+
+	first := newTestClient(t, addr)
+	// Seed mailbox discovery as if LIST reported All Mail with \All;
+	// the in-memory server does not retain CreateOptions.SpecialUse.
+	first.mailboxCache = []string{"All Mail", "Projects"}
+	first.allMailFolder = "All Mail"
+	require.Len(listAllMessages(t, first), 3)
+	saved := first.ObservedFolderStates()
+	require.Contains(saved, "All Mail")
+	require.Contains(saved, "Projects")
+	require.NoError(first.Close())
+
+	second := newTestClient(t, addr, WithFolderStates(saved))
+	second.mailboxCache = []string{"All Mail", "Projects"}
+	second.allMailFolder = "All Mail"
+	ids := listAllMessages(t, second)
+	assert.Empty(ids, "unchanged folders must not be re-enumerated when an All Mail folder exists")
+	assert.Equal(saved, second.ObservedFolderStates())
+	assert.Nil(second.msgIDToLabels, "a no-op resync must not build the All Mail label map")
+}

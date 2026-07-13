@@ -22,9 +22,9 @@ type FolderState struct {
 // completed sync. During message listing, mailboxes whose current
 // STATUS matches the saved state are skipped without enumeration, and
 // changed mailboxes are searched only for UIDs at or above the saved
-// UIDNEXT. Ignored when a date filter is active or when the server
-// exposes an \All mailbox (Gmail-style virtual folders need full
-// enumeration for label mapping).
+// UIDNEXT. Ignored when a date filter is active. When the server
+// exposes an \All mailbox, saved states short-circuit fully unchanged
+// resyncs; changed runs still enumerate fully for label mapping.
 func WithFolderStates(states map[string]FolderState) Option {
 	return func(c *Client) { c.priorFolderStates = states }
 }
@@ -33,7 +33,7 @@ func WithFolderStates(states map[string]FolderState) Option {
 // the last message-list enumeration, for persistence after a completed
 // sync. Mailboxes whose STATUS or enumeration failed are absent, so
 // saved state for them is left untouched. Returns nil when folder
-// tracking was disabled (date filter, \All mailbox, or no listing yet).
+// tracking was disabled (date filter or no listing yet).
 func (c *Client) ObservedFolderStates() map[string]FolderState {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -43,6 +43,28 @@ func (c *Client) ObservedFolderStates() map[string]FolderState {
 	states := make(map[string]FolderState, len(c.observedFolderStates))
 	maps.Copy(states, c.observedFolderStates)
 	return states
+}
+
+func (c *Client) observeFolderStates(
+	ctx context.Context, mailboxes []string,
+) (map[string]FolderState, int) {
+	states := make(map[string]FolderState, len(mailboxes))
+	unchanged := 0
+	for _, mailbox := range mailboxes {
+		status, err := c.statusFolder(ctx, mailbox)
+		if err != nil {
+			c.logger.Warn("STATUS failed, enumerating mailbox fully",
+				"mailbox", mailbox, "error", err)
+			continue
+		}
+		states[mailbox] = status
+		if prior, ok := c.priorFolderStates[mailbox]; ok &&
+			prior.UIDValidity == status.UIDValidity &&
+			prior.UIDNext == status.UIDNext {
+			unchanged++
+		}
+	}
+	return states, unchanged
 }
 
 // statusFolder fetches UIDVALIDITY and UIDNEXT for a mailbox via
