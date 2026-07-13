@@ -86,6 +86,35 @@ function Add-CgoFlag {
     }
 }
 
+function Format-CgoPathFlag {
+    param(
+        [Parameter(Mandatory = $true)]
+        [ValidateSet('-I', '-L')]
+        [string]$Prefix,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Path
+    )
+
+    $normalizedPath = $Path.Replace('\', '/')
+    if ($normalizedPath.Contains('"')) {
+        throw "CGO path contains an unsupported quote character: $Path"
+    }
+    return "`"$Prefix$normalizedPath`""
+}
+
+function Format-GoCompilerCommand {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path
+    )
+
+    if ($Path.Contains('"')) {
+        throw "Compiler path contains an unsupported quote character: $Path"
+    }
+    return "`"$Path`""
+}
+
 function Get-GoModuleDirectory {
     param(
         [Parameter(Mandatory = $true)]
@@ -282,6 +311,21 @@ Then rerun this command. The compiled library will be cached at:
     return $build
 }
 
+$buildEnvironmentVariables = @(
+    'GOOS',
+    'GOARCH',
+    'CGO_ENABLED',
+    'CC',
+    'PATH',
+    'CGO_CFLAGS',
+    'CGO_LDFLAGS',
+    'CMAKE_BUILD_PARALLEL_LEVEL'
+)
+$originalBuildEnvironment = @{}
+foreach ($variable in $buildEnvironmentVariables) {
+    $originalBuildEnvironment[$variable] = [Environment]::GetEnvironmentVariable($variable, 'Process')
+}
+
 Push-Location $repoRoot
 try {
     if (-not (Get-Command go -ErrorAction SilentlyContinue)) {
@@ -313,7 +357,7 @@ try {
 
     $tags = @('fts5', 'sqlite_vec')
     $includeDir = Initialize-SqliteHeader $cacheRoot
-    Add-CgoFlag 'CGO_CFLAGS' "-I$($includeDir.Replace('\', '/'))"
+    Add-CgoFlag 'CGO_CFLAGS' (Format-CgoPathFlag '-I' $includeDir)
     Add-CgoFlag 'CGO_CFLAGS' '-fgnu89-inline'
     Add-CgoFlag 'CGO_LDFLAGS' '-Wl,--allow-multiple-definition'
 
@@ -321,11 +365,11 @@ try {
         $compilerDirectory = Initialize-Arm64Toolchain $cacheRoot
         $cc = Join-Path $compilerDirectory 'aarch64-w64-mingw32-clang.exe'
         $env:PATH = "$compilerDirectory;$env:PATH"
-        $env:CC = $cc
+        $env:CC = Format-GoCompilerCommand $cc
 
         $duckdbBuild = Initialize-Arm64DuckDB $cacheRoot $compilerDirectory
         $tags += 'duckdb_use_static_lib'
-        Add-CgoFlag 'CGO_LDFLAGS' "-L$($duckdbBuild.Replace('\', '/'))"
+        Add-CgoFlag 'CGO_LDFLAGS' (Format-CgoPathFlag '-L' $duckdbBuild)
         Add-CgoFlag 'CGO_LDFLAGS' '-lduckdb_bundle'
         Add-CgoFlag 'CGO_LDFLAGS' '-lws2_32 -lwsock32 -lrstrtmgr -lstdc++ -lm --static'
     } else {
@@ -339,7 +383,7 @@ The MinGW-w64 compiler was not found. Install MSYS2, then run:
         }
         $compilerDirectory = Split-Path -Parent $cc
         $env:PATH = "$compilerDirectory;$env:PATH"
-        $env:CC = $cc
+        $env:CC = Format-GoCompilerCommand $cc
     }
 
     $version = (& git describe --tags --always --dirty 2>$null | Out-String).Trim()
@@ -365,5 +409,8 @@ The MinGW-w64 compiler was not found. Install MSYS2, then run:
     Invoke-Checked go @buildArguments
     Write-Host "Built: $OutputPath" -ForegroundColor Green
 } finally {
+    foreach ($variable in $buildEnvironmentVariables) {
+        [Environment]::SetEnvironmentVariable($variable, $originalBuildEnvironment[$variable], 'Process')
+    }
     Pop-Location
 }
