@@ -97,6 +97,38 @@ function Get-WindowsHostArchitecture {
     }
 }
 
+function Invoke-WebRequestCompat {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Uri,
+
+        [Parameter(Mandatory = $true)]
+        [string]$OutFile
+    )
+
+    $parameters = @{
+        Uri = $Uri
+        OutFile = $OutFile
+    }
+    $isWindowsPowerShell = $PSVersionTable.PSVersion.Major -lt 6
+    $originalSecurityProtocol = $null
+    if ($isWindowsPowerShell) {
+        # Windows PowerShell 5 can default to TLS 1.0 and its web cmdlet can
+        # require the Internet Explorer parser unless basic parsing is set.
+        $originalSecurityProtocol = [Net.ServicePointManager]::SecurityProtocol
+        [Net.ServicePointManager]::SecurityProtocol = $originalSecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+        $parameters.UseBasicParsing = $true
+    }
+
+    try {
+        Invoke-WebRequest @parameters | Out-Null
+    } finally {
+        if ($isWindowsPowerShell) {
+            [Net.ServicePointManager]::SecurityProtocol = $originalSecurityProtocol
+        }
+    }
+}
+
 function Add-CgoFlag {
     param(
         [Parameter(Mandatory = $true)]
@@ -203,7 +235,7 @@ function Initialize-Arm64Toolchain {
         $download = "$archive.download"
         Write-Host "Downloading the Windows ARM64 LLVM-MinGW toolchain (one-time setup)..."
         try {
-            Invoke-WebRequest -Uri $url -OutFile $download
+            Invoke-WebRequestCompat -Uri $url -OutFile $download
             Move-Item -LiteralPath $download -Destination $archive -Force
         } finally {
             Remove-Item -LiteralPath $download -Force -ErrorAction SilentlyContinue
