@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -17,6 +18,14 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/query"
 )
+
+type closeErrorReader struct {
+	io.Reader
+
+	err error
+}
+
+func (r *closeErrorReader) Close() error { return r.err }
 
 // createAttachmentFile creates a file in the content-addressed storage layout
 // (root/<hash[:2]>/<hash>) and returns the SHA-256 hex hash of the content.
@@ -278,6 +287,28 @@ func TestAttachmentsToDirWithOpener(t *testing.T) {
 	got, err := os.ReadFile(res.Files[0].Path)
 	require.NoError(err)
 	assert.Equal(content, got)
+}
+
+func TestAttachmentsToDirWithOpenerRejectsCloseVerificationError(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	content := []byte("streamed content with terminal verification")
+	hash := fmt.Sprintf("%x", sha256.Sum256(content))
+	verificationErr := errors.New("terminal verification failed")
+	outDir := t.TempDir()
+
+	result := AttachmentsToDirWithOpener(outDir,
+		[]query.AttachmentInfo{{Filename: "doc.txt", ContentHash: hash}},
+		func(string) (io.ReadCloser, error) {
+			return &closeErrorReader{Reader: bytes.NewReader(content), err: verificationErr}, nil
+		})
+
+	require.Empty(result.Files)
+	require.Len(result.Errors, 1)
+	assert.Contains(result.Errors[0], verificationErr.Error())
+	entries, err := os.ReadDir(outDir)
+	require.NoError(err)
+	assert.Empty(entries, "a stream that fails terminal verification must not leave exported content")
 }
 
 func TestAttachmentsToDir_FilePermissions(t *testing.T) {

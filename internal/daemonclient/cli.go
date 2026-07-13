@@ -15,6 +15,7 @@ import (
 	"go.kenn.io/msgvault/internal/accountops"
 	"go.kenn.io/msgvault/internal/cacheops"
 	"go.kenn.io/msgvault/internal/collectionops"
+	"go.kenn.io/msgvault/internal/contentverify"
 	"go.kenn.io/msgvault/internal/deletion"
 	"go.kenn.io/msgvault/internal/identityops"
 	"go.kenn.io/msgvault/internal/query"
@@ -1012,6 +1013,9 @@ func (c *Client) GetCLIAttachment(ctx context.Context, contentHash string) ([]by
 	if err != nil {
 		return nil, err
 	}
+	if err := contentverify.VerifyBytes(resp.Body, contentHash); err != nil {
+		return nil, fmt.Errorf("verify downloaded attachment %s: %w", contentHash, err)
+	}
 	return resp.Body, nil
 }
 
@@ -1040,7 +1044,11 @@ func (c *Client) OpenCLIAttachment(ctx context.Context, contentHash string) (io.
 		defer func() { _ = resp.Body.Close() }()
 		return nil, HandleErrorResponse(resp)
 	}
-	return resp.Body, nil
+	verified, err := contentverify.NewReadCloser(resp.Body, contentHash)
+	if err != nil {
+		return nil, errors.Join(err, resp.Body.Close())
+	}
+	return verified, nil
 }
 
 func (c *Client) RunSQLQuery(ctx context.Context, sql string) (*query.QueryResult, error) {

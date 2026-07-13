@@ -3,11 +3,13 @@ package client
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
 
 	"github.com/doordash-oss/oapi-codegen-dd/v3/pkg/runtime"
+	"go.kenn.io/msgvault/internal/contentverify"
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
 
@@ -39,6 +41,55 @@ func NewWithAPIClient(apiClient runtime.APIClient) *Client {
 		Client:    generated.NewClient(wrapped),
 		apiClient: wrapped,
 	}
+}
+
+// GetAttachmentContent downloads and verifies content against the requested
+// SHA-256 path identity before returning it to the caller.
+func (c *Client) GetAttachmentContent(
+	ctx context.Context,
+	options *generated.GetAttachmentContentRequestOptions,
+	reqEditors ...runtime.RequestEditorFn,
+) (*generated.GetAttachmentContentResponse, error) {
+	response, err := c.Client.GetAttachmentContent(ctx, options, reqEditors...)
+	if err != nil || response == nil {
+		return response, err
+	}
+	expected, err := attachmentContentHash(options)
+	if err != nil {
+		return nil, err
+	}
+	if err := contentverify.VerifyBytes(*response, expected); err != nil {
+		return nil, fmt.Errorf("verify downloaded attachment %s: %w", expected, err)
+	}
+	return response, nil
+}
+
+// GetAttachmentContentWithResponse is the response-preserving variant of
+// GetAttachmentContent. Successful binary bodies are still hash-verified.
+func (c *Client) GetAttachmentContentWithResponse(
+	ctx context.Context,
+	options *generated.GetAttachmentContentRequestOptions,
+	reqEditors ...runtime.RequestEditorFn,
+) (*generated.GetAttachmentContentResp, error) {
+	response, err := c.Client.GetAttachmentContentWithResponse(ctx, options, reqEditors...)
+	if err != nil || response == nil || response.StatusCode != http.StatusOK {
+		return response, err
+	}
+	expected, err := attachmentContentHash(options)
+	if err != nil {
+		return response, err
+	}
+	if err := contentverify.VerifyBytes(response.Body, expected); err != nil {
+		return response, fmt.Errorf("verify downloaded attachment %s: %w", expected, err)
+	}
+	return response, nil
+}
+
+func attachmentContentHash(options *generated.GetAttachmentContentRequestOptions) (string, error) {
+	if options == nil || options.PathParams == nil {
+		return "", errors.New("attachment content hash is required")
+	}
+	return options.PathParams.Hash, nil
 }
 
 // floatNormalizingAPIClient works around an upstream defect in the generated

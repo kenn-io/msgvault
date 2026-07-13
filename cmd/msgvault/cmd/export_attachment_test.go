@@ -2,9 +2,12 @@ package cmd
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -31,6 +34,16 @@ func (r *failingAttachmentStream) Read(p []byte) (int, error) {
 	}
 	r.sent = true
 	return copy(p, "partial download"), errors.New("stream failed")
+}
+
+type closeFailingAttachmentStream struct {
+	io.Reader
+
+	closeErr error
+}
+
+func (r *closeFailingAttachmentStream) Close() error {
+	return r.closeErr
 }
 
 func TestExportAttachmentBinaryStreamPreservesExistingFileOnError(t *testing.T) {
@@ -72,12 +85,42 @@ func TestExportAttachmentBinaryStreamReplacesExistingFile(t *testing.T) {
 	assert.Equal([]byte("new data"), got, "pre-existing output should be replaced")
 }
 
+func TestExportAttachmentBinaryDownloadPreservesExistingFileOnCloseError(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	tmpDir := t.TempDir()
+	outFile := filepath.Join(tmpDir, "attachment.bin")
+	original := []byte("existing verified data")
+	require.NoError(os.WriteFile(outFile, original, 0o600), "seed output file")
+
+	savedOutput := exportAttachmentOutput
+	defer func() { exportAttachmentOutput = savedOutput }()
+	exportAttachmentOutput = outFile
+
+	doneErr := captureStderr(t)
+	err := exportAttachmentBinaryDownload(&closeFailingAttachmentStream{
+		Reader:   strings.NewReader("unverified replacement"),
+		closeErr: errors.New("verification failed during close"),
+	})
+	stderr := doneErr()
+	require.Error(err, "close-time verification failure should be returned")
+	require.ErrorContains(err, "verification failed during close")
+	assert.NotContains(stderr, "Exported attachment", "failed export must not report success")
+
+	got, readErr := os.ReadFile(outFile)
+	require.NoError(readErr, "read original output")
+	assert.Equal(original, got, "pre-existing output must survive close-time verification failure")
+	temps, globErr := filepath.Glob(filepath.Join(tmpDir, ".attachment.bin.tmp-*"))
+	require.NoError(globErr, "find staged output files")
+	assert.Empty(temps, "failed export must remove its staged output")
+}
+
 func TestExportAttachmentUsesLocalDaemonHTTPAndPreservesFileOutput(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	dataDir := t.TempDir()
-	contentHash := "61ccf192b5bd358738802dc2676d3ceab856f47d26dd29681ac3d335bfd5bbd0"
 	wantData := []byte("daemon attachment content")
+	contentHash := fmt.Sprintf("%x", sha256.Sum256(wantData))
 	server, attachmentRequests := attachmentHTTPDaemon(t, contentHash, wantData)
 	writeStatsHTTPDaemonRuntime(t, dataDir, server)
 
@@ -126,8 +169,8 @@ func TestExportAttachmentUsesLocalDaemonHTTPAndPreservesJSONOutput(t *testing.T)
 	require := require.New(t)
 	assert := assert.New(t)
 	dataDir := t.TempDir()
-	contentHash := "61ccf192b5bd358738802dc2676d3ceab856f47d26dd29681ac3d335bfd5bbd0"
 	wantData := []byte("daemon attachment content")
+	contentHash := fmt.Sprintf("%x", sha256.Sum256(wantData))
 	server, attachmentRequests := attachmentHTTPDaemon(t, contentHash, wantData)
 	writeStatsHTTPDaemonRuntime(t, dataDir, server)
 
@@ -178,8 +221,8 @@ func TestExportAttachmentUsesLocalDaemonHTTPAndPreservesBase64Output(t *testing.
 	require := require.New(t)
 	assert := assert.New(t)
 	dataDir := t.TempDir()
-	contentHash := "61ccf192b5bd358738802dc2676d3ceab856f47d26dd29681ac3d335bfd5bbd0"
 	wantData := []byte("daemon attachment content")
+	contentHash := fmt.Sprintf("%x", sha256.Sum256(wantData))
 	server, attachmentRequests := attachmentHTTPDaemon(t, contentHash, wantData)
 	writeStatsHTTPDaemonRuntime(t, dataDir, server)
 

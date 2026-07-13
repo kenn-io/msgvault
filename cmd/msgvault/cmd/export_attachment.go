@@ -90,12 +90,11 @@ func runExportAttachmentHTTP(cmd *cobra.Command, contentHash string) error {
 	if err != nil {
 		return err
 	}
-	defer func() { _ = body.Close() }()
 
 	if exportAttachmentBase64 {
-		return exportAttachmentStreamAsBase64(body)
+		return errors.Join(exportAttachmentStreamAsBase64(body), body.Close())
 	}
-	return exportAttachmentBinaryStream(body)
+	return exportAttachmentBinaryDownload(body)
 }
 
 func exportAttachmentDataAsJSON(data []byte, contentHash string) error {
@@ -137,7 +136,43 @@ func exportAttachmentBinaryStream(r io.Reader) error {
 	return nil
 }
 
+func exportAttachmentBinaryDownload(body io.ReadCloser) (err error) {
+	sourceClosed := false
+	closeSource := func() error {
+		if sourceClosed {
+			return nil
+		}
+		sourceClosed = true
+		return body.Close()
+	}
+	defer func() {
+		err = errors.Join(err, closeSource())
+	}()
+
+	outputPath := exportAttachmentOutput
+	if outputPath == "" || outputPath == "-" {
+		_, copyErr := io.Copy(os.Stdout, body)
+		return errors.Join(copyErr, closeSource())
+	}
+
+	n, err := writeAttachmentStreamToFileBeforeInstall(outputPath, body, closeSource)
+	if err != nil {
+		return err
+	}
+
+	fmt.Fprintf(os.Stderr, "Exported attachment to: %s (%d bytes)\n", outputPath, n)
+	return nil
+}
+
 func writeAttachmentStreamToFile(outputPath string, r io.Reader) (int64, error) {
+	return writeAttachmentStreamToFileBeforeInstall(outputPath, r, nil)
+}
+
+func writeAttachmentStreamToFileBeforeInstall(
+	outputPath string,
+	r io.Reader,
+	closeSource func() error,
+) (int64, error) {
 	dir := filepath.Dir(outputPath)
 	if dir == "" {
 		dir = "."
@@ -160,17 +195,29 @@ func writeAttachmentStreamToFile(outputPath string, r io.Reader) (int64, error) 
 
 	n, copyErr := io.Copy(tmp, r)
 	closeErr := tmp.Close()
-	if copyErr != nil {
-		return 0, fmt.Errorf("write file: %w", copyErr)
+	var sourceCloseErr error
+	if closeSource != nil {
+		sourceCloseErr = closeSource()
 	}
-	if closeErr != nil {
-		return 0, fmt.Errorf("close file: %w", closeErr)
+	if copyErr != nil || closeErr != nil || sourceCloseErr != nil {
+		return 0, errors.Join(
+			wrapAttachmentExportError("write file", copyErr),
+			wrapAttachmentExportError("close file", closeErr),
+			wrapAttachmentExportError("verify downloaded attachment", sourceCloseErr),
+		)
 	}
 	if err := replaceOutputFile(tmpPath, outputPath); err != nil {
 		return 0, fmt.Errorf("replace output file: %w", err)
 	}
 	cleanup = false
 	return n, nil
+}
+
+func wrapAttachmentExportError(operation string, err error) error {
+	if err == nil {
+		return nil
+	}
+	return fmt.Errorf("%s: %w", operation, err)
 }
 
 func replaceOutputFile(tmpPath, outputPath string) error {

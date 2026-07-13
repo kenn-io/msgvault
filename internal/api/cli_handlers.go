@@ -2001,7 +2001,7 @@ func (s *Server) handleCLIAttachment(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if s.blobStore != nil {
-		rc, size, err := s.blobStore.Open(contentHash)
+		rc, size, err := s.blobStore.OpenStream(r.Context(), contentHash)
 		if err != nil {
 			if errors.Is(err, fs.ErrNotExist) {
 				writeError(w, http.StatusNotFound, "not_found", "Attachment not found")
@@ -2011,12 +2011,12 @@ func (s *Server) handleCLIAttachment(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, "internal_error", "Failed to retrieve attachment")
 			return
 		}
-		defer func() { _ = rc.Close() }()
 		w.Header().Set("Content-Type", "application/octet-stream")
 		w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
 		w.Header().Set("X-Msgvault-Content-Hash", contentHash)
 		w.WriteHeader(http.StatusOK)
-		if _, err := io.Copy(w, rc); err != nil {
+		_, copyErr := io.Copy(w, rc)
+		if err := errors.Join(copyErr, rc.Close()); err != nil {
 			s.logger.Error("failed to write CLI attachment", "content_hash", contentHash, "error", err)
 		}
 		return

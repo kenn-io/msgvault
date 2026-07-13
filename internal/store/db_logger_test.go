@@ -264,7 +264,9 @@ func TestLoggedRows_QueryErrorLogsImmediately(t *testing.T) {
 func TestLoggedRows_FinalizesAtEndOfScan(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	ConfigureSQLLogging(SQLLogOptions{FullTrace: true})
+	// Keep this test about finalization timing, independent of whether a busy
+	// CI host would classify the tiny query as slow.
+	ConfigureSQLLogging(SQLLogOptions{FullTrace: true, SlowMs: 60_000})
 	t.Cleanup(func() { ConfigureSQLLogging(SQLLogOptions{}) })
 
 	buf := captureSlog(t)
@@ -305,12 +307,9 @@ func TestLoggedRows_FinalizesAtEndOfScan(t *testing.T) {
 		}
 	}
 	assert.Equal(1, count, "query log lines")
-	// Duration recorded at end-of-scan must not include the 50ms
-	// of post-iteration work — give a generous ceiling so a slow
-	// CI host doesn't flake.
+	// Equality proves the duration recorded at end-of-scan did not absorb the
+	// 50ms of post-iteration work, without imposing a host-speed ceiling.
 	assert.InDelta(durAtEndOfScan, lastDuration, 0, "duration_ms changed after Close")
-	assert.Less(lastDuration, float64(40),
-		"duration_ms %v includes post-iteration sleep; finalizer should run at end-of-Next", lastDuration)
 }
 
 // TestLoggedRows_EarlyExitFinalizesOnClose covers the path where

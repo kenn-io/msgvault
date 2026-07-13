@@ -2572,7 +2572,7 @@ func (s *Server) handleGetAttachmentContent(w http.ResponseWriter, r *http.Reque
 	var content io.ReadCloser
 	var contentLength int64
 	if s.blobStore != nil {
-		content, contentLength, err = s.blobStore.Open(hash)
+		content, contentLength, err = s.blobStore.OpenStream(r.Context(), hash)
 	}
 	if s.blobStore == nil || errors.Is(err, os.ErrNotExist) {
 		content, contentLength, att, err = openLooseAttachmentCandidates(
@@ -2588,8 +2588,6 @@ func (s *Server) handleGetAttachmentContent(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusInternalServerError, "internal_error", "Failed to open attachment")
 		return
 	}
-	defer func() { _ = content.Close() }()
-
 	contentType := att.MimeType
 	if contentType == "" {
 		contentType = "application/octet-stream"
@@ -2599,7 +2597,8 @@ func (s *Server) handleGetAttachmentContent(w http.ResponseWriter, r *http.Reque
 	w.Header().Set("Content-Length", strconv.FormatInt(contentLength, 10))
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 
-	if _, err := io.Copy(w, content); err != nil {
+	_, copyErr := io.Copy(w, content)
+	if err := errors.Join(copyErr, content.Close()); err != nil {
 		// Status and headers are already committed, so only logging is possible.
 		s.logger.Error("failed to stream attachment", "error", err, "hash", hash)
 	}
