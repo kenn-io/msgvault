@@ -132,12 +132,97 @@ jobs:
           CGO_ENABLED: "1"
           CGO_CFLAGS: "-IC:/msys64/mingw64/include -fgnu89-inline"
           CGO_LDFLAGS: "-Wl,--allow-multiple-definition"
-        run: go test -timeout 20m -tags "fts5 sqlite_vec" ./...
+        run: |
+          $separatePackages = @(
+            "go.kenn.io/msgvault/cmd/msgvault/cmd"
+            "go.kenn.io/msgvault/internal/api"
+            "go.kenn.io/msgvault/internal/importer"
+            "go.kenn.io/msgvault/internal/store"
+            "go.kenn.io/msgvault/internal/sync"
+            "go.kenn.io/msgvault/internal/vector/embed"
+            "go.kenn.io/msgvault/internal/vector/sqlitevec"
+            "go.kenn.io/msgvault/scripts"
+          )
+          $packages = go list -tags "fts5 sqlite_vec" ./... |
+            Where-Object { $_ -notin $separatePackages }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          go test -timeout 20m -tags "fts5 sqlite_vec" $packages
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: msgvault-windows-amd64
           path: msgvault.exe
+
+  test-windows-slow-packages:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+
+      - name: Install sqlite3 dev headers
+        shell: pwsh
+        run: |
+          C:\msys64\usr\bin\pacman.exe -S --noconfirm --needed mingw-w64-x86_64-sqlite3
+
+      - name: Test slow packages
+        shell: pwsh
+        env:
+          CGO_ENABLED: "1"
+          CGO_CFLAGS: "-IC:/msys64/mingw64/include -fgnu89-inline"
+          CGO_LDFLAGS: "-Wl,--allow-multiple-definition"
+        run: |
+          go test -timeout 20m -tags "fts5 sqlite_vec" `
+            ./internal/api `
+            ./internal/importer `
+            ./internal/store `
+            ./scripts
+
+  test-windows-sharded:
+    name: test-windows-sharded (${{ matrix.name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: cli
+            package: ./cmd/msgvault/cmd
+          - name: sync-vector-embed
+            package: ./internal/sync
+            package2: ./internal/vector/embed
+          - name: vector-sqlite
+            package: ./internal/vector/sqlitevec
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+
+      - name: Install sqlite3 dev headers
+        shell: pwsh
+        run: |
+          C:\msys64\usr\bin\pacman.exe -S --noconfirm --needed mingw-w64-x86_64-sqlite3
+
+      - name: Test package in isolated shards
+        shell: pwsh
+        env:
+          CGO_ENABLED: "1"
+          CGO_CFLAGS: "-IC:/msys64/mingw64/include -fgnu89-inline"
+          CGO_LDFLAGS: "-Wl,--allow-multiple-definition"
+        run: |
+          $packages = @('${{ matrix.package }}', '${{ matrix.package2 }}') |
+            Where-Object { $_ }
+          foreach ($package in $packages) {
+            ./scripts/test-package-shards.ps1 `
+              -Package $package `
+              -ShardCount 4 `
+              -Tags "fts5 sqlite_vec" `
+              -Timeout 20m
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
 
   test-windows-pack-restore:
     runs-on: windows-latest
