@@ -49,7 +49,20 @@ cd msgvault
 make install
 ```
 
-Installs to `~/.local/bin` or `$GOPATH/bin`. For a debug build use `make build`, or `make build-release` for an optimized binary with stripped debug symbols.
+On macOS and Linux this installs to `~/.local/bin` or `$GOPATH/bin`. For a
+debug build use `make build`, or `make build-release` for an optimized binary
+with stripped debug symbols.
+
+On Windows, use the native PowerShell helper:
+
+```powershell
+.\scripts\build.ps1          # Debug build
+.\scripts\build.ps1 -Release # Optimized, stripped build
+```
+
+It detects AMD64 or ARM64 automatically and writes `msgvault.exe` in the
+repository root. See [Development and Roadmap](/development/#windows) for the
+one-time MSYS2 compiler prerequisites.
 
 Verify the installation:
 
