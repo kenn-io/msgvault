@@ -44,6 +44,7 @@ var (
 	backupRestoreForceUnlock      bool
 	backupRestoreJobs             int
 	backupRestoreLooseAttachments bool
+	backupRestoreIntegrityCheck   bool
 
 	// backupCreateProgress selects backup create's progress rendering mode:
 	// auto (default), bar, or plain. It is hidden/undocumented — see
@@ -87,7 +88,7 @@ var backupVerifyCmd = &cobra.Command{
 
 var backupRestoreCmd = &cobra.Command{
 	Use:   "restore [SNAPSHOT]",
-	Short: "Restore a snapshot into a target directory and prove the result",
+	Short: "Restore a snapshot into a target directory",
 	Args:  cobra.MaximumNArgs(1),
 	RunE:  runBackupRestore,
 }
@@ -207,7 +208,7 @@ func runBackupVerify(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// runBackupRestore materializes a snapshot into --target and proves the
+// runBackupRestore materializes a snapshot into --target and verifies the
 // result. Like verify, it never proxies through the daemon: it reads only
 // the repository and writes only the target, never the live archive.
 func runBackupRestore(cmd *cobra.Command, args []string) error {
@@ -229,13 +230,14 @@ func runBackupRestore(cmd *cobra.Command, args []string) error {
 	renderer := newBackupProgressRenderer(cmd.OutOrStdout(), progressModeAuto)
 	defer renderer.finish()
 	res, err := backup.Restore(cmd.Context(), r, backupapp.New(Version), backup.RestoreOptions{
-		SnapshotID:    snapshotID,
-		TargetDir:     backupRestoreTarget,
-		Overwrite:     backupRestoreOverwrite,
-		Jobs:          backupRestoreJobs,
-		ForceUnlock:   backupRestoreForceUnlock,
-		Progress:      renderer.handle,
-		PackedContent: backupRestorePackedContentTarget(backupRestoreLooseAttachments),
+		SnapshotID:         snapshotID,
+		TargetDir:          backupRestoreTarget,
+		Overwrite:          backupRestoreOverwrite,
+		Jobs:               backupRestoreJobs,
+		ForceUnlock:        backupRestoreForceUnlock,
+		SkipIntegrityCheck: !backupRestoreIntegrityCheck,
+		Progress:           renderer.handle,
+		PackedContent:      backupRestorePackedContentTarget(backupRestoreLooseAttachments),
 	})
 	if err != nil {
 		return fmt.Errorf("restoring snapshot: %w", err)
@@ -295,9 +297,11 @@ func printBackupRestoreSummary(w io.Writer, target string, res *backup.RestoreRe
 	if res.ExtrasFiles > 0 {
 		lines = append(lines, fmt.Sprintf("Extras files: %d\n", res.ExtrasFiles))
 	}
-	lines = append(lines,
-		"Proof: integrity_check ok, manifest stats match\n",
-		fmt.Sprintf("Duration: %.1fs\n", res.Duration.Seconds()))
+	verification := "Verification: page and blob hashes verified; manifest stats match\n"
+	if res.DatabaseIntegrityChecked {
+		verification = "Verification: page and blob hashes verified; SQLite integrity_check ok; manifest stats match\n"
+	}
+	lines = append(lines, verification, fmt.Sprintf("Duration: %.1fs\n", res.Duration.Seconds()))
 	for _, line := range lines {
 		if _, err := io.WriteString(w, line); err != nil {
 			return fmt.Errorf("write backup restore output: %w", err)
@@ -317,7 +321,7 @@ func printBackupRestoreSummary(w io.Writer, target string, res *backup.RestoreRe
 //
 // The snapshot may predate the pack tables; ClearAttachmentPackMetadata checks
 // for them and does nothing when absent, avoiding unrelated schema migrations
-// after the restore proof has already completed. dbPath comes from the restore
+// after restore verification has already completed. dbPath comes from the restore
 // result and is always a SQLite file under the target directory, never the
 // configured live archive (or PostgreSQL).
 func clearRestoredPackMetadata(dbPath string) error {
@@ -594,6 +598,8 @@ func init() {
 	backupRestoreCmd.Flags().BoolVar(&backupRestoreOverwrite, "overwrite", false, "Allow restoring into a non-empty target directory")
 	backupRestoreCmd.Flags().BoolVar(&backupRestoreForceUnlock, "force-unlock", false, "Break a stale exclusive repository lock before restoring")
 	backupRestoreCmd.Flags().IntVar(&backupRestoreJobs, "jobs", 0, "Concurrent pack readers (default: one per CPU; use 1 for serial reads on spinning disks or NAS shares)")
+	backupRestoreCmd.Flags().BoolVar(&backupRestoreIntegrityCheck, "integrity-check", false,
+		"Run SQLite's full integrity check after restoring (slow for large databases)")
 	backupRestoreCmd.Flags().BoolVar(&backupRestoreLooseAttachments, "loose-attachments", false,
 		"Restore attachments as loose files instead of installing compatible packs")
 

@@ -5,6 +5,7 @@ import (
 	"net"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strconv"
 	"testing"
 
@@ -38,6 +39,27 @@ func TestWriteDaemonRuntimePublishesKitRecord(t *testing.T) {
 	assert.Equal(api.APISchemaVersion, rec.Metadata[runtimeAPISchemaVersion], "api schema metadata")
 	assert.Equal(daemonAPIKeyFingerprint("test-api-key"), rec.Metadata[runtimeAuthFingerprint], "api key fingerprint metadata")
 	assert.Equal(shutdownToken, rec.Metadata[runtimeShutdownToken], "shutdown token metadata")
+}
+
+func TestWriteDaemonRuntimeAcceptsSymlinkedDataDir(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	parentDir := t.TempDir()
+	realDataDir := filepath.Join(parentDir, "real")
+	linkedDataDir := filepath.Join(parentDir, "linked")
+	require.NoError(os.Mkdir(realDataDir, 0o700), "create real data directory")
+	if err := os.Symlink(realDataDir, linkedDataDir); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+
+	path, _, err := writeDaemonRuntime(linkedDataDir, "127.0.0.1", 8123, "v-test", "")
+	require.NoError(err, "writeDaemonRuntime through symlink")
+	t.Cleanup(func() { removeDaemonRuntime(linkedDataDir) })
+
+	rec, err := daemonRuntimeStore(linkedDataDir).Read(path)
+	require.NoError(err, "read runtime record through symlink")
+	assert.Equal(os.Getpid(), rec.PID, "pid")
+	assert.Equal(daemonService, rec.Service, "service")
 }
 
 func TestFindDaemonRuntimeRequiresLiveMsgvaultPing(t *testing.T) {

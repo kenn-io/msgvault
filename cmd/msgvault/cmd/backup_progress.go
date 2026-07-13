@@ -37,15 +37,16 @@ var backupProgressBarStyle = cliProgressBarStyle{
 
 // backupProgressStageLabels names each backup.ProgressStage for display.
 var backupProgressStageLabels = map[backup.ProgressStage]string{
-	backup.ProgressStageFreeze:      "freeze",
-	backup.ProgressStageScan:        "scan",
-	backup.ProgressStagePack:        "pack",
-	backup.ProgressStageAttachments: "attachments",
-	backup.ProgressStageSeal:        "seal",
-	backup.ProgressStageVerify:      "verify",
-	backup.ProgressStageRestoreDB:   "db",
-	backup.ProgressStageExtras:      "extras",
-	backup.ProgressStageProof:       "proof",
+	backup.ProgressStageFreeze:         "freeze",
+	backup.ProgressStageScan:           "scan",
+	backup.ProgressStagePack:           "pack",
+	backup.ProgressStageAttachments:    "attachments",
+	backup.ProgressStageSeal:           "seal",
+	backup.ProgressStageVerify:         "verify",
+	backup.ProgressStageRestoreDB:      "db",
+	backup.ProgressStageExtras:         "extras",
+	backup.ProgressStageIntegrityCheck: "SQLite check",
+	backup.ProgressStageRestoreStats:   "database stats",
 }
 
 // backupProgressStageLabel returns stage's display label, falling back to
@@ -170,7 +171,7 @@ func (r *backupProgressRenderer) render(ev backup.ProgressEvent) {
 	}
 
 	bar := formatCLIProgressBar(pct, backupProgressBarStyle)
-	line := fmt.Sprintf("  %-11s %s %3.0f%%  %s%s%s", label, bar, pct, counts, extra, r.elapsedSuffix())
+	line := fmt.Sprintf("  %-14s %s %3.0f%%  %s%s%s", label, bar, pct, counts, extra, r.elapsedSuffix())
 	// \r alone does not clear the row, so a redraw shorter than its
 	// predecessor (a rate blip, a compact final line) would leave the old
 	// tail visible. Pad to the widest line rendered so far this stage.

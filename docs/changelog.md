@@ -43,6 +43,12 @@ All notable changes to msgvault, grouped by release.
 - PostgreSQL full-text indexes use a versioned field layout so stale indexes
   are detected and must be backfilled before body-only search.
 
+**Bug fixes**
+
+- Local daemon discovery works when the msgvault home or configured data
+  directory is a symlink, restoring the path layouts supported before 0.17.0
+  while retaining ownership and permission checks on the resolved directory.
+
 ---
 
 ## 0.17.1

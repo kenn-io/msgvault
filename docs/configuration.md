@@ -495,6 +495,10 @@ export MSGVAULT_HOME=/mnt/data/msgvault
 
 Both options are equivalent: `config.toml` is loaded from the specified directory, and all data (database, tokens, attachments) is stored there. The `--home` flag takes priority over `MSGVAULT_HOME`.
 
+The home or `[data].data_dir` directory may be a symlink to an existing
+directory. Local daemon bookkeeping resolves the symlink and applies its
+ownership and permission checks to the target directory.
+
 ## Environment Variables
 
 | Variable | Description |
