@@ -630,6 +630,7 @@ msgvault backup restore [snapshot] --target <dir> [flags]
 | `--repo <dir>` | Backup repository directory |
 | `--target <dir>` | Directory to restore into (required) |
 | `--overwrite` | Allow restoring into a non-empty target directory |
+| `--integrity-check` | Run SQLite's full integrity check after restoring (slow for large databases) |
 | `--loose-attachments` | Restore attachments as individual loose files instead of installing compatible packs |
 | `--force-unlock` | Break a stale exclusive repository lock before restoring |
 | `--jobs N` | Concurrent pack readers; `0` uses one per CPU |
@@ -639,6 +640,10 @@ restored attachment store. Every selected attachment is still read and
 SHA-256 verified; entries that exceed the target store's maintenance limits,
 or packs that use an incompatible representation, are restored loose instead.
 The summary reports the resulting packed/loose split and any fallback reasons.
+Every restore verifies database pages and content blobs by hash and compares
+the restored database statistics with the snapshot manifest. Pass
+`--integrity-check` to additionally run SQLite's full `PRAGMA integrity_check`
+scan; it is optional because it can dominate restore time for large databases.
 
 Use `--loose-attachments` for downgrade or recovery. Restore into a fresh
 target with that flag to guarantee a fully loose result. An overwritten target
