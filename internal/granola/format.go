@@ -42,7 +42,7 @@ func buildBody(n *Note) string {
 
 	if len(n.Transcript) > 0 {
 		b.WriteString("\nTranscript:\n")
-		base := n.Transcript[0].StartTime
+		base := transcriptStartTime(n)
 		for _, seg := range n.Transcript {
 			writeLine(formatTranscriptLine(seg.StartTime.Sub(base), speakerLabel(seg.Speaker), seg.Text))
 		}
@@ -71,8 +71,17 @@ func noteStartTime(n *Note) time.Time {
 	if n.CalendarEvent != nil && !n.CalendarEvent.ScheduledStartTime.IsZero() {
 		return n.CalendarEvent.ScheduledStartTime
 	}
-	if len(n.Transcript) > 0 {
-		return n.Transcript[0].StartTime
+	return transcriptStartTime(n)
+}
+
+// transcriptStartTime returns the first usable transcript timestamp. Granola
+// can omit timestamps on leading or all segments, so note creation is the
+// stable fallback for both message dating and transcript-relative offsets.
+func transcriptStartTime(n *Note) time.Time {
+	for _, segment := range n.Transcript {
+		if !segment.StartTime.IsZero() {
+			return segment.StartTime
+		}
 	}
 	return n.CreatedAt
 }

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -405,7 +406,14 @@ func buildMetadata(n *Note, identifier, organizerEmail string) meetingMetadata {
 		}
 	}
 	if m.DurationSeconds == 0 && len(n.Transcript) > 0 {
-		span := n.Transcript[len(n.Transcript)-1].EndTime.Sub(n.Transcript[0].StartTime)
+		var transcriptEnd time.Time
+		for _, segment := range slices.Backward(n.Transcript) {
+			if !segment.EndTime.IsZero() {
+				transcriptEnd = segment.EndTime
+				break
+			}
+		}
+		span := transcriptEnd.Sub(transcriptStartTime(n))
 		if span > 0 {
 			m.DurationSeconds = int64(span.Seconds())
 		}

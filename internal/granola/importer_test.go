@@ -219,6 +219,77 @@ func TestImport_RoundTrip(t *testing.T) {
 	assert.Equal(RawFormat, rawFormat)
 }
 
+func TestImport_TranscriptTimestampFallbacksRemainSearchable(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	createdAt := time.Date(2026, 7, 14, 15, 0, 0, 0, time.UTC)
+	firstTranscriptAt := createdAt.Add(2 * time.Minute)
+
+	notes := []*Note{
+		{
+			NoteSummary: NoteSummary{
+				ID: "sparse-transcript-times", Title: "Sparse transcript times",
+				Owner:     User{Name: "Test User", Email: "user@example.com"},
+				CreatedAt: createdAt, UpdatedAt: createdAt,
+			},
+			Transcript: []TranscriptSegment{
+				{Speaker: Speaker{Name: "Untimed"}, Text: "No timestamp"},
+				{Speaker: Speaker{Name: "Timed"}, Text: "First timestamp", StartTime: firstTranscriptAt},
+				{Speaker: Speaker{Name: "Later"}, Text: "Thirty seconds later", StartTime: firstTranscriptAt.Add(30 * time.Second), EndTime: firstTranscriptAt.Add(45 * time.Second)},
+			},
+		},
+		{
+			NoteSummary: NoteSummary{
+				ID: "missing-transcript-times", Title: "Missing transcript times",
+				Owner:     User{Name: "Test User", Email: "user@example.com"},
+				CreatedAt: createdAt.Add(time.Hour), UpdatedAt: createdAt.Add(time.Hour),
+			},
+			Transcript: []TranscriptSegment{{
+				Speaker: Speaker{Name: "Untimed"}, Text: "Created-at fallback",
+			}},
+		},
+	}
+	api := &fakeAPI{notes: make(map[string][]byte, len(notes))}
+	for _, note := range notes {
+		raw, err := json.Marshal(note)
+		require.NoError(err)
+		api.notes[note.ID] = raw
+	}
+	imp, st := newTestImporter(t, api)
+
+	_, err := imp.Import(context.Background(), ImportOptions{
+		Identifier: "work", AccountEmail: "user@example.com",
+	})
+	require.NoError(err)
+
+	var sparseSentAt, sparseBody, sparseMetadata string
+	require.NoError(st.DB().QueryRow(st.Rebind(`
+		SELECT m.sent_at, mb.body_text, m.metadata
+		FROM messages m
+		JOIN message_bodies mb ON mb.message_id = m.id
+		WHERE m.source_message_id = ?`), "sparse-transcript-times").Scan(
+		&sparseSentAt, &sparseBody, &sparseMetadata,
+	))
+	assert.Equal("2026-07-14T15:02:00Z", sparseSentAt)
+	assert.Contains(sparseBody, "[00:00] Untimed: No timestamp")
+	assert.Contains(sparseBody, "[00:00] Timed: First timestamp")
+	assert.Contains(sparseBody, "[00:30] Later: Thirty seconds later")
+	var sparseMeta meetingMetadata
+	require.NoError(json.Unmarshal([]byte(sparseMetadata), &sparseMeta))
+	assert.EqualValues(45, sparseMeta.DurationSeconds)
+
+	var fallbackSentAt, fallbackBody string
+	require.NoError(st.DB().QueryRow(st.Rebind(`
+		SELECT m.sent_at, mb.body_text
+		FROM messages m
+		JOIN message_bodies mb ON mb.message_id = m.id
+		WHERE m.source_message_id = ?`), "missing-transcript-times").Scan(
+		&fallbackSentAt, &fallbackBody,
+	))
+	assert.Equal("2026-07-14T16:00:00Z", fallbackSentAt)
+	assert.Contains(fallbackBody, "[00:00] Untimed: Created-at fallback")
+}
+
 func TestImport_AccountIdentityControlsFromMe(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
