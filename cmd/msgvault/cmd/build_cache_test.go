@@ -545,6 +545,59 @@ func TestBuildCache_RejectsTerminalAdditionDuringExport(t *testing.T) {
 	}
 }
 
+func TestBuildCache_RejectsZeroCounterFailedRunDuringExport(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	tmpDir := setupTestSQLite(t)
+	dbPath := filepath.Join(tmpDir, "test.db")
+	analyticsDir := filepath.Join(tmpDir, "analytics")
+
+	db, err := sql.Open("sqlite3", dbPath)
+	require.NoError(err)
+	_, err = db.Exec(`
+		CREATE TABLE sync_runs (
+			id INTEGER PRIMARY KEY,
+			source_id INTEGER,
+			started_at DATETIME,
+			completed_at DATETIME,
+			status TEXT,
+			messages_processed INTEGER,
+			messages_added INTEGER,
+			messages_updated INTEGER,
+			errors_count INTEGER
+		);
+		INSERT INTO sync_runs (
+			id, source_id, started_at, status,
+			messages_processed, messages_added, messages_updated, errors_count
+		) VALUES (1, 1, datetime('now'), 'running', 0, 0, 0, 0);
+	`)
+	require.NoError(err)
+	require.NoError(db.Close())
+
+	_, err = buildCache(dbPath, analyticsDir, false)
+	require.NoError(err)
+
+	buildCacheBeforeStateWriteHook = func() {
+		hookDB, hookErr := sql.Open("sqlite3", dbPath)
+		require.NoError(hookErr)
+		defer func() { require.NoError(hookDB.Close()) }()
+		_, hookErr = hookDB.Exec(`
+			UPDATE sync_runs
+			SET status = 'failed', completed_at = datetime('now')
+			WHERE id = 1
+		`)
+		require.NoError(hookErr)
+	}
+	t.Cleanup(func() { buildCacheBeforeStateWriteHook = nil })
+
+	_, err = buildCache(dbPath, analyticsDir, true)
+	require.Error(err)
+	assert.Contains(err.Error(), "sync counters changed during cache export")
+	buildCacheBeforeStateWriteHook = nil
+	_, statErr := os.Stat(analyticsDir)
+	assert.True(os.IsNotExist(statErr), "racing full rebuild output must be discarded")
+}
+
 func TestCacheNeedsBuild_AddOnlySyncUsesIncrementalBuild(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

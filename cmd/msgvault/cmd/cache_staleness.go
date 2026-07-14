@@ -212,6 +212,13 @@ func cacheNeedsBuild(dbPath, analyticsDir string) cacheStaleness {
 					state.LastCacheUpdateCount, counters.updates))
 			}
 		}
+		if counters.lastFailedRunID != state.LastFailedSyncRunID {
+			result.HasUpdated = true
+			result.FullRebuild = true
+			reasons = append(reasons, fmt.Sprintf(
+				"failed sync watermark changed from %d to %d",
+				state.LastFailedSyncRunID, counters.lastFailedRunID))
+		}
 		if counters.additions != state.LastCacheAdditionCount {
 			// A larger message ID gives the incremental exporter an exact lower
 			// boundary for ordinary append-only syncs. If the ID boundary did not

@@ -19,7 +19,11 @@ type meetingModeTextEngine struct{}
 func (meetingModeTextEngine) ListConversations(
 	context.Context, query.TextFilter,
 ) ([]query.ConversationRow, error) {
-	return []query.ConversationRow{{ConversationID: 77}}, nil
+	return []query.ConversationRow{
+		{ConversationID: 77},
+		{ConversationID: 78},
+		{ConversationID: 79},
+	}, nil
 }
 
 func (meetingModeTextEngine) TextAggregate(
@@ -37,7 +41,7 @@ func (meetingModeTextEngine) ListConversationMessages(
 func (meetingModeTextEngine) TextSearch(
 	context.Context, string, int, int,
 ) ([]query.MessageSummary, error) {
-	return nil, nil
+	return []query.MessageSummary{{ID: 99, Subject: "Old search result"}}, nil
 }
 
 func (meetingModeTextEngine) GetTextStats(
@@ -676,7 +680,7 @@ func TestModeCycleRejectsStalePresentationCompletions(t *testing.T) {
 				return model.loadTextConversations()
 			},
 			assertCached: func(assert *assert.Assertions, require *require.Assertions, model Model) {
-				require.Len(model.textState.conversations, 1)
+				require.Len(model.textState.conversations, 3)
 				assert.Equal(int64(77), model.textState.conversations[0].ConversationID)
 			},
 		},
@@ -738,6 +742,35 @@ func TestModeCycleRejectsStalePresentationCompletions(t *testing.T) {
 			})
 		}
 	}
+}
+
+func TestStaleTextSearchDoesNotReplaceReenteredConversationView(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	model := NewBuilder().Build()
+	model.textEngine = meetingModeTextEngine{}
+	model.mode = modeTexts
+	staleSearch := model.loadTextSearch("old query")()
+
+	for range 3 {
+		var handled bool
+		model, _, handled = model.handleGlobalKeys(tea.KeyPressMsg{Code: 'm', Text: "m"})
+		require.True(handled)
+	}
+	require.Equal(modeTexts, model.mode)
+
+	model = sendMsg(t, model, model.loadTextConversations()())
+	require.Len(model.textState.conversations, 3)
+	model.textState.cursor = 2
+	model.textState.scrollOffset = 1
+
+	model = sendMsg(t, model, staleSearch)
+
+	assert.Equal(textLevelConversations, model.textState.level)
+	assert.Equal(2, model.textState.cursor)
+	assert.Equal(1, model.textState.scrollOffset)
+	require.Len(model.textState.messages, 1, "successful stale payload remains cached")
+	assert.Equal(int64(99), model.textState.messages[0].ID)
 }
 
 func modeCompletionWithError(t *testing.T, msg tea.Msg, err error) tea.Msg {

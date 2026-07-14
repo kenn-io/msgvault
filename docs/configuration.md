@@ -349,7 +349,7 @@ first with `msgvault add-granola`. See
 ```toml
 [[granola]]
 identifier = "work"              # stable label; defaults to "default" for a single entry
-account_email = "you@example.com" # required unless identifier is an email address
+account_email = "you@example.com" # required primary account identity
 api_key = "grn_..."              # from the desktop app's settings (Business plan)
 schedule = "0 */6 * * *"         # 5-field cron, no seconds
 enabled = true
@@ -358,7 +358,7 @@ enabled = true
 | Key | Default | Description |
 |---|---|---|
 | `identifier` | `default` (single entry) | Source name used by `sync-granola <identifier>` and scheduler logs |
-| `account_email` | email-shaped `identifier` | Normalized primary account identity used for `is_from_me`; required when `identifier` is an arbitrary label |
+| `account_email` | (required) | Normalized primary account identity used for `is_from_me` |
 | `api_key` | (required) | Granola API key (`grn_…`) |
 | `schedule` | — | Cron expression used by `msgvault serve` |
 | `enabled` | `false` | Whether the source is daemon-scheduled |
@@ -381,7 +381,7 @@ secret lives in the config file. See
 ```toml
 [[circleback]]
 identifier = "work"              # stable label/token key; defaults to "default" for one entry
-account_email = "you@example.com" # required unless identifier is an email address
+account_email = "you@example.com" # required primary account identity
 schedule = "30 */6 * * *"        # 5-field cron, no seconds
 enabled = true
 ```
@@ -389,7 +389,7 @@ enabled = true
 | Key | Default | Description |
 |---|---|---|
 | `identifier` | `default` (single entry) | Source name used by `sync-circleback <identifier>`, the token filename, and scheduler logs |
-| `account_email` | email-shaped `identifier` | Normalized primary account identity used for `is_from_me`; required when `identifier` is an arbitrary label |
+| `account_email` | (required) | Normalized primary account identity used for `is_from_me` |
 | `endpoint` | production | MCP endpoint override (testing only) |
 | `schedule` | — | Cron expression used by `msgvault serve` |
 | `enabled` | `false` | Whether the source is daemon-scheduled |

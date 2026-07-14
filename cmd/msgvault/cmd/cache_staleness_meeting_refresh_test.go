@@ -133,6 +133,78 @@ func TestCacheNeedsBuild_CirclebackRefresh(t *testing.T) {
 	assert.Equal("Refreshed Meeting", cachedSubject)
 }
 
+func TestCacheNeedsBuild_SupersededCirclebackRunWithoutCheckpoint(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	tmp := t.TempDir()
+	dbPath := filepath.Join(tmp, "msgvault.db")
+	analyticsDir := filepath.Join(tmp, "analytics")
+
+	st, err := store.Open(dbPath)
+	require.NoError(err)
+	require.NoError(st.InitSchema())
+	t.Cleanup(func() { _ = st.Close() })
+
+	organizer := circleback.Attendee{Name: "Alice", Email: "alice@example.com"}
+	source := &cacheRefreshCirclebackSource{meeting: circleback.Meeting{
+		ID:        circleback.FlexString("failed-refresh-1"),
+		Name:      "Initial Meeting",
+		CreatedAt: "2026-07-01T09:00:00Z",
+		StartTime: "2026-07-01T09:00:00Z",
+		EndTime:   "2026-07-01T10:00:00Z",
+		Organizer: &organizer,
+		Notes:     "Initial meeting notes",
+	}}
+	imp := circleback.NewImporter(st, source)
+	first, err := imp.Import(context.Background(), circleback.ImportOptions{Identifier: "alice@example.com"})
+	require.NoError(err)
+	require.EqualValues(1, first.MeetingsAdded)
+	_, err = buildCache(dbPath, analyticsDir, false)
+	require.NoError(err)
+
+	abandonedRunID, err := st.StartSync(first.SourceID, circleback.SourceType)
+	require.NoError(err)
+	_, err = st.DB().Exec(`
+		UPDATE messages SET subject = 'Persisted Before Exit'
+		WHERE source_message_id = 'meeting:failed-refresh-1'
+	`)
+	require.NoError(err)
+	_, err = st.StartSync(first.SourceID, circleback.SourceType)
+	require.NoError(err, "starting the replacement run supersedes the abandoned run")
+
+	var status string
+	var additions, updates int64
+	require.NoError(st.DB().QueryRow(`
+		SELECT status, messages_added, messages_updated
+		FROM sync_runs WHERE id = ?
+	`, abandonedRunID).Scan(&status, &additions, &updates))
+	assert.Equal("failed", status)
+	assert.Zero(additions)
+	assert.Zero(updates)
+
+	staleness := cacheNeedsBuild(dbPath, analyticsDir)
+	require.True(staleness.NeedsBuild, "zero-counter failed run must invalidate cache: %+v", staleness)
+	require.True(staleness.FullRebuild, "failed-run progress requires a full rebuild: %+v", staleness)
+	require.Contains(staleness.Reason, "failed sync")
+
+	rebuilt, err := buildCache(dbPath, analyticsDir, false)
+	require.NoError(err)
+	require.False(rebuilt.Skipped, "direct build-cache must honor failed-run progress")
+
+	duckDB, err := sql.Open("duckdb", "")
+	require.NoError(err)
+	t.Cleanup(func() { _ = duckDB.Close() })
+	var cachedSubject string
+	require.NoError(duckDB.QueryRow(`
+		SELECT subject FROM read_parquet(?, hive_partitioning=true)
+		WHERE source_message_id = 'meeting:failed-refresh-1'
+	`, filepath.Join(analyticsDir, "messages", "**", "*.parquet")).Scan(&cachedSubject))
+	assert.Equal("Persisted Before Exit", cachedSubject)
+
+	fresh := cacheNeedsBuild(dbPath, analyticsDir)
+	assert.False(fresh.NeedsBuild, "recorded failed-run watermark must not rebuild repeatedly: %+v", fresh)
+}
+
 type cacheRefreshGranolaAPI struct {
 	mu   sync.Mutex
 	note []byte

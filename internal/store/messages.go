@@ -35,19 +35,17 @@ type RecipientSet struct {
 // MessagePersistData bundles everything needed to atomically
 // persist a message and its related rows in a single transaction.
 type MessagePersistData struct {
-	Message                *Message
-	Conversation           *ConversationPersistData
-	Metadata               *sql.NullString
-	BodyText               sql.NullString
-	BodyHTML               sql.NullString
-	RawMIME                []byte
-	RawFormat              string
-	Recipients             []RecipientSet
-	LabelIDs               []int64
-	PreserveLabels         bool
-	ReplaceLinkAttachments bool
-	LinkAttachments        []AttachmentRef
-	FTS                    *FTSDoc
+	Message        *Message
+	Conversation   *ConversationPersistData
+	Metadata       *sql.NullString
+	BodyText       sql.NullString
+	BodyHTML       sql.NullString
+	RawMIME        []byte
+	RawFormat      string
+	Recipients     []RecipientSet
+	LabelIDs       []int64
+	PreserveLabels bool
+	FTS            *FTSDoc
 }
 
 // ConversationPersistData optionally makes conversation identity, title, and
@@ -539,7 +537,7 @@ func (s *Store) GetMessageRaw(messageID int64) ([]byte, error) {
 // PersistMessage atomically stores a message and its requested related
 // snapshots in one transaction. Existing email callers persist body, raw MIME,
 // recipients, and labels; non-email callers can additionally include
-// conversation state, metadata, URL-backed attachments, and FTS.
+// conversation state, metadata, provider raw data, and FTS.
 func (s *Store) PersistMessage(data *MessagePersistData) (int64, error) {
 	if data == nil || data.Message == nil {
 		return 0, errors.New("persist message requires a message")
@@ -603,18 +601,6 @@ func (s *Store) PersistMessage(data *MessagePersistData) (int64, error) {
 		if !data.PreserveLabels {
 			if err := replaceMessageLabelsTx(tx, messageID, data.LabelIDs); err != nil {
 				return fmt.Errorf("store labels: %w", err)
-			}
-		}
-		if data.ReplaceLinkAttachments {
-			if err := replaceMessageAttachmentsWhereTx(
-				tx, s.dialect, messageID,
-				`storage_path LIKE 'http://%' OR storage_path LIKE 'https://%'`,
-				false, data.LinkAttachments,
-			); err != nil {
-				return fmt.Errorf("replace link attachments: %w", err)
-			}
-			if err := recomputeMessageAttachmentStatsWith(tx, messageID); err != nil {
-				return fmt.Errorf("recompute attachment stats: %w", err)
 			}
 		}
 		if data.FTS != nil && s.fts5Available {
@@ -2430,11 +2416,7 @@ func (s *Store) UpsertAttachment(messageID int64, filename, mimeType, storagePat
 // RecomputeMessageAttachmentStats refreshes the denormalized attachment flags
 // on one message from its current attachment rows.
 func (s *Store) RecomputeMessageAttachmentStats(messageID int64) error {
-	return recomputeMessageAttachmentStatsWith(s.db, messageID)
-}
-
-func recomputeMessageAttachmentStatsWith(q querier, messageID int64) error {
-	_, err := q.Exec(`
+	_, err := s.db.Exec(`
 		UPDATE messages
 		SET has_attachments = (SELECT COUNT(*) FROM attachments WHERE message_id = ?) > 0,
 		    attachment_count = (SELECT COUNT(*) FROM attachments WHERE message_id = ?)
@@ -2462,29 +2444,25 @@ type AttachmentRef struct {
 // (and, when requireHash is set, an empty ContentHash) are skipped.
 func (s *Store) replaceMessageAttachmentsWhere(messageID int64, deleteWhere string, requireHash bool, refs []AttachmentRef) error {
 	return s.withTx(func(tx *loggedTx) error {
-		return replaceMessageAttachmentsWhereTx(tx, s.dialect, messageID, deleteWhere, requireHash, refs)
-	})
-}
-
-func replaceMessageAttachmentsWhereTx(tx *loggedTx, dialect Dialect, messageID int64, deleteWhere string, requireHash bool, refs []AttachmentRef) error {
-	if _, err := tx.Exec(`DELETE FROM attachments WHERE message_id = ? AND (`+deleteWhere+`)`, messageID); err != nil {
-		return err
-	}
-	for _, ref := range refs {
-		if ref.StoragePath == "" || (requireHash && ref.ContentHash == "") {
-			continue
-		}
-		if _, err := tx.Exec(fmt.Sprintf(`
-			INSERT INTO attachments (message_id, filename, mime_type, storage_path, content_hash, size, source_attachment_id,
-				media_type, width, height, duration_ms, created_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, %s)
-			ON CONFLICT (message_id, content_hash) WHERE content_hash IS NOT NULL AND content_hash != '' DO NOTHING
-		`, dialect.Now()), messageID, ref.Filename, ref.MimeType, ref.StoragePath, ref.ContentHash, int64(ref.Size), ref.SourceAttachmentID,
-			nullIfEmpty(ref.MediaType), nullIfZero(ref.Width), nullIfZero(ref.Height), nullIfZero(ref.DurationMS)); err != nil {
+		if _, err := tx.Exec(`DELETE FROM attachments WHERE message_id = ? AND (`+deleteWhere+`)`, messageID); err != nil {
 			return err
 		}
-	}
-	return nil
+		for _, ref := range refs {
+			if ref.StoragePath == "" || (requireHash && ref.ContentHash == "") {
+				continue
+			}
+			if _, err := tx.Exec(fmt.Sprintf(`
+				INSERT INTO attachments (message_id, filename, mime_type, storage_path, content_hash, size, source_attachment_id,
+					media_type, width, height, duration_ms, created_at)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, %s)
+				ON CONFLICT (message_id, content_hash) WHERE content_hash IS NOT NULL AND content_hash != '' DO NOTHING
+			`, s.dialect.Now()), messageID, ref.Filename, ref.MimeType, ref.StoragePath, ref.ContentHash, int64(ref.Size), ref.SourceAttachmentID,
+				nullIfEmpty(ref.MediaType), nullIfZero(ref.Width), nullIfZero(ref.Height), nullIfZero(ref.DurationMS)); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 }
 
 func nullIfEmpty(s string) sql.NullString {
@@ -2632,60 +2610,4 @@ func (s *Store) ListBeeperPendingAttachmentMessages(sourceID int64) ([]BeeperPen
 func (s *Store) ReplaceMessageLinkAttachments(messageID int64, refs []AttachmentRef) error {
 	return s.replaceMessageAttachmentsWhere(messageID,
 		`storage_path LIKE 'http://%' OR storage_path LIKE 'https://%'`, false, refs)
-}
-
-// RemoveSourceLinkAttachments removes URL-backed attachment rows owned by one
-// source and refreshes the affected messages' denormalized attachment flags.
-// The operation is atomic so importers can count the repaired messages as one
-// cache-invalidating sync mutation without exposing partially cleaned rows.
-func (s *Store) RemoveSourceLinkAttachments(sourceID int64) (int64, error) {
-	var messageIDs []int64
-	err := s.withTx(func(tx *loggedTx) error {
-		rows, err := tx.Query(`
-			SELECT DISTINCT m.id
-			FROM messages m
-			JOIN attachments a ON a.message_id = m.id
-			WHERE m.source_id = ?
-			  AND (LOWER(a.storage_path) LIKE 'http://%'
-			       OR LOWER(a.storage_path) LIKE 'https://%')
-			ORDER BY m.id
-		`, sourceID)
-		if err != nil {
-			return fmt.Errorf("list source link attachments: %w", err)
-		}
-		for rows.Next() {
-			var messageID int64
-			if err := rows.Scan(&messageID); err != nil {
-				_ = rows.Close()
-				return fmt.Errorf("scan source link attachment message: %w", err)
-			}
-			messageIDs = append(messageIDs, messageID)
-		}
-		if err := rows.Err(); err != nil {
-			_ = rows.Close()
-			return fmt.Errorf("iterate source link attachment messages: %w", err)
-		}
-		if err := rows.Close(); err != nil {
-			return fmt.Errorf("close source link attachment rows: %w", err)
-		}
-
-		for _, messageID := range messageIDs {
-			if _, err := tx.Exec(`
-				DELETE FROM attachments
-				WHERE message_id = ?
-				  AND (LOWER(storage_path) LIKE 'http://%'
-				       OR LOWER(storage_path) LIKE 'https://%')
-			`, messageID); err != nil {
-				return fmt.Errorf("delete source link attachments for message %d: %w", messageID, err)
-			}
-			if err := recomputeMessageAttachmentStatsWith(tx, messageID); err != nil {
-				return fmt.Errorf("refresh attachment stats for message %d: %w", messageID, err)
-			}
-		}
-		return nil
-	})
-	if err != nil {
-		return 0, err
-	}
-	return int64(len(messageIDs)), nil
 }

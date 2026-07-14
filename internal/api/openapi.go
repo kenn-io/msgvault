@@ -38,16 +38,12 @@ import (
 // scored chunk matches. Additive (minor bump): existing summary-only callers
 // retain their request and response behavior.
 //
-// 1.5.0 adds the search_scope boolean to GET /api/v1/stats/total plus
-// capability echoes for the applied broad search scope and source set. True
-// aligns total statistics with unscoped cross-message-type search; omitted or
-// false preserves the email-only analytics default. Additive (minor bump):
-// the major-version compatibility gate stays at 1.
-//
-// 1.6.0 adds the applied source set to fast-search responses so remote clients
-// can fail closed when an older daemon ignores the additive request filter.
+// 1.5.0 adds source IDs to message summaries, source filters and capability
+// echoes to fast search, and the search_scope/source filters plus capability
+// echoes to total statistics. The echoes let remote clients fail closed when
+// a released older daemon ignores an additive request filter.
 // Additive (minor bump): the major-version compatibility gate stays at 1.
-const APISchemaVersion = "1.6.0"
+const APISchemaVersion = "1.5.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.

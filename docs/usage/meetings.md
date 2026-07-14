@@ -26,10 +26,9 @@ Each meeting source has two distinct values:
 - `account_email` is the normalized primary email used to determine whether
   the meeting organizer is you (`is_from_me`).
 
-If `identifier` is itself an email address, it is also the compatibility
-fallback for `account_email`. Otherwise `account_email` is required. Config
-loading rejects labels such as `work` or the single-entry default `default`
-without it, with guidance to preserve the label and add the email separately.
+`account_email` is required independently of `identifier`. Config loading
+rejects a missing or invalid value with guidance to preserve the source label
+and add the account email separately.
 
 `add-granola` and `add-circleback` always confirm the primary email for their
 source. Add other confirmed aliases with the identity command:

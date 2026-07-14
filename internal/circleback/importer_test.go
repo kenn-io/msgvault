@@ -770,7 +770,7 @@ func TestPendingTranscript_FailedRunRecoversPersistedRetryBeforeCreationCutoff(t
 	require.NoError(json.Unmarshal(meetings[oldID], &archived))
 	archived.Raw = meetings[oldID]
 	added, changed, err := imp.ingestMeeting(
-		prior.SourceID, "alice@example.com", nil, &archived, nil, "", false,
+		prior.SourceID, "alice@example.com", nil, &archived, nil, transcriptStateUnavailable, false,
 	)
 	require.NoError(err)
 	assert.True(added)
@@ -940,26 +940,6 @@ func TestImport_MalformedPendingCursorFailsRecordedSync(t *testing.T) {
 			assert.Equal(prior.CursorAfter, lastSuccessful.CursorAfter)
 		})
 	}
-}
-
-func TestImport_LegacyCreatedAfterOnlyCursorRemainsCompatible(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	f := &fakeSource{
-		meetings:    map[string]json.RawMessage{},
-		transcripts: map[string]json.RawMessage{},
-		searchPages: [][]string{{}},
-	}
-	imp, st := newTestImporter(t, f)
-	prior := seedCirclebackCursor(t, st, `{"created_after":"2026-07-09T11:00:00Z"}`)
-
-	_, err := imp.Import(context.Background(), ImportOptions{Identifier: "alice@example.com"})
-
-	require.NoError(err)
-	assert.Empty(f.lastSearchStart, "legacy creation cursors must not become scheduled-date filters")
-	state := lastCirclebackState(t, st, prior.SourceID)
-	assert.Equal("2026-07-09T11:00:00Z", state.CreatedAfter)
-	assert.Empty(state.PendingTranscripts)
 }
 
 func TestImport_FutureMeetingWithoutCreatedAtDoesNotAdvanceCursor(t *testing.T) {
@@ -1464,34 +1444,11 @@ func TestImport_SkipsKnownOldMeetingWhenSearchSummaryOmitsCreatedAt(t *testing.T
 		transcripts:    map[string]json.RawMessage{},
 		orderedIDs:     []string{"current", "old"},
 	}
-	imp, st := newTestImporter(t, f)
+	imp, _ := newTestImporter(t, f)
 
 	first, err := imp.Import(context.Background(), ImportOptions{Identifier: "alice@example.com"})
 	require.NoError(err)
 	require.EqualValues(2, first.MeetingsAdded)
-
-	var oldMessageID int64
-	require.NoError(st.DB().QueryRow(st.Rebind(`
-		SELECT id FROM messages WHERE source_id = ? AND source_message_id = ?`),
-		first.SourceID, "meeting:old",
-	).Scan(&oldMessageID))
-	require.NoError(st.UpsertAttachment(
-		oldMessageID,
-		"Old meeting (recording)",
-		"",
-		"https://cdn.example.com/old.mp4",
-		"",
-		0,
-	))
-	require.NoError(st.UpsertAttachment(
-		oldMessageID,
-		"Archived notes",
-		"text/plain",
-		"blobs/archived-notes",
-		"archived-notes-hash",
-		42,
-	))
-	require.NoError(st.RecomputeMessageAttachmentStats(oldMessageID))
 
 	f.searchMeetings["old"] = json.RawMessage(`{
 		"id":"old",
@@ -1503,29 +1460,11 @@ func TestImport_SkipsKnownOldMeetingWhenSearchSummaryOmitsCreatedAt(t *testing.T
 
 	second, err := imp.Import(context.Background(), ImportOptions{Identifier: "alice@example.com"})
 	require.NoError(err)
-	assert.EqualValues(1, second.MeetingsUpdated,
-		"legacy recording attachment cleanup must invalidate derived caches")
+	assert.EqualValues(0, second.MeetingsUpdated)
 	assert.NotContains(f.readIDs, "old",
 		"archived creation time should avoid hydrating an old known meeting")
 	assert.NotContains(f.transcriptIDs, "old",
 		"an old known meeting must be filtered before transcript retrieval")
-
-	var hasAttachments bool
-	var attachmentCount, attachmentRows int
-	var remainingPath string
-	require.NoError(st.DB().QueryRow(st.Rebind(`
-		SELECT has_attachments, attachment_count FROM messages WHERE id = ?`),
-		oldMessageID,
-	).Scan(&hasAttachments, &attachmentCount))
-	require.NoError(st.DB().QueryRow(st.Rebind(`
-		SELECT COUNT(*), MAX(storage_path) FROM attachments WHERE message_id = ?`),
-		oldMessageID,
-	).Scan(&attachmentRows, &remainingPath))
-	assert.True(hasAttachments)
-	assert.Equal(1, attachmentCount)
-	assert.Equal(1, attachmentRows)
-	assert.Equal("blobs/archived-notes", remainingPath,
-		"local archived attachments must survive the URL cleanup")
 }
 
 func TestImport_SearchDateBounds(t *testing.T) {
@@ -1981,7 +1920,7 @@ func TestImport_OmittedTranscriptPreservesArchive(t *testing.T) {
 }
 
 func TestImport_ArchivedTranscriptRecovery(t *testing.T) {
-	t.Run("legacy raw archive is authoritative", func(t *testing.T) {
+	t.Run("explicit present raw archive is authoritative", func(t *testing.T) {
 		for _, archive := range archivedTranscriptFixtures {
 			t.Run(archive.name, func(t *testing.T) {
 				assert := assert.New(t)
@@ -1994,15 +1933,6 @@ func TestImport_ArchivedTranscriptRecovery(t *testing.T) {
 				_, err := imp.Import(context.Background(), ImportOptions{Identifier: "alice@example.com"})
 				require.NoError(err)
 				msgID := circlebackMessageID(t, st)
-
-				metadata := circlebackMetadataMap(t, st, msgID)
-				delete(metadata, "transcript_state")
-				if archive.name == "plain text archive" {
-					metadata["transcript_segments"] = float64(0)
-				}
-				legacyJSON, marshalErr := json.Marshal(metadata)
-				require.NoError(marshalErr)
-				require.NoError(st.SetMessageMetadata(msgID, sql.NullString{String: string(legacyJSON), Valid: true}))
 
 				f.meetings["42"] = json.RawMessage(refreshedMeeting42)
 				delete(f.transcripts, "42")
@@ -2041,12 +1971,11 @@ func TestImport_ArchivedTranscriptRecovery(t *testing.T) {
 				},
 			},
 			{
-				name: "legacy positive segment count with corrupt raw",
+				name: "missing explicit transcript state",
 				setMetadata: func(t *testing.T, st *store.Store, msgID int64) {
 					t.Helper()
 					metadata := circlebackMetadataMap(t, st, msgID)
 					delete(metadata, "transcript_state")
-					metadata["transcript_segments"] = float64(2)
 					encoded, err := json.Marshal(metadata)
 					require.NoError(t, err)
 					require.NoError(t, st.SetMessageMetadata(msgID,
@@ -2054,7 +1983,6 @@ func TestImport_ArchivedTranscriptRecovery(t *testing.T) {
 				},
 				corruptRaw: func(t *testing.T, st *store.Store, msgID int64) {
 					t.Helper()
-					require.NoError(t, st.UpsertMessageRawWithFormat(msgID, []byte(`{"meeting":`), RawFormat))
 				},
 			},
 		}

@@ -50,7 +50,7 @@ var buildCacheBeforeStateWriteHook func()
 // columns are added/removed/renamed in the COPY queries below so that
 // incremental builds automatically trigger a full rebuild instead of
 // producing Parquet files with mismatched schemas.
-const cacheSchemaVersion = 9 // v9: split append and update freshness watermarks
+const cacheSchemaVersion = 7 // v7: include meeting transcripts in the searchable Parquet cache
 
 // sentCacheExportMessageWhere identifies rows eligible for the searchable
 // Parquet cache. Calendar events are the sole archived message type excluded
@@ -91,11 +91,13 @@ type syncState struct {
 	LastCompletedSyncRunID int64     `json:"last_completed_sync_run_id,omitempty"`
 	LastCacheAdditionCount int64     `json:"last_cache_addition_count,omitempty"`
 	LastCacheUpdateCount   int64     `json:"last_cache_update_count,omitempty"`
+	LastFailedSyncRunID    int64     `json:"last_failed_sync_run_id,omitempty"`
 }
 
 type cacheSyncCounters struct {
-	additions int64
-	updates   int64
+	additions       int64
+	updates         int64
+	lastFailedRunID int64
 }
 
 func readCacheSyncCounters(db *sql.DB) (cacheSyncCounters, error) {
@@ -103,13 +105,18 @@ func readCacheSyncCounters(db *sql.DB) (cacheSyncCounters, error) {
 	err := db.QueryRow(`
 		SELECT
 			COALESCE(SUM(COALESCE(sr.messages_added, 0)), 0),
-			COALESCE(SUM(COALESCE(sr.messages_updated, 0)), 0)
+			COALESCE(SUM(COALESCE(sr.messages_updated, 0)), 0),
+			COALESCE(MAX(CASE WHEN sr.status = 'failed' THEN sr.id ELSE 0 END), 0)
 		FROM sync_runs sr
 		JOIN sources src ON src.id = sr.source_id
 		WHERE sr.status IN ('completed', 'failed')
 		  AND sr.completed_at IS NOT NULL
 		  AND src.source_type <> ?
-	`, sourceTypeCalendar).Scan(&counters.additions, &counters.updates)
+	`, sourceTypeCalendar).Scan(
+		&counters.additions,
+		&counters.updates,
+		&counters.lastFailedRunID,
+	)
 	return counters, err
 }
 
@@ -345,7 +352,8 @@ func buildCache(dbPath, analyticsDir string, fullRebuild bool) (*buildResult, er
 		updatesChanged := syncCounters.updates != previousState.LastCacheUpdateCount
 		coveredAdditionsChanged := syncCounters.additions != previousState.LastCacheAdditionCount &&
 			maxID <= previousState.LastMessageID
-		if updatesChanged || coveredAdditionsChanged {
+		failedSyncChanged := syncCounters.lastFailedRunID != previousState.LastFailedSyncRunID
+		if updatesChanged || coveredAdditionsChanged || failedSyncChanged {
 			fmt.Println("Existing cached messages changed. Forcing full rebuild...")
 			fullRebuild = true
 			lastMessageID = 0
@@ -682,9 +690,10 @@ func buildCache(dbPath, analyticsDir string, fullRebuild bool) (*buildResult, er
 		}
 		if currentCounters != syncCounters {
 			return nil, discardAttempt(fmt.Errorf(
-				"sync counters changed during cache export (additions %d→%d, updates %d→%d); retry",
+				"sync counters changed during cache export (additions %d→%d, updates %d→%d, failed run %d→%d); retry",
 				syncCounters.additions, currentCounters.additions,
 				syncCounters.updates, currentCounters.updates,
+				syncCounters.lastFailedRunID, currentCounters.lastFailedRunID,
 			))
 		}
 	}
@@ -698,6 +707,7 @@ func buildCache(dbPath, analyticsDir string, fullRebuild bool) (*buildResult, er
 		LastCompletedSyncRunID: lastCompletedSyncRunID,
 		LastCacheAdditionCount: syncCounters.additions,
 		LastCacheUpdateCount:   syncCounters.updates,
+		LastFailedSyncRunID:    syncCounters.lastFailedRunID,
 	}
 	stateData, err := json.Marshal(state)
 	if err != nil {

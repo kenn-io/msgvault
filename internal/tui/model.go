@@ -1073,9 +1073,11 @@ func (m Model) handleTextSearchResult(msg textSearchResultMsg) (tea.Model, tea.C
 	}
 	// Show search results as a timeline
 	m.textState.messages = msg.messages
-	m.textState.level = textLevelTimeline
-	m.textState.cursor = 0
-	m.textState.scrollOffset = 0
+	if active {
+		m.textState.level = textLevelTimeline
+		m.textState.cursor = 0
+		m.textState.scrollOffset = 0
+	}
 	return m, nil
 }
 

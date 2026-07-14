@@ -24,6 +24,7 @@ func TestLoadWithMeetingSources(t *testing.T) {
 	configPath := writeMeetingConfig(t, `
 [[granola]]
 identifier = "alice@example.com"
+account_email = "alice@example.com"
 api_key = "grn_test1"
 schedule = "0 */6 * * *"
 enabled = true
@@ -36,6 +37,7 @@ enabled = true
 
 [[circleback]]
 identifier = "alice@example.com"
+account_email = "alice@example.com"
 schedule = "30 */6 * * *"
 enabled = true
 `)
@@ -100,16 +102,16 @@ func TestMeetingSourceEffectiveAccountEmail(t *testing.T) {
 			wantEmail: "user-a@example.com",
 		},
 		{
-			name:      "granola email identifier is the fallback",
-			provider:  "granola",
-			config:    "identifier = \"  User-A@Example.COM  \"\napi_key = \"grn_test\"",
-			wantEmail: "user-a@example.com",
+			name:         "granola email identifier still requires account email",
+			provider:     "granola",
+			config:       "identifier = \"  User-A@Example.COM  \"\napi_key = \"grn_test\"",
+			wantErrParts: []string{"identifier \"User-A@Example.COM\"", "requires", "account_email"},
 		},
 		{
-			name:      "circleback email identifier is the fallback",
-			provider:  "circleback",
-			config:    "identifier = \"  User-A@Example.COM  \"",
-			wantEmail: "user-a@example.com",
+			name:         "circleback email identifier still requires account email",
+			provider:     "circleback",
+			config:       "identifier = \"  User-A@Example.COM  \"",
+			wantErrParts: []string{"identifier \"User-A@Example.COM\"", "requires", "account_email"},
 		},
 		{
 			name:         "granola label requires explicit account email",

@@ -904,7 +904,7 @@ func (e *Engine) SearchFastWithStats(ctx context.Context, q *search.Query, query
 	}
 	if len(filter.SourceIDs) > 0 &&
 		!slices.Equal(normalizedSourceIDs(filter.SourceIDs), normalizedSourceIDs(resp.JSON200.AppliedSourceIds)) {
-		return nil, errors.New("daemon did not confirm fast-search source IDs; upgrade the daemon to API schema 1.6.0 or newer")
+		return nil, errors.New("daemon did not confirm fast-search source IDs; upgrade the daemon to API schema 1.5.0 or newer")
 	}
 	return &query.SearchFastResult{
 		Messages:   messageSummariesFromGenerated(resp.JSON200.Messages),

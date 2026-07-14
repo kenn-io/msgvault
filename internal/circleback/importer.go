@@ -32,9 +32,9 @@ const (
 	transcriptRetryCadence     = 6 * time.Hour
 	transcriptRetryWindow      = 7 * 24 * time.Hour
 	unknownTranscriptRetrySpan = 48 * time.Hour
-	// Bump when canonical rendering or persistence rules change so existing
-	// rows receive one repair refresh under the new rules.
-	circlebackSnapshotVersion = 2 // v2: do not persist expiring recording URLs as attachments
+	// Bump after a released canonical format changes so archived rows receive
+	// one repair refresh under the new rules.
+	circlebackSnapshotVersion = 1
 )
 
 // meetingSource is the narrow client surface the importer needs (satisfied
@@ -88,8 +88,7 @@ type ImportSummary struct {
 }
 
 // pendingTranscript is one bounded maintenance retry persisted in the sync
-// cursor. Timestamps remain RFC3339 strings so older created_after-only cursor
-// JSON stays directly readable without a migration.
+// cursor. Timestamps use RFC3339 for deterministic cursor JSON.
 type pendingTranscript struct {
 	MeetingID     string `json:"meeting_id"`
 	NextAttemptAt string `json:"next_attempt_at"`
@@ -686,29 +685,6 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (*ImportSum
 	if cancelIfDone(1) {
 		return sum, err
 	}
-	cleanedLinks, cleanupErr := imp.store.RemoveSourceLinkAttachments(src.ID)
-	if cleanupErr != nil {
-		sum.Errors++
-		err = fmt.Errorf("remove expired recording attachments: %w", cleanupErr)
-		return sum, err
-	}
-	if cleanedLinks > 0 {
-		sum.MeetingsUpdated += cleanedLinks
-		if checkpointErr := imp.store.UpdateSyncCheckpoint(syncID, &store.Checkpoint{
-			MessagesProcessed: sum.MeetingsProcessed,
-			MessagesAdded:     sum.MeetingsAdded,
-			MessagesUpdated:   sum.MeetingsUpdated,
-			ErrorsCount:       sum.Errors,
-		}); checkpointErr != nil {
-			sum.Errors++
-			err = fmt.Errorf("checkpoint recording attachment cleanup: %w", checkpointErr)
-			return sum, err
-		}
-		progress(fmt.Sprintf("removed expired recording attachments from %d archived meetings", cleanedLinks))
-	}
-	if cancelIfDone(1) {
-		return sum, err
-	}
 	if recomputeErr := imp.store.RecomputeConversationStats(src.ID); recomputeErr != nil {
 		sum.Errors++
 		hardErrors = append(hardErrors, fmt.Errorf("recompute conversation stats: %w", recomputeErr))
@@ -764,7 +740,6 @@ func decodeArchivedMeetingCreatedAt(encoded string) time.Time {
 func decodeArchivedTranscriptState(encoded string) transcriptState {
 	var meta meetingMetadata
 	if json.Unmarshal([]byte(encoded), &meta) != nil {
-		// Unparsable metadata is treated as legacy by archive recovery too.
 		return ""
 	}
 	return meta.TranscriptState
@@ -772,64 +747,48 @@ func decodeArchivedTranscriptState(encoded string) transcriptState {
 
 // recoverArchivedTranscript loads content from the composed raw archive when a
 // refresh omits a transcript or returns a recognized-empty payload. Explicit
-// state is the normal presence signal. Legacy rows have no state, so their raw
-// content is authoritative and transcript_segments is only an unrecoverable
-// content fallback.
+// transcript state is authoritative: a present transcript must have a valid
+// archived payload, while pending and unavailable transcripts are not restored.
 func (imp *Importer) recoverArchivedTranscript(msgID int64) (Transcript, bool, error) {
 	metaNS, err := imp.store.GetMessageMetadata(msgID)
 	if err != nil {
 		return Transcript{}, false, err
 	}
+	if !metaNS.Valid || metaNS.String == "" {
+		return Transcript{}, false, errors.New("archived meeting has no metadata")
+	}
 	var meta meetingMetadata
-	if metaNS.Valid && metaNS.String != "" {
-		// Unparsable metadata is treated as legacy. A valid raw transcript can
-		// still be recovered without trusting metadata from an unknown writer.
-		var decoded meetingMetadata
-		if json.Unmarshal([]byte(metaNS.String), &decoded) == nil {
-			meta = decoded
-		}
+	if err := json.Unmarshal([]byte(metaNS.String), &meta); err != nil {
+		return Transcript{}, false, fmt.Errorf("decode archived metadata: %w", err)
 	}
-
-	hasState := meta.TranscriptState != ""
-	if hasState && meta.TranscriptState != transcriptStatePresent {
+	switch meta.TranscriptState {
+	case transcriptStatePending, transcriptStateUnavailable:
 		return Transcript{}, false, nil
+	case transcriptStatePresent:
+		// Continue to the required raw transcript archive below.
+	default:
+		return Transcript{}, false, fmt.Errorf(
+			"archived meeting has invalid transcript state %q", meta.TranscriptState)
 	}
-	expectsArchive := meta.TranscriptState == transcriptStatePresent ||
-		(!hasState && meta.TranscriptSegments > 0)
 
 	raw, err := imp.store.GetMessageRaw(msgID)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) && !expectsArchive {
-			return Transcript{}, false, nil
-		}
 		return Transcript{}, false, fmt.Errorf("read composed raw: %w", err)
 	}
 	var composed map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &composed); err != nil {
-		if expectsArchive {
-			return Transcript{}, false, fmt.Errorf("decode composed raw: %w", err)
-		}
-		return Transcript{}, false, nil
+		return Transcript{}, false, fmt.Errorf("decode composed raw: %w", err)
 	}
 	transcriptRaw, ok := composed["transcript"]
 	if !ok || len(transcriptRaw) == 0 {
-		if expectsArchive {
-			return Transcript{}, false, errors.New("composed raw has no transcript")
-		}
-		return Transcript{}, false, nil
+		return Transcript{}, false, errors.New("composed raw has no transcript")
 	}
 	tr, err := decodeTranscript(transcriptRaw)
 	if err != nil {
-		if expectsArchive {
-			return Transcript{}, false, fmt.Errorf("decode transcript raw: %w", err)
-		}
-		return Transcript{}, false, nil
+		return Transcript{}, false, fmt.Errorf("decode transcript raw: %w", err)
 	}
 	if !hasTranscriptContent(tr) {
-		if expectsArchive {
-			return Transcript{}, false, errors.New("composed raw transcript has no usable content")
-		}
-		return Transcript{}, false, nil
+		return Transcript{}, false, errors.New("composed raw transcript has no usable content")
 	}
 	return *tr, true, nil
 }
@@ -857,7 +816,7 @@ type meetingMetadata struct {
 	Tags               []string            `json:"tags,omitempty"`
 	ActionItems        []metaActionItem    `json:"action_items,omitempty"`
 	Insights           []map[string]string `json:"insights,omitempty"`
-	TranscriptState    transcriptState     `json:"transcript_state,omitempty"`
+	TranscriptState    transcriptState     `json:"transcript_state"`
 	TranscriptSegments int                 `json:"transcript_segments,omitempty"`
 	AccountID          string              `json:"account_identifier,omitempty"`
 	SnapshotHash       string              `json:"snapshot_hash,omitempty"`
@@ -892,7 +851,7 @@ func circlebackSnapshotHash(
 		Version         int             `json:"version"`
 		Meeting         json.RawMessage `json:"meeting"`
 		Transcript      json.RawMessage `json:"transcript,omitempty"`
-		TranscriptState transcriptState `json:"transcript_state,omitempty"`
+		TranscriptState transcriptState `json:"transcript_state"`
 		AccountID       string          `json:"account_identifier,omitempty"`
 		IsFromMe        bool            `json:"is_from_me"`
 	}{
@@ -1071,9 +1030,8 @@ func (imp *Importer) ingestMeeting(
 			{Type: "from", ParticipantIDs: fromIDs, DisplayNames: fromNames},
 			{Type: "to", ParticipantIDs: attendeeIDs, DisplayNames: attendeeNames},
 		},
-		PreserveLabels:         true,
-		ReplaceLinkAttachments: true,
-		FTS:                    fts,
+		PreserveLabels: true,
+		FTS:            fts,
 	}); err != nil {
 		return false, false, fmt.Errorf("persist meeting: %w", err)
 	}

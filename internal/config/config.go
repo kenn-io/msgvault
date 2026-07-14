@@ -776,15 +776,14 @@ func (c *Config) ScheduledGCalSources() []GCalSource {
 // [[granola]] table.
 type GranolaSource struct {
 	Identifier   string `toml:"identifier"`    // stable source label for add-/sync-granola; defaults to "default" for a single entry
-	AccountEmail string `toml:"account_email"` // primary account identity; optional only when Identifier is an email
+	AccountEmail string `toml:"account_email"` // primary account identity
 	APIKey       string `toml:"api_key"`       // grn_… key from the desktop app's settings (Business plan)
 	Schedule     string `toml:"schedule"`      // 5-field cron; empty = not daemon-scheduled
 	Enabled      bool   `toml:"enabled"`
 }
 
 // EffectiveAccountEmail returns the normalized primary identity configured
-// for this source. An email-shaped identifier remains a compatibility
-// fallback, while labels require an explicit account_email.
+// for this source.
 func (s GranolaSource) EffectiveAccountEmail() (string, error) {
 	return effectiveMeetingAccountEmail("granola", s.Identifier, s.AccountEmail)
 }
@@ -794,20 +793,20 @@ func (s GranolaSource) EffectiveAccountEmail() (string, error) {
 // no secret lives in the config file.
 type CirclebackSource struct {
 	Identifier   string `toml:"identifier"`    // stable source label for add-/sync-circleback; defaults to "default" for a single entry
-	AccountEmail string `toml:"account_email"` // primary account identity; optional only when Identifier is an email
+	AccountEmail string `toml:"account_email"` // primary account identity
 	Endpoint     string `toml:"endpoint"`      // MCP endpoint override; empty = production
 	Schedule     string `toml:"schedule"`      // 5-field cron; empty = not daemon-scheduled
 	Enabled      bool   `toml:"enabled"`
 }
 
 // EffectiveAccountEmail returns the normalized primary identity configured
-// for this source. An email-shaped identifier remains a compatibility
-// fallback, while labels require an explicit account_email.
+// for this source.
 func (s CirclebackSource) EffectiveAccountEmail() (string, error) {
 	return effectiveMeetingAccountEmail("circleback", s.Identifier, s.AccountEmail)
 }
 
 func effectiveMeetingAccountEmail(kind, identifier, configured string) (string, error) {
+	identifier = strings.TrimSpace(identifier)
 	if strings.TrimSpace(configured) != "" {
 		if email, ok := normalizedMeetingAccountEmail(configured); ok {
 			return email, nil
@@ -815,10 +814,7 @@ func effectiveMeetingAccountEmail(kind, identifier, configured string) (string, 
 		return "", fmt.Errorf("[[%s]] identifier %q has invalid account_email %q; preserve the identifier and set account_email to the account's email address",
 			kind, identifier, configured)
 	}
-	if email, ok := normalizedMeetingAccountEmail(identifier); ok {
-		return email, nil
-	}
-	return "", fmt.Errorf("[[%s]] identifier %q is a source label, not an account email; preserve identifier = %q and add account_email = \"you@example.com\"",
+	return "", fmt.Errorf("[[%s]] identifier %q requires account_email; preserve identifier = %q and add account_email = \"you@example.com\"",
 		kind, identifier, identifier)
 }
 

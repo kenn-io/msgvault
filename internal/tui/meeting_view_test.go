@@ -46,7 +46,7 @@ func TestMeetingListViewUsesPlaceholderForUnknownSource(t *testing.T) {
 	model.mode = modeMeetings
 	model.loading = false
 	model.meetingState.messages = []query.MessageSummary{{
-		ID: 10, Subject: "Old daemon result", SentAt: time.Now(),
+		ID: 10, Subject: "Unknown source result", SentAt: time.Now(),
 	}}
 
 	view := stripANSI(model.renderView())
