@@ -216,9 +216,8 @@ func (m Model) meetingDetailLines() []string {
 	if body == "" {
 		body = "(No transcript or notes available)"
 	}
-	body = strings.ReplaceAll(body, "\r\n", "\n")
-	body = strings.ReplaceAll(body, "\r", "")
-	lines = append(lines, wrapText(textutil.SanitizeTerminal(body), max(m.width-2, 1))...)
+	bodyWidth := max(m.width-2, 1)
+	lines = append(lines, m.markdownCache.meetingLinesFor(detail.ID, body, bodyWidth)...)
 	return lines
 }
 

@@ -114,9 +114,10 @@ Launch `msgvault tui` and press `m` until the title bar shows **Meetings**.
 The list combines Granola and Circleback meetings and shows their date, title,
 organizer, and source. Press `A` to select one meeting source, `/` to search
 meeting titles, people, transcripts, and notes, and `Enter` to open the full
-transcript. Inside the detail view, `/` finds text and `n`/`N` moves between
-matches. Meetings mode is read-only; selection and deletion actions are not
-available.
+transcript. The detail view renders summary Markdown with terminal-friendly
+headings, lists, emphasis, code, and preserved transcript line breaks. Inside
+the detail view, `/` finds text and `n`/`N` moves between matches. Meetings
+mode is read-only; selection and deletion actions are not available.
 
 Meetings remains available in the mode cycle when the archive is empty and
 shows setup guidance. If Texts mode is unavailable, `m` skips it and still

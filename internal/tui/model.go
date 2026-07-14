@@ -142,7 +142,8 @@ type Model struct {
 	analyticsNotice string
 
 	// Terminal-dependent styles
-	styles tuiStyles
+	styles        tuiStyles
+	markdownCache *markdownCache
 
 	// Update notification
 	updateAvailable  string // Latest version if update available
@@ -300,6 +301,7 @@ func New(engine query.Engine, opts Options) Model {
 		loading:       true,
 		spinnerActive: true,
 		styles:        newStyles(false),
+		markdownCache: newMarkdownCache(false, noColorRequested()),
 		selection: selectionState{
 			aggregateKeys:     make(map[string]bool),
 			aggregateViewType: query.ViewSenders, // Match initial viewType
@@ -908,6 +910,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleKeyPress(msg)
 	case tea.BackgroundColorMsg:
 		m.styles = newStyles(msg.IsDark())
+		m.markdownCache.setDark(msg.IsDark())
 		return m, nil
 	case tea.WindowSizeMsg:
 		return m.handleWindowSize(msg)

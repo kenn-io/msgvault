@@ -121,6 +121,28 @@ func TestMeetingDetailViewShowsTranscript(t *testing.T) {
 	assert.Contains(view, "A searchable transcript sentence.")
 }
 
+func TestMeetingDetailViewRendersSummaryMarkdown(t *testing.T) {
+	assert := assert.New(t)
+	model := NewBuilder().WithSize(100, 24).Build()
+	model.mode = modeMeetings
+	model.loading = false
+	model.meetingState.level = meetingLevelDetail
+	model.meetingState.detail = &query.MessageDetail{
+		ID:       10,
+		Subject:  "Planning",
+		BodyText: "### Decisions\r\n\r\n- Keep **one archive**\r\n- Preserve line breaks",
+	}
+	model.markdownCache = newMarkdownCache(true, true)
+
+	lines := plainMarkdownLines(model.meetingDetailLines())
+	joined := strings.Join(lines, "\n")
+
+	assert.Contains(lines, "### Decisions")
+	assert.Contains(lines, "• Keep one archive")
+	assert.Contains(lines, "• Preserve line breaks")
+	assert.NotContains(joined, "**")
+}
+
 func TestMeetingHelpOnlyShowsReadOnlyActions(t *testing.T) {
 	assert := assert.New(t)
 	model := NewBuilder().WithSize(100, 60).Build()
