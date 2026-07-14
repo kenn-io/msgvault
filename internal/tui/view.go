@@ -1243,16 +1243,22 @@ func (m Model) renderQuitConfirmModal() string {
 // renderAccountSelectorModal renders the account selector modal content.
 func (m Model) renderAccountSelectorModal() string {
 	var sb strings.Builder
-	sb.WriteString(m.styles.modalTitle.Render("Select Account"))
+	title := "Select Account"
+	allLabel := "All Accounts"
+	if m.mode == modeMeetings {
+		title = "Select Source"
+		allLabel = "All Sources"
+	}
+	sb.WriteString(m.styles.modalTitle.Render(title))
 	sb.WriteString("\n\n")
 	// All Accounts option
 	indicator := "○"
 	if m.modalCursor == 0 {
 		indicator = "●"
 	}
-	_, _ = fmt.Fprintf(&sb, " %s All Accounts\n", indicator)
+	_, _ = fmt.Fprintf(&sb, " %s %s\n", indicator, allLabel)
 	// Individual accounts
-	for i, acc := range m.accounts {
+	for i, acc := range m.selectableAccounts() {
 		indicator = "○"
 		if m.modalCursor == i+1 {
 			indicator = "●"

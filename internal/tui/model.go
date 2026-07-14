@@ -131,6 +131,9 @@ type Model struct {
 	// Texts mode state (separate from email viewState)
 	textState textState
 
+	// Meetings mode state (separate from email and text navigation state)
+	meetingState meetingState
+
 	// Version info for title bar
 	version string
 
@@ -931,6 +934,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleTextSearchResult(msg)
 	case textStatsLoadedMsg:
 		return m.handleTextStatsLoaded(msg)
+	case meetingMessagesLoadedMsg:
+		return m.handleMeetingMessagesLoaded(msg)
 	}
 	return m, nil
 }

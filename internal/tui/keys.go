@@ -109,7 +109,10 @@ func (m Model) handleGlobalKeys(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 			spinCmd := m.startSpinner()
 			return m, tea.Batch(spinCmd, m.loadTextConversations()), true
 		case modeMeetings:
-			return m, nil, true
+			m.loading = true
+			m.meetingState.requestID++
+			spinCmd := m.startSpinner()
+			return m, tea.Batch(spinCmd, m.loadMeetingMessages()), true
 		default:
 			m.loading = true
 			m.aggregateRequestID++
@@ -937,7 +940,8 @@ func (m Model) handleQuitConfirmKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handleAccountSelectorKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
-	maxIdx := len(m.accounts) // 0 = All Accounts, then accounts
+	accounts := m.selectableAccounts()
+	maxIdx := len(accounts) // 0 = All Accounts/Sources, then selectable sources
 	switch msg.String() {
 	case "up", "k":
 		if m.modalCursor > 0 {
@@ -949,14 +953,22 @@ func (m Model) handleAccountSelectorKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cm
 		}
 	case keyNameEnter:
 		// Apply selection with bounds check
-		if m.modalCursor == 0 || m.modalCursor > len(m.accounts) {
-			m.accountFilter = nil // All accounts (or fallback if out of bounds)
+		var selectedID *int64
+		if m.modalCursor > 0 && m.modalCursor <= len(accounts) {
+			accID := accounts[m.modalCursor-1].ID
+			selectedID = &accID
+		}
+		if m.mode == modeMeetings {
+			m.meetingState.sourceID = selectedID
 		} else {
-			accID := m.accounts[m.modalCursor-1].ID
-			m.accountFilter = &accID
+			m.accountFilter = selectedID
 		}
 		m.modal = modalNone
 		m.loading = true
+		if m.mode == modeMeetings {
+			m.meetingState.requestID++
+			return m, m.loadMeetingMessages()
+		}
 		if m.mode == modeTexts {
 			m.textState.filter.SourceID = m.accountFilter
 			return m, m.loadTextData()
@@ -1234,17 +1246,22 @@ func (m Model) enterDrillDown(row query.AggregateRow) (tea.Model, tea.Cmd) {
 
 func (m *Model) openAccountSelector() {
 	m.modal = modalAccountSelector
-	m.modalCursor = 0 // Default to "All Accounts"
-	if m.accountFilter != nil {
-		for i, acc := range m.accounts {
-			if acc.ID == *m.accountFilter {
+	m.modalCursor = 0 // Default to "All Accounts" / "All Sources"
+	selectedID := m.accountFilter
+	if m.mode == modeMeetings {
+		selectedID = m.meetingState.sourceID
+	}
+	accounts := m.selectableAccounts()
+	if selectedID != nil {
+		for i, acc := range accounts {
+			if acc.ID == *selectedID {
 				m.modalCursor = i + 1 // +1 because 0 is "All Accounts"
 				break
 			}
 		}
 	}
 	// Clamp to valid range in case accounts list changed
-	if m.modalCursor > len(m.accounts) {
+	if m.modalCursor > len(accounts) {
 		m.modalCursor = 0
 	}
 }
