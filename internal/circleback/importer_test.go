@@ -962,6 +962,31 @@ func TestImport_LegacyCreatedAfterOnlyCursorRemainsCompatible(t *testing.T) {
 	assert.Empty(state.PendingTranscripts)
 }
 
+func TestImport_FutureMeetingWithoutCreatedAtDoesNotAdvanceCursor(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	const meetingID = "future-without-created-at"
+	f := &fakeSource{
+		meetings: map[string]json.RawMessage{
+			meetingID: meetingFixture(t, meetingID, "", "2026-08-01T10:00:00Z", "2026-08-01T11:00:00Z"),
+		},
+		transcripts: map[string]json.RawMessage{
+			meetingID: json.RawMessage(`{"id":"future-without-created-at","text":"Scheduled later"}`),
+		},
+		orderedIDs: []string{meetingID},
+	}
+	imp, st := newTestImporter(t, f)
+	priorState := syncState{CreatedAfter: "2026-07-09T11:00:00Z"}
+	prior := seedCirclebackState(t, st, priorState)
+
+	sum, err := imp.Import(context.Background(), ImportOptions{Identifier: "alice@example.com"})
+
+	require.NoError(err)
+	assert.EqualValues(1, sum.MeetingsAdded)
+	assert.Equal(priorState.CreatedAfter, lastCirclebackState(t, st, prior.SourceID).CreatedAfter,
+		"a scheduled start is not a provider creation timestamp")
+}
+
 func TestImport_TranscriptBatchFailureCountsAffectedMeetings(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)

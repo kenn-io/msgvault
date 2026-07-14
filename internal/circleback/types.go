@@ -245,13 +245,10 @@ func (m *Meeting) EndedAt() time.Time {
 	return parseFlexibleTime(m.EndTime)
 }
 
-// CreatedTime parses createdAt (falling back to the start time) for
-// watermark bookkeeping.
+// CreatedTime parses only the provider's creation timestamp for watermark
+// bookkeeping. Scheduled time is a separate dimension and may be in the future.
 func (m *Meeting) CreatedTime() time.Time {
-	if t := parseFlexibleTime(m.CreatedAt); !t.IsZero() {
-		return t
-	}
-	return m.StartedAt()
+	return parseFlexibleTime(m.CreatedAt)
 }
 
 // DurationSecs returns the meeting duration in seconds, 0 when unknown.
