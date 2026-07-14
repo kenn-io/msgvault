@@ -40,18 +40,57 @@ func buildBody(m *Meeting, tr *Transcript) string {
 		writeLine(notes)
 	}
 
-	if len(m.ActionItems) > 0 {
+	var actionLines []string
+	for _, ai := range m.ActionItems {
+		title := ai.DisplayTitle()
+		if title == "" {
+			continue
+		}
+		line := "- " + title
+		if assignee := ai.AssigneeLabel(); assignee != "" {
+			line += " (" + assignee + ")"
+		}
+		if ai.Status != "" {
+			line += " [" + ai.Status + "]"
+		}
+		actionLines = append(actionLines, line)
+	}
+	if len(actionLines) > 0 {
 		b.WriteString("\nAction items:\n")
-		for _, ai := range m.ActionItems {
-			line := "- " + ai.DisplayTitle()
-			if assignee := ai.AssigneeLabel(); assignee != "" {
-				line += " (" + assignee + ")"
-			}
-			if ai.Status != "" {
-				line += " [" + ai.Status + "]"
-			}
+		for _, line := range actionLines {
 			writeLine(line)
 		}
+	}
+
+	var insightLines []string
+	for _, insight := range m.Insights {
+		title := insight.DisplayTitle()
+		content := insight.DisplayContent()
+		switch {
+		case title != "" && content != "":
+			insightLines = append(insightLines, "- "+title+": "+content)
+		case title != "":
+			insightLines = append(insightLines, "- "+title)
+		case content != "":
+			insightLines = append(insightLines, "- "+content)
+		}
+	}
+	if len(insightLines) > 0 {
+		b.WriteString("\nInsights:\n")
+		for _, line := range insightLines {
+			writeLine(line)
+		}
+	}
+
+	var tags []string
+	for _, tag := range m.Tags {
+		if tag = strings.TrimSpace(tag); tag != "" {
+			tags = append(tags, tag)
+		}
+	}
+	if len(tags) > 0 {
+		b.WriteString("\n")
+		writeLine("Tags: " + strings.Join(tags, ", "))
 	}
 
 	writeTranscript(&b, tr)

@@ -38,7 +38,10 @@ func TestImport_FTSIndexed(t *testing.T) {
 				_, err = imp.Import(context.Background(), ImportOptions{Identifier: "alice@example.com"})
 				require.NoError(err)
 
-				for _, term := range []string{archive.ftsTerm, "refreshedsignal"} {
+				for _, term := range []string{
+					archive.ftsTerm, "refreshedsignal", "reviewbudgetdelta",
+					"pineapplemetric", "forecasttag",
+				} {
 					var hits int
 					require.NoError(st.DB().QueryRow(
 						`SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH ?`, term).Scan(&hits),

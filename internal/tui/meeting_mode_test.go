@@ -659,13 +659,15 @@ func TestModeCycleRejectsStalePresentationCompletions(t *testing.T) {
 	for _, scenario := range []struct {
 		name         string
 		mode         tuiMode
-		capture      func(Model) tea.Cmd
+		capture      func(*Model) tea.Cmd
+		cacheStale   bool
 		assertCached func(*assert.Assertions, *require.Assertions, Model)
 	}{
 		{
-			name: "email detail",
-			mode: modeEmail,
-			capture: func(model Model) tea.Cmd {
+			name:       "email detail",
+			mode:       modeEmail,
+			cacheStale: true,
+			capture: func(model *Model) tea.Cmd {
 				return model.loadMessageDetail(detail.ID)
 			},
 			assertCached: func(assert *assert.Assertions, require *require.Assertions, model Model) {
@@ -676,7 +678,7 @@ func TestModeCycleRejectsStalePresentationCompletions(t *testing.T) {
 		{
 			name: "text conversations",
 			mode: modeTexts,
-			capture: func(model Model) tea.Cmd {
+			capture: func(model *Model) tea.Cmd {
 				return model.loadTextConversations()
 			},
 			assertCached: func(assert *assert.Assertions, require *require.Assertions, model Model) {
@@ -685,9 +687,10 @@ func TestModeCycleRejectsStalePresentationCompletions(t *testing.T) {
 			},
 		},
 		{
-			name: "meeting search",
-			mode: modeMeetings,
-			capture: func(model Model) tea.Cmd {
+			name:       "meeting search",
+			mode:       modeMeetings,
+			cacheStale: true,
+			capture: func(model *Model) tea.Cmd {
 				return model.loadMeetingSearch("weekly", 0, false)
 			},
 			assertCached: func(assert *assert.Assertions, require *require.Assertions, model Model) {
@@ -709,7 +712,7 @@ func TestModeCycleRejectsStalePresentationCompletions(t *testing.T) {
 				model.textEngine = meetingModeTextEngine{}
 				model.mode = scenario.mode
 
-				staleMsg := scenario.capture(model)()
+				staleMsg := scenario.capture(&model)()
 				if staleFailure {
 					staleMsg = modeCompletionWithError(t, staleMsg, staleErr)
 				}
@@ -722,7 +725,7 @@ func TestModeCycleRejectsStalePresentationCompletions(t *testing.T) {
 				require.Equal(scenario.mode, model.mode)
 				require.True(model.loading)
 
-				currentMsg := scenario.capture(model)()
+				currentMsg := scenario.capture(&model)()
 				model.transitionBuffer = "current activation"
 				model = sendMsg(t, model, staleMsg)
 
@@ -730,7 +733,7 @@ func TestModeCycleRejectsStalePresentationCompletions(t *testing.T) {
 				assert.Equal("current activation", model.transitionBuffer)
 				require.NoError(model.err)
 				assert.Equal(modalNone, model.modal)
-				if !staleFailure {
+				if !staleFailure && scenario.cacheStale {
 					scenario.assertCached(assert, require, model)
 				}
 
@@ -739,6 +742,7 @@ func TestModeCycleRejectsStalePresentationCompletions(t *testing.T) {
 				assert.Empty(model.transitionBuffer)
 				require.NoError(model.err)
 				assert.Equal(modalNone, model.modal)
+				scenario.assertCached(assert, require, model)
 			})
 		}
 	}
@@ -761,6 +765,7 @@ func TestStaleTextSearchDoesNotReplaceReenteredConversationView(t *testing.T) {
 
 	model = sendMsg(t, model, model.loadTextConversations()())
 	require.Len(model.textState.conversations, 3)
+	model.textState.messages = []query.MessageSummary{{ID: 123, Subject: "Current timeline"}}
 	model.textState.cursor = 2
 	model.textState.scrollOffset = 1
 
@@ -769,8 +774,75 @@ func TestStaleTextSearchDoesNotReplaceReenteredConversationView(t *testing.T) {
 	assert.Equal(textLevelConversations, model.textState.level)
 	assert.Equal(2, model.textState.cursor)
 	assert.Equal(1, model.textState.scrollOffset)
-	require.Len(model.textState.messages, 1, "successful stale payload remains cached")
-	assert.Equal(int64(99), model.textState.messages[0].ID)
+	require.Len(model.textState.messages, 1, "stale search payload must be discarded")
+	assert.Equal(int64(123), model.textState.messages[0].ID)
+}
+
+func TestTextStateRejectsOlderCompletions(t *testing.T) {
+	t.Run("conversations", func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
+		model := NewBuilder().Build()
+		model.textEngine = meetingModeTextEngine{}
+		model.mode = modeTexts
+
+		stale, ok := model.loadTextConversations()().(textConversationsLoadedMsg)
+		require.True(ok)
+		current, ok := model.loadTextConversations()().(textConversationsLoadedMsg)
+		require.True(ok)
+		stale.conversations = []query.ConversationRow{{ConversationID: 1, Title: "Stale"}}
+		current.conversations = []query.ConversationRow{{ConversationID: 2, Title: "Current"}}
+
+		model = sendMsg(t, model, current)
+		model = sendMsg(t, model, stale)
+
+		require.Len(model.textState.conversations, 1)
+		assert.Equal(int64(2), model.textState.conversations[0].ConversationID)
+	})
+
+	t.Run("aggregates", func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
+		model := NewBuilder().Build()
+		model.textEngine = meetingModeTextEngine{}
+		model.mode = modeTexts
+		model.textState.viewType = query.TextViewContacts
+
+		stale, ok := model.loadTextAggregate()().(textAggregateLoadedMsg)
+		require.True(ok)
+		current, ok := model.loadTextAggregate()().(textAggregateLoadedMsg)
+		require.True(ok)
+		stale.rows = []query.AggregateRow{{Key: "stale"}}
+		current.rows = []query.AggregateRow{{Key: "current"}}
+
+		model = sendMsg(t, model, current)
+		model = sendMsg(t, model, stale)
+
+		require.Len(model.textState.aggregateRows, 1)
+		assert.Equal("current", model.textState.aggregateRows[0].Key)
+	})
+
+	t.Run("messages", func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
+		model := NewBuilder().Build()
+		model.textEngine = meetingModeTextEngine{}
+		model.mode = modeTexts
+		model.textState.selectedConvID = 77
+
+		stale, ok := model.loadTextMessages()().(textMessagesLoadedMsg)
+		require.True(ok)
+		current, ok := model.loadTextMessages()().(textMessagesLoadedMsg)
+		require.True(ok)
+		stale.messages = []query.MessageSummary{{ID: 1, Subject: "Stale"}}
+		current.messages = []query.MessageSummary{{ID: 2, Subject: "Current"}}
+
+		model = sendMsg(t, model, current)
+		model = sendMsg(t, model, stale)
+
+		require.Len(model.textState.messages, 1)
+		assert.Equal(int64(2), model.textState.messages[0].ID)
+	})
 }
 
 func modeCompletionWithError(t *testing.T, msg tea.Msg, err error) tea.Msg {

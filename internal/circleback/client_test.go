@@ -194,6 +194,23 @@ func TestReadMeetings_OfficialArgumentsAndSchemas(t *testing.T) {
 	assert.Contains(buildBody(&meetings[0], nil), "- Send recap (Bob Example) [open]")
 }
 
+func TestBuildBodyIncludesSearchableMeetingMetadata(t *testing.T) {
+	body := buildBody(&Meeting{
+		Name: "Planning",
+		ActionItems: []ActionItem{{
+			Description: "Review budget delta",
+		}},
+		Insights: []Insight{{
+			Title: "Customer signal", Content: "Expansion interest is rising",
+		}},
+		Tags: []string{"forecast", "customer-health"},
+	}, nil)
+
+	assert.Contains(t, body, "- Review budget delta")
+	assert.Contains(t, body, "Insights:\n- Customer signal: Expansion interest is rising")
+	assert.Contains(t, body, "Tags: forecast, customer-health")
+}
+
 func TestGetTranscripts_OfficialArgumentsAndSchemas(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)

@@ -201,6 +201,7 @@ type Model struct {
 	detailRequestID        uint64 // Current request ID for message detail
 	searchRequestID        uint64 // Current request ID for search results
 	presentationGeneration uint64 // Mode activation owning shared presentation
+	textRequestID          uint64 // Latest Text navigation/data request
 
 	// Search state
 	searchMode        searchModeKind  // Fast (Parquet) or Deep (FTS5)
@@ -1006,6 +1007,9 @@ func (m *Model) finishModePresentation(mode tuiMode, generation uint64) bool {
 
 // handleTextConversationsLoaded processes text conversations load completion.
 func (m Model) handleTextConversationsLoaded(msg textConversationsLoadedMsg) (tea.Model, tea.Cmd) {
+	if msg.requestID != m.textRequestID {
+		return m, nil
+	}
 	active := m.finishModePresentation(modeTexts, msg.presentationGeneration)
 	if msg.err != nil {
 		if active {
@@ -1025,6 +1029,9 @@ func (m Model) handleTextConversationsLoaded(msg textConversationsLoadedMsg) (te
 
 // handleTextAggregateLoaded processes text aggregate load completion.
 func (m Model) handleTextAggregateLoaded(msg textAggregateLoadedMsg) (tea.Model, tea.Cmd) {
+	if msg.requestID != m.textRequestID {
+		return m, nil
+	}
 	active := m.finishModePresentation(modeTexts, msg.presentationGeneration)
 	if msg.err != nil {
 		if active {
@@ -1044,6 +1051,9 @@ func (m Model) handleTextAggregateLoaded(msg textAggregateLoadedMsg) (tea.Model,
 
 // handleTextMessagesLoaded processes text messages load completion.
 func (m Model) handleTextMessagesLoaded(msg textMessagesLoadedMsg) (tea.Model, tea.Cmd) {
+	if msg.requestID != m.textRequestID {
+		return m, nil
+	}
 	active := m.finishModePresentation(modeTexts, msg.presentationGeneration)
 	if msg.err != nil {
 		if active {
@@ -1062,6 +1072,9 @@ func (m Model) handleTextMessagesLoaded(msg textMessagesLoadedMsg) (tea.Model, t
 
 // handleTextSearchResult processes text search results.
 func (m Model) handleTextSearchResult(msg textSearchResultMsg) (tea.Model, tea.Cmd) {
+	if msg.requestID != m.textRequestID {
+		return m, nil
+	}
 	active := m.finishModePresentation(modeTexts, msg.presentationGeneration)
 	if msg.err != nil {
 		if active {

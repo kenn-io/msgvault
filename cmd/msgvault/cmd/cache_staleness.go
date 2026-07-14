@@ -212,12 +212,14 @@ func cacheNeedsBuild(dbPath, analyticsDir string) cacheStaleness {
 					state.LastCacheUpdateCount, counters.updates))
 			}
 		}
-		if counters.lastFailedRunID != state.LastFailedSyncRunID {
+		if counters.failedRunCount != state.LastFailedSyncRunCount ||
+			counters.failedRunIDSum != state.LastFailedSyncRunIDSum {
 			result.HasUpdated = true
 			result.FullRebuild = true
 			reasons = append(reasons, fmt.Sprintf(
-				"failed sync watermark changed from %d to %d",
-				state.LastFailedSyncRunID, counters.lastFailedRunID))
+				"failed sync watermark changed from count=%d,sum=%d to count=%d,sum=%d",
+				state.LastFailedSyncRunCount, state.LastFailedSyncRunIDSum,
+				counters.failedRunCount, counters.failedRunIDSum))
 		}
 		if counters.additions != state.LastCacheAdditionCount {
 			// A larger message ID gives the incremental exporter an exact lower

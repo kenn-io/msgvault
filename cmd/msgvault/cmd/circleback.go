@@ -29,6 +29,7 @@ const circlebackConfigHint = `Add to your config.toml:
 
   [[circleback]]
   identifier = "you@example.com"   # label for this account
+  account_email = "you@example.com" # primary identity for organizer attribution
   enabled = true
   # schedule = "30 */6 * * *"      # optional daemon schedule
 

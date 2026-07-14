@@ -188,6 +188,11 @@ func (imp *Importer) forEachNote(ctx context.Context, sourceID int64, accountIde
 				progress(fmt.Sprintf("note %s: fetch failed: %v", ns.ID, err))
 				continue
 			}
+			if note.ID == "" || note.ID != ns.ID {
+				sum.Errors++
+				progress(fmt.Sprintf("note %s: fetch returned invalid ID %q", ns.ID, note.ID))
+				continue
+			}
 			added, err := imp.ingestNote(sourceID, opts.Identifier, accountIdentities, note)
 			if err != nil {
 				sum.Errors++

@@ -141,10 +141,12 @@ type ActionItem struct {
 
 // DisplayTitle returns the first populated title variant.
 func (a ActionItem) DisplayTitle() string {
-	if a.Title != "" {
-		return a.Title
+	for _, value := range []string{a.Title, a.Name, a.Description} {
+		if value = strings.TrimSpace(value); value != "" {
+			return value
+		}
 	}
-	return a.Name
+	return ""
 }
 
 // AssigneeLabel returns a stable display value across assignee shapes.
@@ -194,6 +196,26 @@ type Insight struct {
 	Title   string `json:"title,omitempty"`
 	Content string `json:"content,omitempty"`
 	Value   string `json:"value,omitempty"`
+}
+
+// DisplayTitle returns the first populated insight label.
+func (i Insight) DisplayTitle() string {
+	for _, value := range []string{i.Title, i.Name} {
+		if value = strings.TrimSpace(value); value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+// DisplayContent returns the first populated insight value.
+func (i Insight) DisplayContent() string {
+	for _, value := range []string{i.Content, i.Value} {
+		if value = strings.TrimSpace(value); value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 // DisplayName returns the meeting's title from the first populated variant.

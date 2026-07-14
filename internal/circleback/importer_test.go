@@ -205,7 +205,9 @@ const refreshedMeeting42 = `{
 		{"name": "Carol Jones", "email": "carol@example.com"}
 	],
 	"notes": "Refreshedsignal notes from the current meeting payload",
-	"tags": ["refreshed"]
+	"actionItems": [{"description": "Reviewbudgetdelta before launch"}],
+	"insights": [{"title": "Forecast", "content": "Pineapplemetric is improving"}],
+	"tags": ["refreshed", "forecasttag"]
 }`
 
 type archivedTranscriptFixture struct {

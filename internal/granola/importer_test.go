@@ -23,6 +23,7 @@ import (
 type fakeAPI struct {
 	mu                  sync.Mutex
 	notes               map[string][]byte // note ID -> full note JSON
+	fullNotes           map[string][]byte // optional GET response override by listed note ID
 	fail                map[string]bool   // note ID -> serve 404
 	orderedIDs          []string
 	respectUpdatedAfter bool
@@ -91,6 +92,9 @@ func (f *fakeAPI) handler() http.Handler {
 			return
 		}
 		raw, ok := f.notes[id]
+		if override, exists := f.fullNotes[id]; exists {
+			raw, ok = override, true
+		}
 		if !ok {
 			http.Error(w, "not found", http.StatusNotFound)
 			return
@@ -262,7 +266,8 @@ func TestImport_TranscriptTimestampFallbacksRemainSearchable(t *testing.T) {
 	})
 	require.NoError(err)
 
-	var sparseSentAt, sparseBody, sparseMetadata string
+	var sparseSentAt time.Time
+	var sparseBody, sparseMetadata string
 	require.NoError(st.DB().QueryRow(st.Rebind(`
 		SELECT m.sent_at, mb.body_text, m.metadata
 		FROM messages m
@@ -270,7 +275,7 @@ func TestImport_TranscriptTimestampFallbacksRemainSearchable(t *testing.T) {
 		WHERE m.source_message_id = ?`), "sparse-transcript-times").Scan(
 		&sparseSentAt, &sparseBody, &sparseMetadata,
 	))
-	assert.Equal("2026-07-14T15:02:00Z", sparseSentAt)
+	assert.Equal(firstTranscriptAt, sparseSentAt.UTC())
 	assert.Contains(sparseBody, "[00:00] Untimed: No timestamp")
 	assert.Contains(sparseBody, "[00:00] Timed: First timestamp")
 	assert.Contains(sparseBody, "[00:30] Later: Thirty seconds later")
@@ -278,7 +283,8 @@ func TestImport_TranscriptTimestampFallbacksRemainSearchable(t *testing.T) {
 	require.NoError(json.Unmarshal([]byte(sparseMetadata), &sparseMeta))
 	assert.EqualValues(45, sparseMeta.DurationSeconds)
 
-	var fallbackSentAt, fallbackBody string
+	var fallbackSentAt time.Time
+	var fallbackBody string
 	require.NoError(st.DB().QueryRow(st.Rebind(`
 		SELECT m.sent_at, mb.body_text
 		FROM messages m
@@ -286,8 +292,63 @@ func TestImport_TranscriptTimestampFallbacksRemainSearchable(t *testing.T) {
 		WHERE m.source_message_id = ?`), "missing-transcript-times").Scan(
 		&fallbackSentAt, &fallbackBody,
 	))
-	assert.Equal("2026-07-14T16:00:00Z", fallbackSentAt)
+	assert.Equal(createdAt.Add(time.Hour), fallbackSentAt.UTC())
 	assert.Contains(fallbackBody, "[00:00] Untimed: Created-at fallback")
+}
+
+func TestImport_RejectsFetchedNoteWithInvalidID(t *testing.T) {
+	for _, tt := range []struct {
+		name     string
+		fullNote []byte
+	}{
+		{
+			name: "missing ID",
+			fullNote: []byte(`{
+				"title":"Missing ID","created_at":"2026-07-14T10:00:00Z",
+				"updated_at":"2026-07-14T11:00:00Z"
+			}`),
+		},
+		{
+			name: "mismatched ID",
+			fullNote: []byte(`{
+				"id":"different-note","title":"Mismatched ID",
+				"created_at":"2026-07-14T10:00:00Z","updated_at":"2026-07-14T11:00:00Z"
+			}`),
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			api := &fakeAPI{
+				notes: map[string][]byte{
+					"listed-note": []byte(`{
+						"id":"listed-note","title":"Listed note",
+						"created_at":"2026-07-14T10:00:00Z","updated_at":"2026-07-14T11:00:00Z"
+					}`),
+				},
+				fullNotes:  map[string][]byte{"listed-note": tt.fullNote},
+				orderedIDs: []string{"listed-note"},
+			}
+			imp, st := newTestImporter(t, api)
+
+			sum, err := imp.Import(context.Background(), ImportOptions{
+				Identifier: "work", AccountEmail: "user@example.com",
+			})
+
+			require.ErrorContains(err, "partial Granola sync")
+			assert.EqualValues(1, sum.NotesProcessed)
+			assert.EqualValues(1, sum.Errors)
+			assert.Zero(sum.NotesAdded)
+			assert.Zero(sum.NotesUpdated)
+			var messageCount, completedRunCount int
+			require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&messageCount))
+			require.NoError(st.DB().QueryRow(
+				`SELECT COUNT(*) FROM sync_runs WHERE status = 'completed'`,
+			).Scan(&completedRunCount))
+			assert.Zero(messageCount, "invalid response must not be archived")
+			assert.Zero(completedRunCount, "invalid response must not advance a successful cursor")
+		})
+	}
 }
 
 func TestImport_AccountIdentityControlsFromMe(t *testing.T) {

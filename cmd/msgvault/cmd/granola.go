@@ -32,6 +32,7 @@ const granolaConfigHint = `Add to your config.toml:
 
   [[granola]]
   identifier = "you@example.com"   # label for this account
+  account_email = "you@example.com" # primary identity for organizer attribution
   api_key = "grn_..."              # from the desktop app's settings (Business plan)
   enabled = true
   # schedule = "0 */6 * * *"       # optional daemon schedule`
