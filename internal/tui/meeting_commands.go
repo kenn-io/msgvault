@@ -59,15 +59,21 @@ func (m Model) handleMeetingMessagesLoaded(msg meetingMessagesLoadedMsg) (tea.Mo
 	if msg.requestID != m.meetingState.requestID {
 		return m, nil
 	}
-	m.loading = false
+	if m.mode == modeMeetings {
+		m.loading = false
+	}
 	m.meetingState.listLoadingMore = false
 	if msg.err != nil {
-		m.err = query.HintRepairEncoding(msg.err)
-		m.modal = modalError
-		m.modalResult = m.err.Error()
+		if m.mode == modeMeetings {
+			m.err = query.HintRepairEncoding(msg.err)
+			m.modal = modalError
+			m.modalResult = m.err.Error()
+		}
 		return m, nil
 	}
-	m.err = nil
+	if m.mode == modeMeetings {
+		m.err = nil
+	}
 	m.meetingState.initialized = true
 	if msg.append {
 		m.meetingState.messages = append(m.meetingState.messages, msg.messages...)

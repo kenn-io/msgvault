@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
@@ -418,6 +419,65 @@ func TestMeetingLoadDoesNotReplaceEmailState(t *testing.T) {
 	assert.Equal("Planning", updated.meetingState.messages[0].Subject)
 	require.Len(updated.messages, 1)
 	assert.Equal("Email", updated.messages[0].Subject)
+}
+
+func TestMeetingListResponseOutsideMeetingModePreservesGlobalUIState(t *testing.T) {
+	t.Run("successful response is cached", func(t *testing.T) {
+		require := require.New(t)
+		assert := assert.New(t)
+		existingErr := errors.New("email request still loading")
+		model := NewBuilder().Build()
+		model.mode = modeEmail
+		model.loading = true
+		model.err = existingErr
+		model.modal = modalHelp
+		model.modalResult = "email help"
+		model.meetingState.requestID = 4
+		model.meetingState.listLoadingMore = true
+
+		updatedModel, _ := model.Update(meetingMessagesLoadedMsg{
+			messages:  []query.MessageSummary{{ID: 2, Subject: "Planning"}},
+			requestID: 4,
+		})
+		updated, ok := updatedModel.(Model)
+		require.True(ok)
+
+		assert.True(updated.loading)
+		require.ErrorIs(updated.err, existingErr)
+		assert.Equal(modalHelp, updated.modal)
+		assert.Equal("email help", updated.modalResult)
+		assert.False(updated.meetingState.listLoadingMore)
+		assert.True(updated.meetingState.initialized)
+		require.Len(updated.meetingState.messages, 1)
+		assert.Equal("Planning", updated.meetingState.messages[0].Subject)
+	})
+
+	t.Run("failed response stays scoped to meetings", func(t *testing.T) {
+		require := require.New(t)
+		assert := assert.New(t)
+		existingErr := errors.New("email request still loading")
+		model := NewBuilder().Build()
+		model.mode = modeEmail
+		model.loading = true
+		model.err = existingErr
+		model.modal = modalHelp
+		model.modalResult = "email help"
+		model.meetingState.requestID = 4
+		model.meetingState.listLoadingMore = true
+
+		updatedModel, _ := model.Update(meetingMessagesLoadedMsg{
+			err:       errors.New("meeting load failed"),
+			requestID: 4,
+		})
+		updated, ok := updatedModel.(Model)
+		require.True(ok)
+
+		assert.True(updated.loading)
+		require.ErrorIs(updated.err, existingErr)
+		assert.Equal(modalHelp, updated.modal)
+		assert.Equal("email help", updated.modalResult)
+		assert.False(updated.meetingState.listLoadingMore)
+	})
 }
 
 func TestModeKeyStartsMeetingLoad(t *testing.T) {
