@@ -3346,6 +3346,12 @@ func TestMessageSummaryNilSlices(t *testing.T) {
 	assert.Empty(labels, "expected empty 'labels' array")
 }
 
+func TestQueryMessageSummaryPreservesSourceID(t *testing.T) {
+	summary := toMessageSummaryFromQuery(query.MessageSummary{ID: 1, SourceID: 42})
+
+	assert.Equal(t, int64(42), summary.SourceID)
+}
+
 func TestMessageSummaryCcBccInResponse(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

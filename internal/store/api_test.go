@@ -281,6 +281,7 @@ func TestGetMessageCcBcc(t *testing.T) {
 	// Test GetMessage
 	m, err := st.GetMessage(msgID)
 	require.NoError(err, "GetMessage")
+	assert.Equal(source.ID, m.SourceID, "SourceID")
 	require.Len(m.To, 1)
 	assert.Equal("to@example.com", m.To[0], "To[0]")
 	gotCc := slices.Clone(m.Cc)
@@ -336,6 +337,7 @@ func TestListMessagesCcBcc(t *testing.T) {
 	messages, total, err := st.ListMessages(0, 100)
 	require.NoError(err, "ListMessages")
 	require.Equal(int64(1), total, "total")
+	assert.Equal(source.ID, messages[0].SourceID, "SourceID")
 	require.Len(messages[0].Cc, 1)
 	assert.Equal("cc@example.com", messages[0].Cc[0], "Cc[0]")
 	require.Len(messages[0].Bcc, 1)

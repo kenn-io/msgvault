@@ -84,6 +84,7 @@ func (m *MockEngine) GetMessageSummariesByIDs(ctx context.Context, ids []int64) 
 		}
 		out = append(out, query.MessageSummary{
 			ID:                   md.ID,
+			SourceID:             md.SourceID,
 			SourceMessageID:      md.SourceMessageID,
 			ConversationID:       md.ConversationID,
 			SourceConversationID: md.SourceConversationID,

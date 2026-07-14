@@ -1191,6 +1191,48 @@ func TestDuckDBEngine_SearchFast_MessageTypeFilter(t *testing.T) {
 	assert.NotEqual(emailMsg, results[0].ID, "email message must not leak into sms search")
 }
 
+func TestDuckDBMessageSummariesIncludeSourceID(t *testing.T) {
+	b := NewTestDataBuilder(t)
+	b.AddSource("email@example.com")
+	meetingSourceID := b.AddSource("meeting-source")
+	messageID := b.AddMessage(MessageOpt{
+		SourceID:    meetingSourceID,
+		Subject:     "sourceidentityneedle",
+		MessageType: messageTypeMeetingTranscript,
+	})
+	engine := b.BuildEngine()
+
+	listed, err := engine.ListMessages(context.Background(), MessageFilter{MessageType: messageTypeMeetingTranscript})
+	require.NoError(t, err, "ListMessages")
+	require.Len(t, listed, 1)
+	assert.Equal(t, meetingSourceID, listed[0].SourceID)
+
+	searched, err := engine.SearchFast(
+		context.Background(),
+		search.Parse("message_type:meeting_transcript sourceidentityneedle"),
+		MessageFilter{},
+		10,
+		0,
+	)
+	require.NoError(t, err, "SearchFast")
+	require.Len(t, searched, 1)
+	assert.Equal(t, messageID, searched[0].ID)
+	assert.Equal(t, meetingSourceID, searched[0].SourceID)
+
+	withStats, err := engine.SearchFastWithStats(
+		context.Background(),
+		search.Parse("message_type:meeting_transcript sourceidentityneedle"),
+		"message_type:meeting_transcript sourceidentityneedle",
+		MessageFilter{},
+		ViewSenders,
+		10,
+		0,
+	)
+	require.NoError(t, err, "SearchFastWithStats")
+	require.Len(t, withStats.Messages, 1)
+	assert.Equal(t, meetingSourceID, withStats.Messages[0].SourceID)
+}
+
 func TestDuckDBEngine_SearchFastWithStats_MessageTypeFilter(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -1266,7 +1308,7 @@ func TestDuckDBEngine_GetTotalStats_SearchScope(t *testing.T) {
 	})
 	meetingID := b.AddMessage(MessageOpt{
 		Subject:      "cross-type stats needle",
-		MessageType:  "meeting_transcript",
+		MessageType:  messageTypeMeetingTranscript,
 		SizeEstimate: 420,
 	})
 	b.AddAttachment(meetingID, 84, "transcript.txt")
@@ -1315,7 +1357,7 @@ func TestDuckDBEngine_GetTotalStats_SearchScopeUsesDeepSearchEngine(t *testing.T
 	env := newTestEnv(t)
 	meetingID := env.AddMessage(dbtest.MessageOpts{
 		Subject:      "ordinary meeting subject",
-		MessageType:  "meeting_transcript",
+		MessageType:  messageTypeMeetingTranscript,
 		SizeEstimate: 420,
 		SentAt:       "2024-04-01 10:00:00",
 	})
@@ -1332,7 +1374,7 @@ func TestDuckDBEngine_GetTotalStats_SearchScopeUsesDeepSearchEngine(t *testing.T
 	b.AddMessage(MessageOpt{
 		Subject:      "ordinary cached meeting subject",
 		Snippet:      "ordinary cached preview",
-		MessageType:  "meeting_transcript",
+		MessageType:  messageTypeMeetingTranscript,
 		SizeEstimate: 420,
 	})
 	b.SetEmptyAttachments()
@@ -1379,7 +1421,7 @@ func TestDuckDBEngine_DefaultAnalyticsExcludeNonEmailMessages(t *testing.T) {
 
 	typedEmail := b.AddMessage(MessageOpt{Subject: "typed email", MessageType: "email", SizeEstimate: 100})
 	legacyEmail := b.AddMessage(MessageOpt{Subject: "legacy email", MessageType: "", SizeEstimate: 200})
-	meeting := b.AddMessage(MessageOpt{Subject: "meeting", MessageType: "meeting_transcript", SizeEstimate: 300})
+	meeting := b.AddMessage(MessageOpt{Subject: "meeting", MessageType: messageTypeMeetingTranscript, SizeEstimate: 300})
 	chat := b.AddMessage(MessageOpt{Subject: "chat", MessageType: "whatsapp", SizeEstimate: 400})
 
 	b.AddFrom(typedEmail, typedSender, "Typed Email")

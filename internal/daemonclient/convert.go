@@ -302,6 +302,7 @@ func cliHybridSearchResultFromGenerated(item generated.HybridSearchItem) (CLIHyb
 func queryMessageSummaryFromGenerated(msg generated.CLIQueryMessageSummary) query.MessageSummary {
 	return query.MessageSummary{
 		ID:                   msg.ID,
+		SourceID:             int64Value(msg.SourceID),
 		SourceMessageID:      msg.SourceMessageID,
 		ConversationID:       msg.ConversationID,
 		SourceConversationID: msg.SourceConversationID,

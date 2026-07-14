@@ -79,6 +79,7 @@ func generatedMessageToAPIMessage(m generated.MessageSummary) store.APIMessage {
 	}
 	return store.APIMessage{
 		ID:              m.ID,
+		SourceID:        int64Value(m.SourceID),
 		SourceMessageID: stringValue(m.SourceMessageID),
 		ConversationID:  int64Value(m.ConversationID),
 		Subject:         m.Subject,
@@ -123,6 +124,7 @@ func generatedDetailToAPIMessage(m *generated.MessageDetail) *store.APIMessage {
 	}
 	msg := &store.APIMessage{
 		ID:              m.ID,
+		SourceID:        int64Value(m.SourceID),
 		SourceMessageID: stringValue(m.SourceMessageID),
 		ConversationID:  int64Value(m.ConversationID),
 		Subject:         m.Subject,

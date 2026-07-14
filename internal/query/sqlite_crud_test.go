@@ -1245,7 +1245,7 @@ func TestGetTotalStats_SearchScope(t *testing.T) {
 
 	meetingID := env.AddMessage(dbtest.MessageOpts{
 		Subject:      "cross-type stats needle",
-		MessageType:  "meeting_transcript",
+		MessageType:  messageTypeMeetingTranscript,
 		SizeEstimate: 420,
 		SentAt:       "2024-04-01 10:00:00",
 	})
@@ -1281,9 +1281,46 @@ func TestGetTotalStats_SearchScope(t *testing.T) {
 	assert.Equal(searchResult.Stats.TotalSize, searchStats.TotalSize, "search/stats size agreement")
 }
 
-func TestGetTotalStats_SearchScopeCountsMatchingLabelsAndSources(t *testing.T) {
-	const meetingTranscriptType = "meeting_transcript"
+func TestSQLiteMessageSummariesIncludeSourceID(t *testing.T) {
+	env := newTestEnv(t)
+	sourceID := env.AddSource(dbtest.SourceOpts{Identifier: "meeting-source"})
+	conversationID := env.AddConversation(dbtest.ConversationOpts{
+		SourceID: sourceID, Title: "Meeting",
+	})
+	messageID := env.AddMessage(dbtest.MessageOpts{
+		SourceID:       sourceID,
+		ConversationID: conversationID,
+		Subject:        "sourceidentityneedle",
+		MessageType:    messageTypeMeetingTranscript,
+	})
 
+	listed, err := env.Engine.ListMessages(env.Ctx, MessageFilter{MessageType: messageTypeMeetingTranscript})
+	require.NoError(t, err, "ListMessages")
+	require.Len(t, listed, 1)
+	assert.Equal(t, sourceID, listed[0].SourceID)
+
+	searched, err := env.Engine.Search(
+		env.Ctx,
+		search.Parse("message_type:meeting_transcript sourceidentityneedle"),
+		10,
+		0,
+	)
+	require.NoError(t, err, "Search")
+	require.Len(t, searched, 1)
+	assert.Equal(t, sourceID, searched[0].SourceID)
+
+	hydrated, err := env.Engine.GetMessageSummariesByIDs(env.Ctx, []int64{messageID})
+	require.NoError(t, err, "GetMessageSummariesByIDs")
+	require.Len(t, hydrated, 1)
+	assert.Equal(t, sourceID, hydrated[0].SourceID)
+
+	detail, err := env.Engine.GetMessage(env.Ctx, messageID)
+	require.NoError(t, err, "GetMessage")
+	require.NotNil(t, detail)
+	assert.Equal(t, sourceID, detail.SourceID)
+}
+
+func TestGetTotalStats_SearchScopeCountsMatchingLabelsAndSources(t *testing.T) {
 	env := newTestEnv(t)
 	source2 := env.AddSource(dbtest.SourceOpts{
 		Identifier: "second@example.com", DisplayName: "Second Account",
@@ -1302,16 +1339,16 @@ func TestGetTotalStats_SearchScopeCountsMatchingLabelsAndSources(t *testing.T) {
 	label2 := env.AddLabel(dbtest.LabelOpts{SourceID: source2, Name: "Scoped Second"})
 	label3 := env.AddLabel(dbtest.LabelOpts{SourceID: source3, Name: "Scoped Third"})
 	message1 := env.AddMessage(dbtest.MessageOpts{
-		Subject: "ordinary first subject", MessageType: meetingTranscriptType,
+		Subject: "ordinary first subject", MessageType: messageTypeMeetingTranscript,
 		SizeEstimate: 110, HasAttachments: true,
 	})
 	message2 := env.AddMessage(dbtest.MessageOpts{
 		SourceID: source2, ConversationID: conversation2,
-		Subject: "ordinary second subject", MessageType: meetingTranscriptType, SizeEstimate: 220,
+		Subject: "ordinary second subject", MessageType: messageTypeMeetingTranscript, SizeEstimate: 220,
 	})
 	message3 := env.AddMessage(dbtest.MessageOpts{
 		SourceID: source3, ConversationID: conversation3,
-		Subject: "ordinary third subject", MessageType: meetingTranscriptType,
+		Subject: "ordinary third subject", MessageType: messageTypeMeetingTranscript,
 		SizeEstimate: 330, HasAttachments: true,
 	})
 	env.AddMessageLabel(message1, label1A)

@@ -811,6 +811,7 @@ func (e *SQLiteEngine) ListMessages(ctx context.Context, filter MessageFilter) (
 	query := fmt.Sprintf(`
 		SELECT
 			m.id,
+			m.source_id,
 			m.source_message_id,
 			m.conversation_id,
 			COALESCE(conv.source_conversation_id, ''),
@@ -850,6 +851,7 @@ func (e *SQLiteEngine) ListMessages(ctx context.Context, filter MessageFilter) (
 		var deletedAt sql.NullTime
 		if err := rows.Scan(
 			&msg.ID,
+			&msg.SourceID,
 			&msg.SourceMessageID,
 			&msg.ConversationID,
 			&msg.SourceConversationID,
@@ -913,6 +915,7 @@ func (e *SQLiteEngine) GetMessageSummariesByIDs(ctx context.Context, ids []int64
 	q := fmt.Sprintf(`
 		SELECT
 			m.id,
+			m.source_id,
 			m.source_message_id,
 			m.conversation_id,
 			COALESCE(conv.source_conversation_id, ''),
@@ -947,6 +950,7 @@ func (e *SQLiteEngine) GetMessageSummariesByIDs(ctx context.Context, ids []int64
 		var deletedAt sql.NullTime
 		if err := rows.Scan(
 			&msg.ID,
+			&msg.SourceID,
 			&msg.SourceMessageID,
 			&msg.ConversationID,
 			&msg.SourceConversationID,
@@ -1920,6 +1924,7 @@ func (e *SQLiteEngine) executeSearchQuery(ctx context.Context, conditions []stri
 	query := fmt.Sprintf(`
 		SELECT
 			m.id,
+			m.source_id,
 			m.source_message_id,
 			m.conversation_id,
 			COALESCE(conv.source_conversation_id, ''),
@@ -1959,6 +1964,7 @@ func (e *SQLiteEngine) executeSearchQuery(ctx context.Context, conditions []stri
 		var deletedAt sql.NullTime
 		if err := rows.Scan(
 			&msg.ID,
+			&msg.SourceID,
 			&msg.SourceMessageID,
 			&msg.ConversationID,
 			&msg.SourceConversationID,

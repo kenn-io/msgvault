@@ -229,6 +229,7 @@ type BodySearchContext struct {
 // MessageSummary represents a message in list responses.
 type MessageSummary struct {
 	ID              int64    `json:"id"`
+	SourceID        int64    `json:"source_id,omitempty"`
 	SourceMessageID string   `json:"source_message_id,omitempty"`
 	ConversationID  int64    `json:"conversation_id,omitempty"`
 	Subject         string   `json:"subject"`
@@ -449,6 +450,7 @@ func messageDetailFromQuery(qMsg *query.MessageDetail) MessageDetail {
 	return MessageDetail{
 		MessageSummary: MessageSummary{
 			ID:              qMsg.ID,
+			SourceID:        qMsg.SourceID,
 			SourceMessageID: qMsg.SourceMessageID,
 			ConversationID:  qMsg.ConversationID,
 			Subject:         qMsg.Subject,
@@ -484,6 +486,7 @@ func toMessageSummary(m APIMessage) MessageSummary {
 	}
 	return MessageSummary{
 		ID:              m.ID,
+		SourceID:        m.SourceID,
 		SourceMessageID: m.SourceMessageID,
 		ConversationID:  m.ConversationID,
 		Subject:         m.Subject,
@@ -2378,6 +2381,7 @@ func toMessageSummaryFromQuery(m query.MessageSummary) MessageSummary {
 	}
 	return MessageSummary{
 		ID:              m.ID,
+		SourceID:        m.SourceID,
 		SourceMessageID: m.SourceMessageID,
 		ConversationID:  m.ConversationID,
 		Subject:         m.Subject,

@@ -392,6 +392,7 @@ func getMessageByQueryShared(ctx context.Context, db *sql.DB, rebind rebindFunc,
 	query := fmt.Sprintf(`
 		SELECT
 			m.id,
+			m.source_id,
 			m.source_message_id,
 			m.conversation_id,
 			COALESCE(conv.source_conversation_id, ''),
@@ -412,6 +413,7 @@ func getMessageByQueryShared(ctx context.Context, db *sql.DB, rebind rebindFunc,
 	var sentAt, receivedAt, deletedAt sql.NullTime
 	err := db.QueryRowContext(ctx, rebind(query), args...).Scan(
 		&msg.ID,
+		&msg.SourceID,
 		&msg.SourceMessageID,
 		&msg.ConversationID,
 		&msg.SourceConversationID,

@@ -48,6 +48,7 @@ const participantSummarySenderSQL = participantDisplaySQL + ` as from_display,
 // APIMessage represents a message for API responses.
 type APIMessage struct {
 	ID                   int64
+	SourceID             int64
 	SourceMessageID      string
 	ConversationID       int64
 	SourceConversationID string
@@ -109,6 +110,7 @@ func (s *Store) ListMessagesContext(ctx context.Context, offset, limit int) ([]A
 	query := fmt.Sprintf(`
 		SELECT
 			m.id,
+			m.source_id,
 			COALESCE(m.source_message_id, '') as source_message_id,
 			COALESCE(m.conversation_id, 0) as conversation_id,
 			COALESCE(c.source_conversation_id, '') as source_conversation_id,
@@ -174,6 +176,7 @@ func (s *Store) GetMessageContext(ctx context.Context, id int64) (*APIMessage, e
 	query := fmt.Sprintf(`
 		SELECT
 			m.id,
+			m.source_id,
 			COALESCE(m.source_message_id, '') as source_message_id,
 			COALESCE(m.conversation_id, 0) as conversation_id,
 			COALESCE(c.source_conversation_id, '') as source_conversation_id,
@@ -204,6 +207,7 @@ func (s *Store) GetMessageContext(ctx context.Context, id int64) (*APIMessage, e
 	var sentAt, deletedAt nullableTimestamp
 	err := s.db.QueryRowContext(ctx, query, id).Scan(
 		&m.ID,
+		&m.SourceID,
 		&m.SourceMessageID,
 		&m.ConversationID,
 		&m.SourceConversationID,
@@ -327,6 +331,7 @@ func (s *Store) GetMessagesSummariesByIDsContext(ctx context.Context, ids []int6
 	q := fmt.Sprintf(`
 		SELECT
 			m.id,
+			m.source_id,
 			COALESCE(m.source_message_id, '') as source_message_id,
 			COALESCE(m.conversation_id, 0) as conversation_id,
 			COALESCE(c.source_conversation_id, '') as source_conversation_id,
@@ -668,6 +673,7 @@ func (s *Store) searchMessagesQueryImpl(
 	searchSQL := fmt.Sprintf(`
 		SELECT
 			m.id,
+			m.source_id,
 			COALESCE(m.source_message_id, '') as source_message_id,
 			COALESCE(m.conversation_id, 0) as conversation_id,
 			COALESCE(c.source_conversation_id, '') as source_conversation_id,
@@ -765,6 +771,7 @@ func (s *Store) searchMessagesLike(query string, offset, limit int) ([]APIMessag
 	searchQuery := fmt.Sprintf(`
 		SELECT
 			m.id,
+			m.source_id,
 			COALESCE(m.source_message_id, '') as source_message_id,
 			COALESCE(m.conversation_id, 0) as conversation_id,
 			COALESCE(c.source_conversation_id, '') as source_conversation_id,
@@ -852,7 +859,7 @@ func (n *nullableTimestamp) Scan(src any) error {
 }
 
 // scanMessageRows scans the standard message row set
-// (id, source_message_id, conversation_id, source_conversation_id, subject,
+// (id, source_id, source_message_id, conversation_id, source_conversation_id, subject,
 // message_type, from_display, from_email, from_name, from_phone, sent_at,
 // snippet, has_attachments, size_estimate). All SELECT statements that feed
 // this scanner must produce the same column order.
@@ -869,6 +876,7 @@ func scanMessageRows(rows *loggedRows) ([]APIMessage, []int64, error) {
 		var sentAt nullableTimestamp
 		err := rows.Scan(
 			&m.ID,
+			&m.SourceID,
 			&m.SourceMessageID,
 			&m.ConversationID,
 			&m.SourceConversationID,

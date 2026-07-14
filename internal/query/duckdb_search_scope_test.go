@@ -63,7 +63,7 @@ func TestDuckDBSearchFast_UnscopedIncludesCachedMessageTypes(t *testing.T) {
 
 	messageTypes := []string{
 		messageTypeEmail,
-		"meeting_transcript",
+		messageTypeMeetingTranscript,
 		messageTypeSMS,
 		"whatsapp",
 		"imessage",
@@ -115,7 +115,7 @@ func TestDuckDBSearchFast_UnscopedIncludesCachedMessageTypes(t *testing.T) {
 	)
 	require.NoError(err, "SearchFast query-scoped")
 	require.Len(queryScoped, 1, "query message type remains authoritative")
-	assert.Equal("meeting_transcript", queryScoped[0].MessageType)
+	assert.Equal(messageTypeMeetingTranscript, queryScoped[0].MessageType)
 	explicitResult, err := engine.SearchFastWithStats(
 		ctx,
 		search.Parse("message_type:meeting_transcript cachewide needle"),

@@ -346,6 +346,7 @@ type CLIQueryMessageSummary struct {
 	SizeEstimate         int64      `json:"size_estimate"`
 	Snippet              string     `json:"snippet" validate:"required"`
 	SourceConversationID string     `json:"source_conversation_id" validate:"required"`
+	SourceID             *int64     `json:"source_id,omitempty"`
 	SourceMessageID      string     `json:"source_message_id" validate:"required"`
 	Subject              string     `json:"subject" validate:"required"`
 	To                   []Address  `json:"to,omitempty"`
@@ -1093,6 +1094,7 @@ type HybridSearchItem struct {
 	SentAt           string              `json:"sent_at" validate:"required"`
 	SizeBytes        int64               `json:"size_bytes"`
 	Snippet          string              `json:"snippet" validate:"required"`
+	SourceID         *int64              `json:"source_id,omitempty"`
 	SourceMessageID  *string             `json:"source_message_id,omitempty"`
 	Subject          string              `json:"subject" validate:"required"`
 	To               []string            `json:"to,omitempty" validate:"required"`
@@ -1285,6 +1287,7 @@ type MessageDetail struct {
 	SentAt          string           `json:"sent_at" validate:"required"`
 	SizeBytes       int64            `json:"size_bytes"`
 	Snippet         string           `json:"snippet" validate:"required"`
+	SourceID        *int64           `json:"source_id,omitempty"`
 	SourceMessageID *string          `json:"source_message_id,omitempty"`
 	Subject         string           `json:"subject" validate:"required"`
 	To              []string         `json:"to,omitempty" validate:"required"`
@@ -1364,6 +1367,7 @@ type MessageSummary struct {
 	SentAt          string   `json:"sent_at" validate:"required"`
 	SizeBytes       int64    `json:"size_bytes"`
 	Snippet         string   `json:"snippet" validate:"required"`
+	SourceID        *int64   `json:"source_id,omitempty"`
 	SourceMessageID *string  `json:"source_message_id,omitempty"`
 	Subject         string   `json:"subject" validate:"required"`
 	To              []string `json:"to,omitempty" validate:"required"`

@@ -506,6 +506,9 @@ components:
           type: string
         source_conversation_id:
           type: string
+        source_id:
+          format: int64
+          type: integer
         source_message_id:
           type: string
         subject:
@@ -1414,6 +1417,9 @@ components:
           type: integer
         snippet:
           type: string
+        source_id:
+          format: int64
+          type: integer
         source_message_id:
           type: string
         subject:
@@ -1603,6 +1609,9 @@ components:
           type: integer
         snippet:
           type: string
+        source_id:
+          format: int64
+          type: integer
         source_message_id:
           type: string
         subject:
@@ -1698,6 +1707,9 @@ components:
           type: integer
         snippet:
           type: string
+        source_id:
+          format: int64
+          type: integer
         source_message_id:
           type: string
         subject:

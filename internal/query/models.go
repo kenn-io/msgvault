@@ -24,6 +24,7 @@ type AggregateRow struct {
 // Contains enough information for display without fetching the full body.
 type MessageSummary struct {
 	ID                           int64      `json:"id"`
+	SourceID                     int64      `json:"source_id,omitempty"`
 	SourceMessageID              string     `json:"source_message_id"`
 	ConversationID               int64      `json:"conversation_id"`
 	SourceConversationID         string     `json:"source_conversation_id"` // Gmail Thread ID
@@ -51,6 +52,7 @@ type MessageSummary struct {
 // MessageDetail represents a full message with body and attachments.
 type MessageDetail struct {
 	ID                   int64      `json:"id"`
+	SourceID             int64      `json:"source_id,omitempty"`
 	SourceMessageID      string     `json:"source_message_id"`
 	ConversationID       int64      `json:"conversation_id"`
 	SourceConversationID string     `json:"source_conversation_id"` // Gmail Thread ID

@@ -478,6 +478,7 @@ func querySummaryFromAPIMessage(msg store.APIMessage) query.MessageSummary {
 	}
 	return query.MessageSummary{
 		ID:                   msg.ID,
+		SourceID:             msg.SourceID,
 		SourceMessageID:      msg.SourceMessageID,
 		ConversationID:       msg.ConversationID,
 		SourceConversationID: msg.SourceConversationID,
@@ -651,6 +652,7 @@ func queryDetailFromAPIMessage(msg *store.APIMessage) *query.MessageDetail {
 	}
 	detail := &query.MessageDetail{
 		ID:                   msg.ID,
+		SourceID:             msg.SourceID,
 		SourceMessageID:      msg.SourceMessageID,
 		ConversationID:       msg.ConversationID,
 		SourceConversationID: msg.SourceConversationID,
@@ -736,6 +738,7 @@ func (e *Engine) GetMessageSummariesByIDs(ctx context.Context, ids []int64) ([]q
 		}
 		summary := query.MessageSummary{
 			ID:                   md.ID,
+			SourceID:             md.SourceID,
 			SourceMessageID:      md.SourceMessageID,
 			ConversationID:       md.ConversationID,
 			SourceConversationID: md.SourceConversationID,

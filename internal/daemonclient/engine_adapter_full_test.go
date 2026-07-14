@@ -29,6 +29,7 @@ func TestEngineListMessagesPreservesDeletedAt(t *testing.T) {
 			"messages": []map[string]any{
 				{
 					"id":         1,
+					"source_id":  42,
 					"subject":    "Deleted message",
 					"from":       "sender@example.com",
 					"to":         []string{"receiver@example.com"},
@@ -49,6 +50,7 @@ func TestEngineListMessagesPreservesDeletedAt(t *testing.T) {
 	msgs, err := engine.ListMessages(context.Background(), query.MessageFilter{})
 	require.NoError(err, "ListMessages()")
 	require.Len(msgs, 1)
+	assert.Equal(t, int64(42), msgs[0].SourceID, "SourceID")
 	require.NotNil(msgs[0].DeletedAt, "DeletedAt should be parsed")
 	assert.Equal(t, deletedAt, msgs[0].DeletedAt.UTC().Format(time.RFC3339), "DeletedAt")
 }

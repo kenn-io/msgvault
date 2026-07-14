@@ -1566,6 +1566,7 @@ func (e *DuckDBEngine) ListMessages(ctx context.Context, filter MessageFilter) (
 		)
 		SELECT
 			msg.id,
+			CAST(msg.source_id AS BIGINT) as source_id,
 			COALESCE(msg.source_message_id, '') as source_message_id,
 			COALESCE(msg.conversation_id, 0) as conversation_id,
 			COALESCE(c.source_conversation_id, '') as source_conversation_id,
@@ -1604,6 +1605,7 @@ func (e *DuckDBEngine) ListMessages(ctx context.Context, filter MessageFilter) (
 		var deletedAt sql.NullTime
 		if err := rows.Scan(
 			&msg.ID,
+			&msg.SourceID,
 			&msg.SourceMessageID,
 			&msg.ConversationID,
 			&msg.SourceConversationID,
@@ -1927,6 +1929,7 @@ func (e *DuckDBEngine) Search(ctx context.Context, q *search.Query, limit, offse
 	query := fmt.Sprintf(`
 		SELECT DISTINCT
 			m.id,
+			CAST(m.source_id AS BIGINT) as source_id,
 			m.source_message_id,
 			m.conversation_id,
 			COALESCE(conv.source_conversation_id, ''),
@@ -1965,6 +1968,7 @@ func (e *DuckDBEngine) Search(ctx context.Context, q *search.Query, limit, offse
 		var deletedAt sql.NullTime
 		if err := rows.Scan(
 			&msg.ID,
+			&msg.SourceID,
 			&msg.SourceMessageID,
 			&msg.ConversationID,
 			&msg.SourceConversationID,
@@ -2389,6 +2393,7 @@ func (e *DuckDBEngine) SearchFast(ctx context.Context, q *search.Query, filter M
 		)
 		SELECT
 			COALESCE(msg.id, 0) as id,
+			CAST(msg.source_id AS BIGINT) as source_id,
 			COALESCE(msg.source_message_id, '') as source_message_id,
 			COALESCE(msg.conversation_id, 0) as conversation_id,
 			COALESCE(c.source_conversation_id, '') as source_conversation_id,
@@ -2432,6 +2437,7 @@ func (e *DuckDBEngine) SearchFast(ctx context.Context, q *search.Query, filter M
 		var labelsJSON string
 		if err := rows.Scan(
 			&msg.ID,
+			&msg.SourceID,
 			&msg.SourceMessageID,
 			&msg.ConversationID,
 			&msg.SourceConversationID,
@@ -2570,6 +2576,7 @@ func (e *DuckDBEngine) searchPageFromCache(ctx context.Context, limit, offset in
 		)
 		SELECT
 			sm.id,
+			CAST(sm.source_id AS BIGINT) as source_id,
 			sm.source_message_id,
 			sm.conversation_id,
 			COALESCE(c.source_conversation_id, '') as source_conversation_id,
@@ -2619,6 +2626,7 @@ func (e *DuckDBEngine) searchPageFromCache(ctx context.Context, limit, offset in
 		var labelsJSON string
 		if err := rows.Scan(
 			&msg.ID,
+			&msg.SourceID,
 			&msg.SourceMessageID,
 			&msg.ConversationID,
 			&msg.SourceConversationID,
