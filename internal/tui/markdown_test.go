@@ -71,6 +71,27 @@ func TestRenderMarkdownLinesStripsTerminalCommandsAndCapsWidth(t *testing.T) {
 	}
 }
 
+func TestSanitizeMarkdownSourcePreservesLinesAndStripsAllControls(t *testing.T) {
+	input := "line one\r\n" +
+		"\x1b[31mred\x1b[0m\n" +
+		"csi:\u009b2J\n" +
+		"osc:\u009dtitle\u009c\n" +
+		"lone:\x1b\n" +
+		"partial:\x1b[31"
+
+	got := sanitizeMarkdownSource(input)
+
+	assert.Equal(t, "line one\nred\ncsi:2J\nosc:title\nlone:\npartial:", got)
+}
+
+func TestRenderMarkdownLinesRejectsSourceProvidedSGR(t *testing.T) {
+	lines := renderMarkdownLines("before \x1b[31mINJECTED\x1b[0m after", 80, true, false)
+	joined := strings.Join(lines, "\n")
+
+	assert.Contains(t, stripANSI(joined), "before INJECTED after")
+	assert.NotContains(t, joined, "\x1b[31mINJECTED")
+}
+
 func TestMeetingMarkdownCacheInvalidatesOnContentAndWidth(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)

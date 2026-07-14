@@ -93,8 +93,7 @@ func renderMarkdownLines(text string, width int, dark, noColor bool) []string {
 	if width <= 0 {
 		width = 80
 	}
-	text = strings.ReplaceAll(text, "\r\n", "\n")
-	text = strings.ReplaceAll(text, "\r", "\n")
+	text = sanitizeMarkdownSource(text)
 	renderer, err := glamour.NewTermRenderer(
 		glamour.WithStyles(markdownStyle(dark)),
 		glamour.WithWordWrap(width),
@@ -121,6 +120,19 @@ func renderMarkdownLines(text string, width int, dark, noColor bool) []string {
 		lines[i] = line
 	}
 	return lines
+}
+
+// sanitizeMarkdownSource removes every source-provided terminal control before
+// Glamour adds its own SGR styling. Sanitizing line by line applies the shared
+// single-line security contract without collapsing Markdown structure.
+func sanitizeMarkdownSource(text string) string {
+	text = strings.ReplaceAll(text, "\r\n", "\n")
+	text = strings.ReplaceAll(text, "\r", "\n")
+	lines := strings.Split(text, "\n")
+	for i, line := range lines {
+		lines[i] = textutil.SanitizeTerminal(line)
+	}
+	return strings.Join(lines, "\n")
 }
 
 func wrapSafeMarkdownFallback(text string, width int) []string {
