@@ -401,12 +401,15 @@ func (m Model) loadData() tea.Cmd {
 			var rows []query.AggregateRow
 			var err error
 
-			// Use SubAggregate for sub-grouping, regular aggregate for top-level
-			if m.level == levelDrillDown {
-				rows, err = m.engine.SubAggregate(ctx, m.drillFilter, m.viewType, opts)
-			} else {
-				rows, err = m.engine.Aggregate(ctx, m.viewType, opts)
-			}
+			// Use an explicitly email-scoped filter at every aggregate level.
+			// SubAggregate is also valid without drill criteria and, unlike the
+			// generic Aggregate call, lets the TUI's mode constraint intersect
+			// an explicit message_type search instead of being overridden by it.
+			aggregateFilter := emailScopedMessageFilter(m.drillFilter)
+			aggregateFilter.SourceID = m.accountFilter
+			aggregateFilter.WithAttachmentsOnly = m.filters.attachmentsOnly
+			aggregateFilter.HideDeletedFromSource = m.filters.hideDeletedFromSource
+			rows, err = m.engine.SubAggregate(ctx, aggregateFilter, m.viewType, opts)
 			if err != nil {
 				slog.Warn("tui loadData failed",
 					"view", viewLabel,
@@ -430,14 +433,19 @@ func (m Model) loadData() tea.Cmd {
 			// where a message appears in multiple groups.
 			var filteredStats *query.TotalStats
 			if err == nil && opts.SearchQuery != "" {
-				statsOpts := query.StatsOptions{
-					SourceID:              m.accountFilter,
-					WithAttachmentsOnly:   m.filters.attachmentsOnly,
-					HideDeletedFromSource: m.filters.hideDeletedFromSource,
-					SearchQuery:           opts.SearchQuery,
-					GroupBy:               m.viewType,
+				scopedQuery, noMatches := emailScopedSearchQuery(opts.SearchQuery)
+				if noMatches {
+					filteredStats = &query.TotalStats{}
+				} else {
+					statsOpts := query.StatsOptions{
+						SourceID:              m.accountFilter,
+						WithAttachmentsOnly:   m.filters.attachmentsOnly,
+						HideDeletedFromSource: m.filters.hideDeletedFromSource,
+						SearchQuery:           scopedQuery,
+						GroupBy:               m.viewType,
+					}
+					filteredStats, _ = m.engine.GetTotalStats(ctx, statsOpts)
 				}
-				filteredStats, _ = m.engine.GetTotalStats(ctx, statsOpts)
 			}
 
 			return dataLoadedMsg{
@@ -567,6 +575,12 @@ const flashDuration = 4 * time.Second
 // searchPageSize is the number of results per page for search pagination.
 const searchPageSize = 100
 
+// emailMessageType scopes the original TUI mode to email records. The shared
+// query datasets also contain meetings and text messages, so every Email-mode
+// query must carry this explicit constraint. Query engines interpret "email"
+// as typed email plus legacy NULL/empty message_type rows.
+const emailMessageType = "email"
+
 // messageListPageSize is the number of results per page for message list pagination.
 const messageListPageSize = 500
 
@@ -592,6 +606,7 @@ func (m Model) loadSearchWithOffset(queryStr string, offset int, appendResults b
 		func() tea.Msg {
 			ctx := context.Background()
 			q := search.Parse(queryStr)
+			searchFilter := emailScopedMessageFilter(m.searchFilter)
 
 			start := time.Now()
 			var results []query.MessageSummary
@@ -624,7 +639,7 @@ func (m Model) loadSearchWithOffset(queryStr string, offset int, appendResults b
 
 			if m.searchMode == searchModeFast {
 				// Fast search: single-scan with temp table materialization
-				result, fastErr := m.engine.SearchFastWithStats(ctx, q, queryStr, m.searchFilter, m.viewType, searchPageSize, offset)
+				result, fastErr := m.engine.SearchFastWithStats(ctx, q, queryStr, searchFilter, m.viewType, searchPageSize, offset)
 				if fastErr == nil {
 					results = result.Messages
 					totalCount = result.TotalCount
@@ -636,7 +651,7 @@ func (m Model) loadSearchWithOffset(queryStr string, offset int, appendResults b
 			} else {
 				// Deep search: FTS5 body search
 				// Merge context filter into query to honor drill-down context
-				mergedQuery := query.MergeFilterIntoQuery(q, m.searchFilter)
+				mergedQuery := query.MergeFilterIntoQuery(q, searchFilter)
 				results, err = m.engine.Search(ctx, mergedQuery, searchPageSize, offset)
 				// For deep search, estimate total from result count (no separate count query)
 				if err == nil && offset == 0 {
@@ -733,6 +748,7 @@ func (m Model) buildMessageFilter() query.MessageFilter {
 	filter.Sorting.Direction = m.msgSortDirection
 	filter.WithAttachmentsOnly = m.filters.attachmentsOnly
 	filter.HideDeletedFromSource = m.filters.hideDeletedFromSource
+	filter.MessageType = emailMessageType
 
 	// If not showing all messages and no drill filter, apply simple filter
 	if !m.allMessages && !m.hasDrillFilter() {
@@ -867,6 +883,7 @@ func (m Model) loadThreadMessages(conversationID int64) tea.Cmd {
 		func() tea.Msg {
 			filter := query.MessageFilter{
 				ConversationID: &conversationID,
+				MessageType:    emailMessageType,
 				Sorting:        query.MessageSorting{Field: query.MessageSortByDate, Direction: query.SortAsc},
 				Pagination:     query.Pagination{Limit: threadLimit + 1}, // Request one extra to detect truncation
 			}
@@ -896,6 +913,26 @@ func (m Model) loadThreadMessages(conversationID int64) tea.Cmd {
 			}
 		},
 	)
+}
+
+// emailScopedMessageFilter applies the Email-mode contract at the engine
+// boundary. Keeping this out of hasDrillFilter means the mandatory mode scope
+// does not make every top-level view look like a user-selected drill-down.
+func emailScopedMessageFilter(filter query.MessageFilter) query.MessageFilter {
+	filter.MessageType = emailMessageType
+	return filter
+}
+
+// emailScopedSearchQuery intersects a parsed aggregate search with Email mode.
+// A non-nil empty account scope is MergeFilterIntoQuery's match-nothing signal
+// for conflicting message types.
+func emailScopedSearchQuery(raw string) (string, bool) {
+	merged := query.MergeFilterIntoQuery(
+		search.Parse(raw),
+		query.MessageFilter{MessageType: emailMessageType},
+	)
+	noMatches := merged.AccountIDs != nil && len(merged.AccountIDs) == 0
+	return search.Format(merged), noMatches
 }
 
 // loadMessageDetail fetches a single message's full details.

@@ -276,6 +276,7 @@ func TestStageForDeletion_NoDrillFilter(t *testing.T) {
 
 	assert.Empty(t, capturedFilter.Sender)
 	assert.Equal(t, "2024-01", capturedFilter.TimeRange.Period)
+	assert.Equal(t, "email", capturedFilter.MessageType)
 }
 
 func TestSaveManifest_UsesInjectedSaver(t *testing.T) {

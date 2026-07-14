@@ -163,6 +163,10 @@ func (c *ActionController) buildFilterForAggregate(key string, dctx DeletionCont
 	if dctx.AccountFilter != nil {
 		filter.SourceID = dctx.AccountFilter
 	}
+	// TUI deletion is an email/Gmail workflow. Keep aggregate resolution
+	// inside Email mode even though the shared messages dataset also contains
+	// meetings and text records.
+	filter.MessageType = emailMessageType
 
 	switch dctx.AggregateViewType {
 	case query.ViewSenders:

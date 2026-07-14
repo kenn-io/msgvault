@@ -6,6 +6,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/query"
+	"go.kenn.io/msgvault/internal/search"
 )
 
 // =============================================================================
@@ -946,7 +947,9 @@ func TestLoadDataSetsGroupByInStatsOpts(t *testing.T) {
 	// The command should have called GetTotalStats with GroupBy=ViewRecipients
 	require.NotZero(tracker.callCount, "expected GetTotalStats to be called during loadData with search active")
 	assert.Equal(query.ViewRecipients, tracker.lastOpts.GroupBy)
-	assert.Equal("bob", tracker.lastOpts.SearchQuery)
+	scopedSearch := search.Parse(tracker.lastOpts.SearchQuery)
+	assert.Equal([]string{"bob"}, scopedSearch.TextTerms)
+	assert.Equal([]string{"email"}, scopedSearch.MessageTypes)
 
 	// Verify the result contains filteredStats
 	dlm, ok := msg.(dataLoadedMsg)

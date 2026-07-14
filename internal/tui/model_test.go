@@ -102,7 +102,7 @@ func TestDeepSearchStatsOptions_EnableSearchScope(t *testing.T) {
 		assert.ElementsMatch([]string{"alice@example.com", "@example.com"}, formatted.FromAddrs)
 		assert.Equal([]string{"bob@example.com"}, formatted.ToAddrs)
 		assert.Equal([]string{"Project Review"}, formatted.Labels)
-		assert.Equal([]string{"meeting_transcript"}, formatted.MessageTypes)
+		assert.Equal([]string{"email"}, formatted.MessageTypes)
 		require.NotNil(formatted.AfterDate, "merged after date")
 		require.NotNil(formatted.BeforeDate, "merged before date")
 		assert.Equal(after, *formatted.AfterDate)
@@ -117,9 +117,9 @@ func TestDeepSearchStatsOptions_EnableSearchScope(t *testing.T) {
 		tracker.install(engine)
 		model := New(engine, Options{DataDir: "/tmp/test", Version: "test"})
 		model.searchMode = searchModeDeep
-		model.searchFilter = query.MessageFilter{MessageType: "sms"}
+		model.searchFilter = query.MessageFilter{}
 
-		cmd := model.loadSearch("message_type:email conflictneedle")
+		cmd := model.loadSearch("message_type:sms conflictneedle")
 		require.NotNil(cmd, "loadSearch command")
 		msg := cmd()
 		result, ok := msg.(searchResultsMsg)
