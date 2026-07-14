@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
@@ -603,6 +604,71 @@ func TestMeetingDetailFindJumpsToTranscriptMatch(t *testing.T) {
 	assert.Equal("needle", matched.meetingState.detailSearchQuery)
 	assert.NotEmpty(matched.meetingState.detailSearchMatches)
 	assert.Positive(matched.meetingState.detailScroll)
+}
+
+func TestMeetingDetailScrollingClampsAtRenderedMaximum(t *testing.T) {
+	newModel := func() Model {
+		model := NewBuilder().WithSize(40, 12).Build()
+		model.mode = modeMeetings
+		model.meetingState.level = meetingLevelDetail
+		model.meetingState.detail = &query.MessageDetail{
+			Subject:  "Planning",
+			BodyText: strings.Repeat("Transcript line with enough text to wrap.\n", 20),
+		}
+		return model
+	}
+
+	for _, test := range []struct {
+		name string
+		key  tea.KeyPressMsg
+	}{
+		{name: "down", key: keyDown()},
+		{name: "page down", key: tea.KeyPressMsg{Code: tea.KeyPgDown}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			model := newModel()
+			maxScroll := max(len(model.meetingDetailLines())-model.detailPageSize(), 0)
+			require.Positive(t, maxScroll)
+
+			for range maxScroll + 20 {
+				model, _ = sendKey(t, model, test.key)
+			}
+
+			assert.Equal(t, maxScroll, model.meetingState.detailScroll)
+		})
+	}
+}
+
+func TestMeetingDetailResizeClampsScrollAndRecomputesFindMatches(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	model := NewBuilder().WithSize(80, 12).Build()
+	model.mode = modeMeetings
+	model.meetingState.level = meetingLevelDetail
+	model.meetingState.detail = &query.MessageDetail{
+		Subject: "Planning",
+		BodyText: strings.Repeat("context before the search result ", 8) +
+			"needle appears after text that wraps differently",
+	}
+	model.meetingState.detailSearchQuery = "needle"
+	model.findMeetingDetailMatches()
+	require.NotEmpty(model.meetingState.detailSearchMatches)
+	wideMatch := model.meetingState.detailSearchMatches[0]
+	model.meetingState.detailScroll = 1000
+
+	resized := resizeModel(t, model, 28, 12)
+	lines := plainMarkdownLines(resized.meetingDetailLines())
+	expectedMatches := make([]int, 0, 1)
+	for index, line := range lines {
+		if strings.Contains(strings.ToLower(line), "needle") {
+			expectedMatches = append(expectedMatches, index)
+		}
+	}
+	require.NotEmpty(expectedMatches)
+	assert.NotEqual(wideMatch, expectedMatches[0], "test fixture must rewrap the match")
+	assert.Equal(expectedMatches, resized.meetingState.detailSearchMatches)
+	maxScroll := max(len(lines)-resized.detailPageSize(), 0)
+	assert.LessOrEqual(resized.meetingState.detailScroll, maxScroll)
 }
 
 func TestMeetingDetailFindIgnoresMarkdownANSISequences(t *testing.T) {

@@ -172,6 +172,7 @@ func (m Model) handleMeetingDetailKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd)
 	case "N":
 		m.moveMeetingDetailMatch(-1)
 	}
+	m.clampMeetingDetailScroll()
 	return m, nil
 }
 
@@ -220,6 +221,12 @@ func (m *Model) scrollToMeetingDetailMatch() {
 	}
 	target := m.meetingState.detailSearchMatches[m.meetingState.detailSearchMatchIndex]
 	m.meetingState.detailScroll = max(target-m.detailPageSize()/2, 0)
+	m.clampMeetingDetailScroll()
+}
+
+func (m *Model) clampMeetingDetailScroll() {
+	maxScroll := max(len(m.meetingDetailLines())-m.detailPageSize(), 0)
+	m.meetingState.detailScroll = min(max(m.meetingState.detailScroll, 0), maxScroll)
 }
 
 func (m *Model) moveMeetingDetailMatch(delta int) {

@@ -1068,6 +1068,16 @@ func (m Model) handleWindowSize(msg tea.WindowSizeMsg) (tea.Model, tea.Cmd) {
 		}
 		m.clampDetailScroll()
 	}
+	if m.mode == modeMeetings && m.meetingState.level == meetingLevelDetail && m.meetingState.detail != nil {
+		if m.meetingState.detailSearchQuery != "" {
+			matchIndex := m.meetingState.detailSearchMatchIndex
+			m.findMeetingDetailMatches()
+			if len(m.meetingState.detailSearchMatches) > 0 {
+				m.meetingState.detailSearchMatchIndex = min(matchIndex, len(m.meetingState.detailSearchMatches)-1)
+			}
+		}
+		m.clampMeetingDetailScroll()
+	}
 	return m, nil
 }
 
