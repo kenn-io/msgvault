@@ -58,3 +58,19 @@ func TestApplyHighlight(t *testing.T) {
 		})
 	}
 }
+
+func TestApplyHighlightPreservesExistingANSISequences(t *testing.T) {
+	assert := assert.New(t)
+	forceColorProfile(t)
+	text := "\x1b[1mHeading\x1b[0m"
+
+	escapeOnlyResult := applyHighlight(text, []string{"m"})
+	assert.Equal(text, escapeOnlyResult)
+
+	result := applyHighlight(text, []string{"heading"})
+
+	assert.Equal("Heading", stripANSI(result))
+	assert.Contains(result, "\x1b[1m")
+	assert.Contains(result, "\x1b[0m")
+	assert.NotEqual(text, result)
+}

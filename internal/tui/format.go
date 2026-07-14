@@ -47,18 +47,79 @@ func extractSearchTerms(queryStr string) []string {
 	return filtered
 }
 
-// applyHighlight wraps all case-insensitive occurrences of any term in text with highlightStyle.
-// It operates on runes to avoid byte-offset mismatches when strings.ToLower changes byte length
-// (e.g., certain Unicode characters like İ).
+type highlightInterval struct{ start, end int }
+
+// applyHighlight wraps all case-insensitive occurrences of any term in text
+// with highlightStyle. Matches are located in ANSI-free text, then styling is
+// inserted around printable runes so existing terminal sequences remain intact.
 func applyHighlight(text string, terms []string) string {
 	if len(terms) == 0 {
 		return text
 	}
-	textRunes := []rune(text)
+	plainText := ansi.Strip(text)
+	intervals := findHighlightIntervals(plainText, terms)
+	if len(intervals) == 0 {
+		return text
+	}
+
+	marker := "\x00"
+	styledMarker := highlightStyle.Render(marker)
+	prefix, suffix, found := strings.Cut(styledMarker, marker)
+	if !found || prefix == "" {
+		return text
+	}
+
+	var result strings.Builder
+	var sgrHistory strings.Builder
+	result.Grow(len(text) + len(intervals)*(len(prefix)+len(suffix)))
+	state := byte(0)
+	visibleRune := 0
+	intervalIndex := 0
+	inHighlight := false
+	for len(text) > 0 {
+		sequence, _, bytesRead, newState := ansi.DecodeSequence(text, state, nil)
+		if bytesRead == 0 {
+			result.WriteString(text)
+			break
+		}
+		state = newState
+		text = text[bytesRead:]
+		plainSequence := ansi.Strip(sequence)
+		if plainSequence == "" {
+			result.WriteString(sequence)
+			if strings.HasPrefix(sequence, "\x1b[") && strings.HasSuffix(sequence, "m") {
+				sgrHistory.WriteString(sequence)
+				if inHighlight {
+					result.WriteString(prefix)
+				}
+			}
+			continue
+		}
+
+		for _, char := range plainSequence {
+			if intervalIndex < len(intervals) && visibleRune == intervals[intervalIndex].start {
+				result.WriteString(prefix)
+				inHighlight = true
+			}
+			result.WriteRune(char)
+			visibleRune++
+			if intervalIndex < len(intervals) && visibleRune == intervals[intervalIndex].end {
+				result.WriteString(suffix)
+				result.WriteString(sgrHistory.String())
+				inHighlight = false
+				intervalIndex++
+			}
+		}
+	}
+	return result.String()
+}
+
+// findHighlightIntervals returns merged [start, end) rune offsets in plain
+// text. Rune offsets avoid byte-index mismatches when Unicode case folding
+// changes encoded length.
+func findHighlightIntervals(text string, terms []string) []highlightInterval {
 	lowerRunes := []rune(strings.ToLower(text))
-	// Build list of highlight intervals [start, end) in rune indices
-	type interval struct{ start, end int }
-	var intervals []interval
+	var intervals []highlightInterval
 	for _, term := range terms {
 		termLowerRunes := []rune(strings.ToLower(term))
 		tLen := len(termLowerRunes)
@@ -74,13 +135,13 @@ func applyHighlight(text string, terms []string) string {
 				}
 			}
 			if match {
-				intervals = append(intervals, interval{i, i + tLen})
+				intervals = append(intervals, highlightInterval{i, i + tLen})
 				i += tLen - 1 // skip past this match
 			}
 		}
 	}
 	if len(intervals) == 0 {
-		return text
+		return nil
 	}
 	// Sort and merge overlapping intervals
 	// Simple insertion sort since we expect few intervals
@@ -89,7 +150,7 @@ func applyHighlight(text string, terms []string) string {
 			intervals[j], intervals[j-1] = intervals[j-1], intervals[j]
 		}
 	}
-	merged := []interval{intervals[0]}
+	merged := []highlightInterval{intervals[0]}
 	for _, iv := range intervals[1:] {
 		last := &merged[len(merged)-1]
 		if iv.start <= last.end {
@@ -100,16 +161,7 @@ func applyHighlight(text string, terms []string) string {
 			merged = append(merged, iv)
 		}
 	}
-	// Build result using rune slicing
-	var sb strings.Builder
-	prev := 0
-	for _, iv := range merged {
-		sb.WriteString(string(textRunes[prev:iv.start]))
-		sb.WriteString(highlightStyle.Render(string(textRunes[iv.start:iv.end])))
-		prev = iv.end
-	}
-	sb.WriteString(string(textRunes[prev:]))
-	return sb.String()
+	return merged
 }
 
 // formatBytes formats a byte count as a human-readable string (e.g., "1.5 KB").

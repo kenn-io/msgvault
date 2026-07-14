@@ -2,6 +2,7 @@ package query_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -104,4 +105,37 @@ func TestSQLiteQueryEngineDateBoundsCompareMixedOffsetsAsInstants(t *testing.T) 
 			assert.Equal(int64(len(tc.want)), rows[0].Count, "Aggregate")
 		})
 	}
+}
+
+func TestSQLiteInstantDatePredicateUsesExpressionIndex(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := storetest.New(t)
+	if f.Store.IsPostgreSQL() {
+		t.Skip("SQLite query-plan regression")
+	}
+
+	f.NewMessage().
+		WithSourceMessageID("indexed-date-bound").
+		WithSentAt(time.Date(2024, 1, 15, 16, 0, 0, 0, time.UTC)).
+		Create(t, f.Store)
+
+	predicate := (query.SQLiteQueryDialect{}).DateComparison("m.sent_at", ">=")
+	rows, err := f.Store.DB().QueryContext(t.Context(),
+		"EXPLAIN QUERY PLAN SELECT m.id FROM messages m WHERE "+predicate,
+		"2024-01-15 15:30:00",
+	)
+	require.NoError(err)
+	defer func() { require.NoError(rows.Close()) }()
+
+	var plan strings.Builder
+	for rows.Next() {
+		var selectID, order, from int
+		var detail string
+		require.NoError(rows.Scan(&selectID, &order, &from, &detail))
+		plan.WriteString(detail)
+		plan.WriteByte('\n')
+	}
+	require.NoError(rows.Err())
+	assert.Contains(plan.String(), "idx_messages_sent_at_julianday", plan.String())
 }

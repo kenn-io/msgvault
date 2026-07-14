@@ -13,7 +13,7 @@ import (
 func TestMeetingListViewShowsMeetingColumns(t *testing.T) {
 	assert := assert.New(t)
 	model := NewBuilder().WithAccounts(
-		query.AccountInfo{ID: 2, SourceType: "granola", Identifier: "work-notes"},
+		query.AccountInfo{ID: 2, SourceType: meetingSourceGranola, Identifier: "work-notes"},
 	).WithSize(120, 24).Build()
 	model.mode = modeMeetings
 	model.loading = false
@@ -95,7 +95,7 @@ func TestMeetingSearchInputRemainsVisibleWithNoResults(t *testing.T) {
 func TestMeetingDetailViewShowsTranscript(t *testing.T) {
 	assert := assert.New(t)
 	model := NewBuilder().WithAccounts(
-		query.AccountInfo{ID: 2, SourceType: "granola", Identifier: "work-notes"},
+		query.AccountInfo{ID: 2, SourceType: meetingSourceGranola, Identifier: "work-notes"},
 	).WithSize(100, 24).Build()
 	model.mode = modeMeetings
 	model.loading = false

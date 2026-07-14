@@ -984,12 +984,14 @@ func (m Model) handleAccountSelectorKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cm
 			// never be restored after the source changes.
 			m.meetingState.preSearch = nil
 			if m.meetingState.searchQuery != "" {
+				m.meetingState.searchSnapshotInvalid = true
 				spinCmd := m.startSpinner()
 				return m, tea.Batch(
 					spinCmd,
 					m.loadMeetingSearch(m.meetingState.searchQuery, 0, false),
 				)
 			}
+			m.meetingState.searchSnapshotInvalid = false
 			return m, m.loadMeetingMessages()
 		}
 		if m.mode == modeTexts {

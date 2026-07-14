@@ -784,8 +784,10 @@ func (s *Store) InitSchema() error {
 	// 5-row page. The partial expression index lets COUNT read only the compact
 	// index and lets the page query walk it in order and stop at LIMIT,
 	// eliminating both the full scan and the sort (~29x faster COUNT, no sort).
-	// The second matches SearchMessages' timezone-correct Julian-day predicate;
-	// without it, date-bounded counts scan every entry in the first index.
+	// The second serves query-engine filters that compare julianday(sent_at) so
+	// mixed-offset timestamps remain correct without scanning the plain sent_at
+	// index. The third matches SearchMessages' COALESCE-based Julian-day
+	// predicate; without it, date-bounded counts scan every live message.
 	//
 	// Runs after the legacy ADD COLUMN loop above so deleted_at /
 	// deleted_from_source_at exist on upgraded DBs. SQLite only: PostgreSQL
@@ -800,6 +802,12 @@ func (s *Store) InitSchema() error {
 				CREATE INDEX IF NOT EXISTS idx_messages_live_sent_at
 				    ON messages(COALESCE(sent_at, received_at, internal_date) DESC, id DESC)
 				    WHERE deleted_at IS NULL AND deleted_from_source_at IS NULL
+			`); err != nil {
+				return err
+			}
+			if _, err := tx.ExecContext(ctx, `
+				CREATE INDEX IF NOT EXISTS idx_messages_sent_at_julianday
+				    ON messages(julianday(sent_at))
 			`); err != nil {
 				return err
 			}

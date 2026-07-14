@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 	"go.kenn.io/msgvault/internal/query"
 )
 
@@ -45,7 +46,7 @@ func (m Model) handleMeetingKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.meetingState.searchQuery = ""
 			m.meetingState.searchInput.SetValue("")
 			m.meetingState.searchRequestID++
-			if m.meetingState.preSearch != nil {
+			if !m.meetingState.searchSnapshotInvalid && m.meetingState.preSearch != nil {
 				m.meetingState.messages = m.meetingState.preSearch
 				m.meetingState.preSearch = nil
 			} else {
@@ -59,6 +60,7 @@ func (m Model) handleMeetingKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.meetingState.searchOffset = 0
 			m.meetingState.searchComplete = false
 			if m.meetingState.messages == nil {
+				m.meetingState.searchSnapshotInvalid = false
 				return m.reloadMeetingList()
 			}
 		}
@@ -87,7 +89,7 @@ func (m Model) handleMeetingKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 		return m.reloadMeetingList()
 	case "/":
-		if m.meetingState.preSearch == nil {
+		if !m.meetingState.searchSnapshotInvalid && m.meetingState.preSearch == nil {
 			m.meetingState.preSearch = append([]query.MessageSummary(nil), m.meetingState.messages...)
 		}
 		m.meetingState.searchActive = true
@@ -206,7 +208,7 @@ func (m *Model) findMeetingDetailMatches() {
 		return
 	}
 	for index, line := range m.meetingDetailLines() {
-		if strings.Contains(strings.ToLower(line), needle) {
+		if strings.Contains(strings.ToLower(ansi.Strip(line)), needle) {
 			m.meetingState.detailSearchMatches = append(m.meetingState.detailSearchMatches, index)
 		}
 	}
@@ -251,6 +253,17 @@ func (m Model) handleMeetingSearchInput(msg tea.KeyPressMsg) (tea.Model, tea.Cmd
 		m.meetingState.searchInput.Blur()
 		m.meetingState.searchQuery = queryString
 		if queryString == "" {
+			if m.meetingState.searchSnapshotInvalid {
+				m.meetingState.searchRequestID++
+				m.meetingState.searchSnapshotInvalid = false
+				m.meetingState.preSearch = nil
+				m.meetingState.messages = nil
+				m.meetingState.cursor = 0
+				m.meetingState.scrollOffset = 0
+				m.meetingState.searchOffset = 0
+				m.meetingState.searchComplete = false
+				return m.reloadMeetingList()
+			}
 			m.meetingState.messages = m.meetingState.preSearch
 			m.meetingState.preSearch = nil
 			m.meetingState.cursor = 0

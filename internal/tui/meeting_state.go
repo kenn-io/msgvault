@@ -9,6 +9,11 @@ import (
 
 const meetingMessageType = "meeting_transcript"
 
+const (
+	meetingSourceGranola    = "granola"
+	meetingSourceCircleback = "circleback"
+)
+
 type meetingViewLevel int
 
 const (
@@ -44,8 +49,11 @@ type meetingState struct {
 	searchQuery     string
 	searchRequestID uint64
 	preSearch       []query.MessageSummary
-	searchOffset    int
-	searchComplete  bool
+	// searchSnapshotInvalid marks that preSearch belonged to a previous
+	// source. Clearing the query must load the selected source's normal list.
+	searchSnapshotInvalid bool
+	searchOffset          int
+	searchComplete        bool
 }
 
 func (m Model) meetingMessageFilter() query.MessageFilter {
@@ -65,7 +73,7 @@ func (m Model) meetingAccounts() []query.AccountInfo {
 	accounts := make([]query.AccountInfo, 0, len(m.accounts))
 	for _, account := range m.accounts {
 		switch strings.ToLower(strings.TrimSpace(account.SourceType)) {
-		case "granola", "circleback":
+		case meetingSourceGranola, meetingSourceCircleback:
 			accounts = append(accounts, account)
 		}
 	}

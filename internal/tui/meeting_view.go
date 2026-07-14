@@ -56,9 +56,9 @@ func (m Model) meetingSourceLabel(sourceID int64) string {
 			continue
 		}
 		switch strings.ToLower(strings.TrimSpace(account.SourceType)) {
-		case "granola":
+		case meetingSourceGranola:
 			return "Granola"
-		case "circleback":
+		case meetingSourceCircleback:
 			return "Circleback"
 		}
 		if account.DisplayName != "" {

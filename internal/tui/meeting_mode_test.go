@@ -43,8 +43,8 @@ func TestMeetingMessageFilter(t *testing.T) {
 func TestMeetingAccountsExcludeUnrelatedSources(t *testing.T) {
 	model := NewBuilder().WithAccounts(
 		query.AccountInfo{ID: 1, SourceType: "gmail", Identifier: "user@example.com"},
-		query.AccountInfo{ID: 2, SourceType: "granola", Identifier: "work-notes"},
-		query.AccountInfo{ID: 3, SourceType: "circleback", Identifier: "team-meetings"},
+		query.AccountInfo{ID: 2, SourceType: meetingSourceGranola, Identifier: "work-notes"},
+		query.AccountInfo{ID: 3, SourceType: meetingSourceCircleback, Identifier: "team-meetings"},
 		query.AccountInfo{ID: 4, SourceType: "teams", Identifier: "team-chat"},
 	).Build()
 
@@ -62,8 +62,8 @@ func TestMeetingAccountSelectorUsesMeetingSources(t *testing.T) {
 	selectedID := int64(3)
 	model := NewBuilder().WithAccounts(
 		query.AccountInfo{ID: 1, SourceType: "gmail", Identifier: "user@example.com"},
-		query.AccountInfo{ID: 2, SourceType: "granola", Identifier: "work-notes"},
-		query.AccountInfo{ID: 3, SourceType: "circleback", Identifier: "team-meetings"},
+		query.AccountInfo{ID: 2, SourceType: meetingSourceGranola, Identifier: "work-notes"},
+		query.AccountInfo{ID: 3, SourceType: meetingSourceCircleback, Identifier: "team-meetings"},
 	).Build()
 	model.mode = modeMeetings
 	model.meetingState.sourceID = &selectedID
@@ -85,7 +85,7 @@ func TestMeetingAccountSelectionDoesNotReplaceEmailFilter(t *testing.T) {
 	emailID := int64(1)
 	model := NewBuilder().WithAccounts(
 		query.AccountInfo{ID: emailID, SourceType: "gmail", Identifier: "user@example.com"},
-		query.AccountInfo{ID: 2, SourceType: "granola", Identifier: "work-notes"},
+		query.AccountInfo{ID: 2, SourceType: meetingSourceGranola, Identifier: "work-notes"},
 	).Build()
 	model.mode = modeMeetings
 	model.accountFilter = &emailID
@@ -114,8 +114,8 @@ func TestMeetingAccountSelectionRerunsActiveSearchForNewSource(t *testing.T) {
 	model := New(engine, Options{})
 	model.mode = modeMeetings
 	model.accounts = []query.AccountInfo{
-		{ID: oldSourceID, SourceType: "granola", Identifier: "old-source"},
-		{ID: newSourceID, SourceType: "circleback", Identifier: "new-source"},
+		{ID: oldSourceID, SourceType: meetingSourceGranola, Identifier: "old-source"},
+		{ID: newSourceID, SourceType: meetingSourceCircleback, Identifier: "new-source"},
 	}
 	model.meetingState.sourceID = &oldSourceID
 	model.meetingState.searchQuery = "roadmap"
@@ -205,6 +205,76 @@ func TestMeetingEscapeReloadsListWhenSearchSourceChanged(t *testing.T) {
 	require.True(foundList)
 	require.NotNil(captured.SourceID)
 	assert.Equal(sourceID, *captured.SourceID)
+}
+
+func TestMeetingEmptySearchAfterSourceChangeReloadsSelectedSourceList(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		completeRerun bool
+	}{
+		{name: "before rerun completes"},
+		{name: "after rerun completes", completeRerun: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			oldSourceID := int64(7)
+			newSourceID := int64(8)
+			var listedFilter query.MessageFilter
+			engine := &querytest.MockEngine{}
+			engine.SearchFunc = func(_ context.Context, _ *search.Query, _, _ int) ([]query.MessageSummary, error) {
+				return []query.MessageSummary{{ID: 80, Subject: "New source result"}}, nil
+			}
+			engine.ListMessagesFunc = func(_ context.Context, filter query.MessageFilter) ([]query.MessageSummary, error) {
+				listedFilter = filter
+				return []query.MessageSummary{{ID: 81, Subject: "New source list"}}, nil
+			}
+			model := New(engine, Options{})
+			model.mode = modeMeetings
+			model.accounts = []query.AccountInfo{
+				{ID: oldSourceID, SourceType: meetingSourceGranola, Identifier: "old-source"},
+				{ID: newSourceID, SourceType: meetingSourceCircleback, Identifier: "new-source"},
+			}
+			model.meetingState.sourceID = &oldSourceID
+			model.meetingState.searchQuery = "roadmap"
+			model.meetingState.preSearch = []query.MessageSummary{{ID: 7, Subject: "Old source list"}}
+			model.meetingState.messages = []query.MessageSummary{{ID: 70, Subject: "Old source result"}}
+			model.meetingState.requestID = 4
+			model.meetingState.searchRequestID = 9
+			model.modal = modalAccountSelector
+			model.modalCursor = 2
+
+			updated, rerunCmd := applyModalKey(t, model, keyEnter())
+			if tc.completeRerun {
+				for _, msg := range runBatchCommand(t, rerunCmd) {
+					if loaded, ok := msg.(meetingSearchLoadedMsg); ok {
+						updated = sendMsg(t, updated, loaded)
+					}
+				}
+			}
+			requestIDBeforeClear := updated.meetingState.searchRequestID
+
+			updated, _ = sendKey(t, updated, key('/'))
+			require.True(updated.meetingState.searchActive)
+			updated.meetingState.searchInput.SetValue("")
+			updated, cmd := sendKey(t, updated, keyEnter())
+
+			assert.Empty(updated.meetingState.searchQuery)
+			assert.Greater(updated.meetingState.searchRequestID, requestIDBeforeClear,
+				"empty query must invalidate the source-scoped search")
+			require.NotNil(cmd, "empty query must reload the selected source list")
+			foundList := false
+			for _, msg := range runBatchCommand(t, cmd) {
+				if _, ok := msg.(meetingMessagesLoadedMsg); ok {
+					foundList = true
+				}
+			}
+			require.True(foundList)
+			require.NotNil(listedFilter.SourceID)
+			assert.Equal(newSourceID, *listedFilter.SourceID)
+			assert.Nil(updated.meetingState.preSearch)
+		})
+	}
 }
 
 func runBatchCommand(t *testing.T, cmd tea.Cmd) []tea.Msg {
@@ -414,7 +484,7 @@ func TestMeetingModeIgnoresMutationKeys(t *testing.T) {
 func TestMeetingModeOpensSourceSelector(t *testing.T) {
 	model := NewBuilder().WithAccounts(
 		query.AccountInfo{ID: 1, SourceType: "gmail", Identifier: "user@example.com"},
-		query.AccountInfo{ID: 2, SourceType: "granola", Identifier: "work-notes"},
+		query.AccountInfo{ID: 2, SourceType: meetingSourceGranola, Identifier: "work-notes"},
 	).Build()
 	model.mode = modeMeetings
 
@@ -473,6 +543,23 @@ func TestMeetingDetailFindJumpsToTranscriptMatch(t *testing.T) {
 	assert.Equal("needle", matched.meetingState.detailSearchQuery)
 	assert.NotEmpty(matched.meetingState.detailSearchMatches)
 	assert.Positive(matched.meetingState.detailScroll)
+}
+
+func TestMeetingDetailFindIgnoresMarkdownANSISequences(t *testing.T) {
+	forceColorProfile(t)
+	model := NewBuilder().WithSize(80, 12).Build()
+	model.mode = modeMeetings
+	model.meetingState.level = meetingLevelDetail
+	model.meetingState.detail = &query.MessageDetail{
+		Subject:  "Planning",
+		BodyText: "alpha\n\nbeta",
+	}
+	model.markdownCache = newMarkdownCache(true, false)
+	model.meetingState.detailSearchQuery = "38"
+
+	model.findMeetingDetailMatches()
+
+	assert.Empty(t, model.meetingState.detailSearchMatches)
 }
 
 func TestMeetingDetailNavigationRecomputesFindMatches(t *testing.T) {
