@@ -387,7 +387,7 @@ func imapFolderStateSaveOption(s *store.Store, src *store.Source) imaplib.Option
 // saveIMAPFolderStates persists the per-mailbox states observed during
 // listing, but only after a sync that completed cleanly: an
 // interrupted, truncated (--limit), or partly failed run must not
-// advance the watermarks, or the messages it skipped would never be
+// advance the high water marks, or the messages it skipped would never be
 // fetched. Save failures only cost the next run's speedup, so they are
 // logged and swallowed.
 func saveIMAPFolderStates(s *store.Store, src *store.Source, apiClient gmail.API, summary *gmail.SyncSummary, limit int) {
@@ -414,8 +414,8 @@ func runFullSync(ctx context.Context, s *store.Store, getOAuthMgr func(string) (
 	progress := &CLIProgress{}
 
 	// --noresume promises a fresh sync, so it must also bypass the
-	// saved folder watermarks and re-enumerate every mailbox. A clean
-	// completed run still saves fresh watermarks afterwards.
+	// saved folder high water marks and re-enumerate every mailbox. A clean
+	// completed run still saves fresh high water marks afterwards.
 	imapOpts := imapFolderStateOptions(s, src, syncNoResume)
 	if src.SourceType == sourceTypeIMAP {
 		imapOpts = append(imapOpts,

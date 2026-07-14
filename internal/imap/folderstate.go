@@ -22,7 +22,7 @@ type FolderState struct {
 // completed sync. During message listing, mailboxes whose current
 // STATUS matches the saved state are skipped without enumeration, and
 // changed mailboxes are searched only for UIDs at or above the saved
-// UIDNEXT. Ignored when a date filter is active. When the server
+// UIDNEXT high water mark. Ignored when a date filter is active. When the server
 // exposes an \All mailbox, saved states short-circuit fully unchanged
 // resyncs; changed runs still enumerate fully for label mapping.
 func WithFolderStates(states map[string]FolderState) Option {
@@ -101,7 +101,7 @@ func (c *Client) clearFolderAcknowledgements() {
 
 // AcknowledgeMessages records message IDs that the syncer safely
 // handled. When every listed message in a folder has been acknowledged,
-// the folder state callback is invoked with that folder's watermark.
+// the folder state callback is invoked with that folder's high water mark.
 func (c *Client) AcknowledgeMessages(_ context.Context, messageIDs []string) {
 	var completed []struct {
 		mailbox string

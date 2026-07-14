@@ -29,7 +29,7 @@ This is faster than a full sync as it only fetches changes since the last sync.
 Requires a prior full sync to establish the history ID baseline.
 
 IMAP accounts use folder-based sync. Unchanged folders are skipped when
-UIDVALIDITY/UIDNEXT watermarks are available.
+UIDVALIDITY/UIDNEXT high water marks are available.
 
 If no email is specified, syncs all accounts that have credentials configured.
 Accounts without tokens or history IDs are skipped.
@@ -171,7 +171,7 @@ func runSyncIncrementalLocal(cmd *cobra.Command, args []string) error {
 		if ctx.Err() != nil {
 			break
 		}
-		fmt.Printf("Note: IMAP account %s uses folder-based sync. Unchanged folders are skipped when watermarks are available.\n\n", src.Identifier)
+		fmt.Printf("Note: IMAP account %s uses folder-based sync. Unchanged folders are skipped when high water marks are available.\n\n", src.Identifier)
 		if err := runFullSync(ctx, s, getOAuthMgr, src); err != nil {
 			syncErrors = append(syncErrors, fmt.Sprintf("%s: %v", src.Identifier, err))
 		}

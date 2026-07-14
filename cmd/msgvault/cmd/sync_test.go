@@ -176,7 +176,11 @@ func TestSyncCmd_SingleSourceNoAmbiguity(t *testing.T) {
 	// Should NOT hit legacy fallback (source exists in DB).
 	assert.NotContains(errMsg, "no source found", "should not hit legacy fallback path")
 	assert.Contains(output, "uses folder-based sync",
-		"IMAP note should describe folder-based watermarks; output:\n%s", output)
+		"IMAP note should describe folder-based high water marks; output:\n%s", output)
+	assert.Contains(output, "high water marks",
+		"IMAP note should use the high water mark term; output:\n%s", output)
+	assert.NotContains(output, "watermarks",
+		"IMAP note should say high water marks, not watermarks; output:\n%s", output)
 	assert.NotContains(output, "does not support incremental sync",
 		"IMAP note should not imply every sync is a full rescan; output:\n%s", output)
 }

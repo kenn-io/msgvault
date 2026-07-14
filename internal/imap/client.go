@@ -333,7 +333,7 @@ func addMessageIDsFromHeaderFetchResults(dst map[string]bool, msgs []*imapclient
 
 // enumerateMailbox lists UIDs in a single mailbox. A non-zero minUID
 // restricts the search to UIDs at or above it (new messages since a
-// saved UIDNEXT watermark). It handles network errors with one
+// saved UIDNEXT high water mark). It handles network errors with one
 // reconnect attempt.
 func (c *Client) enumerateMailbox(
 	ctx context.Context, mailbox string, minUID imap.UID,
@@ -532,7 +532,7 @@ func (c *Client) buildMessageListCache(ctx context.Context) error {
 	// Folder-state tracking skips unchanged mailboxes via STATUS
 	// UIDVALIDITY/UIDNEXT. Disabled under a date filter because a
 	// filtered run does not fetch everything up to UIDNEXT, so the
-	// watermark would be wrong. When an \All mailbox exists, the label
+	// high water mark would be wrong. When an \All mailbox exists, the label
 	// map still needs full enumeration if anything changed, but a fully
 	// unchanged resync can return immediately.
 	trackFolders := c.since.IsZero() && c.before.IsZero()
