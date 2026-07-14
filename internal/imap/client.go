@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"slices"
 	"strconv"
 	"strings"
@@ -544,9 +545,7 @@ func (c *Client) buildMessageListCache(ctx context.Context) error {
 		if c.allMailFolder != "" &&
 			len(folderStatuses) == len(allMailboxes) &&
 			unchangedStatuses == len(allMailboxes) {
-			for mailbox, status := range folderStatuses {
-				c.observedFolderStates[mailbox] = status
-			}
+			maps.Copy(c.observedFolderStates, folderStatuses)
 			if c.listProgress != nil {
 				c.listProgress(0, len(allMailboxes), "", 0, 0)
 				c.listProgress(len(allMailboxes), len(allMailboxes), "", 0, unchangedStatuses)
@@ -652,9 +651,7 @@ func (c *Client) buildMessageListCache(ctx context.Context) error {
 	}
 	if trackFolders && c.allMailFolder != "" {
 		if labelMapComplete && enumerationComplete {
-			for mailbox, status := range folderStatuses {
-				c.observedFolderStates[mailbox] = status
-			}
+			maps.Copy(c.observedFolderStates, folderStatuses)
 		} else {
 			c.observedFolderStates = nil
 			c.clearFolderAcknowledgements()

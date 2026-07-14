@@ -45,6 +45,7 @@ func (b *batchErrorAPI) GetMessagesRawBatchWithErrors(_ context.Context, _ []str
 
 type acknowledgingAPI struct {
 	*gmail.MockAPI
+
 	acknowledged []string
 }
 

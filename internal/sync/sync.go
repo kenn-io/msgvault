@@ -65,7 +65,7 @@ type Syncer struct {
 }
 
 type messageAcknowledger interface {
-	AcknowledgeMessages(context.Context, []string)
+	AcknowledgeMessages(ctx context.Context, messageIDs []string)
 }
 
 // New creates a new Syncer.
