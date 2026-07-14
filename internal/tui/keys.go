@@ -972,6 +972,24 @@ func (m Model) handleAccountSelectorKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cm
 		m.loading = true
 		if m.mode == modeMeetings {
 			m.meetingState.requestID++
+			m.meetingState.searchRequestID++
+			m.meetingState.listOffset = 0
+			m.meetingState.listComplete = false
+			m.meetingState.listLoadingMore = false
+			m.meetingState.searchOffset = 0
+			m.meetingState.searchComplete = false
+			m.meetingState.cursor = 0
+			m.meetingState.scrollOffset = 0
+			// A pre-search snapshot belongs to the previous source and must
+			// never be restored after the source changes.
+			m.meetingState.preSearch = nil
+			if m.meetingState.searchQuery != "" {
+				spinCmd := m.startSpinner()
+				return m, tea.Batch(
+					spinCmd,
+					m.loadMeetingSearch(m.meetingState.searchQuery, 0, false),
+				)
+			}
 			return m, m.loadMeetingMessages()
 		}
 		if m.mode == modeTexts {

@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/query/querytest"
+	"go.kenn.io/msgvault/internal/search"
 )
 
 func TestNextModeCyclesThroughMeetings(t *testing.T) {
@@ -97,6 +98,128 @@ func TestMeetingAccountSelectionDoesNotReplaceEmailFilter(t *testing.T) {
 	assert.Equal(int64(2), *updatedModel.meetingState.sourceID)
 	require.NotNil(updatedModel.accountFilter)
 	assert.Equal(emailID, *updatedModel.accountFilter)
+}
+
+func TestMeetingAccountSelectionRerunsActiveSearchForNewSource(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	oldSourceID := int64(7)
+	newSourceID := int64(8)
+	var captured *search.Query
+	engine := &querytest.MockEngine{}
+	engine.SearchFunc = func(_ context.Context, q *search.Query, _, _ int) ([]query.MessageSummary, error) {
+		captured = q
+		return []query.MessageSummary{{ID: 80, Subject: "New source result"}}, nil
+	}
+	model := New(engine, Options{})
+	model.mode = modeMeetings
+	model.accounts = []query.AccountInfo{
+		{ID: oldSourceID, SourceType: "granola", Identifier: "old-source"},
+		{ID: newSourceID, SourceType: "circleback", Identifier: "new-source"},
+	}
+	model.meetingState.sourceID = &oldSourceID
+	model.meetingState.searchQuery = "roadmap"
+	model.meetingState.preSearch = []query.MessageSummary{{ID: 7, Subject: "Old source list"}}
+	model.meetingState.messages = []query.MessageSummary{{ID: 70, Subject: "Old source result"}}
+	model.meetingState.requestID = 4
+	model.meetingState.searchRequestID = 9
+	model.meetingState.searchOffset = 25
+	model.meetingState.searchComplete = true
+	model.meetingState.listLoadingMore = true
+	model.modal = modalAccountSelector
+	model.modalCursor = 2
+
+	updated, cmd := applyModalKey(t, model, keyEnter())
+
+	require.NotNil(updated.meetingState.sourceID)
+	assert.Equal(newSourceID, *updated.meetingState.sourceID)
+	assert.Equal(uint64(5), updated.meetingState.requestID, "invalidate in-flight list")
+	assert.Equal(uint64(10), updated.meetingState.searchRequestID, "invalidate in-flight search")
+	assert.Equal("roadmap", updated.meetingState.searchQuery)
+	assert.Nil(updated.meetingState.preSearch, "old source list cannot be restored")
+	assert.Zero(updated.meetingState.searchOffset)
+	assert.False(updated.meetingState.searchComplete)
+	assert.False(updated.meetingState.listLoadingMore)
+
+	msgs := runBatchCommand(t, cmd)
+	var loaded meetingSearchLoadedMsg
+	foundSearch := false
+	for _, msg := range msgs {
+		if candidate, ok := msg.(meetingSearchLoadedMsg); ok {
+			loaded = candidate
+			foundSearch = true
+		}
+	}
+	require.True(foundSearch, "source change should rerun the active meeting search")
+	assert.Equal(uint64(10), loaded.requestID)
+	assert.Zero(loaded.offset)
+	require.NotNil(captured)
+	assert.Equal([]int64{newSourceID}, captured.AccountIDs)
+	assert.Equal([]string{meetingMessageType}, captured.MessageTypes)
+
+	updated = sendMsg(t, updated, meetingMessagesLoadedMsg{
+		messages:  []query.MessageSummary{{ID: 71, Subject: "Stale list"}},
+		requestID: 4,
+	})
+	updated = sendMsg(t, updated, meetingSearchLoadedMsg{
+		messages:  []query.MessageSummary{{ID: 72, Subject: "Stale search"}},
+		requestID: 9,
+	})
+	require.Len(updated.meetingState.messages, 1)
+	assert.Equal(int64(70), updated.meetingState.messages[0].ID, "stale responses must be ignored")
+
+	updated = sendMsg(t, updated, loaded)
+	require.Len(updated.meetingState.messages, 1)
+	assert.Equal(int64(80), updated.meetingState.messages[0].ID)
+}
+
+func TestMeetingEscapeReloadsListWhenSearchSourceChanged(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	sourceID := int64(8)
+	var captured query.MessageFilter
+	engine := &querytest.MockEngine{}
+	engine.ListMessagesFunc = func(_ context.Context, filter query.MessageFilter) ([]query.MessageSummary, error) {
+		captured = filter
+		return []query.MessageSummary{{ID: 81, Subject: "New source list"}}, nil
+	}
+	model := New(engine, Options{})
+	model.mode = modeMeetings
+	model.meetingState.sourceID = &sourceID
+	model.meetingState.searchQuery = "roadmap"
+	model.meetingState.searchInput.SetValue("roadmap")
+	model.meetingState.messages = []query.MessageSummary{{ID: 80, Subject: "Search result"}}
+	model.meetingState.preSearch = nil
+
+	updated, cmd := sendKey(t, model, keyEsc())
+
+	assert.Empty(updated.meetingState.searchQuery)
+	require.NotNil(cmd, "clearing search should load the selected source's normal list")
+	msgs := runBatchCommand(t, cmd)
+	foundList := false
+	for _, msg := range msgs {
+		if _, ok := msg.(meetingMessagesLoadedMsg); ok {
+			foundList = true
+		}
+	}
+	require.True(foundList)
+	require.NotNil(captured.SourceID)
+	assert.Equal(sourceID, *captured.SourceID)
+}
+
+func runBatchCommand(t *testing.T, cmd tea.Cmd) []tea.Msg {
+	t.Helper()
+	require.NotNil(t, cmd)
+	msg := cmd()
+	batch, ok := msg.(tea.BatchMsg)
+	if !ok {
+		return []tea.Msg{msg}
+	}
+	msgs := make([]tea.Msg, 0, len(batch))
+	for _, child := range batch {
+		msgs = append(msgs, child())
+	}
+	return msgs
 }
 
 func TestLoadMeetingMessagesUsesMeetingScope(t *testing.T) {

@@ -140,11 +140,11 @@ func buildSQLiteTextFilterConditions(d Dialect, filter TextFilter) (string, []an
 		args = append(args, filter.TimeRange.Period)
 	}
 	if filter.After != nil {
-		conditions = append(conditions, "m.sent_at >= ?")
+		conditions = append(conditions, d.DateComparison("m.sent_at", ">="))
 		args = append(args, d.DateParam(*filter.After))
 	}
 	if filter.Before != nil {
-		conditions = append(conditions, "m.sent_at < ?")
+		conditions = append(conditions, d.DateComparison("m.sent_at", "<"))
 		args = append(args, d.DateParam(*filter.Before))
 	}
 
@@ -326,11 +326,11 @@ func (e *SQLiteEngine) TextAggregate(
 		args = append(args, *opts.SourceID)
 	}
 	if opts.After != nil {
-		conditions = append(conditions, "m.sent_at >= ?")
+		conditions = append(conditions, e.dialect.DateComparison("m.sent_at", ">="))
 		args = append(args, e.dialect.DateParam(*opts.After))
 	}
 	if opts.Before != nil {
-		conditions = append(conditions, "m.sent_at < ?")
+		conditions = append(conditions, e.dialect.DateComparison("m.sent_at", "<"))
 		args = append(args, e.dialect.DateParam(*opts.Before))
 	}
 	if opts.SearchQuery != "" {

@@ -253,11 +253,11 @@ func optsToFilterConditions(d Dialect, opts AggregateOptions, prefix string) ([]
 	)
 	// Normalize absolute instants through the active backend dialect.
 	if opts.After != nil {
-		conditions = append(conditions, prefix+"sent_at >= ?")
+		conditions = append(conditions, d.DateComparison(prefix+"sent_at", ">="))
 		args = append(args, d.DateParam(*opts.After))
 	}
 	if opts.Before != nil {
-		conditions = append(conditions, prefix+"sent_at < ?")
+		conditions = append(conditions, d.DateComparison(prefix+"sent_at", "<"))
 		args = append(args, d.DateParam(*opts.Before))
 	}
 	if opts.WithAttachmentsOnly {
@@ -330,12 +330,12 @@ func (e *SQLiteEngine) buildFilterJoinsAndConditions(filter MessageFilter, table
 	}
 
 	if filter.After != nil {
-		conditions = append(conditions, prefix+"sent_at >= ?")
+		conditions = append(conditions, e.dialect.DateComparison(prefix+"sent_at", ">="))
 		args = append(args, e.dialect.DateParam(*filter.After))
 	}
 
 	if filter.Before != nil {
-		conditions = append(conditions, prefix+"sent_at < ?")
+		conditions = append(conditions, e.dialect.DateComparison(prefix+"sent_at", "<"))
 		args = append(args, e.dialect.DateParam(*filter.Before))
 	}
 
@@ -1418,11 +1418,11 @@ func (e *SQLiteEngine) GetGmailIDsByFilter(ctx context.Context, filter MessageFi
 	}
 
 	if filter.After != nil {
-		conditions = append(conditions, "m.sent_at >= ?")
+		conditions = append(conditions, e.dialect.DateComparison("m.sent_at", ">="))
 		args = append(args, e.dialect.DateParam(*filter.After))
 	}
 	if filter.Before != nil {
-		conditions = append(conditions, "m.sent_at < ?")
+		conditions = append(conditions, e.dialect.DateComparison("m.sent_at", "<"))
 		args = append(args, e.dialect.DateParam(*filter.Before))
 	}
 
@@ -1595,11 +1595,11 @@ func (e *SQLiteEngine) SearchByDomains(ctx context.Context, domains []string, af
 	)`, strings.Join(placeholders, ", ")))
 
 	if after != nil {
-		conditions = append(conditions, "m.sent_at >= ?")
+		conditions = append(conditions, e.dialect.DateComparison("m.sent_at", ">="))
 		args = append(args, e.dialect.DateParam(*after))
 	}
 	if before != nil {
-		conditions = append(conditions, "m.sent_at < ?")
+		conditions = append(conditions, e.dialect.DateComparison("m.sent_at", "<"))
 		args = append(args, e.dialect.DateParam(*before))
 	}
 
@@ -1737,15 +1737,15 @@ func (e *SQLiteEngine) buildSearchQueryParts(ctx context.Context, q *search.Quer
 		conditions = append(conditions, e.dialect.BoolTrueExpr("m.has_attachments"))
 	}
 
-	// Date range filters use the dialect's UTC-normalized parameter form.
-	// PostgreSQL retains a typed TIMESTAMPTZ bind while SQLite uses the same
-	// zone-less UTC layout as its stored DATETIME values. [cr2-9]
+	// Date range filters use backend-native instant comparisons. PostgreSQL
+	// retains typed TIMESTAMPTZ comparisons; SQLite parses both operands so
+	// mixed UTC and offset-bearing DATETIME strings compare chronologically.
 	if q.AfterDate != nil {
-		conditions = append(conditions, "m.sent_at >= ?")
+		conditions = append(conditions, e.dialect.DateComparison("m.sent_at", ">="))
 		args = append(args, e.dialect.DateParam(*q.AfterDate))
 	}
 	if q.BeforeDate != nil {
-		conditions = append(conditions, "m.sent_at < ?")
+		conditions = append(conditions, e.dialect.DateComparison("m.sent_at", "<"))
 		args = append(args, e.dialect.DateParam(*q.BeforeDate))
 	}
 

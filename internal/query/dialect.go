@@ -115,6 +115,11 @@ type Dialect interface {
 	// DateParam normalizes an instant for the backend timestamp representation.
 	DateParam(value time.Time) any
 
+	// DateComparison returns a backend-native comparison against one bound
+	// placeholder. SQLite parses both operands as instants because archives can
+	// contain mixed textual offsets; PostgreSQL compares typed timestamps.
+	DateComparison(column, operator string) string
+
 	// messageBodyContextBackend selects the backend-native highlighter used to
 	// extract exact context for body-index hits.
 	messageBodyContextBackend() messageBodyContextBackend
@@ -133,6 +138,10 @@ func (SQLiteQueryDialect) UnicodeLowerExpression(expr string) string {
 
 func (SQLiteQueryDialect) DateParam(value time.Time) any {
 	return queryTimeUTC(value).Format(queryTimestampLayout)
+}
+
+func (SQLiteQueryDialect) DateComparison(column, operator string) string {
+	return fmt.Sprintf("julianday(%s) %s julianday(?)", column, operator)
 }
 
 func (SQLiteQueryDialect) messageBodyContextBackend() messageBodyContextBackend {
@@ -230,6 +239,10 @@ func (PostgreSQLQueryDialect) UnicodeLowerExpression(expr string) string {
 
 func (PostgreSQLQueryDialect) DateParam(value time.Time) any {
 	return queryTimeUTC(value)
+}
+
+func (PostgreSQLQueryDialect) DateComparison(column, operator string) string {
+	return fmt.Sprintf("%s %s ?", column, operator)
 }
 
 func (PostgreSQLQueryDialect) messageBodyContextBackend() messageBodyContextBackend {

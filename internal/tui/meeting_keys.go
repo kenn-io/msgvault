@@ -48,11 +48,19 @@ func (m Model) handleMeetingKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			if m.meetingState.preSearch != nil {
 				m.meetingState.messages = m.meetingState.preSearch
 				m.meetingState.preSearch = nil
+			} else {
+				// A source change invalidates the old source's pre-search
+				// snapshot. Reload the selected source rather than presenting
+				// former search results as an unsearched list.
+				m.meetingState.messages = nil
 			}
 			m.meetingState.cursor = 0
 			m.meetingState.scrollOffset = 0
 			m.meetingState.searchOffset = 0
 			m.meetingState.searchComplete = false
+			if m.meetingState.messages == nil {
+				return m.reloadMeetingList()
+			}
 		}
 		return m, nil
 	case "A":
