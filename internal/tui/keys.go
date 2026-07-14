@@ -103,6 +103,11 @@ func (m Model) handleGlobalKeys(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 		return m, nil, true
 	case "m":
 		m.mode = nextMode(m.mode, m.textEngine != nil)
+		// A frozen view and the email search loading flags describe the mode
+		// being left. Do not let them obscure or animate the destination mode.
+		m.transitionBuffer = ""
+		m.inlineSearchLoading = false
+		m.searchLoadingMore = false
 		switch m.mode {
 		case modeTexts:
 			m.textState.filter.SourceID = m.accountFilter

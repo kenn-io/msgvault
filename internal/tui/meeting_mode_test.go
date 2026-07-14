@@ -512,6 +512,108 @@ func TestModeKeyRestoresInitializedMeetingState(t *testing.T) {
 	require.Len(t, updated.meetingState.messages, 1)
 }
 
+func TestModeKeyClearsPreviousModePresentationState(t *testing.T) {
+	assert := assert.New(t)
+	model := NewBuilder().Build()
+	model.textEngine = nil
+	model.transitionBuffer = "frozen email view"
+	model.inlineSearchLoading = true
+	model.searchLoadingMore = true
+
+	updated, _, handled := model.handleGlobalKeys(tea.KeyPressMsg{Code: 'm', Text: "m"})
+
+	assert.True(handled)
+	assert.Equal(modeMeetings, updated.mode)
+	assert.Empty(updated.transitionBuffer)
+	assert.False(updated.inlineSearchLoading)
+	assert.False(updated.searchLoadingMore)
+	assert.True(updated.loading, "Meetings load owns the shared loading indicator")
+}
+
+func TestModeSwitchScopesPreviousModeCompletions(t *testing.T) {
+	previousErr := errors.New("previous mode failed")
+
+	for _, origin := range []struct {
+		name    string
+		mode    tuiMode
+		message func(Model) tea.Msg
+	}{
+		{
+			name: "email",
+			mode: modeEmail,
+			message: func(model Model) tea.Msg {
+				return dataLoadedMsg{
+					err:       previousErr,
+					requestID: model.aggregateRequestID,
+				}
+			},
+		},
+		{
+			name: "texts",
+			mode: modeTexts,
+			message: func(Model) tea.Msg {
+				return textConversationsLoadedMsg{err: previousErr}
+			},
+		},
+	} {
+		for _, previousCompletesFirst := range []bool{true, false} {
+			orderName := "meetings completes first"
+			if previousCompletesFirst {
+				orderName = "previous mode completes first"
+			}
+			t.Run(origin.name+"/"+orderName, func(t *testing.T) {
+				assert := assert.New(t)
+				require := require.New(t)
+				model := NewBuilder().Build()
+				model.mode = origin.mode
+				if origin.mode == modeEmail {
+					model.textEngine = nil
+				}
+				model.loading = true
+
+				switched, _, handled := model.handleGlobalKeys(tea.KeyPressMsg{Code: 'm', Text: "m"})
+				require.True(handled)
+				require.Equal(modeMeetings, switched.mode)
+
+				completePrevious := func(current Model) Model {
+					updatedModel, _ := current.Update(origin.message(current))
+					updated, ok := updatedModel.(Model)
+					require.True(ok)
+					return updated
+				}
+
+				completeMeeting := func(current Model) Model {
+					updatedModel, _ := current.Update(meetingMessagesLoadedMsg{
+						messages:  []query.MessageSummary{{ID: 42, Subject: "Planning"}},
+						requestID: current.meetingState.requestID,
+					})
+					updated, ok := updatedModel.(Model)
+					require.True(ok)
+					return updated
+				}
+
+				if previousCompletesFirst {
+					switched = completePrevious(switched)
+					assert.True(switched.loading, "previous mode must not stop Meetings loading")
+					require.NoError(switched.err)
+					assert.Equal(modalNone, switched.modal)
+					switched = completeMeeting(switched)
+				} else {
+					switched = completeMeeting(switched)
+					require.False(switched.loading)
+					switched = completePrevious(switched)
+				}
+
+				assert.False(switched.loading)
+				require.NoError(switched.err)
+				assert.Equal(modalNone, switched.modal)
+				require.Len(switched.meetingState.messages, 1)
+				assert.Equal(int64(42), switched.meetingState.messages[0].ID)
+			})
+		}
+	}
+}
+
 func TestMeetingKeysUseIndependentCursor(t *testing.T) {
 	model := NewBuilder().Build()
 	model.mode = modeMeetings

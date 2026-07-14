@@ -959,14 +959,27 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// handleTextConversationsLoaded processes text conversations load completion.
-func (m Model) handleTextConversationsLoaded(msg textConversationsLoadedMsg) (tea.Model, tea.Cmd) {
+// finishModePresentation settles shared loading state only when the response
+// belongs to the mode currently on screen. The response handler may still
+// cache mode-owned data while another mode is active.
+func (m *Model) finishModePresentation(mode tuiMode) bool {
+	if m.mode != mode {
+		return false
+	}
 	m.transitionBuffer = ""
 	m.loading = false
+	return true
+}
+
+// handleTextConversationsLoaded processes text conversations load completion.
+func (m Model) handleTextConversationsLoaded(msg textConversationsLoadedMsg) (tea.Model, tea.Cmd) {
+	active := m.finishModePresentation(modeTexts)
 	if msg.err != nil {
-		m.err = msg.err
-		m.modal = modalError
-		m.modalResult = msg.err.Error()
+		if active {
+			m.err = msg.err
+			m.modal = modalError
+			m.modalResult = msg.err.Error()
+		}
 		return m, nil
 	}
 	m.textState.conversations = msg.conversations
@@ -979,12 +992,13 @@ func (m Model) handleTextConversationsLoaded(msg textConversationsLoadedMsg) (te
 
 // handleTextAggregateLoaded processes text aggregate load completion.
 func (m Model) handleTextAggregateLoaded(msg textAggregateLoadedMsg) (tea.Model, tea.Cmd) {
-	m.transitionBuffer = ""
-	m.loading = false
+	active := m.finishModePresentation(modeTexts)
 	if msg.err != nil {
-		m.err = msg.err
-		m.modal = modalError
-		m.modalResult = msg.err.Error()
+		if active {
+			m.err = msg.err
+			m.modal = modalError
+			m.modalResult = msg.err.Error()
+		}
 		return m, nil
 	}
 	m.textState.aggregateRows = msg.rows
@@ -997,12 +1011,13 @@ func (m Model) handleTextAggregateLoaded(msg textAggregateLoadedMsg) (tea.Model,
 
 // handleTextMessagesLoaded processes text messages load completion.
 func (m Model) handleTextMessagesLoaded(msg textMessagesLoadedMsg) (tea.Model, tea.Cmd) {
-	m.transitionBuffer = ""
-	m.loading = false
+	active := m.finishModePresentation(modeTexts)
 	if msg.err != nil {
-		m.err = msg.err
-		m.modal = modalError
-		m.modalResult = msg.err.Error()
+		if active {
+			m.err = msg.err
+			m.modal = modalError
+			m.modalResult = msg.err.Error()
+		}
 		return m, nil
 	}
 	m.textState.messages = msg.messages
@@ -1014,12 +1029,13 @@ func (m Model) handleTextMessagesLoaded(msg textMessagesLoadedMsg) (tea.Model, t
 
 // handleTextSearchResult processes text search results.
 func (m Model) handleTextSearchResult(msg textSearchResultMsg) (tea.Model, tea.Cmd) {
-	m.transitionBuffer = ""
-	m.loading = false
+	active := m.finishModePresentation(modeTexts)
 	if msg.err != nil {
-		m.err = msg.err
-		m.modal = modalError
-		m.modalResult = msg.err.Error()
+		if active {
+			m.err = msg.err
+			m.modal = modalError
+			m.modalResult = msg.err.Error()
+		}
 		return m, nil
 	}
 	// Show search results as a timeline
@@ -1087,20 +1103,25 @@ func (m Model) handleDataLoaded(msg dataLoadedMsg) (tea.Model, tea.Cmd) {
 	if msg.requestID != m.aggregateRequestID {
 		return m, nil
 	}
-	m.transitionBuffer = "" // Unfreeze view now that data is ready
-	m.loading = false
-	m.inlineSearchLoading = false
+	active := m.finishModePresentation(modeEmail)
+	if active {
+		m.inlineSearchLoading = false
+	}
 	if msg.err != nil {
-		m.err = query.HintRepairEncoding(msg.err)
-		m.modal = modalError
-		m.modalResult = m.err.Error()
+		if active {
+			m.err = query.HintRepairEncoding(msg.err)
+			m.modal = modalError
+			m.modalResult = m.err.Error()
+		}
 		m.restorePosition = false // Clear flag on error to prevent stale state
 		return m, nil
 	}
 
-	m.err = nil
-	if m.modal == modalError {
-		m.modal = modalNone
+	if active {
+		m.err = nil
+		if m.modal == modalError {
+			m.modal = modalNone
+		}
 	}
 	m.rows = msg.rows
 	// Only reset position on fresh loads, not when restoring from breadcrumb
@@ -1169,19 +1190,24 @@ func (m Model) handleMessagesLoaded(msg messagesLoadedMsg) (tea.Model, tea.Cmd) 
 	if msg.requestID != m.loadRequestID {
 		return m, nil
 	}
-	m.transitionBuffer = "" // Unfreeze view now that data is ready
-	m.loading = false
-	m.inlineSearchLoading = false
+	active := m.finishModePresentation(modeEmail)
+	if active {
+		m.inlineSearchLoading = false
+	}
 	m.msgListLoadingMore = false
 	if msg.err != nil {
-		m.err = query.HintRepairEncoding(msg.err)
-		m.modal = modalError
-		m.modalResult = m.err.Error()
+		if active {
+			m.err = query.HintRepairEncoding(msg.err)
+			m.modal = modalError
+			m.modalResult = m.err.Error()
+		}
 		m.restorePosition = false // Clear flag on error to prevent stale state
 	} else {
-		m.err = nil
-		if m.modal == modalError {
-			m.modal = modalNone
+		if active {
+			m.err = nil
+			if m.modal == modalError {
+				m.modal = modalNone
+			}
 		}
 		if msg.append {
 			// Append paginated results to existing list
@@ -1212,16 +1238,19 @@ func (m Model) handleMessageDetailLoaded(msg messageDetailLoadedMsg) (tea.Model,
 	if msg.requestID != m.detailRequestID {
 		return m, nil
 	}
-	m.transitionBuffer = "" // Unfreeze view now that data is ready
-	m.loading = false
+	active := m.finishModePresentation(modeEmail)
 	if msg.err != nil {
-		m.err = query.HintRepairEncoding(msg.err)
-		m.modal = modalError
-		m.modalResult = m.err.Error()
+		if active {
+			m.err = query.HintRepairEncoding(msg.err)
+			m.modal = modalError
+			m.modalResult = m.err.Error()
+		}
 	} else {
-		m.err = nil
-		if m.modal == modalError {
-			m.modal = modalNone
+		if active {
+			m.err = nil
+			if m.modal == modalError {
+				m.modal = modalNone
+			}
 		}
 		m.messageDetail = msg.detail
 		m.detailScroll = 0
@@ -1237,14 +1266,17 @@ func (m Model) handleThreadMessagesLoaded(msg threadMessagesLoadedMsg) (tea.Mode
 	if msg.requestID != m.loadRequestID {
 		return m, nil
 	}
-	m.transitionBuffer = "" // Unfreeze view now that data is ready
-	m.loading = false
+	active := m.finishModePresentation(modeEmail)
 	if msg.err != nil {
-		m.err = query.HintRepairEncoding(msg.err)
-		m.modal = modalError
-		m.modalResult = m.err.Error()
+		if active {
+			m.err = query.HintRepairEncoding(msg.err)
+			m.modal = modalError
+			m.modalResult = m.err.Error()
+		}
 	} else {
-		m.err = nil
+		if active {
+			m.err = nil
+		}
 		m.threadMessages = msg.messages
 		m.threadConversationID = msg.conversationID
 		m.threadTruncated = msg.truncated
@@ -1261,20 +1293,25 @@ func (m Model) handleSearchResults(msg searchResultsMsg) (tea.Model, tea.Cmd) {
 	if msg.requestID != m.searchRequestID {
 		return m, nil
 	}
-	m.transitionBuffer = "" // Unfreeze view now that data is ready
-	m.loading = false
-	m.inlineSearchLoading = false
-	m.searchLoadingMore = false
+	active := m.finishModePresentation(modeEmail)
+	if active {
+		m.inlineSearchLoading = false
+		m.searchLoadingMore = false
+	}
 	if msg.err != nil {
-		m.err = query.HintRepairEncoding(msg.err)
-		m.modal = modalError
-		m.modalResult = m.err.Error()
+		if active {
+			m.err = query.HintRepairEncoding(msg.err)
+			m.modal = modalError
+			m.modalResult = m.err.Error()
+		}
 		return m, nil
 	}
 
-	m.err = nil
-	if m.modal == modalError {
-		m.modal = modalNone
+	if active {
+		m.err = nil
+		if m.modal == modalError {
+			m.modal = modalNone
+		}
 	}
 	if msg.append {
 		m.appendSearchResults(msg)
