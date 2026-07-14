@@ -101,21 +101,21 @@ func (m Model) handleGlobalKeys(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 		m.modal = modalHelp
 		return m, nil, true
 	case "m":
-		if m.textEngine == nil {
-			return m, nil, true
-		}
-		if m.mode == modeEmail {
-			m.mode = modeTexts
+		m.mode = nextMode(m.mode, m.textEngine != nil)
+		switch m.mode {
+		case modeTexts:
 			m.textState.filter.SourceID = m.accountFilter
 			m.loading = true
 			spinCmd := m.startSpinner()
 			return m, tea.Batch(spinCmd, m.loadTextConversations()), true
+		case modeMeetings:
+			return m, nil, true
+		default:
+			m.loading = true
+			m.aggregateRequestID++
+			spinCmd := m.startSpinner()
+			return m, tea.Batch(spinCmd, m.loadData(), m.loadStats()), true
 		}
-		m.mode = modeEmail
-		m.loading = true
-		m.aggregateRequestID++
-		spinCmd := m.startSpinner()
-		return m, tea.Batch(spinCmd, m.loadData(), m.loadStats()), true
 	}
 	return m, nil, false
 }
