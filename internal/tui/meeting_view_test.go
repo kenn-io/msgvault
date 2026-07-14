@@ -11,6 +11,7 @@ import (
 )
 
 func TestMeetingListViewShowsMeetingColumns(t *testing.T) {
+	assert := assert.New(t)
 	model := NewBuilder().WithAccounts(
 		query.AccountInfo{ID: 2, SourceType: "granola", Identifier: "work-notes"},
 	).WithSize(120, 24).Build()
@@ -29,15 +30,15 @@ func TestMeetingListViewShowsMeetingColumns(t *testing.T) {
 
 	view := stripANSI(model.renderView())
 
-	assert.Contains(t, view, "[Meetings]")
-	assert.Contains(t, view, "Date")
-	assert.Contains(t, view, "Title")
-	assert.Contains(t, view, "Organizer")
-	assert.Contains(t, view, "Source")
-	assert.Contains(t, view, "Product review")
-	assert.Contains(t, view, "Test Organizer")
-	assert.Contains(t, view, "Granola")
-	assert.NotContains(t, view, "del")
+	assert.Contains(view, "[Meetings]")
+	assert.Contains(view, "Date")
+	assert.Contains(view, "Title")
+	assert.Contains(view, "Organizer")
+	assert.Contains(view, "Source")
+	assert.Contains(view, "Product review")
+	assert.Contains(view, "Test Organizer")
+	assert.Contains(view, "Granola")
+	assert.NotContains(view, "del")
 }
 
 func TestMeetingListViewUsesPlaceholderForUnknownSource(t *testing.T) {
@@ -92,6 +93,7 @@ func TestMeetingSearchInputRemainsVisibleWithNoResults(t *testing.T) {
 }
 
 func TestMeetingDetailViewShowsTranscript(t *testing.T) {
+	assert := assert.New(t)
 	model := NewBuilder().WithAccounts(
 		query.AccountInfo{ID: 2, SourceType: "granola", Identifier: "work-notes"},
 	).WithSize(100, 24).Build()
@@ -110,29 +112,31 @@ func TestMeetingDetailViewShowsTranscript(t *testing.T) {
 
 	view := stripANSI(model.renderView())
 
-	assert.Contains(t, view, "Title: Product review")
-	assert.Contains(t, view, "When:")
-	assert.Contains(t, view, "Organizer: Test Organizer")
-	assert.Contains(t, view, "Attendees: Test Attendee")
-	assert.Contains(t, view, "Source: Granola")
-	assert.Contains(t, view, "Transcript / Notes")
-	assert.Contains(t, view, "A searchable transcript sentence.")
+	assert.Contains(view, "Title: Product review")
+	assert.Contains(view, "When:")
+	assert.Contains(view, "Organizer: Test Organizer")
+	assert.Contains(view, "Attendees: Test Attendee")
+	assert.Contains(view, "Source: Granola")
+	assert.Contains(view, "Transcript / Notes")
+	assert.Contains(view, "A searchable transcript sentence.")
 }
 
 func TestMeetingHelpOnlyShowsReadOnlyActions(t *testing.T) {
+	assert := assert.New(t)
 	model := NewBuilder().WithSize(100, 60).Build()
 	model.mode = modeMeetings
 
 	help := stripANSI(model.renderHelpModal())
 
-	assert.Contains(t, help, "Search titles, people, transcripts, and notes")
-	assert.Contains(t, help, "Select meeting source")
-	assert.Contains(t, help, "Cycle Email/Texts/Meetings")
-	assert.NotContains(t, help, "Stage for deletion")
-	assert.NotContains(t, help, "Toggle selection")
+	assert.Contains(help, "Search titles, people, transcripts, and notes")
+	assert.Contains(help, "Select meeting source")
+	assert.Contains(help, "Cycle Email/Texts/Meetings")
+	assert.NotContains(help, "Stage for deletion")
+	assert.NotContains(help, "Toggle selection")
 }
 
 func TestMeetingListFitsNarrowTerminal(t *testing.T) {
+	assert := assert.New(t)
 	model := NewBuilder().WithSize(32, 16).Build()
 	model.mode = modeMeetings
 	model.loading = false
@@ -143,6 +147,6 @@ func TestMeetingListFitsNarrowTerminal(t *testing.T) {
 	view := model.renderView()
 
 	for line := range strings.SplitSeq(view, "\n") {
-		assert.LessOrEqual(t, lipgloss.Width(line), 32, "line exceeds terminal width: %q", stripANSI(line))
+		assert.LessOrEqual(lipgloss.Width(line), 32, "line exceeds terminal width: %q", stripANSI(line))
 	}
 }

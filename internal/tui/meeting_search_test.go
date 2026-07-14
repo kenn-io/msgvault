@@ -13,6 +13,8 @@ import (
 )
 
 func TestMeetingSearchScopesTranscriptAndSource(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
 	sourceID := int64(7)
 	var captured *search.Query
 	engine := &querytest.MockEngine{}
@@ -26,15 +28,17 @@ func TestMeetingSearchScopesTranscriptAndSource(t *testing.T) {
 	msg := model.loadMeetingSearch("roadmap", 0, false)()
 
 	loaded, ok := msg.(meetingSearchLoadedMsg)
-	require.True(t, ok)
-	require.NoError(t, loaded.err)
-	require.NotNil(t, captured)
-	assert.Equal(t, []string{meetingMessageType}, captured.MessageTypes)
-	assert.Equal(t, []int64{sourceID}, captured.AccountIDs)
-	assert.Equal(t, []string{"roadmap"}, captured.TextTerms)
+	require.True(ok)
+	require.NoError(loaded.err)
+	require.NotNil(captured)
+	assert.Equal([]string{meetingMessageType}, captured.MessageTypes)
+	assert.Equal([]int64{sourceID}, captured.AccountIDs)
+	assert.Equal([]string{"roadmap"}, captured.TextTerms)
 }
 
 func TestMeetingSearchCannotOverrideMeetingScope(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
 	var captured *search.Query
 	engine := &querytest.MockEngine{}
 	engine.SearchFunc = func(_ context.Context, q *search.Query, _, _ int) ([]query.MessageSummary, error) {
@@ -46,12 +50,12 @@ func TestMeetingSearchCannotOverrideMeetingScope(t *testing.T) {
 	msg := model.loadMeetingSearch("message_type:email roadmap", 0, false)()
 
 	loaded, ok := msg.(meetingSearchLoadedMsg)
-	require.True(t, ok)
-	require.NoError(t, loaded.err)
-	require.NotNil(t, captured)
-	assert.Equal(t, []string{meetingMessageType}, captured.MessageTypes)
-	assert.NotNil(t, captured.AccountIDs, "conflicting scope must be match-nothing, not unscoped")
-	assert.Empty(t, captured.AccountIDs)
+	require.True(ok)
+	require.NoError(loaded.err)
+	require.NotNil(captured)
+	assert.Equal([]string{meetingMessageType}, captured.MessageTypes)
+	assert.NotNil(captured.AccountIDs, "conflicting scope must be match-nothing, not unscoped")
+	assert.Empty(captured.AccountIDs)
 }
 
 func TestMeetingSlashStartsDeepSearch(t *testing.T) {
@@ -66,6 +70,7 @@ func TestMeetingSlashStartsDeepSearch(t *testing.T) {
 }
 
 func TestMeetingSearchEnterRunsQuery(t *testing.T) {
+	assert := assert.New(t)
 	model := NewBuilder().Build()
 	model.mode = modeMeetings
 	model.meetingState.searchActive = true
@@ -75,12 +80,13 @@ func TestMeetingSearchEnterRunsQuery(t *testing.T) {
 	updated, ok := updatedModel.(Model)
 	require.True(t, ok)
 
-	assert.False(t, updated.meetingState.searchActive)
-	assert.Equal(t, "roadmap", updated.meetingState.searchQuery)
-	assert.NotNil(t, cmd)
+	assert.False(updated.meetingState.searchActive)
+	assert.Equal("roadmap", updated.meetingState.searchQuery)
+	assert.NotNil(cmd)
 }
 
 func TestMeetingEscapeClearsSearchAndRestoresList(t *testing.T) {
+	assert := assert.New(t)
 	model := NewBuilder().Build()
 	model.mode = modeMeetings
 	model.meetingState.searchQuery = "roadmap"
@@ -89,8 +95,8 @@ func TestMeetingEscapeClearsSearchAndRestoresList(t *testing.T) {
 
 	updated, cmd := sendKey(t, model, keyEsc())
 
-	assert.Nil(t, cmd)
-	assert.Empty(t, updated.meetingState.searchQuery)
+	assert.Nil(cmd)
+	assert.Empty(updated.meetingState.searchQuery)
 	require.Len(t, updated.meetingState.messages, 1)
-	assert.Equal(t, "Original meeting", updated.meetingState.messages[0].Subject)
+	assert.Equal("Original meeting", updated.meetingState.messages[0].Subject)
 }

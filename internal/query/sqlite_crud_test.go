@@ -1282,6 +1282,8 @@ func TestGetTotalStats_SearchScope(t *testing.T) {
 }
 
 func TestSQLiteMessageSummariesIncludeSourceID(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
 	env := newTestEnv(t)
 	sourceID := env.AddSource(dbtest.SourceOpts{Identifier: "meeting-source"})
 	conversationID := env.AddConversation(dbtest.ConversationOpts{
@@ -1295,9 +1297,9 @@ func TestSQLiteMessageSummariesIncludeSourceID(t *testing.T) {
 	})
 
 	listed, err := env.Engine.ListMessages(env.Ctx, MessageFilter{MessageType: messageTypeMeetingTranscript})
-	require.NoError(t, err, "ListMessages")
-	require.Len(t, listed, 1)
-	assert.Equal(t, sourceID, listed[0].SourceID)
+	require.NoError(err, "ListMessages")
+	require.Len(listed, 1)
+	assert.Equal(sourceID, listed[0].SourceID)
 
 	searched, err := env.Engine.Search(
 		env.Ctx,
@@ -1305,19 +1307,19 @@ func TestSQLiteMessageSummariesIncludeSourceID(t *testing.T) {
 		10,
 		0,
 	)
-	require.NoError(t, err, "Search")
-	require.Len(t, searched, 1)
-	assert.Equal(t, sourceID, searched[0].SourceID)
+	require.NoError(err, "Search")
+	require.Len(searched, 1)
+	assert.Equal(sourceID, searched[0].SourceID)
 
 	hydrated, err := env.Engine.GetMessageSummariesByIDs(env.Ctx, []int64{messageID})
-	require.NoError(t, err, "GetMessageSummariesByIDs")
-	require.Len(t, hydrated, 1)
-	assert.Equal(t, sourceID, hydrated[0].SourceID)
+	require.NoError(err, "GetMessageSummariesByIDs")
+	require.Len(hydrated, 1)
+	assert.Equal(sourceID, hydrated[0].SourceID)
 
 	detail, err := env.Engine.GetMessage(env.Ctx, messageID)
-	require.NoError(t, err, "GetMessage")
-	require.NotNil(t, detail)
-	assert.Equal(t, sourceID, detail.SourceID)
+	require.NoError(err, "GetMessage")
+	require.NotNil(detail)
+	assert.Equal(sourceID, detail.SourceID)
 }
 
 func TestGetTotalStats_SearchScopeCountsMatchingLabelsAndSources(t *testing.T) {

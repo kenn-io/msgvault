@@ -1192,6 +1192,8 @@ func TestDuckDBEngine_SearchFast_MessageTypeFilter(t *testing.T) {
 }
 
 func TestDuckDBMessageSummariesIncludeSourceID(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
 	b := NewTestDataBuilder(t)
 	b.AddSource("email@example.com")
 	meetingSourceID := b.AddSource("meeting-source")
@@ -1203,9 +1205,9 @@ func TestDuckDBMessageSummariesIncludeSourceID(t *testing.T) {
 	engine := b.BuildEngine()
 
 	listed, err := engine.ListMessages(context.Background(), MessageFilter{MessageType: messageTypeMeetingTranscript})
-	require.NoError(t, err, "ListMessages")
-	require.Len(t, listed, 1)
-	assert.Equal(t, meetingSourceID, listed[0].SourceID)
+	require.NoError(err, "ListMessages")
+	require.Len(listed, 1)
+	assert.Equal(meetingSourceID, listed[0].SourceID)
 
 	searched, err := engine.SearchFast(
 		context.Background(),
@@ -1214,10 +1216,10 @@ func TestDuckDBMessageSummariesIncludeSourceID(t *testing.T) {
 		10,
 		0,
 	)
-	require.NoError(t, err, "SearchFast")
-	require.Len(t, searched, 1)
-	assert.Equal(t, messageID, searched[0].ID)
-	assert.Equal(t, meetingSourceID, searched[0].SourceID)
+	require.NoError(err, "SearchFast")
+	require.Len(searched, 1)
+	assert.Equal(messageID, searched[0].ID)
+	assert.Equal(meetingSourceID, searched[0].SourceID)
 
 	withStats, err := engine.SearchFastWithStats(
 		context.Background(),
@@ -1228,9 +1230,9 @@ func TestDuckDBMessageSummariesIncludeSourceID(t *testing.T) {
 		10,
 		0,
 	)
-	require.NoError(t, err, "SearchFastWithStats")
-	require.Len(t, withStats.Messages, 1)
-	assert.Equal(t, meetingSourceID, withStats.Messages[0].SourceID)
+	require.NoError(err, "SearchFastWithStats")
+	require.Len(withStats.Messages, 1)
+	assert.Equal(meetingSourceID, withStats.Messages[0].SourceID)
 }
 
 func TestDuckDBEngine_SearchFastWithStats_MessageTypeFilter(t *testing.T) {
