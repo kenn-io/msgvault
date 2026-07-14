@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"html"
 	"os"
 	"regexp"
 	"strings"
@@ -13,15 +14,6 @@ import (
 )
 
 var (
-	markdownNonCSIEscape = regexp.MustCompile(
-		`\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)?` +
-			`|\x1bP[^\x1b]*(?:\x1b\\)?` +
-			`|\x1b[^[\]P]`,
-	)
-	markdownCSI = regexp.MustCompile(
-		`\x1b\[[\x30-\x3f]*[\x20-\x2f]*[\x40-\x7e]`,
-	)
-	markdownSGR             = regexp.MustCompile(`^\x1b\[[0-9;]*m$`)
 	markdownAllSGR          = regexp.MustCompile(`\x1b\[[0-9;]*m`)
 	markdownTrailingPadding = regexp.MustCompile(`(\s|\x1b\[[0-9;]*m)+$`)
 )
@@ -126,6 +118,7 @@ func renderMarkdownLines(text string, width int, dark, noColor bool) []string {
 // Glamour adds its own SGR styling. Sanitizing line by line applies the shared
 // single-line security contract without collapsing Markdown structure.
 func sanitizeMarkdownSource(text string) string {
+	text = html.UnescapeString(text)
 	text = strings.ReplaceAll(text, "\r\n", "\n")
 	text = strings.ReplaceAll(text, "\r", "\n")
 	lines := strings.Split(text, "\n")
@@ -143,24 +136,64 @@ func wrapSafeMarkdownFallback(text string, width int) []string {
 	return lines
 }
 
-// sanitizeMarkdownEscapes retains Glamour's SGR styling while removing
-// cursor movement, title changes, device commands, and overwrite controls.
+// sanitizeMarkdownEscapes retains only Glamour's SGR styling. Controls are
+// removed before escape parsing so interleaved bytes cannot reconstruct a
+// terminal command after validation.
 func sanitizeMarkdownEscapes(line string) string {
-	line = markdownNonCSIEscape.ReplaceAllString(line, "")
-	line = markdownCSI.ReplaceAllStringFunc(line, func(sequence string) string {
-		if markdownSGR.MatchString(sequence) {
-			return sequence
-		}
-		return ""
-	})
-	var b strings.Builder
+	var normalized strings.Builder
 	for _, r := range line {
-		if r < 0x20 && r != '\t' && r != 0x1b {
+		switch {
+		case r == 0x1b:
+			normalized.WriteRune(r)
+		case r == '\t':
+			normalized.WriteByte(' ')
+		case r < 0x20 || (r >= 0x7f && r <= 0x9f):
+			continue
+		default:
+			normalized.WriteRune(r)
+		}
+	}
+	line = normalized.String()
+
+	var b strings.Builder
+	for i := 0; i < len(line); {
+		if line[i] != 0x1b {
+			b.WriteByte(line[i])
+			i++
 			continue
 		}
-		b.WriteRune(r)
+		if i+1 >= len(line) || line[i+1] != '[' {
+			i++
+			continue
+		}
+		end := i + 2
+		for end < len(line) && ((line[end] >= 0x30 && line[end] <= 0x3f) ||
+			(line[end] >= 0x20 && line[end] <= 0x2f)) {
+			end++
+		}
+		if end >= len(line) || line[end] < 0x40 || line[end] > 0x7e {
+			i++
+			continue
+		}
+		sequence := line[i : end+1]
+		if safeMarkdownSGR(sequence) {
+			b.WriteString(sequence)
+		}
+		i = end + 1
 	}
 	return b.String()
+}
+
+func safeMarkdownSGR(sequence string) bool {
+	if len(sequence) < 3 || !strings.HasPrefix(sequence, "\x1b[") || sequence[len(sequence)-1] != 'm' {
+		return false
+	}
+	for _, c := range sequence[2 : len(sequence)-1] {
+		if (c < '0' || c > '9') && c != ';' {
+			return false
+		}
+	}
+	return true
 }
 
 func stripMarkdownPadding(line string, noColor bool) string {

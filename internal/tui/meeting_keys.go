@@ -45,10 +45,11 @@ func (m Model) handleMeetingKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		if m.meetingState.searchQuery != "" {
 			m.meetingState.searchQuery = ""
 			m.meetingState.searchInput.SetValue("")
-			m.meetingState.searchRequestID++
+			m.invalidateMeetingSearchLoad()
 			if !m.meetingState.searchSnapshotInvalid && m.meetingState.preSearch != nil {
 				m.meetingState.messages = m.meetingState.preSearch
 				m.meetingState.preSearch = nil
+				m.restoreMeetingListPagination()
 			} else {
 				// A source change invalidates the old source's pre-search
 				// snapshot. Reload the selected source rather than presenting
@@ -57,8 +58,6 @@ func (m Model) handleMeetingKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			}
 			m.meetingState.cursor = 0
 			m.meetingState.scrollOffset = 0
-			m.meetingState.searchOffset = 0
-			m.meetingState.searchComplete = false
 			if m.meetingState.messages == nil {
 				m.meetingState.searchSnapshotInvalid = false
 				return m.reloadMeetingList()
@@ -118,6 +117,29 @@ func (m Model) reloadMeetingList() (tea.Model, tea.Cmd) {
 	m.loading = true
 	spinCmd := m.startSpinner()
 	return m, tea.Batch(spinCmd, m.loadMeetingMessages())
+}
+
+func (m *Model) invalidateMeetingSearchLoad() {
+	m.meetingState.searchRequestID++
+	m.meetingState.searchOffset = 0
+	m.meetingState.searchComplete = false
+	m.meetingState.listLoadingMore = false
+	m.loading = false
+}
+
+func (m *Model) invalidateMeetingListForSearch() {
+	m.meetingState.requestID++
+	m.meetingState.listOffset = 0
+	m.meetingState.listComplete = false
+	m.meetingState.listLoadingMore = false
+	m.meetingState.searchOffset = 0
+	m.meetingState.searchComplete = false
+}
+
+func (m *Model) restoreMeetingListPagination() {
+	m.meetingState.listOffset = len(m.meetingState.messages)
+	m.meetingState.listComplete = len(m.meetingState.messages) < messageListPageSize
+	m.meetingState.listLoadingMore = false
 }
 
 func (m *Model) maybeLoadMoreMeetings() tea.Cmd {
@@ -260,23 +282,23 @@ func (m Model) handleMeetingSearchInput(msg tea.KeyPressMsg) (tea.Model, tea.Cmd
 		m.meetingState.searchInput.Blur()
 		m.meetingState.searchQuery = queryString
 		if queryString == "" {
-			if m.meetingState.searchSnapshotInvalid {
-				m.meetingState.searchRequestID++
+			m.invalidateMeetingSearchLoad()
+			if m.meetingState.searchSnapshotInvalid || m.meetingState.preSearch == nil {
 				m.meetingState.searchSnapshotInvalid = false
 				m.meetingState.preSearch = nil
 				m.meetingState.messages = nil
 				m.meetingState.cursor = 0
 				m.meetingState.scrollOffset = 0
-				m.meetingState.searchOffset = 0
-				m.meetingState.searchComplete = false
 				return m.reloadMeetingList()
 			}
 			m.meetingState.messages = m.meetingState.preSearch
 			m.meetingState.preSearch = nil
 			m.meetingState.cursor = 0
 			m.meetingState.scrollOffset = 0
+			m.restoreMeetingListPagination()
 			return m, nil
 		}
+		m.invalidateMeetingListForSearch()
 		m.loading = true
 		m.meetingState.searchRequestID++
 		spinCmd := m.startSpinner()

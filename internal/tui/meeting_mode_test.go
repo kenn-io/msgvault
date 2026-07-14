@@ -315,6 +315,107 @@ func TestMeetingEmptySearchAfterSourceChangeReloadsSelectedSourceList(t *testing
 	}
 }
 
+func TestMeetingSearchClearInvalidatesInFlightResultsAndSettlesLoading(t *testing.T) {
+	for _, tt := range []struct {
+		name       string
+		searchOpen bool
+		key        tea.KeyPressMsg
+	}{
+		{name: "empty submit", searchOpen: true, key: keyEnter()},
+		{name: "list escape", key: keyEsc()},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			model := NewBuilder().Build()
+			model.mode = modeMeetings
+			model.loading = true
+			model.meetingState.searchActive = tt.searchOpen
+			model.meetingState.searchQuery = "roadmap"
+			model.meetingState.searchInput.SetValue("")
+			model.meetingState.searchRequestID = 7
+			model.meetingState.preSearch = []query.MessageSummary{{ID: 10, Subject: "Full list"}}
+			model.meetingState.messages = []query.MessageSummary{{ID: 20, Subject: "Search result"}}
+			model.meetingState.searchOffset = 25
+			model.meetingState.searchComplete = true
+			model.meetingState.listLoadingMore = true
+
+			updated, cmd := sendKey(t, model, tt.key)
+
+			assert.Nil(cmd)
+			assert.Greater(updated.meetingState.searchRequestID, uint64(7))
+			assert.False(updated.loading)
+			assert.False(updated.meetingState.listLoadingMore)
+			assert.Zero(updated.meetingState.searchOffset)
+			assert.False(updated.meetingState.searchComplete)
+			require.Len(updated.meetingState.messages, 1)
+			assert.Equal(int64(10), updated.meetingState.messages[0].ID)
+
+			updated = sendMsg(t, updated, meetingSearchLoadedMsg{
+				messages:  []query.MessageSummary{{ID: 30, Subject: "Stale result"}},
+				requestID: 7,
+			})
+			require.Len(updated.meetingState.messages, 1)
+			assert.Equal(int64(10), updated.meetingState.messages[0].ID)
+		})
+	}
+}
+
+func TestMeetingSearchStartInvalidatesInFlightList(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	model := NewBuilder().Build()
+	model.mode = modeMeetings
+	model.meetingState.searchActive = true
+	model.meetingState.searchInput.SetValue("roadmap")
+	model.meetingState.messages = []query.MessageSummary{{ID: 20, Subject: "Current list"}}
+	model.meetingState.requestID = 4
+	model.meetingState.searchRequestID = 9
+	model.meetingState.listOffset = 40
+	model.meetingState.listComplete = true
+	model.meetingState.listLoadingMore = true
+	model.meetingState.searchOffset = 25
+	model.meetingState.searchComplete = true
+
+	updated, cmd := sendKey(t, model, keyEnter())
+
+	require.NotNil(cmd)
+	assert.Greater(updated.meetingState.requestID, uint64(4))
+	assert.Greater(updated.meetingState.searchRequestID, uint64(9))
+	assert.Zero(updated.meetingState.listOffset)
+	assert.False(updated.meetingState.listComplete)
+	assert.False(updated.meetingState.listLoadingMore)
+	assert.Zero(updated.meetingState.searchOffset)
+	assert.False(updated.meetingState.searchComplete)
+
+	updated = sendMsg(t, updated, meetingMessagesLoadedMsg{
+		messages:  []query.MessageSummary{{ID: 30, Subject: "Stale unfiltered list"}},
+		requestID: 4,
+	})
+	require.Len(updated.meetingState.messages, 1)
+	assert.Equal(int64(20), updated.meetingState.messages[0].ID)
+}
+
+func TestTextKeyTransitionKeepsRequestOwnerOnReturnedModel(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	model := NewBuilder().Build()
+	model.mode = modeTexts
+	model.textEngine = meetingModeTextEngine{}
+	model.textState.level = textLevelConversations
+
+	updated, cmd := sendKey(t, model, tea.KeyPressMsg{Code: tea.KeyTab})
+
+	require.NotNil(cmd)
+	msg := cmd()
+	loaded, ok := msg.(textAggregateLoadedMsg)
+	require.True(ok)
+	assert.Equal(updated.textRequestID, loaded.requestID)
+
+	updated = sendMsg(t, updated, loaded)
+	assert.False(updated.loading, "the real key transition completion must settle loading")
+}
+
 func runBatchCommand(t *testing.T, cmd tea.Cmd) []tea.Msg {
 	t.Helper()
 	require.NotNil(t, cmd)

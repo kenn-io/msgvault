@@ -114,7 +114,8 @@ func (m Model) handleGlobalKeys(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 			m.textState.filter.SourceID = m.accountFilter
 			m.loading = true
 			spinCmd := m.startSpinner()
-			return m, tea.Batch(spinCmd, m.loadTextConversations()), true
+			loadCmd := m.loadTextConversations()
+			return m, tea.Batch(spinCmd, loadCmd), true
 		case modeMeetings:
 			if m.meetingState.initialized {
 				m.loading = false
@@ -1002,7 +1003,8 @@ func (m Model) handleAccountSelectorKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cm
 		}
 		if m.mode == modeTexts {
 			m.textState.filter.SourceID = m.accountFilter
-			return m, m.loadTextData()
+			cmd := m.loadTextData()
+			return m, cmd
 		}
 		m.aggregateRequestID++
 		return m, tea.Batch(m.loadData(), m.loadStats())

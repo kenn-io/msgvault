@@ -84,12 +84,46 @@ func TestSanitizeMarkdownSourcePreservesLinesAndStripsAllControls(t *testing.T) 
 	assert.Equal(t, "line one\nred\ncsi:2J\nosc:title\nlone:\npartial:", got)
 }
 
+func TestSanitizeMarkdownSourceDecodesEntitiesBeforeFiltering(t *testing.T) {
+	got := sanitizeMarkdownSource("before &#27;[2J after")
+
+	assert.Equal(t, "before  after", got)
+}
+
+func TestSanitizeMarkdownEscapesRejectsControlInterleavedCommands(t *testing.T) {
+	assert := assert.New(t)
+	got := sanitizeMarkdownEscapes("before \x1b[\x012J after")
+
+	assert.NotContains(got, "\x1b")
+	assert.NotContains(got, "\x01")
+	assert.Contains(got, "before")
+	assert.Contains(got, "after")
+}
+
 func TestRenderMarkdownLinesRejectsSourceProvidedSGR(t *testing.T) {
 	lines := renderMarkdownLines("before \x1b[31mINJECTED\x1b[0m after", 80, true, false)
 	joined := strings.Join(lines, "\n")
 
 	assert.Contains(t, stripANSI(joined), "before INJECTED after")
 	assert.NotContains(t, joined, "\x1b[31mINJECTED")
+}
+
+func TestRenderMarkdownLinesRejectsEntityEncodedInterleavedTerminalCommand(t *testing.T) {
+	assert := assert.New(t)
+	lines := renderMarkdownLines(
+		"before &#27;[&#1;2J forged screen after",
+		80, true, false,
+	)
+	joined := strings.Join(lines, "\n")
+
+	assert.Contains(stripANSI(joined), "before")
+	assert.Contains(stripANSI(joined), "after")
+	assert.NotContains(joined, "\x1b[2J")
+	assert.NotContains(markdownAllSGR.ReplaceAllString(joined, ""), "\x1b")
+	for _, r := range joined {
+		assert.False(r < 0x20 && r != '\t' && r != '\n' && r != 0x1b,
+			"unexpected control character U+%04X", r)
+	}
 }
 
 func TestMeetingMarkdownCacheInvalidatesOnContentAndWidth(t *testing.T) {
