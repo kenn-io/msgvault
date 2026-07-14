@@ -183,6 +183,9 @@ func (m Model) handleMeetingDetailKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd)
 	case keyNameEsc, "backspace":
 		m.meetingState.level = meetingLevelList
 		m.meetingState.detailScroll = 0
+		m.meetingState.detailRequestID++
+		m.meetingState.detailLoading = false
+		m.updateMeetingLoading()
 		return m, nil
 	case "up", "k":
 		m.meetingState.detailScroll = max(m.meetingState.detailScroll-1, 0)

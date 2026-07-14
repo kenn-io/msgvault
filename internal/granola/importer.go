@@ -122,24 +122,31 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (*ImportSum
 	// had zero fetch errors — a failed note would otherwise be skipped
 	// forever. IDs at the exact boundary avoid rewriting unchanged overlap.
 	maxUpdated := cursorUpdatedAt
-	boundaryIDs := make(map[string]struct{}, len(state.UpdatedAfterIDs))
+	previousBoundaryIDs := make(map[string]struct{}, len(state.UpdatedAfterIDs))
+	cursorBoundaryIDs := make(map[string]struct{}, len(state.UpdatedAfterIDs))
+	maxBoundaryIDs := make(map[string]struct{}, len(state.UpdatedAfterIDs))
 	for _, id := range state.UpdatedAfterIDs {
-		boundaryIDs[id] = struct{}{}
+		previousBoundaryIDs[id] = struct{}{}
+		cursorBoundaryIDs[id] = struct{}{}
+		maxBoundaryIDs[id] = struct{}{}
 	}
 
 	err = imp.forEachNote(ctx, src.ID, accountIdentities, params, opts, sum, func(n NoteSummary) bool {
 		if opts.Full || cursorUpdatedAt.IsZero() || !n.UpdatedAt.Equal(cursorUpdatedAt) {
 			return false
 		}
-		_, covered := boundaryIDs[n.ID]
+		_, covered := previousBoundaryIDs[n.ID]
 		return covered
 	}, func(n *Note) {
+		if !cursorUpdatedAt.IsZero() && n.UpdatedAt.Equal(cursorUpdatedAt) {
+			cursorBoundaryIDs[n.ID] = struct{}{}
+		}
 		if n.UpdatedAt.After(maxUpdated) {
 			maxUpdated = n.UpdatedAt
-			clear(boundaryIDs)
-			boundaryIDs[n.ID] = struct{}{}
+			clear(maxBoundaryIDs)
+			maxBoundaryIDs[n.ID] = struct{}{}
 		} else if n.UpdatedAt.Equal(maxUpdated) {
-			boundaryIDs[n.ID] = struct{}{}
+			maxBoundaryIDs[n.ID] = struct{}{}
 		}
 	})
 	if err != nil {
@@ -171,8 +178,17 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (*ImportSum
 	boundedFull := opts.Full && !opts.CreatedAfter.IsZero()
 	if opts.Limit == 0 && !boundedFull && !maxUpdated.IsZero() {
 		cursor = maxUpdated.UTC().Format(time.RFC3339Nano)
-		cursorIDs = make([]string, 0, len(boundaryIDs))
-		for id := range boundaryIDs {
+		cursorIDs = make([]string, 0, len(maxBoundaryIDs))
+		for id := range maxBoundaryIDs {
+			cursorIDs = append(cursorIDs, id)
+		}
+		slices.Sort(cursorIDs)
+	} else if !cursorUpdatedAt.IsZero() {
+		// A bounded traversal cannot advance the timestamp, but remembering
+		// successfully ingested IDs exactly at that timestamp lets repeated
+		// limited runs make progress through a shared boundary.
+		cursorIDs = make([]string, 0, len(cursorBoundaryIDs))
+		for id := range cursorBoundaryIDs {
 			cursorIDs = append(cursorIDs, id)
 		}
 		slices.Sort(cursorIDs)

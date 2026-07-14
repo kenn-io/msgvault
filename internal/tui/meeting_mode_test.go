@@ -1103,6 +1103,29 @@ func TestMeetingDetailFlowRestoresListPosition(t *testing.T) {
 	assert.Equal(1, returned.meetingState.cursor)
 }
 
+func TestMeetingDetailExitInvalidatesPendingLoad(t *testing.T) {
+	assert := assert.New(t)
+	model := NewBuilder().Build()
+	model.mode = modeMeetings
+	model.loading = true
+	model.meetingState.level = meetingLevelDetail
+	model.meetingState.detailRequestID = 5
+	model.meetingState.detailLoading = true
+
+	returned, _ := sendKey(t, model, keyEsc())
+
+	assert.Equal(meetingLevelList, returned.meetingState.level)
+	assert.Greater(returned.meetingState.detailRequestID, uint64(5))
+	assert.False(returned.meetingState.detailLoading)
+	assert.False(returned.loading)
+
+	returned = sendMsg(t, returned, meetingDetailLoadedMsg{
+		detail:    &query.MessageDetail{ID: 2, Subject: "Stale detail"},
+		requestID: 5,
+	})
+	assert.Nil(returned.meetingState.detail)
+}
+
 func TestMeetingDetailFindJumpsToTranscriptMatch(t *testing.T) {
 	assert := assert.New(t)
 	model := NewBuilder().WithSize(80, 12).Build()

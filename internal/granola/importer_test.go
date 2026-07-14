@@ -573,12 +573,15 @@ func TestImport_FatalRunPersistsSuccessfulRefreshCounters(t *testing.T) {
 func TestImport_CursorAdvancesOnlyOnCleanRuns(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
+	updatedID := "not_Ab12Cd34Ef56Gh"
+	failingID := "not_Zz98Yy87Xx76Wv"
 	api := &fakeAPI{
 		notes: map[string][]byte{
-			"not_Ab12Cd34Ef56Gh": loadFixture(t, "note_full.json"),
-			"not_Zz98Yy87Xx76Wv": loadFixture(t, "note_no_calendar.json"),
+			updatedID: loadFixture(t, "note_full.json"),
+			failingID: loadFixture(t, "note_no_calendar.json"),
 		},
-		fail: map[string]bool{},
+		orderedIDs: []string{updatedID, failingID},
+		fail:       map[string]bool{},
 	}
 	imp, st := newTestImporter(t, api)
 
@@ -604,11 +607,14 @@ func TestImport_CursorAdvancesOnlyOnCleanRuns(t *testing.T) {
 	assert.Equal("2026-06-02T09:50:00Z", firstCursor)
 
 	// Failing run: one note 404s; the cursor must not advance.
-	edited := strings.Replace(string(api.notes["not_Ab12Cd34Ef56Gh"]),
+	edited := strings.Replace(string(api.notes[updatedID]),
 		"2026-06-01T16:45:00Z", "2026-06-05T12:00:00Z", 1)
+	failing := strings.Replace(string(api.notes[failingID]),
+		"2026-06-02T09:50:00Z", "2026-06-04T12:00:00Z", 1)
 	api.mu.Lock()
-	api.notes["not_Ab12Cd34Ef56Gh"] = []byte(edited)
-	api.fail["not_Zz98Yy87Xx76Wv"] = true
+	api.notes[updatedID] = []byte(edited)
+	api.notes[failingID] = []byte(failing)
+	api.fail[failingID] = true
 	api.mu.Unlock()
 
 	sum2, err := imp.Import(context.Background(), ImportOptions{Identifier: "alice@example.com"})
@@ -629,7 +635,7 @@ func TestImport_CursorAdvancesOnlyOnCleanRuns(t *testing.T) {
 
 	// Clean retry: cursor advances past the edited note.
 	api.mu.Lock()
-	api.fail["not_Zz98Yy87Xx76Wv"] = false
+	api.fail[failingID] = false
 	api.mu.Unlock()
 	sum3, err := imp.Import(context.Background(), ImportOptions{Identifier: "alice@example.com"})
 	require.NoError(err)
@@ -718,6 +724,53 @@ func TestImport_CoveredCursorBoundaryDoesNotConsumeLimit(t *testing.T) {
 	assert.EqualValues(1, sum.NotesProcessed)
 	assert.EqualValues(1, sum.NotesAdded,
 		"an already-covered overlap row must not starve a new note under --limit")
+}
+
+func TestImport_LimitedRunsRememberNewCursorBoundaryIDs(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	updatedAt := time.Date(2026, 7, 14, 18, 30, 0, 123456789, time.UTC)
+	firstID := "not_InitialLimitedBoundary"
+	lateFirstID := "not_FirstLateLimitedBoundary"
+	lateSecondID := "not_SecondLateLimitedBoundary"
+	api := &fakeAPI{
+		notes: map[string][]byte{
+			firstID: noteFixtureAt(t, firstID, updatedAt),
+		},
+		orderedIDs:          []string{firstID},
+		respectUpdatedAfter: true,
+	}
+	imp, st := newTestImporter(t, api)
+
+	_, err := imp.Import(context.Background(), ImportOptions{Identifier: "alice@example.com"})
+	require.NoError(err)
+	api.mu.Lock()
+	api.notes[lateFirstID] = noteFixtureAt(t, lateFirstID, updatedAt)
+	api.notes[lateSecondID] = noteFixtureAt(t, lateSecondID, updatedAt)
+	api.orderedIDs = []string{firstID, lateFirstID, lateSecondID}
+	api.mu.Unlock()
+
+	firstLimited, err := imp.Import(context.Background(), ImportOptions{
+		Identifier: "alice@example.com",
+		Limit:      1,
+	})
+	require.NoError(err)
+	assert.EqualValues(1, firstLimited.NotesAdded)
+	assert.Zero(firstLimited.NotesUpdated)
+
+	secondLimited, err := imp.Import(context.Background(), ImportOptions{
+		Identifier: "alice@example.com",
+		Limit:      1,
+	})
+	require.NoError(err)
+	assert.EqualValues(1, secondLimited.NotesAdded,
+		"the second late boundary note must not be starved by the first")
+	assert.Zero(secondLimited.NotesUpdated,
+		"the first late boundary note must be remembered after a limited run")
+
+	var count int
+	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&count))
+	assert.Equal(3, count)
 }
 
 func TestImport_LimitDoesNotAdvanceCursor(t *testing.T) {
