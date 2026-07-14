@@ -23,30 +23,40 @@ var deprecatedTUINoSQLiteScanner bool
 var tuiCmd = &cobra.Command{
 	Use:   "tui",
 	Short: "Open the interactive terminal UI",
-	Long: `Open an interactive terminal UI for browsing your email archive.
+	Long: `Open an interactive terminal UI for browsing email, text messages,
+and meeting transcripts.
 
-The TUI provides aggregate views of your messages by:
+Email mode provides aggregate views by:
   - Senders: Who sends you the most email
   - Recipients: Who you email most frequently
   - Domains: Which domains you interact with
   - Labels: Gmail label distribution
   - Time: Message volume over time
 
+Press 'm' to cycle through Email, Texts, and Meetings. Texts is skipped when
+its engine is unavailable. Meetings shows a read-only list of Granola and
+Circleback transcripts and remains available before a source is configured.
+
 Navigation:
   ↑/k, ↓/j    Move up/down
   PgUp/PgDn   Page up/down
   Enter       Drill down / view message
   Esc         Go back
-  Tab         Switch view (aggregates only)
+  m           Cycle Email / Texts / Meetings
+  g           Cycle aggregate view (Email and Texts)
+  /           Search; find within an open meeting transcript
+  A           Filter by account, or meeting source in Meetings mode
   s           Cycle sort field
   r           Reverse sort direction
   t           Toggle time granularity (Time view only)
 
-Selection:
+Email selection:
   Space       Toggle selection
-  A           Select all visible
   x           Clear selection
-  q           Quit
+  d           Stage selected messages for deletion
+
+Meeting browsing is read-only; selection and deletion keys are disabled.
+Press '?' in any mode for its complete key reference, or 'q' to quit.
 
 Performance:
   The TUI talks to the msgvault HTTP API. Local runs use the daemon, which owns
