@@ -1552,12 +1552,10 @@ func TestImport_TranscriptProviderUnrecognizedAndIngestFailuresRetainCursor(t *t
 		transcript    json.RawMessage
 		transcriptErr error
 		ingestFailure bool
-		wantMessage   bool
 	}{
 		{
 			name:          "provider tool failure",
 			transcriptErr: context.DeadlineExceeded,
-			wantMessage:   true,
 		},
 		{
 			name:       "unrecognized result object",
@@ -1634,11 +1632,8 @@ func TestImport_TranscriptProviderUnrecognizedAndIngestFailuresRetainCursor(t *t
 			require.NoError(st.DB().QueryRow(st.Rebind(
 				`SELECT COUNT(*) FROM messages WHERE source_id = ? AND source_message_id = ?`),
 				prior.SourceID, "meeting:hard-error").Scan(&messageCount))
-			if tt.wantMessage {
-				assert.Equal(1, messageCount, "ordinary provider failure may still archive new meeting notes")
-			} else {
-				assert.Zero(messageCount, "contract and ingest failures must not persist a partial row")
-			}
+			assert.Zero(messageCount,
+				"transcript provider, contract, and ingest failures must leave new meetings retryable")
 		})
 	}
 }
@@ -1747,8 +1742,10 @@ func TestImport_TranscriptFailurePreservesArchivedTranscript(t *testing.T) {
 	require.Contains(bodyOf("meeting:42"), "[00:00] Alice Smith: Welcome to the design review.")
 
 	// Transcript retrieval now fails while the meeting notes were edited
-	// server-side, and a brand-new meeting appears. The existing meeting must
-	// keep its archived transcript; the new one is archived notes-only.
+	// server-side, and a brand-new historical meeting appears. The existing
+	// meeting must keep its archived transcript; the new one must remain absent
+	// so the next incremental search still treats it as retryable even though its
+	// creation time is outside the refresh overlap.
 	f.failTranscripts = true
 	f.meetings["42"] = json.RawMessage(`{
 		"id": 42, "name": "Design Review",
@@ -1768,16 +1765,17 @@ func TestImport_TranscriptFailurePreservesArchivedTranscript(t *testing.T) {
 	sum, err := imp.Import(context.Background(), ImportOptions{Identifier: "alice@example.com"})
 	require.Error(err)
 	assert.Positive(sum.Errors, "transcript failure must count as an error (holds the watermark)")
-	assert.EqualValues(1, sum.MeetingsAdded, "the new meeting is still archived notes-only")
+	assert.Zero(sum.MeetingsAdded, "a new meeting without a fetched transcript remains retryable")
 
 	body42 := bodyOf("meeting:42")
 	assert.Contains(body42, "[00:00] Alice Smith: Welcome to the design review.",
 		"existing archived transcript must survive a transient transcript failure")
 	assert.NotContains(body42, "EDITED notes", "the skipped meeting is untouched until transcripts return")
 
-	body43 := bodyOf("meeting:43")
-	assert.Contains(body43, "Retro notes")
-	assert.NotContains(body43, "Transcript:")
+	var meeting43Count int
+	require.NoError(st.DB().QueryRow(st.Rebind(`
+		SELECT COUNT(*) FROM messages WHERE source_message_id = ?`), "meeting:43").Scan(&meeting43Count))
+	assert.Zero(meeting43Count, "historical meeting must not be persisted without durable retry state")
 
 	// Once transcripts are available again, the edited meeting refreshes
 	// fully (notes + transcript) because the held watermark re-covers it.

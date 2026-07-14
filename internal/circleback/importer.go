@@ -494,12 +494,12 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (*ImportSum
 					if trErr != nil {
 						if exists {
 							progress(fmt.Sprintf("meeting %s: transcript fetch failed; keeping the archived copy", m.ID))
-							continue
-						}
-						if errors.Is(trErr, ErrContract) {
+						} else if errors.Is(trErr, ErrContract) {
 							progress(fmt.Sprintf("meeting %s: transcript contract failed; leaving the meeting unmodified", m.ID))
-							continue
+						} else {
+							progress(fmt.Sprintf("meeting %s: transcript fetch failed; leaving the meeting unmodified for retry", m.ID))
 						}
+						continue
 					}
 					if tr != nil && tr.Classification() == TranscriptUnrecognized {
 						hardErr := fmt.Errorf("meeting %s: %w: unrecognized transcript payload", m.ID, ErrContract)

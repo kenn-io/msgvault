@@ -627,24 +627,22 @@ func (s *Store) searchMessagesQueryImpl(
 	}
 
 	// after: / before:
-	// Bind time.Time directly rather than an RFC3339 ('T'-separated) string.
-	// The *time.Time bind is correct on BOTH backends — pgx encodes it as a
-	// TIMESTAMPTZ value (RFC3339 already carries the 'Z' offset, so the old
-	// string bind was fine on PG too) and go-sqlite3 serializes it to the
-	// sortable layout matching how sent_at was stored. The bug this fixes was
-	// SQLite-only: comparing an RFC3339 string against SQLite's space-separated
-	// stored timestamps put the 'T' (0x54) after the space (0x20), shifting the
-	// day boundary. Binding time.Time also keeps this store API consistent with
-	// the query engine, which binds time.Time the same way. [cr2-9]
+	// Bind time.Time directly and normalize it to UTC first. pgx encodes the
+	// value as TIMESTAMPTZ, while go-sqlite3 serializes it to the sortable layout
+	// used by stored timestamps. UTC normalization matters on SQLite because it
+	// compares those serialized values lexically; preserving a caller's offset
+	// can put an equivalent wall-clock value on the wrong side of a UTC archive
+	// timestamp. Direct binding also avoids the older RFC3339-string bug where
+	// the 'T' separator sorted after SQLite's space separator. [cr2-9]
 	if q.AfterDate != nil {
 		conditions = append(conditions,
 			"COALESCE(m.sent_at, m.received_at, m.internal_date) >= ?")
-		args = append(args, *q.AfterDate)
+		args = append(args, q.AfterDate.UTC())
 	}
 	if q.BeforeDate != nil {
 		conditions = append(conditions,
 			"COALESCE(m.sent_at, m.received_at, m.internal_date) < ?")
-		args = append(args, *q.BeforeDate)
+		args = append(args, q.BeforeDate.UTC())
 	}
 
 	whereClause := strings.Join(conditions, " AND ")
