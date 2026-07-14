@@ -1,10 +1,12 @@
 package circleback
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"strings"
 	"testing"
 	"time"
@@ -369,6 +371,23 @@ func pendingTranscriptByID(t *testing.T, state syncState, meetingID string) pend
 	}
 	require.FailNow(t, "pending transcript not found", "meeting id %q", meetingID)
 	return pendingTranscript{}
+}
+
+func countLoggedSQLStatements(t *testing.T, logs *bytes.Buffer, fragment string) int {
+	t.Helper()
+	count := 0
+	for line := range strings.SplitSeq(strings.TrimSpace(logs.String()), "\n") {
+		if line == "" {
+			continue
+		}
+		var record map[string]any
+		require.NoError(t, json.Unmarshal([]byte(line), &record))
+		statement, _ := record["stmt"].(string)
+		if record["msg"] == "sql" && strings.Contains(statement, fragment) {
+			count++
+		}
+	}
+	return count
 }
 
 func circlebackMessageIDFor(t *testing.T, st *store.Store, meetingID string) int64 {
@@ -772,12 +791,24 @@ func TestPendingTranscript_FailedRunRecoversPersistedRetryBeforeCreationCutoff(t
 	f.readIDs = nil
 	f.transcriptIDs = nil
 	f.transcripts[oldID] = json.RawMessage(`{"id":"old-pending","text":"Recovered after the failed run"}`)
+	var sqlLogs bytes.Buffer
+	previousLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&sqlLogs, &slog.HandlerOptions{Level: slog.LevelInfo})))
+	store.ConfigureSQLLogging(store.SQLLogOptions{FullTrace: true})
+	t.Cleanup(func() {
+		store.ConfigureSQLLogging(store.SQLLogOptions{})
+		slog.SetDefault(previousLogger)
+	})
 
 	retried, err := imp.Import(context.Background(), ImportOptions{Identifier: "alice@example.com"})
 	require.NoError(err)
 	assert.EqualValues(1, retried.MeetingsProcessed)
 	assert.Equal([]string{oldID}, f.readIDs)
 	assert.Equal([]string{oldID}, f.transcriptIDs)
+	assert.Equal(1, countLoggedSQLStatements(t, &sqlLogs, "SELECT source_message_id, id, metadata"),
+		"the search page should batch archive metadata")
+	assert.Equal(2, countLoggedSQLStatements(t, &sqlLogs, "SELECT metadata FROM messages WHERE id"),
+		"only hydration and persistence, not discovery filtering, should read per-message metadata")
 	assert.Equal("present", circlebackMetadataMap(t, st, msgID)["transcript_state"])
 }
 

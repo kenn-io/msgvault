@@ -609,7 +609,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (*ImportSum
 				pageSMIDs = append(pageSMIDs, "meeting:"+id)
 			}
 		}
-		existingPage, lookupErr := imp.store.MessageExistsBatch(src.ID, pageSMIDs)
+		existingPage, lookupErr := imp.store.MessageMetadataBatch(src.ID, pageSMIDs)
 		if lookupErr != nil {
 			sum.Errors++
 			hardErrors = append(hardErrors, fmt.Errorf("lookup search page %d meetings: %w", pageIndex, lookupErr))
@@ -640,27 +640,15 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (*ImportSum
 				continue
 			}
 			if !opts.Full {
-				existingID, exists := existingPage["meeting:"+id]
+				archived, exists := existingPage["meeting:"+id]
 				created := parseFlexibleTime(meeting.CreatedAt)
-				if exists && created.IsZero() {
-					var archivedErr error
-					created, archivedErr = imp.archivedMeetingCreatedAt(existingID)
-					if archivedErr != nil {
-						sum.Errors++
-						hardErrors = append(hardErrors,
-							fmt.Errorf("meeting %s: read archived creation time: %w", id, archivedErr))
-						err = errors.Join(hardErrors...)
-						return sum, err
-					}
+				if exists && created.IsZero() && archived.Metadata.Valid {
+					created = decodeArchivedMeetingCreatedAt(archived.Metadata.String)
 				}
 				if exists && !refreshCreatedAfter.IsZero() && !created.IsZero() && created.Before(refreshCreatedAfter) {
-					archivedState, stateErr := imp.archivedTranscriptState(existingID)
-					if stateErr != nil {
-						sum.Errors++
-						hardErrors = append(hardErrors,
-							fmt.Errorf("meeting %s: read archived transcript state: %w", id, stateErr))
-						err = errors.Join(hardErrors...)
-						return sum, err
+					archivedState := transcriptState("")
+					if archived.Metadata.Valid {
+						archivedState = decodeArchivedTranscriptState(archived.Metadata.String)
 					}
 					// A later hard failure can retain this item-level pending
 					// write while rolling the successful cursor back to a state
@@ -763,17 +751,6 @@ func (imp *Importer) archivedTranscriptState(msgID int64) (transcriptState, erro
 		return "", nil
 	}
 	return decodeArchivedTranscriptState(metaNS.String), nil
-}
-
-func (imp *Importer) archivedMeetingCreatedAt(msgID int64) (time.Time, error) {
-	metaNS, err := imp.store.GetMessageMetadata(msgID)
-	if err != nil {
-		return time.Time{}, err
-	}
-	if !metaNS.Valid || metaNS.String == "" {
-		return time.Time{}, nil
-	}
-	return decodeArchivedMeetingCreatedAt(metaNS.String), nil
 }
 
 func decodeArchivedMeetingCreatedAt(encoded string) time.Time {

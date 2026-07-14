@@ -275,6 +275,31 @@ func TestStore_MessageExistsBatch(t *testing.T) {
 	assert.NotContains(existing, "msg-4")
 }
 
+func TestStore_MessageMetadataBatch(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := storetest.New(t)
+
+	withMetadataID := f.CreateMessage("with-metadata")
+	withoutMetadataID := f.CreateMessage("without-metadata")
+	require.NoError(f.Store.SetMessageMetadata(withMetadataID, sql.NullString{
+		String: `{"transcript_state":"pending"}`,
+		Valid:  true,
+	}))
+
+	got, err := f.Store.MessageMetadataBatch(f.Source.ID, []string{
+		"with-metadata", "without-metadata", "missing",
+	})
+	require.NoError(err)
+	require.Len(got, 2)
+	assert.Equal(withMetadataID, got["with-metadata"].ID)
+	assert.JSONEq(`{"transcript_state":"pending"}`, got["with-metadata"].Metadata.String)
+	assert.True(got["with-metadata"].Metadata.Valid)
+	assert.Equal(withoutMetadataID, got["without-metadata"].ID)
+	assert.False(got["without-metadata"].Metadata.Valid)
+	assert.NotContains(got, "missing")
+}
+
 func TestStore_MessageRaw(t *testing.T) {
 	f := storetest.New(t)
 
@@ -857,6 +882,14 @@ func TestStore_MessageExistsBatch_Empty(t *testing.T) {
 	// Check with empty list
 	result, err := f.Store.MessageExistsBatch(f.Source.ID, []string{})
 	require.NoError(t, err, "MessageExistsBatch(empty)")
+	assert.Empty(t, result)
+}
+
+func TestStore_MessageMetadataBatch_Empty(t *testing.T) {
+	f := storetest.New(t)
+
+	result, err := f.Store.MessageMetadataBatch(f.Source.ID, nil)
+	require.NoError(t, err)
 	assert.Empty(t, result)
 }
 

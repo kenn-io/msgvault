@@ -82,6 +82,13 @@ type Message struct {
 	ArchivedAt      time.Time
 }
 
+// MessageMetadataRecord is the archive identity and optional provider metadata
+// for one message returned by MessageMetadataBatch.
+type MessageMetadataRecord struct {
+	ID       int64
+	Metadata sql.NullString
+}
+
 // MessageExistsBatch checks which message IDs already exist in the database.
 // Returns a map of source_message_id -> internal message_id for existing messages.
 func (s *Store) MessageExistsBatch(sourceID int64, sourceMessageIDs []string) (map[string]int64, error) {
@@ -99,6 +106,36 @@ func (s *Store) MessageExistsBatch(sourceID int64, sourceMessageIDs []string) (m
 				return err
 			}
 			result[srcID] = id
+			return nil
+		})
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+// MessageMetadataBatch looks up archive IDs and provider metadata for messages
+// from one source. Importers use this instead of issuing one metadata query per
+// known item while filtering provider search pages.
+func (s *Store) MessageMetadataBatch(
+	sourceID int64, sourceMessageIDs []string,
+) (map[string]MessageMetadataRecord, error) {
+	if len(sourceMessageIDs) == 0 {
+		return make(map[string]MessageMetadataRecord), nil
+	}
+
+	result := make(map[string]MessageMetadataRecord)
+	err := queryInChunks(s.db, sourceMessageIDs, []any{sourceID},
+		`SELECT source_message_id, id, metadata
+		 FROM messages
+		 WHERE source_id = ? AND source_message_id IN (%s)`,
+		func(rows *loggedRows) error {
+			var sourceMessageID string
+			var record MessageMetadataRecord
+			if err := rows.Scan(&sourceMessageID, &record.ID, &record.Metadata); err != nil {
+				return err
+			}
+			result[sourceMessageID] = record
 			return nil
 		})
 	if err != nil {
