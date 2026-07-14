@@ -117,12 +117,18 @@ func (m Model) handleGlobalKeys(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 			loadCmd := m.loadTextConversations()
 			return m, tea.Batch(spinCmd, loadCmd), true
 		case modeMeetings:
+			m.meetingState.listLoading = false
+			m.meetingState.searchLoading = false
+			m.meetingState.detailLoading = false
 			if m.meetingState.initialized {
 				m.loading = false
 				return m, nil, true
 			}
 			m.loading = true
 			m.meetingState.requestID++
+			m.meetingState.listLoading = true
+			m.meetingState.preSearch = nil
+			m.meetingState.searchSnapshotInvalid = true
 			spinCmd := m.startSpinner()
 			return m, tea.Batch(spinCmd, m.loadMeetingMessages()), true
 		default:
@@ -983,6 +989,8 @@ func (m Model) handleAccountSelectorKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cm
 			m.meetingState.listOffset = 0
 			m.meetingState.listComplete = false
 			m.meetingState.listLoadingMore = false
+			m.meetingState.listLoading = false
+			m.meetingState.searchLoading = false
 			m.meetingState.searchOffset = 0
 			m.meetingState.searchComplete = false
 			m.meetingState.cursor = 0
@@ -992,13 +1000,15 @@ func (m Model) handleAccountSelectorKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cm
 			m.meetingState.preSearch = nil
 			if m.meetingState.searchQuery != "" {
 				m.meetingState.searchSnapshotInvalid = true
+				m.meetingState.searchLoading = true
 				spinCmd := m.startSpinner()
 				return m, tea.Batch(
 					spinCmd,
 					m.loadMeetingSearch(m.meetingState.searchQuery, 0, false),
 				)
 			}
-			m.meetingState.searchSnapshotInvalid = false
+			m.meetingState.searchSnapshotInvalid = true
+			m.meetingState.listLoading = true
 			return m, m.loadMeetingMessages()
 		}
 		if m.mode == modeTexts {

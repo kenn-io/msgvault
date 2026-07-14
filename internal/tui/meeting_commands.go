@@ -65,7 +65,7 @@ func (m Model) handleMeetingMessagesLoaded(msg meetingMessagesLoadedMsg) (tea.Mo
 	if msg.requestID != m.meetingState.requestID {
 		return m, nil
 	}
-	active := m.finishModePresentation(modeMeetings, msg.presentationGeneration)
+	active := m.finishMeetingPresentation(msg.presentationGeneration, &m.meetingState.listLoading)
 	m.meetingState.listLoadingMore = false
 	if msg.err != nil {
 		if active {
@@ -88,6 +88,7 @@ func (m Model) handleMeetingMessagesLoaded(msg meetingMessagesLoadedMsg) (tea.Mo
 	}
 	m.meetingState.listOffset = len(m.meetingState.messages)
 	m.meetingState.listComplete = len(msg.messages) < messageListPageSize
+	m.meetingState.searchSnapshotInvalid = false
 	return m, nil
 }
 
@@ -126,7 +127,7 @@ func (m Model) handleMeetingSearchLoaded(msg meetingSearchLoadedMsg) (tea.Model,
 	if msg.requestID != m.meetingState.searchRequestID {
 		return m, nil
 	}
-	active := m.finishModePresentation(modeMeetings, msg.presentationGeneration)
+	active := m.finishMeetingPresentation(msg.presentationGeneration, &m.meetingState.searchLoading)
 	m.meetingState.listLoadingMore = false
 	if msg.err != nil {
 		if active {
@@ -177,7 +178,7 @@ func (m Model) handleMeetingDetailLoaded(msg meetingDetailLoadedMsg) (tea.Model,
 	if msg.requestID != m.meetingState.detailRequestID {
 		return m, nil
 	}
-	active := m.finishModePresentation(modeMeetings, msg.presentationGeneration)
+	active := m.finishMeetingPresentation(msg.presentationGeneration, &m.meetingState.detailLoading)
 	if msg.err != nil {
 		if active {
 			m.err = query.HintRepairEncoding(msg.err)
@@ -197,4 +198,24 @@ func (m Model) handleMeetingDetailLoaded(msg meetingDetailLoadedMsg) (tea.Model,
 		}
 	}
 	return m, nil
+}
+
+func (m *Model) finishMeetingPresentation(generation uint64, owner *bool) bool {
+	if m.mode != modeMeetings || m.presentationGeneration != generation {
+		return false
+	}
+	*owner = false
+	m.updateMeetingLoading()
+	return true
+}
+
+func (m *Model) updateMeetingLoading() {
+	if m.mode != modeMeetings {
+		return
+	}
+	m.loading = m.meetingState.listLoading ||
+		m.meetingState.searchLoading || m.meetingState.detailLoading
+	if !m.loading {
+		m.transitionBuffer = ""
+	}
 }

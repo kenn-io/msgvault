@@ -110,6 +110,17 @@ func loadFixture(t *testing.T, name string) []byte {
 	return b
 }
 
+func noteFixtureAt(t *testing.T, id string, updatedAt time.Time) []byte {
+	t.Helper()
+	var note map[string]any
+	require.NoError(t, json.Unmarshal(loadFixture(t, "note_no_calendar.json"), &note))
+	note["id"] = id
+	note["updated_at"] = updatedAt.UTC().Format(time.RFC3339Nano)
+	b, err := json.Marshal(note)
+	require.NoError(t, err)
+	return b
+}
+
 func newTestImporter(t *testing.T, api *fakeAPI) (*Importer, *store.Store) {
 	t.Helper()
 	srv := httptest.NewServer(api.handler())
@@ -441,11 +452,12 @@ func TestImport_IdempotentAndRefresh(t *testing.T) {
 	_, err := imp.Import(context.Background(), ImportOptions{Identifier: "alice@example.com"})
 	require.NoError(err)
 
-	// Second run: the fake server re-serves the same note; nothing is added.
+	// Second run: the boundary overlap sees the same note but recognizes that
+	// its ID was already covered at that exact updated_at timestamp.
 	sum2, err := imp.Import(context.Background(), ImportOptions{Identifier: "alice@example.com"})
 	require.NoError(err)
 	assert.EqualValues(0, sum2.NotesAdded, "re-import must not add rows")
-	assert.EqualValues(1, sum2.NotesUpdated, "successful existing-row upsert counts as an update")
+	assert.EqualValues(0, sum2.NotesUpdated, "unchanged cursor-boundary notes are no-ops")
 	var count int
 	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&count))
 	assert.Equal(1, count)
@@ -623,6 +635,89 @@ func TestImport_CursorAdvancesOnlyOnCleanRuns(t *testing.T) {
 	require.NoError(err)
 	require.EqualValues(0, sum3.Errors)
 	assert.Equal("2026-06-05T12:00:00Z", cursorOf())
+}
+
+func TestImport_IncrementalDiscoversLateNoteAtCursorTimestamp(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	updatedAt := time.Date(2026, 7, 14, 18, 30, 0, 123456789, time.UTC)
+	firstID := "not_FirstBoundaryNote"
+	lateID := "not_LateBoundaryNote"
+	api := &fakeAPI{
+		notes: map[string][]byte{
+			firstID: noteFixtureAt(t, firstID, updatedAt),
+		},
+		orderedIDs:          []string{firstID},
+		respectUpdatedAfter: true,
+	}
+	imp, st := newTestImporter(t, api)
+
+	first, err := imp.Import(context.Background(), ImportOptions{
+		Identifier:   "alice@example.com",
+		AccountEmail: "alice@example.com",
+	})
+	require.NoError(err)
+	assert.EqualValues(1, first.NotesAdded)
+
+	api.mu.Lock()
+	api.notes[lateID] = noteFixtureAt(t, lateID, updatedAt)
+	api.orderedIDs = []string{firstID, lateID}
+	api.mu.Unlock()
+
+	second, err := imp.Import(context.Background(), ImportOptions{
+		Identifier:   "alice@example.com",
+		AccountEmail: "alice@example.com",
+	})
+	require.NoError(err)
+	assert.EqualValues(1, second.NotesAdded,
+		"a note first listed at the cursor timestamp must remain discoverable")
+	assert.Zero(second.NotesUpdated,
+		"the already-covered boundary note must not become a false update")
+
+	third, err := imp.Import(context.Background(), ImportOptions{
+		Identifier:   "alice@example.com",
+		AccountEmail: "alice@example.com",
+	})
+	require.NoError(err)
+	assert.Zero(third.NotesAdded)
+	assert.Zero(third.NotesUpdated,
+		"overlapping the boundary must not create repeated cache-invalidating updates")
+
+	var count int
+	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&count))
+	assert.Equal(2, count)
+}
+
+func TestImport_CoveredCursorBoundaryDoesNotConsumeLimit(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	updatedAt := time.Date(2026, 7, 14, 18, 30, 0, 123456789, time.UTC)
+	firstID := "not_FirstLimitedBoundary"
+	lateID := "not_LateLimitedBoundary"
+	api := &fakeAPI{
+		notes: map[string][]byte{
+			firstID: noteFixtureAt(t, firstID, updatedAt),
+		},
+		orderedIDs:          []string{firstID},
+		respectUpdatedAfter: true,
+	}
+	imp, _ := newTestImporter(t, api)
+
+	_, err := imp.Import(context.Background(), ImportOptions{Identifier: "alice@example.com"})
+	require.NoError(err)
+	api.mu.Lock()
+	api.notes[lateID] = noteFixtureAt(t, lateID, updatedAt)
+	api.orderedIDs = []string{firstID, lateID}
+	api.mu.Unlock()
+
+	sum, err := imp.Import(context.Background(), ImportOptions{
+		Identifier: "alice@example.com",
+		Limit:      1,
+	})
+	require.NoError(err)
+	assert.EqualValues(1, sum.NotesProcessed)
+	assert.EqualValues(1, sum.NotesAdded,
+		"an already-covered overlap row must not starve a new note under --limit")
 }
 
 func TestImport_LimitDoesNotAdvanceCursor(t *testing.T) {

@@ -16,6 +16,7 @@ import (
 var (
 	markdownAllSGR          = regexp.MustCompile(`\x1b\[[0-9;]*m`)
 	markdownTrailingPadding = regexp.MustCompile(`(\s|\x1b\[[0-9;]*m)+$`)
+	markdownEntity          = regexp.MustCompile(`&(?:#[xX][0-9A-Fa-f]+;?|#[0-9]+;?|[A-Za-z][A-Za-z0-9]+;)`)
 )
 
 // markdownCache avoids rerendering long meeting notes on every scroll frame.
@@ -118,7 +119,15 @@ func renderMarkdownLines(text string, width int, dark, noColor bool) []string {
 // Glamour adds its own SGR styling. Sanitizing line by line applies the shared
 // single-line security contract without collapsing Markdown structure.
 func sanitizeMarkdownSource(text string) string {
-	text = html.UnescapeString(text)
+	text = markdownEntity.ReplaceAllStringFunc(text, func(entity string) string {
+		decoded := html.UnescapeString(entity)
+		for _, r := range decoded {
+			if r < 0x20 || (r >= 0x7f && r <= 0x9f) {
+				return decoded
+			}
+		}
+		return entity
+	})
 	text = strings.ReplaceAll(text, "\r\n", "\n")
 	text = strings.ReplaceAll(text, "\r", "\n")
 	lines := strings.Split(text, "\n")

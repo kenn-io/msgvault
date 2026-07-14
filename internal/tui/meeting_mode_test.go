@@ -396,6 +396,67 @@ func TestMeetingSearchStartInvalidatesInFlightList(t *testing.T) {
 	assert.Equal(int64(20), updated.meetingState.messages[0].ID)
 }
 
+func TestMeetingSearchDuringSortReloadClearsWithFreshList(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	engine := &querytest.MockEngine{}
+	engine.SearchFunc = func(_ context.Context, _ *search.Query, _, _ int) ([]query.MessageSummary, error) {
+		return []query.MessageSummary{{ID: 20, Subject: "Search result"}}, nil
+	}
+	engine.ListMessagesFunc = func(_ context.Context, _ query.MessageFilter) ([]query.MessageSummary, error) {
+		return []query.MessageSummary{{ID: 30, Subject: "Fresh sorted list"}}, nil
+	}
+	model := New(engine, Options{})
+	model.mode = modeMeetings
+	model.meetingState.messages = []query.MessageSummary{{ID: 10, Subject: "Old sort order"}}
+
+	updated, sortCmd := sendKey(t, model, key('s'))
+	require.NotNil(sortCmd)
+	updated, _ = sendKey(t, updated, key('/'))
+	assert.Nil(updated.meetingState.preSearch,
+		"rows visible during a pending reload are not a valid search snapshot")
+	updated.meetingState.searchInput.SetValue("roadmap")
+	updated, searchCmd := sendKey(t, updated, keyEnter())
+	for _, msg := range runBatchCommand(t, searchCmd) {
+		if loaded, ok := msg.(meetingSearchLoadedMsg); ok {
+			updated = sendMsg(t, updated, loaded)
+		}
+	}
+	require.Len(updated.meetingState.messages, 1)
+	assert.Equal(int64(20), updated.meetingState.messages[0].ID)
+
+	updated, _ = sendKey(t, updated, key('/'))
+	updated.meetingState.searchInput.SetValue("")
+	updated, clearCmd := sendKey(t, updated, keyEnter())
+	require.NotNil(clearCmd, "clearing must reload instead of restoring the stale sort snapshot")
+	assert.True(updated.loading)
+	for _, msg := range runBatchCommand(t, clearCmd) {
+		if loaded, ok := msg.(meetingMessagesLoadedMsg); ok {
+			updated = sendMsg(t, updated, loaded)
+		}
+	}
+	require.Len(updated.meetingState.messages, 1)
+	assert.Equal(int64(30), updated.meetingState.messages[0].ID)
+}
+
+func TestMeetingEmptySearchKeepsPendingListReloadLoading(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	model := NewBuilder().Build()
+	model.mode = modeMeetings
+	model.meetingState.messages = []query.MessageSummary{{ID: 10, Subject: "Old list"}}
+
+	updatedModel, _ := model.reloadMeetingList()
+	updated, ok := updatedModel.(Model)
+	require.True(ok)
+	updated, _ = sendKey(t, updated, key('/'))
+	updated.meetingState.searchInput.SetValue("")
+	updated, cmd := sendKey(t, updated, keyEnter())
+
+	assert.True(updated.loading, "a pending normal-list load still owns the spinner")
+	assert.NotNil(cmd, "the invalid snapshot requires a fresh normal-list request")
+}
+
 func TestTextKeyTransitionKeepsRequestOwnerOnReturnedModel(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
@@ -792,6 +853,8 @@ func TestModeCycleRejectsStalePresentationCompletions(t *testing.T) {
 			mode:       modeMeetings,
 			cacheStale: true,
 			capture: func(model *Model) tea.Cmd {
+				model.meetingState.listLoading = false
+				model.meetingState.searchLoading = true
 				return model.loadMeetingSearch("weekly", 0, false)
 			},
 			assertCached: func(assert *assert.Assertions, require *require.Assertions, model Model) {

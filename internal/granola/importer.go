@@ -57,7 +57,8 @@ type ImportSummary struct {
 type syncState struct {
 	// UpdatedAfter is the RFC3339Nano max updated_at across all notes
 	// ingested by the last fully-successful run.
-	UpdatedAfter string `json:"updated_after"`
+	UpdatedAfter    string   `json:"updated_after"`
+	UpdatedAfterIDs []string `json:"updated_after_ids,omitempty"`
 }
 
 func (s syncState) marshal() string {
@@ -101,11 +102,16 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (*ImportSum
 		}
 	}()
 
+	var cursorUpdatedAt time.Time
+	if state.UpdatedAfter != "" {
+		cursorUpdatedAt, _ = time.Parse(time.RFC3339Nano, state.UpdatedAfter)
+	}
 	params := ListNotesParams{PageSize: maxPageSize}
-	if !opts.Full && state.UpdatedAfter != "" {
-		if t, terr := time.Parse(time.RFC3339Nano, state.UpdatedAfter); terr == nil {
-			params.UpdatedAfter = t
-		}
+	if !opts.Full && !cursorUpdatedAt.IsZero() {
+		// Granola's updated_after bound is strict. Overlap the exact boundary
+		// so notes first exposed later with the same timestamp remain visible;
+		// the boundary ID set below suppresses notes already covered there.
+		params.UpdatedAfter = cursorUpdatedAt.Add(-time.Nanosecond)
 	}
 	if opts.Full && !opts.CreatedAfter.IsZero() {
 		params.CreatedAfter = opts.CreatedAfter
@@ -114,15 +120,26 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (*ImportSum
 	// maxUpdated tracks the new watermark. It only advances past notes that
 	// were actually ingested, and the cursor is only persisted when the run
 	// had zero fetch errors — a failed note would otherwise be skipped
-	// forever. Re-fetching a few notes on the retry is free (upsert dedup).
-	var maxUpdated time.Time
-	if state.UpdatedAfter != "" {
-		maxUpdated, _ = time.Parse(time.RFC3339Nano, state.UpdatedAfter)
+	// forever. IDs at the exact boundary avoid rewriting unchanged overlap.
+	maxUpdated := cursorUpdatedAt
+	boundaryIDs := make(map[string]struct{}, len(state.UpdatedAfterIDs))
+	for _, id := range state.UpdatedAfterIDs {
+		boundaryIDs[id] = struct{}{}
 	}
 
-	err = imp.forEachNote(ctx, src.ID, accountIdentities, params, opts, sum, func(n *Note) {
+	err = imp.forEachNote(ctx, src.ID, accountIdentities, params, opts, sum, func(n NoteSummary) bool {
+		if opts.Full || cursorUpdatedAt.IsZero() || !n.UpdatedAt.Equal(cursorUpdatedAt) {
+			return false
+		}
+		_, covered := boundaryIDs[n.ID]
+		return covered
+	}, func(n *Note) {
 		if n.UpdatedAt.After(maxUpdated) {
 			maxUpdated = n.UpdatedAt
+			clear(boundaryIDs)
+			boundaryIDs[n.ID] = struct{}{}
+		} else if n.UpdatedAt.Equal(maxUpdated) {
+			boundaryIDs[n.ID] = struct{}{}
 		}
 	})
 	if err != nil {
@@ -150,11 +167,19 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (*ImportSum
 	// when every processed note succeeded. The next unbounded run must
 	// traverse from the prior cursor.
 	cursor := state.UpdatedAfter
+	cursorIDs := state.UpdatedAfterIDs
 	boundedFull := opts.Full && !opts.CreatedAfter.IsZero()
 	if opts.Limit == 0 && !boundedFull && !maxUpdated.IsZero() {
 		cursor = maxUpdated.UTC().Format(time.RFC3339Nano)
+		cursorIDs = make([]string, 0, len(boundaryIDs))
+		for id := range boundaryIDs {
+			cursorIDs = append(cursorIDs, id)
+		}
+		slices.Sort(cursorIDs)
 	}
-	if err = imp.store.CompleteSync(syncID, syncState{UpdatedAfter: cursor}.marshal()); err != nil {
+	if err = imp.store.CompleteSync(syncID, syncState{
+		UpdatedAfter: cursor, UpdatedAfterIDs: cursorIDs,
+	}.marshal()); err != nil {
 		return sum, err
 	}
 	sum.Duration = time.Since(start)
@@ -162,8 +187,9 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (*ImportSum
 }
 
 // forEachNote pages through the list endpoint, fetches each note in full,
-// ingests it, and reports successfully-ingested notes to onIngested.
-func (imp *Importer) forEachNote(ctx context.Context, sourceID int64, accountIdentities meetingidentity.Set, params ListNotesParams, opts ImportOptions, sum *ImportSummary, onIngested func(*Note)) error {
+// ingests it, and reports successfully-ingested notes to onIngested. Summaries
+// already covered at the cursor boundary do not consume the processing limit.
+func (imp *Importer) forEachNote(ctx context.Context, sourceID int64, accountIdentities meetingidentity.Set, params ListNotesParams, opts ImportOptions, sum *ImportSummary, alreadyCovered func(NoteSummary) bool, onIngested func(*Note)) error {
 	progress := opts.Progress
 	if progress == nil {
 		progress = func(string) {}
@@ -177,6 +203,9 @@ func (imp *Importer) forEachNote(ctx context.Context, sourceID int64, accountIde
 		for _, ns := range page.Notes {
 			if err := ctx.Err(); err != nil {
 				return err
+			}
+			if alreadyCovered(ns) {
+				continue
 			}
 			if opts.Limit > 0 && sum.NotesProcessed >= int64(opts.Limit) {
 				return nil

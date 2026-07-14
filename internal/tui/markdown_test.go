@@ -90,6 +90,12 @@ func TestSanitizeMarkdownSourceDecodesEntitiesBeforeFiltering(t *testing.T) {
 	assert.Equal(t, "before  after", got)
 }
 
+func TestSanitizeMarkdownSourcePreservesPrintableEntities(t *testing.T) {
+	input := "&#35; literal heading marker\n&gt; literal quote marker\n&amp; literal ampersand"
+
+	assert.Equal(t, input, sanitizeMarkdownSource(input))
+}
+
 func TestSanitizeMarkdownEscapesRejectsControlInterleavedCommands(t *testing.T) {
 	assert := assert.New(t)
 	got := sanitizeMarkdownEscapes("before \x1b[\x012J after")

@@ -43,6 +43,9 @@ type meetingState struct {
 	listOffset             int
 	listComplete           bool
 	listLoadingMore        bool
+	listLoading            bool
+	searchLoading          bool
+	detailLoading          bool
 
 	searchActive    bool
 	searchInput     textinput.Model

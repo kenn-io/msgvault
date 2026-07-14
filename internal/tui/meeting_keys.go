@@ -102,6 +102,7 @@ func (m Model) handleMeetingKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.meetingState.detail = nil
 		m.meetingState.detailScroll = 0
 		m.meetingState.detailRequestID++
+		m.meetingState.detailLoading = true
 		m.loading = true
 		spinCmd := m.startSpinner()
 		return m, tea.Batch(spinCmd, m.loadMeetingDetail(m.meetingState.messages[m.meetingState.cursor].ID))
@@ -114,6 +115,9 @@ func (m Model) reloadMeetingList() (tea.Model, tea.Cmd) {
 	m.meetingState.listOffset = 0
 	m.meetingState.listComplete = false
 	m.meetingState.listLoadingMore = false
+	m.meetingState.listLoading = true
+	m.meetingState.preSearch = nil
+	m.meetingState.searchSnapshotInvalid = true
 	m.loading = true
 	spinCmd := m.startSpinner()
 	return m, tea.Batch(spinCmd, m.loadMeetingMessages())
@@ -124,7 +128,8 @@ func (m *Model) invalidateMeetingSearchLoad() {
 	m.meetingState.searchOffset = 0
 	m.meetingState.searchComplete = false
 	m.meetingState.listLoadingMore = false
-	m.loading = false
+	m.meetingState.searchLoading = false
+	m.updateMeetingLoading()
 }
 
 func (m *Model) invalidateMeetingListForSearch() {
@@ -132,8 +137,10 @@ func (m *Model) invalidateMeetingListForSearch() {
 	m.meetingState.listOffset = 0
 	m.meetingState.listComplete = false
 	m.meetingState.listLoadingMore = false
+	m.meetingState.listLoading = false
 	m.meetingState.searchOffset = 0
 	m.meetingState.searchComplete = false
+	m.updateMeetingLoading()
 }
 
 func (m *Model) restoreMeetingListPagination() {
@@ -156,6 +163,7 @@ func (m *Model) maybeLoadMoreMeetings() tea.Cmd {
 		}
 		m.loading = true
 		m.meetingState.searchRequestID++
+		m.meetingState.searchLoading = true
 		return m.loadMeetingSearch(m.meetingState.searchQuery, len(m.meetingState.messages), true)
 	}
 	if m.meetingState.listComplete {
@@ -164,6 +172,9 @@ func (m *Model) maybeLoadMoreMeetings() tea.Cmd {
 	}
 	m.loading = true
 	m.meetingState.requestID++
+	m.meetingState.listLoading = true
+	m.meetingState.preSearch = nil
+	m.meetingState.searchSnapshotInvalid = true
 	return m.loadMeetingMessagesWithOffset(len(m.meetingState.messages), true)
 }
 
@@ -269,6 +280,7 @@ func (m Model) changeMeetingDetail(delta int) (tea.Model, tea.Cmd) {
 	m.meetingState.detail = nil
 	m.meetingState.detailScroll = 0
 	m.meetingState.detailRequestID++
+	m.meetingState.detailLoading = true
 	m.loading = true
 	spinCmd := m.startSpinner()
 	return m, tea.Batch(spinCmd, m.loadMeetingDetail(m.meetingState.messages[index].ID))
@@ -299,8 +311,12 @@ func (m Model) handleMeetingSearchInput(msg tea.KeyPressMsg) (tea.Model, tea.Cmd
 			return m, nil
 		}
 		m.invalidateMeetingListForSearch()
+		if !m.meetingState.searchSnapshotInvalid && m.meetingState.preSearch == nil {
+			m.meetingState.preSearch = append([]query.MessageSummary(nil), m.meetingState.messages...)
+		}
 		m.loading = true
 		m.meetingState.searchRequestID++
+		m.meetingState.searchLoading = true
 		spinCmd := m.startSpinner()
 		return m, tea.Batch(spinCmd, m.loadMeetingSearch(queryString, 0, false))
 	case keyNameEsc:
