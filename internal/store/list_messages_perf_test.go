@@ -77,7 +77,7 @@ func explainPlan(t *testing.T, s *Store, sql string, args ...any) string {
 }
 
 // TestListMessages_UsesLiveIndex verifies the ListMessages COUNT and page
-// queries are served by idx_messages_live_sent_at instead of a full table
+// queries are served by partial live-message indexes instead of a full table
 // scan + temp-B-tree sort. This locks in the perf fix for GET /api/v1/messages,
 // which was seconds per page on a multi-GB SQLite archive.
 func TestListMessages_UsesLiveIndex(t *testing.T) {
@@ -101,7 +101,7 @@ func TestListMessages_UsesLiveIndex(t *testing.T) {
 
 	countSQL := "SELECT COUNT(*) FROM messages WHERE " + LiveMessagesWhere("", true)
 	countPlan := explainPlan(t, s, countSQL)
-	assert.Contains(countPlan, "idx_messages_live_sent_at",
+	assert.Contains(countPlan, "USING INDEX idx_messages_live_",
 		"COUNT should use the partial index, not a full scan:\n%s", countPlan)
 
 	pageSQL := fmt.Sprintf(`SELECT m.id FROM messages m
@@ -122,4 +122,34 @@ func TestListMessages_UsesLiveIndex(t *testing.T) {
 	require.Len(msgs, 20)
 	assert.Equal(int64(1999), msgs[0].ID, "newest live message id (2000 is deleted)")
 	assert.Equal(int64(1997), msgs[1].ID)
+}
+
+// TestSearchMessages_DateBoundsUseInstantIndex verifies that timezone-correct
+// date predicates can seek into a partial expression index. Without the
+// matching index, julianday(COALESCE(...)) forces date-filtered result counts
+// to scan every live message in large SQLite archives.
+func TestSearchMessages_DateBoundsUseInstantIndex(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	s, err := OpenForTest(filepath.Join(t.TempDir(), "search-date.db"))
+	require.NoError(err)
+	defer func() { _ = s.Close() }()
+	require.NoError(s.InitSchema())
+
+	seedLiveMessages(t, s, 2000)
+
+	const indexName = "idx_messages_live_timestamp_julianday"
+	var idxCount int
+	require.NoError(s.db.QueryRow(
+		`SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name=?`, indexName,
+	).Scan(&idxCount))
+	assert.Equal(1, idxCount, "%s should be created by InitSchema", indexName)
+
+	countSQL := `SELECT COUNT(*) FROM messages m
+		WHERE ` + LiveMessagesWhere("m", true) + `
+		AND julianday(COALESCE(m.sent_at, m.received_at, m.internal_date)) >= julianday(?)`
+	countPlan := explainPlan(t, s, countSQL, "2015-01-01T16:00:00-05:00")
+	assert.Contains(countPlan, indexName,
+		"date-filtered COUNT should seek the instant index:\n%s", countPlan)
 }

@@ -773,7 +773,9 @@ func (s *Store) InitSchema() error {
 		}
 	}
 
-	// Partial covering index for the ListMessages page (GET /api/v1/messages).
+	// Partial expression indexes for live-message listing and date filtering.
+	// The first is a covering index for the ListMessages page
+	// (GET /api/v1/messages).
 	// That query counts and paginates live messages ordered by
 	// COALESCE(sent_at, received_at, internal_date) DESC, id DESC. Without an
 	// index matching both the live-messages predicate and that sort key, SQLite
@@ -782,6 +784,8 @@ func (s *Store) InitSchema() error {
 	// 5-row page. The partial expression index lets COUNT read only the compact
 	// index and lets the page query walk it in order and stop at LIMIT,
 	// eliminating both the full scan and the sort (~29x faster COUNT, no sort).
+	// The second matches SearchMessages' timezone-correct Julian-day predicate;
+	// without it, date-bounded counts scan every entry in the first index.
 	//
 	// Runs after the legacy ADD COLUMN loop above so deleted_at /
 	// deleted_from_source_at exist on upgraded DBs. SQLite only: PostgreSQL
@@ -792,14 +796,21 @@ func (s *Store) InitSchema() error {
 	// 30s statement_timeout (finding S1). IF NOT EXISTS is idempotent per start.
 	if !s.IsPostgreSQL() {
 		if err := s.runMaintenance(context.Background(), func(ctx context.Context, tx *loggedTx) error {
-			_, err := tx.ExecContext(ctx, `
+			if _, err := tx.ExecContext(ctx, `
 				CREATE INDEX IF NOT EXISTS idx_messages_live_sent_at
 				    ON messages(COALESCE(sent_at, received_at, internal_date) DESC, id DESC)
+				    WHERE deleted_at IS NULL AND deleted_from_source_at IS NULL
+			`); err != nil {
+				return err
+			}
+			_, err := tx.ExecContext(ctx, `
+				CREATE INDEX IF NOT EXISTS idx_messages_live_timestamp_julianday
+				    ON messages(julianday(COALESCE(sent_at, received_at, internal_date)))
 				    WHERE deleted_at IS NULL AND deleted_from_source_at IS NULL
 			`)
 			return err
 		}); err != nil {
-			return fmt.Errorf("create idx_messages_live_sent_at: %w", err)
+			return fmt.Errorf("create live message timestamp indexes: %w", err)
 		}
 
 		// Partial indexes over the deletion timestamps. The analytics cache
