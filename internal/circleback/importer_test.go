@@ -717,6 +717,70 @@ func TestPendingTranscript_MaintenanceRunsBeforeSearchFailure(t *testing.T) {
 		"item-atomic due writes must be safely revisited from the prior successful cursor")
 }
 
+func TestPendingTranscript_FailedRunRecoversPersistedRetryBeforeCreationCutoff(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	oldID := "old-pending"
+	meetings := map[string]json.RawMessage{
+		oldID: meetingFixture(t, oldID,
+			"2026-07-01T10:00:00Z", "2026-07-09T10:00:00Z", "2026-07-09T11:00:00Z"),
+	}
+	orderedIDs := []string{oldID}
+	for i := 1; i < readBatchSize; i++ {
+		id := fmt.Sprintf("current-%d", i)
+		meetings[id] = meetingFixture(t, id,
+			fmt.Sprintf("2026-07-09T%02d:00:00Z", i), "2026-07-09T10:00:00Z", "")
+		orderedIDs = append(orderedIDs, id)
+	}
+	hardFailureID := "missing-detail"
+	meetings[hardFailureID] = meetingFixture(t, hardFailureID,
+		"2026-07-09T11:30:00Z", "2026-07-09T11:00:00Z", "")
+	orderedIDs = append(orderedIDs, hardFailureID)
+
+	f := &fakeSource{
+		meetings:    meetings,
+		transcripts: map[string]json.RawMessage{},
+		omitRead:    map[string]bool{hardFailureID: true},
+		orderedIDs:  orderedIDs,
+	}
+	imp, st := newTestImporter(t, f)
+	priorState := syncState{CreatedAfter: "2026-07-09T11:00:00Z"}
+	prior := seedCirclebackState(t, st, priorState)
+
+	var archived Meeting
+	require.NoError(json.Unmarshal(meetings[oldID], &archived))
+	archived.Raw = meetings[oldID]
+	added, changed, err := imp.ingestMeeting(
+		prior.SourceID, "alice@example.com", nil, &archived, nil, "", false,
+	)
+	require.NoError(err)
+	assert.True(added)
+	assert.True(changed)
+
+	failed, err := imp.Import(context.Background(), ImportOptions{
+		Identifier: "alice@example.com",
+		Full:       true,
+	})
+	require.Error(err)
+	assert.EqualValues(readBatchSize, failed.MeetingsProcessed)
+	msgID := circlebackMessageIDFor(t, st, oldID)
+	assert.Equal("pending", circlebackMetadataMap(t, st, msgID)["transcript_state"])
+	assert.Equal(priorState, lastCirclebackState(t, st, prior.SourceID),
+		"the later hard failure must retain the prior successful cursor")
+
+	f.orderedIDs = []string{oldID}
+	f.readIDs = nil
+	f.transcriptIDs = nil
+	f.transcripts[oldID] = json.RawMessage(`{"id":"old-pending","text":"Recovered after the failed run"}`)
+
+	retried, err := imp.Import(context.Background(), ImportOptions{Identifier: "alice@example.com"})
+	require.NoError(err)
+	assert.EqualValues(1, retried.MeetingsProcessed)
+	assert.Equal([]string{oldID}, f.readIDs)
+	assert.Equal([]string{oldID}, f.transcriptIDs)
+	assert.Equal("present", circlebackMetadataMap(t, st, msgID)["transcript_state"])
+}
+
 func TestPendingTranscript_TerminalExpiryRunsBeforeSearchFailure(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)

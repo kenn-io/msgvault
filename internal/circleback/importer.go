@@ -654,7 +654,21 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (*ImportSum
 					}
 				}
 				if exists && !refreshCreatedAfter.IsZero() && !created.IsZero() && created.Before(refreshCreatedAfter) {
-					continue
+					archivedState, stateErr := imp.archivedTranscriptState(existingID)
+					if stateErr != nil {
+						sum.Errors++
+						hardErrors = append(hardErrors,
+							fmt.Errorf("meeting %s: read archived transcript state: %w", id, stateErr))
+						err = errors.Join(hardErrors...)
+						return sum, err
+					}
+					// A later hard failure can retain this item-level pending
+					// write while rolling the successful cursor back to a state
+					// without its retry entry. Recover that durable signal before
+					// applying the creation watermark so the retry is not stranded.
+					if archivedState != transcriptStatePending {
+						continue
+					}
 				}
 			}
 			searchedIDs = append(searchedIDs, id)
