@@ -196,10 +196,11 @@ type Model struct {
 	spinnerActive bool // True when spinner tick is running
 
 	// Request tracking to ignore stale async results
-	aggregateRequestID uint64 // Current request ID for aggregate data
-	loadRequestID      uint64 // Current request ID for message list
-	detailRequestID    uint64 // Current request ID for message detail
-	searchRequestID    uint64 // Current request ID for search results
+	aggregateRequestID     uint64 // Current request ID for aggregate data
+	loadRequestID          uint64 // Current request ID for message list
+	detailRequestID        uint64 // Current request ID for message detail
+	searchRequestID        uint64 // Current request ID for search results
+	presentationGeneration uint64 // Mode activation owning shared presentation
 
 	// Search state
 	searchMode        searchModeKind  // Fast (Parquet) or Deep (FTS5)
@@ -338,10 +339,11 @@ func (m Model) checkForUpdate() tea.Cmd {
 
 // dataLoadedMsg is sent when aggregate data is loaded.
 type dataLoadedMsg struct {
-	rows          []query.AggregateRow
-	filteredStats *query.TotalStats // distinct message stats when search is active
-	err           error
-	requestID     uint64 // To detect stale responses
+	rows                   []query.AggregateRow
+	filteredStats          *query.TotalStats // distinct message stats when search is active
+	err                    error
+	requestID              uint64 // To detect stale responses
+	presentationGeneration uint64
 }
 
 // statsLoadedMsg is sent when stats are loaded.
@@ -376,6 +378,7 @@ type updateCheckMsg struct {
 // loadData fetches aggregate data based on current view settings.
 func (m Model) loadData() tea.Cmd {
 	requestID := m.aggregateRequestID
+	presentationGeneration := m.presentationGeneration
 	scopeLabel := m.scopeLabelForLog()
 	viewLabel := m.viewType.String()
 	searchTerm := m.searchQuery
@@ -436,10 +439,16 @@ func (m Model) loadData() tea.Cmd {
 				filteredStats, _ = m.engine.GetTotalStats(ctx, statsOpts)
 			}
 
-			return dataLoadedMsg{rows: rows, filteredStats: filteredStats, err: err, requestID: requestID}
+			return dataLoadedMsg{
+				rows: rows, filteredStats: filteredStats, err: err, requestID: requestID,
+				presentationGeneration: presentationGeneration,
+			}
 		},
 		func(r any) tea.Msg {
-			return dataLoadedMsg{err: fmt.Errorf("query panic: %v", r), requestID: requestID}
+			return dataLoadedMsg{
+				err: fmt.Errorf("query panic: %v", r), requestID: requestID,
+				presentationGeneration: presentationGeneration,
+			}
 		},
 	)
 }
@@ -485,36 +494,40 @@ func (m Model) loadAccounts() tea.Cmd {
 
 // messagesLoadedMsg is sent when message list is loaded.
 type messagesLoadedMsg struct {
-	messages  []query.MessageSummary
-	err       error
-	requestID uint64 // To detect stale responses
-	append    bool   // True when appending paginated results to existing list
+	messages               []query.MessageSummary
+	err                    error
+	requestID              uint64 // To detect stale responses
+	append                 bool   // True when appending paginated results to existing list
+	presentationGeneration uint64
 }
 
 // messageDetailLoadedMsg is sent when message detail is loaded.
 type messageDetailLoadedMsg struct {
-	detail    *query.MessageDetail
-	err       error
-	requestID uint64 // To detect stale responses
+	detail                 *query.MessageDetail
+	err                    error
+	requestID              uint64 // To detect stale responses
+	presentationGeneration uint64
 }
 
 // searchResultsMsg is sent when search results are loaded.
 type searchResultsMsg struct {
-	messages   []query.MessageSummary
-	totalCount int64             // Total matching messages (for "N of M" display)
-	stats      *query.TotalStats // Aggregate stats for the search results (size, attachments, etc.)
-	err        error
-	requestID  uint64 // To detect stale responses
-	append     bool   // True if these results should be appended (pagination)
+	messages               []query.MessageSummary
+	totalCount             int64             // Total matching messages (for "N of M" display)
+	stats                  *query.TotalStats // Aggregate stats for the search results (size, attachments, etc.)
+	err                    error
+	requestID              uint64 // To detect stale responses
+	append                 bool   // True if these results should be appended (pagination)
+	presentationGeneration uint64
 }
 
 // threadMessagesLoadedMsg is sent when thread messages are loaded.
 type threadMessagesLoadedMsg struct {
-	messages       []query.MessageSummary
-	conversationID int64
-	truncated      bool // True if more messages exist but were limited
-	err            error
-	requestID      uint64
+	messages               []query.MessageSummary
+	conversationID         int64
+	truncated              bool // True if more messages exist but were limited
+	err                    error
+	requestID              uint64
+	presentationGeneration uint64
 }
 
 // flashClearMsg clears the flash message after timeout.
@@ -568,6 +581,7 @@ func (m Model) loadSearch(queryStr string) tea.Cmd {
 // loadSearchWithOffset executes the search query with pagination.
 func (m Model) loadSearchWithOffset(queryStr string, offset int, appendResults bool) tea.Cmd {
 	requestID := m.searchRequestID
+	presentationGeneration := m.presentationGeneration
 	modeLabel := "fast"
 	if m.searchMode != searchModeFast {
 		modeLabel = "deep"
@@ -656,18 +670,20 @@ func (m Model) loadSearchWithOffset(queryStr string, offset int, appendResults b
 			}
 
 			return searchResultsMsg{
-				messages:   results,
-				totalCount: totalCount,
-				stats:      stats,
-				err:        err,
-				requestID:  requestID,
-				append:     appendResults,
+				messages:               results,
+				totalCount:             totalCount,
+				stats:                  stats,
+				err:                    err,
+				requestID:              requestID,
+				append:                 appendResults,
+				presentationGeneration: presentationGeneration,
 			}
 		},
 		func(r any) tea.Msg {
 			return searchResultsMsg{
-				err:       fmt.Errorf("search panic: %v", r),
-				requestID: requestID,
+				err:                    fmt.Errorf("search panic: %v", r),
+				requestID:              requestID,
+				presentationGeneration: presentationGeneration,
 			}
 		},
 	)
@@ -760,6 +776,7 @@ func (m Model) loadMessages() tea.Cmd {
 // is true, the results are appended to the existing message list.
 func (m Model) loadMessagesWithOffset(offset int, appendMode bool) tea.Cmd {
 	requestID := m.loadRequestID
+	presentationGeneration := m.presentationGeneration
 	scopeLabel := m.scopeLabelForLog()
 	searchTerm := m.searchQuery
 	return safeCmdWithPanic(
@@ -789,10 +806,16 @@ func (m Model) loadMessagesWithOffset(offset int, appendMode bool) tea.Cmd {
 					"duration_ms", time.Since(start).Milliseconds(),
 				)
 			}
-			return messagesLoadedMsg{messages: messages, err: err, requestID: requestID, append: appendMode}
+			return messagesLoadedMsg{
+				messages: messages, err: err, requestID: requestID, append: appendMode,
+				presentationGeneration: presentationGeneration,
+			}
 		},
 		func(r any) tea.Msg {
-			return messagesLoadedMsg{err: fmt.Errorf("messages panic: %v", r), requestID: requestID}
+			return messagesLoadedMsg{
+				err: fmt.Errorf("messages panic: %v", r), requestID: requestID,
+				presentationGeneration: presentationGeneration,
+			}
 		},
 	)
 }
@@ -837,6 +860,7 @@ func (m Model) drillFilterKey() string {
 // loadThreadMessages fetches all messages in a conversation/thread.
 func (m Model) loadThreadMessages(conversationID int64) tea.Cmd {
 	requestID := m.loadRequestID
+	presentationGeneration := m.presentationGeneration
 	threadLimit := m.threadMessageLimit
 	return safeCmdWithPanic(
 		func() tea.Msg {
@@ -855,17 +879,19 @@ func (m Model) loadThreadMessages(conversationID int64) tea.Cmd {
 			}
 
 			return threadMessagesLoadedMsg{
-				messages:       messages,
-				conversationID: conversationID,
-				truncated:      truncated,
-				err:            err,
-				requestID:      requestID,
+				messages:               messages,
+				conversationID:         conversationID,
+				truncated:              truncated,
+				err:                    err,
+				requestID:              requestID,
+				presentationGeneration: presentationGeneration,
 			}
 		},
 		func(r any) tea.Msg {
 			return threadMessagesLoadedMsg{
-				err:       fmt.Errorf("thread messages panic: %v", r),
-				requestID: requestID,
+				err:                    fmt.Errorf("thread messages panic: %v", r),
+				requestID:              requestID,
+				presentationGeneration: presentationGeneration,
 			}
 		},
 	)
@@ -874,13 +900,20 @@ func (m Model) loadThreadMessages(conversationID int64) tea.Cmd {
 // loadMessageDetail fetches a single message's full details.
 func (m Model) loadMessageDetail(id int64) tea.Cmd {
 	requestID := m.detailRequestID
+	presentationGeneration := m.presentationGeneration
 	return safeCmdWithPanic(
 		func() tea.Msg {
 			detail, err := m.engine.GetMessage(context.Background(), id)
-			return messageDetailLoadedMsg{detail: detail, err: err, requestID: requestID}
+			return messageDetailLoadedMsg{
+				detail: detail, err: err, requestID: requestID,
+				presentationGeneration: presentationGeneration,
+			}
 		},
 		func(r any) tea.Msg {
-			return messageDetailLoadedMsg{err: fmt.Errorf("message detail panic: %v", r), requestID: requestID}
+			return messageDetailLoadedMsg{
+				err: fmt.Errorf("message detail panic: %v", r), requestID: requestID,
+				presentationGeneration: presentationGeneration,
+			}
 		},
 	)
 }
@@ -962,8 +995,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // finishModePresentation settles shared loading state only when the response
 // belongs to the mode currently on screen. The response handler may still
 // cache mode-owned data while another mode is active.
-func (m *Model) finishModePresentation(mode tuiMode) bool {
-	if m.mode != mode {
+func (m *Model) finishModePresentation(mode tuiMode, generation uint64) bool {
+	if m.mode != mode || m.presentationGeneration != generation {
 		return false
 	}
 	m.transitionBuffer = ""
@@ -973,7 +1006,7 @@ func (m *Model) finishModePresentation(mode tuiMode) bool {
 
 // handleTextConversationsLoaded processes text conversations load completion.
 func (m Model) handleTextConversationsLoaded(msg textConversationsLoadedMsg) (tea.Model, tea.Cmd) {
-	active := m.finishModePresentation(modeTexts)
+	active := m.finishModePresentation(modeTexts, msg.presentationGeneration)
 	if msg.err != nil {
 		if active {
 			m.err = msg.err
@@ -992,7 +1025,7 @@ func (m Model) handleTextConversationsLoaded(msg textConversationsLoadedMsg) (te
 
 // handleTextAggregateLoaded processes text aggregate load completion.
 func (m Model) handleTextAggregateLoaded(msg textAggregateLoadedMsg) (tea.Model, tea.Cmd) {
-	active := m.finishModePresentation(modeTexts)
+	active := m.finishModePresentation(modeTexts, msg.presentationGeneration)
 	if msg.err != nil {
 		if active {
 			m.err = msg.err
@@ -1011,7 +1044,7 @@ func (m Model) handleTextAggregateLoaded(msg textAggregateLoadedMsg) (tea.Model,
 
 // handleTextMessagesLoaded processes text messages load completion.
 func (m Model) handleTextMessagesLoaded(msg textMessagesLoadedMsg) (tea.Model, tea.Cmd) {
-	active := m.finishModePresentation(modeTexts)
+	active := m.finishModePresentation(modeTexts, msg.presentationGeneration)
 	if msg.err != nil {
 		if active {
 			m.err = msg.err
@@ -1029,7 +1062,7 @@ func (m Model) handleTextMessagesLoaded(msg textMessagesLoadedMsg) (tea.Model, t
 
 // handleTextSearchResult processes text search results.
 func (m Model) handleTextSearchResult(msg textSearchResultMsg) (tea.Model, tea.Cmd) {
-	active := m.finishModePresentation(modeTexts)
+	active := m.finishModePresentation(modeTexts, msg.presentationGeneration)
 	if msg.err != nil {
 		if active {
 			m.err = msg.err
@@ -1103,7 +1136,7 @@ func (m Model) handleDataLoaded(msg dataLoadedMsg) (tea.Model, tea.Cmd) {
 	if msg.requestID != m.aggregateRequestID {
 		return m, nil
 	}
-	active := m.finishModePresentation(modeEmail)
+	active := m.finishModePresentation(modeEmail, msg.presentationGeneration)
 	if active {
 		m.inlineSearchLoading = false
 	}
@@ -1190,7 +1223,7 @@ func (m Model) handleMessagesLoaded(msg messagesLoadedMsg) (tea.Model, tea.Cmd) 
 	if msg.requestID != m.loadRequestID {
 		return m, nil
 	}
-	active := m.finishModePresentation(modeEmail)
+	active := m.finishModePresentation(modeEmail, msg.presentationGeneration)
 	if active {
 		m.inlineSearchLoading = false
 	}
@@ -1238,7 +1271,7 @@ func (m Model) handleMessageDetailLoaded(msg messageDetailLoadedMsg) (tea.Model,
 	if msg.requestID != m.detailRequestID {
 		return m, nil
 	}
-	active := m.finishModePresentation(modeEmail)
+	active := m.finishModePresentation(modeEmail, msg.presentationGeneration)
 	if msg.err != nil {
 		if active {
 			m.err = query.HintRepairEncoding(msg.err)
@@ -1266,7 +1299,7 @@ func (m Model) handleThreadMessagesLoaded(msg threadMessagesLoadedMsg) (tea.Mode
 	if msg.requestID != m.loadRequestID {
 		return m, nil
 	}
-	active := m.finishModePresentation(modeEmail)
+	active := m.finishModePresentation(modeEmail, msg.presentationGeneration)
 	if msg.err != nil {
 		if active {
 			m.err = query.HintRepairEncoding(msg.err)
@@ -1293,7 +1326,7 @@ func (m Model) handleSearchResults(msg searchResultsMsg) (tea.Model, tea.Cmd) {
 	if msg.requestID != m.searchRequestID {
 		return m, nil
 	}
-	active := m.finishModePresentation(modeEmail)
+	active := m.finishModePresentation(modeEmail, msg.presentationGeneration)
 	if active {
 		m.inlineSearchLoading = false
 		m.searchLoadingMore = false

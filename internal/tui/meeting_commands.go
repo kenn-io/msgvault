@@ -10,23 +10,26 @@ import (
 )
 
 type meetingMessagesLoadedMsg struct {
-	messages  []query.MessageSummary
-	err       error
-	requestID uint64
-	append    bool
+	messages               []query.MessageSummary
+	err                    error
+	requestID              uint64
+	append                 bool
+	presentationGeneration uint64
 }
 
 type meetingSearchLoadedMsg struct {
-	messages  []query.MessageSummary
-	err       error
-	requestID uint64
-	offset    int
+	messages               []query.MessageSummary
+	err                    error
+	requestID              uint64
+	offset                 int
+	presentationGeneration uint64
 }
 
 type meetingDetailLoadedMsg struct {
-	detail    *query.MessageDetail
-	err       error
-	requestID uint64
+	detail                 *query.MessageDetail
+	err                    error
+	requestID              uint64
+	presentationGeneration uint64
 }
 
 func (m Model) loadMeetingMessages() tea.Cmd {
@@ -38,18 +41,21 @@ func (m Model) loadMeetingMessagesWithOffset(offset int, appendResults bool) tea
 	filter := m.meetingMessageFilter()
 	filter.Pagination.Offset = offset
 	requestID := m.meetingState.requestID
+	presentationGeneration := m.presentationGeneration
 	return safeCmdWithPanic(
 		func() tea.Msg {
 			messages, err := engine.ListMessages(context.Background(), filter)
 			return meetingMessagesLoadedMsg{
 				messages: messages, err: err, requestID: requestID, append: appendResults,
+				presentationGeneration: presentationGeneration,
 			}
 		},
 		func(r any) tea.Msg {
 			return meetingMessagesLoadedMsg{
-				err:       fmt.Errorf("meeting messages panic: %v", r),
-				requestID: requestID,
-				append:    appendResults,
+				err:                    fmt.Errorf("meeting messages panic: %v", r),
+				requestID:              requestID,
+				append:                 appendResults,
+				presentationGeneration: presentationGeneration,
 			}
 		},
 	)
@@ -59,19 +65,17 @@ func (m Model) handleMeetingMessagesLoaded(msg meetingMessagesLoadedMsg) (tea.Mo
 	if msg.requestID != m.meetingState.requestID {
 		return m, nil
 	}
-	if m.mode == modeMeetings {
-		m.loading = false
-	}
+	active := m.finishModePresentation(modeMeetings, msg.presentationGeneration)
 	m.meetingState.listLoadingMore = false
 	if msg.err != nil {
-		if m.mode == modeMeetings {
+		if active {
 			m.err = query.HintRepairEncoding(msg.err)
 			m.modal = modalError
 			m.modalResult = m.err.Error()
 		}
 		return m, nil
 	}
-	if m.mode == modeMeetings {
+	if active {
 		m.err = nil
 	}
 	m.meetingState.initialized = true
@@ -91,22 +95,28 @@ func (m Model) loadMeetingSearch(queryString string, offset int, _ bool) tea.Cmd
 	engine := m.engine
 	filter := m.meetingMessageFilter()
 	requestID := m.meetingState.searchRequestID
+	presentationGeneration := m.presentationGeneration
 	return safeCmdWithPanic(
 		func() tea.Msg {
 			parsed := search.Parse(queryString)
 			if err := parsed.Err(); err != nil {
-				return meetingSearchLoadedMsg{err: err, requestID: requestID, offset: offset}
+				return meetingSearchLoadedMsg{
+					err: err, requestID: requestID, offset: offset,
+					presentationGeneration: presentationGeneration,
+				}
 			}
 			merged := query.MergeFilterIntoQuery(parsed, filter)
 			messages, err := engine.Search(context.Background(), merged, searchPageSize, offset)
 			return meetingSearchLoadedMsg{
 				messages: messages,
 				err:      err, requestID: requestID, offset: offset,
+				presentationGeneration: presentationGeneration,
 			}
 		},
 		func(r any) tea.Msg {
 			return meetingSearchLoadedMsg{
 				err: fmt.Errorf("meeting search panic: %v", r), requestID: requestID, offset: offset,
+				presentationGeneration: presentationGeneration,
 			}
 		},
 	)
@@ -116,19 +126,19 @@ func (m Model) handleMeetingSearchLoaded(msg meetingSearchLoadedMsg) (tea.Model,
 	if msg.requestID != m.meetingState.searchRequestID {
 		return m, nil
 	}
-	if m.mode == modeMeetings {
-		m.loading = false
-	}
+	active := m.finishModePresentation(modeMeetings, msg.presentationGeneration)
 	m.meetingState.listLoadingMore = false
 	if msg.err != nil {
-		if m.mode == modeMeetings {
+		if active {
 			m.err = query.HintRepairEncoding(msg.err)
 			m.modal = modalError
 			m.modalResult = m.err.Error()
 		}
 		return m, nil
 	}
-	m.err = nil
+	if active {
+		m.err = nil
+	}
 	m.meetingState.initialized = true
 	if msg.offset > 0 {
 		m.meetingState.messages = append(m.meetingState.messages, msg.messages...)
@@ -145,14 +155,19 @@ func (m Model) handleMeetingSearchLoaded(msg meetingSearchLoadedMsg) (tea.Model,
 func (m Model) loadMeetingDetail(id int64) tea.Cmd {
 	engine := m.engine
 	requestID := m.meetingState.detailRequestID
+	presentationGeneration := m.presentationGeneration
 	return safeCmdWithPanic(
 		func() tea.Msg {
 			detail, err := engine.GetMessage(context.Background(), id)
-			return meetingDetailLoadedMsg{detail: detail, err: err, requestID: requestID}
+			return meetingDetailLoadedMsg{
+				detail: detail, err: err, requestID: requestID,
+				presentationGeneration: presentationGeneration,
+			}
 		},
 		func(r any) tea.Msg {
 			return meetingDetailLoadedMsg{
 				err: fmt.Errorf("meeting detail panic: %v", r), requestID: requestID,
+				presentationGeneration: presentationGeneration,
 			}
 		},
 	)
@@ -162,18 +177,18 @@ func (m Model) handleMeetingDetailLoaded(msg meetingDetailLoadedMsg) (tea.Model,
 	if msg.requestID != m.meetingState.detailRequestID {
 		return m, nil
 	}
-	if m.mode == modeMeetings {
-		m.loading = false
-	}
+	active := m.finishModePresentation(modeMeetings, msg.presentationGeneration)
 	if msg.err != nil {
-		if m.mode == modeMeetings {
+		if active {
 			m.err = query.HintRepairEncoding(msg.err)
 			m.modal = modalError
 			m.modalResult = m.err.Error()
 		}
 		return m, nil
 	}
-	m.err = nil
+	if active {
+		m.err = nil
+	}
 	m.meetingState.detail = msg.detail
 	if m.meetingState.detailSearchQuery != "" {
 		m.findMeetingDetailMatches()

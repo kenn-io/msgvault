@@ -102,6 +102,7 @@ func (m Model) handleGlobalKeys(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 		m.modal = modalHelp
 		return m, nil, true
 	case "m":
+		m.presentationGeneration++
 		m.mode = nextMode(m.mode, m.textEngine != nil)
 		// A frozen view and the email search loading flags describe the mode
 		// being left. Do not let them obscure or animate the destination mode.

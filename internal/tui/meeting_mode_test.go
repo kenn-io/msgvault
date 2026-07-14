@@ -14,6 +14,38 @@ import (
 	"go.kenn.io/msgvault/internal/search"
 )
 
+type meetingModeTextEngine struct{}
+
+func (meetingModeTextEngine) ListConversations(
+	context.Context, query.TextFilter,
+) ([]query.ConversationRow, error) {
+	return []query.ConversationRow{{ConversationID: 77}}, nil
+}
+
+func (meetingModeTextEngine) TextAggregate(
+	context.Context, query.TextViewType, query.TextAggregateOptions,
+) ([]query.AggregateRow, error) {
+	return nil, nil
+}
+
+func (meetingModeTextEngine) ListConversationMessages(
+	context.Context, int64, query.TextFilter,
+) ([]query.MessageSummary, error) {
+	return nil, nil
+}
+
+func (meetingModeTextEngine) TextSearch(
+	context.Context, string, int, int,
+) ([]query.MessageSummary, error) {
+	return nil, nil
+}
+
+func (meetingModeTextEngine) GetTextStats(
+	context.Context, query.TextStatsOptions,
+) (*query.TotalStats, error) {
+	return &query.TotalStats{MessageCount: 1}, nil
+}
+
 func TestNextModeCyclesThroughMeetings(t *testing.T) {
 	t.Run("with texts available", func(t *testing.T) {
 		assert.Equal(t, modeTexts, nextMode(modeEmail, true))
@@ -584,8 +616,9 @@ func TestModeSwitchScopesPreviousModeCompletions(t *testing.T) {
 
 				completeMeeting := func(current Model) Model {
 					updatedModel, _ := current.Update(meetingMessagesLoadedMsg{
-						messages:  []query.MessageSummary{{ID: 42, Subject: "Planning"}},
-						requestID: current.meetingState.requestID,
+						messages:               []query.MessageSummary{{ID: 42, Subject: "Planning"}},
+						requestID:              current.meetingState.requestID,
+						presentationGeneration: current.presentationGeneration,
 					})
 					updated, ok := updatedModel.(Model)
 					require.True(ok)
@@ -611,6 +644,121 @@ func TestModeSwitchScopesPreviousModeCompletions(t *testing.T) {
 				assert.Equal(int64(42), switched.meetingState.messages[0].ID)
 			})
 		}
+	}
+}
+
+func TestModeCycleRejectsStalePresentationCompletions(t *testing.T) {
+	detail := &query.MessageDetail{ID: 42, Subject: "Planning"}
+	meeting := query.MessageSummary{ID: 84, Subject: "Weekly sync"}
+	staleErr := errors.New("stale activation failed")
+
+	for _, scenario := range []struct {
+		name         string
+		mode         tuiMode
+		capture      func(Model) tea.Cmd
+		assertCached func(*assert.Assertions, *require.Assertions, Model)
+	}{
+		{
+			name: "email detail",
+			mode: modeEmail,
+			capture: func(model Model) tea.Cmd {
+				return model.loadMessageDetail(detail.ID)
+			},
+			assertCached: func(assert *assert.Assertions, require *require.Assertions, model Model) {
+				require.NotNil(model.messageDetail)
+				assert.Equal(detail.ID, model.messageDetail.ID)
+			},
+		},
+		{
+			name: "text conversations",
+			mode: modeTexts,
+			capture: func(model Model) tea.Cmd {
+				return model.loadTextConversations()
+			},
+			assertCached: func(assert *assert.Assertions, require *require.Assertions, model Model) {
+				require.Len(model.textState.conversations, 1)
+				assert.Equal(int64(77), model.textState.conversations[0].ConversationID)
+			},
+		},
+		{
+			name: "meeting search",
+			mode: modeMeetings,
+			capture: func(model Model) tea.Cmd {
+				return model.loadMeetingSearch("weekly", 0, false)
+			},
+			assertCached: func(assert *assert.Assertions, require *require.Assertions, model Model) {
+				require.Len(model.meetingState.messages, 1)
+				assert.Equal(meeting.ID, model.meetingState.messages[0].ID)
+			},
+		},
+	} {
+		for _, staleFailure := range []bool{false, true} {
+			completion := "success"
+			if staleFailure {
+				completion = "error"
+			}
+			t.Run(scenario.name+"/"+completion, func(t *testing.T) {
+				assert := assert.New(t)
+				require := require.New(t)
+				model := NewBuilder().WithDetail(detail).WithMessages(meeting).Build()
+				model.messageDetail = nil
+				model.textEngine = meetingModeTextEngine{}
+				model.mode = scenario.mode
+
+				staleMsg := scenario.capture(model)()
+				if staleFailure {
+					staleMsg = modeCompletionWithError(t, staleMsg, staleErr)
+				}
+
+				for range 3 {
+					var handled bool
+					model, _, handled = model.handleGlobalKeys(tea.KeyPressMsg{Code: 'm', Text: "m"})
+					require.True(handled)
+				}
+				require.Equal(scenario.mode, model.mode)
+				require.True(model.loading)
+
+				currentMsg := scenario.capture(model)()
+				model.transitionBuffer = "current activation"
+				model = sendMsg(t, model, staleMsg)
+
+				assert.True(model.loading, "stale completion must not stop the current load")
+				assert.Equal("current activation", model.transitionBuffer)
+				require.NoError(model.err)
+				assert.Equal(modalNone, model.modal)
+				if !staleFailure {
+					scenario.assertCached(assert, require, model)
+				}
+
+				model = sendMsg(t, model, currentMsg)
+				assert.False(model.loading)
+				assert.Empty(model.transitionBuffer)
+				require.NoError(model.err)
+				assert.Equal(modalNone, model.modal)
+			})
+		}
+	}
+}
+
+func modeCompletionWithError(t *testing.T, msg tea.Msg, err error) tea.Msg {
+	t.Helper()
+	switch msg := msg.(type) {
+	case messageDetailLoadedMsg:
+		msg.detail = nil
+		msg.err = err
+		return msg
+	case textConversationsLoadedMsg:
+		msg.conversations = nil
+		msg.stats = nil
+		msg.err = err
+		return msg
+	case meetingSearchLoadedMsg:
+		msg.messages = nil
+		msg.err = err
+		return msg
+	default:
+		require.FailNow(t, "unsupported completion type", "%T", msg)
+		return nil
 	}
 }
 
