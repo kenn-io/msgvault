@@ -209,7 +209,7 @@ func (m *Model) navigateList(key string, itemCount int) bool {
 			m.cursor--
 			changed = true
 		}
-	case "down", "j":
+	case keyNameDown, "j":
 		if m.cursor < itemCount-1 {
 			m.cursor++
 			changed = true

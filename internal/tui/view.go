@@ -473,7 +473,7 @@ func (m Model) messageListView() string {
 	// When a search is active (or search bar is open), fall through to full
 	// rendering so the search bar stays visible and the user can edit their query.
 	if len(m.messages) == 0 && !m.loading && !m.inlineSearchActive && m.searchQuery == "" && m.err == nil {
-		return m.fillScreen(m.styles.normalRow.Render(padRight("No messages", m.width)), 1)
+		return m.fillScreen(m.styles.normalRow.Render(padRight("No messages", m.width)))
 	}
 
 	var sb strings.Builder
@@ -760,26 +760,26 @@ func (m Model) fillScreenWithPageSize(content string, usedLines, pageSize int) s
 }
 
 // fillScreen fills the remaining screen space with blank lines for table views.
-func (m Model) fillScreen(content string, usedLines int) string {
-	return m.fillScreenWithPageSize(content, usedLines, m.pageSize)
+func (m Model) fillScreen(content string) string {
+	return m.fillScreenWithPageSize(content, 1, m.pageSize)
 }
 
 // fillScreenDetail fills remaining space for detail view (uses detailPageSize).
-func (m Model) fillScreenDetail(content string, usedLines int) string {
-	return m.fillScreenWithPageSize(content, usedLines, m.detailPageSize())
+func (m Model) fillScreenDetail(content string) string {
+	return m.fillScreenWithPageSize(content, 1, m.detailPageSize())
 }
 
 // messageDetailView renders the full message.
 func (m Model) messageDetailView() string {
 	if m.messageDetail == nil {
 		if m.loading {
-			return m.fillScreenDetail(m.styles.loading.Render(padRight(m.spinnerIndicator()+" Loading message...", m.width)), 1)
+			return m.fillScreenDetail(m.styles.loading.Render(padRight(m.spinnerIndicator()+" Loading message...", m.width)))
 		}
-		content := m.fillScreenDetail(m.styles.normalRow.Render(strings.Repeat(" ", m.width)), 1)
+		content := m.fillScreenDetail(m.styles.normalRow.Render(strings.Repeat(" ", m.width)))
 		if m.modal != modalNone {
 			return m.overlayModal(content)
 		}
-		return m.fillScreenDetail(m.styles.err.Render(padRight("Message not found (nil detail)", m.width)), 1)
+		return m.fillScreenDetail(m.styles.err.Render(padRight("Message not found (nil detail)", m.width)))
 	}
 
 	lines := m.buildDetailLines()
@@ -855,11 +855,11 @@ func (m Model) messageDetailView() string {
 // threadView renders the thread/conversation view.
 func (m Model) threadView() string {
 	if m.loading && len(m.threadMessages) == 0 {
-		return m.fillScreen(m.styles.loading.Render(padRight(m.spinnerIndicator()+" Loading thread...", m.width)), 1)
+		return m.fillScreen(m.styles.loading.Render(padRight(m.spinnerIndicator()+" Loading thread...", m.width)))
 	}
 
 	if !m.loading && len(m.threadMessages) == 0 {
-		content := m.fillScreen(m.styles.normalRow.Render(padRight("No messages in thread", m.width)), 1)
+		content := m.fillScreen(m.styles.normalRow.Render(padRight("No messages in thread", m.width)))
 		if m.modal != modalNone {
 			return m.overlayModal(content)
 		}
@@ -1195,15 +1195,49 @@ var rawHelpLines = []string{
 	"  A           Select account",
 	"  f           Filter (attachments, deleted)",
 	"  e           Export attachments (in message view)",
-	"  m           Toggle Email/Texts mode",
+	"  m           Cycle Email/Texts/Meetings",
 	"  q           Quit",
 	"",
 	"[↑/↓] Scroll  [Any other key] Close",
 }
 
+var meetingHelpLines = []string{
+	"Meeting Shortcuts",
+	"",
+	"Navigation",
+	"  ↑/k, ↓/j    Move cursor or scroll transcript",
+	"  ←/h, →/l    Previous/next meeting in detail",
+	"  PgUp/PgDn   Page up/down",
+	"  Home/End    Go to first/last meeting",
+	"  Enter       Open transcript",
+	"  Esc         Clear search or go back",
+	"",
+	"Browse & Search",
+	"  /           Search titles, people, transcripts, and notes",
+	"  A           Select meeting source",
+	"  s           Cycle date/title sort",
+	"  r           Reverse sort order",
+	"",
+	"Other",
+	"  m           Cycle Email/Texts/Meetings",
+	"  ?           Show this help",
+	"  q           Quit",
+	"",
+	"Meetings are read-only in the TUI.",
+	"",
+	"[↑/↓] Scroll  [Any other key] Close",
+}
+
+func (m Model) activeHelpLines() []string {
+	if m.mode == modeMeetings {
+		return meetingHelpLines
+	}
+	return rawHelpLines
+}
+
 // helpMaxVisible returns the max visible lines for the help modal given terminal height.
 func (m Model) helpMaxVisible() int {
-	v := min(max(m.height-6, 1), len(rawHelpLines))
+	v := min(max(m.height-6, 1), len(m.activeHelpLines()))
 	return v
 }
 
@@ -1302,16 +1336,17 @@ func (m Model) renderFilterModal() string {
 
 // renderHelpModal renders the help modal content with scrolling support.
 func (m Model) renderHelpModal() string {
+	helpLines := m.activeHelpLines()
 	maxVisible := m.helpMaxVisible()
 
 	// Clamp scroll offset
-	maxScroll := max(len(rawHelpLines)-maxVisible, 0)
+	maxScroll := max(len(helpLines)-maxVisible, 0)
 	if m.helpScroll > maxScroll {
 		m.helpScroll = maxScroll
 	}
 
 	// Build visible slice, rendering the title line with style
-	visible := rawHelpLines[m.helpScroll : m.helpScroll+maxVisible]
+	visible := helpLines[m.helpScroll : m.helpScroll+maxVisible]
 	rendered := make([]string, len(visible))
 	for i, line := range visible {
 		if m.helpScroll+i == 0 {

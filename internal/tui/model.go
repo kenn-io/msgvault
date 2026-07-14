@@ -245,6 +245,14 @@ func New(engine query.Engine, opts Options) Model {
 	ti.Placeholder = "search (Tab: deep)"
 	ti.CharLimit = 200
 	ti.SetWidth(50)
+	meetingInput := textinput.New()
+	meetingInput.Placeholder = "search meetings and transcripts"
+	meetingInput.CharLimit = 200
+	meetingInput.SetWidth(50)
+	meetingDetailInput := textinput.New()
+	meetingDetailInput.Placeholder = "find in transcript"
+	meetingDetailInput.CharLimit = 200
+	meetingDetailInput.SetWidth(40)
 
 	aggLimit := opts.AggregateLimit
 	if aggLimit == 0 {
@@ -283,6 +291,10 @@ func New(engine query.Engine, opts Options) Model {
 			sortDirection:    query.SortDesc,
 			msgSortField:     query.MessageSortByDate,
 			msgSortDirection: query.SortDesc,
+		},
+		meetingState: meetingState{
+			searchInput:       meetingInput,
+			detailSearchInput: meetingDetailInput,
 		},
 		pageSize:      20,
 		loading:       true,
@@ -936,6 +948,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleTextStatsLoaded(msg)
 	case meetingMessagesLoadedMsg:
 		return m.handleMeetingMessagesLoaded(msg)
+	case meetingSearchLoadedMsg:
+		return m.handleMeetingSearchLoaded(msg)
+	case meetingDetailLoadedMsg:
+		return m.handleMeetingDetailLoaded(msg)
 	}
 	return m, nil
 }
@@ -1383,6 +1399,9 @@ func (m Model) handleKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if m.mode == modeTexts {
 		return m.handleTextKeyPress(msg)
 	}
+	if m.mode == modeMeetings {
+		return m.handleMeetingKeyPress(msg)
+	}
 
 	// Handle modal first (error modals must dismiss even during search)
 	if m.modal != modalNone {
@@ -1590,6 +1609,9 @@ func (m Model) View() tea.View {
 func (m Model) renderView() string {
 	if m.mode == modeTexts {
 		return m.renderTextView()
+	}
+	if m.mode == modeMeetings {
+		return m.renderMeetingView()
 	}
 
 	switch m.level {

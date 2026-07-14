@@ -135,7 +135,7 @@ func (m Model) handleTextTimelineKeys(
 	case keyNameEsc, "backspace":
 		return m.textGoBack()
 
-	case "j", "down":
+	case "j", keyNameDown:
 		m.textMoveCursor(1)
 		return m, nil
 
@@ -327,7 +327,7 @@ func (m *Model) navigateTextList(key string, itemCount int) bool {
 			)
 		}
 		return true
-	case "down", "j":
+	case keyNameDown, "j":
 		if m.textState.cursor < itemCount-1 {
 			m.textState.cursor++
 			m.textState.scrollOffset = calculateScrollOffset(

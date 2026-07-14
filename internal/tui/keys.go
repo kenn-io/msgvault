@@ -12,6 +12,7 @@ import (
 const (
 	keyNameEnter = "enter"
 	keyNameEsc   = "esc"
+	keyNameDown  = "down"
 )
 
 // handleInlineSearchKeys handles keys when inline search bar is active.
@@ -109,6 +110,10 @@ func (m Model) handleGlobalKeys(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 			spinCmd := m.startSpinner()
 			return m, tea.Batch(spinCmd, m.loadTextConversations()), true
 		case modeMeetings:
+			if m.meetingState.initialized {
+				m.loading = false
+				return m, nil, true
+			}
 			m.loading = true
 			m.meetingState.requestID++
 			spinCmd := m.startSpinner()
@@ -738,7 +743,7 @@ func (m Model) handleMessageDetailKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd)
 		} else {
 			return m.showFlash("At top")
 		}
-	case "down", "j":
+	case keyNameDown, "j":
 		// Clamp first in case scroll is out of range after resize
 		m.clampDetailScroll()
 		maxScroll := max(m.detailLineCount-m.detailPageSize(), 0)
@@ -827,7 +832,7 @@ func (m Model) handleThreadViewKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.threadCursor--
 			m.ensureThreadCursorVisible()
 		}
-	case "down", "j":
+	case keyNameDown, "j":
 		if m.threadCursor < len(m.threadMessages)-1 {
 			m.threadCursor++
 			m.ensureThreadCursorVisible()
@@ -947,7 +952,7 @@ func (m Model) handleAccountSelectorKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cm
 		if m.modalCursor > 0 {
 			m.modalCursor--
 		}
-	case "down", "j":
+	case keyNameDown, "j":
 		if m.modalCursor < maxIdx {
 			m.modalCursor++
 		}
@@ -990,7 +995,7 @@ func (m Model) handleFilterToggleKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) 
 		if m.modalCursor > 0 {
 			m.modalCursor--
 		}
-	case "down", "j":
+	case keyNameDown, "j":
 		if m.modalCursor < filterOptionCount-1 {
 			m.modalCursor++
 		}
@@ -1035,7 +1040,7 @@ func (m Model) handleExportAttachmentsKeys(msg tea.KeyPressMsg) (tea.Model, tea.
 		if m.exportCursor > 0 {
 			m.exportCursor--
 		}
-	case "down", "j":
+	case keyNameDown, "j":
 		if m.exportCursor < maxIdx {
 			m.exportCursor++
 		}
@@ -1075,7 +1080,7 @@ func (m Model) handleErrorKeys() (tea.Model, tea.Cmd) {
 
 func (m Model) handleHelpKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
-	case "down", "j":
+	case keyNameDown, "j":
 		m.helpScroll++
 	case "up", "k":
 		if m.helpScroll > 0 {
@@ -1095,7 +1100,7 @@ func (m Model) handleHelpKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	// Clamp scroll to prevent overscroll
-	if maxScroll := len(rawHelpLines) - m.helpMaxVisible(); maxScroll > 0 {
+	if maxScroll := len(m.activeHelpLines()) - m.helpMaxVisible(); maxScroll > 0 {
 		if m.helpScroll > maxScroll {
 			m.helpScroll = maxScroll
 		}

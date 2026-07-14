@@ -3,16 +3,49 @@ package tui
 import (
 	"strings"
 
+	"charm.land/bubbles/v2/textinput"
 	"go.kenn.io/msgvault/internal/query"
 )
 
 const meetingMessageType = "meeting_transcript"
 
+type meetingViewLevel int
+
+const (
+	meetingLevelList meetingViewLevel = iota
+	meetingLevelDetail
+)
+
 // meetingState holds state that must remain independent from Email and Texts.
 type meetingState struct {
-	sourceID  *int64
-	messages  []query.MessageSummary
-	requestID uint64
+	level                  meetingViewLevel
+	initialized            bool
+	sourceID               *int64
+	messages               []query.MessageSummary
+	cursor                 int
+	scrollOffset           int
+	requestID              uint64
+	sortField              query.MessageSortField
+	sortDirection          query.SortDirection
+	detail                 *query.MessageDetail
+	detailScroll           int
+	detailRequestID        uint64
+	detailSearchActive     bool
+	detailSearchInput      textinput.Model
+	detailSearchQuery      string
+	detailSearchMatches    []int
+	detailSearchMatchIndex int
+	listOffset             int
+	listComplete           bool
+	listLoadingMore        bool
+
+	searchActive    bool
+	searchInput     textinput.Model
+	searchQuery     string
+	searchRequestID uint64
+	preSearch       []query.MessageSummary
+	searchOffset    int
+	searchComplete  bool
 }
 
 func (m Model) meetingMessageFilter() query.MessageFilter {
@@ -20,8 +53,8 @@ func (m Model) meetingMessageFilter() query.MessageFilter {
 		MessageType: meetingMessageType,
 		SourceID:    m.meetingState.sourceID,
 		Sorting: query.MessageSorting{
-			Field:     query.MessageSortByDate,
-			Direction: query.SortDesc,
+			Field:     m.meetingState.sortField,
+			Direction: m.meetingState.sortDirection,
 		},
 	}
 	filter.Pagination.Limit = messageListPageSize
