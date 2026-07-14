@@ -14,6 +14,7 @@ func TestSearchMessagesQuery_NormalizesOffsetDateBounds(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
+	minusFive := time.FixedZone("UTC-5", -5*60*60)
 
 	earlierID := f.NewMessage().
 		WithSourceMessageID("offset-bound-earlier").
@@ -23,10 +24,9 @@ func TestSearchMessagesQuery_NormalizesOffsetDateBounds(t *testing.T) {
 	laterID := f.NewMessage().
 		WithSourceMessageID("offset-bound-later").
 		WithSubject("later").
-		WithSentAt(time.Date(2024, 1, 15, 16, 0, 0, 0, time.UTC)).
+		WithSentAt(time.Date(2024, 1, 15, 11, 0, 0, 0, minusFive)).
 		Create(t, f.Store)
 
-	minusFive := time.FixedZone("UTC-5", -5*60*60)
 	bound := time.Date(2024, 1, 15, 10, 30, 0, 0, minusFive) // 15:30 UTC
 
 	after, total, err := f.Store.SearchMessagesQuery(&search.Query{AfterDate: &bound}, 0, 50)

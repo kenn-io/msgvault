@@ -627,21 +627,22 @@ func (s *Store) searchMessagesQueryImpl(
 	}
 
 	// after: / before:
-	// Bind time.Time directly and normalize it to UTC first. pgx encodes the
-	// value as TIMESTAMPTZ, while go-sqlite3 serializes it to the sortable layout
-	// used by stored timestamps. UTC normalization matters on SQLite because it
-	// compares those serialized values lexically; preserving a caller's offset
-	// can put an equivalent wall-clock value on the wrong side of a UTC archive
-	// timestamp. Direct binding also avoids the older RFC3339-string bug where
-	// the 'T' separator sorted after SQLite's space separator. [cr2-9]
+	// PostgreSQL compares typed TIMESTAMPTZ values directly. SQLite archives can
+	// contain both UTC and offset-bearing timestamp strings, so compare Julian
+	// day values instead of their lexical encodings. Normalizing the bound to UTC
+	// keeps the argument stable on both backends. [cr2-9]
+	timestampExpr := "COALESCE(m.sent_at, m.received_at, m.internal_date)"
+	boundExpr := "?"
+	if !s.IsPostgreSQL() {
+		timestampExpr = "julianday(" + timestampExpr + ")"
+		boundExpr = "julianday(?)"
+	}
 	if q.AfterDate != nil {
-		conditions = append(conditions,
-			"COALESCE(m.sent_at, m.received_at, m.internal_date) >= ?")
+		conditions = append(conditions, timestampExpr+" >= "+boundExpr)
 		args = append(args, q.AfterDate.UTC())
 	}
 	if q.BeforeDate != nil {
-		conditions = append(conditions,
-			"COALESCE(m.sent_at, m.received_at, m.internal_date) < ?")
+		conditions = append(conditions, timestampExpr+" < "+boundExpr)
 		args = append(args, q.BeforeDate.UTC())
 	}
 
