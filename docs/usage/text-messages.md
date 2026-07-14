@@ -227,7 +227,7 @@ msgvault sync-synctech-sms phone-backups
 
 ## Browsing Texts in the TUI
 
-After importing, launch the TUI and press `m` to toggle between Email and Texts mode. Text mode shows a conversations list; select a conversation to drill down into its messages.
+After importing, launch the TUI and press `m` to cycle from Email to Texts mode. Text mode shows a conversations list; select a conversation to drill down into its messages. Pressing `m` again reaches Meetings, then returns to Email.
 
 ```bash
 msgvault tui

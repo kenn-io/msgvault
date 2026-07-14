@@ -157,6 +157,10 @@ Once several accounts hold overlapping copies of the same message, [deduplicatio
 
 Press `A` (uppercase) inside the TUI to open the account selector modal. Pick a single account to scope every view, or pick "All Accounts" to clear the filter. The currently selected account is shown in the title bar.
 
+Meetings mode uses the same key for a separate source selector. It lists only
+configured Granola and Circleback sources, and changing it does not replace the
+Email account filter.
+
 ## Command Reference
 
 See the [CLI Reference](/cli-reference/#add-account) for the complete flag list on `add-account`, `add-imap`, `add-o365`, `identity`, and `collection`.

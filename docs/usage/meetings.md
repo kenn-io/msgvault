@@ -85,7 +85,7 @@ With a single configured entry the identifier argument may be omitted.
 ```bash
 msgvault sync-granola                      # all configured accounts
 msgvault sync-granola work                 # one account
-msgvault sync-granola --limit 5            # smoke test
+msgvault sync-granola --limit 5            # limited production validation
 msgvault sync-granola --full               # re-fetch everything, repair in place
 msgvault sync-granola --after 2024-01-01   # bound a full sync by creation date
 ```
@@ -107,6 +107,20 @@ transcript, organizer, attendees, and `is_from_me` attribution. Running the
 same limited sync again updates the existing meeting rows rather than creating
 duplicates. Once the results look correct, run `msgvault sync-granola work`
 without a limit to continue normal incremental operation.
+
+### Browse in the TUI
+
+Launch `msgvault tui` and press `m` until the title bar shows **Meetings**.
+The list combines Granola and Circleback meetings and shows their date, title,
+organizer, and source. Press `A` to select one meeting source, `/` to search
+meeting titles, people, transcripts, and notes, and `Enter` to open the full
+transcript. Inside the detail view, `/` finds text and `n`/`N` moves between
+matches. Meetings mode is read-only; selection and deletion actions are not
+available.
+
+Meetings remains available in the mode cycle when the archive is empty and
+shows setup guidance. If Texts mode is unavailable, `m` skips it and still
+reaches Meetings.
 
 With a `schedule` set, `msgvault serve` runs the sync on that cron cadence,
 like `[[gcal]]` calendar sources. Registration is intentionally durable: if

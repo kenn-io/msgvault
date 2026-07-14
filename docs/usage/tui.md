@@ -1,6 +1,6 @@
 ---
 title: Interactive TUI
-description: Terminal interface for exploring, filtering, and managing your email and text message archive.
+description: Terminal interface for exploring email, text messages, and meeting transcripts.
 ---
 
 
@@ -88,7 +88,7 @@ Press `t` from any view to jump directly to the Time view. The Time view aggrega
 
 ## Text Messages
 
-Press `m` to toggle between Email and Texts mode. This mode is only available when text/chat data has been imported or synced. See [Text Messages](/usage/text-messages/) for details on importing WhatsApp, iMessage, Google Voice, Facebook Messenger, and SMS Backup & Restore conversations, and [Microsoft Teams](/usage/teams/) for Teams sync.
+Press `m` to cycle through Email, Texts, and Meetings. Texts is skipped when no text/chat engine is available, but Meetings remains in the cycle even before a meeting source has been configured. See [Text Messages](/usage/text-messages/) for details on importing WhatsApp, iMessage, Google Voice, Facebook Messenger, and SMS Backup & Restore conversations, and [Microsoft Teams](/usage/teams/) for Teams sync.
 
 Text mode provides the following view types. Press `g` to cycle through them:
 
@@ -102,6 +102,28 @@ Text mode provides the following view types. Press `g` to cycle through them:
 | Time | Aggregate by time period (year/month/day) |
 
 Navigation and interaction in Text mode work the same as Email mode. Press `Enter` to drill into a conversation and view individual messages. Press `Esc` or `Backspace` to go back. Use `g` to re-aggregate from a drill-down view, `/` to search, and `f` to filter. The stats display shows message count and total size for text conversations.
+
+## Meetings
+
+Meetings mode is a read-only browser for transcripts and notes imported from
+[Granola or Circleback](/usage/meetings/). It shows a flat, newest-first list
+with each meeting's date, title, organizer, and source. Press `Enter` to open
+the transcript and notes, `Esc` or `Backspace` to return to the list, and the
+left/right arrow keys to move between meeting details.
+
+Press `/` in the meeting list to search titles, people, transcripts, and notes.
+Meeting search is always scoped to meeting transcripts, including when the
+search text contains explicit message-type syntax. In the detail view, `/`
+finds text within the current transcript; use `n` and `N` to move between
+matches.
+
+Press `A` to select all meeting sources or one configured Granola or Circleback
+source. This source choice is independent of the Email account filter. If an
+older remote daemon does not provide source identity, the Source column shows
+`—` instead of a misleading blank value.
+
+Selection and deletion keys are disabled in Meetings mode. Meeting sync is
+read-only, and browsing a transcript never changes the source service.
 
 ## Drill-down and Sub-grouping
 
@@ -168,13 +190,13 @@ Press `Esc` to return to the message list.
 | `Enter` | Drill down into selection |
 | `T` | View full email thread |
 | `Esc` / `Backspace` | Go back |
-| `m` | Toggle between Email and Texts mode |
+| `m` | Cycle through Email, Texts, and Meetings (skips unavailable Texts) |
 | `g` | Cycle view mode |
 | `s` | Cycle sort field (Name / Count / Size) |
 | `v` | Reverse sort direction |
 | `t` | Jump to Time view (cycle granularity when already in Time) |
 | `a` | Show all individual messages in current view |
-| `A` | Filter by account |
+| `A` | Filter by account, or by source in Meetings mode |
 | `f` | Open filter modal |
 | `Space` | Toggle selection |
 | `d` | Stage selected for deletion |
