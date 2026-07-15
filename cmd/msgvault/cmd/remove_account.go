@@ -172,12 +172,31 @@ func runRemoveAccountLocal(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("collect attachment paths: %w", err)
 	}
 
+	// Invalidate the analytics cache sync state BEFORE the deletion commits,
+	// holding the exclusive cache build lock until after the commit.
+	// Cascading deletion also removes the sync history that staleness probes
+	// compare against, so any window where the deletion has committed but a
+	// pre-deletion cache still carries valid state — a crash here, or a
+	// concurrent build completing against the pre-deletion database — could
+	// otherwise serve the removed account's data indefinitely. Holding the
+	// lock across the commit means no builder can write a fresh state from
+	// pre-deletion data; a crash after invalidation merely costs one full
+	// rebuild. The lock is released before the rebuild below, which takes it
+	// itself.
+	releaseCacheLock := func() {}
+	if !store.IsPostgresURL(cfg.DatabaseDSN()) {
+		releaseCacheLock = lockCacheAndInvalidateSyncState(cfg.AnalyticsDir())
+	}
+
 	// RemoveSourceSerialized runs the active-sync check and the cascade
 	// under a single exclusive write lock. StartSync blocks on that lock,
 	// so a sync started between our check and the delete is either seen
 	// as active (we skip file deletion) or fails after we commit because
 	// the source is gone.
 	hadActiveSync, packedMappingsRemoved, err := s.RemoveSourceSerialized(cmd.Context(), source.ID)
+	// Release after the commit (or its failure): the rebuild below acquires
+	// the same lock itself, and holding it here would deadlock.
+	releaseCacheLock()
 	if err != nil {
 		return fmt.Errorf("remove account: %w", err)
 	}
@@ -295,21 +314,9 @@ func runRemoveAccountLocal(cmd *cobra.Command, args []string) error {
 	// so a running daemon's queries never see the removed account's data
 	// disappear mid-query.
 	if !store.IsPostgresURL(cfg.DatabaseDSN()) {
-		// Invalidate the cache sync state first: cascading deletion also
-		// removed the sync history that staleness probes compare against, so
-		// if the rebuild below fails (or this process dies), a cache built
-		// before the removal could otherwise look fresh forever while still
-		// containing the removed account's data. With the state gone, every
-		// probe forces a full rebuild. Hold the exclusive build lock across
-		// the removal so a builder that started before the account deletion
-		// cannot land a fresh state file after we delete it.
-		if err := invalidateCacheSyncState(cfg.AnalyticsDir()); err != nil {
-			fmt.Fprintf(os.Stderr,
-				"Warning: %v\n"+
-					"Aggregate views may keep serving the removed account's data until 'msgvault build-cache --full-rebuild' succeeds.\n",
-				err,
-			)
-		}
+		// The sync state was already invalidated under the build lock before
+		// the deletion committed (see above), so even a crash right here
+		// cannot leave the pre-removal cache looking fresh.
 		fmt.Println("\nRebuilding analytics cache...")
 		if _, err := buildCache(cfg.DatabaseDSN(), cfg.AnalyticsDir(), true); err != nil {
 			fmt.Fprintf(os.Stderr,

@@ -75,20 +75,23 @@ func invalidateSyncStateFile(stateFile string) error {
 	return nil
 }
 
-// invalidateCacheSyncState invalidates the cache's sync state under the
-// exclusive build lock so every later staleness probe demands a full
-// rebuild. Waiting on the lock means a builder that started before the
-// caller's database mutation finishes first and its freshly written state is
-// still invalidated here; any builder that starts afterwards sees the
-// mutated database. The returned error means the pre-mutation cache may keep
-// looking fresh — callers must surface that.
-func invalidateCacheSyncState(analyticsDir string) error {
+// lockCacheAndInvalidateSyncState acquires the exclusive cache build lock,
+// invalidates the sync state, and returns a release function the caller must
+// invoke once its own database mutation has committed. Waiting on the lock
+// means a builder that started before the caller's mutation finishes first
+// and its freshly written state is still invalidated here; holding the lock
+// until the commit means no builder can write a fresh state computed from
+// the pre-mutation database. Failures degrade to loud warnings — the
+// caller's mutation must proceed — and the returned release function is
+// always safe to call.
+func lockCacheAndInvalidateSyncState(analyticsDir string) func() {
+	release := func() {}
 	buildLock, err := cacheBuildFileLock(analyticsDir)
 	if err == nil {
 		if lockErr := buildLock.Lock(); lockErr != nil {
 			err = lockErr
 		} else {
-			defer func() { _ = buildLock.Unlock() }()
+			release = func() { _ = buildLock.Unlock() }
 		}
 	}
 	if err != nil {
@@ -96,7 +99,13 @@ func invalidateCacheSyncState(analyticsDir string) error {
 		fmt.Fprintf(os.Stderr,
 			"Warning: could not lock analytics cache for invalidation: %v\n", err)
 	}
-	return invalidateSyncStateFile(filepath.Join(analyticsDir, "_last_sync.json"))
+	if err := invalidateSyncStateFile(filepath.Join(analyticsDir, "_last_sync.json")); err != nil {
+		fmt.Fprintf(os.Stderr,
+			"Warning: %v\n"+
+				"Aggregate views may keep serving stale data until 'msgvault build-cache --full-rebuild' succeeds.\n",
+			err)
+	}
+	return release
 }
 
 // buildCacheAfterSnapshotHook is a deterministic test seam for writes that
