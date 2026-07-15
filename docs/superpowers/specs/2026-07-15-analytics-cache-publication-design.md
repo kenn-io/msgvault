@@ -75,6 +75,9 @@ Cache inspection returns one of three states:
   complete set of files, or the state file is malformed. DuckDB readers return
   a cache-unavailable error and the next build performs stateless recovery.
 
+Cache stats maps Interrupted state to a distinct `StatusInterrupted` result
+without opening or scanning the uncommitted Parquet files.
+
 A successfully built zero-message archive is Ready: it contains the existing
 schema-compatible empty messages shard, the required empty dimension files,
 and valid state. It is distinct from an Absent fresh installation.
@@ -201,6 +204,13 @@ invalid and the command returns an explicit partial-success error stating that
 the account was removed but cache refresh failed. Cleanup still runs before
 the error is returned.
 
+If the serialized source cascade itself fails after state was invalidated, its
+transaction leaves the database unchanged. Removal still invokes the full
+lock-held builder before returning the cascade error, restoring the unchanged
+cache to Ready state. If that recovery build also fails, removal returns both
+errors and leaves the cache Interrupted; credentials and attachments are not
+cleaned up because the source still exists.
+
 ## Refresh Failure Semantics
 
 Cache maintenance is part of successful write-command completion:
@@ -214,9 +224,9 @@ Cache maintenance is part of successful write-command completion:
   archived successfully and those counters are themselves cache-staleness
   inputs.
 
-The next scheduled refresh, explicit `build-cache`, or daemon startup can
-repair an Interrupted cache. The error remains visible to the operation that
-failed to finish cache maintenance.
+The next scheduled refresh, explicit `build-cache`, daemon startup, or local
+TUI launch that starts the daemon can repair an Interrupted cache. The error
+remains visible to the operation that failed to finish cache maintenance.
 
 ## Simplification
 
@@ -252,6 +262,9 @@ All Go tests use testify and exercise the real SQLite-to-DuckDB export path.
   and the first subsequent query contains no removed-account rows.
 - A failed post-removal rebuild returns partial-success error text and leaves
   readers unable to use the cache.
+- A failed removal cascade rebuilds the unchanged cache before returning the
+  cascade error; a simultaneous recovery failure returns both errors.
+- Cache stats reports `StatusInterrupted` without scanning uncommitted files.
 - A cache refresh failure propagates through command/job results without
   changing a completed `sync_runs` row to failed.
 - Replacement publication follows delete-then-rename semantics suitable for
