@@ -807,8 +807,13 @@ func buildCacheImpl(dbPath, analyticsDir string, fullRebuild, autoDecided bool) 
 	if err != nil {
 		return nil, fmt.Errorf("marshal sync state: %w", err)
 	}
+	// A state write failure must fail the build: incrementally appended rows
+	// paired with the old watermark would be appended again as duplicates on
+	// the next build. Failing here keeps exportCompleted false so the
+	// partial-update discard above cleans up; a failed full rebuild simply
+	// forces another full rebuild next time (no sync state found).
 	if err := os.WriteFile(stateFile, stateData, 0600); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: failed to save sync state: %v\n", err)
+		return nil, fmt.Errorf("save cache sync state to %s: %w", stateFile, err)
 	}
 
 	exportCompleted = true

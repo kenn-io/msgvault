@@ -72,17 +72,17 @@ func runDaemonCLISubprocessStreamWithEnv(
 	firstStreamErr := <-streamErrCh
 	secondStreamErr := <-streamErrCh
 	waitErr := cmd.Wait()
+	// The child may have changed the analytics cache regardless of how it
+	// exited: an ingest rebuilds it (rebuildCacheAfterWrite) and can then
+	// fail for unrelated reasons, and remove-account deletes it outright.
+	// Reconcile the daemon's engine on every termination — it is a no-op
+	// for read-only children and for an already-consistent engine.
+	maybeAdoptAnalyticsCache()
 	if firstStreamErr != nil {
 		return firstStreamErr
 	}
 	if secondStreamErr != nil {
 		return secondStreamErr
-	}
-	if waitErr == nil {
-		// An ingest child may have just rebuilt the analytics cache
-		// (rebuildCacheAfterWrite); adopt it if the daemon is still on
-		// live-SQL fallback. No-op for read-only children and once adopted.
-		maybeAdoptAnalyticsCache()
 	}
 	return classifyDaemonCLIWaitErr(waitErr, args)
 }

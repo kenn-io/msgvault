@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -289,6 +290,58 @@ func TestBuildCacheFailedIncrementalDiscardsPartialUpdate(t *testing.T) {
 		"SELECT COUNT(*) FROM read_parquet('%s', hive_partitioning=true) WHERE id = 6", pattern,
 	)).Scan(&rows), "count message rows")
 	assert.Equal(1, rows, "retry after a failed incremental build must not duplicate message rows")
+}
+
+// TestBuildCacheFailedStateWriteDiscardsIncrementalUpdate pins that a failed
+// _last_sync.json write fails an incremental build and discards its output:
+// appended message rows paired with the old watermark would otherwise be
+// appended again as duplicates by the next build.
+func TestBuildCacheFailedStateWriteDiscardsIncrementalUpdate(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("simulates the state-write failure via a read-only file, which RemoveAll cannot discard on Windows")
+	}
+	require := require.New(t)
+	assert := assert.New(t)
+	tmpDir := setupTestSQLite(t)
+	dbPath := filepath.Join(tmpDir, "test.db")
+	analyticsDir := filepath.Join(tmpDir, "analytics")
+
+	_, err := buildCache(dbPath, analyticsDir, false)
+	require.NoError(err, "initial build")
+
+	db, err := sql.Open("sqlite3", dbPath)
+	require.NoError(err, "open sqlite")
+	defer func() { _ = db.Close() }()
+	_, err = db.Exec(`
+		INSERT INTO messages (id, source_id, source_message_id, conversation_id, subject, snippet, sent_at, size_estimate, has_attachments)
+			VALUES (6, 1, 'msg6', 104, 'New', 'Preview 6', '2024-03-02 10:00:00', 700, 0);
+		INSERT INTO message_recipients (message_id, participant_id, recipient_type, display_name)
+			VALUES (6, 1, 'from', 'Alice Smith');
+	`)
+	require.NoError(err, "insert new message")
+
+	stateFile := filepath.Join(analyticsDir, "_last_sync.json")
+	require.NoError(os.Chmod(stateFile, 0o400), "make sync state read-only")
+
+	_, err = buildCache(dbPath, analyticsDir, false)
+	require.ErrorContains(err, "save cache sync state",
+		"incremental build must fail when the sync state cannot be persisted")
+
+	assert.False(query.HasCompleteParquetData(analyticsDir),
+		"a build with unpersisted sync state must not leave a cache that still looks complete")
+
+	_, err = buildCache(dbPath, analyticsDir, false)
+	require.NoError(err, "retry build")
+
+	duck, err := sql.Open("duckdb", "")
+	require.NoError(err, "open duckdb")
+	defer func() { _ = duck.Close() }()
+	var rows int
+	pattern := strings.ReplaceAll(filepath.Join(analyticsDir, "messages", "**", "*.parquet"), "'", "''")
+	require.NoError(duck.QueryRow(fmt.Sprintf(
+		"SELECT COUNT(*) FROM read_parquet('%s', hive_partitioning=true) WHERE id = 6", pattern,
+	)).Scan(&rows), "count message rows")
+	assert.Equal(1, rows, "retry after a failed state write must not duplicate message rows")
 }
 
 // TestBuildCacheAutoReevaluatesUnderLock pins the waiter-refresh behavior:
