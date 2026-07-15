@@ -258,10 +258,13 @@ func requestEditor(apiKey string) apiclient.RequestEditorFn {
 type DaemonHealth struct {
 	Status          string
 	AnalyticsEngine string
+	// AnalyticsCacheBuilding is true while the daemon is building the
+	// analytics cache that will upgrade a live-SQL fallback.
+	AnalyticsCacheBuilding bool
 }
 
 // GetHealth fetches the daemon's health status, including the analytics
-// engine mode the daemon selected at startup (empty on daemons that
+// engine mode the daemon is currently running (empty on daemons that
 // predate the field).
 func (c *Client) GetHealth(ctx context.Context) (*DaemonHealth, error) {
 	resp, err := APIResponse(c, func(client *apiclient.Client) (*generated.HealthResp, error) {
@@ -275,6 +278,9 @@ func (c *Client) GetHealth(ctx context.Context) (*DaemonHealth, error) {
 		health.Status = resp.JSON200.Status
 		if resp.JSON200.AnalyticsEngine != nil {
 			health.AnalyticsEngine = *resp.JSON200.AnalyticsEngine
+		}
+		if resp.JSON200.AnalyticsCacheBuilding != nil {
+			health.AnalyticsCacheBuilding = *resp.JSON200.AnalyticsCacheBuilding
 		}
 	}
 	return health, nil

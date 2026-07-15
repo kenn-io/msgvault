@@ -134,14 +134,15 @@ type tuiBackend struct {
 	cleanup func()
 }
 
-// analyticsCacheNotice asks the daemon which analytics engine it actually
-// selected at startup (GET /health, no cache scans or archive access) and
-// warns when aggregate views run live SQL only because no usable cache
-// existed then. Deliberate live SQL (engine = "sql", PostgreSQL) reports a
-// different mode and stays silent, as do daemons predating the field. The
-// mode is fixed for the daemon's lifetime, so the notice stays accurate —
-// and keeps firing — after a cache build until the daemon restarts.
-// Best-effort: errors return an empty notice rather than blocking launch.
+// analyticsCacheNotice asks the daemon which analytics engine it is running
+// (GET /health, no cache scans or archive access) and warns when aggregate
+// views run live SQL only because no usable cache existed at startup.
+// Deliberate live SQL (engine = "sql", PostgreSQL) reports a different mode
+// and stays silent, as do daemons predating the field. When the daemon is
+// already building the cache in the background the notice says so instead of
+// prescribing manual steps; the daemon upgrades onto the cache automatically
+// once any build lands. Best-effort: errors return an empty notice rather
+// than blocking launch.
 func analyticsCacheNotice(ctx context.Context, client *daemonclient.Client) string {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
@@ -149,7 +150,10 @@ func analyticsCacheNotice(ctx context.Context, client *daemonclient.Client) stri
 	if err != nil || health.AnalyticsEngine != api.AnalyticsModeSQLFallback {
 		return ""
 	}
-	return "Aggregate views are using live SQL because the daemon started without a usable analytics cache; they may load slowly. Run 'msgvault build-cache', then restart the daemon."
+	if health.AnalyticsCacheBuilding {
+		return "Aggregate views are using live SQL while the daemon builds the analytics cache in the background; they may load slowly until it finishes."
+	}
+	return "Aggregate views are using live SQL because the daemon has no usable analytics cache; they may load slowly. Run 'msgvault build-cache' to build it."
 }
 
 func openTUIBackend(ctx context.Context) (*tuiBackend, error) {

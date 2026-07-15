@@ -12,12 +12,12 @@ msgvault tui
 
 The TUI always talks to a msgvault HTTP server. Without `[remote].url`, it starts or reuses the local background daemon. The daemon owns database access, analytics engine selection, and cache rebuilds.
 
-The daemon picks its analytics engine once at startup: DuckDB over the Parquet cache when a fresh, complete cache exists, live SQL otherwise. Opening aggregate views does not trigger a cache build — the daemon refreshes a stale cache after its scheduled syncs, and `msgvault build-cache` builds one on demand. When the daemon reports it fell back to live SQL (a freshly restored archive with no cache, for example), `msgvault tui` prints a notice and repeats it on the TUI's info line while views load; after `msgvault build-cache`, restart the daemon to switch it onto the cache. Configure engine selection in `config.toml`:
+The daemon picks its analytics engine at startup: DuckDB over the Parquet cache when a fresh, complete cache exists, live SQL otherwise. Opening aggregate views does not trigger a cache build — but when the default `engine = "auto"` falls back to live SQL over a buildable cache (a freshly restored archive with no cache, for example), the daemon builds the cache in the background and switches onto DuckDB as soon as the build lands; no restart is needed. The daemon likewise adopts a cache produced by `msgvault build-cache` or by its own post-sync refreshes. While it is still on live SQL, `msgvault tui` prints a notice and repeats it on the TUI's info line while views load. Configure engine selection in `config.toml`:
 
 ```toml
 [analytics]
 engine = "auto"          # auto, sql, or duckdb
-auto_build_cache = true  # startup build under engine = "duckdb" only; scheduled-sync refreshes ignore it
+auto_build_cache = true  # auto: background build after startup; duckdb: blocking startup build; scheduled-sync refreshes ignore it
 ```
 
 Deprecated in 0.17.0: the old `msgvault tui --force-sql`, `--no-cache-build`, and `--no-sqlite-scanner` flags are hidden because these choices are now daemon configuration. Use `engine = "sql"` for live SQL, `auto_build_cache = false` to skip the automatic startup cache build, or `msgvault build-cache` to prebuild cache files on the daemon host. See [Configuration: analytics](/configuration/#analytics).

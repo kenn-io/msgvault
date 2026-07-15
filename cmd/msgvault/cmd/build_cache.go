@@ -1258,6 +1258,7 @@ func rebuildCacheAfterScheduledSync(ctx context.Context, identifier string) {
 		// Don't fail the sync for cache build errors.
 	} else {
 		logger.Info("cache build completed")
+		maybeAdoptAnalyticsCache()
 	}
 }
 

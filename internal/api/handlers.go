@@ -172,10 +172,15 @@ type HealthResponse struct {
 	Status    string           `json:"status"`
 	Vector    *VectorHealth    `json:"vector,omitempty"`
 	Operation *OperationHealth `json:"operation,omitempty"`
-	// AnalyticsEngine is the analytics mode the daemon selected at startup
+	// AnalyticsEngine is the analytics mode the daemon is currently running
 	// (one of the AnalyticsMode constants). Empty when the server was built
-	// without one (tests, embedded uses).
+	// without one (tests, embedded uses). Starts as the mode selected at
+	// startup; the daemon upgrades a live-SQL fallback to DuckDB once a
+	// cache build lands.
 	AnalyticsEngine string `json:"analytics_engine,omitempty"`
+	// AnalyticsCacheBuilding is true while a daemon-side analytics cache
+	// build that will upgrade a live-SQL fallback is in flight.
+	AnalyticsCacheBuilding bool `json:"analytics_cache_building,omitempty"`
 }
 
 type MessageListResponse struct {
@@ -604,8 +609,8 @@ func (s *Server) handleGetMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if s.engine != nil {
-		qMsg, err := s.engine.GetMessage(r.Context(), id)
+	if s.queryEngine() != nil {
+		qMsg, err := s.queryEngine().GetMessage(r.Context(), id)
 		switch {
 		case err != nil && !isEngineUnsupported(err):
 			s.logger.Error("failed to get message via engine", "id", id, "error", err)
@@ -1251,8 +1256,8 @@ func (s *Server) handleListAccounts(w http.ResponseWriter, r *http.Request) {
 
 	// Build source ID lookup from the engine (database sources table).
 	sourceIDs := make(map[string]int64)
-	if s.engine != nil {
-		if engineAccounts, err := s.engine.ListAccounts(r.Context()); err == nil {
+	if s.queryEngine() != nil {
+		if engineAccounts, err := s.queryEngine().ListAccounts(r.Context()); err == nil {
 			for _, ea := range engineAccounts {
 				sourceIDs[ea.Identifier] = ea.ID
 			}
@@ -1770,7 +1775,7 @@ func (s *Server) runSQLQuery(ctx context.Context, sql string) (*query.QueryResul
 	if s.sqlQueryRunner != nil {
 		return s.sqlQueryRunner(ctx, sql)
 	}
-	querier, ok := s.engine.(query.SQLQuerier)
+	querier, ok := s.queryEngine().(query.SQLQuerier)
 	if !ok {
 		return nil, errSQLQueryEngineUnavailable
 	}
@@ -2334,11 +2339,11 @@ func toTextConversationRow(row query.ConversationRow) TextConversationRow {
 }
 
 func (s *Server) textEngine(w http.ResponseWriter) (query.TextEngine, bool) {
-	if s.engine == nil {
+	if s.queryEngine() == nil {
 		writeError(w, http.StatusServiceUnavailable, "engine_unavailable", "Query engine not available")
 		return nil, false
 	}
-	textEngine, ok := s.engine.(query.TextEngine)
+	textEngine, ok := s.queryEngine().(query.TextEngine)
 	if !ok {
 		writeError(w, http.StatusServiceUnavailable, "text_engine_unavailable", "Text query engine not available")
 		return nil, false
@@ -2442,7 +2447,7 @@ func formatDeletedAt(deletedAt *time.Time) string {
 // handleAggregates returns aggregate data for a view type.
 // GET /api/v1/aggregates?view_type=senders&sort=count&direction=desc&limit=100.
 func (s *Server) handleAggregates(w http.ResponseWriter, r *http.Request) {
-	if s.engine == nil {
+	if s.queryEngine() == nil {
 		writeError(w, http.StatusServiceUnavailable, "engine_unavailable", "Query engine not available")
 		return
 	}
@@ -2464,7 +2469,7 @@ func (s *Server) handleAggregates(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rows, err := s.engine.Aggregate(r.Context(), viewType, opts)
+	rows, err := s.queryEngine().Aggregate(r.Context(), viewType, opts)
 	if err != nil {
 		if s.writeIfContextError(w, err) {
 			return
@@ -2488,7 +2493,7 @@ func (s *Server) handleAggregates(w http.ResponseWriter, r *http.Request) {
 // handleSubAggregates returns sub-aggregate data after drill-down.
 // GET /api/v1/aggregates/sub?view_type=labels&sender=foo@example.com.
 func (s *Server) handleSubAggregates(w http.ResponseWriter, r *http.Request) {
-	if s.engine == nil {
+	if s.queryEngine() == nil {
 		writeError(w, http.StatusServiceUnavailable, "engine_unavailable", "Query engine not available")
 		return
 	}
@@ -2522,7 +2527,7 @@ func (s *Server) handleSubAggregates(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rows, err := s.engine.SubAggregate(r.Context(), filter, viewType, opts)
+	rows, err := s.queryEngine().SubAggregate(r.Context(), filter, viewType, opts)
 	if err != nil {
 		if s.writeIfContextError(w, err) {
 			return
@@ -2546,7 +2551,7 @@ func (s *Server) handleSubAggregates(w http.ResponseWriter, r *http.Request) {
 // handleFilteredMessages returns a filtered list of messages.
 // GET /api/v1/messages/filter?sender=foo@example.com&offset=0&limit=500.
 func (s *Server) handleFilteredMessages(w http.ResponseWriter, r *http.Request) {
-	if s.engine == nil {
+	if s.queryEngine() == nil {
 		writeError(w, http.StatusServiceUnavailable, "engine_unavailable", "Query engine not available")
 		return
 	}
@@ -2570,7 +2575,7 @@ func (s *Server) handleFilteredMessages(w http.ResponseWriter, r *http.Request) 
 	requestLimit := filter.Pagination.Limit
 	filter.Pagination.Limit = requestLimit + 1
 
-	messages, err := s.engine.ListMessages(r.Context(), filter)
+	messages, err := s.queryEngine().ListMessages(r.Context(), filter)
 	if err != nil {
 		if s.writeIfContextError(w, err) {
 			return
@@ -2600,7 +2605,7 @@ func (s *Server) handleFilteredMessages(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *Server) handleGmailIDsByFilter(w http.ResponseWriter, r *http.Request) {
-	if s.engine == nil {
+	if s.queryEngine() == nil {
 		writeError(w, http.StatusServiceUnavailable, "engine_unavailable", "Query engine not available")
 		return
 	}
@@ -2610,7 +2615,7 @@ func (s *Server) handleGmailIDsByFilter(w http.ResponseWriter, r *http.Request) 
 		s.rejectBadParam(w, err)
 		return
 	}
-	ids, err := s.engine.GetGmailIDsByFilter(r.Context(), filter)
+	ids, err := s.queryEngine().GetGmailIDsByFilter(r.Context(), filter)
 	if err != nil {
 		s.logger.Error("gmail id filter query failed", "error", err)
 		writeError(w, http.StatusInternalServerError, "internal_error", "Gmail ID query failed")
@@ -2624,7 +2629,7 @@ func (s *Server) handleGmailIDsByFilter(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *Server) handleGetAttachment(w http.ResponseWriter, r *http.Request) {
-	if s.engine == nil {
+	if s.queryEngine() == nil {
 		writeError(w, http.StatusServiceUnavailable, "engine_unavailable", "Query engine not available")
 		return
 	}
@@ -2636,7 +2641,7 @@ func (s *Server) handleGetAttachment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	att, err := s.engine.GetAttachment(r.Context(), id)
+	att, err := s.queryEngine().GetAttachment(r.Context(), id)
 	if err != nil {
 		s.logger.Error("failed to get attachment", "id", id, "error", err)
 		writeError(w, http.StatusInternalServerError, "internal_error", "Failed to retrieve attachment")
@@ -2661,7 +2666,7 @@ func (s *Server) handleGetAttachment(w http.ResponseWriter, r *http.Request) {
 // SHA-256 content hash. The /content suffix keeps this binary response distinct
 // from GET /attachments/{id}, which returns attachment metadata as JSON.
 func (s *Server) handleGetAttachmentContent(w http.ResponseWriter, r *http.Request) {
-	if s.engine == nil {
+	if s.queryEngine() == nil {
 		writeError(w, http.StatusServiceUnavailable, "engine_unavailable", "Query engine not available")
 		return
 	}
@@ -2673,7 +2678,7 @@ func (s *Server) handleGetAttachmentContent(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	attachments, err := s.engine.GetAttachmentsByHash(r.Context(), hash)
+	attachments, err := s.queryEngine().GetAttachmentsByHash(r.Context(), hash)
 	if err != nil {
 		s.logger.Error("failed to look up attachment by hash", "error", err, "hash", hash)
 		writeError(w, http.StatusInternalServerError, "internal_error", "Failed to look up attachment")
@@ -2832,7 +2837,7 @@ func contentDisposition(filename string) string {
 }
 
 func (s *Server) handleSearchByDomains(w http.ResponseWriter, r *http.Request) {
-	if s.engine == nil {
+	if s.queryEngine() == nil {
 		writeError(w, http.StatusServiceUnavailable, "engine_unavailable", "Query engine not available")
 		return
 	}
@@ -2856,7 +2861,7 @@ func (s *Server) handleSearchByDomains(w http.ResponseWriter, r *http.Request) {
 	}
 
 	requestLimit := filter.Pagination.Limit
-	messages, err := s.engine.SearchByDomains(
+	messages, err := s.queryEngine().SearchByDomains(
 		r.Context(),
 		domains,
 		filter.After,
@@ -2906,7 +2911,7 @@ func parseDomainValues(values []string) []string {
 // handleTotalStats returns detailed stats with optional filters.
 // GET /api/v1/stats/total?source_id=1&attachments_only=true.
 func (s *Server) handleTotalStats(w http.ResponseWriter, r *http.Request) {
-	if s.engine == nil {
+	if s.queryEngine() == nil {
 		writeError(w, http.StatusServiceUnavailable, "engine_unavailable", "Query engine not available")
 		return
 	}
@@ -2960,7 +2965,7 @@ func (s *Server) handleTotalStats(w http.ResponseWriter, r *http.Request) {
 		opts.GroupBy = viewType
 	}
 
-	stats, err := s.engine.GetTotalStats(r.Context(), opts)
+	stats, err := s.queryEngine().GetTotalStats(r.Context(), opts)
 	if err != nil {
 		if s.writeIfContextError(w, err) {
 			return
@@ -2994,7 +2999,7 @@ func normalizeSourceIDs(ids []int64) []int64 {
 // handleFastSearch performs fast metadata search (subject, sender, recipient).
 // GET /api/v1/search/fast?q=invoice&offset=0&limit=100.
 func (s *Server) handleFastSearch(w http.ResponseWriter, r *http.Request) {
-	if s.engine == nil {
+	if s.queryEngine() == nil {
 		writeError(w, http.StatusServiceUnavailable, "engine_unavailable", "Query engine not available")
 		return
 	}
@@ -3058,7 +3063,7 @@ func (s *Server) handleFastSearch(w http.ResponseWriter, r *http.Request) {
 		limit = maxPageSize
 	}
 
-	result, err := s.engine.SearchFastWithStats(r.Context(), q, queryStr, filter, statsGroupBy, limit, offset)
+	result, err := s.queryEngine().SearchFastWithStats(r.Context(), q, queryStr, filter, statsGroupBy, limit, offset)
 	if err != nil {
 		if s.writeIfContextError(w, err) {
 			return
@@ -3086,7 +3091,7 @@ func (s *Server) handleFastSearch(w http.ResponseWriter, r *http.Request) {
 // search when scope=body is requested.
 // GET /api/v1/search/deep?q=invoice&scope=body&offset=0&limit=100&source_id=1&hide_deleted=true.
 func (s *Server) handleDeepSearch(w http.ResponseWriter, r *http.Request) {
-	if s.engine == nil {
+	if s.queryEngine() == nil {
 		writeError(w, http.StatusServiceUnavailable, "engine_unavailable", "Query engine not available")
 		return
 	}
@@ -3148,7 +3153,7 @@ func (s *Server) handleDeepSearch(w http.ResponseWriter, r *http.Request) {
 	// Fetch one extra row to determine has_more accurately.
 	var messages []query.MessageSummary
 	if scope == "body" {
-		bodySearcher, ok := s.engine.(query.MessageBodySearcher)
+		bodySearcher, ok := s.queryEngine().(query.MessageBodySearcher)
 		if !ok {
 			writeError(w, http.StatusNotImplemented, "body_search_unavailable",
 				"Query engine does not support exact message body search")
@@ -3156,7 +3161,7 @@ func (s *Server) handleDeepSearch(w http.ResponseWriter, r *http.Request) {
 		}
 		messages, err = bodySearcher.SearchMessageBodies(r.Context(), merged, limit+1, offset)
 	} else {
-		messages, err = s.engine.Search(r.Context(), merged, limit+1, offset)
+		messages, err = s.queryEngine().Search(r.Context(), merged, limit+1, offset)
 	}
 	if err != nil {
 		if s.writeIfContextError(w, err) {
@@ -3452,7 +3457,7 @@ func isEngineUnsupported(err error) bool {
 // query parameter so values containing `/` (legal per RFC 5322) round-trip
 // without ambiguity in the routing layer.
 func (s *Server) handleMessageInline(w http.ResponseWriter, r *http.Request) {
-	if s.engine == nil {
+	if s.queryEngine() == nil {
 		writeError(w, http.StatusServiceUnavailable, "engine_unavailable", "Query engine not available")
 		return
 	}
@@ -3470,7 +3475,7 @@ func (s *Server) handleMessageInline(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	raw, err := s.engine.GetMessageRaw(r.Context(), id)
+	raw, err := s.queryEngine().GetMessageRaw(r.Context(), id)
 	if err != nil {
 		if isEngineUnsupported(err) {
 			writeError(w, http.StatusNotImplemented, "not_supported", "Inline MIME parts are not available on this engine")

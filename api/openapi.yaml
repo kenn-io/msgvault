@@ -1326,6 +1326,8 @@ components:
     HealthResponse:
       additionalProperties: true
       properties:
+        analytics_cache_building:
+          type: boolean
         analytics_engine:
           type: string
         operation:

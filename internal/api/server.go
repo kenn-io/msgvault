@@ -126,15 +126,22 @@ type AttachmentBlobStore interface {
 
 // Server represents the HTTP API server.
 type Server struct {
-	cfg            *config.Config
-	store          MessageStore
-	engine         query.Engine // Query engine for aggregates and TUI support
-	sqlQueryRunner SQLQueryRunner
-	shutdownToken  string
-	shutdownFunc   func()
-	scheduler      SyncScheduler
-	logger         *slog.Logger
-	requestTimeout time.Duration
+	cfg   *config.Config
+	store MessageStore
+	// engineMu guards engine, analyticsMode, and analyticsCacheBuilding: the
+	// daemon can replace a live-SQL fallback engine with a DuckDB engine after
+	// a background cache build finishes (SetAnalyticsEngine), so handlers must
+	// read the engine through queryEngine() rather than the field.
+	engineMu               sync.RWMutex
+	engine                 query.Engine // Query engine for aggregates and TUI support
+	analyticsMode          string
+	analyticsCacheBuilding bool
+	sqlQueryRunner         SQLQueryRunner
+	shutdownToken          string
+	shutdownFunc           func()
+	scheduler              SyncScheduler
+	logger                 *slog.Logger
+	requestTimeout         time.Duration
 	// queryTimeout caps POST /api/v1/query. Defaults to QueryEndpointTimeout;
 	// tests override it to exercise the timeout path without a real slow query.
 	queryTimeout time.Duration
@@ -143,7 +150,6 @@ type Server struct {
 	inProgressThreshold time.Duration
 	inProgressInterval  time.Duration
 	daemonVersion       string
-	analyticsMode       string
 	router              http.Handler
 	server              *http.Server
 	rateLimiter         *RateLimiter
@@ -257,8 +263,12 @@ type ServerOptions struct {
 	// AnalyticsMode is the analytics engine the daemon selected at startup
 	// (an AnalyticsMode constant), reported by /health so clients can tell
 	// whether aggregate views run on the cache or live SQL. Empty omits the
-	// field.
+	// field. The daemon may later upgrade the engine via SetAnalyticsEngine.
 	AnalyticsMode string
+	// AnalyticsCacheBuilding marks a pending daemon-side cache build that will
+	// upgrade a live-SQL fallback once it finishes, so clients can word their
+	// fallback notice as "in progress" instead of prescribing manual steps.
+	AnalyticsCacheBuilding bool
 }
 
 // NewServer creates a new API server.
@@ -278,26 +288,27 @@ func NewServerWithOptions(opts ServerOptions) *Server {
 		timeout = 60 * time.Second
 	}
 	s := &Server{
-		cfg:                 opts.Config,
-		store:               opts.Store,
-		engine:              opts.Engine,
-		sqlQueryRunner:      opts.SQLQueryRunner,
-		shutdownToken:       opts.ShutdownToken,
-		shutdownFunc:        opts.ShutdownFunc,
-		hybridEngine:        opts.HybridEngine,
-		vectorCfg:           opts.VectorCfg,
-		backend:             opts.Backend,
-		scheduler:           opts.Scheduler,
-		logger:              opts.Logger,
-		requestTimeout:      timeout,
-		queryTimeout:        QueryEndpointTimeout,
-		inProgressThreshold: inProgressLogThreshold,
-		inProgressInterval:  inProgressLogInterval,
-		daemonVersion:       opts.DaemonVersion,
-		analyticsMode:       opts.AnalyticsMode,
-		idleTracker:         opts.IdleTracker,
-		operationGate:       opts.OperationGate,
-		blobStore:           opts.BlobStore,
+		cfg:                    opts.Config,
+		store:                  opts.Store,
+		engine:                 opts.Engine,
+		sqlQueryRunner:         opts.SQLQueryRunner,
+		shutdownToken:          opts.ShutdownToken,
+		shutdownFunc:           opts.ShutdownFunc,
+		hybridEngine:           opts.HybridEngine,
+		vectorCfg:              opts.VectorCfg,
+		backend:                opts.Backend,
+		scheduler:              opts.Scheduler,
+		logger:                 opts.Logger,
+		requestTimeout:         timeout,
+		queryTimeout:           QueryEndpointTimeout,
+		inProgressThreshold:    inProgressLogThreshold,
+		inProgressInterval:     inProgressLogInterval,
+		daemonVersion:          opts.DaemonVersion,
+		analyticsMode:          opts.AnalyticsMode,
+		analyticsCacheBuilding: opts.AnalyticsCacheBuilding,
+		idleTracker:            opts.IdleTracker,
+		operationGate:          opts.OperationGate,
+		blobStore:              opts.BlobStore,
 	}
 	s.vectorStatus = opts.VectorStatus
 	if s.vectorStatus == "" {
@@ -720,14 +731,60 @@ func (s *Server) handleDaemonShutdown(w http.ResponseWriter, r *http.Request) {
 	go s.shutdownFunc()
 }
 
+// queryEngine returns the current analytics query engine. The daemon may
+// replace the engine after startup (SetAnalyticsEngine) when a background
+// cache build finishes, so handlers must not read s.engine directly.
+func (s *Server) queryEngine() query.Engine {
+	s.engineMu.RLock()
+	defer s.engineMu.RUnlock()
+	return s.engine
+}
+
+// AnalyticsMode reports the analytics mode the server is currently running
+// (one of the AnalyticsMode constants; empty when none was configured).
+func (s *Server) AnalyticsMode() string {
+	s.engineMu.RLock()
+	defer s.engineMu.RUnlock()
+	return s.analyticsMode
+}
+
+// SetAnalyticsEngine installs a new analytics engine and mode, clearing any
+// pending cache-build flag. It does not close the previous engine: in-flight
+// requests may still hold it, and the daemon's startup engine wraps the
+// shared store handle, so the daemon owns both engines' lifetimes.
+func (s *Server) SetAnalyticsEngine(engine query.Engine, mode string) {
+	s.engineMu.Lock()
+	defer s.engineMu.Unlock()
+	s.engine = engine
+	s.analyticsMode = mode
+	s.analyticsCacheBuilding = false
+}
+
+// SetAnalyticsCacheBuilding records whether a daemon-side cache build that
+// could upgrade a live-SQL fallback is in flight; /health reports it so
+// clients can word their fallback notice accordingly.
+func (s *Server) SetAnalyticsCacheBuilding(building bool) {
+	s.engineMu.Lock()
+	defer s.engineMu.Unlock()
+	s.analyticsCacheBuilding = building
+}
+
+func (s *Server) analyticsHealth() (mode string, building bool) {
+	s.engineMu.RLock()
+	defer s.engineMu.RUnlock()
+	return s.analyticsMode, s.analyticsCacheBuilding
+}
+
 // handleHealth returns a simple health check response.
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	s.refreshVectorStatusIfStale(r.Context())
+	mode, building := s.analyticsHealth()
 	writeJSON(w, http.StatusOK, HealthResponse{
-		Status:          "ok",
-		Vector:          s.vectorHealth(),
-		Operation:       s.operationBusyHealth(),
-		AnalyticsEngine: s.analyticsMode,
+		Status:                 "ok",
+		Vector:                 s.vectorHealth(),
+		Operation:              s.operationBusyHealth(),
+		AnalyticsEngine:        mode,
+		AnalyticsCacheBuilding: building,
 	})
 }
 
@@ -735,11 +792,13 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 // API-key boundary.
 func (s *Server) handleAuthenticatedHealth(w http.ResponseWriter, r *http.Request) {
 	s.refreshVectorStatusIfStale(r.Context())
+	mode, building := s.analyticsHealth()
 	writeJSON(w, http.StatusOK, HealthResponse{
-		Status:          "ok",
-		Vector:          s.vectorHealth(),
-		Operation:       s.operationHealth(),
-		AnalyticsEngine: s.analyticsMode,
+		Status:                 "ok",
+		Vector:                 s.vectorHealth(),
+		Operation:              s.operationHealth(),
+		AnalyticsEngine:        mode,
+		AnalyticsCacheBuilding: building,
 	})
 }
 

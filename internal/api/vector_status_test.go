@@ -402,3 +402,39 @@ func TestHealthReportsAnalyticsMode(t *testing.T) {
 	assert.NotContains(rec.Body.String(), "analytics_engine",
 		"field must be omitted when no mode was configured")
 }
+
+// TestHealthReportsAnalyticsCacheBuildingAndEngineSwap pins the background
+// cache-build lifecycle on /health: the building flag shows while the daemon
+// builds, and SetAnalyticsEngine flips the mode and clears the flag once the
+// daemon adopts the cache.
+func TestHealthReportsAnalyticsCacheBuildingAndEngineSwap(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	opts := testServerOptions(t, nil)
+	opts.AnalyticsMode = AnalyticsModeSQLFallback
+	opts.AnalyticsCacheBuilding = true
+	srv := NewServerWithOptions(opts)
+
+	health := func() HealthResponse {
+		rec := httptest.NewRecorder()
+		srv.Router().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/health", nil))
+		require.Equal(http.StatusOK, rec.Code)
+		var body HealthResponse
+		require.NoError(json.Unmarshal(rec.Body.Bytes(), &body))
+		return body
+	}
+
+	body := health()
+	assert.Equal(AnalyticsModeSQLFallback, body.AnalyticsEngine)
+	assert.True(body.AnalyticsCacheBuilding, "pending background build must surface on /health")
+
+	srv.SetAnalyticsCacheBuilding(false)
+	body = health()
+	assert.Equal(AnalyticsModeSQLFallback, body.AnalyticsEngine, "failed build keeps the fallback mode")
+	assert.False(body.AnalyticsCacheBuilding)
+
+	srv.SetAnalyticsEngine(srv.queryEngine(), AnalyticsModeDuckDB)
+	body = health()
+	assert.Equal(AnalyticsModeDuckDB, body.AnalyticsEngine, "adopting the cache upgrades the reported mode")
+	assert.False(body.AnalyticsCacheBuilding)
+}

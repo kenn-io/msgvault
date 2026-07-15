@@ -360,12 +360,13 @@ func TestOpenDaemonAnalyticsEngineForceSQLSkipsCacheBuild(t *testing.T) {
 		return nil
 	})
 
-	engine, mode, err := openDaemonAnalyticsEngine(context.Background(), c, s)
+	engine, mode, autoBuild, err := openDaemonAnalyticsEngine(context.Background(), c, s)
 	require.NoError(err, "openDaemonAnalyticsEngine")
 	defer func() { _ = engine.Close() }()
 
 	assert.IsType(&query.SQLiteEngine{}, engine)
 	assert.Equal(api.AnalyticsModeSQL, mode, "engine=sql is a deliberate live-SQL choice")
+	assert.False(autoBuild, "engine=sql must not schedule a background cache build")
 }
 
 func TestOpenDaemonAnalyticsEngineSkipsCacheBuildWhenDisabled(t *testing.T) {
@@ -379,12 +380,13 @@ func TestOpenDaemonAnalyticsEngineSkipsCacheBuildWhenDisabled(t *testing.T) {
 		return nil
 	})
 
-	engine, mode, err := openDaemonAnalyticsEngine(context.Background(), c, s)
+	engine, mode, autoBuild, err := openDaemonAnalyticsEngine(context.Background(), c, s)
 	require.NoError(err, "openDaemonAnalyticsEngine")
 	defer func() { _ = engine.Close() }()
 
 	assert.IsType(&query.SQLiteEngine{}, engine)
 	assert.Equal(api.AnalyticsModeSQLFallback, mode, "auto mode without a cache is a fallback")
+	assert.False(autoBuild, "auto_build_cache=false must not schedule a background cache build")
 }
 
 func TestOpenDaemonAnalyticsEngineAutoDoesNotBlockStartupOnMissingCache(t *testing.T) {
@@ -400,13 +402,14 @@ func TestOpenDaemonAnalyticsEngineAutoDoesNotBlockStartupOnMissingCache(t *testi
 		return nil
 	})
 
-	engine, mode, err := openDaemonAnalyticsEngine(context.Background(), c, s)
+	engine, mode, autoBuild, err := openDaemonAnalyticsEngine(context.Background(), c, s)
 	require.NoError(err, "auto mode should start with live SQL when cache is missing")
 	defer func() { _ = engine.Close() }()
 
 	assert.False(gotFullRebuild, "startup should not request a synchronous cache rebuild")
 	assert.IsType(&query.SQLiteEngine{}, engine)
 	assert.Equal(api.AnalyticsModeSQLFallback, mode, "auto mode without a cache is a fallback")
+	assert.True(autoBuild, "auto mode with auto_build_cache=true should defer the build to the background")
 }
 
 func TestOpenDaemonAnalyticsEngineDuckDBRequiresCacheBuild(t *testing.T) {
@@ -419,7 +422,7 @@ func TestOpenDaemonAnalyticsEngineDuckDBRequiresCacheBuild(t *testing.T) {
 		return sentinel
 	})
 
-	engine, _, err := openDaemonAnalyticsEngine(context.Background(), c, s)
+	engine, _, _, err := openDaemonAnalyticsEngine(context.Background(), c, s)
 	if engine != nil {
 		_ = engine.Close()
 	}

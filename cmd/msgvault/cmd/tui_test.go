@@ -153,17 +153,20 @@ func tuiAccountsHandler(requests *atomic.Int32, email string) http.Handler {
 
 // TestAnalyticsCacheNotice verifies the pre-launch warning keys off the
 // analytics mode the daemon itself reports on /health: only the live-SQL
-// fallback mode warns, while deliberate live SQL (engine = "sql",
-// PostgreSQL), cache-backed DuckDB, daemons predating the field, and
-// health-endpoint failures all stay silent.
+// fallback mode warns (with an "in progress" wording when the daemon is
+// already building the cache in the background), while deliberate live SQL
+// (engine = "sql", PostgreSQL), cache-backed DuckDB, daemons predating the
+// field, and health-endpoint failures all stay silent.
 func TestAnalyticsCacheNotice(t *testing.T) {
 	tests := []struct {
-		name       string
-		mode       string
-		statusCode int
-		wantNotice bool
+		name         string
+		mode         string
+		building     bool
+		statusCode   int
+		wantContains string
 	}{
-		{name: "sql fallback warns", mode: api.AnalyticsModeSQLFallback, statusCode: http.StatusOK, wantNotice: true},
+		{name: "sql fallback warns", mode: api.AnalyticsModeSQLFallback, statusCode: http.StatusOK, wantContains: "msgvault build-cache"},
+		{name: "sql fallback with background build reports progress", mode: api.AnalyticsModeSQLFallback, building: true, statusCode: http.StatusOK, wantContains: "in the background"},
 		{name: "duckdb is silent", mode: api.AnalyticsModeDuckDB, statusCode: http.StatusOK},
 		{name: "deliberate sql is silent", mode: api.AnalyticsModeSQL, statusCode: http.StatusOK},
 		{name: "postgres is silent", mode: api.AnalyticsModePostgres, statusCode: http.StatusOK},
@@ -183,6 +186,9 @@ func TestAnalyticsCacheNotice(t *testing.T) {
 				if tt.mode != "" {
 					body["analytics_engine"] = tt.mode
 				}
+				if tt.building {
+					body["analytics_cache_building"] = true
+				}
 				_ = json.NewEncoder(w).Encode(body)
 			})
 			srv := httptest.NewServer(mux)
@@ -192,8 +198,8 @@ func TestAnalyticsCacheNotice(t *testing.T) {
 			require.NoError(t, err, "daemonclient.New")
 
 			notice := analyticsCacheNotice(context.Background(), client)
-			if tt.wantNotice {
-				assert.Contains(t, notice, "msgvault build-cache")
+			if tt.wantContains != "" {
+				assert.Contains(t, notice, tt.wantContains)
 			} else {
 				assert.Empty(t, notice)
 			}

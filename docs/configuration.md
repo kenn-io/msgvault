@@ -227,7 +227,7 @@ Settings for daemon-side aggregate query behavior. The TUI, MCP server, and aggr
 | Key | Default | Description |
 |---|---|---|
 | `engine` | `auto` | Aggregate engine: `auto` uses DuckDB over Parquet when the cache is usable and falls back to live SQL; `sql` always uses live SQL; `duckdb` requires a usable Parquet cache |
-| `auto_build_cache` | `true` | Build a stale or missing Parquet cache before the daemon opens DuckDB for aggregate views |
+| `auto_build_cache` | `true` | Build a stale or missing Parquet cache automatically: in the background after startup under `engine = "auto"` (the daemon switches onto it when the build lands), or blocking startup under `engine = "duckdb"` |
 
 Deprecated in 0.17.0: per-command analytics flags such as `msgvault tui --force-sql`, `msgvault mcp --force-sql`, `msgvault tui --no-cache-build`, and `--no-sqlite-scanner` were replaced by this daemon-level section. Use `engine = "sql"` for live SQL, `auto_build_cache = false` to skip automatic daemon cache builds, or `msgvault build-cache` to prebuild cache files on the daemon host. If `engine = "duckdb"` and the cache cannot be built or opened, `msgvault serve` fails instead of silently falling back.
 
