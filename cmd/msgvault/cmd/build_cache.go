@@ -58,6 +58,36 @@ func cacheBuildFileLock(analyticsDir string) (*flock.Flock, error) {
 	return flock.New(lockPath), nil
 }
 
+// invalidateCacheSyncState removes the cache's _last_sync.json under the
+// exclusive build lock so every later staleness probe demands a full
+// rebuild. Waiting on the lock means a builder that started before the
+// caller's database mutation finishes first and its freshly written state is
+// still deleted here; any builder that starts afterwards sees the mutated
+// database. Failures only warn — the caller's mutation has already been
+// committed — but the message says what remains at risk.
+func invalidateCacheSyncState(analyticsDir string) {
+	buildLock, err := cacheBuildFileLock(analyticsDir)
+	if err == nil {
+		if lockErr := buildLock.Lock(); lockErr != nil {
+			err = lockErr
+		} else {
+			defer func() { _ = buildLock.Unlock() }()
+		}
+	}
+	if err != nil {
+		// Still attempt the removal: unsynchronized invalidation beats none.
+		fmt.Fprintf(os.Stderr,
+			"Warning: could not lock analytics cache for invalidation: %v\n", err)
+	}
+	stateFile := filepath.Join(analyticsDir, "_last_sync.json")
+	if err := os.Remove(stateFile); err != nil && !os.IsNotExist(err) {
+		fmt.Fprintf(os.Stderr,
+			"Warning: could not invalidate analytics cache state: %v\n"+
+				"Aggregate views may keep serving pre-removal data until 'msgvault build-cache --full-rebuild' succeeds.\n",
+			err)
+	}
+}
+
 // buildCacheAfterSnapshotHook is a deterministic test seam for writes that
 // race with cache construction after its source watermark is captured.
 var buildCacheAfterSnapshotHook func()
@@ -67,10 +97,11 @@ var buildCacheAfterSnapshotHook func()
 // persisted.
 var buildCacheBeforeStateWriteHook func()
 
-// buildCacheAfterMessagesExportHook is a deterministic test seam for export
-// failures that strike between table COPYs, after incremental message shards
-// have already been appended.
-var buildCacheAfterMessagesExportHook func() error
+// buildCacheBeforeMessagesExportHook is a deterministic test seam for export
+// failures that strike between table COPYs, after junction and dimension
+// tables have been updated but before the messages export makes the new rows
+// reachable.
+var buildCacheBeforeMessagesExportHook func() error
 
 // buildCacheWriteStateFile persists the cache sync state; a test seam for
 // simulating state persistence failures.
@@ -502,10 +533,12 @@ func buildCacheImpl(dbPath, analyticsDir string, fullRebuild, autoDecided bool) 
 	buildStart := time.Now()
 
 	// A failed incremental export deliberately leaves its Parquet files in
-	// place: a running daemon keeps serving (slightly stale) aggregates
-	// instead of erroring on missing files, and because the sync state was
-	// invalidated above, the next build starts from scratch and clears the
-	// partially updated tables rather than appending duplicates.
+	// place: a running daemon keeps serving aggregates instead of erroring
+	// on missing files. The messages table exports last (see below), so a
+	// failure at any earlier step leaves the new rows unreachable and the
+	// cache logically equivalent to the pre-build snapshot; because the sync
+	// state was invalidated above, the next build starts from scratch and
+	// clears the partially updated tables rather than appending duplicates.
 
 	// Build WHERE clause for incremental exports
 	idFilter := fmt.Sprintf(" AND TRY_CAST(m.id AS BIGINT) <= %d", maxID)
@@ -551,7 +584,167 @@ func buildCacheImpl(dbPath, analyticsDir string, fullRebuild, autoDecided bool) 
 	// Export each table separately - this is MUCH faster than joining during export
 	// because DuckDB can use SQLite indexes efficiently for simple queries
 
-	// 1. Export messages (partitioned by year)
+	// 1. Export message_recipients (large junction table)
+	recipientsDir := filepath.Join(analyticsDir, "message_recipients")
+	escapedRecipientsDir := strings.ReplaceAll(recipientsDir, "'", "''")
+	recipientsFilter := ""
+	if !fullRebuild && lastMessageID > 0 {
+		recipientsFilter = fmt.Sprintf(" WHERE message_id > %d", lastMessageID)
+	}
+	recipientsFilter = junctionFilter(recipientsFilter)
+	if err := runExport("message_recipients", fmt.Sprintf(`
+	COPY (
+		SELECT
+			message_id,
+			participant_id,
+			recipient_type,
+			COALESCE(TRY_CAST(display_name AS VARCHAR), '') as display_name
+		FROM sqlite_db.message_recipients%s
+	) TO '%s/%s' (
+		FORMAT PARQUET,
+		COMPRESSION 'zstd'
+	)
+	`, recipientsFilter, escapedRecipientsDir, junctionFile)); err != nil {
+		return nil, fmt.Errorf("export message_recipients: %w", err)
+	}
+
+	// 2. Export message_labels (large junction table)
+	messageLabelsDir := filepath.Join(analyticsDir, "message_labels")
+	escapedMessageLabelsDir := strings.ReplaceAll(messageLabelsDir, "'", "''")
+	messageLabelsFilter := ""
+	if !fullRebuild && lastMessageID > 0 {
+		messageLabelsFilter = fmt.Sprintf(" WHERE message_id > %d", lastMessageID)
+	}
+	messageLabelsFilter = junctionFilter(messageLabelsFilter)
+	if err := runExport("message_labels", fmt.Sprintf(`
+	COPY (
+		SELECT
+			message_id,
+			label_id
+		FROM sqlite_db.message_labels%s
+	) TO '%s/%s' (
+		FORMAT PARQUET,
+		COMPRESSION 'zstd'
+	)
+	`, messageLabelsFilter, escapedMessageLabelsDir, junctionFile)); err != nil {
+		return nil, fmt.Errorf("export message_labels: %w", err)
+	}
+
+	// 3. Export attachments
+	attachmentsDir := filepath.Join(analyticsDir, tableAttachments)
+	escapedAttachmentsDir := strings.ReplaceAll(attachmentsDir, "'", "''")
+	attachmentsFilter := ""
+	if !fullRebuild && lastMessageID > 0 {
+		attachmentsFilter = fmt.Sprintf(" WHERE message_id > %d", lastMessageID)
+	}
+	attachmentsFilter = junctionFilter(attachmentsFilter)
+	if err := runExport(tableAttachments, fmt.Sprintf(`
+	COPY (
+		SELECT
+			message_id,
+			size,
+			COALESCE(TRY_CAST(filename AS VARCHAR), '') as filename
+		FROM sqlite_db.attachments%s
+	) TO '%s/%s' (
+		FORMAT PARQUET,
+		COMPRESSION 'zstd'
+	)
+	`, attachmentsFilter, escapedAttachmentsDir, junctionFile)); err != nil {
+		return nil, fmt.Errorf("export attachments: %w", err)
+	}
+
+	// 4. Export participants
+	participantsDir := filepath.Join(analyticsDir, tableParticipants)
+	escapedParticipantsDir := strings.ReplaceAll(participantsDir, "'", "''")
+	if err := runExport(tableParticipants, fmt.Sprintf(`
+	COPY (
+		SELECT
+			id,
+			COALESCE(TRY_CAST(email_address AS VARCHAR), '') as email_address,
+			COALESCE(TRY_CAST(domain AS VARCHAR), '') as domain,
+			COALESCE(TRY_CAST(display_name AS VARCHAR), '') as display_name,
+			COALESCE(TRY_CAST(phone_number AS VARCHAR), '') as phone_number
+		FROM sqlite_db.participants
+	) TO '%s/participants.parquet' (
+		FORMAT PARQUET,
+		COMPRESSION 'zstd'
+	)
+	`, escapedParticipantsDir)); err != nil {
+		return nil, fmt.Errorf("export participants: %w", err)
+	}
+
+	// 5. Export labels
+	labelsDir := filepath.Join(analyticsDir, tableLabels)
+	escapedLabelsDir := strings.ReplaceAll(labelsDir, "'", "''")
+	if err := runExport(tableLabels, fmt.Sprintf(`
+	COPY (
+		SELECT
+			id,
+			COALESCE(TRY_CAST(name AS VARCHAR), '') as name
+		FROM sqlite_db.labels
+	) TO '%s/labels.parquet' (
+		FORMAT PARQUET,
+		COMPRESSION 'zstd'
+	)
+	`, escapedLabelsDir)); err != nil {
+		return nil, fmt.Errorf("export labels: %w", err)
+	}
+
+	// 6. Export sources
+	sourcesDir := filepath.Join(analyticsDir, "sources")
+	escapedSourcesDir := strings.ReplaceAll(sourcesDir, "'", "''")
+	if err := runExport("sources", fmt.Sprintf(`
+	COPY (
+		SELECT
+			id,
+			identifier as account_email,
+			COALESCE(TRY_CAST(source_type AS VARCHAR), 'gmail') as source_type
+		FROM sqlite_db.sources
+	) TO '%s/sources.parquet' (
+		FORMAT PARQUET,
+		COMPRESSION 'zstd'
+	)
+	`, escapedSourcesDir)); err != nil {
+		return nil, fmt.Errorf("export sources: %w", err)
+	}
+
+	// 7. Export conversations (for Gmail thread IDs)
+	conversationsDir := filepath.Join(analyticsDir, tableConversations)
+	escapedConversationsDir := strings.ReplaceAll(conversationsDir, "'", "''")
+	if err := runExport(tableConversations, fmt.Sprintf(`
+	COPY (
+		SELECT
+			id,
+			COALESCE(TRY_CAST(source_conversation_id AS VARCHAR), '') as source_conversation_id,
+			COALESCE(TRY_CAST(title AS VARCHAR), '') as title,
+			COALESCE(TRY_CAST(conversation_type AS VARCHAR), 'email') as conversation_type
+		FROM sqlite_db.conversations c
+		WHERE EXISTS (
+			SELECT 1 FROM sqlite_db.messages m
+			WHERE m.conversation_id = c.id
+			  AND `+exportableMessageWhere("m")+`
+			  AND TRY_CAST(m.id AS BIGINT) <= %d
+		)
+	) TO '%s/conversations.parquet' (
+		FORMAT PARQUET,
+		COMPRESSION 'zstd'
+	)
+	`, maxID, escapedConversationsDir)); err != nil {
+		return nil, fmt.Errorf("export conversations: %w", err)
+	}
+
+	if buildCacheBeforeMessagesExportHook != nil {
+		if err := buildCacheBeforeMessagesExportHook(); err != nil {
+			return nil, err
+		}
+	}
+
+	// 8. Export messages (partitioned by year) — deliberately LAST. Every
+	// query shape joins from the messages table, so junction or dimension
+	// rows without a parent message are invisible. Exporting messages after
+	// everything else means a build that fails at any earlier step leaves a
+	// cache logically equivalent to the pre-build snapshot: new rows exist
+	// only in tables no query can reach them through.
 	messagesDir := filepath.Join(analyticsDir, tableMessages)
 	escapedMessagesDir := strings.ReplaceAll(messagesDir, "'", "''")
 
@@ -588,161 +781,6 @@ func buildCacheImpl(dbPath, analyticsDir string, fullRebuild, autoDecided bool) 
 	)
 	`, idFilter, escapedMessagesDir, writeMode)); err != nil {
 		return nil, fmt.Errorf("export messages: %w", err)
-	}
-
-	if buildCacheAfterMessagesExportHook != nil {
-		if err := buildCacheAfterMessagesExportHook(); err != nil {
-			return nil, err
-		}
-	}
-
-	// 2. Export message_recipients (large junction table)
-	recipientsDir := filepath.Join(analyticsDir, "message_recipients")
-	escapedRecipientsDir := strings.ReplaceAll(recipientsDir, "'", "''")
-	recipientsFilter := ""
-	if !fullRebuild && lastMessageID > 0 {
-		recipientsFilter = fmt.Sprintf(" WHERE message_id > %d", lastMessageID)
-	}
-	recipientsFilter = junctionFilter(recipientsFilter)
-	if err := runExport("message_recipients", fmt.Sprintf(`
-	COPY (
-		SELECT
-			message_id,
-			participant_id,
-			recipient_type,
-			COALESCE(TRY_CAST(display_name AS VARCHAR), '') as display_name
-		FROM sqlite_db.message_recipients%s
-	) TO '%s/%s' (
-		FORMAT PARQUET,
-		COMPRESSION 'zstd'
-	)
-	`, recipientsFilter, escapedRecipientsDir, junctionFile)); err != nil {
-		return nil, fmt.Errorf("export message_recipients: %w", err)
-	}
-
-	// 3. Export message_labels (large junction table)
-	messageLabelsDir := filepath.Join(analyticsDir, "message_labels")
-	escapedMessageLabelsDir := strings.ReplaceAll(messageLabelsDir, "'", "''")
-	messageLabelsFilter := ""
-	if !fullRebuild && lastMessageID > 0 {
-		messageLabelsFilter = fmt.Sprintf(" WHERE message_id > %d", lastMessageID)
-	}
-	messageLabelsFilter = junctionFilter(messageLabelsFilter)
-	if err := runExport("message_labels", fmt.Sprintf(`
-	COPY (
-		SELECT
-			message_id,
-			label_id
-		FROM sqlite_db.message_labels%s
-	) TO '%s/%s' (
-		FORMAT PARQUET,
-		COMPRESSION 'zstd'
-	)
-	`, messageLabelsFilter, escapedMessageLabelsDir, junctionFile)); err != nil {
-		return nil, fmt.Errorf("export message_labels: %w", err)
-	}
-
-	// 4. Export attachments
-	attachmentsDir := filepath.Join(analyticsDir, tableAttachments)
-	escapedAttachmentsDir := strings.ReplaceAll(attachmentsDir, "'", "''")
-	attachmentsFilter := ""
-	if !fullRebuild && lastMessageID > 0 {
-		attachmentsFilter = fmt.Sprintf(" WHERE message_id > %d", lastMessageID)
-	}
-	attachmentsFilter = junctionFilter(attachmentsFilter)
-	if err := runExport(tableAttachments, fmt.Sprintf(`
-	COPY (
-		SELECT
-			message_id,
-			size,
-			COALESCE(TRY_CAST(filename AS VARCHAR), '') as filename
-		FROM sqlite_db.attachments%s
-	) TO '%s/%s' (
-		FORMAT PARQUET,
-		COMPRESSION 'zstd'
-	)
-	`, attachmentsFilter, escapedAttachmentsDir, junctionFile)); err != nil {
-		return nil, fmt.Errorf("export attachments: %w", err)
-	}
-
-	// 5. Export participants
-	participantsDir := filepath.Join(analyticsDir, tableParticipants)
-	escapedParticipantsDir := strings.ReplaceAll(participantsDir, "'", "''")
-	if err := runExport(tableParticipants, fmt.Sprintf(`
-	COPY (
-		SELECT
-			id,
-			COALESCE(TRY_CAST(email_address AS VARCHAR), '') as email_address,
-			COALESCE(TRY_CAST(domain AS VARCHAR), '') as domain,
-			COALESCE(TRY_CAST(display_name AS VARCHAR), '') as display_name,
-			COALESCE(TRY_CAST(phone_number AS VARCHAR), '') as phone_number
-		FROM sqlite_db.participants
-	) TO '%s/participants.parquet' (
-		FORMAT PARQUET,
-		COMPRESSION 'zstd'
-	)
-	`, escapedParticipantsDir)); err != nil {
-		return nil, fmt.Errorf("export participants: %w", err)
-	}
-
-	// 6. Export labels
-	labelsDir := filepath.Join(analyticsDir, tableLabels)
-	escapedLabelsDir := strings.ReplaceAll(labelsDir, "'", "''")
-	if err := runExport(tableLabels, fmt.Sprintf(`
-	COPY (
-		SELECT
-			id,
-			COALESCE(TRY_CAST(name AS VARCHAR), '') as name
-		FROM sqlite_db.labels
-	) TO '%s/labels.parquet' (
-		FORMAT PARQUET,
-		COMPRESSION 'zstd'
-	)
-	`, escapedLabelsDir)); err != nil {
-		return nil, fmt.Errorf("export labels: %w", err)
-	}
-
-	// 7. Export sources
-	sourcesDir := filepath.Join(analyticsDir, "sources")
-	escapedSourcesDir := strings.ReplaceAll(sourcesDir, "'", "''")
-	if err := runExport("sources", fmt.Sprintf(`
-	COPY (
-		SELECT
-			id,
-			identifier as account_email,
-			COALESCE(TRY_CAST(source_type AS VARCHAR), 'gmail') as source_type
-		FROM sqlite_db.sources
-	) TO '%s/sources.parquet' (
-		FORMAT PARQUET,
-		COMPRESSION 'zstd'
-	)
-	`, escapedSourcesDir)); err != nil {
-		return nil, fmt.Errorf("export sources: %w", err)
-	}
-
-	// 8. Export conversations (for Gmail thread IDs)
-	conversationsDir := filepath.Join(analyticsDir, tableConversations)
-	escapedConversationsDir := strings.ReplaceAll(conversationsDir, "'", "''")
-	if err := runExport(tableConversations, fmt.Sprintf(`
-	COPY (
-		SELECT
-			id,
-			COALESCE(TRY_CAST(source_conversation_id AS VARCHAR), '') as source_conversation_id,
-			COALESCE(TRY_CAST(title AS VARCHAR), '') as title,
-			COALESCE(TRY_CAST(conversation_type AS VARCHAR), 'email') as conversation_type
-		FROM sqlite_db.conversations c
-		WHERE EXISTS (
-			SELECT 1 FROM sqlite_db.messages m
-			WHERE m.conversation_id = c.id
-			  AND `+exportableMessageWhere("m")+`
-			  AND TRY_CAST(m.id AS BIGINT) <= %d
-		)
-	) TO '%s/conversations.parquet' (
-		FORMAT PARQUET,
-		COMPRESSION 'zstd'
-	)
-	`, maxID, escapedConversationsDir)); err != nil {
-		return nil, fmt.Errorf("export conversations: %w", err)
 	}
 
 	fmt.Printf("  %-25s %s\n", "Total:", time.Since(buildStart).Round(time.Millisecond))

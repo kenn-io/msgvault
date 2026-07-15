@@ -245,9 +245,10 @@ func TestCacheBuildFileLockSurvivesAnalyticsDirRemoval(t *testing.T) {
 // TestBuildCacheFailedIncrementalStaysServableAndRebuildsCleanly pins the
 // failed-incremental contract: the Parquet files stay in place so a running
 // daemon keeps serving aggregates instead of erroring on missing files, the
-// sync state is gone so every staleness probe demands a full rebuild, and
-// the retry clears the partially updated tables instead of appending the
-// same ID range as duplicates.
+// new rows stay invisible because the messages table (which every query
+// joins from) exports last, the sync state is gone so every staleness probe
+// demands a full rebuild, and the retry clears the partially updated tables
+// instead of appending the same ID range as duplicates.
 func TestBuildCacheFailedIncrementalStaysServableAndRebuildsCleanly(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -260,13 +261,17 @@ func TestBuildCacheFailedIncrementalStaysServableAndRebuildsCleanly(t *testing.T
 	insertSixthMessage(t, dbPath)
 
 	exportFailure := errors.New("simulated export failure")
-	buildCacheAfterMessagesExportHook = func() error { return exportFailure }
+	buildCacheBeforeMessagesExportHook = func() error { return exportFailure }
 	_, err = buildCache(dbPath, analyticsDir, false)
-	buildCacheAfterMessagesExportHook = nil
+	buildCacheBeforeMessagesExportHook = nil
 	require.ErrorIs(err, exportFailure, "incremental build must surface the export failure")
 
 	assert.True(query.HasCompleteParquetData(analyticsDir),
 		"a failed incremental build must leave the cache files servable")
+	assert.Equal(0, countCachedMessages(t, analyticsDir, 6),
+		"rows appended by the failed build must stay invisible: messages export last")
+	assert.Equal(5, countCachedMessages(t, analyticsDir, 0),
+		"the servable cache must equal the pre-build snapshot")
 	_, err = os.Stat(filepath.Join(analyticsDir, "_last_sync.json"))
 	assert.True(os.IsNotExist(err),
 		"a failed incremental build must leave no sync state so the next build starts from scratch")

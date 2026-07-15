@@ -300,12 +300,10 @@ func runRemoveAccountLocal(cmd *cobra.Command, args []string) error {
 		// if the rebuild below fails (or this process dies), a cache built
 		// before the removal could otherwise look fresh forever while still
 		// containing the removed account's data. With the state gone, every
-		// probe forces a full rebuild.
-		stateFile := filepath.Join(cfg.AnalyticsDir(), "_last_sync.json")
-		if err := os.Remove(stateFile); err != nil && !os.IsNotExist(err) {
-			fmt.Fprintf(os.Stderr,
-				"Warning: could not invalidate analytics cache state: %v\n", err)
-		}
+		// probe forces a full rebuild. Hold the exclusive build lock across
+		// the removal so a builder that started before the account deletion
+		// cannot land a fresh state file after we delete it.
+		invalidateCacheSyncState(cfg.AnalyticsDir())
 		fmt.Println("\nRebuilding analytics cache...")
 		if _, err := buildCache(cfg.DatabaseDSN(), cfg.AnalyticsDir(), true); err != nil {
 			fmt.Fprintf(os.Stderr,
