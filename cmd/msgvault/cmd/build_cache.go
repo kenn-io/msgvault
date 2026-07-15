@@ -18,7 +18,8 @@ import (
 	"time"
 
 	_ "github.com/duckdb/duckdb-go/v2" // DuckDB driver (database/sql)
-	_ "github.com/mattn/go-sqlite3"    // SQLite driver (database/sql)
+	"github.com/gofrs/flock"
+	_ "github.com/mattn/go-sqlite3" // SQLite driver (database/sql)
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/cacheops"
@@ -28,6 +29,7 @@ import (
 )
 
 var fullRebuild bool
+var buildCacheAutoFlag bool
 
 const buildCacheDaemonSubprocessEnv = "MSGVAULT_DAEMON_BUILD_CACHE_PARENT_PID"
 
@@ -37,6 +39,25 @@ const buildCacheDaemonSubprocessEnv = "MSGVAULT_DAEMON_BUILD_CACHE_PARENT_PID"
 // files (_last_sync.json, parquet directories) can corrupt the cache.
 var buildCacheMu sync.Mutex
 
+// cacheBuildFileLock returns the inter-process lock that serializes cache
+// builds across processes. buildCacheMu only covers one process, but cache
+// writers span several: the daemon's own build subprocesses and daemon-owned
+// CLI children whose ingest commands rebuild the cache in-process via
+// rebuildCacheAfterWrite (e.g. the daemon's background startup build racing
+// the very sync that auto-started it). The lock file lives NEXT TO the
+// analytics directory, not inside it: the consistency-failure path
+// (discardAttempt) and `remove-account` delete the directory wholesale, and
+// unlinking a held lock file would let another process create a fresh one on
+// a new inode and build concurrently. The OS releases the lock if the holder
+// dies.
+func cacheBuildFileLock(analyticsDir string) (*flock.Flock, error) {
+	lockPath := query.CacheBuildLockPath(analyticsDir)
+	if err := os.MkdirAll(filepath.Dir(lockPath), 0755); err != nil {
+		return nil, fmt.Errorf("create analytics parent dir: %w", err)
+	}
+	return flock.New(lockPath), nil
+}
+
 // buildCacheAfterSnapshotHook is a deterministic test seam for writes that
 // race with cache construction after its source watermark is captured.
 var buildCacheAfterSnapshotHook func()
@@ -45,6 +66,15 @@ var buildCacheAfterSnapshotHook func()
 // mutations that finish after table COPY operations but before cache state is
 // persisted.
 var buildCacheBeforeStateWriteHook func()
+
+// buildCacheAfterMessagesExportHook is a deterministic test seam for export
+// failures that strike between table COPYs, after incremental message shards
+// have already been appended.
+var buildCacheAfterMessagesExportHook func() error
+
+// buildCacheWriteStateFile persists the cache sync state; a test seam for
+// simulating state persistence failures.
+var buildCacheWriteStateFile = os.WriteFile
 
 // cacheSchemaVersion tracks the Parquet schema layout. Bump this whenever
 // columns are added/removed/renamed in the COPY queries below so that
@@ -146,7 +176,7 @@ By default, this performs an incremental update (only adding new messages).
 Use --full-rebuild to recreate all cache files from scratch.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if isDaemonBuildCacheChild() {
-			return runBuildCacheLocal(fullRebuild)
+			return runBuildCacheLocal(fullRebuild, buildCacheAutoFlag)
 		}
 		return runBuildCacheHTTP(cmd, fullRebuild)
 	},
@@ -176,7 +206,7 @@ func runBuildCacheHTTP(cmd *cobra.Command, fullRebuild bool) error {
 	})
 }
 
-func runBuildCacheLocal(fullRebuild bool) error {
+func runBuildCacheLocal(fullRebuild, auto bool) error {
 	dbPath := cfg.DatabaseDSN()
 	analyticsDir := cfg.AnalyticsDir()
 
@@ -197,25 +227,19 @@ func runBuildCacheLocal(fullRebuild bool) error {
 	}
 	defer release()
 
-	// Ensure schema is up to date before building cache.
-	// Legacy databases may be missing columns (e.g. attachment_count,
-	// sender_id, message_type, phone_number) that the export queries
-	// reference. Running migrations first adds them.
-	s, err := store.Open(dbPath)
-	if err != nil {
-		return fmt.Errorf("open database: %w", err)
-	}
-	if err := s.InitSchema(); err != nil {
-		_ = s.Close()
-		return fmt.Errorf("init schema: %w", err)
-	}
-	if err := runStartupMigrations(s); err != nil {
-		_ = s.Close()
-		return fmt.Errorf("startup migrations: %w", err)
-	}
-	_ = s.Close()
+	// No schema init or startup migrations here: this path only runs as a
+	// daemon-owned child (isDaemonBuildCacheChild), and the parent daemon
+	// already ran InitSchema at startup. Running runStartupMigrations in the
+	// child would apply the deliberately deferred legacy identity migration
+	// concurrently with an ingest command, populating account_identities
+	// before that ingest's confirmDefaultIdentity and suppressing the
+	// source's own address — the exact race the daemon defers it to avoid.
 
-	result, err := buildCache(dbPath, analyticsDir, fullRebuild)
+	build := buildCache
+	if auto {
+		build = buildCacheAuto
+	}
+	result, err := build(dbPath, analyticsDir, fullRebuild)
 	if err != nil {
 		return err
 	}
@@ -247,20 +271,59 @@ type buildResult struct {
 	Skipped       bool
 }
 
+// buildCache builds the cache with the caller's explicit fullRebuild demand
+// (e.g. `build-cache --full-rebuild`), which is honored unconditionally.
 func buildCache(dbPath, analyticsDir string, fullRebuild bool) (*buildResult, error) {
+	return buildCacheImpl(dbPath, analyticsDir, fullRebuild, false)
+}
+
+// buildCacheAuto builds the cache for automatic (staleness-derived) callers.
+// Their fullRebuild decision predates the inter-process build lock, so it is
+// re-evaluated once the lock is held: a build another process finished while
+// we waited can make the work unnecessary or downgrade a full rebuild to an
+// incremental one, instead of erasing a cache that was just completed.
+func buildCacheAuto(dbPath, analyticsDir string, fullRebuild bool) (*buildResult, error) {
+	return buildCacheImpl(dbPath, analyticsDir, fullRebuild, true)
+}
+
+func buildCacheImpl(dbPath, analyticsDir string, fullRebuild, autoDecided bool) (*buildResult, error) {
 	buildCacheMu.Lock()
 	defer buildCacheMu.Unlock()
+
+	buildLock, err := cacheBuildFileLock(analyticsDir)
+	if err != nil {
+		return nil, err
+	}
+	if locked, err := buildLock.TryLock(); err != nil {
+		return nil, fmt.Errorf("acquire cache build lock: %w", err)
+	} else if !locked {
+		fmt.Println("Waiting for another msgvault process to finish a cache build...")
+		if err := buildLock.Lock(); err != nil {
+			return nil, fmt.Errorf("acquire cache build lock: %w", err)
+		}
+	}
+	defer func() { _ = buildLock.Unlock() }()
+
+	if autoDecided {
+		staleness := cacheNeedsBuild(dbPath, analyticsDir)
+		if !staleness.NeedsBuild {
+			return &buildResult{Skipped: true, OutputDir: analyticsDir}, nil
+		}
+		fullRebuild = staleness.FullRebuild
+	}
+
+	// Create output directory after acquiring the lock: a build we waited on
+	// may have discarded and removed the whole directory.
+	if err := os.MkdirAll(analyticsDir, 0755); err != nil {
+		return nil, fmt.Errorf("create analytics dir: %w", err)
+	}
 
 	// Record the freshness boundary before reading any source metadata. A sync
 	// or deletion that finishes after this instant may not be represented by
 	// the bounded export and must invalidate the cache on the next check.
+	// Captured after the build lock so it postdates any build we waited on.
 	cacheWatermark := time.Now().UTC().Truncate(time.Second)
 	stateFile := filepath.Join(analyticsDir, "_last_sync.json")
-
-	// Create output directory
-	if err := os.MkdirAll(analyticsDir, 0755); err != nil {
-		return nil, fmt.Errorf("create analytics dir: %w", err)
-	}
 
 	// Load sync state for incremental updates
 	var lastMessageID int64
@@ -399,9 +462,24 @@ func buildCache(dbPath, analyticsDir string, fullRebuild bool) (*buildResult, er
 	}
 	defer cleanup()
 
-	// On full rebuild, clear existing cache
-	if fullRebuild {
-		fmt.Println("Full rebuild: clearing existing cache...")
+	// Invalidate the sync state on disk before touching any cache files.
+	// Deferred cleanup cannot run when the process is killed mid-export, but
+	// with the state file gone every later probe treats the cache as
+	// requiring a full rebuild, so exported rows are never paired with the
+	// pre-build watermark. The state is rewritten only after a fully
+	// successful export.
+	if err := os.Remove(stateFile); err != nil && !os.IsNotExist(err) {
+		return nil, fmt.Errorf("invalidate cache sync state: %w", err)
+	}
+
+	// Clear the existing cache on full rebuilds and whenever no sync state
+	// bounds the export: lastMessageID == 0 re-exports everything, and any
+	// leftover shard (e.g. appended by a build that was killed mid-export)
+	// would duplicate the rows it holds.
+	if fullRebuild || lastMessageID == 0 {
+		if fullRebuild {
+			fmt.Println("Full rebuild: clearing existing cache...")
+		}
 		for _, subdir := range query.RequiredParquetDirs {
 			if err := os.RemoveAll(filepath.Join(analyticsDir, subdir)); err != nil {
 				return nil, fmt.Errorf("clear existing cache: %w", err)
@@ -422,6 +500,28 @@ func buildCache(dbPath, analyticsDir string, fullRebuild bool) (*buildResult, er
 		fmt.Println("Updating analytics cache...")
 	}
 	buildStart := time.Now()
+
+	// A partially applied incremental build must not survive: message shards
+	// are APPENDed table by table, so a mid-export failure leaves a cache
+	// where every directory still holds files (HasCompleteParquetData stays
+	// true) but some tables lack the new rows. The sync-state invalidation
+	// above already prevents duplicate re-appends; this discard additionally
+	// keeps a DuckDB daemon from adopting or continuing to serve the
+	// half-updated cache by demoting it to live SQL. Full rebuilds need no
+	// such cleanup: their partial state is already detected as missing
+	// tables. The consistency-failure path below discards independently.
+	exportCompleted := false
+	if !fullRebuild && lastMessageID > 0 {
+		defer func() {
+			if exportCompleted {
+				return
+			}
+			if err := os.RemoveAll(analyticsDir); err != nil {
+				fmt.Fprintf(os.Stderr,
+					"Warning: could not discard partially updated cache: %v\n", err)
+			}
+		}()
+	}
 
 	// Build WHERE clause for incremental exports
 	idFilter := fmt.Sprintf(" AND TRY_CAST(m.id AS BIGINT) <= %d", maxID)
@@ -504,6 +604,12 @@ func buildCache(dbPath, analyticsDir string, fullRebuild bool) (*buildResult, er
 	)
 	`, idFilter, escapedMessagesDir, writeMode)); err != nil {
 		return nil, fmt.Errorf("export messages: %w", err)
+	}
+
+	if buildCacheAfterMessagesExportHook != nil {
+		if err := buildCacheAfterMessagesExportHook(); err != nil {
+			return nil, err
+		}
 	}
 
 	// 2. Export message_recipients (large junction table)
@@ -720,10 +826,17 @@ func buildCache(dbPath, analyticsDir string, fullRebuild bool) (*buildResult, er
 	if err != nil {
 		return nil, fmt.Errorf("marshal sync state: %w", err)
 	}
-	if err := os.WriteFile(stateFile, stateData, 0600); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: failed to save sync state: %v\n", err)
+	// A state write failure must fail the build: exported rows paired with
+	// the pre-build watermark would be appended again as duplicates on the
+	// next incremental build. The old state was already invalidated before
+	// the export, so failing here leaves the cache stateless and the next
+	// build starts from scratch; for incrementals the partial-update discard
+	// above also cleans up immediately.
+	if err := buildCacheWriteStateFile(stateFile, stateData, 0600); err != nil {
+		return nil, fmt.Errorf("save cache sync state to %s: %w", stateFile, err)
 	}
 
+	exportCompleted = true
 	return &buildResult{
 		ExportedCount: exportedCount,
 		MaxMessageID:  maxID,
@@ -1023,7 +1136,7 @@ func rebuildCacheAfterWrite(dbPath string) {
 	if staleness := cacheNeedsBuild(dbPath, analyticsDir); staleness.FullRebuild {
 		fullRebuild = true
 	}
-	result, err := buildCache(dbPath, analyticsDir, fullRebuild)
+	result, err := buildCacheAuto(dbPath, analyticsDir, fullRebuild)
 	if err != nil {
 		fmt.Fprintf(os.Stderr,
 			"Warning: cache rebuild failed: %v\n", err)
@@ -1059,13 +1172,13 @@ func rebuildCacheAfterWrite(dbPath string) {
 // are forwarded so the child loads identical configuration. --no-log-file
 // keeps the child from writing to the daemon's log file; its output is
 // captured and surfaced on failure instead.
-func buildCacheSubprocess(ctx context.Context, fullRebuild bool) error {
+func buildCacheSubprocess(ctx context.Context, fullRebuild, auto bool) error {
 	// Serialize with each other so parallel per-account syncs in the
 	// daemon don't spawn concurrent cache builds racing on shared files.
 	buildCacheMu.Lock()
 	defer buildCacheMu.Unlock()
 
-	cmd, err := newBuildCacheSubprocessCommand(ctx, fullRebuild)
+	cmd, err := newBuildCacheSubprocessCommand(ctx, fullRebuild, auto)
 	if err != nil {
 		return err
 	}
@@ -1079,13 +1192,13 @@ func buildCacheSubprocess(ctx context.Context, fullRebuild bool) error {
 
 func buildCacheSubprocessStream(
 	ctx context.Context,
-	fullRebuild bool,
+	fullRebuild, auto bool,
 	emit func(api.CLICacheBuildEvent) error,
 ) error {
 	buildCacheMu.Lock()
 	defer buildCacheMu.Unlock()
 
-	cmd, err := newBuildCacheSubprocessCommand(ctx, fullRebuild)
+	cmd, err := newBuildCacheSubprocessCommand(ctx, fullRebuild, auto)
 	if err != nil {
 		return err
 	}
@@ -1134,7 +1247,7 @@ func buildCacheSubprocessStream(
 	return nil
 }
 
-func newBuildCacheSubprocessCommand(ctx context.Context, fullRebuild bool) (*exec.Cmd, error) {
+func newBuildCacheSubprocessCommand(ctx context.Context, fullRebuild, auto bool) (*exec.Cmd, error) {
 	exe, err := os.Executable()
 	if err != nil {
 		return nil, fmt.Errorf("locate msgvault executable: %w", err)
@@ -1144,6 +1257,9 @@ func newBuildCacheSubprocessCommand(ctx context.Context, fullRebuild bool) (*exe
 	args = append(args, "--no-log-file", "build-cache")
 	if fullRebuild {
 		args = append(args, "--full-rebuild")
+	}
+	if auto {
+		args = append(args, "--auto")
 	}
 
 	// exe is this binary (os.Executable) and args are our own fixed subcommand
@@ -1253,7 +1369,7 @@ func rebuildCacheAfterScheduledSync(ctx context.Context, identifier string) {
 	logger.Info("rebuilding cache after sync",
 		"identifier", identifier, "reason", staleness.Reason,
 		"full_rebuild", staleness.FullRebuild)
-	if err := buildCacheSubprocess(ctx, staleness.FullRebuild); err != nil {
+	if err := buildCacheSubprocess(ctx, staleness.FullRebuild, true); err != nil {
 		logger.Error("cache build failed", "error", err)
 		// Don't fail the sync for cache build errors.
 	} else {
@@ -1265,4 +1381,9 @@ func init() {
 	rootCmd.AddCommand(buildCacheCmd)
 	rootCmd.AddCommand(cacheStatsCmd)
 	buildCacheCmd.Flags().BoolVar(&fullRebuild, "full-rebuild", false, "Rebuild all cache files from scratch")
+	// --auto marks a daemon-spawned, staleness-derived build whose rebuild
+	// decision is re-evaluated under the build lock; explicit user builds
+	// stay unconditional. Internal, so hidden.
+	buildCacheCmd.Flags().BoolVar(&buildCacheAutoFlag, "auto", false, "Internal: staleness-derived build; re-evaluated under the build lock")
+	_ = buildCacheCmd.Flags().MarkHidden("auto")
 }

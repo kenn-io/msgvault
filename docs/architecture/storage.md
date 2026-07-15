@@ -151,7 +151,7 @@ There is currently no SQLite to PostgreSQL migration command. Use PostgreSQL for
 
 The TUI needs to aggregate across your entire archive (top senders, domains, labels, time series) and return results instantly as you drill down. SQLite JOINs across normalized tables cannot do this at interactive speeds on large archives. msgvault solves this on the default SQLite backend with denormalized Parquet files queried by an embedded DuckDB engine, delivering aggregate queries hundreds of times faster than SQLite.
 
-The Parquet cache is disposable and can be rebuilt at any time. Aggregate views never trigger a build: the daemon picks its engine once at startup (DuckDB when a fresh, complete cache exists, live SQL otherwise), refreshes a stale cache after its scheduled syncs, and builds one at startup only under `engine = "duckdb"` with `auto_build_cache = true`. `msgvault build-cache` builds the cache on demand; the daemon switches onto it at its next restart. PostgreSQL archives currently use live SQL for aggregate views rather than this Parquet acceleration layer.
+The Parquet cache is disposable and can be rebuilt at any time. Aggregate views never trigger a build mid-session: with `auto_build_cache = true` (the default) the daemon builds a stale or missing cache synchronously at startup — incremental builds take seconds — and then serves DuckDB over it, refreshing the cache after scheduled syncs and ingest commands. Cache builds hold an exclusive cross-process lock and queries hold it shared, so a rebuild never removes Parquet files out from under a running query. `msgvault build-cache` builds the cache on demand. PostgreSQL archives currently use live SQL for aggregate views rather than this Parquet acceleration layer.
 
 ```bash
 # Manual build

@@ -34,8 +34,8 @@ from the local database. This is irreversible.
 If the same identifier exists for multiple source types (e.g., gmail
 and mbox), use --type to specify which one to remove.
 
-The Parquet analytics cache is deleted because it is shared across accounts
-and must be rebuilt. Run 'msgvault build-cache' afterward to rebuild it.
+The Parquet analytics cache is rebuilt automatically because it is shared
+across accounts.
 
 Attachment files on disk that are not shared with another account are deleted.
 Shared attachments (same content hash across multiple accounts) are kept.
@@ -289,13 +289,20 @@ func runRemoveAccountLocal(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Remove analytics cache (shared across accounts, needs full rebuild)
-	analyticsDir := cfg.AnalyticsDir()
-	if err := os.RemoveAll(analyticsDir); err != nil {
-		fmt.Fprintf(os.Stderr,
-			"Warning: could not remove analytics cache %s: %v\n",
-			analyticsDir, err,
-		)
+	// The Parquet cache is shared across accounts, so rebuild it from
+	// scratch now that the account's rows are gone from SQLite. A full
+	// rebuild clears and re-exports every table under the cache build lock,
+	// so a running daemon's queries never see the removed account's data
+	// disappear mid-query.
+	if !store.IsPostgresURL(cfg.DatabaseDSN()) {
+		fmt.Println("\nRebuilding analytics cache...")
+		if _, err := buildCache(cfg.DatabaseDSN(), cfg.AnalyticsDir(), true); err != nil {
+			fmt.Fprintf(os.Stderr,
+				"Warning: could not rebuild analytics cache: %v\n"+
+					"Run 'msgvault build-cache --full-rebuild' to rebuild it.\n",
+				err,
+			)
+		}
 	}
 
 	fmt.Printf("\nAccount %s removed.\n", email)
@@ -314,10 +321,6 @@ func runRemoveAccountLocal(cmd *cobra.Command, args []string) error {
 			packedMappingsRemoved,
 		)
 	}
-	fmt.Println(
-		"Run 'msgvault build-cache' to rebuild the analytics cache.",
-	)
-
 	return nil
 }
 

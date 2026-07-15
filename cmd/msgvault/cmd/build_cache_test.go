@@ -3,6 +3,7 @@ package cmd
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -14,6 +15,7 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/query"
 )
 
 // setupTestSQLite creates a test SQLite database with realistic email data.
@@ -184,6 +186,329 @@ func setupTestSQLite(t *testing.T) string {
 	require.NoError(t, err, "insert test data")
 
 	return tmpDir
+}
+
+// TestRunBuildCacheLocalSkipsDeferredIdentityMigration pins that the
+// daemon-owned build-cache child never applies the deferred legacy identity
+// migration: it can run concurrently with an ingest command, and populating
+// account_identities before that ingest's confirmDefaultIdentity would
+// suppress the source's own address.
+func TestRunBuildCacheLocalSkipsDeferredIdentityMigration(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	c, s := openTestDaemonAnalyticsStore(t)
+	withTUIConfig(t, c)
+	cfg.Identity.Addresses = []string{"legacy@example.com"}
+	_, err := s.DB().Exec(`
+		INSERT INTO sources (id, source_type, identifier) VALUES (1, 'gmail', 'user@example.com');
+		INSERT INTO conversations (id, source_id, source_conversation_id, conversation_type, title)
+			VALUES (1, 1, 'thread1', 'email_thread', 'Hello');
+		INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type, sent_at, subject, snippet)
+			VALUES (1, 1, 1, 'msg1', 'email', '2024-01-15 10:00:00', 'Hello', 'Preview');
+	`)
+	require.NoError(err, "insert test data")
+
+	require.NoError(runBuildCacheLocal(false, false), "runBuildCacheLocal")
+
+	var identities int
+	require.NoError(s.DB().QueryRow("SELECT COUNT(*) FROM account_identities").Scan(&identities))
+	assert.Zero(identities,
+		"build-cache child must not apply the deferred legacy identity migration")
+}
+
+// TestCacheBuildFileLockSurvivesAnalyticsDirRemoval pins the lock file's
+// location outside the analytics directory: discardAttempt and
+// `remove-account` delete that directory wholesale, and unlinking a held
+// lock would let another process acquire a fresh one and build concurrently.
+func TestCacheBuildFileLockSurvivesAnalyticsDirRemoval(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	tmp := t.TempDir()
+	analyticsDir := filepath.Join(tmp, "analytics")
+
+	lock, err := cacheBuildFileLock(analyticsDir)
+	require.NoError(err, "cacheBuildFileLock")
+	locked, err := lock.TryLock()
+	require.NoError(err, "acquire build lock")
+	require.True(locked, "acquire build lock")
+	defer func() { _ = lock.Unlock() }()
+
+	require.NoError(os.MkdirAll(analyticsDir, 0o755), "create analytics dir")
+	require.NoError(os.RemoveAll(analyticsDir), "remove analytics dir")
+
+	_, err = os.Stat(lock.Path())
+	require.NoError(err, "build lock must survive analytics directory removal")
+	assert.NotEqual(analyticsDir, filepath.Dir(lock.Path()),
+		"lock must not live inside the removable analytics directory")
+}
+
+// TestBuildCacheFailedIncrementalDiscardsPartialUpdate pins the
+// failed-incremental repair path: message shards are APPENDed before later
+// tables export, so a mid-build failure must discard the cache — otherwise
+// the un-advanced sync state does not cover the appended rows, the cache
+// still looks complete, and a retry appends the same ID range as duplicates.
+func TestBuildCacheFailedIncrementalDiscardsPartialUpdate(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	tmpDir := setupTestSQLite(t)
+	dbPath := filepath.Join(tmpDir, "test.db")
+	analyticsDir := filepath.Join(tmpDir, "analytics")
+
+	_, err := buildCache(dbPath, analyticsDir, false)
+	require.NoError(err, "initial build")
+	insertSixthMessage(t, dbPath)
+
+	exportFailure := errors.New("simulated export failure")
+	buildCacheAfterMessagesExportHook = func() error { return exportFailure }
+	_, err = buildCache(dbPath, analyticsDir, false)
+	buildCacheAfterMessagesExportHook = nil
+	require.ErrorIs(err, exportFailure, "incremental build must surface the export failure")
+
+	assert.False(query.HasCompleteParquetData(analyticsDir),
+		"a failed incremental build must not leave a cache that still looks complete")
+
+	_, err = buildCache(dbPath, analyticsDir, false)
+	require.NoError(err, "retry build")
+	assert.Equal(1, countCachedMessages(t, analyticsDir, 6),
+		"retry after a failed incremental build must not duplicate message rows")
+}
+
+// countCachedMessages returns how many message rows with the given ID (or all
+// rows when id == 0) exist across the cache's hive-partitioned Parquet files.
+func countCachedMessages(t *testing.T, analyticsDir string, id int64) int {
+	t.Helper()
+	duck, err := sql.Open("duckdb", "")
+	require.NoError(t, err, "open duckdb")
+	defer func() { _ = duck.Close() }()
+	pattern := strings.ReplaceAll(filepath.Join(analyticsDir, "messages", "**", "*.parquet"), "'", "''")
+	where := ""
+	if id != 0 {
+		where = fmt.Sprintf(" WHERE id = %d", id)
+	}
+	var rows int
+	require.NoError(t, duck.QueryRow(fmt.Sprintf(
+		"SELECT COUNT(*) FROM read_parquet('%s', hive_partitioning=true)%s", pattern, where,
+	)).Scan(&rows), "count message rows")
+	return rows
+}
+
+// insertSixthMessage adds one message past the initial fixture's watermark so
+// the next non-full build takes the incremental APPEND path.
+func insertSixthMessage(t *testing.T, dbPath string) {
+	t.Helper()
+	db, err := sql.Open("sqlite3", dbPath)
+	require.NoError(t, err, "open sqlite")
+	defer func() { _ = db.Close() }()
+	_, err = db.Exec(`
+		INSERT INTO messages (id, source_id, source_message_id, conversation_id, subject, snippet, sent_at, size_estimate, has_attachments)
+			VALUES (6, 1, 'msg6', 104, 'New', 'Preview 6', '2024-03-02 10:00:00', 700, 0);
+		INSERT INTO message_recipients (message_id, participant_id, recipient_type, display_name)
+			VALUES (6, 1, 'from', 'Alice Smith');
+	`)
+	require.NoError(t, err, "insert new message")
+}
+
+// TestBuildCacheFailedStateWriteDiscardsIncrementalUpdate pins that a failed
+// _last_sync.json write fails an incremental build and discards its output:
+// appended message rows paired with the old watermark would otherwise be
+// appended again as duplicates by the next build.
+func TestBuildCacheFailedStateWriteDiscardsIncrementalUpdate(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	tmpDir := setupTestSQLite(t)
+	dbPath := filepath.Join(tmpDir, "test.db")
+	analyticsDir := filepath.Join(tmpDir, "analytics")
+
+	_, err := buildCache(dbPath, analyticsDir, false)
+	require.NoError(err, "initial build")
+	insertSixthMessage(t, dbPath)
+
+	buildCacheWriteStateFile = func(string, []byte, os.FileMode) error {
+		return errors.New("simulated state write failure")
+	}
+	_, err = buildCache(dbPath, analyticsDir, false)
+	buildCacheWriteStateFile = os.WriteFile
+	require.ErrorContains(err, "save cache sync state",
+		"incremental build must fail when the sync state cannot be persisted")
+
+	assert.False(query.HasCompleteParquetData(analyticsDir),
+		"a build with unpersisted sync state must not leave a cache that still looks complete")
+
+	_, err = buildCache(dbPath, analyticsDir, false)
+	require.NoError(err, "retry build")
+	assert.Equal(1, countCachedMessages(t, analyticsDir, 6),
+		"retry after a failed state write must not duplicate message rows")
+}
+
+// TestBuildCacheFailedStateWriteFullRebuildLeavesNoStaleState pins that a
+// full rebuild invalidates the previous _last_sync.json before exporting: if
+// the replacement state write fails, the rebuilt Parquet files must not stay
+// paired with the old watermark, or the next incremental build would append
+// rows the full rebuild already exported.
+func TestBuildCacheFailedStateWriteFullRebuildLeavesNoStaleState(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	tmpDir := setupTestSQLite(t)
+	dbPath := filepath.Join(tmpDir, "test.db")
+	analyticsDir := filepath.Join(tmpDir, "analytics")
+
+	_, err := buildCache(dbPath, analyticsDir, false)
+	require.NoError(err, "initial build")
+	insertSixthMessage(t, dbPath)
+
+	buildCacheWriteStateFile = func(string, []byte, os.FileMode) error {
+		return errors.New("simulated state write failure")
+	}
+	_, err = buildCache(dbPath, analyticsDir, true)
+	buildCacheWriteStateFile = os.WriteFile
+	require.ErrorContains(err, "save cache sync state",
+		"full rebuild must fail when the sync state cannot be persisted")
+
+	_, err = os.Stat(filepath.Join(analyticsDir, "_last_sync.json"))
+	require.True(os.IsNotExist(err),
+		"a failed full rebuild must not leave the pre-rebuild sync state behind")
+
+	_, err = buildCache(dbPath, analyticsDir, false)
+	require.NoError(err, "retry build")
+	assert.Equal(1, countCachedMessages(t, analyticsDir, 6),
+		"retry after a failed full rebuild must not duplicate message rows")
+	assert.Equal(6, countCachedMessages(t, analyticsDir, 0),
+		"retry after a failed full rebuild must export each message exactly once")
+}
+
+// TestBuildCacheRecoversFromInterruptedIncrementalBuild pins recovery from a
+// build killed mid-export, where deferred cleanup never ran: appended shards
+// remain but the sync state was already invalidated (removed before the first
+// cache mutation). The next build — including an explicit non-auto one — must
+// start from scratch and clear leftover shards instead of exporting on top of
+// them.
+func TestBuildCacheRecoversFromInterruptedIncrementalBuild(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	tmpDir := setupTestSQLite(t)
+	dbPath := filepath.Join(tmpDir, "test.db")
+	analyticsDir := filepath.Join(tmpDir, "analytics")
+
+	_, err := buildCache(dbPath, analyticsDir, false)
+	require.NoError(err, "initial build")
+	insertSixthMessage(t, dbPath)
+	_, err = buildCache(dbPath, analyticsDir, false)
+	require.NoError(err, "incremental build")
+
+	// A kill between the message APPEND and the final state write leaves
+	// exactly this on disk: appended shards, no _last_sync.json.
+	require.NoError(os.Remove(filepath.Join(analyticsDir, "_last_sync.json")),
+		"simulate interruption after append, before state write")
+
+	_, err = buildCache(dbPath, analyticsDir, false)
+	require.NoError(err, "recovery build")
+	assert.Equal(1, countCachedMessages(t, analyticsDir, 6),
+		"recovery build must clear leftover shards instead of duplicating their rows")
+	assert.Equal(6, countCachedMessages(t, analyticsDir, 0),
+		"recovery build must export each message exactly once")
+}
+
+// TestBuildCacheAutoReevaluatesUnderLock pins the waiter-refresh behavior:
+// a staleness-derived full-rebuild decision taken before the build lock must
+// be re-evaluated once the lock is held, so a builder that waited on another
+// process's build does not erase the cache that build just completed. An
+// explicit (user-requested) full rebuild stays unconditional.
+func TestBuildCacheAutoReevaluatesUnderLock(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	tmpDir := setupTestSQLite(t)
+	dbPath := filepath.Join(tmpDir, "test.db")
+	analyticsDir := filepath.Join(tmpDir, "analytics")
+
+	first, err := buildCache(dbPath, analyticsDir, true)
+	require.NoError(err, "initial full build")
+	require.False(first.Skipped)
+
+	// Simulates a waiter whose pre-lock probe saw "no cache exists" while
+	// the build above was running: by the time it holds the lock, the cache
+	// is fresh and the stale full-rebuild decision must be dropped.
+	auto, err := buildCacheAuto(dbPath, analyticsDir, true)
+	require.NoError(err, "auto build over fresh cache")
+	assert.True(auto.Skipped, "auto build must re-evaluate staleness under the lock and skip a fresh cache")
+
+	explicit, err := buildCache(dbPath, analyticsDir, true)
+	require.NoError(err, "explicit full rebuild over fresh cache")
+	assert.False(explicit.Skipped, "explicit --full-rebuild must stay unconditional")
+}
+
+// TestBuildCache_WaitsForCrossProcessBuildLock verifies buildCache blocks on
+// the inter-process build lock: buildCacheMu only serializes one process,
+// while daemon-owned CLI children rebuild the cache in their own processes.
+// The test holds the lock through an independent file handle, which conflicts
+// exactly like another process's holder would.
+func TestBuildCache_WaitsForCrossProcessBuildLock(t *testing.T) {
+	require := require.New(t)
+	tmpDir := setupTestSQLite(t)
+	dbPath := filepath.Join(tmpDir, "test.db")
+	analyticsDir := filepath.Join(tmpDir, "analytics")
+
+	held, err := cacheBuildFileLock(analyticsDir)
+	require.NoError(err, "cacheBuildFileLock")
+	locked, err := held.TryLock()
+	require.NoError(err, "hold build lock")
+	require.True(locked, "hold build lock")
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := buildCache(dbPath, analyticsDir, false)
+		done <- err
+	}()
+
+	select {
+	case <-done:
+		require.FailNow("buildCache must wait for the cross-process build lock")
+	case <-time.After(150 * time.Millisecond):
+	}
+
+	require.NoError(held.Unlock(), "release build lock")
+	select {
+	case err := <-done:
+		require.NoError(err, "buildCache after lock release")
+	case <-time.After(30 * time.Second):
+		require.FailNow("buildCache did not finish after the lock was released")
+	}
+}
+
+// TestBuildCache_WaitsForCacheReaders verifies the writer side of the
+// reader/writer protocol: a build's exclusive lock must wait for a query's
+// shared hold to release, so it cannot delete Parquet files out from under a
+// running query.
+func TestBuildCache_WaitsForCacheReaders(t *testing.T) {
+	require := require.New(t)
+	tmpDir := setupTestSQLite(t)
+	dbPath := filepath.Join(tmpDir, "test.db")
+	analyticsDir := filepath.Join(tmpDir, "analytics")
+
+	reader, err := cacheBuildFileLock(analyticsDir)
+	require.NoError(err, "cacheBuildFileLock")
+	locked, err := reader.TryRLock()
+	require.NoError(err, "hold shared reader lock")
+	require.True(locked, "hold shared reader lock")
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := buildCache(dbPath, analyticsDir, false)
+		done <- err
+	}()
+
+	select {
+	case <-done:
+		require.FailNow("buildCache must wait for shared reader locks")
+	case <-time.After(150 * time.Millisecond):
+	}
+
+	require.NoError(reader.Unlock(), "release reader lock")
+	select {
+	case err := <-done:
+		require.NoError(err, "buildCache after reader release")
+	case <-time.After(30 * time.Second):
+		require.FailNow("buildCache did not finish after the reader released")
+	}
 }
 
 // TestBuildCache_BasicExport tests that buildCache creates all expected Parquet files.

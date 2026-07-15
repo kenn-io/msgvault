@@ -267,18 +267,40 @@ func (e *DuckDBEngine) QuerySQL(
 }
 
 // acquireQuerySlot blocks until a DuckDB query slot is free or ctx is done,
-// bounding concurrent heavy queries (see duckDBQueryConcurrency). The returned
-// release function frees the slot and must be deferred by the caller. Callers
-// must not nest acquisitions — every gated method is a top-level entry point
-// that does not call another gated method, so the two slots cannot deadlock.
+// bounding concurrent heavy queries (see duckDBQueryConcurrency), then takes
+// the shared cache lock for the query's duration (see acquireCacheRead). The
+// returned release function frees both and must be deferred by the caller.
+// Callers must not nest acquisitions — every gated method is a top-level
+// entry point that does not call another gated method, so the slots cannot
+// deadlock (the shared cache lock itself nests freely).
 func (e *DuckDBEngine) acquireQuerySlot(ctx context.Context) (func(), error) {
 	if e.querySem == nil {
-		return func() {}, nil
+		return e.acquireCacheRead(ctx)
 	}
 	if err := e.querySem.Acquire(ctx, 1); err != nil {
 		return nil, fmt.Errorf("acquire query slot: %w", err)
 	}
-	return func() { e.querySem.Release(1) }, nil
+	releaseRead, err := e.acquireCacheRead(ctx)
+	if err != nil {
+		e.querySem.Release(1)
+		return nil, err
+	}
+	return func() {
+		releaseRead()
+		e.querySem.Release(1)
+	}, nil
+}
+
+// acquireCacheRead holds the shared cache lock for the duration of one query
+// so a concurrent cache build (which holds it exclusively) cannot delete or
+// replace Parquet files mid-read. Shared holders never conflict with each
+// other; a reader blocks only while a build runs (seconds). Engines opened
+// without an analytics directory have no cache to guard.
+func (e *DuckDBEngine) acquireCacheRead(ctx context.Context) (func(), error) {
+	if e.analyticsDir == "" {
+		return func() {}, nil
+	}
+	return acquireCacheReadLock(ctx, e.analyticsDir)
 }
 
 // hasSQLite returns true if DuckDB's sqlite_scanner extension is loaded,
@@ -1498,6 +1520,12 @@ func (e *DuckDBEngine) ListAccounts(ctx context.Context) ([]AccountInfo, error) 
 // ListMessages retrieves messages from Parquet files for fast filtered queries.
 // Joins normalized Parquet tables to reconstruct denormalized view.
 func (e *DuckDBEngine) ListMessages(ctx context.Context, filter MessageFilter) ([]MessageSummary, error) {
+	release, err := e.acquireCacheRead(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+
 	where, args := e.buildFilterConditions(filter)
 
 	// Build ORDER BY
@@ -1817,6 +1845,12 @@ func (e *DuckDBEngine) Search(ctx context.Context, q *search.Query, limit, offse
 	if !e.hasSQLite() {
 		return nil, errors.New("Search requires SQLite: pass sqlitePath to NewDuckDBEngine")
 	}
+	// This fallback fetches labels from Parquet for its results.
+	release, err := e.acquireCacheRead(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 
 	var conditions []string
 	var args []any
@@ -2041,6 +2075,11 @@ func (e *DuckDBEngine) GetGmailIDsByFilter(ctx context.Context, filter MessageFi
 	if e.analyticsDir == "" {
 		return nil, errors.New("GetGmailIDsByFilter requires SQLite or Parquet data")
 	}
+	release, err := e.acquireCacheRead(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 
 	var conditions []string
 	var args []any
@@ -2225,6 +2264,11 @@ func (e *DuckDBEngine) GetGmailIDsByMessageIDs(ctx context.Context, ids []int64)
 	if len(ids) == 0 {
 		return nil, nil
 	}
+	release, err := e.acquireCacheRead(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 	return gmailIDsByMessageIDsChunked(ctx, ids, e.gmailIDsForMessageIDChunk)
 }
 
@@ -2267,6 +2311,11 @@ func (e *DuckDBEngine) GetAccountsByGmailIDs(ctx context.Context, gmailIDs []str
 	if len(gmailIDs) == 0 {
 		return nil, nil
 	}
+	release, err := e.acquireCacheRead(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 	return accountsByGmailIDsChunked(ctx, gmailIDs, e.accountsForGmailIDChunk)
 }
 

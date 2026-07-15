@@ -387,26 +387,54 @@ func TestOpenDaemonAnalyticsEngineSkipsCacheBuildWhenDisabled(t *testing.T) {
 	assert.Equal(api.AnalyticsModeSQLFallback, mode, "auto mode without a cache is a fallback")
 }
 
-func TestOpenDaemonAnalyticsEngineAutoDoesNotBlockStartupOnMissingCache(t *testing.T) {
+func TestOpenDaemonAnalyticsEngineAutoBuildsCacheAtStartup(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	c, s := openTestDaemonAnalyticsStore(t)
 	c.Analytics.Engine = config.AnalyticsEngineAuto
 	c.Analytics.AutoBuildCache = true
-	var gotFullRebuild bool
+	_, err := s.DB().Exec(`
+		INSERT INTO sources (id, source_type, identifier) VALUES (1, 'gmail', 'user@example.com');
+		INSERT INTO conversations (id, source_id, source_conversation_id, conversation_type, title)
+			VALUES (1, 1, 'thread1', 'email_thread', 'Hello');
+		INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type, sent_at, subject, snippet)
+			VALUES (1, 1, 1, 'msg1', 'email', '2024-01-15 10:00:00', 'Hello', 'Preview');
+	`)
+	require.NoError(err, "insert test data")
+
+	builds := 0
 	stubBuildCacheSubprocess(t, func(_ context.Context, fullRebuild bool) error {
-		gotFullRebuild = fullRebuild
-		require.FailNow("auto mode must not block daemon startup on cache build")
-		return nil
+		builds++
+		_, err := buildCache(c.DatabaseDSN(), c.AnalyticsDir(), fullRebuild)
+		return err
 	})
 
 	engine, mode, err := openDaemonAnalyticsEngine(context.Background(), c, s)
-	require.NoError(err, "auto mode should start with live SQL when cache is missing")
+	require.NoError(err, "openDaemonAnalyticsEngine")
 	defer func() { _ = engine.Close() }()
 
-	assert.False(gotFullRebuild, "startup should not request a synchronous cache rebuild")
+	assert.Equal(1, builds, "a stale cache must be built synchronously at startup")
+	assert.Equal(api.AnalyticsModeDuckDB, mode,
+		"the daemon must serve DuckDB over the fresh cache, not live-SQL fallback")
+}
+
+func TestOpenDaemonAnalyticsEngineAutoFallsBackWhenStartupBuildFails(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	c, s := openTestDaemonAnalyticsStore(t)
+	c.Analytics.Engine = config.AnalyticsEngineAuto
+	c.Analytics.AutoBuildCache = true
+	stubBuildCacheSubprocess(t, func(context.Context, bool) error {
+		return errors.New("simulated build failure")
+	})
+
+	engine, mode, err := openDaemonAnalyticsEngine(context.Background(), c, s)
+	require.NoError(err, "a failed auto-mode build must not fail daemon startup")
+	defer func() { _ = engine.Close() }()
+
 	assert.IsType(&query.SQLiteEngine{}, engine)
-	assert.Equal(api.AnalyticsModeSQLFallback, mode, "auto mode without a cache is a fallback")
+	assert.Equal(api.AnalyticsModeSQLFallback, mode,
+		"a failed build falls back to live SQL for engine=auto")
 }
 
 func TestOpenDaemonAnalyticsEngineDuckDBRequiresCacheBuild(t *testing.T) {
