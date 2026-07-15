@@ -125,6 +125,23 @@ type syncState struct {
 	LastFailedSyncRunIDSum int64     `json:"last_failed_sync_run_id_sum,omitempty"`
 }
 
+// hasValidCacheSyncState reports whether the cache's _last_sync.json exists,
+// parses, and matches the current schema version. Builds remove the state
+// before their first cache mutation and rewrite it only on full success, so
+// a complete-looking Parquet layout without valid sync state is the
+// signature of a build killed mid-export and cannot be trusted.
+func hasValidCacheSyncState(analyticsDir string) bool {
+	data, err := os.ReadFile(filepath.Join(analyticsDir, "_last_sync.json"))
+	if err != nil {
+		return false
+	}
+	var state syncState
+	if err := json.Unmarshal(data, &state); err != nil {
+		return false
+	}
+	return state.SchemaVersion == cacheSchemaVersion
+}
+
 type cacheSyncCounters struct {
 	additions      int64
 	updates        int64

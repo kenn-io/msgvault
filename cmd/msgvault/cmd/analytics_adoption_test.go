@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -105,6 +106,33 @@ func TestMaybeAdoptAnalyticsCacheDemotesWhenCacheRemoved(t *testing.T) {
 	maybeAdoptAnalyticsCache()
 	assert.Equal(api.AnalyticsModeDuckDB, server.AnalyticsMode(),
 		"a rebuilt cache must be re-adopted after a demotion")
+}
+
+// TestMaybeAdoptAnalyticsCacheDemotesWhenSyncStateMissing pins the sync-state
+// invariant on the retention path: a build killed mid-export leaves every
+// Parquet directory populated but no _last_sync.json, and a DuckDB daemon
+// must not keep serving that partially updated cache.
+func TestMaybeAdoptAnalyticsCacheDemotesWhenSyncStateMissing(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	c, server := newAdoptionTestDaemon(t)
+
+	_, err := buildCache(c.DatabaseDSN(), c.AnalyticsDir(), false)
+	require.NoError(err, "buildCache")
+	maybeAdoptAnalyticsCache()
+	require.Equal(api.AnalyticsModeDuckDB, server.AnalyticsMode(), "adopt the fresh cache")
+
+	require.NoError(os.Remove(filepath.Join(c.AnalyticsDir(), "_last_sync.json")),
+		"simulate a build killed after invalidating the sync state")
+	maybeAdoptAnalyticsCache()
+	assert.Equal(api.AnalyticsModeSQLFallback, server.AnalyticsMode(),
+		"a complete-looking cache without sync state must demote to live SQL")
+
+	_, err = buildCache(c.DatabaseDSN(), c.AnalyticsDir(), true)
+	require.NoError(err, "rebuild cache")
+	maybeAdoptAnalyticsCache()
+	assert.Equal(api.AnalyticsModeDuckDB, server.AnalyticsMode(),
+		"a rebuilt cache must be re-adopted after the demotion")
 }
 
 // TestMaybeAdoptAnalyticsCacheRespectsDeliberateSQLMode pins that a

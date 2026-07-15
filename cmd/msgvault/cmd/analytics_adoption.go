@@ -89,18 +89,23 @@ func maybeAdoptAnalyticsCache() {
 	}
 	defer func() { _ = buildLock.Unlock() }()
 
-	complete := query.HasCompleteParquetData(analyticsDir)
+	// A complete-looking Parquet layout is only trustworthy together with a
+	// valid sync state: builds invalidate the state before their first cache
+	// mutation, so a build killed mid-export can leave every directory
+	// populated while some tables lack the new rows.
+	consistent := query.HasCompleteParquetData(analyticsDir) &&
+		hasValidCacheSyncState(analyticsDir)
 	if mode == api.AnalyticsModeDuckDB {
-		if complete {
+		if consistent {
 			return
 		}
 		server.SetAnalyticsEngine(query.NewEngine(s.DB(), false), api.AnalyticsModeSQLFallback)
-		logger.Warn("analytics cache files missing; aggregate views demoted to live SQL until the next cache build")
+		logger.Warn("analytics cache files missing or sync state invalid; aggregate views demoted to live SQL until the next cache build")
 		return
 	}
 
 	staleness := cacheNeedsBuild(c.DatabaseDSN(), analyticsDir)
-	if staleness.NeedsBuild || !complete {
+	if staleness.NeedsBuild || !consistent {
 		reason := staleness.Reason
 		if reason == "" {
 			reason = "cache files missing or incomplete"
