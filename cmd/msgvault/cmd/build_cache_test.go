@@ -186,6 +186,32 @@ func setupTestSQLite(t *testing.T) string {
 	return tmpDir
 }
 
+// TestCacheBuildFileLockSurvivesAnalyticsDirRemoval pins the lock file's
+// location outside the analytics directory: discardAttempt and
+// `remove-account` delete that directory wholesale, and unlinking a held
+// lock would let another process acquire a fresh one and build concurrently.
+func TestCacheBuildFileLockSurvivesAnalyticsDirRemoval(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	tmp := t.TempDir()
+	analyticsDir := filepath.Join(tmp, "analytics")
+
+	lock, err := cacheBuildFileLock(analyticsDir)
+	require.NoError(err, "cacheBuildFileLock")
+	locked, err := lock.TryLock()
+	require.NoError(err, "acquire build lock")
+	require.True(locked, "acquire build lock")
+	defer func() { _ = lock.Unlock() }()
+
+	require.NoError(os.MkdirAll(analyticsDir, 0o755), "create analytics dir")
+	require.NoError(os.RemoveAll(analyticsDir), "remove analytics dir")
+
+	_, err = os.Stat(lock.Path())
+	require.NoError(err, "build lock must survive analytics directory removal")
+	assert.NotEqual(analyticsDir, filepath.Dir(lock.Path()),
+		"lock must not live inside the removable analytics directory")
+}
+
 // TestBuildCache_WaitsForCrossProcessBuildLock verifies buildCache blocks on
 // the inter-process build lock: buildCacheMu only serializes one process,
 // while daemon-owned CLI children rebuild the cache in their own processes.

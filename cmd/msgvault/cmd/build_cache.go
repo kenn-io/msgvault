@@ -43,14 +43,18 @@ var buildCacheMu sync.Mutex
 // writers span several: the daemon's own build subprocesses and daemon-owned
 // CLI children whose ingest commands rebuild the cache in-process via
 // rebuildCacheAfterWrite (e.g. the daemon's background startup build racing
-// the very sync that auto-started it). The lock file lives inside the
-// analytics directory — full rebuilds clear only the table subdirectories,
-// never the directory itself — and the OS releases it if the holder dies.
+// the very sync that auto-started it). The lock file lives NEXT TO the
+// analytics directory, not inside it: the consistency-failure path
+// (discardAttempt) and `remove-account` delete the directory wholesale, and
+// unlinking a held lock file would let another process create a fresh one on
+// a new inode and build concurrently. The OS releases the lock if the holder
+// dies.
 func cacheBuildFileLock(analyticsDir string) (*flock.Flock, error) {
-	if err := os.MkdirAll(analyticsDir, 0755); err != nil {
-		return nil, fmt.Errorf("create analytics dir: %w", err)
+	dir := filepath.Clean(analyticsDir)
+	if err := os.MkdirAll(filepath.Dir(dir), 0755); err != nil {
+		return nil, fmt.Errorf("create analytics parent dir: %w", err)
 	}
-	return flock.New(filepath.Join(analyticsDir, ".build.lock")), nil
+	return flock.New(dir + ".build.lock"), nil
 }
 
 // buildCacheAfterSnapshotHook is a deterministic test seam for writes that
@@ -280,6 +284,12 @@ func buildCache(dbPath, analyticsDir string, fullRebuild bool) (*buildResult, er
 		}
 	}
 	defer func() { _ = buildLock.Unlock() }()
+
+	// Create output directory after acquiring the lock: a build we waited on
+	// may have discarded and removed the whole directory.
+	if err := os.MkdirAll(analyticsDir, 0755); err != nil {
+		return nil, fmt.Errorf("create analytics dir: %w", err)
+	}
 
 	// Record the freshness boundary before reading any source metadata. A sync
 	// or deletion that finishes after this instant may not be represented by

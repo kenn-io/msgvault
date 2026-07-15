@@ -289,8 +289,19 @@ func runRemoveAccountLocal(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Remove analytics cache (shared across accounts, needs full rebuild)
+	// Remove analytics cache (shared across accounts, needs full rebuild).
+	// Take the inter-process build lock so the removal cannot interleave
+	// with a cache build running in another process.
 	analyticsDir := cfg.AnalyticsDir()
+	buildLock, err := cacheBuildFileLock(analyticsDir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: %v; removing analytics cache without the build lock\n", err)
+	} else if lockErr := buildLock.Lock(); lockErr != nil {
+		fmt.Fprintf(os.Stderr,
+			"Warning: could not acquire cache build lock: %v; removing analytics cache without it\n", lockErr)
+	} else {
+		defer func() { _ = buildLock.Unlock() }()
+	}
 	if err := os.RemoveAll(analyticsDir); err != nil {
 		fmt.Fprintf(os.Stderr,
 			"Warning: could not remove analytics cache %s: %v\n",
