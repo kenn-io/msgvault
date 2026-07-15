@@ -58,14 +58,31 @@ func cacheBuildFileLock(analyticsDir string) (*flock.Flock, error) {
 	return flock.New(lockPath), nil
 }
 
-// invalidateCacheSyncState removes the cache's _last_sync.json under the
+// invalidateSyncStateFile makes the cache's _last_sync.json unusable so
+// every later staleness probe demands a full rebuild: removal first, and if
+// the file cannot be unlinked (e.g. no directory write permission),
+// overwriting it with content that fails to parse. Only when neither works
+// does it return an error.
+func invalidateSyncStateFile(stateFile string) error {
+	removeErr := os.Remove(stateFile)
+	if removeErr == nil || os.IsNotExist(removeErr) {
+		return nil
+	}
+	if writeErr := os.WriteFile(stateFile, []byte("invalidated"), 0600); writeErr != nil {
+		return fmt.Errorf("invalidate cache sync state: remove: %w; overwrite: %w",
+			removeErr, writeErr)
+	}
+	return nil
+}
+
+// invalidateCacheSyncState invalidates the cache's sync state under the
 // exclusive build lock so every later staleness probe demands a full
 // rebuild. Waiting on the lock means a builder that started before the
 // caller's database mutation finishes first and its freshly written state is
-// still deleted here; any builder that starts afterwards sees the mutated
-// database. Failures only warn — the caller's mutation has already been
-// committed — but the message says what remains at risk.
-func invalidateCacheSyncState(analyticsDir string) {
+// still invalidated here; any builder that starts afterwards sees the
+// mutated database. The returned error means the pre-mutation cache may keep
+// looking fresh — callers must surface that.
+func invalidateCacheSyncState(analyticsDir string) error {
 	buildLock, err := cacheBuildFileLock(analyticsDir)
 	if err == nil {
 		if lockErr := buildLock.Lock(); lockErr != nil {
@@ -75,17 +92,11 @@ func invalidateCacheSyncState(analyticsDir string) {
 		}
 	}
 	if err != nil {
-		// Still attempt the removal: unsynchronized invalidation beats none.
+		// Still attempt the invalidation: unsynchronized beats none.
 		fmt.Fprintf(os.Stderr,
 			"Warning: could not lock analytics cache for invalidation: %v\n", err)
 	}
-	stateFile := filepath.Join(analyticsDir, "_last_sync.json")
-	if err := os.Remove(stateFile); err != nil && !os.IsNotExist(err) {
-		fmt.Fprintf(os.Stderr,
-			"Warning: could not invalidate analytics cache state: %v\n"+
-				"Aggregate views may keep serving pre-removal data until 'msgvault build-cache --full-rebuild' succeeds.\n",
-			err)
-	}
+	return invalidateSyncStateFile(filepath.Join(analyticsDir, "_last_sync.json"))
 }
 
 // buildCacheAfterSnapshotHook is a deterministic test seam for writes that
@@ -499,8 +510,8 @@ func buildCacheImpl(dbPath, analyticsDir string, fullRebuild, autoDecided bool) 
 	// requiring a full rebuild, so exported rows are never paired with the
 	// pre-build watermark. The state is rewritten only after a fully
 	// successful export.
-	if err := os.Remove(stateFile); err != nil && !os.IsNotExist(err) {
-		return nil, fmt.Errorf("invalidate cache sync state: %w", err)
+	if err := invalidateSyncStateFile(stateFile); err != nil {
+		return nil, err
 	}
 
 	// Clear the existing cache on full rebuilds and whenever no sync state
@@ -781,6 +792,47 @@ func buildCacheImpl(dbPath, analyticsDir string, fullRebuild, autoDecided bool) 
 	)
 	`, idFilter, escapedMessagesDir, writeMode)); err != nil {
 		return nil, fmt.Errorf("export messages: %w", err)
+	}
+
+	// An archive with no exportable messages produces no partitioned Parquet
+	// at all (COPY ... PARTITION_BY writes nothing for zero rows), which
+	// would make every read_parquet over the messages glob error on a
+	// running daemon — e.g. right after removing the last account. Write one
+	// empty, schema-compatible shard so queries return zero rows instead.
+	// Only the cleared-directory builds need this; an incremental no-op
+	// leaves the previous shards in place.
+	if exportableMaxID == 0 && (fullRebuild || lastMessageID == 0) {
+		emptyShardDir := filepath.Join(messagesDir, "year=0")
+		if err := os.MkdirAll(emptyShardDir, 0755); err != nil {
+			return nil, fmt.Errorf("create empty messages shard dir: %w", err)
+		}
+		escapedEmptyShard := strings.ReplaceAll(
+			filepath.Join(emptyShardDir, "empty.parquet"), "'", "''")
+		// Same column list as the partitioned export minus the year
+		// partition column, which hive_partitioning derives from the path.
+		if _, err := db.Exec(fmt.Sprintf(`
+		COPY (
+			SELECT
+				m.id,
+				m.source_id,
+				m.source_message_id,
+				m.conversation_id,
+				CASE WHEN m.subject IS NULL THEN NULL ELSE COALESCE(TRY_CAST(m.subject AS VARCHAR), '') END as subject,
+				CASE WHEN m.snippet IS NULL THEN NULL ELSE COALESCE(TRY_CAST(m.snippet AS VARCHAR), '') END as snippet,
+				m.sent_at,
+				m.size_estimate,
+				m.has_attachments,
+				COALESCE(TRY_CAST(m.attachment_count AS INTEGER), 0) as attachment_count,
+				m.deleted_from_source_at,
+				m.sender_id,
+				COALESCE(TRY_CAST(m.message_type AS VARCHAR), '') as message_type,
+				CAST(EXTRACT(MONTH FROM m.sent_at) AS INTEGER) as month
+			FROM sqlite_db.messages m
+			WHERE 1 = 0
+		) TO '%s' (FORMAT PARQUET, COMPRESSION 'zstd')
+		`, escapedEmptyShard)); err != nil {
+			return nil, fmt.Errorf("export empty messages shard: %w", err)
+		}
 	}
 
 	fmt.Printf("  %-25s %s\n", "Total:", time.Since(buildStart).Round(time.Millisecond))

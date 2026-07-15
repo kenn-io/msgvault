@@ -303,7 +303,13 @@ func runRemoveAccountLocal(cmd *cobra.Command, args []string) error {
 		// probe forces a full rebuild. Hold the exclusive build lock across
 		// the removal so a builder that started before the account deletion
 		// cannot land a fresh state file after we delete it.
-		invalidateCacheSyncState(cfg.AnalyticsDir())
+		if err := invalidateCacheSyncState(cfg.AnalyticsDir()); err != nil {
+			fmt.Fprintf(os.Stderr,
+				"Warning: %v\n"+
+					"Aggregate views may keep serving the removed account's data until 'msgvault build-cache --full-rebuild' succeeds.\n",
+				err,
+			)
+		}
 		fmt.Println("\nRebuilding analytics cache...")
 		if _, err := buildCache(cfg.DatabaseDSN(), cfg.AnalyticsDir(), true); err != nil {
 			fmt.Fprintf(os.Stderr,

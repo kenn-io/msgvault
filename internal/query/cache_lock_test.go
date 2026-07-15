@@ -24,11 +24,11 @@ func TestAcquireCacheReadLockBlocksDuringBuild(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
 	defer cancel()
-	_, err = acquireCacheReadLock(ctx, dir)
+	_, err = AcquireCacheReadLock(ctx, dir)
 	require.Error(err, "reader must block while a build holds the lock exclusively")
 
 	require.NoError(build.Unlock(), "release build lock")
-	release, err := acquireCacheReadLock(context.Background(), dir)
+	release, err := AcquireCacheReadLock(context.Background(), dir)
 	require.NoError(err, "reader must acquire after the build releases")
 	release()
 }
@@ -39,13 +39,13 @@ func TestAcquireCacheReadLockSharedHoldersDoNotConflict(t *testing.T) {
 	require := require.New(t)
 	dir := t.TempDir()
 
-	first, err := acquireCacheReadLock(context.Background(), dir)
+	first, err := AcquireCacheReadLock(context.Background(), dir)
 	require.NoError(err, "first shared holder")
 	defer first()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	second, err := acquireCacheReadLock(ctx, dir)
+	second, err := AcquireCacheReadLock(ctx, dir)
 	require.NoError(err, "second shared holder must not conflict with the first")
 	second()
 }

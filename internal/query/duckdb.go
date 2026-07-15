@@ -300,7 +300,7 @@ func (e *DuckDBEngine) acquireCacheRead(ctx context.Context) (func(), error) {
 	if e.analyticsDir == "" {
 		return func() {}, nil
 	}
-	return acquireCacheReadLock(ctx, e.analyticsDir)
+	return AcquireCacheReadLock(ctx, e.analyticsDir)
 }
 
 // hasSQLite returns true if DuckDB's sqlite_scanner extension is loaded,

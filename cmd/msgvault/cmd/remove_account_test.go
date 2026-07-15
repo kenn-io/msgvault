@@ -601,6 +601,41 @@ func TestRemoveAccountCmd_FailedCacheRebuildInvalidatesSyncState(t *testing.T) {
 		"the pre-removal cache must never look fresh after a failed rebuild")
 }
 
+// TestRemoveAccountCmd_LastAccountLeavesReadableEmptyCache pins that
+// removing the only account still leaves a queryable cache: a running daemon
+// keeps its DuckDB engine, so read_parquet over the messages glob must
+// return zero rows instead of failing on an empty directory.
+func TestRemoveAccountCmd_LastAccountLeavesReadableEmptyCache(t *testing.T) {
+	require := require.New(t)
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "msgvault.db")
+
+	s, err := store.Open(dbPath)
+	require.NoError(err, "open store")
+	require.NoError(s.InitSchema(), "init schema")
+	seedMessageWithAttachment(t, s, "test@example.com",
+		"thread1", "msg1", "aa/bb/a.pdf", "hash-a")
+	_ = s.Close()
+
+	savedCfg := cfg
+	defer func() { cfg = savedCfg }()
+	cfg = &config.Config{
+		HomeDir: tmpDir,
+		Data:    config.DataConfig{DataDir: tmpDir},
+	}
+
+	_, err = buildCache(dbPath, cfg.AnalyticsDir(), true)
+	require.NoError(err, "initial cache build")
+
+	root := newTestRootCmd()
+	root.AddCommand(newRemoveAccountLocalTestCmd())
+	root.SetArgs([]string{"remove-account", "test@example.com", "--yes"})
+	require.NoError(root.Execute(), "remove last account")
+
+	require.Equal(0, countCachedMessages(t, cfg.AnalyticsDir(), 0),
+		"the messages glob must stay readable and empty after removing the last account")
+}
+
 func TestRemoveAccountCmd_DuplicateIdentifierRequiresType(
 	t *testing.T,
 ) {

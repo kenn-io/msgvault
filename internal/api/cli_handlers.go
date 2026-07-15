@@ -658,12 +658,12 @@ func (s *Server) handleCLIInitDB(w http.ResponseWriter, _ *http.Request) {
 	})
 }
 
-func (s *Server) handleCLICacheStats(w http.ResponseWriter, _ *http.Request) {
+func (s *Server) handleCLICacheStats(w http.ResponseWriter, r *http.Request) {
 	if s.cfg == nil {
 		writeError(w, http.StatusServiceUnavailable, "config_unavailable", "Config not available")
 		return
 	}
-	stats, err := cacheops.CollectStats(s.cfg.AnalyticsDir())
+	stats, err := cacheops.CollectStats(r.Context(), s.cfg.AnalyticsDir())
 	if err != nil {
 		s.logger.Error("failed to get CLI cache stats", "error", err)
 		writeError(w, http.StatusInternalServerError, "cache_stats_failed", err.Error())

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -420,6 +421,69 @@ func TestBuildCacheRecoversFromInterruptedIncrementalBuild(t *testing.T) {
 		"recovery build must clear leftover shards instead of duplicating their rows")
 	assert.Equal(6, countCachedMessages(t, analyticsDir, 0),
 		"recovery build must export each message exactly once")
+}
+
+// TestBuildCacheEmptyArchiveKeepsMessagesGlobReadable pins the emptied-archive
+// contract (e.g. the last account was removed): a full rebuild over an archive
+// with no exportable messages must write an empty, schema-compatible shard so
+// a running daemon's read_parquet over the messages glob returns zero rows
+// instead of erroring on an empty glob.
+func TestBuildCacheEmptyArchiveKeepsMessagesGlobReadable(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	tmpDir := setupTestSQLite(t)
+	dbPath := filepath.Join(tmpDir, "test.db")
+	analyticsDir := filepath.Join(tmpDir, "analytics")
+
+	_, err := buildCache(dbPath, analyticsDir, false)
+	require.NoError(err, "initial build")
+
+	db, err := sql.Open("sqlite3", dbPath)
+	require.NoError(err, "open sqlite")
+	_, err = db.Exec(`
+		DELETE FROM message_recipients;
+		DELETE FROM message_labels;
+		DELETE FROM attachments;
+		DELETE FROM messages;
+	`)
+	require.NoError(err, "empty the archive")
+	require.NoError(db.Close(), "close sqlite")
+
+	_, err = buildCache(dbPath, analyticsDir, true)
+	require.NoError(err, "full rebuild over the empty archive")
+
+	assert.Equal(0, countCachedMessages(t, analyticsDir, 0),
+		"the messages glob must stay readable and return zero rows")
+}
+
+// TestInvalidateSyncStateFileFallsBackToOverwrite pins the invalidation
+// fallback: when the state file cannot be unlinked (no directory write
+// permission — the same condition that would make a follow-up rebuild fail
+// at its own invalidation), the file is overwritten with content that no
+// staleness probe accepts as a valid sync state.
+func TestInvalidateSyncStateFileFallsBackToOverwrite(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("directory write permissions are not enforced the same way on Windows")
+	}
+	require := require.New(t)
+	dir := t.TempDir()
+	stateFile := filepath.Join(dir, "_last_sync.json")
+	require.NoError(os.WriteFile(stateFile, []byte(`{"last_message_id":5,"schema_version":7}`), 0o600),
+		"seed valid sync state")
+	require.NoError(os.Chmod(dir, 0o500), "make directory read-only")
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+
+	require.NoError(invalidateSyncStateFile(stateFile),
+		"invalidation must succeed via the overwrite fallback")
+
+	data, err := os.ReadFile(stateFile)
+	if os.IsNotExist(err) {
+		return // unlink worked after all (e.g. running as root) — also valid
+	}
+	require.NoError(err, "read state file")
+	var state syncState
+	require.Error(json.Unmarshal(data, &state),
+		"fallback content must not parse as a valid sync state")
 }
 
 // TestBuildCacheAutoReevaluatesUnderLock pins the waiter-refresh behavior:

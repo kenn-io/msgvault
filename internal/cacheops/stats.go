@@ -1,6 +1,7 @@
 package cacheops
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	_ "github.com/duckdb/duckdb-go/v2" // DuckDB driver (database/sql)
+	"go.kenn.io/msgvault/internal/query"
 )
 
 const (
@@ -41,7 +43,16 @@ type syncState struct {
 	LastSyncAt    time.Time `json:"last_sync_at"`
 }
 
-func CollectStats(analyticsDir string) (*CacheStats, error) {
+func CollectStats(ctx context.Context, analyticsDir string) (*CacheStats, error) {
+	// Hold the shared cache lock across file discovery, DuckDB queries, and
+	// the sync-state read so a concurrent rebuild cannot remove files
+	// mid-collection.
+	release, err := query.AcquireCacheReadLock(ctx, analyticsDir)
+	if err != nil {
+		return nil, fmt.Errorf("lock analytics cache for stats: %w", err)
+	}
+	defer release()
+
 	messagesDir := filepath.Join(analyticsDir, tableMessages)
 	if _, err := os.Stat(messagesDir); os.IsNotExist(err) {
 		return &CacheStats{Status: StatusNoCacheFiles}, nil
