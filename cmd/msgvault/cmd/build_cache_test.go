@@ -206,7 +206,7 @@ func TestRunBuildCacheLocalSkipsDeferredIdentityMigration(t *testing.T) {
 	`)
 	require.NoError(err, "insert test data")
 
-	require.NoError(runBuildCacheLocal(false), "runBuildCacheLocal")
+	require.NoError(runBuildCacheLocal(false, false), "runBuildCacheLocal")
 
 	var identities int
 	require.NoError(s.DB().QueryRow("SELECT COUNT(*) FROM account_identities").Scan(&identities))
@@ -238,6 +238,34 @@ func TestCacheBuildFileLockSurvivesAnalyticsDirRemoval(t *testing.T) {
 	require.NoError(err, "build lock must survive analytics directory removal")
 	assert.NotEqual(analyticsDir, filepath.Dir(lock.Path()),
 		"lock must not live inside the removable analytics directory")
+}
+
+// TestBuildCacheAutoReevaluatesUnderLock pins the waiter-refresh behavior:
+// a staleness-derived full-rebuild decision taken before the build lock must
+// be re-evaluated once the lock is held, so a builder that waited on another
+// process's build does not erase the cache that build just completed. An
+// explicit (user-requested) full rebuild stays unconditional.
+func TestBuildCacheAutoReevaluatesUnderLock(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	tmpDir := setupTestSQLite(t)
+	dbPath := filepath.Join(tmpDir, "test.db")
+	analyticsDir := filepath.Join(tmpDir, "analytics")
+
+	first, err := buildCache(dbPath, analyticsDir, true)
+	require.NoError(err, "initial full build")
+	require.False(first.Skipped)
+
+	// Simulates a waiter whose pre-lock probe saw "no cache exists" while
+	// the build above was running: by the time it holds the lock, the cache
+	// is fresh and the stale full-rebuild decision must be dropped.
+	auto, err := buildCacheAuto(dbPath, analyticsDir, true)
+	require.NoError(err, "auto build over fresh cache")
+	assert.True(auto.Skipped, "auto build must re-evaluate staleness under the lock and skip a fresh cache")
+
+	explicit, err := buildCache(dbPath, analyticsDir, true)
+	require.NoError(err, "explicit full rebuild over fresh cache")
+	assert.False(explicit.Skipped, "explicit --full-rebuild must stay unconditional")
 }
 
 // TestBuildCache_WaitsForCrossProcessBuildLock verifies buildCache blocks on

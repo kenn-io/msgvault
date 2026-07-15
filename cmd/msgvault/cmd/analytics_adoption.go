@@ -151,10 +151,12 @@ func startAnalyticsCacheAutoBuild(
 			if err := buildCacheSubprocessForRun(ctx, staleness.FullRebuild); err != nil {
 				logger.Warn("background analytics cache build failed; aggregate views stay on live SQL",
 					"error", err)
-				return
+			} else {
+				logger.Info("background analytics cache build completed")
 			}
-			logger.Info("background analytics cache build completed")
 		}
+		// Reconcile regardless of build outcome; on failure this is a no-op
+		// for a fallback daemon but keeps the engine honest either way.
 		maybeAdoptAnalyticsCache()
 	}()
 }

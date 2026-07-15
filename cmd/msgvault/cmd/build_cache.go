@@ -29,6 +29,7 @@ import (
 )
 
 var fullRebuild bool
+var buildCacheAutoFlag bool
 
 const buildCacheDaemonSubprocessEnv = "MSGVAULT_DAEMON_BUILD_CACHE_PARENT_PID"
 
@@ -166,7 +167,7 @@ By default, this performs an incremental update (only adding new messages).
 Use --full-rebuild to recreate all cache files from scratch.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if isDaemonBuildCacheChild() {
-			return runBuildCacheLocal(fullRebuild)
+			return runBuildCacheLocal(fullRebuild, buildCacheAutoFlag)
 		}
 		return runBuildCacheHTTP(cmd, fullRebuild)
 	},
@@ -196,7 +197,7 @@ func runBuildCacheHTTP(cmd *cobra.Command, fullRebuild bool) error {
 	})
 }
 
-func runBuildCacheLocal(fullRebuild bool) error {
+func runBuildCacheLocal(fullRebuild, auto bool) error {
 	dbPath := cfg.DatabaseDSN()
 	analyticsDir := cfg.AnalyticsDir()
 
@@ -225,7 +226,11 @@ func runBuildCacheLocal(fullRebuild bool) error {
 	// before that ingest's confirmDefaultIdentity and suppressing the
 	// source's own address — the exact race the daemon defers it to avoid.
 
-	result, err := buildCache(dbPath, analyticsDir, fullRebuild)
+	build := buildCache
+	if auto {
+		build = buildCacheAuto
+	}
+	result, err := build(dbPath, analyticsDir, fullRebuild)
 	if err != nil {
 		return err
 	}
@@ -257,7 +262,22 @@ type buildResult struct {
 	Skipped       bool
 }
 
+// buildCache builds the cache with the caller's explicit fullRebuild demand
+// (e.g. `build-cache --full-rebuild`), which is honored unconditionally.
 func buildCache(dbPath, analyticsDir string, fullRebuild bool) (*buildResult, error) {
+	return buildCacheImpl(dbPath, analyticsDir, fullRebuild, false)
+}
+
+// buildCacheAuto builds the cache for automatic (staleness-derived) callers.
+// Their fullRebuild decision predates the inter-process build lock, so it is
+// re-evaluated once the lock is held: a build another process finished while
+// we waited can make the work unnecessary or downgrade a full rebuild to an
+// incremental one, instead of erasing a cache that was just completed.
+func buildCacheAuto(dbPath, analyticsDir string, fullRebuild bool) (*buildResult, error) {
+	return buildCacheImpl(dbPath, analyticsDir, fullRebuild, true)
+}
+
+func buildCacheImpl(dbPath, analyticsDir string, fullRebuild, autoDecided bool) (*buildResult, error) {
 	buildCacheMu.Lock()
 	defer buildCacheMu.Unlock()
 
@@ -274,6 +294,14 @@ func buildCache(dbPath, analyticsDir string, fullRebuild bool) (*buildResult, er
 		}
 	}
 	defer func() { _ = buildLock.Unlock() }()
+
+	if autoDecided {
+		staleness := cacheNeedsBuild(dbPath, analyticsDir)
+		if !staleness.NeedsBuild {
+			return &buildResult{Skipped: true, OutputDir: analyticsDir}, nil
+		}
+		fullRebuild = staleness.FullRebuild
+	}
 
 	// Create output directory after acquiring the lock: a build we waited on
 	// may have discarded and removed the whole directory.
@@ -1049,7 +1077,7 @@ func rebuildCacheAfterWrite(dbPath string) {
 	if staleness := cacheNeedsBuild(dbPath, analyticsDir); staleness.FullRebuild {
 		fullRebuild = true
 	}
-	result, err := buildCache(dbPath, analyticsDir, fullRebuild)
+	result, err := buildCacheAuto(dbPath, analyticsDir, fullRebuild)
 	if err != nil {
 		fmt.Fprintf(os.Stderr,
 			"Warning: cache rebuild failed: %v\n", err)
@@ -1085,13 +1113,13 @@ func rebuildCacheAfterWrite(dbPath string) {
 // are forwarded so the child loads identical configuration. --no-log-file
 // keeps the child from writing to the daemon's log file; its output is
 // captured and surfaced on failure instead.
-func buildCacheSubprocess(ctx context.Context, fullRebuild bool) error {
+func buildCacheSubprocess(ctx context.Context, fullRebuild, auto bool) error {
 	// Serialize with each other so parallel per-account syncs in the
 	// daemon don't spawn concurrent cache builds racing on shared files.
 	buildCacheMu.Lock()
 	defer buildCacheMu.Unlock()
 
-	cmd, err := newBuildCacheSubprocessCommand(ctx, fullRebuild)
+	cmd, err := newBuildCacheSubprocessCommand(ctx, fullRebuild, auto)
 	if err != nil {
 		return err
 	}
@@ -1105,13 +1133,13 @@ func buildCacheSubprocess(ctx context.Context, fullRebuild bool) error {
 
 func buildCacheSubprocessStream(
 	ctx context.Context,
-	fullRebuild bool,
+	fullRebuild, auto bool,
 	emit func(api.CLICacheBuildEvent) error,
 ) error {
 	buildCacheMu.Lock()
 	defer buildCacheMu.Unlock()
 
-	cmd, err := newBuildCacheSubprocessCommand(ctx, fullRebuild)
+	cmd, err := newBuildCacheSubprocessCommand(ctx, fullRebuild, auto)
 	if err != nil {
 		return err
 	}
@@ -1160,7 +1188,7 @@ func buildCacheSubprocessStream(
 	return nil
 }
 
-func newBuildCacheSubprocessCommand(ctx context.Context, fullRebuild bool) (*exec.Cmd, error) {
+func newBuildCacheSubprocessCommand(ctx context.Context, fullRebuild, auto bool) (*exec.Cmd, error) {
 	exe, err := os.Executable()
 	if err != nil {
 		return nil, fmt.Errorf("locate msgvault executable: %w", err)
@@ -1170,6 +1198,9 @@ func newBuildCacheSubprocessCommand(ctx context.Context, fullRebuild bool) (*exe
 	args = append(args, "--no-log-file", "build-cache")
 	if fullRebuild {
 		args = append(args, "--full-rebuild")
+	}
+	if auto {
+		args = append(args, "--auto")
 	}
 
 	// exe is this binary (os.Executable) and args are our own fixed subcommand
@@ -1279,17 +1310,25 @@ func rebuildCacheAfterScheduledSync(ctx context.Context, identifier string) {
 	logger.Info("rebuilding cache after sync",
 		"identifier", identifier, "reason", staleness.Reason,
 		"full_rebuild", staleness.FullRebuild)
-	if err := buildCacheSubprocess(ctx, staleness.FullRebuild); err != nil {
+	if err := buildCacheSubprocess(ctx, staleness.FullRebuild, true); err != nil {
 		logger.Error("cache build failed", "error", err)
 		// Don't fail the sync for cache build errors.
 	} else {
 		logger.Info("cache build completed")
-		maybeAdoptAnalyticsCache()
 	}
+	// Reconcile on failure too: a failed full rebuild may have cleared
+	// Parquet files, and a DuckDB daemon must demote rather than keep
+	// querying an incomplete cache.
+	maybeAdoptAnalyticsCache()
 }
 
 func init() {
 	rootCmd.AddCommand(buildCacheCmd)
 	rootCmd.AddCommand(cacheStatsCmd)
 	buildCacheCmd.Flags().BoolVar(&fullRebuild, "full-rebuild", false, "Rebuild all cache files from scratch")
+	// --auto marks a daemon-spawned, staleness-derived build whose rebuild
+	// decision is re-evaluated under the build lock; explicit user builds
+	// stay unconditional. Internal, so hidden.
+	buildCacheCmd.Flags().BoolVar(&buildCacheAutoFlag, "auto", false, "Internal: staleness-derived build; re-evaluated under the build lock")
+	_ = buildCacheCmd.Flags().MarkHidden("auto")
 }

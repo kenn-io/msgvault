@@ -740,6 +740,13 @@ func (s *Server) queryEngine() query.Engine {
 	return s.engine
 }
 
+// QueryEngine returns the analytics engine currently serving aggregate
+// queries. Exported for the daemon's SQL query runner, which must follow
+// engine swaps (SetAnalyticsEngine) instead of capturing the startup engine.
+func (s *Server) QueryEngine() query.Engine {
+	return s.queryEngine()
+}
+
 // AnalyticsMode reports the analytics mode the server is currently running
 // (one of the AnalyticsMode constants; empty when none was configured).
 func (s *Server) AnalyticsMode() string {

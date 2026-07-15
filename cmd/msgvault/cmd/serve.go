@@ -62,7 +62,12 @@ Use Ctrl+C to stop the daemon gracefully.`,
 
 const daemonIdleTimeoutEnv = "MSGVAULT_DAEMON_IDLE_TIMEOUT"
 
-var buildCacheSubprocessForRun = buildCacheSubprocess
+// buildCacheSubprocessForRun runs a staleness-derived (automatic) cache
+// build; the child re-evaluates the rebuild decision under the build lock.
+// Test seam: stubBuildCacheSubprocess replaces it.
+var buildCacheSubprocessForRun = func(ctx context.Context, fullRebuild bool) error {
+	return buildCacheSubprocess(ctx, fullRebuild, true)
+}
 
 type serveRuntimeAPIServer interface {
 	Shutdown(ctx context.Context) error
@@ -345,13 +350,23 @@ func runServe(cmd *cobra.Command, args []string) error {
 	storeAdapter := &storeAPIAdapter{store: s, attachmentMaintenance: attachmentMaint}
 	schedAdapter := &schedulerAdapter{scheduler: sched}
 
-	// Create and start API server
+	// Create and start API server. The SQL runner resolves the server's
+	// CURRENT engine per request rather than capturing the startup engine:
+	// adoption/demotion swap it at runtime (SetAnalyticsEngine), and a raw
+	// SQL query should share the adopted DuckDB engine instead of opening a
+	// throwaway one. apiServer is assigned before the listener goroutine
+	// starts, so the closure never observes it nil while serving.
+	var apiServer *api.Server
 	apiOpts := api.ServerOptions{
 		Config: cfg,
 		Store:  storeAdapter,
 		Engine: engine,
 		SQLQueryRunner: func(ctx context.Context, sql string) (*query.QueryResult, error) {
-			return runDaemonSQLQuery(ctx, cfg, s, engine, sql)
+			currentEngine := engine
+			if apiServer != nil {
+				currentEngine = apiServer.QueryEngine()
+			}
+			return runDaemonSQLQuery(ctx, cfg, s, currentEngine, sql)
 		},
 		ShutdownToken:          ownership.shutdownToken,
 		ShutdownFunc:           cancel,
@@ -367,7 +382,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	if cfg.Vector.Enabled {
 		apiOpts.VectorStatus = api.VectorStatusInitializing
 	}
-	apiServer := api.NewServerWithOptions(apiOpts)
+	apiServer = api.NewServerWithOptions(apiOpts)
 	// Cache builds that finish while the daemon runs (the background startup
 	// build, post-sync refreshes, user-run `msgvault build-cache`) upgrade a
 	// live-SQL fallback onto the cache without a restart. The deferred
@@ -580,13 +595,17 @@ func runDaemonSQLQuery(
 	}
 
 	if staleness.NeedsBuild {
-		if err := buildCacheSubprocessForRun(ctx, staleness.FullRebuild); err != nil {
+		err := buildCacheSubprocessForRun(ctx, staleness.FullRebuild)
+		// Reconcile even when the build failed: a failed full rebuild may
+		// have cleared Parquet files, and a DuckDB daemon must demote
+		// rather than keep querying an incomplete cache.
+		maybeAdoptAnalyticsCache()
+		if err != nil {
 			return nil, fmt.Errorf("build cache: %w", err)
 		}
 		logger.Info("rebuilt analytics cache for SQL query",
 			"reason", staleness.Reason,
 			"full_rebuild", staleness.FullRebuild)
-		maybeAdoptAnalyticsCache()
 	}
 
 	duckEngine, err := openDaemonDuckDBEngine(c, s)
@@ -833,11 +852,12 @@ func (a *storeAPIAdapter) BuildCLICache(
 	fullRebuild bool,
 	emit func(api.CLICacheBuildEvent) error,
 ) error {
-	if err := buildCacheSubprocessStream(ctx, fullRebuild, emit); err != nil {
-		return err
-	}
+	err := buildCacheSubprocessStream(ctx, fullRebuild, false, emit)
+	// Reconcile on failure too: a failed full rebuild may have cleared
+	// Parquet files, and a DuckDB daemon must demote rather than keep
+	// querying an incomplete cache.
 	maybeAdoptAnalyticsCache()
-	return nil
+	return err
 }
 
 func (a *storeAPIAdapter) RunCLISync(
