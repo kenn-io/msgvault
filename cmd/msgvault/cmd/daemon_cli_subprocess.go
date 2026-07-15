@@ -78,6 +78,12 @@ func runDaemonCLISubprocessStreamWithEnv(
 	if secondStreamErr != nil {
 		return secondStreamErr
 	}
+	if waitErr == nil {
+		// An ingest child may have just rebuilt the analytics cache
+		// (rebuildCacheAfterWrite); adopt it if the daemon is still on
+		// live-SQL fallback. No-op for read-only children and once adopted.
+		maybeAdoptAnalyticsCache()
+	}
 	return classifyDaemonCLIWaitErr(waitErr, args)
 }
 

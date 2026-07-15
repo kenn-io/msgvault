@@ -186,6 +186,44 @@ func setupTestSQLite(t *testing.T) string {
 	return tmpDir
 }
 
+// TestBuildCache_WaitsForCrossProcessBuildLock verifies buildCache blocks on
+// the inter-process build lock: buildCacheMu only serializes one process,
+// while daemon-owned CLI children rebuild the cache in their own processes.
+// The test holds the lock through an independent file handle, which conflicts
+// exactly like another process's holder would.
+func TestBuildCache_WaitsForCrossProcessBuildLock(t *testing.T) {
+	require := require.New(t)
+	tmpDir := setupTestSQLite(t)
+	dbPath := filepath.Join(tmpDir, "test.db")
+	analyticsDir := filepath.Join(tmpDir, "analytics")
+
+	held, err := cacheBuildFileLock(analyticsDir)
+	require.NoError(err, "cacheBuildFileLock")
+	locked, err := held.TryLock()
+	require.NoError(err, "hold build lock")
+	require.True(locked, "hold build lock")
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := buildCache(dbPath, analyticsDir, false)
+		done <- err
+	}()
+
+	select {
+	case <-done:
+		require.FailNow("buildCache must wait for the cross-process build lock")
+	case <-time.After(150 * time.Millisecond):
+	}
+
+	require.NoError(held.Unlock(), "release build lock")
+	select {
+	case err := <-done:
+		require.NoError(err, "buildCache after lock release")
+	case <-time.After(30 * time.Second):
+		require.FailNow("buildCache did not finish after the lock was released")
+	}
+}
+
 // TestBuildCache_BasicExport tests that buildCache creates all expected Parquet files.
 func TestBuildCache_BasicExport(t *testing.T) {
 	require := require.New(t)

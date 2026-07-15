@@ -18,7 +18,8 @@ import (
 	"time"
 
 	_ "github.com/duckdb/duckdb-go/v2" // DuckDB driver (database/sql)
-	_ "github.com/mattn/go-sqlite3"    // SQLite driver (database/sql)
+	"github.com/gofrs/flock"
+	_ "github.com/mattn/go-sqlite3" // SQLite driver (database/sql)
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/cacheops"
@@ -36,6 +37,21 @@ const buildCacheDaemonSubprocessEnv = "MSGVAULT_DAEMON_BUILD_CACHE_PARENT_PID"
 // buildCache on completion. Without this lock, concurrent writes to shared
 // files (_last_sync.json, parquet directories) can corrupt the cache.
 var buildCacheMu sync.Mutex
+
+// cacheBuildFileLock returns the inter-process lock that serializes cache
+// builds across processes. buildCacheMu only covers one process, but cache
+// writers span several: the daemon's own build subprocesses and daemon-owned
+// CLI children whose ingest commands rebuild the cache in-process via
+// rebuildCacheAfterWrite (e.g. the daemon's background startup build racing
+// the very sync that auto-started it). The lock file lives inside the
+// analytics directory — full rebuilds clear only the table subdirectories,
+// never the directory itself — and the OS releases it if the holder dies.
+func cacheBuildFileLock(analyticsDir string) (*flock.Flock, error) {
+	if err := os.MkdirAll(analyticsDir, 0755); err != nil {
+		return nil, fmt.Errorf("create analytics dir: %w", err)
+	}
+	return flock.New(filepath.Join(analyticsDir, ".build.lock")), nil
+}
 
 // buildCacheAfterSnapshotHook is a deterministic test seam for writes that
 // race with cache construction after its source watermark is captured.
@@ -251,16 +267,26 @@ func buildCache(dbPath, analyticsDir string, fullRebuild bool) (*buildResult, er
 	buildCacheMu.Lock()
 	defer buildCacheMu.Unlock()
 
+	buildLock, err := cacheBuildFileLock(analyticsDir)
+	if err != nil {
+		return nil, err
+	}
+	if locked, err := buildLock.TryLock(); err != nil {
+		return nil, fmt.Errorf("acquire cache build lock: %w", err)
+	} else if !locked {
+		fmt.Println("Waiting for another msgvault process to finish a cache build...")
+		if err := buildLock.Lock(); err != nil {
+			return nil, fmt.Errorf("acquire cache build lock: %w", err)
+		}
+	}
+	defer func() { _ = buildLock.Unlock() }()
+
 	// Record the freshness boundary before reading any source metadata. A sync
 	// or deletion that finishes after this instant may not be represented by
 	// the bounded export and must invalidate the cache on the next check.
+	// Captured after the build lock so it postdates any build we waited on.
 	cacheWatermark := time.Now().UTC().Truncate(time.Second)
 	stateFile := filepath.Join(analyticsDir, "_last_sync.json")
-
-	// Create output directory
-	if err := os.MkdirAll(analyticsDir, 0755); err != nil {
-		return nil, fmt.Errorf("create analytics dir: %w", err)
-	}
 
 	// Load sync state for incremental updates
 	var lastMessageID int64

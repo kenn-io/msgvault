@@ -68,13 +68,27 @@ func maybeAdoptAnalyticsCache() {
 		return
 	}
 	analyticsDir := c.AnalyticsDir()
+	// Hold the inter-process build lock across the freshness check and the
+	// DuckDB open so a build running in another process (e.g. a daemon-owned
+	// CLI child's rebuildCacheAfterWrite) cannot hand us a half-written
+	// cache. A held lock means that build's completion path retries adoption.
+	buildLock, err := cacheBuildFileLock(analyticsDir)
+	if err != nil {
+		logger.Warn("analytics cache adoption skipped", "error", err)
+		return
+	}
+	if locked, err := buildLock.TryLock(); err != nil || !locked {
+		logger.Debug("analytics cache adoption deferred; a cache build is in progress elsewhere")
+		return
+	}
+	defer func() { _ = buildLock.Unlock() }()
 	staleness := cacheNeedsBuild(c.DatabaseDSN(), analyticsDir)
 	if staleness.NeedsBuild || !query.HasCompleteParquetData(analyticsDir) {
 		reason := staleness.Reason
 		if reason == "" {
 			reason = "cache files missing or incomplete"
 		}
-		logger.Info("analytics cache not adopted after build; staying on live SQL",
+		logger.Debug("analytics cache not adopted; staying on live SQL",
 			"reason", reason)
 		return
 	}

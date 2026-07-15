@@ -55,6 +55,16 @@ func TestMaybeAdoptAnalyticsCacheUpgradesSQLFallbackAfterBuild(t *testing.T) {
 	_, err = buildCache(c.DatabaseDSN(), c.AnalyticsDir(), false)
 	require.NoError(err, "buildCache")
 
+	buildLock, err := cacheBuildFileLock(c.AnalyticsDir())
+	require.NoError(err, "cacheBuildFileLock")
+	locked, err := buildLock.TryLock()
+	require.NoError(err, "hold build lock")
+	require.True(locked, "hold build lock")
+	maybeAdoptAnalyticsCache()
+	assert.Equal(api.AnalyticsModeSQLFallback, server.AnalyticsMode(),
+		"adoption must defer while another process holds the build lock")
+	require.NoError(buildLock.Unlock(), "release build lock")
+
 	maybeAdoptAnalyticsCache()
 	assert.Equal(api.AnalyticsModeDuckDB, server.AnalyticsMode(),
 		"a fresh cache should be adopted without a daemon restart")
