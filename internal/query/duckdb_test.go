@@ -2058,6 +2058,25 @@ func TestDuckDBEngine_GetGmailIDsByFilter(t *testing.T) {
 	}
 }
 
+func TestDuckDBEngine_GetGmailIDsByFilter_MessageTypeEmailIncludesLegacy(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	b := NewTestDataBuilder(t)
+	b.AddSource("test@example.com")
+	typedEmailID := b.AddMessage(MessageOpt{Subject: "typed email", MessageType: "email"})
+	legacyEmailID := b.AddMessage(MessageOpt{Subject: "legacy email", MessageType: ""})
+	b.AddMessage(MessageOpt{Subject: "meeting", MessageType: "meeting_transcript"})
+	b.AddMessage(MessageOpt{Subject: "text", MessageType: "sms"})
+	engine := b.BuildEngine()
+
+	ids, err := engine.GetGmailIDsByFilter(context.Background(), MessageFilter{MessageType: "email"})
+	require.NoError(err)
+	assert.ElementsMatch(
+		[]string{fmt.Sprintf("msg%d", typedEmailID), fmt.Sprintf("msg%d", legacyEmailID)},
+		ids,
+	)
+}
+
 // buildEmptyBucketsTestData creates a TestDataBuilder with messages that have
 // empty senders, recipients, domains, and labels for testing MatchEmpty* filters.
 func buildEmptyBucketsTestData(t *testing.T) *TestDataBuilder {

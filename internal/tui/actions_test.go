@@ -15,6 +15,7 @@ import (
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/query/querytest"
 	"go.kenn.io/msgvault/internal/testutil"
+	"go.kenn.io/msgvault/internal/testutil/dbtest"
 )
 
 type captureManifestSaver struct {
@@ -277,6 +278,38 @@ func TestStageForDeletion_NoDrillFilter(t *testing.T) {
 	assert.Empty(t, capturedFilter.Sender)
 	assert.Equal(t, "2024-01", capturedFilter.TimeRange.Period)
 	assert.Equal(t, "email", capturedFilter.MessageType)
+}
+
+func TestStageForDeletion_EmailScopeExcludesMixedMessageTypes(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	tdb := dbtest.NewTestDB(t, "../store/schema.sql")
+	tdb.SeedStandardDataSet()
+	typedEmailID := tdb.AddMessage(dbtest.MessageOpts{Subject: "typed email", MessageType: "email"})
+	legacyEmailID := tdb.AddMessage(dbtest.MessageOpts{Subject: "legacy email", MessageType: "email"})
+	tdb.AddMessage(dbtest.MessageOpts{Subject: "meeting", MessageType: "meeting_transcript"})
+	tdb.AddMessage(dbtest.MessageOpts{Subject: "text", MessageType: "sms"})
+	_, err := tdb.DB.Exec(`UPDATE messages SET message_type = '' WHERE id = ?`, legacyEmailID)
+	require.NoError(err)
+
+	sourceMessageID := func(messageID int64) string {
+		var id string
+		err := tdb.DB.QueryRow(`SELECT source_message_id FROM messages WHERE id = ?`, messageID).Scan(&id)
+		require.NoError(err)
+		return id
+	}
+	controller := NewActionController(query.NewSQLiteEngine(tdb.DB), t.TempDir(), nil)
+	manifest, err := controller.StageForDeletion(DeletionContext{
+		AggregateSelection: map[string]bool{"2024-05": true},
+		AggregateViewType:  query.ViewTime,
+		TimeGranularity:    query.TimeMonth,
+	})
+	require.NoError(err)
+
+	assert.ElementsMatch(
+		[]string{sourceMessageID(typedEmailID), sourceMessageID(legacyEmailID)},
+		manifest.GmailIDs,
+	)
 }
 
 func TestSaveManifest_UsesInjectedSaver(t *testing.T) {

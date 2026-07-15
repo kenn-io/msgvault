@@ -1277,6 +1277,13 @@ func (e *SQLiteEngine) GetGmailIDsByFilter(ctx context.Context, filter MessageFi
 	conditions = append(conditions, store.LiveMessagesWhere("m", true))
 
 	conditions, args = appendSourceFilter(conditions, args, "m.", filter.SourceID, filter.SourceIDs)
+	if filter.MessageType != "" {
+		condition, conditionArgs := sqliteMessageTypeCondition("m", []string{filter.MessageType})
+		if condition != "" {
+			conditions = append(conditions, condition)
+			args = append(args, conditionArgs...)
+		}
+	}
 
 	// Scope to Gmail sources only — this function is used for
 	// Gmail-specific deletion/staging workflows and must not return

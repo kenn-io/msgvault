@@ -2050,6 +2050,13 @@ func (e *DuckDBEngine) GetGmailIDsByFilter(ctx context.Context, filter MessageFi
 	// must never honor an opt-in.
 	conditions = append(conditions, store.LiveMessagesWhere("msg", true))
 	conditions, args = appendSourceFilter(conditions, args, "msg.", filter.SourceID, filter.SourceIDs)
+	if filter.MessageType != "" {
+		condition, conditionArgs := duckDBMessageTypeCondition("msg", []string{filter.MessageType})
+		if condition != "" {
+			conditions = append(conditions, condition)
+			args = append(args, conditionArgs...)
+		}
+	}
 
 	// Use EXISTS subqueries for filtering (becomes semi-joins, no duplicates).
 	// When BOTH the email and the display name are filtered, they must match
