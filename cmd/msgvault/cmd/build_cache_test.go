@@ -186,6 +186,34 @@ func setupTestSQLite(t *testing.T) string {
 	return tmpDir
 }
 
+// TestRunBuildCacheLocalSkipsDeferredIdentityMigration pins that the
+// daemon-owned build-cache child never applies the deferred legacy identity
+// migration: it can run concurrently with an ingest command, and populating
+// account_identities before that ingest's confirmDefaultIdentity would
+// suppress the source's own address.
+func TestRunBuildCacheLocalSkipsDeferredIdentityMigration(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	c, s := openTestDaemonAnalyticsStore(t)
+	withTUIConfig(t, c)
+	cfg.Identity.Addresses = []string{"legacy@example.com"}
+	_, err := s.DB().Exec(`
+		INSERT INTO sources (id, source_type, identifier) VALUES (1, 'gmail', 'user@example.com');
+		INSERT INTO conversations (id, source_id, source_conversation_id, conversation_type, title)
+			VALUES (1, 1, 'thread1', 'email_thread', 'Hello');
+		INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type, sent_at, subject, snippet)
+			VALUES (1, 1, 1, 'msg1', 'email', '2024-01-15 10:00:00', 'Hello', 'Preview');
+	`)
+	require.NoError(err, "insert test data")
+
+	require.NoError(runBuildCacheLocal(false), "runBuildCacheLocal")
+
+	var identities int
+	require.NoError(s.DB().QueryRow("SELECT COUNT(*) FROM account_identities").Scan(&identities))
+	assert.Zero(identities,
+		"build-cache child must not apply the deferred legacy identity migration")
+}
+
 // TestCacheBuildFileLockSurvivesAnalyticsDirRemoval pins the lock file's
 // location outside the analytics directory: discardAttempt and
 // `remove-account` delete that directory wholesale, and unlinking a held

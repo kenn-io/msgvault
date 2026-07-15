@@ -12,16 +12,17 @@ import (
 )
 
 // analyticsAdoption lets daemon cache-build completions upgrade the API
-// server off live-SQL fallback without a restart. runServe registers the
-// server; the state stays empty in plain CLI processes, which makes
-// maybeAdoptAnalyticsCache a no-op there. At most one adoption ever happens:
-// the mode leaves sql-fallback permanently once the DuckDB engine installs.
+// server off live-SQL fallback without a restart, and demote it back when
+// the cache disappears. runServe registers the server; the state stays empty
+// in plain CLI processes, which makes maybeAdoptAnalyticsCache a no-op there.
+// Adopted DuckDB engines are kept until shutdown — in-flight requests may
+// still hold a replaced engine, so none is closed while the server runs.
 var analyticsAdoption struct {
 	mu      sync.Mutex
 	server  *api.Server
 	cfg     *config.Config
 	store   *store.Store
-	adopted *query.DuckDBEngine
+	adopted []*query.DuckDBEngine
 }
 
 func registerAnalyticsCacheAdoption(server *api.Server, c *config.Config, s *store.Store) {
@@ -33,57 +34,73 @@ func registerAnalyticsCacheAdoption(server *api.Server, c *config.Config, s *sto
 }
 
 // shutdownAnalyticsCacheAdoption unregisters the daemon and closes any
-// adopted DuckDB engine. Call it after the API server has shut down so no
-// in-flight request still holds the engine.
+// adopted DuckDB engines. Call it after the API server has shut down so no
+// in-flight request still holds one.
 func shutdownAnalyticsCacheAdoption() {
 	analyticsAdoption.mu.Lock()
 	defer analyticsAdoption.mu.Unlock()
 	analyticsAdoption.server = nil
 	analyticsAdoption.cfg = nil
 	analyticsAdoption.store = nil
-	if analyticsAdoption.adopted != nil {
-		_ = analyticsAdoption.adopted.Close()
-		analyticsAdoption.adopted = nil
+	for _, engine := range analyticsAdoption.adopted {
+		_ = engine.Close()
 	}
+	analyticsAdoption.adopted = nil
 }
 
-// maybeAdoptAnalyticsCache upgrades a daemon running on live-SQL fallback
-// onto the Parquet cache after a successful cache build, so aggregate views
-// speed up without a restart. Only [analytics] engine="auto" adopts: "sql"
-// is a deliberate live-SQL choice and "duckdb" never falls back. The cache
-// must be fresh and complete at adoption time — a cache that went stale
-// again (e.g. a sync landed mid-build) is left for the next build to adopt,
-// since live SQL is at least as current.
+// maybeAdoptAnalyticsCache reconciles the daemon's analytics engine with the
+// on-disk cache after cache-affecting work. A daemon on live-SQL fallback
+// adopts a fresh, complete cache after a successful build, so aggregate
+// views speed up without a restart; a stale-again cache (e.g. a sync landed
+// mid-build) is left for the next build, since live SQL is at least as
+// current. A daemon on DuckDB whose cache files were removed (remove-account
+// clears the analytics directory) demotes back to live SQL so aggregate
+// views keep working, and re-adopts after the next successful build. Only
+// [analytics] engine="auto" reconciles: "sql" is a deliberate live-SQL
+// choice and "duckdb" is documented to never fall back.
 func maybeAdoptAnalyticsCache() {
 	analyticsAdoption.mu.Lock()
 	defer analyticsAdoption.mu.Unlock()
 	server, c, s := analyticsAdoption.server, analyticsAdoption.cfg, analyticsAdoption.store
-	if server == nil || c == nil || s == nil || analyticsAdoption.adopted != nil {
-		return
-	}
-	if server.AnalyticsMode() != api.AnalyticsModeSQLFallback {
+	if server == nil || c == nil || s == nil {
 		return
 	}
 	if engineMode := c.Analytics.Engine; engineMode != "" && engineMode != config.AnalyticsEngineAuto {
 		return
 	}
+	mode := server.AnalyticsMode()
+	if mode != api.AnalyticsModeSQLFallback && mode != api.AnalyticsModeDuckDB {
+		return
+	}
 	analyticsDir := c.AnalyticsDir()
 	// Hold the inter-process build lock across the freshness check and the
-	// DuckDB open so a build running in another process (e.g. a daemon-owned
+	// engine swap so a build running in another process (e.g. a daemon-owned
 	// CLI child's rebuildCacheAfterWrite) cannot hand us a half-written
-	// cache. A held lock means that build's completion path retries adoption.
+	// cache or trigger a spurious demotion mid-rebuild. A held lock means
+	// that build's completion path retries the reconciliation.
 	buildLock, err := cacheBuildFileLock(analyticsDir)
 	if err != nil {
-		logger.Warn("analytics cache adoption skipped", "error", err)
+		logger.Warn("analytics engine reconciliation skipped", "error", err)
 		return
 	}
 	if locked, err := buildLock.TryLock(); err != nil || !locked {
-		logger.Debug("analytics cache adoption deferred; a cache build is in progress elsewhere")
+		logger.Debug("analytics engine reconciliation deferred; a cache build is in progress elsewhere")
 		return
 	}
 	defer func() { _ = buildLock.Unlock() }()
+
+	complete := query.HasCompleteParquetData(analyticsDir)
+	if mode == api.AnalyticsModeDuckDB {
+		if complete {
+			return
+		}
+		server.SetAnalyticsEngine(query.NewEngine(s.DB(), false), api.AnalyticsModeSQLFallback)
+		logger.Warn("analytics cache files missing; aggregate views demoted to live SQL until the next cache build")
+		return
+	}
+
 	staleness := cacheNeedsBuild(c.DatabaseDSN(), analyticsDir)
-	if staleness.NeedsBuild || !query.HasCompleteParquetData(analyticsDir) {
+	if staleness.NeedsBuild || !complete {
 		reason := staleness.Reason
 		if reason == "" {
 			reason = "cache files missing or incomplete"
@@ -98,7 +115,7 @@ func maybeAdoptAnalyticsCache() {
 			"error", err)
 		return
 	}
-	analyticsAdoption.adopted = duckEngine
+	analyticsAdoption.adopted = append(analyticsAdoption.adopted, duckEngine)
 	server.SetAnalyticsEngine(duckEngine, api.AnalyticsModeDuckDB)
 	logger.Info("analytics engine upgraded to DuckDB over the Parquet cache")
 }

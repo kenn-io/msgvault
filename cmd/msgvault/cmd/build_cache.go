@@ -217,23 +217,13 @@ func runBuildCacheLocal(fullRebuild bool) error {
 	}
 	defer release()
 
-	// Ensure schema is up to date before building cache.
-	// Legacy databases may be missing columns (e.g. attachment_count,
-	// sender_id, message_type, phone_number) that the export queries
-	// reference. Running migrations first adds them.
-	s, err := store.Open(dbPath)
-	if err != nil {
-		return fmt.Errorf("open database: %w", err)
-	}
-	if err := s.InitSchema(); err != nil {
-		_ = s.Close()
-		return fmt.Errorf("init schema: %w", err)
-	}
-	if err := runStartupMigrations(s); err != nil {
-		_ = s.Close()
-		return fmt.Errorf("startup migrations: %w", err)
-	}
-	_ = s.Close()
+	// No schema init or startup migrations here: this path only runs as a
+	// daemon-owned child (isDaemonBuildCacheChild), and the parent daemon
+	// already ran InitSchema at startup. Running runStartupMigrations in the
+	// child would apply the deliberately deferred legacy identity migration
+	// concurrently with an ingest command, populating account_identities
+	// before that ingest's confirmDefaultIdentity and suppressing the
+	// source's own address — the exact race the daemon defers it to avoid.
 
 	result, err := buildCache(dbPath, analyticsDir, fullRebuild)
 	if err != nil {
