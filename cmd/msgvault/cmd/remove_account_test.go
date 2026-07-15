@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
 	"net/http"
@@ -549,6 +550,55 @@ func TestRemoveAccountCmd_WithYesFlag(t *testing.T) {
 	src, err := s.GetSourceByIdentifier("test@example.com")
 	require.ErrorIs(err, store.ErrSourceNotFound, "GetSourceByIdentifier")
 	assert.Nil(t, src, "account should be removed after --yes")
+}
+
+// TestRemoveAccountCmd_FailedCacheRebuildInvalidatesSyncState pins that a
+// failed post-removal cache rebuild can never leave the pre-removal cache
+// looking fresh: cascading deletion also removes the sync history that
+// staleness probes compare against, so the sync state must be gone and the
+// next probe must demand a full rebuild.
+func TestRemoveAccountCmd_FailedCacheRebuildInvalidatesSyncState(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "msgvault.db")
+
+	s, err := store.Open(dbPath)
+	require.NoError(err, "open store")
+	require.NoError(s.InitSchema(), "init schema")
+	seedMessageWithAttachment(t, s, "test@example.com",
+		"thread1", "msg1", "aa/bb/a.pdf", "hash-a")
+	_ = s.Close()
+
+	savedCfg := cfg
+	defer func() { cfg = savedCfg }()
+	cfg = &config.Config{
+		HomeDir: tmpDir,
+		Data:    config.DataConfig{DataDir: tmpDir},
+	}
+
+	_, err = buildCache(dbPath, cfg.AnalyticsDir(), true)
+	require.NoError(err, "initial cache build")
+	stateFile := filepath.Join(cfg.AnalyticsDir(), "_last_sync.json")
+	_, err = os.Stat(stateFile)
+	require.NoError(err, "sync state exists after initial build")
+
+	buildCacheWriteStateFile = func(string, []byte, os.FileMode) error {
+		return errors.New("simulated rebuild failure")
+	}
+	defer func() { buildCacheWriteStateFile = os.WriteFile }()
+
+	root := newTestRootCmd()
+	root.AddCommand(newRemoveAccountLocalTestCmd())
+	root.SetArgs([]string{"remove-account", "test@example.com", "--yes"})
+	require.NoError(root.Execute(), "remove-account succeeds despite rebuild failure")
+
+	_, err = os.Stat(stateFile)
+	assert.True(os.IsNotExist(err),
+		"a failed rebuild must not leave the pre-removal sync state behind")
+	staleness := cacheNeedsBuild(dbPath, cfg.AnalyticsDir())
+	assert.True(staleness.NeedsBuild && staleness.FullRebuild,
+		"the pre-removal cache must never look fresh after a failed rebuild")
 }
 
 func TestRemoveAccountCmd_DuplicateIdentifierRequiresType(

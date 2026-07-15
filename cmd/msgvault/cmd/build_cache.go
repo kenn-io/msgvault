@@ -501,27 +501,11 @@ func buildCacheImpl(dbPath, analyticsDir string, fullRebuild, autoDecided bool) 
 	}
 	buildStart := time.Now()
 
-	// A partially applied incremental build must not survive: message shards
-	// are APPENDed table by table, so a mid-export failure leaves a cache
-	// where every directory still holds files (HasCompleteParquetData stays
-	// true) but some tables lack the new rows. The sync-state invalidation
-	// above already prevents duplicate re-appends; this discard additionally
-	// keeps a DuckDB daemon from adopting or continuing to serve the
-	// half-updated cache by demoting it to live SQL. Full rebuilds need no
-	// such cleanup: their partial state is already detected as missing
-	// tables. The consistency-failure path below discards independently.
-	exportCompleted := false
-	if !fullRebuild && lastMessageID > 0 {
-		defer func() {
-			if exportCompleted {
-				return
-			}
-			if err := os.RemoveAll(analyticsDir); err != nil {
-				fmt.Fprintf(os.Stderr,
-					"Warning: could not discard partially updated cache: %v\n", err)
-			}
-		}()
-	}
+	// A failed incremental export deliberately leaves its Parquet files in
+	// place: a running daemon keeps serving (slightly stale) aggregates
+	// instead of erroring on missing files, and because the sync state was
+	// invalidated above, the next build starts from scratch and clears the
+	// partially updated tables rather than appending duplicates.
 
 	// Build WHERE clause for incremental exports
 	idFilter := fmt.Sprintf(" AND TRY_CAST(m.id AS BIGINT) <= %d", maxID)
@@ -830,13 +814,11 @@ func buildCacheImpl(dbPath, analyticsDir string, fullRebuild, autoDecided bool) 
 	// the pre-build watermark would be appended again as duplicates on the
 	// next incremental build. The old state was already invalidated before
 	// the export, so failing here leaves the cache stateless and the next
-	// build starts from scratch; for incrementals the partial-update discard
-	// above also cleans up immediately.
+	// build starts from scratch.
 	if err := buildCacheWriteStateFile(stateFile, stateData, 0600); err != nil {
 		return nil, fmt.Errorf("save cache sync state to %s: %w", stateFile, err)
 	}
 
-	exportCompleted = true
 	return &buildResult{
 		ExportedCount: exportedCount,
 		MaxMessageID:  maxID,

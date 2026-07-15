@@ -242,12 +242,13 @@ func TestCacheBuildFileLockSurvivesAnalyticsDirRemoval(t *testing.T) {
 		"lock must not live inside the removable analytics directory")
 }
 
-// TestBuildCacheFailedIncrementalDiscardsPartialUpdate pins the
-// failed-incremental repair path: message shards are APPENDed before later
-// tables export, so a mid-build failure must discard the cache — otherwise
-// the un-advanced sync state does not cover the appended rows, the cache
-// still looks complete, and a retry appends the same ID range as duplicates.
-func TestBuildCacheFailedIncrementalDiscardsPartialUpdate(t *testing.T) {
+// TestBuildCacheFailedIncrementalStaysServableAndRebuildsCleanly pins the
+// failed-incremental contract: the Parquet files stay in place so a running
+// daemon keeps serving aggregates instead of erroring on missing files, the
+// sync state is gone so every staleness probe demands a full rebuild, and
+// the retry clears the partially updated tables instead of appending the
+// same ID range as duplicates.
+func TestBuildCacheFailedIncrementalStaysServableAndRebuildsCleanly(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	tmpDir := setupTestSQLite(t)
@@ -264,13 +265,20 @@ func TestBuildCacheFailedIncrementalDiscardsPartialUpdate(t *testing.T) {
 	buildCacheAfterMessagesExportHook = nil
 	require.ErrorIs(err, exportFailure, "incremental build must surface the export failure")
 
-	assert.False(query.HasCompleteParquetData(analyticsDir),
-		"a failed incremental build must not leave a cache that still looks complete")
+	assert.True(query.HasCompleteParquetData(analyticsDir),
+		"a failed incremental build must leave the cache files servable")
+	_, err = os.Stat(filepath.Join(analyticsDir, "_last_sync.json"))
+	assert.True(os.IsNotExist(err),
+		"a failed incremental build must leave no sync state so the next build starts from scratch")
+	assert.True(cacheNeedsBuild(dbPath, analyticsDir).FullRebuild,
+		"staleness probes must demand a full rebuild after the failure")
 
 	_, err = buildCache(dbPath, analyticsDir, false)
 	require.NoError(err, "retry build")
 	assert.Equal(1, countCachedMessages(t, analyticsDir, 6),
 		"retry after a failed incremental build must not duplicate message rows")
+	assert.Equal(6, countCachedMessages(t, analyticsDir, 0),
+		"retry must export each message exactly once")
 }
 
 // countCachedMessages returns how many message rows with the given ID (or all
@@ -308,11 +316,11 @@ func insertSixthMessage(t *testing.T, dbPath string) {
 	require.NoError(t, err, "insert new message")
 }
 
-// TestBuildCacheFailedStateWriteDiscardsIncrementalUpdate pins that a failed
-// _last_sync.json write fails an incremental build and discards its output:
-// appended message rows paired with the old watermark would otherwise be
-// appended again as duplicates by the next build.
-func TestBuildCacheFailedStateWriteDiscardsIncrementalUpdate(t *testing.T) {
+// TestBuildCacheFailedStateWriteForcesFullRebuild pins that a failed
+// _last_sync.json write fails an incremental build and leaves the cache
+// stateless: appended message rows paired with the old watermark would
+// otherwise be appended again as duplicates by the next build.
+func TestBuildCacheFailedStateWriteForcesFullRebuild(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	tmpDir := setupTestSQLite(t)
@@ -331,8 +339,9 @@ func TestBuildCacheFailedStateWriteDiscardsIncrementalUpdate(t *testing.T) {
 	require.ErrorContains(err, "save cache sync state",
 		"incremental build must fail when the sync state cannot be persisted")
 
-	assert.False(query.HasCompleteParquetData(analyticsDir),
-		"a build with unpersisted sync state must not leave a cache that still looks complete")
+	_, err = os.Stat(filepath.Join(analyticsDir, "_last_sync.json"))
+	assert.True(os.IsNotExist(err),
+		"a build with unpersisted sync state must leave no stale state behind")
 
 	_, err = buildCache(dbPath, analyticsDir, false)
 	require.NoError(err, "retry build")

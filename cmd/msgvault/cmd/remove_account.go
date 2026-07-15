@@ -295,11 +295,22 @@ func runRemoveAccountLocal(cmd *cobra.Command, args []string) error {
 	// so a running daemon's queries never see the removed account's data
 	// disappear mid-query.
 	if !store.IsPostgresURL(cfg.DatabaseDSN()) {
+		// Invalidate the cache sync state first: cascading deletion also
+		// removed the sync history that staleness probes compare against, so
+		// if the rebuild below fails (or this process dies), a cache built
+		// before the removal could otherwise look fresh forever while still
+		// containing the removed account's data. With the state gone, every
+		// probe forces a full rebuild.
+		stateFile := filepath.Join(cfg.AnalyticsDir(), "_last_sync.json")
+		if err := os.Remove(stateFile); err != nil && !os.IsNotExist(err) {
+			fmt.Fprintf(os.Stderr,
+				"Warning: could not invalidate analytics cache state: %v\n", err)
+		}
 		fmt.Println("\nRebuilding analytics cache...")
 		if _, err := buildCache(cfg.DatabaseDSN(), cfg.AnalyticsDir(), true); err != nil {
 			fmt.Fprintf(os.Stderr,
 				"Warning: could not rebuild analytics cache: %v\n"+
-					"Run 'msgvault build-cache --full-rebuild' to rebuild it.\n",
+					"The daemon rebuilds it at its next startup, or run 'msgvault build-cache'.\n",
 				err,
 			)
 		}
