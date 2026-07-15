@@ -67,6 +67,11 @@ var buildCacheAfterSnapshotHook func()
 // persisted.
 var buildCacheBeforeStateWriteHook func()
 
+// buildCacheAfterMessagesExportHook is a deterministic test seam for export
+// failures that strike between table COPYs, after incremental message shards
+// have already been appended.
+var buildCacheAfterMessagesExportHook func() error
+
 // cacheSchemaVersion tracks the Parquet schema layout. Bump this whenever
 // columns are added/removed/renamed in the COPY queries below so that
 // incremental builds automatically trigger a full rebuild instead of
@@ -477,6 +482,28 @@ func buildCacheImpl(dbPath, analyticsDir string, fullRebuild, autoDecided bool) 
 	}
 	buildStart := time.Now()
 
+	// A partially applied incremental build must not survive: message shards
+	// are APPENDed table by table, so a mid-export failure leaves rows that
+	// the un-advanced sync state does not cover while every directory still
+	// holds files (HasCompleteParquetData stays true), and a retry would
+	// append the same ID range again as duplicates. Discard the whole cache
+	// on failure so the next build starts from "no cache exists" (a full
+	// rebuild) and a DuckDB daemon demotes to live SQL. Full rebuilds need
+	// no such cleanup: their partial state is already detected as missing
+	// tables. The consistency-failure path below discards independently.
+	exportCompleted := false
+	if !fullRebuild && lastMessageID > 0 {
+		defer func() {
+			if exportCompleted {
+				return
+			}
+			if err := os.RemoveAll(analyticsDir); err != nil {
+				fmt.Fprintf(os.Stderr,
+					"Warning: could not discard partially updated cache: %v\n", err)
+			}
+		}()
+	}
+
 	// Build WHERE clause for incremental exports
 	idFilter := fmt.Sprintf(" AND TRY_CAST(m.id AS BIGINT) <= %d", maxID)
 	if !fullRebuild && lastMessageID > 0 {
@@ -558,6 +585,12 @@ func buildCacheImpl(dbPath, analyticsDir string, fullRebuild, autoDecided bool) 
 	)
 	`, idFilter, escapedMessagesDir, writeMode)); err != nil {
 		return nil, fmt.Errorf("export messages: %w", err)
+	}
+
+	if buildCacheAfterMessagesExportHook != nil {
+		if err := buildCacheAfterMessagesExportHook(); err != nil {
+			return nil, err
+		}
 	}
 
 	// 2. Export message_recipients (large junction table)
@@ -778,6 +811,7 @@ func buildCacheImpl(dbPath, analyticsDir string, fullRebuild, autoDecided bool) 
 		fmt.Fprintf(os.Stderr, "Warning: failed to save sync state: %v\n", err)
 	}
 
+	exportCompleted = true
 	return &buildResult{
 		ExportedCount: exportedCount,
 		MaxMessageID:  maxID,

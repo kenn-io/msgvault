@@ -3,6 +3,7 @@ package cmd
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -14,6 +15,7 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/query"
 )
 
 // setupTestSQLite creates a test SQLite database with realistic email data.
@@ -238,6 +240,55 @@ func TestCacheBuildFileLockSurvivesAnalyticsDirRemoval(t *testing.T) {
 	require.NoError(err, "build lock must survive analytics directory removal")
 	assert.NotEqual(analyticsDir, filepath.Dir(lock.Path()),
 		"lock must not live inside the removable analytics directory")
+}
+
+// TestBuildCacheFailedIncrementalDiscardsPartialUpdate pins the
+// failed-incremental repair path: message shards are APPENDed before later
+// tables export, so a mid-build failure must discard the cache — otherwise
+// the un-advanced sync state does not cover the appended rows, the cache
+// still looks complete, and a retry appends the same ID range as duplicates.
+func TestBuildCacheFailedIncrementalDiscardsPartialUpdate(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	tmpDir := setupTestSQLite(t)
+	dbPath := filepath.Join(tmpDir, "test.db")
+	analyticsDir := filepath.Join(tmpDir, "analytics")
+
+	_, err := buildCache(dbPath, analyticsDir, false)
+	require.NoError(err, "initial build")
+
+	db, err := sql.Open("sqlite3", dbPath)
+	require.NoError(err, "open sqlite")
+	defer func() { _ = db.Close() }()
+	_, err = db.Exec(`
+		INSERT INTO messages (id, source_id, source_message_id, conversation_id, subject, snippet, sent_at, size_estimate, has_attachments)
+			VALUES (6, 1, 'msg6', 104, 'New', 'Preview 6', '2024-03-02 10:00:00', 700, 0);
+		INSERT INTO message_recipients (message_id, participant_id, recipient_type, display_name)
+			VALUES (6, 1, 'from', 'Alice Smith');
+	`)
+	require.NoError(err, "insert new message")
+
+	exportFailure := errors.New("simulated export failure")
+	buildCacheAfterMessagesExportHook = func() error { return exportFailure }
+	_, err = buildCache(dbPath, analyticsDir, false)
+	buildCacheAfterMessagesExportHook = nil
+	require.ErrorIs(err, exportFailure, "incremental build must surface the export failure")
+
+	assert.False(query.HasCompleteParquetData(analyticsDir),
+		"a failed incremental build must not leave a cache that still looks complete")
+
+	_, err = buildCache(dbPath, analyticsDir, false)
+	require.NoError(err, "retry build")
+
+	duck, err := sql.Open("duckdb", "")
+	require.NoError(err, "open duckdb")
+	defer func() { _ = duck.Close() }()
+	var rows int
+	pattern := strings.ReplaceAll(filepath.Join(analyticsDir, "messages", "**", "*.parquet"), "'", "''")
+	require.NoError(duck.QueryRow(fmt.Sprintf(
+		"SELECT COUNT(*) FROM read_parquet('%s', hive_partitioning=true) WHERE id = 6", pattern,
+	)).Scan(&rows), "count message rows")
+	assert.Equal(1, rows, "retry after a failed incremental build must not duplicate message rows")
 }
 
 // TestBuildCacheAutoReevaluatesUnderLock pins the waiter-refresh behavior:
