@@ -1,6 +1,8 @@
 package cmd
 
 import (
+	"context"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -218,9 +220,9 @@ func TestRunBuildCacheLocalSkipsDeferredIdentityMigration(t *testing.T) {
 }
 
 // TestCacheBuildFileLockSurvivesAnalyticsDirRemoval pins the lock file's
-// location outside the analytics directory: discardAttempt and
-// `remove-account` delete that directory wholesale, and unlinking a held
-// lock would let another process acquire a fresh one and build concurrently.
+// location outside the analytics directory: cache recovery may replace live
+// paths, and unlinking a held lock would let another process acquire a fresh
+// one and build concurrently.
 func TestCacheBuildFileLockSurvivesAnalyticsDirRemoval(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -244,12 +246,9 @@ func TestCacheBuildFileLockSurvivesAnalyticsDirRemoval(t *testing.T) {
 }
 
 // TestBuildCacheFailedIncrementalStaysServableAndRebuildsCleanly pins the
-// failed-incremental contract: the Parquet files stay in place so a running
-// daemon keeps serving aggregates instead of erroring on missing files, the
-// new rows stay invisible because the messages table (which every query
-// joins from) exports last, the sync state is gone so every staleness probe
-// demands a full rebuild, and the retry clears the partially updated tables
-// instead of appending the same ID range as duplicates.
+// staged-export contract: failures before publication leave the last committed
+// state and every live Parquet byte unchanged, so readers continue to see the
+// old snapshot and the next build can retry incrementally.
 func TestBuildCacheFailedIncrementalStaysServableAndRebuildsCleanly(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -259,6 +258,9 @@ func TestBuildCacheFailedIncrementalStaysServableAndRebuildsCleanly(t *testing.T
 
 	_, err := buildCache(dbPath, analyticsDir, false)
 	require.NoError(err, "initial build")
+	stateBefore, err := os.ReadFile(query.CacheStatePath(analyticsDir))
+	require.NoError(err, "read committed state")
+	filesBefore := snapshotCacheParquet(t, analyticsDir)
 	insertSixthMessage(t, dbPath)
 
 	exportFailure := errors.New("simulated export failure")
@@ -267,17 +269,24 @@ func TestBuildCacheFailedIncrementalStaysServableAndRebuildsCleanly(t *testing.T
 	buildCacheBeforeMessagesExportHook = nil
 	require.ErrorIs(err, exportFailure, "incremental build must surface the export failure")
 
-	assert.True(query.HasCompleteParquetData(analyticsDir),
-		"a failed incremental build must leave the cache files servable")
+	readiness, readyErr := query.InspectCacheReadiness(analyticsDir)
+	require.NoError(readyErr)
+	assert.Equal(query.CacheReady, readiness)
+	stateAfter, readErr := os.ReadFile(query.CacheStatePath(analyticsDir))
+	require.NoError(readErr)
+	assert.Equal(stateBefore, stateAfter, "failed staging must preserve committed state")
+	assert.Equal(filesBefore, snapshotCacheParquet(t, analyticsDir),
+		"failed staging must not mutate live Parquet")
+	assert.Empty(cacheStagingPaths(t, analyticsDir),
+		"ordinary export failures must clean their private staging directory")
 	assert.Equal(0, countCachedMessages(t, analyticsDir, 6),
-		"rows appended by the failed build must stay invisible: messages export last")
+		"rows from a failed staged export must not be published")
 	assert.Equal(5, countCachedMessages(t, analyticsDir, 0),
 		"the servable cache must equal the pre-build snapshot")
-	_, err = os.Stat(filepath.Join(analyticsDir, "_last_sync.json"))
-	assert.True(os.IsNotExist(err),
-		"a failed incremental build must leave no sync state so the next build starts from scratch")
-	assert.True(cacheNeedsBuild(dbPath, analyticsDir).FullRebuild,
-		"staleness probes must demand a full rebuild after the failure")
+	staleness := cacheNeedsBuild(dbPath, analyticsDir)
+	assert.True(staleness.NeedsBuild)
+	assert.False(staleness.FullRebuild,
+		"a failed staged export leaves the committed cache eligible for incremental retry")
 
 	_, err = buildCache(dbPath, analyticsDir, false)
 	require.NoError(err, "retry build")
@@ -285,6 +294,149 @@ func TestBuildCacheFailedIncrementalStaysServableAndRebuildsCleanly(t *testing.T
 		"retry after a failed incremental build must not duplicate message rows")
 	assert.Equal(6, countCachedMessages(t, analyticsDir, 0),
 		"retry must export each message exactly once")
+}
+
+func TestBuildCacheStagingCleanupRemovesAbandonedBuild(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	tmpDir := setupTestSQLite(t)
+	dbPath := filepath.Join(tmpDir, "test.db")
+	analyticsDir := filepath.Join(tmpDir, "analytics")
+	_, err := buildCache(dbPath, analyticsDir, false)
+	require.NoError(err, "initial build")
+
+	abandoned := filepath.Join(filepath.Dir(analyticsDir), cacheStagingPrefix(analyticsDir)+"abandoned")
+	require.NoError(os.MkdirAll(abandoned, 0o755))
+	require.NoError(os.WriteFile(filepath.Join(abandoned, "partial.parquet"), []byte("partial"), 0o600))
+
+	result, err := buildCache(dbPath, analyticsDir, false)
+	require.NoError(err)
+	assert.True(result.Skipped, "cleanup must also run on the no-op path")
+	assert.Empty(cacheStagingPaths(t, analyticsDir))
+}
+
+func TestBuildCachePublishInterruptionRejectsReaders(t *testing.T) {
+	require := require.New(t)
+	tmpDir := setupTestSQLite(t)
+	dbPath := filepath.Join(tmpDir, "test.db")
+	analyticsDir := filepath.Join(tmpDir, "analytics")
+
+	_, err := buildCache(dbPath, analyticsDir, false)
+	require.NoError(err, "initial build")
+	engine, err := query.NewDuckDBEngine(analyticsDir, "", nil)
+	require.NoError(err, "open committed cache")
+	t.Cleanup(func() { _ = engine.Close() })
+	insertSixthMessage(t, dbPath)
+
+	publishErr := errors.New("simulated publish interruption")
+	buildCacheAfterStateInvalidationHook = func() error { return publishErr }
+	t.Cleanup(func() { buildCacheAfterStateInvalidationHook = nil })
+	_, err = buildCache(dbPath, analyticsDir, false)
+	require.ErrorIs(err, publishErr)
+
+	readiness, inspectErr := query.InspectCacheReadiness(analyticsDir)
+	require.NoError(inspectErr)
+	assert.Equal(t, query.CacheInterrupted, readiness)
+	_, err = engine.Aggregate(context.Background(), query.ViewSenders, query.DefaultAggregateOptions())
+	require.ErrorIs(err, query.ErrCacheUnavailable)
+}
+
+func TestBuildCacheEmptyStatelessReplacesStaleShards(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	tmpDir := setupTestSQLite(t)
+	dbPath := filepath.Join(tmpDir, "test.db")
+	analyticsDir := filepath.Join(tmpDir, "analytics")
+
+	_, err := buildCache(dbPath, analyticsDir, false)
+	require.NoError(err, "initial build")
+	db, err := sql.Open("sqlite3", dbPath)
+	require.NoError(err)
+	_, err = db.Exec(`
+		DELETE FROM attachments;
+		DELETE FROM message_labels;
+		DELETE FROM message_recipients;
+		DELETE FROM messages;
+		DELETE FROM conversations;
+		DELETE FROM labels;
+		DELETE FROM participants;
+		DELETE FROM sources;
+	`)
+	require.NoError(err)
+	require.NoError(db.Close())
+	require.NoError(os.Remove(query.CacheStatePath(analyticsDir)))
+
+	result, err := buildCache(dbPath, analyticsDir, false)
+	require.NoError(err)
+	assert.False(result.Skipped)
+	assert.Zero(result.ExportedCount)
+	readiness, inspectErr := query.InspectCacheReadiness(analyticsDir)
+	require.NoError(inspectErr)
+	assert.Equal(query.CacheReady, readiness)
+	assert.Zero(countCachedMessages(t, analyticsDir, 0))
+}
+
+func TestBuildCacheRowCountMismatchPreservesCommittedCache(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	tmpDir := setupTestSQLite(t)
+	dbPath := filepath.Join(tmpDir, "test.db")
+	analyticsDir := filepath.Join(tmpDir, "analytics")
+
+	_, err := buildCache(dbPath, analyticsDir, false)
+	require.NoError(err, "initial build")
+	stateBefore, err := os.ReadFile(query.CacheStatePath(analyticsDir))
+	require.NoError(err)
+	filesBefore := snapshotCacheParquet(t, analyticsDir)
+	insertSixthMessage(t, dbPath)
+
+	buildCacheAfterSnapshotHook = func() {
+		hookDB, hookErr := sql.Open("sqlite3", dbPath)
+		require.NoError(hookErr)
+		defer func() { require.NoError(hookDB.Close()) }()
+		_, hookErr = hookDB.Exec(`UPDATE messages SET deleted_at = datetime('now') WHERE id = 6`)
+		require.NoError(hookErr)
+	}
+	t.Cleanup(func() { buildCacheAfterSnapshotHook = nil })
+
+	_, err = buildCache(dbPath, analyticsDir, false)
+	require.ErrorContains(err, "staged message row count")
+	buildCacheAfterSnapshotHook = nil
+	stateAfter, err := os.ReadFile(query.CacheStatePath(analyticsDir))
+	require.NoError(err)
+	assert.Equal(stateBefore, stateAfter)
+	assert.Equal(filesBefore, snapshotCacheParquet(t, analyticsDir))
+}
+
+func snapshotCacheParquet(t *testing.T, analyticsDir string) map[string][sha256.Size]byte {
+	t.Helper()
+	result := make(map[string][sha256.Size]byte)
+	require.NoError(t, filepath.Walk(analyticsDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if info.IsDir() || !strings.EqualFold(filepath.Ext(path), ".parquet") {
+			return nil
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(analyticsDir, path)
+		if err != nil {
+			return err
+		}
+		result[rel] = sha256.Sum256(data)
+		return nil
+	}))
+	return result
+}
+
+func cacheStagingPaths(t *testing.T, analyticsDir string) []string {
+	t.Helper()
+	paths, err := filepath.Glob(filepath.Join(filepath.Dir(analyticsDir), cacheStagingPrefix(analyticsDir)+"*"))
+	require.NoError(t, err)
+	return paths
 }
 
 // countCachedMessages returns how many message rows with the given ID (or all
@@ -307,7 +459,7 @@ func countCachedMessages(t *testing.T, analyticsDir string, id int64) int {
 }
 
 // insertSixthMessage adds one message past the initial fixture's watermark so
-// the next non-full build takes the incremental APPEND path.
+// the next non-full build stages and publishes an incremental shard.
 func insertSixthMessage(t *testing.T, dbPath string) {
 	t.Helper()
 	db, err := sql.Open("sqlite3", dbPath)
@@ -323,9 +475,8 @@ func insertSixthMessage(t *testing.T, dbPath string) {
 }
 
 // TestBuildCacheFailedStateWriteForcesFullRebuild pins that a failed
-// _last_sync.json write fails an incremental build and leaves the cache
-// stateless: appended message rows paired with the old watermark would
-// otherwise be appended again as duplicates by the next build.
+// _last_sync.json write fails inside the publication window and leaves the
+// cache stateless, forcing the next build to replace all live datasets.
 func TestBuildCacheFailedStateWriteForcesFullRebuild(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -356,10 +507,8 @@ func TestBuildCacheFailedStateWriteForcesFullRebuild(t *testing.T) {
 }
 
 // TestBuildCacheFailedStateWriteFullRebuildLeavesNoStaleState pins that a
-// full rebuild invalidates the previous _last_sync.json before exporting: if
-// the replacement state write fails, the rebuilt Parquet files must not stay
-// paired with the old watermark, or the next incremental build would append
-// rows the full rebuild already exported.
+// full rebuild state write failure leaves no commit marker, so the published
+// replacement files cannot be mistaken for a committed cache.
 func TestBuildCacheFailedStateWriteFullRebuildLeavesNoStaleState(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -391,12 +540,9 @@ func TestBuildCacheFailedStateWriteFullRebuildLeavesNoStaleState(t *testing.T) {
 		"retry after a failed full rebuild must export each message exactly once")
 }
 
-// TestBuildCacheRecoversFromInterruptedIncrementalBuild pins recovery from a
-// build killed mid-export, where deferred cleanup never ran: appended shards
-// remain but the sync state was already invalidated (removed before the first
-// cache mutation). The next build — including an explicit non-auto one — must
-// start from scratch and clear leftover shards instead of exporting on top of
-// them.
+// TestBuildCacheRecoversFromInterruptedIncrementalBuild pins recovery from an
+// interrupted publication: live shards may have moved, but the missing commit
+// marker forces the next explicit build to replace everything from SQLite.
 func TestBuildCacheRecoversFromInterruptedIncrementalBuild(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -410,8 +556,8 @@ func TestBuildCacheRecoversFromInterruptedIncrementalBuild(t *testing.T) {
 	_, err = buildCache(dbPath, analyticsDir, false)
 	require.NoError(err, "incremental build")
 
-	// A kill between the message APPEND and the final state write leaves
-	// exactly this on disk: appended shards, no _last_sync.json.
+	// Simulate a crash inside the publish window, after live file moves but
+	// before the final commit-marker write.
 	require.NoError(os.Remove(filepath.Join(analyticsDir, "_last_sync.json")),
 		"simulate interruption after append, before state write")
 
@@ -505,7 +651,7 @@ func TestBuildCacheAutoReevaluatesUnderLock(t *testing.T) {
 	// Simulates a waiter whose pre-lock probe saw "no cache exists" while
 	// the build above was running: by the time it holds the lock, the cache
 	// is fresh and the stale full-rebuild decision must be dropped.
-	auto, err := buildCacheAuto(dbPath, analyticsDir, true)
+	auto, err := buildCacheAuto(dbPath, analyticsDir)
 	require.NoError(err, "auto build over fresh cache")
 	assert.True(auto.Skipped, "auto build must re-evaluate staleness under the lock and skip a fresh cache")
 
@@ -781,12 +927,33 @@ func TestBuildCache_IncrementalExport(t *testing.T) {
 	// Sources: 1 (overwritten each run)
 	assert.Equal(int64(1), countRows(filepath.Join(analyticsDir, "sources", "*.parquet")), "sources")
 
+	recipientFiles, err := filepath.Glob(filepath.Join(analyticsDir, "message_recipients", "*.parquet"))
+	require.NoError(err)
+	require.Len(recipientFiles, 2, "full and incremental recipient shards")
+	assert.True(hasPublishedBuildIDPrefix(recipientFiles, "data.parquet"),
+		"incremental shard names must carry a build ID to avoid live collisions")
+
+	messageFiles, err := filepath.Glob(filepath.Join(analyticsDir, "messages", "year=*", "*.parquet"))
+	require.NoError(err)
+	assert.True(hasPublishedBuildIDPrefix(messageFiles, "data_0.parquet"),
+		"partitioned message shards must retain the year directory and gain a build ID")
+
 	// Verify sync state was updated
 	var state syncState
 	data, _ := os.ReadFile(filepath.Join(analyticsDir, "_last_sync.json"))
 	_ = json.Unmarshal(data, &state)
 
 	assert.Equal(int64(7), state.LastMessageID)
+}
+
+func hasPublishedBuildIDPrefix(paths []string, stagedBase string) bool {
+	for _, path := range paths {
+		base := filepath.Base(path)
+		if base != stagedBase && strings.HasSuffix(base, "-"+stagedBase) {
+			return true
+		}
+	}
+	return false
 }
 
 func TestBuildCache_SnapshotUpperBoundPreventsDuplicateIncrementalRows(t *testing.T) {
@@ -867,6 +1034,9 @@ func TestBuildCache_RejectsTerminalAdditionDuringExport(t *testing.T) {
 			analyticsDir := filepath.Join(tmpDir, "analytics")
 			_, err := buildCache(dbPath, analyticsDir, false)
 			require.NoError(err)
+			stateBefore, err := os.ReadFile(query.CacheStatePath(analyticsDir))
+			require.NoError(err)
+			filesBefore := snapshotCacheParquet(t, analyticsDir)
 
 			db, err := sql.Open("sqlite3", dbPath)
 			require.NoError(err)
@@ -922,8 +1092,11 @@ func TestBuildCache_RejectsTerminalAdditionDuringExport(t *testing.T) {
 			require.Error(err)
 			assert.Contains(err.Error(), "sync counters changed during cache export")
 			buildCacheBeforeStateWriteHook = nil
-			_, statErr := os.Stat(analyticsDir)
-			assert.True(os.IsNotExist(statErr), "racing incremental output must be discarded")
+			stateAfter, readErr := os.ReadFile(query.CacheStatePath(analyticsDir))
+			require.NoError(readErr)
+			assert.Equal(stateBefore, stateAfter, "counter mismatch preserves committed state")
+			assert.Equal(filesBefore, snapshotCacheParquet(t, analyticsDir),
+				"counter mismatch preserves committed Parquet")
 
 			_, err = buildCache(dbPath, analyticsDir, false)
 			require.NoError(err)
@@ -979,6 +1152,9 @@ func TestBuildCache_RejectsZeroCounterFailedRunDuringExport(t *testing.T) {
 
 	_, err = buildCache(dbPath, analyticsDir, false)
 	require.NoError(err)
+	stateBefore, err := os.ReadFile(query.CacheStatePath(analyticsDir))
+	require.NoError(err)
+	filesBefore := snapshotCacheParquet(t, analyticsDir)
 
 	buildCacheBeforeStateWriteHook = func() {
 		hookDB, hookErr := sql.Open("sqlite3", dbPath)
@@ -997,8 +1173,11 @@ func TestBuildCache_RejectsZeroCounterFailedRunDuringExport(t *testing.T) {
 	require.Error(err)
 	assert.Contains(err.Error(), "sync counters changed during cache export")
 	buildCacheBeforeStateWriteHook = nil
-	_, statErr := os.Stat(analyticsDir)
-	assert.True(os.IsNotExist(statErr), "racing full rebuild output must be discarded")
+	stateAfter, readErr := os.ReadFile(query.CacheStatePath(analyticsDir))
+	require.NoError(readErr)
+	assert.Equal(stateBefore, stateAfter, "counter mismatch preserves committed state")
+	assert.Equal(filesBefore, snapshotCacheParquet(t, analyticsDir),
+		"counter mismatch preserves committed Parquet")
 }
 
 func TestCacheNeedsBuild_DetectsOlderRunFailingAfterNewerFailure(t *testing.T) {
@@ -1223,8 +1402,8 @@ func TestBuildCache_BackfillsMissingConversations(t *testing.T) {
 
 // TestBuildCache_BackfillAfterIncrementalNoDuplicates tests the scenario:
 // full export → add data → incremental export → remove a required table → backfill.
-// This verifies that stale incr_*.parquet shards from prior incremental runs
-// are cleaned up during backfill, preventing duplicate rows.
+// This verifies that build-ID-prefixed shards from prior incremental runs are
+// cleaned up during a stateless backfill, preventing duplicate rows.
 func TestBuildCache_BackfillAfterIncrementalNoDuplicates(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -1238,8 +1417,8 @@ func TestBuildCache_BackfillAfterIncrementalNoDuplicates(t *testing.T) {
 	require.NoError(err, "first buildCache")
 	require.Equal(int64(5), result1.ExportedCount, "expected 5 messages in initial export")
 
-	// Step 2: Add new messages to SQLite, then incremental export.
-	// This creates incr_*.parquet files alongside data.parquet.
+	// Step 2: Add new messages to SQLite, then incremental export. Publication
+	// adds build-ID-prefixed shards alongside the original full-build files.
 	sqliteDB, err := sql.Open("sqlite3", dbPath)
 	require.NoError(err, "open sqlite")
 	_, err = sqliteDB.Exec(`
@@ -1270,7 +1449,7 @@ func TestBuildCache_BackfillAfterIncrementalNoDuplicates(t *testing.T) {
 	require.NoError(err, "third buildCache (backfill)")
 	require.False(result3.Skipped, "expected backfill, but was skipped")
 
-	// Step 5: Verify exact counts — no duplicates from stale incr_*.parquet.
+	// Step 5: Verify exact counts — no duplicates from stale incremental shards.
 	duckdb, err := sql.Open("duckdb", "")
 	require.NoError(err, "open duckdb")
 	defer func() { _ = duckdb.Close() }()
@@ -1353,9 +1532,8 @@ func TestBuildCache_BackfillWithNewMessages(t *testing.T) {
 
 // TestBuildCache_BackfillMissingMessages tests that when the messages parquet
 // directory is missing but other parquet tables exist (e.g. participants),
-// the cache is detected as broken and rebuilt. This covers an edge case where
-// HasParquetData (messages-only) would return false, causing missingRequiredParquet
-// to return false and skip the rebuild.
+// the shared readiness check classifies the cache as Interrupted and forces a
+// stateless rebuild.
 func TestBuildCache_BackfillMissingMessages(t *testing.T) {
 	require := require.New(t)
 	tmpDir := setupTestSQLite(t)
@@ -1649,6 +1827,8 @@ func TestBuildCache_UTF8Handling(t *testing.T) {
 
 // TestBuildCache_EmptyDatabase tests handling of empty database.
 func TestBuildCache_EmptyDatabase(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
 	tmpDir := t.TempDir()
 
 	dbPath := filepath.Join(tmpDir, "empty.db")
@@ -1657,7 +1837,7 @@ func TestBuildCache_EmptyDatabase(t *testing.T) {
 	// Create empty database with schema
 	db, _ := sql.Open("sqlite3", dbPath)
 	_, _ = db.Exec(`
-		CREATE TABLE sources (id INTEGER PRIMARY KEY, identifier TEXT);
+		CREATE TABLE sources (id INTEGER PRIMARY KEY, source_type TEXT NOT NULL DEFAULT 'gmail', identifier TEXT);
 		CREATE TABLE messages (id INTEGER PRIMARY KEY, source_id INTEGER, source_message_id TEXT, sent_at TIMESTAMP, size_estimate INTEGER, has_attachments BOOLEAN, subject TEXT, snippet TEXT, conversation_id INTEGER, deleted_from_source_at TIMESTAMP, attachment_count INTEGER DEFAULT 0, sender_id INTEGER, message_type TEXT NOT NULL DEFAULT 'email', deleted_at DATETIME);
 		CREATE TABLE participants (id INTEGER PRIMARY KEY, email_address TEXT, domain TEXT, display_name TEXT, phone_number TEXT);
 		CREATE TABLE message_recipients (message_id INTEGER, participant_id INTEGER, recipient_type TEXT, display_name TEXT);
@@ -1669,10 +1849,22 @@ func TestBuildCache_EmptyDatabase(t *testing.T) {
 	_ = db.Close()
 
 	result, err := buildCache(dbPath, analyticsDir, false)
-	require.NoError(t, err, "buildCache on empty db")
+	require.NoError(err, "buildCache on empty db")
 
-	// Should be skipped (no messages)
-	assert.True(t, result.Skipped, "expected empty database export to be skipped")
+	assert.False(result.Skipped, "an empty stateless database must publish an empty cache")
+	assert.Zero(result.ExportedCount)
+
+	readiness, err := query.InspectCacheReadiness(analyticsDir)
+	require.NoError(err, "inspect empty cache")
+	assert.Equal(query.CacheReady, readiness)
+
+	duckDB, err := sql.Open("duckdb", "")
+	require.NoError(err, "open DuckDB")
+	defer func() { _ = duckDB.Close() }()
+	messageGlob := filepath.Join(analyticsDir, tableMessages, "**", "*.parquet")
+	var count int
+	require.NoError(duckDB.QueryRow("SELECT COUNT(*) FROM read_parquet(?)", messageGlob).Scan(&count))
+	assert.Zero(count)
 }
 
 // TestCSVFallbackPath exercises the Windows-style CSV intermediate path:
@@ -1977,8 +2169,7 @@ func setupTestSQLiteEmpty(t *testing.T) string {
 // TestBuildCache_ZeroMessagesNoRepeatedRebuilds verifies that when the DB has
 // zero messages but metadata parquet exists (sources, labels, etc.), subsequent
 // non-full builds skip correctly and do NOT trigger repeated full rebuilds.
-// Regression test for: zero-message accounts entering a rebuild loop because
-// missingRequiredParquet() sees non-message parquet but missing messages parquet.
+// The committed empty message shard keeps readiness stable between builds.
 func TestBuildCache_ZeroMessagesNoRepeatedRebuilds(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -1987,8 +2178,8 @@ func TestBuildCache_ZeroMessagesNoRepeatedRebuilds(t *testing.T) {
 	dbPath := filepath.Join(tmpDir, "test.db")
 	analyticsDir := filepath.Join(tmpDir, "analytics")
 
-	// Step 1: Full rebuild to create metadata parquet (sources, labels, etc.).
-	// With zero messages, messages parquet won't be created (no partitions).
+	// Step 1: Full rebuild creates metadata plus a schema-compatible empty
+	// message shard.
 	result1, err := buildCache(dbPath, analyticsDir, true)
 	require.NoError(err, "first buildCache (full)")
 	assert.Equal(int64(0), result1.ExportedCount, "expected 0 exported messages")
@@ -2069,8 +2260,10 @@ func TestCacheNeedsBuild(t *testing.T) {
 			name: "ZeroMessages_ZeroState_NoRebuild",
 			setup: func(t *testing.T, dbPath, analyticsDir string) {
 				t.Helper()
-				// DB has 0 messages, state says 0 — no rebuild needed
+				// A completed empty cache has state plus every required Parquet
+				// dataset, including its schema-only messages shard.
 				writeSyncState(t, analyticsDir, 0)
+				createFakeParquet(t, analyticsDir)
 			},
 			wantBuild: false,
 		},
@@ -2091,7 +2284,7 @@ func TestCacheNeedsBuild(t *testing.T) {
 				createFakeParquet(t, analyticsDir)
 			},
 			wantBuild:  true,
-			wantReason: "no sync state found",
+			wantReason: "analytics cache publication interrupted",
 		},
 		{
 			name: "NewMessages_NeedsBuild",
@@ -2135,10 +2328,10 @@ func TestCacheNeedsBuild(t *testing.T) {
 				_, err = db.Exec(`INSERT INTO messages (id, source_id, source_message_id, sent_at) VALUES (5, 1, 'msg5', datetime('now'))`)
 				require.NoError(t, err, "insert message")
 				writeSyncState(t, analyticsDir, 5)
-				// No parquet files created — HasParquetData returns false
+				// No Parquet files created, so readiness reports an absent cache.
 			},
 			wantBuild:  true,
-			wantReason: "no cache exists",
+			wantReason: "analytics cache publication interrupted",
 		},
 		{
 			name: "DeletedMessages_Excluded",
@@ -2148,9 +2341,10 @@ func TestCacheNeedsBuild(t *testing.T) {
 				db, err := sql.Open("sqlite3", dbPath)
 				require.NoError(t, err, "open db")
 				defer func() { _ = db.Close() }()
-				_, err = db.Exec(`INSERT INTO messages (id, source_id, source_message_id, sent_at, deleted_from_source_at) VALUES (10, 1, 'msg10', datetime('now'), datetime('now'))`)
+				_, err = db.Exec(`INSERT INTO messages (id, source_id, source_message_id, sent_at, deleted_from_source_at) VALUES (10, 1, 'msg10', datetime('now'), datetime('now', '-1 hour'))`)
 				require.NoError(t, err, "insert message")
 				writeSyncState(t, analyticsDir, 0)
+				createFakeParquet(t, analyticsDir)
 			},
 			wantBuild: false,
 		},
@@ -2167,6 +2361,7 @@ func TestCacheNeedsBuild(t *testing.T) {
 				`)
 				require.NoError(t, err, "insert calendar event")
 				writeSyncState(t, analyticsDir, 10)
+				createFakeParquet(t, analyticsDir)
 			},
 			wantBuild: false,
 		},
@@ -2202,7 +2397,7 @@ func TestCacheNeedsBuild(t *testing.T) {
 				createFakeParquet(t, analyticsDir)
 			},
 			wantBuild:  true,
-			wantReason: "invalid sync state",
+			wantReason: "analytics cache publication interrupted",
 		},
 		{
 			name: "DBOpenFailure_NeedsBuild",
@@ -2234,7 +2429,7 @@ func TestCacheNeedsBuild(t *testing.T) {
 				require.NoError(t, os.WriteFile(filepath.Join(msgDir, "data.parquet"), []byte("fake"), 0644), "write parquet")
 			},
 			wantBuild:  true,
-			wantReason: "cache missing required tables",
+			wantReason: "analytics cache publication interrupted",
 		},
 	}
 

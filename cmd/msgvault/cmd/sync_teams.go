@@ -106,8 +106,7 @@ Examples:
 		sum, err := imp.Import(ctx, opts)
 		if ctx.Err() != nil {
 			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "\nInterrupted — re-run sync-teams to resume.")
-			rebuildCacheAfterWrite(dbPath)
-			return nil
+			return rebuildCacheAfterWrite(dbPath)
 		}
 		if err != nil {
 			return fmt.Errorf("teams sync failed: %w", err)
@@ -126,8 +125,7 @@ Examples:
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Errors:          %d\n", sum.Errors)
 		}
 
-		rebuildCacheAfterWrite(dbPath)
-		return nil
+		return rebuildCacheAfterWrite(dbPath)
 	},
 }
 

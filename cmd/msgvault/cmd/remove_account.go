@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/gofrs/flock"
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/beeper"
 	"go.kenn.io/msgvault/internal/circleback"
@@ -23,6 +24,10 @@ const (
 	removeAccountCommandName   = "remove-account"
 	removeAccountConfirmedFlag = "confirmed"
 )
+
+// removeAccountAfterCascadeHook pauses tests after the database mutation and
+// before the lock-held cache rebuild.
+var removeAccountAfterCascadeHook func()
 
 func newRemoveAccountCmd() *cobra.Command {
 	cmd := &cobra.Command{
@@ -172,20 +177,13 @@ func runRemoveAccountLocal(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("collect attachment paths: %w", err)
 	}
 
-	// Invalidate the analytics cache sync state BEFORE the deletion commits,
-	// holding the exclusive cache build lock until after the commit.
-	// Cascading deletion also removes the sync history that staleness probes
-	// compare against, so any window where the deletion has committed but a
-	// pre-deletion cache still carries valid state — a crash here, or a
-	// concurrent build completing against the pre-deletion database — could
-	// otherwise serve the removed account's data indefinitely. Holding the
-	// lock across the commit means no builder can write a fresh state from
-	// pre-deletion data; a crash after invalidation merely costs one full
-	// rebuild. The lock is released before the rebuild below, which takes it
-	// itself.
-	releaseCacheLock := func() {}
-	if !store.IsPostgresURL(cfg.DatabaseDSN()) {
-		releaseCacheLock = lockCacheAndInvalidateSyncState(cfg.AnalyticsDir())
+	isSQLite := !store.IsPostgresURL(cfg.DatabaseDSN())
+	var cacheLock *flock.Flock
+	if isSQLite {
+		cacheLock, err = lockCacheAndInvalidateSyncState(cfg.AnalyticsDir())
+		if err != nil {
+			return fmt.Errorf("protect analytics cache for account removal: %w", err)
+		}
 	}
 
 	// RemoveSourceSerialized runs the active-sync check and the cascade
@@ -193,12 +191,25 @@ func runRemoveAccountLocal(cmd *cobra.Command, args []string) error {
 	// so a sync started between our check and the delete is either seen
 	// as active (we skip file deletion) or fails after we commit because
 	// the source is gone.
-	hadActiveSync, packedMappingsRemoved, err := s.RemoveSourceSerialized(cmd.Context(), source.ID)
-	// Release after the commit (or its failure): the rebuild below acquires
-	// the same lock itself, and holding it here would deadlock.
-	releaseCacheLock()
-	if err != nil {
-		return fmt.Errorf("remove account: %w", err)
+	hadActiveSync, packedMappingsRemoved, removeErr := s.RemoveSourceSerialized(cmd.Context(), source.ID)
+
+	var cacheRefreshErr error
+	if isSQLite {
+		if removeAccountAfterCascadeHook != nil {
+			removeAccountAfterCascadeHook()
+		}
+		fmt.Println("\nRebuilding analytics cache...")
+		_, cacheRefreshErr = buildCacheLocked(cfg.DatabaseDSN(), cfg.AnalyticsDir(), true, false)
+		cacheRefreshErr = errors.Join(
+			cacheRefreshErr,
+			wrapError(cacheLock.Unlock(), "release analytics cache lock"),
+		)
+	}
+	if removeErr != nil {
+		return errors.Join(
+			fmt.Errorf("remove account: %w", removeErr),
+			wrapError(cacheRefreshErr, "restore analytics cache after failed account removal"),
+		)
 	}
 
 	var deletedFiles, preservedFiles int
@@ -308,23 +319,11 @@ func runRemoveAccountLocal(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// The Parquet cache is shared across accounts, so rebuild it from
-	// scratch now that the account's rows are gone from SQLite. A full
-	// rebuild clears and re-exports every table under the cache build lock,
-	// so a running daemon's queries never see the removed account's data
-	// disappear mid-query.
-	if !store.IsPostgresURL(cfg.DatabaseDSN()) {
-		// The sync state was already invalidated under the build lock before
-		// the deletion committed (see above), so even a crash right here
-		// cannot leave the pre-removal cache looking fresh.
-		fmt.Println("\nRebuilding analytics cache...")
-		if _, err := buildCache(cfg.DatabaseDSN(), cfg.AnalyticsDir(), true); err != nil {
-			fmt.Fprintf(os.Stderr,
-				"Warning: could not rebuild analytics cache: %v\n"+
-					"The daemon rebuilds it at its next startup, or run 'msgvault build-cache'.\n",
-				err,
-			)
-		}
+	if cacheRefreshErr != nil {
+		return fmt.Errorf(
+			"account was removed, but analytics cache refresh failed: %w",
+			cacheRefreshErr,
+		)
 	}
 
 	fmt.Printf("\nAccount %s removed.\n", email)

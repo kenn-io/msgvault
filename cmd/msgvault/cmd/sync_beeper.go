@@ -83,20 +83,22 @@ Examples:
 
 			// Successful accounts' messages must reach the analytics cache
 			// regardless of interruptions or per-account failures.
-			rebuildCacheAfterWrite(dbPath)
+			cacheErr := rebuildCacheAfterWrite(dbPath)
 			if ctx.Err() != nil {
 				_, _ = fmt.Fprintln(cmd.OutOrStdout(), "\nInterrupted — re-run sync-beeper to resume.")
-				return nil
+				return cacheErr
 			}
 			if len(syncErrors) > 0 {
 				_, _ = fmt.Fprintln(cmd.OutOrStdout(), "\nErrors:")
 				for _, e := range syncErrors {
 					_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  %s\n", e)
 				}
-				return fmt.Errorf("%d account(s) failed to sync: %s",
-					len(syncErrors), strings.Join(syncErrors, "; "))
+				return errors.Join(
+					fmt.Errorf("%d account(s) failed to sync: %s", len(syncErrors), strings.Join(syncErrors, "; ")),
+					cacheErr,
+				)
 			}
-			return nil
+			return cacheErr
 		},
 	}
 	cmd.Flags().IntVar(&syncBeeperLimit, "limit", 0, "max messages per chat this run (0 = no limit; limited backfills resume on the next run)")
@@ -231,14 +233,14 @@ func runConfiguredBeeperSync(ctx context.Context, s *store.Store) error {
 			_, err := imp.Import(ctx, beeperImportOptions(accountID))
 			return err
 		},
-		func() { rebuildCacheAfterScheduledSync(context.WithoutCancel(ctx), "beeper") },
+		func() error { return rebuildCacheAfterScheduledSync(context.WithoutCancel(ctx), "beeper") },
 	)
 }
 
 // runScheduledBeeperAttempts keeps per-account failures isolated while
 // rebuilding analytics after any import attempt, since even a failed or
 // canceled attempt may have committed messages from healthy chats.
-func runScheduledBeeperAttempts(ctx context.Context, accountIDs []string, attempt func(string) error, rebuild func()) error {
+func runScheduledBeeperAttempts(ctx context.Context, accountIDs []string, attempt func(string) error, rebuild func() error) error {
 	var errs []error
 	attempted := 0
 	for _, accountID := range accountIDs {
@@ -251,7 +253,9 @@ func runScheduledBeeperAttempts(ctx context.Context, accountIDs []string, attemp
 		}
 	}
 	if attempted > 0 {
-		rebuild()
+		if err := rebuild(); err != nil {
+			errs = append(errs, err)
+		}
 	}
 	if ctx.Err() != nil {
 		errs = append(errs, ctx.Err())

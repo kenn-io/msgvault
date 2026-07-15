@@ -122,22 +122,20 @@ func runImportImessage(cmd *cobra.Command, args []string) error {
 		if ctx.Err() != nil {
 			fmt.Println("\nImport interrupted.")
 			printImessageSummary(summary, startTime)
-			finishImessageImport(s)
-			return nil
+			return finishImessageImport(s)
 		}
 		return fmt.Errorf("import failed: %w", err)
 	}
 
 	printImessageSummary(summary, startTime)
-	finishImessageImport(s)
-	return nil
+	return finishImessageImport(s)
 }
 
 // finishImessageImport runs the post-import name backfill, refreshes
 // generated chat titles, and triggers an analytics cache rebuild that picks up
 // the participant/conversation changes (the default staleness check only
 // notices new/deleted messages, not title or display_name updates).
-func finishImessageImport(s *store.Store) {
+func finishImessageImport(s *store.Store) error {
 	mutated := false
 
 	if importImessageContacts != "" {
@@ -157,15 +155,12 @@ func finishImessageImport(s *store.Store) {
 		// Force a full rebuild so conversations.parquet and
 		// participants.parquet are re-exported and the TUI sees the new names.
 		if _, err := buildCache(dbPath, cfg.AnalyticsDir(), true); err != nil {
-			fmt.Fprintf(os.Stderr,
-				"Warning: cache rebuild failed: %v\n", err)
-			fmt.Fprintf(os.Stderr,
-				"Run 'msgvault build-cache --full-rebuild' to retry.\n")
+			return fmt.Errorf("refresh analytics cache: %w", err)
 		}
-		return
+		return nil
 	}
 
-	rebuildCacheAfterWrite(dbPath)
+	return rebuildCacheAfterWrite(dbPath)
 }
 
 func retitleImessageChats(s *store.Store) bool {

@@ -2,6 +2,7 @@ package query
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -415,6 +416,11 @@ func (b *TestDataBuilder) Build() (string, func()) {
 
 // addMessageTables partitions messages by year and adds each partition to the builder.
 func (b *TestDataBuilder) addMessageTables(pb *parquetBuilder) {
+	if len(b.messages) == 0 {
+		pb.addEmptyTable("messages", "messages/year=0", "empty.parquet", messagesCols,
+			"(0::BIGINT, 0::BIGINT, '', 0::BIGINT, '', '', TIMESTAMP '1970-01-01', 0::BIGINT, false, 0::INTEGER, NULL::TIMESTAMP, NULL::BIGINT, 'email', 0, 0)")
+		return
+	}
 	byYear := map[int][]MessageFixture{}
 	for _, m := range b.messages {
 		byYear[m.Year] = append(byYear[m.Year], m)
@@ -537,6 +543,12 @@ func (b *parquetBuilder) build() (string, func()) {
 	defer func() { _ = db.Close() }()
 
 	b.writeParquetFiles(db, tmpDir)
+	stateData, err := json.Marshal(CacheSyncState{
+		LastSyncAt: time.Date(2026, 7, 15, 12, 0, 0, 0, time.UTC),
+	})
+	require.NoError(b.t, err, "marshal cache state")
+	require.NoError(b.t, os.WriteFile(CacheStatePath(tmpDir), stateData, 0o600),
+		"write cache state")
 
 	return tmpDir, func() { _ = os.RemoveAll(tmpDir) }
 }

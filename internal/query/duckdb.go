@@ -168,6 +168,15 @@ func NewDuckDBEngine(analyticsDir string, sqlitePath string, sqliteDB *sql.DB, o
 		hasSQLiteScanner: hasSQLiteScanner,
 		querySem:         semaphore.NewWeighted(duckDBQueryConcurrency),
 	}
+	var releaseInitialCacheRead func()
+	if analyticsDir != "" {
+		releaseInitialCacheRead, err = AcquireReadyCacheReadLock(context.Background(), analyticsDir)
+		if err != nil {
+			_ = db.Close()
+			return nil, err
+		}
+		defer releaseInitialCacheRead()
+	}
 
 	// Probe Parquet schemas for optional columns added in PR #160 (WhatsApp import).
 	// Old cache files may lack these columns; we'll supply defaults in parquetCTEs().
@@ -300,7 +309,7 @@ func (e *DuckDBEngine) acquireCacheRead(ctx context.Context) (func(), error) {
 	if e.analyticsDir == "" {
 		return func() {}, nil
 	}
-	return AcquireCacheReadLock(ctx, e.analyticsDir)
+	return AcquireReadyCacheReadLock(ctx, e.analyticsDir)
 }
 
 // hasSQLite returns true if DuckDB's sqlite_scanner extension is loaded,
@@ -2348,17 +2357,6 @@ func (e *DuckDBEngine) accountsForGmailIDChunk(ctx context.Context, gmailIDs []s
 	return collectGmailIDs(rows)
 }
 
-// HasParquetData checks if Parquet files exist and are usable.
-func HasParquetData(analyticsDir string) bool {
-	pattern := filepath.Join(analyticsDir, datasetMessages, "**", "*.parquet")
-	matches, err := filepath.Glob(filepath.Join(analyticsDir, datasetMessages, "*", "*.parquet"))
-	if err != nil {
-		return false
-	}
-	_ = pattern // Used in queries, not glob
-	return len(matches) > 0
-}
-
 // RequiredParquetDirs lists the analytics subdirectories that must each
 // contain at least one .parquet file for the cache to be considered complete.
 // Shared between the cache builder, TUI, and MCP startup paths.
@@ -2371,35 +2369,6 @@ var RequiredParquetDirs = []string{
 	"message_labels",
 	"attachments",
 	datasetConversations,
-}
-
-// HasCompleteParquetData checks that all required parquet tables exist.
-// Use this instead of HasParquetData when enabling DuckDB, since DuckDB
-// unconditionally reads all tables (including conversations) and will fail
-// at runtime if any are missing.
-func HasCompleteParquetData(analyticsDir string) bool {
-	for _, dir := range RequiredParquetDirs {
-		pattern := filepath.Join(analyticsDir, dir, "*.parquet")
-		matches, _ := filepath.Glob(pattern)
-		if len(matches) > 0 {
-			continue
-		}
-		// For messages, also check hive-partitioned layout (messages/year=*/*.parquet)
-		if dir == datasetMessages {
-			deepMatches, _ := filepath.Glob(filepath.Join(analyticsDir, dir, "*", "*.parquet"))
-			if len(deepMatches) > 0 {
-				continue
-			}
-		}
-		return false
-	}
-	return true
-}
-
-// ParquetSyncState represents the sync state from _last_sync.json.
-type ParquetSyncState struct {
-	LastMessageID int64     `json:"last_message_id"`
-	LastSyncAt    time.Time `json:"last_sync_at,omitzero"`
 }
 
 // SearchFast searches message metadata in Parquet files (no body text).

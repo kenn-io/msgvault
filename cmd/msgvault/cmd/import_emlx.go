@@ -171,8 +171,7 @@ Examples:
 			importErr = importAutoAccounts(ctx, cmd, st, mailDir, attachmentsDir)
 		}
 
-		rebuildCacheAfterWrite(dbPath)
-		return importErr
+		return errors.Join(importErr, rebuildCacheAfterWrite(dbPath))
 	},
 }
 

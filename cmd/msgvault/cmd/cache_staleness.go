@@ -1,10 +1,7 @@
 package cmd
 
 import (
-	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 
 	"go.kenn.io/msgvault/internal/query"
@@ -58,31 +55,32 @@ func cacheNeedsBuild(dbPath, analyticsDir string) cacheStaleness {
 	if store.IsPostgresURL(dbPath) {
 		return cacheStaleness{}
 	}
-	messagesDir := filepath.Join(analyticsDir, tableMessages)
-	stateFile := filepath.Join(analyticsDir, "_last_sync.json")
-
-	hasParquetData := query.HasParquetData(analyticsDir)
-
-	// Load last sync state
-	data, err := os.ReadFile(stateFile)
+	readiness, err := query.InspectCacheReadiness(analyticsDir)
 	if err != nil {
-		if !hasParquetData {
-			return cacheStaleness{
-				NeedsBuild: true, FullRebuild: true,
-				Reason: "no cache exists",
-			}
-		}
 		return cacheStaleness{
 			NeedsBuild: true, FullRebuild: true,
-			Reason: "no sync state found",
+			Reason: "cannot inspect cache status",
 		}
 	}
-
-	var state syncState
-	if err := json.Unmarshal(data, &state); err != nil {
+	switch readiness {
+	case query.CacheAbsent:
 		return cacheStaleness{
 			NeedsBuild: true, FullRebuild: true,
-			Reason: "invalid sync state",
+			Reason: "no cache exists",
+		}
+	case query.CacheInterrupted:
+		return cacheStaleness{
+			NeedsBuild: true, FullRebuild: true,
+			Reason: "analytics cache publication interrupted",
+		}
+	case query.CacheReady:
+	}
+
+	state, err := query.ReadCacheSyncState(analyticsDir)
+	if err != nil {
+		return cacheStaleness{
+			NeedsBuild: true, FullRebuild: true,
+			Reason: "cannot read cache state",
 		}
 	}
 
@@ -115,17 +113,6 @@ func cacheNeedsBuild(dbPath, analyticsDir string) cacheStaleness {
 		return cacheStaleness{
 			NeedsBuild: true, FullRebuild: true,
 			Reason: "cannot verify cache status",
-		}
-	}
-
-	if maxLiveID == 0 && !hasParquetData {
-		return cacheStaleness{}
-	}
-
-	if !hasParquetData {
-		return cacheStaleness{
-			NeedsBuild: true, FullRebuild: true,
-			Reason: "no cache exists",
 		}
 	}
 
@@ -235,19 +222,6 @@ func cacheNeedsBuild(dbPath, analyticsDir string) cacheStaleness {
 					state.LastCacheAdditionCount, counters.additions, state.LastMessageID))
 			}
 		}
-	}
-
-	// Check if parquet files actually exist (directory might be empty)
-	files, _ := filepath.Glob(
-		filepath.Join(messagesDir, "*", "*.parquet"))
-	if len(files) == 0 {
-		result.FullRebuild = true
-		reasons = append(reasons, "cache directory empty")
-	}
-
-	if missingRequiredParquet(analyticsDir) {
-		result.FullRebuild = true
-		reasons = append(reasons, "cache missing required tables")
 	}
 
 	if len(reasons) > 0 {

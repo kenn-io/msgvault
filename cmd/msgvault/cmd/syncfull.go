@@ -208,7 +208,7 @@ func runSyncFullLocal(cmd *cobra.Command, args []string) error {
 	}
 
 	// Rebuild analytics cache.
-	rebuildCacheAfterWrite(dbPath)
+	cacheErr := rebuildCacheAfterWrite(dbPath)
 
 	if len(syncErrors) > 0 {
 		fmt.Println()
@@ -216,11 +216,13 @@ func runSyncFullLocal(cmd *cobra.Command, args []string) error {
 		for _, e := range syncErrors {
 			fmt.Printf("  %s\n", e)
 		}
-		return fmt.Errorf("%d account(s) failed to sync: %s",
-			len(syncErrors), strings.Join(syncErrors, "; "))
+		return errors.Join(
+			fmt.Errorf("%d account(s) failed to sync: %s", len(syncErrors), strings.Join(syncErrors, "; ")),
+			cacheErr,
+		)
 	}
 
-	return nil
+	return cacheErr
 }
 
 // buildAPIClient creates the appropriate gmail.API client for the given

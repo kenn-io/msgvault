@@ -13,6 +13,18 @@ import (
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
+func TestCacheNeedsBuildInterruptedStateOnlyCache(t *testing.T) {
+	tmpDir := setupTestSQLiteEmpty(t)
+	dbPath := filepath.Join(tmpDir, "test.db")
+	analyticsDir := filepath.Join(tmpDir, "analytics")
+	writeSyncState(t, analyticsDir, 0)
+
+	got := cacheNeedsBuild(dbPath, analyticsDir)
+	require.True(t, got.NeedsBuild)
+	assert.True(t, got.FullRebuild)
+	assert.Contains(t, got.Reason, "interrupted")
+}
+
 func TestCacheNeedsBuild_MeetingMutation(t *testing.T) {
 	tests := []struct {
 		name          string

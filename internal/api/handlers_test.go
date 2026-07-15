@@ -27,6 +27,7 @@ import (
 	"go.kenn.io/kit/pack"
 	"go.kenn.io/kit/packstore"
 	"go.kenn.io/msgvault/internal/attachmentstore"
+	"go.kenn.io/msgvault/internal/cacheops"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/deletion"
@@ -699,6 +700,31 @@ func TestCLICacheStatsReportsMissingCacheThroughDaemon(t *testing.T) {
 	var out cliCacheStatsResponse
 	require.NoError(json.NewDecoder(resp.Body).Decode(&out), "decode response")
 	assert.Equal("no_cache_files", out.Status, "status")
+}
+
+func TestCLICacheStatsReportsInterruptedCacheThroughDaemon(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	st := testutil.NewTestStore(t)
+	dataDir := t.TempDir()
+	analyticsDir := filepath.Join(dataDir, "analytics")
+	require.NoError(os.MkdirAll(filepath.Join(analyticsDir, "messages"), 0o755))
+	require.NoError(os.WriteFile(filepath.Join(analyticsDir, "messages", "broken.parquet"), []byte("not parquet"), 0o600))
+	cfg := &config.Config{
+		Data:   config.DataConfig{DataDir: dataDir},
+		Server: config.ServerConfig{APIPort: 8080},
+	}
+	srv := NewServer(cfg, st, nil, testLogger())
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/cli/cache-stats", nil)
+	resp := httptest.NewRecorder()
+	srv.Router().ServeHTTP(resp, req)
+
+	require.Equal(http.StatusOK, resp.Code, "cache-stats status: %s", resp.Body.String())
+	var out cliCacheStatsResponse
+	require.NoError(json.NewDecoder(resp.Body).Decode(&out), "decode response")
+	assert.Equal(cacheops.StatusInterrupted, out.Status, "status")
 }
 
 func TestHandleCLIBuildCacheStreamsOutput(t *testing.T) {

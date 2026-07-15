@@ -134,7 +134,7 @@ func TestManualGranolaPartialImportRefreshesCacheBeforeReturningError(t *testing
 	savedRefresh := rebuildGranolaCacheAfterWrite
 	refreshes := 0
 	refreshSawWrite := false
-	rebuildGranolaCacheAfterWrite = func(dbPath string) {
+	rebuildGranolaCacheAfterWrite = func(dbPath string) error {
 		refreshes++
 		st, openErr := store.Open(dbPath)
 		require.NoError(openErr)
@@ -142,6 +142,7 @@ func TestManualGranolaPartialImportRefreshesCacheBeforeReturningError(t *testing
 		var count int
 		require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&count))
 		refreshSawWrite = count == 1
+		return nil
 	}
 	t.Cleanup(func() { rebuildGranolaCacheAfterWrite = savedRefresh })
 
@@ -201,13 +202,14 @@ func TestConfiguredGranolaPartialImportRefreshesCacheBeforeReturningError(t *tes
 	refreshSawWrite := false
 	ctx, cancel := context.WithCancel(context.Background())
 	var refreshContextErr error
-	rebuildGranolaCacheAfterScheduledSync = func(refreshCtx context.Context, _ string) {
+	rebuildGranolaCacheAfterScheduledSync = func(refreshCtx context.Context, _ string) error {
 		refreshes++
 		cancel()
 		refreshContextErr = refreshCtx.Err()
 		var count int
 		require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&count))
 		refreshSawWrite = count == 1
+		return nil
 	}
 	t.Cleanup(func() { rebuildGranolaCacheAfterScheduledSync = savedRefresh })
 
@@ -236,7 +238,10 @@ func TestConfiguredGranolaPartialImportWithoutWritesSkipsCacheRefresh(t *testing
 
 	savedRefresh := rebuildGranolaCacheAfterScheduledSync
 	refreshes := 0
-	rebuildGranolaCacheAfterScheduledSync = func(context.Context, string) { refreshes++ }
+	rebuildGranolaCacheAfterScheduledSync = func(context.Context, string) error {
+		refreshes++
+		return nil
+	}
 	t.Cleanup(func() { rebuildGranolaCacheAfterScheduledSync = savedRefresh })
 
 	err = runConfiguredGranolaSync(context.Background(), st, config.GranolaSource{
@@ -275,7 +280,7 @@ func TestManualGranolaLaterFailureRefreshesEarlierSourceWrites(t *testing.T) {
 	savedRefresh := rebuildGranolaCacheAfterWrite
 	refreshes := 0
 	refreshSawWrite := false
-	rebuildGranolaCacheAfterWrite = func(dbPath string) {
+	rebuildGranolaCacheAfterWrite = func(dbPath string) error {
 		refreshes++
 		st, openErr := store.Open(dbPath)
 		require.NoError(openErr)
@@ -283,6 +288,7 @@ func TestManualGranolaLaterFailureRefreshesEarlierSourceWrites(t *testing.T) {
 		var count int
 		require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&count))
 		refreshSawWrite = count == 1
+		return nil
 	}
 	t.Cleanup(func() { rebuildGranolaCacheAfterWrite = savedRefresh })
 

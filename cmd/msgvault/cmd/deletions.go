@@ -937,9 +937,7 @@ Examples:
 		fmt.Println("\nDeletion complete!")
 
 		// Refresh analytics cache to reflect deleted messages.
-		rebuildCacheAfterWrite(dbPath)
-
-		return nil
+		return rebuildCacheAfterWrite(dbPath)
 	},
 }
 

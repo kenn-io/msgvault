@@ -151,8 +151,9 @@ func TestFinishCirclebackImportRefreshesOnlyAfterCommittedWrites(t *testing.T) {
 			}
 			refreshes := 0
 
-			err := finishCirclebackImport(ctx, "alice@example.com", tc.sum, tc.importErr, func() {
+			err := finishCirclebackImport(ctx, "alice@example.com", tc.sum, tc.importErr, func() error {
 				refreshes++
+				return nil
 			})
 
 			require.Error(err)
@@ -174,8 +175,9 @@ func TestFinishCirclebackImportRefreshesEarlierSourceWritesOnLaterFailure(t *tes
 	accumulateCirclebackWrites(total, &circleback.ImportSummary{MeetingsUpdated: 1})
 	refreshes := 0
 
-	err := finishCirclebackImport(context.Background(), "second", total, errors.New("connect failed"), func() {
+	err := finishCirclebackImport(context.Background(), "second", total, errors.New("connect failed"), func() error {
 		refreshes++
+		return nil
 	})
 
 	require.ErrorContains(err, "circleback sync second failed")
@@ -214,11 +216,12 @@ func TestFinishScheduledCirclebackImportUsesDetachedRefreshContext(t *testing.T)
 				"work",
 				&circleback.ImportSummary{MeetingsAdded: 1},
 				tc.importErr,
-				func(refreshCtx context.Context, identifier string) {
+				func(refreshCtx context.Context, identifier string) error {
 					refreshes++
 					cancel()
 					refreshContextErr = refreshCtx.Err()
 					assert.Equal("circleback:work", identifier)
+					return nil
 				},
 			)
 
@@ -231,6 +234,22 @@ func TestFinishScheduledCirclebackImportUsesDetachedRefreshContext(t *testing.T)
 			assert.NoError(refreshContextErr, "scheduled cache refresh must outlive cancellation of the sync context")
 		})
 	}
+}
+
+func TestFinishScheduledCirclebackImportReturnsRefreshError(t *testing.T) {
+	importErr := errors.New("provider failed")
+	refreshErr := errors.New("refresh failed")
+
+	err := finishScheduledCirclebackImport(
+		context.Background(),
+		"work",
+		&circleback.ImportSummary{MeetingsAdded: 1},
+		importErr,
+		func(context.Context, string) error { return refreshErr },
+	)
+
+	require.ErrorIs(t, err, importErr)
+	require.ErrorIs(t, err, refreshErr)
 }
 
 func TestConfiguredCirclebackMissingRegisteredSourceStopsBeforeConnect(t *testing.T) {

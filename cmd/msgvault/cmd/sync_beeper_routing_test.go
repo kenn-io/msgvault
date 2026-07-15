@@ -46,12 +46,30 @@ func TestScheduledBeeperAttemptsRebuildAfterPartialFailure(t *testing.T) {
 			}
 			return nil
 		},
-		func() { rebuilds++ },
+		func() error {
+			rebuilds++
+			return nil
+		},
 	)
 
 	require.ErrorContains(err, "beeper signal: partial sync")
 	assert.Equal([]string{"signal", "telegram"}, attempted, "one failure must not starve later accounts")
 	assert.Equal(1, rebuilds, "any attempted import may write messages and must trigger a cache rebuild")
+}
+
+func TestScheduledBeeperAttemptsReturnsRefreshError(t *testing.T) {
+	importErr := errors.New("partial sync")
+	refreshErr := errors.New("refresh failed")
+
+	err := runScheduledBeeperAttempts(
+		context.Background(),
+		[]string{"signal"},
+		func(string) error { return importErr },
+		func() error { return refreshErr },
+	)
+
+	require.ErrorIs(t, err, importErr)
+	require.ErrorIs(t, err, refreshErr)
 }
 
 func resetSyncBeeperRoutingGlobals(t *testing.T) {

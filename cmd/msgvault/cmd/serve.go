@@ -567,7 +567,7 @@ func runDaemonSQLQuery(
 	dbPath := c.DatabaseDSN()
 	analyticsDir := c.AnalyticsDir()
 	staleness := cacheNeedsBuild(dbPath, analyticsDir)
-	if !staleness.NeedsBuild {
+	if !store.IsPostgresURL(dbPath) && !staleness.NeedsBuild {
 		if querier, ok := engine.(query.SQLQuerier); ok {
 			return querier.QuerySQL(ctx, sqlStr)
 		}
@@ -640,7 +640,7 @@ func openDaemonAnalyticsEngine(
 		staleness = cacheNeedsBuild(dbPath, analyticsDir)
 	}
 
-	if !staleness.NeedsBuild && query.HasCompleteParquetData(analyticsDir) {
+	if !staleness.NeedsBuild {
 		duckEngine, err := openDaemonDuckDBEngine(c, s)
 		if err != nil {
 			if engineMode == config.AnalyticsEngineDuckDB {
@@ -1286,18 +1286,16 @@ func runScheduledSync(ctx context.Context, identifier string, s *store.Store, ge
 	// row exists).
 	if len(srcs) == 0 {
 		startTime := time.Now()
-		summary, err := runScheduledGmailSync(ctx, identifier, nil, s, getOAuthMgr)
-		if err != nil {
-			return err
+		summary, syncErr := runScheduledGmailSync(ctx, identifier, nil, s, getOAuthMgr)
+		if syncErr == nil {
+			logger.Info("sync completed",
+				"identifier", identifier,
+				"source_type", sourceTypeGmail,
+				"messages_added", summary.MessagesAdded,
+				"duration", time.Since(startTime),
+			)
 		}
-		logger.Info("sync completed",
-			"identifier", identifier,
-			"source_type", sourceTypeGmail,
-			"messages_added", summary.MessagesAdded,
-			"duration", time.Since(startTime),
-		)
-		rebuildCacheAfterScheduledSync(ctx, identifier)
-		return nil
+		return errors.Join(syncErr, rebuildCacheAfterScheduledSync(context.WithoutCancel(ctx), identifier))
 	}
 
 	var errs []error
@@ -1344,7 +1342,9 @@ func runScheduledSync(ctx context.Context, identifier string, s *store.Store, ge
 	}
 
 	// Rebuild cache once after all sources, regardless of per-source errors.
-	rebuildCacheAfterScheduledSync(ctx, identifier)
+	if err := rebuildCacheAfterScheduledSync(context.WithoutCancel(ctx), identifier); err != nil {
+		errs = append(errs, err)
+	}
 
 	return errors.Join(errs...)
 }

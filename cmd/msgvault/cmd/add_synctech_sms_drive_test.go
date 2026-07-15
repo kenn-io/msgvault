@@ -267,6 +267,7 @@ func TestSynctechSMSDrivePartialFailureEnqueuesImportedMessages(t *testing.T) {
 }
 
 func TestRunConfiguredSynctechSMSSourceLeavesManualSyncMessagesUnstamped(t *testing.T) {
+	stubScheduledCacheBuild(t)
 	require := require.New(t)
 	assert := assert.New(t)
 	ctx := context.Background()
@@ -316,6 +317,7 @@ func TestRunConfiguredSynctechSMSSourceLeavesManualSyncMessagesUnstamped(t *test
 }
 
 func TestConfiguredSynctechSMSCompletesAfterImport(t *testing.T) {
+	stubScheduledCacheBuild(t)
 	require := require.New(t)
 	assert := assert.New(t)
 	home := t.TempDir()
@@ -341,6 +343,13 @@ func TestConfiguredSynctechSMSCompletesAfterImport(t *testing.T) {
 	run := getOnlySyncRun(t, f.Store, source.ID)
 	assert.Equal(store.SyncStatusCompleted, run.Status, "sync status")
 	assertSourceMessageCount(t, f.Store, source.ID, 1)
+}
+
+func stubScheduledCacheBuild(t *testing.T) {
+	t.Helper()
+	old := runBuildCacheSubprocess
+	runBuildCacheSubprocess = func(context.Context, bool, bool) error { return nil }
+	t.Cleanup(func() { runBuildCacheSubprocess = old })
 }
 
 type fakeSynctechDriveClient struct {

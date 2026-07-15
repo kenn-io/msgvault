@@ -14,8 +14,8 @@ import (
 // files, and DuckDB readers hold it shared per query so a rebuild cannot
 // delete files out from under a running query. The lock lives next to the
 // analytics directory rather than inside it because builds and account
-// removal delete the directory wholesale, and unlinking a held lock file
-// would let another process acquire a fresh one and write concurrently.
+// recovery replace live cache paths, and unlinking a held lock file would let
+// another process acquire a fresh one and write concurrently.
 func CacheBuildLockPath(analyticsDir string) string {
 	return filepath.Clean(analyticsDir) + ".build.lock"
 }
@@ -41,4 +41,24 @@ func AcquireCacheReadLock(ctx context.Context, analyticsDir string) (func(), err
 		return nil, fmt.Errorf("acquire shared analytics cache lock %s: not acquired", lock.Path())
 	}
 	return func() { _ = lock.Unlock() }, nil
+}
+
+// AcquireReadyCacheReadLock takes the shared cache lock and validates the
+// commit marker before any Parquet path is touched. Callers must release the
+// returned lock after their read completes.
+func AcquireReadyCacheReadLock(ctx context.Context, analyticsDir string) (func(), error) {
+	release, err := AcquireCacheReadLock(ctx, analyticsDir)
+	if err != nil {
+		return nil, err
+	}
+	readiness, err := InspectCacheReadiness(analyticsDir)
+	if err != nil {
+		release()
+		return nil, err
+	}
+	if readiness != CacheReady {
+		release()
+		return nil, fmt.Errorf("%w: cache is %s", ErrCacheUnavailable, readiness)
+	}
+	return release, nil
 }

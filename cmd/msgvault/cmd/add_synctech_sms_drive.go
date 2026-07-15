@@ -158,8 +158,7 @@ func runConfiguredSynctechSMSSourceWithStoreDriveClient(ctx context.Context, st 
 	if err != nil {
 		return err
 	}
-	rebuildCacheAfterScheduledSync(ctx, "synctech-sms:"+src.Name)
-	return nil
+	return rebuildCacheAfterScheduledSync(ctx, "synctech-sms:"+src.Name)
 }
 
 func ensureConfiguredSynctechSMSSource(st *store.Store, src config.SynctechSMSSource, opts synctechsms.ImportOptions) (*store.Source, error) {

@@ -45,11 +45,10 @@ var buildCacheMu sync.Mutex
 // CLI children whose ingest commands rebuild the cache in-process via
 // rebuildCacheAfterWrite (e.g. the daemon's background startup build racing
 // the very sync that auto-started it). The lock file lives NEXT TO the
-// analytics directory, not inside it: the consistency-failure path
-// (discardAttempt) and `remove-account` delete the directory wholesale, and
-// unlinking a held lock file would let another process create a fresh one on
-// a new inode and build concurrently. The OS releases the lock if the holder
-// dies.
+// analytics directory, not inside it: stateless replacement and account
+// removal can replace live dataset directories, while this stable lock inode
+// must continue excluding other writers. The OS releases the lock if the
+// holder dies.
 func cacheBuildFileLock(analyticsDir string) (*flock.Flock, error) {
 	lockPath := query.CacheBuildLockPath(analyticsDir)
 	if err := os.MkdirAll(filepath.Dir(lockPath), 0755); err != nil {
@@ -75,37 +74,33 @@ func invalidateSyncStateFile(stateFile string) error {
 	return nil
 }
 
-// lockCacheAndInvalidateSyncState acquires the exclusive cache build lock,
-// invalidates the sync state, and returns a release function the caller must
-// invoke once its own database mutation has committed. Waiting on the lock
-// means a builder that started before the caller's mutation finishes first
-// and its freshly written state is still invalidated here; holding the lock
-// until the commit means no builder can write a fresh state computed from
-// the pre-mutation database. Failures degrade to loud warnings — the
-// caller's mutation must proceed — and the returned release function is
-// always safe to call.
-func lockCacheAndInvalidateSyncState(analyticsDir string) func() {
-	release := func() {}
+// lockCacheAndInvalidateSyncState returns an exclusive writer lock with the
+// cache commit marker already invalidated. Callers must keep the lock through
+// their database mutation and the lock-held cache rebuild. A destructive
+// mutation must not proceed when either protection step fails.
+func lockCacheAndInvalidateSyncState(analyticsDir string) (*flock.Flock, error) {
 	buildLock, err := cacheBuildFileLock(analyticsDir)
-	if err == nil {
-		if lockErr := buildLock.Lock(); lockErr != nil {
-			err = lockErr
-		} else {
-			release = func() { _ = buildLock.Unlock() }
-		}
-	}
 	if err != nil {
-		// Still attempt the invalidation: unsynchronized beats none.
-		fmt.Fprintf(os.Stderr,
-			"Warning: could not lock analytics cache for invalidation: %v\n", err)
+		return nil, fmt.Errorf("create analytics cache lock: %w", err)
 	}
-	if err := invalidateSyncStateFile(filepath.Join(analyticsDir, "_last_sync.json")); err != nil {
-		fmt.Fprintf(os.Stderr,
-			"Warning: %v\n"+
-				"Aggregate views may keep serving stale data until 'msgvault build-cache --full-rebuild' succeeds.\n",
-			err)
+	if err := buildLock.Lock(); err != nil {
+		return nil, fmt.Errorf("lock analytics cache: %w", err)
 	}
-	return release
+	if err := invalidateSyncStateFile(query.CacheStatePath(analyticsDir)); err != nil {
+		unlockErr := buildLock.Unlock()
+		return nil, errors.Join(
+			fmt.Errorf("invalidate analytics cache before mutation: %w", err),
+			wrapError(unlockErr, "unlock analytics cache after invalidation failure"),
+		)
+	}
+	return buildLock, nil
+}
+
+func wrapError(err error, message string) error {
+	if err == nil {
+		return nil
+	}
+	return fmt.Errorf("%s: %w", message, err)
 }
 
 // buildCacheAfterSnapshotHook is a deterministic test seam for writes that
@@ -117,10 +112,8 @@ var buildCacheAfterSnapshotHook func()
 // persisted.
 var buildCacheBeforeStateWriteHook func()
 
-// buildCacheBeforeMessagesExportHook is a deterministic test seam for export
-// failures that strike between table COPYs, after junction and dimension
-// tables have been updated but before the messages export makes the new rows
-// reachable.
+// buildCacheBeforeMessagesExportHook is a deterministic test seam for staged
+// export failures before the messages COPY begins.
 var buildCacheBeforeMessagesExportHook func() error
 
 // buildCacheWriteStateFile persists the cache sync state; a test seam for
@@ -165,16 +158,7 @@ func cacheLiveMessageWhere(alias string) string {
 }
 
 // syncState tracks the message and sync-run watermarks covered by the cache.
-type syncState struct {
-	LastMessageID          int64     `json:"last_message_id"`
-	LastSyncAt             time.Time `json:"last_sync_at"`
-	SchemaVersion          int       `json:"schema_version,omitempty"`
-	LastCompletedSyncRunID int64     `json:"last_completed_sync_run_id,omitempty"`
-	LastCacheAdditionCount int64     `json:"last_cache_addition_count,omitempty"`
-	LastCacheUpdateCount   int64     `json:"last_cache_update_count,omitempty"`
-	LastFailedSyncRunCount int64     `json:"last_failed_sync_run_count,omitempty"`
-	LastFailedSyncRunIDSum int64     `json:"last_failed_sync_run_id_sum,omitempty"`
-}
+type syncState = query.CacheSyncState
 
 type cacheSyncCounters struct {
 	additions      int64
@@ -286,11 +270,12 @@ func runBuildCacheLocal(fullRebuild, auto bool) error {
 	// before that ingest's confirmDefaultIdentity and suppressing the
 	// source's own address — the exact race the daemon defers it to avoid.
 
-	build := buildCache
+	var result *buildResult
 	if auto {
-		build = buildCacheAuto
+		result, err = buildCacheAuto(dbPath, analyticsDir)
+	} else {
+		result, err = buildCache(dbPath, analyticsDir, fullRebuild)
 	}
-	result, err := build(dbPath, analyticsDir, fullRebuild)
 	if err != nil {
 		return err
 	}
@@ -333,14 +318,23 @@ func buildCache(dbPath, analyticsDir string, fullRebuild bool) (*buildResult, er
 // re-evaluated once the lock is held: a build another process finished while
 // we waited can make the work unnecessary or downgrade a full rebuild to an
 // incremental one, instead of erasing a cache that was just completed.
-func buildCacheAuto(dbPath, analyticsDir string, fullRebuild bool) (*buildResult, error) {
-	return buildCacheImpl(dbPath, analyticsDir, fullRebuild, true)
+func buildCacheAuto(dbPath, analyticsDir string) (*buildResult, error) {
+	return buildCacheImpl(dbPath, analyticsDir, false, true)
 }
 
-func buildCacheImpl(dbPath, analyticsDir string, fullRebuild, autoDecided bool) (*buildResult, error) {
+func buildCacheImpl(dbPath, analyticsDir string, fullRebuild, recheckStaleness bool) (*buildResult, error) {
 	buildCacheMu.Lock()
 	defer buildCacheMu.Unlock()
 
+	buildLock, err := acquireCacheBuildLock(analyticsDir)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = buildLock.Unlock() }()
+	return buildCacheLocked(dbPath, analyticsDir, fullRebuild, recheckStaleness)
+}
+
+func acquireCacheBuildLock(analyticsDir string) (*flock.Flock, error) {
 	buildLock, err := cacheBuildFileLock(analyticsDir)
 	if err != nil {
 		return nil, err
@@ -353,9 +347,16 @@ func buildCacheImpl(dbPath, analyticsDir string, fullRebuild, autoDecided bool) 
 			return nil, fmt.Errorf("acquire cache build lock: %w", err)
 		}
 	}
-	defer func() { _ = buildLock.Unlock() }()
+	return buildLock, nil
+}
 
-	if autoDecided {
+// buildCacheLocked exports and publishes a cache while the caller holds the
+// exclusive cross-process cache lock.
+func buildCacheLocked(dbPath, analyticsDir string, fullRebuild, recheckStaleness bool) (*buildResult, error) {
+	if err := cleanupStaleCacheStaging(analyticsDir); err != nil {
+		return nil, err
+	}
+	if recheckStaleness {
 		staleness := cacheNeedsBuild(dbPath, analyticsDir)
 		if !staleness.NeedsBuild {
 			return &buildResult{Skipped: true, OutputDir: analyticsDir}, nil
@@ -363,39 +364,32 @@ func buildCacheImpl(dbPath, analyticsDir string, fullRebuild, autoDecided bool) 
 		fullRebuild = staleness.FullRebuild
 	}
 
-	// Create output directory after acquiring the lock: a build we waited on
-	// may have discarded and removed the whole directory.
-	if err := os.MkdirAll(analyticsDir, 0755); err != nil {
-		return nil, fmt.Errorf("create analytics dir: %w", err)
-	}
-
 	// Record the freshness boundary before reading any source metadata. A sync
 	// or deletion that finishes after this instant may not be represented by
 	// the bounded export and must invalidate the cache on the next check.
 	// Captured after the build lock so it postdates any build we waited on.
 	cacheWatermark := time.Now().UTC().Truncate(time.Second)
-	stateFile := filepath.Join(analyticsDir, "_last_sync.json")
-
 	// Load sync state for incremental updates
 	var lastMessageID int64
 	var previousState syncState
 	var hasPreviousState bool
-	if !fullRebuild {
-		if data, err := os.ReadFile(stateFile); err == nil {
-			var state syncState
-			if json.Unmarshal(data, &state) == nil {
-				if state.SchemaVersion != cacheSchemaVersion {
-					// Schema has changed — force a full rebuild.
-					fmt.Printf("Cache schema version mismatch (have v%d, need v%d). Forcing full rebuild.\n",
-						state.SchemaVersion, cacheSchemaVersion)
-					fullRebuild = true
-					lastMessageID = 0
-				} else {
-					previousState = state
-					hasPreviousState = true
-					lastMessageID = state.LastMessageID
-				}
-			}
+	readiness, err := query.InspectCacheReadiness(analyticsDir)
+	if err != nil {
+		return nil, fmt.Errorf("inspect analytics cache before build: %w", err)
+	}
+	if !fullRebuild && readiness == query.CacheReady {
+		state, err := query.ReadCacheSyncState(analyticsDir)
+		if err != nil {
+			return nil, fmt.Errorf("read analytics cache state before build: %w", err)
+		}
+		if state.SchemaVersion != cacheSchemaVersion {
+			fmt.Printf("Cache schema version mismatch (have v%d, need v%d). Forcing full rebuild.\n",
+				state.SchemaVersion, cacheSchemaVersion)
+			fullRebuild = true
+		} else {
+			previousState = state
+			hasPreviousState = true
+			lastMessageID = state.LastMessageID
 		}
 	}
 
@@ -408,7 +402,6 @@ func buildCacheImpl(dbPath, analyticsDir string, fullRebuild, autoDecided bool) 
 	}
 
 	var maxMessageID sql.NullInt64
-	var maxExportableMessageID sql.NullInt64
 	var lastCompletedSyncRunID int64
 	var syncCounters cacheSyncCounters
 	// Use indexed query: id is PRIMARY KEY, sent_at has an index
@@ -422,13 +415,6 @@ func buildCacheImpl(dbPath, analyticsDir string, fullRebuild, autoDecided bool) 
 	maxID := int64(0)
 	if maxMessageID.Valid {
 		maxID = maxMessageID.Int64
-	}
-	maxExportableIDQuery := "SELECT MAX(id) FROM messages WHERE " + exportableMessageWhere("") + " AND id <= ?"
-	if err := sqliteDB.QueryRow(maxExportableIDQuery, maxID).Scan(&maxExportableMessageID); err != nil {
-		if closeErr := sqliteDB.Close(); closeErr != nil {
-			return nil, fmt.Errorf("get max exportable message id: %w; close sqlite: %w", err, closeErr)
-		}
-		return nil, fmt.Errorf("get max exportable message id: %w", err)
 	}
 	var hasSyncRunsTable int
 	if err := sqliteDB.QueryRow(`
@@ -457,15 +443,6 @@ func buildCacheImpl(dbPath, analyticsDir string, fullRebuild, autoDecided bool) 
 			return nil, fmt.Errorf("get cache sync counters: %w", err)
 		}
 	}
-	if err := sqliteDB.Close(); err != nil {
-		return nil, fmt.Errorf("close sqlite after metadata check: %w", err)
-	}
-
-	exportableMaxID := int64(0)
-	if maxExportableMessageID.Valid {
-		exportableMaxID = maxExportableMessageID.Int64
-	}
-
 	if !fullRebuild && hasPreviousState && hasSyncRunsTable > 0 {
 		updatesChanged := syncCounters.updates != previousState.LastCacheUpdateCount
 		coveredAdditionsChanged := syncCounters.additions != previousState.LastCacheAdditionCount &&
@@ -479,24 +456,42 @@ func buildCacheImpl(dbPath, analyticsDir string, fullRebuild, autoDecided bool) 
 		}
 	}
 
-	// Check for missing required parquet tables independently of whether
-	// new messages exist. A legacy cache might be missing tables (e.g.
-	// conversations) regardless of message count. Force full rebuild to
-	// avoid stale incr_*.parquet shards and ensure all tables are populated.
-	// Gate on exportableMaxID > 0: when the DB has no email-analytics messages,
-	// missing messages parquet is legitimate, not a sign of a broken cache.
-	if !fullRebuild && exportableMaxID > 0 && missingRequiredParquet(analyticsDir) {
-		fmt.Println("Backfilling missing cache tables (full rebuild)...")
-		fullRebuild = true
-		lastMessageID = 0
+	if hasPreviousState && maxID <= lastMessageID && !fullRebuild {
+		if err := sqliteDB.Close(); err != nil {
+			return nil, fmt.Errorf("close sqlite after metadata check: %w", err)
+		}
+		return &buildResult{Skipped: true, OutputDir: analyticsDir}, nil
 	}
 
-	if maxID <= lastMessageID && !fullRebuild {
-		return &buildResult{Skipped: true}, nil
+	replaceAll := fullRebuild || !hasPreviousState
+	if replaceAll {
+		lastMessageID = 0
+	}
+	var expectedBatchCount, expectedTotalCount int64
+	expectedCountQuery := "SELECT COUNT(*) FROM messages WHERE " +
+		exportableMessageWhere("") + " AND id <= ? AND id > ?"
+	if err := sqliteDB.QueryRow(expectedCountQuery, maxID, lastMessageID).Scan(&expectedBatchCount); err != nil {
+		_ = sqliteDB.Close()
+		return nil, fmt.Errorf("count expected staged messages: %w", err)
+	}
+	expectedTotalQuery := "SELECT COUNT(*) FROM messages WHERE " +
+		exportableMessageWhere("") + " AND id <= ?"
+	if err := sqliteDB.QueryRow(expectedTotalQuery, maxID).Scan(&expectedTotalCount); err != nil {
+		_ = sqliteDB.Close()
+		return nil, fmt.Errorf("count expected cached messages: %w", err)
+	}
+	if err := sqliteDB.Close(); err != nil {
+		return nil, fmt.Errorf("close sqlite after metadata check: %w", err)
 	}
 	if buildCacheAfterSnapshotHook != nil {
 		buildCacheAfterSnapshotHook()
 	}
+
+	staging, err := newCacheStaging(analyticsDir)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = staging.cleanup() }()
 
 	// Open DuckDB for the actual export
 	db, err := sql.Open("duckdb", "")
@@ -513,56 +508,24 @@ func buildCacheImpl(dbPath, analyticsDir string, fullRebuild, autoDecided bool) 
 	}
 	defer cleanup()
 
-	// Invalidate the sync state on disk before touching any cache files.
-	// Deferred cleanup cannot run when the process is killed mid-export, but
-	// with the state file gone every later probe treats the cache as
-	// requiring a full rebuild, so exported rows are never paired with the
-	// pre-build watermark. The state is rewritten only after a fully
-	// successful export.
-	if err := invalidateSyncStateFile(stateFile); err != nil {
-		return nil, err
-	}
-
-	// Clear the existing cache on full rebuilds and whenever no sync state
-	// bounds the export: lastMessageID == 0 re-exports everything, and any
-	// leftover shard (e.g. appended by a build that was killed mid-export)
-	// would duplicate the rows it holds.
-	if fullRebuild || lastMessageID == 0 {
-		if fullRebuild {
-			fmt.Println("Full rebuild: clearing existing cache...")
-		}
-		for _, subdir := range query.RequiredParquetDirs {
-			if err := os.RemoveAll(filepath.Join(analyticsDir, subdir)); err != nil {
-				return nil, fmt.Errorf("clear existing cache: %w", err)
-			}
-		}
-	}
-
-	// Create subdirectories
+	// Every COPY targets a same-filesystem sibling staging directory. Live
+	// Parquet and its commit marker remain untouched until verification passes.
 	for _, subdir := range query.RequiredParquetDirs {
-		if err := os.MkdirAll(filepath.Join(analyticsDir, subdir), 0755); err != nil {
+		if err := os.MkdirAll(filepath.Join(staging.root, subdir), 0755); err != nil {
 			return nil, fmt.Errorf("create %s dir: %w", subdir, err)
 		}
 	}
 
-	if fullRebuild {
+	if replaceAll {
 		fmt.Println("Building analytics cache...")
 	} else {
 		fmt.Println("Updating analytics cache...")
 	}
 	buildStart := time.Now()
 
-	// A failed incremental export deliberately leaves its Parquet files in
-	// place: a running daemon keeps serving aggregates instead of erroring
-	// on missing files. The messages table exports last (see below), so a
-	// failure at any earlier step leaves the new rows unreachable and the
-	// cache logically equivalent to the pre-build snapshot; because the sync
-	// state was invalidated above, the next build starts from scratch and
-	// clears the partially updated tables rather than appending duplicates.
-
 	// Build WHERE clause for incremental exports
 	idFilter := fmt.Sprintf(" AND TRY_CAST(m.id AS BIGINT) <= %d", maxID)
-	if !fullRebuild && lastMessageID > 0 {
+	if !replaceAll && lastMessageID > 0 {
 		idFilter += fmt.Sprintf(" AND TRY_CAST(m.id AS BIGINT) > %d", lastMessageID)
 	}
 
@@ -580,14 +543,7 @@ func buildCacheImpl(dbPath, analyticsDir string, fullRebuild, autoDecided bool) 
 		return " WHERE " + exportableJunctionWhere
 	}
 
-	// Junction tables (message_recipients, message_labels, attachments) need
-	// unique filenames per batch because Parquet files cannot be appended to —
-	// DuckDB's COPY with APPEND silently overwrites a single file.
-	// Using *.parquet glob in queries reads all batch files together.
 	junctionFile := "data.parquet"
-	if !fullRebuild && lastMessageID > 0 {
-		junctionFile = fmt.Sprintf("incr_%d.parquet", lastMessageID)
-	}
 
 	// runExport executes a COPY query and prints timing info.
 	runExport := func(label, query string) error {
@@ -605,10 +561,10 @@ func buildCacheImpl(dbPath, analyticsDir string, fullRebuild, autoDecided bool) 
 	// because DuckDB can use SQLite indexes efficiently for simple queries
 
 	// 1. Export message_recipients (large junction table)
-	recipientsDir := filepath.Join(analyticsDir, "message_recipients")
+	recipientsDir := filepath.Join(staging.root, "message_recipients")
 	escapedRecipientsDir := strings.ReplaceAll(recipientsDir, "'", "''")
 	recipientsFilter := ""
-	if !fullRebuild && lastMessageID > 0 {
+	if !replaceAll && lastMessageID > 0 {
 		recipientsFilter = fmt.Sprintf(" WHERE message_id > %d", lastMessageID)
 	}
 	recipientsFilter = junctionFilter(recipientsFilter)
@@ -629,10 +585,10 @@ func buildCacheImpl(dbPath, analyticsDir string, fullRebuild, autoDecided bool) 
 	}
 
 	// 2. Export message_labels (large junction table)
-	messageLabelsDir := filepath.Join(analyticsDir, "message_labels")
+	messageLabelsDir := filepath.Join(staging.root, "message_labels")
 	escapedMessageLabelsDir := strings.ReplaceAll(messageLabelsDir, "'", "''")
 	messageLabelsFilter := ""
-	if !fullRebuild && lastMessageID > 0 {
+	if !replaceAll && lastMessageID > 0 {
 		messageLabelsFilter = fmt.Sprintf(" WHERE message_id > %d", lastMessageID)
 	}
 	messageLabelsFilter = junctionFilter(messageLabelsFilter)
@@ -651,10 +607,10 @@ func buildCacheImpl(dbPath, analyticsDir string, fullRebuild, autoDecided bool) 
 	}
 
 	// 3. Export attachments
-	attachmentsDir := filepath.Join(analyticsDir, tableAttachments)
+	attachmentsDir := filepath.Join(staging.root, tableAttachments)
 	escapedAttachmentsDir := strings.ReplaceAll(attachmentsDir, "'", "''")
 	attachmentsFilter := ""
-	if !fullRebuild && lastMessageID > 0 {
+	if !replaceAll && lastMessageID > 0 {
 		attachmentsFilter = fmt.Sprintf(" WHERE message_id > %d", lastMessageID)
 	}
 	attachmentsFilter = junctionFilter(attachmentsFilter)
@@ -674,7 +630,7 @@ func buildCacheImpl(dbPath, analyticsDir string, fullRebuild, autoDecided bool) 
 	}
 
 	// 4. Export participants
-	participantsDir := filepath.Join(analyticsDir, tableParticipants)
+	participantsDir := filepath.Join(staging.root, tableParticipants)
 	escapedParticipantsDir := strings.ReplaceAll(participantsDir, "'", "''")
 	if err := runExport(tableParticipants, fmt.Sprintf(`
 	COPY (
@@ -694,7 +650,7 @@ func buildCacheImpl(dbPath, analyticsDir string, fullRebuild, autoDecided bool) 
 	}
 
 	// 5. Export labels
-	labelsDir := filepath.Join(analyticsDir, tableLabels)
+	labelsDir := filepath.Join(staging.root, tableLabels)
 	escapedLabelsDir := strings.ReplaceAll(labelsDir, "'", "''")
 	if err := runExport(tableLabels, fmt.Sprintf(`
 	COPY (
@@ -711,7 +667,7 @@ func buildCacheImpl(dbPath, analyticsDir string, fullRebuild, autoDecided bool) 
 	}
 
 	// 6. Export sources
-	sourcesDir := filepath.Join(analyticsDir, "sources")
+	sourcesDir := filepath.Join(staging.root, "sources")
 	escapedSourcesDir := strings.ReplaceAll(sourcesDir, "'", "''")
 	if err := runExport("sources", fmt.Sprintf(`
 	COPY (
@@ -729,7 +685,7 @@ func buildCacheImpl(dbPath, analyticsDir string, fullRebuild, autoDecided bool) 
 	}
 
 	// 7. Export conversations (for Gmail thread IDs)
-	conversationsDir := filepath.Join(analyticsDir, tableConversations)
+	conversationsDir := filepath.Join(staging.root, tableConversations)
 	escapedConversationsDir := strings.ReplaceAll(conversationsDir, "'", "''")
 	if err := runExport(tableConversations, fmt.Sprintf(`
 	COPY (
@@ -759,19 +715,9 @@ func buildCacheImpl(dbPath, analyticsDir string, fullRebuild, autoDecided bool) 
 		}
 	}
 
-	// 8. Export messages (partitioned by year) — deliberately LAST. Every
-	// query shape joins from the messages table, so junction or dimension
-	// rows without a parent message are invisible. Exporting messages after
-	// everything else means a build that fails at any earlier step leaves a
-	// cache logically equivalent to the pre-build snapshot: new rows exist
-	// only in tables no query can reach them through.
-	messagesDir := filepath.Join(analyticsDir, tableMessages)
+	// 8. Export messages (partitioned by year) into staging.
+	messagesDir := filepath.Join(staging.root, tableMessages)
 	escapedMessagesDir := strings.ReplaceAll(messagesDir, "'", "''")
-
-	writeMode := "OVERWRITE_OR_IGNORE"
-	if !fullRebuild && lastMessageID > 0 {
-		writeMode = "APPEND"
-	}
 
 	if err := runExport(tableMessages, fmt.Sprintf(`
 	COPY (
@@ -796,10 +742,10 @@ func buildCacheImpl(dbPath, analyticsDir string, fullRebuild, autoDecided bool) 
 	) TO '%s' (
 		FORMAT PARQUET,
 		PARTITION_BY (year),
-		%s,
+		OVERWRITE_OR_IGNORE,
 		COMPRESSION 'zstd'
 	)
-	`, idFilter, escapedMessagesDir, writeMode)); err != nil {
+	`, idFilter, escapedMessagesDir)); err != nil {
 		return nil, fmt.Errorf("export messages: %w", err)
 	}
 
@@ -810,7 +756,7 @@ func buildCacheImpl(dbPath, analyticsDir string, fullRebuild, autoDecided bool) 
 	// empty, schema-compatible shard so queries return zero rows instead.
 	// Only the cleared-directory builds need this; an incremental no-op
 	// leaves the previous shards in place.
-	if exportableMaxID == 0 && (fullRebuild || lastMessageID == 0) {
+	if expectedTotalCount == 0 && replaceAll {
 		emptyShardDir := filepath.Join(messagesDir, "year=0")
 		if err := os.MkdirAll(emptyShardDir, 0755); err != nil {
 			return nil, fmt.Errorf("create empty messages shard dir: %w", err)
@@ -846,50 +792,41 @@ func buildCacheImpl(dbPath, analyticsDir string, fullRebuild, autoDecided bool) 
 
 	fmt.Printf("  %-25s %s\n", "Total:", time.Since(buildStart).Round(time.Millisecond))
 
-	// Count exported messages and verify Parquet files actually exist.
-	// Calendar events are intentionally excluded from the email analytics
-	// export, so a database with only calendar_event rows has maxID > 0 but no
-	// message Parquet. Only require verifiable message rows when at least one
-	// exportable non-calendar message exists.
-	var exportedCount int64
-	if exportableMaxID > 0 {
-		countSQL := fmt.Sprintf("SELECT COUNT(*) FROM read_parquet('%s/**/*.parquet', hive_partitioning=true)", escapedMessagesDir)
-		if err := db.QueryRow(countSQL).Scan(&exportedCount); err != nil {
-			return nil, fmt.Errorf("verify exported parquet rows: %w; cache state not updated", err)
-		}
-		if exportedCount == 0 {
-			return nil, fmt.Errorf("export produced 0 parquet rows from exportable messages through id %d; cache state not updated", exportableMaxID)
-		}
+	stagedCount, err := countStagedMessages(db, messagesDir, replaceAll)
+	if err != nil {
+		return nil, err
+	}
+	if stagedCount != expectedBatchCount {
+		return nil, fmt.Errorf("staged message row count %d does not match SQLite snapshot count %d; retry",
+			stagedCount, expectedBatchCount)
+	}
+	if err := validateStagedReplacementDatasets(db, staging.root, replaceAll); err != nil {
+		return nil, err
 	}
 	if buildCacheBeforeStateWriteHook != nil {
 		buildCacheBeforeStateWriteHook()
 	}
-	discardAttempt := func(cause error) error {
-		closeErr := db.Close()
-		removeErr := os.RemoveAll(analyticsDir)
-		return errors.Join(cause, closeErr, removeErr)
-	}
 	if hasSyncRunsTable > 0 {
 		checkDB, openErr := sql.Open("sqlite3", dbPath+"?mode=ro")
 		if openErr != nil {
-			return nil, discardAttempt(fmt.Errorf("reopen sqlite for cache consistency check: %w", openErr))
+			return nil, fmt.Errorf("reopen sqlite for cache consistency check: %w", openErr)
 		}
 		currentCounters, counterErr := readCacheSyncCounters(checkDB)
 		closeErr := checkDB.Close()
 		if counterErr != nil {
-			return nil, discardAttempt(fmt.Errorf("recheck cache sync counters: %w", counterErr))
+			return nil, fmt.Errorf("recheck cache sync counters: %w", counterErr)
 		}
 		if closeErr != nil {
-			return nil, discardAttempt(fmt.Errorf("close sqlite after cache consistency check: %w", closeErr))
+			return nil, fmt.Errorf("close sqlite after cache consistency check: %w", closeErr)
 		}
 		if currentCounters != syncCounters {
-			return nil, discardAttempt(fmt.Errorf(
+			return nil, fmt.Errorf(
 				"sync counters changed during cache export (additions %d→%d, updates %d→%d, failed runs count %d→%d, id sum %d→%d); retry",
 				syncCounters.additions, currentCounters.additions,
 				syncCounters.updates, currentCounters.updates,
 				syncCounters.failedRunCount, currentCounters.failedRunCount,
 				syncCounters.failedRunIDSum, currentCounters.failedRunIDSum,
-			))
+			)
 		}
 	}
 
@@ -909,43 +846,54 @@ func buildCacheImpl(dbPath, analyticsDir string, fullRebuild, autoDecided bool) 
 	if err != nil {
 		return nil, fmt.Errorf("marshal sync state: %w", err)
 	}
-	// A state write failure must fail the build: exported rows paired with
-	// the pre-build watermark would be appended again as duplicates on the
-	// next incremental build. The old state was already invalidated before
-	// the export, so failing here leaves the cache stateless and the next
-	// build starts from scratch.
-	if err := buildCacheWriteStateFile(stateFile, stateData, 0600); err != nil {
-		return nil, fmt.Errorf("save cache sync state to %s: %w", stateFile, err)
+	if err := publishCache(staging, analyticsDir, replaceAll, stateData); err != nil {
+		return nil, err
 	}
 
 	return &buildResult{
-		ExportedCount: exportedCount,
+		ExportedCount: expectedTotalCount,
 		MaxMessageID:  maxID,
 		OutputDir:     analyticsDir,
 	}, nil
 }
 
-// missingRequiredParquet returns true if some parquet data exists but is
-// missing one or more required tables (e.g. upgrading from a cache that
-// predates the conversations export). Returns false for a fresh empty cache.
-func missingRequiredParquet(analyticsDir string) bool {
-	if query.HasCompleteParquetData(analyticsDir) {
-		return false
+func countStagedMessages(db *sql.DB, messagesDir string, requireShard bool) (int64, error) {
+	files, err := filepath.Glob(filepath.Join(messagesDir, "*", "*.parquet"))
+	if err != nil {
+		return 0, fmt.Errorf("list staged message shards: %w", err)
 	}
-	// Incomplete — check if any table has data (partial/broken cache vs fresh).
-	for _, dir := range query.RequiredParquetDirs {
-		pattern := filepath.Join(analyticsDir, dir, "*.parquet")
-		if matches, _ := filepath.Glob(pattern); len(matches) > 0 {
-			return true
+	if len(files) == 0 {
+		if requireShard {
+			return 0, errors.New("staged messages contain no Parquet shards")
 		}
-		// For messages, also check hive-partitioned layout (messages/year=*/*.parquet)
-		if dir == tableMessages {
-			if deep, _ := filepath.Glob(filepath.Join(analyticsDir, dir, "*", "*.parquet")); len(deep) > 0 {
-				return true
-			}
+		return 0, nil
+	}
+	escaped := strings.ReplaceAll(filepath.Join(messagesDir, "**", "*.parquet"), "'", "''")
+	var count int64
+	if err := db.QueryRow(fmt.Sprintf(
+		"SELECT COUNT(*) FROM read_parquet('%s', hive_partitioning=true)", escaped,
+	)).Scan(&count); err != nil {
+		return 0, fmt.Errorf("read staged message shards: %w", err)
+	}
+	return count, nil
+}
+
+func validateStagedReplacementDatasets(db *sql.DB, stagingDir string, replaceAll bool) error {
+	for _, dataset := range query.RequiredParquetDirs {
+		// countStagedMessages already verifies and reads every message shard.
+		if dataset == tableMessages || !replacesCacheDataset(dataset, replaceAll) {
+			continue
+		}
+		pattern := filepath.Join(stagingDir, dataset, "*.parquet")
+		escaped := strings.ReplaceAll(pattern, "'", "''")
+		var ignored int64
+		if err := db.QueryRow(fmt.Sprintf(
+			"SELECT COUNT(*) FROM read_parquet('%s')", escaped,
+		)).Scan(&ignored); err != nil {
+			return fmt.Errorf("validate staged cache dataset %s: %w", dataset, err)
 		}
 	}
-	return false
+	return nil
 }
 
 var cacheStatsCmd = &cobra.Command{
@@ -998,6 +946,13 @@ func printCacheStats(out io.Writer, errOut io.Writer, stats *cacheops.CacheStats
 			return err
 		}
 		if err := writeCacheStatsLine(out, "Run 'msgvault build-cache' to populate it.\n"); err != nil {
+			return err
+		}
+	case cacheops.StatusInterrupted:
+		if err := writeCacheStatsLine(out, "Analytics cache publication was interrupted.\n"); err != nil {
+			return err
+		}
+		if err := writeCacheStatsLine(out, "Run 'msgvault build-cache' to repair it.\n"); err != nil {
 			return err
 		}
 	case cacheops.StatusReady:
@@ -1206,28 +1161,26 @@ func exportToCSV(db *sql.DB, query string, dest string) error {
 	return rows.Err()
 }
 
-// rebuildCacheAfterWrite rebuilds the analytics cache after a write
-// operation. Uses the staleness check to determine whether a full
-// rebuild (deletions/mutations) or incremental export (new messages
-// only) is needed. Logs a warning on failure — the data is safe in
-// SQLite.
-func rebuildCacheAfterWrite(dbPath string) {
-	analyticsDir := cfg.AnalyticsDir()
-	fullRebuild := false
-	if staleness := cacheNeedsBuild(dbPath, analyticsDir); staleness.FullRebuild {
-		fullRebuild = true
+// rebuildCacheAfterWrite refreshes the SQLite-backed analytics cache after a
+// write operation. Cache maintenance is part of the operation result: SQLite
+// remains authoritative, but callers must surface any refresh failure.
+func rebuildCacheAfterWrite(dbPath string) error {
+	if store.IsPostgresURL(dbPath) {
+		return nil
 	}
-	result, err := buildCacheAuto(dbPath, analyticsDir, fullRebuild)
+	analyticsDir := cfg.AnalyticsDir()
+	staleness := cacheNeedsBuild(dbPath, analyticsDir)
+	if !staleness.NeedsBuild {
+		return nil
+	}
+	result, err := buildCacheAuto(dbPath, analyticsDir)
 	if err != nil {
-		fmt.Fprintf(os.Stderr,
-			"Warning: cache rebuild failed: %v\n", err)
-		fmt.Fprintf(os.Stderr,
-			"Run 'msgvault build-cache' to retry.\n")
-		return
+		return fmt.Errorf("refresh analytics cache: %w", err)
 	}
 	if !result.Skipped {
 		logger.Info("cache rebuilt", "exported", result.ExportedCount)
 	}
+	return nil
 }
 
 // buildCacheSubprocess runs `msgvault build-cache` as a child process
@@ -1270,6 +1223,8 @@ func buildCacheSubprocess(ctx context.Context, fullRebuild, auto bool) error {
 	}
 	return nil
 }
+
+var runBuildCacheSubprocess = buildCacheSubprocess
 
 func buildCacheSubprocessStream(
 	ctx context.Context,
@@ -1437,25 +1392,25 @@ func globalConfigFlagArgs() []string {
 // PostgreSQL DSNs. The build runs in a subprocess (see buildCacheSubprocess)
 // to keep DuckDB's bundled SQLite library out of a long-lived daemon's
 // address space (issue #379).
-func rebuildCacheAfterScheduledSync(ctx context.Context, identifier string) {
+func rebuildCacheAfterScheduledSync(ctx context.Context, identifier string) error {
 	dbPath := cfg.DatabaseDSN()
 	if store.IsPostgresURL(dbPath) {
-		return
+		return nil
 	}
 	analyticsDir := cfg.AnalyticsDir()
 	staleness := cacheNeedsBuild(dbPath, analyticsDir)
 	if !staleness.NeedsBuild {
-		return
+		return nil
 	}
 	logger.Info("rebuilding cache after sync",
 		"identifier", identifier, "reason", staleness.Reason,
 		"full_rebuild", staleness.FullRebuild)
-	if err := buildCacheSubprocess(ctx, staleness.FullRebuild, true); err != nil {
+	if err := runBuildCacheSubprocess(ctx, staleness.FullRebuild, true); err != nil {
 		logger.Error("cache build failed", "error", err)
-		// Don't fail the sync for cache build errors.
-	} else {
-		logger.Info("cache build completed")
+		return fmt.Errorf("refresh analytics cache: %w", err)
 	}
+	logger.Info("cache build completed")
+	return nil
 }
 
 func init() {
