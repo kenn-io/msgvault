@@ -72,6 +72,10 @@ var buildCacheBeforeStateWriteHook func()
 // have already been appended.
 var buildCacheAfterMessagesExportHook func() error
 
+// buildCacheWriteStateFile persists the cache sync state; a test seam for
+// simulating state persistence failures.
+var buildCacheWriteStateFile = os.WriteFile
+
 // cacheSchemaVersion tracks the Parquet schema layout. Bump this whenever
 // columns are added/removed/renamed in the COPY queries below so that
 // incremental builds automatically trigger a full rebuild instead of
@@ -458,9 +462,24 @@ func buildCacheImpl(dbPath, analyticsDir string, fullRebuild, autoDecided bool) 
 	}
 	defer cleanup()
 
-	// On full rebuild, clear existing cache
-	if fullRebuild {
-		fmt.Println("Full rebuild: clearing existing cache...")
+	// Invalidate the sync state on disk before touching any cache files.
+	// Deferred cleanup cannot run when the process is killed mid-export, but
+	// with the state file gone every later probe treats the cache as
+	// requiring a full rebuild, so exported rows are never paired with the
+	// pre-build watermark. The state is rewritten only after a fully
+	// successful export.
+	if err := os.Remove(stateFile); err != nil && !os.IsNotExist(err) {
+		return nil, fmt.Errorf("invalidate cache sync state: %w", err)
+	}
+
+	// Clear the existing cache on full rebuilds and whenever no sync state
+	// bounds the export: lastMessageID == 0 re-exports everything, and any
+	// leftover shard (e.g. appended by a build that was killed mid-export)
+	// would duplicate the rows it holds.
+	if fullRebuild || lastMessageID == 0 {
+		if fullRebuild {
+			fmt.Println("Full rebuild: clearing existing cache...")
+		}
 		for _, subdir := range query.RequiredParquetDirs {
 			if err := os.RemoveAll(filepath.Join(analyticsDir, subdir)); err != nil {
 				return nil, fmt.Errorf("clear existing cache: %w", err)
@@ -483,13 +502,13 @@ func buildCacheImpl(dbPath, analyticsDir string, fullRebuild, autoDecided bool) 
 	buildStart := time.Now()
 
 	// A partially applied incremental build must not survive: message shards
-	// are APPENDed table by table, so a mid-export failure leaves rows that
-	// the un-advanced sync state does not cover while every directory still
-	// holds files (HasCompleteParquetData stays true), and a retry would
-	// append the same ID range again as duplicates. Discard the whole cache
-	// on failure so the next build starts from "no cache exists" (a full
-	// rebuild) and a DuckDB daemon demotes to live SQL. Full rebuilds need
-	// no such cleanup: their partial state is already detected as missing
+	// are APPENDed table by table, so a mid-export failure leaves a cache
+	// where every directory still holds files (HasCompleteParquetData stays
+	// true) but some tables lack the new rows. The sync-state invalidation
+	// above already prevents duplicate re-appends; this discard additionally
+	// keeps a DuckDB daemon from adopting or continuing to serve the
+	// half-updated cache by demoting it to live SQL. Full rebuilds need no
+	// such cleanup: their partial state is already detected as missing
 	// tables. The consistency-failure path below discards independently.
 	exportCompleted := false
 	if !fullRebuild && lastMessageID > 0 {
@@ -807,12 +826,13 @@ func buildCacheImpl(dbPath, analyticsDir string, fullRebuild, autoDecided bool) 
 	if err != nil {
 		return nil, fmt.Errorf("marshal sync state: %w", err)
 	}
-	// A state write failure must fail the build: incrementally appended rows
-	// paired with the old watermark would be appended again as duplicates on
-	// the next build. Failing here keeps exportCompleted false so the
-	// partial-update discard above cleans up; a failed full rebuild simply
-	// forces another full rebuild next time (no sync state found).
-	if err := os.WriteFile(stateFile, stateData, 0600); err != nil {
+	// A state write failure must fail the build: exported rows paired with
+	// the pre-build watermark would be appended again as duplicates on the
+	// next incremental build. The old state was already invalidated before
+	// the export, so failing here leaves the cache stateless and the next
+	// build starts from scratch; for incrementals the partial-update discard
+	// above also cleans up immediately.
+	if err := buildCacheWriteStateFile(stateFile, stateData, 0600); err != nil {
 		return nil, fmt.Errorf("save cache sync state to %s: %w", stateFile, err)
 	}
 
