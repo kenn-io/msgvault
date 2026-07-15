@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/gofrs/flock"
 	"go.kenn.io/msgvault/internal/api"
@@ -412,7 +413,14 @@ var humanizeDaemonLogLineKnownKeys = map[string]bool{
 // dropping time/level/run_id/detail. When the line carries any key the
 // humanizer does not recognize (e.g. panic/stack), it returns the raw line so
 // no information is hidden. On any parse trouble it also returns the raw line.
+// Either way the result is capped at maxDaemonLogLineLen — a raw "sql slow"
+// record can embed a multi-kilobyte statement — with the full line always
+// available in serve.log, whose path the startup progress already prints.
 func humanizeDaemonLogLine(line string) string {
+	return truncateDaemonLogLine(summarizeDaemonLogLine(line))
+}
+
+func summarizeDaemonLogLine(line string) string {
 	line = strings.TrimSpace(line)
 	if line == "" {
 		return line
@@ -439,6 +447,16 @@ func humanizeDaemonLogLine(line string) string {
 	case msg == "daemon startup step complete" && step != "":
 		sb.WriteString(daemonStartupStepLabel(step))
 		sb.WriteString(" (done)")
+	// SQL logger records carry the full statement in stmt — schema
+	// migrations dump multiple kilobytes of SQL into a single line.
+	// Summarize to the duration; the statement stays in serve.log.
+	case msg == "sql slow":
+		sb.WriteString("running a slow SQL statement")
+		if ms := fields["duration_ms"]; ms != "" {
+			sb.WriteString(" (")
+			sb.WriteString(ms)
+			sb.WriteString("ms)")
+		}
 	default:
 		for key := range fields {
 			if !humanizeDaemonLogLineKnownKeys[key] {
@@ -456,6 +474,22 @@ func humanizeDaemonLogLine(line string) string {
 		sb.WriteString(errVal)
 	}
 	return sb.String()
+}
+
+// maxDaemonLogLineLen bounds startup progress lines echoed to the terminal.
+// Long enough to keep a panic record's message and value readable, short
+// enough that one log line cannot flood the screen.
+const maxDaemonLogLineLen = 240
+
+func truncateDaemonLogLine(line string) string {
+	if len(line) <= maxDaemonLogLineLen {
+		return line
+	}
+	cut := maxDaemonLogLineLen
+	for cut > 0 && !utf8.RuneStart(line[cut]) {
+		cut--
+	}
+	return line[:cut] + "…"
 }
 
 // parseLogfmt is a tolerant parser for slog's text output: space
