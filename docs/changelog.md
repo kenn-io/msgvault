@@ -30,8 +30,7 @@ No notable changes yet.
   `msgvault skills uninstall` removes generated copies.
 - MCP search now has explicit `search_metadata`, `search_message_bodies`, and
   `semantic_search_messages` tools. `search_in_message` finds literal matches
-  with raw-body offsets inside one message and, when vector search is enabled,
-  can rank that message's embedded chunks semantically. The former combined
+  with raw-body offsets inside one message. The former combined
   `search_messages` tool remains as a deprecated compatibility wrapper.
 - MCP `list_messages` accepts a `conversation_id` filter for listing one
   conversation or thread.

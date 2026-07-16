@@ -51,7 +51,7 @@ The MCP server exposes the following tools to connected AI clients:
 | `search_metadata` | Search message metadata with a subset of Gmail query syntax (not full Gmail compatibility). Matches subject, snippet, and sender/recipient metadata, not message bodies. | `query` (string, required), `limit` (int), `offset` (int), `account` (string) |
 | `search_message_bodies` | Keyword full-text search inside message bodies. Returns `matches` excerpts (up to 5 per message), ordered newest-first. Backend excerpts may omit `char_offset` and `line`; use `search_in_message` when exact locations are needed. | `query` (string, required), `limit` (int), `offset` (int), `account` (string) |
 | `semantic_search_messages` | Semantic search over preprocessed message subjects and bodies when [vector search](/usage/vector-search/) is configured. Returns scored chunk excerpts; `min_score` filters excerpts, not ranked messages. | `query` (string, required), `mode` (string: `vector`/`hybrid`, default `hybrid`), `explain` (bool), `min_score` (number), `limit` (int), `offset` (int), `account` (string) |
-| `search_in_message` | Find matches within one message body. Keyword mode returns literal occurrences with raw-body offsets and line numbers; vector mode semantically ranks that message's embedded chunks when vector search is configured. | `id` (int, required), `query` (string, required), `mode` (string: `keyword`/`vector`, default `keyword`), `min_score` (number, vector only), `limit` (int), `offset` (int) |
+| `search_in_message` | Find case-insensitive literal matches within one message body, with raw-body offsets and line numbers. | `id` (int, required), `query` (string, required), `limit` (int), `offset` (int) |
 | `find_similar_messages` | Nearest-neighbor search from a seed message's embedding. Requires vector search to be configured and an active index generation. | `message_id` (int, required), `limit` (int), `account` (string), `message_type` (string), `after` (string), `before` (string), `has_attachment` (bool) |
 | `search_by_domains` | Find messages where any participant (`from`, `to`, or `cc`) belongs to one of several domains, regardless of direction. | `domains` (comma-separated string, required), `limit` (int), `offset` (int), `after` (string), `before` (string) |
 | `get_message` | Get message details with windowed body paging | `id` (int, required), `offset` (int), `center_at` (int), `max_chars` (int), `body_format` (string: `auto`/`text`/`html`), `full_body` (bool) |
@@ -102,17 +102,15 @@ Free text in `search_metadata` matches subject, snippet, and sender/recipient me
 
 ### `search_in_message`
 
-Pass a message `id` from any list or search result plus a `query`. The default
-keyword mode performs case-insensitive literal matching in `body_text` and
+Pass a message `id` from any list or search result plus a `query`. The tool
+performs case-insensitive literal matching in `body_text` and
 returns an exact `total`, paginated `data`, and a `char_offset`, `line`, and
 centered `snippet` for every match. Feed `char_offset` to `get_message` as
 `center_at` to read a larger body window around that occurrence.
 
-When vector search is configured, `mode=vector` embeds the query and scores
-only the selected message's stored chunks. Vector matches include `snippet`
-and `score`; `char_offset` and `line` are present only when preprocessing still
-allows a reliable mapping to the raw body. `min_score` filters vector chunks.
-The tool defaults to `limit = 10` in either mode.
+The tool defaults to `limit = 10`. For semantic search across the archive, use
+`semantic_search_messages`; `msgvault mcp` does not expose a vector mode for
+searching within a single message.
 
 ### `aggregate` response
 
