@@ -63,7 +63,7 @@ func TestRefuseUnpackWithLiveDaemon(t *testing.T) {
 		"precondition: the daemon reads as incompatible to this client")
 
 	err = refuseUnpackWithLiveDaemon(dataDir)
-	require.ErrorContains(err, "msgvault serve stop",
+	require.ErrorContains(err, "msgvault daemon stop",
 		"live daemon (even incompatible) must be refused with actionable guidance")
 }
 
@@ -144,7 +144,7 @@ func TestRunUnpackAttachmentsLocalHoldsDaemonLeaseBeforePostgresStoreOpen(t *tes
 	require.ErrorAs(err, &daemonOwnerLockHeldError{},
 		"simulated daemon startup must lose while unpack owns daemon.lock")
 	close(release)
-	require.ErrorContains(<-errCh, "msgvault serve stop",
+	require.ErrorContains(<-errCh, "msgvault daemon stop",
 		"runtime ping remains defense in depth after ownership is claimed")
 
 	contender, err = tryAcquireDaemonOwnerLock(dataDir)
@@ -175,5 +175,5 @@ func TestRunUnpackAttachmentsLocalReportsHeldDaemonLease(t *testing.T) {
 	err = runUnpackAttachmentsLocal(cmd)
 	require.Error(err)
 	require.ErrorAs(err, &daemonOwnerLockHeldError{})
-	require.ErrorContains(err, "msgvault serve stop")
+	require.ErrorContains(err, "msgvault daemon stop")
 }

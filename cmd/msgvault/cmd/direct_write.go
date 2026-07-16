@@ -43,19 +43,19 @@ func acquireDirectSQLiteWriteLock(cfg *config.Config) (func(), error) {
 
 // archiveOwnedError explains that the SQLite archive is owned by another
 // msgvault process and how to proceed. When a local daemon is discoverable the
-// message names it so the remedy ("msgvault serve stop") is concrete.
+// message names it so the remedy ("msgvault daemon stop") is concrete.
 func archiveOwnedError(dataDir string) error {
 	if rt := findDaemonRuntime(dataDir); rt != nil {
 		return fmt.Errorf(
 			"the msgvault archive is owned by the running daemon at %s; "+
-				"stop it with `msgvault serve stop` (or wait for the active "+
+				"stop it with `msgvault daemon stop` (or wait for the active "+
 				"operation to finish), then retry",
 			urlFromDaemonRuntime(rt),
 		)
 	}
 	return errors.New(
 		"the msgvault archive is owned by another msgvault process; wait for " +
-			"that operation to finish — or run `msgvault serve stop` if a daemon " +
+			"that operation to finish — or run `msgvault daemon stop` if a daemon " +
 			"is running — then retry",
 	)
 }

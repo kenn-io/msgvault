@@ -19,7 +19,7 @@ This is the downgrade escape hatch: older msgvault binaries cannot read
 pack files, so run this before downgrading. Each blob is hash-verified
 as it is written back.
 
-The daemon must be stopped first ('msgvault serve stop'): a running
+The daemon must be stopped first ('msgvault daemon stop'): a running
 daemon holds pack files open, so this command refuses to run while one
 is detected. Re-running 'msgvault pack-attachments' packs everything
 again. When a remote server is configured, run this command on the archive
@@ -45,7 +45,7 @@ func refuseUnpackWithLiveDaemon(dataDir string) error {
 	if findAnyDaemonRuntime(dataDir) != nil {
 		return errors.New(
 			"unpack-attachments: a msgvault daemon is running and holds pack files open; " +
-				"stop it with `msgvault serve stop`, then retry")
+				"stop it with `msgvault daemon stop`, then retry")
 	}
 	return nil
 }

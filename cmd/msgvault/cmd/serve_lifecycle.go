@@ -30,7 +30,7 @@ const (
 	serveBackgroundChildEnv     = "MSGVAULT_BACKGROUND_DAEMON"
 )
 
-// serveStopQuietWindow is how long `serve stop` waits silently before
+// serveStopQuietWindow is how long `daemon stop` waits silently before
 // explaining what the daemon is still doing; serveStopProgressInterval paces
 // the "still waiting" updates after that. Variables only so tests can shorten
 // them.
@@ -280,7 +280,7 @@ func runServeStartWithOptions(cmd *cobra.Command, c *config.Config, opts backgro
 	}
 	defer func() { _ = launchLock.Unlock() }()
 
-	prep, err := prepareBackgroundDaemonStart(c, "run `msgvault serve stop` before starting this version")
+	prep, err := prepareBackgroundDaemonStart(c, "run `msgvault daemon stop` before starting this version")
 	if err != nil {
 		return err
 	}
@@ -585,7 +585,7 @@ func reportBackgroundLaunchInProgress(cmd *cobra.Command, dataDir string) {
 		_, _ = fmt.Fprint(cmd.OutOrStdout(), daemonRunningLine("already running", rt, rt.Record.PID))
 		return
 	}
-	_, _ = fmt.Fprintln(cmd.OutOrStdout(), "msgvault serve start is already in progress.")
+	_, _ = fmt.Fprintln(cmd.OutOrStdout(), "msgvault daemon start is already in progress.")
 }
 
 type backgroundServeProcess struct {

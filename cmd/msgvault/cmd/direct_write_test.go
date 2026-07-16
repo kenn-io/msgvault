@@ -111,7 +111,7 @@ func TestAcquireDirectSQLiteWriteLock_ActionableErrorWhenOwned(t *testing.T) {
 	assert.Nil(release, "no release when blocked")
 	require.Error(err, "acquire on an owned archive")
 	assert.Contains(err.Error(), "owned", "names the ownership condition")
-	assert.Contains(err.Error(), "serve stop", "points at the remedy")
+	assert.Contains(err.Error(), "msgvault daemon stop", "points at the remedy")
 }
 
 func TestDirectWriterOwnsArchive_TrueWhenHeldWithoutDaemon(t *testing.T) {
@@ -241,7 +241,7 @@ func TestEmbeddingsRetireFailsFastWhenArchiveOwned(t *testing.T) {
 	err = runEmbeddingsRetire(cmd, []string{"1"})
 	require.Error(err, "embeddings retire must fail while the archive is owned")
 	assert.Contains(err.Error(), "owned", "actionable ownership error")
-	assert.Contains(err.Error(), "serve stop", "points at the remedy")
+	assert.Contains(err.Error(), "msgvault daemon stop", "points at the remedy")
 }
 
 func TestEmbeddingsListFailsFastWhenArchiveOwned(t *testing.T) {
@@ -274,7 +274,7 @@ func TestEmbeddingsListFailsFastWhenArchiveOwned(t *testing.T) {
 	err = runEmbeddingsList(cmd, nil)
 	require.Error(err, "embeddings list must fail while the archive is owned")
 	assert.Contains(err.Error(), "owned", "actionable ownership error")
-	assert.Contains(err.Error(), "serve stop", "points at the remedy")
+	assert.Contains(err.Error(), "msgvault daemon stop", "points at the remedy")
 }
 
 func TestInitDBFailsFastWhenArchiveOwned(t *testing.T) {

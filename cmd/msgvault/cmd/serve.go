@@ -428,7 +428,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	// init goroutine, and vectors.db needs closing whenever init finished.
 	// Bound the wait by the time REMAINING on shutdownCtx rather than a
 	// fresh full drain window — shutdownServeRuntime already consumed part
-	// of it, and `serve stop` budgets only one drain window before it kills
+	// of it, and `daemon stop` budgets only one drain window before it kills
 	// the daemon (serveStopGraceTimeout).
 	if vectorInit.WaitContext(shutdownCtx) {
 		vectorInit.CloseFeatures()

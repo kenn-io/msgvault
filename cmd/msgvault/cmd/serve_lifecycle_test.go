@@ -705,9 +705,20 @@ func TestRunServeStartRefusesNewerIncompatibleDaemon(t *testing.T) {
 	err = runServeStart(cmd, lifecycleTestConfig(dataDir))
 	require.Error(err, "newer incompatible daemon must be refused")
 	assert.Contains(err.Error(), "incompatible daemon is already running")
-	assert.Contains(err.Error(), "msgvault serve stop")
+	assert.Contains(err.Error(), "msgvault daemon stop")
 	assert.Empty(stdout.String())
 	assert.Empty(stderr.String())
+}
+
+func TestReportBackgroundLaunchInProgressUsesCanonicalCommand(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	cmd, stdout, _ := lifecycleTestCommand()
+	cmd.SetContext(ctx)
+
+	reportBackgroundLaunchInProgress(cmd, t.TempDir())
+
+	assert.Equal(t, "msgvault daemon start is already in progress.\n", stdout.String())
 }
 
 func TestRunServeRestartStartsWhenNoDaemonIsRunning(t *testing.T) {

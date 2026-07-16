@@ -344,7 +344,7 @@ func TestOpenHTTPStoreRejectsLocalDaemonWithStaleServerAPIKey(t *testing.T) {
 
 	require.Error(err, "OpenHTTPStore should reject a daemon using stale authentication")
 	assert.Contains(err.Error(), "api_key", "error names the key mismatch")
-	assert.Contains(err.Error(), "msgvault serve restart", "error gives a daemon lifecycle remedy")
+	assert.Contains(err.Error(), "msgvault daemon restart", "error gives a daemon lifecycle remedy")
 	assert.True(statsCalled, "runtime reuse should probe an authenticated endpoint")
 }
 
@@ -397,7 +397,7 @@ func TestOpenHTTPStoreRejectsLocalDaemonWithChangedServerAPIKeyFingerprint(t *te
 
 	require.Error(err, "OpenHTTPStore should reject a daemon started with a different api key")
 	assert.Contains(err.Error(), "api_key", "error names the key mismatch")
-	assert.Contains(err.Error(), "msgvault serve restart", "error gives a daemon lifecycle remedy")
+	assert.Contains(err.Error(), "msgvault daemon restart", "error gives a daemon lifecycle remedy")
 	assert.False(statsCalled, "runtime reuse should reject stale auth metadata before routed requests")
 }
 
@@ -450,7 +450,7 @@ func TestOpenHTTPStoreRejectsLegacyLocalDaemonAfterServerAPIKeyRemoved(t *testin
 
 	require.Error(err, "OpenHTTPStore should reject a legacy daemon that still requires an api key")
 	assert.Contains(err.Error(), "api_key", "error names the key mismatch")
-	assert.Contains(err.Error(), "msgvault serve restart", "error gives a daemon lifecycle remedy")
+	assert.Contains(err.Error(), "msgvault daemon restart", "error gives a daemon lifecycle remedy")
 	assert.True(statsCalled, "missing auth metadata should be verified with a live probe")
 }
 
@@ -584,7 +584,7 @@ func TestWaitForUsableBackgroundRuntimeWaitsWhileChildInitializing(t *testing.T)
 	dataDir := t.TempDir()
 
 	// A live process (this test) owns a runtime record whose recorded
-	// endpoint is not answering the daemon ping — i.e. a `serve start`
+	// endpoint is not answering the daemon ping — i.e. a `daemon start`
 	// child that is still initializing after its parent released the lock.
 	_, err := daemonRuntimeStore(dataDir).Write(daemon.RuntimeRecord{
 		PID:     os.Getpid(),
@@ -610,7 +610,7 @@ func TestWaitForUsableBackgroundRuntimeWaitsWhileChildInitializing(t *testing.T)
 
 // TestDaemonStartInProgressDetectsInitializingChild verifies the predicate the
 // launch-lock guard relies on: a live process holding a runtime record that is
-// not answering the daemon ping (a `serve start` child still initializing)
+// not answering the daemon ping (a `daemon start` child still initializing)
 // reports in-progress, so both the direct and waited launch-lock acquisition
 // paths refuse to spawn a duplicate daemon. An empty data dir reports false.
 func TestDaemonStartInProgressDetectsInitializingChild(t *testing.T) {
