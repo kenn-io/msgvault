@@ -76,6 +76,10 @@ and CLI-reference documentation will recommend `msgvault daemon ...` for
 background lifecycle management. Operational hints emitted by the CLI will
 also point to the canonical `daemon` commands.
 
+The implementation plan will classify each port example before changing it:
+generic and local-daemon examples use automatic selection, while remote, NAS,
+container, and port-forwarding examples keep their stable explicit ports.
+
 Documentation will distinguish the two visible roles:
 
 - `msgvault serve` runs a foreground server.
@@ -96,23 +100,27 @@ scripts remain quiet.
 
 Existing guidance embedded in errors and tests will be updated from
 `msgvault serve stop` or `msgvault serve restart` to the corresponding
-canonical `msgvault daemon` command.
+canonical `msgvault daemon` command. The sweep includes archive ownership,
+attachment unpacking, daemon ownership, local daemon startup and authentication,
+version-compatibility remedies, command help, and their tests. Shared launch
+contention output becomes `msgvault daemon start is already in progress`, even
+when reached through the hidden compatibility alias.
 
 ## Testing
 
-Tests will exercise production command construction and listener behavior:
+Tests will exercise production command construction and behavior:
 
 - root help exposes `daemon`, and `daemon` exposes all four lifecycle
   subcommands;
 - `serve` retains all four lifecycle subcommands, but marks them hidden;
-- canonical and compatibility commands delegate to the same lifecycle paths;
-- saving a default configuration records `api_port = 0`, and loading an
-  omitted port also yields `0`;
-- a listener configured with port `0` receives an available operating-system
-  port;
-- a listener configured with an available nonzero port binds that exact port;
-- a listener configured with an occupied nonzero port returns the existing
-  bind error instead of choosing a different port.
+- canonical `daemon status` and compatibility `serve status` are both executed
+  through Cobra against an isolated temporary data directory and produce the
+  same output and exit behavior;
+- existing port-selection tests are reviewed before adding coverage so the
+  implementation does not duplicate tests for default configuration, configured
+  save/load, automatic selection, or occupied-port failure;
+- the missing listener case proves that an available, explicitly configured
+  nonzero port is bound exactly rather than replaced with another port.
 
 All Go tests use testify and run with the repository's required build tags.
 
