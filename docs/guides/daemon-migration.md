@@ -51,15 +51,15 @@ Ctrl+C still cancels them.
 New lifecycle subcommands:
 
 ```bash
-msgvault serve status    # URL, pid, version, API schema, uptime
-msgvault serve start     # start the background daemon explicitly
-msgvault serve stop      # stop it
-msgvault serve restart   # stop + start
+msgvault daemon status   # URL, pid, version, API schema, uptime
+msgvault daemon start    # start the background daemon explicitly
+msgvault daemon stop     # stop it
+msgvault daemon restart  # stop + start
 msgvault serve           # foreground server (Docker/NAS; never idle-stops)
 ```
 
 You rarely need these — auto-start handles the common case — but
-`serve restart` is the fix whenever the daemon needs to pick up changes
+`daemon restart` is the fix whenever the daemon needs to pick up changes
 (a new binary, an edited `config.toml`, or new environment variables).
 
 When you upgrade the msgvault binary, the CLI notices the running daemon is
@@ -108,8 +108,8 @@ passed through from your shell automatically:
 
 If an operation needs any other environment variable (for example a proxy
 setting), export it before starting the daemon — in the shell that runs
-`msgvault serve start`, in your systemd unit, or in your Docker environment —
-and `msgvault serve restart` after changing it.
+`msgvault daemon start`, in your systemd unit, or in your Docker environment —
+and `msgvault daemon restart` after changing it.
 
 ## Gotcha: OAuth and browser flows
 
@@ -178,13 +178,13 @@ never wait.
 
 **A command fails with `env "..." is not allowed through the daemon CLI runner`.**
 You passed an environment variable that is not on the forwarding allowlist.
-Set it in the daemon's environment instead (then `msgvault serve restart`),
+Set it in the daemon's environment instead (then `msgvault daemon restart`),
 or — for embedding API keys — name it in `[vector.embeddings].api_key_env` so
 the CLI forwards it for you.
 
 **The CLI says the daemon was started with a different api_key.**
 You edited `[server].api_key` after the daemon started. Run
-`msgvault serve restart`.
+`msgvault daemon restart`.
 
 **Can I still open the database with `sqlite3` or other tools?**
 For reads, yes — the archive remains standard SQLite. Avoid external writes
@@ -192,10 +192,10 @@ while the daemon is running; it is the write owner.
 
 **How do I see what the daemon is doing?**
 `msgvault logs` (with `--follow`, `--level`, `--grep`) shows the selected
-daemon's logs — including a remote daemon's — and `msgvault serve status`
+daemon's logs — including a remote daemon's — and `msgvault daemon status`
 shows version, uptime, and vector-search state.
 
 **Something is off after upgrading. What is the first thing to try?**
-`msgvault serve restart`. It re-reads config, picks up the current binary and
+`msgvault daemon restart`. It re-reads config, picks up the current binary and
 environment, and re-registers the runtime record. See
 [Troubleshooting](/troubleshooting/) for more.

@@ -703,7 +703,7 @@ baseline for the pack-native restore optimization tracked by issue #466.
    daemon's blob store holds open (blocks deletion on Windows), so it is
    local-only: the command holds `daemon.lock` for its entire execution and a
    live-daemon runtime preflight rejects unpack on all backends (directing the
-   user to `msgvault serve stop`); on SQLite the `db.write.lock` additionally
+   user to `msgvault daemon stop`); on SQLite the `db.write.lock` additionally
    guarantees exclusivity against any other writer. When `[remote].url` is
    active, unpack refuses before opening local storage; the operator must run
    it on the archive host, or pass `--local` to select the client machine's

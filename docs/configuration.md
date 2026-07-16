@@ -52,10 +52,10 @@ enabled = true
 rate_limit_qps = 5
 
 [server]
-# API server settings (used by `msgvault serve`)
+# API server settings (used by `msgvault serve` and `msgvault daemon`)
 # api_port is optional; omit it (or set 0) to auto-select an open port that
 # clients discover automatically. Set a fixed port for remote/NAS deployments.
-api_port = 8080
+api_port = 0
 bind_addr = "127.0.0.1"
 api_key = "your-secret-key"
 daemon_idle_timeout = "20m" # background daemon idle timeout; "0s" disables
@@ -216,7 +216,7 @@ Settings for the web server started by `msgvault serve`. The same HTTP server is
 | `daemon_idle_timeout` | `20m` | Idle timeout for lifecycle-managed background daemons; set to `"0s"` to disable |
 | `daemon_auto_restart` | `newer` | Local daemon restart policy when the CLI finds a different daemon binary version: `newer`, `never`, or `always` |
 
-`daemon_idle_timeout` applies only to background daemons started by `msgvault serve start` or auto-started by a CLI command. Foreground `msgvault serve` keeps running until stopped. `MSGVAULT_DAEMON_IDLE_TIMEOUT` overrides the configured value for lifecycle-managed background daemons.
+`daemon_idle_timeout` applies only to background daemons started by `msgvault daemon start` or auto-started by a CLI command. Foreground `msgvault serve` keeps running until stopped. `MSGVAULT_DAEMON_IDLE_TIMEOUT` overrides the configured value for lifecycle-managed background daemons.
 
 `daemon_auto_restart = "newer"` replaces an older compatible local daemon with the current CLI binary. Use `"never"` when another supervisor owns the daemon lifecycle, or `"always"` to restart whenever the recorded daemon version differs. Remote servers are never auto-restarted by a CLI client.
 

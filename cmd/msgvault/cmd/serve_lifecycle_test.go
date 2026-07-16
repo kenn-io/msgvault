@@ -26,6 +26,7 @@ import (
 
 func TestDaemonAndServeLifecycleCommandSurfaces(t *testing.T) {
 	assert := assert.New(t)
+	require := require.New(t)
 
 	daemonNames := map[string]bool{}
 	for _, sub := range daemonCmd.Commands() {
@@ -35,13 +36,15 @@ func TestDaemonAndServeLifecycleCommandSurfaces(t *testing.T) {
 	for _, name := range []string{"start", "status", "stop", "restart"} {
 		assert.True(daemonNames[name], "daemon must expose %s", name)
 		compat, _, err := serveCmd.Find([]string{name})
-		require.NoError(t, err)
+		require.NoError(err)
 		assert.Equal(name, compat.Name())
 		assert.True(compat.Hidden, "serve %s must be hidden", name)
 	}
 }
 
 func TestDaemonAndServeStatusHaveIdenticalBehavior(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	dataDir := t.TempDir()
 	oldCfg := cfg
 	cfg = lifecycleTestConfig(dataDir)
@@ -64,10 +67,10 @@ func TestDaemonAndServeStatusHaveIdenticalBehavior(t *testing.T) {
 
 	daemonOut, daemonErr := run("daemon", "status")
 	serveOut, serveErr := run("serve", "status")
-	require.NoError(t, daemonErr)
-	require.NoError(t, serveErr)
-	assert.Equal(t, daemonOut, serveOut)
-	assert.Equal(t, "No msgvault daemon is running.\n", daemonOut)
+	require.NoError(daemonErr)
+	require.NoError(serveErr)
+	assert.Equal(daemonOut, serveOut)
+	assert.Equal("No msgvault daemon is running.\n", daemonOut)
 }
 
 func TestServeStatusLines(t *testing.T) {

@@ -267,7 +267,7 @@ preferred.
 access because it deletes production pack files, so stop the local daemon first:
 
 ```bash
-msgvault serve stop
+msgvault daemon stop
 msgvault unpack-attachments
 ```
 
@@ -343,10 +343,10 @@ msgvault serve
 For local CLI use, msgvault can also manage a background daemon:
 
 ```bash
-msgvault serve start
-msgvault serve status
-msgvault serve stop
-msgvault serve restart
+msgvault daemon start
+msgvault daemon status
+msgvault daemon stop
+msgvault daemon restart
 ```
 
 Archive-access CLI commands use the HTTP API by default. If `[remote].url` is configured, the CLI talks to that remote server. Otherwise, it discovers or starts the local background daemon instead of opening the SQLite database itself. This keeps local and remote CLI behavior aligned and avoids repeated startup cost on large archives. Use `--local` to force the local daemon when a remote server is configured.
@@ -373,7 +373,7 @@ api_key = "your-secret-key"
 daemon_idle_timeout = "20m" # background daemon idle timeout; "0s" disables
 ```
 
-`daemon_idle_timeout` applies to lifecycle-managed background daemons started by `msgvault serve start` or auto-started by a CLI command. A foreground `msgvault serve` keeps running until you stop it. See the [Web Server reference](https://msgvault.io/api-server/) or `/openapi.json` on a running server for the HTTP API.
+`daemon_idle_timeout` applies to lifecycle-managed background daemons started by `msgvault daemon start` or auto-started by a CLI command. A foreground `msgvault serve` keeps running until you stop it. See the [Web Server reference](https://msgvault.io/api-server/) or `/openapi.json` on a running server for the HTTP API.
 
 ## Documentation
 
