@@ -352,15 +352,15 @@ Examples:
 		_, _ = fmt.Fprintf(out, "  Errors:         %d\n", totalErrors)
 		_, _ = fmt.Fprintf(out, "  Bytes:          %.2f MB\n", float64(totalBytes)/(1024*1024))
 
-		rebuildCacheAfterWrite(dbPath)
+		cacheErr := rebuildCacheAfterWrite(dbPath)
 
 		if ctx.Err() == nil && hadHardErrors {
-			return fmt.Errorf("import completed with %d errors", totalErrors)
+			return errors.Join(fmt.Errorf("import completed with %d errors", totalErrors), cacheErr)
 		}
 		if ctx.Err() != nil {
-			return context.Canceled
+			return errors.Join(context.Canceled, cacheErr)
 		}
-		return nil
+		return cacheErr
 	},
 }
 

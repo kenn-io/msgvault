@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"time"
 
@@ -44,12 +45,13 @@ Examples:
 				sum, err := imp.BackfillMedia(ctx, opts)
 				if ctx.Err() != nil {
 					_, _ = fmt.Fprintln(cmd.OutOrStdout(), "\nInterrupted — re-run backfill-beeper-media to resume (idempotent).")
-					rebuildCacheAfterWrite(dbPath)
-					return nil
+					return rebuildCacheAfterWrite(dbPath)
 				}
 				if err != nil {
-					rebuildCacheAfterWrite(dbPath)
-					return fmt.Errorf("beeper media backfill failed for %s: %w", accountID, err)
+					return errors.Join(
+						fmt.Errorf("beeper media backfill failed for %s: %w", accountID, err),
+						rebuildCacheAfterWrite(dbPath),
+					)
 				}
 				_, _ = fmt.Fprintf(cmd.OutOrStdout(),
 					"%s: %d messages checked, %d attachments downloaded, %d still pending (%s)\n",
@@ -60,8 +62,7 @@ Examples:
 				}
 			}
 
-			rebuildCacheAfterWrite(dbPath)
-			return nil
+			return rebuildCacheAfterWrite(dbPath)
 		},
 	}
 	cmd.Flags().StringArrayVar(&backfillBeeperMediaAccounts, "account", nil, "Beeper accountID to backfill (repeatable; default: all registered accounts)")

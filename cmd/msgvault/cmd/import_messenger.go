@@ -105,8 +105,7 @@ func runImportMessenger(cmd *cobra.Command, rootDir string) error {
 	if err != nil {
 		if ctx.Err() != nil {
 			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "\nImport interrupted. Re-run to continue.")
-			rebuildCacheAfterWrite(dbPath)
-			return nil
+			return rebuildCacheAfterWrite(dbPath)
 		}
 		return fmt.Errorf("import failed: %w", err)
 	}
@@ -139,8 +138,7 @@ func runImportMessenger(cmd *cobra.Command, rootDir string) error {
 			importMessengerMe, fbmessenger.Slug(fbmessenger.StripDomain(importMessengerMe)))
 	}
 
-	rebuildCacheAfterWrite(dbPath)
-	return nil
+	return rebuildCacheAfterWrite(dbPath)
 }
 
 func init() {

@@ -109,8 +109,7 @@ func runWhatsAppImport(cmd *cobra.Command, sourcePath string) error {
 	if err != nil {
 		if ctx.Err() != nil {
 			fmt.Println("\nImport interrupted. Run again to continue.")
-			rebuildCacheAfterWrite(dbPath)
-			return nil
+			return rebuildCacheAfterWrite(dbPath)
 		}
 		return fmt.Errorf("import failed: %w", err)
 	}
@@ -160,8 +159,7 @@ func runWhatsAppImport(cmd *cobra.Command, sourcePath string) error {
 		fmt.Printf("  Rate:           %.0f messages/sec\n", rate)
 	}
 
-	rebuildCacheAfterWrite(dbPath)
-	return nil
+	return rebuildCacheAfterWrite(dbPath)
 }
 
 // ImportCLIProgress implements whatsapp.ImportProgress for terminal output.

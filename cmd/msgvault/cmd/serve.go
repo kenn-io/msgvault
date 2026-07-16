@@ -62,7 +62,13 @@ Use Ctrl+C to stop the daemon gracefully.`,
 
 const daemonIdleTimeoutEnv = "MSGVAULT_DAEMON_IDLE_TIMEOUT"
 
-var buildCacheSubprocessForRun = buildCacheSubprocess
+// buildCacheSubprocessForRun is the daemon's staleness-derived build entry
+// point (a test seam). auto=true re-evaluates the rebuild decision under the
+// cache build lock, so a build that waited on another process's build does
+// not redo (or erase) its work.
+var buildCacheSubprocessForRun = func(ctx context.Context, fullRebuild bool) error {
+	return buildCacheSubprocess(ctx, fullRebuild, true)
+}
 
 type serveRuntimeAPIServer interface {
 	Shutdown(ctx context.Context) error
@@ -559,7 +565,7 @@ func runDaemonSQLQuery(
 	dbPath := c.DatabaseDSN()
 	analyticsDir := c.AnalyticsDir()
 	staleness := cacheNeedsBuild(dbPath, analyticsDir)
-	if !staleness.NeedsBuild {
+	if !store.IsPostgresURL(dbPath) && !staleness.NeedsBuild {
 		if querier, ok := engine.(query.SQLQuerier); ok {
 			return querier.QuerySQL(ctx, sqlStr)
 		}
@@ -612,17 +618,27 @@ func openDaemonAnalyticsEngine(
 	dbPath := c.DatabaseDSN()
 	analyticsDir := c.AnalyticsDir()
 	staleness := cacheNeedsBuild(dbPath, analyticsDir)
-	if staleness.NeedsBuild && c.Analytics.AutoBuildCache && engineMode == config.AnalyticsEngineDuckDB {
+	if staleness.NeedsBuild && c.Analytics.AutoBuildCache {
+		// Build the cache before serving rather than starting on live-SQL
+		// fallback: incremental rebuilds take seconds, and startup progress
+		// already streams to the CLI that auto-started the daemon. A failed
+		// build is fatal for engine="duckdb" (documented to never fall back)
+		// and falls back to live SQL for engine="auto".
 		if err := buildCacheSubprocessForRun(ctx, staleness.FullRebuild); err != nil {
-			return nil, "", fmt.Errorf("build analytics cache: %w", err)
+			if engineMode == config.AnalyticsEngineDuckDB {
+				return nil, "", fmt.Errorf("build analytics cache: %w", err)
+			}
+			logger.Warn("analytics cache build failed; using live SQL engine",
+				"error", err)
+		} else {
+			logger.Info("rebuilt analytics cache",
+				"reason", staleness.Reason,
+				"full_rebuild", staleness.FullRebuild)
 		}
-		logger.Info("rebuilt analytics cache",
-			"reason", staleness.Reason,
-			"full_rebuild", staleness.FullRebuild)
 		staleness = cacheNeedsBuild(dbPath, analyticsDir)
 	}
 
-	if !staleness.NeedsBuild && query.HasCompleteParquetData(analyticsDir) {
+	if !staleness.NeedsBuild {
 		duckEngine, err := openDaemonDuckDBEngine(c, s)
 		if err != nil {
 			if engineMode == config.AnalyticsEngineDuckDB {
@@ -812,7 +828,7 @@ func (a *storeAPIAdapter) BuildCLICache(
 	fullRebuild bool,
 	emit func(api.CLICacheBuildEvent) error,
 ) error {
-	return buildCacheSubprocessStream(ctx, fullRebuild, emit)
+	return buildCacheSubprocessStream(ctx, fullRebuild, false, emit)
 }
 
 func (a *storeAPIAdapter) RunCLISync(
@@ -1268,18 +1284,16 @@ func runScheduledSync(ctx context.Context, identifier string, s *store.Store, ge
 	// row exists).
 	if len(srcs) == 0 {
 		startTime := time.Now()
-		summary, err := runScheduledGmailSync(ctx, identifier, nil, s, getOAuthMgr)
-		if err != nil {
-			return err
+		summary, syncErr := runScheduledGmailSync(ctx, identifier, nil, s, getOAuthMgr)
+		if syncErr == nil {
+			logger.Info("sync completed",
+				"identifier", identifier,
+				"source_type", sourceTypeGmail,
+				"messages_added", summary.MessagesAdded,
+				"duration", time.Since(startTime),
+			)
 		}
-		logger.Info("sync completed",
-			"identifier", identifier,
-			"source_type", sourceTypeGmail,
-			"messages_added", summary.MessagesAdded,
-			"duration", time.Since(startTime),
-		)
-		rebuildCacheAfterScheduledSync(ctx, identifier)
-		return nil
+		return errors.Join(syncErr, rebuildCacheAfterScheduledSync(context.WithoutCancel(ctx), identifier))
 	}
 
 	var errs []error
@@ -1326,7 +1340,9 @@ func runScheduledSync(ctx context.Context, identifier string, s *store.Store, ge
 	}
 
 	// Rebuild cache once after all sources, regardless of per-source errors.
-	rebuildCacheAfterScheduledSync(ctx, identifier)
+	if err := rebuildCacheAfterScheduledSync(context.WithoutCancel(ctx), identifier); err != nil {
+		errs = append(errs, err)
+	}
 
 	return errors.Join(errs...)
 }

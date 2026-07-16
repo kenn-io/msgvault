@@ -1,8 +1,8 @@
 package cacheops
 
 import (
+	"context"
 	"database/sql"
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -10,12 +10,14 @@ import (
 	"time"
 
 	_ "github.com/duckdb/duckdb-go/v2" // DuckDB driver (database/sql)
+	"go.kenn.io/msgvault/internal/query"
 )
 
 const (
 	StatusReady        = "ready"
 	StatusNoCacheFiles = "no_cache_files"
 	StatusNoCacheData  = "no_cache_data"
+	StatusInterrupted  = "interrupted"
 
 	tableAttachments = "attachments"
 	tableMessages    = "messages"
@@ -36,26 +38,34 @@ type CacheStats struct {
 	Warnings            []string   `json:"warnings,omitempty"`
 }
 
-type syncState struct {
-	LastMessageID int64     `json:"last_message_id"`
-	LastSyncAt    time.Time `json:"last_sync_at"`
-}
-
-func CollectStats(analyticsDir string) (*CacheStats, error) {
-	messagesDir := filepath.Join(analyticsDir, tableMessages)
-	if _, err := os.Stat(messagesDir); os.IsNotExist(err) {
-		return &CacheStats{Status: StatusNoCacheFiles}, nil
-	}
-
-	parquetFiles, err := filepath.Glob(filepath.Join(messagesDir, "**", "*.parquet"))
+func CollectStats(ctx context.Context, analyticsDir string) (*CacheStats, error) {
+	// Hold the shared cache lock across file discovery, DuckDB queries, and
+	// the sync-state read so a concurrent rebuild cannot remove files
+	// mid-collection.
+	release, err := query.AcquireCacheReadLock(ctx, analyticsDir)
 	if err != nil {
-		return nil, fmt.Errorf("check for cache files: %w", err)
+		return nil, fmt.Errorf("lock analytics cache for stats: %w", err)
 	}
-	if len(parquetFiles) == 0 {
-		parquetFiles, _ = filepath.Glob(filepath.Join(messagesDir, "*", "*.parquet"))
+	defer release()
+
+	readiness, err := query.InspectCacheReadiness(analyticsDir)
+	if err != nil {
+		return nil, fmt.Errorf("inspect analytics cache readiness: %w", err)
 	}
-	if len(parquetFiles) == 0 {
-		return &CacheStats{Status: StatusNoCacheData}, nil
+	switch readiness {
+	case query.CacheAbsent:
+		return &CacheStats{Status: StatusNoCacheFiles}, nil
+	case query.CacheInterrupted:
+		return &CacheStats{Status: StatusInterrupted}, nil
+	case query.CacheReady:
+		// Continue while holding the same shared lock through all Parquet reads.
+	default:
+		return nil, fmt.Errorf("unknown analytics cache readiness %q", readiness)
+	}
+
+	state, err := query.ReadCacheSyncState(analyticsDir)
+	if err != nil {
+		return nil, fmt.Errorf("read analytics cache state: %w", err)
 	}
 
 	db, err := sql.Open("duckdb", "")
@@ -123,14 +133,8 @@ func CollectStats(analyticsDir string) (*CacheStats, error) {
 		}
 	}
 
-	stateFile := filepath.Join(analyticsDir, "_last_sync.json")
-	if data, err := os.ReadFile(stateFile); err == nil {
-		var state syncState
-		if json.Unmarshal(data, &state) == nil {
-			result.LastSyncAt = &state.LastSyncAt
-			result.LastMessageID = &state.LastMessageID
-		}
-	}
+	result.LastSyncAt = &state.LastSyncAt
+	result.LastMessageID = &state.LastMessageID
 
 	return result, nil
 }

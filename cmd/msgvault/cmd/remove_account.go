@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/gofrs/flock"
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/beeper"
 	"go.kenn.io/msgvault/internal/circleback"
@@ -24,6 +25,10 @@ const (
 	removeAccountConfirmedFlag = "confirmed"
 )
 
+// removeAccountAfterCascadeHook pauses tests after the database mutation and
+// before the lock-held cache rebuild.
+var removeAccountAfterCascadeHook func()
+
 func newRemoveAccountCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   removeAccountCommandName + " <email>",
@@ -34,8 +39,8 @@ from the local database. This is irreversible.
 If the same identifier exists for multiple source types (e.g., gmail
 and mbox), use --type to specify which one to remove.
 
-The Parquet analytics cache is deleted because it is shared across accounts
-and must be rebuilt. Run 'msgvault build-cache' afterward to rebuild it.
+The Parquet analytics cache is rebuilt automatically because it is shared
+across accounts.
 
 Attachment files on disk that are not shared with another account are deleted.
 Shared attachments (same content hash across multiple accounts) are kept.
@@ -172,14 +177,39 @@ func runRemoveAccountLocal(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("collect attachment paths: %w", err)
 	}
 
+	isSQLite := !store.IsPostgresURL(cfg.DatabaseDSN())
+	var cacheLock *flock.Flock
+	if isSQLite {
+		cacheLock, err = lockCacheAndInvalidateSyncState(cfg.AnalyticsDir())
+		if err != nil {
+			return fmt.Errorf("protect analytics cache for account removal: %w", err)
+		}
+	}
+
 	// RemoveSourceSerialized runs the active-sync check and the cascade
 	// under a single exclusive write lock. StartSync blocks on that lock,
 	// so a sync started between our check and the delete is either seen
 	// as active (we skip file deletion) or fails after we commit because
 	// the source is gone.
-	hadActiveSync, packedMappingsRemoved, err := s.RemoveSourceSerialized(cmd.Context(), source.ID)
-	if err != nil {
-		return fmt.Errorf("remove account: %w", err)
+	hadActiveSync, packedMappingsRemoved, removeErr := s.RemoveSourceSerialized(cmd.Context(), source.ID)
+
+	var cacheRefreshErr error
+	if isSQLite {
+		if removeAccountAfterCascadeHook != nil {
+			removeAccountAfterCascadeHook()
+		}
+		fmt.Println("\nRebuilding analytics cache...")
+		_, cacheRefreshErr = buildCacheLocked(cfg.DatabaseDSN(), cfg.AnalyticsDir(), true, false)
+		cacheRefreshErr = errors.Join(
+			cacheRefreshErr,
+			wrapError(cacheLock.Unlock(), "release analytics cache lock"),
+		)
+	}
+	if removeErr != nil {
+		return errors.Join(
+			fmt.Errorf("remove account: %w", removeErr),
+			wrapError(cacheRefreshErr, "restore analytics cache after failed account removal"),
+		)
 	}
 
 	var deletedFiles, preservedFiles int
@@ -289,12 +319,10 @@ func runRemoveAccountLocal(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Remove analytics cache (shared across accounts, needs full rebuild)
-	analyticsDir := cfg.AnalyticsDir()
-	if err := os.RemoveAll(analyticsDir); err != nil {
-		fmt.Fprintf(os.Stderr,
-			"Warning: could not remove analytics cache %s: %v\n",
-			analyticsDir, err,
+	if cacheRefreshErr != nil {
+		return fmt.Errorf(
+			"account was removed, but analytics cache refresh failed: %w",
+			cacheRefreshErr,
 		)
 	}
 
@@ -314,10 +342,6 @@ func runRemoveAccountLocal(cmd *cobra.Command, args []string) error {
 			packedMappingsRemoved,
 		)
 	}
-	fmt.Println(
-		"Run 'msgvault build-cache' to rebuild the analytics cache.",
-	)
-
 	return nil
 }
 

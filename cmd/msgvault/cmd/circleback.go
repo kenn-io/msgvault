@@ -255,13 +255,13 @@ Examples:
 			src := sources[i]
 			accountEmail, err := src.EffectiveAccountEmail()
 			if err != nil {
-				return finishCirclebackImport(ctx, src.Identifier, pendingCacheWrites, err, func() {
-					rebuildCacheAfterWrite(dbPath)
+				return finishCirclebackImport(ctx, src.Identifier, pendingCacheWrites, err, func() error {
+					return rebuildCacheAfterWrite(dbPath)
 				})
 			}
 			if ctx.Err() != nil {
-				return finishCirclebackImport(ctx, src.Identifier, pendingCacheWrites, nil, func() {
-					rebuildCacheAfterWrite(dbPath)
+				return finishCirclebackImport(ctx, src.Identifier, pendingCacheWrites, nil, func() error {
+					return rebuildCacheAfterWrite(dbPath)
 				})
 			}
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Syncing Circleback for %s\n\n", src.Identifier)
@@ -269,8 +269,8 @@ Examples:
 			mgr := circlebackManager(&src)
 			session, err := circleback.Connect(ctx, mgr.Endpoint(), mgr.Handler(src.Identifier))
 			if err != nil {
-				return finishCirclebackImport(ctx, src.Identifier, pendingCacheWrites, err, func() {
-					rebuildCacheAfterWrite(dbPath)
+				return finishCirclebackImport(ctx, src.Identifier, pendingCacheWrites, err, func() error {
+					return rebuildCacheAfterWrite(dbPath)
 				})
 			}
 			imp := circleback.NewImporter(s, session)
@@ -287,8 +287,8 @@ Examples:
 			if ctx.Err() != nil || errors.Is(err, context.Canceled) {
 				_, _ = fmt.Fprintln(cmd.OutOrStdout(), "\nInterrupted — re-run sync-circleback to resume.")
 			}
-			if finishErr := finishCirclebackImport(ctx, src.Identifier, pendingCacheWrites, err, func() {
-				rebuildCacheAfterWrite(dbPath)
+			if finishErr := finishCirclebackImport(ctx, src.Identifier, pendingCacheWrites, err, func() error {
+				return rebuildCacheAfterWrite(dbPath)
 			}); finishErr != nil {
 				return finishErr
 			}
@@ -297,12 +297,11 @@ Examples:
 		}
 
 		if ctx.Err() != nil {
-			return finishCirclebackImport(ctx, sources[len(sources)-1].Identifier, pendingCacheWrites, nil, func() {
-				rebuildCacheAfterWrite(dbPath)
+			return finishCirclebackImport(ctx, sources[len(sources)-1].Identifier, pendingCacheWrites, nil, func() error {
+				return rebuildCacheAfterWrite(dbPath)
 			})
 		}
-		rebuildCacheAfterWrite(dbPath)
-		return nil
+		return rebuildCacheAfterWrite(dbPath)
 	},
 }
 
@@ -311,22 +310,26 @@ func finishCirclebackImport(
 	identifier string,
 	sum *circleback.ImportSummary,
 	importErr error,
-	refreshCache func(),
+	refreshCache func() error,
 ) error {
 	cancelErr := ctx.Err()
 	if cancelErr == nil && errors.Is(importErr, context.Canceled) {
 		cancelErr = context.Canceled
 	}
-	if cancelErr == nil && importErr == nil {
+	var operationErr error
+	switch {
+	case cancelErr != nil:
+		operationErr = fmt.Errorf("circleback sync %s canceled: %w", identifier, cancelErr)
+	case importErr != nil:
+		operationErr = fmt.Errorf("circleback sync %s failed: %w", identifier, importErr)
+	default:
 		return nil
 	}
+	var refreshErr error
 	if sum != nil && sum.MeetingsAdded+sum.MeetingsUpdated > 0 && refreshCache != nil {
-		refreshCache()
+		refreshErr = refreshCache()
 	}
-	if cancelErr != nil {
-		return fmt.Errorf("circleback sync %s canceled: %w", identifier, cancelErr)
-	}
-	return fmt.Errorf("circleback sync %s failed: %w", identifier, importErr)
+	return errors.Join(operationErr, refreshErr)
 }
 
 func accumulateCirclebackWrites(total, current *circleback.ImportSummary) {
@@ -440,19 +443,19 @@ func finishScheduledCirclebackImport(
 	identifier string,
 	sum *circleback.ImportSummary,
 	importErr error,
-	refreshCache func(context.Context, string),
+	refreshCache func(context.Context, string) error,
 ) error {
 	refreshCtx := context.WithoutCancel(ctx)
-	refresh := func() {
+	refresh := func() error {
 		if refreshCache != nil {
-			refreshCache(refreshCtx, "circleback:"+identifier)
+			return refreshCache(refreshCtx, "circleback:"+identifier)
 		}
+		return nil
 	}
 	if err := finishCirclebackImport(ctx, identifier, sum, importErr, refresh); err != nil {
 		return err
 	}
-	refresh()
-	return nil
+	return refresh()
 }
 
 func init() {

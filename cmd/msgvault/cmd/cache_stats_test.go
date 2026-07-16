@@ -12,8 +12,19 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/cacheops"
 	"go.kenn.io/msgvault/internal/config"
 )
+
+func TestPrintCacheStatsInterrupted(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	err := printCacheStats(&stdout, &stderr, &cacheops.CacheStats{Status: cacheops.StatusInterrupted})
+	require.NoError(t, err)
+	assert.Empty(t, stderr.String())
+	assert.Equal(t, "Analytics cache publication was interrupted.\nRun 'msgvault build-cache' to repair it.\n", stdout.String())
+}
 
 func TestCacheStatsUsesConfiguredRemoteHTTPAndPreservesOutput(t *testing.T) {
 	assert := assert.New(t)

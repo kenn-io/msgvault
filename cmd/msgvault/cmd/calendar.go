@@ -468,8 +468,7 @@ func newSyncCalendarLocalCmd() *cobra.Command {
 			}
 			fmt.Printf("Calendar sync complete: %d calendar(s), %d event(s) added, %d cancelled\n",
 				res.CalendarsSynced, res.EventsAdded, res.EventsCancelled)
-			rebuildCacheAfterWrite(cfg.DatabaseDSN())
-			return nil
+			return rebuildCacheAfterWrite(cfg.DatabaseDSN())
 		},
 	}
 	cmd.Flags().StringVar(&calSyncOAuthApp, "oauth-app", "", "named OAuth app to use")
@@ -921,8 +920,7 @@ func runConfiguredGCalSync(ctx context.Context, st *store.Store, src config.GCal
 	if err != nil {
 		return err
 	}
-	rebuildCacheAfterScheduledSync(ctx, "gcal:"+src.Name)
-	return nil
+	return rebuildCacheAfterScheduledSync(ctx, "gcal:"+src.Name)
 }
 
 func calendarDateBounds(cmd *cobra.Command, after, before string) (string, string, error) {

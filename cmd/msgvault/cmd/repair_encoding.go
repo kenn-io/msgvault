@@ -74,13 +74,9 @@ func runRepairEncodingLocal(cmd *cobra.Command) error {
 	dbPath := cfg.DatabaseDSN()
 	analyticsDir := cfg.AnalyticsDir()
 	if _, err := buildCache(dbPath, analyticsDir, true); err != nil {
-		fmt.Fprintf(os.Stderr,
-			"Warning: cache rebuild failed: %v\n", err)
-		fmt.Fprintf(os.Stderr,
-			"Run 'msgvault build-cache --full-rebuild' to retry.\n")
-	} else {
-		fmt.Println("\nAnalytics cache rebuilt.")
+		return fmt.Errorf("encoding repair completed, but analytics cache refresh failed: %w", err)
 	}
+	fmt.Println("\nAnalytics cache rebuilt.")
 	return nil
 }
 

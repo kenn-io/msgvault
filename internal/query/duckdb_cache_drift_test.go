@@ -81,6 +81,26 @@ func TestDuckDBEngine_CacheRebuiltUnderneath(t *testing.T) {
 	require.Len(agg, 1)
 }
 
+func TestDuckDBEngineRejectsInterruptedCache(t *testing.T) {
+	require := require.New(t)
+	analyticsDir, cleanup := buildStandardTestData(t).Build()
+	t.Cleanup(cleanup)
+
+	engine, err := NewDuckDBEngine(analyticsDir, "", nil)
+	require.NoError(err, "open ready cache")
+	t.Cleanup(func() { _ = engine.Close() })
+
+	require.NoError(os.Remove(CacheStatePath(analyticsDir)), "interrupt cache")
+	_, err = engine.Aggregate(context.Background(), ViewSenders, DefaultAggregateOptions())
+	require.ErrorIs(err, ErrCacheUnavailable)
+
+	second, err := NewDuckDBEngine(analyticsDir, "", nil)
+	if second != nil {
+		_ = second.Close()
+	}
+	require.ErrorIs(err, ErrCacheUnavailable)
+}
+
 func TestDuckDBEngine_SearchFastWithStatsRebuildsCacheWhenParquetChanges(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

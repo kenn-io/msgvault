@@ -98,8 +98,7 @@ Examples:
 		})
 		if ctx.Err() != nil {
 			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "\nInterrupted — re-run backfill-teams-media to resume (idempotent).")
-			rebuildCacheAfterWrite(dbPath)
-			return nil
+			return rebuildCacheAfterWrite(dbPath)
 		}
 		if err != nil {
 			return fmt.Errorf("teams inline-media backfill failed: %w", err)
@@ -112,8 +111,7 @@ Examples:
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Inline images copied:%d\n", sum.InlineImagesCopied)
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Errors:              %d\n", sum.Errors)
 
-		rebuildCacheAfterWrite(dbPath)
-		return nil
+		return rebuildCacheAfterWrite(dbPath)
 	},
 }
 

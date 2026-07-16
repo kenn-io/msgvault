@@ -224,12 +224,12 @@ Examples:
 			}
 			if ctx.Err() != nil {
 				_, _ = fmt.Fprintln(cmd.OutOrStdout(), "\nInterrupted — re-run sync-granola to resume.")
-				return finishGranolaImport(src.Identifier, pendingCacheWrites, ctx.Err(), func() {
-					rebuildGranolaCacheAfterWrite(dbPath)
+				return finishGranolaImport(src.Identifier, pendingCacheWrites, ctx.Err(), func() error {
+					return rebuildGranolaCacheAfterWrite(dbPath)
 				})
 			}
-			if finishErr := finishGranolaImport(src.Identifier, pendingCacheWrites, err, func() {
-				rebuildGranolaCacheAfterWrite(dbPath)
+			if finishErr := finishGranolaImport(src.Identifier, pendingCacheWrites, err, func() error {
+				return rebuildGranolaCacheAfterWrite(dbPath)
 			}); finishErr != nil {
 				return finishErr
 			}
@@ -244,8 +244,7 @@ Examples:
 			}
 		}
 
-		rebuildGranolaCacheAfterWrite(dbPath)
-		return nil
+		return rebuildGranolaCacheAfterWrite(dbPath)
 	},
 }
 
@@ -253,15 +252,16 @@ func finishGranolaImport(
 	identifier string,
 	sum *granola.ImportSummary,
 	importErr error,
-	refreshCache func(),
+	refreshCache func() error,
 ) error {
 	if importErr == nil {
 		return nil
 	}
+	var refreshErr error
 	if sum != nil && sum.NotesAdded+sum.NotesUpdated > 0 && refreshCache != nil {
-		refreshCache()
+		refreshErr = refreshCache()
 	}
-	return fmt.Errorf("granola sync %s failed: %w", identifier, importErr)
+	return errors.Join(fmt.Errorf("granola sync %s failed: %w", identifier, importErr), refreshErr)
 }
 
 // runConfiguredGranolaSync is the daemon-scheduler entry point for one
@@ -298,13 +298,12 @@ func runConfiguredGranolaSync(ctx context.Context, st *store.Store, src config.G
 		Identifier:   src.Identifier,
 		AccountEmail: accountEmail,
 	})
-	if err := finishGranolaImport(src.Identifier, sum, err, func() {
-		rebuildGranolaCacheAfterScheduledSync(refreshCtx, "granola:"+src.Identifier)
+	if err := finishGranolaImport(src.Identifier, sum, err, func() error {
+		return rebuildGranolaCacheAfterScheduledSync(refreshCtx, "granola:"+src.Identifier)
 	}); err != nil {
 		return err
 	}
-	rebuildGranolaCacheAfterScheduledSync(refreshCtx, "granola:"+src.Identifier)
-	return nil
+	return rebuildGranolaCacheAfterScheduledSync(refreshCtx, "granola:"+src.Identifier)
 }
 
 func init() {

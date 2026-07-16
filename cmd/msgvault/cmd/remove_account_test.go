@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
 	"net/http"
@@ -13,6 +15,7 @@ import (
 	"path/filepath"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
@@ -23,6 +26,7 @@ import (
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/microsoft"
 	"go.kenn.io/msgvault/internal/oauth"
+	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -63,6 +67,40 @@ func seedMessageWithAttachment(
 	require.NoError(t, err, "UpsertMessage")
 	require.NoError(t, s.UpsertAttachment(msgID, "a.pdf", "application/pdf",
 		storagePath, contentHash, 0), "UpsertAttachment")
+}
+
+func seedQueryableMessageWithAttachment(t *testing.T, s *store.Store) {
+	t.Helper()
+	const email = "test@example.com"
+	const storagePath = "aa/bb/a.pdf"
+	src, err := s.GetOrCreateSource(sourceTypeGmail, email)
+	require.NoError(t, err)
+	convID, err := s.EnsureConversation(src.ID, "thread-1", "Thread")
+	require.NoError(t, err)
+	senderID, err := s.EnsureParticipant(email, "Sender", "example.com")
+	require.NoError(t, err)
+	msgID, err := s.UpsertMessage(&store.Message{
+		ConversationID:  convID,
+		SourceID:        src.ID,
+		SourceMessageID: "message-1",
+		MessageType:     "email",
+		SentAt:          sql.NullTime{Time: time.Date(2024, time.January, 2, 3, 4, 5, 0, time.UTC), Valid: true},
+		SenderID:        sql.NullInt64{Int64: senderID, Valid: true},
+	})
+	require.NoError(t, err)
+	require.NoError(t, s.ReplaceMessageRecipients(msgID, "from", []int64{senderID}, []string{""}))
+	require.NoError(t, s.UpsertAttachment(msgID, "a.pdf", "application/pdf", storagePath, "hash-a", 10))
+}
+
+func executeRemoveAccount(t *testing.T) error {
+	t.Helper()
+	root := newTestRootCmd()
+	root.AddCommand(newRemoveAccountLocalTestCmd())
+	root.SetArgs([]string{"remove-account", "test@example.com", "--yes"})
+	if err := root.Execute(); err != nil {
+		return fmt.Errorf("execute remove-account: %w", err)
+	}
+	return nil
 }
 
 func TestRemoveAccountUsesDaemonCLIRunnerAndPreservesStreams(t *testing.T) {
@@ -549,6 +587,287 @@ func TestRemoveAccountCmd_WithYesFlag(t *testing.T) {
 	src, err := s.GetSourceByIdentifier("test@example.com")
 	require.ErrorIs(err, store.ErrSourceNotFound, "GetSourceByIdentifier")
 	assert.Nil(t, src, "account should be removed after --yes")
+}
+
+func TestRemoveAccountCmd_HoldsCacheLockThroughRebuild(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "msgvault.db")
+
+	s, err := store.Open(dbPath)
+	require.NoError(err)
+	require.NoError(s.InitSchema())
+	seedQueryableMessageWithAttachment(t, s)
+	require.NoError(s.Close())
+
+	savedCfg := cfg
+	t.Cleanup(func() { cfg = savedCfg })
+	cfg = &config.Config{HomeDir: tmpDir, Data: config.DataConfig{DataDir: tmpDir}}
+	_, err = buildCache(dbPath, cfg.AnalyticsDir(), true)
+	require.NoError(err, "initial cache build")
+
+	engine, err := query.NewDuckDBEngine(cfg.AnalyticsDir(), "", nil)
+	require.NoError(err, "open pre-removal cache engine")
+	t.Cleanup(func() { _ = engine.Close() })
+
+	cascadePaused := make(chan struct{})
+	resumeRemoval := make(chan struct{})
+	removeAccountAfterCascadeHook = func() {
+		close(cascadePaused)
+		<-resumeRemoval
+	}
+	t.Cleanup(func() { removeAccountAfterCascadeHook = nil })
+
+	removeDone := make(chan error, 1)
+	go func() { removeDone <- executeRemoveAccount(t) }()
+
+	select {
+	case <-cascadePaused:
+	case <-time.After(5 * time.Second):
+		require.FailNow("timed out waiting after account cascade")
+	}
+
+	type aggregateResult struct {
+		rows []query.AggregateRow
+		err  error
+	}
+	aggregateDone := make(chan aggregateResult, 1)
+	go func() {
+		rows, err := engine.Aggregate(context.Background(), query.ViewSenders, query.DefaultAggregateOptions())
+		aggregateDone <- aggregateResult{rows: rows, err: err}
+	}()
+
+	select {
+	case result := <-aggregateDone:
+		close(resumeRemoval)
+		require.FailNow("cache reader passed the removal writer lock", "rows=%v err=%v", result.rows, result.err)
+	case <-time.After(150 * time.Millisecond):
+	}
+
+	close(resumeRemoval)
+	require.NoError(<-removeDone, "remove account")
+	result := <-aggregateDone
+	require.NoError(result.err, "first aggregate after rebuild")
+	assert.Empty(result.rows, "removed source must not remain in the rebuilt cache")
+}
+
+// TestRemoveAccountCmd_FailedCacheRebuildInvalidatesSyncState pins that a
+// failed post-removal cache rebuild can never leave the pre-removal cache
+// looking fresh: cascading deletion also removes the sync history that
+// staleness probes compare against, so the sync state must be gone and the
+// next probe must demand a full rebuild.
+func TestRemoveAccountCmd_FailedCacheRebuildInvalidatesSyncState(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "msgvault.db")
+
+	s, err := store.Open(dbPath)
+	require.NoError(err, "open store")
+	require.NoError(s.InitSchema(), "init schema")
+	seedMessageWithAttachment(t, s, "test@example.com",
+		"thread1", "msg1", "aa/bb/a.pdf", "hash-a")
+	_ = s.Close()
+
+	savedCfg := cfg
+	defer func() { cfg = savedCfg }()
+	cfg = &config.Config{
+		HomeDir: tmpDir,
+		Data:    config.DataConfig{DataDir: tmpDir},
+	}
+
+	_, err = buildCache(dbPath, cfg.AnalyticsDir(), true)
+	require.NoError(err, "initial cache build")
+	stateFile := filepath.Join(cfg.AnalyticsDir(), "_last_sync.json")
+	_, err = os.Stat(stateFile)
+	require.NoError(err, "sync state exists after initial build")
+
+	buildCacheWriteStateFile = func(string, []byte, os.FileMode) error {
+		return errors.New("simulated rebuild failure")
+	}
+	defer func() { buildCacheWriteStateFile = os.WriteFile }()
+
+	err = executeRemoveAccount(t)
+	require.Error(err, "mandatory cache rebuild failure must reach the command")
+	require.ErrorContains(err, "account was removed")
+	require.ErrorContains(err, "analytics cache refresh failed")
+	require.ErrorContains(err, "simulated rebuild failure")
+
+	_, err = os.Stat(stateFile)
+	assert.True(os.IsNotExist(err),
+		"a failed rebuild must not leave the pre-removal sync state behind")
+	staleness := cacheNeedsBuild(dbPath, cfg.AnalyticsDir())
+	assert.True(staleness.NeedsBuild && staleness.FullRebuild,
+		"the pre-removal cache must never look fresh after a failed rebuild")
+	readiness, inspectErr := query.InspectCacheReadiness(cfg.AnalyticsDir())
+	require.NoError(inspectErr)
+	assert.Equal(query.CacheInterrupted, readiness)
+
+	s, openErr := store.Open(dbPath)
+	require.NoError(openErr)
+	defer func() { _ = s.Close() }()
+	_, sourceErr := s.GetSourceByIdentifier("test@example.com")
+	require.ErrorIs(sourceErr, store.ErrSourceNotFound, "source deletion committed")
+
+	_, lockErr := query.AcquireReadyCacheReadLock(context.Background(), cfg.AnalyticsDir())
+	assert.ErrorIs(lockErr, query.ErrCacheUnavailable)
+}
+
+func TestRemoveAccountCmd_CascadeFailureRestoresCache(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "msgvault.db")
+	attachmentPath := seedAttachmentFile(t, filepath.Join(tmpDir, "attachments"), "aa/bb/a.pdf", "attachment")
+
+	s, err := store.Open(dbPath)
+	require.NoError(err)
+	require.NoError(s.InitSchema())
+	seedQueryableMessageWithAttachment(t, s)
+	_, err = s.DB().Exec(`
+		CREATE TRIGGER abort_source_delete
+		BEFORE DELETE ON sources
+		BEGIN
+			SELECT RAISE(ABORT, 'simulated cascade failure');
+		END`)
+	require.NoError(err, "install aborting delete trigger")
+	require.NoError(s.Close())
+
+	savedCfg := cfg
+	t.Cleanup(func() { cfg = savedCfg })
+	cfg = &config.Config{HomeDir: tmpDir, Data: config.DataConfig{DataDir: tmpDir}}
+	tokenPath := oauth.TokenFilePath(cfg.TokensDir(), "test@example.com")
+	require.NoError(os.MkdirAll(filepath.Dir(tokenPath), 0o755))
+	require.NoError(os.WriteFile(tokenPath, []byte("token"), 0o600))
+	_, err = buildCache(dbPath, cfg.AnalyticsDir(), true)
+	require.NoError(err, "initial cache build")
+
+	err = executeRemoveAccount(t)
+	require.Error(err, "cascade failure must reach the command")
+	require.ErrorContains(err, "simulated cascade failure")
+
+	readiness, inspectErr := query.InspectCacheReadiness(cfg.AnalyticsDir())
+	require.NoError(inspectErr)
+	assert.Equal(query.CacheReady, readiness, "failed removal must restore the unchanged cache")
+	assert.Equal(1, countCachedMessages(t, cfg.AnalyticsDir(), 0))
+
+	s, err = store.Open(dbPath)
+	require.NoError(err)
+	defer func() { _ = s.Close() }()
+	_, err = s.GetSourceByIdentifier("test@example.com")
+	require.NoError(err, "source remains after rolled-back cascade")
+	_, err = os.Stat(attachmentPath)
+	require.NoError(err, "attachment cleanup must not run after failed cascade")
+	_, err = os.Stat(tokenPath)
+	require.NoError(err, "credential cleanup must not run after failed cascade")
+}
+
+func TestRemoveAccountCmd_CascadeFailureJoinsRecoveryFailure(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "msgvault.db")
+
+	s, err := store.Open(dbPath)
+	require.NoError(err)
+	require.NoError(s.InitSchema())
+	seedQueryableMessageWithAttachment(t, s)
+	_, err = s.DB().Exec(`
+		CREATE TRIGGER abort_source_delete
+		BEFORE DELETE ON sources
+		BEGIN
+			SELECT RAISE(ABORT, 'simulated cascade failure');
+		END`)
+	require.NoError(err)
+	require.NoError(s.Close())
+
+	savedCfg := cfg
+	t.Cleanup(func() { cfg = savedCfg })
+	cfg = &config.Config{HomeDir: tmpDir, Data: config.DataConfig{DataDir: tmpDir}}
+	_, err = buildCache(dbPath, cfg.AnalyticsDir(), true)
+	require.NoError(err, "initial cache build")
+
+	buildCacheWriteStateFile = func(string, []byte, os.FileMode) error {
+		return errors.New("simulated recovery failure")
+	}
+	t.Cleanup(func() { buildCacheWriteStateFile = os.WriteFile })
+
+	err = executeRemoveAccount(t)
+	require.Error(err)
+	require.ErrorContains(err, "simulated cascade failure")
+	require.ErrorContains(err, "simulated recovery failure")
+	readiness, inspectErr := query.InspectCacheReadiness(cfg.AnalyticsDir())
+	require.NoError(inspectErr)
+	assert.Equal(query.CacheInterrupted, readiness)
+}
+
+func TestRemoveAccountCmd_LockFailureLeavesSourceUntouched(t *testing.T) {
+	require := require.New(t)
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "msgvault.db")
+
+	s, err := store.Open(dbPath)
+	require.NoError(err)
+	require.NoError(s.InitSchema())
+	seedQueryableMessageWithAttachment(t, s)
+	require.NoError(s.Close())
+
+	savedCfg := cfg
+	t.Cleanup(func() { cfg = savedCfg })
+	cfg = &config.Config{HomeDir: tmpDir, Data: config.DataConfig{DataDir: tmpDir}}
+	_, err = buildCache(dbPath, cfg.AnalyticsDir(), true)
+	require.NoError(err, "initial cache build")
+
+	statePath := query.CacheStatePath(cfg.AnalyticsDir())
+	require.NoError(os.Remove(statePath))
+	require.NoError(os.Mkdir(statePath, 0o755))
+	require.NoError(os.WriteFile(filepath.Join(statePath, "keep"), []byte("x"), 0o600))
+
+	err = executeRemoveAccount(t)
+	require.Error(err, "invalidation failure must abort removal")
+	require.ErrorContains(err, "invalidate")
+
+	s, err = store.Open(dbPath)
+	require.NoError(err)
+	defer func() { _ = s.Close() }()
+	_, err = s.GetSourceByIdentifier("test@example.com")
+	require.NoError(err, "source must remain when cache protection cannot be established")
+}
+
+// TestRemoveAccountCmd_LastAccountLeavesReadableEmptyCache pins that
+// removing the only account still leaves a queryable cache: a running daemon
+// keeps its DuckDB engine, so read_parquet over the messages glob must
+// return zero rows instead of failing on an empty directory.
+func TestRemoveAccountCmd_LastAccountLeavesReadableEmptyCache(t *testing.T) {
+	require := require.New(t)
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "msgvault.db")
+
+	s, err := store.Open(dbPath)
+	require.NoError(err, "open store")
+	require.NoError(s.InitSchema(), "init schema")
+	seedMessageWithAttachment(t, s, "test@example.com",
+		"thread1", "msg1", "aa/bb/a.pdf", "hash-a")
+	_ = s.Close()
+
+	savedCfg := cfg
+	defer func() { cfg = savedCfg }()
+	cfg = &config.Config{
+		HomeDir: tmpDir,
+		Data:    config.DataConfig{DataDir: tmpDir},
+	}
+
+	_, err = buildCache(dbPath, cfg.AnalyticsDir(), true)
+	require.NoError(err, "initial cache build")
+
+	root := newTestRootCmd()
+	root.AddCommand(newRemoveAccountLocalTestCmd())
+	root.SetArgs([]string{"remove-account", "test@example.com", "--yes"})
+	require.NoError(root.Execute(), "remove last account")
+
+	require.Equal(0, countCachedMessages(t, cfg.AnalyticsDir(), 0),
+		"the messages glob must stay readable and empty after removing the last account")
 }
 
 func TestRemoveAccountCmd_DuplicateIdentifierRequiresType(
