@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -376,7 +377,7 @@ func TestBuildCacheEmptyStatelessReplacesStaleShards(t *testing.T) {
 	assert.Zero(countCachedMessages(t, analyticsDir, 0))
 }
 
-func TestBuildCacheRowCountMismatchPreservesCommittedCache(t *testing.T) {
+func TestBuildCacheSnapshotDefersConcurrentDeletion(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	tmpDir := setupTestSQLite(t)
@@ -385,27 +386,31 @@ func TestBuildCacheRowCountMismatchPreservesCommittedCache(t *testing.T) {
 
 	_, err := buildCache(dbPath, analyticsDir, false)
 	require.NoError(err, "initial build")
-	stateBefore, err := os.ReadFile(query.CacheStatePath(analyticsDir))
-	require.NoError(err)
-	filesBefore := snapshotCacheParquet(t, analyticsDir)
 	insertSixthMessage(t, dbPath)
+	db, err := sql.Open("sqlite3", dbPath)
+	require.NoError(err)
+	_, err = db.Exec("PRAGMA journal_mode=WAL")
+	require.NoError(err)
+	require.NoError(db.Close())
 
 	buildCacheAfterSnapshotHook = func() {
-		hookDB, hookErr := sql.Open("sqlite3", dbPath)
-		require.NoError(hookErr)
-		defer func() { require.NoError(hookDB.Close()) }()
-		_, hookErr = hookDB.Exec(`UPDATE messages SET deleted_at = datetime('now') WHERE id = 6`)
-		require.NoError(hookErr)
+		runBuildCacheSQLiteMutation(t, dbPath, cacheMutationDeleteMessage)
 	}
 	t.Cleanup(func() { buildCacheAfterSnapshotHook = nil })
 
 	_, err = buildCache(dbPath, analyticsDir, false)
-	require.ErrorContains(err, "staged message row count")
-	buildCacheAfterSnapshotHook = nil
-	stateAfter, err := os.ReadFile(query.CacheStatePath(analyticsDir))
 	require.NoError(err)
-	assert.Equal(stateBefore, stateAfter)
-	assert.Equal(filesBefore, snapshotCacheParquet(t, analyticsDir))
+	assert.Equal(1, countCachedMessages(t, analyticsDir, 6),
+		"the completed snapshot must retain a message deleted after its source read began")
+	staleness := cacheNeedsBuild(dbPath, analyticsDir)
+	assert.True(staleness.NeedsBuild, "the concurrent deletion must make the snapshot stale: %+v", staleness)
+	assert.True(staleness.FullRebuild, "repairing a deletion requires replacing all shards")
+
+	buildCacheAfterSnapshotHook = nil
+	_, err = buildCacheAuto(dbPath, analyticsDir)
+	require.NoError(err)
+	assert.Zero(countCachedMessages(t, analyticsDir, 6),
+		"the next automatic build must repair the post-snapshot deletion")
 }
 
 func snapshotCacheParquet(t *testing.T, analyticsDir string) map[string][sha256.Size]byte {
@@ -1022,6 +1027,94 @@ func TestBuildCache_SnapshotUpperBoundPreventsDuplicateIncrementalRows(t *testin
 		filepath.ToSlash(filepath.Join(analyticsDir, "message_recipients", "*.parquet")),
 	).Scan(&recipientRows))
 	assert.Equal(int64(2), recipientRows, "recipient junctions exported once")
+}
+
+func TestBuildCache_UsesOneSnapshotForRelatedTables(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	tmpDir := setupTestSQLite(t)
+	dbPath := filepath.Join(tmpDir, "test.db")
+	analyticsDir := filepath.Join(tmpDir, "analytics")
+
+	db, err := sql.Open("sqlite3", dbPath)
+	require.NoError(err)
+	_, err = db.Exec("PRAGMA journal_mode=WAL")
+	require.NoError(err)
+	require.NoError(db.Close())
+
+	buildCacheAfterSnapshotHook = func() {
+		runBuildCacheSQLiteMutation(t, dbPath, cacheMutationUpdateRelated)
+	}
+	t.Cleanup(func() { buildCacheAfterSnapshotHook = nil })
+
+	_, err = buildCache(dbPath, analyticsDir, false)
+	require.NoError(err)
+
+	duckDB, err := sql.Open("duckdb", "")
+	require.NoError(err)
+	defer func() { require.NoError(duckDB.Close()) }()
+
+	var participantName string
+	require.NoError(duckDB.QueryRow(
+		`SELECT display_name FROM read_parquet(?) WHERE id = 1`,
+		filepath.ToSlash(filepath.Join(analyticsDir, tableParticipants, "*.parquet")),
+	).Scan(&participantName))
+	assert.Equal("Alice Smith", participantName,
+		"participant export must use the metadata snapshot captured before the concurrent update")
+
+	var updatedRecipients int
+	require.NoError(duckDB.QueryRow(
+		`SELECT COUNT(*) FROM read_parquet(?) WHERE participant_id = 1 AND display_name = 'Updated During Build'`,
+		filepath.ToSlash(filepath.Join(analyticsDir, "message_recipients", "*.parquet")),
+	).Scan(&updatedRecipients))
+	assert.Zero(updatedRecipients,
+		"recipient export must use the same snapshot as the participant export")
+}
+
+const (
+	cacheMutationDBEnv         = "MSGVAULT_TEST_CACHE_MUTATION_DB"
+	cacheMutationOpEnv         = "MSGVAULT_TEST_CACHE_MUTATION_OP"
+	cacheMutationDeleteMessage = "delete-message"
+	cacheMutationUpdateRelated = "update-related"
+)
+
+func TestBuildCacheSQLiteMutationHelper(t *testing.T) {
+	dbPath := os.Getenv(cacheMutationDBEnv)
+	if dbPath == "" {
+		return
+	}
+	db, err := sql.Open("sqlite3", dbPath)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, db.Close()) }()
+	switch os.Getenv(cacheMutationOpEnv) {
+	case cacheMutationDeleteMessage:
+		_, err = db.Exec(`UPDATE messages SET deleted_at = datetime('now') WHERE id = 6`)
+	case cacheMutationUpdateRelated:
+		_, err = db.Exec(`
+			UPDATE participants
+			SET display_name = 'Updated During Build'
+			WHERE id = 1;
+			UPDATE message_recipients
+			SET display_name = 'Updated During Build'
+			WHERE participant_id = 1;
+		`)
+	default:
+		require.FailNow(t, "unknown cache mutation operation")
+	}
+	require.NoError(t, err)
+}
+
+func runBuildCacheSQLiteMutation(t *testing.T, dbPath, operation string) {
+	t.Helper()
+	// os.Args[0] is the current Go test binary and the only argument is fixed.
+	//nolint:gosec
+	cmd := exec.Command(os.Args[0], "-test.run=^TestBuildCacheSQLiteMutationHelper$")
+	cmd.Env = append(os.Environ(),
+		cacheMutationDBEnv+"="+dbPath,
+		cacheMutationOpEnv+"="+operation,
+	)
+	output, err := cmd.CombinedOutput()
+	require.NoErrorf(t, err, "run concurrent SQLite mutation\noutput:\n%s", output)
 }
 
 func TestBuildCache_RejectsTerminalAdditionDuringExport(t *testing.T) {

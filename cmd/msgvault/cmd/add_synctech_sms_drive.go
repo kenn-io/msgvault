@@ -155,10 +155,9 @@ func runConfiguredSynctechSMSSourceWithStoreDriveClient(ctx context.Context, st 
 	default:
 		return fmt.Errorf("unsupported synctech-sms backend %q", src.Backend)
 	}
-	if err != nil {
-		return err
-	}
-	return rebuildCacheAfterScheduledSync(ctx, "synctech-sms:"+src.Name)
+	refreshErr := rebuildCacheAfterScheduledSync(
+		context.WithoutCancel(ctx), "synctech-sms:"+src.Name)
+	return errors.Join(err, refreshErr)
 }
 
 func ensureConfiguredSynctechSMSSource(st *store.Store, src config.SynctechSMSSource, opts synctechsms.ImportOptions) (*store.Source, error) {

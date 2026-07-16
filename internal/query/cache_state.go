@@ -57,6 +57,16 @@ func ReadCacheSyncState(analyticsDir string) (CacheSyncState, error) {
 // staging directories are deliberately outside analyticsDir and never enter
 // this inspection.
 func InspectCacheReadiness(analyticsDir string) (CacheReadiness, error) {
+	info, err := os.Stat(analyticsDir)
+	switch {
+	case err == nil && !info.IsDir():
+		return "", fmt.Errorf("inspect analytics cache root: %s is not a directory", analyticsDir)
+	case errors.Is(err, os.ErrNotExist):
+		return CacheAbsent, nil
+	case err != nil:
+		return "", fmt.Errorf("inspect analytics cache root: %w", err)
+	}
+
 	anyParquet := false
 	complete := true
 	for _, dataset := range RequiredParquetDirs {

@@ -167,7 +167,17 @@ type cacheSyncCounters struct {
 	failedRunIDSum int64
 }
 
-func readCacheSyncCounters(db *sql.DB) (cacheSyncCounters, error) {
+type sqlRowQuerier interface {
+	QueryRow(query string, args ...any) *sql.Row
+}
+
+type sqlRunner interface {
+	sqlRowQuerier
+	Exec(query string, args ...any) (sql.Result, error)
+	Query(query string, args ...any) (*sql.Rows, error)
+}
+
+func readCacheSyncCounters(db sqlRowQuerier) (cacheSyncCounters, error) {
 	var counters cacheSyncCounters
 	err := db.QueryRow(`
 		SELECT
@@ -364,11 +374,6 @@ func buildCacheLocked(dbPath, analyticsDir string, fullRebuild, recheckStaleness
 		fullRebuild = staleness.FullRebuild
 	}
 
-	// Record the freshness boundary before reading any source metadata. A sync
-	// or deletion that finishes after this instant may not be represented by
-	// the bounded export and must invalidate the cache on the next check.
-	// Captured after the build lock so it postdates any build we waited on.
-	cacheWatermark := time.Now().UTC().Truncate(time.Second)
 	// Load sync state for incremental updates
 	var lastMessageID int64
 	var previousState syncState
@@ -393,23 +398,34 @@ func buildCacheLocked(dbPath, analyticsDir string, fullRebuild, recheckStaleness
 		}
 	}
 
-	// Use direct SQLite to check for new messages (fast, uses indexes)
-	// DuckDB's sqlite extension doesn't use SQLite indexes, so this query
-	// would scan the entire table if we used DuckDB.
-	sqliteDB, err := sql.Open("sqlite3", dbPath+"?mode=ro")
+	// Keep metadata reads and every source-table export on one SQLite snapshot.
+	// On platforms with sqlite_scanner, sqlite_query preserves native SQLite
+	// indexes while the surrounding DuckDB transaction pins the same snapshot
+	// for the COPY statements. The CSV fallback reads through one SQLite
+	// transaction before exposing the static files to DuckDB.
+	db, err := sql.Open("duckdb", "")
 	if err != nil {
-		return nil, fmt.Errorf("open sqlite for max id check: %w", err)
+		return nil, fmt.Errorf("open duckdb: %w", err)
 	}
+	db.SetMaxOpenConns(1)
+	defer func() { _ = db.Close() }()
+	sourceSnapshot, err := openCacheSourceSnapshot(db, dbPath)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = sourceSnapshot.Close() }()
+
+	// Record the freshness boundary immediately before the first source read.
+	// A sync or deletion that finishes after this instant may not be represented
+	// by the snapshot and must invalidate the cache on the next check.
+	cacheWatermark := time.Now().UTC().Truncate(time.Second)
 
 	var maxMessageID sql.NullInt64
 	var lastCompletedSyncRunID int64
 	var syncCounters cacheSyncCounters
 	// Use indexed query: id is PRIMARY KEY, sent_at has an index
 	maxIDQuery := `SELECT MAX(id) FROM messages WHERE sent_at IS NOT NULL`
-	if err := sqliteDB.QueryRow(maxIDQuery).Scan(&maxMessageID); err != nil {
-		if closeErr := sqliteDB.Close(); closeErr != nil {
-			return nil, fmt.Errorf("get max message id: %w; close sqlite: %w", err, closeErr)
-		}
+	if err := sourceSnapshot.QueryRow(maxIDQuery).Scan(&maxMessageID); err != nil {
 		return nil, fmt.Errorf("get max message id: %w", err)
 	}
 	maxID := int64(0)
@@ -417,29 +433,20 @@ func buildCacheLocked(dbPath, analyticsDir string, fullRebuild, recheckStaleness
 		maxID = maxMessageID.Int64
 	}
 	var hasSyncRunsTable int
-	if err := sqliteDB.QueryRow(`
+	if err := sourceSnapshot.QueryRow(`
 		SELECT COUNT(*) FROM sqlite_master
 		WHERE type = 'table' AND name = 'sync_runs'
 	`).Scan(&hasSyncRunsTable); err != nil {
-		if closeErr := sqliteDB.Close(); closeErr != nil {
-			return nil, fmt.Errorf("check sync_runs table: %w; close sqlite: %w", err, closeErr)
-		}
 		return nil, fmt.Errorf("check sync_runs table: %w", err)
 	}
 	if hasSyncRunsTable > 0 {
-		if err := sqliteDB.QueryRow(`
+		if err := sourceSnapshot.QueryRow(`
 			SELECT COALESCE(MAX(id), 0) FROM sync_runs
 			WHERE status = 'completed' AND completed_at IS NOT NULL
 		`).Scan(&lastCompletedSyncRunID); err != nil {
-			if closeErr := sqliteDB.Close(); closeErr != nil {
-				return nil, fmt.Errorf("get last completed sync run id: %w; close sqlite: %w", err, closeErr)
-			}
 			return nil, fmt.Errorf("get last completed sync run id: %w", err)
 		}
-		if syncCounters, err = readCacheSyncCounters(sqliteDB); err != nil {
-			if closeErr := sqliteDB.Close(); closeErr != nil {
-				return nil, fmt.Errorf("get cache sync counters: %w; close sqlite: %w", err, closeErr)
-			}
+		if syncCounters, err = readCacheSyncCounters(sourceSnapshot); err != nil {
 			return nil, fmt.Errorf("get cache sync counters: %w", err)
 		}
 	}
@@ -457,8 +464,8 @@ func buildCacheLocked(dbPath, analyticsDir string, fullRebuild, recheckStaleness
 	}
 
 	if hasPreviousState && maxID <= lastMessageID && !fullRebuild {
-		if err := sqliteDB.Close(); err != nil {
-			return nil, fmt.Errorf("close sqlite after metadata check: %w", err)
+		if err := sourceSnapshot.Close(); err != nil {
+			return nil, fmt.Errorf("close SQLite snapshot after metadata check: %w", err)
 		}
 		return &buildResult{Skipped: true, OutputDir: analyticsDir}, nil
 	}
@@ -470,21 +477,19 @@ func buildCacheLocked(dbPath, analyticsDir string, fullRebuild, recheckStaleness
 	var expectedBatchCount, expectedTotalCount int64
 	expectedCountQuery := "SELECT COUNT(*) FROM messages WHERE " +
 		exportableMessageWhere("") + " AND id <= ? AND id > ?"
-	if err := sqliteDB.QueryRow(expectedCountQuery, maxID, lastMessageID).Scan(&expectedBatchCount); err != nil {
-		_ = sqliteDB.Close()
+	if err := sourceSnapshot.QueryRow(expectedCountQuery, maxID, lastMessageID).Scan(&expectedBatchCount); err != nil {
 		return nil, fmt.Errorf("count expected staged messages: %w", err)
 	}
 	expectedTotalQuery := "SELECT COUNT(*) FROM messages WHERE " +
 		exportableMessageWhere("") + " AND id <= ?"
-	if err := sqliteDB.QueryRow(expectedTotalQuery, maxID).Scan(&expectedTotalCount); err != nil {
-		_ = sqliteDB.Close()
+	if err := sourceSnapshot.QueryRow(expectedTotalQuery, maxID).Scan(&expectedTotalCount); err != nil {
 		return nil, fmt.Errorf("count expected cached messages: %w", err)
-	}
-	if err := sqliteDB.Close(); err != nil {
-		return nil, fmt.Errorf("close sqlite after metadata check: %w", err)
 	}
 	if buildCacheAfterSnapshotHook != nil {
 		buildCacheAfterSnapshotHook()
+	}
+	if err := sourceSnapshot.Prepare(); err != nil {
+		return nil, err
 	}
 
 	staging, err := newCacheStaging(analyticsDir)
@@ -492,21 +497,7 @@ func buildCacheLocked(dbPath, analyticsDir string, fullRebuild, recheckStaleness
 		return nil, err
 	}
 	defer func() { _ = staging.cleanup() }()
-
-	// Open DuckDB for the actual export
-	db, err := sql.Open("duckdb", "")
-	if err != nil {
-		return nil, fmt.Errorf("open duckdb: %w", err)
-	}
-	defer func() { _ = db.Close() }()
-
-	// Set up sqlite_db tables — either via DuckDB's sqlite extension (Linux/macOS)
-	// or via CSV intermediate files (Windows, where sqlite_scanner is unavailable).
-	cleanup, err := setupSQLiteSource(db, dbPath)
-	if err != nil {
-		return nil, err
-	}
-	defer cleanup()
+	exportDB := sourceSnapshot.DuckDB()
 
 	// Every COPY targets a same-filesystem sibling staging directory. Live
 	// Parquet and its commit marker remain untouched until verification passes.
@@ -549,7 +540,7 @@ func buildCacheLocked(dbPath, analyticsDir string, fullRebuild, recheckStaleness
 	runExport := func(label, query string) error {
 		start := time.Now()
 		fmt.Printf("  %-25s", label+"...")
-		if _, err := db.Exec(query); err != nil {
+		if _, err := exportDB.Exec(query); err != nil {
 			fmt.Println()
 			return err
 		}
@@ -765,7 +756,7 @@ func buildCacheLocked(dbPath, analyticsDir string, fullRebuild, recheckStaleness
 			filepath.Join(emptyShardDir, "empty.parquet"), "'", "''")
 		// Same column list as the partitioned export minus the year
 		// partition column, which hive_partitioning derives from the path.
-		if _, err := db.Exec(fmt.Sprintf(`
+		if _, err := exportDB.Exec(fmt.Sprintf(`
 		COPY (
 			SELECT
 				m.id,
@@ -792,7 +783,7 @@ func buildCacheLocked(dbPath, analyticsDir string, fullRebuild, recheckStaleness
 
 	fmt.Printf("  %-25s %s\n", "Total:", time.Since(buildStart).Round(time.Millisecond))
 
-	stagedCount, err := countStagedMessages(db, messagesDir, replaceAll)
+	stagedCount, err := countStagedMessages(exportDB, messagesDir, replaceAll)
 	if err != nil {
 		return nil, err
 	}
@@ -800,8 +791,11 @@ func buildCacheLocked(dbPath, analyticsDir string, fullRebuild, recheckStaleness
 		return nil, fmt.Errorf("staged message row count %d does not match SQLite snapshot count %d; retry",
 			stagedCount, expectedBatchCount)
 	}
-	if err := validateStagedReplacementDatasets(db, staging.root, replaceAll); err != nil {
+	if err := validateStagedReplacementDatasets(exportDB, staging.root, replaceAll); err != nil {
 		return nil, err
+	}
+	if err := sourceSnapshot.Close(); err != nil {
+		return nil, fmt.Errorf("close SQLite cache snapshot: %w", err)
 	}
 	if buildCacheBeforeStateWriteHook != nil {
 		buildCacheBeforeStateWriteHook()
@@ -857,7 +851,7 @@ func buildCacheLocked(dbPath, analyticsDir string, fullRebuild, recheckStaleness
 	}, nil
 }
 
-func countStagedMessages(db *sql.DB, messagesDir string, requireShard bool) (int64, error) {
+func countStagedMessages(db sqlRowQuerier, messagesDir string, requireShard bool) (int64, error) {
 	files, err := filepath.Glob(filepath.Join(messagesDir, "*", "*.parquet"))
 	if err != nil {
 		return 0, fmt.Errorf("list staged message shards: %w", err)
@@ -878,7 +872,7 @@ func countStagedMessages(db *sql.DB, messagesDir string, requireShard bool) (int
 	return count, nil
 }
 
-func validateStagedReplacementDatasets(db *sql.DB, stagingDir string, replaceAll bool) error {
+func validateStagedReplacementDatasets(db sqlRowQuerier, stagingDir string, replaceAll bool) error {
 	for _, dataset := range query.RequiredParquetDirs {
 		// countStagedMessages already verifies and reads every message shard.
 		if dataset == tableMessages || !replacesCacheDataset(dataset, replaceAll) {
@@ -1007,30 +1001,44 @@ func writeCacheStatsLine(w io.Writer, format string, args ...any) error {
 	return nil
 }
 
-// setupSQLiteSource makes SQLite tables available to DuckDB as sqlite_db.*.
-// On Linux/macOS it uses DuckDB's sqlite extension (ATTACH).
-// On Windows it exports tables to CSV and creates DuckDB views, since the
-// sqlite_scanner extension is not available for MinGW builds.
-func setupSQLiteSource(duckDB *sql.DB, dbPath string) (cleanup func(), err error) {
+// cacheSourceSnapshot keeps every source read in one SQLite transaction. On
+// platforms with sqlite_scanner, the DuckDB transaction owns that SQLite
+// transaction directly. The fallback exports every table from one go-sqlite3
+// transaction before DuckDB reads the resulting static CSV files.
+type cacheSourceSnapshot struct {
+	duckDB   *sql.DB
+	duckTx   *sql.Tx
+	sqliteDB *sql.DB
+	sqliteTx *sql.Tx
+	tmpDir   string
+}
+
+func openCacheSourceSnapshot(duckDB *sql.DB, dbPath string) (*cacheSourceSnapshot, error) {
 	if runtime.GOOS != "windows" {
-		// Try sqlite_scanner extension; fall back to CSV if unavailable
-		// (e.g. air-gapped environment with no internet for extension download).
+		// Try sqlite_scanner; fall back to CSV when the extension is unavailable
+		// (for example in an air-gapped installation). Parallel scanner workers
+		// open independent SQLite connections, so disable only that parallelism
+		// to keep every scan inside the attached database's read transaction.
 		if _, err := duckDB.Exec("INSTALL sqlite; LOAD sqlite;"); err != nil {
 			fmt.Fprintf(os.Stderr, "  sqlite_scanner unavailable, using CSV fallback: %v\n", err)
+		} else if _, err := duckDB.Exec("SET sqlite_disable_multithreaded_scans = true"); err != nil {
+			fmt.Fprintf(os.Stderr, "  sqlite snapshot scans unavailable, using CSV fallback: %v\n", err)
 		} else {
 			escapedPath := strings.ReplaceAll(dbPath, "'", "''")
 			if _, err := duckDB.Exec(fmt.Sprintf("ATTACH '%s' AS sqlite_db (TYPE sqlite, READ_ONLY)", escapedPath)); err != nil {
 				fmt.Fprintf(os.Stderr, "  sqlite attach failed, using CSV fallback: %v\n", err)
 			} else {
-				return func() {}, nil
+				duckTx, err := duckDB.BeginTx(context.Background(), nil)
+				if err != nil {
+					return nil, fmt.Errorf("begin DuckDB cache snapshot: %w", err)
+				}
+				return &cacheSourceSnapshot{duckDB: duckDB, duckTx: duckTx}, nil
 			}
 		}
 	}
 
-	// CSV fallback: export SQLite tables to CSV, create DuckDB views.
-	// Prefer the database's parent directory for temp files (avoids
-	// cross-device moves), but fall back through system temp and
-	// ~/.msgvault/tmp/ for read-only or restricted environments.
+	// Prefer the database's parent directory for temporary CSV files, then
+	// fall back through the configured temporary locations.
 	tmpDir, err := config.MkTempDir(".cache-tmp-*", filepath.Dir(dbPath))
 	if err != nil {
 		return nil, err
@@ -1040,6 +1048,48 @@ func setupSQLiteSource(duckDB *sql.DB, dbPath string) (cleanup func(), err error
 	if err != nil {
 		_ = os.RemoveAll(tmpDir)
 		return nil, fmt.Errorf("open sqlite for CSV export: %w", err)
+	}
+	sqliteTx, err := sqliteDB.BeginTx(context.Background(), nil)
+	if err != nil {
+		_ = sqliteDB.Close()
+		_ = os.RemoveAll(tmpDir)
+		return nil, fmt.Errorf("begin SQLite cache snapshot: %w", err)
+	}
+	return &cacheSourceSnapshot{
+		duckDB: duckDB, sqliteDB: sqliteDB, sqliteTx: sqliteTx, tmpDir: tmpDir,
+	}, nil
+}
+
+// QueryRow executes source metadata SQL inside the same snapshot used by the
+// table exports. sqlite_query preserves native SQLite query planning and
+// indexes when sqlite_scanner is active.
+func (s *cacheSourceSnapshot) QueryRow(query string, args ...any) *sql.Row {
+	if s.sqliteTx != nil {
+		return s.sqliteTx.QueryRow(query, args...)
+	}
+	escapedQuery := strings.ReplaceAll(query, "'", "''")
+	duckQuery := fmt.Sprintf("SELECT * FROM sqlite_query('sqlite_db', '%s'", escapedQuery)
+	if len(args) > 0 {
+		placeholders := strings.TrimSuffix(strings.Repeat("?,", len(args)), ",")
+		duckQuery += ", params=row(" + placeholders + ")"
+	}
+	duckQuery += ")"
+	return s.duckTx.QueryRow(duckQuery, args...)
+}
+
+func (s *cacheSourceSnapshot) DuckDB() sqlRunner {
+	if s.duckTx != nil {
+		return s.duckTx
+	}
+	return s.duckDB
+}
+
+// Prepare materializes the CSV fallback after metadata has pinned the SQLite
+// read transaction. sqlite_scanner needs no preparation because DuckDB's
+// transaction reads the attached database directly.
+func (s *cacheSourceSnapshot) Prepare() error {
+	if s.sqliteTx == nil {
+		return nil
 	}
 
 	// Tables and the SELECT queries to export them.
@@ -1065,23 +1115,22 @@ func setupSQLiteSource(duckDB *sql.DB, dbPath string) (cleanup func(), err error
 	}
 
 	for _, t := range tables {
-		csvPath := filepath.Join(tmpDir, t.name+".csv")
-		if err := exportToCSV(sqliteDB, t.query, csvPath); err != nil {
-			_ = sqliteDB.Close()
-			_ = os.RemoveAll(tmpDir)
-			return nil, fmt.Errorf("export %s to CSV: %w", t.name, err)
+		csvPath := filepath.Join(s.tmpDir, t.name+".csv")
+		if err := exportToCSV(s.sqliteTx, t.query, csvPath); err != nil {
+			return fmt.Errorf("export %s to CSV: %w", t.name, err)
 		}
 	}
-	_ = sqliteDB.Close()
+	if err := s.closeSQLite(); err != nil {
+		return fmt.Errorf("close SQLite cache snapshot after CSV export: %w", err)
+	}
 
 	// Create sqlite_db schema with views pointing to CSV files.
 	// This lets the existing COPY queries reference sqlite_db.tablename unchanged.
-	if _, err := duckDB.Exec("CREATE SCHEMA sqlite_db"); err != nil {
-		_ = os.RemoveAll(tmpDir)
-		return nil, fmt.Errorf("create sqlite_db schema: %w", err)
+	if _, err := s.duckDB.Exec("CREATE SCHEMA sqlite_db"); err != nil {
+		return fmt.Errorf("create sqlite_db schema: %w", err)
 	}
 	for _, t := range tables {
-		csvPath := filepath.Join(tmpDir, t.name+".csv")
+		csvPath := filepath.Join(s.tmpDir, t.name+".csv")
 		// DuckDB handles both forward and backslash paths, but normalize to forward.
 		escaped := strings.ReplaceAll(csvPath, "\\", "/")
 		escaped = strings.ReplaceAll(escaped, "'", "''")
@@ -1093,13 +1142,45 @@ func setupSQLiteSource(duckDB *sql.DB, dbPath string) (cleanup func(), err error
 			`CREATE VIEW sqlite_db."%s" AS SELECT * FROM read_csv_auto('%s', %s)`,
 			t.name, escaped, csvOpts,
 		)
-		if _, err := duckDB.Exec(viewSQL); err != nil {
-			_ = os.RemoveAll(tmpDir)
-			return nil, fmt.Errorf("create view sqlite_db.%s: %w", t.name, err)
+		if _, err := s.duckDB.Exec(viewSQL); err != nil {
+			return fmt.Errorf("create view sqlite_db.%s: %w", t.name, err)
 		}
 	}
 
-	return func() { _ = os.RemoveAll(tmpDir) }, nil
+	return nil
+}
+
+func (s *cacheSourceSnapshot) closeSQLite() error {
+	var result error
+	if s.sqliteTx != nil {
+		if err := s.sqliteTx.Rollback(); err != nil && !errors.Is(err, sql.ErrTxDone) {
+			result = errors.Join(result, fmt.Errorf("rollback SQLite snapshot: %w", err))
+		}
+		s.sqliteTx = nil
+	}
+	if s.sqliteDB != nil {
+		if err := s.sqliteDB.Close(); err != nil {
+			result = errors.Join(result, fmt.Errorf("close SQLite snapshot database: %w", err))
+		}
+		s.sqliteDB = nil
+	}
+	return result
+}
+
+func (s *cacheSourceSnapshot) Close() error {
+	var result error
+	if s.duckTx != nil {
+		if err := s.duckTx.Rollback(); err != nil && !errors.Is(err, sql.ErrTxDone) {
+			result = errors.Join(result, fmt.Errorf("rollback DuckDB cache snapshot: %w", err))
+		}
+		s.duckTx = nil
+	}
+	result = errors.Join(result, s.closeSQLite())
+	if s.tmpDir != "" {
+		_ = os.RemoveAll(s.tmpDir)
+		s.tmpDir = ""
+	}
+	return result
 }
 
 // csvNullStr is written for NULL values in CSV exports so DuckDB can
@@ -1108,7 +1189,7 @@ const csvNullStr = `\N`
 
 // exportToCSV exports the results of a SQL query to a CSV file.
 // NULL values are written as \N (PostgreSQL convention).
-func exportToCSV(db *sql.DB, query string, dest string) error {
+func exportToCSV(db sqlRunner, query string, dest string) error {
 	rows, err := db.Query(query)
 	if err != nil {
 		return err

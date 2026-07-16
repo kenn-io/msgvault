@@ -211,10 +211,27 @@ func TestSynctechSMSDrivePartialFailureEnqueuesImportedMessages(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	home := t.TempDir()
+	savedCfg := cfg
+	t.Cleanup(func() { cfg = savedCfg })
 	cfg = config.NewDefaultConfig()
 	cfg.HomeDir = home
 	cfg.Data.DataDir = home
 	f := storetest.New(t)
+	var dbPath string
+	require.NoError(f.Store.DB().QueryRow(
+		`SELECT file FROM pragma_database_list WHERE name = 'main'`,
+	).Scan(&dbPath), "find test database path")
+	cfg.Data.DatabaseURL = dbPath
+	refreshErr := errors.New("cache refresh failed")
+	refreshCalls := 0
+	var refreshContextErr error
+	oldRunBuild := runBuildCacheSubprocess
+	runBuildCacheSubprocess = func(ctx context.Context, _ bool, _ bool) error {
+		refreshCalls++
+		refreshContextErr = ctx.Err()
+		return refreshErr
+	}
+	t.Cleanup(func() { runBuildCacheSubprocess = oldRunBuild })
 	src := synctechDriveTestSource()
 	client := fakeSynctechDriveClient{
 		files: []synctechsms.DriveFile{
@@ -242,10 +259,14 @@ func TestSynctechSMSDrivePartialFailureEnqueuesImportedMessages(t *testing.T) {
   <sms`,
 		},
 	}
-	err := runConfiguredSynctechSMSSourceWithStoreDriveClient(
-		context.Background(), f.Store, src, client)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	err := runConfiguredSynctechSMSSourceWithStoreDriveClient(ctx, f.Store, src, client)
 	require.Error(err, "runConfiguredSynctechSMSSourceWithStoreDriveClient")
 	assert.Contains(err.Error(), "import backup file", "partial parse error")
+	require.ErrorIs(err, refreshErr, "partial import must preserve the refresh failure")
+	assert.Equal(1, refreshCalls, "partial import must attempt one cache refresh")
+	require.NoError(refreshContextErr, "cache refresh must outlive cancellation of the import context")
 
 	source := getSynctechSource(t, f.Store, src.OwnerPhone)
 	assertSourceMessageCount(t, f.Store, source.ID, 2)
