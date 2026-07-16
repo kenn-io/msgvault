@@ -19,7 +19,8 @@ When vector search is enabled, the `search` command and HTTP
 `mode=hybrid` (BM25 + vector fused with Reciprocal Rank Fusion). The MCP
 equivalent is `semantic_search_messages`. A separate MCP tool,
 `find_similar_messages`, returns nearest-neighbor messages for a
-given seed. The vectors and archive stay local, but embedding work is
+given seed, and `search_in_message` can rank the embedded chunks within one
+selected message. The vectors and archive stay local, but embedding work is
 performed by the endpoint in your config. If that endpoint is hosted
 by a third party, message text and semantic query text are sent there;
 use a local or self-hosted endpoint when you need the workflow to stay
@@ -284,8 +285,9 @@ trigger).
 |---|---|
 | Manual `sync-full` / `sync` (Gmail, IMAP) | No. Run `msgvault embeddings build` afterward |
 | Manual `sync-calendar` / `sync-teams` | No. Run `msgvault embeddings build` afterward |
+| Manual `sync-beeper` / `sync-granola` / `sync-circleback` | No. Run `msgvault embeddings build` afterward |
 | Scheduled account syncs in `msgvault serve` (Gmail, IMAP, Teams) | Yes, when `[vector.embed.schedule].run_after_sync = true` |
-| Scheduled `[[gcal]]` calendar syncs in `msgvault serve` | No. Picked up by the embed worker's `[vector.embed.schedule].cron` schedule |
+| Scheduled calendar, Beeper, Granola, and Circleback syncs in `msgvault serve` | No immediate post-sync run. Picked up by the embed worker's `[vector.embed.schedule].cron` schedule |
 | `import-pst`, `import-emlx`, `import-mbox` | No. Re-run `--full-rebuild` after large imports |
 | Chat/text imports (iMessage, WhatsApp, Google Voice, Messenger, SyncTech SMS) | No. Run a full rebuild after importing if you want chats included |
 
@@ -400,6 +402,9 @@ filtering.
 - `search_message_bodies` performs body-only full-text search and returns
   bounded context around each keyword match. It requires a free-text term
   and does not depend on the vector index.
+- `search_in_message` defaults to literal keyword matches within one message;
+  with vector search enabled, `mode=vector` ranks that message's embedded
+  chunks and returns scored excerpts.
 - `find_similar_messages` takes a seed `message_id` and returns
   nearest neighbors (excluding the seed itself). Optional `account`,
   `after`, `before`, `has_attachment` filters.

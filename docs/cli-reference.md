@@ -492,6 +492,11 @@ msgvault import-emlx <identifier> <mail-dir>
 
 The mail directory should be an Apple Mail mailbox tree containing `.mbox` or `.imapmbox` directories, each with a `Messages/` subdirectory of `.emlx` files. You can also point directly at a single `.mbox` directory. Labels are derived from directory names.
 
+Apple Mail's `N.partial.emlx` files are also imported: their message body is
+complete even when uncached attachment parts are absent. If both `N.emlx` and
+`N.partial.emlx` exist, the complete `N.emlx` copy wins. The command summary
+reports the number of partial files imported.
+
 | Flag | Default | Description |
 |---|---|---|
 | `--source-type` | `apple-mail` | Source type recorded in database |
@@ -766,6 +771,54 @@ cataloged packs, so overwrite cannot currently make the same guarantee.
 Restoring into the live archive home of a running daemon is refused. See
 [Backup](/usage/backup/) for repository format, scheduling, verification, and
 privacy details.
+
+---
+
+## pack-attachments
+
+Move every eligible loose content-addressed attachment into sealed immutable
+pack files:
+
+```bash
+msgvault pack-attachments
+```
+
+The daemon serializes packing against sync and backup operations. Reads remain
+available from loose, packed, or mixed storage, and the command is safe to
+rerun as new loose content arrives. Bounded packing also runs after successful
+attachment-producing operations and during scheduled maintenance; this command
+processes the complete eligible backlog immediately.
+
+---
+
+## repack-attachments
+
+Reclaim dead bytes from sparse attachment packs:
+
+```bash
+msgvault repack-attachments
+```
+
+Repack always runs through the selected daemon so it can atomically replace
+live blob mappings, retire shared readers, and remove old pack files. It is
+safe to retry after interruption or a Windows file-sharing error.
+
+---
+
+## unpack-attachments
+
+Restore every cataloged packed attachment to a loose file and remove its pack:
+
+```bash
+msgvault daemon stop
+msgvault unpack-attachments
+```
+
+Each object is SHA-256 verified as it is written. This is the downgrade and
+recovery escape hatch because msgvault versions before packed attachment
+support cannot read the packs. The command is local-only and refuses to run
+while a daemon holds pack readers open. With `[remote]` configured, run it on
+the archive host or pass `--local` there to select that host's local archive.
 
 ---
 
@@ -1226,6 +1279,33 @@ msgvault mcp [flags]
 | `--http-allow-insecure` | `false` | Allow non-loopback HTTP binding. The MCP server has no built-in auth; put it behind a trusted network or authenticated reverse proxy. |
 
 See [MCP Server](/usage/chat/) for configuration and tool reference.
+
+---
+
+## skills
+
+Install or remove the bundled msgvault agent skills:
+
+```bash
+msgvault skills install
+msgvault skills uninstall
+```
+
+Install detects Claude Code and Codex from `~/.claude` and `~/.codex`, then
+writes the `msgvault-search`, `msgvault-attachments`, and
+`msgvault-analytics` skills to their user-level skill directories. Existing
+generated copies are updated in place; files without msgvault's generation
+marker are preserved unless `--force` is supplied.
+
+| Install flag | Description |
+|---|---|
+| `--agent claude` / `--agent codex` | Restrict installation to one or more detected agents; repeat or comma-separate values |
+| `--dir <path>` | Install into an explicit skill directory instead of detected agents |
+| `--force` | Overwrite skill files that no longer carry the msgvault generation marker |
+
+`skills uninstall` accepts `--agent` and `--dir` with the same target
+semantics, and removes only generated copies that still carry the marker. See
+[Agent Skills](/guides/agent-skills/) for the workflow and safety model.
 
 ---
 

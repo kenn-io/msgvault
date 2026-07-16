@@ -49,8 +49,8 @@ msgvault sync-circleback work --full
 
 ### Prerequisites
 
-- A [Granola](https://granola.ai) account on a **Business** (or Enterprise)
-  plan — the public API is not available on individual plans.
+- A [Granola](https://granola.ai) account on a **Business** plan — the public
+  API is not available on individual plans.
 - An API key, created in the Granola desktop app under **Settings**. Keys look
   like `grn_…`.
 
@@ -226,9 +226,8 @@ them with `--probe`, then run `--full` after decoder support is updated.
 In addition to the shared fields above: action items (title, assignee,
 status), insights, and tags land in the message metadata and body; the
 meeting recording URL and `recording_url_fetched_at` remain in the archived
-provider metadata. Circleback recording URLs expire after about 24 hours, so
-msgvault does not expose them as durable attachments. Downloading and archiving
-recording media is not yet supported.
+provider metadata. msgvault does not expose recording URLs as durable
+attachments, and downloading or archiving recording media is not supported.
 
 ## Searching
 

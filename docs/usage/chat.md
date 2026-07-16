@@ -1,13 +1,13 @@
 ---
 title: MCP Server
-description: Expose your email archive to AI assistants via MCP.
+description: Expose your email, chat, calendar, and meeting archive to AI assistants via MCP.
 ---
 
 The MCP server operates on your msgvault archive through the selected daemon, not your live Gmail account. Without `[remote].url`, `msgvault mcp` starts or reuses the local background daemon; with `[remote].url`, it uses that remote server. The AI cannot send emails, modify labels, or access your Google credentials. Standard read and search operations go through the daemon. If [vector search](/usage/vector-search/) is enabled, semantic and hybrid searches also call the embedding endpoint configured in `[vector.embeddings]`; use a local or self-hosted endpoint if message text must stay on your machine or network. The `stage_deletion` tool asks the selected daemon to save a deletion manifest, and `export_attachment` saves an attachment to a requested path on the MCP server's filesystem. Neither modifies the database, and actual deletion still requires you to run `msgvault delete-staged` from the CLI. You control when data enters the archive (via sync and import commands) and when anything is deleted (via the explicit [deletion workflow](/usage/deletion/)). Compared to giving an AI assistant direct OAuth access to your mailbox, this is a fundamentally smaller attack surface.
 
 ## Setup
 
-The `mcp` command starts a [Model Context Protocol](https://modelcontextprotocol.io/) (MCP) server that exposes your email archive as a set of tools. This lets AI assistants like Claude Desktop search, read, and analyze your messages directly.
+The `mcp` command starts a [Model Context Protocol](https://modelcontextprotocol.io/) (MCP) server that exposes your archive as a set of tools. This lets AI assistants like Claude Desktop search, read, and analyze archived email, chats, calendar events, and meeting notes directly.
 
 ### Claude Desktop Configuration
 
@@ -51,6 +51,7 @@ The MCP server exposes the following tools to connected AI clients:
 | `search_metadata` | Search message metadata with a subset of Gmail query syntax (not full Gmail compatibility). Matches subject, snippet, and sender/recipient metadata, not message bodies. | `query` (string, required), `limit` (int), `offset` (int), `account` (string) |
 | `search_message_bodies` | Keyword full-text search inside message bodies. Returns `matches` excerpts (up to 5 per message), ordered newest-first. Backend excerpts may omit `char_offset` and `line`; use `search_in_message` when exact locations are needed. | `query` (string, required), `limit` (int), `offset` (int), `account` (string) |
 | `semantic_search_messages` | Semantic search over preprocessed message subjects and bodies when [vector search](/usage/vector-search/) is configured. Returns scored chunk excerpts; `min_score` filters excerpts, not ranked messages. | `query` (string, required), `mode` (string: `vector`/`hybrid`, default `hybrid`), `explain` (bool), `min_score` (number), `limit` (int), `offset` (int), `account` (string) |
+| `search_in_message` | Find matches within one message body. Keyword mode returns literal occurrences with raw-body offsets and line numbers; vector mode semantically ranks that message's embedded chunks when vector search is configured. | `id` (int, required), `query` (string, required), `mode` (string: `keyword`/`vector`, default `keyword`), `min_score` (number, vector only), `limit` (int), `offset` (int) |
 | `find_similar_messages` | Nearest-neighbor search from a seed message's embedding. Requires vector search to be configured and an active index generation. | `message_id` (int, required), `limit` (int), `account` (string), `message_type` (string), `after` (string), `before` (string), `has_attachment` (bool) |
 | `search_by_domains` | Find messages where any participant (`from`, `to`, or `cc`) belongs to one of several domains, regardless of direction. | `domains` (comma-separated string, required), `limit` (int), `offset` (int), `after` (string), `before` (string) |
 | `get_message` | Get message details with windowed body paging | `id` (int, required), `offset` (int), `center_at` (int), `max_chars` (int), `body_format` (string: `auto`/`text`/`html`), `full_body` (bool) |
@@ -98,6 +99,20 @@ Supported operators: `from:`, `to:`, `cc:`, `bcc:`, `subject:`, `label:` (or `l:
 Not supported: negation (`-has:attachment`), `OR`, or parentheses grouping.
 
 Free text in `search_metadata` matches subject, snippet, and sender/recipient metadata only. Use `search_message_bodies` for keyword body search or `semantic_search_messages` for vector/hybrid search over preprocessed subject and body content; both require at least one free-text term. Keyword matches literal words; semantic returns ranked messages with scored chunk excerpts. Keyword backend excerpts omit `char_offset` and `line` when the search backend does not provide efficient locations; semantic excerpts also commonly omit them because preprocessing rewrites message text. Use distinctive snippet terms with keyword `search_in_message` when raw-body navigation is needed.
+
+### `search_in_message`
+
+Pass a message `id` from any list or search result plus a `query`. The default
+keyword mode performs case-insensitive literal matching in `body_text` and
+returns an exact `total`, paginated `data`, and a `char_offset`, `line`, and
+centered `snippet` for every match. Feed `char_offset` to `get_message` as
+`center_at` to read a larger body window around that occurrence.
+
+When vector search is configured, `mode=vector` embeds the query and scores
+only the selected message's stored chunks. Vector matches include `snippet`
+and `score`; `char_offset` and `line` are present only when preprocessing still
+allows a reliable mapping to the raw body. `min_score` filters vector chunks.
+The tool defaults to `limit = 10` in either mode.
 
 ### `aggregate` response
 
@@ -170,20 +185,16 @@ msgvault mcp --http 8080
 
 Deprecated in 0.17.0: MCP analytics behavior moved from per-command flags to daemon configuration. Use `[analytics].engine` and `[analytics].auto_build_cache` in `config.toml` so local and remote daemon behavior stays consistent.
 
-## Claude Code Skill
+## Agent Skills
 
-msgvault ships a Claude Code skill for running SQL queries against your archive. The skill uses `msgvault query` with the views documented in [SQL Queries](/usage/querying/), so you can ask Claude Code natural-language questions and it will translate them into SQL.
+For terminal coding agents, msgvault also bundles read-only skills covering
+search, attachment retrieval, and analytics. Install them into detected Claude
+Code and Codex skill directories with:
 
-To enable the skill, add msgvault's skill directory to your Claude Code configuration:
-
-```json
-{
-  "permissions": {
-    "allow": [
-      "Skill(msgvault:*)"
-    ]
-  }
-}
+```bash
+msgvault skills install
 ```
 
-Once configured, Claude Code can query your archive directly during a conversation, for example: "How many emails did I get from linkedin.com last year?" or "Show my top 20 senders by message count."
+The skills teach agents the CLI; the MCP server exposes structured tool calls.
+They can be used independently or together. See [Agent Skills](/guides/agent-skills/)
+for installation targets, update behavior, and uninstall instructions.

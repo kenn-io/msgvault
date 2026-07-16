@@ -10,7 +10,7 @@ description: Database schema, Parquet analytics cache, content-addressed attachm
 | SQLite | Default system of record | `~/.msgvault/msgvault.db` |
 | PostgreSQL | Optional system of record | `[data].database_url` |
 | Parquet | Analytics cache | `~/.msgvault/analytics/` |
-| Attachments | Content-addressed files | `~/.msgvault/attachments/` |
+| Attachments | Content-addressed loose files and sealed packs | `~/.msgvault/attachments/` |
 | Tokens | OAuth credentials | `~/.msgvault/tokens/` |
 
 ## Archive Database
@@ -183,20 +183,36 @@ Messages are partitioned by year for efficient time-range queries. The entire an
 
 ## Content-Addressed Attachments
 
-Every attachment from every message (PDFs, photos, documents, spreadsheets, archives) is extracted and stored as a plain file on your local filesystem. No more digging through Gmail's web UI or hitting API rate limits to retrieve your own files. Once synced, they are yours to browse, back up, or process however you like.
+Every attachment from every message is identified by its SHA-256 content hash,
+so identical bytes referenced by multiple messages are stored once. New
+content is written as a loose file first; background maintenance and
+`pack-attachments` move eligible loose objects into sealed immutable packs to
+reduce file-count overhead. The archive can remain in a mixed state, and all
+normal readers resolve loose and packed content transparently.
 
-Attachments are deduplicated by SHA-256 hash:
+The attachment root can therefore contain both layouts:
 
 ```
 attachments/
 ├── ab/
-│   └── abcd1234567890...   # full SHA-256 hash as filename
-├── cd/
-│   └── cdef9876543210...
+│   └── abcd1234567890...            # loose object: full SHA-256 name
+├── packs/
+│   └── 01/
+│       └── 01k...mvpack             # sealed immutable pack
 └── ...
 ```
 
-The first two characters of the hash form the subdirectory (sharding). Multiple messages referencing the same attachment share one file.
+Loose objects are sharded by the first two hash characters. Packed-object
+locations and immutable pack totals are recorded in `attachment_pack_index`
+and `attachment_packs`; loose objects have no pack-index row.
+
+Use `pack-attachments` to migrate the eligible loose backlog immediately,
+`repack-attachments` to reclaim dead space after content is removed, and
+`unpack-attachments` to restore cataloged packed objects to loose files before
+downgrading. The last command is local-only and requires the daemon to be
+stopped because it removes production pack files. See the [CLI
+reference](/cli-reference/#pack-attachments) and [Backup](/usage/backup/) guide
+for maintenance and restore behavior.
 
 ## Token Storage
 

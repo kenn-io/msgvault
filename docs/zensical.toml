@@ -1,7 +1,7 @@
 [project]
 site_name = "msgvault"
 site_url = "https://msgvault.io"
-site_description = "Offline email and message archive with full-text search, interactive TUI, and multi-account support. Import from Gmail, IMAP, PST, MBOX, Apple Mail, WhatsApp, iMessage, Google Voice, Facebook Messenger, and SMS Backup & Restore."
+site_description = "Offline email, chat, and meeting archive with full-text search and an interactive TUI. Sync Gmail, IMAP, Teams, Beeper, Granola, and Circleback; import PST, MBOX, Apple Mail, and common chat exports."
 site_author = "Kenn Software LLC"
 copyright = 'Copyright &copy; 2026 <a href="https://kenn.io">Kenn Software LLC</a>. MIT License.'
 docs_dir = "docs"

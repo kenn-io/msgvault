@@ -113,11 +113,12 @@ msgvault search "message_type:teams incident review"
 msgvault search "dinner" --message-type sms --message-type mms
 ```
 
-Valid values are `email`, `calendar_event`, `sms`, `mms`, `whatsapp`,
-`imessage`, `teams`, `fbmessenger`, `synctech_sms_call`, `google_voice_text`,
-`google_voice_call`, and `google_voice_voicemail`. `message_type:email`
-also includes legacy rows whose type is empty because older msgvault versions
-created them before the column existed.
+Valid values are `email`, `calendar_event`, `meeting_transcript`, `beeper`,
+`sms`, `mms`, `whatsapp`, `imessage`, `teams`, `fbmessenger`,
+`synctech_sms_call`, `google_voice_text`, `google_voice_call`, and
+`google_voice_voicemail`. `message_type:email` also includes legacy rows whose
+type is empty because older msgvault versions created them before the column
+existed.
 
 The same message-type scoping is available in HTTP search via the
 `message_type` query parameter. In MCP, include a `message_type:` operator in

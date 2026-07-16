@@ -1,6 +1,6 @@
 # msgvault
 
-[![Go 1.25+](https://img.shields.io/badge/Go-1.25+-00ADD8?logo=go)](https://go.dev)
+[![Go 1.26+](https://img.shields.io/badge/Go-1.26+-00ADD8?logo=go)](https://go.dev)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Docs](https://img.shields.io/badge/Docs-msgvault.io-blue)](https://msgvault.io)
 [![Discord](https://img.shields.io/badge/Discord-Join-5865F2?logo=discord&logoColor=white)](https://discord.gg/fDnmxB8Wkq)
@@ -15,15 +15,18 @@ Archive a lifetime of email. Analytics and search in milliseconds, entirely offl
 
 Your messages are yours. Decades of correspondence, attachments, and history shouldn't be locked behind a web interface or an API. By default, msgvault downloads a complete local copy and then everything runs offline. Search, analytics, and the MCP server all work against your msgvault archive with no mailbox network access required. If you configure a remote deployment, the archive lives on your own server rather than a hosted msgvault service.
 
-Currently supports Gmail, Google Calendar, Microsoft Teams, and IMAP sync, plus
-offline imports from MBOX exports, Apple Mail (.emlx) directories, PST archives,
-and common chat/text export formats.
+Currently supports Gmail, Google Calendar, Microsoft Teams, Granola,
+Circleback, Beeper Desktop, and IMAP sync, plus offline imports from MBOX
+exports, Apple Mail (`.emlx`) directories, PST archives, and common chat/text
+export formats.
 
 ## Features
 
 - **Full Gmail backup**: raw MIME, attachments, labels, and metadata
 - **Google Calendar sync**: archive events, organizers, and attendees; searchable alongside email
 - **Microsoft Teams sync**: archive delegated Graph chats, channels, replies, and inline media with `message_type = teams`
+- **Meeting notes**: sync Granola and Circleback notes and transcripts, then browse them in the TUI
+- **Beeper Desktop sync**: archive chats and media from every network bridged through Beeper's local API
 - **IMAP sync**: archive mail from any standard IMAP server
 - **Incremental backup snapshots**: verifiable `msgvault backup` repositories for the SQLite archive and attachments
 - **MBOX / Apple Mail / PST import**: import email from local export formats
@@ -35,6 +38,8 @@ and common chat/text export formats.
 - **Multi-account**: archive several Gmail and IMAP accounts in a single database
 - **Resumable**: interrupted syncs resume from the last checkpoint
 - **Content-addressed attachments**: deduplicated by SHA-256
+- **Packed attachment storage**: sealed immutable packs reduce filesystem overhead, with pack, repack, and unpack maintenance commands
+- **Agent skills**: install bundled search, attachment, and analytics workflows for Claude Code and Codex
 
 ## Installation
 
@@ -55,7 +60,7 @@ powershell -ExecutionPolicy ByPass -c "irm https://msgvault.io/install.ps1 | iex
 
 The installer detects your OS and architecture, downloads the latest release from [GitHub Releases](https://github.com/kenn-io/msgvault/releases), verifies the SHA-256 checksum, and installs the binary. You can review the script ([bash](https://msgvault.io/install.sh), [PowerShell](https://msgvault.io/install.ps1)) before running, or download a release binary directly from GitHub.
 
-To build from source instead (requires **Go 1.25+** and a C/C++ compiler for CGO and to statically link DuckDB):
+To build from source instead (requires **Go 1.26+** and a C/C++ compiler for CGO and to statically link DuckDB):
 
 ```bash
 git clone https://github.com/kenn-io/msgvault.git
@@ -96,6 +101,9 @@ msgvault tui
 | `sync-calendar NAME\|EMAIL` | Sync Google Calendar events (full first run, then incremental) |
 | `add-teams EMAIL` | Authorize delegated Microsoft Graph access for Teams |
 | `sync-teams EMAIL` | Sync Microsoft Teams chats and channels |
+| `add-granola` / `sync-granola` | Register and sync Granola meeting notes and transcripts |
+| `add-circleback` / `sync-circleback` | Authorize and sync Circleback meetings, notes, and transcripts |
+| `add-beeper` / `sync-beeper` | Register and sync Beeper Desktop chats and media |
 | `backup` | Initialize, create, list, verify, and restore backup snapshots |
 | `pack-attachments` | Migrate all eligible loose attachment files into immutable packs |
 | `repack-attachments` | Reclaim dead space from sparse attachment packs |
@@ -104,6 +112,7 @@ msgvault tui
 | `search QUERY` | Search messages (`--account` and `--message-type` to filter, `--json` for machine output) |
 | `show-message ID` | View full message details (`--json` for machine output) |
 | `mcp` | Start the MCP server for AI assistant integration |
+| `skills install` | Install bundled agent skills for search, attachments, and analytics |
 | `serve` | Run the API/scheduler or manage the background daemon (`start`, `status`, `stop`, `restart`) |
 | `stats` | Show archive statistics |
 | `list-accounts` | List synced email accounts |
