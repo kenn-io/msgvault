@@ -306,6 +306,39 @@ func TestBuildCacheFailedIncrementalStaysServableAndRebuildsCleanly(t *testing.T
 		"retry must export each message exactly once")
 }
 
+func TestBuildCacheDefaultRetryRepairsFailedDeletionRebuild(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	tmpDir := setupTestSQLite(t)
+	dbPath := filepath.Join(tmpDir, "test.db")
+	analyticsDir := filepath.Join(tmpDir, "analytics")
+
+	_, err := buildCache(dbPath, analyticsDir, false)
+	require.NoError(err, "initial build")
+	committedState, err := query.ReadCacheSyncState(analyticsDir)
+	require.NoError(err, "read committed state")
+
+	db, err := sql.Open("sqlite3", dbPath)
+	require.NoError(err, "open sqlite")
+	deletedAt := committedState.LastSyncAt.Add(time.Second).UTC().Format("2006-01-02 15:04:05")
+	_, err = db.Exec(`UPDATE messages SET deleted_from_source_at = ? WHERE id = 5`, deletedAt)
+	require.NoError(err, "mark cached message deleted")
+	require.NoError(db.Close())
+
+	exportFailure := errors.New("simulated deletion rebuild failure")
+	buildCacheBeforeMessagesExportHook = func() error { return exportFailure }
+	t.Cleanup(func() { buildCacheBeforeMessagesExportHook = nil })
+	_, err = buildCacheAuto(dbPath, analyticsDir)
+	require.ErrorIs(err, exportFailure, "deletion rebuild must surface the export failure")
+	buildCacheBeforeMessagesExportHook = nil
+
+	result, err := buildCache(dbPath, analyticsDir, false)
+	require.NoError(err, "default retry build")
+	assert.False(result.Skipped, "default retry must re-evaluate deletion staleness")
+	assert.Equal(int64(5), result.ExportedCount,
+		"default retry must replace the full cache despite the unchanged message ID boundary")
+}
+
 func TestBuildCacheStagingCleanupRemovesAbandonedBuild(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

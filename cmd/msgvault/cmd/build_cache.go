@@ -317,10 +317,11 @@ type buildResult struct {
 	Skipped       bool
 }
 
-// buildCache builds the cache with the caller's explicit fullRebuild demand
-// (e.g. `build-cache --full-rebuild`), which is honored unconditionally.
+// buildCache honors an explicit full rebuild unconditionally. Default builds
+// recheck staleness under the inter-process lock so retries cannot skip cache
+// repairs for deletions or other mutations that leave the ID boundary intact.
 func buildCache(dbPath, analyticsDir string, fullRebuild bool) (*buildResult, error) {
-	return buildCacheImpl(dbPath, analyticsDir, fullRebuild, false)
+	return buildCacheImpl(dbPath, analyticsDir, fullRebuild, !fullRebuild)
 }
 
 // buildCacheAuto builds the cache for automatic (staleness-derived) callers.
