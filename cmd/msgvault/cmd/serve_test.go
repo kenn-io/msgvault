@@ -205,6 +205,21 @@ func TestRunServeAutoSelectsAPIPortWhenUnconfigured(t *testing.T) {
 	}
 }
 
+func TestListenServeAPIHonorsAvailableExplicitPort(t *testing.T) {
+	probe, err := net.Listen("tcp", net.JoinHostPort(defaultDaemonBindAddr, "0"))
+	require.NoError(t, err)
+	explicitPort, err := listenerPort(probe)
+	require.NoError(t, err)
+	require.NoError(t, probe.Close())
+
+	ln, err := listenServeAPI(defaultDaemonBindAddr, explicitPort)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = ln.Close() })
+	actualPort, err := listenerPort(ln)
+	require.NoError(t, err)
+	assert.Equal(t, explicitPort, actualPort)
+}
+
 func TestRunServeFailsBeforeArchiveWorkWhenAPIPortInUse(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
