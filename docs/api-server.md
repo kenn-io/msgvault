@@ -262,15 +262,60 @@ Full message details including body and attachment metadata.
   "body_html": "<html><body><p>Full HTML body</p></body></html>",
   "attachments": [
     {
+      "id": 987,
       "filename": "q4-plan.pdf",
       "mime_type": "application/pdf",
-      "size_bytes": 204800
+      "size_bytes": 204800,
+      "content_hash": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
     }
   ]
 }
 ```
 
 The `cc`, `bcc`, and `body_html` fields are included only when present. `body` is the plain-text body when one exists; for HTML-only messages, it falls back to the HTML body so callers still receive message content.
+
+---
+
+### Attachment metadata {#get-apiv1attachmentsid}
+
+**Endpoint:** `GET /api/v1/attachments/{id}`
+
+Returns metadata for the numeric attachment ID exposed by message details.
+The response includes the SHA-256 `content_hash` used by the content endpoint:
+
+```json
+{
+  "id": 987,
+  "filename": "q4-plan.pdf",
+  "mime_type": "application/pdf",
+  "size_bytes": 204800,
+  "content_hash": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+}
+```
+
+---
+
+### Attachment content by hash {#get-apiv1attachmentshashcontent}
+
+**Endpoint:** `GET /api/v1/attachments/{hash}/content`
+
+Streams the raw bytes of an archived attachment from either loose or packed
+storage. `{hash}` must be the 64-character SHA-256 `content_hash` returned by
+message details or the attachment metadata endpoint.
+
+```bash
+curl -H "X-API-Key: $MSGVAULT_API_KEY" \
+  --output attachment.bin \
+  "http://localhost:8080/api/v1/attachments/$HASH/content"
+```
+
+Successful responses set the archived MIME type as `Content-Type` (falling
+back to `application/octet-stream`), the archived filename in
+`Content-Disposition`, `Content-Length`, and `X-Content-Type-Options: nosniff`.
+An invalid hash returns `400`; a hash with no attachment row, or content that
+is no longer available, returns `404`. The generated Go client's
+`GetAttachmentContent` wrapper verifies the returned bytes against the
+requested hash before returning them.
 
 ---
 
@@ -324,10 +369,11 @@ to `mode=fts` instead.
 | `explain` | 0/1 | `0` | When `1` and `mode=vector|hybrid`, include per-signal scores |
 
 `message_type` uses the same values as local search: `email`,
-`calendar_event`, `teams`, `sms`, `mms`, `whatsapp`, `imessage`,
-`fbmessenger`, `synctech_sms_call`, `google_voice_text`,
-`google_voice_call`, and `google_voice_voicemail`. The query string can also
-carry `message_type:` / `message_type=` operators inside `q`.
+`calendar_event`, `meeting_transcript`, `beeper`, `teams`, `sms`, `mms`,
+`whatsapp`, `imessage`, `fbmessenger`, `synctech_sms_call`,
+`google_voice_text`, `google_voice_call`, and `google_voice_voicemail`. The
+query string can also carry `message_type:` / `message_type=` operators inside
+`q`.
 
 **Response (mode=fts, default):**
 

@@ -18,6 +18,10 @@ powershell -ExecutionPolicy ByPass -c "irm https://msgvault.io/install.ps1 | iex
 
 The installer detects your OS and architecture, downloads the latest release from [GitHub Releases](https://github.com/kenn-io/msgvault/releases), verifies the SHA-256 checksum, and installs the binary.
 
+Windows releases include native AMD64 and ARM64 packages. On Windows ARM64,
+the PowerShell installer selects the native package when the release provides
+one and falls back to the AMD64 package under emulation for older releases.
+
 !!! tip "Running on a headless server?"
     msgvault works on headless machines (SSH, VPS, NAS, Docker), but OAuth requires a browser for the initial authorization. You'll authorize on your local machine and copy the token file to the server. See [Headless Server Setup](/guides/oauth-setup/#headless-server-setup) for the copy-token workflow, or jump to the [Remote Deployment](/guides/remote-deployment/) guide for a full NAS/server setup with Docker Compose.
 

@@ -7,47 +7,92 @@ All notable changes to msgvault, grouped by release.
 
 ## Unreleased
 
+No notable changes yet.
+
+---
+
+## 0.18.0
+<small>2026-07-14</small>
+
 **New features**
 
-- `msgvault skills install` installs agent skills (per the open
-  agent-skills standard) for Claude Code and Codex, teaching coding
-  agents the search, attachment, and analytics CLI workflows.
-  `msgvault skills uninstall` removes them.
-- MCP message search now separates metadata and body search:
-  `search_metadata` searches metadata, `search_message_bodies` performs
-  body-only full-text search with bounded context around each match, and
-  `semantic_search_messages` owns explicit `vector` and `hybrid` modes.
-  The former combined `search_messages` tool remains as a deprecated
-  compatibility wrapper during migration.
+- Granola and Circleback meeting notes, summaries, action items, and
+  transcripts can be synced into the archive and browsed in a new read-only
+  Meetings mode in the TUI. Meeting records are searchable with
+  `message_type:meeting_transcript`, and scheduled sync is supported through
+  `[[granola]]` and `[[circleback]]` configuration.
+- Beeper Desktop chat archiving registers each bridged network as a separate
+  source, incrementally syncs messages, reactions, edits, and deletions, and
+  downloads media into the attachment store. Interrupted history backfills
+  resume, and `backfill-beeper-media` retries pending downloads.
+- `msgvault skills install` installs bundled read-only agent skills for search,
+  attachment, and analytics workflows into Claude Code and Codex;
+  `msgvault skills uninstall` removes generated copies.
+- MCP search now has explicit `search_metadata`, `search_message_bodies`, and
+  `semantic_search_messages` tools. `search_in_message` finds literal matches
+  with raw-body offsets inside one message. The former combined
+  `search_messages` tool remains as a deprecated compatibility wrapper.
 - MCP `list_messages` accepts a `conversation_id` filter for listing one
   conversation or thread.
 - The daemon HTTP API schema is now 1.3.0 and supports `scope=body` on deep
   search so daemon-backed clients can require an exact body-only response;
   bounded excerpts are returned in an ID-keyed `body_contexts` companion.
+- `GET /api/v1/attachments/{hash}/content` streams archived attachment bytes
+  by SHA-256 content hash; message details expose the hash needed to call it.
+- Windows users can build natively with `scripts/build.ps1` on AMD64 or ARM64.
+  Releases now include a native Windows ARM64 package with DuckDB analytics and
+  Parquet cache support.
 
 **Improvements**
 
-- Windows releases include a native ARM64 package with full DuckDB analytics
-  and Parquet cache support.
-- Backup restore now installs compatible attachment packs directly instead of
-  recreating every blob as an individual file, substantially reducing file
-  creation overhead on Windows and large archives. Selected content remains
-  SHA-256 verified, incompatible or oversized entries fall back safely to
-  loose files, and `--loose-attachments` preserves the explicit downgrade and
-  recovery path.
-- Metadata and body search scopes are enforced consistently across SQLite,
-  PostgreSQL, DuckDB, and daemon-backed MCP sessions. Metadata result counts
-  and aggregate statistics use the same predicate, and body-search snippets
-  remain bounded, UTF-8-safe, and are selected by each backend's native FTS
-  tokenizer.
+- Attachment storage now supports sealed, immutable content-addressed packs
+  while remaining compatible with loose files. `pack-attachments` migrates
+  eligible loose content, `repack-attachments` reclaims dead pack space, and
+  `unpack-attachments` restores loose files for downgrade or recovery.
+- Backup snapshots now use Kit's pack-based backup engine. Restore installs
+  compatible attachment packs directly by default, still SHA-256 verifies
+  every selected attachment, and falls back to loose files for incompatible or
+  oversized content; `--loose-attachments` forces loose restoration.
+- Attachment exports, backup capture, HTTP downloads, and other consumers
+  stream packed or loose content instead of buffering whole attachments in
+  memory.
+- SQLite's full `PRAGMA integrity_check` is now opt-in during restore through
+  `--integrity-check`; page hashes, content hashes, and manifest-statistics
+  verification remain enabled for every restore.
+- Apple Mail import recognizes `.partial.emlx` files whose bodies are present
+  but attachments have not been cached. A complete `N.emlx` copy takes
+  precedence over `N.partial.emlx` when both exist.
 - PostgreSQL full-text indexes use a versioned field layout so stale indexes
   are detected and must be backfilled before body-only search.
 
 **Bug fixes**
 
+- IMAP folder `UIDVALIDITY` / `UIDNEXT` high water marks are now supported on
+  servers that advertise an `\All` mailbox and are persisted as each folder is
+  safely ingested. Interrupted, limited, or partially failed folders do not
+  advance, so later fast syncs can skip unchanged folders without missing mail.
 - Local daemon discovery works when the msgvault home or configured data
   directory is a symlink, restoring the path layouts supported before 0.17.0
   while retaining ownership and permission checks on the resolved directory.
+- Metadata-only and body-only search scopes are enforced consistently across
+  SQLite, PostgreSQL, DuckDB, and daemon-backed MCP sessions. Counts and
+  aggregate statistics use the same predicates, and body excerpts remain
+  bounded and UTF-8-safe.
+
+**Acknowledgements**
+
+- Thanks to [Wes McKinney](https://github.com/wesm) for the Kit backup and
+  packed-attachment storage work, agent skills, Apple Mail partial-message
+  import, native Windows builds and ARM64 releases, and symlink-safe daemon
+  discovery.
+- Thanks to [endolith](https://github.com/endolith) for the MCP search tools,
+  in-message search, and consistent metadata/body search scopes.
+- Thanks to [Rob Elkin](https://github.com/robelkin) for attachment retrieval
+  by content hash through the HTTP API and generated Go client.
+- Thanks to [Matthew Sweeney](https://github.com/sweenzor) for Beeper Desktop
+  archiving and Granola/Circleback meeting sync and TUI browsing.
+- Thanks to [Jesse Vincent](https://github.com/obra) for correct IMAP folder
+  high water marks and fast sync on servers with an `\All` mailbox.
 
 ---
 

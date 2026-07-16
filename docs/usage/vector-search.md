@@ -284,8 +284,9 @@ trigger).
 |---|---|
 | Manual `sync-full` / `sync` (Gmail, IMAP) | No. Run `msgvault embeddings build` afterward |
 | Manual `sync-calendar` / `sync-teams` | No. Run `msgvault embeddings build` afterward |
+| Manual `sync-beeper` / `sync-granola` / `sync-circleback` | No. Run `msgvault embeddings build` afterward |
 | Scheduled account syncs in `msgvault serve` (Gmail, IMAP, Teams) | Yes, when `[vector.embed.schedule].run_after_sync = true` |
-| Scheduled `[[gcal]]` calendar syncs in `msgvault serve` | No. Picked up by the embed worker's `[vector.embed.schedule].cron` schedule |
+| Scheduled calendar, Beeper, Granola, and Circleback syncs in `msgvault serve` | No immediate post-sync run. Picked up by the embed worker's `[vector.embed.schedule].cron` schedule |
 | `import-pst`, `import-emlx`, `import-mbox` | No. Re-run `--full-rebuild` after large imports |
 | Chat/text imports (iMessage, WhatsApp, Google Voice, Messenger, SyncTech SMS) | No. Run a full rebuild after importing if you want chats included |
 
@@ -400,6 +401,8 @@ filtering.
 - `search_message_bodies` performs body-only full-text search and returns
   bounded context around each keyword match. It requires a free-text term
   and does not depend on the vector index.
+- `search_in_message` performs literal keyword matching within one message; it
+  does not expose a vector mode through `msgvault mcp`.
 - `find_similar_messages` takes a seed `message_id` and returns
   nearest neighbors (excluding the seed itself). Optional `account`,
   `after`, `before`, `has_attachment` filters.
