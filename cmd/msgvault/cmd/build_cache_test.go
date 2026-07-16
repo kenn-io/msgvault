@@ -192,6 +192,15 @@ func setupTestSQLite(t *testing.T) string {
 	return tmpDir
 }
 
+func enableSQLiteWAL(t *testing.T, dbPath string) {
+	t.Helper()
+	db, err := sql.Open("sqlite3", dbPath)
+	require.NoError(t, err)
+	_, err = db.Exec("PRAGMA journal_mode=WAL")
+	require.NoError(t, err)
+	require.NoError(t, db.Close())
+}
+
 // TestRunBuildCacheLocalSkipsDeferredIdentityMigration pins that the
 // daemon-owned build-cache child never applies the deferred legacy identity
 // migration: it can run concurrently with an ingest command, and populating
@@ -387,11 +396,7 @@ func TestBuildCacheSnapshotDefersConcurrentDeletion(t *testing.T) {
 	_, err := buildCache(dbPath, analyticsDir, false)
 	require.NoError(err, "initial build")
 	insertSixthMessage(t, dbPath)
-	db, err := sql.Open("sqlite3", dbPath)
-	require.NoError(err)
-	_, err = db.Exec("PRAGMA journal_mode=WAL")
-	require.NoError(err)
-	require.NoError(db.Close())
+	enableSQLiteWAL(t, dbPath)
 
 	buildCacheAfterSnapshotHook = func() {
 		runBuildCacheSQLiteMutation(t, dbPath, cacheMutationDeleteMessage)
@@ -967,6 +972,7 @@ func TestBuildCache_SnapshotUpperBoundPreventsDuplicateIncrementalRows(t *testin
 	tmpDir := setupTestSQLite(t)
 	dbPath := filepath.Join(tmpDir, "test.db")
 	analyticsDir := filepath.Join(tmpDir, "analytics")
+	enableSQLiteWAL(t, dbPath)
 
 	buildCacheAfterSnapshotHook = func() {
 		db, err := sql.Open("sqlite3", dbPath)
@@ -1036,18 +1042,14 @@ func TestBuildCache_UsesOneSnapshotForRelatedTables(t *testing.T) {
 	dbPath := filepath.Join(tmpDir, "test.db")
 	analyticsDir := filepath.Join(tmpDir, "analytics")
 
-	db, err := sql.Open("sqlite3", dbPath)
-	require.NoError(err)
-	_, err = db.Exec("PRAGMA journal_mode=WAL")
-	require.NoError(err)
-	require.NoError(db.Close())
+	enableSQLiteWAL(t, dbPath)
 
 	buildCacheAfterSnapshotHook = func() {
 		runBuildCacheSQLiteMutation(t, dbPath, cacheMutationUpdateRelated)
 	}
 	t.Cleanup(func() { buildCacheAfterSnapshotHook = nil })
 
-	_, err = buildCache(dbPath, analyticsDir, false)
+	_, err := buildCache(dbPath, analyticsDir, false)
 	require.NoError(err)
 
 	duckDB, err := sql.Open("duckdb", "")

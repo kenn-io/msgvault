@@ -216,9 +216,9 @@ func TestSynctechSMSDrivePartialFailureEnqueuesImportedMessages(t *testing.T) {
 	cfg = config.NewDefaultConfig()
 	cfg.HomeDir = home
 	cfg.Data.DataDir = home
-	f := storetest.New(t)
+	st := testutil.NewSQLiteTestStore(t)
 	var dbPath string
-	require.NoError(f.Store.DB().QueryRow(
+	require.NoError(st.DB().QueryRow(
 		`SELECT file FROM pragma_database_list WHERE name = 'main'`,
 	).Scan(&dbPath), "find test database path")
 	cfg.Data.DatabaseURL = dbPath
@@ -261,27 +261,27 @@ func TestSynctechSMSDrivePartialFailureEnqueuesImportedMessages(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	err := runConfiguredSynctechSMSSourceWithStoreDriveClient(ctx, f.Store, src, client)
+	err := runConfiguredSynctechSMSSourceWithStoreDriveClient(ctx, st, src, client)
 	require.Error(err, "runConfiguredSynctechSMSSourceWithStoreDriveClient")
 	assert.Contains(err.Error(), "import backup file", "partial parse error")
 	require.ErrorIs(err, refreshErr, "partial import must preserve the refresh failure")
 	assert.Equal(1, refreshCalls, "partial import must attempt one cache refresh")
 	require.NoError(refreshContextErr, "cache refresh must outlive cancellation of the import context")
 
-	source := getSynctechSource(t, f.Store, src.OwnerPhone)
-	assertSourceMessageCount(t, f.Store, source.ID, 2)
-	assert.Equal(1, countSyncRuns(t, f.Store, source.ID), "sync run count")
-	run := getOnlySyncRun(t, f.Store, source.ID)
+	source := getSynctechSource(t, st, src.OwnerPhone)
+	assertSourceMessageCount(t, st, source.ID, 2)
+	assert.Equal(1, countSyncRuns(t, st, source.ID), "sync run count")
+	run := getOnlySyncRun(t, st, source.ID)
 	assert.Equal(store.SyncStatusFailed, run.Status, "sync status")
 
-	imported := getDriveSourceImportItem(t, f.Store, source.ID, "backup-1")
+	imported := getDriveSourceImportItem(t, st, source.ID, "backup-1")
 	assert.Equal("imported", imported.Status, "first source import status")
-	failed := getDriveSourceImportItem(t, f.Store, source.ID, "backup-2")
+	failed := getDriveSourceImportItem(t, st, source.ID, "backup-2")
 	assert.Equal("failed", failed.Status, "second source import status")
 
 	var unstamped int
-	require.NoError(f.Store.DB().QueryRow(
-		f.Store.Rebind(`SELECT COUNT(*) FROM messages WHERE source_id = ? AND embed_gen IS NULL`),
+	require.NoError(st.DB().QueryRow(
+		st.Rebind(`SELECT COUNT(*) FROM messages WHERE source_id = ? AND embed_gen IS NULL`),
 		source.ID,
 	).Scan(&unstamped), "count unstamped messages")
 	assert.Equal(2, unstamped, "imported messages remain discoverable by scan-and-fill")
