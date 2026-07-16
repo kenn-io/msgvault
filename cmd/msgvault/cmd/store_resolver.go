@@ -206,7 +206,7 @@ func ensureLocalDaemonRuntime(ctx context.Context, c *config.Config) (*DaemonRun
 	launchLock, ok := acquireBackgroundLaunchLock(c.Data.DataDir)
 	if ok {
 		// Acquiring the launch lock is not proof no daemon start is underway: a
-		// prior `serve start` releases the lock after its short readiness wait
+		// prior `daemon start` releases the lock after its short readiness wait
 		// while its background child may still be initializing (a live runtime
 		// record not yet answering the ping). Spawning now would race a
 		// duplicate daemon onto the port/ownership lock. Release and fall into
@@ -245,7 +245,7 @@ func ensureLocalDaemonRuntime(ctx context.Context, c *config.Config) (*DaemonRun
 	}
 	defer func() { _ = launchLock.Unlock() }()
 
-	prep, err := prepareBackgroundDaemonStart(c, "run `msgvault serve stop` or retry with --local")
+	prep, err := prepareBackgroundDaemonStart(c, "run `msgvault daemon stop` or retry with --local")
 	if err != nil {
 		return nil, err
 	}
@@ -593,7 +593,7 @@ func probeLocalDaemonAuth(ctx context.Context, rt *DaemonRuntime, c *config.Conf
 		return fmt.Errorf(
 			"local msgvault daemon at %s rejected the configured [server] api_key; "+
 				"the daemon may have been started before config.toml changed. "+
-				"Run `msgvault serve restart` or `msgvault serve stop` and retry",
+				"Run `msgvault daemon restart` or `msgvault daemon stop` and retry",
 			url,
 		)
 	default:
@@ -630,7 +630,7 @@ func daemonRuntimeAuthFingerprint(rt *DaemonRuntime) string {
 func localDaemonAPIKeyMismatchError(url string) error {
 	return fmt.Errorf(
 		"local msgvault daemon at %s was started with a different [server] api_key configuration. "+
-			"Run `msgvault serve restart` or `msgvault serve stop` and retry",
+			"Run `msgvault daemon restart` or `msgvault daemon stop` and retry",
 		url,
 	)
 }
@@ -669,7 +669,7 @@ func waitForUsableBackgroundRuntimeOrLaunchLock(
 			if !inProgress {
 				return nil, lock, nil
 			}
-			// A previous `serve start` released the launch lock after its
+			// A previous `daemon start` released the launch lock after its
 			// short readiness wait, but its background child is still
 			// initializing (a live runtime record not yet answering the
 			// daemon ping). Taking over now would spawn a duplicate daemon
@@ -693,7 +693,7 @@ func waitForUsableBackgroundRuntimeOrLaunchLock(
 // daemonStartInProgress reports whether a live msgvault process holds a
 // runtime record that is not yet answering the daemon ping — i.e. a daemon
 // child that is still initializing. A released launch lock is not proof the
-// previous starter's child died: `serve start` releases the lock after a
+// previous starter's child died: `daemon start` releases the lock after a
 // short readiness wait while its child may still be starting up. A record
 // that IS answering the ping does not block takeover here (a compatible one
 // is already returned by the loop-top probe; an incompatible or

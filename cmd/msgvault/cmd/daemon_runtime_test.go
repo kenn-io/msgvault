@@ -290,10 +290,10 @@ func TestShouldUpgradeDaemonRuntimeWithConfiguredPolicy(t *testing.T) {
 func TestIncompatibleDaemonMessageUsesCallerGuidance(t *testing.T) {
 	err := incompatibleDaemonError(
 		errors.New("daemon API version 1 is incompatible with client API version 2"),
-		"run `msgvault serve stop` or retry with --local",
+		"run `msgvault daemon stop` or retry with --local",
 	)
 
 	require.Error(t, err, "incompatible daemon error")
 	assert.Contains(t, err.Error(), "incompatible daemon is already running")
-	assert.Contains(t, err.Error(), "run `msgvault serve stop` or retry with --local")
+	assert.Contains(t, err.Error(), "run `msgvault daemon stop` or retry with --local")
 }

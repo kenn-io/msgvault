@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -23,17 +24,53 @@ import (
 	"go.kenn.io/msgvault/internal/config"
 )
 
-func TestServeCommandHasLifecycleSubcommands(t *testing.T) {
+func TestDaemonAndServeLifecycleCommandSurfaces(t *testing.T) {
 	assert := assert.New(t)
+	require := require.New(t)
 
-	names := map[string]bool{}
-	for _, sub := range serveCmd.Commands() {
-		names[sub.Name()] = true
+	daemonNames := map[string]bool{}
+	for _, sub := range daemonCmd.Commands() {
+		daemonNames[sub.Name()] = true
+		assert.False(sub.Hidden, "daemon %s must be visible", sub.Name())
 	}
-	assert.True(names["status"], "serve must expose status")
-	assert.True(names["start"], "serve must expose start")
-	assert.True(names["stop"], "serve must expose stop")
-	assert.True(names["restart"], "serve must expose restart")
+	for _, name := range []string{"start", "status", "stop", "restart"} {
+		assert.True(daemonNames[name], "daemon must expose %s", name)
+		compat, _, err := serveCmd.Find([]string{name})
+		require.NoError(err)
+		assert.Equal(name, compat.Name())
+		assert.True(compat.Hidden, "serve %s must be hidden", name)
+	}
+}
+
+func TestDaemonAndServeStatusHaveIdenticalBehavior(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	dataDir := t.TempDir()
+	oldCfg := cfg
+	cfg = lifecycleTestConfig(dataDir)
+	t.Cleanup(func() { cfg = oldCfg })
+
+	run := func(args ...string) (string, error) {
+		root := newTestRootCmd()
+		root.SilenceUsage = true
+		root.AddCommand(newDaemonCommand())
+		compatServe := &cobra.Command{Use: "serve"}
+		addServeLifecycleCommands(compatServe)
+		root.AddCommand(compatServe)
+		var stdout bytes.Buffer
+		root.SetOut(&stdout)
+		root.SetErr(io.Discard)
+		root.SetArgs(args)
+		err := root.ExecuteContext(context.Background())
+		return stdout.String(), err
+	}
+
+	daemonOut, daemonErr := run("daemon", "status")
+	serveOut, serveErr := run("serve", "status")
+	require.NoError(daemonErr)
+	require.NoError(serveErr)
+	assert.Equal(daemonOut, serveOut)
+	assert.Equal("No msgvault daemon is running.\n", daemonOut)
 }
 
 func TestServeStatusLines(t *testing.T) {
@@ -209,7 +246,9 @@ func TestServeStatusCommandUsesAuthenticatedHealthForOperationDetails(t *testing
 
 	cmd, stdout, stderr := lifecycleTestCommand()
 	cmd.SetContext(context.Background())
-	require.NoError(serveStatusCmd.RunE(cmd, nil), "serve status")
+	statusCmd, _, err := serveCmd.Find([]string{"status"})
+	require.NoError(err, "find serve status")
+	require.NoError(statusCmd.RunE(cmd, nil), "serve status")
 
 	out := stdout.String()
 	assert.Equal("secret-key", gotAPIKey, "authenticated health API key")
@@ -669,9 +708,20 @@ func TestRunServeStartRefusesNewerIncompatibleDaemon(t *testing.T) {
 	err = runServeStart(cmd, lifecycleTestConfig(dataDir))
 	require.Error(err, "newer incompatible daemon must be refused")
 	assert.Contains(err.Error(), "incompatible daemon is already running")
-	assert.Contains(err.Error(), "msgvault serve stop")
+	assert.Contains(err.Error(), "msgvault daemon stop")
 	assert.Empty(stdout.String())
 	assert.Empty(stderr.String())
+}
+
+func TestReportBackgroundLaunchInProgressUsesCanonicalCommand(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	cmd, stdout, _ := lifecycleTestCommand()
+	cmd.SetContext(ctx)
+
+	reportBackgroundLaunchInProgress(cmd, t.TempDir())
+
+	assert.Equal(t, "msgvault daemon start is already in progress.\n", stdout.String())
 }
 
 func TestRunServeRestartStartsWhenNoDaemonIsRunning(t *testing.T) {

@@ -109,4 +109,6 @@ func TestClaimServeOwnershipRejectsSecondPostgreSQLDaemon(t *testing.T) {
 	assert.Nil(second, "second owner")
 	require.Error(err, "second PostgreSQL daemon should be rejected")
 	assert.Contains(err.Error(), "daemon", "error names daemon ownership")
+	assert.Contains(err.Error(), "msgvault daemon stop", "error recommends canonical stop command")
+	assert.Contains(err.Error(), "msgvault daemon status", "error recommends canonical status command")
 }

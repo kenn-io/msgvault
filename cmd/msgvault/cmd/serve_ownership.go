@@ -107,8 +107,8 @@ type daemonOwnerLockHeldError struct {
 func (e daemonOwnerLockHeldError) Error() string {
 	return fmt.Sprintf(
 		"msgvault daemon is already running for this data directory "+
-			"(daemon lock %s is held); stop it with `msgvault serve stop` "+
-			"or use `msgvault serve status` to inspect it",
+			"(daemon lock %s is held); stop it with `msgvault daemon stop` "+
+			"or use `msgvault daemon status` to inspect it",
 		e.path,
 	)
 }
