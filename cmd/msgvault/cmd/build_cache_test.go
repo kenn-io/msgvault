@@ -975,21 +975,7 @@ func TestBuildCache_SnapshotUpperBoundPreventsDuplicateIncrementalRows(t *testin
 	enableSQLiteWAL(t, dbPath)
 
 	buildCacheAfterSnapshotHook = func() {
-		db, err := sql.Open("sqlite3", dbPath)
-		require.NoError(err)
-		defer func() { require.NoError(db.Close()) }()
-		_, err = db.Exec(`
-			INSERT INTO messages (id, source_id, source_message_id, conversation_id, subject, snippet, sent_at, size_estimate, has_attachments)
-			VALUES (6, 1, 'msg6', 105, 'Racing Message', 'Preview 6', '2024-03-15 10:00:00', 1200, 1);
-			INSERT INTO conversations (id, source_id, source_conversation_id, title)
-			VALUES (105, 1, 'thread105', 'Racing Thread');
-			INSERT INTO message_recipients (message_id, participant_id, recipient_type, display_name)
-			VALUES (6, 1, 'from', 'Alice Smith'), (6, 2, 'to', 'Bob Jones');
-			INSERT INTO message_labels (message_id, label_id) VALUES (6, 1);
-			INSERT INTO attachments (message_id, filename, mime_type, size)
-			VALUES (6, 'racing.txt', 'text/plain', 100);
-		`)
-		require.NoError(err)
+		runBuildCacheSQLiteMutation(t, dbPath, cacheMutationInsertMessage)
 	}
 	t.Cleanup(func() { buildCacheAfterSnapshotHook = nil })
 
@@ -1077,6 +1063,7 @@ const (
 	cacheMutationDBEnv         = "MSGVAULT_TEST_CACHE_MUTATION_DB"
 	cacheMutationOpEnv         = "MSGVAULT_TEST_CACHE_MUTATION_OP"
 	cacheMutationDeleteMessage = "delete-message"
+	cacheMutationInsertMessage = "insert-message"
 	cacheMutationUpdateRelated = "update-related"
 )
 
@@ -1091,6 +1078,18 @@ func TestBuildCacheSQLiteMutationHelper(t *testing.T) {
 	switch os.Getenv(cacheMutationOpEnv) {
 	case cacheMutationDeleteMessage:
 		_, err = db.Exec(`UPDATE messages SET deleted_at = datetime('now') WHERE id = 6`)
+	case cacheMutationInsertMessage:
+		_, err = db.Exec(`
+			INSERT INTO messages (id, source_id, source_message_id, conversation_id, subject, snippet, sent_at, size_estimate, has_attachments)
+			VALUES (6, 1, 'msg6', 105, 'Racing Message', 'Preview 6', '2024-03-15 10:00:00', 1200, 1);
+			INSERT INTO conversations (id, source_id, source_conversation_id, title)
+			VALUES (105, 1, 'thread105', 'Racing Thread');
+			INSERT INTO message_recipients (message_id, participant_id, recipient_type, display_name)
+			VALUES (6, 1, 'from', 'Alice Smith'), (6, 2, 'to', 'Bob Jones');
+			INSERT INTO message_labels (message_id, label_id) VALUES (6, 1);
+			INSERT INTO attachments (message_id, filename, mime_type, size)
+			VALUES (6, 'racing.txt', 'text/plain', 100);
+		`)
 	case cacheMutationUpdateRelated:
 		_, err = db.Exec(`
 			UPDATE participants
