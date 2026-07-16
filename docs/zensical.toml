@@ -19,6 +19,7 @@ nav = [
   {"CLI Reference" = "cli-reference.md"},
   {"MCP Server" = "usage/chat.md"},
   {"Web Server" = "api-server.md"},
+  {"Changelog" = "changelog.md"},
   {"CLI Usage" = [
     {"Searching" = "usage/searching.md"},
     {"Vector Search" = "usage/vector-search.md"},
@@ -53,7 +54,6 @@ nav = [
   {"Troubleshooting" = "troubleshooting.md"},
   {"Development" = "development.md"},
   {"FAQ" = "faq.md"},
-  {"Changelog" = "changelog.md"},
 ]
 
 [project.extra]
