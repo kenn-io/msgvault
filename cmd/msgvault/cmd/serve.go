@@ -79,10 +79,8 @@ type serveRuntimeOperationGate interface {
 
 func init() {
 	rootCmd.AddCommand(serveCmd)
-	serveCmd.AddCommand(serveStartCmd)
-	serveCmd.AddCommand(serveStatusCmd)
-	serveCmd.AddCommand(serveStopCmd)
-	serveCmd.AddCommand(serveRestartCmd)
+	rootCmd.AddCommand(daemonCmd)
+	addServeLifecycleCommands(serveCmd)
 }
 
 func runServe(cmd *cobra.Command, args []string) error {

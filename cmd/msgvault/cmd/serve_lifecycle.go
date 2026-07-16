@@ -46,41 +46,58 @@ var (
 	requestDaemonShutdownForRun       = requestDaemonShutdown
 )
 
-var serveStartCmd = &cobra.Command{
-	Use:   "start",
-	Short: "Start msgvault daemon in the background",
-	Args:  cobra.NoArgs,
-	RunE: func(cmd *cobra.Command, args []string) error {
-		return runServeStart(cmd, cfg)
-	},
+func newLifecycleCommand(name string, hidden bool) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:    name,
+		Hidden: hidden,
+		Args:   cobra.NoArgs,
+	}
+	switch name {
+	case "start":
+		cmd.Short = "Start msgvault daemon in the background"
+		cmd.RunE = func(cmd *cobra.Command, _ []string) error {
+			return runServeStart(cmd, cfg)
+		}
+	case "status":
+		cmd.Short = "Show msgvault daemon status"
+		cmd.RunE = func(cmd *cobra.Command, _ []string) error {
+			return runServeStatusWithAPIKey(cmd, cfg.Data.DataDir, cfg.Server.APIKey)
+		}
+	case "stop":
+		cmd.Short = "Stop msgvault daemon"
+		cmd.RunE = func(cmd *cobra.Command, _ []string) error {
+			return runServeStopWithAPIKey(cmd, cfg.Data.DataDir, cfg.Server.APIKey)
+		}
+	case "restart":
+		cmd.Short = "Restart msgvault daemon in the background"
+		cmd.RunE = func(cmd *cobra.Command, _ []string) error {
+			return runServeRestart(cmd, cfg)
+		}
+	default:
+		panic("unknown daemon lifecycle command: " + name)
+	}
+	return cmd
 }
 
-var serveStatusCmd = &cobra.Command{
-	Use:   "status",
-	Short: "Show msgvault daemon status",
-	Args:  cobra.NoArgs,
-	RunE: func(cmd *cobra.Command, args []string) error {
-		return runServeStatusWithAPIKey(cmd, cfg.Data.DataDir, cfg.Server.APIKey)
-	},
+func addServeLifecycleCommands(parent *cobra.Command) {
+	for _, name := range []string{"start", "status", "stop", "restart"} {
+		parent.AddCommand(newLifecycleCommand(name, true))
+	}
 }
 
-var serveStopCmd = &cobra.Command{
-	Use:   "stop",
-	Short: "Stop msgvault daemon",
-	Args:  cobra.NoArgs,
-	RunE: func(cmd *cobra.Command, args []string) error {
-		return runServeStopWithAPIKey(cmd, cfg.Data.DataDir, cfg.Server.APIKey)
-	},
+func newDaemonCommand() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "daemon",
+		Short: "Manage the background daemon",
+		Args:  cobra.NoArgs,
+	}
+	for _, name := range []string{"start", "status", "stop", "restart"} {
+		cmd.AddCommand(newLifecycleCommand(name, false))
+	}
+	return cmd
 }
 
-var serveRestartCmd = &cobra.Command{
-	Use:   "restart",
-	Short: "Restart msgvault daemon in the background",
-	Args:  cobra.NoArgs,
-	RunE: func(cmd *cobra.Command, args []string) error {
-		return runServeRestart(cmd, cfg)
-	},
-}
+var daemonCmd = newDaemonCommand()
 
 func runServeStatus(cmd *cobra.Command, dataDir string) error {
 	return runServeStatusWithAPIKey(cmd, dataDir, "")
