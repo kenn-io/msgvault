@@ -3,19 +3,20 @@ package tui
 import (
 	"time"
 
-	"github.com/charmbracelet/bubbles/textinput"
-	tea "github.com/charmbracelet/bubbletea"
+	"charm.land/bubbles/v2/textinput"
+	tea "charm.land/bubbletea/v2"
 	"go.kenn.io/msgvault/internal/query"
 )
 
-// Key names matched against tea.KeyMsg.String() in the key-handling switches.
+// Key names matched against tea.KeyPressMsg.String() in the key-handling switches.
 const (
 	keyNameEnter = "enter"
 	keyNameEsc   = "esc"
+	keyNameDown  = "down"
 )
 
 // handleInlineSearchKeys handles keys when inline search bar is active.
-func (m Model) handleInlineSearchKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m Model) handleInlineSearchKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case keyNameEnter:
 		return m.commitInlineSearch()
@@ -89,7 +90,7 @@ func (m Model) handleInlineSearchKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 // handleGlobalKeys handles keys common to all views (quit, help, mode toggle).
 // Returns (model, cmd, true) if the key was handled, or (model, nil, false) otherwise.
-func (m Model) handleGlobalKeys(msg tea.KeyMsg) (Model, tea.Cmd, bool) {
+func (m Model) handleGlobalKeys(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 	switch msg.String() {
 	case "q":
 		m.modal = modalQuitConfirm
@@ -101,27 +102,47 @@ func (m Model) handleGlobalKeys(msg tea.KeyMsg) (Model, tea.Cmd, bool) {
 		m.modal = modalHelp
 		return m, nil, true
 	case "m":
-		if m.textEngine == nil {
-			return m, nil, true
-		}
-		if m.mode == modeEmail {
-			m.mode = modeTexts
+		m.presentationGeneration++
+		m.mode = nextMode(m.mode, m.textEngine != nil)
+		// A frozen view and the email search loading flags describe the mode
+		// being left. Do not let them obscure or animate the destination mode.
+		m.transitionBuffer = ""
+		m.inlineSearchLoading = false
+		m.searchLoadingMore = false
+		switch m.mode {
+		case modeTexts:
 			m.textState.filter.SourceID = m.accountFilter
 			m.loading = true
 			spinCmd := m.startSpinner()
-			return m, tea.Batch(spinCmd, m.loadTextConversations()), true
+			loadCmd := m.loadTextConversations()
+			return m, tea.Batch(spinCmd, loadCmd), true
+		case modeMeetings:
+			m.meetingState.listLoading = false
+			m.meetingState.searchLoading = false
+			m.meetingState.detailLoading = false
+			if m.meetingState.initialized {
+				m.loading = false
+				return m, nil, true
+			}
+			m.loading = true
+			m.meetingState.requestID++
+			m.meetingState.listLoading = true
+			m.meetingState.preSearch = nil
+			m.meetingState.searchSnapshotInvalid = true
+			spinCmd := m.startSpinner()
+			return m, tea.Batch(spinCmd, m.loadMeetingMessages()), true
+		default:
+			m.loading = true
+			m.aggregateRequestID++
+			spinCmd := m.startSpinner()
+			return m, tea.Batch(spinCmd, m.loadData(), m.loadStats()), true
 		}
-		m.mode = modeEmail
-		m.loading = true
-		m.aggregateRequestID++
-		spinCmd := m.startSpinner()
-		return m, tea.Batch(spinCmd, m.loadData(), m.loadStats()), true
 	}
 	return m, nil, false
 }
 
 // handleAggregateKeys handles keys in the aggregate and sub-aggregate views.
-func (m Model) handleAggregateKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m Model) handleAggregateKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	isSub := m.level == levelDrillDown
 
 	// Handle global keys (quit, help)
@@ -174,7 +195,7 @@ func (m Model) handleAggregateKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, m.activateInlineSearch("search")
 
 	// Selection
-	case " ": // Space to toggle selection
+	case "space": // Space to toggle selection
 		m.toggleAggregateSelection()
 
 	case "S": // Select all visible
@@ -215,9 +236,6 @@ func (m Model) handleAggregateKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, m.loadMessages()
 
 	case "d", "D": // Stage for deletion (selection or current row)
-		if m.isRemote {
-			return m.showFlash("Deletion not available in remote mode")
-		}
 		if !m.hasSelection() && len(m.rows) > 0 && m.cursor < len(m.rows) {
 			// No selection - select current row first
 			m.selection.aggregateKeys[m.rows[m.cursor].Key] = true
@@ -316,7 +334,7 @@ func (m Model) nextSubGroupView(current query.ViewType) query.ViewType {
 }
 
 // handleMessageListKeys handles keys in the message list view.
-func (m Model) handleMessageListKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m Model) handleMessageListKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	// Handle global keys (quit, help)
 	if m2, cmd, handled := m.handleGlobalKeys(msg); handled {
 		return m2, cmd
@@ -371,7 +389,7 @@ func (m Model) handleMessageListKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.goBack()
 
 	// Selection
-	case " ": // Space to toggle selection
+	case "space": // Space to toggle selection
 		if len(m.messages) > 0 && m.cursor < len(m.messages) {
 			id := m.messages[m.cursor].ID
 			if m.selection.messageIDs[id] {
@@ -391,9 +409,6 @@ func (m Model) handleMessageListKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.clearAllSelections()
 
 	case "d", "D": // Stage for deletion (selection or current row)
-		if m.isRemote {
-			return m.showFlash("Deletion not available in remote mode")
-		}
 		if !m.hasSelection() && len(m.messages) > 0 && m.cursor < len(m.messages) {
 			// No selection - select current row first
 			m.selection.messageIDs[m.messages[m.cursor].ID] = true
@@ -650,7 +665,7 @@ func (m *Model) maybeLoadMoreMessages() tea.Cmd {
 }
 
 // handleMessageDetailKeys handles keys in the message detail view.
-func (m Model) handleMessageDetailKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m Model) handleMessageDetailKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	// When detail search input is active, route keys there first
 	if m.detailSearchActive {
 		switch msg.String() {
@@ -698,12 +713,12 @@ func (m Model) handleMessageDetailKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.detailSearchInput = textinput.New()
 		m.detailSearchInput.Placeholder = "find in message..."
 		m.detailSearchInput.CharLimit = 200
-		m.detailSearchInput.Width = 50
+		m.detailSearchInput.SetWidth(50)
 		if m.detailSearchQuery != "" {
 			m.detailSearchInput.SetValue(m.detailSearchQuery)
 		}
 		m.detailSearchInput.Focus()
-		return m, m.detailSearchInput.Cursor.BlinkCmd()
+		return m, textinput.Blink
 
 	// Next match
 	case "n":
@@ -741,7 +756,7 @@ func (m Model) handleMessageDetailKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		} else {
 			return m.showFlash("At top")
 		}
-	case "down", "j":
+	case keyNameDown, "j":
 		// Clamp first in case scroll is out of range after resize
 		m.clampDetailScroll()
 		maxScroll := max(m.detailLineCount-m.detailPageSize(), 0)
@@ -795,9 +810,6 @@ func (m Model) handleMessageDetailKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	// Export attachments
 	case "e":
-		if m.isRemote {
-			return m.showFlash("Export not available in remote mode")
-		}
 		if m.messageDetail != nil && len(m.messageDetail.Attachments) > 0 {
 			m.modal = modalExportAttachments
 			m.modalCursor = 0
@@ -816,7 +828,7 @@ func (m Model) handleMessageDetailKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 // handleThreadViewKeys handles keys in the thread view.
-func (m Model) handleThreadViewKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m Model) handleThreadViewKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	// Handle global keys (quit, help)
 	if m2, cmd, handled := m.handleGlobalKeys(msg); handled {
 		return m2, cmd
@@ -833,7 +845,7 @@ func (m Model) handleThreadViewKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.threadCursor--
 			m.ensureThreadCursorVisible()
 		}
-	case "down", "j":
+	case keyNameDown, "j":
 		if m.threadCursor < len(m.threadMessages)-1 {
 			m.threadCursor++
 			m.ensureThreadCursorVisible()
@@ -890,7 +902,7 @@ func (m Model) handleThreadViewKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m Model) handleModalKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m Model) handleModalKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch m.modal {
 	case modalDeleteConfirm:
 		return m.handleDeleteConfirmKeys(msg)
@@ -916,7 +928,7 @@ func (m Model) handleModalKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m Model) handleDeleteConfirmKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m Model) handleDeleteConfirmKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "y", "Y":
 		return m.confirmDeletion()
@@ -934,7 +946,7 @@ func (m Model) handleDeleteResultKeys() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m Model) handleQuitConfirmKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m Model) handleQuitConfirmKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "y", "Y", keyNameEnter:
 		m.quitting = true
@@ -945,30 +957,64 @@ func (m Model) handleQuitConfirmKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m Model) handleAccountSelectorKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	maxIdx := len(m.accounts) // 0 = All Accounts, then accounts
+func (m Model) handleAccountSelectorKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	accounts := m.selectableAccounts()
+	maxIdx := len(accounts) // 0 = All Accounts/Sources, then selectable sources
 	switch msg.String() {
 	case "up", "k":
 		if m.modalCursor > 0 {
 			m.modalCursor--
 		}
-	case "down", "j":
+	case keyNameDown, "j":
 		if m.modalCursor < maxIdx {
 			m.modalCursor++
 		}
 	case keyNameEnter:
 		// Apply selection with bounds check
-		if m.modalCursor == 0 || m.modalCursor > len(m.accounts) {
-			m.accountFilter = nil // All accounts (or fallback if out of bounds)
+		var selectedID *int64
+		if m.modalCursor > 0 && m.modalCursor <= len(accounts) {
+			accID := accounts[m.modalCursor-1].ID
+			selectedID = &accID
+		}
+		if m.mode == modeMeetings {
+			m.meetingState.sourceID = selectedID
 		} else {
-			accID := m.accounts[m.modalCursor-1].ID
-			m.accountFilter = &accID
+			m.accountFilter = selectedID
 		}
 		m.modal = modalNone
 		m.loading = true
+		if m.mode == modeMeetings {
+			m.meetingState.requestID++
+			m.meetingState.searchRequestID++
+			m.meetingState.listOffset = 0
+			m.meetingState.listComplete = false
+			m.meetingState.listLoadingMore = false
+			m.meetingState.listLoading = false
+			m.meetingState.searchLoading = false
+			m.meetingState.searchOffset = 0
+			m.meetingState.searchComplete = false
+			m.meetingState.cursor = 0
+			m.meetingState.scrollOffset = 0
+			// A pre-search snapshot belongs to the previous source and must
+			// never be restored after the source changes.
+			m.meetingState.preSearch = nil
+			if m.meetingState.searchQuery != "" {
+				m.meetingState.searchSnapshotInvalid = true
+				m.meetingState.searchLoading = true
+				spinCmd := m.startSpinner()
+				return m, tea.Batch(
+					spinCmd,
+					m.loadMeetingSearch(m.meetingState.searchQuery, 0, false),
+				)
+			}
+			m.meetingState.searchSnapshotInvalid = true
+			m.meetingState.listLoading = true
+			return m, m.loadMeetingMessages()
+		}
 		if m.mode == modeTexts {
 			m.textState.filter.SourceID = m.accountFilter
-			return m, m.loadTextData()
+			cmd := m.loadTextData()
+			return m, cmd
 		}
 		m.aggregateRequestID++
 		return m, tea.Batch(m.loadData(), m.loadStats())
@@ -981,17 +1027,17 @@ func (m Model) handleAccountSelectorKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 // filterOptionCount is the number of toggleable options in the filter modal.
 const filterOptionCount = 2
 
-func (m Model) handleFilterToggleKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m Model) handleFilterToggleKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "up", "k":
 		if m.modalCursor > 0 {
 			m.modalCursor--
 		}
-	case "down", "j":
+	case keyNameDown, "j":
 		if m.modalCursor < filterOptionCount-1 {
 			m.modalCursor++
 		}
-	case " ", "x":
+	case "space", "x":
 		// Toggle the checkbox at current cursor
 		switch m.modalCursor {
 		case 0:
@@ -1021,7 +1067,7 @@ func (m Model) handleFilterToggleKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m Model) handleExportAttachmentsKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m Model) handleExportAttachmentsKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if m.messageDetail == nil || len(m.messageDetail.Attachments) == 0 {
 		m.modal = modalNone
 		return m, nil
@@ -1032,11 +1078,11 @@ func (m Model) handleExportAttachmentsKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) 
 		if m.exportCursor > 0 {
 			m.exportCursor--
 		}
-	case "down", "j":
+	case keyNameDown, "j":
 		if m.exportCursor < maxIdx {
 			m.exportCursor++
 		}
-	case " ": // Space toggles selection
+	case "space": // Space toggles selection
 		m.exportSelection[m.exportCursor] = !m.exportSelection[m.exportCursor]
 	case "a": // Select all
 		for i := range m.messageDetail.Attachments {
@@ -1070,9 +1116,9 @@ func (m Model) handleErrorKeys() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m Model) handleHelpKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m Model) handleHelpKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
-	case "down", "j":
+	case keyNameDown, "j":
 		m.helpScroll++
 	case "up", "k":
 		if m.helpScroll > 0 {
@@ -1092,7 +1138,7 @@ func (m Model) handleHelpKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	// Clamp scroll to prevent overscroll
-	if maxScroll := len(rawHelpLines) - m.helpMaxVisible(); maxScroll > 0 {
+	if maxScroll := len(m.activeHelpLines()) - m.helpMaxVisible(); maxScroll > 0 {
 		if m.helpScroll > maxScroll {
 			m.helpScroll = maxScroll
 		}
@@ -1243,17 +1289,22 @@ func (m Model) enterDrillDown(row query.AggregateRow) (tea.Model, tea.Cmd) {
 
 func (m *Model) openAccountSelector() {
 	m.modal = modalAccountSelector
-	m.modalCursor = 0 // Default to "All Accounts"
-	if m.accountFilter != nil {
-		for i, acc := range m.accounts {
-			if acc.ID == *m.accountFilter {
+	m.modalCursor = 0 // Default to "All Accounts" / "All Sources"
+	selectedID := m.accountFilter
+	if m.mode == modeMeetings {
+		selectedID = m.meetingState.sourceID
+	}
+	accounts := m.selectableAccounts()
+	if selectedID != nil {
+		for i, acc := range accounts {
+			if acc.ID == *selectedID {
 				m.modalCursor = i + 1 // +1 because 0 is "All Accounts"
 				break
 			}
 		}
 	}
 	// Clamp to valid range in case accounts list changed
-	if m.modalCursor > len(m.accounts) {
+	if m.modalCursor > len(accounts) {
 		m.modalCursor = 0
 	}
 }

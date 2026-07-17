@@ -20,6 +20,7 @@ into your agent's context to give it full knowledge of available commands.
 
 Example:
   msgvault quickstart | pbcopy`,
+	Args: cobra.NoArgs,
 	Run: func(cmd *cobra.Command, args []string) {
 		fmt.Print(quickstartText)
 	},

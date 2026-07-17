@@ -6,15 +6,28 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"net/mail"
 	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
+	"time"
 
 	"github.com/BurntSushi/toml"
 	"go.kenn.io/msgvault/internal/fileutil"
 	"go.kenn.io/msgvault/internal/vector"
+)
+
+const (
+	AnalyticsEngineAuto   = "auto"
+	AnalyticsEngineSQL    = "sql"
+	AnalyticsEngineDuckDB = "duckdb"
+
+	DaemonAutoRestartNewer  = "newer"
+	DaemonAutoRestartNever  = "never"
+	DaemonAutoRestartAlways = "always"
 )
 
 // ChatConfig holds chat/LLM configuration.
@@ -24,20 +37,68 @@ type ChatConfig struct {
 	MaxResults int    `toml:"max_results"` // Top-K messages to retrieve
 }
 
+// AnalyticsConfig controls daemon-side analytics engine selection.
+type AnalyticsConfig struct {
+	Engine         string `toml:"engine"`           // auto, sql, or duckdb
+	AutoBuildCache bool   `toml:"auto_build_cache"` // Build stale/missing Parquet cache before using DuckDB
+}
+
+func (a *AnalyticsConfig) ApplyDefaults() {
+	a.Engine = strings.ToLower(strings.TrimSpace(a.Engine))
+	if a.Engine == "" {
+		a.Engine = AnalyticsEngineAuto
+	}
+}
+
+func (a *AnalyticsConfig) Validate() error {
+	switch a.Engine {
+	case AnalyticsEngineAuto, AnalyticsEngineSQL, AnalyticsEngineDuckDB:
+		return nil
+	default:
+		return fmt.Errorf("invalid [analytics] engine %q (want %q, %q, or %q)",
+			a.Engine,
+			AnalyticsEngineAuto,
+			AnalyticsEngineSQL,
+			AnalyticsEngineDuckDB)
+	}
+}
+
 // ServerConfig holds HTTP API server configuration.
 type ServerConfig struct {
-	APIPort         int      `toml:"api_port"`         // HTTP server port (default: 8080)
-	BindAddr        string   `toml:"bind_addr"`        // Bind address (default: 127.0.0.1)
-	APIKey          string   `toml:"api_key"`          // API authentication key
-	AllowInsecure   bool     `toml:"allow_insecure"`   // Allow unauthenticated non-loopback access
-	CORSOrigins     []string `toml:"cors_origins"`     // Allowed CORS origins (empty = disabled)
-	CORSCredentials bool     `toml:"cors_credentials"` // Allow credentials in CORS
-	CORSMaxAge      int      `toml:"cors_max_age"`     // Preflight cache duration in seconds
+	APIPort           int           `toml:"api_port"`            // HTTP server port; 0 (the default) auto-selects an open port at daemon startup and clients discover it via the daemon runtime record. Set api_port explicitly for a stable port (e.g. remote/NAS deployments).
+	BindAddr          string        `toml:"bind_addr"`           // Bind address (default: 127.0.0.1)
+	APIKey            string        `toml:"api_key"`             // API authentication key
+	AllowInsecure     bool          `toml:"allow_insecure"`      // Allow unauthenticated non-loopback access
+	CORSOrigins       []string      `toml:"cors_origins"`        // Allowed CORS origins (empty = disabled)
+	CORSCredentials   bool          `toml:"cors_credentials"`    // Allow credentials in CORS
+	CORSMaxAge        int           `toml:"cors_max_age"`        // Preflight cache duration in seconds
+	DaemonIdleTimeout time.Duration `toml:"daemon_idle_timeout"` // Background daemon idle timeout (0 disables)
+	DaemonAutoRestart string        `toml:"daemon_auto_restart"` // never, newer, or always
+}
+
+func (s *ServerConfig) ApplyDefaults() {
+	s.DaemonAutoRestart = strings.ToLower(strings.TrimSpace(s.DaemonAutoRestart))
+	if s.DaemonAutoRestart == "" {
+		s.DaemonAutoRestart = DaemonAutoRestartNewer
+	}
+}
+
+func (s *ServerConfig) Validate() error {
+	switch s.DaemonAutoRestart {
+	case DaemonAutoRestartNewer, DaemonAutoRestartNever, DaemonAutoRestartAlways:
+		return nil
+	default:
+		return fmt.Errorf("invalid [server] daemon_auto_restart %q (want %q, %q, or %q)",
+			s.DaemonAutoRestart,
+			DaemonAutoRestartNewer,
+			DaemonAutoRestartNever,
+			DaemonAutoRestartAlways)
+	}
 }
 
 // IsLoopback returns true if the bind address is a loopback address.
 // Handles the full 127.0.0.0/8 range, IPv6 ::1, and "localhost".
-func (s ServerConfig) IsLoopback() bool {
+func (s *ServerConfig) IsLoopback() bool {
 	addr := s.BindAddr
 	if addr == "" || addr == "localhost" {
 		return true
@@ -48,7 +109,7 @@ func (s ServerConfig) IsLoopback() bool {
 
 // ValidateSecure returns an error if the server is configured insecurely
 // without an explicit opt-in via allow_insecure.
-func (s ServerConfig) ValidateSecure() error {
+func (s *ServerConfig) ValidateSecure() error {
 	if !s.IsLoopback() && s.APIKey == "" && !s.AllowInsecure {
 		return fmt.Errorf("refusing to start: bind address %q is not loopback and no api_key is set\n\n"+
 			"Set [server] api_key in config.toml, or set allow_insecure = true to override", s.BindAddr)
@@ -97,19 +158,43 @@ type IdentityConfig struct {
 	Addresses []string `toml:"addresses"`
 }
 
+// BackupConfig holds default settings for `msgvault backup` (spec Section
+// 10). Repo lets `--repo` be omitted on every invocation; ZstdLevel tunes
+// the pack compression level (0 keeps kit/pack's own default).
+type BackupConfig struct {
+	Repo      string `toml:"repo"`       // Default snapshot repository directory
+	ZstdLevel int    `toml:"zstd_level"` // 0 (default) or 1-19
+}
+
+// Validate enforces the zstd compression level range: 0 (meaning "use
+// kit/pack's default") or 1-19, matching the range the zstd encoder
+// actually accepts.
+func (b *BackupConfig) Validate() error {
+	if b.ZstdLevel == 0 || (b.ZstdLevel >= 1 && b.ZstdLevel <= 19) {
+		return nil
+	}
+	return fmt.Errorf("invalid [backup] zstd_level %d (want 0 or 1-19)", b.ZstdLevel)
+}
+
 type Config struct {
-	Data        DataConfig        `toml:"data"`
-	Log         LogConfig         `toml:"log"`
-	OAuth       OAuthConfig       `toml:"oauth"`
-	Microsoft   MicrosoftConfig   `toml:"microsoft"`
-	Sync        SyncConfig        `toml:"sync"`
-	Chat        ChatConfig        `toml:"chat"`
-	Server      ServerConfig      `toml:"server"`
-	Remote      RemoteConfig      `toml:"remote"`
-	Vector      vector.Config     `toml:"vector"`
-	Identity    IdentityConfig    `toml:"identity"`
-	Accounts    []AccountSchedule `toml:"accounts"`
-	SynctechSMS SynctechSMSConfig `toml:"synctech_sms"`
+	Data        DataConfig         `toml:"data"`
+	Log         LogConfig          `toml:"log"`
+	OAuth       OAuthConfig        `toml:"oauth"`
+	Microsoft   MicrosoftConfig    `toml:"microsoft"`
+	Sync        SyncConfig         `toml:"sync"`
+	Chat        ChatConfig         `toml:"chat"`
+	Server      ServerConfig       `toml:"server"`
+	Analytics   AnalyticsConfig    `toml:"analytics"`
+	Remote      RemoteConfig       `toml:"remote"`
+	Vector      vector.Config      `toml:"vector"`
+	Identity    IdentityConfig     `toml:"identity"`
+	Accounts    []AccountSchedule  `toml:"accounts"`
+	SynctechSMS SynctechSMSConfig  `toml:"synctech_sms"`
+	GCal        []GCalSource       `toml:"gcal"`
+	Beeper      BeeperConfig       `toml:"beeper"`
+	Granola     []GranolaSource    `toml:"granola"`
+	Circleback  []CirclebackSource `toml:"circleback"`
+	Backup      BackupConfig       `toml:"backup"`
 
 	// Computed paths (not from config file)
 	HomeDir    string `toml:"-"`
@@ -268,13 +353,21 @@ func NewDefaultConfig() *Config {
 			MaxResults: 20,
 		},
 		Server: ServerConfig{
-			APIPort:  8080,
-			BindAddr: "127.0.0.1",
+			APIPort:           0,
+			BindAddr:          "127.0.0.1",
+			DaemonIdleTimeout: 20 * time.Minute,
+			DaemonAutoRestart: DaemonAutoRestartNewer,
+		},
+		Analytics: AnalyticsConfig{
+			Engine:         AnalyticsEngineAuto,
+			AutoBuildCache: true,
 		},
 		Accounts:    []AccountSchedule{},
 		SynctechSMS: SynctechSMSConfig{Sources: []SynctechSMSSource{}},
+		GCal:        []GCalSource{},
 	}
 	cfg.Vector.ApplyDefaults()
+	cfg.Server.ApplyDefaults()
 	return cfg
 }
 
@@ -339,6 +432,7 @@ func Load(path, homeDir string) (*Config, error) {
 	cfg.OAuth.ClientSecrets = expandPath(cfg.OAuth.ClientSecrets)
 	cfg.OAuth.ServiceAccountKey = expandPath(cfg.OAuth.ServiceAccountKey)
 	cfg.Vector.DBPath = expandPath(cfg.Vector.DBPath)
+	cfg.Backup.Repo = expandPath(cfg.Backup.Repo)
 	for name, app := range cfg.OAuth.Apps {
 		app.ClientSecrets = expandPath(app.ClientSecrets)
 		app.ServiceAccountKey = expandPath(app.ServiceAccountKey)
@@ -353,6 +447,7 @@ func Load(path, homeDir string) (*Config, error) {
 		cfg.OAuth.ClientSecrets = resolveRelative(cfg.OAuth.ClientSecrets, cfg.HomeDir)
 		cfg.OAuth.ServiceAccountKey = resolveRelative(cfg.OAuth.ServiceAccountKey, cfg.HomeDir)
 		cfg.Vector.DBPath = resolveRelative(cfg.Vector.DBPath, cfg.HomeDir)
+		cfg.Backup.Repo = resolveRelative(cfg.Backup.Repo, cfg.HomeDir)
 		for name, app := range cfg.OAuth.Apps {
 			app.ClientSecrets = resolveRelative(app.ClientSecrets, cfg.HomeDir)
 			app.ServiceAccountKey = resolveRelative(app.ServiceAccountKey, cfg.HomeDir)
@@ -365,7 +460,23 @@ func Load(path, homeDir string) (*Config, error) {
 	// Preprocess booleans are *bool so pointer-nil still means "default";
 	// an explicit false in the file stays false.
 	cfg.Vector.ApplyDefaults()
+	cfg.Server.ApplyDefaults()
+	if err := cfg.Server.Validate(); err != nil {
+		return nil, err
+	}
+	cfg.Analytics.ApplyDefaults()
+	if err := cfg.Analytics.Validate(); err != nil {
+		return nil, err
+	}
+	if err := cfg.Backup.Validate(); err != nil {
+		return nil, err
+	}
 	cfg.applySynctechSMSDefaults()
+	cfg.applyGCalDefaults()
+	cfg.applyMeetingSourceDefaults()
+	if err := cfg.validateMeetingSources(); err != nil {
+		return nil, err
+	}
 
 	return cfg, nil
 }
@@ -564,6 +675,270 @@ func (c *Config) GetAccountSchedule(email string) *AccountSchedule {
 		}
 	}
 	return nil
+}
+
+// BeeperConfig configures the Beeper Desktop archive source ([beeper] table).
+// A single block, not a slice: the Beeper Desktop API is loopback-only, so
+// there is exactly one instance per machine and the daemon must be co-located
+// with it.
+type BeeperConfig struct {
+	// URL is the Beeper Desktop API base URL. Empty means the default
+	// loopback address (http://localhost:23373).
+	URL string `toml:"url"`
+	// Enabled gates the daemon scheduler job.
+	Enabled bool `toml:"enabled"`
+	// Schedule is a 5-field cron expression; empty = not daemon-scheduled.
+	Schedule string `toml:"schedule"`
+	// Accounts is an accountID include filter (empty = sync all accounts).
+	Accounts []string `toml:"accounts"`
+	// ExcludeAccounts skips specific accountIDs — e.g. ["whatsapp"] when the
+	// native import-whatsapp path already archives that network.
+	ExcludeAccounts []string `toml:"exclude_accounts"`
+	// RateLimitQPS bounds request rate against the local Beeper Desktop app
+	// (0 = default 20).
+	RateLimitQPS float64 `toml:"rate_limit_qps"`
+	// Media toggles attachment download (nil/absent = enabled).
+	Media *bool `toml:"media"`
+	// MaxMediaMB caps individual attachment downloads in MiB (0 = 100).
+	MaxMediaMB int `toml:"max_media_mb"`
+}
+
+// MediaEnabled reports whether attachment download is on (default true).
+func (b BeeperConfig) MediaEnabled() bool {
+	return b.Media == nil || *b.Media
+}
+
+// MaxMediaBytes returns the per-attachment download cap in bytes.
+func (b BeeperConfig) MaxMediaBytes() int64 {
+	if b.MaxMediaMB > 0 {
+		return int64(b.MaxMediaMB) << 20
+	}
+	return 100 << 20
+}
+
+// AccountIncluded reports whether a Beeper accountID passes the
+// include/exclude filters.
+func (b BeeperConfig) AccountIncluded(accountID string) bool {
+	if slices.Contains(b.ExcludeAccounts, accountID) {
+		return false
+	}
+	if len(b.Accounts) == 0 {
+		return true
+	}
+	return slices.Contains(b.Accounts, accountID)
+}
+
+// GCalSource is one configured Google Calendar sync target. Each entry is a
+// top-level [[gcal]] table.
+type GCalSource struct {
+	Name      string   `toml:"name"`      // identifier for sync-calendar <name>; defaults to Email
+	Email     string   `toml:"email"`     // the OAuth account = token key
+	OAuthApp  string   `toml:"oauth_app"` // optional named OAuth app
+	Calendars []string `toml:"calendars"` // optional calendarId filter; empty = owner+writer
+	Schedule  string   `toml:"schedule"`  // 5-field cron; empty = not daemon-scheduled
+	Enabled   bool     `toml:"enabled"`
+}
+
+// applyGCalDefaults normalizes [[gcal]] entries: a source with no name takes its
+// email, so `sync-calendar <email>` resolves it.
+func (c *Config) applyGCalDefaults() {
+	for i := range c.GCal {
+		if c.GCal[i].Name == "" {
+			c.GCal[i].Name = c.GCal[i].Email
+		}
+	}
+}
+
+// GetGCalSource returns the configured calendar source matching name or email
+// (case-insensitive), or nil.
+func (c *Config) GetGCalSource(name string) *GCalSource {
+	for _, src := range c.GCal {
+		if strings.EqualFold(src.Name, name) || strings.EqualFold(src.Email, name) {
+			cp := src
+			return &cp
+		}
+	}
+	return nil
+}
+
+// ScheduledGCalSources returns enabled calendar sources with a cron schedule.
+func (c *Config) ScheduledGCalSources() []GCalSource {
+	var out []GCalSource
+	for _, src := range c.GCal {
+		if src.Enabled && src.Schedule != "" {
+			out = append(out, src)
+		}
+	}
+	return out
+}
+
+// GranolaSource is one configured Granola account. Each entry is a top-level
+// [[granola]] table.
+type GranolaSource struct {
+	Identifier   string `toml:"identifier"`    // stable source label for add-/sync-granola; defaults to "default" for a single entry
+	AccountEmail string `toml:"account_email"` // primary account identity
+	APIKey       string `toml:"api_key"`       // grn_… key from the desktop app's settings (Business plan)
+	Schedule     string `toml:"schedule"`      // 5-field cron; empty = not daemon-scheduled
+	Enabled      bool   `toml:"enabled"`
+}
+
+// EffectiveAccountEmail returns the normalized primary identity configured
+// for this source.
+func (s GranolaSource) EffectiveAccountEmail() (string, error) {
+	return effectiveMeetingAccountEmail("granola", s.Identifier, s.AccountEmail)
+}
+
+// CirclebackSource is one configured Circleback account. Each entry is a
+// top-level [[circleback]] table. Authentication is OAuth (add-circleback);
+// no secret lives in the config file.
+type CirclebackSource struct {
+	Identifier   string `toml:"identifier"`    // stable source label for add-/sync-circleback; defaults to "default" for a single entry
+	AccountEmail string `toml:"account_email"` // primary account identity
+	Endpoint     string `toml:"endpoint"`      // MCP endpoint override; empty = production
+	Schedule     string `toml:"schedule"`      // 5-field cron; empty = not daemon-scheduled
+	Enabled      bool   `toml:"enabled"`
+}
+
+// EffectiveAccountEmail returns the normalized primary identity configured
+// for this source.
+func (s CirclebackSource) EffectiveAccountEmail() (string, error) {
+	return effectiveMeetingAccountEmail("circleback", s.Identifier, s.AccountEmail)
+}
+
+func effectiveMeetingAccountEmail(kind, identifier, configured string) (string, error) {
+	identifier = strings.TrimSpace(identifier)
+	if strings.TrimSpace(configured) != "" {
+		if email, ok := normalizedMeetingAccountEmail(configured); ok {
+			return email, nil
+		}
+		return "", fmt.Errorf("[[%s]] identifier %q has invalid account_email %q; preserve the identifier and set account_email to the account's email address",
+			kind, identifier, configured)
+	}
+	return "", fmt.Errorf("[[%s]] identifier %q requires account_email; preserve identifier = %q and add account_email = \"you@example.com\"",
+		kind, identifier, identifier)
+}
+
+func normalizedMeetingAccountEmail(value string) (string, bool) {
+	email := strings.ToLower(strings.TrimSpace(value))
+	if email == "" || strings.ContainsAny(email, " \t\r\n") {
+		return "", false
+	}
+	parsed, err := mail.ParseAddress(email)
+	if err != nil || parsed.Name != "" || !strings.EqualFold(parsed.Address, email) {
+		return "", false
+	}
+	return email, true
+}
+
+// applyMeetingSourceDefaults normalizes [[granola]]/[[circleback]] entries: a
+// single entry with no identifier becomes "default" so the CLI argument can
+// be omitted in the common one-account case.
+func (c *Config) applyMeetingSourceDefaults() {
+	if len(c.Granola) == 1 && c.Granola[0].Identifier == "" {
+		c.Granola[0].Identifier = "default"
+	}
+	if len(c.Circleback) == 1 && c.Circleback[0].Identifier == "" {
+		c.Circleback[0].Identifier = "default"
+	}
+}
+
+// validateMeetingSources rejects [[granola]]/[[circleback]] lists with empty
+// or duplicate identifiers — the identifier keys the source row and token
+// file, so a collision would silently merge two accounts.
+func (c *Config) validateMeetingSources() error {
+	check := func(kind string, ids []string) error {
+		seen := map[string]bool{}
+		for _, id := range ids {
+			key := strings.ToLower(id)
+			if key == "" {
+				return fmt.Errorf("[[%s]]: every entry needs an identifier when more than one is configured", kind)
+			}
+			if seen[key] {
+				return fmt.Errorf("[[%s]]: duplicate identifier %q", kind, id)
+			}
+			seen[key] = true
+		}
+		return nil
+	}
+	granolaIDs := make([]string, len(c.Granola))
+	for i, s := range c.Granola {
+		granolaIDs[i] = s.Identifier
+	}
+	if err := check("granola", granolaIDs); err != nil {
+		return err
+	}
+	for i := range c.Granola {
+		email, err := c.Granola[i].EffectiveAccountEmail()
+		if err != nil {
+			return err
+		}
+		if strings.TrimSpace(c.Granola[i].AccountEmail) != "" {
+			c.Granola[i].AccountEmail = email
+		}
+	}
+	circlebackIDs := make([]string, len(c.Circleback))
+	for i, s := range c.Circleback {
+		circlebackIDs[i] = s.Identifier
+	}
+	if err := check("circleback", circlebackIDs); err != nil {
+		return err
+	}
+	for i := range c.Circleback {
+		email, err := c.Circleback[i].EffectiveAccountEmail()
+		if err != nil {
+			return err
+		}
+		if strings.TrimSpace(c.Circleback[i].AccountEmail) != "" {
+			c.Circleback[i].AccountEmail = email
+		}
+	}
+	return nil
+}
+
+// GetGranolaSource returns the configured Granola source matching identifier
+// (case-insensitive), or nil.
+func (c *Config) GetGranolaSource(identifier string) *GranolaSource {
+	for _, src := range c.Granola {
+		if strings.EqualFold(src.Identifier, identifier) {
+			cp := src
+			return &cp
+		}
+	}
+	return nil
+}
+
+// ScheduledGranolaSources returns enabled Granola sources with a cron schedule.
+func (c *Config) ScheduledGranolaSources() []GranolaSource {
+	var out []GranolaSource
+	for _, src := range c.Granola {
+		if src.Enabled && src.Schedule != "" {
+			out = append(out, src)
+		}
+	}
+	return out
+}
+
+// GetCirclebackSource returns the configured Circleback source matching
+// identifier (case-insensitive), or nil.
+func (c *Config) GetCirclebackSource(identifier string) *CirclebackSource {
+	for _, src := range c.Circleback {
+		if strings.EqualFold(src.Identifier, identifier) {
+			cp := src
+			return &cp
+		}
+	}
+	return nil
+}
+
+// ScheduledCirclebackSources returns enabled Circleback sources with a cron schedule.
+func (c *Config) ScheduledCirclebackSources() []CirclebackSource {
+	var out []CirclebackSource
+	for _, src := range c.Circleback {
+		if src.Enabled && src.Schedule != "" {
+			out = append(out, src)
+		}
+	}
+	return out
 }
 
 func (c *Config) GetSynctechSMSSource(name string) *SynctechSMSSource {

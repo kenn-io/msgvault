@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/synctechsms"
@@ -19,8 +19,10 @@ import (
 )
 
 func TestAddSynctechSMSDriveWritesConfigWithoutSecrets(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	markDaemonCLISubprocessForTest(t)
+
+	require := require.New(t)
+	assert := assert.New(t)
 	home := t.TempDir()
 	cfg = config.NewDefaultConfig()
 	cfg.HomeDir = home
@@ -51,8 +53,8 @@ func TestAddSynctechSMSDriveWritesConfigWithoutSecrets(t *testing.T) {
 }
 
 func TestSynctechSMSDriveRunUsesSingleOuterSyncRun(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	home := t.TempDir()
 	cfg = config.NewDefaultConfig()
 	cfg.HomeDir = home
@@ -75,8 +77,9 @@ func TestSynctechSMSDriveRunUsesSingleOuterSyncRun(t *testing.T) {
 		},
 	}
 
-	err := runSynctechSMSDriveSourceWithClient(context.Background(), f.Store, src, synctechImportOptions(src), client)
+	summary, err := runSynctechSMSDriveSourceWithClient(context.Background(), f.Store, src, synctechImportOptions(src), client)
 	require.NoError(err, "runSynctechSMSDriveSourceWithClient")
+	require.Len(summary.MessageIDs, 1, "summary message IDs")
 
 	source := getSynctechSource(t, f.Store, src.OwnerPhone)
 	assert.Equal(1, countSyncRuns(t, f.Store, source.ID), "sync run count")
@@ -86,7 +89,7 @@ func TestSynctechSMSDriveRunUsesSingleOuterSyncRun(t *testing.T) {
 	assert.Equal(int64(1), run.MessagesAdded, "messages added")
 	assert.True(getSynctechSource(t, f.Store, src.OwnerPhone).LastSyncAt.Valid, "last_sync_at should be touched")
 
-	item := getSourceImportItem(t, f.Store, source.ID, "drive", "backup-1")
+	item := getDriveSourceImportItem(t, f.Store, source.ID, "backup-1")
 	assert.Equal("imported", item.Status, "source import status")
 	assert.Equal(1, item.RecordsImported, "records imported")
 	assert.False(item.ErrorMessage.Valid, "source import error")
@@ -95,8 +98,8 @@ func TestSynctechSMSDriveRunUsesSingleOuterSyncRun(t *testing.T) {
 }
 
 func TestSynctechSMSDriveRunSetsUpIdentityAndPostSourceMigration(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	home := t.TempDir()
 	savedCfg := cfg
 	t.Cleanup(func() {
@@ -113,7 +116,7 @@ func TestSynctechSMSDriveRunSetsUpIdentityAndPostSourceMigration(t *testing.T) {
 	src := synctechDriveTestSource()
 	client := fakeSynctechDriveClient{}
 
-	err = runSynctechSMSDriveSourceWithClient(context.Background(), st, src, synctechImportOptions(src), client)
+	_, err = runSynctechSMSDriveSourceWithClient(context.Background(), st, src, synctechImportOptions(src), client)
 	require.NoError(err, "runSynctechSMSDriveSourceWithClient")
 
 	synctechSource := getSynctechSource(t, st, src.OwnerPhone)
@@ -135,8 +138,8 @@ func TestSynctechSMSDriveRunSetsUpIdentityAndPostSourceMigration(t *testing.T) {
 }
 
 func TestSynctechSMSDriveRunRecordsZeroSelectedPoll(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	home := t.TempDir()
 	cfg = config.NewDefaultConfig()
 	cfg.HomeDir = home
@@ -154,7 +157,7 @@ func TestSynctechSMSDriveRunRecordsZeroSelectedPoll(t *testing.T) {
 		}},
 	}
 
-	err := runSynctechSMSDriveSourceWithClient(context.Background(), f.Store, src, synctechImportOptions(src), client)
+	_, err := runSynctechSMSDriveSourceWithClient(context.Background(), f.Store, src, synctechImportOptions(src), client)
 	require.NoError(err, "runSynctechSMSDriveSourceWithClient")
 
 	source := getSynctechSource(t, f.Store, src.OwnerPhone)
@@ -168,8 +171,8 @@ func TestSynctechSMSDriveRunRecordsZeroSelectedPoll(t *testing.T) {
 }
 
 func TestSynctechSMSDriveRunMarksOuterSyncFailedOnDownloadError(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	home := t.TempDir()
 	cfg = config.NewDefaultConfig()
 	cfg.HomeDir = home
@@ -188,7 +191,7 @@ func TestSynctechSMSDriveRunMarksOuterSyncFailedOnDownloadError(t *testing.T) {
 		downloadErr: downloadErr,
 	}
 
-	err := runSynctechSMSDriveSourceWithClient(context.Background(), f.Store, src, synctechImportOptions(src), client)
+	_, err := runSynctechSMSDriveSourceWithClient(context.Background(), f.Store, src, synctechImportOptions(src), client)
 	require.ErrorIs(err, downloadErr, "runSynctechSMSDriveSourceWithClient")
 
 	source := getSynctechSource(t, f.Store, src.OwnerPhone)
@@ -198,17 +201,184 @@ func TestSynctechSMSDriveRunMarksOuterSyncFailedOnDownloadError(t *testing.T) {
 	require.True(run.ErrorMessage.Valid, "sync error_message")
 	assert.Contains(run.ErrorMessage.String, downloadErr.Error(), "sync error_message")
 
-	item := getSourceImportItem(t, f.Store, source.ID, "drive", "backup-1")
+	item := getDriveSourceImportItem(t, f.Store, source.ID, "backup-1")
 	assert.Equal("failed", item.Status, "source import status")
 	require.True(item.ErrorMessage.Valid, "source import error")
 	assert.Contains(item.ErrorMessage.String, downloadErr.Error(), "source import error")
 }
 
+func TestSynctechSMSDrivePartialFailureEnqueuesImportedMessages(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	home := t.TempDir()
+	savedCfg := cfg
+	t.Cleanup(func() { cfg = savedCfg })
+	cfg = config.NewDefaultConfig()
+	cfg.HomeDir = home
+	cfg.Data.DataDir = home
+	st := testutil.NewSQLiteTestStore(t)
+	var dbPath string
+	require.NoError(st.DB().QueryRow(
+		`SELECT file FROM pragma_database_list WHERE name = 'main'`,
+	).Scan(&dbPath), "find test database path")
+	cfg.Data.DatabaseURL = dbPath
+	refreshErr := errors.New("cache refresh failed")
+	refreshCalls := 0
+	var refreshContextErr error
+	oldRunBuild := runBuildCacheSubprocess
+	runBuildCacheSubprocess = func(ctx context.Context, _ bool, _ bool) error {
+		refreshCalls++
+		refreshContextErr = ctx.Err()
+		return refreshErr
+	}
+	t.Cleanup(func() { runBuildCacheSubprocess = oldRunBuild })
+	src := synctechDriveTestSource()
+	client := fakeSynctechDriveClient{
+		files: []synctechsms.DriveFile{
+			{
+				ID:           "backup-1",
+				Name:         "sms-1.xml",
+				Checksum:     "sum-1",
+				Size:         128,
+				ModifiedTime: time.Now().Add(-30 * time.Minute),
+			},
+			{
+				ID:           "backup-2",
+				Name:         "sms-2.xml",
+				Checksum:     "sum-2",
+				Size:         128,
+				ModifiedTime: time.Now().Add(-30 * time.Minute),
+			},
+		},
+		downloads: map[string]string{
+			"backup-1": `<smses count="1">
+  <sms address="+15551234567" date="1717214400000" type="1" body="hello before failure" read="1" status="-1" contact_name="Alice" />
+</smses>`,
+			"backup-2": `<smses count="1">
+  <sms address="+15557654321" date="1717214460000" type="1" body="durable before malformed tail" read="1" status="-1" contact_name="Bob" />
+  <sms`,
+		},
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	err := runConfiguredSynctechSMSSourceWithStoreDriveClient(ctx, st, src, client)
+	require.Error(err, "runConfiguredSynctechSMSSourceWithStoreDriveClient")
+	assert.Contains(err.Error(), "import backup file", "partial parse error")
+	require.ErrorIs(err, refreshErr, "partial import must preserve the refresh failure")
+	assert.Equal(1, refreshCalls, "partial import must attempt one cache refresh")
+	require.NoError(refreshContextErr, "cache refresh must outlive cancellation of the import context")
+
+	source := getSynctechSource(t, st, src.OwnerPhone)
+	assertSourceMessageCount(t, st, source.ID, 2)
+	assert.Equal(1, countSyncRuns(t, st, source.ID), "sync run count")
+	run := getOnlySyncRun(t, st, source.ID)
+	assert.Equal(store.SyncStatusFailed, run.Status, "sync status")
+
+	imported := getDriveSourceImportItem(t, st, source.ID, "backup-1")
+	assert.Equal("imported", imported.Status, "first source import status")
+	failed := getDriveSourceImportItem(t, st, source.ID, "backup-2")
+	assert.Equal("failed", failed.Status, "second source import status")
+
+	var unstamped int
+	require.NoError(st.DB().QueryRow(
+		st.Rebind(`SELECT COUNT(*) FROM messages WHERE source_id = ? AND embed_gen IS NULL`),
+		source.ID,
+	).Scan(&unstamped), "count unstamped messages")
+	assert.Equal(2, unstamped, "imported messages remain discoverable by scan-and-fill")
+}
+
+func TestRunConfiguredSynctechSMSSourceLeavesManualSyncMessagesUnstamped(t *testing.T) {
+	stubScheduledCacheBuild(t)
+	require := require.New(t)
+	assert := assert.New(t)
+	ctx := context.Background()
+	home := t.TempDir()
+	savedCfg := cfg
+	t.Cleanup(func() {
+		cfg = savedCfg
+	})
+	cfg = config.NewDefaultConfig()
+	cfg.HomeDir = home
+	cfg.Data.DataDir = home
+	cfg.Vector.Enabled = true
+	cfg.Vector.Embeddings.Endpoint = "http://127.0.0.1:1"
+	cfg.Vector.Embeddings.Model = "fake"
+	cfg.Vector.Embeddings.Dimension = 4
+
+	importDir := filepath.Join(home, "synctech-local")
+	require.NoError(os.MkdirAll(importDir, 0o700), "create import dir")
+	require.NoError(os.WriteFile(filepath.Join(importDir, "messages.xml"), []byte(`<smses count="1">
+  <sms address="+15551234567" date="1717214400000" type="1" body="manual sync should enqueue" read="1" status="-1" contact_name="Alice" />
+</smses>`), 0o600), "write backup")
+
+	st, err := store.Open(cfg.DatabaseDSN())
+	require.NoError(err, "open store")
+	require.NoError(st.InitSchema(), "InitSchema")
+	require.NoError(st.Close(), "close store")
+
+	src := config.SynctechSMSSource{
+		Name:       "pixel-local",
+		Backend:    "local",
+		Path:       importDir,
+		OwnerPhone: "+15550000001",
+		IncludeSMS: true,
+	}
+	require.NoError(runConfiguredSynctechSMSSource(ctx, src), "runConfiguredSynctechSMSSource")
+
+	st, err = store.Open(cfg.DatabaseDSN())
+	require.NoError(err, "reopen store")
+	t.Cleanup(func() { _ = st.Close() })
+	source := getSynctechSource(t, st, src.OwnerPhone)
+	var unstamped int
+	require.NoError(st.DB().QueryRowContext(ctx,
+		st.Rebind(`SELECT COUNT(*) FROM messages WHERE source_id = ? AND embed_gen IS NULL`),
+		source.ID,
+	).Scan(&unstamped), "count unstamped messages")
+	assert.Equal(1, unstamped, "manual sync message remains discoverable by scan-and-fill")
+}
+
+func TestConfiguredSynctechSMSCompletesAfterImport(t *testing.T) {
+	stubScheduledCacheBuild(t)
+	require := require.New(t)
+	assert := assert.New(t)
+	home := t.TempDir()
+	savedCfg := cfg
+	t.Cleanup(func() { cfg = savedCfg })
+	cfg = config.NewDefaultConfig()
+	cfg.HomeDir = home
+	cfg.Data.DataDir = home
+
+	f := storetest.New(t)
+	xmlPath := filepath.Join(home, "sms.xml")
+	require.NoError(os.WriteFile(xmlPath, []byte(`<smses count="1">
+  <sms address="+15551234567" date="1717214400000" type="1" body="hello from local" read="1" status="-1" contact_name="Alice" />
+</smses>`), 0o600), "write sms fixture")
+	src := synctechDriveTestSource()
+	src.Backend = "local"
+	src.Path = xmlPath
+
+	err := runConfiguredSynctechSMSSourceWithStore(context.Background(), f.Store, src)
+
+	require.NoError(err, "configured synctech-sms import")
+	source := getSynctechSource(t, f.Store, src.OwnerPhone)
+	run := getOnlySyncRun(t, f.Store, source.ID)
+	assert.Equal(store.SyncStatusCompleted, run.Status, "sync status")
+	assertSourceMessageCount(t, f.Store, source.ID, 1)
+}
+
+func stubScheduledCacheBuild(t *testing.T) {
+	t.Helper()
+	old := runBuildCacheSubprocess
+	runBuildCacheSubprocess = func(context.Context, bool, bool) error { return nil }
+	t.Cleanup(func() { runBuildCacheSubprocess = old })
+}
+
 type fakeSynctechDriveClient struct {
-	files       []synctechsms.DriveFile
-	downloads   map[string]string
-	listErr     error
-	downloadErr error
+	files           []synctechsms.DriveFile
+	downloads       map[string]string
+	listErr         error
+	downloadErr     error
+	downloadErrByID map[string]error
 }
 
 func (f fakeSynctechDriveClient) ListBackupFiles(context.Context, string) ([]synctechsms.DriveFile, error) {
@@ -219,6 +389,9 @@ func (f fakeSynctechDriveClient) ListBackupFiles(context.Context, string) ([]syn
 }
 
 func (f fakeSynctechDriveClient) DownloadToFile(_ context.Context, fileID, path string) error {
+	if err := f.downloadErrByID[fileID]; err != nil {
+		return err
+	}
 	if f.downloadErr != nil {
 		return f.downloadErr
 	}
@@ -244,13 +417,13 @@ func synctechDriveTestSource() config.SynctechSMSSource {
 func getSynctechSource(t *testing.T, st *store.Store, ownerPhone string) *store.Source {
 	t.Helper()
 	sources, err := st.ListSources(synctechsms.SourceType)
-	requirepkg.NoError(t, err, "ListSources")
+	require.NoError(t, err, "ListSources")
 	for _, source := range sources {
 		if source.Identifier == ownerPhone {
 			return source
 		}
 	}
-	requirepkg.Failf(t, "synctech source not found", "owner_phone=%s sources=%#v", ownerPhone, sources)
+	require.Failf(t, "synctech source not found", "owner_phone=%s sources=%#v", ownerPhone, sources)
 	return nil
 }
 
@@ -258,7 +431,7 @@ func countSyncRuns(t *testing.T, st *store.Store, sourceID int64) int {
 	t.Helper()
 	var got int
 	err := st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM sync_runs WHERE source_id = ?`), sourceID).Scan(&got)
-	requirepkg.NoError(t, err, "count sync runs")
+	require.NoError(t, err, "count sync runs")
 	return got
 }
 
@@ -276,14 +449,14 @@ func getOnlySyncRun(t *testing.T, st *store.Store, sourceID int64) store.SyncRun
 		&run.MessagesProcessed, &run.MessagesAdded, &run.MessagesUpdated, &run.ErrorsCount,
 		&run.ErrorMessage, &run.CursorBefore, &run.CursorAfter,
 	)
-	requirepkg.NoError(t, err, "get sync run")
+	require.NoError(t, err, "get sync run")
 	return run
 }
 
-func getSourceImportItem(t *testing.T, st *store.Store, sourceID int64, provider, providerID string) *store.SourceImportItem {
+func getDriveSourceImportItem(t *testing.T, st *store.Store, sourceID int64, providerID string) *store.SourceImportItem {
 	t.Helper()
-	item, err := st.GetSourceImportItem(sourceID, provider, providerID)
-	requirepkg.NoError(t, err, "GetSourceImportItem")
+	item, err := st.GetSourceImportItem(sourceID, "drive", providerID)
+	require.NoError(t, err, "GetSourceImportItem")
 	return item
 }
 
@@ -291,14 +464,14 @@ func assertSourceMessageCount(t *testing.T, st *store.Store, sourceID int64, wan
 	t.Helper()
 	var got int
 	err := st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM messages WHERE source_id = ?`), sourceID).Scan(&got)
-	requirepkg.NoError(t, err, "count source messages")
-	assertpkg.Equal(t, want, got, "source message count")
+	require.NoError(t, err, "count source messages")
+	assert.Equal(t, want, got, "source message count")
 }
 
 func assertSourceConversationMessageCount(t *testing.T, st *store.Store, sourceID int64, want int) {
 	t.Helper()
 	var got int
 	err := st.DB().QueryRow(st.Rebind(`SELECT COALESCE(MAX(message_count), 0) FROM conversations WHERE source_id = ?`), sourceID).Scan(&got)
-	requirepkg.NoError(t, err, "read conversation message_count")
-	assertpkg.Equal(t, want, got, "conversation message_count")
+	require.NoError(t, err, "read conversation message_count")
+	assert.Equal(t, want, got, "conversation message_count")
 }

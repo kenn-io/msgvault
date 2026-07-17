@@ -22,12 +22,6 @@ import (
 // ErrHistoryExpired indicates that the Gmail history ID is too old and a full sync is required.
 var ErrHistoryExpired = errors.New("history expired - run full sync")
 
-// EmbedEnqueuer is optionally supplied to a Syncer; nil means vector
-// search is disabled. Set via SetEmbedEnqueuer.
-type EmbedEnqueuer interface {
-	EnqueueMessages(ctx context.Context, messageIDs []int64) error
-}
-
 // Options configures sync behavior.
 type Options struct {
 	// SourceType is the type of source being synced ("gmail" or "imap").
@@ -63,12 +57,15 @@ func DefaultOptions() *Options {
 
 // Syncer performs Gmail synchronization.
 type Syncer struct {
-	client        gmail.API
-	store         *store.Store
-	logger        *slog.Logger
-	progress      gmail.SyncProgress
-	opts          *Options
-	embedEnqueuer EmbedEnqueuer
+	client   gmail.API
+	store    *store.Store
+	logger   *slog.Logger
+	progress gmail.SyncProgress
+	opts     *Options
+}
+
+type messageAcknowledger interface {
+	AcknowledgeMessages(ctx context.Context, messageIDs []string)
 }
 
 // New creates a new Syncer.
@@ -98,18 +95,24 @@ func (s *Syncer) WithProgress(p gmail.SyncProgress) *Syncer {
 	return s
 }
 
-// SetEmbedEnqueuer wires up the optional vector-search enqueuer. Safe
-// to call with nil to disable.
-func (s *Syncer) SetEmbedEnqueuer(e EmbedEnqueuer) {
-	s.embedEnqueuer = e
-}
-
 // syncState holds the state for a sync operation.
 type syncState struct {
 	syncID     int64
 	checkpoint *store.Checkpoint
 	pageToken  string
 	wasResumed bool
+}
+
+// failSyncUnlessCanceled marks the run failed for real errors. A cancelled
+// sync (Ctrl-C, daemon shutdown, a scheduled sync yielding to a waiting
+// operation) keeps status='running' with its saved checkpoint, matching the
+// killed-process semantics GetActiveSync resumes from; marking it failed
+// would discard the checkpoint and restart the sync from scratch.
+func (s *Syncer) failSyncUnlessCanceled(syncID int64, err error) {
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return
+	}
+	_ = s.store.FailSync(syncID, err.Error())
 }
 
 // initSyncState initializes sync state, resuming from checkpoint if possible.
@@ -152,14 +155,15 @@ func (s *Syncer) initSyncState(sourceID int64) (*syncState, error) {
 
 // batchResult holds the result of processing a batch.
 type batchResult struct {
-	processed  int64
-	added      int64
-	skipped    int64
-	oldestDate time.Time
+	processed    int64
+	added        int64
+	skipped      int64
+	oldestDate   time.Time
+	acknowledged []string
 }
 
 // processBatch processes a single batch of messages from a list response.
-func (s *Syncer) processBatch(ctx context.Context, sourceID int64, listResp *gmail.MessageListResponse, labelMap map[string]int64, checkpoint *store.Checkpoint, summary *gmail.SyncSummary) (*batchResult, error) {
+func (s *Syncer) processBatch(ctx context.Context, syncID, sourceID int64, listResp *gmail.MessageListResponse, labelMap map[string]int64, checkpoint *store.Checkpoint, summary *gmail.SyncSummary) (*batchResult, error) {
 	result := &batchResult{}
 
 	if len(listResp.Messages) == 0 {
@@ -185,7 +189,9 @@ func (s *Syncer) processBatch(ctx context.Context, sourceID int64, listResp *gma
 	for _, id := range messageIDs {
 		if _, exists := existingMap[id]; !exists {
 			newIDs = append(newIDs, id)
+			continue
 		}
+		result.acknowledged = append(result.acknowledged, id)
 	}
 
 	result.processed = int64(len(messageIDs))
@@ -193,15 +199,28 @@ func (s *Syncer) processBatch(ctx context.Context, sourceID int64, listResp *gma
 
 	// Fetch and ingest new messages
 	if len(newIDs) > 0 {
-		rawMessages, err := s.client.GetMessagesRawBatch(ctx, newIDs)
+		rawMessages, err := s.getMessagesRawBatchWithDiagnostics(ctx, newIDs)
 		if err != nil {
+			for _, id := range newIDs {
+				s.recordSyncItem(syncID, id, syncItemPhaseFetch, store.SyncRunItemStatusError, syncItemKindBatchFetchError, err)
+			}
+			checkpoint.ErrorsCount += int64(len(newIDs))
 			return nil, fmt.Errorf("fetch messages: %w", err)
 		}
 
-		var insertedIDs []int64
-		for i, raw := range rawMessages {
+		for i, fetch := range rawMessages {
+			raw := fetch.Message
 			if raw == nil {
-				s.logger.Warn("failed to fetch message (nil response)", "id", newIDs[i])
+				if isGmailNotFound(fetch.Err) {
+					s.logger.Debug("skipping message deleted before fetch", "id", newIDs[i])
+					s.recordSyncItem(syncID, newIDs[i], syncItemPhaseFetch, store.SyncRunItemStatusSkipped, syncItemKindGmailNotFound, fetch.Err)
+					result.skipped++
+					result.acknowledged = append(result.acknowledged, newIDs[i])
+					continue
+				}
+				errMsg := syncItemErrorMessage(fetch.Err, errRawBatchMissing.Error())
+				s.logger.Warn("failed to fetch message", "id", newIDs[i], "error", errMsg)
+				s.recordSyncItem(syncID, newIDs[i], syncItemPhaseFetch, store.SyncRunItemStatusError, syncItemKindFetchError, fetch.Err)
 				checkpoint.ErrorsCount++
 				continue
 			}
@@ -210,49 +229,45 @@ func (s *Syncer) processBatch(ctx context.Context, sourceID int64, listResp *gma
 			// Distinct from []byte{} which is a genuine empty body.
 			if raw.Raw == nil {
 				result.skipped++
+				result.acknowledged = append(result.acknowledged, newIDs[i])
 				continue
 			}
 
 			// Track oldest message date for progress display
 			// Gmail returns messages newest-to-oldest, so oldest shows where we've reached
 			if raw.InternalDate > 0 {
-				msgDate := time.UnixMilli(raw.InternalDate)
+				// .UTC() to match how InternalDate is normalized everywhere
+				// else (the stored message date and parsed.Date both use
+				// .UTC()); without it oldestDate carries the local zone and
+				// callers reading its calendar day are off by one east of UTC.
+				msgDate := time.UnixMilli(raw.InternalDate).UTC()
 				if result.oldestDate.IsZero() || msgDate.Before(result.oldestDate) {
 					result.oldestDate = msgDate
 				}
 			}
 
 			threadID := threadIDs[newIDs[i]]
-			insertedID, err := s.ingestMessage(sourceID, raw, threadID, labelMap)
+			err := s.ingestMessage(sourceID, raw, threadID, labelMap)
 			if err != nil {
 				if errors.Is(err, errDuplicateRFC822) {
 					result.skipped++
+					result.acknowledged = append(result.acknowledged, newIDs[i])
 					continue
 				}
 				s.logger.Warn("failed to ingest message", "id", raw.ID, "error", err)
+				s.recordSyncItem(syncID, newIDs[i], syncItemPhaseIngest, store.SyncRunItemStatusError, syncItemKindIngestError, err)
 				checkpoint.ErrorsCount++
 				continue
 			}
 
-			if insertedID > 0 {
-				insertedIDs = append(insertedIDs, insertedID)
-			}
 			result.added++
+			result.acknowledged = append(result.acknowledged, newIDs[i])
 			summary.BytesDownloaded += int64(len(raw.Raw))
 		}
 
-		// Hook vector-search enqueue after the batch-insert point.
-		// A failed enqueue is non-fatal on both backends: the message
-		// rows are already persisted, and any IDs missed by a failed
-		// enqueue are recovered by a full vector rebuild
-		// (`msgvault embed --full-rebuild`), which re-seeds every live
-		// message (both pgvector and sqlitevec provide this path). So we
-		// warn and continue rather than abort the sync.
-		if s.embedEnqueuer != nil && len(insertedIDs) > 0 {
-			if err := s.embedEnqueuer.EnqueueMessages(ctx, insertedIDs); err != nil {
-				s.logger.Warn("vector enqueue failed", "ids", len(insertedIDs), "error", err)
-			}
-		}
+		// Newly-persisted messages get embed_gen = NULL by column default,
+		// so the scan-and-fill embed worker picks them up automatically on
+		// its next run — no sync-time enqueue step is needed.
 	}
 
 	return result, nil
@@ -297,7 +312,7 @@ func (s *Syncer) Full(ctx context.Context, email string) (summary *gmail.SyncSum
 	// Get profile to verify connection and get historyId
 	profile, err := s.client.GetProfile(ctx)
 	if err != nil {
-		_ = s.store.FailSync(state.syncID, err.Error())
+		s.failSyncUnlessCanceled(state.syncID, err)
 		return nil, fmt.Errorf("get profile: %w", err)
 	}
 
@@ -306,7 +321,7 @@ func (s *Syncer) Full(ctx context.Context, email string) (summary *gmail.SyncSum
 	// Sync labels
 	labelMap, err := s.syncLabels(ctx, source.ID)
 	if err != nil {
-		_ = s.store.FailSync(state.syncID, err.Error())
+		s.failSyncUnlessCanceled(state.syncID, err)
 		return nil, fmt.Errorf("sync labels: %w", err)
 	}
 
@@ -319,7 +334,7 @@ func (s *Syncer) Full(ctx context.Context, email string) (summary *gmail.SyncSum
 		// List messages
 		listResp, err := s.client.ListMessages(ctx, s.opts.Query, pageToken)
 		if err != nil {
-			_ = s.store.FailSync(state.syncID, err.Error())
+			s.failSyncUnlessCanceled(state.syncID, err)
 			return nil, fmt.Errorf("list messages: %w", err)
 		}
 
@@ -345,14 +360,20 @@ func (s *Syncer) Full(ctx context.Context, email string) (summary *gmail.SyncSum
 		}
 
 		// Process batch
-		result, err := s.processBatch(ctx, source.ID, listResp, labelMap, state.checkpoint, summary)
+		result, err := s.processBatch(ctx, state.syncID, source.ID, listResp, labelMap, state.checkpoint, summary)
 		if err != nil {
-			_ = s.store.FailSync(state.syncID, err.Error())
+			if checkpointErr := s.store.UpdateSyncCheckpoint(state.syncID, state.checkpoint); checkpointErr != nil {
+				s.logger.Warn("failed to save checkpoint before failing sync", "error", checkpointErr)
+			}
+			s.failSyncUnlessCanceled(state.syncID, err)
 			return nil, err
 		}
 
 		state.checkpoint.MessagesProcessed += result.processed
 		state.checkpoint.MessagesAdded += result.added
+		if ack, ok := s.client.(messageAcknowledger); ok && len(result.acknowledged) > 0 {
+			ack.AcknowledgeMessages(ctx, result.acknowledged)
+		}
 
 		// Report current position date before progress (so UI shows consistent state)
 		if !result.oldestDate.IsZero() {
@@ -601,8 +622,10 @@ func (s *Syncer) parseToModel(sourceID int64, raw *gmail.RawMessage, threadID st
 	}, nil
 }
 
-// persistMessage stores a parsed message and all related data. Returns
-// the internal message ID for hooks (e.g. vector-search enqueue).
+// persistMessage stores a parsed message and all related data, returning
+// the internal message ID to callers. No vector-search enqueue happens
+// here: persisted rows leave embed_gen NULL (column default) and the
+// scan-and-fill worker discovers them later.
 func (s *Syncer) persistMessage(data *messageData, labelMap map[string]int64) (int64, error) {
 	// Map Gmail label IDs to internal IDs
 	var labelIDs []int64
@@ -691,13 +714,12 @@ func (s *Syncer) persistMessage(data *messageData, labelMap map[string]int64) (i
 // composite IDs change when messages move between mailboxes.
 var errDuplicateRFC822 = errors.New("duplicate RFC822 Message-ID")
 
-// ingestMessage parses and stores a single message, returning the
-// internal message ID on success. Returns (0, errDuplicateRFC822) for
-// IMAP deduplication skips.
-func (s *Syncer) ingestMessage(sourceID int64, raw *gmail.RawMessage, threadID string, labelMap map[string]int64) (int64, error) {
+// ingestMessage parses and stores a single message. Returns
+// errDuplicateRFC822 for IMAP deduplication skips.
+func (s *Syncer) ingestMessage(sourceID int64, raw *gmail.RawMessage, threadID string, labelMap map[string]int64) error {
 	data, err := s.parseToModel(sourceID, raw, threadID)
 	if err != nil {
-		return 0, err
+		return err
 	}
 
 	// For IMAP sources, check if a message with the same RFC822
@@ -712,7 +734,7 @@ func (s *Syncer) ingestMessage(sourceID int64, raw *gmail.RawMessage, threadID s
 		existingID, err := s.store.GetMessageIDByRFC822ID(
 			sourceID, data.message.RFC822MessageID.String)
 		if err != nil {
-			return 0, fmt.Errorf("check rfc822 dedup: %w", err)
+			return fmt.Errorf("check rfc822 dedup: %w", err)
 		}
 		if existingID > 0 {
 			var labelIDs []int64
@@ -726,13 +748,14 @@ func (s *Syncer) ingestMessage(sourceID int64, raw *gmail.RawMessage, threadID s
 				data.message.SourceMessageID,
 				labelIDs,
 			); err != nil {
-				return 0, fmt.Errorf("update dedup message: %w", err)
+				return fmt.Errorf("update dedup message: %w", err)
 			}
-			return 0, errDuplicateRFC822
+			return errDuplicateRFC822
 		}
 	}
 
-	return s.persistMessage(data, labelMap)
+	_, err = s.persistMessage(data, labelMap)
+	return err
 }
 
 // ensureAddressUTF8 validates and converts address names to valid UTF-8 in place.

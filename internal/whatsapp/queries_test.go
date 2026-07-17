@@ -5,13 +5,13 @@ import (
 	"testing"
 
 	_ "github.com/mattn/go-sqlite3"
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestFetchChatsOldSchema(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	// Old WhatsApp schemas (pre-2022) lack the group_type column on chat.
 	// fetchChats should handle this gracefully, defaulting group_type to 0.
 	db, err := sql.Open("sqlite3", ":memory:")
@@ -64,7 +64,7 @@ func TestFetchChatsOldSchema(t *testing.T) {
 }
 
 func TestFetchChatsNewSchema(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	// New WhatsApp schemas have group_type on chat.
 	db, err := sql.Open("sqlite3", ":memory:")
 	require.NoError(err)
@@ -98,12 +98,12 @@ func TestFetchChatsNewSchema(t *testing.T) {
 	require.NoError(err, "fetchChats with new schema")
 
 	require.Len(chats, 1)
-	assertpkg.Equal(t, 1, chats[0].GroupType, "GroupType")
+	assert.Equal(t, 1, chats[0].GroupType, "GroupType")
 }
 
 func TestFetchMediaOldSchema(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	// Old WhatsApp schemas lack media_caption on message_media.
 	db, err := sql.Open("sqlite3", ":memory:")
 	require.NoError(err)
@@ -137,8 +137,8 @@ func TestFetchMediaOldSchema(t *testing.T) {
 }
 
 func TestColumnCacheScopedPerDB(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	// Verify that inspecting an old-schema DB then a new-schema DB
 	// (and vice versa) produces correct results without resetColumnCache.
 	resetColumnCache()
@@ -188,8 +188,8 @@ func TestColumnCacheScopedPerDB(t *testing.T) {
 }
 
 func TestFetchLidMap(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	db, err := sql.Open("sqlite3", ":memory:")
 	require.NoError(err)
 	defer func() { _ = db.Close() }()
@@ -240,11 +240,11 @@ func TestFetchLidMap(t *testing.T) {
 
 func TestFetchLidMapMissingTable(t *testing.T) {
 	db, err := sql.Open("sqlite3", ":memory:")
-	requirepkg.NoError(t, err)
+	require.NoError(t, err)
 	defer func() { _ = db.Close() }()
 
 	// No jid_map table — should return empty map, not error.
 	lidMap, err := fetchLidMap(db)
-	requirepkg.NoError(t, err, "expected no error for missing table")
-	assertpkg.Empty(t, lidMap, "expected empty map")
+	require.NoError(t, err, "expected no error for missing table")
+	assert.Empty(t, lidMap, "expected empty map")
 }

@@ -6,14 +6,14 @@ import (
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgconn"
-	assertpkg "github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/assert"
 )
 
 // TestPostgreSQLDialect_IsBusyError mirrors TestSQLiteDialect_IsBusyError for
 // the PostgreSQL dialect. It needs no database: IsBusyError only inspects the
 // SQLSTATE on a *pgconn.PgError, so synthetic errors fully exercise it.
 func TestPostgreSQLDialect_IsBusyError(t *testing.T) {
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	d := &PostgreSQLDialect{}
 
 	// 55P03 lock_not_available, 40P01 deadlock_detected, 57014 query_canceled

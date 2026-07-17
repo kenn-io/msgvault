@@ -14,7 +14,7 @@ var _ TextEngine = (*DuckDBEngine)(nil)
 
 // textTypeFilter returns a SQL condition restricting to text message types.
 func textTypeFilter() string {
-	return "msg.message_type IN ('whatsapp','imessage','sms','mms','google_voice_text')"
+	return "msg.message_type IN (" + TextMessageTypeSQLList + ")"
 }
 
 // textSenderJoin resolves the sending participant (p_sender) for each text
@@ -100,13 +100,13 @@ func (e *DuckDBEngine) buildTextFilterConditions(
 		conditions = append(conditions,
 			"msg.sent_at >= CAST(? AS TIMESTAMP)")
 		args = append(args,
-			filter.After.Format("2006-01-02 15:04:05"))
+			duckDBDateParam(*filter.After))
 	}
 	if filter.Before != nil {
 		conditions = append(conditions,
 			"msg.sent_at < CAST(? AS TIMESTAMP)")
 		args = append(args,
-			filter.Before.Format("2006-01-02 15:04:05"))
+			duckDBDateParam(*filter.Before))
 	}
 
 	return strings.Join(conditions, " AND "), args
@@ -117,6 +117,12 @@ func (e *DuckDBEngine) buildTextFilterConditions(
 func (e *DuckDBEngine) ListConversations(
 	ctx context.Context, filter TextFilter,
 ) ([]ConversationRow, error) {
+	release, err := e.acquireQuerySlot(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+
 	where, args := e.buildTextFilterConditions(filter)
 
 	// Sort clause.
@@ -258,7 +264,15 @@ func (e *DuckDBEngine) TextAggregate(
 	viewType TextViewType,
 	opts TextAggregateOptions,
 ) ([]AggregateRow, error) {
-	def, err := textAggViewDef(viewType, opts.TimeGranularity)
+	// Gate here, not in the shared runAggregation helper: Aggregate and
+	// SubAggregate already hold a slot when they reach it.
+	release, err := e.acquireQuerySlot(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+
+	def, err := textAggViewDef(viewType, opts.EffectiveTimeGranularity())
 	if err != nil {
 		return nil, err
 	}
@@ -275,13 +289,13 @@ func (e *DuckDBEngine) TextAggregate(
 		conditions = append(conditions,
 			"msg.sent_at >= CAST(? AS TIMESTAMP)")
 		args = append(args,
-			opts.After.Format("2006-01-02 15:04:05"))
+			duckDBDateParam(*opts.After))
 	}
 	if opts.Before != nil {
 		conditions = append(conditions,
 			"msg.sent_at < CAST(? AS TIMESTAMP)")
 		args = append(args,
-			opts.Before.Format("2006-01-02 15:04:05"))
+			duckDBDateParam(*opts.Before))
 	}
 
 	// Search filter on key columns.
@@ -320,6 +334,12 @@ func (e *DuckDBEngine) ListConversationMessages(
 	// Fallback to Parquet (snippet only, no body text).
 	// NOTE: search results will only show snippets, not full body
 	// text, since Parquet files do not contain message bodies.
+	release, err := e.acquireQuerySlot(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+
 	where, args := e.buildTextFilterConditions(filter)
 	where += " AND msg.conversation_id = ?"
 	args = append(args, convID)
@@ -413,7 +433,8 @@ func (e *DuckDBEngine) TextSearch(
 	if e.sqliteDB == nil {
 		return nil, nil
 	}
-	if query == "" {
+	match := sanitizeTextSearchMatch(query)
+	if match == "" {
 		return nil, nil
 	}
 	if limit == 0 {
@@ -444,14 +465,14 @@ func (e *DuckDBEngine) TextSearch(
 		LEFT JOIN participants p ON p.id = m.sender_id
 		LEFT JOIN conversations c ON c.id = m.conversation_id
 		WHERE messages_fts MATCH ?
-		  AND m.message_type IN ('whatsapp','imessage','sms','mms','google_voice_text')
+		  AND %s
 		  AND %s
 		ORDER BY m.sent_at DESC
 		LIMIT ? OFFSET ?
-	`, store.LiveMessagesWhere("m", true))
+	`, textMsgTypeFilter(), store.LiveMessagesWhere("m", true))
 
 	rows, err := e.sqliteDB.QueryContext(ctx, sqlQuery,
-		query, limit, offset)
+		match, limit, offset)
 	if err != nil {
 		return nil, fmt.Errorf("text search: %w", err)
 	}
@@ -464,9 +485,15 @@ func (e *DuckDBEngine) TextSearch(
 func (e *DuckDBEngine) GetTextStats(
 	ctx context.Context, opts TextStatsOptions,
 ) (*TotalStats, error) {
+	release, err := e.acquireQuerySlot(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+
 	stats := &TotalStats{}
 
-	conditions := []string{textTypeFilter()}
+	conditions := []string{textTypeFilter(), store.LiveMessagesWhere("msg", false)}
 	var args []any
 
 	if opts.SourceID != nil {
@@ -486,6 +513,8 @@ func (e *DuckDBEngine) GetTextStats(
 		WITH %s
 		SELECT
 			COUNT(*) AS message_count,
+			COALESCE(SUM(CASE WHEN msg.deleted_from_source_at IS NULL THEN 1 ELSE 0 END), 0) AS active_count,
+			COALESCE(SUM(CASE WHEN msg.deleted_from_source_at IS NOT NULL THEN 1 ELSE 0 END), 0) AS source_deleted_count,
 			COALESCE(SUM(CAST(msg.size_estimate AS BIGINT)), 0) AS total_size,
 			CAST(COALESCE(SUM(att.attachment_count), 0) AS BIGINT) AS attachment_count,
 			CAST(COALESCE(SUM(att.attachment_size), 0) AS BIGINT) AS attachment_size,
@@ -496,8 +525,10 @@ func (e *DuckDBEngine) GetTextStats(
 	`, e.parquetCTEs(), whereClause)
 
 	var attachmentSize sql.NullFloat64
-	err := e.db.QueryRowContext(ctx, msgQuery, args...).Scan(
+	err = e.db.QueryRowContext(ctx, msgQuery, args...).Scan(
 		&stats.MessageCount,
+		&stats.ActiveMessageCount,
+		&stats.SourceDeletedMessageCount,
 		&stats.TotalSize,
 		&stats.AttachmentCount,
 		&attachmentSize,

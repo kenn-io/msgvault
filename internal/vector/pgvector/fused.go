@@ -25,6 +25,16 @@ var _ vector.FusingBackend = (*Backend)(nil)
 // outer GROUP BY still yields enough distinct messages.
 const fusedANNChunksPerMessage = 8
 
+// postgresFTSRankExpression keeps recipient (C) and body (D) weights equal
+// after the versioned search_fts layout separates those fields. The array is
+// ordered D, C, B, A per PostgreSQL's ts_rank_cd contract.
+func postgresFTSRankExpression(vectorExpr, queryArg string) string {
+	return fmt.Sprintf(
+		"ts_rank_cd(ARRAY[0.1, 0.1, 0.4, 1.0]::real[], %s, to_tsquery('simple', %s), 32)",
+		vectorExpr, queryArg,
+	)
+}
+
 // FusedSearch runs the single-query hybrid CTE against pgvector.
 // Mirrors sqlitevec.FusedSearch (spec §5.3) but built around
 // to_tsquery + ts_rank_cd on the inline messages.search_fts
@@ -132,6 +142,7 @@ func (b *Backend) FusedSearch(ctx context.Context, req vector.FusedRequest) ([]v
 			// PostgreSQLQueryDialect.BuildFTSTerm's output, never raw text.
 			_, tsArg := query.PostgreSQLQueryDialect{}.BuildFTSTerm(req.FTSTerms)
 			ftsArg := bind(tsArg)
+			ftsRank := postgresFTSRankExpression("m.search_fts", ftsArg)
 			kp1Arg := bind(kPlus1)
 			kArg := bind(req.KPerSignal)
 			// Empty filter: scan messages directly with an inline liveness
@@ -146,12 +157,12 @@ func (b *Backend) FusedSearch(ctx context.Context, req vector.FusedRequest) ([]v
 			ctes = append(ctes,
 				fmt.Sprintf(`fts_pool AS (
     SELECT m.id AS message_id,
-           ts_rank_cd(m.search_fts, to_tsquery('simple', %s), 32) AS bm25
+           %s AS bm25
       FROM messages m
 %s     WHERE m.search_fts @@ to_tsquery('simple', %s)
 %s     ORDER BY bm25 DESC
      LIMIT %s
-)`, ftsArg, ftsFrom, ftsArg, ftsLive, kp1Arg),
+)`, ftsRank, ftsFrom, ftsArg, ftsLive, kp1Arg),
 				fmt.Sprintf(`fts_ranked AS (
     SELECT message_id, bm25,
            ROW_NUMBER() OVER (ORDER BY bm25 DESC, message_id ASC) AS rnk

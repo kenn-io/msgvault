@@ -1,9 +1,6 @@
 package cmd
 
 import (
-	"database/sql"
-
-	"go.kenn.io/msgvault/internal/sync"
 	"go.kenn.io/msgvault/internal/vector"
 	"go.kenn.io/msgvault/internal/vector/embed"
 	"go.kenn.io/msgvault/internal/vector/hybrid"
@@ -12,29 +9,21 @@ import (
 // vectorFeatures carries the optional vector-search components that the
 // serve, mcp, sync, and sync-full commands wire into their servers and
 // sync pipelines. It is populated only when cfg.Vector.Enabled is true
-// AND the binary is built with -tags sqlite_vec; otherwise
-// setupVectorFeatures returns (nil, nil) or a clear error.
+// AND the binary is built with a vector backend tag (sqlite_vec or
+// pgvector); otherwise setupVectorFeatures returns (nil, nil) or a clear
+// error.
 //
 // When non-nil, all fields are populated (invariant enforced by
 // setupVectorFeatures). Callers only need to nil-check vf itself.
 type vectorFeatures struct {
 	Backend      vector.Backend
 	HybridEngine *hybrid.Engine
-	Enqueuer     sync.EmbedEnqueuer
 	Worker       *embed.Worker
 	Cfg          vector.Config
-	// VectorsDB is the underlying vectors.db handle. The daemon's
-	// EmbedJob uses it to count pending_embeddings for the
-	// activation gate; other consumers should prefer the higher-
-	// level Backend abstraction.
-	VectorsDB *sql.DB
-	// Rebind translates ?-placeholders to the driver's native form for
-	// raw queries run directly against VectorsDB (the daemon's EmbedJob
-	// activation-gate count). Identity on SQLite, PostgreSQLDialect.Rebind
-	// on PG. Callers that issue raw SQL against VectorsDB must apply it.
-	Rebind func(string) string
-	// Close releases the underlying vectors.db handle. Every caller
-	// that receives a non-nil vectorFeatures must invoke Close during
-	// shutdown so WAL checkpoints complete.
+	// Close releases the backend's resources: on SQLite it closes the
+	// vectors.db handle (so WAL checkpoints complete); on PostgreSQL it is
+	// a no-op because the pgvector backend shares the main store's handle,
+	// which is owned and closed elsewhere. Every caller that receives a
+	// non-nil vectorFeatures must invoke Close during shutdown.
 	Close func() error
 }

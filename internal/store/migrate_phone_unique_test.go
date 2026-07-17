@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // TestEnsureParticipantsPhoneUniqueIndex_LegacyNonUnique simulates an
@@ -29,8 +29,8 @@ import (
 // id (proving ON CONFLICT (phone_number) now binds to a real UNIQUE
 // constraint).
 func TestEnsureParticipantsPhoneUniqueIndex_LegacyNonUnique(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	// SQLite-only: this test pokes at sqlite_master and reseats the
 	// applied_migrations row directly. The PG equivalent of the
 	// migration is exercised by TestEnsureParticipantByPhone_Concurrent

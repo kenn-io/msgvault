@@ -26,6 +26,8 @@ BUILD_TAGS := fts5 sqlite_vec
 # Omitting sqlite_vec compiles those out and the target gives false confidence.
 PG_TEST_TAGS := fts5 sqlite_vec pgvector
 
+OPENAPI_ARTIFACTS := api/openapi.yaml pkg/client/openapi.yaml pkg/client/generated
+
 # Keep golangci-lint results scoped to this git worktree. Its cache can contain
 # absolute source paths, so sharing the default user cache across worktrees can
 # replay diagnostics for deleted worktree paths.
@@ -33,7 +35,7 @@ DEFAULT_GOLANGCI_LINT_CACHE := $(shell git rev-parse --path-format=absolute --gi
 GOLANGCI_LINT_CACHE ?= $(DEFAULT_GOLANGCI_LINT_CACHE)
 export GOLANGCI_LINT_CACHE
 
-.PHONY: build build-release install clean test test-v test-pg fmt lint lint-ci testify-helper-check tidy shootout run-shootout install-hooks bench help
+.PHONY: build build-release install clean test test-v test-pg fmt lint lint-ci testify-helper-check tidy openapi api-generate openapi-check api-check shootout run-shootout install-hooks bench docs-install docs-build docs-serve docs-check docs-screenshots docs-assets-branch docs-generated-assets-branch docs-deploy-staging docs-deploy help
 
 # Build the binary (debug)
 build:
@@ -78,13 +80,34 @@ test-v:
 # Example: MSGVAULT_TEST_DB=postgres://user:pass@localhost:5432/db make test-pg
 #
 # CI runs the same target under .github/workflows/ci.yml's test-postgres job.
-# See docs/PG_STATUS.md for the supported feature surface.
+# See docs/internal/PG_STATUS.md for the supported feature surface.
 test-pg:
 	@if [ -z "$$MSGVAULT_TEST_DB" ]; then \
 		echo "MSGVAULT_TEST_DB must be set, e.g., postgres://user:pass@localhost:5432/db" >&2; \
 		exit 1; \
 	fi
 	go test -tags "$(PG_TEST_TAGS)" ./...
+
+# Regenerate the committed OpenAPI schemas and generated Go client.
+# api/openapi.yaml is the published OpenAPI 3.1 schema; pkg/client/openapi.yaml
+# is the OpenAPI 3.0 schema used by the Go client generator.
+api-generate:
+	@mkdir -p api pkg/client/generated
+	set -e; tmp="$$(mktemp)"; trap 'rm -f "$$tmp"' EXIT; go run ./cmd/msgvault openapi > "$$tmp"; if [ -f api/openapi.yaml ] && cmp -s "$$tmp" api/openapi.yaml; then rm "$$tmp"; else mv "$$tmp" api/openapi.yaml; fi; trap - EXIT
+	set -e; tmp="$$(mktemp)"; trap 'rm -f "$$tmp"' EXIT; go run ./cmd/msgvault openapi --version 3.0 --format yaml > "$$tmp"; if [ -f pkg/client/openapi.yaml ] && cmp -s "$$tmp" pkg/client/openapi.yaml; then rm "$$tmp"; else mv "$$tmp" pkg/client/openapi.yaml; fi; trap - EXIT
+	cd pkg/client/generated && find . -maxdepth 1 -type f -name '*.go' ! -name 'generate.go' -delete && go run github.com/doordash-oss/oapi-codegen-dd/v3/cmd/oapi-codegen@v3.75.5 -config config.yaml ../openapi.yaml
+
+openapi-check: api-generate
+	@git diff --exit-code -- $(OPENAPI_ARTIFACTS) || (echo "OpenAPI generated assets are stale; run 'make api-generate' and commit the changes." >&2; exit 1)
+	@if [ -n "$$(git status --porcelain --untracked-files=all -- $(OPENAPI_ARTIFACTS))" ]; then \
+		git status --short --untracked-files=all -- $(OPENAPI_ARTIFACTS); \
+		echo "OpenAPI generated assets are stale; run 'make api-generate' and commit the changes." >&2; \
+		exit 1; \
+	fi
+
+api-check: openapi-check
+
+openapi: api-generate
 
 # Format code
 fmt:
@@ -133,6 +156,43 @@ tidy:
 bench:
 	go test -tags "$(BUILD_TAGS)" -run=^$$ -bench=. -benchtime=1s -count=1 ./internal/query/
 
+# Install docs dependencies
+docs-install:
+	cd docs && uv sync --frozen
+
+# Build docs site
+docs-build:
+	cd docs && bash ./vercel-build.sh
+
+# Serve docs site locally
+docs-serve:
+	bash docs/assets/hydrate-assets.sh
+	cd docs && uv run bash ./zensical-docs.sh serve
+
+# Check docs sources and build output
+docs-check:
+	bash scripts/check-docs.sh
+
+# Regenerate docs screenshots
+docs-screenshots:
+	bash docs/screenshots/generate-all.sh
+
+# Publish curated static docs assets to local asset branch
+docs-assets-branch:
+	bash docs/assets/update-static-assets-branch.sh
+
+# Publish generated docs assets to local asset branch
+docs-generated-assets-branch:
+	bash docs/screenshots/update-generated-assets-branch.sh
+
+# Deploy docs to Vercel staging
+docs-deploy-staging:
+	cd docs && vercel
+
+# Deploy docs to Vercel production
+docs-deploy:
+	cd docs && vercel --prod
+
 # Build the MIME shootout tool
 shootout:
 	CGO_ENABLED=1 go build -o mimeshootout ./scripts/mimeshootout
@@ -156,8 +216,21 @@ help:
 	@echo "  lint-ci        - Run linter (CI, no auto-fix; also runs testify-helper-check)"
 	@echo "  testify-helper-check - Enforce testify helper usage in assertion-heavy tests"
 	@echo "  tidy           - Tidy go.mod"
+	@echo "  openapi        - Regenerate OpenAPI specs and generated Go client"
+	@echo "  openapi-check  - Check committed OpenAPI specs and generated Go client are up to date"
+	@echo "  api-check      - Alias for openapi-check"
 	@echo "  install-hooks  - Install pre-commit hook via prek"
 	@echo "  clean          - Remove build artifacts"
+	@echo ""
+	@echo "  docs-install   - Install docs dependencies"
+	@echo "  docs-build     - Build docs site"
+	@echo "  docs-serve     - Hydrate and serve docs locally"
+	@echo "  docs-check     - Run docs validation"
+	@echo "  docs-screenshots - Regenerate docs screenshots"
+	@echo "  docs-assets-branch - Publish static docs assets branch"
+	@echo "  docs-generated-assets-branch - Publish generated docs assets branch"
+	@echo "  docs-deploy-staging - Deploy docs to Vercel staging"
+	@echo "  docs-deploy    - Deploy docs to Vercel production"
 	@echo ""
 	@echo "  bench          - Run query engine benchmarks"
 	@echo "  shootout       - Build MIME shootout tool"

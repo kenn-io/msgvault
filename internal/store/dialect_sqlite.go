@@ -10,12 +10,13 @@ import (
 	"unicode"
 
 	"github.com/mattn/go-sqlite3"
+	"go.kenn.io/msgvault/internal/sqliteutil"
 )
 
 // SQLiteDialect implements Dialect for SQLite (the default backend).
 type SQLiteDialect struct{}
 
-func (d *SQLiteDialect) DriverName() string { return "sqlite3" }
+func (d *SQLiteDialect) DriverName() string { return sqliteutil.DriverName() }
 
 // Rebind is a no-op for SQLite — it uses ? placeholders natively.
 func (d *SQLiteDialect) Rebind(query string) string { return query }
@@ -96,15 +97,17 @@ func (d *SQLiteDialect) FTSUpsert(q querier, doc FTSDoc) error {
 //
 // The bm25 weights approximate PostgreSQL's setweight field-priority
 // preferences (subject heaviest, then sender, then body / other
-// recipients) for typical email shapes. This is a best-effort SQLite
-// tuning, NOT a strict cross-backend parity guarantee.
+// recipients) for typical email shapes. PostgreSQL assigns recipients
+// weight C and body weight D so body-only search can distinguish them,
+// then supplies explicit rank weights that keep C and D equivalent. This is a
+// best-effort SQLite tuning, NOT a strict cross-backend parity guarantee.
 //
 // Weights are positional over every column declared in messages_fts —
 // UNINDEXED columns count too even though they cannot match — so the
 // leading 1.0 is the placeholder for `message_id UNINDEXED`. The
 // remaining slots map to (subject, body, from_addr, to_addr, cc_addr).
 // PostgreSQL applies setweight 'A'=1.0 to subject and 'B'=0.4 to sender,
-// leaving body and other recipients at default 'D'=0.1 — a 10:4:1 ratio,
+// with explicit C/D rank weights of 0.1 for recipients/body — a 10:4:1 ratio,
 // which bm25 reproduces as 10/1/4/1/1 across (subject, body, from, to,
 // cc). bm25 returns lower (more negative) scores for more relevant rows,
 // so callers ORDER BY this expression ascending (the default).
@@ -128,6 +131,17 @@ func (d *SQLiteDialect) FTSDeleteSQL() string {
 	return `DELETE FROM messages_fts WHERE message_id IN (
 		SELECT id FROM messages WHERE source_id = ?
 	)`
+}
+
+func (d *SQLiteDialect) InvalidateFTSForMessage(q querier, messageID int64) error {
+	_, err := q.Exec("DELETE FROM messages_fts WHERE rowid = ?", messageID)
+	if d.IsNoSuchTableError(err) {
+		// A missing FTS table cannot contain a stale searchable row. Preserve
+		// the existing best-effort indexing contract so canonical message
+		// persistence can continue and a later rebuild can recreate the index.
+		return nil
+	}
+	return err
 }
 
 // FTSBackfillBatchSQL returns the SQL to backfill FTS5 for a range of message IDs.
@@ -182,6 +196,26 @@ func (d *SQLiteDialect) FTSNeedsBackfill(db *sql.DB) bool {
 	return exists
 }
 
+// FTSNeedsBackfillQuick compares MAX(id) against MAX(rowid) — two B-tree
+// lookups, instant at any archive size. It catches the dominant staleness
+// (tail of the messages table not yet indexed: fresh import, interrupted
+// backfill) but misses interior holes; FTSNeedsBackfill stays authoritative.
+func (d *SQLiteDialect) FTSNeedsBackfillQuick(db *sql.DB) bool {
+	var msgMax int64
+	if err := db.QueryRowContext(context.Background(),
+		"SELECT COALESCE(MAX(id), 0) FROM messages",
+	).Scan(&msgMax); err != nil || msgMax == 0 {
+		return false
+	}
+	var ftsMax int64
+	if err := db.QueryRowContext(context.Background(),
+		"SELECT COALESCE(MAX(rowid), 0) FROM messages_fts",
+	).Scan(&ftsMax); err != nil {
+		return false
+	}
+	return ftsMax < msgMax
+}
+
 // FTSClearSQL returns the SQL to clear all FTS5 data.
 func (d *SQLiteDialect) FTSClearSQL() string {
 	return "DELETE FROM messages_fts"
@@ -225,6 +259,11 @@ func (d *SQLiteDialect) FTSRebuildSchema(q querier) error {
 // not a post-migration step (cr2-10).
 func (d *SQLiteDialect) EnsureFTSIndex(querier) error { return nil }
 
+// EnsureTriggers is a no-op for SQLite: the last_modified triggers are
+// `CREATE TRIGGER IF NOT EXISTS` in schema.sql, which InitSchema re-execs
+// idempotently on every open (fresh and existing DBs alike).
+func (d *SQLiteDialect) EnsureTriggers(querier) error { return nil }
+
 // LegacyColumnMigrations returns the ALTER TABLE ADD COLUMN statements that
 // bring older SQLite databases up to the current schema. IsDuplicateColumnError
 // silences these when the column already exists (idempotent migrations).
@@ -243,6 +282,21 @@ func (d *SQLiteDialect) LegacyColumnMigrations() []ColumnMigration {
 		{`ALTER TABLE messages ADD COLUMN delete_batch_id TEXT`, "delete_batch_id"},
 		{`ALTER TABLE conversations ADD COLUMN title TEXT`, "title"},
 		{`ALTER TABLE conversations ADD COLUMN conversation_type TEXT NOT NULL DEFAULT 'email_thread'`, "conversation_type"},
+		// embed_gen: per-message vector-embedding watermark. NULL default
+		// means every legacy row reads as "needs embedding", which is
+		// correct — the scan-and-fill worker (and backstop) will embed and
+		// stamp them. No backfill.
+		{`ALTER TABLE messages ADD COLUMN embed_gen INTEGER`, "embed_gen"},
+		// last_modified: row-level last-modified watermark, the embed
+		// worker's optimistic-CAS token. SQLite rejects a non-constant
+		// DEFAULT in ADD COLUMN ("Cannot add a column with non-constant
+		// default"), so the column is added with no default (existing rows
+		// get NULL) and InitSchema's backfillLastModified follows up with a
+		// one-shot `UPDATE ... SET last_modified = CURRENT_TIMESTAMP WHERE
+		// last_modified IS NULL` so the CAS token is a comparable value
+		// (NULL would never match `last_modified = ?`). Fresh DBs keep the
+		// CREATE TABLE default in schema.sql, which IS allowed.
+		{`ALTER TABLE messages ADD COLUMN last_modified DATETIME`, "last_modified"},
 	}
 }
 
@@ -285,7 +339,7 @@ func (d *SQLiteDialect) CheckpointWAL(db *sql.DB) error {
 
 // SchemaStaleCheck returns the SQL to check whether the most recent migration column exists.
 func (d *SQLiteDialect) SchemaStaleCheck() string {
-	return "SELECT COUNT(*) FROM pragma_table_info('conversations') WHERE name = 'conversation_type'"
+	return "SELECT COUNT(*) FROM pragma_table_info('messages') WHERE name = 'embed_gen'"
 }
 
 // IsDuplicateColumnError returns true if the error is "duplicate column name" from ALTER TABLE.

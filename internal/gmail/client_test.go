@@ -12,8 +12,8 @@ import (
 	"sync"
 	"testing"
 
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // Gmail API error reason constants for tests.
@@ -221,11 +221,11 @@ func TestDecodeBase64URL(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			got, err := decodeBase64URL(tt.input)
 			if tt.wantErr {
-				assertpkg.Error(t, err, "decodeBase64URL()")
+				assert.Error(t, err, "decodeBase64URL()")
 				return
 			}
-			requirepkg.NoError(t, err, "decodeBase64URL()")
-			assertpkg.Equal(t, string(tt.want), string(got), "decodeBase64URL()")
+			require.NoError(t, err, "decodeBase64URL()")
+			assert.Equal(t, string(tt.want), string(got), "decodeBase64URL()")
 		})
 	}
 }
@@ -281,7 +281,7 @@ func TestIsRateLimitError(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := isRateLimitError(tt.body)
-			assertpkg.Equal(t, tt.want, got, "isRateLimitError()")
+			assert.Equal(t, tt.want, got, "isRateLimitError()")
 		})
 	}
 }
@@ -323,7 +323,8 @@ func (h *testLogHandler) getRecords() []logRecord {
 }
 
 func TestGetMessagesRawBatch_LogLevels(t *testing.T) {
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	// Set up a test HTTP server that returns different responses per message ID.
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
@@ -367,7 +368,7 @@ func TestGetMessagesRawBatch_LogLevels(t *testing.T) {
 
 	ctx := context.Background()
 	results, err := client.GetMessagesRawBatch(ctx, []string{"msg_ok", "msg_404", "msg_err"})
-	requirepkg.NoError(t, err, "GetMessagesRawBatch()")
+	require.NoError(err, "GetMessagesRawBatch()")
 
 	// msg_ok should succeed
 	assert.NotNil(results[0], "expected msg_ok to return a result")
@@ -396,6 +397,20 @@ func TestGetMessagesRawBatch_LogLevels(t *testing.T) {
 
 	assert.True(foundDebug404, "expected debug log for msg_404 with message %q, got records: %v", "message deleted before fetch", records)
 	assert.True(foundWarnErr, "expected warn log for msg_err with message %q, got records: %v", "failed to fetch message", records)
+
+	batch, err := client.GetMessagesRawBatchWithErrors(ctx, []string{"msg_ok", "msg_404", "msg_err"})
+	require.NoError(err, "GetMessagesRawBatchWithErrors()")
+	require.Len(batch, 3, "batch results")
+	assert.Equal("msg_ok", batch[0].ID, "batch[0].ID")
+	assert.NotNil(batch[0].Message, "batch[0].Message")
+	require.NoError(batch[0].Err, "batch[0].Err")
+	assert.Equal("msg_404", batch[1].ID, "batch[1].ID")
+	assert.Nil(batch[1].Message, "batch[1].Message")
+	var notFound *NotFoundError
+	require.ErrorAs(batch[1].Err, &notFound, "batch[1].Err")
+	assert.Equal("msg_err", batch[2].ID, "batch[2].ID")
+	assert.Nil(batch[2].Message, "batch[2].Message")
+	require.Error(batch[2].Err, "batch[2].Err")
 }
 
 // rewriteTransport rewrites requests from the Gmail API baseURL to a test server URL.

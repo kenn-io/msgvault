@@ -1,0 +1,325 @@
+/* msgvault monochrome terminal theme for Zensical / mkdocs-material. */
+
+:root {
+  --md-text-font: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+  --md-code-font: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+[data-md-color-scheme="slate"] {
+  --md-hue: 0;
+  --msgvault-bg: #0a0a0a;
+  --msgvault-bg-raised: #0f0f0f;
+  --msgvault-panel: #111111;
+  --msgvault-panel-hover: #171717;
+  --msgvault-border: #2a2a2a;
+  --msgvault-border-strong: #555555;
+  --msgvault-text: #e8e8e8;
+  --msgvault-muted: #a0a0a0;
+  --msgvault-link: #d6d6d6;
+  --msgvault-link-hover: #ffffff;
+  --md-default-bg-color: var(--msgvault-bg);
+  --md-default-fg-color: var(--msgvault-text);
+  --md-default-fg-color--light: #c0c0c0;
+  --md-default-fg-color--lighter: #888888;
+  --md-primary-fg-color: var(--msgvault-bg-raised);
+  --md-primary-fg-color--light: var(--msgvault-panel);
+  --md-primary-fg-color--dark: var(--msgvault-bg);
+  --md-primary-bg-color: var(--msgvault-text);
+  --md-accent-fg-color: var(--msgvault-link-hover);
+  --md-typeset-a-color: var(--msgvault-link);
+  --md-code-bg-color: #151515;
+}
+
+.md-header,
+.md-tabs {
+  background: var(--msgvault-bg-raised);
+  border-bottom: 1px solid var(--msgvault-border);
+}
+
+.md-logo {
+  display: inline-flex;
+  width: auto;
+  align-items: center;
+  gap: 0.5rem;
+  text-decoration: none;
+}
+
+.md-logo img {
+  display: block;
+  width: 1.5rem;
+  height: 1.5rem;
+}
+
+.msgvault-discord-link {
+  color: var(--msgvault-muted);
+}
+
+.msgvault-discord-link:hover,
+.msgvault-discord-link:focus-visible {
+  color: #5865f2;
+}
+
+.md-typeset a {
+  color: var(--msgvault-link);
+  text-decoration-thickness: 0.06em;
+  text-underline-offset: 0.16em;
+}
+
+.md-typeset a:hover,
+.md-nav__link:hover,
+.md-nav__link--active {
+  color: var(--msgvault-link-hover);
+}
+
+.md-nav__item .md-nav__link--active {
+  background: #1a1a1a;
+  box-shadow: inset 2px 0 0 var(--msgvault-border-strong);
+}
+
+.md-nav__title,
+.md-nav__item--section > .md-nav__link {
+  letter-spacing: 0;
+}
+
+.md-typeset h1,
+.md-typeset h2,
+.md-typeset h3,
+.md-typeset h4,
+.md-typeset h5,
+.md-typeset h6 {
+  color: #ffffff;
+  font-weight: 600;
+  letter-spacing: 0;
+}
+
+.md-typeset h1 {
+  font-size: 2rem;
+}
+
+.md-typeset h2 {
+  padding-bottom: 0.3em;
+  border-bottom: 1px solid var(--msgvault-border);
+}
+
+.md-typeset .md-button {
+  border-radius: 0;
+}
+
+.md-typeset .md-button--primary {
+  background-color: #ffffff;
+  border-color: #ffffff;
+  color: #0a0a0a;
+}
+
+.md-typeset .md-button--primary:hover,
+.md-typeset .md-button--primary:focus {
+  background-color: #cfcfcf;
+  border-color: #cfcfcf;
+  color: #0a0a0a;
+}
+
+.md-typeset .hero-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin: 1.1rem 0 1.5rem;
+}
+
+.md-typeset figure.hero-shot,
+.md-typeset figure.screenshot {
+  margin: 1.5rem 0;
+  cursor: zoom-in;
+}
+
+.md-typeset figure.hero-shot {
+  margin-bottom: 2rem;
+}
+
+.md-typeset figure.hero-shot img,
+.md-typeset figure.screenshot img,
+.md-typeset img[src^="/assets/generated/tui-"],
+.md-typeset img[src="/assets/generated/stats.svg"],
+.md-typeset img[src="/assets/generated/list-senders.svg"] {
+  display: block;
+  width: 100%;
+  height: auto;
+  background: var(--msgvault-bg);
+  border: 1px solid var(--msgvault-border);
+  border-radius: 4px;
+  box-shadow: 0 18px 45px rgba(0, 0, 0, 0.24);
+  transition: border-color 0.16s ease, box-shadow 0.16s ease;
+}
+
+.md-typeset figure.hero-shot img {
+  max-width: 980px;
+}
+
+.md-typeset figure.screenshot img {
+  max-width: 860px;
+}
+
+.md-typeset figure.hero-shot:hover img,
+.md-typeset figure.screenshot:hover img {
+  border-color: var(--msgvault-border-strong);
+  box-shadow: 0 20px 52px rgba(0, 0, 0, 0.32);
+}
+
+.md-typeset figure.hero-shot img:focus-visible,
+.md-typeset figure.screenshot img:focus-visible {
+  outline: 2px solid var(--msgvault-border-strong);
+  outline-offset: 4px;
+}
+
+.md-typeset figcaption {
+  margin-top: 0.5rem;
+  color: var(--msgvault-muted);
+  font-size: 0.78rem;
+}
+
+.md-typeset img.diagram-center,
+.md-typeset img[src="/assets/static/how-it-works.svg"],
+.md-typeset img[src="/assets/static/oauth-multi-account.svg"],
+.md-typeset img[src^="/assets/generated/concepts/"] {
+  display: block;
+  width: 100%;
+  max-width: 960px;
+  height: auto;
+  margin: 1.5rem auto;
+  border: 0;
+}
+
+.md-typeset .feature-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.9rem;
+  margin: 1rem 0 2rem;
+}
+
+.md-typeset .feature-grid section {
+  min-width: 0;
+  padding: 1rem;
+  background: var(--msgvault-panel);
+  border: 1px solid var(--msgvault-border);
+  border-radius: 0;
+}
+
+.md-typeset .feature-grid section:hover {
+  background: var(--msgvault-panel-hover);
+}
+
+.md-typeset .feature-grid h3 {
+  margin: 0 0 0.45rem;
+  font-size: 1rem;
+}
+
+.md-typeset .feature-grid p {
+  margin: 0;
+}
+
+.md-typeset .faq-question {
+  margin: 2rem 0 0.5rem;
+  color: #ffffff;
+  font-size: 1.25rem;
+  font-weight: 700;
+}
+
+.md-typeset .admonition,
+.md-typeset details {
+  background: #141414;
+  border-color: var(--msgvault-border-strong);
+  border-radius: 0;
+}
+
+.md-typeset .admonition-title,
+.md-typeset summary {
+  background: #1a1a1a;
+  color: #ffffff;
+}
+
+.md-typeset .admonition-title::before,
+.md-typeset summary::before {
+  background-color: #c0c0c0;
+}
+
+.md-typeset .md-typeset__table {
+  display: block;
+  width: 100%;
+  overflow-x: auto;
+}
+
+.md-typeset table:not([class]) {
+  border-collapse: collapse;
+  font-size: 0.78rem;
+}
+
+.md-typeset table:not([class]) th {
+  background: #1a1a1a;
+  color: var(--msgvault-text);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0;
+}
+
+.md-typeset table:not([class]) th,
+.md-typeset table:not([class]) td {
+  padding: 0.55em 0.75em;
+  border-color: var(--msgvault-border);
+  vertical-align: top;
+  white-space: normal;
+}
+
+.md-typeset table:not([class]) tr:nth-child(even) {
+  background: #0f0f0f;
+}
+
+.md-typeset table:not([class]) tr:hover {
+  background: #181818;
+}
+
+.md-typeset code:not(pre code) {
+  padding: 0.1em 0.3em;
+  background: var(--md-code-bg-color);
+  border: 1px solid var(--msgvault-border);
+  border-radius: 0;
+  font-size: 0.95em;
+}
+
+.md-typeset .highlight pre {
+  background: #0f0f0f;
+  border: 1px solid var(--msgvault-border);
+  border-radius: 0;
+}
+
+.md-typeset .mermaid {
+  margin: 1.5rem 0;
+  padding: 1rem;
+  overflow-x: auto;
+  background: var(--msgvault-panel);
+  border: 1px solid var(--msgvault-border);
+  border-radius: 0;
+}
+
+::selection {
+  background: #333333;
+  color: #ffffff;
+}
+
+:focus-visible {
+  outline: 2px solid var(--msgvault-border-strong);
+  outline-offset: 2px;
+}
+
+@media (max-width: 50rem) {
+  .md-typeset .hero-actions {
+    gap: 0.55rem;
+  }
+
+  .md-typeset .hero-actions .md-button {
+    width: 100%;
+    text-align: center;
+  }
+
+  .md-typeset .feature-grid {
+    grid-template-columns: 1fr;
+  }
+}

@@ -5,7 +5,7 @@
   sqlite,
 }:
 let
-  version = "0.15.2";
+  version = "0.18.0";
 in
 buildGoModule {
   pname = "msgvault";
@@ -13,7 +13,7 @@ buildGoModule {
 
   src = gitignoreSource ../.;
 
-  vendorHash = "sha256-/73eRD97wpP6C1u5UtAXk8+lIRXS8BF7qEzyqYHDGuo=";
+  vendorHash = "sha256-ykrI7CRnfb5jcfaLRXJ0yDrU7GADz2rEJmVq2vUA68E=";
   proxyVendor = true;
 
   subPackages = [ "cmd/msgvault" ];
@@ -41,7 +41,7 @@ buildGoModule {
 
   meta = {
     description = "Offline Gmail archive with full-text search";
-    homepage = "https://github.com/wesm/msgvault";
+    homepage = "https://github.com/kenn-io/msgvault";
     license = lib.licenses.asl20;
     mainProgram = "msgvault";
   };

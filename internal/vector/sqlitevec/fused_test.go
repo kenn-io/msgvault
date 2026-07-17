@@ -14,15 +14,15 @@ import (
 	"time"
 
 	_ "github.com/mattn/go-sqlite3"
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/msgvault/internal/vector"
 )
 
 func TestFusedSearch_BothSignalsContribute(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	b, ctx := newFusedBackendForTest(t)
 	gid := seedAndEmbed(t, b, map[int64][]float32{
 		1: unitVec(768, 0),
@@ -48,8 +48,8 @@ func TestFusedSearch_BothSignalsContribute(t *testing.T) {
 }
 
 func TestFusedSearch_FTSOnly_VectorScoreIsNaN(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	b, ctx := newFusedBackendForTest(t)
 	gid := seedAndEmbed(t, b, map[int64][]float32{
 		1: unitVec(768, 0),
@@ -75,8 +75,8 @@ func TestFusedSearch_FTSOnly_VectorScoreIsNaN(t *testing.T) {
 }
 
 func TestFusedSearch_VectorOnly_BM25ScoreIsNaN(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	b, ctx := newFusedBackendForTest(t)
 	gid := seedAndEmbed(t, b, map[int64][]float32{
 		1: unitVec(768, 0),
@@ -116,7 +116,7 @@ func TestFusedSearch_AnnSaturation_VectorOnly(t *testing.T) {
 		vecs[i] = unitVec(768, 0)
 	}
 	gid := seedAndEmbed(t, b, vecs)
-	requirepkg.NoError(t, b.ActivateGeneration(ctx, gid, true), "ActivateGeneration")
+	require.NoError(t, b.ActivateGeneration(ctx, gid, true), "ActivateGeneration")
 
 	req := vector.FusedRequest{
 		QueryVec:   unitVec(768, 0),
@@ -126,8 +126,8 @@ func TestFusedSearch_AnnSaturation_VectorOnly(t *testing.T) {
 		RRFK:       60,
 	}
 	hits, saturated, err := b.FusedSearch(ctx, req)
-	requirepkg.NoError(t, err, "FusedSearch")
-	assertpkg.Truef(t, saturated, "saturated for ANN pool of 5 with KPerSignal=2 should be true (hits=%d)", len(hits))
+	require.NoError(t, err, "FusedSearch")
+	assert.Truef(t, saturated, "saturated for ANN pool of 5 with KPerSignal=2 should be true (hits=%d)", len(hits))
 }
 
 // TestFusedSearch_AnnSaturation_BelowCap is the counter-test for
@@ -139,7 +139,7 @@ func TestFusedSearch_AnnSaturation_BelowCap(t *testing.T) {
 		1: unitVec(768, 0),
 		2: unitVec(768, 0),
 	})
-	requirepkg.NoError(t, b.ActivateGeneration(ctx, gid, true), "ActivateGeneration")
+	require.NoError(t, b.ActivateGeneration(ctx, gid, true), "ActivateGeneration")
 
 	req := vector.FusedRequest{
 		QueryVec:   unitVec(768, 0),
@@ -149,8 +149,8 @@ func TestFusedSearch_AnnSaturation_BelowCap(t *testing.T) {
 		RRFK:       60,
 	}
 	_, saturated, err := b.FusedSearch(ctx, req)
-	requirepkg.NoError(t, err, "FusedSearch")
-	assertpkg.False(t, saturated, "saturated for ANN pool of 2 with KPerSignal=5 should be false")
+	require.NoError(t, err, "FusedSearch")
+	assert.False(t, saturated, "saturated for ANN pool of 2 with KPerSignal=5 should be false")
 }
 
 func TestFusedSearch_NoSignals_Errors(t *testing.T) {
@@ -162,7 +162,7 @@ func TestFusedSearch_NoSignals_Errors(t *testing.T) {
 		Generation: gid,
 		KPerSignal: 10, Limit: 5, RRFK: 60,
 	})
-	assertpkg.Error(t, err, "FusedSearch with no signals should error")
+	assert.Error(t, err, "FusedSearch with no signals should error")
 }
 
 func TestFusedSearch_UnknownGeneration(t *testing.T) {
@@ -173,7 +173,7 @@ func TestFusedSearch_UnknownGeneration(t *testing.T) {
 		Generation: vector.GenerationID(9999),
 		KPerSignal: 10, Limit: 5, RRFK: 60,
 	})
-	assertpkg.ErrorIs(t, err, vector.ErrUnknownGeneration)
+	assert.ErrorIs(t, err, vector.ErrUnknownGeneration)
 }
 
 // TestFusedSearch_BM25TopKRespectsRank seeds messages with varying
@@ -183,7 +183,7 @@ func TestFusedSearch_UnknownGeneration(t *testing.T) {
 // may return any K rows from the match set and silently lose the
 // most-relevant messages from the fused signal.
 func TestFusedSearch_BM25TopKRespectsRank(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	ctx := context.Background()
 	// Fresh main DB where we control the FTS content density so BM25
 	// produces a known ranking. Message 5 gets the highest rank by
@@ -271,7 +271,7 @@ func TestFusedSearch_BM25TopKRespectsRank(t *testing.T) {
 			for _, h := range hits {
 				ids = append(ids, formatInt(h.MessageID))
 			}
-			assertpkg.Failf(t, "missing top-rank id",
+			assert.Failf(t, "missing top-rank id",
 				"id %d absent from fused hits=[%s]; ground-truth top3 by BM25: %v",
 				w.id, strings.Join(ids, ","), wantTop)
 		}
@@ -283,14 +283,15 @@ func TestFusedSearch_BM25TopKRespectsRank(t *testing.T) {
 func openFusedMainWithSchema(t *testing.T, path string) *sql.DB {
 	t.Helper()
 	db, err := sql.Open("sqlite3", path)
-	requirepkg.NoError(t, err, "open main")
+	require.NoError(t, err, "open main")
 	t.Cleanup(func() { _ = db.Close() })
 	// sent_at is DATETIME (text) to match the production schema.
 	schema := `
-CREATE TABLE messages (
-    id INTEGER PRIMARY KEY,
-    subject TEXT,
-    source_id INTEGER,
+	CREATE TABLE messages (
+	    id INTEGER PRIMARY KEY,
+	    subject TEXT,
+	    message_type TEXT NOT NULL DEFAULT 'email',
+	    source_id INTEGER,
     sender_id INTEGER,
     has_attachments INTEGER DEFAULT 0,
     size_estimate INTEGER,
@@ -311,7 +312,41 @@ CREATE TABLE message_recipients (
     participant_id INTEGER NOT NULL
 );`
 	_, err = db.Exec(schema)
-	requirepkg.NoError(t, err, "schema")
+	require.NoError(t, err, "schema")
+	return db
+}
+
+func openFusedMainWithoutMessageType(t *testing.T, path string) *sql.DB {
+	t.Helper()
+	db, err := sql.Open("sqlite3", path)
+	require.NoError(t, err, "open main")
+	t.Cleanup(func() { _ = db.Close() })
+	schema := `
+	CREATE TABLE messages (
+	    id INTEGER PRIMARY KEY,
+	    subject TEXT,
+	    source_id INTEGER,
+    sender_id INTEGER,
+    has_attachments INTEGER DEFAULT 0,
+    size_estimate INTEGER,
+    sent_at DATETIME,
+    deleted_at DATETIME,
+    deleted_from_source_at DATETIME
+);
+CREATE VIRTUAL TABLE messages_fts USING fts5(subject, body, content='', contentless_delete=1);
+CREATE TABLE message_labels (
+    message_id INTEGER NOT NULL,
+    label_id INTEGER NOT NULL,
+    PRIMARY KEY (message_id, label_id)
+);
+CREATE TABLE message_recipients (
+    id INTEGER PRIMARY KEY,
+    message_id INTEGER NOT NULL,
+    recipient_type TEXT NOT NULL,
+    participant_id INTEGER NOT NULL
+);`
+	_, err = db.Exec(schema)
+	require.NoError(t, err, "schema")
 	return db
 }
 
@@ -330,8 +365,8 @@ func formatInt(n int64) string { return strconv.FormatInt(n, 10) }
 //     attached vec table — catching any future refactor that
 //     unsets the pin in a way the stats check might miss.
 func TestFusedSearch_PinnedPoolKeepsAttach(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	b, ctx := newFusedBackendForTest(t)
 	gid := seedAndEmbed(t, b, map[int64][]float32{1: unitVec(768, 0)})
 	require.NoError(b.ActivateGeneration(ctx, gid, true), "ActivateGeneration")
@@ -396,7 +431,7 @@ func TestFusedSearch_PinnedPoolKeepsAttach(t *testing.T) {
 // distinct text sent_at values and assert the bounds carve out exactly
 // the expected subset.
 func TestFusedSearch_AfterBeforeBoundaries_TextDate(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	ctx := context.Background()
 	dir := t.TempDir()
 	mainPath := filepath.Join(dir, "main.db")
@@ -473,17 +508,116 @@ func TestFusedSearch_AfterBeforeBoundaries_TextDate(t *testing.T) {
 				RRFK:       60,
 			}
 			hits, _, err := b.FusedSearch(ctx, req)
-			requirepkg.NoError(t, err, "FusedSearch")
+			require.NoError(err, "FusedSearch")
 			got := make(map[int64]bool, len(hits))
 			for _, h := range hits {
 				got[h.MessageID] = true
 			}
 			for _, id := range c.want {
-				assertpkg.Truef(t, got[id], "missing expected id %d (got %v)", id, got)
+				assert.Truef(t, got[id], "missing expected id %d (got %v)", id, got)
 			}
-			assertpkg.Lenf(t, got, len(c.want), "got %d hits, want %d (got=%v want=%v)", len(got), len(c.want), got, c.want)
+			assert.Lenf(t, got, len(c.want), "got %d hits, want %d (got=%v want=%v)", len(got), len(c.want), got, c.want)
 		})
 	}
+}
+
+func TestFusedSearch_MessageTypeFilter(t *testing.T) {
+	require := require.New(t)
+	ctx := context.Background()
+	dir := t.TempDir()
+	mainPath := filepath.Join(dir, "main.db")
+	main := openFusedMainWithSchema(t, mainPath)
+
+	rows := []struct {
+		id          int64
+		messageType string
+	}{
+		{1, "email"},
+		{2, "sms"},
+		{3, "sms"},
+		{4, "mms"},
+	}
+	for _, r := range rows {
+		_, err := main.ExecContext(ctx,
+			`INSERT INTO messages (id, message_type) VALUES (?, ?)`,
+			r.id, r.messageType)
+		require.NoErrorf(err, "insert msg %d", r.id)
+		_, err = main.ExecContext(ctx,
+			`INSERT INTO messages_fts (rowid, subject, body) VALUES (?, ?, ?)`,
+			r.id, "", "topic")
+		require.NoErrorf(err, "insert fts %d", r.id)
+	}
+
+	b, err := Open(ctx, Options{
+		Path:      filepath.Join(dir, "vectors.db"),
+		MainPath:  mainPath,
+		Dimension: 768,
+		MainDB:    main,
+	})
+	require.NoError(err, "Open")
+	t.Cleanup(func() { _ = b.Close() })
+
+	gid, err := b.CreateGeneration(ctx, "m", 768, "")
+	require.NoError(err, "CreateGeneration")
+	require.NoError(b.ActivateGeneration(ctx, gid, true), "Activate")
+
+	hits, _, err := b.FusedSearch(ctx, vector.FusedRequest{
+		FTSTerms:   []string{"topic"},
+		Generation: gid,
+		Filter:     vector.Filter{MessageTypes: []string{"sms"}},
+		KPerSignal: 10,
+		Limit:      10,
+		RRFK:       60,
+	})
+	require.NoError(err, "FusedSearch")
+
+	got := make(map[int64]bool, len(hits))
+	for _, h := range hits {
+		got[h.MessageID] = true
+	}
+	assert.Equal(t, map[int64]bool{2: true, 3: true}, got, "message_type=sms hits")
+}
+
+func TestFusedSearch_LegacySchemaWithoutMessageType(t *testing.T) {
+	require := require.New(t)
+	ctx := context.Background()
+	dir := t.TempDir()
+	mainPath := filepath.Join(dir, "main.db")
+	main := openFusedMainWithoutMessageType(t, mainPath)
+
+	_, err := main.ExecContext(ctx, `INSERT INTO messages (id, subject) VALUES (?, ?)`, 1, "legacy topic")
+	require.NoError(err, "insert message")
+	_, err = main.ExecContext(ctx,
+		`INSERT INTO messages_fts (rowid, subject, body) VALUES (?, ?, ?)`,
+		1, "legacy topic", "topic body")
+	require.NoError(err, "insert fts")
+
+	b, err := Open(ctx, Options{
+		Path:      filepath.Join(dir, "vectors.db"),
+		MainPath:  mainPath,
+		Dimension: 768,
+		MainDB:    main,
+	})
+	require.NoError(err, "Open")
+	t.Cleanup(func() { _ = b.Close() })
+
+	gid, err := b.CreateGeneration(ctx, "m", 768, "")
+	require.NoError(err, "CreateGeneration")
+	require.NoError(b.Upsert(ctx, gid, []vector.Chunk{
+		{MessageID: 1, Vector: unitVec(768, 0)},
+	}), "Upsert")
+	require.NoError(b.ActivateGeneration(ctx, gid, true), "Activate")
+
+	hits, _, err := b.FusedSearch(ctx, vector.FusedRequest{
+		FTSTerms:   []string{"topic"},
+		Generation: gid,
+		KPerSignal: 10,
+		Limit:      10,
+		RRFK:       60,
+	})
+	require.NoError(err, "FusedSearch")
+	require.Len(hits, 1, "legacy message should still be searchable")
+	assert.Equal(t, int64(1), hits[0].MessageID, "legacy hit")
 }
 
 // TestFusedSearch_SenderMatchesFromRecipientOnly confirms the sender
@@ -494,8 +628,8 @@ func TestFusedSearch_AfterBeforeBoundaries_TextDate(t *testing.T) {
 // be satisfied by a mix of sender_id and recipient rows, diverging
 // from the SQLite FTS path.
 func TestFusedSearch_SenderMatchesFromRecipientOnly(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	ctx := context.Background()
 	dir := t.TempDir()
 	mainPath := filepath.Join(dir, "main.db")
@@ -574,7 +708,7 @@ func TestFusedSearch_RecipientFiltersMatchNoneSentinel(t *testing.T) {
 		2: unitVec(768, 1),
 		3: unitVec(768, 2),
 	})
-	requirepkg.NoError(t, b.ActivateGeneration(ctx, gid, true), "Activate")
+	require.NoError(t, b.ActivateGeneration(ctx, gid, true), "Activate")
 
 	const sentinel int64 = -1 // mirrors hybrid.noMatchSentinel
 	cases := []struct {
@@ -599,8 +733,8 @@ func TestFusedSearch_RecipientFiltersMatchNoneSentinel(t *testing.T) {
 				RRFK:       60,
 			}
 			hits, _, err := b.FusedSearch(ctx, req)
-			requirepkg.NoError(t, err, "FusedSearch")
-			assertpkg.Empty(t, hits, "operator present + no match must return nothing")
+			require.NoError(t, err, "FusedSearch")
+			assert.Empty(t, hits, "operator present + no match must return nothing")
 		})
 	}
 }
@@ -618,7 +752,7 @@ func TestFusedSearch_RecipientFiltersMatchNoneSentinel(t *testing.T) {
 // drop boosted hits from the page even though they technically scored
 // higher.
 func TestFusedSearch_SubjectBoost(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	b, ctx := newFusedBackendForTest(t)
 
 	// Reset so we control subjects precisely.
@@ -657,8 +791,7 @@ func TestFusedSearch_SubjectBoost(t *testing.T) {
 	require.NoError(b.ActivateGeneration(ctx, gid, true), "ActivateGeneration")
 
 	t.Run("boost_lifts_subject_match_above_higher_ann", func(t *testing.T) {
-		require := requirepkg.New(t)
-		assert := assertpkg.New(t)
+		assert := assert.New(t)
 		req := vector.FusedRequest{
 			QueryVec:     queryVec,
 			Generation:   gid,
@@ -687,9 +820,9 @@ func TestFusedSearch_SubjectBoost(t *testing.T) {
 			SubjectTerms: []string{"quarterly"},
 		}
 		hits, _, err := b.FusedSearch(ctx, req)
-		requirepkg.NoError(t, err, "FusedSearch")
+		require.NoError(err, "FusedSearch")
 		for _, h := range hits {
-			assertpkg.Falsef(t, h.SubjectBoosted, "hit %d boosted with factor=1.0; want no boost applied", h.MessageID)
+			assert.Falsef(t, h.SubjectBoosted, "hit %d boosted with factor=1.0; want no boost applied", h.MessageID)
 		}
 	})
 
@@ -704,15 +837,14 @@ func TestFusedSearch_SubjectBoost(t *testing.T) {
 			SubjectTerms: nil,
 		}
 		hits, _, err := b.FusedSearch(ctx, req)
-		requirepkg.NoError(t, err, "FusedSearch")
+		require.NoError(err, "FusedSearch")
 		for _, h := range hits {
-			assertpkg.Falsef(t, h.SubjectBoosted, "hit %d boosted with no terms; want no boost applied", h.MessageID)
+			assert.Falsef(t, h.SubjectBoosted, "hit %d boosted with no terms; want no boost applied", h.MessageID)
 		}
 	})
 
 	t.Run("term_match_is_case_insensitive_substring", func(t *testing.T) {
-		require := requirepkg.New(t)
-		assert := assertpkg.New(t)
+		assert := assert.New(t)
 		// Subject is "Quarterly Planning Offsite"; lowercased term
 		// "planning" is a substring.
 		req := vector.FusedRequest{
@@ -740,7 +872,7 @@ func TestFusedSearch_SubjectBoost(t *testing.T) {
 // future SQL rewrite that breaks the FULL OUTER JOIN identity has to
 // update this test too.
 func TestFusedSearch_EmptyFilteredSetReportsNotSaturated(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	b, ctx := newFusedBackendForTest(t)
 
 	_, err := b.mainDB.ExecContext(ctx,
@@ -775,7 +907,7 @@ func TestFusedSearch_EmptyFilteredSetReportsNotSaturated(t *testing.T) {
 	})
 	require.NoError(err, "FusedSearch")
 	require.Emptyf(hits, "want empty (filter excludes everything); got %+v", hits)
-	assertpkg.False(t, saturated, "saturation requires overflow, which is impossible when no rows pass the filter")
+	assert.False(t, saturated, "saturation requires overflow, which is impossible when no rows pass the filter")
 }
 
 // TestFusedSearch_SubjectBoostOverFetchesBeyondLimit regresses the
@@ -784,8 +916,8 @@ func TestFusedSearch_EmptyFilteredSetReportsNotSaturated(t *testing.T) {
 // FusedSearch must over-fetch when boost is active so post-boost
 // re-sort can promote the hit into the visible page.
 func TestFusedSearch_SubjectBoostOverFetchesBeyondLimit(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	b, ctx := newFusedBackendForTest(t)
 
 	_, err := b.mainDB.ExecContext(ctx,
@@ -855,8 +987,8 @@ func TestFusedSearch_SubjectBoostOverFetchesBeyondLimit(t *testing.T) {
 // fixed multiple) still surfaces. Achieved by fetching the entire
 // fused pool (capped naturally at 2 × KPerSignal) before re-ranking.
 func TestFusedSearch_SubjectBoostPromotesDeepRankHit(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	b, ctx := newFusedBackendForTest(t)
 
 	_, err := b.mainDB.ExecContext(ctx,
@@ -930,7 +1062,7 @@ func TestFusedSearch_SubjectBoostPromotesDeepRankHit(t *testing.T) {
 // instead of silently surfacing legacy NULL-subject imports for
 // subject-only queries.
 func TestFusedSearch_NullSubjectExcludedBySubjectFilter(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	b, ctx := newFusedBackendForTest(t)
 
 	_, err := b.mainDB.ExecContext(ctx,
@@ -983,5 +1115,5 @@ func TestFusedSearch_DimensionMismatch(t *testing.T) {
 		Generation: gid,
 		KPerSignal: 10, Limit: 5, RRFK: 60,
 	})
-	assertpkg.ErrorIs(t, err, vector.ErrDimensionMismatch)
+	assert.ErrorIs(t, err, vector.ErrDimensionMismatch)
 }

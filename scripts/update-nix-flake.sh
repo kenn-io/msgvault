@@ -23,9 +23,11 @@ for cmd in nix gh sed; do
     fi
 done
 
-# Must be on a clean main branch
-if ! git diff-index --quiet HEAD --; then
-    echo "Error: uncommitted changes. Commit or stash first." >&2
+# Must be on a clean main branch. Include untracked files so local notes,
+# secrets, or generated artifacts cannot be swept into the release PR.
+if [ -n "$(git status --porcelain --untracked-files=all)" ]; then
+    echo "Error: uncommitted or untracked changes. Commit, stash, or remove them first." >&2
+    git status --short --untracked-files=all >&2
     exit 1
 fi
 
@@ -90,7 +92,10 @@ fi
 
 # Step 4: Commit and open PR
 echo "==> Committing and opening PR..."
+echo "==> Running format/lint fixers before staging..."
+make fmt lint
 git add "$PACKAGE_NIX"
+git add -u
 
 COMMIT_MSG="Update nix flake vendorHash"
 PR_TITLE="Update nix flake vendorHash"

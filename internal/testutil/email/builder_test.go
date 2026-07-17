@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestPlainMessage(t *testing.T) {
@@ -22,12 +22,12 @@ func TestPlainMessage(t *testing.T) {
 		"",
 	}, "\n")
 
-	assertpkg.Equal(t, want, got, "plain message mismatch")
+	assert.Equal(t, want, got, "plain message mismatch")
 }
 
 func TestNoSubject(t *testing.T) {
 	got := string(NewMessage().NoSubject().Bytes())
-	assertpkg.NotContains(t, got, "Subject:", "expected no Subject header, but found one")
+	assert.NotContains(t, got, "Subject:", "expected no Subject header, but found one")
 }
 
 func TestMultipartMessage(t *testing.T) {
@@ -48,13 +48,13 @@ func TestMultipartMessage(t *testing.T) {
 		"--BOUND--",
 	}
 	for _, c := range checks {
-		assertpkg.Contains(t, got, c, "multipart message missing %q", c)
+		assert.Contains(t, got, c, "multipart message missing %q", c)
 	}
 }
 
 func TestHeaderOrder(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	got := string(NewMessage().
 		Header("X-First", "1").
 		Header("X-Second", "2").
@@ -76,10 +76,10 @@ func TestCRLF(t *testing.T) {
 	got := NewMessage().CRLF().Bytes()
 	for i, b := range got {
 		if b == '\n' && (i == 0 || got[i-1] != '\r') {
-			requirepkg.Failf(t, "bare LF found", "bare \\n at byte %d; expected all line endings to be \\r\\n", i)
+			require.Failf(t, "bare LF found", "bare \\n at byte %d; expected all line endings to be \\r\\n", i)
 		}
 	}
-	assertpkg.Contains(t, string(got), "\r\n", "expected at least one CRLF line ending")
+	assert.Contains(t, string(got), "\r\n", "expected at least one CRLF line ending")
 }
 
 func TestHeaderOverwrite(t *testing.T) {
@@ -88,8 +88,8 @@ func TestHeaderOverwrite(t *testing.T) {
 		Header("X-Custom", "second").
 		Bytes())
 
-	assertpkg.Equal(t, 1, strings.Count(got, "X-Custom:"), "expected exactly one X-Custom header, got:\n%s", got)
-	assertpkg.Contains(t, got, "X-Custom: second", "expected overwritten value 'second', got:\n%s", got)
+	assert.Equal(t, 1, strings.Count(got, "X-Custom:"), "expected exactly one X-Custom header, got:\n%s", got)
+	assert.Contains(t, got, "X-Custom: second", "expected overwritten value 'second', got:\n%s", got)
 }
 
 func TestHeaderCaseInsensitiveOverwrite(t *testing.T) {
@@ -106,8 +106,8 @@ func TestHeaderCaseInsensitiveOverwrite(t *testing.T) {
 			count++
 		}
 	}
-	assertpkg.Equal(t, 1, count, "expected exactly one x-custom header (case-insensitive), got %d:\n%s", count, got)
-	assertpkg.Contains(t, got, "x-custom: second", "expected latest value with latest casing, got:\n%s", got)
+	assert.Equal(t, 1, count, "expected exactly one x-custom header (case-insensitive), got %d:\n%s", count, got)
+	assert.Contains(t, got, "x-custom: second", "expected latest value with latest casing, got:\n%s", got)
 }
 
 func TestHeaderAppendAllowsDuplicates(t *testing.T) {
@@ -116,5 +116,5 @@ func TestHeaderAppendAllowsDuplicates(t *testing.T) {
 		HeaderAppend("Received", "from server2").
 		Bytes())
 
-	assertpkg.Equal(t, 2, strings.Count(got, "Received:"), "expected two Received headers, got:\n%s", got)
+	assert.Equal(t, 2, strings.Count(got, "Received:"), "expected two Received headers, got:\n%s", got)
 }

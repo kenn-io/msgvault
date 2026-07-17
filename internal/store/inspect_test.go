@@ -4,8 +4,8 @@ import (
 	"database/sql"
 	"testing"
 
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
@@ -16,14 +16,14 @@ func TestInspectMessage_NotFound(t *testing.T) {
 	st := testutil.NewTestStore(t)
 
 	_, err := st.InspectMessage("nonexistent-msg-id")
-	assertpkg.ErrorIs(t, err, sql.ErrNoRows, "InspectMessage(nonexistent)")
+	assert.ErrorIs(t, err, sql.ErrNoRows, "InspectMessage(nonexistent)")
 }
 
 // TestInspectMessage_BasicFields verifies that InspectMessage returns correct
 // basic fields for a message.
 func TestInspectMessage_BasicFields(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	f := storetest.New(t)
 
 	// Create a message with a specific source_message_id
@@ -51,12 +51,12 @@ func TestInspectMessage_WithRawData(t *testing.T) {
 	// Add raw data
 	rawData := []byte("From: test@example.com\r\nSubject: Test\r\n\r\nBody")
 	err := f.Store.UpsertMessageRaw(msgID, rawData)
-	requirepkg.NoError(t, err, "UpsertMessageRaw")
+	require.NoError(t, err, "UpsertMessageRaw")
 
 	insp, err := f.Store.InspectMessage("inspect-raw-test-msg")
-	requirepkg.NoError(t, err, "InspectMessage")
+	require.NoError(t, err, "InspectMessage")
 
-	assertpkg.True(t, insp.RawDataExists, "RawDataExists should be true when raw data exists")
+	assert.True(t, insp.RawDataExists, "RawDataExists should be true when raw data exists")
 }
 
 // TestInspectMessage_DBError verifies that InspectMessage returns DB errors
@@ -70,11 +70,11 @@ func TestInspectMessage_DBError(t *testing.T) {
 
 	// Drop the message_raw table to cause a DB error during the raw check
 	_, err := f.Store.DB().Exec("DROP TABLE message_raw")
-	requirepkg.NoError(t, err, "DROP TABLE message_raw")
+	require.NoError(t, err, "DROP TABLE message_raw")
 
 	// InspectMessage should now return an error when checking raw data existence
 	_, err = f.Store.InspectMessage("inspect-db-error-msg")
-	assertpkg.Error(t, err, "InspectMessage should return error when message_raw table is missing")
+	assert.Error(t, err, "InspectMessage should return error when message_raw table is missing")
 }
 
 // TestInspectRawDataExists_NotFound verifies that InspectRawDataExists returns
@@ -85,9 +85,9 @@ func TestInspectRawDataExists_NotFound(t *testing.T) {
 	f.CreateMessage("raw-exists-not-found-msg")
 
 	exists, err := f.Store.InspectRawDataExists("raw-exists-not-found-msg")
-	requirepkg.NoError(t, err, "InspectRawDataExists")
+	require.NoError(t, err, "InspectRawDataExists")
 
-	assertpkg.False(t, exists, "InspectRawDataExists should return false when no raw data exists")
+	assert.False(t, exists, "InspectRawDataExists should return false when no raw data exists")
 }
 
 // TestInspectRawDataExists_Found verifies that InspectRawDataExists returns
@@ -99,12 +99,12 @@ func TestInspectRawDataExists_Found(t *testing.T) {
 
 	rawData := []byte("From: test@example.com\r\nSubject: Test\r\n\r\nBody")
 	err := f.Store.UpsertMessageRaw(msgID, rawData)
-	requirepkg.NoError(t, err, "UpsertMessageRaw")
+	require.NoError(t, err, "UpsertMessageRaw")
 
 	exists, err := f.Store.InspectRawDataExists("raw-exists-found-msg")
-	requirepkg.NoError(t, err, "InspectRawDataExists")
+	require.NoError(t, err, "InspectRawDataExists")
 
-	assertpkg.True(t, exists, "InspectRawDataExists should return true when raw data exists")
+	assert.True(t, exists, "InspectRawDataExists should return true when raw data exists")
 }
 
 // TestInspectRawDataExists_DBError verifies that InspectRawDataExists returns
@@ -116,10 +116,10 @@ func TestInspectRawDataExists_DBError(t *testing.T) {
 
 	// Drop the message_raw table to cause a DB error
 	_, err := f.Store.DB().Exec("DROP TABLE message_raw")
-	requirepkg.NoError(t, err, "DROP TABLE message_raw")
+	require.NoError(t, err, "DROP TABLE message_raw")
 
 	_, err = f.Store.InspectRawDataExists("raw-exists-db-error-msg")
-	assertpkg.Error(t, err, "InspectRawDataExists should return error when message_raw table is missing")
+	assert.Error(t, err, "InspectRawDataExists should return error when message_raw table is missing")
 }
 
 // TestInspectRawDataExists_MessageNotFound verifies that InspectRawDataExists
@@ -129,16 +129,16 @@ func TestInspectRawDataExists_MessageNotFound(t *testing.T) {
 	st := testutil.NewTestStore(t)
 
 	exists, err := st.InspectRawDataExists("nonexistent-msg")
-	requirepkg.NoError(t, err, "InspectRawDataExists(nonexistent)")
+	require.NoError(t, err, "InspectRawDataExists(nonexistent)")
 
-	assertpkg.False(t, exists, "InspectRawDataExists should return false for nonexistent message")
+	assert.False(t, exists, "InspectRawDataExists should return false for nonexistent message")
 }
 
 // TestInspectMessage_RecipientCounts verifies that InspectMessage correctly
 // counts recipients by type.
 func TestInspectMessage_RecipientCounts(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	f := storetest.New(t)
 
 	msgID := f.CreateMessage("inspect-recipients-msg")
@@ -170,11 +170,11 @@ func TestInspectMessage_RecipientDisplayNames(t *testing.T) {
 
 	pid := f.EnsureParticipant("sender@example.com", "Sender", "example.com")
 	err := f.Store.ReplaceMessageRecipients(msgID, "from", []int64{pid}, []string{"Custom Display Name"})
-	requirepkg.NoError(t, err, "ReplaceMessageRecipients")
+	require.NoError(t, err, "ReplaceMessageRecipients")
 
 	insp, err := f.Store.InspectMessage("inspect-display-names-msg")
-	requirepkg.NoError(t, err, "InspectMessage")
+	require.NoError(t, err, "InspectMessage")
 
 	key := "from:sender@example.com"
-	assertpkg.Equal(t, "Custom Display Name", insp.RecipientDisplayName[key], "RecipientDisplayName[%s]", key)
+	assert.Equal(t, "Custom Display Name", insp.RecipientDisplayName[key], "RecipientDisplayName[%s]", key)
 }

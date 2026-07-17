@@ -24,11 +24,26 @@ type CORSConfig struct {
 func DefaultCORSConfig() CORSConfig {
 	return CORSConfig{
 		AllowedOrigins:   []string{"*"},
-		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
-		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-API-Key"},
+		AllowedMethods:   defaultCORSAllowedMethods(),
+		AllowedHeaders:   defaultCORSAllowedHeaders(),
 		AllowCredentials: false,
 		MaxAge:           86400, // 24 hours
 	}
+}
+
+func defaultCORSAllowedMethods() []string {
+	return []string{
+		http.MethodGet,
+		http.MethodPost,
+		http.MethodPut,
+		http.MethodPatch,
+		http.MethodDelete,
+		http.MethodOptions,
+	}
+}
+
+func defaultCORSAllowedHeaders() []string {
+	return []string{"Accept", "Authorization", "Content-Type", "X-API-Key"}
 }
 
 // CORSMiddleware returns a middleware that handles CORS headers.
@@ -150,12 +165,40 @@ func clientIP(r *http.Request) string {
 	return host
 }
 
+// isLoopbackRequest reports whether the request originates from a loopback
+// address. It uses r.RemoteAddr (via clientIP), never forwarded-for headers,
+// so it cannot be spoofed by a remote client. Shared by the rate-limiter
+// exemption and the pprof gate.
+func isLoopbackRequest(r *http.Request) bool {
+	parsed := net.ParseIP(clientIP(r))
+	return parsed != nil && parsed.IsLoopback()
+}
+
 // RateLimitMiddleware returns a middleware that rate limits requests by IP.
-func RateLimitMiddleware(limiter *RateLimiter) func(http.Handler) http.Handler {
+// The exempt predicate lets trusted requests bypass the limiter: the local
+// TUI/CLI legitimately bursts far past the remote budget (daemon discovery
+// alone fires a dozen parallel pings, and TUI drill-downs issue many aggregate
+// queries at once), and the limiter exists to protect non-local exposure.
+//
+// A bare loopback address is NOT trusted on its own: behind a same-host
+// reverse proxy, SSH tunnel, or TLS terminator forwarding to loopback, remote
+// traffic arrives as 127.0.0.1 and could brute-force the API key unthrottled.
+// The predicate (see Server.loopbackRateLimitExempt) therefore also requires
+// that the request be authenticated or that no API key be configured. The
+// loopback check inside it uses r.RemoteAddr, never forwarded-for headers, so
+// it cannot be spoofed remotely.
+func RateLimitMiddleware(
+	limiter *RateLimiter,
+	exempt func(*http.Request) bool,
+) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			ip := clientIP(r)
+			if exempt != nil && exempt(r) {
+				next.ServeHTTP(w, r)
+				return
+			}
 
+			ip := clientIP(r)
 			if !limiter.Allow(ip) {
 				w.Header().Set("Content-Type", "application/json")
 				w.Header().Set("Retry-After", "1")

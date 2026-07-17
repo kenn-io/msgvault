@@ -25,6 +25,17 @@ const (
 	OpMessagesDelete                       // 10 units
 	OpMessagesBatchDelete                  // 50 units
 	OpProfile                              // 1 unit
+
+	// OpCalendarListList and the other Calendar API operations live on this
+	// shared Operation enum (rather than a parallel one in internal/gcal) so
+	// the Calendar client can reuse this package's token-bucket limiter and
+	// adaptive Throttle/RecoverRate backoff via NewRateLimiterWithCapacity.
+	// Each costs 1 quota unit (Calendar bills per request, not per field
+	// projection), which falls through Cost()'s default branch. See
+	// internal/gcal.
+	OpCalendarListList // 1 unit
+	OpEventsList       // 1 unit
+	OpEventsGet        // 1 unit
 )
 
 // Cost returns the quota cost for an operation.
@@ -109,6 +120,40 @@ func newRateLimiter(clk Clock, qps float64) *RateLimiter {
 		clock:          clk,
 		tokens:         DefaultCapacity,
 		capacity:       DefaultCapacity,
+		refillRate:     refillRate,
+		baseRefillRate: refillRate,
+		lastRefill:     clk.Now(),
+	}
+}
+
+// NewRateLimiterWithCapacity creates a token-bucket limiter with an explicit
+// bucket capacity and refill rate (tokens/second), bypassing the Gmail-tuned
+// NewRateLimiter defaults (capacity=250, refill scaled from QPS). This lets a
+// Google API with a different per-user budget use a correctly-sized bucket
+// instead of inheriting Gmail's 250-token instant burst — e.g. the Calendar
+// API at 600 req/min/user is built with capacity=10, refillRate=8 (80% of the
+// 10 req/s sustained ceiling, leaving headroom for jitter and retries).
+// capacity is clamped to >=1 and refillRate to >= MinQPS.
+func NewRateLimiterWithCapacity(capacity int, refillRate float64) *RateLimiter {
+	return newRateLimiterWithCapacity(realClock{}, capacity, refillRate)
+}
+
+// newRateLimiterWithCapacity is the clock-injectable form for tests.
+func newRateLimiterWithCapacity(clk Clock, capacity int, refillRate float64) *RateLimiter {
+	if clk == nil {
+		panic("gmail: RateLimiter requires a non-nil Clock")
+	}
+	if capacity < 1 {
+		capacity = 1
+	}
+	if refillRate < MinQPS {
+		refillRate = MinQPS
+	}
+	capF := float64(capacity)
+	return &RateLimiter{
+		clock:          clk,
+		tokens:         capF,
+		capacity:       capF,
 		refillRate:     refillRate,
 		baseRefillRate: refillRate,
 		lastRefill:     clk.Now(),

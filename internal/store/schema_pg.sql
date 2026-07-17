@@ -132,8 +132,19 @@ CREATE TABLE IF NOT EXISTS messages (
 
     metadata JSONB,
 
+    -- Row-level last-modified watermark, maintained ENTIRELY by the
+    -- database (triggers, created by EnsureTriggers), never by application
+    -- write paths. Used by the embed worker as an optimistic-CAS token.
+    -- See schema.sql for the full contract.
+    last_modified TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+
     -- Full-text search column
     search_fts TSVECTOR,
+
+    -- Vector-embedding watermark: the index generation this message's
+    -- embeddings were last written for. NULL means "needs embedding"
+    -- (new rows default to NULL). See schema.sql for the full contract.
+    embed_gen BIGINT,
 
     UNIQUE(source_id, source_message_id)
 );
@@ -263,6 +274,17 @@ CREATE TABLE IF NOT EXISTS sync_runs (
     cursor_after TEXT
 );
 
+CREATE TABLE IF NOT EXISTS sync_run_items (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    sync_run_id BIGINT NOT NULL REFERENCES sync_runs(id) ON DELETE CASCADE,
+    source_message_id TEXT NOT NULL,
+    phase TEXT NOT NULL,
+    status TEXT NOT NULL,
+    error_kind TEXT NOT NULL,
+    error_message TEXT NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE IF NOT EXISTS sync_checkpoints (
     source_id BIGINT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
     checkpoint_type TEXT NOT NULL,
@@ -271,6 +293,17 @@ CREATE TABLE IF NOT EXISTS sync_checkpoints (
     updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
 
     PRIMARY KEY (source_id, checkpoint_type)
+);
+
+CREATE TABLE IF NOT EXISTS imap_folder_state (
+    source_id BIGINT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+    mailbox TEXT NOT NULL,
+    uidvalidity BIGINT NOT NULL,
+    uidnext BIGINT NOT NULL,
+
+    updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+
+    PRIMARY KEY (source_id, mailbox)
 );
 
 CREATE TABLE IF NOT EXISTS source_import_items (
@@ -331,6 +364,33 @@ CREATE TABLE IF NOT EXISTS applied_migrations (
     applied_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+-- Packed attachment storage (docs/internal/packed-attachments-design.md).
+-- attachment_pack_index maps content-addressed blobs (attachment content and
+-- thumbnails) to sealed pack files under attachments/packs/. Rows exist only
+-- for live packed blobs; loose files have no row. pack_offset et al mirror
+-- the pack footer's entry so reads need no footer parse ("offset" is a
+-- reserved word in SQLite and PostgreSQL, hence the prefix).
+CREATE TABLE IF NOT EXISTS attachment_pack_index (
+    blob_hash   TEXT PRIMARY KEY,
+    pack_id     TEXT NOT NULL,
+    pack_offset BIGINT NOT NULL,
+    stored_len  BIGINT NOT NULL,
+    raw_len     BIGINT NOT NULL,
+    flags       INTEGER NOT NULL,
+    crc32c      BIGINT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_attachment_pack_index_pack
+    ON attachment_pack_index(pack_id);
+
+-- Immutable per-pack totals captured at seal/adoption. GC derives dead bytes
+-- as stored_bytes minus the sum of the pack's live index rows.
+CREATE TABLE IF NOT EXISTS attachment_packs (
+    pack_id      TEXT PRIMARY KEY,
+    entry_count  BIGINT NOT NULL,
+    stored_bytes BIGINT NOT NULL,
+    created_at   TEXT NOT NULL
+);
+
 -- ============================================================================
 -- INDEXES
 -- ============================================================================
@@ -373,6 +433,12 @@ CREATE INDEX IF NOT EXISTS idx_reactions_message ON reactions(message_id);
 
 CREATE INDEX IF NOT EXISTS idx_attachments_message ON attachments(message_id);
 CREATE INDEX IF NOT EXISTS idx_attachments_hash ON attachments(content_hash);
+-- Thumbnail hash/path and LOWER(content_hash)/LOWER(thumbnail_hash) indexes
+-- are created in Go (Store.InitSchema) under the maintenance escape hatch:
+-- this file executes before that hatch is available, and the one-time index
+-- builds over a populated attachments table can exceed the pool-wide 30s
+-- statement_timeout on a large archive (finding S1). SQLite keeps the indexes
+-- in schema.sql (no statement_timeout there).
 CREATE INDEX IF NOT EXISTS idx_attachments_storage_path ON attachments(storage_path);
 -- idx_attachments_msg_content_hash is created in Go (Store.InitSchema)
 -- after a one-shot dedupe of legacy duplicate rows.
@@ -381,6 +447,8 @@ CREATE INDEX IF NOT EXISTS idx_labels_source ON labels(source_id);
 CREATE INDEX IF NOT EXISTS idx_message_labels_label ON message_labels(label_id);
 
 CREATE INDEX IF NOT EXISTS idx_sync_runs_source ON sync_runs(source_id, started_at DESC);
+CREATE INDEX IF NOT EXISTS idx_sync_run_items_run_status
+    ON sync_run_items(sync_run_id, status, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_source_import_items_source_provider
     ON source_import_items(source_id, provider, status);
 

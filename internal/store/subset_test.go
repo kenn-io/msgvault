@@ -8,8 +8,8 @@ import (
 	"testing"
 
 	_ "github.com/mattn/go-sqlite3"
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // createTestSourceDB creates a source database with schema and test
@@ -20,17 +20,17 @@ func createTestSourceDB(t *testing.T, dir string, msgCount int) string {
 	dbPath := filepath.Join(dir, "msgvault.db")
 
 	st, err := Open(dbPath)
-	requirepkg.NoError(t, err, "Open")
-	requirepkg.NoError(t, st.InitSchema(), "InitSchema")
+	require.NoError(t, err, "Open")
+	require.NoError(t, st.InitSchema(), "InitSchema")
 	_ = st.Close()
 
 	db, err := sql.Open("sqlite3", dbPath+"?_foreign_keys=OFF")
-	requirepkg.NoError(t, err, "open db")
+	require.NoError(t, err, "open db")
 	defer func() { _ = db.Close() }()
 
 	_, err = db.Exec(`INSERT INTO sources (id, source_type, identifier)
 		VALUES (1, 'gmail', 'test@example.com')`)
-	requirepkg.NoError(t, err, "insert source")
+	require.NoError(t, err, "insert source")
 
 	_, err = db.Exec(`
 		INSERT INTO participants
@@ -39,7 +39,7 @@ func createTestSourceDB(t *testing.T, dir string, msgCount int) string {
 			(1, 'alice@example.com', 'Alice', 'example.com'),
 			(2, 'bob@example.com', 'Bob', 'example.com'),
 			(3, 'charlie@example.com', 'Charlie', 'example.com')`)
-	requirepkg.NoError(t, err, "insert participants")
+	require.NoError(t, err, "insert participants")
 
 	_, err = db.Exec(`
 		INSERT INTO participant_identifiers
@@ -48,7 +48,7 @@ func createTestSourceDB(t *testing.T, dir string, msgCount int) string {
 			(1, 1, 'email', 'alice@example.com'),
 			(2, 2, 'email', 'bob@example.com'),
 			(3, 3, 'email', 'charlie@example.com')`)
-	requirepkg.NoError(t, err, "insert participant_identifiers")
+	require.NoError(t, err, "insert participant_identifiers")
 
 	_, err = db.Exec(`
 		INSERT INTO conversations
@@ -57,13 +57,13 @@ func createTestSourceDB(t *testing.T, dir string, msgCount int) string {
 		VALUES
 			(1, 1, 'email_thread', 'Thread 1', 5, 2),
 			(2, 1, 'email_thread', 'Thread 2', 5, 2)`)
-	requirepkg.NoError(t, err, "insert conversations")
+	require.NoError(t, err, "insert conversations")
 
 	_, err = db.Exec(`
 		INSERT INTO conversation_participants
 			(conversation_id, participant_id)
 		VALUES (1, 1), (1, 2), (2, 2), (2, 3)`)
-	requirepkg.NoError(t, err, "insert conversation_participants")
+	require.NoError(t, err, "insert conversation_participants")
 
 	_, err = db.Exec(`
 		INSERT INTO labels (id, source_id, name, label_type)
@@ -71,7 +71,7 @@ func createTestSourceDB(t *testing.T, dir string, msgCount int) string {
 			(1, 1, 'INBOX', 'system'),
 			(2, 1, 'SENT', 'system'),
 			(3, 1, 'Work', 'user')`)
-	requirepkg.NoError(t, err, "insert labels")
+	require.NoError(t, err, "insert labels")
 
 	for i := 1; i <= msgCount; i++ {
 		convID := 1
@@ -91,20 +91,20 @@ func createTestSourceDB(t *testing.T, dir string, msgCount int) string {
 				?, ?)`,
 			i, convID, fmt.Sprintf("msg_%d", i),
 			i, senderID, "Subject "+string(rune('A'+i%26)))
-		requirepkg.NoError(t, err, "insert message %d", i)
+		require.NoError(t, err, "insert message %d", i)
 
 		_, err = db.Exec(
 			`INSERT INTO message_bodies (message_id, body_text)
 			 VALUES (?, ?)`,
 			i, "Body of message "+string(rune('A'+i%26)))
-		requirepkg.NoError(t, err, "insert message_body %d", i)
+		require.NoError(t, err, "insert message_body %d", i)
 
 		_, err = db.Exec(
 			`INSERT INTO message_recipients
 				(message_id, participant_id, recipient_type)
 			 VALUES (?, ?, 'from')`,
 			i, senderID)
-		requirepkg.NoError(t, err, "insert message_recipient from %d", i)
+		require.NoError(t, err, "insert message_recipient from %d", i)
 
 		toID := 2
 		if senderID == 2 {
@@ -115,22 +115,22 @@ func createTestSourceDB(t *testing.T, dir string, msgCount int) string {
 				(message_id, participant_id, recipient_type)
 			 VALUES (?, ?, 'to')`,
 			i, toID)
-		requirepkg.NoError(t, err, "insert message_recipient to %d", i)
+		require.NoError(t, err, "insert message_recipient to %d", i)
 
 		labelID := (i % 3) + 1
 		_, err = db.Exec(
 			`INSERT INTO message_labels (message_id, label_id)
 			 VALUES (?, ?)`,
 			i, labelID)
-		requirepkg.NoError(t, err, "insert message_label %d", i)
+		require.NoError(t, err, "insert message_label %d", i)
 	}
 
 	return dbPath
 }
 
 func TestCopySubset_Basic(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	srcDir := t.TempDir()
 	dstDir := filepath.Join(t.TempDir(), "dst")
 
@@ -192,9 +192,9 @@ func TestCopySubset_AllRows(t *testing.T) {
 	srcDB := createTestSourceDB(t, srcDir, 5)
 
 	result, err := CopySubset(srcDB, dstDir, 100)
-	requirepkg.NoError(t, err, "CopySubset")
+	require.NoError(t, err, "CopySubset")
 
-	assertpkg.Equal(t, int64(5), result.Messages, "Messages (all available)")
+	assert.Equal(t, int64(5), result.Messages, "Messages (all available)")
 }
 
 func TestCopySubset_FTSPopulated(t *testing.T) {
@@ -204,10 +204,10 @@ func TestCopySubset_FTSPopulated(t *testing.T) {
 	srcDB := createTestSourceDB(t, srcDir, 5)
 
 	_, err := CopySubset(srcDB, dstDir, 5)
-	requirepkg.NoError(t, err, "CopySubset")
+	require.NoError(t, err, "CopySubset")
 
 	db, err := sql.Open("sqlite3", filepath.Join(dstDir, "msgvault.db"))
-	requirepkg.NoError(t, err)
+	require.NoError(t, err)
 	defer func() { _ = db.Close() }()
 
 	var count int64
@@ -215,11 +215,11 @@ func TestCopySubset_FTSPopulated(t *testing.T) {
 	if err != nil {
 		t.Skip("FTS5 not available")
 	}
-	assertpkg.NotZero(t, count, "expected FTS index to be populated")
+	assert.NotZero(t, count, "expected FTS index to be populated")
 }
 
 func TestCopySubset_ConversationCounts(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	srcDir := t.TempDir()
 	dstDir := filepath.Join(t.TempDir(), "dst")
 
@@ -243,15 +243,15 @@ func TestCopySubset_ConversationCounts(t *testing.T) {
 	for rows.Next() {
 		var id, denormalized, actual int64
 		require.NoError(rows.Scan(&id, &denormalized, &actual))
-		assertpkg.Equal(t, actual, denormalized,
+		assert.Equal(t, actual, denormalized,
 			"conversation %d: denormalized count=%d, actual=%d", id, denormalized, actual)
 	}
 	require.NoError(rows.Err(), "conversation rows")
 }
 
 func TestCopySubset_DestinationEmptyDir(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	srcDir := t.TempDir()
 	dstDir := filepath.Join(t.TempDir(), "dst")
 
@@ -269,7 +269,7 @@ func TestCopySubset_DestinationEmptyDir(t *testing.T) {
 }
 
 func TestCopySubset_DestinationDBExists(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	srcDir := t.TempDir()
 	dstDir := filepath.Join(t.TempDir(), "dst")
 
@@ -282,7 +282,7 @@ func TestCopySubset_DestinationDBExists(t *testing.T) {
 
 	_, err := CopySubset(srcDB, dstDir, 5)
 	require.Error(err, "expected error when destination DB exists")
-	assertpkg.ErrorContains(t, err, "destination database already exists")
+	assert.ErrorContains(t, err, "destination database already exists")
 }
 
 func TestCopySubset_SQLInjectionInPath(t *testing.T) {
@@ -290,24 +290,24 @@ func TestCopySubset_SQLInjectionInPath(t *testing.T) {
 	dstDir := filepath.Join(t.TempDir(), "dst")
 
 	quotedDir := filepath.Join(srcDir, "test'db")
-	requirepkg.NoError(t, os.MkdirAll(quotedDir, 0755))
+	require.NoError(t, os.MkdirAll(quotedDir, 0755))
 	srcDB := createTestSourceDB(t, quotedDir, 3)
 
 	result, err := CopySubset(srcDB, dstDir, 3)
-	requirepkg.NoError(t, err, "CopySubset with quoted path")
-	assertpkg.Equal(t, int64(3), result.Messages, "Messages")
+	require.NoError(t, err, "CopySubset with quoted path")
+	assert.Equal(t, int64(3), result.Messages, "Messages")
 }
 
 func TestCopySubset_NonPositiveRowCount(t *testing.T) {
 	for _, n := range []int{0, -1, -100} {
 		_, err := CopySubset("/tmp/fake.db", t.TempDir(), n)
-		assertpkg.Error(t, err, "CopySubset(rowCount=%d) should error", n)
+		assert.Error(t, err, "CopySubset(rowCount=%d) should error", n)
 	}
 }
 
 func TestCopySubset_TimestampFallback(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	srcDir := t.TempDir()
 	dstDir := filepath.Join(t.TempDir(), "dst")
 
@@ -407,8 +407,8 @@ func TestCopySubset_TimestampFallback(t *testing.T) {
 }
 
 func TestCopySubset_TieBreaker(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	srcDir := t.TempDir()
 	dstDir := filepath.Join(t.TempDir(), "dst")
 
@@ -481,8 +481,8 @@ func TestCopySubset_TieBreaker(t *testing.T) {
 }
 
 func TestCopySubset_ReplyToOrphanNulled(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	srcDir := t.TempDir()
 	dstDir := filepath.Join(t.TempDir(), "dst")
 
@@ -568,8 +568,8 @@ func TestCopySubset_ReplyToOrphanNulled(t *testing.T) {
 }
 
 func TestCopySubset_ExcludesSoftDeleted(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	srcDir := t.TempDir()
 	dstDir := filepath.Join(t.TempDir(), "dst")
 
@@ -606,8 +606,8 @@ func TestCopySubset_ExcludesSoftDeleted(t *testing.T) {
 }
 
 func TestCopySubset_ReactionParticipants(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	srcDir := t.TempDir()
 	dstDir := filepath.Join(t.TempDir(), "dst")
 
@@ -665,8 +665,8 @@ func TestCopySubset_ReactionParticipants(t *testing.T) {
 // TestCopySubset_NullSourceIDLabels verifies that user-created labels
 // with NULL source_id are preserved when attached to selected messages.
 func TestCopySubset_NullSourceIDLabels(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	srcDir := t.TempDir()
 	dstDir := filepath.Join(t.TempDir(), "dst")
 
@@ -724,7 +724,7 @@ func TestCopySubset_NullSourceIDLabels(t *testing.T) {
 // CopySubset to fail. This guards against the regression where src was
 // still attached during PRAGMA foreign_key_check.
 func TestCopySubset_SourceFKViolationIgnored(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	srcDir := t.TempDir()
 	dstDir := filepath.Join(t.TempDir(), "dst")
 
@@ -743,17 +743,17 @@ func TestCopySubset_SourceFKViolationIgnored(t *testing.T) {
 	// CopySubset should succeed — FK check must only scan destination
 	result, err := CopySubset(srcDB, dstDir, 3)
 	require.NoError(err, "CopySubset (source FK leak)")
-	assertpkg.Equal(t, int64(3), result.Messages, "Messages")
+	assert.Equal(t, int64(3), result.Messages, "Messages")
 }
 
 func TestCopySubset_MissingSourceDB(t *testing.T) {
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	dstDir := filepath.Join(t.TempDir(), "dst")
 	fakeSrc := filepath.Join(t.TempDir(), "nonexistent.db")
 
 	_, err := CopySubset(fakeSrc, dstDir, 5)
-	requirepkg.Error(t, err, "expected error for missing source DB")
-	requirepkg.ErrorContains(t, err, "source database not found")
+	require.Error(t, err, "expected error for missing source DB")
+	require.ErrorContains(t, err, "source database not found")
 
 	// ATTACH on a missing path would create a file; verify it wasn't
 	_, statErr := os.Stat(fakeSrc)
@@ -765,8 +765,8 @@ func TestCopySubset_MissingSourceDB(t *testing.T) {
 }
 
 func TestCopySubset_MultiSourceScoping(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	srcDir := t.TempDir()
 	dstDir := filepath.Join(t.TempDir(), "dst")
 
@@ -902,8 +902,8 @@ func TestCopySubset_MultiSourceScoping(t *testing.T) {
 }
 
 func TestCopySubset_LegacySourceWithoutOAuthApp(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	srcDir := t.TempDir()
 	dstDir := filepath.Join(t.TempDir(), "dst")
 
@@ -957,6 +957,6 @@ func TestCopySubset_ControlCharInPath(t *testing.T) {
 	}
 	for _, p := range controlPaths {
 		_, err := CopySubset(p, dstDir, 5)
-		assertpkg.Error(t, err, "CopySubset(%q) should reject control chars", p)
+		assert.Error(t, err, "CopySubset(%q) should reject control chars", p)
 	}
 }

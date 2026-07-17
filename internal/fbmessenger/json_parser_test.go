@@ -5,20 +5,20 @@ import (
 	"path/filepath"
 	"testing"
 
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func threadDir(t *testing.T, root, name string) string {
 	t.Helper()
 	abs, err := filepath.Abs(root)
-	requirepkg.NoError(t, err)
+	require.NoError(t, err)
 	return filepath.Join(abs, "your_activity_across_facebook", "messages", "inbox", name)
 }
 
 func TestParseJSONThread_Simple(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	root := "testdata/json_simple"
 	th, err := ParseJSONThread(root, threadDir(t, root, "alice_ABC123"))
 	require.NoError(err, "parse")
@@ -44,16 +44,16 @@ func TestParseJSONThread_Simple(t *testing.T) {
 func TestParseJSONThread_Group(t *testing.T) {
 	root := "testdata/json_group"
 	th, err := ParseJSONThread(root, threadDir(t, root, "crew_GRP123"))
-	requirepkg.NoError(t, err, "parse")
-	assertpkg.Equal(t, "group_chat", th.ConvType)
-	assertpkg.Len(t, th.Participants, 3)
+	require.NoError(t, err, "parse")
+	assert.Equal(t, "group_chat", th.ConvType)
+	assert.Len(t, th.Participants, 3)
 }
 
 func TestParseJSONThread_Multifile_NumericSort(t *testing.T) {
 	root := "testdata/json_multifile"
 	th, err := ParseJSONThread(root, threadDir(t, root, "dave_MULTI"))
-	requirepkg.NoError(t, err, "parse")
-	requirepkg.Len(t, th.Messages, 4)
+	require.NoError(t, err, "parse")
+	require.Len(t, th.Messages, 4)
 	// Bodies, in chronological order, must be A,B,C,D.
 	wantBodies := []string{
 		"Message A (from file 1, oldest)",
@@ -62,20 +62,20 @@ func TestParseJSONThread_Multifile_NumericSort(t *testing.T) {
 		"Message D (from file 10, newest)",
 	}
 	for i, w := range wantBodies {
-		assertpkg.Equal(t, w, th.Messages[i].Body, "messages[%d].Body", i)
+		assert.Equal(t, w, th.Messages[i].Body, "messages[%d].Body", i)
 	}
 }
 
 func TestParseJSONThread_Corrupt(t *testing.T) {
 	root := "testdata/corrupt"
 	_, err := ParseJSONThread(root, threadDir(t, root, "broken_BAD"))
-	requirepkg.Error(t, err)
-	assertpkg.ErrorIs(t, err, ErrCorruptJSON)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrCorruptJSON)
 }
 
 func TestParseJSONThread_Attachments(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	root := "testdata/json_with_media"
 	th, err := ParseJSONThread(root, threadDir(t, root, "bob_XYZ789"))
 	require.NoError(err, "parse")
@@ -89,8 +89,8 @@ func TestParseJSONThread_Attachments(t *testing.T) {
 }
 
 func TestParseJSONThread_Attachments_AltLayout(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	root := "testdata/json_with_media_alt"
 	absRoot, err := filepath.Abs(root)
 	require.NoError(err)
@@ -108,7 +108,7 @@ func TestParseJSONThread_Attachments_AltLayout(t *testing.T) {
 func TestParseJSONThread_NonTextBodies(t *testing.T) {
 	root := "testdata/json_nontext"
 	th, err := ParseJSONThread(root, threadDir(t, root, "sam_NONTXT"))
-	requirepkg.NoError(t, err, "parse")
+	require.NoError(t, err, "parse")
 	// Ordered chronologically ascending: unsubscribe, share, missed call, call, photo, sticker.
 	wantBodies := []string{
 		"[system] Sam left the chat",
@@ -118,14 +118,14 @@ func TestParseJSONThread_NonTextBodies(t *testing.T) {
 		"[photo]",
 		"[sticker]",
 	}
-	requirepkg.Len(t, th.Messages, len(wantBodies))
+	require.Len(t, th.Messages, len(wantBodies))
 	for i, w := range wantBodies {
-		assertpkg.Equal(t, w, th.Messages[i].Body, "messages[%d].Body", i)
+		assert.Equal(t, w, th.Messages[i].Body, "messages[%d].Body", i)
 	}
 }
 
 func TestParseJSONThread_PathEscapeRejected(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	tmp := t.TempDir()
 	threadPath := filepath.Join(tmp, "your_activity_across_facebook", "messages", "inbox", "evil_ESC")
 	require.NoError(os.MkdirAll(threadPath, 0755))
@@ -138,7 +138,7 @@ func TestParseJSONThread_PathEscapeRejected(t *testing.T) {
 	require.Len(th.Messages, 1)
 	att := th.Messages[0].Attachments
 	require.Len(att, 1)
-	assertpkg.Empty(t, att[0].AbsPath, "path escape not rejected")
+	assert.Empty(t, att[0].AbsPath, "path escape not rejected")
 }
 
 // When a thread dir has no valid numbered message files at all, the
@@ -146,10 +146,10 @@ func TestParseJSONThread_PathEscapeRejected(t *testing.T) {
 func TestParseJSONThread_OnlyUnnumberedFiles(t *testing.T) {
 	tmp := t.TempDir()
 	threadPath := filepath.Join(tmp, "your_activity_across_facebook", "messages", "inbox", "bad_NAME")
-	requirepkg.NoError(t, os.MkdirAll(threadPath, 0755))
-	requirepkg.NoError(t, os.WriteFile(filepath.Join(threadPath, "message_final.json"), []byte(`{}`), 0644))
+	require.NoError(t, os.MkdirAll(threadPath, 0755))
+	require.NoError(t, os.WriteFile(filepath.Join(threadPath, "message_final.json"), []byte(`{}`), 0644))
 	_, err := ParseJSONThread(tmp, threadPath)
-	requirepkg.Error(t, err, "expected error when no valid numbered files present")
+	require.Error(t, err, "expected error when no valid numbered files present")
 }
 
 // When a thread dir contains BOTH valid numbered files and a sibling
@@ -157,8 +157,8 @@ func TestParseJSONThread_OnlyUnnumberedFiles(t *testing.T) {
 // parser must import the valid file(s) and report the bad sibling via
 // Thread.BadSiblings rather than aborting the entire thread.
 func TestParseJSONThread_SkipsUnnumberedSibling(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	tmp := t.TempDir()
 	threadPath := filepath.Join(tmp, "your_activity_across_facebook", "messages", "inbox", "mix_MIXED")
 	require.NoError(os.MkdirAll(threadPath, 0755))

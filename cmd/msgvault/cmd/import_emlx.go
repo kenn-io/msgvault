@@ -59,9 +59,13 @@ Examples:
 
   # Legacy two-arg form (deprecated, still works)
   msgvault import-emlx me@gmail.com ~/Library/Mail/V10/SOME-GUID
-`,
+	`,
 	Args: cobra.MaximumNArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
+		if !isDaemonCLISubprocess() {
+			return runDaemonCLICommandHTTPFromCobra(cmd, args)
+		}
+
 		// Use a local copy so we don't mutate the package-global
 		// flag variable (which persists across Execute() calls).
 		identifier := importEmlxIdentifier
@@ -146,19 +150,12 @@ Examples:
 			}
 		}()
 
-		dbPath := cfg.DatabaseDSN()
-		st, err := store.Open(dbPath)
+		st, cleanup, err := openWritableStoreAndInitForIngest()
 		if err != nil {
-			return fmt.Errorf("open database: %w", err)
+			return err
 		}
-		defer func() { _ = st.Close() }()
-
-		if err := st.InitSchema(); err != nil {
-			return fmt.Errorf("init schema: %w", err)
-		}
-		if err := runStartupMigrationsForIngest(st); err != nil {
-			return fmt.Errorf("startup migrations: %w", err)
-		}
+		defer cleanup()
+		dbPath := cfg.DatabaseDSN()
 
 		attachmentsDir := cfg.AttachmentsDir()
 		if importEmlxNoAttachments {
@@ -174,8 +171,7 @@ Examples:
 			importErr = importAutoAccounts(ctx, cmd, st, mailDir, attachmentsDir)
 		}
 
-		rebuildCacheAfterWrite(dbPath)
-		return importErr
+		return errors.Join(importErr, rebuildCacheAfterWrite(dbPath))
 	},
 }
 
@@ -374,6 +370,7 @@ func importAutoAccounts(
 		grandTotal.MessagesAdded += summary.MessagesAdded
 		grandTotal.MessagesUpdated += summary.MessagesUpdated
 		grandTotal.MessagesSkipped += summary.MessagesSkipped
+		grandTotal.PartialFiles += summary.PartialFiles
 		grandTotal.Errors += summary.Errors
 		if summary.HardErrors {
 			grandTotal.HardErrors = true
@@ -448,6 +445,12 @@ func printImportStats(out io.Writer, summary importer.EmlxImportSummary) {
 		"  Skipped (dup):  %d messages\n",
 		summary.MessagesSkipped,
 	)
+	if summary.PartialFiles > 0 {
+		_, _ = fmt.Fprintf(out,
+			"  Partial files:  %d (body imported; attachments not cached by Apple Mail)\n",
+			summary.PartialFiles,
+		)
+	}
 	_, _ = fmt.Fprintf(out,
 		"  Errors:         %d\n",
 		summary.Errors,

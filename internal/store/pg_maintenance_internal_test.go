@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -234,4 +235,75 @@ func TestMaintenanceHatchLiftsStatementTimeout(t *testing.T) {
 		})
 		require.NoError(err, "runMaintenance must lift the session timeout and let pg_sleep(0.3) complete")
 	})
+}
+
+// TestRepackMetadataMaintenanceLiftsStatementTimeout proves the public repack
+// metadata phases use runMaintenance rather than the pool's ordinary timeout.
+// Slow DELETE triggers make both stale-index repair and zero-live record
+// cleanup exceed a deliberately tiny session timeout; both must still finish.
+func TestRepackMetadataMaintenanceLiftsStatementTimeout(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	dbURL := skipUnlessPostgresInternal(t)
+	st := newPGStoreInternal(t, dbURL)
+	ctx := context.Background()
+	const (
+		packID = "01hzy3v7q8r9s0t1a2v3w4x6j1"
+		hash   = "aa11223344556677889900aabbccddeeff00112233445566778899aabbccddee"
+	)
+
+	_, err := st.DB().Exec(`
+		INSERT INTO attachment_packs (pack_id, entry_count, stored_bytes, created_at)
+		VALUES ($1, 1, 64, $2)`, packID, time.Now().UTC().Format(time.RFC3339))
+	require.NoError(err, "insert zero-live pack record")
+	_, err = st.DB().Exec(`
+		INSERT INTO attachment_pack_index
+		    (blob_hash, pack_id, pack_offset, stored_len, raw_len, flags, crc32c)
+		VALUES ($1, $2, 6, 64, 64, 0, 0)`, hash, packID)
+	require.NoError(err, "insert stale mapping")
+	_, err = st.DB().Exec(`
+		CREATE FUNCTION slow_repack_maintenance_delete() RETURNS trigger
+		LANGUAGE plpgsql AS $$
+		BEGIN
+		    PERFORM pg_sleep(0.3);
+		    RETURN OLD;
+		END $$`)
+	require.NoError(err, "create slow maintenance trigger function")
+	_, err = st.DB().Exec(`
+		CREATE TRIGGER slow_repack_mapping_delete
+		BEFORE DELETE ON attachment_pack_index
+		FOR EACH ROW EXECUTE FUNCTION slow_repack_maintenance_delete()`)
+	require.NoError(err, "create slow mapping trigger")
+	_, err = st.DB().Exec(`
+		CREATE TRIGGER slow_repack_record_delete
+		BEFORE DELETE ON attachment_packs
+		FOR EACH ROW EXECUTE FUNCTION slow_repack_maintenance_delete()`)
+	require.NoError(err, "create slow pack-record trigger")
+
+	st.DB().SetMaxOpenConns(1)
+	st.DB().SetMaxIdleConns(1)
+	conn, err := st.DB().Conn(ctx)
+	require.NoError(err, "grab single pooled connection")
+	_, err = conn.ExecContext(ctx, "SET statement_timeout = '100ms'")
+	require.NoError(err, "set short session timeout")
+	require.NoError(conn.Close(), "return connection to pool")
+	_, err = st.DB().ExecContext(ctx, "SELECT pg_sleep(0.3)")
+	require.Error(err, "negative control must hit the session timeout")
+	assert.True(is57014(err), "expected SQLSTATE 57014 from negative control, got %v", err)
+
+	pruned, err := st.PruneUnreferencedPackIndex(ctx)
+	require.NoError(err, "slow prune must run with maintenance timeout disabled")
+	assert.Equal(int64(1), pruned)
+	usage, err := st.ListPackUsage(ctx)
+	require.NoError(err, "usage accounting shares the context-aware maintenance path")
+	require.Len(usage, 1)
+	assert.Zero(usage[0].LiveEntries)
+	assert.Zero(usage[0].MaxLiveStoredLen)
+	assert.Zero(usage[0].MaxLiveRawLen)
+	entries, err := st.ListReferencedPackEntries(ctx, packID)
+	require.NoError(err, "referenced enumeration shares the maintenance path")
+	assert.Empty(entries)
+	deleted, err := st.DeleteEmptyPackRecord(ctx, packID)
+	require.NoError(err, "slow cleanup must run with maintenance timeout disabled")
+	assert.True(deleted)
 }

@@ -12,24 +12,25 @@ import (
 	"testing"
 	"time"
 
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/vector"
 	"go.kenn.io/msgvault/internal/vector/embed"
 	"go.kenn.io/msgvault/internal/vector/sqlitevec"
 )
 
 // openTestBackend opens a fresh in-memory-ish sqlitevec backend with a
-// single pre-seeded message so CreateGeneration has something to enqueue.
+// single pre-seeded message so the scan-and-fill worker has a message to
+// discover and embed.
 func openTestBackend(t *testing.T) *sqlitevec.Backend {
 	t.Helper()
 	ctx := context.Background()
-	requirepkg.NoError(t, sqlitevec.RegisterExtension(), "RegisterExtension")
+	require.NoError(t, sqlitevec.RegisterExtension(), "RegisterExtension")
 
 	dir := t.TempDir()
 	mainPath := filepath.Join(dir, "main.db")
 	main, err := sql.Open("sqlite3", mainPath)
-	requirepkg.NoError(t, err, "open main")
+	require.NoError(t, err, "open main")
 	t.Cleanup(func() { _ = main.Close() })
 	schema := `
 CREATE TABLE messages (
@@ -38,16 +39,16 @@ CREATE TABLE messages (
     deleted_from_source_at DATETIME
 );`
 	_, err = main.Exec(schema)
-	requirepkg.NoError(t, err, "schema")
+	require.NoError(t, err, "schema")
 	_, err = main.Exec(`INSERT INTO messages (id) VALUES (1)`)
-	requirepkg.NoError(t, err, "seed")
+	require.NoError(t, err, "seed")
 	b, err := sqlitevec.Open(ctx, sqlitevec.Options{
 		Path:      filepath.Join(dir, "vectors.db"),
 		MainPath:  mainPath,
 		Dimension: 4,
 		MainDB:    main,
 	})
-	requirepkg.NoError(t, err, "Open")
+	require.NoError(t, err, "Open")
 	t.Cleanup(func() { _ = b.Close() })
 	return b
 }
@@ -57,7 +58,7 @@ CREATE TABLE messages (
 func openStderrSink(t *testing.T) *os.File {
 	t.Helper()
 	f, err := os.OpenFile(os.DevNull, os.O_WRONLY, 0)
-	requirepkg.NoError(t, err, "open /dev/null")
+	require.NoError(t, err, "open /dev/null")
 	t.Cleanup(func() { _ = f.Close() })
 	return f
 }
@@ -69,8 +70,8 @@ func openStderrSink(t *testing.T) *os.File {
 // still runs when pending drains to zero. Previously this path
 // errored out with ErrIndexBuilding.
 func TestPickEmbedGeneration_ResumesBuildingGeneration(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	ctx := context.Background()
 	b := openTestBackend(t)
 
@@ -105,11 +106,11 @@ func TestPickEmbedGeneration_NoGenerations_HintsFullRebuild(t *testing.T) {
 		Fingerprint: "fake:4",
 		Stderr:      openStderrSink(t),
 	})
-	requirepkg.Error(t, err, "expected error when no generations exist")
+	require.Error(t, err, "expected error when no generations exist")
 	// Intentional: we wrap the underlying error with a hint, but the
 	// underlying sentinel should still be errors.Is-reachable so
 	// upstream callers can branch on it.
-	assertpkg.ErrorIs(t, err, vector.ErrNotEnabled, "err should wrap ErrNotEnabled")
+	assert.ErrorIs(t, err, vector.ErrNotEnabled, "err should wrap ErrNotEnabled")
 }
 
 // TestPickEmbedGeneration_ResumeFingerprintMismatch rejects a resume
@@ -120,7 +121,7 @@ func TestPickEmbedGeneration_ResumeFingerprintMismatch(t *testing.T) {
 	ctx := context.Background()
 	b := openTestBackend(t)
 	_, err := b.CreateGeneration(ctx, "old-model", 4, "")
-	requirepkg.NoError(t, err, "CreateGeneration")
+	require.NoError(t, err, "CreateGeneration")
 
 	_, _, err = pickEmbedGeneration(ctx, b, embedGenerationOpts{
 		FullRebuild: false,
@@ -129,8 +130,8 @@ func TestPickEmbedGeneration_ResumeFingerprintMismatch(t *testing.T) {
 		Fingerprint: "new-model:4",
 		Stderr:      openStderrSink(t),
 	})
-	requirepkg.Error(t, err, "expected fingerprint mismatch error")
-	assertpkg.ErrorContains(t, err, "fingerprint", "error should mention fingerprint")
+	require.Error(t, err, "expected fingerprint mismatch error")
+	assert.ErrorContains(t, err, "fingerprint", "error should mention fingerprint")
 }
 
 // TestPickEmbedGeneration_PrefersBuildingOverActive_MatchingFingerprint
@@ -141,8 +142,8 @@ func TestPickEmbedGeneration_ResumeFingerprintMismatch(t *testing.T) {
 // (so it can be activated) rather than continuing to top up the old
 // active generation.
 func TestPickEmbedGeneration_PrefersBuildingOverActive_MatchingFingerprint(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	ctx := context.Background()
 	b := openTestBackend(t)
 
@@ -181,7 +182,7 @@ func TestPickEmbedGeneration_RejectsBuildingWithMismatchedFingerprint(t *testing
 	// State: building generation exists for an old model. No active
 	// generation, and config now points at a different model.
 	_, err := b.CreateGeneration(ctx, "old-model", 4, "")
-	requirepkg.NoError(t, err, "CreateGeneration (building)")
+	require.NoError(t, err, "CreateGeneration (building)")
 
 	_, _, err = pickEmbedGeneration(ctx, b, embedGenerationOpts{
 		FullRebuild: false,
@@ -190,8 +191,8 @@ func TestPickEmbedGeneration_RejectsBuildingWithMismatchedFingerprint(t *testing
 		Fingerprint: "new-model:4",
 		Stderr:      openStderrSink(t),
 	})
-	requirepkg.Error(t, err, "expected error for mismatched-fingerprint building generation")
-	assertpkg.ErrorContains(t, err, "fingerprint", "error should mention fingerprint")
+	require.Error(t, err, "expected error for mismatched-fingerprint building generation")
+	assert.ErrorContains(t, err, "fingerprint", "error should mention fingerprint")
 }
 
 // TestPickEmbedGeneration_StaleActivePlusMatchingBuilding covers the
@@ -202,8 +203,8 @@ func TestPickEmbedGeneration_RejectsBuildingWithMismatchedFingerprint(t *testing
 // stale active one being topped up — otherwise the new build stays
 // stuck in `building` indefinitely.
 func TestPickEmbedGeneration_StaleActivePlusMatchingBuilding(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	ctx := context.Background()
 	b := openTestBackend(t)
 
@@ -234,7 +235,7 @@ func TestPickEmbedGeneration_StaleActivePlusMatchingBuilding(t *testing.T) {
 // only rejected mismatched builds via the ErrIndexBuilding branch and
 // missed this active-also-matches case.
 func TestPickEmbedGeneration_ActivePlusMismatchedBuildingRejected(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	ctx := context.Background()
 	b := openTestBackend(t)
 
@@ -252,7 +253,7 @@ func TestPickEmbedGeneration_ActivePlusMismatchedBuildingRejected(t *testing.T) 
 		Stderr:      openStderrSink(t),
 	})
 	require.Error(err, "expected error when a mismatched building exists alongside matching active")
-	assertpkg.ErrorContains(t, err, "fingerprint", "error should mention fingerprint")
+	assert.ErrorContains(t, err, "fingerprint", "error should mention fingerprint")
 }
 
 // TestPickEmbedGeneration_FullRebuildAbortsWhenDeclined verifies the
@@ -269,137 +270,19 @@ func TestPickEmbedGeneration_FullRebuildAbortsWhenDeclined(t *testing.T) {
 		Confirm:     func() bool { return false },
 		Stderr:      openStderrSink(t),
 	})
-	requirepkg.Error(t, err, "expected abort error")
+	require.Error(t, err, "expected abort error")
 }
 
-// TestPickEmbedGeneration_ResumeReseedsUnseededBuilding regression-
-// guards the crash-window bug where a process that died between
-// inserting the building row and committing the initial seed would
-// leave the queue empty; a later `msgvault embeddings build` would then "drain"
-// zero rows and silently activate an unseeded generation. The resume
-// path must call EnsureSeeded on the matched build before returning,
-// reseeding pending_embeddings so the activation gate sees real work
-// (or the absence of any) instead of a vacuous empty queue.
-func TestPickEmbedGeneration_ResumeReseedsUnseededBuilding(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
-	ctx := context.Background()
-	b := openTestBackend(t)
+func TestRemainingCoverageHintMentionsBackstop(t *testing.T) {
+	got := remainingCoverageHint(7, 3)
 
-	// Step 1: create a building gen the normal way (which seeds + marks
-	// seeded_at).
-	gen, err := b.CreateGeneration(ctx, "fake", 4, "")
-	require.NoError(err, "CreateGeneration")
-
-	// Step 2: simulate the crash window — clear pending_embeddings and
-	// blank seeded_at so the next resume must reseed. This mirrors the
-	// state after a process dies between the building-row insert and
-	// the seedPending commit.
-	_, err = b.DB().ExecContext(ctx,
-		`DELETE FROM pending_embeddings WHERE generation_id = ?`, int64(gen))
-	require.NoError(err, "clear pending")
-	_, err = b.DB().ExecContext(ctx,
-		`UPDATE index_generations SET seeded_at = NULL WHERE id = ?`, int64(gen))
-	require.NoError(err, "clear seeded_at")
-
-	// Sanity: pending really is empty before the resume.
-	var pendingBefore int
-	require.NoError(b.DB().QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM pending_embeddings WHERE generation_id = ?`, int64(gen)).Scan(&pendingBefore),
-		"count pending before")
-	require.Equal(0, pendingBefore, "pending count before resume = %d, want 0 (test setup wrong)", pendingBefore)
-
-	// Step 3: run pickEmbedGeneration on the resume path.
-	gotGen, rebuildInProgress, err := pickEmbedGeneration(ctx, b, embedGenerationOpts{
-		FullRebuild: false,
-		Model:       "fake",
-		Dimension:   4,
-		Fingerprint: "fake:4",
-		Stderr:      openStderrSink(t),
-	})
-	require.NoError(err, "pickEmbedGeneration")
-	assert.Equal(gen, gotGen, "gotGen mismatch")
-	assert.True(rebuildInProgress, "rebuildInProgress=false, want true")
-
-	// Step 4: pending_embeddings should now contain the message we
-	// seeded in openTestBackend (id=1). Without EnsureSeeded on the
-	// resume path, this would still be 0.
-	var pendingAfter int
-	require.NoError(b.DB().QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM pending_embeddings WHERE generation_id = ?`, int64(gen)).Scan(&pendingAfter),
-		"count pending after")
-	assert.Equal(1, pendingAfter, "pending count after resume = %d, want 1 (EnsureSeeded should have reseeded)", pendingAfter)
-	// And seeded_at should be set so a subsequent resume skips the work.
-	var seededAt sql.NullInt64
-	require.NoError(b.DB().QueryRowContext(ctx,
-		`SELECT seeded_at FROM index_generations WHERE id = ?`, int64(gen)).Scan(&seededAt),
-		"read seeded_at")
-	assert.True(seededAt.Valid, "seeded_at still NULL after resume, want set")
-}
-
-// TestPickEmbedGeneration_ResumeRacesActivation regresses the case
-// where the `building` row flips to `active` between the
-// BuildingGeneration read and EnsureSeeded. Before the fix this
-// surfaced a fatal `ensure seeded: ... state="active"` error even
-// though a legitimate active generation (matching the configured
-// fingerprint) now existed. After the fix we fall through to the
-// active-generation lookup and top it up as a normal incremental
-// pass.
-func TestPickEmbedGeneration_ResumeRacesActivation(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
-	ctx := context.Background()
-	b := openTestBackend(t)
-
-	// Create the building generation as if the operator had just run
-	// `msgvault embeddings build --full-rebuild`. CreateGeneration seeds pending
-	// rows for id=1 via openTestBackend's seed message.
-	gen, err := b.CreateGeneration(ctx, "fake", 4, "")
-	require.NoError(err, "CreateGeneration")
-	// Simulate the race: another actor (the daemon, or a concurrent
-	// `msgvault embeddings build` run that finished first) activated the
-	// generation. From this actor's perspective BuildingGeneration
-	// returned non-nil a moment ago, but the state has since flipped.
-	require.NoError(b.ActivateGeneration(ctx, gen, true), "ActivateGeneration")
-
-	// Intercepting the race is hard to do in a single-threaded test,
-	// but we can drive the same code path by calling
-	// pickEmbedGeneration with a backend that reports the now-active
-	// generation when BuildingGeneration is queried. We use a
-	// shim that wraps the real backend and overrides only
-	// BuildingGeneration.
-	shim := &buildingShim{Backend: b, forceBuilding: &vector.Generation{
-		ID: gen, Fingerprint: "fake:4", State: vector.GenerationBuilding,
-	}}
-
-	gotGen, rebuildInProgress, err := pickEmbedGeneration(ctx, shim, embedGenerationOpts{
-		FullRebuild: false,
-		Model:       "fake",
-		Dimension:   4,
-		Fingerprint: "fake:4",
-		Stderr:      openStderrSink(t),
-	})
-	require.NoError(err, "pickEmbedGeneration (race must be retryable, not fatal)")
-	assert.Equal(gen, gotGen, "same generation, but now active")
-	assert.False(rebuildInProgress, "rebuildInProgress=true, want false (now on the active path)")
-}
-
-// buildingShim wraps a real backend, overriding only BuildingGeneration
-// to return a forced value. Used by TestPickEmbedGeneration_ResumeRacesActivation
-// to simulate a stale read where the generation flipped to active
-// underneath us after BuildingGeneration returned.
-type buildingShim struct {
-	vector.Backend
-
-	forceBuilding *vector.Generation
-}
-
-func (s *buildingShim) BuildingGeneration(ctx context.Context) (*vector.Generation, error) {
-	return s.forceBuilding, nil
+	assert.Contains(t, got, "Generation 7 still has 3 message(s) needing embedding")
+	assert.Contains(t, got, "msgvault embeddings resume --backstop")
+	assert.NotContains(t, got, "resume` again")
 }
 
 func TestNewProgressPrinter_UsesWindowedRate(t *testing.T) {
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	var buf bytes.Buffer
 	// window=2, total=210 so the percent path runs. The zero
 	// interval keeps the test deterministic without sleeping.
@@ -441,7 +324,7 @@ func TestNewProgressPrinter_UsesWindowedRate(t *testing.T) {
 
 	out := buf.String()
 	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
-	requirepkg.GreaterOrEqual(t, len(lines), 2, "expected at least 2 emitted lines, got:\n%s", out)
+	require.GreaterOrEqual(t, len(lines), 2, "expected at least 2 emitted lines, got:\n%s", out)
 	finalLine := lines[len(lines)-1]
 
 	assert.Contains(finalLine, "(last 2)", "expected `(last 2)` annotation on final line")
@@ -467,5 +350,5 @@ func TestNewProgressPrinter_DoesNotBypassThrottleAfterInitialTotal(t *testing.T)
 	})
 
 	lines := strings.Split(strings.TrimRight(buf.String(), "\n"), "\n")
-	requirepkg.Len(t, lines, 1, "progress emitted %d lines, want 1 throttled line after initial total:\n%s", len(lines), buf.String())
+	require.Len(t, lines, 1, "progress emitted %d lines, want 1 throttled line after initial total:\n%s", len(lines), buf.String())
 }

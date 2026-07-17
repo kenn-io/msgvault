@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 var convergenceWS = regexp.MustCompile(`\s+`)
@@ -18,8 +18,8 @@ func normalizeConvergence(s string) string {
 }
 
 func TestJSONHTMLConvergence_Simple(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	jsonRoot := "testdata/json_simple"
 	htmlRoot := "testdata/html_simple"
 	jsonTh, err := ParseJSONThread(jsonRoot, threadDir(t, jsonRoot, "alice_ABC123"))

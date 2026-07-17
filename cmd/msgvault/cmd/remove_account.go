@@ -5,20 +5,33 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 
+	"github.com/gofrs/flock"
 	"github.com/spf13/cobra"
+	"go.kenn.io/msgvault/internal/beeper"
+	"go.kenn.io/msgvault/internal/circleback"
 	imaplib "go.kenn.io/msgvault/internal/imap"
 	"go.kenn.io/msgvault/internal/microsoft"
 	"go.kenn.io/msgvault/internal/oauth"
 	"go.kenn.io/msgvault/internal/store"
 )
 
+const (
+	removeAccountCommandName   = "remove-account"
+	removeAccountConfirmedFlag = "confirmed"
+)
+
+// removeAccountAfterCascadeHook pauses tests after the database mutation and
+// before the lock-held cache rebuild.
+var removeAccountAfterCascadeHook func()
+
 func newRemoveAccountCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "remove-account <email>",
+		Use:   removeAccountCommandName + " <email>",
 		Short: "Remove an account and all its data",
 		Long: `Remove an account and all associated messages, labels, and sync data
 from the local database. This is irreversible.
@@ -26,11 +39,13 @@ from the local database. This is irreversible.
 If the same identifier exists for multiple source types (e.g., gmail
 and mbox), use --type to specify which one to remove.
 
-The Parquet analytics cache is deleted because it is shared across accounts
-and must be rebuilt. Run 'msgvault build-cache' afterward to rebuild it.
+The Parquet analytics cache is rebuilt automatically because it is shared
+across accounts.
 
 Attachment files on disk that are not shared with another account are deleted.
 Shared attachments (same content hash across multiple accounts) are kept.
+Unique packed attachments become unreachable immediately; their immutable pack
+bytes are reclaimed by attachment maintenance.
 
 Examples:
   msgvault remove-account you@gmail.com
@@ -40,6 +55,10 @@ Examples:
 		RunE: runRemoveAccount,
 	}
 	cmd.Flags().BoolP("yes", "y", false, "Skip confirmation prompt")
+	cmd.Flags().Bool(removeAccountConfirmedFlag, false, "Internal: confirmation was already accepted by the frontend CLI")
+	if err := cmd.Flags().MarkHidden(removeAccountConfirmedFlag); err != nil {
+		panic(err)
+	}
 	cmd.Flags().String(
 		"type", "",
 		"Source type to remove (gmail, mbox, etc.)",
@@ -48,10 +67,50 @@ Examples:
 }
 
 func runRemoveAccount(cmd *cobra.Command, args []string) error {
-	if err := MustBeLocal("remove-account"); err != nil {
-		return err
+	if !isDaemonCLISubprocess() {
+		return runRemoveAccountHTTP(cmd, args)
 	}
+	return runRemoveAccountLocal(cmd, args)
+}
 
+func runRemoveAccountHTTP(cmd *cobra.Command, args []string) error {
+	yes, err := cmd.Flags().GetBool("yes")
+	if err != nil {
+		return fmt.Errorf("read --yes flag: %w", err)
+	}
+	if !yes {
+		ok, err := confirmRemoveAccount(cmd.InOrStdin(), cmd.OutOrStdout())
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return nil
+		}
+		if err := cmd.Flags().Set(removeAccountConfirmedFlag, "true"); err != nil {
+			return fmt.Errorf("set --%s after confirmation: %w", removeAccountConfirmedFlag, err)
+		}
+	}
+	return runDaemonCLICommandHTTPFromCobra(cmd, args)
+}
+
+func confirmRemoveAccount(r io.Reader, w io.Writer) (bool, error) {
+	_, _ = fmt.Fprint(w, "\nRemove this account and all its data? [y/N] ")
+	scanner := bufio.NewScanner(r)
+	if !scanner.Scan() {
+		if err := scanner.Err(); err != nil {
+			return false, fmt.Errorf("read confirmation: %w", err)
+		}
+		return false, errors.New("no confirmation input (stdin closed); use --yes")
+	}
+	answer := strings.TrimSpace(strings.ToLower(scanner.Text()))
+	if !isYesAnswer(answer) {
+		_, _ = fmt.Fprintln(w, "Aborted.")
+		return false, nil
+	}
+	return true, nil
+}
+
+func runRemoveAccountLocal(cmd *cobra.Command, args []string) error {
 	yes, err := cmd.Flags().GetBool("yes")
 	if err != nil {
 		return fmt.Errorf("read --yes flag: %w", err)
@@ -60,22 +119,17 @@ func runRemoveAccount(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("read --type flag: %w", err)
 	}
-
+	confirmed, err := cmd.Flags().GetBool(removeAccountConfirmedFlag)
+	if err != nil {
+		return fmt.Errorf("read --%s flag: %w", removeAccountConfirmedFlag, err)
+	}
 	email := args[0]
 
-	dbPath := cfg.DatabaseDSN()
-	s, err := store.Open(dbPath)
+	s, cleanup, err := openWritableStoreAndInit()
 	if err != nil {
-		return fmt.Errorf("open database: %w", err)
+		return err
 	}
-	defer func() { _ = s.Close() }()
-
-	if err := s.InitSchema(); err != nil {
-		return fmt.Errorf("init schema: %w", err)
-	}
-	if err := runStartupMigrations(s); err != nil {
-		return fmt.Errorf("startup migrations: %w", err)
-	}
+	defer cleanup()
 
 	source, err := resolveSource(s, email, sourceType)
 	if err != nil {
@@ -92,7 +146,6 @@ func runRemoveAccount(cmd *cobra.Command, args []string) error {
 				"Use --yes to force removal", email,
 		)
 	}
-
 	msgCount, err := s.CountMessagesForSource(source.ID)
 	if err != nil {
 		return fmt.Errorf("count messages: %w", err)
@@ -102,7 +155,7 @@ func runRemoveAccount(cmd *cobra.Command, args []string) error {
 	fmt.Printf("Type:     %s\n", source.SourceType)
 	fmt.Printf("Messages: %s\n", formatCount(msgCount))
 
-	if !yes {
+	if !yes && !confirmed {
 		fmt.Print("\nRemove this account and all its data? [y/N] ")
 		scanner := bufio.NewScanner(os.Stdin)
 		if !scanner.Scan() {
@@ -112,7 +165,7 @@ func runRemoveAccount(cmd *cobra.Command, args []string) error {
 			return errors.New("no confirmation input (stdin closed); use --yes")
 		}
 		answer := strings.TrimSpace(strings.ToLower(scanner.Text()))
-		if answer != "y" && answer != "yes" {
+		if !isYesAnswer(answer) {
 			fmt.Println("Aborted.")
 			return nil
 		}
@@ -124,14 +177,39 @@ func runRemoveAccount(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("collect attachment paths: %w", err)
 	}
 
+	isSQLite := !store.IsPostgresURL(cfg.DatabaseDSN())
+	var cacheLock *flock.Flock
+	if isSQLite {
+		cacheLock, err = lockCacheAndInvalidateSyncState(cfg.AnalyticsDir())
+		if err != nil {
+			return fmt.Errorf("protect analytics cache for account removal: %w", err)
+		}
+	}
+
 	// RemoveSourceSerialized runs the active-sync check and the cascade
 	// under a single exclusive write lock. StartSync blocks on that lock,
 	// so a sync started between our check and the delete is either seen
 	// as active (we skip file deletion) or fails after we commit because
 	// the source is gone.
-	hadActiveSync, err := s.RemoveSourceSerialized(cmd.Context(), source.ID)
-	if err != nil {
-		return fmt.Errorf("remove account: %w", err)
+	hadActiveSync, packedMappingsRemoved, removeErr := s.RemoveSourceSerialized(cmd.Context(), source.ID)
+
+	var cacheRefreshErr error
+	if isSQLite {
+		if removeAccountAfterCascadeHook != nil {
+			removeAccountAfterCascadeHook()
+		}
+		fmt.Println("\nRebuilding analytics cache...")
+		_, cacheRefreshErr = buildCacheLocked(cfg.DatabaseDSN(), cfg.AnalyticsDir(), true, false)
+		cacheRefreshErr = errors.Join(
+			cacheRefreshErr,
+			wrapError(cacheLock.Unlock(), "release analytics cache lock"),
+		)
+	}
+	if removeErr != nil {
+		return errors.Join(
+			fmt.Errorf("remove account: %w", removeErr),
+			wrapError(cacheRefreshErr, "restore analytics cache after failed account removal"),
+		)
 	}
 
 	var deletedFiles, preservedFiles int
@@ -161,6 +239,41 @@ func runRemoveAccount(cmd *cobra.Command, args []string) error {
 			fmt.Fprintf(os.Stderr,
 				"Warning: could not remove token file %s: %v\n",
 				tokenPath, err,
+			)
+		}
+	case sourceTypeTeams:
+		graphMgr := microsoft.NewGraphManager(
+			cfg.Microsoft.ClientID,
+			cfg.Microsoft.EffectiveTenantID(),
+			cfg.TokensDir(),
+			logger,
+		)
+		if err := graphMgr.DeleteToken(source.Identifier); err != nil {
+			fmt.Fprintf(os.Stderr,
+				"Warning: could not remove Microsoft Graph token: %v\n", err,
+			)
+		}
+	case sourceTypeBeeper:
+		// The token is shared by every Beeper network-account source; only
+		// remove it when the last one is gone. The source row was already
+		// removed above, so any remaining rows belong to other accounts.
+		remaining, lerr := s.ListSources(sourceTypeBeeper)
+		if lerr != nil {
+			fmt.Fprintf(os.Stderr,
+				"Warning: could not check remaining beeper sources: %v\n", lerr,
+			)
+		} else if len(remaining) == 0 {
+			if err := beeper.DeleteToken(cfg.TokensDir()); err != nil {
+				fmt.Fprintf(os.Stderr,
+					"Warning: could not remove Beeper token: %v\n", err,
+				)
+			}
+		}
+	case sourceTypeCircleback:
+		circlebackMgr := circleback.NewManager("", cfg.TokensDir(), logger)
+		if err := circlebackMgr.DeleteToken(source.Identifier); err != nil {
+			fmt.Fprintf(os.Stderr,
+				"Warning: could not remove Circleback token: %v\n", err,
 			)
 		}
 	case sourceTypeIMAP:
@@ -206,12 +319,10 @@ func runRemoveAccount(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Remove analytics cache (shared across accounts, needs full rebuild)
-	analyticsDir := cfg.AnalyticsDir()
-	if err := os.RemoveAll(analyticsDir); err != nil {
-		fmt.Fprintf(os.Stderr,
-			"Warning: could not remove analytics cache %s: %v\n",
-			analyticsDir, err,
+	if cacheRefreshErr != nil {
+		return fmt.Errorf(
+			"account was removed, but analytics cache refresh failed: %w",
+			cacheRefreshErr,
 		)
 	}
 
@@ -225,10 +336,12 @@ func runRemoveAccount(cmd *cobra.Command, args []string) error {
 			preservedFiles,
 		)
 	}
-	fmt.Println(
-		"Run 'msgvault build-cache' to rebuild the analytics cache.",
-	)
-
+	if packedMappingsRemoved > 0 {
+		fmt.Printf(
+			"Removed %d packed blob mapping(s); physical pack bytes will be reclaimed by repack.\n",
+			packedMappingsRemoved,
+		)
+	}
 	return nil
 }
 

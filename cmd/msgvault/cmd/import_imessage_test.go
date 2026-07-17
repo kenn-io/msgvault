@@ -4,8 +4,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -14,7 +14,7 @@ import (
 // this ingest path from auto-default-identity. After source creation via
 // resolveImessageSource, account_identities must remain empty.
 func TestImportIMessage_NoAutoDefaultIdentity(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	// After a successful import, account_identities has zero rows for the
 	// apple_messages source. The source identifier is "local"; we never
 	// auto-write because there's no per-user identifier known at source
@@ -30,7 +30,7 @@ func TestImportIMessage_NoAutoDefaultIdentity(t *testing.T) {
 
 	rows, err := s.ListAccountIdentities(src.ID)
 	require.NoError(err, "ListAccountIdentities")
-	assertpkg.Empty(t, rows, "expected no account_identities rows for apple_messages source")
+	assert.Empty(t, rows, "expected no account_identities rows for apple_messages source")
 }
 
 func TestResolveImessageSource(t *testing.T) {
@@ -81,7 +81,7 @@ func TestResolveImessageSource(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			require := requirepkg.New(t)
+			require := require.New(t)
 			s, err := store.Open(":memory:")
 			require.NoError(err)
 			defer func() { _ = s.Close() }()
@@ -97,7 +97,7 @@ func TestResolveImessageSource(t *testing.T) {
 
 			src, err := resolveImessageSource(s)
 			require.NoError(err, "resolveImessageSource")
-			assertpkg.Equal(t, tt.wantIdentifier, src.Identifier, "identifier")
+			assert.Equal(t, tt.wantIdentifier, src.Identifier, "identifier")
 		})
 	}
 }

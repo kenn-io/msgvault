@@ -9,7 +9,7 @@
 
 # Security-critical configuration
 .github/CODEOWNERS @wesm
-.github/dependabot.yml @wesm
+renovate.json @wesm
 
 # Supply chain: Go dependency changes require owner approval
 go.mod @wesm

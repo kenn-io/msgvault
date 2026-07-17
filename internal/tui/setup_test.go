@@ -5,12 +5,9 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
-	"sync"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
-	"github.com/muesli/termenv"
+	tea "charm.land/bubbletea/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/query"
@@ -21,21 +18,10 @@ import (
 // ansiStart is the escape sequence prefix found in styled terminal output.
 const ansiStart = "\x1b["
 
-// colorProfileMu serializes tests that mutate the global lipgloss color profile.
-var colorProfileMu sync.Mutex
-
-// forceColorProfile sets lipgloss to ANSI color output for tests that assert
-// on styled output. It acquires colorProfileMu to prevent data races with
-// parallel tests and restores the original profile via t.Cleanup.
+// forceColorProfile is kept for tests that need styled output. Lip Gloss v2
+// no longer uses a global color profile; rendered content is deterministic.
 func forceColorProfile(t *testing.T) {
 	t.Helper()
-	colorProfileMu.Lock()
-	orig := lipgloss.ColorProfile()
-	lipgloss.SetColorProfile(termenv.ANSI)
-	t.Cleanup(func() {
-		lipgloss.SetColorProfile(orig)
-		colorProfileMu.Unlock()
-	})
 }
 
 var ansiPattern = regexp.MustCompile(`\x1b\[[0-9;?]*[ -/]*[@-~]`)
@@ -335,7 +321,7 @@ func (b *TestModelBuilder) configureState(m *Model) {
 }
 
 // sendKey sends a key message to the model and returns the updated concrete Model.
-func sendKey(t *testing.T, m Model, k tea.KeyMsg) (Model, tea.Cmd) {
+func sendKey(t *testing.T, m Model, k tea.KeyPressMsg) (Model, tea.Cmd) {
 	t.Helper()
 	newM, cmd := m.Update(k)
 	return asModel(t, newM), cmd
@@ -502,52 +488,52 @@ func sumAggregateStats(rows []query.AggregateRow) (count, size, attachments int6
 }
 
 // -----------------------------------------------------------------------------
-// Key Event Helpers - reduce verbosity of tea.KeyMsg construction
+// Key Event Helpers - reduce verbosity of tea.KeyPressMsg construction
 // -----------------------------------------------------------------------------
 
-// key returns a KeyMsg for a single rune (e.g., key('x'), key(' ')).
-func key(r rune) tea.KeyMsg {
-	return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}}
+// key returns a KeyPressMsg for a single rune (e.g., key('x'), key(' ')).
+func key(r rune) tea.KeyPressMsg {
+	return tea.KeyPressMsg{Code: r, Text: string(r)}
 }
 
-// keyEnter returns a KeyMsg for the Enter key.
-func keyEnter() tea.KeyMsg {
-	return tea.KeyMsg{Type: tea.KeyEnter}
+// keyEnter returns a KeyPressMsg for the Enter key.
+func keyEnter() tea.KeyPressMsg {
+	return tea.KeyPressMsg{Code: tea.KeyEnter}
 }
 
-// keyEsc returns a KeyMsg for the Escape key.
-func keyEsc() tea.KeyMsg {
-	return tea.KeyMsg{Type: tea.KeyEscape}
+// keyEsc returns a KeyPressMsg for the Escape key.
+func keyEsc() tea.KeyPressMsg {
+	return tea.KeyPressMsg{Code: tea.KeyEscape}
 }
 
-// keyTab returns a KeyMsg for the Tab key.
-func keyTab() tea.KeyMsg {
-	return tea.KeyMsg{Type: tea.KeyTab}
+// keyTab returns a KeyPressMsg for the Tab key.
+func keyTab() tea.KeyPressMsg {
+	return tea.KeyPressMsg{Code: tea.KeyTab}
 }
 
-// keyDown returns a KeyMsg for the Down arrow key.
-func keyDown() tea.KeyMsg {
-	return tea.KeyMsg{Type: tea.KeyDown}
+// keyDown returns a KeyPressMsg for the Down arrow key.
+func keyDown() tea.KeyPressMsg {
+	return tea.KeyPressMsg{Code: tea.KeyDown}
 }
 
-// keyShiftTab returns a KeyMsg for Shift+Tab.
-func keyShiftTab() tea.KeyMsg {
-	return tea.KeyMsg{Type: tea.KeyShiftTab}
+// keyShiftTab returns a KeyPressMsg for Shift+Tab.
+func keyShiftTab() tea.KeyPressMsg {
+	return tea.KeyPressMsg{Code: tea.KeyTab, Mod: tea.ModShift}
 }
 
-// keyLeft returns a KeyMsg for the Left arrow key.
-func keyLeft() tea.KeyMsg {
-	return tea.KeyMsg{Type: tea.KeyLeft}
+// keyLeft returns a KeyPressMsg for the Left arrow key.
+func keyLeft() tea.KeyPressMsg {
+	return tea.KeyPressMsg{Code: tea.KeyLeft}
 }
 
-// keyRight returns a KeyMsg for the Right arrow key.
-func keyRight() tea.KeyMsg {
-	return tea.KeyMsg{Type: tea.KeyRight}
+// keyRight returns a KeyPressMsg for the Right arrow key.
+func keyRight() tea.KeyPressMsg {
+	return tea.KeyPressMsg{Code: tea.KeyRight}
 }
 
-// keyHome returns a KeyMsg for the Home key.
-func keyHome() tea.KeyMsg {
-	return tea.KeyMsg{Type: tea.KeyHome}
+// keyHome returns a KeyPressMsg for the Home key.
+func keyHome() tea.KeyPressMsg {
+	return tea.KeyPressMsg{Code: tea.KeyHome}
 }
 
 // -----------------------------------------------------------------------------
@@ -622,42 +608,42 @@ func assertPendingManifest(t *testing.T, m Model, wantAccount string) {
 }
 
 // applyAggregateKey sends a key through handleAggregateKeys and returns the concrete Model.
-func applyAggregateKey(t *testing.T, m Model, k tea.KeyMsg) Model {
+func applyAggregateKey(t *testing.T, m Model, k tea.KeyPressMsg) Model {
 	t.Helper()
 	newModel, _ := m.handleAggregateKeys(k)
 	return asModel(t, newModel)
 }
 
 // applyAggregateKeyWithCmd sends a key through handleAggregateKeys and returns Model and Cmd.
-func applyAggregateKeyWithCmd(t *testing.T, m Model, k tea.KeyMsg) (Model, tea.Cmd) {
+func applyAggregateKeyWithCmd(t *testing.T, m Model, k tea.KeyPressMsg) (Model, tea.Cmd) {
 	t.Helper()
 	newModel, cmd := m.handleAggregateKeys(k)
 	return asModel(t, newModel), cmd
 }
 
 // applyMessageListKey sends a key through handleMessageListKeys and returns the concrete Model.
-func applyMessageListKey(t *testing.T, m Model, k tea.KeyMsg) Model {
+func applyMessageListKey(t *testing.T, m Model, k tea.KeyPressMsg) Model {
 	t.Helper()
 	newModel, _ := m.handleMessageListKeys(k)
 	return asModel(t, newModel)
 }
 
 // applyMessageListKeyWithCmd sends a key through handleMessageListKeys and returns Model and Cmd.
-func applyMessageListKeyWithCmd(t *testing.T, m Model, k tea.KeyMsg) (Model, tea.Cmd) {
+func applyMessageListKeyWithCmd(t *testing.T, m Model, k tea.KeyPressMsg) (Model, tea.Cmd) {
 	t.Helper()
 	newModel, cmd := m.handleMessageListKeys(k)
 	return asModel(t, newModel), cmd
 }
 
 // applyModalKey sends a key through handleModalKeys and returns the concrete Model and Cmd.
-func applyModalKey(t *testing.T, m Model, k tea.KeyMsg) (Model, tea.Cmd) {
+func applyModalKey(t *testing.T, m Model, k tea.KeyPressMsg) (Model, tea.Cmd) {
 	t.Helper()
 	newModel, cmd := m.handleModalKeys(k)
 	return asModel(t, newModel), cmd
 }
 
 // applyDetailKey sends a key through handleMessageDetailKeys and returns the concrete Model.
-func applyDetailKey(t *testing.T, m Model, k tea.KeyMsg) Model {
+func applyDetailKey(t *testing.T, m Model, k tea.KeyPressMsg) Model {
 	t.Helper()
 	newModel, _ := m.handleMessageDetailKeys(k)
 	return asModel(t, newModel)
@@ -804,7 +790,7 @@ func assertInlineSearchActive(t *testing.T, m Model, expected bool) {
 }
 
 // applyInlineSearchKey sends a key through handleInlineSearchKeys and returns Model and Cmd.
-func applyInlineSearchKey(t *testing.T, m Model, k tea.KeyMsg) (Model, tea.Cmd) {
+func applyInlineSearchKey(t *testing.T, m Model, k tea.KeyPressMsg) (Model, tea.Cmd) {
 	t.Helper()
 	newModel, cmd := m.handleInlineSearchKeys(k)
 	return asModel(t, newModel), cmd

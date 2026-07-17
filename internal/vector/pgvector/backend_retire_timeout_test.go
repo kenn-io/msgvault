@@ -37,6 +37,9 @@ func newTracedBackendForTest(t *testing.T) (*Backend, *sqlTracer, context.Contex
 // retire tx. The functional success is hardened by clamping the session
 // statement_timeout low first — the hatch's tx-scoped SET LOCAL must override it.
 func TestRetireGeneration_DisablesStatementTimeout(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
 	b, tracer, ctx := newTracedBackendForTest(t)
 
 	gen := seedAndEmbed(t, b, b.db, map[int64][]float32{
@@ -44,20 +47,31 @@ func TestRetireGeneration_DisablesStatementTimeout(t *testing.T) {
 		2: unitVec(768, 1),
 		3: unitVec(768, 2),
 	})
-	require.Equal(t, 3, countEmbeddingRows(t, b, gen), "precondition: generation has embeddings")
+	require.Equal(3, countEmbeddingRows(t, b, gen), "precondition: generation has embeddings")
 
 	// Clamp the session timeout absurdly low. The retire's SET LOCAL = 0 is
 	// tx-scoped and must override this for the duration of the DELETEs.
+	// One pooled connection makes the session-level SET sticky and lets the
+	// RESET below reliably restore the same session before verification
+	// (same pattern as the backfill timeout tests) — otherwise the
+	// verification COUNT can land on the still-clamped connection and be
+	// cancelled at 1ms on a slow runner.
+	b.db.SetMaxOpenConns(1)
 	_, err := b.db.ExecContext(ctx, "SET statement_timeout = 1")
-	require.NoError(t, err, "set tiny session statement_timeout")
+	require.NoError(
+		err, "set tiny session statement_timeout")
 
 	tracer.reset()
-	require.NoError(t, b.RetireGeneration(ctx, gen, true),
+	require.NoError(
+		b.RetireGeneration(ctx, gen, true),
 		"RetireGeneration must succeed despite a tiny session statement_timeout (hatch disables it)")
 
-	assert.True(t, tracer.contains("SET LOCAL statement_timeout = 0"),
+	_, err = b.db.ExecContext(ctx, "RESET statement_timeout")
+	require.NoError(err, "restore statement_timeout before verification")
+
+	assert.True(tracer.contains("SET LOCAL statement_timeout = 0"),
 		"retire tx must disable the pool-wide statement_timeout (C1 hatch); got %v", tracer.snapshot())
-	assert.Equal(t, 0, countEmbeddingRows(t, b, gen),
+	assert.Equal(0, countEmbeddingRows(t, b, gen),
 		"retired generation's embeddings must be deleted")
 }
 
@@ -71,14 +85,19 @@ func TestRetireGeneration_DisablesStatementTimeout(t *testing.T) {
 // session statement_timeout, and assert the activation succeeds, the first
 // generation's embeddings are gone, and the hatch was issued.
 func TestActivateGeneration_DisablesStatementTimeout(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
 	b, tracer, ctx := newTracedBackendForTest(t)
 
 	gen1 := seedAndEmbed(t, b, b.db, map[int64][]float32{
 		1: unitVec(768, 0),
 		2: unitVec(768, 1),
 	})
-	require.NoError(t, b.ActivateGeneration(ctx, gen1, true), "activate gen1")
-	require.Equal(t, 2, countEmbeddingRows(t, b, gen1), "precondition: gen1 has embeddings")
+	require.NoError(
+		b.ActivateGeneration(ctx, gen1, true), "activate gen1")
+
+	require.Equal(2, countEmbeddingRows(t, b, gen1), "precondition: gen1 has embeddings")
 
 	gen2 := seedAndEmbed(t, b, b.db, map[int64][]float32{
 		1: unitVec(768, 2),
@@ -86,19 +105,26 @@ func TestActivateGeneration_DisablesStatementTimeout(t *testing.T) {
 	})
 
 	// Clamp the session timeout low; the activate tx's auto-retire DELETEs must
-	// override it via the tx-scoped SET LOCAL = 0.
+	// override it via the tx-scoped SET LOCAL = 0. One pooled connection
+	// makes the SET sticky and the RESET below deterministic, so the
+	// verification COUNTs never run against the clamped session.
+	b.db.SetMaxOpenConns(1)
 	_, err := b.db.ExecContext(ctx, "SET statement_timeout = 1")
-	require.NoError(t, err, "set tiny session statement_timeout")
+	require.NoError(
+		err, "set tiny session statement_timeout")
 
 	tracer.reset()
-	require.NoError(t, b.ActivateGeneration(ctx, gen2, true),
+	require.NoError(
+		b.ActivateGeneration(ctx, gen2, true),
 		"ActivateGeneration must succeed despite a tiny session statement_timeout (hatch disables it)")
 
-	assert.True(t, tracer.contains("SET LOCAL statement_timeout = 0"),
-		"activate tx must disable the pool-wide statement_timeout (C1 hatch); got %v", tracer.snapshot())
-	assert.Equal(t, 0, countEmbeddingRows(t, b, gen1),
-		"auto-retired gen1's embeddings must be deleted by the activation")
+	_, err = b.db.ExecContext(ctx, "RESET statement_timeout")
+	require.NoError(err, "restore statement_timeout before verification")
 
-	// Sanity: gen2 is now the active generation with its embeddings intact.
-	require.Equal(t, 2, countEmbeddingRows(t, b, gen2), "gen2 embeddings must survive activation")
+	assert.True(tracer.contains("SET LOCAL statement_timeout = 0"),
+		"activate tx must disable the pool-wide statement_timeout (C1 hatch); got %v", tracer.snapshot())
+	assert.Equal(0, countEmbeddingRows(t, b, gen1),
+		"auto-retired gen1's embeddings must be deleted by the activation")
+	require. // Sanity: gen2 is now the active generation with its embeddings intact.
+			Equal(2, countEmbeddingRows(t, b, gen2), "gen2 embeddings must survive activation")
 }

@@ -61,6 +61,7 @@ type PstImportOptions struct {
 
 // PstImportSummary reports the results of a PST import.
 type PstImportSummary struct {
+	SourceID   int64
 	WasResumed bool
 	Duration   time.Duration
 
@@ -153,6 +154,7 @@ func ImportPst(ctx context.Context, st *store.Store, pstPath string, opts PstImp
 	if err != nil {
 		return nil, fmt.Errorf("get/create source: %w", err)
 	}
+	summary.SourceID = src.ID
 
 	// Set display name to the PST filename so it appears in list-accounts / get_stats.
 	pstBase := filepath.Base(absPath)

@@ -6,9 +6,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	_ "github.com/marcboeker/go-duckdb"
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	_ "github.com/duckdb/duckdb-go/v2"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/fbmessenger"
 	"go.kenn.io/msgvault/internal/store"
 )
@@ -17,8 +17,8 @@ import (
 // after importing Messenger JSON and running buildCache, the resulting
 // Parquet partition files exist and contain the expected row count.
 func TestBuildCache_AfterMessengerImport(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	tmp := t.TempDir()
 	dbPath := filepath.Join(tmp, "msgvault.db")
 	analyticsDir := filepath.Join(tmp, "analytics")

@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/msgvault/internal/testutil"
 )
@@ -26,7 +26,7 @@ import (
 // then drop the search_fts column (CASCADE drops its GIN index too), then
 // re-run InitSchema and assert the column + index + availability are restored.
 func TestInitSchema_PGLegacyMessagesGetsFTSColumn(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	testDB := os.Getenv("MSGVAULT_TEST_DB")
 	if !strings.HasPrefix(testDB, "postgres://") && !strings.HasPrefix(testDB, "postgresql://") {
 		t.Skip("cr2-10 legacy-upgrade test requires MSGVAULT_TEST_DB pointing at PostgreSQL")

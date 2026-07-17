@@ -10,13 +10,13 @@ import (
 	"testing"
 	"time"
 
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestBuildHandler_WritesToFileAndStderr(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	dir := t.TempDir()
 	var stderr bytes.Buffer
 	fixed := time.Date(2026, 4, 11, 12, 0, 0, 0, time.UTC)
@@ -58,12 +58,12 @@ func TestBuildHandler_FileDisabledKeepsStderr(t *testing.T) {
 		LevelString:  "info",
 		Stderr:       &stderr,
 	})
-	requirepkg.NoError(t, err, "BuildHandler")
+	require.NoError(t, err, "BuildHandler")
 	defer res.Close()
 
-	assertpkg.Empty(t, res.FilePath)
+	assert.Empty(t, res.FilePath)
 	slog.New(res.Handler).Info("no-file")
-	assertpkg.Contains(t, stderr.String(), "no-file", "stderr missing msg")
+	assert.Contains(t, stderr.String(), "no-file", "stderr missing msg")
 }
 
 func TestBuildHandler_LevelOverrideBeatsLevelString(t *testing.T) {
@@ -75,18 +75,57 @@ func TestBuildHandler_LevelOverrideBeatsLevelString(t *testing.T) {
 		LevelOverride: &debug,
 		Stderr:        &stderr,
 	})
-	requirepkg.NoError(t, err, "BuildHandler")
+	require.NoError(t, err, "BuildHandler")
 	defer res.Close()
 
-	assertpkg.Equal(t, slog.LevelDebug, res.Level)
+	assert.Equal(t, slog.LevelDebug, res.Level)
 	logger := slog.New(res.Handler)
 	logger.Debug("dbg-line")
-	assertpkg.Contains(t, stderr.String(), "dbg-line", "debug line missing")
+	assert.Contains(t, stderr.String(), "dbg-line", "debug line missing")
+}
+
+func TestBuildHandler_HumanConsoleRendersForPeople(t *testing.T) {
+	assert := assert.New(t)
+	var stderr bytes.Buffer
+	warn := slog.LevelWarn
+	res, err := BuildHandler(Options{
+		FileDisabled:  true,
+		LevelOverride: &warn,
+		Stderr:        &stderr,
+		HumanConsole:  true,
+	})
+	require.NoError(t, err, "BuildHandler")
+	defer res.Close()
+
+	logger := slog.New(res.Handler)
+	logger.Info("routine noise")
+	logger.Warn("history expired", "email", "user@example.com")
+	logger.Error("sync failed", "error", "boom")
+
+	out := stderr.String()
+	assert.Equal(
+		"Warning: history expired (email=user@example.com)\n"+
+			"Error: sync failed (error=boom)\n",
+		out)
+	assert.NotContains(out, "run_id", "run_id belongs in the file log only")
+	assert.NotContains(out, "time=", "timestamps belong in the file log only")
+}
+
+func TestHumanConsoleHandlerWithAttrsAndGroups(t *testing.T) {
+	var out bytes.Buffer
+	h := newHumanConsoleHandler(&out, slog.LevelInfo)
+	logger := slog.New(h.WithAttrs([]slog.Attr{
+		slog.String("run_id", "abc123"),
+		slog.String("account", "user@example.com"),
+	}))
+	logger.WithGroup("sync").Info("started", "limit", 10)
+
+	assert.Equal(t, "started (account=user@example.com, limit=10)\n", out.String())
 }
 
 func TestRotate_RotatesDailyFileOverLimit(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	dir := t.TempDir()
 	path := filepath.Join(dir, "msgvault-2026-04-11.log")
 	// Seed a "big" file so BuildHandler will rotate it.
@@ -127,12 +166,26 @@ func TestParseLevel(t *testing.T) {
 		"garbage": slog.LevelInfo,
 	}
 	for in, want := range cases {
-		assertpkg.Equal(t, want, parseLevel(in), "parseLevel(%q)", in)
+		assert.Equal(t, want, parseLevel(in), "parseLevel(%q)", in)
+	}
+}
+
+func TestValidateLevel(t *testing.T) {
+	valid := []string{"", "info", "INFO", " info ", "debug", "warn", "warning", "error", "ERROR"}
+	for _, in := range valid {
+		require.NoError(t, ValidateLevel(in), "ValidateLevel(%q)", in)
+	}
+
+	invalid := []string{"bogus", "verbose", "trace", "warns", "0"}
+	for _, in := range invalid {
+		err := ValidateLevel(in)
+		require.Error(t, err, "ValidateLevel(%q)", in)
+		assert.Contains(t, err.Error(), "debug, info, warn, error", "lists valid levels")
 	}
 }
 
 func TestMultiHandler_FansOutAndFiltersByLevel(t *testing.T) {
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	var textBuf, jsonBuf bytes.Buffer
 	textH := slog.NewTextHandler(&textBuf, &slog.HandlerOptions{
 		Level: slog.LevelWarn,
@@ -156,4 +209,84 @@ func TestMultiHandler_FansOutAndFiltersByLevel(t *testing.T) {
 	assert.Contains(jsonBuf.String(), "warned", "json handler missing warn")
 	// Attr fan-out should include run_id in both.
 	assert.Contains(jsonBuf.String(), "abc123", "json handler lost run_id")
+}
+
+func TestResolveConsoleLevel(t *testing.T) {
+	warn := slog.LevelWarn
+	tests := []struct {
+		name                string
+		explicitLevel       string
+		verbose             bool
+		fileDisabled        bool
+		stderrIsTerminal    bool
+		daemonCLISubprocess bool
+		want                *slog.Level
+	}{
+		{
+			name:             "terminal file-disabled no-explicit → warn",
+			fileDisabled:     true,
+			stderrIsTerminal: true,
+			want:             &warn,
+		},
+		{
+			name:             "not a terminal → unchanged",
+			fileDisabled:     true,
+			stderrIsTerminal: false,
+			want:             nil,
+		},
+		{
+			name:                "daemon CLI subprocess file-disabled → warn",
+			fileDisabled:        true,
+			stderrIsTerminal:    false,
+			daemonCLISubprocess: true,
+			want:                &warn,
+		},
+		{
+			name:                "daemon CLI subprocess with file logging → unchanged",
+			fileDisabled:        false,
+			daemonCLISubprocess: true,
+			want:                nil,
+		},
+		{
+			name:                "daemon CLI subprocess verbose wins",
+			verbose:             true,
+			fileDisabled:        true,
+			daemonCLISubprocess: true,
+			want:                nil,
+		},
+		{
+			name:             "file logging enabled → unchanged",
+			fileDisabled:     false,
+			stderrIsTerminal: true,
+			want:             nil,
+		},
+		{
+			name:             "explicit level wins",
+			explicitLevel:    "info",
+			fileDisabled:     true,
+			stderrIsTerminal: true,
+			want:             nil,
+		},
+		{
+			name:             "verbose wins",
+			verbose:          true,
+			fileDisabled:     true,
+			stderrIsTerminal: true,
+			want:             nil,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := ResolveConsoleLevel(
+				tt.explicitLevel, tt.verbose, tt.fileDisabled,
+				tt.stderrIsTerminal, tt.daemonCLISubprocess,
+			)
+			if tt.want == nil {
+				assert.Nil(t, got)
+				return
+			}
+			require.NotNil(t, got)
+			assert.Equal(t, *tt.want, *got)
+		})
+	}
 }

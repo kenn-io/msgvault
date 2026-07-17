@@ -2,9 +2,22 @@ package query
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"go.kenn.io/msgvault/internal/search"
+)
+
+var (
+	// ErrMessageBodySearchUnavailable means the backend cannot execute exact
+	// body-only search without violating the no-body-scan contract.
+	ErrMessageBodySearchUnavailable = errors.New("exact message body search is unavailable")
+	// ErrMessageBodySearchIndexStale means the backend has an FTS index, but
+	// its field layout is not the version required for exact body scoping.
+	ErrMessageBodySearchIndexStale = errors.New("message body search index layout is stale")
+	// ErrMessageBodySearchInvalidQuery means exact body search rejected a
+	// bounded-work query limit before touching the index.
+	ErrMessageBodySearchInvalidQuery = errors.New("invalid message body search query")
 )
 
 // Engine provides query operations for msgvault data.
@@ -28,6 +41,11 @@ type Engine interface {
 	GetMessageBySourceID(ctx context.Context, sourceMessageID string) (*MessageDetail, error)
 	GetAttachment(ctx context.Context, id int64) (*AttachmentInfo, error)
 
+	// GetAttachmentsByHash returns every attachment matching the given content
+	// hash in stable ID order. Multiple rows may refer to the same bytes while
+	// retaining different filenames, MIME types, and legacy storage paths.
+	GetAttachmentsByHash(ctx context.Context, contentHash string) ([]AttachmentInfo, error)
+
 	// GetMessageRaw returns the decompressed raw MIME data for a message.
 	// Returns nil, nil if no raw data is stored for the given ID.
 	GetMessageRaw(ctx context.Context, id int64) ([]byte, error)
@@ -46,7 +64,8 @@ type Engine interface {
 
 	// SearchFast searches message metadata only (no body text).
 	// This is much faster for large archives as it queries Parquet files directly.
-	// Searches: subject, sender email/name (case-insensitive).
+	// Free text searches subject, snippet, and sender/recipient metadata
+	// (case-insensitive).
 	// The filter parameter allows contextual search within a drill-down.
 	SearchFast(ctx context.Context, query *search.Query, filter MessageFilter, limit, offset int) ([]MessageSummary, error)
 
@@ -83,6 +102,13 @@ type Engine interface {
 	Close() error
 }
 
+// MessageBodySearcher is an optional capability for exact full-text search of
+// message bodies. It is deliberately separate from Engine so generic Search
+// retains its composite subject/body/participant semantics.
+type MessageBodySearcher interface {
+	SearchMessageBodies(ctx context.Context, query *search.Query, limit, offset int) ([]MessageSummary, error)
+}
+
 // SearchFastResult holds the combined results of a fast search:
 // paginated messages, total count, and aggregate stats — all from a single
 // materialized scan of the matching message IDs.
@@ -93,11 +119,19 @@ type SearchFastResult struct {
 }
 
 // TotalStats provides overall database statistics.
+//
+// MessageCount is the total count over the filtered population and, unless
+// HideDeletedFromSource is set, includes messages deleted from their source
+// account (the archive retains them). ActiveMessageCount and
+// SourceDeletedMessageCount break MessageCount into its two populations so
+// callers can label a total instead of silently picking one semantic.
 type TotalStats struct {
-	MessageCount    int64
-	TotalSize       int64
-	AttachmentCount int64
-	AttachmentSize  int64
-	LabelCount      int64
-	AccountCount    int64
+	MessageCount              int64
+	ActiveMessageCount        int64
+	SourceDeletedMessageCount int64
+	TotalSize                 int64
+	AttachmentCount           int64
+	AttachmentSize            int64
+	LabelCount                int64
+	AccountCount              int64
 }

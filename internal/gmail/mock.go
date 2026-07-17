@@ -186,13 +186,29 @@ func (m *MockAPI) GetMessageRaw(ctx context.Context, messageID string) (*RawMess
 // in the results slice rather than failing the entire batch. Callers must
 // handle nil entries (see sync.go).
 func (m *MockAPI) GetMessagesRawBatch(ctx context.Context, messageIDs []string) ([]*RawMessage, error) {
-	results := make([]*RawMessage, len(messageIDs))
+	batch, err := m.GetMessagesRawBatchWithErrors(ctx, messageIDs)
+	if err != nil {
+		return nil, err
+	}
+	results := make([]*RawMessage, len(batch))
+	for i, result := range batch {
+		results[i] = result.Message
+	}
+	return results, nil
+}
+
+// GetMessagesRawBatchWithErrors fetches multiple messages and preserves each
+// per-message error for sync diagnostics.
+func (m *MockAPI) GetMessagesRawBatchWithErrors(ctx context.Context, messageIDs []string) ([]RawMessageBatchResult, error) {
+	results := make([]RawMessageBatchResult, len(messageIDs))
 	for i, id := range messageIDs {
+		results[i].ID = id
 		msg, err := m.GetMessageRaw(ctx, id)
 		if err != nil {
+			results[i].Err = err
 			continue
 		}
-		results[i] = msg
+		results[i].Message = msg
 	}
 	return results, nil
 }

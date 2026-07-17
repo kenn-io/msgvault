@@ -31,6 +31,21 @@ func NewTestStore(t *testing.T) *store.Store {
 		return newPostgresTestStore(t, testDB)
 	}
 
+	return NewSQLiteTestStore(t)
+}
+
+// NewSQLiteTestStore creates a temporary SQLite store, ALWAYS, ignoring
+// MSGVAULT_TEST_DB. Use it for tests that are intrinsically tied to a SQLite
+// main DB regardless of the configured backend — e.g. the sqlitevec vectors
+// backend, whose Open-time probes (mainTableExists' sqlite_master lookup,
+// resetOrphanedEmbedGen/BackfillEmbedGenForUpgrade) run SQLite-dialect SQL
+// against the main handle. In production sqlitevec is only ever paired with a
+// SQLite main store (the backend factory picks pgvector when the store is
+// PostgreSQL), so such a test must not adopt a PostgreSQL main store just
+// because MSGVAULT_TEST_DB is set.
+func NewSQLiteTestStore(t *testing.T) *store.Store {
+	t.Helper()
+
 	dbPath := filepath.Join(t.TempDir(), "test.db")
 	st, err := store.OpenForTest(dbPath)
 	require.NoError(t, err, "open store")

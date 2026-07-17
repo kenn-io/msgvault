@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -54,9 +54,9 @@ func openTestStorePst(t *testing.T) *store.Store {
 	tmp := t.TempDir()
 	dbPath := filepath.Join(tmp, "msgvault.db")
 	st, err := store.Open(dbPath)
-	requirepkg.NoError(t, err, "open store")
+	require.NoError(t, err, "open store")
 	t.Cleanup(func() { _ = st.Close() })
-	requirepkg.NoError(t, st.InitSchema(), "init schema")
+	require.NoError(t, st.InitSchema(), "init schema")
 	return st
 }
 
@@ -71,8 +71,8 @@ func TestImportPst_MissingFile(t *testing.T) {
 		NoResume:   true,
 		IngestFunc: mock.fn,
 	})
-	requirepkg.Error(t, err, "expected error for non-existent PST file")
-	assertpkg.Empty(t, mock.calls, "expected 0 ingest calls")
+	require.Error(t, err, "expected error for non-existent PST file")
+	assert.Empty(t, mock.calls, "expected 0 ingest calls")
 }
 
 // TestImportPst_RequiresIdentifier verifies that ImportPst rejects an empty identifier.
@@ -81,14 +81,14 @@ func TestImportPst_RequiresIdentifier(t *testing.T) {
 	_, err := ImportPst(context.Background(), st, "any.pst", PstImportOptions{
 		Identifier: "",
 	})
-	requirepkg.Error(t, err, "expected error for empty identifier")
+	require.Error(t, err, "expected error for empty identifier")
 }
 
 // TestPstCheckpoint_RoundTrip verifies that savePstCheckpoint stores a checkpoint
 // that can be decoded back to the original values.
 func TestPstCheckpoint_RoundTrip(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	st := openTestStorePst(t)
 	src, err := st.GetOrCreateSource("pst", "user@example.com")
 	require.NoError(err, "get/create source")
@@ -123,8 +123,8 @@ func TestPstCheckpoint_RoundTrip(t *testing.T) {
 // same source identifier would collide on PST EntryIDs (which are unique
 // only within a single archive) and falsely skip or update unrelated rows.
 func TestPstArchiveFingerprint(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	dir := t.TempDir()
 
 	// Two files with different headers — fingerprints must differ.
@@ -167,5 +167,5 @@ func TestImportPst_ContextCancelledBeforeOpen(t *testing.T) {
 		NoResume:   true,
 	})
 	// Either ctx error or open error is acceptable — we just must not hang.
-	assertpkg.Error(t, err, "expected error (either ctx or open)")
+	assert.Error(t, err, "expected error (either ctx or open)")
 }

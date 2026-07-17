@@ -171,9 +171,10 @@ func (d *PostgreSQLDialect) FTSUpsert(q querier, doc FTSDoc) error {
 		`UPDATE messages SET search_fts =
 			setweight(to_tsvector('simple', LEFT(COALESCE($2, ''), `+charCap+`)), 'A') ||
 			setweight(to_tsvector('simple', LEFT(COALESCE($4, ''), `+charCap+`)), 'B') ||
-			to_tsvector('simple', LEFT(COALESCE($3, ''), `+charCap+`)) ||
-			to_tsvector('simple', LEFT(COALESCE($5, ''), `+charCap+`)) ||
-			to_tsvector('simple', LEFT(COALESCE($6, ''), `+charCap+`))
+			setweight(to_tsvector('simple', LEFT(COALESCE($5, ''), `+charCap+`)), 'C') ||
+			setweight(to_tsvector('simple', LEFT(COALESCE($6, ''), `+charCap+`)), 'C') ||
+			setweight(to_tsvector('simple', LEFT(COALESCE($3, ''), `+charCap+`)), 'D'),
+			indexing_version = `+strconv.Itoa(CurrentFTSIndexingVersion)+`
 		WHERE id = $1`,
 		doc.MessageID, subject, body,
 		fromAddr, toAddrs, ccAddrs,
@@ -191,13 +192,21 @@ func (d *PostgreSQLDialect) FTSUpsert(q querier, doc FTSDoc) error {
 func (d *PostgreSQLDialect) FTSSearchClause() (join, where, orderBy string, orderArgCount int) {
 	return "",
 		"m.search_fts @@ to_tsquery('simple', ?)",
-		"ts_rank(m.search_fts, to_tsquery('simple', ?)) DESC",
+		"ts_rank(ARRAY[0.1, 0.1, 0.4, 1.0]::real[], m.search_fts, to_tsquery('simple', ?)) DESC",
 		1
 }
 
 // FTSDeleteSQL returns the SQL to clear tsvector data for messages belonging to a source.
 func (d *PostgreSQLDialect) FTSDeleteSQL() string {
 	return `UPDATE messages SET search_fts = NULL WHERE source_id = $1`
+}
+
+func (d *PostgreSQLDialect) InvalidateFTSForMessage(q querier, messageID int64) error {
+	_, err := q.Exec(
+		"UPDATE messages SET search_fts = NULL, indexing_version = NULL WHERE id = $1",
+		messageID,
+	)
+	return err
 }
 
 // FTSBackfillBatchSQL returns the SQL to populate tsvector for a range of message IDs.
@@ -207,7 +216,6 @@ func (d *PostgreSQLDialect) FTSBackfillBatchSQL() string {
 	charCap := strconv.Itoa(maxFTSBodyChars)
 	return `UPDATE messages m SET search_fts =
 		setweight(to_tsvector('simple', LEFT(COALESCE(m.subject, ''), ` + charCap + `)), 'A') ||
-		to_tsvector('simple', LEFT(COALESCE(src.body_text, ''), ` + charCap + `)) ||
 		setweight(to_tsvector('simple', LEFT(COALESCE(
 			CASE WHEN m.message_type != 'email' AND m.message_type IS NOT NULL AND m.message_type != ''
 			     THEN (SELECT COALESCE(p.phone_number, p.email_address) FROM participants p WHERE p.id = m.sender_id)
@@ -215,8 +223,10 @@ func (d *PostgreSQLDialect) FTSBackfillBatchSQL() string {
 			(SELECT STRING_AGG(p.email_address, ' ') FROM message_recipients mr JOIN participants p ON p.id = mr.participant_id WHERE mr.message_id = m.id AND mr.recipient_type = 'from'),
 			''
 		), ` + charCap + `)), 'B') ||
-		to_tsvector('simple', LEFT(COALESCE((SELECT STRING_AGG(p.email_address, ' ') FROM message_recipients mr JOIN participants p ON p.id = mr.participant_id WHERE mr.message_id = m.id AND mr.recipient_type = 'to'), ''), ` + charCap + `)) ||
-		to_tsvector('simple', LEFT(COALESCE((SELECT STRING_AGG(p.email_address, ' ') FROM message_recipients mr JOIN participants p ON p.id = mr.participant_id WHERE mr.message_id = m.id AND mr.recipient_type = 'cc'), ''), ` + charCap + `))
+		setweight(to_tsvector('simple', LEFT(COALESCE((SELECT STRING_AGG(p.email_address, ' ') FROM message_recipients mr JOIN participants p ON p.id = mr.participant_id WHERE mr.message_id = m.id AND mr.recipient_type = 'to'), ''), ` + charCap + `)), 'C') ||
+		setweight(to_tsvector('simple', LEFT(COALESCE((SELECT STRING_AGG(p.email_address, ' ') FROM message_recipients mr JOIN participants p ON p.id = mr.participant_id WHERE mr.message_id = m.id AND mr.recipient_type = 'cc'), ''), ` + charCap + `)), 'C') ||
+		setweight(to_tsvector('simple', LEFT(COALESCE(src.body_text, ''), ` + charCap + `)), 'D'),
+		indexing_version = ` + strconv.Itoa(CurrentFTSIndexingVersion) + `
 	FROM (
 		SELECT m2.id, mb.body_text
 		FROM messages m2
@@ -234,24 +244,37 @@ func (d *PostgreSQLDialect) FTSAvailable(db *sql.DB) bool {
 	return err == nil && count > 0
 }
 
-// FTSNeedsBackfill reports whether the tsvector column needs population.
-// Probes for the existence of any NULL search_fts row so an interrupted
-// backfill that leaves a low-id row NULL (and later inserts continue normally)
-// still flags the gap — the previous max-vs-max comparison missed that case.
+func postgresFTSNeedsBackfillSQL() string {
+	return fmt.Sprintf(
+		"SELECT EXISTS (SELECT 1 FROM messages WHERE search_fts IS NULL OR indexing_version IS DISTINCT FROM %d)",
+		CurrentFTSIndexingVersion,
+	)
+}
+
+// FTSNeedsBackfill reports whether the tsvector column needs population or
+// uses an obsolete field-weight layout. It probes for a NULL search_fts or an
+// indexing_version other than CurrentFTSIndexingVersion, so both interrupted
+// backfills and durable layout migrations remain visible.
 //
 // Uses EXISTS rather than COUNT(*): a GIN index on search_fts cannot serve an
 // `IS NULL` predicate, so COUNT(*) was a full sequential scan of every message
-// on each startup. EXISTS short-circuits at the first NULL row. The partial
-// btree index idx_messages_search_fts_null (created by EnsureFTSIndex) makes
-// even the false case index-served and self-pruning as backfill completes.
+// on each startup. EXISTS short-circuits at the first NULL row. The versioned
+// partial btree index created by EnsureFTSIndex makes even the false
+// case index-served and self-pruning as backfill completes.
 func (d *PostgreSQLDialect) FTSNeedsBackfill(db *sql.DB) bool {
 	var exists bool
 	if err := db.QueryRow(
-		"SELECT EXISTS (SELECT 1 FROM messages WHERE search_fts IS NULL)",
+		postgresFTSNeedsBackfillSQL(),
 	).Scan(&exists); err != nil {
 		return false
 	}
 	return exists
+}
+
+// FTSNeedsBackfillQuick delegates to FTSNeedsBackfill: the versioned stale-row
+// index makes the exact EXISTS probe as cheap as any approximation would be.
+func (d *PostgreSQLDialect) FTSNeedsBackfillQuick(db *sql.DB) bool {
+	return d.FTSNeedsBackfill(db)
 }
 
 // FTSClearSQL returns the SQL to clear all tsvector data.
@@ -320,6 +343,16 @@ func (d *PostgreSQLDialect) LegacyColumnMigrations() []ColumnMigration {
 		// column and FTS stays unavailable. Its GIN index is created
 		// separately by EnsureFTSIndex AFTER this migration runs. [cr2-10]
 		{`ALTER TABLE messages ADD COLUMN IF NOT EXISTS search_fts TSVECTOR`, "search_fts"},
+		// embed_gen: per-message vector-embedding watermark. NULL default
+		// means every legacy row reads as "needs embedding", which is
+		// correct — the scan-and-fill worker (and backstop) will embed and
+		// stamp them. No backfill.
+		{`ALTER TABLE messages ADD COLUMN IF NOT EXISTS embed_gen BIGINT`, "embed_gen"},
+		// last_modified: row-level last-modified watermark, the embed
+		// worker's optimistic-CAS token. Existing rows get the default
+		// (CURRENT_TIMESTAMP at the time the column is added); the triggers
+		// created by EnsureTriggers keep it current thereafter.
+		{`ALTER TABLE messages ADD COLUMN IF NOT EXISTS last_modified TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP`, "last_modified"},
 	}
 }
 
@@ -335,14 +368,61 @@ func (d *PostgreSQLDialect) EnsureFTSIndex(q querier) error {
 	); err != nil {
 		return fmt.Errorf("create messages_search_fts_idx: %w", err)
 	}
-	// Partial btree index that serves the FTSNeedsBackfill probe (a GIN index
-	// on search_fts cannot answer an IS NULL predicate). It only indexes the
-	// rows still awaiting backfill, so it self-prunes to empty as backfill
-	// completes and stays tiny thereafter.
+	// Version the partial-index name as well as its predicate: IF NOT EXISTS
+	// cannot alter the legacy NULL-only index on upgraded databases.
+	staleIndexName := fmt.Sprintf("idx_messages_search_fts_stale_v%d", CurrentFTSIndexingVersion)
 	if _, err := q.Exec(
-		"CREATE INDEX IF NOT EXISTS idx_messages_search_fts_null ON messages (id) WHERE search_fts IS NULL",
+		fmt.Sprintf("CREATE INDEX IF NOT EXISTS %s ON messages (id) WHERE search_fts IS NULL OR indexing_version IS DISTINCT FROM %d", staleIndexName, CurrentFTSIndexingVersion),
 	); err != nil {
-		return fmt.Errorf("create idx_messages_search_fts_null: %w", err)
+		return fmt.Errorf("create %s: %w", staleIndexName, err)
+	}
+	return nil
+}
+
+// EnsureTriggers creates the last_modified maintenance triggers idempotently.
+// Two triggers feed messages.last_modified:
+//
+//   - trg_messages_last_modified (BEFORE UPDATE on messages): sets
+//     NEW.last_modified in-row. BEFORE → no secondary write → no recursion.
+//     The WHEN guard (OLD.last_modified IS NOT DISTINCT FROM NEW.last_modified)
+//     yields to an explicit last_modified write in the UPDATE rather than
+//     overriding it, mirroring the SQLite trigger's guard.
+//   - trg_message_bodies_last_modified (AFTER INSERT OR UPDATE on
+//     message_bodies): bumps the parent message's last_modified so body
+//     edits move the worker's CAS token too.
+//
+// CREATE TRIGGER is not idempotent before PG14, so each trigger is dropped
+// (IF EXISTS) and recreated; the functions use CREATE OR REPLACE. Re-running
+// InitSchema is therefore safe. Runs on the querier so InitSchema can route
+// it through the maintenance transaction (consistent with EnsureFTSIndex).
+func (d *PostgreSQLDialect) EnsureTriggers(q querier) error {
+	stmts := []string{
+		`CREATE OR REPLACE FUNCTION set_messages_last_modified() RETURNS trigger AS $$
+		 BEGIN
+		     NEW.last_modified := CURRENT_TIMESTAMP;
+		     RETURN NEW;
+		 END;
+		 $$ LANGUAGE plpgsql`,
+		`DROP TRIGGER IF EXISTS trg_messages_last_modified ON messages`,
+		`CREATE TRIGGER trg_messages_last_modified
+		     BEFORE UPDATE ON messages FOR EACH ROW
+		     WHEN (OLD.last_modified IS NOT DISTINCT FROM NEW.last_modified)
+		     EXECUTE FUNCTION set_messages_last_modified()`,
+		`CREATE OR REPLACE FUNCTION bump_message_last_modified() RETURNS trigger AS $$
+		 BEGIN
+		     UPDATE messages SET last_modified = CURRENT_TIMESTAMP WHERE id = NEW.message_id;
+		     RETURN NEW;
+		 END;
+		 $$ LANGUAGE plpgsql`,
+		`DROP TRIGGER IF EXISTS trg_message_bodies_last_modified ON message_bodies`,
+		`CREATE TRIGGER trg_message_bodies_last_modified
+		     AFTER INSERT OR UPDATE ON message_bodies FOR EACH ROW
+		     EXECUTE FUNCTION bump_message_last_modified()`,
+	}
+	for _, stmt := range stmts {
+		if _, err := q.Exec(stmt); err != nil {
+			return fmt.Errorf("ensure last_modified triggers: %w", err)
+		}
 	}
 	return nil
 }
@@ -374,7 +454,7 @@ func (d *PostgreSQLDialect) CheckpointWAL(db *sql.DB) error { return nil }
 // SchemaStaleCheck returns the SQL to check whether migrations are needed.
 // PostgreSQL uses information_schema instead of pragma_table_info.
 func (d *PostgreSQLDialect) SchemaStaleCheck() string {
-	return postgresColumnExistsSQL("conversations", "conversation_type")
+	return postgresColumnExistsSQL("messages", "embed_gen")
 }
 
 // IsDuplicateColumnError returns true if the error is a "column already exists" error.
@@ -443,6 +523,8 @@ func (d *PostgreSQLDialect) IsFTSValueTooLargeError(err error) bool {
 //     and cascade-reachable from sources — a real race before it was added here.
 //   - sync_checkpoints: cascade-reachable from sources; no writer today, but
 //     included so a future checkpoint writer cannot race the cascade.
+//   - imap_folder_state: written by UpsertIMAPFolderStates after IMAP syncs
+//     and cascade-reachable from sources.
 //
 // collections is included (despite not being a direct sources cascade target)
 // so a concurrent collection rename cannot race the collection_sources cascade.
@@ -451,7 +533,8 @@ var exclusiveLockTables = []string{
 	"messages", "message_recipients", "message_labels", "message_bodies", "message_raw",
 	"attachments", "labels", "participants", "participant_identifiers", "reactions",
 	"collections", "collection_sources", "account_identities", "applied_migrations",
-	"source_import_items", "sync_checkpoints",
+	"source_import_items", "sync_run_items", "sync_checkpoints",
+	"imap_folder_state",
 }
 
 // BeginExclusive opens a transaction on conn and locks every table the

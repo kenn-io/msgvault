@@ -5,6 +5,11 @@ import (
 	"database/sql"
 )
 
+// CurrentFTSIndexingVersion identifies the PostgreSQL search_fts field-weight
+// layout. Version 2 assigns subject=A, sender=B, recipients=C, and body=D so
+// exact body-only queries can restrict tsquery matches to weight D.
+const CurrentFTSIndexingVersion = 2
+
 // FTSDoc is the set of fields the dialect needs to upsert a message into
 // the full-text search index.
 type FTSDoc struct {
@@ -80,6 +85,11 @@ type Dialect interface {
 	// a given source. Takes one parameter: source_id.
 	FTSDeleteSQL() string
 
+	// InvalidateFTSForMessage removes or marks stale one message's search
+	// document before its canonical body changes. This prevents a failed
+	// best-effort reindex from leaving an old body searchable as an exact hit.
+	InvalidateFTSForMessage(q querier, messageID int64) error
+
 	// FTSBackfillBatchSQL returns the SQL to populate the search index for a range of message IDs.
 	// Uses two ? placeholders for the ID range: WHERE m.id >= ? AND m.id < ?
 	FTSBackfillBatchSQL() string
@@ -91,6 +101,13 @@ type Dialect interface {
 
 	// FTSNeedsBackfill reports whether the FTS index needs to be populated.
 	FTSNeedsBackfill(db *sql.DB) bool
+
+	// FTSNeedsBackfillQuick is a cheap approximation of FTSNeedsBackfill for
+	// hot paths: it must never take longer than a few index lookups. True
+	// means the index is visibly behind (a backfill is certainly needed);
+	// false is not authoritative — on SQLite the MAX(rowid)-vs-MAX(id)
+	// comparison misses interior holes that only the full anti-join finds.
+	FTSNeedsBackfillQuick(db *sql.DB) bool
 
 	// FTSClearSQL returns the SQL to clear all FTS data before a full backfill.
 	FTSClearSQL() string
@@ -128,6 +145,19 @@ type Dialect interface {
 	// the GIN build over a populated messages table can exceed the pool-wide
 	// 30s timeout on a large archive (finding S1).
 	EnsureFTSIndex(q querier) error
+
+	// EnsureTriggers idempotently creates the database-maintained triggers
+	// that bump messages.last_modified on any change to a message or its
+	// body row. Called by InitSchema after LegacyColumnMigrations (which add
+	// the last_modified column on legacy DBs), so the column is guaranteed
+	// present. SQLite is a no-op: its triggers are `CREATE TRIGGER IF NOT
+	// EXISTS` in schema.sql, re-exec'd idempotently by InitSchema. PostgreSQL
+	// creates them here because CREATE TRIGGER is not idempotent before PG14,
+	// so the impl wraps each in `DROP TRIGGER IF EXISTS ...; CREATE TRIGGER`.
+	//
+	// Takes a querier (not *sql.DB) so InitSchema can run it on the
+	// maintenance transaction (consistent with EnsureFTSIndex).
+	EnsureTriggers(q querier) error
 
 	// LegacyColumnMigrations returns ALTER TABLE ADD COLUMN statements to
 	// bring older databases up to date with schema columns added over time.

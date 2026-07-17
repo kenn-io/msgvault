@@ -54,12 +54,16 @@ Examples:
 	RunE: runImportImessage,
 }
 
-func runImportImessage(cmd *cobra.Command, _ []string) error {
-	s, err := openStoreAndInitForIngest()
+func runImportImessage(cmd *cobra.Command, args []string) error {
+	if !isDaemonCLISubprocess() {
+		return runDaemonCLICommandHTTPFromCobra(cmd, args)
+	}
+
+	s, cleanup, err := openWritableStoreAndInitForIngest()
 	if err != nil {
 		return err
 	}
-	defer func() { _ = s.Close() }()
+	defer cleanup()
 
 	chatDBPath, err := resolveChatDBPath()
 	if err != nil {
@@ -118,22 +122,20 @@ func runImportImessage(cmd *cobra.Command, _ []string) error {
 		if ctx.Err() != nil {
 			fmt.Println("\nImport interrupted.")
 			printImessageSummary(summary, startTime)
-			finishImessageImport(s)
-			return nil
+			return finishImessageImport(s)
 		}
 		return fmt.Errorf("import failed: %w", err)
 	}
 
 	printImessageSummary(summary, startTime)
-	finishImessageImport(s)
-	return nil
+	return finishImessageImport(s)
 }
 
 // finishImessageImport runs the post-import name backfill, refreshes
 // generated chat titles, and triggers an analytics cache rebuild that picks up
 // the participant/conversation changes (the default staleness check only
 // notices new/deleted messages, not title or display_name updates).
-func finishImessageImport(s *store.Store) {
+func finishImessageImport(s *store.Store) error {
 	mutated := false
 
 	if importImessageContacts != "" {
@@ -153,15 +155,12 @@ func finishImessageImport(s *store.Store) {
 		// Force a full rebuild so conversations.parquet and
 		// participants.parquet are re-exported and the TUI sees the new names.
 		if _, err := buildCache(dbPath, cfg.AnalyticsDir(), true); err != nil {
-			fmt.Fprintf(os.Stderr,
-				"Warning: cache rebuild failed: %v\n", err)
-			fmt.Fprintf(os.Stderr,
-				"Run 'msgvault build-cache --full-rebuild' to retry.\n")
+			return fmt.Errorf("refresh analytics cache: %w", err)
 		}
-		return
+		return nil
 	}
 
-	rebuildCacheAfterWrite(dbPath)
+	return rebuildCacheAfterWrite(dbPath)
 }
 
 func retitleImessageChats(s *store.Store) bool {
@@ -244,43 +243,6 @@ func applyImessageContacts(s *store.Store, vcfPath string) bool {
 		}
 	}
 	return phoneMatches > 0 || emailMatches > 0
-}
-
-func openStoreAndInit() (*store.Store, error) {
-	// Shared by 15 commands (deduplicate, identity, collection,
-	// import-imessage/gvoice, delete-deduped, …). store.Open + InitSchema
-	// create the database file on first use, which is the right behavior
-	// for a freshly-installed CLI: a missing file is not an error here.
-	// init-db remains the explicit setup command for users who want to
-	// pre-create the DB.
-	return openStoreAndInitWith(runStartupMigrations)
-}
-
-// openStoreAndInitForIngest is the ingest-command variant of
-// openStoreAndInit. It uses runStartupMigrationsForIngest so that, on a
-// fresh install with [identity] addresses configured but no source yet,
-// the misleading "migration will run on the next command" notice does
-// not fire. The post-source-create migration call run by ingest commands
-// after GetOrCreateSource emits the accurate "applied" notice once.
-func openStoreAndInitForIngest() (*store.Store, error) {
-	return openStoreAndInitWith(runStartupMigrationsForIngest)
-}
-
-func openStoreAndInitWith(migrate func(*store.Store) error) (*store.Store, error) {
-	dbPath := cfg.DatabaseDSN()
-	s, err := store.Open(dbPath)
-	if err != nil {
-		return nil, fmt.Errorf("open database: %w", err)
-	}
-	if err := s.InitSchema(); err != nil {
-		_ = s.Close()
-		return nil, fmt.Errorf("init schema: %w", err)
-	}
-	if err := migrate(s); err != nil {
-		_ = s.Close()
-		return nil, fmt.Errorf("startup migrations: %w", err)
-	}
-	return s, nil
 }
 
 func resolveChatDBPath() (string, error) {

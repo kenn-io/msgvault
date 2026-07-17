@@ -7,8 +7,8 @@ import (
 	"testing"
 
 	"github.com/spf13/cobra"
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/store"
 )
@@ -25,6 +25,13 @@ const fakeClientSecrets = `{
   }
 }`
 
+func runSyncFullLocalForTest(cmd *cobra.Command, args []string) error {
+	if err := validateSyncFullFlags(cmd); err != nil {
+		return err
+	}
+	return runSyncFullLocal(cmd, args)
+}
+
 // TestSyncCmd_DuplicateIdentifierRoutesCorrectly verifies that when
 // Gmail and IMAP sources share the same identifier, the single-arg
 // sync path resolves both and routes each to the correct backend.
@@ -35,8 +42,8 @@ const fakeClientSecrets = `{
 // scaffolding so the test exercises runIncrementalSync, not just
 // the OAuth manager setup.
 func TestSyncCmd_DuplicateIdentifierRoutesCorrectly(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	tmpDir := t.TempDir()
 	dbPath := tmpDir + "/msgvault.db"
 
@@ -84,7 +91,7 @@ func TestSyncCmd_DuplicateIdentifierRoutesCorrectly(t *testing.T) {
 	testCmd := &cobra.Command{
 		Use:  "sync [email]",
 		Args: cobra.MaximumNArgs(1),
-		RunE: syncIncrementalCmd.RunE,
+		RunE: runSyncIncrementalLocal,
 	}
 
 	root := newTestRootCmd()
@@ -120,8 +127,8 @@ func TestSyncCmd_DuplicateIdentifierRoutesCorrectly(t *testing.T) {
 // TestSyncCmd_SingleSourceNoAmbiguity verifies that a single
 // source for an identifier works without the legacy fallback.
 func TestSyncCmd_SingleSourceNoAmbiguity(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	tmpDir := t.TempDir()
 	dbPath := tmpDir + "/msgvault.db"
 
@@ -149,14 +156,16 @@ func TestSyncCmd_SingleSourceNoAmbiguity(t *testing.T) {
 	testCmd := &cobra.Command{
 		Use:  "sync [email]",
 		Args: cobra.MaximumNArgs(1),
-		RunE: syncIncrementalCmd.RunE,
+		RunE: runSyncIncrementalLocal,
 	}
 
 	root := newTestRootCmd()
 	root.AddCommand(testCmd)
 	root.SetArgs([]string{"sync", "solo@example.com"})
 
+	getOutput := captureStdout(t)
 	err = root.Execute()
+	output := getOutput()
 	require.Error(err, "expected error (no IMAP config)")
 
 	errMsg := err.Error()
@@ -166,6 +175,14 @@ func TestSyncCmd_SingleSourceNoAmbiguity(t *testing.T) {
 
 	// Should NOT hit legacy fallback (source exists in DB).
 	assert.NotContains(errMsg, "no source found", "should not hit legacy fallback path")
+	assert.Contains(output, "uses folder-based sync",
+		"IMAP note should describe folder-based high water marks; output:\n%s", output)
+	assert.Contains(output, "high water marks",
+		"IMAP note should use the high water mark term; output:\n%s", output)
+	assert.NotContains(output, "watermarks",
+		"IMAP note should say high water marks, not watermarks; output:\n%s", output)
+	assert.NotContains(output, "does not support incremental sync",
+		"IMAP note should not imply every sync is a full rescan; output:\n%s", output)
 }
 
 // TestSyncCmd_MboxIdentifierDoesNotFallback verifies that an
@@ -177,11 +194,11 @@ func TestSyncCmd_MboxIdentifierDoesNotFallback(t *testing.T) {
 	dbPath := tmpDir + "/msgvault.db"
 
 	s, err := store.Open(dbPath)
-	requirepkg.NoError(t, err, "open store")
-	requirepkg.NoError(t, s.InitSchema(), "init schema")
+	require.NoError(t, err, "open store")
+	require.NoError(t, s.InitSchema(), "init schema")
 
 	_, err = s.GetOrCreateSource("mbox", "imported@example.com")
-	requirepkg.NoError(t, err, "create mbox source")
+	require.NoError(t, err, "create mbox source")
 	_ = s.Close()
 
 	savedCfg := cfg
@@ -202,8 +219,8 @@ func TestSyncCmd_MboxIdentifierDoesNotFallback(t *testing.T) {
 		name string
 		runE func(*cobra.Command, []string) error
 	}{
-		{"sync", syncIncrementalCmd.RunE},
-		{"sync-full", syncFullCmd.RunE},
+		{"sync", runSyncIncrementalLocal},
+		{"sync-full", runSyncFullLocalForTest},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			testCmd := &cobra.Command{
@@ -219,8 +236,8 @@ func TestSyncCmd_MboxIdentifierDoesNotFallback(t *testing.T) {
 			})
 
 			err := root.Execute()
-			requirepkg.Error(t, err, "expected error for non-syncable source")
-			assertpkg.ErrorContains(t, err, "cannot be synced", "expected unsupported-source error")
+			require.Error(t, err, "expected error for non-syncable source")
+			assert.ErrorContains(t, err, "cannot be synced", "expected unsupported-source error")
 		})
 	}
 }
@@ -229,8 +246,8 @@ func TestSyncCmd_MboxIdentifierDoesNotFallback(t *testing.T) {
 // mixed Gmail+IMAP setup without OAuth configured, sync-full skips
 // the Gmail source and still syncs the IMAP source.
 func TestSyncFullCmd_OAuthSkipDoesNotBlockIMAP(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	tmpDir := t.TempDir()
 	dbPath := tmpDir + "/msgvault.db"
 
@@ -261,7 +278,7 @@ func TestSyncFullCmd_OAuthSkipDoesNotBlockIMAP(t *testing.T) {
 	testCmd := &cobra.Command{
 		Use:  "sync-full [email]",
 		Args: cobra.MaximumNArgs(1),
-		RunE: syncFullCmd.RunE,
+		RunE: runSyncFullLocalForTest,
 	}
 
 	root := newTestRootCmd()
@@ -296,12 +313,12 @@ func TestSyncCmd_BrokenOAuthDoesNotBlockIMAP(t *testing.T) {
 		name string
 		runE func(*cobra.Command, []string) error
 	}{
-		{"sync", syncIncrementalCmd.RunE},
-		{"sync-full", syncFullCmd.RunE},
+		{"sync", runSyncIncrementalLocal},
+		{"sync-full", runSyncFullLocalForTest},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			require := requirepkg.New(t)
-			assert := assertpkg.New(t)
+			require := require.New(t)
+			assert := assert.New(t)
 			tmpDir := t.TempDir()
 			dbPath := tmpDir + "/msgvault.db"
 
@@ -390,8 +407,8 @@ func TestSyncCmd_BrokenOAuthDoesNotBlockIMAP(t *testing.T) {
 // even in a mixed Gmail+IMAP setup where Gmail would otherwise
 // succeed first.
 func TestSyncFullCmd_MalformedDateRejectsBeforeSync(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	tmpDir := t.TempDir()
 	dbPath := tmpDir + "/msgvault.db"
 
@@ -439,7 +456,7 @@ func TestSyncFullCmd_MalformedDateRejectsBeforeSync(t *testing.T) {
 	testCmd := &cobra.Command{
 		Use:  "sync-full [email]",
 		Args: cobra.MaximumNArgs(1),
-		RunE: syncFullCmd.RunE,
+		RunE: runSyncFullLocalForTest,
 	}
 
 	root := newTestRootCmd()
@@ -461,7 +478,7 @@ func TestSyncFullCmd_MalformedDateRejectsBeforeSync(t *testing.T) {
 // --after/--before flags produce a clear error for IMAP sources
 // instead of silently syncing the entire mailbox.
 func TestSyncFullCmd_MalformedIMAPDateFlagErrors(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	tmpDir := t.TempDir()
 	dbPath := tmpDir + "/msgvault.db"
 
@@ -510,7 +527,7 @@ func TestSyncFullCmd_MalformedIMAPDateFlagErrors(t *testing.T) {
 			testCmd := &cobra.Command{
 				Use:  "sync-full [email]",
 				Args: cobra.MaximumNArgs(1),
-				RunE: syncFullCmd.RunE,
+				RunE: runSyncFullLocalForTest,
 			}
 
 			root := newTestRootCmd()
@@ -520,9 +537,9 @@ func TestSyncFullCmd_MalformedIMAPDateFlagErrors(t *testing.T) {
 			})
 
 			err := root.Execute()
-			requirepkg.Error(t, err, "expected error for malformed date")
-			requirepkg.ErrorContains(t, err, tc.errStr, "error should mention %q", tc.errStr)
-			assertpkg.ErrorContains(t, err, "YYYY-MM-DD", "error should mention expected format")
+			require.Error(err, "expected error for malformed date")
+			require.ErrorContains(err, tc.errStr, "error should mention %q", tc.errStr)
+			assert.ErrorContains(t, err, "YYYY-MM-DD", "error should mention expected format")
 		})
 	}
 }
@@ -535,11 +552,11 @@ func TestSyncCmd_GmailOnlyBrokenOAuthSurfacesError(t *testing.T) {
 		name string
 		runE func(*cobra.Command, []string) error
 	}{
-		{"sync", syncIncrementalCmd.RunE},
-		{"sync-full", syncFullCmd.RunE},
+		{"sync", runSyncIncrementalLocal},
+		{"sync-full", runSyncFullLocalForTest},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			require := requirepkg.New(t)
+			require := require.New(t)
 			tmpDir := t.TempDir()
 			dbPath := tmpDir + "/msgvault.db"
 
@@ -595,7 +612,7 @@ func TestSyncCmd_GmailOnlyBrokenOAuthSurfacesError(t *testing.T) {
 			errMsg := err.Error()
 
 			// Should surface the real OAuth parse error.
-			assertpkg.Contains(t, errMsg, "client secrets", "expected OAuth parse error")
+			assert.Contains(t, errMsg, "client secrets", "expected OAuth parse error")
 		})
 	}
 }

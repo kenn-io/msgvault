@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestWindowsFiletimeToTime(t *testing.T) {
@@ -43,7 +43,7 @@ func TestWindowsFiletimeToTime(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := windowsFiletimeToTime(tt.ft)
-			assertpkg.True(t, got.Equal(tt.want), "windowsFiletimeToTime(%d) = %v, want %v", tt.ft, got, tt.want)
+			assert.True(t, got.Equal(tt.want), "windowsFiletimeToTime(%d) = %v, want %v", tt.ft, got, tt.want)
 		})
 	}
 }
@@ -60,18 +60,18 @@ func TestExtractCN(t *testing.T) {
 	}
 	for _, tt := range tests {
 		got := extractCN(tt.dn)
-		assertpkg.Equal(t, tt.want, got, "extractCN(%q)", tt.dn)
+		assert.Equal(t, tt.want, got, "extractCN(%q)", tt.dn)
 	}
 }
 
 func TestIsExchangeDN(t *testing.T) {
-	assertpkg.True(t, isExchangeDN("/O=CORP/OU=EXCH/CN=user"), "expected true for /O= DN")
-	assertpkg.True(t, isExchangeDN("/o=corp/cn=user"), "expected true for /o= DN")
-	assertpkg.False(t, isExchangeDN("user@example.com"), "expected false for SMTP address")
+	assert.True(t, isExchangeDN("/O=CORP/OU=EXCH/CN=user"), "expected true for /O= DN")
+	assert.True(t, isExchangeDN("/o=corp/cn=user"), "expected true for /o= DN")
+	assert.False(t, isExchangeDN("user@example.com"), "expected false for SMTP address")
 }
 
 func TestBuildRFC5322_SynthesizedHeaders(t *testing.T) {
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	msg := &MessageEntry{
 		EntryID:     "12345",
 		FolderPath:  "Inbox",
@@ -85,7 +85,7 @@ func TestBuildRFC5322_SynthesizedHeaders(t *testing.T) {
 	}
 
 	raw, err := BuildRFC5322(msg, nil)
-	requirepkg.NoError(t, err, "BuildRFC5322")
+	require.NoError(t, err, "BuildRFC5322")
 
 	s := string(raw)
 	assert.Contains(s, "From:", "missing From header")
@@ -98,7 +98,7 @@ func TestBuildRFC5322_SynthesizedHeaders(t *testing.T) {
 }
 
 func TestBuildRFC5322_TransportHeaders(t *testing.T) {
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	transportHeaders := "From: alice@example.com\r\nTo: bob@example.com\r\nSubject: Test\r\nMessage-ID: <orig@example.com>\r\nDate: Mon, 15 Jan 2024 10:30:00 +0000\r\n"
 
 	msg := &MessageEntry{
@@ -109,7 +109,7 @@ func TestBuildRFC5322_TransportHeaders(t *testing.T) {
 	}
 
 	raw, err := BuildRFC5322(msg, nil)
-	requirepkg.NoError(t, err, "BuildRFC5322")
+	require.NoError(t, err, "BuildRFC5322")
 
 	s := string(raw)
 	// Original headers should be present.
@@ -122,7 +122,7 @@ func TestBuildRFC5322_TransportHeaders(t *testing.T) {
 }
 
 func TestBuildRFC5322_WithAttachments(t *testing.T) {
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	msg := &MessageEntry{
 		EntryID:     "42",
 		Subject:     "With attachment",
@@ -138,7 +138,7 @@ func TestBuildRFC5322_WithAttachments(t *testing.T) {
 	}
 
 	raw, err := BuildRFC5322(msg, attachments)
-	requirepkg.NoError(t, err, "BuildRFC5322")
+	require.NoError(t, err, "BuildRFC5322")
 
 	s := string(raw)
 	assert.Contains(s, "multipart/mixed", "expected multipart/mixed for message with attachments")
@@ -154,10 +154,10 @@ func TestBuildRFC5322_EmptyBody(t *testing.T) {
 	}
 
 	raw, err := BuildRFC5322(msg, nil)
-	requirepkg.NoError(t, err, "BuildRFC5322")
+	require.NoError(t, err, "BuildRFC5322")
 
 	s := string(raw)
-	assertpkg.Contains(t, s, "text/plain", "expected text/plain even for empty body")
+	assert.Contains(t, s, "text/plain", "expected text/plain even for empty body")
 }
 
 func TestSanitizeHeaderValue(t *testing.T) {
@@ -169,7 +169,7 @@ func TestSanitizeHeaderValue(t *testing.T) {
 	}
 	for _, tt := range tests {
 		got := sanitizeHeaderValue(tt.in)
-		assertpkg.Equal(t, tt.want, got, "sanitizeHeaderValue(%q)", tt.in)
+		assert.Equal(t, tt.want, got, "sanitizeHeaderValue(%q)", tt.in)
 	}
 }
 
@@ -181,11 +181,11 @@ func TestBuildRFC5322_HeaderInjection(t *testing.T) {
 		BodyText:    "body",
 	}
 	raw, err := BuildRFC5322(msg, nil)
-	requirepkg.NoError(t, err, "BuildRFC5322")
+	require.NoError(t, err, "BuildRFC5322")
 	// Check that "Bcc:" does not appear as a separate header line (the actual
 	// injection vector). A sanitized value may still contain "Bcc:" as a
 	// substring within the From address, but not as a new header line.
-	assertpkg.NotContains(t, string(raw), "\r\nBcc:", "header injection: Bcc header was injected via SenderEmail")
+	assert.NotContains(t, string(raw), "\r\nBcc:", "header injection: Bcc header was injected via SenderEmail")
 }
 
 func TestSanitizeFilename(t *testing.T) {
@@ -199,7 +199,7 @@ func TestSanitizeFilename(t *testing.T) {
 	}
 	for _, tt := range tests {
 		got := sanitizeFilename(tt.in)
-		assertpkg.Equal(t, tt.want, got, "sanitizeFilename(%q)", tt.in)
+		assert.Equal(t, tt.want, got, "sanitizeFilename(%q)", tt.in)
 	}
 }
 
@@ -210,7 +210,7 @@ func TestSanitizeContentID(t *testing.T) {
 	}
 	for _, tt := range tests {
 		got := sanitizeContentID(tt.in)
-		assertpkg.Equal(t, tt.want, got, "sanitizeContentID(%q)", tt.in)
+		assert.Equal(t, tt.want, got, "sanitizeContentID(%q)", tt.in)
 	}
 }
 
@@ -218,11 +218,11 @@ func TestWriteQP_TrailingSpace(t *testing.T) {
 	var buf bytes.Buffer
 	writeQP(&buf, "hello \nworld")
 	got := buf.String()
-	assertpkg.Contains(t, got, "hello=20\r\n", "trailing space not encoded: got %q", got)
+	assert.Contains(t, got, "hello=20\r\n", "trailing space not encoded: got %q", got)
 }
 
 func TestBuildRFC5322_TransportHeadersStripMIME(t *testing.T) {
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	// Transport headers that include MIME headers — these should be stripped.
 	transportHeaders := "From: alice@example.com\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=us-ascii\r\nContent-Transfer-Encoding: 7bit\r\nSubject: Old MIME\r\n"
 
@@ -232,7 +232,7 @@ func TestBuildRFC5322_TransportHeadersStripMIME(t *testing.T) {
 	}
 
 	raw, err := BuildRFC5322(msg, nil)
-	requirepkg.NoError(t, err, "BuildRFC5322")
+	require.NoError(t, err, "BuildRFC5322")
 
 	s := string(raw)
 	// From and Subject should be present.

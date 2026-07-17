@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/msgvault/internal/vector"
 )
@@ -25,14 +25,14 @@ func newBackendForTest(t *testing.T) (*Backend, context.Context) {
 		Dimension: 768,
 		MainDB:    main,
 	})
-	requirepkg.NoError(t, err, "Open")
+	require.NoError(t, err, "Open")
 	t.Cleanup(func() { _ = b.Close() })
 	return b, ctx
 }
 
 func TestBackend_CreateActivateRetire(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	b, ctx := newBackendForTest(t)
 
 	gid, err := b.CreateGeneration(ctx, "nomic-embed-text-v1.5", 768, "")
@@ -56,41 +56,24 @@ func TestBackend_CreateActivateRetire(t *testing.T) {
 	require.Error(err, "ActiveGeneration should error after retire")
 }
 
-// pendingCount returns the number of pending_embeddings rows for a generation.
-func pendingCount(t *testing.T, b *Backend, gen vector.GenerationID) int {
+// missingCountSV returns the number of live messages still needing
+// embedding for gen (embed_gen <> gen) in the backend's main DB. This is
+// the scan-and-fill coverage count that replaced pending_embeddings.
+func missingCountSV(t *testing.T, b *Backend, gen vector.GenerationID) int {
 	t.Helper()
-	var n int
-	requirepkg.NoError(t, b.db.QueryRowContext(context.Background(),
-		`SELECT COUNT(*) FROM pending_embeddings WHERE generation_id = ?`, int64(gen)).Scan(&n),
-		"count pending rows")
-	return n
-}
-
-// TestBackend_RetireGeneration_CleansPending pins the cr2-2/cr2-4 fix for the
-// explicit-retire path: RetireGeneration must DELETE the generation's
-// pending_embeddings rows in the same tx as the state flip. A retired
-// generation is never re-targeted by pickTarget, so leftover queue rows would
-// be orphaned forever and would violate the documented "retired generations
-// have zero pending items" stats invariant.
-func TestBackend_RetireGeneration_CleansPending(t *testing.T) {
-	b, ctx := newBackendForTest(t)
-
-	// CreateGeneration seeds one pending row (for msg id=1 in the test main DB).
-	gen, err := b.CreateGeneration(ctx, "m", 768, "")
-	requirepkg.NoError(t, err, "CreateGeneration")
-	requirepkg.Equal(t, 1, pendingCount(t, b, gen), "precondition: pending row present")
-
-	requirepkg.NoError(t, b.RetireGeneration(ctx, gen, false), "RetireGeneration")
-
-	assertpkg.Equal(t, 0, pendingCount(t, b, gen),
-		"retire must delete the generation's pending_embeddings rows")
+	missing, err := b.hasMissingForGen(context.Background(), gen)
+	require.NoError(t, err, "hasMissingForGen")
+	if missing {
+		return 1
+	}
+	return 0
 }
 
 // genStateSV reads index_generations.state for a generation.
 func genStateSV(t *testing.T, b *Backend, gen vector.GenerationID) vector.GenerationState {
 	t.Helper()
 	var s vector.GenerationState
-	requirepkg.NoError(t, b.db.QueryRowContext(context.Background(),
+	require.NoError(t, b.db.QueryRowContext(context.Background(),
 		`SELECT state FROM index_generations WHERE id = ?`, int64(gen)).Scan(&s),
 		"read state for generation %d", gen)
 	return s
@@ -99,81 +82,220 @@ func genStateSV(t *testing.T, b *Backend, gen vector.GenerationID) vector.Genera
 // TestBackend_RetireGeneration_ActiveGuard pins the retire-TOCTOU class-closing
 // fix: the active-gen guard lives ATOMICALLY inside RetireGeneration's tx.
 //   - force=false against the ACTIVE generation is refused with
-//     ErrRefuseRetireActive, leaving state='active' and its pending rows intact
-//     (no destructive reap of the now-serving generation).
-//   - force=true retires the active generation and reaps its pending rows.
+//     ErrRefuseRetireActive, leaving state='active'.
+//   - force=true retires the active generation.
 //   - force=false against a NON-active (building) generation retires fine.
 func TestBackend_RetireGeneration_ActiveGuard(t *testing.T) {
+	assert := assert.New(t)
+	require := require.
+		New(t)
+
 	b, ctx := newBackendForTest(t)
 
-	// Build + force-activate genA, leaving an undrained pending row on it.
+	// Build + force-activate genA (force bypasses the coverage gate so the
+	// one unembedded test message does not block activation).
 	genA, err := b.CreateGeneration(ctx, "model-a", 768, "")
-	requirepkg.NoError(t, err, "CreateGeneration A")
-	requirepkg.NoError(t, b.ActivateGeneration(ctx, genA, true), "activate A (force)")
-	requirepkg.Equal(t, 1, pendingCount(t, b, genA), "precondition: pending row on active gen")
-	requirepkg.Equal(t, vector.GenerationActive, genStateSV(t, b, genA), "precondition: A active")
+	require.NoError(
+		err, "CreateGeneration A")
 
-	// (1) Non-forced retire of the ACTIVE gen is refused atomically: sentinel
-	// error, state unchanged, pending rows NOT reaped.
+	require.NoError(
+		b.ActivateGeneration(ctx, genA, true), "activate A (force)")
+
+	require.Equal(vector.GenerationActive, genStateSV(t, b, genA), "precondition: A active")
+
+	// (1) Non-forced retire of the ACTIVE gen is refused atomically.
 	err = b.RetireGeneration(ctx, genA, false)
-	requirepkg.ErrorIs(t, err, vector.ErrRefuseRetireActive,
+	require.ErrorIs(err, vector.ErrRefuseRetireActive,
 		"non-forced retire of active gen must return ErrRefuseRetireActive")
-	assertpkg.Equal(t, vector.GenerationActive, genStateSV(t, b, genA),
+	assert.Equal(vector.GenerationActive, genStateSV(t, b, genA),
 		"refused retire must leave the active gen's state unchanged")
-	assertpkg.Equal(t, 1, pendingCount(t, b, genA),
-		"refused retire must NOT reap the active gen's pending rows")
+	require.NoError(
 
-	// (2) Forced retire succeeds: state flips to retired and pending is reaped.
-	requirepkg.NoError(t, b.RetireGeneration(ctx, genA, true),
+		b.RetireGeneration(ctx, genA, true),
 		"forced retire of active gen must succeed")
-	assertpkg.Equal(t, vector.GenerationRetired, genStateSV(t, b, genA),
+
+	assert.Equal(vector.GenerationRetired, genStateSV(t, b, genA),
 		"forced retire flips state to retired")
-	assertpkg.Equal(t, 0, pendingCount(t, b, genA),
-		"forced retire reaps the gen's pending rows")
 
 	// (3) A NON-active (building) generation retires fine without force.
 	genB, err := b.CreateGeneration(ctx, "model-b", 768, "")
-	requirepkg.NoError(t, err, "CreateGeneration B")
-	requirepkg.Equal(t, vector.GenerationBuilding, genStateSV(t, b, genB), "precondition: B building")
-	requirepkg.NoError(t, b.RetireGeneration(ctx, genB, false),
+	require.NoError(
+		err, "CreateGeneration B")
+
+	require.Equal(vector.GenerationBuilding, genStateSV(t, b, genB), "precondition: B building")
+	require.NoError(
+		b.RetireGeneration(ctx, genB, false),
 		"non-forced retire of a non-active gen must succeed")
-	assertpkg.Equal(t, vector.GenerationRetired, genStateSV(t, b, genB),
+
+	assert.Equal(vector.GenerationRetired, genStateSV(t, b, genB),
 		"non-active gen retires to retired without force")
 }
 
-// TestBackend_ActivateGeneration_AutoRetireCleansPending pins the
-// cr2-3/cr2-4 fix for the auto-retire path: activating a new generation must
-// reap the demoted (now-retired) generation's pending_embeddings rows in the
-// same tx as the state flip.
-func TestBackend_ActivateGeneration_AutoRetireCleansPending(t *testing.T) {
+// TestBackend_ActivateGeneration_AutoRetires pins the auto-retire path:
+// activating a new generation demotes the previously-active one to
+// retired in the same tx as the state flip (RETURNING-id provable).
+func TestBackend_ActivateGeneration_AutoRetires(t *testing.T) {
+	assert := assert.New(t)
+	require := require.
+		New(t)
+
 	b, ctx := newBackendForTest(t)
 
 	genA, err := b.CreateGeneration(ctx, "model-a", 768, "")
-	requirepkg.NoError(t, err, "CreateGeneration A")
-	// Force-activate A while it still has its seeded pending row (mimicking an
-	// undrained incremental queue row left on the active gen at re-embed time).
-	requirepkg.NoError(t, b.ActivateGeneration(ctx, genA, true), "activate A (force)")
-	requirepkg.Equal(t, 1, pendingCount(t, b, genA), "precondition: pending row on active gen")
+	require.NoError(
+		err, "CreateGeneration A")
+
+	require.NoError(
+		b.ActivateGeneration(ctx, genA, true), "activate A (force)")
 
 	genB, err := b.CreateGeneration(ctx, "model-b", 768, "")
-	requirepkg.NoError(t, err, "CreateGeneration B")
-	requirepkg.NoError(t, b.ActivateGeneration(ctx, genB, true), "activate B (auto-retires A)")
+	require.NoError(
+		err, "CreateGeneration B")
 
-	assertpkg.Equal(t, 0, pendingCount(t, b, genA),
-		"auto-retire must delete the demoted generation's pending_embeddings rows")
+	require.NoError(
+		b.ActivateGeneration(ctx, genB, true), "activate B (auto-retires A)")
 
-	// RETURNING-id provability: the demote folds into one
-	// `UPDATE ... WHERE state='active' RETURNING id` statement (SQLite 3.35+),
-	// so the id whose pending rows get reaped is exactly the row that flipped to
-	// retired. Assert the previously-active gen (genA) is the sole retired row
-	// AND that it is the one whose pending was reaped, while the new active gen
-	// (genB) is not retired. This pins that the RETURNING'd id == the reaped id
-	// == the previously-active generation.
 	retired := singleRetiredGenSV(t, b)
-	assertpkg.Equal(t, genA, retired, "the previously-active gen must be the sole retired row")
-	assertpkg.NotEqual(t, genB, retired, "the newly-activated gen must not be retired")
-	assertpkg.Equal(t, 0, pendingCount(t, b, retired),
-		"pending reaped for exactly the RETURNING'd (retired) id")
+	assert.Equal(genA, retired, "the previously-active gen must be the sole retired row")
+	assert.NotEqual(genB, retired, "the newly-activated gen must not be retired")
+}
+
+// TestBackend_ActivateGeneration_CoverageGate pins the scan-and-fill
+// activation gate: a generation with a live message still needing
+// embedding (embed_gen <> gen) is refused without force, and succeeds once
+// coverage is complete (or with force).
+func TestBackend_ActivateGeneration_CoverageGate(t *testing.T) {
+	assert := assert.New(t)
+	require := require.
+		New(t)
+
+	b, ctx := newBackendForTest(t)
+	gen, err := b.CreateGeneration(ctx, "m", 768, "")
+	require.NoError(
+		err, "CreateGeneration")
+
+	require.Equal(1, missingCountSV(t, b, gen), "precondition: one missing message")
+
+	// Non-forced activate is refused while the message is unembedded.
+	err = b.ActivateGeneration(ctx, gen, false)
+	require.Error(err, "activate must be refused with missing coverage")
+	assert.Contains(err.Error(), "needing embedding")
+
+	// Stamp the message as covered, then activation succeeds.
+	_, err = b.mainDB.ExecContext(ctx, `UPDATE messages SET embed_gen = ? WHERE id = 1`, int64(gen))
+	require.NoError(
+		err, "stamp embed_gen")
+
+	require.Equal(0, missingCountSV(t, b, gen), "covered now")
+	require.NoError(
+		b.ActivateGeneration(ctx, gen, false), "activate after coverage complete")
+
+	assert.Equal(vector.GenerationActive, genStateSV(t, b, gen), "now active")
+}
+
+// TestBackend_ActivateGeneration_LifecycleErrorBeforeCoverage pins that
+// activating an unknown or non-building generation WITHOUT --force returns
+// the lifecycle error (unknown generation / not in 'building' state), NOT
+// the misleading "messages needing embedding" coverage error. The coverage
+// predicate (embed_gen IS NULL OR embed_gen <> gen) is true for an unknown
+// gen id, so the lifecycle check must run first. The seeded test message
+// (id=1) stays unembedded so the coverage gate WOULD trip if checked first.
+func TestBackend_ActivateGeneration_LifecycleErrorBeforeCoverage(t *testing.T) {
+	assert := assert.New(t)
+	require := require.
+		New(t)
+
+	b, ctx := newBackendForTest(t)
+	require.Equal(1, missingCountSV(t, b, vector.GenerationID(999)),
+		"precondition: coverage gate would trip for any gen (message unembedded)")
+
+	// (a) Unknown gen id: lifecycle error (ErrUnknownGeneration), not coverage.
+	err := b.ActivateGeneration(ctx, vector.GenerationID(999), false)
+	require.Error(err, "activating unknown gen must fail")
+	require.ErrorIs(err, vector.ErrUnknownGeneration,
+		"unknown gen must return ErrUnknownGeneration, not coverage error")
+	assert.NotContains(err.Error(), "needing embedding",
+		"unknown gen must NOT surface the coverage error")
+
+	// (b) Non-building (retired) gen id: lifecycle error, not coverage.
+	gen, err := b.CreateGeneration(ctx, "m", 768, "")
+	require.NoError(
+		err, "CreateGeneration")
+
+	require.NoError(
+		b.ActivateGeneration(ctx, gen, true), "force-activate to bypass coverage")
+
+	require.NoError(
+		b.RetireGeneration(ctx, gen, true), "force-retire to reach non-building state")
+
+	require.Equal(vector.GenerationRetired, genStateSV(t, b, gen), "precondition: gen retired")
+
+	err = b.ActivateGeneration(ctx, gen, false)
+	require.Error(err, "activating retired gen must fail")
+	assert.Contains(err.Error(), "not in 'building' state",
+		"retired gen must return the not-building lifecycle error")
+	assert.NotContains(err.Error(), "needing embedding",
+		"retired gen must NOT surface the coverage error")
+}
+
+// TestBackend_SingleTargetRebuild pins the single-target invariant: while
+// a new generation B builds, the active generation A keeps serving
+// (stale-but-correct), and B only becomes active once its coverage is
+// complete — at which point A is retired in the same swap. There is no
+// dual-write fan-out; the per-message embed_gen names exactly one target.
+func TestBackend_SingleTargetRebuild(t *testing.T) {
+	assert := assert.New(t)
+	require := require.
+		New(t)
+
+	b, ctx := newBackendForTest(t)
+
+	// A: build, cover (force-activate to skip the gate for the one test
+	// message), and start serving.
+	genA, err := b.CreateGeneration(ctx, "model-a", 768, "")
+	require.NoError(
+		err, "CreateGeneration A")
+
+	require.NoError(
+		b.ActivateGeneration(ctx, genA, true), "activate A (force)")
+
+	active, err := b.ActiveGeneration(ctx)
+	require.NoError(
+		err, "ActiveGeneration")
+
+	require.Equal(genA, active.ID, "A is serving")
+
+	// B: a new building generation for the same corpus. The message reads
+	// as missing for B (embed_gen still names A), but A keeps serving
+	// unchanged — stale-but-correct mid-rebuild.
+	genB, err := b.CreateGeneration(ctx, "model-b", 768, "")
+	require.NoError(
+		err, "CreateGeneration B")
+
+	require.Equal(1, missingCountSV(t, b, genB), "message missing for B mid-rebuild")
+	active, err = b.ActiveGeneration(ctx)
+	require.NoError(
+		err, "ActiveGeneration mid-rebuild")
+
+	assert.Equal(genA, active.ID, "A still serving while B builds")
+	require. // B's activation is refused until its coverage is complete.
+			Error(b.ActivateGeneration(ctx, genB, false), "B refused while incomplete")
+
+	// Cover the message for B (worker would do this after upsert), then
+	// activate B — the swap retires A and makes B the single serving gen.
+	_, err = b.mainDB.ExecContext(ctx, `UPDATE messages SET embed_gen = ? WHERE id = 1`, int64(genB))
+	require.NoError(
+		err, "stamp embed_gen for B")
+
+	require.NoError(
+		b.ActivateGeneration(ctx, genB, false), "activate B after coverage complete")
+
+	active, err = b.ActiveGeneration(ctx)
+	require.NoError(
+		err, "ActiveGeneration after swap")
+
+	assert.Equal(genB, active.ID, "B is the single serving gen after swap")
+	assert.Equal(vector.GenerationRetired, genStateSV(t, b, genA), "A retired by the swap")
 }
 
 // singleRetiredGenSV returns the id of the one generation in state='retired',
@@ -182,22 +304,135 @@ func TestBackend_ActivateGeneration_AutoRetireCleansPending(t *testing.T) {
 func singleRetiredGenSV(t *testing.T, b *Backend) vector.GenerationID {
 	t.Helper()
 	var id int64
-	requirepkg.NoError(t, b.db.QueryRowContext(context.Background(),
+	require.NoError(t, b.db.QueryRowContext(context.Background(),
 		`SELECT id FROM index_generations WHERE state = 'retired'`).Scan(&id),
 		"expected exactly one retired generation")
 	return vector.GenerationID(id)
 }
 
-func TestBackend_CreateGeneration_SeedsPending(t *testing.T) {
+// TestBackend_CreateGeneration_StampsSeededAt confirms CreateGeneration
+// stamps seeded_at so the activation gate's lifecycle check passes.
+func TestBackend_CreateGeneration_StampsSeededAt(t *testing.T) {
 	b, ctx := newBackendForTest(t)
 	gid, err := b.CreateGeneration(ctx, "m", 768, "")
-	requirepkg.NoError(t, err, "Create")
-	var n int
-	err = b.db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM pending_embeddings WHERE generation_id = ?`, gid,
-	).Scan(&n)
-	requirepkg.NoError(t, err, "count pending")
-	assertpkg.Equal(t, 1, n, "pending count")
+	require.NoError(t, err, "Create")
+	var seededAt sql.NullInt64
+	require.NoError(t, b.db.QueryRowContext(ctx,
+		`SELECT seeded_at FROM index_generations WHERE id = ?`, int64(gid)).Scan(&seededAt))
+	assert.True(t, seededAt.Valid, "seeded_at stamped at creation")
+}
+
+// TestBackend_ActivateGeneration_NullSeededAtActivatesWithCoverage pins
+// that a legacy/crashed generation whose seeded_at is NULL must still
+// activate WITHOUT --force as long as coverage is complete (missing==0).
+// The old seeded_at IS NOT NULL gate would have rejected it and pointed
+// users at `embeddings resume`, which cannot stamp seeded_at — making the
+// row unactivatable except via --force. Coverage is the real gate now.
+func TestBackend_ActivateGeneration_NullSeededAtActivatesWithCoverage(t *testing.T) {
+	require := require.
+		New(t)
+
+	b, ctx := newBackendForTest(t)
+	gen, err := b.CreateGeneration(ctx, "m", 768, "")
+	require.NoError(
+		err, "CreateGeneration")
+
+	// Simulate a legacy/crashed generation: clear seeded_at.
+	_, err = b.db.ExecContext(ctx,
+		`UPDATE index_generations SET seeded_at = NULL WHERE id = ?`, int64(gen))
+	require.NoError(
+		err, "clear seeded_at")
+
+	var seededAt sql.NullInt64
+	require.NoError(b.db.QueryRowContext(ctx,
+		`SELECT seeded_at FROM index_generations WHERE id = ?`, int64(gen)).Scan(&seededAt))
+	require.False(seededAt.Valid, "precondition: seeded_at is NULL")
+
+	// Make coverage complete (worker would stamp this after upsert).
+	_, err = b.mainDB.ExecContext(ctx, `UPDATE messages SET embed_gen = ? WHERE id = 1`, int64(gen))
+	require.NoError(
+		err, "stamp embed_gen")
+
+	require.Equal(0, missingCountSV(t, b, gen), "precondition: coverage complete")
+	require.NoError(
+
+		b.ActivateGeneration(ctx, gen, false),
+		"NULL seeded_at + full coverage must activate without --force")
+
+	assert.Equal(t, vector.GenerationActive, genStateSV(t, b, gen), "now active")
+}
+
+func TestBackend_CreateGeneration_ScopeLimitsCoverage(t *testing.T) {
+	assert := assert.New(t)
+	require := require.
+		New(t)
+
+	ctx := context.Background()
+	main, err := sql.Open("sqlite3", ":memory:")
+	require.NoError(
+		err, "open main")
+
+	t.Cleanup(func() { _ = main.Close() })
+	_, err = main.Exec(`CREATE TABLE messages (
+		id INTEGER PRIMARY KEY,
+		message_type TEXT NOT NULL,
+		embed_gen INTEGER,
+		deleted_at DATETIME,
+		deleted_from_source_at DATETIME
+	)`)
+	require.NoError(
+		err, "create messages")
+
+	_, err = main.Exec(`
+		INSERT INTO messages (id, message_type, deleted_from_source_at) VALUES
+		(1, 'email', NULL),
+		(2, 'sms', NULL),
+		(3, 'mms', NULL),
+		(4, 'sms', CURRENT_TIMESTAMP)`)
+	require.NoError(
+		err, "insert messages")
+
+	b, err := Open(ctx, Options{
+		Path:       filepath.Join(t.TempDir(), "vectors.db"),
+		Dimension:  768,
+		MainDB:     main,
+		BuildScope: vector.NewBuildScope([]string{"sms", "mms"}),
+	})
+	require.NoError(
+		err, "Open")
+
+	t.Cleanup(func() { _ = b.Close() })
+
+	gid, err := b.CreateGeneration(ctx, "m", 768, "")
+	require.NoError(
+		err, "Create")
+
+	stats, err := b.Stats(ctx, gid)
+	require.NoError(
+		err, "Stats")
+
+	assert.Equal(int64(2), stats.PendingCount, "only scoped live messages should count as missing")
+
+	missing, err := b.hasMissingForGen(ctx, gid)
+	require.NoError(
+		err, "hasMissingForGen")
+
+	assert.True(missing, "scoped messages still need embeddings")
+
+	_, err = main.Exec(`UPDATE messages SET embed_gen = ? WHERE id IN (2, 3)`, int64(gid))
+	require.NoError(
+		err, "stamp scoped messages")
+
+	stats, err = b.Stats(ctx, gid)
+	require.NoError(
+		err, "Stats after stamp")
+
+	assert.Equal(int64(0), stats.PendingCount, "unscoped email must not block scoped coverage")
+	missing, err = b.hasMissingForGen(ctx, gid)
+	require.NoError(
+		err, "hasMissingForGen after stamp")
+
+	assert.False(missing, "unscoped email must not block scoped activation")
 }
 
 // TestBackend_CreateGeneration_ResumesBuilding confirms that calling
@@ -208,11 +443,11 @@ func TestBackend_CreateGeneration_ResumesBuilding(t *testing.T) {
 	b, ctx := newBackendForTest(t)
 
 	first, err := b.CreateGeneration(ctx, "m", 768, "")
-	requirepkg.NoError(t, err, "first Create")
+	require.NoError(t, err, "first Create")
 
 	second, err := b.CreateGeneration(ctx, "m", 768, "")
-	requirepkg.NoError(t, err, "second Create with matching fingerprint")
-	assertpkg.Equal(t, first, second, "should reuse existing id")
+	require.NoError(t, err, "second Create with matching fingerprint")
+	assert.Equal(t, first, second, "should reuse existing id")
 }
 
 // TestBackend_CreateGeneration_MismatchedFingerprint checks that a
@@ -224,92 +459,11 @@ func TestBackend_CreateGeneration_MismatchedFingerprint(t *testing.T) {
 	b, ctx := newBackendForTest(t)
 
 	_, err := b.CreateGeneration(ctx, "model-a", 768, "")
-	requirepkg.NoError(t, err, "first Create")
+	require.NoError(t, err, "first Create")
 
 	_, err = b.CreateGeneration(ctx, "model-b", 768, "")
-	requirepkg.Error(t, err, "second Create with different fingerprint")
-	assertpkg.ErrorIs(t, err, vector.ErrBuildingInProgress)
-}
-
-// TestBackend_CreateGeneration_ResumeDoesNotReseedCompleted is the
-// regression test for the "interrupted full rebuild re-embeds
-// everything" bug: after the worker has already embedded some messages
-// (Queue.Complete removed those rows from pending_embeddings), a
-// retry'd CreateGeneration must NOT push them back onto the queue. We
-// simulate this by manually removing a pending row, then calling
-// CreateGeneration again with the same fingerprint and asserting the
-// removed row is not re-enqueued.
-func TestBackend_CreateGeneration_ResumeDoesNotReseedCompleted(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
-	b, ctx := newBackendForTest(t)
-
-	gen, err := b.CreateGeneration(ctx, "m", 768, "")
-	require.NoError(err, "first Create")
-
-	// Simulate Queue.Complete: remove the pending row for the only
-	// pre-seeded message (id=1) as if it were already embedded.
-	_, err = b.db.ExecContext(ctx,
-		`DELETE FROM pending_embeddings WHERE generation_id = ? AND message_id = ?`,
-		int64(gen), int64(1))
-	require.NoError(err, "delete pending")
-
-	// Resume: CreateGeneration must reuse the existing building gen
-	// and NOT re-enqueue the completed message.
-	resumed, err := b.CreateGeneration(ctx, "m", 768, "")
-	require.NoError(err, "resume Create")
-	assert.Equal(gen, resumed, "resumed gen should reuse existing")
-	var pending int
-	err = b.db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM pending_embeddings WHERE generation_id = ? AND message_id = 1`,
-		int64(gen)).Scan(&pending)
-	require.NoError(err, "count pending")
-	assert.Equal(0, pending, "resume re-seeded a completed message")
-}
-
-// TestBackend_CreateGeneration_ResumeReseedsUnseededGeneration covers
-// the "crash between row insert and seed commit" path: a building row
-// exists but seeded_at is NULL because the previous attempt died
-// before the seed transaction committed. A naive resume would skip
-// seedPending, leave pending_embeddings empty, and let
-// `msgvault embeddings build` activate the unseeded generation — silently
-// replacing the prior active index with an empty one. The fix is to
-// re-run seedPending whenever seeded_at IS NULL on resume.
-func TestBackend_CreateGeneration_ResumeReseedsUnseededGeneration(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
-	b, ctx := newBackendForTest(t)
-
-	gen, err := b.CreateGeneration(ctx, "m", 768, "")
-	require.NoError(err, "first Create")
-	// Simulate the crash window: clear seeded_at AND wipe the seeded
-	// rows so the post-resume pending count is exactly what the resume
-	// re-seed would produce. Without this we couldn't distinguish
-	// "rows are present because resume re-seeded" from "rows are
-	// present because the original seed left them there".
-	_, err = b.db.ExecContext(ctx,
-		`UPDATE index_generations SET seeded_at = NULL WHERE id = ?`, int64(gen))
-	require.NoError(err, "clear seeded_at")
-	_, err = b.db.ExecContext(ctx,
-		`DELETE FROM pending_embeddings WHERE generation_id = ?`, int64(gen))
-	require.NoError(err, "clear pending")
-
-	resumed, err := b.CreateGeneration(ctx, "m", 768, "")
-	require.NoError(err, "resume Create")
-	assert.Equal(gen, resumed, "resumed gen should reuse existing")
-	var pending int
-	err = b.db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM pending_embeddings WHERE generation_id = ?`,
-		int64(gen)).Scan(&pending)
-	require.NoError(err, "count pending")
-	assert.Equal(1, pending, "resume must re-seed an unseeded build")
-	// And seeded_at should now be populated so a second resume
-	// would correctly skip re-seeding.
-	var seededAt sql.NullInt64
-	err = b.db.QueryRowContext(ctx,
-		`SELECT seeded_at FROM index_generations WHERE id = ?`, int64(gen)).Scan(&seededAt)
-	require.NoError(err, "read seeded_at")
-	assert.True(seededAt.Valid, "seeded_at still NULL after resume re-seed; second resume would re-seed again")
+	require.Error(t, err, "second Create with different fingerprint")
+	assert.ErrorIs(t, err, vector.ErrBuildingInProgress)
 }
 
 // TestBackend_ClaimOrInsertBuilding_RaceRecoversFromUniqueConstraint
@@ -329,8 +483,8 @@ func TestBackend_CreateGeneration_ResumeReseedsUnseededGeneration(t *testing.T) 
 // dedicated race path is covered indirectly because both code paths
 // converge on lookupBuilding.
 func TestBackend_ClaimOrInsertBuilding_RecoversFromExistingRow(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	b, ctx := newBackendForTest(t)
 
 	gen1, isNew1, err := b.claimOrInsertBuilding(ctx, "m", 768, "m:768", time.Now().Unix())
@@ -347,107 +501,35 @@ func TestBackend_ClaimOrInsertBuilding_RecoversFromExistingRow(t *testing.T) {
 	assert.Equal(gen1, gen2, "should reuse gen id")
 }
 
-// TestBackend_CreateGeneration_SeedCommitsVisibleFirst confirms the
-// new building row is committed *before* the seed pass runs, so a
-// concurrent Enqueuer can see the generation and dual-enqueue
-// newly-synced messages. Without this ordering there is a window
-// during which sync-side enqueues would be scoped only to the active
-// generation and the new build would be missing messages.
-//
-// The previous version of this test polled on a short loop and
-// passed even if visibility happened only AFTER CreateGeneration
-// returned, because <-done would block until the goroutine finished
-// and the polling loop would then see the committed row regardless.
-// We now seed many messages to make seedPending take measurable time
-// and require visibility to be observed strictly while the goroutine
-// is still in flight (done has not fired yet).
-func TestBackend_CreateGeneration_SeedCommitsVisibleFirst(t *testing.T) {
-	require := requirepkg.New(t)
-	ctx := context.Background()
+// TestBackend_CoverageGate_SkipsDeletedMessages verifies the coverage
+// gate's live-message predicate excludes soft-deleted rows: a backend
+// whose only message is deleted-from-source reports zero missing, so a
+// building generation can activate without force.
+func TestBackend_CoverageGate_SkipsDeletedMessages(t *testing.T) {
+	require := require.
+		New(t)
 
-	// Build a backend whose main DB has many messages so seedPending
-	// has enough work that we can race a visibility poll against it.
-	// 5_000 rows is comfortably more than the one row in the standard
-	// helper and drives seedPending into the millisecond range even on
-	// a fast laptop — far longer than the polling interval below.
-	main := openMainDBWithOneMessage(t)
-	insert, err := main.PrepareContext(ctx, `INSERT INTO messages (id) VALUES (?)`)
-	require.NoError(err, "prepare insert")
-	defer func() { _ = insert.Close() }()
-	for i := int64(2); i <= 5000; i++ {
-		_, err := insert.ExecContext(ctx, i)
-		require.NoErrorf(err, "insert msg %d", i)
-	}
-
-	b, err := Open(ctx, Options{
-		Path:      filepath.Join(t.TempDir(), "vectors.db"),
-		Dimension: 768,
-		MainDB:    main,
-	})
-	require.NoError(err, "Open")
-	t.Cleanup(func() { _ = b.Close() })
-
-	done := make(chan error, 1)
-	go func() {
-		_, err := b.CreateGeneration(ctx, "m", 768, "")
-		done <- err
-	}()
-
-	// Poll for visibility, but strictly while the goroutine is still
-	// in flight: every iteration first checks `done` via select-default,
-	// and a poll that fires after `done` is closed counts as a failure
-	// because we'd then be observing a row that was committed at any
-	// point — including after return. With 5000 messages to seed, we
-	// have hundreds of polling windows before CreateGeneration returns.
-	deadline := time.Now().Add(5 * time.Second)
-	var (
-		visibleInFlight bool
-		doneFiredFirst  bool
-	)
-poll:
-	for time.Now().Before(deadline) {
-		select {
-		case err := <-done:
-			// Push the result back so the post-loop assertion can
-			// also read it. If we got here without observing the row
-			// yet, that is a failure.
-			done <- err
-			doneFiredFirst = true
-			break poll
-		default:
-		}
-		var id int64
-		qErr := b.db.QueryRowContext(ctx,
-			`SELECT id FROM index_generations WHERE state = 'building'`).Scan(&id)
-		if qErr == nil && id > 0 {
-			visibleInFlight = true
-			break poll
-		}
-		time.Sleep(1 * time.Millisecond)
-	}
-
-	require.NoError(<-done, "CreateGeneration")
-	require.False(doneFiredFirst, "CreateGeneration returned before the building row became visible — commit was deferred to after seed")
-	require.True(visibleInFlight, "building generation was never visible while CreateGeneration was in flight")
-}
-
-func TestBackend_CreateGeneration_SkipsDeletedMessages(t *testing.T) {
 	b := openBackendWithOneDeletedMessage(t)
 	t.Cleanup(func() { _ = b.Close() })
 	ctx := context.Background()
 	gid, err := b.CreateGeneration(ctx, "m", 768, "")
-	requirepkg.NoError(t, err, "Create")
-	var n int
-	_ = b.db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM pending_embeddings WHERE generation_id = ?`, gid).Scan(&n)
-	assertpkg.Equal(t, 0, n, "pending count for deleted message")
+	require.NoError(
+		err, "Create")
+
+	missing, err := b.hasMissingForGen(ctx, gid)
+	require.NoError(
+		err, "hasMissingForGen")
+
+	assert.False(t, missing, "deleted-from-source message must not count as missing")
+	require.NoError(
+		b.ActivateGeneration(ctx, gid, false), "activate (no missing)")
 }
 
-// TestBackend_SeedPending_SkipsDedupHidden verifies that seedPending
-// omits messages soft-deleted by dedup (deleted_at IS NOT NULL).
-func TestBackend_SeedPending_SkipsDedupHidden(t *testing.T) {
-	require := requirepkg.New(t)
-	t.Helper()
+// TestBackend_CoverageGate_SkipsDedupHidden verifies the coverage gate
+// excludes dedup-hidden messages (deleted_at IS NOT NULL): only the live
+// message counts toward "missing".
+func TestBackend_CoverageGate_SkipsDedupHidden(t *testing.T) {
+	require := require.New(t)
 	ctx := context.Background()
 
 	db, err := sql.Open("sqlite3", ":memory:")
@@ -456,10 +538,10 @@ func TestBackend_SeedPending_SkipsDedupHidden(t *testing.T) {
 	_, err = db.Exec(`CREATE TABLE messages (
 		id INTEGER PRIMARY KEY,
 		deleted_at DATETIME,
-		deleted_from_source_at DATETIME
+		deleted_from_source_at DATETIME,
+		embed_gen INTEGER
 	)`)
 	require.NoError(err, "create messages")
-	// Insert one live and one dedup-hidden message.
 	_, err = db.Exec(`INSERT INTO messages (id) VALUES (1)`)
 	require.NoError(err, "insert live")
 	_, err = db.Exec(`INSERT INTO messages (id, deleted_at) VALUES (2, CURRENT_TIMESTAMP)`)
@@ -475,22 +557,20 @@ func TestBackend_SeedPending_SkipsDedupHidden(t *testing.T) {
 
 	gid, err := b.CreateGeneration(ctx, "m", 768, "")
 	require.NoError(err, "CreateGeneration")
-	var n int
-	err = b.db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM pending_embeddings WHERE generation_id = ?`, gid).Scan(&n)
-	require.NoError(err, "count pending")
-	assertpkg.Equal(t, 1, n, "dedup-hidden message must be excluded")
+	// Stamp the dedup-hidden message as if covered for some other gen; it
+	// must still not count (it is dedup-hidden), and the live one must.
+	s, err := b.Stats(ctx, gid)
+	require.NoError(err, "Stats")
+	assert.Equal(t, int64(1), s.PendingCount, "only the live message counts as missing")
 }
 
 // TestBackend_Upsert_WritesEmbeddingAndVector verifies Upsert's
 // contract: it writes the embeddings row and the dimension-specific
-// vec0 row, and explicitly does NOT touch pending_embeddings. The
-// queue is the sole owner of that table so that Queue.Complete's
-// token check can prevent a stale worker from wiping a newer worker's
-// claim.
+// vec0 row, and explicitly does NOT touch messages.embed_gen (the worker
+// stamps that after a successful upsert, in the main DB).
 func TestBackend_Upsert_WritesEmbeddingAndVector(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	b, ctx := newBackendForTest(t)
 	gid, err := b.CreateGeneration(ctx, "m", 768, "")
 	require.NoError(err, "CreateGeneration")
@@ -515,26 +595,26 @@ func TestBackend_Upsert_WritesEmbeddingAndVector(t *testing.T) {
 	require.NoError(err, "count vectors_vec_d768")
 	assert.Equal(1, n, "vectors_vec_d768 count")
 
-	// Pending row is still present — the queue owns that table and
-	// only Queue.Complete may remove it.
-	err = b.db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM pending_embeddings WHERE generation_id = ? AND message_id = 1`, gid).Scan(&n)
-	require.NoError(err, "count pending")
-	assert.Equal(1, n, "Upsert must not touch pending_embeddings")
+	// embed_gen is untouched by Upsert — message 1 still reads as missing.
+	var embedGen sql.NullInt64
+	err = b.mainDB.QueryRowContext(ctx,
+		`SELECT embed_gen FROM messages WHERE id = 1`).Scan(&embedGen)
+	require.NoError(err, "read embed_gen")
+	assert.False(embedGen.Valid, "Upsert must not stamp messages.embed_gen")
 }
 
 func TestBackend_Upsert_DimensionMismatch(t *testing.T) {
 	b, ctx := newBackendForTest(t)
 	gid, err := b.CreateGeneration(ctx, "m", 768, "")
-	requirepkg.NoError(t, err, "CreateGeneration")
+	require.NoError(t, err, "CreateGeneration")
 
 	short := make([]float32, 64) // wrong dim
 	err = b.Upsert(ctx, gid, []vector.Chunk{{MessageID: 1, Vector: short}})
-	assertpkg.ErrorIs(t, err, vector.ErrDimensionMismatch)
+	assert.ErrorIs(t, err, vector.ErrDimensionMismatch)
 }
 
 func TestBackend_Upsert_EmptyChunks(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	b, ctx := newBackendForTest(t)
 	gid, err := b.CreateGeneration(ctx, "m", 768, "")
 	require.NoError(err, "CreateGeneration")
@@ -546,7 +626,7 @@ func TestBackend_Upsert_EmptyChunks(t *testing.T) {
 	err = b.db.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM embeddings WHERE generation_id = ?`, gid).Scan(&n)
 	require.NoError(err, "count embeddings")
-	assertpkg.Equal(t, 0, n, "embeddings count")
+	assert.Equal(t, 0, n, "embeddings count")
 }
 
 func TestBackend_Upsert_UnknownGeneration(t *testing.T) {
@@ -554,12 +634,12 @@ func TestBackend_Upsert_UnknownGeneration(t *testing.T) {
 
 	vec := make([]float32, 768)
 	err := b.Upsert(ctx, vector.GenerationID(9999), []vector.Chunk{{MessageID: 1, Vector: vec}})
-	assertpkg.ErrorIs(t, err, vector.ErrUnknownGeneration)
+	assert.ErrorIs(t, err, vector.ErrUnknownGeneration)
 }
 
 func TestBackend_Upsert_MultiChunkAndTruncated(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	b, ctx := newBackendForTest(t)
 	gid, err := b.CreateGeneration(ctx, "m", 768, "")
 	require.NoError(err, "CreateGeneration")
@@ -603,8 +683,8 @@ func TestBackend_Upsert_MultiChunkAndTruncated(t *testing.T) {
 // message id must produce two embeddings rows (with chunk_index 0
 // and 1) and two vec0 rows, joined back through embedding_id.
 func TestBackend_Upsert_MultiChunkMessage(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	b, ctx := newBackendForTest(t)
 	gid, err := b.CreateGeneration(ctx, "m", 768, "")
 	require.NoError(err, "CreateGeneration")
@@ -620,6 +700,7 @@ func TestBackend_Upsert_MultiChunkMessage(t *testing.T) {
 		{MessageID: 7, ChunkIndex: 1, Vector: v1, SourceCharLen: 90,
 			ChunkCharStart: 80, ChunkCharEnd: 170},
 	}), "Upsert")
+
 	var n int
 	err = b.db.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM embeddings WHERE generation_id = ? AND message_id = 7`, gid).Scan(&n)
@@ -650,8 +731,8 @@ func TestBackend_Upsert_MultiChunkMessage(t *testing.T) {
 // only chunk 0 must remove the chunk 1 left from a previous call.
 // Half-replace would leave an orphan row pointing at stale text.
 func TestBackend_Upsert_ReplaceFewerChunks(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	b, ctx := newBackendForTest(t)
 	gid, err := b.CreateGeneration(ctx, "m", 768, "")
 	require.NoError(err, "CreateGeneration")
@@ -666,11 +747,13 @@ func TestBackend_Upsert_ReplaceFewerChunks(t *testing.T) {
 		{MessageID: 5, ChunkIndex: 0, Vector: v0, SourceCharLen: 100},
 		{MessageID: 5, ChunkIndex: 1, Vector: v1, SourceCharLen: 90},
 	}), "first Upsert")
+
 	// Second upsert: only chunk 0. Idempotent replace should also
 	// vacate the stale chunk 1 row.
 	require.NoError(b.Upsert(ctx, gid, []vector.Chunk{
 		{MessageID: 5, ChunkIndex: 0, Vector: v0, SourceCharLen: 999},
 	}), "second Upsert")
+
 	var n int
 	err = b.db.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM embeddings WHERE generation_id = ? AND message_id = 5`, gid).Scan(&n)
@@ -685,8 +768,8 @@ func TestBackend_Upsert_ReplaceFewerChunks(t *testing.T) {
 }
 
 func TestBackend_Upsert_ReplacesExisting(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	b, ctx := newBackendForTest(t)
 	gid, err := b.CreateGeneration(ctx, "m", 768, "")
 	require.NoError(err, "CreateGeneration")
@@ -724,8 +807,8 @@ func TestBackend_Upsert_ReplacesExisting(t *testing.T) {
 }
 
 func TestBackend_Search_ReturnsRankedHits(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	b, ctx := newBackendForTest(t)
 	gid := seedAndEmbed(t, b, map[int64][]float32{
 		10: unitVec(768, 0),
@@ -743,26 +826,26 @@ func TestBackend_Search_ReturnsRankedHits(t *testing.T) {
 func TestBackend_Search_EmptyQueryVector(t *testing.T) {
 	b, ctx := newBackendForTest(t)
 	gid, err := b.CreateGeneration(ctx, "m", 768, "")
-	requirepkg.NoError(t, err, "CreateGeneration")
+	require.NoError(t, err, "CreateGeneration")
 	_, err = b.Search(ctx, gid, nil, 5, vector.Filter{})
-	requirepkg.Error(t, err, "Search with nil queryVec should error")
+	require.Error(t, err, "Search with nil queryVec should error")
 	_, err = b.Search(ctx, gid, []float32{}, 5, vector.Filter{})
-	requirepkg.Error(t, err, "Search with empty queryVec should error")
+	require.Error(t, err, "Search with empty queryVec should error")
 }
 
 func TestBackend_Search_UnknownGeneration(t *testing.T) {
 	b, ctx := newBackendForTest(t)
 	vec := unitVec(768, 0)
 	_, err := b.Search(ctx, vector.GenerationID(9999), vec, 5, vector.Filter{})
-	assertpkg.ErrorIs(t, err, vector.ErrUnknownGeneration)
+	assert.ErrorIs(t, err, vector.ErrUnknownGeneration)
 }
 
 func TestBackend_Search_DimensionMismatch(t *testing.T) {
 	b, ctx := newBackendForTest(t)
 	gid, err := b.CreateGeneration(ctx, "m", 768, "")
-	requirepkg.NoError(t, err, "CreateGeneration")
+	require.NoError(t, err, "CreateGeneration")
 	_, err = b.Search(ctx, gid, unitVec(64, 0), 5, vector.Filter{})
-	assertpkg.ErrorIs(t, err, vector.ErrDimensionMismatch)
+	assert.ErrorIs(t, err, vector.ErrDimensionMismatch)
 }
 
 // TestBackend_Search_FilterIDsExceedSQLiteParamCap exercises the
@@ -771,7 +854,7 @@ func TestBackend_Search_DimensionMismatch(t *testing.T) {
 // implementation expanded the id set into one `IN (?,?,...)` list per
 // id and failed with `too many SQL variables` once it crossed the cap.
 func TestBackend_Search_FilterIDsExceedSQLiteParamCap(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	b, ctx := newFusedBackendForTest(t)
 
 	const total = 1200 // well past SQLite's 999-variable ceiling
@@ -810,14 +893,14 @@ func TestBackend_Search_FilterIDsExceedSQLiteParamCap(t *testing.T) {
 
 	hits, err := b.Search(ctx, gid, unitVec(768, 0), 3, vector.Filter{SenderGroups: [][]int64{{42}}})
 	require.NoErrorf(err, "Search with broad filter (%d ids)", total)
-	assertpkg.NotEmpty(t, hits, "expected at least one hit after filter")
+	assert.NotEmpty(t, hits, "expected at least one hit after filter")
 }
 
 // TestBackend_Search_NewFilterFields exercises the filter fields added
 // to match the existing SQLite search surface: to/cc/bcc recipients,
 // larger/smaller size bounds, and subject substring match.
 func TestBackend_Search_NewFilterFields(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	b, ctx := newFusedBackendForTest(t)
 
 	// Reset and seed 4 messages with distinct recipient / size / subject
@@ -827,20 +910,21 @@ func TestBackend_Search_NewFilterFields(t *testing.T) {
 	require.NoError(err, "reset")
 
 	rows := []struct {
-		id      int64
-		size    int64
-		subject string
-		to, cc  int64
+		id          int64
+		size        int64
+		subject     string
+		messageType string
+		to, cc      int64
 	}{
-		{1, 100_000, "quarterly planning", 10, 0},
-		{2, 5_000_000, "quarterly review", 20, 10},
-		{3, 100_000, "lunch", 20, 0},
-		{4, 20_000_000, "quarterly deep dive", 30, 0},
+		{1, 100_000, "quarterly planning", "email", 10, 0},
+		{2, 5_000_000, "quarterly review", "sms", 20, 10},
+		{3, 100_000, "lunch", "sms", 20, 0},
+		{4, 20_000_000, "quarterly deep dive", "email", 30, 0},
 	}
 	for _, r := range rows {
 		_, err := b.mainDB.ExecContext(ctx,
-			`INSERT INTO messages (id, subject, size_estimate) VALUES (?, ?, ?)`,
-			r.id, r.subject, r.size)
+			`INSERT INTO messages (id, subject, size_estimate, message_type) VALUES (?, ?, ?, ?)`,
+			r.id, r.subject, r.size, r.messageType)
 		require.NoErrorf(err, "insert msg %d", r.id)
 		if r.to != 0 {
 			_, err := b.mainDB.ExecContext(ctx,
@@ -877,29 +961,33 @@ func TestBackend_Search_NewFilterFields(t *testing.T) {
 
 	t.Run("ToGroups_singleGroup", func(t *testing.T) {
 		got := matched(t, vector.Filter{ToGroups: [][]int64{{20}}})
-		assertpkg.Truef(t, got[2] && got[3] && !got[1] && !got[4], "ToGroups=[[20]]: got %v, want {2,3}", got)
+		assert.Truef(t, got[2] && got[3] && !got[1] && !got[4], "ToGroups=[[20]]: got %v, want {2,3}", got)
 	})
 	t.Run("CcGroups_singleGroup", func(t *testing.T) {
 		got := matched(t, vector.Filter{CcGroups: [][]int64{{10}}})
-		assertpkg.Truef(t, got[2] && !got[1] && !got[3] && !got[4], "CcGroups=[[10]]: got %v, want {2}", got)
+		assert.Truef(t, got[2] && !got[1] && !got[3] && !got[4], "CcGroups=[[10]]: got %v, want {2}", got)
 	})
 	t.Run("LargerThan", func(t *testing.T) {
 		size := int64(1_000_000)
 		got := matched(t, vector.Filter{LargerThan: &size})
-		assertpkg.Truef(t, got[2] && got[4] && !got[1] && !got[3], "LargerThan=1MB: got %v, want {2,4}", got)
+		assert.Truef(t, got[2] && got[4] && !got[1] && !got[3], "LargerThan=1MB: got %v, want {2,4}", got)
 	})
 	t.Run("SmallerThan", func(t *testing.T) {
 		size := int64(1_000_000)
 		got := matched(t, vector.Filter{SmallerThan: &size})
-		assertpkg.Truef(t, got[1] && got[3] && !got[2] && !got[4], "SmallerThan=1MB: got %v, want {1,3}", got)
+		assert.Truef(t, got[1] && got[3] && !got[2] && !got[4], "SmallerThan=1MB: got %v, want {1,3}", got)
 	})
 	t.Run("SubjectSubstring", func(t *testing.T) {
 		got := matched(t, vector.Filter{SubjectSubstrings: []string{"quarterly"}})
-		assertpkg.Truef(t, got[1] && got[2] && got[4] && !got[3], "subject=quarterly: got %v, want {1,2,4}", got)
+		assert.Truef(t, got[1] && got[2] && got[4] && !got[3], "subject=quarterly: got %v, want {1,2,4}", got)
 	})
 	t.Run("MultipleSubjectsANDed", func(t *testing.T) {
 		got := matched(t, vector.Filter{SubjectSubstrings: []string{"quarterly", "deep"}})
-		assertpkg.Truef(t, got[4] && !got[1] && !got[2] && !got[3], "subject=[quarterly, deep]: got %v, want {4}", got)
+		assert.Truef(t, got[4] && !got[1] && !got[2] && !got[3], "subject=[quarterly, deep]: got %v, want {4}", got)
+	})
+	t.Run("MessageTypes", func(t *testing.T) {
+		got := matched(t, vector.Filter{MessageTypes: []string{"sms"}})
+		assert.Truef(t, got[2] && got[3] && !got[1] && !got[4], "MessageTypes=[sms]: got %v, want {2,3}", got)
 	})
 	t.Run("CombinedFilter", func(t *testing.T) {
 		size := int64(1_000_000)
@@ -907,8 +995,9 @@ func TestBackend_Search_NewFilterFields(t *testing.T) {
 			ToGroups:          [][]int64{{20}},
 			LargerThan:        &size,
 			SubjectSubstrings: []string{"quarterly"},
+			MessageTypes:      []string{"sms"},
 		})
-		assertpkg.Truef(t, got[2] && !got[1] && !got[3] && !got[4], "combined to=20 + >1MB + quarterly: got %v, want {2}", got)
+		assert.Truef(t, got[2] && !got[1] && !got[3] && !got[4], "combined to=20 + >1MB + quarterly: got %v, want {2}", got)
 	})
 }
 
@@ -918,7 +1007,7 @@ func TestBackend_Search_NewFilterFields(t *testing.T) {
 // `to:(alice OR bob)`. Each group becomes its own EXISTS clause and
 // they are AND'd together. Same shape as label group AND'ing.
 func TestBackend_Search_RecipientGroupsAreANDed(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	b, ctx := newFusedBackendForTest(t)
 
 	_, err := b.mainDB.ExecContext(ctx,
@@ -988,19 +1077,19 @@ func TestBackend_Search_RecipientGroupsAreANDed(t *testing.T) {
 	t.Run("two_to_groups_require_both", func(t *testing.T) {
 		// `to:100 to:200` ⇒ ToGroups=[[100],[200]]; only msg 2 has both.
 		got := matched(t, vector.Filter{ToGroups: [][]int64{{100}, {200}}})
-		assertpkg.Truef(t, got[2] && !got[1] && !got[3], "ToGroups=[[100],[200]]: got %v, want only {2}", got)
+		assert.Truef(t, got[2] && !got[1] && !got[3], "ToGroups=[[100],[200]]: got %v, want only {2}", got)
 	})
 
 	t.Run("two_label_groups_require_both", func(t *testing.T) {
 		// `label:1 label:2` ⇒ LabelGroups=[[1],[2]]; only msg 2 has both.
 		got := matched(t, vector.Filter{LabelGroups: [][]int64{{1}, {2}}})
-		assertpkg.Truef(t, got[2] && !got[1] && !got[3], "LabelGroups=[[1],[2]]: got %v, want only {2}", got)
+		assert.Truef(t, got[2] && !got[1] && !got[3], "LabelGroups=[[1],[2]]: got %v, want only {2}", got)
 	})
 
 	t.Run("OR_within_a_group_still_works", func(t *testing.T) {
 		// One group containing both ids ⇒ matches messages with either.
 		got := matched(t, vector.Filter{ToGroups: [][]int64{{100, 200}}})
-		assertpkg.Truef(t, got[1] && got[2] && got[3], "ToGroups=[[100,200]]: got %v, want {1,2,3}", got)
+		assert.Truef(t, got[1] && got[2] && got[3], "ToGroups=[[100,200]]: got %v, want {1,2,3}", got)
 	})
 }
 
@@ -1012,8 +1101,8 @@ func TestBackend_Search_RecipientGroupsAreANDed(t *testing.T) {
 // path and allow repeated `from:` tokens to be satisfied by a mix of
 // sender_id and recipient rows.
 func TestBackend_Search_SenderMatchesFromRecipientOnly(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	b, ctx := newFusedBackendForTest(t)
 
 	// Reset the fused helper's seed data so we control the rows.
@@ -1070,7 +1159,7 @@ func TestBackend_Search_SenderMatchesFromRecipientOnly(t *testing.T) {
 // regression-guards the bug where SenderGroups were collapsed to a
 // participant-level intersection (which would drop such messages).
 func TestBackend_Search_SenderGroupsAreANDed_AtMessageLevel(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	b, ctx := newFusedBackendForTest(t)
 
 	_, err := b.mainDB.ExecContext(ctx,
@@ -1123,12 +1212,12 @@ func TestBackend_Search_SenderGroupsAreANDed_AtMessageLevel(t *testing.T) {
 
 	t.Run("two_groups_AND_at_message_level", func(t *testing.T) {
 		got := matched(t, vector.Filter{SenderGroups: [][]int64{{100}, {200}}})
-		assertpkg.Truef(t, !got[1] && got[2] && got[3], "SenderGroups=[[100],[200]]: got %v, want {2,3}", got)
+		assert.Truef(t, !got[1] && got[2] && got[3], "SenderGroups=[[100],[200]]: got %v, want {2,3}", got)
 	})
 
 	t.Run("single_group_OR_within", func(t *testing.T) {
 		got := matched(t, vector.Filter{SenderGroups: [][]int64{{100, 200}}})
-		assertpkg.Truef(t, got[1] && got[2] && got[3], "SenderGroups=[[100,200]]: got %v, want {1,2,3}", got)
+		assert.Truef(t, got[1] && got[2] && got[3], "SenderGroups=[[100,200]]: got %v, want {1,2,3}", got)
 	})
 }
 
@@ -1141,8 +1230,8 @@ func TestBackend_Search_SenderGroupsAreANDed_AtMessageLevel(t *testing.T) {
 // hardcodes the same check, but the parity gap meant pure-vector
 // answers could include archive-deleted messages.
 func TestBackend_Search_ExcludesDeletedFromSource(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	b, ctx := newFusedBackendForTest(t)
 
 	_, err := b.mainDB.ExecContext(ctx,
@@ -1180,8 +1269,8 @@ func TestBackend_Search_ExcludesDeletedFromSource(t *testing.T) {
 // neighbors existed just below the cutoff. The fast path must
 // over-fetch enough to still return k live hits in this situation.
 func TestBackend_Search_OverFetchesToHonorKWhenTopHitsDeleted(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	b, ctx := newFusedBackendForTest(t)
 
 	_, err := b.mainDB.ExecContext(ctx,
@@ -1248,8 +1337,8 @@ func TestBackend_Search_OverFetchesToHonorKWhenTopHitsDeleted(t *testing.T) {
 // over-fetch isn't enough. Search must keep doubling fetch until it
 // collects k live hits or exhausts the generation.
 func TestBackend_Search_IterativelyExpandsWhenDeletionsExceedOverfetch(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	b, ctx := newFusedBackendForTest(t)
 
 	_, err := b.mainDB.ExecContext(ctx,
@@ -1307,7 +1396,7 @@ func TestBackend_Search_IterativelyExpandsWhenDeletionsExceedOverfetch(t *testin
 // after expanding to the whole generation, Search returns the
 // remainder without looping forever.
 func TestBackend_Search_ExhaustedCorpusReturnsWhatsAvailable(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	b, ctx := newFusedBackendForTest(t)
 
 	_, err := b.mainDB.ExecContext(ctx,
@@ -1340,8 +1429,8 @@ func TestBackend_Search_ExhaustedCorpusReturnsWhatsAvailable(t *testing.T) {
 }
 
 func TestBackend_Delete_RemovesFromAllTables(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	b, ctx := newBackendForTest(t)
 	gid := seedAndEmbed(t, b, map[int64][]float32{1: unitVec(768, 0)})
 
@@ -1360,15 +1449,15 @@ func TestBackend_Delete_RemovesFromAllTables(t *testing.T) {
 func TestBackend_Delete_EmptyIDsIsNoop(t *testing.T) {
 	b, ctx := newBackendForTest(t)
 	gid, err := b.CreateGeneration(ctx, "m", 768, "")
-	requirepkg.NoError(t, err, "CreateGeneration")
-	assertpkg.NoError(t, b.Delete(ctx, gid, nil), "Delete(nil)")
-	assertpkg.NoError(t, b.Delete(ctx, gid, []int64{}), "Delete(empty)")
+	require.NoError(t, err, "CreateGeneration")
+	assert.NoError(t, b.Delete(ctx, gid, nil), "Delete(nil)")
+	assert.NoError(t, b.Delete(ctx, gid, []int64{}), "Delete(empty)")
 }
 
 func TestBackend_Delete_UnknownGeneration(t *testing.T) {
 	b, ctx := newBackendForTest(t)
 	err := b.Delete(ctx, vector.GenerationID(9999), []int64{1})
-	assertpkg.ErrorIs(t, err, vector.ErrUnknownGeneration)
+	assert.ErrorIs(t, err, vector.ErrUnknownGeneration)
 }
 
 func TestBackend_Stats_CountsCorrectly(t *testing.T) {
@@ -1376,18 +1465,19 @@ func TestBackend_Stats_CountsCorrectly(t *testing.T) {
 	gid := seedAndEmbed(t, b, map[int64][]float32{1: unitVec(768, 0)})
 
 	s, err := b.Stats(ctx, gid)
-	requirepkg.NoError(t, err, "Stats")
-	assertpkg.Equal(t, int64(1), s.EmbeddingCount)
-	assertpkg.Equal(t, int64(0), s.PendingCount)
+	require.NoError(t, err, "Stats")
+	assert.Equal(t, int64(1), s.EmbeddingCount)
+	assert.Equal(t, int64(0), s.PendingCount)
 }
 
 func TestBackend_Stats_PendingCountAfterCreate(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	b, ctx := newBackendForTest(t)
 	gid, err := b.CreateGeneration(ctx, "m", 768, "")
 	require.NoError(err, "CreateGeneration")
-	// CreateGeneration seeds 1 pending row for the one pre-seeded message.
+	// The one live message is unembedded, so PendingCount (= missing for
+	// this gen, read from the main DB) is 1.
 	s, err := b.Stats(ctx, gid)
 	require.NoError(err, "Stats")
 	assert.Equal(int64(0), s.EmbeddingCount)
@@ -1400,8 +1490,8 @@ func TestBackend_Stats_AggregateAcrossGenerations(t *testing.T) {
 	_ = seedAndEmbed(t, b, map[int64][]float32{1: unitVec(768, 0)})
 
 	s, err := b.Stats(ctx, vector.GenerationID(0))
-	requirepkg.NoError(t, err, "Stats(0)")
-	assertpkg.Equal(t, int64(1), s.EmbeddingCount, "aggregate EmbeddingCount")
+	require.NoError(t, err, "Stats(0)")
+	assert.Equal(t, int64(1), s.EmbeddingCount, "aggregate EmbeddingCount")
 }
 
 // TestBackend_Stats_AggregateCountsPerGenerationDuplicates pins the
@@ -1410,8 +1500,8 @@ func TestBackend_Stats_AggregateAcrossGenerations(t *testing.T) {
 // aggregate path should report two units of embedded work (one per
 // generation) rather than collapsing to one via DISTINCT message_id.
 func TestBackend_Stats_AggregateCountsPerGenerationDuplicates(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	b, ctx := newBackendForTest(t)
 
 	// First generation: embed message 1, then activate so the next
@@ -1449,8 +1539,8 @@ func TestBackend_Stats_AggregateCountsPerGenerationDuplicates(t *testing.T) {
 // delete. Without this, ActiveGeneration().MessageCount stays at zero
 // regardless of how many chunks have been written.
 func TestBackend_Upsert_UpdatesMessageCount(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	b, ctx := newBackendForTest(t)
 
 	gid, err := b.CreateGeneration(ctx, "m", 768, "")
@@ -1493,12 +1583,12 @@ func TestBackend_Stats_UnknownGeneration(t *testing.T) {
 	b, ctx := newBackendForTest(t)
 
 	_, err := b.Stats(ctx, vector.GenerationID(9999))
-	requirepkg.Error(t, err, "Stats on unknown generation: want error")
-	assertpkg.ErrorIs(t, err, vector.ErrUnknownGeneration)
+	require.Error(t, err, "Stats on unknown generation: want error")
+	assert.ErrorIs(t, err, vector.ErrUnknownGeneration)
 }
 
 func TestBackend_LoadVector(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	b, ctx := newBackendForTest(t)
 	gid, err := b.CreateGeneration(ctx, "m", 768, "")
 	require.NoError(err, "CreateGeneration")
@@ -1523,7 +1613,7 @@ func TestBackend_LoadVector(t *testing.T) {
 }
 
 func TestBackend_LoadVector_NotEmbedded(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	b, ctx := newBackendForTest(t)
 	gid, err := b.CreateGeneration(ctx, "m", 768, "")
 	require.NoError(err, "CreateGeneration")
@@ -1543,16 +1633,16 @@ func TestBackend_LoadVector_NotEmbedded(t *testing.T) {
 func TestBackend_LoadVector_NoActive(t *testing.T) {
 	b, ctx := newBackendForTest(t)
 	_, err := b.LoadVector(ctx, 1)
-	requirepkg.Error(t, err)
-	assertpkg.ErrorIs(t, err, vector.ErrNoActiveGeneration)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, vector.ErrNoActiveGeneration)
 }
 
 // TestBackend_Search_ExcludesDedupHidden confirms that Search excludes
 // messages hidden by dedup (deleted_at IS NOT NULL), not just those
 // deleted from source. Uses a minimal main DB without FTS5.
 func TestBackend_Search_ExcludesDedupHidden(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	ctx := context.Background()
 
 	// Minimal main DB: two messages, one dedup-hidden. No FTS5 required.
@@ -1599,8 +1689,8 @@ func TestBackend_Search_ExcludesDedupHidden(t *testing.T) {
 // filteredMessageIDs excludes messages with deleted_at set.
 // Uses a minimal main DB without FTS5.
 func TestBackend_FilteredMessageIDs_ExcludesDedupHidden(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	ctx := context.Background()
 
 	// Minimal main DB with source_id for SourceIDs filter.

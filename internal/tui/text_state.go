@@ -2,13 +2,31 @@ package tui
 
 import "go.kenn.io/msgvault/internal/query"
 
-// tuiMode represents the top-level mode: Email or Texts.
+// tuiMode represents the top-level content mode.
 type tuiMode int
 
 const (
 	modeEmail tuiMode = iota
 	modeTexts
+	modeMeetings
 )
+
+// nextMode advances through the available content modes. Meetings uses the
+// primary query engine, so it remains available when the optional text engine
+// is not configured.
+func nextMode(current tuiMode, textsAvailable bool) tuiMode {
+	switch current {
+	case modeEmail:
+		if textsAvailable {
+			return modeTexts
+		}
+		return modeMeetings
+	case modeTexts:
+		return modeMeetings
+	default:
+		return modeEmail
+	}
+}
 
 // textViewLevel represents the navigation depth within Texts mode.
 type textViewLevel int

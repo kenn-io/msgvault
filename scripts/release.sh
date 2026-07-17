@@ -78,7 +78,7 @@ echo ""
 echo "Release $TAG created and pushed successfully!"
 echo "GitHub Actions will create the release with the changelog from the tag message."
 echo ""
-echo "GitHub release URL: https://github.com/wesm/msgvault/releases/tag/$TAG"
+echo "GitHub release URL: https://github.com/kenn-io/msgvault/releases/tag/$TAG"
 
 # Offer to update nix flake
 if [ -f "$REPO_ROOT/flake.nix" ] && command -v nix &>/dev/null; then

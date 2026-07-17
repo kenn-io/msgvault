@@ -3,7 +3,7 @@ package tui
 import (
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/query"
@@ -120,7 +120,7 @@ func TestPageSizeRawZeroAndNegative(t *testing.T) {
 			assert.Equal(t, tc.pageSize, model.pageSize)
 
 			// Rendering should not panic even with unusual page sizes.
-			_ = model.View()
+			_ = model.View().Content
 		})
 	}
 }
@@ -386,7 +386,7 @@ func TestThreadViewPageDown(t *testing.T) {
 			m.threadCursor = tt.initCursor
 			m.threadScrollOffset = tt.initScrollOffset
 
-			m, _ = sendKey(t, m, tea.KeyMsg{Type: tea.KeyPgDown})
+			m, _ = sendKey(t, m, tea.KeyPressMsg{Code: tea.KeyPgDown})
 
 			assert.Equal(t, tt.wantCursor, m.threadCursor)
 			assert.Equal(t, tt.wantScrollOffset, m.threadScrollOffset)
@@ -462,7 +462,7 @@ func TestThreadViewPageUp(t *testing.T) {
 			m.threadCursor = tt.initCursor
 			m.threadScrollOffset = tt.initScrollOffset
 
-			m, _ = sendKey(t, m, tea.KeyMsg{Type: tea.KeyPgUp})
+			m, _ = sendKey(t, m, tea.KeyPressMsg{Code: tea.KeyPgUp})
 
 			assert.Equal(t, tt.wantCursor, m.threadCursor)
 			assert.Equal(t, tt.wantScrollOffset, m.threadScrollOffset)

@@ -114,6 +114,13 @@ func runIncrementalSync(t *testing.T, env *TestEnv) *gmail.SyncSummary {
 	return summary
 }
 
+func startSyncRun(t *testing.T, env *TestEnv, sourceID int64) int64 {
+	t.Helper()
+	syncID, err := env.Store.StartSync(sourceID, "full")
+	require.NoError(t, err, "StartSync")
+	return syncID
+}
+
 // WantSummary specifies expected SyncSummary values. Nil fields are not checked.
 type WantSummary struct {
 	Added   *int64
@@ -319,9 +326,11 @@ func historyLabelRemoved(id string, labels ...string) gmail.HistoryRecord {
 	}
 }
 
-// seedPagedMessages adds `total` messages to the mock distributed across pages of `pageSize`.
-// Message IDs use the given prefix: prefix1, prefix2, etc.
-func seedPagedMessages(env *TestEnv, total int, pageSize int, prefix string) {
+// seedPagedMessages adds `total` messages (msg1, msg2, ...) to the mock,
+// distributed across pages of two.
+func seedPagedMessages(env *TestEnv, total int) {
+	const pageSize = 2
+	const prefix = "msg"
 	env.Mock.Profile.MessagesTotal = int64(total)
 	var pages [][]string
 	var page []string

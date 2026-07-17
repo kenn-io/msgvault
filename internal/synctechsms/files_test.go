@@ -6,13 +6,13 @@ import (
 	"path/filepath"
 	"testing"
 
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestDiscoverBackupFilesFromDirectory(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	dir := t.TempDir()
 	writeFile(t, filepath.Join(dir, "sms-2024.xml"), `<smses count="0"></smses>`)
 	writeFile(t, filepath.Join(dir, "calls-2024.xml"), `<calls count="0"></calls>`)
@@ -32,13 +32,13 @@ func TestDiscoverBackupFilesFromZip(t *testing.T) {
 		"Calls.xml": `<calls count="0"></calls>`,
 	})
 	files, err := DiscoverBackupFiles(zipPath)
-	requirepkg.NoError(t, err, "DiscoverBackupFiles")
-	requirepkg.Len(t, files, 2)
-	assertpkg.NotNil(t, files[0].Opener, "zip file opener is nil")
+	require.NoError(t, err, "DiscoverBackupFiles")
+	require.Len(t, files, 2)
+	assert.NotNil(t, files[0].Opener, "zip file opener is nil")
 }
 
 func TestDiscoverRejectsEncryptedZip(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	zipPath := filepath.Join(t.TempDir(), "encrypted.zip")
 	f, err := os.Create(zipPath)
 	require.NoError(err, "create zip")
@@ -56,20 +56,20 @@ func TestDiscoverRejectsEncryptedZip(t *testing.T) {
 
 func writeFile(t *testing.T, path, body string) {
 	t.Helper()
-	requirepkg.NoError(t, os.WriteFile(path, []byte(body), 0o600), "write %s", path)
+	require.NoError(t, os.WriteFile(path, []byte(body), 0o600), "write %s", path)
 }
 
 func createZip(t *testing.T, path string, entries map[string]string) {
 	t.Helper()
 	f, err := os.Create(path)
-	requirepkg.NoError(t, err, "create zip")
+	require.NoError(t, err, "create zip")
 	defer func() { _ = f.Close() }()
 	zw := zip.NewWriter(f)
 	for name, body := range entries {
 		w, err := zw.Create(name)
-		requirepkg.NoError(t, err, "create zip entry")
+		require.NoError(t, err, "create zip entry")
 		_, err = w.Write([]byte(body))
-		requirepkg.NoError(t, err, "write zip entry")
+		require.NoError(t, err, "write zip entry")
 	}
-	requirepkg.NoError(t, zw.Close(), "close zip")
+	require.NoError(t, zw.Close(), "close zip")
 }

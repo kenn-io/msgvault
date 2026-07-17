@@ -25,7 +25,9 @@ type Options struct {
 	DB            *sql.DB
 	Dimension     int
 	SkipMigrate   bool
+	ReadOnly      bool
 	SkipExtension bool
+	BuildScope    vector.BuildScope
 }
 
 // Backend is a placeholder type so non-pgvector builds can compile
@@ -90,13 +92,23 @@ func (b *Backend) Stats(_ context.Context, _ vector.GenerationID) (vector.Stats,
 	return vector.Stats{}, ErrNotBuilt
 }
 
-// EnsureSeeded always returns ErrNotBuilt in non-pgvector builds.
-func (b *Backend) EnsureSeeded(_ context.Context, _ vector.GenerationID) error {
+// LoadVector always returns ErrNotBuilt in non-pgvector builds.
+func (b *Backend) LoadVector(_ context.Context, _ int64) ([]float32, error) {
+	return nil, ErrNotBuilt
+}
+
+// ResetWatermarkBelow always returns ErrNotBuilt in non-pgvector builds.
+func (b *Backend) ResetWatermarkBelow(_ context.Context, _ int64) error {
 	return ErrNotBuilt
 }
 
-// LoadVector always returns ErrNotBuilt in non-pgvector builds.
-func (b *Backend) LoadVector(_ context.Context, _ int64) ([]float32, error) {
+// EmbeddedMessageCount always returns ErrNotBuilt in non-pgvector builds.
+func (b *Backend) EmbeddedMessageCount(_ context.Context, _ vector.GenerationID) (int64, error) {
+	return 0, ErrNotBuilt
+}
+
+// ScoreMessageChunks always returns ErrNotBuilt in non-pgvector builds.
+func (b *Backend) ScoreMessageChunks(_ context.Context, _ vector.GenerationID, _ int64, _ []float32) ([]vector.ChunkHit, error) {
 	return nil, ErrNotBuilt
 }
 

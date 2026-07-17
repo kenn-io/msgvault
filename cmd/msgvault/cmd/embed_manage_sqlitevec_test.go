@@ -5,11 +5,12 @@ package cmd
 import (
 	"context"
 	"database/sql"
+	"path/filepath"
 	"testing"
 
 	_ "github.com/mattn/go-sqlite3"
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/vector"
 )
 
@@ -20,8 +21,8 @@ import (
 // returns ErrNotBuilt under a no-sqlite_vec build. The untagged pre-check
 // refusal lives in TestRetireEmbeddingGenerationRefusesActiveWithoutForce_PreCheck.
 func TestRunEmbeddingsRetire_ForceActive(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	dbPath := newEmbeddingMetadataTestDBFile(t)
 	withEmbeddingCommandConfig(t, dbPath)
 
@@ -47,4 +48,31 @@ func TestRunEmbeddingsRetire_ForceActive(t *testing.T) {
 	t.Cleanup(func() { require.NoError(db.Close()) })
 	row := mustGetEmbeddingGeneration(t.Context(), t, db, 1)
 	assert.Equal(vector.GenerationRetired, row.State)
+}
+
+func TestFillFullCoverageUsesEmbeddingScopeForEmbeddedCount(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	ctx := context.Background()
+	dataDir := t.TempDir()
+	dbPath := newEmbeddingMetadataTestDBFileAt(t, filepath.Join(dataDir, "vectors.db"))
+	seedMainDBWithScopedFullCoverageMessages(t, dataDir)
+	withEmbeddingCommandConfigDataDir(t, dbPath, dataDir)
+	cfg.Vector.Embed.Scope.MessageTypes = []string{"sms"}
+
+	backend, closeBackend, err := openEmbeddingsBackend(ctx)
+	require.NoError(err, "open embeddings backend")
+	t.Cleanup(closeBackend)
+	require.NoError(backend.Upsert(ctx, 2, []vector.Chunk{
+		{MessageID: 1, Vector: []float32{1, 0, 0, 0}},
+		{MessageID: 2, Vector: []float32{0, 1, 0, 0}},
+	}), "upsert in-scope and out-of-scope vectors")
+
+	row := embeddingGenerationRow{ID: 2}
+	require.NoError(fillFullCoverage(ctx, backend, &row))
+
+	assert.Equal(int64(1), row.LiveCount, "only sms is in scope")
+	assert.Equal(int64(1), row.EmbeddedCount, "out-of-scope email vector is excluded")
+	assert.Equal(int64(0), row.BlankCount)
+	assert.Equal(int64(0), row.MissingCount)
 }

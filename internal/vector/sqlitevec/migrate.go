@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	_ "embed"
 	"fmt"
+	"log/slog"
 	"strings"
 )
 
@@ -44,6 +45,19 @@ func Migrate(ctx context.Context, db *sql.DB, defaultDim int) error {
 			return fmt.Errorf("migrate vectors.db (%s): %w", m.desc, err)
 		}
 	}
+	// NOTE: the dead pending_embeddings queue table is NOT dropped here. The
+	// scan-and-fill design replaced the per-generation seed queue with a live
+	// messages.embed_gen scan, so the table is otherwise unused — BUT the
+	// one-time upgrade backfill (BackfillEmbedGenForUpgrade) must first consult
+	// it to preserve the legacy "pending re-embed" signal: a message could
+	// carry BOTH a stale active-gen embedding AND an active-gen pending row
+	// (old repair-encoding re-enqueued already-embedded messages). Dropping it
+	// here, before the backfill reads it, would let the backfill stamp those
+	// messages "covered" and never re-embed them. The drop now happens in the
+	// writable Open path AFTER the backfill has consulted it (see
+	// dropDeadPendingEmbeddings, called from Open). Migrate runs on read-only
+	// opens too, where dropping would be wrong (it must linger until a writable
+	// open honors the signal).
 	if _, err := db.ExecContext(ctx, `PRAGMA journal_mode = WAL`); err != nil {
 		return fmt.Errorf("enable WAL: %w", err)
 	}
@@ -92,6 +106,8 @@ func migrateEmbeddingsToChunked(ctx context.Context, db *sql.DB) error {
 		return nil
 	}
 
+	log := slog.Default()
+	log.Info("vector migration step", "step", "embeddings_to_chunked")
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin migration tx: %w", err)
@@ -167,6 +183,7 @@ func migrateEmbeddingsToChunked(ctx context.Context, db *sql.DB) error {
 		return fmt.Errorf("commit migration tx: %w", err)
 	}
 	committed = true
+	log.Info("vector migration step complete", "step", "embeddings_to_chunked")
 	return nil
 }
 
@@ -261,6 +278,8 @@ func migrateVecTablesToChunked(ctx context.Context, db *sql.DB) error {
 // state, so a subsequent Migrate() retry observes the unchanged
 // schema and runs cleanly.
 func rebuildVecTableForChunking(ctx context.Context, db *sql.DB, name string, dim int) error {
+	log := slog.Default()
+	log.Info("vector migration step", "step", "rebuild_vec_table_for_chunking", "table", name, "dimension", dim)
 	type vecRow struct {
 		gen   int64
 		msgID int64
@@ -378,6 +397,7 @@ func rebuildVecTableForChunking(ctx context.Context, db *sql.DB, name string, di
 		return fmt.Errorf("commit rebuild tx: %w", err)
 	}
 	committed = true
+	log.Info("vector migration step complete", "step", "rebuild_vec_table_for_chunking", "table", name, "dimension", dim)
 	return nil
 }
 

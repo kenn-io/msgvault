@@ -17,6 +17,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/mattn/go-sqlite3"
+	"go.kenn.io/msgvault/internal/sqliteutil"
 )
 
 //go:embed schema.sql schema_sqlite.sql schema_pg.sql
@@ -126,7 +127,7 @@ func openSQLite(dbPath, params string) (*Store, error) {
 	}
 
 	dsn := dbPath + params
-	db, err := sql.Open("sqlite3", dsn)
+	db, err := sql.Open(sqliteutil.DriverName(), dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open database: %w", err)
 	}
@@ -214,7 +215,7 @@ func OpenReadOnly(dbPath string) (*Store, error) {
 	// under SQLITE_OPEN_READONLY. _query_only opens normally (so SQLite
 	// can manage sidecars) but rejects all write SQL at the query layer.
 	dsn := dbPath + "?_query_only=true&_busy_timeout=5000"
-	db, err := sql.Open("sqlite3", dsn)
+	db, err := sql.Open(sqliteutil.DriverName(), dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open database (read-only): %w", err)
 	}
@@ -374,6 +375,25 @@ func (s *Store) DB() *sql.DB {
 	return s.db.DB
 }
 
+// BackupDatabase writes a point-in-time consistent copy of the SQLite database
+// to dst using VACUUM INTO. PostgreSQL deployments should be backed up with
+// pg_dump, pg_basebackup, or replication tooling outside msgvault.
+func (s *Store) BackupDatabase(dst string) error {
+	if s.IsPostgreSQL() {
+		return errors.New("backup-before-dedup is SQLite-only (uses VACUUM INTO); " +
+			"snapshot the PostgreSQL database with pg_dump out-of-band, " +
+			"then rerun with --no-backup",
+		)
+	}
+	if _, err := os.Stat(dst); err == nil {
+		return fmt.Errorf("backup target already exists: %s", dst)
+	}
+	if _, err := s.DB().Exec("VACUUM INTO ?", dst); err != nil {
+		return fmt.Errorf("vacuum into %s: %w", dst, err)
+	}
+	return nil
+}
+
 // IsPostgreSQL reports whether this store is backed by PostgreSQL.
 // Engine factories use this to choose between the SQLite and PostgreSQL
 // query paths.
@@ -456,10 +476,17 @@ func (s *Store) withTx(fn func(tx *loggedTx) error) error {
 			"duration_ms", time.Since(start).Milliseconds())
 		return err
 	}
+	// A tx crossing the slow threshold is a diagnostic, not a problem —
+	// bulk syncs routinely commit 100ms+ batches — so it logs at Info and
+	// only escalates to Warn at 10x the threshold, where something is
+	// genuinely wrong (lock contention, an unindexed cascade).
 	ms := time.Since(start).Milliseconds()
-	if slowMs := sqlLogSlowMs.Load(); slowMs > 0 && ms >= slowMs {
+	switch slowMs := sqlLogSlowMs.Load(); {
+	case slowMs > 0 && ms >= 10*slowMs:
 		slog.Warn("sql tx slow", "duration_ms", ms)
-	} else {
+	case slowMs > 0 && ms >= slowMs:
+		slog.Info("sql tx slow", "duration_ms", ms)
+	default:
 		slog.Debug("sql tx commit", "duration_ms", ms)
 	}
 	return nil
@@ -652,7 +679,7 @@ func (s *Store) SchemaStale() (bool, string, error) {
 		return false, "", fmt.Errorf("check schema version: %w", err)
 	}
 	if count == 0 {
-		return true, "conversations.conversation_type", nil
+		return true, "messages.embed_gen", nil
 	}
 	return false, "", nil
 }
@@ -674,28 +701,39 @@ func (s *Store) InitSchema() error {
 	// Legacy databases may hold duplicate (message_id, content_hash)
 	// attachment rows from the old SELECT-then-INSERT UpsertAttachment.
 	// Dedupe before creating the partial unique index that enforces
-	// idempotency going forward. Both steps are idempotent.
+	// idempotency going forward. Gated on the applied_migrations ledger:
+	// the dedupe's GROUP BY over the full attachments table is not free on
+	// a large archive, and it never finds work after the first run.
 	//
-	// Both run under runMaintenance: on a large archive the dedupe DELETE
-	// and the unique-index build over the full attachments table exceed the
-	// pool-wide 30s statement_timeout, so the maintenance escape hatch
-	// disables it for this transaction (finding S1). They share one tx so
-	// the index is built against the just-deduped table. No-op timeout reset
-	// on SQLite.
-	if err := s.runMaintenance(context.Background(), func(ctx context.Context, tx *loggedTx) error {
-		if err := s.dedupeAttachmentsBeforeUniqueIndex(ctx, tx); err != nil {
-			return fmt.Errorf("dedupe attachments: %w", err)
-		}
-		if _, err := tx.ExecContext(ctx, `
-			CREATE UNIQUE INDEX IF NOT EXISTS idx_attachments_msg_content_hash
-			    ON attachments(message_id, content_hash)
-			    WHERE content_hash IS NOT NULL AND content_hash != ''
-		`); err != nil {
-			return fmt.Errorf("create idx_attachments_msg_content_hash: %w", err)
-		}
-		return nil
-	}); err != nil {
+	// Both steps run under runMaintenance: on a large archive the dedupe
+	// DELETE and the unique-index build over the full attachments table
+	// exceed the pool-wide 30s statement_timeout, so the maintenance escape
+	// hatch disables it for this transaction (finding S1). They share one tx
+	// so the index is built against the just-deduped table. No-op timeout
+	// reset on SQLite.
+	attachmentsMigrated, err := s.IsMigrationApplied(migrationAttachmentsContentHashUnique)
+	if err != nil {
 		return err
+	}
+	if !attachmentsMigrated {
+		if err := s.runMaintenance(context.Background(), func(ctx context.Context, tx *loggedTx) error {
+			if err := s.dedupeAttachmentsBeforeUniqueIndex(ctx, tx); err != nil {
+				return fmt.Errorf("dedupe attachments: %w", err)
+			}
+			if _, err := tx.ExecContext(ctx, `
+				CREATE UNIQUE INDEX IF NOT EXISTS idx_attachments_msg_content_hash
+				    ON attachments(message_id, content_hash)
+				    WHERE content_hash IS NOT NULL AND content_hash != ''
+			`); err != nil {
+				return fmt.Errorf("create idx_attachments_msg_content_hash: %w", err)
+			}
+			return nil
+		}); err != nil {
+			return err
+		}
+		if err := s.MarkMigrationApplied(migrationAttachmentsContentHashUnique); err != nil {
+			return err
+		}
 	}
 
 	// Legacy databases may have idx_participants_phone as a non-unique
@@ -715,11 +753,172 @@ func (s *Store) InitSchema() error {
 	// migrations for DBs created before later columns were introduced:
 	// SQLite emits ALTER TABLE ADD COLUMN, PostgreSQL emits the equivalent
 	// ALTER TABLE ADD COLUMN IF NOT EXISTS list (including search_fts).
+	//
+	// lastModifiedColumnAdded tracks whether the last_modified ALTER
+	// actually fired, which forces the last_modified backfill below even if
+	// its ledger sentinel is present: a just-added column holds NULLs that
+	// must be stamped. Only SQLite can signal this — its ALTER errors with
+	// a duplicate-column error when the column exists, while PostgreSQL's
+	// IF NOT EXISTS form always succeeds; PG never needs the forced path
+	// because its ADD COLUMN carries DEFAULT CURRENT_TIMESTAMP, which
+	// backfills existing rows in the same statement.
+	lastModifiedColumnAdded := false
 	for _, m := range s.dialect.LegacyColumnMigrations() {
 		if _, err := s.db.Exec(m.SQL); err != nil {
 			if !s.dialect.IsDuplicateColumnError(err) {
 				return fmt.Errorf("migrate schema (%s): %w", m.Desc, err)
 			}
+		} else if m.Desc == "last_modified" && !s.IsPostgreSQL() {
+			lastModifiedColumnAdded = true
+		}
+	}
+
+	// Partial expression indexes for live-message listing and date filtering.
+	// The first is a covering index for the ListMessages page
+	// (GET /api/v1/messages).
+	// That query counts and paginates live messages ordered by
+	// COALESCE(sent_at, received_at, internal_date) DESC, id DESC. Without an
+	// index matching both the live-messages predicate and that sort key, SQLite
+	// falls back to a full scan of the messages table (multiple GB on a large
+	// archive) plus a temp-B-tree sort for every page — measured at seconds per
+	// 5-row page. The partial expression index lets COUNT read only the compact
+	// index and lets the page query walk it in order and stop at LIMIT,
+	// eliminating both the full scan and the sort (~29x faster COUNT, no sort).
+	// The second serves query-engine filters that compare julianday(sent_at) so
+	// mixed-offset timestamps remain correct without scanning the plain sent_at
+	// index. The third matches SearchMessages' COALESCE-based Julian-day
+	// predicate; without it, date-bounded counts scan every live message.
+	//
+	// Runs after the legacy ADD COLUMN loop above so deleted_at /
+	// deleted_from_source_at exist on upgraded DBs. SQLite only: PostgreSQL
+	// autovacuum keeps planner statistics current and picks its own plan, and
+	// the index expression syntax differs; the measured regression is specific
+	// to the statistics-free SQLite archive. Built under runMaintenance so the
+	// one-time index build over a large table is not cut off by the pool-wide
+	// 30s statement_timeout (finding S1). IF NOT EXISTS is idempotent per start.
+	if !s.IsPostgreSQL() {
+		if err := s.runMaintenance(context.Background(), func(ctx context.Context, tx *loggedTx) error {
+			if _, err := tx.ExecContext(ctx, `
+				CREATE INDEX IF NOT EXISTS idx_messages_live_sent_at
+				    ON messages(COALESCE(sent_at, received_at, internal_date) DESC, id DESC)
+				    WHERE deleted_at IS NULL AND deleted_from_source_at IS NULL
+			`); err != nil {
+				return err
+			}
+			if _, err := tx.ExecContext(ctx, `
+				CREATE INDEX IF NOT EXISTS idx_messages_sent_at_julianday
+				    ON messages(julianday(sent_at))
+			`); err != nil {
+				return err
+			}
+			_, err := tx.ExecContext(ctx, `
+				CREATE INDEX IF NOT EXISTS idx_messages_live_timestamp_julianday
+				    ON messages(julianday(COALESCE(sent_at, received_at, internal_date)))
+				    WHERE deleted_at IS NULL AND deleted_from_source_at IS NULL
+			`)
+			return err
+		}); err != nil {
+			return fmt.Errorf("create live message timestamp indexes: %w", err)
+		}
+
+		// Partial indexes over the deletion timestamps. The analytics cache
+		// staleness check (cacheNeedsBuild) counts messages source-deleted or
+		// dedup-hidden since the last build on every daemon start, before the
+		// API server binds. Neither predicate is served by an existing index
+		// (idx_messages_deleted leads with source_id), so each COUNT was a
+		// full scan of the messages table — measured at ~4.5s on a cold page
+		// cache over a 2.5M-row archive, which was the entire cold-start
+		// latency of `msgvault search`. The partial form keeps the indexes
+		// proportional to the deleted rows only, so live-message insert and
+		// update paths pay no maintenance for them.
+		if err := s.runMaintenance(context.Background(), func(ctx context.Context, tx *loggedTx) error {
+			if _, err := tx.ExecContext(ctx, `
+				CREATE INDEX IF NOT EXISTS idx_messages_deleted_from_source_at
+				    ON messages(deleted_from_source_at)
+				    WHERE deleted_from_source_at IS NOT NULL
+			`); err != nil {
+				return err
+			}
+			_, err := tx.ExecContext(ctx, `
+				CREATE INDEX IF NOT EXISTS idx_messages_deleted_at
+				    ON messages(deleted_at)
+				    WHERE deleted_at IS NOT NULL
+			`)
+			return err
+		}); err != nil {
+			return fmt.Errorf("create deletion timestamp indexes: %w", err)
+		}
+	}
+
+	// Indexes over attachment thumbnail hash/path serve pack enumeration and
+	// remove-account's per-candidate reference checks. The LOWER(hash)
+	// expression indexes serve alias-aware pack reads, pruning, and repack
+	// liveness without scanning the full attachments table for every packed
+	// entry. PostgreSQL only here:
+	// schema_pg.sql executes before any maintenance hatch is available, and on
+	// an existing large archive the one-time builds can exceed the pool-wide
+	// 30s statement_timeout, so they run under runMaintenance (finding S1) like
+	// the other one-time index builds above. SQLite keeps both in schema.sql —
+	// it has no statement_timeout. IF NOT EXISTS is idempotent per start.
+	if s.IsPostgreSQL() {
+		if err := s.runMaintenance(context.Background(), func(ctx context.Context, tx *loggedTx) error {
+			if _, err := tx.ExecContext(ctx, `
+				CREATE INDEX IF NOT EXISTS idx_attachments_thumbnail_hash
+				    ON attachments(thumbnail_hash)
+			`); err != nil {
+				return err
+			}
+			if _, err := tx.ExecContext(ctx, `
+				CREATE INDEX IF NOT EXISTS idx_attachments_thumbnail_path
+				    ON attachments(thumbnail_path)
+			`); err != nil {
+				return err
+			}
+			if _, err := tx.ExecContext(ctx, `
+				CREATE INDEX IF NOT EXISTS idx_attachments_content_hash_lower
+				    ON attachments(LOWER(content_hash))
+			`); err != nil {
+				return err
+			}
+			_, err := tx.ExecContext(ctx, `
+				CREATE INDEX IF NOT EXISTS idx_attachments_thumbnail_hash_lower
+				    ON attachments(LOWER(thumbnail_hash))
+			`)
+			return err
+		}); err != nil {
+			return fmt.Errorf("create attachment lookup indexes: %w", err)
+		}
+	}
+
+	// Backfill last_modified for rows that predate the column. SQLite cannot
+	// ADD COLUMN with a non-constant default, so the legacy ADD COLUMN above
+	// leaves existing rows NULL; this one-shot UPDATE sets them to
+	// CURRENT_TIMESTAMP so the embed worker's CAS token is a comparable value
+	// (a NULL token would never satisfy `last_modified = ?` and the row would
+	// loop "needs embedding" forever). Idempotent and portable: on a fresh
+	// DB (or PostgreSQL, whose ADD COLUMN ... DEFAULT CURRENT_TIMESTAMP
+	// backfills automatically) no rows are NULL, so this is a no-op. Gated
+	// on the applied_migrations ledger: last_modified has no index, so the
+	// UPDATE's WHERE clause is a full scan of the messages table — the
+	// dominant cost of daemon startup on a large archive — and it never
+	// finds work after the first run. Run under runMaintenance so the
+	// full-table UPDATE on a large archive is not cut off by the pool-wide
+	// statement_timeout (no-op reset on SQLite).
+	lastModifiedMigrated, err := s.IsMigrationApplied(migrationMessagesLastModifiedBackfill)
+	if err != nil {
+		return err
+	}
+	if !lastModifiedMigrated || lastModifiedColumnAdded {
+		if err := s.runMaintenance(context.Background(), func(ctx context.Context, tx *loggedTx) error {
+			_, err := tx.ExecContext(ctx,
+				`UPDATE messages SET last_modified = `+s.dialect.Now()+
+					` WHERE last_modified IS NULL`)
+			return err
+		}); err != nil {
+			return fmt.Errorf("backfill last_modified: %w", err)
+		}
+		if err := s.MarkMigrationApplied(migrationMessagesLastModifiedBackfill); err != nil {
+			return err
 		}
 	}
 
@@ -735,6 +934,34 @@ func (s *Store) InitSchema() error {
 		return s.dialect.EnsureFTSIndex(tx)
 	}); err != nil {
 		return fmt.Errorf("ensure FTS index: %w", err)
+	}
+
+	// Create the last_modified maintenance triggers. Must run after the
+	// migration loop above adds the last_modified column on legacy DBs.
+	// SQLite is a no-op here (its triggers ride schema.sql); PostgreSQL
+	// creates them idempotently. Run under runMaintenance for consistency
+	// with EnsureFTSIndex (no statement_timeout cap on the DDL).
+	if err := s.runMaintenance(context.Background(), func(ctx context.Context, tx *loggedTx) error {
+		return s.dialect.EnsureTriggers(tx)
+	}); err != nil {
+		return fmt.Errorf("ensure last_modified triggers: %w", err)
+	}
+
+	// Drop the obsolete partial index over messages needing embedding. It was
+	// redundant with the per-generation embed watermark (the work-finder scan
+	// rides the messages PRIMARY KEY B-tree via `id > :watermark ORDER BY id`)
+	// and useless during a rebuild (old-gen leftovers carry a non-NULL embed_gen
+	// that an `embed_gen IS NULL` index never covers), while costing index
+	// maintenance on the two hottest write paths (message insert + embed_gen
+	// stamp). DROP IF EXISTS is idempotent and portable across SQLite/PG; it
+	// cleans up any dev DB that already created the index. Run under
+	// runMaintenance to match the original CREATE's transaction context.
+	if err := s.runMaintenance(context.Background(), func(ctx context.Context, tx *loggedTx) error {
+		_, err := tx.ExecContext(ctx,
+			`DROP INDEX IF EXISTS idx_messages_embed_gen`)
+		return err
+	}); err != nil {
+		return fmt.Errorf("drop idx_messages_embed_gen: %w", err)
 	}
 
 	// Load the optional FTS schema, if the dialect keeps one separate.
@@ -784,6 +1011,11 @@ func (s *Store) dedupeAttachmentsBeforeUniqueIndex(ctx context.Context, tx *logg
 }
 
 // NeedsFTSBackfill reports whether the FTS index needs to be populated.
+//
+// This runs an anti-join that scans every message when the index is already
+// complete (the healthy steady state), so it is expensive on a large archive.
+// Callers on hot request paths must not invoke it per request — see the
+// server-level memoization in handleCLISearch.
 func (s *Store) NeedsFTSBackfill() bool {
 	if !s.fts5Available {
 		return false
@@ -791,14 +1023,35 @@ func (s *Store) NeedsFTSBackfill() bool {
 	return s.dialect.FTSNeedsBackfill(s.db.DB)
 }
 
+// NeedsFTSBackfillQuick is the cheap, hot-path-safe form of NeedsFTSBackfill:
+// true means a backfill is certainly needed; false may miss interior index
+// holes (SQLite) that only the full probe finds.
+func (s *Store) NeedsFTSBackfillQuick() bool {
+	if !s.fts5Available {
+		return false
+	}
+	return s.dialect.FTSNeedsBackfillQuick(s.db.DB)
+}
+
 // Stats holds database statistics.
+//
+// MessageCount is the count of active messages: those still present in the
+// source account (deleted_at IS NULL AND deleted_from_source_at IS NULL).
+// SourceDeletedCount is the count of archived messages that were deleted from
+// the source account but are retained in the archive (deleted_at IS NULL AND
+// deleted_from_source_at IS NOT NULL). The archive is the system of record,
+// so the canonical total is MessageCount + SourceDeletedCount; callers that
+// display a total must label the two populations rather than pick one
+// silently. Dedup-hidden rows (deleted_at IS NOT NULL) are excluded from
+// both counts.
 type Stats struct {
-	MessageCount    int64
-	ThreadCount     int64
-	AttachmentCount int64
-	LabelCount      int64
-	SourceCount     int64
-	DatabaseSize    int64
+	MessageCount       int64
+	SourceDeletedCount int64
+	ThreadCount        int64
+	AttachmentCount    int64
+	LabelCount         int64
+	SourceCount        int64
+	DatabaseSize       int64
 }
 
 // GetStats returns statistics about the database.
@@ -807,12 +1060,24 @@ func (s *Store) GetStats() (*Stats, error) {
 	return s.GetStatsForScope(nil)
 }
 
+// GetStatsContext is the context-aware form of GetStats. Request paths pass
+// the request context so the count queries carry the request_id for SQL
+// logging and are cancelled with the request.
+func (s *Store) GetStatsContext(ctx context.Context) (*Stats, error) {
+	return s.GetStatsForScopeContext(ctx, nil)
+}
+
 // GetStatsForScope returns statistics scoped to the given source IDs.
 // When sourceIDs is nil or empty, returns global counts.
 // All message-derived counts (threads, attachments, labels) exclude
 // dedup-hidden and source-deleted messages via LiveMessagesWhere.
 // DatabaseSize is always the global file size — it cannot be decomposed per source.
 func (s *Store) GetStatsForScope(sourceIDs []int64) (*Stats, error) {
+	return s.GetStatsForScopeContext(context.Background(), sourceIDs)
+}
+
+// GetStatsForScopeContext is the context-aware form of GetStatsForScope.
+func (s *Store) GetStatsForScopeContext(ctx context.Context, sourceIDs []int64) (*Stats, error) {
 	stats := &Stats{}
 
 	var queries []struct {
@@ -834,6 +1099,11 @@ func (s *Store) GetStatsForScope(sourceIDs []int64) (*Stats, error) {
 				"SELECT COUNT(*) FROM messages WHERE " + LiveMessagesWhere("", true),
 				nil,
 				&stats.MessageCount,
+			},
+			{
+				"SELECT COUNT(*) FROM messages WHERE " + SourceDeletedMessagesWhere(""),
+				nil,
+				&stats.SourceDeletedCount,
 			},
 			{
 				"SELECT COUNT(*) FROM conversations WHERE EXISTS (" +
@@ -891,6 +1161,11 @@ func (s *Store) GetStatsForScope(sourceIDs []int64) (*Stats, error) {
 				&stats.MessageCount,
 			},
 			{
+				"SELECT COUNT(*) FROM messages WHERE " + SourceDeletedMessagesWhere("") + " AND " + inClause,
+				cloneArgs(),
+				&stats.SourceDeletedCount,
+			},
+			{
 				"SELECT COUNT(DISTINCT conversation_id) FROM messages WHERE " + LiveMessagesWhere("", true) + " AND " + inClause,
 				cloneArgs(),
 				&stats.ThreadCount,
@@ -923,9 +1198,9 @@ func (s *Store) GetStatsForScope(sourceIDs []int64) (*Stats, error) {
 	for _, q := range queries {
 		var row *sql.Row
 		if len(q.args) > 0 {
-			row = s.db.QueryRow(q.query, q.args...)
+			row = s.db.QueryRowContext(ctx, q.query, q.args...)
 		} else {
-			row = s.db.QueryRow(q.query)
+			row = s.db.QueryRowContext(ctx, q.query)
 		}
 		if err := row.Scan(q.dest); err != nil {
 			if s.dialect.IsNoSuchTableError(err) {

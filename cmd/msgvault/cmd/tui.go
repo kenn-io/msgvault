@@ -1,175 +1,103 @@
 package cmd
 
 import (
-	"encoding/json"
+	"context"
 	"fmt"
+	"io"
 	"log/slog"
-	"os"
-	"path/filepath"
-	"strings"
+	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/spf13/cobra"
+	"go.kenn.io/msgvault/internal/api"
+	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/query"
-	"go.kenn.io/msgvault/internal/remote"
-	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/tui"
 )
 
-var forceSQL bool
-var skipCacheBuild bool
-var noSQLiteScanner bool
 var forceLocalTUI bool
+var deprecatedTUIForceSQL bool
+var deprecatedTUISkipCacheBuild bool
+var deprecatedTUINoSQLiteScanner bool
 
 var tuiCmd = &cobra.Command{
 	Use:   "tui",
 	Short: "Open the interactive terminal UI",
-	Long: `Open an interactive terminal UI for browsing your email archive.
+	Long: `Open an interactive terminal UI for browsing email, text messages,
+and meeting transcripts.
 
-The TUI provides aggregate views of your messages by:
+Email mode provides aggregate views by:
   - Senders: Who sends you the most email
   - Recipients: Who you email most frequently
   - Domains: Which domains you interact with
   - Labels: Gmail label distribution
   - Time: Message volume over time
 
+Press 'm' to cycle through Email, Texts, and Meetings. Texts is skipped when
+its engine is unavailable. Meetings shows a read-only list of Granola and
+Circleback transcripts and remains available before a source is configured.
+
 Navigation:
   ↑/k, ↓/j    Move up/down
   PgUp/PgDn   Page up/down
   Enter       Drill down / view message
   Esc         Go back
-  Tab         Switch view (aggregates only)
+  m           Cycle Email / Texts / Meetings
+  g           Cycle aggregate view (Email and Texts)
+  /           Search; find within an open meeting transcript
+  A           Filter by account, or meeting source in Meetings mode
   s           Cycle sort field
   r           Reverse sort direction
   t           Toggle time granularity (Time view only)
 
-Selection & Deletion:
+Email selection:
   Space       Toggle selection
-  A           Select all visible
   x           Clear selection
-  D           Stage selected for deletion
-  q           Quit
+  d           Stage selected messages for deletion
+
+Meeting browsing is read-only; selection and deletion keys are disabled.
+Press '?' in any mode for its complete key reference, or 'q' to quit.
 
 Performance:
-  For large archives (100k+ messages), the TUI uses Parquet files for fast
-  aggregation queries. Run 'msgvault build-cache' to generate them.
-  Use --force-sql to bypass Parquet and query SQLite directly (slow).
+  The TUI talks to the msgvault HTTP API. Local runs use the daemon, which owns
+  database access and server-side cache selection. Run 'msgvault build-cache'
+  on the daemon host to prebuild analytics cache files for large archives.
 
-Remote Mode:
-  When [remote].url is configured, the TUI connects to a remote msgvault server.
-  Use --local to force local database. Deletion and export are disabled in remote mode.`,
+HTTP Mode:
+  When [remote].url is configured, the TUI connects to that remote server.
+  Otherwise it starts or reuses the local daemon. Use --local to force the local
+  daemon when a remote is configured.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		var engine query.Engine
-		var isRemote bool
-
-		// Check for remote mode (unless --local flag is set)
-		if cfg.Remote.URL != "" && !forceLocalTUI {
-			// Remote mode - connect to remote msgvault server
-			remoteCfg := remote.Config{
-				URL:           cfg.Remote.URL,
-				APIKey:        cfg.Remote.APIKey,
-				AllowInsecure: cfg.Remote.AllowInsecure,
-			}
-			remoteEngine, err := remote.NewEngine(remoteCfg)
-			if err != nil {
-				return fmt.Errorf("connect to remote: %w", err)
-			}
-			defer func() { _ = remoteEngine.Close() }()
-			engine = remoteEngine
-			isRemote = true
+		backend, err := openTUIBackend(cmd.Context())
+		if err != nil {
+			return err
+		}
+		defer backend.cleanup()
+		if backend.info.Kind == HTTPStoreConfiguredRemote {
 			fmt.Printf("Connected to remote: %s\n", cfg.Remote.URL)
-		} else {
-			// Local mode - use local database
-			dbPath := cfg.DatabaseDSN()
-			s, err := store.Open(dbPath)
-			if err != nil {
-				return fmt.Errorf("open database: %w", err)
-			}
-			defer func() { _ = s.Close() }()
-
-			// Ensure schema is up to date
-			if err := s.InitSchema(); err != nil {
-				return fmt.Errorf("init schema: %w", err)
-			}
-			if err := runStartupMigrations(s); err != nil {
-				return fmt.Errorf("startup migrations: %w", err)
-			}
-
-			// Build FTS index in background — TUI uses DuckDB/Parquet for
-			// aggregates and only needs FTS for deep search (Tab to switch).
-			if s.NeedsFTSBackfill() {
-				go func() {
-					_, _ = s.BackfillFTS(nil)
-				}()
-			}
-
-			analyticsDir := cfg.AnalyticsDir()
-
-			// The Parquet analytics cache is a SQLite → DuckDB ETL and
-			// has no meaning when the system of record is PostgreSQL —
-			// buildCache feeds the DSN to the SQLite driver and
-			// cacheNeedsBuild dispatches ? placeholders that pgx
-			// rejects. On PG, skip the entire cache pipeline and go
-			// straight to the dialect-aware query engine.
-			if s.IsPostgreSQL() {
-				engine = query.NewEngine(s.DB(), true)
-			} else {
-				// Check if cache needs to be built/updated (unless forcing SQL or skipping)
-				if !forceSQL && !skipCacheBuild {
-					staleness := cacheNeedsBuild(dbPath, analyticsDir)
-					if staleness.NeedsBuild {
-						fmt.Printf("Building analytics cache (%s)...\n", staleness.Reason)
-						result, err := buildCache(dbPath, analyticsDir, staleness.FullRebuild)
-						if err != nil {
-							fmt.Fprintf(os.Stderr, "Warning: Failed to build cache: %v\n", err)
-							fmt.Fprintf(os.Stderr, "Falling back to SQLite (may be slow for large archives)\n")
-						} else if !result.Skipped {
-							fmt.Printf("Cached %d messages for fast queries.\n", result.ExportedCount)
-						}
-					}
-				}
-
-				// Determine query engine to use
-				if !forceSQL && query.HasCompleteParquetData(analyticsDir) {
-					// Use DuckDB for fast Parquet queries
-					var duckOpts query.DuckDBOptions
-					if noSQLiteScanner {
-						duckOpts.DisableSQLiteScanner = true
-					}
-					duckEngine, err := query.NewDuckDBEngine(analyticsDir, dbPath, s.DB(), duckOpts)
-					if err != nil {
-						fmt.Fprintf(os.Stderr, "Warning: Failed to open Parquet engine: %v\n", err)
-						fmt.Fprintf(os.Stderr, "Falling back to SQLite (may be slow for large archives)\n")
-						engine = query.NewEngine(s.DB(), false)
-					} else {
-						engine = duckEngine
-						defer func() { _ = duckEngine.Close() }()
-					}
-				} else {
-					// Use SQLite directly
-					if !forceSQL {
-						fmt.Fprintf(os.Stderr, "Note: No cache data available, using SQLite (slow for large archives)\n")
-						fmt.Fprintf(os.Stderr, "Run 'msgvault build-cache' to enable fast queries.\n")
-					}
-					engine = query.NewEngine(s.DB(), false)
-				}
-			}
 		}
 
 		// Check if engine supports text queries
 		var textEngine query.TextEngine
-		if te, ok := engine.(query.TextEngine); ok {
+		if te, ok := backend.engine.(query.TextEngine); ok {
 			textEngine = te
 		}
 
+		notice := analyticsCacheNotice(cmd.Context(), backend.client)
+		if notice != "" {
+			fmt.Println(notice)
+		}
+
 		// Create and run TUI
-		model := tui.New(engine, tui.Options{
-			DataDir:    cfg.Data.DataDir,
-			Version:    Version,
-			IsRemote:   isRemote,
-			TextEngine: textEngine,
+		model := tui.New(backend.engine, tui.Options{
+			DataDir:          cfg.Data.DataDir,
+			Version:          Version,
+			TextEngine:       textEngine,
+			ManifestSaver:    backend.client,
+			AttachmentReader: tuiAttachmentOpener{client: backend.client},
+			AnalyticsNotice:  notice,
 		})
-		p := tea.NewProgram(model, tea.WithAltScreen())
+		p := tea.NewProgram(model)
 
 		// Swap the slog default to a file-only logger for the
 		// duration of the TUI. Bubble Tea owns the terminal in
@@ -191,207 +119,69 @@ Remote Mode:
 	},
 }
 
-// cacheStaleness describes why the analytics cache needs a rebuild.
-type cacheStaleness struct {
-	NeedsBuild  bool
-	HasNew      bool // new messages since last build
-	HasDeleted  bool // deletions since last build
-	HasUpdated  bool // existing messages mutated since last build
-	FullRebuild bool // must rewrite all shards (not incremental)
-	Reason      string
+type tuiAttachmentOpener struct {
+	client *daemonclient.Client
 }
 
-// cacheNeedsBuild checks if the analytics cache needs to be built or
-// updated. Collects all staleness signals before returning so that
-// e.g. a mixed add+delete sync correctly reports both.
-//
-// The Parquet cache is a SQLite-only ETL — when dbPath points at a
-// PostgreSQL DSN, this returns "no build needed" rather than dispatching
-// SQLite-shaped queries against pgx (which would fail on the ?
-// placeholders and the sqlite_master probe).
-func cacheNeedsBuild(dbPath, analyticsDir string) cacheStaleness {
-	if store.IsPostgresURL(dbPath) {
-		return cacheStaleness{}
+func (o tuiAttachmentOpener) OpenAttachment(ctx context.Context, contentHash string) (io.ReadCloser, error) {
+	return o.client.OpenCLIAttachment(ctx, contentHash)
+}
+
+type tuiBackend struct {
+	engine  query.Engine
+	client  *daemonclient.Client
+	info    HTTPStoreInfo
+	cleanup func()
+}
+
+// analyticsCacheNotice asks the daemon which analytics engine it actually
+// selected at startup (GET /health, no cache scans or archive access) and
+// warns when aggregate views run live SQL only because no usable cache
+// existed then. Deliberate live SQL (engine = "sql", PostgreSQL) reports a
+// different mode and stays silent, as do daemons predating the field. The
+// mode is fixed for the daemon's lifetime, so the notice stays accurate —
+// and keeps firing — after a cache build until the daemon restarts.
+// Best-effort: errors return an empty notice rather than blocking launch.
+func analyticsCacheNotice(ctx context.Context, client *daemonclient.Client) string {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	health, err := client.GetHealth(ctx)
+	if err != nil || health.AnalyticsEngine != api.AnalyticsModeSQLFallback {
+		return ""
 	}
-	messagesDir := filepath.Join(analyticsDir, tableMessages)
-	stateFile := filepath.Join(analyticsDir, "_last_sync.json")
+	return "Aggregate views are using live SQL because the daemon started without a usable analytics cache; they may load slowly. Run 'msgvault build-cache', then restart the daemon."
+}
 
-	hasParquetData := query.HasParquetData(analyticsDir)
+func openTUIBackend(ctx context.Context) (*tuiBackend, error) {
+	if forceLocalTUI {
+		previousUseLocal := useLocal
+		useLocal = true
+		defer func() { useLocal = previousUseLocal }()
+	}
 
-	// Load last sync state
-	data, err := os.ReadFile(stateFile)
+	st, info, err := OpenHTTPStore(ctx)
 	if err != nil {
-		if !hasParquetData {
-			return cacheStaleness{
-				NeedsBuild: true, FullRebuild: true,
-				Reason: "no cache exists",
-			}
-		}
-		return cacheStaleness{
-			NeedsBuild: true, FullRebuild: true,
-			Reason: "no sync state found",
-		}
+		return nil, err
 	}
-
-	var state syncState
-	if err := json.Unmarshal(data, &state); err != nil {
-		return cacheStaleness{
-			NeedsBuild: true, FullRebuild: true,
-			Reason: "invalid sync state",
-		}
-	}
-
-	db, err := store.Open(dbPath)
-	if err != nil {
-		return cacheStaleness{
-			NeedsBuild: true, FullRebuild: true,
-			Reason: "cannot verify cache status",
-		}
-	}
-	defer func() { _ = db.Close() }()
-
-	var maxID int64
-	err = db.DB().QueryRow(`
-		SELECT COALESCE(MAX(id), 0) FROM messages
-		WHERE deleted_from_source_at IS NULL AND sent_at IS NOT NULL
-	`).Scan(&maxID)
-	if err != nil {
-		return cacheStaleness{
-			NeedsBuild: true, FullRebuild: true,
-			Reason: "cannot verify cache status",
-		}
-	}
-
-	if maxID == 0 && state.LastMessageID == 0 {
-		return cacheStaleness{}
-	}
-
-	if !hasParquetData {
-		return cacheStaleness{
-			NeedsBuild: true, FullRebuild: true,
-			Reason: "no cache exists",
-		}
-	}
-
-	// Collect staleness signals without short-circuiting so a mixed
-	// add+delete sync correctly triggers a full rebuild.
-	var reasons []string
-	result := cacheStaleness{}
-
-	if maxID > state.LastMessageID {
-		newCount := maxID - state.LastMessageID
-		result.HasNew = true
-		reasons = append(reasons,
-			fmt.Sprintf("%d new messages", newCount))
-	}
-
-	syncAtStr := state.LastSyncAt.UTC().Format("2006-01-02 15:04:05")
-	var deletedSinceBuild int64
-	err = db.DB().QueryRow(`
-		SELECT COUNT(*) FROM messages
-		WHERE deleted_from_source_at IS NOT NULL
-		  AND deleted_from_source_at >= ?
-	`, syncAtStr).Scan(&deletedSinceBuild)
-	if err != nil {
-		return cacheStaleness{
-			NeedsBuild: true, FullRebuild: true,
-			Reason: "cannot verify deletion state",
-		}
-	}
-	if deletedSinceBuild > 0 {
-		result.HasDeleted = true
-		result.FullRebuild = true
-		reasons = append(reasons,
-			fmt.Sprintf("%d deletions", deletedSinceBuild))
-	}
-
-	// Dedup-hidden rows (deleted_at) are excluded from the messages
-	// Parquet export, so a dedup run after the last cache build leaves
-	// stale duplicate rows in the cache. Detect that by counting hides
-	// since LastSyncAt and force a full rebuild if any are present.
-	// The deleted_from_source_at IS NULL clause keeps the count
-	// disjoint from the deletedSinceBuild count above so a row that is
-	// both source-deleted and dedup-hidden after LastSyncAt is reported
-	// once (as a deletion), not double-counted in the reason string.
-	var hiddenSinceBuild int64
-	err = db.DB().QueryRow(`
-		SELECT COUNT(*) FROM messages
-		WHERE deleted_at IS NOT NULL
-		  AND deleted_at >= ?
-		  AND deleted_from_source_at IS NULL
-	`, syncAtStr).Scan(&hiddenSinceBuild)
-	if err != nil {
-		return cacheStaleness{
-			NeedsBuild: true, FullRebuild: true,
-			Reason: "cannot verify dedup state",
-		}
-	}
-	if hiddenSinceBuild > 0 {
-		result.HasDeleted = true
-		result.FullRebuild = true
-		reasons = append(reasons,
-			fmt.Sprintf("%d dedup-hidden", hiddenSinceBuild))
-	}
-
-	var hasSyncRunsTable int
-	err = db.DB().QueryRow(`
-		SELECT COUNT(*) FROM sqlite_master
-		WHERE type = 'table' AND name = 'sync_runs'
-	`).Scan(&hasSyncRunsTable)
-	if err != nil {
-		return cacheStaleness{
-			NeedsBuild: true, FullRebuild: true,
-			Reason: "cannot verify sync history",
-		}
-	}
-	if hasSyncRunsTable > 0 {
-		var updatedSinceBuild int64
-		err = db.DB().QueryRow(`
-			SELECT COALESCE(SUM(messages_updated), 0) FROM sync_runs
-			WHERE status = 'completed'
-			  AND completed_at IS NOT NULL
-			  AND id > ?
-		`, state.LastCompletedSyncRunID).Scan(&updatedSinceBuild)
-		if err != nil {
-			return cacheStaleness{
-				NeedsBuild: true, FullRebuild: true,
-				Reason: "cannot verify sync history",
-			}
-		}
-		if updatedSinceBuild > 0 {
-			result.HasUpdated = true
-			result.FullRebuild = true
-			reasons = append(reasons,
-				fmt.Sprintf("%d updated messages", updatedSinceBuild))
-		}
-	}
-
-	// Check if parquet files actually exist (directory might be empty)
-	files, _ := filepath.Glob(
-		filepath.Join(messagesDir, "*", "*.parquet"))
-	if len(files) == 0 {
-		result.FullRebuild = true
-		reasons = append(reasons, "cache directory empty")
-	}
-
-	if missingRequiredParquet(analyticsDir) {
-		result.FullRebuild = true
-		reasons = append(reasons, "cache missing required tables")
-	}
-
-	if len(reasons) > 0 {
-		result.NeedsBuild = true
-		result.Reason = strings.Join(reasons, "; ")
-	}
-
-	return result
+	engine := daemonclient.NewEngineAdapter(st)
+	return &tuiBackend{
+		engine:  engine,
+		client:  st,
+		info:    info,
+		cleanup: func() { _ = engine.Close() },
+	}, nil
 }
 
 func init() {
 	rootCmd.AddCommand(tuiCmd)
-	tuiCmd.Flags().BoolVar(&forceSQL, "force-sql", false, "Force SQLite queries instead of Parquet (slow for large archives)")
-	tuiCmd.Flags().BoolVar(&skipCacheBuild, "no-cache-build", false, "Skip automatic cache build/update")
-	tuiCmd.Flags().BoolVar(&noSQLiteScanner, "no-sqlite-scanner", false, "Disable DuckDB sqlite_scanner extension (use direct SQLite fallback)")
-	tuiCmd.Flags().BoolVar(&forceLocalTUI, "local", false, "Force local database (override remote config)")
+	tuiCmd.Flags().BoolVar(&forceLocalTUI, "local", false, "Use the local daemon instead of the configured remote server")
+	tuiCmd.Flags().BoolVar(&deprecatedTUIForceSQL, "force-sql", false, "Deprecated in 0.17.0: set [analytics].engine = \"sql\" in config.toml")
+	tuiCmd.Flags().BoolVar(&deprecatedTUISkipCacheBuild, "no-cache-build", false, "Deprecated in 0.17.0: set [analytics].auto_build_cache = false in config.toml")
+	tuiCmd.Flags().BoolVar(&deprecatedTUINoSQLiteScanner, "no-sqlite-scanner", false, "Deprecated in 0.17.0: cache engine selection is daemon-managed")
+	_ = tuiCmd.Flags().MarkDeprecated("force-sql", "deprecated in 0.17.0; set [analytics].engine = \"sql\" in config.toml")
+	_ = tuiCmd.Flags().MarkDeprecated("no-cache-build", "deprecated in 0.17.0; set [analytics].auto_build_cache = false in config.toml")
+	_ = tuiCmd.Flags().MarkDeprecated("no-sqlite-scanner", "deprecated in 0.17.0; cache engine selection is daemon-managed; use [analytics].engine = \"sql\" for live SQL")
+	_ = tuiCmd.Flags().MarkHidden("force-sql")
+	_ = tuiCmd.Flags().MarkHidden("no-cache-build")
 	_ = tuiCmd.Flags().MarkHidden("no-sqlite-scanner")
 }

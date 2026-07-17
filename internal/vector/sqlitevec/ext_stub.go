@@ -32,10 +32,12 @@ func Available() bool { return false }
 // can reference sqlitevec.Options without a compile error; the struct is
 // never populated at runtime when the PG code path is taken.
 type Options struct {
-	Path      string
-	MainPath  string
-	Dimension int
-	MainDB    *sql.DB
+	Path       string
+	MainPath   string
+	Dimension  int
+	MainDB     *sql.DB
+	BuildScope vector.BuildScope
+	ReadOnly   bool
 }
 
 // Backend is the stub backend type for builds without sqlite_vec.
@@ -106,12 +108,22 @@ func (b *Backend) Stats(_ context.Context, _ vector.GenerationID) (vector.Stats,
 	return vector.Stats{}, ErrNotBuilt
 }
 
-// EnsureSeeded is a stub that always returns ErrNotBuilt.
-func (b *Backend) EnsureSeeded(_ context.Context, _ vector.GenerationID) error {
+// LoadVector is a stub that always returns ErrNotBuilt.
+func (b *Backend) LoadVector(_ context.Context, _ int64) ([]float32, error) {
+	return nil, ErrNotBuilt
+}
+
+// ResetWatermarkBelow is a stub that always returns ErrNotBuilt.
+func (b *Backend) ResetWatermarkBelow(_ context.Context, _ int64) error {
 	return ErrNotBuilt
 }
 
-// LoadVector is a stub that always returns ErrNotBuilt.
-func (b *Backend) LoadVector(_ context.Context, _ int64) ([]float32, error) {
+// EmbeddedMessageCount is a stub that always returns ErrNotBuilt.
+func (b *Backend) EmbeddedMessageCount(_ context.Context, _ vector.GenerationID) (int64, error) {
+	return 0, ErrNotBuilt
+}
+
+// ScoreMessageChunks is a stub that always returns ErrNotBuilt.
+func (b *Backend) ScoreMessageChunks(_ context.Context, _ vector.GenerationID, _ int64, _ []float32) ([]vector.ChunkHit, error) {
 	return nil, ErrNotBuilt
 }

@@ -7,8 +7,8 @@ import (
 	"testing"
 
 	_ "github.com/mattn/go-sqlite3"
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // createTestAccountsDB creates a temporary Accounts4.sqlite with the
@@ -18,7 +18,7 @@ func createTestAccountsDB(t *testing.T, accounts []testAccount) string {
 
 	dbPath := filepath.Join(t.TempDir(), "Accounts4.sqlite")
 	db, err := sql.Open("sqlite3", dbPath)
-	requirepkg.NoError(t, err, "create test db")
+	require.NoError(t, err, "create test db")
 	defer func() { _ = db.Close() }()
 
 	_, err = db.Exec(`
@@ -30,7 +30,7 @@ func createTestAccountsDB(t *testing.T, accounts []testAccount) string {
 			ZPARENTACCOUNT INTEGER
 		)
 	`)
-	requirepkg.NoError(t, err, "create schema")
+	require.NoError(t, err, "create schema")
 
 	for _, a := range accounts {
 		_, err := db.Exec(
@@ -38,7 +38,7 @@ func createTestAccountsDB(t *testing.T, accounts []testAccount) string {
 			 VALUES (?, ?, ?, ?, ?)`,
 			a.pk, a.identifier, a.username, a.description, a.parentAccount,
 		)
-		requirepkg.NoError(t, err, "insert account")
+		require.NoError(t, err, "insert account")
 	}
 
 	return dbPath
@@ -54,7 +54,7 @@ type testAccount struct {
 
 func mustMkdirAll(t *testing.T, path string) {
 	t.Helper()
-	requirepkg.NoError(t, os.MkdirAll(path, 0o755), "mkdir %q", path)
+	require.NoError(t, os.MkdirAll(path, 0o755), "mkdir %q", path)
 }
 
 func TestResolveAccounts(t *testing.T) {
@@ -167,9 +167,9 @@ func TestResolveAccounts(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert := assertpkg.New(t)
+			assert := assert.New(t)
 			result, err := ResolveAccounts(dbPath, tt.guids)
-			requirepkg.NoError(t, err, "ResolveAccounts")
+			require.NoError(t, err, "ResolveAccounts")
 
 			assert.Len(result, tt.wantLen)
 
@@ -199,7 +199,7 @@ func TestResolveAccounts(t *testing.T) {
 
 func TestResolveAccounts_BadPath(t *testing.T) {
 	_, err := ResolveAccounts("/nonexistent/path/Accounts4.sqlite", []string{"some-guid"})
-	requirepkg.Error(t, err, "expected error for bad DB path")
+	require.Error(t, err, "expected error for bad DB path")
 }
 
 func TestAccountInfo_Identifier(t *testing.T) {
@@ -222,14 +222,14 @@ func TestAccountInfo_Identifier(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assertpkg.Equal(t, tt.want, tt.info.Identifier())
+			assert.Equal(t, tt.want, tt.info.Identifier())
 		})
 	}
 }
 
 func TestDiscoverV10Accounts(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	// Create a fake Mail directory with V10 layout.
 	mailDir := t.TempDir()
 	v10Dir := filepath.Join(mailDir, "V10")
@@ -342,9 +342,9 @@ func TestFindV10GUIDs(t *testing.T) {
 			tt.setup(t, mailDir)
 
 			guids, err := findV10GUIDs(mailDir)
-			requirepkg.NoError(t, err, "findV10GUIDs")
+			require.NoError(t, err, "findV10GUIDs")
 
-			assertpkg.ElementsMatch(t, tt.wantGUIDs, guids)
+			assert.ElementsMatch(t, tt.wantGUIDs, guids)
 		})
 	}
 }
@@ -354,7 +354,7 @@ func writeTestEmlx(t *testing.T, dir, name string) {
 	t.Helper()
 	mustMkdirAll(t, dir)
 	path := filepath.Join(dir, name)
-	requirepkg.NoError(t, os.WriteFile(path, []byte("10\nFrom: x\r\n\r\n"), 0o600), "write %q", path)
+	require.NoError(t, os.WriteFile(path, []byte("10\nFrom: x\r\n\r\n"), 0o600), "write %q", path)
 }
 
 func TestV10AccountDir_PrefersPopulated(t *testing.T) {
@@ -371,10 +371,10 @@ func TestV10AccountDir_PrefersPopulated(t *testing.T) {
 	)
 
 	got, err := V10AccountDir(mailDir, guid)
-	requirepkg.NoError(t, err, "V10AccountDir")
+	require.NoError(t, err, "V10AccountDir")
 
 	want := filepath.Join(mailDir, "V9", guid)
-	assertpkg.Equal(t, want, got, "should prefer populated V9 over empty V10")
+	assert.Equal(t, want, got, "should prefer populated V9 over empty V10")
 }
 
 func TestV10AccountDir_NewestPopulatedWins(t *testing.T) {
@@ -392,8 +392,8 @@ func TestV10AccountDir_NewestPopulatedWins(t *testing.T) {
 	)
 
 	got, err := V10AccountDir(mailDir, guid)
-	requirepkg.NoError(t, err, "V10AccountDir")
+	require.NoError(t, err, "V10AccountDir")
 
 	want := filepath.Join(mailDir, "V10", guid)
-	assertpkg.Equal(t, want, got, "newest populated should win")
+	assert.Equal(t, want, got, "newest populated should win")
 }

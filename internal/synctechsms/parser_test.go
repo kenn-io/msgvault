@@ -5,13 +5,13 @@ import (
 	"testing"
 	"time"
 
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestParseSMSBackup(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	xml := `<smses count="2" backup_set="abc" backup_date="1717214400000">
   <sms protocol="0" address="+15551234567" date="1717214400123" type="1" subject="null" body="hello" toa="null" sc_toa="null" service_center="null" read="1" status="-1" readable_date="Jun 1, 2024 4:00:00 AM" contact_name="Alice" />
   <sms protocol="0" address="12345" date="1717214460000" type="2" subject="null" body="short code reply" toa="null" sc_toa="null" service_center="null" read="0" status="-1" readable_date="Jun 1, 2024 4:01:00 AM" contact_name="null" />
@@ -30,8 +30,8 @@ func TestParseSMSBackup(t *testing.T) {
 }
 
 func TestParseMMSBackupWithTextMediaAndRecipients(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	xml := `<smses count="1">
   <mms date="1717214520000" msg_box="1" read="1" m_id="mms-1" sub="Group subject" ct_t="application/vnd.wap.multipart.related" m_type="132" readable_date="Jun 1, 2024 4:02:00 AM" contact_name="Group">
     <parts>
@@ -61,8 +61,8 @@ func TestParseMMSBackupWithTextMediaAndRecipients(t *testing.T) {
 }
 
 func TestParseCallLog(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	xml := `<calls count="1" backup_set="abc" backup_date="1717218000000">
   <call number="+15551234567" duration="42" date="1717218000123" type="3" presentation="1" readable_date="Jun 1, 2024 5:00:00 AM" contact_name="Alice" />
 </calls>`
@@ -76,13 +76,13 @@ func TestParseCallLog(t *testing.T) {
 
 func TestParseRejectsUnsupportedRoot(t *testing.T) {
 	_, err := Parse(strings.NewReader(`<backup></backup>`))
-	requirepkg.Error(t, err, "Parse returned nil error for unsupported root")
-	assertpkg.ErrorContains(t, err, "unsupported SMS Backup & Restore XML root")
+	require.Error(t, err, "Parse returned nil error for unsupported root")
+	assert.ErrorContains(t, err, "unsupported SMS Backup & Restore XML root")
 }
 
 func TestParseRejectsInvalidBase64Part(t *testing.T) {
 	xml := `<smses count="1"><mms date="1" msg_box="1"><parts><part seq="0" ct="image/png" data="%%%"/></parts></mms></smses>`
 	_, err := Parse(strings.NewReader(xml))
-	requirepkg.Error(t, err, "Parse returned nil error for invalid base64")
-	assertpkg.ErrorContains(t, err, "decode MMS part data")
+	require.Error(t, err, "Parse returned nil error for invalid base64")
+	assert.ErrorContains(t, err, "decode MMS part data")
 }

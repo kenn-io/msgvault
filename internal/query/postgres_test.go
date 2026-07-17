@@ -3,8 +3,8 @@ package query
 import (
 	"testing"
 
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 var _ Engine = (*SQLiteEngine)(nil)
@@ -13,7 +13,7 @@ var _ Engine = (*DuckDBEngine)(nil)
 // TestPostgresEngineUsesDialect verifies that NewPostgreSQLEngine creates an engine
 // with the PostgreSQL query dialect (Rebind converts ? to $N).
 func TestPostgresEngineUsesDialect(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	e := NewPostgreSQLEngine(nil)
 	pe, ok := e.(*pgEngine)
 	require.True(ok, "NewPostgreSQLEngine returned %T, want *pgEngine", e)
@@ -33,10 +33,10 @@ func TestPostgresEngineUsesDialect(t *testing.T) {
 func TestPostgresEngineHidesTextEngine(t *testing.T) {
 	e := NewPostgreSQLEngine(nil)
 	_, ok := e.(TextEngine)
-	requirepkg.False(t, ok, "PostgreSQL engine must not satisfy TextEngine (SQLite-only FTS5/strftime SQL)")
+	require.False(t, ok, "PostgreSQL engine must not satisfy TextEngine (SQLite-only FTS5/strftime SQL)")
 	// Sanity: the SQLite engine must still satisfy TextEngine.
 	_, ok = any(NewSQLiteEngine(nil)).(TextEngine)
-	requirepkg.True(t, ok, "SQLite engine should satisfy TextEngine")
+	require.True(t, ok, "SQLite engine should satisfy TextEngine")
 }
 
 // TestPostgresTimeTruncExpression verifies the PostgreSQL time truncation expressions.
@@ -51,6 +51,6 @@ func TestPostgresTimeTruncExpression(t *testing.T) {
 		{"day", "to_char(col AT TIME ZONE 'UTC', 'YYYY-MM-DD')"},
 	} {
 		got := d.TimeTruncExpression("col", tc.gran)
-		assertpkg.Equal(t, tc.want, got, "TimeTruncExpression(%q, %q)", "col", tc.gran)
+		assert.Equal(t, tc.want, got, "TimeTruncExpression(%q, %q)", "col", tc.gran)
 	}
 }

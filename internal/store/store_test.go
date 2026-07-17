@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
@@ -20,15 +20,15 @@ func TestStore_Open(t *testing.T) {
 	st := testutil.NewTestStore(t)
 
 	// Store should be usable
-	assertpkg.NotNil(t, st.DB(), "DB() returned nil")
+	assert.NotNil(t, st.DB(), "DB() returned nil")
 }
 
 func TestStore_GetStats_Empty(t *testing.T) {
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
 
 	stats, err := st.GetStats()
-	requirepkg.NoError(t, err, "GetStats()")
+	require.NoError(t, err, "GetStats()")
 
 	assert.Equal(int64(0), stats.MessageCount, "MessageCount")
 	assert.Equal(int64(0), stats.ThreadCount, "ThreadCount")
@@ -36,8 +36,8 @@ func TestStore_GetStats_Empty(t *testing.T) {
 }
 
 func TestStore_Source_CreateAndGet(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
 
 	// Create source
@@ -56,8 +56,8 @@ func TestStore_Source_CreateAndGet(t *testing.T) {
 }
 
 func TestStore_Source_UpdateSyncCursor(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	f := storetest.New(t)
 
 	err := f.Store.UpdateSourceSyncCursor(f.Source.ID, "12345")
@@ -72,8 +72,8 @@ func TestStore_Source_UpdateSyncCursor(t *testing.T) {
 }
 
 func TestStore_Source_UpdateDisplayName(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	f := storetest.New(t)
 
 	err := f.Store.UpdateSourceDisplayName(f.Source.ID, "Work Account")
@@ -88,8 +88,8 @@ func TestStore_Source_UpdateDisplayName(t *testing.T) {
 }
 
 func TestStore_ListSources(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	f := storetest.New(t)
 
 	sources, err := f.Store.ListSources("")
@@ -101,8 +101,8 @@ func TestStore_ListSources(t *testing.T) {
 }
 
 func TestStore_SourceImportItems(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	f := storetest.New(t)
 	src, err := f.Store.GetOrCreateSource("synctech_sms", "+15550000001")
 	require.NoError(err, "GetOrCreateSource")
@@ -158,8 +158,8 @@ func TestStore_SourceImportItems(t *testing.T) {
 }
 
 func TestStore_Conversation(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	f := storetest.New(t)
 
 	// Create conversation
@@ -176,14 +176,14 @@ func TestStore_Conversation(t *testing.T) {
 }
 
 func TestStore_EnsureParticipantByIdentifierAllowsShortCode(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	f := storetest.New(t)
 	id, err := f.Store.EnsureParticipantByIdentifier("synctech_sms", "12345", "Bank alerts")
 	require.NoError(err, "EnsureParticipantByIdentifier")
 	require.NotZero(id, "participant id is zero")
 	id2, err := f.Store.EnsureParticipantByIdentifier("synctech_sms", "12345", "Bank alerts")
 	require.NoError(err, "EnsureParticipantByIdentifier second")
-	assertpkg.Equal(t, id, id2, "id2")
+	assert.Equal(t, id, id2, "id2")
 }
 
 func TestStore_UpsertMessage(t *testing.T) {
@@ -222,8 +222,8 @@ func TestStore_UpsertMessage(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			require := requirepkg.New(t)
-			assert := assertpkg.New(t)
+			require := require.New(t)
+			assert := assert.New(t)
 			f := storetest.New(t)
 			msg := tt.msg(f.Source.ID, f.ConvID)
 
@@ -255,7 +255,7 @@ func TestStore_UpsertMessage(t *testing.T) {
 }
 
 func TestStore_MessageExistsBatch(t *testing.T) {
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	f := storetest.New(t)
 
 	// Insert some messages
@@ -267,12 +267,37 @@ func TestStore_MessageExistsBatch(t *testing.T) {
 	// Check which exist
 	checkIDs := []string{"msg-1", "msg-2", "msg-4", "msg-5"}
 	existing, err := f.Store.MessageExistsBatch(f.Source.ID, checkIDs)
-	requirepkg.NoError(t, err, "MessageExistsBatch()")
+	require.NoError(t, err, "MessageExistsBatch()")
 
 	assert.Len(existing, 2)
 	assert.Contains(existing, "msg-1")
 	assert.Contains(existing, "msg-2")
 	assert.NotContains(existing, "msg-4")
+}
+
+func TestStore_MessageMetadataBatch(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := storetest.New(t)
+
+	withMetadataID := f.CreateMessage("with-metadata")
+	withoutMetadataID := f.CreateMessage("without-metadata")
+	require.NoError(f.Store.SetMessageMetadata(withMetadataID, sql.NullString{
+		String: `{"transcript_state":"pending"}`,
+		Valid:  true,
+	}))
+
+	got, err := f.Store.MessageMetadataBatch(f.Source.ID, []string{
+		"with-metadata", "without-metadata", "missing",
+	})
+	require.NoError(err)
+	require.Len(got, 2)
+	assert.Equal(withMetadataID, got["with-metadata"].ID)
+	assert.JSONEq(`{"transcript_state":"pending"}`, got["with-metadata"].Metadata.String)
+	assert.True(got["with-metadata"].Metadata.Valid)
+	assert.Equal(withoutMetadataID, got["without-metadata"].ID)
+	assert.False(got["without-metadata"].Metadata.Valid)
+	assert.NotContains(got, "missing")
 }
 
 func TestStore_MessageRaw(t *testing.T) {
@@ -282,13 +307,13 @@ func TestStore_MessageRaw(t *testing.T) {
 
 	// Store raw data
 	err := f.Store.UpsertMessageRaw(msgID, sampleRawMessage)
-	requirepkg.NoError(t, err, "UpsertMessageRaw()")
+	require.NoError(t, err, "UpsertMessageRaw()")
 
 	// Retrieve raw data
 	retrieved, err := f.Store.GetMessageRaw(msgID)
-	requirepkg.NoError(t, err, "GetMessageRaw()")
+	require.NoError(t, err, "GetMessageRaw()")
 
-	assertpkg.Equal(t, string(sampleRawMessage), string(retrieved), "retrieved data")
+	assert.Equal(t, string(sampleRawMessage), string(retrieved), "retrieved data")
 }
 
 func TestStore_Participant(t *testing.T) {
@@ -296,15 +321,15 @@ func TestStore_Participant(t *testing.T) {
 
 	// Create participant
 	pid := f.EnsureParticipant("alice@example.com", "Alice Smith", "example.com")
-	assertpkg.NotZero(t, pid, "participant ID should be non-zero")
+	assert.NotZero(t, pid, "participant ID should be non-zero")
 
 	// Get same participant (should return existing)
 	pid2 := f.EnsureParticipant("alice@example.com", "Alice", "example.com")
-	assertpkg.Equal(t, pid, pid2, "second call ID")
+	assert.Equal(t, pid, pid2, "second call ID")
 }
 
 func TestStore_EnsureParticipantsBatch(t *testing.T) {
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	f := storetest.New(t)
 
 	addresses := []mime.Address{
@@ -314,7 +339,7 @@ func TestStore_EnsureParticipantsBatch(t *testing.T) {
 	}
 
 	result, err := f.Store.EnsureParticipantsBatch(addresses)
-	requirepkg.NoError(t, err, "EnsureParticipantsBatch()")
+	require.NoError(t, err, "EnsureParticipantsBatch()")
 
 	assert.Len(result, 2)
 	assert.Contains(result, "alice@example.com")
@@ -322,8 +347,8 @@ func TestStore_EnsureParticipantsBatch(t *testing.T) {
 }
 
 func TestStore_Label(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	f := storetest.New(t)
 
 	// Create label
@@ -339,9 +364,53 @@ func TestStore_Label(t *testing.T) {
 	assert.Equal(lid, lid2, "second call ID")
 }
 
+func TestStore_EnsureLabelUpdatesTypeWhenNameUnchanged(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := storetest.New(t)
+
+	lid, err := f.Store.EnsureLabel(f.Source.ID, "Sent Messages", "Sent Messages", "user")
+	require.NoError(err, "create stale sent label")
+
+	lid2, err := f.Store.EnsureLabel(f.Source.ID, "Sent Messages", "Sent Messages", "system")
+	require.NoError(err, "refresh sent label type")
+
+	assert.Equal(lid, lid2, "label ID")
+
+	var labelType string
+	err = f.Store.DB().QueryRow(
+		f.Store.Rebind(`SELECT label_type FROM labels WHERE id = ?`), lid,
+	).Scan(&labelType)
+	require.NoError(err, "select label type")
+	assert.Equal("system", labelType, "label type")
+}
+
+func TestStore_EnsureLabelUpdatesNullTypeWhenNameUnchanged(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := storetest.New(t)
+
+	lid, err := f.Store.EnsureLabel(f.Source.ID, "Sent Messages", "Sent Messages", "user")
+	require.NoError(err, "create stale sent label")
+	_, err = f.Store.DB().Exec(f.Store.Rebind(`UPDATE labels SET label_type = NULL WHERE id = ?`), lid)
+	require.NoError(err, "clear label type")
+
+	lid2, err := f.Store.EnsureLabel(f.Source.ID, "Sent Messages", "Sent Messages", "system")
+	require.NoError(err, "refresh sent label type")
+
+	assert.Equal(lid, lid2, "label ID")
+
+	var labelType string
+	err = f.Store.DB().QueryRow(
+		f.Store.Rebind(`SELECT label_type FROM labels WHERE id = ?`), lid,
+	).Scan(&labelType)
+	require.NoError(err, "select label type")
+	assert.Equal("system", labelType, "label type")
+}
+
 func TestStore_EnsureLabel_NameConflict(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	f := storetest.New(t)
 
 	// Create label L1 with name "Work"
@@ -366,13 +435,13 @@ func TestStore_EnsureLabel_Rename(t *testing.T) {
 
 	// Create label L1 with name "OldName"
 	lid, err := f.Store.EnsureLabel(f.Source.ID, "L1", "OldName", "user")
-	requirepkg.NoError(t, err, "create L1")
+	require.NoError(t, err, "create L1")
 
 	// Same source_label_id, different name (label was renamed in Gmail)
 	lid2, err := f.Store.EnsureLabel(f.Source.ID, "L1", "NewName", "user")
-	requirepkg.NoError(t, err, "rename L1")
+	require.NoError(t, err, "rename L1")
 
-	assertpkg.Equal(t, lid, lid2, "renamed label ID")
+	assert.Equal(t, lid, lid2, "renamed label ID")
 }
 
 func TestStore_EnsureLabel_RenameAndReuse(t *testing.T) {
@@ -380,19 +449,19 @@ func TestStore_EnsureLabel_RenameAndReuse(t *testing.T) {
 
 	// Scenario: L1 named "Foo" is renamed to "Bar", then L2 takes "Foo".
 	_, err := f.Store.EnsureLabel(f.Source.ID, "L1", "Foo", "user")
-	requirepkg.NoError(t, err, "create L1=Foo")
+	require.NoError(t, err, "create L1=Foo")
 
 	// L1 renamed to "Bar" — should update name in place
 	_, err = f.Store.EnsureLabel(f.Source.ID, "L1", "Bar", "user")
-	requirepkg.NoError(t, err, "rename L1=Bar")
+	require.NoError(t, err, "rename L1=Bar")
 
 	// New label L2 takes the old name "Foo" — should succeed
 	_, err = f.Store.EnsureLabel(f.Source.ID, "L2", "Foo", "user")
-	requirepkg.NoError(t, err, "create L2=Foo")
+	require.NoError(t, err, "create L2=Foo")
 }
 
 func TestStore_EnsureLabel_RenameSwap(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	f := storetest.New(t)
 
 	// L1="Foo" exists, and L1 is renamed to the name of an existing
@@ -413,7 +482,7 @@ func TestStore_EnsureLabel_RenameSwap(t *testing.T) {
 	lid1After, err := f.Store.EnsureLabel(f.Source.ID, "L1", "Bar", "user")
 	require.NoError(err, "rename L1=Bar (was L2's name)")
 
-	assertpkg.Equal(t, lid1, lid1After, "L1 ID")
+	assert.Equal(t, lid1, lid1After, "L1 ID")
 
 	// Message should now be associated with L1 (not the deleted L2)
 	f.AssertLabelCount(msgID, 1)
@@ -430,17 +499,17 @@ func TestStore_EnsureLabelsBatch(t *testing.T) {
 	}
 
 	result, err := f.Store.EnsureLabelsBatch(f.Source.ID, labels)
-	requirepkg.NoError(t, err, "EnsureLabelsBatch()")
+	require.NoError(t, err, "EnsureLabelsBatch()")
 
-	assertpkg.Len(t, result, 3)
+	assert.Len(t, result, 3)
 	for sourceLabelID := range labels {
-		assertpkg.Contains(t, result, sourceLabelID, "%s should be in result", sourceLabelID)
+		assert.Contains(t, result, sourceLabelID, "%s should be in result", sourceLabelID)
 	}
 }
 
 func TestStore_EnsureLabelsBatch_CrossRename(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	f := storetest.New(t)
 
 	// Initial state: L1="Foo", L2="Bar"
@@ -493,19 +562,19 @@ func TestStore_MessageLabels(t *testing.T) {
 
 	// Set labels
 	err := f.Store.ReplaceMessageLabels(msgID, []int64{labels["INBOX"], labels["STARRED"]})
-	requirepkg.NoError(t, err, "ReplaceMessageLabels()")
+	require.NoError(t, err, "ReplaceMessageLabels()")
 
 	f.AssertLabelCount(msgID, 2)
 
 	// Replace with different labels
 	err = f.Store.ReplaceMessageLabels(msgID, []int64{labels["SENT"]})
-	requirepkg.NoError(t, err, "ReplaceMessageLabels() replace")
+	require.NoError(t, err, "ReplaceMessageLabels() replace")
 
 	f.AssertLabelCount(msgID, 1)
 
 	// Verify it's the right label
 	labelID := f.GetSingleLabelID(msgID)
-	assertpkg.Equal(t, labels["SENT"], labelID, "label_id (SENT)")
+	assert.Equal(t, labels["SENT"], labelID, "label_id (SENT)")
 }
 
 func TestStore_MessageRecipients(t *testing.T) {
@@ -518,19 +587,19 @@ func TestStore_MessageRecipients(t *testing.T) {
 
 	// Set recipients
 	err := f.Store.ReplaceMessageRecipients(msgID, "to", []int64{pid1, pid2}, []string{"Alice", "Bob"})
-	requirepkg.NoError(t, err, "ReplaceMessageRecipients()")
+	require.NoError(t, err, "ReplaceMessageRecipients()")
 
 	f.AssertRecipientCount(msgID, "to", 2)
 
 	// Replace recipients
 	err = f.Store.ReplaceMessageRecipients(msgID, "to", []int64{pid1}, []string{"Alice"})
-	requirepkg.NoError(t, err, "ReplaceMessageRecipients() replace")
+	require.NoError(t, err, "ReplaceMessageRecipients() replace")
 
 	f.AssertRecipientCount(msgID, "to", 1)
 
 	// Verify it's the right recipient
 	participantID := f.GetSingleRecipientID(msgID, "to")
-	assertpkg.Equal(t, pid1, participantID, "participant_id (alice)")
+	assert.Equal(t, pid1, participantID, "participant_id (alice)")
 }
 
 func TestStore_MarkMessageDeleted(t *testing.T) {
@@ -541,13 +610,13 @@ func TestStore_MarkMessageDeleted(t *testing.T) {
 	f.AssertMessageNotDeleted(msgID)
 
 	err := f.Store.MarkMessageDeleted(f.Source.ID, "msg-1")
-	requirepkg.NoError(t, err, "MarkMessageDeleted()")
+	require.NoError(t, err, "MarkMessageDeleted()")
 
 	f.AssertMessageDeleted(msgID)
 }
 
 func TestStore_Attachment(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	f := storetest.New(t)
 
 	msgID := storetest.NewMessage(f.Source.ID, f.ConvID).
@@ -564,7 +633,7 @@ func TestStore_Attachment(t *testing.T) {
 
 	stats, err := f.Store.GetStats()
 	require.NoError(err, "GetStats")
-	assertpkg.Equal(t, int64(1), stats.AttachmentCount, "AttachmentCount")
+	assert.Equal(t, int64(1), stats.AttachmentCount, "AttachmentCount")
 }
 
 func TestStore_SyncRun(t *testing.T) {
@@ -588,17 +657,17 @@ func TestStore_SyncCheckpoint(t *testing.T) {
 	}
 
 	err := f.Store.UpdateSyncCheckpoint(syncID, cp)
-	requirepkg.NoError(t, err, "UpdateSyncCheckpoint()")
+	require.NoError(t, err, "UpdateSyncCheckpoint()")
 
 	// Verify checkpoint was saved
 	f.AssertActiveSync(syncID, "running")
 	active, err := f.Store.GetActiveSync(f.Source.ID)
-	requirepkg.NoError(t, err, "GetActiveSync")
-	assertpkg.Equal(t, int64(100), active.MessagesProcessed, "sync MessagesProcessed")
+	require.NoError(t, err, "GetActiveSync")
+	assert.Equal(t, int64(100), active.MessagesProcessed, "sync MessagesProcessed")
 }
 
 func TestStore_SyncComplete(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	f := storetest.New(t)
 
 	syncID := f.StartSync()
@@ -612,7 +681,7 @@ func TestStore_SyncComplete(t *testing.T) {
 	lastSync, err := f.Store.GetLastSuccessfulSync(f.Source.ID)
 	require.NoError(err, "GetLastSuccessfulSync()")
 	require.NotNil(lastSync, "expected last successful sync, got nil")
-	assertpkg.Equal(t, "completed", lastSync.Status, "status")
+	assert.Equal(t, "completed", lastSync.Status, "status")
 }
 
 func TestStore_SyncFail(t *testing.T) {
@@ -621,14 +690,14 @@ func TestStore_SyncFail(t *testing.T) {
 	syncID := f.StartSync()
 
 	err := f.Store.FailSync(syncID, "network error")
-	requirepkg.NoError(t, err, "FailSync()")
+	require.NoError(t, err, "FailSync()")
 
 	f.AssertNoActiveSync()
 
 	// Verify sync status is "failed" and error message is stored
 	status, errorMsg := f.GetSyncRun(syncID)
-	assertpkg.Equal(t, "failed", status, "sync status")
-	assertpkg.Equal(t, "network error", errorMsg, "error_message")
+	assert.Equal(t, "failed", status, "sync status")
+	assert.Equal(t, "network error", errorMsg, "error_message")
 }
 
 func TestStore_GetMessage_DeletedMessageVisibleByID(t *testing.T) {
@@ -640,11 +709,11 @@ func TestStore_GetMessage_DeletedMessageVisibleByID(t *testing.T) {
 		time.Date(2026, 3, 18, 14, 30, 0, 0, time.UTC),
 		msgID,
 	)
-	requirepkg.NoError(t, err, "mark deleted")
+	require.NoError(t, err, "mark deleted")
 
 	msg, err := f.Store.GetMessage(msgID)
-	requirepkg.NoError(t, err, "GetMessage()")
-	requirepkg.NotNil(t, msg, "GetMessage() = nil, want deleted message")
+	require.NoError(t, err, "GetMessage()")
+	require.NotNil(t, msg, "GetMessage() = nil, want deleted message")
 }
 
 func TestStore_MarkMessageDeletedByGmailID(t *testing.T) {
@@ -654,19 +723,19 @@ func TestStore_MarkMessageDeletedByGmailID(t *testing.T) {
 
 	// Mark as deleted (trash)
 	err := f.Store.MarkMessageDeletedByGmailID(false, "gmail-msg-123")
-	requirepkg.NoError(t, err, "MarkMessageDeletedByGmailID(trash)")
+	require.NoError(t, err, "MarkMessageDeletedByGmailID(trash)")
 
 	// Mark as permanently deleted
 	err = f.Store.MarkMessageDeletedByGmailID(true, "gmail-msg-123")
-	requirepkg.NoError(t, err, "MarkMessageDeletedByGmailID(permanent)")
+	require.NoError(t, err, "MarkMessageDeletedByGmailID(permanent)")
 
 	// Non-existent message should not error (no rows affected is OK)
 	err = f.Store.MarkMessageDeletedByGmailID(true, "nonexistent-id")
-	requirepkg.NoError(t, err, "MarkMessageDeletedByGmailID(nonexistent)")
+	require.NoError(t, err, "MarkMessageDeletedByGmailID(nonexistent)")
 }
 
 func TestStore_MarkMessagesDeletedByGmailIDBatch(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	f := storetest.New(t)
 
 	// Create 600+ messages to exercise multi-chunk behavior (chunkSize=500)
@@ -687,7 +756,7 @@ func TestStore_MarkMessagesDeletedByGmailIDBatch(t *testing.T) {
 		`SELECT COUNT(*) FROM messages WHERE deleted_from_source_at IS NOT NULL`,
 	).Scan(&deletedCount)
 	require.NoError(err, "count deleted")
-	assertpkg.Equal(t, count, deletedCount, "deleted count")
+	assert.Equal(t, count, deletedCount, "deleted count")
 
 	// Empty batch should be a no-op
 	err = f.Store.MarkMessagesDeletedByGmailIDBatch(nil)
@@ -699,11 +768,11 @@ func TestStore_GetMessageRaw_NotFound(t *testing.T) {
 
 	// Try to get raw for non-existent message
 	_, err := f.Store.GetMessageRaw(99999)
-	assertpkg.Error(t, err, "GetMessageRaw() should error for non-existent message")
+	assert.Error(t, err, "GetMessageRaw() should error for non-existent message")
 }
 
 func TestStore_UpsertMessageRaw_Update(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	f := storetest.New(t)
 
 	msgID := f.CreateMessage("msg-raw-update")
@@ -721,12 +790,12 @@ func TestStore_UpsertMessageRaw_Update(t *testing.T) {
 	// Verify updated data
 	retrieved, err := f.Store.GetMessageRaw(msgID)
 	require.NoError(err, "GetMessageRaw")
-	assertpkg.Equal(t, string(rawData2), string(retrieved), "retrieved")
+	assert.Equal(t, string(rawData2), string(retrieved), "retrieved")
 }
 
 func TestStore_UpsertMessageBody(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	f := storetest.New(t)
 	msgID := f.CreateMessage("msg-body-test")
 
@@ -754,13 +823,74 @@ func TestStore_UpsertMessageBody(t *testing.T) {
 	assert.False(bodyHTML.Valid, "after update: body_html should be NULL, got %q", bodyHTML.String)
 }
 
+func TestStore_UpsertMessageBodyInvalidatesChangedFTS(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := storetest.New(t)
+	if !f.Store.FTS5Available() {
+		t.Skip("FTS is unavailable")
+	}
+	messageID := f.CreateMessage("msg-body-fts-invalidation")
+	body := sql.NullString{String: "old indexed body", Valid: true}
+	require.NoError(f.Store.UpsertMessageBody(messageID, body, sql.NullString{}),
+		"store initial body")
+	require.NoError(f.Store.UpsertFTS(
+		messageID, "subject", body.String, "", "", "",
+	), "index initial body")
+
+	// An idempotent body write must not create needless backfill work.
+	require.NoError(f.Store.UpsertMessageBody(messageID, body, sql.NullString{}),
+		"store unchanged body")
+	if f.Store.IsPostgreSQL() {
+		var searchIsNull bool
+		require.NoError(f.Store.DB().QueryRow(
+			"SELECT search_fts IS NULL FROM messages WHERE id = $1", messageID,
+		).Scan(&searchIsNull), "check unchanged PostgreSQL index")
+		assert.False(searchIsNull, "unchanged body must retain its FTS document")
+	} else {
+		var count int
+		require.NoError(f.Store.DB().QueryRow(
+			"SELECT COUNT(*) FROM messages_fts WHERE rowid = ?", messageID,
+		).Scan(&count), "check unchanged SQLite index")
+		assert.Equal(1, count, "unchanged body must retain its FTS document")
+	}
+
+	require.NoError(f.Store.UpsertMessageBody(messageID,
+		sql.NullString{},
+		sql.NullString{String: "<p>old indexed body</p>", Valid: true}),
+		"replace indexed text with equivalent HTML-only body")
+	if f.Store.IsPostgreSQL() {
+		var searchIsNull, versionIsNull bool
+		require.NoError(f.Store.DB().QueryRow(`
+			SELECT search_fts IS NULL, indexing_version IS NULL
+			FROM messages WHERE id = $1
+		`, messageID).Scan(&searchIsNull, &versionIsNull), "check PostgreSQL invalidation")
+		assert.True(searchIsNull, "changed body must clear its old FTS document")
+		assert.True(versionIsNull, "changed body must require a fresh index version")
+	} else {
+		var count int
+		require.NoError(f.Store.DB().QueryRow(
+			"SELECT COUNT(*) FROM messages_fts WHERE rowid = ?", messageID,
+		).Scan(&count), "check SQLite invalidation")
+		assert.Zero(count, "changed body must delete its old FTS document")
+	}
+}
+
 func TestStore_MessageExistsBatch_Empty(t *testing.T) {
 	f := storetest.New(t)
 
 	// Check with empty list
 	result, err := f.Store.MessageExistsBatch(f.Source.ID, []string{})
-	requirepkg.NoError(t, err, "MessageExistsBatch(empty)")
-	assertpkg.Empty(t, result)
+	require.NoError(t, err, "MessageExistsBatch(empty)")
+	assert.Empty(t, result)
+}
+
+func TestStore_MessageMetadataBatch_Empty(t *testing.T) {
+	f := storetest.New(t)
+
+	result, err := f.Store.MessageMetadataBatch(f.Source.ID, nil)
+	require.NoError(t, err)
+	assert.Empty(t, result)
 }
 
 func TestStore_ReplaceMessageLabels_Empty(t *testing.T) {
@@ -775,13 +905,13 @@ func TestStore_ReplaceMessageLabels_Empty(t *testing.T) {
 
 	// Add labels
 	err := f.Store.ReplaceMessageLabels(msgID, []int64{labels["INBOX"], labels["STARRED"]})
-	requirepkg.NoError(t, err, "ReplaceMessageLabels")
+	require.NoError(t, err, "ReplaceMessageLabels")
 
 	f.AssertLabelCount(msgID, 2)
 
 	// Replace with empty list (remove all labels)
 	err = f.Store.ReplaceMessageLabels(msgID, []int64{})
-	requirepkg.NoError(t, err, "ReplaceMessageLabels(empty)")
+	require.NoError(t, err, "ReplaceMessageLabels(empty)")
 
 	f.AssertLabelCount(msgID, 0)
 }
@@ -795,15 +925,37 @@ func TestStore_ReplaceMessageRecipients_Empty(t *testing.T) {
 
 	// Add recipient
 	err := f.Store.ReplaceMessageRecipients(msgID, "to", []int64{pid1}, []string{"Alice"})
-	requirepkg.NoError(t, err, "ReplaceMessageRecipients")
+	require.NoError(t, err, "ReplaceMessageRecipients")
 
 	f.AssertRecipientCount(msgID, "to", 1)
 
 	// Replace with empty list
 	err = f.Store.ReplaceMessageRecipients(msgID, "to", []int64{}, []string{})
-	requirepkg.NoError(t, err, "ReplaceMessageRecipients(empty)")
+	require.NoError(t, err, "ReplaceMessageRecipients(empty)")
 
 	f.AssertRecipientCount(msgID, "to", 0)
+}
+
+// TestStore_ReplaceMessageRecipients_DuplicateParticipants is the regression for
+// the production crash where one recipient set contained the same participant
+// twice (e.g. a calendar event listing the same attendee twice, or two address
+// forms resolving to one participant). The plain INSERT tripped the
+// UNIQUE(message_id, participant_id, recipient_type) constraint and aborted the
+// write. Duplicates must collapse to a single row instead of erroring.
+func TestStore_ReplaceMessageRecipients_DuplicateParticipants(t *testing.T) {
+	f := storetest.New(t)
+
+	msgID := f.CreateMessage("msg-dup-recip")
+	pid1 := f.EnsureParticipant("alice@example.com", "Alice", "example.com")
+	pid2 := f.EnsureParticipant("bob@example.com", "Bob", "example.com")
+
+	// alice appears twice; this must not error and must store one row per
+	// distinct participant.
+	err := f.Store.ReplaceMessageRecipients(msgID, "to",
+		[]int64{pid1, pid1, pid2}, []string{"Alice", "Alice (dup)", "Bob"})
+	require.NoError(t, err, "duplicate participant IDs must not error")
+
+	f.AssertRecipientCount(msgID, "to", 2)
 }
 
 func TestStore_GetActiveSync_NoSync(t *testing.T) {
@@ -816,16 +968,16 @@ func TestStore_GetLastSuccessfulSync_None(t *testing.T) {
 
 	// No successful sync yet
 	lastSync, err := f.Store.GetLastSuccessfulSync(f.Source.ID)
-	requirepkg.ErrorIs(t, err, store.ErrSyncRunNotFound, "GetLastSuccessfulSync()")
-	assertpkg.Nil(t, lastSync, "expected nil last sync")
+	require.ErrorIs(t, err, store.ErrSyncRunNotFound, "GetLastSuccessfulSync()")
+	assert.Nil(t, lastSync, "expected nil last sync")
 }
 
 func TestStore_GetSourceByIdentifier_NotFound(t *testing.T) {
 	f := storetest.New(t)
 
 	source, err := f.Store.GetSourceByIdentifier("nonexistent@example.com")
-	requirepkg.ErrorIs(t, err, store.ErrSourceNotFound, "GetSourceByIdentifier()")
-	assertpkg.Nil(t, source, "expected nil source")
+	require.ErrorIs(t, err, store.ErrSourceNotFound, "GetSourceByIdentifier()")
+	assert.Nil(t, source, "expected nil source")
 }
 
 func TestStore_GetStats_WithData(t *testing.T) {
@@ -835,10 +987,10 @@ func TestStore_GetStats_WithData(t *testing.T) {
 	f.CreateMessages(5)
 
 	stats, err := f.Store.GetStats()
-	requirepkg.NoError(t, err, "GetStats()")
+	require.NoError(t, err, "GetStats()")
 
-	assertpkg.Equal(t, int64(5), stats.MessageCount, "MessageCount")
-	assertpkg.NotZero(t, stats.ThreadCount, "ThreadCount should be non-zero")
+	assert.Equal(t, int64(5), stats.MessageCount, "MessageCount")
+	assert.NotZero(t, stats.ThreadCount, "ThreadCount should be non-zero")
 }
 
 func TestStore_GetStats_ExcludesDedupHidden(t *testing.T) {
@@ -848,11 +1000,11 @@ func TestStore_GetStats_ExcludesDedupHidden(t *testing.T) {
 	// Soft-delete one via dedup (deleted_at).
 	_, err := f.Store.DB().Exec(
 		f.Store.Rebind("UPDATE messages SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?"), ids[0])
-	requirepkg.NoError(t, err, "set deleted_at")
+	require.NoError(t, err, "set deleted_at")
 
 	stats, err := f.Store.GetStats()
-	requirepkg.NoError(t, err, "GetStats()")
-	assertpkg.Equal(t, int64(2), stats.MessageCount, "MessageCount (dedup-hidden row excluded)")
+	require.NoError(t, err, "GetStats()")
+	assert.Equal(t, int64(2), stats.MessageCount, "MessageCount (dedup-hidden row excluded)")
 }
 
 func TestStore_GetStats_ExcludesSourceDeleted(t *testing.T) {
@@ -862,11 +1014,11 @@ func TestStore_GetStats_ExcludesSourceDeleted(t *testing.T) {
 	// Mark one as deleted from source.
 	_, err := f.Store.DB().Exec(
 		f.Store.Rebind("UPDATE messages SET deleted_from_source_at = CURRENT_TIMESTAMP WHERE id = ?"), ids[1])
-	requirepkg.NoError(t, err, "set deleted_from_source_at")
+	require.NoError(t, err, "set deleted_from_source_at")
 
 	stats, err := f.Store.GetStats()
-	requirepkg.NoError(t, err, "GetStats()")
-	assertpkg.Equal(t, int64(2), stats.MessageCount, "MessageCount (source-deleted row excluded)")
+	require.NoError(t, err, "GetStats()")
+	assert.Equal(t, int64(2), stats.MessageCount, "MessageCount (source-deleted row excluded)")
 }
 
 func TestStore_GetStats_ClosedDB(t *testing.T) {
@@ -874,11 +1026,11 @@ func TestStore_GetStats_ClosedDB(t *testing.T) {
 
 	// Close the database
 	err := st.Close()
-	requirepkg.NoError(t, err, "Close()")
+	require.NoError(t, err, "Close()")
 
 	// GetStats should return an error for closed DB (not silently ignore)
 	_, err = st.GetStats()
-	assertpkg.Error(t, err, "GetStats() should return error on closed DB")
+	assert.Error(t, err, "GetStats() should return error on closed DB")
 }
 
 func TestStore_GetStats_MissingTable(t *testing.T) {
@@ -886,19 +1038,19 @@ func TestStore_GetStats_MissingTable(t *testing.T) {
 
 	// Drop a table to simulate missing table scenario
 	_, err := st.DB().Exec("DROP TABLE IF EXISTS attachments")
-	requirepkg.NoError(t, err, "DROP TABLE attachments")
+	require.NoError(t, err, "DROP TABLE attachments")
 
 	// GetStats should ignore missing tables and return partial stats
 	stats, err := st.GetStats()
-	requirepkg.NoError(t, err, "GetStats() with missing table")
+	require.NoError(t, err, "GetStats() with missing table")
 
 	// AttachmentCount should be 0 (table missing, ignored)
-	assertpkg.Equal(t, int64(0), stats.AttachmentCount, "AttachmentCount (missing table)")
+	assert.Equal(t, int64(0), stats.AttachmentCount, "AttachmentCount (missing table)")
 }
 
 func TestStore_CountMessagesForSource(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	f := storetest.New(t)
 
 	// Initially zero
@@ -923,8 +1075,8 @@ func TestStore_CountMessagesForSource(t *testing.T) {
 }
 
 func TestStore_CountMessagesWithRaw(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	f := storetest.New(t)
 
 	// Initially zero
@@ -949,8 +1101,8 @@ func TestStore_CountMessagesWithRaw(t *testing.T) {
 }
 
 func TestStore_GetRandomMessageIDs(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	f := storetest.New(t)
 
 	// Empty source
@@ -989,7 +1141,7 @@ func TestStore_GetRandomMessageIDs(t *testing.T) {
 }
 
 func TestStore_GetRandomMessageIDs_ExcludesDeleted(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	f := storetest.New(t)
 
 	// Add 5 messages
@@ -1004,7 +1156,7 @@ func TestStore_GetRandomMessageIDs_ExcludesDeleted(t *testing.T) {
 	// Should only return 3 (non-deleted) messages
 	ids, err := f.Store.GetRandomMessageIDs(f.Source.ID, 10)
 	require.NoError(err, "GetRandomMessageIDs()")
-	assertpkg.Len(t, ids, 3, "len(ids) (5 total - 2 deleted)")
+	assert.Len(t, ids, 3, "len(ids) (5 total - 2 deleted)")
 }
 
 func TestStore_ReplaceMessageRecipients_LargeBatch(t *testing.T) {
@@ -1025,20 +1177,20 @@ func TestStore_ReplaceMessageRecipients_LargeBatch(t *testing.T) {
 
 	// This should work without hitting SQLite parameter limit
 	err := f.Store.ReplaceMessageRecipients(msgID, "to", participantIDs, displayNames)
-	requirepkg.NoError(t, err, "ReplaceMessageRecipients(300 recipients)")
+	require.NoError(t, err, "ReplaceMessageRecipients(300 recipients)")
 
 	f.AssertRecipientCount(msgID, "to", numRecipients)
 
 	// Replace with a different large batch to ensure chunked delete+insert works
 	err = f.Store.ReplaceMessageRecipients(msgID, "to", participantIDs[:150], displayNames[:150])
-	requirepkg.NoError(t, err, "ReplaceMessageRecipients(150 recipients)")
+	require.NoError(t, err, "ReplaceMessageRecipients(150 recipients)")
 
 	f.AssertRecipientCount(msgID, "to", 150)
 }
 
 func TestStore_UpsertFTS(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	testutil.SkipIfPostgres(t, "directly queries the SQLite FTS5 vtable with MATCH; PG uses a tsvector column tested via FTSSearchClause")
 	f := storetest.New(t)
 
@@ -1091,8 +1243,8 @@ func TestStore_UpsertFTS(t *testing.T) {
 }
 
 func TestStore_BackfillFTS(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	testutil.SkipIfPostgres(t, "directly queries the SQLite FTS5 vtable; PG backfill is exercised separately via FTSBackfillBatchSQL")
 	f := storetest.New(t)
 
@@ -1168,8 +1320,8 @@ func TestStore_FTS5Available(t *testing.T) {
 }
 
 func TestStore_NeedsFTSBackfill(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	testutil.SkipIfPostgres(t, "directly mutates the SQLite FTS5 vtable; PG NeedsFTSBackfill probes the tsvector column instead")
 	f := storetest.New(t)
 
@@ -1222,25 +1374,25 @@ func TestStore_ReplaceMessageLabels_LargeBatch(t *testing.T) {
 	for i := range numLabels {
 		sourceLabelID := fmt.Sprintf("Label_%d", i)
 		lid, err := f.Store.EnsureLabel(f.Source.ID, sourceLabelID, fmt.Sprintf("Label %d", i), "user")
-		requirepkg.NoError(t, err, "EnsureLabel")
+		require.NoError(t, err, "EnsureLabel")
 		labelIDs[i] = lid
 	}
 
 	// This should work without hitting SQLite parameter limit
 	err := f.Store.ReplaceMessageLabels(msgID, labelIDs)
-	requirepkg.NoError(t, err, "ReplaceMessageLabels(600 labels)")
+	require.NoError(t, err, "ReplaceMessageLabels(600 labels)")
 
 	f.AssertLabelCount(msgID, numLabels)
 
 	// Replace with a different large batch to ensure chunked delete+insert works
 	err = f.Store.ReplaceMessageLabels(msgID, labelIDs[:250])
-	requirepkg.NoError(t, err, "ReplaceMessageLabels(250 labels)")
+	require.NoError(t, err, "ReplaceMessageLabels(250 labels)")
 
 	f.AssertLabelCount(msgID, 250)
 }
 
 func TestStore_AddMessageLabels(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	f := storetest.New(t)
 
 	msgID := f.CreateMessage("msg-add-labels")
@@ -1278,7 +1430,7 @@ func TestStore_AddMessageLabels(t *testing.T) {
 }
 
 func TestStore_RemoveMessageLabels(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	f := storetest.New(t)
 
 	msgID := f.CreateMessage("msg-remove-labels")
@@ -1311,7 +1463,7 @@ func TestStore_RemoveMessageLabels(t *testing.T) {
 
 	// Verify the remaining label is TRASH
 	labelID := f.GetSingleLabelID(msgID)
-	assertpkg.Equal(t, labels["TRASH"], labelID, "remaining label_id (TRASH)")
+	assert.Equal(t, labels["TRASH"], labelID, "remaining label_id (TRASH)")
 
 	// Empty list is a no-op
 	err = f.Store.RemoveMessageLabels(msgID, []int64{})
@@ -1336,7 +1488,7 @@ func TestStore_MarkMessagesDeletedBatch(t *testing.T) {
 
 	// Batch delete first two
 	err := f.Store.MarkMessagesDeletedBatch(f.Source.ID, []string{"batch-del-1", "batch-del-2"})
-	requirepkg.NoError(t, err, "MarkMessagesDeletedBatch")
+	require.NoError(t, err, "MarkMessagesDeletedBatch")
 
 	// First two should be deleted, last two should not
 	f.AssertMessageDeleted(internalIDs["batch-del-1"])
@@ -1346,16 +1498,16 @@ func TestStore_MarkMessagesDeletedBatch(t *testing.T) {
 
 	// Batch with non-existent IDs should not error
 	err = f.Store.MarkMessagesDeletedBatch(f.Source.ID, []string{"nonexistent-1", "nonexistent-2"})
-	requirepkg.NoError(t, err, "MarkMessagesDeletedBatch(nonexistent)")
+	require.NoError(t, err, "MarkMessagesDeletedBatch(nonexistent)")
 
 	// Empty list is a no-op
 	err = f.Store.MarkMessagesDeletedBatch(f.Source.ID, []string{})
-	requirepkg.NoError(t, err, "MarkMessagesDeletedBatch(empty)")
+	require.NoError(t, err, "MarkMessagesDeletedBatch(empty)")
 }
 
 func TestStore_PersistMessage(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	f := storetest.New(t)
 
 	pid1 := f.EnsureParticipant("alice@example.com", "Alice", "example.com")
@@ -1430,17 +1582,17 @@ func TestStore_PersistMessage_Atomicity(t *testing.T) {
 	}
 
 	_, err := f.Store.PersistMessage(data)
-	requirepkg.Error(t, err, "PersistMessage should fail with invalid label ID")
+	require.Error(t, err, "PersistMessage should fail with invalid label ID")
 
 	// Verify the message was NOT committed
 	existing, err := f.Store.MessageExistsBatch(f.Source.ID, []string{"persist-atomic"})
-	requirepkg.NoError(t, err, "MessageExistsBatch")
-	assertpkg.Empty(t, existing, "message should not exist after failed PersistMessage")
+	require.NoError(t, err, "MessageExistsBatch")
+	assert.Empty(t, existing, "message should not exist after failed PersistMessage")
 }
 
 func TestStore_OAuthAppColumn(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	f := storetest.New(t)
 
 	// Default source should have null oauth_app
@@ -1467,7 +1619,7 @@ func TestStore_OAuthAppColumn(t *testing.T) {
 }
 
 func TestStore_OAuthAppColumn_NullRoundTrip(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	f := storetest.New(t)
 
 	// Set to acme
@@ -1483,13 +1635,13 @@ func TestStore_OAuthAppColumn_NullRoundTrip(t *testing.T) {
 	require.NoError(err, "GetSourcesByIdentifier")
 
 	require.NotEmpty(sources, "no sources found")
-	assertpkg.False(t, sources[0].OAuthApp.Valid,
+	assert.False(t, sources[0].OAuthApp.Valid,
 		"OAuthApp should be null after clearing, got %q", sources[0].OAuthApp.String)
 }
 
 func TestStore_PersistMessage_Upsert(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	f := storetest.New(t)
 
 	msg := storetest.NewMessage(f.Source.ID, f.ConvID).
@@ -1524,15 +1676,102 @@ func TestStore_PersistMessage_Upsert(t *testing.T) {
 	assert.Equal("updated body", bodyText.String, "body_text")
 }
 
+func TestStore_PersistMessageClearsEmbedGenWhenEmbeddingInputsChange(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := storetest.New(t)
+	ctx := t.Context()
+
+	msg := storetest.NewMessage(f.Source.ID, f.ConvID).
+		WithSourceMessageID("persist-embed-gen").
+		WithSubject("Original subject").
+		WithSnippet("preview").
+		Build()
+	data := &store.MessagePersistData{
+		Message:  msg,
+		BodyText: sql.NullString{String: "original body", Valid: true},
+		RawMIME:  sampleRawMessage,
+	}
+
+	msgID, err := f.Store.PersistMessage(data)
+	require.NoError(err, "PersistMessage first call")
+
+	const gen = int64(7)
+	require.NoError(f.Store.SetEmbedGen(ctx, []int64{msgID}, gen), "SetEmbedGen")
+	assert.Equal(sql.NullInt64{Int64: gen, Valid: true}, readEmbedGen(t, f.Store, msgID),
+		"precondition: message is stamped")
+
+	msg.Snippet = sql.NullString{String: "preview changed", Valid: true}
+	_, err = f.Store.PersistMessage(data)
+	require.NoError(err, "PersistMessage unchanged embedding inputs")
+	assert.Equal(sql.NullInt64{Int64: gen, Valid: true}, readEmbedGen(t, f.Store, msgID),
+		"non-embedding metadata must not clear embed_gen")
+
+	data.BodyHTML = sql.NullString{String: "<p>rendering changed</p>", Valid: true}
+	_, err = f.Store.PersistMessage(data)
+	require.NoError(err, "PersistMessage changed HTML with unchanged plaintext")
+	assert.Equal(sql.NullInt64{Int64: gen, Valid: true}, readEmbedGen(t, f.Store, msgID),
+		"HTML-only changes must not clear embed_gen while plaintext is the embedded body")
+
+	data.BodyText = sql.NullString{String: "updated body", Valid: true}
+	_, err = f.Store.PersistMessage(data)
+	require.NoError(err, "PersistMessage changed body")
+	assert.False(readEmbedGen(t, f.Store, msgID).Valid, "body change must clear embed_gen")
+
+	require.NoError(f.Store.SetEmbedGen(ctx, []int64{msgID}, gen), "SetEmbedGen after body change")
+	msg.Subject = sql.NullString{String: "Updated subject", Valid: true}
+	_, err = f.Store.PersistMessage(data)
+	require.NoError(err, "PersistMessage changed subject")
+	assert.False(readEmbedGen(t, f.Store, msgID).Valid, "subject change must clear embed_gen")
+}
+
+func TestStore_PersistMessagePreservesEmbedGenForEquivalentHTMLFallback(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := storetest.New(t)
+	ctx := t.Context()
+
+	msg := storetest.NewMessage(f.Source.ID, f.ConvID).
+		WithSourceMessageID("persist-html-only-embed-gen").
+		WithSubject("HTML only").
+		Build()
+	data := &store.MessagePersistData{
+		Message:  msg,
+		BodyHTML: sql.NullString{String: "<p>Rendered body</p>", Valid: true},
+		RawMIME:  sampleRawMessage,
+	}
+
+	msgID, err := f.Store.PersistMessage(data)
+	require.NoError(err, "PersistMessage first call")
+
+	const gen = int64(7)
+	require.NoError(f.Store.SetEmbedGen(ctx, []int64{msgID}, gen), "SetEmbedGen")
+
+	data.BodyHTML = sql.NullString{String: "<div><span>Rendered body</span></div>", Valid: true}
+	_, err = f.Store.PersistMessage(data)
+	require.NoError(err, "PersistMessage equivalent HTML fallback")
+	assert.Equal(sql.NullInt64{Int64: gen, Valid: true}, readEmbedGen(t, f.Store, msgID),
+		"markup-only HTML fallback changes must not clear embed_gen")
+}
+
+func readEmbedGen(t *testing.T, st *store.Store, msgID int64) sql.NullInt64 {
+	t.Helper()
+	var got sql.NullInt64
+	err := st.DB().QueryRowContext(t.Context(),
+		st.Rebind(`SELECT embed_gen FROM messages WHERE id = ?`), msgID).Scan(&got)
+	require.NoError(t, err, "read embed_gen")
+	return got
+}
+
 // --- GetStatsForScope tests ---
 
 // makeSecondSource creates a second source and conversation in the same store as f.
 func makeSecondSource(t *testing.T, f *storetest.Fixture, identifier string) (*store.Source, int64) {
 	t.Helper()
 	src, err := f.Store.GetOrCreateSource("gmail", identifier)
-	requirepkg.NoError(t, err, "GetOrCreateSource "+identifier)
+	require.NoError(t, err, "GetOrCreateSource "+identifier)
 	convID, err := f.Store.EnsureConversation(src.ID, "thread-b-1", "Thread B")
-	requirepkg.NoError(t, err, "EnsureConversation "+identifier)
+	require.NoError(t, err, "EnsureConversation "+identifier)
 	return src, convID
 }
 
@@ -1548,15 +1787,15 @@ func createMessagesForSource(t *testing.T, st *store.Store, srcID, convID int64,
 			MessageType:     "email",
 			SizeEstimate:    1000,
 		})
-		requirepkg.NoError(t, err, "UpsertMessage %s-%d", prefix, i)
+		require.NoError(t, err, "UpsertMessage %s-%d", prefix, i)
 		ids = append(ids, id)
 	}
 	return ids
 }
 
 func TestStore_GetStatsForScope_SingleSource(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	f := storetest.New(t)
 	srcB, convB := makeSecondSource(t, f, "b@example.com")
 
@@ -1583,8 +1822,8 @@ func TestStore_GetStatsForScope_SingleSource(t *testing.T) {
 }
 
 func TestStore_GetStatsForScope_ExcludesDedupHidden(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	f := storetest.New(t)
 	srcB, convB := makeSecondSource(t, f, "b-dedup@example.com")
 
@@ -1614,9 +1853,9 @@ func TestStore_GetStatsForScope_ExcludesSourceDeleted(t *testing.T) {
 	// Mark one as deleted from source.
 	_, err := f.Store.DB().Exec(
 		f.Store.Rebind("UPDATE messages SET deleted_from_source_at = CURRENT_TIMESTAMP WHERE id = ?"), ids[0])
-	requirepkg.NoError(t, err, "set deleted_from_source_at")
+	require.NoError(t, err, "set deleted_from_source_at")
 
 	stats, err := f.Store.GetStatsForScope([]int64{f.Source.ID})
-	requirepkg.NoError(t, err, "GetStatsForScope")
-	assertpkg.Equal(t, int64(1), stats.MessageCount, "MessageCount (source-deleted excluded)")
+	require.NoError(t, err, "GetStatsForScope")
+	assert.Equal(t, int64(1), stats.MessageCount, "MessageCount (source-deleted excluded)")
 }

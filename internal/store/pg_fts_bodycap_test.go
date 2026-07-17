@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
@@ -90,7 +90,7 @@ func multibyteOversizedBody() string {
 func nullSearchFTSCount(t *testing.T, st interface{ DB() *sql.DB }) int {
 	t.Helper()
 	var n int
-	requirepkg.NoError(t, st.DB().QueryRow(
+	require.NoError(t, st.DB().QueryRow(
 		"SELECT COUNT(*) FROM messages WHERE search_fts IS NULL").Scan(&n),
 		"count NULL search_fts")
 	return n
@@ -102,7 +102,7 @@ func nullSearchFTSCount(t *testing.T, st interface{ DB() *sql.DB }) int {
 // search_fts non-NULL. Without the cap this would fail with SQLSTATE 54000
 // ("string is too long for tsvector") and leave the row permanently NULL.
 func TestPG_FTSUpsert_OversizedBodyTruncates(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	skipUnlessPostgres(t)
 	f := storetest.New(t)
 	require.True(f.Store.FTS5Available(), "FTS must be available on PG")
@@ -119,7 +119,7 @@ func TestPG_FTSUpsert_OversizedBodyTruncates(t *testing.T) {
 	require.NoError(f.Store.DB().QueryRow(
 		"SELECT search_fts IS NULL FROM messages WHERE id = $1", msgID).Scan(&isNull),
 		"probe search_fts")
-	assertpkg.False(t, isNull, "search_fts must be non-NULL after truncated upsert")
+	assert.False(t, isNull, "search_fts must be non-NULL after truncated upsert")
 }
 
 // TestPG_BackfillFTS_OversizedBodyDoesNotWedge (finding T2b) seeds >5000
@@ -129,8 +129,8 @@ func TestPG_FTSUpsert_OversizedBodyTruncates(t *testing.T) {
 // oversized row index fine; the row-by-row retry fallback is the belt-and-
 // suspenders guarantee that no single bad row can wedge later batches.
 func TestPG_BackfillFTS_OversizedBodyDoesNotWedge(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	skipUnlessPostgres(t)
 	f := storetest.New(t)
 	require.True(f.Store.FTS5Available(), "FTS must be available on PG")
@@ -178,7 +178,7 @@ func TestPG_BackfillFTS_OversizedBodyDoesNotWedge(t *testing.T) {
 // must end up indexed (search_fts non-NULL). The key property: a pathological
 // multibyte body can never wedge the sync FTS path.
 func TestPG_FTSUpsert_MultibyteOversizedBody(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	skipUnlessPostgres(t)
 	f := storetest.New(t)
 	require.True(f.Store.FTS5Available(), "FTS must be available on PG")
@@ -200,7 +200,7 @@ func TestPG_FTSUpsert_MultibyteOversizedBody(t *testing.T) {
 	require.NoError(f.Store.DB().QueryRow(
 		"SELECT search_fts IS NULL FROM messages WHERE id = $1", msgID).Scan(&isNull),
 		"probe search_fts")
-	assertpkg.False(t, isNull,
+	assert.False(t, isNull,
 		"search_fts must be non-NULL after byte-truncated multibyte upsert")
 }
 
@@ -217,41 +217,41 @@ func TestPG_FTSUpsert_MultibyteOversizedBody(t *testing.T) {
 func TestPG_FTSUpsert_OversizedSubjectAndRecipients(t *testing.T) {
 	skipUnlessPostgres(t)
 	f := storetest.New(t)
-	requirepkg.True(t, f.Store.FTS5Available(), "FTS must be available on PG")
+	require.True(t, f.Store.FTS5Available(), "FTS must be available on PG")
 
 	// Multibyte oversized inputs: the char-only LEFT cap cannot bound these, so
 	// reaching a non-NULL search_fts proves the D1 per-field byte-truncation ran.
 	bigSubject := multibyteOversizedBody() // distinct 2-byte tokens, >1MB pre-cap
 	bigTo := multibyteOversizedBody()      // oversized multibyte recipient list
-	requirepkg.Greater(t, len(bigSubject), 1_100_000, "multibyte subject must exceed 1MB of bytes")
-	requirepkg.Less(t, len([]rune(bigSubject)), len(bigSubject), "subject must contain multibyte runes")
+	require.Greater(t, len(bigSubject), 1_100_000, "multibyte subject must exceed 1MB of bytes")
+	require.Less(t, len([]rune(bigSubject)), len(bigSubject), "subject must contain multibyte runes")
 
 	t.Run("oversized subject only", func(t *testing.T) {
 		msgID := f.CreateMessage("oversized-subject")
 		err := f.Store.UpsertFTS(msgID, bigSubject, "normal body apricot",
 			"alice@example.com", "bob@example.com", "")
-		requirepkg.NoError(t, err,
+		require.NoError(t, err,
 			"UpsertFTS with a multibyte oversized subject must succeed (subject is now byte-truncated)")
 
 		var isNull bool
-		requirepkg.NoError(t, f.Store.DB().QueryRow(
+		require.NoError(t, f.Store.DB().QueryRow(
 			"SELECT search_fts IS NULL FROM messages WHERE id = $1", msgID).Scan(&isNull),
 			"probe search_fts")
-		assertpkg.False(t, isNull, "search_fts must be non-NULL after byte-truncated subject upsert")
+		assert.False(t, isNull, "search_fts must be non-NULL after byte-truncated subject upsert")
 	})
 
 	t.Run("oversized subject and recipient list", func(t *testing.T) {
 		msgID := f.CreateMessage("oversized-subject-and-to")
 		err := f.Store.UpsertFTS(msgID, bigSubject, "normal body banana",
 			"alice@example.com", bigTo, "")
-		requirepkg.NoError(t, err,
+		require.NoError(t, err,
 			"UpsertFTS with multibyte oversized subject + recipient list must succeed (all fields byte-truncated)")
 
 		var isNull bool
-		requirepkg.NoError(t, f.Store.DB().QueryRow(
+		require.NoError(t, f.Store.DB().QueryRow(
 			"SELECT search_fts IS NULL FROM messages WHERE id = $1", msgID).Scan(&isNull),
 			"probe search_fts")
-		assertpkg.False(t, isNull, "search_fts must be non-NULL after byte-truncated subject+recipients upsert")
+		assert.False(t, isNull, "search_fts must be non-NULL after byte-truncated subject+recipients upsert")
 	})
 }
 
@@ -264,8 +264,8 @@ func TestPG_FTSUpsert_OversizedSubjectAndRecipients(t *testing.T) {
 // property: BackfillFTS COMPLETES WITHOUT ERROR and indexes every OTHER row,
 // regardless of whether the pathological row itself survives the char cap.
 func TestPG_BackfillFTS_MultibyteOversizedBodyDoesNotWedge(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	skipUnlessPostgres(t)
 	f := storetest.New(t)
 	require.True(f.Store.FTS5Available(), "FTS must be available on PG")

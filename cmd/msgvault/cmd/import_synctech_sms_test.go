@@ -23,6 +23,8 @@ func TestImportSynctechSMSRequiresOwnerPhone(t *testing.T) {
 }
 
 func TestImportSynctechSMSCommandRuns(t *testing.T) {
+	markDaemonCLISubprocessForTest(t)
+
 	home := t.TempDir()
 	input := filepath.Join(t.TempDir(), "sms.xml")
 	err := os.WriteFile(input, []byte(`<smses count="1"><sms address="+15551234567" date="1717214400000" type="1" body="hello" read="1" status="-1"/></smses>`), 0o600)

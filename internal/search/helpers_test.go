@@ -15,6 +15,6 @@ import (
 // checks which treat nil and empty identically.
 func assertQueryEqual(t *testing.T, got, want Query) {
 	t.Helper()
-	diff := cmp.Diff(want, got, cmpopts.EquateEmpty())
+	diff := cmp.Diff(want, got, cmpopts.EquateEmpty(), cmpopts.IgnoreUnexported(Query{}))
 	assert.Empty(t, diff, "Query mismatch (-want +got):\n%s", diff)
 }

@@ -11,6 +11,8 @@ import "os"
 
 // SecureWriteFile writes data to the named file, creating it if necessary.
 func SecureWriteFile(path string, data []byte, perm os.FileMode) error {
+	// codeql[go/path-injection] -- callers provide local user-owned paths;
+	// this helper preserves os.WriteFile semantics on non-Windows platforms.
 	return os.WriteFile(path, data, perm)
 }
 

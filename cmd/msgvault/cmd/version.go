@@ -17,6 +17,7 @@ var (
 var versionCmd = &cobra.Command{
 	Use:   "version",
 	Short: "Print version information",
+	Args:  cobra.NoArgs,
 	Run: func(cmd *cobra.Command, args []string) {
 		fmt.Printf("msgvault %s\n", Version)
 		fmt.Printf("  commit:  %s\n", Commit)

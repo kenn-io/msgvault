@@ -198,6 +198,9 @@ func setupRemoteServer(reader *bufio.Reader, oauthSecretsPath string) (string, s
 	if err != nil {
 		return "", "", fmt.Errorf("generate API key: %w", err)
 	}
+
+	// codeql[go/clear-text-logging] -- setup is an interactive CLI flow and
+	// intentionally prints the generated key once so the user can copy it.
 	fmt.Printf("\nGenerated API key: %s\n", apiKey)
 
 	// Create NAS deployment bundle
@@ -329,5 +332,5 @@ func promptYesNo(reader *bufio.Reader, prompt string) bool {
 	fmt.Printf("%s [Y/n]: ", prompt)
 	response, _ := reader.ReadString('\n')
 	response = strings.ToLower(strings.TrimSpace(response))
-	return response == "" || response == "y" || response == "yes"
+	return response == "" || isYesAnswer(response)
 }

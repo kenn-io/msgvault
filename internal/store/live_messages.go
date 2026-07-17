@@ -51,3 +51,19 @@ func LiveMessagesWhere(alias string, hideDeletedFromSource bool) string {
 	}
 	return alias + ".deleted_at IS NULL"
 }
+
+// SourceDeletedMessagesWhere returns the SQL predicate that selects messages
+// retained in the archive but deleted from their source account. Dedup-hidden
+// rows (deleted_at IS NOT NULL) are excluded so the count is the exact
+// complement of LiveMessagesWhere(alias, true) within the non-dedup-hidden
+// population. Pass the table alias used in the surrounding query (use "" if
+// the query has no alias).
+func SourceDeletedMessagesWhere(alias string) string {
+	if alias == "" {
+		return "deleted_at IS NULL AND deleted_from_source_at IS NOT NULL"
+	}
+	return fmt.Sprintf(
+		"%s.deleted_at IS NULL AND %s.deleted_from_source_at IS NOT NULL",
+		alias, alias,
+	)
+}

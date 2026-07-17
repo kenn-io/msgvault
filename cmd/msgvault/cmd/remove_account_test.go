@@ -1,24 +1,48 @@
 package cmd
 
 import (
+	"bytes"
+	"context"
+	"crypto/sha256"
+	"database/sql"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io/fs"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
+	"time"
 
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/spf13/cobra"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"go.kenn.io/kit/daemon"
+	"go.kenn.io/msgvault/internal/attachmentstore"
+	"go.kenn.io/msgvault/internal/circleback"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/microsoft"
 	"go.kenn.io/msgvault/internal/oauth"
+	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/store"
 )
+
+func newRemoveAccountLocalTestCmd() *cobra.Command {
+	cmd := newRemoveAccountCmd()
+	cmd.RunE = runRemoveAccountLocal
+	return cmd
+}
 
 // seedAttachmentFile creates a file under attachmentsDir at relPath and returns
 // its absolute path. Intermediate directories are created as needed.
 func seedAttachmentFile(t *testing.T, attachmentsDir, relPath, content string) string {
 	t.Helper()
 	absPath := filepath.Join(attachmentsDir, relPath)
-	requirepkg.NoError(t, os.MkdirAll(filepath.Dir(absPath), 0o755), "mkdir %s", filepath.Dir(absPath))
-	requirepkg.NoError(t, os.WriteFile(absPath, []byte(content), 0o600), "write %s", absPath)
+	require.NoError(t, os.MkdirAll(filepath.Dir(absPath), 0o755), "mkdir %s", filepath.Dir(absPath))
+	require.NoError(t, os.WriteFile(absPath, []byte(content), 0o600), "write %s", absPath)
 	return absPath
 }
 
@@ -31,22 +55,177 @@ func seedMessageWithAttachment(
 ) {
 	t.Helper()
 	src, err := s.GetOrCreateSource("gmail", email)
-	requirepkg.NoError(t, err, "GetOrCreateSource(%s)", email)
+	require.NoError(t, err, "GetOrCreateSource(%s)", email)
 	convID, err := s.EnsureConversation(src.ID, threadKey, "Thread")
-	requirepkg.NoError(t, err, "EnsureConversation")
+	require.NoError(t, err, "EnsureConversation")
 	msgID, err := s.UpsertMessage(&store.Message{
 		ConversationID:  convID,
 		SourceID:        src.ID,
 		SourceMessageID: msgKey,
 		MessageType:     "email",
 	})
-	requirepkg.NoError(t, err, "UpsertMessage")
-	requirepkg.NoError(t, s.UpsertAttachment(msgID, "a.pdf", "application/pdf",
+	require.NoError(t, err, "UpsertMessage")
+	require.NoError(t, s.UpsertAttachment(msgID, "a.pdf", "application/pdf",
 		storagePath, contentHash, 0), "UpsertAttachment")
 }
 
+func seedQueryableMessageWithAttachment(t *testing.T, s *store.Store) {
+	t.Helper()
+	const email = "test@example.com"
+	const storagePath = "aa/bb/a.pdf"
+	src, err := s.GetOrCreateSource(sourceTypeGmail, email)
+	require.NoError(t, err)
+	convID, err := s.EnsureConversation(src.ID, "thread-1", "Thread")
+	require.NoError(t, err)
+	senderID, err := s.EnsureParticipant(email, "Sender", "example.com")
+	require.NoError(t, err)
+	msgID, err := s.UpsertMessage(&store.Message{
+		ConversationID:  convID,
+		SourceID:        src.ID,
+		SourceMessageID: "message-1",
+		MessageType:     "email",
+		SentAt:          sql.NullTime{Time: time.Date(2024, time.January, 2, 3, 4, 5, 0, time.UTC), Valid: true},
+		SenderID:        sql.NullInt64{Int64: senderID, Valid: true},
+	})
+	require.NoError(t, err)
+	require.NoError(t, s.ReplaceMessageRecipients(msgID, "from", []int64{senderID}, []string{""}))
+	require.NoError(t, s.UpsertAttachment(msgID, "a.pdf", "application/pdf", storagePath, "hash-a", 10))
+}
+
+func executeRemoveAccount(t *testing.T) error {
+	t.Helper()
+	root := newTestRootCmd()
+	root.AddCommand(newRemoveAccountLocalTestCmd())
+	root.SetArgs([]string{"remove-account", "test@example.com", "--yes"})
+	if err := root.Execute(); err != nil {
+		return fmt.Errorf("execute remove-account: %w", err)
+	}
+	return nil
+}
+
+func TestRemoveAccountUsesDaemonCLIRunnerAndPreservesStreams(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	requests := &atomic.Int32{}
+
+	mux := http.NewServeMux()
+	mux.Handle("/api/ping", daemon.NewPingHandler(daemon.PingHandlerOptions{
+		Service: daemonService,
+		Version: Version,
+	}))
+	mux.HandleFunc("/api/v1/cli/run", func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(http.MethodPost, r.Method, "method")
+		requests.Add(1)
+
+		var req struct {
+			Args []string `json:"args"`
+		}
+		if !assert.NoError(json.NewDecoder(r.Body).Decode(&req), "decode request") {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		assert.Equal([]string{"remove-account", "--type=gmail", "--yes", "alice@example.com"}, req.Args, "args")
+
+		w.Header().Set("Content-Type", "application/x-ndjson")
+		_, _ = w.Write([]byte(`{"type":"stdout","data":"Account removed\n"}` + "\n"))
+		_, _ = w.Write([]byte(`{"type":"stderr","data":"remove warning\n"}` + "\n"))
+		_, _ = w.Write([]byte(`{"type":"complete"}` + "\n"))
+	})
+	server := httptest.NewServer(mux)
+	t.Cleanup(server.Close)
+
+	savedCfg := cfg
+	savedUseLocal := useLocal
+	t.Cleanup(func() {
+		cfg = savedCfg
+		useLocal = savedUseLocal
+	})
+	cfg = &config.Config{
+		HomeDir: t.TempDir(),
+		Remote: config.RemoteConfig{
+			URL:           server.URL,
+			AllowInsecure: true,
+		},
+	}
+	useLocal = false
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd := newRemoveAccountCmd()
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+	cmd.SetArgs([]string{"alice@example.com", "--yes", "--type", "gmail"})
+
+	require.NoError(cmd.Execute(), "remove-account")
+
+	assert.Equal(1, int(requests.Load()), "runner endpoint calls")
+	assert.Equal("Account removed\n", stdout.String(), "stdout")
+	assert.Equal("remove warning\n", stderr.String(), "stderr")
+}
+
+func TestRemoveAccountPromptsBeforeDaemonCLIRunner(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	requests := &atomic.Int32{}
+
+	mux := http.NewServeMux()
+	mux.Handle("/api/ping", daemon.NewPingHandler(daemon.PingHandlerOptions{
+		Service: daemonService,
+		Version: Version,
+	}))
+	mux.HandleFunc("/api/v1/cli/run", func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(http.MethodPost, r.Method, "method")
+		requests.Add(1)
+
+		var req struct {
+			Args []string `json:"args"`
+		}
+		if !assert.NoError(json.NewDecoder(r.Body).Decode(&req), "decode request") {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		assert.Equal([]string{"remove-account", "--confirmed", "alice@example.com"}, req.Args, "args")
+
+		w.Header().Set("Content-Type", "application/x-ndjson")
+		_, _ = w.Write([]byte(`{"type":"stdout","data":"Account removed\n"}` + "\n"))
+		_, _ = w.Write([]byte(`{"type":"complete"}` + "\n"))
+	})
+	server := httptest.NewServer(mux)
+	t.Cleanup(server.Close)
+
+	savedCfg := cfg
+	savedUseLocal := useLocal
+	t.Cleanup(func() {
+		cfg = savedCfg
+		useLocal = savedUseLocal
+	})
+	cfg = &config.Config{
+		HomeDir: t.TempDir(),
+		Remote: config.RemoteConfig{
+			URL:           server.URL,
+			AllowInsecure: true,
+		},
+	}
+	useLocal = false
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd := newRemoveAccountCmd()
+	cmd.SetIn(bytes.NewBufferString("y\n"))
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+	cmd.SetArgs([]string{"alice@example.com"})
+
+	require.NoError(cmd.Execute(), "remove-account")
+
+	assert.Equal(1, int(requests.Load()), "runner endpoint calls")
+	assert.Contains(stdout.String(), "Remove this account and all its data?", "prompt")
+	assert.Contains(stdout.String(), "Account removed\n", "daemon stdout")
+	assert.Empty(stderr.String(), "stderr")
+}
+
 func TestRemoveAccountCmd_DeletesUniqueAttachmentFiles(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	tmpDir := t.TempDir()
 	attachmentsDir := filepath.Join(tmpDir, "attachments")
 
@@ -68,16 +247,16 @@ func TestRemoveAccountCmd_DeletesUniqueAttachmentFiles(t *testing.T) {
 	}
 
 	root := newTestRootCmd()
-	root.AddCommand(newRemoveAccountCmd())
+	root.AddCommand(newRemoveAccountLocalTestCmd())
 	root.SetArgs([]string{"remove-account", "alice@example.com", "--yes"})
 	require.NoError(root.Execute(), "remove-account")
 
 	_, err = os.Stat(filePath)
-	assertpkg.True(t, os.IsNotExist(err), "expected attachment file deleted, err = %v", err)
+	assert.True(t, os.IsNotExist(err), "expected attachment file deleted, err = %v", err)
 }
 
 func TestRemoveAccountCmd_PreservesSharedAttachments(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	tmpDir := t.TempDir()
 	attachmentsDir := filepath.Join(tmpDir, "attachments")
 
@@ -103,17 +282,80 @@ func TestRemoveAccountCmd_PreservesSharedAttachments(t *testing.T) {
 	}
 
 	root := newTestRootCmd()
-	root.AddCommand(newRemoveAccountCmd())
+	root.AddCommand(newRemoveAccountLocalTestCmd())
 	root.SetArgs([]string{"remove-account", "alice@example.com", "--yes"})
 	require.NoError(root.Execute(), "remove-account")
 
 	_, err = os.Stat(filePath)
-	assertpkg.NoError(t, err, "shared attachment file should be preserved")
+	assert.NoError(t, err, "shared attachment file should be preserved")
+}
+
+func TestRemoveAccountCmd_DeletesUniquePackedMappings(t *testing.T) {
+	require := require.New(t)
+	tmpDir := t.TempDir()
+	attachmentsDir := filepath.Join(tmpDir, "attachments")
+	content := []byte("unique packed attachment")
+	hash := fmt.Sprintf("%x", sha256.Sum256(content))
+	storagePath := hash[:2] + "/" + hash
+	thumbnail := []byte("unique packed thumbnail")
+	thumbnailHash := fmt.Sprintf("%x", sha256.Sum256(thumbnail))
+	thumbnailPath := thumbnailHash[:2] + "/" + thumbnailHash
+
+	s, err := store.Open(filepath.Join(tmpDir, "msgvault.db"))
+	require.NoError(err)
+	require.NoError(s.InitSchema())
+	seedMessageWithAttachment(t, s,
+		"alice@example.com", "thread-a", "msg-a", storagePath, hash)
+	_, err = s.DB().Exec(s.Rebind(`
+		UPDATE attachments SET thumbnail_hash = ?, thumbnail_path = ?
+		WHERE content_hash = ?`), thumbnailHash, thumbnailPath, hash)
+	require.NoError(err)
+	seedAttachmentFile(t, attachmentsDir, storagePath, string(content))
+	seedAttachmentFile(t, attachmentsDir, thumbnailPath, string(thumbnail))
+	maintenance, err := newAttachmentMaintenance(s, attachmentsDir, nil)
+	require.NoError(err)
+	packed, err := maintenance.pack(context.Background(), 0)
+	require.NoError(err)
+	require.Equal(2, packed.BlobsPacked)
+	require.NoError(maintenance.close())
+	require.NoError(s.Close())
+
+	savedCfg := cfg
+	defer func() { cfg = savedCfg }()
+	cfg = &config.Config{
+		HomeDir: tmpDir,
+		Data:    config.DataConfig{DataDir: tmpDir},
+	}
+
+	root := newTestRootCmd()
+	root.AddCommand(newRemoveAccountLocalTestCmd())
+	root.SetArgs([]string{"remove-account", "alice@example.com", "--yes"})
+	getOutput := captureStdout(t)
+	require.NoError(root.Execute(), "packed removal succeeds without unpacking first")
+	output := getOutput()
+	assert.Contains(t, output, "Removed 2 packed blob mapping(s)")
+	assert.Contains(t, output, "repack")
+
+	removed, err := store.Open(filepath.Join(tmpDir, "msgvault.db"))
+	require.NoError(err)
+	defer func() { require.NoError(removed.Close()) }()
+	_, err = removed.GetSourceByIdentifier("alice@example.com")
+	require.ErrorIs(err, store.ErrSourceNotFound)
+	bs, err := attachmentstore.New(store.NewPackCatalog(removed), attachmentsDir)
+	require.NoError(err)
+	defer func() { require.NoError(bs.Close()) }()
+	_, _, err = bs.Open(hash)
+	require.ErrorIs(err, fs.ErrNotExist, "removed blob is no longer addressable by hash")
+	_, _, err = bs.Open(thumbnailHash)
+	require.ErrorIs(err, fs.ErrNotExist, "removed thumbnail is no longer addressable by hash")
+	recs, err := removed.ListPackRecords()
+	require.NoError(err)
+	assert.Len(t, recs, 1, "logical deletion leaves immutable pack reclamation to repack")
 }
 
 func TestRemoveAccountCmd_SkipsDeletionDuringActiveSync(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	tmpDir := t.TempDir()
 	attachmentsDir := filepath.Join(tmpDir, "attachments")
 
@@ -140,7 +382,7 @@ func TestRemoveAccountCmd_SkipsDeletionDuringActiveSync(t *testing.T) {
 	}
 
 	root := newTestRootCmd()
-	root.AddCommand(newRemoveAccountCmd())
+	root.AddCommand(newRemoveAccountLocalTestCmd())
 	root.SetArgs([]string{"remove-account", "alice@example.com", "--yes"})
 	require.NoError(root.Execute(), "remove-account")
 
@@ -164,7 +406,7 @@ func TestRemoveAccountCmd_SkipsDeletionDuringActiveSync(t *testing.T) {
 // though the sync worker may still be writing attachment files. The
 // pre-RemoveSource check must catch this and skip file deletion.
 func TestRemoveAccountCmd_SkipsDeletionWhenRemovedAccountHasActiveSync(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	tmpDir := t.TempDir()
 	attachmentsDir := filepath.Join(tmpDir, "attachments")
 
@@ -193,18 +435,50 @@ func TestRemoveAccountCmd_SkipsDeletionWhenRemovedAccountHasActiveSync(t *testin
 	}
 
 	root := newTestRootCmd()
-	root.AddCommand(newRemoveAccountCmd())
+	root.AddCommand(newRemoveAccountLocalTestCmd())
 	// --yes bypasses the initial GetActiveSync guard so we exercise the
 	// later file-deletion path.
 	root.SetArgs([]string{"remove-account", "alice@example.com", "--yes"})
 	require.NoError(root.Execute(), "remove-account")
 
 	_, err = os.Stat(filePath)
-	assertpkg.NoError(t, err, "attachment file should be preserved when the removed account has an active sync")
+	assert.NoError(t, err, "attachment file should be preserved when the removed account has an active sync")
+}
+
+func TestRemoveAccountConfirmedDoesNotBypassActiveSyncGuard(t *testing.T) {
+	require := require.New(t)
+	tmpDir := t.TempDir()
+
+	s, err := store.Open(filepath.Join(tmpDir, "msgvault.db"))
+	require.NoError(err, "open store")
+	require.NoError(s.InitSchema(), "init schema")
+	seedMessageWithAttachment(t, s,
+		"alice@example.com", "thread-a", "msg-a",
+		"ee/hashA", "hashA")
+	aliceSrc, err := s.GetSourceByIdentifier("alice@example.com")
+	require.NoError(err, "GetSourceByIdentifier")
+	_, err = s.StartSync(aliceSrc.ID, "full")
+	require.NoError(err, "StartSync")
+	_ = s.Close()
+
+	savedCfg := cfg
+	defer func() { cfg = savedCfg }()
+	cfg = &config.Config{
+		HomeDir: tmpDir,
+		Data:    config.DataConfig{DataDir: tmpDir},
+	}
+
+	root := newTestRootCmd()
+	root.AddCommand(newRemoveAccountLocalTestCmd())
+	root.SetArgs([]string{"remove-account", "alice@example.com", "--confirmed"})
+
+	err = root.Execute()
+	require.Error(err, "confirmed prompt must not force active-sync removal")
+	require.ErrorContains(err, "active sync in progress")
 }
 
 func TestRemoveAccountCmd_RejectsPathTraversal(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	tmpDir := t.TempDir()
 	attachmentsDir := filepath.Join(tmpDir, "attachments")
 	require.NoError(os.MkdirAll(attachmentsDir, 0o755), "mkdir attachments")
@@ -230,24 +504,24 @@ func TestRemoveAccountCmd_RejectsPathTraversal(t *testing.T) {
 	}
 
 	root := newTestRootCmd()
-	root.AddCommand(newRemoveAccountCmd())
+	root.AddCommand(newRemoveAccountLocalTestCmd())
 	root.SetArgs([]string{"remove-account", "alice@example.com", "--yes"})
 	require.NoError(root.Execute(), "remove-account")
 
 	_, err = os.Stat(outsidePath)
-	assertpkg.NoError(t, err, "file outside attachments dir must not be deleted")
+	assert.NoError(t, err, "file outside attachments dir must not be deleted")
 }
 
 func TestRemoveAccountCmd_RequiresEmail(t *testing.T) {
 	root := newTestRootCmd()
-	root.AddCommand(newRemoveAccountCmd())
+	root.AddCommand(newRemoveAccountLocalTestCmd())
 	root.SetArgs([]string{"remove-account"})
 
-	requirepkg.Error(t, root.Execute(), "expected error for missing email arg")
+	require.Error(t, root.Execute(), "expected error for missing email arg")
 }
 
 func TestRemoveAccountCmd_NotFound(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	tmpDir := t.TempDir()
 	dbPath := tmpDir + "/msgvault.db"
 
@@ -265,18 +539,18 @@ func TestRemoveAccountCmd_NotFound(t *testing.T) {
 	}
 
 	root := newTestRootCmd()
-	root.AddCommand(newRemoveAccountCmd())
+	root.AddCommand(newRemoveAccountLocalTestCmd())
 	root.SetArgs([]string{
 		"remove-account", "nobody@example.com", "--yes",
 	})
 
 	err = root.Execute()
 	require.Error(err, "expected error for unknown email")
-	assertpkg.ErrorContains(t, err, "not found")
+	assert.ErrorContains(t, err, "not found")
 }
 
 func TestRemoveAccountCmd_WithYesFlag(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	tmpDir := t.TempDir()
 	dbPath := tmpDir + "/msgvault.db"
 
@@ -297,7 +571,7 @@ func TestRemoveAccountCmd_WithYesFlag(t *testing.T) {
 	}
 
 	root := newTestRootCmd()
-	root.AddCommand(newRemoveAccountCmd())
+	root.AddCommand(newRemoveAccountLocalTestCmd())
 	root.SetArgs([]string{
 		"remove-account", "test@example.com", "--yes",
 	})
@@ -312,14 +586,295 @@ func TestRemoveAccountCmd_WithYesFlag(t *testing.T) {
 
 	src, err := s.GetSourceByIdentifier("test@example.com")
 	require.ErrorIs(err, store.ErrSourceNotFound, "GetSourceByIdentifier")
-	assertpkg.Nil(t, src, "account should be removed after --yes")
+	assert.Nil(t, src, "account should be removed after --yes")
+}
+
+func TestRemoveAccountCmd_HoldsCacheLockThroughRebuild(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "msgvault.db")
+
+	s, err := store.Open(dbPath)
+	require.NoError(err)
+	require.NoError(s.InitSchema())
+	seedQueryableMessageWithAttachment(t, s)
+	require.NoError(s.Close())
+
+	savedCfg := cfg
+	t.Cleanup(func() { cfg = savedCfg })
+	cfg = &config.Config{HomeDir: tmpDir, Data: config.DataConfig{DataDir: tmpDir}}
+	_, err = buildCache(dbPath, cfg.AnalyticsDir(), true)
+	require.NoError(err, "initial cache build")
+
+	engine, err := query.NewDuckDBEngine(cfg.AnalyticsDir(), "", nil)
+	require.NoError(err, "open pre-removal cache engine")
+	t.Cleanup(func() { _ = engine.Close() })
+
+	cascadePaused := make(chan struct{})
+	resumeRemoval := make(chan struct{})
+	removeAccountAfterCascadeHook = func() {
+		close(cascadePaused)
+		<-resumeRemoval
+	}
+	t.Cleanup(func() { removeAccountAfterCascadeHook = nil })
+
+	removeDone := make(chan error, 1)
+	go func() { removeDone <- executeRemoveAccount(t) }()
+
+	select {
+	case <-cascadePaused:
+	case <-time.After(5 * time.Second):
+		require.FailNow("timed out waiting after account cascade")
+	}
+
+	type aggregateResult struct {
+		rows []query.AggregateRow
+		err  error
+	}
+	aggregateDone := make(chan aggregateResult, 1)
+	go func() {
+		rows, err := engine.Aggregate(context.Background(), query.ViewSenders, query.DefaultAggregateOptions())
+		aggregateDone <- aggregateResult{rows: rows, err: err}
+	}()
+
+	select {
+	case result := <-aggregateDone:
+		close(resumeRemoval)
+		require.FailNow("cache reader passed the removal writer lock", "rows=%v err=%v", result.rows, result.err)
+	case <-time.After(150 * time.Millisecond):
+	}
+
+	close(resumeRemoval)
+	require.NoError(<-removeDone, "remove account")
+	result := <-aggregateDone
+	require.NoError(result.err, "first aggregate after rebuild")
+	assert.Empty(result.rows, "removed source must not remain in the rebuilt cache")
+}
+
+// TestRemoveAccountCmd_FailedCacheRebuildInvalidatesSyncState pins that a
+// failed post-removal cache rebuild can never leave the pre-removal cache
+// looking fresh: cascading deletion also removes the sync history that
+// staleness probes compare against, so the sync state must be gone and the
+// next probe must demand a full rebuild.
+func TestRemoveAccountCmd_FailedCacheRebuildInvalidatesSyncState(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "msgvault.db")
+
+	s, err := store.Open(dbPath)
+	require.NoError(err, "open store")
+	require.NoError(s.InitSchema(), "init schema")
+	seedMessageWithAttachment(t, s, "test@example.com",
+		"thread1", "msg1", "aa/bb/a.pdf", "hash-a")
+	_ = s.Close()
+
+	savedCfg := cfg
+	defer func() { cfg = savedCfg }()
+	cfg = &config.Config{
+		HomeDir: tmpDir,
+		Data:    config.DataConfig{DataDir: tmpDir},
+	}
+
+	_, err = buildCache(dbPath, cfg.AnalyticsDir(), true)
+	require.NoError(err, "initial cache build")
+	stateFile := filepath.Join(cfg.AnalyticsDir(), "_last_sync.json")
+	_, err = os.Stat(stateFile)
+	require.NoError(err, "sync state exists after initial build")
+
+	buildCacheWriteStateFile = func(string, []byte, os.FileMode) error {
+		return errors.New("simulated rebuild failure")
+	}
+	defer func() { buildCacheWriteStateFile = os.WriteFile }()
+
+	err = executeRemoveAccount(t)
+	require.Error(err, "mandatory cache rebuild failure must reach the command")
+	require.ErrorContains(err, "account was removed")
+	require.ErrorContains(err, "analytics cache refresh failed")
+	require.ErrorContains(err, "simulated rebuild failure")
+
+	_, err = os.Stat(stateFile)
+	assert.True(os.IsNotExist(err),
+		"a failed rebuild must not leave the pre-removal sync state behind")
+	staleness := cacheNeedsBuild(dbPath, cfg.AnalyticsDir())
+	assert.True(staleness.NeedsBuild && staleness.FullRebuild,
+		"the pre-removal cache must never look fresh after a failed rebuild")
+	readiness, inspectErr := query.InspectCacheReadiness(cfg.AnalyticsDir())
+	require.NoError(inspectErr)
+	assert.Equal(query.CacheInterrupted, readiness)
+
+	s, openErr := store.Open(dbPath)
+	require.NoError(openErr)
+	defer func() { _ = s.Close() }()
+	_, sourceErr := s.GetSourceByIdentifier("test@example.com")
+	require.ErrorIs(sourceErr, store.ErrSourceNotFound, "source deletion committed")
+
+	_, lockErr := query.AcquireReadyCacheReadLock(context.Background(), cfg.AnalyticsDir())
+	assert.ErrorIs(lockErr, query.ErrCacheUnavailable)
+}
+
+func TestRemoveAccountCmd_CascadeFailureRestoresCache(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "msgvault.db")
+	attachmentPath := seedAttachmentFile(t, filepath.Join(tmpDir, "attachments"), "aa/bb/a.pdf", "attachment")
+
+	s, err := store.Open(dbPath)
+	require.NoError(err)
+	require.NoError(s.InitSchema())
+	seedQueryableMessageWithAttachment(t, s)
+	_, err = s.DB().Exec(`
+		CREATE TRIGGER abort_source_delete
+		BEFORE DELETE ON sources
+		BEGIN
+			SELECT RAISE(ABORT, 'simulated cascade failure');
+		END`)
+	require.NoError(err, "install aborting delete trigger")
+	require.NoError(s.Close())
+
+	savedCfg := cfg
+	t.Cleanup(func() { cfg = savedCfg })
+	cfg = &config.Config{HomeDir: tmpDir, Data: config.DataConfig{DataDir: tmpDir}}
+	tokenPath := oauth.TokenFilePath(cfg.TokensDir(), "test@example.com")
+	require.NoError(os.MkdirAll(filepath.Dir(tokenPath), 0o755))
+	require.NoError(os.WriteFile(tokenPath, []byte("token"), 0o600))
+	_, err = buildCache(dbPath, cfg.AnalyticsDir(), true)
+	require.NoError(err, "initial cache build")
+
+	err = executeRemoveAccount(t)
+	require.Error(err, "cascade failure must reach the command")
+	require.ErrorContains(err, "simulated cascade failure")
+
+	readiness, inspectErr := query.InspectCacheReadiness(cfg.AnalyticsDir())
+	require.NoError(inspectErr)
+	assert.Equal(query.CacheReady, readiness, "failed removal must restore the unchanged cache")
+	assert.Equal(1, countCachedMessages(t, cfg.AnalyticsDir(), 0))
+
+	s, err = store.Open(dbPath)
+	require.NoError(err)
+	defer func() { _ = s.Close() }()
+	_, err = s.GetSourceByIdentifier("test@example.com")
+	require.NoError(err, "source remains after rolled-back cascade")
+	_, err = os.Stat(attachmentPath)
+	require.NoError(err, "attachment cleanup must not run after failed cascade")
+	_, err = os.Stat(tokenPath)
+	require.NoError(err, "credential cleanup must not run after failed cascade")
+}
+
+func TestRemoveAccountCmd_CascadeFailureJoinsRecoveryFailure(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "msgvault.db")
+
+	s, err := store.Open(dbPath)
+	require.NoError(err)
+	require.NoError(s.InitSchema())
+	seedQueryableMessageWithAttachment(t, s)
+	_, err = s.DB().Exec(`
+		CREATE TRIGGER abort_source_delete
+		BEFORE DELETE ON sources
+		BEGIN
+			SELECT RAISE(ABORT, 'simulated cascade failure');
+		END`)
+	require.NoError(err)
+	require.NoError(s.Close())
+
+	savedCfg := cfg
+	t.Cleanup(func() { cfg = savedCfg })
+	cfg = &config.Config{HomeDir: tmpDir, Data: config.DataConfig{DataDir: tmpDir}}
+	_, err = buildCache(dbPath, cfg.AnalyticsDir(), true)
+	require.NoError(err, "initial cache build")
+
+	buildCacheWriteStateFile = func(string, []byte, os.FileMode) error {
+		return errors.New("simulated recovery failure")
+	}
+	t.Cleanup(func() { buildCacheWriteStateFile = os.WriteFile })
+
+	err = executeRemoveAccount(t)
+	require.Error(err)
+	require.ErrorContains(err, "simulated cascade failure")
+	require.ErrorContains(err, "simulated recovery failure")
+	readiness, inspectErr := query.InspectCacheReadiness(cfg.AnalyticsDir())
+	require.NoError(inspectErr)
+	assert.Equal(query.CacheInterrupted, readiness)
+}
+
+func TestRemoveAccountCmd_LockFailureLeavesSourceUntouched(t *testing.T) {
+	require := require.New(t)
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "msgvault.db")
+
+	s, err := store.Open(dbPath)
+	require.NoError(err)
+	require.NoError(s.InitSchema())
+	seedQueryableMessageWithAttachment(t, s)
+	require.NoError(s.Close())
+
+	savedCfg := cfg
+	t.Cleanup(func() { cfg = savedCfg })
+	cfg = &config.Config{HomeDir: tmpDir, Data: config.DataConfig{DataDir: tmpDir}}
+	_, err = buildCache(dbPath, cfg.AnalyticsDir(), true)
+	require.NoError(err, "initial cache build")
+
+	statePath := query.CacheStatePath(cfg.AnalyticsDir())
+	require.NoError(os.Remove(statePath))
+	require.NoError(os.Mkdir(statePath, 0o755))
+	require.NoError(os.WriteFile(filepath.Join(statePath, "keep"), []byte("x"), 0o600))
+
+	err = executeRemoveAccount(t)
+	require.Error(err, "invalidation failure must abort removal")
+	require.ErrorContains(err, "invalidate")
+
+	s, err = store.Open(dbPath)
+	require.NoError(err)
+	defer func() { _ = s.Close() }()
+	_, err = s.GetSourceByIdentifier("test@example.com")
+	require.NoError(err, "source must remain when cache protection cannot be established")
+}
+
+// TestRemoveAccountCmd_LastAccountLeavesReadableEmptyCache pins that
+// removing the only account still leaves a queryable cache: a running daemon
+// keeps its DuckDB engine, so read_parquet over the messages glob must
+// return zero rows instead of failing on an empty directory.
+func TestRemoveAccountCmd_LastAccountLeavesReadableEmptyCache(t *testing.T) {
+	require := require.New(t)
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "msgvault.db")
+
+	s, err := store.Open(dbPath)
+	require.NoError(err, "open store")
+	require.NoError(s.InitSchema(), "init schema")
+	seedMessageWithAttachment(t, s, "test@example.com",
+		"thread1", "msg1", "aa/bb/a.pdf", "hash-a")
+	_ = s.Close()
+
+	savedCfg := cfg
+	defer func() { cfg = savedCfg }()
+	cfg = &config.Config{
+		HomeDir: tmpDir,
+		Data:    config.DataConfig{DataDir: tmpDir},
+	}
+
+	_, err = buildCache(dbPath, cfg.AnalyticsDir(), true)
+	require.NoError(err, "initial cache build")
+
+	root := newTestRootCmd()
+	root.AddCommand(newRemoveAccountLocalTestCmd())
+	root.SetArgs([]string{"remove-account", "test@example.com", "--yes"})
+	require.NoError(root.Execute(), "remove last account")
+
+	require.Equal(0, countCachedMessages(t, cfg.AnalyticsDir(), 0),
+		"the messages glob must stay readable and empty after removing the last account")
 }
 
 func TestRemoveAccountCmd_DuplicateIdentifierRequiresType(
 	t *testing.T,
 ) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	tmpDir := t.TempDir()
 	dbPath := tmpDir + "/msgvault.db"
 
@@ -343,7 +898,7 @@ func TestRemoveAccountCmd_DuplicateIdentifierRequiresType(
 
 	// Without --type should fail
 	root := newTestRootCmd()
-	root.AddCommand(newRemoveAccountCmd())
+	root.AddCommand(newRemoveAccountLocalTestCmd())
 	root.SetArgs([]string{
 		"remove-account", "dup@example.com", "--yes",
 	})
@@ -354,7 +909,7 @@ func TestRemoveAccountCmd_DuplicateIdentifierRequiresType(
 
 	// With --type should succeed
 	root2 := newTestRootCmd()
-	root2.AddCommand(newRemoveAccountCmd())
+	root2.AddCommand(newRemoveAccountLocalTestCmd())
 	root2.SetArgs([]string{
 		"remove-account", "dup@example.com",
 		"--yes", "--type", "mbox",
@@ -375,7 +930,7 @@ func TestRemoveAccountCmd_DuplicateIdentifierRequiresType(
 }
 
 func TestRemoveAccountCmd_GmailRemovesToken(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	tmpDir := t.TempDir()
 	dbPath := tmpDir + "/msgvault.db"
 	tokensDir := filepath.Join(tmpDir, "tokens")
@@ -401,7 +956,7 @@ func TestRemoveAccountCmd_GmailRemovesToken(t *testing.T) {
 	}
 
 	root := newTestRootCmd()
-	root.AddCommand(newRemoveAccountCmd())
+	root.AddCommand(newRemoveAccountLocalTestCmd())
 	root.SetArgs([]string{
 		"remove-account", "tok@example.com", "--yes",
 	})
@@ -409,11 +964,89 @@ func TestRemoveAccountCmd_GmailRemovesToken(t *testing.T) {
 	require.NoError(root.Execute(), "remove-account")
 
 	_, err = os.Stat(tokenPath)
-	assertpkg.True(t, os.IsNotExist(err), "token file should be removed for gmail source")
+	assert.True(t, os.IsNotExist(err), "token file should be removed for gmail source")
+}
+
+func TestRemoveAccountCmd_TeamsRemovesGraphToken(t *testing.T) {
+	require := require.New(t)
+	tmpDir := t.TempDir()
+	dbPath := tmpDir + "/msgvault.db"
+	tokensDir := filepath.Join(tmpDir, "tokens")
+	require.NoError(os.MkdirAll(tokensDir, 0700), "mkdir tokens")
+
+	s, err := store.Open(dbPath)
+	require.NoError(err, "open store")
+	require.NoError(s.InitSchema(), "init schema")
+	_, err = s.GetOrCreateSource("teams", "tok@example.com")
+	require.NoError(err, "create source")
+	_ = s.Close()
+
+	mgr := microsoft.NewGraphManager("client-id", "", tokensDir, nil)
+	tokenPath := mgr.TokenPath("tok@example.com")
+	require.NoError(os.WriteFile(tokenPath, []byte(`{}`), 0600), "write teams token")
+
+	savedCfg := cfg
+	defer func() { cfg = savedCfg }()
+
+	cfg = &config.Config{
+		HomeDir: tmpDir,
+		Data:    config.DataConfig{DataDir: tmpDir},
+		Microsoft: config.MicrosoftConfig{
+			ClientID: "client-id",
+		},
+	}
+
+	root := newTestRootCmd()
+	root.AddCommand(newRemoveAccountLocalTestCmd())
+	root.SetArgs([]string{
+		"remove-account", "tok@example.com", "--yes", "--type", "teams",
+	})
+
+	require.NoError(root.Execute(), "remove-account")
+
+	_, err = os.Stat(tokenPath)
+	assert.True(t, os.IsNotExist(err), "Graph token file should be removed for teams source")
+}
+
+func TestRemoveAccountCmd_CirclebackRemovesToken(t *testing.T) {
+	require := require.New(t)
+	tmpDir := t.TempDir()
+	dbPath := tmpDir + "/msgvault.db"
+	tokensDir := filepath.Join(tmpDir, "tokens")
+	require.NoError(os.MkdirAll(tokensDir, 0700), "mkdir tokens")
+
+	s, err := store.Open(dbPath)
+	require.NoError(err, "open store")
+	require.NoError(s.InitSchema(), "init schema")
+	_, err = s.GetOrCreateSource(sourceTypeCircleback, "tok@example.com")
+	require.NoError(err, "create source")
+	require.NoError(s.Close(), "close store")
+
+	mgr := circleback.NewManager("", tokensDir, nil)
+	tokenPath := mgr.TokenPath("tok@example.com")
+	require.NoError(os.WriteFile(tokenPath, []byte(`{}`), 0600), "write circleback token")
+
+	savedCfg := cfg
+	t.Cleanup(func() { cfg = savedCfg })
+	cfg = &config.Config{
+		HomeDir: tmpDir,
+		Data:    config.DataConfig{DataDir: tmpDir},
+	}
+
+	root := newTestRootCmd()
+	root.AddCommand(newRemoveAccountLocalTestCmd())
+	root.SetArgs([]string{
+		"remove-account", "tok@example.com", "--yes", "--type", sourceTypeCircleback,
+	})
+
+	require.NoError(root.Execute(), "remove-account")
+
+	_, err = os.Stat(tokenPath)
+	assert.True(t, os.IsNotExist(err), "token file should be removed for Circleback source")
 }
 
 func TestRemoveAccountCmd_NonGmailSkipsToken(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	tmpDir := t.TempDir()
 	dbPath := tmpDir + "/msgvault.db"
 	tokensDir := filepath.Join(tmpDir, "tokens")
@@ -439,7 +1072,7 @@ func TestRemoveAccountCmd_NonGmailSkipsToken(t *testing.T) {
 	}
 
 	root := newTestRootCmd()
-	root.AddCommand(newRemoveAccountCmd())
+	root.AddCommand(newRemoveAccountLocalTestCmd())
 	root.SetArgs([]string{
 		"remove-account", "imp@example.com", "--yes",
 	})
@@ -447,11 +1080,11 @@ func TestRemoveAccountCmd_NonGmailSkipsToken(t *testing.T) {
 	require.NoError(root.Execute(), "remove-account")
 
 	_, err = os.Stat(tokenPath)
-	assertpkg.False(t, os.IsNotExist(err), "token file should NOT be removed for non-gmail source")
+	assert.False(t, os.IsNotExist(err), "token file should NOT be removed for non-gmail source")
 }
 
 func TestResolveSource_IMAPDisplayName(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	tmpDir := t.TempDir()
 	dbPath := tmpDir + "/msgvault.db"
 
@@ -472,11 +1105,11 @@ func TestResolveSource_IMAPDisplayName(t *testing.T) {
 
 	found, err := resolveSource(s2, "user@outlook.com", "")
 	require.NoError(err, "resolveSource by display name")
-	assertpkg.Equal(t, "imaps://user%40outlook.com@outlook.office365.com:993", found.Identifier, "identifier should be IMAP URL")
+	assert.Equal(t, "imaps://user%40outlook.com@outlook.office365.com:993", found.Identifier, "identifier should be IMAP URL")
 }
 
 func TestRemoveAccountCmd_ClosedStdinReturnsError(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	tmpDir := t.TempDir()
 	dbPath := tmpDir + "/msgvault.db"
 
@@ -509,10 +1142,10 @@ func TestRemoveAccountCmd_ClosedStdinReturnsError(t *testing.T) {
 
 	// Run WITHOUT --yes so it tries to read confirmation
 	root := newTestRootCmd()
-	root.AddCommand(newRemoveAccountCmd())
+	root.AddCommand(newRemoveAccountLocalTestCmd())
 	root.SetArgs([]string{"remove-account", "eof@example.com"})
 
 	err = root.Execute()
 	require.Error(err, "expected error when stdin is closed")
-	assertpkg.ErrorContains(t, err, "use --yes")
+	assert.ErrorContains(t, err, "use --yes")
 }

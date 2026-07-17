@@ -96,6 +96,14 @@ type RawMessage struct {
 	Raw          []byte // Decoded from base64url
 }
 
+// RawMessageBatchResult is one per-message result from a batch raw fetch.
+// Message is nil when the fetch failed; Err preserves the per-message cause.
+type RawMessageBatchResult struct {
+	ID      string
+	Message *RawMessage
+	Err     error
+}
+
 // HistoryResponse contains changes since a history ID.
 type HistoryResponse struct {
 	History       []HistoryRecord

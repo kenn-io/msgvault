@@ -1,44 +1,29 @@
 package export
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"sync"
-	"time"
+
+	"go.kenn.io/kit/packstore"
 
 	"go.kenn.io/msgvault/internal/fileutil"
 	"go.kenn.io/msgvault/internal/mime"
 )
 
-// key: fullPath + size + expectedHash -> value: modTime (int64)
-var validatedAttachmentFiles sync.Map
+var attachmentLooseStores sync.Map
 
-// resolveContentHash computes the SHA-256 of content and validates it against
-// the provided hash (if any). Returns the canonical lowercase hash without
-// mutating the attachment.
-func resolveContentHash(content []byte, providedHash string) (string, error) {
-	sum := sha256.Sum256(content)
-	computed := hex.EncodeToString(sum[:])
-
-	if providedHash == "" {
-		return computed, nil
-	}
-
-	normalized := strings.ToLower(providedHash)
-	if err := ValidateContentHash(normalized); err != nil {
-		return "", fmt.Errorf("invalid attachment content hash %q: %w", normalized, err)
-	}
-	if normalized != computed {
-		return "", fmt.Errorf("attachment content hash mismatch: provided %q, computed %q", normalized, computed)
-	}
-	return normalized, nil
+type attachmentLooseStoreKey struct {
+	baseDir string
+	staging packstore.StagingMode
 }
 
 // prepareStorageDir ensures the base attachments directory exists, resolves
@@ -68,65 +53,6 @@ func prepareStorageDir(attachmentsDir string) (string, error) {
 	return resolved, nil
 }
 
-// ensureSubdirSafe creates the hash-prefix subdirectory and checks it is
-// not a symlink.
-func ensureSubdirSafe(baseDir, hashPrefix string) error {
-	subdirPath := filepath.Join(baseDir, hashPrefix)
-	if st, err := os.Lstat(subdirPath); err == nil {
-		if st.Mode()&os.ModeSymlink != 0 {
-			return fmt.Errorf("attachment dir %q is a symlink", subdirPath)
-		}
-	} else if !os.IsNotExist(err) {
-		return fmt.Errorf("lstat attachment dir: %w", err)
-	}
-	return fileutil.SecureMkdirAll(subdirPath, 0700)
-}
-
-// writeAtomicFile writes data to a temp file alongside fullPath and renames
-// it into place. On rename conflict (concurrent writer), validates the
-// existing file instead.
-func writeAtomicFile(fullPath string, data []byte, expectedSize int64, expectedHash string) error {
-	dir := filepath.Dir(fullPath)
-	base := filepath.Base(fullPath)
-
-	tmp, err := os.CreateTemp(dir, base+".tmp.")
-	if err != nil {
-		return fmt.Errorf("create temp attachment file: %w", err)
-	}
-	tmpPath := tmp.Name()
-	removeTmp := true
-	defer func() {
-		if removeTmp {
-			_ = tmp.Close()
-			_ = os.Remove(tmpPath)
-		}
-	}()
-
-	if err := fileutil.SecureChmod(tmpPath, 0600); err != nil {
-		return fmt.Errorf("chmod temp attachment file: %w", err)
-	}
-
-	if _, err := tmp.Write(data); err != nil {
-		return fmt.Errorf("write attachment file: %w", err)
-	}
-	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("close attachment file: %w", err)
-	}
-
-	if err := os.Rename(tmpPath, fullPath); err != nil {
-		// Another writer may have installed the final file first (notably on
-		// Windows; Unix rename typically overwrites). Validate the existing file.
-		if _, statErr := os.Lstat(fullPath); statErr == nil {
-			removeTmp = false
-			_ = os.Remove(tmpPath)
-			return validateExistingAttachmentFile(fullPath, expectedSize, expectedHash)
-		}
-		return fmt.Errorf("rename attachment file into place: %w", err)
-	}
-	removeTmp = false
-	return nil
-}
-
 // StoreAttachmentFile stores att.Content on disk under attachmentsDir using
 // content-addressed storage (hash[:2]/hash). It validates existing files when
 // de-duping. If attachmentsDir is a symlink, it is resolved before writing.
@@ -138,87 +64,209 @@ func StoreAttachmentFile(attachmentsDir string, att *mime.Attachment) (string, e
 		return "", nil
 	}
 
-	contentHash, err := resolveContentHash(att.Content, att.ContentHash)
-	if err != nil {
-		return "", err
+	var expectedHash packstore.Hash
+	var err error
+	if att.ContentHash != "" {
+		normalized := strings.ToLower(att.ContentHash)
+		if err := ValidateContentHash(normalized); err != nil {
+			return "", fmt.Errorf("invalid attachment content hash %q: %w", normalized, err)
+		}
+		expectedHash, err = packstore.ParseHash(normalized)
+		if err != nil {
+			return "", fmt.Errorf("parse attachment content hash: %w", err)
+		}
 	}
-	att.ContentHash = contentHash
-
-	hashPrefix := contentHash[:2]
-	storagePath := path.Join(hashPrefix, contentHash)
-
 	baseDir, err := prepareStorageDir(attachmentsDir)
 	if err != nil {
 		return "", err
 	}
-
-	if err := ensureSubdirSafe(baseDir, hashPrefix); err != nil {
+	loose, err := attachmentLooseStore(baseDir, packstore.StagingSameDirectory)
+	if err != nil {
 		return "", err
 	}
 
-	fullPath := filepath.Join(baseDir, hashPrefix, contentHash)
-	expectedSize := int64(len(att.Content))
-
-	if _, err := os.Lstat(fullPath); err == nil {
-		if err := validateExistingAttachmentFile(fullPath, expectedSize, contentHash); err != nil {
-			return "", err
-		}
-		return storagePath, nil
-	} else if !os.IsNotExist(err) {
-		return "", fmt.Errorf("lstat attachment file: %w", err)
+	result, writeErr := loose.WriteBytes(context.Background(), att.Content, packstore.WriteOptions{
+		Durability:   packstore.AtomicPublication,
+		Dedup:        packstore.VerifyFullHash,
+		ExpectedHash: expectedHash,
+		ExpectedSize: int64(len(att.Content)),
+		SizeKnown:    true,
+	})
+	if result.Hash != "" && (expectedHash == "" || result.Hash == expectedHash) {
+		att.ContentHash = result.Hash.String()
 	}
-
-	if err := writeAtomicFile(fullPath, att.Content, expectedSize, contentHash); err != nil {
-		return "", err
+	if writeErr != nil {
+		return "", fmt.Errorf("store loose attachment: %w", writeErr)
 	}
-	return storagePath, nil
+	contentHash := result.Hash.String()
+	return path.Join(contentHash[:2], contentHash), nil
 }
 
-func validateExistingAttachmentFile(fullPath string, expectedSize int64, expectedHash string) error {
-	var f *os.File
+func attachmentLooseStore(baseDir string, staging packstore.StagingMode) (*packstore.LooseStore, error) {
+	key := attachmentLooseStoreKey{baseDir: baseDir, staging: staging}
+	if existing, ok := attachmentLooseStores.Load(key); ok {
+		store, ok := existing.(*packstore.LooseStore)
+		if !ok {
+			return nil, errors.New("attachment loose store cache contains an invalid value")
+		}
+		return store, nil
+	}
+	options := packstore.LayoutOptions{Staging: staging}
+	if staging == packstore.StagingStoreDirectory {
+		options.StagingDir = "."
+	}
+	layout, err := packstore.NewLayout(baseDir, options)
+	if err != nil {
+		return nil, fmt.Errorf("create attachment layout: %w", err)
+	}
+	loose, err := packstore.NewLooseStore(layout)
+	if err != nil {
+		return nil, fmt.Errorf("create loose attachment store: %w", err)
+	}
+	actual, _ := attachmentLooseStores.LoadOrStore(key, loose)
+	store, ok := actual.(*packstore.LooseStore)
+	if !ok {
+		return nil, errors.New("attachment loose store cache contains an invalid value")
+	}
+	return store, nil
+}
+
+// StoreAttachmentFileDurable stores attachment content, including an empty
+// blob, through the content-addressed atomic write path. Unlike ordinary
+// ingest, this entry point is reserved for maintenance that will discard an
+// existing authoritative copy after the loose file is durable.
+func StoreAttachmentFileDurable(attachmentsDir string, att *mime.Attachment) (string, error) {
+	if attachmentsDir == "" {
+		return "", nil
+	}
+	var expectedHash packstore.Hash
 	var err error
-	const maxRetries = 5
-	for attempt := range maxRetries {
-		f, err = openNoFollow(fullPath)
-		if err == nil {
-			break
+	if att.ContentHash != "" {
+		normalized := strings.ToLower(att.ContentHash)
+		if err := ValidateContentHash(normalized); err != nil {
+			return "", fmt.Errorf("invalid attachment content hash %q: %w", normalized, err)
 		}
-		if runtime.GOOS != "windows" || attempt == maxRetries-1 {
-			return fmt.Errorf(
-				"open attachment file for validation: %w", err,
-			)
+		expectedHash, err = packstore.ParseHash(normalized)
+		if err != nil {
+			return "", fmt.Errorf("parse attachment content hash: %w", err)
 		}
-		time.Sleep(time.Duration(attempt+1) * 10 * time.Millisecond)
+	}
+	baseDir, err := prepareStorageDir(attachmentsDir)
+	if err != nil {
+		return "", err
+	}
+	loose, err := attachmentLooseStore(baseDir, packstore.StagingSameDirectory)
+	if err != nil {
+		return "", err
+	}
+	result, writeErr := loose.WriteBytes(context.Background(), att.Content, packstore.WriteOptions{
+		Durability:   packstore.DurablePublication,
+		Dedup:        packstore.VerifyFullHash,
+		ExpectedHash: expectedHash,
+		ExpectedSize: int64(len(att.Content)),
+		SizeKnown:    true,
+	})
+	if result.Hash != "" && (expectedHash == "" || result.Hash == expectedHash) {
+		att.ContentHash = result.Hash.String()
+	}
+	if writeErr != nil {
+		return "", fmt.Errorf("store durable loose attachment: %w", writeErr)
+	}
+	contentHash := result.Hash.String()
+	return path.Join(contentHash[:2], contentHash), nil
+}
+
+// hashSourceFile hashes f without staging any bytes, enforcing maxSize on
+// the bytes actually read.
+func hashSourceFile(f *os.File, srcPath string, maxSize int64) (string, int64, error) {
+	src := io.Reader(f)
+	if maxSize > 0 {
+		src = io.LimitReader(f, maxSize+1)
+	}
+	h := sha256.New()
+	size, err := io.Copy(h, src)
+	if err != nil {
+		return "", 0, fmt.Errorf("hash attachment source: %w", err)
+	}
+	if maxSize > 0 && size > maxSize {
+		return "", 0, fmt.Errorf("attachment source %q exceeds %d bytes", srcPath, maxSize)
+	}
+	return hex.EncodeToString(h.Sum(nil)), size, nil
+}
+
+// StoreAttachmentFromPath streams the regular file at srcPath into
+// content-addressed storage under attachmentsDir (hash[:2]/hash), hashing
+// without loading the file into memory. maxSize > 0 rejects larger sources.
+//
+// The source is hashed before any bytes are staged, so importing content
+// that is already stored needs no temp-file writes and no free disk space.
+// When the blob is new, the source is re-read and staged with the hash
+// recomputed in the same read, so the stored bytes always match the returned
+// hash and size even if the source file changes between the two reads;
+// maxSize is enforced on the bytes actually read, not just the pre-read stat.
+//
+// Returns the storage path relative to attachmentsDir, the content hash, and
+// the stored size. On failures after the source was hashed, contentHash and
+// size are still returned (with an empty storage path) so callers can record
+// metadata for content they could not store.
+func StoreAttachmentFromPath(attachmentsDir, srcPath string, maxSize int64) (string, string, int64, error) {
+	if attachmentsDir == "" || srcPath == "" {
+		return "", "", 0, errors.New("attachments dir and source path are required")
+	}
+	linfo, err := os.Lstat(srcPath)
+	if err != nil {
+		return "", "", 0, fmt.Errorf("lstat attachment source: %w", err)
+	}
+	if !linfo.Mode().IsRegular() {
+		return "", "", 0, fmt.Errorf("attachment source %q is not a regular file", srcPath)
+	}
+	if maxSize > 0 && linfo.Size() > maxSize {
+		return "", "", 0, fmt.Errorf("attachment source %q is %d bytes (max %d)", srcPath, linfo.Size(), maxSize)
+	}
+
+	f, err := os.Open(srcPath)
+	if err != nil {
+		return "", "", 0, fmt.Errorf("open attachment source: %w", err)
 	}
 	defer func() { _ = f.Close() }()
 
-	st, err := f.Stat()
+	baseDir, err := prepareStorageDir(attachmentsDir)
 	if err != nil {
-		return fmt.Errorf("stat attachment file: %w", err)
-	}
-	if !st.Mode().IsRegular() {
-		return fmt.Errorf("attachment file %q is not a regular file", fullPath)
-	}
-	if st.Size() != expectedSize {
-		return fmt.Errorf("attachment file %q has size %d, want %d", fullPath, st.Size(), expectedSize)
+		return "", "", 0, err
 	}
 
-	key := fmt.Sprintf("%s\x00%d\x00%s", fullPath, expectedSize, expectedHash)
-	modTime := st.ModTime().UnixNano()
-	if cached, ok := validatedAttachmentFiles.Load(key); ok {
-		if ts, ok := cached.(int64); ok && ts == modTime {
-			return nil
-		}
+	contentHash, size, err := hashSourceFile(f, srcPath, maxSize)
+	if err != nil {
+		return "", "", 0, err
+	}
+	hash, err := packstore.ParseHash(contentHash)
+	if err != nil {
+		return "", contentHash, size, fmt.Errorf("parse attachment content hash: %w", err)
+	}
+	loose, err := attachmentLooseStore(baseDir, packstore.StagingStoreDirectory)
+	if err != nil {
+		return "", contentHash, size, err
+	}
+	if _, exists, err := loose.Verify(hash, size, packstore.VerifyFullHash, packstore.AtomicPublication); err != nil {
+		return "", contentHash, size, fmt.Errorf("verify loose attachment: %w", err)
+	} else if exists {
+		return path.Join(contentHash[:2], contentHash), contentHash, size, nil
 	}
 
-	h := sha256.New()
-	if _, err := io.Copy(h, f); err != nil {
-		return fmt.Errorf("hash attachment file: %w", err)
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		return "", contentHash, size, fmt.Errorf("rewind attachment source: %w", err)
 	}
-	gotHash := hex.EncodeToString(h.Sum(nil))
-	if gotHash != expectedHash {
-		return fmt.Errorf("attachment file %q has hash %q, want %q", fullPath, gotHash, expectedHash)
+	result, writeErr := loose.Write(context.Background(), f, packstore.WriteOptions{
+		Durability: packstore.AtomicPublication,
+		Dedup:      packstore.VerifyFullHash,
+		MaxBytes:   maxSize,
+	})
+	if result.Hash != "" {
+		contentHash = result.Hash.String()
+		size = result.Size
 	}
-	validatedAttachmentFiles.Store(key, modTime)
-	return nil
+	if writeErr != nil {
+		return "", contentHash, size, fmt.Errorf("store attachment source %q: %w", srcPath, writeErr)
+	}
+	return path.Join(contentHash[:2], contentHash), contentHash, size, nil
 }

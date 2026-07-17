@@ -38,13 +38,17 @@ Examples:
 }
 
 func runImportGvoice(cmd *cobra.Command, args []string) error {
+	if !isDaemonCLISubprocess() {
+		return runDaemonCLICommandHTTPFromCobra(cmd, args)
+	}
+
 	takeoutDir := args[0]
 
-	s, err := openStoreAndInitForIngest()
+	s, cleanup, err := openWritableStoreAndInitForIngest()
 	if err != nil {
 		return err
 	}
-	defer func() { _ = s.Close() }()
+	defer cleanup()
 
 	clientOpts, err := buildGvoiceOpts()
 	if err != nil {
@@ -90,8 +94,7 @@ func runImportGvoice(cmd *cobra.Command, args []string) error {
 		if ctx.Err() != nil {
 			fmt.Println("\nImport interrupted.")
 			printGvoiceSummary(summary, startTime)
-			rebuildCacheAfterWrite(cfg.DatabaseDSN())
-			return nil
+			return rebuildCacheAfterWrite(cfg.DatabaseDSN())
 		}
 		return fmt.Errorf("import failed: %w", err)
 	}
@@ -107,8 +110,7 @@ func runImportGvoice(cmd *cobra.Command, args []string) error {
 	}
 
 	printGvoiceSummary(summary, startTime)
-	rebuildCacheAfterWrite(cfg.DatabaseDSN())
-	return nil
+	return rebuildCacheAfterWrite(cfg.DatabaseDSN())
 }
 
 func buildGvoiceOpts() ([]gvoice.ClientOption, error) {

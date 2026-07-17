@@ -1,10 +1,12 @@
 package cmd
 
 import (
+	"encoding/json"
 	"testing"
 
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
@@ -22,7 +24,7 @@ func setupScopeFixture(t *testing.T) (
 
 	collectionName = "inbox-collection"
 	_, err := f.Store.CreateCollection(collectionName, "", []int64{f.Source.ID})
-	requirepkg.NoError(t, err, "CreateCollection")
+	require.NoError(t, err, "CreateCollection")
 
 	return f, accountID, collectionName
 }
@@ -31,8 +33,8 @@ func TestResolveAccountFlag_EmptyInput(t *testing.T) {
 	f, _, _ := setupScopeFixture(t)
 
 	scope, err := ResolveAccountFlag(f.Store, "")
-	requirepkg.NoError(t, err)
-	assertpkg.True(t, scope.IsEmpty(), "expected empty scope, got source=%v collection=%v",
+	require.NoError(t, err)
+	assert.True(t, scope.IsEmpty(), "expected empty scope, got source=%v collection=%v",
 		scope.Source, scope.Collection)
 }
 
@@ -40,14 +42,14 @@ func TestResolveCollectionFlag_EmptyInput(t *testing.T) {
 	f, _, _ := setupScopeFixture(t)
 
 	scope, err := ResolveCollectionFlag(f.Store, "")
-	requirepkg.NoError(t, err)
-	assertpkg.True(t, scope.IsEmpty(), "expected empty scope, got source=%v collection=%v",
+	require.NoError(t, err)
+	assert.True(t, scope.IsEmpty(), "expected empty scope, got source=%v collection=%v",
 		scope.Source, scope.Collection)
 }
 
 func TestResolveAccountFlag_ValidAccount(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	f, accountID, _ := setupScopeFixture(t)
 
 	scope, err := ResolveAccountFlag(f.Store, accountID)
@@ -57,9 +59,83 @@ func TestResolveAccountFlag_ValidAccount(t *testing.T) {
 	assert.Nil(scope.Collection, "expected Collection to be nil")
 }
 
+func TestResolveAccountFlag_IncludesCalendarSourcesForAccountEmail(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f, accountID, _ := setupScopeFixture(t)
+
+	mkCalendarSource := func(identifier, accountEmail string) *store.Source {
+		t.Helper()
+		src, err := f.Store.GetOrCreateSource("gcal", identifier)
+		require.NoError(err, "GetOrCreateSource(%s)", identifier)
+		cfg, err := json.Marshal(map[string]string{
+			"account_email": accountEmail,
+			"calendar_id":   identifier,
+		})
+		require.NoError(err, "marshal sync_config")
+		require.NoError(f.Store.UpdateSourceSyncConfig(src.ID, string(cfg)), "UpdateSourceSyncConfig")
+		return src
+	}
+	primaryCal := mkCalendarSource("test@example.com/primary", "Test@Example.COM")
+	workCal := mkCalendarSource("test@example.com/work", "test@example.com")
+	otherCal := mkCalendarSource("other@example.com/primary", "other@example.com")
+
+	scope, err := ResolveAccountFlag(f.Store, accountID)
+	require.NoError(err)
+	require.NotNil(scope.Source, "direct Gmail source should still be available")
+	assert.Equal(f.Source.ID, scope.Source.ID, "source ID")
+	assert.ElementsMatch([]int64{f.Source.ID, primaryCal.ID, workCal.ID}, scope.SourceIDs())
+	assert.NotContains(scope.SourceIDs(), otherCal.ID, "other account calendar source")
+	assert.False(scope.IsCollection(), "calendar expansion should not masquerade as a collection")
+	assert.Equal(accountID, scope.DisplayName(), "display name")
+}
+
+func TestResolveAccountFlag_IncludesCalendarSourcesForDisplayName(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f, accountID, _ := setupScopeFixture(t)
+	require.NoError(f.Store.UpdateSourceDisplayName(f.Source.ID, "Work"), "UpdateSourceDisplayName")
+
+	cal, err := f.Store.GetOrCreateSource("gcal", accountID+"/primary")
+	require.NoError(err, "GetOrCreateSource")
+	cfg, err := json.Marshal(map[string]string{
+		"account_email": accountID,
+		"calendar_id":   "primary",
+	})
+	require.NoError(err, "marshal sync_config")
+	require.NoError(f.Store.UpdateSourceSyncConfig(cal.ID, string(cfg)), "UpdateSourceSyncConfig")
+
+	scope, err := ResolveAccountFlag(f.Store, "Work")
+	require.NoError(err)
+	require.NotNil(scope.Source, "display-name lookup should resolve the Gmail source")
+	assert.Equal(f.Source.ID, scope.Source.ID, "source ID")
+	assert.ElementsMatch([]int64{f.Source.ID, cal.ID}, scope.SourceIDs())
+}
+
+func TestResolveAccountFlag_CalendarOnlyAccountEmail(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := storetest.New(t)
+	cal, err := f.Store.GetOrCreateSource("gcal", "calendar-only@example.com/primary")
+	require.NoError(err, "GetOrCreateSource")
+	cfg, err := json.Marshal(map[string]string{
+		"account_email": "Calendar.Only@Example.COM",
+		"calendar_id":   "primary",
+	})
+	require.NoError(err, "marshal sync_config")
+	require.NoError(f.Store.UpdateSourceSyncConfig(cal.ID, string(cfg)), "UpdateSourceSyncConfig")
+
+	scope, err := ResolveAccountFlag(f.Store, "calendar.only@example.com")
+	require.NoError(err)
+	assert.Nil(scope.Source, "calendar-only account has no single source")
+	assert.ElementsMatch([]int64{cal.ID}, scope.SourceIDs())
+	assert.False(scope.IsCollection(), "calendar-only account is still an account scope")
+	assert.Equal("calendar.only@example.com", scope.DisplayName())
+}
+
 func TestResolveCollectionFlag_ValidCollection(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	f, _, collectionName := setupScopeFixture(t)
 
 	scope, err := ResolveCollectionFlag(f.Store, collectionName)
@@ -73,25 +149,25 @@ func TestResolveAccountFlag_RejectsCollectionName(t *testing.T) {
 	f, _, collectionName := setupScopeFixture(t)
 
 	_, err := ResolveAccountFlag(f.Store, collectionName)
-	requirepkg.Error(t, err, "expected error for collection name passed as --account")
-	requirepkg.ErrorContains(t, err, "is a collection")
-	assertpkg.ErrorContains(t, err, "--collection")
+	require.Error(t, err, "expected error for collection name passed as --account")
+	require.ErrorContains(t, err, "is a collection")
+	assert.ErrorContains(t, err, "--collection")
 }
 
 func TestResolveCollectionFlag_RejectsAccountIdentifier(t *testing.T) {
 	f, accountID, _ := setupScopeFixture(t)
 
 	_, err := ResolveCollectionFlag(f.Store, accountID)
-	requirepkg.Error(t, err, "expected error for account identifier passed as --collection")
-	requirepkg.ErrorContains(t, err, "is an account")
-	assertpkg.ErrorContains(t, err, "--account")
+	require.Error(t, err, "expected error for account identifier passed as --collection")
+	require.ErrorContains(t, err, "is an account")
+	assert.ErrorContains(t, err, "--account")
 }
 
 // TestResolveAccountFlag_BothExist verifies the tie-break rule: when a name
 // exists as both an account and a collection, --account resolves the account.
 func TestResolveAccountFlag_BothExist(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	f := storetest.New(t)
 
 	// Create a second source whose identifier matches our collection name.
@@ -112,8 +188,8 @@ func TestResolveAccountFlag_BothExist(t *testing.T) {
 // TestResolveCollectionFlag_BothExist verifies that when a name exists as both
 // an account and a collection, --collection resolves the collection.
 func TestResolveCollectionFlag_BothExist(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	f := storetest.New(t)
 
 	sharedName := "shared-name"

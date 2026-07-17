@@ -14,15 +14,15 @@ import (
 	"strings"
 	"testing"
 
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/mbox"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil/email"
 )
 
 func TestImportMbox_IngestsMessagesThreadsAndAttachments(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	tmp := t.TempDir()
 
 	dbPath := filepath.Join(tmp, "msgvault.db")
@@ -115,7 +115,7 @@ func TestImportMbox_IngestsMessagesThreadsAndAttachments(t *testing.T) {
 }
 
 func TestImportMbox_NoAttachmentsStillRecordsAttachmentMetadata(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	tmp := t.TempDir()
 
 	dbPath := filepath.Join(tmp, "msgvault.db")
@@ -169,7 +169,7 @@ func TestImportMbox_NoAttachmentsStillRecordsAttachmentMetadata(t *testing.T) {
 }
 
 func TestImportMbox_IsIdempotentAcrossPathChanges(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	tmp := t.TempDir()
 
 	dbPath := filepath.Join(tmp, "msgvault.db")
@@ -245,12 +245,12 @@ func TestImportMbox_IsIdempotentAcrossPathChanges(t *testing.T) {
 
 func TestParseFromLineDate_NamedTimezone(t *testing.T) {
 	got, ok := parseFromLineDate("From sender@example.com Mon Jan 1 00:00:00 MST 2024")
-	requirepkg.True(t, ok)
-	requirepkg.Equal(t, 2024, got.Year())
+	require.True(t, ok)
+	require.Equal(t, 2024, got.Year())
 }
 
 func TestImportMbox_InvalidInput_ReturnsErrorAndFailsSync(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	tmp := t.TempDir()
 
 	dbPath := filepath.Join(tmp, "msgvault.db")
@@ -277,7 +277,7 @@ func TestImportMbox_InvalidInput_ReturnsErrorAndFailsSync(t *testing.T) {
 }
 
 func TestImportMbox_IdenticalRawMessagesAreImportedSeparately(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	tmp := t.TempDir()
 
 	dbPath := filepath.Join(tmp, "msgvault.db")
@@ -329,7 +329,7 @@ func TestImportMbox_IdenticalRawMessagesAreImportedSeparately(t *testing.T) {
 }
 
 func TestImportMbox_RerunRepairsMissingRawInsteadOfSkipping(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	tmp := t.TempDir()
 
 	dbPath := filepath.Join(tmp, "msgvault.db")
@@ -396,7 +396,7 @@ func TestImportMbox_RerunRepairsMissingRawInsteadOfSkipping(t *testing.T) {
 }
 
 func TestImportMbox_RerunRetriesAttachmentsAfterStoreFailure(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	tmp := t.TempDir()
 
 	dbPath := filepath.Join(tmp, "msgvault.db")
@@ -478,8 +478,8 @@ func TestImportMbox_RerunRetriesAttachmentsAfterStoreFailure(t *testing.T) {
 }
 
 func TestImportMbox_ErrorsCauseSyncFailed(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	tmp := t.TempDir()
 
 	dbPath := filepath.Join(tmp, "msgvault.db")
@@ -529,8 +529,8 @@ func TestImportMbox_ErrorsCauseSyncFailed(t *testing.T) {
 }
 
 func TestImportMbox_SoftErrorsDoNotFailSync(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	tmp := t.TempDir()
 
 	dbPath := filepath.Join(tmp, "msgvault.db")
@@ -579,7 +579,7 @@ func TestImportMbox_SoftErrorsDoNotFailSync(t *testing.T) {
 }
 
 func TestImportMbox_CheckpointDoesNotAdvancePastFailedIngest(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	tmp := t.TempDir()
 
 	dbPath := filepath.Join(tmp, "msgvault.db")
@@ -698,12 +698,12 @@ func TestImportMbox_CheckpointDoesNotAdvancePastFailedIngest(t *testing.T) {
 	for _, subj := range []string{"msg1", "msg2", "msg3", "msg4"} {
 		var c int
 		require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages WHERE subject = ?`, subj).Scan(&c), "count subject %q", subj)
-		assertpkg.Equal(t, 1, c, "subject %q count", subj)
+		assert.Equal(t, 1, c, "subject %q count", subj)
 	}
 }
 
 func TestImportMbox_InvalidResumeOffsetBeyondEOF_FailsSync(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	tmp := t.TempDir()
 
 	dbPath := filepath.Join(tmp, "msgvault.db")
@@ -735,7 +735,7 @@ func TestImportMbox_InvalidResumeOffsetBeyondEOF_FailsSync(t *testing.T) {
 		NoResume:   false,
 	})
 	require.Error(err)
-	requirepkg.ErrorContains(t, err, "beyond end of file")
+	require.ErrorContains(err, "beyond end of file")
 
 	var status string
 	require.NoError(st.DB().QueryRow(`SELECT status FROM sync_runs WHERE id = ?`, syncID).Scan(&status), "select sync")
@@ -747,7 +747,7 @@ func TestImportMbox_InvalidResumeOffsetBeyondEOF_FailsSync(t *testing.T) {
 }
 
 func TestImportMbox_HardErrorsStopsMultiFileLoop(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	// Verify that when ImportMbox reports HardErrors, the caller's
 	// multi-file loop should break. This simulates the control flow
 	// in import_mbox.go where HardErrors now stops subsequent files.
@@ -849,7 +849,7 @@ func (h *cancelOnLogMessageHandler) WithGroup(name string) slog.Handler {
 }
 
 func TestImportMbox_CheckpointAdvancesPastReaderErrors(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	tmp := t.TempDir()
 
 	dbPath := filepath.Join(tmp, "msgvault.db")

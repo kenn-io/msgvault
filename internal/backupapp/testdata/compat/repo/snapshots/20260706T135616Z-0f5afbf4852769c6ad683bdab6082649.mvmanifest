@@ -1,0 +1,64 @@
+{
+  "format_version": 1,
+  "min_reader_version": 1,
+  "msgvault_version": "compat-fixture",
+  "snapshot_id": "20260706T135616Z-0f5afbf4852769c6ad683bdab6082649",
+  "parent_id": "",
+  "created_at": "2026-07-06T13:56:16Z",
+  "options": {
+    "include_config": false,
+    "include_tokens": false,
+    "zstd_level": 3,
+    "tag": ""
+  },
+  "db": {
+    "engine": "sqlite",
+    "page_size": 4096,
+    "page_count": 7,
+    "page_map": "a75b95ed25d93c4d289504fcf96f7c3f5468531077218dd53ac12885974bcbab",
+    "page_hash_map": "6ca2990770bff9c0aafe06aa4563d2d2538cdba7728201bf0ec6e4017f547cb0",
+    "map_chain_depth": 0
+  },
+  "attachments": {
+    "layout": [
+      "loose"
+    ],
+    "rows": 2,
+    "blobs": 3,
+    "blob_bytes": 73,
+    "recipes": [],
+    "lists": [
+      "1babf0b08ffa3f0f4f12ecc46dac0a0361eccccc9dad629bfb6a83d3bd076452"
+    ]
+  },
+  "extras": {
+    "tree": ""
+  },
+  "excluded": [
+    "vectors.db",
+    "analytics/",
+    "logs/",
+    "imports/",
+    "tmp/",
+    "locks"
+  ],
+  "stats": {
+    "messages": 2,
+    "conversations": 1,
+    "sources": 1,
+    "accounts": 1,
+    "attachment_rows": 2,
+    "attachment_blobs": 3,
+    "labels": 1,
+    "date_range": [
+      "2024-01-01T00:00:00Z",
+      "2024-06-01T00:00:00Z"
+    ]
+  },
+  "new_packs": [
+    "01kwvve8k3wz72j3vhy0dphk55"
+  ],
+  "new_index": "01kwvve8ks8944ymb42x3mjdvs",
+  "duration_seconds": 0.043863,
+  "bytes_added": 1122
+}

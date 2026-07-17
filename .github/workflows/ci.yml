@@ -6,12 +6,72 @@ on:
   pull_request:
 
 jobs:
+  release-linux-smoke:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goarch: amd64
+            runner: ubuntu-latest
+            go_arch_name: amd64
+          - goarch: arm64
+            runner: ubuntu-24.04-arm
+            go_arch_name: arm64
+    runs-on: ${{ matrix.runner }}
+    container:
+      image: ubuntu:22.04
+    steps:
+      - name: Install build tools
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          apt-get update
+          apt-get install -y gcc g++ make git curl tar gzip file binutils libsqlite3-dev
+
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Install Go
+        run: |
+          GO_VERSION=$(grep '^go ' go.mod | awk '{print $2}')
+          curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-${{ matrix.go_arch_name }}.tar.gz" -o go.tar.gz
+          tar -C /usr/local -xzf go.tar.gz
+          rm go.tar.gz
+          echo "/usr/local/go/bin" >> "$GITHUB_PATH"
+          echo "$HOME/go/bin" >> "$GITHUB_PATH"
+
+      - name: Build Linux release binary
+        env:
+          GOOS: linux
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: '1'
+        run: |
+          export PATH="/usr/local/go/bin:$HOME/go/bin:$PATH"
+          COMMIT=$(printf '%s' "$GITHUB_SHA" | cut -c1-8)
+          VERSION="ci-$COMMIT"
+
+          mkdir -p dist
+          LDFLAGS="-s -w -X go.kenn.io/msgvault/cmd/msgvault/cmd.Version=${VERSION} -X go.kenn.io/msgvault/cmd/msgvault/cmd.Commit=${COMMIT} -X go.kenn.io/msgvault/cmd/msgvault/cmd.BuildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ) -extldflags '-lstdc++ -lm'"
+          go build -tags "fts5 sqlite_vec" -trimpath -buildvcs=false -ldflags="$LDFLAGS" -o dist/msgvault ./cmd/msgvault
+
+          echo "--- Binary info ---"
+          file dist/msgvault
+          ldd dist/msgvault || true
+
+          echo "--- Runtime requirements ---"
+          objdump -T dist/msgvault 2>/dev/null | grep -oP 'GLIBC_\d+\.\d+' | sort -uV | tail -1 || true
+          objdump -T dist/msgvault 2>/dev/null | grep -oP 'GLIBCXX_\d+\.\d+(\.\d+)?' | sort -uV | tail -1 || true
+
+          echo "--- Smoke test ---"
+          SMOKE_OUT=$(dist/msgvault version 2>&1)
+          echo "$SMOKE_OUT"
+          echo "$SMOKE_OUT" | grep -q "$VERSION" || { echo "FATAL: version output doesn't match CI build version"; exit 1; }
+
   test:
     runs-on: macos-15
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
-      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
 
@@ -20,6 +80,9 @@ jobs:
 
       - name: Test
         run: make test
+
+      - name: Check OpenAPI artifacts
+        run: make openapi-check
 
       - name: Lint
         run: make lint-ci
@@ -33,9 +96,9 @@ jobs:
   test-windows:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
-      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
 
@@ -69,12 +132,131 @@ jobs:
           CGO_ENABLED: "1"
           CGO_CFLAGS: "-IC:/msys64/mingw64/include -fgnu89-inline"
           CGO_LDFLAGS: "-Wl,--allow-multiple-definition"
-        run: go test -tags "fts5 sqlite_vec" ./...
+        run: |
+          $separatePackages = @(
+            "go.kenn.io/msgvault/cmd/msgvault/cmd"
+            "go.kenn.io/msgvault/internal/api"
+            "go.kenn.io/msgvault/internal/importer"
+            "go.kenn.io/msgvault/internal/store"
+            "go.kenn.io/msgvault/internal/sync"
+            "go.kenn.io/msgvault/internal/vector/embed"
+            "go.kenn.io/msgvault/internal/vector/sqlitevec"
+            "go.kenn.io/msgvault/scripts"
+          )
+          $packages = go list -tags "fts5 sqlite_vec" ./... |
+            Where-Object { $_ -notin $separatePackages }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          go test -timeout 20m -tags "fts5 sqlite_vec" $packages
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: msgvault-windows-amd64
           path: msgvault.exe
+
+  test-windows-slow-packages:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+
+      - name: Install sqlite3 dev headers
+        shell: pwsh
+        run: |
+          C:\msys64\usr\bin\pacman.exe -S --noconfirm --needed mingw-w64-x86_64-sqlite3
+
+      - name: Test slow packages
+        shell: pwsh
+        env:
+          CGO_ENABLED: "1"
+          CGO_CFLAGS: "-IC:/msys64/mingw64/include -fgnu89-inline"
+          CGO_LDFLAGS: "-Wl,--allow-multiple-definition"
+        run: |
+          go test -timeout 20m -tags "fts5 sqlite_vec" `
+            ./internal/api `
+            ./internal/importer `
+            ./internal/store `
+            ./scripts
+
+  test-windows-sharded:
+    name: test-windows-sharded (${{ matrix.name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: cli
+            package: ./cmd/msgvault/cmd
+          - name: sync-vector-embed
+            package: ./internal/sync
+            package2: ./internal/vector/embed
+          - name: vector-sqlite
+            package: ./internal/vector/sqlitevec
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+
+      - name: Install sqlite3 dev headers
+        shell: pwsh
+        run: |
+          C:\msys64\usr\bin\pacman.exe -S --noconfirm --needed mingw-w64-x86_64-sqlite3
+
+      - name: Test package in isolated shards
+        shell: pwsh
+        env:
+          CGO_ENABLED: "1"
+          CGO_CFLAGS: "-IC:/msys64/mingw64/include -fgnu89-inline"
+          CGO_LDFLAGS: "-Wl,--allow-multiple-definition"
+        run: |
+          $packages = @('${{ matrix.package }}', '${{ matrix.package2 }}') |
+            Where-Object { $_ }
+          foreach ($package in $packages) {
+            ./scripts/test-package-shards.ps1 `
+              -Package $package `
+              -ShardCount 4 `
+              -Tags "fts5 sqlite_vec" `
+              -Timeout 20m
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+
+  test-windows-pack-restore:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+
+      - name: Install sqlite3 dev headers
+        shell: pwsh
+        run: |
+          C:\msys64\usr\bin\pacman.exe -S --noconfirm --needed mingw-w64-x86_64-sqlite3
+
+      - name: Measure packed and loose restore layouts
+        shell: pwsh
+        env:
+          CGO_ENABLED: "1"
+          CGO_CFLAGS: "-IC:/msys64/mingw64/include -fgnu89-inline"
+          CGO_LDFLAGS: "-Wl,--allow-multiple-definition"
+        run: |
+          go test -tags "fts5 sqlite_vec" ./internal/backupapp `
+            -run '^$' -bench '^BenchmarkBackupRestoreLayouts$' -benchtime=1x -count=3 `
+            2>&1 | Tee-Object -FilePath pack-restore-benchmark.txt
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: msgvault-windows-pack-restore-benchmark
+          path: pack-restore-benchmark.txt
+          if-no-files-found: ignore
 
   # pgvector lane: runs every pgvector-tagged test against a live
   # pgvector/pgvector image — backend, embed queue/worker/enqueue, hybrid
@@ -100,9 +282,9 @@ jobs:
     env:
       MSGVAULT_TEST_DB: postgres://msgvault_test:testpw@localhost:5432/msgvault_test
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
-      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
 
@@ -123,7 +305,7 @@ jobs:
   nix-build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
       - uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
 
@@ -155,9 +337,9 @@ jobs:
     env:
       MSGVAULT_TEST_DB: postgres://msgvault_test:msgvault_test@localhost:5432/msgvault_test?sslmode=disable
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
-      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
 

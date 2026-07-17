@@ -57,15 +57,6 @@ var (
 	// cannot delete the now-serving generation's embeddings.
 	ErrRefuseRetireActive = errors.New("refusing to retire the active (serving) generation without force")
 
-	// ErrGenerationNotBuilding is returned by EnsureSeeded when the
-	// target generation is no longer in state='building' — e.g. a
-	// concurrent activation flipped it to active, or a retire call
-	// moved it to retired, between the caller's BuildingGeneration
-	// read and EnsureSeeded. Callers performing a resume can treat
-	// this as a retryable race and re-resolve the active/building
-	// state instead of aborting.
-	ErrGenerationNotBuilding = errors.New("generation is not in state=building")
-
 	// ErrEmbeddingTimeout is returned by the hybrid engine when the
 	// embedding endpoint did not respond before the request context
 	// was cancelled (typically because the HTTP server's per-request
@@ -73,4 +64,10 @@ var (
 	// "transient backend slow" response so clients can retry instead
 	// of treating it as a permanent failure.
 	ErrEmbeddingTimeout = errors.New("embedding request timed out")
+
+	// ErrIndexScopeMismatch is returned when a scoped embedding index
+	// is used without an equivalent structured filter. For example, an
+	// index built only for message_type=sms must not answer an unscoped
+	// vector query over email + SMS.
+	ErrIndexScopeMismatch = errors.New("index scope mismatch")
 )

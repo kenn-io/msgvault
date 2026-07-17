@@ -4,8 +4,8 @@ import (
 	"testing"
 	"time"
 
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
@@ -14,8 +14,8 @@ import (
 // TestScanSource_NullLastSyncAt_Valid verifies that a new source with NULL
 // last_sync_at is handled correctly (Valid=false).
 func TestScanSource_NullLastSyncAt_Valid(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
 
 	// Create a fresh source (should have NULL last_sync_at)
@@ -35,7 +35,7 @@ func TestScanSource_NullLastSyncAt_Valid(t *testing.T) {
 // the go-sqlite3 driver normalizes to zero time (from invalid input).
 // The driver converts unparseable DATETIME values to "0001-01-01T00:00:00Z".
 func TestScanSyncRun_ZeroTime(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	testutil.SkipIfPostgres(t, "tests go-sqlite3 driver normalization of invalid DATETIME strings to zero time; PG TIMESTAMPTZ rejects invalid strings outright")
 	f := storetest.New(t)
 
@@ -55,13 +55,13 @@ func TestScanSyncRun_ZeroTime(t *testing.T) {
 	require.NotNil(run, "expected sync run, got nil")
 
 	// The driver normalizes invalid timestamps to zero time
-	assertpkg.True(t, run.StartedAt.IsZero(), "StartedAt = %v, expected zero time", run.StartedAt)
+	assert.True(t, run.StartedAt.IsZero(), "StartedAt = %v, expected zero time", run.StartedAt)
 }
 
 // TestScanSource_ZeroTime verifies that sources with timestamps that the driver
 // normalizes to zero time are handled correctly.
 func TestScanSource_ZeroTime(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	testutil.SkipIfPostgres(t, "tests go-sqlite3 driver normalization of invalid DATETIME strings to zero time; PG TIMESTAMPTZ rejects invalid strings outright")
 	st := testutil.NewTestStore(t)
 
@@ -83,14 +83,14 @@ func TestScanSource_ZeroTime(t *testing.T) {
 	require.NotNil(retrieved, "expected source, got nil")
 
 	// The driver normalizes invalid timestamps to zero time
-	assertpkg.True(t, retrieved.CreatedAt.IsZero(), "CreatedAt = %v, expected zero time", retrieved.CreatedAt)
+	assert.True(t, retrieved.CreatedAt.IsZero(), "CreatedAt = %v, expected zero time", retrieved.CreatedAt)
 }
 
 // TestParseDBTime_MultipleFormats verifies that the timestamp parser accepts
 // both SQLite datetime('now') format and RFC3339 format from go-sqlite3.
 func TestParseDBTime_MultipleFormats(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	f := storetest.New(t)
 
 	// Start a sync (uses datetime('now') which go-sqlite3 normalizes to RFC3339)
@@ -110,8 +110,8 @@ func TestParseDBTime_MultipleFormats(t *testing.T) {
 }
 
 func TestStore_GetLatestSync(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	f := storetest.New(t)
 
 	_, err := f.Store.GetLatestSync(f.Source.ID)
@@ -129,11 +129,76 @@ func TestStore_GetLatestSync(t *testing.T) {
 	assert.Equal(store.SyncStatusRunning, run.Status, "Status")
 }
 
+func TestStore_SyncRunItems(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := storetest.New(t)
+
+	syncID := f.StartSync()
+
+	require.NoError(f.Store.RecordSyncRunItem(store.SyncRunItem{
+		SyncRunID:       syncID,
+		SourceMessageID: "msg-skipped",
+		Phase:           "fetch",
+		Status:          store.SyncRunItemStatusSkipped,
+		ErrorKind:       "gmail_not_found",
+		ErrorMessage:    "not found: /messages/msg-skipped",
+	}), "RecordSyncRunItem skipped")
+	require.NoError(f.Store.RecordSyncRunItem(store.SyncRunItem{
+		SyncRunID:       syncID,
+		SourceMessageID: "msg-error",
+		Phase:           "ingest",
+		Status:          store.SyncRunItemStatusError,
+		ErrorKind:       "ingest_error",
+		ErrorMessage:    "parse MIME: malformed header",
+	}), "RecordSyncRunItem error")
+
+	errorCount, err := f.Store.CountSyncRunItems(syncID, store.SyncRunItemStatusError)
+	require.NoError(err, "CountSyncRunItems error")
+	assert.Equal(int64(1), errorCount, "error count")
+
+	skippedCount, err := f.Store.CountSyncRunItems(syncID, store.SyncRunItemStatusSkipped)
+	require.NoError(err, "CountSyncRunItems skipped")
+	assert.Equal(int64(1), skippedCount, "skipped count")
+
+	items, err := f.Store.ListSyncRunItems(syncID, store.SyncRunItemStatusError, 10)
+	require.NoError(err, "ListSyncRunItems")
+	require.Len(items, 1, "items")
+	assert.Equal("msg-error", items[0].SourceMessageID, "SourceMessageID")
+	assert.Equal("ingest", items[0].Phase, "Phase")
+	assert.Equal("ingest_error", items[0].ErrorKind, "ErrorKind")
+	assert.Equal("parse MIME: malformed header", items[0].ErrorMessage, "ErrorMessage")
+	assert.False(items[0].CreatedAt.IsZero(), "CreatedAt")
+}
+
+func TestStore_SyncRunItemsCascadeWithSyncRun(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := storetest.New(t)
+
+	syncID := f.StartSync()
+	require.NoError(f.Store.RecordSyncRunItem(store.SyncRunItem{
+		SyncRunID:       syncID,
+		SourceMessageID: "msg-error",
+		Phase:           "fetch",
+		Status:          store.SyncRunItemStatusError,
+		ErrorKind:       "fetch_error",
+		ErrorMessage:    "network unavailable",
+	}), "RecordSyncRunItem")
+
+	_, err := f.Store.DB().Exec(f.Store.Rebind(`DELETE FROM sync_runs WHERE id = ?`), syncID)
+	require.NoError(err, "delete sync run")
+
+	count, err := f.Store.CountSyncRunItems(syncID, "")
+	require.NoError(err, "CountSyncRunItems")
+	assert.Equal(int64(0), count, "sync_run_items should cascade with sync_run")
+}
+
 // TestListSources_ParsesTimestamps verifies that ListSources correctly parses
 // timestamps for all returned sources.
 func TestListSources_ParsesTimestamps(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
 
 	// Create a few sources
@@ -164,17 +229,17 @@ func TestScanSource_UnrecognizedFormat(t *testing.T) {
 
 	// Verify that parseDBTime rejects unrecognized formats
 	_, err := store.ParseDBTime(badTimestamp)
-	requirepkg.Error(t, err, "expected error for unrecognized timestamp format")
+	require.Error(t, err, "expected error for unrecognized timestamp format")
 
 	// Error should include the bad value for debugging
-	assertpkg.ErrorContains(t, err, badTimestamp, "error should include the bad value")
+	assert.ErrorContains(t, err, badTimestamp, "error should include the bad value")
 }
 
 // TestScanSource_NullRequiredTimestamp verifies that parseRequiredTime returns
 // an error when a required timestamp field (created_at/updated_at) is NULL.
 func TestScanSource_NullRequiredTimestamp(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
 
 	// Create a source
@@ -195,8 +260,8 @@ func TestScanSource_NullRequiredTimestamp(t *testing.T) {
 }
 
 func TestStore_HasAnyActiveSync(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	f := storetest.New(t)
 
 	running, err := f.Store.HasAnyActiveSync()

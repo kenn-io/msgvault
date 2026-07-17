@@ -6,13 +6,13 @@ import (
 	"sort"
 	"testing"
 
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestDiscover_JSONSimple(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	dirs, err := Discover("testdata/json_simple")
 	require.NoError(err, "Discover")
 	// json_simple has one inbox thread and one archived thread.
@@ -33,20 +33,20 @@ func TestDiscover_JSONSimple(t *testing.T) {
 
 func TestDiscover_HTMLOnly(t *testing.T) {
 	dirs, err := Discover("testdata/html_simple")
-	requirepkg.NoError(t, err, "Discover")
-	requirepkg.Len(t, dirs, 1)
-	assertpkg.Equal(t, "html", dirs[0].Format)
+	require.NoError(t, err, "Discover")
+	require.Len(t, dirs, 1)
+	assert.Equal(t, "html", dirs[0].Format)
 }
 
 func TestDiscover_Both(t *testing.T) {
 	dirs, err := Discover("testdata/mixed")
-	requirepkg.NoError(t, err, "Discover")
-	requirepkg.Len(t, dirs, 1)
-	assertpkg.Equal(t, "both", dirs[0].Format)
+	require.NoError(t, err, "Discover")
+	require.Len(t, dirs, 1)
+	assert.Equal(t, "both", dirs[0].Format)
 }
 
 func TestDiscover_AbsoluteAndRelativeInvariance(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	rel, err := Discover("testdata/json_simple")
 	require.NoError(err, "relative Discover")
 	absRoot, err := filepath.Abs("testdata/json_simple")
@@ -55,12 +55,12 @@ func TestDiscover_AbsoluteAndRelativeInvariance(t *testing.T) {
 	require.NoError(err, "absolute Discover")
 	sort.Slice(rel, func(i, j int) bool { return rel[i].Path < rel[j].Path })
 	sort.Slice(abs, func(i, j int) bool { return abs[i].Path < abs[j].Path })
-	assertpkg.Equal(t, abs, rel, "relative vs absolute differ")
+	assert.Equal(t, abs, rel, "relative vs absolute differ")
 }
 
 func TestDiscover_IgnoresHiddenAndMediaSubdirs(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	// json_with_media contains a photos/ subdir with tiny.png; it must
 	// not be returned as a thread dir.
 	dirs, err := Discover("testdata/json_with_media")
@@ -84,7 +84,7 @@ func TestDiscover_AlternateLayouts(t *testing.T) {
 	}
 	for _, layout := range layouts {
 		t.Run(layout, func(t *testing.T) {
-			require := requirepkg.New(t)
+			require := require.New(t)
 			tmp := t.TempDir()
 			threadDir := filepath.Join(tmp, layout, "inbox", "testthread_1")
 			require.NoError(os.MkdirAll(threadDir, 0755))
@@ -96,7 +96,7 @@ func TestDiscover_AlternateLayouts(t *testing.T) {
 			dirs, err := Discover(tmp)
 			require.NoError(err, "Discover")
 			require.Len(dirs, 1, "discovered: %+v", dirs)
-			assertpkg.Equal(t, "testthread_1", dirs[0].Name)
+			assert.Equal(t, "testthread_1", dirs[0].Name)
 		})
 	}
 }
@@ -108,7 +108,7 @@ func TestDiscover_AlternateLayouts(t *testing.T) {
 // would cause the thread to fail in auto/json mode and the valid HTML to
 // be skipped.
 func TestDiscover_UnnumberedJSONSiblingNotMisclassified(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	tmp := t.TempDir()
 	threadDir := filepath.Join(tmp, "your_activity_across_facebook", "messages", "inbox", "foo_1")
 	require.NoError(os.MkdirAll(threadDir, 0755))
@@ -126,12 +126,12 @@ func TestDiscover_UnnumberedJSONSiblingNotMisclassified(t *testing.T) {
 	dirs, err := Discover(tmp)
 	require.NoError(err, "Discover")
 	require.Len(dirs, 1, "discovered: %+v", dirs)
-	assertpkg.Equal(t, "html", dirs[0].Format,
+	assert.Equal(t, "html", dirs[0].Format,
 		"unnumbered JSON sibling must not promote thread to json/both")
 }
 
 func TestDiscover_IgnoresDSStore(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	// Create a temp DYI tree with a .DS_Store at the thread level; it
 	// must not turn it into a thread dir.
 	tmp := t.TempDir()
@@ -146,5 +146,5 @@ func TestDiscover_IgnoresDSStore(t *testing.T) {
 	dirs, err := Discover(tmp)
 	require.NoError(err, "Discover")
 	require.Len(dirs, 1, "discovered: %+v", dirs)
-	assertpkg.Equal(t, "foo_1", dirs[0].Name)
+	assert.Equal(t, "foo_1", dirs[0].Name)
 }

@@ -5,15 +5,15 @@ import (
 	"testing"
 	"time"
 
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
 func TestRecomputeConversationStats(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
 
 	source, err := st.GetOrCreateSource("whatsapp", "+15550000001")
@@ -100,9 +100,178 @@ func TestRecomputeConversationStats(t *testing.T) {
 	assert.Equal(3, count, "idempotency message_count")
 }
 
+// TestEmbedGen_OrphanImpossibleAndCoverage pins the scan-and-fill
+// embed_gen contract:
+//   - a freshly-upserted message has embed_gen NULL (column default), so
+//     CoverageCounts reports it as missing for any generation — the
+//     scan-and-fill worker picks it up with no enqueue step (orphan rows
+//     are impossible).
+//   - SetEmbedGen stamps it covered; CoverageCounts then reports it
+//     embedded.
+//   - a subsequent UpsertMessage (ON CONFLICT DO UPDATE) clears embed_gen
+//     when the embeddable subject text changes.
+func TestEmbedGen_OrphanImpossibleAndCoverage(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+
+	source, err := st.GetOrCreateSource("gmail", "me@example.com")
+	require.NoError(err, "GetOrCreateSource")
+	convID, err := st.EnsureConversationWithType(source.ID, "conv-1", "email_thread", "Subject")
+	require.NoError(err, "EnsureConversationWithType")
+
+	msg := &store.Message{
+		SourceID:        source.ID,
+		SourceMessageID: "m1",
+		ConversationID:  convID,
+		MessageType:     "email",
+		Subject:         sql.NullString{String: "hello", Valid: true},
+	}
+	id, err := st.UpsertMessage(msg)
+	require.NoError(err, "UpsertMessage")
+
+	const gen = int64(7)
+	ctx := t.Context()
+
+	// New row: embed_gen NULL by default -> reported missing for any gen.
+	var embedGen sql.NullInt64
+	require.NoError(st.DB().QueryRow(
+		st.Rebind(`SELECT embed_gen FROM messages WHERE id = ?`), id).Scan(&embedGen))
+	assert.False(embedGen.Valid, "new message must have NULL embed_gen (no enqueue, no orphan)")
+
+	live, embedded, _, missing, err := st.CoverageCounts(ctx, gen)
+	require.NoError(err, "CoverageCounts (before stamp)")
+	assert.Equal(int64(1), live, "one live message")
+	assert.Equal(int64(0), embedded, "none embedded yet")
+	assert.Equal(int64(1), missing, "the new message is missing")
+
+	// Stamp it covered.
+	require.NoError(st.SetEmbedGen(ctx, []int64{id}, gen), "SetEmbedGen")
+	live, embedded, _, missing, err = st.CoverageCounts(ctx, gen)
+	require.NoError(err, "CoverageCounts (after stamp)")
+	assert.Equal(int64(1), live, "still one live message")
+	assert.Equal(int64(1), embedded, "now embedded")
+	assert.Equal(int64(0), missing, "nothing missing")
+
+	// Re-upsert the same message with changed embedding input: embed_gen must
+	// be cleared so the scan-and-fill worker re-embeds it.
+	msg.Subject = sql.NullString{String: "hello (edited)", Valid: true}
+	_, err = st.UpsertMessage(msg)
+	require.NoError(err, "re-UpsertMessage")
+	require.NoError(st.DB().QueryRow(
+		st.Rebind(`SELECT embed_gen FROM messages WHERE id = ?`), id).Scan(&embedGen))
+	assert.False(embedGen.Valid, "subject change must clear embed_gen")
+}
+
+func TestMigrateSourceMessageIDRepointsRepliesBeforeDeletingDuplicate(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+
+	source, err := st.GetOrCreateSource("teams", "user@example.com")
+	require.NoError(err, "GetOrCreateSource")
+	convID, err := st.EnsureConversationWithType(source.ID, "team-1/channel-1", "channel", "General")
+	require.NoError(err, "EnsureConversationWithType")
+
+	legacyParentID := insertStoreTestMessage(t, st, source.ID, convID, "m1")
+	scopedParentID := insertStoreTestMessage(t, st, source.ID, convID, "channel:team-1:channel-1:m1")
+	childID := insertStoreTestMessage(t, st, source.ID, convID, "m2")
+	_, err = st.DB().Exec(
+		st.Rebind(`UPDATE messages SET reply_to_message_id = ? WHERE id = ?`),
+		legacyParentID, childID,
+	)
+	require.NoError(err, "seed reply")
+
+	require.NoError(
+		st.MigrateSourceMessageID(source.ID, convID, "m1", "channel:team-1:channel-1:m1"),
+		"MigrateSourceMessageID",
+	)
+
+	var replyTo sql.NullInt64
+	err = st.DB().QueryRow(
+		st.Rebind(`SELECT reply_to_message_id FROM messages WHERE id = ?`),
+		childID,
+	).Scan(&replyTo)
+	require.NoError(err, "scan reply_to_message_id")
+	require.True(replyTo.Valid, "reply_to_message_id should remain set")
+	assert.Equal(scopedParentID, replyTo.Int64, "reply should point at scoped parent")
+
+	var legacyCount int
+	err = st.DB().QueryRow(
+		st.Rebind(`SELECT COUNT(*) FROM messages WHERE id = ?`),
+		legacyParentID,
+	).Scan(&legacyCount)
+	require.NoError(err, "legacy count")
+	assert.Equal(0, legacyCount, "legacy duplicate should be deleted")
+}
+
+func TestMigrateSourceMessageIDClearsTombstoneWhenRenamingLegacyRow(t *testing.T) {
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+
+	source, err := st.GetOrCreateSource("teams", "user@example.com")
+	require.NoError(err, "GetOrCreateSource")
+	convID, err := st.EnsureConversationWithType(source.ID, "19:x@thread.v2", "direct_chat", "DM")
+	require.NoError(err, "EnsureConversationWithType")
+	_ = insertStoreTestMessage(t, st, source.ID, convID, "m1")
+	require.NoError(st.MarkMessageDeleted(source.ID, "m1"), "MarkMessageDeleted")
+
+	require.NoError(
+		st.MigrateSourceMessageID(source.ID, convID, "m1", "chat:19:x@thread.v2:m1"),
+		"MigrateSourceMessageID",
+	)
+
+	assertSourceMessageIDNotDeleted(t, st, source.ID, "chat:19:x@thread.v2:m1")
+}
+
+func TestMigrateSourceMessageIDClearsTombstoneOnExistingScopedRow(t *testing.T) {
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+
+	source, err := st.GetOrCreateSource("teams", "user@example.com")
+	require.NoError(err, "GetOrCreateSource")
+	convID, err := st.EnsureConversationWithType(source.ID, "19:x@thread.v2", "direct_chat", "DM")
+	require.NoError(err, "EnsureConversationWithType")
+	_ = insertStoreTestMessage(t, st, source.ID, convID, "chat:19:x@thread.v2:m1")
+	require.NoError(st.MarkMessageDeleted(source.ID, "chat:19:x@thread.v2:m1"), "MarkMessageDeleted")
+
+	require.NoError(
+		st.MigrateSourceMessageID(source.ID, convID, "m1", "chat:19:x@thread.v2:m1"),
+		"MigrateSourceMessageID",
+	)
+
+	assertSourceMessageIDNotDeleted(t, st, source.ID, "chat:19:x@thread.v2:m1")
+}
+
+func insertStoreTestMessage(t *testing.T, st *store.Store, sourceID, convID int64, sourceMessageID string) int64 {
+	t.Helper()
+	msg := &store.Message{
+		SourceID:        sourceID,
+		SourceMessageID: sourceMessageID,
+		ConversationID:  convID,
+		MessageType:     "teams",
+		SentAt:          sql.NullTime{Time: time.Date(2024, 1, 15, 10, 0, 0, 0, time.UTC), Valid: true},
+		Snippet:         sql.NullString{String: sourceMessageID, Valid: true},
+	}
+	id, err := st.UpsertMessage(msg)
+	require.NoError(t, err, "UpsertMessage "+sourceMessageID)
+	return id
+}
+
+func assertSourceMessageIDNotDeleted(t *testing.T, st *store.Store, sourceID int64, sourceMessageID string) {
+	t.Helper()
+	var deletedAt sql.NullTime
+	err := st.DB().QueryRow(
+		st.Rebind(`SELECT deleted_from_source_at FROM messages WHERE source_id = ? AND source_message_id = ?`),
+		sourceID, sourceMessageID,
+	).Scan(&deletedAt)
+	require.NoError(t, err, "scan deleted_from_source_at")
+	assert.False(t, deletedAt.Valid, "deleted_from_source_at should be cleared")
+}
+
 func TestEnsureParticipantByPhone_IdentifierType(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
 
 	// Create participant via WhatsApp
@@ -138,8 +307,8 @@ func TestEnsureParticipantByPhone_IdentifierType(t *testing.T) {
 }
 
 func TestUpdateParticipantDisplayNameByEmail(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
 
 	// Create an unnamed email participant (e.g. inserted by iMessage import
@@ -179,8 +348,8 @@ func TestUpdateParticipantDisplayNameByEmail(t *testing.T) {
 }
 
 func TestUpdateImessageParticipantDisplayNameByPhone(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
 
 	// Case 1: legacy iMessage participant with display_name = phone_number.
@@ -224,8 +393,8 @@ func TestUpdateImessageParticipantDisplayNameByPhone(t *testing.T) {
 }
 
 func TestRetitleImessageChats(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
 
 	src, err := st.GetOrCreateSource("apple_messages", "local")
@@ -325,7 +494,7 @@ func TestRetitleImessageChats(t *testing.T) {
 func readConvTitle(t *testing.T, st *store.Store, id int64) string {
 	t.Helper()
 	var title sql.NullString
-	requirepkg.NoError(t, st.DB().QueryRow(
+	require.NoError(t, st.DB().QueryRow(
 		st.Rebind(`SELECT title FROM conversations WHERE id = ?`), id,
 	).Scan(&title), "scan title")
 	return title.String
@@ -334,7 +503,7 @@ func readConvTitle(t *testing.T, st *store.Store, id int64) string {
 func readDisplayName(t *testing.T, st *store.Store, pid int64) string {
 	t.Helper()
 	var name sql.NullString
-	requirepkg.NoError(t, st.DB().QueryRow(
+	require.NoError(t, st.DB().QueryRow(
 		st.Rebind(`SELECT display_name FROM participants WHERE id = ?`), pid,
 	).Scan(&name), "scan display_name")
 	return name.String

@@ -69,6 +69,7 @@ func buildSqlitevecParity(t *testing.T, corpus []parityDoc) (*sqlitevec.Backend,
 CREATE TABLE messages (
     id INTEGER PRIMARY KEY,
     subject TEXT,
+    message_type TEXT NOT NULL DEFAULT 'email',
     source_id INTEGER,
     sender_id INTEGER,
     has_attachments INTEGER DEFAULT 0,
@@ -236,14 +237,19 @@ func TestParity_HybridOrderingMatchesSqlitevec(t *testing.T) {
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
+			require := require.New(t)
+
 			sHits, _, err := sb.FusedSearch(sctx, c.req(sGen))
-			require.NoError(t, err, "sqlitevec FusedSearch")
+			require.NoError(
+				err, "sqlitevec FusedSearch")
+
 			pHits, _, err := pf.b.FusedSearch(pf.ctx, c.req(pgGen))
-			require.NoError(t, err, "pgvector FusedSearch")
+			require.NoError(
+				err, "pgvector FusedSearch")
 
 			sIDs := idSeq(sHits)
 			pIDs := idSeq(pHits)
-			require.NotEmpty(t, sIDs, "sqlitevec returned no hits")
+			require.NotEmpty(sIDs, "sqlitevec returned no hits")
 			assert.Equalf(t, sIDs, pIDs,
 				"ordering mismatch: sqlitevec=%v pgvector=%v", sIDs, pIDs)
 		})

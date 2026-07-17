@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/mattn/go-isatty"
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/logging"
@@ -24,7 +25,7 @@ var (
 	cfgFile    string
 	homeDir    string
 	verbose    bool
-	useLocal   bool // Force local database even when remote is configured
+	useLocal   bool // Use local daemon even when remote is configured
 	logFile    string
 	logLevel   string
 	noLogFile  bool
@@ -70,10 +71,7 @@ in a single binary.`,
 
 		// Skip config loading (and therefore logging setup) for
 		// commands that must run without touching disk or config.
-		if cmd.Name() == "version" || cmd.Name() == "update" ||
-			cmd.Name() == "quickstart" || cmd.Name() == "completion" ||
-			cmd.Name() == cobra.ShellCompRequestCmd ||
-			cmd.Name() == cobra.ShellCompNoDescRequestCmd {
+		if skipsConfigLoad(cmd) {
 			cmd.SilenceUsage = false
 			return nil
 		}
@@ -103,10 +101,38 @@ in a single binary.`,
 		if levelString == "" {
 			levelString = cfg.Log.Level
 		}
+		if err := logging.ValidateLevel(levelString); err != nil {
+			return err
+		}
 		logsDir := cfg.LogsDir()
 		// File logging is opt-in: requires [log].enabled,
 		// [log].dir, or --log-file. --no-log-file overrides.
 		fileDisabled := noLogFile || (logFile == "" && !cfg.Log.Enabled && cfg.Log.Dir == "")
+
+		// SQL tracing (--log-sql or [log].sql_trace) emits at INFO, so treat
+		// it as an implicit request for info-level logging: skip the
+		// interactive-terminal quieting below that would otherwise raise the
+		// console level to WARN and suppress the very output the user asked for.
+		sqlTrace := logSQL || cfg.Log.SQLTrace
+
+		// When the stderr fallback is the only sink and the user
+		// hasn't asked for a level, quiet routine INFO noise on an
+		// interactive terminal. The terminal check preserves INFO
+		// for the background daemon child (stderr → serve.log).
+		// The same condition means a person is reading stderr, so
+		// render records human-style (no timestamps or run_id)
+		// instead of logfmt.
+		humanConsole := false
+		if levelOverride == nil && !sqlTrace {
+			stderrIsTerminal := isatty.IsTerminal(os.Stderr.Fd()) ||
+				isatty.IsCygwinTerminal(os.Stderr.Fd())
+			if consoleLevel := logging.ResolveConsoleLevel(
+				levelString, verbose, fileDisabled, stderrIsTerminal, isDaemonCLISubprocess(),
+			); consoleLevel != nil {
+				levelOverride = consoleLevel
+				humanConsole = true
+			}
+		}
 
 		// Close a previous log handler if tests re-enter
 		// PersistentPreRunE without going through ExecuteContext.
@@ -121,6 +147,7 @@ in a single binary.`,
 			FileDisabled:  fileDisabled,
 			LevelOverride: levelOverride,
 			LevelString:   levelString,
+			HumanConsole:  humanConsole,
 		})
 		if err != nil {
 			return fmt.Errorf("build logger: %w", err)
@@ -132,7 +159,6 @@ in a single binary.`,
 		// Configure the store's SQL logging adapter now that
 		// slog.Default is set. Flag overrides config; a zero
 		// SlowMs falls back to the built-in default (100 ms).
-		sqlTrace := logSQL || cfg.Log.SQLTrace
 		slowMs := logSQLSlow
 		if slowMs == 0 {
 			slowMs = cfg.Log.SQLSlowMs
@@ -172,6 +198,23 @@ in a single binary.`,
 	// shutdown, which runs after the exit record is written. Do not
 	// close logResult in PersistentPostRunE — doing so drops the
 	// "msgvault exit" log line on successful runs.
+}
+
+// skipsConfigLoad reports whether cmd must run without loading config
+// or touching the msgvault home directory (e.g. version, completion,
+// and the skills group, which only writes agent skill files).
+func skipsConfigLoad(cmd *cobra.Command) bool {
+	switch cmd.Name() {
+	case "version", "update", "quickstart", "openapi", "completion",
+		cobra.ShellCompRequestCmd, cobra.ShellCompNoDescRequestCmd:
+		return true
+	}
+	for c := cmd; c != nil; c = c.Parent() {
+		if c == skillsCmd {
+			return true
+		}
+	}
+	return false
 }
 
 // sanitizeArgs removes anything that might carry a secret before
@@ -266,7 +309,7 @@ func ExecuteContext(ctx context.Context) error {
 
 	// Record the exit outcome so users can see the per-run
 	// result in the log without parsing error messages.
-	if logger != nil {
+	if logResult != nil && logger != nil {
 		if err != nil {
 			logger.Info("msgvault exit",
 				"outcome", "error", "error", err.Error(),
@@ -418,6 +461,34 @@ type tokenReauthorizer interface {
 	AuthorizeManual(ctx context.Context, email string) error
 }
 
+type scopePreservingReauthorizer interface {
+	AuthorizeManualPreservingGrantedScopes(ctx context.Context, email string) error
+}
+
+// reauthHint returns caller-specific, out-of-band re-authorization guidance for
+// an expired/revoked token in a non-interactive session. Gmail and Calendar use
+// different commands (add-account vs add-calendar), so the shared reauth helper
+// must be told which one to point the user at.
+type reauthHint func(email string) string
+
+// gmailReauthHint points at add-account, the Gmail authorization command.
+func gmailReauthHint(email string) string {
+	return fmt.Sprintf(
+		"re-authorize with 'msgvault add-account %s --force' (or "+
+			"'msgvault add-account %s --headless' on a server without a browser)",
+		email, email,
+	)
+}
+
+// calendarReauthHint points at add-calendar, the Calendar authorization command.
+func calendarReauthHint(email string) string {
+	return fmt.Sprintf(
+		"re-authorize with 'msgvault add-calendar %s' (or "+
+			"'msgvault add-calendar %s --headless' on a server without a browser)",
+		email, email,
+	)
+}
+
 // getTokenSourceWithReauth tries to get a token source for the given email.
 // If the token exists but is expired/revoked (invalid_grant), it automatically
 // deletes the old token and re-initiates the OAuth browser flow.
@@ -425,11 +496,14 @@ type tokenReauthorizer interface {
 // deleting the token.
 // The interactive parameter controls whether the function can open a browser
 // for re-authorization. Callers should pass the result of an isatty check.
+// The recovery hint supplies the caller-specific out-of-band re-authorization
+// guidance printed when a non-interactive session cannot open a browser.
 func getTokenSourceWithReauth(
 	ctx context.Context,
 	mgr tokenReauthorizer,
 	email string,
 	interactive bool,
+	recovery reauthHint,
 ) (oauth2.TokenSource, error) {
 	tokenSource, err := mgr.TokenSource(ctx, email)
 	if err == nil {
@@ -446,13 +520,16 @@ func getTokenSourceWithReauth(
 		return nil, fmt.Errorf("get token source for %s: %w", email, err)
 	}
 
-	// Non-interactive session cannot open a browser for reauth
+	// Non-interactive session cannot open a browser for reauth.
+	// This runs inside the daemon's non-TTY CLI subprocess, where the
+	// remedy is to re-authorize out of band. On a desktop, add-account's
+	// --force browser flow works even from here (it opens its own loopback
+	// callback). On a headless server with no browser, --headless prints
+	// device-code instructions instead (--force is browser-only).
 	if !interactive {
 		return nil, fmt.Errorf(
-			"token for %s is expired or revoked, but cannot re-authorize "+
-				"in a non-interactive session (run this command from an "+
-				"interactive terminal to re-authorize automatically)",
-			email,
+			"token for %s is expired or revoked; %s",
+			email, recovery(email),
 		)
 	}
 
@@ -462,7 +539,7 @@ func getTokenSourceWithReauth(
 	// account needs authorization and can select the correct one.
 	// AuthorizeManual validates the token and atomically saves it,
 	// so the old token is only overwritten after validation succeeds.
-	if authErr := mgr.AuthorizeManual(ctx, email); authErr != nil {
+	if authErr := authorizeManualForReauth(ctx, mgr, email); authErr != nil {
 		var mismatch *oauth.TokenMismatchError
 		if errors.As(authErr, &mismatch) {
 			return nil, fmt.Errorf(
@@ -485,6 +562,13 @@ func getTokenSourceWithReauth(
 	}
 
 	return tokenSource, nil
+}
+
+func authorizeManualForReauth(ctx context.Context, mgr tokenReauthorizer, email string) error {
+	if preserving, ok := mgr.(scopePreservingReauthorizer); ok {
+		return preserving.AuthorizeManualPreservingGrantedScopes(ctx, email)
+	}
+	return mgr.AuthorizeManual(ctx, email)
 }
 
 // oauthManagerCache returns a resolver function that lazily creates and
@@ -525,7 +609,7 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default: ~/.msgvault/config.toml)")
 	rootCmd.PersistentFlags().StringVar(&homeDir, "home", "", "home directory (overrides MSGVAULT_HOME)")
 	rootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "verbose output (implies --log-level=debug)")
-	rootCmd.PersistentFlags().BoolVar(&useLocal, "local", false, "force local database (override remote config)")
+	rootCmd.PersistentFlags().BoolVar(&useLocal, "local", false, "use local daemon instead of configured remote")
 	rootCmd.PersistentFlags().StringVar(&logFile, "log-file", "",
 		"override log file path (default: <data dir>/logs/msgvault-YYYY-MM-DD.log)")
 	rootCmd.PersistentFlags().StringVar(&logLevel, "log-level", "",

@@ -3,12 +3,12 @@ package tui
 import (
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"go.kenn.io/msgvault/internal/query"
 )
 
 // handleTextKeyPress dispatches key events when in Texts mode.
-func (m Model) handleTextKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m Model) handleTextKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	// Modal takes priority
 	if m.modal != modalNone {
 		return m.handleModalKeys(msg)
@@ -27,7 +27,7 @@ func (m Model) handleTextKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	// Disable selection/deletion keys in Texts mode (read-only)
 	switch msg.String() {
-	case " ", "S", "d", "D", "x":
+	case "space", "S", "d", "D", "x":
 		return m, nil
 	}
 
@@ -44,7 +44,7 @@ func (m Model) handleTextKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 // handleTextListKeys handles keys in text list views
 // (conversations, aggregates, drill-down conversations).
 func (m Model) handleTextListKeys(
-	msg tea.KeyMsg,
+	msg tea.KeyPressMsg,
 ) (tea.Model, tea.Cmd) {
 	// Handle list navigation (text-specific: operates on textState)
 	if m.navigateTextList(msg.String(), m.textRowCount()) {
@@ -55,12 +55,14 @@ func (m Model) handleTextListKeys(
 	case "tab", "Tab":
 		m.cycleTextViewType(true)
 		m.loading = true
-		return m, m.loadTextData()
+		cmd := m.loadTextData()
+		return m, cmd
 
 	case "shift+tab":
 		m.cycleTextViewType(false)
 		m.loading = true
-		return m, m.loadTextData()
+		cmd := m.loadTextData()
+		return m, cmd
 
 	case keyNameEnter:
 		return m.textDrillDown()
@@ -71,7 +73,8 @@ func (m Model) handleTextListKeys(
 	case "s":
 		m.cycleTextSortField()
 		m.loading = true
-		return m, m.loadTextData()
+		cmd := m.loadTextData()
+		return m, cmd
 
 	case "r", "v":
 		if m.textState.filter.SortDirection == query.SortDesc {
@@ -80,7 +83,8 @@ func (m Model) handleTextListKeys(
 			m.textState.filter.SortDirection = query.SortDesc
 		}
 		m.loading = true
-		return m, m.loadTextData()
+		cmd := m.loadTextData()
+		return m, cmd
 
 	case "t":
 		m.textState.viewType = query.TextViewTime
@@ -88,7 +92,8 @@ func (m Model) handleTextListKeys(
 		m.textState.cursor = 0
 		m.textState.scrollOffset = 0
 		m.loading = true
-		return m, m.loadTextData()
+		cmd := m.loadTextData()
+		return m, cmd
 
 	case "a":
 		// Reset to conversations view (clear filters)
@@ -96,7 +101,8 @@ func (m Model) handleTextListKeys(
 			viewType: query.TextViewConversations,
 		}
 		m.loading = true
-		return m, m.loadTextConversations()
+		cmd := m.loadTextConversations()
+		return m, cmd
 
 	case "A":
 		m.openAccountSelector()
@@ -111,7 +117,7 @@ func (m Model) handleTextListKeys(
 
 // handleTextTimelineKeys handles keys in the text timeline view.
 func (m Model) handleTextTimelineKeys(
-	msg tea.KeyMsg,
+	msg tea.KeyPressMsg,
 ) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "r":
@@ -124,7 +130,8 @@ func (m Model) handleTextTimelineKeys(
 		m.textState.cursor = 0
 		m.textState.scrollOffset = 0
 		m.loading = true
-		return m, m.loadTextMessages()
+		cmd := m.loadTextMessages()
+		return m, cmd
 
 	case "/":
 		m.inlineSearchActive = true
@@ -135,7 +142,7 @@ func (m Model) handleTextTimelineKeys(
 	case keyNameEsc, "backspace":
 		return m.textGoBack()
 
-	case "j", "down":
+	case "j", keyNameDown:
 		m.textMoveCursor(1)
 		return m, nil
 
@@ -188,7 +195,7 @@ func (m Model) handleTextTimelineKeys(
 // handleTextInlineSearchKeys handles keys when inline search is
 // active in Texts mode. Enter commits the search; Esc cancels.
 func (m Model) handleTextInlineSearchKeys(
-	msg tea.KeyMsg,
+	msg tea.KeyPressMsg,
 ) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case keyNameEnter:
@@ -251,7 +258,8 @@ func (m Model) handleTextInlineSearchKeys(
 			},
 		)
 		m.loading = true
-		return m, m.loadTextSearch(queryStr)
+		cmd := m.loadTextSearch(queryStr)
+		return m, cmd
 
 	case keyNameEsc:
 		m.exitInlineSearchMode()
@@ -327,7 +335,7 @@ func (m *Model) navigateTextList(key string, itemCount int) bool {
 			)
 		}
 		return true
-	case "down", "j":
+	case keyNameDown, "j":
 		if m.textState.cursor < itemCount-1 {
 			m.textState.cursor++
 			m.textState.scrollOffset = calculateScrollOffset(
@@ -439,7 +447,8 @@ func (m Model) textDrillDown() (tea.Model, tea.Cmd) {
 		m.textState.cursor = 0
 		m.textState.scrollOffset = 0
 		m.loading = true
-		return m, m.loadTextMessages()
+		cmd := m.loadTextMessages()
+		return m, cmd
 
 	case textLevelAggregate:
 		if m.textState.cursor >= len(m.textState.aggregateRows) {
@@ -474,7 +483,8 @@ func (m Model) textDrillDown() (tea.Model, tea.Cmd) {
 		m.textState.cursor = 0
 		m.textState.scrollOffset = 0
 		m.loading = true
-		return m, m.loadTextConversations()
+		cmd := m.loadTextConversations()
+		return m, cmd
 
 	case textLevelTimeline:
 		// Drill-down doesn't fire from the timeline level (no children).
@@ -514,5 +524,6 @@ func (m Model) textGoBack() (tea.Model, tea.Cmd) {
 	m.textState.filter = snap.filter
 	m.textState.selectedConvID = snap.selectedConvID
 	m.loading = true
-	return m, m.loadTextData()
+	cmd := m.loadTextData()
+	return m, cmd
 }

@@ -24,12 +24,15 @@ SMS Backup & Restore by SyncTech Pty Ltd.`,
 			if opts.OwnerPhone == "" {
 				return errors.New("--owner-phone is required")
 			}
+			if !isDaemonCLISubprocess() {
+				return runDaemonCLICommandHTTPFromCobra(cmd, args)
+			}
 			opts.AttachmentsDir = cfg.AttachmentsDir()
-			st, err := openStoreAndInitForIngest()
+			st, cleanup, err := openWritableStoreAndInitForIngest()
 			if err != nil {
 				return err
 			}
-			defer func() { _ = st.Close() }()
+			defer cleanup()
 			summary, err := synctechsms.NewImporter(st, opts).ImportPath(args[0])
 			if err != nil {
 				return err

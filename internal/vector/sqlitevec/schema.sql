@@ -11,12 +11,11 @@ CREATE TABLE IF NOT EXISTS index_generations (
     dimension     INTEGER NOT NULL,
     fingerprint   TEXT NOT NULL,
     started_at    INTEGER NOT NULL,
-    -- seeded_at marks when the initial pending_embeddings seed pass
-    -- finished. NULL means "row inserted but seed never committed"
-    -- (e.g. crash between insert and seed) — the resume path re-runs
-    -- seedPending in that case rather than activating an empty
-    -- generation. Columns added after release ship via the ALTER
-    -- TABLE migrations in migrate.go for already-initialized databases.
+    -- seeded_at is stamped at CreateGeneration as harmless vestigial
+    -- metadata. Under the scan-and-fill design there is no separate seed
+    -- pass, and activation no longer gates on it (coverage — missing==0 —
+    -- is the real gate). Retained only so the column stays populated for
+    -- legacy display; no destructive migration drops it.
     seeded_at     INTEGER,
     completed_at  INTEGER,
     activated_at  INTEGER,
@@ -55,19 +54,6 @@ CREATE TABLE IF NOT EXISTS embeddings (
 CREATE INDEX IF NOT EXISTS idx_embeddings_msg ON embeddings(message_id);
 CREATE INDEX IF NOT EXISTS idx_embeddings_gen_msg ON embeddings(generation_id, message_id);
 
-CREATE TABLE IF NOT EXISTS pending_embeddings (
-    generation_id INTEGER NOT NULL REFERENCES index_generations(id) ON DELETE CASCADE,
-    message_id    INTEGER NOT NULL,
-    enqueued_at   INTEGER NOT NULL,
-    claimed_at    INTEGER,
-    claim_token   TEXT,
-    PRIMARY KEY (generation_id, message_id)
-);
-CREATE INDEX IF NOT EXISTS idx_pending_available
-    ON pending_embeddings(generation_id, message_id) WHERE claimed_at IS NULL;
-CREATE INDEX IF NOT EXISTS idx_pending_claims
-    ON pending_embeddings(claimed_at) WHERE claimed_at IS NOT NULL;
-
 CREATE TABLE IF NOT EXISTS embed_runs (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
     generation_id INTEGER NOT NULL REFERENCES index_generations(id),
@@ -78,4 +64,19 @@ CREATE TABLE IF NOT EXISTS embed_runs (
     failed        INTEGER NOT NULL DEFAULT 0,
     truncated     INTEGER NOT NULL DEFAULT 0,
     error         TEXT
+);
+
+-- embed_watermark tracks the highest message id the scan-and-fill embed
+-- worker has already swept for a generation, so each RunOnce resumes the
+-- forward scan from where the last one stopped instead of re-scanning the
+-- whole messages B-tree. It is a pure optimization: losing it (or never
+-- seeding it) only makes the next scan start at id 0, which is harmless
+-- because the scan predicate (embed_gen IS NULL OR embed_gen <> gen) and
+-- the idempotent upsert make re-sweeping covered rows a no-op. The
+-- full-scan backstop ignores this watermark entirely. No FK to messages
+-- (those live in the main DB on SQLite); it lives here with the
+-- generations it watermarks.
+CREATE TABLE IF NOT EXISTS embed_watermark (
+    generation_id INTEGER PRIMARY KEY,
+    watermark_id  INTEGER NOT NULL DEFAULT 0
 );

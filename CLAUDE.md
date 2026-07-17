@@ -8,6 +8,11 @@ Always commit after every turn. Don't wait for the user to ask — if you made c
 
 PR descriptions should be concise and changelog-oriented: what changed, why, and how to use it. Do not include test plans, design decisions, or implementation details — those belong in specs and commit messages.
 
+Never name private downstream projects or other private codebases in public
+code, tests, fixtures, documentation, commit messages, pull requests, or
+issues. Describe the reusable requirement generically and run the private-data
+scrub before publishing.
+
 ## Project Overview
 
 msgvault is an offline Gmail archive tool that exports and stores email data locally with full-text search capabilities. The goal is to archive 20+ years of Gmail data from multiple accounts, make it searchable, and eventually delete emails from Gmail once safely archived.
@@ -54,8 +59,7 @@ make lint                     # Run linter
 ./msgvault sync-incremental you@gmail.com             # Incremental sync
 
 # TUI and analytics
-./msgvault tui                                        # Launch TUI
-./msgvault tui --account you@gmail.com                # Filter by account
+./msgvault tui                                        # Launch TUI (press 'a' inside to filter by account)
 ./msgvault tui --local                                # Force local (override remote config)
 ./msgvault build-cache                                # Build Parquet cache
 ./msgvault build-cache --full-rebuild                 # Full rebuild
@@ -68,11 +72,20 @@ make lint                     # Run linter
 ./msgvault import-emlx --account me@gmail.com         # Specific account(s)
 ./msgvault import-emlx /path/to/dir --identifier me@gmail.com  # Manual fallback
 
+# Microsoft Teams (delegated Graph)
+./msgvault add-teams you@tenant.com          # Authorize Teams (browser OAuth)
+./msgvault sync-teams you@tenant.com         # Sync Teams chats + channels
+./msgvault sync-teams you@tenant.com --no-channels --limit 50
+
 # Daemon mode (NAS/server deployment)
 ./msgvault serve                                      # Start HTTP API + scheduled syncs
 
 # Maintenance
 ./msgvault repair-encoding                            # Fix UTF-8 encoding issues
+
+# Agent skills
+./msgvault skills install                             # Install agent skills (Claude Code, Codex)
+./msgvault skills uninstall                           # Remove installed agent skills
 ```
 
 ## Key Files
@@ -96,6 +109,7 @@ make lint                     # Run linter
 - `store/schema.sql` - Core SQLite schema
 - `store/schema_sqlite.sql` - FTS5 virtual table
 - `deletion/manifest.go` - Deletion staging and manifest generation
+- `blobstore/blobstore.go` - Attachment blob reads: packed CAS with loose-file fallback
 - `gmail/client.go` - Gmail API client with rate limiting
 - `oauth/oauth.go` - OAuth2 flows (browser + device)
 - `sync/sync.go` - Sync orchestration, MIME parsing
@@ -140,7 +154,7 @@ Schema files in `internal/store/`:
 
 **Database backend**: SQLite is the default. PostgreSQL is opt-in via
 `[data].database_url` and runs through the same store/query interfaces.
-See `docs/PG_STATUS.md` for the current implementation state and
+See `docs/internal/PG_STATUS.md` for the current implementation state and
 follow-up work.
 
 **Test env**: `MSGVAULT_TEST_DB=postgres://...` runs PostgreSQL-backed
@@ -207,6 +221,21 @@ After making any Go code changes, always run `go fmt ./...` and `go vet ./...` b
 ## Testing
 
 All Go tests use [testify](https://github.com/stretchr/testify) for assertions. Do NOT introduce new `t.Errorf`/`t.Fatalf`/`t.Fatal`/`t.Error` patterns — use `assert.X` or `require.X` instead.
+
+Tests must exercise real behavior through the production path. Do not add
+tautological "fake TDD" tests that copy shell scripts into synthetic temporary
+trees, stub the primary commands, and only assert that the stub saw expected
+arguments or filenames. Those tests usually verify the fixture rather than the
+system. Prefer testing a real validator, parser, or public command output; for
+shell/docs workflows, use the actual repository script against the real docs
+tree or a built artifact. If a fake command is truly needed, the test must prove
+a stable external contract or regression that cannot be covered by the real
+path, and the commit message must explain why.
+
+Do not add bash tests that grep shell scripts, workflows, config files, or docs
+for expected implementation text. Those checks are usually tautological. Use
+real execution, parser/tool-native validation, or a documented manual release
+check instead.
 
 **Mapping rule:**
 - `require.X` — halts the test on failure (replaces what was `t.Fatalf` / `t.Fatal`). Use for setup operations or when subsequent assertions would be meaningless on failure.

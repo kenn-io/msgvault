@@ -6,8 +6,8 @@ import (
 	"testing"
 
 	pstlib "github.com/mooijtech/go-pst/v6/pkg"
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	pstreader "go.kenn.io/msgvault/internal/pst"
 )
 
@@ -26,27 +26,27 @@ func bit32PST(t *testing.T) string {
 // TestOpen_SupportPST verifies that a real 64-bit PST file opens without error.
 func TestOpen_SupportPST(t *testing.T) {
 	f, err := pstreader.Open(supportPST(t))
-	requirepkg.NoError(t, err, "Open")
+	require.NoError(t, err, "Open")
 	defer func() { _ = f.Close() }()
 }
 
 // TestOpen_32BitPST verifies that a 32-bit PST file opens without error.
 func TestOpen_32BitPST(t *testing.T) {
 	f, err := pstreader.Open(bit32PST(t))
-	requirepkg.NoError(t, err, "Open")
+	require.NoError(t, err, "Open")
 	defer func() { _ = f.Close() }()
 }
 
 // TestOpen_NonExistent verifies a clear error for missing files.
 func TestOpen_NonExistent(t *testing.T) {
 	_, err := pstreader.Open("/nonexistent/path.pst")
-	requirepkg.Error(t, err, "expected error, got nil")
+	require.Error(t, err, "expected error, got nil")
 }
 
 // TestWalkFolders_SupportPST verifies that WalkFolders visits the known folders
 // and builds correct slash-separated paths.
 func TestWalkFolders_SupportPST(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	f, err := pstreader.Open(supportPST(t))
 	require.NoError(err, "Open")
 	defer func() { _ = f.Close() }()
@@ -71,7 +71,7 @@ func TestWalkFolders_SupportPST(t *testing.T) {
 				break
 			}
 		}
-		assertpkg.True(t, found, "folder %q not found in: %v", want, keys(seen))
+		assert.True(t, found, "folder %q not found in: %v", want, keys(seen))
 	}
 }
 
@@ -79,7 +79,7 @@ func TestWalkFolders_SupportPST(t *testing.T) {
 // slash-separated paths (e.g. "Personal Folders/Inbox/Archive").
 func TestWalkFolders_PathsAreSlashSeparated(t *testing.T) {
 	f, err := pstreader.Open(supportPST(t))
-	requirepkg.NoError(t, err, "Open")
+	require.NoError(t, err, "Open")
 	defer func() { _ = f.Close() }()
 
 	depth2 := false
@@ -89,14 +89,14 @@ func TestWalkFolders_PathsAreSlashSeparated(t *testing.T) {
 		}
 		return nil
 	})
-	assertpkg.True(t, depth2, "expected at least one folder path with depth >= 2 (slash-separated)")
+	assert.True(t, depth2, "expected at least one folder path with depth >= 2 (slash-separated)")
 }
 
 // TestExtractMessages_SupportPST verifies that email messages are extracted
 // with the expected properties from support.pst.
 func TestExtractMessages_SupportPST(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	f, err := pstreader.Open(supportPST(t))
 	require.NoError(err, "Open")
 	defer func() { _ = f.Close() }()
@@ -141,7 +141,7 @@ func TestExtractMessages_SupportPST(t *testing.T) {
 // calendar, tasks) do not appear in the extracted message list.
 func TestExtractMessages_NonEmailsSkipped(t *testing.T) {
 	f, err := pstreader.Open(supportPST(t))
-	requirepkg.NoError(t, err, "Open")
+	require.NoError(t, err, "Open")
 	defer func() { _ = f.Close() }()
 
 	var total, emails int
@@ -160,14 +160,14 @@ func TestExtractMessages_NonEmailsSkipped(t *testing.T) {
 		return nil
 	})
 	// All items in support.pst should be email messages.
-	assertpkg.Equal(t, total, emails, "%d non-email items unexpectedly extracted", total-emails)
+	assert.Equal(t, total, emails, "%d non-email items unexpectedly extracted", total-emails)
 }
 
 // TestReadAttachments_SupportPST verifies that the message with known attachments
 // returns non-empty attachment content.
 func TestReadAttachments_SupportPST(t *testing.T) {
 	f, err := pstreader.Open(supportPST(t))
-	requirepkg.NoError(t, err, "Open")
+	require.NoError(t, err, "Open")
 	defer func() { _ = f.Close() }()
 
 	found := false
@@ -184,25 +184,25 @@ func TestReadAttachments_SupportPST(t *testing.T) {
 			}
 			found = true
 			atts, err := pstreader.ReadAttachments(msg, 0)
-			requirepkg.NoError(t, err, "ReadAttachments")
-			if !assertpkg.Len(t, atts, 2) {
+			require.NoError(t, err, "ReadAttachments")
+			if !assert.Len(t, atts, 2) {
 				return nil
 			}
 			for i, att := range atts {
-				assertpkg.NotEmpty(t, att.Content, "attachment %d (%q) has empty content", i, att.Filename)
+				assert.NotEmpty(t, att.Content, "attachment %d (%q) has empty content", i, att.Filename)
 			}
 		}
 		return nil
 	})
 
-	assertpkg.True(t, found, "could not find the message with 2 attachments")
+	assert.True(t, found, "could not find the message with 2 attachments")
 }
 
 // TestBuildRFC5322_RoundTrip verifies that MIME built from a real PST message
 // can be successfully re-parsed by the msgvault MIME parser.
 func TestBuildRFC5322_RoundTrip(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	f, err := pstreader.Open(supportPST(t))
 	require.NoError(err, "Open")
 	defer func() { _ = f.Close() }()
@@ -246,7 +246,7 @@ func TestBuildRFC5322_RoundTrip(t *testing.T) {
 // produces valid multipart/mixed MIME.
 func TestBuildRFC5322_WithAttachments_RoundTrip(t *testing.T) {
 	f, err := pstreader.Open(supportPST(t))
-	requirepkg.NoError(t, err, "Open")
+	require.NoError(t, err, "Open")
 	defer func() { _ = f.Close() }()
 
 	_ = f.WalkFolders(func(entry pstreader.FolderEntry, folder *pstlib.Folder) error {
@@ -261,14 +261,14 @@ func TestBuildRFC5322_WithAttachments_RoundTrip(t *testing.T) {
 				continue
 			}
 			atts, err := pstreader.ReadAttachments(msg, 0)
-			requirepkg.NoError(t, err, "ReadAttachments")
+			require.NoError(t, err, "ReadAttachments")
 			raw, err := pstreader.BuildRFC5322(e, atts)
-			requirepkg.NoError(t, err, "BuildRFC5322")
+			require.NoError(t, err, "BuildRFC5322")
 			s := string(raw)
-			assertpkg.Contains(t, s, "multipart/mixed", "expected multipart/mixed for message with attachments")
+			assert.Contains(t, s, "multipart/mixed", "expected multipart/mixed for message with attachments")
 			// Both attachments in this message have ContentIDs so they
 			// render as inline; check for Content-Disposition regardless.
-			assertpkg.Contains(t, s, "Content-Disposition:", "expected Content-Disposition header in attachment MIME")
+			assert.Contains(t, s, "Content-Disposition:", "expected Content-Disposition header in attachment MIME")
 		}
 		return nil
 	})

@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/mattn/go-sqlite3"
-	assertpkg "github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/assert"
 )
 
 func TestIsSQLiteError_ValueForm(t *testing.T) {
@@ -20,10 +20,10 @@ func TestIsSQLiteError_ValueForm(t *testing.T) {
 	wrappedErr := fmt.Errorf("insert failed: %w", sqliteErr)
 
 	// sqlite3.Error.Error() returns the code description, e.g. "constraint failed"
-	assertpkg.True(t, isSQLiteError(wrappedErr, "constraint failed"),
+	assert.True(t, isSQLiteError(wrappedErr, "constraint failed"),
 		"isSQLiteError should match constraint error, got: %v", sqliteErr.Error())
 
-	assertpkg.False(t, isSQLiteError(wrappedErr, "no such table"),
+	assert.False(t, isSQLiteError(wrappedErr, "no such table"),
 		"isSQLiteError should not match unrelated substring")
 }
 
@@ -38,10 +38,10 @@ func TestIsSQLiteError_PointerForm(t *testing.T) {
 	wrappedErr := fmt.Errorf("insert failed: %w", sqliteErr)
 
 	// sqlite3.Error.Error() returns the code description, e.g. "constraint failed"
-	assertpkg.True(t, isSQLiteError(wrappedErr, "constraint failed"),
+	assert.True(t, isSQLiteError(wrappedErr, "constraint failed"),
 		"isSQLiteError should match constraint error via pointer, got: %v", sqliteErr.Error())
 
-	assertpkg.False(t, isSQLiteError(wrappedErr, "no such table"),
+	assert.False(t, isSQLiteError(wrappedErr, "no such table"),
 		"isSQLiteError should not match unrelated substring via pointer")
 }
 
@@ -55,21 +55,21 @@ func TestIsSQLiteError_TypedNilPointer(t *testing.T) {
 
 	// This should not panic - the nil guard should protect us
 	result := isSQLiteError(wrappedErr, "any")
-	assertpkg.False(t, result, "isSQLiteError should return false for typed nil pointer")
+	assert.False(t, result, "isSQLiteError should return false for typed nil pointer")
 }
 
 func TestIsSQLiteError_NonSQLiteError(t *testing.T) {
 	plainErr := errors.New("some other error")
 
-	assertpkg.False(t, isSQLiteError(plainErr, "error"), "isSQLiteError should return false for non-sqlite errors")
+	assert.False(t, isSQLiteError(plainErr, "error"), "isSQLiteError should return false for non-sqlite errors")
 }
 
 func TestIsSQLiteError_NilError(t *testing.T) {
-	assertpkg.False(t, isSQLiteError(nil, "anything"), "isSQLiteError should return false for nil error")
+	assert.False(t, isSQLiteError(nil, "anything"), "isSQLiteError should return false for nil error")
 }
 
 func TestSQLiteDialect_IsBusyError(t *testing.T) {
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	d := &SQLiteDialect{}
 
 	busy := sqlite3.Error{Code: sqlite3.ErrBusy}

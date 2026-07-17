@@ -5,8 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -16,16 +16,16 @@ func openIntegrationStore(t *testing.T) *store.Store {
 	t.Helper()
 	tmp := t.TempDir()
 	st, err := store.Open(filepath.Join(tmp, "msgvault.db"))
-	requirepkg.NoError(t, err, "open store")
+	require.NoError(t, err, "open store")
 	t.Cleanup(func() { _ = st.Close() })
-	requirepkg.NoError(t, st.InitSchema(), "init schema")
+	require.NoError(t, st.InitSchema(), "init schema")
 	return st
 }
 
 // TestImportPst_SupportPST imports the real support.pst fixture and asserts
 // the expected message counts and deduplication behaviour.
 func TestImportPst_SupportPST(t *testing.T) {
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	st := openIntegrationStore(t)
 	pstPath := filepath.Join(pstTestdataDir, "support.pst")
 
@@ -33,7 +33,7 @@ func TestImportPst_SupportPST(t *testing.T) {
 		Identifier: "support@hackingteam.com",
 		NoResume:   true,
 	})
-	requirepkg.NoError(t, err, "ImportPst")
+	require.NoError(t, err, "ImportPst")
 
 	// support.pst has 17 email messages across Drafts (6) and Sent Messages (11).
 	assert.Equal(int64(17), summary.MessagesProcessed, "MessagesProcessed")
@@ -46,8 +46,8 @@ func TestImportPst_SupportPST(t *testing.T) {
 // TestImportPst_SupportPST_Idempotent verifies that re-importing the same PST
 // skips all messages (content-hash deduplication).
 func TestImportPst_SupportPST_Idempotent(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	st := openIntegrationStore(t)
 	pstPath := filepath.Join(pstTestdataDir, "support.pst")
 	opts := PstImportOptions{
@@ -79,12 +79,12 @@ func TestImportPst_SupportPST_CrossFolderLabels(t *testing.T) {
 		Identifier: "support@hackingteam.com",
 		NoResume:   true,
 	})
-	requirepkg.NoError(t, err, "ImportPst")
+	require.NoError(t, err, "ImportPst")
 
 	// support.pst has 17 raw items but some subjects appear in both Drafts and
 	// Sent Messages (duplicates). The total processed should equal all items.
 	// Added + Skipped should equal processed (no items dropped).
-	assertpkg.Equal(t,
+	assert.Equal(t,
 		summary.MessagesProcessed,
 		summary.MessagesAdded+summary.MessagesSkipped+summary.MessagesUpdated,
 		"accounting mismatch: added(%d)+skipped(%d)+updated(%d) != processed(%d)",
@@ -103,14 +103,14 @@ func TestImportPst_SupportPST_SkipFolder(t *testing.T) {
 		SkipFolders: []string{"Drafts"},
 		NoResume:    true,
 	})
-	requirepkg.NoError(t, err, "ImportPst")
+	require.NoError(t, err, "ImportPst")
 
 	// With Drafts skipped we process fewer messages. Some "Sent Messages" subjects
 	// also appear in Drafts — but those aren't processed since Drafts is skipped.
 	// At minimum we should have processed fewer than all 17.
-	assertpkg.Less(t, summary.MessagesProcessed, int64(17),
+	assert.Less(t, summary.MessagesProcessed, int64(17),
 		"MessagesProcessed with Drafts skipped; expected < 17")
-	assertpkg.NotZero(t, summary.MessagesProcessed,
+	assert.NotZero(t, summary.MessagesProcessed,
 		"MessagesProcessed; Sent Messages should still be imported")
 }
 
@@ -130,7 +130,7 @@ func TestImportPst_SupportPST_ContextCancelled(t *testing.T) {
 	})
 
 	// Must not panic and must return a (possibly zero) summary.
-	requirepkg.NotNil(t, summary, "ImportPst returned nil summary")
+	require.NotNil(t, summary, "ImportPst returned nil summary")
 }
 
 // TestImportPst_32BitPST verifies that a 32-bit format PST is handled
@@ -144,8 +144,8 @@ func TestImportPst_32BitPST(t *testing.T) {
 		Identifier: "user@example.com",
 		NoResume:   true,
 	})
-	requirepkg.NoError(t, err, "ImportPst")
+	require.NoError(t, err, "ImportPst")
 	// 32-bit.pst has no readable email messages.
-	assertpkg.Equal(t, int64(0), summary.MessagesProcessed, "MessagesProcessed")
-	assertpkg.False(t, summary.HardErrors, "HardErrors")
+	assert.Equal(t, int64(0), summary.MessagesProcessed, "MessagesProcessed")
+	assert.False(t, summary.HardErrors, "HardErrors")
 }

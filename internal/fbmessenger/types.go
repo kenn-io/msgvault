@@ -5,8 +5,12 @@ import (
 	"time"
 )
 
-// formatJSON is the Thread.Format value for JSON-sourced threads.
-const formatJSON = "json"
+const (
+	// formatAuto asks the importer to detect Messenger export formats.
+	formatAuto = "auto"
+	// formatJSON is the Thread.Format value for JSON-sourced threads.
+	formatJSON = "json"
+)
 
 // ErrCorruptJSON is returned by the JSON parser when a message_*.json file
 // cannot be parsed as valid JSON. Callers should log and skip the thread.

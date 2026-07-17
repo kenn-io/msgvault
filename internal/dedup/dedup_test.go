@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/dedup"
 	"go.kenn.io/msgvault/internal/deletion"
 	"go.kenn.io/msgvault/internal/store"
@@ -26,7 +26,7 @@ func addMessage(
 	convID, err := st.EnsureConversation(
 		source.ID, "thread-"+srcMsgID, "Subject",
 	)
-	requirepkg.NoError(t, err, "EnsureConversation")
+	require.NoError(t, err, "EnsureConversation")
 	id, err := st.UpsertMessage(&store.Message{
 		ConversationID:  convID,
 		SourceID:        source.ID,
@@ -38,7 +38,7 @@ func addMessage(
 		IsFromMe:     fromMe,
 		SizeEstimate: 1000,
 	})
-	requirepkg.NoError(t, err, "UpsertMessage")
+	require.NoError(t, err, "UpsertMessage")
 	return id
 }
 
@@ -50,11 +50,11 @@ func assertSoftDeleted(
 	err := st.DB().QueryRow(
 		st.Rebind("SELECT deleted_at FROM messages WHERE id = ?"), msgID,
 	).Scan(&deletedAt)
-	requirepkg.NoError(t, err, "query deleted_at")
+	require.NoError(t, err, "query deleted_at")
 	if wantDeleted {
-		assertpkg.True(t, deletedAt.Valid, "message %d: deleted_at should be set", msgID)
+		assert.True(t, deletedAt.Valid, "message %d: deleted_at should be set", msgID)
 	} else {
-		assertpkg.False(t, deletedAt.Valid, "message %d: deleted_at should be NULL", msgID)
+		assert.False(t, deletedAt.Valid, "message %d: deleted_at should be NULL", msgID)
 	}
 }
 
@@ -66,16 +66,16 @@ func linkLabel(
 ) {
 	t.Helper()
 	lid, err := st.EnsureLabel(sourceID, sourceLabelID, name, typ)
-	requirepkg.NoError(t, err, "EnsureLabel "+sourceLabelID)
-	requirepkg.NoError(t,
+	require.NoError(t, err, "EnsureLabel "+sourceLabelID)
+	require.NoError(t,
 		st.LinkMessageLabel(msgID, lid),
 		"LinkMessageLabel "+sourceLabelID,
 	)
 }
 
 func TestEngine_Scan_UnionsLabelsOnSurvivor(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	f := storetest.New(t)
 	st := f.Store
 	gmail := f.Source
@@ -131,15 +131,15 @@ func TestEngine_Scan_RejectsEmptyAccountSourceIDs(t *testing.T) {
 				AccountSourceIDs: tc.ids,
 			}, nil)
 			_, err := eng.Scan(context.Background())
-			requirepkg.Error(t, err, "expected error for empty AccountSourceIDs")
-			assertpkg.ErrorContains(t, err, "AccountSourceIDs must be non-empty")
+			require.Error(t, err, "expected error for empty AccountSourceIDs")
+			assert.ErrorContains(t, err, "AccountSourceIDs must be non-empty")
 		})
 	}
 }
 
 func TestEngine_SurvivorFavorsSentCopy(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	f := storetest.New(t)
 	st := f.Store
 	gmail := f.Source
@@ -166,8 +166,8 @@ func TestEngine_SurvivorFavorsSentCopy(t *testing.T) {
 }
 
 func TestEngine_DefaultConfig_NeverStagesRemote(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	f := storetest.New(t)
 	st := f.Store
 	gmail := f.Source
@@ -200,8 +200,8 @@ func TestEngine_DefaultConfig_NeverStagesRemote(t *testing.T) {
 }
 
 func TestEngine_OptIn_StagesOnlyWithinSameSourceID(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	f := storetest.New(t)
 	st := f.Store
 	gmail := f.Source
@@ -264,7 +264,7 @@ func TestEngine_ScopedToSingleSource_IgnoresCrossAccount(t *testing.T) {
 	alice := f.Source
 
 	bob, err := st.GetOrCreateSource("gmail", "bob@example.com")
-	requirepkg.NoError(t, err, "GetOrCreateSource bob")
+	require.NoError(t, err, "GetOrCreateSource bob")
 
 	addMessage(t, st, alice, "a-1", "rfc-cross", true)
 	addMessage(t, st, bob, "b-1", "rfc-cross", false)
@@ -274,12 +274,12 @@ func TestEngine_ScopedToSingleSource_IgnoresCrossAccount(t *testing.T) {
 		Account:          "test@example.com",
 	}, nil)
 	report, err := eng.Scan(context.Background())
-	requirepkg.NoError(t, err, "Scan")
-	assertpkg.Equal(t, 0, report.DuplicateGroups, "cross-account dedup happened")
+	require.NoError(t, err, "Scan")
+	assert.Equal(t, 0, report.DuplicateGroups, "cross-account dedup happened")
 }
 
 func TestEngine_ContentHashFallbackFindsNormalizedDuplicates(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	f := storetest.New(t)
 	st := f.Store
 	gmail := f.Source
@@ -318,8 +318,8 @@ func TestEngine_ContentHashFallbackFindsNormalizedDuplicates(t *testing.T) {
 // The correct behaviour is to skip that content-hash group entirely —
 // total losers must equal 2 (one per MID group), never 3.
 func TestEngine_ContentHash_TwoMessageIDSurvivors_BothPreserved(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	f := storetest.New(t)
 	st := f.Store
 	gmail := f.Source
@@ -380,8 +380,8 @@ func TestEngine_ContentHash_TwoMessageIDSurvivors_BothPreserved(t *testing.T) {
 // otherwise be forced in over the sent orphan; the new skip rule prevents
 // that.
 func TestEngine_ContentHash_MIDSurvivorAndSentOrphan_SkipsGroup(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	f := storetest.New(t)
 	st := f.Store
 	gmail := f.Source
@@ -435,7 +435,7 @@ func TestEngine_ContentHash_MIDSurvivorAndSentOrphan_SkipsGroup(t *testing.T) {
 }
 
 func TestEngine_ContentHashFallbackDisabledByDefault(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	f := storetest.New(t)
 	st := f.Store
 	gmail := f.Source
@@ -466,7 +466,7 @@ func TestEngine_FormatMethodology_MentionsSentPolicy(t *testing.T) {
 		AccountSourceIDs: []int64{f.Source.ID},
 	}, nil)
 	out := eng.FormatMethodology()
-	assertpkg.Contains(t,
+	assert.Contains(t,
 		strings.ToLower(out),
 		"never merges messages across different",
 		"methodology missing cross-account guarantee",
@@ -488,17 +488,17 @@ func TestEngine_FormatMethodology_SingleMemberCollection(t *testing.T) {
 	}, nil)
 	out := eng.FormatMethodology()
 	lower := strings.ToLower(out)
-	assertpkg.NotContains(t, lower, "cross-account dedup\n  is enabled",
+	assert.NotContains(t, lower, "cross-account dedup\n  is enabled",
 		"single-member collection should not advertise cross-account dedup; got:\n%s", out)
-	assertpkg.NotContains(t, lower, "intentionally merges messages",
+	assert.NotContains(t, lower, "intentionally merges messages",
 		"single-member collection should not describe intentional cross-account merging; got:\n%s", out)
-	assertpkg.Contains(t, lower, "never merges messages across different",
+	assert.Contains(t, lower, "never merges messages across different",
 		"single-member collection should fall to the same-account guarantee; got:\n%s", out)
 }
 
 func TestEngine_SurvivorTiebreakers(t *testing.T) {
 	t.Run("raw MIME wins over no raw MIME", func(t *testing.T) {
-		require := requirepkg.New(t)
+		require := require.New(t)
 		f := storetest.New(t)
 		st := f.Store
 
@@ -516,7 +516,7 @@ func TestEngine_SurvivorTiebreakers(t *testing.T) {
 		require.NoError(err, "Scan")
 		require.Equal(1, report.DuplicateGroups, "groups")
 		survivor := report.Groups[0].Messages[report.Groups[0].Survivor]
-		assertpkg.Equal(t, idHasRaw, survivor.ID, "survivor (has raw)")
+		assert.Equal(t, idHasRaw, survivor.ID, "survivor (has raw)")
 		_ = idNoRaw
 	})
 
@@ -540,10 +540,10 @@ func TestEngine_SurvivorTiebreakers(t *testing.T) {
 			Account:          "test",
 		}, nil)
 		report, err := eng.Scan(context.Background())
-		requirepkg.NoError(t, err, "Scan")
-		requirepkg.Equal(t, 1, report.DuplicateGroups, "groups")
+		require.NoError(t, err, "Scan")
+		require.Equal(t, 1, report.DuplicateGroups, "groups")
 		survivor := report.Groups[0].Messages[report.Groups[0].Survivor]
-		assertpkg.Equal(t, idMany, survivor.ID, "survivor (more labels)")
+		assert.Equal(t, idMany, survivor.ID, "survivor (more labels)")
 	})
 
 	t.Run("lower ID wins as final tiebreaker", func(t *testing.T) {
@@ -558,10 +558,10 @@ func TestEngine_SurvivorTiebreakers(t *testing.T) {
 			Account:          "test",
 		}, nil)
 		report, err := eng.Scan(context.Background())
-		requirepkg.NoError(t, err, "Scan")
-		requirepkg.Equal(t, 1, report.DuplicateGroups, "groups")
+		require.NoError(t, err, "Scan")
+		require.Equal(t, 1, report.DuplicateGroups, "groups")
 		survivor := report.Groups[0].Messages[report.Groups[0].Survivor]
-		assertpkg.Equal(t, idFirst, survivor.ID, "survivor (lower ID)")
+		assert.Equal(t, idFirst, survivor.ID, "survivor (lower ID)")
 	})
 }
 
@@ -577,7 +577,7 @@ func addMessageWithFrom(
 	convID, err := st.EnsureConversation(
 		source.ID, "thread-"+srcMsgID, "Subject",
 	)
-	requirepkg.NoError(t, err, "EnsureConversation")
+	require.NoError(t, err, "EnsureConversation")
 	id, err := st.UpsertMessage(&store.Message{
 		ConversationID:  convID,
 		SourceID:        source.ID,
@@ -589,11 +589,11 @@ func addMessageWithFrom(
 		IsFromMe:     false, // no is_from_me so MatchedIdentity is the deciding signal
 		SizeEstimate: 1000,
 	})
-	requirepkg.NoError(t, err, "UpsertMessage")
+	require.NoError(t, err, "UpsertMessage")
 	if fromEmail != "" {
 		pid, pErr := st.EnsureParticipant(fromEmail, "", "")
-		requirepkg.NoError(t, pErr, "EnsureParticipant")
-		requirepkg.NoError(t,
+		require.NoError(t, pErr, "EnsureParticipant")
+		require.NoError(t,
 			st.ReplaceMessageRecipients(id, "from", []int64{pid}, []string{""}),
 			"ReplaceMessageRecipients",
 		)
@@ -604,8 +604,8 @@ func addMessageWithFrom(
 // TestEngine_PerSourceIdentity verifies that identity matching is per-source:
 // an address confirmed only for source A does not count as "me" in source B.
 func TestEngine_PerSourceIdentity(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	f := storetest.New(t)
 	st := f.Store
 	sourceA := f.Source // already created by storetest.New

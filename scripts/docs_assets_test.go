@@ -1,0 +1,779 @@
+package scripts
+
+import (
+	"os"
+	"os/exec"
+	"path/filepath"
+	"regexp"
+	"sort"
+	"strings"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+var msgvaultStaticAssets = []string{
+	"favicon-192.png",
+	"favicon-512.png",
+	"favicon.svg",
+	"how-it-works.svg",
+	"oauth-multi-account.svg",
+	"og-image.png",
+	"og-image.svg",
+}
+
+var msgvaultGeneratedAssets = []string{
+	"concepts/account-collection-concept.png",
+	"concepts/deduplication-concept.png",
+	"concepts/oauth-multi-account-concept.png",
+	"concepts/safety-ladder-concept.png",
+	"concepts/survivor-selection-concept.png",
+	"list-senders.svg",
+	"stats.svg",
+	"tui-all-messages.svg",
+	"tui-deletion.svg",
+	"tui-domains.svg",
+	"tui-drilldown.svg",
+	"tui-filter-modal.svg",
+	"tui-labels.svg",
+	"tui-message-detail.svg",
+	"tui-search-drilldown.svg",
+	"tui-search-sender.svg",
+	"tui-search-subject.svg",
+	"tui-selection.svg",
+	"tui-senders.svg",
+	"tui-subgroup-recipients.svg",
+	"tui-subgroup-time.svg",
+	"tui-thread.svg",
+	"tui-time-daily.svg",
+	"tui-time-monthly.svg",
+	"tui-time-yearly.svg",
+	"tui-time.svg",
+}
+
+type publisherScriptCase struct {
+	name        string
+	scriptRel   string
+	branch      string
+	branchEnv   string
+	write       func(*testing.T, string, string)
+	symlinkPath string
+}
+
+func TestHydrateAssetsForceFetchesRemoteAssetBranches(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	tempDir := t.TempDir()
+	remoteRepo := filepath.Join(tempDir, "remote")
+	localRepo := filepath.Join(tempDir, "local")
+	require.NoError(os.MkdirAll(remoteRepo, 0o755))
+	require.NoError(os.MkdirAll(localRepo, 0o755))
+
+	git(t, remoteRepo, "init")
+	git(t, remoteRepo, "config", "user.name", "Test User")
+	git(t, remoteRepo, "config", "user.email", "test@example.invalid")
+	writeStaticAssets(t, remoteRepo, "old static")
+	git(t, remoteRepo, "add", ".")
+	git(t, remoteRepo, "commit", "-m", "old static assets")
+	oldStaticCommit := gitOutput(t, remoteRepo, "rev-parse", "HEAD")
+	git(t, remoteRepo, "branch", "docs-assets")
+
+	git(t, localRepo, "init")
+	git(t, localRepo, "remote", "add", "origin", remoteRepo)
+	git(t, localRepo, "fetch", "origin", "docs-assets:refs/remotes/origin/docs-assets")
+
+	git(t, remoteRepo, "checkout", "--orphan", "new-static-assets")
+	clearWorkingTree(t, remoteRepo)
+	writeStaticAssets(t, remoteRepo, "new static")
+	git(t, remoteRepo, "add", "-A")
+	git(t, remoteRepo, "commit", "-m", "new static assets")
+	newStaticCommit := gitOutput(t, remoteRepo, "rev-parse", "HEAD")
+	git(t, remoteRepo, "update-ref", "refs/heads/docs-assets", newStaticCommit)
+	require.NotEqual(oldStaticCommit, newStaticCommit)
+
+	git(t, remoteRepo, "checkout", "--orphan", "generated-assets")
+	clearWorkingTree(t, remoteRepo)
+	writeGeneratedAssets(t, remoteRepo, "generated")
+	git(t, remoteRepo, "add", "-A")
+	git(t, remoteRepo, "commit", "-m", "generated assets")
+	generatedCommit := gitOutput(t, remoteRepo, "rev-parse", "HEAD")
+	git(t, remoteRepo, "update-ref", "refs/heads/docs-generated-assets", generatedCommit)
+
+	docsAssetsDir := filepath.Join(localRepo, "docs", "assets")
+	require.NoError(os.MkdirAll(docsAssetsDir, 0o755))
+	writeStaticAssets(t, filepath.Join(docsAssetsDir, "static"), "stale local static")
+	writeGeneratedAssets(t, filepath.Join(docsAssetsDir, "generated"), "stale local generated")
+	writeAssetFile(t, filepath.Join(docsAssetsDir, "static"), "stale-static.svg", "stale static extra")
+	writeAssetFile(t, filepath.Join(docsAssetsDir, "generated"), "stale-generated.svg", "stale generated extra")
+
+	scriptPath := installScript(t, localRepo, filepath.Join("docs", "assets", "hydrate-assets.sh"))
+	cmd := exec.Command("bash", scriptPath)
+	cmd.Dir = localRepo
+	output, err := cmd.CombinedOutput()
+	require.NoError(err, string(output))
+
+	assert.Equal(newStaticCommit, gitOutput(t, localRepo, "rev-parse", "refs/remotes/origin/docs-assets"))
+	assert.Equal(generatedCommit, gitOutput(t, localRepo, "rev-parse", "refs/remotes/origin/docs-generated-assets"))
+	assertRecursiveFileList(t, filepath.Join(docsAssetsDir, "static"), msgvaultStaticAssets)
+	assertRecursiveFileList(t, filepath.Join(docsAssetsDir, "generated"), msgvaultGeneratedAssets)
+	assertAssetFilesHaveContent(t, filepath.Join(docsAssetsDir, "static"), msgvaultStaticAssets, "new static")
+	assertAssetFilesHaveContent(t, filepath.Join(docsAssetsDir, "generated"), msgvaultGeneratedAssets, "generated")
+}
+
+func TestAssetPublishersRejectUnexpectedFiles(t *testing.T) {
+	for _, tc := range publisherScriptCases() {
+		t.Run(tc.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+
+			tempDir := t.TempDir()
+			repo := filepath.Join(tempDir, "repo")
+			sourceDir := filepath.Join(tempDir, "source")
+			require.NoError(os.MkdirAll(repo, 0o755))
+			git(t, repo, "init")
+			git(t, repo, "config", "user.name", "Test User")
+			git(t, repo, "config", "user.email", "test@example.invalid")
+			tc.write(t, sourceDir, "asset")
+			require.NoError(os.WriteFile(filepath.Join(sourceDir, ".env.local"), []byte("TOKEN=secret\n"), 0o600))
+			beforeRef, beforeExists := gitRef(t, repo, tc.branch)
+
+			scriptPath := installScript(t, repo, tc.scriptRel)
+			cmd := exec.Command("bash", scriptPath, "--source", sourceDir)
+			cmd.Dir = repo
+			output, err := cmd.CombinedOutput()
+
+			require.Error(err, string(output))
+			assert.Contains(strings.ToLower(string(output)), "unexpected")
+			assert.Contains(string(output), ".env.local")
+			assertBranchRefUnchanged(t, repo, tc.branch, beforeRef, beforeExists)
+		})
+	}
+}
+
+func TestAssetPublishersRejectSymlinks(t *testing.T) {
+	for _, tc := range publisherScriptCases() {
+		t.Run(tc.name, func(t *testing.T) {
+			require := require.New(t)
+
+			tempDir := t.TempDir()
+			repo := filepath.Join(tempDir, "repo")
+			sourceDir := filepath.Join(tempDir, "source")
+			require.NoError(os.MkdirAll(repo, 0o755))
+			git(t, repo, "init")
+			git(t, repo, "config", "user.name", "Test User")
+			git(t, repo, "config", "user.email", "test@example.invalid")
+			tc.write(t, sourceDir, "asset")
+			beforeRef := seedBranchRef(t, repo, tc.branch)
+
+			target := filepath.Join(tempDir, "symlink-target")
+			require.NoError(os.WriteFile(target, []byte("not an asset\n"), 0o644))
+			link := filepath.Join(sourceDir, tc.symlinkPath)
+			require.NoError(os.Remove(link))
+			require.NoError(os.Symlink(target, link))
+
+			scriptPath := installScript(t, repo, tc.scriptRel)
+			cmd := exec.Command("bash", scriptPath, "--source", sourceDir)
+			cmd.Dir = repo
+			output, err := cmd.CombinedOutput()
+
+			require.Error(err, string(output))
+			assert.Contains(t, strings.ToLower(string(output)), "symlink")
+			assertBranchRefUnchanged(t, repo, tc.branch, beforeRef, true)
+		})
+	}
+}
+
+func TestAssetPublishersRejectProtectedBranchNames(t *testing.T) {
+	for _, tc := range publisherScriptCases() {
+		t.Run(tc.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+
+			tempDir := t.TempDir()
+			repo := filepath.Join(tempDir, "repo")
+			sourceDir := filepath.Join(tempDir, "source")
+			require.NoError(os.MkdirAll(repo, 0o755))
+			git(t, repo, "init")
+			git(t, repo, "config", "user.name", "Test User")
+			git(t, repo, "config", "user.email", "test@example.invalid")
+			tc.write(t, sourceDir, "asset")
+
+			require.NoError(os.WriteFile(filepath.Join(repo, "main-seed.txt"), []byte("main\n"), 0o644))
+			git(t, repo, "add", ".")
+			git(t, repo, "commit", "-m", "seed main")
+			mainRef := gitOutput(t, repo, "rev-parse", "HEAD")
+			git(t, repo, "update-ref", "refs/heads/main", mainRef)
+			git(t, repo, "checkout", "-b", "work")
+
+			scriptPath := installScript(t, repo, tc.scriptRel)
+			cmd := exec.Command("bash", scriptPath, "--source", sourceDir)
+			cmd.Dir = repo
+			cmd.Env = append(os.Environ(), tc.branchEnv+"=main")
+			output, err := cmd.CombinedOutput()
+
+			require.Error(err, string(output))
+			assert.Contains(strings.ToLower(string(output)), "protected")
+			assert.Contains(string(output), "main")
+			assertBranchRefUnchanged(t, repo, "main", mainRef, true)
+		})
+	}
+}
+
+func TestCheckDocsRejectsForbiddenMediaReferenceOnLineWithAllowedAsset(t *testing.T) {
+	runCheckDocsMediaReferenceTest(
+		t,
+		"![bad](/favicon.svg) ![ok](/assets/static/favicon.svg)",
+		"docs media references must use /assets/static or /assets/generated",
+	)
+}
+
+func TestCheckDocsRejectsForbiddenSourceMediaReferenceOnLineWithAllowedAsset(t *testing.T) {
+	runCheckDocsMediaReferenceTest(
+		t,
+		`logo = "/favicon.svg" favicon = "assets/static/favicon.svg"`,
+		"docs source media references must use /assets/static or /assets/generated",
+	)
+}
+
+func TestDocsScreenshotDemoDataUsesIntegratedRepoSchemaPath(t *testing.T) {
+	content, err := os.ReadFile(filepath.Join("..", "docs", "screenshots", "generate_demo_data.py"))
+	require.NoError(t, err)
+
+	text := string(content)
+	assert.Contains(t, text, `SCRIPT_DIR / "../../internal/store/schema.sql"`)
+	assert.NotContains(t, text, `SCRIPT_DIR / "../../msgvault/internal/store/schema.sql"`)
+}
+
+func TestDocsScreenshotGenerateAllDoesNotRequireDockerIgnorefileFlag(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	tempDir := t.TempDir()
+	screenshotsDir := filepath.Join(tempDir, "docs", "screenshots")
+	productRepo := filepath.Join(tempDir, "product")
+	binDir := filepath.Join(tempDir, "bin")
+	logPath := filepath.Join(tempDir, "docker-calls.log")
+	require.NoError(os.MkdirAll(screenshotsDir, 0o755))
+	require.NoError(os.MkdirAll(productRepo, 0o755))
+	require.NoError(os.MkdirAll(binDir, 0o755))
+
+	copyTestFile(t, filepath.Join("..", "docs", "screenshots", "generate-all.sh"), filepath.Join(screenshotsDir, "generate-all.sh"))
+	writeExecutableFile(t, filepath.Join(binDir, "docker"), fakeDockerScript(logPath))
+
+	cmd := exec.Command("bash", filepath.Join(screenshotsDir, "generate-all.sh"), "--skip-data", "--repo", productRepo)
+	cmd.Dir = tempDir
+	cmd.Env = append(os.Environ(), "PATH="+binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	output, err := cmd.CombinedOutput()
+	require.NoError(err, string(output))
+
+	logContent, err := os.ReadFile(logPath)
+	require.NoError(err)
+	logText := string(logContent)
+	assert.NotContains(logText, "--ignorefile")
+
+	var buildLine string
+	for line := range strings.SplitSeq(logText, "\n") {
+		if strings.HasPrefix(line, "build ") {
+			buildLine = line
+			break
+		}
+	}
+	require.NotEmpty(buildLine)
+	buildFields := strings.Fields(buildLine)
+	require.NotEmpty(buildFields)
+	assert.Equal(filepath.Base(productRepo), filepath.Base(filepath.FromSlash(buildFields[len(buildFields)-1])))
+}
+
+func TestDocsScreenshotDockerfileSpecificIgnoreMatchesSourceIgnore(t *testing.T) {
+	sourceIgnore, err := os.ReadFile(filepath.Join("..", "docs", "screenshots", ".dockerignore"))
+	require.NoError(t, err)
+	dockerfileIgnore, err := os.ReadFile(filepath.Join("..", "docs", "screenshots", "Dockerfile.dockerignore"))
+	require.NoError(t, err)
+
+	assert.Equal(t, string(sourceIgnore), string(dockerfileIgnore))
+}
+
+func TestDocsGitignoreIgnoresVercelLocalGitignore(t *testing.T) {
+	content, err := os.ReadFile(filepath.Join("..", ".gitignore"))
+	require.NoError(t, err)
+
+	assert.Contains(t, string(content), "docs/.gitignore")
+}
+
+func TestDocsScreenshotDemoDataPrefersMSGVAULTRepoSchema(t *testing.T) {
+	require := require.New(t)
+
+	tempDir := t.TempDir()
+	overrideRepo := filepath.Join(tempDir, "override")
+	require.NoError(os.MkdirAll(filepath.Join(overrideRepo, "internal", "store"), 0o755))
+	require.NoError(os.WriteFile(
+		filepath.Join(overrideRepo, "internal", "store", "schema.sql"),
+		[]byte("-- override schema marker\n"),
+		0o644,
+	))
+
+	probe := `
+import importlib.util
+import os
+import pathlib
+import sys
+import types
+
+class FakeFaker:
+    @staticmethod
+    def seed(value):
+        pass
+
+    def name(self):
+        return "Test User"
+
+    def user_name(self):
+        return "test"
+
+    def sentence(self, *args, **kwargs):
+        return "Test subject."
+
+    def paragraphs(self, *args, **kwargs):
+        return ["Test body."]
+
+fake_module = types.ModuleType("faker")
+fake_module.Faker = FakeFaker
+sys.modules["faker"] = fake_module
+
+module_path = pathlib.Path(os.environ["GENERATE_DEMO_DATA_PATH"])
+spec = importlib.util.spec_from_file_location("generate_demo_data", module_path)
+module = importlib.util.module_from_spec(spec)
+assert spec.loader is not None
+spec.loader.exec_module(module)
+
+class Conn:
+    def __init__(self):
+        self.scripts = []
+
+    def executescript(self, script):
+        self.scripts.append(script)
+
+conn = Conn()
+module.load_schema(conn)
+print(conn.scripts[0])
+`
+	cmd := exec.Command("python3", "-c", probe)
+	cmd.Env = append(
+		os.Environ(),
+		"MSGVAULT_REPO="+overrideRepo,
+		"GENERATE_DEMO_DATA_PATH="+filepath.Join("..", "docs", "screenshots", "generate_demo_data.py"),
+	)
+	output, err := cmd.CombinedOutput()
+	require.NoError(err, string(output))
+	assert.Contains(t, string(output), "override schema marker")
+}
+
+func TestDocsScreenshotDockerfileGoVersionMatchesModule(t *testing.T) {
+	require := require.New(t)
+
+	goMod, err := os.ReadFile(filepath.Join("..", "go.mod"))
+	require.NoError(err)
+	dockerfile, err := os.ReadFile(filepath.Join("..", "docs", "screenshots", "Dockerfile"))
+	require.NoError(err)
+
+	moduleGoVersion := regexp.MustCompile(`(?m)^go\s+([0-9]+\.[0-9]+)`).FindStringSubmatch(string(goMod))
+	require.Len(moduleGoVersion, 2)
+	dockerGoVersion := regexp.MustCompile(`(?m)^FROM\s+golang:([0-9]+\.[0-9]+)-`).FindStringSubmatch(string(dockerfile))
+	require.Len(dockerGoVersion, 2)
+
+	assert.Equal(t, moduleGoVersion[1], dockerGoVersion[1])
+}
+
+func TestDocsScreenshotDockerfileInstallsCGODependencies(t *testing.T) {
+	dockerfile, err := os.ReadFile(filepath.Join("..", "docs", "screenshots", "Dockerfile"))
+	require.NoError(t, err)
+
+	assert.Contains(t, string(dockerfile), "libsqlite3-dev")
+}
+
+func TestDocsScreenshotTmuxSessionStartsWithOptions(t *testing.T) {
+	script, err := os.ReadFile(filepath.Join("..", "docs", "screenshots", "generate-screenshots.sh"))
+	require.NoError(t, err)
+
+	assert := assert.New(t)
+	text := string(script)
+	assert.NotContains(text, "start-server")
+	assert.Contains(text, `tmux -f /dev/null set-option -g default-terminal "tmux-256color"`)
+	assert.Contains(text, `new-session -d -s "$SESSION" -x 120 -y 40`)
+}
+
+func TestDocsScreenshotWaitsForCurrentSenderLabel(t *testing.T) {
+	script, err := os.ReadFile(filepath.Join("..", "docs", "screenshots", "generate-screenshots.sh"))
+	require.NoError(t, err)
+
+	assert.NotContains(t, string(script), `wait_until "Sender Name"`)
+	assert.Contains(t, string(script), `wait_until "Sender"`)
+}
+
+func TestDocsScreenshotSubgroupRecipientWaitUsesCurrentLabel(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	script, err := os.ReadFile(filepath.Join("..", "docs", "screenshots", "generate-screenshots.sh"))
+	require.NoError(err)
+
+	text := string(script)
+	subgroupStart := strings.Index(text, "# Sub-grouping:")
+	require.NotEqual(-1, subgroupStart)
+	captureIndex := strings.Index(text[subgroupStart:], `capture "tui-subgroup-recipients"`)
+	require.NotEqual(-1, captureIndex)
+	subgroupBlock := text[subgroupStart : subgroupStart+captureIndex]
+
+	assert.Contains(subgroupBlock, `wait_until "Recipient"`)
+	assert.NotContains(subgroupBlock, `wait_until "Recipient Name"`)
+}
+
+func TestDocsScreenshotCapturesLegacyTimeAsset(t *testing.T) {
+	require := require.New(t)
+
+	script, err := os.ReadFile(filepath.Join("..", "docs", "screenshots", "generate-screenshots.sh"))
+	require.NoError(err)
+
+	text := string(script)
+	legacyIndex := strings.Index(text, `capture "tui-time"`)
+	monthlyIndex := strings.Index(text, `capture "tui-time-monthly"`)
+	require.NotEqual(-1, legacyIndex)
+	require.NotEqual(-1, monthlyIndex)
+	assert.Less(t, legacyIndex, monthlyIndex)
+}
+
+func runCheckDocsMediaReferenceTest(t *testing.T, docsLine, wantMessage string) {
+	t.Helper()
+	tempDir := t.TempDir()
+	repo := filepath.Join(tempDir, "repo")
+	binDir := filepath.Join(tempDir, "bin")
+	require.NoError(t, os.MkdirAll(repo, 0o755))
+	require.NoError(t, os.MkdirAll(binDir, 0o755))
+	git(t, repo, "init")
+	git(t, repo, "config", "user.name", "Test User")
+	git(t, repo, "config", "user.email", "test@example.invalid")
+
+	scriptPath := installScript(t, repo, filepath.Join("scripts", "check-docs.sh"))
+	writeAssetFile(
+		t,
+		filepath.Join(repo, "docs"),
+		"index.md",
+		docsLine,
+	)
+	writeAssetFile(t, repo, "README.md", "# test")
+	writeExecutableFile(
+		t,
+		filepath.Join(repo, "docs", "scripts", "check_markdown_sources.py"),
+		"#!/usr/bin/env python3\nprint('docs markdown source checks passed')\n",
+	)
+	writeExecutableFile(
+		t,
+		filepath.Join(repo, "docs", "assets", "hydrate-assets.sh"),
+		"#!/usr/bin/env bash\necho 'hydrate should not run' >&2\nexit 1\n",
+	)
+	writeExecutableFile(t, filepath.Join(binDir, "rg"), fakeRipgrepForDocsMediaRefs())
+
+	cmd := exec.Command("bash", scriptPath)
+	cmd.Dir = repo
+	cmd.Env = envWithPath(binDir + string(os.PathListSeparator) + os.Getenv("PATH"))
+	output, err := cmd.CombinedOutput()
+
+	require.Error(t, err, string(output))
+	assert.Contains(t, string(output), wantMessage)
+	assert.Contains(t, string(output), "/favicon.svg")
+	assert.NotContains(t, string(output), "hydrate should not run")
+}
+
+func installScript(t *testing.T, repo, scriptRel string) string {
+	t.Helper()
+	sourceScriptPath := filepath.Join("..", scriptRel)
+	info, err := os.Stat(sourceScriptPath)
+	require.NoError(t, err)
+	require.False(t, info.IsDir(), sourceScriptPath)
+
+	for _, relDir := range supportDirsForScript(scriptRel) {
+		copySupportFiles(t, repo, relDir)
+	}
+
+	scriptPath := filepath.Join(repo, scriptRel)
+	require.FileExists(t, scriptPath)
+	return scriptPath
+}
+
+func publisherScriptCases() []publisherScriptCase {
+	return []publisherScriptCase{
+		{
+			name:        "static",
+			scriptRel:   filepath.Join("docs", "assets", "update-static-assets-branch.sh"),
+			branch:      "docs-assets",
+			branchEnv:   "MSGVAULT_DOCS_ASSETS_BRANCH",
+			write:       writeStaticAssets,
+			symlinkPath: "favicon.svg",
+		},
+		{
+			name:        "generated",
+			scriptRel:   filepath.Join("docs", "screenshots", "update-generated-assets-branch.sh"),
+			branch:      "docs-generated-assets",
+			branchEnv:   "MSGVAULT_DOCS_GENERATED_ASSETS_BRANCH",
+			write:       writeGeneratedAssets,
+			symlinkPath: "tui-filter-modal.svg",
+		},
+	}
+}
+
+func writeStaticAssets(t *testing.T, dir, content string) {
+	t.Helper()
+	writeAssetFiles(t, dir, msgvaultStaticAssets, content)
+}
+
+func writeGeneratedAssets(t *testing.T, dir, content string) {
+	t.Helper()
+	writeAssetFiles(t, dir, msgvaultGeneratedAssets, content)
+}
+
+func writeAssetFiles(t *testing.T, dir string, files []string, content string) {
+	t.Helper()
+	for _, file := range files {
+		writeAssetFile(t, dir, file, content)
+	}
+}
+
+func writeAssetFile(t *testing.T, dir, file, content string) {
+	t.Helper()
+	path := filepath.Join(dir, file)
+	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
+	require.NoError(t, os.WriteFile(path, []byte(content+"\n"), 0o644))
+}
+
+func writeExecutableFile(t *testing.T, path, content string) {
+	t.Helper()
+	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
+	require.NoError(t, os.WriteFile(path, []byte(content), 0o755))
+}
+
+func copyTestFile(t *testing.T, source, dest string) {
+	t.Helper()
+	content, err := os.ReadFile(source)
+	require.NoError(t, err)
+	info, err := os.Stat(source)
+	require.NoError(t, err)
+	require.NoError(t, os.MkdirAll(filepath.Dir(dest), 0o755))
+	require.NoError(t, os.WriteFile(dest, content, info.Mode().Perm()))
+}
+
+func fakeDockerScript(logPath string) string {
+	return "#!/usr/bin/env bash\n" +
+		"set -euo pipefail\n" +
+		"printf '%s\\n' \"$*\" >> " + shellQuote(logPath) + "\n" +
+		"if [[ \"${1:-}\" == \"build\" && \"${2:-}\" == \"--help\" ]]; then\n" +
+		"  printf 'Usage: docker build [OPTIONS] PATH\\n'\n" +
+		"  exit 0\n" +
+		"fi\n" +
+		"for arg in \"$@\"; do\n" +
+		"  if [[ \"$arg\" == \"--ignorefile\" ]]; then\n" +
+		"    printf 'unknown flag: --ignorefile\\n' >&2\n" +
+		"    exit 125\n" +
+		"  fi\n" +
+		"done\n"
+}
+
+func fakeRipgrepForDocsMediaRefs() string {
+	return `#!/usr/bin/env bash
+set -euo pipefail
+
+mode="root"
+args="$*"
+if [[ "$args" == *"https://msgvault"* ]]; then
+  mode="source"
+fi
+
+status=1
+line=""
+if [[ -f docs/index.md ]]; then
+  line="$(cat docs/index.md)"
+fi
+
+case "$mode" in
+  root)
+    if [[ "$line" == *"/favicon.svg"* && ( "$line" == *"!["* || "$line" == *"<img"* ) ]]; then
+      printf 'docs/index.md:1:/favicon.svg\n'
+      status=0
+    fi
+    ;;
+  source)
+    if [[ "$line" == *"/favicon.svg"* ]]; then
+      printf 'docs/index.md:1:/favicon.svg\n'
+      status=0
+    fi
+    ;;
+esac
+
+exit "$status"
+`
+}
+
+func envWithPath(pathValue string) []string {
+	env := os.Environ()
+	pathEntry := "PATH=" + pathValue
+	for i, entry := range env {
+		if strings.HasPrefix(entry, "PATH=") {
+			env[i] = pathEntry
+			return env
+		}
+	}
+	return append(env, pathEntry)
+}
+
+func shellQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
+}
+
+func assertRecursiveFileList(t *testing.T, dir string, want []string) {
+	t.Helper()
+	got := recursiveFileList(t, dir)
+	expected := append([]string(nil), want...)
+	sort.Strings(expected)
+	assert.Equal(t, expected, got)
+}
+
+func assertAssetFilesHaveContent(t *testing.T, dir string, files []string, want string) {
+	t.Helper()
+	for _, file := range files {
+		content, err := os.ReadFile(filepath.Join(dir, file))
+		require.NoError(t, err, file)
+		assert.Equal(t, want, strings.TrimRight(string(content), "\r\n"), file)
+	}
+}
+
+func recursiveFileList(t *testing.T, dir string) []string {
+	t.Helper()
+	var files []string
+	err := filepath.WalkDir(dir, func(path string, entry os.DirEntry, err error) error {
+		require.NoError(t, err)
+		if entry.IsDir() {
+			return nil
+		}
+		rel, err := filepath.Rel(dir, path)
+		require.NoError(t, err)
+		files = append(files, filepath.ToSlash(rel))
+		return nil
+	})
+	require.NoError(t, err)
+	sort.Strings(files)
+	return files
+}
+
+func clearWorkingTree(t *testing.T, dir string) {
+	t.Helper()
+	entries, err := os.ReadDir(dir)
+	require.NoError(t, err)
+	for _, entry := range entries {
+		if entry.Name() == ".git" {
+			continue
+		}
+		require.NoError(t, os.RemoveAll(filepath.Join(dir, entry.Name())))
+	}
+}
+
+func supportDirsForScript(scriptRel string) []string {
+	dirs := []string{filepath.Dir(scriptRel)}
+	if filepath.Dir(scriptRel) == filepath.Join("docs", "screenshots") {
+		dirs = append(dirs, filepath.Join("docs", "assets"))
+	}
+	return dirs
+}
+
+func copySupportFiles(t *testing.T, repo, relDir string) {
+	t.Helper()
+	sourceDir := filepath.Join("..", relDir)
+	if _, err := os.Stat(sourceDir); os.IsNotExist(err) {
+		return
+	}
+
+	err := filepath.WalkDir(sourceDir, func(path string, entry os.DirEntry, err error) error {
+		require.NoError(t, err)
+		if entry.IsDir() {
+			switch entry.Name() {
+			case ".venv", ".vercel", "demo-data", "generated", "site", "static":
+				return filepath.SkipDir
+			default:
+				return nil
+			}
+		}
+		if !isSupportFile(path) {
+			return nil
+		}
+
+		rel, err := filepath.Rel("..", path)
+		require.NoError(t, err)
+		info, err := entry.Info()
+		require.NoError(t, err)
+		content, err := os.ReadFile(path)
+		require.NoError(t, err)
+		dest := filepath.Join(repo, rel)
+		require.NoError(t, os.MkdirAll(filepath.Dir(dest), 0o755))
+		require.NoError(t, os.WriteFile(dest, content, info.Mode().Perm()))
+		return nil
+	})
+	require.NoError(t, err)
+}
+
+func isSupportFile(path string) bool {
+	switch filepath.Ext(path) {
+	case ".bash", ".py", ".sh":
+		return true
+	default:
+		return false
+	}
+}
+
+func seedBranchRef(t *testing.T, repo, branch string) string {
+	t.Helper()
+	require.NoError(t, os.WriteFile(filepath.Join(repo, "branch-seed.txt"), []byte(branch+"\n"), 0o644))
+	git(t, repo, "add", ".")
+	git(t, repo, "commit", "-m", "seed branch ref")
+	commit := gitOutput(t, repo, "rev-parse", "HEAD")
+	git(t, repo, "branch", branch, commit)
+	return commit
+}
+
+func assertBranchRefUnchanged(t *testing.T, repo, branch, beforeRef string, beforeExists bool) {
+	t.Helper()
+	afterRef, afterExists := gitRef(t, repo, branch)
+	if !beforeExists {
+		assert.False(t, afterExists, branch)
+		return
+	}
+	require.True(t, afterExists, branch)
+	assert.Equal(t, beforeRef, afterRef, branch)
+}
+
+func gitRef(t *testing.T, dir, ref string) (string, bool) {
+	t.Helper()
+	cmd := exec.Command("git", "rev-parse", "--verify", ref)
+	cmd.Dir = dir
+	output, err := cmd.Output()
+	if err != nil {
+		return "", false
+	}
+	return strings.TrimSpace(string(output)), true
+}
+
+func git(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	output, err := cmd.CombinedOutput()
+	require.NoError(t, err, string(output))
+}
+
+func gitOutput(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	output, err := cmd.Output()
+	require.NoError(t, err)
+	return strings.TrimSpace(string(output))
+}

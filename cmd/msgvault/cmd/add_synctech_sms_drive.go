@@ -42,6 +42,17 @@ func newAddSynctechSMSDriveCmd() *cobra.Command {
 			if opts.GoogleAccount == "" {
 				return errors.New("--google-account is required")
 			}
+			if !isDaemonCLISubprocess() {
+				// Complete OAuth in this process — which owns the user's
+				// browser — before proxying; the daemon subprocess's
+				// idempotent token check then skips the browser flow.
+				if !opts.SkipAuthForTest && !IsRemoteMode() {
+					if err := ensureSynctechSMSDriveToken(cmd.Context(), opts.GoogleAccount, opts.OAuthApp); err != nil {
+						return err
+					}
+				}
+				return runDaemonCLICommandHTTPFromCobra(cmd, args)
+			}
 			name := args[0]
 			if cfg.GetSynctechSMSSource(name) != nil {
 				return fmt.Errorf("synctech-sms source %q already exists", name)
@@ -94,6 +105,9 @@ func newSyncSynctechSMSCmd() *cobra.Command {
 		Short: "Run one configured synctech-sms source now",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if !isDaemonCLISubprocess() {
+				return runDaemonCLICommandHTTPFromCobra(cmd, args)
+			}
 			src := cfg.GetSynctechSMSSource(args[0])
 			if src == nil {
 				return fmt.Errorf("synctech-sms source %q not found", args[0])
@@ -104,15 +118,20 @@ func newSyncSynctechSMSCmd() *cobra.Command {
 }
 
 func runConfiguredSynctechSMSSource(ctx context.Context, src config.SynctechSMSSource) error {
-	st, err := openStoreAndInitForIngest()
+	st, cleanup, err := openWritableStoreAndInitForIngest()
 	if err != nil {
 		return err
 	}
-	defer func() { _ = st.Close() }()
+	defer cleanup()
+
 	return runConfiguredSynctechSMSSourceWithStore(ctx, st, src)
 }
 
 func runConfiguredSynctechSMSSourceWithStore(ctx context.Context, st *store.Store, src config.SynctechSMSSource) error {
+	return runConfiguredSynctechSMSSourceWithStoreDriveClient(ctx, st, src, nil)
+}
+
+func runConfiguredSynctechSMSSourceWithStoreDriveClient(ctx context.Context, st *store.Store, src config.SynctechSMSSource, driveClient synctechsms.DriveClient) error {
 	opts := synctechImportOptions(src)
 	if opts.OwnerPhone == "" {
 		return fmt.Errorf("synctech-sms source %q owner_phone is required", src.Name)
@@ -128,15 +147,17 @@ func runConfiguredSynctechSMSSourceWithStore(ctx context.Context, st *store.Stor
 		}
 		_, err = synctechsms.NewImporter(st, opts).ImportPath(src.Path)
 	case "drive":
-		err = runSynctechSMSDriveSource(ctx, st, src, opts)
+		if driveClient != nil {
+			_, err = runSynctechSMSDriveSourceWithClient(ctx, st, src, opts, driveClient)
+		} else {
+			_, err = runSynctechSMSDriveSource(ctx, st, src, opts)
+		}
 	default:
 		return fmt.Errorf("unsupported synctech-sms backend %q", src.Backend)
 	}
-	if err != nil {
-		return err
-	}
-	rebuildCacheAfterScheduledSync(ctx, "synctech-sms:"+src.Name)
-	return nil
+	refreshErr := rebuildCacheAfterScheduledSync(
+		context.WithoutCancel(ctx), "synctech-sms:"+src.Name)
+	return errors.Join(err, refreshErr)
 }
 
 func ensureConfiguredSynctechSMSSource(st *store.Store, src config.SynctechSMSSource, opts synctechsms.ImportOptions) (*store.Source, error) {
@@ -167,28 +188,28 @@ func validateSynctechSMSDriveSource(src config.SynctechSMSSource) error {
 	return nil
 }
 
-func runSynctechSMSDriveSource(ctx context.Context, st *store.Store, src config.SynctechSMSSource, opts synctechsms.ImportOptions) error {
+func runSynctechSMSDriveSource(ctx context.Context, st *store.Store, src config.SynctechSMSSource, opts synctechsms.ImportOptions) (synctechsms.ImportSummary, error) {
 	if err := validateSynctechSMSDriveSource(src); err != nil {
-		return err
+		return synctechsms.ImportSummary{}, err
 	}
 	client, err := newSynctechSMSDriveClient(ctx, src)
 	if err != nil {
-		return err
+		return synctechsms.ImportSummary{}, err
 	}
 	return runSynctechSMSDriveSourceWithClient(ctx, st, src, opts, client)
 }
 
-func runSynctechSMSDriveSourceWithClient(ctx context.Context, st *store.Store, src config.SynctechSMSSource, opts synctechsms.ImportOptions, client synctechsms.DriveClient) (retErr error) {
+func runSynctechSMSDriveSourceWithClient(ctx context.Context, st *store.Store, src config.SynctechSMSSource, opts synctechsms.ImportOptions, client synctechsms.DriveClient) (summary synctechsms.ImportSummary, retErr error) {
 	if err := validateSynctechSMSDriveSource(src); err != nil {
-		return err
+		return summary, err
 	}
 	source, err := ensureConfiguredSynctechSMSSource(st, src, opts)
 	if err != nil {
-		return err
+		return summary, err
 	}
 	syncID, err := st.StartSync(source.ID, synctechsms.AdapterName)
 	if err != nil {
-		return fmt.Errorf("start sync: %w", err)
+		return summary, fmt.Errorf("start sync: %w", err)
 	}
 	completed := false
 	defer func() {
@@ -204,38 +225,38 @@ func runSynctechSMSDriveSourceWithClient(ctx context.Context, st *store.Store, s
 	}()
 	files, err := client.ListBackupFiles(ctx, src.FolderID)
 	if err != nil {
-		return fmt.Errorf("list Drive backup files: %w", err)
+		return summary, fmt.Errorf("list Drive backup files: %w", err)
 	}
 	imported, err := st.ListImportedSourceItemChecksums(source.ID, "drive")
 	if err != nil {
-		return fmt.Errorf("list imported Drive checksums: %w", err)
+		return summary, fmt.Errorf("list imported Drive checksums: %w", err)
 	}
 	stableAfter, err := time.ParseDuration(src.StableAfter)
 	if err != nil {
-		return fmt.Errorf("parse stable_after: %w", err)
+		return summary, fmt.Errorf("parse stable_after: %w", err)
 	}
 	selected := synctechsms.SelectStableDriveFiles(files, time.Now(), stableAfter, imported)
 	stagingDir := filepath.Join(cfg.Data.DataDir, "imports", "synctech-sms", src.Name)
 	if err := os.MkdirAll(stagingDir, 0o700); err != nil {
-		return fmt.Errorf("create staging directory: %w", err)
+		return summary, fmt.Errorf("create staging directory: %w", err)
 	}
 	imp := synctechsms.NewImporter(st, opts)
-	var summary synctechsms.ImportSummary
 	for _, file := range selected {
 		fileSummary, err := importOneDriveBackup(ctx, st, imp, client, source.ID, file, stagingDir)
-		if err != nil {
-			return err
-		}
 		summary.FilesSeen += fileSummary.FilesSeen
 		summary.FilesImported += fileSummary.FilesImported
 		summary.SMSImported += fileSummary.SMSImported
 		summary.MMSImported += fileSummary.MMSImported
 		summary.CallsImported += fileSummary.CallsImported
 		summary.AttachmentsImported += fileSummary.AttachmentsImported
+		summary.MessageIDs = append(summary.MessageIDs, fileSummary.MessageIDs...)
+		if err != nil {
+			return summary, err
+		}
 	}
 	if summary.FilesImported > 0 {
 		if err := st.RecomputeConversationStats(source.ID); err != nil {
-			return fmt.Errorf("recompute conversation stats: %w", err)
+			return summary, fmt.Errorf("recompute conversation stats: %w", err)
 		}
 	}
 	totalRecords := int64(summary.SMSImported + summary.MMSImported + summary.CallsImported)
@@ -243,16 +264,16 @@ func runSynctechSMSDriveSourceWithClient(ctx context.Context, st *store.Store, s
 		MessagesProcessed: totalRecords,
 		MessagesAdded:     totalRecords,
 	}); err != nil {
-		return fmt.Errorf("update sync checkpoint: %w", err)
+		return summary, fmt.Errorf("update sync checkpoint: %w", err)
 	}
 	if err := st.TouchSourceLastSyncAt(source.ID); err != nil {
-		return fmt.Errorf("touch source last sync: %w", err)
+		return summary, fmt.Errorf("touch source last sync: %w", err)
 	}
 	if err := st.CompleteSync(syncID, ""); err != nil {
-		return fmt.Errorf("complete sync: %w", err)
+		return summary, fmt.Errorf("complete sync: %w", err)
 	}
 	completed = true
-	return nil
+	return summary, nil
 }
 
 func importOneDriveBackup(ctx context.Context, st *store.Store, imp *synctechsms.Importer, client synctechsms.DriveClient, sourceID int64, file synctechsms.DriveFile, stagingDir string) (synctechsms.ImportSummary, error) {

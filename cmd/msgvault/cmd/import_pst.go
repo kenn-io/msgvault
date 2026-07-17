@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"syscall"
@@ -40,6 +41,10 @@ Examples:
 `,
 	Args: cobra.ExactArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
+		if !isDaemonCLISubprocess() {
+			return runDaemonCLICommandHTTPFromCobra(cmd, args)
+		}
+
 		identifier := args[0]
 		pstPath := args[1]
 
@@ -91,16 +96,11 @@ Examples:
 			}
 		}()
 
-		dbPath := cfg.DatabaseDSN()
-		st, err := store.Open(dbPath)
+		st, cleanup, err := openWritableStoreAndInitForIngest()
 		if err != nil {
-			return fmt.Errorf("open database: %w", err)
+			return err
 		}
-		defer func() { _ = st.Close() }()
-
-		if err := st.InitSchema(); err != nil {
-			return fmt.Errorf("init schema: %w", err)
-		}
+		defer cleanup()
 
 		attachmentsDir := cfg.AttachmentsDir()
 		if importPstNoAttachments {
@@ -117,6 +117,9 @@ Examples:
 			Logger:             logger,
 		})
 		if err != nil {
+			return err
+		}
+		if err := runPstPostImportMigrations(cmd.OutOrStdout(), st, summary, importPstSourceType, identifier); err != nil {
 			return err
 		}
 
@@ -160,4 +163,27 @@ func init() {
 	importPstCmd.Flags().BoolVar(&importPstNoResume, "no-resume", false, "Do not resume from an interrupted import")
 	importPstCmd.Flags().IntVar(&importPstCheckpointInterval, "checkpoint-interval", 200, "Save progress every N messages")
 	importPstCmd.Flags().BoolVar(&importPstNoAttachments, "no-attachments", false, "Do not store attachments to disk (messages are still imported)")
+}
+
+func runPstPostImportMigrations(
+	out io.Writer,
+	st *store.Store,
+	summary *importer.PstImportSummary,
+	sourceType string,
+	identifier string,
+) error {
+	if summary == nil || summary.SourceID == 0 {
+		return nil
+	}
+	// Auto-default-identity must run BEFORE the legacy migration retry
+	// whenever the migration will run, including interrupted or hard-error
+	// imports, so migrated legacy [identity] rows cannot suppress the
+	// source's own account identifier on a later resume.
+	if store.SourceTypeUsesEmailIdentity(sourceType) {
+		confirmDefaultIdentity(out, st, summary.SourceID, identifier, identifier, "account-identifier")
+	}
+	if err := runPostSourceCreateMigrations(st); err != nil {
+		return fmt.Errorf("post-source-create migrations: %w", err)
+	}
+	return nil
 }

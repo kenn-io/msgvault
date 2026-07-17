@@ -2,14 +2,17 @@ package query
 
 import (
 	"bytes"
+	"cmp"
 	"compress/zlib"
 	"context"
 	"database/sql"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 
 	"go.kenn.io/msgvault/internal/mime"
+	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -19,15 +22,34 @@ const (
 	datasetMessages      = "messages"
 	datasetParticipants  = "participants"
 	datasetConversations = "conversations"
+	messageTypeEmail     = "email"
 )
 
 // emailOnlyFilterMsg is the SQL condition restricting to email messages with "msg." alias (DuckDB).
 // NULL and empty string handle old data where message_type was not yet populated.
-const emailOnlyFilterMsg = "(msg.message_type = 'email' OR msg.message_type IS NULL OR msg.message_type = '')"
+const emailOnlyFilterMsg = "(msg.message_type = '" + messageTypeEmail + "' OR msg.message_type IS NULL OR msg.message_type = '')"
 
 // emailOnlyFilterM is the SQL condition restricting to email messages with "m." alias (SQLite).
 // NULL and empty string handle old data where message_type was not yet populated.
-const emailOnlyFilterM = "(m.message_type = 'email' OR m.message_type IS NULL OR m.message_type = '')"
+const emailOnlyFilterM = "(m.message_type = '" + messageTypeEmail + "' OR m.message_type IS NULL OR m.message_type = '')"
+
+// hasExplicitMessageTypeSearch reports whether a parsed search query selects
+// one or more message types. Default analytics use this to apply the positive
+// email-only predicate without overriding an explicit message-type scope.
+func hasExplicitMessageTypeSearch(searchQuery string) bool {
+	if searchQuery == "" {
+		return false
+	}
+	return len(search.Parse(searchQuery).MessageTypes) > 0
+}
+
+// shouldDefaultStatsToEmail reports whether a generic stats query should use
+// the positive email-only default. Search result stats opt into the same broad
+// message-type scope as search, while an explicit message_type remains
+// authoritative in either mode.
+func shouldDefaultStatsToEmail(opts StatsOptions) bool {
+	return !opts.SearchScope && !hasExplicitMessageTypeSearch(opts.SearchQuery)
+}
 
 // participantNameExpr returns the SQL expression for a participant's display
 // label, falling back through display_name → phone_number → email_address.
@@ -58,6 +80,24 @@ func recipientNameExpr(mrAlias, pAlias string) string {
 		mrAlias, pAlias, pAlias, pAlias,
 	)
 }
+
+// sqliteSenderNameExpr hydrates a message summary's FromName with the same
+// per-message display-name preference sender-name aggregation uses: the
+// message's own "from" recipient display_name (mr_from) wins over the
+// participant's sticky name, so drilling into a per-message sender-name bucket
+// shows the same name the bucket was keyed by. Pairs with sqliteSenderJoin.
+var sqliteSenderNameExpr = recipientNameExpr("mr_from", "p_sender")
+
+// sqliteSenderJoin binds a message's first "from" recipient row (mr_from) and
+// the resolved sender participant (p_sender), falling back to the direct
+// m.sender_id participant only when the message has no "from" recipient row.
+// The leading newline/indentation matches the surrounding query literals.
+const sqliteSenderJoin = `LEFT JOIN message_recipients mr_from ON mr_from.id = (
+			SELECT mr.id FROM message_recipients mr
+			WHERE mr.message_id = m.id AND mr.recipient_type = 'from'
+			ORDER BY mr.id LIMIT 1
+		)
+		LEFT JOIN participants p_sender ON p_sender.id = COALESCE(mr_from.participant_id, m.sender_id)`
 
 // rebindFunc converts a query written with ? placeholders into the
 // driver-native form. Helpers in this file accept it explicitly so the
@@ -240,7 +280,7 @@ func fetchParticipantsShared(ctx context.Context, db *sql.DB, rebind rebindFunc,
 // rebind rewrites the ? placeholders for the driver in use.
 func fetchAttachmentsShared(ctx context.Context, db *sql.DB, rebind rebindFunc, tablePrefix string, msg *MessageDetail) error {
 	rows, err := db.QueryContext(ctx, rebind(fmt.Sprintf(`
-		SELECT id, COALESCE(filename, ''), COALESCE(mime_type, ''), COALESCE(size, 0), COALESCE(content_hash, '')
+		SELECT id, COALESCE(filename, ''), COALESCE(mime_type, ''), COALESCE(size, 0), COALESCE(content_hash, ''), COALESCE(storage_path, '')
 		FROM %sattachments
 		WHERE message_id = ?
 	`, tablePrefix)), msg.ID)
@@ -251,13 +291,22 @@ func fetchAttachmentsShared(ctx context.Context, db *sql.DB, rebind rebindFunc, 
 
 	for rows.Next() {
 		var att AttachmentInfo
-		if err := rows.Scan(&att.ID, &att.Filename, &att.MimeType, &att.Size, &att.ContentHash); err != nil {
+		var storagePath string
+		if err := rows.Scan(&att.ID, &att.Filename, &att.MimeType, &att.Size, &att.ContentHash, &storagePath); err != nil {
 			return err
+		}
+		if isURLStoragePath(storagePath) {
+			att.URL = storagePath
+			att.ContentHash = ""
 		}
 		msg.Attachments = append(msg.Attachments, att)
 	}
 
 	return rows.Err()
+}
+
+func isURLStoragePath(path string) bool {
+	return strings.HasPrefix(path, "http://") || strings.HasPrefix(path, "https://")
 }
 
 // extractBodyFromRawShared extracts text body from compressed MIME data.
@@ -343,6 +392,7 @@ func getMessageByQueryShared(ctx context.Context, db *sql.DB, rebind rebindFunc,
 	query := fmt.Sprintf(`
 		SELECT
 			m.id,
+			m.source_id,
 			m.source_message_id,
 			m.conversation_id,
 			COALESCE(conv.source_conversation_id, ''),
@@ -363,6 +413,7 @@ func getMessageByQueryShared(ctx context.Context, db *sql.DB, rebind rebindFunc,
 	var sentAt, receivedAt, deletedAt sql.NullTime
 	err := db.QueryRowContext(ctx, rebind(query), args...).Scan(
 		&msg.ID,
+		&msg.SourceID,
 		&msg.SourceMessageID,
 		&msg.ConversationID,
 		&msg.SourceConversationID,
@@ -450,4 +501,87 @@ func collectGmailIDs(rows *sql.Rows) ([]string, error) {
 		return nil, fmt.Errorf("iterate gmail ids: %w", err)
 	}
 	return ids, nil
+}
+
+// gmailIDRow carries the ORDER BY keys (sent_at, message id) alongside a
+// source_message_id so chunked message-ID resolution can be merged back
+// into the single-query newest-first order.
+type gmailIDRow struct {
+	gmailID string
+	sentAt  sql.NullTime
+	id      int64
+}
+
+// collectGmailIDRows scans (source_message_id, sent_at, id) rows.
+func collectGmailIDRows(rows *sql.Rows) ([]gmailIDRow, error) {
+	defer func() { _ = rows.Close() }()
+	var out []gmailIDRow
+	for rows.Next() {
+		var r gmailIDRow
+		if err := rows.Scan(&r.gmailID, &r.sentAt, &r.id); err != nil {
+			return nil, fmt.Errorf("scan gmail id row: %w", err)
+		}
+		out = append(out, r)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate gmail id rows: %w", err)
+	}
+	return out, nil
+}
+
+// gmailIDsByMessageIDsChunked resolves message IDs to Gmail IDs in
+// inListChunkSize batches so arbitrarily large explicit selections stay
+// under the backend's bind-parameter limit. Input IDs are deduplicated
+// (each message row surfaces from exactly one chunk) and the merged
+// result is re-sorted to the single-query contract: sent_at DESC,
+// id DESC, with NULL sent_at last.
+func gmailIDsByMessageIDsChunked(
+	ctx context.Context,
+	ids []int64,
+	queryChunk func(ctx context.Context, chunk []int64) ([]gmailIDRow, error),
+) ([]string, error) {
+	seen := make(map[int64]struct{}, len(ids))
+	unique := make([]int64, 0, len(ids))
+	for _, id := range ids {
+		if _, dup := seen[id]; dup {
+			continue
+		}
+		seen[id] = struct{}{}
+		unique = append(unique, id)
+	}
+
+	var merged []gmailIDRow
+	for start := 0; start < len(unique); start += inListChunkSize {
+		end := min(start+inListChunkSize, len(unique))
+		rows, err := queryChunk(ctx, unique[start:end])
+		if err != nil {
+			return nil, err
+		}
+		merged = append(merged, rows...)
+	}
+
+	slices.SortFunc(merged, compareGmailIDRowsNewestFirst)
+	out := make([]string, len(merged))
+	for i, r := range merged {
+		out[i] = r.gmailID
+	}
+	return out, nil
+}
+
+// compareGmailIDRowsNewestFirst orders by sent_at DESC then id DESC,
+// with NULL sent_at sorting last (matching SQLite DESC semantics).
+func compareGmailIDRowsNewestFirst(a, b gmailIDRow) int {
+	switch {
+	case a.sentAt.Valid && !b.sentAt.Valid:
+		return -1
+	case !a.sentAt.Valid && b.sentAt.Valid:
+		return 1
+	case a.sentAt.Valid && b.sentAt.Valid && !a.sentAt.Time.Equal(b.sentAt.Time):
+		if a.sentAt.Time.After(b.sentAt.Time) {
+			return -1
+		}
+		return 1
+	default:
+		return cmp.Compare(b.id, a.id)
+	}
 }

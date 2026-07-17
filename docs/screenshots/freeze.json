@@ -1,0 +1,16 @@
+{
+  "window": false,
+  "padding": [5, 5, 5, 5],
+  "margin": [0, 0, 0, 0],
+  "background": "#1a1b26",
+  "font": {
+    "family": "Liberation Mono",
+    "size": 14
+  },
+  "line_height": 1.2,
+  "shadow": {
+    "blur": 0,
+    "x": 0,
+    "y": 0
+  }
+}

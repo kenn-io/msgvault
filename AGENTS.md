@@ -6,6 +6,21 @@ This file applies to all AI coding agents (Claude Code, Codex, Copilot CLI, etc.
 
 - Project guide: `CLAUDE.md` (this file is authoritative; AGENTS.md inherits its rules).
 
+## Roborev
+
+- Never invoke the `roborev review` CLI command in any form unless the user
+  explicitly asks for it. Use all other `roborev` CLI commands normally when
+  they are appropriate for interacting with roborev. Never invoke a roborev
+  skill (including `roborev-fix` or `roborev-design-review-branch`) unless the
+  user explicitly asks for that skill.
+
+## Content Hygiene
+
+- Never name private downstream projects or other private codebases in public
+  code, tests, fixtures, documentation, commit messages, pull requests, or
+  issues. Describe the reusable requirement generically and run the private-data
+  scrub before publishing.
+
 ## Testing — Use testify
 
 All Go tests use `github.com/stretchr/testify`. New tests and modifications to existing tests MUST use `assert.X` or `require.X` from testify — never `t.Errorf`, `t.Fatalf`, `t.Fatal`, or `t.Error`.
@@ -15,6 +30,18 @@ All Go tests use `github.com/stretchr/testify`. New tests and modifications to e
 - Equality takes `(want, got)`, not `(got, want)`. Always: `assert.Equal(t, want, got)`.
 
 The mapping cheatsheet is in `CLAUDE.md` under the Testing section.
+
+## Testing — No Fake TDD
+
+Do not add tautological tests that copy shell scripts into synthetic temp trees,
+stub the primary commands, and only assert that the stub saw expected arguments.
+Exercise the production path, a real validator/parser, or a built artifact
+instead. See `CLAUDE.md` for the full rule and narrow exception.
+
+Do not add bash tests that grep shell scripts, workflows, config files, or docs
+for expected implementation text. Those checks are usually tautological; prefer
+real execution, parser/tool-native validation, or a documented manual release
+check.
 
 ## Custom Helpers
 

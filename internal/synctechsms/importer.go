@@ -8,13 +8,13 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"os"
-	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
 	"time"
 
+	"go.kenn.io/msgvault/internal/export"
+	"go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/textimport"
 )
@@ -98,39 +98,47 @@ func (i *Importer) importRecord(sourceID int64, record Record, summary *ImportSu
 	switch record.Kind {
 	case RecordSMS:
 		if i.opts.IncludeSMS && record.SMS != nil {
-			if err := i.importSMS(sourceID, *record.SMS); err != nil {
+			msgID, err := i.importSMS(sourceID, *record.SMS)
+			if err != nil {
 				return err
 			}
+			summary.MessageIDs = append(summary.MessageIDs, msgID)
 			summary.SMSImported++
 		}
 	case RecordMMS:
 		if i.opts.IncludeMMS && record.MMS != nil {
-			attachments, err := i.importMMS(sourceID, *record.MMS)
+			msgID, attachments, err := i.importMMS(sourceID, *record.MMS)
 			if err != nil {
+				if msgID != 0 {
+					summary.MessageIDs = append(summary.MessageIDs, msgID)
+				}
 				return err
 			}
+			summary.MessageIDs = append(summary.MessageIDs, msgID)
 			summary.MMSImported++
 			summary.AttachmentsImported += attachments
 		}
 	case RecordCall:
 		if i.opts.IncludeCalls && record.Call != nil {
-			if err := i.importCall(sourceID, *record.Call); err != nil {
+			msgID, err := i.importCall(sourceID, *record.Call)
+			if err != nil {
 				return err
 			}
+			summary.MessageIDs = append(summary.MessageIDs, msgID)
 			summary.CallsImported++
 		}
 	}
 	return nil
 }
 
-func (i *Importer) importSMS(sourceID int64, sms SMS) error {
+func (i *Importer) importSMS(sourceID int64, sms SMS) (int64, error) {
 	remoteID, err := i.participantID(sms.Address, sms.ContactName.String)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	ownerID, err := i.participantID(i.opts.OwnerPhone, "Me")
 	if err != nil {
-		return err
+		return 0, err
 	}
 	// Drafts are owner-authored messages that never made it out, but
 	// they still belong on the owner's side of the conversation. Without
@@ -144,36 +152,36 @@ func (i *Importer) importSMS(sourceID int64, sms SMS) error {
 	}
 	convID, err := i.ensureConversation(sourceID, textConversationKey([]int64{ownerID, remoteID}), sms.ContactName.String)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	if err := i.store.EnsureConversationParticipant(convID, remoteID, "member"); err != nil {
-		return err
+		return 0, err
 	}
 	if err := i.store.EnsureConversationParticipant(convID, ownerID, "member"); err != nil {
-		return err
+		return 0, err
 	}
 	msgID := stableID("sms", sms.Address, sms.Timestamp.String(), fmt.Sprint(sms.Type), sms.Body)
 	return i.upsertTextMessage(sourceID, convID, msgID, "sms", senderID, recipientIDs, fromMe, sms.Timestamp, sms.Body, sms.Body, 0, sms)
 }
 
-func (i *Importer) importMMS(sourceID int64, mms MMS) (int, error) {
+func (i *Importer) importMMS(sourceID int64, mms MMS) (int64, int, error) {
 	ownerID, err := i.participantID(i.opts.OwnerPhone, "Me")
 	if err != nil {
-		return 0, err
+		return 0, 0, err
 	}
 	participantIDs, senderID, recipientIDs, err := i.mmsParticipants(mms, ownerID)
 	if err != nil {
-		return 0, err
+		return 0, 0, err
 	}
 	// Drafts belong to the owner — see the matching note in importSMS.
 	fromMe := mms.MessageBox == MMSBoxSent || mms.MessageBox == MMSBoxOutbox || mms.MessageBox == MMSBoxDraft
 	convID, err := i.ensureConversation(sourceID, textConversationKey(participantIDs), mms.ContactName.String)
 	if err != nil {
-		return 0, err
+		return 0, 0, err
 	}
 	for _, participantID := range participantIDs {
 		if err := i.store.EnsureConversationParticipant(convID, participantID, "member"); err != nil {
-			return 0, err
+			return 0, 0, err
 		}
 	}
 	body := mmsText(mms)
@@ -183,21 +191,26 @@ func (i *Importer) importMMS(sourceID int64, mms MMS) (int, error) {
 	}
 	msgID := stableID("mms", srcIDPart, mms.Timestamp.String(), sortedKey(participantIDs))
 	attachmentCount := countImportableAttachments(mms, i.opts.IncludeAttachments)
-	if err := i.upsertTextMessage(sourceID, convID, msgID, "mms", senderID, recipientIDs, fromMe, mms.Timestamp, body, mms.Subject.String, attachmentCount, mms); err != nil {
-		return 0, err
+	messageID, err := i.upsertTextMessage(sourceID, convID, msgID, "mms", senderID, recipientIDs, fromMe, mms.Timestamp, body, mms.Subject.String, attachmentCount, mms)
+	if err != nil {
+		return 0, 0, err
 	}
-	return i.importMMSAttachments(sourceID, msgID, mms)
+	imported, err := i.importMMSAttachments(sourceID, msgID, mms)
+	if err != nil {
+		return messageID, imported, err
+	}
+	return messageID, imported, nil
 }
 
-func (i *Importer) importCall(sourceID int64, call Call) error {
+func (i *Importer) importCall(sourceID int64, call Call) (int64, error) {
 	remoteAddress := callParticipantAddress(call)
 	remoteID, err := i.participantID(remoteAddress, call.ContactName.String)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	ownerID, err := i.participantID(i.opts.OwnerPhone, "Me")
 	if err != nil {
-		return err
+		return 0, err
 	}
 	fromMe := call.Type == CallOutgoing
 	senderID := remoteID
@@ -208,20 +221,20 @@ func (i *Importer) importCall(sourceID int64, call Call) error {
 	}
 	convID, err := i.ensureConversation(sourceID, "calls:"+canonicalAddress(remoteAddress), call.ContactName.String)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	if err := i.store.EnsureConversationParticipant(convID, remoteID, "member"); err != nil {
-		return err
+		return 0, err
 	}
 	if err := i.store.EnsureConversationParticipant(convID, ownerID, "member"); err != nil {
-		return err
+		return 0, err
 	}
 	body := fmt.Sprintf("Call %s, %d seconds", callTypeLabel(call.Type), call.DurationSeconds)
 	msgID := stableID("call", remoteAddress, call.Timestamp.String(), fmt.Sprint(call.Type), strconv.Itoa(call.DurationSeconds))
 	return i.upsertTextMessage(sourceID, convID, msgID, "synctech_sms_call", senderID, recipientIDs, fromMe, call.Timestamp, body, body, 0, call)
 }
 
-func (i *Importer) upsertTextMessage(sourceID, convID int64, sourceMessageID, messageType string, senderID int64, recipientIDs []int64, fromMe bool, sentAt time.Time, body, subject string, attachmentCount int, raw any) error {
+func (i *Importer) upsertTextMessage(sourceID, convID int64, sourceMessageID, messageType string, senderID int64, recipientIDs []int64, fromMe bool, sentAt time.Time, body, subject string, attachmentCount int, raw any) (int64, error) {
 	msgID, err := i.store.UpsertMessage(&store.Message{
 		ConversationID:  convID,
 		SourceID:        sourceID,
@@ -237,33 +250,33 @@ func (i *Importer) upsertTextMessage(sourceID, convID int64, sourceMessageID, me
 		AttachmentCount: attachmentCount,
 	})
 	if err != nil {
-		return fmt.Errorf("upsert message: %w", err)
+		return 0, fmt.Errorf("upsert message: %w", err)
 	}
 	if body != "" {
 		if err := i.store.UpsertMessageBody(msgID, sql.NullString{String: body, Valid: true}, sql.NullString{}); err != nil {
-			return fmt.Errorf("upsert body: %w", err)
+			return 0, fmt.Errorf("upsert body: %w", err)
 		}
 	}
 	rawJSON, err := json.Marshal(raw)
 	if err != nil {
-		return fmt.Errorf("marshal raw record: %w", err)
+		return 0, fmt.Errorf("marshal raw record: %w", err)
 	}
 	if err := i.store.UpsertMessageRawWithFormat(msgID, rawJSON, RawFormat); err != nil {
-		return fmt.Errorf("upsert raw record: %w", err)
+		return 0, fmt.Errorf("upsert raw record: %w", err)
 	}
 	if err := i.store.ReplaceMessageRecipients(msgID, "from", []int64{senderID}, []string{""}); err != nil {
-		return fmt.Errorf("replace from recipient: %w", err)
+		return 0, fmt.Errorf("replace from recipient: %w", err)
 	}
 	if err := i.store.ReplaceMessageRecipients(msgID, "to", recipientIDs, blankNames(len(recipientIDs))); err != nil {
-		return fmt.Errorf("replace to recipient: %w", err)
+		return 0, fmt.Errorf("replace to recipient: %w", err)
 	}
 	if err := i.store.UpsertFTS(msgID, subject, body, "", "", ""); err != nil {
-		// FTS is an index, not data: a failure to populate it must never abort
-		// the import. Warn and continue, matching the other UpsertFTS callers
-		// (sync.go, importer/ingest.go, fbmessenger, whatsapp). [C2]
-		slog.Warn("failed to upsert FTS", "message", msgID, "error", err)
+		slog.Warn("failed to update Synctech message FTS index",
+			"message_id", msgID,
+			"message_type", messageType,
+			"error", err)
 	}
-	return nil
+	return msgID, nil
 }
 
 func (i *Importer) participantID(address, displayName string) (int64, error) {
@@ -437,21 +450,20 @@ func (i *Importer) importMMSAttachments(sourceID int64, sourceMessageID string, 
 		if int64(len(part.Data)) > maxBytes {
 			return count, fmt.Errorf("MMS attachment %d exceeds maximum size", idx)
 		}
-		sum := sha256.Sum256(part.Data)
-		hash := hex.EncodeToString(sum[:])
 		filename := part.Filename.String
 		if filename == "" {
 			filename = fmt.Sprintf("mms-part-%d", idx)
 		}
-		storagePath := filepath.Join("synctech-sms", hash[:2], hash)
-		fullPath := filepath.Join(i.opts.AttachmentsDir, storagePath)
-		if err := os.MkdirAll(filepath.Dir(fullPath), 0o700); err != nil {
-			return count, fmt.Errorf("create attachment directory: %w", err)
+		att := &mime.Attachment{
+			Filename:    filename,
+			ContentType: part.ContentType,
+			Content:     part.Data,
 		}
-		if err := os.WriteFile(fullPath, part.Data, 0o600); err != nil {
-			return count, fmt.Errorf("write attachment: %w", err)
+		storagePath, err := export.StoreAttachmentFile(i.opts.AttachmentsDir, att)
+		if err != nil {
+			return count, fmt.Errorf("store MMS attachment: %w", err)
 		}
-		if err := i.store.UpsertAttachment(messageID, filename, part.ContentType, storagePath, hash, len(part.Data)); err != nil {
+		if err := i.store.UpsertAttachment(messageID, filename, part.ContentType, storagePath, att.ContentHash, len(part.Data)); err != nil {
 			return count, fmt.Errorf("upsert attachment: %w", err)
 		}
 		count++

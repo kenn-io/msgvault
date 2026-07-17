@@ -3,8 +3,8 @@ package store_test
 import (
 	"testing"
 
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
@@ -12,8 +12,8 @@ import (
 // rows associated with the given batch ID and that ON DELETE CASCADE removes
 // child rows (message_labels).
 func TestDeleteDedupedBatch_DeletesHiddenRows(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	f := storetest.New(t)
 	idKeep := newRFC822Message(t, f, "keep", "rfc822-delete-a")
 	idDrop := newRFC822Message(t, f, "drop", "rfc822-delete-a")
@@ -60,15 +60,15 @@ func TestDeleteDedupedBatch_UnknownBatch(t *testing.T) {
 	_ = newRFC822Message(t, f, "msg-a", "rfc822-only")
 
 	deleted, err := f.Store.DeleteDedupedBatch("no-such-batch")
-	requirepkg.NoError(t, err, "DeleteDedupedBatch unknown batch")
-	assertpkg.Equal(t, int64(0), deleted, "DeleteDedupedBatch deleted")
+	require.NoError(t, err, "DeleteDedupedBatch unknown batch")
+	assert.Equal(t, int64(0), deleted, "DeleteDedupedBatch deleted")
 }
 
 // TestDeleteAllDeduped_MultiplesBatches verifies that DeleteAllDeduped removes
 // rows from all batches and reports the correct counts.
 func TestDeleteAllDeduped_MultipleBatches(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	f := storetest.New(t)
 
 	// batch-alpha hides one message
@@ -102,8 +102,8 @@ func TestDeleteAllDeduped_MultipleBatches(t *testing.T) {
 // deleted_at for any other reason (trash view, per-message hide) must not
 // have its rows silently destroyed by the dedup hard-delete rung.
 func TestDeleteAllDeduped_PreservesBatchlessSoftDelete(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	f := storetest.New(t)
 
 	// One real dedup batch — should be purged.
@@ -142,15 +142,15 @@ func TestDeleteAllDeduped_Empty(t *testing.T) {
 	_ = newRFC822Message(t, f, "visible", "rfc822-vis")
 
 	deleted, batches, err := f.Store.DeleteAllDeduped()
-	requirepkg.NoError(t, err, "DeleteAllDeduped empty")
-	assertpkg.Equal(t, int64(0), deleted, "deleted")
-	assertpkg.Equal(t, int64(0), batches, "distinctBatches")
+	require.NoError(t, err, "DeleteAllDeduped empty")
+	assert.Equal(t, int64(0), deleted, "deleted")
+	assert.Equal(t, int64(0), batches, "distinctBatches")
 }
 
 // TestDeleteDedupedBatch_ThenUndoNoOps verifies that calling UndoDedup after DeleteDedupedBatch
 // returns 0 (the rows no longer exist) without error.
 func TestDeleteDedupedBatch_ThenUndoNoOps(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	f := storetest.New(t)
 	idKeep := newRFC822Message(t, f, "keep", "rfc822-undo-noop")
 	idDrop := newRFC822Message(t, f, "drop", "rfc822-undo-noop")
@@ -163,5 +163,5 @@ func TestDeleteDedupedBatch_ThenUndoNoOps(t *testing.T) {
 
 	restored, err := f.Store.UndoDedup("batch-noop")
 	require.NoError(err, "UndoDedup after delete")
-	assertpkg.Equal(t, int64(0), restored, "UndoDedup after delete restored")
+	assert.Equal(t, int64(0), restored, "UndoDedup after delete restored")
 }

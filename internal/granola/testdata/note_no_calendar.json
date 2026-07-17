@@ -1,0 +1,31 @@
+{
+  "id": "not_Zz98Yy87Xx76Wv",
+  "object": "note",
+  "title": null,
+  "owner": {
+    "name": "Alice Smith",
+    "email": "alice@example.com"
+  },
+  "created_at": "2026-06-02T09:15:00Z",
+  "updated_at": "2026-06-02T09:50:00Z",
+  "web_url": "https://notes.example.com/d/a1b2c3d4-0000-1111-2222-333344445555",
+  "calendar_event": null,
+  "attendees": [],
+  "folder_membership": [],
+  "summary_text": "Ad-hoc huddle about the release checklist.",
+  "summary_markdown": null,
+  "transcript": [
+    {
+      "speaker": {"source": "microphone"},
+      "text": "Quick sync on the release checklist.",
+      "start_time": "2026-06-02T09:15:12Z",
+      "end_time": "2026-06-02T09:15:16Z"
+    },
+    {
+      "speaker": {"source": "speaker"},
+      "text": "The signing step still needs the new certificate.",
+      "start_time": "2026-06-02T09:16:30Z",
+      "end_time": "2026-06-02T09:16:37Z"
+    }
+  ]
+}

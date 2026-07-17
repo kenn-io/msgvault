@@ -113,7 +113,7 @@ CREATE TABLE IF NOT EXISTS messages (
     rfc822_message_id TEXT,
 
     -- Message classification
-    message_type TEXT NOT NULL,  -- 'email', 'imessage', 'sms', 'mms', 'rcs', 'whatsapp', 'fbmessenger'
+    message_type TEXT NOT NULL,  -- 'email', 'imessage', 'sms', 'mms', 'rcs', 'whatsapp', 'fbmessenger', 'teams'
 
     -- Timestamps (sent_at is canonical, others platform-specific)
     sent_at DATETIME,
@@ -155,8 +155,25 @@ CREATE TABLE IF NOT EXISTS messages (
     archived_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     indexing_version INTEGER DEFAULT 1,
 
+    -- Row-level last-modified watermark, maintained ENTIRELY by the
+    -- database (triggers below), never by application write paths. Used by
+    -- the embed worker as an optimistic-CAS token: it captures this value
+    -- when it reads a message's content and stamps embed_gen only if the
+    -- value is unchanged at stamp time, so a concurrent content edit
+    -- (e.g. repair-encoding) that lands between read and stamp leaves the
+    -- row unstamped and it is re-embedded with the corrected content.
+    last_modified DATETIME DEFAULT CURRENT_TIMESTAMP,
+
     -- Platform-specific metadata
     metadata JSON,
+
+    -- Vector-embedding watermark: the index generation this message's
+    -- embeddings were last written for. NULL means "needs embedding"
+    -- (new rows default to NULL); a value equal to the active/building
+    -- generation id means "covered". The scan-and-fill embed worker
+    -- finds work via (embed_gen IS NULL OR embed_gen <> <target>) and
+    -- stamps this column after a successful upsert (or skip).
+    embed_gen INTEGER,
 
     UNIQUE(source_id, source_message_id)
 );
@@ -269,6 +286,44 @@ CREATE TABLE IF NOT EXISTS message_bodies (
     body_html TEXT
 );
 
+-- ============================================================================
+-- LAST-MODIFIED TRIGGERS
+-- ============================================================================
+-- messages.last_modified is bumped to CURRENT_TIMESTAMP on ANY change to a
+-- message row OR any insert/update of its body row. This is a TRUE row-level
+-- last-modified (blanket, not column-specific): the embed worker uses it as an
+-- optimistic-CAS token, so it must move whenever any embeddable content could
+-- have changed. No application write path bumps it manually — the database
+-- owns it via these triggers. InitSchema re-execs schema.sql idempotently, so
+-- `IF NOT EXISTS` makes these safe on both fresh and existing databases.
+
+-- On messages: re-stamp last_modified after any UPDATE. The WHEN guard
+-- (OLD.last_modified = NEW.last_modified) prevents infinite recursion: the
+-- trigger's own UPDATE changes last_modified, so on the re-fire
+-- OLD.last_modified <> NEW.last_modified and WHEN evaluates false, regardless
+-- of the recursive_triggers pragma. It also yields to an explicit
+-- last_modified write in the original UPDATE rather than clobbering it.
+CREATE TRIGGER IF NOT EXISTS trg_messages_last_modified
+AFTER UPDATE ON messages FOR EACH ROW
+WHEN OLD.last_modified = NEW.last_modified
+BEGIN
+    UPDATE messages SET last_modified = CURRENT_TIMESTAMP WHERE id = NEW.id;
+END;
+
+-- On message_bodies: a body change must bump the parent message's
+-- last_modified so the worker's CAS token covers body edits too.
+CREATE TRIGGER IF NOT EXISTS trg_message_bodies_last_modified_upd
+AFTER UPDATE ON message_bodies FOR EACH ROW
+BEGIN
+    UPDATE messages SET last_modified = CURRENT_TIMESTAMP WHERE id = NEW.message_id;
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_message_bodies_last_modified_ins
+AFTER INSERT ON message_bodies FOR EACH ROW
+BEGIN
+    UPDATE messages SET last_modified = CURRENT_TIMESTAMP WHERE id = NEW.message_id;
+END;
+
 -- Original message data (for re-parsing/export)
 CREATE TABLE IF NOT EXISTS message_raw (
     message_id INTEGER PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
@@ -303,6 +358,21 @@ CREATE TABLE IF NOT EXISTS sync_runs (
     cursor_after TEXT
 );
 
+-- Per-item sync outcomes, for diagnosing partial sync completion.
+-- status='error' is actionable and contributes to sync_runs.errors_count.
+-- status='skipped' records expected item churn, such as Gmail messages that
+-- were deleted between a history/list response and raw-message fetch.
+CREATE TABLE IF NOT EXISTS sync_run_items (
+    id INTEGER PRIMARY KEY,
+    sync_run_id INTEGER NOT NULL REFERENCES sync_runs(id) ON DELETE CASCADE,
+    source_message_id TEXT NOT NULL,
+    phase TEXT NOT NULL,
+    status TEXT NOT NULL,
+    error_kind TEXT NOT NULL,
+    error_message TEXT NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
 -- Sync checkpoints (for resumable imports)
 CREATE TABLE IF NOT EXISTS sync_checkpoints (
     source_id INTEGER NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
@@ -312,6 +382,20 @@ CREATE TABLE IF NOT EXISTS sync_checkpoints (
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 
     PRIMARY KEY (source_id, checkpoint_type)
+);
+
+-- Per-mailbox IMAP sync state from the last fully completed sync.
+-- UIDVALIDITY/UIDNEXT let subsequent syncs skip mailboxes that have
+-- not changed instead of re-enumerating every folder.
+CREATE TABLE IF NOT EXISTS imap_folder_state (
+    source_id INTEGER NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+    mailbox TEXT NOT NULL,
+    uidvalidity INTEGER NOT NULL,
+    uidnext INTEGER NOT NULL,
+
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+
+    PRIMARY KEY (source_id, mailbox)
 );
 
 -- Imported source items (files/objects already processed for resumable adapters)
@@ -378,6 +462,10 @@ CREATE INDEX IF NOT EXISTS idx_reactions_message ON reactions(message_id);
 -- Attachments
 CREATE INDEX IF NOT EXISTS idx_attachments_message ON attachments(message_id);
 CREATE INDEX IF NOT EXISTS idx_attachments_hash ON attachments(content_hash);
+CREATE INDEX IF NOT EXISTS idx_attachments_content_hash_lower ON attachments(LOWER(content_hash));
+CREATE INDEX IF NOT EXISTS idx_attachments_thumbnail_hash ON attachments(thumbnail_hash);
+CREATE INDEX IF NOT EXISTS idx_attachments_thumbnail_hash_lower ON attachments(LOWER(thumbnail_hash));
+CREATE INDEX IF NOT EXISTS idx_attachments_thumbnail_path ON attachments(thumbnail_path);
 CREATE INDEX IF NOT EXISTS idx_attachments_storage_path ON attachments(storage_path);
 -- The partial unique index on (message_id, content_hash) for
 -- UpsertAttachment idempotency is created in Go (Store.InitSchema)
@@ -389,6 +477,8 @@ CREATE INDEX IF NOT EXISTS idx_message_labels_label ON message_labels(label_id);
 
 -- Sync
 CREATE INDEX IF NOT EXISTS idx_sync_runs_source ON sync_runs(source_id, started_at DESC);
+CREATE INDEX IF NOT EXISTS idx_sync_run_items_run_status
+    ON sync_run_items(sync_run_id, status, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_source_import_items_source_provider
     ON source_import_items(source_id, provider, status);
 
@@ -443,4 +533,31 @@ CREATE INDEX IF NOT EXISTS idx_account_identities_address
 CREATE TABLE IF NOT EXISTS applied_migrations (
     name        TEXT PRIMARY KEY,
     applied_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Packed attachment storage (docs/internal/packed-attachments-design.md).
+-- attachment_pack_index maps content-addressed blobs (attachment content and
+-- thumbnails) to sealed pack files under attachments/packs/. Rows exist only
+-- for live packed blobs; loose files have no row. pack_offset et al mirror
+-- the pack footer's entry so reads need no footer parse ("offset" is a
+-- reserved word in SQLite and PostgreSQL, hence the prefix).
+CREATE TABLE IF NOT EXISTS attachment_pack_index (
+    blob_hash   TEXT PRIMARY KEY,
+    pack_id     TEXT NOT NULL,
+    pack_offset BIGINT NOT NULL,
+    stored_len  BIGINT NOT NULL,
+    raw_len     BIGINT NOT NULL,
+    flags       INTEGER NOT NULL,
+    crc32c      BIGINT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_attachment_pack_index_pack
+    ON attachment_pack_index(pack_id);
+
+-- Immutable per-pack totals captured at seal/adoption. GC derives dead bytes
+-- as stored_bytes minus the sum of the pack's live index rows.
+CREATE TABLE IF NOT EXISTS attachment_packs (
+    pack_id      TEXT PRIMARY KEY,
+    entry_count  BIGINT NOT NULL,
+    stored_bytes BIGINT NOT NULL,
+    created_at   TEXT NOT NULL
 );

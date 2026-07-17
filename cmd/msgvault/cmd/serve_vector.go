@@ -5,9 +5,11 @@ package cmd
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"path/filepath"
 
+	"go.kenn.io/msgvault/internal/scheduler"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
 	"go.kenn.io/msgvault/internal/vector/embed"
@@ -16,40 +18,87 @@ import (
 	"go.kenn.io/msgvault/internal/vector/sqlitevec"
 )
 
-// setupVectorFeatures builds the vector backend, hybrid engine, embed
-// worker, and enqueuer used by the serve daemon and the MCP command. The
-// backend is dialect-selected from mainPath: a postgres:// DSN uses the
-// pgvector backend sharing mainDB (no separate vectors.db, no ATTACH);
+// precheckVectorFeatures validates vector configuration cheaply so runServe
+// can fail fast on misconfiguration while deferring the expensive backend
+// open/migrate/backfill to the background init task. Returns nil when
+// vector search is disabled. mainPath drives a dialect-aware build-tag
+// check that fails fast on the "binary built without backend support" case
+// the cheap precheck can catch synchronously: a postgres:// DSN needs the
+// pgvector tag, a SQLite path needs the sqlite_vec tag. Without this,
+// setupVectorFeatures would only discover the gap later inside the
+// background init goroutine.
+func precheckVectorFeatures(mainPath string) error {
+	if !cfg.Vector.Enabled {
+		return nil
+	}
+	if store.IsPostgresURL(mainPath) && !pgvector.Available() {
+		return errors.New("vector search is enabled in config but this binary was built without vector support; " +
+			"to use vector search on PostgreSQL, rebuild with `go build -tags \"fts5 sqlite_vec pgvector\"` " +
+			"or set [vector] enabled = false")
+	}
+	if !store.IsPostgresURL(mainPath) && !sqlitevec.Available() {
+		return errors.New("vector search is enabled in config but this binary was built without sqlite-vec support; " +
+			"to use vector search on SQLite, rebuild with `go build -tags \"fts5 sqlite_vec\"` or `make build`, " +
+			"or set [vector] enabled = false")
+	}
+	if err := cfg.Vector.Validate(); err != nil {
+		return fmt.Errorf("vector config: %w", err)
+	}
+	if cronExpr := cfg.Vector.Embed.Schedule.Cron; cronExpr != "" {
+		if err := scheduler.ValidateCronExpr(cronExpr); err != nil {
+			return fmt.Errorf("invalid embed cron expression %q: %w", cronExpr, err)
+		}
+	}
+	return nil
+}
+
+// setupVectorFeatures builds the vector backend, hybrid engine, and embed
+// worker used by the serve daemon and the MCP command. The backend is
+// dialect-selected from mainPath: a postgres:// DSN uses the pgvector
+// backend sharing mainStore's DB (no separate vectors.db, no ATTACH);
 // otherwise the sqlitevec backend opens/attaches vectors.db. Returns
 // (nil, nil) when cfg.Vector.Enabled is false. The returned Close function
 // must be called on shutdown.
 //
-// mainDB is the already-opened handle to the main database. On SQLite,
-// mainPath is the msgvault.db filesystem path FusedSearch uses to ATTACH
+// mainStore is the already-opened main-database store. On SQLite, mainPath
+// is the msgvault.db filesystem path FusedSearch uses to ATTACH
 // vectors.db; on PostgreSQL it is the DSN, used only for dialect detection
 // (store.IsPostgresURL).
 //
-// readOnly skips schema migration on the PostgreSQL backend
-// (pgvector.Options.SkipMigrate); set it true when mainDB is a read-only
-// connection — e.g. the MCP server — so CREATE EXTENSION / DDL are not
-// attempted (PostgreSQL rejects them with SQLSTATE 25006). Ignored on
-// SQLite.
-func setupVectorFeatures(ctx context.Context, mainDB *sql.DB, mainPath string, readOnly bool) (*vectorFeatures, error) {
+// readOnly marks mainDB as a read-only connection — e.g. the MCP server's
+// store.OpenReadOnly. On PostgreSQL it sets BOTH pgvector.Options.SkipMigrate
+// and pgvector.Options.ReadOnly: SkipMigrate suppresses the privileged
+// CREATE EXTENSION + full migrate, and ReadOnly suppresses ALL remaining
+// writes — the extension-less schema apply, the orphan reset, and the
+// embed_gen backfill — because PG vector tables share the (read-only) main
+// connection and any DDL/UPDATE would be rejected with SQLSTATE 25006. On
+// SQLite it sets sqlitevec.Options.ReadOnly so only the one-time embed_gen
+// upgrade backfill — which WRITES messages.embed_gen + applied_migrations
+// through the main handle — is skipped (the query-only handle would reject
+// those writes); Migrate still runs there because it only touches the
+// separate vectors.db, which is read-write regardless.
+func setupVectorFeatures(ctx context.Context, mainStore *store.Store, mainPath string, readOnly bool) (*vectorFeatures, error) {
 	if !cfg.Vector.Enabled {
 		return nil, nil //nolint:nilnil // vector disabled: callers nil-check vf; (nil, nil) means "no features, no error"
 	}
 	if err := cfg.Vector.Validate(); err != nil {
 		return nil, fmt.Errorf("vector config: %w", err)
 	}
+	mainDB := mainStore.DB()
 
-	// Resolve the dialect once from the main DSN. The queue, worker, and
-	// enqueuer are dialect-portable via Rebind / InsertOrIgnore, so the
-	// serve daemon and MCP run vector features on PostgreSQL the same way
-	// `msgvault embed` does. SQLite's Rebind / InsertOrIgnore are identity
-	// so the SQLite path is unchanged.
+	// Resolve the dialect once from the main DSN. The worker is
+	// dialect-portable via Rebind, so the serve daemon and MCP run vector
+	// features on PostgreSQL the same way `msgvault embed` does. SQLite's
+	// Rebind is identity so the SQLite path is unchanged.
 	var dialect store.Dialect = &store.SQLiteDialect{}
+	// lastModifiedExpr is the dialect-correct SELECT expression for the embed
+	// worker's last_modified CAS token. SQLite needs CAST(... AS TEXT) to
+	// defeat go-sqlite3's DATETIME→time.Time coercion (which would break
+	// round-trip equality); PG uses the bare column.
+	lastModifiedExpr := "CAST(m.last_modified AS TEXT)"
 	if store.IsPostgresURL(mainPath) {
 		dialect = &store.PostgreSQLDialect{}
+		lastModifiedExpr = "m.last_modified"
 	}
 
 	var (
@@ -63,7 +112,13 @@ func setupVectorFeatures(ctx context.Context, mainDB *sql.DB, mainPath string, r
 		pgb, err := pgvector.Open(ctx, pgvector.Options{
 			DB:          mainDB,
 			Dimension:   cfg.Vector.Embeddings.Dimension,
+			BuildScope:  cfg.Vector.Embed.Scope.BuildScope(),
 			SkipMigrate: readOnly,
+			// ReadOnly MUST track readOnly here: this is the MCP read-only
+			// path (store.OpenReadOnly). When set, Open performs no writes —
+			// no schema apply, no orphan reset, no upgrade backfill — so the
+			// query-only connection never attempts DDL/UPDATE (SQLSTATE 25006).
+			ReadOnly: readOnly,
 			// On a managed/locked-down PG the `vector` extension is
 			// pre-installed by an admin and CREATE EXTENSION would fail
 			// for the msgvault role; SkipExtensionCreate lets schema +
@@ -85,10 +140,16 @@ func setupVectorFeatures(ctx context.Context, mainDB *sql.DB, mainPath string, r
 			vecPath = filepath.Join(cfg.Data.DataDir, "vectors.db")
 		}
 		sb, err := sqlitevec.Open(ctx, sqlitevec.Options{
-			Path:      vecPath,
-			MainPath:  mainPath,
-			Dimension: cfg.Vector.Embeddings.Dimension,
-			MainDB:    mainDB,
+			Path:       vecPath,
+			MainPath:   mainPath,
+			Dimension:  cfg.Vector.Embeddings.Dimension,
+			MainDB:     mainDB,
+			BuildScope: cfg.Vector.Embed.Scope.BuildScope(),
+			// Honor the read-only signal on SQLite too: when mainDB is a
+			// query-only handle (MCP), skip the embed_gen upgrade backfill,
+			// which would write through it. Migrate still runs (vectors.db
+			// is read-write).
+			ReadOnly: readOnly,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("open vectors.db: %w", err)
@@ -111,6 +172,7 @@ func setupVectorFeatures(ctx context.Context, mainDB *sql.DB, mainPath string, r
 		Backend:   backend,
 		VectorsDB: vectorsDB,
 		MainDB:    mainDB,
+		Store:     mainStore,
 		Client:    client,
 		Preprocess: embed.PreprocessConfig{
 			StripQuotes:        cfg.Vector.Preprocess.StripQuotesEnabled(),
@@ -120,14 +182,14 @@ func setupVectorFeatures(ctx context.Context, mainDB *sql.DB, mainPath string, r
 			StripURLTracking:   cfg.Vector.Preprocess.StripURLTrackingEnabled(),
 			CollapseWhitespace: cfg.Vector.Preprocess.CollapseWhitespaceEnabled(),
 		},
-		MaxInputChars:   cfg.Vector.Embeddings.MaxInputChars,
-		BatchSize:       cfg.Vector.Embeddings.BatchSize,
-		EmbedTimeout:    cfg.Vector.Embeddings.Timeout,
-		EmbedMaxRetries: cfg.Vector.Embeddings.MaxRetries,
-		// Rebind makes the worker's queue + body-fetch SQL run on pgx.
+		MaxInputChars: cfg.Vector.Embeddings.MaxInputChars,
+		BatchSize:     cfg.Vector.Embeddings.BatchSize,
+		BuildScope:    cfg.Vector.Embed.Scope.BuildScope(),
+		// Rebind makes the worker's body-fetch + watermark SQL run on pgx.
 		// SQLiteDialect.Rebind is identity, so the SQLite path is unchanged.
-		Rebind: dialect.Rebind,
-		Log:    logger,
+		Rebind:           dialect.Rebind,
+		LastModifiedExpr: lastModifiedExpr,
+		Log:              logger,
 	})
 
 	engine := hybrid.NewEngine(backend, mainDB, client, hybrid.Config{
@@ -139,22 +201,18 @@ func setupVectorFeatures(ctx context.Context, mainDB *sql.DB, mainPath string, r
 		// placeholders. On PG those must become $N or pgx rejects them, so
 		// the serve/MCP hybrid engine (shared via vectorFeatures.HybridEngine)
 		// carries the dialect's Rebind. SQLite's Rebind is identity.
-		Rebind: dialect.Rebind,
+		Rebind:     dialect.Rebind,
+		BuildScope: cfg.Vector.Embed.Scope.BuildScope(),
 	})
 
-	// The enqueuer drives sync-time enqueueing into pending_embeddings.
-	// On PG it must run on pgx (rebind ? → $N) and use ON CONFLICT DO
-	// NOTHING (insertOrIgnore) instead of SQLite's INSERT OR IGNORE.
-	enqueuer := embed.NewEnqueuer(vectorsDB, dialect.Rebind, dialect.InsertOrIgnore)
+	// No sync-time enqueue: newly-persisted messages get embed_gen = NULL
+	// by column default and the scan-and-fill worker picks them up.
 
 	return &vectorFeatures{
 		Backend:      backend,
 		HybridEngine: engine,
-		Enqueuer:     enqueuer,
 		Worker:       worker,
 		Cfg:          cfg.Vector,
-		VectorsDB:    vectorsDB,
-		Rebind:       dialect.Rebind,
 		Close:        closeFn,
 	}, nil
 }

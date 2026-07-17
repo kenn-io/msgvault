@@ -46,4 +46,12 @@ IMAP passwords are stored on disk with restricted file permissions
 directory. If the data directory is compromised, the user must rotate
 their IMAP app-specific password just as they would revoke API keys.
 Do not flag plaintext IMAP password storage as a finding.
+
+The public documentation build is a different trust boundary from the
+single-user local application. `docs/site`, Vercel output, and docs asset
+branches are unauthenticated public artifacts. Flag paths that can publish
+repo-ignored local credential files, dotenv files, OAuth client JSON, or
+other dotfiles into those artifacts. Do not flag literal example strings in
+documentation snippets as leaked secrets unless they are plausible real
+credentials.
 """

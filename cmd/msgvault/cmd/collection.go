@@ -3,13 +3,12 @@ package cmd
 import (
 	"errors"
 	"fmt"
-	"os"
-	"strconv"
-	"strings"
+	"io"
 	"text/tabwriter"
 
 	"github.com/spf13/cobra"
-	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/collectionops"
+	"go.kenn.io/msgvault/internal/daemonclient"
 )
 
 var collectionCmd = &cobra.Command{
@@ -32,6 +31,7 @@ var collectionCreateCmd = &cobra.Command{
 var collectionListCmd = &cobra.Command{
 	Use:   cmdUseList,
 	Short: "List all collections",
+	Args:  cobra.NoArgs,
 	RunE:  runCollectionList,
 }
 
@@ -70,44 +70,55 @@ var (
 )
 
 func runCollectionCreate(cmd *cobra.Command, args []string) error {
-	st, err := openStoreAndInit()
+	accounts, err := collectionAccountsFromFlag(cmd, collectionCreateAccounts)
+	if err != nil {
+		return err
+	}
+
+	st, _, err := OpenHTTPStore(cmd.Context())
 	if err != nil {
 		return err
 	}
 	defer func() { _ = st.Close() }()
 
-	name := args[0]
-	sourceIDs, err := resolveAccountList(cmd, st, collectionCreateAccounts)
+	result, err := st.CreateCLICollection(cmd.Context(), daemonclient.CLICollectionCreateRequest{
+		Name:     args[0],
+		Accounts: accounts,
+	})
 	if err != nil {
 		return err
 	}
-
-	coll, err := st.CreateCollection(name, "", sourceIDs)
-	if err != nil {
-		return err
-	}
-	fmt.Printf("Created collection %q with %d source(s).\n",
-		coll.Name, len(sourceIDs))
+	renderCollectionCreateResult(cmd.OutOrStdout(), *result)
 	return nil
 }
 
-func runCollectionList(_ *cobra.Command, _ []string) error {
-	st, err := openStoreAndInit()
+func renderCollectionCreateResult(out io.Writer, result collectionops.MutationResult) {
+	_, _ = fmt.Fprintf(out, "Created collection %q with %d source(s).\n",
+		result.Name, result.SourceCount)
+}
+
+func runCollectionList(cmd *cobra.Command, _ []string) error {
+	st, _, err := OpenHTTPStore(cmd.Context())
 	if err != nil {
 		return err
 	}
 	defer func() { _ = st.Close() }()
 
-	collections, err := st.ListCollections()
+	collections, err := st.GetCLICollections(cmd.Context())
 	if err != nil {
 		return err
 	}
+	renderCollectionList(cmd.OutOrStdout(), collections)
+	return nil
+}
+
+func renderCollectionList(out io.Writer, collections []daemonclient.CLICollection) {
 	if len(collections) == 0 {
-		fmt.Println("No collections.")
-		return nil
+		_, _ = fmt.Fprintln(out, "No collections.")
+		return
 	}
 
-	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
 	_, _ = fmt.Fprintln(w, "NAME\tSOURCES\tMESSAGES")
 	for _, c := range collections {
 		_, _ = fmt.Fprintf(w, "%s\t%d\t%s\n",
@@ -115,147 +126,131 @@ func runCollectionList(_ *cobra.Command, _ []string) error {
 			formatCount(c.MessageCount))
 	}
 	_ = w.Flush()
-	return nil
 }
 
-func runCollectionShow(_ *cobra.Command, args []string) error {
-	st, err := openStoreAndInit()
+func runCollectionShow(cmd *cobra.Command, args []string) error {
+	st, _, err := OpenHTTPStore(cmd.Context())
 	if err != nil {
 		return err
 	}
 	defer func() { _ = st.Close() }()
 
-	coll, err := st.GetCollectionByName(args[0])
+	coll, err := st.GetCLICollection(cmd.Context(), args[0])
 	if err != nil {
 		return err
 	}
+	renderCollectionShow(cmd.OutOrStdout(), *coll)
+	return nil
+}
 
-	fmt.Printf("Collection: %s\n", coll.Name)
+func renderCollectionShow(out io.Writer, coll daemonclient.CLICollection) {
+	_, _ = fmt.Fprintf(out, "Collection: %s\n", coll.Name)
 	if coll.Description != "" {
-		fmt.Printf("Description: %s\n", coll.Description)
+		_, _ = fmt.Fprintf(out, "Description: %s\n", coll.Description)
 	}
-	fmt.Printf("Sources: %d\n", len(coll.SourceIDs))
-	fmt.Printf("Messages: %s\n", formatCount(coll.MessageCount))
-	fmt.Printf("Created: %s\n", coll.CreatedAt.Format("2006-01-02 15:04"))
+	_, _ = fmt.Fprintf(out, "Sources: %d\n", len(coll.SourceIDs))
+	if coll.SourceDeletedCount > 0 {
+		_, _ = fmt.Fprintf(out, "Messages: %s active (+%s deleted from source)\n",
+			formatCount(coll.MessageCount), formatCount(coll.SourceDeletedCount))
+	} else {
+		_, _ = fmt.Fprintf(out, "Messages: %s\n", formatCount(coll.MessageCount))
+	}
+	_, _ = fmt.Fprintf(out, "Created: %s\n", coll.CreatedAt.Format("2006-01-02 15:04"))
 
 	if len(coll.SourceIDs) > 0 {
-		fmt.Println("\nMember sources:")
-		for _, sid := range coll.SourceIDs {
-			src, err := st.GetSourceByID(sid)
-			if err != nil {
-				return fmt.Errorf("get source %d: %w", sid, err)
-			}
+		_, _ = fmt.Fprintln(out, "\nMember sources:")
+		for _, src := range coll.Sources {
 			label := src.Identifier
-			if src.DisplayName.Valid && src.DisplayName.String != "" {
-				label = src.DisplayName.String
+			if src.DisplayName != "" {
+				label = src.DisplayName
 			}
-			fmt.Printf("- %s (id %d)\n", label, src.ID)
+			_, _ = fmt.Fprintf(out, "- %s (id %d)\n", label, src.ID)
 		}
 	}
-	return nil
 }
 
 func runCollectionAdd(cmd *cobra.Command, args []string) error {
-	st, err := openStoreAndInit()
+	accounts, err := collectionAccountsFromFlag(cmd, collectionAddAccounts)
+	if err != nil {
+		return err
+	}
+
+	st, _, err := OpenHTTPStore(cmd.Context())
 	if err != nil {
 		return err
 	}
 	defer func() { _ = st.Close() }()
 
-	sourceIDs, err := resolveAccountList(cmd, st, collectionAddAccounts)
+	result, err := st.AddCLICollectionSources(cmd.Context(), args[0], daemonclient.CLICollectionSourcesRequest{
+		Accounts: accounts,
+	})
 	if err != nil {
 		return err
 	}
-
-	if err := st.AddSourcesToCollection(args[0], sourceIDs); err != nil {
-		return err
-	}
-	fmt.Printf("Added %d source(s) to %q.\n", len(sourceIDs), args[0])
+	renderCollectionAddResult(cmd.OutOrStdout(), *result)
 	return nil
+}
+
+func renderCollectionAddResult(out io.Writer, result collectionops.MutationResult) {
+	_, _ = fmt.Fprintf(out, "Added %d source(s) to %q.\n",
+		result.SourceCount, result.Name)
 }
 
 func runCollectionRemove(cmd *cobra.Command, args []string) error {
-	st, err := openStoreAndInit()
+	accounts, err := collectionAccountsFromFlag(cmd, collectionRemoveAccounts)
+	if err != nil {
+		return err
+	}
+
+	st, _, err := OpenHTTPStore(cmd.Context())
 	if err != nil {
 		return err
 	}
 	defer func() { _ = st.Close() }()
 
-	sourceIDs, err := resolveAccountList(cmd, st, collectionRemoveAccounts)
+	result, err := st.RemoveCLICollectionSources(cmd.Context(), args[0], daemonclient.CLICollectionSourcesRequest{
+		Accounts: accounts,
+	})
 	if err != nil {
 		return err
 	}
-
-	if err := st.RemoveSourcesFromCollection(args[0], sourceIDs); err != nil {
-		return err
-	}
-	fmt.Printf("Removed %d source(s) from %q.\n", len(sourceIDs), args[0])
+	renderCollectionRemoveResult(cmd.OutOrStdout(), *result)
 	return nil
 }
 
-func runCollectionDelete(_ *cobra.Command, args []string) error {
-	st, err := openStoreAndInit()
+func renderCollectionRemoveResult(out io.Writer, result collectionops.MutationResult) {
+	_, _ = fmt.Fprintf(out, "Removed %d source(s) from %q.\n",
+		result.SourceCount, result.Name)
+}
+
+func runCollectionDelete(cmd *cobra.Command, args []string) error {
+	st, _, err := OpenHTTPStore(cmd.Context())
 	if err != nil {
 		return err
 	}
 	defer func() { _ = st.Close() }()
 
-	if err := st.DeleteCollection(args[0]); err != nil {
+	result, err := st.DeleteCLICollection(cmd.Context(), args[0])
+	if err != nil {
 		return err
 	}
-	fmt.Printf("Deleted collection %q.\n", args[0])
+	renderCollectionDeleteResult(cmd.OutOrStdout(), *result)
 	return nil
 }
 
-func resolveAccountList(cmd *cobra.Command, st *store.Store, accounts string) ([]int64, error) {
-	if accounts == "" {
-		return nil, usageErr(cmd, errors.New("--accounts is required"))
-	}
-	parts := strings.Split(accounts, ",")
-	var ids []int64
-	for _, p := range parts {
-		p = strings.TrimSpace(p)
-		if p == "" {
-			continue
+func renderCollectionDeleteResult(out io.Writer, result collectionops.MutationResult) {
+	_, _ = fmt.Fprintf(out, "Deleted collection %q.\n", result.Name)
+}
+
+func collectionAccountsFromFlag(cmd *cobra.Command, accounts string) ([]string, error) {
+	parsed, err := collectionops.ParseAccountsFlag(accounts)
+	if err != nil {
+		if cmd != nil && errors.Is(err, collectionops.ErrAccountsRequired) {
+			return nil, usageErr(cmd, err)
 		}
-		// Try as numeric ID first, but only for plain digit tokens.
-		// strconv.ParseInt accepts a leading '+' or '-' sign, so an
-		// E.164 phone identifier like "+15551234567" would parse as
-		// the integer 15551234567 and be treated as a source ID,
-		// silently breaking WhatsApp/Google Voice accounts that key
-		// on phone numbers. Restrict the numeric branch to tokens
-		// whose first byte is a decimal digit so signed inputs fall
-		// through to identifier resolution. If the numeric lookup
-		// returns ErrSourceNotFound, fall through to ResolveAccountFlag
-		// — the digit string may be a numeric identifier (e.g.
-		// unprefixed phone number, account name) rather than a source
-		// ID. Surface any other error (real DB failure) so it isn't
-		// masked as a "not found".
-		if p[0] >= '0' && p[0] <= '9' {
-			if id, err := strconv.ParseInt(p, 10, 64); err == nil {
-				_, lookupErr := st.GetSourceByID(id)
-				switch {
-				case lookupErr == nil:
-					ids = append(ids, id)
-					continue
-				case errors.Is(lookupErr, store.ErrSourceNotFound):
-					// fall through to identifier resolution
-				default:
-					return nil, fmt.Errorf("get source %d: %w", id, lookupErr)
-				}
-			}
-		}
-		// Resolve by identifier
-		scope, err := ResolveAccountFlag(st, p)
-		if err != nil {
-			return nil, err
-		}
-		ids = append(ids, scope.SourceIDs()...)
+		return nil, err
 	}
-	if len(ids) == 0 {
-		return nil, errors.New("no valid accounts in --accounts")
-	}
-	return ids, nil
+	return parsed, nil
 }
 
 func init() {

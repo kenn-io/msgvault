@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestMigrate_FreshAndIdempotent(t *testing.T) {
@@ -21,19 +21,19 @@ func TestMigrate_FreshAndIdempotent(t *testing.T) {
 	db := openTestDB(t, path)
 	t.Cleanup(func() { _ = db.Close() })
 
-	requirepkg.NoError(t, Migrate(ctx, db, 768), "first migrate")
+	require.NoError(t, Migrate(ctx, db, 768), "first migrate")
 
 	for _, tbl := range []string{
 		"index_generations", "embeddings", "embed_runs",
-		"pending_embeddings", "vectors_vec_d768", "schema_version",
+		"embed_watermark", "vectors_vec_d768", "schema_version",
 	} {
 		var name string
 		err := db.QueryRow(`SELECT name FROM sqlite_master WHERE name = ?`, tbl).Scan(&name)
-		requirepkg.NoErrorf(t, err, "table %s missing", tbl)
+		require.NoErrorf(t, err, "table %s missing", tbl)
 	}
 
 	// Idempotent: running again must not error.
-	requirepkg.NoError(t, Migrate(ctx, db, 768), "second migrate")
+	require.NoError(t, Migrate(ctx, db, 768), "second migrate")
 }
 
 // TestMigrate_LegacyToChunked builds a pre-chunking vectors.db
@@ -51,8 +51,8 @@ func TestMigrate_FreshAndIdempotent(t *testing.T) {
 //     rowids;
 //   - a second Migrate is a no-op (idempotent).
 func TestMigrate_LegacyToChunked(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "legacy.db")
 	db := openTestDB(t, path)
@@ -200,8 +200,8 @@ func TestMigrate_LegacyToChunked(t *testing.T) {
 // embedding_ids per (gen, msg) pair and preserving every legacy
 // vec0 row through the rebuild.
 func TestMigrate_LegacyToChunked_MultiGenerationCollision(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "legacy.db")
 	db := openTestDB(t, path)
@@ -296,6 +296,7 @@ func TestMigrate_LegacyToChunked_MultiGenerationCollision(t *testing.T) {
 	assert.Equal(2, n, "embeddings rows")
 	require.NoError(db.QueryRowContext(ctx,
 		`SELECT COUNT(DISTINCT embedding_id) FROM embeddings`).Scan(&n), "count distinct eid")
+
 	assert.Equal(2, n, "distinct embedding_ids (one per (gen, msg))")
 
 	// vec0 join still resolves cleanly for the row that was actually
@@ -306,6 +307,7 @@ func TestMigrate_LegacyToChunked_MultiGenerationCollision(t *testing.T) {
 		SELECT COUNT(*) FROM vectors_vec_d768 v
 		  JOIN embeddings e ON e.embedding_id = v.embedding_id
 		 WHERE v.generation_id = 1 AND e.message_id = 10`).Scan(&n), "join")
+
 	assert.Equal(1, n, "join rows")
 }
 
@@ -314,19 +316,64 @@ func TestMigrate_CreatesDimensionSpecificVecTable(t *testing.T) {
 	db := openTestDB(t, filepath.Join(t.TempDir(), "v.db"))
 	t.Cleanup(func() { _ = db.Close() })
 
-	requirepkg.NoError(t, Migrate(ctx, db, 768), "migrate 768")
-	requirepkg.NoError(t, EnsureVectorTable(ctx, db, 1024), "ensure 1024")
+	require.NoError(t, Migrate(ctx, db, 768), "migrate 768")
+	require.NoError(t, EnsureVectorTable(ctx, db, 1024), "ensure 1024")
 	var name string
 	err := db.QueryRow(
 		`SELECT name FROM sqlite_master WHERE name = 'vectors_vec_d1024'`).Scan(&name)
-	assertpkg.NoError(t, err, "vectors_vec_d1024 not created")
+	assert.NoError(t, err, "vectors_vec_d1024 not created")
+}
+
+// TestMigrate_KeepsDeadPendingEmbeddings pins that Migrate ALONE no longer
+// drops the dead pending_embeddings queue table: the one-time upgrade backfill
+// (BackfillEmbedGenForUpgrade) must first consult the table to preserve its
+// legacy re-embed signal. The drop moved to the writable Open
+// path, AFTER the backfill — see TestOpen_DropsDeadPendingEmbeddings and
+// TestBackfillEmbedGen_PreservesActiveGenPendingReembedSignal. Migrate runs on
+// read-only opens too, where dropping (before the signal is honored on a later
+// writable open) would be wrong.
+func TestMigrate_KeepsDeadPendingEmbeddings(t *testing.T) {
+	assert := assert.New(t)
+	require := require.
+		New(t)
+
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "vectors.db")
+	db := openTestDB(t, path)
+	t.Cleanup(func() { _ = db.Close() })
+
+	// Stand up a legacy pending_embeddings table before migrating.
+	_, err := db.ExecContext(ctx, `CREATE TABLE pending_embeddings (
+		generation_id INTEGER NOT NULL,
+		message_id    INTEGER NOT NULL
+	)`)
+	require.NoError(
+		err, "create legacy pending_embeddings")
+
+	require.NoError(
+		Migrate(ctx, db, 768), "migrate")
+
+	exists, err := tableExists(ctx, db, "pending_embeddings")
+	require.NoError(
+		err, "probe pending_embeddings")
+
+	assert.True(exists, "Migrate alone must NOT drop pending_embeddings (Open does, after the backfill consults it)")
+	require.NoError(
+
+		Migrate(ctx, db, 768), "second migrate (idempotent)")
+
+	exists, err = tableExists(ctx, db, "pending_embeddings")
+	require.NoError(
+		err, "probe pending_embeddings after second migrate")
+
+	assert.True(exists, "second Migrate still must not drop pending_embeddings")
 }
 
 func openTestDB(t *testing.T, path string) *sql.DB {
 	t.Helper()
-	requirepkg.NoError(t, RegisterExtension(), "register")
+	require.NoError(t, RegisterExtension(), "register")
 	db, err := sql.Open(DriverName(), path)
-	requirepkg.NoError(t, err, "open")
+	require.NoError(t, err, "open")
 	return db
 }
 
@@ -342,8 +389,8 @@ func openTestDB(t *testing.T, path string) *sql.DB {
 // db.Conn() calls or db.ExecContext() calls can all be served by the
 // same pooled conn, which would let a buggy hook hide undetected.
 func TestForeignKeys_PerConnection(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	ctx := context.Background()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "vectors.db")
@@ -379,9 +426,13 @@ func TestForeignKeys_PerConnection(t *testing.T) {
 		err := c.QueryRowContext(ctx, `PRAGMA foreign_keys`).Scan(&fk)
 		require.NoErrorf(err, "conn %d pragma read", i)
 		assert.Equalf(1, fk, "conn %d: foreign_keys (ConnectHook missed this conn)", i)
+		// embeddings.generation_id REFERENCES index_generations(id); insert
+		// a row pointing at a non-existent generation to trigger the FK
+		// violation on a properly-configured connection.
 		_, err = c.ExecContext(ctx,
-			`INSERT INTO pending_embeddings (generation_id, message_id, enqueued_at)
-			 VALUES (?, ?, ?)`, 9999999, int64(i), int64(i))
+			`INSERT INTO embeddings
+			   (generation_id, message_id, chunk_index, embedded_at, source_char_len)
+			 VALUES (?, ?, 0, 0, 0)`, 9999999, int64(i))
 		//nolint:testifylint // guarded assert+continue: a require here would abort the per-conn loop instead of skipping to the next connection
 		if !assert.Errorf(err, "conn %d: FK-violating insert should fail", i) {
 			continue

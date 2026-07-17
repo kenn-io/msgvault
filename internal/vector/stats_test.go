@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // statsFakeBackend implements Backend for CollectStats tests. It is
@@ -75,23 +75,27 @@ func (f *statsFakeBackend) LoadVector(context.Context, int64) ([]float32, error)
 	return nil, errors.New("not implemented")
 }
 
-func (f *statsFakeBackend) Close() error { return nil }
-
-func (f *statsFakeBackend) EnsureSeeded(context.Context, GenerationID) error {
+func (f *statsFakeBackend) ResetWatermarkBelow(context.Context, int64) error {
 	return errors.New("not implemented")
 }
+
+func (f *statsFakeBackend) EmbeddedMessageCount(context.Context, GenerationID) (int64, error) {
+	return 0, errors.New("not implemented")
+}
+
+func (f *statsFakeBackend) Close() error { return nil }
 
 var _ Backend = (*statsFakeBackend)(nil)
 
 func TestCollectStats_NilBackend(t *testing.T) {
 	sv, err := CollectStats(context.Background(), nil)
-	requirepkg.NoError(t, err, "CollectStats(nil)")
-	assertpkg.Nil(t, sv, "CollectStats(nil) should return nil")
+	require.NoError(t, err, "CollectStats(nil)")
+	assert.Nil(t, sv, "CollectStats(nil) should return nil")
 }
 
 func TestCollectStats_ActiveOnly(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	activatedAt := time.Date(2025, 3, 1, 12, 0, 0, 0, time.UTC)
 	b := &statsFakeBackend{
 		active: &Generation{
@@ -121,12 +125,12 @@ func TestCollectStats_ActiveOnly(t *testing.T) {
 	assert.Equal(int64(100), ag.MessageCount)
 	assert.Equal(activatedAt.Format(time.RFC3339), ag.ActivatedAt)
 	assert.Nil(sv.BuildingGeneration)
-	assert.Equal(int64(7), sv.PendingEmbeddingsTotal)
+	assert.Equal(int64(7), sv.MissingEmbeddingsTotal)
 }
 
 func TestCollectStats_BuildingOnly(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	startedAt := time.Date(2025, 4, 15, 9, 30, 0, 0, time.UTC)
 	b := &statsFakeBackend{
 		// No active generation — first build scenario.
@@ -154,12 +158,12 @@ func TestCollectStats_BuildingOnly(t *testing.T) {
 	assert.Equal(startedAt.Format(time.RFC3339), bg.StartedAt)
 	assert.Equal(int64(40), bg.Progress.Done)
 	assert.Equal(int64(100), bg.Progress.Total)
-	assert.Equal(int64(60), sv.PendingEmbeddingsTotal)
+	assert.Equal(int64(60), sv.MissingEmbeddingsTotal)
 }
 
 func TestCollectStats_BothGenerations(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	activatedAt := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
 	startedAt := time.Date(2025, 5, 1, 0, 0, 0, 0, time.UTC)
 	b := &statsFakeBackend{
@@ -192,13 +196,15 @@ func TestCollectStats_BothGenerations(t *testing.T) {
 	if assert.NotNil(sv.BuildingGeneration) {
 		assert.Equal(GenerationID(2), sv.BuildingGeneration.ID)
 	}
-	// Sum of both pending counts: 3 + 450.
-	assert.Equal(int64(453), sv.PendingEmbeddingsTotal)
+	// While a rebuild is in flight the worker targets the building generation
+	// and freezes active-generation top-ups, so the total reports actionable
+	// building work rather than adding active-generation drift.
+	assert.Equal(int64(450), sv.MissingEmbeddingsTotal)
 }
 
 func TestCollectStats_ActiveError(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	// A non-sentinel error from ActiveGeneration is joined into the
 	// returned error, but the envelope (Enabled=true) is still returned
 	// so callers can log the failure and still render whatever partial
@@ -215,8 +221,8 @@ func TestCollectStats_ActiveError(t *testing.T) {
 }
 
 func TestCollectStats_BuildingError(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	// A non-sentinel error from BuildingGeneration is joined into the
 	// returned error, symmetric with the ActiveGeneration error path.
 	wantErr := errors.New("db connection refused")
@@ -231,8 +237,8 @@ func TestCollectStats_BuildingError(t *testing.T) {
 }
 
 func TestCollectStats_BuildingStatsError_Tolerated(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	// BuildingGeneration loads fine, but its Stats call fails. The
 	// envelope is still returned with BuildingGeneration=nil, and the
 	// stats failure is joined into the returned error so callers can log
@@ -252,12 +258,43 @@ func TestCollectStats_BuildingStatsError_Tolerated(t *testing.T) {
 	require.ErrorIs(err, wantErr)
 	require.NotNil(sv, "CollectStats sv = nil, want non-nil envelope")
 	assert.Nil(sv.BuildingGeneration, "Stats failed")
-	assert.Equal(int64(0), sv.PendingEmbeddingsTotal)
+	assert.Equal(int64(0), sv.MissingEmbeddingsTotal)
+}
+
+func TestCollectStats_BuildingStatsErrorDoesNotReportFrozenActiveDrift(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	wantErr := errors.New("stats table locked")
+	b := &statsFakeBackend{
+		active: &Generation{
+			ID:          1,
+			Model:       "m1",
+			Dimension:   384,
+			Fingerprint: "m1:384",
+			State:       GenerationActive,
+		},
+		building: &Generation{
+			ID:        2,
+			Model:     "m2",
+			Dimension: 768,
+		},
+		statsByGen: map[GenerationID]Stats{
+			1: {EmbeddingCount: 500, PendingCount: 12},
+		},
+		statsErr: map[GenerationID]error{2: wantErr},
+	}
+
+	sv, err := CollectStats(context.Background(), b)
+	require.Error(err, "CollectStats err should wrap want")
+	require.ErrorIs(err, wantErr)
+	require.NotNil(sv, "CollectStats sv = nil, want non-nil envelope")
+	assert.Nil(sv.BuildingGeneration, "Stats failed")
+	assert.Equal(int64(0), sv.MissingEmbeddingsTotal, "active drift is frozen while building exists")
 }
 
 func TestCollectStats_StatsError_Tolerated(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	// Active generation loads fine, but Stats(active.ID) fails. The
 	// helper returns a StatsView with ActiveGeneration=nil and a joined
 	// error so callers can log the failure without losing the envelope.
@@ -279,5 +316,5 @@ func TestCollectStats_StatsError_Tolerated(t *testing.T) {
 	require.NotNil(sv, "CollectStats sv = nil, want non-nil envelope")
 	assert.True(sv.Enabled, "backend is non-nil")
 	assert.Nil(sv.ActiveGeneration, "Stats failed")
-	assert.Equal(int64(0), sv.PendingEmbeddingsTotal, "no successful stats")
+	assert.Equal(int64(0), sv.MissingEmbeddingsTotal, "no successful stats")
 }

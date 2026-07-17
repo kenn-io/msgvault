@@ -11,7 +11,6 @@ import (
 
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/export"
-	"go.kenn.io/msgvault/internal/fileutil"
 )
 
 var (
@@ -32,12 +31,12 @@ Examples:
   msgvault export-attachment 61ccf192b5bd358738802dc2676d3ceab856f47d26dd29681ac3d335bfd5bbd0
   msgvault export-attachment 61ccf192... --output invoice.pdf
 
-Export all attachments from a message with original filenames:
-  msgvault show-message 45 --json | \
-    jq -r '.attachments[] | "\(.content_hash)\t\(.filename)"' | \
-    while IFS=$'\t' read -r hash name; do
-      msgvault export-attachment "$hash" -o "$name"
-    done
+To export all attachments from a message with original filenames, use
+'msgvault export-attachments <message-id> -o <dir>', which sanitizes
+filenames. Attachment filenames are sender-controlled: do not pass the
+JSON 'filename' field to -o (a name like ../../evil escapes the output
+directory). Use content hashes or your own fixed paths instead.
+
   msgvault export-attachment 61ccf192... -o -       # stdout (binary)
   msgvault export-attachment 61ccf192... --base64  # stdout (base64)
   msgvault export-attachment 61ccf192... --json    # JSON with base64 data`,
@@ -66,34 +65,39 @@ func runExportAttachment(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Validate output path before doing any work
-	if exportAttachmentOutput != "" && exportAttachmentOutput != "-" {
-		if err := export.ValidateOutputPath(exportAttachmentOutput); err != nil {
-			return err
-		}
-	}
-
-	// Construct storage path: attachmentsDir/hash[:2]/hash
-	attachmentsDir := cfg.AttachmentsDir()
-	storagePath := filepath.Join(attachmentsDir, contentHash[:2], contentHash)
-
-	// JSON mode reads the full file into memory for base64 encoding.
-	// Base64 and binary modes stream directly to avoid loading large files.
-	if exportAttachmentJSON {
-		return exportAttachmentAsJSON(storagePath, contentHash)
-	}
-	if exportAttachmentBase64 {
-		return exportAttachmentAsBase64(storagePath)
-	}
-	return exportAttachmentBinary(storagePath)
+	return runExportAttachmentHTTP(cmd, contentHash)
 }
 
-func exportAttachmentAsJSON(storagePath, contentHash string) error {
-	data, err := readAttachmentFile(storagePath, contentHash)
+func runExportAttachmentHTTP(cmd *cobra.Command, contentHash string) error {
+	if cmd == nil {
+		return errors.New("command context is required for HTTP attachment export")
+	}
+	s, _, err := OpenHTTPStore(cmd.Context())
+	if err != nil {
+		return fmt.Errorf("open store: %w", err)
+	}
+	defer func() { _ = s.Close() }()
+
+	if exportAttachmentJSON {
+		data, err := s.GetCLIAttachment(cmd.Context(), contentHash)
+		if err != nil {
+			return err
+		}
+		return exportAttachmentDataAsJSON(data, contentHash)
+	}
+
+	body, err := s.OpenCLIAttachment(cmd.Context(), contentHash)
 	if err != nil {
 		return err
 	}
 
+	if exportAttachmentBase64 {
+		return errors.Join(exportAttachmentStreamAsBase64(body), body.Close())
+	}
+	return exportAttachmentBinaryDownload(body)
+}
+
+func exportAttachmentDataAsJSON(data []byte, contentHash string) error {
 	output := map[string]any{
 		"content_hash": contentHash,
 		"size":         len(data),
@@ -104,15 +108,9 @@ func exportAttachmentAsJSON(storagePath, contentHash string) error {
 	return enc.Encode(output)
 }
 
-func exportAttachmentAsBase64(storagePath string) error {
-	f, err := openAttachmentFile(storagePath)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = f.Close() }()
-
+func exportAttachmentStreamAsBase64(r io.Reader) error {
 	encoder := base64.NewEncoder(base64.StdEncoding, os.Stdout)
-	if _, err := io.Copy(encoder, f); err != nil {
+	if _, err := io.Copy(encoder, r); err != nil {
 		return fmt.Errorf("encode attachment: %w", err)
 	}
 	if err := encoder.Close(); err != nil {
@@ -122,59 +120,145 @@ func exportAttachmentAsBase64(storagePath string) error {
 	return nil
 }
 
-func exportAttachmentBinary(storagePath string) error {
-	f, err := openAttachmentFile(storagePath)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = f.Close() }()
-
+func exportAttachmentBinaryStream(r io.Reader) error {
 	outputPath := exportAttachmentOutput
 	if outputPath == "" || outputPath == "-" {
-		_, err = io.Copy(os.Stdout, f)
+		_, err := io.Copy(os.Stdout, r)
 		return err
 	}
 
-	dst, err := fileutil.SecureOpenFile(outputPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
+	n, err := writeAttachmentStreamToFile(outputPath, r)
 	if err != nil {
-		return fmt.Errorf("create output file: %w", err)
-	}
-
-	n, copyErr := io.Copy(dst, f)
-	closeErr := dst.Close()
-	if copyErr != nil {
-		_ = os.Remove(outputPath)
-		return fmt.Errorf("write file: %w", copyErr)
-	}
-	if closeErr != nil {
-		_ = os.Remove(outputPath)
-		return fmt.Errorf("close file: %w", closeErr)
+		return err
 	}
 
 	fmt.Fprintf(os.Stderr, "Exported attachment to: %s (%d bytes)\n", outputPath, n)
 	return nil
 }
 
-func openAttachmentFile(storagePath string) (*os.File, error) {
-	f, err := os.Open(storagePath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, fmt.Errorf("attachment not found: %s", filepath.Base(storagePath))
+func exportAttachmentBinaryDownload(body io.ReadCloser) (err error) {
+	sourceClosed := false
+	closeSource := func() error {
+		if sourceClosed {
+			return nil
 		}
-		return nil, fmt.Errorf("read attachment: %w", err)
+		sourceClosed = true
+		return body.Close()
 	}
-	return f, nil
+	defer func() {
+		err = errors.Join(err, closeSource())
+	}()
+
+	outputPath := exportAttachmentOutput
+	if outputPath == "" || outputPath == "-" {
+		_, copyErr := io.Copy(os.Stdout, body)
+		return errors.Join(copyErr, closeSource())
+	}
+
+	n, err := writeAttachmentStreamToFileBeforeInstall(outputPath, body, closeSource)
+	if err != nil {
+		return err
+	}
+
+	fmt.Fprintf(os.Stderr, "Exported attachment to: %s (%d bytes)\n", outputPath, n)
+	return nil
 }
 
-func readAttachmentFile(storagePath, contentHash string) ([]byte, error) {
-	data, err := os.ReadFile(storagePath)
+func writeAttachmentStreamToFile(outputPath string, r io.Reader) (int64, error) {
+	return writeAttachmentStreamToFileBeforeInstall(outputPath, r, nil)
+}
+
+func writeAttachmentStreamToFileBeforeInstall(
+	outputPath string,
+	r io.Reader,
+	closeSource func() error,
+) (int64, error) {
+	dir := filepath.Dir(outputPath)
+	if dir == "" {
+		dir = "."
+	}
+	tmp, err := os.CreateTemp(dir, "."+filepath.Base(outputPath)+".tmp-*")
+	if err != nil {
+		return 0, fmt.Errorf("create output file: %w", err)
+	}
+	tmpPath := tmp.Name()
+	cleanup := true
+	defer func() {
+		if cleanup {
+			_ = os.Remove(tmpPath)
+		}
+	}()
+	if err := tmp.Chmod(0o600); err != nil {
+		_ = tmp.Close()
+		return 0, fmt.Errorf("set output file permissions: %w", err)
+	}
+
+	n, copyErr := io.Copy(tmp, r)
+	closeErr := tmp.Close()
+	var sourceCloseErr error
+	if closeSource != nil {
+		sourceCloseErr = closeSource()
+	}
+	if copyErr != nil || closeErr != nil || sourceCloseErr != nil {
+		return 0, errors.Join(
+			wrapAttachmentExportError("write file", copyErr),
+			wrapAttachmentExportError("close file", closeErr),
+			wrapAttachmentExportError("verify downloaded attachment", sourceCloseErr),
+		)
+	}
+	if err := replaceOutputFile(tmpPath, outputPath); err != nil {
+		return 0, fmt.Errorf("replace output file: %w", err)
+	}
+	cleanup = false
+	return n, nil
+}
+
+func wrapAttachmentExportError(operation string, err error) error {
+	if err == nil {
+		return nil
+	}
+	return fmt.Errorf("%s: %w", operation, err)
+}
+
+func replaceOutputFile(tmpPath, outputPath string) error {
+	info, err := os.Lstat(outputPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, fmt.Errorf("attachment not found: no file for hash %s", contentHash)
+			return os.Rename(tmpPath, outputPath)
 		}
-		return nil, fmt.Errorf("read attachment: %w", err)
+		return err
 	}
-	return data, nil
+	if info.IsDir() {
+		return fmt.Errorf("output path is a directory: %s", outputPath)
+	}
+
+	dir := filepath.Dir(outputPath)
+	backup, err := os.CreateTemp(dir, "."+filepath.Base(outputPath)+".old-*")
+	if err != nil {
+		return fmt.Errorf("create output backup: %w", err)
+	}
+	backupPath := backup.Name()
+	if err := backup.Close(); err != nil {
+		_ = os.Remove(backupPath)
+		return fmt.Errorf("close output backup: %w", err)
+	}
+	if err := os.Remove(backupPath); err != nil {
+		return fmt.Errorf("prepare output backup: %w", err)
+	}
+
+	if err := os.Rename(outputPath, backupPath); err != nil {
+		return fmt.Errorf("backup existing output: %w", err)
+	}
+	if err := os.Rename(tmpPath, outputPath); err != nil {
+		if restoreErr := os.Rename(backupPath, outputPath); restoreErr != nil {
+			return fmt.Errorf("%w; restore existing output: %w", err, restoreErr)
+		}
+		return err
+	}
+	if err := os.Remove(backupPath); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("remove output backup: %w", err)
+	}
+	return nil
 }
 
 func init() {

@@ -4,14 +4,14 @@ import (
 	"testing"
 	"time"
 
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
 func TestAddAndListAccountIdentities(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	f := storetest.New(t)
 	st := f.Store
 
@@ -28,8 +28,8 @@ func TestAddAndListAccountIdentities(t *testing.T) {
 }
 
 func TestAddAccountIdentity_Idempotent(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	f := storetest.New(t)
 	st := f.Store
 
@@ -56,7 +56,7 @@ func TestAddAccountIdentity_Idempotent(t *testing.T) {
 // "case-preserved storage, email-case-insensitive logical identity"
 // contract that the add/remove paths share.
 func TestAddAccountIdentity_PreservesCase(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	f := storetest.New(t)
 	st := f.Store
 
@@ -66,13 +66,13 @@ func TestAddAccountIdentity_PreservesCase(t *testing.T) {
 	rows, err := st.ListAccountIdentities(f.Source.ID)
 	require.NoError(err, "ListAccountIdentities")
 	require.Len(rows, 1, "want 1 row (email is case-insensitive)")
-	assertpkg.Equal(t, "Alice@Example.com", rows[0].Address,
+	assert.Equal(t, "Alice@Example.com", rows[0].Address,
 		"address (case-preserved first-write)")
 }
 
 func TestAddAccountIdentity_AdditionalSignal(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	f := storetest.New(t)
 	st := f.Store
 
@@ -94,15 +94,15 @@ func TestAddAccountIdentity_ThreeSignalAccumulation(t *testing.T) {
 	st := f.Store
 
 	for _, sig := range []string{"manual", "account-identifier", "is_from_me"} {
-		requirepkg.NoError(t, st.AddAccountIdentity(f.Source.ID, "alice@example.com", sig))
+		require.NoError(t, st.AddAccountIdentity(f.Source.ID, "alice@example.com", sig))
 	}
 	rows, err := st.ListAccountIdentities(f.Source.ID)
-	requirepkg.NoError(t, err, "ListAccountIdentities")
-	assertpkg.Equal(t, "account-identifier,is_from_me,manual", rows[0].SourceSignal, "signal")
+	require.NoError(t, err, "ListAccountIdentities")
+	assert.Equal(t, "account-identifier,is_from_me,manual", rows[0].SourceSignal, "signal")
 }
 
 func TestAddAccountIdentity_EmptySignalOnExistingRow(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	f := storetest.New(t)
 	st := f.Store
 
@@ -110,12 +110,12 @@ func TestAddAccountIdentity_EmptySignalOnExistingRow(t *testing.T) {
 	require.NoError(st.AddAccountIdentity(f.Source.ID, "alice@example.com", ""))
 	rows, err := st.ListAccountIdentities(f.Source.ID)
 	require.NoError(err, "ListAccountIdentities")
-	assertpkg.Equal(t, "manual", rows[0].SourceSignal,
+	assert.Equal(t, "manual", rows[0].SourceSignal,
 		"signal (empty signal on existing row should be no-op)")
 }
 
 func TestAddAccountIdentity_EmptySignalOnMissingRow(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	f := storetest.New(t)
 	st := f.Store
 
@@ -124,11 +124,11 @@ func TestAddAccountIdentity_EmptySignalOnMissingRow(t *testing.T) {
 	require.NoError(err, "ListAccountIdentities")
 	require.Len(rows, 1)
 	require.Empty(rows[0].SourceSignal, "want one row with empty signal")
-	assertpkg.False(t, rows[0].ConfirmedAt.IsZero(), "confirmed_at should be set even with empty signal")
+	assert.False(t, rows[0].ConfirmedAt.IsZero(), "confirmed_at should be set even with empty signal")
 }
 
 func TestAddAccountIdentity_NonEmptySignalReplacesEmptyRow(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	f := storetest.New(t)
 	st := f.Store
 
@@ -136,7 +136,7 @@ func TestAddAccountIdentity_NonEmptySignalReplacesEmptyRow(t *testing.T) {
 	require.NoError(st.AddAccountIdentity(f.Source.ID, "alice@example.com", "manual"))
 	rows, err := st.ListAccountIdentities(f.Source.ID)
 	require.NoError(err, "ListAccountIdentities")
-	assertpkg.Equal(t, "manual", rows[0].SourceSignal, "signal")
+	assert.Equal(t, "manual", rows[0].SourceSignal, "signal")
 }
 
 func TestAddAccountIdentity_RejectsCommaInSignal(t *testing.T) {
@@ -144,22 +144,22 @@ func TestAddAccountIdentity_RejectsCommaInSignal(t *testing.T) {
 	st := f.Store
 
 	err := st.AddAccountIdentity(f.Source.ID, "alice@example.com", "a,b")
-	requirepkg.Error(t, err, "expected error for comma in signal")
-	assertpkg.ErrorContains(t, err, "comma")
+	require.Error(t, err, "expected error for comma in signal")
+	assert.ErrorContains(t, err, "comma")
 }
 
 func TestAddAccountIdentity_AllWhitespaceIdentifierIsNoOp(t *testing.T) {
 	f := storetest.New(t)
 	st := f.Store
 
-	requirepkg.NoError(t, st.AddAccountIdentity(f.Source.ID, "   ", "manual"))
+	require.NoError(t, st.AddAccountIdentity(f.Source.ID, "   ", "manual"))
 	rows, err := st.ListAccountIdentities(f.Source.ID)
-	requirepkg.NoError(t, err, "ListAccountIdentities")
-	assertpkg.Empty(t, rows, "whitespace identifier should not insert")
+	require.NoError(t, err, "ListAccountIdentities")
+	assert.Empty(t, rows, "whitespace identifier should not insert")
 }
 
 func TestAccountIdentities_FKCascadeOnSourceDelete(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	f := storetest.New(t)
 	st := f.Store
 
@@ -169,12 +169,12 @@ func TestAccountIdentities_FKCascadeOnSourceDelete(t *testing.T) {
 	require.NoError(st.DB().QueryRow(
 		st.Rebind(`SELECT COUNT(*) FROM account_identities WHERE source_id = ?`), f.Source.ID,
 	).Scan(&n))
-	assertpkg.Equal(t, 0, n, "FK cascade failed: %d rows remain", n)
+	assert.Equal(t, 0, n, "FK cascade failed: %d rows remain", n)
 }
 
 func TestGetIdentitiesForScope_MultiSource(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	f := storetest.New(t)
 	st := f.Store
 
@@ -193,8 +193,8 @@ func TestGetIdentitiesForScope_MultiSource(t *testing.T) {
 }
 
 func TestGetIdentitiesForScope_EmptyInput(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	f := storetest.New(t)
 	st := f.Store
 
@@ -207,8 +207,8 @@ func TestGetIdentitiesForScope_EmptyInput(t *testing.T) {
 }
 
 func TestRemoveAccountIdentity_Hit(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	f := storetest.New(t)
 	st := f.Store
 
@@ -226,15 +226,15 @@ func TestRemoveAccountIdentity_Miss(t *testing.T) {
 	st := f.Store
 
 	removed, err := st.RemoveAccountIdentity(f.Source.ID, "nope@example.com")
-	requirepkg.NoError(t, err, "RemoveAccountIdentity")
-	assertpkg.Equal(t, int64(0), removed, "removed on miss")
+	require.NoError(t, err, "RemoveAccountIdentity")
+	assert.Equal(t, int64(0), removed, "removed on miss")
 }
 
 // TestRemoveAccountIdentity_EmailIsCaseInsensitive verifies that an
 // email-shaped identifier removed with different casing matches the
 // stored row, since email addresses are case-insensitive in practice.
 func TestRemoveAccountIdentity_EmailIsCaseInsensitive(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	f := storetest.New(t)
 	st := f.Store
 
@@ -247,7 +247,7 @@ func TestRemoveAccountIdentity_EmailIsCaseInsensitive(t *testing.T) {
 
 	rows, err := st.ListAccountIdentities(f.Source.ID)
 	require.NoError(err, "ListAccountIdentities")
-	assertpkg.Empty(t, rows)
+	assert.Empty(t, rows)
 }
 
 // TestAddAccountIdentity_EmailIsCaseInsensitive verifies that a second
@@ -258,8 +258,8 @@ func TestRemoveAccountIdentity_EmailIsCaseInsensitive(t *testing.T) {
 // 'identity add Foo@x.com' followed by 'identity remove foo@x.com'
 // could leave (or remove) the wrong row.
 func TestAddAccountIdentity_EmailIsCaseInsensitive(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	f := storetest.New(t)
 	st := f.Store
 
@@ -280,7 +280,7 @@ func TestAddAccountIdentity_EmailIsCaseInsensitive(t *testing.T) {
 // chat-handle invariant: synthetic identifiers can be case-significant
 // so two distinct cases must produce two rows.
 func TestAddAccountIdentity_NonEmailStaysCaseSensitive(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	f := storetest.New(t)
 	st := f.Store
 
@@ -299,7 +299,7 @@ func TestAddAccountIdentity_NonEmailStaysCaseSensitive(t *testing.T) {
 // with "@" and contain a "." but are not emails. Two distinct cases must
 // produce two distinct rows.
 func TestAddAccountIdentity_MatrixMXIDStaysCaseSensitive(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	f := storetest.New(t)
 	st := f.Store
 
@@ -320,11 +320,11 @@ func TestRemoveAccountIdentity_NonEmailIsCaseSensitive(t *testing.T) {
 	f := storetest.New(t)
 	st := f.Store
 
-	requirepkg.NoError(t,
+	require.NoError(t,
 		st.AddAccountIdentity(f.Source.ID, "AliceHandle", "manual"),
 		"add identity")
 
 	removed, err := st.RemoveAccountIdentity(f.Source.ID, "alicehandle")
-	requirepkg.NoError(t, err, "RemoveAccountIdentity")
-	requirepkg.Equal(t, int64(0), removed, "removed on case-mismatch for non-email identifier")
+	require.NoError(t, err, "RemoveAccountIdentity")
+	require.Equal(t, int64(0), removed, "removed on case-mismatch for non-email identifier")
 }

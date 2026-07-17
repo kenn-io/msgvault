@@ -8,8 +8,11 @@
 package query
 
 import (
+	"context"
 	"database/sql"
 	"errors"
+
+	"go.kenn.io/msgvault/internal/search"
 )
 
 // ErrNotImplemented is a sentinel returned by engine methods that the current
@@ -28,6 +31,53 @@ var ErrNotImplemented = errors.New("query: method not implemented for this engin
 // silently sending SQLite SQL to PostgreSQL at runtime.
 type pgEngine struct {
 	Engine
+}
+
+var _ MessageBodySearcher = (*pgEngine)(nil)
+
+type gmailIDsByMessageIDsResolver interface {
+	GetGmailIDsByMessageIDs(ctx context.Context, ids []int64) ([]string, error)
+}
+
+type accountsByGmailIDsResolver interface {
+	GetAccountsByGmailIDs(ctx context.Context, gmailIDs []string) ([]string, error)
+}
+
+// GetGmailIDsByMessageIDs forwards the optional deletion-staging resolver
+// capability through the PostgreSQL wrapper. pgEngine intentionally embeds only
+// Engine to hide SQLite-only TextEngine methods, so optional methods that are
+// valid on PostgreSQL need explicit forwarding.
+func (e *pgEngine) GetGmailIDsByMessageIDs(ctx context.Context, ids []int64) ([]string, error) {
+	resolver, ok := e.Engine.(gmailIDsByMessageIDsResolver)
+	if !ok {
+		return nil, ErrNotImplemented
+	}
+	return resolver.GetGmailIDsByMessageIDs(ctx, ids)
+}
+
+// GetAccountsByGmailIDs forwards the optional deletion-staging account
+// resolver capability through the PostgreSQL wrapper, for the same reason
+// as GetGmailIDsByMessageIDs above.
+func (e *pgEngine) GetAccountsByGmailIDs(ctx context.Context, gmailIDs []string) ([]string, error) {
+	resolver, ok := e.Engine.(accountsByGmailIDsResolver)
+	if !ok {
+		return nil, ErrNotImplemented
+	}
+	return resolver.GetAccountsByGmailIDs(ctx, gmailIDs)
+}
+
+// SearchMessageBodies forwards exact body-only search through the PostgreSQL
+// wrapper. pgEngine hides optional SQLite-only capabilities by default, so
+// capabilities implemented with PostgreSQL-safe SQL must be promoted
+// explicitly.
+func (e *pgEngine) SearchMessageBodies(
+	ctx context.Context, q *search.Query, limit, offset int,
+) ([]MessageSummary, error) {
+	bodySearcher, ok := e.Engine.(MessageBodySearcher)
+	if !ok {
+		return nil, ErrMessageBodySearchUnavailable
+	}
+	return bodySearcher.SearchMessageBodies(ctx, q, limit, offset)
 }
 
 // NewPostgreSQLEngine creates a query engine backed by PostgreSQL. The engine

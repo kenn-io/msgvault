@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/store"
@@ -27,7 +27,7 @@ import (
 // Runs on whichever backend testutil.NewTestStore selects; a postgres:// DSN in
 // MSGVAULT_TEST_DB exercises the PG path (the engine the Q2 fix did not touch).
 func TestStoreAPI_PaginationStability_IdenticalSentAt(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	st := testutil.NewTestStore(t)
 	src, err := st.GetOrCreateSource("gmail", "page@example.com")
 	require.NoError(err, "GetOrCreateSource")
@@ -64,7 +64,7 @@ func TestStoreAPI_PaginationStability_IdenticalSentAt(t *testing.T) {
 	t.Run("ListMessages", func(t *testing.T) {
 		seen := pageStoreOneByOne(t, n, func(offset int) (int64, bool) {
 			msgs, _, err := st.ListMessages(offset, 1)
-			requirepkg.NoError(t, err, "ListMessages offset=%d", offset)
+			require.NoError(err, "ListMessages offset=%d", offset)
 			if len(msgs) == 0 {
 				return 0, false
 			}
@@ -80,7 +80,7 @@ func TestStoreAPI_PaginationStability_IdenticalSentAt(t *testing.T) {
 		seen := pageStoreOneByOne(t, n, func(offset int) (int64, bool) {
 			msgs, _, err := st.SearchMessagesQuery(
 				&search.Query{SubjectTerms: []string{subjectTag}}, offset, 1)
-			requirepkg.NoError(t, err, "SearchMessagesQuery offset=%d", offset)
+			require.NoError(err, "SearchMessagesQuery offset=%d", offset)
 			if len(msgs) == 0 {
 				return 0, false
 			}
@@ -97,7 +97,7 @@ func pageStoreOneByOne(t *testing.T, n int, fetch func(offset int) (int64, bool)
 	seen := make([]int64, 0, n)
 	for offset := range n {
 		id, ok := fetch(offset)
-		requirepkg.True(t, ok, "page at offset=%d returned no row (pagination skipped a row)", offset)
+		require.True(t, ok, "page at offset=%d returned no row (pagination skipped a row)", offset)
 		seen = append(seen, id)
 	}
 	return seen
@@ -110,12 +110,12 @@ func assertStorePagesDisjointComplete(t *testing.T, want map[int64]struct{}, got
 	gotSet := make(map[int64]struct{}, len(got))
 	for _, id := range got {
 		_, dup := gotSet[id]
-		assertpkg.False(t, dup, "id %d appeared on more than one page (unstable pagination)", id)
+		assert.False(t, dup, "id %d appeared on more than one page (unstable pagination)", id)
 		gotSet[id] = struct{}{}
 	}
-	assertpkg.Len(t, got, len(want), "paged ids should cover every row exactly once")
+	assert.Len(t, got, len(want), "paged ids should cover every row exactly once")
 	for id := range want {
 		_, ok := gotSet[id]
-		assertpkg.True(t, ok, "expected id %d missing from paged results (row skipped)", id)
+		assert.True(t, ok, "expected id %d missing from paged results (row skipped)", id)
 	}
 }

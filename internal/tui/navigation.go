@@ -1,8 +1,8 @@
 package tui
 
 import (
-	"github.com/charmbracelet/bubbles/textinput"
-	tea "github.com/charmbracelet/bubbletea"
+	"charm.land/bubbles/v2/textinput"
+	tea "charm.land/bubbletea/v2"
 	"go.kenn.io/msgvault/internal/query"
 )
 
@@ -209,7 +209,7 @@ func (m *Model) navigateList(key string, itemCount int) bool {
 			m.cursor--
 			changed = true
 		}
-	case "down", "j":
+	case keyNameDown, "j":
 		if m.cursor < itemCount-1 {
 			m.cursor++
 			changed = true

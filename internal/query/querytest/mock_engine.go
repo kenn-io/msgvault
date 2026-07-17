@@ -18,10 +18,12 @@ type MockEngine struct {
 	ListResults       []query.MessageSummary
 	Messages          map[int64]*query.MessageDetail
 	Attachments       map[int64]*query.AttachmentInfo
+	AttachmentsByHash map[string][]query.AttachmentInfo
 	Stats             *query.TotalStats
 	Accounts          []query.AccountInfo
 	AggregateRows     []query.AggregateRow
 	GmailIDs          []string
+	GmailAccounts     []string
 
 	// MessagesBySourceID maps source IDs to message details for GetMessageBySourceID.
 	// When nil, GetMessageBySourceID falls back to scanning Messages for a matching SourceMessageID.
@@ -30,12 +32,15 @@ type MockEngine struct {
 	// Optional overrides — set these to customise behavior per-test.
 	SearchFastFunc               func(context.Context, *search.Query, query.MessageFilter, int, int) ([]query.MessageSummary, error)
 	SearchFunc                   func(context.Context, *search.Query, int, int) ([]query.MessageSummary, error)
+	SearchMessageBodiesFunc      func(context.Context, *search.Query, int, int) ([]query.MessageSummary, error)
 	GetMessageFunc               func(context.Context, int64) (*query.MessageDetail, error)
 	GetMessageBySourceIDFunc     func(context.Context, string) (*query.MessageDetail, error)
 	GetTotalStatsFunc            func(context.Context, query.StatsOptions) (*query.TotalStats, error)
 	ListMessagesFunc             func(context.Context, query.MessageFilter) ([]query.MessageSummary, error)
 	SearchFastCountFunc          func(context.Context, *search.Query, query.MessageFilter) (int64, error)
 	GetGmailIDsByFilterFunc      func(context.Context, query.MessageFilter) ([]string, error)
+	GetGmailIDsByMessageIDsFunc  func(context.Context, []int64) ([]string, error)
+	GetAccountsByGmailIDsFunc    func(context.Context, []string) ([]string, error)
 	SearchByDomainsFunc          func(context.Context, []string, *time.Time, *time.Time, int, int) ([]query.MessageSummary, error)
 	SearchFastWithStatsFunc      func(context.Context, *search.Query, string, query.MessageFilter, query.ViewType, int, int) (*query.SearchFastResult, error)
 	GetMessageRawFunc            func(context.Context, int64) ([]byte, error)
@@ -46,6 +51,7 @@ type MockEngine struct {
 
 // Compile-time check.
 var _ query.Engine = (*MockEngine)(nil)
+var _ query.MessageBodySearcher = (*MockEngine)(nil)
 
 func (m *MockEngine) Aggregate(_ context.Context, _ query.ViewType, _ query.AggregateOptions) ([]query.AggregateRow, error) {
 	return m.AggregateRows, nil
@@ -78,6 +84,7 @@ func (m *MockEngine) GetMessageSummariesByIDs(ctx context.Context, ids []int64) 
 		}
 		out = append(out, query.MessageSummary{
 			ID:                   md.ID,
+			SourceID:             md.SourceID,
 			SourceMessageID:      md.SourceMessageID,
 			ConversationID:       md.ConversationID,
 			SourceConversationID: md.SourceConversationID,
@@ -126,6 +133,15 @@ func (m *MockEngine) GetAttachment(_ context.Context, id int64) (*query.Attachme
 	return nil, nil //nolint:nilnil // mirrors Engine.GetAttachment (nil, nil) not-found contract
 }
 
+func (m *MockEngine) GetAttachmentsByHash(_ context.Context, contentHash string) ([]query.AttachmentInfo, error) {
+	if m.AttachmentsByHash != nil {
+		if attachments, ok := m.AttachmentsByHash[contentHash]; ok {
+			return attachments, nil
+		}
+	}
+	return nil, nil
+}
+
 func (m *MockEngine) GetMessageRaw(ctx context.Context, id int64) ([]byte, error) {
 	if m.GetMessageRawFunc != nil {
 		return m.GetMessageRawFunc(ctx, id)
@@ -141,6 +157,13 @@ func (m *MockEngine) GetMessageRaw(ctx context.Context, id int64) ([]byte, error
 func (m *MockEngine) Search(ctx context.Context, q *search.Query, limit, offset int) ([]query.MessageSummary, error) {
 	if m.SearchFunc != nil {
 		return m.SearchFunc(ctx, q, limit, offset)
+	}
+	return m.SearchResults, nil
+}
+
+func (m *MockEngine) SearchMessageBodies(ctx context.Context, q *search.Query, limit, offset int) ([]query.MessageSummary, error) {
+	if m.SearchMessageBodiesFunc != nil {
+		return m.SearchMessageBodiesFunc(ctx, q, limit, offset)
 	}
 	return m.SearchResults, nil
 }
@@ -176,6 +199,20 @@ func (m *MockEngine) GetGmailIDsByFilter(ctx context.Context, filter query.Messa
 		return m.GetGmailIDsByFilterFunc(ctx, filter)
 	}
 	return m.GmailIDs, nil
+}
+
+func (m *MockEngine) GetGmailIDsByMessageIDs(ctx context.Context, ids []int64) ([]string, error) {
+	if m.GetGmailIDsByMessageIDsFunc != nil {
+		return m.GetGmailIDsByMessageIDsFunc(ctx, ids)
+	}
+	return m.GmailIDs, nil
+}
+
+func (m *MockEngine) GetAccountsByGmailIDs(ctx context.Context, gmailIDs []string) ([]string, error) {
+	if m.GetAccountsByGmailIDsFunc != nil {
+		return m.GetAccountsByGmailIDsFunc(ctx, gmailIDs)
+	}
+	return m.GmailAccounts, nil
 }
 
 func (m *MockEngine) SearchByDomains(ctx context.Context, domains []string, after, before *time.Time, limit, offset int) ([]query.MessageSummary, error) {

@@ -22,8 +22,9 @@ type Collection struct {
 type CollectionWithSources struct {
 	Collection
 
-	SourceIDs    []int64
-	MessageCount int64
+	SourceIDs          []int64
+	MessageCount       int64
+	SourceDeletedCount int64
 }
 
 // DefaultCollectionName is the always-present collection that mirrors
@@ -34,6 +35,10 @@ const DefaultCollectionName = "All"
 
 // ErrCollectionNotFound is returned when a collection lookup has no hits.
 var ErrCollectionNotFound = errors.New("collection not found")
+
+// ErrCollectionExists is returned when creating a collection with a name
+// that already exists.
+var ErrCollectionExists = errors.New("collection already exists")
 
 // ErrCollectionImmutable is returned when an explicit mutation is
 // attempted against the auto-managed default collection.
@@ -125,7 +130,9 @@ func (s *Store) CreateCollection(
 		if err != nil {
 			if s.dialect.IsConflictError(err) {
 				return fmt.Errorf(
-					"collection %q already exists", name,
+					"collection %q already exists: %w",
+					name,
+					ErrCollectionExists,
 				)
 			}
 			return fmt.Errorf("insert collection: %w", err)
@@ -333,18 +340,23 @@ func (s *Store) hydrateCollection(
 	}
 	_ = rows.Close()
 
-	var count int64
+	var count, sourceDeleted int64
 	if len(sourceIDs) > 0 {
 		count, err = s.CountActiveMessages(sourceIDs...)
+		if err != nil {
+			return nil, err
+		}
+		sourceDeleted, err = s.CountSourceDeletedMessages(sourceIDs...)
 		if err != nil {
 			return nil, err
 		}
 	}
 
 	return &CollectionWithSources{
-		Collection:   *c,
-		SourceIDs:    sourceIDs,
-		MessageCount: count,
+		Collection:         *c,
+		SourceIDs:          sourceIDs,
+		MessageCount:       count,
+		SourceDeletedCount: sourceDeleted,
 	}, nil
 }
 
