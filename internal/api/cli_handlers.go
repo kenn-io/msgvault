@@ -1035,9 +1035,11 @@ func cliRunCommandAllowed(args []string) bool {
 		"add-granola",
 		"add-imap",
 		"add-o365",
+		"add-slack",
 		"add-synctech-sms-drive",
 		"add-teams",
 		"backfill-beeper-media",
+		"backfill-slack-media",
 		"backfill-teams-media",
 		"build-embeddings",
 		"cancel-deletion",
@@ -1064,6 +1066,7 @@ func cliRunCommandAllowed(args []string) bool {
 		"sync-calendar",
 		"sync-circleback",
 		"sync-granola",
+		"sync-slack",
 		"sync-synctech-sms",
 		"sync-teams":
 		return true

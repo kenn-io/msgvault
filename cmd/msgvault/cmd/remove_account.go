@@ -17,6 +17,7 @@ import (
 	imaplib "go.kenn.io/msgvault/internal/imap"
 	"go.kenn.io/msgvault/internal/microsoft"
 	"go.kenn.io/msgvault/internal/oauth"
+	"go.kenn.io/msgvault/internal/slack"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -266,6 +267,14 @@ func runRemoveAccountLocal(cmd *cobra.Command, args []string) error {
 			if err := beeper.DeleteToken(cfg.TokensDir()); err != nil {
 				fmt.Fprintf(os.Stderr,
 					"Warning: could not remove Beeper token: %v\n", err,
+				)
+			}
+		}
+	case sourceTypeSlack:
+		if teamID, _, ok := splitSlackIdentifier(source.Identifier); ok {
+			if err := slack.DeleteToken(cfg.TokensDir(), teamID); err != nil {
+				fmt.Fprintf(os.Stderr,
+					"Warning: could not remove Slack token: %v\n", err,
 				)
 			}
 		}

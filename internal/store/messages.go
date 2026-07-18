@@ -2505,12 +2505,19 @@ func (s *Store) ReplaceMessageBeeperAttachments(messageID int64, refs []Attachme
 // attachment rows keyed by source_attachment_id, so re-persisting a message
 // can keep already-downloaded media without re-fetching it.
 func (s *Store) MessageBeeperAttachments(messageID int64) (map[string]AttachmentRef, error) {
+	return s.messageAttachmentsByPrefix(messageID, "beeper:")
+}
+
+// messageAttachmentsByPrefix returns a message's importer-managed attachment
+// rows under the given source_attachment_id prefix, keyed by
+// source_attachment_id. prefix is a trusted package constant, never user input.
+func (s *Store) messageAttachmentsByPrefix(messageID int64, prefix string) (map[string]AttachmentRef, error) {
 	rows, err := s.db.Query(`
 		SELECT COALESCE(filename, ''), COALESCE(mime_type, ''), storage_path, COALESCE(content_hash, ''), size, source_attachment_id,
 		       COALESCE(media_type, ''), COALESCE(width, 0), COALESCE(height, 0), COALESCE(duration_ms, 0)
 		FROM attachments
-		WHERE message_id = ? AND source_attachment_id LIKE 'beeper:%'
-	`, messageID)
+		WHERE message_id = ? AND source_attachment_id LIKE ? || '%'
+	`, messageID, prefix)
 	if err != nil {
 		return nil, err
 	}
@@ -2564,19 +2571,25 @@ func (s *Store) ListRecentMessagesForSource(sourceID int64, limit int) ([]Source
 	return out, rows.Err()
 }
 
-// BeeperPendingAttachmentMessage identifies a message with at least one
-// pending (not yet downloaded) Beeper attachment marker.
-type BeeperPendingAttachmentMessage struct {
+// PendingAttachmentMessage identifies a message with at least one pending
+// (not yet downloaded) importer-managed attachment marker.
+type PendingAttachmentMessage struct {
 	MessageID       int64
 	SourceMessageID string
 	ChatID          string // conversations.source_conversation_id
 }
 
-// ListBeeperPendingAttachmentMessages returns the messages of a beeper
-// source that still have pending attachment markers, so a retry pass can
-// re-fetch their media. Buffered (not a cursor callback): callers do slow
-// network and write work per item, which must not hold a read cursor open.
-func (s *Store) ListBeeperPendingAttachmentMessages(sourceID int64) ([]BeeperPendingAttachmentMessage, error) {
+// BeeperPendingAttachmentMessage is the Beeper-era name for
+// PendingAttachmentMessage, kept as an alias for existing callers.
+type BeeperPendingAttachmentMessage = PendingAttachmentMessage
+
+// listPendingAttachmentMessages returns the messages of a source that still
+// have pending attachment markers under the given source_attachment_id
+// prefix, so a retry pass can re-fetch their media. Buffered (not a cursor
+// callback): callers do slow network and write work per item, which must not
+// hold a read cursor open. prefix is a trusted package constant, never user
+// input.
+func (s *Store) listPendingAttachmentMessages(sourceID int64, prefix string) ([]PendingAttachmentMessage, error) {
 	rows, err := s.db.Query(`
 		SELECT m.id, m.source_message_id, c.source_conversation_id
 		FROM messages m
@@ -2585,23 +2598,52 @@ func (s *Store) ListBeeperPendingAttachmentMessages(sourceID int64) ([]BeeperPen
 		  AND EXISTS (
 		    SELECT 1 FROM attachments a
 		    WHERE a.message_id = m.id
-		      AND a.source_attachment_id LIKE 'beeper:%'
+		      AND a.source_attachment_id LIKE ? || '%'
 		      AND (a.content_hash IS NULL OR a.content_hash = '')
+		      AND COALESCE(a.media_type, '') <> 'link'
 		  )
-	`, sourceID)
+	`, sourceID, prefix)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = rows.Close() }()
-	var items []BeeperPendingAttachmentMessage
+	var items []PendingAttachmentMessage
 	for rows.Next() {
-		var item BeeperPendingAttachmentMessage
+		var item PendingAttachmentMessage
 		if err := rows.Scan(&item.MessageID, &item.SourceMessageID, &item.ChatID); err != nil {
 			return nil, err
 		}
 		items = append(items, item)
 	}
 	return items, rows.Err()
+}
+
+// ListBeeperPendingAttachmentMessages returns the messages of a beeper
+// source that still have pending attachment markers (see
+// listPendingAttachmentMessages).
+func (s *Store) ListBeeperPendingAttachmentMessages(sourceID int64) ([]PendingAttachmentMessage, error) {
+	return s.listPendingAttachmentMessages(sourceID, "beeper:")
+}
+
+// ListSlackPendingAttachmentMessages returns the messages of a slack source
+// that still have pending attachment markers (see
+// listPendingAttachmentMessages). Metadata-only link rows (media_type
+// "link") are deliberate non-downloads, not pending work.
+func (s *Store) ListSlackPendingAttachmentMessages(sourceID int64) ([]PendingAttachmentMessage, error) {
+	return s.listPendingAttachmentMessages(sourceID, "slack:")
+}
+
+// ReplaceMessageSlackAttachments replaces Slack-managed attachment rows for
+// a message (rows whose source_attachment_id carries the "slack:" prefix).
+func (s *Store) ReplaceMessageSlackAttachments(messageID int64, refs []AttachmentRef) error {
+	return s.replaceMessageAttachmentsWhere(messageID, `source_attachment_id LIKE 'slack:%'`, false, refs)
+}
+
+// MessageSlackAttachments returns the message's existing Slack-managed
+// attachment rows keyed by source_attachment_id, so re-persisting a message
+// can keep already-downloaded media without re-fetching it.
+func (s *Store) MessageSlackAttachments(messageID int64) (map[string]AttachmentRef, error) {
+	return s.messageAttachmentsByPrefix(messageID, "slack:")
 }
 
 // ReplaceMessageLinkAttachments replaces URL-backed attachment rows for a message.

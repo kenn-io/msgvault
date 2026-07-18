@@ -119,7 +119,7 @@ const (
 
 // TextMessageTypes lists the message_type values included in Texts mode.
 var TextMessageTypes = []string{
-	"whatsapp", "imessage", messageTypeSMS, "mms", "google_voice_text", "teams", "beeper",
+	"whatsapp", "imessage", messageTypeSMS, "mms", "google_voice_text", "teams", "beeper", "slack",
 }
 
 // TextMessageTypeSQLList renders TextMessageTypes as a quoted SQL IN-list
@@ -166,6 +166,7 @@ var KnownMessageTypes = []string{
 	"google_voice_call",
 	"google_voice_voicemail",
 	"beeper",
+	"slack",
 }
 
 // IsKnownMessageType reports whether mt is a message_type value that msgvault
