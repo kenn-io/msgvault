@@ -1,9 +1,10 @@
 # Slack Ingestion — Design
 
 Date: 2026-07-18
-Status: Draft — decisions settled, load-bearing items marked LB-* below
-require live validation against a real workspace before implementation
-is declared sound.
+Status: Draft, load-bearing pass complete — LB-1..5 probed live against a
+Slack Developer Program sandbox (team `TesterMsgVault`, 2026-07-18) with
+a seeded 1,100-message channel. LB-3 was falsified and the incremental
+design revised accordingly; verdicts inline below.
 
 ## Goal
 
@@ -155,6 +156,7 @@ Config:
 # max_media_bytes = 52428800       # 50 MiB default, 0 = metadata-only
 # sync_interval = "1h"             # daemon scheduling
 # edit_rescan_window = "168h"      # see Incremental sync
+# thread_lookback = "720h"         # how long a thread root stays tracked for new replies
 ```
 
 ## Incremental sync & checkpointing
@@ -166,6 +168,9 @@ Config:
 type SyncState struct {
     // channelID -> max message ts persisted for that conversation
     Conversations map[string]string `json:"conversations"`
+    // channelID -> rootTs -> max reply ts persisted for that thread.
+    // Pruned to roots younger than thread_lookback (see below).
+    Threads map[string]map[string]string `json:"threads"`
 }
 ```
 
@@ -180,11 +185,26 @@ type SyncState struct {
   data-loss bug roborev hammered on in #398 — a failed replies fetch
   must fail that conversation's cursor advance, not just increment an
   error counter).
-- **Incremental:** `conversations.history` with `oldest=<cursor>`,
-  `inclusive=false`. New thread replies on *old* roots do appear in
-  history as fresh messages carrying `thread_ts`, so threading links
-  resolve even when the root is already archived (LB-3 verifies the
-  parent lookup path).
+- **Incremental (channel level):** `conversations.history` with
+  `oldest=<cursor>`, `inclusive=false` — catches new roots and
+  broadcast replies only.
+- **Incremental (threads) — revised after LB-3 was falsified.** Thread
+  replies do **not** appear in `conversations.history` unless the author
+  chose "also send to channel", and the updated parent is not re-served
+  either (history filters on the parent's original `ts`). Verified
+  mitigation: `conversations.replies` honors `oldest`, and a re-fetched
+  parent carries live `reply_count`/`latest_reply`. Design: track
+  per-root reply cursors in `SyncState.Threads`; each incremental sync
+  calls `conversations.replies` with `oldest=<thread cursor>` for every
+  tracked root, tracking roots for a configurable `thread_lookback`
+  (default 30 days) before pruning. Replies to threads older than the
+  lookback are caught only by `--full` (or the LB-6 search-based
+  discovery fast-follow). Empty replies calls are cheap at internal-app
+  limits (~50 req/min, LB-1), but this bounds per-sync call count to
+  O(active threads), which is why the lookback exists. Implementation
+  gotcha (probe-verified): `conversations.replies` includes the parent
+  itself as the first message — the importer must skip it or rely on
+  upsert idempotency.
 - **Edits & deletes (structural limitation):** history is keyed by
   original `ts`, so an edit or delete of a message older than the cursor
   is invisible to incremental sync. Mitigation: each scheduled sync
@@ -247,32 +267,41 @@ type SyncState struct {
 - Live validation against a real workspace before the PR (Teams
   precedent: it shipped with a ~313k-message live validation note).
 
-## Load-bearing items (to validate live before/while implementing)
+## Load-bearing findings (probed live 2026-07-18, Developer Program
+sandbox, fresh internal app, 1,100-message seeded channel)
 
-- **LB-1 — internal-app rate limits.** Slack's changelog states internal
-  custom apps keep ~50 req/min + up to 999 msgs/req on
-  `conversations.history`; the clampdown targets commercially
-  distributed apps. Probe: page a large channel with `limit=999` on a
-  fresh internal app and confirm granted page size + sustained request
-  rate. If falsified, backfill is still correct, just slow — and the
-  export-ZIP follow-up spec becomes the recommended backfill path.
-- **LB-2 — full-history depth.** Confirm `conversations.history` serves
-  history to the beginning of the channel on a paid plan (Free plan is
-  documented at 90 days). Validate against the oldest known message in
-  a test workspace.
-- **LB-3 — late thread replies.** Confirm a reply to a months-old root
-  appears in incremental `history` (`oldest=<cursor>`) with `thread_ts`
-  set, and that persisting it links to the archived root via
-  `source_message_id` lookup rather than requiring a re-fetch of the
-  root.
-- **LB-4 — non-member public channels.** Check whether a user token can
-  read `conversations.history` of a public channel the user has never
-  joined. If yes, a `[slack] include_unjoined_public = true` option can
-  be a fast follow; if no, v1's membership scope stands.
-- **LB-5 — mpim membership enumeration.** Confirm `users.conversations`
-  with `types=public_channel,private_channel,mpim,im` returns all four
-  kinds under the listed scopes (Slack has historically had quirks with
-  mpim visibility).
+- **LB-1 — internal-app rate limits: VERIFIED.** `conversations.history`
+  with `limit=999` returned full 999-message pages at 42 req/min
+  sustained (12 consecutive calls, no 429). The 2025 clampdown
+  (1 req/min, 15 msgs) does not apply to internal custom apps; the
+  design's backfill performance assumptions hold.
+- **LB-2 — full-history depth: INCONCLUSIVE in sandbox** (all seeded
+  data is same-day, so there is no >90-day boundary to cross). Slack's
+  plan docs state paid plans serve full history via API; treat as
+  docs-verified and confirm during the first real-workspace sync.
+- **LB-3 — late thread replies: FALSIFIED.** A reply to an
+  already-archived root does **not** appear in `conversations.history
+  oldest=<cursor>` (empty page), and the parent is not re-served with
+  updated metadata either. Verified mitigation (see Incremental sync):
+  `conversations.replies` honors `oldest` and returns the late reply;
+  the re-fetched parent carries `reply_count`/`latest_reply`. Design
+  revised to per-root reply cursors with a `thread_lookback` window.
+- **LB-4 — non-member public channels: WORKS.** The user token read
+  `conversations.history` of a public channel after leaving it. A
+  `[slack] include_unjoined_public = true` option is a viable fast
+  follow; v1 still defaults to memberships only.
+- **LB-5 — conversation-type enumeration: PARTIAL.** `users.conversations`
+  returned `public_channel` and `im` correctly; `mpim` untested because
+  the sandbox has no group DM (needs 3+ users). Re-verify in passing on
+  the first workspace that has one; no design impact expected.
+
+Follow-up probe candidates:
+
+- **LB-6 — search-based reply discovery.** `search.messages` (user
+  scope `search:read`) with an `after:<date>` modifier may return new
+  thread replies globally, removing the `thread_lookback` blind spot
+  for replies to old threads. Not yet probed (scope not granted to the
+  probe app); candidate for a fast follow to the incremental design.
 
 ## Out of scope
 
