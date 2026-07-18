@@ -275,6 +275,10 @@ func (imp *Importer) ensureMembership(ctx context.Context, syncID, convID int64,
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
+			if errors.Is(err, ErrNotFound) {
+				imp.recordItem(syncID, c.ID, "membership", store.SyncRunItemStatusSkipped, "slack_channel_gone", err)
+				return nil
+			}
 			imp.recordItem(syncID, c.ID, "membership", store.SyncRunItemStatusError, "slack_fetch_error", err)
 			sum.Errors++
 			return nil
@@ -315,6 +319,15 @@ func (imp *Importer) backfillConversation(ctx context.Context, cc *convScope, st
 		if err != nil {
 			if ctx.Err() != nil {
 				return ctx.Err()
+			}
+			if errors.Is(err, ErrNotFound) {
+				// Enumerated but unreadable (observed live: a sandbox
+				// provisioning-bot DM). There is nothing to fetch — recording
+				// it as a hard error would wedge every future run into
+				// partial failure.
+				imp.recordItem(cc.syncID, cc.channelID, "fetch", store.SyncRunItemStatusSkipped, "slack_channel_gone", err)
+				cs.Done = true
+				return nil
 			}
 			imp.recordItem(cc.syncID, cc.channelID, "fetch", store.SyncRunItemStatusError, "slack_fetch_error", err)
 			sum.FetchErrors++
@@ -370,6 +383,12 @@ func (imp *Importer) incrementalConversation(ctx context.Context, cc *convScope,
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
+			if errors.Is(err, ErrNotFound) {
+				// The conversation is gone (left/deleted); the archived
+				// messages are kept and there is nothing left to fetch.
+				imp.recordItem(cc.syncID, cc.channelID, "fetch", store.SyncRunItemStatusSkipped, "slack_channel_gone", err)
+				return nil
+			}
 			imp.recordItem(cc.syncID, cc.channelID, "fetch", store.SyncRunItemStatusError, "slack_fetch_error", err)
 			sum.FetchErrors++
 			sum.Errors++
@@ -422,6 +441,10 @@ func (imp *Importer) rescanHead(ctx context.Context, cc *convScope, sum *ImportS
 		if err != nil {
 			if ctx.Err() != nil {
 				return ctx.Err()
+			}
+			if errors.Is(err, ErrNotFound) {
+				imp.recordItem(cc.syncID, cc.channelID, "fetch", store.SyncRunItemStatusSkipped, "slack_channel_gone", err)
+				return nil
 			}
 			imp.recordItem(cc.syncID, cc.channelID, "fetch", store.SyncRunItemStatusError, "slack_fetch_error", err)
 			sum.FetchErrors++

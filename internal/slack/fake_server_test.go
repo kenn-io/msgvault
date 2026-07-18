@@ -113,6 +113,9 @@ type fakeSlack struct {
 	// failHistoryContinuations fails only history requests carrying a page
 	// cursor, emulating a walk that dies partway through a multi-page window.
 	failHistoryContinuations bool
+	// ghosts lists conversation IDs that stay enumerable but 404 on read
+	// (see handleGhost).
+	ghosts []string
 	// rateLimit429s serves that many 429s (with Retry-After: 0) before
 	// succeeding, per method call sequence.
 	rateLimit429s int
@@ -127,7 +130,26 @@ func newFakeSlack(t *testing.T) *fakeSlack {
 	}
 }
 
+// handleGhost keeps c in the users.conversations listing while making its
+// history/members lookups answer channel_not_found, like a conversation the
+// token can enumerate but not read.
+func (f *fakeSlack) handleGhost(c *fakeConv) {
+	f.ghosts = append(f.ghosts, c.ID)
+}
+
+func (f *fakeSlack) isGhost(id string) bool {
+	for _, g := range f.ghosts {
+		if g == id {
+			return true
+		}
+	}
+	return false
+}
+
 func (f *fakeSlack) conv(id string) *fakeConv {
+	if f.isGhost(id) {
+		return nil
+	}
 	for _, c := range f.convs {
 		if c.ID == id {
 			return c

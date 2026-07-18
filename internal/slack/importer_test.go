@@ -345,6 +345,27 @@ func TestImportFullReUpsertsInPlace(t *testing.T) {
 	assert.Equal(t, 12, total, "full run must upsert, not duplicate")
 }
 
+func TestImportGoneConversationIsSkippedNotFatal(t *testing.T) {
+	f := testWorkspace(t)
+	// Enumerated but unreadable: history answers channel_not_found (observed
+	// live with a sandbox provisioning-bot DM). The fake 404s any channel it
+	// has no record of, so listing a ghost entry reproduces it exactly.
+	f.convs = append(f.convs, &fakeConv{ID: "D_GONE", Kind: "im", IMUser: "UALICE"})
+	ghost := f.convs[len(f.convs)-1]
+	f.handleGhost(ghost)
+	imp, opts := testImporter(t, f)
+	st := imp.store
+
+	sum, err := imp.Import(context.Background(), opts)
+	require.NoError(t, err, "a permanently-gone conversation must not fail the run")
+	assert.Zero(t, sum.FetchErrors)
+
+	// Everything else archived normally.
+	var total int
+	require.NoError(t, st.DB().QueryRow(`SELECT COUNT(*) FROM messages WHERE message_type='slack'`).Scan(&total))
+	assert.Equal(t, 12, total)
+}
+
 func TestImportChannelFilters(t *testing.T) {
 	f := testWorkspace(t)
 	imp, opts := testImporter(t, f)
