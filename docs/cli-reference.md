@@ -413,6 +413,67 @@ msgvault backfill-beeper-media --account signal
 
 ---
 
+## add-slack
+
+Register a [Slack workspace](/usage/slack/) as a `slack` source. Requires a
+user token (`xoxp-…`) from an internal Slack app you create (see the usage
+guide for the two-minute setup and scope list). The token is validated with
+`auth.test` and stored at `tokens/slack_<team-id>.json`.
+
+```bash
+msgvault add-slack
+msgvault add-slack --token-file ~/slack-token.txt
+MSGVAULT_SLACK_TOKEN="xoxp-..." msgvault add-slack
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--token-file` | | Read the user token from a file instead of prompting |
+| `--no-default-identity` | `false` | Do not auto-confirm the workspace user ID as the source's "me" identity |
+
+After adding, sync with `msgvault sync-slack`.
+
+---
+
+## sync-slack
+
+Sync Slack conversations — channels you are a member of, group DMs, and 1:1
+DMs — for registered workspaces. The first run backfills full history and is
+resumable; later runs are incremental and poll recent thread roots for late
+replies. Per-workspace failures do not stop the run: remaining workspaces
+still sync and the command exits non-zero listing the failures. The `[slack]`
+config `channels`/`exclude_channels` filters select which channels sync. See
+[Slack](/usage/slack/).
+
+```bash
+msgvault sync-slack
+msgvault sync-slack T0123456789
+msgvault sync-slack --full
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--limit` | `0` | Max messages per conversation this run (0 = no limit; limited backfills resume next run) |
+| `--full` | `false` | Ignore stored cursors and re-fetch every message (repairs rows in place; catches old thread replies and edits) |
+| `--no-threads` | `false` | Skip thread-reply fetching for this run |
+| `--no-media` | `false` | Skip file downloads for this run |
+
+---
+
+## backfill-slack-media
+
+Retry pending Slack file downloads (files that failed or exceeded the size
+cap during `sync-slack`). Idempotent: files are content-addressed and
+already-downloaded ones are never re-fetched. Files hosted outside
+`files.slack.com` are metadata-only link rows and are never downloaded.
+
+```bash
+msgvault backfill-slack-media
+msgvault backfill-slack-media T0123456789
+```
+
+---
+
 ## add-calendar
 
 Authorize read-only Google Calendar access for an account and register its calendars for sync. If the account already has a Gmail token, re-consent bundles Gmail + Calendar so Gmail access is not dropped — keep both checked on the consent screen. The Calendar API must be enabled on the OAuth project. By default only owned/writable calendars are registered.

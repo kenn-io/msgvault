@@ -113,6 +113,13 @@ func NewClient(baseURL, token string) *Client {
 	}
 }
 
+// disableRateLimits removes the per-tier pacing (tests only).
+func (c *Client) disableRateLimits() {
+	for tier := range c.limiters {
+		c.limiters[tier] = rate.NewLimiter(rate.Inf, 1)
+	}
+}
+
 // call POSTs a Web API method with form params, decoding the JSON body into
 // out (which must embed apiResponse via an ok/error check by the caller).
 // 429 and 5xx are retried with Retry-After / exponential back-off.

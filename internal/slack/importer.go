@@ -292,6 +292,13 @@ func (imp *Importer) ensureMembership(ctx context.Context, syncID, convID int64,
 // conversation resumable rather than failing the run.
 func (imp *Importer) backfillConversation(ctx context.Context, cc *convScope, state *SyncState, sum *ImportSummary) error {
 	cs := cc.cs
+	// Pin the walk's upper bound BEFORE the first page: page cursors index
+	// into the bounded window, so introducing the bound mid-walk would shift
+	// the window under an already-issued cursor and skip messages. Messages
+	// arriving after the pin are left for the incremental phase.
+	if cs.BackfillLatest == "" {
+		cs.BackfillLatest = fmt.Sprintf("%d.999999", imp.now().Unix())
+	}
 	pages := 0
 	for {
 		if err := ctx.Err(); err != nil {
@@ -319,11 +326,6 @@ func (imp *Importer) backfillConversation(ctx context.Context, cc *convScope, st
 		if cs.Cursor == "" && len(page.Messages) > 0 {
 			cs.Cursor = page.Messages[0].TS
 		}
-		// Pin the walk's upper bound so messages arriving mid-backfill are
-		// left for the incremental phase instead of shifting pagination.
-		if cs.BackfillLatest == "" && len(page.Messages) > 0 {
-			cs.BackfillLatest = page.Messages[0].TS
-		}
 		for i := range page.Messages {
 			if err := imp.processMessage(ctx, cc, &page.Messages[i], sum); err != nil {
 				return err
@@ -344,8 +346,10 @@ func (imp *Importer) backfillConversation(ctx context.Context, cc *convScope, st
 }
 
 // incrementalConversation fetches top-level messages newer than the stored
-// cursor. The cursor advances only after a page has fully persisted, so a
-// failed page is re-fetched next run (upserts make that idempotent).
+// cursor. History pages arrive NEWEST-first, so the ts cursor only advances
+// once every page of the window has persisted — advancing it per page would
+// let an interruption after page one permanently skip the older pages.
+// A retried window is re-fetched in full (upserts make that idempotent).
 func (imp *Importer) incrementalConversation(ctx context.Context, cc *convScope, sum *ImportSummary) error {
 	cs := cc.cs
 	pageCursor := ""
@@ -355,7 +359,7 @@ func (imp *Importer) incrementalConversation(ctx context.Context, cc *convScope,
 			return err
 		}
 		if cc.limitReached() {
-			return nil
+			return nil // cursor not advanced; limited runs re-fetch the window
 		}
 		page, err := imp.client.HistoryPage(ctx, HistoryParams{
 			ChannelID: cc.channelID,
@@ -369,7 +373,7 @@ func (imp *Importer) incrementalConversation(ctx context.Context, cc *convScope,
 			imp.recordItem(cc.syncID, cc.channelID, "fetch", store.SyncRunItemStatusError, "slack_fetch_error", err)
 			sum.FetchErrors++
 			sum.Errors++
-			return nil // cursor not advanced; next run retries
+			return nil // cursor not advanced; next run retries the window
 		}
 		for i := range page.Messages {
 			m := &page.Messages[i]
@@ -381,9 +385,8 @@ func (imp *Importer) incrementalConversation(ctx context.Context, cc *convScope,
 			}
 		}
 		cc.budgetUsed += len(page.Messages)
-		// The page persisted cleanly: safe to advance the ts cursor.
-		cs.Cursor = maxTS
 		if !page.HasMore || page.NextCursor == "" {
+			cs.Cursor = maxTS // the whole window persisted cleanly
 			return nil
 		}
 		pageCursor = page.NextCursor
