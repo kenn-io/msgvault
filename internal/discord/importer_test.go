@@ -29,6 +29,7 @@ type importerFakeAPI struct {
 	failBefore  map[string]map[string]error
 	injectAfter map[string][]Message
 	catalogErr  error
+	messageHook func(string, MessageQuery) ([]Message, error, bool)
 }
 
 func newImporterFakeAPI(channels ...Channel) *importerFakeAPI {
@@ -72,6 +73,11 @@ func (f *importerFakeAPI) Messages(_ context.Context, channelID string, query Me
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.queries[channelID] = append(f.queries[channelID], query)
+	if f.messageHook != nil {
+		if page, err, handled := f.messageHook(channelID, query); handled {
+			return slices.Clone(page), err
+		}
+	}
 	if byCursor := f.failBefore[channelID]; byCursor != nil && query.Before != "" {
 		if err := byCursor[query.Before]; err != nil {
 			delete(byCursor, query.Before)
@@ -149,6 +155,15 @@ func newTestImporter(st *store.Store, api API) *Importer {
 	importer := NewImporter(st, api)
 	importer.pageSize = 2
 	return importer
+}
+
+func importerTestSnowflake(t *testing.T, at time.Time, sequence uint64) string {
+	t.Helper()
+	lower, err := SnowflakeFromTimestamp(at)
+	require.NoError(t, err)
+	value, err := ParseSnowflake(lower)
+	require.NoError(t, err)
+	return strconv.FormatUint(value+sequence, 10)
 }
 
 func TestImporterPinsBackfillPagesBackwardThenCollectsForwardPerContainer(t *testing.T) {
@@ -705,4 +720,366 @@ func TestImporterEmptyContainerKeepsAForwardCursorForFutureMessages(t *testing.T
 	var count int
 	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM messages WHERE source_id = ?`), source.ID).Scan(&count))
 	assert.Equal(1, count)
+}
+
+func TestImporterIncrementalRepairUsesPinnedIntervalAndRefreshesMessages(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewSQLiteTestStore(t)
+	now := time.Date(2026, 7, 19, 12, 0, 0, 0, time.UTC)
+	lower, err := SnowflakeFromTimestamp(now.Add(-7 * 24 * time.Hour))
+	require.NoError(err)
+	changedID := importerTestSnowflake(t, now.Add(-2*time.Hour), 1)
+	deletedID := importerTestSnowflake(t, now.Add(-3*time.Hour), 2)
+	abovePinnedHeadID := importerTestSnowflake(t, now.Add(-time.Hour), 3)
+
+	api := newImporterFakeAPI(importerTestChannel("300", "general"))
+	api.messages["300"] = []Message{
+		importerTestMessage(deletedID, "300", "will disappear"),
+		importerTestMessage(changedID, "300", "before edit"),
+	}
+	importer := newTestImporter(st, api)
+	importer.now = func() time.Time { return now }
+	_, err = importer.Import(t.Context(), ImportOptions{GuildID: "200", EditRescanWindow: 7 * 24 * time.Hour})
+	require.NoError(err)
+	source, err := st.GetSourceByIdentifier("200")
+	require.NoError(err)
+	conversationID, err := st.EnsureConversationWithType(source.ID, "300", "channel", "general")
+	require.NoError(err)
+
+	editedAt := now.Add(-30 * time.Minute)
+	changed := importerTestMessage(changedID, "300", "after edit")
+	changed.EditedTimestamp = &editedAt
+	changed.Reactions = []Reaction{{Emoji: Emoji{Name: "thumbsup"}, Count: 12}}
+	// The pinned repair head is changedID. A concurrently archived message
+	// above it must not enter the local comparison.
+	api.messages["300"] = []Message{changed}
+	api.queries["300"] = nil
+	injected := false
+	api.messageHook = func(_ string, query MessageQuery) ([]Message, error, bool) {
+		if injected || query.Before == "" {
+			return nil, nil, false
+		}
+		injected = true
+		_, insertErr := st.UpsertMessage(&store.Message{
+			SourceID: source.ID, ConversationID: conversationID,
+			SourceMessageID: abovePinnedHeadID, MessageType: "discord",
+			SentAt: sql.NullTime{Time: now.Add(-time.Hour), Valid: true},
+		})
+		require.NoError(insertErr)
+		return nil, nil, false
+	}
+	_, err = importer.Import(t.Context(), ImportOptions{GuildID: "200", EditRescanWindow: 7 * 24 * time.Hour})
+	require.NoError(err)
+
+	var body, metadata string
+	var edited bool
+	require.NoError(st.DB().QueryRow(st.Rebind(`
+		SELECT mb.body_text, m.metadata, m.is_edited
+		FROM messages m JOIN message_bodies mb ON mb.message_id = m.id
+		WHERE m.source_id = ? AND m.source_message_id = ?`), source.ID, changedID).Scan(&body, &metadata, &edited))
+	assert.Equal("after edit", body)
+	assert.True(edited)
+	assert.Contains(metadata, `"reaction_summaries":[{"emoji":"thumbsup","count":12}]`)
+	assertMessageDeletionState(t, st, source.ID, deletedID, true)
+	assertMessageDeletionState(t, st, source.ID, abovePinnedHeadID, false)
+
+	queries := api.channelQueries("300")
+	assert.Contains(queries, MessageQuery{Limit: 1})
+	repairBefore, err := snowflakeSuccessor(changedID)
+	require.NoError(err)
+	assert.Contains(queries, MessageQuery{Before: repairBefore, Limit: 2})
+	assert.NotEmpty(lower)
+}
+
+func TestImporterRepairClearsTombstoneWhenMessageReappears(t *testing.T) {
+	require := require.New(t)
+	st := testutil.NewSQLiteTestStore(t)
+	now := time.Date(2026, 7, 19, 12, 0, 0, 0, time.UTC)
+	messageID := importerTestSnowflake(t, now.Add(-time.Hour), 1)
+	api := newImporterFakeAPI(importerTestChannel("300", "general"))
+	api.messages["300"] = []Message{importerTestMessage(messageID, "300", "present")}
+	importer := newTestImporter(st, api)
+	importer.now = func() time.Time { return now }
+	_, err := importer.Import(t.Context(), ImportOptions{GuildID: "200", EditRescanWindow: 7 * 24 * time.Hour})
+	require.NoError(err)
+	source, err := st.GetSourceByIdentifier("200")
+	require.NoError(err)
+	require.NoError(st.MarkMessageDeleted(source.ID, messageID))
+
+	_, err = importer.Import(t.Context(), ImportOptions{GuildID: "200", EditRescanWindow: 7 * 24 * time.Hour})
+	require.NoError(err)
+	assertMessageDeletionState(t, st, source.ID, messageID, false)
+}
+
+func TestImporterAccessFailuresRecordAndClearContainerMarkersWithoutChangingState(t *testing.T) {
+	for _, tt := range []struct {
+		name       string
+		statusCode int
+		marker     string
+		reason     bool
+	}{
+		{name: "forbidden", statusCode: http.StatusForbidden, marker: "container_inaccessible_since"},
+		{name: "unknown channel", statusCode: http.StatusNotFound, marker: "container_missing_since", reason: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			st := testutil.NewSQLiteTestStore(t)
+			now := time.Date(2026, 7, 19, 12, 0, 0, 0, time.UTC)
+			messageID := importerTestSnowflake(t, now.Add(-time.Hour), 1)
+			api := newImporterFakeAPI(importerTestChannel("300", "general"))
+			api.messages["300"] = []Message{importerTestMessage(messageID, "300", "archived")}
+			importer := newTestImporter(st, api)
+			importer.now = func() time.Time { return now }
+			_, err := importer.Import(t.Context(), ImportOptions{GuildID: "200", EditRescanWindow: 7 * 24 * time.Hour})
+			require.NoError(err)
+			source, err := st.GetSourceByIdentifier("200")
+			require.NoError(err)
+			before, err := st.GetLastSuccessfulSync(source.ID)
+			require.NoError(err)
+
+			failed := false
+			api.messageHook = func(_ string, _ MessageQuery) ([]Message, error, bool) {
+				if failed {
+					return nil, nil, false
+				}
+				failed = true
+				return nil, &APIError{Operation: "list channel messages", StatusCode: tt.statusCode, Code: 10003}, true
+			}
+			_, err = importer.Import(t.Context(), ImportOptions{GuildID: "200", EditRescanWindow: 7 * 24 * time.Hour})
+			require.NoError(err)
+			after, err := st.GetLastSuccessfulSync(source.ID)
+			require.NoError(err)
+			assert.Equal(before.CursorAfter.String, after.CursorAfter.String)
+			assertMessageDeletionState(t, st, source.ID, messageID, false)
+			conversationID, err := st.EnsureConversationWithType(source.ID, "300", "channel", "general")
+			require.NoError(err)
+			metadata, err := st.GetConversationMetadata(conversationID)
+			require.NoError(err)
+			assert.Contains(metadata.String, `"discord_channel_type":0`)
+			assert.Contains(metadata.String, `"`+tt.marker+`":"2026-07-19T12:00:00Z"`)
+			if tt.reason {
+				assert.Contains(metadata.String, `"container_missing_reason":"unknown_channel"`)
+			}
+
+			api.messageHook = nil
+			_, err = importer.Import(t.Context(), ImportOptions{GuildID: "200", EditRescanWindow: 7 * 24 * time.Hour})
+			require.NoError(err)
+			metadata, err = st.GetConversationMetadata(conversationID)
+			require.NoError(err)
+			assert.NotContains(metadata.String, "container_inaccessible_since")
+			assert.NotContains(metadata.String, "container_missing_since")
+			assert.NotContains(metadata.String, "container_missing_reason")
+		})
+	}
+}
+
+func TestImporterIncompleteRepairNeverMarksDeletions(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		err  error
+	}{
+		{name: "page failure", err: errors.New("temporary Discord failure")},
+		{name: "cancellation", err: context.Canceled},
+		{name: "malformed response", err: ErrDecodeResponse},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			require := require.New(t)
+			st := testutil.NewSQLiteTestStore(t)
+			now := time.Date(2026, 7, 19, 12, 0, 0, 0, time.UTC)
+			ids := []string{
+				importerTestSnowflake(t, now.Add(-4*time.Hour), 1),
+				importerTestSnowflake(t, now.Add(-3*time.Hour), 2),
+				importerTestSnowflake(t, now.Add(-2*time.Hour), 3),
+				importerTestSnowflake(t, now.Add(-time.Hour), 4),
+			}
+			api := newImporterFakeAPI(importerTestChannel("300", "general"))
+			for _, id := range ids {
+				api.messages["300"] = append(api.messages["300"], importerTestMessage(id, "300", id))
+			}
+			importer := newTestImporter(st, api)
+			importer.now = func() time.Time { return now }
+			_, err := importer.Import(t.Context(), ImportOptions{GuildID: "200", EditRescanWindow: 7 * 24 * time.Hour})
+			require.NoError(err)
+			source, err := st.GetSourceByIdentifier("200")
+			require.NoError(err)
+
+			api.messages["300"] = []Message{
+				importerTestMessage(ids[1], "300", ids[1]),
+				importerTestMessage(ids[2], "300", ids[2]),
+				importerTestMessage(ids[3], "300", ids[3]),
+			}
+			api.failBefore["300"] = map[string]error{ids[2]: tt.err}
+			_, err = importer.Import(t.Context(), ImportOptions{GuildID: "200", EditRescanWindow: 7 * 24 * time.Hour})
+			require.Error(err)
+			assertMessageDeletionState(t, st, source.ID, ids[0], false)
+		})
+	}
+
+	t.Run("out of order partial page", func(t *testing.T) {
+		require := require.New(t)
+		st := testutil.NewSQLiteTestStore(t)
+		now := time.Date(2026, 7, 19, 12, 0, 0, 0, time.UTC)
+		ids := []string{
+			importerTestSnowflake(t, now.Add(-4*time.Hour), 1),
+			importerTestSnowflake(t, now.Add(-3*time.Hour), 2),
+			importerTestSnowflake(t, now.Add(-2*time.Hour), 3),
+			importerTestSnowflake(t, now.Add(-time.Hour), 4),
+		}
+		api := newImporterFakeAPI(importerTestChannel("300", "general"))
+		for _, id := range ids {
+			api.messages["300"] = append(api.messages["300"], importerTestMessage(id, "300", id))
+		}
+		importer := newTestImporter(st, api)
+		importer.now = func() time.Time { return now }
+		_, err := importer.Import(t.Context(), ImportOptions{GuildID: "200"})
+		require.NoError(err)
+		source, err := st.GetSourceByIdentifier("200")
+		require.NoError(err)
+		api.messages["300"] = []Message{
+			importerTestMessage(ids[1], "300", ids[1]),
+			importerTestMessage(ids[2], "300", ids[2]),
+			importerTestMessage(ids[3], "300", ids[3]),
+		}
+		api.messageHook = func(channelID string, query MessageQuery) ([]Message, error, bool) {
+			if channelID == "300" && query.Before == ids[2] {
+				return []Message{
+					importerTestMessage(ids[1], "300", ids[1]),
+					importerTestMessage(ids[2], "300", ids[2]),
+				}, nil, true
+			}
+			return nil, nil, false
+		}
+		_, err = importer.Import(t.Context(), ImportOptions{GuildID: "200"})
+		require.ErrorContains(err, "not strictly below prior cursor")
+		assertMessageDeletionState(t, st, source.ID, ids[0], false)
+	})
+}
+
+func TestImporterReconcilesSuccessfulContainerWhenAnotherContainerFails(t *testing.T) {
+	require := require.New(t)
+	st := testutil.NewSQLiteTestStore(t)
+	now := time.Date(2026, 7, 19, 12, 0, 0, 0, time.UTC)
+	deletedInSuccessful := importerTestSnowflake(t, now.Add(-3*time.Hour), 1)
+	keptInSuccessful := importerTestSnowflake(t, now.Add(-2*time.Hour), 2)
+	wouldDeleteInFailed := importerTestSnowflake(t, now.Add(-3*time.Hour), 3)
+	keptInFailed := importerTestSnowflake(t, now.Add(-2*time.Hour), 4)
+	api := newImporterFakeAPI(
+		importerTestChannel("300", "general"), importerTestChannel("400", "random"),
+	)
+	api.messages["300"] = []Message{
+		importerTestMessage(deletedInSuccessful, "300", "deleted"),
+		importerTestMessage(keptInSuccessful, "300", "kept"),
+	}
+	api.messages["400"] = []Message{
+		importerTestMessage(wouldDeleteInFailed, "400", "not safely deleted"),
+		importerTestMessage(keptInFailed, "400", "kept"),
+	}
+	importer := newTestImporter(st, api)
+	importer.now = func() time.Time { return now }
+	_, err := importer.Import(t.Context(), ImportOptions{GuildID: "200"})
+	require.NoError(err)
+	source, err := st.GetSourceByIdentifier("200")
+	require.NoError(err)
+	api.messages["300"] = []Message{importerTestMessage(keptInSuccessful, "300", "kept")}
+	api.messages["400"] = []Message{importerTestMessage(keptInFailed, "400", "kept")}
+	api.messageHook = func(channelID string, _ MessageQuery) ([]Message, error, bool) {
+		if channelID == "400" {
+			return nil, errors.New("container failed"), true
+		}
+		return nil, nil, false
+	}
+	_, err = importer.Import(t.Context(), ImportOptions{GuildID: "200"})
+	require.Error(err)
+	assertMessageDeletionState(t, st, source.ID, deletedInSuccessful, true)
+	assertMessageDeletionState(t, st, source.ID, wouldDeleteInFailed, false)
+}
+
+func TestImporterFullRepairRespectsAfterAndUnboundedEmptyRemote(t *testing.T) {
+	t.Run("after leaves older rows untouched", func(t *testing.T) {
+		require := require.New(t)
+		st := testutil.NewSQLiteTestStore(t)
+		now := time.Date(2026, 7, 19, 12, 0, 0, 0, time.UTC)
+		oldID := importerTestSnowflake(t, now.Add(-30*24*time.Hour), 1)
+		recentMissingID := importerTestSnowflake(t, now.Add(-2*time.Hour), 2)
+		survivorID := importerTestSnowflake(t, now.Add(-time.Hour), 3)
+		api := newImporterFakeAPI(importerTestChannel("300", "general"))
+		api.messages["300"] = []Message{
+			importerTestMessage(oldID, "300", "old"),
+			importerTestMessage(recentMissingID, "300", "recent"),
+			importerTestMessage(survivorID, "300", "survivor"),
+		}
+		importer := newTestImporter(st, api)
+		importer.now = func() time.Time { return now }
+		_, err := importer.Import(t.Context(), ImportOptions{GuildID: "200"})
+		require.NoError(err)
+		source, err := st.GetSourceByIdentifier("200")
+		require.NoError(err)
+		api.messages["300"] = []Message{importerTestMessage(survivorID, "300", "survivor")}
+		_, err = importer.Import(t.Context(), ImportOptions{GuildID: "200", Full: true, After: now.Add(-7 * 24 * time.Hour)})
+		require.NoError(err)
+		assertMessageDeletionState(t, st, source.ID, oldID, false)
+		assertMessageDeletionState(t, st, source.ID, recentMissingID, true)
+	})
+
+	t.Run("deleted newest archived message is inside pinned local upper", func(t *testing.T) {
+		require := require.New(t)
+		st := testutil.NewSQLiteTestStore(t)
+		now := time.Date(2026, 7, 19, 12, 0, 0, 0, time.UTC)
+		remoteOlderID := importerTestSnowflake(t, now.Add(-3*time.Hour), 1)
+		deletedNewestID := importerTestSnowflake(t, now.Add(-time.Hour), 2)
+		api := newImporterFakeAPI(importerTestChannel("300", "general"))
+		api.messages["300"] = []Message{
+			importerTestMessage(remoteOlderID, "300", "older"),
+			importerTestMessage(deletedNewestID, "300", "newest"),
+		}
+		importer := newTestImporter(st, api)
+		importer.now = func() time.Time { return now }
+		_, err := importer.Import(t.Context(), ImportOptions{GuildID: "200"})
+		require.NoError(err)
+		source, err := st.GetSourceByIdentifier("200")
+		require.NoError(err)
+		api.messages["300"] = []Message{importerTestMessage(remoteOlderID, "300", "older")}
+		_, err = importer.Import(t.Context(), ImportOptions{GuildID: "200", Full: true})
+		require.NoError(err)
+		assertMessageDeletionState(t, st, source.ID, deletedNewestID, true)
+	})
+
+	t.Run("unbounded empty remote detects historical deletions", func(t *testing.T) {
+		require := require.New(t)
+		assert := assert.New(t)
+		st := testutil.NewSQLiteTestStore(t)
+		now := time.Date(2026, 7, 19, 12, 0, 0, 0, time.UTC)
+		messageID := importerTestSnowflake(t, now.Add(-30*24*time.Hour), 1)
+		api := newImporterFakeAPI(importerTestChannel("300", "general"))
+		api.messages["300"] = []Message{importerTestMessage(messageID, "300", "historical")}
+		importer := newTestImporter(st, api)
+		importer.now = func() time.Time { return now }
+		_, err := importer.Import(t.Context(), ImportOptions{GuildID: "200"})
+		require.NoError(err)
+		source, err := st.GetSourceByIdentifier("200")
+		require.NoError(err)
+		api.messages["300"] = nil
+		api.queries["300"] = nil
+		_, err = importer.Import(t.Context(), ImportOptions{GuildID: "200", Full: true})
+		require.NoError(err)
+		assertMessageDeletionState(t, st, source.ID, messageID, true)
+		for _, query := range api.channelQueries("300") {
+			assert.NotEqual("0", query.After)
+			assert.NotEqual("0", query.Before)
+		}
+	})
+}
+
+func assertMessageDeletionState(
+	t *testing.T, st *store.Store, sourceID int64, sourceMessageID string, wantDeleted bool,
+) {
+	t.Helper()
+	var deletedAt sql.NullTime
+	err := st.DB().QueryRow(st.Rebind(`
+		SELECT deleted_from_source_at FROM messages
+		WHERE source_id = ? AND source_message_id = ?`), sourceID, sourceMessageID).Scan(&deletedAt)
+	require.NoError(t, err)
+	assert.Equal(t, wantDeleted, deletedAt.Valid)
 }
