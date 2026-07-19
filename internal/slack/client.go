@@ -124,9 +124,13 @@ func (c *Client) disableRateLimits() {
 // out (which must embed apiResponse via an ok/error check by the caller).
 // 429 and 5xx are retried with Retry-After / exponential back-off.
 func (c *Client) call(ctx context.Context, method string, params url.Values, out any) error {
-	tier := methodTiers[method]
-	if tier == 0 {
-		tier = 3
+	// Strict method allowlist: reqURL is base + method, and the G704
+	// suppressions below rest on method being one of these package
+	// constants. Refusing unknown methods enforces that at runtime instead
+	// of by convention (and no new method can dodge tier classification).
+	tier, ok := methodTiers[method]
+	if !ok {
+		return fmt.Errorf("slack client: method %q is not allowlisted", method)
 	}
 	reqURL := c.baseURL + "/" + method
 	body := params.Encode()
@@ -135,9 +139,9 @@ func (c *Client) call(ctx context.Context, method string, params url.Values, out
 			return fmt.Errorf("wait for slack rate limit: %w", err)
 		}
 		// reqURL is the constant Slack API base (or a test-injected httptest
-		// URL) plus a package-constant method name — no remote or user input
-		// reaches it. gosec's taint analysis flags it via the env-var-driven
-		// live-probe test.
+		// URL) plus an allowlisted package-constant method name (enforced
+		// above) — no remote or user input reaches it. gosec's taint
+		// analysis flags it via the env-var-driven live-probe test.
 		req, err := http.NewRequestWithContext(ctx, http.MethodPost, reqURL, strings.NewReader(body)) // #nosec G704
 		if err != nil {
 			return err

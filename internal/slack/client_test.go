@@ -48,6 +48,15 @@ func TestClientErrorMapping(t *testing.T) {
 	require.NotErrorIs(t, err, ErrAuth)
 }
 
+func TestClientRejectsUnallowlistedMethods(t *testing.T) {
+	f := newFakeSlack(t)
+	c := testClient(t, f)
+
+	err := c.call(context.Background(), "chat.postMessage", nil, nil)
+	require.ErrorContains(t, err, "not allowlisted",
+		"the client must refuse methods outside its read-only allowlist before any request is made")
+}
+
 func TestClientPagination(t *testing.T) {
 	f := newFakeSlack(t)
 	f.users = []map[string]any{
