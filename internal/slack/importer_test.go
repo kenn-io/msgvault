@@ -55,6 +55,9 @@ func testWorkspace(t *testing.T) *fakeSlack {
 	}
 	f.convs = []*fakeConv{
 		general,
+		{ID: "C02", Name: "secrets", Kind: "private",
+			Members: []string{"UME", "UALICE"},
+			Msgs:    []fakeMsg{{TS: ts(30), User: "UALICE", Text: "private hi"}}},
 		{ID: "G01", Name: "mpdm-me--alice--bob-1", Kind: "mpim",
 			Members: []string{"UME", "UALICE", "UBOB"},
 			Msgs:    []fakeMsg{{TS: ts(10), User: "UME", Text: "group hi"}}},
@@ -63,6 +66,11 @@ func testWorkspace(t *testing.T) *fakeSlack {
 	}
 	return f
 }
+
+// totalWorkspaceMessages is the archived-row count for the full test
+// workspace: 8 channel + 1 private + 1 mpim + 1 im top-level, plus 2 thread
+// replies (the root re-upserts in place).
+const totalWorkspaceMessages = 13
 
 func testImporter(t *testing.T, f *fakeSlack) (*Importer, ImportOptions) {
 	t.Helper()
@@ -85,14 +93,13 @@ func TestImportEndToEnd(t *testing.T) {
 
 	sum, err := imp.Import(context.Background(), opts)
 	require.NoError(t, err)
-	assert.Equal(t, 3, sum.ConversationsProcessed)
+	assert.Equal(t, 4, sum.ConversationsProcessed)
 	assert.Equal(t, 2, sum.RepliesFetched)
 	assert.Zero(t, sum.FetchErrors)
 
-	// 8 channel + 1 mpim + 1 im top-level, 2 replies, root re-upserted in place.
 	var msgCount int
 	require.NoError(t, st.DB().QueryRow(`SELECT COUNT(*) FROM messages WHERE message_type='slack'`).Scan(&msgCount))
-	assert.Equal(t, 12, msgCount)
+	assert.Equal(t, totalWorkspaceMessages, msgCount)
 
 	// Conversation types and titles.
 	var title, convType string
@@ -106,6 +113,16 @@ func TestImportEndToEnd(t *testing.T) {
 		Scan(&title, &convType))
 	assert.Equal(t, "Alice", title)
 	assert.Equal(t, "direct_chat", convType)
+	require.NoError(t, st.DB().QueryRow(st.Rebind(
+		`SELECT title, conversation_type FROM conversations WHERE source_conversation_id = ?`), "C02").
+		Scan(&title, &convType))
+	assert.Equal(t, "#secrets", title, "private channels archive like channels")
+	assert.Equal(t, "channel", convType)
+	var privateMsgs int
+	require.NoError(t, st.DB().QueryRow(st.Rebind(`
+		SELECT COUNT(*) FROM messages m JOIN conversations c ON c.id = m.conversation_id
+		WHERE c.source_conversation_id = ?`), "C02").Scan(&privateMsgs))
+	assert.Equal(t, 1, privateMsgs)
 
 	// Email-based identity: Alice deduped against mail archives by address.
 	var aliceID int64
@@ -282,7 +299,7 @@ func TestImportHistoryFailureLeavesConversationResumable(t *testing.T) {
 	require.NoError(t, err)
 	var total int
 	require.NoError(t, st.DB().QueryRow(`SELECT COUNT(*) FROM messages WHERE message_type='slack'`).Scan(&total))
-	assert.Equal(t, 12, total)
+	assert.Equal(t, totalWorkspaceMessages, total)
 }
 
 func TestImportInterruptResumesWithoutDuplicates(t *testing.T) {
@@ -313,7 +330,7 @@ func TestImportInterruptResumesWithoutDuplicates(t *testing.T) {
 	var total, distinct int
 	require.NoError(t, st.DB().QueryRow(`SELECT COUNT(*) FROM messages WHERE message_type='slack'`).Scan(&total))
 	require.NoError(t, st.DB().QueryRow(`SELECT COUNT(DISTINCT source_message_id) FROM messages WHERE message_type='slack'`).Scan(&distinct))
-	assert.Equal(t, 12, total)
+	assert.Equal(t, totalWorkspaceMessages, total)
 	assert.Equal(t, distinct, total)
 }
 
@@ -342,7 +359,34 @@ func TestImportFullReUpsertsInPlace(t *testing.T) {
 	assert.Equal(t, "hello 0 (edited)", body)
 	var total int
 	require.NoError(t, st.DB().QueryRow(`SELECT COUNT(*) FROM messages WHERE message_type='slack'`).Scan(&total))
-	assert.Equal(t, 12, total, "full run must upsert, not duplicate")
+	assert.Equal(t, totalWorkspaceMessages, total, "full run must upsert, not duplicate")
+}
+
+func TestImportLimitLeavesBackfillResumable(t *testing.T) {
+	f := testWorkspace(t)
+	imp, opts := testImporter(t, f)
+	st := imp.store
+
+	// A cap below #general's 8 top-level messages: the first run must stop
+	// early without marking the conversation complete or advancing past
+	// unfetched pages.
+	limited := opts
+	limited.Limit = 4
+	limited.NoThreads = true
+	_, err := imp.Import(context.Background(), limited)
+	require.NoError(t, err)
+	var partial int
+	require.NoError(t, st.DB().QueryRow(`SELECT COUNT(*) FROM messages WHERE message_type='slack'`).Scan(&partial))
+	assert.Less(t, partial, totalWorkspaceMessages)
+
+	// An uncapped run completes the backfill: every message exactly once.
+	_, err = imp.Import(context.Background(), opts)
+	require.NoError(t, err)
+	var total, distinct int
+	require.NoError(t, st.DB().QueryRow(`SELECT COUNT(*) FROM messages WHERE message_type='slack'`).Scan(&total))
+	require.NoError(t, st.DB().QueryRow(`SELECT COUNT(DISTINCT source_message_id) FROM messages WHERE message_type='slack'`).Scan(&distinct))
+	assert.Equal(t, totalWorkspaceMessages, total, "limited first run must not lose messages")
+	assert.Equal(t, distinct, total)
 }
 
 func TestImportGoneConversationIsSkippedNotFatal(t *testing.T) {
@@ -363,7 +407,7 @@ func TestImportGoneConversationIsSkippedNotFatal(t *testing.T) {
 	// Everything else archived normally.
 	var total int
 	require.NoError(t, st.DB().QueryRow(`SELECT COUNT(*) FROM messages WHERE message_type='slack'`).Scan(&total))
-	assert.Equal(t, 12, total)
+	assert.Equal(t, totalWorkspaceMessages, total)
 }
 
 func TestImportChannelFilters(t *testing.T) {

@@ -27,6 +27,7 @@ import (
 	"go.kenn.io/msgvault/internal/microsoft"
 	"go.kenn.io/msgvault/internal/oauth"
 	"go.kenn.io/msgvault/internal/query"
+	"go.kenn.io/msgvault/internal/slack"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -1043,6 +1044,44 @@ func TestRemoveAccountCmd_CirclebackRemovesToken(t *testing.T) {
 
 	_, err = os.Stat(tokenPath)
 	assert.True(t, os.IsNotExist(err), "token file should be removed for Circleback source")
+}
+
+func TestRemoveAccountCmd_SlackRemovesToken(t *testing.T) {
+	require := require.New(t)
+	tmpDir := t.TempDir()
+	dbPath := tmpDir + "/msgvault.db"
+	tokensDir := filepath.Join(tmpDir, "tokens")
+	require.NoError(os.MkdirAll(tokensDir, 0700), "mkdir tokens")
+
+	s, err := store.Open(dbPath)
+	require.NoError(err, "open store")
+	require.NoError(s.InitSchema(), "init schema")
+	_, err = s.GetOrCreateSource(sourceTypeSlack, "T01:UME")
+	require.NoError(err, "create source")
+	require.NoError(s.Close(), "close store")
+
+	require.NoError(slack.SaveToken(tokensDir, "T01", "testers", "UME", "xoxp-test"), "write slack token")
+	tokenPath := filepath.Join(tokensDir, "slack_T01.json")
+	_, err = os.Stat(tokenPath)
+	require.NoError(err, "slack token file must exist before removal")
+
+	savedCfg := cfg
+	t.Cleanup(func() { cfg = savedCfg })
+	cfg = &config.Config{
+		HomeDir: tmpDir,
+		Data:    config.DataConfig{DataDir: tmpDir},
+	}
+
+	root := newTestRootCmd()
+	root.AddCommand(newRemoveAccountLocalTestCmd())
+	root.SetArgs([]string{
+		"remove-account", "T01:UME", "--yes", "--type", sourceTypeSlack,
+	})
+
+	require.NoError(root.Execute(), "remove-account")
+
+	_, err = os.Stat(tokenPath)
+	assert.True(t, os.IsNotExist(err), "token file should be removed for Slack source")
 }
 
 func TestRemoveAccountCmd_NonGmailSkipsToken(t *testing.T) {
