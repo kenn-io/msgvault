@@ -178,21 +178,6 @@ func runRemoveAccountLocal(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("collect attachment paths: %w", err)
 	}
 
-	var discordCredential *discord.TokenRecord
-	var discordTokens *discord.TokenManager
-	if source.SourceType == sourceTypeDiscord {
-		discordTokens = discord.NewTokenManager(cfg.TokensDir())
-		record, resolveErr := discordTokens.Resolve(sourceOAuthApp(source))
-		if resolveErr != nil {
-			fmt.Fprintf(os.Stderr,
-				"Warning: could not resolve Discord credential before source removal; token files will be preserved: %v\n",
-				resolveErr,
-			)
-		} else {
-			discordCredential = &record
-		}
-	}
-
 	isSQLite := !store.IsPostgresURL(cfg.DatabaseDSN())
 	var cacheLock *flock.Flock
 	if isSQLite {
@@ -207,7 +192,40 @@ func runRemoveAccountLocal(cmd *cobra.Command, args []string) error {
 	// so a sync started between our check and the delete is either seen
 	// as active (we skip file deletion) or fails after we commit because
 	// the source is gone.
-	hadActiveSync, packedMappingsRemoved, removeErr := s.RemoveSourceSerialized(cmd.Context(), source.ID)
+	var (
+		hadActiveSync         bool
+		packedMappingsRemoved int64
+		removeErr             error
+	)
+	if source.SourceType == sourceTypeDiscord {
+		discordTokens := discord.NewTokenManager(cfg.TokensDir())
+		removeErr = discordTokens.WithLifecycleLock(func() error {
+			lockedSource, lookupErr := s.GetSourceByID(source.ID)
+			if lookupErr != nil {
+				return fmt.Errorf("reload Discord source under credential lifecycle lock: %w", lookupErr)
+			}
+			var discordCredential *discord.TokenRecord
+			record, resolveErr := discordTokens.Resolve(sourceOAuthApp(lockedSource))
+			if resolveErr != nil {
+				fmt.Fprintf(os.Stderr,
+					"Warning: could not resolve Discord credential before source removal; token files will be preserved: %v\n",
+					resolveErr,
+				)
+			} else {
+				discordCredential = &record
+			}
+
+			var cascadeErr error
+			hadActiveSync, packedMappingsRemoved, cascadeErr = s.RemoveSourceSerialized(cmd.Context(), source.ID)
+			if cascadeErr != nil {
+				return cascadeErr
+			}
+			removeDiscordCredentialAfterCascade(s, discordTokens, discordCredential, hadActiveSync)
+			return nil
+		})
+	} else {
+		hadActiveSync, packedMappingsRemoved, removeErr = s.RemoveSourceSerialized(cmd.Context(), source.ID)
+	}
 
 	var cacheRefreshErr error
 	if isSQLite {
@@ -270,7 +288,8 @@ func runRemoveAccountLocal(cmd *cobra.Command, args []string) error {
 			)
 		}
 	case sourceTypeDiscord:
-		removeDiscordCredentialAfterCascade(s, discordTokens, discordCredential, hadActiveSync)
+		// Discord credential cleanup is part of the lifecycle-locked cascade
+		// above so a concurrent guild registration cannot lose its bot token.
 	case sourceTypeBeeper:
 		// The token is shared by every Beeper network-account source; only
 		// remove it when the last one is gone. The source row was already

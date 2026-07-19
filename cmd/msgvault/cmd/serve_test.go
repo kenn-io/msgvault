@@ -1301,6 +1301,72 @@ func TestRunScheduledSyncUsesSharedDiscordImporterAndRebuildsOnce(t *testing.T) 
 	assert.Equal(1, rebuilds)
 }
 
+func TestScheduledDiscordGuildFailureDoesNotBlockLaterGuild(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := storetest.New(t)
+	first, err := st.Store.GetOrCreateSource(sourceTypeDiscord, "113456789012345678")
+	require.NoError(err)
+	second, err := st.Store.GetOrCreateSource(sourceTypeDiscord, "223456789012345678")
+	require.NoError(err)
+	require.Less(first.ID, second.ID)
+
+	originalImport := importDiscordSourceForScheduledRun
+	originalRebuild := rebuildCacheAfterScheduledSourceRun
+	t.Cleanup(func() {
+		importDiscordSourceForScheduledRun = originalImport
+		rebuildCacheAfterScheduledSourceRun = originalRebuild
+	})
+	var imported []int64
+	importDiscordSourceForScheduledRun = func(
+		_ context.Context, _ *store.Store, source *store.Source,
+		_ discordCommandDeps, _ bool, _ time.Time, _ func(string),
+	) (*discord.ImportSummary, error) {
+		imported = append(imported, source.ID)
+		if source.ID == first.ID {
+			return nil, errors.New("synthetic first guild failure")
+		}
+		return &discord.ImportSummary{}, nil
+	}
+	var rebuilt []string
+	rebuildCacheAfterScheduledSourceRun = func(_ context.Context, identifier string) error {
+		rebuilt = append(rebuilt, identifier)
+		return nil
+	}
+
+	completed := make(chan string, 2)
+	sched := scheduler.New(func(ctx context.Context, identifier string) error {
+		err := runScheduledSync(ctx, identifier, st.Store, func(string) (*oauth.Manager, error) {
+			return nil, errors.New("unreachable Gmail OAuth resolution")
+		})
+		completed <- identifier
+		return err
+	})
+	for _, source := range []*store.Source{first, second} {
+		require.NoError(sched.AddAccount(source.Identifier, "0 0 1 1 *"))
+	}
+	sched.Start()
+	t.Cleanup(func() { <-sched.Stop().Done() })
+	awaitCompletion := func() string {
+		select {
+		case identifier := <-completed:
+			return identifier
+		case <-time.After(5 * time.Second):
+			require.FailNow("timed out waiting for scheduled Discord guild")
+			return ""
+		}
+	}
+
+	require.NoError(sched.TriggerSync(first.Identifier))
+	assert.Equal(first.Identifier, awaitCompletion())
+	require.NoError(sched.TriggerSync(second.Identifier))
+	assert.Equal(second.Identifier, awaitCompletion())
+
+	assert.Equal([]int64{first.ID, second.ID}, imported)
+	assert.Equal([]string{first.Identifier, second.Identifier}, rebuilt,
+		"each scheduled guild invocation rebuilds its cache exactly once")
+}
+
 func TestCronExpressionValidation(t *testing.T) {
 	tests := []struct {
 		name    string

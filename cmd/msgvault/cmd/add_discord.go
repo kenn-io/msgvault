@@ -21,6 +21,11 @@ type addDiscordOptions struct {
 	GuildIDs []string
 }
 
+// addDiscordAfterCredentialSaveHook lets the lifecycle concurrency test pause
+// after the inner token-store mutation while the outer lifecycle lock remains
+// held.
+var addDiscordAfterCredentialSaveHook func()
+
 func newAddDiscordCmd(deps discordCommandDeps) *cobra.Command {
 	cmd := newAddDiscordLocalCmd(deps)
 	runLocal := cmd.RunE
@@ -105,25 +110,46 @@ func runAddDiscord(cmd *cobra.Command, deps discordCommandDeps, opts addDiscordO
 	}
 	defer cleanup()
 	manager := deps.tokenManager()
-	// Credential persistence is the first durable setup phase. If later source
-	// registration fails, re-running add-discord with the same bot and binding
-	// safely rotates the same token record and resumes idempotent source upserts.
-	if err := saveDiscordCredential(st, manager, discord.TokenRecord{
+	record := discord.TokenRecord{
 		BotUserID: me.ID, BotUsername: me.Username, AccessToken: accessToken, Binding: opts.OAuthApp,
-	}); err != nil {
+	}
+	if err := saveAndRegisterDiscordCredential(st, manager, record, selected, deps); err != nil {
 		return err
 	}
 	for _, guild := range selected {
-		if err := deps.registerGuild(st, guild, opts.OAuthApp); err != nil {
-			return err
-		}
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Registered Discord guild: %s (%s)\n", guild.Name, guild.ID)
 		diagnoseDiscordGuild(cmd, client, guild, cmd.OutOrStdout())
 	}
-	if err := deps.postSourceMigrations(st); err != nil {
-		return fmt.Errorf("post-source-create migrations: %w", err)
-	}
 	return nil
+}
+
+func saveAndRegisterDiscordCredential(
+	st *store.Store,
+	manager *discord.TokenManager,
+	record discord.TokenRecord,
+	selected []discord.Guild,
+	deps discordCommandDeps,
+) error {
+	return manager.WithLifecycleLock(func() error {
+		// Credential persistence is the first durable setup phase. If later
+		// source registration fails, rerunning the same bot binding rotates the
+		// protected record and resumes idempotent source upserts.
+		if err := saveDiscordCredential(st, manager, record); err != nil {
+			return err
+		}
+		if addDiscordAfterCredentialSaveHook != nil {
+			addDiscordAfterCredentialSaveHook()
+		}
+		for _, guild := range selected {
+			if err := deps.registerGuild(st, guild, record.Binding); err != nil {
+				return err
+			}
+		}
+		if err := deps.postSourceMigrations(st); err != nil {
+			return fmt.Errorf("post-source-create migrations: %w", err)
+		}
+		return nil
+	})
 }
 
 func registerDiscordGuild(st *store.Store, guild discord.Guild, binding string) error {

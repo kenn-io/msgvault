@@ -381,3 +381,62 @@ func TestTokenManagerDeleteUsesCredentialStoreLock(t *testing.T) {
 	require.NoError(t, lock.Unlock())
 	require.NoError(t, <-done)
 }
+
+func TestTokenManagerDeleteRejectsSymlinkedTokenRoot(t *testing.T) {
+	realDir := t.TempDir()
+	realManager := NewTokenManager(realDir)
+	requireCredentialSuccess(t, realManager.Save(TokenRecord{
+		BotUserID: testBotID1, BotUsername: "archive-bot", AccessToken: "token-one",
+	}))
+	link := filepath.Join(t.TempDir(), "tokens-link")
+	if err := os.Symlink(realDir, link); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+
+	err := NewTokenManager(link).Delete(testBotID1)
+	require.Error(t, err)
+	_, statErr := os.Stat(realManager.TokenPath(testBotID1))
+	assert.NoError(t, statErr, "symlinked token root must preserve credential")
+}
+
+func TestTokenManagerDeleteRejectsSymlinkCredentialFile(t *testing.T) {
+	dir := t.TempDir()
+	manager := NewTokenManager(dir)
+	target := filepath.Join(t.TempDir(), "outside-token.json")
+	require.NoError(t, os.WriteFile(target, []byte(`{"bot_user_id":"`+testBotID1+`","bot_username":"archive-bot","access_token":"token-one"}`), 0o600))
+	if err := os.Symlink(target, manager.TokenPath(testBotID1)); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+
+	err := manager.Delete(testBotID1)
+	require.Error(t, err)
+	_, statErr := os.Lstat(manager.TokenPath(testBotID1))
+	require.NoError(t, statErr, "symlink credential entry must be preserved")
+	_, statErr = os.Stat(target)
+	assert.NoError(t, statErr, "symlink target must be preserved")
+}
+
+func TestTokenManagerDeletePreservesTargetWhenSiblingRecordIsMalformed(t *testing.T) {
+	dir := t.TempDir()
+	manager := NewTokenManager(dir)
+	requireCredentialSuccess(t, manager.Save(TokenRecord{
+		BotUserID: testBotID1, BotUsername: "first-bot", AccessToken: "token-one", Binding: "work",
+	}))
+	require.NoError(t, os.WriteFile(manager.TokenPath(testBotID2), []byte(`{"malformed":`), 0o600))
+
+	err := manager.Delete(testBotID1)
+	require.Error(t, err)
+	_, statErr := os.Stat(manager.TokenPath(testBotID1))
+	assert.NoError(t, statErr, "invalid sibling store entry must preserve target credential")
+}
+
+func TestTokenManagerDeleteRejectsNonDirectoryTokenRoot(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "tokens")
+	require.NoError(t, os.WriteFile(root, []byte("not a directory"), 0o600))
+
+	err := NewTokenManager(root).Delete(testBotID1)
+	require.Error(t, err)
+	data, readErr := os.ReadFile(root)
+	require.NoError(t, readErr)
+	assert.Equal(t, "not a directory", string(data))
+}

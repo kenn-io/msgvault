@@ -88,11 +88,16 @@ func (m *TokenManager) Save(record TokenRecord) (retErr error) {
 	if err := validateTokenRecord(record); err != nil {
 		return err
 	}
-	if err := fileutil.SecureMkdirAll(m.tokensDir, 0700); err != nil {
-		return fmt.Errorf("create Discord tokens directory: %w", err)
+	rootInfo, err := m.inspectTokenRoot(true)
+	if err != nil {
+		return err
 	}
 
-	saveLock := flock.New(filepath.Join(m.tokensDir, ".discord-token.lock"), flock.SetPermissions(0600))
+	lockPath := filepath.Join(m.tokensDir, ".discord-token.lock")
+	if err := validateTokenLockPath(lockPath); err != nil {
+		return err
+	}
+	saveLock := flock.New(lockPath, flock.SetPermissions(0600))
 	if err := saveLock.Lock(); err != nil {
 		return fmt.Errorf("lock Discord token store: %w", err)
 	}
@@ -101,6 +106,12 @@ func (m *TokenManager) Save(record TokenRecord) (retErr error) {
 			retErr = fmt.Errorf("unlock Discord token store: %w", err)
 		}
 	}()
+	if err := m.revalidateTokenRoot(rootInfo); err != nil {
+		return err
+	}
+	if err := validateTokenLockPath(lockPath); err != nil {
+		return err
+	}
 
 	records, err := m.List()
 	if err != nil {
@@ -221,14 +232,19 @@ func (m *TokenManager) Delete(botUserID string) (retErr error) {
 	if err != nil || value == 0 {
 		return errors.New("discord bot credential has an invalid bot user ID")
 	}
-	if _, err := os.Stat(m.tokensDir); err != nil {
+	rootInfo, err := m.inspectTokenRoot(false)
+	if err != nil {
 		if os.IsNotExist(err) {
 			return nil
 		}
-		return fmt.Errorf("inspect Discord tokens directory: %w", err)
+		return err
 	}
 
-	storeLock := flock.New(filepath.Join(m.tokensDir, ".discord-token.lock"), flock.SetPermissions(0600))
+	lockPath := filepath.Join(m.tokensDir, ".discord-token.lock")
+	if err := validateTokenLockPath(lockPath); err != nil {
+		return err
+	}
+	storeLock := flock.New(lockPath, flock.SetPermissions(0600))
 	if err := storeLock.Lock(); err != nil {
 		return fmt.Errorf("lock Discord token store: %w", err)
 	}
@@ -237,6 +253,12 @@ func (m *TokenManager) Delete(botUserID string) (retErr error) {
 			retErr = fmt.Errorf("unlock Discord token store: %w", err)
 		}
 	}()
+	if err := m.revalidateTokenRoot(rootInfo); err != nil {
+		return err
+	}
+	if err := validateTokenLockPath(lockPath); err != nil {
+		return err
+	}
 
 	records, err := m.List()
 	if err != nil {
@@ -258,6 +280,80 @@ func (m *TokenManager) Delete(botUserID string) (retErr error) {
 	}
 	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("remove Discord bot credential: %w", err)
+	}
+	return nil
+}
+
+// WithLifecycleLock serializes source registration/removal decisions that
+// span both the Discord credential store and source rows. Callers must acquire
+// this outer lock before TokenManager methods, which take the inner store lock.
+func (m *TokenManager) WithLifecycleLock(fn func() error) (retErr error) {
+	if fn == nil {
+		return errors.New("discord credential lifecycle operation is missing")
+	}
+	rootInfo, err := m.inspectTokenRoot(true)
+	if err != nil {
+		return err
+	}
+	lockPath := filepath.Join(m.tokensDir, ".discord-lifecycle.lock")
+	if err := validateTokenLockPath(lockPath); err != nil {
+		return err
+	}
+	lifecycleLock := flock.New(lockPath, flock.SetPermissions(0600))
+	if err := lifecycleLock.Lock(); err != nil {
+		return fmt.Errorf("lock Discord credential lifecycle: %w", err)
+	}
+	defer func() {
+		if err := lifecycleLock.Unlock(); err != nil && retErr == nil {
+			retErr = fmt.Errorf("unlock Discord credential lifecycle: %w", err)
+		}
+	}()
+	if err := m.revalidateTokenRoot(rootInfo); err != nil {
+		return err
+	}
+	if err := validateTokenLockPath(lockPath); err != nil {
+		return err
+	}
+	return fn()
+}
+
+func (m *TokenManager) inspectTokenRoot(create bool) (os.FileInfo, error) {
+	if create {
+		if err := fileutil.SecureMkdirAll(m.tokensDir, 0o700); err != nil {
+			return nil, fmt.Errorf("create Discord tokens directory: %w", err)
+		}
+	}
+	info, err := os.Lstat(m.tokensDir)
+	if err != nil {
+		return nil, fmt.Errorf("inspect Discord tokens directory: %w", err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+		return nil, errors.New("discord tokens path is not a direct directory")
+	}
+	return info, nil
+}
+
+func (m *TokenManager) revalidateTokenRoot(before os.FileInfo) error {
+	after, err := m.inspectTokenRoot(false)
+	if err != nil {
+		return err
+	}
+	if !os.SameFile(before, after) {
+		return errors.New("discord tokens directory changed while locking")
+	}
+	return nil
+}
+
+func validateTokenLockPath(path string) error {
+	info, err := os.Lstat(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("inspect Discord credential lock: %w", err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+		return errors.New("discord credential lock is not a regular file")
 	}
 	return nil
 }

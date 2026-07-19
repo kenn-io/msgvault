@@ -1116,6 +1116,96 @@ func TestRemoveAccountCmd_DiscordPreservesTokenWhenRemainingBindingCannotResolve
 	assert.NoError(err, "unresolved remaining source must conservatively preserve token")
 }
 
+func TestDiscordAddLifecycleBlocksFinalCredentialRemovalUntilGuildRegistration(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "msgvault.db")
+	st, err := store.Open(dbPath)
+	require.NoError(err)
+	require.NoError(st.InitSchema())
+	first, err := st.GetOrCreateSource(sourceTypeDiscord, "113456789012345678")
+	require.NoError(err)
+	require.NoError(st.UpdateSourceOAuthApp(first.ID, sql.NullString{String: "archive", Valid: true}))
+
+	manager := discord.NewTokenManager(filepath.Join(tmpDir, "tokens"))
+	record := discord.TokenRecord{
+		BotUserID: "333456789012345678", BotUsername: "archive-bot",
+		AccessToken: "synthetic-secret", Binding: "archive",
+	}
+	require.NoError(manager.Save(record))
+	tokenPath := manager.TokenPath(record.BotUserID)
+
+	savedCfg := cfg
+	t.Cleanup(func() { cfg = savedCfg })
+	cfg = &config.Config{HomeDir: tmpDir, Data: config.DataConfig{DataDir: tmpDir}}
+
+	credentialSaved := make(chan struct{})
+	resumeAdd := make(chan struct{})
+	addDiscordAfterCredentialSaveHook = func() {
+		close(credentialSaved)
+		<-resumeAdd
+	}
+	t.Cleanup(func() { addDiscordAfterCredentialSaveHook = nil })
+
+	addDone := make(chan error, 1)
+	go func() {
+		addDone <- saveAndRegisterDiscordCredential(
+			st, manager, record,
+			[]discord.Guild{{ID: "223456789012345678", Name: "Second Guild"}},
+			discordCommandDeps{
+				registerGuild:        registerDiscordGuild,
+				postSourceMigrations: func(*store.Store) error { return nil },
+			},
+		)
+	}()
+	select {
+	case <-credentialSaved:
+	case err := <-addDone:
+		require.FailNow("Discord add ended before lifecycle pause", "error: %v", err)
+	case <-time.After(5 * time.Second):
+		require.FailNow("timed out waiting for Discord credential save")
+	}
+
+	removeDone := make(chan error, 1)
+	go func() {
+		root := newTestRootCmd()
+		root.AddCommand(newRemoveAccountLocalTestCmd())
+		root.SetArgs([]string{"remove-account", first.Identifier, "--yes", "--type", sourceTypeDiscord})
+		removeDone <- root.Execute()
+	}()
+	select {
+	case err := <-removeDone:
+		require.FailNow("removal bypassed Discord lifecycle lock", "error: %v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	close(resumeAdd)
+	waitResult := func(label string, result <-chan error) error {
+		select {
+		case err := <-result:
+			return err
+		case <-time.After(5 * time.Second):
+			require.FailNow("timed out waiting for Discord lifecycle operation", "operation: %s", label)
+			return errors.New("unreachable timeout")
+		}
+	}
+	require.NoError(waitResult("add", addDone))
+	require.NoError(waitResult("remove", removeDone))
+	require.NoError(st.Close())
+	_, err = os.Stat(tokenPath)
+	require.NoError(err, "credential must survive because the newly registered guild references it")
+
+	check, err := store.Open(dbPath)
+	require.NoError(err)
+	defer func() { require.NoError(check.Close()) }()
+	_, err = check.GetSourceByIdentifier(first.Identifier)
+	require.ErrorIs(err, store.ErrSourceNotFound)
+	second, err := check.GetSourceByIdentifier("223456789012345678")
+	require.NoError(err)
+	assert.Equal(sourceTypeDiscord, second.SourceType)
+}
+
 func TestRemoveAccountCmd_CirclebackRemovesToken(t *testing.T) {
 	require := require.New(t)
 	tmpDir := t.TempDir()
