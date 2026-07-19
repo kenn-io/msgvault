@@ -49,6 +49,16 @@ func (cc *convScope) limitReached() bool {
 	return cc.opts.Limit > 0 && cc.budgetUsed >= cc.opts.Limit
 }
 
+// pageBudget sizes API page requests to the remaining --limit budget, so a
+// small limit cannot be overshot by an entire 999-message page.
+func (cc *convScope) pageBudget() int {
+	if cc.opts.Limit <= 0 {
+		return historyPageLimit
+	}
+	remaining := max(cc.opts.Limit-cc.budgetUsed, 1)
+	return min(remaining, historyPageLimit)
+}
+
 // Importer ingests one Slack workspace user's conversations into the
 // msgvault store. One Import run covers one workspace (= one source).
 type Importer struct {
@@ -223,15 +233,17 @@ func (imp *Importer) syncConversation(ctx context.Context, syncID, sourceID int6
 		}
 	}
 
+	// Prune only roots polled this run: skipping pruning entirely under
+	// --no-threads (and for limit-skipped or fetch-failed roots) keeps their
+	// replies reachable by a later incremental sync instead of silently
+	// lost.
 	if !opts.NoThreads {
-		if err := imp.syncThreads(ctx, cc, sum); err != nil {
+		polled, err := imp.syncThreads(ctx, cc, sum)
+		if err != nil {
 			return err
 		}
+		cs.PruneThreads(imp.now().Add(-threadLookback(opts)), polled)
 	}
-	// Prune only after thread polling: roots discovered during a long
-	// backfill must get their one reply fetch even when older than the
-	// lookback.
-	cs.PruneThreads(imp.now().Add(-threadLookback(opts)))
 	return nil
 }
 
@@ -305,11 +317,11 @@ func (imp *Importer) backfillConversation(ctx context.Context, cc *convScope, st
 		if cc.limitReached() {
 			return nil // resumable: Done stays false
 		}
-		page, err := imp.client.HistoryPage(ctx, HistoryParams{
+		page, err := imp.client.historyPageWithLimit(ctx, HistoryParams{
 			ChannelID: cc.channelID,
 			Cursor:    cs.BackfillCursor,
 			Latest:    cs.BackfillLatest,
-		})
+		}, cc.pageBudget())
 		if err != nil {
 			if ctx.Err() != nil {
 				return ctx.Err()
@@ -368,11 +380,11 @@ func (imp *Importer) incrementalConversation(ctx context.Context, cc *convScope,
 		if cc.limitReached() {
 			return nil // cursor not advanced; limited runs re-fetch the window
 		}
-		page, err := imp.client.HistoryPage(ctx, HistoryParams{
+		page, err := imp.client.historyPageWithLimit(ctx, HistoryParams{
 			ChannelID: cc.channelID,
 			Cursor:    pageCursor,
 			Oldest:    cs.Cursor,
-		})
+		}, cc.pageBudget())
 		if err != nil {
 			if ctx.Err() != nil {
 				return ctx.Err()
@@ -410,7 +422,9 @@ func (imp *Importer) incrementalConversation(ctx context.Context, cc *convScope,
 // messages in place to catch edits and reaction changes (history is keyed by
 // original ts, so the incremental cursor cannot see them). Thread roots
 // re-encountered here refresh their tracking, catching reply activity on
-// recent roots.
+// recent roots. The window's upper bound is the cursor message INCLUSIVE:
+// with the default exclusive bounds, edits to the newest archived message
+// would stay invisible until a newer message moved the cursor past it.
 func (imp *Importer) rescanHead(ctx context.Context, cc *convScope, sum *ImportSummary) error {
 	oldest := fmt.Sprintf("%d.000000", imp.now().Add(-editRescanWindow).Unix())
 	if cc.cs.Cursor != "" && tsLess(cc.cs.Cursor, oldest) {
@@ -426,12 +440,13 @@ func (imp *Importer) rescanHead(ctx context.Context, cc *convScope, sum *ImportS
 		if cc.limitReached() {
 			return nil
 		}
-		page, err := imp.client.HistoryPage(ctx, HistoryParams{
+		page, err := imp.client.historyPageWithLimit(ctx, HistoryParams{
 			ChannelID: cc.channelID,
 			Cursor:    pageCursor,
 			Oldest:    oldest,
 			Latest:    cc.cs.Cursor,
-		})
+			Inclusive: true,
+		}, cc.pageBudget())
 		if err != nil {
 			if ctx.Err() != nil {
 				return ctx.Err()
@@ -461,53 +476,60 @@ func (imp *Importer) rescanHead(ctx context.Context, cc *convScope, sum *ImportS
 // syncThreads polls every tracked thread root for replies newer than its
 // reply cursor. A root's cursor advances only after its replies persisted
 // cleanly; a failed root is retried next run without blocking the others.
-func (imp *Importer) syncThreads(ctx context.Context, cc *convScope, sum *ImportSummary) error {
+// The returned set holds the roots whose polling completed this run — the
+// only ones PruneThreads may drop.
+func (imp *Importer) syncThreads(ctx context.Context, cc *convScope, sum *ImportSummary) (map[string]bool, error) {
+	polled := map[string]bool{}
 	for root, replyCursor := range cc.cs.Threads {
 		if err := ctx.Err(); err != nil {
-			return err
+			return polled, err
 		}
 		if cc.limitReached() {
-			return nil
+			return polled, nil
 		}
-		newCursor, err := imp.syncThread(ctx, cc, root, replyCursor, sum)
+		newCursor, completed, err := imp.syncThread(ctx, cc, root, replyCursor, sum)
 		if err != nil {
-			return err
+			return polled, err
+		}
+		if completed {
+			polled[root] = true
 		}
 		if newCursor != "" {
 			cc.cs.Threads[root] = newCursor
 		}
 	}
-	return nil
+	return polled, nil
 }
 
 // syncThread fetches one thread's replies newer than replyCursor, returning
-// the advanced cursor ("" = do not advance).
-func (imp *Importer) syncThread(ctx context.Context, cc *convScope, root, replyCursor string, sum *ImportSummary) (string, error) {
+// the advanced cursor ("" = do not advance) and whether polling completed
+// (false = fetch failure; the root must survive pruning to retry).
+func (imp *Importer) syncThread(ctx context.Context, cc *convScope, root, replyCursor string, sum *ImportSummary) (string, bool, error) {
 	pageCursor := ""
 	maxTS := replyCursor
 	for {
-		page, err := imp.client.RepliesPage(ctx, cc.channelID, root, pageCursor, replyCursor)
+		page, err := imp.client.repliesPageWithLimit(ctx, cc.channelID, root, pageCursor, replyCursor, cc.pageBudget())
 		if errors.Is(err, ErrNotFound) {
 			// The root was deleted; its archived copy is kept, and there is
 			// nothing left to poll.
 			delete(cc.cs.Threads, root)
-			return "", nil
+			return "", true, nil
 		}
 		if err != nil {
 			if ctx.Err() != nil {
-				return "", ctx.Err()
+				return "", false, ctx.Err()
 			}
 			imp.recordItem(cc.syncID, sourceMessageID(cc.channelID, root), "thread", store.SyncRunItemStatusError, "slack_fetch_error", err)
 			sum.FetchErrors++
 			sum.Errors++
-			return "", nil // cursor not advanced; next run retries this thread
+			return "", false, nil // cursor not advanced; next run retries this thread
 		}
 		for i := range page.Messages {
 			m := &page.Messages[i]
 			// The response includes the root itself; re-upserting it is
 			// harmless (idempotent) and refreshes its edited state.
 			if err := imp.processMessage(ctx, cc, m, sum); err != nil {
-				return "", err
+				return "", false, err
 			}
 			if m.TS != root {
 				sum.RepliesFetched++
@@ -518,7 +540,7 @@ func (imp *Importer) syncThread(ctx context.Context, cc *convScope, root, replyC
 		}
 		cc.budgetUsed += len(page.Messages)
 		if !page.HasMore || page.NextCursor == "" {
-			return maxTS, nil
+			return maxTS, true, nil
 		}
 		pageCursor = page.NextCursor
 	}

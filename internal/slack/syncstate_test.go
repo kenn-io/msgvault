@@ -57,16 +57,18 @@ func TestSyncStateMergePrefersAdvancedCursors(t *testing.T) {
 
 func TestPruneThreads(t *testing.T) {
 	cs := &ConvState{Threads: map[string]string{}}
-	old := time.Now().Add(-60 * 24 * time.Hour)
-	fresh := time.Now().Add(-time.Hour)
-	oldTS := tsFromTime(old)
-	freshTS := tsFromTime(fresh)
-	cs.TrackThread(oldTS, "")
-	cs.TrackThread(freshTS, "")
+	oldPolled := tsFromTime(time.Now().Add(-60 * 24 * time.Hour))
+	oldSkipped := tsFromTime(time.Now().Add(-59 * 24 * time.Hour))
+	fresh := tsFromTime(time.Now().Add(-time.Hour))
+	cs.TrackThread(oldPolled, "")
+	cs.TrackThread(oldSkipped, "")
+	cs.TrackThread(fresh, "")
 
-	cs.PruneThreads(time.Now().Add(-30 * 24 * time.Hour))
-	assert.NotContains(t, cs.Threads, oldTS)
-	assert.Contains(t, cs.Threads, freshTS)
+	cutoff := time.Now().Add(-30 * 24 * time.Hour)
+	cs.PruneThreads(cutoff, map[string]bool{oldPolled: true, fresh: true})
+	assert.NotContains(t, cs.Threads, oldPolled, "polled roots past the lookback are pruned")
+	assert.Contains(t, cs.Threads, oldSkipped, "unpolled roots must survive pruning or their replies are lost")
+	assert.Contains(t, cs.Threads, fresh, "fresh roots stay tracked")
 }
 
 func tsFromTime(t time.Time) string {

@@ -213,8 +213,9 @@ func (f *fakeSlack) replyErr(w http.ResponseWriter, apiErr string) {
 	}
 }
 
-// page slices items[from:from+pageSize] driven by the "cursor" form value
-// (a stringified index), returning the slice and the next cursor.
+// page slices items[from:from+size] driven by the "cursor" form value (a
+// stringified index), returning the slice and the next cursor. Like the real
+// API, a "limit" smaller than the server's page size is honored.
 func (f *fakeSlack) page(r *http.Request, n int) (from, to int, next string) {
 	from = 0
 	if cur := r.FormValue("cursor"); cur != "" {
@@ -225,7 +226,13 @@ func (f *fakeSlack) page(r *http.Request, n int) (from, to int, next string) {
 		}
 		from = idx
 	}
-	to = min(from+f.pageSize, n)
+	size := f.pageSize
+	if raw := r.FormValue("limit"); raw != "" {
+		if limit, err := strconv.Atoi(raw); err == nil && limit > 0 && limit < size {
+			size = limit
+		}
+	}
+	to = min(from+size, n)
 	if to < n {
 		next = strconv.Itoa(to)
 	}
@@ -272,15 +279,23 @@ func (f *fakeSlack) handleMembers(w http.ResponseWriter, r *http.Request) {
 }
 
 // visibleHistory returns c's top-level messages newest→oldest within the
-// (oldest, latest) exclusive ts bounds.
-func visibleHistory(c *fakeConv, oldest, latest string) []fakeMsg {
+// (oldest, latest) ts bounds — exclusive by default, inclusive like the real
+// API's inclusive=true when requested.
+func visibleHistory(c *fakeConv, oldest, latest string, inclusive bool) []fakeMsg {
 	var out []fakeMsg
-	for _, v := range slices.Backward(c.Msgs) {
-		m := v
-		if oldest != "" && !tsLess(oldest, m.TS) {
+	for _, m := range slices.Backward(c.Msgs) {
+		switch {
+		case oldest == "":
+		case inclusive && tsLess(m.TS, oldest):
+			continue
+		case !inclusive && !tsLess(oldest, m.TS):
 			continue
 		}
-		if latest != "" && !tsLess(m.TS, latest) {
+		switch {
+		case latest == "":
+		case inclusive && tsLess(latest, m.TS):
+			continue
+		case !inclusive && !tsLess(m.TS, latest):
 			continue
 		}
 		out = append(out, m)
@@ -305,7 +320,7 @@ func (f *fakeSlack) handleHistory(w http.ResponseWriter, r *http.Request) {
 		f.replyErr(w, "internal_error")
 		return
 	}
-	visible := visibleHistory(c, r.FormValue("oldest"), r.FormValue("latest"))
+	visible := visibleHistory(c, r.FormValue("oldest"), r.FormValue("latest"), r.FormValue("inclusive") == "true")
 	from, to, next := f.page(r, len(visible))
 	msgs := make([]map[string]any, 0, to-from)
 	for _, m := range visible[from:to] {

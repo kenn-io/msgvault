@@ -401,6 +401,119 @@ func TestImportLimitLeavesBackfillResumable(t *testing.T) {
 	assert.Equal(t, distinct, total)
 }
 
+// oldThreadWorkspace builds a workspace whose only thread root is ~10 days
+// old: outside BOTH the reply-tracking lookback used by these tests and the
+// 7-day edit-rescan window. That placement is load-bearing — a root inside
+// the rescan window would be re-tracked on the next sync, masking a
+// wrongly-pruned root.
+func oldThreadWorkspace(t *testing.T) (*fakeSlack, string, string) {
+	t.Helper()
+	f := newFakeSlack(t)
+	f.users = []map[string]any{
+		{"id": "UME", "name": "me", "profile": map[string]any{"email": "me@example.com"}},
+	}
+	rootTS, replyTS := ts(-14400), ts(-14390) // ~10 days before tsBase
+	f.convs = []*fakeConv{{
+		ID: "C09", Name: "archive", Kind: "public", Members: []string{"UME"},
+		Msgs: []fakeMsg{
+			{TS: rootTS, User: "UME", Text: "ancient root",
+				Replies: []fakeMsg{{TS: replyTS, ThreadTS: rootTS, User: "UME", Text: "ancient reply"}}},
+			{TS: ts(0), User: "UME", Text: "recent chatter"},
+		},
+	}}
+	return f, rootTS, replyTS
+}
+
+func TestImportNoThreadsDoesNotPruneUnpolledRoots(t *testing.T) {
+	f, _, replyTS := oldThreadWorkspace(t)
+	imp, opts := testImporter(t, f)
+	st := imp.store
+	opts.ThreadLookback = time.Hour
+
+	noThreads := opts
+	noThreads.NoThreads = true
+	_, err := imp.Import(context.Background(), noThreads)
+	require.NoError(t, err)
+	var n int
+	require.NoError(t, st.DB().QueryRow(st.Rebind(
+		`SELECT COUNT(*) FROM messages WHERE source_message_id = ?`), "C09:"+replyTS).Scan(&n))
+	require.Zero(t, n, "sanity: --no-threads must not have fetched replies")
+
+	// Without the polled-roots guard the --no-threads run pruned the root
+	// (older than lookback AND outside the rescan window), losing its
+	// replies to every later incremental sync.
+	_, err = imp.Import(context.Background(), opts)
+	require.NoError(t, err)
+	require.NoError(t, st.DB().QueryRow(st.Rebind(
+		`SELECT COUNT(*) FROM messages WHERE source_message_id = ?`), "C09:"+replyTS).Scan(&n))
+	assert.Equal(t, 1, n, "the root survived --no-threads unpruned, so its replies are fetched next run")
+}
+
+func TestImportThreadFetchFailureSurvivesPruning(t *testing.T) {
+	f, rootTS, replyTS := oldThreadWorkspace(t)
+	imp, opts := testImporter(t, f)
+	st := imp.store
+	opts.ThreadLookback = time.Hour
+
+	f.failReplies[rootTS] = true
+	_, err := imp.Import(context.Background(), opts)
+	require.Error(t, err)
+
+	f.mu.Lock()
+	delete(f.failReplies, rootTS)
+	f.mu.Unlock()
+	_, err = imp.Import(context.Background(), opts)
+	require.NoError(t, err)
+	var n int
+	require.NoError(t, st.DB().QueryRow(st.Rebind(
+		`SELECT COUNT(*) FROM messages WHERE source_message_id = ?`), "C09:"+replyTS).Scan(&n))
+	assert.Equal(t, 1, n, "a fetch-failed root must survive pruning and be retried")
+}
+
+func TestImportRescanCatchesEditToNewestMessage(t *testing.T) {
+	f := testWorkspace(t)
+	imp, opts := testImporter(t, f)
+	st := imp.store
+
+	_, err := imp.Import(context.Background(), opts)
+	require.NoError(t, err)
+
+	// Edit the NEWEST top-level message (the cursor message) with no newer
+	// traffic: only an inclusive rescan upper bound can see it.
+	f.mu.Lock()
+	general := f.conv("C01")
+	general.Msgs[len(general.Msgs)-1].Text = "hello 7 (edited)"
+	general.Msgs[len(general.Msgs)-1].Edited = true
+	f.mu.Unlock()
+
+	_, err = imp.Import(context.Background(), opts)
+	require.NoError(t, err)
+	var body string
+	require.NoError(t, st.DB().QueryRow(st.Rebind(`
+		SELECT mb.body_text FROM message_bodies mb
+		JOIN messages m ON m.id = mb.message_id WHERE m.source_message_id = ?`), "C01:"+ts(7)).Scan(&body))
+	assert.Equal(t, "hello 7 (edited)", body, "edits to the cursor message must be caught by the rescan")
+}
+
+func TestImportLimitBoundsProcessedMessages(t *testing.T) {
+	f := testWorkspace(t)
+	imp, opts := testImporter(t, f)
+	st := imp.store
+
+	limited := opts
+	limited.Limit = 1
+	limited.NoThreads = true
+	_, err := imp.Import(context.Background(), limited)
+	require.NoError(t, err)
+
+	// Page requests are sized to the remaining budget, so each conversation
+	// processes at most its limit — not a full server page.
+	var total int
+	require.NoError(t, st.DB().QueryRow(`SELECT COUNT(*) FROM messages WHERE message_type='slack'`).Scan(&total))
+	assert.LessOrEqual(t, total, 4, "--limit 1 must not fetch whole pages per conversation")
+	assert.Positive(t, total)
+}
+
 func TestImportGoneConversationIsSkippedNotFatal(t *testing.T) {
 	f := testWorkspace(t)
 	// Enumerated but unreadable: history answers channel_not_found (observed

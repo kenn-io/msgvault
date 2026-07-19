@@ -110,8 +110,14 @@ func (cs *ConvState) TrackThread(rootTS, replyTS string) {
 
 // PruneThreads drops tracked roots older than cutoff, bounding both the
 // per-sync conversations.replies call count and the checkpoint blob size.
-func (cs *ConvState) PruneThreads(cutoff time.Time) {
+// Only roots whose polling completed this run (polled) are eligible: pruning
+// a root that was skipped (--limit) or whose fetch failed would permanently
+// lose its replies to incremental sync.
+func (cs *ConvState) PruneThreads(cutoff time.Time, polled map[string]bool) {
 	for root := range cs.Threads {
+		if !polled[root] {
+			continue
+		}
 		if t := tsTime(root); !t.IsZero() && t.Before(cutoff) {
 			delete(cs.Threads, root)
 		}

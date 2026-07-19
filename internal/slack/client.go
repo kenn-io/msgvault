@@ -343,8 +343,12 @@ type HistoryPage struct {
 type HistoryParams struct {
 	ChannelID string
 	Cursor    string // opaque page cursor; mutually advancing with Oldest
-	Oldest    string // exclusive lower ts bound ("" = beginning)
-	Latest    string // exclusive upper ts bound ("" = now)
+	Oldest    string // lower ts bound ("" = beginning)
+	Latest    string // upper ts bound ("" = now)
+	// Inclusive makes the Oldest/Latest bounds inclusive (the edit rescan
+	// must re-read the cursor message itself; default exclusive bounds are
+	// what cursor-advancing walks need).
+	Inclusive bool
 }
 
 // HistoryPage fetches one page of top-level channel history. Slack pages
@@ -354,13 +358,14 @@ func (c *Client) HistoryPage(ctx context.Context, p HistoryParams) (*HistoryPage
 	return c.historyPageWithLimit(ctx, p, historyPageLimit)
 }
 
-// historyPageWithLimit is HistoryPage with an explicit page size (the live
-// throttle probe uses tiny pages; every request costs the same budget).
+// historyPageWithLimit is HistoryPage with an explicit page size (the
+// importer sizes pages to the remaining --limit budget; the live throttle
+// probe uses tiny pages).
 func (c *Client) historyPageWithLimit(ctx context.Context, p HistoryParams, limit int) (*HistoryPage, error) {
 	params := url.Values{
 		"channel":   {p.ChannelID},
 		"limit":     {strconv.Itoa(limit)},
-		"inclusive": {"false"},
+		"inclusive": {strconv.FormatBool(p.Inclusive)},
 	}
 	if p.Cursor != "" {
 		params.Set("cursor", p.Cursor)
@@ -387,10 +392,16 @@ func (c *Client) historyPageWithLimit(ctx context.Context, p HistoryParams, limi
 // root's ts). The response includes the root itself as the first message of
 // the first page; callers must skip or idempotently re-upsert it.
 func (c *Client) RepliesPage(ctx context.Context, channelID, rootTS, cursor, oldest string) (*HistoryPage, error) {
+	return c.repliesPageWithLimit(ctx, channelID, rootTS, cursor, oldest, historyPageLimit)
+}
+
+// repliesPageWithLimit is RepliesPage with an explicit page size (sized to
+// the importer's remaining --limit budget).
+func (c *Client) repliesPageWithLimit(ctx context.Context, channelID, rootTS, cursor, oldest string, limit int) (*HistoryPage, error) {
 	params := url.Values{
 		"channel": {channelID},
 		"ts":      {rootTS},
-		"limit":   {strconv.Itoa(historyPageLimit)},
+		"limit":   {strconv.Itoa(limit)},
 	}
 	if cursor != "" {
 		params.Set("cursor", cursor)
