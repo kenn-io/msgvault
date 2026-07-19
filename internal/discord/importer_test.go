@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"slices"
 	"strconv"
 	"sync"
@@ -12,6 +14,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
@@ -538,14 +541,132 @@ func TestImporterKeepsPreviouslyStoredAbsentContainerAndItsMetadata(t *testing.T
 	assert.JSONEq(wantMetadata, metadata.String)
 }
 
+func TestImporterPreviouslyStoredContainerFiltersUseArchivedParentMetadata(t *testing.T) {
+	topLevelMetadata := `{"guild_id":"200","discord_channel_type":0}`
+	threadMetadata := `{"guild_id":"200","parent_channel_id":"250","discord_channel_type":11,"thread":{"archived":true}}`
+	malformedMetadata := `{not-json`
+	tests := []struct {
+		name         string
+		metadata     *string
+		guildConfig  config.DiscordGuildConfig
+		wantImported bool
+	}{
+		{
+			name: "changed include list omits stored top-level channel", metadata: &topLevelMetadata,
+			guildConfig: config.DiscordGuildConfig{Include: []string{"400"}},
+		},
+		{
+			name: "stored thread inherits new parent exclusion", metadata: &threadMetadata,
+			guildConfig: config.DiscordGuildConfig{Exclude: []string{"250"}},
+		},
+		{
+			name: "explicit stored thread inclusion overrides parent exclusion", metadata: &threadMetadata,
+			guildConfig:  config.DiscordGuildConfig{Include: []string{"300"}, Exclude: []string{"250"}},
+			wantImported: true,
+		},
+		{
+			name: "explicit stored thread exclusion wins", metadata: &threadMetadata,
+			guildConfig: config.DiscordGuildConfig{Include: []string{"300"}, Exclude: []string{"300", "250"}},
+		},
+		{
+			name:        "missing metadata is skipped conservatively when filters need a parent",
+			guildConfig: config.DiscordGuildConfig{Exclude: []string{"250"}},
+		},
+		{
+			name: "malformed metadata is skipped conservatively when filters need a parent", metadata: &malformedMetadata,
+			guildConfig: config.DiscordGuildConfig{Exclude: []string{"250"}},
+		},
+		{
+			name: "missing metadata remains eligible without filters", wantImported: true,
+		},
+		{
+			name: "explicit inclusion is safe with malformed metadata", metadata: &malformedMetadata,
+			guildConfig:  config.DiscordGuildConfig{Include: []string{"300"}},
+			wantImported: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			st := testutil.NewSQLiteTestStore(t)
+			source, err := st.GetOrCreateSource("discord", "200")
+			require.NoError(err)
+			conversationID, err := st.EnsureConversationWithType(source.ID, "300", "channel", "Stored container")
+			require.NoError(err)
+			if tt.metadata != nil {
+				require.NoError(st.SetConversationMetadata(conversationID, sql.NullString{
+					String: *tt.metadata, Valid: true,
+				}))
+			}
+			baseline := NewSyncState()
+			baseline.Containers["300"] = ContainerState{
+				HighWater: "100", BackfillUpper: "100", BackfillBefore: "1", BackfillComplete: true,
+			}
+			blob, err := baseline.Marshal()
+			require.NoError(err)
+			runID, err := st.StartSync(source.ID, "discord")
+			require.NoError(err)
+			require.NoError(st.CompleteSync(runID, blob))
+			api := newImporterFakeAPI()
+
+			_, err = newTestImporter(st, api).Import(t.Context(), ImportOptions{
+				GuildID: "200", GuildConfig: tt.guildConfig,
+			})
+			require.NoError(err)
+			assert.Equal(tt.wantImported, len(api.channelQueries("300")) != 0)
+		})
+	}
+}
+
 func TestImporterEmptyContainerKeepsAForwardCursorForFutureMessages(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewSQLiteTestStore(t)
-	api := newImporterFakeAPI(importerTestChannel("300", "general"))
-	importer := newTestImporter(st, api)
+	var mu sync.Mutex
+	available := false
+	var afterCursors []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/guilds/200":
+			writeDiscordJSON(w, http.StatusOK, map[string]any{"id": "200", "name": "Test Guild"})
+		case "/guilds/200/channels":
+			writeDiscordJSON(w, http.StatusOK, []map[string]any{{
+				"id": "300", "guild_id": "200", "type": 0, "name": "general",
+			}})
+		case "/guilds/200/threads/active":
+			writeDiscordJSON(w, http.StatusOK, map[string]any{"threads": []any{}})
+		case "/channels/300/threads/archived/public",
+			"/channels/300/users/@me/threads/archived/private":
+			writeDiscordJSON(w, http.StatusOK, map[string]any{"threads": []any{}, "has_more": false})
+		case "/channels/300/messages":
+			mu.Lock()
+			after := request.URL.Query().Get("after")
+			if after != "" {
+				afterCursors = append(afterCursors, after)
+			}
+			hasMessage := available
+			mu.Unlock()
+			if !hasMessage {
+				writeDiscordJSON(w, http.StatusOK, []any{})
+				return
+			}
+			writeDiscordJSON(w, http.StatusOK, []map[string]any{{
+				"id": "501", "channel_id": "300", "guild_id": "200",
+				"author":  map[string]any{"id": "101", "username": "alice"},
+				"content": "created later", "timestamp": "2026-07-19T00:00:00Z", "type": 0,
+			}})
+		default:
+			writeDiscordJSON(w, http.StatusNotFound, map[string]any{"code": 0, "message": "not found"})
+		}
+	}))
+	t.Cleanup(server.Close)
+	client, err := NewClient(server.URL, "test-token")
+	require.NoError(err)
+	importer := newTestImporter(st, client)
 
-	_, err := importer.Import(t.Context(), ImportOptions{GuildID: "200"})
+	_, err = importer.Import(t.Context(), ImportOptions{GuildID: "200"})
 	require.NoError(err)
 	source, err := st.GetSourceByIdentifier("200")
 	require.NoError(err)
@@ -553,16 +674,34 @@ func TestImporterEmptyContainerKeepsAForwardCursorForFutureMessages(t *testing.T
 	require.NoError(err)
 	firstState, err := LoadSyncState(first.CursorAfter.String)
 	require.NoError(err)
-	assert.Equal("0", firstState.Containers["300"].HighWater)
+	assert.NotEqual("0", firstState.Containers["300"].HighWater)
+	cursor, err := ParseSnowflake(firstState.Containers["300"].HighWater)
+	require.NoError(err)
+	assert.NotZero(cursor)
 	assert.True(firstState.Containers["300"].BackfillComplete)
+	legacyState := NewSyncState()
+	legacyState.Containers["300"] = firstState.Containers["300"]
+	legacyContainer := legacyState.Containers["300"]
+	legacyContainer.HighWater = "0"
+	legacyState.Containers["300"] = legacyContainer
+	legacyBlob, err := legacyState.Marshal()
+	require.NoError(err)
+	legacyRun, err := st.StartSync(source.ID, "discord")
+	require.NoError(err)
+	require.NoError(st.CompleteSync(legacyRun, legacyBlob))
 
-	api.messages["300"] = []Message{importerTestMessage("101", "300", "created later")}
-	callCount := len(api.channelQueries("300"))
+	mu.Lock()
+	available = true
+	mu.Unlock()
 	_, err = importer.Import(t.Context(), ImportOptions{GuildID: "200"})
 	require.NoError(err)
-	queries := api.channelQueries("300")[callCount:]
-	require.NotEmpty(queries)
-	assert.Equal("0", queries[0].After)
+	mu.Lock()
+	cursors := slices.Clone(afterCursors)
+	mu.Unlock()
+	require.NotEmpty(cursors)
+	for _, after := range cursors {
+		assert.NotEqual("0", after)
+	}
 	var count int
 	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM messages WHERE source_id = ?`), source.ID).Scan(&count))
 	assert.Equal(1, count)

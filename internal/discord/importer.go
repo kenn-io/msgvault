@@ -149,7 +149,12 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (summary *I
 		}
 	}
 
-	containers := importerContainers(catalog.Containers, state, opts.GuildID, opts.GuildConfig)
+	containers, err := imp.importerContainers(
+		source.ID, catalog.Containers, state, opts.GuildID, opts.GuildConfig,
+	)
+	if err != nil {
+		return summary, err
+	}
 	for _, container := range containers {
 		if err := ctx.Err(); err != nil {
 			return summary, err
@@ -228,22 +233,37 @@ type importerContainer struct {
 	preserveMetadata bool
 }
 
-func importerContainers(
+func (imp *Importer) importerContainers(
+	sourceID int64,
 	discovered []CatalogContainer,
 	state *SyncState,
 	guildID string,
 	guildConfig config.DiscordGuildConfig,
-) []importerContainer {
+) ([]importerContainer, error) {
 	containers := make([]importerContainer, 0, len(discovered)+len(state.Containers))
 	seen := make(map[string]struct{}, len(containers))
 	for _, container := range discovered {
 		containers = append(containers, importerContainer{CatalogContainer: container})
 		seen[container.Channel.ID] = struct{}{}
 	}
-	// A thread can disappear from the active/archived catalog while remaining
-	// accessible. Preserve every previously imported, still-selected container.
+	storedIDs := make([]string, 0, len(state.Containers))
 	for containerID := range state.Containers {
-		if _, ok := seen[containerID]; ok || slices.Contains(guildConfig.Exclude, containerID) {
+		if _, ok := seen[containerID]; ok {
+			continue
+		}
+		storedIDs = append(storedIDs, containerID)
+	}
+	storedMetadata, err := imp.store.ConversationMetadataBatch(sourceID, storedIDs)
+	if err != nil {
+		return nil, fmt.Errorf("load stored Discord container metadata: %w", err)
+	}
+
+	// A thread can disappear from the active/archived catalog while remaining
+	// accessible. Recover its archived parent before reapplying today's filters;
+	// malformed or absent metadata is included only when filters cannot depend
+	// on the unknown parent or explicitly name the container itself.
+	for _, containerID := range storedIDs {
+		if !storedContainerIncluded(guildConfig, containerID, storedMetadata[containerID]) {
 			continue
 		}
 		containers = append(containers, importerContainer{
@@ -254,7 +274,48 @@ func importerContainers(
 	slices.SortStableFunc(containers, func(left, right importerContainer) int {
 		return strings.Compare(left.Channel.ID, right.Channel.ID)
 	})
-	return containers
+	return containers, nil
+}
+
+func storedContainerIncluded(
+	guildConfig config.DiscordGuildConfig, containerID string, metadata sql.NullString,
+) bool {
+	if slices.Contains(guildConfig.Exclude, containerID) {
+		return false
+	}
+	if slices.Contains(guildConfig.Include, containerID) {
+		return true
+	}
+	if len(guildConfig.Include) == 0 && len(guildConfig.Exclude) == 0 {
+		return true
+	}
+
+	parentID, ok := storedContainerParent(metadata)
+	if !ok {
+		return false
+	}
+	return ContainerIncluded(guildConfig, containerID, parentID)
+}
+
+func storedContainerParent(metadata sql.NullString) (string, bool) {
+	if !metadata.Valid || strings.TrimSpace(metadata.String) == "" {
+		return "", false
+	}
+	var archived struct {
+		ParentChannelID    string `json:"parent_channel_id"`
+		DiscordChannelType *int   `json:"discord_channel_type"`
+	}
+	if err := json.Unmarshal([]byte(metadata.String), &archived); err != nil || archived.DiscordChannelType == nil {
+		return "", false
+	}
+	if isTopLevelMessageContainer(*archived.DiscordChannelType) {
+		return "", true
+	}
+	parent, err := ParseSnowflake(archived.ParentChannelID)
+	if err != nil || parent == 0 {
+		return "", false
+	}
+	return archived.ParentChannelID, true
 }
 
 func (imp *Importer) importContainer(
@@ -297,6 +358,16 @@ func (imp *Importer) importContainer(
 			return err
 		}
 	}
+	if containerState.HighWater == "0" {
+		// Repair checkpoints written by the pre-release importer review build.
+		// The container snowflake has the same race-safe ordering property used
+		// for a newly empty container and is accepted by Discord's API.
+		containerState.HighWater, err = maximumSnowflake(container.Channel.ID, lowerBound)
+		if err != nil {
+			return fmt.Errorf("repair empty Discord container cursor: %w", err)
+		}
+		state.Containers[container.Channel.ID] = containerState
+	}
 	if err := imp.forward(
 		ctx, sourceID, syncID, conversationID, container.Channel.ID,
 		&containerState, state, summary, media,
@@ -324,9 +395,13 @@ func (imp *Importer) backfill(
 		}
 		if len(head) == 0 {
 			containerState.BackfillComplete = true
-			containerState.HighWater = lowerBound
-			if containerState.HighWater == "" {
-				containerState.HighWater = "0"
+			// A container must exist before any message can be created in it, so
+			// its own snowflake is a valid nonzero lower cursor after an empty
+			// head response. This avoids both a local-clock race and the invalid
+			// zero cursor rejected by the production REST client.
+			containerState.HighWater, err = maximumSnowflake(containerID, lowerBound)
+			if err != nil {
+				return fmt.Errorf("pin empty Discord container cursor: %w", err)
 			}
 			state.Containers[containerID] = *containerState
 			return imp.saveCheckpoint(syncID, state, summary)
