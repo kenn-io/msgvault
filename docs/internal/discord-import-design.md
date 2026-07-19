@@ -351,13 +351,18 @@ Each channel and thread independently performs:
 The comparison interval is pinned as `(lower, upper]` when the window scan
 starts:
 
-- `upper` is the remote container head observed at scan start;
 - `lower` is the edit-window start converted to a Discord snowflake;
+- the importer snapshots archived IDs for that container once at scan start;
+- `upper` is the greater of the remote container head and the highest archived
+  ID in that pinned local snapshot;
+- remote paging begins with `before = successor(upper)` and stops at `lower`;
 - remote enumeration and the archived-side query use the identical container
   ID and snowflake predicates; and
 - the bounds remain fixed for the scan's lifetime.
 
-Messages persisted above `upper`, whether from the forward scan or concurrent
+Including the pinned local maximum lets repair detect when the newest archived
+message was deleted and the current remote head is older. Messages persisted
+above `upper` after the snapshot, whether from the forward scan or a concurrent
 arrival, cannot enter either side of the comparison and cannot be falsely
 tombstoned. Cancellation, incomplete pagination, rate-limit exhaustion,
 missing access, malformed payloads, or persistence errors suppress deletion

@@ -863,6 +863,15 @@ func TestImporterAccessFailuresRecordAndClearContainerMarkersWithoutChangingStat
 				assert.Contains(metadata.String, `"container_missing_reason":"unknown_channel"`)
 			}
 
+			now = now.Add(6 * time.Hour)
+			failed = false
+			_, err = importer.Import(t.Context(), ImportOptions{GuildID: "200", EditRescanWindow: 7 * 24 * time.Hour})
+			require.NoError(err)
+			metadata, err = st.GetConversationMetadata(conversationID)
+			require.NoError(err)
+			assert.Contains(metadata.String, `"`+tt.marker+`":"2026-07-19T12:00:00Z"`,
+				"repeated failures preserve when the inaccessible period began")
+
 			api.messageHook = nil
 			_, err = importer.Import(t.Context(), ImportOptions{GuildID: "200", EditRescanWindow: 7 * 24 * time.Hour})
 			require.NoError(err)
@@ -873,6 +882,45 @@ func TestImporterAccessFailuresRecordAndClearContainerMarkersWithoutChangingStat
 			assert.NotContains(metadata.String, "container_missing_reason")
 		})
 	}
+}
+
+func TestImporterCodeZero404FailsWithoutMissingMarkerOrCursorChange(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewSQLiteTestStore(t)
+	now := time.Date(2026, 7, 19, 12, 0, 0, 0, time.UTC)
+	messageID := importerTestSnowflake(t, now.Add(-time.Hour), 1)
+	api := newImporterFakeAPI(importerTestChannel("300", "general"))
+	api.messages["300"] = []Message{importerTestMessage(messageID, "300", "archived")}
+	importer := newTestImporter(st, api)
+	importer.now = func() time.Time { return now }
+	_, err := importer.Import(t.Context(), ImportOptions{GuildID: "200"})
+	require.NoError(err)
+	source, err := st.GetSourceByIdentifier("200")
+	require.NoError(err)
+	before, err := st.GetLastSuccessfulSync(source.ID)
+	require.NoError(err)
+
+	api.messageHook = func(_ string, _ MessageQuery) ([]Message, error, bool) {
+		return nil, &APIError{
+			Operation: "list channel messages", StatusCode: http.StatusNotFound,
+		}, true
+	}
+	_, err = importer.Import(t.Context(), ImportOptions{GuildID: "200"})
+	require.Error(err)
+	var apiErr *APIError
+	require.ErrorAs(err, &apiErr)
+	assert.Zero(apiErr.Code)
+	checkpoint, err := st.GetLatestCheckpointedSync(source.ID)
+	require.NoError(err)
+	assert.Equal(before.CursorAfter.String, checkpoint.CursorBefore.String)
+	assertMessageDeletionState(t, st, source.ID, messageID, false)
+	conversationID, err := st.EnsureConversationWithType(source.ID, "300", "channel", "general")
+	require.NoError(err)
+	metadata, err := st.GetConversationMetadata(conversationID)
+	require.NoError(err)
+	assert.NotContains(metadata.String, "container_missing_since")
+	assert.NotContains(metadata.String, "container_missing_reason")
 }
 
 func TestImporterIncompleteRepairNeverMarksDeletions(t *testing.T) {

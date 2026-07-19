@@ -352,9 +352,7 @@ func (imp *Importer) importContainer(
 		if err != nil {
 			return err
 		}
-		if err := imp.store.SetConversationMetadata(conversationID, sql.NullString{
-			String: string(mapped.Metadata), Valid: len(mapped.Metadata) != 0,
-		}); err != nil {
+		if err := imp.setConversationCatalogMetadata(conversationID, mapped.Metadata); err != nil {
 			return err
 		}
 	}
@@ -766,7 +764,7 @@ func containerAccessMarker(err error) (marker, reason string, ok bool) {
 	case http.StatusForbidden:
 		return "container_inaccessible_since", "", true
 	case http.StatusNotFound:
-		if apiErr.Code == 0 || apiErr.Code == 10003 {
+		if apiErr.Code == 10003 {
 			return "container_missing_since", "unknown_channel", true
 		}
 	}
@@ -784,17 +782,48 @@ func (imp *Importer) setContainerAccessMarker(
 	if imp.now != nil {
 		now = imp.now
 	}
-	encodedTime, err := json.Marshal(now().UTC().Format(time.RFC3339Nano))
-	if err != nil {
-		return err
+	if _, exists := metadata[marker]; !exists {
+		encodedTime, err := json.Marshal(now().UTC().Format(time.RFC3339Nano))
+		if err != nil {
+			return err
+		}
+		metadata[marker] = encodedTime
 	}
-	metadata[marker] = encodedTime
 	if reason != "" {
 		encodedReason, err := json.Marshal(reason)
 		if err != nil {
 			return err
 		}
 		metadata["container_missing_reason"] = encodedReason
+	}
+	return imp.writeContainerMetadata(conversationID, metadata)
+}
+
+func (imp *Importer) setConversationCatalogMetadata(
+	conversationID int64, catalogMetadata json.RawMessage,
+) error {
+	metadata := make(map[string]json.RawMessage)
+	if len(catalogMetadata) != 0 {
+		if err := json.Unmarshal(catalogMetadata, &metadata); err != nil {
+			return fmt.Errorf("decode mapped Discord conversation metadata: %w", err)
+		}
+	}
+	stored, err := imp.store.GetConversationMetadata(conversationID)
+	if err != nil {
+		return err
+	}
+	if stored.Valid && json.Valid([]byte(stored.String)) {
+		var existing map[string]json.RawMessage
+		if err := json.Unmarshal([]byte(stored.String), &existing); err != nil {
+			return fmt.Errorf("decode stored Discord conversation metadata: %w", err)
+		}
+		for _, key := range []string{
+			"container_inaccessible_since", "container_missing_since", "container_missing_reason",
+		} {
+			if value, ok := existing[key]; ok {
+				metadata[key] = value
+			}
+		}
 	}
 	return imp.writeContainerMetadata(conversationID, metadata)
 }
