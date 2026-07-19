@@ -420,9 +420,10 @@ run sequentially using the same aggregate-failure behavior as
 |---|---|---|
 | `--only-incomplete` | `false` | Select only messages with pending attachment rows |
 
-Backfill re-fetches each source message to obtain a fresh signed CDN URL. An
-incomplete attachment is unrecoverable if the source message has since been
-deleted. See [Discord](/usage/discord/#attachment-backfill-and-limits).
+Backfill re-fetches each selected source message that has pending attachments
+to obtain fresh signed CDN URLs. An incomplete attachment is unrecoverable if
+the source message has since been deleted. See
+[Discord](/usage/discord/#attachment-backfill-and-limits).
 
 ---
 

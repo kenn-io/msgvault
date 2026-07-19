@@ -183,8 +183,9 @@ resolved and synced independently through the same importer as
 Reaction metadata is stored as stable summaries such as `👍 12`, including
 custom emoji name, ID, animation state, and count. Version 1 does not fetch
 reactor identities or populate normalized reaction rows, so reaction-detail
-views and reaction analytics show no Discord reactions even though message
-detail can display the summary.
+views and reaction analytics show no Discord reactions. The summaries remain
+archived in stable message metadata for future provider-aware consumers; the
+current generic CLI and API message-detail models do not expose them.
 
 ## Edit and deletion consistency
 
