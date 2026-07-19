@@ -29,7 +29,13 @@ const (
 	memberPageLimit  = 1000
 )
 
-var ErrRedirect = errors.New("discord API redirects are not allowed")
+var (
+	// ErrDecodeResponse classifies malformed successful Discord responses
+	// without retaining attacker-controlled decoder details.
+	ErrDecodeResponse = errors.New("discord API response could not be decoded")
+	// ErrRedirect classifies a refused Discord API redirect.
+	ErrRedirect = errors.New("discord API redirects are not allowed")
+)
 
 // APIError is a decoded Discord REST error. Error deliberately omits the
 // upstream message body so attacker-controlled URLs cannot enter diagnostics;
@@ -38,7 +44,6 @@ type APIError struct {
 	Operation  string
 	StatusCode int
 	Code       int
-	Message    string
 }
 
 func (e *APIError) Error() string {
@@ -299,7 +304,7 @@ func (c *Client) getJSON(ctx context.Context, route discordRoute, query url.Valu
 		return err
 	}
 	if err := json.Unmarshal(body, out); err != nil {
-		return fmt.Errorf("discord %s: decode response: %w", route.operation, err)
+		return fmt.Errorf("discord %s: %w", route.operation, ErrDecodeResponse)
 	}
 	return nil
 }
@@ -375,12 +380,10 @@ func (c *Client) do(ctx context.Context, requestURL, operation string) ([]byte, 
 func decodeAPIError(operation string, status int, body []byte) *APIError {
 	apiErr := &APIError{Operation: operation, StatusCode: status}
 	var payload struct {
-		Code    int    `json:"code"`
-		Message string `json:"message"`
+		Code int `json:"code"`
 	}
 	if json.Unmarshal(body, &payload) == nil {
 		apiErr.Code = payload.Code
-		apiErr.Message = payload.Message
 	}
 	return apiErr
 }
@@ -393,19 +396,23 @@ func retryDelay(headers http.Header, body []byte, attempt int) (time.Duration, b
 	}
 	decoder := json.NewDecoder(strings.NewReader(string(body)))
 	decoder.UseNumber()
-	jsonOK := decoder.Decode(&payload) == nil && payload.RetryAfter != ""
+	decodeOK := decoder.Decode(&payload) == nil
+	jsonOK := decodeOK && payload.RetryAfter != ""
 	jsonDelay, durationOK := secondsDuration(string(payload.RetryAfter))
 	jsonOK = jsonOK && durationOK
+	global := decodeOK && payload.Global ||
+		strings.EqualFold(strings.TrimSpace(headers.Get("X-Ratelimit-Global")), "true") ||
+		strings.EqualFold(strings.TrimSpace(headers.Get("X-Ratelimit-Scope")), "global")
 
 	switch {
 	case headerOK && jsonOK:
-		return max(headerDelay, jsonDelay), payload.Global
+		return max(headerDelay, jsonDelay), global
 	case headerOK:
-		return headerDelay, payload.Global
+		return headerDelay, global
 	case jsonOK:
-		return jsonDelay, payload.Global
+		return jsonDelay, global
 	default:
-		return min(100*time.Millisecond*time.Duration(1<<attempt), 2*time.Second), payload.Global
+		return min(100*time.Millisecond*time.Duration(1<<attempt), 2*time.Second), global
 	}
 }
 
@@ -415,35 +422,6 @@ func secondsDuration(value string) (time.Duration, bool) {
 		return 0, false
 	}
 	return time.Duration(seconds * float64(time.Second)), true
-}
-
-// resolvePaginationURL validates an API pagination URL without echoing it in
-// errors. Discord currently uses cursor parameters, but keeping this boundary
-// strict prevents future response-provided links from becoming token sinks.
-func (c *Client) resolvePaginationURL(rawURL string) (string, error) {
-	parsed, err := url.Parse(rawURL)
-	if err != nil {
-		return "", errors.New("invalid Discord pagination URL")
-	}
-	if !parsed.IsAbs() {
-		if !strings.HasPrefix(parsed.Path, "/") {
-			return "", errors.New("invalid Discord pagination URL")
-		}
-		parsed.Scheme = c.baseURL.Scheme
-		parsed.Host = c.baseURL.Host
-	}
-	if !sameOrigin(parsed, c.baseURL) || parsed.User != nil || parsed.Fragment != "" {
-		return "", errors.New("discord pagination URL is outside the configured API origin")
-	}
-	basePath := strings.TrimRight(c.baseURL.Path, "/")
-	if parsed.Path != basePath && !strings.HasPrefix(parsed.Path, basePath+"/") {
-		return "", errors.New("discord pagination URL is outside the configured API root")
-	}
-	return parsed.String(), nil
-}
-
-func sameOrigin(left, right *url.URL) bool {
-	return strings.EqualFold(left.Scheme, right.Scheme) && strings.EqualFold(left.Host, right.Host)
 }
 
 type contextMutex chan struct{}

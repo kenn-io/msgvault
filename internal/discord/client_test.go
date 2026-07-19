@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -129,7 +130,9 @@ func TestMessageQueryValidation(t *testing.T) {
 
 func TestClientDecodesDiscordAPIError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		writeDiscordJSON(w, http.StatusForbidden, map[string]any{"code": 50013, "message": "Missing Permissions"})
+		writeDiscordJSON(w, http.StatusForbidden, map[string]any{
+			"code": 50013, "message": "https://attacker.example/error?signature=api-error-marker",
+		})
 	}))
 	t.Cleanup(server.Close)
 	client, err := NewClient(server.URL, "secret-token")
@@ -141,8 +144,29 @@ func TestClientDecodesDiscordAPIError(t *testing.T) {
 	require.ErrorAs(t, err, &apiErr)
 	assert.Equal(t, http.StatusForbidden, apiErr.StatusCode)
 	assert.Equal(t, 50013, apiErr.Code)
-	assert.Equal(t, "Missing Permissions", apiErr.Message)
 	assert.NotContains(t, err.Error(), "secret-token")
+	if strings.Contains(fmt.Sprintf("%#v", apiErr), "api-error-marker") {
+		require.Fail(t, "Discord API error retained an untrusted upstream message")
+	}
+}
+
+func TestClientSanitizesSuccessfulResponseDecodeErrors(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		writeDiscordJSON(w, http.StatusOK, map[string]any{
+			"id": "501", "timestamp": "https://attacker.example/file?signature=decode-marker&token=token-marker",
+		})
+	}))
+	t.Cleanup(server.Close)
+	client, err := NewClient(server.URL, "secret-token")
+	require.NoError(t, err)
+
+	_, err = client.Message(context.Background(), "301", "501")
+
+	require.Error(t, err)
+	if strings.Contains(err.Error(), "decode-marker") || strings.Contains(err.Error(), "token-marker") || strings.Contains(err.Error(), "secret-token") {
+		require.Fail(t, "Discord response decode error exposed confidential input")
+	}
+	require.ErrorIs(t, err, ErrDecodeResponse)
 }
 
 func TestClientSerializesRoutesLearnedToShareBucket(t *testing.T) {
@@ -239,11 +263,115 @@ func TestClientHonorsGlobal429AcrossRoutes(t *testing.T) {
 	assert.GreaterOrEqual(t, time.Unix(0, guildAt.Load()).Sub(started), 65*time.Millisecond)
 }
 
+func TestClientHonorsHeaderSignaledGlobal429AcrossRoutes(t *testing.T) {
+	tests := []struct {
+		name        string
+		headerName  string
+		headerValue string
+		body        string
+	}{
+		{
+			name:        "global header with malformed JSON",
+			headerName:  "X-Ratelimit-Global",
+			headerValue: "  TrUe  ",
+			body:        `{"malformed"`,
+		},
+		{
+			name:        "scope header without JSON global field",
+			headerName:  "X-Ratelimit-Scope",
+			headerValue: "  GLOBAL  ",
+			body:        `{"message":"limited"}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			limited := make(chan struct{}, 1)
+			var meCalls atomic.Int32
+			var guildAt atomic.Int64
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+				switch request.URL.Path {
+				case "/users/@me":
+					if meCalls.Add(1) == 1 {
+						w.Header().Set("Retry-After", "0.15")
+						w.Header().Set(tt.headerName, tt.headerValue)
+						w.WriteHeader(http.StatusTooManyRequests)
+						if _, err := w.Write([]byte(tt.body)); err != nil {
+							panic(fmt.Errorf("write synthetic 429 response: %w", err))
+						}
+						limited <- struct{}{}
+						return
+					}
+					writeDiscordJSON(w, http.StatusOK, map[string]any{"id": "101"})
+				case "/guilds/201":
+					guildAt.Store(time.Now().UnixNano())
+					writeDiscordJSON(w, http.StatusOK, map[string]any{"id": "201"})
+				}
+			}))
+			t.Cleanup(server.Close)
+			client, err := NewClient(server.URL, "test-token")
+			require.NoError(t, err)
+
+			meDone := make(chan error, 1)
+			go func() {
+				_, callErr := client.Me(context.Background())
+				meDone <- callErr
+			}()
+			<-limited
+			require.Eventually(t, func() bool {
+				client.limits.mu.Lock()
+				defer client.limits.mu.Unlock()
+				if client.limits.globalUntil.After(time.Now()) {
+					return true
+				}
+				for _, route := range client.limits.routes {
+					if route.readyAt.After(time.Now()) {
+						return true
+					}
+				}
+				return false
+			}, 500*time.Millisecond, time.Millisecond)
+			started := time.Now()
+
+			_, err = client.Guild(context.Background(), "201")
+
+			require.NoError(t, err)
+			require.NoError(t, <-meDone)
+			assert.GreaterOrEqual(t, time.Unix(0, guildAt.Load()).Sub(started), 100*time.Millisecond)
+		})
+	}
+}
+
 func TestClientRetainsGlobalPauseAfterRetryExhaustion(t *testing.T) {
 	var guildAt atomic.Int64
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
 		if request.URL.Path == "/users/@me" {
 			writeDiscordJSON(w, http.StatusTooManyRequests, map[string]any{"message": "limited", "retry_after": 0.04, "global": true})
+			return
+		}
+		guildAt.Store(time.Now().UnixNano())
+		writeDiscordJSON(w, http.StatusOK, map[string]any{"id": "201"})
+	}))
+	t.Cleanup(server.Close)
+	client, err := NewClient(server.URL, "test-token")
+	require.NoError(t, err)
+
+	_, err = client.Me(context.Background())
+	require.Error(t, err)
+	exhaustedAt := time.Now()
+	_, err = client.Guild(context.Background(), "201")
+
+	require.NoError(t, err)
+	assert.GreaterOrEqual(t, time.Unix(0, guildAt.Load()).Sub(exhaustedAt), 30*time.Millisecond)
+}
+
+func TestClientRetainsHeaderSignaledGlobalPauseAfterRetryExhaustion(t *testing.T) {
+	var guildAt atomic.Int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		if request.URL.Path == "/users/@me" {
+			w.Header().Set("Retry-After", "0.04")
+			w.Header().Set("X-Ratelimit-Scope", " global ")
+			writeDiscordJSON(w, http.StatusTooManyRequests, map[string]any{"message": "limited"})
 			return
 		}
 		guildAt.Store(time.Now().UnixNano())
@@ -373,40 +501,28 @@ func TestClientBoundsServerErrorRetries(t *testing.T) {
 	assert.Equal(t, int32(maxAttempts), calls.Load())
 }
 
-func TestClientRejectsCrossOriginPaginationAndRedirects(t *testing.T) {
-	t.Run("pagination URL", func(t *testing.T) {
-		client, err := NewClient("https://discord.example/api/v10", "test-token")
-		require.NoError(t, err)
+func TestClientRejectsRedirects(t *testing.T) {
+	var redirectedAuthorization string
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		redirectedAuthorization = request.Header.Get("Authorization")
+		writeDiscordJSON(w, http.StatusOK, map[string]any{"id": "101"})
+	}))
+	t.Cleanup(target.Close)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Location", target.URL+"/collect?signature=do-not-log")
+		w.WriteHeader(http.StatusFound)
+	}))
+	t.Cleanup(server.Close)
+	client, err := NewClient(server.URL, "secret-token")
+	require.NoError(t, err)
 
-		_, err = client.resolvePaginationURL("https://attacker.example/api/v10/users/@me/guilds?after=secret")
+	_, err = client.Me(context.Background())
 
-		require.Error(t, err)
-		assert.NotContains(t, err.Error(), "secret")
-	})
-
-	t.Run("redirect", func(t *testing.T) {
-		var redirectedAuthorization string
-		target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
-			redirectedAuthorization = request.Header.Get("Authorization")
-			writeDiscordJSON(w, http.StatusOK, map[string]any{"id": "101"})
-		}))
-		t.Cleanup(target.Close)
-		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			w.Header().Set("Location", target.URL+"/collect?signature=do-not-log")
-			w.WriteHeader(http.StatusFound)
-		}))
-		t.Cleanup(server.Close)
-		client, err := NewClient(server.URL, "secret-token")
-		require.NoError(t, err)
-
-		_, err = client.Me(context.Background())
-
-		require.Error(t, err)
-		assert.Empty(t, redirectedAuthorization)
-		assert.NotContains(t, err.Error(), "secret-token")
-		assert.NotContains(t, err.Error(), "do-not-log")
-		assert.ErrorIs(t, err, ErrRedirect)
-	})
+	require.Error(t, err)
+	assert.Empty(t, redirectedAuthorization)
+	assert.NotContains(t, err.Error(), "secret-token")
+	assert.NotContains(t, err.Error(), "do-not-log")
+	assert.ErrorIs(t, err, ErrRedirect)
 }
 
 func TestNewClientRejectsUnsafeBaseURL(t *testing.T) {
