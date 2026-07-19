@@ -84,9 +84,10 @@ for 429 and server failures. It never exposes a write-method surface.
 `msgvault add-discord` prompts for a bot token through protected input rather
 than accepting it on the command line. It validates the bot identity, lists the
 guilds the bot can access, and registers selected guilds. If exactly one guild
-is available it may be selected automatically. If several are available, the
-user must pass one or more `--guild <id>` flags; setup never silently archives
-every accessible guild.
+is available, setup selects it automatically and echoes its name and ID for
+confirmation. An explicit `--guild <id>` always overrides automatic selection.
+If several are available, the user must pass one or more `--guild <id>` flags;
+setup never silently archives every accessible guild.
 
 Each registered guild becomes a source with:
 
@@ -217,7 +218,7 @@ Version 1 stores a stable summary in message metadata:
 ```json
 {
   "reaction_summaries": [
-    {"emoji": "thumbsup", "count": 12}
+    {"emoji": "thumbsup", "emoji_id": "123456789012345678", "animated": false, "count": 12}
   ]
 }
 ```
@@ -229,6 +230,11 @@ therefore an explicit user-visible outlier: existing normalized reaction views
 and analytics show no Discord reactions, while message detail can render the
 stable summaries. A future opt-in reactor-detail pass can populate normalized
 rows without changing the message import.
+
+For Unicode emoji, `emoji` contains the character and `emoji_id` is omitted.
+For custom guild emoji, `emoji` contains the name, `emoji_id` contains its
+stable Discord ID, and `animated` records whether it is animated. This shape is
+shared by message detail and any future reactor-detail backfill.
 
 ## Attachments and media
 
@@ -420,6 +426,12 @@ msgvault backfill-discord-media [<guild-id-or-name>] [--only-incomplete]
 msgvault remove-account <guild-id> --type discord
 ```
 
+With an explicit argument, `sync-discord` resolves exactly one registered
+guild by ID or unambiguous display name. With no argument, it syncs every
+registered Discord source sequentially in stable source-ID order and reports
+each guild's result; one guild failure does not prevent later guilds from
+running, but the overall command returns an aggregate error.
+
 Discord becomes a known text message type so existing search, TUI, API,
 analytics, and message-type filters include it. The daemon resolves and
 schedules each guild source independently through the existing source
@@ -440,8 +452,11 @@ exclude = ["222222222222222222"]
 
 The default is every bot-accessible text/announcement channel, forum post,
 and active or archived thread. Include/exclude filters are applied to message
-containers; filtering a parent can include or exclude its child threads as
-documented. Tokens and binding labels are never stored in this configuration.
+containers. Top-level channels match their own IDs. Threads and forum posts
+inherit their parent channel's included or excluded state, while a thread ID
+listed explicitly in `include` or `exclude` overrides that inheritance. When
+the same container is listed in both sets, `exclude` wins. Tokens and binding
+labels are never stored in this configuration.
 
 ## Security
 
