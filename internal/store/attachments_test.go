@@ -100,6 +100,47 @@ func TestListDiscordPendingAttachmentMessagesGroupsScopesAndOrders(t *testing.T)
 	}, pending)
 }
 
+func TestListDiscordAttachmentMessagesIncludesCompletedAndPendingInOneQuery(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewSQLiteTestStore(t)
+	source, err := st.GetOrCreateSource("discord", "source-all-attachments")
+	require.NoError(err)
+	conversationID, err := st.EnsureConversationWithType(source.ID, "channel-all", "channel", "all")
+	require.NoError(err)
+	completedID := insertStoreTestMessage(t, st, source.ID, conversationID, "completed")
+	pendingID := insertStoreTestMessage(t, st, source.ID, conversationID, "pending")
+	beeperOnlyID := insertStoreTestMessage(t, st, source.ID, conversationID, "beeper-only")
+	otherSource, err := st.GetOrCreateSource("discord", "other-all-attachments")
+	require.NoError(err)
+	otherConversationID, err := st.EnsureConversationWithType(otherSource.ID, "channel-other", "channel", "other")
+	require.NoError(err)
+	otherID := insertStoreTestMessage(t, st, otherSource.ID, otherConversationID, "other")
+
+	hash := strings.Repeat("c3", 32)
+	require.NoError(st.ReplaceMessageDiscordAttachments(completedID, []store.AttachmentRef{{
+		StoragePath: hash[:2] + "/" + hash, ContentHash: hash, SourceAttachmentID: "discord:completed",
+	}}))
+	require.NoError(st.ReplaceMessageDiscordAttachments(pendingID, []store.AttachmentRef{{
+		StoragePath: "discord:pending:pending", SourceAttachmentID: "discord:pending",
+	}}))
+	require.NoError(st.ReplaceMessageBeeperAttachments(beeperOnlyID, []store.AttachmentRef{{
+		StoragePath: "beeper:pending", SourceAttachmentID: "beeper:only",
+	}}))
+	require.NoError(st.ReplaceMessageDiscordAttachments(otherID, []store.AttachmentRef{{
+		StoragePath: "discord:pending:other", SourceAttachmentID: "discord:other",
+	}}))
+
+	logs := captureAttachmentQueryLogs(t)
+	items, err := st.ListDiscordAttachmentMessages(source.ID)
+	require.NoError(err)
+	assert.Equal([]store.DiscordPendingAttachmentMessage{
+		{MessageID: completedID, SourceMessageID: "completed", ChatID: "channel-all"},
+		{MessageID: pendingID, SourceMessageID: "pending", ChatID: "channel-all"},
+	}, items)
+	assert.Equal(1, strings.Count(logs.String(), `"kind":"query"`), "all-attachment scan must use one query")
+}
+
 func TestReplaceMessageDiscordAttachmentsPreservesDuplicateContentSourceIDs(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

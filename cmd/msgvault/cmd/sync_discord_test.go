@@ -80,6 +80,32 @@ func TestSyncDiscordResolvesUnambiguousDisplayNameAndForwardsBounds(t *testing.T
 	assert.Zero(t, messageCount, "--after must exclude earlier Discord messages")
 }
 
+func TestSyncDiscordReportsSanitizedCatalogAndContainerAccessIssues(t *testing.T) {
+	st := newDiscordCLIStore(t)
+	tokensDir := t.TempDir()
+	require.NoError(t, discord.NewTokenManager(tokensDir).Save(discord.TokenRecord{
+		BotUserID: testDiscordBotID, BotUsername: "archive-bot", AccessToken: testDiscordBotToken,
+	}))
+	_, err := st.GetOrCreateSource("discord", testDiscordGuildA)
+	require.NoError(t, err)
+	api := newDiscordCLIServer(t)
+	api.fail["/channels/"+testDiscordChannel+"/users/@me/threads/archived/private"] = http.StatusForbidden
+	api.fail["/channels/"+testDiscordChannel+"/messages"] = http.StatusForbidden
+
+	cmd := newSyncDiscordLocalCmd(testDiscordCommandDeps(t, st, tokensDir, api.server.URL))
+	var output bytes.Buffer
+	cmd.SetArgs([]string{testDiscordGuildA})
+	cmd.SetOut(&output)
+	cmd.SetErr(&output)
+	require.NoError(t, cmd.Execute())
+	assert.Contains(t, output.String(), "Private archived threads unavailable")
+	assert.Contains(t, output.String(), "Container inaccessible")
+	assert.Contains(t, output.String(), testDiscordChannel)
+	assert.Contains(t, output.String(), "HTTP 403")
+	assert.NotContains(t, output.String(), "synthetic failure")
+	assert.NotContains(t, output.String(), testDiscordBotToken)
+}
+
 func TestResolveDiscordSourcesRejectsAmbiguousDisplayName(t *testing.T) {
 	st := newDiscordCLIStore(t)
 	for _, guildID := range []string{testDiscordGuildA, testDiscordGuildB} {

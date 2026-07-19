@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -31,15 +32,17 @@ type discordCLIServer struct {
 	requests []string
 	guilds   []discord.Guild
 	fail     map[string]int
+	failCode map[string]int
 	messages map[string][]discord.Message
 }
 
 func newDiscordCLIServer(t *testing.T, guilds ...discord.Guild) *discordCLIServer {
 	t.Helper()
 	fake := &discordCLIServer{
-		testing: t,
-		guilds:  guilds,
-		fail:    make(map[string]int),
+		testing:  t,
+		guilds:   guilds,
+		fail:     make(map[string]int),
+		failCode: make(map[string]int),
 		messages: map[string][]discord.Message{
 			testDiscordChannel: {},
 		},
@@ -53,6 +56,7 @@ func (f *discordCLIServer) serveHTTP(w http.ResponseWriter, r *http.Request) {
 	f.mu.Lock()
 	f.requests = append(f.requests, r.URL.RequestURI())
 	status := f.fail[r.URL.Path]
+	code := f.failCode[r.URL.Path]
 	f.mu.Unlock()
 
 	if got := r.Header.Get("Authorization"); got != "Bot "+testDiscordBotToken {
@@ -61,7 +65,10 @@ func (f *discordCLIServer) serveHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if status != 0 {
 		w.WriteHeader(status)
-		_, _ = w.Write([]byte(`{"message":"synthetic failure","code":50001}`))
+		if code == 0 {
+			code = 50001
+		}
+		_, _ = fmt.Fprintf(w, `{"message":"synthetic failure","code":%d}`, code)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -137,6 +144,7 @@ func testDiscordCommandDeps(t *testing.T, st *store.Store, tokensDir, baseURL st
 		databaseDSN:          func() string { return "" },
 		rebuildCache:         func(string) error { return nil },
 		postSourceMigrations: func(*store.Store) error { return nil },
+		registerGuild:        registerDiscordGuild,
 	}
 }
 

@@ -28,6 +28,7 @@ type discordCommandDeps struct {
 	databaseDSN          func() string
 	rebuildCache         func(string) error
 	postSourceMigrations func(*store.Store) error
+	registerGuild        func(*store.Store, discord.Guild, string) error
 }
 
 func defaultDiscordCommandDeps() discordCommandDeps {
@@ -42,6 +43,7 @@ func defaultDiscordCommandDeps() discordCommandDeps {
 		databaseDSN:          func() string { return cfg.DatabaseDSN() },
 		rebuildCache:         rebuildCacheAfterWrite,
 		postSourceMigrations: runPostSourceCreateMigrations,
+		registerGuild:        registerDiscordGuild,
 	}
 }
 

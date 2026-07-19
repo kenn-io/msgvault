@@ -19,6 +19,10 @@ type BeeperPendingAttachmentMessage = PendingAttachmentMessage
 // DiscordPendingAttachmentMessage identifies a Discord message with pending media.
 type DiscordPendingAttachmentMessage = PendingAttachmentMessage
 
+// DiscordAttachmentMessage identifies a Discord message with provider-managed
+// attachment rows, regardless of whether every row is already downloaded.
+type DiscordAttachmentMessage = PendingAttachmentMessage
+
 func (s *Store) replaceMessageProviderAttachments(messageID int64, providerPrefix string, refs []AttachmentRef) error {
 	return s.replaceMessageAttachmentsWhere(
 		messageID, `source_attachment_id LIKE ?`, false, refs, providerPrefix+"%",
@@ -204,4 +208,38 @@ func (s *Store) ListDiscordPendingAttachmentMessages(sourceID int64) ([]DiscordP
 	}
 	flushCurrent()
 	return pending, nil
+}
+
+// ListDiscordAttachmentMessages returns every source-scoped message with at
+// least one Discord-managed attachment. The one-query selection is used by a
+// full media refresh; callers that only want incomplete rows use
+// ListDiscordPendingAttachmentMessages.
+func (s *Store) ListDiscordAttachmentMessages(sourceID int64) ([]DiscordAttachmentMessage, error) {
+	rows, err := s.db.Query(`
+		SELECT m.id, m.source_message_id, c.source_conversation_id
+		FROM messages m
+		JOIN conversations c ON c.id = m.conversation_id
+		WHERE m.source_id = ?
+		  AND EXISTS (
+		    SELECT 1
+		    FROM attachments a
+		    WHERE a.message_id = m.id
+		      AND a.source_attachment_id LIKE ?
+		  )
+		ORDER BY m.id
+	`, sourceID, "discord:%")
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	var messages []DiscordAttachmentMessage
+	for rows.Next() {
+		var message DiscordAttachmentMessage
+		if err := rows.Scan(&message.MessageID, &message.SourceMessageID, &message.ChatID); err != nil {
+			return nil, err
+		}
+		messages = append(messages, message)
+	}
+	return messages, rows.Err()
 }

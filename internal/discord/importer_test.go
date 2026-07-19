@@ -814,13 +814,21 @@ func TestImporterRepairClearsTombstoneWhenMessageReappears(t *testing.T) {
 
 func TestImporterAccessFailuresRecordAndClearContainerMarkersWithoutChangingState(t *testing.T) {
 	for _, tt := range []struct {
-		name       string
-		statusCode int
-		marker     string
-		reason     bool
+		name        string
+		statusCode  int
+		discordCode int
+		marker      string
+		reason      bool
+		kind        ContainerIssueKind
 	}{
-		{name: "forbidden", statusCode: http.StatusForbidden, marker: "container_inaccessible_since"},
-		{name: "unknown channel", statusCode: http.StatusNotFound, marker: "container_missing_since", reason: true},
+		{
+			name: "forbidden", statusCode: http.StatusForbidden, discordCode: 50013,
+			marker: "container_inaccessible_since", kind: ContainerIssueForbidden,
+		},
+		{
+			name: "unknown channel", statusCode: http.StatusNotFound, discordCode: 10003,
+			marker: "container_missing_since", reason: true, kind: ContainerIssueUnknownChannel,
+		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			require := require.New(t)
@@ -845,10 +853,17 @@ func TestImporterAccessFailuresRecordAndClearContainerMarkersWithoutChangingStat
 					return nil, nil, false
 				}
 				failed = true
-				return nil, &APIError{Operation: "list channel messages", StatusCode: tt.statusCode, Code: 10003}, true
+				return nil, &APIError{
+					Operation: "list channel messages", StatusCode: tt.statusCode, Code: tt.discordCode,
+				}, true
 			}
-			_, err = importer.Import(t.Context(), ImportOptions{GuildID: "200", EditRescanWindow: 7 * 24 * time.Hour})
+			summary, err := importer.Import(t.Context(), ImportOptions{GuildID: "200", EditRescanWindow: 7 * 24 * time.Hour})
 			require.NoError(err)
+			require.Len(summary.ContainerIssues, 1)
+			assert.Equal(ContainerIssue{
+				ContainerID: "300", Kind: tt.kind,
+				StatusCode: tt.statusCode, DiscordCode: tt.discordCode,
+			}, summary.ContainerIssues[0])
 			after, err := st.GetLastSuccessfulSync(source.ID)
 			require.NoError(err)
 			assert.Equal(before.CursorAfter.String, after.CursorAfter.String)

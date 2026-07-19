@@ -80,27 +80,37 @@ func runAddDiscord(cmd *cobra.Command, deps discordCommandDeps, opts addDiscordO
 	}
 	defer cleanup()
 	manager := deps.tokenManager()
+	// Credential persistence is the first durable setup phase. If later source
+	// registration fails, re-running add-discord with the same bot and binding
+	// safely rotates the same token record and resumes idempotent source upserts.
 	if err := saveDiscordCredential(st, manager, discord.TokenRecord{
 		BotUserID: me.ID, BotUsername: me.Username, AccessToken: accessToken, Binding: opts.OAuthApp,
 	}); err != nil {
 		return err
 	}
 	for _, guild := range selected {
-		source, sourceErr := st.GetOrCreateSource(sourceTypeDiscord, guild.ID)
-		if sourceErr != nil {
-			return fmt.Errorf("register Discord guild %s: %w", guild.ID, sourceErr)
-		}
-		if sourceErr = st.UpdateSourceDisplayName(source.ID, guild.Name); sourceErr != nil {
-			return fmt.Errorf("set Discord guild name %s: %w", guild.ID, sourceErr)
-		}
-		if sourceErr = st.UpdateSourceOAuthApp(source.ID, nullableDiscordBinding(opts.OAuthApp)); sourceErr != nil {
-			return fmt.Errorf("bind Discord guild credential %s: %w", guild.ID, sourceErr)
+		if err := deps.registerGuild(st, guild, opts.OAuthApp); err != nil {
+			return err
 		}
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Registered Discord guild: %s (%s)\n", guild.Name, guild.ID)
 		diagnoseDiscordGuild(cmd, client, guild, cmd.OutOrStdout())
 	}
 	if err := deps.postSourceMigrations(st); err != nil {
 		return fmt.Errorf("post-source-create migrations: %w", err)
+	}
+	return nil
+}
+
+func registerDiscordGuild(st *store.Store, guild discord.Guild, binding string) error {
+	source, err := st.GetOrCreateSource(sourceTypeDiscord, guild.ID)
+	if err != nil {
+		return fmt.Errorf("register Discord guild %s: %w", guild.ID, err)
+	}
+	if err := st.UpdateSourceDisplayName(source.ID, guild.Name); err != nil {
+		return fmt.Errorf("set Discord guild name %s: %w", guild.ID, err)
+	}
+	if err := st.UpdateSourceOAuthApp(source.ID, nullableDiscordBinding(binding)); err != nil {
+		return fmt.Errorf("bind Discord guild credential %s: %w", guild.ID, err)
 	}
 	return nil
 }

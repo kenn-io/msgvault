@@ -48,7 +48,27 @@ type ImportSummary struct {
 	MediaDownloaded     int64
 	MediaPending        int64
 	CatalogIssues       []CatalogIssue
+	ContainerIssues     []ContainerIssue
 	processedMessageIDs map[string]struct{}
+}
+
+// ContainerIssueKind classifies a message-container scan that was skipped
+// without failing the guild import. Values are provider-stable and do not
+// retain upstream response text.
+type ContainerIssueKind string
+
+const (
+	ContainerIssueForbidden      ContainerIssueKind = "forbidden"
+	ContainerIssueUnknownChannel ContainerIssueKind = "unknown_channel"
+)
+
+// ContainerIssue is the sanitized access diagnostic for one skipped channel,
+// thread, or forum post. It intentionally contains no raw error or URL.
+type ContainerIssue struct {
+	ContainerID string
+	Kind        ContainerIssueKind
+	StatusCode  int
+	DiscordCode int
 }
 
 // Importer ingests one Discord guild through the shared store and sync-run
@@ -752,7 +772,34 @@ func (imp *Importer) handleContainerError(
 	if err := imp.saveCheckpoint(syncID, state, summary); err != nil {
 		return errors.Join(importErr, err)
 	}
+	issue, classified := newContainerIssue(containerID, importErr)
+	if classified {
+		summary.ContainerIssues = append(summary.ContainerIssues, issue)
+	}
 	return nil
+}
+
+func newContainerIssue(containerID string, err error) (ContainerIssue, bool) {
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) {
+		return ContainerIssue{}, false
+	}
+	issue := ContainerIssue{
+		ContainerID: containerID,
+		StatusCode:  apiErr.StatusCode,
+		DiscordCode: apiErr.Code,
+	}
+	switch apiErr.StatusCode {
+	case http.StatusForbidden:
+		issue.Kind = ContainerIssueForbidden
+		return issue, true
+	case http.StatusNotFound:
+		if apiErr.Code == 10003 {
+			issue.Kind = ContainerIssueUnknownChannel
+			return issue, true
+		}
+	}
+	return ContainerIssue{}, false
 }
 
 func containerAccessMarker(err error) (marker, reason string, ok bool) {

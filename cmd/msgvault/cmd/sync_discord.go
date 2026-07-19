@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -59,6 +61,7 @@ func runSyncDiscord(cmd *cobra.Command, deps discordCommandDeps, selector string
 		summary, importErr := importDiscordSource(
 			ctx, st, source, deps, opts.Full, after, writeDiscordProgress(cmd.OutOrStdout()),
 		)
+		writeDiscordSyncIssues(cmd.OutOrStdout(), summary)
 		if summary != nil && summary.MessagesProcessed > 0 {
 			anyWrites = true
 		}
@@ -80,6 +83,54 @@ func runSyncDiscord(cmd *cobra.Command, deps discordCommandDeps, selector string
 		}
 	}
 	return runErr
+}
+
+func writeDiscordSyncIssues(out io.Writer, summary *discord.ImportSummary) {
+	if summary == nil {
+		return
+	}
+	for _, issue := range summary.CatalogIssues {
+		label := "Discord catalog unavailable"
+		switch issue.Scope {
+		case discord.CatalogScopeGuildChannels:
+			label = "Guild channel catalog unavailable"
+		case discord.CatalogScopeActiveThreads:
+			label = "Active thread catalog unavailable"
+		case discord.CatalogScopePublicArchive:
+			label = "Public archived threads unavailable"
+		case discord.CatalogScopePrivateArchive:
+			label = "Private archived threads unavailable"
+		}
+		target := issue.GuildID
+		if issue.ParentID != "" {
+			target = issue.ParentID
+		}
+		_, _ = fmt.Fprintf(out, "  Warning: %s for %s (%s)\n", label, target, discordIssueStatus(issue.StatusCode, issue.DiscordCode, string(issue.Kind)))
+	}
+	for _, issue := range summary.ContainerIssues {
+		label := "Container unavailable"
+		switch issue.Kind {
+		case discord.ContainerIssueForbidden:
+			label = "Container inaccessible"
+		case discord.ContainerIssueUnknownChannel:
+			label = "Container missing upstream"
+		}
+		_, _ = fmt.Fprintf(out, "  Warning: %s: %s (%s)\n", label, issue.ContainerID, discordIssueStatus(issue.StatusCode, issue.DiscordCode, string(issue.Kind)))
+	}
+}
+
+func discordIssueStatus(statusCode, discordCode int, fallback string) string {
+	parts := make([]string, 0, 2)
+	if statusCode != 0 {
+		parts = append(parts, fmt.Sprintf("HTTP %d", statusCode))
+	}
+	if discordCode != 0 {
+		parts = append(parts, fmt.Sprintf("Discord code %d", discordCode))
+	}
+	if len(parts) == 0 {
+		return fallback
+	}
+	return strings.Join(parts, ", ")
 }
 
 // importDiscordSource is the shared manual/scheduler production path. Task 11's
