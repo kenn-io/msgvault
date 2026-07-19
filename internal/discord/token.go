@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/gofrs/flock"
 	"go.kenn.io/msgvault/internal/fileutil"
 )
 
@@ -38,6 +39,13 @@ type TokenRecord struct {
 // String returns safe credential metadata without the access token.
 func (r TokenRecord) String() string {
 	return fmt.Sprintf("Discord bot %s (%s), binding %q", r.BotUsername, r.BotUserID, r.Binding)
+}
+
+// GoString protects Go-syntax formatting (%#v) from reflecting the exported
+// AccessToken field. A value receiver covers both TokenRecord and
+// *TokenRecord formatting.
+func (r TokenRecord) GoString() string {
+	return r.String()
 }
 
 type tokenFile struct {
@@ -76,10 +84,23 @@ func (m *TokenManager) TokenPath(botUserID string) string {
 // Save validates and atomically stores a Discord bot credential. Re-saving the
 // same bot rotates its token, and changing its empty binding to a named binding
 // performs the supported unnamed-to-named promotion.
-func (m *TokenManager) Save(record TokenRecord) error {
+func (m *TokenManager) Save(record TokenRecord) (retErr error) {
 	if err := validateTokenRecord(record); err != nil {
 		return err
 	}
+	if err := fileutil.SecureMkdirAll(m.tokensDir, 0700); err != nil {
+		return fmt.Errorf("create Discord tokens directory: %w", err)
+	}
+
+	saveLock := flock.New(filepath.Join(m.tokensDir, ".discord-token.lock"), flock.SetPermissions(0600))
+	if err := saveLock.Lock(); err != nil {
+		return fmt.Errorf("lock Discord token store: %w", err)
+	}
+	defer func() {
+		if err := saveLock.Unlock(); err != nil && retErr == nil {
+			retErr = fmt.Errorf("unlock Discord token store: %w", err)
+		}
+	}()
 
 	records, err := m.List()
 	if err != nil {
@@ -110,7 +131,7 @@ func (m *TokenManager) Save(record TokenRecord) error {
 		}
 	}
 
-	return m.write(record)
+	return m.writeLocked(record)
 }
 
 // List loads all Discord bot credentials, validates their contents and
@@ -220,10 +241,8 @@ func (m *TokenManager) Promote(botUserID, binding string) (TokenRecord, error) {
 	return TokenRecord{}, ErrTokenNotFound
 }
 
-func (m *TokenManager) write(record TokenRecord) error {
-	if err := fileutil.SecureMkdirAll(m.tokensDir, 0700); err != nil {
-		return fmt.Errorf("create Discord tokens directory: %w", err)
-	}
+// writeLocked persists record while Save holds the cross-process store lock.
+func (m *TokenManager) writeLocked(record TokenRecord) error {
 	stored := tokenFile(record)
 	data, err := json.MarshalIndent(stored, "", "  ") //nolint:gosec // the token file is the 0600 credential store
 	if err != nil {
