@@ -1,5 +1,10 @@
 package store
 
+import (
+	"encoding/hex"
+	"strings"
+)
+
 // PendingAttachmentMessage identifies a message with at least one provider
 // attachment marker that has not been downloaded yet.
 type PendingAttachmentMessage struct {
@@ -78,11 +83,98 @@ func (s *Store) listPendingAttachmentMessages(sourceID int64, providerPrefix str
 	return items, rows.Err()
 }
 
+func (s *Store) listProviderAttachmentMessages(sourceID int64, providerPrefix string) ([]PendingAttachmentMessage, error) {
+	rows, err := s.db.Query(`
+		SELECT m.id, m.source_message_id, c.source_conversation_id
+		FROM messages m
+		JOIN conversations c ON c.id = m.conversation_id
+		WHERE m.source_id = ?
+		  AND EXISTS (
+		    SELECT 1 FROM attachments a
+		    WHERE a.message_id = m.id
+		      AND a.source_attachment_id LIKE ?
+		  )
+	`, sourceID, providerPrefix+"%")
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	var items []PendingAttachmentMessage
+	for rows.Next() {
+		var item PendingAttachmentMessage
+		if err := rows.Scan(&item.MessageID, &item.SourceMessageID, &item.ChatID); err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
 // ReplaceMessageDiscordAttachments replaces Discord-managed attachment rows.
-// Rows without a content hash are pending-download markers whose storage path
-// retains the observed CDN URL.
+// Pending rows retain an observed CDN URL or deterministic provider sentinel.
+// Hashless rows with a trusted local CAS path are duplicate-content aliases.
 func (s *Store) ReplaceMessageDiscordAttachments(messageID int64, refs []AttachmentRef) error {
+	refs = normalizeDiscordAttachmentRefs(refs)
 	return s.replaceMessageProviderAttachments(messageID, "discord:", refs)
+}
+
+// normalizeDiscordAttachmentRefs preserves one row per stable Discord
+// attachment ID when several attachments on a message share one CAS blob. The
+// schema's (message_id, content_hash) uniqueness keeps the real hash on the
+// first row; later aliases retain the same trusted local path with an empty
+// hash. Empty source URLs become provider sentinels so generic replacement
+// never drops their metadata.
+func normalizeDiscordAttachmentRefs(refs []AttachmentRef) []AttachmentRef {
+	normalized := append([]AttachmentRef(nil), refs...)
+	seen := make(map[string]struct{}, len(normalized))
+	for i := range normalized {
+		if normalized[i].StoragePath == "" {
+			attachmentID := strings.TrimPrefix(normalized[i].SourceAttachmentID, "discord:")
+			normalized[i].StoragePath = "discord:pending:" + attachmentID
+		}
+		contentHash := strings.ToLower(normalized[i].ContentHash)
+		if contentHash == "" {
+			pathHash, ok := discordCASPathHash(normalized[i].StoragePath)
+			if !ok {
+				continue
+			}
+			contentHash = pathHash
+			normalized[i].ContentHash = pathHash
+		}
+		if _, ok := seen[contentHash]; ok {
+			normalized[i].ContentHash = ""
+			continue
+		}
+		seen[contentHash] = struct{}{}
+	}
+	return normalized
+}
+
+// IsDiscordAttachmentDownloaded reports whether a Discord row references a
+// trusted local SHA-256 CAS path. A duplicate-content alias may omit its hash;
+// URLs, provider sentinels, malformed paths, and hash/path mismatches are not
+// considered downloaded.
+func IsDiscordAttachmentDownloaded(ref AttachmentRef) bool {
+	pathHash, ok := discordCASPathHash(ref.StoragePath)
+	if !ok {
+		return false
+	}
+	return ref.ContentHash == "" || ref.ContentHash == pathHash
+}
+
+func discordCASPathHash(storagePath string) (string, bool) {
+	if len(storagePath) != 67 || storagePath[2] != '/' {
+		return "", false
+	}
+	contentHash := storagePath[3:]
+	if contentHash != strings.ToLower(contentHash) || storagePath[:2] != contentHash[:2] {
+		return "", false
+	}
+	if _, err := hex.DecodeString(contentHash); err != nil {
+		return "", false
+	}
+	return contentHash, true
 }
 
 // MessageDiscordAttachments returns Discord-managed rows keyed by source ID.
@@ -90,8 +182,25 @@ func (s *Store) MessageDiscordAttachments(messageID int64) (map[string]Attachmen
 	return s.messageProviderAttachments(messageID, "discord:")
 }
 
-// ListDiscordPendingAttachmentMessages returns buffered messages containing at
-// least one Discord attachment marker without downloaded content.
+// ListDiscordPendingAttachmentMessages returns messages containing at least
+// one Discord attachment that does not resolve to a trusted local CAS path.
 func (s *Store) ListDiscordPendingAttachmentMessages(sourceID int64) ([]DiscordPendingAttachmentMessage, error) {
-	return s.listPendingAttachmentMessages(sourceID, "discord:")
+	candidates, err := s.listProviderAttachmentMessages(sourceID, "discord:")
+	if err != nil {
+		return nil, err
+	}
+	pending := make([]DiscordPendingAttachmentMessage, 0, len(candidates))
+	for _, candidate := range candidates {
+		refs, err := s.MessageDiscordAttachments(candidate.MessageID)
+		if err != nil {
+			return nil, err
+		}
+		for _, ref := range refs {
+			if !IsDiscordAttachmentDownloaded(ref) {
+				pending = append(pending, candidate)
+				break
+			}
+		}
+	}
+	return pending, nil
 }

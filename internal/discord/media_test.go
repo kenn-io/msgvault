@@ -14,6 +14,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	internalexport "go.kenn.io/msgvault/internal/export"
+	internalmime "go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
@@ -26,6 +28,7 @@ const (
 
 type mediaFixture struct {
 	store     *store.Store
+	sourceID  int64
 	messageID int64
 	dir       string
 }
@@ -50,7 +53,7 @@ func newMediaFixture(t *testing.T) mediaFixture {
 		},
 	})
 	require.NoError(t, err)
-	return mediaFixture{store: st, messageID: messageID, dir: t.TempDir()}
+	return mediaFixture{store: st, sourceID: source.ID, messageID: messageID, dir: t.TempDir()}
 }
 
 func testDiscordAttachment(rawURL string, size int64) Attachment {
@@ -88,6 +91,8 @@ func newTestArchiver(t *testing.T, f mediaFixture, api API, maxBytes int64, cdn 
 }
 
 func TestMediaArchiverStoresAttachmentAfterDurableMarker(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	f := newMediaFixture(t)
 	content := []byte("synthetic attachment bytes")
 	type observation struct {
@@ -113,26 +118,124 @@ func TestMediaArchiverStoresAttachmentAfterDurableMarker(t *testing.T) {
 	result, err := archiver.PersistAttachments(
 		context.Background(), f.messageID, []Attachment{testDiscordAttachment(rawURL, int64(len(content)))},
 	)
-	require.NoError(t, err)
-	require.Len(t, result.Items, 1)
-	assert.Equal(t, MediaDownloaded, result.Items[0].Outcome)
-	require.NoError(t, result.Items[0].Err)
+	require.NoError(err)
+	require.Len(result.Items, 1)
+	assert.Equal(MediaDownloaded, result.Items[0].Outcome)
+	require.NoError(result.Items[0].Err)
 
 	requestObservation := <-observed
-	assert.Empty(t, requestObservation.authorization, "CDN requests must never receive the bot token")
-	assert.True(t, requestObservation.markerSeen, "pending metadata must exist before binary work starts")
+	assert.Empty(requestObservation.authorization, "CDN requests must never receive the bot token")
+	assert.True(requestObservation.markerSeen, "pending metadata must exist before binary work starts")
 
 	refs, err := f.store.MessageDiscordAttachments(f.messageID)
-	require.NoError(t, err)
+	require.NoError(err)
 	ref := refs["discord:"+mediaTestAttachmentID]
-	assert.NotEmpty(t, ref.ContentHash)
-	assert.Equal(t, len(content), ref.Size)
-	assert.Equal(t, "image", ref.MediaType)
-	assert.EqualValues(t, 640, ref.Width)
-	assert.EqualValues(t, 480, ref.Height)
+	assert.NotEmpty(ref.ContentHash)
+	assert.Equal(len(content), ref.Size)
+	assert.Equal("image", ref.MediaType)
+	assert.EqualValues(640, ref.Width)
+	assert.EqualValues(480, ref.Height)
 	stored, err := os.ReadFile(filepath.Join(f.dir, filepath.FromSlash(ref.StoragePath)))
-	require.NoError(t, err)
-	assert.Equal(t, content, stored)
+	require.NoError(err)
+	assert.Equal(content, stored)
+}
+
+func TestMediaArchiverPreservesDuplicateContentAttachmentIDs(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := newMediaFixture(t)
+	content := []byte("identical attachment bytes")
+	var requests atomic.Int32
+	cdn := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		_, _ = w.Write(content)
+	}))
+	defer cdn.Close()
+	attachments := []Attachment{
+		{
+			ID: "401", Filename: "first.bin", ContentType: "application/octet-stream",
+			Size: int64(len(content)), URL: cdn.URL + "/attachments/301/401/first.bin",
+		},
+		{
+			ID: "402", Filename: "second.bin", ContentType: "application/x-second",
+			Size: int64(len(content)), URL: cdn.URL + "/attachments/301/402/second.bin",
+		},
+	}
+	archiver := newTestArchiver(t, f, nil, 1<<20, cdn)
+
+	result, err := archiver.PersistAttachments(context.Background(), f.messageID, attachments)
+	require.NoError(err)
+	require.Len(result.Items, 2)
+	assert.Equal(MediaDownloaded, result.Items[0].Outcome)
+	assert.Equal(MediaDownloaded, result.Items[1].Outcome)
+	assert.EqualValues(2, requests.Load())
+
+	refs, err := f.store.MessageDiscordAttachments(f.messageID)
+	require.NoError(err)
+	require.Len(refs, 2)
+	first := refs["discord:401"]
+	second := refs["discord:402"]
+	assert.Equal("first.bin", first.Filename)
+	assert.Equal("second.bin", second.Filename)
+	assert.Equal(first.StoragePath, second.StoragePath)
+	assert.NotEmpty(first.StoragePath)
+	assert.NotEqual(first.ContentHash == "", second.ContentHash == "",
+		"exactly one duplicate row must own the real hash")
+	assert.Len(first.ContentHash+second.ContentHash, 64)
+
+	pending, err := f.store.ListDiscordPendingAttachmentMessages(f.sourceID)
+	require.NoError(err)
+	assert.Empty(pending)
+
+	requests.Store(0)
+	result, err = archiver.PersistAttachments(context.Background(), f.messageID, attachments)
+	require.NoError(err)
+	require.Len(result.Items, 2)
+	assert.Equal(MediaDownloaded, result.Items[0].Outcome)
+	assert.Equal(MediaDownloaded, result.Items[1].Outcome)
+	assert.Zero(requests.Load(), "repersist must recognize both local CAS references")
+
+	result, err = archiver.BackfillMessage(context.Background(), f.messageID, mediaTestChannelID, mediaTestMessageID)
+	require.NoError(err)
+	assert.Empty(result.Items, "backfill must not revisit a local hashless CAS alias")
+	refs, err = f.store.MessageDiscordAttachments(f.messageID)
+	require.NoError(err)
+	assert.Len(refs, 2)
+}
+
+func TestMediaArchiverPersistsPendingMetadataForEmptyURL(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := newMediaFixture(t)
+	var requests atomic.Int32
+	cdn := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		requests.Add(1)
+	}))
+	defer cdn.Close()
+	archiver := newTestArchiver(t, f, nil, 1<<20, cdn)
+	attachment := testDiscordAttachment("", 42)
+	attachment.Filename = "unavailable.bin"
+	attachment.ContentType = "application/octet-stream"
+
+	result, err := archiver.PersistAttachments(context.Background(), f.messageID, []Attachment{attachment})
+	require.NoError(err)
+	require.Len(result.Items, 1)
+	assert.Equal(MediaPending, result.Items[0].Outcome)
+	require.ErrorIs(result.Items[0].Err, ErrInvalidMediaURL)
+	assert.Zero(requests.Load())
+
+	refs, err := f.store.MessageDiscordAttachments(f.messageID)
+	require.NoError(err)
+	assert.Equal(store.AttachmentRef{
+		Filename: "unavailable.bin", MimeType: "application/octet-stream", Size: 42,
+		StoragePath: "discord:pending:401", SourceAttachmentID: "discord:401", MediaType: "document",
+		Width: 640, Height: 480,
+	}, refs["discord:401"])
+	pending, err := f.store.ListDiscordPendingAttachmentMessages(f.sourceID)
+	require.NoError(err)
+	assert.Equal([]store.DiscordPendingAttachmentMessage{{
+		MessageID: f.messageID, SourceMessageID: mediaTestMessageID, ChatID: mediaTestChannelID,
+	}}, pending)
 }
 
 func TestMediaArchiverEnforcesSizeCapBeforeAndDuringStreaming(t *testing.T) {
@@ -173,6 +276,8 @@ func TestMediaArchiverEnforcesSizeCapBeforeAndDuringStreaming(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
 			f := newMediaFixture(t)
 			var requests atomic.Int32
 			cdn := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -186,11 +291,11 @@ func TestMediaArchiverEnforcesSizeCapBeforeAndDuringStreaming(t *testing.T) {
 			result, err := archiver.PersistAttachments(
 				context.Background(), f.messageID, []Attachment{testDiscordAttachment(rawURL, tt.attachmentSize)},
 			)
-			require.NoError(t, err)
-			require.Len(t, result.Items, 1)
-			assert.Equal(t, MediaPending, result.Items[0].Outcome)
-			require.ErrorIs(t, result.Items[0].Err, ErrMediaTooLarge)
-			assert.Equal(t, tt.wantRequests, requests.Load())
+			require.NoError(err)
+			require.Len(result.Items, 1)
+			assert.Equal(MediaPending, result.Items[0].Outcome)
+			require.ErrorIs(result.Items[0].Err, ErrMediaTooLarge)
+			assert.Equal(tt.wantRequests, requests.Load())
 			requirePendingDiscordAttachment(t, f, rawURL)
 		})
 	}
@@ -209,6 +314,8 @@ func TestMediaArchiverPreservesPendingMarkerOnHTTPAndStorageFailures(t *testing.
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
 			f := newMediaFixture(t)
 			cdn := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				w.WriteHeader(tt.status)
@@ -218,7 +325,7 @@ func TestMediaArchiverPreservesPendingMarkerOnHTTPAndStorageFailures(t *testing.
 			rawURL := cdn.URL + "/attachments/301/401/failure.bin?hm=do-not-return-this"
 			if tt.breakStorage {
 				blockedPath := filepath.Join(f.dir, "not-a-directory")
-				require.NoError(t, os.WriteFile(blockedPath, []byte("file"), 0600))
+				require.NoError(os.WriteFile(blockedPath, []byte("file"), 0600))
 				f.dir = blockedPath
 			}
 
@@ -226,17 +333,19 @@ func TestMediaArchiverPreservesPendingMarkerOnHTTPAndStorageFailures(t *testing.
 			result, err := archiver.PersistAttachments(
 				context.Background(), f.messageID, []Attachment{testDiscordAttachment(rawURL, 0)},
 			)
-			require.NoError(t, err, "binary failure must not invalidate the durable message boundary")
-			require.Len(t, result.Items, 1)
-			assert.Equal(t, MediaPending, result.Items[0].Outcome)
-			require.ErrorIs(t, result.Items[0].Err, tt.wantErrorKind)
-			assert.NotContains(t, result.Items[0].Err.Error(), "do-not-return-this")
+			require.NoError(err, "binary failure must not invalidate the durable message boundary")
+			require.Len(result.Items, 1)
+			assert.Equal(MediaPending, result.Items[0].Outcome)
+			require.ErrorIs(result.Items[0].Err, tt.wantErrorKind)
+			assert.NotContains(result.Items[0].Err.Error(), "do-not-return-this")
 			requirePendingDiscordAttachment(t, f, rawURL)
 		})
 	}
 }
 
 func TestMediaArchiverCancellationLeavesPendingMarker(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	f := newMediaFixture(t)
 	started := make(chan struct{})
 	cdn := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -264,33 +373,90 @@ func TestMediaArchiverCancellationLeavesPendingMarker(t *testing.T) {
 	<-started
 	cancel()
 	completed := <-done
-	require.NoError(t, completed.err)
+	require.NoError(completed.err)
 	result := completed.media
-	require.Len(t, result.Items, 1)
-	assert.Equal(t, MediaPending, result.Items[0].Outcome)
-	require.ErrorIs(t, result.Items[0].Err, context.Canceled)
-	assert.NotContains(t, result.Items[0].Err.Error(), "cancel-secret")
+	require.Len(result.Items, 1)
+	assert.Equal(MediaPending, result.Items[0].Outcome)
+	require.ErrorIs(result.Items[0].Err, context.Canceled)
+	assert.NotContains(result.Items[0].Err.Error(), "cancel-secret")
 	requirePendingDiscordAttachment(t, f, rawURL)
+}
+
+func TestReadMediaFileHonorsCanceledContext(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "bounded-download.bin")
+	require.NoError(t, os.WriteFile(path, []byte("bytes that must not be published"), 0600))
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	content, err := readMediaFile(ctx, path)
+	require.ErrorIs(t, err, context.Canceled)
+	assert.Nil(t, content)
+}
+
+func TestMediaArchiverCancellationAfterCASLeavesMarkerPending(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := newMediaFixture(t)
+	content := []byte("CAS bytes may become an orphan")
+	cdn := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write(content)
+	}))
+	defer cdn.Close()
+	rawURL := cdn.URL + "/attachments/301/401/post-cas-cancel.bin?hm=cancel-after-cas"
+	archiver := newTestArchiver(t, f, nil, 1<<20, cdn)
+	ctx, cancel := context.WithCancel(context.Background())
+	var orphanStoragePath string
+	archiver.storeAttachmentFile = func(dir string, attachment *internalmime.Attachment) (string, error) {
+		storagePath, err := internalexport.StoreAttachmentFile(dir, attachment)
+		orphanStoragePath = storagePath
+		cancel()
+		return storagePath, err
+	}
+
+	result, err := archiver.PersistAttachments(
+		ctx, f.messageID, []Attachment{testDiscordAttachment(rawURL, int64(len(content)))},
+	)
+	require.NoError(err)
+	require.Len(result.Items, 1)
+	assert.Equal(MediaPending, result.Items[0].Outcome)
+	require.ErrorIs(result.Items[0].Err, context.Canceled)
+	require.NotEmpty(orphanStoragePath, "test wrapper must exercise the real CAS")
+	_, err = os.Stat(filepath.Join(f.dir, filepath.FromSlash(orphanStoragePath)))
+	require.NoError(err, "an unpublished orphan CAS blob is acceptable")
+
+	requirePendingDiscordAttachment(t, f, rawURL)
+	refs, err := f.store.MessageDiscordAttachments(f.messageID)
+	require.NoError(err)
+	ref := refs["discord:"+mediaTestAttachmentID]
+	assert.Empty(ref.ContentHash)
+	assert.Equal(rawURL, ref.StoragePath)
+	pending, err := f.store.ListDiscordPendingAttachmentMessages(f.sourceID)
+	require.NoError(err)
+	assert.Len(pending, 1)
 }
 
 func TestMediaArchiverRejectsUnapprovedOriginsAndRedirects(t *testing.T) {
 	t.Run("production origin policy", func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
 		f := newMediaFixture(t)
 		archiver, err := NewMediaArchiver(f.store, nil, f.dir, 1<<20)
-		require.NoError(t, err)
+		require.NoError(err)
 		rawURL := "https://example.invalid/attachments/301/401/private.bin?hm=origin-secret"
 		result, err := archiver.PersistAttachments(
 			context.Background(), f.messageID, []Attachment{testDiscordAttachment(rawURL, 0)},
 		)
-		require.NoError(t, err)
-		require.Len(t, result.Items, 1)
-		assert.Equal(t, MediaPending, result.Items[0].Outcome)
-		require.ErrorIs(t, result.Items[0].Err, ErrInvalidMediaURL)
-		assert.NotContains(t, result.Items[0].Err.Error(), "origin-secret")
+		require.NoError(err)
+		require.Len(result.Items, 1)
+		assert.Equal(MediaPending, result.Items[0].Outcome)
+		require.ErrorIs(result.Items[0].Err, ErrInvalidMediaURL)
+		assert.NotContains(result.Items[0].Err.Error(), "origin-secret")
 		requirePendingDiscordAttachment(t, f, rawURL)
 	})
 
 	t.Run("redirect", func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
 		f := newMediaFixture(t)
 		cdn := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			http.Redirect(w, r, "/attachments/301/401/redirected.bin?hm=redirected-secret", http.StatusFound)
@@ -301,11 +467,11 @@ func TestMediaArchiverRejectsUnapprovedOriginsAndRedirects(t *testing.T) {
 		result, err := archiver.PersistAttachments(
 			context.Background(), f.messageID, []Attachment{testDiscordAttachment(rawURL, 0)},
 		)
-		require.NoError(t, err)
-		require.Len(t, result.Items, 1)
-		assert.Equal(t, MediaPending, result.Items[0].Outcome)
-		require.ErrorIs(t, result.Items[0].Err, ErrMediaRedirect)
-		assert.NotContains(t, result.Items[0].Err.Error(), "original-secret")
+		require.NoError(err)
+		require.Len(result.Items, 1)
+		assert.Equal(MediaPending, result.Items[0].Outcome)
+		require.ErrorIs(result.Items[0].Err, ErrMediaRedirect)
+		assert.NotContains(result.Items[0].Err.Error(), "original-secret")
 		requirePendingDiscordAttachment(t, f, rawURL)
 	})
 }
@@ -320,6 +486,8 @@ func TestMediaArchiverRejectsMalformedAttachmentPathsBeforeRequest(t *testing.T)
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
 			f := newMediaFixture(t)
 			var requests atomic.Int32
 			cdn := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -333,17 +501,19 @@ func TestMediaArchiverRejectsMalformedAttachmentPathsBeforeRequest(t *testing.T)
 			result, err := archiver.PersistAttachments(
 				context.Background(), f.messageID, []Attachment{testDiscordAttachment(rawURL, 0)},
 			)
-			require.NoError(t, err)
-			require.Len(t, result.Items, 1)
-			assert.Equal(t, MediaPending, result.Items[0].Outcome)
-			require.ErrorIs(t, result.Items[0].Err, ErrInvalidMediaURL)
-			assert.Zero(t, requests.Load())
+			require.NoError(err)
+			require.Len(result.Items, 1)
+			assert.Equal(MediaPending, result.Items[0].Outcome)
+			require.ErrorIs(result.Items[0].Err, ErrInvalidMediaURL)
+			assert.Zero(requests.Load())
 			requirePendingDiscordAttachment(t, f, rawURL)
 		})
 	}
 }
 
 func TestMediaBackfillRefreshesSignedURLThroughMessageEndpoint(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	f := newMediaFixture(t)
 	content := []byte("fresh signed URL bytes")
 	var cdnAuthorization atomic.Value
@@ -361,13 +531,13 @@ func TestMediaBackfillRefreshesSignedURLThroughMessageEndpoint(t *testing.T) {
 	defer cdn.Close()
 	freshURL = cdn.URL + "/attachments/301/401/fresh.bin?ex=new&hm=fresh-secret"
 	oldURL := cdn.URL + "/attachments/301/401/old.bin?ex=old&hm=old-secret"
-	require.NoError(t, f.store.ReplaceMessageDiscordAttachments(f.messageID, []store.AttachmentRef{pendingDiscordRef(oldURL)}))
+	require.NoError(f.store.ReplaceMessageDiscordAttachments(f.messageID, []store.AttachmentRef{pendingDiscordRef(oldURL)}))
 
 	var apiRequests atomic.Int32
 	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		apiRequests.Add(1)
-		assert.Equal(t, "/api/v10/channels/301/messages/501", r.URL.Path)
-		assert.Equal(t, "Bot synthetic-token", r.Header.Get("Authorization"))
+		assert.Equal("/api/v10/channels/301/messages/501", r.URL.Path)
+		assert.Equal("Bot synthetic-token", r.Header.Get("Authorization"))
 		writeDiscordJSON(w, http.StatusOK, map[string]any{
 			"id": mediaTestMessageID, "channel_id": mediaTestChannelID,
 			"author": map[string]any{"id": "101"}, "timestamp": "2026-07-18T12:00:00Z",
@@ -379,25 +549,25 @@ func TestMediaBackfillRefreshesSignedURLThroughMessageEndpoint(t *testing.T) {
 	}))
 	defer apiServer.Close()
 	client, err := NewClient(apiServer.URL+"/api/v10", "synthetic-token")
-	require.NoError(t, err)
+	require.NoError(err)
 	archiver := newTestArchiver(t, f, client, 1<<20, cdn)
 
 	result, err := archiver.BackfillMessage(context.Background(), f.messageID, mediaTestChannelID, mediaTestMessageID)
-	require.NoError(t, err)
-	require.Len(t, result.Items, 1)
-	assert.Equal(t, MediaDownloaded, result.Items[0].Outcome)
-	assert.EqualValues(t, 1, apiRequests.Load())
-	assert.Empty(t, cdnAuthorization.Load())
-	assert.True(t, refreshedMarkerSeen.Load(), "fresh signed provenance must be durable before its download")
+	require.NoError(err)
+	require.Len(result.Items, 1)
+	assert.Equal(MediaDownloaded, result.Items[0].Outcome)
+	assert.EqualValues(1, apiRequests.Load())
+	assert.Empty(cdnAuthorization.Load())
+	assert.True(refreshedMarkerSeen.Load(), "fresh signed provenance must be durable before its download")
 
 	refs, err := f.store.MessageDiscordAttachments(f.messageID)
-	require.NoError(t, err)
+	require.NoError(err)
 	ref := refs["discord:"+mediaTestAttachmentID]
-	assert.NotEmpty(t, ref.ContentHash)
-	assert.NotEqual(t, oldURL, ref.StoragePath)
+	assert.NotEmpty(ref.ContentHash)
+	assert.NotEqual(oldURL, ref.StoragePath)
 	stored, err := os.ReadFile(filepath.Join(f.dir, filepath.FromSlash(ref.StoragePath)))
-	require.NoError(t, err)
-	assert.Equal(t, content, stored)
+	require.NoError(err)
+	assert.Equal(content, stored)
 }
 
 func TestMediaBackfillReturnsUnrecoverableOutcomeWhenSourceCannotRefresh(t *testing.T) {
@@ -422,34 +592,38 @@ func TestMediaBackfillReturnsUnrecoverableOutcomeWhenSourceCannotRefresh(t *test
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
 			f := newMediaFixture(t)
 			oldURL := "https://cdn.discordapp.com/attachments/301/401/old.bin?hm=stored-secret"
-			require.NoError(t, f.store.ReplaceMessageDiscordAttachments(f.messageID, []store.AttachmentRef{pendingDiscordRef(oldURL)}))
+			require.NoError(f.store.ReplaceMessageDiscordAttachments(f.messageID, []store.AttachmentRef{pendingDiscordRef(oldURL)}))
 			apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				writeDiscordJSON(w, tt.status, tt.body)
 			}))
 			defer apiServer.Close()
 			client, err := NewClient(apiServer.URL+"/api/v10", "synthetic-token")
-			require.NoError(t, err)
+			require.NoError(err)
 			archiver, err := NewMediaArchiver(f.store, client, f.dir, 1<<20)
-			require.NoError(t, err)
+			require.NoError(err)
 
 			result, err := archiver.BackfillMessage(context.Background(), f.messageID, mediaTestChannelID, mediaTestMessageID)
-			require.NoError(t, err)
-			require.Len(t, result.Items, 1)
-			assert.Equal(t, MediaUnrecoverable, result.Items[0].Outcome)
-			require.ErrorIs(t, result.Items[0].Err, ErrMediaUnrecoverable)
-			assert.NotContains(t, result.Items[0].Err.Error(), "must-not-leak")
-			assert.NotContains(t, result.Items[0].Err.Error(), "stored-secret")
+			require.NoError(err)
+			require.Len(result.Items, 1)
+			assert.Equal(MediaUnrecoverable, result.Items[0].Outcome)
+			require.ErrorIs(result.Items[0].Err, ErrMediaUnrecoverable)
+			assert.NotContains(result.Items[0].Err.Error(), "must-not-leak")
+			assert.NotContains(result.Items[0].Err.Error(), "stored-secret")
 			requirePendingDiscordAttachment(t, f, oldURL)
 		})
 	}
 }
 
 func TestMediaBackfillPreservesPendingMarkerOnRefreshFailure(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	f := newMediaFixture(t)
 	oldURL := "https://cdn.discordapp.com/attachments/301/401/old.bin?hm=stored-secret"
-	require.NoError(t, f.store.ReplaceMessageDiscordAttachments(f.messageID, []store.AttachmentRef{pendingDiscordRef(oldURL)}))
+	require.NoError(f.store.ReplaceMessageDiscordAttachments(f.messageID, []store.AttachmentRef{pendingDiscordRef(oldURL)}))
 	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		writeDiscordJSON(w, http.StatusForbidden, map[string]any{
 			"code": 50013, "message": "Missing Permissions hm=api-secret",
@@ -457,17 +631,17 @@ func TestMediaBackfillPreservesPendingMarkerOnRefreshFailure(t *testing.T) {
 	}))
 	defer apiServer.Close()
 	client, err := NewClient(apiServer.URL+"/api/v10", "synthetic-token")
-	require.NoError(t, err)
+	require.NoError(err)
 	archiver, err := NewMediaArchiver(f.store, client, f.dir, 1<<20)
-	require.NoError(t, err)
+	require.NoError(err)
 
 	result, err := archiver.BackfillMessage(context.Background(), f.messageID, mediaTestChannelID, mediaTestMessageID)
-	require.NoError(t, err)
-	require.Len(t, result.Items, 1)
-	assert.Equal(t, MediaPending, result.Items[0].Outcome)
-	require.ErrorIs(t, result.Items[0].Err, ErrMediaRefresh)
-	assert.NotContains(t, result.Items[0].Err.Error(), "api-secret")
-	assert.NotContains(t, result.Items[0].Err.Error(), "stored-secret")
+	require.NoError(err)
+	require.Len(result.Items, 1)
+	assert.Equal(MediaPending, result.Items[0].Outcome)
+	require.ErrorIs(result.Items[0].Err, ErrMediaRefresh)
+	assert.NotContains(result.Items[0].Err.Error(), "api-secret")
+	assert.NotContains(result.Items[0].Err.Error(), "stored-secret")
 	requirePendingDiscordAttachment(t, f, oldURL)
 }
 

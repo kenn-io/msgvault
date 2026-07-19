@@ -1,6 +1,7 @@
 package discord
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -66,12 +67,13 @@ type MediaResult struct {
 // MediaArchiver persists Discord attachment markers and best-effort binary
 // content. Its production URL policy is fixed rather than caller-configurable.
 type MediaArchiver struct {
-	store          *store.Store
-	api            API
-	attachmentsDir string
-	maxBytes       int64
-	httpClient     *http.Client
-	allowedOrigins map[string]struct{}
+	store               *store.Store
+	api                 API
+	attachmentsDir      string
+	maxBytes            int64
+	httpClient          *http.Client
+	allowedOrigins      map[string]struct{}
+	storeAttachmentFile func(string, *mime.Attachment) (string, error)
 }
 
 // NewMediaArchiver constructs the production attachment boundary. A nonpositive
@@ -89,11 +91,12 @@ func NewMediaArchiver(
 		maxBytes = config.DefaultDiscordMaxMediaBytes
 	}
 	return &MediaArchiver{
-		store:          st,
-		api:            api,
-		attachmentsDir: attachmentsDir,
-		maxBytes:       maxBytes,
-		httpClient:     mediaHTTPClient(),
+		store:               st,
+		api:                 api,
+		attachmentsDir:      attachmentsDir,
+		maxBytes:            maxBytes,
+		httpClient:          mediaHTTPClient(),
+		storeAttachmentFile: export.StoreAttachmentFile,
 		allowedOrigins: map[string]struct{}{
 			"https://cdn.discordapp.com":   {},
 			"https://media.discordapp.net": {},
@@ -181,7 +184,7 @@ func (m *MediaArchiver) PersistAttachments(
 		ref := &remainingRefs[0]
 		remainingRefs = remainingRefs[1:]
 		item := attachmentWork{attachment: attachment, ref: ref, download: true}
-		if previous, ok := existing[ref.SourceAttachmentID]; ok && previous.ContentHash != "" {
+		if previous, ok := existing[ref.SourceAttachmentID]; ok && store.IsDiscordAttachmentDownloaded(previous) {
 			ref.StoragePath = previous.StoragePath
 			ref.ContentHash = previous.ContentHash
 			ref.Size = previous.Size
@@ -205,6 +208,12 @@ func (m *MediaArchiver) PersistAttachments(
 		if downloadErr != nil {
 			item.Outcome = MediaPending
 			item.Err = downloadErr
+			result.Items = append(result.Items, item)
+			continue
+		}
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			item.Outcome = MediaPending
+			item.Err = ctxErr
 			result.Items = append(result.Items, item)
 			continue
 		}
@@ -234,7 +243,7 @@ func (m *MediaArchiver) BackfillMessage(
 	}
 	pendingIDs := make([]string, 0, len(existing))
 	for sourceAttachmentID, ref := range existing {
-		if ref.ContentHash == "" {
+		if !store.IsDiscordAttachmentDownloaded(ref) {
 			pendingIDs = append(pendingIDs, sourceAttachmentID)
 		}
 	}
@@ -304,6 +313,14 @@ func (m *MediaArchiver) BackfillMessage(
 				SourceAttachmentID: sourceAttachmentID,
 				Outcome:            MediaPending,
 				Err:                downloadErr,
+			})
+			continue
+		}
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			result.Items = append(result.Items, MediaItemResult{
+				SourceAttachmentID: sourceAttachmentID,
+				Outcome:            MediaPending,
+				Err:                ctxErr,
 			})
 			continue
 		}
@@ -431,8 +448,11 @@ func (m *MediaArchiver) downloadAttachment(
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		return marker, ctxErr
 	}
-	content, err := os.ReadFile(temporaryPath)
+	content, err := readMediaFile(ctx, temporaryPath)
 	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return marker, ctxErr
+		}
 		return marker, ErrMediaStorage
 	}
 	mimeAttachment := &mime.Attachment{
@@ -440,7 +460,10 @@ func (m *MediaArchiver) downloadAttachment(
 		ContentType: attachment.ContentType,
 		Content:     content,
 	}
-	storagePath, err := export.StoreAttachmentFile(m.attachmentsDir, mimeAttachment)
+	storagePath, err := m.storeAttachmentFile(m.attachmentsDir, mimeAttachment)
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return marker, ctxErr
+	}
 	if err != nil || storagePath == "" {
 		return marker, ErrMediaStorage
 	}
@@ -448,6 +471,35 @@ func (m *MediaArchiver) downloadAttachment(
 	marker.ContentHash = mimeAttachment.ContentHash
 	marker.Size = len(content)
 	return marker, nil
+}
+
+type mediaContextReader struct {
+	ctx    context.Context
+	reader io.Reader
+}
+
+func (r *mediaContextReader) Read(p []byte) (int, error) {
+	if err := r.ctx.Err(); err != nil {
+		return 0, err
+	}
+	n, err := r.reader.Read(p)
+	if ctxErr := r.ctx.Err(); ctxErr != nil {
+		return n, ctxErr
+	}
+	return n, err
+}
+
+func readMediaFile(ctx context.Context, filePath string) ([]byte, error) {
+	file, err := os.Open(filePath)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = file.Close() }()
+	var content bytes.Buffer
+	if _, err := io.Copy(&content, &mediaContextReader{ctx: ctx, reader: file}); err != nil {
+		return nil, err
+	}
+	return content.Bytes(), nil
 }
 
 func (m *MediaArchiver) validateMediaURL(raw, expectedAttachmentID string) (*url.URL, error) {
