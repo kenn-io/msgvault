@@ -20,6 +20,10 @@ const (
 	channelTypeGuildMedia        = 16
 )
 
+// ErrMalformedCatalog classifies internally inconsistent successful catalog
+// responses without requiring callers to inspect diagnostic strings.
+var ErrMalformedCatalog = errors.New("discord catalog response is malformed")
+
 // CatalogScope identifies the Discord catalog operation that produced an
 // issue. Archive scopes are independent so callers can report and checkpoint
 // public and private discovery separately.
@@ -95,7 +99,7 @@ func DiscoverCatalog(
 
 	channels, err := api.GuildChannels(ctx, guildID)
 	if err != nil {
-		issue := newCatalogIssue(CatalogScopeGuildChannels, guildID, "", err, true)
+		issue := newCatalogIssue(CatalogScopeGuildChannels, guildID, "", err)
 		result.Issues = append(result.Issues, issue)
 		return result, fmt.Errorf("discover Discord guild channels: %w", err)
 	}
@@ -103,10 +107,10 @@ func DiscoverCatalog(
 	parents := make(map[string]Channel)
 	containerIndexes := make(map[string]int)
 	for _, channel := range channels {
+		parents[channel.ID] = channel
 		if !isThreadCatalogParent(channel.Type) {
 			continue
 		}
-		parents[channel.ID] = channel
 		if isTopLevelMessageContainer(channel.Type) && ContainerIncluded(guildConfig, channel.ID, "") {
 			addCatalogContainer(&result, containerIndexes, channel, nil)
 		}
@@ -115,7 +119,7 @@ func DiscoverCatalog(
 	var fatalErrors []error
 	active, activeErr := api.ActiveThreads(ctx, guildID)
 	if activeErr != nil {
-		issue := newCatalogIssue(CatalogScopeActiveThreads, guildID, "", activeErr, true)
+		issue := newCatalogIssue(CatalogScopeActiveThreads, guildID, "", activeErr)
 		result.Issues = append(result.Issues, issue)
 		fatalErrors = append(fatalErrors, fmt.Errorf("discover Discord active threads: %w", activeErr))
 		if errors.Is(activeErr, context.Canceled) || errors.Is(activeErr, context.DeadlineExceeded) {
@@ -123,6 +127,18 @@ func DiscoverCatalog(
 		}
 	} else {
 		for _, thread := range active {
+			if thread.ParentID == "" {
+				malformedErr := fmt.Errorf("%w: active thread %s has no parent ID", ErrMalformedCatalog, thread.ID)
+				result.Issues = append(result.Issues, newCatalogIssue(CatalogScopeActiveThreads, guildID, "", malformedErr))
+				fatalErrors = append(fatalErrors, malformedErr)
+				continue
+			}
+			if _, ok := parents[thread.ParentID]; !ok {
+				malformedErr := fmt.Errorf("%w: active thread %s has unknown parent %s", ErrMalformedCatalog, thread.ID, thread.ParentID)
+				result.Issues = append(result.Issues, newCatalogIssue(CatalogScopeActiveThreads, guildID, thread.ParentID, malformedErr))
+				fatalErrors = append(fatalErrors, malformedErr)
+				continue
+			}
 			if !ContainerIncluded(guildConfig, thread.ID, thread.ParentID) {
 				continue
 			}
@@ -148,16 +164,13 @@ func DiscoverCatalog(
 			newWatermark, scanErr := discoverArchive(
 				ctx, api, parent, private, priorWatermark, full,
 				func(thread Channel) {
-					if thread.ParentID == "" {
-						thread.ParentID = parent.ID
-					}
 					if ContainerIncluded(guildConfig, thread.ID, thread.ParentID) {
 						addCatalogContainer(&result, containerIndexes, thread, catalogParent(parents, parent.ID))
 					}
 				},
 			)
 			if scanErr != nil {
-				issue := newCatalogIssue(scope, guildID, parent.ID, scanErr, true)
+				issue := newCatalogIssue(scope, guildID, parent.ID, scanErr)
 				if issue.Kind == CatalogIssueForbidden || issue.Kind == CatalogIssueUnknownChannel {
 					issue.Fatal = false
 				}
@@ -208,7 +221,12 @@ func discoverArchive(
 		reachedBoundary := false
 		for _, thread := range page.Threads {
 			if thread.ThreadMetadata == nil || thread.ThreadMetadata.ArchiveTimestamp.IsZero() {
-				return priorWatermark, errors.New("archived thread page is missing an archive timestamp")
+				return priorWatermark, fmt.Errorf("%w: archived thread %s is missing an archive timestamp", ErrMalformedCatalog, thread.ID)
+			}
+			if thread.ParentID == "" {
+				thread.ParentID = parent.ID
+			} else if thread.ParentID != parent.ID {
+				return priorWatermark, fmt.Errorf("%w: archived thread %s has parent %s, want endpoint parent %s", ErrMalformedCatalog, thread.ID, thread.ParentID, parent.ID)
 			}
 			archiveTime := thread.ThreadMetadata.ArchiveTimestamp
 			if archiveTime.After(candidate) {
@@ -224,7 +242,7 @@ func discoverArchive(
 			return formatCatalogWatermark(candidate, priorWatermark), nil
 		}
 		if page.NextBefore.IsZero() || (!before.IsZero() && !page.NextBefore.Before(before)) {
-			return priorWatermark, errors.New("archived thread pagination cursor did not advance")
+			return priorWatermark, fmt.Errorf("%w: archived thread pagination cursor did not advance", ErrMalformedCatalog)
 		}
 		before = page.NextBefore
 	}
@@ -345,18 +363,39 @@ func mergeCatalogChannel(existing, incoming Channel) Channel {
 		merged.DefaultReactionEmoji = incoming.DefaultReactionEmoji
 	}
 	if incoming.ThreadMetadata != nil {
-		merged.ThreadMetadata = incoming.ThreadMetadata
+		merged.ThreadMetadata = mergeThreadMetadata(merged.ThreadMetadata, incoming.ThreadMetadata)
 	}
 	return merged
 }
 
-func newCatalogIssue(scope CatalogScope, guildID, parentID string, err error, fatal bool) CatalogIssue {
+func mergeThreadMetadata(existing, incoming *ThreadMetadata) *ThreadMetadata {
+	if existing == nil {
+		incomingCopy := *incoming
+		return &incomingCopy
+	}
+	merged := *existing
+	merged.Archived = merged.Archived || incoming.Archived
+	if incoming.AutoArchiveDuration != 0 {
+		merged.AutoArchiveDuration = incoming.AutoArchiveDuration
+	}
+	if incoming.ArchiveTimestamp.After(merged.ArchiveTimestamp) {
+		merged.ArchiveTimestamp = incoming.ArchiveTimestamp
+	}
+	merged.Locked = merged.Locked || incoming.Locked
+	merged.Invitable = merged.Invitable || incoming.Invitable
+	if incoming.CreateTimestamp != nil {
+		merged.CreateTimestamp = incoming.CreateTimestamp
+	}
+	return &merged
+}
+
+func newCatalogIssue(scope CatalogScope, guildID, parentID string, err error) CatalogIssue {
 	issue := CatalogIssue{
 		Scope:    scope,
 		Kind:     CatalogIssueAPI,
 		GuildID:  guildID,
 		ParentID: parentID,
-		Fatal:    fatal,
+		Fatal:    true,
 		Err:      err,
 	}
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
@@ -365,6 +404,10 @@ func newCatalogIssue(scope CatalogScope, guildID, parentID string, err error, fa
 	}
 	if errors.Is(err, ErrDecodeResponse) {
 		issue.Kind = CatalogIssueDecode
+		return issue
+	}
+	if errors.Is(err, ErrMalformedCatalog) {
+		issue.Kind = CatalogIssueMalformedPage
 		return issue
 	}
 	var apiErr *APIError
@@ -380,9 +423,6 @@ func newCatalogIssue(scope CatalogScope, guildID, parentID string, err error, fa
 			issue.Kind = CatalogIssueAPI
 		}
 		return issue
-	}
-	if strings.Contains(err.Error(), "archive cursor") || strings.Contains(err.Error(), "pagination cursor") || strings.Contains(err.Error(), "archive timestamp") {
-		issue.Kind = CatalogIssueMalformedPage
 	}
 	return issue
 }

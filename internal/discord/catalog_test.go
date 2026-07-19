@@ -2,6 +2,7 @@ package discord
 
 import (
 	"context"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -51,7 +52,14 @@ func TestDiscoverCatalogFindsAndFiltersIndependentContainers(t *testing.T) {
 	assert.Equal("active-name", byID["401"].Channel.Name, "dedupe keeps richer active metadata")
 	assert.Equal("active topic", byID["401"].Channel.Topic)
 	require.NotNil(byID["401"].Channel.ThreadMetadata)
-	assert.True(byID["401"].Channel.ThreadMetadata.Archived, "newer archived metadata wins")
+	threadMetadata := byID["401"].Channel.ThreadMetadata
+	assert.True(threadMetadata.Archived, "newer archived state wins")
+	assert.Equal(4320, threadMetadata.AutoArchiveDuration, "sparse archive copy keeps active duration")
+	assert.Equal(mustParseTime(t, "2026-07-19T00:00:00Z"), threadMetadata.ArchiveTimestamp, "archive copy advances timestamp")
+	assert.True(threadMetadata.Locked, "sparse archive copy keeps useful locked state")
+	assert.True(threadMetadata.Invitable, "sparse archive copy keeps useful invitable state")
+	require.NotNil(threadMetadata.CreateTimestamp)
+	assert.Equal(mustParseTime(t, "2026-07-10T00:00:00Z"), *threadMetadata.CreateTimestamp)
 	require.NotNil(byID["401"].Parent)
 	assert.Equal("301", byID["401"].Parent.ID)
 	assert.Equal("general", byID["401"].Parent.Name)
@@ -80,6 +88,8 @@ func TestDiscoverCatalogFullScanExhaustsArchivePages(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	var publicRequests int
+	var privateRequests int
+	var privateBefore []string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
 		if request.URL.Path == "/channels/301/threads/archived/public" {
 			publicRequests++
@@ -91,6 +101,17 @@ func TestDiscoverCatalogFullScanExhaustsArchivePages(t *testing.T) {
 			writeCatalogThreads(w, false, catalogThread("422", "301", "full-old", "2026-07-01T00:00:00Z"))
 			return
 		}
+		if request.URL.Path == "/channels/301/users/@me/threads/archived/private" {
+			privateRequests++
+			before := request.URL.Query().Get("before")
+			privateBefore = append(privateBefore, before)
+			if before == "" {
+				writeCatalogThreads(w, true, catalogThread("423", "301", "private-full-new", "2026-07-20T00:00:00Z"))
+				return
+			}
+			writeCatalogThreads(w, false, catalogThread("424", "301", "private-full-old", "2026-07-02T00:00:00Z"))
+			return
+		}
 		serveMinimalCatalog(w, request)
 	}))
 	t.Cleanup(server.Close)
@@ -98,13 +119,17 @@ func TestDiscoverCatalogFullScanExhaustsArchivePages(t *testing.T) {
 	require.NoError(err)
 
 	result, err := DiscoverCatalog(context.Background(), client, "201", config.DiscordGuildConfig{}, map[string]ThreadCatalogState{
-		"301": {PublicArchiveWatermark: "2026-07-18T00:00:00Z"},
+		"301": {PublicArchiveWatermark: "2026-07-18T00:00:00Z", PrivateArchiveWatermark: "2026-07-18T00:00:00Z"},
 	}, true)
 
 	require.NoError(err)
 	assert.Equal(2, publicRequests)
+	assert.Equal(2, privateRequests)
+	assert.Equal([]string{"", "2026-07-20T00:00:00Z"}, privateBefore)
 	assert.Contains(catalogContainersByID(result.Containers), "422", "full scan does not stop at the prior watermark")
+	assert.Contains(catalogContainersByID(result.Containers), "424", "private full scan emits its second page")
 	assert.Equal("2026-07-19T00:00:00Z", result.ThreadCatalog["301"].PublicArchiveWatermark)
+	assert.Equal("2026-07-20T00:00:00Z", result.ThreadCatalog["301"].PrivateArchiveWatermark)
 }
 
 func TestDiscoverCatalogArchiveDenialsAreNonfatalAndIndependent(t *testing.T) {
@@ -144,6 +169,93 @@ func TestDiscoverCatalogArchiveDenialsAreNonfatalAndIndependent(t *testing.T) {
 	assert.Equal("2026-07-19T00:00:00Z", result.ThreadCatalog["301"].PrivateArchiveWatermark)
 	assert.Equal("2026-07-18T00:00:00Z", result.ThreadCatalog["302"].PublicArchiveWatermark)
 	assert.Equal("2026-07-16T00:00:00Z", result.ThreadCatalog["302"].PrivateArchiveWatermark)
+}
+
+func TestDiscoverCatalogRejectsActiveThreadsWithoutAuthoritativeParents(t *testing.T) {
+	tests := []struct {
+		name       string
+		parentData map[string]any
+	}{
+		{name: "missing parent ID", parentData: map[string]any{}},
+		{name: "unknown parent ID", parentData: map[string]any{"parent_id": "999"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+				if request.URL.Path == "/guilds/201/threads/active" {
+					malformed := map[string]any{
+						"id": "451", "guild_id": "201", "type": 11, "name": "malformed",
+						"thread_metadata": map[string]any{"archived": false, "archive_timestamp": "2026-07-19T00:00:00Z"},
+					}
+					maps.Copy(malformed, tt.parentData)
+					writeDiscordJSON(w, http.StatusOK, map[string]any{"threads": []map[string]any{
+						{"id": "450", "guild_id": "201", "parent_id": "301", "type": 11, "name": "valid", "thread_metadata": map[string]any{"archived": false, "archive_timestamp": "2026-07-19T00:00:00Z"}},
+						malformed,
+					}})
+					return
+				}
+				serveMinimalCatalog(w, request)
+			}))
+			t.Cleanup(server.Close)
+			client, err := NewClient(server.URL, "test-token")
+			require.NoError(err)
+
+			result, err := DiscoverCatalog(context.Background(), client, "201", config.DiscordGuildConfig{}, nil, false)
+
+			require.Error(err)
+			byID := catalogContainersByID(result.Containers)
+			assert.Contains(byID, "301")
+			assert.Contains(byID, "450", "valid active threads survive a malformed sibling")
+			assert.NotContains(byID, "451")
+			require.Len(result.Issues, 1)
+			assert.Equal(CatalogScopeActiveThreads, result.Issues[0].Scope)
+			assert.Equal(CatalogIssueMalformedPage, result.Issues[0].Kind)
+			assert.True(result.Issues[0].Fatal)
+			require.ErrorIs(result.Issues[0].Err, ErrMalformedCatalog)
+		})
+	}
+}
+
+func TestDiscoverCatalogRejectsArchivedThreadWithMismatchedEndpointParent(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/channels/301/threads/archived/public":
+			writeCatalogThreads(w, false,
+				catalogThread("460", "301", "valid", "2026-07-19T00:00:00Z"),
+				catalogThread("461", "999", "mismatched", "2026-07-18T00:00:00Z"),
+			)
+		case "/channels/301/users/@me/threads/archived/private":
+			writeCatalogThreads(w, false, catalogThread("462", "301", "private-valid", "2026-07-20T00:00:00Z"))
+		default:
+			serveMinimalCatalog(w, request)
+		}
+	}))
+	t.Cleanup(server.Close)
+	client, err := NewClient(server.URL, "test-token")
+	require.NoError(err)
+	prior := map[string]ThreadCatalogState{
+		"301": {PublicArchiveWatermark: "2026-07-17T00:00:00Z", PrivateArchiveWatermark: "2026-07-17T00:00:00Z"},
+	}
+
+	result, err := DiscoverCatalog(context.Background(), client, "201", config.DiscordGuildConfig{}, prior, false)
+
+	require.Error(err)
+	byID := catalogContainersByID(result.Containers)
+	assert.Contains(byID, "460", "valid preceding archive entries remain in the partial result")
+	assert.NotContains(byID, "461")
+	assert.Contains(byID, "462", "private archive scan remains independent")
+	require.Len(result.Issues, 1)
+	assert.Equal(CatalogScopePublicArchive, result.Issues[0].Scope)
+	assert.Equal(CatalogIssueMalformedPage, result.Issues[0].Kind)
+	assert.True(result.Issues[0].Fatal)
+	require.ErrorIs(result.Issues[0].Err, ErrMalformedCatalog)
+	assert.Equal("2026-07-17T00:00:00Z", result.ThreadCatalog["301"].PublicArchiveWatermark)
+	assert.Equal("2026-07-20T00:00:00Z", result.ThreadCatalog["301"].PrivateArchiveWatermark)
 }
 
 func TestDiscoverCatalogFatalArchiveFailuresPreserveOnlyFailedWatermarks(t *testing.T) {
@@ -221,6 +333,9 @@ func TestDiscoverCatalogFatalArchiveFailuresPreserveOnlyFailedWatermarks(t *test
 			require.NotEmpty(result.Issues)
 			assert.Equal(tt.wantKind, result.Issues[0].Kind)
 			assert.True(result.Issues[0].Fatal)
+			if tt.wantKind == CatalogIssueMalformedPage {
+				require.ErrorIs(result.Issues[0].Err, ErrMalformedCatalog)
+			}
 			assert.Equal("2026-07-17T00:00:00Z", result.ThreadCatalog["301"].PublicArchiveWatermark)
 			if tt.cancel {
 				assert.Equal("2026-07-17T00:00:00Z", result.ThreadCatalog["301"].PrivateArchiveWatermark)
@@ -288,14 +403,16 @@ func serveCatalogFixture(w http.ResponseWriter, request *http.Request) {
 		})
 	case "/guilds/201/threads/active":
 		writeDiscordJSON(w, http.StatusOK, map[string]any{"threads": []map[string]any{
-			{"id": "401", "guild_id": "201", "parent_id": "301", "type": 11, "name": "active-name", "topic": "active topic", "thread_metadata": map[string]any{"archived": false, "archive_timestamp": "2026-07-18T12:00:00Z"}},
+			{"id": "401", "guild_id": "201", "parent_id": "301", "type": 11, "name": "active-name", "topic": "active topic", "thread_metadata": map[string]any{"archived": false, "auto_archive_duration": 4320, "archive_timestamp": "2026-07-18T12:00:00Z", "locked": true, "invitable": true, "create_timestamp": "2026-07-10T00:00:00Z"}},
 			{"id": "402", "guild_id": "201", "parent_id": "302", "type": 10, "name": "explicit-override", "thread_metadata": map[string]any{"archived": false, "archive_timestamp": "2026-07-18T12:00:00Z"}},
 			{"id": "403", "guild_id": "201", "parent_id": "303", "type": 11, "name": "same-level-excluded", "thread_metadata": map[string]any{"archived": false, "archive_timestamp": "2026-07-18T12:00:00Z"}},
 		}})
 	case "/channels/301/threads/archived/public":
 		if request.URL.Query().Get("before") == "" {
+			sparseDuplicate := catalogThread("401", "301", "", "2026-07-19T00:00:00Z")
+			sparseDuplicate["thread_metadata"] = map[string]any{"archived": true, "archive_timestamp": "2026-07-19T00:00:00Z"}
 			writeCatalogThreads(w, true,
-				catalogThread("401", "301", "", "2026-07-19T00:00:00Z"),
+				sparseDuplicate,
 				catalogThread("410", "301", "new-public", "2026-07-18T00:00:00Z"),
 			)
 			return

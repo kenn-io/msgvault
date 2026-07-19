@@ -199,7 +199,7 @@ func (c *Client) ArchivedThreads(ctx context.Context, channelID string, private 
 	out.HasMore = response.HasMore
 	if response.HasMore {
 		if len(response.Threads) == 0 || response.Threads[len(response.Threads)-1].ThreadMetadata == nil || response.Threads[len(response.Threads)-1].ThreadMetadata.ArchiveTimestamp.IsZero() {
-			return ThreadPage{}, fmt.Errorf("discord %s: response has more pages but no archive cursor", operation)
+			return ThreadPage{}, fmt.Errorf("%w: discord %s response has more pages but no archive cursor", ErrMalformedCatalog, operation)
 		}
 		out.NextBefore = response.Threads[len(response.Threads)-1].ThreadMetadata.ArchiveTimestamp
 	}
