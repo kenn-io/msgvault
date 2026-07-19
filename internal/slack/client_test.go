@@ -44,8 +44,8 @@ func TestClientErrorMapping(t *testing.T) {
 		})
 	}
 	err := apiError("conversations.history", &apiResponse{Error: "fatal_error"})
-	assert.NotErrorIs(t, err, ErrNotFound)
-	assert.NotErrorIs(t, err, ErrAuth)
+	require.NotErrorIs(t, err, ErrNotFound)
+	require.NotErrorIs(t, err, ErrAuth)
 }
 
 func TestClientPagination(t *testing.T) {

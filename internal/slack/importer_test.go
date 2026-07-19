@@ -25,6 +25,7 @@ func ts(minutes int) string {
 // channels with threads, reactions, mentions, edits, bot messages, a group
 // DM, and a 1:1 DM.
 func testWorkspace(t *testing.T) *fakeSlack {
+	t.Helper()
 	f := newFakeSlack(t)
 	f.users = []map[string]any{
 		{"id": "UME", "name": "me", "real_name": "Test User",

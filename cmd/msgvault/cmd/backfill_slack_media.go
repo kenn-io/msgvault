@@ -53,7 +53,7 @@ Examples:
 				}
 				teamID, userID, ok := splitSlackIdentifier(src.Identifier)
 				if !ok {
-					runErrors = append(runErrors, fmt.Sprintf("%s: malformed slack identifier", src.Identifier))
+					runErrors = append(runErrors, src.Identifier+": malformed slack identifier")
 					continue
 				}
 				token, terr := slack.LoadToken(cfg.TokensDir(), teamID)

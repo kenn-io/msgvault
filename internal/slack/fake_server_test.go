@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strconv"
 	"sync"
 	"testing"
@@ -124,6 +125,7 @@ type fakeSlack struct {
 }
 
 func newFakeSlack(t *testing.T) *fakeSlack {
+	t.Helper()
 	return &fakeSlack{
 		t: t, pageSize: 3,
 		failHistory: map[string]bool{}, failReplies: map[string]bool{},
@@ -138,12 +140,7 @@ func (f *fakeSlack) handleGhost(c *fakeConv) {
 }
 
 func (f *fakeSlack) isGhost(id string) bool {
-	for _, g := range f.ghosts {
-		if g == id {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(f.ghosts, id)
 }
 
 func (f *fakeSlack) conv(id string) *fakeConv {
@@ -202,7 +199,9 @@ func (f *fakeSlack) reply(w http.ResponseWriter, body map[string]any) {
 
 func (f *fakeSlack) replyErr(w http.ResponseWriter, apiErr string) {
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{"ok": false, "error": apiErr})
+	if err := json.NewEncoder(w).Encode(map[string]any{"ok": false, "error": apiErr}); err != nil {
+		f.t.Errorf("encode fake error response: %v", err)
+	}
 }
 
 // page slices items[from:from+pageSize] driven by the "cursor" form value
@@ -267,8 +266,8 @@ func (f *fakeSlack) handleMembers(w http.ResponseWriter, r *http.Request) {
 // (oldest, latest) exclusive ts bounds.
 func visibleHistory(c *fakeConv, oldest, latest string) []fakeMsg {
 	var out []fakeMsg
-	for i := len(c.Msgs) - 1; i >= 0; i-- {
-		m := c.Msgs[i]
+	for _, v := range slices.Backward(c.Msgs) {
+		m := v
 		if oldest != "" && !tsLess(oldest, m.TS) {
 			continue
 		}

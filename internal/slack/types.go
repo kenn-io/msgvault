@@ -67,6 +67,7 @@ func (u *User) UnmarshalJSON(b []byte) error {
 	type alias User // avoid recursion into this method
 	var a struct {
 		alias
+
 		Profile UserProfile `json:"profile"`
 	}
 	if err := json.Unmarshal(b, &a); err != nil {

@@ -247,6 +247,7 @@ func (c *Client) AllConversations(ctx context.Context, fn func(Conversation) err
 		}
 		var out struct {
 			apiResponse
+
 			Channels []Conversation `json:"channels"`
 		}
 		if err := c.call(ctx, "users.conversations", params, &out); err != nil {
@@ -274,6 +275,7 @@ func (c *Client) AllUsers(ctx context.Context, fn func(User) error) error {
 		}
 		var out struct {
 			apiResponse
+
 			Members []User `json:"members"`
 		}
 		if err := c.call(ctx, "users.list", params, &out); err != nil {
@@ -304,6 +306,7 @@ func (c *Client) AllMembers(ctx context.Context, channelID string, fn func(userI
 		}
 		var out struct {
 			apiResponse
+
 			Members []string `json:"members"`
 		}
 		if err := c.call(ctx, "conversations.members", params, &out); err != nil {
@@ -356,6 +359,7 @@ func (c *Client) HistoryPage(ctx context.Context, p HistoryParams) (*HistoryPage
 	}
 	var out struct {
 		apiResponse
+
 		Messages []Message `json:"messages"`
 		HasMore  bool      `json:"has_more"`
 	}
@@ -383,6 +387,7 @@ func (c *Client) RepliesPage(ctx context.Context, channelID, rootTS, cursor, old
 	}
 	var out struct {
 		apiResponse
+
 		Messages []Message `json:"messages"`
 		HasMore  bool      `json:"has_more"`
 	}

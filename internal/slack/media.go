@@ -54,7 +54,7 @@ func mediaTypeOf(f *File) string {
 func fetchableURL(rawURL string) (string, error) {
 	u, err := url.Parse(rawURL)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("parse file URL: %w", err)
 	}
 	if u.Scheme != "https" || u.User != nil || !strings.EqualFold(u.Host, mediaHost) {
 		return "", fmt.Errorf("%q: %w", rawURL, errOffHost)

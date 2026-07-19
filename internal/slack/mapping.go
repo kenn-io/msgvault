@@ -24,8 +24,8 @@ var mentionRe = regexp.MustCompile(`<@([UW][A-Z0-9]+)(?:\|[^>]*)?>`)
 // tokenRe matches every <…> mrkdwn token for text rendering.
 var tokenRe = regexp.MustCompile(`<([^<>]+)>`)
 
-// Mentions returns the user IDs mentioned in the message text (deduped, in
-// first-appearance order).
+// MentionedUserIDs returns the user IDs mentioned in the message text
+// (deduped, in first-appearance order).
 func (m *Message) MentionedUserIDs() []string {
 	var ids []string
 	seen := map[string]bool{}

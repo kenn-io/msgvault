@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	"go.kenn.io/msgvault/internal/store"
@@ -184,20 +185,13 @@ func includeConversation(c *Conversation, opts *ImportOptions) bool {
 	if c.IsIM || c.IsMpim {
 		return true
 	}
-	for _, name := range opts.ExcludeChannels {
-		if name == c.Name {
-			return false
-		}
+	if slices.Contains(opts.ExcludeChannels, c.Name) {
+		return false
 	}
 	if len(opts.IncludeChannels) == 0 {
 		return true
 	}
-	for _, name := range opts.IncludeChannels {
-		if name == c.Name {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(opts.IncludeChannels, c.Name)
 }
 
 // syncConversation ensures the conversation row and membership, then

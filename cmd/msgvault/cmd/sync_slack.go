@@ -69,7 +69,7 @@ Examples:
 				}
 				teamID, userID, ok := splitSlackIdentifier(src.Identifier)
 				if !ok {
-					syncErrors = append(syncErrors, fmt.Sprintf("%s: malformed slack identifier", src.Identifier))
+					syncErrors = append(syncErrors, src.Identifier+": malformed slack identifier")
 					continue
 				}
 				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Syncing Slack workspace %s\n", teamID)
