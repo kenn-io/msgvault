@@ -16,77 +16,79 @@ import (
 )
 
 func TestClientReadAPI(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
 	fake := newFakeDiscord(t)
 	server := fake.server()
 	t.Cleanup(server.Close)
 
 	client, err := NewClient(server.URL+"/api/v10", "test-bot-token")
-	require.NoError(t, err)
+	require.NoError(err)
 	ctx := context.Background()
 
 	me, err := client.Me(ctx)
-	require.NoError(t, err)
-	assert.Equal(t, "101", me.ID)
-	assert.Equal(t, "Archive Bot", me.GlobalName)
-	assert.True(t, me.Bot)
+	require.NoError(err)
+	assert.Equal("101", me.ID)
+	assert.Equal("Archive Bot", me.GlobalName)
+	assert.True(me.Bot)
 
 	guilds, err := client.Guilds(ctx)
-	require.NoError(t, err)
-	assert.Len(t, guilds, 201)
-	assert.Equal(t, "1200", guilds[len(guilds)-1].ID)
+	require.NoError(err)
+	assert.Len(guilds, 201)
+	assert.Equal("1200", guilds[len(guilds)-1].ID)
 
 	guild, err := client.Guild(ctx, "201")
-	require.NoError(t, err)
-	assert.Equal(t, "Test Guild", guild.Name)
+	require.NoError(err)
+	assert.Equal("Test Guild", guild.Name)
 
 	channels, err := client.GuildChannels(ctx, "201")
-	require.NoError(t, err)
-	require.Len(t, channels, 1)
-	assert.Equal(t, "Synthetic discussion", channels[0].Topic)
+	require.NoError(err)
+	require.Len(channels, 1)
+	assert.Equal("Synthetic discussion", channels[0].Topic)
 
 	active, err := client.ActiveThreads(ctx, "201")
-	require.NoError(t, err)
-	require.Len(t, active, 1)
-	assert.Equal(t, "active-thread", active[0].Name)
-	assert.False(t, active[0].ThreadMetadata.Archived)
+	require.NoError(err)
+	require.Len(active, 1)
+	assert.Equal("active-thread", active[0].Name)
+	assert.False(active[0].ThreadMetadata.Archived)
 
 	before := mustParseTime(t, "2026-07-18T00:00:00Z")
 	publicPage, err := client.ArchivedThreads(ctx, "301", false, before)
-	require.NoError(t, err)
-	require.Len(t, publicPage.Threads, 1)
-	assert.Equal(t, "public-thread", publicPage.Threads[0].Name)
-	assert.True(t, publicPage.HasMore)
-	assert.Equal(t, mustParseTime(t, "2026-07-17T12:00:00Z"), publicPage.NextBefore)
+	require.NoError(err)
+	require.Len(publicPage.Threads, 1)
+	assert.Equal("public-thread", publicPage.Threads[0].Name)
+	assert.True(publicPage.HasMore)
+	assert.Equal(mustParseTime(t, "2026-07-17T12:00:00Z"), publicPage.NextBefore)
 
 	privatePage, err := client.ArchivedThreads(ctx, "301", true, before)
-	require.NoError(t, err)
-	require.Len(t, privatePage.Threads, 1)
-	assert.Equal(t, "private-thread", privatePage.Threads[0].Name)
+	require.NoError(err)
+	require.Len(privatePage.Threads, 1)
+	assert.Equal("private-thread", privatePage.Threads[0].Name)
 
 	members, err := client.GuildMembers(ctx, "201", "101")
-	require.NoError(t, err)
-	require.Len(t, members.Members, 1)
-	assert.Equal(t, "Test Alice", members.Members[0].Nick)
-	assert.False(t, members.HasMore)
-	assert.Empty(t, members.NextAfter)
+	require.NoError(err)
+	require.Len(members.Members, 1)
+	assert.Equal("Test Alice", members.Members[0].Nick)
+	assert.False(members.HasMore)
+	assert.Empty(members.NextAfter)
 
 	messages, err := client.Messages(ctx, "301", MessageQuery{Before: "600", Limit: 100})
-	require.NoError(t, err)
-	require.Len(t, messages, 1)
-	assert.Equal(t, "hello", messages[0].Content)
-	assert.JSONEq(t, `{"id":"501","channel_id":"301","guild_id":"201","author":{"id":"102","username":"alice","global_name":"Alice"},"content":"hello","timestamp":"2026-07-18T12:01:00Z","type":0,"future_field":{"retained":true}}`, string(messages[0].Raw))
+	require.NoError(err)
+	require.Len(messages, 1)
+	assert.Equal("hello", messages[0].Content)
+	assert.JSONEq(`{"id":"501","channel_id":"301","guild_id":"201","author":{"id":"102","username":"alice","global_name":"Alice"},"content":"hello","timestamp":"2026-07-18T12:01:00Z","type":0,"future_field":{"retained":true}}`, string(messages[0].Raw))
 
 	message, err := client.Message(ctx, "301", "501")
-	require.NoError(t, err)
-	assert.Equal(t, "hello, edited", message.Content)
-	require.NotNil(t, message.EditedTimestamp)
+	require.NoError(err)
+	assert.Equal("hello, edited", message.Content)
+	require.NotNil(message.EditedTimestamp)
 
 	request := fake.firstRequest()
-	require.NotNil(t, request)
-	assert.Equal(t, "Bot test-bot-token", request.Header.Get("Authorization"))
-	assert.Equal(t, UserAgent, request.Header.Get("User-Agent"))
-	assert.Equal(t, "application/json", request.Header.Get("Accept"))
-	assert.Equal(t, []string{
+	require.NotNil(request)
+	assert.Equal("Bot test-bot-token", request.Header.Get("Authorization"))
+	assert.Equal(UserAgent, request.Header.Get("User-Agent"))
+	assert.Equal("application/json", request.Header.Get("Accept"))
+	assert.Equal([]string{
 		"/api/v10/users/@me",
 		"/api/v10/users/@me/guilds?limit=200",
 		"/api/v10/users/@me/guilds?after=1199&limit=200",
@@ -129,6 +131,8 @@ func TestMessageQueryValidation(t *testing.T) {
 }
 
 func TestClientDecodesDiscordAPIError(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		writeDiscordJSON(w, http.StatusForbidden, map[string]any{
 			"code": 50013, "message": "https://attacker.example/error?signature=api-error-marker",
@@ -136,21 +140,22 @@ func TestClientDecodesDiscordAPIError(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 	client, err := NewClient(server.URL, "secret-token")
-	require.NoError(t, err)
+	require.NoError(err)
 
 	_, err = client.GuildChannels(context.Background(), "201")
 
 	var apiErr *APIError
-	require.ErrorAs(t, err, &apiErr)
-	assert.Equal(t, http.StatusForbidden, apiErr.StatusCode)
-	assert.Equal(t, 50013, apiErr.Code)
-	assert.NotContains(t, err.Error(), "secret-token")
+	require.ErrorAs(err, &apiErr)
+	assert.Equal(http.StatusForbidden, apiErr.StatusCode)
+	assert.Equal(50013, apiErr.Code)
+	assert.NotContains(err.Error(), "secret-token")
 	if strings.Contains(fmt.Sprintf("%#v", apiErr), "api-error-marker") {
-		require.Fail(t, "Discord API error retained an untrusted upstream message")
+		require.Fail("Discord API error retained an untrusted upstream message")
 	}
 }
 
 func TestClientSanitizesSuccessfulResponseDecodeErrors(t *testing.T) {
+	require := require.New(t)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		writeDiscordJSON(w, http.StatusOK, map[string]any{
 			"id": "501", "timestamp": "https://attacker.example/file?signature=decode-marker&token=token-marker",
@@ -158,18 +163,19 @@ func TestClientSanitizesSuccessfulResponseDecodeErrors(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 	client, err := NewClient(server.URL, "secret-token")
-	require.NoError(t, err)
+	require.NoError(err)
 
 	_, err = client.Message(context.Background(), "301", "501")
 
-	require.Error(t, err)
+	require.Error(err)
 	if strings.Contains(err.Error(), "decode-marker") || strings.Contains(err.Error(), "token-marker") || strings.Contains(err.Error(), "secret-token") {
-		require.Fail(t, "Discord response decode error exposed confidential input")
+		require.Fail("Discord response decode error exposed confidential input")
 	}
-	require.ErrorIs(t, err, ErrDecodeResponse)
+	require.ErrorIs(err, ErrDecodeResponse)
 }
 
 func TestClientSerializesRoutesLearnedToShareBucket(t *testing.T) {
+	require := require.New(t)
 	var enabled atomic.Bool
 	var inFlight atomic.Int32
 	var maximum atomic.Int32
@@ -194,12 +200,12 @@ func TestClientSerializesRoutesLearnedToShareBucket(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 	client, err := NewClient(server.URL, "test-token")
-	require.NoError(t, err)
+	require.NoError(err)
 
 	_, err = client.Messages(context.Background(), "301", MessageQuery{Limit: 1})
-	require.NoError(t, err)
+	require.NoError(err)
 	_, err = client.Message(context.Background(), "301", "501")
-	require.NoError(t, err)
+	require.NoError(err)
 	enabled.Store(true)
 
 	var wg sync.WaitGroup
@@ -218,12 +224,13 @@ func TestClientSerializesRoutesLearnedToShareBucket(t *testing.T) {
 	wg.Wait()
 	close(errs)
 	for callErr := range errs {
-		require.NoError(t, callErr)
+		require.NoError(callErr)
 	}
 	assert.Equal(t, int32(1), maximum.Load())
 }
 
 func TestClientHonorsGlobal429AcrossRoutes(t *testing.T) {
+	require := require.New(t)
 	globalSet := make(chan time.Time, 1)
 	var meCalls atomic.Int32
 	var guildAt atomic.Int64
@@ -244,7 +251,7 @@ func TestClientHonorsGlobal429AcrossRoutes(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 	client, err := NewClient(server.URL, "test-token")
-	require.NoError(t, err)
+	require.NoError(err)
 
 	meDone := make(chan error, 1)
 	go func() {
@@ -252,14 +259,14 @@ func TestClientHonorsGlobal429AcrossRoutes(t *testing.T) {
 		meDone <- callErr
 	}()
 	started := <-globalSet
-	require.Eventually(t, func() bool {
+	require.Eventually(func() bool {
 		client.limits.mu.Lock()
 		defer client.limits.mu.Unlock()
 		return client.limits.globalUntil.After(time.Now())
 	}, 500*time.Millisecond, time.Millisecond)
 	_, err = client.Guild(context.Background(), "201")
-	require.NoError(t, err)
-	require.NoError(t, <-meDone)
+	require.NoError(err)
+	require.NoError(<-meDone)
 	assert.GreaterOrEqual(t, time.Unix(0, guildAt.Load()).Sub(started), 65*time.Millisecond)
 }
 
@@ -286,6 +293,7 @@ func TestClientHonorsHeaderSignaledGlobal429AcrossRoutes(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			require := require.New(t)
 			limited := make(chan struct{}, 1)
 			var meCalls atomic.Int32
 			var guildAt atomic.Int64
@@ -310,7 +318,7 @@ func TestClientHonorsHeaderSignaledGlobal429AcrossRoutes(t *testing.T) {
 			}))
 			t.Cleanup(server.Close)
 			client, err := NewClient(server.URL, "test-token")
-			require.NoError(t, err)
+			require.NoError(err)
 
 			meDone := make(chan error, 1)
 			go func() {
@@ -318,7 +326,7 @@ func TestClientHonorsHeaderSignaledGlobal429AcrossRoutes(t *testing.T) {
 				meDone <- callErr
 			}()
 			<-limited
-			require.Eventually(t, func() bool {
+			require.Eventually(func() bool {
 				client.limits.mu.Lock()
 				defer client.limits.mu.Unlock()
 				if client.limits.globalUntil.After(time.Now()) {
@@ -335,14 +343,15 @@ func TestClientHonorsHeaderSignaledGlobal429AcrossRoutes(t *testing.T) {
 
 			_, err = client.Guild(context.Background(), "201")
 
-			require.NoError(t, err)
-			require.NoError(t, <-meDone)
+			require.NoError(err)
+			require.NoError(<-meDone)
 			assert.GreaterOrEqual(t, time.Unix(0, guildAt.Load()).Sub(started), 100*time.Millisecond)
 		})
 	}
 }
 
 func TestClientRetainsGlobalPauseAfterRetryExhaustion(t *testing.T) {
+	require := require.New(t)
 	var guildAt atomic.Int64
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
 		if request.URL.Path == "/users/@me" {
@@ -354,18 +363,19 @@ func TestClientRetainsGlobalPauseAfterRetryExhaustion(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 	client, err := NewClient(server.URL, "test-token")
-	require.NoError(t, err)
+	require.NoError(err)
 
 	_, err = client.Me(context.Background())
-	require.Error(t, err)
+	require.Error(err)
 	exhaustedAt := time.Now()
 	_, err = client.Guild(context.Background(), "201")
 
-	require.NoError(t, err)
+	require.NoError(err)
 	assert.GreaterOrEqual(t, time.Unix(0, guildAt.Load()).Sub(exhaustedAt), 30*time.Millisecond)
 }
 
 func TestClientRetainsHeaderSignaledGlobalPauseAfterRetryExhaustion(t *testing.T) {
+	require := require.New(t)
 	var guildAt atomic.Int64
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
 		if request.URL.Path == "/users/@me" {
@@ -379,14 +389,14 @@ func TestClientRetainsHeaderSignaledGlobalPauseAfterRetryExhaustion(t *testing.T
 	}))
 	t.Cleanup(server.Close)
 	client, err := NewClient(server.URL, "test-token")
-	require.NoError(t, err)
+	require.NoError(err)
 
 	_, err = client.Me(context.Background())
-	require.Error(t, err)
+	require.Error(err)
 	exhaustedAt := time.Now()
 	_, err = client.Guild(context.Background(), "201")
 
-	require.NoError(t, err)
+	require.NoError(err)
 	assert.GreaterOrEqual(t, time.Unix(0, guildAt.Load()).Sub(exhaustedAt), 30*time.Millisecond)
 }
 
@@ -404,6 +414,8 @@ func TestClientHonorsRetryAfterHeaderAndJSON(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
 			var calls atomic.Int32
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				if calls.Add(1) == 1 {
@@ -417,14 +429,14 @@ func TestClientHonorsRetryAfterHeaderAndJSON(t *testing.T) {
 			}))
 			t.Cleanup(server.Close)
 			client, err := NewClient(server.URL, "test-token")
-			require.NoError(t, err)
+			require.NoError(err)
 
 			started := time.Now()
 			_, err = client.Me(context.Background())
 
-			require.NoError(t, err)
-			assert.GreaterOrEqual(t, time.Since(started), tt.minimumDelay)
-			assert.Equal(t, int32(2), calls.Load())
+			require.NoError(err)
+			assert.GreaterOrEqual(time.Since(started), tt.minimumDelay)
+			assert.Equal(int32(2), calls.Load())
 		})
 	}
 }
@@ -502,6 +514,8 @@ func TestClientBoundsServerErrorRetries(t *testing.T) {
 }
 
 func TestClientRejectsRedirects(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
 	var redirectedAuthorization string
 	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
 		redirectedAuthorization = request.Header.Get("Authorization")
@@ -514,15 +528,15 @@ func TestClientRejectsRedirects(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 	client, err := NewClient(server.URL, "secret-token")
-	require.NoError(t, err)
+	require.NoError(err)
 
 	_, err = client.Me(context.Background())
 
-	require.Error(t, err)
-	assert.Empty(t, redirectedAuthorization)
-	assert.NotContains(t, err.Error(), "secret-token")
-	assert.NotContains(t, err.Error(), "do-not-log")
-	assert.ErrorIs(t, err, ErrRedirect)
+	require.Error(err)
+	assert.Empty(redirectedAuthorization)
+	assert.NotContains(err.Error(), "secret-token")
+	assert.NotContains(err.Error(), "do-not-log")
+	assert.ErrorIs(err, ErrRedirect)
 }
 
 func TestNewClientRejectsUnsafeBaseURL(t *testing.T) {
