@@ -73,6 +73,9 @@ func LoadSyncState(blob string) (*SyncState, error) {
 	if state.ThreadCatalog == nil {
 		state.ThreadCatalog = map[string]ThreadCatalogState{}
 	}
+	if err := state.validate(); err != nil {
+		return nil, fmt.Errorf("validate Discord sync state: %w", err)
+	}
 	return state, nil
 }
 
@@ -84,6 +87,9 @@ func (s *SyncState) Marshal() (string, error) {
 	if s.Version != SyncStateVersion {
 		return "", fmt.Errorf("marshal Discord sync state: unsupported version %d", s.Version)
 	}
+	if err := s.validate(); err != nil {
+		return "", fmt.Errorf("marshal Discord sync state: %w", err)
+	}
 	encoded, err := json.Marshal(s)
 	if err != nil {
 		return "", fmt.Errorf("marshal Discord sync state: %w", err)
@@ -91,12 +97,64 @@ func (s *SyncState) Marshal() (string, error) {
 	return string(encoded), nil
 }
 
+func (s *SyncState) validate() error {
+	if s == nil {
+		return errors.New("nil state")
+	}
+	if s.Version != SyncStateVersion {
+		return fmt.Errorf("unsupported version %d", s.Version)
+	}
+	for containerID, container := range s.Containers {
+		fields := []struct {
+			name  string
+			value string
+		}{
+			{name: "high_water", value: container.HighWater},
+			{name: "backfill_before", value: container.BackfillBefore},
+			{name: "backfill_upper", value: container.BackfillUpper},
+		}
+		for _, field := range fields {
+			if field.value == "" {
+				continue
+			}
+			if _, err := ParseSnowflake(field.value); err != nil {
+				return fmt.Errorf("containers[%q].%s: %w", containerID, field.name, err)
+			}
+		}
+	}
+
+	for parentID, catalog := range s.ThreadCatalog {
+		fields := []struct {
+			name  string
+			value string
+		}{
+			{name: "public_archive_watermark", value: catalog.PublicArchiveWatermark},
+			{name: "private_archive_watermark", value: catalog.PrivateArchiveWatermark},
+		}
+		for _, field := range fields {
+			if field.value == "" {
+				continue
+			}
+			if _, err := time.Parse(time.RFC3339Nano, field.value); err != nil {
+				return fmt.Errorf("thread_catalog[%q].%s: %w", parentID, field.name, err)
+			}
+		}
+	}
+	return nil
+}
+
 // Merge incorporates a newer active-run checkpoint over a completed-run
 // baseline. Comparable cursors only advance; opaque incomplete-backfill bounds
 // use newer non-empty values and cannot be erased by an unrelated checkpoint.
-func (s *SyncState) Merge(other *SyncState) {
+func (s *SyncState) Merge(other *SyncState) error {
+	if err := s.validate(); err != nil {
+		return fmt.Errorf("validate Discord sync baseline: %w", err)
+	}
 	if other == nil {
-		return
+		return nil
+	}
+	if err := other.validate(); err != nil {
+		return fmt.Errorf("validate Discord sync checkpoint: %w", err)
 	}
 	if s.Containers == nil {
 		s.Containers = map[string]ContainerState{}
@@ -107,7 +165,11 @@ func (s *SyncState) Merge(other *SyncState) {
 
 	for containerID, checkpoint := range other.Containers {
 		baseline := s.Containers[containerID]
-		if decimalAfter(checkpoint.HighWater, baseline.HighWater) {
+		after, err := snowflakeAfter(checkpoint.HighWater, baseline.HighWater)
+		if err != nil {
+			return fmt.Errorf("compare containers[%q].high_water: %w", containerID, err)
+		}
+		if after {
 			baseline.HighWater = checkpoint.HighWater
 		}
 		if checkpoint.BackfillBefore != "" {
@@ -122,42 +184,57 @@ func (s *SyncState) Merge(other *SyncState) {
 
 	for parentID, checkpoint := range other.ThreadCatalog {
 		baseline := s.ThreadCatalog[parentID]
-		if timestampAfter(checkpoint.PublicArchiveWatermark, baseline.PublicArchiveWatermark) {
+		publicAfter, err := timestampAfter(checkpoint.PublicArchiveWatermark, baseline.PublicArchiveWatermark)
+		if err != nil {
+			return fmt.Errorf("compare thread_catalog[%q].public_archive_watermark: %w", parentID, err)
+		}
+		if publicAfter {
 			baseline.PublicArchiveWatermark = checkpoint.PublicArchiveWatermark
 		}
-		if timestampAfter(checkpoint.PrivateArchiveWatermark, baseline.PrivateArchiveWatermark) {
+		privateAfter, err := timestampAfter(checkpoint.PrivateArchiveWatermark, baseline.PrivateArchiveWatermark)
+		if err != nil {
+			return fmt.Errorf("compare thread_catalog[%q].private_archive_watermark: %w", parentID, err)
+		}
+		if privateAfter {
 			baseline.PrivateArchiveWatermark = checkpoint.PrivateArchiveWatermark
 		}
 		s.ThreadCatalog[parentID] = baseline
 	}
+	return nil
 }
 
-func decimalAfter(candidate, existing string) bool {
+func snowflakeAfter(candidate, existing string) (bool, error) {
 	if candidate == "" {
-		return false
+		return false, nil
 	}
 	if existing == "" {
-		return true
+		return true, nil
 	}
-	candidate = strings.TrimLeft(candidate, "0")
-	existing = strings.TrimLeft(existing, "0")
-	if len(candidate) != len(existing) {
-		return len(candidate) > len(existing)
+	candidateValue, err := ParseSnowflake(candidate)
+	if err != nil {
+		return false, err
 	}
-	return candidate > existing
+	existingValue, err := ParseSnowflake(existing)
+	if err != nil {
+		return false, err
+	}
+	return candidateValue > existingValue, nil
 }
 
-func timestampAfter(candidate, existing string) bool {
+func timestampAfter(candidate, existing string) (bool, error) {
 	if candidate == "" {
-		return false
+		return false, nil
 	}
 	if existing == "" {
-		return true
+		return true, nil
 	}
 	candidateTime, candidateErr := time.Parse(time.RFC3339Nano, candidate)
 	existingTime, existingErr := time.Parse(time.RFC3339Nano, existing)
-	if candidateErr == nil && existingErr == nil {
-		return candidateTime.After(existingTime)
+	if candidateErr != nil {
+		return false, fmt.Errorf("parse candidate timestamp: %w", candidateErr)
 	}
-	return candidate > existing
+	if existingErr != nil {
+		return false, fmt.Errorf("parse existing timestamp: %w", existingErr)
+	}
+	return candidateTime.After(existingTime), nil
 }
