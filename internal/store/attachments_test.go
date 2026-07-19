@@ -1,6 +1,8 @@
 package store_test
 
 import (
+	"bytes"
+	"log/slog"
 	"strings"
 	"testing"
 
@@ -9,6 +11,94 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
+
+func captureAttachmentQueryLogs(t *testing.T) *bytes.Buffer {
+	t.Helper()
+	store.ConfigureSQLLogging(store.SQLLogOptions{FullTrace: true})
+	t.Cleanup(func() { store.ConfigureSQLLogging(store.SQLLogOptions{}) })
+	var logs bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+	return &logs
+}
+
+func TestListDiscordPendingAttachmentMessagesManyDownloadedUsesSingleQuery(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewSQLiteTestStore(t)
+	source, err := st.GetOrCreateSource("discord", "source-many-downloaded")
+	require.NoError(err)
+	conversationID, err := st.EnsureConversationWithType(source.ID, "channel-many", "channel", "many")
+	require.NoError(err)
+	contentHash := strings.Repeat("a1", 32)
+	for i := range 24 {
+		messageID := insertStoreTestMessage(t, st, source.ID, conversationID, "downloaded-"+string(rune('a'+i)))
+		refHash := contentHash[:62] + string("0123456789abcdef"[i%16]) + string("0123456789abcdef"[(i+1)%16])
+		require.NoError(st.ReplaceMessageDiscordAttachments(messageID, []store.AttachmentRef{{
+			StoragePath: refHash[:2] + "/" + refHash, ContentHash: refHash,
+			SourceAttachmentID: "discord:file-" + string(rune('a'+i)),
+		}}))
+	}
+
+	logs := captureAttachmentQueryLogs(t)
+	pending, err := st.ListDiscordPendingAttachmentMessages(source.ID)
+	require.NoError(err)
+	assert.Empty(pending)
+	assert.Equal(1, strings.Count(logs.String(), `"kind":"query"`),
+		"pending scan must use one query regardless of message count")
+}
+
+func TestListDiscordPendingAttachmentMessagesGroupsScopesAndOrders(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewSQLiteTestStore(t)
+	source, err := st.GetOrCreateSource("discord", "source-target")
+	require.NoError(err)
+	conversationID, err := st.EnsureConversationWithType(source.ID, "channel-target", "channel", "target")
+	require.NoError(err)
+	otherSource, err := st.GetOrCreateSource("discord", "source-other")
+	require.NoError(err)
+	otherConversationID, err := st.EnsureConversationWithType(otherSource.ID, "channel-other", "channel", "other")
+	require.NoError(err)
+
+	firstPendingID := insertStoreTestMessage(t, st, source.ID, conversationID, "pending-first")
+	mixedPendingID := insertStoreTestMessage(t, st, source.ID, conversationID, "pending-mixed")
+	beeperOnlyID := insertStoreTestMessage(t, st, source.ID, conversationID, "beeper-only")
+	otherPendingID := insertStoreTestMessage(t, st, otherSource.ID, otherConversationID, "other-pending")
+
+	firstHash := strings.Repeat("b2", 32)
+	require.NoError(st.ReplaceMessageDiscordAttachments(firstPendingID, []store.AttachmentRef{{
+		StoragePath: "discord:pending:first", SourceAttachmentID: "discord:first",
+	}}))
+	require.NoError(st.ReplaceMessageDiscordAttachments(mixedPendingID, []store.AttachmentRef{
+		{
+			StoragePath: firstHash[:2] + "/" + firstHash, ContentHash: firstHash,
+			SourceAttachmentID: "discord:mixed-downloaded-1",
+		},
+		{
+			StoragePath: firstHash[:2] + "/" + firstHash, ContentHash: firstHash,
+			SourceAttachmentID: "discord:mixed-downloaded-2",
+		},
+		{
+			StoragePath:        "https://cdn.discordapp.com/attachments/1/2/pending.bin",
+			SourceAttachmentID: "discord:mixed-pending",
+		},
+	}))
+	require.NoError(st.ReplaceMessageBeeperAttachments(beeperOnlyID, []store.AttachmentRef{{
+		StoragePath: "beeper:pending", SourceAttachmentID: "beeper:only",
+	}}))
+	require.NoError(st.ReplaceMessageDiscordAttachments(otherPendingID, []store.AttachmentRef{{
+		StoragePath: "discord:pending:other", SourceAttachmentID: "discord:other",
+	}}))
+
+	pending, err := st.ListDiscordPendingAttachmentMessages(source.ID)
+	require.NoError(err)
+	assert.Equal([]store.DiscordPendingAttachmentMessage{
+		{MessageID: firstPendingID, SourceMessageID: "pending-first", ChatID: "channel-target"},
+		{MessageID: mixedPendingID, SourceMessageID: "pending-mixed", ChatID: "channel-target"},
+	}, pending)
+}
 
 func TestReplaceMessageDiscordAttachmentsPreservesDuplicateContentSourceIDs(t *testing.T) {
 	require := require.New(t)

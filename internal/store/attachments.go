@@ -83,34 +83,6 @@ func (s *Store) listPendingAttachmentMessages(sourceID int64, providerPrefix str
 	return items, rows.Err()
 }
 
-func (s *Store) listProviderAttachmentMessages(sourceID int64, providerPrefix string) ([]PendingAttachmentMessage, error) {
-	rows, err := s.db.Query(`
-		SELECT m.id, m.source_message_id, c.source_conversation_id
-		FROM messages m
-		JOIN conversations c ON c.id = m.conversation_id
-		WHERE m.source_id = ?
-		  AND EXISTS (
-		    SELECT 1 FROM attachments a
-		    WHERE a.message_id = m.id
-		      AND a.source_attachment_id LIKE ?
-		  )
-	`, sourceID, providerPrefix+"%")
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-
-	var items []PendingAttachmentMessage
-	for rows.Next() {
-		var item PendingAttachmentMessage
-		if err := rows.Scan(&item.MessageID, &item.SourceMessageID, &item.ChatID); err != nil {
-			return nil, err
-		}
-		items = append(items, item)
-	}
-	return items, rows.Err()
-}
-
 // ReplaceMessageDiscordAttachments replaces Discord-managed attachment rows.
 // Pending rows retain an observed CDN URL or deterministic provider sentinel.
 // Hashless rows with a trusted local CAS path are duplicate-content aliases.
@@ -185,22 +157,51 @@ func (s *Store) MessageDiscordAttachments(messageID int64) (map[string]Attachmen
 // ListDiscordPendingAttachmentMessages returns messages containing at least
 // one Discord attachment that does not resolve to a trusted local CAS path.
 func (s *Store) ListDiscordPendingAttachmentMessages(sourceID int64) ([]DiscordPendingAttachmentMessage, error) {
-	candidates, err := s.listProviderAttachmentMessages(sourceID, "discord:")
+	rows, err := s.db.Query(`
+		SELECT m.id, m.source_message_id, c.source_conversation_id,
+		       a.storage_path, COALESCE(a.content_hash, '')
+		FROM messages m
+		JOIN conversations c ON c.id = m.conversation_id
+		JOIN attachments a ON a.message_id = m.id
+		WHERE m.source_id = ?
+		  AND a.source_attachment_id LIKE ?
+		ORDER BY m.id, a.id
+	`, sourceID, "discord:%")
 	if err != nil {
 		return nil, err
 	}
-	pending := make([]DiscordPendingAttachmentMessage, 0, len(candidates))
-	for _, candidate := range candidates {
-		refs, err := s.MessageDiscordAttachments(candidate.MessageID)
-		if err != nil {
-			return nil, err
-		}
-		for _, ref := range refs {
-			if !IsDiscordAttachmentDownloaded(ref) {
-				pending = append(pending, candidate)
-				break
-			}
+	defer func() { _ = rows.Close() }()
+
+	var pending []DiscordPendingAttachmentMessage
+	var current DiscordPendingAttachmentMessage
+	var haveCurrent, currentPending bool
+	flushCurrent := func() {
+		if haveCurrent && currentPending {
+			pending = append(pending, current)
 		}
 	}
+	for rows.Next() {
+		var item DiscordPendingAttachmentMessage
+		var ref AttachmentRef
+		if err := rows.Scan(
+			&item.MessageID, &item.SourceMessageID, &item.ChatID,
+			&ref.StoragePath, &ref.ContentHash,
+		); err != nil {
+			return nil, err
+		}
+		if !haveCurrent || item.MessageID != current.MessageID {
+			flushCurrent()
+			current = item
+			haveCurrent = true
+			currentPending = false
+		}
+		if !IsDiscordAttachmentDownloaded(ref) {
+			currentPending = true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	flushCurrent()
 	return pending, nil
 }
