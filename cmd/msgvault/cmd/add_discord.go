@@ -110,9 +110,7 @@ func runAddDiscord(cmd *cobra.Command, deps discordCommandDeps, opts addDiscordO
 	}
 	defer cleanup()
 	manager := deps.tokenManager()
-	record := discord.TokenRecord{
-		BotUserID: me.ID, BotUsername: me.Username, AccessToken: accessToken, Binding: opts.OAuthApp,
-	}
+	record := discord.NewTokenRecord(me.ID, me.Username, accessToken, opts.OAuthApp)
 	if err := saveAndRegisterDiscordCredential(st, manager, record, selected, deps); err != nil {
 		return err
 	}
@@ -240,9 +238,6 @@ func diagnoseDiscordGuild(cmd *cobra.Command, api discord.API, guild discord.Gui
 	if err != nil {
 		_, _ = fmt.Fprintf(out, "  Channel access unavailable: %s\n", discordDiagnostic(err))
 		return
-	}
-	if _, err := api.GuildMembers(cmd.Context(), guild.ID, ""); err != nil {
-		_, _ = fmt.Fprintf(out, "  Member enrichment unavailable: %s\n", discordDiagnostic(err))
 	}
 	for _, channel := range channels {
 		if channel.Type != 0 && channel.Type != 5 {

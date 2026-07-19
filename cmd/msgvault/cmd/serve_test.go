@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -1299,6 +1300,60 @@ func TestRunScheduledSyncUsesSharedDiscordImporterAndRebuildsOnce(t *testing.T) 
 	require.ErrorContains(err, "synthetic Discord import failure")
 	assert.Equal([]int64{source.ID}, imported)
 	assert.Equal(1, rebuilds)
+}
+
+func TestRunScheduledSyncLogsDiscordImportIssues(t *testing.T) {
+	st := storetest.New(t)
+	source, err := st.Store.GetOrCreateSource(sourceTypeDiscord, "113456789012345678")
+	require.NoError(t, err)
+
+	originalImport := importDiscordSourceForScheduledRun
+	originalRebuild := rebuildCacheAfterScheduledSourceRun
+	originalLogger := logger
+	t.Cleanup(func() {
+		importDiscordSourceForScheduledRun = originalImport
+		rebuildCacheAfterScheduledSourceRun = originalRebuild
+		logger = originalLogger
+	})
+	importDiscordSourceForScheduledRun = func(
+		context.Context, *store.Store, *store.Source,
+		discordCommandDeps, bool, time.Time, func(string),
+	) (*discord.ImportSummary, error) {
+		return &discord.ImportSummary{
+			CatalogIssues: []discord.CatalogIssue{{
+				Scope: discord.CatalogScopePrivateArchive, Kind: discord.CatalogIssueForbidden,
+				GuildID: source.Identifier, ParentID: "300000000000000001",
+				StatusCode: http.StatusForbidden, DiscordCode: 50013,
+				Err: errors.New("private-response-secret"),
+			}},
+			ContainerIssues: []discord.ContainerIssue{{
+				ContainerID: "400000000000000001", Kind: discord.ContainerIssueUnknownChannel,
+				StatusCode: http.StatusNotFound, DiscordCode: 10003,
+			}},
+		}, nil
+	}
+	rebuildCacheAfterScheduledSourceRun = func(context.Context, string) error { return nil }
+	var logs bytes.Buffer
+	logger = slog.New(slog.NewTextHandler(&logs, nil))
+
+	require.NoError(t, runScheduledSync(
+		context.Background(), source.Identifier, st.Store,
+		func(string) (*oauth.Manager, error) {
+			require.FailNow(t, "Discord scheduled sync must not resolve Gmail OAuth")
+			return nil, errors.New("unreachable")
+		},
+	))
+	output := logs.String()
+	assert.Contains(t, output, "discord catalog issue")
+	assert.Contains(t, output, "scope=private_archive")
+	assert.Contains(t, output, "parent_id=300000000000000001")
+	assert.Contains(t, output, "status_code=403")
+	assert.Contains(t, output, "discord_code=50013")
+	assert.Contains(t, output, "discord container issue")
+	assert.Contains(t, output, "container_id=400000000000000001")
+	assert.Contains(t, output, "kind=unknown_channel")
+	assert.Contains(t, output, "status_code=404")
+	assert.NotContains(t, output, "private-response-secret")
 }
 
 func TestScheduledDiscordGuildFailureDoesNotBlockLaterGuild(t *testing.T) {

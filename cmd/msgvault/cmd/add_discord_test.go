@@ -37,7 +37,7 @@ func TestAddDiscordReadsTokenFromStdinAndSelectsSoleGuild(t *testing.T) {
 	record, err := discord.NewTokenManager(tokensDir).Resolve("")
 	require.NoError(t, err)
 	assert.Equal(t, testDiscordBotID, record.BotUserID)
-	assert.Equal(t, testDiscordBotToken, record.AccessToken)
+	assert.Equal(t, testDiscordBotToken, record.AccessToken())
 }
 
 func TestAddDiscordRequiresExplicitGuildWhenSeveralAreAccessible(t *testing.T) {
@@ -68,9 +68,7 @@ func TestAddDiscordPromotesSoleBindingAndExistingNullSources(t *testing.T) {
 	st := newDiscordCLIStore(t)
 	tokensDir := t.TempDir()
 	manager := discord.NewTokenManager(tokensDir)
-	require.NoError(t, manager.Save(discord.TokenRecord{
-		BotUserID: testDiscordBotID, BotUsername: "archive-bot", AccessToken: testDiscordBotToken,
-	}))
+	require.NoError(t, manager.Save(discord.NewTokenRecord(testDiscordBotID, "archive-bot", testDiscordBotToken, "")))
 	existing, err := st.GetOrCreateSource("discord", testDiscordGuildB)
 	require.NoError(t, err)
 	assert.False(t, existing.OAuthApp.Valid)
@@ -97,7 +95,6 @@ func TestAddDiscordPromotesSoleBindingAndExistingNullSources(t *testing.T) {
 func TestAddDiscordReportsPermissionDiagnosticsWithoutExposingToken(t *testing.T) {
 	st := newDiscordCLIStore(t)
 	api := newDiscordCLIServer(t, discord.Guild{ID: testDiscordGuildA, Name: "Alpha Guild"})
-	api.fail["/guilds/"+testDiscordGuildA+"/members"] = 403
 	api.fail["/channels/"+testDiscordChannel+"/users/@me/threads/archived/private"] = 403
 	cmd := newAddDiscordLocalCmd(testDiscordCommandDeps(t, st, t.TempDir(), api.server.URL))
 	var output bytes.Buffer
@@ -106,9 +103,12 @@ func TestAddDiscordReportsPermissionDiagnosticsWithoutExposingToken(t *testing.T
 	cmd.SetErr(&output)
 
 	require.NoError(t, cmd.Execute())
-	assert.Contains(t, output.String(), "Member enrichment unavailable")
 	assert.Contains(t, output.String(), "Private archived threads unavailable")
+	assert.NotContains(t, output.String(), "Member enrichment unavailable")
 	assert.NotContains(t, output.String(), testDiscordBotToken)
+	for _, requestURI := range api.requestURIs() {
+		assert.NotContains(t, requestURI, "/members", "setup must not request the unused guild roster")
+	}
 }
 
 func TestAddDiscordCredentialFirstRegistrationFailureIsIdempotentlyRecoverable(t *testing.T) {

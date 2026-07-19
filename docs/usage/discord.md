@@ -23,18 +23,15 @@ Create a dedicated application and bot in the
 
 1. Create an application, add its bot user, and copy the bot token.
 2. Enable **Message Content Intent** so message bodies are available.
-3. Optionally enable **Server Members Intent** for better participant-name
-   enrichment. A member-list failure does not block message archival.
-4. Install the bot in each guild you want to archive with the `bot` scope and
+3. Install the bot in each guild you want to archive with the `bot` scope and
    only **View Channels** and **Read Message History** permissions.
-5. Explicitly grant the bot access to any private channels or threads that
+4. Explicitly grant the bot access to any private channels or threads that
    should be archived.
 
 Do not grant Administrator, Send Messages, Manage Messages, or moderation
 permissions. Archived private-thread coverage depends on what the bot can see.
-`add-discord` reports missing channel history, member enrichment, private
-thread access, and likely Message Content Intent problems without printing the
-token.
+`add-discord` reports missing channel history, private-thread access, and likely
+Message Content Intent problems without printing the token.
 
 ## Register guilds
 
@@ -222,9 +219,9 @@ msgvault backfill-discord-media 123456789012345678 --only-incomplete
 msgvault backfill-discord-media --only-incomplete
 ```
 
-The default scan counts already-complete messages but does no download work
-for them. Backfill re-fetches each source message to obtain a fresh attachment
-URL before retrying incomplete files.
+The default scan counts already-complete messages but does no download work or
+source re-fetch for them. Backfill re-fetches only messages with pending
+attachments to obtain fresh attachment URLs before retrying incomplete files.
 
 Discord CDN URLs are signed and expire. A stored URL is provenance, not a
 durable lazy-download link. If an over-cap or failed attachment matters, raise

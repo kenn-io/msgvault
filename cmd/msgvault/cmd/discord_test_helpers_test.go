@@ -85,8 +85,6 @@ func (f *discordCLIServer) serveHTTP(w http.ResponseWriter, r *http.Request) {
 		writeDiscordCLIJSON(f.testing, w, []discord.Channel{{ID: testDiscordChannel, Type: 0, Name: "general"}})
 	case "/guilds/" + testDiscordGuildA + "/threads/active", "/guilds/" + testDiscordGuildB + "/threads/active":
 		writeDiscordCLIJSON(f.testing, w, map[string]any{"threads": []discord.Channel{}})
-	case "/guilds/" + testDiscordGuildA + "/members", "/guilds/" + testDiscordGuildB + "/members":
-		writeDiscordCLIJSON(f.testing, w, []discord.GuildMember{})
 	case "/channels/" + testDiscordChannel + "/threads/archived/public",
 		"/channels/" + testDiscordChannel + "/users/@me/threads/archived/private":
 		writeDiscordCLIJSON(f.testing, w, map[string]any{"threads": []discord.Channel{}, "has_more": false})

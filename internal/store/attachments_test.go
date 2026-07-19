@@ -175,18 +175,27 @@ func TestReplaceMessageDiscordAttachmentsPreservesDuplicateContentSourceIDs(t *t
 	assert.Equal("second.bin", got["discord:attachment-2"].Filename)
 	assert.Equal(storagePath, got["discord:attachment-1"].StoragePath)
 	assert.Equal(storagePath, got["discord:attachment-2"].StoragePath)
-	hashes := []string{
-		got["discord:attachment-1"].ContentHash,
-		got["discord:attachment-2"].ContentHash,
-	}
-	assert.ElementsMatch([]string{contentHash, ""}, hashes)
+	assert.Equal(contentHash, got["discord:attachment-1"].ContentHash)
+	assert.Equal(contentHash, got["discord:attachment-2"].ContentHash,
+		"store reads must recover a duplicate alias hash from its trusted CAS path")
+
+	message, err := st.GetMessage(messageID)
+	require.NoError(err)
+	require.Len(message.Attachments, 2)
+	assert.Equal(contentHash, message.Attachments[0].ContentHash)
+	assert.Equal(contentHash, message.Attachments[1].ContentHash)
 
 	pending, err := st.ListDiscordPendingAttachmentMessages(source.ID)
 	require.NoError(err)
 	assert.Empty(pending, "hashless aliases of trusted local CAS paths are downloaded")
 
 	remaining := got["discord:attachment-2"]
-	require.Empty(remaining.ContentHash, "fixture must retain the duplicate alias row")
+	var storedHash string
+	require.NoError(st.DB().QueryRow(`
+		SELECT COALESCE(content_hash, '') FROM attachments
+		WHERE message_id = ? AND source_attachment_id = ?
+	`, messageID, "discord:attachment-2").Scan(&storedHash))
+	require.Empty(storedHash, "schema-level duplicate alias must retain an empty hash")
 	require.NoError(st.ReplaceMessageDiscordAttachments(messageID, []store.AttachmentRef{remaining}))
 	got, err = st.MessageDiscordAttachments(messageID)
 	require.NoError(err)

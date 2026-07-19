@@ -30,8 +30,16 @@ type ThreadCatalogState struct {
 // SyncState is the versioned Discord cursor persisted in sync run state.
 type SyncState struct {
 	Version       int                           `json:"version"`
+	Full          bool                          `json:"full,omitempty"`
+	LowerBound    string                        `json:"lower_bound,omitempty"`
 	Containers    map[string]ContainerState     `json:"containers"`
 	ThreadCatalog map[string]ThreadCatalogState `json:"thread_catalog"`
+}
+
+// CompatibleRun reports whether a failed checkpoint was produced with the
+// same history mode and exact exclusive lower bound as the requested run.
+func (s *SyncState) CompatibleRun(full bool, lowerBound string) bool {
+	return s != nil && s.Full == full && s.LowerBound == lowerBound
 }
 
 // NewSyncState returns an initialized state at the current format version.
@@ -104,6 +112,11 @@ func (s *SyncState) validate() error {
 	if s.Version != SyncStateVersion {
 		return fmt.Errorf("unsupported version %d", s.Version)
 	}
+	if s.LowerBound != "" {
+		if _, err := ParseSnowflake(s.LowerBound); err != nil {
+			return fmt.Errorf("lower_bound: %w", err)
+		}
+	}
 	for containerID, container := range s.Containers {
 		fields := []struct {
 			name  string
@@ -143,9 +156,9 @@ func (s *SyncState) validate() error {
 	return nil
 }
 
-// Merge incorporates a newer active-run checkpoint over a completed-run
-// baseline. Comparable cursors only advance; opaque incomplete-backfill bounds
-// use newer non-empty values and cannot be erased by an unrelated checkpoint.
+// Merge incorporates a compatible newer active-run checkpoint over a
+// completed-run baseline. High-water and catalog cursors only advance; the
+// newer checkpoint's backfill epoch is authoritative as one coherent unit.
 func (s *SyncState) Merge(other *SyncState) error {
 	if err := s.validate(); err != nil {
 		return fmt.Errorf("validate Discord sync baseline: %w", err)
@@ -172,13 +185,9 @@ func (s *SyncState) Merge(other *SyncState) error {
 		if after {
 			baseline.HighWater = checkpoint.HighWater
 		}
-		if checkpoint.BackfillBefore != "" {
-			baseline.BackfillBefore = checkpoint.BackfillBefore
-		}
-		if checkpoint.BackfillUpper != "" {
-			baseline.BackfillUpper = checkpoint.BackfillUpper
-		}
-		baseline.BackfillComplete = baseline.BackfillComplete || checkpoint.BackfillComplete
+		baseline.BackfillBefore = checkpoint.BackfillBefore
+		baseline.BackfillUpper = checkpoint.BackfillUpper
+		baseline.BackfillComplete = checkpoint.BackfillComplete
 		s.Containers[containerID] = baseline
 	}
 

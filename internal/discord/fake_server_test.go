@@ -82,8 +82,6 @@ func (f *fakeDiscord) serveHTTP(w http.ResponseWriter, request *http.Request) {
 		f.writeArchivedThreads(w, "public-thread", "402")
 	case "/api/v10/channels/301/users/@me/threads/archived/private":
 		f.writeArchivedThreads(w, "private-thread", "403")
-	case "/api/v10/guilds/201/members":
-		f.writeMembers(w)
 	case "/api/v10/channels/301/messages":
 		writeDiscordJSON(w, http.StatusOK, []json.RawMessage{
 			json.RawMessage(`{"id":"501","channel_id":"301","guild_id":"201","author":{"id":"102","username":"alice","global_name":"Alice"},"content":"hello","timestamp":"2026-07-18T12:01:00Z","type":0,"future_field":{"retained":true}}`),
@@ -114,13 +112,6 @@ func (f *fakeDiscord) writeArchivedThreads(w http.ResponseWriter, name, id strin
 		"id": id, "guild_id": "201", "parent_id": "301", "type": 11, "name": name,
 		"thread_metadata": map[string]any{"archived": true, "archive_timestamp": archiveTimestamp, "auto_archive_duration": 1440, "locked": false},
 	}}, "members": []any{}, "has_more": true})
-}
-
-func (f *fakeDiscord) writeMembers(w http.ResponseWriter) {
-	writeDiscordJSON(w, http.StatusOK, []map[string]any{{
-		"user": map[string]any{"id": "102", "username": "alice", "global_name": "Alice", "bot": false},
-		"nick": "Test Alice", "roles": []string{"601"}, "joined_at": "2026-01-01T00:00:00Z",
-	}})
 }
 
 func writeDiscordJSON(w http.ResponseWriter, status int, value any) {

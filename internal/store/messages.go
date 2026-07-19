@@ -1,6 +1,7 @@
 package store
 
 import (
+	"bufio"
 	"bytes"
 	"compress/zlib"
 	"context"
@@ -181,6 +182,93 @@ func (s *Store) MessageSourceIDsInSnowflakeInterval(
 	return sourceMessageIDs, rows.Err()
 }
 
+// MaxMessageSourceIDInSnowflakeInterval returns the numerically greatest
+// canonical decimal source ID in (lower, upper] without materializing the
+// interval. An empty interval returns an empty string.
+func (s *Store) MaxMessageSourceIDInSnowflakeInterval(
+	sourceID, conversationID int64, lower, upper string,
+) (string, error) {
+	page, err := s.MessageSourceIDsInSnowflakeIntervalPage(
+		sourceID, conversationID, lower, upper, "", 1,
+	)
+	if err != nil || len(page) == 0 {
+		return "", err
+	}
+	return page[0], nil
+}
+
+// MessageSourceIDsInSnowflakeIntervalPage returns one descending numeric
+// keyset page from (lower, upper]. before is an optional exclusive cursor.
+func (s *Store) MessageSourceIDsInSnowflakeIntervalPage(
+	sourceID, conversationID int64, lower, upper, before string, limit int,
+) ([]string, error) {
+	canonicalLower, err := canonicalDecimal(lower)
+	if err != nil {
+		return nil, fmt.Errorf("invalid lower snowflake: %w", err)
+	}
+	canonicalUpper, err := canonicalDecimal(upper)
+	if err != nil {
+		return nil, fmt.Errorf("invalid upper snowflake: %w", err)
+	}
+	if compareCanonicalDecimals(canonicalLower, canonicalUpper) > 0 {
+		return nil, errors.New("invalid snowflake interval: lower exceeds upper")
+	}
+	if limit <= 0 {
+		return nil, errors.New("invalid snowflake page limit")
+	}
+
+	query := `
+		SELECT source_message_id
+		FROM messages
+		WHERE source_id = ?
+		  AND conversation_id = ?
+		  AND (
+		    LENGTH(source_message_id) > ?
+		    OR (LENGTH(source_message_id) = ? AND source_message_id > ?)
+		  )
+		  AND (
+		    LENGTH(source_message_id) < ?
+		    OR (LENGTH(source_message_id) = ? AND source_message_id <= ?)
+		  )`
+	args := []any{
+		sourceID, conversationID,
+		len(canonicalLower), len(canonicalLower), canonicalLower,
+		len(canonicalUpper), len(canonicalUpper), canonicalUpper,
+	}
+	if before != "" {
+		canonicalBefore, beforeErr := canonicalDecimal(before)
+		if beforeErr != nil {
+			return nil, fmt.Errorf("invalid before snowflake: %w", beforeErr)
+		}
+		query += ` AND (
+			LENGTH(source_message_id) < ?
+			OR (LENGTH(source_message_id) = ? AND source_message_id < ?)
+		)`
+		args = append(args, len(canonicalBefore), len(canonicalBefore), canonicalBefore)
+	}
+	query += ` ORDER BY LENGTH(source_message_id) DESC, source_message_id DESC LIMIT ?`
+	args = append(args, limit)
+
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	result := make([]string, 0, limit)
+	for rows.Next() {
+		var sourceMessageID string
+		if err := rows.Scan(&sourceMessageID); err != nil {
+			return nil, err
+		}
+		canonical, err := canonicalDecimal(sourceMessageID)
+		if err == nil && canonical == sourceMessageID {
+			result = append(result, sourceMessageID)
+		}
+	}
+	return result, rows.Err()
+}
+
 func canonicalDecimal(value string) (string, error) {
 	if value == "" {
 		return "", errors.New("value is empty")
@@ -241,15 +329,40 @@ func (s *Store) MessageMetadataBatch(
 // reply-linking pass. Keeping JSON decoding in the provider avoids adding
 // backend-specific JSON expressions to the shared store.
 func (s *Store) ListUnresolvedMessageReplies(sourceID int64, messageType string) ([]UnresolvedMessageReply, error) {
+	return s.listUnresolvedMessageReplies(sourceID, messageType, 0, 0)
+}
+
+// ListUnresolvedMessageRepliesAfter returns one bounded keyset page. Callers
+// can resolve large provider archives without retaining every candidate's JSON
+// metadata in memory at once.
+func (s *Store) ListUnresolvedMessageRepliesAfter(
+	sourceID int64, messageType string, afterID int64, limit int,
+) ([]UnresolvedMessageReply, error) {
+	if limit <= 0 {
+		return nil, errors.New("list unresolved message replies: limit must be positive")
+	}
+	return s.listUnresolvedMessageReplies(sourceID, messageType, afterID, limit)
+}
+
+func (s *Store) listUnresolvedMessageReplies(
+	sourceID int64, messageType string, afterID int64, limit int,
+) ([]UnresolvedMessageReply, error) {
+	limitClause := ""
+	args := []any{sourceID, messageType, afterID}
+	if limit > 0 {
+		limitClause = " LIMIT ?"
+		args = append(args, limit)
+	}
 	rows, err := s.db.Query(`
 		SELECT id, source_message_id, metadata
 		FROM messages
 		WHERE source_id = ?
 		  AND message_type = ?
+		  AND id > ?
 		  AND reply_to_message_id IS NULL
 		  AND metadata IS NOT NULL
-		ORDER BY id
-	`, sourceID, messageType)
+		ORDER BY id`+limitClause,
+		args...)
 	if err != nil {
 		return nil, fmt.Errorf("list unresolved message replies: %w", err)
 	}
@@ -1235,6 +1348,60 @@ func (s *Store) MarkMessagesDeletedBatch(sourceID int64, sourceMessageIDs []stri
 	}
 	return execInChunks(s.db, sourceMessageIDs, []any{sourceID},
 		fmt.Sprintf(`UPDATE messages SET deleted_from_source_at = %s WHERE source_id = ? AND source_message_id IN (%%s)`, s.dialect.Now()))
+}
+
+// MarkMessagesDeletedFromReader consumes newline-delimited source message IDs
+// in bounded batches and commits all tombstones atomically. Any late reader or
+// update failure rolls back earlier batches.
+func (s *Store) MarkMessagesDeletedFromReader(sourceID int64, reader io.Reader, batchSize int) error {
+	if reader == nil {
+		return errors.New("mark messages deleted from reader: nil reader")
+	}
+	if batchSize <= 0 {
+		return errors.New("mark messages deleted from reader: batch size must be positive")
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("mark messages deleted from reader: begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	batch := make([]string, 0, batchSize)
+	flush := func() error {
+		if len(batch) == 0 {
+			return nil
+		}
+		if err := execInChunks(tx, batch, []any{sourceID},
+			fmt.Sprintf(`UPDATE messages SET deleted_from_source_at = %s WHERE source_id = ? AND source_message_id IN (%%s)`, s.dialect.Now())); err != nil {
+			return err
+		}
+		batch = batch[:0]
+		return nil
+	}
+
+	scanner := bufio.NewScanner(reader)
+	for scanner.Scan() {
+		messageID := scanner.Text()
+		if messageID == "" {
+			return errors.New("mark messages deleted from reader: empty source message ID")
+		}
+		batch = append(batch, messageID)
+		if len(batch) == batchSize {
+			if err := flush(); err != nil {
+				return fmt.Errorf("mark messages deleted from reader: update: %w", err)
+			}
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return fmt.Errorf("mark messages deleted from reader: %w", err)
+	}
+	if err := flush(); err != nil {
+		return fmt.Errorf("mark messages deleted from reader: update: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("mark messages deleted from reader: commit: %w", err)
+	}
+	return nil
 }
 
 // MarkMessageDeletedByGmailID marks a message as deleted by its Gmail ID.

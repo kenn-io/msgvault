@@ -24,6 +24,7 @@ type importerFakeAPI struct {
 
 	guild       Guild
 	channels    []Channel
+	active      []Channel
 	messages    map[string][]Message
 	queries     map[string][]MessageQuery
 	failBefore  map[string]map[string]error
@@ -57,13 +58,10 @@ func (f *importerFakeAPI) GuildChannels(_ context.Context, _ string) ([]Channel,
 	return slices.Clone(f.channels), nil
 }
 func (f *importerFakeAPI) ActiveThreads(context.Context, string) ([]Channel, error) {
-	return nil, nil
+	return slices.Clone(f.active), nil
 }
 func (f *importerFakeAPI) ArchivedThreads(context.Context, string, bool, time.Time) (ThreadPage, error) {
 	return ThreadPage{}, nil
-}
-func (f *importerFakeAPI) GuildMembers(context.Context, string, string) (MemberPage, error) {
-	return MemberPage{}, nil
 }
 func (f *importerFakeAPI) Message(context.Context, string, string) (Message, error) {
 	return Message{}, errors.New("not implemented")
@@ -304,6 +302,71 @@ func TestImporterResumesFromNewestCheckpointMergedOverSuccessfulBaseline(t *test
 	assert.True(state.Containers["300"].BackfillComplete)
 }
 
+func TestImporterInitialStateResumesOnlyCompatibleRunShape(t *testing.T) {
+	tests := []struct {
+		name            string
+		checkpointFull  bool
+		checkpointLower string
+		requestedFull   bool
+		requestedLower  string
+		wantCheckpoint  bool
+	}{
+		{name: "matching incremental", wantCheckpoint: true},
+		{name: "matching full", checkpointFull: true, requestedFull: true, wantCheckpoint: true},
+		{name: "full checkpoint ignored by incremental", checkpointFull: true},
+		{name: "incremental checkpoint ignored by full", requestedFull: true},
+		{name: "changed exact lower bound", checkpointLower: "42", requestedLower: "43"},
+		{name: "matching exact lower bound", checkpointLower: "42", requestedLower: "42", wantCheckpoint: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			st := testutil.NewSQLiteTestStore(t)
+			source, err := st.GetOrCreateSource("discord", "200")
+			require.NoError(err)
+			baseline := NewSyncState()
+			baseline.Containers["300"] = ContainerState{
+				HighWater: "900", BackfillBefore: "800", BackfillUpper: "900", BackfillComplete: true,
+			}
+			baselineBlob, err := baseline.Marshal()
+			require.NoError(err)
+			completedID, err := st.StartSync(source.ID, "discord")
+			require.NoError(err)
+			require.NoError(st.CompleteSync(completedID, baselineBlob))
+
+			checkpoint := NewSyncState()
+			checkpoint.Full = tt.checkpointFull
+			checkpoint.LowerBound = tt.checkpointLower
+			checkpoint.Containers["300"] = ContainerState{
+				HighWater: "700", BackfillBefore: "600", BackfillUpper: "700",
+			}
+			checkpointBlob, err := checkpoint.Marshal()
+			require.NoError(err)
+			failedID, err := st.StartSync(source.ID, "discord")
+			require.NoError(err)
+			require.NoError(st.UpdateSyncCheckpoint(failedID, &store.Checkpoint{PageToken: checkpointBlob}))
+			require.NoError(st.FailSync(failedID, "interrupted"))
+
+			state, hadBaseline, err := newTestImporter(st, newImporterFakeAPI()).initialState(
+				source.ID, tt.requestedFull, tt.requestedLower,
+			)
+			require.NoError(err)
+			assert.Equal(tt.requestedFull, state.Full)
+			assert.Equal(tt.requestedLower, state.LowerBound)
+			if tt.wantCheckpoint {
+				assert.Equal("600", state.Containers["300"].BackfillBefore)
+			} else if tt.requestedFull {
+				assert.Empty(state.Containers)
+			} else {
+				assert.Equal("800", state.Containers["300"].BackfillBefore)
+			}
+			assert.Equal(!tt.requestedFull, hadBaseline)
+		})
+	}
+}
+
 func TestImporterFailureCheckpointsDurablePagesAndResumeDoesNotReplayThem(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -418,6 +481,61 @@ func TestImporterRepeatedIDsRefreshContentRawMetadataRecipientsAndAttachments(t 
 	assert.JSONEq(`{"id":"101","channel_id":"300","content":"edited","future":"retained"}`, string(raw))
 }
 
+func TestImporterCountsEachAttachmentOnceAcrossHistoryAndRepair(t *testing.T) {
+	for _, withArchiver := range []bool{false, true} {
+		t.Run(strconv.FormatBool(withArchiver), func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			st := testutil.NewSQLiteTestStore(t)
+			now := time.Date(2026, 7, 19, 12, 0, 0, 0, time.UTC)
+			messageID := importerTestSnowflake(t, now.Add(-time.Hour), 1)
+			message := importerTestMessage(messageID, "300", "recent attachment")
+			message.Attachments = []Attachment{{ID: "401", Filename: "pending.bin", Size: 42}}
+			api := newImporterFakeAPI(importerTestChannel("300", "general"))
+			api.messages["300"] = []Message{message}
+			importer := newTestImporter(st, api)
+			importer.now = func() time.Time { return now }
+			opts := ImportOptions{GuildID: "200", EditRescanWindow: 7 * 24 * time.Hour}
+			if withArchiver {
+				opts.AttachmentsDir = t.TempDir()
+			}
+
+			summary, err := importer.Import(t.Context(), opts)
+			require.NoError(err)
+			assert.Equal(int64(1), summary.MediaPending)
+			assert.Zero(summary.MediaDownloaded)
+		})
+	}
+}
+
+func TestImporterRepeatedPayloadRefreshesMetadataAndCountsOnlyNewAttachments(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewSQLiteTestStore(t)
+	source, err := st.GetOrCreateSource("discord", "200")
+	require.NoError(err)
+	conversationID, err := st.EnsureConversationWithType(source.ID, "300", "channel", "general")
+	require.NoError(err)
+	importer := newTestImporter(st, newImporterFakeAPI())
+	summary := &ImportSummary{processedMessageIDs: map[string]struct{}{}}
+	message := importerTestMessage("501", "300", "attachments")
+	message.Attachments = []Attachment{{ID: "401", Filename: "old.bin", Size: 1}}
+	require.NoError(importer.persistPage(t.Context(), source.ID, conversationID, []Message{message}, summary, nil))
+
+	message.Attachments = []Attachment{
+		{ID: "401", Filename: "renamed.bin", Size: 2},
+		{ID: "402", Filename: "new.bin", Size: 3},
+	}
+	require.NoError(importer.persistPage(t.Context(), source.ID, conversationID, []Message{message}, summary, nil))
+	messageID := messageIDBySource(t, st, source.ID, "501")
+	refs, err := st.MessageDiscordAttachments(messageID)
+	require.NoError(err)
+	require.Len(refs, 2)
+	assert.Equal("renamed.bin", refs["discord:401"].Filename)
+	assert.Equal("new.bin", refs["discord:402"].Filename)
+	assert.Equal(int64(2), summary.MediaPending)
+}
+
 func messageIDBySource(t *testing.T, st *store.Store, sourceID int64, sourceMessageID string) int64 {
 	t.Helper()
 	var messageID int64
@@ -491,7 +609,48 @@ func TestImporterMalformedStateFailsRunWithoutCallingDiscord(t *testing.T) {
 	assert.Empty(api.channelQueries("300"))
 	latest, err := st.GetLatestSync(source.ID)
 	require.NoError(err)
-	assert.Equal(store.SyncStatusFailed, latest.Status)
+	assert.Equal(runID, latest.ID, "state-load failure must not supersede malformed progress")
+	assert.Equal(store.SyncStatusCompleted, latest.Status)
+}
+
+func TestImporterFullIgnoresMalformedLatestCheckpointButIncrementalDoesNotSupersedeIt(t *testing.T) {
+	for _, full := range []bool{false, true} {
+		t.Run(strconv.FormatBool(full), func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			st := testutil.NewSQLiteTestStore(t)
+			source, err := st.GetOrCreateSource("discord", "200")
+			require.NoError(err)
+			baseline, err := NewSyncState().Marshal()
+			require.NoError(err)
+			completedID, err := st.StartSync(source.ID, "discord")
+			require.NoError(err)
+			require.NoError(st.CompleteSync(completedID, baseline))
+			malformedID, err := st.StartSync(source.ID, "discord")
+			require.NoError(err)
+			require.NoError(st.UpdateSyncCheckpoint(malformedID, &store.Checkpoint{
+				PageToken: `{"version":1,"containers":{"300":{"high_water":"bad"}}}`,
+			}))
+			require.NoError(st.FailSync(malformedID, "interrupted"))
+			api := newImporterFakeAPI(importerTestChannel("300", "general"))
+			api.messages["300"] = []Message{importerTestMessage("501", "300", "history")}
+
+			_, err = newTestImporter(st, api).Import(t.Context(), ImportOptions{GuildID: "200", Full: full})
+			latest, latestErr := st.GetLatestSync(source.ID)
+			require.NoError(latestErr)
+			if full {
+				require.NoError(err)
+				assert.Equal(store.SyncStatusCompleted, latest.Status)
+				assert.Greater(latest.ID, malformedID)
+				assert.NotEmpty(api.channelQueries("300"))
+			} else {
+				require.ErrorContains(err, "load latest Discord checkpoint")
+				assert.Equal(malformedID, latest.ID)
+				assert.Equal(store.SyncStatusFailed, latest.Status)
+				assert.Empty(api.channelQueries("300"))
+			}
+		})
+	}
 }
 
 func TestImporterCatalogFailurePreservesSafeCheckpointAndFailsRun(t *testing.T) {
@@ -722,6 +881,45 @@ func TestImporterEmptyContainerKeepsAForwardCursorForFutureMessages(t *testing.T
 	assert.Equal(1, count)
 }
 
+func TestImporterDisappearingPinnedHeadStillBecomesForwardCursor(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewSQLiteTestStore(t)
+	api := newImporterFakeAPI(importerTestChannel("300", "general"))
+	returnedPinnedHead := false
+	api.messageHook = func(channelID string, query MessageQuery) ([]Message, error, bool) {
+		if channelID == "300" && query.Limit == 1 && !returnedPinnedHead {
+			returnedPinnedHead = true
+			return []Message{importerTestMessage("500", "300", "deleted during scan")}, nil, true
+		}
+		return nil, nil, false
+	}
+	importer := newTestImporter(st, api)
+
+	_, err := importer.Import(t.Context(), ImportOptions{GuildID: "200"})
+	require.NoError(err)
+	source, err := st.GetSourceByIdentifier("200")
+	require.NoError(err)
+	run, err := st.GetLastSuccessfulSync(source.ID)
+	require.NoError(err)
+	state, err := LoadSyncState(run.CursorAfter.String)
+	require.NoError(err)
+	assert.Equal("500", state.Containers["300"].HighWater)
+
+	api.messageHook = nil
+	api.messages["300"] = []Message{importerTestMessage("501", "300", "created later")}
+	api.queries["300"] = nil
+	_, err = importer.Import(t.Context(), ImportOptions{GuildID: "200"})
+	require.NoError(err)
+	require.NotEmpty(api.channelQueries("300"))
+	assert.Equal("500", api.channelQueries("300")[0].After)
+	var count int
+	require.NoError(st.DB().QueryRow(st.Rebind(
+		`SELECT COUNT(*) FROM messages WHERE source_id = ? AND source_message_id = '501'`,
+	), source.ID).Scan(&count))
+	assert.Equal(1, count)
+}
+
 func TestImporterIncrementalRepairUsesPinnedIntervalAndRefreshesMessages(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -897,6 +1095,82 @@ func TestImporterAccessFailuresRecordAndClearContainerMarkersWithoutChangingStat
 			assert.NotContains(metadata.String, "container_missing_reason")
 		})
 	}
+}
+
+func TestImporterFirstSeenDeniedContainerRemainsRetryableWhenCatalogDropsIt(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		err  error
+	}{
+		{name: "forbidden", err: &APIError{StatusCode: http.StatusForbidden, Code: 50013}},
+		{name: "unknown channel", err: &APIError{StatusCode: http.StatusNotFound, Code: 10003}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			st := testutil.NewSQLiteTestStore(t)
+			api := newImporterFakeAPI(importerTestChannel("250", "parent"))
+			api.active = []Channel{{
+				ID: "300", GuildID: "200", ParentID: "250", Type: 11, Name: "archived thread",
+				ThreadMetadata: &ThreadMetadata{ArchiveTimestamp: time.Date(2026, 7, 19, 0, 0, 0, 0, time.UTC)},
+			}}
+			api.messageHook = func(channelID string, _ MessageQuery) ([]Message, error, bool) {
+				return nil, tt.err, channelID == "300"
+			}
+			importer := newTestImporter(st, api)
+
+			_, err := importer.Import(t.Context(), ImportOptions{GuildID: "200"})
+			require.NoError(err)
+			source, err := st.GetSourceByIdentifier("200")
+			require.NoError(err)
+			run, err := st.GetLastSuccessfulSync(source.ID)
+			require.NoError(err)
+			state, err := LoadSyncState(run.CursorAfter.String)
+			require.NoError(err)
+			assert.Contains(state.Containers, "300")
+
+			api.active = nil
+			api.messageHook = nil
+			api.messages["300"] = []Message{importerTestMessage("501", "300", "retry")}
+			api.queries["300"] = nil
+			_, err = importer.Import(t.Context(), ImportOptions{GuildID: "200"})
+			require.NoError(err)
+			assert.NotEmpty(api.channelQueries("300"))
+			var count int
+			require.NoError(st.DB().QueryRow(st.Rebind(
+				`SELECT COUNT(*) FROM messages WHERE source_id = ? AND source_message_id = '501'`,
+			), source.ID).Scan(&count))
+			assert.Equal(1, count)
+		})
+	}
+}
+
+func TestImporterDenialRetainsSafeForwardPageCheckpoint(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewSQLiteTestStore(t)
+	api := newImporterFakeAPI(importerTestChannel("300", "general"))
+	api.messages["300"] = []Message{importerTestMessage("500", "300", "initial")}
+	importer := newTestImporter(st, api)
+	_, err := importer.Import(t.Context(), ImportOptions{GuildID: "200"})
+	require.NoError(err)
+
+	api.messages["300"] = append(api.messages["300"], importerTestMessage("501", "300", "new"))
+	api.messageHook = func(_ string, query MessageQuery) ([]Message, error, bool) {
+		if query.After == "501" {
+			return nil, &APIError{StatusCode: http.StatusForbidden, Code: 50013}, true
+		}
+		return nil, nil, false
+	}
+	_, err = importer.Import(t.Context(), ImportOptions{GuildID: "200"})
+	require.NoError(err)
+	source, err := st.GetSourceByIdentifier("200")
+	require.NoError(err)
+	run, err := st.GetLastSuccessfulSync(source.ID)
+	require.NoError(err)
+	state, err := LoadSyncState(run.CursorAfter.String)
+	require.NoError(err)
+	assert.Equal("501", state.Containers["300"].HighWater)
 }
 
 func TestImporterCodeZero404FailsWithoutMissingMarkerOrCursorChange(t *testing.T) {

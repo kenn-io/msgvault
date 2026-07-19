@@ -161,6 +161,15 @@ func isLoopbackMediaHost(host string) bool {
 func (m *MediaArchiver) PersistAttachments(
 	ctx context.Context, messageID int64, attachments []Attachment,
 ) (MediaResult, error) {
+	return m.persistAttachments(ctx, messageID, attachments, true)
+}
+
+// persistAttachments refreshes the complete observed attachment set. When
+// retryExisting is false, known pending rows get fresh metadata without a
+// duplicate download attempt; newly observed rows are still attempted.
+func (m *MediaArchiver) persistAttachments(
+	ctx context.Context, messageID int64, attachments []Attachment, retryExisting bool,
+) (MediaResult, error) {
 	existing, err := m.store.MessageDiscordAttachments(messageID)
 	if err != nil {
 		return MediaResult{}, fmt.Errorf("load Discord attachment metadata: %w", err)
@@ -174,6 +183,7 @@ func (m *MediaArchiver) PersistAttachments(
 		attachment Attachment
 		ref        *store.AttachmentRef
 		download   bool
+		report     bool
 	}
 	work := make([]attachmentWork, 0, len(attachments))
 	remainingRefs := refs
@@ -183,12 +193,17 @@ func (m *MediaArchiver) PersistAttachments(
 		}
 		ref := &remainingRefs[0]
 		remainingRefs = remainingRefs[1:]
-		item := attachmentWork{attachment: attachment, ref: ref, download: true}
-		if previous, ok := existing[ref.SourceAttachmentID]; ok && store.IsDiscordAttachmentDownloaded(previous) {
-			ref.StoragePath = previous.StoragePath
-			ref.ContentHash = previous.ContentHash
-			ref.Size = previous.Size
-			item.download = false
+		item := attachmentWork{attachment: attachment, ref: ref, download: true, report: true}
+		if previous, ok := existing[ref.SourceAttachmentID]; ok {
+			if store.IsDiscordAttachmentDownloaded(previous) {
+				ref.StoragePath = previous.StoragePath
+				ref.ContentHash = previous.ContentHash
+				item.download = false
+				item.report = retryExisting
+			} else if !retryExisting {
+				item.download = false
+				item.report = false
+			}
 		}
 		work = append(work, item)
 	}
@@ -198,6 +213,9 @@ func (m *MediaArchiver) PersistAttachments(
 
 	result := MediaResult{Items: make([]MediaItemResult, 0, len(refs))}
 	for _, pending := range work {
+		if !pending.report {
+			continue
+		}
 		item := MediaItemResult{SourceAttachmentID: pending.ref.SourceAttachmentID}
 		if !pending.download {
 			item.Outcome = MediaDownloaded

@@ -286,6 +286,10 @@ func (s *Store) GetMessageContext(ctx context.Context, id int64) (*APIMessage, e
 		if strings.HasPrefix(storagePath, "http://") || strings.HasPrefix(storagePath, "https://") {
 			att.ContentHash = ""
 			att.URL = storagePath
+		} else if att.ContentHash == "" {
+			if pathHash, ok := discordCASPathHash(storagePath); ok {
+				att.ContentHash = pathHash
+			}
 		}
 		m.Attachments = append(m.Attachments, att)
 	}

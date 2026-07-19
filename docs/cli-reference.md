@@ -162,7 +162,7 @@ msgvault add-discord --oauth-app archive-bot \
 If the bot can access exactly one guild, it is selected automatically and
 echoed for confirmation. Otherwise, repeat `--guild` to select exact guild
 IDs. One guild becomes one source. Setup also reports likely Message Content
-Intent, channel-history, member-enrichment, and private-thread access issues.
+Intent, channel-history, and private-thread access issues.
 
 | Flag | Default | Description |
 |---|---|---|

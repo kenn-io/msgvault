@@ -74,13 +74,15 @@ func runSyncDiscord(cmd *cobra.Command, deps discordCommandDeps, selector string
 			ctx, st, source, deps, opts.Full, after, writeDiscordProgress(cmd.OutOrStdout()),
 		)
 		writeDiscordSyncIssues(cmd.OutOrStdout(), summary)
-		if summary != nil && summary.MessagesProcessed > 0 {
+		// A nonzero sync run means the importer reached its durable lifecycle.
+		// Core message persistence can precede later participant, media, or
+		// reply failures, so MessagesProcessed is not a safe write indicator.
+		if summary != nil && summary.SyncRunID != 0 {
 			anyWrites = true
 		}
 		if importErr != nil {
 			return importErr
 		}
-		anyWrites = true
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Discord sync complete: %s\n", label)
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Containers processed: %d\n", summary.ContainersProcessed)
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Messages added: %d\n", summary.MessagesAdded)

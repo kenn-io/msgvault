@@ -2,6 +2,9 @@ package store_test
 
 import (
 	"database/sql"
+	"errors"
+	"io"
+	"strings"
 	"testing"
 	"time"
 
@@ -10,6 +13,12 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
+
+type failingMessageIDReader struct{}
+
+func (failingMessageIDReader) Read([]byte) (int, error) {
+	return 0, errors.New("synthetic staged-ID read failure")
+}
 
 func TestRecomputeConversationStats(t *testing.T) {
 	require := require.New(t)
@@ -236,6 +245,40 @@ func TestListUnresolvedMessageRepliesReturnsOnlyUnlinkedProviderMetadata(t *test
 	assert.NotZero(parentID)
 }
 
+func TestListUnresolvedMessageRepliesAfterUsesBoundedKeysetPages(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource("discord", "guild-keyset")
+	require.NoError(err)
+	convID, err := st.EnsureConversationWithType(source.ID, "channel-keyset", "channel", "General")
+	require.NoError(err)
+
+	var ids []int64
+	for _, sourceMessageID := range []string{"101", "102", "103", "104", "105"} {
+		messageID := insertStoreTestMessage(t, st, source.ID, convID, sourceMessageID)
+		ids = append(ids, messageID)
+		require.NoError(st.SetMessageMetadata(messageID, sql.NullString{
+			String: `{"referenced_message_id":"100"}`, Valid: true,
+		}))
+	}
+	_, err = st.DB().Exec(st.Rebind(`UPDATE messages SET message_type = 'discord' WHERE source_id = ?`), source.ID)
+	require.NoError(err)
+
+	first, err := st.ListUnresolvedMessageRepliesAfter(source.ID, "discord", 0, 2)
+	require.NoError(err)
+	require.Len(first, 2)
+	assert.Equal([]int64{first[0].MessageID, first[1].MessageID}, ids[:2])
+	second, err := st.ListUnresolvedMessageRepliesAfter(source.ID, "discord", first[1].MessageID, 2)
+	require.NoError(err)
+	require.Len(second, 2)
+	assert.Equal([]int64{second[0].MessageID, second[1].MessageID}, ids[2:4])
+	last, err := st.ListUnresolvedMessageRepliesAfter(source.ID, "discord", second[1].MessageID, 2)
+	require.NoError(err)
+	require.Len(last, 1)
+	assert.Equal(ids[4], last[0].MessageID)
+}
+
 func TestMigrateSourceMessageIDClearsTombstoneWhenRenamingLegacyRow(t *testing.T) {
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
@@ -335,6 +378,38 @@ func TestMessageSourceIDsInSnowflakeInterval(t *testing.T) {
 	assert.Equal(got, zeroPadded)
 }
 
+func TestMessageSourceIDsInSnowflakeIntervalPageAndMaximum(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource("discord", "paged-guild")
+	require.NoError(err)
+	conversationID, err := st.EnsureConversationWithType(source.ID, "paged-channel", "channel", "general")
+	require.NoError(err)
+	for _, sourceMessageID := range []string{"100", "101", "102", "103", "104"} {
+		insertStoreTestMessage(t, st, source.ID, conversationID, sourceMessageID)
+	}
+
+	maximum, err := st.MaxMessageSourceIDInSnowflakeInterval(source.ID, conversationID, "99", "104")
+	require.NoError(err)
+	assert.Equal("104", maximum)
+	first, err := st.MessageSourceIDsInSnowflakeIntervalPage(
+		source.ID, conversationID, "99", "104", "", 2,
+	)
+	require.NoError(err)
+	assert.Equal([]string{"104", "103"}, first)
+	second, err := st.MessageSourceIDsInSnowflakeIntervalPage(
+		source.ID, conversationID, "99", "104", first[len(first)-1], 2,
+	)
+	require.NoError(err)
+	assert.Equal([]string{"102", "101"}, second)
+	last, err := st.MessageSourceIDsInSnowflakeIntervalPage(
+		source.ID, conversationID, "99", "104", second[len(second)-1], 2,
+	)
+	require.NoError(err)
+	assert.Equal([]string{"100"}, last)
+}
+
 func TestMessageSourceIDsInSnowflakeIntervalRejectsUnsafeBounds(t *testing.T) {
 	st := testutil.NewTestStore(t)
 
@@ -389,6 +464,36 @@ func TestClearMessageDeletedFromSource(t *testing.T) {
 	).Scan(&otherDeletedAt)
 	require.NoError(err)
 	assert.True(otherDeletedAt.Valid)
+}
+
+func TestMarkMessagesDeletedFromReaderIsAtomicOnLateReadFailure(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource("discord", "atomic-delete-guild")
+	require.NoError(err)
+	conversationID, err := st.EnsureConversationWithType(source.ID, "atomic-channel", "channel", "general")
+	require.NoError(err)
+	for _, sourceMessageID := range []string{"101", "102"} {
+		insertStoreTestMessage(t, st, source.ID, conversationID, sourceMessageID)
+	}
+	reader := io.MultiReader(strings.NewReader("101\n102\n"), failingMessageIDReader{})
+
+	err = st.MarkMessagesDeletedFromReader(source.ID, reader, 1)
+	require.ErrorContains(err, "synthetic staged-ID read failure")
+	var deleted int
+	require.NoError(st.DB().QueryRow(st.Rebind(`
+		SELECT COUNT(*) FROM messages
+		WHERE source_id = ? AND deleted_from_source_at IS NOT NULL
+	`), source.ID).Scan(&deleted))
+	assert.Zero(deleted, "late reader failure rolls back earlier bounded batches")
+
+	require.NoError(st.MarkMessagesDeletedFromReader(source.ID, strings.NewReader("101\n102\n"), 1))
+	require.NoError(st.DB().QueryRow(st.Rebind(`
+		SELECT COUNT(*) FROM messages
+		WHERE source_id = ? AND deleted_from_source_at IS NOT NULL
+	`), source.ID).Scan(&deleted))
+	assert.Equal(2, deleted)
 }
 
 func insertStoreTestMessage(t *testing.T, st *store.Store, sourceID, convID int64, sourceMessageID string) int64 {

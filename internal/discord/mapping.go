@@ -333,7 +333,7 @@ func systemMessageTypeName(messageType int) string {
 		16: "guild_discovery_initial_warning", 17: "guild_discovery_final_warning", 18: "thread_created",
 		21: "thread_starter_message", 22: "guild_invite_reminder", 24: "auto_moderation_action",
 		25: "role_subscription_purchase", 26: "interaction_premium_upsell", 27: "stage_start",
-		28: "stage_end", 29: "stage_speaker", 31: "stage_topic",
+		28: "stage_end", 29: "stage_speaker", 30: "stage_raise_hand", 31: "stage_topic",
 		32: "guild_application_premium_subscription", 36: "guild_incident_alert_mode_enabled",
 		37: "guild_incident_alert_mode_disabled", 38: "guild_incident_report_raid",
 		39: "guild_incident_report_false_alarm", 44: "purchase_notification", 46: "poll_result",
@@ -410,6 +410,8 @@ func renderSystemMessage(message *Message, content string) string {
 		return author + " ended the stage."
 	case 29:
 		return detail(author + " became a stage speaker")
+	case 30:
+		return detail(author + " raised a hand to speak on stage")
 	case 31:
 		return detail(author + " changed the stage topic")
 	case 32:

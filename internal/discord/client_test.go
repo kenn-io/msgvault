@@ -65,13 +65,6 @@ func TestClientReadAPI(t *testing.T) {
 	require.Len(privatePage.Threads, 1)
 	assert.Equal("private-thread", privatePage.Threads[0].Name)
 
-	members, err := client.GuildMembers(ctx, "201", "101")
-	require.NoError(err)
-	require.Len(members.Members, 1)
-	assert.Equal("Test Alice", members.Members[0].Nick)
-	assert.False(members.HasMore)
-	assert.Empty(members.NextAfter)
-
 	messages, err := client.Messages(ctx, "301", MessageQuery{Before: "600", Limit: 100})
 	require.NoError(err)
 	require.Len(messages, 1)
@@ -97,10 +90,61 @@ func TestClientReadAPI(t *testing.T) {
 		"/api/v10/guilds/201/threads/active",
 		"/api/v10/channels/301/threads/archived/public?before=2026-07-18T00%3A00%3A00Z&limit=100",
 		"/api/v10/channels/301/users/@me/threads/archived/private?before=2026-07-18T00%3A00%3A00Z&limit=100",
-		"/api/v10/guilds/201/members?after=101&limit=1000",
 		"/api/v10/channels/301/messages?before=600&limit=100",
 		"/api/v10/channels/301/messages/501",
 	}, fake.requestPaths())
+}
+
+func TestClientFormattingDoesNotExposeBotToken(t *testing.T) {
+	client, err := NewClient("https://discord.com/api/v10", "format-only-client-token")
+	require.NoError(t, err)
+	zeroClient := &Client{token: "zero-value-client-token"}
+
+	formats := []string{
+		"%v", "%+v", "%#v", "%s", "%q", "%x", "%X", "%d", "%o", "%O",
+		"%b", "%c", "%e", "%E", "%f", "%F", "%g", "%G", "%U", "%t",
+	}
+	for _, verb := range "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ" {
+		// fmt reserves %p, %T, and %w and bypasses Formatter for them. %p on
+		// pointers and %T expose only an address/type; %w is valid only in Errorf.
+		if verb == 'p' || verb == 'T' || verb == 'w' {
+			continue
+		}
+		formats = append(formats, "%"+string(verb))
+	}
+	for _, format := range formats {
+		t.Run(format, func(t *testing.T) {
+			assert.NotContains(t, fmt.Sprintf(format, client), "format-only-client-token")
+			assert.NotContains(t, fmt.Sprintf(format, zeroClient), "zero-value-client-token")
+		})
+	}
+}
+
+func TestWaitGlobalObservesExtendedDeadline(t *testing.T) {
+	limits := newRateLimitState()
+	limits.pause(nil, 60*time.Millisecond, true)
+
+	done := make(chan error, 1)
+	go func() {
+		done <- limits.waitGlobal(t.Context())
+	}()
+
+	time.Sleep(20 * time.Millisecond)
+	limits.pause(nil, 160*time.Millisecond, true)
+
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+		require.Fail(t, "global wait returned before an extended deadline")
+	case <-time.After(80 * time.Millisecond):
+	}
+
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(200 * time.Millisecond):
+		require.Fail(t, "global wait did not return after the extended deadline")
+	}
 }
 
 func TestMessageQueryValidation(t *testing.T) {

@@ -19,7 +19,7 @@ The first release covers:
 - full historical backfill plus scheduled incremental sync;
 - messages, edits, recent and full-scan deletion detection, mentions, reply
   references, reaction summaries, and raw API payloads;
-- best-effort guild-member enrichment; and
+- best-effort enrichment from member data attached to observed messages; and
 - attachment download into msgvault's content-addressed store.
 
 ## Non-goals
@@ -66,13 +66,12 @@ internal/discord/types.go
 ```
 
 `internal/discord/client.go` is a minimal REST client, not a general Discord
-SDK. It exposes only the read endpoints required by the importer:
+SDK. The importer and setup flow use only this read surface:
 
 - current bot identity and accessible guilds;
 - guild metadata and channel catalog;
 - active and archived thread catalogs;
 - channel or thread messages and individual message refresh;
-- guild members for best-effort enrichment; and
 - attachment bytes from approved Discord CDN origins.
 
 The client implements Discord's route-bucket and global rate limits using the
@@ -119,16 +118,16 @@ remaining Discord source references the resolved credential.
 ## Permissions and setup diagnostics
 
 The bot needs permission to view each desired channel and read message
-history. Message Content Intent is required for message bodies. Server Members
-Intent improves member enrichment but failure to list members is non-fatal.
-Archived private-thread coverage depends on the bot's channel and thread
-permissions.
+history. Message Content Intent is required for message bodies. Participant
+names are enriched from member data attached to observed message payloads;
+version 1 does not import the guild roster and does not require Server Members
+Intent for archival. Archived private-thread coverage depends on the bot's
+channel and thread permissions.
 
 Setup and sync output must distinguish:
 
 - missing Message Content Intent;
 - missing guild or channel access;
-- member enrichment unavailable;
 - archived private threads unavailable; and
 - authentication or token-binding failure.
 
@@ -169,12 +168,12 @@ so the same Discord account can resolve to one participant across guilds.
 Discord exposes no member email, so the importer performs no automatic
 email-identity unification.
 
-Member enrichment records usernames, global display names, bot status, and
-observed guild nicknames best-effort. Guild-specific display names stay with
-the observed message or conversation metadata instead of becoming a mutable
-global identity. Only observed authors and mentions become conversation
-participants; importing a guild roster does not add every member to every
-conversation.
+Member data attached to observed messages supplies usernames, global display
+names, bot status, and guild nicknames without a roster request. Guild-specific
+display names stay with the observed message or conversation metadata instead
+of becoming a mutable global identity. Only observed authors and mentions
+become conversation participants; the importer never adds an entire guild
+roster to its conversations.
 
 Regular bots carry `author_kind = "bot"` in message metadata. Webhook messages
 use a separate `discord_webhook_id` participant identifier. The participant
@@ -227,14 +226,16 @@ The raw payload preserves Discord's complete summary object. The importer does
 not populate normalized `reactions` rows, because doing so requires at least
 one additional paginated API request per emoji per reacted message. Discord is
 therefore an explicit user-visible outlier: existing normalized reaction views
-and analytics show no Discord reactions, while message detail can render the
-stable summaries. A future opt-in reactor-detail pass can populate normalized
-rows without changing the message import.
+and analytics show no Discord reactions. The stable summaries remain archived
+in message metadata for future provider-aware consumers, but current generic
+message-detail models do not expose them. A future opt-in reactor-detail pass
+can populate normalized rows without changing the message import.
 
 For Unicode emoji, `emoji` contains the character and `emoji_id` is omitted.
 For custom guild emoji, `emoji` contains the name, `emoji_id` contains its
 stable Discord ID, and `animated` records whether it is animated. This shape is
-shared by message detail and any future reactor-detail backfill.
+the stable archive contract for future provider-aware display and
+reactor-detail backfill.
 
 ## Attachments and media
 
@@ -407,15 +408,14 @@ but stops updating.
 
 After container processing, the importer resolves deferred reply links,
 enqueues changed messages for embeddings, and calls
-`RecomputeConversationStats`. Member enrichment is best-effort and may occur
-before or during message mapping as long as its failure cannot suppress core
-message ingestion.
+`RecomputeConversationStats`. Member fields already attached to observed
+message payloads are mapped as part of normal message ingestion.
 
 Authentication, guild discovery, required catalog, decoding, transient API,
 and database failures fail the sync run while preserving safe checkpoints. A
 container that explicitly returns missing access or Unknown Channel is
-recorded as skipped and does not erase state. Member-enrichment and media
-download failures are warnings with independent retry paths.
+recorded as skipped and does not erase state. Media download failures are
+warnings with an independent retry path.
 
 Only a clean core run calls `CompleteSync`; other runs call `FailSync` with the
 latest checkpoint intact. Manual and scheduled syncs use the same importer and

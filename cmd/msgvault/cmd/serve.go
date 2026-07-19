@@ -20,6 +20,7 @@ import (
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/deletion"
+	"go.kenn.io/msgvault/internal/discord"
 	"go.kenn.io/msgvault/internal/gmail"
 	"go.kenn.io/msgvault/internal/microsoft"
 	"go.kenn.io/msgvault/internal/oauth"
@@ -1321,9 +1322,11 @@ func runScheduledSync(ctx context.Context, identifier string, s *store.Store, ge
 		case sourceTypeTeams:
 			err = runScheduledTeamsSync(ctx, src, s)
 		case sourceTypeDiscord:
-			_, err = importDiscordSourceForScheduledRun(
+			var discordSummary *discord.ImportSummary
+			discordSummary, err = importDiscordSourceForScheduledRun(
 				ctx, s, src, defaultDiscordCommandDeps(), false, time.Time{}, nil,
 			)
+			logScheduledDiscordIssues(identifier, discordSummary)
 		default:
 			err = fmt.Errorf("source %q has type %q which is not supported by the daemon scheduler", identifier, sourceType)
 		}
@@ -1354,6 +1357,32 @@ func runScheduledSync(ctx context.Context, identifier string, s *store.Store, ge
 	}
 
 	return errors.Join(errs...)
+}
+
+func logScheduledDiscordIssues(identifier string, summary *discord.ImportSummary) {
+	if summary == nil {
+		return
+	}
+	for _, issue := range summary.CatalogIssues {
+		logger.Warn("discord catalog issue",
+			"identifier", identifier,
+			"scope", issue.Scope,
+			"kind", issue.Kind,
+			"guild_id", issue.GuildID,
+			"parent_id", issue.ParentID,
+			"status_code", issue.StatusCode,
+			"discord_code", issue.DiscordCode,
+		)
+	}
+	for _, issue := range summary.ContainerIssues {
+		logger.Warn("discord container issue",
+			"identifier", identifier,
+			"container_id", issue.ContainerID,
+			"kind", issue.Kind,
+			"status_code", issue.StatusCode,
+			"discord_code", issue.DiscordCode,
+		)
+	}
 }
 
 // findScheduledSyncSources resolves ALL syncable source rows for a

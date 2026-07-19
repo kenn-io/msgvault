@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -26,14 +27,36 @@ var (
 	ErrDuplicateBinding = errors.New("duplicate Discord bot token binding")
 )
 
-// TokenRecord is a Discord bot credential and its optional source-binding
-// label. AccessToken is intentionally excluded from general JSON encoding;
-// TokenManager uses a private on-disk representation for credential storage.
+// TokenRecord is safe credential metadata plus an opaque bot token. The token
+// is pointer-backed so fmt's value-%p special case cannot reflect the raw
+// string when it bypasses Formatter.
 type TokenRecord struct {
 	BotUserID   string `json:"bot_user_id"`
 	BotUsername string `json:"bot_username"`
-	AccessToken string `json:"-"`
 	Binding     string `json:"binding,omitempty"`
+
+	secret *tokenSecret
+}
+
+type tokenSecret struct {
+	value string
+}
+
+// NewTokenRecord constructs a credential without exposing its secret as a
+// reflectable string field.
+func NewTokenRecord(botUserID, botUsername, accessToken, binding string) TokenRecord {
+	return TokenRecord{
+		BotUserID: botUserID, BotUsername: botUsername, Binding: binding,
+		secret: &tokenSecret{value: accessToken},
+	}
+}
+
+// AccessToken returns the secret only for explicit credential use.
+func (r TokenRecord) AccessToken() string {
+	if r.secret == nil {
+		return ""
+	}
+	return r.secret.value
 }
 
 // String returns safe credential metadata without the access token.
@@ -41,11 +64,17 @@ func (r TokenRecord) String() string {
 	return fmt.Sprintf("Discord bot %s (%s), binding %q", r.BotUsername, r.BotUserID, r.Binding)
 }
 
-// GoString protects Go-syntax formatting (%#v) from reflecting the exported
-// AccessToken field. A value receiver covers both TokenRecord and
-// *TokenRecord formatting.
+// GoString protects Go-syntax formatting (%#v) from inspecting credential
+// internals. A value receiver covers both TokenRecord and *TokenRecord.
 func (r TokenRecord) GoString() string {
 	return r.String()
+}
+
+// Format prevents supported fmt verbs, including numeric verbs, from
+// inspecting credential internals. The pointer-backed secret also protects
+// fmt's value-%p special case, which bypasses Formatter.
+func (r TokenRecord) Format(state fmt.State, _ rune) {
+	_, _ = io.WriteString(state, r.String())
 }
 
 type tokenFile struct {
@@ -56,7 +85,7 @@ type tokenFile struct {
 }
 
 func (f tokenFile) record() TokenRecord {
-	return TokenRecord(f)
+	return NewTokenRecord(f.BotUserID, f.BotUsername, f.AccessToken, f.Binding)
 }
 
 // TokenManager stores and resolves Discord bot credentials independently of
@@ -234,7 +263,7 @@ func (m *TokenManager) Delete(botUserID string) (retErr error) {
 	}
 	rootInfo, err := m.inspectTokenRoot(false)
 	if err != nil {
-		if os.IsNotExist(err) {
+		if errors.Is(err, os.ErrNotExist) {
 			return nil
 		}
 		return err
@@ -389,7 +418,10 @@ func (m *TokenManager) Promote(botUserID, binding string) (TokenRecord, error) {
 
 // writeLocked persists record while Save holds the cross-process store lock.
 func (m *TokenManager) writeLocked(record TokenRecord) error {
-	stored := tokenFile(record)
+	stored := tokenFile{
+		BotUserID: record.BotUserID, BotUsername: record.BotUsername,
+		AccessToken: record.AccessToken(), Binding: record.Binding,
+	}
 	data, err := json.MarshalIndent(stored, "", "  ") //nolint:gosec // the token file is the 0600 credential store
 	if err != nil {
 		return fmt.Errorf("serialize Discord bot credential: %w", err)
@@ -426,7 +458,7 @@ func validateTokenRecord(record TokenRecord) error {
 	if record.BotUsername == "" {
 		return errors.New("discord bot credential is missing its bot username")
 	}
-	if record.AccessToken == "" {
+	if record.AccessToken() == "" {
 		return errors.New("discord bot credential is missing its access token")
 	}
 	return nil

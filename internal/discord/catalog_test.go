@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -132,6 +133,82 @@ func TestDiscoverCatalogFullScanExhaustsArchivePages(t *testing.T) {
 	assert.Equal("2026-07-20T00:00:00Z", result.ThreadCatalog["301"].PrivateArchiveWatermark)
 }
 
+func TestDiscoverCatalogQueriesPrivateArchivesOnlyForGuildTextParents(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	var mu sync.Mutex
+	var privatePaths []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		mu.Lock()
+		if strings.Contains(request.URL.Path, "/users/@me/threads/archived/private") {
+			privatePaths = append(privatePaths, request.URL.Path)
+		}
+		mu.Unlock()
+		switch request.URL.Path {
+		case "/guilds/201/channels":
+			writeDiscordJSON(w, http.StatusOK, []map[string]any{
+				{"id": "301", "guild_id": "201", "type": 0, "name": "text"},
+				{"id": "302", "guild_id": "201", "type": 5, "name": "announcement"},
+				{"id": "303", "guild_id": "201", "type": 15, "name": "forum"},
+				{"id": "304", "guild_id": "201", "type": 16, "name": "media"},
+			})
+		case "/guilds/201/threads/active":
+			writeDiscordJSON(w, http.StatusOK, map[string]any{"threads": []any{}})
+		default:
+			writeCatalogThreads(w, false)
+		}
+	}))
+	t.Cleanup(server.Close)
+	client, err := NewClient(server.URL, "test-token")
+	require.NoError(err)
+
+	_, err = DiscoverCatalog(t.Context(), client, "201", config.DiscordGuildConfig{}, nil, false)
+	require.NoError(err)
+
+	mu.Lock()
+	got := slices.Clone(privatePaths)
+	mu.Unlock()
+	assert.Equal([]string{"/channels/301/users/@me/threads/archived/private"}, got)
+}
+
+func TestDiscoverCatalogRejectsDuplicateThreadWithConflictingParent(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	const priorWatermark = "2026-07-17T00:00:00Z"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/guilds/201/channels":
+			writeDiscordJSON(w, http.StatusOK, []map[string]any{
+				{"id": "301", "guild_id": "201", "type": 0, "name": "first"},
+				{"id": "302", "guild_id": "201", "type": 0, "name": "second"},
+			})
+		case "/guilds/201/threads/active":
+			writeDiscordJSON(w, http.StatusOK, map[string]any{"threads": []map[string]any{
+				{"id": "450", "guild_id": "201", "parent_id": "301", "type": 11, "name": "active"},
+			}})
+		case "/channels/302/threads/archived/public":
+			writeCatalogThreads(w, false, catalogThread("450", "302", "conflict", "2026-07-19T00:00:00Z"))
+		default:
+			writeCatalogThreads(w, false)
+		}
+	}))
+	t.Cleanup(server.Close)
+	client, err := NewClient(server.URL, "test-token")
+	require.NoError(err)
+	prior := map[string]ThreadCatalogState{"302": {PublicArchiveWatermark: priorWatermark}}
+
+	result, err := DiscoverCatalog(t.Context(), client, "201", config.DiscordGuildConfig{}, prior, false)
+
+	require.Error(err)
+	require.ErrorIs(err, ErrMalformedCatalog)
+	assert.Equal(priorWatermark, result.ThreadCatalog["302"].PublicArchiveWatermark)
+	require.NotEmpty(result.Issues)
+	issue := result.Issues[len(result.Issues)-1]
+	assert.Equal(CatalogScopePublicArchive, issue.Scope)
+	assert.Equal("302", issue.ParentID)
+	assert.True(issue.Fatal)
+}
+
 func TestDiscoverCatalogArchiveDenialsAreNonfatalAndIndependent(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
@@ -143,8 +220,6 @@ func TestDiscoverCatalogArchiveDenialsAreNonfatalAndIndependent(t *testing.T) {
 			writeCatalogThreads(w, false, catalogThread("431", "301", "private", "2026-07-19T00:00:00Z"))
 		case "/channels/302/threads/archived/public":
 			writeCatalogThreads(w, false, catalogThread("432", "302", "public", "2026-07-18T00:00:00Z"))
-		case "/channels/302/users/@me/threads/archived/private":
-			writeDiscordJSON(w, http.StatusNotFound, map[string]any{"code": 10003, "message": "unknown channel"})
 		default:
 			serveTwoParentCatalog(w, request)
 		}
@@ -160,11 +235,9 @@ func TestDiscoverCatalogArchiveDenialsAreNonfatalAndIndependent(t *testing.T) {
 	result, err := DiscoverCatalog(context.Background(), client, "201", config.DiscordGuildConfig{}, prior, false)
 
 	require.NoError(err)
-	require.Len(result.Issues, 2)
+	require.Len(result.Issues, 1)
 	assert.Equal(CatalogIssueForbidden, result.Issues[0].Kind)
 	assert.False(result.Issues[0].Fatal)
-	assert.Equal(CatalogIssueUnknownChannel, result.Issues[1].Kind)
-	assert.False(result.Issues[1].Fatal)
 	assert.Equal("2026-07-17T00:00:00Z", result.ThreadCatalog["301"].PublicArchiveWatermark)
 	assert.Equal("2026-07-19T00:00:00Z", result.ThreadCatalog["301"].PrivateArchiveWatermark)
 	assert.Equal("2026-07-18T00:00:00Z", result.ThreadCatalog["302"].PublicArchiveWatermark)

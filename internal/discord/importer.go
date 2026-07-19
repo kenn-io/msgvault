@@ -1,6 +1,7 @@
 package discord
 
 import (
+	"bufio"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -8,6 +9,7 @@ import (
 	"fmt"
 	"math"
 	"net/http"
+	"os"
 	"slices"
 	"strconv"
 	"strings"
@@ -107,9 +109,21 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (summary *I
 	if err != nil {
 		return nil, fmt.Errorf("get Discord source: %w", err)
 	}
-	state, hadBaseline, stateErr := imp.initialState(source.ID, opts.Full)
+	lowerBound := ""
+	if !opts.After.IsZero() {
+		lowerBound, err = SnowflakeFromTimestamp(opts.After)
+		if err != nil {
+			return nil, fmt.Errorf("convert Discord after bound: %w", err)
+		}
+	}
+	state, hadBaseline, stateErr := imp.initialState(source.ID, opts.Full, lowerBound)
+	if stateErr != nil {
+		return nil, stateErr
+	}
 	if state == nil {
 		state = NewSyncState()
+		state.Full = opts.Full
+		state.LowerBound = lowerBound
 	}
 
 	syncID, err := imp.store.StartSync(source.ID, sourceTypeDiscord)
@@ -131,10 +145,6 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (summary *I
 			retErr = errors.Join(retErr, fmt.Errorf("fail Discord sync run: %w", failErr))
 		}
 	}()
-	if stateErr != nil {
-		return summary, stateErr
-	}
-
 	guild, err := imp.api.Guild(ctx, opts.GuildID)
 	if err != nil {
 		return summary, fmt.Errorf("discover Discord guild %s: %w", opts.GuildID, err)
@@ -161,13 +171,6 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (summary *I
 		return summary, fmt.Errorf("discover Discord catalog: %w", catalogErr)
 	}
 
-	lowerBound := ""
-	if !opts.After.IsZero() {
-		lowerBound, err = SnowflakeFromTimestamp(opts.After)
-		if err != nil {
-			return summary, fmt.Errorf("convert Discord after bound: %w", err)
-		}
-	}
 	var media *MediaArchiver
 	if opts.AttachmentsDir != "" {
 		media, err = NewMediaArchiver(imp.store, imp.api, opts.AttachmentsDir, opts.MaxMediaBytes)
@@ -215,25 +218,28 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (summary *I
 	return summary, nil
 }
 
-func (imp *Importer) initialState(sourceID int64, full bool) (*SyncState, bool, error) {
-	if full {
-		return NewSyncState(), false, nil
-	}
+func (imp *Importer) initialState(sourceID int64, full bool, lowerBound string) (*SyncState, bool, error) {
 	state := NewSyncState()
+	state.Full = full
+	state.LowerBound = lowerBound
 	hadBaseline := false
-	last, err := imp.store.GetLastSuccessfulSync(sourceID)
-	switch {
-	case err == nil:
-		hadBaseline = true
-		if last.CursorAfter.Valid {
-			state, err = LoadSyncState(last.CursorAfter.String)
-			if err != nil {
-				return nil, hadBaseline, fmt.Errorf("load last successful Discord sync state: %w", err)
+	if !full {
+		last, err := imp.store.GetLastSuccessfulSync(sourceID)
+		switch {
+		case err == nil:
+			hadBaseline = true
+			if last.CursorAfter.Valid {
+				state, err = LoadSyncState(last.CursorAfter.String)
+				if err != nil {
+					return nil, hadBaseline, fmt.Errorf("load last successful Discord sync state: %w", err)
+				}
+				state.Full = full
+				state.LowerBound = lowerBound
 			}
+		case errors.Is(err, store.ErrSyncRunNotFound):
+		case err != nil:
+			return nil, false, fmt.Errorf("load last successful Discord sync: %w", err)
 		}
-	case errors.Is(err, store.ErrSyncRunNotFound):
-	case err != nil:
-		return nil, false, fmt.Errorf("load last successful Discord sync: %w", err)
 	}
 
 	checkpoint, err := imp.store.GetLatestCheckpointedSync(sourceID)
@@ -242,10 +248,17 @@ func (imp *Importer) initialState(sourceID int64, full bool) (*SyncState, bool, 
 		if checkpoint.CursorBefore.Valid {
 			newer, loadErr := LoadSyncState(checkpoint.CursorBefore.String)
 			if loadErr != nil {
+				if full {
+					return state, false, nil
+				}
 				return nil, hadBaseline, fmt.Errorf("load latest Discord checkpoint: %w", loadErr)
 			}
-			if mergeErr := state.Merge(newer); mergeErr != nil {
-				return nil, hadBaseline, fmt.Errorf("merge latest Discord checkpoint: %w", mergeErr)
+			if newer.CompatibleRun(full, lowerBound) {
+				if full {
+					state = newer
+				} else if mergeErr := state.Merge(newer); mergeErr != nil {
+					return nil, hadBaseline, fmt.Errorf("merge latest Discord checkpoint: %w", mergeErr)
+				}
 			}
 		}
 	case errors.Is(err, store.ErrSyncRunNotFound):
@@ -377,16 +390,17 @@ func (imp *Importer) importContainer(
 		}
 	}
 
-	containerState, hadContainerState := state.Containers[container.Channel.ID]
-	originalState := containerState
+	containerState := state.Containers[container.Channel.ID]
+	// Retain even an empty first-seen entry so a denied archived thread remains
+	// independently retryable after it drops out of later catalog responses.
+	state.Containers[container.Channel.ID] = containerState
 	if !containerState.BackfillComplete {
 		if err := imp.backfill(
 			ctx, sourceID, syncID, conversationID, container.Channel.ID,
 			lowerBound, &containerState, state, summary, media,
 		); err != nil {
 			return imp.handleContainerError(
-				syncID, conversationID, container.Channel.ID, err,
-				originalState, hadContainerState, state, summary,
+				syncID, conversationID, container.Channel.ID, err, state, summary,
 			)
 		}
 	}
@@ -405,8 +419,7 @@ func (imp *Importer) importContainer(
 		&containerState, state, summary, media,
 	); err != nil {
 		return imp.handleContainerError(
-			syncID, conversationID, container.Channel.ID, err,
-			originalState, hadContainerState, state, summary,
+			syncID, conversationID, container.Channel.ID, err, state, summary,
 		)
 	}
 	repairLower, err := imp.repairLowerBound(lowerBound, full, editRescanWindow)
@@ -418,8 +431,7 @@ func (imp *Importer) importContainer(
 		repairLower, summary, media,
 	); err != nil {
 		return imp.handleContainerError(
-			syncID, conversationID, container.Channel.ID, err,
-			originalState, hadContainerState, state, summary,
+			syncID, conversationID, container.Channel.ID, err, state, summary,
 		)
 	}
 	if err := imp.clearContainerAccessMarkers(conversationID); err != nil {
@@ -464,6 +476,12 @@ func (imp *Importer) backfill(
 			return fmt.Errorf("pin backfill head: %w", err)
 		}
 		containerState.BackfillUpper = head[0].ID
+		containerState.HighWater, err = maximumSnowflake(
+			containerState.HighWater, containerState.BackfillUpper,
+		)
+		if err != nil {
+			return fmt.Errorf("pin backfill high-water: %w", err)
+		}
 		before, err = snowflakeSuccessor(head[0].ID)
 		if err != nil {
 			return fmt.Errorf("pin backfill head: %w", err)
@@ -615,15 +633,11 @@ func (imp *Importer) reconcile(
 	summary *ImportSummary,
 	media *MediaArchiver,
 ) error {
-	localAtStart, err := imp.store.MessageSourceIDsInSnowflakeInterval(
+	localUpper, err := imp.store.MaxMessageSourceIDInSnowflakeInterval(
 		sourceID, conversationID, lower, strconv.FormatUint(math.MaxUint64, 10),
 	)
 	if err != nil {
 		return fmt.Errorf("pin local Discord repair interval: %w", err)
-	}
-	localUpper := ""
-	if len(localAtStart) != 0 {
-		localUpper = localAtStart[len(localAtStart)-1]
 	}
 
 	head, err := imp.api.Messages(ctx, containerID, MessageQuery{Limit: 1})
@@ -634,7 +648,6 @@ func (imp *Importer) reconcile(
 		return fmt.Errorf("pin repair head: expected at most one message, got %d", len(head))
 	}
 
-	remoteIDs := make(map[string]struct{})
 	remoteHead := ""
 	if len(head) == 1 {
 		if err := validateDiscordMessage(containerID, head[0]); err != nil {
@@ -659,6 +672,22 @@ func (imp *Importer) reconcile(
 	if !afterLower {
 		return nil
 	}
+	stagedRemote, err := os.CreateTemp("", ".msgvault-discord-repair-*")
+	if err != nil {
+		return fmt.Errorf("stage Discord repair IDs: %w", err)
+	}
+	stagedPath := stagedRemote.Name()
+	defer func() {
+		_ = stagedRemote.Close()
+		_ = os.Remove(stagedPath)
+	}()
+	remoteWriter := bufio.NewWriter(stagedRemote)
+	stageRemoteID := func(messageID string) error {
+		if _, err := remoteWriter.WriteString(messageID + "\n"); err != nil {
+			return fmt.Errorf("stage Discord repair ID: %w", err)
+		}
+		return nil
+	}
 
 	before, successorErr := snowflakeSuccessor(upper)
 	if successorErr != nil {
@@ -668,7 +697,9 @@ func (imp *Importer) reconcile(
 			if err := imp.persistPage(ctx, sourceID, conversationID, head, summary, media); err != nil {
 				return err
 			}
-			remoteIDs[remoteHead] = struct{}{}
+			if err := stageRemoteID(remoteHead); err != nil {
+				return err
+			}
 		}
 		before = upper
 	}
@@ -686,7 +717,9 @@ func (imp *Importer) reconcile(
 			return err
 		}
 		for _, message := range eligible {
-			remoteIDs[message.ID] = struct{}{}
+			if err := stageRemoteID(message.ID); err != nil {
+				return err
+			}
 		}
 		if reachedLower || len(page) < imp.pageSize {
 			break
@@ -697,19 +730,79 @@ func (imp *Importer) reconcile(
 		before = pageMin
 	}
 
-	localIDs, err := imp.store.MessageSourceIDsInSnowflakeInterval(
-		sourceID, conversationID, lower, upper,
-	)
-	if err != nil {
-		return fmt.Errorf("load archived Discord repair interval: %w", err)
+	if err := remoteWriter.Flush(); err != nil {
+		return fmt.Errorf("flush staged Discord repair IDs: %w", err)
 	}
-	missing := make([]string, 0)
-	for _, messageID := range localIDs {
-		if _, ok := remoteIDs[messageID]; !ok {
-			missing = append(missing, messageID)
+	if _, err := stagedRemote.Seek(0, 0); err != nil {
+		return fmt.Errorf("rewind staged Discord repair IDs: %w", err)
+	}
+	remoteScanner := bufio.NewScanner(stagedRemote)
+	remoteID, remoteOK := "", remoteScanner.Scan()
+	if remoteOK {
+		remoteID = remoteScanner.Text()
+	}
+	advanceRemote := func() {
+		remoteOK = remoteScanner.Scan()
+		if remoteOK {
+			remoteID = remoteScanner.Text()
 		}
 	}
-	if err := imp.store.MarkMessagesDeletedBatch(sourceID, missing); err != nil {
+	stagedMissing, err := os.CreateTemp("", ".msgvault-discord-missing-*")
+	if err != nil {
+		return fmt.Errorf("stage missing Discord repair IDs: %w", err)
+	}
+	stagedMissingPath := stagedMissing.Name()
+	defer func() {
+		_ = stagedMissing.Close()
+		_ = os.Remove(stagedMissingPath)
+	}()
+	missingWriter := bufio.NewWriter(stagedMissing)
+
+	localBefore := ""
+	for {
+		localIDs, err := imp.store.MessageSourceIDsInSnowflakeIntervalPage(
+			sourceID, conversationID, lower, upper, localBefore, imp.pageSize,
+		)
+		if err != nil {
+			return fmt.Errorf("load archived Discord repair interval: %w", err)
+		}
+		for _, localID := range localIDs {
+			for remoteOK {
+				remoteAfterLocal, err := snowflakeAfter(remoteID, localID)
+				if err != nil {
+					return fmt.Errorf("compare staged Discord repair ID: %w", err)
+				}
+				if !remoteAfterLocal {
+					break
+				}
+				advanceRemote()
+			}
+			if remoteOK && remoteID == localID {
+				advanceRemote()
+				continue
+			}
+			if _, err := missingWriter.WriteString(localID + "\n"); err != nil {
+				return fmt.Errorf("stage missing Discord repair ID: %w", err)
+			}
+		}
+		if len(localIDs) < imp.pageSize {
+			break
+		}
+		localBefore = localIDs[len(localIDs)-1]
+	}
+	for remoteOK {
+		advanceRemote()
+	}
+	if err := remoteScanner.Err(); err != nil {
+		return fmt.Errorf("read staged Discord repair IDs: %w", err)
+	}
+	if err := missingWriter.Flush(); err != nil {
+		return fmt.Errorf("flush missing Discord repair IDs: %w", err)
+	}
+	if _, err := stagedMissing.Seek(0, 0); err != nil {
+		return fmt.Errorf("rewind missing Discord repair IDs: %w", err)
+	}
+	if err := imp.store.MarkMessagesDeletedFromReader(sourceID, stagedMissing, imp.pageSize); err != nil {
 		return fmt.Errorf("mark deleted Discord messages: %w", err)
 	}
 	return nil
@@ -752,19 +845,12 @@ func (imp *Importer) handleContainerError(
 	syncID, conversationID int64,
 	containerID string,
 	importErr error,
-	originalState ContainerState,
-	hadOriginalState bool,
 	state *SyncState,
 	summary *ImportSummary,
 ) error {
 	marker, reason, ok := containerAccessMarker(importErr)
 	if !ok {
 		return importErr
-	}
-	if hadOriginalState {
-		state.Containers[containerID] = originalState
-	} else {
-		delete(state.Containers, containerID)
 	}
 	if err := imp.setContainerAccessMarker(conversationID, marker, reason); err != nil {
 		return errors.Join(importErr, err)
@@ -999,7 +1085,9 @@ func (imp *Importer) persistPage(
 	}
 
 	for i := range page {
-		mapped, err := mapMessage(&page[i], conversationID, sourceID)
+		message := &page[i]
+		_, alreadyProcessed := summary.processedMessageIDs[message.ID]
+		mapped, err := mapMessage(message, conversationID, sourceID)
 		if err != nil {
 			return err
 		}
@@ -1024,14 +1112,14 @@ func (imp *Importer) persistPage(
 			},
 		})
 		if err != nil {
-			return fmt.Errorf("persist Discord message %s: %w", page[i].ID, err)
+			return fmt.Errorf("persist Discord message %s: %w", message.ID, err)
 		}
-		if err := imp.store.ClearMessageDeletedFromSource(sourceID, page[i].ID); err != nil {
-			return fmt.Errorf("clear Discord message %s tombstone: %w", page[i].ID, err)
+		if err := imp.store.ClearMessageDeletedFromSource(sourceID, message.ID); err != nil {
+			return fmt.Errorf("clear Discord message %s tombstone: %w", message.ID, err)
 		}
 		if mapped.Edited {
 			if err := imp.store.SetMessageEdited(messageID); err != nil {
-				return fmt.Errorf("mark Discord message %s edited: %w", page[i].ID, err)
+				return fmt.Errorf("mark Discord message %s edited: %w", message.ID, err)
 			}
 		}
 		for _, participantID := range participantIDs {
@@ -1040,9 +1128,9 @@ func (imp *Importer) persistPage(
 			}
 		}
 		if media != nil {
-			result, err := media.PersistAttachments(ctx, messageID, page[i].Attachments)
+			result, err := media.persistAttachments(ctx, messageID, message.Attachments, !alreadyProcessed)
 			if err != nil {
-				return fmt.Errorf("persist Discord message %s media metadata: %w", page[i].ID, err)
+				return fmt.Errorf("persist Discord message %s media metadata: %w", message.ID, err)
 			}
 			for _, item := range result.Items {
 				switch item.Outcome {
@@ -1053,24 +1141,37 @@ func (imp *Importer) persistPage(
 				}
 			}
 		} else {
+			pendingCount := len(mapped.Attachments)
+			if alreadyProcessed {
+				existingAttachments, err := imp.store.MessageDiscordAttachments(messageID)
+				if err != nil {
+					return fmt.Errorf("load Discord message %s attachment metadata: %w", message.ID, err)
+				}
+				pendingCount = 0
+				for _, attachment := range mapped.Attachments {
+					if _, ok := existingAttachments[attachment.SourceAttachmentID]; !ok {
+						pendingCount++
+					}
+				}
+			}
 			if err := imp.store.ReplaceMessageDiscordAttachments(messageID, mapped.Attachments); err != nil {
-				return fmt.Errorf("persist Discord message %s attachment metadata: %w", page[i].ID, err)
+				return fmt.Errorf("persist Discord message %s attachment metadata: %w", message.ID, err)
 			}
 			if err := imp.store.RecomputeMessageAttachmentStats(messageID); err != nil {
-				return fmt.Errorf("recompute Discord message %s attachment metadata: %w", page[i].ID, err)
+				return fmt.Errorf("recompute Discord message %s attachment metadata: %w", message.ID, err)
 			}
-			summary.MediaPending += int64(len(mapped.Attachments))
+			summary.MediaPending += int64(pendingCount)
 		}
 
-		if reference := page[i].MessageReference; reference != nil && reference.MessageID != "" {
-			if err := imp.store.SetReplyTo(sourceID, page[i].ID, reference.MessageID); err != nil {
-				return fmt.Errorf("link Discord reply %s: %w", page[i].ID, err)
+		if reference := message.MessageReference; reference != nil && reference.MessageID != "" {
+			if err := imp.store.SetReplyTo(sourceID, message.ID, reference.MessageID); err != nil {
+				return fmt.Errorf("link Discord reply %s: %w", message.ID, err)
 			}
 		}
-		if _, counted := summary.processedMessageIDs[page[i].ID]; !counted {
-			summary.processedMessageIDs[page[i].ID] = struct{}{}
+		if _, counted := summary.processedMessageIDs[message.ID]; !counted {
+			summary.processedMessageIDs[message.ID] = struct{}{}
 			summary.MessagesProcessed++
-			if _, ok := existing[page[i].ID]; ok {
+			if _, ok := existing[message.ID]; ok {
 				summary.MessagesUpdated++
 			} else {
 				summary.MessagesAdded++
@@ -1129,25 +1230,32 @@ func (imp *Importer) resolveRecipients(
 }
 
 func (imp *Importer) resolveDeferredReplies(sourceID int64) error {
-	unresolved, err := imp.store.ListUnresolvedMessageReplies(sourceID, discordMessageType)
-	if err != nil {
-		return err
+	afterID := int64(0)
+	for {
+		unresolved, err := imp.store.ListUnresolvedMessageRepliesAfter(
+			sourceID, discordMessageType, afterID, imp.pageSize,
+		)
+		if err != nil {
+			return err
+		}
+		for _, reply := range unresolved {
+			var metadata struct {
+				ReferencedMessageID string `json:"referenced_message_id"`
+			}
+			if err := json.Unmarshal([]byte(reply.Metadata), &metadata); err != nil {
+				return fmt.Errorf("decode Discord reply metadata for %s: %w", reply.SourceMessageID, err)
+			}
+			if metadata.ReferencedMessageID != "" {
+				if err := imp.store.SetReplyTo(sourceID, reply.SourceMessageID, metadata.ReferencedMessageID); err != nil {
+					return fmt.Errorf("resolve deferred Discord reply %s: %w", reply.SourceMessageID, err)
+				}
+			}
+			afterID = reply.MessageID
+		}
+		if len(unresolved) < imp.pageSize {
+			return nil
+		}
 	}
-	for _, reply := range unresolved {
-		var metadata struct {
-			ReferencedMessageID string `json:"referenced_message_id"`
-		}
-		if err := json.Unmarshal([]byte(reply.Metadata), &metadata); err != nil {
-			return fmt.Errorf("decode Discord reply metadata for %s: %w", reply.SourceMessageID, err)
-		}
-		if metadata.ReferencedMessageID == "" {
-			continue
-		}
-		if err := imp.store.SetReplyTo(sourceID, reply.SourceMessageID, metadata.ReferencedMessageID); err != nil {
-			return fmt.Errorf("resolve deferred Discord reply %s: %w", reply.SourceMessageID, err)
-		}
-	}
-	return nil
 }
 
 func (imp *Importer) saveCheckpoint(

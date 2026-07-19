@@ -56,9 +56,9 @@ The authoritative behavior is in `docs/internal/discord-import-design.md`. If th
 - Create: `internal/discord/client_test.go`
 - Create: `internal/discord/fake_server_test.go`
 
-1. Build an `httptest` server that exercises real request parsing and response behavior for current bot, guilds, guild detail, channels, active threads, archived public/private threads, members, message pages, and one-message refresh.
+1. Build an `httptest` server that exercises real request parsing and response behavior for current bot, guilds, guild detail, channels, active threads, archived public/private threads, message pages, and one-message refresh.
 2. Write failing tests for authorization and user agent headers, Discord API error decoding, pagination parameters, route-bucket serialization, global `429` handling, `Retry-After` in headers and JSON, cancellation during waits, and rejecting redirects or pagination URLs outside the configured API origin.
-3. Define only the response fields required by the design, retaining `json.RawMessage` for archival payloads. Expose an importer-facing `API` interface with `Me`, `Guilds`, `Guild`, `GuildChannels`, `ActiveThreads`, `ArchivedThreads`, `GuildMembers`, `Messages`, and `Message`.
+3. Define only the response fields required by the design, retaining `json.RawMessage` for archival payloads. Expose an importer-facing `API` interface with `Me`, `Guilds`, `Guild`, `GuildChannels`, `ActiveThreads`, `ArchivedThreads`, `Messages`, and `Message`; member data is consumed only when attached to observed message payloads, never through roster enumeration.
 4. Implement explicit read-only routes with a shared limiter, per-route bucket state learned from response headers, global pause state, bounded retries, and context-aware waits.
 5. Run `go test -tags "fts5 sqlite_vec" ./internal/discord` and commit as `feat(discord): add rate-limited REST client`.
 
@@ -100,8 +100,8 @@ The authoritative behavior is in `docs/internal/discord-import-design.md`. If th
 - Create: `internal/discord/media.go`
 - Create: `internal/discord/media_test.go`
 
-1. Write failing tests for successful downloads through `export.StoreAttachmentFile`, the size cap before and during streaming, signed URL refresh through the message endpoint, CDN HTTP failures, canceled downloads, and pending-state preservation.
-2. Implement attachment persistence that records metadata first, downloads within the configured cap, uses temporary files safely, validates content length while streaming, and treats media failure as retryable attachment state rather than message failure.
+1. Write failing tests for successful downloads through `export.StoreAttachmentFile`, the size cap before and during streaming, signed URL refresh through the message endpoint, CDN HTTP failures, canceled downloads, pending-state preservation, HTTPS-only approved Discord CDN hosts and paths, rejected cross-origin redirects, and the absence of bot authorization on CDN requests.
+2. Implement attachment persistence that records metadata first, downloads within the configured cap, uses temporary files safely, validates content length while streaming, validates every initial and redirected CDN URL, never sends the bot token to a CDN, and treats media failure as retryable attachment state rather than message failure.
 3. Implement backfill that re-fetches the source message for fresh signed URLs. Return an explicit unrecoverable result when the source message is gone.
 4. Run `go test -tags "fts5 sqlite_vec" ./internal/discord` and commit as `feat(discord): archive attachments and support backfill`.
 
@@ -123,10 +123,11 @@ The authoritative behavior is in `docs/internal/discord-import-design.md`. If th
 - Create: `internal/discord/importer_test.go`
 
 1. Write integration tests for an initial pinned `backfill_upper`, backward paging below that head, forward collection above it, independent container cursors, page-level `cursor_before` checkpoints, last-successful `cursor_after` plus newer failed/running checkpoint precedence, at-most-one-page repeat, `--after` lower bounds, and `--full` state reset.
-2. Persist each message atomically through `store.PersistMessage`, then add recipients, replies, metadata, and attachments idempotently. Upsert existing source IDs so repeated pages and repair scans update edits instead of duplicating rows.
-3. After every durable page, update the running sync's `cursor_before`. Only publish merged `cursor_after` and mark the run successful after all requested work completes.
-4. On successful guild completion call `RecomputeConversationStats` for affected conversations.
-5. Run `go test -tags "fts5 sqlite_vec" ./internal/discord` and commit as `feat(discord): import guild message history`.
+2. Persist each message atomically through `store.PersistMessage`, then add recipients, reply metadata, metadata, and attachments idempotently. Upsert existing source IDs so repeated pages and repair scans update edits instead of duplicating rows.
+3. After message persistence, run a deferred reply-linking pass so replies imported before older parents on later pages or syncs can populate `reply_to_message_id`; keep unresolved source snowflakes in metadata.
+4. After every durable page, update the running sync's `cursor_before`. Only publish merged `cursor_after` and mark the run successful after all requested work completes.
+5. On successful guild completion call `RecomputeConversationStats` for affected conversations.
+6. Run `go test -tags "fts5 sqlite_vec" ./internal/discord` and commit as `feat(discord): import guild message history`.
 
 ## Task 9: Bounded edit, reaction, and deletion reconciliation
 
@@ -136,7 +137,7 @@ The authoritative behavior is in `docs/internal/discord-import-design.md`. If th
 - Modify: `internal/discord/syncstate.go`
 - Modify: `internal/discord/syncstate_test.go`
 
-1. Write integration tests that pin `lower` from the window start and `upper` from the container head, apply the identical `(lower, upper]` predicate remotely and locally, refresh edits and reaction summaries, clear false tombstones when messages reappear, and never tombstone an archived message above `upper`.
+1. Write integration tests that pin `lower` from the window start and `upper` to the maximum of the remote container head and the highest archived/high-water snowflake at scan start, apply the identical `(lower, upper]` predicate remotely and locally, support an empty remote result, refresh edits and reaction summaries, clear false tombstones when messages reappear, detect deletion of the newest or every message, and never tombstone an archived message above `upper`.
 2. Add complete-range ID comparison for seven-day repair scans and the whole selected range during `--full`. Mark missing IDs only after a complete successful enumeration.
 3. Add suppression tests for `403`, `404`, cancellation, page failure, malformed response, and partial pagination. One incomplete condition disables deletion marking only for that container.
 4. Record `container_inaccessible_since` for `403` and `container_missing_since` plus reason for `404` in conversation metadata. Preserve messages and cursors, clear the marker on recovery, and never mass-tombstone from container status alone.
@@ -188,7 +189,7 @@ The authoritative behavior is in `docs/internal/discord-import-design.md`. If th
 3. Run `gofmt` on all changed Go files, `go vet -tags "fts5 sqlite_vec" ./...`, `make test`, `make docs-check`, and `git diff --check`.
 4. Run the repository private-data scrub over every unpushed commit, docs, tests, fixtures, command output, and commit/PR text. Resolve every finding.
 5. Commit docs and cleanup as `docs: add Discord import guide`.
-6. Invoke the user-requested `$roborev-fix` workflow. Triage every reported finding against the design, fix valid issues with focused regression tests, record justified non-fixes through the workflow, and repeat its required verification.
+6. If the user explicitly requests `$roborev-fix` in the active implementation session, invoke that workflow. Triage every reported finding against the design, fix valid issues with focused regression tests, record justified non-fixes through the workflow, and repeat its required verification.
 7. Run the full verification set again after review fixes. Ensure `git status --short` is clean and every code-producing change is committed.
 
 ## Completion criteria

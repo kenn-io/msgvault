@@ -179,9 +179,9 @@ func TestMediaArchiverPreservesDuplicateContentAttachmentIDs(t *testing.T) {
 	assert.Equal("second.bin", second.Filename)
 	assert.Equal(first.StoragePath, second.StoragePath)
 	assert.NotEmpty(first.StoragePath)
-	assert.NotEqual(first.ContentHash == "", second.ContentHash == "",
-		"exactly one duplicate row must own the real hash")
-	assert.Len(first.ContentHash+second.ContentHash, 64)
+	assert.Len(first.ContentHash, 64)
+	assert.Equal(first.ContentHash, second.ContentHash,
+		"store reads derive the hash for a duplicate CAS alias")
 
 	pending, err := f.store.ListDiscordPendingAttachmentMessages(f.sourceID)
 	require.NoError(err)
@@ -201,6 +201,37 @@ func TestMediaArchiverPreservesDuplicateContentAttachmentIDs(t *testing.T) {
 	refs, err = f.store.MessageDiscordAttachments(f.messageID)
 	require.NoError(err)
 	assert.Len(refs, 2)
+}
+
+func TestMediaArchiverRepeatedPayloadRefreshesSetWithoutRetryingKnownPendingRows(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newMediaFixture(t)
+	cdn := httptest.NewServer(nil)
+	t.Cleanup(cdn.Close)
+	archiver := newTestArchiver(t, f, nil, 1<<20, cdn)
+
+	first := []Attachment{{ID: "401", Filename: "old.bin", Size: 1}}
+	result, err := archiver.persistAttachments(context.Background(), f.messageID, first, true)
+	require.NoError(err)
+	require.Len(result.Items, 1)
+	assert.Equal(MediaPending, result.Items[0].Outcome)
+
+	newer := []Attachment{
+		{ID: "401", Filename: "renamed.bin", Size: 2},
+		{ID: "402", Filename: "new.bin", Size: 3},
+	}
+	result, err = archiver.persistAttachments(context.Background(), f.messageID, newer, false)
+	require.NoError(err)
+	require.Len(result.Items, 1, "only the newly observed attachment is attempted and reported")
+	assert.Equal("discord:402", result.Items[0].SourceAttachmentID)
+
+	refs, err := f.store.MessageDiscordAttachments(f.messageID)
+	require.NoError(err)
+	require.Len(refs, 2)
+	assert.Equal("renamed.bin", refs["discord:401"].Filename)
+	assert.Equal(2, refs["discord:401"].Size)
+	assert.Equal("new.bin", refs["discord:402"].Filename)
 }
 
 func TestMediaArchiverPersistsPendingMetadataForEmptyURL(t *testing.T) {

@@ -99,7 +99,7 @@ func newDiscordClientForSource(
 	if err != nil {
 		return nil, fmt.Errorf("resolve Discord credential for %s: %w", discordSourceLabel(source), err)
 	}
-	client, err := deps.client(record.AccessToken)
+	client, err := deps.client(record.AccessToken())
 	if err != nil {
 		return nil, fmt.Errorf("configure Discord client for %s: %w", discordSourceLabel(source), err)
 	}

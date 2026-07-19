@@ -52,6 +52,11 @@ func (s *Store) messageProviderAttachments(messageID int64, providerPrefix strin
 		); err != nil {
 			return nil, err
 		}
+		if ref.ContentHash == "" {
+			if pathHash, ok := discordCASPathHash(ref.StoragePath); ok {
+				ref.ContentHash = pathHash
+			}
+		}
 		ref.Size = int(size)
 		out[ref.SourceAttachmentID] = ref
 	}

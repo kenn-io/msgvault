@@ -9,6 +9,8 @@ import (
 
 func TestSyncStateRoundTrip(t *testing.T) {
 	state := NewSyncState()
+	state.Full = true
+	state.LowerBound = "42"
 	state.Containers["channel"] = ContainerState{
 		HighWater:        "123456789012345678",
 		BackfillBefore:   "100000000000000000",
@@ -25,6 +27,16 @@ func TestSyncStateRoundTrip(t *testing.T) {
 	loaded, err := LoadSyncState(blob)
 	require.NoError(t, err)
 	assert.Equal(t, state, loaded)
+}
+
+func TestSyncStateRunIdentityRequiresExactModeAndLowerBound(t *testing.T) {
+	state := NewSyncState()
+	state.Full = true
+	state.LowerBound = "42"
+
+	assert.True(t, state.CompatibleRun(true, "42"))
+	assert.False(t, state.CompatibleRun(false, "42"))
+	assert.False(t, state.CompatibleRun(true, "43"))
 }
 
 func TestLoadSyncStateInitializesEmptyState(t *testing.T) {
@@ -74,9 +86,11 @@ func TestSyncStateMerge(t *testing.T) {
 
 	assert.Equal("10000000000000000000", baseline.Containers["channel"].HighWater, "numeric snowflake maximum")
 	assert.Equal("100", baseline.Containers["channel"].BackfillBefore, "newer opaque cursor")
-	assert.Equal("1000", baseline.Containers["channel"].BackfillUpper, "checkpoint cannot erase pinned bound")
+	assert.Empty(baseline.Containers["channel"].BackfillUpper, "newer backfill epoch clears a stale pinned bound")
 	assert.Equal("80", baseline.Containers["complete"].HighWater, "high-water cannot regress")
-	assert.True(baseline.Containers["complete"].BackfillComplete, "completion cannot regress")
+	assert.False(baseline.Containers["complete"].BackfillComplete, "newer backfill epoch can restart completed history")
+	assert.Equal("40", baseline.Containers["complete"].BackfillBefore)
+	assert.Equal("90", baseline.Containers["complete"].BackfillUpper)
 	assert.Equal("50", baseline.Containers["new"].HighWater)
 	assert.Equal("2026-07-19T12:00:00Z", baseline.ThreadCatalog["parent"].PublicArchiveWatermark, "catalog watermark cannot regress")
 	assert.Equal("2026-07-19T13:00:00Z", baseline.ThreadCatalog["parent"].PrivateArchiveWatermark, "catalog watermark advances")

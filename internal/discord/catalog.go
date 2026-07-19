@@ -106,6 +106,7 @@ func DiscoverCatalog(
 
 	parents := make(map[string]Channel)
 	containerIndexes := make(map[string]int)
+	threadParents := make(map[string]string)
 	for _, channel := range channels {
 		parents[channel.ID] = channel
 		if !isThreadCatalogParent(channel.Type) {
@@ -139,6 +140,11 @@ func DiscoverCatalog(
 				fatalErrors = append(fatalErrors, malformedErr)
 				continue
 			}
+			if err := recordCatalogThreadParent(threadParents, thread.ID, thread.ParentID); err != nil {
+				result.Issues = append(result.Issues, newCatalogIssue(CatalogScopeActiveThreads, guildID, thread.ParentID, err))
+				fatalErrors = append(fatalErrors, err)
+				continue
+			}
 			if !ContainerIncluded(guildConfig, thread.ID, thread.ParentID) {
 				continue
 			}
@@ -150,7 +156,11 @@ func DiscoverCatalog(
 		if _, ok := result.ThreadCatalog[parent.ID]; !ok {
 			result.ThreadCatalog[parent.ID] = ThreadCatalogState{}
 		}
-		for _, private := range []bool{false, true} {
+		archiveKinds := []bool{false}
+		if parent.Type == channelTypeGuildText {
+			archiveKinds = append(archiveKinds, true)
+		}
+		for _, private := range archiveKinds {
 			scope := CatalogScopePublicArchive
 			if private {
 				scope = CatalogScopePrivateArchive
@@ -163,10 +173,14 @@ func DiscoverCatalog(
 
 			newWatermark, scanErr := discoverArchive(
 				ctx, api, parent, private, priorWatermark, full,
-				func(thread Channel) {
+				func(thread Channel) error {
+					if err := recordCatalogThreadParent(threadParents, thread.ID, thread.ParentID); err != nil {
+						return err
+					}
 					if ContainerIncluded(guildConfig, thread.ID, thread.ParentID) {
 						addCatalogContainer(&result, containerIndexes, thread, catalogParent(parents, parent.ID))
 					}
+					return nil
 				},
 			)
 			if scanErr != nil {
@@ -203,7 +217,7 @@ func discoverArchive(
 	private bool,
 	priorWatermark string,
 	full bool,
-	emit func(Channel),
+	emit func(Channel) error,
 ) (string, error) {
 	priorTime, err := parseCatalogWatermark(priorWatermark)
 	if err != nil {
@@ -235,7 +249,9 @@ func discoverArchive(
 			if !full && !priorTime.IsZero() && !archiveTime.After(priorTime) {
 				reachedBoundary = true
 			}
-			emit(thread)
+			if err := emit(thread); err != nil {
+				return priorWatermark, err
+			}
 		}
 
 		if !page.HasMore || reachedBoundary {
@@ -246,6 +262,17 @@ func discoverArchive(
 		}
 		before = page.NextBefore
 	}
+}
+
+func recordCatalogThreadParent(parents map[string]string, threadID, parentID string) error {
+	if previous, ok := parents[threadID]; ok && previous != parentID {
+		return fmt.Errorf(
+			"%w: thread %s appears under conflicting parents %s and %s",
+			ErrMalformedCatalog, threadID, previous, parentID,
+		)
+	}
+	parents[threadID] = parentID
+	return nil
 }
 
 func cloneThreadCatalog(prior map[string]ThreadCatalogState) map[string]ThreadCatalogState {

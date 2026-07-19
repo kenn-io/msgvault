@@ -16,9 +16,7 @@ import (
 func TestSyncDiscordNoArgumentContinuesAfterFailureInSourceIDOrder(t *testing.T) {
 	st := newDiscordCLIStore(t)
 	tokensDir := t.TempDir()
-	require.NoError(t, discord.NewTokenManager(tokensDir).Save(discord.TokenRecord{
-		BotUserID: testDiscordBotID, BotUsername: "archive-bot", AccessToken: testDiscordBotToken,
-	}))
+	require.NoError(t, discord.NewTokenManager(tokensDir).Save(discord.NewTokenRecord(testDiscordBotID, "archive-bot", testDiscordBotToken, "")))
 	first, err := st.GetOrCreateSource("discord", testDiscordGuildA)
 	require.NoError(t, err)
 	second, err := st.GetOrCreateSource("discord", testDiscordGuildB)
@@ -50,9 +48,7 @@ func TestSyncDiscordNoArgumentContinuesAfterFailureInSourceIDOrder(t *testing.T)
 func TestSyncDiscordResolvesUnambiguousDisplayNameAndForwardsBounds(t *testing.T) {
 	st := newDiscordCLIStore(t)
 	tokensDir := t.TempDir()
-	require.NoError(t, discord.NewTokenManager(tokensDir).Save(discord.TokenRecord{
-		BotUserID: testDiscordBotID, BotUsername: "archive-bot", AccessToken: testDiscordBotToken,
-	}))
+	require.NoError(t, discord.NewTokenManager(tokensDir).Save(discord.NewTokenRecord(testDiscordBotID, "archive-bot", testDiscordBotToken, "")))
 	source, err := st.GetOrCreateSource("discord", testDiscordGuildA)
 	require.NoError(t, err)
 	require.NoError(t, st.UpdateSourceDisplayName(source.ID, "Alpha Guild"))
@@ -83,9 +79,7 @@ func TestSyncDiscordResolvesUnambiguousDisplayNameAndForwardsBounds(t *testing.T
 func TestSyncDiscordReportsSanitizedCatalogAndContainerAccessIssues(t *testing.T) {
 	st := newDiscordCLIStore(t)
 	tokensDir := t.TempDir()
-	require.NoError(t, discord.NewTokenManager(tokensDir).Save(discord.TokenRecord{
-		BotUserID: testDiscordBotID, BotUsername: "archive-bot", AccessToken: testDiscordBotToken,
-	}))
+	require.NoError(t, discord.NewTokenManager(tokensDir).Save(discord.NewTokenRecord(testDiscordBotID, "archive-bot", testDiscordBotToken, "")))
 	_, err := st.GetOrCreateSource("discord", testDiscordGuildA)
 	require.NoError(t, err)
 	api := newDiscordCLIServer(t)
@@ -104,6 +98,48 @@ func TestSyncDiscordReportsSanitizedCatalogAndContainerAccessIssues(t *testing.T
 	assert.Contains(t, output.String(), "HTTP 403")
 	assert.NotContains(t, output.String(), "synthetic failure")
 	assert.NotContains(t, output.String(), testDiscordBotToken)
+}
+
+func TestSyncDiscordRebuildsCacheAfterPartialDurableImportFailure(t *testing.T) {
+	st := newDiscordCLIStore(t)
+	tokensDir := t.TempDir()
+	require.NoError(t, discord.NewTokenManager(tokensDir).Save(discord.NewTokenRecord(testDiscordBotID, "archive-bot", testDiscordBotToken, "")))
+	source, err := st.GetOrCreateSource("discord", testDiscordGuildA)
+	require.NoError(t, err)
+	require.NoError(t, st.UpdateSourceDisplayName(source.ID, "Alpha Guild"))
+	require.NoError(t, st.UpdateSourceOAuthApp(source.ID, sql.NullString{}))
+	_, err = st.DB().Exec(`
+		CREATE TRIGGER fail_discord_conversation_participant
+		BEFORE INSERT ON conversation_participants
+		BEGIN
+			SELECT RAISE(ABORT, 'synthetic participant persistence failure');
+		END
+	`)
+	require.NoError(t, err)
+	api := newDiscordCLIServer(t)
+	api.messages[testDiscordChannel] = []discord.Message{{
+		ID: "400000000000000001", ChannelID: testDiscordChannel, GuildID: testDiscordGuildA,
+		Author:    discord.User{ID: "500000000000000001", Username: "synthetic-user"},
+		Content:   "durable before the later failure",
+		Timestamp: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+	}}
+	deps := testDiscordCommandDeps(t, st, tokensDir, api.server.URL)
+	rebuilds := 0
+	deps.rebuildCache = func(string) error {
+		rebuilds++
+		return nil
+	}
+
+	cmd := newSyncDiscordLocalCmd(deps)
+	cmd.SetArgs([]string{testDiscordGuildA})
+	err = cmd.Execute()
+	require.ErrorContains(t, err, "synthetic participant persistence failure")
+	var messageCount int
+	require.NoError(t, st.DB().QueryRow(
+		"SELECT COUNT(*) FROM messages WHERE source_id = ?", source.ID,
+	).Scan(&messageCount))
+	assert.Equal(t, 1, messageCount, "core message persistence must precede the injected failure")
+	assert.Equal(t, 1, rebuilds, "a failed importer attempt with durable writes must refresh analytics")
 }
 
 func TestResolveDiscordSourcesRejectsAmbiguousDisplayName(t *testing.T) {

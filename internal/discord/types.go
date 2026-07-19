@@ -14,7 +14,6 @@ type API interface {
 	GuildChannels(ctx context.Context, guildID string) ([]Channel, error)
 	ActiveThreads(ctx context.Context, guildID string) ([]Channel, error)
 	ArchivedThreads(ctx context.Context, channelID string, private bool, before time.Time) (ThreadPage, error)
-	GuildMembers(ctx context.Context, guildID, after string) (MemberPage, error)
 	Messages(ctx context.Context, channelID string, query MessageQuery) ([]Message, error)
 	Message(ctx context.Context, channelID, messageID string) (Message, error)
 }
@@ -98,8 +97,8 @@ type ThreadPage struct {
 	NextBefore time.Time
 }
 
-// GuildMember holds only roster fields used for best-effort identity
-// enrichment.
+// GuildMember contains member data attached to an observed message payload.
+// Version 1 does not enumerate the guild roster.
 type GuildMember struct {
 	User                       User       `json:"user"`
 	Nick                       string     `json:"nick"`
@@ -108,14 +107,6 @@ type GuildMember struct {
 	JoinedAt                   *time.Time `json:"joined_at"`
 	Pending                    bool       `json:"pending"`
 	CommunicationDisabledUntil *time.Time `json:"communication_disabled_until"`
-}
-
-// MemberPage is one maximum-sized guild-member page. NextAfter is populated
-// only when another page may exist.
-type MemberPage struct {
-	Members   []GuildMember
-	HasMore   bool
-	NextAfter string
 }
 
 // MessageQuery controls Discord's mutually exclusive message cursors. Limit

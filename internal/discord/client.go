@@ -26,7 +26,6 @@ const (
 	maxResponseBytes = 32 << 20
 	guildPageLimit   = 200
 	threadPageLimit  = 100
-	memberPageLimit  = 1000
 )
 
 var (
@@ -62,6 +61,19 @@ type Client struct {
 }
 
 var _ API = (*Client)(nil)
+
+// Format prevents diagnostic formatting from reflecting the bot token.
+func (c *Client) Format(state fmt.State, _ rune) {
+	if c == nil {
+		_, _ = io.WriteString(state, "Discord REST client <nil>")
+		return
+	}
+	baseURL := "unconfigured"
+	if c.baseURL != nil {
+		baseURL = c.baseURL.String()
+	}
+	_, _ = io.WriteString(state, "Discord REST client ("+baseURL+")")
+}
 
 // NewClient creates a REST client bound to one exact Discord API root. Plain
 // HTTP is accepted only for loopback httptest servers.
@@ -202,33 +214,6 @@ func (c *Client) ArchivedThreads(ctx context.Context, channelID string, private 
 			return ThreadPage{}, fmt.Errorf("%w: discord %s response has more pages but no archive cursor", ErrMalformedCatalog, operation)
 		}
 		out.NextBefore = response.Threads[len(response.Threads)-1].ThreadMetadata.ArchiveTimestamp
-	}
-	return out, nil
-}
-
-func (c *Client) GuildMembers(ctx context.Context, guildID, after string) (MemberPage, error) {
-	var out MemberPage
-	id, err := snowflakePathValue("guild ID", guildID)
-	if err != nil {
-		return out, err
-	}
-	query := url.Values{"limit": {strconv.Itoa(memberPageLimit)}}
-	if after != "" {
-		if _, err := snowflakePathValue("member cursor", after); err != nil {
-			return out, err
-		}
-		query.Set("after", after)
-	}
-	err = c.getJSON(ctx, discordRoute{"guild members", "/guilds/" + id + "/members", "GET /guilds/:guild/members", guildID}, query, &out.Members)
-	if err != nil {
-		return MemberPage{}, err
-	}
-	if len(out.Members) == memberPageLimit {
-		out.HasMore = true
-		out.NextAfter = out.Members[len(out.Members)-1].User.ID
-		if out.NextAfter == "" || out.NextAfter == after {
-			return MemberPage{}, errors.New("discord guild members: pagination cursor did not advance")
-		}
 	}
 	return out, nil
 }
@@ -514,7 +499,10 @@ func (l *rateLimitState) waitGlobal(ctx context.Context) error {
 		l.mu.Lock()
 		until := l.globalUntil
 		l.mu.Unlock()
-		if err := waitUntil(ctx, until); err != nil || !time.Now().Before(until) {
+		if !time.Now().Before(until) {
+			return nil
+		}
+		if err := waitUntil(ctx, until); err != nil {
 			return err
 		}
 	}

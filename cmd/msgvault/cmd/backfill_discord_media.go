@@ -139,9 +139,11 @@ func backfillDiscordSourceMedia(
 		return summary, fmt.Errorf("list Discord media messages: %w", err)
 	}
 	var errs []error
+	contextErrorRecorded := false
 	for _, message := range messages {
 		if err := ctx.Err(); err != nil {
 			errs = append(errs, err)
+			contextErrorRecorded = true
 			break
 		}
 		result, backfillErr := archiver.BackfillMessage(
@@ -164,6 +166,11 @@ func backfillDiscordSourceMedia(
 			if item.Err != nil {
 				summary.Warnings[classifyDiscordMediaWarning(item.Err)]++
 			}
+		}
+	}
+	if !contextErrorRecorded {
+		if err := ctx.Err(); err != nil {
+			errs = append(errs, err)
 		}
 	}
 	return summary, errors.Join(errs...)

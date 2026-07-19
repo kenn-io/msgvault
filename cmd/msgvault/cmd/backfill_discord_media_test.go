@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
 	"net/http"
 	"strings"
@@ -15,12 +16,25 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 )
 
+type cancelAfterFirstErrContext struct {
+	context.Context
+
+	checks int
+	cancel context.CancelFunc
+}
+
+func (c *cancelAfterFirstErrContext) Err() error {
+	c.checks++
+	if c.checks > 1 {
+		c.cancel()
+	}
+	return c.Context.Err()
+}
+
 func TestBackfillDiscordMediaReportsPendingWithoutSignedURL(t *testing.T) {
 	st := newDiscordCLIStore(t)
 	tokensDir := t.TempDir()
-	require.NoError(t, discord.NewTokenManager(tokensDir).Save(discord.TokenRecord{
-		BotUserID: testDiscordBotID, BotUsername: "archive-bot", AccessToken: testDiscordBotToken,
-	}))
+	require.NoError(t, discord.NewTokenManager(tokensDir).Save(discord.NewTokenRecord(testDiscordBotID, "archive-bot", testDiscordBotToken, "")))
 	source, err := st.GetOrCreateSource("discord", testDiscordGuildA)
 	require.NoError(t, err)
 	require.NoError(t, st.UpdateSourceDisplayName(source.ID, "Alpha Guild"))
@@ -105,9 +119,7 @@ func TestBackfillDiscordMediaReportsSanitizedRefreshAndUnrecoverableWarnings(t *
 		t.Run(tt.name, func(t *testing.T) {
 			st := newDiscordCLIStore(t)
 			tokensDir := t.TempDir()
-			require.NoError(t, discord.NewTokenManager(tokensDir).Save(discord.TokenRecord{
-				BotUserID: testDiscordBotID, BotUsername: "archive-bot", AccessToken: testDiscordBotToken,
-			}))
+			require.NoError(t, discord.NewTokenManager(tokensDir).Save(discord.NewTokenRecord(testDiscordBotID, "archive-bot", testDiscordBotToken, "")))
 			source, err := st.GetOrCreateSource("discord", testDiscordGuildA)
 			require.NoError(t, err)
 			conversationID, err := st.EnsureConversationWithType(source.ID, testDiscordChannel, "channel", "general")
@@ -139,4 +151,33 @@ func TestBackfillDiscordMediaReportsSanitizedRefreshAndUnrecoverableWarnings(t *
 			assert.NotContains(t, output.String(), testDiscordBotToken)
 		})
 	}
+}
+
+func TestBackfillDiscordMediaReturnsCancellationAfterFinalMessage(t *testing.T) {
+	st := newDiscordCLIStore(t)
+	tokensDir := t.TempDir()
+	require.NoError(t, discord.NewTokenManager(tokensDir).Save(discord.NewTokenRecord(testDiscordBotID, "archive-bot", testDiscordBotToken, "")))
+	source, err := st.GetOrCreateSource("discord", testDiscordGuildA)
+	require.NoError(t, err)
+	conversationID, err := st.EnsureConversationWithType(source.ID, testDiscordChannel, "channel", "general")
+	require.NoError(t, err)
+	messageID, err := st.UpsertMessage(&store.Message{
+		SourceID: source.ID, ConversationID: conversationID,
+		SourceMessageID: "400000000000000001", MessageType: "discord",
+	})
+	require.NoError(t, err)
+	completedHash := strings.Repeat("ab", 32)
+	require.NoError(t, st.ReplaceMessageDiscordAttachments(messageID, []store.AttachmentRef{{
+		Filename: "complete.bin", Size: 100,
+		StoragePath: completedHash[:2] + "/" + completedHash, ContentHash: completedHash,
+		SourceAttachmentID: "discord:500000000000000001", MediaType: "document",
+	}}))
+	baseContext, cancel := context.WithCancel(context.Background())
+	ctx := &cancelAfterFirstErrContext{Context: baseContext, cancel: cancel}
+	deps := testDiscordCommandDeps(t, st, tokensDir, newDiscordCLIServer(t).server.URL)
+
+	summary, err := backfillDiscordSourceMedia(ctx, st, source, deps, false)
+	require.ErrorIs(t, err, context.Canceled)
+	assert.Equal(t, int64(1), summary.MessagesProcessed)
+	assert.GreaterOrEqual(t, ctx.checks, 2, "cancellation must be checked after the final message")
 }

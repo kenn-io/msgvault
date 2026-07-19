@@ -246,7 +246,7 @@ func TestRenderMessageBodyIncludesAuthoredRichContent(t *testing.T) {
 
 func TestKnownDiscordSystemMessagesRenderReadableText(t *testing.T) {
 	outerAssert := assert.New(t)
-	knownTypes := []int{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 14, 15, 16, 17, 18, 21, 22, 24, 25, 26, 27, 28, 29, 31, 32, 36, 37, 38, 39, 44, 46}
+	knownTypes := []int{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 14, 15, 16, 17, 18, 21, 22, 24, 25, 26, 27, 28, 29, 30, 31, 32, 36, 37, 38, 39, 44, 46}
 	for _, messageType := range knownTypes {
 		t.Run(systemMessageTypeName(messageType), func(t *testing.T) {
 			assert := assert.New(t)
@@ -264,6 +264,9 @@ func TestKnownDiscordSystemMessagesRenderReadableText(t *testing.T) {
 	outerAssert.Equal("alice boosted the server to level 2.", renderMessageBody(&Message{Type: 10, Author: User{Username: "alice"}}))
 	outerAssert.Equal("alice pinned a message. (message 100)", renderMessageBody(&Message{
 		Type: 6, Author: User{Username: "alice"}, MessageReference: &MessageReference{MessageID: "100"},
+	}))
+	outerAssert.Equal("alice raised a hand to speak on stage.", renderMessageBody(&Message{
+		Type: 30, Author: User{Username: "alice"},
 	}))
 }
 

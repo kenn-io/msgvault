@@ -1025,10 +1025,9 @@ func TestRemoveAccountCmd_DiscordDeletesTokenOnlyAfterFinalBotReference(t *testi
 	require.NoError(st.Close())
 
 	manager := discord.NewTokenManager(filepath.Join(tmpDir, "tokens"))
-	require.NoError(manager.Save(discord.TokenRecord{
-		BotUserID: "333456789012345678", BotUsername: "archive-bot",
-		AccessToken: "synthetic-secret", Binding: "archive",
-	}))
+	require.NoError(manager.Save(discord.NewTokenRecord(
+		"333456789012345678", "archive-bot", "synthetic-secret", "archive",
+	)))
 	tokenPath := manager.TokenPath("333456789012345678")
 
 	savedCfg := cfg
@@ -1063,9 +1062,9 @@ func TestRemoveAccountCmd_DiscordPreservesTokenDuringActiveSync(t *testing.T) {
 	require.NoError(st.Close())
 
 	manager := discord.NewTokenManager(filepath.Join(tmpDir, "tokens"))
-	require.NoError(manager.Save(discord.TokenRecord{
-		BotUserID: "333456789012345678", BotUsername: "archive-bot", AccessToken: "synthetic-secret",
-	}))
+	require.NoError(manager.Save(discord.NewTokenRecord(
+		"333456789012345678", "archive-bot", "synthetic-secret", "",
+	)))
 	tokenPath := manager.TokenPath("333456789012345678")
 	savedCfg := cfg
 	t.Cleanup(func() { cfg = savedCfg })
@@ -1095,10 +1094,9 @@ func TestRemoveAccountCmd_DiscordPreservesTokenWhenRemainingBindingCannotResolve
 	require.NoError(st.Close())
 
 	manager := discord.NewTokenManager(filepath.Join(tmpDir, "tokens"))
-	require.NoError(manager.Save(discord.TokenRecord{
-		BotUserID: "333456789012345678", BotUsername: "archive-bot",
-		AccessToken: "synthetic-secret", Binding: "archive",
-	}))
+	require.NoError(manager.Save(discord.NewTokenRecord(
+		"333456789012345678", "archive-bot", "synthetic-secret", "archive",
+	)))
 	tokenPath := manager.TokenPath("333456789012345678")
 	savedCfg := cfg
 	t.Cleanup(func() { cfg = savedCfg })
@@ -1129,10 +1127,9 @@ func TestDiscordAddLifecycleBlocksFinalCredentialRemovalUntilGuildRegistration(t
 	require.NoError(st.UpdateSourceOAuthApp(first.ID, sql.NullString{String: "archive", Valid: true}))
 
 	manager := discord.NewTokenManager(filepath.Join(tmpDir, "tokens"))
-	record := discord.TokenRecord{
-		BotUserID: "333456789012345678", BotUsername: "archive-bot",
-		AccessToken: "synthetic-secret", Binding: "archive",
-	}
+	record := discord.NewTokenRecord(
+		"333456789012345678", "archive-bot", "synthetic-secret", "archive",
+	)
 	require.NoError(manager.Save(record))
 	tokenPath := manager.TokenPath(record.BotUserID)
 
