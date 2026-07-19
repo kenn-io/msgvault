@@ -29,22 +29,24 @@ func TestSnowflakeTimestampConversions(t *testing.T) {
 }
 
 func TestSnowflakeTimestampBounds(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
 	at := time.Date(2026, 7, 19, 12, 34, 56, 789_654_321, time.UTC)
 	lower, upper, err := SnowflakeBoundsForTimestamp(at)
-	require.NoError(t, err)
+	require.NoError(err)
 
 	lowerTime, err := TimestampFromSnowflake(lower)
-	require.NoError(t, err)
+	require.NoError(err)
 	upperTime, err := TimestampFromSnowflake(upper)
-	require.NoError(t, err)
-	assert.Equal(t, at.Truncate(time.Millisecond), lowerTime)
-	assert.Equal(t, lowerTime, upperTime)
+	require.NoError(err)
+	assert.Equal(at.Truncate(time.Millisecond), lowerTime)
+	assert.Equal(lowerTime, upperTime)
 
 	lowerValue, err := ParseSnowflake(lower)
-	require.NoError(t, err)
+	require.NoError(err)
 	upperValue, err := ParseSnowflake(upper)
-	require.NoError(t, err)
-	assert.Equal(t, uint64((1<<22)-1), upperValue-lowerValue)
+	require.NoError(err)
+	assert.Equal(uint64((1<<22)-1), upperValue-lowerValue)
 }
 
 func TestSnowflakeConversionRejectsInvalidValues(t *testing.T) {

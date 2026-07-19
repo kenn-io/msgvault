@@ -71,6 +71,8 @@ func TestDiscordConfigDefaults(t *testing.T) {
 }
 
 func TestDiscordConfigTOMLRoundTrip(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
 	dir := t.TempDir()
 	cfg := NewDefaultConfig()
 	cfg.HomeDir = dir
@@ -81,13 +83,13 @@ func TestDiscordConfigTOMLRoundTrip(t *testing.T) {
 		Exclude: []string{"222222222222222222"},
 	}
 
-	require.NoError(t, cfg.Save())
+	require.NoError(cfg.Save())
 	loaded, err := Load(cfg.ConfigFilePath(), "")
-	require.NoError(t, err)
+	require.NoError(err)
 
-	assert.Equal(t, cfg.Discord.MaxMediaBytes, loaded.Discord.MaxMediaBytes)
-	assert.Equal(t, cfg.Discord.EditRescanWindow, loaded.Discord.EditRescanWindow)
-	assert.Equal(t, cfg.Discord.Guilds, loaded.Discord.Guilds)
+	assert.Equal(cfg.Discord.MaxMediaBytes, loaded.Discord.MaxMediaBytes)
+	assert.Equal(cfg.Discord.EditRescanWindow, loaded.Discord.EditRescanWindow)
+	assert.Equal(cfg.Discord.Guilds, loaded.Discord.Guilds)
 }
 
 func TestAccountScheduleEmpty(t *testing.T) {

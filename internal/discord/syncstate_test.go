@@ -28,14 +28,16 @@ func TestSyncStateRoundTrip(t *testing.T) {
 }
 
 func TestLoadSyncStateInitializesEmptyState(t *testing.T) {
+	assert := assert.New(t)
 	state, err := LoadSyncState("")
 	require.NoError(t, err)
-	assert.Equal(t, SyncStateVersion, state.Version)
-	assert.NotNil(t, state.Containers)
-	assert.NotNil(t, state.ThreadCatalog)
+	assert.Equal(SyncStateVersion, state.Version)
+	assert.NotNil(state.Containers)
+	assert.NotNil(state.ThreadCatalog)
 }
 
 func TestSyncStateMerge(t *testing.T) {
+	assert := assert.New(t)
 	baseline := NewSyncState()
 	baseline.Containers["channel"] = ContainerState{
 		HighWater:      "9000000000000000000",
@@ -70,14 +72,14 @@ func TestSyncStateMerge(t *testing.T) {
 
 	require.NoError(t, baseline.Merge(checkpoint))
 
-	assert.Equal(t, "10000000000000000000", baseline.Containers["channel"].HighWater, "numeric snowflake maximum")
-	assert.Equal(t, "100", baseline.Containers["channel"].BackfillBefore, "newer opaque cursor")
-	assert.Equal(t, "1000", baseline.Containers["channel"].BackfillUpper, "checkpoint cannot erase pinned bound")
-	assert.Equal(t, "80", baseline.Containers["complete"].HighWater, "high-water cannot regress")
-	assert.True(t, baseline.Containers["complete"].BackfillComplete, "completion cannot regress")
-	assert.Equal(t, "50", baseline.Containers["new"].HighWater)
-	assert.Equal(t, "2026-07-19T12:00:00Z", baseline.ThreadCatalog["parent"].PublicArchiveWatermark, "catalog watermark cannot regress")
-	assert.Equal(t, "2026-07-19T13:00:00Z", baseline.ThreadCatalog["parent"].PrivateArchiveWatermark, "catalog watermark advances")
+	assert.Equal("10000000000000000000", baseline.Containers["channel"].HighWater, "numeric snowflake maximum")
+	assert.Equal("100", baseline.Containers["channel"].BackfillBefore, "newer opaque cursor")
+	assert.Equal("1000", baseline.Containers["channel"].BackfillUpper, "checkpoint cannot erase pinned bound")
+	assert.Equal("80", baseline.Containers["complete"].HighWater, "high-water cannot regress")
+	assert.True(baseline.Containers["complete"].BackfillComplete, "completion cannot regress")
+	assert.Equal("50", baseline.Containers["new"].HighWater)
+	assert.Equal("2026-07-19T12:00:00Z", baseline.ThreadCatalog["parent"].PublicArchiveWatermark, "catalog watermark cannot regress")
+	assert.Equal("2026-07-19T13:00:00Z", baseline.ThreadCatalog["parent"].PrivateArchiveWatermark, "catalog watermark advances")
 }
 
 func TestSyncStateMergeRejectsMalformedState(t *testing.T) {
