@@ -155,7 +155,7 @@ Config:
 # exclude = ["#noise"]
 # max_media_bytes = 52428800       # 50 MiB default, 0 = metadata-only
 # sync_interval = "1h"             # daemon scheduling
-# edit_rescan_window = "168h"      # see Incremental sync
+# (the edit/discovery rescan shares the thread_lookback window)
 # thread_lookback = "720h"         # how long a thread root stays tracked for new replies
 ```
 

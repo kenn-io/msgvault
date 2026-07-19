@@ -73,7 +73,7 @@ Examples:
 					continue
 				}
 				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Syncing Slack workspace %s\n", teamID)
-				token, terr := slack.LoadToken(cfg.TokensDir(), teamID)
+				token, terr := slack.LoadToken(cfg.TokensDir(), teamID, userID)
 				if terr != nil {
 					syncErrors = append(syncErrors, fmt.Sprintf("%s: %v", teamID, terr))
 					continue
@@ -208,7 +208,7 @@ func runConfiguredSlackSync(ctx context.Context, s *store.Store) error {
 			errs = append(errs, fmt.Errorf("slack %s: malformed identifier", src.Identifier))
 			continue
 		}
-		token, terr := slack.LoadToken(cfg.TokensDir(), teamID)
+		token, terr := slack.LoadToken(cfg.TokensDir(), teamID, userID)
 		if terr != nil {
 			errs = append(errs, fmt.Errorf("slack %s: %w", teamID, terr))
 			continue

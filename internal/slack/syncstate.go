@@ -24,6 +24,12 @@ type ConvState struct {
 	BackfillLatest string            `json:"backfill_latest,omitempty"`
 	Done           bool              `json:"done,omitempty"`
 	Threads        map[string]string `json:"threads,omitempty"`
+	// IncrCursor/IncrMaxTS checkpoint a partially-walked incremental window
+	// (interrupted by --limit or a fetch error), so limited runs drain a
+	// backlog across runs instead of restarting from the newest page. The
+	// main Cursor still only advances once the window is exhausted.
+	IncrCursor string `json:"incr_cursor,omitempty"`
+	IncrMaxTS  string `json:"incr_max_ts,omitempty"`
 }
 
 // SyncState holds per-conversation cursors for one Slack source, persisted
@@ -89,6 +95,12 @@ func (s *SyncState) Merge(other *SyncState) {
 		}
 		if ocs.BackfillLatest != "" {
 			cs.BackfillLatest = ocs.BackfillLatest
+		}
+		if ocs.IncrCursor != "" {
+			cs.IncrCursor = ocs.IncrCursor
+		}
+		if ocs.IncrMaxTS != "" && (cs.IncrMaxTS == "" || tsLess(cs.IncrMaxTS, ocs.IncrMaxTS)) {
+			cs.IncrMaxTS = ocs.IncrMaxTS
 		}
 		for root, replyTS := range ocs.Threads {
 			if cur, ok := cs.Threads[root]; !ok || tsLess(cur, replyTS) {

@@ -84,7 +84,7 @@ func TestRunConfiguredSlackSyncIsolatesBrokenWorkspaces(t *testing.T) {
 
 	err = runConfiguredSlackSync(context.Background(), st)
 	require.ErrorContains(err, "malformed identifier")
-	require.ErrorContains(err, "no Slack token for workspace T09")
+	require.ErrorContains(err, "no Slack token for UME in workspace T09")
 }
 
 func TestSlackImportOptionsDeriveFromConfig(t *testing.T) {

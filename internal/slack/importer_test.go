@@ -514,6 +514,110 @@ func TestImportLimitBoundsProcessedMessages(t *testing.T) {
 	assert.Positive(t, total)
 }
 
+func TestImportLimitedRunsDrainIncrementalBacklog(t *testing.T) {
+	f := testWorkspace(t)
+	imp, opts := testImporter(t, f)
+	st := imp.store
+
+	_, err := imp.Import(context.Background(), opts)
+	require.NoError(t, err)
+
+	// A 9-message backlog against a standing --limit 2: without the
+	// incremental window checkpoint, every limited run restarts from the
+	// newest page and the backlog never drains.
+	f.mu.Lock()
+	general := f.conv("C01")
+	for i := range 9 {
+		general.Msgs = append(general.Msgs, fakeMsg{TS: ts(400 + i), User: "UBOB", Text: "backlog " + strconv.Itoa(i)})
+	}
+	f.mu.Unlock()
+
+	limited := opts
+	limited.Limit = 2
+	limited.NoThreads = true
+	for range 8 {
+		_, err = imp.Import(context.Background(), limited)
+		require.NoError(t, err)
+	}
+	for i := range 9 {
+		var n int
+		require.NoError(t, st.DB().QueryRow(st.Rebind(
+			`SELECT COUNT(*) FROM messages WHERE source_message_id = ?`), "C01:"+ts(400+i)).Scan(&n))
+		assert.Equal(t, 1, n, "backlog message %d must be drained by repeated limited runs", i)
+	}
+}
+
+func TestImportLimitedRunsDrainLargeThread(t *testing.T) {
+	f, rootTS, _ := oldThreadWorkspace(t)
+	// Grow the ancient thread to 7 replies: several budget-sized pages.
+	f.mu.Lock()
+	root := f.conv("C09").findRoot(rootTS)
+	root.Replies = nil
+	for i := range 7 {
+		root.Replies = append(root.Replies, fakeMsg{
+			TS: ts(-14390 + i), ThreadTS: rootTS, User: "UME", Text: "reply " + strconv.Itoa(i)})
+	}
+	f.mu.Unlock()
+	imp, opts := testImporter(t, f)
+	st := imp.store
+	opts.ThreadLookback = time.Hour // root is prunable the moment polling completes
+
+	limited := opts
+	limited.Limit = 2
+	// Replies arrive oldest-first, so each limited run persists a bounded
+	// slice and advances the thread cursor; repeated runs drain the whole
+	// thread WITHOUT any single run overshooting the budget mid-thread.
+	countRows := func() int {
+		var n int
+		require.NoError(t, st.DB().QueryRow(`SELECT COUNT(*) FROM messages WHERE message_type='slack'`).Scan(&n))
+		return n
+	}
+	prev := 0
+	for range 10 {
+		_, err := imp.Import(context.Background(), limited)
+		require.NoError(t, err)
+		grown := countRows() - prev
+		assert.LessOrEqual(t, grown, 3, "one --limit 2 run must not archive a whole thread page burst")
+		prev += grown
+	}
+	var replies int
+	require.NoError(t, st.DB().QueryRow(st.Rebind(`
+		SELECT COUNT(*) FROM messages m
+		WHERE m.source_message_id LIKE ? AND m.source_message_id <> ?`),
+		"C09:%", "C09:"+rootTS).Scan(&replies))
+	assert.GreaterOrEqual(t, replies, 7, "limited runs must drain the thread across runs")
+}
+
+func TestImportDiscoversFirstReplyToOlderMessage(t *testing.T) {
+	f, rootTS, _ := oldThreadWorkspace(t)
+	// The 10-day-old message starts with NO replies: it is archived as a
+	// plain message, not tracked as a thread root.
+	f.mu.Lock()
+	f.conv("C09").findRoot(rootTS).Replies = nil
+	f.mu.Unlock()
+	imp, opts := testImporter(t, f)
+	st := imp.store
+
+	_, err := imp.Import(context.Background(), opts)
+	require.NoError(t, err)
+
+	// First reply arrives long after archiving — outside any short edit
+	// window, inside the 30-day lookback. The lookback-wide rescan must
+	// re-encounter the parent (now reply_count > 0), track it, and fetch.
+	lateReply := ts(200)
+	f.mu.Lock()
+	root := f.conv("C09").findRoot(rootTS)
+	root.Replies = []fakeMsg{{TS: lateReply, ThreadTS: rootTS, User: "UME", Text: "first ever reply"}}
+	f.mu.Unlock()
+
+	_, err = imp.Import(context.Background(), opts)
+	require.NoError(t, err)
+	var n int
+	require.NoError(t, st.DB().QueryRow(st.Rebind(
+		`SELECT COUNT(*) FROM messages WHERE source_message_id = ?`), "C09:"+lateReply).Scan(&n))
+	assert.Equal(t, 1, n, "a first reply to an older message must be discovered without --full")
+}
+
 func TestImportGoneConversationIsSkippedNotFatal(t *testing.T) {
 	f := testWorkspace(t)
 	// Enumerated but unreadable: history answers channel_not_found (observed

@@ -271,8 +271,8 @@ func runRemoveAccountLocal(cmd *cobra.Command, args []string) error {
 			}
 		}
 	case sourceTypeSlack:
-		if teamID, _, ok := splitSlackIdentifier(source.Identifier); ok {
-			if err := slack.DeleteToken(cfg.TokensDir(), teamID); err != nil {
+		if teamID, userID, ok := splitSlackIdentifier(source.Identifier); ok {
+			if err := slack.DeleteToken(cfg.TokensDir(), teamID, userID); err != nil {
 				fmt.Fprintf(os.Stderr,
 					"Warning: could not remove Slack token: %v\n", err,
 				)

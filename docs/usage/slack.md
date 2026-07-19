@@ -41,8 +41,9 @@ msgvault add-slack
 ```
 
 The command validates the token (`auth.test`), stores it at
-`tokens/slack_<team-id>.json` (0600), and registers the workspace as a
-`slack` source identified by `<team-id>:<user-id>`.
+`tokens/slack_<team-id>_<user-id>.json` (0600), and registers the workspace
+as a `slack` source identified by `<team-id>:<user-id>`. Tokens are keyed by
+workspace *and* user, so two accounts in the same workspace coexist.
 
 Provide the token via the interactive prompt, `--token-file <path>`, or the
 `MSGVAULT_SLACK_TOKEN` environment variable:
@@ -84,12 +85,12 @@ for new replies.
 
 Slack's history API never returns thread replies in the main channel stream
 (unless the author chose "also send to channel"), so msgvault tracks each
-thread root and polls it for new replies. Tracking lasts
-`thread_lookback_days` (default 30); a reply posted to an older thread is
-only picked up by a `--full` run.
-
-Edits and reaction changes are caught within the trailing re-scan window
-(one week); older ones likewise need `--full`. Deleted messages simply
+thread root and polls it for new replies. Each incremental sync also
+re-reads the trailing `thread_lookback_days` window (default 30 days),
+which both catches edits and reaction changes and discovers threads whose
+FIRST reply arrived after the root was archived. Replies or edits landing
+on messages older than the lookback are only picked up by a `--full` run.
+Deleted messages simply
 disappear from Slack — your archived copy is kept (archive semantics; nothing
 is ever deleted locally).
 

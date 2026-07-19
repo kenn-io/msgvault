@@ -1061,7 +1061,7 @@ func TestRemoveAccountCmd_SlackRemovesToken(t *testing.T) {
 	require.NoError(s.Close(), "close store")
 
 	require.NoError(slack.SaveToken(tokensDir, "T01", "testers", "UME", "xoxp-test"), "write slack token")
-	tokenPath := filepath.Join(tokensDir, "slack_T01.json")
+	tokenPath := filepath.Join(tokensDir, "slack_T01_UME.json")
 	_, err = os.Stat(tokenPath)
 	require.NoError(err, "slack token file must exist before removal")
 

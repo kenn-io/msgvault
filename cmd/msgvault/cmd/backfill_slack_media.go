@@ -56,7 +56,7 @@ Examples:
 					runErrors = append(runErrors, src.Identifier+": malformed slack identifier")
 					continue
 				}
-				token, terr := slack.LoadToken(cfg.TokensDir(), teamID)
+				token, terr := slack.LoadToken(cfg.TokensDir(), teamID, userID)
 				if terr != nil {
 					runErrors = append(runErrors, fmt.Sprintf("%s: %v", teamID, terr))
 					continue

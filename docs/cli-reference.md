@@ -418,7 +418,7 @@ msgvault backfill-beeper-media --account signal
 Register a [Slack workspace](/usage/slack/) as a `slack` source. Requires a
 user token (`xoxp-…`) from an internal Slack app you create (see the usage
 guide for the two-minute setup and scope list). The token is validated with
-`auth.test` and stored at `tokens/slack_<team-id>.json`.
+`auth.test` and stored at `tokens/slack_<team-id>_<user-id>.json`.
 
 ```bash
 msgvault add-slack

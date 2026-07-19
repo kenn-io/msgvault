@@ -25,12 +25,9 @@ const (
 	// defaultThreadLookback bounds how long a thread root stays tracked for
 	// new replies (see ConvState.Threads).
 	defaultThreadLookback = 30 * 24 * time.Hour
-	// editRescanWindow bounds the head re-walk that catches edits and
-	// reaction changes the ts cursor cannot see (Slack history is keyed by
-	// original ts). Changes older than the window are only repaired by
-	// --full runs (documented limitation).
-	editRescanWindow = 7 * 24 * time.Hour
-	// maxRescanPages caps the edit-rescan walk for pathologically busy channels.
+	// maxRescanPages caps the rescan walk for pathologically busy channels;
+	// conversations busier than maxRescanPages full pages per lookback are
+	// only fully repaired by --full runs (documented limitation).
 	maxRescanPages = 10
 )
 
@@ -368,17 +365,28 @@ func (imp *Importer) backfillConversation(ctx context.Context, cc *convScope, st
 // cursor. History pages arrive NEWEST-first, so the ts cursor only advances
 // once every page of the window has persisted — advancing it per page would
 // let an interruption after page one permanently skip the older pages.
-// A retried window is re-fetched in full (upserts make that idempotent).
+// A window interrupted by --limit or a fetch error checkpoints its page
+// cursor (IncrCursor/IncrMaxTS) instead, so limited runs drain a backlog
+// across runs rather than restarting from the newest page forever.
 func (imp *Importer) incrementalConversation(ctx context.Context, cc *convScope, sum *ImportSummary) error {
 	cs := cc.cs
-	pageCursor := ""
-	maxTS := cs.Cursor
+	pageCursor := cs.IncrCursor
+	maxTS := cs.IncrMaxTS
+	if maxTS == "" {
+		maxTS = cs.Cursor
+	}
+	checkpoint := func() {
+		cs.IncrCursor = pageCursor
+		cs.IncrMaxTS = maxTS
+	}
 	for {
 		if err := ctx.Err(); err != nil {
+			checkpoint()
 			return err
 		}
 		if cc.limitReached() {
-			return nil // cursor not advanced; limited runs re-fetch the window
+			checkpoint() // main cursor not advanced; next run resumes mid-window
+			return nil
 		}
 		page, err := imp.client.historyPageWithLimit(ctx, HistoryParams{
 			ChannelID: cc.channelID,
@@ -387,6 +395,7 @@ func (imp *Importer) incrementalConversation(ctx context.Context, cc *convScope,
 		}, cc.pageBudget())
 		if err != nil {
 			if ctx.Err() != nil {
+				checkpoint()
 				return ctx.Err()
 			}
 			if errors.Is(err, ErrNotFound) {
@@ -398,7 +407,8 @@ func (imp *Importer) incrementalConversation(ctx context.Context, cc *convScope,
 			imp.recordItem(cc.syncID, cc.channelID, "fetch", store.SyncRunItemStatusError, "slack_fetch_error", err)
 			sum.FetchErrors++
 			sum.Errors++
-			return nil // cursor not advanced; next run retries the window
+			checkpoint() // next run retries from this page
+			return nil
 		}
 		for i := range page.Messages {
 			m := &page.Messages[i]
@@ -412,21 +422,25 @@ func (imp *Importer) incrementalConversation(ctx context.Context, cc *convScope,
 		cc.budgetUsed += len(page.Messages)
 		if !page.HasMore || page.NextCursor == "" {
 			cs.Cursor = maxTS // the whole window persisted cleanly
+			cs.IncrCursor, cs.IncrMaxTS = "", ""
 			return nil
 		}
 		pageCursor = page.NextCursor
 	}
 }
 
-// rescanHead re-pages the conversation's trailing edit window, re-upserting
-// messages in place to catch edits and reaction changes (history is keyed by
-// original ts, so the incremental cursor cannot see them). Thread roots
-// re-encountered here refresh their tracking, catching reply activity on
-// recent roots. The window's upper bound is the cursor message INCLUSIVE:
-// with the default exclusive bounds, edits to the newest archived message
-// would stay invisible until a newer message moved the cursor past it.
+// rescanHead re-pages the conversation's trailing thread-lookback window,
+// re-upserting messages in place. It serves two purposes the ts cursor
+// cannot (history is keyed by original ts): catching edits and reaction
+// changes, and DISCOVERING newly-created thread roots — a first reply to an
+// older message never appears in cursor-bounded history, but the re-read
+// parent now carries reply_count > 0 and gets tracked for reply polling.
+// The window matches the thread lookback so root discovery covers the whole
+// tracking period. Its upper bound is the cursor message INCLUSIVE: with
+// the default exclusive bounds, edits to the newest archived message would
+// stay invisible until a newer message moved the cursor past it.
 func (imp *Importer) rescanHead(ctx context.Context, cc *convScope, sum *ImportSummary) error {
-	oldest := fmt.Sprintf("%d.000000", imp.now().Add(-editRescanWindow).Unix())
+	oldest := fmt.Sprintf("%d.000000", imp.now().Add(-threadLookback(cc.opts)).Unix())
 	if cc.cs.Cursor != "" && tsLess(cc.cs.Cursor, oldest) {
 		// Everything newer than the cursor was just fetched by the
 		// incremental pass; nothing older than it has been archived yet.
@@ -503,11 +517,17 @@ func (imp *Importer) syncThreads(ctx context.Context, cc *convScope, sum *Import
 
 // syncThread fetches one thread's replies newer than replyCursor, returning
 // the advanced cursor ("" = do not advance) and whether polling completed
-// (false = fetch failure; the root must survive pruning to retry).
+// (false = fetch failure or --limit stop; the root must survive pruning to
+// finish later). Replies arrive OLDEST-first, so unlike history windows the
+// cursor can advance after every fully-persisted page — a --limit stop
+// mid-thread loses no progress.
 func (imp *Importer) syncThread(ctx context.Context, cc *convScope, root, replyCursor string, sum *ImportSummary) (string, bool, error) {
 	pageCursor := ""
 	maxTS := replyCursor
 	for {
+		if cc.limitReached() {
+			return maxTS, false, nil // pages persisted so far are checkpointed by the caller
+		}
 		page, err := imp.client.repliesPageWithLimit(ctx, cc.channelID, root, pageCursor, replyCursor, cc.pageBudget())
 		if errors.Is(err, ErrNotFound) {
 			// The root was deleted; its archived copy is kept, and there is
@@ -517,12 +537,15 @@ func (imp *Importer) syncThread(ctx context.Context, cc *convScope, root, replyC
 		}
 		if err != nil {
 			if ctx.Err() != nil {
-				return "", false, ctx.Err()
+				return maxTS, false, ctx.Err()
 			}
 			imp.recordItem(cc.syncID, sourceMessageID(cc.channelID, root), "thread", store.SyncRunItemStatusError, "slack_fetch_error", err)
 			sum.FetchErrors++
 			sum.Errors++
-			return "", false, nil // cursor not advanced; next run retries this thread
+			// Oldest-first ordering makes the pages persisted before the
+			// failure a contiguous prefix: advancing to them is safe, and
+			// the next run resumes from there.
+			return maxTS, false, nil
 		}
 		for i := range page.Messages {
 			m := &page.Messages[i]
