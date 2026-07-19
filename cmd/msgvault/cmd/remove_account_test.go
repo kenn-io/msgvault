@@ -24,6 +24,7 @@ import (
 	"go.kenn.io/msgvault/internal/attachmentstore"
 	"go.kenn.io/msgvault/internal/circleback"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/discord"
 	"go.kenn.io/msgvault/internal/microsoft"
 	"go.kenn.io/msgvault/internal/oauth"
 	"go.kenn.io/msgvault/internal/query"
@@ -1006,6 +1007,113 @@ func TestRemoveAccountCmd_TeamsRemovesGraphToken(t *testing.T) {
 
 	_, err = os.Stat(tokenPath)
 	assert.True(t, os.IsNotExist(err), "Graph token file should be removed for teams source")
+}
+
+func TestRemoveAccountCmd_DiscordDeletesTokenOnlyAfterFinalBotReference(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	tmpDir := t.TempDir()
+	st, err := store.Open(filepath.Join(tmpDir, "msgvault.db"))
+	require.NoError(err)
+	require.NoError(st.InitSchema())
+	first, err := st.GetOrCreateSource(sourceTypeDiscord, "113456789012345678")
+	require.NoError(err)
+	second, err := st.GetOrCreateSource(sourceTypeDiscord, "223456789012345678")
+	require.NoError(err)
+	require.NoError(st.UpdateSourceOAuthApp(first.ID, sql.NullString{String: "archive", Valid: true}))
+	require.NoError(st.UpdateSourceOAuthApp(second.ID, sql.NullString{String: "archive", Valid: true}))
+	require.NoError(st.Close())
+
+	manager := discord.NewTokenManager(filepath.Join(tmpDir, "tokens"))
+	require.NoError(manager.Save(discord.TokenRecord{
+		BotUserID: "333456789012345678", BotUsername: "archive-bot",
+		AccessToken: "synthetic-secret", Binding: "archive",
+	}))
+	tokenPath := manager.TokenPath("333456789012345678")
+
+	savedCfg := cfg
+	t.Cleanup(func() { cfg = savedCfg })
+	cfg = &config.Config{HomeDir: tmpDir, Data: config.DataConfig{DataDir: tmpDir}}
+
+	remove := func(guildID string) {
+		root := newTestRootCmd()
+		root.AddCommand(newRemoveAccountLocalTestCmd())
+		root.SetArgs([]string{"remove-account", guildID, "--yes", "--type", sourceTypeDiscord})
+		require.NoError(root.Execute())
+	}
+	remove(first.Identifier)
+	_, err = os.Stat(tokenPath)
+	require.NoError(err, "shared bot token must remain while another guild uses it")
+
+	remove(second.Identifier)
+	_, err = os.Stat(tokenPath)
+	assert.True(os.IsNotExist(err), "final Discord source removal must delete its bot credential")
+}
+
+func TestRemoveAccountCmd_DiscordPreservesTokenDuringActiveSync(t *testing.T) {
+	require := require.New(t)
+	tmpDir := t.TempDir()
+	st, err := store.Open(filepath.Join(tmpDir, "msgvault.db"))
+	require.NoError(err)
+	require.NoError(st.InitSchema())
+	source, err := st.GetOrCreateSource(sourceTypeDiscord, "113456789012345678")
+	require.NoError(err)
+	_, err = st.StartSync(source.ID, "discord")
+	require.NoError(err)
+	require.NoError(st.Close())
+
+	manager := discord.NewTokenManager(filepath.Join(tmpDir, "tokens"))
+	require.NoError(manager.Save(discord.TokenRecord{
+		BotUserID: "333456789012345678", BotUsername: "archive-bot", AccessToken: "synthetic-secret",
+	}))
+	tokenPath := manager.TokenPath("333456789012345678")
+	savedCfg := cfg
+	t.Cleanup(func() { cfg = savedCfg })
+	cfg = &config.Config{HomeDir: tmpDir, Data: config.DataConfig{DataDir: tmpDir}}
+
+	root := newTestRootCmd()
+	root.AddCommand(newRemoveAccountLocalTestCmd())
+	root.SetArgs([]string{"remove-account", source.Identifier, "--yes", "--type", sourceTypeDiscord})
+	require.NoError(root.Execute())
+	_, err = os.Stat(tokenPath)
+	assert.NoError(t, err, "forced removal during an active sync must preserve Discord credentials")
+}
+
+func TestRemoveAccountCmd_DiscordPreservesTokenWhenRemainingBindingCannotResolve(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	tmpDir := t.TempDir()
+	st, err := store.Open(filepath.Join(tmpDir, "msgvault.db"))
+	require.NoError(err)
+	require.NoError(st.InitSchema())
+	removed, err := st.GetOrCreateSource(sourceTypeDiscord, "113456789012345678")
+	require.NoError(err)
+	remaining, err := st.GetOrCreateSource(sourceTypeDiscord, "223456789012345678")
+	require.NoError(err)
+	require.NoError(st.UpdateSourceOAuthApp(removed.ID, sql.NullString{String: "archive", Valid: true}))
+	require.NoError(st.UpdateSourceOAuthApp(remaining.ID, sql.NullString{String: "missing", Valid: true}))
+	require.NoError(st.Close())
+
+	manager := discord.NewTokenManager(filepath.Join(tmpDir, "tokens"))
+	require.NoError(manager.Save(discord.TokenRecord{
+		BotUserID: "333456789012345678", BotUsername: "archive-bot",
+		AccessToken: "synthetic-secret", Binding: "archive",
+	}))
+	tokenPath := manager.TokenPath("333456789012345678")
+	savedCfg := cfg
+	t.Cleanup(func() { cfg = savedCfg })
+	cfg = &config.Config{HomeDir: tmpDir, Data: config.DataConfig{DataDir: tmpDir}}
+
+	readStderr := captureStderr(t)
+	root := newTestRootCmd()
+	root.AddCommand(newRemoveAccountLocalTestCmd())
+	root.SetArgs([]string{"remove-account", removed.Identifier, "--yes", "--type", sourceTypeDiscord})
+	require.NoError(root.Execute())
+	warning := readStderr()
+	assert.Contains(warning, "credential was preserved")
+	assert.NotContains(warning, "synthetic-secret")
+	_, err = os.Stat(tokenPath)
+	assert.NoError(err, "unresolved remaining source must conservatively preserve token")
 }
 
 func TestRemoveAccountCmd_CirclebackRemovesToken(t *testing.T) {

@@ -1317,6 +1317,9 @@ func TestHandleCLIRunBackupSubcommandAdmission(t *testing.T) {
 		{"remove-account still allowed", []string{"remove-account", "alice@example.com", "--yes"}, true},
 		{"pack-attachments allowed", []string{"pack-attachments"}, true},
 		{"repack-attachments allowed", []string{"repack-attachments"}, true},
+		{"add-discord allowed", []string{"add-discord"}, true},
+		{"sync-discord allowed", []string{"sync-discord", "113456789012345678"}, true},
+		{"backfill-discord-media allowed", []string{"backfill-discord-media", "113456789012345678"}, true},
 		{"unpack-attachments rejected", []string{"unpack-attachments"}, false},
 	}
 	for _, tc := range cases {

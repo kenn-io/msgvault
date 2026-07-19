@@ -70,6 +70,11 @@ var buildCacheSubprocessForRun = func(ctx context.Context, fullRebuild bool) err
 	return buildCacheSubprocess(ctx, fullRebuild, true)
 }
 
+var (
+	importDiscordSourceForScheduledRun  = importDiscordSource
+	rebuildCacheAfterScheduledSourceRun = rebuildCacheAfterScheduledSync
+)
+
 type serveRuntimeAPIServer interface {
 	Shutdown(ctx context.Context) error
 }
@@ -1254,7 +1259,7 @@ func (a *schedulerAdapter) Status() []api.AccountStatus {
 }
 
 // runScheduledSync performs a sync for a scheduled account. It resolves
-// ALL syncable source rows for the identifier (gmail, imap, teams) and
+// ALL syncable source rows for the identifier (gmail, imap, teams, discord) and
 // dispatches each in turn. When no source row matches, it falls back to
 // the Gmail token-first workflow (tokens uploaded via API before the
 // source row exists) so that legacy deployments keep working.
@@ -1293,7 +1298,7 @@ func runScheduledSync(ctx context.Context, identifier string, s *store.Store, ge
 				"duration", time.Since(startTime),
 			)
 		}
-		return errors.Join(syncErr, rebuildCacheAfterScheduledSync(context.WithoutCancel(ctx), identifier))
+		return errors.Join(syncErr, rebuildCacheAfterScheduledSourceRun(context.WithoutCancel(ctx), identifier))
 	}
 
 	var errs []error
@@ -1315,6 +1320,10 @@ func runScheduledSync(ctx context.Context, identifier string, s *store.Store, ge
 			summary, err = runScheduledIMAPSync(ctx, src, s)
 		case sourceTypeTeams:
 			err = runScheduledTeamsSync(ctx, src, s)
+		case sourceTypeDiscord:
+			_, err = importDiscordSourceForScheduledRun(
+				ctx, s, src, defaultDiscordCommandDeps(), false, time.Time{}, nil,
+			)
 		default:
 			err = fmt.Errorf("source %q has type %q which is not supported by the daemon scheduler", identifier, sourceType)
 		}
@@ -1340,7 +1349,7 @@ func runScheduledSync(ctx context.Context, identifier string, s *store.Store, ge
 	}
 
 	// Rebuild cache once after all sources, regardless of per-source errors.
-	if err := rebuildCacheAfterScheduledSync(context.WithoutCancel(ctx), identifier); err != nil {
+	if err := rebuildCacheAfterScheduledSourceRun(context.WithoutCancel(ctx), identifier); err != nil {
 		errs = append(errs, err)
 	}
 
@@ -1349,7 +1358,7 @@ func runScheduledSync(ctx context.Context, identifier string, s *store.Store, ge
 
 // findScheduledSyncSources resolves ALL syncable source rows for a
 // scheduler identifier. Returns at most one row per syncable type
-// (gmail, imap, teams), in that stable order. Non-syncable types
+// (gmail, imap, teams, discord), in that stable order. Non-syncable types
 // (mbox, apple-mail, etc.) are skipped.
 //
 // Returns an empty slice (not nil) when no syncable source matches —
@@ -1363,19 +1372,25 @@ func findScheduledSyncSources(s *store.Store, identifier string) ([]*store.Sourc
 	}
 
 	// Collect first occurrence of each syncable type.
-	seen := make(map[string]*store.Source, 3)
+	seen := make(map[string]*store.Source, 4)
 	for _, src := range rows {
 		switch src.SourceType {
 		case sourceTypeGmail, sourceTypeIMAP, sourceTypeTeams:
 			if _, dup := seen[src.SourceType]; !dup {
 				seen[src.SourceType] = src
 			}
+		case sourceTypeDiscord:
+			// Guild display names are not stable or unique. Scheduled Discord
+			// jobs must use the exact guild snowflake as their key.
+			if src.Identifier == identifier {
+				seen[src.SourceType] = src
+			}
 		}
 	}
 
-	// Return in stable order: gmail, imap, teams.
+	// Return in stable order: gmail, imap, teams, discord.
 	var result []*store.Source
-	for _, t := range []string{sourceTypeGmail, sourceTypeIMAP, sourceTypeTeams} {
+	for _, t := range []string{sourceTypeGmail, sourceTypeIMAP, sourceTypeTeams, sourceTypeDiscord} {
 		if src, ok := seen[t]; ok {
 			result = append(result, src)
 		}

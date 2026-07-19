@@ -15,6 +15,18 @@ type backfillDiscordMediaOptions struct {
 	OnlyIncomplete bool
 }
 
+func newBackfillDiscordMediaCmd(deps discordCommandDeps) *cobra.Command {
+	cmd := newBackfillDiscordMediaLocalCmd(deps)
+	runLocal := cmd.RunE
+	cmd.RunE = func(cmd *cobra.Command, args []string) error {
+		if !isDaemonCLISubprocess() {
+			return runDaemonCLICommandHTTPFromCobra(cmd, args)
+		}
+		return runLocal(cmd, args)
+	}
+	return cmd
+}
+
 type discordMediaBackfillSummary struct {
 	MessagesProcessed int64
 	Downloaded        int64
@@ -210,5 +222,5 @@ func writeDiscordMediaWarnings(out io.Writer, warnings map[discordMediaWarningKi
 }
 
 func init() {
-	rootCmd.AddCommand(newBackfillDiscordMediaLocalCmd(defaultDiscordCommandDeps()))
+	rootCmd.AddCommand(newBackfillDiscordMediaCmd(defaultDiscordCommandDeps()))
 }

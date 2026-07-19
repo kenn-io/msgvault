@@ -14,6 +14,7 @@ import (
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/beeper"
 	"go.kenn.io/msgvault/internal/circleback"
+	"go.kenn.io/msgvault/internal/discord"
 	imaplib "go.kenn.io/msgvault/internal/imap"
 	"go.kenn.io/msgvault/internal/microsoft"
 	"go.kenn.io/msgvault/internal/oauth"
@@ -177,6 +178,21 @@ func runRemoveAccountLocal(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("collect attachment paths: %w", err)
 	}
 
+	var discordCredential *discord.TokenRecord
+	var discordTokens *discord.TokenManager
+	if source.SourceType == sourceTypeDiscord {
+		discordTokens = discord.NewTokenManager(cfg.TokensDir())
+		record, resolveErr := discordTokens.Resolve(sourceOAuthApp(source))
+		if resolveErr != nil {
+			fmt.Fprintf(os.Stderr,
+				"Warning: could not resolve Discord credential before source removal; token files will be preserved: %v\n",
+				resolveErr,
+			)
+		} else {
+			discordCredential = &record
+		}
+	}
+
 	isSQLite := !store.IsPostgresURL(cfg.DatabaseDSN())
 	var cacheLock *flock.Flock
 	if isSQLite {
@@ -253,6 +269,8 @@ func runRemoveAccountLocal(cmd *cobra.Command, args []string) error {
 				"Warning: could not remove Microsoft Graph token: %v\n", err,
 			)
 		}
+	case sourceTypeDiscord:
+		removeDiscordCredentialAfterCascade(s, discordTokens, discordCredential, hadActiveSync)
 	case sourceTypeBeeper:
 		// The token is shared by every Beeper network-account source; only
 		// remove it when the last one is gone. The source row was already
@@ -343,6 +361,45 @@ func runRemoveAccountLocal(cmd *cobra.Command, args []string) error {
 		)
 	}
 	return nil
+}
+
+func removeDiscordCredentialAfterCascade(
+	s *store.Store,
+	manager *discord.TokenManager,
+	removedCredential *discord.TokenRecord,
+	hadActiveSync bool,
+) {
+	if manager == nil || removedCredential == nil {
+		return
+	}
+	if hadActiveSync {
+		fmt.Fprintln(os.Stderr,
+			"Warning: Discord credential was preserved because the removed source had an active sync")
+		return
+	}
+	remaining, err := s.ListSources(sourceTypeDiscord)
+	if err != nil {
+		fmt.Fprintf(os.Stderr,
+			"Warning: could not check remaining Discord sources; credential was preserved: %v\n", err)
+		return
+	}
+	for _, source := range remaining {
+		record, resolveErr := manager.Resolve(sourceOAuthApp(source))
+		if resolveErr != nil {
+			fmt.Fprintf(os.Stderr,
+				"Warning: could not resolve remaining Discord source %s; credential was preserved: %v\n",
+				source.Identifier, resolveErr,
+			)
+			return
+		}
+		if record.BotUserID == removedCredential.BotUserID {
+			return
+		}
+	}
+	if err := manager.Delete(removedCredential.BotUserID); err != nil {
+		fmt.Fprintf(os.Stderr,
+			"Warning: could not remove Discord credential: %v\n", err)
+	}
 }
 
 // deleteOrphanedAttachmentFiles removes files in paths that are no longer

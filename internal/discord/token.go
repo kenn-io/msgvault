@@ -212,6 +212,56 @@ func (m *TokenManager) Resolve(binding string) (TokenRecord, error) {
 	return TokenRecord{}, fmt.Errorf("%w for binding %q", ErrTokenNotFound, binding)
 }
 
+// Delete removes the credential for botUserID while holding the same
+// cross-process lock used by Save. Invalid IDs and malformed token stores fail
+// closed so account removal cannot delete an unintended path or guess through
+// ambiguous credential state.
+func (m *TokenManager) Delete(botUserID string) (retErr error) {
+	value, err := ParseSnowflake(botUserID)
+	if err != nil || value == 0 {
+		return errors.New("discord bot credential has an invalid bot user ID")
+	}
+	if _, err := os.Stat(m.tokensDir); err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("inspect Discord tokens directory: %w", err)
+	}
+
+	storeLock := flock.New(filepath.Join(m.tokensDir, ".discord-token.lock"), flock.SetPermissions(0600))
+	if err := storeLock.Lock(); err != nil {
+		return fmt.Errorf("lock Discord token store: %w", err)
+	}
+	defer func() {
+		if err := storeLock.Unlock(); err != nil && retErr == nil {
+			retErr = fmt.Errorf("unlock Discord token store: %w", err)
+		}
+	}()
+
+	records, err := m.List()
+	if err != nil {
+		return err
+	}
+	found := false
+	for _, record := range records {
+		if record.BotUserID == botUserID {
+			found = true
+			break
+		}
+	}
+	if !found {
+		return nil
+	}
+	path := m.TokenPath(botUserID)
+	if filepath.Dir(path) != filepath.Clean(m.tokensDir) || filepath.Base(path) != "discord_"+botUserID+".json" {
+		return errors.New("discord bot credential path failed validation")
+	}
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("remove Discord bot credential: %w", err)
+	}
+	return nil
+}
+
 // Promote assigns a label to an unnamed credential. Promotion is idempotent
 // when the same bot already has the requested label.
 func (m *TokenManager) Promote(botUserID, binding string) (TokenRecord, error) {

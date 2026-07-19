@@ -5,11 +5,13 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"slices"
 	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
+	"go.kenn.io/msgvault/internal/clirun"
 	"go.kenn.io/msgvault/internal/discord"
 	"go.kenn.io/msgvault/internal/store"
 )
@@ -17,6 +19,29 @@ import (
 type addDiscordOptions struct {
 	OAuthApp string
 	GuildIDs []string
+}
+
+func newAddDiscordCmd(deps discordCommandDeps) *cobra.Command {
+	cmd := newAddDiscordLocalCmd(deps)
+	runLocal := cmd.RunE
+	cmd.RunE = func(cmd *cobra.Command, args []string) error {
+		if !isDaemonCLISubprocess() {
+			token, err := readDiscordBotToken(cmd.InOrStdin())
+			if err != nil {
+				return err
+			}
+			return runDaemonCLICommandHTTPFromCobraWithEnv(cmd, args, map[string]string{
+				clirun.EnvDiscordToken: strings.TrimSpace(token),
+			})
+		}
+		token := strings.TrimSpace(os.Getenv(clirun.EnvDiscordToken))
+		if token == "" {
+			return errors.New("missing Discord bot token in daemon subprocess")
+		}
+		cmd.SetIn(strings.NewReader(token))
+		return runLocal(cmd, args)
+	}
+	return cmd
 }
 
 func newAddDiscordLocalCmd(deps discordCommandDeps) *cobra.Command {
@@ -229,5 +254,5 @@ func discordDiagnostic(err error) string {
 }
 
 func init() {
-	rootCmd.AddCommand(newAddDiscordLocalCmd(defaultDiscordCommandDeps()))
+	rootCmd.AddCommand(newAddDiscordCmd(defaultDiscordCommandDeps()))
 }

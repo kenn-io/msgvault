@@ -12,7 +12,9 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
+	"github.com/gofrs/flock"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -337,4 +339,45 @@ func TestTokenManagerValidatesRecordsBeforeWriting(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestTokenManagerDeleteRemovesOnlyValidatedBotCredential(t *testing.T) {
+	manager := NewTokenManager(t.TempDir())
+	first := TokenRecord{BotUserID: testBotID1, BotUsername: "first-bot", AccessToken: "token-one", Binding: "work"}
+	second := TokenRecord{BotUserID: testBotID2, BotUsername: "second-bot", AccessToken: "token-two", Binding: "personal"}
+	requireCredentialSuccess(t, manager.Save(first))
+	requireCredentialSuccess(t, manager.Save(second))
+
+	require.NoError(t, manager.Delete(first.BotUserID))
+	_, err := os.Stat(manager.TokenPath(first.BotUserID))
+	assert.True(t, os.IsNotExist(err))
+	got, err := manager.Resolve(second.Binding)
+	require.NoError(t, err)
+	assertTokenRecord(t, second, got)
+
+	err = manager.Delete("../escape")
+	require.Error(t, err)
+	_, statErr := os.Stat(manager.TokenPath(second.BotUserID))
+	assert.NoError(t, statErr, "invalid deletion must preserve other credentials")
+}
+
+func TestTokenManagerDeleteUsesCredentialStoreLock(t *testing.T) {
+	dir := t.TempDir()
+	manager := NewTokenManager(dir)
+	requireCredentialSuccess(t, manager.Save(TokenRecord{
+		BotUserID: testBotID1, BotUsername: "archive-bot", AccessToken: "token-one",
+	}))
+
+	lock := flock.New(filepath.Join(dir, ".discord-token.lock"), flock.SetPermissions(0600))
+	require.NoError(t, lock.Lock())
+	done := make(chan error, 1)
+	go func() { done <- manager.Delete(testBotID1) }()
+
+	select {
+	case err := <-done:
+		require.FailNow(t, "credential deletion bypassed store lock", "error: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+	require.NoError(t, lock.Unlock())
+	require.NoError(t, <-done)
 }

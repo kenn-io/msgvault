@@ -18,6 +18,18 @@ type syncDiscordOptions struct {
 	After string
 }
 
+func newSyncDiscordCmd(deps discordCommandDeps) *cobra.Command {
+	cmd := newSyncDiscordLocalCmd(deps)
+	runLocal := cmd.RunE
+	cmd.RunE = func(cmd *cobra.Command, args []string) error {
+		if !isDaemonCLISubprocess() {
+			return runDaemonCLICommandHTTPFromCobra(cmd, args)
+		}
+		return runLocal(cmd, args)
+	}
+	return cmd
+}
+
 func newSyncDiscordLocalCmd(deps discordCommandDeps) *cobra.Command {
 	opts := syncDiscordOptions{}
 	cmd := &cobra.Command{
@@ -152,5 +164,5 @@ func importDiscordSource(
 }
 
 func init() {
-	rootCmd.AddCommand(newSyncDiscordLocalCmd(defaultDiscordCommandDeps()))
+	rootCmd.AddCommand(newSyncDiscordCmd(defaultDiscordCommandDeps()))
 }
