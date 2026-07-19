@@ -67,6 +67,88 @@ func TestThreadPredicates(t *testing.T) {
 	assert.False(t, plain.IsThreadReply())
 }
 
+func TestPayloadTextExtraction(t *testing.T) {
+	lookup := func(string) string { return "" }
+
+	t.Run("fallback wins per attachment", func(t *testing.T) {
+		m := Message{Attachments: []LegacyAttachment{
+			{Fallback: "Build #42 failed", Title: "ignored", Text: "ignored too"},
+		}}
+		assert.Equal(t, "Build #42 failed", payloadText(&m, lookup))
+	})
+
+	t.Run("composed parts when no fallback", func(t *testing.T) {
+		m := Message{Attachments: []LegacyAttachment{{
+			Pretext: "Deploy finished",
+			Title:   "api-server v1.2.3",
+			Text:    "all checks green",
+			Fields: []struct {
+				Title string `json:"title"`
+				Value string `json:"value"`
+			}{{Title: "Env", Value: "prod"}},
+			Footer: "deploybot",
+		}}}
+		assert.Equal(t, "Deploy finished\napi-server v1.2.3\nall checks green\nEnv: prod\ndeploybot",
+			payloadText(&m, lookup))
+	})
+
+	t.Run("shape-shifting block elements decode (live regression)", func(t *testing.T) {
+		// Observed live: actions-block buttons carry text as an OBJECT while
+		// context elements carry it as a string; both must decode, and image
+		// elements (no text) must not error.
+		blob := `{"type":"message","ts":"1.000001","bot_id":"B1","blocks":[
+			{"type":"actions","elements":[{"type":"button","text":{"type":"plain_text","text":"Approve"}}]},
+			{"type":"context","elements":[{"type":"mrkdwn","text":"requested by alice"},{"type":"image","image_url":"https://x.example/i.png","alt_text":"pic"}]}
+		]}`
+		var m Message
+		require.NoError(t, json.Unmarshal([]byte(blob), &m))
+		assert.Equal(t, "requested by alice", payloadText(&m, lookup),
+			"context text extracted; button labels and images are not content")
+	})
+
+	t.Run("block kit section header context", func(t *testing.T) {
+		m := Message{Blocks: []Block{
+			{Type: "header", Text: &BlockText{Type: "plain_text", Text: "Alert!"}},
+			{Type: "section", Text: &BlockText{Type: "mrkdwn", Text: "disk *full* on <https://host.example|host>"},
+				Fields: []BlockText{{Type: "mrkdwn", Text: "Sev: 1"}}},
+			{Type: "context", Elements: []BlockElement{{Type: "mrkdwn", Text: "triggered 5m ago"}}},
+			{Type: "rich_text"}, // duplicates message text: never extracted
+			{Type: "divider"},
+		}}
+		assert.Equal(t, "Alert!\ndisk *full* on host (https://host.example)\nSev: 1\ntriggered 5m ago",
+			payloadText(&m, lookup))
+	})
+}
+
+func TestMapMessagePayloadRules(t *testing.T) {
+	lookup := func(string) string { return "" }
+	unfurl := []LegacyAttachment{{Fallback: "Some Page Title — example.com"}}
+
+	t.Run("bot message with empty text gets payload body", func(t *testing.T) {
+		m := Message{TS: "1.000001", BotID: "B1", Attachments: unfurl}
+		_, text := mapMessage(&m, "C1", 1, 1, false, lookup)
+		assert.Equal(t, "Some Page Title — example.com", text)
+	})
+
+	t.Run("bot message with text appends payload", func(t *testing.T) {
+		m := Message{TS: "1.000001", BotID: "B1", Text: "heads up", Attachments: unfurl}
+		_, text := mapMessage(&m, "C1", 1, 1, false, lookup)
+		assert.Equal(t, "heads up\nSome Page Title — example.com", text)
+	})
+
+	t.Run("user message with text ignores unfurl attachments", func(t *testing.T) {
+		m := Message{TS: "1.000001", User: "U1", Text: "check https://example.com", Attachments: unfurl}
+		_, text := mapMessage(&m, "C1", 1, 1, false, lookup)
+		assert.Equal(t, "check https://example.com", text)
+	})
+
+	t.Run("files placeholder still applies when no payload", func(t *testing.T) {
+		m := Message{TS: "1.000001", User: "U1", Files: []File{{Name: "a.png"}}}
+		_, text := mapMessage(&m, "C1", 1, 1, false, lookup)
+		assert.Equal(t, "[file: a.png]", text)
+	})
+}
+
 func TestConversationTypeAndTitle(t *testing.T) {
 	lookup := func(id string) string {
 		if id == "UALICE" {

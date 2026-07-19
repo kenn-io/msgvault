@@ -50,6 +50,10 @@ func testWorkspace(t *testing.T) *fakeSlack {
 	general.Msgs[4].User = ""
 	general.Msgs[4].BotID = "B042"
 	general.Msgs[4].Username = "deploybot"
+	general.Msgs[4].Text = ""
+	general.Msgs[4].LegacyAttachments = []map[string]any{
+		{"fallback": "Build #42 failed on main"},
+	}
 	general.Msgs[5].Replies = []fakeMsg{
 		{TS: ts(100), ThreadTS: general.Msgs[5].TS, User: "UBOB", Text: "reply one"},
 		{TS: ts(101), ThreadTS: general.Msgs[5].TS, User: "UME", Text: "reply two"},
@@ -171,6 +175,13 @@ func TestImportEndToEnd(t *testing.T) {
 		SELECT p.display_name FROM messages m JOIN participants p ON p.id = m.sender_id
 		WHERE m.source_message_id = ?`), "C01:"+ts(4)).Scan(&botSender))
 	assert.Equal(t, "deploybot", botSender)
+	// The bot message's content lives in a legacy attachment (empty text);
+	// its fallback must be the searchable body.
+	var botBody string
+	require.NoError(t, st.DB().QueryRow(st.Rebind(`
+		SELECT mb.body_text FROM message_bodies mb
+		JOIN messages m ON m.id = mb.message_id WHERE m.source_message_id = ?`), "C01:"+ts(4)).Scan(&botBody))
+	assert.Equal(t, "Build #42 failed on main", botBody)
 	var rawFormat string
 	require.NoError(t, st.DB().QueryRow(st.Rebind(`
 		SELECT mr.raw_format FROM message_raw mr JOIN messages m ON m.id = mr.message_id

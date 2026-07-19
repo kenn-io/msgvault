@@ -23,6 +23,9 @@ type fakeMsg struct {
 	Edited    bool
 	Reactions []map[string]any
 	Files     []map[string]any
+	// LegacyAttachments/Blocks emit as "attachments"/"blocks" (bot payloads).
+	LegacyAttachments []map[string]any
+	Blocks            []map[string]any
 	// Replies holds the thread's replies (oldest→newest) when this message
 	// is a root. Reply fakeMsgs must carry ThreadTS = root TS.
 	Replies []fakeMsg
@@ -56,6 +59,12 @@ func (m *fakeMsg) toJSON() map[string]any {
 	}
 	if len(m.Files) > 0 {
 		out["files"] = m.Files
+	}
+	if len(m.LegacyAttachments) > 0 {
+		out["attachments"] = m.LegacyAttachments
+	}
+	if len(m.Blocks) > 0 {
+		out["blocks"] = m.Blocks
 	}
 	return out
 }

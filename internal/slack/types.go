@@ -116,6 +116,73 @@ type Edited struct {
 	TS   string `json:"ts"`
 }
 
+// LegacyAttachment is Slack's pre-Block-Kit rich payload ("secondary
+// attachment"). Bots and integrations often carry their entire content here
+// with an empty message text; user messages get them as link unfurls.
+type LegacyAttachment struct {
+	Fallback string `json:"fallback"` // required plain-text summary
+	Pretext  string `json:"pretext"`
+	Title    string `json:"title"`
+	Text     string `json:"text"`
+	Fields   []struct {
+		Title string `json:"title"`
+		Value string `json:"value"`
+	} `json:"fields"`
+	Footer string `json:"footer"`
+}
+
+// Block is a Block Kit layout block, modelled only deeply enough to extract
+// searchable text: section/header text, section fields, and context
+// elements. rich_text blocks are deliberately not extracted — they duplicate
+// the message's own text field.
+type Block struct {
+	Type     string         `json:"type"`
+	Text     *BlockText     `json:"text"`
+	Fields   []BlockText    `json:"fields"`
+	Elements []BlockElement `json:"elements"`
+}
+
+// BlockText is a Block Kit text object (plain_text or mrkdwn).
+type BlockText struct {
+	Type string `json:"type"`
+	Text string `json:"text"`
+}
+
+// BlockElement is one entry of a block's elements array. Its text field is
+// shape-shifting across block kinds (observed live): a plain string on
+// context mrkdwn/plain_text elements, a nested text object on actions-block
+// buttons, and absent on rich_text/image elements. All shapes must decode —
+// a strict model here made conversations.history undecodable.
+type BlockElement struct {
+	Type string
+	Text string
+}
+
+// UnmarshalJSON decodes a BlockElement tolerantly (see type comment).
+func (e *BlockElement) UnmarshalJSON(b []byte) error {
+	var probe struct {
+		Type string          `json:"type"`
+		Text json.RawMessage `json:"text"`
+	}
+	if err := json.Unmarshal(b, &probe); err != nil {
+		return err
+	}
+	e.Type = probe.Type
+	if len(probe.Text) == 0 {
+		return nil
+	}
+	var s string
+	if json.Unmarshal(probe.Text, &s) == nil {
+		e.Text = s
+		return nil
+	}
+	var bt BlockText
+	if json.Unmarshal(probe.Text, &bt) == nil {
+		e.Text = bt.Text
+	}
+	return nil
+}
+
 // Message is one message from conversations.history / conversations.replies.
 type Message struct {
 	Type        string     `json:"type"`    // "message"
@@ -131,6 +198,10 @@ type Message struct {
 	LatestReply string     `json:"latest_reply"`
 	Reactions   []Reaction `json:"reactions"`
 	Files       []File     `json:"files"`
+	// Attachments are legacy rich payloads; Blocks are Block Kit layout
+	// blocks. Both feed FTS via payloadText (see mapping.go).
+	Attachments []LegacyAttachment `json:"attachments"`
+	Blocks      []Block            `json:"blocks"`
 	// Raw holds the exact original JSON for this message, captured during
 	// decode (see UnmarshalJSON) and archived verbatim so no API field is
 	// lost to our partial struct modelling.

@@ -91,6 +91,51 @@ func placeholderBody(m *Message) string {
 	return ""
 }
 
+// payloadText extracts searchable text from legacy attachments and Block Kit
+// blocks — where bots and integrations often carry their entire content
+// while the message text stays empty. Per attachment, the mandatory fallback
+// summary wins; otherwise the individual parts are composed. rich_text
+// blocks are skipped (they duplicate the message text field).
+func payloadText(m *Message, lookupName func(string) string) string {
+	var parts []string
+	add := func(s string) {
+		if s = strings.TrimSpace(renderText(s, lookupName)); s != "" {
+			parts = append(parts, s)
+		}
+	}
+	for i := range m.Attachments {
+		a := &m.Attachments[i]
+		if a.Fallback != "" {
+			add(a.Fallback)
+			continue
+		}
+		add(a.Pretext)
+		add(a.Title)
+		add(a.Text)
+		for _, f := range a.Fields {
+			add(strings.TrimSpace(f.Title + ": " + f.Value))
+		}
+		add(a.Footer)
+	}
+	for i := range m.Blocks {
+		b := &m.Blocks[i]
+		switch b.Type {
+		case "section", "header":
+			if b.Text != nil {
+				add(b.Text.Text)
+			}
+			for _, f := range b.Fields {
+				add(f.Text)
+			}
+		case "context":
+			for _, e := range b.Elements {
+				add(e.Text)
+			}
+		}
+	}
+	return strings.Join(parts, "\n")
+}
+
 func snippet(text string) string {
 	r := []rune(text)
 	if len(r) > 100 {
@@ -101,9 +146,23 @@ func snippet(text string) string {
 
 // mapMessage converts a Slack Message into a store.Message plus its rendered
 // plain-text body. isFromMe is decided by the caller (archiving user's ID).
+//
+// Legacy-attachment/block text is appended for bot-authored messages and
+// used as the body for text-less ones. User messages WITH text keep only
+// that text: their attachments are link unfurls, and indexing page previews
+// would pollute FTS with content the person never wrote.
 func mapMessage(m *Message, channelID string, conversationID, storeSourceID int64, isFromMe bool, lookupName func(string) string) (store.Message, string) {
-	text := renderText(m.Text, lookupName)
-	if strings.TrimSpace(text) == "" {
+	text := strings.TrimSpace(renderText(m.Text, lookupName))
+	if m.BotID != "" || text == "" {
+		if extra := payloadText(m, lookupName); extra != "" {
+			if text == "" {
+				text = extra
+			} else {
+				text += "\n" + extra
+			}
+		}
+	}
+	if text == "" {
 		text = placeholderBody(m)
 	}
 	t := tsTime(m.TS)
