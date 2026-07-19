@@ -243,6 +243,123 @@ func TestMigrateSourceMessageIDClearsTombstoneOnExistingScopedRow(t *testing.T) 
 	assertSourceMessageIDNotDeleted(t, st, source.ID, "chat:19:x@thread.v2:m1")
 }
 
+func TestMessageSourceIDsInSnowflakeInterval(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource("discord", "123456789012345678")
+	require.NoError(err)
+	conversationID, err := st.EnsureConversationWithType(
+		source.ID, "234567890123456789", "channel", "general",
+	)
+	require.NoError(err)
+
+	for _, sourceMessageID := range []string{
+		"99",
+		"100",
+		"101",
+		"9223372036854775807",
+		"9223372036854775808",
+		"10000000000000000000",
+		"1000000000000000000a",
+		"09223372036854775808",
+		"18446744073709551615",
+		"18446744073709551616",
+	} {
+		insertStoreTestMessage(t, st, source.ID, conversationID, sourceMessageID)
+	}
+
+	otherConversationID, err := st.EnsureConversationWithType(
+		source.ID, "234567890123456790", "channel", "random",
+	)
+	require.NoError(err)
+	insertStoreTestMessage(t, st, source.ID, otherConversationID, "10000000000000000001")
+
+	otherSource, err := st.GetOrCreateSource("discord", "999999999999999999")
+	require.NoError(err)
+	otherSourceConversationID, err := st.EnsureConversationWithType(
+		otherSource.ID, "234567890123456789", "channel", "general",
+	)
+	require.NoError(err)
+	insertStoreTestMessage(t, st, otherSource.ID, otherSourceConversationID, "10000000000000000002")
+
+	got, err := st.MessageSourceIDsInSnowflakeInterval(
+		source.ID, conversationID, "9223372036854775807", "18446744073709551615",
+	)
+	require.NoError(err)
+	assert.Equal([]string{
+		"9223372036854775808",
+		"10000000000000000000",
+		"18446744073709551615",
+	}, got)
+
+	adjacent, err := st.MessageSourceIDsInSnowflakeInterval(source.ID, conversationID, "99", "100")
+	require.NoError(err)
+	assert.Equal([]string{"100"}, adjacent)
+
+	zeroPadded, err := st.MessageSourceIDsInSnowflakeInterval(
+		source.ID, conversationID, "0009223372036854775807", "00018446744073709551615",
+	)
+	require.NoError(err)
+	assert.Equal(got, zeroPadded)
+}
+
+func TestMessageSourceIDsInSnowflakeIntervalRejectsUnsafeBounds(t *testing.T) {
+	st := testutil.NewTestStore(t)
+
+	for _, tc := range []struct {
+		name  string
+		lower string
+		upper string
+	}{
+		{name: "empty lower", lower: "", upper: "100"},
+		{name: "empty upper", lower: "99", upper: ""},
+		{name: "malformed lower", lower: "9x", upper: "100"},
+		{name: "malformed upper", lower: "99", upper: "10_0"},
+		{name: "reversed", lower: "101", upper: "100"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require := require.New(t)
+			_, err := st.MessageSourceIDsInSnowflakeInterval(1, 1, tc.lower, tc.upper)
+			require.Error(err)
+		})
+	}
+}
+
+func TestClearMessageDeletedFromSource(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource("discord", "123456789012345678")
+	require.NoError(err)
+	conversationID, err := st.EnsureConversationWithType(
+		source.ID, "234567890123456789", "channel", "general",
+	)
+	require.NoError(err)
+	insertStoreTestMessage(t, st, source.ID, conversationID, "345678901234567890")
+	require.NoError(st.MarkMessageDeleted(source.ID, "345678901234567890"))
+
+	otherSource, err := st.GetOrCreateSource("discord", "999999999999999999")
+	require.NoError(err)
+	otherConversationID, err := st.EnsureConversationWithType(
+		otherSource.ID, "888888888888888888", "channel", "other",
+	)
+	require.NoError(err)
+	insertStoreTestMessage(t, st, otherSource.ID, otherConversationID, "345678901234567890")
+	require.NoError(st.MarkMessageDeleted(otherSource.ID, "345678901234567890"))
+
+	require.NoError(st.ClearMessageDeletedFromSource(source.ID, "345678901234567890"))
+	assertSourceMessageIDNotDeleted(t, st, source.ID, "345678901234567890")
+
+	var otherDeletedAt sql.NullTime
+	err = st.DB().QueryRow(
+		st.Rebind(`SELECT deleted_from_source_at FROM messages WHERE source_id = ? AND source_message_id = ?`),
+		otherSource.ID, "345678901234567890",
+	).Scan(&otherDeletedAt)
+	require.NoError(err)
+	assert.True(otherDeletedAt.Valid)
+}
+
 func insertStoreTestMessage(t *testing.T, st *store.Store, sourceID, convID int64, sourceMessageID string) int64 {
 	t.Helper()
 	msg := &store.Message{

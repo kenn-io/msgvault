@@ -112,6 +112,91 @@ func (s *Store) MessageExistsBatch(sourceID int64, sourceMessageIDs []string) (m
 	return result, nil
 }
 
+// MessageSourceIDsInSnowflakeInterval returns canonical decimal source IDs in
+// the exact numeric interval (lower, upper] for one source and conversation.
+// Snowflakes are compared as decimal strings so values above signed int64 are
+// ordered correctly on both SQLite and PostgreSQL.
+func (s *Store) MessageSourceIDsInSnowflakeInterval(
+	sourceID, conversationID int64, lower, upper string,
+) ([]string, error) {
+	canonicalLower, err := canonicalDecimal(lower)
+	if err != nil {
+		return nil, fmt.Errorf("invalid lower snowflake: %w", err)
+	}
+	canonicalUpper, err := canonicalDecimal(upper)
+	if err != nil {
+		return nil, fmt.Errorf("invalid upper snowflake: %w", err)
+	}
+	if compareCanonicalDecimals(canonicalLower, canonicalUpper) > 0 {
+		return nil, errors.New("invalid snowflake interval: lower exceeds upper")
+	}
+
+	lowerLength := len(canonicalLower)
+	upperLength := len(canonicalUpper)
+	rows, err := s.db.Query(`
+		SELECT source_message_id
+		FROM messages
+		WHERE source_id = ?
+		  AND conversation_id = ?
+		  AND (
+		    LENGTH(source_message_id) > ?
+		    OR (LENGTH(source_message_id) = ? AND source_message_id > ?)
+		  )
+		  AND (
+		    LENGTH(source_message_id) < ?
+		    OR (LENGTH(source_message_id) = ? AND source_message_id <= ?)
+		  )
+		ORDER BY LENGTH(source_message_id), source_message_id
+	`, sourceID, conversationID,
+		lowerLength, lowerLength, canonicalLower,
+		upperLength, upperLength, canonicalUpper,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	var sourceMessageIDs []string
+	for rows.Next() {
+		var sourceMessageID string
+		if err := rows.Scan(&sourceMessageID); err != nil {
+			return nil, err
+		}
+		canonical, err := canonicalDecimal(sourceMessageID)
+		if err != nil || canonical != sourceMessageID {
+			continue
+		}
+		sourceMessageIDs = append(sourceMessageIDs, sourceMessageID)
+	}
+	return sourceMessageIDs, rows.Err()
+}
+
+func canonicalDecimal(value string) (string, error) {
+	if value == "" {
+		return "", errors.New("value is empty")
+	}
+	for i := range len(value) {
+		if value[i] < '0' || value[i] > '9' {
+			return "", errors.New("value must contain only decimal digits")
+		}
+	}
+	canonical := strings.TrimLeft(value, "0")
+	if canonical == "" {
+		return "0", nil
+	}
+	return canonical, nil
+}
+
+func compareCanonicalDecimals(left, right string) int {
+	if len(left) < len(right) {
+		return -1
+	}
+	if len(left) > len(right) {
+		return 1
+	}
+	return strings.Compare(left, right)
+}
+
 // MessageMetadataBatch looks up archive IDs and provider metadata for messages
 // from one source. Importers use this instead of issuing one metadata query per
 // known item while filtering provider search pages.
@@ -1087,6 +1172,17 @@ func (s *Store) MarkMessageDeleted(sourceID int64, sourceMessageID string) error
 		SET deleted_from_source_at = %s
 		WHERE source_id = ? AND source_message_id = ?
 	`, s.dialect.Now()), sourceID, sourceMessageID)
+	return err
+}
+
+// ClearMessageDeletedFromSource clears the upstream tombstone when a message
+// reappears during a provider repair scan.
+func (s *Store) ClearMessageDeletedFromSource(sourceID int64, sourceMessageID string) error {
+	_, err := s.db.Exec(`
+		UPDATE messages
+		SET deleted_from_source_at = NULL
+		WHERE source_id = ? AND source_message_id = ?
+	`, sourceID, sourceMessageID)
 	return err
 }
 
@@ -2442,9 +2538,12 @@ type AttachmentRef struct {
 // replaceMessageAttachmentsWhere atomically deletes a message's attachment
 // rows matching deleteWhere and inserts refs. Refs with an empty StoragePath
 // (and, when requireHash is set, an empty ContentHash) are skipped.
-func (s *Store) replaceMessageAttachmentsWhere(messageID int64, deleteWhere string, requireHash bool, refs []AttachmentRef) error {
+func (s *Store) replaceMessageAttachmentsWhere(
+	messageID int64, deleteWhere string, requireHash bool, refs []AttachmentRef, deleteArgs ...any,
+) error {
 	return s.withTx(func(tx *loggedTx) error {
-		if _, err := tx.Exec(`DELETE FROM attachments WHERE message_id = ? AND (`+deleteWhere+`)`, messageID); err != nil {
+		args := append([]any{messageID}, deleteArgs...)
+		if _, err := tx.Exec(`DELETE FROM attachments WHERE message_id = ? AND (`+deleteWhere+`)`, args...); err != nil {
 			return err
 		}
 		for _, ref := range refs {
@@ -2498,35 +2597,14 @@ func (s *Store) ReplaceMessageInlineAttachments(messageID int64, refs []Attachme
 // pending-download markers whose storage_path holds the source asset URL, so
 // a later retry pass can find and repair them.
 func (s *Store) ReplaceMessageBeeperAttachments(messageID int64, refs []AttachmentRef) error {
-	return s.replaceMessageAttachmentsWhere(messageID, `source_attachment_id LIKE 'beeper:%'`, false, refs)
+	return s.replaceMessageProviderAttachments(messageID, "beeper:", refs)
 }
 
 // MessageBeeperAttachments returns the message's existing Beeper-managed
 // attachment rows keyed by source_attachment_id, so re-persisting a message
 // can keep already-downloaded media without re-fetching it.
 func (s *Store) MessageBeeperAttachments(messageID int64) (map[string]AttachmentRef, error) {
-	rows, err := s.db.Query(`
-		SELECT COALESCE(filename, ''), COALESCE(mime_type, ''), storage_path, COALESCE(content_hash, ''), size, source_attachment_id,
-		       COALESCE(media_type, ''), COALESCE(width, 0), COALESCE(height, 0), COALESCE(duration_ms, 0)
-		FROM attachments
-		WHERE message_id = ? AND source_attachment_id LIKE 'beeper:%'
-	`, messageID)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-	out := map[string]AttachmentRef{}
-	for rows.Next() {
-		var ref AttachmentRef
-		var size int64
-		if err := rows.Scan(&ref.Filename, &ref.MimeType, &ref.StoragePath, &ref.ContentHash, &size, &ref.SourceAttachmentID,
-			&ref.MediaType, &ref.Width, &ref.Height, &ref.DurationMS); err != nil {
-			return nil, err
-		}
-		ref.Size = int(size)
-		out[ref.SourceAttachmentID] = ref
-	}
-	return out, rows.Err()
+	return s.messageProviderAttachments(messageID, "beeper:")
 }
 
 // SourceMessageRef locates an archived message at its source: the source
@@ -2564,44 +2642,12 @@ func (s *Store) ListRecentMessagesForSource(sourceID int64, limit int) ([]Source
 	return out, rows.Err()
 }
 
-// BeeperPendingAttachmentMessage identifies a message with at least one
-// pending (not yet downloaded) Beeper attachment marker.
-type BeeperPendingAttachmentMessage struct {
-	MessageID       int64
-	SourceMessageID string
-	ChatID          string // conversations.source_conversation_id
-}
-
 // ListBeeperPendingAttachmentMessages returns the messages of a beeper
 // source that still have pending attachment markers, so a retry pass can
 // re-fetch their media. Buffered (not a cursor callback): callers do slow
 // network and write work per item, which must not hold a read cursor open.
 func (s *Store) ListBeeperPendingAttachmentMessages(sourceID int64) ([]BeeperPendingAttachmentMessage, error) {
-	rows, err := s.db.Query(`
-		SELECT m.id, m.source_message_id, c.source_conversation_id
-		FROM messages m
-		JOIN conversations c ON c.id = m.conversation_id
-		WHERE m.source_id = ?
-		  AND EXISTS (
-		    SELECT 1 FROM attachments a
-		    WHERE a.message_id = m.id
-		      AND a.source_attachment_id LIKE 'beeper:%'
-		      AND (a.content_hash IS NULL OR a.content_hash = '')
-		  )
-	`, sourceID)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-	var items []BeeperPendingAttachmentMessage
-	for rows.Next() {
-		var item BeeperPendingAttachmentMessage
-		if err := rows.Scan(&item.MessageID, &item.SourceMessageID, &item.ChatID); err != nil {
-			return nil, err
-		}
-		items = append(items, item)
-	}
-	return items, rows.Err()
+	return s.listPendingAttachmentMessages(sourceID, "beeper:")
 }
 
 // ReplaceMessageLinkAttachments replaces URL-backed attachment rows for a message.
