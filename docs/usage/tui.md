@@ -88,7 +88,11 @@ Press `t` from any view to jump directly to the Time view. The Time view aggrega
 
 ## Text Messages
 
-Press `m` to cycle through Email, Texts, and Meetings. Texts is skipped when no text/chat engine is available, but Meetings remains in the cycle even before a meeting source has been configured. See [Text Messages](/usage/text-messages/) for details on importing WhatsApp, iMessage, Google Voice, Facebook Messenger, and SMS Backup & Restore conversations, and [Microsoft Teams](/usage/teams/) for Teams sync.
+Press `m` to cycle through Email, Texts, and Meetings. Texts is skipped when no
+text/chat engine is available, but Meetings remains in the cycle even before a
+meeting source has been configured. See [Text Messages](/usage/text-messages/)
+for local chat imports, [Microsoft Teams](/usage/teams/) for Teams sync, and
+[Discord](/usage/discord/) for guild channel and thread sync.
 
 Text mode provides the following view types. Press `g` to cycle through them:
 
