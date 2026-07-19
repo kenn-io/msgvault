@@ -81,9 +81,10 @@ type CatalogResult struct {
 }
 
 // DiscoverCatalog refreshes top-level message containers, active threads, and
-// public/private archived threads. full exhausts archive pagination; an
-// incremental scan stops only after processing a complete page that reaches
-// the prior watermark.
+// public/private archived threads. Full scans exhaust archive pagination.
+// Incremental public scans stop only after a complete page reaches the prior
+// timestamp watermark; joined-private scans always exhaust their ID-ordered
+// pages because archive timestamps are not an ordering boundary there.
 func DiscoverCatalog(
 	ctx context.Context,
 	api API,
@@ -246,7 +247,12 @@ func discoverArchive(
 			if archiveTime.After(candidate) {
 				candidate = archiveTime
 			}
-			if !full && !priorTime.IsZero() && !archiveTime.After(priorTime) {
+			// Public archives are ordered by archive timestamp, so a complete
+			// boundary page proves older pages cannot contain newer archives.
+			// Joined-private archives page by thread snowflake instead; their
+			// timestamps are not an ordering boundary and that scope must be
+			// exhausted to avoid skipping a later page.
+			if !private && !full && !priorTime.IsZero() && !archiveTime.After(priorTime) {
 				reachedBoundary = true
 			}
 			if err := emit(thread); err != nil {

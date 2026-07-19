@@ -133,6 +133,42 @@ func TestDiscoverCatalogFullScanExhaustsArchivePages(t *testing.T) {
 	assert.Equal("2026-07-20T00:00:00Z", result.ThreadCatalog["301"].PrivateArchiveWatermark)
 }
 
+func TestDiscoverCatalogIncrementalPrivateArchiveExhaustsIDOrderedPages(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	var privateBefore []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/channels/301/users/@me/threads/archived/private":
+			before := request.URL.Query().Get("before")
+			privateBefore = append(privateBefore, before)
+			switch before {
+			case "":
+				writeCatalogThreads(w, true, catalogThread("500", "301", "older timestamp", "2026-07-17T00:00:00Z"))
+			case "500":
+				writeCatalogThreads(w, false, catalogThread("400", "301", "newer timestamp on later ID page", "2026-07-19T00:00:00Z"))
+			default:
+				writeDiscordJSON(w, http.StatusBadRequest, map[string]any{"code": 0, "message": "unexpected private cursor"})
+			}
+		default:
+			serveMinimalCatalog(w, request)
+		}
+	}))
+	t.Cleanup(server.Close)
+	client, err := NewClient(server.URL, "test-token")
+	require.NoError(err)
+
+	result, err := DiscoverCatalog(t.Context(), client, "201", config.DiscordGuildConfig{}, map[string]ThreadCatalogState{
+		"301": {PrivateArchiveWatermark: "2026-07-18T00:00:00Z"},
+	}, false)
+
+	require.NoError(err)
+	assert.Equal([]string{"", "500"}, privateBefore)
+	assert.Contains(catalogContainersByID(result.Containers), "400",
+		"an older-ID page can contain a newly archived or newly accessible thread")
+	assert.Equal("2026-07-19T00:00:00Z", result.ThreadCatalog["301"].PrivateArchiveWatermark)
+}
+
 func TestDiscoverCatalogQueriesPrivateArchivesOnlyForGuildTextParents(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
