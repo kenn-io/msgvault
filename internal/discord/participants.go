@@ -3,8 +3,6 @@ package discord
 import (
 	"encoding/json"
 	"strings"
-
-	"go.kenn.io/msgvault/internal/store"
 )
 
 const (
@@ -22,47 +20,19 @@ const (
 // provider identity is intentionally separate from guild- and message-local
 // presentation so nicknames and webhook overrides cannot fork participants.
 type participantObservation struct {
-	IdentifierType  string
-	IdentifierValue string
-	DisplayName     string
-	Avatar          string
-	GuildNickname   string
-	AuthorKind      string
-	Automated       bool
+	IdentifierType          string
+	IdentifierValue         string
+	ParticipantLabel        string
+	PresentationDisplayName string
+	PresentationAvatar      string
+	GuildNickname           string
+	AuthorKind              string
+	Automated               bool
 }
 
 type recipientObservation struct {
 	Type        string
 	Participant participantObservation
-}
-
-type participantResolver struct {
-	store *store.Store
-	cache map[string]int64
-}
-
-func newParticipantResolver(s *store.Store) *participantResolver {
-	return &participantResolver{store: s, cache: make(map[string]int64)}
-}
-
-func (r *participantResolver) resolve(observation participantObservation) (int64, error) {
-	if observation.IdentifierType == "" || observation.IdentifierValue == "" {
-		return 0, nil
-	}
-	key := observation.IdentifierType + "\x00" + observation.IdentifierValue
-	if participantID, ok := r.cache[key]; ok {
-		return participantID, nil
-	}
-	participantID, err := r.store.EnsureParticipantByIdentifier(
-		observation.IdentifierType,
-		observation.IdentifierValue,
-		observation.DisplayName,
-	)
-	if err != nil {
-		return 0, err
-	}
-	r.cache[key] = participantID
-	return participantID, nil
 }
 
 func authorObservation(message *Message) participantObservation {
@@ -71,12 +41,13 @@ func authorObservation(message *Message) participantObservation {
 	}
 	if message.WebhookID != "" {
 		return participantObservation{
-			IdentifierType:  discordWebhookIdentifier,
-			IdentifierValue: message.WebhookID,
-			DisplayName:     userDisplayName(message.Author),
-			Avatar:          message.Author.Avatar,
-			AuthorKind:      authorKindWebhook,
-			Automated:       true,
+			IdentifierType:          discordWebhookIdentifier,
+			IdentifierValue:         message.WebhookID,
+			ParticipantLabel:        "Discord webhook " + message.WebhookID,
+			PresentationDisplayName: userDisplayName(message.Author),
+			PresentationAvatar:      message.Author.Avatar,
+			AuthorKind:              authorKindWebhook,
+			Automated:               true,
 		}
 	}
 	if message.Author.ID != "" {
@@ -84,13 +55,15 @@ func authorObservation(message *Message) participantObservation {
 		if message.Author.Bot {
 			kind = authorKindBot
 		}
+		displayName := userDisplayName(message.Author)
 		observation := participantObservation{
-			IdentifierType:  discordUserIdentifier,
-			IdentifierValue: message.Author.ID,
-			DisplayName:     userDisplayName(message.Author),
-			Avatar:          message.Author.Avatar,
-			AuthorKind:      kind,
-			Automated:       message.Author.Bot || message.Author.System,
+			IdentifierType:          discordUserIdentifier,
+			IdentifierValue:         message.Author.ID,
+			ParticipantLabel:        displayName,
+			PresentationDisplayName: displayName,
+			PresentationAvatar:      message.Author.Avatar,
+			AuthorKind:              kind,
+			Automated:               message.Author.Bot || message.Author.System,
 		}
 		if message.Member != nil {
 			observation.GuildNickname = message.Member.Nick
@@ -118,11 +91,12 @@ func authorObservation(message *Message) participantObservation {
 		applicationName = "Discord application"
 	}
 	return participantObservation{
-		IdentifierType:  identifierType,
-		IdentifierValue: identifierValue,
-		DisplayName:     applicationName,
-		AuthorKind:      authorKindApplication,
-		Automated:       true,
+		IdentifierType:          identifierType,
+		IdentifierValue:         identifierValue,
+		ParticipantLabel:        applicationName,
+		PresentationDisplayName: applicationName,
+		AuthorKind:              authorKindApplication,
+		Automated:               true,
 	}
 }
 
@@ -171,12 +145,13 @@ func messageRecipientObservations(message *Message) []recipientObservation {
 		recipients = append(recipients, recipientObservation{
 			Type: "mention",
 			Participant: participantObservation{
-				IdentifierType:  discordUserIdentifier,
-				IdentifierValue: mention.ID,
-				DisplayName:     userDisplayName(mention),
-				Avatar:          mention.Avatar,
-				AuthorKind:      kind,
-				Automated:       mention.Bot || mention.System,
+				IdentifierType:          discordUserIdentifier,
+				IdentifierValue:         mention.ID,
+				ParticipantLabel:        userDisplayName(mention),
+				PresentationDisplayName: userDisplayName(mention),
+				PresentationAvatar:      mention.Avatar,
+				AuthorKind:              kind,
+				Automated:               mention.Bot || mention.System,
 			},
 		})
 	}

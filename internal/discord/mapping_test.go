@@ -99,11 +99,13 @@ func TestMapMessageBasicsMentionsRepliesAndRaw(t *testing.T) {
 	assert.JSONEq(raw, string(got.Raw))
 	assert.Equal([]recipientObservation{
 		{Type: "from", Participant: participantObservation{
-			IdentifierType: "discord_user_id", IdentifierValue: "350", DisplayName: "alice", Avatar: "bot-avatar",
+			IdentifierType: "discord_user_id", IdentifierValue: "350", ParticipantLabel: "alice",
+			PresentationDisplayName: "alice", PresentationAvatar: "bot-avatar",
 			GuildNickname: "Guild Alice", AuthorKind: authorKindBot, Automated: true,
 		}},
 		{Type: "mention", Participant: participantObservation{
-			IdentifierType: "discord_user_id", IdentifierValue: "400", DisplayName: "Bob Builder", AuthorKind: authorKindUser,
+			IdentifierType: "discord_user_id", IdentifierValue: "400", ParticipantLabel: "Bob Builder",
+			PresentationDisplayName: "Bob Builder", AuthorKind: authorKindUser,
 		}},
 	}, got.Recipients)
 	assert.JSONEq(`{
@@ -128,20 +130,82 @@ func TestMapMessageBasicsMentionsRepliesAndRaw(t *testing.T) {
 }
 
 func TestMapWebhookPresentationOverridesRemainPerMessage(t *testing.T) {
-	msg := &Message{
-		ID: "1", WebhookID: "300", Type: 0, Content: "deployed",
-		Author: User{Username: "Production deploy", Avatar: "presentation-avatar"},
+	require := require.New(t)
+	assert := assert.New(t)
+	messages := []*Message{
+		{
+			ID: "1", WebhookID: "300", Type: 0, Content: "deployed",
+			Author: User{Username: "Production deploy", Avatar: "production-avatar"},
+		},
+		{
+			ID: "2", WebhookID: "300", Type: 0, Content: "previewed",
+			Author: User{Username: "Preview deploy", Avatar: "preview-avatar"},
+		},
 	}
 
-	got, err := mapMessage(msg, 30, 40)
-	require.NoError(t, err)
-	assert.JSONEq(t, `{
+	firstObservation := authorObservation(messages[0])
+	secondObservation := authorObservation(messages[1])
+	assert.Equal(firstObservation.IdentifierType, secondObservation.IdentifierType)
+	assert.Equal(firstObservation.IdentifierValue, secondObservation.IdentifierValue)
+	assert.Equal("Discord webhook 300", firstObservation.ParticipantLabel)
+	assert.Equal(firstObservation.ParticipantLabel, secondObservation.ParticipantLabel)
+	assert.NotEqual(firstObservation.PresentationDisplayName, secondObservation.PresentationDisplayName)
+	assert.NotEqual(firstObservation.PresentationAvatar, secondObservation.PresentationAvatar)
+
+	first, err := mapMessage(messages[0], 30, 40)
+	require.NoError(err)
+	second, err := mapMessage(messages[1], 30, 40)
+	require.NoError(err)
+	assert.JSONEq(`{
 		"discord_message_type":0,
 		"author_kind":"webhook",
 		"author_display_name":"Production deploy",
-		"author_avatar":"presentation-avatar",
+		"author_avatar":"production-avatar",
 		"automated":true
-	}`, string(got.Metadata))
+	}`, string(first.Metadata))
+	assert.JSONEq(`{
+		"discord_message_type":0,
+		"author_kind":"webhook",
+		"author_display_name":"Preview deploy",
+		"author_avatar":"preview-avatar",
+		"automated":true
+	}`, string(second.Metadata))
+}
+
+func TestDecodeAndMapRetainsUnknownAttachmentAndEmbedFields(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	raw := `{
+		"id":"900","channel_id":"800","guild_id":"700","type":0,
+		"content":"release details","timestamp":"2026-02-03T04:05:06Z",
+		"attachments":[{
+			"id":"asset-1","filename":"diagram.png","content_type":"image/png","size":4096,
+			"url":"https://cdn.discordapp.com/attachments/800/asset-1/diagram.png","width":640,"height":480,
+			"description":"architecture overview","unknown_attachment":{"retained":true}
+		}],
+		"embeds":[{
+			"type":"rich","title":"Release 2.0","description":"Ready to archive",
+			"fields":[{"name":"Status","value":"Green","unknown_field":{"retained":true}}],
+			"unknown_embed":{"accent":"violet"}
+		}],
+		"unknown_root":{"nested":[1,2,3]}
+	}`
+	var message Message
+	require.NoError(json.Unmarshal([]byte(raw), &message))
+
+	got, err := mapMessage(&message, 50, 60)
+	require.NoError(err)
+	assert.JSONEq(raw, string(got.Raw))
+	assert.Equal([]store.AttachmentRef{{
+		Filename: "diagram.png", MimeType: "image/png", Size: 4096,
+		StoragePath:        "https://cdn.discordapp.com/attachments/800/asset-1/diagram.png",
+		SourceAttachmentID: "discord:asset-1", MediaType: "image", Width: 640, Height: 480,
+	}}, got.Attachments)
+	assert.Contains(got.BodyText, "release details")
+	assert.Contains(got.BodyText, "Release 2.0")
+	assert.Contains(got.BodyText, "Ready to archive")
+	assert.Contains(got.BodyText, "Status: Green")
+	assert.Equal("discord_json", got.RawFormat)
 }
 
 func TestRenderMessageBodyIncludesAuthoredRichContent(t *testing.T) {

@@ -4,8 +4,6 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
-	"go.kenn.io/msgvault/internal/testutil"
 )
 
 func TestAuthorObservation(t *testing.T) {
@@ -21,23 +19,25 @@ func TestAuthorObservation(t *testing.T) {
 				Member: &GuildMember{Nick: "Guild Alice"},
 			},
 			want: participantObservation{
-				IdentifierType:  "discord_user_id",
-				IdentifierValue: "100",
-				DisplayName:     "Alice",
-				Avatar:          "user-avatar",
-				GuildNickname:   "Guild Alice",
-				AuthorKind:      authorKindUser,
+				IdentifierType:          "discord_user_id",
+				IdentifierValue:         "100",
+				ParticipantLabel:        "Alice",
+				PresentationDisplayName: "Alice",
+				PresentationAvatar:      "user-avatar",
+				GuildNickname:           "Guild Alice",
+				AuthorKind:              authorKindUser,
 			},
 		},
 		{
 			name: "bot keeps global user identity and automation flag",
 			msg:  Message{Author: User{ID: "200", Username: "archive-bot", Bot: true}},
 			want: participantObservation{
-				IdentifierType:  "discord_user_id",
-				IdentifierValue: "200",
-				DisplayName:     "archive-bot",
-				AuthorKind:      authorKindBot,
-				Automated:       true,
+				IdentifierType:          "discord_user_id",
+				IdentifierValue:         "200",
+				ParticipantLabel:        "archive-bot",
+				PresentationDisplayName: "archive-bot",
+				AuthorKind:              authorKindBot,
+				Automated:               true,
 			},
 		},
 		{
@@ -47,12 +47,13 @@ func TestAuthorObservation(t *testing.T) {
 				Author:    User{ID: "ignored-webhook-user", Username: "Deploy hook", Avatar: "override-avatar"},
 			},
 			want: participantObservation{
-				IdentifierType:  "discord_webhook_id",
-				IdentifierValue: "300",
-				DisplayName:     "Deploy hook",
-				Avatar:          "override-avatar",
-				AuthorKind:      authorKindWebhook,
-				Automated:       true,
+				IdentifierType:          "discord_webhook_id",
+				IdentifierValue:         "300",
+				ParticipantLabel:        "Discord webhook 300",
+				PresentationDisplayName: "Deploy hook",
+				PresentationAvatar:      "override-avatar",
+				AuthorKind:              authorKindWebhook,
+				Automated:               true,
 			},
 		},
 		{
@@ -63,11 +64,12 @@ func TestAuthorObservation(t *testing.T) {
 				Application:   []byte(`{"id":"500","name":"Reminder app"}`),
 			},
 			want: participantObservation{
-				IdentifierType:  "discord_application_id",
-				IdentifierValue: "500",
-				DisplayName:     "Reminder app",
-				AuthorKind:      authorKindApplication,
-				Automated:       true,
+				IdentifierType:          "discord_application_id",
+				IdentifierValue:         "500",
+				ParticipantLabel:        "Reminder app",
+				PresentationDisplayName: "Reminder app",
+				AuthorKind:              authorKindApplication,
+				Automated:               true,
 			},
 		},
 		{
@@ -78,11 +80,12 @@ func TestAuthorObservation(t *testing.T) {
 				Application: []byte(`{"name":"Legacy app"}`),
 			},
 			want: participantObservation{
-				IdentifierType:  "discord_automated_id",
-				IdentifierValue: "guild:400:application",
-				DisplayName:     "Legacy app",
-				AuthorKind:      authorKindApplication,
-				Automated:       true,
+				IdentifierType:          "discord_automated_id",
+				IdentifierValue:         "guild:400:application",
+				ParticipantLabel:        "Legacy app",
+				PresentationDisplayName: "Legacy app",
+				AuthorKind:              authorKindApplication,
+				Automated:               true,
 			},
 		},
 		{
@@ -99,11 +102,8 @@ func TestAuthorObservation(t *testing.T) {
 	}
 }
 
-func TestParticipantResolverUsesStableProviderIdentifiers(t *testing.T) {
-	require := require.New(t)
+func TestParticipantObservationsKeepIdentitySeparateFromPresentation(t *testing.T) {
 	assert := assert.New(t)
-	st := testutil.NewTestStore(t)
-	resolver := newParticipantResolver(st)
 
 	firstWebhook := authorObservation(&Message{
 		WebhookID: "300",
@@ -113,16 +113,14 @@ func TestParticipantResolverUsesStableProviderIdentifiers(t *testing.T) {
 		WebhookID: "300",
 		Author:    User{Username: "Second presentation", Avatar: "second-avatar"},
 	})
-	firstID, err := resolver.resolve(firstWebhook)
-	require.NoError(err)
-	secondID, err := resolver.resolve(secondWebhook)
-	require.NoError(err)
-	assert.Equal(firstID, secondID)
-	storedWebhookID, _, err := st.ParticipantByIdentifier("discord_webhook_id", "300")
-	require.NoError(err)
-	assert.Equal(firstID, storedWebhookID)
-	assert.Equal("First presentation", firstWebhook.DisplayName)
-	assert.Equal("Second presentation", secondWebhook.DisplayName)
+	assert.Equal(firstWebhook.IdentifierType, secondWebhook.IdentifierType)
+	assert.Equal(firstWebhook.IdentifierValue, secondWebhook.IdentifierValue)
+	assert.Equal("Discord webhook 300", firstWebhook.ParticipantLabel)
+	assert.Equal(firstWebhook.ParticipantLabel, secondWebhook.ParticipantLabel)
+	assert.Equal("First presentation", firstWebhook.PresentationDisplayName)
+	assert.Equal("Second presentation", secondWebhook.PresentationDisplayName)
+	assert.Equal("first-avatar", firstWebhook.PresentationAvatar)
+	assert.Equal("second-avatar", secondWebhook.PresentationAvatar)
 
 	firstUser := authorObservation(&Message{
 		GuildID: "guild-a",
@@ -134,17 +132,12 @@ func TestParticipantResolverUsesStableProviderIdentifiers(t *testing.T) {
 		Author:  User{ID: "100", Username: "renamed-alice"},
 		Member:  &GuildMember{Nick: "Guild B Alice"},
 	})
-	firstUserID, err := resolver.resolve(firstUser)
-	require.NoError(err)
-	secondUserID, err := resolver.resolve(secondUser)
-	require.NoError(err)
-	assert.Equal(firstUserID, secondUserID)
-	storedUserID, _, err := st.ParticipantByIdentifier("discord_user_id", "100")
-	require.NoError(err)
-	assert.Equal(firstUserID, storedUserID)
-	emailID, _, err := st.ParticipantByIdentifier("email", "alice@example.com")
-	require.NoError(err)
-	assert.Zero(emailID, "Discord usernames must not trigger email unification")
+	assert.Equal("discord_user_id", firstUser.IdentifierType)
+	assert.Equal("100", firstUser.IdentifierValue)
+	assert.Equal(firstUser.IdentifierType, secondUser.IdentifierType)
+	assert.Equal(firstUser.IdentifierValue, secondUser.IdentifierValue)
+	assert.Equal("alice@example.com", firstUser.ParticipantLabel)
+	assert.Equal("renamed-alice", secondUser.ParticipantLabel)
 	assert.Equal("Guild A Alice", firstUser.GuildNickname)
 	assert.Equal("Guild B Alice", secondUser.GuildNickname)
 }
@@ -161,13 +154,16 @@ func TestMessageRecipientObservationsOnlyIncludeAuthorAndMentions(t *testing.T) 
 
 	assert.Equal(t, []recipientObservation{
 		{Type: "from", Participant: participantObservation{
-			IdentifierType: "discord_user_id", IdentifierValue: "100", DisplayName: "alice", AuthorKind: authorKindUser,
+			IdentifierType: "discord_user_id", IdentifierValue: "100", ParticipantLabel: "alice",
+			PresentationDisplayName: "alice", AuthorKind: authorKindUser,
 		}},
 		{Type: "mention", Participant: participantObservation{
-			IdentifierType: "discord_user_id", IdentifierValue: "200", DisplayName: "bob", AuthorKind: authorKindUser,
+			IdentifierType: "discord_user_id", IdentifierValue: "200", ParticipantLabel: "bob",
+			PresentationDisplayName: "bob", AuthorKind: authorKindUser,
 		}},
 		{Type: "mention", Participant: participantObservation{
-			IdentifierType: "discord_user_id", IdentifierValue: "300", DisplayName: "carol", AuthorKind: authorKindBot, Automated: true,
+			IdentifierType: "discord_user_id", IdentifierValue: "300", ParticipantLabel: "carol",
+			PresentationDisplayName: "carol", AuthorKind: authorKindBot, Automated: true,
 		}},
 	}, messageRecipientObservations(msg))
 }

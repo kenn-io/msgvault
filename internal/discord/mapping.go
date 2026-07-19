@@ -157,8 +157,8 @@ func buildMessageMetadata(message *Message) messageMetadata {
 	metadata := messageMetadata{
 		DiscordMessageType: message.Type,
 		AuthorKind:         author.AuthorKind,
-		AuthorDisplayName:  author.DisplayName,
-		AuthorAvatar:       author.Avatar,
+		AuthorDisplayName:  author.PresentationDisplayName,
+		AuthorAvatar:       author.PresentationAvatar,
 		GuildNickname:      author.GuildNickname,
 		Automated:          author.Automated,
 		MentionEveryone:    message.MentionEveryone,
