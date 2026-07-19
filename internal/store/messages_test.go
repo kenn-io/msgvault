@@ -205,6 +205,37 @@ func TestMigrateSourceMessageIDRepointsRepliesBeforeDeletingDuplicate(t *testing
 	assert.Equal(0, legacyCount, "legacy duplicate should be deleted")
 }
 
+func TestListUnresolvedMessageRepliesReturnsOnlyUnlinkedProviderMetadata(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource("discord", "guild-1")
+	require.NoError(err)
+	convID, err := st.EnsureConversationWithType(source.ID, "channel-1", "channel", "General")
+	require.NoError(err)
+
+	parentID := insertStoreTestMessage(t, st, source.ID, convID, "100")
+	childID := insertStoreTestMessage(t, st, source.ID, convID, "101")
+	linkedID := insertStoreTestMessage(t, st, source.ID, convID, "102")
+	_, err = st.DB().Exec(st.Rebind(`UPDATE messages SET message_type = 'discord' WHERE source_id = ?`), source.ID)
+	require.NoError(err)
+	require.NoError(st.SetMessageMetadata(childID, sql.NullString{
+		String: `{"referenced_message_id":"100","referenced_channel_id":"channel-1"}`, Valid: true,
+	}))
+	require.NoError(st.SetMessageMetadata(linkedID, sql.NullString{
+		String: `{"referenced_message_id":"100"}`, Valid: true,
+	}))
+	require.NoError(st.SetReplyTo(source.ID, "102", "100"))
+
+	unresolved, err := st.ListUnresolvedMessageReplies(source.ID, "discord")
+	require.NoError(err)
+	require.Len(unresolved, 1)
+	assert.Equal(childID, unresolved[0].MessageID)
+	assert.Equal("101", unresolved[0].SourceMessageID)
+	assert.JSONEq(`{"referenced_message_id":"100","referenced_channel_id":"channel-1"}`, unresolved[0].Metadata)
+	assert.NotZero(parentID)
+}
+
 func TestMigrateSourceMessageIDClearsTombstoneWhenRenamingLegacyRow(t *testing.T) {
 	require := require.New(t)
 	st := testutil.NewTestStore(t)

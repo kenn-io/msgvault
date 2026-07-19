@@ -87,6 +87,16 @@ type MessageMetadataRecord struct {
 	Metadata sql.NullString
 }
 
+// UnresolvedMessageReply is a message whose provider metadata may contain a
+// durable source reply reference but whose generic reply link is still NULL.
+// Importers decode their own metadata shape and call SetReplyTo once the
+// referenced message has arrived.
+type UnresolvedMessageReply struct {
+	MessageID       int64
+	SourceMessageID string
+	Metadata        string
+}
+
 // MessageExistsBatch checks which message IDs already exist in the database.
 // Returns a map of source_message_id -> internal message_id for existing messages.
 func (s *Store) MessageExistsBatch(sourceID int64, sourceMessageIDs []string) (map[string]int64, error) {
@@ -225,6 +235,38 @@ func (s *Store) MessageMetadataBatch(
 		return nil, err
 	}
 	return result, nil
+}
+
+// ListUnresolvedMessageReplies returns provider messages that still need a
+// reply-linking pass. Keeping JSON decoding in the provider avoids adding
+// backend-specific JSON expressions to the shared store.
+func (s *Store) ListUnresolvedMessageReplies(sourceID int64, messageType string) ([]UnresolvedMessageReply, error) {
+	rows, err := s.db.Query(`
+		SELECT id, source_message_id, metadata
+		FROM messages
+		WHERE source_id = ?
+		  AND message_type = ?
+		  AND reply_to_message_id IS NULL
+		  AND metadata IS NOT NULL
+		ORDER BY id
+	`, sourceID, messageType)
+	if err != nil {
+		return nil, fmt.Errorf("list unresolved message replies: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var unresolved []UnresolvedMessageReply
+	for rows.Next() {
+		var reply UnresolvedMessageReply
+		if err := rows.Scan(&reply.MessageID, &reply.SourceMessageID, &reply.Metadata); err != nil {
+			return nil, fmt.Errorf("scan unresolved message reply: %w", err)
+		}
+		unresolved = append(unresolved, reply)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate unresolved message replies: %w", err)
+	}
+	return unresolved, nil
 }
 
 // SetMessageMetadata writes the messages.metadata JSON/JSONB column for an
