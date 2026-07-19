@@ -33,6 +33,63 @@ func TestAnalyticsConfigDefaults(t *testing.T) {
 	assert.True(t, cfg.Analytics.AutoBuildCache)
 }
 
+func TestDiscordConfigDefaults(t *testing.T) {
+	tests := []struct {
+		name string
+		load func(t *testing.T) *Config
+	}{
+		{
+			name: "new default config",
+			load: func(t *testing.T) *Config {
+				t.Helper()
+				return NewDefaultConfig()
+			},
+		},
+		{
+			name: "load reapplies zero values",
+			load: func(t *testing.T) *Config {
+				t.Helper()
+				dir := t.TempDir()
+				path := filepath.Join(dir, "config.toml")
+				require.NoError(t, os.WriteFile(path, []byte("[discord]\nmax_media_bytes = 0\nedit_rescan_window = \"0s\"\n"), 0o600))
+
+				cfg, err := Load(path, "")
+				require.NoError(t, err)
+				return cfg
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := tt.load(t)
+			assert.Equal(t, int64(50<<20), cfg.Discord.MaxMediaBytes)
+			assert.Equal(t, 7*24*time.Hour, cfg.Discord.EditRescanWindow)
+			assert.NotNil(t, cfg.Discord.Guilds)
+		})
+	}
+}
+
+func TestDiscordConfigTOMLRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	cfg := NewDefaultConfig()
+	cfg.HomeDir = dir
+	cfg.Discord.MaxMediaBytes = 12_345_678
+	cfg.Discord.EditRescanWindow = 36 * time.Hour
+	cfg.Discord.Guilds["123456789012345678"] = DiscordGuildConfig{
+		Include: []string{"111111111111111111", "333333333333333333"},
+		Exclude: []string{"222222222222222222"},
+	}
+
+	require.NoError(t, cfg.Save())
+	loaded, err := Load(cfg.ConfigFilePath(), "")
+	require.NoError(t, err)
+
+	assert.Equal(t, cfg.Discord.MaxMediaBytes, loaded.Discord.MaxMediaBytes)
+	assert.Equal(t, cfg.Discord.EditRescanWindow, loaded.Discord.EditRescanWindow)
+	assert.Equal(t, cfg.Discord.Guilds, loaded.Discord.Guilds)
+}
+
 func TestAccountScheduleEmpty(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("MSGVAULT_HOME", tmpDir)
