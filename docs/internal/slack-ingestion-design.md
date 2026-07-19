@@ -275,10 +275,11 @@ sandbox, fresh internal app, 1,100-message seeded channel)
   sustained (12 consecutive calls, no 429). The 2025 clampdown
   (1 req/min, 15 msgs) does not apply to internal custom apps; the
   design's backfill performance assumptions hold.
-- **LB-2 — full-history depth: INCONCLUSIVE in sandbox** (all seeded
-  data is same-day, so there is no >90-day boundary to cross). Slack's
-  plan docs state paid plans serve full history via API; treat as
-  docs-verified and confirm during the first real-workspace sync.
+- **LB-2 — full-history depth: VERIFIED** (follow-up probe 2026-07-19
+  against a real paid workspace, single channels:history scope, one
+  channel, timestamps only): `conversations.history` with a `latest`
+  bound served messages 95 days, 2, 5, and 8+ years old. Paid plans
+  serve full history via API; full-depth backfill is sound.
 - **LB-3 — late thread replies: FALSIFIED.** A reply to an
   already-archived root does **not** appear in `conversations.history
   oldest=<cursor>` (empty page), and the parent is not re-served with
