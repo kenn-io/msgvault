@@ -397,7 +397,8 @@ metadata. A 404 Unknown Channel records `container_missing_since` and
 `container_missing_reason = "unknown_channel"`. Neither response tombstones
 the container's messages or removes its cursor.
 
-A later successful catalog or message fetch clears the marker. Version 1 thus
+A catalog refresh preserves an existing access marker. Only a later successful
+message scan and reconciliation for that container clears it. Version 1 thus
 records likely upstream channel or thread deletion without turning one API
 response into mass message tombstones. A missing conversation remains archived
 but stops updating.
