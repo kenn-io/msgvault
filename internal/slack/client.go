@@ -134,13 +134,17 @@ func (c *Client) call(ctx context.Context, method string, params url.Values, out
 		if err := c.limiters[tier].Wait(ctx); err != nil {
 			return fmt.Errorf("wait for slack rate limit: %w", err)
 		}
-		req, err := http.NewRequestWithContext(ctx, http.MethodPost, reqURL, strings.NewReader(body))
+		// reqURL is the constant Slack API base (or a test-injected httptest
+		// URL) plus a package-constant method name — no remote or user input
+		// reaches it. gosec's taint analysis flags it via the env-var-driven
+		// live-probe test.
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, reqURL, strings.NewReader(body)) // #nosec G704
 		if err != nil {
 			return err
 		}
 		req.Header.Set("Authorization", "Bearer "+c.token)
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-		resp, err := c.http.Do(req)
+		resp, err := c.http.Do(req) // #nosec G704 -- see reqURL above
 		if err != nil {
 			return fmt.Errorf("slack %s: %w", method, err)
 		}
@@ -343,9 +347,15 @@ type HistoryParams struct {
 // newest→oldest without a cursor; the importer requests oldest-bounded
 // windows and walks pages via NextCursor.
 func (c *Client) HistoryPage(ctx context.Context, p HistoryParams) (*HistoryPage, error) {
+	return c.historyPageWithLimit(ctx, p, historyPageLimit)
+}
+
+// historyPageWithLimit is HistoryPage with an explicit page size (the live
+// throttle probe uses tiny pages; every request costs the same budget).
+func (c *Client) historyPageWithLimit(ctx context.Context, p HistoryParams, limit int) (*HistoryPage, error) {
 	params := url.Values{
 		"channel":   {p.ChannelID},
-		"limit":     {strconv.Itoa(historyPageLimit)},
+		"limit":     {strconv.Itoa(limit)},
 		"inclusive": {"false"},
 	}
 	if p.Cursor != "" {
