@@ -191,10 +191,10 @@ func TestReplaceMessageDiscordAttachmentsPreservesDuplicateContentSourceIDs(t *t
 
 	remaining := got["discord:attachment-2"]
 	var storedHash string
-	require.NoError(st.DB().QueryRow(`
+	require.NoError(st.DB().QueryRow(st.Rebind(`
 		SELECT COALESCE(content_hash, '') FROM attachments
 		WHERE message_id = ? AND source_attachment_id = ?
-	`, messageID, "discord:attachment-2").Scan(&storedHash))
+	`), messageID, "discord:attachment-2").Scan(&storedHash))
 	require.Empty(storedHash, "schema-level duplicate alias must retain an empty hash")
 	require.NoError(st.ReplaceMessageDiscordAttachments(messageID, []store.AttachmentRef{remaining}))
 	got, err = st.MessageDiscordAttachments(messageID)

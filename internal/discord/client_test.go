@@ -53,17 +53,18 @@ func TestClientReadAPI(t *testing.T) {
 	assert.False(active[0].ThreadMetadata.Archived)
 
 	before := mustParseTime(t, "2026-07-18T00:00:00Z")
-	publicPage, err := client.ArchivedThreads(ctx, "301", false, before)
+	publicPage, err := client.ArchivedThreads(ctx, "301", false, ArchiveCursor{BeforeTime: before})
 	require.NoError(err)
 	require.Len(publicPage.Threads, 1)
 	assert.Equal("public-thread", publicPage.Threads[0].Name)
 	assert.True(publicPage.HasMore)
-	assert.Equal(mustParseTime(t, "2026-07-17T12:00:00Z"), publicPage.NextBefore)
+	assert.Equal(mustParseTime(t, "2026-07-17T12:00:00Z"), publicPage.NextBeforeTime)
 
-	privatePage, err := client.ArchivedThreads(ctx, "301", true, before)
+	privatePage, err := client.ArchivedThreads(ctx, "301", true, ArchiveCursor{BeforeID: "777"})
 	require.NoError(err)
 	require.Len(privatePage.Threads, 1)
 	assert.Equal("private-thread", privatePage.Threads[0].Name)
+	assert.Equal("403", privatePage.NextBeforeID)
 
 	messages, err := client.Messages(ctx, "301", MessageQuery{Before: "600", Limit: 100})
 	require.NoError(err)
@@ -89,7 +90,7 @@ func TestClientReadAPI(t *testing.T) {
 		"/api/v10/guilds/201/channels",
 		"/api/v10/guilds/201/threads/active",
 		"/api/v10/channels/301/threads/archived/public?before=2026-07-18T00%3A00%3A00Z&limit=100",
-		"/api/v10/channels/301/users/@me/threads/archived/private?before=2026-07-18T00%3A00%3A00Z&limit=100",
+		"/api/v10/channels/301/users/@me/threads/archived/private?before=777&limit=100",
 		"/api/v10/channels/301/messages?before=600&limit=100",
 		"/api/v10/channels/301/messages/501",
 	}, fake.requestPaths())
@@ -121,6 +122,7 @@ func TestClientFormattingDoesNotExposeBotToken(t *testing.T) {
 }
 
 func TestWaitGlobalObservesExtendedDeadline(t *testing.T) {
+	require := require.New(t)
 	limits := newRateLimitState()
 	limits.pause(nil, 60*time.Millisecond, true)
 
@@ -134,16 +136,16 @@ func TestWaitGlobalObservesExtendedDeadline(t *testing.T) {
 
 	select {
 	case err := <-done:
-		require.NoError(t, err)
-		require.Fail(t, "global wait returned before an extended deadline")
+		require.NoError(err)
+		require.Fail("global wait returned before an extended deadline")
 	case <-time.After(80 * time.Millisecond):
 	}
 
 	select {
 	case err := <-done:
-		require.NoError(t, err)
+		require.NoError(err)
 	case <-time.After(200 * time.Millisecond):
-		require.Fail(t, "global wait did not return after the extended deadline")
+		require.Fail("global wait did not return after the extended deadline")
 	}
 }
 

@@ -30,6 +30,7 @@ type importerFakeAPI struct {
 	failBefore  map[string]map[string]error
 	injectAfter map[string][]Message
 	catalogErr  error
+	archiveHook func(string, bool, ArchiveCursor) (ThreadPage, error)
 	messageHook func(string, MessageQuery) ([]Message, error, bool)
 }
 
@@ -60,7 +61,11 @@ func (f *importerFakeAPI) GuildChannels(_ context.Context, _ string) ([]Channel,
 func (f *importerFakeAPI) ActiveThreads(context.Context, string) ([]Channel, error) {
 	return slices.Clone(f.active), nil
 }
-func (f *importerFakeAPI) ArchivedThreads(context.Context, string, bool, time.Time) (ThreadPage, error) {
+
+func (f *importerFakeAPI) ArchivedThreads(_ context.Context, channelID string, private bool, before ArchiveCursor) (ThreadPage, error) {
+	if f.archiveHook != nil {
+		return f.archiveHook(channelID, private, before)
+	}
 	return ThreadPage{}, nil
 }
 func (f *importerFakeAPI) Message(context.Context, string, string) (Message, error) {
@@ -681,6 +686,53 @@ func TestImporterCatalogFailurePreservesSafeCheckpointAndFailsRun(t *testing.T) 
 	require.NoError(err)
 	assert.Equal(baseline.ThreadCatalog, checkpoint.ThreadCatalog)
 	assert.Equal(store.SyncStatusFailed, failed.Status)
+}
+
+func TestImporterStagesCompleteCatalogBeforePublishingArchiveWatermark(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewSQLiteTestStore(t)
+	api := newImporterFakeAPI(importerTestChannel("300", "general"))
+	archiveTime := time.Date(2026, 7, 19, 12, 0, 0, 0, time.UTC)
+	api.archiveHook = func(channelID string, private bool, before ArchiveCursor) (ThreadPage, error) {
+		assert.Equal("300", channelID)
+		assert.Empty(before)
+		if private {
+			return ThreadPage{}, nil
+		}
+		return ThreadPage{Threads: []Channel{
+			{
+				ID: "400", GuildID: "200", ParentID: "300", Type: 11, Name: "first thread",
+				ThreadMetadata: &ThreadMetadata{Archived: true, ArchiveTimestamp: archiveTime},
+			},
+			{
+				ID: "500", GuildID: "200", ParentID: "300", Type: 11, Name: "second thread",
+				ThreadMetadata: &ThreadMetadata{Archived: true, ArchiveTimestamp: archiveTime.Add(-time.Hour)},
+			},
+		}}, nil
+	}
+	api.messageHook = func(channelID string, _ MessageQuery) ([]Message, error, bool) {
+		if channelID == "300" {
+			return nil, errors.New("synthetic import failure after catalog discovery"), true
+		}
+		return nil, nil, false
+	}
+
+	_, err := newTestImporter(st, api).Import(t.Context(), ImportOptions{GuildID: "200"})
+	require.ErrorContains(err, "synthetic import failure after catalog discovery")
+	source, err := st.GetSourceByIdentifier("200")
+	require.NoError(err)
+	failed, err := st.GetLatestCheckpointedSync(source.ID)
+	require.NoError(err)
+	checkpoint, err := LoadSyncState(failed.CursorBefore.String)
+	require.NoError(err)
+	assert.Equal(archiveTime.Format(time.RFC3339Nano), checkpoint.ThreadCatalog["300"].PublicArchiveWatermark)
+	assert.Contains(checkpoint.Containers, "300")
+	assert.Contains(checkpoint.Containers, "400")
+	assert.Contains(checkpoint.Containers, "500")
+	metadata, err := st.ConversationMetadataBatch(source.ID, []string{"300", "400", "500"})
+	require.NoError(err)
+	assert.Len(metadata, 3, "all catalog containers are durable before the watermark advances")
 }
 
 func TestImporterKeepsPreviouslyStoredAbsentContainerAndItsMetadata(t *testing.T) {

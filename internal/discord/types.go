@@ -13,9 +13,17 @@ type API interface {
 	Guild(ctx context.Context, guildID string) (Guild, error)
 	GuildChannels(ctx context.Context, guildID string) ([]Channel, error)
 	ActiveThreads(ctx context.Context, guildID string) ([]Channel, error)
-	ArchivedThreads(ctx context.Context, channelID string, private bool, before time.Time) (ThreadPage, error)
+	ArchivedThreads(ctx context.Context, channelID string, private bool, before ArchiveCursor) (ThreadPage, error)
 	Messages(ctx context.Context, channelID string, query MessageQuery) ([]Message, error)
 	Message(ctx context.Context, channelID, messageID string) (Message, error)
+}
+
+// ArchiveCursor carries the endpoint-specific pagination cursor used by
+// Discord's archived-thread APIs. Public archives page by archive timestamp;
+// joined private archives page by thread snowflake.
+type ArchiveCursor struct {
+	BeforeTime time.Time
+	BeforeID   string
 }
 
 // User contains the identity fields used for bot validation and participant
@@ -89,12 +97,13 @@ type ThreadMetadata struct {
 	CreateTimestamp     *time.Time `json:"create_timestamp"`
 }
 
-// ThreadPage is one public or private archived-thread response. NextBefore is
-// the archive timestamp to pass to the next call when HasMore is true.
+// ThreadPage is one public or private archived-thread response. The endpoint's
+// corresponding next cursor is populated when HasMore is true.
 type ThreadPage struct {
-	Threads    []Channel
-	HasMore    bool
-	NextBefore time.Time
+	Threads        []Channel
+	HasMore        bool
+	NextBeforeTime time.Time
+	NextBeforeID   string
 }
 
 // GuildMember contains member data attached to an observed message payload.

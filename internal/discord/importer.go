@@ -162,11 +162,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (summary *I
 		ctx, imp.api, opts.GuildID, opts.GuildConfig, state.ThreadCatalog,
 		opts.Full || !hadBaseline,
 	)
-	state.ThreadCatalog = catalog.ThreadCatalog
 	summary.CatalogIssues = append(summary.CatalogIssues, catalog.Issues...)
-	if err := imp.saveCheckpoint(syncID, state, summary); err != nil {
-		return summary, err
-	}
 	if catalogErr != nil {
 		return summary, fmt.Errorf("discover Discord catalog: %w", catalogErr)
 	}
@@ -183,6 +179,13 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (summary *I
 		source.ID, catalog.Containers, state, opts.GuildID, opts.GuildConfig,
 	)
 	if err != nil {
+		return summary, err
+	}
+	if err := imp.stageCatalogContainers(source.ID, containers, state); err != nil {
+		return summary, err
+	}
+	state.ThreadCatalog = catalog.ThreadCatalog
+	if err := imp.saveCheckpoint(syncID, state, summary); err != nil {
 		return summary, err
 	}
 	for _, container := range containers {
@@ -216,6 +219,38 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (summary *I
 	}
 	completed = true
 	return summary, nil
+}
+
+// stageCatalogContainers makes every discovered container recoverable before
+// publishing archive watermarks that can page past it. Conversation metadata
+// and an empty per-container state entry together form the durable catalog.
+func (imp *Importer) stageCatalogContainers(
+	sourceID int64, containers []importerContainer, state *SyncState,
+) error {
+	for _, container := range containers {
+		if container.Channel.ID == "" {
+			return errors.New("catalog container has an empty ID")
+		}
+		conversationID, err := imp.store.EnsureConversationWithType(
+			sourceID, container.Channel.ID, discordConversationType, container.Channel.Name,
+		)
+		if err != nil {
+			return fmt.Errorf("stage Discord container %s: ensure conversation: %w", container.Channel.ID, err)
+		}
+		if !container.preserveMetadata {
+			mapped, err := mapConversation(&container.Channel)
+			if err != nil {
+				return fmt.Errorf("stage Discord container %s: %w", container.Channel.ID, err)
+			}
+			if err := imp.setConversationCatalogMetadata(conversationID, mapped.Metadata); err != nil {
+				return fmt.Errorf("stage Discord container %s: %w", container.Channel.ID, err)
+			}
+		}
+		if _, exists := state.Containers[container.Channel.ID]; !exists {
+			state.Containers[container.Channel.ID] = ContainerState{}
+		}
+	}
+	return nil
 }
 
 func (imp *Importer) initialState(sourceID int64, full bool, lowerBound string) (*SyncState, bool, error) {

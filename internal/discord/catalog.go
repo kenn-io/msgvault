@@ -224,7 +224,7 @@ func discoverArchive(
 		return priorWatermark, fmt.Errorf("invalid prior archive watermark: %w", err)
 	}
 	candidate := priorTime
-	before := time.Time{}
+	before := ArchiveCursor{}
 
 	for {
 		page, pageErr := api.ArchivedThreads(ctx, parent.ID, private, before)
@@ -257,10 +257,17 @@ func discoverArchive(
 		if !page.HasMore || reachedBoundary {
 			return formatCatalogWatermark(candidate, priorWatermark), nil
 		}
-		if page.NextBefore.IsZero() || (!before.IsZero() && !page.NextBefore.Before(before)) {
+		if private {
+			if page.NextBeforeID == "" || page.NextBeforeID == before.BeforeID {
+				return priorWatermark, fmt.Errorf("%w: archived thread pagination cursor did not advance", ErrMalformedCatalog)
+			}
+			before = ArchiveCursor{BeforeID: page.NextBeforeID}
+			continue
+		}
+		if page.NextBeforeTime.IsZero() || (!before.BeforeTime.IsZero() && !page.NextBeforeTime.Before(before.BeforeTime)) {
 			return priorWatermark, fmt.Errorf("%w: archived thread pagination cursor did not advance", ErrMalformedCatalog)
 		}
-		before = page.NextBefore
+		before = ArchiveCursor{BeforeTime: page.NextBeforeTime}
 	}
 }
 

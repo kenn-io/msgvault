@@ -13,6 +13,8 @@ import (
 )
 
 func TestAddDiscordReadsTokenFromStdinAndSelectsSoleGuild(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
 	st := newDiscordCLIStore(t)
 	tokensDir := t.TempDir()
 	api := newDiscordCLIServer(t, discord.Guild{ID: testDiscordGuildA, Name: "Alpha Guild"})
@@ -22,25 +24,27 @@ func TestAddDiscordReadsTokenFromStdinAndSelectsSoleGuild(t *testing.T) {
 	cmd.SetOut(&output)
 	cmd.SetErr(&output)
 
-	require.NoError(t, cmd.Execute())
-	assert.Contains(t, output.String(), "Alpha Guild")
-	assert.Contains(t, output.String(), testDiscordGuildA)
-	assert.NotContains(t, output.String(), testDiscordBotToken)
+	require.NoError(cmd.Execute())
+	assert.Contains(output.String(), "Alpha Guild")
+	assert.Contains(output.String(), testDiscordGuildA)
+	assert.NotContains(output.String(), testDiscordBotToken)
 
 	sources, err := st.ListSources("discord")
-	require.NoError(t, err)
-	require.Len(t, sources, 1)
-	assert.Equal(t, testDiscordGuildA, sources[0].Identifier)
-	assert.Equal(t, sql.NullString{String: "Alpha Guild", Valid: true}, sources[0].DisplayName)
-	assert.False(t, sources[0].OAuthApp.Valid)
+	require.NoError(err)
+	require.Len(sources, 1)
+	assert.Equal(testDiscordGuildA, sources[0].Identifier)
+	assert.Equal(sql.NullString{String: "Alpha Guild", Valid: true}, sources[0].DisplayName)
+	assert.False(sources[0].OAuthApp.Valid)
 
 	record, err := discord.NewTokenManager(tokensDir).Resolve("")
-	require.NoError(t, err)
-	assert.Equal(t, testDiscordBotID, record.BotUserID)
-	assert.Equal(t, testDiscordBotToken, record.AccessToken())
+	require.NoError(err)
+	assert.Equal(testDiscordBotID, record.BotUserID)
+	assert.Equal(testDiscordBotToken, record.AccessToken())
 }
 
 func TestAddDiscordRequiresExplicitGuildWhenSeveralAreAccessible(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
 	st := newDiscordCLIStore(t)
 	tokensDir := t.TempDir()
 	api := newDiscordCLIServer(t,
@@ -54,24 +58,26 @@ func TestAddDiscordRequiresExplicitGuildWhenSeveralAreAccessible(t *testing.T) {
 	cmd.SetErr(&output)
 
 	err := cmd.Execute()
-	require.ErrorContains(t, err, "--guild")
-	assert.Contains(t, output.String(), "Alpha Guild")
-	assert.Contains(t, output.String(), "Beta Guild")
-	assert.NotContains(t, err.Error(), testDiscordBotToken)
-	assert.NotContains(t, output.String(), testDiscordBotToken)
+	require.ErrorContains(err, "--guild")
+	assert.Contains(output.String(), "Alpha Guild")
+	assert.Contains(output.String(), "Beta Guild")
+	assert.NotContains(err.Error(), testDiscordBotToken)
+	assert.NotContains(output.String(), testDiscordBotToken)
 	sources, listErr := st.ListSources("discord")
-	require.NoError(t, listErr)
-	assert.Empty(t, sources)
+	require.NoError(listErr)
+	assert.Empty(sources)
 }
 
 func TestAddDiscordPromotesSoleBindingAndExistingNullSources(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
 	st := newDiscordCLIStore(t)
 	tokensDir := t.TempDir()
 	manager := discord.NewTokenManager(tokensDir)
-	require.NoError(t, manager.Save(discord.NewTokenRecord(testDiscordBotID, "archive-bot", testDiscordBotToken, "")))
+	require.NoError(manager.Save(discord.NewTokenRecord(testDiscordBotID, "archive-bot", testDiscordBotToken, "")))
 	existing, err := st.GetOrCreateSource("discord", testDiscordGuildB)
-	require.NoError(t, err)
-	assert.False(t, existing.OAuthApp.Valid)
+	require.NoError(err)
+	assert.False(existing.OAuthApp.Valid)
 
 	api := newDiscordCLIServer(t, discord.Guild{ID: testDiscordGuildA, Name: "Alpha Guild"})
 	cmd := newAddDiscordLocalCmd(testDiscordCommandDeps(t, st, tokensDir, api.server.URL))
@@ -79,20 +85,22 @@ func TestAddDiscordPromotesSoleBindingAndExistingNullSources(t *testing.T) {
 	cmd.SetArgs([]string{"--oauth-app", "archive-bot"})
 	cmd.SetOut(&bytes.Buffer{})
 	cmd.SetErr(&bytes.Buffer{})
-	require.NoError(t, cmd.Execute())
+	require.NoError(cmd.Execute())
 
 	record, err := manager.Resolve("archive-bot")
-	require.NoError(t, err)
-	assert.Equal(t, testDiscordBotID, record.BotUserID)
+	require.NoError(err)
+	assert.Equal(testDiscordBotID, record.BotUserID)
 	sources, err := st.ListSources("discord")
-	require.NoError(t, err)
-	require.Len(t, sources, 2)
+	require.NoError(err)
+	require.Len(sources, 2)
 	for _, source := range sources {
-		assert.Equal(t, sql.NullString{String: "archive-bot", Valid: true}, source.OAuthApp)
+		assert.Equal(sql.NullString{String: "archive-bot", Valid: true}, source.OAuthApp)
 	}
 }
 
 func TestAddDiscordReportsPermissionDiagnosticsWithoutExposingToken(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
 	st := newDiscordCLIStore(t)
 	api := newDiscordCLIServer(t, discord.Guild{ID: testDiscordGuildA, Name: "Alpha Guild"})
 	api.fail["/channels/"+testDiscordChannel+"/users/@me/threads/archived/private"] = 403
@@ -102,16 +110,18 @@ func TestAddDiscordReportsPermissionDiagnosticsWithoutExposingToken(t *testing.T
 	cmd.SetOut(&output)
 	cmd.SetErr(&output)
 
-	require.NoError(t, cmd.Execute())
-	assert.Contains(t, output.String(), "Private archived threads unavailable")
-	assert.NotContains(t, output.String(), "Member enrichment unavailable")
-	assert.NotContains(t, output.String(), testDiscordBotToken)
+	require.NoError(cmd.Execute())
+	assert.Contains(output.String(), "Private archived threads unavailable")
+	assert.NotContains(output.String(), "Member enrichment unavailable")
+	assert.NotContains(output.String(), testDiscordBotToken)
 	for _, requestURI := range api.requestURIs() {
-		assert.NotContains(t, requestURI, "/members", "setup must not request the unused guild roster")
+		assert.NotContains(requestURI, "/members", "setup must not request the unused guild roster")
 	}
 }
 
 func TestAddDiscordCredentialFirstRegistrationFailureIsIdempotentlyRecoverable(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
 	st := newDiscordCLIStore(t)
 	tokensDir := t.TempDir()
 	api := newDiscordCLIServer(t, discord.Guild{ID: testDiscordGuildA, Name: "Alpha Guild"})
@@ -129,18 +139,18 @@ func TestAddDiscordCredentialFirstRegistrationFailureIsIdempotentlyRecoverable(t
 	first.SetOut(&firstOutput)
 	first.SetErr(&firstOutput)
 	err := first.Execute()
-	require.ErrorContains(t, err, "synthetic source registration failure")
-	assert.NotContains(t, err.Error(), testDiscordBotToken)
-	assert.NotContains(t, firstOutput.String(), testDiscordBotToken)
+	require.ErrorContains(err, "synthetic source registration failure")
+	assert.NotContains(err.Error(), testDiscordBotToken)
+	assert.NotContains(firstOutput.String(), testDiscordBotToken)
 
 	record, err := discord.NewTokenManager(tokensDir).Resolve("archive-bot")
-	require.NoError(t, err, "validated credential is the durable first phase")
-	assert.Equal(t, testDiscordBotID, record.BotUserID)
+	require.NoError(err, "validated credential is the durable first phase")
+	assert.Equal(testDiscordBotID, record.BotUserID)
 	sources, err := st.ListSources("discord")
-	require.NoError(t, err)
-	require.Len(t, sources, 1)
-	assert.False(t, sources[0].DisplayName.Valid, "interrupted registration may leave a resumable source shell")
-	assert.False(t, sources[0].OAuthApp.Valid)
+	require.NoError(err)
+	require.Len(sources, 1)
+	assert.False(sources[0].DisplayName.Valid, "interrupted registration may leave a resumable source shell")
+	assert.False(sources[0].OAuthApp.Valid)
 
 	second := newAddDiscordLocalCmd(testDiscordCommandDeps(t, st, tokensDir, api.server.URL))
 	var secondOutput bytes.Buffer
@@ -148,10 +158,10 @@ func TestAddDiscordCredentialFirstRegistrationFailureIsIdempotentlyRecoverable(t
 	second.SetArgs([]string{"--oauth-app", "archive-bot"})
 	second.SetOut(&secondOutput)
 	second.SetErr(&secondOutput)
-	require.NoError(t, second.Execute())
+	require.NoError(second.Execute())
 	sources, err = st.ListSources("discord")
-	require.NoError(t, err)
-	require.Len(t, sources, 1)
-	assert.Equal(t, sql.NullString{String: "archive-bot", Valid: true}, sources[0].OAuthApp)
-	assert.NotContains(t, secondOutput.String(), testDiscordBotToken)
+	require.NoError(err)
+	require.Len(sources, 1)
+	assert.Equal(sql.NullString{String: "archive-bot", Valid: true}, sources[0].OAuthApp)
+	assert.NotContains(secondOutput.String(), testDiscordBotToken)
 }

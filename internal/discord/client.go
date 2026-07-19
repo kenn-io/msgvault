@@ -181,7 +181,7 @@ func (c *Client) ActiveThreads(ctx context.Context, guildID string) ([]Channel, 
 	return response.Threads, err
 }
 
-func (c *Client) ArchivedThreads(ctx context.Context, channelID string, private bool, before time.Time) (ThreadPage, error) {
+func (c *Client) ArchivedThreads(ctx context.Context, channelID string, private bool, before ArchiveCursor) (ThreadPage, error) {
 	var out ThreadPage
 	id, err := snowflakePathValue("channel ID", channelID)
 	if err != nil {
@@ -196,8 +196,16 @@ func (c *Client) ArchivedThreads(ctx context.Context, channelID string, private 
 		routeKey = "GET /channels/:channel/users/@me/threads/archived/private"
 	}
 	query := url.Values{"limit": {strconv.Itoa(threadPageLimit)}}
-	if !before.IsZero() {
-		query.Set("before", before.UTC().Format(time.RFC3339Nano))
+	if private {
+		if before.BeforeID != "" {
+			cursor, err := snowflakePathValue("private archive cursor", before.BeforeID)
+			if err != nil {
+				return out, err
+			}
+			query.Set("before", cursor)
+		}
+	} else if !before.BeforeTime.IsZero() {
+		query.Set("before", before.BeforeTime.UTC().Format(time.RFC3339Nano))
 	}
 	var response struct {
 		Threads []Channel `json:"threads"`
@@ -210,10 +218,20 @@ func (c *Client) ArchivedThreads(ctx context.Context, channelID string, private 
 	out.Threads = response.Threads
 	out.HasMore = response.HasMore
 	if response.HasMore {
-		if len(response.Threads) == 0 || response.Threads[len(response.Threads)-1].ThreadMetadata == nil || response.Threads[len(response.Threads)-1].ThreadMetadata.ArchiveTimestamp.IsZero() {
+		if len(response.Threads) == 0 {
 			return ThreadPage{}, fmt.Errorf("%w: discord %s response has more pages but no archive cursor", ErrMalformedCatalog, operation)
 		}
-		out.NextBefore = response.Threads[len(response.Threads)-1].ThreadMetadata.ArchiveTimestamp
+		last := response.Threads[len(response.Threads)-1]
+		if private {
+			if _, err := snowflakePathValue("private archive cursor", last.ID); err != nil {
+				return ThreadPage{}, fmt.Errorf("%w: discord %s response has more pages but no thread cursor: %w", ErrMalformedCatalog, operation, err)
+			}
+			out.NextBeforeID = last.ID
+		} else if last.ThreadMetadata == nil || last.ThreadMetadata.ArchiveTimestamp.IsZero() {
+			return ThreadPage{}, fmt.Errorf("%w: discord %s response has more pages but no archive cursor", ErrMalformedCatalog, operation)
+		} else {
+			out.NextBeforeTime = last.ThreadMetadata.ArchiveTimestamp
+		}
 	}
 	return out, nil
 }

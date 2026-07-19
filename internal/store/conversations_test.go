@@ -32,7 +32,8 @@ func TestConversationMetadataGetSetAndClear(t *testing.T) {
 
 	metadata, err = st.GetConversationMetadata(conversationID)
 	require.NoError(err)
-	assert.Equal(want, metadata)
+	assert.True(metadata.Valid)
+	assert.JSONEq(want.String, metadata.String)
 
 	require.NoError(st.SetConversationMetadata(conversationID, sql.NullString{}))
 	metadata, err = st.GetConversationMetadata(conversationID)

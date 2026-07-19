@@ -32,22 +32,23 @@ func (c *cancelAfterFirstErrContext) Err() error {
 }
 
 func TestBackfillDiscordMediaReportsPendingWithoutSignedURL(t *testing.T) {
+	req := require.New(t)
 	st := newDiscordCLIStore(t)
 	tokensDir := t.TempDir()
-	require.NoError(t, discord.NewTokenManager(tokensDir).Save(discord.NewTokenRecord(testDiscordBotID, "archive-bot", testDiscordBotToken, "")))
+	req.NoError(discord.NewTokenManager(tokensDir).Save(discord.NewTokenRecord(testDiscordBotID, "archive-bot", testDiscordBotToken, "")))
 	source, err := st.GetOrCreateSource("discord", testDiscordGuildA)
-	require.NoError(t, err)
-	require.NoError(t, st.UpdateSourceDisplayName(source.ID, "Alpha Guild"))
+	req.NoError(err)
+	req.NoError(st.UpdateSourceDisplayName(source.ID, "Alpha Guild"))
 	conversationID, err := st.EnsureConversationWithType(source.ID, testDiscordChannel, "channel", "general")
-	require.NoError(t, err)
+	req.NoError(err)
 	messageID, err := st.UpsertMessage(&store.Message{
 		SourceID: source.ID, ConversationID: conversationID,
 		SourceMessageID: "400000000000000001", MessageType: "discord",
 		SentAt: sql.NullTime{Time: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), Valid: true},
 	})
-	require.NoError(t, err)
+	req.NoError(err)
 	signedURL := "https://cdn.discordapp.com/attachments/300000000000000001/500000000000000001/file.bin?hm=secret-signature"
-	require.NoError(t, st.ReplaceMessageDiscordAttachments(messageID, []store.AttachmentRef{{
+	req.NoError(st.ReplaceMessageDiscordAttachments(messageID, []store.AttachmentRef{{
 		Filename: "file.bin", Size: 100, StoragePath: signedURL,
 		SourceAttachmentID: "discord:500000000000000001", MediaType: "document",
 	}}))
@@ -56,9 +57,9 @@ func TestBackfillDiscordMediaReportsPendingWithoutSignedURL(t *testing.T) {
 		SourceMessageID: "400000000000000002", MessageType: "discord",
 		SentAt: sql.NullTime{Time: time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC), Valid: true},
 	})
-	require.NoError(t, err)
+	req.NoError(err)
 	completedHash := strings.Repeat("ab", 32)
-	require.NoError(t, st.ReplaceMessageDiscordAttachments(completedMessageID, []store.AttachmentRef{{
+	req.NoError(st.ReplaceMessageDiscordAttachments(completedMessageID, []store.AttachmentRef{{
 		Filename: "complete.bin", Size: 100,
 		StoragePath: completedHash[:2] + "/" + completedHash, ContentHash: completedHash,
 		SourceAttachmentID: "discord:500000000000000002", MediaType: "document",
@@ -83,18 +84,20 @@ func TestBackfillDiscordMediaReportsPendingWithoutSignedURL(t *testing.T) {
 		{name: "only incomplete", args: []string{"Alpha Guild", "--only-incomplete"}, wantProcessed: "Messages processed: 1"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
 			cmd := newBackfillDiscordMediaLocalCmd(deps)
 			var output bytes.Buffer
 			cmd.SetArgs(tt.args)
 			cmd.SetOut(&output)
 			cmd.SetErr(&output)
-			require.NoError(t, cmd.Execute())
-			assert.Contains(t, output.String(), tt.wantProcessed)
-			assert.Contains(t, output.String(), "Pending: 1")
-			assert.Contains(t, output.String(), "Attachment warnings: 1")
-			assert.Contains(t, output.String(), "Size cap exceeded: 1")
-			assert.NotContains(t, output.String(), "hm=secret-signature")
-			assert.NotContains(t, output.String(), testDiscordBotToken)
+			require.NoError(cmd.Execute())
+			assert.Contains(output.String(), tt.wantProcessed)
+			assert.Contains(output.String(), "Pending: 1")
+			assert.Contains(output.String(), "Attachment warnings: 1")
+			assert.Contains(output.String(), "Size cap exceeded: 1")
+			assert.NotContains(output.String(), "hm=secret-signature")
+			assert.NotContains(output.String(), testDiscordBotToken)
 		})
 	}
 }
@@ -117,20 +120,22 @@ func TestBackfillDiscordMediaReportsSanitizedRefreshAndUnrecoverableWarnings(t *
 		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
 			st := newDiscordCLIStore(t)
 			tokensDir := t.TempDir()
-			require.NoError(t, discord.NewTokenManager(tokensDir).Save(discord.NewTokenRecord(testDiscordBotID, "archive-bot", testDiscordBotToken, "")))
+			require.NoError(discord.NewTokenManager(tokensDir).Save(discord.NewTokenRecord(testDiscordBotID, "archive-bot", testDiscordBotToken, "")))
 			source, err := st.GetOrCreateSource("discord", testDiscordGuildA)
-			require.NoError(t, err)
+			require.NoError(err)
 			conversationID, err := st.EnsureConversationWithType(source.ID, testDiscordChannel, "channel", "general")
-			require.NoError(t, err)
+			require.NoError(err)
 			messageID, err := st.UpsertMessage(&store.Message{
 				SourceID: source.ID, ConversationID: conversationID,
 				SourceMessageID: "400000000000000001", MessageType: "discord",
 			})
-			require.NoError(t, err)
+			require.NoError(err)
 			signedURL := "https://cdn.discordapp.com/attachments/300000000000000001/500000000000000001/file.bin?hm=private-signature"
-			require.NoError(t, st.ReplaceMessageDiscordAttachments(messageID, []store.AttachmentRef{{
+			require.NoError(st.ReplaceMessageDiscordAttachments(messageID, []store.AttachmentRef{{
 				StoragePath: signedURL, SourceAttachmentID: "discord:500000000000000001",
 			}}))
 			api := newDiscordCLIServer(t)
@@ -143,31 +148,33 @@ func TestBackfillDiscordMediaReportsSanitizedRefreshAndUnrecoverableWarnings(t *
 			cmd.SetOut(&output)
 			cmd.SetErr(&output)
 
-			require.NoError(t, cmd.Execute())
-			assert.Contains(t, output.String(), tt.wantOutcome)
-			assert.Contains(t, output.String(), "Attachment warnings: 1")
-			assert.Contains(t, output.String(), tt.wantWarning)
-			assert.NotContains(t, output.String(), "private-signature")
-			assert.NotContains(t, output.String(), testDiscordBotToken)
+			require.NoError(cmd.Execute())
+			assert.Contains(output.String(), tt.wantOutcome)
+			assert.Contains(output.String(), "Attachment warnings: 1")
+			assert.Contains(output.String(), tt.wantWarning)
+			assert.NotContains(output.String(), "private-signature")
+			assert.NotContains(output.String(), testDiscordBotToken)
 		})
 	}
 }
 
 func TestBackfillDiscordMediaReturnsCancellationAfterFinalMessage(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
 	st := newDiscordCLIStore(t)
 	tokensDir := t.TempDir()
-	require.NoError(t, discord.NewTokenManager(tokensDir).Save(discord.NewTokenRecord(testDiscordBotID, "archive-bot", testDiscordBotToken, "")))
+	require.NoError(discord.NewTokenManager(tokensDir).Save(discord.NewTokenRecord(testDiscordBotID, "archive-bot", testDiscordBotToken, "")))
 	source, err := st.GetOrCreateSource("discord", testDiscordGuildA)
-	require.NoError(t, err)
+	require.NoError(err)
 	conversationID, err := st.EnsureConversationWithType(source.ID, testDiscordChannel, "channel", "general")
-	require.NoError(t, err)
+	require.NoError(err)
 	messageID, err := st.UpsertMessage(&store.Message{
 		SourceID: source.ID, ConversationID: conversationID,
 		SourceMessageID: "400000000000000001", MessageType: "discord",
 	})
-	require.NoError(t, err)
+	require.NoError(err)
 	completedHash := strings.Repeat("ab", 32)
-	require.NoError(t, st.ReplaceMessageDiscordAttachments(messageID, []store.AttachmentRef{{
+	require.NoError(st.ReplaceMessageDiscordAttachments(messageID, []store.AttachmentRef{{
 		Filename: "complete.bin", Size: 100,
 		StoragePath: completedHash[:2] + "/" + completedHash, ContentHash: completedHash,
 		SourceAttachmentID: "discord:500000000000000001", MediaType: "document",
@@ -177,7 +184,7 @@ func TestBackfillDiscordMediaReturnsCancellationAfterFinalMessage(t *testing.T) 
 	deps := testDiscordCommandDeps(t, st, tokensDir, newDiscordCLIServer(t).server.URL)
 
 	summary, err := backfillDiscordSourceMedia(ctx, st, source, deps, false)
-	require.ErrorIs(t, err, context.Canceled)
-	assert.Equal(t, int64(1), summary.MessagesProcessed)
-	assert.GreaterOrEqual(t, ctx.checks, 2, "cancellation must be checked after the final message")
+	require.ErrorIs(err, context.Canceled)
+	assert.Equal(int64(1), summary.MessagesProcessed)
+	assert.GreaterOrEqual(ctx.checks, 2, "cancellation must be checked after the final message")
 }

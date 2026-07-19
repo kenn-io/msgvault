@@ -8,7 +8,6 @@ import (
 	"os"
 	"slices"
 	"strings"
-	"time"
 
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/clirun"
@@ -249,7 +248,7 @@ func diagnoseDiscordGuild(cmd *cobra.Command, api discord.API, guild discord.Gui
 		} else if len(messages) > 0 && messageContentUnavailable(messages[0]) {
 			_, _ = fmt.Fprintf(out, "  Message Content Intent may be unavailable in channel %s\n", channel.ID)
 		}
-		if _, privateErr := api.ArchivedThreads(cmd.Context(), channel.ID, true, time.Time{}); privateErr != nil {
+		if _, privateErr := api.ArchivedThreads(cmd.Context(), channel.ID, true, discord.ArchiveCursor{}); privateErr != nil {
 			_, _ = fmt.Fprintf(out, "  Private archived threads unavailable for channel %s: %s\n", channel.ID, discordDiagnostic(privateErr))
 		}
 	}

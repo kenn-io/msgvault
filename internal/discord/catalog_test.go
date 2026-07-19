@@ -126,7 +126,7 @@ func TestDiscoverCatalogFullScanExhaustsArchivePages(t *testing.T) {
 	require.NoError(err)
 	assert.Equal(2, publicRequests)
 	assert.Equal(2, privateRequests)
-	assert.Equal([]string{"", "2026-07-20T00:00:00Z"}, privateBefore)
+	assert.Equal([]string{"", "423"}, privateBefore)
 	assert.Contains(catalogContainersByID(result.Containers), "422", "full scan does not stop at the prior watermark")
 	assert.Contains(catalogContainersByID(result.Containers), "424", "private full scan emits its second page")
 	assert.Equal("2026-07-19T00:00:00Z", result.ThreadCatalog["301"].PublicArchiveWatermark)
