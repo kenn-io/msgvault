@@ -118,10 +118,10 @@ Examples:
 			return cacheErr
 		},
 	}
-	cmd.Flags().IntVar(&syncSlackLimit, "limit", 0, "max messages per conversation this run (0 = no limit; limited backfills resume on the next run)")
+	cmd.Flags().IntVar(&syncSlackLimit, "limit", 0, "max messages per conversation this run (0 = no limit; limited runs resume on the next run and skip the maintenance rescan)")
 	cmd.Flags().BoolVar(&syncSlackFull, "full", false, "ignore stored cursors and re-fetch every message (repairs/backfills existing rows in place)")
 	cmd.Flags().BoolVar(&syncSlackNoThreads, "no-threads", false, "skip thread reply fetching for this run")
-	cmd.Flags().BoolVar(&syncSlackNoMedia, "no-media", false, "skip file downloads for this run")
+	cmd.Flags().BoolVar(&syncSlackNoMedia, "no-media", false, "skip file downloads for this run (files are recorded as pending; backfill-slack-media fetches them later)")
 	return cmd
 }
 

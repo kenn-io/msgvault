@@ -71,10 +71,10 @@ msgvault sync-slack --full
 
 | Flag | Description |
 |---|---|
-| `--limit N` | Max messages per conversation this run (backfills resume next run) |
+| `--limit N` | Max messages per conversation this run (limited runs resume next run and skip the maintenance rescan) |
 | `--full` | Ignore stored cursors; re-fetch and upsert every message in place |
 | `--no-threads` | Skip thread-reply fetching this run |
-| `--no-media` | Skip file downloads this run |
+| `--no-media` | Skip file downloads this run (files stay pending for `backfill-slack-media`) |
 
 Backfills are resumable: interrupt with Ctrl-C and the next run continues
 from the last checkpoint. Incremental runs fetch new messages, re-scan the

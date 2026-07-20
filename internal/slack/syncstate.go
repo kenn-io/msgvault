@@ -87,20 +87,30 @@ func (s *SyncState) Merge(other *SyncState) {
 			continue
 		}
 		cs := s.EnsureConv(channelID)
-		if ocs.Cursor != "" && (cs.Cursor == "" || tsLess(cs.Cursor, ocs.Cursor)) {
+		// Cursor and IncrCursor/IncrMaxTS form ONE resume unit: a window page
+		// cursor is only valid relative to the oldest=Cursor bound it was
+		// minted under. The more-advanced unit wins wholesale — including
+		// cleared fields, so a completed window's clear is authoritative and
+		// a stale checkpoint's mid-window state never pairs with a newer
+		// cursor.
+		switch {
+		case ocs.Cursor != "" && (cs.Cursor == "" || tsLess(cs.Cursor, ocs.Cursor)):
 			cs.Cursor = ocs.Cursor
+			cs.IncrCursor = ocs.IncrCursor
+			cs.IncrMaxTS = ocs.IncrMaxTS
+		case ocs.Cursor == cs.Cursor:
+			if ocs.IncrCursor != "" {
+				cs.IncrCursor = ocs.IncrCursor
+			}
+			if ocs.IncrMaxTS != "" && (cs.IncrMaxTS == "" || tsLess(cs.IncrMaxTS, ocs.IncrMaxTS)) {
+				cs.IncrMaxTS = ocs.IncrMaxTS
+			}
 		}
 		if ocs.BackfillCursor != "" {
 			cs.BackfillCursor = ocs.BackfillCursor
 		}
 		if ocs.BackfillLatest != "" {
 			cs.BackfillLatest = ocs.BackfillLatest
-		}
-		if ocs.IncrCursor != "" {
-			cs.IncrCursor = ocs.IncrCursor
-		}
-		if ocs.IncrMaxTS != "" && (cs.IncrMaxTS == "" || tsLess(cs.IncrMaxTS, ocs.IncrMaxTS)) {
-			cs.IncrMaxTS = ocs.IncrMaxTS
 		}
 		for root, replyTS := range ocs.Threads {
 			if cur, ok := cs.Threads[root]; !ok || tsLess(cur, replyTS) {

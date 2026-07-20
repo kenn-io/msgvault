@@ -223,7 +223,12 @@ func (imp *Importer) syncConversation(ctx context.Context, syncID, sourceID int6
 		if err := imp.incrementalConversation(ctx, cc, sum); err != nil {
 			return err
 		}
-		if !cc.limitReached() {
+		// The rescan is steady-state maintenance (edits, reactions, thread
+		// discovery): --limit runs skip it entirely. It never charges the
+		// fetch budget, so on unlimited runs it cannot starve thread
+		// polling; on limited runs skipping it keeps the run scoped and
+		// leaves the whole budget to the phases that make durable progress.
+		if opts.Limit == 0 {
 			if err := imp.rescanHead(ctx, cc, sum); err != nil {
 				return err
 			}
@@ -451,16 +456,15 @@ func (imp *Importer) rescanHead(ctx context.Context, cc *convScope, sum *ImportS
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		if cc.limitReached() {
-			return nil
-		}
+		// Full pages, no budget interplay: the rescan only runs on unlimited
+		// syncs (see syncConversation) and never charges the fetch budget.
 		page, err := imp.client.historyPageWithLimit(ctx, HistoryParams{
 			ChannelID: cc.channelID,
 			Cursor:    pageCursor,
 			Oldest:    oldest,
 			Latest:    cc.cs.Cursor,
 			Inclusive: true,
-		}, cc.pageBudget())
+		}, historyPageLimit)
 		if err != nil {
 			if ctx.Err() != nil {
 				return ctx.Err()

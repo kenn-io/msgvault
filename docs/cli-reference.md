@@ -453,10 +453,10 @@ msgvault sync-slack --full
 
 | Flag | Default | Description |
 |---|---|---|
-| `--limit` | `0` | Max messages per conversation this run (0 = no limit; limited backfills resume next run) |
+| `--limit` | `0` | Max messages per conversation this run (0 = no limit; limited runs resume next run and skip the maintenance rescan) |
 | `--full` | `false` | Ignore stored cursors and re-fetch every message (repairs rows in place; catches old thread replies and edits) |
 | `--no-threads` | `false` | Skip thread-reply fetching for this run |
-| `--no-media` | `false` | Skip file downloads for this run |
+| `--no-media` | `false` | Skip file downloads for this run (files become pending markers; `backfill-slack-media` fetches them later) |
 
 ---
 

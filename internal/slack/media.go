@@ -169,7 +169,13 @@ func (imp *Importer) persistFiles(ctx context.Context, syncID, messageID int64, 
 			continue
 		}
 		if opts.NoMedia || opts.AttachmentsDir == "" {
-			refs = append(refs, linkRow)
+			// Deferred, not declined: a pending marker keeps the file
+			// discoverable by backfill-slack-media once media is enabled.
+			// A link row here would hide it from the pending queries
+			// forever (link rows are reserved for genuinely external
+			// files that must never be fetched with the token).
+			refs = append(refs, pendingRow)
+			sum.AttachmentsPending++
 			continue
 		}
 		if f.Size > 0 && f.Size > maxBytes {

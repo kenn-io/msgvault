@@ -618,6 +618,38 @@ func TestImportDiscoversFirstReplyToOlderMessage(t *testing.T) {
 	assert.Equal(t, 1, n, "a first reply to an older message must be discovered without --full")
 }
 
+func TestImportLimitedRunsSkipMaintenanceRescan(t *testing.T) {
+	f := testWorkspace(t)
+	imp, opts := testImporter(t, f)
+	st := imp.store
+
+	_, err := imp.Import(context.Background(), opts)
+	require.NoError(t, err)
+
+	// Edit an already-archived message: only the maintenance rescan can see
+	// it. A limited run must skip that phase; an unlimited run catches up.
+	f.mu.Lock()
+	f.conv("C01").Msgs[0].Text = "hello 0 (stealth edit)"
+	f.mu.Unlock()
+
+	limited := opts
+	limited.Limit = 5
+	_, err = imp.Import(context.Background(), limited)
+	require.NoError(t, err)
+	var body string
+	readBody := func() string {
+		require.NoError(t, st.DB().QueryRow(st.Rebind(`
+			SELECT mb.body_text FROM message_bodies mb
+			JOIN messages m ON m.id = mb.message_id WHERE m.source_message_id = ?`), "C01:"+ts(0)).Scan(&body))
+		return body
+	}
+	assert.Equal(t, "hello 0", readBody(), "--limit runs are scoped: no maintenance rescan")
+
+	_, err = imp.Import(context.Background(), opts)
+	require.NoError(t, err)
+	assert.Equal(t, "hello 0 (stealth edit)", readBody(), "unlimited runs perform the rescan")
+}
+
 func TestImportGoneConversationIsSkippedNotFatal(t *testing.T) {
 	f := testWorkspace(t)
 	// Enumerated but unreadable: history answers channel_not_found (observed

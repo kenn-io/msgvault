@@ -171,3 +171,46 @@ func TestPersistFilesLinkRowsAndPendingMarkers(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, pending)
 }
+
+func TestNoMediaDefersFilesAsPendingNotLinks(t *testing.T) {
+	f := testWorkspace(t)
+	f.conv("C01").Msgs[6].Files = []map[string]any{
+		{"id": "F_DEFER", "name": "b.png", "mimetype": "image/png", "size": 5,
+			"url_private": "https://files.slack.com/files-pri/T01-F_DEFER/b.png",
+			"permalink":   "https://testers.slack.com/files/F_DEFER"},
+	}
+
+	prevInterval := checkpointMinInterval
+	checkpointMinInterval = 0
+	t.Cleanup(func() { checkpointMinInterval = prevInterval })
+	srv := f.serve()
+	client := NewClient(srv.URL, "xoxp-test")
+	client.disableRateLimits()
+	client.mediaTransport = &recordingTransport{body: "png02"}
+	st := testutil.NewTestStore(t)
+	imp := NewImporter(st, client, "T01")
+
+	// Sync with media disabled: the hosted file must become a PENDING
+	// marker — a link row would hide it from backfill forever.
+	opts := ImportOptions{TeamID: "T01", UserID: "UME", NoMedia: true, AttachmentsDir: t.TempDir()}
+	sum, err := imp.Import(context.Background(), opts)
+	require.NoError(t, err)
+	assert.Equal(t, 1, sum.AttachmentsPending)
+
+	src, err := st.GetOrCreateSource("slack", "T01:UME")
+	require.NoError(t, err)
+	pending, err := st.ListSlackPendingAttachmentMessages(src.ID)
+	require.NoError(t, err)
+	require.Len(t, pending, 1, "a --no-media deferred hosted file must stay discoverable")
+
+	// Enabling media and backfilling downloads it.
+	opts.NoMedia = false
+	bsum, err := imp.BackfillMedia(context.Background(), opts)
+	require.NoError(t, err)
+	assert.Equal(t, 1, bsum.AttachmentsDownloaded)
+	var hash string
+	require.NoError(t, st.DB().QueryRow(st.Rebind(`
+		SELECT COALESCE(a.content_hash,'') FROM attachments a
+		WHERE a.source_attachment_id = ?`), "slack:F_DEFER").Scan(&hash))
+	assert.NotEmpty(t, hash)
+}
