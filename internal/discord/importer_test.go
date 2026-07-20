@@ -865,6 +865,68 @@ func TestImporterRetriesAbsentThreadAfterTransientProbeFailureAgesPastWindow(t *
 	assert.False(completedState.Containers["300"].RetryRequired)
 }
 
+func TestImporterRetriesFailedRepairWithOriginalIntervalAfterWindowAdvances(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewSQLiteTestStore(t)
+	now := time.Date(2026, 7, 19, 12, 0, 0, 0, time.UTC)
+	deletedID := importerTestSnowflake(t, now.Add(-3*24*time.Hour), 1)
+	changedID := importerTestSnowflake(t, now.Add(-2*24*time.Hour), 2)
+	api := newImporterFakeAPI(importerTestChannel("300", "general"))
+	api.messages["300"] = []Message{
+		importerTestMessage(deletedID, "300", "will disappear"),
+		importerTestMessage(changedID, "300", "before edit"),
+	}
+	importer := newTestImporter(st, api)
+	importer.now = func() time.Time { return now }
+	window := 7 * 24 * time.Hour
+	_, err := importer.Import(t.Context(), ImportOptions{GuildID: "200", EditRescanWindow: window})
+	require.NoError(err)
+	source, err := st.GetSourceByIdentifier("200")
+	require.NoError(err)
+
+	changed := importerTestMessage(changedID, "300", "after edit")
+	editedAt := now.Add(-time.Hour)
+	changed.EditedTimestamp = &editedAt
+	api.messages["300"] = []Message{changed}
+	failRepairHead := true
+	api.messageHook = func(channelID string, query MessageQuery) ([]Message, error, bool) {
+		if channelID == "300" && query.Limit == 1 && failRepairHead {
+			failRepairHead = false
+			return nil, errors.New("synthetic repair-head failure"), true
+		}
+		return nil, nil, false
+	}
+	originalLower, err := SnowflakeFromTimestamp(now.Add(-window))
+	require.NoError(err)
+	_, err = importer.Import(t.Context(), ImportOptions{GuildID: "200", EditRescanWindow: window})
+	require.ErrorContains(err, "synthetic repair-head failure")
+	failedRun, err := st.GetLatestCheckpointedSync(source.ID)
+	require.NoError(err)
+	failedState, err := LoadSyncState(failedRun.CursorBefore.String)
+	require.NoError(err)
+	assert.Equal(originalLower, failedState.Containers["300"].RepairLower)
+
+	now = now.Add(30 * 24 * time.Hour)
+	api.messageHook = nil
+	_, err = importer.Import(t.Context(), ImportOptions{GuildID: "200", EditRescanWindow: window})
+	require.NoError(err)
+	var body string
+	require.NoError(st.DB().QueryRow(st.Rebind(`
+		SELECT mb.body_text FROM messages m
+		JOIN message_bodies mb ON mb.message_id = m.id
+		WHERE m.source_id = ? AND m.source_message_id = ?
+	`), source.ID, changedID).Scan(&body))
+	assert.Equal("after edit", body)
+	assertMessageDeletionState(t, st, source.ID, deletedID, true)
+	completedRun, err := st.GetLastSuccessfulSync(source.ID)
+	require.NoError(err)
+	completedState, err := LoadSyncState(completedRun.CursorAfter.String)
+	require.NoError(err)
+	assert.Empty(completedState.Containers["300"].RepairLower)
+	assert.False(completedState.Containers["300"].RetryRequired)
+}
+
 func TestImporterPreviouslyStoredContainerFiltersUseArchivedParentMetadata(t *testing.T) {
 	topLevelMetadata := `{"guild_id":"200","discord_channel_type":0}`
 	threadMetadata := `{"guild_id":"200","parent_channel_id":"250","discord_channel_type":11,"thread":{"archived":true}}`
@@ -1220,7 +1282,9 @@ func TestImporterAccessFailuresRecordMarkersAndPreserveContainerProgress(t *test
 			require.NoError(err)
 			afterContainer := afterState.Containers["300"]
 			assert.True(afterContainer.RetryRequired)
+			assert.NotEmpty(afterContainer.RepairLower)
 			afterContainer.RetryRequired = false
+			afterContainer.RepairLower = ""
 			afterState.Containers["300"] = afterContainer
 			assert.Equal(beforeState, afterState, "access failures preserve progress while recording a retry")
 			assertMessageDeletionState(t, st, source.ID, messageID, false)
@@ -1366,7 +1430,9 @@ func TestImporterCodeZero404FailsWithoutMissingMarkerOrCursorChange(t *testing.T
 	require.NoError(err)
 	checkpointContainer := checkpointState.Containers["300"]
 	assert.True(checkpointContainer.RetryRequired)
+	assert.NotEmpty(checkpointContainer.RepairLower)
 	checkpointContainer.RetryRequired = false
+	checkpointContainer.RepairLower = ""
 	checkpointState.Containers["300"] = checkpointContainer
 	assert.Equal(beforeState, checkpointState, "unclassified failures preserve progress while recording a retry")
 	assertMessageDeletionState(t, st, source.ID, messageID, false)

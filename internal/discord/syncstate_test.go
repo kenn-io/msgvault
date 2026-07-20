@@ -17,6 +17,7 @@ func TestSyncStateRoundTrip(t *testing.T) {
 		BackfillUpper:    "123456789012345678",
 		BackfillComplete: false,
 		RetryRequired:    true,
+		RepairLower:      "90000000000000000",
 	}
 	state.ThreadCatalog["channel"] = ThreadCatalogState{
 		PublicArchiveWatermark:  "2026-07-18T12:00:00.123Z",
@@ -77,6 +78,7 @@ func TestSyncStateMerge(t *testing.T) {
 		BackfillUpper:    "90",
 		BackfillComplete: false,
 		RetryRequired:    true,
+		RepairLower:      "30",
 	}
 	checkpoint.Containers["new"] = ContainerState{HighWater: "50"}
 	checkpoint.ThreadCatalog["parent"] = ThreadCatalogState{
@@ -92,6 +94,7 @@ func TestSyncStateMerge(t *testing.T) {
 	assert.Equal("80", baseline.Containers["complete"].HighWater, "high-water cannot regress")
 	assert.False(baseline.Containers["complete"].BackfillComplete, "newer backfill epoch can restart completed history")
 	assert.True(baseline.Containers["complete"].RetryRequired, "newer retry state is authoritative")
+	assert.Equal("30", baseline.Containers["complete"].RepairLower, "newer repair interval is authoritative")
 	assert.Equal("40", baseline.Containers["complete"].BackfillBefore)
 	assert.Equal("90", baseline.Containers["complete"].BackfillUpper)
 	assert.Equal("50", baseline.Containers["new"].HighWater)
@@ -166,6 +169,11 @@ func TestLoadSyncStateRejectsMalformedState(t *testing.T) {
 			wantDetail: `containers["channel"].backfill_upper`,
 		},
 		{
+			name:       "invalid repair-lower digits",
+			blob:       `{"version":1,"containers":{"channel":{"repair_lower":"12x"}}}`,
+			wantDetail: `containers["channel"].repair_lower`,
+		},
+		{
 			name:       "invalid public archive timestamp",
 			blob:       `{"version":1,"thread_catalog":{"channel":{"public_archive_watermark":"not-a-time"}}}`,
 			wantDetail: `thread_catalog["channel"].public_archive_watermark`,
@@ -214,6 +222,13 @@ func TestSyncStateMarshalRejectsMalformedState(t *testing.T) {
 				state.Containers["channel"] = ContainerState{BackfillUpper: "-1"}
 			},
 			wantDetail: `containers["channel"].backfill_upper`,
+		},
+		{
+			name: "repair-lower uint64 overflow",
+			mutate: func(state *SyncState) {
+				state.Containers["channel"] = ContainerState{RepairLower: "18446744073709551616"}
+			},
+			wantDetail: `containers["channel"].repair_lower`,
 		},
 		{
 			name: "invalid public archive timestamp",

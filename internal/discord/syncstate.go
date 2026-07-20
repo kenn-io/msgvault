@@ -19,6 +19,7 @@ type ContainerState struct {
 	BackfillUpper    string `json:"backfill_upper,omitempty"`
 	BackfillComplete bool   `json:"backfill_complete,omitempty"`
 	RetryRequired    bool   `json:"retry_required,omitempty"`
+	RepairLower      string `json:"repair_lower,omitempty"`
 }
 
 // ThreadCatalogState tracks completed archived-thread enumeration for one
@@ -126,6 +127,7 @@ func (s *SyncState) validate() error {
 			{name: "high_water", value: container.HighWater},
 			{name: "backfill_before", value: container.BackfillBefore},
 			{name: "backfill_upper", value: container.BackfillUpper},
+			{name: "repair_lower", value: container.RepairLower},
 		}
 		for _, field := range fields {
 			if field.value == "" {
@@ -190,6 +192,7 @@ func (s *SyncState) Merge(other *SyncState) error {
 		baseline.BackfillUpper = checkpoint.BackfillUpper
 		baseline.BackfillComplete = checkpoint.BackfillComplete
 		baseline.RetryRequired = checkpoint.RetryRequired
+		baseline.RepairLower = checkpoint.RepairLower
 		s.Containers[containerID] = baseline
 	}
 

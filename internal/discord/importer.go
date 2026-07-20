@@ -482,6 +482,10 @@ func (imp *Importer) importContainer(
 	// interruption and unclassified transient errors, then clears only after
 	// forward and repair both complete.
 	containerState.RetryRequired = true
+	containerState.RepairLower, err = minimumSnowflake(containerState.RepairLower, repairLower)
+	if err != nil {
+		return fmt.Errorf("pin Discord container repair lower bound: %w", err)
+	}
 	state.Containers[container.Channel.ID] = containerState
 	if err := imp.saveCheckpoint(syncID, state, summary); err != nil {
 		return err
@@ -516,7 +520,7 @@ func (imp *Importer) importContainer(
 	}
 	if err := imp.reconcile(
 		ctx, sourceID, conversationID, container.Channel.ID,
-		repairLower, summary, media,
+		containerState.RepairLower, summary, media,
 	); err != nil {
 		return imp.handleContainerError(
 			syncID, conversationID, container.Channel.ID, err, state, summary,
@@ -526,6 +530,7 @@ func (imp *Importer) importContainer(
 		return err
 	}
 	containerState.RetryRequired = false
+	containerState.RepairLower = ""
 	state.Containers[container.Channel.ID] = containerState
 	return nil
 }
