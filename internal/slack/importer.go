@@ -22,12 +22,10 @@ const (
 	// checkpointPageInterval flushes the sync checkpoint every N pages inside
 	// a single conversation backfill (a busy channel can hold years of pages).
 	checkpointPageInterval = 10
-	// defaultThreadLookback bounds how long a thread root stays tracked for
-	// new replies (see ConvState.Threads).
-	defaultThreadLookback = 30 * 24 * time.Hour
+	// maintenanceRescanWindow bounds the explicit --maintenance rescan.
+	maintenanceRescanWindow = 30 * 24 * time.Hour
 	// maxRescanPages caps the rescan walk for pathologically busy channels;
-	// conversations busier than maxRescanPages full pages per lookback are
-	// only fully repaired by --full runs (documented limitation).
+	// busier windows are only fully repaired by --full runs.
 	maxRescanPages = 10
 )
 
@@ -65,6 +63,10 @@ type Importer struct {
 	lastCheckpoint time.Time
 	// now is a clock hook for tests.
 	now func() time.Time
+	// opts/sourceID scope the current run (the importer is single-threaded;
+	// set at the top of Import/BackfillMedia).
+	opts     ImportOptions
+	sourceID int64
 }
 
 // NewImporter creates an Importer backed by the given store and Slack client.
@@ -102,6 +104,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (*ImportSum
 	if err != nil {
 		return nil, err
 	}
+	imp.opts, imp.sourceID = opts, src.ID
 	sum := &ImportSummary{SourceID: src.ID}
 
 	state := imp.loadResumeState(src.ID)
@@ -144,15 +147,19 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (*ImportSum
 	}
 
 	total := len(convs)
+	targets := map[string]sweepTarget{}
 	for idx := range convs {
 		c := &convs[idx]
 		if err = ctx.Err(); err != nil {
 			return sum, err
 		}
 		before := sum.MessagesProcessed
-		if serr := imp.syncConversation(ctx, syncID, src.ID, c, opts, state, sum); serr != nil {
-			err = serr
+		var convID int64
+		if convID, err = imp.syncConversation(ctx, syncID, src.ID, c, opts, state, sum); err != nil {
 			return sum, err
+		}
+		if state.EnsureConv(c.ID).Done {
+			targets[c.ID] = sweepTarget{convID: convID}
 		}
 		sum.ConversationsProcessed++
 		if opts.Progress != nil {
@@ -160,6 +167,16 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (*ImportSum
 				idx+1, total, conversationTitle(c, imp.res.displayName), sum.MessagesProcessed-before))
 		}
 		// Flush checkpoint so an interrupted run resumes from this point.
+		imp.checkpoint(syncID, state, sum)
+	}
+
+	// Reply sweep: discovers thread replies created since the watermark and
+	// archives them canonically. Scoped (--limit) runs skip it, like all
+	// steady-state phases; --no-threads skips it explicitly.
+	if !opts.NoThreads && opts.Limit == 0 {
+		if err = imp.sweepReplies(ctx, syncID, targets, state, sum); err != nil {
+			return sum, err
+		}
 		imp.checkpoint(syncID, state, sum)
 	}
 
@@ -202,14 +219,16 @@ func includeConversation(c *Conversation, opts *ImportOptions) bool {
 }
 
 // syncConversation ensures the conversation row and membership, then
-// backfills or incrementally extends its messages and polls tracked threads.
-func (imp *Importer) syncConversation(ctx context.Context, syncID, sourceID int64, c *Conversation, opts ImportOptions, state *SyncState, sum *ImportSummary) error {
+// backfills or incrementally extends its messages. Thread replies are
+// fetched inline during backfill (before the containing page's cursor
+// advances) and by the reply sweep thereafter.
+func (imp *Importer) syncConversation(ctx context.Context, syncID, sourceID int64, c *Conversation, opts ImportOptions, state *SyncState, sum *ImportSummary) (int64, error) {
 	convID, err := imp.store.EnsureConversationWithType(sourceID, c.ID, conversationType(c), conversationTitle(c, imp.res.displayName))
 	if err != nil {
-		return err
+		return 0, err
 	}
 	if err := imp.ensureMembership(ctx, syncID, convID, c, opts, sum); err != nil {
-		return err
+		return 0, err
 	}
 
 	cs := state.EnsureConv(c.ID)
@@ -217,43 +236,32 @@ func (imp *Importer) syncConversation(ctx context.Context, syncID, sourceID int6
 
 	if !cs.Done {
 		if err := imp.backfillConversation(ctx, cc, state, sum); err != nil {
-			return err
+			return 0, err
 		}
 	} else {
 		if err := imp.incrementalConversation(ctx, cc, sum); err != nil {
-			return err
+			return 0, err
 		}
-		// The rescan is steady-state maintenance (edits, reactions, thread
-		// discovery): --limit runs skip it entirely. It never charges the
-		// fetch budget, so on unlimited runs it cannot starve thread
-		// polling; on limited runs skipping it keeps the run scoped and
-		// leaves the whole budget to the phases that make durable progress.
-		if opts.Limit == 0 {
+		// The maintenance rescan (edits and reaction repair) runs only when
+		// explicitly requested: archives ignore post-capture mutations by
+		// default. It never charges the fetch budget and is skipped on
+		// scoped runs regardless.
+		if opts.Maintenance && opts.Limit == 0 {
 			if err := imp.rescanHead(ctx, cc, sum); err != nil {
-				return err
+				return 0, err
 			}
 		}
 	}
-
-	// Prune only roots polled this run: skipping pruning entirely under
-	// --no-threads (and for limit-skipped or fetch-failed roots) keeps their
-	// replies reachable by a later incremental sync instead of silently
-	// lost.
-	if !opts.NoThreads {
-		polled, err := imp.syncThreads(ctx, cc, sum)
-		if err != nil {
-			return err
+	// Thread catch-up: an earlier --no-threads backfill left roots without
+	// their replies (and the sweep floor postdates them). Runs as soon as the
+	// backfill is complete — including the run that completes it — on any
+	// unlimited threaded run; the debt clears only after a clean pass.
+	if cs.Done && cs.ThreadsPending && !opts.NoThreads && opts.Limit == 0 {
+		if err := imp.threadCatchUp(ctx, cc, sum); err != nil {
+			return 0, err
 		}
-		cs.PruneThreads(imp.now().Add(-threadLookback(opts)), polled)
 	}
-	return nil
-}
-
-func threadLookback(opts ImportOptions) time.Duration {
-	if opts.ThreadLookback > 0 {
-		return opts.ThreadLookback
-	}
-	return defaultThreadLookback
+	return convID, nil
 }
 
 // ensureMembership records the conversation's member list. Membership fetch
@@ -352,6 +360,38 @@ func (imp *Importer) backfillConversation(ctx context.Context, cc *convScope, st
 				return err
 			}
 		}
+		// Fetch each discovered root's replies INLINE, before this page's
+		// cursor advances: "cursor past page" must keep meaning "page AND
+		// its threads durable". A reply-fetch failure leaves the cursor on
+		// this page; the refetch next run re-upserts harmlessly.
+		if cc.opts.NoThreads {
+			// Pages consumed threadless leave their roots un-fetched, and
+			// the sweep floor postdates those replies: flag the debt for the
+			// next threaded run's catch-up walk.
+			for i := range page.Messages {
+				if page.Messages[i].IsThreadRoot() {
+					cs.ThreadsPending = true
+					break
+				}
+			}
+		}
+		if !cc.opts.NoThreads {
+			for i := range page.Messages {
+				m := &page.Messages[i]
+				if !m.IsThreadRoot() {
+					continue
+				}
+				if _, terr := imp.fetchThread(ctx, cc.syncID, cc.convID, cc.channelID, m.TS, "", sum); terr != nil {
+					if ctx.Err() != nil {
+						return ctx.Err()
+					}
+					imp.recordItem(cc.syncID, sourceMessageID(cc.channelID, m.TS), "thread", store.SyncRunItemStatusError, "slack_fetch_error", terr)
+					sum.FetchErrors++
+					sum.Errors++
+					return nil // cursor not advanced; page + threads retried next run
+				}
+			}
+		}
 		cc.budgetUsed += len(page.Messages)
 		if !page.HasMore || page.NextCursor == "" {
 			cs.Done = true
@@ -434,6 +474,54 @@ func (imp *Importer) incrementalConversation(ctx context.Context, cc *convScope,
 	}
 }
 
+// threadCatchUp re-walks a conversation's history fetching ONLY thread
+// replies, paying the debt left by a --no-threads backfill (whose pages
+// advanced past roots without inline fetches — replies that the sweep floor,
+// pinned at backfill start, also postdates). Pure re-read: every persist is
+// an upsert. ThreadsPending clears only on a clean pass, so failures retry.
+func (imp *Importer) threadCatchUp(ctx context.Context, cc *convScope, sum *ImportSummary) error {
+	pageCursor := ""
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		page, err := imp.client.historyPageWithLimit(ctx, HistoryParams{
+			ChannelID: cc.channelID,
+			Cursor:    pageCursor,
+			Latest:    cc.cs.BackfillLatest,
+		}, historyPageLimit)
+		if err != nil {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			imp.recordItem(cc.syncID, cc.channelID, "fetch", store.SyncRunItemStatusError, "slack_fetch_error", err)
+			sum.FetchErrors++
+			sum.Errors++
+			return nil // ThreadsPending stays set; retried next run
+		}
+		for i := range page.Messages {
+			m := &page.Messages[i]
+			if !m.IsThreadRoot() {
+				continue
+			}
+			if _, terr := imp.fetchThread(ctx, cc.syncID, cc.convID, cc.channelID, m.TS, "", sum); terr != nil {
+				if ctx.Err() != nil {
+					return ctx.Err()
+				}
+				imp.recordItem(cc.syncID, sourceMessageID(cc.channelID, m.TS), "thread", store.SyncRunItemStatusError, "slack_fetch_error", terr)
+				sum.FetchErrors++
+				sum.Errors++
+				return nil // ThreadsPending stays set; retried next run
+			}
+		}
+		if !page.HasMore || page.NextCursor == "" {
+			cc.cs.ThreadsPending = false
+			return nil
+		}
+		pageCursor = page.NextCursor
+	}
+}
+
 // rescanHead re-pages the conversation's trailing thread-lookback window,
 // re-upserting messages in place. It serves two purposes the ts cursor
 // cannot (history is keyed by original ts): catching edits and reaction
@@ -445,7 +533,7 @@ func (imp *Importer) incrementalConversation(ctx context.Context, cc *convScope,
 // the default exclusive bounds, edits to the newest archived message would
 // stay invisible until a newer message moved the cursor past it.
 func (imp *Importer) rescanHead(ctx context.Context, cc *convScope, sum *ImportSummary) error {
-	oldest := fmt.Sprintf("%d.000000", imp.now().Add(-threadLookback(cc.opts)).Unix())
+	oldest := fmt.Sprintf("%d.000000", imp.now().Add(-maintenanceRescanWindow).Unix())
 	if cc.cs.Cursor != "" && tsLess(cc.cs.Cursor, oldest) {
 		// Everything newer than the cursor was just fetched by the
 		// incremental pass; nothing older than it has been archived yet.
@@ -491,99 +579,12 @@ func (imp *Importer) rescanHead(ctx context.Context, cc *convScope, sum *ImportS
 	return nil
 }
 
-// syncThreads polls every tracked thread root for replies newer than its
-// reply cursor. A root's cursor advances only after its replies persisted
-// cleanly; a failed root is retried next run without blocking the others.
-// The returned set holds the roots whose polling completed this run — the
-// only ones PruneThreads may drop.
-func (imp *Importer) syncThreads(ctx context.Context, cc *convScope, sum *ImportSummary) (map[string]bool, error) {
-	polled := map[string]bool{}
-	for root, replyCursor := range cc.cs.Threads {
-		if err := ctx.Err(); err != nil {
-			return polled, err
-		}
-		if cc.limitReached() {
-			return polled, nil
-		}
-		newCursor, completed, err := imp.syncThread(ctx, cc, root, replyCursor, sum)
-		if err != nil {
-			return polled, err
-		}
-		if completed {
-			polled[root] = true
-		}
-		if newCursor != "" {
-			cc.cs.Threads[root] = newCursor
-		}
-	}
-	return polled, nil
-}
-
-// syncThread fetches one thread's replies newer than replyCursor, returning
-// the advanced cursor ("" = do not advance) and whether polling completed
-// (false = fetch failure or --limit stop; the root must survive pruning to
-// finish later). Replies arrive OLDEST-first, so unlike history windows the
-// cursor can advance after every fully-persisted page — a --limit stop
-// mid-thread loses no progress.
-func (imp *Importer) syncThread(ctx context.Context, cc *convScope, root, replyCursor string, sum *ImportSummary) (string, bool, error) {
-	pageCursor := ""
-	maxTS := replyCursor
-	for {
-		if cc.limitReached() {
-			return maxTS, false, nil // pages persisted so far are checkpointed by the caller
-		}
-		page, err := imp.client.repliesPageWithLimit(ctx, cc.channelID, root, pageCursor, replyCursor, cc.pageBudget())
-		if errors.Is(err, ErrNotFound) {
-			// The root was deleted; its archived copy is kept, and there is
-			// nothing left to poll.
-			delete(cc.cs.Threads, root)
-			return "", true, nil
-		}
-		if err != nil {
-			if ctx.Err() != nil {
-				return maxTS, false, ctx.Err()
-			}
-			imp.recordItem(cc.syncID, sourceMessageID(cc.channelID, root), "thread", store.SyncRunItemStatusError, "slack_fetch_error", err)
-			sum.FetchErrors++
-			sum.Errors++
-			// Oldest-first ordering makes the pages persisted before the
-			// failure a contiguous prefix: advancing to them is safe, and
-			// the next run resumes from there.
-			return maxTS, false, nil
-		}
-		for i := range page.Messages {
-			m := &page.Messages[i]
-			// The response includes the root itself; re-upserting it is
-			// harmless (idempotent) and refreshes its edited state.
-			if err := imp.processMessage(ctx, cc, m, sum); err != nil {
-				return "", false, err
-			}
-			if m.TS != root {
-				sum.RepliesFetched++
-				if maxTS == "" || tsLess(maxTS, m.TS) {
-					maxTS = m.TS
-				}
-			}
-		}
-		cc.budgetUsed += len(page.Messages)
-		if !page.HasMore || page.NextCursor == "" {
-			return maxTS, true, nil
-		}
-		pageCursor = page.NextCursor
-	}
-}
-
 // processMessage persists one message and its auxiliary rows. Store-level
 // failures are fatal (they indicate DB problems); per-item auxiliary
 // failures (FTS, recipients, reactions) are counted but do not abort the run.
 func (imp *Importer) processMessage(ctx context.Context, cc *convScope, m *Message, sum *ImportSummary) error {
 	if m.Type != "message" || m.TS == "" {
 		return nil
-	}
-	// Track thread roots for reply polling regardless of persist outcome
-	// details: the reply cursor itself only advances in syncThread.
-	if m.IsThreadRoot() {
-		cc.cs.TrackThread(m.TS, "")
 	}
 
 	msg, text := mapMessage(m, cc.channelID, cc.convID, cc.sourceID, m.User == cc.opts.UserID, imp.res.displayName)
@@ -757,6 +758,7 @@ func (imp *Importer) BackfillMedia(ctx context.Context, opts ImportOptions) (*Im
 	if err != nil {
 		return nil, err
 	}
+	imp.opts, imp.sourceID = opts, src.ID
 	sum := &ImportSummary{SourceID: src.ID}
 	// This run's sync_runs row becomes the source's newest completed run and
 	// Import loads its cursor_after as the resume baseline — carry the

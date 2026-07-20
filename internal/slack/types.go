@@ -50,6 +50,7 @@ type User struct {
 	Name     string `json:"name"` // legacy handle
 	Deleted  bool   `json:"deleted"`
 	IsBot    bool   `json:"is_bot"`
+	TZOffset int    `json:"tz_offset"` // seconds from UTC; drives sweep-day arithmetic
 	Profile  UserProfile
 	RealName string `json:"real_name"`
 }
@@ -276,8 +277,12 @@ type ImportOptions struct {
 	// Full ignores stored cursors: every conversation is re-walked and every
 	// message re-upserted in place (repair path).
 	Full bool
-	// NoThreads skips per-root reply fetching (scoped first runs).
+	// NoThreads skips the reply sweep (and backfill's inline thread
+	// fetching) for scoped first runs.
 	NoThreads bool
+	// Maintenance runs the explicit edits/reactions rescan. Archives ignore
+	// post-capture mutations by default.
+	Maintenance bool
 	// AttachmentsDir is the content-addressed attachment store root. Empty
 	// disables media download (as does NoMedia).
 	AttachmentsDir string
@@ -285,10 +290,6 @@ type ImportOptions struct {
 	NoMedia bool
 	// MaxMediaBytes caps individual file downloads (0 = 100 MB).
 	MaxMediaBytes int64
-	// ThreadLookback bounds how long a thread root stays tracked for new
-	// replies (0 = 30 days). Replies to roots older than this are only
-	// caught by --full runs (documented limitation).
-	ThreadLookback time.Duration
 	// IncludeChannels/ExcludeChannels filter by channel name (no "#").
 	// Include empty = all memberships. DMs/group DMs are never filtered.
 	IncludeChannels []string

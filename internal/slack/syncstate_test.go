@@ -1,9 +1,7 @@
 package slack
 
 import (
-	"strconv"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -14,7 +12,8 @@ func TestSyncStateRoundTrip(t *testing.T) {
 	cs := s.EnsureConv("C01")
 	cs.Cursor = "100.000001"
 	cs.Done = true
-	cs.TrackThread("50.000001", "60.000001")
+	s.SweepWatermark = "150.000001"
+	s.SweepOffset = 7200
 
 	blob, err := s.Marshal()
 	require.NoError(t, err)
@@ -23,36 +22,51 @@ func TestSyncStateRoundTrip(t *testing.T) {
 	lcs := loaded.EnsureConv("C01")
 	assert.Equal(t, "100.000001", lcs.Cursor)
 	assert.True(t, lcs.Done)
-	assert.Equal(t, "60.000001", lcs.Threads["50.000001"])
+	assert.Equal(t, "150.000001", loaded.SweepWatermark)
+	assert.Equal(t, 7200, loaded.SweepOffset)
+}
+
+func TestSyncStateLegacyThreadsBlobLoads(t *testing.T) {
+	// Checkpoints written by the superseded thread-tracking design carry a
+	// per-conversation "threads" map; they must load cleanly (the key is
+	// simply ignored) so an upgrade never breaks resume.
+	blob := `{"conversations":{"C01":{"cursor":"100.000001","done":true,"threads":{"50.000001":"60.000001"}}}}`
+	loaded, err := LoadSyncState(blob)
+	require.NoError(t, err)
+	assert.Equal(t, "100.000001", loaded.EnsureConv("C01").Cursor)
+	assert.True(t, loaded.EnsureConv("C01").Done)
+	assert.Empty(t, loaded.SweepWatermark, "legacy blobs start the sweep from the first-sweep floor")
 }
 
 func TestSyncStateMergePrefersAdvancedCursors(t *testing.T) {
 	base := NewSyncState()
 	bcs := base.EnsureConv("C01")
 	bcs.Cursor = "100.000001"
-	bcs.TrackThread("50.000001", "60.000001")
+	base.SweepWatermark, base.SweepOffset = "90.000001", 7200
 
 	newer := NewSyncState()
 	ncs := newer.EnsureConv("C01")
 	ncs.Cursor = "200.000001"
 	ncs.Done = true
-	ncs.TrackThread("50.000001", "70.000001")
 	newer.EnsureConv("C02").BackfillCursor = "opaque"
+	newer.SweepWatermark, newer.SweepOffset = "180.000001", -14400
 
 	base.Merge(newer)
 	mcs := base.EnsureConv("C01")
 	assert.Equal(t, "200.000001", mcs.Cursor)
 	assert.True(t, mcs.Done)
-	assert.Equal(t, "70.000001", mcs.Threads["50.000001"])
 	assert.Equal(t, "opaque", base.EnsureConv("C02").BackfillCursor)
+	assert.Equal(t, "180.000001", base.SweepWatermark, "the further-advanced watermark wins")
+	assert.Equal(t, -14400, base.SweepOffset, "the winning watermark carries its audit offset")
 
-	// A stale checkpoint must never regress an advanced cursor.
+	// A stale checkpoint must never regress an advanced cursor or watermark.
 	stale := NewSyncState()
 	stale.EnsureConv("C01").Cursor = "150.000001"
-	stale.EnsureConv("C01").Threads = map[string]string{"50.000001": "65.000001"}
+	stale.SweepWatermark, stale.SweepOffset = "120.000001", 3600
 	base.Merge(stale)
 	assert.Equal(t, "200.000001", base.EnsureConv("C01").Cursor)
-	assert.Equal(t, "70.000001", base.EnsureConv("C01").Threads["50.000001"])
+	assert.Equal(t, "180.000001", base.SweepWatermark)
+	assert.Equal(t, -14400, base.SweepOffset)
 }
 
 func TestSyncStateMergeCursorUnitIsAtomic(t *testing.T) {
@@ -90,24 +104,4 @@ func TestSyncStateMergeCursorUnitIsAtomic(t *testing.T) {
 	assert.Equal(t, "150.000001", mcs.Cursor)
 	assert.Empty(t, mcs.IncrCursor, "a stale checkpoint's page cursor must not pair with a newer window")
 	assert.Empty(t, mcs.IncrMaxTS)
-}
-
-func TestPruneThreads(t *testing.T) {
-	cs := &ConvState{Threads: map[string]string{}}
-	oldPolled := tsFromTime(time.Now().Add(-60 * 24 * time.Hour))
-	oldSkipped := tsFromTime(time.Now().Add(-59 * 24 * time.Hour))
-	fresh := tsFromTime(time.Now().Add(-time.Hour))
-	cs.TrackThread(oldPolled, "")
-	cs.TrackThread(oldSkipped, "")
-	cs.TrackThread(fresh, "")
-
-	cutoff := time.Now().Add(-30 * 24 * time.Hour)
-	cs.PruneThreads(cutoff, map[string]bool{oldPolled: true, fresh: true})
-	assert.NotContains(t, cs.Threads, oldPolled, "polled roots past the lookback are pruned")
-	assert.Contains(t, cs.Threads, oldSkipped, "unpolled roots must survive pruning or their replies are lost")
-	assert.Contains(t, cs.Threads, fresh, "fresh roots stay tracked")
-}
-
-func tsFromTime(t time.Time) string {
-	return strconv.FormatInt(t.Unix(), 10) + ".000100"
 }

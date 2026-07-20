@@ -54,6 +54,13 @@ func (r *participantResolver) loadUsers(ctx context.Context, c *Client) error {
 	})
 }
 
+// tzOffset returns the cached user's tz_offset in seconds (0 when unknown).
+// Read fresh each run: search date modifiers evaluate in the user's CURRENT
+// profile timezone.
+func (r *participantResolver) tzOffset(userID string) int {
+	return r.users[userID].TZOffset
+}
+
 // displayName returns the best-known name for a user ID ("" when unknown).
 func (r *participantResolver) displayName(userID string) string {
 	if u, ok := r.users[userID]; ok {

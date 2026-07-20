@@ -721,9 +721,6 @@ type SlackConfig struct {
 	Media *bool `toml:"media"`
 	// MaxMediaMB caps individual file downloads in MiB (0 = 100).
 	MaxMediaMB int `toml:"max_media_mb"`
-	// ThreadLookbackDays bounds how long a thread root stays tracked for new
-	// replies (0 = 30). Replies to older roots are only caught by --full.
-	ThreadLookbackDays int `toml:"thread_lookback_days"`
 }
 
 // MediaEnabled reports whether file download is on (default true).
@@ -735,14 +732,6 @@ func (s SlackConfig) MediaEnabled() bool {
 func (s SlackConfig) MaxMediaBytes() int64 {
 	if s.MaxMediaMB > 0 {
 		return int64(s.MaxMediaMB) << 20
-	}
-	return 0
-}
-
-// ThreadLookbackDuration returns the thread tracking window (0 = importer default).
-func (s SlackConfig) ThreadLookbackDuration() time.Duration {
-	if s.ThreadLookbackDays > 0 {
-		return time.Duration(s.ThreadLookbackDays) * 24 * time.Hour
 	}
 	return 0
 }

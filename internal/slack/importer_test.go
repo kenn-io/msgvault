@@ -21,6 +21,13 @@ func ts(minutes int) string {
 	return strconv.FormatInt(tsBase.Add(time.Duration(minutes)*time.Minute).Unix(), 10) + ".000100"
 }
 
+// tsFresh renders a Slack ts a few seconds in the future — a message created
+// "now", strictly after any backfill pin or sweep watermark taken earlier in
+// the test (real replies are always created at post time, never back-dated).
+func tsFresh(offsetSeconds int) string {
+	return strconv.FormatInt(time.Now().Add(time.Duration(2+offsetSeconds)*time.Second).Unix(), 10) + ".000100"
+}
+
 // testWorkspace builds a fake workspace exercising every persist path:
 // channels with threads, reactions, mentions, edits, bot messages, a group
 // DM, and a 1:1 DM.
@@ -209,15 +216,16 @@ func TestImportIncrementalCatchesNewMessagesAndLateReplies(t *testing.T) {
 	f.mu.Lock()
 	general := f.conv("C01")
 	general.Msgs = append(general.Msgs, fakeMsg{TS: ts(200), User: "UBOB", Text: "fresh news"})
+	lateReply := tsFresh(0)
 	root := general.findRoot(ts(5))
-	root.Replies = append(root.Replies, fakeMsg{TS: ts(201), ThreadTS: root.TS, User: "UALICE", Text: "late reply"})
+	root.Replies = append(root.Replies, fakeMsg{TS: lateReply, ThreadTS: root.TS, User: "UALICE", Text: "late reply"})
 	f.mu.Unlock()
 
 	sum, err := imp.Import(context.Background(), opts)
 	require.NoError(t, err)
 	assert.Equal(t, 1, sum.RepliesFetched, "only the late reply is new; earlier replies are behind the thread cursor")
 
-	for _, id := range []string{"C01:" + ts(200), "C01:" + ts(201)} {
+	for _, id := range []string{"C01:" + ts(200), "C01:" + lateReply} {
 		var n int
 		require.NoError(t, st.DB().QueryRow(st.Rebind(
 			`SELECT COUNT(*) FROM messages WHERE source_message_id = ?`), id).Scan(&n))
@@ -261,11 +269,14 @@ func TestImportIncrementalMidWindowFailureDoesNotAdvanceCursor(t *testing.T) {
 	}
 }
 
-func TestImportRepliesFailureDoesNotAdvanceThreadCursor(t *testing.T) {
+func TestBackfillThreadFetchFailureLeavesPageResumable(t *testing.T) {
 	f := testWorkspace(t)
 	imp, opts := testImporter(t, f)
 	st := imp.store
 
+	// Backfill fetches each root's replies INLINE before advancing past the
+	// containing page: a reply-fetch failure must leave the page (and its
+	// threads) to be retried, and the run must not report success.
 	f.failReplies[ts(5)] = true
 	sum, err := imp.Import(context.Background(), opts)
 	require.Error(t, err, "a run with fetch errors must not report success")
@@ -277,7 +288,7 @@ func TestImportRepliesFailureDoesNotAdvanceThreadCursor(t *testing.T) {
 		`SELECT COUNT(*) FROM messages WHERE source_message_id = ?`), "C01:"+ts(100)).Scan(&n))
 	assert.Zero(t, n)
 
-	// Healed: the next run retries the thread from its unadvanced cursor.
+	// Healed: the resumed backfill refetches the page and its threads.
 	f.mu.Lock()
 	delete(f.failReplies, ts(5))
 	f.mu.Unlock()
@@ -287,6 +298,10 @@ func TestImportRepliesFailureDoesNotAdvanceThreadCursor(t *testing.T) {
 	require.NoError(t, st.DB().QueryRow(st.Rebind(
 		`SELECT COUNT(*) FROM messages WHERE source_message_id = ?`), "C01:"+ts(100)).Scan(&n))
 	assert.Equal(t, 1, n)
+	var total, distinct int
+	require.NoError(t, st.DB().QueryRow(`SELECT COUNT(*) FROM messages WHERE message_type='slack'`).Scan(&total))
+	require.NoError(t, st.DB().QueryRow(`SELECT COUNT(DISTINCT source_message_id) FROM messages WHERE message_type='slack'`).Scan(&distinct))
+	assert.Equal(t, distinct, total, "page refetch after thread failure must not duplicate")
 }
 
 func TestImportHistoryFailureLeavesConversationResumable(t *testing.T) {
@@ -402,97 +417,139 @@ func TestImportLimitLeavesBackfillResumable(t *testing.T) {
 }
 
 // oldThreadWorkspace builds a workspace whose only thread root is ~10 days
-// old: outside BOTH the reply-tracking lookback used by these tests and the
-// 7-day edit-rescan window. That placement is load-bearing — a root inside
-// the rescan window would be re-tracked on the next sync, masking a
-// wrongly-pruned root.
-func oldThreadWorkspace(t *testing.T) (*fakeSlack, string, string) {
+// old — far older than any recent-activity window, so reply capture can only
+// come from mechanisms that key on the REPLY's creation time.
+func oldThreadWorkspace(t *testing.T) (*fakeSlack, string) {
 	t.Helper()
 	f := newFakeSlack(t)
 	f.users = []map[string]any{
 		{"id": "UME", "name": "me", "profile": map[string]any{"email": "me@example.com"}},
 	}
-	rootTS, replyTS := ts(-14400), ts(-14390) // ~10 days before tsBase
+	rootTS := ts(-14400) // ~10 days before tsBase
 	f.convs = []*fakeConv{{
 		ID: "C09", Name: "archive", Kind: "public", Members: []string{"UME"},
 		Msgs: []fakeMsg{
 			{TS: rootTS, User: "UME", Text: "ancient root",
-				Replies: []fakeMsg{{TS: replyTS, ThreadTS: rootTS, User: "UME", Text: "ancient reply"}}},
+				Replies: []fakeMsg{{TS: ts(-14390), ThreadTS: rootTS, User: "UME", Text: "ancient reply"}}},
 			{TS: ts(0), User: "UME", Text: "recent chatter"},
 		},
 	}}
-	return f, rootTS, replyTS
+	return f, rootTS
 }
 
-func TestImportNoThreadsDoesNotPruneUnpolledRoots(t *testing.T) {
-	f, _, replyTS := oldThreadWorkspace(t)
-	imp, opts := testImporter(t, f)
-	st := imp.store
-	opts.ThreadLookback = time.Hour
-
-	noThreads := opts
-	noThreads.NoThreads = true
-	_, err := imp.Import(context.Background(), noThreads)
-	require.NoError(t, err)
-	var n int
-	require.NoError(t, st.DB().QueryRow(st.Rebind(
-		`SELECT COUNT(*) FROM messages WHERE source_message_id = ?`), "C09:"+replyTS).Scan(&n))
-	require.Zero(t, n, "sanity: --no-threads must not have fetched replies")
-
-	// Without the polled-roots guard the --no-threads run pruned the root
-	// (older than lookback AND outside the rescan window), losing its
-	// replies to every later incremental sync.
-	_, err = imp.Import(context.Background(), opts)
-	require.NoError(t, err)
-	require.NoError(t, st.DB().QueryRow(st.Rebind(
-		`SELECT COUNT(*) FROM messages WHERE source_message_id = ?`), "C09:"+replyTS).Scan(&n))
-	assert.Equal(t, 1, n, "the root survived --no-threads unpruned, so its replies are fetched next run")
-}
-
-func TestImportThreadFetchFailureSurvivesPruning(t *testing.T) {
-	f, rootTS, replyTS := oldThreadWorkspace(t)
-	imp, opts := testImporter(t, f)
-	st := imp.store
-	opts.ThreadLookback = time.Hour
-
-	f.failReplies[rootTS] = true
-	_, err := imp.Import(context.Background(), opts)
-	require.Error(t, err)
-
-	f.mu.Lock()
-	delete(f.failReplies, rootTS)
-	f.mu.Unlock()
-	_, err = imp.Import(context.Background(), opts)
-	require.NoError(t, err)
-	var n int
-	require.NoError(t, st.DB().QueryRow(st.Rebind(
-		`SELECT COUNT(*) FROM messages WHERE source_message_id = ?`), "C09:"+replyTS).Scan(&n))
-	assert.Equal(t, 1, n, "a fetch-failed root must survive pruning and be retried")
-}
-
-func TestImportRescanCatchesEditToNewestMessage(t *testing.T) {
-	f := testWorkspace(t)
+func TestSweepFindsLateReplyToAncientThread(t *testing.T) {
+	f, rootTS := oldThreadWorkspace(t)
 	imp, opts := testImporter(t, f)
 	st := imp.store
 
 	_, err := imp.Import(context.Background(), opts)
 	require.NoError(t, err)
 
-	// Edit the NEWEST top-level message (the cursor message) with no newer
-	// traffic: only an inclusive rescan upper bound can see it.
+	// A NEW reply lands on the ~10-day-old thread after backfill. No
+	// lookback window applies: the sweep discovers by the reply's creation
+	// time, so root age is irrelevant (the old design's documented LB-3
+	// blind spot).
+	lateReply := tsFresh(0)
 	f.mu.Lock()
-	general := f.conv("C01")
-	general.Msgs[len(general.Msgs)-1].Text = "hello 7 (edited)"
-	general.Msgs[len(general.Msgs)-1].Edited = true
+	root := f.conv("C09").findRoot(rootTS)
+	root.Replies = append(root.Replies, fakeMsg{TS: lateReply, ThreadTS: rootTS, User: "UME", Text: "late reply"})
 	f.mu.Unlock()
 
 	_, err = imp.Import(context.Background(), opts)
 	require.NoError(t, err)
-	var body string
+	var linked int
 	require.NoError(t, st.DB().QueryRow(st.Rebind(`
-		SELECT mb.body_text FROM message_bodies mb
-		JOIN messages m ON m.id = mb.message_id WHERE m.source_message_id = ?`), "C01:"+ts(7)).Scan(&body))
-	assert.Equal(t, "hello 7 (edited)", body, "edits to the cursor message must be caught by the rescan")
+		SELECT COUNT(*) FROM messages child
+		JOIN messages parent ON parent.id = child.reply_to_message_id
+		WHERE child.source_message_id = ? AND parent.source_message_id = ?`),
+		"C09:"+lateReply, "C09:"+rootTS).Scan(&linked))
+	assert.Equal(t, 1, linked, "the sweep must archive and link a late reply to an ancient root")
+}
+
+func TestSweepWatermarkHoldsOnCanonicalFetchFailure(t *testing.T) {
+	f, rootTS := oldThreadWorkspace(t)
+	imp, opts := testImporter(t, f)
+	st := imp.store
+
+	_, err := imp.Import(context.Background(), opts)
+	require.NoError(t, err)
+
+	lateReply := tsFresh(0)
+	f.mu.Lock()
+	root := f.conv("C09").findRoot(rootTS)
+	root.Replies = append(root.Replies, fakeMsg{TS: lateReply, ThreadTS: rootTS, User: "UME", Text: "late reply"})
+	// The canonical fetch is anchored at the discovered hit's ts.
+	f.failReplies[lateReply] = true
+	f.mu.Unlock()
+
+	sum, err := imp.Import(context.Background(), opts)
+	require.Error(t, err, "a sweep with a failed canonical fetch must not report success")
+	assert.Positive(t, sum.FetchErrors)
+	var n int
+	require.NoError(t, st.DB().QueryRow(st.Rebind(
+		`SELECT COUNT(*) FROM messages WHERE source_message_id = ?`), "C09:"+lateReply).Scan(&n))
+	require.Zero(t, n)
+
+	// Healed: the watermark parked before the failed hit, so the next sweep
+	// re-discovers and archives it — exactly once.
+	f.mu.Lock()
+	delete(f.failReplies, lateReply)
+	f.mu.Unlock()
+	_, err = imp.Import(context.Background(), opts)
+	require.NoError(t, err)
+	require.NoError(t, st.DB().QueryRow(st.Rebind(
+		`SELECT COUNT(*) FROM messages WHERE source_message_id = ?`), "C09:"+lateReply).Scan(&n))
+	assert.Equal(t, 1, n)
+	var total, distinct int
+	require.NoError(t, st.DB().QueryRow(`SELECT COUNT(*) FROM messages WHERE message_type='slack'`).Scan(&total))
+	require.NoError(t, st.DB().QueryRow(`SELECT COUNT(DISTINCT source_message_id) FROM messages WHERE message_type='slack'`).Scan(&distinct))
+	assert.Equal(t, distinct, total)
+}
+
+func TestSweepSkipsNotDoneConversations(t *testing.T) {
+	f, rootTS := oldThreadWorkspace(t)
+	// A second conversation that cannot finish backfilling: its search hits
+	// must be ignored — the backfill owns not-done conversations.
+	f.convs = append(f.convs, &fakeConv{
+		ID: "C10", Name: "stuck", Kind: "public", Members: []string{"UME"},
+		Msgs: []fakeMsg{
+			{TS: ts(-100), User: "UME", Text: "stuck root",
+				Replies: []fakeMsg{{TS: tsFresh(4), ThreadTS: ts(-100), User: "UME", Text: "stuck late reply"}}},
+		},
+	})
+	f.failHistory["C10"] = true
+	stuckReply := f.convs[len(f.convs)-1].Msgs[0].Replies[0].TS
+	imp, opts := testImporter(t, f)
+	st := imp.store
+
+	// C09 completes and gets a late reply; C10 never finishes backfill.
+	_, err := imp.Import(context.Background(), opts)
+	require.Error(t, err) // C10's history failure keeps the run partial
+	lateReply := tsFresh(0)
+	f.mu.Lock()
+	root := f.conv("C09").findRoot(rootTS)
+	root.Replies = append(root.Replies, fakeMsg{TS: lateReply, ThreadTS: rootTS, User: "UME", Text: "late reply"})
+	f.mu.Unlock()
+
+	_, err = imp.Import(context.Background(), opts)
+	require.Error(t, err) // still partial: C10 still failing
+	var n int
+	require.NoError(t, st.DB().QueryRow(st.Rebind(
+		`SELECT COUNT(*) FROM messages WHERE source_message_id = ?`), "C09:"+lateReply).Scan(&n))
+	assert.Equal(t, 1, n, "done conversations are swept even while others are stuck")
+	require.NoError(t, st.DB().QueryRow(st.Rebind(
+		`SELECT COUNT(*) FROM messages WHERE source_message_id = ?`), "C10:"+stuckReply).Scan(&n))
+	assert.Zero(t, n, "not-done conversations are owned by backfill, never the sweep")
+
+	// C10 heals: its backfill fetches root AND replies inline.
+	f.mu.Lock()
+	delete(f.failHistory, "C10")
+	f.mu.Unlock()
+	_, err = imp.Import(context.Background(), opts)
+	require.NoError(t, err)
+	require.NoError(t, st.DB().QueryRow(st.Rebind(
+		`SELECT COUNT(*) FROM messages WHERE source_message_id = ?`), "C10:"+stuckReply).Scan(&n))
+	assert.Equal(t, 1, n)
 }
 
 func TestImportLimitBoundsProcessedMessages(t *testing.T) {
@@ -547,49 +604,8 @@ func TestImportLimitedRunsDrainIncrementalBacklog(t *testing.T) {
 	}
 }
 
-func TestImportLimitedRunsDrainLargeThread(t *testing.T) {
-	f, rootTS, _ := oldThreadWorkspace(t)
-	// Grow the ancient thread to 7 replies: several budget-sized pages.
-	f.mu.Lock()
-	root := f.conv("C09").findRoot(rootTS)
-	root.Replies = nil
-	for i := range 7 {
-		root.Replies = append(root.Replies, fakeMsg{
-			TS: ts(-14390 + i), ThreadTS: rootTS, User: "UME", Text: "reply " + strconv.Itoa(i)})
-	}
-	f.mu.Unlock()
-	imp, opts := testImporter(t, f)
-	st := imp.store
-	opts.ThreadLookback = time.Hour // root is prunable the moment polling completes
-
-	limited := opts
-	limited.Limit = 2
-	// Replies arrive oldest-first, so each limited run persists a bounded
-	// slice and advances the thread cursor; repeated runs drain the whole
-	// thread WITHOUT any single run overshooting the budget mid-thread.
-	countRows := func() int {
-		var n int
-		require.NoError(t, st.DB().QueryRow(`SELECT COUNT(*) FROM messages WHERE message_type='slack'`).Scan(&n))
-		return n
-	}
-	prev := 0
-	for range 10 {
-		_, err := imp.Import(context.Background(), limited)
-		require.NoError(t, err)
-		grown := countRows() - prev
-		assert.LessOrEqual(t, grown, 3, "one --limit 2 run must not archive a whole thread page burst")
-		prev += grown
-	}
-	var replies int
-	require.NoError(t, st.DB().QueryRow(st.Rebind(`
-		SELECT COUNT(*) FROM messages m
-		WHERE m.source_message_id LIKE ? AND m.source_message_id <> ?`),
-		"C09:%", "C09:"+rootTS).Scan(&replies))
-	assert.GreaterOrEqual(t, replies, 7, "limited runs must drain the thread across runs")
-}
-
 func TestImportDiscoversFirstReplyToOlderMessage(t *testing.T) {
-	f, rootTS, _ := oldThreadWorkspace(t)
+	f, rootTS := oldThreadWorkspace(t)
 	// The 10-day-old message starts with NO replies: it is archived as a
 	// plain message, not tracked as a thread root.
 	f.mu.Lock()
@@ -601,10 +617,9 @@ func TestImportDiscoversFirstReplyToOlderMessage(t *testing.T) {
 	_, err := imp.Import(context.Background(), opts)
 	require.NoError(t, err)
 
-	// First reply arrives long after archiving — outside any short edit
-	// window, inside the 30-day lookback. The lookback-wide rescan must
-	// re-encounter the parent (now reply_count > 0), track it, and fetch.
-	lateReply := ts(200)
+	// First reply arrives long after archiving. The reply sweep must
+	// discover it by creation time — the parent's age is irrelevant.
+	lateReply := tsFresh(0)
 	f.mu.Lock()
 	root := f.conv("C09").findRoot(rootTS)
 	root.Replies = []fakeMsg{{TS: lateReply, ThreadTS: rootTS, User: "UME", Text: "first ever reply"}}
@@ -615,10 +630,10 @@ func TestImportDiscoversFirstReplyToOlderMessage(t *testing.T) {
 	var n int
 	require.NoError(t, st.DB().QueryRow(st.Rebind(
 		`SELECT COUNT(*) FROM messages WHERE source_message_id = ?`), "C09:"+lateReply).Scan(&n))
-	assert.Equal(t, 1, n, "a first reply to an older message must be discovered without --full")
+	assert.Equal(t, 1, n, "a first reply to an older message must be swept in without --full")
 }
 
-func TestImportLimitedRunsSkipMaintenanceRescan(t *testing.T) {
+func TestMaintenanceRescanIsExplicit(t *testing.T) {
 	f := testWorkspace(t)
 	imp, opts := testImporter(t, f)
 	st := imp.store
@@ -626,28 +641,31 @@ func TestImportLimitedRunsSkipMaintenanceRescan(t *testing.T) {
 	_, err := imp.Import(context.Background(), opts)
 	require.NoError(t, err)
 
-	// Edit an already-archived message: only the maintenance rescan can see
-	// it. A limited run must skip that phase; an unlimited run catches up.
+	// Edit the NEWEST archived message: archives ignore post-capture
+	// mutations by default, so plain incremental runs must not see it.
+	// The explicit --maintenance rescan repairs it (its inclusive upper
+	// bound covers the cursor message itself).
 	f.mu.Lock()
-	f.conv("C01").Msgs[0].Text = "hello 0 (stealth edit)"
+	last := len(f.conv("C01").Msgs) - 1
+	f.conv("C01").Msgs[last].Text = "hello 7 (stealth edit)"
 	f.mu.Unlock()
 
-	limited := opts
-	limited.Limit = 5
-	_, err = imp.Import(context.Background(), limited)
+	_, err = imp.Import(context.Background(), opts)
 	require.NoError(t, err)
 	var body string
 	readBody := func() string {
 		require.NoError(t, st.DB().QueryRow(st.Rebind(`
 			SELECT mb.body_text FROM message_bodies mb
-			JOIN messages m ON m.id = mb.message_id WHERE m.source_message_id = ?`), "C01:"+ts(0)).Scan(&body))
+			JOIN messages m ON m.id = mb.message_id WHERE m.source_message_id = ?`), "C01:"+ts(7)).Scan(&body))
 		return body
 	}
-	assert.Equal(t, "hello 0", readBody(), "--limit runs are scoped: no maintenance rescan")
+	assert.Equal(t, "hello 7", readBody(), "plain runs ignore post-capture edits")
 
-	_, err = imp.Import(context.Background(), opts)
+	maint := opts
+	maint.Maintenance = true
+	_, err = imp.Import(context.Background(), maint)
 	require.NoError(t, err)
-	assert.Equal(t, "hello 0 (stealth edit)", readBody(), "unlimited runs perform the rescan")
+	assert.Equal(t, "hello 7 (stealth edit)", readBody(), "--maintenance repairs edits")
 }
 
 func TestImportGoneConversationIsSkippedNotFatal(t *testing.T) {

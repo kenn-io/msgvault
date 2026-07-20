@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"slices"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 )
@@ -96,11 +97,17 @@ func (c *fakeConv) toJSON() map[string]any {
 	return out
 }
 
-// findRoot returns the root fakeMsg for ts, or nil.
+// findRoot resolves ts — a root's ts OR any reply's ts — to the thread's
+// root fakeMsg, mimicking conversations.replies' anchor resolution.
 func (c *fakeConv) findRoot(ts string) *fakeMsg {
 	for i := range c.Msgs {
 		if c.Msgs[i].TS == ts {
 			return &c.Msgs[i]
+		}
+		for j := range c.Msgs[i].Replies {
+			if c.Msgs[i].Replies[j].TS == ts {
+				return &c.Msgs[i]
+			}
 		}
 	}
 	return nil
@@ -120,6 +127,11 @@ type fakeSlack struct {
 	// method error (a non-retryable fetch failure).
 	failHistory map[string]bool
 	failReplies map[string]bool
+	// failSearch makes search.messages answer a method error.
+	failSearch bool
+	// searchPageSize overrides the honored count for search pagination
+	// (0 = honor the requested count).
+	searchPageSize int
 	// failHistoryContinuations fails only history requests carrying a page
 	// cursor, emulating a walk that dies partway through a multi-page window.
 	failHistoryContinuations bool
@@ -177,6 +189,7 @@ func (f *fakeSlack) serve() *httptest.Server {
 	mux.HandleFunc("/conversations.members", f.handleMembers)
 	mux.HandleFunc("/conversations.history", f.handleHistory)
 	mux.HandleFunc("/conversations.replies", f.handleReplies)
+	mux.HandleFunc("/search.messages", f.handleSearch)
 	// The 429 gate runs before any handler takes f.mu (reply is called with
 	// the mutex held, so it must not lock).
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -369,5 +382,118 @@ func (f *fakeSlack) handleReplies(w http.ResponseWriter, r *http.Request) {
 		"messages":          msgs,
 		"has_more":          next != "",
 		"response_metadata": map[string]any{"next_cursor": next},
+	})
+}
+
+// searchHit pairs a reply with its location for the fake search index.
+type searchHit struct {
+	channelID string
+	rootTS    string
+	ts        string
+}
+
+// handleSearch mimics search.messages closely enough for the sweep:
+// threads:replies filtering, on:/after: day bounds (UTC days — fake users
+// carry tz_offset 0), in:<#ID> scoping, negated terms ignored, ascending
+// timestamp sort, count/page pagination WITH the probed clamp behavior
+// (page numbers beyond 100 are silently served as page 1).
+func (f *fakeSlack) handleSearch(w http.ResponseWriter, r *http.Request) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.failSearch {
+		f.replyErr(w, "fatal_error")
+		return
+	}
+	query := r.FormValue("query")
+	repliesOnly := false
+	var onDay, afterDay string
+	scopes := map[string]bool{}
+	for tok := range strings.FieldsSeq(query) {
+		switch {
+		case tok == "threads:replies":
+			repliesOnly = true
+		case strings.HasPrefix(tok, "on:"):
+			onDay = strings.TrimPrefix(tok, "on:")
+		case strings.HasPrefix(tok, "after:"):
+			afterDay = strings.TrimPrefix(tok, "after:")
+		case strings.HasPrefix(tok, "in:<#") && strings.HasSuffix(tok, ">"):
+			scopes[tok[len("in:<#"):len(tok)-1]] = true
+		}
+	}
+	day := func(ts string) string { return tsTime(ts).UTC().Format("2006-01-02") }
+	keep := func(ts string) bool {
+		d := day(ts)
+		if onDay != "" && d != onDay {
+			return false
+		}
+		if afterDay != "" && d <= afterDay {
+			return false
+		}
+		return true
+	}
+
+	var hits []searchHit
+	for _, c := range f.convs {
+		if len(scopes) > 0 && !scopes[c.ID] {
+			continue
+		}
+		for i := range c.Msgs {
+			root := &c.Msgs[i]
+			if !repliesOnly && keep(root.TS) {
+				hits = append(hits, searchHit{channelID: c.ID, ts: root.TS})
+			}
+			for j := range root.Replies {
+				if keep(root.Replies[j].TS) {
+					hits = append(hits, searchHit{channelID: c.ID, rootTS: root.TS, ts: root.Replies[j].TS})
+				}
+			}
+		}
+	}
+	slices.SortFunc(hits, func(a, b searchHit) int {
+		if tsLess(a.ts, b.ts) {
+			return -1
+		}
+		if tsLess(b.ts, a.ts) {
+			return 1
+		}
+		return 0
+	})
+
+	count, _ := strconv.Atoi(r.FormValue("count"))
+	if count <= 0 {
+		count = 20
+	}
+	if f.searchPageSize > 0 && f.searchPageSize < count {
+		count = f.searchPageSize
+	}
+	page, _ := strconv.Atoi(r.FormValue("page"))
+	if page <= 0 {
+		page = 1
+	}
+	if page > 100 {
+		page = 1 // probed live: past-the-ceiling pages are CLAMPED to page 1
+	}
+	pages := (len(hits) + count - 1) / count
+	from := min((page-1)*count, len(hits))
+	to := min(from+count, len(hits))
+
+	matches := make([]map[string]any, 0, to-from)
+	for _, h := range hits[from:to] {
+		permalink := "https://testers.slack.com/archives/" + h.channelID + "/p" + strings.ReplaceAll(h.ts, ".", "")
+		if h.rootTS != "" {
+			permalink += "?thread_ts=" + h.rootTS + "&cid=" + h.channelID
+		}
+		matches = append(matches, map[string]any{
+			"ts":        h.ts,
+			"channel":   map[string]any{"id": h.channelID},
+			"permalink": permalink,
+		})
+	}
+	f.reply(w, map[string]any{
+		"messages": map[string]any{
+			"total":   len(hits),
+			"paging":  map[string]any{"count": count, "total": len(hits), "page": page, "pages": pages},
+			"matches": matches,
+		},
 	})
 }

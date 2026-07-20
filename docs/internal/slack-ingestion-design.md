@@ -1,5 +1,10 @@
 # Slack Ingestion — Design
 
+> **Partially superseded (2026-07-20):** the thread-lookback polling design
+> below (the LB-3 mitigation: tracked roots, reply cursors, pruning, the
+> automatic rescan) is replaced by the search-based reply sweep — see
+> `slack-reply-sweep-design.md`. Everything else stands.
+
 Date: 2026-07-18
 Status: Draft, load-bearing pass complete — LB-1..5 probed live against a
 Slack Developer Program sandbox (team `TesterMsgVault`, 2026-07-18) with

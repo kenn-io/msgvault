@@ -94,11 +94,10 @@ func TestSlackImportOptionsDeriveFromConfig(t *testing.T) {
 	cfg = &config.Config{
 		HomeDir: t.TempDir(),
 		Slack: config.SlackConfig{
-			Channels:           []string{"eng"},
-			ExcludeChannels:    []string{"noise"},
-			Media:              &media,
-			MaxMediaMB:         7,
-			ThreadLookbackDays: 3,
+			Channels:        []string{"eng"},
+			ExcludeChannels: []string{"noise"},
+			Media:           &media,
+			MaxMediaMB:      7,
 		},
 	}
 
@@ -107,7 +106,6 @@ func TestSlackImportOptionsDeriveFromConfig(t *testing.T) {
 	assert.Equal(t, "UME", opts.UserID)
 	assert.True(t, opts.NoMedia)
 	assert.Equal(t, int64(7)<<20, opts.MaxMediaBytes)
-	assert.Equal(t, int64(3*24), int64(opts.ThreadLookback.Hours()))
 	assert.Equal(t, []string{"eng"}, opts.IncludeChannels)
 	assert.Equal(t, []string{"noise"}, opts.ExcludeChannels)
 }

@@ -351,7 +351,6 @@ channels = []                     # channel-name include filter (empty = all mem
 exclude_channels = []             # channel names to skip, e.g. ["noise"]
 media = true                      # download shared-file bytes
 max_media_mb = 100                # per-file download cap (MiB)
-thread_lookback_days = 30         # thread tracking + edit-rescan window
 ```
 
 | Key | Default | Description |
@@ -362,7 +361,6 @@ thread_lookback_days = 30         # thread tracking + edit-rescan window
 | `exclude_channels` | — | Channel names to skip (wins over `channels`) |
 | `media` | `true` | Download shared-file bytes (failed downloads retry via `backfill-slack-media`) |
 | `max_media_mb` | `100` | Per-file download cap in MiB (over-cap files leave a retry marker) |
-| `thread_lookback_days` | `30` | Window for thread-reply tracking, new-thread discovery, and the edit/reaction rescan (older changes need `--full`) |
 
 ### Granola Sources
 

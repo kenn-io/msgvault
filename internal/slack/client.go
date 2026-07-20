@@ -41,6 +41,7 @@ var methodTiers = map[string]int{
 	"conversations.history": 3,
 	"conversations.replies": 3,
 	"conversations.members": 4,
+	"search.messages":       2,
 }
 
 // ErrNotFound reports a channel/thread/user that no longer exists.
@@ -389,10 +390,102 @@ func (c *Client) historyPageWithLimit(ctx context.Context, p HistoryParams, limi
 }
 
 // RepliesPage fetches one page of a thread's replies (rootTS = the thread
-// root's ts). The response includes the root itself as the first message of
-// the first page; callers must skip or idempotently re-upsert it.
+// root's ts, or ANY message ts within the thread — Slack resolves to the
+// thread either way, returning the true parent as the first message).
+// Callers must skip or idempotently re-upsert the included root.
 func (c *Client) RepliesPage(ctx context.Context, channelID, rootTS, cursor, oldest string) (*HistoryPage, error) {
 	return c.repliesPageWithLimit(ctx, channelID, rootTS, cursor, oldest, historyPageLimit)
+}
+
+// searchPageLimit is the result page size for search.messages (its maximum).
+const searchPageLimit = 100
+
+// maxSearchPages is the server-side page-number ceiling on search.messages.
+// Requests beyond it are silently CLAMPED to page 1 (probed live), so the
+// pager must both bound itself here and verify the echoed page number.
+const maxSearchPages = 100
+
+// SearchMatch is one search.messages hit, reduced to the fields the sweep
+// consumes. Search results are never archived directly (they are not native
+// message objects); they are pointers for canonical conversations.replies
+// fetches.
+type SearchMatch struct {
+	ChannelID string
+	TS        string
+	// RootTS is the thread root ts parsed from the permalink's thread_ts
+	// query parameter ("" when unparseable — the hit is then fetched
+	// per-message, which conversations.replies resolves to the thread
+	// anyway).
+	RootTS string
+}
+
+// SearchPage is one page of search.messages results.
+type SearchPage struct {
+	Matches []SearchMatch
+	// Page is the ECHOED page number: when it differs from the requested
+	// page, the server clamped the request (past its page ceiling) and the
+	// walk must stop.
+	Page  int
+	Pages int
+	Total int
+}
+
+// SearchMessagesPage runs one page of a search.messages query, always
+// timestamp-ascending (the sweep watermark requires stable ascending order;
+// probed stable across full walks with no duplicates).
+func (c *Client) SearchMessagesPage(ctx context.Context, query string, page int) (*SearchPage, error) {
+	params := url.Values{
+		"query":    {query},
+		"count":    {strconv.Itoa(searchPageLimit)},
+		"page":     {strconv.Itoa(page)},
+		"sort":     {"timestamp"},
+		"sort_dir": {"asc"},
+	}
+	var out struct {
+		apiResponse
+
+		Messages struct {
+			Total  int `json:"total"`
+			Paging struct {
+				Page  int `json:"page"`
+				Pages int `json:"pages"`
+			} `json:"paging"`
+			Matches []struct {
+				TS      string `json:"ts"`
+				Channel struct {
+					ID string `json:"id"`
+				} `json:"channel"`
+				Permalink string `json:"permalink"`
+			} `json:"matches"`
+		} `json:"messages"`
+	}
+	if err := c.call(ctx, "search.messages", params, &out); err != nil {
+		return nil, err
+	}
+	sp := &SearchPage{
+		Page:  out.Messages.Paging.Page,
+		Pages: out.Messages.Paging.Pages,
+		Total: out.Messages.Total,
+	}
+	for _, m := range out.Messages.Matches {
+		sp.Matches = append(sp.Matches, SearchMatch{
+			ChannelID: m.Channel.ID,
+			TS:        m.TS,
+			RootTS:    permalinkThreadTS(m.Permalink),
+		})
+	}
+	return sp, nil
+}
+
+// permalinkThreadTS extracts the thread_ts query parameter from a message
+// permalink ("" when absent or unparseable). Used only as a grouping
+// optimization — never as the source of truth for thread membership.
+func permalinkThreadTS(permalink string) string {
+	u, err := url.Parse(permalink)
+	if err != nil {
+		return ""
+	}
+	return u.Query().Get("thread_ts")
 }
 
 // repliesPageWithLimit is RepliesPage with an explicit page size (sized to

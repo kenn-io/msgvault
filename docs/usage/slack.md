@@ -73,23 +73,23 @@ msgvault sync-slack --full
 |---|---|
 | `--limit N` | Max messages per conversation this run (limited runs resume next run and skip the maintenance rescan) |
 | `--full` | Ignore stored cursors; re-fetch and upsert every message in place |
-| `--no-threads` | Skip thread-reply fetching this run |
+| `--no-threads` | Skip thread-reply fetching this run (a later threaded run pays the debt automatically) |
+| `--maintenance` | Repair edits and reaction changes on recent messages (archives ignore post-capture mutations by default) |
 | `--no-media` | Skip file downloads this run (files stay pending for `backfill-slack-media`) |
 
 Backfills are resumable: interrupt with Ctrl-C and the next run continues
 from the last checkpoint. Incremental runs fetch new messages, re-scan the
-trailing week for edits and reaction changes, and poll recent thread roots
-for new replies.
-
-### Threads, edits, and deletions
+sweep for thread replies created since the last run.
 
 Slack's history API never returns thread replies in the main channel stream
-(unless the author chose "also send to channel"), so msgvault tracks each
-thread root and polls it for new replies. Each incremental sync also
-re-reads the trailing `thread_lookback_days` window (default 30 days),
-which both catches edits and reaction changes and discovers threads whose
-FIRST reply arrived after the root was archived. Replies or edits landing
-on messages older than the lookback are only picked up by a `--full` run.
+(unless "also sent to channel"), and offers no change feed. The importer
+discovers replies with a search sweep (`threads:replies`, day-granular,
+resumable via a UTC watermark): a reply is found by its **creation time**,
+so the age of its thread is irrelevant — no lookback window, no blind spot.
+Discovered replies are archived canonically via `conversations.replies`.
+Edits and reaction changes after capture are ignored by default; run
+`sync-slack --maintenance` to repair the recent window, or `--full` to
+repair everything.
 Deleted messages simply
 disappear from Slack — your archived copy is kept (archive semantics; nothing
 is ever deleted locally).
@@ -117,7 +117,7 @@ schedule = "*/30 * * * *"
 
 The daemon then syncs every registered workspace on the schedule. See
 [Configuration](/configuration/#slack) for the full option list
-(channel include/exclude filters, media caps, thread lookback).
+(channel include/exclude filters, media caps).
 
 ## Identity unification
 
