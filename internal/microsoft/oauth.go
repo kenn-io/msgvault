@@ -358,9 +358,6 @@ func (m *Manager) browserFlow(ctx context.Context, email string, scopes []string
 	// Bind the listener before constructing the auth URL so that the redirect
 	// URI embedded in the authorization request matches exactly. Failing fast
 	// here produces a clear error instead of a silent hang.
-	if err := checkBindPort(redirectPort); err != nil {
-		return nil, "", fmt.Errorf("cannot bind to port %s: %w", redirectPort, err)
-	}
 
 	bindHost := "localhost"
 	if host == "localhost" || host == "" {
@@ -378,12 +375,23 @@ func (m *Manager) browserFlow(ctx context.Context, email string, scopes []string
 	bindAddr := net.JoinHostPort(bindHost, redirectPort)
 
 	lc := &net.ListenConfig{}
-	ln, err := lc.Listen(ctx, "tcp4", bindAddr)
+	ln, err := lc.Listen(ctx, "tcp", bindAddr)
 	if err != nil {
-		return nil, "", fmt.Errorf(
-			"port %s is already in use — ensure no other process is using it and retry: %w",
-			redirectPort, err,
-		)
+		p, perr := strconv.Atoi(redirectPort)
+		switch {
+		case perr == nil && p > 0 && p < 1024:
+			return nil, "", fmt.Errorf(
+				"cannot bind to privileged port %d: %w\n\n"+
+					"Fix by granting the capability to the binary:\n"+
+					"  sudo setcap 'cap_net_bind_service=+ep' \"$(which msgvault)\"",
+				p, err,
+			)
+		default:
+			return nil, "", fmt.Errorf(
+				"port %s is already in use — ensure no other process is using it and retry: %w",
+				redirectPort, err,
+			)
+		}
 	}
 
 	if scheme == "https" {
@@ -906,22 +914,4 @@ func redirectURIParts(rawURL string) (scheme, host, redirectPort, path string, e
 		path = "/"
 	}
 	return scheme, host, redirectPort, path, nil
-}
-
-// checkBindPort verifies that the process can bind to port.
-func checkBindPort(port string) error {
-	ln, err := net.Listen("tcp", ":"+port)
-	if err != nil {
-		// If we're trying to bind a privileged port (< 1024) without the
-		// cap_net_bind_service capability, provide a clear hint.
-		p, _ := strconv.Atoi(port)
-		if p > 0 && p < 1024 {
-			return fmt.Errorf("cannot bind to privileged port %s: %w\n\n"+
-				"Fix by granting the capability to the binary:\n"+
-				"  sudo setcap 'cap_net_bind_service=+ep' \"$(which msgvault)\"", port, err)
-		}
-		return fmt.Errorf("cannot bind to port %s: %w", port, err)
-	}
-	_ = ln.Close()
-	return nil
 }
