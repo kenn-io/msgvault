@@ -361,8 +361,24 @@ func (m *Manager) browserFlow(ctx context.Context, email string, scopes []string
 	if err := checkBindPort(redirectPort); err != nil {
 		return nil, "", fmt.Errorf("cannot bind to port %s: %w", redirectPort, err)
 	}
+
+	bindHost := "localhost"
+	if host == "localhost" || host == "" {
+		bindHost = "localhost"
+	} else if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() {
+		// Allow 127.x.x.x, ::1 — use the configured loopback address so the
+		// bind address matches the redirect URI (browser sends callback to
+		// 127.0.0.1, server listens on 127.0.0.1, etc.).
+		bindHost = host
+	} else {
+		return nil, "", fmt.Errorf(
+			"redirect URI host %q must be localhost or a loopback address", host,
+		)
+	}
+	bindAddr := net.JoinHostPort(bindHost, redirectPort)
+
 	lc := &net.ListenConfig{}
-	ln, err := lc.Listen(ctx, "tcp", "localhost:"+redirectPort)
+	ln, err := lc.Listen(ctx, "tcp4", bindAddr)
 	if err != nil {
 		return nil, "", fmt.Errorf(
 			"port %s is already in use — ensure no other process is using it and retry: %w",
