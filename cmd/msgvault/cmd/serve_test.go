@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -22,6 +23,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/discord"
 	imaplib "go.kenn.io/msgvault/internal/imap"
 	"go.kenn.io/msgvault/internal/oauth"
 	"go.kenn.io/msgvault/internal/query"
@@ -1238,6 +1240,188 @@ func TestFindScheduledSyncSources(t *testing.T) {
 	got, err = findScheduledSyncSources(s, mboxAddr)
 	require.NoError(err, "findScheduledSyncSources(mbox-only)")
 	assert.Empty(got, "findScheduledSyncSources(mbox-only) should be empty")
+
+	// Discord schedules are keyed by exact guild ID. Display names are not
+	// accepted because separate guilds may legitimately have the same name.
+	discordA, err := s.GetOrCreateSource(sourceTypeDiscord, "113456789012345678")
+	require.NoError(err, "create first Discord source")
+	require.NoError(s.UpdateSourceDisplayName(discordA.ID, "Shared Guild"), "name first Discord source")
+	discordB, err := s.GetOrCreateSource(sourceTypeDiscord, "223456789012345678")
+	require.NoError(err, "create second Discord source")
+	require.NoError(s.UpdateSourceDisplayName(discordB.ID, "Shared Guild"), "name second Discord source")
+
+	got, err = findScheduledSyncSources(s, discordB.Identifier)
+	require.NoError(err, "find Discord source by guild ID")
+	require.Len(got, 1, "exact guild ID selects one Discord source")
+	assert.Equal(discordB.ID, got[0].ID)
+
+	got, err = findScheduledSyncSources(s, "Shared Guild")
+	require.NoError(err, "do not resolve Discord source by display name")
+	assert.Empty(got, "duplicate guild display names must not select an arbitrary source")
+}
+
+func TestRunScheduledSyncUsesSharedDiscordImporterAndRebuildsOnce(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := storetest.New(t)
+	source, err := st.Store.GetOrCreateSource(sourceTypeDiscord, "113456789012345678")
+	require.NoError(err)
+
+	originalImport := importDiscordSourceForScheduledRun
+	originalRebuild := rebuildCacheAfterScheduledSourceRun
+	t.Cleanup(func() {
+		importDiscordSourceForScheduledRun = originalImport
+		rebuildCacheAfterScheduledSourceRun = originalRebuild
+	})
+
+	var imported []int64
+	importDiscordSourceForScheduledRun = func(
+		_ context.Context, gotStore *store.Store, gotSource *store.Source,
+		deps discordCommandDeps, full bool, after time.Time, progress func(string),
+	) (*discord.ImportSummary, error) {
+		assert.Same(st.Store, gotStore)
+		assert.False(full)
+		assert.True(after.IsZero())
+		assert.Nil(progress)
+		assert.NotNil(deps.tokenManager)
+		imported = append(imported, gotSource.ID)
+		return nil, errors.New("synthetic Discord import failure")
+	}
+	rebuilds := 0
+	rebuildCacheAfterScheduledSourceRun = func(context.Context, string) error {
+		rebuilds++
+		return nil
+	}
+
+	err = runScheduledSync(context.Background(), source.Identifier, st.Store, func(string) (*oauth.Manager, error) {
+		require.FailNow("Discord scheduled sync must not resolve Gmail OAuth")
+		return nil, errors.New("unreachable Gmail OAuth resolution")
+	})
+	require.ErrorContains(err, "synthetic Discord import failure")
+	assert.Equal([]int64{source.ID}, imported)
+	assert.Equal(1, rebuilds)
+}
+
+func TestRunScheduledSyncLogsDiscordImportIssues(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := storetest.New(t)
+	source, err := st.Store.GetOrCreateSource(sourceTypeDiscord, "113456789012345678")
+	require.NoError(err)
+
+	originalImport := importDiscordSourceForScheduledRun
+	originalRebuild := rebuildCacheAfterScheduledSourceRun
+	originalLogger := logger
+	t.Cleanup(func() {
+		importDiscordSourceForScheduledRun = originalImport
+		rebuildCacheAfterScheduledSourceRun = originalRebuild
+		logger = originalLogger
+	})
+	importDiscordSourceForScheduledRun = func(
+		context.Context, *store.Store, *store.Source,
+		discordCommandDeps, bool, time.Time, func(string),
+	) (*discord.ImportSummary, error) {
+		return &discord.ImportSummary{
+			CatalogIssues: []discord.CatalogIssue{{
+				Scope: discord.CatalogScopePrivateArchive, Kind: discord.CatalogIssueForbidden,
+				GuildID: source.Identifier, ParentID: "300000000000000001",
+				StatusCode: http.StatusForbidden, DiscordCode: 50013,
+				Err: errors.New("private-response-secret"),
+			}},
+			ContainerIssues: []discord.ContainerIssue{{
+				ContainerID: "400000000000000001", Kind: discord.ContainerIssueUnknownChannel,
+				StatusCode: http.StatusNotFound, DiscordCode: 10003,
+			}},
+		}, nil
+	}
+	rebuildCacheAfterScheduledSourceRun = func(context.Context, string) error { return nil }
+	var logs bytes.Buffer
+	logger = slog.New(slog.NewTextHandler(&logs, nil))
+
+	require.NoError(runScheduledSync(
+		context.Background(), source.Identifier, st.Store,
+		func(string) (*oauth.Manager, error) {
+			require.FailNow("Discord scheduled sync must not resolve Gmail OAuth")
+			return nil, errors.New("unreachable")
+		},
+	))
+	output := logs.String()
+	assert.Contains(output, "discord catalog issue")
+	assert.Contains(output, "scope=private_archive")
+	assert.Contains(output, "parent_id=300000000000000001")
+	assert.Contains(output, "status_code=403")
+	assert.Contains(output, "discord_code=50013")
+	assert.Contains(output, "discord container issue")
+	assert.Contains(output, "container_id=400000000000000001")
+	assert.Contains(output, "kind=unknown_channel")
+	assert.Contains(output, "status_code=404")
+	assert.NotContains(output, "private-response-secret")
+}
+
+func TestScheduledDiscordGuildFailureDoesNotBlockLaterGuild(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := storetest.New(t)
+	first, err := st.Store.GetOrCreateSource(sourceTypeDiscord, "113456789012345678")
+	require.NoError(err)
+	second, err := st.Store.GetOrCreateSource(sourceTypeDiscord, "223456789012345678")
+	require.NoError(err)
+	require.Less(first.ID, second.ID)
+
+	originalImport := importDiscordSourceForScheduledRun
+	originalRebuild := rebuildCacheAfterScheduledSourceRun
+	t.Cleanup(func() {
+		importDiscordSourceForScheduledRun = originalImport
+		rebuildCacheAfterScheduledSourceRun = originalRebuild
+	})
+	var imported []int64
+	importDiscordSourceForScheduledRun = func(
+		_ context.Context, _ *store.Store, source *store.Source,
+		_ discordCommandDeps, _ bool, _ time.Time, _ func(string),
+	) (*discord.ImportSummary, error) {
+		imported = append(imported, source.ID)
+		if source.ID == first.ID {
+			return nil, errors.New("synthetic first guild failure")
+		}
+		return &discord.ImportSummary{}, nil
+	}
+	var rebuilt []string
+	rebuildCacheAfterScheduledSourceRun = func(_ context.Context, identifier string) error {
+		rebuilt = append(rebuilt, identifier)
+		return nil
+	}
+
+	completed := make(chan string, 2)
+	sched := scheduler.New(func(ctx context.Context, identifier string) error {
+		err := runScheduledSync(ctx, identifier, st.Store, func(string) (*oauth.Manager, error) {
+			return nil, errors.New("unreachable Gmail OAuth resolution")
+		})
+		completed <- identifier
+		return err
+	})
+	for _, source := range []*store.Source{first, second} {
+		require.NoError(sched.AddAccount(source.Identifier, "0 0 1 1 *"))
+	}
+	sched.Start()
+	t.Cleanup(func() { <-sched.Stop().Done() })
+	awaitCompletion := func() string {
+		select {
+		case identifier := <-completed:
+			return identifier
+		case <-time.After(5 * time.Second):
+			require.FailNow("timed out waiting for scheduled Discord guild")
+			return ""
+		}
+	}
+
+	require.NoError(sched.TriggerSync(first.Identifier))
+	assert.Equal(first.Identifier, awaitCompletion())
+	require.NoError(sched.TriggerSync(second.Identifier))
+	assert.Equal(second.Identifier, awaitCompletion())
+
+	assert.Equal([]int64{first.ID, second.ID}, imported)
+	assert.Equal([]string{first.Identifier, second.Identifier}, rebuilt,
+		"each scheduled guild invocation rebuilds its cache exactly once")
 }
 
 func TestCronExpressionValidation(t *testing.T) {

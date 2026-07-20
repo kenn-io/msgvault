@@ -39,6 +39,17 @@ client_secrets = "/path/to/acme_workspace_secret.json"
 client_id = "your-azure-app-client-id"
 # tenant_id = "your-tenant-id"   # optional, default "common"
 
+[discord]
+# Per-attachment download cap (default: 50 MiB)
+max_media_bytes = 52428800
+# Trailing edit/delete/reaction repair window (default: seven days)
+edit_rescan_window = "168h"
+
+[discord.guilds."123456789012345678"]
+# Channel, thread, and forum-post IDs; empty include means all accessible.
+include = ["456789012345678901"]
+exclude = ["567890123456789012"]
+
 [log]
 # Persistent structured file logging (opt-in)
 enabled = true
@@ -162,6 +173,9 @@ Named OAuth apps for Google Workspace organizations that require their own OAuth
 
 See [OAuth Setup: Google Workspace Accounts](/guides/oauth-setup/#google-workspace-accounts) for when and why you need named apps.
 
+Discord's `--oauth-app` value is only a protected bot-token binding label. It
+is not resolved from this section and does not require an `[oauth.apps]` entry.
+
 When `service_account_key` is configured, `msgvault add-account <email>` validates the delegated Gmail profile and registers the account without storing a per-user refresh token. The service account key file must be owner-only on Unix-like systems, for example `chmod 600 /path/to/service-account.json`.
 
 ### `[microsoft]`
@@ -175,6 +189,32 @@ sync. Required only if you use `add-o365`, `add-teams`, or `sync-teams`.
 | `tenant_id` | `common` | Azure AD tenant ID; `common` allows both personal and org accounts |
 
 See [OAuth Setup: Microsoft 365](/guides/oauth-setup/#microsoft-365-outlook-hotmail) for app registration steps. Teams uses the same `client_id` but requests Microsoft Graph scopes and stores tokens under `tokens/teams_<email>.json`; Outlook/Hotmail IMAP OAuth uses `tokens/microsoft_<email>.json`.
+
+### `[discord]`
+
+Provider-wide Discord import settings and optional message-container filters.
+Register guilds and store their bot credential first with `msgvault
+add-discord`; tokens and binding labels do not belong in `config.toml`.
+
+| Key | Default | Description |
+|---|---|---|
+| `max_media_bytes` | `52428800` (50 MiB) | Maximum size of one Discord attachment downloaded during sync or backfill |
+| `edit_rescan_window` | `168h` (seven days) | Trailing per-channel/thread window refreshed for edits, deletions, and reaction summaries |
+
+Use an exact guild ID for a per-guild filter block:
+
+```toml
+[discord.guilds."123456789012345678"]
+include = ["456789012345678901"]
+exclude = ["567890123456789012"]
+```
+
+An empty `include` means every accessible text or announcement channel, thread,
+and forum post. Top-level channels match directly. A child inherits its
+parent's state unless its own ID appears explicitly. An explicit child include
+can override an excluded parent; an explicit child exclude can override an
+included parent. `exclude` wins when the same ID is in both lists. See
+[Discord](/usage/discord/#configure-media-repairs-and-channel-filters).
 
 ### `[log]`
 
@@ -255,13 +295,27 @@ Affected CLI commands include `search` (FTS mode), `query`, `show-message`, `sta
 
 ### `[[accounts]]`
 
-Scheduled sync accounts for the web server. Each `[[accounts]]` entry defines a cron schedule for automatic background syncing. Gmail and IMAP sources are supported; for IMAP, use the account display name/email when available rather than the raw `imaps://...` source identifier.
+Scheduled sync sources for the web server. Each `[[accounts]]` entry defines a
+cron schedule for automatic background syncing. Gmail, IMAP, Microsoft Teams,
+and Discord sources are supported. For IMAP or Teams, use the account display
+name/email when available rather than a raw provider identifier. Discord
+schedules must use the exact guild ID because guild display names are mutable
+and may be duplicated.
 
 | Key | Default | Description |
 |---|---|---|
-| `email` | (required) | Account identifier or display name to sync |
+| `email` | (required) | Account identifier/display name, or exact Discord guild ID, to sync |
 | `schedule` | — | Cron expression for sync schedule (e.g., `0 * * * *`) |
 | `enabled` | `true` | Whether scheduled sync is active for this account |
+
+For example, schedule one previously registered Discord guild independently:
+
+```toml
+[[accounts]]
+email = "123456789012345678"
+schedule = "*/30 * * * *"
+enabled = true
+```
 
 ### SyncTech SMS Sources
 

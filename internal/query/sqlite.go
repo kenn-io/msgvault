@@ -1041,6 +1041,10 @@ func (e *SQLiteEngine) GetAttachment(ctx context.Context, id int64) (*Attachment
 		att.URL = att.StoragePath
 		att.ContentHash = ""
 		att.StoragePath = ""
+	} else if att.ContentHash == "" {
+		if pathHash, ok := attachmentCASPathHash(att.StoragePath); ok {
+			att.ContentHash = pathHash
+		}
 	}
 	return &att, nil
 }
@@ -1051,9 +1055,9 @@ func (e *SQLiteEngine) GetAttachmentsByHash(ctx context.Context, contentHash str
 	rows, err := e.queryContext(ctx, `
 		SELECT id, COALESCE(filename, ''), COALESCE(mime_type, ''), COALESCE(size, 0), COALESCE(content_hash, ''), COALESCE(storage_path, '')
 		FROM attachments
-		WHERE content_hash = ?
+		WHERE content_hash = ? OR (COALESCE(content_hash, '') = '' AND storage_path = ?)
 		ORDER BY id
-	`, contentHash)
+	`, contentHash, attachmentCASPath(contentHash))
 	if err != nil {
 		return nil, fmt.Errorf("get attachments by hash: %w", err)
 	}
@@ -1064,6 +1068,11 @@ func (e *SQLiteEngine) GetAttachmentsByHash(ctx context.Context, contentHash str
 		var att AttachmentInfo
 		if err := rows.Scan(&att.ID, &att.Filename, &att.MimeType, &att.Size, &att.ContentHash, &att.StoragePath); err != nil {
 			return nil, fmt.Errorf("scan attachment by hash: %w", err)
+		}
+		if att.ContentHash == "" {
+			if pathHash, ok := attachmentCASPathHash(att.StoragePath); ok {
+				att.ContentHash = pathHash
+			}
 		}
 		attachments = append(attachments, att)
 	}

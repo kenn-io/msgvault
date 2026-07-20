@@ -24,8 +24,8 @@ All message data (metadata, labels, participants, and raw MIME) lives in the con
 | Column | Type | Description |
 |---|---|---|
 | `id` | INTEGER PK | Auto-increment |
-| `source_type` | TEXT | `gmail`, `imap`, `gcal`, `teams`, `mbox`, `pst`, `apple-mail`, `whatsapp`, `apple_messages`, `google_voice`, `facebook_messenger`, `synctech_sms` |
-| `identifier` | TEXT | Email address or phone number |
+| `source_type` | TEXT | Provider/import type, for example `gmail`, `imap`, `gcal`, `teams`, `discord`, `beeper`, `mbox`, `whatsapp`, `granola`, or `circleback` |
+| `identifier` | TEXT | Provider-stable identifier such as an email address, phone number, or Discord guild ID |
 | `display_name` | TEXT | Account display name |
 | `sync_cursor` | TEXT | Sync cursor (Gmail history ID for Gmail accounts) |
 | `last_sync_at` | DATETIME | Last sync timestamp |
@@ -37,7 +37,7 @@ All message data (metadata, labels, participants, and raw MIME) lives in the con
 | `id` | INTEGER PK | Auto-increment |
 | `source_id` | INTEGER FK | References `sources` |
 | `source_conversation_id` | TEXT | Source-specific thread/conversation ID |
-| `conversation_type` | TEXT | `email_thread`, `direct_chat`, `group_chat` |
+| `conversation_type` | TEXT | `email_thread`, `direct_chat`, `group_chat`, `channel`, or another provider-defined kind |
 | `message_count` | INTEGER | Denormalized count |
 | `last_message_at` | DATETIME | Latest message timestamp |
 
@@ -49,7 +49,7 @@ All message data (metadata, labels, participants, and raw MIME) lives in the con
 | `conversation_id` | INTEGER FK | References `conversations` |
 | `source_id` | INTEGER FK | References `sources` |
 | `source_message_id` | TEXT | Source-specific message ID |
-| `message_type` | TEXT | `email`, `calendar_event`, `teams`, `sms`, `mms`, `whatsapp`, `imessage`, `fbmessenger`, `synctech_sms_call`, `google_voice_text`, `google_voice_call`, `google_voice_voicemail` |
+| `message_type` | TEXT | `email`, `calendar_event`, `meeting_transcript`, `beeper`, `teams`, `discord`, `sms`, `mms`, `whatsapp`, `imessage`, `fbmessenger`, `synctech_sms_call`, `google_voice_text`, `google_voice_call`, `google_voice_voicemail` |
 | `sent_at` | DATETIME | Send timestamp |
 | `sender_id` | INTEGER FK | References `participants` |
 | `subject` | TEXT | Message subject |
@@ -59,12 +59,12 @@ All message data (metadata, labels, participants, and raw MIME) lives in the con
 | `has_attachments` | BOOLEAN | Attachment flag |
 | `deleted_at` | DATETIME | Soft delete timestamp |
 
-**message_raw** -- Raw MIME blob storage, compressed with zlib.
+**message_raw** -- Raw provider payload storage, compressed with zlib.
 
 | Column | Type | Description |
 |---|---|---|
 | `message_id` | INTEGER PK/FK | References `messages` |
-| `raw_data` | BLOB | Compressed MIME data |
+| `raw_data` | BLOB | Compressed MIME or provider JSON data |
 | `compression` | TEXT | `zlib` |
 
 **participants** -- Unified contacts.
@@ -83,7 +83,7 @@ All message data (metadata, labels, participants, and raw MIME) lives in the con
 |---|---|---|
 | `message_id` | INTEGER FK | References `messages` |
 | `participant_id` | INTEGER FK | References `participants` |
-| `recipient_type` | TEXT | `from`, `to`, `cc`, `bcc` |
+| `recipient_type` | TEXT | `from`, `to`, `cc`, `bcc`, `mention`, or another provider-defined role |
 
 **labels / message_labels** -- Gmail labels (many-to-many).
 
@@ -220,11 +220,15 @@ OAuth tokens are stored as JSON files per account:
 
 ```
 tokens/
-├── personal@gmail.com.json
-└── work@company.com.json
+├── personal@example.com.json
+├── work@example.com.json
+└── discord_<bot-user-id>.json
 ```
 
-Tokens refresh automatically. Protect this directory; tokens grant read/write access to Gmail.
+Token files are owner-only. Protect this directory: its credentials grant the
+configured provider access. Discord bot records may be shared by several guild
+sources through an optional binding label and are removed only after the last
+referencing source is deleted.
 
 ## Compression
 

@@ -482,6 +482,7 @@ func TestAutomaticRepackLogsCommittedSiblingProgressBeforeAggregateWarning(t *te
 func TestAttachmentProducingCommandExactAllowlist(t *testing.T) {
 	allowlisted := []string{
 		"backfill-beeper-media",
+		"backfill-discord-media",
 		"backfill-teams-media",
 		"import",
 		"import-emlx",
@@ -493,6 +494,7 @@ func TestAttachmentProducingCommandExactAllowlist(t *testing.T) {
 		"import-synctech-sms",
 		"import-whatsapp",
 		"sync-beeper",
+		"sync-discord",
 		"sync-synctech-sms",
 		"sync-teams",
 	}
