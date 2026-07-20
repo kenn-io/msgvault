@@ -279,6 +279,7 @@ func runRemoveAccountLocal(cmd *cobra.Command, args []string) error {
 		graphMgr := microsoft.NewGraphManager(
 			cfg.Microsoft.ClientID,
 			cfg.Microsoft.EffectiveTenantID(),
+			cfg.Microsoft.EffectiveRedirectURI(),
 			cfg.TokensDir(),
 			logger,
 		)
@@ -322,6 +323,7 @@ func runRemoveAccountLocal(cmd *cobra.Command, args []string) error {
 					msMgr := microsoft.NewManager(
 						cfg.Microsoft.ClientID,
 						cfg.Microsoft.EffectiveTenantID(),
+						cfg.Microsoft.EffectiveRedirectURI(),
 						cfg.TokensDir(),
 						logger,
 					)

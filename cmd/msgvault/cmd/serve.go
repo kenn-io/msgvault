@@ -1579,7 +1579,7 @@ func runScheduledTeamsSync(ctx context.Context, src *store.Source, s *store.Stor
 		return fmt.Errorf("post-source-create migrations: %w", err)
 	}
 
-	mgr := microsoft.NewGraphManager(cfg.Microsoft.ClientID, cfg.Microsoft.EffectiveTenantID(), cfg.TokensDir(), logger)
+	mgr := microsoft.NewGraphManager(cfg.Microsoft.ClientID, cfg.Microsoft.EffectiveTenantID(), cfg.Microsoft.EffectiveRedirectURI(), cfg.TokensDir(), logger)
 	tokenFn, err := mgr.TokenSource(ctx, email)
 	if err != nil {
 		return err

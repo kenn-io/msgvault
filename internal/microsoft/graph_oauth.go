@@ -45,10 +45,11 @@ func GraphScopes() []string {
 // internal *Manager delegate; only token storage (filename prefix) and the
 // scope set differ. This keeps Manager's external behavior unchanged.
 type GraphManager struct {
-	clientID  string
-	tenantID  string
-	tokensDir string
-	logger    *slog.Logger
+	clientID    string
+	tenantID    string
+	redirectURI string
+	tokensDir   string
+	logger      *slog.Logger
 
 	// Test hooks, mirrored onto the internal delegate. See Manager.
 	browserFlowFn   func(ctx context.Context, email string, scopes []string) (*oauth2.Token, string, error)
@@ -57,7 +58,7 @@ type GraphManager struct {
 
 // NewGraphManager constructs a GraphManager. An empty tenantID defaults to the
 // multi-tenant "common" endpoint; a nil logger defaults to slog.Default().
-func NewGraphManager(clientID, tenantID, tokensDir string, logger *slog.Logger) *GraphManager {
+func NewGraphManager(clientID, tenantID, redirectURI, tokensDir string, logger *slog.Logger) *GraphManager {
 	if tenantID == "" {
 		tenantID = DefaultTenant
 	}
@@ -65,10 +66,11 @@ func NewGraphManager(clientID, tenantID, tokensDir string, logger *slog.Logger) 
 		logger = slog.Default()
 	}
 	return &GraphManager{
-		clientID:  clientID,
-		tenantID:  tenantID,
-		tokensDir: tokensDir,
-		logger:    logger,
+		clientID:    clientID,
+		tenantID:    tenantID,
+		redirectURI: redirectURI,
+		tokensDir:   tokensDir,
+		logger:      logger,
 	}
 }
 
@@ -79,6 +81,7 @@ func (m *GraphManager) delegate() *Manager {
 	return &Manager{
 		clientID:        m.clientID,
 		tenantID:        m.tenantID,
+		redirectURI:     m.redirectURI,
 		tokensDir:       m.tokensDir,
 		logger:          m.logger,
 		browserFlowFn:   m.browserFlowFn,

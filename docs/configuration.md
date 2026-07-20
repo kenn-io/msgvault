@@ -37,6 +37,7 @@ client_secrets = "/path/to/acme_workspace_secret.json"
 [microsoft]
 # Azure AD app registration client ID (required for M365)
 client_id = "your-azure-app-client-id"
+# redirect_uri = "http://localhost:8089/callback/microsoft"  # default
 # tenant_id = "your-tenant-id"   # optional, default "common"
 
 [discord]
@@ -186,6 +187,7 @@ sync. Required only if you use `add-o365`, `add-teams`, or `sync-teams`.
 | Key | Default | Description |
 |---|---|---|
 | `client_id` | — | Azure AD Application (client) ID (required) |
+| `redirect_uri` | `http://localhost:8089/callback/microsoft` | OAuth redirect URI registered in the Azure AD app |
 | `tenant_id` | `common` | Azure AD tenant ID; `common` allows both personal and org accounts |
 
 See [OAuth Setup: Microsoft 365](/guides/oauth-setup/#microsoft-365-outlook-hotmail) for app registration steps. Teams uses the same `client_id` but requests Microsoft Graph scopes and stores tokens under `tokens/teams_<email>.json`; Outlook/Hotmail IMAP OAuth uses `tokens/microsoft_<email>.json`.

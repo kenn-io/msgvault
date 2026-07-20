@@ -1,14 +1,20 @@
 package microsoft
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/rsa"
 	"crypto/sha256"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"log/slog"
+	"math/big"
 	"net"
 	"net/http"
 	"net/url"
@@ -16,6 +22,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -37,9 +44,6 @@ const (
 	// MicrosoftConsumerTenantID is the fixed tenant ID for all personal
 	// Microsoft accounts (outlook.com, hotmail.com, live.com, etc.).
 	MicrosoftConsumerTenantID = "9188040d-6c67-4c5b-b112-36a304b66dad"
-
-	redirectPort = "8089"
-	callbackPath = "/callback/microsoft"
 
 	// scopeOfflineAccess is the OAuth scope requesting a refresh token.
 	scopeOfflineAccess = "offline_access"
@@ -105,10 +109,11 @@ func (e *TokenMismatchError) Error() string {
 }
 
 type Manager struct {
-	clientID  string
-	tenantID  string
-	tokensDir string
-	logger    *slog.Logger
+	clientID    string
+	tenantID    string
+	redirectURI string
+	tokensDir   string
+	logger      *slog.Logger
 
 	// browserFlowFn overrides browserFlow for testing. Returns (token, nonce, error).
 	browserFlowFn func(ctx context.Context, email string, scopes []string) (*oauth2.Token, string, error)
@@ -116,7 +121,7 @@ type Manager struct {
 	verifyIDTokenFn func(ctx context.Context, rawIDToken string) (*idTokenClaims, error)
 }
 
-func NewManager(clientID, tenantID, tokensDir string, logger *slog.Logger) *Manager {
+func NewManager(clientID, tenantID, redirectURI, tokensDir string, logger *slog.Logger) *Manager {
 	if tenantID == "" {
 		tenantID = DefaultTenant
 	}
@@ -124,10 +129,11 @@ func NewManager(clientID, tenantID, tokensDir string, logger *slog.Logger) *Mana
 		logger = slog.Default()
 	}
 	return &Manager{
-		clientID:  clientID,
-		tenantID:  tenantID,
-		tokensDir: tokensDir,
-		logger:    logger,
+		clientID:    clientID,
+		tenantID:    tenantID,
+		redirectURI: redirectURI,
+		tokensDir:   tokensDir,
+		logger:      logger,
 	}
 }
 
@@ -142,7 +148,7 @@ func (m *Manager) oauthConfigWithTenant(tenantID string, scopes []string) *oauth
 			AuthURL:  fmt.Sprintf("https://login.microsoftonline.com/%s/oauth2/v2.0/authorize", tenantID),
 			TokenURL: fmt.Sprintf("https://login.microsoftonline.com/%s/oauth2/v2.0/token", tenantID),
 		},
-		RedirectURL: "http://localhost:" + redirectPort + callbackPath,
+		RedirectURL: m.redirectURI,
 		Scopes:      scopes,
 	}
 }
@@ -339,14 +345,22 @@ func (m *Manager) IMAPHost(email string) (string, error) {
 }
 
 func (m *Manager) browserFlow(ctx context.Context, email string, scopes []string) (*oauth2.Token, string, error) {
-	// Bound the entire browser flow to 5 minutes. This prevents port 8089
+	// Bound the entire browser flow to 5 minutes. This prevents the port
 	// from staying bound indefinitely if the user abandons authorization.
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
 
+	scheme, host, redirectPort, callbackPath, err := redirectURIParts(m.redirectURI)
+	if err != nil {
+		return nil, "", fmt.Errorf("parse redirect URI: %w", err)
+	}
+
 	// Bind the listener before constructing the auth URL so that the redirect
 	// URI embedded in the authorization request matches exactly. Failing fast
 	// here produces a clear error instead of a silent hang.
+	if err := checkBindPort(redirectPort); err != nil {
+		return nil, "", fmt.Errorf("cannot bind to port %s: %w", redirectPort, err)
+	}
 	lc := &net.ListenConfig{}
 	ln, err := lc.Listen(ctx, "tcp", "localhost:"+redirectPort)
 	if err != nil {
@@ -355,6 +369,18 @@ func (m *Manager) browserFlow(ctx context.Context, email string, scopes []string
 			redirectPort, err,
 		)
 	}
+
+	if scheme == "https" {
+		certCert, err := generateSelfSignedCert([]string{host})
+		if err != nil {
+			return nil, "", fmt.Errorf("generate self-signed TLS cert: %w", err)
+		}
+		fmt.Fprintln(os.Stderr, "\nThis is a self-signed certificate for localhost.\n\n    Your browser will show a certificate warning on https://localhost\n    — click \"Advanced\" → \"Accept the risk and continue\" to proceed.")
+		tlsCfg := &tls.Config{Certificates: []tls.Certificate{certCert}, MinVersion: tls.VersionTLS12}
+		ln = tls.NewListener(ln, tlsCfg)
+	}
+
+	defer ln.Close()
 
 	cfg := m.oauthConfig(scopes)
 
@@ -451,6 +477,8 @@ func (m *Manager) browserFlow(ctx context.Context, email string, scopes []string
 
 	fmt.Printf("Opening browser for Microsoft authorization...\n")
 	fmt.Printf("If browser doesn't open, visit:\n%s\n\n", redactAuthURL(authURL))
+	// Note: browser will show a self-signed cert warning on https://localhost —
+	// the user must click "Advanced" → "Accept the risk and continue".
 	if err := openBrowser(ctx, authURL); err != nil {
 		m.logger.Warn("failed to open browser", "error", err)
 	}
@@ -470,6 +498,50 @@ func (m *Manager) browserFlow(ctx context.Context, email string, scopes []string
 		return nil, "", ctx.Err()
 	}
 }
+
+// generateSelfSignedCert creates a self-signed TLS certificate for the given hosts.
+func generateSelfSignedCert(hosts []string) (tls.Certificate, error) {
+	var buf bytes.Buffer
+
+	priv, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		return tls.Certificate{}, fmt.Errorf("generate key: %w", err)
+	}
+
+	template := x509.Certificate{
+		SerialNumber: big.NewInt(time.Now().UnixNano()),
+		NotBefore:    time.Now().Add(-24 * time.Hour),
+		NotAfter:     time.Now().Add(1 * time.Hour),
+		KeyUsage: x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		IPAddresses:  []net.IP{net.ParseIP("127.0.0.1"), net.ParseIP("::1")},
+	}
+	if len(hosts) == 0 {
+		template.DNSNames = []string{"localhost"}
+	} else {
+		template.DNSNames = hosts
+	}
+
+	derBytes, err := x509.CreateCertificate(rand.Reader, &template, &template, &priv.PublicKey, priv)
+	if err != nil {
+		return tls.Certificate{}, fmt.Errorf("create certificate: %w", err)
+	}
+
+	if err := pem.Encode(&buf, &pem.Block{Type: "CERTIFICATE", Bytes: derBytes}); err != nil {
+		return tls.Certificate{}, fmt.Errorf("encode cert: %w", err)
+	}
+
+	keyBytes, err := x509.MarshalPKCS8PrivateKey(priv)
+	if err != nil {
+		return tls.Certificate{}, fmt.Errorf("marshal key: %w", err)
+	}
+	if err := pem.Encode(&buf, &pem.Block{Type: "PRIVATE KEY", Bytes: keyBytes}); err != nil {
+		return tls.Certificate{}, fmt.Errorf("encode key: %w", err)
+	}
+
+	return tls.X509KeyPair(buf.Bytes(), buf.Bytes())
+}
+
 
 // resolveTokenEmail verifies the ID token and validates the authenticated
 // email matches the expected address. Uses OIDC signature/issuer/audience
@@ -788,5 +860,52 @@ func openBrowser(ctx context.Context, rawURL string) error {
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("start browser command: %w", err)
 	}
+	return nil
+}
+
+// redirectURIParts parses a redirect URL string and returns its scheme,
+// host, port, and path components. Returns the port as "443" for
+// https:// URLs with no explicit port, and "80" for http:// URLs with
+// no explicit port so callers can decide whether TLS is needed.
+func redirectURIParts(rawURL string) (scheme, host, redirectPort, path string, err error) {
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return "", "", "", "", fmt.Errorf("parse URL %q: %w", rawURL, err)
+	}
+	scheme = parsed.Scheme
+	host = parsed.Hostname()
+	redirectPort = parsed.Port()
+	if redirectPort == "" {
+		if scheme == "https" {
+			redirectPort = "443"
+		} else {
+			redirectPort = "80"
+		}
+	}
+	if scheme != "https" && scheme != "http" {
+		return "", "", "", "", fmt.Errorf("redirect URL scheme %q not supported (only http and https)", scheme)
+	}
+	path = parsed.Path
+	if path == "" {
+		path = "/"
+	}
+	return scheme, host, redirectPort, path, nil
+}
+
+// checkBindPort verifies that the process can bind to port.
+func checkBindPort(port string) error {
+	ln, err := net.Listen("tcp", ":"+port)
+	if err != nil {
+		// If we're trying to bind a privileged port (< 1024) without the
+		// cap_net_bind_service capability, provide a clear hint.
+		p, _ := strconv.Atoi(port)
+		if p > 0 && p < 1024 {
+			return fmt.Errorf("cannot bind to privileged port %s: %w\n\n"+
+				"Fix by granting the capability to the binary:\n"+
+				"  sudo setcap 'cap_net_bind_service=+ep' \"$(which msgvault)\"", port, err)
+		}
+		return fmt.Errorf("cannot bind to port %s: %w", port, err)
+	}
+	_ = ln.Close()
 	return nil
 }
