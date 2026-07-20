@@ -58,9 +58,9 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (*ImportSum
 			}
 		}
 		// Merge in any mid-run checkpoint from an interrupted run.
-		// GetLatestCheckpointedSync returns a row only when the most recent run
-		// is running/failed and has a non-empty cursor_before; a completed run
-		// means the checkpoint is stale and returns ErrSyncRunNotFound.
+		// GetLatestCheckpointedSync returns the newest recoverable checkpoint
+		// after the last completed run. Uncheckpointed interruptions are skipped;
+		// a completion still makes every preceding checkpoint stale.
 		if cp, cerr := imp.store.GetLatestCheckpointedSync(src.ID); cerr == nil && cp != nil && cp.CursorBefore.Valid {
 			if cpState, lerr := LoadSyncState(cp.CursorBefore.String); lerr == nil {
 				state.Merge(cpState)

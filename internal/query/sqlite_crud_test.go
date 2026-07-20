@@ -3,6 +3,7 @@ package query
 import (
 	"fmt"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -327,6 +328,45 @@ func TestGetAttachmentsByHashUsesDialectRebind(t *testing.T) {
 	require.Len(attachments, 1, "attachments")
 	require.NotEmpty(dialect.queries, "dialect Rebind calls")
 	assert.Contains(dialect.queries[len(dialect.queries)-1], "content_hash = $1", "rebound query")
+}
+
+func TestDuplicateCASAliasRetainsHashAcrossAttachmentQueries(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	env := newTestEnv(t)
+	hash := strings.Repeat("ab", 32)
+	storagePath := hash[:2] + "/" + hash
+
+	_, err := env.DB.Exec(`
+		INSERT INTO attachments (message_id, filename, mime_type, size, content_hash, storage_path, source_attachment_id)
+		VALUES (1, 'owner.bin', 'application/octet-stream', 12, ?, ?, 'discord:owner')
+	`, hash, storagePath)
+	require.NoError(err)
+	aliasResult, err := env.DB.Exec(`
+		INSERT INTO attachments (message_id, filename, mime_type, size, content_hash, storage_path, source_attachment_id)
+		VALUES (1, 'alias.bin', 'application/octet-stream', 12, '', ?, 'discord:alias')
+	`, storagePath)
+	require.NoError(err)
+	aliasID, err := aliasResult.LastInsertId()
+	require.NoError(err)
+
+	message, err := env.Engine.GetMessage(env.Ctx, 1)
+	require.NoError(err)
+	require.Len(message.Attachments, 2)
+	assert.Equal(hash, message.Attachments[0].ContentHash)
+	assert.Equal(hash, message.Attachments[1].ContentHash)
+
+	alias, err := env.Engine.GetAttachment(env.Ctx, aliasID)
+	require.NoError(err)
+	require.NotNil(alias)
+	assert.Equal(hash, alias.ContentHash)
+
+	byHash, err := env.Engine.GetAttachmentsByHash(env.Ctx, hash)
+	require.NoError(err)
+	require.Len(byHash, 2, "hash retrieval must include the duplicate alias")
+	assert.Equal([]string{"owner.bin", "alias.bin"}, []string{byHash[0].Filename, byHash[1].Filename})
+	assert.Equal(hash, byHash[0].ContentHash)
+	assert.Equal(hash, byHash[1].ContentHash)
 }
 
 func TestGetMessageBySourceID(t *testing.T) {

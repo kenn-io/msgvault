@@ -102,9 +102,9 @@ msgvault query "
 
 ### Filter by message type
 
-Mixed archives store email, calendar events, Teams messages, and text-message
-imports in the same `messages` table. Use the `message_type` column to keep SQL
-reports scoped:
+Mixed archives store email, calendar events, Teams and Discord messages, and
+text-message imports in the same `messages` table. Use the `message_type`
+column to keep SQL reports scoped:
 
 ```bash
 # Teams activity by month
@@ -125,11 +125,23 @@ msgvault query --format table "
   ORDER BY sent_at DESC
   LIMIT 20
 "
+
+# Discord activity by channel or thread
+msgvault query --format table "
+  SELECT t.conversation_title, count(*) AS messages
+  FROM v_threads t
+  JOIN messages m ON m.conversation_id = t.conversation_id
+  WHERE m.message_type = 'discord'
+  GROUP BY t.conversation_id, t.conversation_title
+  ORDER BY messages DESC
+  LIMIT 20
+"
 ```
 
-Known values include `email`, `calendar_event`, `teams`, `sms`, `mms`,
-`whatsapp`, `imessage`, `fbmessenger`, `synctech_sms_call`,
-`google_voice_text`, `google_voice_call`, and `google_voice_voicemail`.
+Known values are `email`, `calendar_event`, `meeting_transcript`, `beeper`,
+`teams`, `discord`, `sms`, `mms`, `whatsapp`, `imessage`, `fbmessenger`,
+`synctech_sms_call`, `google_voice_text`, `google_voice_call`, and
+`google_voice_voicemail`.
 
 ### Label statistics
 

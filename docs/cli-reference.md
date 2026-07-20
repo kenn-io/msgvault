@@ -146,6 +146,35 @@ After adding the account, sync it with `msgvault sync-teams`.
 
 ---
 
+## add-discord
+
+Validate a Discord bot token and register one or more guilds as `discord`
+sources. The token is read from a masked prompt or piped stdin; there is no
+token flag.
+
+```bash
+msgvault add-discord
+msgvault add-discord --guild 123456789012345678
+msgvault add-discord --oauth-app archive-bot \
+  --guild 123456789012345678 --guild 234567890123456789
+```
+
+If the bot can access exactly one guild, it is selected automatically and
+echoed for confirmation. Otherwise, repeat `--guild` to select exact guild
+IDs. One guild becomes one source. Setup also reports likely Message Content
+Intent, channel-history, and private-thread access issues.
+
+| Flag | Default | Description |
+|---|---|---|
+| `--guild` | sole accessible guild | Guild ID to register (repeatable/comma-separated) |
+| `--oauth-app` | sole/default bot | Discord token binding label; no `[oauth.apps]` entry is required |
+
+After registering a guild, sync it with `msgvault sync-discord`. See
+[Discord](/usage/discord/) for least-privilege bot setup and multi-bot binding
+rules.
+
+---
+
 ## sync-full
 
 Download all messages from a Gmail or IMAP account. When called without an email argument, syncs all configured syncable accounts.
@@ -207,6 +236,34 @@ so importer upgrades can repair existing data without creating duplicates.
 
 See [Microsoft Teams](/usage/teams/) for setup, scheduling, search, and inline
 media backfill.
+
+---
+
+## sync-discord
+
+Sync one registered Discord guild, or every registered guild when the selector
+is omitted.
+
+```bash
+msgvault sync-discord [guild-id-or-name]
+msgvault sync-discord 123456789012345678 --after 2025-01-01
+msgvault sync-discord 123456789012345678 --full
+```
+
+One-guild selection accepts an exact guild ID or an unambiguous display name.
+Without a selector, sources run sequentially in stable source order. One guild
+failure does not block later guilds, but the overall command returns an
+aggregate error.
+
+| Flag | Default | Description |
+|---|---|---|
+| `--full` | `false` | Ignore stored cursors and re-fetch all available history, repairing rows and historical deletions |
+| `--after` | — | Exclusive lower bound in `YYYY-MM-DD` or RFC3339 form |
+
+Normal runs re-scan the configured trailing edit window, seven days by
+default. `--full --after` bounds both re-fetch and deletion repair and leaves
+earlier rows untouched. See [Discord](/usage/discord/) for per-channel/thread
+checkpoint and deletion semantics.
 
 ---
 
@@ -341,6 +398,32 @@ attachments are content-addressed.
 | Flag | Default | Description |
 |---|---|---|
 | `--only-incomplete` | `false` | Retry only messages whose inline media is still missing |
+
+---
+
+## backfill-discord-media
+
+Refresh Discord message attachment metadata and retry pending downloads for
+one guild or every registered guild.
+
+```bash
+msgvault backfill-discord-media [guild-id-or-name]
+msgvault backfill-discord-media 123456789012345678 --only-incomplete
+```
+
+By default, all archived Discord messages with attachments are scanned;
+already-complete messages require no download work. With no selector, guilds
+run sequentially using the same aggregate-failure behavior as
+`sync-discord`.
+
+| Flag | Default | Description |
+|---|---|---|
+| `--only-incomplete` | `false` | Select only messages with pending attachment rows |
+
+Backfill re-fetches each selected source message that has pending attachments
+to obtain fresh signed CDN URLs. An incomplete attachment is unrecoverable if
+the source message has since been deleted. See
+[Discord](/usage/discord/#attachment-backfill-and-limits).
 
 ---
 
@@ -899,7 +982,7 @@ msgvault search <query> [flags]
 | `--json` | Output results as JSON |
 | `--account` | Limit results to a specific account |
 | `--collection` | Limit results to all member accounts of a collection |
-| `--message-type` | Limit results to one or more message types, e.g. `email`, `teams`, `calendar_event`, `sms` |
+| `--message-type` | Limit results to one or more message types, e.g. `email`, `teams`, `discord`, `calendar_event`, `sms` |
 | `--mode` | Search mode: `fts` (default), `vector`, or `hybrid`. `vector` and `hybrid` require vector search to be configured. |
 | `--explain` | Include per-signal scores (RRF, BM25, vector) in the output. Only applies to `--mode vector` and `--mode hybrid`. |
 
@@ -1486,18 +1569,22 @@ msgvault update-account <email> [flags]
 
 ## remove-account
 
-Remove an account and all its archived data from the selected msgvault archive. Deletes messages, labels, sync state, OAuth or IMAP credentials, and attachment files unique to this account. This is irreversible but does not touch the remote mail provider.
+Remove an account or source and all its archived data from the selected msgvault archive. Deletes messages, labels, sync state, credentials no longer shared by another source, and attachment files unique to this source. This is irreversible but does not touch the remote provider.
 
 ```bash
 msgvault remove-account <email> [flags]
+msgvault remove-account 123456789012345678 --type discord
 ```
 
 | Flag | Description |
 |---|---|
 | `-y`, `--yes` | Skip the confirmation prompt (and allow removal when an active sync is in progress) |
-| `--type` | Source type to remove when the same identifier exists across source types (`gmail`, `imap`, `mbox`, etc.) |
+| `--type` | Source type to remove when the same identifier exists across source types (`gmail`, `imap`, `mbox`, `discord`, etc.) |
 
-Attachment files are only deleted when no other account references the same content hash. The shared Parquet analytics cache is also cleared; run `msgvault build-cache` afterward to rebuild it.
+Attachment files are only deleted when no other account references the same
+content hash. A Discord bot token is preserved while another registered guild
+uses it, and deleted after its last source is removed. The shared Parquet
+analytics cache is rebuilt automatically.
 
 ---
 

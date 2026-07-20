@@ -148,15 +148,17 @@ func TestImport_RoundTrip(t *testing.T) {
 	assert.EqualValues(0, sum.Errors)
 
 	// Message row: type, subject, sent_at from the scheduled start, organizer
-	// bob is not the account holder.
-	var subject, sentAt string
+	// bob is not the account holder. sent_at compares as an instant, not a
+	// rendered string: text renderings follow the session/local timezone and
+	// fail on non-UTC machines.
+	var subject string
+	var sentAt time.Time
 	var fromMe bool
 	require.NoError(st.DB().QueryRow(st.Rebind(
 		`SELECT subject, sent_at, is_from_me FROM messages WHERE source_message_id = ?`),
 		"not_Ab12Cd34Ef56Gh").Scan(&subject, &sentAt, &fromMe))
 	assert.Equal("Quarterly Planning Review", subject)
-	assert.Contains(sentAt, "2026-06-01")
-	assert.Contains(sentAt, "15:00:00")
+	assert.Equal(time.Date(2026, 6, 1, 15, 0, 0, 0, time.UTC), sentAt.UTC())
 	assert.False(fromMe, "organizer bob is not the account identifier")
 
 	// The ad-hoc note: title fallback, owner alice IS the account holder.
@@ -435,10 +437,13 @@ func TestImport_NormalizesSentAtToUTC(t *testing.T) {
 
 	_, err := imp.Import(context.Background(), ImportOptions{Identifier: "alice@example.com"})
 	require.NoError(err)
-	var sentAt string
-	require.NoError(st.DB().QueryRow(`SELECT CAST(sent_at AS TEXT) FROM messages`).Scan(&sentAt))
-	assert.Contains(sentAt, "2026-06-01 20:00:00")
-	assert.NotContains(sentAt, "-05:00")
+	// Instant equality proves the -05:00 source offset was normalized: the
+	// stored value IS 20:00 UTC. Comparing rendered text instead would tie
+	// the assertion to the session/local timezone and fail on non-UTC
+	// machines (PostgreSQL renders timestamptz in the session zone).
+	var sentAt time.Time
+	require.NoError(st.DB().QueryRow(`SELECT sent_at FROM messages`).Scan(&sentAt))
+	assert.Equal(time.Date(2026, 6, 1, 20, 0, 0, 0, time.UTC), sentAt.UTC())
 }
 
 func TestImport_IdempotentAndRefresh(t *testing.T) {

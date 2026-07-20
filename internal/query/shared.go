@@ -6,6 +6,7 @@ import (
 	"compress/zlib"
 	"context"
 	"database/sql"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"slices"
@@ -298,6 +299,10 @@ func fetchAttachmentsShared(ctx context.Context, db *sql.DB, rebind rebindFunc, 
 		if isURLStoragePath(storagePath) {
 			att.URL = storagePath
 			att.ContentHash = ""
+		} else if att.ContentHash == "" {
+			if pathHash, ok := attachmentCASPathHash(storagePath); ok {
+				att.ContentHash = pathHash
+			}
 		}
 		msg.Attachments = append(msg.Attachments, att)
 	}
@@ -307,6 +312,30 @@ func fetchAttachmentsShared(ctx context.Context, db *sql.DB, rebind rebindFunc, 
 
 func isURLStoragePath(path string) bool {
 	return strings.HasPrefix(path, "http://") || strings.HasPrefix(path, "https://")
+}
+
+func attachmentCASPathHash(storagePath string) (string, bool) {
+	if len(storagePath) != 67 || storagePath[2] != '/' {
+		return "", false
+	}
+	contentHash := storagePath[3:]
+	if contentHash != strings.ToLower(contentHash) || storagePath[:2] != contentHash[:2] {
+		return "", false
+	}
+	if _, err := hex.DecodeString(contentHash); err != nil {
+		return "", false
+	}
+	return contentHash, true
+}
+
+func attachmentCASPath(contentHash string) string {
+	if len(contentHash) != 64 || contentHash != strings.ToLower(contentHash) {
+		return ""
+	}
+	if _, err := hex.DecodeString(contentHash); err != nil {
+		return ""
+	}
+	return contentHash[:2] + "/" + contentHash
 }
 
 // extractBodyFromRawShared extracts text body from compressed MIME data.

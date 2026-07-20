@@ -25,7 +25,21 @@ By default, everything stays on your local machine. msgvault stores messages in 
 
 <p class="faq-question">Can I use msgvault with non-Gmail accounts?</p>
 
-Yes. You can sync from any standard IMAP server using `msgvault add-imap`, use Microsoft 365/Outlook.com OAuth via `add-o365`, import email from local files using `import-pst`, `import-mbox`, or `import-emlx`, and import chats/texts from WhatsApp, iMessage, Google Voice, Facebook Messenger, and SMS Backup & Restore. All messages are stored in the same database and work with the same tools: search, TUI, MCP server, web server, and export. See [Setup Guide](/setup/#add-an-imap-account) for IMAP setup, [Importing Local Email](/usage/importing/) for file imports, and [Text Messages](/usage/text-messages/) for chat imports.
+Yes. You can sync any standard IMAP server, Microsoft 365 mail and Teams,
+Discord guilds, Beeper Desktop chats, Google Calendar, and supported meeting
+note services. You can also import email from PST, MBOX, or Apple Mail and
+chats/texts from WhatsApp, iMessage, Google Voice, Facebook Messenger, and SMS
+Backup & Restore. All messages use the same search, TUI, MCP, web-server, and
+export surfaces. See [Setup Guide](/setup/#add-an-imap-account), [Importing
+Local Email](/usage/importing/), [Text Messages](/usage/text-messages/), and
+[Discord](/usage/discord/).
+
+<p class="faq-question">Can msgvault archive Discord direct messages?</p>
+
+No. Discord bot tokens expose guilds the bot has joined, not a person's direct
+messages. msgvault does not accept user tokens or implement selfbots. It can
+archive accessible guild channels, threads, forum posts, and attachments; see
+[Discord](/usage/discord/).
 
 <p class="faq-question">Does deleting email in msgvault delete it from Gmail?</p>
 

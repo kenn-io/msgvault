@@ -119,7 +119,7 @@ const (
 
 // TextMessageTypes lists the message_type values included in Texts mode.
 var TextMessageTypes = []string{
-	"whatsapp", "imessage", messageTypeSMS, "mms", "google_voice_text", "teams", "beeper", "slack",
+	"whatsapp", "imessage", messageTypeSMS, "mms", "google_voice_text", "teams", "discord", "beeper", "slack",
 }
 
 // TextMessageTypeSQLList renders TextMessageTypes as a quoted SQL IN-list
@@ -160,6 +160,7 @@ var KnownMessageTypes = []string{
 	"whatsapp",
 	"imessage",
 	"teams",
+	"discord",
 	"fbmessenger",
 	"synctech_sms_call",
 	"google_voice_text",
