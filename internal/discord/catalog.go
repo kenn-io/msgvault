@@ -14,10 +14,13 @@ import (
 )
 
 const (
-	channelTypeGuildText         = 0
-	channelTypeGuildAnnouncement = 5
-	channelTypeGuildForum        = 15
-	channelTypeGuildMedia        = 16
+	channelTypeGuildText          = 0
+	channelTypeGuildAnnouncement  = 5
+	channelTypeAnnouncementThread = 10
+	channelTypePublicThread       = 11
+	channelTypePrivateThread      = 12
+	channelTypeGuildForum         = 15
+	channelTypeGuildMedia         = 16
 )
 
 // ErrMalformedCatalog classifies internally inconsistent successful catalog
@@ -314,6 +317,12 @@ func formatCatalogWatermark(value time.Time, prior string) string {
 
 func isTopLevelMessageContainer(channelType int) bool {
 	return channelType == channelTypeGuildText || channelType == channelTypeGuildAnnouncement
+}
+
+func isThreadMessageContainer(channelType int) bool {
+	return channelType == channelTypeAnnouncementThread ||
+		channelType == channelTypePublicThread ||
+		channelType == channelTypePrivateThread
 }
 
 func isThreadCatalogParent(channelType int) bool {

@@ -140,6 +140,55 @@ func TestMediaArchiverStoresAttachmentAfterDurableMarker(t *testing.T) {
 	assert.Equal(content, stored)
 }
 
+func TestMediaArchiverStoresEphemeralAttachment(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newMediaFixture(t)
+	content := []byte("synthetic ephemeral attachment")
+	var requests atomic.Int32
+	cdn := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		_, _ = w.Write(content)
+	}))
+	t.Cleanup(cdn.Close)
+	rawURL := cdn.URL + "/ephemeral-attachments/301/401/archive%20image.png"
+	attachment := testDiscordAttachment(rawURL, int64(len(content)))
+	attachment.Ephemeral = true
+	archiver := newTestArchiver(t, f, nil, 1<<20, cdn)
+
+	result, err := archiver.PersistAttachments(t.Context(), f.messageID, []Attachment{attachment})
+	require.NoError(err)
+	require.Len(result.Items, 1)
+	assert.Equal(MediaDownloaded, result.Items[0].Outcome)
+	assert.EqualValues(1, requests.Load())
+	refs, err := f.store.MessageDiscordAttachments(f.messageID)
+	require.NoError(err)
+	assert.NotEmpty(refs["discord:"+mediaTestAttachmentID].ContentHash)
+}
+
+func TestMediaArchiverRejectsEphemeralPathWithoutEphemeralFlag(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newMediaFixture(t)
+	var requests atomic.Int32
+	cdn := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		requests.Add(1)
+	}))
+	t.Cleanup(cdn.Close)
+	rawURL := cdn.URL + "/ephemeral-attachments/301/401/archive%20image.png"
+	archiver := newTestArchiver(t, f, nil, 1<<20, cdn)
+
+	result, err := archiver.PersistAttachments(
+		t.Context(), f.messageID, []Attachment{testDiscordAttachment(rawURL, 1)},
+	)
+	require.NoError(err)
+	require.Len(result.Items, 1)
+	assert.Equal(MediaPending, result.Items[0].Outcome)
+	require.ErrorIs(result.Items[0].Err, ErrInvalidMediaURL)
+	assert.Zero(requests.Load())
+	requirePendingDiscordAttachment(t, f, rawURL)
+}
+
 func TestMediaArchiverPreservesDuplicateContentAttachmentIDs(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)

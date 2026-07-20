@@ -226,6 +226,7 @@ func TestListUnresolvedMessageRepliesReturnsOnlyUnlinkedProviderMetadata(t *test
 	parentID := insertStoreTestMessage(t, st, source.ID, convID, "100")
 	childID := insertStoreTestMessage(t, st, source.ID, convID, "101")
 	linkedID := insertStoreTestMessage(t, st, source.ID, convID, "102")
+	nonReplyID := insertStoreTestMessage(t, st, source.ID, convID, "103")
 	_, err = st.DB().Exec(st.Rebind(`UPDATE messages SET message_type = 'discord' WHERE source_id = ?`), source.ID)
 	require.NoError(err)
 	require.NoError(st.SetMessageMetadata(childID, sql.NullString{
@@ -233,6 +234,9 @@ func TestListUnresolvedMessageRepliesReturnsOnlyUnlinkedProviderMetadata(t *test
 	}))
 	require.NoError(st.SetMessageMetadata(linkedID, sql.NullString{
 		String: `{"referenced_message_id":"100"}`, Valid: true,
+	}))
+	require.NoError(st.SetMessageMetadata(nonReplyID, sql.NullString{
+		String: `{"reaction_summaries":[{"emoji":"thumbsup","count":1}]}`, Valid: true,
 	}))
 	require.NoError(st.SetReplyTo(source.ID, "102", "100"))
 
@@ -257,9 +261,15 @@ func TestListUnresolvedMessageRepliesAfterUsesBoundedKeysetPages(t *testing.T) {
 	var ids []int64
 	for _, sourceMessageID := range []string{"101", "102", "103", "104", "105"} {
 		messageID := insertStoreTestMessage(t, st, source.ID, convID, sourceMessageID)
-		ids = append(ids, messageID)
+		if sourceMessageID != "102" {
+			ids = append(ids, messageID)
+		}
+		metadata := `{"referenced_message_id":"100"}`
+		if sourceMessageID == "102" {
+			metadata = `{"reaction_summaries":[]}`
+		}
 		require.NoError(st.SetMessageMetadata(messageID, sql.NullString{
-			String: `{"referenced_message_id":"100"}`, Valid: true,
+			String: metadata, Valid: true,
 		}))
 	}
 	_, err = st.DB().Exec(st.Rebind(`UPDATE messages SET message_type = 'discord' WHERE source_id = ?`), source.ID)
@@ -268,15 +278,18 @@ func TestListUnresolvedMessageRepliesAfterUsesBoundedKeysetPages(t *testing.T) {
 	first, err := st.ListUnresolvedMessageRepliesAfter(source.ID, "discord", 0, 2)
 	require.NoError(err)
 	require.Len(first, 2)
-	assert.Equal([]int64{first[0].MessageID, first[1].MessageID}, ids[:2])
+	wantFirst := ids[:2]
+	gotFirst := []int64{first[0].MessageID, first[1].MessageID}
+	assert.Equal(wantFirst, gotFirst)
 	second, err := st.ListUnresolvedMessageRepliesAfter(source.ID, "discord", first[1].MessageID, 2)
 	require.NoError(err)
 	require.Len(second, 2)
-	assert.Equal([]int64{second[0].MessageID, second[1].MessageID}, ids[2:4])
+	wantSecond := ids[2:]
+	gotSecond := []int64{second[0].MessageID, second[1].MessageID}
+	assert.Equal(wantSecond, gotSecond)
 	last, err := st.ListUnresolvedMessageRepliesAfter(source.ID, "discord", second[1].MessageID, 2)
 	require.NoError(err)
-	require.Len(last, 1)
-	assert.Equal(ids[4], last[0].MessageID)
+	assert.Empty(last)
 }
 
 func TestMigrateSourceMessageIDClearsTombstoneWhenRenamingLegacyRow(t *testing.T) {

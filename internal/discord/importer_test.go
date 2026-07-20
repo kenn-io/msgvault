@@ -745,9 +745,12 @@ func TestImporterKeepsPreviouslyStoredAbsentContainerAndItsMetadata(t *testing.T
 	require.NoError(err)
 	wantMetadata := `{"guild_id":"200","parent_channel_id":"250","discord_channel_type":11,"thread":{"archived":true}}`
 	require.NoError(st.SetConversationMetadata(conversationID, sql.NullString{String: wantMetadata, Valid: true}))
+	now := time.Date(2026, 7, 19, 12, 0, 0, 0, time.UTC)
+	highWater := importerTestSnowflake(t, now.Add(-time.Hour), 1)
+	newMessageID := importerTestSnowflake(t, now.Add(-30*time.Minute), 1)
 	baseline := NewSyncState()
 	baseline.Containers["300"] = ContainerState{
-		HighWater: "100", BackfillUpper: "100", BackfillBefore: "1", BackfillComplete: true,
+		HighWater: highWater, BackfillUpper: highWater, BackfillBefore: "1", BackfillComplete: true,
 	}
 	blob, err := baseline.Marshal()
 	require.NoError(err)
@@ -755,16 +758,53 @@ func TestImporterKeepsPreviouslyStoredAbsentContainerAndItsMetadata(t *testing.T
 	require.NoError(err)
 	require.NoError(st.CompleteSync(runID, blob))
 	api := newImporterFakeAPI()
-	api.messages["300"] = []Message{importerTestMessage("101", "300", "still accessible")}
+	api.messages["300"] = []Message{importerTestMessage(newMessageID, "300", "still accessible")}
 
-	_, err = newTestImporter(st, api).Import(t.Context(), ImportOptions{GuildID: "200"})
+	importer := newTestImporter(st, api)
+	importer.now = func() time.Time { return now }
+	_, err = importer.Import(t.Context(), ImportOptions{GuildID: "200"})
 	require.NoError(err)
 	queries := api.channelQueries("300")
 	require.NotEmpty(queries)
-	assert.Equal("100", queries[0].After)
+	assert.Equal(highWater, queries[0].After)
 	metadata, err := st.GetConversationMetadata(conversationID)
 	require.NoError(err)
 	assert.JSONEq(wantMetadata, metadata.String)
+}
+
+func TestImporterSkipsCompletedAbsentThreadOutsideRepairWindow(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewSQLiteTestStore(t)
+	source, err := st.GetOrCreateSource("discord", "200")
+	require.NoError(err)
+	conversationID, err := st.EnsureConversationWithType(source.ID, "300", "channel", "Archived thread")
+	require.NoError(err)
+	require.NoError(st.SetConversationMetadata(conversationID, sql.NullString{
+		String: `{"guild_id":"200","parent_channel_id":"250","discord_channel_type":11,"thread":{"archived":true}}`,
+		Valid:  true,
+	}))
+	now := time.Date(2026, 7, 19, 12, 0, 0, 0, time.UTC)
+	highWater := importerTestSnowflake(t, now.Add(-30*24*time.Hour), 1)
+	baseline := NewSyncState()
+	baseline.Containers["300"] = ContainerState{
+		HighWater: highWater, BackfillUpper: highWater, BackfillBefore: "1", BackfillComplete: true,
+	}
+	blob, err := baseline.Marshal()
+	require.NoError(err)
+	runID, err := st.StartSync(source.ID, "discord")
+	require.NoError(err)
+	require.NoError(st.CompleteSync(runID, blob))
+	api := newImporterFakeAPI()
+	importer := newTestImporter(st, api)
+	importer.now = func() time.Time { return now }
+
+	_, err = importer.Import(t.Context(), ImportOptions{GuildID: "200", EditRescanWindow: 7 * 24 * time.Hour})
+	require.NoError(err)
+	assert.Empty(api.channelQueries("300"))
+	metadata, err := st.GetConversationMetadata(conversationID)
+	require.NoError(err)
+	assert.Contains(metadata.String, `"discord_channel_type":11`)
 }
 
 func TestImporterPreviouslyStoredContainerFiltersUseArchivedParentMetadata(t *testing.T) {

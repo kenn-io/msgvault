@@ -326,8 +326,8 @@ func (s *Store) MessageMetadataBatch(
 }
 
 // ListUnresolvedMessageReplies returns provider messages that still need a
-// reply-linking pass. Keeping JSON decoding in the provider avoids adding
-// backend-specific JSON expressions to the shared store.
+// reply-linking pass. A portable textual key check bounds the candidate set;
+// the provider remains authoritative for JSON decoding and validation.
 func (s *Store) ListUnresolvedMessageReplies(sourceID int64, messageType string) ([]UnresolvedMessageReply, error) {
 	return s.listUnresolvedMessageReplies(sourceID, messageType, 0, 0)
 }
@@ -361,6 +361,7 @@ func (s *Store) listUnresolvedMessageReplies(
 		  AND id > ?
 		  AND reply_to_message_id IS NULL
 		  AND metadata IS NOT NULL
+		  AND CAST(metadata AS TEXT) LIKE '%"referenced_message_id"%'
 		ORDER BY id`+limitClause,
 		args...)
 	if err != nil {

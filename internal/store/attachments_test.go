@@ -277,6 +277,14 @@ func TestBeeperHashlessLocalPathRemainsPending(t *testing.T) {
 	assert.Equal([]store.BeeperPendingAttachmentMessage{{
 		MessageID: messageID, SourceMessageID: "message-1", ChatID: "chat-1",
 	}}, pending)
+
+	refs, err := st.MessageBeeperAttachments(messageID)
+	require.NoError(err)
+	assert.Empty(refs["beeper:asset-1"].ContentHash)
+	message, err := st.GetMessage(messageID)
+	require.NoError(err)
+	require.Len(message.Attachments, 1)
+	assert.Empty(message.Attachments[0].ContentHash)
 }
 
 func TestReplaceAndListMessageDiscordAttachments(t *testing.T) {

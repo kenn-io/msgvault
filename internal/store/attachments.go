@@ -52,11 +52,6 @@ func (s *Store) messageProviderAttachments(messageID int64, providerPrefix strin
 		); err != nil {
 			return nil, err
 		}
-		if ref.ContentHash == "" {
-			if pathHash, ok := discordCASPathHash(ref.StoragePath); ok {
-				ref.ContentHash = pathHash
-			}
-		}
 		ref.Size = int(size)
 		out[ref.SourceAttachmentID] = ref
 	}
@@ -160,7 +155,19 @@ func discordCASPathHash(storagePath string) (string, bool) {
 
 // MessageDiscordAttachments returns Discord-managed rows keyed by source ID.
 func (s *Store) MessageDiscordAttachments(messageID int64) (map[string]AttachmentRef, error) {
-	return s.messageProviderAttachments(messageID, "discord:")
+	refs, err := s.messageProviderAttachments(messageID, "discord:")
+	if err != nil {
+		return nil, err
+	}
+	for sourceAttachmentID, ref := range refs {
+		if ref.ContentHash == "" {
+			if pathHash, ok := discordCASPathHash(ref.StoragePath); ok {
+				ref.ContentHash = pathHash
+				refs[sourceAttachmentID] = ref
+			}
+		}
+	}
+	return refs, nil
 }
 
 // ListDiscordPendingAttachmentMessages returns messages containing at least

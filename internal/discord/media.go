@@ -412,7 +412,7 @@ func (m *MediaArchiver) downloadAttachment(
 	if attachment.Size > m.maxBytes {
 		return marker, ErrMediaTooLarge
 	}
-	requestURL, err := m.validateMediaURL(attachment.URL, attachment.ID)
+	requestURL, err := m.validateMediaURL(attachment.URL, attachment.ID, attachment.Ephemeral)
 	if err != nil {
 		return marker, err
 	}
@@ -520,7 +520,7 @@ func readMediaFile(ctx context.Context, filePath string) ([]byte, error) {
 	return content.Bytes(), nil
 }
 
-func (m *MediaArchiver) validateMediaURL(raw, expectedAttachmentID string) (*url.URL, error) {
+func (m *MediaArchiver) validateMediaURL(raw, expectedAttachmentID string, ephemeral bool) (*url.URL, error) {
 	parsed, err := url.Parse(raw)
 	if err != nil || parsed.Scheme == "" || parsed.Host == "" || parsed.User != nil ||
 		parsed.Fragment != "" || parsed.Opaque != "" {
@@ -532,10 +532,14 @@ func (m *MediaArchiver) validateMediaURL(raw, expectedAttachmentID string) (*url
 	}
 	escapedPath := parsed.EscapedPath()
 	parts := strings.Split(escapedPath, "/")
-	if len(parts) != 5 || parts[0] != "" || parts[1] != "attachments" || parts[4] == "" {
+	if len(parts) != 5 || parts[0] != "" || parts[4] == "" {
 		return nil, ErrInvalidMediaURL
 	}
-	if _, err := snowflakePathValue("attachment channel ID", parts[2]); err != nil {
+	validPathKind := parts[1] == "attachments" || (ephemeral && parts[1] == "ephemeral-attachments")
+	if !validPathKind {
+		return nil, ErrInvalidMediaURL
+	}
+	if _, err := snowflakePathValue("attachment container ID", parts[2]); err != nil {
 		return nil, ErrInvalidMediaURL
 	}
 	if _, err := snowflakePathValue("attachment ID", parts[3]); err != nil {

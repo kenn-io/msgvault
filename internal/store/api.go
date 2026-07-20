@@ -272,21 +272,24 @@ func (s *Store) GetMessageContext(ctx context.Context, id int64) (*APIMessage, e
 	}
 
 	// Get attachments
-	attRows, err := s.db.QueryContext(ctx, "SELECT id, COALESCE(filename, ''), COALESCE(mime_type, ''), COALESCE(size, 0), COALESCE(content_hash, ''), storage_path FROM attachments WHERE message_id = ?", id)
+	attRows, err := s.db.QueryContext(ctx, "SELECT id, COALESCE(filename, ''), COALESCE(mime_type, ''), COALESCE(size, 0), COALESCE(content_hash, ''), storage_path, COALESCE(source_attachment_id, '') FROM attachments WHERE message_id = ?", id)
 	if err != nil {
 		return nil, fmt.Errorf("get attachments: %w", err)
 	}
 	defer func() { _ = attRows.Close() }()
 	for attRows.Next() {
 		var att APIAttachment
-		var storagePath string
-		if err := attRows.Scan(&att.ID, &att.Filename, &att.MimeType, &att.Size, &att.ContentHash, &storagePath); err != nil {
+		var storagePath, sourceAttachmentID string
+		if err := attRows.Scan(
+			&att.ID, &att.Filename, &att.MimeType, &att.Size, &att.ContentHash,
+			&storagePath, &sourceAttachmentID,
+		); err != nil {
 			return nil, fmt.Errorf("scan attachment: %w", err)
 		}
 		if strings.HasPrefix(storagePath, "http://") || strings.HasPrefix(storagePath, "https://") {
 			att.ContentHash = ""
 			att.URL = storagePath
-		} else if att.ContentHash == "" {
+		} else if att.ContentHash == "" && strings.HasPrefix(sourceAttachmentID, "discord:") {
 			if pathHash, ok := discordCASPathHash(storagePath); ok {
 				att.ContentHash = pathHash
 			}

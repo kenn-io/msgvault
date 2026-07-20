@@ -174,9 +174,14 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (summary *I
 			return summary, fmt.Errorf("configure Discord media archiver: %w", err)
 		}
 	}
+	repairLower, err := imp.repairLowerBound(lowerBound, opts.Full, opts.EditRescanWindow)
+	if err != nil {
+		return summary, err
+	}
 
 	containers, err := imp.importerContainers(
 		source.ID, catalog.Containers, state, opts.GuildID, opts.GuildConfig,
+		repairLower, opts.Full,
 	)
 	if err != nil {
 		return summary, err
@@ -194,7 +199,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (summary *I
 		}
 		if err := imp.importContainer(
 			ctx, source.ID, syncID, container, lowerBound, state, summary, media,
-			opts.Full, opts.EditRescanWindow,
+			repairLower,
 		); err != nil {
 			return summary, fmt.Errorf("import Discord container %s: %w", container.Channel.ID, err)
 		}
@@ -315,6 +320,8 @@ func (imp *Importer) importerContainers(
 	state *SyncState,
 	guildID string,
 	guildConfig config.DiscordGuildConfig,
+	repairLower string,
+	full bool,
 ) ([]importerContainer, error) {
 	containers := make([]importerContainer, 0, len(discovered)+len(state.Containers))
 	seen := make(map[string]struct{}, len(containers))
@@ -342,6 +349,16 @@ func (imp *Importer) importerContainers(
 		if !storedContainerIncluded(guildConfig, containerID, storedMetadata[containerID]) {
 			continue
 		}
+		needsImport, err := storedContainerNeedsImport(
+			state.Containers[containerID], storedMetadata[containerID], repairLower, full,
+			slices.Contains(guildConfig.Include, containerID),
+		)
+		if err != nil {
+			return nil, fmt.Errorf("select stored Discord container %s: %w", containerID, err)
+		}
+		if !needsImport {
+			continue
+		}
 		containers = append(containers, importerContainer{
 			CatalogContainer: CatalogContainer{Channel: Channel{ID: containerID, GuildID: guildID}},
 			preserveMetadata: true,
@@ -351,6 +368,42 @@ func (imp *Importer) importerContainers(
 		return strings.Compare(left.Channel.ID, right.Channel.ID)
 	})
 	return containers, nil
+}
+
+func storedContainerNeedsImport(
+	state ContainerState, metadata sql.NullString, repairLower string, full, explicitlyIncluded bool,
+) (bool, error) {
+	if !state.BackfillComplete || explicitlyIncluded {
+		return true, nil
+	}
+	if !metadata.Valid || strings.TrimSpace(metadata.String) == "" || !json.Valid([]byte(metadata.String)) {
+		return true, nil
+	}
+	var archived struct {
+		DiscordChannelType *int            `json:"discord_channel_type"`
+		InaccessibleSince  json.RawMessage `json:"container_inaccessible_since"`
+		MissingSince       json.RawMessage `json:"container_missing_since"`
+	}
+	_ = json.Unmarshal([]byte(metadata.String), &archived)
+	if archived.DiscordChannelType == nil {
+		return true, nil
+	}
+	if len(archived.InaccessibleSince) != 0 || len(archived.MissingSince) != 0 ||
+		isTopLevelMessageContainer(*archived.DiscordChannelType) {
+		return true, nil
+	}
+	if !isThreadMessageContainer(*archived.DiscordChannelType) {
+		return true, nil
+	}
+	// A complete full catalog already exhausts every accessible archived-thread
+	// endpoint. An absent completed thread needs no second message probe.
+	if full {
+		return false, nil
+	}
+	if state.HighWater == "" {
+		return true, nil
+	}
+	return snowflakeAfter(state.HighWater, repairLower)
 }
 
 func storedContainerIncluded(
@@ -402,8 +455,7 @@ func (imp *Importer) importContainer(
 	state *SyncState,
 	summary *ImportSummary,
 	media *MediaArchiver,
-	full bool,
-	editRescanWindow time.Duration,
+	repairLower string,
 ) error {
 	if container.Channel.ID == "" {
 		return errors.New("catalog container has an empty ID")
@@ -456,10 +508,6 @@ func (imp *Importer) importContainer(
 		return imp.handleContainerError(
 			syncID, conversationID, container.Channel.ID, err, state, summary,
 		)
-	}
-	repairLower, err := imp.repairLowerBound(lowerBound, full, editRescanWindow)
-	if err != nil {
-		return err
 	}
 	if err := imp.reconcile(
 		ctx, sourceID, conversationID, container.Channel.ID,
