@@ -373,7 +373,7 @@ func (imp *Importer) importerContainers(
 func storedContainerNeedsImport(
 	state ContainerState, metadata sql.NullString, repairLower string, full, explicitlyIncluded bool,
 ) (bool, error) {
-	if !state.BackfillComplete || explicitlyIncluded {
+	if !state.BackfillComplete || state.RetryRequired || explicitlyIncluded {
 		return true, nil
 	}
 	if !metadata.Valid || strings.TrimSpace(metadata.String) == "" || !json.Valid([]byte(metadata.String)) {
@@ -478,9 +478,14 @@ func (imp *Importer) importContainer(
 	}
 
 	containerState := state.Containers[container.Channel.ID]
-	// Retain even an empty first-seen entry so a denied archived thread remains
-	// independently retryable after it drops out of later catalog responses.
+	// Publish the retry bit before the first remote probe. It survives process
+	// interruption and unclassified transient errors, then clears only after
+	// forward and repair both complete.
+	containerState.RetryRequired = true
 	state.Containers[container.Channel.ID] = containerState
+	if err := imp.saveCheckpoint(syncID, state, summary); err != nil {
+		return err
+	}
 	if !containerState.BackfillComplete {
 		if err := imp.backfill(
 			ctx, sourceID, syncID, conversationID, container.Channel.ID,
@@ -520,6 +525,7 @@ func (imp *Importer) importContainer(
 	if err := imp.clearContainerAccessMarkers(conversationID); err != nil {
 		return err
 	}
+	containerState.RetryRequired = false
 	state.Containers[container.Channel.ID] = containerState
 	return nil
 }

@@ -16,6 +16,7 @@ func TestSyncStateRoundTrip(t *testing.T) {
 		BackfillBefore:   "100000000000000000",
 		BackfillUpper:    "123456789012345678",
 		BackfillComplete: false,
+		RetryRequired:    true,
 	}
 	state.ThreadCatalog["channel"] = ThreadCatalogState{
 		PublicArchiveWatermark:  "2026-07-18T12:00:00.123Z",
@@ -75,6 +76,7 @@ func TestSyncStateMerge(t *testing.T) {
 		BackfillBefore:   "40",
 		BackfillUpper:    "90",
 		BackfillComplete: false,
+		RetryRequired:    true,
 	}
 	checkpoint.Containers["new"] = ContainerState{HighWater: "50"}
 	checkpoint.ThreadCatalog["parent"] = ThreadCatalogState{
@@ -89,6 +91,7 @@ func TestSyncStateMerge(t *testing.T) {
 	assert.Empty(baseline.Containers["channel"].BackfillUpper, "newer backfill epoch clears a stale pinned bound")
 	assert.Equal("80", baseline.Containers["complete"].HighWater, "high-water cannot regress")
 	assert.False(baseline.Containers["complete"].BackfillComplete, "newer backfill epoch can restart completed history")
+	assert.True(baseline.Containers["complete"].RetryRequired, "newer retry state is authoritative")
 	assert.Equal("40", baseline.Containers["complete"].BackfillBefore)
 	assert.Equal("90", baseline.Containers["complete"].BackfillUpper)
 	assert.Equal("50", baseline.Containers["new"].HighWater)

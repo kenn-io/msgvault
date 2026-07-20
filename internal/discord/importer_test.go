@@ -807,6 +807,64 @@ func TestImporterSkipsCompletedAbsentThreadOutsideRepairWindow(t *testing.T) {
 	assert.Contains(metadata.String, `"discord_channel_type":11`)
 }
 
+func TestImporterRetriesAbsentThreadAfterTransientProbeFailureAgesPastWindow(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewSQLiteTestStore(t)
+	source, err := st.GetOrCreateSource("discord", "200")
+	require.NoError(err)
+	conversationID, err := st.EnsureConversationWithType(source.ID, "300", "channel", "Archived thread")
+	require.NoError(err)
+	require.NoError(st.SetConversationMetadata(conversationID, sql.NullString{
+		String: `{"guild_id":"200","parent_channel_id":"250","discord_channel_type":11,"thread":{"archived":true}}`,
+		Valid:  true,
+	}))
+	now := time.Date(2026, 7, 19, 12, 0, 0, 0, time.UTC)
+	highWater := importerTestSnowflake(t, now.Add(-time.Hour), 1)
+	baseline := NewSyncState()
+	baseline.Containers["300"] = ContainerState{
+		HighWater: highWater, BackfillUpper: highWater, BackfillBefore: "1", BackfillComplete: true,
+	}
+	blob, err := baseline.Marshal()
+	require.NoError(err)
+	runID, err := st.StartSync(source.ID, "discord")
+	require.NoError(err)
+	require.NoError(st.CompleteSync(runID, blob))
+	api := newImporterFakeAPI()
+	api.messageHook = func(channelID string, _ MessageQuery) ([]Message, error, bool) {
+		return nil, errors.New("synthetic transient message failure"), channelID == "300"
+	}
+	importer := newTestImporter(st, api)
+	importer.now = func() time.Time { return now }
+
+	_, err = importer.Import(t.Context(), ImportOptions{GuildID: "200", EditRescanWindow: 7 * 24 * time.Hour})
+	require.ErrorContains(err, "synthetic transient message failure")
+	failedRun, err := st.GetLatestCheckpointedSync(source.ID)
+	require.NoError(err)
+	failedState, err := LoadSyncState(failedRun.CursorBefore.String)
+	require.NoError(err)
+	assert.True(failedState.Containers["300"].RetryRequired)
+
+	now = now.Add(30 * 24 * time.Hour)
+	newMessageID := importerTestSnowflake(t, now.Add(-29*24*time.Hour), 2)
+	api.messageHook = nil
+	api.messages["300"] = []Message{importerTestMessage(newMessageID, "300", "eventually imported")}
+	api.queries["300"] = nil
+	_, err = importer.Import(t.Context(), ImportOptions{GuildID: "200", EditRescanWindow: 7 * 24 * time.Hour})
+	require.NoError(err)
+	assert.NotEmpty(api.channelQueries("300"), "failed probes remain retryable outside the repair window")
+	var count int
+	require.NoError(st.DB().QueryRow(st.Rebind(`
+		SELECT COUNT(*) FROM messages WHERE source_id = ? AND source_message_id = ?
+	`), source.ID, newMessageID).Scan(&count))
+	assert.Equal(1, count)
+	completedRun, err := st.GetLastSuccessfulSync(source.ID)
+	require.NoError(err)
+	completedState, err := LoadSyncState(completedRun.CursorAfter.String)
+	require.NoError(err)
+	assert.False(completedState.Containers["300"].RetryRequired)
+}
+
 func TestImporterPreviouslyStoredContainerFiltersUseArchivedParentMetadata(t *testing.T) {
 	topLevelMetadata := `{"guild_id":"200","discord_channel_type":0}`
 	threadMetadata := `{"guild_id":"200","parent_channel_id":"250","discord_channel_type":11,"thread":{"archived":true}}`
@@ -1102,7 +1160,7 @@ func TestImporterRepairClearsTombstoneWhenMessageReappears(t *testing.T) {
 	assertMessageDeletionState(t, st, source.ID, messageID, false)
 }
 
-func TestImporterAccessFailuresRecordAndClearContainerMarkersWithoutChangingState(t *testing.T) {
+func TestImporterAccessFailuresRecordMarkersAndPreserveContainerProgress(t *testing.T) {
 	for _, tt := range []struct {
 		name        string
 		statusCode  int
@@ -1136,6 +1194,8 @@ func TestImporterAccessFailuresRecordAndClearContainerMarkersWithoutChangingStat
 			require.NoError(err)
 			before, err := st.GetLastSuccessfulSync(source.ID)
 			require.NoError(err)
+			beforeState, err := LoadSyncState(before.CursorAfter.String)
+			require.NoError(err)
 
 			failed := false
 			api.messageHook = func(_ string, _ MessageQuery) ([]Message, error, bool) {
@@ -1156,7 +1216,13 @@ func TestImporterAccessFailuresRecordAndClearContainerMarkersWithoutChangingStat
 			}, summary.ContainerIssues[0])
 			after, err := st.GetLastSuccessfulSync(source.ID)
 			require.NoError(err)
-			assert.Equal(before.CursorAfter.String, after.CursorAfter.String)
+			afterState, err := LoadSyncState(after.CursorAfter.String)
+			require.NoError(err)
+			afterContainer := afterState.Containers["300"]
+			assert.True(afterContainer.RetryRequired)
+			afterContainer.RetryRequired = false
+			afterState.Containers["300"] = afterContainer
+			assert.Equal(beforeState, afterState, "access failures preserve progress while recording a retry")
 			assertMessageDeletionState(t, st, source.ID, messageID, false)
 			conversationID, err := st.EnsureConversationWithType(source.ID, "300", "channel", "general")
 			require.NoError(err)
@@ -1281,6 +1347,8 @@ func TestImporterCodeZero404FailsWithoutMissingMarkerOrCursorChange(t *testing.T
 	require.NoError(err)
 	before, err := st.GetLastSuccessfulSync(source.ID)
 	require.NoError(err)
+	beforeState, err := LoadSyncState(before.CursorAfter.String)
+	require.NoError(err)
 
 	api.messageHook = func(_ string, _ MessageQuery) ([]Message, error, bool) {
 		return nil, &APIError{
@@ -1294,7 +1362,13 @@ func TestImporterCodeZero404FailsWithoutMissingMarkerOrCursorChange(t *testing.T
 	assert.Zero(apiErr.Code)
 	checkpoint, err := st.GetLatestCheckpointedSync(source.ID)
 	require.NoError(err)
-	assert.Equal(before.CursorAfter.String, checkpoint.CursorBefore.String)
+	checkpointState, err := LoadSyncState(checkpoint.CursorBefore.String)
+	require.NoError(err)
+	checkpointContainer := checkpointState.Containers["300"]
+	assert.True(checkpointContainer.RetryRequired)
+	checkpointContainer.RetryRequired = false
+	checkpointState.Containers["300"] = checkpointContainer
+	assert.Equal(beforeState, checkpointState, "unclassified failures preserve progress while recording a retry")
 	assertMessageDeletionState(t, st, source.ID, messageID, false)
 	conversationID, err := st.EnsureConversationWithType(source.ID, "300", "channel", "general")
 	require.NoError(err)

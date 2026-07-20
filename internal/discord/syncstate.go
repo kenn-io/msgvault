@@ -18,6 +18,7 @@ type ContainerState struct {
 	BackfillBefore   string `json:"backfill_before,omitempty"`
 	BackfillUpper    string `json:"backfill_upper,omitempty"`
 	BackfillComplete bool   `json:"backfill_complete,omitempty"`
+	RetryRequired    bool   `json:"retry_required,omitempty"`
 }
 
 // ThreadCatalogState tracks completed archived-thread enumeration for one
@@ -188,6 +189,7 @@ func (s *SyncState) Merge(other *SyncState) error {
 		baseline.BackfillBefore = checkpoint.BackfillBefore
 		baseline.BackfillUpper = checkpoint.BackfillUpper
 		baseline.BackfillComplete = checkpoint.BackfillComplete
+		baseline.RetryRequired = checkpoint.RetryRequired
 		s.Containers[containerID] = baseline
 	}
 
