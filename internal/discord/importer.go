@@ -145,6 +145,12 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (summary *I
 			retErr = errors.Join(retErr, fmt.Errorf("fail Discord sync run: %w", failErr))
 		}
 	}()
+	// Publish inherited retry state before any remote discovery. StartSync makes
+	// this run the authoritative resumption candidate, so leaving cursor_before
+	// empty here could hide the previous failed checkpoint after a hard exit.
+	if err := imp.saveCheckpoint(syncID, state, summary); err != nil {
+		return summary, err
+	}
 	guild, err := imp.api.Guild(ctx, opts.GuildID)
 	if err != nil {
 		return summary, fmt.Errorf("discover Discord guild %s: %w", opts.GuildID, err)

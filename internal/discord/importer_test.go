@@ -30,6 +30,7 @@ type importerFakeAPI struct {
 	failBefore  map[string]map[string]error
 	injectAfter map[string][]Message
 	catalogErr  error
+	guildHook   func()
 	archiveHook func(string, bool, ArchiveCursor) (ThreadPage, error)
 	messageHook func(string, MessageQuery) ([]Message, error, bool)
 }
@@ -50,6 +51,9 @@ func (f *importerFakeAPI) Guilds(context.Context) ([]Guild, error) {
 	return []Guild{f.guild}, nil
 }
 func (f *importerFakeAPI) Guild(_ context.Context, _ string) (Guild, error) {
+	if f.guildHook != nil {
+		f.guildHook()
+	}
 	return f.guild, nil
 }
 func (f *importerFakeAPI) GuildChannels(_ context.Context, _ string) ([]Channel, error) {
@@ -305,6 +309,53 @@ func TestImporterResumesFromNewestCheckpointMergedOverSuccessfulBaseline(t *test
 	require.NoError(err)
 	assert.Equal("108", state.Containers["300"].HighWater)
 	assert.True(state.Containers["300"].BackfillComplete)
+}
+
+func TestImporterCheckpointsInheritedRetryBeforeGuildDiscovery(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewSQLiteTestStore(t)
+	source, err := st.GetOrCreateSource("discord", "200")
+	require.NoError(err)
+	baseline := NewSyncState()
+	baseline.Containers["300"] = ContainerState{
+		HighWater: "100", BackfillUpper: "100", BackfillBefore: "1", BackfillComplete: true,
+	}
+	baselineBlob, err := baseline.Marshal()
+	require.NoError(err)
+	completedID, err := st.StartSync(source.ID, "discord")
+	require.NoError(err)
+	require.NoError(st.CompleteSync(completedID, baselineBlob))
+	checkpoint := NewSyncState()
+	checkpoint.Containers["300"] = ContainerState{
+		HighWater: "100", BackfillUpper: "100", BackfillBefore: "1", BackfillComplete: true,
+		RetryRequired: true, RepairLower: "50",
+	}
+	checkpointBlob, err := checkpoint.Marshal()
+	require.NoError(err)
+	failedID, err := st.StartSync(source.ID, "discord")
+	require.NoError(err)
+	require.NoError(st.UpdateSyncCheckpoint(failedID, &store.Checkpoint{PageToken: checkpointBlob}))
+	require.NoError(st.FailSync(failedID, "synthetic interrupted repair"))
+
+	api := newImporterFakeAPI()
+	api.catalogErr = errors.New("synthetic discovery failure")
+	var observed *SyncState
+	var observeErr error
+	api.guildHook = func() {
+		latest, err := st.GetLatestCheckpointedSync(source.ID)
+		if err != nil {
+			observeErr = err
+			return
+		}
+		observed, observeErr = LoadSyncState(latest.CursorBefore.String)
+	}
+	_, err = newTestImporter(st, api).Import(t.Context(), ImportOptions{GuildID: "200"})
+	require.ErrorContains(err, "synthetic discovery failure")
+	require.NoError(observeErr, "the new running sync must inherit its predecessor before discovery")
+	require.NotNil(observed)
+	assert.True(observed.Containers["300"].RetryRequired)
+	assert.Equal("50", observed.Containers["300"].RepairLower)
 }
 
 func TestImporterInitialStateResumesOnlyCompatibleRunShape(t *testing.T) {
