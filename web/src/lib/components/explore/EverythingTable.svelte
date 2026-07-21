@@ -734,9 +734,11 @@
     text-align: right;
   }
 
+  /* The row open in the reading pane shares the app-wide selection
+   * language: 2px accent inset bar over the selected surface. */
   .data-row--inspected {
-    outline: 1px solid var(--artifact-ink);
-    outline-offset: -1px;
+    background: var(--selected-bg);
+    box-shadow: inset 2px 0 0 var(--accent-blue);
   }
 
   .cell--title strong {

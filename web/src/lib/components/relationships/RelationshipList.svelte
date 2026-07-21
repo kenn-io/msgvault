@@ -377,18 +377,21 @@
     font-size: var(--font-size-2xs);
   }
 
+  /* Fixed-width gauge on the row's right edge. The track itself stays
+   * invisible — only the accent fill shows, so low-score rows read as
+   * quiet instead of as a broken progress bar. */
   .activity-track {
     display: block;
-    min-width: 0;
+    width: 56px;
     height: 3px;
-    flex: 1;
+    flex: none;
     align-self: center;
-    border-radius: 2px;
-    background: var(--bg-inset);
+    margin-left: auto;
   }
 
   .activity-bar {
     display: block;
+    min-width: 3px;
     height: 100%;
     border-radius: 2px;
     background: color-mix(in srgb, var(--accent-blue) 45%, transparent);

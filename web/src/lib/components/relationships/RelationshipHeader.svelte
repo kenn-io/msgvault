@@ -4,6 +4,7 @@
   import type { APIClient } from '../../api/client';
   import type { DomainSummary, PersonSummary } from '../../explore/models';
   import type { LinkOutcome } from '../../relationships/controller.svelte';
+  import IdentityAvatar from '../common/IdentityAvatar.svelte';
   import LinkIdentityDialog from './LinkIdentityDialog.svelte';
 
   const STALE_CACHE_MESSAGE =
@@ -185,6 +186,12 @@
     </p>
   {:else}
     <div class="title-row">
+      <IdentityAvatar
+        label={displayLabel(detail)}
+        seed={isPersonDetail(detail) ? `cluster:${detail.id}` : `domain:${detail.domain}`}
+        shape={isPersonDetail(detail) ? 'person' : 'domain'}
+        size={36}
+      />
       <h2>{displayLabel(detail)}</h2>
       <div class="actions">
         <Button
@@ -332,14 +339,19 @@
   .title-row {
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    gap: var(--space-3);
+    gap: var(--space-4);
+  }
+
+  .title-row h2 {
+    flex: 1;
   }
 
   h2 {
     overflow: hidden;
     margin: 0;
-    font-size: var(--font-size-lg);
+    font-size: var(--font-size-xl);
+    font-weight: 650;
+    line-height: 1.2;
     text-overflow: ellipsis;
     white-space: nowrap;
   }

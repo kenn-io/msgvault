@@ -470,8 +470,8 @@
   }
 
   .group-row--inspected {
-    outline: 1px solid var(--artifact-ink);
-    outline-offset: -1px;
+    background: var(--selected-bg);
+    box-shadow: inset 2px 0 0 var(--accent-blue);
   }
 
   .group-state {
