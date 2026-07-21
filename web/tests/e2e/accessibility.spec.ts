@@ -31,7 +31,7 @@ for (const theme of ['light', 'dark'] as const) {
       await assertNoViolations(page, `Relationships timeline ${theme}/${density}`);
       await relationshipTimeline.focus();
       await page.keyboard.press('Enter');
-      await expect(page.getByRole('complementary', { name: /Inspect/ })).toBeVisible();
+      await expect(page.getByRole('complementary', { name: /Reading pane/ })).toBeVisible();
       await assertNoViolations(page, `Relationships reading pane ${theme}/${density}`);
       await page.keyboard.press('Escape');
 
@@ -41,8 +41,8 @@ for (const theme of ['light', 'dark'] as const) {
       await assertNoViolations(page, `Everything ${theme}/${density}`);
       await grid.focus();
       await page.keyboard.press('Enter');
-      await expect(page.getByRole('complementary', { name: /Inspect/ })).toBeVisible();
-      await assertNoViolations(page, `inspector ${theme}/${density}`);
+      await expect(page.getByRole('complementary', { name: /Reading pane/ })).toBeVisible();
+      await assertNoViolations(page, `reading pane ${theme}/${density}`);
       await page.keyboard.press('Escape');
 
       await page.keyboard.press('Shift+/');

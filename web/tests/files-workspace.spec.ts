@@ -68,7 +68,6 @@ test('Files restores a deep URL through bounded 500-row pages with bounded DOM',
     activeRow: `file:${target}`,
     selectedRow: `file:${target}`,
     inspectorPinned: false,
-    inspectorWidth: 380,
     conversationAnchor: null,
     scrollAnchor: null
   };

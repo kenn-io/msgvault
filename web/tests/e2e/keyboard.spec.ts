@@ -107,7 +107,7 @@ test('pointer-free archive journey preserves focus, announcements, and history',
   const relationshipTimeline = page.getByRole('grid', { name: 'Relationship activity' });
   await expect(relationshipTimeline).toBeFocused();
   await page.keyboard.press('Enter');
-  const relationshipReading = page.getByRole('complementary', { name: /Inspect Synthetic conversation/ });
+  const relationshipReading = page.getByRole('complementary', { name: /Reading pane: Synthetic conversation/ });
   await expect(relationshipReading).toBeVisible();
 
   await page.keyboard.press('Escape');
@@ -143,7 +143,7 @@ test('pointer-free archive journey preserves focus, announcements, and history',
   await expect(grouped).toBeFocused();
   await tabTo(page, 'Drill into Synthetic chat');
   await page.keyboard.press('Enter');
-  await expect(page.getByRole('complementary', { name: /Inspect/ })).toBeVisible();
+  await expect(page.getByRole('complementary', { name: /Reading pane/ })).toBeVisible();
   await page.keyboard.press('Escape');
 
   const grid = page.getByRole('grid', { name: 'Everything results' });
@@ -159,15 +159,14 @@ test('pointer-free archive journey preserves focus, announcements, and history',
   }).toBe(terminalServedRow.key);
   await expect(grid.locator(`[data-row-key="${terminalServedRow.key}"]`)).toBeVisible();
   await page.keyboard.press('Enter');
-  await expect(page.getByRole('complementary', { name: /Inspect/ })).toBeVisible();
-  await tabTo(page, 'View conversation');
-  await page.keyboard.press('Enter');
-  await expect(page.getByRole('heading', { name: 'Conversation', exact: true })).toBeVisible();
-  await page.keyboard.press('Escape');
-  await expect(page.getByRole('heading', { name: 'Conversation', exact: true })).toBeHidden();
-  await expect(page.getByRole('complementary', { name: /Inspect/ })).toBeVisible();
+  const everythingReading = page.getByRole('complementary', { name: /Reading pane/ });
+  await expect(everythingReading).toBeVisible();
+  // The conversation thread renders directly in the pane: the anchor
+  // message arrives expanded, with no intermediate metadata step.
+  await expect(everythingReading.getByRole('button', { name: /Collapse message/ })).toBeVisible();
   await expect(grid).toHaveAttribute('aria-busy', 'false');
   await page.keyboard.press('Escape');
+  await expect(everythingReading).toBeHidden();
   await expect(grid).toBeFocused();
 
   await tabTo(page, 'Files');

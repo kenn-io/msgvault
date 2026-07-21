@@ -107,12 +107,13 @@ test('legacy People URL lands on the Relationships hub and walks list, timeline,
   await expect(timeline.getByText('Subject line')).toBeVisible();
 
   // A chat-burst row opens straight into the bounded conversation window in
-  // the reading pane rather than the plain entry summary.
+  // the reading pane rather than the plain entry summary: the anchor message
+  // renders expanded as a card in the thread.
   await timeline.getByText('6 messages in Team Chat').click();
-  const reading = page.getByRole('complementary', { name: /Inspect 6 messages in Team Chat/ });
+  const reading = page.getByRole('complementary', { name: /Reading pane: 6 messages in Team Chat/ });
   await expect(reading).toBeVisible();
-  await expect(reading.getByText('Bob Example')).toBeVisible();
-  await expect(reading.getByRole('heading', { level: 2, name: 'Conversation' })).toBeVisible();
+  await expect(reading.getByRole('button', { name: 'Collapse message 500 from Bob Example' })).toBeVisible();
+  await expect(reading.getByText('Latest chat message')).toBeVisible();
 
   // Toggling the facet switches the ranked list to Domains without losing
   // the open person detail underneath.

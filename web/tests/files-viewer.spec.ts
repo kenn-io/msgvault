@@ -18,7 +18,6 @@ function exploreURLState() {
     activeRow: null,
     selectedRow: null,
     inspectorPinned: false,
-    inspectorWidth: 380,
     conversationAnchor: null,
     scrollAnchor: null
   };
@@ -190,7 +189,9 @@ test('opening a containing conversation and one Back restores the exact Files UR
   const filesURL = page.url();
 
   await page.getByRole('button', { name: 'Open containing conversation' }).click();
-  await expect(page.getByRole('region', { name: 'Containing conversation' })).toBeVisible();
+  const reading = page.getByRole('complementary', { name: 'Reading pane: Containing item' });
+  await expect(reading).toBeVisible();
+  await expect(reading.getByRole('region', { name: 'Conversation thread' })).toBeVisible();
   await page.goBack();
 
   await expect(page).toHaveURL(filesURL);

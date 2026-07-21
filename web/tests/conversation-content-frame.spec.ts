@@ -111,19 +111,19 @@ test('archived content has an opaque capability boundary and durable conversatio
   const grid = page.getByRole('grid', { name: 'Everything results' });
   await expect(grid.getByText(row.title)).toBeVisible();
   await grid.focus();
-  await page.keyboard.press('Enter');
   const priorURL = page.url();
-  await page.getByRole('button', { name: 'View conversation' }).click();
-  await expect(page.getByRole('heading', { name: 'Conversation' })).toBeVisible();
+  await page.keyboard.press('Enter');
 
-  const frame = page.locator('iframe[title="Message body"]');
-  const enter = page.getByRole('button', { name: 'Enter archived content' });
-  await expect(page.getByText('Preparing archived content…')).toBeVisible();
-  await expect(enter).toBeDisabled();
+  // The reading pane opens straight into the thread: the anchor message is
+  // expanded and its archived body renders directly, with no entry gating.
+  const reading = page.getByRole('complementary', { name: `Reading pane: ${row.title}` });
+  await expect(reading).toBeVisible();
+  const anchorCard = page.locator('[data-message-id="42"]');
+  const frame = anchorCard.locator('iframe[title="Message body"]');
+  await expect(anchorCard.getByText('Preparing message…')).toBeVisible();
   await expect(frame).toHaveCount(0);
   releaseInitialInline();
   await expect(frame).toHaveCount(1);
-  await expect(enter).toBeEnabled();
   await expect(frame).toHaveAttribute('sandbox', 'allow-scripts');
   await expect(frame).not.toHaveAttribute('sandbox', /allow-same-origin/);
   const frameHandle = await frame.elementHandle();
@@ -166,29 +166,13 @@ test('archived content has an opaque capability boundary and durable conversatio
   });
   await expect.poll(() => outerFrame.locator('body').getAttribute('data-received')).toBe('no');
 
-  await enter.focus();
-  await expect(frame).toHaveJSProperty('inert', true);
-  const archivedWords = frame.contentFrame().getByText('Safe archived words');
-  const archivedWordsBox = await archivedWords.boundingBox();
-  expect(archivedWordsBox).not.toBeNull();
-  await page.mouse.click(
-    archivedWordsBox!.x + archivedWordsBox!.width / 2,
-    archivedWordsBox!.y + archivedWordsBox!.height / 2
-  );
-  await expect(enter).toBeFocused();
-  const box = await frame.boundingBox();
-  expect(box).not.toBeNull();
-  await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2);
-  await page.mouse.wheel(0, 100);
-  await expect(enter).toBeFocused();
-
-  await enter.click();
-  await expect(page.getByText('Archived content active')).toBeVisible();
-  await expect(frame).toHaveJSProperty('inert', false);
+  const thread = page.getByRole('region', { name: 'Conversation thread' });
   const nonce = await frame.contentFrame().locator('html').getAttribute('data-bridge-nonce');
   expect(nonce).toBeTruthy();
 
-  // Wrong source, wrong nonce, and an extra field must not exit content mode.
+  // Wrong source, wrong nonce, an extra field, and an oversized scroll delta
+  // must all be ignored by the bridge.
+  const priorScroll = await thread.evaluate((element) => element.scrollTop);
   await page.evaluate((frameNonce) => {
     postMessage({
       channel: 'msgvault-archived-content', nonce: frameNonce,
@@ -202,71 +186,57 @@ test('archived content has an opaque capability boundary and durable conversatio
     channel: 'msgvault-archived-content', nonce: frameNonce,
     type: 'key', key: 'Escape', extra: true
   }, '*'), nonce);
-  await expect(page.getByText('Archived content active')).toBeVisible();
-
-  const shellScroll = page.locator('.frame-scroll');
-  const priorScroll = await shellScroll.evaluate((element) => element.scrollTop);
   await contentFrame!.evaluate((frameNonce) => parent.postMessage({
     channel: 'msgvault-archived-content', nonce: frameNonce,
     type: 'scroll', deltaY: 10_001
   }, '*'), nonce);
-  expect(await shellScroll.evaluate((element) => element.scrollTop)).toBe(priorScroll);
+  await expect(thread).not.toBeFocused();
+  expect(await thread.evaluate((element) => element.scrollTop)).toBe(priorScroll);
 
-  // Consent while entered synchronously exits shell content scope and detaches
-  // the old frame before the newly-capable document can be entered.
+  // The exact expected frame message hands focus back out to the thread.
+  await contentFrame!.evaluate((frameNonce) => parent.postMessage({
+    channel: 'msgvault-archived-content', nonce: frameNonce,
+    type: 'key', key: 'Escape'
+  }, '*'), nonce);
+  await expect(thread).toBeFocused();
+
+  // Remote-image consent rebuilds the document: the old incapable frame is
+  // detached before the newly-capable one loads, and the remote fetch goes
+  // out without referrer or credentials leaking.
   await page.getByRole('button', { name: 'Load 1 remote image' }).click();
-  await expect(page.getByText('Archived content active')).toHaveCount(0);
-  await expect(page.getByLabel('Archived content controls')).toBeFocused();
-  await expect(enter).toBeDisabled();
+  await expect(page.getByText('1 remote image is not loaded.')).toHaveCount(0);
   expect(await frameHandle!.evaluate((element) => element.isConnected)).toBe(false);
   await expect.poll(() => networkRequests.length).toBe(1);
   expect(networkRequests[0]).toBe('https://images.example/chart.png?token=synthetic');
   expect(remoteReferrers).toEqual([undefined]);
   expect(unintendedRequests).toEqual([]);
   releaseRemoteImage();
-  await expect(enter).toBeEnabled();
-
-  await enter.click();
-  await expect(page.getByText('Archived content active')).toBeVisible();
-  const consentedHandle = await frame.elementHandle();
-  const consentedContentFrame = await consentedHandle?.contentFrame();
   const consentedNonce = await frame.contentFrame().locator('html').getAttribute('data-bridge-nonce');
   expect(consentedNonce).toBeTruthy();
+  expect(consentedNonce).not.toBe(nonce);
 
-  // The exact expected replacement-frame message exits and returns focus to the shell.
-  await consentedContentFrame!.evaluate((frameNonce) => parent.postMessage({
-    channel: 'msgvault-archived-content', nonce: frameNonce,
-    type: 'key', key: 'Escape'
-  }, '*'), consentedNonce);
-  await expect(page.getByText('Archived content active')).toHaveCount(0);
-  await expect(page.getByRole('button', { name: 'Enter archived content' })).toBeFocused();
-
+  // Browser Back closes the reading pane, restores the pre-open URL, and
+  // returns focus to the grid.
   await page.evaluate(() => history.back());
-  const restoredAfterBrowserBack = page.getByRole('button', { name: 'View conversation' });
-  await expect(restoredAfterBrowserBack).toBeVisible();
-  await expect(restoredAfterBrowserBack).toBeFocused();
+  await expect(reading).toBeHidden();
+  await expect(grid).toBeFocused();
   expect(page.url()).toBe(priorURL);
 
-  const reopenAtPeer = async (): Promise<void> => {
-    await page.getByRole('button', { name: 'View conversation' }).click();
-    await expect(page.getByRole('heading', { name: 'Conversation' })).toBeVisible();
-    await page.getByRole('button', { name: /Open message 43/ }).click();
-    await expect(page.getByRole('article', { name: 'Selected message 43' })).toBeVisible();
-    await expect(frame.contentFrame().getByText('Inline image unavailable: Inline logo')).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Enter archived content' })).toBeEnabled();
-  };
+  // Reopening and expanding the peer message keeps the anchor expanded and
+  // renders the peer's own frame, whose missing inline image degrades to a
+  // visible placeholder.
+  await page.keyboard.press('Enter');
+  await expect(reading).toBeVisible();
+  await reading.getByRole('button', { name: 'Expand message 43 from alice@example.com' }).click();
+  const peerCard = page.locator('[data-message-id="43"]');
+  await expect(peerCard).toHaveAttribute('aria-current', 'true');
+  const peerFrame = peerCard.locator('iframe[title="Message body"]');
+  await expect(peerFrame.contentFrame().getByText('Inline image unavailable: Inline logo')).toBeVisible();
+  await expect(frame).toHaveCount(1);
 
-  await reopenAtPeer();
-  await page.getByRole('button', { name: 'Back from conversation' }).click();
-  const restoredAfterToolbarBack = page.getByRole('button', { name: 'View conversation' });
-  await expect(restoredAfterToolbarBack).toBeVisible();
-  await expect(restoredAfterToolbarBack).toBeFocused();
-  expect(page.url()).toBe(priorURL);
-
-  await reopenAtPeer();
+  // Escape closes the pane from anywhere in it, restoring URL and grid focus.
   await page.keyboard.press('Escape');
-  const restoredAfterEscape = page.getByRole('button', { name: 'View conversation' });
-  await expect(restoredAfterEscape).toBeVisible();
-  await expect(restoredAfterEscape).toBeFocused();
+  await expect(reading).toBeHidden();
+  await expect(grid).toBeFocused();
   expect(page.url()).toBe(priorURL);
 });

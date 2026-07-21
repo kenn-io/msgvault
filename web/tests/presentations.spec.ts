@@ -98,7 +98,7 @@ test('Show as preserves analytical meaning, keyboard focus, history, and Saved V
   await page.keyboard.press('Enter');
   await expect(viewer).toBeVisible();
   await viewer.getByRole('button', { name: 'Open containing item' }).click();
-  await expect(page.getByRole('complementary', { name: 'Inspect Presentation message 1' })).toBeVisible();
+  await expect(page.getByRole('complementary', { name: 'Reading pane: Presentation message 1' })).toBeVisible();
   const tableState = JSON.parse(new URL(page.url()).searchParams.get('explore') ?? '{}');
   expect(tableState).toMatchObject({ presentation: 'table', activeRow: 'message:1', scrollAnchor: null });
   expect(tableState.activeRow).not.toContain(':file:');
@@ -158,7 +158,7 @@ test('Files presentation restores a deep paged anchor with bounded DOM and visib
     fileSort: { field: 'occurred_at', direction: 'desc' }, fileFilenameQuery: '', fileMIMEFamilies: [],
     columns: ['kind', 'people', 'title', 'excerpt', 'time', 'attachments'], columnWidths: {},
     activeRow: 'message:550:file:550', selectedRow: null, inspectorPinned: false,
-    inspectorWidth: 380, conversationAnchor: null,
+    conversationAnchor: null,
     scrollAnchor: { key: 'message:540:file:540', offset: 5 }
   };
   await page.goto(`/?explore=${encodeURIComponent(JSON.stringify(state))}`);
@@ -213,7 +213,7 @@ test('attachment deep links restore with one bounded metadata lookup', async ({ 
     fileSort: { field: 'occurred_at', direction: 'desc' }, fileFilenameQuery: '', fileMIMEFamilies: [],
     columns: ['kind', 'people', 'title', 'excerpt', 'time', 'attachments'], columnWidths: {},
     activeRow: null, selectedRow: 'attachment:640', inspectorPinned: false,
-    inspectorWidth: 380, conversationAnchor: null, scrollAnchor: null
+    conversationAnchor: null, scrollAnchor: null
   };
   await page.goto(`/?explore=${encodeURIComponent(JSON.stringify(state))}`);
 

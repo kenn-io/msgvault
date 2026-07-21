@@ -113,7 +113,7 @@ function exploreState(overrides: Record<string, unknown>) {
     groupingChain: [], presentation: 'table', sort: [{ field: 'occurred_at', direction: 'desc' }],
     fileSort: { field: 'occurred_at', direction: 'desc' }, fileFilenameQuery: '', fileMIMEFamilies: [],
     columns: ['kind', 'people', 'title', 'excerpt', 'time', 'attachments'], columnWidths: {},
-    activeRow: null, selectedRow: null, inspectorPinned: false, inspectorWidth: 380,
+    activeRow: null, selectedRow: null, inspectorPinned: false,
     conversationAnchor: null, scrollAnchor: null, ...overrides
   };
 }

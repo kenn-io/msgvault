@@ -34,7 +34,9 @@ test('sanitized archived HTML requires remote-image consent and rejects forged f
   const grid = page.getByRole('grid', { name: 'Everything results' });
   await grid.focus();
   await page.keyboard.press('Enter');
-  await page.getByRole('button', { name: 'View conversation' }).click();
+
+  // The reading pane renders the sanitized message frame directly — no
+  // intermediate step, no entry gating.
   const frame = page.locator('iframe[title="Message body"]');
   await expect(frame).toHaveAttribute('sandbox', 'allow-scripts');
   const frameHandle = await frame.elementHandle();
@@ -48,20 +50,28 @@ test('sanitized archived HTML requires remote-image consent and rejects forged f
   expect(csp).toContain("object-src 'none'");
   expect(remoteRequests).toEqual([]);
 
-  const enter = page.getByRole('button', { name: 'Enter archived content' });
-  await enter.click();
+  // A forged bridge message (wrong nonce) and a spoofed one (right nonce,
+  // wrong source window) are both ignored; only the frame's own message
+  // with the real nonce drives the Escape hand-off to the thread.
   const nonce = await frame.contentFrame().locator('html').getAttribute('data-bridge-nonce');
-  await page.evaluate((frameNonce) => postMessage({
-    channel: 'msgvault-archived-content', nonce: frameNonce, type: 'key', key: 'Escape'
-  }, '*'), nonce);
+  const thread = page.getByRole('region', { name: 'Conversation thread' });
   await contentFrame!.evaluate(() => parent.postMessage({
     channel: 'msgvault-archived-content', nonce: 'forged', type: 'key', key: 'Escape'
   }, '*'));
-  await expect(page.getByText('Archived content active')).toBeVisible();
+  await page.evaluate((frameNonce) => postMessage({
+    channel: 'msgvault-archived-content', nonce: frameNonce, type: 'key', key: 'Escape'
+  }, '*'), nonce);
+  await expect(thread).not.toBeFocused();
+  await contentFrame!.evaluate((frameNonce) => parent.postMessage({
+    channel: 'msgvault-archived-content', nonce: frameNonce, type: 'key', key: 'Escape'
+  }, '*'), nonce);
+  await expect(thread).toBeFocused();
 
+  // Remote images stay blocked behind one quiet inline notice.
+  await expect(page.getByText('1 remote image is not loaded.')).toBeVisible();
   await page.getByRole('button', { name: 'Load 1 remote image' }).click();
   await expect.poll(() => remoteRequests).toHaveLength(1);
-  await expect(page.getByLabel('Archived content controls')).toBeFocused();
+  await expect(page.getByText('1 remote image is not loaded.')).toBeHidden();
 });
 
 test('activating a replacement API key rejects the old browser authority and requires login', async ({ page }) => {
