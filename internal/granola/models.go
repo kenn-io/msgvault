@@ -76,6 +76,7 @@ func (s *TranscriptSegment) UnmarshalJSON(data []byte) error {
 	type plain TranscriptSegment
 	decoded := struct {
 		*plain
+
 		StartTime apiTimestamp `json:"start_time"`
 		EndTime   apiTimestamp `json:"end_time"`
 	}{plain: (*plain)(s)}
@@ -108,6 +109,7 @@ func (e *CalendarEvent) UnmarshalJSON(data []byte) error {
 	type plain CalendarEvent
 	decoded := struct {
 		*plain
+
 		ScheduledStartTime apiTimestamp `json:"scheduled_start_time"`
 		ScheduledEndTime   apiTimestamp `json:"scheduled_end_time"`
 	}{plain: (*plain)(e)}
@@ -139,6 +141,7 @@ func (s *NoteSummary) UnmarshalJSON(data []byte) error {
 	type plain NoteSummary
 	decoded := struct {
 		*plain
+
 		CreatedAt apiTimestamp `json:"created_at"`
 		UpdatedAt apiTimestamp `json:"updated_at"`
 	}{plain: (*plain)(s)}
