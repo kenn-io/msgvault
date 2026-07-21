@@ -4,6 +4,22 @@ import (
 	"encoding/json"
 )
 
+// PendingThread is one thread whose replies the backfill still owes: the
+// containing history page was consumed (and the page cursor advanced), but
+// the reply fetch was deferred or clipped by the --limit budget.
+type PendingThread struct {
+	RootTS string `json:"root"`
+	// DrainedTo is the newest reply ts fetched so far ("" = not started):
+	// the drain resumes with oldest=DrainedTo (exclusive), a self-validating
+	// ts bound rather than an opaque page cursor.
+	DrainedTo string `json:"drained_to,omitempty"`
+	// Forecast is the remaining reply_count estimate, charged against the
+	// run budget at recording time and converted to actuals as the drain
+	// fetches replies. Pacing and progress only — never a completeness
+	// signal (counts can be stale).
+	Forecast int `json:"forecast,omitempty"`
+}
+
 // ConvState tracks one conversation's sync progress.
 //
 // Cursor is the max top-level message ts persisted; incremental history
@@ -28,6 +44,12 @@ type ConvState struct {
 	// (the backfill pin) postdates them. The next threaded run performs a
 	// thread catch-up walk and clears the flag.
 	ThreadsPending bool `json:"threads_pending,omitempty"`
+	// PendingThreads is the backfill's outstanding thread-drain debt,
+	// bounded by one history page's roots: the walk never fetches a new
+	// page while any entry is outstanding. Drained head-first; an entry
+	// leaves the list only when its thread is fully fetched (or the
+	// thread is gone).
+	PendingThreads []PendingThread `json:"pending_threads,omitempty"`
 	// SweptThrough is this conversation's reply-certification boundary
 	// (UTC ts): every thread reply created at or before it has been
 	// archived. It normally tracks the workspace SweepWatermark; it lags
@@ -80,6 +102,28 @@ func (s *SyncState) Marshal() (string, error) {
 	return string(b), err
 }
 
+// RecordPendingThread appends a thread to the drain debt unless it is
+// already recorded (a page refetched after a failure re-discovers its
+// roots; the existing entry keeps its drain progress).
+func (cs *ConvState) RecordPendingThread(rootTS string, forecast int) {
+	for i := range cs.PendingThreads {
+		if cs.PendingThreads[i].RootTS == rootTS {
+			return
+		}
+	}
+	cs.PendingThreads = append(cs.PendingThreads, PendingThread{RootTS: rootTS, Forecast: forecast})
+}
+
+// PendingForecast sums the remaining reply forecasts of the outstanding
+// drain debt: the budget charge for work committed but not yet performed.
+func (cs *ConvState) PendingForecast() int {
+	n := 0
+	for i := range cs.PendingThreads {
+		n += cs.PendingThreads[i].Forecast
+	}
+	return n
+}
+
 // EnsureConv returns the (created-if-missing) state for channelID.
 func (s *SyncState) EnsureConv(channelID string) *ConvState {
 	cs, ok := s.Conversations[channelID]
@@ -127,6 +171,15 @@ func (s *SyncState) Merge(other *SyncState) {
 		}
 		if ocs.BackfillLatest != "" {
 			cs.BackfillLatest = ocs.BackfillLatest
+		}
+		// Pending thread debt follows the BackfillCursor rule: other's
+		// non-empty list wins wholesale, and emptiness never clears. A
+		// stale list is only ever wasteful (re-drains resolve into
+		// idempotent upserts and empty out again); dropping a live list
+		// would lose replies, so the conservative direction is the safe
+		// one.
+		if len(ocs.PendingThreads) > 0 {
+			cs.PendingThreads = ocs.PendingThreads
 		}
 		cs.Done = cs.Done || ocs.Done
 		cs.ThreadsPending = cs.ThreadsPending || ocs.ThreadsPending

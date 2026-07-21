@@ -112,7 +112,7 @@ func normalizeDiscordAttachmentRefs(refs []AttachmentRef) []AttachmentRef {
 		}
 		contentHash := strings.ToLower(normalized[i].ContentHash)
 		if contentHash == "" {
-			pathHash, ok := discordCASPathHash(normalized[i].StoragePath)
+			pathHash, ok := casPathHash(normalized[i].StoragePath)
 			if !ok {
 				continue
 			}
@@ -133,14 +133,23 @@ func normalizeDiscordAttachmentRefs(refs []AttachmentRef) []AttachmentRef {
 // URLs, provider sentinels, malformed paths, and hash/path mismatches are not
 // considered downloaded.
 func IsDiscordAttachmentDownloaded(ref AttachmentRef) bool {
-	pathHash, ok := discordCASPathHash(ref.StoragePath)
+	return casAttachmentDownloaded(ref)
+}
+
+// casAttachmentDownloaded reports whether a provider attachment row
+// references a trusted local SHA-256 CAS path (shared by the Discord and
+// Slack media paths). A duplicate-content alias may omit its hash; URLs,
+// provider sentinels, malformed paths, and hash/path mismatches are not
+// considered downloaded.
+func casAttachmentDownloaded(ref AttachmentRef) bool {
+	pathHash, ok := casPathHash(ref.StoragePath)
 	if !ok {
 		return false
 	}
 	return ref.ContentHash == "" || ref.ContentHash == pathHash
 }
 
-func discordCASPathHash(storagePath string) (string, bool) {
+func casPathHash(storagePath string) (string, bool) {
 	if len(storagePath) != 67 || storagePath[2] != '/' {
 		return "", false
 	}
@@ -162,7 +171,7 @@ func (s *Store) MessageDiscordAttachments(messageID int64) (map[string]Attachmen
 	}
 	for sourceAttachmentID, ref := range refs {
 		if ref.ContentHash == "" {
-			if pathHash, ok := discordCASPathHash(ref.StoragePath); ok {
+			if pathHash, ok := casPathHash(ref.StoragePath); ok {
 				ref.ContentHash = pathHash
 				refs[sourceAttachmentID] = ref
 			}

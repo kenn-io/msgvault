@@ -95,16 +95,45 @@ for incremental sync. Consequences:
   `threads:replies` filtering makes it Enterprise-scale rare.
   Cursormark pagination is not supported on this method (parameter
   silently ignored).
-- **`--limit` budgets thread fetches too**: inline thread fetches size
-  their reply pages to the remaining budget and charge it; exhaustion
-  mid-thread leaves the backfill page cursor unadvanced so the page and
-  its threads are refetched whole next run. (Sweeps and catch-up walks
-  only run unlimited, so the budget is inert there by construction.)
-- **Backfill is unchanged in shape**: the history walker fetches each
-  discovered root's replies inline, before the containing page's cursor
-  advances, so "cursor past page" continues to mean "page and its
-  threads durable". Incremental needs no root fetching at all: any reply
-  is created after some watermark and the sweep finds it.
+- **`--limit` bounds committed work via a resumable thread drain.** The
+  backfill records each discovered root as durable debt on a
+  per-conversation pending list — `(root ts, drained-to ts, remaining
+  reply_count forecast)` — before the page cursor advances, charging the
+  forecast against the run budget so root progress stays loosely aligned
+  with thread progress. The drain pays the list head-first, resuming each
+  thread with `oldest=drained-to` (a self-validating ts bound; the
+  archived root is not refetched) on budget-sized pages, converting
+  forecast to actuals as replies land. Invariants: the walk never fetches
+  a new history page while debt is outstanding (bounding the list at one
+  page's roots), and the drain runs before anything else touches the
+  conversation — so a standing `--limit` schedule converges to a complete
+  archive by itself, draining arbitrarily large threads across runs with
+  durable progress every run. The list merges like the backfill cursor
+  (non-empty wins; emptiness never clears — stale debt re-drains into
+  idempotent upserts, dropped debt would lose replies). Sweeps and
+  catch-up walks only run unlimited, so their thread fetches stay
+  whole-thread.
+- **The thread catch-up walk pins its upper bound at its own start time**,
+  not the original backfill pin: conversation-level debt (`--no-threads`
+  runs, non-channel sweep-gap recovery) can include replies to roots
+  created after the backfill, which a pin-bounded walk would never
+  anchor. Roots newer than the fresh pin need no walk (their replies
+  postdate the watermark by creation time), and the pin keeps the
+  newest-first pagination window stable during the walk.
+- **Duplicate file content keeps one row per Slack file ID** via the
+  Discord alias pattern: the schema's `(message_id, content_hash)`
+  uniqueness keeps the real hash on the first row; same-content siblings
+  become hashless alias rows sharing the trusted CAS path, re-derived as
+  downloaded on read — so repairs never re-download and no file ID's
+  metadata is silently dropped.
+- **Backfill owes threads as recorded debt**: the history walker records
+  each discovered root on the pending-drain list before the containing
+  page's cursor advances, so "cursor past page" means "page durable and
+  its thread debt recorded" (the debt and the cursor persist in the same
+  checkpointed blob). Unlimited runs drain a page's debt immediately
+  after the page, which reduces to the old inline behavior; limited runs
+  carry the remainder across runs. Incremental needs no root fetching at
+  all: any reply is created after some watermark and the sweep finds it.
 
 ## Sweep algorithm
 
@@ -167,14 +196,24 @@ type SyncState struct {
 
 type ConvState struct {
     // …cursors…
-    SweptThrough string // UTC ts: this conversation's own reply certification
+    SweptThrough   string          // UTC ts: this conversation's own reply certification
+    PendingThreads []PendingThread // backfill's outstanding thread-drain debt (≤ one page's roots)
+}
+
+type PendingThread struct {
+    RootTS    string // thread root (already archived with its page)
+    DrainedTo string // newest reply fetched; drain resumes oldest=DrainedTo
+    Forecast  int    // remaining reply_count estimate (budget pacing only)
 }
 ```
 
 `ConvState` loses `Threads` (old checkpoints carrying a `threads` key
-load cleanly; the field is simply gone) and gains `SweptThrough`. Merge
+load cleanly; the field is simply gone) and gains `SweptThrough` plus the
+bounded, transient `PendingThreads` work queue. Merge
 rules: the further-advanced watermark wins, carrying its offset with it;
-`SweptThrough` merges further-advanced-wins per conversation.
+`SweptThrough` merges further-advanced-wins per conversation;
+`PendingThreads` merges like the backfill cursor (non-empty wins,
+emptiness never clears).
 
 ## Probe ledger
 

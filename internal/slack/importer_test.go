@@ -274,16 +274,16 @@ func TestImportIncrementalMidWindowFailureDoesNotAdvanceCursor(t *testing.T) {
 	}
 }
 
-func TestBackfillThreadFetchFailureLeavesPageResumable(t *testing.T) {
+func TestBackfillThreadFetchFailureParksDrainDebt(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	f := testWorkspace(t)
 	imp, opts := testImporter(t, f)
 	st := imp.store
 
-	// Backfill fetches each root's replies INLINE before advancing past the
-	// containing page: a reply-fetch failure must leave the page (and its
-	// threads) to be retried, and the run must not report success.
+	// Backfill records each root as drain debt before its page's cursor
+	// advances; a reply-fetch failure parks the debt entry at its resume
+	// point, and the run must not report success.
 	f.failReplies[ts(5)] = true
 	sum, err := imp.Import(context.Background(), opts)
 	require.Error(err, "a run with fetch errors must not report success")
@@ -670,9 +670,9 @@ func TestImportLimitBoundsThreadReplies(t *testing.T) {
 	imp, opts := testImporter(t, f)
 	st := imp.store
 
-	// One discovered thread must not blow through the budget: replies are
-	// fetched on budget-sized pages and charged against it, and exhaustion
-	// leaves the backfill page (with its threads) resumable.
+	// One discovered thread must not blow through the budget: its
+	// reply_count forecast charges the run at recording time, and the drain
+	// fetches on budget-sized pages, parking the remainder as durable debt.
 	limited := opts
 	limited.Limit = 3
 	_, err := imp.Import(context.Background(), limited)
@@ -690,6 +690,101 @@ func TestImportLimitBoundsThreadReplies(t *testing.T) {
 	require.NoError(st.DB().QueryRow(`SELECT COUNT(DISTINCT source_message_id) FROM messages WHERE message_type='slack'`).Scan(&distinct))
 	assert.Equal(13, total, "resumed runs must recover the budget-clipped replies")
 	assert.Equal(distinct, total)
+}
+
+func TestStandingLimitConvergesThroughThreadDebt(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newFakeSlack(t)
+	f.users = []map[string]any{
+		{"id": "UME", "name": "me", "profile": map[string]any{"email": "me@example.com"}},
+	}
+	// The OLDEST message is a root with more replies than the standing
+	// limit; several newer top-levels sit above it. Newest-first pagination
+	// reaches the root last, so the drain must carry the thread across runs.
+	busyRoot := fakeMsg{TS: ts(0), User: "UME", Text: "busy root"}
+	for i := range 12 {
+		busyRoot.Replies = append(busyRoot.Replies,
+			fakeMsg{TS: ts(i + 1), ThreadTS: busyRoot.TS, User: "UME", Text: "reply " + strconv.Itoa(i)})
+	}
+	conv := &fakeConv{ID: "C30", Name: "steady", Kind: "public", Members: []string{"UME"}, Msgs: []fakeMsg{busyRoot}}
+	for i := range 5 {
+		conv.Msgs = append(conv.Msgs, fakeMsg{TS: ts(100 + i), User: "UME", Text: "top " + strconv.Itoa(i)})
+	}
+	f.convs = []*fakeConv{conv}
+	imp, opts := testImporter(t, f)
+	st := imp.store
+
+	// A standing --limit cron must converge to a complete archive BY
+	// ITSELF: each run makes durable progress (history pages, then reply
+	// drain resumed from the per-thread drained-to ts) — no unlimited run
+	// required, no stall.
+	limited := opts
+	limited.Limit = 4
+	for range 12 {
+		_, err := imp.Import(context.Background(), limited)
+		require.NoError(err)
+	}
+	var total, distinct int
+	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages WHERE message_type='slack'`).Scan(&total))
+	require.NoError(st.DB().QueryRow(`SELECT COUNT(DISTINCT source_message_id) FROM messages WHERE message_type='slack'`).Scan(&distinct))
+	assert.Equal(18, total, "repeated limited runs must drain the whole archive, thread included")
+	assert.Equal(distinct, total)
+}
+
+func TestGapCatchUpCoversPostBackfillRoots(t *testing.T) {
+	require := require.New(t)
+	f, rootTS := oldThreadWorkspace(t)
+	// A legacy G-prefixed private channel (name-filterable, but outside the
+	// probed in:<#C…> search-scope form, so its gap recovery runs through
+	// the thread catch-up walk) plus a channel that keeps the workspace
+	// watermark advancing while it is excluded.
+	f.convs = append(f.convs,
+		&fakeConv{ID: "G05", Name: "legacy", Kind: "private", Members: []string{"UME"},
+			Msgs: []fakeMsg{{TS: ts(2), User: "UME", Text: "legacy hi"}}},
+		&fakeConv{ID: "C11", Name: "keep", Kind: "public", Members: []string{"UME"},
+			Msgs: []fakeMsg{{TS: ts(1), User: "UME", Text: "keep hi"}}},
+	)
+	_ = rootTS
+	imp, opts := testImporter(t, f)
+	st := imp.store
+
+	sum, err := imp.Import(context.Background(), opts)
+	require.NoError(err)
+
+	// While #legacy is excluded, a NEW thread starts there — root AND reply
+	// both created after the channel's backfill pin — and the watermark
+	// certifies past them. A catch-up walk bounded by the original pin
+	// would never anchor this root, losing the reply permanently.
+	gapRoot, gapReply := tsFresh(0), tsFresh(1)
+	f.mu.Lock()
+	f.conv("G05").Msgs = append(f.conv("G05").Msgs, fakeMsg{TS: gapRoot, User: "UME", Text: "root while excluded",
+		Replies: []fakeMsg{{TS: gapReply, ThreadTS: gapRoot, User: "UME", Text: "reply while excluded"}}})
+	f.mu.Unlock()
+
+	imp.now = func() time.Time { return time.Now().Add(time.Hour) }
+	excluded := opts
+	excluded.ExcludeChannels = []string{"legacy"}
+	_, err = imp.Import(context.Background(), excluded)
+	require.NoError(err)
+
+	state := imp.loadResumeState(sum.SourceID)
+	require.True(tsLess(gapReply, state.SweepWatermark),
+		"test setup: the watermark must have certified past the excluded channel's reply")
+
+	// Re-entry flags the gap as thread debt; the following run's catch-up
+	// walk must cover roots created AFTER the original backfill pin.
+	imp.now = func() time.Time { return time.Now().Add(2 * time.Hour) }
+	_, err = imp.Import(context.Background(), opts)
+	require.NoError(err)
+	imp.now = func() time.Time { return time.Now().Add(3 * time.Hour) }
+	_, err = imp.Import(context.Background(), opts)
+	require.NoError(err)
+
+	var n int
+	require.NoError(st.DB().QueryRow(st.Rebind(
+		`SELECT COUNT(*) FROM messages WHERE source_message_id = ?`), "G05:"+gapReply).Scan(&n))
+	require.Equal(1, n, "gap recovery must anchor threads rooted after the backfill pin")
 }
 
 func TestSweepSkipsNotDoneConversations(t *testing.T) {

@@ -253,6 +253,69 @@ func TestPersistFilesPreservesTombstonedAndOmittedDownloads(t *testing.T) {
 	assert.False(pendKept, "a stale pending marker clears once the source stops listing the file")
 }
 
+func TestPersistFilesKeepsAliasRowsForDuplicateContent(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := testWorkspace(t)
+	// Two distinct Slack files whose bytes are identical (the transport
+	// serves one body for every path): the schema's (message_id,
+	// content_hash) uniqueness must not silently drop the second file ID.
+	f.conv("C01").Msgs[6].Files = []map[string]any{
+		{"id": "F_DUP1", "name": "a.png", "mimetype": "image/png", "size": 5,
+			"url_private": "https://files.slack.com/files-pri/T01-F_DUP1/a.png",
+			"permalink":   "https://testers.slack.com/files/F_DUP1"},
+		{"id": "F_DUP2", "name": "copy-of-a.png", "mimetype": "image/png", "size": 5,
+			"url_private": "https://files.slack.com/files-pri/T01-F_DUP2/copy-of-a.png",
+			"permalink":   "https://testers.slack.com/files/F_DUP2"},
+	}
+
+	prevInterval := checkpointMinInterval
+	checkpointMinInterval = 0
+	t.Cleanup(func() { checkpointMinInterval = prevInterval })
+	srv := f.serve()
+	client := NewClient(srv.URL, "xoxp-test")
+	client.disableRateLimits()
+	rt := &recordingTransport{body: "png05"}
+	client.mediaTransport = rt
+	st := testutil.NewTestStore(t)
+	imp := NewImporter(st, client, "T01")
+
+	opts := ImportOptions{
+		TeamID: "T01", UserID: "UME",
+		AttachmentsDir: t.TempDir(), MaxMediaBytes: 1 << 20,
+	}
+	_, err := imp.Import(context.Background(), opts)
+	require.NoError(err)
+
+	// Both file IDs keep a row: one carries the hash, the duplicate is an
+	// alias (same CAS path, hash re-derived on read).
+	src, err := st.GetOrCreateSource("slack", "T01:UME")
+	require.NoError(err)
+	var messageID int64
+	require.NoError(st.DB().QueryRow(st.Rebind(
+		`SELECT id FROM messages WHERE source_message_id = ?`), "C01:"+ts(6)).Scan(&messageID))
+	refs, err := st.MessageSlackAttachments(messageID)
+	require.NoError(err)
+	require.Len(refs, 2, "duplicate-content file IDs must both keep attachment rows")
+	assert.NotEmpty(refs["slack:F_DUP1"].ContentHash)
+	assert.NotEmpty(refs["slack:F_DUP2"].ContentHash, "the alias row must read back as downloaded")
+	assert.Equal(refs["slack:F_DUP1"].StoragePath, refs["slack:F_DUP2"].StoragePath)
+
+	// Aliases are downloaded, not pending — and repairs must not re-fetch.
+	pending, err := st.ListSlackPendingAttachmentMessages(src.ID)
+	require.NoError(err)
+	assert.Empty(pending, "alias rows are downloaded, never pending work")
+
+	full := opts
+	full.Full = true
+	_, err = imp.Import(context.Background(), full)
+	require.NoError(err)
+	assert.Len(rt.requests, 2, "a repair pass must not re-download duplicate-content files")
+	refs, err = st.MessageSlackAttachments(messageID)
+	require.NoError(err)
+	assert.Len(refs, 2)
+}
+
 func TestNoMediaDefersFilesAsPendingNotLinks(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

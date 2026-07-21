@@ -525,7 +525,7 @@ After adding, sync with `msgvault sync-slack`.
 Sync Slack conversations — channels you are a member of, group DMs, and 1:1
 DMs — for registered workspaces. The first run backfills full history and is
 resumable; later runs are incremental and sweep for thread replies created
-since the last run (any thread age). replies. Per-workspace failures do not stop the run: remaining workspaces
+since the last run (any thread age). Per-workspace failures do not stop the run: remaining workspaces
 still sync and the command exits non-zero listing the failures. The `[slack]`
 config `channels`/`exclude_channels` filters select which channels sync. See
 [Slack](/usage/slack/).
@@ -538,7 +538,7 @@ msgvault sync-slack --full
 
 | Flag | Default | Description |
 |---|---|---|
-| `--limit` | `0` | Max messages per conversation this run (0 = no limit; limited runs resume next run and skip the maintenance rescan) |
+| `--limit` | `0` | Max messages of work per conversation this run, thread replies included via their `reply_count` forecast (0 = no limit; limited runs resume next run, drain large threads across runs, and skip the maintenance rescan) |
 | `--full` | `false` | Ignore stored cursors and re-fetch every message (repairs rows in place; catches old thread replies and edits) |
 | `--no-threads` | `false` | Skip thread-reply fetching for this run (a later threaded run pays the debt automatically) |
 | `--maintenance` | `false` | Repair edits/reaction changes on recent messages (ignored by default after capture) |

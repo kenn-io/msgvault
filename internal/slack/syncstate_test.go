@@ -53,6 +53,7 @@ func TestSyncStateMergePrefersAdvancedCursors(t *testing.T) {
 	ncs.Cursor = "200.000001"
 	ncs.Done = true
 	ncs.SweptThrough = "170.000001"
+	ncs.PendingThreads = []PendingThread{{RootTS: "50.000001", DrainedTo: "60.000001", Forecast: 7}}
 	newer.EnsureConv("C02").BackfillCursor = "opaque"
 	newer.SweepWatermark, newer.SweepOffset = "180.000001", -14400
 
@@ -64,9 +65,13 @@ func TestSyncStateMergePrefersAdvancedCursors(t *testing.T) {
 	assert.Equal("180.000001", base.SweepWatermark, "the further-advanced watermark wins")
 	assert.Equal(-14400, base.SweepOffset, "the winning watermark carries its audit offset")
 	assert.Equal("170.000001", mcs.SweptThrough)
+	assert.Equal([]PendingThread{{RootTS: "50.000001", DrainedTo: "60.000001", Forecast: 7}}, mcs.PendingThreads,
+		"non-empty thread debt wins wholesale")
 
 	// A stale checkpoint must never regress an advanced cursor, watermark,
-	// or per-conversation certification stamp.
+	// or per-conversation certification stamp — and its EMPTY thread-debt
+	// list must not clear live debt (a stale non-empty list only causes a
+	// harmless idempotent re-drain; a wrongly cleared one loses replies).
 	stale := NewSyncState()
 	stale.EnsureConv("C01").Cursor = "150.000001"
 	stale.EnsureConv("C01").SweptThrough = "110.000001"
@@ -77,6 +82,8 @@ func TestSyncStateMergePrefersAdvancedCursors(t *testing.T) {
 	assert.Equal(-14400, base.SweepOffset)
 	assert.Equal("170.000001", base.EnsureConv("C01").SweptThrough,
 		"a stale checkpoint's certification stamp must not regress the advanced one")
+	assert.Len(base.EnsureConv("C01").PendingThreads, 1,
+		"an empty list must never clear outstanding thread debt")
 }
 
 func TestSyncStateMergeCursorUnitIsAtomic(t *testing.T) {
