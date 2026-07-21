@@ -138,7 +138,7 @@ func TestWebHandlerServesShellForSafeNavigation(t *testing.T) {
 			assert.Equal("0", recorder.Header().Get("Expires"))
 			assert.Equal("nosniff", recorder.Header().Get("X-Content-Type-Options"))
 			assert.Equal(
-				"default-src 'self'; script-src 'self'; style-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'",
+				"default-src 'self'; img-src 'self' data: blob:; script-src 'self'; style-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'",
 				recorder.Header().Get("Content-Security-Policy"),
 			)
 		})

@@ -13,8 +13,11 @@ import (
 const (
 	shellCacheControl = "no-store, no-cache, must-revalidate, max-age=0"
 	immutableCache    = "public, max-age=31536000, immutable"
-	shellCSP          = "default-src 'self'; script-src 'self'; style-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'"
-	viteManifestPath  = ".vite/manifest.json"
+	// img-src allows blob: for FileViewer image previews (object URLs over
+	// verified archive bytes) and data: for sanitized inline images in the
+	// reader's srcdoc frame, which inherits this policy.
+	shellCSP         = "default-src 'self'; img-src 'self' data: blob:; script-src 'self'; style-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'"
+	viteManifestPath = ".vite/manifest.json"
 )
 
 type viteManifestEntry struct {
