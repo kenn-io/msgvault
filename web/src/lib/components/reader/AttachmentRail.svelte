@@ -45,7 +45,7 @@
       {#each chronological as file (file.key)}
         <li>
           <div><strong>{file.filename || '(unnamed file)'}</strong><span>{bytes(file.size)}</span></div>
-          <div><time datetime={file.occurred_at}>{date(file.occurred_at)}</time><span>{file.title || file.source_identifier}</span></div>
+          <div><time datetime={file.occurred_at} data-mono>{date(file.occurred_at)}</time><span>{file.title || file.source_identifier}</span></div>
         </li>
       {/each}
     </ol>

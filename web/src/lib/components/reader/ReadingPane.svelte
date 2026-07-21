@@ -27,6 +27,7 @@
   import type { APIClient } from '../../api/client';
   import { createExploreAPI } from '../../explore/api';
   import type { ExploreCacheUnavailable, ExploreFileFact, ExploreFilter } from '../../explore/models';
+  import EmptyState from '../common/EmptyState.svelte';
   import TaskLinks from '../tasks/TaskLinks.svelte';
   import AttachmentRail from './AttachmentRail.svelte';
   import ConversationView from './ConversationView.svelte';
@@ -205,7 +206,7 @@
   <header class="pane-header">
     <div class="pane-heading">
       <strong class="pane-title">{title}</strong>
-      {#if metaStrip}<span class="pane-meta">{metaStrip}</span>{/if}
+      {#if metaStrip}<span class="pane-meta" data-mono>{metaStrip}</span>{/if}
     </div>
     <div class="pane-actions">
       {#if showTasks}
@@ -258,7 +259,12 @@
             {unavailable.message} Rebuild the cache with <code>{unavailable.recovery_action}</code>.
           </p>
         {:else}
-          <p role="alert">{statusMessage || 'The selected result is no longer available in this context.'}</p>
+          <EmptyState
+            glyph="envelope"
+            label="Nothing to read here"
+            hint={statusMessage || 'The selected result is no longer available in this context.'}
+            role="alert"
+          />
         {/if}
       </section>
     {:else if selection.kind === 'entry'}
@@ -266,7 +272,7 @@
         <p class="preview">{selection.row.preview || 'No preview is available.'}</p>
       </section>
     {:else}
-      <div class="group-scroll" aria-label="Group details">
+      <div class="group-scroll" aria-label="Group details" data-scroll>
         {#if showFiles}
           <AttachmentRail files={files} totalCount={totalFiles} loading={filesLoading} error={filesError} />
         {:else}
@@ -290,6 +296,21 @@
     background: var(--bg-surface);
   }
 
+  @media (prefers-reduced-motion: no-preference) {
+    .reading-pane {
+      animation: pane-rise 160ms ease-out;
+    }
+
+    @keyframes pane-rise {
+      from {
+        opacity: 0;
+        transform: translateY(10px);
+      }
+    }
+  }
+
+  /* Machined hairline under the pane header: darker line plus a faint
+   * sheen below it. */
   .pane-header {
     display: flex;
     min-height: 40px;
@@ -299,6 +320,7 @@
     gap: var(--space-4);
     padding: var(--space-2) var(--space-4);
     border-bottom: 1px solid var(--border-muted);
+    box-shadow: 0 1px 0 var(--hairline-sheen);
   }
 
   .pane-heading {

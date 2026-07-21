@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { APIClient } from '../../api/client';
   import type { ArchiveMessageDetail, MessageViewMode } from '../../archive/types';
+  import IdentityAvatar from '../common/IdentityAvatar.svelte';
   import ContentFrame from './ContentFrame.svelte';
 
   interface Props {
@@ -54,6 +55,7 @@
     data-message-id={message.id}
   >
     <div class="card-header">
+      <IdentityAvatar label={message.sender || '?'} size={24} />
       <button
         type="button"
         class="collapse-target"
@@ -63,10 +65,10 @@
       >
         <span class="header-line">
           <strong class="sender">{message.sender || 'Unknown sender'}</strong>
-          <time datetime={message.sentAt}>{formatDate(message.sentAt)}</time>
+          <time datetime={message.sentAt} data-mono>{formatDate(message.sentAt)}</time>
         </span>
         {#if message.recipients.length > 0}
-          <span class="recipients">to {message.recipients.join(', ')}</span>
+          <span class="recipients" data-mono>to {message.recipients.join(', ')}</span>
         {/if}
         {#if message.subject}
           <span class="subject">{message.subject}</span>
@@ -90,18 +92,20 @@
       <p class="sanitize-notice" role="alert">Could not render HTML formatting. Showing plain text.</p>
     {/if}
 
-    <section class="card-body" aria-label="Message body">
-      {#if renderAsHTML}
-        <ContentFrame
-          {client}
-          messageId={message.id}
-          html={message.bodyHtml ?? ''}
-          title="Message body"
-        />
-      {:else}
-        <pre>{message.body}</pre>
-      {/if}
-    </section>
+    <div class="body-reveal">
+      <section class="card-body" aria-label="Message body">
+        {#if renderAsHTML}
+          <ContentFrame
+            {client}
+            messageId={message.id}
+            html={message.bodyHtml ?? ''}
+            title="Message body"
+          />
+        {:else}
+          <pre>{message.body}</pre>
+        {/if}
+      </section>
+    </div>
   </article>
 {:else}
   <button
@@ -112,9 +116,10 @@
     data-message-id={message.id}
     onclick={() => onToggle?.(message.id)}
   >
+    <IdentityAvatar label={message.sender || '?'} size={24} />
     <span class="collapsed-sender">{message.sender || 'Unknown sender'}</span>
     <span class="collapsed-snippet">{message.snippet || message.subject}</span>
-    <time datetime={message.sentAt}>{formatDate(message.sentAt)}</time>
+    <time datetime={message.sentAt} data-mono>{formatDate(message.sentAt)}</time>
   </button>
 {/if}
 
@@ -127,7 +132,7 @@
   .message-card--collapsed {
     display: flex;
     width: 100%;
-    align-items: baseline;
+    align-items: center;
     gap: var(--space-4);
     padding: var(--space-3) var(--space-4);
     border: 0;
@@ -137,10 +142,45 @@
     cursor: pointer;
     font: inherit;
     text-align: left;
+    transition: background-color 80ms ease-out;
   }
 
   .message-card--collapsed:hover {
     background: var(--bg-surface-hover);
+  }
+
+  /* The thread anchor carries the same 2px accent inset bar as every other
+   * selected row in the app. */
+  .message-card--expanded[aria-current='true'] {
+    box-shadow: inset 2px 0 0 var(--accent-blue);
+  }
+
+  .body-reveal {
+    display: grid;
+    grid-template-rows: 1fr;
+  }
+
+  .body-reveal > .card-body {
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  @media (prefers-reduced-motion: no-preference) {
+    .body-reveal {
+      animation: body-expand 180ms ease-out;
+    }
+
+    @keyframes body-expand {
+      from {
+        grid-template-rows: 0fr;
+        opacity: 0;
+      }
+
+      to {
+        grid-template-rows: 1fr;
+        opacity: 1;
+      }
+    }
   }
 
   .collapsed-sender {
