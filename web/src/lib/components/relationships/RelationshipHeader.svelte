@@ -178,9 +178,11 @@
   }
 </script>
 
-<header class="relationship-header" aria-label="Relationship detail">
+<header class="relationship-header" class:has-detail={Boolean(detail)} aria-label="Relationship detail">
   {#if !detail}
-    <p role="status">{loading ? 'Loading relationship…' : 'Select a person or domain to see activity.'}</p>
+    <p class="header-empty" role="status">
+      {loading ? 'Loading relationship…' : 'Select a person or domain to see your shared history.'}
+    </p>
   {:else}
     <div class="title-row">
       <h2>{displayLabel(detail)}</h2>
@@ -307,8 +309,17 @@
     display: flex;
     flex-direction: column;
     gap: var(--space-3);
-    padding-bottom: var(--space-3);
+  }
+
+  .relationship-header.has-detail {
+    padding-bottom: var(--space-4);
     border-bottom: 1px solid var(--border-muted);
+  }
+
+  .header-empty {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
   }
 
   .title-row {

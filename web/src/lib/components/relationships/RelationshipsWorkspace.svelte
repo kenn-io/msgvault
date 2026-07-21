@@ -399,41 +399,52 @@
 
   <div class="pane-center-and-reading" class:stacked={layout !== 'wide'}>
     <div class="pane-center">
-      <RelationshipHeader
-        detail={controller.detail}
-        loading={controller.timelineLoading}
-        {filesOpen}
-        {onFilesToggle}
-        {client}
-        onLinkParticipants={(a, b) => controller.linkParticipants(a, b)}
-        onUnlinkParticipants={(a, b) => controller.unlinkParticipants(a, b)}
-      />
-      {#if filesOpen && filesReady}
-        <FilesWorkspace
-          {client}
-          predicate={contextPredicate(predicate)}
-          identityScope={identityScopeFor(target)}
-          sort={fileSort}
-          filenameQuery={fileFilenameQuery}
-          mimeFamilies={fileMIMEFamilies}
-          onSortChange={(value) => (fileSort = value)}
-          onFilenameQueryChange={(value) => (fileFilenameQuery = value)}
-          onMIMEFamiliesChange={(value) => (fileMIMEFamilies = value)}
-          onOpenItem={onOpenFileItem}
-          onOpenConversation={onOpenFileConversation}
-        />
+      {#if target === null && controller.target === null}
+        <div class="hub-empty" role="status">
+          <p class="hub-empty-title">Select a person or domain</p>
+          <p class="hub-empty-hint">
+            Choose someone from the list to see your shared history across mail, chat, and files.
+          </p>
+        </div>
       {:else}
-        <RelationshipTimeline
-          rows={controller.timelineRows}
-          loading={controller.timelineLoading}
-          loadingMore={controller.timelineLoadingMore}
-          hasMore={Boolean(controller.timelineCursor)}
-          error={controller.timelineError}
-          restartNotice={controller.timelineRestartNotice}
-          selectedKey={selectedRowKey}
-          onRowOpen={openTimelineRow}
-          onLoadMore={() => { void controller.loadMoreTimeline(); }}
-        />
+        <div class="pane-center-column">
+          <RelationshipHeader
+            detail={controller.detail}
+            loading={controller.timelineLoading}
+            {filesOpen}
+            {onFilesToggle}
+            {client}
+            onLinkParticipants={(a, b) => controller.linkParticipants(a, b)}
+            onUnlinkParticipants={(a, b) => controller.unlinkParticipants(a, b)}
+          />
+          {#if filesOpen && filesReady}
+            <FilesWorkspace
+              {client}
+              predicate={contextPredicate(predicate)}
+              identityScope={identityScopeFor(target)}
+              sort={fileSort}
+              filenameQuery={fileFilenameQuery}
+              mimeFamilies={fileMIMEFamilies}
+              onSortChange={(value) => (fileSort = value)}
+              onFilenameQueryChange={(value) => (fileFilenameQuery = value)}
+              onMIMEFamiliesChange={(value) => (fileMIMEFamilies = value)}
+              onOpenItem={onOpenFileItem}
+              onOpenConversation={onOpenFileConversation}
+            />
+          {:else}
+            <RelationshipTimeline
+              rows={controller.timelineRows}
+              loading={controller.timelineLoading}
+              loadingMore={controller.timelineLoadingMore}
+              hasMore={Boolean(controller.timelineCursor)}
+              error={controller.timelineError}
+              restartNotice={controller.timelineRestartNotice}
+              selectedKey={selectedRowKey}
+              onRowOpen={openTimelineRow}
+              onLoadMore={() => { void controller.loadMoreTimeline(); }}
+            />
+          {/if}
+        </div>
       {/if}
     </div>
     {#if selection !== undefined}
@@ -463,14 +474,16 @@
     display: flex;
     min-height: 0;
     height: 100%;
-    gap: var(--space-4);
+    background: var(--bg-canvas);
   }
 
   .pane-list {
     display: flex;
-    flex: 0 0 280px;
+    flex: 0 0 clamp(280px, 19vw, 340px);
     flex-direction: column;
     overflow: hidden;
+    background: var(--bg-primary);
+    border-right: 1px solid var(--border-muted);
   }
 
   .pane-list.drawer {
@@ -493,7 +506,6 @@
     display: flex;
     min-width: 0;
     flex: 1;
-    gap: var(--space-4);
     overflow: hidden;
   }
 
@@ -506,16 +518,66 @@
     min-width: 0;
     flex: 1;
     flex-direction: column;
-    gap: var(--space-3);
     overflow: hidden;
+  }
+
+  /* Readable content column: the timeline caps out instead of stretching
+   * shapelessly across ultrawide viewports. */
+  .pane-center-column {
+    display: flex;
+    width: 100%;
+    max-width: 1080px;
+    min-height: 0;
+    flex: 1;
+    flex-direction: column;
+    gap: var(--space-4);
+    margin-inline: auto;
+    padding: var(--space-6) var(--space-7);
+  }
+
+  .hub-empty {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-2);
+    padding: var(--space-8);
+    text-align: center;
+  }
+
+  .hub-empty-title {
+    margin: 0;
+    color: var(--text-secondary);
+    font-size: var(--font-size-lg);
+    font-weight: 600;
+  }
+
+  .hub-empty-hint {
+    margin: 0;
+    max-width: 380px;
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+    line-height: 1.5;
   }
 
   .pane-reading {
     flex: none;
+    border-left: 1px solid var(--border-muted);
+    background: var(--bg-surface);
+  }
+
+  /* The reading pane provides the boundary; the embedded Inspector card
+   * chrome would double it up. */
+  .pane-reading :global(.pinned-inspector aside) {
+    border: 0;
+    border-radius: 0;
   }
 
   .pane-center-and-reading.stacked .pane-reading {
     flex: 1;
     min-height: 0;
+    border-left: 0;
+    border-top: 1px solid var(--border-muted);
   }
 </style>

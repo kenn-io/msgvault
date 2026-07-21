@@ -181,9 +181,12 @@
       onkeydown={handleKeydown}
     >
       {#if loading && views.length === 0}
-        <p role="status">Loading relationships…</p>
+        <p class="list-empty" role="status">Loading relationships…</p>
       {:else if views.length === 0}
-        <p role="status">No relationships found.</p>
+        <div class="list-empty" role="status">
+          <p class="list-empty-title">No relationships found</p>
+          <p class="list-empty-hint">Try a different search, or switch between People and Domains.</p>
+        </div>
       {:else}
         {#each views as view, index (view.key)}
           <div
@@ -224,15 +227,18 @@
   .relationship-list {
     display: flex;
     min-width: 0;
+    min-height: 0;
+    flex: 1;
     flex-direction: column;
     gap: var(--space-3);
     overflow: hidden;
+    padding: var(--space-5) var(--space-4) 0;
   }
 
   .toolbar {
     display: flex;
     flex-direction: column;
-    gap: var(--space-2);
+    gap: var(--space-3);
   }
 
   .show-all {
@@ -241,6 +247,27 @@
     gap: var(--space-2);
     color: var(--text-secondary);
     font-size: var(--font-size-xs);
+  }
+
+  .list-empty {
+    display: grid;
+    gap: var(--space-2);
+    margin: 0;
+    padding: var(--space-8) var(--space-5);
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+    text-align: center;
+  }
+
+  .list-empty-title {
+    margin: 0;
+    color: var(--text-secondary);
+    font-weight: 600;
+  }
+
+  .list-empty-hint {
+    margin: 0;
+    line-height: 1.5;
   }
 
   .named-state {
@@ -261,6 +288,8 @@
     gap: 2px;
     overflow: auto;
     outline: none;
+    margin-inline: calc(var(--space-2) * -1);
+    padding-bottom: var(--space-4);
   }
 
   .results-grid:focus-visible {
@@ -290,8 +319,7 @@
   }
 
   .result-row.selected {
-    background: color-mix(in srgb, var(--accent-teal) 12%, var(--bg-surface));
-    border-color: var(--selected-border);
+    background: var(--selected-bg);
   }
 
   .row-main {

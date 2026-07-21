@@ -36,9 +36,14 @@
 
   const MONTH_HEADER_HEIGHT = 28;
   const OVERSCAN = 6;
+  /* Timeline rows stack a title/time line over a preview line, so they need
+   * more room than the single-line table rows the density token sizes. */
+  const TWO_LINE_ROW_EXTRA = 16;
 
   const geometry = new RowGeometry();
-  const rowHeight = $derived(geometry.height);
+  const rowHeight = $derived(
+    geometry.height === undefined ? undefined : geometry.height + TWO_LINE_ROW_EXTRA
+  );
 
   let gridElement = $state<HTMLDivElement>();
   let scrollTop = $state(0);
@@ -178,11 +183,11 @@
   >
     <div class="timeline-body" role="rowgroup">
       {#if loading && rows.length === 0}
-        <div role="row"><div role="gridcell"><p role="status">Loading activity…</p></div></div>
+        <div role="row"><div role="gridcell"><p class="timeline-empty" role="status">Loading activity…</p></div></div>
       {:else if rows.length === 0}
-        <div role="row"><div role="gridcell"><p role="status">No activity yet.</p></div></div>
+        <div role="row"><div role="gridcell"><p class="timeline-empty" role="status">No activity yet.</p></div></div>
       {:else if !slice || rowHeight === undefined}
-        <div role="row"><div role="gridcell"><p role="status">Preparing timeline layout…</p></div></div>
+        <div role="row"><div role="gridcell"><p class="timeline-empty" role="status">Preparing timeline layout…</p></div></div>
       {:else}
         <div class="virtual-spacer" style:height={`${slice.totalHeight}px`}>
           <div class="virtual-window" style:transform={`translateY(${slice.topPad}px)`}>
@@ -205,9 +210,11 @@
                   ondblclick={() => selectRow(item.row)}
                 >
                   <div role="gridcell">
-                    <strong>{timelineRowTitle(item.row)}</strong>
+                    <span class="row-top">
+                      <strong>{timelineRowTitle(item.row)}</strong>
+                      <time datetime={item.row.occurred_at}>{formatTime(item.row.occurred_at)}</time>
+                    </span>
                     <span class="preview">{item.row.preview}</span>
-                    <time datetime={item.row.occurred_at}>{formatTime(item.row.occurred_at)}</time>
                   </div>
                 </div>
               {/if}
@@ -299,9 +306,26 @@
 
   .timeline-row [role='gridcell'] {
     display: flex;
+    min-width: 0;
     flex-direction: column;
     gap: 2px;
     padding: 0 var(--space-3);
+  }
+
+  .row-top {
+    display: flex;
+    min-width: 0;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: var(--space-4);
+  }
+
+  .row-top strong {
+    flex: 1;
+  }
+
+  .row-top time {
+    flex: none;
   }
 
   .timeline-row:hover {
@@ -317,10 +341,19 @@
     outline-offset: -2px;
   }
 
+  .timeline-empty {
+    margin: 0;
+    padding: var(--space-7) var(--space-3);
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+    text-align: center;
+  }
+
   .timeline-row strong {
     overflow: hidden;
     color: var(--text-primary);
     font-size: var(--font-size-sm);
+    font-weight: 600;
     text-overflow: ellipsis;
     white-space: nowrap;
   }

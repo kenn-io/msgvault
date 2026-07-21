@@ -84,7 +84,7 @@ describe('RelationshipsWorkspace', () => {
     render(RelationshipsWorkspace, { props: baseProps(fetchFn) });
 
     expect(await screen.findByText('Alice Example')).toBeDefined();
-    expect(screen.getByText('Select a person or domain to see activity.')).toBeDefined();
+    expect(screen.getByText('Select a person or domain')).toBeDefined();
     expect(screen.queryByRole('complementary', { name: /Inspect/ })).toBeNull();
   });
 
@@ -403,7 +403,7 @@ describe('RelationshipsWorkspace', () => {
 
     await screen.findByText('Alice Example');
     expect(screen.queryByRole('grid', { name: 'Files results' })).toBeNull();
-    expect(screen.getByText('Select a person or domain to see activity.')).toBeDefined();
+    expect(screen.getByText('Select a person or domain')).toBeDefined();
   });
 
   it('walks Esc back one layer at a time: reading pane, then the open target', async () => {
