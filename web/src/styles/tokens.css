@@ -1,5 +1,6 @@
 :root {
-  --font-sans: 'Figtree Variable', Figtree, ui-sans-serif, system-ui, sans-serif;
+  --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial,
+    sans-serif;
   --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   --font-reading: Charter, 'Bitstream Charter', Georgia, serif;
   --focus-ring: 2px solid var(--focus-color);

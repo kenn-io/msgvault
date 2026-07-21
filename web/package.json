@@ -14,7 +14,6 @@
     "test:e2e": "playwright test e2e conversation-content-frame.spec.ts files-viewer.spec.ts"
   },
   "dependencies": {
-    "@fontsource-variable/figtree": "5.3.0",
     "@kenn-io/kit-ui": "github:kenn-io/kit-ui#1e9dc7d45525a471040b72b894432c4956542c38",
     "@tanstack/svelte-virtual": "3.13.32",
     "dompurify": "3.4.11",

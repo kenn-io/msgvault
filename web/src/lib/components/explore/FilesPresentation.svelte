@@ -327,7 +327,7 @@
   .file-grid { display: flex; min-height: 0; flex: 1; flex-direction: column; overflow: auto; border: 1px solid var(--border-default); border-radius: var(--radius-md); background: var(--bg-surface); outline: none; }
   .file-grid:focus-visible { box-shadow: inset 0 0 0 2px var(--focus-color); }
   .file-row { display: grid; grid-template-columns: 110px minmax(160px,1fr) minmax(180px,1.4fr) minmax(150px,1fr) 90px; align-items: center; gap: var(--space-3); min-height: var(--row-height); padding: 0 var(--space-3); }
-  .file-header { position: sticky; z-index: 1; top: 0; min-height: var(--table-header-height); flex: 0 0 auto; border-bottom: 1px solid var(--border-default); background: var(--bg-surface); color: var(--text-muted); font-size: var(--font-size-2xs); font-weight: 700; text-transform: uppercase; }
+  .file-header { position: sticky; z-index: 1; top: 0; min-height: var(--table-header-height); flex: 0 0 auto; border-bottom: 1px solid var(--border-default); background: var(--bg-surface); color: var(--text-muted); font-size: var(--font-size-2xs); font-weight: 600; text-transform: uppercase; }
   .file-body { position: relative; min-height: 220px; flex: 0 0 auto; }
   .virtual-spacer { position: relative; }
   .virtual-window { position: absolute; inset: 0 0 auto; }
@@ -339,7 +339,7 @@
      active/selected indicator on hover. */
   .file-data--active:hover { background: var(--selected-bg); }
   .file-data span { min-width: 0; overflow: hidden; color: var(--text-secondary); font-size: var(--font-size-xs); text-overflow: ellipsis; white-space: nowrap; }
-  .file-data .filename { color: var(--text-primary); font-weight: 700; }
+  .file-data .filename { color: var(--text-primary); font-weight: 600; }
   .file-data button { max-width: 100%; padding: 0; overflow: hidden; border: 0; background: transparent; color: inherit; cursor: pointer; font: inherit; text-overflow: ellipsis; white-space: nowrap; }
   .file-data button:hover { color: var(--text-primary); text-decoration: underline; }
   .notice { display: flex; min-height: 120px; align-items: center; justify-content: center; gap: var(--space-3); padding: var(--space-5); color: var(--text-secondary); }

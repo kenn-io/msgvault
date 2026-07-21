@@ -41,9 +41,7 @@ test('validates the production Vite graph and staged embed', (t) => {
   const paths = releaseCopy(t);
   const result = validateWebAssets(paths);
   assert.ok(result.files.some((file) => file.path === 'index.html'));
-  assert.ok(result.files.some((file) => file.path.endsWith('.woff2')));
   assert.ok(result.files.some((file) => file.path.endsWith('.mjs')));
-  assert.ok(result.files.some((file) => file.path === 'licenses/Figtree-OFL.txt'));
 });
 
 test('rejects missing and escaping release references', (t) => {
@@ -61,7 +59,7 @@ test('rejects source maps, external scripts, fonts, and embed drift', (t) => {
   const sourceMap = releaseCopy(t);
   const manifestPath = resolve(sourceMap.dist, '.vite/manifest.json');
   const manifest = JSON.parse(readFileSync(manifestPath));
-  manifest['index.html'].assets.push('assets/index.js.map');
+  manifest['index.html'].assets = [...(manifest['index.html'].assets ?? []), 'assets/index.js.map'];
   mkdirSync(resolve(sourceMap.dist, 'assets'), { recursive: true });
   writeFileSync(resolve(sourceMap.dist, 'assets/index.js.map'), '{}');
   writeFileSync(manifestPath, JSON.stringify(manifest));
@@ -149,7 +147,7 @@ test('requires immutable release assets to carry Vite hash-bearing names', (t) =
   const paths = releaseCopy(t);
   const manifestPath = resolve(paths.dist, '.vite/manifest.json');
   const manifest = JSON.parse(readFileSync(manifestPath));
-  manifest['index.html'].assets.push('assets/unhashed.css');
+  manifest['index.html'].assets = [...(manifest['index.html'].assets ?? []), 'assets/unhashed.css'];
   writeReleaseFile(paths, 'assets/unhashed.css', '.unhashed{color:inherit}');
   writeFileSync(manifestPath, JSON.stringify(manifest));
   writeFileSync(resolve(paths.embedded, '.vite/manifest.json'), JSON.stringify(manifest));

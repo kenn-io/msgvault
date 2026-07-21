@@ -202,9 +202,6 @@ export function validateWebAssets(options = {}) {
 
   const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
   for (const reference of manifestGraph(manifest)) enqueue(reference);
-  // Vite copies this compliance artifact from web/public. It is intentionally
-  // distributed even though application code does not request it at runtime.
-  enqueue('licenses/Figtree-OFL.txt');
 
   const files = [];
   for (let index = 0; index < queue.length; index += 1) {

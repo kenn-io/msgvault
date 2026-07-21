@@ -649,7 +649,7 @@
     background: var(--bg-surface);
     color: var(--text-muted);
     font-size: var(--font-size-2xs);
-    font-weight: 700;
+    font-weight: 600;
     letter-spacing: 0.04em;
     text-transform: uppercase;
   }
