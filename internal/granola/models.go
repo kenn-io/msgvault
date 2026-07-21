@@ -7,6 +7,7 @@ package granola
 
 import (
 	"encoding/json"
+	"fmt"
 	"time"
 )
 
@@ -22,6 +23,28 @@ const (
 	// DefaultBaseURL is the production API host.
 	DefaultBaseURL = "https://public-api.granola.ai"
 )
+
+type apiTimestamp time.Time
+
+func (t *apiTimestamp) UnmarshalJSON(data []byte) error {
+	if string(data) == "null" {
+		*t = apiTimestamp(time.Time{})
+		return nil
+	}
+	var value string
+	if err := json.Unmarshal(data, &value); err != nil {
+		return fmt.Errorf("decode Granola timestamp: %w", err)
+	}
+	parsed, err := time.Parse(time.RFC3339Nano, value)
+	if err != nil {
+		parsed, err = time.Parse(time.DateOnly, value)
+	}
+	if err != nil {
+		return fmt.Errorf("parse Granola timestamp %q: %w", value, err)
+	}
+	*t = apiTimestamp(parsed)
+	return nil
+}
 
 // User is a note owner or meeting attendee. Email is always present; name may
 // be empty.
@@ -49,6 +72,21 @@ type TranscriptSegment struct {
 	EndTime   time.Time `json:"end_time"`
 }
 
+func (s *TranscriptSegment) UnmarshalJSON(data []byte) error {
+	type plain TranscriptSegment
+	decoded := struct {
+		*plain
+		StartTime apiTimestamp `json:"start_time"`
+		EndTime   apiTimestamp `json:"end_time"`
+	}{plain: (*plain)(s)}
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	s.StartTime = time.Time(decoded.StartTime)
+	s.EndTime = time.Time(decoded.EndTime)
+	return nil
+}
+
 // CalendarInvitee is an invitee on the calendar event backing a note.
 type CalendarInvitee struct {
 	Email string `json:"email"`
@@ -64,6 +102,21 @@ type CalendarEvent struct {
 	CalendarEventID    string            `json:"calendar_event_id"`
 	ScheduledStartTime time.Time         `json:"scheduled_start_time"`
 	ScheduledEndTime   time.Time         `json:"scheduled_end_time"`
+}
+
+func (e *CalendarEvent) UnmarshalJSON(data []byte) error {
+	type plain CalendarEvent
+	decoded := struct {
+		*plain
+		ScheduledStartTime apiTimestamp `json:"scheduled_start_time"`
+		ScheduledEndTime   apiTimestamp `json:"scheduled_end_time"`
+	}{plain: (*plain)(e)}
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	e.ScheduledStartTime = time.Time(decoded.ScheduledStartTime)
+	e.ScheduledEndTime = time.Time(decoded.ScheduledEndTime)
+	return nil
 }
 
 // Folder is a Granola workspace folder.
@@ -82,6 +135,21 @@ type NoteSummary struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
+func (s *NoteSummary) UnmarshalJSON(data []byte) error {
+	type plain NoteSummary
+	decoded := struct {
+		*plain
+		CreatedAt apiTimestamp `json:"created_at"`
+		UpdatedAt apiTimestamp `json:"updated_at"`
+	}{plain: (*plain)(s)}
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	s.CreatedAt = time.Time(decoded.CreatedAt)
+	s.UpdatedAt = time.Time(decoded.UpdatedAt)
+	return nil
+}
+
 // Note is the full note returned by GET /v1/notes/{id}?include=transcript.
 // Raw preserves the verbatim response body for archival in message_raw.
 type Note struct {
@@ -96,6 +164,36 @@ type Note struct {
 	Transcript       []TranscriptSegment `json:"transcript"`
 
 	Raw json.RawMessage `json:"-"`
+}
+
+func (n *Note) UnmarshalJSON(data []byte) error {
+	var summary NoteSummary
+	if err := json.Unmarshal(data, &summary); err != nil {
+		return err
+	}
+	var fields struct {
+		WebURL           string              `json:"web_url"`
+		CalendarEvent    *CalendarEvent      `json:"calendar_event"`
+		Attendees        []User              `json:"attendees"`
+		FolderMembership []Folder            `json:"folder_membership"`
+		SummaryText      string              `json:"summary_text"`
+		SummaryMarkdown  string              `json:"summary_markdown"`
+		Transcript       []TranscriptSegment `json:"transcript"`
+	}
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	*n = Note{
+		NoteSummary:      summary,
+		WebURL:           fields.WebURL,
+		CalendarEvent:    fields.CalendarEvent,
+		Attendees:        fields.Attendees,
+		FolderMembership: fields.FolderMembership,
+		SummaryText:      fields.SummaryText,
+		SummaryMarkdown:  fields.SummaryMarkdown,
+		Transcript:       fields.Transcript,
+	}
+	return nil
 }
 
 // ListNotesOutput is the GET /v1/notes response envelope.
