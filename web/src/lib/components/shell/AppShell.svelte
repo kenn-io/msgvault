@@ -856,10 +856,10 @@
             value={appearance.temporary.theme ?? 'daemon'}
             onchange={(event) => applyTemporaryTheme(event.currentTarget.value)}
           >
-            <option value="daemon">Theme: daemon</option>
-            <option value="system">Theme: system</option>
-            <option value="light">Theme: light</option>
-            <option value="dark">Theme: dark</option>
+            <option value="daemon">Theme: Auto</option>
+            <option value="system">Theme: System</option>
+            <option value="light">Theme: Light</option>
+            <option value="dark">Theme: Dark</option>
           </select>
         </label>
         <label>
@@ -869,9 +869,9 @@
             value={appearance.temporary.density ?? 'daemon'}
             onchange={(event) => applyTemporaryDensity(event.currentTarget.value)}
           >
-            <option value="daemon">Density: daemon</option>
-            <option value="compact">Density: compact</option>
-            <option value="comfortable">Density: comfortable</option>
+            <option value="daemon">Density: Auto</option>
+            <option value="compact">Density: Compact</option>
+            <option value="comfortable">Density: Comfortable</option>
           </select>
         </label>
       </div>
@@ -1065,34 +1065,54 @@
     height: 100vh;
     flex-direction: column;
     overflow: hidden;
-    background:
-      radial-gradient(circle at 86% -20%, color-mix(in srgb, var(--artifact-ink) 13%, transparent), transparent 34%),
-      var(--bg-primary);
+    background: var(--bg-primary);
     color: var(--text-primary);
   }
 
   .brand {
     display: inline-flex;
     align-items: center;
-    gap: var(--space-3);
+    gap: var(--space-2);
     color: var(--text-primary);
     font-family: var(--font-sans);
-    font-size: var(--font-size-lg);
-    font-weight: 700;
-    letter-spacing: 0.02em;
+    font-size: var(--font-size-md);
+    font-weight: 650;
+    letter-spacing: 0.01em;
   }
-
 
   .brand span {
     color: var(--artifact-ink);
+    font-size: var(--font-size-sm);
+  }
+
+  /* Integrated app-bar tabs: quiet text buttons with a soft active pill
+   * instead of kit-ui's detached inset track. */
+  .app-shell :global(.kit-top-bar__tabs) {
+    gap: var(--space-1);
+    padding: 0;
+    background: transparent;
+    border-radius: 0;
+  }
+
+  .app-shell :global(.kit-top-bar__tab) {
+    padding: 5px 12px;
+    border-radius: var(--radius-md);
+    font-size: var(--font-size-md);
+  }
+
+  .app-shell :global(.kit-top-bar__tab.active) {
+    background: var(--bg-subtle);
+    box-shadow: none;
   }
 
   .archive-state {
     display: inline-flex;
     align-items: center;
-    gap: var(--space-3);
+    gap: var(--space-2);
+    margin-left: var(--space-3);
     color: var(--text-muted);
     font-size: var(--font-size-xs);
+    white-space: nowrap;
   }
 
   .archive-state span {
@@ -1111,22 +1131,30 @@
   }
 
   .appearance-controls select {
-    min-height: var(--control-height);
-    border: 1px solid var(--control-border);
+    height: 26px;
+    padding: 0 var(--space-2);
+    border: 1px solid transparent;
     border-radius: var(--radius-sm);
-    background: var(--control-bg);
-    color: var(--text-primary);
+    background: transparent;
+    color: var(--text-secondary);
     font-size: var(--font-size-xs);
+  }
+
+  .appearance-controls select:hover {
+    border-color: var(--control-border);
+    background: var(--bg-surface-hover);
+    color: var(--text-primary);
   }
 
   .files-shell {
     display: flex;
+    width: 100%;
+    max-width: 1760px;
     min-height: 0;
     flex: 1;
     flex-direction: column;
-  }
-
-  .files-shell > :global(.context-bar) {
-    margin: var(--space-4) var(--space-6) 0;
+    gap: var(--space-4);
+    margin-inline: auto;
+    padding: var(--space-6) var(--space-7) var(--space-4);
   }
 </style>

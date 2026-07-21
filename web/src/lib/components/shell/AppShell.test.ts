@@ -464,7 +464,7 @@ describe('AppShell', () => {
     state.commitNavigation({ relationshipTarget: null });
 
     await waitFor(() => expect(screen.queryByRole('heading', { name: 'Alice Example' })).toBeNull());
-    expect(screen.getByText('Select a person or domain to see activity.')).toBeDefined();
+    expect(screen.getByText('Select a person or domain')).toBeDefined();
     expect(state.current.workspace).toBe('relationships');
 
     rendered.unmount();
