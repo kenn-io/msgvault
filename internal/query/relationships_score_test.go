@@ -2,6 +2,7 @@ package query
 
 import (
 	"context"
+	"math"
 	"testing"
 	"time"
 
@@ -31,14 +32,14 @@ func TestRelationshipScore(t *testing.T) {
 			want:    3.0,
 		},
 		{
-			name:    "one decayed received unit scores the received weight",
+			name:    "one decayed received unit scores the log-compressed received weight",
 			signals: RelationshipSignals{ReceivedFromThem: 1, Modalities: 1},
-			want:    1.0,
+			want:    math.Log1p(1),
 		},
 		{
-			name:    "combined signals sum the weighted contributions",
+			name:    "combined signals sum sent and meetings linearly but log-compress received",
 			signals: RelationshipSignals{SentToThem: 1, MeetingsTogether: 1, ReceivedFromThem: 1, Modalities: 1},
-			want:    6.0,
+			want:    2.0 + 3.0 + math.Log1p(1),
 		},
 		{
 			name:    "three modalities apply a 1.5x breadth boost",
@@ -70,6 +71,38 @@ func TestRelationshipScore(t *testing.T) {
 			assert.InDelta(t, tc.want, RelationshipScore(tc.signals), 1e-9)
 		})
 	}
+}
+
+// TestRelationshipScoreLogCompressesReceivedVolume pins the real-archive
+// regression this fix addresses: on a 2.5M-message archive, a high-volume
+// one-way sender (a GitHub collaborator whose notifications the owner merely
+// receives) scored far above a genuine reciprocal counterpart (a partner
+// with real back-and-forth) purely because received volume was linear.
+// Log-compressing only the received term must flip that ordering by roughly
+// an order of magnitude, without changing how sent or meetings contribute.
+func TestRelationshipScoreLogCompressesReceivedVolume(t *testing.T) {
+	partner := RelationshipSignals{SentToThem: 131, ReceivedFromThem: 110, Modalities: 1}
+	notificationsBot := RelationshipSignals{SentToThem: 0.7, ReceivedFromThem: 31000, Modalities: 1}
+
+	partnerScore := RelationshipScore(partner)
+	notificationsScore := RelationshipScore(notificationsBot)
+
+	assert.Greater(t, partnerScore, notificationsScore,
+		"reciprocal partner must outscore a one-way high-volume notification sender")
+	assert.Greater(t, partnerScore, notificationsScore*10,
+		"partner must outscore the notification sender by roughly an order of magnitude")
+}
+
+// TestRelationshipScoreMeetingsOutweighReceivedVolume pins that a
+// meeting-heavy counterpart, previously buried by inbound volume, now
+// outranks a received-heavy one-way counterpart even with far less sent
+// activity, since meetings stay linear while received is log-compressed.
+func TestRelationshipScoreMeetingsOutweighReceivedVolume(t *testing.T) {
+	meetingHeavy := RelationshipSignals{SentToThem: 5, MeetingsTogether: 20, Modalities: 1}
+	receivedHeavy := RelationshipSignals{SentToThem: 0.5, ReceivedFromThem: 500, Modalities: 1}
+
+	assert.Greater(t, RelationshipScore(meetingHeavy), RelationshipScore(receivedHeavy),
+		"a meeting-heavy counterpart must outscore a received-volume-heavy one")
 }
 
 // TestRelationshipsReceivedCreditsOnlyAuthors pins the credit-assignment

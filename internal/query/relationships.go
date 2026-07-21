@@ -36,11 +36,22 @@ type RelationshipSignals struct {
 }
 
 // RelationshipScore applies the spec's weights, decay having been applied in
-// SQL: score = (2.0*sent + 3.0*meetings + 1.0*received) * (1 + 0.25*(modalities-1)).
+// SQL: score = (2.0*sent + 3.0*meetings + 1.0*ln(1+received)) * (1 + 0.25*(modalities-1)).
+//
+// The received term is log-compressed (ln(1+received_decayed), via
+// math.Log1p) while sent and meetings stay linear. On real archives, inbound
+// volume (mailing lists, CI/notification bots, co-workers whose tickets you
+// merely receive) grows far faster than genuine reciprocal contact, so a
+// linear received term let high-volume one-way senders outrank people with
+// real back-and-forth or shared meetings. Log-compression keeps received
+// mail a positive signal without letting its raw volume dominate the score.
+// received_from_them in RelationshipSignals and the API response still
+// reports the raw (pre-log) decayed value — only this score composition
+// changes.
 func RelationshipScore(s RelationshipSignals) float64 {
 	base := relationshipWeightSent*s.SentToThem +
 		relationshipWeightMeetings*s.MeetingsTogether +
-		relationshipWeightReceived*s.ReceivedFromThem
+		relationshipWeightReceived*math.Log1p(s.ReceivedFromThem)
 	breadth := 1.0
 	if s.Modalities > 1 {
 		breadth = 1.0 + relationshipBreadthStep*float64(s.Modalities-1)
