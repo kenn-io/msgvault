@@ -337,8 +337,8 @@
   }
 
   .timeline-row.selected {
-    outline: 2px solid var(--accent-blue);
-    outline-offset: -2px;
+    background: var(--selected-bg);
+    box-shadow: inset 3px 0 var(--accent-teal);
   }
 
   .timeline-empty {

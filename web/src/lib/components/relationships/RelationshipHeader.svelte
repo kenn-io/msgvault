@@ -372,9 +372,10 @@
     display: flex;
     flex-direction: column;
     gap: 2px;
-    border: 1px solid var(--border-default);
+    border: 1px solid var(--border-muted);
     border-radius: var(--radius-sm);
-    padding: var(--space-2);
+    background: var(--bg-subtle);
+    padding: var(--space-2) var(--space-3);
   }
 
   .chip-display {

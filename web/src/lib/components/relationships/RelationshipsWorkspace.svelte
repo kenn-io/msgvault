@@ -580,4 +580,21 @@
     border-left: 0;
     border-top: 1px solid var(--border-muted);
   }
+
+  /* Stacked below the timeline, the reading pane spans the hub: the drag
+   * handle is meaningless there and the inline resize width (an inline
+   * style, hence the !important) must give way to the full row. */
+  .pane-center-and-reading.stacked .pane-reading :global(.pinned-inspector) {
+    width: 100%;
+  }
+
+  .pane-center-and-reading.stacked .pane-reading :global(.pinned-inspector aside) {
+    width: auto !important;
+    max-width: none;
+    flex: 1;
+  }
+
+  .pane-center-and-reading.stacked .pane-reading :global(.kit-split-resize-handle) {
+    display: none;
+  }
 </style>
