@@ -31,6 +31,16 @@ type sweepTarget struct {
 	convID int64
 }
 
+// sweepBudget bounds a limited run's sweep work (limit 0 = unlimited). Days
+// searched and canonically fetched messages both charge it: fetches are the
+// message work, and the per-day charge keeps a long catch-up from paging
+// through months of queries on a run that promised to be small. Exhaustion
+// parks certification at the last safe boundary WITHOUT failing the run —
+// per-day commits are durable, so repeated limited runs converge.
+type sweepBudget struct{ limit, used int }
+
+func (b *sweepBudget) exhausted() bool { return b.limit > 0 && b.used >= b.limit }
+
 // sweepReplies discovers thread replies created since each conversation's
 // certification stamp via search.messages (threads:replies) and archives
 // them through canonical conversations.replies fetches.
@@ -56,6 +66,7 @@ func (imp *Importer) sweepReplies(ctx context.Context, syncID int64, targets map
 	// must therefore use the zone read this run, not a fixed offset.
 	loc := imp.res.tzLocation(imp.opts.UserID)
 	offset := imp.res.tzOffset(imp.opts.UserID)
+	budget := &sweepBudget{limit: imp.opts.Limit}
 	now := imp.now().UTC()
 	horizon := tsFormat(now.Add(-sweepLagMargin))
 
@@ -105,7 +116,7 @@ func (imp *Importer) sweepReplies(ctx context.Context, syncID int64, targets map
 			continue
 		}
 		err := imp.sweepRange(ctx, syncID, cid, cs.SweptThrough, tsTime(state.SweepWatermark), state.SweepWatermark,
-			map[string]sweepTarget{cid: targets[cid]}, loc, state, sum,
+			map[string]sweepTarget{cid: targets[cid]}, loc, budget, state, sum,
 			func(certified string) { cs.SweptThrough = certified })
 		if err != nil {
 			return err
@@ -132,7 +143,7 @@ func (imp *Importer) sweepReplies(ctx context.Context, syncID int64, targets map
 	// Search runs through NOW — replies inside the lag window are archived
 	// too — but certification caps at the horizon, so anything the index
 	// may not have served yet is re-swept next run (idempotent upserts).
-	return imp.sweepRange(ctx, syncID, "", floor, now, horizon, targets, loc, state, sum,
+	return imp.sweepRange(ctx, syncID, "", floor, now, horizon, targets, loc, budget, state, sum,
 		func(certified string) {
 			state.SweepWatermark, state.SweepOffset = certified, offset
 			for _, cid := range ids {
@@ -158,11 +169,15 @@ func (imp *Importer) sweepReplies(ctx context.Context, syncID int64, targets map
 // Discovery and fetch failures are recorded, certification parks at the
 // last safe boundary, and the sweep stops; only store/context failures
 // return an error.
-func (imp *Importer) sweepRange(ctx context.Context, syncID int64, scope, floor string, searchEnd time.Time, ceiling string, targets map[string]sweepTarget, loc *time.Location, state *SyncState, sum *ImportSummary, commit func(certified string)) error {
+func (imp *Importer) sweepRange(ctx context.Context, syncID int64, scope, floor string, searchEnd time.Time, ceiling string, targets map[string]sweepTarget, loc *time.Location, budget *sweepBudget, state *SyncState, sum *ImportSummary, commit func(certified string)) error {
 	day := tsTime(floor).In(loc)
 	day = time.Date(day.Year(), day.Month(), day.Day(), 0, 0, 0, 0, loc)
 	end := searchEnd.In(loc)
 	for !day.After(end) {
+		if budget.exhausted() {
+			return nil // certification stays at the last committed boundary
+		}
+		budget.used++
 		dayStr := day.Format("2006-01-02")
 		item := dayStr
 		if scope != "" {
@@ -180,7 +195,7 @@ func (imp *Importer) sweepRange(ctx context.Context, syncID int64, scope, floor 
 			sum.Errors++
 			return nil
 		}
-		complete, parked, err := imp.fetchSweepHits(ctx, syncID, hits, floor, targets, sum)
+		complete, parked, err := imp.fetchSweepHits(ctx, syncID, hits, floor, targets, budget, sum)
 		if err != nil {
 			return err // store/context failure: fatal for the run
 		}
@@ -263,7 +278,7 @@ func (imp *Importer) sweepQuery(scope, day string, syncID int64, page int) strin
 // Returns (complete, parked boundary, fatal error): on a fetch failure,
 // complete=false and the parked boundary sits just before the failed
 // thread's first hit — everything before it was fetched (ascending order).
-func (imp *Importer) fetchSweepHits(ctx context.Context, syncID int64, hits []SearchMatch, floor string, targets map[string]sweepTarget, sum *ImportSummary) (bool, string, error) {
+func (imp *Importer) fetchSweepHits(ctx context.Context, syncID int64, hits []SearchMatch, floor string, targets map[string]sweepTarget, budget *sweepBudget, sum *ImportSummary) (bool, string, error) {
 	type group struct {
 		channelID string
 		anchorTS  string // any ts within the thread; replies resolves it
@@ -294,9 +309,15 @@ func (imp *Importer) fetchSweepHits(ctx context.Context, syncID int64, hits []Se
 		if err := ctx.Err(); err != nil {
 			return false, "", err
 		}
+		if budget.exhausted() {
+			// Budget-park, not a failure: everything before this group is
+			// fetched (ascending order), so resuming here next run is safe.
+			return false, tsMinusMicro(g.minHit), nil
+		}
 		target := targets[g.channelID]
 		cc := &convScope{channelID: g.channelID, convID: target.convID, sourceID: imp.sourceID, syncID: syncID, opts: imp.opts}
 		err := imp.fetchThread(ctx, cc, g.anchorTS, tsMinusMicro(g.minHit), sum)
+		budget.used += cc.budgetUsed
 		if errors.Is(err, ErrNotFound) {
 			// Thread/channel gone between discovery and fetch: expected churn.
 			imp.recordItem(syncID, sourceMessageID(g.channelID, g.anchorTS), "sweep", store.SyncRunItemStatusSkipped, "slack_thread_gone", err)

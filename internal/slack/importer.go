@@ -206,9 +206,11 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (*ImportSum
 	}
 
 	// Reply sweep: discovers thread replies created since the watermark and
-	// archives them canonically. Scoped (--limit) runs skip it, like all
-	// steady-state phases; --no-threads skips it explicitly.
-	if !opts.NoThreads && opts.Limit == 0 {
+	// archives them canonically. Limited runs participate with a work
+	// budget — certification parks safely when it runs out, so standing
+	// --limit schedules still converge on reply discovery. --no-threads
+	// skips it explicitly.
+	if !opts.NoThreads {
 		if err = imp.sweepReplies(ctx, syncID, targets, state, sum); err != nil {
 			return sum, err
 		}
@@ -302,12 +304,13 @@ func (imp *Importer) syncConversation(ctx context.Context, syncID, sourceID int6
 			}
 		}
 	}
-	// Thread catch-up: an earlier --no-threads backfill left roots without
-	// their replies (and the sweep floor postdates them). Runs as soon as the
-	// backfill is complete — including the run that completes it — on any
-	// unlimited threaded run; the debt clears only after a clean pass.
-	if cs.Done && cs.ThreadsPending && !opts.NoThreads && opts.Limit == 0 {
-		if err := imp.threadCatchUp(ctx, cc, sum); err != nil {
+	// Thread catch-up: conversation-level thread debt (--no-threads
+	// backfills, non-channel gap recovery). Runs as soon as the backfill is
+	// complete — including the run that completes it — on any threaded run;
+	// limited runs make budget-bounded progress through the persisted walk
+	// cursor, and the debt clears only after a clean finish.
+	if cs.Done && cs.ThreadsPending && !opts.NoThreads {
+		if err := imp.threadCatchUp(ctx, cc, state, sum); err != nil {
 			return 0, err
 		}
 	}
@@ -609,55 +612,86 @@ func (imp *Importer) incrementalConversation(ctx context.Context, cc *convScope,
 // replies, paying conversation-level thread debt: a --no-threads backfill
 // whose pages advanced past roots without fetches, or a non-channel
 // conversation recovering a sweep gap. Pure re-read: every persist is an
-// upsert. ThreadsPending clears only on a clean pass, so failures retry.
+// upsert. ThreadsPending clears only when the walk finishes with no drain
+// debt left, so failures retry.
 //
-// The walk pins its upper bound at its own start time — NOT the original
-// backfill pin: gap-recovery debt includes replies to roots created after
-// the backfill, which a pin-bounded walk would never anchor. Roots newer
-// than the fresh pin need no walk at all (their replies postdate the sweep
-// watermark by creation time), and the pin keeps the newest-first
-// pagination window stable while the walk runs.
-func (imp *Importer) threadCatchUp(ctx context.Context, cc *convScope, sum *ImportSummary) error {
-	latest := fmt.Sprintf("%d.999999", imp.now().Unix())
-	pageCursor := ""
+// The walk is shaped like the backfill: each page's roots are recorded as
+// drain debt (charging their reply_count forecasts), paging holds while
+// debt is outstanding, and the page cursor persists in CatchUpCursor — so
+// limited runs make durable progress and a standing --limit schedule
+// converges instead of restarting the walk forever.
+//
+// The upper bound pins at the WALK's start (persisted in CatchUpLatest;
+// page cursors are only valid against the bound they were minted with) —
+// not the original backfill pin: gap-recovery debt includes replies to
+// roots created after the backfill, which a pin-bounded walk would never
+// anchor. Roots newer than the walk pin need none of this (their replies
+// postdate the sweep watermark by creation time), and the pin keeps the
+// newest-first pagination window stable while the walk runs.
+func (imp *Importer) threadCatchUp(ctx context.Context, cc *convScope, state *SyncState, sum *ImportSummary) error {
+	cs := cc.cs
+	if cs.CatchUpLatest == "" {
+		cs.CatchUpLatest = fmt.Sprintf("%d.999999", imp.now().Unix())
+	}
 	for {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
+		if cc.limitReached() {
+			return nil // resumes from CatchUpCursor next run
+		}
 		page, err := imp.client.historyPageWithLimit(ctx, HistoryParams{
 			ChannelID: cc.channelID,
-			Cursor:    pageCursor,
-			Latest:    latest,
-		}, historyPageLimit)
+			Cursor:    cs.CatchUpCursor,
+			Latest:    cs.CatchUpLatest,
+		}, cc.pageBudget())
 		if err != nil {
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
+			if errors.Is(err, ErrNotFound) {
+				// The conversation is gone: there is nothing left to fetch,
+				// ever. Clearing the debt here keeps one deleted channel
+				// from wedging every future workspace sync into failure.
+				imp.recordItem(cc.syncID, cc.channelID, "fetch", store.SyncRunItemStatusSkipped, "slack_channel_gone", err)
+				cs.ThreadsPending = false
+				cs.CatchUpCursor, cs.CatchUpLatest = "", ""
+				return nil
+			}
 			imp.recordItem(cc.syncID, cc.channelID, "fetch", store.SyncRunItemStatusError, "slack_fetch_error", err)
 			sum.FetchErrors++
 			sum.Errors++
-			return nil // ThreadsPending stays set; retried next run
+			return nil // cursor stays; retried next run
 		}
+		// The page itself is only scanned for roots, but it still charges
+		// the budget: re-reading history is the walk's dominant work, and
+		// an uncharged scan would let a "limited" run page unboundedly.
+		cc.budgetUsed += len(page.Messages)
 		for i := range page.Messages {
 			m := &page.Messages[i]
-			if !m.IsThreadRoot() {
-				continue
+			if m.IsThreadRoot() {
+				cs.RecordPendingThread(m.TS, m.ReplyCount)
 			}
-			if terr := imp.fetchThread(ctx, cc, m.TS, "", sum); terr != nil {
-				if ctx.Err() != nil {
-					return ctx.Err()
-				}
-				imp.recordItem(cc.syncID, sourceMessageID(cc.channelID, m.TS), "thread", store.SyncRunItemStatusError, "slack_fetch_error", terr)
-				sum.FetchErrors++
-				sum.Errors++
-				return nil // ThreadsPending stays set; retried next run
-			}
+		}
+		if err := imp.drainPendingThreads(ctx, cc, sum); err != nil {
+			return err
 		}
 		if !page.HasMore || page.NextCursor == "" {
-			cc.cs.ThreadsPending = false
+			// The WALK is complete: every root it owed is now recorded as
+			// durable PendingThreads debt, which the drain-first step pays
+			// unconditionally on every threaded run — so the flag (which
+			// only schedules walks) and the cursor clear even when drain
+			// debt remains. Keeping the flag here would re-visit this final
+			// page forever, re-recording its already-drained threads.
+			cs.ThreadsPending = false
+			cs.CatchUpCursor, cs.CatchUpLatest = "", ""
 			return nil
 		}
-		pageCursor = page.NextCursor
+		cs.CatchUpCursor = page.NextCursor
+		if len(cs.PendingThreads) > 0 {
+			return nil // one-page invariant: pay before paging further
+		}
+		imp.checkpoint(cc.syncID, state, sum)
 	}
 }
 

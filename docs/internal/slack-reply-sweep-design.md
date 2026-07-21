@@ -121,19 +121,40 @@ for incremental sync. Consequences:
   idempotent upserts, dropped debt would lose replies). Sweeps and
   catch-up walks only run unlimited, so their thread fetches stay
   whole-thread.
-- **The thread catch-up walk pins its upper bound at its own start time**,
-  not the original backfill pin: conversation-level debt (`--no-threads`
+- **The thread catch-up walk is resumable and budget-aware**, shaped like
+  the backfill: each page's roots are recorded as pending-drain debt
+  (charging their `reply_count` forecasts), paging holds while debt is
+  outstanding, and the page cursor persists (`CatchUpCursor`, with the
+  walk's pin in `CatchUpLatest` — page cursors are only valid against the
+  bound they were minted with). Scanned pages charge the budget too: the
+  re-read is the walk's dominant work. When the walk reaches the end, the
+  flag and cursor clear even with drain debt left — the debt lives on the
+  pending list, which drain-first pays unconditionally (keeping the flag
+  would re-visit the final page forever). A gone conversation clears its
+  debt as skipped work instead of wedging every future sync into partial
+  failure.
+- **The catch-up walk pins its upper bound at its own start time**, not
+  the original backfill pin: conversation-level debt (`--no-threads`
   runs, non-channel sweep-gap recovery) can include replies to roots
   created after the backfill, which a pin-bounded walk would never
   anchor. Roots newer than the fresh pin need no walk (their replies
   postdate the watermark by creation time), and the pin keeps the
   newest-first pagination window stable during the walk.
+- **Limited runs sweep too**, with a work budget: searched days and
+  canonically fetched messages charge it, and exhaustion parks
+  certification at the last safe boundary without failing the run.
+  Per-day commits are durable, so a standing `--limit` schedule converges
+  on reply discovery like every other path — a permanently-capped sync
+  must never mean "no replies, ever".
 - **Duplicate file content keeps one row per Slack file ID** via the
   Discord alias pattern: the schema's `(message_id, content_hash)`
   uniqueness keeps the real hash on the first row; same-content siblings
   become hashless alias rows sharing the trusted CAS path, re-derived as
-  downloaded on read — so repairs never re-download and no file ID's
-  metadata is silently dropped.
+  downloaded on read (store read paths AND the message-detail API) — so
+  repairs never re-download and no file ID's metadata is silently
+  dropped. The re-derivation is provider-gated to `discord:`/`slack:`
+  deliberately: a Beeper hashless local path means pending/untrusted and
+  must stay hashless.
 - **Backfill owes threads as recorded debt**: the history walker records
   each discovered root on the pending-drain list before the containing
   page's cursor advances, so "cursor past page" means "page durable and
@@ -206,7 +227,9 @@ type SyncState struct {
 type ConvState struct {
     // …cursors…
     SweptThrough   string          // UTC ts: this conversation's own reply certification
-    PendingThreads []PendingThread // backfill's outstanding thread-drain debt (≤ one page's roots)
+    PendingThreads []PendingThread // outstanding thread-drain debt (≤ one page's roots)
+    CatchUpCursor  string          // resumable catch-up walk page cursor
+    CatchUpLatest  string          // the pin the walk was started under
 }
 
 type PendingThread struct {

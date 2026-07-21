@@ -289,7 +289,14 @@ func (s *Store) GetMessageContext(ctx context.Context, id int64) (*APIMessage, e
 		if strings.HasPrefix(storagePath, "http://") || strings.HasPrefix(storagePath, "https://") {
 			att.ContentHash = ""
 			att.URL = storagePath
-		} else if att.ContentHash == "" && strings.HasPrefix(sourceAttachmentID, "discord:") {
+		} else if att.ContentHash == "" &&
+			(strings.HasPrefix(sourceAttachmentID, "discord:") || strings.HasPrefix(sourceAttachmentID, "slack:")) {
+			// A hashless Discord/Slack row whose storage path validates as
+			// a trusted CAS path is a duplicate-content alias; re-derive
+			// its hash so the attachment stays accessible. The provider
+			// gate is load-bearing: a Beeper hashless local path means
+			// pending/untrusted and must stay hashless (see
+			// TestBeeperHashlessLocalPathRemainsPending).
 			if pathHash, ok := casPathHash(storagePath); ok {
 				att.ContentHash = pathHash
 			}

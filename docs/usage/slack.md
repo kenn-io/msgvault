@@ -73,7 +73,7 @@ msgvault sync-slack --full
 
 | Flag | Description |
 |---|---|
-| `--limit N` | Max messages of work per conversation this run — thread replies count via their `reply_count` forecast. Limited runs resume next run (large threads drain across runs) and skip the maintenance rescan |
+| `--limit N` | Max messages of work per conversation this run — thread replies count via their `reply_count` forecast, and the reply sweep gets the same budget workspace-wide. Every phase resumes next run (large threads, catch-up walks, and the sweep all make durable progress), so standing limited schedules converge; only the maintenance rescan is skipped |
 | `--full` | Ignore stored cursors; re-fetch and upsert every message in place |
 | `--no-threads` | Skip thread-reply fetching this run (a later threaded run pays the debt automatically) |
 | `--maintenance` | Repair edits and reaction changes on recent messages (archives ignore post-capture mutations by default) |

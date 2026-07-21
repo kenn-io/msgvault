@@ -39,11 +39,17 @@ type ConvState struct {
 	// main Cursor still only advances once the window is exhausted.
 	IncrCursor string `json:"incr_cursor,omitempty"`
 	IncrMaxTS  string `json:"incr_max_ts,omitempty"`
-	// ThreadsPending marks a backfill that consumed pages under --no-threads:
-	// their roots' replies were never inline-fetched, and the sweep floor
-	// (the backfill pin) postdates them. The next threaded run performs a
-	// thread catch-up walk and clears the flag.
-	ThreadsPending bool `json:"threads_pending,omitempty"`
+	// ThreadsPending marks conversation-level thread debt: a backfill that
+	// consumed pages under --no-threads, or a non-channel conversation
+	// recovering a sweep gap. The thread catch-up walk pays it and clears
+	// the flag on a clean finish; CatchUpCursor/CatchUpLatest checkpoint a
+	// partially-walked catch-up (the page cursor to resume from and the
+	// pin the walk was started under — page cursors are only valid against
+	// the bound they were minted with), so limited runs drain the walk
+	// across runs instead of restarting it.
+	ThreadsPending bool   `json:"threads_pending,omitempty"`
+	CatchUpCursor  string `json:"catch_up_cursor,omitempty"`
+	CatchUpLatest  string `json:"catch_up_latest,omitempty"`
 	// PendingThreads is the backfill's outstanding thread-drain debt,
 	// bounded by one history page's roots: the walk never fetches a new
 	// page while any entry is outstanding. Drained head-first; an entry
@@ -183,6 +189,15 @@ func (s *SyncState) Merge(other *SyncState) {
 		}
 		cs.Done = cs.Done || ocs.Done
 		cs.ThreadsPending = cs.ThreadsPending || ocs.ThreadsPending
+		// The catch-up walk unit follows the backfill-cursor rule: opaque,
+		// non-empty wins, emptiness never clears. Staleness only re-walks
+		// already-drained pages into idempotent upserts.
+		if ocs.CatchUpCursor != "" {
+			cs.CatchUpCursor = ocs.CatchUpCursor
+		}
+		if ocs.CatchUpLatest != "" {
+			cs.CatchUpLatest = ocs.CatchUpLatest
+		}
 		if ocs.SweptThrough != "" && (cs.SweptThrough == "" || tsLess(cs.SweptThrough, ocs.SweptThrough)) {
 			cs.SweptThrough = ocs.SweptThrough
 		}

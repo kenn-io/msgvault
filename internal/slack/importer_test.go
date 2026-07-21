@@ -787,6 +787,113 @@ func TestGapCatchUpCoversPostBackfillRoots(t *testing.T) {
 	require.Equal(1, n, "gap recovery must anchor threads rooted after the backfill pin")
 }
 
+func TestStandingLimitSweepsLateReplies(t *testing.T) {
+	require := require.New(t)
+	f, rootTS := oldThreadWorkspace(t)
+	imp, opts := testImporter(t, f)
+	st := imp.store
+
+	// A standing --limit schedule must still discover replies: the sweep
+	// participates in limited runs with a work budget instead of being
+	// skipped outright (which would mean a permanently-capped sync NEVER
+	// archives another reply).
+	limited := opts
+	limited.Limit = 6
+	for range 4 {
+		_, err := imp.Import(context.Background(), limited)
+		require.NoError(err)
+	}
+	lateReply := tsFresh(0)
+	f.mu.Lock()
+	root := f.conv("C09").findRoot(rootTS)
+	root.Replies = append(root.Replies, fakeMsg{TS: lateReply, ThreadTS: rootTS, User: "UME", Text: "late reply"})
+	f.mu.Unlock()
+
+	for range 4 {
+		_, err := imp.Import(context.Background(), limited)
+		require.NoError(err)
+	}
+	var n int
+	require.NoError(st.DB().QueryRow(st.Rebind(
+		`SELECT COUNT(*) FROM messages WHERE source_message_id = ?`), "C09:"+lateReply).Scan(&n))
+	require.Equal(1, n, "limited runs must sweep in late replies — no unlimited run required")
+}
+
+func TestStandingLimitPaysCatchUpDebt(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newFakeSlack(t)
+	f.users = []map[string]any{
+		{"id": "UME", "name": "me", "profile": map[string]any{"email": "me@example.com"}},
+	}
+	busyRoot := fakeMsg{TS: ts(0), User: "UME", Text: "busy root"}
+	for i := range 10 {
+		busyRoot.Replies = append(busyRoot.Replies,
+			fakeMsg{TS: ts(i + 1), ThreadTS: busyRoot.TS, User: "UME", Text: "reply " + strconv.Itoa(i)})
+	}
+	conv := &fakeConv{ID: "C40", Name: "debtor", Kind: "public", Members: []string{"UME"}, Msgs: []fakeMsg{busyRoot}}
+	for i := range 6 {
+		conv.Msgs = append(conv.Msgs, fakeMsg{TS: ts(100 + i), User: "UME", Text: "top " + strconv.Itoa(i)})
+	}
+	f.convs = []*fakeConv{conv}
+	imp, opts := testImporter(t, f)
+	st := imp.store
+
+	// A --no-threads backfill leaves conversation-level thread debt…
+	noThreads := opts
+	noThreads.NoThreads = true
+	_, err := imp.Import(context.Background(), noThreads)
+	require.NoError(err)
+
+	// …which repeated LIMITED threaded runs must pay by themselves: the
+	// catch-up walk checkpoints its page cursor and drains through the
+	// shared pending-thread machinery, so a standing --limit schedule
+	// converges instead of skipping the walk forever.
+	limited := opts
+	limited.Limit = 4
+	for range 14 {
+		_, err = imp.Import(context.Background(), limited)
+		require.NoError(err)
+	}
+	var total, distinct int
+	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages WHERE message_type='slack'`).Scan(&total))
+	require.NoError(st.DB().QueryRow(`SELECT COUNT(DISTINCT source_message_id) FROM messages WHERE message_type='slack'`).Scan(&distinct))
+	assert.Equal(17, total, "limited runs must pay --no-threads debt without an unlimited run")
+	assert.Equal(distinct, total)
+
+	src, err := st.GetOrCreateSource("slack", "T01:UME")
+	require.NoError(err)
+	state := imp.loadResumeState(src.ID)
+	assert.False(state.EnsureConv("C40").ThreadsPending, "the debt flag clears once the walk finishes clean")
+}
+
+func TestCatchUpClearsDebtForGoneConversation(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := testWorkspace(t)
+	imp, opts := testImporter(t, f)
+
+	// Build conversation-level thread debt, then delete the channel at the
+	// source. The catch-up walk must treat the gone channel as skipped
+	// work and CLEAR the debt — a retryable error here would wedge every
+	// future workspace sync into partial failure, permanently.
+	noThreads := opts
+	noThreads.NoThreads = true
+	_, err := imp.Import(context.Background(), noThreads)
+	require.NoError(err)
+
+	f.mu.Lock()
+	f.handleGhost(f.conv("C01"))
+	f.mu.Unlock()
+
+	sum, err := imp.Import(context.Background(), opts)
+	require.NoError(err, "a gone conversation with catch-up debt must not fail the run")
+	assert.Zero(sum.FetchErrors)
+
+	state := imp.loadResumeState(sum.SourceID)
+	assert.False(state.EnsureConv("C01").ThreadsPending, "debt for a gone conversation clears — there is nothing left to fetch")
+}
+
 func TestSweepDayBoundariesFollowHistoricalDST(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
