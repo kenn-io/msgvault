@@ -23,7 +23,7 @@ function deferred<T>(): {
 }
 
 describe('ContentFrame', () => {
-  it('uses an opaque scripted sandbox without same-origin authority', async () => {
+  it('uses an opaque scripted sandbox that is focusable but never same-origin', async () => {
     const { container } = render(ContentFrame, {
       props: { messageId: 42, html: '<p>Archived content</p>', title: 'Archived message' }
     });
@@ -32,31 +32,28 @@ describe('ContentFrame', () => {
     const frame = container.querySelector('iframe');
     expect(frame?.getAttribute('sandbox')).toBe('allow-scripts');
     expect(frame?.getAttribute('sandbox')).not.toContain('allow-same-origin');
-    expect(frame?.getAttribute('tabindex')).toBe('-1');
-    expect((frame as HTMLIFrameElement & { inert: boolean }).inert).toBe(true);
+    // The frame is a first-class focus target: keyboard users Tab into it
+    // and the bridge forwards Escape back out. No entry gating remains.
+    expect(frame?.getAttribute('tabindex')).toBe('0');
+    expect(frame?.hasAttribute('inert')).toBe(false);
     await waitFor(() =>
       expect(container.querySelector('iframe')?.getAttribute('srcdoc')).toContain('Archived content')
     );
   });
 
-  it('keeps focus in the shell until explicit content entry', async () => {
-    render(ContentFrame, {
+  it('renders archived content immediately, with no entry gating chrome', async () => {
+    const { container } = render(ContentFrame, {
       props: { messageId: 42, html: '<p>Archived content</p>', title: 'Archived message' }
     });
-    const enter = screen.getByRole('button', { name: 'Enter archived content' });
-    await waitFor(() => expect(document.querySelector('iframe')).not.toBeNull());
-    await fireEvent.load(document.querySelector('iframe')!);
-    enter.focus();
 
-    expect(screen.queryByText('Archived content active')).toBeNull();
-    await fireEvent.click(enter);
-
-    expect(screen.getByText('Archived content active')).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Exit archived content' })).toBeTruthy();
-    expect((document.querySelector('iframe') as HTMLIFrameElement & { inert: boolean }).inert).toBe(false);
+    await waitFor(() => expect(container.querySelector('iframe')).not.toBeNull());
+    expect(screen.queryByRole('button', { name: /Enter archived content/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: /Exit archived content/ })).toBeNull();
+    expect(screen.queryByText(/Archived content active/)).toBeNull();
+    expect(container.querySelector('.content-entry-shield')).toBeNull();
   });
 
-  it('keeps entry unavailable until delayed CID resolution and the final iframe load', async () => {
+  it('keeps a quiet preparing state until delayed CID resolution completes', async () => {
     const response = deferred<Response>();
     const fetchFn = vi.fn<typeof fetch>(async () => await response.promise);
     const { container } = render(ContentFrame, {
@@ -69,47 +66,16 @@ describe('ContentFrame', () => {
     });
 
     await waitFor(() => expect(fetchFn).toHaveBeenCalledOnce());
-    const enter = screen.getByRole('button', { name: 'Enter archived content' });
-    expect((enter as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByRole('status').textContent).toContain('Preparing message');
     expect(container.querySelector('iframe')).toBeNull();
 
     response.resolve(new Response(onePixelPNG, { headers: { 'Content-Type': 'image/png' } }));
     await waitFor(() => expect(container.querySelector('iframe')).not.toBeNull());
-    expect((enter as HTMLButtonElement).disabled).toBe(true);
     await fireEvent.load(container.querySelector('iframe')!);
-    expect((enter as HTMLButtonElement).disabled).toBe(false);
+    expect(screen.queryByText(/Preparing message/)).toBeNull();
   });
 
-  it('synchronously exits and focuses stable shell chrome before consent replaces an entered frame', async () => {
-    const onContentFocusChange = vi.fn();
-    const { container } = render(ContentFrame, {
-      props: {
-        messageId: 42,
-        html: '<p>Words</p><img src="https://images.example/chart.png" alt="Chart">',
-        title: 'Archived message',
-        onContentFocusChange
-      }
-    });
-    await waitFor(() => expect(container.querySelector('iframe')?.getAttribute('srcdoc')).toContain('Words'));
-    await fireEvent.load(container.querySelector('iframe')!);
-    await fireEvent.click(screen.getByRole('button', { name: 'Enter archived content' }));
-    expect(screen.getByText('Archived content active')).toBeTruthy();
-
-    await fireEvent.click(screen.getByRole('button', { name: 'Load 1 remote image' }));
-
-    expect(screen.queryByText('Archived content active')).toBeNull();
-    expect(onContentFocusChange).toHaveBeenLastCalledWith(false);
-    expect(container.querySelector('iframe')).toBeNull();
-    expect(document.activeElement).toBe(screen.getByLabelText('Archived content controls'));
-    const enter = screen.getByRole('button', { name: 'Enter archived content' });
-    expect((enter as HTMLButtonElement).disabled).toBe(true);
-    await waitFor(() => expect(container.querySelector('iframe')).not.toBeNull());
-    expect((enter as HTMLButtonElement).disabled).toBe(true);
-    await fireEvent.load(container.querySelector('iframe')!);
-    expect((enter as HTMLButtonElement).disabled).toBe(false);
-  });
-
-  it('publishes a failed CID placeholder but still requires the final iframe load before entry', async () => {
+  it('publishes a failed CID placeholder inside the rendered document', async () => {
     const { container } = render(ContentFrame, {
       props: {
         client: createAPIClient(vi.fn<typeof fetch>(async () => new Response('missing', { status: 404 }))),
@@ -119,16 +85,11 @@ describe('ContentFrame', () => {
       }
     });
 
-    const enter = screen.getByRole('button', { name: 'Enter archived content' });
-    expect((enter as HTMLButtonElement).disabled).toBe(true);
     await waitFor(() => {
       expect(container.querySelector('iframe')?.getAttribute('srcdoc')).toContain(
         'Inline image unavailable: Missing'
       );
     });
-    expect((enter as HTMLButtonElement).disabled).toBe(true);
-    await fireEvent.load(container.querySelector('iframe')!);
-    expect((enter as HTMLButtonElement).disabled).toBe(false);
   });
 
   it('aborts old message work and ignores its stale completion after a replacement is ready', async () => {
@@ -238,7 +199,7 @@ describe('ContentFrame', () => {
     await Promise.resolve();
   });
 
-  it('keeps remote image consent in the shell and rebuilds only after consent', async () => {
+  it('keeps remote image consent as one quiet inline notice and rebuilds only after consent', async () => {
     const { container } = render(ContentFrame, {
       props: {
         messageId: 42,
@@ -247,6 +208,7 @@ describe('ContentFrame', () => {
       }
     });
     const consent = await screen.findByRole('button', { name: 'Load 1 remote image' });
+    expect(screen.getByText('1 remote image is not loaded.')).toBeDefined();
     await waitFor(() => {
       const srcdoc = container.querySelector('iframe')?.getAttribute('srcdoc');
       expect(srcdoc).toContain('Remote image blocked: Chart');
@@ -261,5 +223,45 @@ describe('ContentFrame', () => {
         'https://images.example/chart.png'
       )
     );
+    expect(screen.queryByRole('button', { name: /remote image/ })).toBeNull();
+  });
+
+  it('detaches the consent-superseded frame before the newly capable document renders', async () => {
+    const { container } = render(ContentFrame, {
+      props: {
+        messageId: 42,
+        html: '<p>Words</p><img src="https://images.example/chart.png" alt="Chart">',
+        title: 'Archived message'
+      }
+    });
+    await waitFor(() => expect(container.querySelector('iframe')?.getAttribute('srcdoc')).toContain('Words'));
+    await fireEvent.load(container.querySelector('iframe')!);
+    const priorFrame = container.querySelector('iframe');
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Load 1 remote image' }));
+
+    expect(container.querySelector('iframe')).toBeNull();
+    expect(priorFrame?.isConnected).toBe(false);
+    await waitFor(() =>
+      expect(container.querySelector('iframe')?.getAttribute('srcdoc')).toContain('images.example')
+    );
+  });
+
+  it('applies bridge-reported content heights to the frame element', async () => {
+    const { container } = render(ContentFrame, {
+      props: { messageId: 42, html: '<p>Archived content</p>', title: 'Archived message' }
+    });
+    await waitFor(() => expect(container.querySelector('iframe')).not.toBeNull());
+    const frame = container.querySelector('iframe') as HTMLIFrameElement;
+    const nonce = /data-bridge-nonce="([^"]+)"/.exec(frame.getAttribute('srcdoc') ?? '')?.[1];
+    expect(nonce).toBeTruthy();
+
+    window.dispatchEvent(new MessageEvent('message', {
+      source: frame.contentWindow,
+      origin: 'null',
+      data: { channel: 'msgvault-archived-content', nonce, type: 'height', height: 732 }
+    }));
+
+    await waitFor(() => expect(frame.style.height).toBe('732px'));
   });
 });

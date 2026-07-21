@@ -16,7 +16,8 @@ describe('archived content frame message boundary', () => {
       frameWindow: () => frameWindow,
       nonce: () => 'secret-nonce',
       onKey,
-      onScroll
+      onScroll,
+      onHeight: vi.fn()
     });
     const valid = {
       channel: 'msgvault-archived-content',
@@ -46,7 +47,8 @@ describe('archived content frame message boundary', () => {
       frameWindow: () => frameWindow,
       nonce: () => 'nonce',
       onKey: vi.fn(),
-      onScroll
+      onScroll,
+      onHeight: vi.fn()
     });
     const base = { channel: 'msgvault-archived-content', nonce: 'nonce', type: 'scroll' };
 
@@ -59,5 +61,29 @@ describe('archived content frame message boundary', () => {
 
     expect(onScroll).toHaveBeenCalledTimes(1);
     expect(onScroll).toHaveBeenCalledWith(12.5);
+  });
+
+  it('accepts bounded positive content heights only through the exact height schema', () => {
+    const frameWindow = {} as Window;
+    const onHeight = vi.fn();
+    const handle = createArchivedContentMessageHandler({
+      frameWindow: () => frameWindow,
+      nonce: () => 'nonce',
+      onKey: vi.fn(),
+      onScroll: vi.fn(),
+      onHeight
+    });
+    const base = { channel: 'msgvault-archived-content', nonce: 'nonce', type: 'height' };
+
+    handle(event(frameWindow, { ...base, height: 480 }));
+    handle(event(frameWindow, { ...base, height: 0 }));
+    handle(event(frameWindow, { ...base, height: -20 }));
+    handle(event(frameWindow, { ...base, height: 65_537 }));
+    handle(event(frameWindow, { ...base, height: Number.POSITIVE_INFINITY }));
+    handle(event(frameWindow, { ...base, height: '480' }));
+    handle(event(frameWindow, { ...base, height: 480, key: 'Escape' }));
+
+    expect(onHeight).toHaveBeenCalledTimes(1);
+    expect(onHeight).toHaveBeenCalledWith(480);
   });
 });

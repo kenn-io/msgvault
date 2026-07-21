@@ -1,10 +1,14 @@
 export const ARCHIVED_CONTENT_CHANNEL = 'msgvault-archived-content';
 export const MAX_ARCHIVED_SCROLL_DELTA = 10_000;
+export const MAX_ARCHIVED_FRAME_HEIGHT = 65_536;
 
 // This generated script is the only executable content admitted by the frame
 // CSP. Its sole dynamic value is a validated, JSON-serialized shell origin.
+// Besides key/scroll forwarding it reports the document's natural height so
+// the shell can size the frame to its content (the thread scrolls as one
+// column; the frame itself never scrolls internally).
 export function archivedContentBridge(targetOrigin: string): string {
-  return `(()=>{const n=document.documentElement.dataset.bridgeNonce;const c='${ARCHIVED_CONTENT_CHANNEL}';const o=${JSON.stringify(targetOrigin)};const keys=new Set(['Escape','PageUp','PageDown','Home','End','ArrowUp','ArrowDown']);addEventListener('keydown',e=>{if(keys.has(e.key))parent.postMessage({channel:c,nonce:n,type:'key',key:e.key},o)});addEventListener('wheel',e=>{if(Number.isFinite(e.deltaY)&&Math.abs(e.deltaY)<=${MAX_ARCHIVED_SCROLL_DELTA})parent.postMessage({channel:c,nonce:n,type:'scroll',deltaY:e.deltaY},o)},{passive:true})})()`;
+  return `(()=>{const n=document.documentElement.dataset.bridgeNonce;const c='${ARCHIVED_CONTENT_CHANNEL}';const o=${JSON.stringify(targetOrigin)};const keys=new Set(['Escape','PageUp','PageDown','Home','End','ArrowUp','ArrowDown']);addEventListener('keydown',e=>{if(keys.has(e.key))parent.postMessage({channel:c,nonce:n,type:'key',key:e.key},o)});addEventListener('wheel',e=>{if(Number.isFinite(e.deltaY)&&Math.abs(e.deltaY)<=${MAX_ARCHIVED_SCROLL_DELTA})parent.postMessage({channel:c,nonce:n,type:'scroll',deltaY:e.deltaY},o)},{passive:true});const h=()=>{const v=Math.min(Math.ceil(document.documentElement.scrollHeight),${MAX_ARCHIVED_FRAME_HEIGHT});if(v>0)parent.postMessage({channel:c,nonce:n,type:'height',height:v},o)};if(typeof ResizeObserver==='function')new ResizeObserver(h).observe(document.body);addEventListener('load',h);h()})()`;
 }
 
 export interface FrameDocumentOptions {

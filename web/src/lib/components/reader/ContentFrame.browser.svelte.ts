@@ -1,5 +1,6 @@
 import {
   ARCHIVED_CONTENT_CHANNEL,
+  MAX_ARCHIVED_FRAME_HEIGHT,
   MAX_ARCHIVED_SCROLL_DELTA
 } from '../../content/frame-document';
 
@@ -10,6 +11,7 @@ interface ArchivedContentHandlerOptions {
   nonce: () => string;
   onKey: (key: string) => void;
   onScroll: (deltaY: number) => void;
+  onHeight: (height: number) => void;
 }
 
 function exactKeys(value: Record<string, unknown>, expected: string[]): boolean {
@@ -36,6 +38,13 @@ export function createArchivedContentMessageHandler(
       if (typeof data.deltaY !== 'number' || !Number.isFinite(data.deltaY) ||
         Math.abs(data.deltaY) > MAX_ARCHIVED_SCROLL_DELTA) return;
       options.onScroll(data.deltaY);
+      return;
+    }
+    if (data.type === 'height') {
+      if (!exactKeys(data, ['channel', 'nonce', 'type', 'height'])) return;
+      if (typeof data.height !== 'number' || !Number.isFinite(data.height) ||
+        data.height <= 0 || data.height > MAX_ARCHIVED_FRAME_HEIGHT) return;
+      options.onHeight(data.height);
     }
   };
 }

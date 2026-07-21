@@ -1,6 +1,5 @@
 <script lang="ts">
-  import { Button } from '@kenn-io/kit-ui';
-  import { onDestroy, onMount, tick, untrack } from 'svelte';
+  import { onDestroy, onMount, untrack } from 'svelte';
 
   import type { APIClient } from '../../api/client';
   import { buildFrameDocument } from '../../content/frame-document';
@@ -16,26 +15,25 @@
     messageId,
     html,
     title,
-    onContentFocusChange = undefined,
-    onFrameKey = undefined
+    onEscapeContent = undefined
   }: {
     client?: APIClient;
     messageId: number;
     html: string;
     title: string;
-    onContentFocusChange?: (focused: boolean) => void;
-    onFrameKey?: (key: string) => void;
+    /** Called when Escape is pressed while focus is inside the archived
+     * frame — the keyboard path out of the content. Defaults to focusing
+     * the nearest scrollable ancestor. */
+    onEscapeContent?: () => void;
   } = $props();
 
+  let host = $state<HTMLElement>();
   let frame = $state<HTMLIFrameElement>();
-  let enterControl = $state<HTMLSpanElement>();
-  let toolbar = $state<HTMLDivElement>();
-  let scrollShell = $state<HTMLDivElement>();
   let frameDocument = $state<{ generation: number; srcdoc: string }>();
   let documentState = $state<'building' | 'loading' | 'ready' | 'failed'>('building');
   let remoteImageCount = $state(0);
   let remoteImagesAllowed = $state(false);
-  let contentEntered = $state(false);
+  let frameHeight = $state(96);
   let nonce = $state(createFrameNonce());
   let documentGeneration = 0;
   let messageIdentity = '';
@@ -44,11 +42,6 @@
   function invalidateDocument(): void {
     documentGeneration += 1;
     inlineController?.abort();
-    if (contentEntered) {
-      contentEntered = false;
-      onContentFocusChange?.(false);
-      toolbar?.focus({ preventScroll: true });
-    }
     frameDocument = undefined;
     documentState = 'building';
   }
@@ -100,42 +93,55 @@
     documentState = 'ready';
   }
 
-  async function exitContent(): Promise<void> {
-    if (!contentEntered) return;
-    contentEntered = false;
-    onContentFocusChange?.(false);
-    await tick();
-    enterControl?.querySelector('button')?.focus();
-  }
-
-  async function enterContent(): Promise<void> {
-    if (documentState !== 'ready' || !frame) return;
-    contentEntered = true;
-    onContentFocusChange?.(true);
-    await tick();
-    frame?.focus();
-  }
-
   function loadRemoteImages(): void {
     if (remoteImagesAllowed || documentState !== 'ready') return;
     invalidateDocument();
     remoteImagesAllowed = true;
   }
 
-  function handleFrameKey(key: string): void {
-    if (!contentEntered) return;
-    if (key === 'Escape') {
-      void exitContent();
+  function nearestScroller(): HTMLElement | undefined {
+    let node = host?.parentElement ?? undefined;
+    while (node) {
+      const style = getComputedStyle(node);
+      if ((style.overflowY === 'auto' || style.overflowY === 'scroll') &&
+        node.scrollHeight > node.clientHeight) {
+        return node;
+      }
+      node = node.parentElement ?? undefined;
+    }
+    return undefined;
+  }
+
+  function scrollThread(deltaY: number): void {
+    nearestScroller()?.scrollBy({ top: deltaY });
+  }
+
+  function exitContent(): void {
+    if (onEscapeContent) {
+      onEscapeContent();
       return;
     }
-    onFrameKey?.(key);
+    const scroller = nearestScroller();
+    if (scroller && scroller.tabIndex >= 0) scroller.focus();
+  }
+
+  function handleFrameKey(key: string): void {
+    const scroller = nearestScroller();
+    if (key === 'Escape') exitContent();
+    else if (key === 'ArrowDown') scrollThread(48);
+    else if (key === 'ArrowUp') scrollThread(-48);
+    else if (key === 'PageDown') scrollThread((scroller?.clientHeight ?? 480) * 0.9);
+    else if (key === 'PageUp') scrollThread(-(scroller?.clientHeight ?? 480) * 0.9);
+    else if (key === 'Home') scroller?.scrollTo({ top: 0 });
+    else if (key === 'End') scroller?.scrollTo({ top: scroller.scrollHeight });
   }
 
   const messageHandler = createArchivedContentMessageHandler({
     frameWindow: () => frame?.contentWindow ?? null,
     nonce: () => nonce,
     onKey: handleFrameKey,
-    onScroll: (deltaY) => scrollShell?.scrollBy({ top: deltaY })
+    onScroll: scrollThread,
+    onHeight: (height) => { frameHeight = height; }
   });
 
   onMount(() => window.addEventListener('message', messageHandler));
@@ -143,141 +149,97 @@
     window.removeEventListener('message', messageHandler);
     inlineController?.abort();
     documentGeneration += 1;
-    if (contentEntered) onContentFocusChange?.(false);
   });
 </script>
 
-<section
-  class="content-frame"
-  class:content-frame--entered={contentEntered}
-  aria-label={title}
->
-  <div
-    bind:this={toolbar}
-    class="content-toolbar"
-    aria-label="Archived content controls"
-    tabindex="-1"
-  >
-    {#if contentEntered}
-      <span class="content-state" role="status">Archived content active</span>
-      <Button
-        size="sm"
-        surface="outline"
-        label="Exit content"
-        ariaLabel="Exit archived content"
-        onclick={() => { void exitContent(); }}
-      />
-    {:else}
-      <span bind:this={enterControl}>
-        <Button
-          size="sm"
-          surface="outline"
-          label="Enter content"
-          ariaLabel="Enter archived content"
-          disabled={documentState !== 'ready'}
-          onclick={() => { void enterContent(); }}
-        />
-      </span>
-    {/if}
-    {#if documentState === 'building' || documentState === 'loading'}
-      <span class="content-state" role="status">Preparing archived content…</span>
-    {:else if documentState === 'failed'}
-      <span class="content-state" role="alert">Archived content unavailable</span>
-    {/if}
-    {#if remoteImageCount > 0 && !remoteImagesAllowed}
-      <Button
-        size="sm"
-        surface="soft"
-        label={`Load ${remoteImageCount} remote ${remoteImageCount === 1 ? 'image' : 'images'}`}
-        ariaLabel={`Load ${remoteImageCount} remote ${remoteImageCount === 1 ? 'image' : 'images'}`}
+<section class="content-frame" aria-label={title} bind:this={host}>
+  {#if remoteImageCount > 0 && !remoteImagesAllowed}
+    <p class="remote-notice" role="status">
+      <span>{remoteImageCount === 1
+        ? '1 remote image is not loaded.'
+        : `${remoteImageCount} remote images are not loaded.`}</span>
+      <button
+        type="button"
+        aria-label={`Load ${remoteImageCount} remote ${remoteImageCount === 1 ? 'image' : 'images'}`}
         disabled={documentState !== 'ready'}
         onclick={loadRemoteImages}
-      />
-    {/if}
-  </div>
-  <div bind:this={scrollShell} class="frame-scroll">
-    {#if !contentEntered}
-      <div
-        class="content-entry-shield"
-        aria-hidden="true"
-        onpointerdown={(event) => event.preventDefault()}
-      ></div>
-    {/if}
-    {#if frameDocument}
-      {#key frameDocument.generation}
-        <iframe
-          bind:this={frame}
-          title={title}
-          sandbox="allow-scripts"
-          referrerpolicy="no-referrer"
-          tabindex="-1"
-          inert={!contentEntered}
-          srcdoc={frameDocument.srcdoc}
-          onload={() => handleFrameLoad(frameDocument!.generation)}
-        ></iframe>
-      {/key}
-    {/if}
-  </div>
+      >Load images</button>
+    </p>
+  {/if}
+  {#if documentState === 'failed'}
+    <p class="frame-state" role="alert">Archived content unavailable</p>
+  {:else if !frameDocument}
+    <p class="frame-state" role="status">Preparing message…</p>
+  {/if}
+  {#if frameDocument}
+    {#key frameDocument.generation}
+      <iframe
+        bind:this={frame}
+        title={title}
+        sandbox="allow-scripts"
+        referrerpolicy="no-referrer"
+        tabindex="0"
+        srcdoc={frameDocument.srcdoc}
+        style:height={`${frameHeight}px`}
+        onload={() => handleFrameLoad(frameDocument!.generation)}
+      ></iframe>
+    {/key}
+  {/if}
 </section>
 
 <style>
   .content-frame {
     display: flex;
-    min-height: 240px;
+    min-width: 0;
     flex-direction: column;
-    overflow: hidden;
-    border: 1px solid var(--border-default);
-    border-radius: var(--radius-md);
-    background: var(--bg-surface);
-  }
-
-  .content-frame--entered {
-    outline: 2px solid var(--accent-blue);
-    outline-offset: 2px;
-  }
-
-  .content-toolbar {
-    position: sticky;
-    z-index: 1;
-    top: 0;
-    display: flex;
-    min-height: 36px;
-    align-items: center;
     gap: var(--space-2);
-    padding: var(--space-2);
-    border-bottom: 1px solid var(--border-muted);
-    background: var(--bg-surface);
   }
 
-  .content-state {
-    color: var(--text-secondary);
+  .remote-notice {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    margin: 0;
+    color: var(--text-muted);
     font-size: var(--font-size-xs);
   }
 
-  .frame-scroll {
-    position: relative;
-    min-height: 0;
-    flex: 1;
-    overflow: auto;
+  .remote-notice button {
+    padding: 0;
+    border: 0;
+    background: none;
+    color: var(--accent-blue);
+    cursor: pointer;
+    font: inherit;
   }
 
-  .content-entry-shield {
-    position: absolute;
-    z-index: 1;
-    inset: 0;
+  .remote-notice button:disabled {
+    color: var(--text-muted);
     cursor: default;
   }
 
+  .remote-notice button:hover:not(:disabled) {
+    text-decoration: underline;
+  }
+
+  .frame-state {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+  }
+
+  /* HTML mail assumes a white canvas; keep it white in both themes but
+   * seamless — rounded, borderless, sized to its content by the bridge. */
   iframe {
     display: block;
     width: 100%;
-    min-height: 320px;
     border: 0;
+    border-radius: var(--radius-sm);
     background: white;
   }
 
-  iframe[inert] {
-    pointer-events: none;
-    user-select: none;
+  iframe:focus-visible {
+    outline: var(--focus-ring);
+    outline-offset: 1px;
   }
 </style>
