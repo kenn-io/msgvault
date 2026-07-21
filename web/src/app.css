@@ -28,5 +28,5 @@ textarea {
 }
 
 .kit-command-palette__option.highlighted {
-  box-shadow: inset 3px 0 var(--accent-blue);
+  box-shadow: inset 2px 0 0 var(--accent-blue);
 }
