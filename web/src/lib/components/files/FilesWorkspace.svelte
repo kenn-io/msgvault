@@ -425,7 +425,7 @@
 
 <main class="files-workspace" aria-label="Files">
   <header class="workspace-header">
-    <div><p>Archive workspace</p><h1>Files</h1></div>
+    <div><h1>Files</h1></div>
     <span aria-live="polite">{totalCount.toLocaleString()} files</span>
   </header>
 
@@ -563,11 +563,9 @@
 </script>
 
 <style>
-  .files-workspace { display: flex; min-height: 0; flex: 1; flex-direction: column; gap: var(--space-4); padding: var(--space-5) var(--space-6) var(--space-4); }
-  .workspace-header { display: flex; align-items: end; justify-content: space-between; }
-  .workspace-header p, h1 { margin: 0; }
-  .workspace-header p { color: var(--artifact-ink); font-size: var(--font-size-2xs); font-weight: 800; letter-spacing: .1em; text-transform: uppercase; }
-  h1 { font-family: var(--font-sans); }
+  .files-workspace { display: flex; min-height: 0; flex: 1; flex-direction: column; gap: var(--space-4); }
+  .workspace-header { display: flex; align-items: baseline; justify-content: space-between; }
+  h1 { margin: 0; font-family: var(--font-sans); font-size: var(--font-size-xl); font-weight: 650; line-height: 1.2; }
   .workspace-header span { color: var(--text-muted); font-size: var(--font-size-xs); }
   .file-controls, .mime-controls { display: flex; align-items: center; gap: var(--space-3); }
   .file-controls { flex-wrap: wrap; }

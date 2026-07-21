@@ -481,7 +481,6 @@
 <main class="everything-workspace" aria-label="Everything">
   <header class="workspace-header">
     <div>
-      <p class="eyebrow">Analytical workspace</p>
       <h1>Everything</h1>
     </div>
     <p class="result-count" aria-live="polite">
@@ -695,35 +694,29 @@
 <style>
   .everything-workspace {
     display: flex;
+    width: 100%;
+    max-width: 1760px;
     min-height: 0;
     flex: 1;
     flex-direction: column;
     gap: var(--space-4);
-    padding: var(--space-5) var(--space-6) var(--space-4);
+    margin-inline: auto;
+    padding: var(--space-6) var(--space-7) var(--space-4);
   }
 
   .workspace-header {
     display: flex;
-    min-height: 42px;
-    align-items: end;
+    align-items: baseline;
     justify-content: space-between;
     gap: var(--space-6);
-  }
-
-  .eyebrow {
-    margin: 0 0 var(--space-1);
-    color: var(--artifact-ink);
-    font-size: var(--font-size-2xs);
-    font-weight: 800;
-    letter-spacing: 0.12em;
-    text-transform: uppercase;
   }
 
   h1 {
     margin: 0;
     font-family: var(--font-sans);
-    font-size: var(--font-size-2xl);
-    line-height: 1;
+    font-size: var(--font-size-xl);
+    font-weight: 650;
+    line-height: 1.2;
   }
 
   .result-count {
