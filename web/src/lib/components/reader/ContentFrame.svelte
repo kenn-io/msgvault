@@ -173,6 +173,9 @@
   {/if}
   {#if frameDocument}
     {#key frameDocument.generation}
+      <!-- svelte-ignore a11y_no_noninteractive_tabindex -- the sandboxed
+           frame is the keyboard path into archived content; the bridge
+           forwards Escape back out to the surrounding scroller. -->
       <iframe
         bind:this={frame}
         title={title}
