@@ -221,12 +221,15 @@ func (imp *Importer) persistFiles(ctx context.Context, syncID, messageID int64, 
 		refs = append(refs, stored)
 		sum.AttachmentsDownloaded++
 	}
-	// Files tombstoned or omitted at the source keep their archived rows:
-	// a Slack-side deletion (or an edit that drops a file) must never reach
-	// into the archive. Only stale pending markers (no content hash) clear.
+	// Files tombstoned or omitted at the source keep their archived rows —
+	// downloaded media AND metadata-only link rows (all the record we will
+	// ever have for an external file): a Slack-side deletion, or an edit
+	// that drops a file, must never reach into the archive. Only stale
+	// pending markers clear: a gone file can never be fetched, and keeping
+	// its marker would wedge the pending queue forever.
 	var keep []string
 	for id, prev := range existing {
-		if prev.ContentHash != "" && !seen[id] {
+		if (prev.ContentHash != "" || prev.MediaType == "link") && !seen[id] {
 			keep = append(keep, id)
 		}
 	}

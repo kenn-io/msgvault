@@ -45,12 +45,18 @@ type Conversation struct {
 
 // User is one workspace member from users.list.
 type User struct {
-	ID       string `json:"id"`
-	TeamID   string `json:"team_id"`
-	Name     string `json:"name"` // legacy handle
-	Deleted  bool   `json:"deleted"`
-	IsBot    bool   `json:"is_bot"`
-	TZOffset int    `json:"tz_offset"` // seconds from UTC; drives sweep-day arithmetic
+	ID      string `json:"id"`
+	TeamID  string `json:"team_id"`
+	Name    string `json:"name"` // legacy handle
+	Deleted bool   `json:"deleted"`
+	IsBot   bool   `json:"is_bot"`
+	// TZ (IANA name) and TZOffset (current seconds from UTC) drive
+	// sweep-day arithmetic: search date modifiers evaluate in the user's
+	// IANA zone WITH historical DST rules (probed live against a corpus
+	// spanning DST transitions), so the zone is authoritative and the
+	// offset is the fallback for unloadable zone names.
+	TZ       string `json:"tz"`
+	TZOffset int    `json:"tz_offset"`
 	Profile  UserProfile
 	RealName string `json:"real_name"`
 }

@@ -71,9 +71,17 @@ for incremental sync. Consequences:
   work.
 - Date modifiers are evaluated in the searching user's *current profile
   timezone at query time* (verified, including retroactive re-filing
-  after a tz change), so sweep-day arithmetic reads `tz_offset` fresh
-  each run and derives days from the watermark under the current offset
-  — gap-free across tz changes and DST with no standing overlap.
+  after a tz change) **using the IANA zone's historical DST rules**
+  (verified against a production corpus spanning DST transitions: a
+  January day boundary follows the winter offset even when queried in
+  summer, and the spring-forward day is served as a 23-hour span). So
+  sweep-day arithmetic reads the user's IANA `tz` fresh each run and
+  derives day boundaries with `time.LoadLocation` — a fixed zone at the
+  current `tz_offset` (the fallback for unloadable zone names, and exact
+  for non-DST zones) would put historical boundaries an hour off across
+  a transition, letting an interrupted per-day sweep certify an hour the
+  day's query never served. Gap-free across tz changes and DST with no
+  standing overlap.
 - **Every query string is unique** (an inert negated nonce term):
   verified that search responses are cached by query string and can
   serve stale results — including pre-tz-change day filings — for
@@ -140,7 +148,8 @@ for incremental sync. Consequences:
 Per source, after the per-conversation walks complete:
 
 ```
-offset = current user tz_offset (from the users cache)
+zone = current user IANA tz (users cache; historical DST rules — probed);
+       fall back to FixedZone(tz_offset) when the name will not load
 
 # Stamp adoption (targets without a SweptThrough):
 #   max(own backfill pin, watermark) — the pin is exact for a freshly
@@ -225,6 +234,8 @@ emptiness never clears).
 | Unjoined public channels appear in results | verified — filter is load-bearing | sandbox (`#msgvault-probe-unjoined`) |
 | `in:<#ID>` scoping reliable; name form observed unreliable | verified / observed | production + sandbox |
 | Date modifiers use current profile tz at query time | verified (tz changed mid-test; messages re-filed) | sandbox |
+| Date filing uses IANA zone with HISTORICAL DST rules (not flat current offset) | verified — winter day boundary at the winter offset while queried in summer; brackets within minutes | production workspace (multi-year corpus, profile tz `America/New_York`) |
+| DST transition day served as a 23-hour span | verified — `on:` day starts at pre-transition midnight, ends at post-transition midnight | production workspace |
 | Results cached by query string (stale across tz change) | verified — nonce required | sandbox |
 | `page=101` silently clamps to page 1 | verified — echo check required | sandbox |
 | Cursormark pagination unsupported (ignored) | verified — 10k/query ceiling stands | sandbox |

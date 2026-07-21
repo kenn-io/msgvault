@@ -49,7 +49,12 @@ func (imp *Importer) sweepReplies(ctx context.Context, syncID int64, targets map
 	}
 	// Date modifiers evaluate in the user's CURRENT profile timezone at
 	// query time (probed live, including retroactive re-filing after a tz
-	// change), so day arithmetic must use the offset read this run.
+	// change) using the IANA zone's HISTORICAL DST rules (probed live
+	// against a corpus spanning DST transitions: a January day boundary
+	// follows the winter offset even when queried in summer, and the
+	// transition day itself is served as a 23-hour day). Day arithmetic
+	// must therefore use the zone read this run, not a fixed offset.
+	loc := imp.res.tzLocation(imp.opts.UserID)
 	offset := imp.res.tzOffset(imp.opts.UserID)
 	now := imp.now().UTC()
 	horizon := tsFormat(now.Add(-sweepLagMargin))
@@ -100,7 +105,7 @@ func (imp *Importer) sweepReplies(ctx context.Context, syncID int64, targets map
 			continue
 		}
 		err := imp.sweepRange(ctx, syncID, cid, cs.SweptThrough, tsTime(state.SweepWatermark), state.SweepWatermark,
-			map[string]sweepTarget{cid: targets[cid]}, offset, state, sum,
+			map[string]sweepTarget{cid: targets[cid]}, loc, state, sum,
 			func(certified string) { cs.SweptThrough = certified })
 		if err != nil {
 			return err
@@ -127,7 +132,7 @@ func (imp *Importer) sweepReplies(ctx context.Context, syncID int64, targets map
 	// Search runs through NOW — replies inside the lag window are archived
 	// too — but certification caps at the horizon, so anything the index
 	// may not have served yet is re-swept next run (idempotent upserts).
-	return imp.sweepRange(ctx, syncID, "", floor, now, horizon, targets, offset, state, sum,
+	return imp.sweepRange(ctx, syncID, "", floor, now, horizon, targets, loc, state, sum,
 		func(certified string) {
 			state.SweepWatermark, state.SweepOffset = certified, offset
 			for _, cid := range ids {
@@ -153,8 +158,7 @@ func (imp *Importer) sweepReplies(ctx context.Context, syncID int64, targets map
 // Discovery and fetch failures are recorded, certification parks at the
 // last safe boundary, and the sweep stops; only store/context failures
 // return an error.
-func (imp *Importer) sweepRange(ctx context.Context, syncID int64, scope, floor string, searchEnd time.Time, ceiling string, targets map[string]sweepTarget, offset int, state *SyncState, sum *ImportSummary, commit func(certified string)) error {
-	loc := time.FixedZone("user", offset)
+func (imp *Importer) sweepRange(ctx context.Context, syncID int64, scope, floor string, searchEnd time.Time, ceiling string, targets map[string]sweepTarget, loc *time.Location, state *SyncState, sum *ImportSummary, commit func(certified string)) error {
 	day := tsTime(floor).In(loc)
 	day = time.Date(day.Year(), day.Month(), day.Day(), 0, 0, 0, 0, loc)
 	end := searchEnd.In(loc)
@@ -201,7 +205,7 @@ func (imp *Importer) sweepRange(ctx context.Context, syncID int64, scope, floor 
 			}
 			return nil
 		}
-		nextDay := day.AddDate(0, 0, 1)
+		nextDay := nextDayStart(day, loc)
 		commit(minTS(tsFormat(nextDay.UTC()), ceiling))
 		imp.checkpoint(syncID, state, sum)
 		day = nextDay
@@ -310,6 +314,16 @@ func (imp *Importer) fetchSweepHits(ctx context.Context, syncID int64, hits []Se
 		}
 	}
 	return true, "", nil
+}
+
+// nextDayStart returns the start of the calendar day after day in loc,
+// honoring the zone's historical DST rules: a transition day is 23 or 25
+// hours long, and a midnight that does not exist normalizes forward. This
+// boundary is load-bearing for certification — search files messages by the
+// zone's civil day (probed live), so a fixed-offset boundary could certify
+// an hour the day's query never served.
+func nextDayStart(day time.Time, loc *time.Location) time.Time {
+	return time.Date(day.Year(), day.Month(), day.Day()+1, 0, 0, 0, 0, loc)
 }
 
 // tsFormat renders a UTC instant as a Slack ts string (microsecond fraction).

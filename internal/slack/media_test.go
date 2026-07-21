@@ -197,6 +197,9 @@ func TestPersistFilesPreservesTombstonedAndOmittedDownloads(t *testing.T) {
 		{"id": "F_PEND", "name": "big.mp4", "mimetype": "video/mp4", "size": 1 << 40,
 			"url_private": "https://files.slack.com/files-pri/T01-F_PEND/big.mp4",
 			"permalink":   "https://testers.slack.com/files/F_PEND"},
+		{"id": "F_LINK", "name": "doc.pdf", "mimetype": "application/pdf", "is_external": true,
+			"url_private": "https://ext.example/doc.pdf",
+			"permalink":   "https://testers.slack.com/files/F_LINK"},
 	}
 
 	prevInterval := checkpointMinInterval
@@ -219,9 +222,11 @@ func TestPersistFilesPreservesTombstonedAndOmittedDownloads(t *testing.T) {
 	require.NoError(err)
 
 	// The source deletes one downloaded file (tombstone) and an edit drops
-	// the other from the message entirely; the oversized pending marker
-	// also stops being listed. Deletions at the source must never reach
-	// into the archive — but a stale pending marker has nothing to keep.
+	// the others from the message entirely; the oversized pending marker
+	// and the external link's metadata row also stop being listed.
+	// Deletions at the source must never reach into the archive — the
+	// downloaded rows AND the metadata-only link row survive; only the
+	// stale pending marker has nothing to keep.
 	f.mu.Lock()
 	f.conv("C01").Msgs[6].Files = []map[string]any{
 		{"id": "F_TOMB", "mode": "tombstone"},
@@ -234,21 +239,22 @@ func TestPersistFilesPreservesTombstonedAndOmittedDownloads(t *testing.T) {
 	require.NoError(err)
 
 	rows, err := st.DB().Query(st.Rebind(`
-		SELECT a.source_attachment_id, COALESCE(a.content_hash, '')
+		SELECT a.source_attachment_id, COALESCE(a.content_hash, ''), COALESCE(a.media_type, '')
 		FROM attachments a JOIN messages m ON m.id = a.message_id
 		WHERE m.source_message_id = ?`), "C01:"+ts(6))
 	require.NoError(err)
 	defer func() { _ = rows.Close() }()
-	got := map[string]string{}
+	got := map[string][2]string{}
 	for rows.Next() {
-		var id, hash string
-		require.NoError(rows.Scan(&id, &hash))
-		got[id] = hash
+		var id, hash, mediaType string
+		require.NoError(rows.Scan(&id, &hash, &mediaType))
+		got[id] = [2]string{hash, mediaType}
 	}
 	require.NoError(rows.Err())
 
-	assert.NotEmpty(got["slack:F_TOMB"], "a tombstoned file keeps its archived attachment row")
-	assert.NotEmpty(got["slack:F_GONE"], "a file dropped by an edit keeps its archived attachment row")
+	assert.NotEmpty(got["slack:F_TOMB"][0], "a tombstoned file keeps its archived attachment row")
+	assert.NotEmpty(got["slack:F_GONE"][0], "a file dropped by an edit keeps its archived attachment row")
+	assert.Equal("link", got["slack:F_LINK"][1], "an omitted external file keeps its metadata-only link row")
 	_, pendKept := got["slack:F_PEND"]
 	assert.False(pendKept, "a stale pending marker clears once the source stops listing the file")
 }

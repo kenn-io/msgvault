@@ -3,6 +3,7 @@ package slack
 import (
 	"context"
 	"strings"
+	"time"
 
 	"go.kenn.io/msgvault/internal/store"
 )
@@ -52,6 +53,21 @@ func (r *participantResolver) loadUsers(ctx context.Context, c *Client) error {
 		r.users[u.ID] = u
 		return nil
 	})
+}
+
+// tzLocation returns the cached user's timezone as a *time.Location: the
+// IANA zone when its name loads (search date modifiers follow the zone's
+// historical DST rules — probed live), falling back to a fixed zone at the
+// current tz_offset (correct for non-DST zones; the pre-probe behavior
+// otherwise).
+func (r *participantResolver) tzLocation(userID string) *time.Location {
+	u := r.users[userID]
+	if u.TZ != "" {
+		if loc, err := time.LoadLocation(u.TZ); err == nil {
+			return loc
+		}
+	}
+	return time.FixedZone("user", u.TZOffset)
 }
 
 // tzOffset returns the cached user's tz_offset in seconds (0 when unknown).

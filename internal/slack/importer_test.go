@@ -787,6 +787,44 @@ func TestGapCatchUpCoversPostBackfillRoots(t *testing.T) {
 	require.Equal(1, n, "gap recovery must anchor threads rooted after the backfill pin")
 }
 
+func TestSweepDayBoundariesFollowHistoricalDST(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	ny, err := time.LoadLocation("America/New_York")
+	if err != nil {
+		t.Skip("tzdata unavailable")
+	}
+	require.NotNil(ny)
+
+	// Search files messages by the user's IANA zone with HISTORICAL DST
+	// rules (probed live against a corpus spanning transitions: winter
+	// boundary at EST midnight even when queried in summer; the spring-
+	// forward day served as a 23-hour span). Certification boundaries must
+	// match, or an interrupted per-day sweep could certify an hour the
+	// day's query never served.
+	jan15 := time.Date(2026, 1, 15, 0, 0, 0, 0, ny)
+	assert.Equal("2026-01-16T05:00:00Z", nextDayStart(jan15, ny).UTC().Format(time.RFC3339),
+		"winter boundary is EST midnight (-5), regardless of the current offset")
+	jun15 := time.Date(2026, 6, 15, 0, 0, 0, 0, ny)
+	assert.Equal("2026-06-16T04:00:00Z", nextDayStart(jun15, ny).UTC().Format(time.RFC3339),
+		"summer boundary is EDT midnight (-4)")
+	mar8 := time.Date(2026, 3, 8, 0, 0, 0, 0, ny)
+	assert.Equal("2026-03-08T05:00:00Z", mar8.UTC().Format(time.RFC3339))
+	assert.Equal("2026-03-09T04:00:00Z", nextDayStart(mar8, ny).UTC().Format(time.RFC3339),
+		"the spring-forward day is 23 hours (probed live: on:2026-03-08 served exactly this span)")
+
+	// The resolver serves the IANA zone when it loads; sweeping with the
+	// flat current offset instead would put winter boundaries an hour off.
+	r := &participantResolver{users: map[string]User{
+		"UNY":  {ID: "UNY", TZ: "America/New_York", TZOffset: -4 * 3600},
+		"UBAD": {ID: "UBAD", TZ: "Not/AZone", TZOffset: 7200},
+	}}
+	winter := time.Date(2026, 1, 16, 5, 0, 0, 0, time.UTC).In(r.tzLocation("UNY"))
+	assert.Equal(0, winter.Hour(), "sweep-day arithmetic must apply the historical winter offset, not the current one")
+	_, off := time.Date(2026, 1, 15, 0, 0, 0, 0, r.tzLocation("UBAD")).Zone()
+	assert.Equal(7200, off, "an unloadable zone name falls back to the fixed current offset")
+}
+
 func TestSweepSkipsNotDoneConversations(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
