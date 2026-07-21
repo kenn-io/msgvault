@@ -546,7 +546,7 @@ describe('AppShell', () => {
     const rendered = render(AppShell, { client: createAPIClient(fetchFn), state });
 
     const row = (await screen.findByText('report.pdf')).closest('[role="row"]')!;
-    await fireEvent.dblClick(row);
+    await fireEvent.click(row);
     await fireEvent.click(await screen.findByRole('button', { name: 'Open containing item' }));
 
     await waitFor(() => expect(state.current.workspace).toBe('everything'));

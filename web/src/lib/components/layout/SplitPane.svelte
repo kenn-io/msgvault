@@ -1,6 +1,6 @@
 <script lang="ts">
   import { SplitResizeHandle, type SplitResizeEvent } from '@kenn-io/kit-ui';
-  import { onDestroy, onMount, type Snippet } from 'svelte';
+  import { onDestroy, onMount, untrack, type Snippet } from 'svelte';
 
   interface Props {
     ariaLabel: string;
@@ -16,6 +16,7 @@
      * handle, the persisted pixel size wins. */
     initialFraction?: number;
     minPrimary?: number;
+    /** Defaults to 160 for vertical panes and 320 for horizontal ones. */
     minSecondary?: number;
     /** Collapses the split to the primary pane only (no handle, no
      * secondary) without unmounting the primary content. */
@@ -32,7 +33,7 @@
     initialSize = 360,
     initialFraction = undefined,
     minPrimary = 220,
-    minSecondary = orientation === 'vertical' ? 160 : 320,
+    minSecondary = undefined,
     collapsed = false,
     primary,
     secondary,
@@ -40,8 +41,10 @@
   }: Props = $props();
 
   const keyboardStep = 24;
-  const vertical = orientation === 'vertical';
+  const vertical = untrack(() => orientation) === 'vertical';
   const handleThickness = vertical ? 5 : 4;
+  const minSized = $derived(vertical ? minSecondary ?? 160 : minPrimary);
+  const minOther = $derived(vertical ? minPrimary : minSecondary ?? 320);
 
   function readStoredSize(): number | undefined {
     try {
@@ -68,14 +71,12 @@
 
   let host: HTMLDivElement;
   const storedSize = readStoredSize();
-  let sizedSize = $state(storedSize ?? initialSize);
+  let sizedSize = $state(untrack(() => storedSize ?? initialSize));
   let userSized = storedSize !== undefined;
   let available = $state(0);
   let resizeStartSize = 0;
   let dragCleanup: (() => void) | undefined;
 
-  const minSized = $derived(vertical ? minSecondary : minPrimary);
-  const minOther = $derived(vertical ? minPrimary : minSecondary);
   const maximum = $derived(
     available > 0
       ? Math.max(0, available - minOther - handleThickness)

@@ -199,7 +199,7 @@
     onRestorationFocus: () => focusGrid()
   });
   // Owned here (not by EverythingWorkspace) so coverage-poll backoff, the
-  // exact lexical match-count cache, and loaded inspector group detail
+  // exact lexical match-count cache, and loaded reading-pane group detail
   // survive a workspace round-trip: AppShell renders EverythingWorkspace
   // behind an {#if}, so it is destroyed and recreated on every switch away
   // from and back to 'everything'.
@@ -209,9 +209,6 @@
   let keyboardHelpScopeCleanup: (() => void) | undefined;
   let sortNotice = $state(DEFAULT_SORT_NOTICE);
   let editableScopeCleanup: (() => void) | undefined;
-  let inspectorContentScopeCleanup: (() => void) | undefined;
-  let previousConversationAnchor = untrack(() => exploreState.current.conversationAnchor);
-  let conversationFocusGeneration = 0;
   let previousSortNoticeWorkspace = untrack(() => exploreState.current.workspace);
 
   $effect(() => {
@@ -238,7 +235,7 @@
   });
 
   const selectedAttachmentID = $derived(parseAttachmentSelection(exploreState.current.selectedRow));
-  const inspectorTargetKey = $derived(
+  const readingTargetKey = $derived(
     selectedAttachmentID === undefined ? exploreState.current.selectedRow : null
   );
 
@@ -368,23 +365,6 @@
     return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : undefined;
   });
 
-  $effect(() => {
-    const currentAnchor = exploreState.current.conversationAnchor;
-    const priorAnchor = previousConversationAnchor;
-    previousConversationAnchor = currentAnchor;
-    if (priorAnchor === null || currentAnchor !== null) return;
-    conversationFocusGeneration += 1;
-    const generation = conversationFocusGeneration;
-    void tick().then(() => {
-      if (generation !== conversationFocusGeneration ||
-        exploreState.current.conversationAnchor !== null) return;
-      const returnControl = document.querySelector<HTMLButtonElement>(
-        '[data-conversation-return] button'
-      );
-      (returnControl ?? currentGrid())?.focus();
-    });
-  });
-
   function editableTarget(target: EventTarget | null): boolean {
     if (!(target instanceof Element)) return false;
     const element = target as HTMLElement;
@@ -448,16 +428,10 @@
     grid.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: false, cancelable: true }));
   }
 
-  async function closeInspector(): Promise<void> {
-    setInspectorContentFocus(false);
+  async function closeReadingPane(): Promise<void> {
     commitNavigation({ selectedRow: null });
     await tick();
     focusGrid();
-  }
-
-  function openContainingConversation(_conversationId: number, anchorId: number): void {
-    setInspectorContentFocus(false);
-    commitNavigation({ conversationAnchor: String(anchorId) });
   }
 
   function openFileItem(entryKey: string): void {
@@ -514,20 +488,8 @@
     (contextualViewerReturnFocus ?? currentGrid())?.focus();
   }
 
-  function backFromConversation(): void {
-    setInspectorContentFocus(false);
-    window.history.back();
-  }
-
   function changeConversationAnchor(anchorId: number): void {
     replaceCommittedNavigation({ conversationAnchor: String(anchorId) });
-  }
-
-  function setInspectorContentFocus(focused: boolean): void {
-    inspectorContentScopeCleanup?.();
-    inspectorContentScopeCleanup = focused
-      ? appShortcuts.pushScope('everything-inspector-content')
-      : undefined;
   }
 
   // The Relationships hub owns its own Esc layering (reading pane → timeline
@@ -541,13 +503,12 @@
   function handleEscape(event: KeyboardEvent): void {
     if (editableTarget(event.target)) return;
     if (exploreState.current.workspace === 'relationships') return;
-    if (exploreState.current.conversationAnchor !== null) {
-      backFromConversation();
-      return;
-    } else if (selectedAttachmentID !== undefined) {
+    if (selectedAttachmentID !== undefined) {
       void closeContextualViewer();
     } else if (exploreState.current.selectedRow !== null) {
-      void closeInspector();
+      // Closing the reading pane clears any in-thread anchor with it —
+      // the thread is the pane's default content, not a separate layer.
+      void closeReadingPane();
     } else if (exploreState.current.groupingChain.length > 0) {
       commitUngroup();
     }
@@ -570,7 +531,7 @@
     document.querySelector<HTMLButtonElement>('button[aria-label="Sort: newest first"]')?.focus();
   }
 
-  function navigateInspector(delta: number): void {
+  function navigateReader(delta: number): void {
     if (!exploreState.current.selectedRow || loader.rows.length === 0) return;
     const index = loader.rows.findIndex((row) => row.key === exploreState.current.selectedRow);
     if (index < 0) return;
@@ -596,8 +557,8 @@
   const commandHandlers: CommandHandlers = {
     'move-next': (event) => relay(event, 'j'),
     'move-previous': (event) => relay(event, 'k'),
-    'reader-previous': () => navigateInspector(-1),
-    'reader-next': () => navigateInspector(1),
+    'reader-previous': () => navigateReader(-1),
+    'reader-next': () => navigateReader(1),
     'page-up': (event) => relay(event, 'PageUp'),
     'page-down': (event) => relay(event, 'PageDown'),
     'first-row': (event) => relay(event, 'Home'),
@@ -677,6 +638,9 @@
   }
 
   function openRow(row: EntryRow): void {
+    // Single-click selects AND opens; re-opening the already-open row must
+    // not push a duplicate history entry.
+    if (exploreState.current.selectedRow === row.key) return;
     commitNavigation({ selectedRow: row.key });
   }
 
@@ -830,7 +794,6 @@
     editableScopeCleanup = undefined;
     keyboardHelpScopeCleanup?.();
     keyboardHelpScopeCleanup = undefined;
-    setInspectorContentFocus(false);
     appearance.destroy();
     relationshipsController.destroy();
     if (ownsState) exploreState.destroy();
@@ -956,7 +919,7 @@
           unavailable={loader.unavailable}
           drillable={groupingByDimension(exploreState.current.groupingChain[0]!).requestable}
           focusedKey={exploreState.current.activeRow}
-          inspectedKey={inspectorTargetKey}
+          inspectedKey={readingTargetKey}
           scrollAnchor={exploreState.current.scrollAnchor}
           restoring={loader.restoring}
           onDrill={drillGroup}
@@ -1006,7 +969,7 @@
       session={everythingSession}
       {selection}
       {enabled}
-      {inspectorTargetKey}
+      {readingTargetKey}
       {conversationAnchorId}
       {sortNotice}
       bind:searchInput
@@ -1022,11 +985,8 @@
       {drillGroup}
       {openFileItem}
       {openContextualFile}
-      closeInspector={() => void closeInspector()}
-      {setInspectorContentFocus}
+      closeReadingPane={() => void closeReadingPane()}
       {openRelationship}
-      {openContainingConversation}
-      {backFromConversation}
       {changeConversationAnchor}
     />
   {/if}

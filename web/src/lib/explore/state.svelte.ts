@@ -42,7 +42,6 @@ const COLUMNS = new Set(['kind', 'people', 'title', 'excerpt', 'time', 'attachme
 const TRANSIENT_HISTORY_FIELDS = [
   'columns',
   'columnWidths',
-  'inspectorWidth',
   'activeRow',
   'scrollAnchor'
 ] as const satisfies ReadonlyArray<keyof ExploreURLState>;
@@ -93,7 +92,6 @@ export const defaultExploreURLState: ExploreURLState = {
   activeRow: null,
   selectedRow: null,
   inspectorPinned: true,
-  inspectorWidth: 380,
   conversationAnchor: null,
   scrollAnchor: null
 };
@@ -295,11 +293,6 @@ function normalize(value: unknown): ExploreURLState {
         : null,
     selectedRow: selectedRow(value.selectedRow),
     inspectorPinned: true,
-    inspectorWidth:
-      typeof value.inspectorWidth === 'number' && Number.isFinite(value.inspectorWidth) &&
-      value.inspectorWidth >= 320 && value.inspectorWidth <= 720
-        ? value.inspectorWidth
-        : defaultExploreURLState.inspectorWidth,
     conversationAnchor:
       typeof value.conversationAnchor === 'string' || value.conversationAnchor === null
         ? value.conversationAnchor

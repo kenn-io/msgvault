@@ -27,13 +27,14 @@
   import FilesPresentation from '../explore/FilesPresentation.svelte';
   import GroupTable from '../explore/GroupTable.svelte';
   import SelectionBar from '../explore/SelectionBar.svelte';
+  import SplitPane from '../layout/SplitPane.svelte';
   import PersonTimeline from '../people/PersonTimeline.svelte';
   import SearchCoverage from '../search/SearchCoverage.svelte';
   import SearchModeControl from '../search/SearchModeControl.svelte';
-  import Inspector, {
-    type InspectorSelection,
-    type InspectorStatus
-  } from '../inspector/Inspector.svelte';
+  import ReadingPane, {
+    type ReadingPaneSelection,
+    type ReadingPaneStatus
+  } from '../reader/ReadingPane.svelte';
   import type { SearchCoverageAction } from '../../search/modes';
   import type { EverythingSessionState } from './EverythingSessionState.svelte';
 
@@ -46,7 +47,7 @@
     session: EverythingSessionState;
     selection: ExploreSelectionState;
     enabled: boolean;
-    inspectorTargetKey: string | null;
+    readingTargetKey: string | null;
     conversationAnchorId: number | undefined;
     sortNotice: string;
     searchInput?: HTMLInputElement;
@@ -62,11 +63,8 @@
     drillGroup: (row: ExploreGroupRow) => void;
     openFileItem: (entryKey: string) => void;
     openContextualFile: (file: ExploreFileFact) => void;
-    closeInspector: () => void;
-    setInspectorContentFocus: (focused: boolean) => void;
+    closeReadingPane: () => void;
     openRelationship: (participantID: number) => void;
-    openContainingConversation: (conversationId: number, anchorId: number) => void;
-    backFromConversation: () => void;
     changeConversationAnchor: (anchorId: number) => void;
   }
 
@@ -77,7 +75,7 @@
     session,
     selection,
     enabled,
-    inspectorTargetKey,
+    readingTargetKey,
     conversationAnchorId,
     sortNotice,
     searchInput = $bindable(undefined),
@@ -93,19 +91,16 @@
     drillGroup,
     openFileItem,
     openContextualFile,
-    closeInspector,
-    setInspectorContentFocus,
+    closeReadingPane,
     openRelationship,
-    openContainingConversation,
-    backFromConversation,
     changeConversationAnchor
   }: Props = $props();
 
   const api = createExploreAPI(untrack(() => client));
 
   // coverage, coveragePollAttempts/coveragePollKey, visibleLexicalRowKeys,
-  // lexicalCountCache/canonicalQueryHashes, and inspectorGroupDetail/
-  // inspectorDetailGeneration/inspectorDetailFingerprint live on `session`
+  // lexicalCountCache/canonicalQueryHashes, and readingGroupDetail/
+  // readingDetailGeneration/readingDetailFingerprint live on `session`
   // (owned by AppShell) so they survive this component being destroyed and
   // recreated on a workspace round-trip. Timer handles, AbortControllers,
   // and other in-flight-request bookkeeping below stay local: they are
@@ -117,10 +112,10 @@
   let lexicalCountController: AbortController | undefined;
   let lexicalCountTimer: ReturnType<typeof setTimeout> | undefined;
   let lexicalCountRequestKey = '';
-  let inspectorDetailLoading = $state(false);
-  let inspectorDetailError = $state('');
-  let inspectorDetailUnavailable = $state<ExploreCacheUnavailable>();
-  let inspectorDetailController: AbortController | undefined;
+  let readingDetailLoading = $state(false);
+  let readingDetailError = $state('');
+  let readingDetailUnavailable = $state<ExploreCacheUnavailable>();
+  let readingDetailController: AbortController | undefined;
 
   const allMatchingSelection = $derived.by((): AllMatchingExploreSelection | undefined => {
     if (!loader.result || loader.loading || loader.loadingMore) return undefined;
@@ -134,37 +129,37 @@
     return createAllMatchingSelection(predicate, loader.result, loader.resultGeneration);
   });
 
-  const inspectedSelection = $derived.by((): InspectorSelection | undefined => {
-    const selected = inspectorTargetKey;
+  const readingSelection = $derived.by((): ReadingPaneSelection | undefined => {
+    const selected = readingTargetKey;
     if (!selected) return undefined;
     const entry = loader.rows.find((row) => row.key === selected);
     if (entry) return { kind: 'entry', row: entry };
     const group = parseGroupSelection(selected);
-    return group && session.inspectorGroupDetail?.kind === 'group' &&
-      session.inspectorGroupDetail.dimension === group.dimension && session.inspectorGroupDetail.key === group.key
-      ? session.inspectorGroupDetail
+    return group && session.readingGroupDetail?.kind === 'group' &&
+      session.readingGroupDetail.dimension === group.dimension && session.readingGroupDetail.key === group.key
+      ? session.readingGroupDetail
       : undefined;
   });
 
-  const inspectorState = $derived.by((): {
-    status: InspectorStatus;
+  const readingState = $derived.by((): {
+    status: ReadingPaneStatus;
     message: string;
     unavailable?: ExploreCacheUnavailable;
   } => {
-    const selected = inspectorTargetKey;
-    if (!selected || inspectedSelection) return { status: 'ready', message: '' };
+    const selected = readingTargetKey;
+    if (!selected || readingSelection) return { status: 'ready', message: '' };
     if (parseGroupSelection(selected)) {
-      if (inspectorDetailUnavailable) {
+      if (readingDetailUnavailable) {
         return {
           status: 'unavailable',
-          message: inspectorDetailUnavailable.message,
-          unavailable: inspectorDetailUnavailable
+          message: readingDetailUnavailable.message,
+          unavailable: readingDetailUnavailable
         };
       }
-      if (inspectorDetailLoading || !inspectorDetailError) return { status: 'loading', message: '' };
+      if (readingDetailLoading || !readingDetailError) return { status: 'loading', message: '' };
       return {
         status: 'missing',
-        message: inspectorDetailError
+        message: readingDetailError
       };
     }
     if (loader.unavailable) {
@@ -177,11 +172,11 @@
     };
   });
 
-  const inspectorPredicateFingerprint = $derived(predicateFingerprint(exploreState.predicate()));
+  const readingPredicateFingerprint = $derived(predicateFingerprint(exploreState.predicate()));
 
   $effect(() => {
     const target = parseGroupSelection(exploreState.current.selectedRow);
-    const fingerprint = inspectorPredicateFingerprint;
+    const fingerprint = readingPredicateFingerprint;
     // Tracked, not untracked like `predicate` below: a cache rebuild
     // invalidates a stale detail whether it happened before this mount
     // (`session` persisted the fingerprint across a prior workspace
@@ -195,9 +190,9 @@
     const cacheRevision = loader.result?.cacheRevision;
     const predicate = untrack(() => exploreState.predicate());
     if (target && cacheRevision === undefined) {
-      inspectorDetailLoading = true;
-      inspectorDetailError = '';
-      inspectorDetailUnavailable = undefined;
+      readingDetailLoading = true;
+      readingDetailError = '';
+      readingDetailUnavailable = undefined;
       return;
     }
     const loadedKey = target ? `${fingerprint}|${cacheRevision}|group:${target.dimension}:${target.key}` : '';
@@ -208,39 +203,39 @@
     // which survives the round-trip — reuse it instead. Read through
     // `untrack` so this effect's dependencies stay limited to the selection
     // and predicate (matching the pre-persistence behavior); this effect
-    // also writes `session.inspectorGroupDetail`/`inspectorDetailFingerprint`
+    // also writes `session.readingGroupDetail`/`readingDetailFingerprint`
     // below, and a tracked read of the same fields here would make the
     // effect re-trigger itself on every write.
     const canReuse = untrack(() => Boolean(
-      target && loadedKey === session.inspectorDetailFingerprint && session.inspectorGroupDetail
+      target && loadedKey === session.readingDetailFingerprint && session.readingGroupDetail
     ));
     if (canReuse) {
-      inspectorDetailLoading = false;
-      inspectorDetailError = '';
-      inspectorDetailUnavailable = undefined;
+      readingDetailLoading = false;
+      readingDetailError = '';
+      readingDetailUnavailable = undefined;
       return;
     }
-    session.inspectorDetailGeneration += 1;
-    inspectorDetailController?.abort();
-    inspectorDetailController = undefined;
-    session.inspectorGroupDetail = undefined;
-    session.inspectorDetailFingerprint = '';
-    inspectorDetailError = '';
-    inspectorDetailUnavailable = undefined;
+    session.readingDetailGeneration += 1;
+    readingDetailController?.abort();
+    readingDetailController = undefined;
+    session.readingGroupDetail = undefined;
+    session.readingDetailFingerprint = '';
+    readingDetailError = '';
+    readingDetailUnavailable = undefined;
     if (!target) {
-      inspectorDetailLoading = false;
+      readingDetailLoading = false;
       return;
     }
     const filters = filtersForGroup(predicate.filters ?? [], target.dimension, target.key);
     if (!filters) {
-      inspectorDetailLoading = false;
-      inspectorDetailError = 'The selected group is not available in this context.';
+      readingDetailLoading = false;
+      readingDetailError = 'The selected group is not available in this context.';
       return;
     }
-    const generation = session.inspectorDetailGeneration;
+    const generation = session.readingDetailGeneration;
     const controller = new AbortController();
-    inspectorDetailController = controller;
-    inspectorDetailLoading = true;
+    readingDetailController = controller;
+    readingDetailLoading = true;
     const detailPredicate = {
       ...predicate,
       cursor: undefined,
@@ -252,17 +247,17 @@
     };
     void api.groups(detailPredicate, target.dimension, controller.signal)
       .then((loaded) => {
-        if (generation !== session.inspectorDetailGeneration || controller.signal.aborted) return;
+        if (generation !== session.readingDetailGeneration || controller.signal.aborted) return;
         if (loaded.status === 'unavailable') {
-          inspectorDetailUnavailable = loaded.unavailable;
+          readingDetailUnavailable = loaded.unavailable;
           return;
         }
         const row = loaded.result.rows.find((candidate) => candidate.key === target.key);
         if (!row) {
-          inspectorDetailError = 'The selected group is no longer available in this context.';
+          readingDetailError = 'The selected group is no longer available in this context.';
           return;
         }
-        session.inspectorGroupDetail = {
+        session.readingGroupDetail = {
           kind: 'group',
           dimension: target.dimension,
           key: target.key,
@@ -271,14 +266,14 @@
           estimatedBytes: row.estimated_bytes,
           latestAt: row.latest_at
         };
-        session.inspectorDetailFingerprint = loadedKey;
+        session.readingDetailFingerprint = loadedKey;
       })
       .catch((cause: unknown) => {
-        if (generation !== session.inspectorDetailGeneration || controller.signal.aborted) return;
-        inspectorDetailError = cause instanceof Error ? cause.message : 'Could not restore the selected group.';
+        if (generation !== session.readingDetailGeneration || controller.signal.aborted) return;
+        readingDetailError = cause instanceof Error ? cause.message : 'Could not restore the selected group.';
       })
       .finally(() => {
-        if (generation === session.inspectorDetailGeneration) inspectorDetailLoading = false;
+        if (generation === session.readingDetailGeneration) readingDetailLoading = false;
       });
   });
 
@@ -473,8 +468,8 @@
     if (coveragePollTimer !== undefined) clearTimeout(coveragePollTimer);
     if (lexicalCountTimer !== undefined) clearTimeout(lexicalCountTimer);
     lexicalCountController?.abort();
-    session.inspectorDetailGeneration += 1;
-    inspectorDetailController?.abort();
+    session.readingDetailGeneration += 1;
+    readingDetailController?.abort();
   });
 </script>
 
@@ -547,10 +542,17 @@
   />
   <span class="kit-sr-only" role="status" aria-label="Sort status" aria-live="polite">{sortNotice}</span>
 
-  <div
-    class="results-and-inspector"
-    class:results-and-inspector--pinned={Boolean(inspectorTargetKey)}
-  >
+  <div class="results-split">
+    <SplitPane
+      ariaLabel="Resize reading pane"
+      storageKey="msgvault.reading-pane.size"
+      orientation="vertical"
+      initialFraction={0.55}
+      minPrimary={120}
+      minSecondary={160}
+      collapsed={!readingTargetKey}
+    >
+    {#snippet primary()}
     <div class="results-primary">
     {#if exploreState.current.groupingChain.length > 0}
       <GroupTable
@@ -565,7 +567,7 @@
       unavailable={loader.unavailable}
       drillable={groupingByDimension(exploreState.current.groupingChain[0]!).requestable}
       focusedKey={exploreState.current.activeRow}
-      inspectedKey={inspectorTargetKey}
+      inspectedKey={readingTargetKey}
       scrollAnchor={exploreState.current.scrollAnchor}
       restoring={loader.restoring}
       onDrill={drillGroup}
@@ -616,7 +618,7 @@
           unavailable={loader.unavailable}
           error={loader.error}
           focusedKey={exploreState.current.activeRow}
-          inspectedKey={inspectorTargetKey}
+          inspectedKey={readingTargetKey}
           scrollAnchor={exploreState.current.scrollAnchor}
           restoring={loader.restoring}
           onOpen={openRow}
@@ -634,7 +636,7 @@
         columns={exploreState.current.columns}
         columnWidths={exploreState.current.columnWidths}
         focusedKey={exploreState.current.activeRow}
-        inspectedKey={inspectorTargetKey}
+        inspectedKey={readingTargetKey}
         scrollAnchor={exploreState.current.scrollAnchor}
         restoring={loader.restoring}
         loading={loader.loading}
@@ -656,27 +658,26 @@
       {/if}
     {/if}
     </div>
-    {#if inspectorTargetKey}
-      <Inspector
-        {client}
-        selection={inspectedSelection}
-        targetKey={inspectorTargetKey}
-        status={inspectorState.status}
-        statusMessage={inspectorState.message}
-        unavailable={inspectorState.unavailable}
-        predicate={exploreState.predicate()}
-        width={exploreState.current.inspectorWidth}
-        onClose={closeInspector}
-        onWidthChange={(inspectorWidth) => exploreState.replaceTransient({ inspectorWidth })}
-        onContentFocusChange={setInspectorContentFocus}
-        onOpenSettings={() => commitWorkspace('settings')}
-        onOpenRelationship={openRelationship}
-        {conversationAnchorId}
-        onViewConversation={openContainingConversation}
-        onBackConversation={backFromConversation}
-        onConversationAnchorChange={changeConversationAnchor}
-      />
-    {/if}
+    {/snippet}
+    {#snippet secondary()}
+      {#if readingTargetKey}
+        <ReadingPane
+          {client}
+          selection={readingSelection}
+          targetKey={readingTargetKey}
+          status={readingState.status}
+          statusMessage={readingState.message}
+          unavailable={readingState.unavailable}
+          predicate={exploreState.predicate()}
+          onClose={closeReadingPane}
+          onOpenSettings={() => commitWorkspace('settings')}
+          onOpenRelationship={openRelationship}
+          {conversationAnchorId}
+          onConversationAnchorChange={changeConversationAnchor}
+        />
+      {/if}
+    {/snippet}
+    </SplitPane>
   </div>
 
   <footer class="keyboard-help" aria-label="Keyboard shortcuts">
@@ -737,7 +738,7 @@
     flex: 1;
   }
 
-  .results-and-inspector {
+  .results-split {
     display: flex;
     min-width: 0;
     min-height: 200px;
@@ -748,9 +749,16 @@
   .results-primary {
     display: flex;
     min-width: 0;
-    min-height: 0;
-    flex: 1;
+    height: 100%;
     flex-direction: column;
+  }
+
+  /* The reading pane provides its own surface; the split's secondary pane
+   * only frames it with the hairline above the drag handle. */
+  .results-split :global([data-pane='secondary']) {
+    border: 1px solid var(--border-default);
+    border-top: 0;
+    border-radius: 0 0 var(--radius-md) var(--radius-md);
   }
 
   .keyboard-help {
@@ -774,10 +782,6 @@
 
     .query-control {
       min-width: 100%;
-    }
-
-    .results-and-inspector--pinned .results-primary {
-      display: none;
     }
 
     .keyboard-help {

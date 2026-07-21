@@ -100,7 +100,6 @@ export interface ExploreURLState {
   activeRow: string | null;
   selectedRow: string | null;
   inspectorPinned: boolean;
-  inspectorWidth: number;
   conversationAnchor: string | null;
   scrollAnchor: ExploreScrollAnchor | null;
   selection?: never;

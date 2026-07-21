@@ -1,11 +1,11 @@
-import type { InspectorSelection } from '../inspector/Inspector.svelte';
+import type { ReadingPaneSelection } from '../reader/ReadingPane.svelte';
 import type { RelationshipTimelineRow } from '../../relationships/models';
 
 /**
  * Pure helpers shared by RelationshipTimeline and RelationshipsWorkspace:
- * turning a TimelineRow into display text, an Inspector entry selection, and
- * (for chat bursts) the UTC bounds of the burst's local calendar day. Kept
- * dependency-free so they're testable without mounting Svelte.
+ * turning a TimelineRow into display text, a reading-pane entry selection,
+ * and (for chat bursts) the UTC bounds of the burst's local calendar day.
+ * Kept dependency-free so they're testable without mounting Svelte.
  */
 
 /** "N messages in <title>" for chat_burst rows; the row's own title otherwise. */
@@ -15,15 +15,15 @@ export function timelineRowTitle(row: RelationshipTimelineRow): string {
 }
 
 /**
- * Adapts a TimelineRow into the EntryRow shape Inspector's `{kind: 'entry'}`
- * selection expects. TimelineRow is a leaner shape (no message_type,
+ * Adapts a TimelineRow into the EntryRow shape the reading pane's
+ * `{kind: 'entry'}` selection expects. TimelineRow is a leaner shape (no message_type,
  * source_type/identifier, attachment counts, participants) than the
  * Everything-table EntryRow it's borrowing the reading pane from — fields
  * absent from the timeline response fall back to values derived from what
  * IS present (source_id as a string identifier, has_attachments as a 0/1
  * attachment count) rather than being fabricated.
  */
-export function timelineRowToSelection(row: RelationshipTimelineRow): InspectorSelection {
+export function timelineRowToSelection(row: RelationshipTimelineRow): ReadingPaneSelection {
   const isBurst = row.kind === 'chat_burst';
   return {
     kind: 'entry',

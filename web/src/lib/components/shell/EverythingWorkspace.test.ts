@@ -545,7 +545,7 @@ describe('EverythingWorkspace', () => {
     }
   });
 
-  it('refetches a persisted group inspector detail after the analytical cache rebuilds', async () => {
+  it('refetches a persisted group reading-pane detail after the analytical cache rebuilds', async () => {
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
     let cacheRevision = 'cache-1';
     let count = 12;
@@ -565,8 +565,8 @@ describe('EverythingWorkspace', () => {
     await screen.findByText('Group Seven v1');
 
     await fireEvent.click(screen.getByRole('button', { name: 'Drill into Group Seven v1' }));
-    expect(await screen.findByRole('complementary', { name: 'Inspect Group Seven v1' })).toBeDefined();
-    expect(await screen.findByText('12 items')).toBeDefined();
+    expect(await screen.findByRole('complementary', { name: 'Reading pane: Group Seven v1' })).toBeDefined();
+    expect(await screen.findByText(/12 items/)).toBeDefined();
 
     // Leave Everything via a workspace switch (destroying EverythingWorkspace,
     // but not the session that persists the loaded detail — commitWorkspace
@@ -587,9 +587,9 @@ describe('EverythingWorkspace', () => {
 
     // Must reflect the rebuilt data, not the detail persisted from before
     // the rebuild under the same group key and predicate.
-    expect(await screen.findByRole('complementary', { name: 'Inspect Group Seven v2' })).toBeDefined();
-    expect(await screen.findByText('99 items')).toBeDefined();
-    expect(screen.queryByText('12 items')).toBeNull();
+    expect(await screen.findByRole('complementary', { name: 'Reading pane: Group Seven v2' })).toBeDefined();
+    expect(await screen.findByText(/99 items/)).toBeDefined();
+    expect(screen.queryByText(/12 items/)).toBeNull();
     rendered.unmount();
     state.destroy();
   });
@@ -868,7 +868,7 @@ describe('EverythingWorkspace', () => {
     const state = new ExploreState(window);
     const rendered = render(AppShell, { client: createAPIClient(fetchFn), state });
 
-    expect(await screen.findByRole('complementary', { name: 'Inspect Synthetic subject 1200' })).toBeDefined();
+    expect(await screen.findByRole('complementary', { name: 'Reading pane: Synthetic subject 1200' })).toBeDefined();
     expect(requests).toHaveLength(3);
     expect(state.current.selectedRow).toBe('message:1200');
     rendered.unmount();
@@ -900,7 +900,7 @@ describe('EverythingWorkspace', () => {
     const state = new ExploreState(window);
     const rendered = render(AppShell, { client: createAPIClient(fetchFn), state });
 
-    expect(await screen.findByRole('complementary', { name: 'Inspect Synthetic subject 1200' })).toBeDefined();
+    expect(await screen.findByRole('complementary', { name: 'Reading pane: Synthetic subject 1200' })).toBeDefined();
     const grid = screen.getByRole('grid', { name: 'Everything results' }) as HTMLDivElement;
     await waitFor(() => expect(grid.getAttribute('aria-activedescendant')).toBe('everything-row-message-3a-1'));
     await waitFor(() => expect(grid.scrollTop).toBe(7));
@@ -967,13 +967,13 @@ describe('EverythingWorkspace', () => {
     });
     const state = new ExploreState(window);
     const rendered = render(AppShell, { client: createAPIClient(fetchFn), state });
-    await screen.findByRole('complementary', { name: 'Inspect Synthetic subject 1200' });
+    await screen.findByRole('complementary', { name: 'Reading pane: Synthetic subject 1200' });
     await fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
-    expect(screen.queryByRole('complementary', { name: 'Inspect Synthetic subject 1200' })).toBeNull();
+    expect(screen.queryByRole('complementary', { name: 'Reading pane: Synthetic subject 1200' })).toBeNull();
 
     window.history.back();
     await new Promise((resolve) => window.addEventListener('popstate', resolve, { once: true }));
-    expect(await screen.findByRole('complementary', { name: 'Inspect Synthetic subject 1200' })).toBeDefined();
+    expect(await screen.findByRole('complementary', { name: 'Reading pane: Synthetic subject 1200' })).toBeDefined();
     const grid = screen.getByRole('grid', { name: 'Everything results' }) as HTMLDivElement;
     await waitFor(() => expect(requests).toHaveLength(6));
     await waitFor(() => expect(grid.getAttribute('aria-activedescendant')).toBe('everything-row-message-3a-1'));
@@ -982,7 +982,7 @@ describe('EverythingWorkspace', () => {
     window.history.forward();
     await new Promise((resolve) => window.addEventListener('popstate', resolve, { once: true }));
     await waitFor(() => expect(screen.getByRole('button', { name: 'Settings' }).getAttribute('aria-current')).toBe('page'));
-    expect(screen.queryByRole('complementary', { name: 'Inspect Synthetic subject 1200' })).toBeNull();
+    expect(screen.queryByRole('complementary', { name: 'Reading pane: Synthetic subject 1200' })).toBeNull();
     rendered.unmount();
     state.destroy();
   });
@@ -1016,8 +1016,8 @@ describe('EverythingWorkspace', () => {
     const state = new ExploreState(window);
     const rendered = render(AppShell, { client: createAPIClient(fetchFn), state });
 
-    expect(await screen.findByRole('complementary', { name: 'Inspect Alice Example' })).toBeDefined();
-    expect(screen.getByRole('region', { name: 'Group details' }).textContent).toContain('3 items');
+    const reading = await screen.findByRole('complementary', { name: 'Reading pane: Alice Example' });
+    expect(within(reading).getByText(/3 items/)).toBeDefined();
     expect(groupRequests).toHaveLength(1);
     await expect(groupRequests[0]!.clone().json()).resolves.toEqual({
       filters: [
@@ -1115,7 +1115,7 @@ describe('EverythingWorkspace', () => {
       rows: [{ key: 'second.example', label: 'Second domain', count: 2 }],
       total_count: 1, cache_revision: 'cache-1', search_provenance: {}
     }));
-    expect(await screen.findByRole('complementary', { name: 'Inspect Second domain' })).toBeDefined();
+    expect(await screen.findByRole('complementary', { name: 'Reading pane: Second domain' })).toBeDefined();
 
     pending[0]!.resolve(Response.json({
       rows: [{ key: 'first.example', label: 'Stale first domain', count: 9 }],
@@ -1645,7 +1645,7 @@ describe('EverythingWorkspace', () => {
     await screen.findByText('Example source group');
 
     await fireEvent.click(screen.getByRole('button', { name: 'Drill into Example source group' }));
-    expect(await screen.findByRole('complementary', { name: 'Inspect Restored source detail' })).toBeDefined();
+    expect(await screen.findByRole('complementary', { name: 'Reading pane: Restored source detail' })).toBeDefined();
     expect(screen.queryByRole('grid', { name: 'Everything grouped by source' })).toBeNull();
     expect(state.current.selectedRow).toBe('group:source:7');
 
@@ -1656,7 +1656,7 @@ describe('EverythingWorkspace', () => {
 
     window.history.forward();
     await new Promise((resolve) => window.addEventListener('popstate', resolve, { once: true }));
-    expect(await screen.findByRole('complementary', { name: 'Inspect Restored source detail' })).toBeDefined();
+    expect(await screen.findByRole('complementary', { name: 'Reading pane: Restored source detail' })).toBeDefined();
     expect(state.current.selectedRow).toBe('group:source:7');
     rendered.unmount();
     state.destroy();
@@ -1827,8 +1827,9 @@ describe('EverythingWorkspace', () => {
   });
 
 
-  it('opens, resizes, and closes the pinned inspector with URL and focus restoration', async () => {
+  it('opens, resizes, and closes the bottom reading pane with size persistence and focus restoration', async () => {
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
+    window.localStorage.removeItem('msgvault.reading-pane.size');
     const fetchFn = vi.fn<typeof fetch>(async () => Response.json(exploreResponse({
       rows: [entry(1), entry(2)], total_count: 2
     })));
@@ -1839,29 +1840,32 @@ describe('EverythingWorkspace', () => {
     grid.focus();
 
     await fireEvent.keyDown(grid, { key: 'Enter' });
-    expect(await screen.findByRole('complementary', { name: 'Inspect Synthetic subject 1' })).toBeDefined();
+    expect(await screen.findByRole('complementary', { name: 'Reading pane: Synthetic subject 1' })).toBeDefined();
     expect(state.current.selectedRow).toBe('message:1');
-    expect(state.current.inspectorPinned).toBe(true);
-    expect(screen.queryByRole('dialog', { name: 'Inspect Synthetic subject 1' })).toBeNull();
+    // A bottom split, never a modal drawer over the results.
+    expect(screen.queryByRole('dialog')).toBeNull();
     expect(document.querySelector('.kit-detail-drawer-overlay')).toBeNull();
 
-    await fireEvent.keyDown(screen.getByRole('button', { name: 'Resize inspector' }), { key: 'ArrowLeft' });
-    expect(state.current.inspectorWidth).toBe(404);
-    expect(parseExploreURLState(window.location.search).inspectorWidth).toBe(404);
-    await fireEvent.click(screen.getByRole('button', { name: 'Close inspector' }));
+    // Keyboard resize on the split handle persists the size locally (not in the URL).
+    await fireEvent.keyDown(screen.getByRole('button', { name: 'Resize reading pane' }), { key: 'ArrowUp' });
+    const persisted = window.localStorage.getItem('msgvault.reading-pane.size');
+    expect(persisted).not.toBeNull();
+    expect(parseExploreURLState(window.location.search)).not.toHaveProperty('inspectorWidth');
+    await fireEvent.click(screen.getByRole('button', { name: 'Close reading pane' }));
 
     await waitFor(() => expect(document.activeElement).toBe(grid));
     expect(state.current.selectedRow).toBeNull();
     window.history.back();
     await new Promise((resolve) => window.addEventListener('popstate', resolve, { once: true }));
-    expect(await screen.findByRole('complementary', { name: 'Inspect Synthetic subject 1' })).toBeDefined();
-    expect(state.current.inspectorWidth).toBe(404);
+    expect(await screen.findByRole('complementary', { name: 'Reading pane: Synthetic subject 1' })).toBeDefined();
+    expect(window.localStorage.getItem('msgvault.reading-pane.size')).toBe(persisted);
+    window.localStorage.removeItem('msgvault.reading-pane.size');
     rendered.unmount();
     state.destroy();
   });
 
 
-  it('replaces peer anchors so one Back restores the complete inspector URL and focus', async () => {
+  it('carries the in-thread anchor in the URL by replacement so Back/Forward restore the same message', async () => {
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
     const row = { ...entry(1), anchor_message_id: 1, conversation_id: 7 };
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
@@ -1888,23 +1892,36 @@ describe('EverythingWorkspace', () => {
     const grid = await screen.findByRole('grid', { name: 'Everything results' });
     await screen.findByText(row.title);
     grid.focus();
-    await fireEvent.keyDown(grid, { key: 'Enter' });
     const priorSearch = window.location.search;
+    await fireEvent.keyDown(grid, { key: 'Enter' });
 
-    await fireEvent.click(await screen.findByRole('button', { name: 'View conversation' }));
+    // The thread renders directly in the reading pane: the anchor message is
+    // expanded, its sibling collapsed.
+    const reading = await screen.findByRole('complementary', { name: `Reading pane: ${row.title}` });
+    expect(await within(reading).findByRole('button', { name: 'Collapse message 1 from alice@example.com' })).toBeDefined();
 
-    expect(state.current.conversationAnchor).toBe('1');
-    expect(await screen.findByRole('heading', { name: 'Conversation' })).toBeDefined();
-    await fireEvent.click(await screen.findByRole('button', { name: /Open message 2/ }));
+    // Expanding another message moves the in-thread anchor. The anchor is
+    // committed by replacement onto the pane's own history entry, so a
+    // single Back closes the pane and restores the pre-open URL exactly.
+    await fireEvent.click(within(reading).getByRole('button', { name: 'Expand message 2 from alice@example.com' }));
     await waitFor(() => expect(state.current.conversationAnchor).toBe('2'));
+    expect(within(reading).getByRole('button', { name: 'Collapse message 2 from alice@example.com' })).toBeDefined();
+
     window.history.back();
     await new Promise((resolve) => window.addEventListener('popstate', resolve, { once: true }));
-    await waitFor(() => expect(state.current.conversationAnchor).toBeNull());
+    await waitFor(() => expect(state.current.selectedRow).toBeNull());
+    expect(state.current.conversationAnchor).toBeNull();
     expect(window.location.search).toBe(priorSearch);
-    const viewConversation = screen.getByRole('button', { name: 'View conversation' });
-    expect(viewConversation).toBeDefined();
-    await waitFor(() => expect(document.activeElement).toBe(viewConversation));
-    await fireEvent.keyDown(viewConversation, { key: 'Escape' });
+    await waitFor(() => expect(document.activeElement).toBe(grid));
+
+    // Forward restores the pane at the exact in-thread message it left off.
+    window.history.forward();
+    await new Promise((resolve) => window.addEventListener('popstate', resolve, { once: true }));
+    await waitFor(() => expect(state.current.conversationAnchor).toBe('2'));
+    const restored = await screen.findByRole('complementary', { name: `Reading pane: ${row.title}` });
+    expect(await within(restored).findByRole('button', { name: 'Collapse message 2 from alice@example.com' })).toBeDefined();
+
+    await fireEvent.keyDown(restored, { key: 'Escape' });
     await waitFor(() => expect(state.current.selectedRow).toBeNull());
     await waitFor(() => expect(document.activeElement).toBe(grid));
     rendered.unmount();
@@ -1912,7 +1929,7 @@ describe('EverythingWorkspace', () => {
   });
 
 
-  it('suspends application row shortcuts in explicit inspector content focus', async () => {
+  it('suspends application shortcuts inside editable reading-pane content and keeps reader navigation live outside it', async () => {
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
     const fetchFn = vi.fn<typeof fetch>(async () => Response.json(exploreResponse({
       rows: [entry(1), entry(2)], total_count: 2
@@ -1923,12 +1940,11 @@ describe('EverythingWorkspace', () => {
     await screen.findByText('Synthetic subject 2');
     grid.focus();
     await fireEvent.keyDown(grid, { key: 'Enter' });
-    await fireEvent.click(await screen.findByRole('button', { name: 'Focus inspector content' }));
-    const content = screen.getByRole('region', { name: 'Inspector content' });
-    expect(appShortcuts.activeScope()).toBe('everything-inspector-content');
+    const reading = await screen.findByRole('complementary', { name: 'Reading pane: Synthetic subject 1' });
 
+    // Editable content inside the pane suspends application shortcuts.
     const editor = document.createElement('textarea');
-    content.append(editor);
+    reading.append(editor);
     editor.focus();
     await waitFor(() => expect(appShortcuts.activeScope()).toBe('everything-editable'));
     const modified = new KeyboardEvent('keydown', {
@@ -1937,14 +1953,16 @@ describe('EverythingWorkspace', () => {
     editor.dispatchEvent(modified);
     expect(modified.defaultPrevented).toBe(false);
     editor.remove();
-    await waitFor(() => expect(appShortcuts.activeScope()).toBe('everything-inspector-content'));
-    content.focus();
+    await waitFor(() => expect(appShortcuts.activeScope()).toBe('root'));
 
-    await fireEvent.keyDown(content, { key: 'j' });
-    expect(state.current.activeRow).toBe('message:1');
-    expect(state.current.selectedRow).toBe('message:1');
-    await fireEvent.keyDown(content, { key: 'Escape' });
-    expect(screen.getByRole('complementary', { name: 'Inspect Synthetic subject 1' })).toBeDefined();
+    // Outside editable content, reader navigation stays live: 'l' advances
+    // the open item without the grid holding focus.
+    await fireEvent.keyDown(reading, { key: 'l' });
+    await waitFor(() => expect(state.current.selectedRow).toBe('message:2'));
+    expect(screen.getByRole('complementary', { name: 'Reading pane: Synthetic subject 2' })).toBeDefined();
+
+    await fireEvent.keyDown(reading, { key: 'Escape' });
+    await waitFor(() => expect(state.current.selectedRow).toBeNull());
     expect(appShortcuts.activeScope()).toBe('root');
     rendered.unmount();
     state.destroy();

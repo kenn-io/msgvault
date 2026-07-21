@@ -1,14 +1,13 @@
 <script module lang="ts">
-  export type HubLayout = 'wide' | 'stacked' | 'narrow';
+  export type HubLayout = 'wide' | 'narrow';
 
   /** Pure container-width → layout classification, kept outside the
    * component so it's unit-testable without a real ResizeObserver (jsdom
-   * doesn't fire one). Below 1100px the reading pane stacks over the
-   * timeline; below 720px the list additionally becomes a slide-in drawer. */
+   * doesn't fire one). Below 720px the list becomes a slide-in drawer; the
+   * reading pane always stacks under the timeline, so no intermediate
+   * breakpoint remains. */
   export function computeHubLayout(width: number): HubLayout {
-    if (width < 720) return 'narrow';
-    if (width < 1100) return 'stacked';
-    return 'wide';
+    return width < 720 ? 'narrow' : 'wide';
   }
 </script>
 
@@ -22,7 +21,8 @@
   import type { RelationshipFacet, RelationshipTimelineRow } from '../../relationships/models';
   import { debounce } from '../../util/debounce';
   import FilesWorkspace from '../files/FilesWorkspace.svelte';
-  import Inspector, { type InspectorSelection } from '../inspector/Inspector.svelte';
+  import SplitPane from '../layout/SplitPane.svelte';
+  import ReadingPane, { type ReadingPaneSelection } from '../reader/ReadingPane.svelte';
   import RelationshipHeader from './RelationshipHeader.svelte';
   import RelationshipList from './RelationshipList.svelte';
   import RelationshipTimeline from './RelationshipTimeline.svelte';
@@ -74,10 +74,9 @@
     onOpenFileConversation = undefined
   }: Props = $props();
 
-  let selection = $state<InspectorSelection | undefined>();
+  let selection = $state<ReadingPaneSelection | undefined>();
   let conversationAnchorId = $state<number | undefined>();
   let conversationBounds = $state<{ start: string; end: string } | undefined>();
-  let inspectorWidth = $state(380);
   let mobileListOpen = $state(false);
   let fileSort = $state<FileSearchSort>({ field: 'occurred_at', direction: 'desc' });
   let fileFilenameQuery = $state('');
@@ -220,7 +219,7 @@
   }
 
   // Closing the reading pane leaves the hub's own keydown handler as the
-  // next-highest focus target (AppShell.closeInspector follows the same
+  // next-highest focus target (AppShell.closeReadingPane follows the same
   // shape): only re-focus the timeline when a pane was actually open, so
   // this stays a no-op when called defensively (e.g. from selectListRow).
   async function closeReadingPane(): Promise<void> {
@@ -298,28 +297,16 @@
     }
   });
 
-  // chat_burst rows open the conversation directly, bounded to the burst's
-  // local day; other rows show the entry summary (its own "View conversation"
-  // opens the full, unbounded window via viewFullConversation below).
+  // Every row opens its conversation thread directly in the reading pane.
+  // chat_burst rows bound the window to the burst's local day; other rows
+  // open the full window anchored at the row's own message.
   function openTimelineRow(row: RelationshipTimelineRow): void {
     selection = timelineRowToSelection(row);
-    if (row.kind === 'chat_burst' && row.conversation_id !== undefined && row.anchor_message_id !== undefined) {
-      conversationAnchorId = row.anchor_message_id;
-      conversationBounds = localDayBoundsUTC(row.first_at ?? row.occurred_at);
-    } else {
-      conversationAnchorId = undefined;
-      conversationBounds = undefined;
-    }
-  }
-
-  function viewFullConversation(_conversationId: number, anchorId: number): void {
-    conversationAnchorId = anchorId;
-    conversationBounds = undefined;
-  }
-
-  function backFromConversation(): void {
-    conversationAnchorId = undefined;
-    conversationBounds = undefined;
+    conversationAnchorId = row.anchor_message_id;
+    conversationBounds = row.kind === 'chat_burst' && row.conversation_id !== undefined &&
+      row.anchor_message_id !== undefined
+      ? localDayBoundsUTC(row.first_at ?? row.occurred_at)
+      : undefined;
   }
 
   function editableTarget(value: EventTarget | null): boolean {
@@ -356,7 +343,6 @@
 <main
   class="relationships-hub"
   aria-label="Relationships"
-  class:layout-stacked={layout !== 'wide'}
   class:layout-narrow={layout === 'narrow'}
   bind:this={rootElement}
   onkeydown={handleEscape}
@@ -397,74 +383,84 @@
     />
   </div>
 
-  <div class="pane-center-and-reading" class:stacked={layout !== 'wide'}>
-    <div class="pane-center">
-      {#if target === null && controller.target === null}
-        <div class="hub-empty" role="status">
-          <p class="hub-empty-title">Select a person or domain</p>
-          <p class="hub-empty-hint">
-            Choose someone from the list to see your shared history across mail, chat, and files.
-          </p>
-        </div>
-      {:else}
-        <div class="pane-center-column">
-          <RelationshipHeader
-            detail={controller.detail}
-            loading={controller.timelineLoading}
-            {filesOpen}
-            {onFilesToggle}
-            {client}
-            onLinkParticipants={(a, b) => controller.linkParticipants(a, b)}
-            onUnlinkParticipants={(a, b) => controller.unlinkParticipants(a, b)}
-          />
-          {#if filesOpen && filesReady}
-            <FilesWorkspace
-              {client}
-              predicate={contextPredicate(predicate)}
-              identityScope={identityScopeFor(target)}
-              sort={fileSort}
-              filenameQuery={fileFilenameQuery}
-              mimeFamilies={fileMIMEFamilies}
-              onSortChange={(value) => (fileSort = value)}
-              onFilenameQueryChange={(value) => (fileFilenameQuery = value)}
-              onMIMEFamiliesChange={(value) => (fileMIMEFamilies = value)}
-              onOpenItem={onOpenFileItem}
-              onOpenConversation={onOpenFileConversation}
-            />
+  <div class="pane-center-and-reading">
+    <SplitPane
+      ariaLabel="Resize reading pane"
+      storageKey="msgvault.reading-pane.size"
+      orientation="vertical"
+      initialFraction={0.55}
+      minPrimary={120}
+      minSecondary={160}
+      collapsed={selection === undefined}
+    >
+      {#snippet primary()}
+        <div class="pane-center">
+          {#if target === null && controller.target === null}
+            <div class="hub-empty" role="status">
+              <p class="hub-empty-title">Select a person or domain</p>
+              <p class="hub-empty-hint">
+                Choose someone from the list to see your shared history across mail, chat, and files.
+              </p>
+            </div>
           {:else}
-            <RelationshipTimeline
-              rows={controller.timelineRows}
-              loading={controller.timelineLoading}
-              loadingMore={controller.timelineLoadingMore}
-              hasMore={Boolean(controller.timelineCursor)}
-              error={controller.timelineError}
-              restartNotice={controller.timelineRestartNotice}
-              selectedKey={selectedRowKey}
-              onRowOpen={openTimelineRow}
-              onLoadMore={() => { void controller.loadMoreTimeline(); }}
-            />
+            <div class="pane-center-column">
+              <RelationshipHeader
+                detail={controller.detail}
+                loading={controller.timelineLoading}
+                {filesOpen}
+                {onFilesToggle}
+                {client}
+                onLinkParticipants={(a, b) => controller.linkParticipants(a, b)}
+                onUnlinkParticipants={(a, b) => controller.unlinkParticipants(a, b)}
+              />
+              {#if filesOpen && filesReady}
+                <FilesWorkspace
+                  {client}
+                  predicate={contextPredicate(predicate)}
+                  identityScope={identityScopeFor(target)}
+                  sort={fileSort}
+                  filenameQuery={fileFilenameQuery}
+                  mimeFamilies={fileMIMEFamilies}
+                  onSortChange={(value) => (fileSort = value)}
+                  onFilenameQueryChange={(value) => (fileFilenameQuery = value)}
+                  onMIMEFamiliesChange={(value) => (fileMIMEFamilies = value)}
+                  onOpenItem={onOpenFileItem}
+                  onOpenConversation={onOpenFileConversation}
+                />
+              {:else}
+                <RelationshipTimeline
+                  rows={controller.timelineRows}
+                  loading={controller.timelineLoading}
+                  loadingMore={controller.timelineLoadingMore}
+                  hasMore={Boolean(controller.timelineCursor)}
+                  error={controller.timelineError}
+                  restartNotice={controller.timelineRestartNotice}
+                  selectedKey={selectedRowKey}
+                  onRowOpen={openTimelineRow}
+                  onLoadMore={() => { void controller.loadMoreTimeline(); }}
+                />
+              {/if}
+            </div>
           {/if}
         </div>
-      {/if}
-    </div>
-    {#if selection !== undefined}
-      <div class="pane-reading">
-        <Inspector
-          {client}
-          {selection}
-          predicate={contextPredicate(predicate)}
-          width={inspectorWidth}
-          onClose={() => { void closeReadingPane(); }}
-          onWidthChange={(width) => (inspectorWidth = width)}
-          {conversationAnchorId}
-          conversationStart={conversationBounds?.start}
-          conversationEnd={conversationBounds?.end}
-          onViewConversation={viewFullConversation}
-          onBackConversation={backFromConversation}
-          onConversationAnchorChange={(anchorId) => (conversationAnchorId = anchorId)}
-        />
-      </div>
-    {/if}
+      {/snippet}
+      {#snippet secondary()}
+        {#if selection !== undefined}
+          <div class="pane-reading">
+            <ReadingPane
+              {client}
+              {selection}
+              predicate={contextPredicate(predicate)}
+              onClose={() => { void closeReadingPane(); }}
+              {conversationAnchorId}
+              conversationStart={conversationBounds?.start}
+              conversationEnd={conversationBounds?.end}
+              onConversationAnchorChange={(anchorId) => (conversationAnchorId = anchorId)}
+            />
+          </div>
+        {/if}
+      {/snippet}
+    </SplitPane>
   </div>
 </main>
 
@@ -509,14 +505,10 @@
     overflow: hidden;
   }
 
-  .pane-center-and-reading.stacked {
-    flex-direction: column;
-  }
-
   .pane-center {
     display: flex;
     min-width: 0;
-    flex: 1;
+    height: 100%;
     flex-direction: column;
     overflow: hidden;
   }
@@ -562,39 +554,7 @@
   }
 
   .pane-reading {
-    flex: none;
-    border-left: 1px solid var(--border-muted);
+    height: 100%;
     background: var(--bg-surface);
-  }
-
-  /* The reading pane provides the boundary; the embedded Inspector card
-   * chrome would double it up. */
-  .pane-reading :global(.pinned-inspector aside) {
-    border: 0;
-    border-radius: 0;
-  }
-
-  .pane-center-and-reading.stacked .pane-reading {
-    flex: 1;
-    min-height: 0;
-    border-left: 0;
-    border-top: 1px solid var(--border-muted);
-  }
-
-  /* Stacked below the timeline, the reading pane spans the hub: the drag
-   * handle is meaningless there and the inline resize width (an inline
-   * style, hence the !important) must give way to the full row. */
-  .pane-center-and-reading.stacked .pane-reading :global(.pinned-inspector) {
-    width: 100%;
-  }
-
-  .pane-center-and-reading.stacked .pane-reading :global(.pinned-inspector aside) {
-    width: auto !important;
-    max-width: none;
-    flex: 1;
-  }
-
-  .pane-center-and-reading.stacked .pane-reading :global(.kit-split-resize-handle) {
-    display: none;
   }
 </style>

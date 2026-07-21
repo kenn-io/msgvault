@@ -1,4 +1,4 @@
-import type { InspectorSelection } from '../inspector/Inspector.svelte';
+import type { ReadingPaneSelection } from '../reader/ReadingPane.svelte';
 import { VisibleLexicalCountCache, type SearchCoverageValue } from '../../search/modes';
 
 /**
@@ -27,10 +27,10 @@ export class EverythingSessionState {
   readonly lexicalCountCache = new VisibleLexicalCountCache(128);
   /** Maps a (lexicalRevision, predicateFingerprint) pair to its last-seen canonical query hash. */
   readonly canonicalQueryHashes = new Map<string, string>();
-  /** Loaded detail for the currently inspected group row, if any. */
-  inspectorGroupDetail = $state<InspectorSelection>();
-  /** Generation counter guarding the inspector-detail fetch against stale/aborted responses. */
-  inspectorDetailGeneration = 0;
-  /** `predicateFingerprint|group:dimension:key` that `inspectorGroupDetail` was loaded under. */
-  inspectorDetailFingerprint = '';
+  /** Loaded detail for the group row currently open in the reading pane, if any. */
+  readingGroupDetail = $state<ReadingPaneSelection>();
+  /** Generation counter guarding the group-detail fetch against stale/aborted responses. */
+  readingDetailGeneration = 0;
+  /** `predicateFingerprint|group:dimension:key` that `readingGroupDetail` was loaded under. */
+  readingDetailFingerprint = '';
 }

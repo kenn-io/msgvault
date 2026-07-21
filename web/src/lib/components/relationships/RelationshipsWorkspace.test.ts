@@ -85,7 +85,7 @@ describe('RelationshipsWorkspace', () => {
 
     expect(await screen.findByText('Alice Example')).toBeDefined();
     expect(screen.getByText('Select a person or domain')).toBeDefined();
-    expect(screen.queryByRole('complementary', { name: /Inspect/ })).toBeNull();
+    expect(screen.queryByRole('complementary', { name: /Reading pane/ })).toBeNull();
   });
 
   it('selecting a list row calls onTargetChange and opens it through the controller', async () => {
@@ -108,22 +108,31 @@ describe('RelationshipsWorkspace', () => {
     expect(await screen.findByText('Subject')).toBeDefined();
   });
 
-  it('selecting a timeline row shows the Inspector reading pane', async () => {
+  it('single-clicking a timeline row opens the conversation thread in the reading pane', async () => {
     const { fetchFn } = fetchHandler({
       '/api/v1/people/1': async () => Response.json(person(1, 'Alice Example')),
       '/api/v1/relationships/1/timeline': async () => Response.json({
         canonical_id: 1, identity_revision: 1, cache_revision: 'cache-rel',
         rows: [{ key: 'message:1', kind: 'email', occurred_at: when, preview: 'Preview text', source_id: 1, title: 'Subject line', has_attachments: false, message_count: 1, anchor_message_id: 9, conversation_id: 70 }],
         total_count: 1
+      }),
+      '/api/v1/conversations/70': async () => Response.json({
+        id: 70, anchor_id: 9, has_before: false, has_after: false, total: 1,
+        messages: [{
+          id: 9, conversation_id: 70, subject: 'Subject line', from: 'alice@example.com',
+          to: ['me@example.com'], sent_at: when, snippet: 'Preview text', body: 'Full message body text'
+        }]
       })
     });
     const props = { ...baseProps(fetchFn), target: 'cluster:1' };
     render(RelationshipsWorkspace, { props });
     await props.controller.openTarget('cluster:1', props.predicate);
 
-    await fireEvent.pointerDown((await screen.findByText('Subject line')).closest('[role="row"]')!);
-    const reading = await screen.findByRole('complementary', { name: /Inspect/ });
-    expect(within(reading).getByText('Preview text')).toBeDefined();
+    await fireEvent.click((await screen.findByText('Subject line')).closest('[role="row"]')!);
+    const reading = await screen.findByRole('complementary', { name: /Reading pane/ });
+    // The anchor message renders expanded immediately — actual content, not metadata.
+    expect(await within(reading).findByText('Full message body text')).toBeDefined();
+    expect(within(reading).getByRole('button', { name: 'Collapse message 9 from alice@example.com' })).toBeDefined();
   });
 
   it('opens a chat_burst directly into the conversation window bounded to the local day', async () => {
@@ -148,7 +157,7 @@ describe('RelationshipsWorkspace', () => {
     render(RelationshipsWorkspace, { props });
     await props.controller.openTarget('cluster:1', props.predicate);
 
-    await fireEvent.pointerDown((await screen.findByText('6 messages in Team Chat')).closest('[role="row"]')!);
+    await fireEvent.click((await screen.findByText('6 messages in Team Chat')).closest('[role="row"]')!);
     await waitFor(() => expect(requestedConversations).toHaveLength(1));
     const url = new URL(requestedConversations[0]!.url);
     expect(url.searchParams.get('anchor')).toBe('500');
@@ -255,14 +264,14 @@ describe('RelationshipsWorkspace', () => {
     const { rerender } = render(RelationshipsWorkspace, { props });
     await props.controller.openTarget('cluster:1', props.predicate);
 
-    await fireEvent.pointerDown((await screen.findByText('Subject')).closest('[role="row"]')!);
-    await screen.findByRole('complementary', { name: /Inspect/ });
+    await fireEvent.click((await screen.findByText('Subject')).closest('[role="row"]')!);
+    await screen.findByRole('complementary', { name: /Reading pane/ });
 
     // AppShell's own hydration effect clears the target directly on a
     // Back/Forward popstate — never through this component's handleEscape.
     await rerender({ ...props, target: null });
 
-    expect(screen.queryByRole('complementary', { name: /Inspect/ })).toBeNull();
+    expect(screen.queryByRole('complementary', { name: /Reading pane/ })).toBeNull();
   });
 
   it('does not scope the embedded FilesWorkspace to the previous cluster while a fast target switch is still resolving', async () => {
@@ -317,7 +326,7 @@ describe('RelationshipsWorkspace', () => {
     await props.controller.openTarget('cluster:1', props.predicate);
 
     const row = (await screen.findByText('report.pdf')).closest('[role="row"]')!;
-    await fireEvent.dblClick(row);
+    await fireEvent.click(row);
 
     await fireEvent.click(await screen.findByRole('button', { name: 'Open containing item' }));
     expect(onOpenFileItem).toHaveBeenCalledWith('message:42');
@@ -419,11 +428,11 @@ describe('RelationshipsWorkspace', () => {
     render(RelationshipsWorkspace, { props });
     await props.controller.openTarget('cluster:1', props.predicate);
 
-    await fireEvent.pointerDown((await screen.findByText('Subject')).closest('[role="row"]')!);
-    const reading = await screen.findByRole('complementary', { name: /Inspect/ });
+    await fireEvent.click((await screen.findByText('Subject')).closest('[role="row"]')!);
+    const reading = await screen.findByRole('complementary', { name: /Reading pane/ });
 
     await fireEvent.keyDown(reading, { key: 'Escape' });
-    await waitFor(() => expect(screen.queryByRole('complementary', { name: /Inspect/ })).toBeNull());
+    await waitFor(() => expect(screen.queryByRole('complementary', { name: /Reading pane/ })).toBeNull());
 
     await fireEvent.keyDown(screen.getByRole('grid', { name: 'Relationship activity' }), { key: 'Escape' });
     expect(props.onTargetChange).toHaveBeenCalledWith(null);
@@ -442,8 +451,8 @@ describe('RelationshipsWorkspace', () => {
     render(RelationshipsWorkspace, { props });
     await props.controller.openTarget('cluster:1', props.predicate);
 
-    await fireEvent.pointerDown((await screen.findByText('Subject')).closest('[role="row"]')!);
-    const reading = await screen.findByRole('complementary', { name: /Inspect/ });
+    await fireEvent.click((await screen.findByText('Subject')).closest('[role="row"]')!);
+    const reading = await screen.findByRole('complementary', { name: /Reading pane/ });
 
     await fireEvent.keyDown(reading, { key: 'Escape' });
     const timelineGrid = screen.getByRole('grid', { name: 'Relationship activity' });
@@ -537,11 +546,10 @@ describe('forceNarrowContainer test helper', () => {
 });
 
 describe('computeHubLayout', () => {
-  it('classifies wide, stacked, and narrow by container width', () => {
+  it('classifies wide and narrow by container width', () => {
     expect(computeHubLayout(1300)).toBe('wide');
     expect(computeHubLayout(1100)).toBe('wide');
-    expect(computeHubLayout(1099)).toBe('stacked');
-    expect(computeHubLayout(720)).toBe('stacked');
+    expect(computeHubLayout(720)).toBe('wide');
     expect(computeHubLayout(719)).toBe('narrow');
     expect(computeHubLayout(400)).toBe('narrow');
   });
