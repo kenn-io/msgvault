@@ -121,8 +121,16 @@
       onEscapeContent();
       return;
     }
-    const scroller = nearestScroller();
-    if (scroller && scroller.tabIndex >= 0) scroller.focus();
+    // Focus the nearest focusable ancestor (the thread scroller) whether or
+    // not it currently overflows — Escape must always lead back out.
+    let node = host?.parentElement ?? undefined;
+    while (node) {
+      if (node.tabIndex >= 0) {
+        node.focus();
+        return;
+      }
+      node = node.parentElement ?? undefined;
+    }
   }
 
   function handleFrameKey(key: string): void {
