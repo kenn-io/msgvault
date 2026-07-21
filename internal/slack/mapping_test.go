@@ -38,14 +38,15 @@ func TestMentionedUserIDs(t *testing.T) {
 }
 
 func TestTsTimeAndOrdering(t *testing.T) {
+	assert := assert.New(t)
 	tm := tsTime("1734567890.123456")
-	assert.Equal(t, time.Date(2024, 12, 19, 0, 24, 50, 123456000, time.UTC), tm)
-	assert.True(t, tsTime("").IsZero())
-	assert.True(t, tsTime("garbage").IsZero())
+	assert.Equal(time.Date(2024, 12, 19, 0, 24, 50, 123456000, time.UTC), tm)
+	assert.True(tsTime("").IsZero())
+	assert.True(tsTime("garbage").IsZero())
 
 	// Numeric, not lexical: a 9-digit second count sorts before a 10-digit one.
-	assert.True(t, tsLess("999999999.000001", "1734567890.000001"))
-	assert.False(t, tsLess("1734567890.000002", "1734567890.000001"))
+	assert.True(tsLess("999999999.000001", "1734567890.000001"))
+	assert.False(tsLess("1734567890.000002", "1734567890.000001"))
 }
 
 func TestMessageRawCapturedOnDecode(t *testing.T) {
@@ -56,15 +57,16 @@ func TestMessageRawCapturedOnDecode(t *testing.T) {
 }
 
 func TestThreadPredicates(t *testing.T) {
+	assert := assert.New(t)
 	root := Message{TS: "5.0", ThreadTS: "5.0", ReplyCount: 2}
 	reply := Message{TS: "6.0", ThreadTS: "5.0"}
 	plain := Message{TS: "7.0"}
-	assert.True(t, root.IsThreadRoot())
-	assert.False(t, root.IsThreadReply())
-	assert.True(t, reply.IsThreadReply())
-	assert.False(t, reply.IsThreadRoot())
-	assert.False(t, plain.IsThreadRoot())
-	assert.False(t, plain.IsThreadReply())
+	assert.True(root.IsThreadRoot())
+	assert.False(root.IsThreadReply())
+	assert.True(reply.IsThreadReply())
+	assert.False(reply.IsThreadRoot())
+	assert.False(plain.IsThreadRoot())
+	assert.False(plain.IsThreadReply())
 }
 
 func TestPayloadTextExtraction(t *testing.T) {
@@ -150,6 +152,7 @@ func TestMapMessagePayloadRules(t *testing.T) {
 }
 
 func TestConversationTypeAndTitle(t *testing.T) {
+	assert := assert.New(t)
 	lookup := func(id string) string {
 		if id == "UALICE" {
 			return "Alice"
@@ -157,14 +160,14 @@ func TestConversationTypeAndTitle(t *testing.T) {
 		return ""
 	}
 	channel := &Conversation{IsChannel: true, Name: "general"}
-	assert.Equal(t, "channel", conversationType(channel))
-	assert.Equal(t, "#general", conversationTitle(channel, lookup))
+	assert.Equal("channel", conversationType(channel))
+	assert.Equal("#general", conversationTitle(channel, lookup))
 
 	im := &Conversation{IsIM: true, User: "UALICE"}
-	assert.Equal(t, "direct_chat", conversationType(im))
-	assert.Equal(t, "Alice", conversationTitle(im, lookup))
+	assert.Equal("direct_chat", conversationType(im))
+	assert.Equal("Alice", conversationTitle(im, lookup))
 
 	mpim := &Conversation{IsMpim: true, Name: "mpdm-a--b-1"}
-	assert.Equal(t, "group_chat", conversationType(mpim))
-	assert.Equal(t, "mpdm-a--b-1", conversationTitle(mpim, lookup))
+	assert.Equal("group_chat", conversationType(mpim))
+	assert.Equal("mpdm-a--b-1", conversationTitle(mpim, lookup))
 }

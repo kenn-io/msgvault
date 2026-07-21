@@ -41,6 +41,8 @@ func (ct *countingTransport) RoundTrip(req *http.Request) (*http.Response, error
 // probeDeadline; stops at the first observed 429. Run this only against a
 // development workspace.
 func TestLive429RetryAfter(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
 	token := os.Getenv("MSGVAULT_SLACK_LIVE_TOKEN")
 	channel := os.Getenv("MSGVAULT_SLACK_LIVE_CHANNEL")
 	if token == "" || channel == "" {
@@ -70,8 +72,8 @@ func TestLive429RetryAfter(t *testing.T) {
 			// accumulated). Inconclusive, not a failure.
 			t.Skipf("no 429 within %v / %d requests — inconclusive", probeDeadline, ct.requests)
 		}
-		require.NoError(t, err, "call %d must succeed even when throttled mid-way", calls)
-		require.NotNil(t, page)
+		require.NoError(err, "call %d must succeed even when throttled mid-way", calls)
+		require.NotNil(page)
 		calls++
 	}
 
@@ -79,6 +81,6 @@ func TestLive429RetryAfter(t *testing.T) {
 		t.Skipf("no 429 within %d requests — workspace budget higher than expected; inconclusive, not a failure", ct.requests)
 	}
 	t.Logf("throttled after %d requests; Retry-After=%q; %d successful calls returned", ct.requests, ct.retryAfter, calls)
-	assert.Positive(t, calls, "the throttled call must have completed via retry")
-	assert.NotEmpty(t, ct.retryAfter, "Slack 429s must carry Retry-After for the backoff to honor")
+	assert.Positive(calls, "the throttled call must have completed via retry")
+	assert.NotEmpty(ct.retryAfter, "Slack 429s must carry Retry-After for the backoff to honor")
 }

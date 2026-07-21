@@ -88,6 +88,7 @@ func TestRunConfiguredSlackSyncIsolatesBrokenWorkspaces(t *testing.T) {
 }
 
 func TestSlackImportOptionsDeriveFromConfig(t *testing.T) {
+	assert := assert.New(t)
 	savedCfg := cfg
 	t.Cleanup(func() { cfg = savedCfg })
 	media := false
@@ -102,12 +103,12 @@ func TestSlackImportOptionsDeriveFromConfig(t *testing.T) {
 	}
 
 	opts := slackImportOptions("T01", "UME")
-	assert.Equal(t, "T01", opts.TeamID)
-	assert.Equal(t, "UME", opts.UserID)
-	assert.True(t, opts.NoMedia)
-	assert.Equal(t, int64(7)<<20, opts.MaxMediaBytes)
-	assert.Equal(t, []string{"eng"}, opts.IncludeChannels)
-	assert.Equal(t, []string{"noise"}, opts.ExcludeChannels)
+	assert.Equal("T01", opts.TeamID)
+	assert.Equal("UME", opts.UserID)
+	assert.True(opts.NoMedia)
+	assert.Equal(int64(7)<<20, opts.MaxMediaBytes)
+	assert.Equal([]string{"eng"}, opts.IncludeChannels)
+	assert.Equal([]string{"noise"}, opts.ExcludeChannels)
 }
 
 func resetSyncSlackRoutingGlobals(t *testing.T) {

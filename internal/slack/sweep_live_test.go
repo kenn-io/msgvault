@@ -24,6 +24,8 @@ import (
 //	                             (root + replies) and at least one plain
 //	                             top-level message
 func TestLiveThreadsRepliesModifierPin(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
 	token := os.Getenv("MSGVAULT_SLACK_LIVE_TOKEN")
 	channel := os.Getenv("MSGVAULT_SLACK_LIVE_CHANNEL")
 	if token == "" || channel == "" {
@@ -38,10 +40,10 @@ func TestLiveThreadsRepliesModifierPin(t *testing.T) {
 	// Modifier query: every hit must be a reply (permalink carries thread_ts).
 	modQ := fmt.Sprintf(`threads:replies in:<#%s> -"zqpin%d"`, channel, nonce)
 	mod, err := c.SearchMessagesPage(ctx, modQ, 1)
-	require.NoError(t, err)
-	require.NotEmpty(t, mod.Matches, "fixture channel must contain thread replies")
+	require.NoError(err)
+	require.NotEmpty(mod.Matches, "fixture channel must contain thread replies")
 	for _, m := range mod.Matches {
-		assert.NotEmpty(t, m.RootTS,
+		assert.NotEmpty(m.RootTS,
 			"threads:replies returned a non-reply hit (ts %s) — the modifier's replies-only contract is broken", m.TS)
 	}
 
@@ -50,7 +52,7 @@ func TestLiveThreadsRepliesModifierPin(t *testing.T) {
 	// assertion above would pass vacuously on an all-replies channel.
 	ctlQ := fmt.Sprintf(`in:<#%s> -"zqpinctl%d"`, channel, nonce)
 	ctl, err := c.SearchMessagesPage(ctx, ctlQ, 1)
-	require.NoError(t, err)
+	require.NoError(err)
 	control := false
 	for _, m := range ctl.Matches {
 		if m.RootTS == "" {
@@ -58,6 +60,6 @@ func TestLiveThreadsRepliesModifierPin(t *testing.T) {
 			break
 		}
 	}
-	assert.True(t, control,
+	assert.True(control,
 		"control query returned only replies — fixture channel needs a plain top-level message for the pin-test to be meaningful")
 }
