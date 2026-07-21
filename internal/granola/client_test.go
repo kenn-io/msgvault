@@ -56,6 +56,21 @@ func TestListNotes_ParamsAndPagination(t *testing.T) {
 	assert.Equal("cursor=c2&page_size=30&updated_after=2026-05-01T00%3A00%3A00.123456789Z", calls[1])
 }
 
+func TestListNotes_AcceptsDateOnlyTimestamps(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = fmt.Fprint(w, `{"notes":[{"id":"note-date-only","title":"Date only","owner":{"email":"user@example.com"},"created_at":"2026-05-19","updated_at":"2026-05-20"}],"hasMore":false,"cursor":null}`)
+	}))
+	defer srv.Close()
+
+	out, err := NewClient(srv.URL, "grn_testkey").ListNotes(context.Background(), ListNotesParams{})
+	require.NoError(err)
+	require.Len(out.Notes, 1)
+	assert.Equal(time.Date(2026, 5, 19, 0, 0, 0, 0, time.UTC), out.Notes[0].CreatedAt)
+	assert.Equal(time.Date(2026, 5, 20, 0, 0, 0, 0, time.UTC), out.Notes[0].UpdatedAt)
+}
+
 func TestGetNote_DecodesAndKeepsRaw(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
@@ -85,6 +100,33 @@ func TestGetNote_DecodesAndKeepsRaw(t *testing.T) {
 	assert.Equal("Alice Smith", n.Transcript[0].Speaker.Name)
 	assert.Equal("Speaker C", n.Transcript[2].Speaker.DiarizationLabel)
 	assert.JSONEq(string(fixture), string(n.Raw), "raw preserves the verbatim response")
+}
+
+func TestGetNote_AcceptsDateOnlyTimestamps(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	payload := []byte(`{
+		"id":"note-date-only","title":"Date only","owner":{"email":"user@example.com"},
+		"created_at":"2026-05-19","updated_at":"2026-05-20",
+		"calendar_event":{"scheduled_start_time":"2026-05-21","scheduled_end_time":"2026-05-22"},
+		"transcript":[{"text":"Hello","start_time":"2026-05-23","end_time":"2026-05-24"}]
+	}`)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write(payload)
+	}))
+	defer srv.Close()
+
+	note, err := NewClient(srv.URL, "grn_testkey").GetNote(context.Background(), "note-date-only")
+	require.NoError(err)
+	assert.Equal(time.Date(2026, 5, 19, 0, 0, 0, 0, time.UTC), note.CreatedAt)
+	assert.Equal(time.Date(2026, 5, 20, 0, 0, 0, 0, time.UTC), note.UpdatedAt)
+	require.NotNil(note.CalendarEvent)
+	assert.Equal(time.Date(2026, 5, 21, 0, 0, 0, 0, time.UTC), note.CalendarEvent.ScheduledStartTime)
+	assert.Equal(time.Date(2026, 5, 22, 0, 0, 0, 0, time.UTC), note.CalendarEvent.ScheduledEndTime)
+	require.Len(note.Transcript, 1)
+	assert.Equal(time.Date(2026, 5, 23, 0, 0, 0, 0, time.UTC), note.Transcript[0].StartTime)
+	assert.Equal(time.Date(2026, 5, 24, 0, 0, 0, 0, time.UTC), note.Transcript[0].EndTime)
+	assert.JSONEq(string(payload), string(note.Raw))
 }
 
 func TestGetNote_NullCalendarEvent(t *testing.T) {
