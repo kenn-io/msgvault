@@ -123,6 +123,6 @@ describe('RelationshipTimeline', () => {
 
   it('shows an empty state when there is no activity', () => {
     render(RelationshipTimeline, { rows: [], onRowOpen: vi.fn() });
-    expect(screen.getByText('No activity yet.')).toBeDefined();
+    expect(screen.getByText('No activity yet')).toBeDefined();
   });
 });

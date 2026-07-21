@@ -3,6 +3,8 @@
 
   import type { DomainSummary, PersonSummary } from '../../explore/models';
   import type { RelationshipFacet, RelationshipRow } from '../../relationships/models';
+  import EmptyState from '../common/EmptyState.svelte';
+  import IdentityAvatar from '../common/IdentityAvatar.svelte';
 
   interface Props {
     rows: RelationshipRow[] | PersonSummary[] | DomainSummary[];
@@ -177,16 +179,18 @@
       aria-label="Relationship results"
       aria-busy={loading}
       tabindex="0"
+      data-scroll
       bind:this={gridElement}
       onkeydown={handleKeydown}
     >
       {#if loading && views.length === 0}
         <p class="list-empty" role="status">Loading relationships…</p>
       {:else if views.length === 0}
-        <div class="list-empty" role="status">
-          <p class="list-empty-title">No relationships found</p>
-          <p class="list-empty-hint">Try a different search, or switch between People and Domains.</p>
-        </div>
+        <EmptyState
+          glyph="people"
+          label="No relationships found"
+          hint="Try a different search, or switch between People and Domains."
+        />
       {:else}
         {#each views as view, index (view.key)}
           <div
@@ -197,24 +201,33 @@
             tabindex="-1"
             data-row-key={view.key}
             aria-selected={view.target === activeTarget}
+            style:--reveal-index={index}
             onpointerdown={() => selectRow(view)}
           >
             <div role="gridcell">
-              <div class="row-main">
-                <span class="label">{view.label}</span>
-                {#if view.modalities !== null}
-                  <span class="modality-badge" aria-label={`${view.modalities} modalities`}>{view.modalities}</span>
-                {/if}
+              <IdentityAvatar
+                label={view.label}
+                seed={view.key}
+                shape={view.key.startsWith('domain:') ? 'domain' : 'person'}
+                size={28}
+              />
+              <div class="row-body">
+                <div class="row-main">
+                  <span class="label">{view.label}</span>
+                  <span class="last-at" data-mono>{formatDate(view.lastAt)}</span>
+                </div>
+                <div class="row-meta">
+                  <span class="item-count" data-mono>{view.itemCount.toLocaleString()} {view.itemUnit}</span>
+                  {#if view.modalities !== null}
+                    <span class="modality-badge" data-mono aria-label={`${view.modalities} modalities`}>{view.modalities}</span>
+                  {/if}
+                  {#if view.score !== null}
+                    <span class="activity-track" aria-label={`Activity score ${view.score.toFixed(2)}`}>
+                      <span class="activity-bar" style:width={`${Math.min(100, (view.score / maxScore) * 100)}%`}></span>
+                    </span>
+                  {/if}
+                </div>
               </div>
-              <div class="row-meta">
-                <span class="last-at">{formatDate(view.lastAt)}</span>
-                <span class="item-count">{view.itemCount.toLocaleString()} {view.itemUnit}</span>
-              </div>
-              {#if view.score !== null}
-                <span class="activity-track" aria-label={`Activity score ${view.score.toFixed(2)}`}>
-                  <span class="activity-bar" style:width={`${Math.min(100, (view.score / maxScore) * 100)}%`}></span>
-                </span>
-              {/if}
             </div>
           </div>
         {/each}
@@ -259,17 +272,6 @@
     text-align: center;
   }
 
-  .list-empty-title {
-    margin: 0;
-    color: var(--text-secondary);
-    font-weight: 600;
-  }
-
-  .list-empty-hint {
-    margin: 0;
-    line-height: 1.5;
-  }
-
   .named-state {
     display: flex;
     flex-direction: column;
@@ -298,16 +300,24 @@
   }
 
   .result-row {
-    border: 1px solid transparent;
     border-radius: var(--radius-sm);
     cursor: default;
+    transition: background-color 80ms ease-out;
   }
 
   .result-row [role='gridcell'] {
     display: flex;
+    align-items: center;
+    gap: var(--space-4);
+    padding: var(--space-2) var(--space-3);
+  }
+
+  .row-body {
+    display: flex;
+    min-width: 0;
+    flex: 1;
     flex-direction: column;
     gap: 2px;
-    padding: var(--space-2) var(--space-3);
   }
 
   .result-row:hover {
@@ -315,17 +325,19 @@
   }
 
   .result-row.active {
-    box-shadow: inset 3px 0 var(--accent-teal);
+    box-shadow: inset 2px 0 0 var(--accent-blue);
   }
 
   .result-row.selected {
     background: var(--selected-bg);
+    box-shadow: inset 2px 0 0 var(--accent-blue);
   }
 
   .row-main {
     display: flex;
-    align-items: center;
-    gap: var(--space-2);
+    align-items: baseline;
+    justify-content: space-between;
+    gap: var(--space-3);
   }
 
   .label {
@@ -337,20 +349,29 @@
     white-space: nowrap;
   }
 
+  .last-at {
+    flex: none;
+    color: var(--text-muted);
+    font-size: var(--font-size-2xs);
+  }
+
   .modality-badge {
     display: inline-flex;
     min-width: 16px;
+    flex: none;
     align-items: center;
     justify-content: center;
-    border-radius: var(--radius-sm);
-    background: var(--bg-inset);
+    border: 1px solid var(--border-muted);
+    border-radius: 999px;
     color: var(--text-muted);
     font-size: var(--font-size-2xs);
-    padding: 0 4px;
+    line-height: 1.4;
+    padding: 0 5px;
   }
 
   .row-meta {
     display: flex;
+    align-items: center;
     gap: var(--space-3);
     color: var(--text-muted);
     font-size: var(--font-size-2xs);
@@ -358,15 +379,32 @@
 
   .activity-track {
     display: block;
+    min-width: 0;
     height: 3px;
-    border-radius: var(--radius-sm);
+    flex: 1;
+    align-self: center;
+    border-radius: 2px;
     background: var(--bg-inset);
   }
 
   .activity-bar {
     display: block;
     height: 100%;
-    border-radius: var(--radius-sm);
-    background: var(--accent-teal);
+    border-radius: 2px;
+    background: color-mix(in srgb, var(--accent-blue) 45%, transparent);
+  }
+
+  @media (prefers-reduced-motion: no-preference) {
+    .result-row {
+      animation: row-reveal 150ms ease-out backwards;
+      animation-delay: calc(min(var(--reveal-index, 0), 15) * 14ms);
+    }
+
+    @keyframes row-reveal {
+      from {
+        opacity: 0;
+        transform: translateY(4px);
+      }
+    }
   }
 </style>

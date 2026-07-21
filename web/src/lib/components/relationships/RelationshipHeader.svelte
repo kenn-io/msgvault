@@ -211,7 +211,7 @@
         <Button label="Retry" surface="outline" size="sm" disabled={retrying} onclick={() => void retryRefresh()} />
       </section>
     {/if}
-    <p class="counts">
+    <p class="counts" data-mono>
       {detail.activity_count.toLocaleString()} items · {detail.file_count.toLocaleString()} files ·
       {formatDate(detail.first_at)} – {formatDate(detail.last_at)}
       {#if !isPersonDetail(detail)}
@@ -219,6 +219,7 @@
       {/if}
     </p>
     {#if isPersonDetail(detail)}
+      <span class="identity-label" data-section-label>Identity evidence</span>
       <div class="identifiers" aria-label="Archive-wide identity evidence">
         {#each detail.identifiers ?? [] as identifier (`${identifier.participant_id}:${identifier.type}:${identifier.value}`)}
           {@const isOtherMember = !!detail.cluster && identifier.participant_id !== detail.id}
@@ -226,7 +227,7 @@
             {#if identifier.display_value?.trim() && identifier.display_value.trim() !== identifier.value}
               <span class="chip-display">{identifier.display_value}</span>
             {/if}
-            <strong>{identifier.value}</strong>
+            <strong data-mono>{identifier.value}</strong>
             <small>
               {identifier.type} · {identifier.is_primary ? 'Primary' : 'Secondary'} · {identifier.provenance}
               {#if detail.cluster}
@@ -305,15 +306,21 @@
 </header>
 
 <style>
+  /* Spacing sits on the 4px grid: 8px between header lines, 16px of air
+   * before the hairline that closes the header. */
   .relationship-header {
     display: flex;
     flex-direction: column;
-    gap: var(--space-3);
+    gap: var(--space-4);
   }
 
   .relationship-header.has-detail {
-    padding-bottom: var(--space-4);
+    padding-bottom: var(--space-6);
     border-bottom: 1px solid var(--border-muted);
+  }
+
+  .identity-label {
+    margin-top: var(--space-2);
   }
 
   .header-empty {

@@ -4,6 +4,7 @@
 
   import type { RelationshipTimelineRow } from '../../relationships/models';
   import { RowGeometry, tableViewportHeight } from '../../theme/preferences.svelte';
+  import EmptyState from '../common/EmptyState.svelte';
   import { monthGroupKey, monthGroupLabel, timelineRowTitle } from './timeline-support';
 
   interface Props {
@@ -177,6 +178,7 @@
     aria-label="Relationship activity"
     aria-busy={loading || loadingMore}
     tabindex="0"
+    data-scroll
     bind:this={gridElement}
     onkeydown={handleKeydown}
     onscroll={handleScroll}
@@ -185,7 +187,9 @@
       {#if loading && rows.length === 0}
         <div role="row"><div role="gridcell"><p class="timeline-empty" role="status">Loading activity…</p></div></div>
       {:else if rows.length === 0}
-        <div role="row"><div role="gridcell"><p class="timeline-empty" role="status">No activity yet.</p></div></div>
+        <div role="row"><div role="gridcell">
+          <EmptyState glyph="pulse" label="No activity yet" hint="Interactions will appear here as they land in the archive." />
+        </div></div>
       {:else if !slice || rowHeight === undefined}
         <div role="row"><div role="gridcell"><p class="timeline-empty" role="status">Preparing timeline layout…</p></div></div>
       {:else}
@@ -194,7 +198,7 @@
             {#each renderedItems as item (item.key)}
               {#if item.type === 'header'}
                 <div class="month-header" role="row" style:height={`${MONTH_HEADER_HEIGHT}px`}>
-                  <span role="gridcell" aria-label={`Month: ${item.label}`}>{item.label}</span>
+                  <span role="gridcell" data-section-label aria-label={`Month: ${item.label}`}>{item.label}</span>
                 </div>
               {:else}
                 <!-- svelte-ignore a11y_click_events_have_key_events -- Enter
@@ -214,7 +218,7 @@
                   <div role="gridcell">
                     <span class="row-top">
                       <strong>{timelineRowTitle(item.row)}</strong>
-                      <time datetime={item.row.occurred_at}>{formatTime(item.row.occurred_at)}</time>
+                      <time datetime={item.row.occurred_at} data-mono>{formatTime(item.row.occurred_at)}</time>
                     </span>
                     <span class="preview">{item.row.preview}</span>
                   </div>
@@ -286,15 +290,27 @@
     inset: 0 0 auto;
   }
 
+  /* Month markers speak the shared small-caps label voice (data-section-label)
+   * with a trailing hairline that rules the month across the pane. */
   .month-header {
     display: flex;
     align-items: center;
     padding: 0 var(--space-3);
-    color: var(--text-muted);
-    font-size: var(--font-size-2xs);
-    font-weight: 600;
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
+  }
+
+  .month-header [role='gridcell'] {
+    display: flex;
+    min-width: 0;
+    flex: 1;
+    align-items: center;
+    gap: var(--space-4);
+  }
+
+  .month-header [role='gridcell']::after {
+    content: '';
+    height: 1px;
+    flex: 1;
+    background: var(--border-muted);
   }
 
   .timeline-row {
@@ -330,17 +346,21 @@
     flex: none;
   }
 
+  .timeline-row {
+    transition: background-color 80ms ease-out;
+  }
+
   .timeline-row:hover {
     background: var(--bg-surface-hover);
   }
 
   .timeline-row.active {
-    box-shadow: inset 3px 0 var(--accent-teal);
+    box-shadow: inset 2px 0 0 var(--accent-blue);
   }
 
   .timeline-row.selected {
     background: var(--selected-bg);
-    box-shadow: inset 3px 0 var(--accent-teal);
+    box-shadow: inset 2px 0 0 var(--accent-blue);
   }
 
   .timeline-empty {
