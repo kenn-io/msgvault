@@ -360,6 +360,7 @@ func (imp *Importer) backfillConversation(ctx context.Context, cc *convScope, st
 				return err
 			}
 		}
+		cc.budgetUsed += len(page.Messages)
 		// Fetch each discovered root's replies INLINE, before this page's
 		// cursor advances: "cursor past page" must keep meaning "page AND
 		// its threads durable". A reply-fetch failure leaves the cursor on
@@ -381,7 +382,7 @@ func (imp *Importer) backfillConversation(ctx context.Context, cc *convScope, st
 				if !m.IsThreadRoot() {
 					continue
 				}
-				if _, terr := imp.fetchThread(ctx, cc.syncID, cc.convID, cc.channelID, m.TS, "", sum); terr != nil {
+				if terr := imp.fetchThread(ctx, cc, m.TS, "", sum); terr != nil {
 					if ctx.Err() != nil {
 						return ctx.Err()
 					}
@@ -390,9 +391,14 @@ func (imp *Importer) backfillConversation(ctx context.Context, cc *convScope, st
 					sum.Errors++
 					return nil // cursor not advanced; page + threads retried next run
 				}
+				if cc.limitReached() {
+					// The budget ran out mid-page (possibly mid-thread): the
+					// cursor stays on this page so the page AND its threads
+					// are refetched whole next run (idempotent upserts).
+					return nil
+				}
 			}
 		}
-		cc.budgetUsed += len(page.Messages)
 		if !page.HasMore || page.NextCursor == "" {
 			cs.Done = true
 			cs.BackfillCursor = ""
@@ -504,7 +510,7 @@ func (imp *Importer) threadCatchUp(ctx context.Context, cc *convScope, sum *Impo
 			if !m.IsThreadRoot() {
 				continue
 			}
-			if _, terr := imp.fetchThread(ctx, cc.syncID, cc.convID, cc.channelID, m.TS, "", sum); terr != nil {
+			if terr := imp.fetchThread(ctx, cc, m.TS, "", sum); terr != nil {
 				if ctx.Err() != nil {
 					return ctx.Err()
 				}
@@ -516,6 +522,39 @@ func (imp *Importer) threadCatchUp(ctx context.Context, cc *convScope, sum *Impo
 		}
 		if !page.HasMore || page.NextCursor == "" {
 			cc.cs.ThreadsPending = false
+			return nil
+		}
+		pageCursor = page.NextCursor
+	}
+}
+
+// fetchThread canonically fetches a thread from oldest (exclusive) onward,
+// persisting every message (the response's included parent re-upserts
+// harmlessly). Pages are sized to and charged against the caller's --limit
+// budget; when the budget exhausts mid-thread it returns early WITHOUT
+// error — the caller must then leave its own cursor unadvanced so the
+// thread is refetched whole on the next run.
+func (imp *Importer) fetchThread(ctx context.Context, cc *convScope, anchorTS, oldest string, sum *ImportSummary) error {
+	pageCursor := ""
+	for {
+		page, err := imp.client.repliesPageWithLimit(ctx, cc.channelID, anchorTS, pageCursor, oldest, cc.pageBudget())
+		if err != nil {
+			return err
+		}
+		for i := range page.Messages {
+			m := &page.Messages[i]
+			if err := imp.processMessage(ctx, cc, m, sum); err != nil {
+				return err
+			}
+			if m.IsThreadReply() {
+				sum.RepliesFetched++
+			}
+		}
+		cc.budgetUsed += len(page.Messages)
+		if !page.HasMore || page.NextCursor == "" {
+			return nil
+		}
+		if cc.limitReached() {
 			return nil
 		}
 		pageCursor = page.NextCursor

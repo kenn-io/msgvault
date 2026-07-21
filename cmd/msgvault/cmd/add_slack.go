@@ -34,6 +34,7 @@ Requires a user token (xoxp-...) from an internal Slack app you create:
        channels:history groups:history im:history mpim:history
        channels:read groups:read im:read mpim:read
        users:read users:read.email files:read reactions:read team:read
+       search:read
   3. Install to Workspace, then copy the "User OAuth Token".
 
 Internal apps you create yourself are not subject to Slack's non-Marketplace
@@ -62,8 +63,14 @@ Examples:
 			if token == "" {
 				return errors.New("missing Slack token in daemon subprocess (set MSGVAULT_SLACK_TOKEN)")
 			}
-			auth, err := slack.NewClient("", token).AuthTest(cmd.Context())
+			client := slack.NewClient("", token)
+			auth, err := client.AuthTest(cmd.Context())
 			if err != nil {
+				return err
+			}
+			// The reply sweep needs search:read; catch an under-scoped token
+			// here, where the fix is cheap, not on every future sync.
+			if err := client.ValidateSearchScope(cmd.Context()); err != nil {
 				return err
 			}
 			teamDomain := strings.TrimSuffix(strings.TrimPrefix(auth.URL, "https://"), ".slack.com/")

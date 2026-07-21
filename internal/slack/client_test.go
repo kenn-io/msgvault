@@ -57,6 +57,19 @@ func TestClientRejectsUnallowlistedMethods(t *testing.T) {
 		"the client must refuse methods outside its read-only allowlist before any request is made")
 }
 
+func TestValidateSearchScope(t *testing.T) {
+	f := newFakeSlack(t)
+	c := testClient(t, f)
+	require.NoError(t, c.ValidateSearchScope(context.Background()))
+
+	// A token minted without search:read must fail add-slack with
+	// remediation instructions, not fail every future sync's sweep.
+	f.searchMissingScope = true
+	err := c.ValidateSearchScope(context.Background())
+	require.ErrorIs(t, err, ErrAuth)
+	assert.ErrorContains(t, err, "search:read")
+}
+
 func TestClientPagination(t *testing.T) {
 	f := newFakeSlack(t)
 	f.users = []map[string]any{

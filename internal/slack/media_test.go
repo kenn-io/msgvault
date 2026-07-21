@@ -43,8 +43,11 @@ func TestFetchableURLHostRestriction(t *testing.T) {
 type recordingTransport struct {
 	requests []string
 	body     string
-	redirect string // when set, answer 302 to this location
-	status   int
+	// bodyByPath overrides body per URL path (distinct content hashes:
+	// the store dedupes same-hash rows per message).
+	bodyByPath map[string]string
+	redirect   string // when set, answer 302 to this location
+	status     int
 }
 
 func (rt *recordingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
@@ -61,35 +64,41 @@ func (rt *recordingTransport) RoundTrip(req *http.Request) (*http.Response, erro
 	if status == 0 {
 		status = http.StatusOK
 	}
+	body := rt.body
+	if b, ok := rt.bodyByPath[req.URL.Path]; ok {
+		body = b
+	}
 	return &http.Response{
 		StatusCode:    status,
-		Body:          io.NopCloser(strings.NewReader(rt.body)),
-		ContentLength: int64(len(rt.body)),
+		Body:          io.NopCloser(strings.NewReader(body)),
+		ContentLength: int64(len(body)),
 		Request:       req,
 	}, nil
 }
 
 func TestDownloadFileRefusesOffHostAndRedirects(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
 	rt := &recordingTransport{body: "bytes"}
 	c := NewClient("", "xoxp-test")
 	c.mediaTransport = rt
 
 	// Off-host: rejected before any request is made.
 	_, err := c.DownloadFile(context.Background(), "https://attacker.example/x", 100)
-	require.ErrorIs(t, err, errOffHost)
-	assert.Empty(t, rt.requests, "the token must never travel to an off-host URL")
+	require.ErrorIs(err, errOffHost)
+	assert.Empty(rt.requests, "the token must never travel to an off-host URL")
 
 	// On-host succeeds.
 	data, err := c.DownloadFile(context.Background(), "https://files.slack.com/files-pri/T01-F01/a.png", 100)
-	require.NoError(t, err)
-	assert.Equal(t, "bytes", string(data))
-	require.Len(t, rt.requests, 1)
+	require.NoError(err)
+	assert.Equal("bytes", string(data))
+	require.Len(rt.requests, 1)
 
 	// A redirect — even one a compromised response injects — is refused.
 	rt.redirect = "https://attacker.example/steal"
 	_, err = c.DownloadFile(context.Background(), "https://files.slack.com/files-pri/T01-F02/b.png", 100)
-	require.ErrorIs(t, err, errOffHost)
-	assert.Len(t, rt.requests, 2, "the redirect target must not be followed")
+	require.ErrorIs(err, errOffHost)
+	assert.Len(rt.requests, 2, "the redirect target must not be followed")
 }
 
 func TestDownloadFileSizeCap(t *testing.T) {
@@ -101,6 +110,8 @@ func TestDownloadFileSizeCap(t *testing.T) {
 }
 
 func TestPersistFilesLinkRowsAndPendingMarkers(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
 	f := testWorkspace(t)
 	general := f.conv("C01")
 	general.Msgs[6].Files = []map[string]any{
@@ -130,49 +141,121 @@ func TestPersistFilesLinkRowsAndPendingMarkers(t *testing.T) {
 		AttachmentsDir: t.TempDir(), MaxMediaBytes: 1 << 20,
 	}
 	_, err := imp.Import(context.Background(), opts)
-	require.NoError(t, err)
+	require.NoError(err)
 
 	rows, err := st.DB().Query(st.Rebind(`
 		SELECT a.source_attachment_id, COALESCE(a.content_hash, ''), COALESCE(a.media_type, '')
 		FROM attachments a JOIN messages m ON m.id = a.message_id
 		WHERE m.source_message_id = ?`), "C01:"+ts(6))
-	require.NoError(t, err)
+	require.NoError(err)
 	defer func() { _ = rows.Close() }()
 	got := map[string][2]string{}
 	for rows.Next() {
 		var id, hash, mediaType string
-		require.NoError(t, rows.Scan(&id, &hash, &mediaType))
+		require.NoError(rows.Scan(&id, &hash, &mediaType))
 		got[id] = [2]string{hash, mediaType}
 	}
-	require.NoError(t, rows.Err())
+	require.NoError(rows.Err())
 
-	require.Len(t, got, 3)
-	assert.NotEmpty(t, got["slack:F_OK"][0], "on-host file downloads into content-addressed storage")
-	assert.Equal(t, "image", got["slack:F_OK"][1])
-	assert.Empty(t, got["slack:F_EXT"][0])
-	assert.Equal(t, "link", got["slack:F_EXT"][1], "external file records metadata only")
-	assert.Empty(t, got["slack:F_BIG"][0])
-	assert.Empty(t, got["slack:F_BIG"][1], "over-cap file leaves a retryable pending marker")
+	require.Len(got, 3)
+	assert.NotEmpty(got["slack:F_OK"][0], "on-host file downloads into content-addressed storage")
+	assert.Equal("image", got["slack:F_OK"][1])
+	assert.Empty(got["slack:F_EXT"][0])
+	assert.Equal("link", got["slack:F_EXT"][1], "external file records metadata only")
+	assert.Empty(got["slack:F_BIG"][0])
+	assert.Empty(got["slack:F_BIG"][1], "over-cap file leaves a retryable pending marker")
 
 	// The pending list sees the over-cap marker but not the link row.
 	src, err := st.GetOrCreateSource("slack", "T01:UME")
-	require.NoError(t, err)
+	require.NoError(err)
 	pending, err := st.ListSlackPendingAttachmentMessages(src.ID)
-	require.NoError(t, err)
-	require.Len(t, pending, 1)
+	require.NoError(err)
+	require.Len(pending, 1)
 
 	// Raising the cap and backfilling repairs the pending download (the
 	// declared size in the archived raw JSON no longer exceeds it).
 	opts.MaxMediaBytes = 1 << 50
 	sum, err := imp.BackfillMedia(context.Background(), opts)
-	require.NoError(t, err)
-	assert.Equal(t, 1, sum.AttachmentsDownloaded)
+	require.NoError(err)
+	assert.Equal(1, sum.AttachmentsDownloaded)
 	pending, err = st.ListSlackPendingAttachmentMessages(src.ID)
-	require.NoError(t, err)
-	assert.Empty(t, pending)
+	require.NoError(err)
+	assert.Empty(pending)
+}
+
+func TestPersistFilesPreservesTombstonedAndOmittedDownloads(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := testWorkspace(t)
+	f.conv("C01").Msgs[6].Files = []map[string]any{
+		{"id": "F_TOMB", "name": "t.png", "mimetype": "image/png", "size": 5,
+			"url_private": "https://files.slack.com/files-pri/T01-F_TOMB/t.png",
+			"permalink":   "https://testers.slack.com/files/F_TOMB"},
+		{"id": "F_GONE", "name": "g.png", "mimetype": "image/png", "size": 5,
+			"url_private": "https://files.slack.com/files-pri/T01-F_GONE/g.png",
+			"permalink":   "https://testers.slack.com/files/F_GONE"},
+		{"id": "F_PEND", "name": "big.mp4", "mimetype": "video/mp4", "size": 1 << 40,
+			"url_private": "https://files.slack.com/files-pri/T01-F_PEND/big.mp4",
+			"permalink":   "https://testers.slack.com/files/F_PEND"},
+	}
+
+	prevInterval := checkpointMinInterval
+	checkpointMinInterval = 0
+	t.Cleanup(func() { checkpointMinInterval = prevInterval })
+	srv := f.serve()
+	client := NewClient(srv.URL, "xoxp-test")
+	client.disableRateLimits()
+	client.mediaTransport = &recordingTransport{body: "png03", bodyByPath: map[string]string{
+		"/files-pri/T01-F_GONE/g.png": "png04",
+	}}
+	st := testutil.NewTestStore(t)
+	imp := NewImporter(st, client, "T01")
+
+	opts := ImportOptions{
+		TeamID: "T01", UserID: "UME",
+		AttachmentsDir: t.TempDir(), MaxMediaBytes: 1 << 20,
+	}
+	_, err := imp.Import(context.Background(), opts)
+	require.NoError(err)
+
+	// The source deletes one downloaded file (tombstone) and an edit drops
+	// the other from the message entirely; the oversized pending marker
+	// also stops being listed. Deletions at the source must never reach
+	// into the archive — but a stale pending marker has nothing to keep.
+	f.mu.Lock()
+	f.conv("C01").Msgs[6].Files = []map[string]any{
+		{"id": "F_TOMB", "mode": "tombstone"},
+	}
+	f.mu.Unlock()
+
+	full := opts
+	full.Full = true
+	_, err = imp.Import(context.Background(), full)
+	require.NoError(err)
+
+	rows, err := st.DB().Query(st.Rebind(`
+		SELECT a.source_attachment_id, COALESCE(a.content_hash, '')
+		FROM attachments a JOIN messages m ON m.id = a.message_id
+		WHERE m.source_message_id = ?`), "C01:"+ts(6))
+	require.NoError(err)
+	defer func() { _ = rows.Close() }()
+	got := map[string]string{}
+	for rows.Next() {
+		var id, hash string
+		require.NoError(rows.Scan(&id, &hash))
+		got[id] = hash
+	}
+	require.NoError(rows.Err())
+
+	assert.NotEmpty(got["slack:F_TOMB"], "a tombstoned file keeps its archived attachment row")
+	assert.NotEmpty(got["slack:F_GONE"], "a file dropped by an edit keeps its archived attachment row")
+	_, pendKept := got["slack:F_PEND"]
+	assert.False(pendKept, "a stale pending marker clears once the source stops listing the file")
 }
 
 func TestNoMediaDefersFilesAsPendingNotLinks(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
 	f := testWorkspace(t)
 	f.conv("C01").Msgs[6].Files = []map[string]any{
 		{"id": "F_DEFER", "name": "b.png", "mimetype": "image/png", "size": 5,
@@ -194,23 +277,23 @@ func TestNoMediaDefersFilesAsPendingNotLinks(t *testing.T) {
 	// marker — a link row would hide it from backfill forever.
 	opts := ImportOptions{TeamID: "T01", UserID: "UME", NoMedia: true, AttachmentsDir: t.TempDir()}
 	sum, err := imp.Import(context.Background(), opts)
-	require.NoError(t, err)
-	assert.Equal(t, 1, sum.AttachmentsPending)
+	require.NoError(err)
+	assert.Equal(1, sum.AttachmentsPending)
 
 	src, err := st.GetOrCreateSource("slack", "T01:UME")
-	require.NoError(t, err)
+	require.NoError(err)
 	pending, err := st.ListSlackPendingAttachmentMessages(src.ID)
-	require.NoError(t, err)
-	require.Len(t, pending, 1, "a --no-media deferred hosted file must stay discoverable")
+	require.NoError(err)
+	require.Len(pending, 1, "a --no-media deferred hosted file must stay discoverable")
 
 	// Enabling media and backfilling downloads it.
 	opts.NoMedia = false
 	bsum, err := imp.BackfillMedia(context.Background(), opts)
-	require.NoError(t, err)
-	assert.Equal(t, 1, bsum.AttachmentsDownloaded)
+	require.NoError(err)
+	assert.Equal(1, bsum.AttachmentsDownloaded)
 	var hash string
-	require.NoError(t, st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRow(st.Rebind(`
 		SELECT COALESCE(a.content_hash,'') FROM attachments a
 		WHERE a.source_attachment_id = ?`), "slack:F_DEFER").Scan(&hash))
-	assert.NotEmpty(t, hash)
+	assert.NotEmpty(hash)
 }

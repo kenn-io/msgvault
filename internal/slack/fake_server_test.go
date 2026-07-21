@@ -129,9 +129,16 @@ type fakeSlack struct {
 	failReplies map[string]bool
 	// failSearch makes search.messages answer a method error.
 	failSearch bool
+	// searchMissingScope makes search.messages answer missing_scope (a
+	// token without search:read).
+	searchMissingScope bool
 	// searchPageSize overrides the honored count for search pagination
 	// (0 = honor the requested count).
 	searchPageSize int
+	// searchTotalOverride reports this total (and pages derived from it)
+	// regardless of the actual match count, emulating a day beyond the
+	// reachable-result ceiling.
+	searchTotalOverride int
 	// failHistoryContinuations fails only history requests carrying a page
 	// cursor, emulating a walk that dies partway through a multi-page window.
 	failHistoryContinuations bool
@@ -404,6 +411,10 @@ func (f *fakeSlack) handleSearch(w http.ResponseWriter, r *http.Request) {
 		f.replyErr(w, "fatal_error")
 		return
 	}
+	if f.searchMissingScope {
+		f.replyErr(w, "missing_scope")
+		return
+	}
 	query := r.FormValue("query")
 	repliesOnly := false
 	var onDay, afterDay string
@@ -473,7 +484,11 @@ func (f *fakeSlack) handleSearch(w http.ResponseWriter, r *http.Request) {
 	if page > 100 {
 		page = 1 // probed live: past-the-ceiling pages are CLAMPED to page 1
 	}
-	pages := (len(hits) + count - 1) / count
+	total := len(hits)
+	if f.searchTotalOverride > 0 {
+		total = f.searchTotalOverride
+	}
+	pages := (total + count - 1) / count
 	from := min((page-1)*count, len(hits))
 	to := min(from+count, len(hits))
 
@@ -491,8 +506,8 @@ func (f *fakeSlack) handleSearch(w http.ResponseWriter, r *http.Request) {
 	}
 	f.reply(w, map[string]any{
 		"messages": map[string]any{
-			"total":   len(hits),
-			"paging":  map[string]any{"count": count, "total": len(hits), "page": page, "pages": pages},
+			"total":   total,
+			"paging":  map[string]any{"count": count, "total": total, "page": page, "pages": pages},
 			"matches": matches,
 		},
 	})

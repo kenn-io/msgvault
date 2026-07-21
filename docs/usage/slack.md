@@ -23,7 +23,7 @@ one-time setup per workspace):
    `channels:history`, `groups:history`, `im:history`, `mpim:history`,
    `channels:read`, `groups:read`, `im:read`, `mpim:read`,
    `users:read`, `users:read.email`, `files:read`, `reactions:read`,
-   `team:read`.
+   `team:read`, `search:read`.
 3. Click **Install to Workspace** and copy the **User OAuth Token**
    (`xoxp-…`).
 
@@ -40,7 +40,9 @@ ask an admin to approve the app.
 msgvault add-slack
 ```
 
-The command validates the token (`auth.test`), stores it at
+The command validates the token (`auth.test`, plus a `search.messages` probe
+— thread-reply archiving requires `search:read`, and a missing scope should
+fail setup, not every future sync), stores it at
 `tokens/slack_<team-id>_<user-id>.json` (0600), and registers the workspace
 as a `slack` source identified by `<team-id>:<user-id>`. Tokens are keyed by
 workspace *and* user, so two accounts in the same workspace coexist.
@@ -87,6 +89,14 @@ discovers replies with a search sweep (`threads:replies`, day-granular,
 resumable via a UTC watermark): a reply is found by its **creation time**,
 so the age of its thread is irrelevant — no lookback window, no blind spot.
 Discovered replies are archived canonically via `conversations.replies`.
+A channel that was excluded (or unreadable) while sweeps advanced recovers
+automatically when it returns: the importer runs a channel-scoped catch-up
+sweep over the days it missed before rejoining the workspace-wide sweep.
+One documented edge: a single day whose reply count exceeds search's
+~10,000 reachable results per query cannot be fully swept — the run fails
+loudly (never silently skipping) and `sync-slack --full` recovers the
+replies without search; per-channel query narrowing for this case is
+planned.
 Edits and reaction changes after capture are ignored by default; run
 `sync-slack --maintenance` to repair the recent window, or `--full` to
 repair everything.

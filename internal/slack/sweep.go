@@ -12,13 +12,17 @@ import (
 )
 
 const (
-	// sweepLagMargin keeps the watermark behind real time so a sweep cannot
+	// sweepLagMargin keeps certification behind real time so a sweep cannot
 	// certify an instant whose messages may not be indexed yet.
 	sweepLagMargin = 10 * time.Minute
 	// sweepTruncationCeiling is search.messages' reachable-result ceiling
-	// per query (count 100 × page cap 100). A single-day total beyond it is
-	// logged as truncation; in:-batch narrowing is the specified (unbuilt)
-	// escape hatch — see docs/internal/slack-reply-sweep-design.md.
+	// per query (count 100 × page cap 100). A single-day total beyond it
+	// fails the run: results past the ceiling cannot be reached by paging,
+	// and re-querying the same day serves the same first 10k (ascending
+	// order is stable), so no amount of retrying drains it. Recovery is
+	// `--full` (backfill's inline thread fetches need no search); per-scope
+	// `in:`-batch narrowing is the specified (unbuilt) sweep-native escape
+	// hatch — see docs/internal/slack-reply-sweep-design.md.
 	sweepTruncationCeiling = searchPageLimit * maxSearchPages
 )
 
@@ -27,72 +31,194 @@ type sweepTarget struct {
 	convID int64
 }
 
-// sweepReplies discovers thread replies created since the sweep watermark
-// via search.messages (threads:replies) and archives them through canonical
-// conversations.replies fetches. The watermark advances only behind
-// persisted work; a failed fetch parks it just before the failed thread's
-// first hit so the next run resumes exactly there.
+// sweepReplies discovers thread replies created since each conversation's
+// certification stamp via search.messages (threads:replies) and archives
+// them through canonical conversations.replies fetches.
+//
+// Certification is per conversation (ConvState.SweptThrough) with the
+// workspace watermark (SweepWatermark) tracking the current target set as a
+// whole. A conversation that re-enters the target set behind the watermark —
+// it was excluded, gone, or filtered while sweeps advanced — first recovers
+// its gap with a channel-scoped sweep; then one workspace-wide sweep runs
+// from the watermark. Certification derives only from fully-searched
+// intervals, never from fetched content (a canonical fetch returns whole
+// threads, including replies newer than the search index horizon).
 func (imp *Importer) sweepReplies(ctx context.Context, syncID int64, targets map[string]sweepTarget, state *SyncState, sum *ImportSummary) error {
-	floor := state.SweepWatermark
-	if floor == "" {
-		floor = firstSweepFloor(state)
-	}
-	if floor == "" {
-		return nil // nothing backfilled yet; backfill owns all replies so far
+	if len(targets) == 0 {
+		return nil
 	}
 	// Date modifiers evaluate in the user's CURRENT profile timezone at
 	// query time (probed live, including retroactive re-filing after a tz
 	// change), so day arithmetic must use the offset read this run.
 	offset := imp.res.tzOffset(imp.opts.UserID)
-
 	now := imp.now().UTC()
-	horizon := now.Add(-sweepLagMargin)
-	newWatermark := floor
+	horizon := tsFormat(now.Add(-sweepLagMargin))
 
-	for _, day := range sweepDays(tsTime(floor), now, offset) {
-		hits, err := imp.sweepDay(ctx, syncID, day, targets)
+	ids := make([]string, 0, len(targets))
+	for cid := range targets {
+		ids = append(ids, cid)
+	}
+	sort.Strings(ids)
+
+	// Adopt a certification stamp for targets that never carried one:
+	// max(own backfill pin, workspace watermark). The pin is exact for a
+	// conversation that just completed backfill (inline thread fetches
+	// covered every reply up to it, and the pin always postdates the
+	// watermark at completion time); the watermark is the correct reading
+	// for legacy state written before per-conversation stamps existed,
+	// because that code swept every target on every run.
+	for _, cid := range ids {
+		cs := state.EnsureConv(cid)
+		if cs.SweptThrough != "" {
+			continue
+		}
+		edge := cs.BackfillLatest
+		if edge == "" {
+			edge = cs.Cursor
+		}
+		cs.SweptThrough = edge
+		if tsLess(cs.SweptThrough, state.SweepWatermark) {
+			cs.SweptThrough = state.SweepWatermark
+		}
+	}
+
+	// Gap recovery: a target certified behind the workspace watermark
+	// missed sweeps while absent from the target set.
+	for _, cid := range ids {
+		cs := state.Conversations[cid]
+		if state.SweepWatermark == "" || !tsLess(cs.SweptThrough, state.SweepWatermark) {
+			continue
+		}
+		if !strings.HasPrefix(cid, "C") {
+			// in:<#ID> scoping is only probed reliable for channel IDs.
+			// DMs and group DMs recover through the thread catch-up walk
+			// instead (fetches every thread, so the gap's bounds are moot);
+			// the flag persists until a clean pass, so stamping forward
+			// here cannot lose the debt.
+			cs.ThreadsPending = true
+			cs.SweptThrough = state.SweepWatermark
+			continue
+		}
+		err := imp.sweepRange(ctx, syncID, cid, cs.SweptThrough, tsTime(state.SweepWatermark), state.SweepWatermark,
+			map[string]sweepTarget{cid: targets[cid]}, offset, state, sum,
+			func(certified string) { cs.SweptThrough = certified })
+		if err != nil {
+			return err
+		}
+	}
+
+	// Workspace-wide sweep from the watermark (first sweep: from the
+	// earliest certification among targets).
+	floor := state.SweepWatermark
+	if floor == "" {
+		for _, cid := range ids {
+			st := state.Conversations[cid].SweptThrough
+			if st == "" {
+				continue
+			}
+			if floor == "" || tsLess(st, floor) {
+				floor = st
+			}
+		}
+	}
+	if floor == "" {
+		return nil // nothing backfilled yet; backfill owns all replies so far
+	}
+	// Search runs through NOW — replies inside the lag window are archived
+	// too — but certification caps at the horizon, so anything the index
+	// may not have served yet is re-swept next run (idempotent upserts).
+	return imp.sweepRange(ctx, syncID, "", floor, now, horizon, targets, offset, state, sum,
+		func(certified string) {
+			state.SweepWatermark, state.SweepOffset = certified, offset
+			for _, cid := range ids {
+				cs := state.Conversations[cid]
+				// Only a conversation already certified through the sweep's
+				// floor is contiguously covered to the new boundary; one
+				// parked behind (a failed gap sweep) keeps its stamp so the
+				// gap is retried next run.
+				if !tsLess(cs.SweptThrough, floor) && tsLess(cs.SweptThrough, certified) {
+					cs.SweptThrough = certified
+				}
+			}
+		})
+}
+
+// sweepRange drains the threads:replies search from floor's day through
+// searchEnd's day for one scope ("" = workspace-wide; a channel ID =
+// in:<#ID>-scoped), day by day in the user's current timezone, archiving
+// every hit above floor. commit is invoked with each newly certified
+// boundary — end of a completed day, capped at ceiling (the lag horizon for
+// the workspace sweep; searchEnd may exceed it so fresh replies are fetched
+// without being certified) — so multi-day catch-ups checkpoint per day.
+// Discovery and fetch failures are recorded, certification parks at the
+// last safe boundary, and the sweep stops; only store/context failures
+// return an error.
+func (imp *Importer) sweepRange(ctx context.Context, syncID int64, scope, floor string, searchEnd time.Time, ceiling string, targets map[string]sweepTarget, offset int, state *SyncState, sum *ImportSummary, commit func(certified string)) error {
+	loc := time.FixedZone("user", offset)
+	day := tsTime(floor).In(loc)
+	day = time.Date(day.Year(), day.Month(), day.Day(), 0, 0, 0, 0, loc)
+	end := searchEnd.In(loc)
+	for !day.After(end) {
+		dayStr := day.Format("2006-01-02")
+		item := dayStr
+		if scope != "" {
+			item = scope + ":" + dayStr
+		}
+		hits, truncated, err := imp.sweepDay(ctx, syncID, scope, dayStr, targets)
 		if err != nil {
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
-			// Discovery failure: nothing this day was processed; the
-			// watermark stays where persisted work ended.
-			imp.recordItem(syncID, day, "sweep", store.SyncRunItemStatusError, "slack_search_error", err)
+			// Discovery failure: nothing this day was processed;
+			// certification stays where the last complete day left it.
+			imp.recordItem(syncID, item, "sweep", store.SyncRunItemStatusError, "slack_search_error", err)
 			sum.FetchErrors++
 			sum.Errors++
-			state.SweepWatermark, state.SweepOffset = newWatermark, offset
 			return nil
 		}
-		complete, high, err := imp.fetchSweepHits(ctx, syncID, hits, floor, targets, sum)
+		complete, parked, err := imp.fetchSweepHits(ctx, syncID, hits, floor, targets, sum)
 		if err != nil {
-			return err // store-level failure: fatal for the run
-		}
-		if high != "" && tsLess(newWatermark, high) {
-			newWatermark = high
+			return err // store/context failure: fatal for the run
 		}
 		if !complete {
 			// A canonical fetch failed mid-day; resume from just before it.
-			state.SweepWatermark, state.SweepOffset = newWatermark, offset
+			if parked != "" && tsLess(floor, parked) {
+				commit(minTS(parked, ceiling))
+			}
 			return nil
 		}
+		if truncated {
+			// Ascending order means the reachable results ARE the day's
+			// earliest, so the last processed hit is a safe boundary — but
+			// the rest of the day is unreachable and the run must fail
+			// loudly rather than skip past it.
+			imp.recordItem(syncID, item, "sweep", store.SyncRunItemStatusError, "slack_sweep_truncated",
+				fmt.Errorf("day %s exceeds the %d reachable results per query; run --full to recover its replies (see the sweep design doc)", dayStr, sweepTruncationCeiling))
+			sum.FetchErrors++
+			sum.Errors++
+			if len(hits) > 0 && tsLess(floor, hits[len(hits)-1].TS) {
+				commit(minTS(hits[len(hits)-1].TS, ceiling))
+			}
+			return nil
+		}
+		nextDay := day.AddDate(0, 0, 1)
+		commit(minTS(tsFormat(nextDay.UTC()), ceiling))
+		imp.checkpoint(syncID, state, sum)
+		day = nextDay
 	}
-	// Clean completion: certify everything up to the lag horizon.
-	horizonTS := fmt.Sprintf("%d.%06d", horizon.Unix(), horizon.Nanosecond()/1000)
-	if tsLess(newWatermark, horizonTS) {
-		newWatermark = horizonTS
-	}
-	state.SweepWatermark, state.SweepOffset = newWatermark, offset
 	return nil
 }
 
 // sweepDay runs the paged threads:replies query for one user-tz day,
-// returning hits filtered to sweep targets, ascending by ts.
-func (imp *Importer) sweepDay(ctx context.Context, syncID int64, day string, targets map[string]sweepTarget) ([]SearchMatch, error) {
+// returning hits filtered to sweep targets (ascending by ts) and whether
+// the day's total exceeds the reachable-result ceiling.
+func (imp *Importer) sweepDay(ctx context.Context, syncID int64, scope, day string, targets map[string]sweepTarget) ([]SearchMatch, bool, error) {
 	var hits []SearchMatch
+	truncated := false
 	for page := 1; page <= maxSearchPages; page++ {
-		sp, err := imp.client.SearchMessagesPage(ctx, imp.sweepQuery(day, syncID, page), page)
+		sp, err := imp.client.SearchMessagesPage(ctx, imp.sweepQuery(scope, day, syncID, page), page)
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
 		// Past-the-ceiling requests are silently CLAMPED to page 1 (probed
 		// live): a mismatched echo means the walk must stop, not loop.
@@ -105,31 +231,34 @@ func (imp *Importer) sweepDay(ctx context.Context, syncID int64, day string, tar
 			}
 		}
 		if page == 1 && sp.Total > sweepTruncationCeiling {
-			imp.recordItem(syncID, day, "sweep", store.SyncRunItemStatusSkipped, "slack_sweep_truncated",
-				fmt.Errorf("day %s has %d matches, beyond the %d reachable per query; results past the ceiling are not swept", day, sp.Total, sweepTruncationCeiling))
+			truncated = true
 		}
 		if page >= sp.Pages {
 			break
 		}
 	}
 	sort.Slice(hits, func(i, j int) bool { return tsLess(hits[i].TS, hits[j].TS) })
-	return hits, nil
+	return hits, truncated, nil
 }
 
-// sweepQuery builds the day's query. The negated nonce term is semantically
+// sweepQuery builds one day's query. The negated nonce term is semantically
 // inert and makes every query string unique: search results are cached by
 // query string (probed live — a cached result can serve stale day filings
 // and miss recently indexed messages).
-func (imp *Importer) sweepQuery(day string, syncID int64, page int) string {
-	return fmt.Sprintf(`threads:replies on:%s -"zqsweep%dp%d"`, day, syncID, page)
+func (imp *Importer) sweepQuery(scope, day string, syncID int64, page int) string {
+	q := fmt.Sprintf(`threads:replies on:%s -"zqsweep%dp%d"`, day, syncID, page)
+	if scope != "" {
+		q = fmt.Sprintf("in:<#%s> ", scope) + q
+	}
+	return q
 }
 
 // fetchSweepHits archives discovered replies via canonical
 // conversations.replies fetches, grouped one fetch per thread. Hits at or
-// below floor are already archived (watermark semantics) and skipped.
-// Returns (complete, highest persisted ts−safe watermark, fatal error):
-// on a fetch failure, complete=false and the returned high watermark sits
-// just before the failed thread's first hit.
+// below floor are already archived (certification semantics) and skipped.
+// Returns (complete, parked boundary, fatal error): on a fetch failure,
+// complete=false and the parked boundary sits just before the failed
+// thread's first hit — everything before it was fetched (ascending order).
 func (imp *Importer) fetchSweepHits(ctx context.Context, syncID int64, hits []SearchMatch, floor string, targets map[string]sweepTarget, sum *ImportSummary) (bool, string, error) {
 	type group struct {
 		channelID string
@@ -140,7 +269,7 @@ func (imp *Importer) fetchSweepHits(ctx context.Context, syncID int64, hits []Se
 	index := map[string]int{}
 	for _, h := range hits {
 		if !tsLess(floor, h.TS) {
-			continue // at/below the watermark: already archived
+			continue // at/below the certification boundary: already archived
 		}
 		key := h.ChannelID + ":" + h.RootTS
 		if h.RootTS == "" {
@@ -157,13 +286,13 @@ func (imp *Importer) fetchSweepHits(ctx context.Context, syncID int64, hits []Se
 	}
 	sort.Slice(groups, func(i, j int) bool { return tsLess(groups[i].minHit, groups[j].minHit) })
 
-	high := ""
 	for _, g := range groups {
 		if err := ctx.Err(); err != nil {
-			return false, high, err
+			return false, "", err
 		}
 		target := targets[g.channelID]
-		persistedTo, err := imp.fetchThread(ctx, syncID, target.convID, g.channelID, g.anchorTS, tsMinusMicro(g.minHit), sum)
+		cc := &convScope{channelID: g.channelID, convID: target.convID, sourceID: imp.sourceID, syncID: syncID, opts: imp.opts}
+		err := imp.fetchThread(ctx, cc, g.anchorTS, tsMinusMicro(g.minHit), sum)
 		if errors.Is(err, ErrNotFound) {
 			// Thread/channel gone between discovery and fetch: expected churn.
 			imp.recordItem(syncID, sourceMessageID(g.channelID, g.anchorTS), "sweep", store.SyncRunItemStatusSkipped, "slack_thread_gone", err)
@@ -171,7 +300,7 @@ func (imp *Importer) fetchSweepHits(ctx context.Context, syncID int64, hits []Se
 		}
 		if err != nil {
 			if ctx.Err() != nil {
-				return false, high, ctx.Err()
+				return false, "", ctx.Err()
 			}
 			imp.recordItem(syncID, sourceMessageID(g.channelID, g.anchorTS), "sweep", store.SyncRunItemStatusError, "slack_fetch_error", err)
 			sum.FetchErrors++
@@ -179,92 +308,29 @@ func (imp *Importer) fetchSweepHits(ctx context.Context, syncID int64, hits []Se
 			// Ascending order: everything before this group is complete.
 			return false, tsMinusMicro(g.minHit), nil
 		}
-		if persistedTo != "" && (high == "" || tsLess(high, persistedTo)) {
-			high = persistedTo
-		}
 	}
-	return true, high, nil
+	return true, "", nil
 }
 
-// fetchThread canonically fetches a thread from oldest (exclusive) onward,
-// persisting every message (the response's included parent re-upserts
-// harmlessly). Returns the newest persisted ts.
-func (imp *Importer) fetchThread(ctx context.Context, syncID, convID int64, channelID, anchorTS, oldest string, sum *ImportSummary) (string, error) {
-	cc := &convScope{channelID: channelID, convID: convID, sourceID: imp.sourceID, syncID: syncID, opts: imp.opts}
-	pageCursor := ""
-	high := ""
-	for {
-		page, err := imp.client.repliesPageWithLimit(ctx, channelID, anchorTS, pageCursor, oldest, historyPageLimit)
-		if err != nil {
-			return high, err
-		}
-		for i := range page.Messages {
-			m := &page.Messages[i]
-			if err := imp.processMessage(ctx, cc, m, sum); err != nil {
-				return high, err
-			}
-			if m.IsThreadReply() {
-				sum.RepliesFetched++
-				if high == "" || tsLess(high, m.TS) {
-					high = m.TS
-				}
-			}
-		}
-		if !page.HasMore || page.NextCursor == "" {
-			return high, nil
-		}
-		pageCursor = page.NextCursor
-	}
+// tsFormat renders a UTC instant as a Slack ts string (microsecond fraction).
+func tsFormat(t time.Time) string {
+	return fmt.Sprintf("%d.%06d", t.Unix(), t.Nanosecond()/1000)
 }
 
-// firstSweepFloor derives the initial watermark: the earliest pinned
-// backfill edge among completed conversations. Replies existing before each
-// conversation's backfill were fetched by the backfill's inline per-root
-// walk; everything created after the earliest pin is sweep territory.
-func firstSweepFloor(state *SyncState) string {
-	floor := ""
-	for _, cs := range state.Conversations {
-		if !cs.Done {
-			continue
-		}
-		edge := cs.BackfillLatest
-		if edge == "" {
-			edge = cs.Cursor
-		}
-		if edge == "" {
-			continue
-		}
-		if floor == "" || tsLess(edge, floor) {
-			floor = edge
-		}
+// minTS returns the earlier of two Slack ts strings.
+func minTS(a, b string) string {
+	if tsLess(b, a) {
+		return b
 	}
-	return floor
-}
-
-// sweepDays lists the user-tz calendar days from the floor instant through
-// now, ascending, formatted for on: modifiers (YYYY-MM-DD).
-func sweepDays(floor, now time.Time, offsetSeconds int) []string {
-	loc := time.FixedZone("user", offsetSeconds)
-	day := floor.In(loc)
-	day = time.Date(day.Year(), day.Month(), day.Day(), 0, 0, 0, 0, loc)
-	end := now.In(loc)
-	var days []string
-	for !day.After(end) {
-		days = append(days, day.Format("2006-01-02"))
-		day = day.AddDate(0, 0, 1)
-	}
-	return days
+	return a
 }
 
 // tsMinusMicro returns the ts one microsecond earlier (Slack ts strings have
 // microsecond resolution), for exclusive-bound arithmetic.
 func tsMinusMicro(ts string) string {
-	sec, frac, ok := strings.Cut(ts, ".")
-	if !ok {
+	if !strings.Contains(ts, ".") {
 		return ts
 	}
 	t := tsTime(ts).Add(-time.Microsecond)
-	_ = sec
-	_ = frac
-	return fmt.Sprintf("%d.%06d", t.Unix(), t.Nanosecond()/1000)
+	return tsFormat(t)
 }

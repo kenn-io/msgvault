@@ -477,6 +477,20 @@ func (c *Client) SearchMessagesPage(ctx context.Context, query string, page int)
 	return sp, nil
 }
 
+// ValidateSearchScope verifies the token can call search.messages (user
+// scope search:read), which the reply sweep depends on. Run at add-slack
+// time so an under-scoped token fails setup with instructions instead of
+// failing every future sync's sweep.
+func (c *Client) ValidateSearchScope(ctx context.Context) error {
+	if _, err := c.SearchMessagesPage(ctx, "msgvault scope check", 1); err != nil {
+		if errors.Is(err, ErrAuth) {
+			return fmt.Errorf("token cannot use search.messages, which reply archiving requires — add the search:read user scope, reinstall the app, and retry with the new token: %w", err)
+		}
+		return fmt.Errorf("verify search.messages access: %w", err)
+	}
+	return nil
+}
+
 // permalinkThreadTS extracts the thread_ts query parameter from a message
 // permalink ("" when absent or unparseable). Used only as a grouping
 // optimization — never as the source of truth for thread membership.

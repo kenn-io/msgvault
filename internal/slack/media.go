@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 
 	"go.kenn.io/msgvault/internal/export"
@@ -110,7 +111,9 @@ func (c *Client) DownloadFile(ctx context.Context, rawURL string, maxBytes int64
 
 // persistFiles downloads a message's files into content-addressed storage
 // and replaces the message's Slack attachment rows. Already-downloaded media
-// (matched by source_attachment_id) is kept without re-fetching. External or
+// (matched by source_attachment_id) is kept without re-fetching — including
+// files the source has since tombstoned or dropped from the message
+// (archive semantics: source deletions never propagate). External or
 // off-host files become metadata-only link rows (media_type "link", the
 // permalink as storage path); failed or over-cap downloads leave a pending
 // marker row (no content hash) for BackfillMedia to retry.
@@ -128,12 +131,14 @@ func (imp *Importer) persistFiles(ctx context.Context, syncID, messageID int64, 
 		maxBytes = defaultMaxMediaBytes
 	}
 	refs := make([]store.AttachmentRef, 0, len(m.Files))
+	seen := map[string]bool{}
 	for i := range m.Files {
 		f := &m.Files[i]
 		if f.ID == "" || f.Mode == "tombstone" {
-			continue
+			continue // preserved below if a downloaded row already exists
 		}
 		sourceAttID := slackAttachmentID(f.ID)
+		seen[sourceAttID] = true
 		if prev, ok := existing[sourceAttID]; ok && prev.ContentHash != "" {
 			refs = append(refs, prev)
 			continue
@@ -215,6 +220,19 @@ func (imp *Importer) persistFiles(ctx context.Context, syncID, messageID int64, 
 		}
 		refs = append(refs, stored)
 		sum.AttachmentsDownloaded++
+	}
+	// Files tombstoned or omitted at the source keep their archived rows:
+	// a Slack-side deletion (or an edit that drops a file) must never reach
+	// into the archive. Only stale pending markers (no content hash) clear.
+	var keep []string
+	for id, prev := range existing {
+		if prev.ContentHash != "" && !seen[id] {
+			keep = append(keep, id)
+		}
+	}
+	sort.Strings(keep)
+	for _, id := range keep {
+		refs = append(refs, existing[id])
 	}
 	if err := imp.store.ReplaceMessageSlackAttachments(messageID, refs); err != nil {
 		sum.Errors++

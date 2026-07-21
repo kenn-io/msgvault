@@ -46,9 +46,30 @@ for incremental sync. Consequences:
   everything else is dropped. Channel scoping, when needed, must use the
   immutable `in:<#C…>` ID form (names are mutable/recyclable and were
   observed unreliable as scopes).
-- **Cursor: one UTC watermark per source** (`replies swept before T`),
-  advanced only behind persisted work, never past `now − lag margin`.
-  Date modifiers are evaluated in the searching user's *current profile
+- **Cursor: a UTC watermark per source plus a certification stamp per
+  conversation.** The watermark (`replies swept before T`) covers the
+  current target set as a whole; each conversation's `SweptThrough`
+  normally tracks it and lags when the conversation missed sweeps
+  (excluded, unreadable, or filtered while the watermark advanced). A
+  conversation re-entering behind the watermark first recovers its gap
+  with a channel-scoped sweep (`in:<#C…>` over just the missed days) —
+  without this, the workspace sweep's floor is already past the gap and
+  those replies are lost permanently. DMs/group DMs (non-`C` IDs, where
+  the `in:` scope form is unprobed) recover through the blunter thread
+  catch-up walk (`ThreadsPending`) instead.
+- **Certification derives only from fully-searched intervals — never
+  from fetched content.** A canonical fetch returns the whole thread,
+  including replies newer than `now − lag margin` that the search index
+  may not serve yet; letting those advance the watermark would skip
+  not-yet-indexed replies in *other* threads forever. So: each cleanly
+  completed day certifies to its end (capped at the lag horizon, and
+  checkpointed per day so multi-day catch-ups drain across runs); a
+  failed canonical fetch parks certification just before the failed
+  thread's first hit; the search itself still runs through *now*, so
+  in-lag-window replies are archived early and simply re-swept next run
+  (idempotent upserts). Both boundaries advance only behind persisted
+  work.
+- Date modifiers are evaluated in the searching user's *current profile
   timezone at query time* (verified, including retroactive re-filing
   after a tz change), so sweep-day arithmetic reads `tz_offset` fresh
   each run and derives days from the watermark under the current offset
@@ -61,11 +82,24 @@ for incremental sync. Consequences:
   page 1* — the pager must stop when the echoed `paging.page` differs
   from the requested page, and bound itself by `min(paging.pages, 100)`.
   `pagination.total_count` is accurate and serves as the truncation
-  tripwire; a single-day, single-scope result set beyond the ~10,000
-  reachable ceiling is logged (`in:`-batch narrowing is the specified
-  escape hatch, unbuilt until the tripwire ever fires — `threads:replies`
-  filtering makes it Enterprise-scale rare). Cursormark pagination is
-  not supported on this method (parameter silently ignored).
+  tripwire. A single-day, single-scope result set beyond the ~10,000
+  reachable ceiling **parks and fails**: ascending order means the
+  reachable results are the day's earliest, so certification advances to
+  the last processed hit, the run fails loudly, and the sweep halts —
+  it never certifies past unreachable replies, and it cannot drain the
+  day across runs either (re-querying serves the same first 10k; `on:`
+  has no intra-day lower bound). Recovery today is `sync-slack --full`,
+  whose backfill-style inline thread fetches need no search; `in:`-batch
+  narrowing (a fresh 10k ceiling per channel scope) is the specified
+  sweep-native escape hatch, unbuilt until the tripwire ever fires —
+  `threads:replies` filtering makes it Enterprise-scale rare.
+  Cursormark pagination is not supported on this method (parameter
+  silently ignored).
+- **`--limit` budgets thread fetches too**: inline thread fetches size
+  their reply pages to the remaining budget and charge it; exhaustion
+  mid-thread leaves the backfill page cursor unadvanced so the page and
+  its threads are refetched whole next run. (Sweeps and catch-up walks
+  only run unlimited, so the budget is inert there by construction.)
 - **Backfill is unchanged in shape**: the history walker fetches each
   discovered root's replies inline, before the containing page's cursor
   advances, so "cursor past page" continues to mean "page and its
@@ -77,40 +111,70 @@ for incremental sync. Consequences:
 Per source, after the per-conversation walks complete:
 
 ```
-offset    = current user tz_offset (from the users cache)
-floor     = SweepWatermark, or min(BackfillLatest of done convs) on first sweep
-for day D = day(floor, offset) … day(now, offset):        // ascending
-    for page = 1 … min(pages, 100):
-        q = `threads:replies on:D -"<nonce>"`             // nonce unique per query
-        stop if echoed page ≠ requested page               // clamp tell
-        collect hits: (channel_id, ts, permalink)
-    hits ∩ known done conversations, ascending by ts
-    group by permalink thread_ts (fallback: per hit)
-    for each group (ascending by min hit ts):
-        conversations.replies(channel, ts=hit, oldest=minHit−1µs)
-        persist via the standard upsert path
-        on fetch failure: watermark = minHit − 1µs; abort sweep   // resume here next run
-advance watermark to min(now − lagMargin) on clean completion
+offset = current user tz_offset (from the users cache)
+
+# Stamp adoption (targets without a SweptThrough):
+#   max(own backfill pin, watermark) — the pin is exact for a freshly
+#   completed backfill (inline thread fetches covered everything up to
+#   it, and the pin always postdates the watermark at completion time);
+#   the watermark is correct for legacy pre-stamp state.
+
+# Gap recovery, per target certified behind the watermark:
+for conv C with SweptThrough < SweepWatermark:
+    if C is not a channel ID: set ThreadsPending; stamp = watermark
+    else: sweepRange(scope=C, floor=SweptThrough, searchEnd=watermark,
+                     ceiling=watermark) → stamp advances per day
+
+# Workspace sweep:
+floor = SweepWatermark, or min(SweptThrough of targets) on first sweep
+sweepRange(scope=none, floor, searchEnd=now, ceiling=now − lagMargin)
+    → watermark advances per day; targets certified through the floor
+      are stamped forward with it (a conversation parked behind by a
+      failed gap sweep keeps its stamp and retries next run)
+
+sweepRange(scope, floor, searchEnd, ceiling):
+    for day D = day(floor, offset) … day(searchEnd, offset):   // ascending
+        for page = 1 … min(pages, 100):
+            q = `[in:<#scope>] threads:replies on:D -"<nonce>"`
+            stop if echoed page ≠ requested page               // clamp tell
+            collect hits: (channel_id, ts, permalink)
+        hits ∩ sweep targets, above floor, ascending by ts
+        group by permalink thread_ts (fallback: per hit)
+        for each group (ascending by min hit ts):
+            conversations.replies(channel, ts=hit, oldest=minHit−1µs)
+            persist via the standard upsert path
+            on fetch failure: certify min(minHit−1µs, ceiling); halt
+        if day total > 10k ceiling:
+            certify min(last processed hit, ceiling); FAIL RUN; halt
+        certify min(end of D, ceiling); checkpoint             // per-day drain
 ```
 
-Failure semantics mirror the rest of the importer: the watermark never
-passes unpersisted work; an aborted sweep resumes exactly where it
-stopped; everything downstream of discovery is the existing idempotent
-upsert machinery.
+Certification never passes unpersisted work and never derives from
+fetched content (fetches return whole threads, including replies newer
+than the index horizon); searchEnd exceeding the ceiling means fresh
+replies are archived early and re-swept next run. An aborted sweep
+resumes exactly where it stopped; everything downstream of discovery is
+the existing idempotent upsert machinery.
 
 ## State
 
 ```go
 type SyncState struct {
     Conversations  map[string]*ConvState
-    SweepWatermark string // UTC ts: all replies created before this are archived
+    SweepWatermark string // UTC ts: the current target set's certification boundary
     SweepOffset    int    // tz_offset in effect when the watermark was written (audit)
+}
+
+type ConvState struct {
+    // …cursors…
+    SweptThrough string // UTC ts: this conversation's own reply certification
 }
 ```
 
 `ConvState` loses `Threads` (old checkpoints carrying a `threads` key
-load cleanly; the field is simply gone). Merge rule: the further-advanced
-watermark wins, carrying its offset with it.
+load cleanly; the field is simply gone) and gains `SweptThrough`. Merge
+rules: the further-advanced watermark wins, carrying its offset with it;
+`SweptThrough` merges further-advanced-wins per conversation.
 
 ## Probe ledger
 
@@ -136,7 +200,13 @@ watermark wins, carrying its offset with it.
   pagination **including the page-clamp behavior**, and accurate totals.
 - e2e: late reply to an ancient thread discovered by sweep (the old
   blind spot); watermark holds on canonical-fetch failure and resumes;
-  not-done conversations skipped; multi-page sweep days.
+  not-done conversations skipped; multi-page sweep days; certification
+  stays behind the lag horizon even when fetches return fresher content;
+  a truncated day fails the run without certifying past it; an
+  excluded-then-re-included channel recovers its gap via the scoped
+  sweep; `--limit` bounds thread replies and leaves the page resumable;
+  tombstoned/omitted files keep their archived attachment rows;
+  `add-slack` rejects tokens without `search:read`.
 - Maintenance gating: edits invisible to plain incremental runs, caught
   by `--maintenance`.
 - Live (env-gated, sandbox): `threads:replies` pin-test — asserts

@@ -28,6 +28,13 @@ type ConvState struct {
 	// (the backfill pin) postdates them. The next threaded run performs a
 	// thread catch-up walk and clears the flag.
 	ThreadsPending bool `json:"threads_pending,omitempty"`
+	// SweptThrough is this conversation's reply-certification boundary
+	// (UTC ts): every thread reply created at or before it has been
+	// archived. It normally tracks the workspace SweepWatermark; it lags
+	// when the conversation missed sweeps (excluded, gone, or filtered
+	// while the watermark advanced), which the next sweep repairs with a
+	// channel-scoped gap sweep before stamping it forward.
+	SweptThrough string `json:"swept_through,omitempty"`
 }
 
 // SyncState holds per-conversation cursors plus the reply-sweep watermark
@@ -36,9 +43,12 @@ type ConvState struct {
 // "threads" maps load cleanly; the field no longer exists.
 type SyncState struct {
 	Conversations map[string]*ConvState `json:"conversations"` // key = channel ID
-	// SweepWatermark is a UTC ts: every thread reply created before it has
-	// been archived (see docs/internal/slack-reply-sweep-design.md). It
-	// advances only behind persisted work and never past now − lag margin.
+	// SweepWatermark is a UTC ts: the reply-sweep certification boundary
+	// for the current target set as a whole (each conversation's own
+	// boundary is its SweptThrough, which lags for conversations that
+	// missed sweeps — see docs/internal/slack-reply-sweep-design.md). It
+	// derives only from fully-searched intervals, advances only behind
+	// persisted work, and never passes now − lag margin.
 	SweepWatermark string `json:"sweep_watermark,omitempty"`
 	// SweepOffset records the user tz_offset (seconds) in effect when the
 	// watermark was written. Audit trail only: sweep-day arithmetic always
@@ -120,6 +130,9 @@ func (s *SyncState) Merge(other *SyncState) {
 		}
 		cs.Done = cs.Done || ocs.Done
 		cs.ThreadsPending = cs.ThreadsPending || ocs.ThreadsPending
+		if ocs.SweptThrough != "" && (cs.SweptThrough == "" || tsLess(cs.SweptThrough, ocs.SweptThrough)) {
+			cs.SweptThrough = ocs.SweptThrough
+		}
 	}
 	// The further-advanced watermark wins, carrying its audit offset with it
 	// (the pair is one unit, like the incremental cursor group).
