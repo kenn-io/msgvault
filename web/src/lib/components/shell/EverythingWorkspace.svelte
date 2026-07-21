@@ -478,7 +478,7 @@
     <div>
       <h1>Everything</h1>
     </div>
-    <p class="result-count" aria-live="polite">
+    <p class="result-count" aria-live="polite" data-mono>
       {#if loader.result?.totalCount !== undefined}
         {loader.result.totalCount.toLocaleString()} items
       {:else if loader.result?.candidatePoolSaturated}

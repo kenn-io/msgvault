@@ -278,6 +278,7 @@
     class="group-grid"
     bind:this={gridElement}
     role="grid"
+    data-scroll
     aria-label={`${workspaceLabel} grouped by ${dimension}`}
     aria-rowcount={accessibilityRowCount}
     aria-colcount="5"
@@ -289,8 +290,8 @@
   >
     <div class="group-header" bind:this={headerElement} role="row" style:grid-template-columns={TEMPLATE}>
       <span role="columnheader">Group</span>
-      <span role="columnheader">Items</span>
-      <span role="columnheader">Estimated</span>
+      <span role="columnheader" class="numeric">Items</span>
+      <span role="columnheader" class="numeric">Estimated</span>
       <span role="columnheader">Latest</span>
       <span role="columnheader">Action</span>
     </div>
@@ -342,9 +343,9 @@
               ondblclick={() => { if (drillable) onDrill(row); }}
             >
               <div role="gridcell"><strong>{row.label}</strong></div>
-              <span role="gridcell">{row.count.toLocaleString()}</span>
-              <span role="gridcell">{bytes(row.estimated_bytes)}</span>
-              <div role="gridcell"><time datetime={row.latest_at}>{date(row.latest_at)}</time></div>
+              <span role="gridcell" class="numeric" data-mono>{row.count.toLocaleString()}</span>
+              <span role="gridcell" class="numeric" data-mono>{bytes(row.estimated_bytes)}</span>
+              <div role="gridcell"><time datetime={row.latest_at} data-mono>{date(row.latest_at)}</time></div>
               <span role="gridcell">
                 {#if drillable}
                   <Button
@@ -408,11 +409,16 @@
     min-height: 30px;
     border-bottom: 1px solid var(--border-default);
     background: var(--bg-surface);
+    box-shadow: 0 1px 0 var(--hairline-sheen);
     color: var(--text-muted);
     font-size: var(--font-size-2xs);
     font-weight: 600;
-    letter-spacing: 0.04em;
+    letter-spacing: 0.06em;
     text-transform: uppercase;
+  }
+
+  .numeric {
+    text-align: right;
   }
 
   .group-header span,
@@ -447,6 +453,10 @@
     font-size: var(--font-size-sm);
   }
 
+  .group-row {
+    transition: background-color 80ms ease-out;
+  }
+
   .group-row:hover {
     background: var(--bg-surface-hover);
   }
@@ -456,7 +466,7 @@
   }
 
   .group-row--active {
-    box-shadow: inset 3px 0 var(--accent-teal);
+    box-shadow: inset 2px 0 0 var(--accent-blue);
   }
 
   .group-row--inspected {

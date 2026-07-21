@@ -119,7 +119,7 @@ for (const theme of ['light', 'dark'] as const) {
 
       exploreMode = 'empty';
       await page.reload();
-      await expect(page.getByText('No items match this view.')).toBeVisible();
+      await expect(page.getByText('No items match this view')).toBeVisible();
       await assertNoViolations(page, `empty ${theme}/${density}`);
 
       exploreMode = 'error';

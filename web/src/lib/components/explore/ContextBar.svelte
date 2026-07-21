@@ -103,7 +103,7 @@
     {/if}
   </div>
 
-  <span class="context-count">{totalCount === undefined ? 'Count pending' : `${totalCount.toLocaleString()} results`}</span>
+  <span class="context-count" data-mono>{totalCount === undefined ? 'Count pending' : `${totalCount.toLocaleString()} results`}</span>
 
   {#if filtersOpen}
     <div class="filter-panel">

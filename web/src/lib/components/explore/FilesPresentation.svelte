@@ -304,11 +304,11 @@
                   if (!(event.target as Element).closest('button')) onOpenFile?.(file);
                 }}
               >
-                <span role="gridcell">{formatTime(file.occurred_at)}</span>
+                <span role="gridcell" data-mono>{formatTime(file.occurred_at)}</span>
                 <span class="filename" role="gridcell">{file.filename || 'Unnamed file'}</span>
                 <span role="gridcell"><button type="button" aria-label={`Open containing item ${file.message_id}`} onclick={(event) => { event.stopPropagation(); onOpenItem?.(file.entry_key); }}>{file.title || 'Untitled item'}</button></span>
                 <span role="gridcell">{file.source_identifier}</span>
-                <span role="gridcell">{formatBytes(file.size)}</span>
+                <span role="gridcell" data-mono>{formatBytes(file.size)}</span>
               </div>
             {/each}
           </div>
@@ -331,7 +331,7 @@
   .file-grid { display: flex; min-height: 0; flex: 1; flex-direction: column; overflow: auto; border: 1px solid var(--border-default); border-radius: var(--radius-md); background: var(--bg-surface); outline: none; }
   .file-grid:focus-visible { box-shadow: inset 0 0 0 2px var(--focus-color); }
   .file-row { display: grid; grid-template-columns: 110px minmax(160px,1fr) minmax(180px,1.4fr) minmax(150px,1fr) 90px; align-items: center; gap: var(--space-3); min-height: var(--row-height); padding: 0 var(--space-3); }
-  .file-header { position: sticky; z-index: 1; top: 0; min-height: var(--table-header-height); flex: 0 0 auto; border-bottom: 1px solid var(--border-default); background: var(--bg-surface); color: var(--text-muted); font-size: var(--font-size-2xs); font-weight: 600; text-transform: uppercase; }
+  .file-header { position: sticky; z-index: 1; top: 0; min-height: var(--table-header-height); flex: 0 0 auto; border-bottom: 1px solid var(--border-default); background: var(--bg-surface); box-shadow: 0 1px 0 var(--hairline-sheen); color: var(--text-muted); font-size: var(--font-size-2xs); font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; }
   .file-body { position: relative; min-height: 220px; flex: 0 0 auto; }
   .virtual-spacer { position: relative; }
   .virtual-window { position: absolute; inset: 0 0 auto; }

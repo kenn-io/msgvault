@@ -509,10 +509,10 @@
                   }
                 }}
               >
-                <span role="gridcell"><time datetime={row.occurred_at}>{formatDate(row.occurred_at)}</time></span>
+                <span role="gridcell"><time datetime={row.occurred_at} data-mono>{formatDate(row.occurred_at)}</time></span>
                 <span role="gridcell"><strong>{row.filename || '(unnamed)'}</strong></span>
                 <span role="gridcell">{row.mime_type || row.mime_family}</span>
-                <span role="gridcell">{formatBytes(row.size_bytes)}</span>
+                <span role="gridcell" data-mono>{formatBytes(row.size_bytes)}</span>
                 <span role="gridcell">{people(row)}</span>
                 <span role="gridcell">{row.source_identifier}</span>
                 <span role="gridcell">{row.containing_title || row.entry_key}</span>
@@ -580,14 +580,14 @@
   .table-header, .data-row { display: grid; grid-template-columns: 112px minmax(150px, 1.5fr) minmax(120px, 1fr) 82px minmax(140px, 1.2fr) minmax(130px, 1fr) minmax(160px, 1.3fr) 105px; align-items: center; }
   .files-grid { display: flex; min-height: 0; flex: 1; flex-direction: column; overflow: auto; outline: none; }
   .files-grid:focus-visible { box-shadow: inset 0 0 0 2px var(--accent-blue); }
-  .table-header { position: sticky; z-index: 1; top: 0; min-height: var(--table-header-height); flex: 0 0 auto; border-bottom: 1px solid var(--border-default); background: var(--bg-surface); color: var(--text-muted); font-size: var(--font-size-2xs); font-weight: 600; text-transform: uppercase; }
+  .table-header { position: sticky; z-index: 1; top: 0; min-height: var(--table-header-height); flex: 0 0 auto; border-bottom: 1px solid var(--border-default); background: var(--bg-surface); box-shadow: 0 1px 0 var(--hairline-sheen); color: var(--text-muted); font-size: var(--font-size-2xs); font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; }
   .table-header span, .data-row span { min-width: 0; padding: 0 var(--space-3); overflow: hidden; text-align: left; text-overflow: ellipsis; white-space: nowrap; }
   .table-header button { width: 100%; height: var(--table-header-height); padding: 0; border: 0; background: transparent; color: inherit; cursor: pointer; font: inherit; text-align: left; text-transform: inherit; }
   .table-body { position: relative; min-height: 220px; flex: 0 0 auto; outline: none; }
   .virtual-spacer { position: relative; }
   .virtual-window { position: absolute; inset: 0 0 auto; }
   .data-row { height: var(--row-height); border-bottom: 1px solid var(--border-muted); color: var(--text-secondary); font-size: var(--font-size-xs); cursor: default; }
-  .data-row--active { background: color-mix(in srgb, var(--accent-blue) 12%, var(--bg-surface)); box-shadow: inset 3px 0 var(--accent-blue); }
+  .data-row--active { background: color-mix(in srgb, var(--accent-blue) 12%, var(--bg-surface)); box-shadow: inset 2px 0 0 var(--accent-blue); }
   .notice { display: flex; min-height: 180px; align-items: center; justify-content: center; gap: var(--space-3); flex-direction: column; color: var(--text-secondary); }
   .page-error { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); padding: var(--space-2) var(--space-3); color: var(--text-danger); }
   .progress { position: sticky; bottom: 0; padding: var(--space-2); background: var(--bg-inset); text-align: center; }

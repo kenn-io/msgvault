@@ -331,7 +331,7 @@ describe('EverythingTable', () => {
     expect(skeleton.children).toHaveLength(6);
 
     void rerender({ rows: [], selection, loading: false });
-    expect(screen.getByText('No items match this view.')).toBeDefined();
+    expect(screen.getByText('No items match this view')).toBeDefined();
     expect(grid.getAttribute('aria-rowcount')).toBe('2');
 
     void rerender({
@@ -350,7 +350,7 @@ describe('EverythingTable', () => {
     expect(grid.getAttribute('aria-rowcount')).toBeNull();
     await fireEvent.click(screen.getByRole('button', { name: 'Retry cache check' }));
     expect(onRetry).toHaveBeenCalledOnce();
-    expect(screen.queryByText('No items match this view.')).toBeNull();
+    expect(screen.queryByText('No items match this view')).toBeNull();
   });
 
   it('renders request errors as an exclusive state rather than an empty result', () => {
@@ -361,7 +361,7 @@ describe('EverythingTable', () => {
     });
 
     expect(screen.getByRole('alert').textContent).toContain('The query could not be completed.');
-    expect(screen.queryByText('No items match this view.')).toBeNull();
+    expect(screen.queryByText('No items match this view')).toBeNull();
     expect(screen.getByRole('grid', { name: 'Everything results' }).getAttribute('aria-rowcount')).toBeNull();
   });
 });

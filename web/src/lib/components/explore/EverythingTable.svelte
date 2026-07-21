@@ -11,6 +11,7 @@
   import { DEFAULT_EXPLORE_COLUMNS } from '../../explore/models';
   import type { ExploreSelectionState } from '../../explore/state.svelte';
   import { rebaseVirtualScroll, RowGeometry, tableViewportHeight } from '../../theme/preferences.svelte';
+  import EmptyState from '../common/EmptyState.svelte';
   import RowKind from './RowKind.svelte';
 
   interface Props {
@@ -439,6 +440,7 @@
     class="table-grid"
     bind:this={gridElement}
     role="grid"
+    data-scroll
     aria-label="Everything results"
     aria-rowcount={accessibilityRowCount}
     aria-colcount={visibleColumns.length}
@@ -450,7 +452,11 @@
   >
     <div class="table-header" bind:this={headerElement} role="row" style:grid-template-columns={template}>
       {#each visibleColumns as column (column)}
-        <span role="columnheader" aria-label={column === 'attachments' ? 'Attachments' : undefined}>
+        <span
+          role="columnheader"
+          class={`header-cell header-cell--${column}`}
+          aria-label={column === 'attachments' ? 'Attachments' : undefined}
+        >
           {column === 'attachments' ? '⌕' : ALL_COLUMNS.find((entry) => entry.id === column)?.label}
         </span>
       {/each}
@@ -496,7 +502,9 @@
           {/each}
         </div>
       {:else if rows.length === 0}
-        <div role="row"><div class="empty" role="gridcell" aria-colspan={visibleColumns.length}>No items match this view.</div></div>
+        <div role="row"><div class="empty" role="gridcell" aria-colspan={visibleColumns.length}>
+          <EmptyState glyph="search" label="No items match this view" hint="Adjust the search or clear filters to widen the view." role="presentation" />
+        </div></div>
       {:else if !slice || rowHeight === undefined}
         <div role="row"><div role="gridcell" aria-colspan={visibleColumns.length}><p class="empty" role="status">Preparing table layout…</p></div></div>
       {:else}
@@ -543,7 +551,7 @@
                         <span class="match-count">{row.match.lexical_match_count} lexical matches</span>
                       {/if}
                     {:else if column === 'time'}
-                      <time datetime={row.occurred_at}>{formatTime(row.occurred_at)}</time>
+                      <time datetime={row.occurred_at} data-mono>{formatTime(row.occurred_at)}</time>
                     {:else if column === 'attachments'}
                       {#if row.has_attachments}
                         <span class="attachment" aria-label={`${row.attachment_count} attachments`}>⌕</span>
@@ -551,7 +559,7 @@
                         <span aria-label="No attachments">—</span>
                       {/if}
                     {:else if column === 'size'}
-                      {formatBytes(row.attachment_size)}
+                      <span data-mono>{formatBytes(row.attachment_size)}</span>
                     {/if}
                   </span>
                 {/each}
@@ -641,6 +649,8 @@
     outline-offset: -2px;
   }
 
+  /* Column headers speak the small-caps label voice; the sheen under the
+   * header hairline gives the sticky edge its machined depth. */
   .table-header {
     position: sticky;
     z-index: 1;
@@ -649,11 +659,17 @@
     min-height: 30px;
     border-bottom: 1px solid var(--border-default);
     background: var(--bg-surface);
+    box-shadow: 0 1px 0 var(--hairline-sheen);
     color: var(--text-muted);
     font-size: var(--font-size-2xs);
     font-weight: 600;
-    letter-spacing: 0.04em;
+    letter-spacing: 0.06em;
     text-transform: uppercase;
+  }
+
+  .header-cell--time,
+  .header-cell--size {
+    text-align: right;
   }
 
   .table-header span,
@@ -692,6 +708,7 @@
     font-size: var(--font-size-sm);
     font-variant-numeric: tabular-nums;
     cursor: default;
+    transition: background-color 80ms ease-out;
   }
 
   .data-row:nth-child(even) {
@@ -703,12 +720,18 @@
   }
 
   .data-row--active {
-    box-shadow: inset 3px 0 var(--accent-teal);
+    box-shadow: inset 2px 0 0 var(--accent-blue);
   }
 
   .data-row--selected {
     background: color-mix(in srgb, var(--accent-teal) 12%, var(--bg-surface));
-    box-shadow: inset 0 0 0 1px var(--selected-border);
+    box-shadow: inset 2px 0 0 var(--accent-blue), inset 0 0 0 1px var(--selected-border);
+  }
+
+  /* Tabular data columns sit on the right edge, mono-aligned. */
+  .cell--time,
+  .cell--size {
+    text-align: right;
   }
 
   .data-row--inspected {
