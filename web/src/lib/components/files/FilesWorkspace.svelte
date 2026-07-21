@@ -493,6 +493,8 @@
           <div class="virtual-window" style:transform={`translateY(${slice.topPad}px)`}>
             {#each renderedRows as row, offset (row.key)}
               {@const index = slice.start + offset}
+              <!-- svelte-ignore a11y_click_events_have_key_events -- Enter on
+                   the focused grid opens the same file via handleKeydown. -->
               <div
                 id={rowID(row)}
                 class="data-row"
@@ -501,7 +503,11 @@
                 tabindex="-1"
                 aria-rowindex={index + 2}
                 onpointerdown={(event) => { activeKey = row.key; onActiveKey?.(row.key); grid?.focus(); viewerReturnFocus = event.currentTarget as HTMLElement; }}
-                ondblclick={(event) => open(row, event.currentTarget as HTMLElement)}
+                onclick={(event) => {
+                  if (!(event.target as Element).closest('button')) {
+                    open(row, event.currentTarget as HTMLElement);
+                  }
+                }}
               >
                 <span role="gridcell"><time datetime={row.occurred_at}>{formatDate(row.occurred_at)}</time></span>
                 <span role="gridcell"><strong>{row.filename || '(unnamed)'}</strong></span>

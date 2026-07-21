@@ -66,14 +66,15 @@ describe('RelationshipTimeline', () => {
     expect(onRowOpen).toHaveBeenCalledWith(expect.objectContaining({ key: 'message:2' }));
   });
 
-  it('opens a row by clicking it', async () => {
+  it('opens a row with a single click', async () => {
     const onRowOpen = vi.fn();
     render(RelationshipTimeline, {
       rows: [emailRow('message:1', '2026-07-18T12:00:00Z', 'Click target')],
       onRowOpen
     });
 
-    await fireEvent.pointerDown(screen.getByText('Click target').closest('[role="row"]')!);
+    await fireEvent.click(screen.getByText('Click target').closest('[role="row"]')!);
+    expect(onRowOpen).toHaveBeenCalledOnce();
     expect(onRowOpen).toHaveBeenCalledWith(expect.objectContaining({ key: 'message:1' }));
   });
 

@@ -504,6 +504,8 @@
           <div class="virtual-window" style:transform={`translateY(${slice.topPad}px)`}>
             {#each renderedRows as row, offset (row.key)}
               {@const index = slice.start + offset}
+              <!-- svelte-ignore a11y_click_events_have_key_events -- Enter on
+                   the focused grid opens the same row via handleKeydown. -->
               <div
                 class="data-row"
                 class:data-row--active={index === activeIndex}
@@ -522,7 +524,7 @@
                   onActiveKey?.(row.key);
                   gridElement?.focus();
                 }}
-                ondblclick={() => onOpen?.(row)}
+                onclick={() => onOpen?.(row)}
               >
                 {#each visibleColumns as column (column)}
                   <span class={`cell cell--${column}`} role="gridcell">

@@ -197,6 +197,8 @@
                   <span role="gridcell" aria-label={`Month: ${item.label}`}>{item.label}</span>
                 </div>
               {:else}
+                <!-- svelte-ignore a11y_click_events_have_key_events -- Enter
+                     on the focused grid opens the same row via handleKeydown. -->
                 <div
                   class="timeline-row"
                   class:active={item.key === activeKey}
@@ -206,8 +208,8 @@
                   data-row-key={item.key}
                   aria-selected={item.key === selectedKey}
                   style:height={`${rowHeight}px`}
-                  onpointerdown={() => selectRow(item.row)}
-                  ondblclick={() => selectRow(item.row)}
+                  onpointerdown={() => { activeKey = item.key; gridElement?.focus(); }}
+                  onclick={() => selectRow(item.row)}
                 >
                   <div role="gridcell">
                     <span class="row-top">
