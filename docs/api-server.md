@@ -1,14 +1,18 @@
 ---
-title: Web Server
-description: REST API for programmatic access to your msgvault archive, with optional background sync scheduling.
+title: Web UI & API Server
+description: Daemon-served analytical Web UI and REST API for your msgvault archive, with optional background sync scheduling.
 ---
 
 
 ## Overview
 
-`msgvault serve` starts an HTTP server that exposes your email archive over a REST API. It optionally runs a background sync scheduler to keep accounts up to date on a cron-based schedule.
+`msgvault serve` starts an HTTP server that exposes your archive through the
+first-party Web UI at `/` and a REST API under `/api`. It optionally runs a
+background sync scheduler to keep accounts up to date on a cron-based schedule.
+The complete UI is embedded in the release binary; see [Web UI](/web-ui/) for
+browser login, secure remote deployment, search states, and keyboard controls.
 
-The API is registered through Huma and exposes a generated OpenAPI document at `/openapi.json`; interactive docs are available at `/docs`. You can also run `msgvault openapi` to print the same checked-in contract without starting a daemon or opening the archive database. The OpenAPI `info.version` is the API schema version used for client/server compatibility; the running daemon binary version is exposed separately in the generated document metadata. The API queries the same archive database and attachment store as the CLI and TUI. SQLite is the default archive database; PostgreSQL is supported when `[data].database_url` is a PostgreSQL DSN. Keyword search and ordinary archive reads stay local to that database. If vector search is enabled, semantic and hybrid search also call the embedding endpoint configured in `[vector.embeddings]`. The server is designed for local integrations, dashboards, and automation scripts.
+The API is registered through Huma and exposes a generated OpenAPI document at `/openapi.json`; interactive docs are available at `/docs`. You can also run `msgvault openapi` to print the same checked-in contract without starting a daemon or opening the archive database. The OpenAPI `info.version` is the API schema version used for client/server compatibility; the running daemon binary version is exposed separately in the generated document metadata. The API queries the same archive database and attachment store as the CLI, Web UI, and TUI. SQLite is the default archive database; PostgreSQL is supported when `[data].database_url` is a PostgreSQL DSN. Keyword search and ordinary archive reads stay local to that database. If vector search is enabled, semantic and hybrid search also call the embedding endpoint configured in `[vector.embeddings]`. The server is designed for interactive archive use, local integrations, dashboards, and automation scripts.
 
 Go integrations can use the generated client in `pkg/client`. The wrapper
 handles msgvault-specific response details such as deletion staging dry-runs
@@ -45,7 +49,10 @@ curl http://localhost:8080/openapi.json
 
 ## Authentication
 
-All endpoints except `/health` require authentication when `api_key` is set in your config. Three authentication methods are supported:
+Archive API endpoints require authentication when `api_key` is set in your
+config. The public application shell, `/health`, and the browser-session
+bootstrap/login routes remain reachable so the UI can determine whether login
+is required. Three API-key authentication methods are supported:
 
 | Method | Header | Example |
 |---|---|---|
@@ -894,7 +901,7 @@ All server settings go in the `[server]` section of `config.toml`. Account sched
 
 | Key | Default | Description |
 |---|---|---|
-| `engine` | `auto` | Aggregate engine for TUI and aggregate HTTP views: `auto`, `sql`, or `duckdb` |
+| `engine` | `auto` | Aggregate engine for Web UI, TUI, and aggregate HTTP views: `auto`, `sql`, or `duckdb` |
 | `auto_build_cache` | `true` | Build stale or missing Parquet cache files before the daemon opens DuckDB |
 
 `engine = "sql"` forces live SQL for aggregate views. `engine = "duckdb"` requires a usable Parquet cache and fails daemon startup if the cache cannot be built or opened. `auto_build_cache = false` leaves cache rebuilds to explicit `msgvault build-cache` runs. These settings replace the TUI/MCP analytics flags deprecated in 0.17.0; see [Configuration: analytics](/configuration/#analytics).

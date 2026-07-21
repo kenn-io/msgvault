@@ -15,9 +15,9 @@ systems to do useful things with it.
 
 This means:
 
-* Search it instantaneously and categorize it the way I want. With a
-  beautiful fast terminal UI rather than a slow, increasingly less
-  useful web application.
+* Search it instantaneously and categorize it the way I want, with both a
+  fast terminal UI and a dense, keyboard-driven analytical Web UI instead of
+  being limited by a provider's interface.
 * Chat with it securely via MCP in Claude Desktop and using my home
   local LLM inference servers.
 * Extract and file away the over 100,000 e-mail attachments sent to me

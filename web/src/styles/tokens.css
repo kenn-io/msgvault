@@ -1,0 +1,52 @@
+:root {
+  --font-sans: 'Figtree Variable', Figtree, ui-sans-serif, system-ui, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  --font-reading: Charter, 'Bitstream Charter', Georgia, serif;
+  --focus-ring: 2px solid var(--focus-color);
+  --transition-fast: 0.12s;
+  color-scheme: light;
+}
+
+:root[data-theme='dark'] {
+  color-scheme: dark;
+}
+
+:where(body, button, input, select, textarea) {
+  font-family: var(--font-sans);
+}
+
+:where(body, table, [role='grid'], [data-numeric]) {
+  font-variant-numeric: tabular-nums;
+}
+
+:where(code, kbd, samp, [data-metadata]) {
+  font-family: var(--font-mono);
+}
+
+:where(a, [data-link]) {
+  color: var(--link-ink);
+}
+
+:where([data-artifact]) {
+  color: var(--artifact-ink);
+}
+
+:where(:focus-visible) {
+  outline-color: var(--focus-color);
+}
+
+::selection {
+  background: var(--selected-bg);
+  color: var(--text-primary);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}

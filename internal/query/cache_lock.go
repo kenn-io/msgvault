@@ -58,7 +58,7 @@ func AcquireReadyCacheReadLock(ctx context.Context, analyticsDir string) (func()
 	}
 	if readiness != CacheReady {
 		release()
-		return nil, fmt.Errorf("%w: cache is %s", ErrCacheUnavailable, readiness)
+		return nil, &CacheUnavailableError{Readiness: readiness}
 	}
 	return release, nil
 }

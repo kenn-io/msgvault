@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/pprof"
+	"net/netip"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -21,8 +22,11 @@ import (
 	"go.kenn.io/msgvault/internal/scheduler"
 	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/taskclient"
+	"go.kenn.io/msgvault/internal/tasklinks"
 	"go.kenn.io/msgvault/internal/vector"
 	"go.kenn.io/msgvault/internal/vector/hybrid"
+	webapp "go.kenn.io/msgvault/internal/web"
 )
 
 // MessageStore defines the store operations the API needs.
@@ -34,6 +38,16 @@ type MessageStore interface {
 	SearchMessages(query string, offset, limit int) ([]APIMessage, int64, error)
 	SearchMessagesQuery(q *search.Query, offset, limit int) ([]APIMessage, int64, error)
 }
+
+type TaskLinkOperations interface {
+	Create(ctx context.Context, key string, create taskclient.TaskCreate, identity tasklinks.MessageIdentity, addedAt time.Time) (taskclient.Task, error)
+	Link(ctx context.Context, taskID string, identity tasklinks.MessageIdentity, addedAt time.Time) (taskclient.Task, error)
+	Unlink(ctx context.Context, taskID string, identity tasklinks.MessageIdentity) (taskclient.Task, error)
+	Lookup(ctx context.Context, identity tasklinks.MessageIdentity) tasklinks.LookupResult
+	Search(ctx context.Context, query string) ([]tasklinks.TaskSummary, error)
+}
+
+type TaskIdentityResolver func(context.Context, *APIMessage) (tasklinks.MessageIdentity, error)
 
 // ctxMessageSearcher is an optional extension of MessageStore for stores that
 // accept a context on the search path. handleSearch prefers it so an
@@ -128,6 +142,7 @@ type AttachmentBlobStore interface {
 type Server struct {
 	cfg            *config.Config
 	store          MessageStore
+	savedViewStore SavedViewStore
 	engine         query.Engine // Query engine for aggregates and TUI support
 	sqlQueryRunner SQLQueryRunner
 	shutdownToken  string
@@ -172,6 +187,12 @@ type Server struct {
 	// index clear; the worker snapshots this generation before probing and
 	// memoizes a "complete" observation only on an even, unchanged value.
 	ftsRebuildGen atomic.Uint64
+	// settingsPendingRestart remains set after the first successful browser
+	// config edit for the lifetime of this daemon process.
+	settingsPendingRestart atomic.Bool
+	// settingsConfigEditor is the persisted config transaction boundary. Tests
+	// replace it to deterministically exercise post-publication error handling.
+	settingsConfigEditor func(string, string, []config.Edit) (config.ConfigFile, error)
 	// activity reports request-scoped work that health should surface even
 	// though it runs outside (or with more detail than) the operation gate,
 	// e.g. the first-search FTS completeness probe and backfill progress.
@@ -196,7 +217,19 @@ type Server struct {
 	// blobStore serves attachment bytes for handleCLIAttachment. Nil in tests
 	// and embedded callers that construct a Server without options, which
 	// fall back to the legacy loose-file open.
-	blobStore AttachmentBlobStore
+	blobStore  AttachmentBlobStore
+	spaHandler http.Handler
+	sessions   *sessionStore
+	// trustedProxies contains only explicitly configured direct proxy peers.
+	// Forwarded scheme/host data is ignored for every other RemoteAddr.
+	trustedProxies   []netip.Prefix
+	exploreState     *exploreServerState
+	exploreCursorKey [32]byte
+	// taskIntegrationProbe performs server-side discovery and capability
+	// validation. It is never exposed to the browser with its credentials.
+	taskIntegrationProbe TaskIntegrationProbe
+	taskLinkOperations   TaskLinkOperations
+	taskIdentityResolver TaskIdentityResolver
 }
 
 type SQLQueryRunner func(ctx context.Context, sql string) (*query.QueryResult, error)
@@ -224,8 +257,12 @@ const (
 
 // ServerOptions configures the API server.
 type ServerOptions struct {
-	Config         *config.Config
-	Store          MessageStore
+	Config *config.Config
+	Store  MessageStore
+	// SavedViewStore owns durable analytical view definitions. It is separate
+	// from the minimal MessageStore so API consumers do not need to implement
+	// unrelated persistence methods.
+	SavedViewStore SavedViewStore
 	Engine         query.Engine // Optional: query engine for aggregates and TUI support
 	SQLQueryRunner SQLQueryRunner
 	ShutdownToken  string
@@ -259,6 +296,15 @@ type ServerOptions struct {
 	// whether aggregate views run on the cache or live SQL. Empty omits the
 	// field.
 	AnalyticsMode string
+	// SPAHandler overrides the embedded browser application handler. Nil uses
+	// internal/web.Handler and is the production default. Tests may inject a
+	// handler built over an in-memory filesystem.
+	SPAHandler http.Handler
+	// TaskIntegrationProbe overrides provider-neutral task discovery for tests.
+	// Nil uses taskclient.Evaluate.
+	TaskIntegrationProbe TaskIntegrationProbe
+	TaskLinkOperations   TaskLinkOperations
+	TaskIdentityResolver TaskIdentityResolver
 }
 
 // NewServer creates a new API server.
@@ -277,27 +323,47 @@ func NewServerWithOptions(opts ServerOptions) *Server {
 	if timeout <= 0 {
 		timeout = 60 * time.Second
 	}
+	taskProbe := opts.TaskIntegrationProbe
+	if taskProbe == nil {
+		taskProbe = taskclient.Evaluate
+	}
 	s := &Server{
-		cfg:                 opts.Config,
-		store:               opts.Store,
-		engine:              opts.Engine,
-		sqlQueryRunner:      opts.SQLQueryRunner,
-		shutdownToken:       opts.ShutdownToken,
-		shutdownFunc:        opts.ShutdownFunc,
-		hybridEngine:        opts.HybridEngine,
-		vectorCfg:           opts.VectorCfg,
-		backend:             opts.Backend,
-		scheduler:           opts.Scheduler,
-		logger:              opts.Logger,
-		requestTimeout:      timeout,
-		queryTimeout:        QueryEndpointTimeout,
-		inProgressThreshold: inProgressLogThreshold,
-		inProgressInterval:  inProgressLogInterval,
-		daemonVersion:       opts.DaemonVersion,
-		analyticsMode:       opts.AnalyticsMode,
-		idleTracker:         opts.IdleTracker,
-		operationGate:       opts.OperationGate,
-		blobStore:           opts.BlobStore,
+		cfg:                  opts.Config,
+		store:                opts.Store,
+		savedViewStore:       opts.SavedViewStore,
+		engine:               opts.Engine,
+		sqlQueryRunner:       opts.SQLQueryRunner,
+		shutdownToken:        opts.ShutdownToken,
+		shutdownFunc:         opts.ShutdownFunc,
+		hybridEngine:         opts.HybridEngine,
+		vectorCfg:            opts.VectorCfg,
+		backend:              opts.Backend,
+		scheduler:            opts.Scheduler,
+		logger:               opts.Logger,
+		requestTimeout:       timeout,
+		queryTimeout:         QueryEndpointTimeout,
+		inProgressThreshold:  inProgressLogThreshold,
+		inProgressInterval:   inProgressLogInterval,
+		daemonVersion:        opts.DaemonVersion,
+		analyticsMode:        opts.AnalyticsMode,
+		idleTracker:          opts.IdleTracker,
+		operationGate:        opts.OperationGate,
+		blobStore:            opts.BlobStore,
+		spaHandler:           opts.SPAHandler,
+		sessions:             newSessionStore(defaultSessionTTL),
+		exploreState:         newExploreServerState(time.Now),
+		exploreCursorKey:     newExploreCursorKey(),
+		trustedProxies:       trustedProxyPrefixes(opts.Config.Server.TrustedProxies),
+		settingsConfigEditor: config.EditConfigFile,
+		taskIntegrationProbe: taskProbe,
+		taskLinkOperations:   opts.TaskLinkOperations,
+		taskIdentityResolver: opts.TaskIdentityResolver,
+	}
+	if s.taskIdentityResolver == nil {
+		s.taskIdentityResolver = s.resolveTaskMessageIdentity
+	}
+	if s.taskLinkOperations == nil {
+		s.taskLinkOperations = newTaskLinkBackend(opts.Config)
 	}
 	s.vectorStatus = opts.VectorStatus
 	if s.vectorStatus == "" {
@@ -319,11 +385,14 @@ func (s *Server) setupRouter() http.Handler {
 	s.registerHumaRoutes(api, apiV1)
 	s.registerPprofHandlers(mux)
 
-	// Catch-all so unknown paths and trailing-slash misses return the JSON
-	// ErrorResponse envelope the contract declares, instead of Go's default
-	// text/plain "404 page not found". More specific patterns (API routes,
-	// /debug/pprof/, /openapi.*, /docs) still take precedence over "/".
-	mux.HandleFunc("/", s.handleNotFound)
+	// Registered API, debug, OpenAPI, and docs routes retain priority over the
+	// root handler. The root serves exact embedded assets and safe navigation;
+	// everything else delegates to the JSON ErrorResponse fallback.
+	spaHandler := s.spaHandler
+	if spaHandler == nil {
+		spaHandler = webapp.Handler(http.HandlerFunc(s.handleNotFound))
+	}
+	mux.Handle("/", spaHandler)
 
 	// CORS middleware (config-driven; disabled when no origins configured)
 	corsConfig := CORSConfig{
@@ -340,11 +409,14 @@ func (s *Server) setupRouter() http.Handler {
 	// Rate limiting (10 req/sec with burst of 20)
 	s.rateLimiter = NewRateLimiter(10, 20)
 
-	// The operation gate sits inside rate limiting and checks API auth
-	// itself, so unauthenticated or rate-limited requests are rejected
-	// before they can register as gate waiters or observe operation state.
+	// Request security classification and CSRF checks sit inside rate limiting
+	// but outside the operation gate, so rejected browser mutations never wait
+	// on or observe archive work. The gate still checks API auth itself so
+	// unauthenticated requests do not register as waiters.
 	var h http.Handler = mux
 	h = operationGateMiddleware(s.operationGate, s.apiRequestAuthorized)(h)
+	h = s.csrfMiddleware(h)
+	h = s.requestSecurityMiddleware(h)
 	h = RateLimitMiddleware(s.rateLimiter, s.loopbackRateLimitExempt)(h)
 	h = CORSMiddleware(corsConfig)(h)
 	h = s.timeoutMiddleware(h)
@@ -354,6 +426,8 @@ func (s *Server) setupRouter() http.Handler {
 	h = s.recoverMiddleware(h)
 	h = s.loggerMiddleware(h)
 	h = requestIDMiddleware(h)
+	h = sessionCacheControlMiddleware(h)
+	h = settingsNoStoreMiddleware(h)
 	return h
 }
 
@@ -436,6 +510,9 @@ func (s *Server) StartOnListener(ln net.Listener) error {
 func (s *Server) Shutdown(ctx context.Context) error {
 	if s.rateLimiter != nil {
 		s.rateLimiter.Close()
+	}
+	if s.sessions != nil {
+		s.sessions.Close()
 	}
 	if s.server == nil {
 		return nil
@@ -674,24 +751,10 @@ func (w *trackingResponseWriter) WroteHeader() bool {
 // returns true in exactly those two cases, so it is reused here to avoid the
 // auth logic drifting.
 func (s *Server) loopbackRateLimitExempt(r *http.Request) bool {
+	if r.Method == http.MethodPost && r.URL.Path == sessionLoginPath {
+		return false
+	}
 	return isLoopbackRequest(r) && s.apiRequestAuthorized(r)
-}
-
-func (s *Server) apiRequestAuthorized(r *http.Request) bool {
-	// Skip auth if no API key configured.
-	if s.cfg.Server.APIKey == "" {
-		return true
-	}
-
-	authHeader := r.Header.Get("Authorization")
-	if authHeader == "" {
-		authHeader = r.Header.Get("X-Api-Key")
-	}
-	if len(authHeader) > 7 && authHeader[:7] == "Bearer " {
-		authHeader = authHeader[7:]
-	}
-
-	return subtle.ConstantTimeCompare([]byte(authHeader), []byte(s.cfg.Server.APIKey)) == 1
 }
 
 func (s *Server) logUnauthorizedAPIRequest(r *http.Request) {

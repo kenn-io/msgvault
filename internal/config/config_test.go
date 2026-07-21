@@ -92,6 +92,64 @@ func TestDiscordConfigTOMLRoundTrip(t *testing.T) {
 	assert.Equal(cfg.Discord.Guilds, loaded.Discord.Guilds)
 }
 
+func TestWebAndTaskIntegrationConfig(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	cfg := NewDefaultConfig()
+	assert.Equal("full_text", cfg.Web.DefaultSearchMode)
+	assert.Equal("system", cfg.Web.Theme)
+	assert.Equal("compact", cfg.Web.Density)
+
+	path := filepath.Join(t.TempDir(), "config.toml")
+	content := "[web]\n" +
+		"default_search_mode = \"hybrid\"\n" +
+		"theme = \"dark\"\n" +
+		"density = \"comfortable\"\n\n" +
+		"[integrations.tasks]\n" +
+		"enabled = true\n" +
+		"endpoint = \"https://tasks.example.com\"\n" +
+		"api_key = \"test-secret\"\n" +
+		"default_project = \"archive\"\n"
+	require.NoError(os.WriteFile(path, []byte(content), 0o600))
+	loaded, err := Load(path, "")
+	require.NoError(err)
+	assert.Equal("hybrid", loaded.Web.DefaultSearchMode)
+	assert.Equal("dark", loaded.Web.Theme)
+	assert.Equal("comfortable", loaded.Web.Density)
+	assert.True(loaded.Integrations.Tasks.Enabled)
+	assert.Equal("https://tasks.example.com", loaded.Integrations.Tasks.Endpoint)
+	assert.Equal("test-secret", loaded.Integrations.Tasks.APIKey)
+	assert.Equal("archive", loaded.Integrations.Tasks.DefaultProject)
+}
+
+func TestWebConfigRejectsInvalidValues(t *testing.T) {
+	tests := []struct {
+		key   string
+		value string
+	}{
+		{key: "default_search_mode", value: "magic"},
+		{key: "theme", value: "sepia"},
+		{key: "density", value: "roomy"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.key, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "config.toml")
+			require.NoError(t, os.WriteFile(path, []byte("[web]\n"+tt.key+" = \""+tt.value+"\"\n"), 0o600))
+			_, err := Load(path, "")
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "invalid [web] "+tt.key)
+		})
+	}
+}
+
+func TestTaskIntegrationRejectsRemotePlaintextEndpoint(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	require.NoError(t, os.WriteFile(path, []byte("[integrations.tasks]\nendpoint = \"http://tasks.example.com\"\n"), 0o600))
+	_, err := Load(path, "")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "remote plaintext HTTP is not allowed")
+}
+
 func TestAccountScheduleEmpty(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("MSGVAULT_HOME", tmpDir)
@@ -198,6 +256,49 @@ daemon_auto_restart = "sometimes"
 
 	require.Error(t, err, "Load()")
 	assert.Contains(t, err.Error(), "invalid [server] daemon_auto_restart")
+}
+
+func TestLoadWithServerTrustedProxies(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.toml")
+	require.NoError(t, os.WriteFile(configPath, []byte(`
+[server]
+trusted_proxies = ["127.0.0.1", "10.20.0.0/16", "2001:db8::1", "2001:db8:abcd::/48"]
+`), 0o644))
+
+	cfg, err := Load(configPath, "")
+	require.NoError(t, err)
+	assert.Equal(t, []string{
+		"127.0.0.1",
+		"10.20.0.0/16",
+		"2001:db8::1",
+		"2001:db8:abcd::/48",
+	}, cfg.Server.TrustedProxies)
+}
+
+func TestLoadRejectsMalformedServerTrustedProxy(t *testing.T) {
+	tests := []struct {
+		name  string
+		entry string
+	}{
+		{name: "hostname", entry: "proxy.example.com"},
+		{name: "invalid CIDR", entry: "10.0.0.0/99"},
+		{name: "IP with port", entry: "127.0.0.1:8080"},
+		{name: "empty", entry: ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			configPath := filepath.Join(tmpDir, "config.toml")
+			content := "[server]\ntrusted_proxies = [\"" + tt.entry + "\"]\n"
+			require.NoError(t, os.WriteFile(configPath, []byte(content), 0o644))
+
+			_, err := Load(configPath, "")
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "invalid [server] trusted_proxies entry")
+		})
+	}
 }
 
 func TestLoadWithAnalyticsConfig(t *testing.T) {
@@ -939,6 +1040,18 @@ func TestSave_CreatesFileWithSecurePermissions(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		assert.Zero(t, info.Mode().Perm()&0077, "config perm = %04o, want no group/other access", info.Mode().Perm())
 	}
+}
+
+func TestSaveCreatesMissingCustomConfigDirectories(t *testing.T) {
+	require := require.New(t)
+	root := t.TempDir()
+	cfg := NewDefaultConfig()
+	cfg.HomeDir = filepath.Join(root, "home")
+	cfg.configPath = filepath.Join(root, "custom", "nested", "config.toml")
+
+	require.NoError(cfg.Save())
+	_, err := os.Stat(cfg.configPath)
+	require.NoError(err)
 }
 
 func TestSave_TightensWeakPermissions(t *testing.T) {

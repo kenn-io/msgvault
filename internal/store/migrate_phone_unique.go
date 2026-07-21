@@ -121,7 +121,7 @@ func (s *Store) dedupeParticipantsByPhone(ctx context.Context, tx *loggedTx) err
 		winner := ids[0]
 		losers := ids[1:]
 		for _, loser := range losers {
-			if err := mergeParticipant(ctx, tx, winner, loser); err != nil {
+			if err := s.mergeParticipant(ctx, tx, winner, loser); err != nil {
 				return err
 			}
 		}
@@ -132,7 +132,7 @@ func (s *Store) dedupeParticipantsByPhone(ctx context.Context, tx *loggedTx) err
 // mergeParticipant moves every reference from loser onto winner,
 // deleting any rows whose new (winner-scoped) key would clash with an
 // existing row, then deletes loser from participants.
-func mergeParticipant(ctx context.Context, tx *loggedTx, winner, loser int64) error {
+func (s *Store) mergeParticipant(ctx context.Context, tx *loggedTx, winner, loser int64) error {
 	// (1) message_recipients UNIQUE(message_id, participant_id, recipient_type)
 	if _, err := tx.ExecContext(ctx, `
 		DELETE FROM message_recipients
@@ -227,7 +227,25 @@ func mergeParticipant(ctx context.Context, tx *loggedTx, winner, loser int64) er
 		return fmt.Errorf("repoint participant_identifiers (loser=%d, winner=%d): %w", loser, winner, err)
 	}
 
-	// (6) Finally drop the loser. participant_identifiers cascades; the
+	// (6) Repoint (and, if needed, restructure) any link edges referencing
+	// loser before the delete below drops them via ON DELETE CASCADE.
+	if err := s.rewriteLinksForMerge(tx, loser, winner); err != nil {
+		return fmt.Errorf("rewrite participant links (loser=%d, winner=%d): %w", loser, winner, err)
+	}
+	// Bump unconditionally, even when the merge touched no link edges: see
+	// the matching comment in MergeParticipants (messages.go).
+	if _, err := s.bumpIdentityRevision(tx); err != nil {
+		return fmt.Errorf("bump identity revision (loser=%d, winner=%d): %w", loser, winner, err)
+	}
+	// Also bump the account-identity revision: the merge repoints
+	// messages.sender_id, so a merge involving the sender of any message
+	// with a baked is_from_me leaves that flag stale in the message
+	// Parquet shards, which only a full rebuild re-derives.
+	if err := s.bumpAccountIdentityRevision(tx); err != nil {
+		return fmt.Errorf("bump account identity revision (loser=%d, winner=%d): %w", loser, winner, err)
+	}
+
+	// (7) Finally drop the loser. participant_identifiers cascades; the
 	// other FKs are already cleared by the repoints above.
 	if _, err := tx.ExecContext(ctx, `DELETE FROM participants WHERE id = ?`, loser); err != nil {
 		return fmt.Errorf("delete loser participant id=%d: %w", loser, err)

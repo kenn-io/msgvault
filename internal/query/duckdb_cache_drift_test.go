@@ -22,7 +22,8 @@ import (
 //
 //	Binder Error: Column "message_type" in REPLACE list not found in FROM clause
 //
-// The engine must detect the cache change and re-probe instead of crashing.
+// The engine must detect out-of-band drift and refuse the cache instead of
+// reading an uncommitted file set or falling back to SQLite.
 func TestDuckDBEngine_CacheRebuiltUnderneath(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -34,15 +35,15 @@ func TestDuckDBEngine_CacheRebuiltUnderneath(t *testing.T) {
 
 	pb := newParquetBuilder(t).
 		addTable("messages", "messages/year=2024", "data.parquet", newMessagesCols, `
-			(1::BIGINT, 1::BIGINT, 'm1', 100::BIGINT, 'Hello SOFRA', 'snip', TIMESTAMP '2024-01-15 10:00:00', 1000::BIGINT, false, 0::INTEGER, NULL::TIMESTAMP, NULL::BIGINT, 'email', 2024, 1)
+			(1::BIGINT, 1::BIGINT, 'm1', 100::BIGINT, 'Hello SOFRA', 'snip', TIMESTAMP '2024-01-15 10:00:00', 1000::BIGINT, false, 0::INTEGER, NULL::TIMESTAMP, NULL::BIGINT, 'email', false, 2024, 1)
 		`).
 		addTable("sources", "sources", "sources.parquet", sourcesCols, `(1::BIGINT, 'test@gmail.com', 'gmail')`).
 		addTable("participants", "participants", "participants.parquet", participantsCols, `(1::BIGINT, 'alice@test.com', 'test.com', 'Alice', '')`).
 		addTable("message_recipients", "message_recipients", "message_recipients.parquet", messageRecipientsCols, `(1::BIGINT, 1::BIGINT, 'from', 'Alice')`).
 		addEmptyTable("labels", "labels", "labels.parquet", labelsCols, `(1::BIGINT, 'x')`).
 		addEmptyTable("message_labels", "message_labels", "message_labels.parquet", messageLabelsCols, `(1::BIGINT, 1::BIGINT)`).
-		addEmptyTable("attachments", "attachments", "attachments.parquet", attachmentsCols, `(1::BIGINT, 100::BIGINT, 'x')`).
-		addTable("conversations", "conversations", "conversations.parquet", conversationsCols, `(100::BIGINT, 'thread100', '')`)
+		addEmptyTable("attachments", "attachments", "attachments.parquet", attachmentsCols, `(1::BIGINT, 1::BIGINT, 100::BIGINT, 'x', '')`).
+		addTable("conversations", "conversations", "conversations.parquet", conversationsCols, `(100::BIGINT, 'thread100', '', 'email')`)
 
 	analyticsDir, cleanup := pb.build()
 	t.Cleanup(cleanup)
@@ -67,18 +68,11 @@ func TestDuckDBEngine_CacheRebuiltUnderneath(t *testing.T) {
 		(1::BIGINT, 1::BIGINT, 'm1', 100::BIGINT, 'Hello SOFRA', 'snip', TIMESTAMP '2024-01-15 10:00:00', 1000::BIGINT, false, NULL::TIMESTAMP, 2024, 1)
 	`)
 
-	// Must re-probe and succeed rather than fail with the REPLACE binder error.
-	res, err = engine.SearchFast(ctx, search.Parse("SOFRA"), MessageFilter{}, 10, 0)
-	require.NoError(err, "SearchFast after cache rebuilt underneath engine")
-	require.Len(res, 1)
-	assert.Equal("Hello SOFRA", res[0].Subject)
-	assert.False(engine.hasCol("messages", "message_type"),
-		"message_type should be re-probed as absent after the rebuild")
-
-	// Aggregate (the other reported-broken path) must also recover.
-	agg, err := engine.Aggregate(ctx, ViewSenders, DefaultAggregateOptions())
-	require.NoError(err, "Aggregate after cache rebuilt underneath engine")
-	require.Len(agg, 1)
+	_, err = engine.SearchFast(ctx, search.Parse("SOFRA"), MessageFilter{}, 10, 0)
+	require.ErrorIs(err, ErrCacheUnavailable)
+	var unavailable *CacheUnavailableError
+	require.ErrorAs(err, &unavailable)
+	assert.Equal(CacheDrifted, unavailable.Readiness)
 }
 
 func TestDuckDBEngineRejectsInterruptedCache(t *testing.T) {
@@ -101,21 +95,21 @@ func TestDuckDBEngineRejectsInterruptedCache(t *testing.T) {
 	require.ErrorIs(err, ErrCacheUnavailable)
 }
 
-func TestDuckDBEngine_SearchFastWithStatsRebuildsCacheWhenParquetChanges(t *testing.T) {
+func TestDuckDBEngine_SearchFastWithStatsRejectsMessageParquetDrift(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 
 	pb := newParquetBuilder(t).
 		addTable("messages", "messages/year=2024", "data.parquet", messagesCols, `
-			(1::BIGINT, 1::BIGINT, 'm1', 100::BIGINT, 'Hello SOFRA', 'snip', TIMESTAMP '2024-01-15 10:00:00', 1000::BIGINT, false, 0::INTEGER, NULL::TIMESTAMP, NULL::BIGINT, 'email', 2024, 1)
+			(1::BIGINT, 1::BIGINT, 'm1', 100::BIGINT, 'Hello SOFRA', 'snip', TIMESTAMP '2024-01-15 10:00:00', 1000::BIGINT, false, 0::INTEGER, NULL::TIMESTAMP, NULL::BIGINT, 'email', false, 2024, 1)
 		`).
 		addTable("sources", "sources", "sources.parquet", sourcesCols, `(1::BIGINT, 'test@gmail.com', 'gmail')`).
 		addTable("participants", "participants", "participants.parquet", participantsCols, `(1::BIGINT, 'alice@test.com', 'test.com', 'Alice', '')`).
 		addTable("message_recipients", "message_recipients", "message_recipients.parquet", messageRecipientsCols, `(1::BIGINT, 1::BIGINT, 'from', 'Alice')`).
 		addEmptyTable("labels", "labels", "labels.parquet", labelsCols, `(1::BIGINT, 'x')`).
 		addEmptyTable("message_labels", "message_labels", "message_labels.parquet", messageLabelsCols, `(1::BIGINT, 1::BIGINT)`).
-		addEmptyTable("attachments", "attachments", "attachments.parquet", attachmentsCols, `(1::BIGINT, 100::BIGINT, 'x')`).
-		addTable("conversations", "conversations", "conversations.parquet", conversationsCols, `(100::BIGINT, 'thread100', '')`)
+		addEmptyTable("attachments", "attachments", "attachments.parquet", attachmentsCols, `(1::BIGINT, 1::BIGINT, 100::BIGINT, 'x', '')`).
+		addTable("conversations", "conversations", "conversations.parquet", conversationsCols, `(100::BIGINT, 'thread100', '', 'email')`)
 
 	analyticsDir, cleanup := pb.build()
 	t.Cleanup(cleanup)
@@ -136,35 +130,32 @@ func TestDuckDBEngine_SearchFastWithStatsRebuildsCacheWhenParquetChanges(t *test
 
 	msgPath := filepath.Join(analyticsDir, "messages", "year=2024", "data.parquet")
 	rewriteParquetForTest(t, msgPath, messagesCols, `
-		(1::BIGINT, 1::BIGINT, 'm1', 100::BIGINT, 'Hello SOFRA', 'snip', TIMESTAMP '2024-01-15 10:00:00', 1000::BIGINT, false, 0::INTEGER, NULL::TIMESTAMP, NULL::BIGINT, 'email', 2024, 1),
-		(2::BIGINT, 1::BIGINT, 'm2', 101::BIGINT, 'Another SOFRA', 'snip', TIMESTAMP '2024-01-16 10:00:00', 2000::BIGINT, false, 0::INTEGER, NULL::TIMESTAMP, NULL::BIGINT, 'email', 2024, 1)
+		(1::BIGINT, 1::BIGINT, 'm1', 100::BIGINT, 'Hello SOFRA', 'snip', TIMESTAMP '2024-01-15 10:00:00', 1000::BIGINT, false, 0::INTEGER, NULL::TIMESTAMP, NULL::BIGINT, 'email', false, 2024, 1),
+		(2::BIGINT, 1::BIGINT, 'm2', 101::BIGINT, 'Another SOFRA', 'snip', TIMESTAMP '2024-01-16 10:00:00', 2000::BIGINT, false, 0::INTEGER, NULL::TIMESTAMP, NULL::BIGINT, 'email', false, 2024, 1)
 	`)
 
-	second, err := engine.SearchFastWithStats(ctx, q, "SOFRA", MessageFilter{}, ViewSenders, 10, 0)
-	require.NoError(err, "SearchFastWithStats after rebuild")
-	require.Len(second.Messages, 2)
-	assert.Equal(int64(2), second.TotalCount)
-	require.NotNil(second.Stats)
-	assert.Equal(int64(2), second.Stats.MessageCount)
-	assert.Equal("Another SOFRA", second.Messages[0].Subject)
-	assert.Equal("Hello SOFRA", second.Messages[1].Subject)
+	_, err = engine.SearchFastWithStats(ctx, q, "SOFRA", MessageFilter{}, ViewSenders, 10, 0)
+	require.ErrorIs(err, ErrCacheUnavailable)
+	var unavailable *CacheUnavailableError
+	require.ErrorAs(err, &unavailable)
+	assert.Equal(CacheDrifted, unavailable.Readiness)
 }
 
-func TestDuckDBEngine_SearchFastWithStatsRebuildsStatsWhenAttachmentsChange(t *testing.T) {
+func TestDuckDBEngine_SearchFastWithStatsRejectsAttachmentParquetDrift(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 
 	pb := newParquetBuilder(t).
 		addTable("messages", "messages/year=2024", "data.parquet", messagesCols, `
-			(1::BIGINT, 1::BIGINT, 'm1', 100::BIGINT, 'Hello SOFRA', 'snip', TIMESTAMP '2024-01-15 10:00:00', 1000::BIGINT, false, 0::INTEGER, NULL::TIMESTAMP, NULL::BIGINT, 'email', 2024, 1)
+			(1::BIGINT, 1::BIGINT, 'm1', 100::BIGINT, 'Hello SOFRA', 'snip', TIMESTAMP '2024-01-15 10:00:00', 1000::BIGINT, false, 0::INTEGER, NULL::TIMESTAMP, NULL::BIGINT, 'email', false, 2024, 1)
 		`).
 		addTable("sources", "sources", "sources.parquet", sourcesCols, `(1::BIGINT, 'test@gmail.com', 'gmail')`).
 		addTable("participants", "participants", "participants.parquet", participantsCols, `(1::BIGINT, 'alice@test.com', 'test.com', 'Alice', '')`).
 		addTable("message_recipients", "message_recipients", "message_recipients.parquet", messageRecipientsCols, `(1::BIGINT, 1::BIGINT, 'from', 'Alice')`).
 		addEmptyTable("labels", "labels", "labels.parquet", labelsCols, `(1::BIGINT, 'x')`).
 		addEmptyTable("message_labels", "message_labels", "message_labels.parquet", messageLabelsCols, `(1::BIGINT, 1::BIGINT)`).
-		addEmptyTable("attachments", "attachments", "attachments.parquet", attachmentsCols, `(1::BIGINT, 100::BIGINT, 'x')`).
-		addTable("conversations", "conversations", "conversations.parquet", conversationsCols, `(100::BIGINT, 'thread100', '')`)
+		addEmptyTable("attachments", "attachments", "attachments.parquet", attachmentsCols, `(1::BIGINT, 1::BIGINT, 100::BIGINT, 'x', '')`).
+		addTable("conversations", "conversations", "conversations.parquet", conversationsCols, `(100::BIGINT, 'thread100', '', 'email')`)
 
 	analyticsDir, cleanup := pb.build()
 	t.Cleanup(cleanup)
@@ -184,15 +175,13 @@ func TestDuckDBEngine_SearchFastWithStatsRebuildsStatsWhenAttachmentsChange(t *t
 	require.Equal(0, first.Messages[0].AttachmentCount)
 
 	attPath := filepath.Join(analyticsDir, "attachments", "attachments.parquet")
-	rewriteParquetForTest(t, attPath, attachmentsCols, `(1::BIGINT, 123::BIGINT, 'file.pdf')`)
+	rewriteParquetForTest(t, attPath, attachmentsCols, `(1::BIGINT, 1::BIGINT, 123::BIGINT, 'file.pdf', 'application/pdf')`)
 
-	second, err := engine.SearchFastWithStats(ctx, q, "SOFRA", MessageFilter{}, ViewSenders, 10, 0)
-	require.NoError(err, "SearchFastWithStats after attachments rebuild")
-	require.NotNil(second.Stats)
-	require.Len(second.Messages, 1)
-	assert.Equal(int64(1), second.Stats.AttachmentCount)
-	assert.Equal(int64(123), second.Stats.AttachmentSize)
-	assert.Equal(1, second.Messages[0].AttachmentCount)
+	_, err = engine.SearchFastWithStats(ctx, q, "SOFRA", MessageFilter{}, ViewSenders, 10, 0)
+	require.ErrorIs(err, ErrCacheUnavailable)
+	var unavailable *CacheUnavailableError
+	require.ErrorAs(err, &unavailable)
+	assert.Equal(CacheDrifted, unavailable.Readiness)
 }
 
 func TestDuckDBEngine_CacheFingerprintCoversRequiredParquetDirs(t *testing.T) {

@@ -278,3 +278,58 @@ func TestCoverageSplit_ScopedEmbeddedHoldsInvariant(t *testing.T) {
 	assert.Equal(live, embedded+blank+missingCount,
 		"invariant: live == embedded + blank + missing")
 }
+
+func TestFilteredCoverageRequiresLiveGenerationStampAndVector(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	ctx := context.Background()
+	st := testutil.NewSQLiteTestStore(t)
+	b, err := Open(ctx, Options{
+		Path: filepath.Join(t.TempDir(), "vectors.db"), Dimension: 8, MainDB: st.DB(),
+	})
+	require.NoError(err)
+	t.Cleanup(func() { _ = b.Close() })
+
+	source, err := st.GetOrCreateSource("gmail", "me@example.com")
+	require.NoError(err)
+	conversationID, err := st.EnsureConversationWithType(source.ID, "coverage", "email_thread", "Coverage")
+	require.NoError(err)
+	makeMessage := func(sourceMessageID string) int64 {
+		id, err := st.UpsertMessage(&store.Message{
+			SourceID: source.ID, SourceMessageID: sourceMessageID,
+			ConversationID: conversationID, MessageType: "email",
+		})
+		require.NoError(err)
+		return id
+	}
+	valid := makeMessage("valid")
+	clearedStamp := makeMessage("cleared-stamp")
+	dedupLoser := makeMessage("dedup-loser")
+	sourceDeleted := makeMessage("source-deleted")
+	wrongGeneration := makeMessage("wrong-generation")
+	noVector := makeMessage("no-vector")
+
+	gen, err := b.CreateGeneration(ctx, "test-model", 8, "fp")
+	require.NoError(err)
+	chunks := make([]vector.Chunk, 0, 5)
+	for i, id := range []int64{valid, clearedStamp, dedupLoser, sourceDeleted, wrongGeneration} {
+		v := make([]float32, 8)
+		v[i] = 1
+		chunks = append(chunks, vector.Chunk{MessageID: id, Vector: v})
+	}
+	require.NoError(b.Upsert(ctx, gen, chunks))
+	require.NoError(st.SetEmbedGen(ctx, []int64{valid, dedupLoser, sourceDeleted, noVector}, int64(gen)))
+	require.NoError(st.SetEmbedGen(ctx, []int64{wrongGeneration}, int64(gen)+99))
+	_, err = st.DB().Exec(`UPDATE messages SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?`, dedupLoser)
+	require.NoError(err)
+	_, err = st.DB().Exec(`UPDATE messages SET deleted_from_source_at = CURRENT_TIMESTAMP WHERE id = ?`, sourceDeleted)
+	require.NoError(err)
+
+	count, err := b.EmbeddedMessageCountForIDs(ctx, gen,
+		[]int64{valid, clearedStamp, dedupLoser, sourceDeleted, wrongGeneration, noVector})
+	require.NoError(err)
+	assert.Equal(int64(1), count)
+
+	_, err = b.EmbeddedMessageCountForIDs(ctx, gen, make([]int64, vector.FilteredCoverageBatchSize+1))
+	assert.ErrorIs(err, vector.ErrCoverageBatchTooLarge)
+}

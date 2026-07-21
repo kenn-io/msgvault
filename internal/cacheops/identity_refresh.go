@@ -1,0 +1,369 @@
+package cacheops
+
+import (
+	"context"
+	"database/sql"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+	"time"
+
+	_ "github.com/duckdb/duckdb-go/v2" // DuckDB driver (database/sql)
+	"go.kenn.io/msgvault/internal/query"
+	"go.kenn.io/msgvault/internal/store"
+)
+
+const (
+	datasetOwnerParticipants   = "owner_participants"
+	datasetParticipantClusters = "participant_clusters"
+)
+
+// identityDatasets lists the Parquet dataset directories RefreshIdentityDatasets
+// re-exports. Both are always fully replaced, matching how the full cache
+// builder treats them (see replacesCacheDataset in cmd/msgvault/cmd).
+var identityDatasets = []string{datasetOwnerParticipants, datasetParticipantClusters}
+
+// ErrNoCommittedCache is returned by RefreshIdentityDatasets when
+// analyticsDir has no committed cache publication (no _last_sync.json) to
+// refresh. Callers should treat this like any other cache-unavailable
+// condition (the API layer maps it to the standard response).
+var ErrNoCommittedCache = errors.New("cacheops: no committed analytics cache to refresh")
+
+// RefreshIdentityDatasets re-exports owner_participants and
+// participant_clusters from st into the committed cache at analyticsDir,
+// leaving every message-derived dataset (including is_from_me, baked into
+// the message shards at export time) untouched, and stamps the new
+// identity revision into _last_sync.json. It returns the stamped revision.
+// It deliberately does NOT advance AccountIdentityRevision — see
+// publishIdentityDatasets.
+//
+// Both datasets are derived entirely from st's own queries (never from a
+// SQLite file path), so the same code path runs for SQLite- and
+// PostgreSQL-backed archives alike: the owner_participants query below has
+// no dialect-specific SQL, so no ATTACH or per-backend branching is needed,
+// and it never crashes a PostgreSQL archive.
+//
+// Concurrency: callers must hold the analytics cache build lock
+// (query.CacheBuildLockPath) exclusively for the duration of this call —
+// the same lock a full cache build holds. This function does not acquire it
+// itself: a caller that already holds it (the build-cache flow wires this
+// in for identity-drift-only staleness) would self-deadlock on a second
+// exclusive acquisition of the same underlying flock file. With that lock
+// held, concurrent Parquet readers (which take it shared) safely wait out
+// the rename below, exactly as they wait out a full build.
+func RefreshIdentityDatasets(ctx context.Context, st *store.Store, analyticsDir string) (int64, error) {
+	state, err := query.ReadCacheSyncState(analyticsDir)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return 0, fmt.Errorf("%w: %s", ErrNoCommittedCache, analyticsDir)
+		}
+		return 0, fmt.Errorf("read cache sync state before identity refresh: %w", err)
+	}
+
+	revision, err := st.IdentityRevision()
+	if err != nil {
+		return 0, fmt.Errorf("read identity revision: %w", err)
+	}
+
+	// No-op short-circuit: every link/unlink API call re-runs this refresh
+	// even when the mutation changed nothing (e.g. re-linking two already-
+	// linked participants), and re-publishing unconditionally would rewrite
+	// the Parquet datasets and advance PublishedAt/DatasetFingerprint for
+	// no reason — needlessly 409-ing every active pagination cursor even
+	// though the committed data is unchanged. Short-circuit only when the
+	// committed revision already matches the current one AND both dataset
+	// directories are actually on disk: a prior refresh that failed before
+	// reaching publishIdentityDatasets leaves the committed revision
+	// lagging behind the current one, so this condition is false and the
+	// retry below still does the real work, satisfying the spec's
+	// requirement that retry-after-stale re-attempts the refresh.
+	if state.IdentityRevision == revision && identityDatasetsExist(analyticsDir) {
+		return revision, nil
+	}
+
+	owners, err := ownerParticipantRows(ctx, st)
+	if err != nil {
+		return 0, fmt.Errorf("read owner participants: %w", err)
+	}
+	clusters, err := st.ParticipantClusters()
+	if err != nil {
+		return 0, fmt.Errorf("read participant clusters: %w", err)
+	}
+
+	staging, err := newIdentityStaging(analyticsDir)
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = staging.cleanup() }()
+
+	db, err := sql.Open("duckdb", "")
+	if err != nil {
+		return 0, fmt.Errorf("open duckdb for identity refresh: %w", err)
+	}
+	defer func() { _ = db.Close() }()
+
+	if err := exportOwnerParticipants(ctx, db, owners, staging.datasetDir(datasetOwnerParticipants)); err != nil {
+		return 0, err
+	}
+	if err := exportParticipantClusters(ctx, db, clusters, staging.datasetDir(datasetParticipantClusters)); err != nil {
+		return 0, err
+	}
+
+	if err := publishIdentityDatasets(staging, analyticsDir, state, revision); err != nil {
+		return 0, err
+	}
+	return revision, nil
+}
+
+// identityDatasetsExist reports whether every identity dataset directory
+// under analyticsDir exists and has at least one file staged into it.
+// exportOwnerParticipants/exportParticipantClusters always write a Parquet
+// file, even for zero rows (see their comments), so an empty or missing
+// directory means the dataset was never actually published — the no-op
+// short-circuit in RefreshIdentityDatasets must not trust a matching
+// revision alone in that case.
+func identityDatasetsExist(analyticsDir string) bool {
+	for _, dataset := range identityDatasets {
+		entries, err := os.ReadDir(filepath.Join(analyticsDir, dataset))
+		if err != nil || len(entries) == 0 {
+			return false
+		}
+	}
+	return true
+}
+
+// ownerParticipantRow is one (source, participant) ownership edge: the
+// source's confirmed account identity resolved to this participant.
+type ownerParticipantRow struct {
+	sourceID      int64
+	participantID int64
+}
+
+// ownerParticipantsSQL matches every participant row that a confirmed
+// account_identities address resolves to for its source, case-insensitively
+// against either the durable participant email or an explicit
+// participant_identifiers email, or verbatim against any non-email
+// participant_identifiers row (phone, chat handle, etc. — identifiers are
+// stored verbatim; only email comparisons fold case). Deliberately
+// dialect-neutral (no bind placeholders, no dialect-specific functions) so
+// it runs unchanged on SQLite and PostgreSQL. Kept byte-equivalent (apart
+// from the ATTACH schema prefix) with the matching query in
+// cmd/msgvault/cmd/build_cache.go.
+const ownerParticipantsSQL = `
+	SELECT DISTINCT ai.source_id, p.id AS participant_id
+	FROM account_identities ai
+	JOIN participants p
+	  ON p.email_address IS NOT NULL AND lower(p.email_address) = lower(ai.address)
+	UNION
+	SELECT DISTINCT ai.source_id, pi.participant_id
+	FROM account_identities ai
+	JOIN participant_identifiers pi
+	  ON (pi.identifier_type = 'email' AND lower(pi.identifier_value) = lower(ai.address))
+	  OR (pi.identifier_type != 'email' AND pi.identifier_value = ai.address)
+`
+
+// ownerParticipantRows reads the current owner_participants edges through
+// st's own connection.
+func ownerParticipantRows(ctx context.Context, st *store.Store) ([]ownerParticipantRow, error) {
+	rows, err := st.DB().QueryContext(ctx, ownerParticipantsSQL)
+	if err != nil {
+		return nil, fmt.Errorf("query owner participants: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []ownerParticipantRow
+	for rows.Next() {
+		var r ownerParticipantRow
+		if err := rows.Scan(&r.sourceID, &r.participantID); err != nil {
+			return nil, fmt.Errorf("scan owner participant row: %w", err)
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// exportOwnerParticipants writes rows to dir/owner_participants.parquet via
+// a DuckDB temp table, mirroring the participant_clusters export pattern:
+// Go-computed data has no SQL source to COPY from directly, so it is
+// staged through a temp table first. Always writes a file, even for zero
+// rows, so the dataset directory required by query.RequiredParquetDirs
+// always exists.
+func exportOwnerParticipants(ctx context.Context, db *sql.DB, rows []ownerParticipantRow, dir string) error {
+	if _, err := db.ExecContext(ctx,
+		`CREATE TEMP TABLE tmp_owner_participants (source_id BIGINT, participant_id BIGINT)`,
+	); err != nil {
+		return fmt.Errorf("create owner participants temp table: %w", err)
+	}
+	if len(rows) > 0 {
+		values := make([]string, 0, len(rows))
+		for _, r := range rows {
+			values = append(values, fmt.Sprintf("(%d, %d)", r.sourceID, r.participantID))
+		}
+		insertSQL := "INSERT INTO tmp_owner_participants (source_id, participant_id) VALUES " +
+			strings.Join(values, ", ")
+		if _, err := db.ExecContext(ctx, insertSQL); err != nil {
+			return fmt.Errorf("populate owner participants temp table: %w", err)
+		}
+	}
+	escapedDir := strings.ReplaceAll(dir, "'", "''")
+	if _, err := db.ExecContext(ctx, fmt.Sprintf(`
+	COPY (
+		SELECT source_id, participant_id FROM tmp_owner_participants
+	) TO '%s/owner_participants.parquet' (
+		FORMAT PARQUET,
+		COMPRESSION 'zstd'
+	)
+	`, escapedDir)); err != nil {
+		return fmt.Errorf("export owner participants: %w", err)
+	}
+	if _, err := db.ExecContext(ctx, `DROP TABLE tmp_owner_participants`); err != nil {
+		return fmt.Errorf("drop owner participants temp table: %w", err)
+	}
+	return nil
+}
+
+// exportParticipantClusters writes clusters (participant_id -> canonical
+// cluster ID) to dir/participant_clusters.parquet via a DuckDB temp table,
+// the same approach cmd/msgvault/cmd/build_cache.go uses for its full-build
+// export: ParticipantClusters does graph traversal in Go, so it cannot be
+// expressed as a COPY query directly.
+func exportParticipantClusters(ctx context.Context, db *sql.DB, clusters map[int64]int64, dir string) error {
+	if _, err := db.ExecContext(ctx,
+		`CREATE TEMP TABLE tmp_participant_clusters (participant_id BIGINT, canonical_id BIGINT)`,
+	); err != nil {
+		return fmt.Errorf("create participant clusters temp table: %w", err)
+	}
+	if len(clusters) > 0 {
+		values := make([]string, 0, len(clusters))
+		for participantID, canonicalID := range clusters {
+			values = append(values, fmt.Sprintf("(%d, %d)", participantID, canonicalID))
+		}
+		insertSQL := "INSERT INTO tmp_participant_clusters (participant_id, canonical_id) VALUES " +
+			strings.Join(values, ", ")
+		if _, err := db.ExecContext(ctx, insertSQL); err != nil {
+			return fmt.Errorf("populate participant clusters temp table: %w", err)
+		}
+	}
+	escapedDir := strings.ReplaceAll(dir, "'", "''")
+	if _, err := db.ExecContext(ctx, fmt.Sprintf(`
+	COPY (
+		SELECT participant_id, canonical_id FROM tmp_participant_clusters
+	) TO '%s/participant_clusters.parquet' (
+		FORMAT PARQUET,
+		COMPRESSION 'zstd'
+	)
+	`, escapedDir)); err != nil {
+		return fmt.Errorf("export participant clusters: %w", err)
+	}
+	if _, err := db.ExecContext(ctx, `DROP TABLE tmp_participant_clusters`); err != nil {
+		return fmt.Errorf("drop participant clusters temp table: %w", err)
+	}
+	return nil
+}
+
+// identityStaging is a same-parent staging directory for the two identity
+// datasets, mirroring cmd/msgvault/cmd/cache_publication.go's cacheStaging
+// convention (a dot-prefixed sibling of analyticsDir) without depending on
+// that unexported type: cacheops cannot import cmd, since cmd imports
+// cacheops.
+type identityStaging struct {
+	root string
+}
+
+func newIdentityStaging(analyticsDir string) (*identityStaging, error) {
+	parent := filepath.Dir(filepath.Clean(analyticsDir))
+	if err := os.MkdirAll(parent, 0o755); err != nil {
+		return nil, fmt.Errorf("create analytics cache parent: %w", err)
+	}
+	prefix := "." + filepath.Base(filepath.Clean(analyticsDir)) + ".identity-"
+	root, err := os.MkdirTemp(parent, prefix)
+	if err != nil {
+		return nil, fmt.Errorf("create identity refresh staging directory: %w", err)
+	}
+	for _, dataset := range identityDatasets {
+		if err := os.MkdirAll(filepath.Join(root, dataset), 0o755); err != nil {
+			_ = os.RemoveAll(root)
+			return nil, fmt.Errorf("create staged %s directory: %w", dataset, err)
+		}
+	}
+	return &identityStaging{root: root}, nil
+}
+
+func (s *identityStaging) datasetDir(dataset string) string {
+	return filepath.Join(s.root, dataset)
+}
+
+func (s *identityStaging) cleanup() error {
+	if s == nil || s.root == "" {
+		return nil
+	}
+	return os.RemoveAll(s.root)
+}
+
+// publishIdentityDatasets replaces the live owner_participants and
+// participant_clusters directories with their staged replacements and
+// commits the updated identity revision, mirroring cmd's publishCache:
+// invalidate the commit marker first, then rename, then re-fingerprint and
+// write the new marker. state is the CacheSyncState already read by
+// RefreshIdentityDatasets; only IdentityRevision, PublishedAt, and
+// DatasetFingerprint change.
+//
+// state.AccountIdentityRevision is deliberately left untouched: this
+// refresh only re-exports owner_participants/participant_clusters, never
+// the message shards that bake in is_from_me, so it must not advance the
+// marker that records those shards' freshness. Advancing it here would
+// make a stale is_from_me look fresh and permanently suppress the full
+// rebuild that HasAccountIdentityDrift is meant to force.
+func publishIdentityDatasets(staging *identityStaging, analyticsDir string, state query.CacheSyncState, revision int64) error {
+	statePath := query.CacheStatePath(analyticsDir)
+	if err := invalidateIdentityStateFile(statePath); err != nil {
+		return err
+	}
+
+	for _, dataset := range identityDatasets {
+		dest := filepath.Join(analyticsDir, dataset)
+		if err := os.RemoveAll(dest); err != nil {
+			return fmt.Errorf("remove live %s dataset: %w", dataset, err)
+		}
+		if err := os.Rename(staging.datasetDir(dataset), dest); err != nil {
+			return fmt.Errorf("publish %s dataset: %w", dataset, err)
+		}
+	}
+
+	fingerprint, err := query.CacheDatasetFingerprint(analyticsDir)
+	if err != nil {
+		return fmt.Errorf("fingerprint published analytics cache: %w", err)
+	}
+	state.IdentityRevision = revision
+	state.PublishedAt = time.Now().UTC()
+	state.DatasetFingerprint = fingerprint
+	data, err := json.Marshal(state)
+	if err != nil {
+		return fmt.Errorf("encode cache sync state: %w", err)
+	}
+	if err := os.WriteFile(statePath, data, 0o600); err != nil {
+		return fmt.Errorf("save cache sync state: %w", err)
+	}
+	return nil
+}
+
+// invalidateIdentityStateFile makes _last_sync.json unusable while the
+// dataset directories below it are mid-rename, mirroring cmd's
+// invalidateSyncStateFile: a reader racing the rename must see a
+// missing/unparseable commit marker rather than one naming a dataset that
+// no longer matches the files on disk. Removal first; if that fails (e.g.
+// no directory write permission), overwrite with content that fails to
+// parse. Only when neither works does it return an error.
+func invalidateIdentityStateFile(statePath string) error {
+	removeErr := os.Remove(statePath)
+	if removeErr == nil || os.IsNotExist(removeErr) {
+		return nil
+	}
+	if writeErr := os.WriteFile(statePath, []byte("invalidated"), 0o600); writeErr != nil {
+		return fmt.Errorf("invalidate cache sync state: remove: %w; overwrite: %w", removeErr, writeErr)
+	}
+	return nil
+}

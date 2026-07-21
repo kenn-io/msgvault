@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -21,21 +22,24 @@ import (
 
 // MessageFixture defines a message row for Parquet test data.
 type MessageFixture struct {
-	ID              int64
-	SourceID        int64
-	SourceMessageID string
-	ConversationID  int64
-	Subject         string
-	Snippet         string
-	SentAt          time.Time
-	SizeEstimate    int64
-	HasAttachments  bool
-	AttachmentCount int
-	DeletedAt       *time.Time // nil = NULL
-	SenderID        *int64     // nil = NULL (direct sender for WhatsApp/chat messages)
-	MessageType     string     // e.g. "email", "whatsapp"
-	Year            int
-	Month           int
+	ID                  int64
+	SourceID            int64
+	SourceMessageID     string
+	ConversationID      int64
+	Subject             string
+	Snippet             string
+	SentAt              time.Time
+	SizeEstimate        int64
+	HasAttachments      bool
+	AttachmentCount     int
+	DeletedAt           *time.Time // nil = NULL
+	InternalDeletedAt   *time.Time // nil = omitted from legacy fixtures / NULL in opted-in fixtures
+	DeletedFromSourceAt *time.Time // nil = NULL
+	SenderID            *int64     // nil = NULL (direct sender for WhatsApp/chat messages)
+	MessageType         string     // e.g. "email", "whatsapp"
+	IsFromMe            bool
+	Year                int
+	Month               int
 }
 
 // SourceFixture defines a source row for Parquet test data.
@@ -52,6 +56,17 @@ type ParticipantFixture struct {
 	Domain      string
 	DisplayName string
 	PhoneNumber string // E.164 phone number (for WhatsApp/chat participants)
+}
+
+// ParticipantIdentifierFixture defines explicit identity evidence for one
+// durable participant. Multiple rows for the same participant do not create
+// additional people.
+type ParticipantIdentifierFixture struct {
+	ParticipantID   int64
+	IdentifierType  string
+	IdentifierValue string
+	DisplayValue    string
+	IsPrimary       bool
 }
 
 // RecipientFixture defines a message_recipients row for Parquet test data.
@@ -76,9 +91,11 @@ type MessageLabelFixture struct {
 
 // AttachmentFixture defines an attachment row for Parquet test data.
 type AttachmentFixture struct {
+	ID        int64
 	MessageID int64
 	Size      int64
 	Filename  string
+	MimeType  string
 }
 
 // ConversationFixture defines a conversation row for Parquet test data.
@@ -86,6 +103,28 @@ type ConversationFixture struct {
 	ID                   int64
 	SourceConversationID string
 	Title                string // Group/chat name (for WhatsApp/chat conversations)
+	ConversationType     string
+}
+
+// ConversationParticipantFixture defines durable conversation membership.
+type ConversationParticipantFixture struct {
+	ConversationID int64
+	ParticipantID  int64
+}
+
+// OwnerParticipantFixture defines an owner_participants row for Parquet test
+// data: a participant that resolves to a confirmed account identity.
+type OwnerParticipantFixture struct {
+	SourceID      int64
+	ParticipantID int64
+}
+
+// ParticipantClusterFixture defines a participant_clusters row for Parquet
+// test data: participant_id mapped to its canonical (smallest member)
+// cluster ID.
+type ParticipantClusterFixture struct {
+	ParticipantID int64
+	CanonicalID   int64
 }
 
 // ---------------------------------------------------------------------------
@@ -100,15 +139,20 @@ type TestDataBuilder struct {
 	nextPartID  int64
 	nextLabelID int64
 	nextConvID  int64
+	nextAttID   int64
 
-	sources       []SourceFixture
-	messages      []MessageFixture
-	participants  []ParticipantFixture
-	recipients    []RecipientFixture
-	labels        []LabelFixture
-	msgLabels     []MessageLabelFixture
-	attachments   []AttachmentFixture
-	conversations []ConversationFixture
+	sources                  []SourceFixture
+	messages                 []MessageFixture
+	participants             []ParticipantFixture
+	participantIdentifiers   []ParticipantIdentifierFixture
+	recipients               []RecipientFixture
+	labels                   []LabelFixture
+	msgLabels                []MessageLabelFixture
+	attachments              []AttachmentFixture
+	conversations            []ConversationFixture
+	conversationParticipants []ConversationParticipantFixture
+	ownerParticipants        []OwnerParticipantFixture
+	participantClusters      []ParticipantClusterFixture
 
 	emptyAttachments bool // if true, write empty attachments file
 }
@@ -123,6 +167,7 @@ func NewTestDataBuilder(tb testing.TB) *TestDataBuilder {
 		nextPartID:  1,
 		nextLabelID: 1,
 		nextConvID:  200,
+		nextAttID:   1,
 	}
 }
 
@@ -173,16 +218,21 @@ func (b *TestDataBuilder) AddLabel(name string) int64 {
 
 // MessageOpt configures a message to add.
 type MessageOpt struct {
-	Subject        string
-	Snippet        string
-	SentAt         time.Time
-	SizeEstimate   int64
-	HasAttachments bool
-	DeletedAt      *time.Time
-	SourceID       int64  // defaults to 1
-	ConversationID int64  // 0 = auto-assign
-	MessageType    string // defaults to "email"
-	SenderID       *int64 // nil = NULL (direct sender for text/chat messages)
+	Subject             string
+	Snippet             string
+	SentAt              time.Time
+	SizeEstimate        int64
+	HasAttachments      bool
+	DeletedAt           *time.Time
+	InternalDeletedAt   *time.Time
+	DeletedFromSourceAt *time.Time
+	SourceID            int64  // defaults to 1
+	ConversationID      int64  // 0 = auto-assign
+	MessageType         string // defaults to "email"
+	SenderID            *int64 // nil = NULL (direct sender for text/chat messages)
+	IsFromMe            bool
+	ConversationType    string // defaults from MessageType
+	ConversationTitle   string
 }
 
 // AddMessage adds a message and returns its ID.
@@ -210,20 +260,23 @@ func (b *TestDataBuilder) AddMessage(opt MessageOpt) int64 {
 	}
 
 	b.messages = append(b.messages, MessageFixture{
-		ID:              id,
-		SourceID:        srcID,
-		SourceMessageID: fmt.Sprintf("msg%d", id),
-		ConversationID:  convID,
-		Subject:         opt.Subject,
-		Snippet:         snippet,
-		SentAt:          sentAt,
-		SizeEstimate:    opt.SizeEstimate,
-		HasAttachments:  opt.HasAttachments,
-		DeletedAt:       opt.DeletedAt,
-		SenderID:        opt.SenderID,
-		MessageType:     opt.MessageType,
-		Year:            sentAt.Year(),
-		Month:           int(sentAt.Month()),
+		ID:                  id,
+		SourceID:            srcID,
+		SourceMessageID:     fmt.Sprintf("msg%d", id),
+		ConversationID:      convID,
+		Subject:             opt.Subject,
+		Snippet:             snippet,
+		SentAt:              sentAt,
+		SizeEstimate:        opt.SizeEstimate,
+		HasAttachments:      opt.HasAttachments,
+		DeletedAt:           opt.DeletedAt,
+		InternalDeletedAt:   opt.InternalDeletedAt,
+		DeletedFromSourceAt: opt.DeletedFromSourceAt,
+		SenderID:            opt.SenderID,
+		MessageType:         opt.MessageType,
+		IsFromMe:            opt.IsFromMe,
+		Year:                sentAt.Year(),
+		Month:               int(sentAt.Month()),
 	})
 
 	// Track conversation if not already present
@@ -235,9 +288,15 @@ func (b *TestDataBuilder) AddMessage(opt MessageOpt) int64 {
 		}
 	}
 	if !convExists {
+		conversationType := opt.ConversationType
+		if conversationType == "" {
+			conversationType = "email"
+		}
 		b.conversations = append(b.conversations, ConversationFixture{
 			ID:                   convID,
 			SourceConversationID: fmt.Sprintf("thread%d", convID),
+			Title:                opt.ConversationTitle,
+			ConversationType:     conversationType,
 		})
 	}
 
@@ -267,6 +326,44 @@ func (b *TestDataBuilder) AddCc(messageID, participantID int64, displayName stri
 	b.AddRecipient(messageID, participantID, "cc", displayName)
 }
 
+// AddConversationParticipant associates a participant with a conversation.
+func (b *TestDataBuilder) AddConversationParticipant(conversationID, participantID int64) {
+	b.conversationParticipants = append(b.conversationParticipants, ConversationParticipantFixture{
+		ConversationID: conversationID,
+		ParticipantID:  participantID,
+	})
+}
+
+// AddOwnerParticipant adds an owner_participants row: participantID resolves
+// to a confirmed account identity for sourceID.
+func (b *TestDataBuilder) AddOwnerParticipant(sourceID, participantID int64) {
+	b.ownerParticipants = append(b.ownerParticipants, OwnerParticipantFixture{
+		SourceID: sourceID, ParticipantID: participantID,
+	})
+}
+
+// LinkCluster adds participant_clusters rows mapping every given participant
+// ID to the smallest ID among them (the canonical cluster ID), mirroring
+// Store.ParticipantClusters. Requires at least two IDs.
+func (b *TestDataBuilder) LinkCluster(ids ...int64) {
+	b.t.Helper()
+	require.GreaterOrEqual(b.t, len(ids), 2, "LinkCluster: at least two participant IDs are required")
+	canonical := slices.Min(ids)
+	for _, id := range ids {
+		b.participantClusters = append(b.participantClusters, ParticipantClusterFixture{
+			ParticipantID: id, CanonicalID: canonical,
+		})
+	}
+}
+
+// AddParticipantIdentifier records explicit identity evidence for a participant.
+func (b *TestDataBuilder) AddParticipantIdentifier(participantID int64, identifierType, identifierValue, displayValue string, isPrimary bool) {
+	b.participantIdentifiers = append(b.participantIdentifiers, ParticipantIdentifierFixture{
+		ParticipantID: participantID, IdentifierType: identifierType,
+		IdentifierValue: identifierValue, DisplayValue: displayValue, IsPrimary: isPrimary,
+	})
+}
+
 // AddMessageLabel associates a message with a label.
 func (b *TestDataBuilder) AddMessageLabel(messageID, labelID int64) {
 	b.msgLabels = append(b.msgLabels, MessageLabelFixture{
@@ -276,9 +373,20 @@ func (b *TestDataBuilder) AddMessageLabel(messageID, labelID int64) {
 
 // AddAttachment adds an attachment row and sets HasAttachments on the related message.
 func (b *TestDataBuilder) AddAttachment(messageID, size int64, filename string) {
+	b.AddAttachmentWithMIME(b.nextAttID, messageID, size, filename, "application/octet-stream")
+	b.nextAttID++
+}
+
+// AddAttachmentWithID adds an attachment with a chosen durable identity.
+func (b *TestDataBuilder) AddAttachmentWithID(id, messageID, size int64, filename string) {
+	b.AddAttachmentWithMIME(id, messageID, size, filename, "application/octet-stream")
+}
+
+// AddAttachmentWithMIME adds an attachment with a chosen durable identity and MIME type.
+func (b *TestDataBuilder) AddAttachmentWithMIME(id, messageID, size int64, filename, mimeType string) {
 	b.t.Helper()
 	b.attachments = append(b.attachments, AttachmentFixture{
-		MessageID: messageID, Size: size, Filename: filename,
+		ID: id, MessageID: messageID, Size: size, Filename: filename, MimeType: mimeType,
 	})
 	// Ensure the related message has HasAttachments set to true.
 	for i := range b.messages {
@@ -315,9 +423,11 @@ func joinRows[T any](items []T, format func(T) string) string {
 
 // toSQL converts a MessageFixture to a SQL VALUES row string.
 func (m MessageFixture) toSQL() string {
-	deletedAt := "NULL::TIMESTAMP"
-	if m.DeletedAt != nil {
-		deletedAt = fmt.Sprintf("TIMESTAMP '%s'", m.DeletedAt.Format("2006-01-02 15:04:05"))
+	deletedFromSourceAt := "NULL::TIMESTAMP"
+	if m.DeletedFromSourceAt != nil {
+		deletedFromSourceAt = fmt.Sprintf("TIMESTAMP '%s'", m.DeletedFromSourceAt.Format("2006-01-02 15:04:05"))
+	} else if m.DeletedAt != nil {
+		deletedFromSourceAt = fmt.Sprintf("TIMESTAMP '%s'", m.DeletedAt.Format("2006-01-02 15:04:05"))
 	}
 	senderID := "NULL::BIGINT"
 	if m.SenderID != nil {
@@ -327,11 +437,38 @@ func (m MessageFixture) toSQL() string {
 	if msgType == "" {
 		msgType = "email"
 	}
-	return fmt.Sprintf("(%d::BIGINT, %d::BIGINT, %s, %d::BIGINT, %s, %s, TIMESTAMP '%s', %d::BIGINT, %v, %d, %s, %s, %s, %d, %d)",
+	return fmt.Sprintf("(%d::BIGINT, %d::BIGINT, %s, %d::BIGINT, %s, %s, TIMESTAMP '%s', %d::BIGINT, %v, %d, %s, %s, %s, %v, %d, %d)",
 		m.ID, m.SourceID, sqlStr(m.SourceMessageID), m.ConversationID,
 		sqlStr(m.Subject), sqlStr(m.Snippet),
 		m.SentAt.Format("2006-01-02 15:04:05"), m.SizeEstimate,
-		m.HasAttachments, m.AttachmentCount, deletedAt, senderID, sqlStr(msgType), m.Year, m.Month,
+		m.HasAttachments, m.AttachmentCount, deletedFromSourceAt, senderID, sqlStr(msgType), m.IsFromMe, m.Year, m.Month,
+	)
+}
+
+func (m MessageFixture) toSQLWithInternalDeletion() string {
+	internalDeletedAt := "NULL::TIMESTAMP"
+	if m.InternalDeletedAt != nil {
+		internalDeletedAt = fmt.Sprintf("TIMESTAMP '%s'", m.InternalDeletedAt.Format("2006-01-02 15:04:05"))
+	}
+	deletedFromSourceAt := "NULL::TIMESTAMP"
+	if m.DeletedFromSourceAt != nil {
+		deletedFromSourceAt = fmt.Sprintf("TIMESTAMP '%s'", m.DeletedFromSourceAt.Format("2006-01-02 15:04:05"))
+	} else if m.DeletedAt != nil {
+		deletedFromSourceAt = fmt.Sprintf("TIMESTAMP '%s'", m.DeletedAt.Format("2006-01-02 15:04:05"))
+	}
+	senderID := "NULL::BIGINT"
+	if m.SenderID != nil {
+		senderID = fmt.Sprintf("%d::BIGINT", *m.SenderID)
+	}
+	msgType := m.MessageType
+	if msgType == "" {
+		msgType = "email"
+	}
+	return fmt.Sprintf("(%d::BIGINT, %d::BIGINT, %s, %d::BIGINT, %s, %s, TIMESTAMP '%s', %d::BIGINT, %v, %d, %s, %s, %s, %s, %v, %d, %d)",
+		m.ID, m.SourceID, sqlStr(m.SourceMessageID), m.ConversationID,
+		sqlStr(m.Subject), sqlStr(m.Snippet),
+		m.SentAt.Format("2006-01-02 15:04:05"), m.SizeEstimate,
+		m.HasAttachments, m.AttachmentCount, internalDeletedAt, deletedFromSourceAt, senderID, sqlStr(msgType), m.IsFromMe, m.Year, m.Month,
 	)
 }
 
@@ -349,6 +486,14 @@ func (b *TestDataBuilder) participantsSQL() string {
 	return joinRows(b.participants, func(p ParticipantFixture) string {
 		return fmt.Sprintf("(%d::BIGINT, %s, %s, %s, %s)",
 			p.ID, sqlStr(p.Email), sqlStr(p.Domain), sqlStr(p.DisplayName), sqlStr(p.PhoneNumber))
+	})
+}
+
+func (b *TestDataBuilder) participantIdentifiersSQL() string {
+	return joinRows(b.participantIdentifiers, func(identifier ParticipantIdentifierFixture) string {
+		return fmt.Sprintf("(%d::BIGINT, %s, %s, %s, %v)", identifier.ParticipantID,
+			sqlStr(identifier.IdentifierType), sqlStr(identifier.IdentifierValue),
+			sqlStr(identifier.DisplayValue), identifier.IsPrimary)
 	})
 }
 
@@ -373,15 +518,33 @@ func (b *TestDataBuilder) messageLabelsSQL() string {
 
 func (b *TestDataBuilder) attachmentsSQL() string {
 	return joinRows(b.attachments, func(a AttachmentFixture) string {
-		return fmt.Sprintf("(%d::BIGINT, %d::BIGINT, %s)",
-			a.MessageID, a.Size, sqlStr(a.Filename))
+		return fmt.Sprintf("(%d::BIGINT, %d::BIGINT, %d::BIGINT, %s, %s)",
+			a.ID, a.MessageID, a.Size, sqlStr(a.Filename), sqlStr(a.MimeType))
 	})
 }
 
 func (b *TestDataBuilder) conversationsSQL() string {
 	return joinRows(b.conversations, func(c ConversationFixture) string {
-		return fmt.Sprintf("(%d::BIGINT, %s, %s)",
-			c.ID, sqlStr(c.SourceConversationID), sqlStr(c.Title))
+		return fmt.Sprintf("(%d::BIGINT, %s, %s, %s)",
+			c.ID, sqlStr(c.SourceConversationID), sqlStr(c.Title), sqlStr(c.ConversationType))
+	})
+}
+
+func (b *TestDataBuilder) conversationParticipantsSQL() string {
+	return joinRows(b.conversationParticipants, func(cp ConversationParticipantFixture) string {
+		return fmt.Sprintf("(%d::BIGINT, %d::BIGINT)", cp.ConversationID, cp.ParticipantID)
+	})
+}
+
+func (b *TestDataBuilder) ownerParticipantsSQL() string {
+	return joinRows(b.ownerParticipants, func(op OwnerParticipantFixture) string {
+		return fmt.Sprintf("(%d::BIGINT, %d::BIGINT)", op.SourceID, op.ParticipantID)
+	})
+}
+
+func (b *TestDataBuilder) participantClustersSQL() string {
+	return joinRows(b.participantClusters, func(pc ParticipantClusterFixture) string {
+		return fmt.Sprintf("(%d::BIGINT, %d::BIGINT)", pc.ParticipantID, pc.CanonicalID)
 	})
 }
 
@@ -391,14 +554,19 @@ func (b *TestDataBuilder) conversationsSQL() string {
 
 // column definitions (coupled to SQL generation methods above).
 const (
-	messagesCols          = "id, source_id, source_message_id, conversation_id, subject, snippet, sent_at, size_estimate, has_attachments, attachment_count, deleted_from_source_at, sender_id, message_type, year, month"
-	sourcesCols           = "id, account_email, source_type"
-	participantsCols      = "id, email_address, domain, display_name, phone_number"
-	messageRecipientsCols = "message_id, participant_id, recipient_type, display_name"
-	labelsCols            = "id, name"
-	messageLabelsCols     = "message_id, label_id"
-	attachmentsCols       = "message_id, size, filename"
-	conversationsCols     = "id, source_conversation_id, title"
+	messagesCols                 = "id, source_id, source_message_id, conversation_id, subject, snippet, sent_at, size_estimate, has_attachments, attachment_count, deleted_from_source_at, sender_id, message_type, is_from_me, year, month"
+	messagesColsWithDeletedAt    = "id, source_id, source_message_id, conversation_id, subject, snippet, sent_at, size_estimate, has_attachments, attachment_count, deleted_at, deleted_from_source_at, sender_id, message_type, is_from_me, year, month"
+	sourcesCols                  = "id, account_email, source_type"
+	participantsCols             = "id, email_address, domain, display_name, phone_number"
+	participantIdentifiersCols   = "participant_id, identifier_type, identifier_value, display_value, is_primary"
+	messageRecipientsCols        = "message_id, participant_id, recipient_type, display_name"
+	labelsCols                   = "id, name"
+	messageLabelsCols            = "message_id, label_id"
+	attachmentsCols              = "attachment_id, message_id, size, filename, mime_type"
+	conversationsCols            = "id, source_conversation_id, title, conversation_type"
+	conversationParticipantsCols = "conversation_id, participant_id"
+	ownerParticipantsCols        = "source_id, participant_id"
+	participantClustersCols      = "participant_id, canonical_id"
 )
 
 // Build generates Parquet files from the accumulated data and returns the
@@ -418,7 +586,7 @@ func (b *TestDataBuilder) Build() (string, func()) {
 func (b *TestDataBuilder) addMessageTables(pb *parquetBuilder) {
 	if len(b.messages) == 0 {
 		pb.addEmptyTable("messages", "messages/year=0", "empty.parquet", messagesCols,
-			"(0::BIGINT, 0::BIGINT, '', 0::BIGINT, '', '', TIMESTAMP '1970-01-01', 0::BIGINT, false, 0::INTEGER, NULL::TIMESTAMP, NULL::BIGINT, 'email', 0, 0)")
+			"(0::BIGINT, 0::BIGINT, '', 0::BIGINT, '', '', TIMESTAMP '1970-01-01', 0::BIGINT, false, 0::INTEGER, NULL::TIMESTAMP, NULL::BIGINT, 'email', false, 0, 0)")
 		return
 	}
 	byYear := map[int][]MessageFixture{}
@@ -426,10 +594,16 @@ func (b *TestDataBuilder) addMessageTables(pb *parquetBuilder) {
 		byYear[m.Year] = append(byYear[m.Year], m)
 	}
 	for year, msgs := range byYear {
-		rows := joinRows(msgs, MessageFixture.toSQL)
+		cols := messagesCols
+		rowFormatter := MessageFixture.toSQL
+		if slices.ContainsFunc(msgs, func(message MessageFixture) bool { return message.InternalDeletedAt != nil }) {
+			cols = messagesColsWithDeletedAt
+			rowFormatter = MessageFixture.toSQLWithInternalDeletion
+		}
+		rows := joinRows(msgs, rowFormatter)
 		pb.addTable("messages",
 			fmt.Sprintf("messages/year=%d", year), "data.parquet",
-			messagesCols, rows)
+			cols, rows)
 	}
 }
 
@@ -441,10 +615,14 @@ func (b *TestDataBuilder) addAuxiliaryTables(pb *parquetBuilder) {
 	}{
 		{"sources", "sources", "sources.parquet", sourcesCols, "(0::BIGINT, '', 'gmail')", b.sourcesSQL(), len(b.sources) == 0},
 		{"participants", "participants", "participants.parquet", participantsCols, "(0::BIGINT, '', '', '', '')", b.participantsSQL(), len(b.participants) == 0},
+		{"participant_identifiers", "participant_identifiers", "participant_identifiers.parquet", participantIdentifiersCols, "(0::BIGINT, '', '', '', false)", b.participantIdentifiersSQL(), len(b.participantIdentifiers) == 0},
 		{"message_recipients", "message_recipients", "message_recipients.parquet", messageRecipientsCols, "(0::BIGINT, 0::BIGINT, '', '')", b.recipientsSQL(), len(b.recipients) == 0},
 		{"labels", "labels", "labels.parquet", labelsCols, "(0::BIGINT, '')", b.labelsSQL(), len(b.labels) == 0},
 		{"message_labels", "message_labels", "message_labels.parquet", messageLabelsCols, "(0::BIGINT, 0::BIGINT)", b.messageLabelsSQL(), len(b.msgLabels) == 0},
-		{"conversations", "conversations", "conversations.parquet", conversationsCols, "(0::BIGINT, '', '')", b.conversationsSQL(), len(b.conversations) == 0},
+		{"conversations", "conversations", "conversations.parquet", conversationsCols, "(0::BIGINT, '', '', 'email')", b.conversationsSQL(), len(b.conversations) == 0},
+		{"conversation_participants", "conversation_participants", "conversation_participants.parquet", conversationParticipantsCols, "(0::BIGINT, 0::BIGINT)", b.conversationParticipantsSQL(), len(b.conversationParticipants) == 0},
+		{datasetOwnerParticipants, datasetOwnerParticipants, datasetOwnerParticipants + ".parquet", ownerParticipantsCols, "(0::BIGINT, 0::BIGINT)", b.ownerParticipantsSQL(), len(b.ownerParticipants) == 0},
+		{datasetParticipantClusters, datasetParticipantClusters, datasetParticipantClusters + ".parquet", participantClustersCols, "(0::BIGINT, 0::BIGINT)", b.participantClustersSQL(), len(b.participantClusters) == 0},
 	}
 	for _, a := range auxTables {
 		if a.empty {
@@ -461,7 +639,7 @@ func (b *TestDataBuilder) addAttachmentsTable(pb *parquetBuilder) {
 		pb.addTable("attachments", "attachments", "attachments.parquet", attachmentsCols, b.attachmentsSQL())
 	} else {
 		pb.addEmptyTable("attachments", "attachments", "attachments.parquet", attachmentsCols,
-			"(0::BIGINT, 0::BIGINT, '')")
+			"(0::BIGINT, 0::BIGINT, 0::BIGINT, '', '')")
 	}
 }
 
@@ -532,6 +710,10 @@ func (b *parquetBuilder) addEmptyTable(name, subdir, file, columns, dummyValues 
 // analytics directory path and a cleanup function.
 func (b *parquetBuilder) build() (string, func()) {
 	b.t.Helper()
+	b.ensureConversationParticipantsTable()
+	b.ensureParticipantIdentifiersTable()
+	b.ensureOwnerParticipantsTable()
+	b.ensureParticipantClustersTable()
 
 	tmpDir := b.createTempDirs()
 
@@ -543,14 +725,65 @@ func (b *parquetBuilder) build() (string, func()) {
 	defer func() { _ = db.Close() }()
 
 	b.writeParquetFiles(db, tmpDir)
+	fingerprint, err := CacheDatasetFingerprint(tmpDir)
+	require.NoError(b.t, err, "fingerprint cache fixture")
 	stateData, err := json.Marshal(CacheSyncState{
-		LastSyncAt: time.Date(2026, 7, 15, 12, 0, 0, 0, time.UTC),
+		LastSyncAt:         time.Date(2026, 7, 15, 12, 0, 0, 0, time.UTC),
+		PublishedAt:        time.Date(2026, 7, 15, 12, 1, 0, 0, time.UTC),
+		SchemaVersion:      CacheSchemaVersion,
+		DatasetFingerprint: fingerprint,
 	})
 	require.NoError(b.t, err, "marshal cache state")
 	require.NoError(b.t, os.WriteFile(CacheStatePath(tmpDir), stateData, 0o600),
 		"write cache state")
 
 	return tmpDir, func() { _ = os.RemoveAll(tmpDir) }
+}
+
+func (b *parquetBuilder) ensureParticipantIdentifiersTable() {
+	for _, table := range b.tables {
+		if table.name == datasetParticipantIdentifiers {
+			return
+		}
+	}
+	b.addEmptyTable(datasetParticipantIdentifiers, datasetParticipantIdentifiers,
+		datasetParticipantIdentifiers+".parquet", participantIdentifiersCols,
+		"(0::BIGINT, '', '', '', false)")
+}
+
+func (b *parquetBuilder) ensureOwnerParticipantsTable() {
+	for _, table := range b.tables {
+		if table.name == datasetOwnerParticipants {
+			return
+		}
+	}
+	b.addEmptyTable(datasetOwnerParticipants, datasetOwnerParticipants,
+		datasetOwnerParticipants+".parquet", ownerParticipantsCols, "(0::BIGINT, 0::BIGINT)")
+}
+
+func (b *parquetBuilder) ensureParticipantClustersTable() {
+	for _, table := range b.tables {
+		if table.name == datasetParticipantClusters {
+			return
+		}
+	}
+	b.addEmptyTable(datasetParticipantClusters, datasetParticipantClusters,
+		datasetParticipantClusters+".parquet", participantClustersCols, "(0::BIGINT, 0::BIGINT)")
+}
+
+func (b *parquetBuilder) ensureConversationParticipantsTable() {
+	for _, table := range b.tables {
+		if table.name == datasetConversationParticipants {
+			return
+		}
+	}
+	b.addEmptyTable(
+		datasetConversationParticipants,
+		datasetConversationParticipants,
+		datasetConversationParticipants+".parquet",
+		conversationParticipantsCols,
+		"(0::BIGINT, 0::BIGINT)",
+	)
 }
 
 // createTempDirs creates the temp directory and all required subdirectories.

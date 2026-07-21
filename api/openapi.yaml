@@ -91,6 +91,11 @@ components:
       properties:
         account:
           type: string
+        cache_state:
+          enum:
+            - ready
+            - stale
+          type: string
         identifier:
           type: string
         outcome:
@@ -1101,6 +1106,36 @@ components:
       required:
         - stats
       type: object
+    ConversationResponse:
+      additionalProperties: true
+      properties:
+        anchor_id:
+          format: int64
+          type: integer
+        has_after:
+          type: boolean
+        has_before:
+          type: boolean
+        id:
+          format: int64
+          type: integer
+        messages:
+          items:
+            $ref: "#/components/schemas/MessageDetail"
+          type:
+            - array
+            - "null"
+        total:
+          format: int64
+          type: integer
+      required:
+        - id
+        - anchor_id
+        - messages
+        - has_before
+        - has_after
+        - total
+      type: object
     CreateRequest:
       additionalProperties: false
       properties:
@@ -1115,6 +1150,23 @@ components:
       required:
         - name
         - accounts
+      type: object
+    CreateSavedViewRequest:
+      additionalProperties: false
+      properties:
+        canonical_state:
+          $ref: "#/components/schemas/SavedViewStateEnvelope"
+        description:
+          type: string
+        name:
+          type: string
+        schema_version:
+          format: int64
+          type: integer
+      required:
+        - name
+        - canonical_state
+        - schema_version
       type: object
     DeepSearchResponse:
       additionalProperties: true
@@ -1154,6 +1206,37 @@ components:
         - offset
         - limit
       type: object
+    DeletionManifestDetail:
+      additionalProperties: true
+      properties:
+        account:
+          type: string
+        created_at:
+          format: date-time
+          type: string
+        created_by:
+          type: string
+        description:
+          type: string
+        execution:
+          $ref: "#/components/schemas/Execution"
+        id:
+          type: string
+        message_count:
+          format: int64
+          type: integer
+        status:
+          type: string
+        summary:
+          $ref: "#/components/schemas/Summary"
+      required:
+        - id
+        - status
+        - created_at
+        - created_by
+        - description
+        - message_count
+      type: object
     DeletionManifestSummary:
       additionalProperties: true
       properties:
@@ -1178,6 +1261,166 @@ components:
         - created_by
         - description
         - message_count
+      type: object
+    DomainContextSummaryHTTPResponse:
+      additionalProperties: true
+      properties:
+        cache_revision:
+          type: string
+        candidate_snapshot_id:
+          type: string
+        search_provenance:
+          $ref: "#/components/schemas/SearchProvenance"
+        summary:
+          $ref: "#/components/schemas/DomainSummary"
+      required:
+        - summary
+        - cache_revision
+        - search_provenance
+      type: object
+    DomainSearchHTTPResponse:
+      additionalProperties: true
+      properties:
+        cache_revision:
+          type: string
+        candidate_snapshot_id:
+          type: string
+        next_cursor:
+          type: string
+        rows:
+          items:
+            $ref: "#/components/schemas/DomainSummary"
+          type:
+            - array
+            - "null"
+        search_provenance:
+          $ref: "#/components/schemas/SearchProvenance"
+        total_count:
+          format: int64
+          type: integer
+      required:
+        - rows
+        - total_count
+        - cache_revision
+        - search_provenance
+      type: object
+    DomainSummary:
+      additionalProperties: true
+      properties:
+        activity_count:
+          format: int64
+          type: integer
+        cache_revision:
+          type: string
+        domain:
+          type: string
+        file_count:
+          format: int64
+          type: integer
+        first_at:
+          format: date-time
+          type: string
+        last_at:
+          format: date-time
+          type: string
+        person_count:
+          format: int64
+          type: integer
+        source_counts:
+          items:
+            $ref: "#/components/schemas/SourceCount"
+          type:
+            - array
+            - "null"
+      required:
+        - domain
+        - activity_count
+        - person_count
+        - file_count
+        - source_counts
+        - first_at
+        - last_at
+        - cache_revision
+      type: object
+    EntryRow:
+      additionalProperties: true
+      properties:
+        anchor_message_id:
+          format: int64
+          type: integer
+        attachment_count:
+          format: int64
+          type: integer
+        attachment_size:
+          format: int64
+          type: integer
+        conversation_id:
+          format: int64
+          type: integer
+        conversation_type:
+          type: string
+        counterpart_participant_id:
+          format: int64
+          type: integer
+        deleted_from_source:
+          type: boolean
+        has_attachments:
+          type: boolean
+        key:
+          type: string
+        kind:
+          type: string
+        match:
+          $ref: "#/components/schemas/MatchSummary"
+        message_count:
+          format: int64
+          type: integer
+        message_type:
+          type: string
+        occurred_at:
+          format: date-time
+          type: string
+        participant_ids:
+          items:
+            format: int64
+            type: integer
+          type:
+            - array
+            - "null"
+        participant_labels:
+          items:
+            type: string
+          type:
+            - array
+            - "null"
+        preview:
+          type: string
+        source_id:
+          format: int64
+          type: integer
+        source_identifier:
+          type: string
+        source_type:
+          type: string
+        title:
+          type: string
+      required:
+        - key
+        - kind
+        - occurred_at
+        - match
+        - source_id
+        - source_type
+        - source_identifier
+        - message_type
+        - conversation_type
+        - title
+        - preview
+        - message_count
+        - has_attachments
+        - attachment_count
+        - attachment_size
+        - deleted_from_source
       type: object
     ErrorResponse:
       additionalProperties: true
@@ -1221,6 +1464,740 @@ components:
         - succeeded
         - failed
         - last_processed_index
+      type: object
+    ExploreActionTarget:
+      additionalProperties: true
+      properties:
+        action:
+          type: string
+        filename:
+          type: string
+        message_id:
+          format: int64
+          type: integer
+      required:
+        - action
+        - message_id
+        - filename
+      type: object
+    ExploreCacheUnavailableResponse:
+      additionalProperties: true
+      properties:
+        error:
+          type: string
+        message:
+          type: string
+        readiness:
+          enum:
+            - absent
+            - interrupted
+            - stale_schema
+            - drifted
+          type: string
+        recovery_action:
+          type: string
+      required:
+        - error
+        - message
+        - readiness
+        - recovery_action
+      type: object
+    ExploreFileFact:
+      additionalProperties: true
+      properties:
+        conversation_id:
+          format: int64
+          type: integer
+        entry_key:
+          type: string
+        filename:
+          type: string
+        id:
+          format: int64
+          type: integer
+        key:
+          type: string
+        message_id:
+          format: int64
+          type: integer
+        mime_type:
+          type: string
+        occurred_at:
+          format: date-time
+          type: string
+        size:
+          format: int64
+          type: integer
+        source_id:
+          format: int64
+          type: integer
+        source_identifier:
+          type: string
+        title:
+          type: string
+      required:
+        - id
+        - key
+        - entry_key
+        - message_id
+        - conversation_id
+        - occurred_at
+        - source_id
+        - source_identifier
+        - title
+        - filename
+        - mime_type
+        - size
+      type: object
+    ExploreFilesHTTPRequest:
+      additionalProperties: false
+      properties:
+        cursor:
+          type: string
+        limit:
+          format: int64
+          maximum: 100
+          minimum: 0
+          type: integer
+        predicate:
+          $ref: "#/components/schemas/ExploreHTTPRequest"
+      required:
+        - predicate
+      type: object
+    ExploreFilesHTTPResponse:
+      additionalProperties: true
+      properties:
+        cache_revision:
+          type: string
+        candidate_snapshot_id:
+          type: string
+        files:
+          items:
+            $ref: "#/components/schemas/ExploreFileFact"
+          type: array
+        next_cursor:
+          type: string
+        search_provenance:
+          $ref: "#/components/schemas/SearchProvenance"
+        total_count:
+          format: int64
+          type: integer
+      required:
+        - files
+        - total_count
+        - cache_revision
+        - search_provenance
+      type: object
+    ExploreFilter:
+      additionalProperties: false
+      properties:
+        dimension:
+          enum:
+            - source
+            - participant
+            - domain
+            - message_type
+            - after
+            - before
+            - deletion
+          type: string
+        values:
+          items:
+            type: string
+          minItems: 1
+          type: array
+      required:
+        - dimension
+        - values
+      type: object
+    ExploreGroupDimension:
+      enum:
+        - source
+        - participant
+        - domain
+        - message_type
+        - kind
+        - year
+        - month
+      type: string
+    ExploreGroupRow:
+      additionalProperties: true
+      properties:
+        count:
+          format: int64
+          type: integer
+        estimated_bytes:
+          format: int64
+          type: integer
+        key:
+          type: string
+        label:
+          type: string
+        latest_at:
+          format: date-time
+          type: string
+      required:
+        - key
+        - label
+        - count
+        - estimated_bytes
+        - latest_at
+      type: object
+    ExploreGroupSort:
+      additionalProperties: false
+      properties:
+        direction:
+          enum:
+            - asc
+            - desc
+          type: string
+        field:
+          enum:
+            - key
+            - count
+            - estimated_bytes
+            - latest_at
+          type: string
+      required:
+        - field
+        - direction
+      type: object
+    ExploreGroupsHTTPRequest:
+      additionalProperties: false
+      properties:
+        cursor:
+          type: string
+        filters:
+          items:
+            $ref: "#/components/schemas/ExploreFilter"
+          type:
+            - array
+            - "null"
+        grouping:
+          items:
+            $ref: "#/components/schemas/ExploreGroupDimension"
+          maxItems: 1
+          minItems: 1
+          type: array
+        limit:
+          format: int64
+          maximum: 500
+          minimum: 0
+          type: integer
+        presentation:
+          enum:
+            - table
+          type: string
+        query:
+          type: string
+        search_mode:
+          enum:
+            - full_text
+            - semantic
+            - hybrid
+          type: string
+        sort:
+          items:
+            $ref: "#/components/schemas/ExploreGroupSort"
+          maxItems: 1
+          type:
+            - array
+            - "null"
+      required:
+        - grouping
+      type: object
+    ExploreGroupsHTTPResponse:
+      additionalProperties: true
+      properties:
+        cache_revision:
+          type: string
+        candidate_snapshot_id:
+          type: string
+        next_cursor:
+          type: string
+        rows:
+          items:
+            $ref: "#/components/schemas/ExploreGroupRow"
+          type: array
+        search_provenance:
+          $ref: "#/components/schemas/SearchProvenance"
+        total_count:
+          format: int64
+          type: integer
+      required:
+        - rows
+        - total_count
+        - cache_revision
+        - search_provenance
+      type: object
+    ExploreHTTPRequest:
+      additionalProperties: false
+      properties:
+        candidate_snapshot_id:
+          type: string
+        cursor:
+          type: string
+        filters:
+          items:
+            $ref: "#/components/schemas/ExploreFilter"
+          type:
+            - array
+            - "null"
+        grouping:
+          items:
+            $ref: "#/components/schemas/ExploreGroupDimension"
+          type:
+            - array
+            - "null"
+        limit:
+          format: int64
+          maximum: 500
+          minimum: 0
+          type: integer
+        presentation:
+          enum:
+            - table
+            - timeline
+            - files
+          type: string
+        query:
+          type: string
+        search_mode:
+          enum:
+            - full_text
+            - semantic
+            - hybrid
+          type: string
+        sort:
+          items:
+            $ref: "#/components/schemas/ExploreSort"
+          type:
+            - array
+            - "null"
+      type: object
+    ExploreHTTPResponse:
+      additionalProperties: true
+      properties:
+        cache_revision:
+          type: string
+        candidate_pool_saturated:
+          type: boolean
+        candidate_snapshot_id:
+          type: string
+        next_cursor:
+          type: string
+        rows:
+          items:
+            $ref: "#/components/schemas/EntryRow"
+          type: array
+        search_provenance:
+          $ref: "#/components/schemas/SearchProvenance"
+        total_count:
+          format: int64
+          type: integer
+      required:
+        - rows
+        - cache_revision
+        - search_provenance
+      type: object
+    ExploreMatchCountsRequest:
+      additionalProperties: false
+      properties:
+        predicate:
+          $ref: "#/components/schemas/ExploreHTTPRequest"
+        row_keys:
+          items:
+            type: string
+          maxItems: 500
+          minItems: 1
+          type: array
+      required:
+        - predicate
+        - row_keys
+      type: object
+    ExploreMatchCountsResponse:
+      additionalProperties: true
+      properties:
+        cache_revision:
+          type: string
+        canonical_query_hash:
+          type: string
+        counts:
+          items:
+            $ref: "#/components/schemas/ExploreRowMatchCount"
+          type: array
+        lexical_index_revision:
+          type: string
+      required:
+        - counts
+        - cache_revision
+        - lexical_index_revision
+        - canonical_query_hash
+      type: object
+    ExplorePreflightRequest:
+      additionalProperties: false
+      properties:
+        selection:
+          $ref: "#/components/schemas/ExploreSelection"
+      required:
+        - selection
+      type: object
+    ExplorePreflightResponse:
+      additionalProperties: true
+      properties:
+        action_targets:
+          items:
+            $ref: "#/components/schemas/ExploreActionTarget"
+          type: array
+        cache_revision:
+          type: string
+        count:
+          format: int64
+          type: integer
+        estimated_bytes:
+          format: int64
+          type: integer
+        expires_at:
+          format: date-time
+          type: string
+        operation_token:
+          type: string
+        search_provenance:
+          $ref: "#/components/schemas/SearchProvenance"
+        unavailable_actions:
+          items:
+            $ref: "#/components/schemas/ExploreUnavailableAction"
+          type: array
+      required:
+        - count
+        - estimated_bytes
+        - cache_revision
+        - search_provenance
+        - unavailable_actions
+        - action_targets
+        - operation_token
+        - expires_at
+      type: object
+    ExploreRowMatchCount:
+      additionalProperties: true
+      properties:
+        count:
+          format: int64
+          type: integer
+        row_key:
+          type: string
+      required:
+        - row_key
+        - count
+      type: object
+    ExploreSelection:
+      additionalProperties: false
+      properties:
+        cache_revision:
+          type: string
+        candidate_snapshot_id:
+          type: string
+        exclusions:
+          items:
+            type: string
+          type:
+            - array
+            - "null"
+        mode:
+          enum:
+            - explicit
+            - all_matching
+          type: string
+        predicate:
+          $ref: "#/components/schemas/ExploreHTTPRequest"
+        row_keys:
+          items:
+            type: string
+          type:
+            - array
+            - "null"
+        search_provenance:
+          $ref: "#/components/schemas/SearchProvenance"
+      required:
+        - mode
+        - predicate
+        - cache_revision
+        - search_provenance
+      type: object
+    ExploreSort:
+      additionalProperties: false
+      properties:
+        direction:
+          enum:
+            - desc
+          type: string
+        field:
+          enum:
+            - occurred_at
+          type: string
+      required:
+        - field
+        - direction
+      type: object
+    ExploreUnavailableAction:
+      additionalProperties: true
+      properties:
+        action:
+          type: string
+        reason:
+          type: string
+      required:
+        - action
+        - reason
+      type: object
+    FileGroupsHTTPRequest:
+      additionalProperties: false
+      properties:
+        cursor:
+          type: string
+        filename_query:
+          type: string
+        grouping:
+          items:
+            $ref: "#/components/schemas/ExploreGroupDimension"
+          maxItems: 1
+          minItems: 1
+          type: array
+        limit:
+          format: int64
+          maximum: 500
+          minimum: 0
+          type: integer
+        mime_families:
+          items:
+            type: string
+          type:
+            - array
+            - "null"
+        predicate:
+          $ref: "#/components/schemas/ExploreHTTPRequest"
+        sort:
+          items:
+            $ref: "#/components/schemas/ExploreGroupSort"
+          maxItems: 1
+          type:
+            - array
+            - "null"
+      required:
+        - predicate
+        - grouping
+      type: object
+    FileGroupsHTTPResponse:
+      additionalProperties: true
+      properties:
+        cache_revision:
+          type: string
+        candidate_snapshot_id:
+          type: string
+        next_cursor:
+          type: string
+        rows:
+          items:
+            $ref: "#/components/schemas/ExploreGroupRow"
+          type: array
+        search_provenance:
+          $ref: "#/components/schemas/SearchProvenance"
+        total_count:
+          format: int64
+          type: integer
+      required:
+        - rows
+        - total_count
+        - cache_revision
+        - search_provenance
+      type: object
+    FileMetadataResponse:
+      additionalProperties: true
+      properties:
+        content_available:
+          type: boolean
+        content_hash:
+          type: string
+        content_state:
+          enum:
+            - metadata_only
+            - url_only
+            - missing_blob
+            - local_content
+          type: string
+        conversation_id:
+          format: int64
+          type: integer
+        filename:
+          type: string
+        id:
+          format: int64
+          type: integer
+        message_id:
+          format: int64
+          type: integer
+        mime_type:
+          type: string
+        size_bytes:
+          format: int64
+          type: integer
+        url:
+          type: string
+      required:
+        - id
+        - message_id
+        - conversation_id
+        - filename
+        - mime_type
+        - size_bytes
+        - content_state
+        - content_available
+      type: object
+    FileSearchHTTPRequest:
+      additionalProperties: false
+      properties:
+        cursor:
+          type: string
+        filename_query:
+          type: string
+        limit:
+          format: int64
+          maximum: 500
+          minimum: 0
+          type: integer
+        mime_families:
+          items:
+            type: string
+          type:
+            - array
+            - "null"
+        predicate:
+          $ref: "#/components/schemas/ExploreHTTPRequest"
+        sort:
+          $ref: "#/components/schemas/FileSearchSort"
+      required:
+        - predicate
+        - sort
+      type: object
+    FileSearchHTTPResponse:
+      additionalProperties: true
+      properties:
+        cache_revision:
+          type: string
+        candidate_snapshot_id:
+          type: string
+        files:
+          items:
+            $ref: "#/components/schemas/FileSearchRow"
+          type:
+            - array
+            - "null"
+        next_cursor:
+          type: string
+        search_provenance:
+          $ref: "#/components/schemas/SearchProvenance"
+        total_count:
+          format: int64
+          type: integer
+      required:
+        - files
+        - total_count
+        - cache_revision
+        - search_provenance
+      type: object
+    FileSearchRow:
+      additionalProperties: true
+      properties:
+        containing_title:
+          type: string
+        content_available:
+          type: boolean
+        content_state:
+          enum:
+            - metadata_only
+            - url_only
+            - missing_blob
+            - local_content
+          type: string
+        conversation_id:
+          format: int64
+          type: integer
+        entry_key:
+          type: string
+        filename:
+          type: string
+        id:
+          format: int64
+          type: integer
+        key:
+          type: string
+        message_id:
+          format: int64
+          type: integer
+        mime_family:
+          type: string
+        mime_type:
+          type: string
+        occurred_at:
+          format: date-time
+          type: string
+        participant_domains:
+          items:
+            type: string
+          type:
+            - array
+            - "null"
+        participant_ids:
+          items:
+            format: int64
+            type: integer
+          type:
+            - array
+            - "null"
+        participant_labels:
+          items:
+            type: string
+          type:
+            - array
+            - "null"
+        size_bytes:
+          format: int64
+          type: integer
+        source_id:
+          format: int64
+          type: integer
+        source_identifier:
+          type: string
+        source_type:
+          type: string
+      required:
+        - id
+        - key
+        - entry_key
+        - message_id
+        - conversation_id
+        - occurred_at
+        - source_id
+        - source_type
+        - source_identifier
+        - containing_title
+        - filename
+        - mime_type
+        - mime_family
+        - size_bytes
+        - content_state
+        - content_available
+      type: object
+    FileSearchSort:
+      additionalProperties: false
+      properties:
+        direction:
+          type: string
+        field:
+          type: string
+      required:
+        - field
+        - direction
       type: object
     FilteredMessagesResponse:
       additionalProperties: true
@@ -1499,6 +2476,72 @@ components:
         - took_ms
         - results
       type: object
+    IdentityLinkRequest:
+      additionalProperties: false
+      properties:
+        participant_a:
+          format: int64
+          type: integer
+        participant_b:
+          format: int64
+          type: integer
+      required:
+        - participant_a
+        - participant_b
+      type: object
+    IdentityLinkResponse:
+      additionalProperties: true
+      properties:
+        cache_state:
+          enum:
+            - ready
+            - stale
+          type: string
+        identity_revision:
+          format: int64
+          type: integer
+      required:
+        - identity_revision
+        - cache_state
+      type: object
+    IdentitySearchHTTPRequest:
+      additionalProperties: false
+      properties:
+        cursor:
+          type: string
+        identity_query:
+          type: string
+        limit:
+          format: int64
+          maximum: 500
+          minimum: 0
+          type: integer
+        predicate:
+          $ref: "#/components/schemas/ExploreHTTPRequest"
+        sort:
+          $ref: "#/components/schemas/IdentitySearchSort"
+      required:
+        - predicate
+        - sort
+      type: object
+    IdentitySearchSort:
+      additionalProperties: false
+      properties:
+        direction:
+          enum:
+            - asc
+            - desc
+          type: string
+        field:
+          enum:
+            - activity_count
+            - latest_at
+            - display_label
+          type: string
+      required:
+        - field
+        - direction
+      type: object
     ListDeletionsResponse:
       additionalProperties: true
       properties:
@@ -1550,6 +2593,18 @@ components:
         - filters
         - gmail_ids
         - status
+      type: object
+    MatchSummary:
+      additionalProperties: true
+      properties:
+        lexical_match_count:
+          format: int64
+          type: integer
+        semantic_score:
+          format: double
+          type: number
+        strongest_excerpt:
+          type: string
       type: object
     MessageDetail:
       additionalProperties: true
@@ -1755,6 +2810,173 @@ components:
       required:
         - busy
       type: object
+    PatchSavedViewRequest:
+      additionalProperties: false
+      properties:
+        canonical_state:
+          $ref: "#/components/schemas/SavedViewStateEnvelope"
+        description:
+          type: string
+        name:
+          type: string
+        schema_version:
+          format: int64
+          type: integer
+      type: object
+    PersonCluster:
+      additionalProperties: true
+      properties:
+        canonical_id:
+          format: int64
+          type: integer
+        edges:
+          items:
+            $ref: "#/components/schemas/PersonClusterEdge"
+          type:
+            - array
+            - "null"
+        member_ids:
+          items:
+            format: int64
+            type: integer
+          type:
+            - array
+            - "null"
+      required:
+        - canonical_id
+        - member_ids
+        - edges
+      type: object
+    PersonClusterEdge:
+      additionalProperties: true
+      properties:
+        participant_a:
+          format: int64
+          type: integer
+        participant_b:
+          format: int64
+          type: integer
+      required:
+        - participant_a
+        - participant_b
+      type: object
+    PersonContextSummaryHTTPResponse:
+      additionalProperties: true
+      properties:
+        cache_revision:
+          type: string
+        candidate_snapshot_id:
+          type: string
+        search_provenance:
+          $ref: "#/components/schemas/SearchProvenance"
+        summary:
+          $ref: "#/components/schemas/PersonSummary"
+      required:
+        - summary
+        - cache_revision
+        - search_provenance
+      type: object
+    PersonIdentifier:
+      additionalProperties: true
+      properties:
+        display_value:
+          type: string
+        is_primary:
+          type: boolean
+        participant_id:
+          format: int64
+          type: integer
+        provenance:
+          type: string
+        type:
+          type: string
+        value:
+          type: string
+      required:
+        - type
+        - value
+        - is_primary
+        - provenance
+        - participant_id
+      type: object
+    PersonSearchHTTPResponse:
+      additionalProperties: true
+      properties:
+        cache_revision:
+          type: string
+        candidate_snapshot_id:
+          type: string
+        next_cursor:
+          type: string
+        rows:
+          items:
+            $ref: "#/components/schemas/PersonSummary"
+          type:
+            - array
+            - "null"
+        search_provenance:
+          $ref: "#/components/schemas/SearchProvenance"
+        total_count:
+          format: int64
+          type: integer
+      required:
+        - rows
+        - total_count
+        - cache_revision
+        - search_provenance
+      type: object
+    PersonSummary:
+      additionalProperties: true
+      properties:
+        activity_count:
+          format: int64
+          type: integer
+        cache_revision:
+          type: string
+        cluster:
+          $ref: "#/components/schemas/PersonCluster"
+        display_label:
+          type: string
+        display_name:
+          type: string
+        file_count:
+          format: int64
+          type: integer
+        first_at:
+          format: date-time
+          type: string
+        id:
+          format: int64
+          type: integer
+        identifiers:
+          items:
+            $ref: "#/components/schemas/PersonIdentifier"
+          type:
+            - array
+            - "null"
+        last_at:
+          format: date-time
+          type: string
+        partial_label:
+          type: boolean
+        source_counts:
+          items:
+            $ref: "#/components/schemas/SourceCount"
+          type:
+            - array
+            - "null"
+      required:
+        - id
+        - display_label
+        - partial_label
+        - identifiers
+        - activity_count
+        - file_count
+        - source_counts
+        - first_at
+        - last_at
+        - cache_revision
+      type: object
     PingInfo:
       additionalProperties: true
       properties:
@@ -1817,6 +3039,162 @@ components:
         - rows
         - row_count
       type: object
+    RelationshipRow:
+      additionalProperties: true
+      properties:
+        canonical_id:
+          format: int64
+          type: integer
+        display_label:
+          type: string
+        last_at:
+          format: date-time
+          type: string
+        member_ids:
+          items:
+            format: int64
+            type: integer
+          type:
+            - array
+            - "null"
+        score:
+          format: double
+          type: number
+        signals:
+          $ref: "#/components/schemas/RelationshipSignals"
+      required:
+        - canonical_id
+        - display_label
+        - member_ids
+        - score
+        - signals
+        - last_at
+      type: object
+    RelationshipSignals:
+      additionalProperties: true
+      properties:
+        last_interaction_at:
+          format: date-time
+          type: string
+        meeting_count:
+          format: int64
+          type: integer
+        meetings_together:
+          format: double
+          type: number
+        modalities:
+          format: int64
+          type: integer
+        received_from_them:
+          format: double
+          type: number
+        sent_count:
+          format: int64
+          type: integer
+        sent_to_them:
+          format: double
+          type: number
+      required:
+        - sent_to_them
+        - received_from_them
+        - meetings_together
+        - sent_count
+        - meeting_count
+        - modalities
+        - last_interaction_at
+      type: object
+    RelationshipTimelineHTTPRequest:
+      additionalProperties: false
+      properties:
+        cursor:
+          type: string
+        filters:
+          items:
+            $ref: "#/components/schemas/ExploreFilter"
+          type:
+            - array
+            - "null"
+        limit:
+          format: int64
+          maximum: 500
+          minimum: 0
+          type: integer
+        timezone:
+          type: string
+      type: object
+    RelationshipTimelineHTTPResponse:
+      additionalProperties: true
+      properties:
+        cache_revision:
+          type: string
+        canonical_id:
+          format: int64
+          type: integer
+        identity_revision:
+          format: int64
+          type: integer
+        next_cursor:
+          type: string
+        rows:
+          items:
+            $ref: "#/components/schemas/TimelineRow"
+          type:
+            - array
+            - "null"
+        total_count:
+          format: int64
+          type: integer
+      required:
+        - canonical_id
+        - rows
+        - total_count
+        - cache_revision
+        - identity_revision
+      type: object
+    RelationshipsHTTPRequest:
+      additionalProperties: false
+      properties:
+        cursor:
+          type: string
+        filters:
+          items:
+            $ref: "#/components/schemas/ExploreFilter"
+          type:
+            - array
+            - "null"
+        limit:
+          format: int64
+          maximum: 500
+          minimum: 0
+          type: integer
+        show_all:
+          type: boolean
+      type: object
+    RelationshipsHTTPResponse:
+      additionalProperties: true
+      properties:
+        cache_revision:
+          type: string
+        identity_revision:
+          format: int64
+          type: integer
+        next_cursor:
+          type: string
+        rows:
+          items:
+            $ref: "#/components/schemas/RelationshipRow"
+          type:
+            - array
+            - "null"
+        total_count:
+          format: int64
+          type: integer
+      required:
+        - rows
+        - total_count
+        - cache_revision
+        - identity_revision
+      type: object
     RemoveRequest:
       additionalProperties: false
       properties:
@@ -1833,6 +3211,11 @@ components:
       properties:
         account:
           type: string
+        cache_state:
+          enum:
+            - ready
+            - stale
+          type: string
         identifier:
           type: string
         no_identity:
@@ -1844,6 +3227,114 @@ components:
         - account
         - identifier
         - removed
+      type: object
+    SavedView:
+      additionalProperties: true
+      properties:
+        canonical_state:
+          $ref: "#/components/schemas/SavedViewStateEnvelope"
+        created_at:
+          format: date-time
+          type: string
+        description:
+          type: string
+        id:
+          format: int64
+          type: integer
+        name:
+          type: string
+        revision:
+          format: int64
+          type: integer
+        schema_version:
+          format: int64
+          type: integer
+        updated_at:
+          format: date-time
+          type: string
+      required:
+        - id
+        - name
+        - canonical_state
+        - schema_version
+        - revision
+        - created_at
+        - updated_at
+      type: object
+    SavedViewFilter:
+      additionalProperties: false
+      properties:
+        field:
+          type: string
+        operator:
+          type: string
+        values:
+          description: Exact filter values; numeric identifiers use decimal strings
+          items:
+            type: string
+          type: array
+      required:
+        - field
+        - operator
+        - values
+      type: object
+    SavedViewSort:
+      additionalProperties: false
+      properties:
+        direction:
+          enum:
+            - asc
+            - desc
+          type: string
+        field:
+          type: string
+      required:
+        - field
+        - direction
+      type: object
+    SavedViewStateEnvelope:
+      additionalProperties: false
+      properties:
+        columns:
+          items:
+            type: string
+          type: array
+        filters:
+          items:
+            $ref: "#/components/schemas/SavedViewFilter"
+          type: array
+        grouping:
+          items:
+            type: string
+          type: array
+        inspector_pinned:
+          type: boolean
+        presentation:
+          enum:
+            - table
+            - timeline
+            - files
+          type: string
+        query:
+          type: string
+        search_mode:
+          type: string
+        sort:
+          items:
+            $ref: "#/components/schemas/SavedViewSort"
+          type: array
+      type: object
+    SavedViewsResponse:
+      additionalProperties: true
+      properties:
+        saved_views:
+          items:
+            $ref: "#/components/schemas/SavedView"
+          type:
+            - array
+            - "null"
+      required:
+        - saved_views
       type: object
     SchedulerStatusResponse:
       additionalProperties: true
@@ -1875,6 +3366,61 @@ components:
           format: double
           type: number
       type: object
+    SearchCoverageRequest:
+      additionalProperties: false
+      properties:
+        filters:
+          items:
+            $ref: "#/components/schemas/ExploreFilter"
+          type:
+            - array
+            - "null"
+      type: object
+    SearchCoverageResponse:
+      additionalProperties: true
+      properties:
+        actions:
+          items:
+            enum:
+              - retry
+              - build_index
+            type: string
+          type: array
+        cache_revision:
+          type: string
+        detail:
+          type: string
+        eligible_count:
+          format: int64
+          type: integer
+        embedded_count:
+          format: int64
+          type: integer
+        percentage:
+          format: double
+          type: number
+        status:
+          enum:
+            - disabled
+            - initializing
+            - stale
+            - incomplete
+            - unavailable
+            - ready
+          type: string
+        vector_fingerprint:
+          type: string
+        vector_generation:
+          format: int64
+          type: integer
+      required:
+        - eligible_count
+        - embedded_count
+        - percentage
+        - cache_revision
+        - status
+        - actions
+      type: object
     SearchFastResponse:
       additionalProperties: true
       properties:
@@ -1903,6 +3449,15 @@ components:
         - messages
         - total_count
       type: object
+    SearchProvenance:
+      additionalProperties: false
+      properties:
+        lexical_index_revision:
+          type: string
+        vector_generation:
+          format: int64
+          type: integer
+      type: object
     SearchResult:
       additionalProperties: true
       properties:
@@ -1930,6 +3485,27 @@ components:
         - page_size
         - messages
       type: object
+    SecretSettingState:
+      additionalProperties: true
+      properties:
+        configured:
+          type: boolean
+      required:
+        - configured
+      type: object
+    SecretSettingUpdate:
+      additionalProperties: false
+      properties:
+        action:
+          enum:
+            - set
+            - clear
+          type: string
+        value:
+          type: string
+      required:
+        - action
+      type: object
     SenderCount:
       additionalProperties: false
       properties:
@@ -1941,6 +3517,157 @@ components:
       required:
         - sender
         - count
+      type: object
+    SessionLoginRequest:
+      additionalProperties: false
+      properties:
+        api_key:
+          type: string
+      required:
+        - api_key
+      type: object
+    SessionStatus:
+      additionalProperties: true
+      properties:
+        auth_mode:
+          enum:
+            - loopback
+            - api_key
+            - session
+            - required
+          type: string
+        csrf_token:
+          type: string
+        https:
+          type: boolean
+        plain_http_warning:
+          type: boolean
+      required:
+        - auth_mode
+        - https
+        - plain_http_warning
+      type: object
+    Setting:
+      additionalProperties: true
+      properties:
+        group:
+          enum:
+            - browser
+            - server
+            - archive
+            - search
+            - sources
+            - integrations
+          type: string
+        key:
+          type: string
+        kind:
+          enum:
+            - string
+            - integer
+            - number
+            - boolean
+            - string_array
+            - secret
+          type: string
+        options:
+          items:
+            type: string
+          type:
+            - array
+            - "null"
+        restart_required:
+          type: boolean
+        secret:
+          $ref: "#/components/schemas/SecretSettingState"
+        testable:
+          type: boolean
+        value:
+          $ref: "#/components/schemas/SettingValue"
+      required:
+        - key
+        - group
+        - kind
+        - restart_required
+      type: object
+    SettingUpdate:
+      additionalProperties: false
+      properties:
+        key:
+          type: string
+        secret:
+          $ref: "#/components/schemas/SecretSettingUpdate"
+        value:
+          $ref: "#/components/schemas/SettingValue"
+      required:
+        - key
+      type: object
+    SettingValue:
+      oneOf:
+        - additionalProperties: false
+          properties:
+            string:
+              type: string
+          required:
+            - string
+          type: object
+        - additionalProperties: false
+          properties:
+            integer:
+              format: int64
+              type: integer
+          required:
+            - integer
+          type: object
+        - additionalProperties: false
+          properties:
+            number:
+              format: double
+              type: number
+          required:
+            - number
+          type: object
+        - additionalProperties: false
+          properties:
+            boolean:
+              type: boolean
+          required:
+            - boolean
+          type: object
+        - additionalProperties: false
+          properties:
+            strings:
+              items:
+                type: string
+              type: array
+          required:
+            - strings
+          type: object
+    SettingsPatchRequest:
+      additionalProperties: false
+      properties:
+        confirm_api_key_restart:
+          type: boolean
+        updates:
+          items:
+            $ref: "#/components/schemas/SettingUpdate"
+          minItems: 1
+          type: array
+      required:
+        - updates
+      type: object
+    SettingsResponse:
+      additionalProperties: true
+      properties:
+        pending_restart:
+          type: boolean
+        settings:
+          items:
+            $ref: "#/components/schemas/Setting"
+          type: array
+      required:
+        - settings
+        - pending_restart
       type: object
     SimilarSearchResponse:
       additionalProperties: true
@@ -1965,11 +3692,27 @@ components:
         - generation
         - messages
       type: object
+    SourceCount:
+      additionalProperties: true
+      properties:
+        count:
+          format: int64
+          type: integer
+        source_type:
+          type: string
+      required:
+        - source_type
+        - count
+      type: object
     SourceStatus:
       additionalProperties: true
       properties:
         active_sync:
-          $ref: "#/components/schemas/SyncRunStatus"
+          oneOf:
+            - $ref: "#/components/schemas/SyncRunStatus"
+            - type: "null"
+        can_sync:
+          type: boolean
         display_name:
           type:
             - string
@@ -1980,14 +3723,30 @@ components:
         identifier:
           type: string
         last_successful_sync:
-          $ref: "#/components/schemas/SyncRunStatus"
+          oneOf:
+            - $ref: "#/components/schemas/SyncRunStatus"
+            - type: "null"
         last_sync_at:
           type:
             - string
             - "null"
         latest_sync:
-          $ref: "#/components/schemas/SyncRunStatus"
+          oneOf:
+            - $ref: "#/components/schemas/SyncRunStatus"
+            - type: "null"
+        next_sync_at:
+          type:
+            - string
+            - "null"
+        schedule:
+          type: string
+        scheduled:
+          type: boolean
+        scheduler_last_error:
+          type: string
         source_type:
+          type: string
+        sync_unavailable_reason:
           type: string
         updated_at:
           type: string
@@ -2001,6 +3760,9 @@ components:
         - active_sync
         - latest_sync
         - last_successful_sync
+        - can_sync
+        - scheduled
+        - next_sync_at
       type: object
     SourceStatusResponse:
       additionalProperties: true
@@ -2065,6 +3827,10 @@ components:
           type:
             - array
             - "null"
+        operation_token:
+          type: string
+        selection:
+          $ref: "#/components/schemas/ExploreSelection"
       type: object
     StageDeletionResponse:
       additionalProperties: true
@@ -2279,6 +4045,167 @@ components:
         - cursor_before
         - cursor_after
       type: object
+    TaskIntegrationStatusResponse:
+      additionalProperties: true
+      properties:
+        message:
+          description: Credential-free status explanation
+          type: string
+        project:
+          description: Configured project when available
+          type: string
+        security_note:
+          description: Platform-specific local socket security limitation
+          type: string
+        state:
+          description: Current task integration state
+          enum:
+            - disabled
+            - not_found
+            - authentication_required
+            - unreachable
+            - incompatible
+            - wrong_project
+            - ready
+          type: string
+      required:
+        - state
+        - message
+      type: object
+    TaskLinkLookupResponse:
+      additionalProperties: true
+      properties:
+        complete:
+          type: boolean
+        last_scan:
+          format: date-time
+          type: string
+        outbound_metadata:
+          $ref: "#/components/schemas/TaskLinkOutboundMetadata"
+        reason:
+          type: string
+        remote_revision:
+          type: string
+        state:
+          type: string
+        tasks:
+          items:
+            $ref: "#/components/schemas/TaskSummary"
+          type: array
+      required:
+        - tasks
+        - outbound_metadata
+        - state
+        - complete
+        - last_scan
+      type: object
+    TaskLinkMutationRequest:
+      additionalProperties: false
+      properties:
+        added_at:
+          description: Browser-generated retry-stable RFC3339 timestamp for the outbound mail link
+          type: string
+        description:
+          type: string
+        labels:
+          items:
+            type: string
+          type:
+            - array
+            - "null"
+        priority:
+          type: string
+        task_id:
+          description: Existing task to link; omit to create a task
+          type: string
+        title:
+          type: string
+      required:
+        - added_at
+      type: object
+    TaskLinkMutationResponse:
+      additionalProperties: true
+      properties:
+        task:
+          $ref: "#/components/schemas/TaskLinkTask"
+      required:
+        - task
+      type: object
+    TaskLinkOutboundMetadata:
+      additionalProperties: true
+      properties:
+        archive_uid:
+          type: string
+        conversation_id:
+          format: int64
+          type: integer
+        from:
+          type: string
+        message_id:
+          format: int64
+          type: integer
+        sent_at:
+          type: string
+        source_identifier:
+          type: string
+        source_message_id:
+          type: string
+        source_type:
+          type: string
+        subject:
+          type: string
+      required:
+        - archive_uid
+        - message_id
+        - conversation_id
+        - subject
+        - from
+        - sent_at
+        - source_type
+        - source_identifier
+        - source_message_id
+      type: object
+    TaskLinkTask:
+      additionalProperties: true
+      properties:
+        id:
+          type: string
+        project:
+          type: string
+        revision:
+          type: string
+        title:
+          type: string
+      required:
+        - id
+        - project
+        - title
+      type: object
+    TaskSearchResponse:
+      additionalProperties: true
+      properties:
+        tasks:
+          items:
+            $ref: "#/components/schemas/TaskSummary"
+          type:
+            - array
+            - "null"
+      required:
+        - tasks
+      type: object
+    TaskSummary:
+      additionalProperties: true
+      properties:
+        id:
+          type: string
+        revision:
+          type: string
+        title:
+          type: string
+      required:
+        - id
+        - title
+      type: object
     TextConversationRow:
       additionalProperties: true
       properties:
@@ -2360,6 +4287,47 @@ components:
         - offset
         - limit
         - messages
+      type: object
+    TimelineRow:
+      additionalProperties: true
+      properties:
+        anchor_message_id:
+          format: int64
+          type: integer
+        conversation_id:
+          format: int64
+          type: integer
+        first_at:
+          format: date-time
+          type: string
+        has_attachments:
+          type: boolean
+        key:
+          type: string
+        kind:
+          type: string
+        message_count:
+          format: int64
+          type: integer
+        occurred_at:
+          format: date-time
+          type: string
+        preview:
+          type: string
+        source_id:
+          format: int64
+          type: integer
+        title:
+          type: string
+      required:
+        - key
+        - kind
+        - title
+        - preview
+        - occurred_at
+        - message_count
+        - source_id
+        - has_attachments
       type: object
     TokenUploadRequest:
       additionalProperties: false
@@ -2471,7 +4439,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 1.5.0
+  version: 1.24.0
 openapi: 3.1.0
 paths:
   /api/ping:
@@ -2493,6 +4461,70 @@ paths:
       summary: Daemon discovery ping
       tags:
         - Daemon
+  /api/session:
+    delete:
+      operationId: logoutSession
+      responses:
+        "204":
+          description: No Content
+        "429":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      summary: Delete the current browser session
+      tags:
+        - Session
+    get:
+      operationId: getSession
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SessionStatus"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      summary: Get browser authentication status
+      tags:
+        - Session
+  /api/session/login:
+    post:
+      operationId: loginSession
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SessionLoginRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SessionStatus"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      summary: Create an in-memory browser session
+      tags:
+        - Session
   /api/v1/accounts:
     get:
       operationId: listAccounts
@@ -4169,6 +6201,64 @@ paths:
       summary: Verify the CLI archive against Gmail
       tags:
         - API
+  /api/v1/conversations/{id}:
+    get:
+      operationId: getConversation
+      parameters:
+        - description: Conversation ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+        - description: Selected message ID anchoring the chronological window
+          in: query
+          name: anchor
+          required: true
+          schema:
+            format: int64
+            type: integer
+        - description: Messages before the anchor (default 25, max 50)
+          in: query
+          name: before
+          schema:
+            format: int64
+            type: integer
+        - description: Messages after the anchor (default 25, max 50)
+          in: query
+          name: after
+          schema:
+            format: int64
+            type: integer
+        - description: Lower UTC bound, inclusive (RFC3339). Restricts the window, before/after counts, and has_before/has_after to messages in [start, end)
+          in: query
+          name: start
+          schema:
+            type: string
+        - description: Upper UTC bound, exclusive (RFC3339). Restricts the window, before/after counts, and has_before/has_after to messages in [start, end)
+          in: query
+          name: end
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConversationResponse"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Get a bounded containing conversation
+      tags:
+        - API
   /api/v1/deletions:
     get:
       operationId: listDeletions
@@ -4256,6 +6346,689 @@ paths:
       summary: Cancel a staged deletion manifest
       tags:
         - API
+    get:
+      operationId: getDeletion
+      parameters:
+        - description: Deletion manifest ID
+          in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeletionManifestDetail"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Inspect a staged deletion manifest
+      tags:
+        - API
+  /api/v1/domains/search:
+    post:
+      operationId: searchDomains
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/IdentitySearchHTTPRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DomainSearchHTTPResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                anyOf:
+                  - $ref: "#/components/schemas/ExploreCacheUnavailableResponse"
+                  - $ref: "#/components/schemas/ErrorResponse"
+          description: Service Unavailable
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Search analytical domains
+      tags:
+        - Exploration
+  /api/v1/domains/{domain}:
+    get:
+      operationId: getDomain
+      parameters:
+        - description: Exact normalized domain fact
+          in: path
+          name: domain
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DomainSummary"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Get one analytical domain
+      tags:
+        - API
+  /api/v1/domains/{domain}/files/search:
+    post:
+      operationId: searchDomainFiles
+      parameters:
+        - description: Exact normalized domain fact
+          in: path
+          name: domain
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FileSearchHTTPRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FileSearchHTTPResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                anyOf:
+                  - $ref: "#/components/schemas/ExploreCacheUnavailableResponse"
+                  - $ref: "#/components/schemas/ErrorResponse"
+          description: Service Unavailable
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Search one domain's analytical files
+      tags:
+        - Exploration
+  /api/v1/domains/{domain}/summary:
+    post:
+      operationId: getDomainContextSummary
+      parameters:
+        - description: Exact normalized domain fact
+          in: path
+          name: domain
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ExploreHTTPRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DomainContextSummaryHTTPResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                anyOf:
+                  - $ref: "#/components/schemas/ExploreCacheUnavailableResponse"
+                  - $ref: "#/components/schemas/ErrorResponse"
+          description: Service Unavailable
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Get one domain's contextual analytical summary
+      tags:
+        - Exploration
+  /api/v1/domains/{domain}/timeline:
+    post:
+      operationId: getDomainTimeline
+      parameters:
+        - description: Exact normalized domain fact
+          in: path
+          name: domain
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ExploreHTTPRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExploreHTTPResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                anyOf:
+                  - $ref: "#/components/schemas/ExploreCacheUnavailableResponse"
+                  - $ref: "#/components/schemas/ErrorResponse"
+          description: Service Unavailable
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Get one domain's canonical activity timeline
+      tags:
+        - Exploration
+  /api/v1/explore:
+    post:
+      operationId: explore
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ExploreHTTPRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExploreHTTPResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                anyOf:
+                  - $ref: "#/components/schemas/ExploreCacheUnavailableResponse"
+                  - $ref: "#/components/schemas/ErrorResponse"
+          description: Service Unavailable
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Explore canonical archive entries
+      tags:
+        - Exploration
+  /api/v1/explore/files:
+    post:
+      operationId: listExploreFiles
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ExploreFilesHTTPRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExploreFilesHTTPResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                anyOf:
+                  - $ref: "#/components/schemas/ExploreCacheUnavailableResponse"
+                  - $ref: "#/components/schemas/ErrorResponse"
+          description: Service Unavailable
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: List bounded chronological attachment facts
+      tags:
+        - Exploration
+  /api/v1/explore/groups:
+    post:
+      operationId: exploreGroups
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ExploreGroupsHTTPRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExploreGroupsHTTPResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                anyOf:
+                  - $ref: "#/components/schemas/ExploreCacheUnavailableResponse"
+                  - $ref: "#/components/schemas/ErrorResponse"
+          description: Service Unavailable
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Group canonical archive entries
+      tags:
+        - Exploration
+  /api/v1/explore/match-counts:
+    post:
+      operationId: countExploreMatches
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ExploreMatchCountsRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExploreMatchCountsResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                anyOf:
+                  - $ref: "#/components/schemas/ExploreCacheUnavailableResponse"
+                  - $ref: "#/components/schemas/ErrorResponse"
+          description: Service Unavailable
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Count exact lexical matches in visible rows
+      tags:
+        - Exploration
+  /api/v1/explore/preflight:
+    post:
+      operationId: preflightExploreSelection
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ExplorePreflightRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExplorePreflightResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                anyOf:
+                  - $ref: "#/components/schemas/ExploreCacheUnavailableResponse"
+                  - $ref: "#/components/schemas/ErrorResponse"
+          description: Service Unavailable
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Preflight a revision-pinned analytical selection
+      tags:
+        - Exploration
+  /api/v1/files/groups:
+    post:
+      operationId: groupFiles
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FileGroupsHTTPRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FileGroupsHTTPResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                anyOf:
+                  - $ref: "#/components/schemas/ExploreCacheUnavailableResponse"
+                  - $ref: "#/components/schemas/ErrorResponse"
+          description: Service Unavailable
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Group analytical files
+      tags:
+        - Exploration
+  /api/v1/files/search:
+    post:
+      operationId: searchFiles
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FileSearchHTTPRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FileSearchHTTPResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                anyOf:
+                  - $ref: "#/components/schemas/ExploreCacheUnavailableResponse"
+                  - $ref: "#/components/schemas/ErrorResponse"
+          description: Service Unavailable
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Search analytical files
+      tags:
+        - Exploration
+  /api/v1/files/{id}:
+    get:
+      operationId: getFile
+      parameters:
+        - description: File attachment ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FileMetadataResponse"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Get authoritative file metadata
+      tags:
+        - API
+  /api/v1/files/{id}/content:
+    get:
+      operationId: getFileContent
+      parameters:
+        - description: File attachment ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+      responses:
+        "200":
+          content:
+            "*/*":
+              schema:
+                contentMediaType: application/octet-stream
+                format: binary
+                type: string
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Download content for one authoritative file row
+      tags:
+        - API
   /api/v1/health:
     get:
       operationId: getHealth
@@ -4275,6 +7048,130 @@ paths:
       security:
         - apiKey: []
       summary: Get authenticated health details
+      tags:
+        - API
+  /api/v1/identity/links:
+    post:
+      operationId: linkIdentityParticipants
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/IdentityLinkRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IdentityLinkResponse"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Assert two participants are the same person
+      tags:
+        - API
+  /api/v1/identity/unlinks:
+    post:
+      operationId: unlinkIdentityParticipants
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/IdentityLinkRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IdentityLinkResponse"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Remove a link edge between two participants
+      tags:
+        - API
+  /api/v1/integrations/tasks/search:
+    get:
+      operationId: searchIntegrationTasks
+      parameters:
+        - description: Task title search within the configured project
+          in: query
+          name: q
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskSearchResponse"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Search tasks in the configured project
+      tags:
+        - API
+  /api/v1/integrations/tasks/status:
+    get:
+      operationId: getTaskIntegrationStatus
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskIntegrationStatusResponse"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Get task integration capability status
+      tags:
+        - API
+  /api/v1/integrations/tasks/test:
+    post:
+      operationId: testTaskIntegration
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskIntegrationStatusResponse"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Test task integration discovery, authentication, capabilities, and project
       tags:
         - API
   /api/v1/messages:
@@ -4671,6 +7568,351 @@ paths:
       summary: Get an inline MIME part
       tags:
         - API
+  /api/v1/messages/{id}/tasks:
+    get:
+      operationId: listMessageTasks
+      parameters:
+        - description: Archived email message ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskLinkLookupResponse"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: List tasks linked to an archived email
+      tags:
+        - API
+    post:
+      operationId: createOrLinkMessageTask
+      parameters:
+        - description: Archived email message ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+        - description: Browser-generated retry-stable request ID
+          in: header
+          name: X-Request-Id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TaskLinkMutationRequest"
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskLinkMutationResponse"
+          description: Created
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Create or link a task for an archived email
+      tags:
+        - API
+  /api/v1/messages/{id}/tasks/{task_id}:
+    delete:
+      operationId: unlinkMessageTask
+      parameters:
+        - description: Archived email message ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+        - description: External task ID
+          in: path
+          name: task_id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskLinkMutationResponse"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Unlink a task from an archived email
+      tags:
+        - API
+  /api/v1/people/search:
+    post:
+      operationId: searchPeople
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/IdentitySearchHTTPRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PersonSearchHTTPResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                anyOf:
+                  - $ref: "#/components/schemas/ExploreCacheUnavailableResponse"
+                  - $ref: "#/components/schemas/ErrorResponse"
+          description: Service Unavailable
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Search analytical people
+      tags:
+        - Exploration
+  /api/v1/people/{id}:
+    get:
+      operationId: getPerson
+      parameters:
+        - description: Durable participant ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PersonSummary"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Get one analytical person
+      tags:
+        - API
+  /api/v1/people/{id}/files/search:
+    post:
+      operationId: searchPersonFiles
+      parameters:
+        - description: Durable participant ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FileSearchHTTPRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FileSearchHTTPResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                anyOf:
+                  - $ref: "#/components/schemas/ExploreCacheUnavailableResponse"
+                  - $ref: "#/components/schemas/ErrorResponse"
+          description: Service Unavailable
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Search one person's analytical files
+      tags:
+        - Exploration
+  /api/v1/people/{id}/summary:
+    post:
+      operationId: getPersonContextSummary
+      parameters:
+        - description: Durable participant ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ExploreHTTPRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PersonContextSummaryHTTPResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                anyOf:
+                  - $ref: "#/components/schemas/ExploreCacheUnavailableResponse"
+                  - $ref: "#/components/schemas/ErrorResponse"
+          description: Service Unavailable
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Get one person's contextual analytical summary
+      tags:
+        - Exploration
+  /api/v1/people/{id}/timeline:
+    post:
+      operationId: getPersonTimeline
+      parameters:
+        - description: Durable participant ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ExploreHTTPRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExploreHTTPResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                anyOf:
+                  - $ref: "#/components/schemas/ExploreCacheUnavailableResponse"
+                  - $ref: "#/components/schemas/ErrorResponse"
+          description: Service Unavailable
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Get one person's canonical activity timeline
+      tags:
+        - Exploration
   /api/v1/query:
     post:
       operationId: runQuery
@@ -4696,6 +7938,371 @@ paths:
       security:
         - apiKey: []
       summary: Run an aggregate query
+      tags:
+        - API
+  /api/v1/relationships:
+    post:
+      operationId: listRelationships
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RelationshipsHTTPRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RelationshipsHTTPResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                anyOf:
+                  - $ref: "#/components/schemas/ExploreCacheUnavailableResponse"
+                  - $ref: "#/components/schemas/ErrorResponse"
+          description: Service Unavailable
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Rank counterparts by reciprocity-weighted interaction
+      tags:
+        - Exploration
+  /api/v1/relationships/{id}/timeline:
+    post:
+      operationId: getRelationshipTimeline
+      parameters:
+        - description: Any member participant ID of the counterpart's identity cluster
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RelationshipTimelineHTTPRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RelationshipTimelineHTTPResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                anyOf:
+                  - $ref: "#/components/schemas/ExploreCacheUnavailableResponse"
+                  - $ref: "#/components/schemas/ErrorResponse"
+          description: Service Unavailable
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Get one counterpart's interaction timeline, with chat grouped into local-day bursts
+      tags:
+        - Exploration
+  /api/v1/saved-views:
+    get:
+      operationId: listSavedViews
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SavedViewsResponse"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: List shared analytical Saved Views
+      tags:
+        - API
+    post:
+      operationId: createSavedView
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateSavedViewRequest"
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SavedView"
+          description: Created
+          headers:
+            ETag:
+              description: Strong Saved View revision tag for optimistic concurrency
+              schema:
+                type: string
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Create a shared analytical Saved View
+      tags:
+        - API
+  /api/v1/saved-views/{id}:
+    delete:
+      operationId: deleteSavedView
+      parameters:
+        - description: Saved View ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+        - description: Strong ETag returned by the latest Saved View read
+          in: header
+          name: If-Match
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: No Content
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "428":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Delete a shared analytical Saved View
+      tags:
+        - API
+    get:
+      operationId: getSavedView
+      parameters:
+        - description: Saved View ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SavedView"
+          description: OK
+          headers:
+            ETag:
+              description: Strong Saved View revision tag for optimistic concurrency
+              schema:
+                type: string
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Get a shared analytical Saved View
+      tags:
+        - API
+    patch:
+      operationId: patchSavedView
+      parameters:
+        - description: Saved View ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+        - description: Strong ETag returned by the latest Saved View read
+          in: header
+          name: If-Match
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PatchSavedViewRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SavedView"
+          description: OK
+          headers:
+            ETag:
+              description: Strong Saved View revision tag for optimistic concurrency
+              schema:
+                type: string
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "428":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Update a shared analytical Saved View
       tags:
         - API
   /api/v1/scheduler/status:
@@ -4802,6 +8409,45 @@ paths:
       summary: Search messages
       tags:
         - API
+  /api/v1/search/coverage:
+    post:
+      operationId: getSearchCoverage
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SearchCoverageRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SearchCoverageResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Get semantic index coverage for an analytical context
+      tags:
+        - Exploration
   /api/v1/search/deep:
     get:
       operationId: deepSearch
@@ -5192,6 +8838,100 @@ paths:
       security:
         - apiKey: []
       summary: Find messages similar to a seed message
+      tags:
+        - API
+  /api/v1/settings:
+    get:
+      operationId: getSettings
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SettingsResponse"
+          description: OK
+          headers:
+            ETag:
+              description: Strong content hash for optimistic concurrency
+              schema:
+                type: string
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Get browser-managed settings
+      tags:
+        - API
+    patch:
+      operationId: patchSettings
+      parameters:
+        - description: Strong ETag returned by the latest settings read
+          in: header
+          name: If-Match
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SettingsPatchRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SettingsResponse"
+          description: OK
+          headers:
+            ETag:
+              description: Strong content hash for optimistic concurrency
+              schema:
+                type: string
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "412":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "428":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Update browser-managed settings
       tags:
         - API
   /api/v1/sources/status:

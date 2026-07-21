@@ -293,10 +293,11 @@ func writeOperationGateBusy(w http.ResponseWriter, gate OperationGate) {
 	writeError(w, http.StatusServiceUnavailable, "operation_in_progress", message)
 }
 
-// operationGateExemptPaths are non-GET endpoints that only read: they must
-// not queue behind long mutating operations, and they never mutate the
-// archive themselves. Verify is NOT exempt: its subprocess opens the store
-// read-write and runs schema init/migrations.
+// operationGateExemptPaths are non-GET endpoints that do not mutate the
+// archive: they must not queue behind long archive operations. Most only read;
+// the session endpoints mutate process-local authentication state. Verify is
+// NOT exempt: its subprocess opens the store read-write and runs schema
+// init/migrations.
 //
 // The backup freeze endpoints are exempt for a different reason: begin
 // acquires the operation gate itself (see beginLabeledOperationGateWork in
@@ -304,6 +305,8 @@ func writeOperationGateBusy(w http.ResponseWriter, gate OperationGate) {
 // gate as well would deadlock begin against its own acquisition.
 var operationGateExemptPaths = map[string]bool{
 	queryEndpointPath:                true,
+	sessionPath:                      true,
+	sessionLoginPath:                 true,
 	"/api/v1/cli/add-calendar/plan":  true,
 	"/api/v1/cli/delete-staged/plan": true,
 	"/api/v1/cli/embeddings/plan":    true,

@@ -28,6 +28,14 @@ oauth_client*.json
 # Python
 __pycache__/
 
+# Browser application dependencies and build output
+/web/node_modules/
+/web/dist/
+/web/playwright-report/
+/web/test-results/
+/internal/web/dist/*
+!/internal/web/dist/stub.html
+
 # Go caches
 .gocache/
 .gopath/

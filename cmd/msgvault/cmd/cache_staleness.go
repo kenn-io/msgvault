@@ -10,12 +10,26 @@ import (
 
 // cacheStaleness describes why the analytics cache needs a rebuild.
 type cacheStaleness struct {
-	NeedsBuild  bool
-	HasNew      bool // new messages since last build
-	HasDeleted  bool // deletions since last build
-	HasUpdated  bool // updates or additions within the cached ID boundary require repair
-	FullRebuild bool // must rewrite all shards (not incremental)
-	Reason      string
+	NeedsBuild bool
+	HasNew     bool // new messages since last build
+	HasDeleted bool // deletions since last build
+	HasUpdated bool // updates or additions within the cached ID boundary require repair
+	// HasIdentityDrift signals participant_links or account_identities
+	// changed since the last build. Also set whenever
+	// HasAccountIdentityDrift is set (AddAccountIdentity/RemoveAccountIdentity
+	// bump both revisions together), so callers deciding whether the cheap
+	// identity-only refresh applies must check HasAccountIdentityDrift too —
+	// see identityDriftOnly in build_cache.go.
+	HasIdentityDrift bool
+	// HasAccountIdentityDrift signals an identity mutation that invalidates
+	// baked message data since the last build: an account identity was
+	// confirmed or removed, or two participants were merged (merges repoint
+	// messages.sender_id). Either changes the is_from_me flag baked into
+	// message Parquet shards. Unlike plain participant-link drift, this can
+	// only be repaired by a full rebuild, so it always sets FullRebuild.
+	HasAccountIdentityDrift bool
+	FullRebuild             bool // must rewrite all shards (not incremental)
+	Reason                  string
 }
 
 // deletedSinceBuildCountSQL counts exportable messages source-deleted since
@@ -72,6 +86,16 @@ func cacheNeedsBuild(dbPath, analyticsDir string) cacheStaleness {
 		return cacheStaleness{
 			NeedsBuild: true, FullRebuild: true,
 			Reason: "analytics cache publication interrupted",
+		}
+	case query.CacheStaleSchema:
+		return cacheStaleness{
+			NeedsBuild: true, FullRebuild: true,
+			Reason: "analytics cache schema is stale",
+		}
+	case query.CacheDrifted:
+		return cacheStaleness{
+			NeedsBuild: true, FullRebuild: true,
+			Reason: "analytics cache publication drifted",
 		}
 	case query.CacheReady:
 	}
@@ -222,6 +246,50 @@ func cacheNeedsBuild(dbPath, analyticsDir string) cacheStaleness {
 					state.LastCacheAdditionCount, counters.additions, state.LastMessageID))
 			}
 		}
+	}
+
+	// Account-identity drift covers identity mutations that invalidate baked
+	// message data: confirming or removing a confirmed "me" address via
+	// AddAccountIdentity/RemoveAccountIdentity, and participant merges via
+	// MergeParticipants/mergeParticipant (which repoint messages.sender_id).
+	// Either changes the is_from_me flag baked into every message Parquet
+	// shard at export time. Unlike plain participant link/unlink drift, this
+	// cannot be repaired by the lightweight identity-only refresh —
+	// incremental appends can't rewrite already-exported shards — so it
+	// always forces a full rebuild. Checked before HasIdentityDrift, and
+	// independently of it, so identityDriftOnly (build_cache.go) never
+	// mistakes this for the cheap-refresh case even though the same
+	// mutation also bumps identity_revision below.
+	accountIdentityRevision, err := db.AccountIdentityRevision()
+	if err != nil {
+		return cacheStaleness{
+			NeedsBuild: true, FullRebuild: true,
+			Reason: "cannot verify account identity revision",
+		}
+	}
+	if accountIdentityRevision != state.AccountIdentityRevision {
+		result.HasAccountIdentityDrift = true
+		result.FullRebuild = true
+		reasons = append(reasons, "identity mutations that invalidate baked message data (account identities, participant merges)")
+	}
+
+	// Identity drift (participant link/unlink/merge mutations, or
+	// confirming/removing an account identity) affects only the is_from_me
+	// derivation and the two identity datasets, not message content, so on
+	// its own it never forces a full rebuild: the lightweight refresh path
+	// (cacheops.RefreshIdentityDatasets) handles it, and a full rebuild
+	// triggered by any other signal (including HasAccountIdentityDrift
+	// above) refreshes it naturally.
+	identityRevision, err := db.IdentityRevision()
+	if err != nil {
+		return cacheStaleness{
+			NeedsBuild: true, FullRebuild: true,
+			Reason: "cannot verify identity revision",
+		}
+	}
+	if identityRevision != state.IdentityRevision {
+		result.HasIdentityDrift = true
+		reasons = append(reasons, "identity revision changed")
 	}
 
 	if len(reasons) > 0 {

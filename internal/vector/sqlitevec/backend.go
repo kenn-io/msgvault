@@ -27,6 +27,7 @@ const sqliteDatetimeFormat = "2006-01-02 15:04:05"
 // Compile-time check that *Backend satisfies the vector.Backend interface.
 var _ vector.Backend = (*Backend)(nil)
 var _ vector.ChunkScoringBackend = (*Backend)(nil)
+var _ vector.FilteredCoverageBackend = (*Backend)(nil)
 
 // Options configures how Open establishes a Backend.
 type Options struct {
@@ -1473,6 +1474,62 @@ func (b *Backend) EmbeddedMessageCount(ctx context.Context, gen vector.Generatio
 		return 0, fmt.Errorf("count live embedded messages: %w", err)
 	}
 	return n, nil
+}
+
+// EmbeddedMessageCountForIDs intersects a DuckDB-resolved canonical context
+// with the selected vector generation inside vectors.db.
+func (b *Backend) EmbeddedMessageCountForIDs(ctx context.Context, gen vector.GenerationID, messageIDs []int64) (int64, error) {
+	if len(messageIDs) == 0 {
+		return 0, nil
+	}
+	if len(messageIDs) > vector.FilteredCoverageBatchSize {
+		return 0, fmt.Errorf("%w: got %d, maximum %d", vector.ErrCoverageBatchTooLarge, len(messageIDs), vector.FilteredCoverageBatchSize)
+	}
+	if b.mainDB == nil {
+		return 0, errors.New("filtered coverage requires the main message database")
+	}
+	encoded, err := json.Marshal(messageIDs)
+	if err != nil {
+		return 0, fmt.Errorf("encode coverage message ids: %w", err)
+	}
+	rows, err := b.mainDB.QueryContext(ctx, `
+		SELECT id
+		FROM messages
+		WHERE id IN (SELECT value FROM json_each(?))
+		  AND embed_gen = ?
+		  AND `+store.LiveMessagesWhere("", true), string(encoded), int64(gen))
+	if err != nil {
+		return 0, fmt.Errorf("list live stamped coverage messages: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	liveStampedIDs := make([]int64, 0, len(messageIDs))
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return 0, fmt.Errorf("scan live stamped coverage message: %w", err)
+		}
+		liveStampedIDs = append(liveStampedIDs, id)
+	}
+	if err := rows.Err(); err != nil {
+		return 0, fmt.Errorf("iterate live stamped coverage messages: %w", err)
+	}
+	if len(liveStampedIDs) == 0 {
+		return 0, nil
+	}
+	encoded, err = json.Marshal(liveStampedIDs)
+	if err != nil {
+		return 0, fmt.Errorf("encode live stamped coverage ids: %w", err)
+	}
+	var count int64
+	if err := b.db.QueryRowContext(ctx, `
+		SELECT COUNT(DISTINCT message_id)
+		FROM embeddings
+		WHERE generation_id = ?
+		  AND message_id IN (SELECT value FROM json_each(?))`,
+		int64(gen), string(encoded)).Scan(&count); err != nil {
+		return 0, fmt.Errorf("count filtered embedded messages: %w", err)
+	}
+	return count, nil
 }
 
 // ScoreMessageChunks scores every embedded chunk of messageID in gen

@@ -1,12 +1,14 @@
 package cmd
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"go.kenn.io/msgvault/internal/query"
 )
@@ -79,7 +81,8 @@ func replacesCacheDataset(dataset string, replaceAll bool) bool {
 		return true
 	}
 	switch dataset {
-	case "participants", "labels", "sources", "conversations":
+	case "participants", "participant_identifiers", "labels", "sources", "conversations", "conversation_participants",
+		tableOwnerParticipants, tableParticipantClusters:
 		return true
 	default:
 		return false
@@ -172,6 +175,20 @@ func publishCache(staging *cacheStaging, analyticsDir string, replaceAll bool, s
 		if err := os.Rename(move.source, move.destination); err != nil {
 			return fmt.Errorf("publish cache path %s: %w", move.destination, err)
 		}
+	}
+	fingerprint, err := query.CacheDatasetFingerprint(analyticsDir)
+	if err != nil {
+		return fmt.Errorf("fingerprint published analytics cache: %w", err)
+	}
+	var state query.CacheSyncState
+	if err := json.Unmarshal(stateData, &state); err != nil {
+		return fmt.Errorf("decode cache sync state for publication: %w", err)
+	}
+	state.PublishedAt = time.Now().UTC()
+	state.DatasetFingerprint = fingerprint
+	stateData, err = json.Marshal(state)
+	if err != nil {
+		return fmt.Errorf("encode committed cache sync state: %w", err)
 	}
 	if err := buildCacheWriteStateFile(statePath, stateData, 0o600); err != nil {
 		return fmt.Errorf("save cache sync state to %s: %w", statePath, err)

@@ -37,3 +37,18 @@ func TestMarkMigrationApplied_Idempotent(t *testing.T) {
 	require.NoError(t, err, "IsMigrationApplied")
 	assert.True(t, applied, "migration should be marked as applied after two calls")
 }
+
+func TestArchiveIdentityMigrationIsRecorded(t *testing.T) {
+	f := storetest.New(t)
+
+	applied, err := f.Store.IsMigrationApplied("archive_identity_v1")
+	require.NoError(t, err)
+	assert.True(t, applied, "archive identity initialization must be a recorded migration")
+}
+
+func TestArchiveIdentityExistsInConfiguredDialect(t *testing.T) {
+	f := storetest.New(t)
+	uid, err := f.Store.ArchiveUID()
+	require.NoError(t, err)
+	assert.Len(t, uid, 64)
+}

@@ -102,6 +102,41 @@ type Engine interface {
 	Close() error
 }
 
+// Explorer is intentionally separate from Engine: only the committed
+// DuckDB/Parquet analytical read model implements it. Transactional engines
+// must never become a modality-specific fallback for exploration.
+type Explorer interface {
+	Explore(ctx context.Context, request ExploreRequest) (*ExploreResponse, error)
+	ExploreCoverage(ctx context.Context, request ExploreCoverageRequest) (*ExploreCoverageResponse, error)
+	ExploreGroups(ctx context.Context, request ExploreGroupRequest) (*ExploreGroupResponse, error)
+	ExploreSelectionStats(ctx context.Context, request ExploreSelectionRequest) (*ExploreSelectionStats, error)
+	ExploreFiles(ctx context.Context, request ExploreFilesRequest) (*ExploreFilesResponse, error)
+	ExploreMatchCounts(ctx context.Context, request ExploreMatchCountsRequest) (*ExploreMatchCountsResponse, error)
+}
+
+// FileSearcher is separate from Engine so Files can only be backed by the
+// committed analytical cache; transactional engines never become a fallback.
+type FileSearcher interface {
+	SearchFiles(ctx context.Context, request FileSearchRequest) (*FileSearchResponse, error)
+}
+
+// FileGrouper is separate from Explorer so grouped Files cannot silently fall
+// back to message-level analytical groups.
+type FileGrouper interface {
+	GroupFiles(ctx context.Context, request FileGroupRequest) (*ExploreGroupResponse, error)
+}
+
+// PeopleAnalyzer is separate from Engine so identity analytics can only be
+// served from a committed canonical cache snapshot.
+type PeopleAnalyzer interface {
+	SearchPeople(ctx context.Context, request PersonSearchRequest) (*PersonSearchResponse, error)
+	GetPerson(ctx context.Context, id int64, analyticalContext Context, clusterMemberIDs []int64) (*PersonSummary, error)
+	GetPersonSummary(ctx context.Context, id int64, explore ExploreRequest) (*PersonSearchResponse, error)
+	SearchDomains(ctx context.Context, request DomainSearchRequest) (*DomainSearchResponse, error)
+	GetDomain(ctx context.Context, domain string, analyticalContext Context) (*DomainSummary, error)
+	GetDomainSummary(ctx context.Context, domain string, explore ExploreRequest) (*DomainSearchResponse, error)
+}
+
 // MessageBodySearcher is an optional capability for exact full-text search of
 // message bodies. It is deliberately separate from Engine so generic Search
 // retains its composite subject/body/participant semantics.

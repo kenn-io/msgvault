@@ -19,11 +19,15 @@ const (
 // names that happen to share these strings use their own literals/constants,
 // so renaming a storage entity cannot silently change an external contract.
 const (
-	tableMessages      = "messages"
-	tableLabels        = "labels"
-	tableAttachments   = "attachments"
-	tableParticipants  = "participants"
-	tableConversations = "conversations"
+	tableMessages                 = "messages"
+	tableLabels                   = "labels"
+	tableAttachments              = "attachments"
+	tableParticipants             = "participants"
+	tableParticipantIdentifiers   = "participant_identifiers"
+	tableConversations            = "conversations"
+	tableConversationParticipants = "conversation_participants"
+	tableOwnerParticipants        = "owner_participants"
+	tableParticipantClusters      = "participant_clusters"
 )
 
 // flagJSON is the name of the boolean --json output flag. It is kept distinct

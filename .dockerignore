@@ -7,6 +7,10 @@ msgvault
 mimeshootout
 bin/
 dist/
+/web/node_modules/
+/web/dist/
+!internal/web/dist/
+!internal/web/dist/**
 
 # IDE/editor
 .idea/

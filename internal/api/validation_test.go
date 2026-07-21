@@ -130,12 +130,11 @@ func TestOutOfRangePaginationClamps(t *testing.T) {
 	}
 }
 
-func TestUnknownPathReturnsJSON404(t *testing.T) {
+func TestUnknownAPIPathReturnsJSON404(t *testing.T) {
 	targets := []string{
 		"/api/v1/nonexistent",
 		"/api/v1/messages/",
 		"/api/v1/stats/",
-		"/totally/unknown",
 	}
 	for _, target := range targets {
 		t.Run(target, func(t *testing.T) {

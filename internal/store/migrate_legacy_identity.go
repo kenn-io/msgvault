@@ -113,6 +113,7 @@ func (s *Store) MigrateLegacyIdentityConfig(addresses []string) (applied, deferr
 			return fmt.Errorf("check migration %q in tx: %w", migrationLegacyIdentity, err)
 		}
 
+		insertedAny := false
 		for _, src := range sources {
 			// Legacy [identity] block holds email-shaped addresses only.
 			// Skip non-email source types (whatsapp, imessage, sms,
@@ -144,6 +145,11 @@ func (s *Store) MigrateLegacyIdentityConfig(addresses []string) (applied, deferr
 					if txErr != nil {
 						return fmt.Errorf("insert identity (source=%d, addr=%s): %w", src.ID, addr, txErr)
 					}
+					// A brand new (source_id, address) pair changes
+					// owner_participants and the is_from_me derivation for
+					// this source, exactly like AddAccountIdentity's insert
+					// branch — see the matching comment there.
+					insertedAny = true
 				case qerr != nil:
 					return fmt.Errorf("read existing identity (source=%d, addr=%s): %w", src.ID, addr, qerr)
 				default:
@@ -160,6 +166,22 @@ func (s *Store) MigrateLegacyIdentityConfig(addresses []string) (applied, deferr
 						}
 					}
 				}
+			}
+		}
+
+		// A daemon that started before this migration ran must not keep
+		// serving a cache with is_from_me/owner_participants baked from
+		// before these identities existed, so bump both revisions exactly
+		// like AddAccountIdentity's insert path does — but only when this
+		// call actually inserted a row; a re-run that only merged a signal
+		// into an already-migrated address changes nothing those datasets
+		// depend on.
+		if insertedAny {
+			if _, err := s.bumpIdentityRevision(tx); err != nil {
+				return err
+			}
+			if err := s.bumpAccountIdentityRevision(tx); err != nil {
+				return err
 			}
 		}
 

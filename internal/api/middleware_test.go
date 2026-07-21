@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -250,4 +251,58 @@ func TestRateLimitMiddlewareLimitsUntrustedLoopback(t *testing.T) {
 	handler.ServeHTTP(w2, req2)
 	assert.Equal(t, http.StatusTooManyRequests, w2.Code,
 		"untrusted loopback request must be rate limited")
+}
+
+func TestExistingAPIKeyAuthenticationCompatibility(t *testing.T) {
+	const apiKey = "compatibility-test-key"
+	tests := []struct {
+		name    string
+		headers http.Header
+	}{
+		{
+			name:    "X-Api-Key",
+			headers: http.Header{"X-Api-Key": []string{apiKey}},
+		},
+		{
+			name:    "bearer authorization",
+			headers: http.Header{"Authorization": []string{"Bearer " + apiKey}},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv := NewServer(
+				&config.Config{Server: config.ServerConfig{APIKey: apiKey}},
+				nil, nil, testLogger(),
+			)
+			t.Cleanup(func() {
+				require.NoError(t, srv.Shutdown(context.Background()))
+			})
+
+			req := httptest.NewRequest(http.MethodGet, "/api/v1/health", nil)
+			for name, values := range tt.headers {
+				for _, value := range values {
+					req.Header.Add(name, value)
+				}
+			}
+			resp := httptest.NewRecorder()
+			srv.Router().ServeHTTP(resp, req)
+
+			assert.Equal(t, http.StatusOK, resp.Code, resp.Body.String())
+		})
+	}
+}
+
+func TestExistingAPIKeyAuthenticationKeepsKeylessLoopbackTrusted(t *testing.T) {
+	srv := NewServer(&config.Config{}, nil, nil, testLogger())
+	t.Cleanup(func() {
+		require.NoError(t, srv.Shutdown(context.Background()))
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/health", nil)
+	req.RemoteAddr = "127.0.0.1:4242"
+	resp := httptest.NewRecorder()
+	srv.Router().ServeHTTP(resp, req)
+
+	assert.Equal(t, http.StatusOK, resp.Code, resp.Body.String())
 }

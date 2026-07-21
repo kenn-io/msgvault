@@ -125,6 +125,7 @@ func probeAllOptionalColumns(db *sql.DB, analyticsDir string) map[string]map[str
 		datasetMessages:      probeColumns(db, msgGlob, true),
 		datasetParticipants:  probeColumns(db, tablePath(datasetParticipants), false),
 		datasetConversations: probeColumns(db, tablePath(datasetConversations), false),
+		"attachments":        probeColumns(db, tablePath("attachments"), false),
 		"sources":            probeColumns(db, tablePath("sources"), false),
 	}
 }
@@ -195,9 +196,19 @@ func createBaseViews(db *sql.DB, analyticsDir string, optCols map[string]map[str
 						defaultExpr: "NULL::BIGINT AS sender_id",
 					},
 					{
-						name:        "message_type",
+						name:        messageTypeDimension,
 						replaceExpr: "COALESCE(CAST(message_type AS VARCHAR), '') AS message_type",
 						defaultExpr: "'' AS message_type",
+					},
+					{
+						name:        "deleted_at",
+						replaceExpr: "TRY_CAST(deleted_at AS TIMESTAMP) AS deleted_at",
+						defaultExpr: "NULL::TIMESTAMP AS deleted_at",
+					},
+					{
+						name:        "is_from_me",
+						replaceExpr: "COALESCE(TRY_CAST(is_from_me AS BOOLEAN), false) AS is_from_me",
+						defaultExpr: "false AS is_from_me",
 					},
 				},
 			},
@@ -264,7 +275,13 @@ func createBaseViews(db *sql.DB, analyticsDir string, optCols map[string]map[str
 					"CAST(size AS BIGINT) AS size",
 					"CAST(filename AS VARCHAR) AS filename",
 				},
+				optionalCols: []optionalCol{{
+					name:        "mime_type",
+					replaceExpr: "COALESCE(CAST(mime_type AS VARCHAR), '') AS mime_type",
+					defaultExpr: "'' AS mime_type",
+				}},
 			},
+			probe: colsFor("attachments"),
 		},
 		{
 			def: viewDef{
@@ -288,6 +305,29 @@ func createBaseViews(db *sql.DB, analyticsDir string, optCols map[string]map[str
 				},
 			},
 			probe: colsFor(datasetConversations),
+		},
+		{
+			def: viewDef{
+				name:        datasetConversationParticipants,
+				pathPattern: tablePath(datasetConversationParticipants),
+				replaceCols: []string{
+					"CAST(conversation_id AS BIGINT) AS conversation_id",
+					"CAST(participant_id AS BIGINT) AS participant_id",
+				},
+			},
+		},
+		{
+			def: viewDef{
+				name:        datasetParticipantIdentifiers,
+				pathPattern: tablePath(datasetParticipantIdentifiers),
+				replaceCols: []string{
+					"CAST(participant_id AS BIGINT) AS participant_id",
+					"CAST(identifier_type AS VARCHAR) AS identifier_type",
+					"CAST(identifier_value AS VARCHAR) AS identifier_value",
+					"COALESCE(CAST(display_value AS VARCHAR), '') AS display_value",
+					"COALESCE(TRY_CAST(is_primary AS BOOLEAN), false) AS is_primary",
+				},
+			},
 		},
 		{
 			def: viewDef{
@@ -334,6 +374,7 @@ func createConvenienceViews(db *sql.DB) error {
 		{"v_domains", sqlVDomains},
 		{"v_labels", sqlVLabels},
 		{"v_threads", sqlVThreads},
+		{"analytical_entries", sqlAnalyticalEntries},
 	}
 	for _, v := range views {
 		if _, err := db.Exec(v.sql); err != nil {
@@ -342,6 +383,81 @@ func createConvenienceViews(db *sql.DB) error {
 	}
 	return nil
 }
+
+// sqlAnalyticalEntries normalizes every durable message-shaped source row.
+// Logical row-unit selection deliberately remains in Explore so Context can be
+// applied before chat conversations are aggregated.
+const sqlAnalyticalEntries = `
+CREATE OR REPLACE VIEW analytical_entries AS
+WITH message_participant_links AS (
+    SELECT message_id, participant_id
+    FROM message_recipients
+    UNION ALL
+    SELECT id AS message_id, sender_id AS participant_id
+    FROM messages
+    WHERE sender_id IS NOT NULL
+), message_participant_facts AS (
+    SELECT
+        link.message_id,
+        list_sort(list_distinct(list(link.participant_id))) AS participant_ids,
+        list_sort(list_distinct(list(COALESCE(NULLIF(p.display_name, ''), NULLIF(p.phone_number, ''), p.email_address, '')))) AS participant_labels,
+        list_sort(list_distinct(list(COALESCE(p.domain, '')))) AS participant_domains
+    FROM message_participant_links link
+    JOIN participants p ON p.id = link.participant_id
+    GROUP BY link.message_id
+), conversation_participant_facts AS (
+    SELECT
+        cp.conversation_id,
+        list_sort(list_distinct(list(cp.participant_id))) AS participant_ids,
+        list_sort(list_distinct(list(COALESCE(NULLIF(p.display_name, ''), NULLIF(p.phone_number, ''), p.email_address, '')))) AS participant_labels,
+        list_sort(list_distinct(list(COALESCE(p.domain, '')))) AS participant_domains
+    FROM conversation_participants cp
+    JOIN participants p ON p.id = cp.participant_id
+    GROUP BY cp.conversation_id
+)
+SELECT
+    m.id AS message_id,
+    m.source_id,
+    COALESCE(s.source_type, '') AS source_type,
+    COALESCE(s.account_email, '') AS source_identifier,
+    m.source_message_id,
+    m.conversation_id,
+    COALESCE(c.source_conversation_id, '') AS source_conversation_id,
+    COALESCE(c.conversation_type, '') AS conversation_type,
+    COALESCE(c.title, '') AS conversation_title,
+    COALESCE(m.message_type, '') AS message_type,
+    m.sender_id,
+    COALESCE(NULLIF(sender.email_address, ''), NULLIF(sender.phone_number, ''), '') AS sender_identifier,
+    COALESCE(NULLIF(sender.display_name, ''), NULLIF(sender.phone_number, ''), sender.email_address, '') AS sender_display,
+    COALESCE(sender.domain, '') AS sender_domain,
+    m.sent_at AS occurred_at,
+    COALESCE(m.subject, '') AS subject,
+    COALESCE(m.snippet, '') AS snippet,
+    m.is_from_me,
+	m.size_estimate,
+	m.deleted_at IS NOT NULL AS internally_deleted,
+    m.deleted_from_source_at IS NOT NULL AS deleted_from_source,
+    COALESCE(m.has_attachments, false) AS has_attachments,
+    COALESCE(att.attachment_count, 0) AS attachment_count,
+    COALESCE(att.attachment_size, 0) AS attachment_size,
+    COALESCE(recip.participant_ids, []::BIGINT[]) AS participant_ids,
+    COALESCE(recip.participant_labels, []::VARCHAR[]) AS participant_labels,
+    COALESCE(recip.participant_domains, []::VARCHAR[]) AS participant_domains,
+    COALESCE(conv_part.participant_ids, []::BIGINT[]) AS conversation_participant_ids,
+    COALESCE(conv_part.participant_labels, []::VARCHAR[]) AS conversation_participant_labels,
+    COALESCE(conv_part.participant_domains, []::VARCHAR[]) AS conversation_participant_domains
+FROM messages m
+JOIN sources s ON s.id = m.source_id
+LEFT JOIN conversations c ON c.id = m.conversation_id
+LEFT JOIN participants sender ON sender.id = m.sender_id
+LEFT JOIN message_participant_facts recip ON recip.message_id = m.id
+LEFT JOIN conversation_participant_facts conv_part ON conv_part.conversation_id = m.conversation_id
+LEFT JOIN (
+    SELECT message_id, COUNT(*) AS attachment_count, COALESCE(SUM(size), 0) AS attachment_size
+    FROM attachments
+    GROUP BY message_id
+) att ON att.message_id = m.id
+`
 
 // sqlVMessages: messages with sender resolved via dual-path
 // (message_recipients for email, messages.sender_id for chat)

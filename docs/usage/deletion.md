@@ -4,7 +4,29 @@ description: Staging messages for deletion, reviewing manifests, and executing d
 ---
 
 
-msgvault supports a staged deletion workflow: select messages in the TUI or stage them via an AI assistant, review what will be deleted, then execute against Gmail or your IMAP provider. **Deletion only removes messages from the remote mail server. Your local archive is never modified.** This means you can always search, browse, and export deleted messages from your local copy.
+msgvault supports a staged deletion workflow: select messages in the Web UI or
+TUI, or stage them via an AI assistant; review what will be deleted; then
+execute against Gmail or your IMAP provider. **Deletion only removes messages
+from the remote mail server. Your local archive is never modified.** This means
+you can always search, browse, and export deleted messages from your local copy.
+
+## Staging in the Web UI
+
+In Everything, select individual rows or all rows matching the current
+canonical filter, then press `d` or `D` to open the Deletions workspace. The UI
+runs a server-side preflight before it enables staging and requires a separate
+confirmation to create the manifest. The Deletions workspace also lists,
+inspects, and cancels staged manifests. It never executes remote deletion;
+that final step remains the explicit CLI command described below.
+
+Preflight validates the selection itself (that it still matches, that the
+cache/search revision hasn't moved) but does not check which accounts the
+matched messages belong to. Each deletion manifest executes against exactly
+one mailbox, so if you stage "all matching" across an unfiltered or
+multi-account view, confirming the stage fails with a `multi_account_selection`
+error even though preflight succeeded. Filter to one source/account
+(the `a` key in the TUI, or the equivalent source filter in the Web UI) before
+staging an all-matching selection that could span more than one account.
 
 ## Bulk Deletion via Aggregate Groups
 

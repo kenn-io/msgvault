@@ -56,6 +56,11 @@ func (a AddCLICollectionSourcesPath) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(a))
 }
 
+type GetConversationPath struct {
+	// ID Conversation ID
+	ID int64 `json:"id"`
+}
+
 type CancelDeletionPath struct {
 	// ID Deletion manifest ID
 	ID string `json:"id" validate:"required"`
@@ -65,6 +70,61 @@ func (c CancelDeletionPath) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(c))
 }
 
+type GetDeletionPath struct {
+	// ID Deletion manifest ID
+	ID string `json:"id" validate:"required"`
+}
+
+func (g GetDeletionPath) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(g))
+}
+
+type GetDomainPath struct {
+	// Domain Exact normalized domain fact
+	Domain string `json:"domain" validate:"required"`
+}
+
+func (g GetDomainPath) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(g))
+}
+
+type SearchDomainFilesPath struct {
+	// Domain Exact normalized domain fact
+	Domain string `json:"domain" validate:"required"`
+}
+
+func (s SearchDomainFilesPath) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(s))
+}
+
+type GetDomainContextSummaryPath struct {
+	// Domain Exact normalized domain fact
+	Domain string `json:"domain" validate:"required"`
+}
+
+func (g GetDomainContextSummaryPath) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(g))
+}
+
+type GetDomainTimelinePath struct {
+	// Domain Exact normalized domain fact
+	Domain string `json:"domain" validate:"required"`
+}
+
+func (g GetDomainTimelinePath) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(g))
+}
+
+type GetFilePath struct {
+	// ID File attachment ID
+	ID int64 `json:"id"`
+}
+
+type GetFileContentPath struct {
+	// ID File attachment ID
+	ID int64 `json:"id"`
+}
+
 type GetMessagePath struct {
 	// ID Message ID
 	ID int64 `json:"id"`
@@ -72,6 +132,68 @@ type GetMessagePath struct {
 
 type GetMessageInlinePartPath struct {
 	// ID Message ID
+	ID int64 `json:"id"`
+}
+
+type ListMessageTasksPath struct {
+	// ID Archived email message ID
+	ID int64 `json:"id"`
+}
+
+type CreateOrLinkMessageTaskPath struct {
+	// ID Archived email message ID
+	ID int64 `json:"id"`
+}
+
+type UnlinkMessageTaskPath struct {
+	// ID Archived email message ID
+	ID int64 `json:"id"`
+
+	// TaskID External task ID
+	TaskID string `json:"task_id" validate:"required"`
+}
+
+func (u UnlinkMessageTaskPath) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(u))
+}
+
+type GetPersonPath struct {
+	// ID Durable participant ID
+	ID int64 `json:"id"`
+}
+
+type SearchPersonFilesPath struct {
+	// ID Durable participant ID
+	ID int64 `json:"id"`
+}
+
+type GetPersonContextSummaryPath struct {
+	// ID Durable participant ID
+	ID int64 `json:"id"`
+}
+
+type GetPersonTimelinePath struct {
+	// ID Durable participant ID
+	ID int64 `json:"id"`
+}
+
+type GetRelationshipTimelinePath struct {
+	// ID Any member participant ID of the counterpart's identity cluster
+	ID int64 `json:"id"`
+}
+
+type DeleteSavedViewPath struct {
+	// ID Saved View ID
+	ID int64 `json:"id"`
+}
+
+type GetSavedViewPath struct {
+	// ID Saved View ID
+	ID int64 `json:"id"`
+}
+
+type PatchSavedViewPath struct {
+	// ID Saved View ID
 	ID int64 `json:"id"`
 }
 

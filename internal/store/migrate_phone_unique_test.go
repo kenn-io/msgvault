@@ -206,3 +206,73 @@ func TestEnsureParticipantsPhoneUniqueIndex_LegacyNonUnique(t *testing.T) {
 	require.NoError(err, "EnsureParticipantByPhone")
 	assert.Equal(winner, gotID, "EnsureParticipantByPhone returned id %d, want winner %d (ON CONFLICT must find the unique index)", gotID, winner)
 }
+
+// TestEnsureParticipantsPhoneUniqueIndex_RewritesLinkEdges covers the
+// migration's underlying mergeParticipant path (used by
+// dedupeParticipantsByPhone), which is a second, tx-level merge
+// implementation distinct from the public MergeParticipants. It must be
+// link-aware the same way: a link edge on the loser participant must
+// survive the merge by repointing onto the winner rather than being
+// silently dropped by participant_links' ON DELETE CASCADE, and the
+// identity revision must bump since the merge changed the link graph.
+func TestEnsureParticipantsPhoneUniqueIndex_RewritesLinkEdges(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	dbPath := filepath.Join(t.TempDir(), "phone_unique_links.db")
+	st, err := Open(dbPath)
+	require.NoError(err, "Open")
+	t.Cleanup(func() { _ = st.Close() })
+	require.NoError(st.InitSchema(), "InitSchema")
+
+	_, err = st.db.Exec(`DELETE FROM applied_migrations WHERE name = ?`, migrationPhoneUniqueIndex)
+	require.NoError(err, "clear migration sentinel")
+	_, err = st.db.Exec(`DROP INDEX IF EXISTS idx_participants_phone`)
+	require.NoError(err, "drop unique idx")
+	_, err = st.db.Exec(`
+		CREATE INDEX idx_participants_phone ON participants(phone_number)
+		    WHERE phone_number IS NOT NULL
+	`)
+	require.NoError(err, "create legacy non-unique idx")
+
+	insertParticipant := func(phone, displayName string) int64 {
+		t.Helper()
+		var id int64
+		err := st.db.QueryRow(`
+			INSERT INTO participants (phone_number, display_name, created_at, updated_at)
+			VALUES (?, ?, datetime('now'), datetime('now'))
+			RETURNING id
+		`, phone, displayName).Scan(&id)
+		require.NoError(err, "insert participant %s", phone)
+		return id
+	}
+	winner := insertParticipant("+15555551234", "Alice")
+	loser := insertParticipant("+15555551234", "Alice (dup)")
+	third, err := st.EnsureParticipant("carol@example.com", "Carol", "example.com")
+	require.NoError(err, "EnsureParticipant third")
+
+	// Link the loser (not the winner) to a third participant, mirroring a
+	// user having asserted "loser and carol are the same person" before an
+	// unrelated phone-based dedupe absorbs loser into winner.
+	_, err = st.LinkParticipants(loser, third)
+	require.NoError(err, "LinkParticipants loser-third")
+	revBeforeMerge, err := st.IdentityRevision()
+	require.NoError(err, "IdentityRevision before merge")
+	acctRevBeforeMerge, err := st.AccountIdentityRevision()
+	require.NoError(err, "AccountIdentityRevision before merge")
+
+	require.NoError(st.ensureParticipantsPhoneUniqueIndex(), "ensureParticipantsPhoneUniqueIndex")
+
+	revAfter, err := st.IdentityRevision()
+	require.NoError(err, "IdentityRevision after merge")
+	assert.Equal(revBeforeMerge+1, revAfter, "dedupe merge must bump identity revision when it touches links")
+	acctRevAfter, err := st.AccountIdentityRevision()
+	require.NoError(err, "AccountIdentityRevision after merge")
+	assert.Equal(acctRevBeforeMerge+1, acctRevAfter,
+		"dedupe merge must bump the account identity revision (it repoints messages.sender_id)")
+
+	clusters, err := st.ParticipantClusters()
+	require.NoError(err, "ParticipantClusters")
+	canonical := min(winner, third)
+	assert.Equal(map[int64]int64{winner: canonical, third: canonical}, clusters,
+		"link must repoint from loser to winner")
+}

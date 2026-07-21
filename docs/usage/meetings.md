@@ -10,11 +10,11 @@ summary followed by the full speaker-labeled transcript, and the organizer and
 attendees join the same contact graph as the people you email.
 
 Meeting sync is **read-only**: msgvault never modifies anything in the source
-service. Meetings are cached and fully searchable with `msgvault search` and
-the TUI. An unscoped search intentionally returns every cached message type,
-including meetings and chats. Ordinary analytics remain email-only unless you
-explicitly filter by message type, so meeting attendees do not inflate email
-sender/recipient statistics.
+service. Meetings are cached and fully searchable with `msgvault search`, the
+Web UI, and the TUI. An unscoped search intentionally returns every cached
+message type, including meetings and chats. The Web UI's Everything workspace
+uses modality-aware rows and filters; email-specific CLI/TUI aggregates remain
+email-only unless you explicitly choose another message type.
 
 ## Source labels and account identity
 
@@ -107,7 +107,12 @@ same limited sync again updates the existing meeting rows rather than creating
 duplicates. Once the results look correct, run `msgvault sync-granola work`
 without a limit to continue normal incremental operation.
 
-### Browse in the TUI
+### Browse in the Web UI or TUI
+
+Start `msgvault serve` and open the [Web UI](/web-ui/) to include meetings in
+Everything, search their titles and transcripts, group them with other archive
+modalities, or filter to meeting notes only. Open a result to read the note in
+its containing context.
 
 Launch `msgvault tui` and press `m` until the title bar shows **Meetings**.
 The list combines Granola and Circleback meetings and shows their date, title,

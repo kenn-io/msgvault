@@ -188,7 +188,7 @@ func NewDuckDBEngine(analyticsDir string, sqlitePath string, sqliteDB *sql.DB, o
 		{datasetParticipants, "phone_number"},
 		{datasetMessages, "attachment_count"},
 		{datasetMessages, "sender_id"},
-		{datasetMessages, "message_type"},
+		{datasetMessages, messageTypeDimension},
 		{datasetConversations, "title"},
 		{datasetConversations, "conversation_type"},
 		{"sources", "source_type"},
@@ -468,7 +468,7 @@ func (e *DuckDBEngine) parquetCTEs() string {
 	} else {
 		msgExtra = append(msgExtra, "NULL::BIGINT AS sender_id")
 	}
-	if e.hasCol(datasetMessages, "message_type") {
+	if e.hasCol(datasetMessages, messageTypeDimension) {
 		msgReplace = append(msgReplace, "COALESCE(CAST(message_type AS VARCHAR), '') AS message_type")
 	} else {
 		msgExtra = append(msgExtra, "'' AS message_type")
@@ -477,6 +477,11 @@ func (e *DuckDBEngine) parquetCTEs() string {
 		msgReplace = append(msgReplace, "TRY_CAST(deleted_at AS TIMESTAMP) AS deleted_at")
 	} else {
 		msgExtra = append(msgExtra, "NULL::TIMESTAMP AS deleted_at")
+	}
+	if e.hasCol(datasetMessages, "is_from_me") {
+		msgReplace = append(msgReplace, "COALESCE(TRY_CAST(is_from_me AS BOOLEAN), false) AS is_from_me")
+	} else {
+		msgExtra = append(msgExtra, "false AS is_from_me")
 	}
 	msgCTE := fmt.Sprintf("SELECT * REPLACE (\n\t\t\t\t%s\n\t\t\t)", strings.Join(msgReplace, ",\n\t\t\t\t"))
 	if len(msgExtra) > 0 {
@@ -2364,11 +2369,15 @@ var RequiredParquetDirs = []string{
 	datasetMessages,
 	"sources",
 	datasetParticipants,
+	datasetParticipantIdentifiers,
 	"message_recipients",
 	"labels",
 	"message_labels",
 	"attachments",
 	datasetConversations,
+	datasetConversationParticipants,
+	datasetOwnerParticipants,
+	datasetParticipantClusters,
 }
 
 // SearchFast searches message metadata in Parquet files (no body text).

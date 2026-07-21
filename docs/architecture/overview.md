@@ -7,7 +7,7 @@ msgvault syncs Gmail, Google Calendar, IMAP, Microsoft 365 mail, Microsoft
 Teams, Discord, Beeper Desktop, Granola, and Circleback into a local SQLite database by
 default and can import local PST/MBOX archives, Apple Mail exports, and common
 chat/text formats. PostgreSQL is available as an opt-in backend for new
-archives. Keyword search, analytics, the TUI, and the MCP server run against
+archives. Keyword search, analytics, the Web UI, the TUI, and the MCP server run against
 the configured archive database, Parquet metadata exports where available,
 and the mixed loose/packed attachment store. Optional vector search calls the
 embedding endpoint configured in `[vector.embeddings]` to build/query semantic
@@ -20,10 +20,12 @@ on PostgreSQL.
 
 ```
 msgvault/
+├── web/                    # Svelte application embedded in release binaries
 ├── cmd/msgvault/            # CLI entrypoint
 │   └── cmd/                 # Cobra commands
 ├── internal/                # Core packages
 │   ├── tui/                 # Bubble Tea TUI
+│   ├── api/                 # HTTP API, browser sessions, and embedded UI server
 │   ├── query/               # DuckDB/SQL query engines
 │   ├── store/               # SQLite/PostgreSQL database access
 │   ├── backupapp/           # msgvault's App seam for the kit backup engine
@@ -63,6 +65,8 @@ msgvault/
 | Package | Responsibility |
 |---|---|
 | `cmd/` | Cobra CLI commands, config loading |
+| `web/` | Svelte analytical browser application and generated API client |
+| `internal/api` | HTTP routes, authentication/session middleware, and embedded UI assets |
 | `internal/store` | SQLite and PostgreSQL database operations, schema management |
 | `internal/backupapp` | msgvault's `backup.App` implementation (stats, layout, exclusions) over `go.kenn.io/kit`'s backup/pack engine |
 | `internal/attachmentstore` | Daemon-owned streaming reader for loose and packed attachment content |
@@ -97,13 +101,13 @@ msgvault/
 
 - **Local-first by design**: Mail, chat, calendar, and meeting providers are
   contacted only by explicit authorization/registration, sync, media-backfill,
-  and deletion workflows. Keyword search, analytics, TUI views, and ordinary
+  and deletion workflows. Keyword search, analytics, Web UI and TUI views, and ordinary
   MCP reads run against archived data without contacting those providers.
   Optional vector search additionally calls only the embedding endpoint you
   configure, so a local/self-hosted endpoint keeps semantic search on your own
   machine or network.
 - **SQLite by default, PostgreSQL opt-in**: SQLite is the default system of record. PostgreSQL can be selected with `[data].database_url` for new archives that should live in a server database.
-- **DuckDB + Parquet for default analytics**: On SQLite archives, the TUI runs an embedded DuckDB engine over Parquet metadata exports, delivering aggregate queries hundreds of times faster than SQLite JOINs. The entire analytics cache for hundreds of thousands of messages fits in a few megabytes, making drill-down and re-aggregation feel instant. PostgreSQL archives currently use live SQL for aggregate views.
+- **DuckDB + Parquet for default analytics**: On SQLite archives, the Web UI and TUI use an embedded DuckDB engine over Parquet metadata exports, delivering aggregate queries hundreds of times faster than SQLite JOINs. The entire analytics cache for hundreds of thousands of messages fits in a few megabytes, making drill-down and re-aggregation feel instant. PostgreSQL archives currently use live SQL for aggregate views.
 - **Content-addressed attachments**: Deduplicated by SHA-256 hash and stored as
   loose files or in sealed immutable packs; readers resolve both layouts
   transparently.

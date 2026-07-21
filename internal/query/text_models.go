@@ -114,12 +114,15 @@ type TextStatsOptions struct {
 
 const (
 	messageTypeSMS               = "sms"
+	messageTypeRCS               = "rcs"
+	messageTypeIMessage          = "imessage"
 	messageTypeMeetingTranscript = "meeting_transcript"
 )
 
 // TextMessageTypes lists the message_type values included in Texts mode.
 var TextMessageTypes = []string{
-	"whatsapp", "imessage", messageTypeSMS, "mms", "google_voice_text", "teams", "discord", "beeper",
+	"whatsapp", messageTypeIMessage, messageTypeSMS, "mms", messageTypeRCS,
+	"google_voice_text", "teams", "discord", "beeper", "fbmessenger",
 }
 
 // TextMessageTypeSQLList renders TextMessageTypes as a quoted SQL IN-list
@@ -153,12 +156,13 @@ func IsTextMessageType(mt string) bool {
 // values instead of silently returning no results.
 var KnownMessageTypes = []string{
 	messageTypeEmail,
-	"calendar_event",
+	messageTypeCalendar,
 	messageTypeMeetingTranscript,
 	messageTypeSMS,
 	"mms",
+	messageTypeRCS,
 	"whatsapp",
-	"imessage",
+	messageTypeIMessage,
 	"teams",
 	"discord",
 	"fbmessenger",

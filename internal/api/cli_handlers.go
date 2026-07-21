@@ -1877,7 +1877,7 @@ func (s *Server) getCLIIdentities(
 	return cliIdentitiesResponse{Rows: rows}, nil
 }
 
-func (s *Server) addCLIIdentity(req identityops.AddRequest) (identityops.AddResult, error) {
+func (s *Server) addCLIIdentity(ctx context.Context, req identityops.AddRequest) (identityops.AddResult, error) {
 	cliStore, apiErr := s.cliStore()
 	if apiErr != nil {
 		return identityops.AddResult{}, apiErr
@@ -1891,10 +1891,15 @@ func (s *Server) addCLIIdentity(req identityops.AddRequest) (identityops.AddResu
 			"Failed to add identity",
 		)
 	}
+	// AddAccountIdentity bumps the identity revision when it confirms a
+	// brand new (source_id, address) pair, changing owner_participants; the
+	// refresh is attempted unconditionally since it is an idempotent
+	// full re-export and the mutation already committed either way.
+	result.CacheState = s.refreshIdentityCacheState(ctx)
 	return result, nil
 }
 
-func (s *Server) removeCLIIdentity(req identityops.RemoveRequest) (identityops.RemoveResult, error) {
+func (s *Server) removeCLIIdentity(ctx context.Context, req identityops.RemoveRequest) (identityops.RemoveResult, error) {
 	cliStore, apiErr := s.cliStore()
 	if apiErr != nil {
 		return identityops.RemoveResult{}, apiErr
@@ -1908,6 +1913,11 @@ func (s *Server) removeCLIIdentity(req identityops.RemoveRequest) (identityops.R
 			"Failed to remove identity",
 		)
 	}
+	// RemoveAccountIdentity only bumps the identity revision on an actual
+	// deletion, but the refresh is attempted unconditionally for the same
+	// reason as addCLIIdentity: it is an idempotent full re-export and the
+	// mutation already committed either way.
+	result.CacheState = s.refreshIdentityCacheState(ctx)
 	return result, nil
 }
 

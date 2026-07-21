@@ -84,6 +84,10 @@ func errorCodeForStatus(status int) string {
 		return "unsupported_media_type"
 	case http.StatusUnprocessableEntity:
 		return "validation_failed"
+	case http.StatusPreconditionFailed:
+		return "precondition_failed"
+	case http.StatusPreconditionRequired:
+		return "precondition_required"
 	case http.StatusTooManyRequests:
 		return "rate_limited"
 	case http.StatusServiceUnavailable:
@@ -142,7 +146,7 @@ func withAPIKeySecurity(op huma.Operation) huma.Operation {
 
 func (s *Server) humaAuthMiddleware(ctx huma.Context, next func(huma.Context)) {
 	req, _ := humago.Unwrap(ctx)
-	if s.apiRequestAuthorized(req) {
+	if s.requestAuthentication(req).Mode != AuthModeRequired {
 		next(ctx)
 		return
 	}
@@ -161,6 +165,7 @@ func writeHumaError(ctx huma.Context, status int, code string, message string) {
 }
 
 func (s *Server) registerHumaRoutes(api huma.API, apiV1 huma.API) {
+	s.registerSessionRoutes(api)
 	registerRawHumaJSONRoute[HealthResponse](api, huma.Operation{
 		OperationID: "health",
 		Method:      http.MethodGet,
@@ -197,6 +202,16 @@ func (s *Server) registerHumaRoutes(api huma.API, apiV1 huma.API) {
 	}, s.handleDaemonShutdown)
 
 	registerAPIV1RawHumaJSONRoute[StatsResponse](apiV1, "getStats", http.MethodGet, "/stats", "Get archive statistics", s.handleStats)
+	s.registerSettingsRoutes(apiV1)
+	s.registerSavedViewRoutes(apiV1)
+	s.registerExploreRoutes(apiV1)
+	s.registerFilesRoutes(apiV1)
+	s.registerPeopleRoutes(apiV1)
+	s.registerRelationshipRoutes(apiV1)
+	s.registerIdentityLinkRoutes(apiV1)
+	s.registerTaskIntegrationRoutes(apiV1)
+	s.registerTaskLinkRoutes(apiV1)
+	s.registerSearchCoverageRoute(apiV1)
 	registerAPIV1RawHumaJSONRoute[cliInitDBResponse](apiV1, "initCLIArchive", http.MethodPost, "/cli/init-db", "Initialize the archive for CLI use", s.handleCLIInitDB)
 	registerAPIV1RawHumaJSONRoute[cliStatsResponse](apiV1, "getCLIStats", http.MethodGet, "/cli/stats", "Get CLI-compatible archive statistics", s.handleCLIStats)
 	registerAPIV1RawHumaJSONRoute[cliSearchResponse](apiV1, "searchCLI", http.MethodGet, "/cli/search", "Search messages for CLI output", s.handleCLISearch)
@@ -251,7 +266,22 @@ func (s *Server) registerHumaRoutes(api huma.API, apiV1 huma.API) {
 
 	registerAPIV1RawHumaJSONRoute[MessageListResponse](apiV1, "listMessages", http.MethodGet, "/messages", "List messages", s.handleListMessages)
 	registerAPIV1RawHumaJSONRoute[MessageDetail](apiV1, "getMessage", http.MethodGet, "/messages/{id}", "Get one message", s.handleGetMessage)
+	registerAPIV1RawHumaJSONRoute[ConversationResponse](apiV1, "getConversation", http.MethodGet, "/conversations/{id}", "Get a bounded containing conversation", s.handleGetConversation)
 	registerAPIV1RawHumaJSONRoute[AttachmentInfo](apiV1, "getAttachment", http.MethodGet, "/attachments/{id}", "Get attachment metadata", s.handleGetAttachment)
+	registerAPIV1RawHumaBinaryRoute(
+		apiV1,
+		"getFileContent",
+		http.MethodGet,
+		"/files/{id}/content",
+		"Download content for one authoritative file row",
+		"*/*",
+		s.handleGetFileContent,
+		http.StatusBadRequest,
+		http.StatusUnauthorized,
+		http.StatusNotFound,
+		http.StatusInternalServerError,
+		http.StatusServiceUnavailable,
+	)
 	registerAPIV1RawHumaBinaryRoute(
 		apiV1,
 		"getAttachmentContent",
@@ -317,6 +347,9 @@ func (s *Server) registerHumaRoutes(api huma.API, apiV1 huma.API) {
 	registerAPIV1RawHumaJSONRoute[ListDeletionsResponse](
 		apiV1, "listDeletions", http.MethodGet, "/deletions",
 		"List staged deletion manifests", s.handleListDeletions)
+	registerAPIV1RawHumaJSONRoute[DeletionManifestDetail](
+		apiV1, "getDeletion", http.MethodGet, "/deletions/{id}",
+		"Inspect a staged deletion manifest", s.handleGetDeletion)
 	registerAPIV1RawHumaJSONRoute[CancelDeletionResponse](
 		apiV1, "cancelDeletion", http.MethodDelete, "/deletions/{id}",
 		"Cancel a staged deletion manifest", s.handleCancelDeletion)
@@ -466,13 +499,47 @@ func rawRouteParameters(operationID string) []*huma.Param {
 		return paginationParams("page", "page_size")
 	case "getMessage":
 		return []*huma.Param{pathIntegerParam("Message ID")}
+	case "listMessageTasks", "createOrLinkMessageTask":
+		params := []*huma.Param{pathIntegerParam("Archived email message ID")}
+		if operationID == "createOrLinkMessageTask" {
+			params = append(params, param("X-Request-Id", "header", "string", "Browser-generated retry-stable request ID", true))
+		}
+		return params
+	case "searchIntegrationTasks":
+		return []*huma.Param{queryStringParam("q", "Task title search within the configured project", true)}
+	case "unlinkMessageTask":
+		return []*huma.Param{
+			pathIntegerParam("Archived email message ID"),
+			pathStringParam("task_id", "External task ID"),
+		}
+	case "getConversation":
+		return []*huma.Param{
+			pathIntegerParam("Conversation ID"),
+			queryRequiredIntegerParam("anchor", "Selected message ID anchoring the chronological window"),
+			queryIntegerParam("before", "Messages before the anchor (default 25, max 50)"),
+			queryIntegerParam("after", "Messages after the anchor (default 25, max 50)"),
+			queryStringParam("start",
+				"Lower UTC bound, inclusive (RFC3339). Restricts the window, before/after "+
+					"counts, and has_before/has_after to messages in [start, end)", false),
+			queryStringParam("end",
+				"Upper UTC bound, exclusive (RFC3339). Restricts the window, before/after "+
+					"counts, and has_before/has_after to messages in [start, end)", false),
+		}
 	case "listDeletions":
 		return []*huma.Param{queryStringParam("status",
 			"Filter manifests by status (pending, in_progress, completed, failed, cancelled)", false)}
-	case "cancelDeletion":
+	case "getDeletion", "cancelDeletion":
 		return []*huma.Param{pathStringParam("id", "Deletion manifest ID")}
 	case "getAttachment":
 		return []*huma.Param{pathIntegerParam("Attachment ID")}
+	case "getFile", "getFileContent":
+		return []*huma.Param{pathIntegerParam("File attachment ID")}
+	case "getPerson", "getPersonTimeline", "getPersonContextSummary", "searchPersonFiles":
+		return []*huma.Param{pathIntegerParam("Durable participant ID")}
+	case "getRelationshipTimeline":
+		return []*huma.Param{pathIntegerParam("Any member participant ID of the counterpart's identity cluster")}
+	case "getDomain", "getDomainTimeline", "getDomainContextSummary", "searchDomainFiles":
+		return []*huma.Param{pathStringParam("domain", "Exact normalized domain fact")}
 	case "getAttachmentContent":
 		return []*huma.Param{pathStringParam("hash", "Attachment SHA-256 content hash")}
 	case "getMessageInlinePart":

@@ -12,6 +12,7 @@ import (
 const (
 	migrationAttachmentsContentHashUnique = "attachments_content_hash_unique_index"
 	migrationMessagesLastModifiedBackfill = "messages_last_modified_backfill"
+	migrationArchiveIdentity              = "archive_identity_v1"
 )
 
 // IsMigrationApplied reports whether the named one-time data migration

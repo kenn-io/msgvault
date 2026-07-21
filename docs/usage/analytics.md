@@ -39,4 +39,7 @@ msgvault list-labels
 <figure class="screenshot" data-lightbox>
   <img src="/assets/generated/list-senders.svg" alt="msgvault list-senders command output" loading="lazy">
 </figure>
-These commands query the configured daemon or remote server. For interactive exploration with drill-down, use the [TUI](/usage/tui/).
+These commands query the configured daemon or remote server. For interactive
+exploration, use the [Web UI](/web-ui/) to combine search, filters, grouping,
+and modality-aware drill-down in a shareable URL-backed context. The
+[TUI](/usage/tui/) provides a terminal-native analytical workflow.

@@ -27,6 +27,7 @@ BUILD_TAGS := fts5 sqlite_vec
 PG_TEST_TAGS := fts5 sqlite_vec pgvector
 
 OPENAPI_ARTIFACTS := api/openapi.yaml pkg/client/openapi.yaml pkg/client/generated
+WEB_INSTALL_STAMP := web/node_modules/.msgvault-install-stamp
 
 # Keep golangci-lint results scoped to this git worktree. Its cache can contain
 # absolute source paths, so sharing the default user cache across worktrees can
@@ -35,20 +36,20 @@ DEFAULT_GOLANGCI_LINT_CACHE := $(shell git rev-parse --path-format=absolute --gi
 GOLANGCI_LINT_CACHE ?= $(DEFAULT_GOLANGCI_LINT_CACHE)
 export GOLANGCI_LINT_CACHE
 
-.PHONY: build build-release install clean test test-v test-pg fmt lint lint-ci testify-helper-check tidy openapi api-generate openapi-check api-check shootout run-shootout install-hooks bench docs-install docs-build docs-serve docs-check docs-screenshots docs-assets-branch docs-generated-assets-branch docs-deploy-staging docs-deploy help
+.PHONY: build build-release install clean test test-v test-pg fmt lint lint-ci testify-helper-check tidy openapi api-generate openapi-check api-check web-install web-generate web-check web-test web-test-browser web-e2e web-build web-embed web-assets-check smoke-web-release shootout run-shootout install-hooks bench docs-install docs-build docs-serve docs-check docs-screenshots docs-assets-branch docs-generated-assets-branch docs-deploy-staging docs-deploy help
 
 # Build the binary (debug)
-build:
+build: web-embed
 	CGO_ENABLED=1 go build -tags "$(BUILD_TAGS)" -ldflags="$(LDFLAGS)" -o msgvault ./cmd/msgvault
 	@chmod +x msgvault
 
 # Build with optimizations (release)
-build-release:
+build-release: web-embed
 	CGO_ENABLED=1 go build -tags "$(BUILD_TAGS)" -ldflags="$(LDFLAGS_RELEASE)" -trimpath -o msgvault ./cmd/msgvault
 	@chmod +x msgvault
 
 # Install to ~/.local/bin, $GOBIN, or $GOPATH/bin
-install:
+install: web-embed
 	@if [ -d "$(HOME)/.local/bin" ]; then \
 		echo "Installing to ~/.local/bin/msgvault"; \
 		CGO_ENABLED=1 go build -tags "$(BUILD_TAGS)" -ldflags="$(LDFLAGS)" -o "$(HOME)/.local/bin/msgvault" ./cmd/msgvault; \
@@ -96,6 +97,7 @@ api-generate:
 	set -e; tmp="$$(mktemp)"; trap 'rm -f "$$tmp"' EXIT; go run ./cmd/msgvault openapi > "$$tmp"; if [ -f api/openapi.yaml ] && cmp -s "$$tmp" api/openapi.yaml; then rm "$$tmp"; else mv "$$tmp" api/openapi.yaml; fi; trap - EXIT
 	set -e; tmp="$$(mktemp)"; trap 'rm -f "$$tmp"' EXIT; go run ./cmd/msgvault openapi --version 3.0 --format yaml > "$$tmp"; if [ -f pkg/client/openapi.yaml ] && cmp -s "$$tmp" pkg/client/openapi.yaml; then rm "$$tmp"; else mv "$$tmp" pkg/client/openapi.yaml; fi; trap - EXIT
 	cd pkg/client/generated && find . -maxdepth 1 -type f -name '*.go' ! -name 'generate.go' -delete && go run github.com/doordash-oss/oapi-codegen-dd/v3/cmd/oapi-codegen@v3.75.5 -config config.yaml ../openapi.yaml
+	go run ./internal/codegenfix/cmd pkg/client/generated/types.go
 
 openapi-check: api-generate
 	@git diff --exit-code -- $(OPENAPI_ARTIFACTS) || (echo "OpenAPI generated assets are stale; run 'make api-generate' and commit the changes." >&2; exit 1)
@@ -108,6 +110,59 @@ openapi-check: api-generate
 api-check: openapi-check
 
 openapi: api-generate
+
+# Install, generate, validate, test, and build the browser application. Web
+# generation is intentionally separate from the Go-only OpenAPI targets so
+# API client checks remain runnable on systems without Bun.
+web-install: $(WEB_INSTALL_STAMP)
+
+$(WEB_INSTALL_STAMP): web/package.json web/bun.lock
+	cd web && bun install --frozen-lockfile
+	@touch $(WEB_INSTALL_STAMP)
+
+web-generate: web-install
+	cd web && bun run generate
+
+web-check: web-generate
+	@git diff --exit-code -- web/src/lib/api/generated/schema.d.ts || (echo "Web API generated types are stale; run 'make web-generate' and commit the changes." >&2; exit 1)
+	@if [ -n "$$(git status --porcelain --untracked-files=all -- web/src/lib/api/generated/schema.d.ts)" ]; then \
+		git status --short --untracked-files=all -- web/src/lib/api/generated/schema.d.ts; \
+		echo "Web API generated types are stale; run 'make web-generate' and commit the changes." >&2; \
+		exit 1; \
+	fi
+	cd web && bun run check
+
+web-test:
+	cd web && bun run test
+
+web-test-browser:
+	cd web && bun run test:browser
+
+# Task 20 browser gates use the same digest-pinned Playwright environment as
+# web-test-browser in CI. Traces, screenshots, and video are retained only for
+# failures by web/playwright.config.ts.
+web-e2e:
+	cd web && bun run test:e2e
+
+web-build: web-generate
+	cd web && bun run build
+
+# Replace prior generated output while preserving the compilation stub, then
+# copy Vite's complete production distribution into the Go embed tree.
+web-embed: web-build
+	@mkdir -p internal/web/dist
+	@find internal/web/dist -mindepth 1 -maxdepth 1 ! -name stub.html -exec rm -rf {} +
+	@cp -R web/dist/. internal/web/dist/
+
+# Validate Vite's parsed release graph against the staged embed. The node test
+# drives the same validator through missing, escaping, external, and stale cases.
+web-assets-check: web-embed
+	node --test scripts/check-web-assets.test.mjs
+	node scripts/check-web-assets.mjs
+
+smoke-web-release:
+	node --test scripts/smoke-web-release.test.mjs
+	bash scripts/smoke-web-release.sh
 
 # Format code
 fmt:
@@ -219,6 +274,15 @@ help:
 	@echo "  openapi        - Regenerate OpenAPI specs and generated Go client"
 	@echo "  openapi-check  - Check committed OpenAPI specs and generated Go client are up to date"
 	@echo "  api-check      - Alias for openapi-check"
+	@echo "  web-install    - Install pinned browser application dependencies"
+	@echo "  web-generate   - Regenerate browser API types from the OpenAPI schema"
+	@echo "  web-check      - Check browser types and generated API artifacts"
+	@echo "  web-test       - Run browser application unit tests"
+	@echo "  web-test-browser - Run browser application Playwright tests"
+	@echo "  web-build      - Build the browser application"
+	@echo "  web-embed      - Build and stage browser assets for Go embedding"
+	@echo "  web-assets-check - Validate the complete release asset graph and staged embed"
+	@echo "  smoke-web-release - Build and exercise an isolated release-style daemon"
 	@echo "  install-hooks  - Install pre-commit hook via prek"
 	@echo "  clean          - Remove build artifacts"
 	@echo ""

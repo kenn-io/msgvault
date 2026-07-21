@@ -39,6 +39,50 @@ func TestMigrateLegacyIdentityConfig_Basic(t *testing.T) {
 	}
 }
 
+// TestMigrateLegacyIdentityConfig_BumpsRevisionsOnlyWhenItInserts verifies
+// that the legacy-config startup migration bumps both the identity revision
+// and the account-identity revision when it actually inserts confirmed
+// account_identities rows (so a daemon that started before the migration ran
+// invalidates its cached owner_participants/is_from_me), and that the
+// idempotent no-op re-run leaves both revisions unchanged.
+func TestMigrateLegacyIdentityConfig_BumpsRevisionsOnlyWhenItInserts(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := storetest.New(t)
+	st := f.Store
+
+	identityRevBefore, err := st.IdentityRevision()
+	require.NoError(err, "IdentityRevision before migration")
+	acctRevBefore, err := st.AccountIdentityRevision()
+	require.NoError(err, "AccountIdentityRevision before migration")
+
+	applied, _, _, _, err := st.MigrateLegacyIdentityConfig([]string{"alice@example.com"}) //nolint:dogsled // 5-return migration; test needs only applied+err
+	require.NoError(err, "MigrateLegacyIdentityConfig")
+	require.True(applied, "applied should be true on first run")
+
+	identityRevAfter, err := st.IdentityRevision()
+	require.NoError(err, "IdentityRevision after migration")
+	assert.Equal(identityRevBefore+1, identityRevAfter,
+		"an actual insert must bump the identity revision")
+	acctRevAfter, err := st.AccountIdentityRevision()
+	require.NoError(err, "AccountIdentityRevision after migration")
+	assert.Equal(acctRevBefore+1, acctRevAfter,
+		"an actual insert must bump the account identity revision")
+
+	// Re-running is a no-op (already applied): neither revision should move.
+	_, _, _, _, err = st.MigrateLegacyIdentityConfig([]string{"alice@example.com"}) //nolint:dogsled // 5-return migration; test needs only err
+	require.NoError(err, "second MigrateLegacyIdentityConfig call")
+
+	identityRevSecond, err := st.IdentityRevision()
+	require.NoError(err, "IdentityRevision after second call")
+	assert.Equal(identityRevAfter, identityRevSecond,
+		"a no-op re-run must not bump the identity revision")
+	acctRevSecond, err := st.AccountIdentityRevision()
+	require.NoError(err, "AccountIdentityRevision after second call")
+	assert.Equal(acctRevAfter, acctRevSecond,
+		"a no-op re-run must not bump the account identity revision")
+}
+
 func TestMigrateLegacyIdentityConfig_MergesExistingSignal(t *testing.T) {
 	require := require.New(t)
 	f := storetest.New(t)

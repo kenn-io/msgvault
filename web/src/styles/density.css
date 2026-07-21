@@ -1,0 +1,16 @@
+:root,
+:root[data-density="compact"] {
+  --row-height: 36px;
+  --table-header-height: 34px;
+  --control-height: 32px;
+  --density-block-padding: 4px;
+  --density-inline-padding: 8px;
+}
+
+:root[data-density="comfortable"] {
+  --row-height: 46px;
+  --table-header-height: 36px;
+  --control-height: 38px;
+  --density-block-padding: 8px;
+  --density-inline-padding: 12px;
+}

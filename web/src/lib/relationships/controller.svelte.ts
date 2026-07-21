@@ -1,0 +1,428 @@
+import type { APIClient } from '../api/client';
+import type {
+  DomainSummary,
+  ExploreCacheUnavailable,
+  ExploreFilter,
+  ExplorePredicate,
+  IdentitySearchSort,
+  PersonSummary
+} from '../explore/models';
+import { predicateFingerprint } from '../explore/selection';
+import type { RelationshipFacet, RelationshipRow, RelationshipTimelineRow } from './models';
+
+export type LinkOutcome =
+  | { ok: true; identityRevision: number; cacheState: 'ready' | 'stale' }
+  | { ok: false; code: 'already_linked' | 'invalid' | 'error'; message: string };
+
+const RANKED_LIST_LIMIT = 200;
+const SEARCH_LIST_LIMIT = 500;
+const TIMELINE_PAGE_LIMIT = 200;
+const DEFAULT_IDENTITY_SORT: IdentitySearchSort = { field: 'activity_count', direction: 'desc' };
+const REPEATED_CURSOR_MESSAGE = 'Pagination stopped because the server repeated a cursor without progress.';
+const TIMELINE_RESTART_MESSAGE = 'Timeline restarted: the archive changed.';
+
+/**
+ * Data controller for the Relationships hub's left list (ranked/searched
+ * people or domains), center detail (cluster or domain header + timeline),
+ * and identity link/unlink mutations.
+ *
+ * Ports the proven mechanics from PeopleWorkspace.svelte/DomainWorkspace.svelte
+ * as plain class methods: a generation counter per independent load (list,
+ * detail) that discards stale async completions, an AbortController per load
+ * that `destroy()` sweeps, and a seen-cursors set that stops runaway
+ * pagination if the server ever repeats a cursor without progress.
+ *
+ * `openTarget` dispatches on the target's prefix (`cluster:` vs `domain:`),
+ * never on `facet` — a target string can legitimately disagree with the
+ * facet that produced it (e.g. restored from a URL), and the prefix is the
+ * only value that determines which endpoints to call.
+ */
+export class RelationshipsController {
+  facet = $state<RelationshipFacet>('people');
+  query = $state('');
+  showAll = $state(false);
+  listRows = $state<RelationshipRow[] | PersonSummary[] | DomainSummary[]>([]);
+  listLoading = $state(false);
+  listError = $state<string | null>(null);
+  degraded = $state<'cache_unavailable' | null>(null);
+
+  target = $state<string | null>(null);
+  /** Fingerprint of the predicate `target` was last opened with — lets a
+   * caller (AppShell's URL-hydration effect) tell "this target is already
+   * open" apart from "this target is open, but for a stale predicate" (e.g.
+   * filters picked up from Everything/Files while the URL-carried target
+   * itself didn't change) without keeping its own shadow copy that could
+   * fall out of sync with a call made through a different path (the
+   * in-hub click handler calls openTarget directly). Set by openTarget,
+   * cleared by clearTarget. */
+  lastPredicateFingerprint = $state<string | null>(null);
+  detail = $state<PersonSummary | DomainSummary | null>(null);
+  timelineRows = $state<RelationshipTimelineRow[]>([]);
+  timelineCursor = $state<string | null>(null);
+  timelineLoading = $state(false);
+  timelineLoadingMore = $state(false);
+  timelineError = $state<string | null>(null);
+  /** One-line notice set when a cursor_invalidated 409 silently restarted the
+   * timeline from page 1; cleared on the next openTarget navigation. */
+  timelineRestartNotice = $state<string | null>(null);
+  canonicalID = $state<number | null>(null);
+  identityRevision = $state<number | null>(null);
+
+  private readonly client: APIClient;
+  private readonly timezone: () => string;
+  private listAbort: AbortController | undefined;
+  private detailAbort: AbortController | undefined;
+  private listGeneration = 0;
+  private detailGeneration = 0;
+  private seenCursors = new Set<string>();
+  private lastPredicate: ExplorePredicate | undefined;
+  private lastListPredicate: ExplorePredicate | undefined;
+
+  constructor(client: APIClient, timezone: () => string) {
+    this.client = client;
+    this.timezone = timezone;
+  }
+
+  async loadList(predicate: ExplorePredicate): Promise<void> {
+    this.listAbort?.abort();
+    const controller = new AbortController();
+    this.listAbort = controller;
+    const generation = ++this.listGeneration;
+    this.lastListPredicate = predicate;
+    this.listLoading = true;
+    this.listError = null;
+    this.degraded = null;
+    const context = contextPredicate(predicate);
+    const query = this.query.trim();
+    try {
+      if (this.facet === 'domains') {
+        const response = await this.client.POST('/api/v1/domains/search', {
+          body: { predicate: context, identity_query: query, sort: DEFAULT_IDENTITY_SORT, limit: SEARCH_LIST_LIMIT },
+          signal: controller.signal
+        });
+        this.applyListResponse(generation, controller.signal, response);
+      } else if (query === '') {
+        const response = await this.client.POST('/api/v1/relationships', {
+          body: { filters: predicate.filters, show_all: this.showAll, limit: RANKED_LIST_LIMIT },
+          signal: controller.signal
+        });
+        this.applyListResponse(generation, controller.signal, response);
+      } else {
+        const response = await this.client.POST('/api/v1/people/search', {
+          body: { predicate: context, identity_query: query, sort: DEFAULT_IDENTITY_SORT, limit: SEARCH_LIST_LIMIT },
+          signal: controller.signal
+        });
+        this.applyListResponse(generation, controller.signal, response);
+      }
+    } catch (cause: unknown) {
+      if (generation === this.listGeneration && !controller.signal.aborted) this.listError = errorMessage(cause, 0);
+    } finally {
+      if (generation === this.listGeneration) this.listLoading = false;
+    }
+  }
+
+  private applyListResponse(
+    generation: number,
+    signal: AbortSignal,
+    response: { data?: { rows?: unknown[] | null }; error?: unknown; response: Response }
+  ): void {
+    if (signal.aborted || generation !== this.listGeneration) return;
+    const { data, error, response: res } = response;
+    if (data) {
+      this.listRows = (data.rows ?? []) as RelationshipRow[] | PersonSummary[] | DomainSummary[];
+      return;
+    }
+    if (res.status === 503 && isCacheUnavailable(error)) {
+      this.degraded = 'cache_unavailable';
+      return;
+    }
+    this.listError = errorMessage(error, res.status);
+  }
+
+  async openTarget(target: string, predicate: ExplorePredicate): Promise<void> {
+    this.detailAbort?.abort();
+    const controller = new AbortController();
+    this.detailAbort = controller;
+    const generation = ++this.detailGeneration;
+    this.target = target;
+    this.lastPredicate = predicate;
+    this.lastPredicateFingerprint = predicateFingerprint(predicate);
+    this.detail = null;
+    this.timelineRows = [];
+    this.timelineCursor = null;
+    this.timelineError = null;
+    this.timelineRestartNotice = null;
+    this.timelineLoadingMore = false;
+    this.canonicalID = null;
+    this.identityRevision = null;
+    this.seenCursors = new Set<string>();
+
+    const clusterID = parseClusterID(target);
+    const domainName = parseDomainName(target);
+    if (clusterID === undefined && domainName === undefined) {
+      this.timelineLoading = false;
+      return;
+    }
+    this.timelineLoading = true;
+    try {
+      if (clusterID !== undefined) await this.openCluster(clusterID, predicate, generation, controller.signal);
+      else if (domainName !== undefined) await this.openDomain(domainName, predicate, generation, controller.signal);
+    } finally {
+      if (generation === this.detailGeneration) this.timelineLoading = false;
+    }
+  }
+
+  private async openCluster(
+    id: number,
+    predicate: ExplorePredicate,
+    generation: number,
+    signal: AbortSignal
+  ): Promise<void> {
+    try {
+      const [personResponse] = await Promise.all([
+        this.client.GET('/api/v1/people/{id}', { params: { path: { id } }, signal }),
+        this.fetchClusterPage(id, predicate.filters ?? undefined, generation, undefined, signal)
+      ]);
+      if (signal.aborted || generation !== this.detailGeneration) return;
+      if (personResponse.data) this.detail = personResponse.data;
+      else this.timelineError ||= errorMessage(personResponse.error, personResponse.response.status);
+    } catch (cause: unknown) {
+      if (!signal.aborted && generation === this.detailGeneration) this.timelineError ||= errorMessage(cause, 0);
+    }
+  }
+
+  private async openDomain(
+    domain: string,
+    predicate: ExplorePredicate,
+    generation: number,
+    signal: AbortSignal
+  ): Promise<void> {
+    try {
+      const [detailResponse] = await Promise.all([
+        this.client.GET('/api/v1/domains/{domain}', { params: { path: { domain } }, signal }),
+        this.fetchDomainPage(domain, contextPredicate(predicate), generation, undefined, signal)
+      ]);
+      if (signal.aborted || generation !== this.detailGeneration) return;
+      if (detailResponse.data) this.detail = detailResponse.data;
+      else this.timelineError ||= errorMessage(detailResponse.error, detailResponse.response.status);
+    } catch (cause: unknown) {
+      if (!signal.aborted && generation === this.detailGeneration) this.timelineError ||= errorMessage(cause, 0);
+    }
+  }
+
+  /**
+   * Drops the open target and its detail/timeline state (cluster or domain
+   * header, rows, canonical ID, revision) back to the hub's empty state.
+   * Called when the URL-carried target becomes null (Esc, Back/Forward) so
+   * the center pane never keeps showing a stale person/domain after the
+   * target it belonged to is gone. Aborts any in-flight detail fetch and
+   * bumps the generation counter so a late response cannot resurrect it.
+   */
+  clearTarget(): void {
+    this.detailAbort?.abort();
+    this.detailAbort = undefined;
+    ++this.detailGeneration;
+    this.target = null;
+    this.lastPredicate = undefined;
+    this.lastPredicateFingerprint = null;
+    this.detail = null;
+    this.timelineRows = [];
+    this.timelineCursor = null;
+    this.timelineLoading = false;
+    this.timelineLoadingMore = false;
+    this.timelineError = null;
+    this.timelineRestartNotice = null;
+    this.canonicalID = null;
+    this.identityRevision = null;
+    this.seenCursors = new Set<string>();
+  }
+
+  async loadMoreTimeline(): Promise<void> {
+    if (this.timelineLoadingMore || !this.timelineCursor || !this.target || !this.lastPredicate || !this.detailAbort) {
+      return;
+    }
+    const clusterID = parseClusterID(this.target);
+    const domainName = parseDomainName(this.target);
+    if (clusterID === undefined && domainName === undefined) return;
+    this.timelineLoadingMore = true;
+    const generation = this.detailGeneration;
+    const signal = this.detailAbort.signal;
+    const cursor = this.timelineCursor;
+    if (clusterID !== undefined) {
+      await this.fetchClusterPage(clusterID, this.lastPredicate.filters ?? undefined, generation, cursor, signal);
+    } else if (domainName !== undefined) {
+      await this.fetchDomainPage(domainName, contextPredicate(this.lastPredicate), generation, cursor, signal);
+    }
+  }
+
+  private async fetchClusterPage(
+    id: number,
+    filters: ExploreFilter[] | undefined,
+    generation: number,
+    cursor: string | undefined,
+    signal: AbortSignal
+  ): Promise<void> {
+    try {
+      if (cursor && this.seenCursors.has(cursor)) {
+        this.applyTimelineFailure(generation, REPEATED_CURSOR_MESSAGE);
+        return;
+      }
+      const response = await this.client.POST('/api/v1/relationships/{id}/timeline', {
+        params: { path: { id } },
+        body: { timezone: this.timezone(), filters, limit: TIMELINE_PAGE_LIMIT, ...(cursor ? { cursor } : {}) },
+        signal
+      });
+      if (signal.aborted || generation !== this.detailGeneration) return;
+      const { data, error, response: res } = response;
+      if (!data) {
+        if (cursor && res.status === 409 && isErrorCode(error, 'cursor_invalidated')) {
+          this.timelineRows = [];
+          this.timelineCursor = null;
+          this.seenCursors = new Set<string>();
+          this.timelineRestartNotice = TIMELINE_RESTART_MESSAGE;
+          await this.fetchClusterPage(id, filters, generation, undefined, signal);
+          return;
+        }
+        this.applyTimelineFailure(generation, errorMessage(error, res.status));
+        return;
+      }
+      this.timelineError = null;
+      if (cursor) this.seenCursors.add(cursor);
+      this.timelineRows = mergeTimelineRows(this.timelineRows, data.rows ?? []);
+      this.canonicalID = data.canonical_id;
+      this.identityRevision = data.identity_revision;
+      this.timelineCursor = data.next_cursor ?? null;
+    } catch (cause: unknown) {
+      if (!signal.aborted && generation === this.detailGeneration) this.timelineError = errorMessage(cause, 0);
+    } finally {
+      if (generation === this.detailGeneration) this.timelineLoadingMore = false;
+    }
+  }
+
+  private async fetchDomainPage(
+    domain: string,
+    context: ExplorePredicate,
+    generation: number,
+    cursor: string | undefined,
+    signal: AbortSignal
+  ): Promise<void> {
+    try {
+      if (cursor && this.seenCursors.has(cursor)) {
+        this.applyTimelineFailure(generation, REPEATED_CURSOR_MESSAGE);
+        return;
+      }
+      const response = await this.client.POST('/api/v1/domains/{domain}/timeline', {
+        params: { path: { domain } },
+        body: { ...context, limit: TIMELINE_PAGE_LIMIT, ...(cursor ? { cursor } : {}) },
+        signal
+      });
+      if (signal.aborted || generation !== this.detailGeneration) return;
+      const { data, error, response: res } = response;
+      if (!data) {
+        this.applyTimelineFailure(generation, errorMessage(error, res.status));
+        return;
+      }
+      this.timelineError = null;
+      if (cursor) this.seenCursors.add(cursor);
+      this.timelineRows = mergeTimelineRows(this.timelineRows, data.rows);
+      this.timelineCursor = data.next_cursor ?? null;
+    } catch (cause: unknown) {
+      if (!signal.aborted && generation === this.detailGeneration) this.timelineError = errorMessage(cause, 0);
+    } finally {
+      if (generation === this.detailGeneration) this.timelineLoadingMore = false;
+    }
+  }
+
+  private applyTimelineFailure(generation: number, message: string): void {
+    if (generation !== this.detailGeneration) return;
+    this.timelineError = message;
+    this.timelineCursor = null;
+  }
+
+  async linkParticipants(a: number, b: number): Promise<LinkOutcome> {
+    try {
+      const response = await this.client.POST('/api/v1/identity/links', { body: { participant_a: a, participant_b: b } });
+      return await this.applyLinkResponse(response);
+    } catch (cause: unknown) {
+      return { ok: false, code: 'error', message: errorMessage(cause, 0) };
+    }
+  }
+
+  async unlinkParticipants(a: number, b: number): Promise<LinkOutcome> {
+    try {
+      const response = await this.client.POST('/api/v1/identity/unlinks', { body: { participant_a: a, participant_b: b } });
+      return await this.applyLinkResponse(response);
+    } catch (cause: unknown) {
+      return { ok: false, code: 'error', message: errorMessage(cause, 0) };
+    }
+  }
+
+  private async applyLinkResponse(response: {
+    data?: { identity_revision: number; cache_state: 'ready' | 'stale' };
+    error?: unknown;
+    response: Response;
+  }): Promise<LinkOutcome> {
+    const { data, error, response: res } = response;
+    if (data) {
+      // A null identityRevision means the prior timeline load failed, so
+      // there is nothing to compare against — treat that as "changed" and
+      // refresh anyway rather than silently skipping the reopen. The ranked
+      // list reloads unconditionally: a link/unlink can move rows (merge or
+      // split a cluster) regardless of whether the currently open target's
+      // own revision moved.
+      const changed = this.identityRevision === null || this.identityRevision !== data.identity_revision;
+      const reloads: Promise<void>[] = [];
+      if (changed && this.target && this.lastPredicate) reloads.push(this.openTarget(this.target, this.lastPredicate));
+      if (this.lastListPredicate) reloads.push(this.loadList(this.lastListPredicate));
+      await Promise.all(reloads);
+      return { ok: true, identityRevision: data.identity_revision, cacheState: data.cache_state };
+    }
+    const message = errorMessage(error, res.status);
+    if (res.status === 409 && isErrorCode(error, 'already_linked')) return { ok: false, code: 'already_linked', message };
+    if (res.status === 400) return { ok: false, code: 'invalid', message };
+    return { ok: false, code: 'error', message };
+  }
+
+  destroy(): void {
+    this.listAbort?.abort();
+    this.detailAbort?.abort();
+  }
+}
+
+function contextPredicate(predicate: ExplorePredicate): ExplorePredicate {
+  const { cursor: _cursor, grouping: _grouping, candidate_snapshot_id: _snapshot, ...context } = predicate;
+  return { ...context, presentation: 'table' };
+}
+
+function mergeTimelineRows<Row extends { key: string }>(existing: Row[], incoming: Row[]): Row[] {
+  const merged = new Map(existing.map((row) => [row.key, row]));
+  for (const row of incoming) merged.set(row.key, row);
+  return [...merged.values()];
+}
+
+function parseClusterID(target: string | null): number | undefined {
+  const match = target ? /^cluster:([1-9][0-9]*)$/.exec(target) : null;
+  if (!match?.[1]) return undefined;
+  const id = Number(match[1]);
+  return Number.isSafeInteger(id) ? id : undefined;
+}
+
+function parseDomainName(target: string | null): string | undefined {
+  return target?.startsWith('domain:') ? target.slice('domain:'.length) : undefined;
+}
+
+function isCacheUnavailable(value: unknown): value is ExploreCacheUnavailable {
+  return typeof value === 'object' && value !== null && 'readiness' in value && 'recovery_action' in value;
+}
+
+function isErrorCode(value: unknown, code: string): boolean {
+  return typeof value === 'object' && value !== null && 'error' in value && (value as { error?: unknown }).error === code;
+}
+
+function errorMessage(value: unknown, status: number): string {
+  if (typeof value === 'object' && value !== null && 'message' in value) {
+    const message = (value as { message?: unknown }).message;
+    if (typeof message === 'string' && message) return message;
+  }
+  return status ? `Request failed (${status})` : 'Request failed';
+}

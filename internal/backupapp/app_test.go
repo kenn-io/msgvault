@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -12,6 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/kit/backup"
 	"go.kenn.io/msgvault/internal/backupapp"
+	"go.kenn.io/msgvault/internal/store"
 )
 
 // seedDB creates the minimal msgvault-shaped schema (same shape as the
@@ -120,4 +122,56 @@ func TestAppConstants(t *testing.T) {
 	assert.Equal(
 		[]string{"vectors.db", "analytics/", "logs/", "imports/", "tmp/", "locks"},
 		app.ExcludedPaths())
+}
+
+func TestBackupRestorePreservesSavedViews(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	ctx := context.Background()
+	dataDir := t.TempDir()
+	dbPath := filepath.Join(dataDir, "msgvault.db")
+	attachmentsDir := filepath.Join(dataDir, "attachments")
+	requirements.NoError(os.MkdirAll(attachmentsDir, 0o700))
+
+	st, err := store.OpenForTest(dbPath)
+	requirements.NoError(err)
+	requirements.NoError(st.InitSchema())
+	archiveUID, err := st.ArchiveUID()
+	requirements.NoError(err)
+	description := "Shared analytical definition"
+	created, err := st.CreateSavedView(ctx, store.SavedViewInput{
+		Name:           "Invoices",
+		Description:    &description,
+		CanonicalState: json.RawMessage(`{"query":"invoice","search_mode":"full_text"}`),
+		SchemaVersion:  store.CurrentSavedViewSchemaVersion,
+	})
+	requirements.NoError(err)
+	t.Cleanup(func() { _ = st.Close() })
+
+	repository, err := backup.Init(filepath.Join(t.TempDir(), "repository"))
+	requirements.NoError(err)
+	app := backupapp.New("test")
+	_, err = backup.Create(ctx, repository, app, backup.CreateOptions{
+		DBPath: dbPath, ContentDir: attachmentsDir, DataDir: dataDir,
+	})
+	requirements.NoError(err)
+
+	restoreResult, err := backup.Restore(ctx, repository, app, backup.RestoreOptions{
+		TargetDir: filepath.Join(t.TempDir(), "restored"),
+	})
+	requirements.NoError(err)
+	restored, err := store.OpenForTest(restoreResult.DBPath)
+	requirements.NoError(err)
+	t.Cleanup(func() { _ = restored.Close() })
+	restoredArchiveUID, err := restored.ArchiveUID()
+	requirements.NoError(err)
+	assertions.Equal(archiveUID, restoredArchiveUID, "backup and restore must preserve archive identity")
+
+	got, err := restored.GetSavedView(ctx, created.ID)
+	requirements.NoError(err)
+	assertions.Equal(created.Name, got.Name)
+	assertions.Equal(created.Description, got.Description)
+	assertions.JSONEq(string(created.CanonicalState), string(got.CanonicalState))
+	assertions.Equal(created.SchemaVersion, got.SchemaVersion)
+	assertions.Equal(created.Revision, got.Revision)
 }

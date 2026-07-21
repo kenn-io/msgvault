@@ -12,8 +12,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/danielgtaylor/huma/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/explorecatalog"
 )
 
 const (
@@ -28,6 +30,71 @@ func TestOpenAPIDocumentUsesAPISchemaVersion(t *testing.T) {
 	require.NotNil(t, doc.Info, "openapi info")
 	assert.Equal(t, APISchemaVersion, doc.Info.Version, "info.version tracks API schema, not binary version")
 	assert.NotEmpty(t, doc.Paths, "paths")
+}
+
+func TestSourceStatusRunReferencesAreNullable(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	doc := OpenAPIDocument()
+	schema := doc.Components.Schemas.Map()["SourceStatus"]
+	requirements.NotNil(schema)
+	for _, name := range []string{"active_sync", "latest_sync", "last_successful_sync"} {
+		property := schema.Properties[name]
+		requirements.NotNil(property, name)
+		requirements.Len(property.OneOf, 2, name)
+		assertions.Equal("#/components/schemas/SyncRunStatus", property.OneOf[0].Ref, name)
+		assertions.Equal("null", property.OneOf[1].Type, name)
+	}
+}
+
+func TestExploreServiceUnavailableResponseUsesNonExclusiveAlternatives(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	doc := OpenAPIDocument()
+	operation := doc.Paths["/api/v1/explore"].Post
+	requirements.NotNil(operation)
+	response := operation.Responses["503"]
+	requirements.NotNil(response)
+	schema := response.Content["application/json"].Schema
+	requirements.NotNil(schema)
+	assertions.Empty(schema.OneOf)
+	assertions.Len(schema.AnyOf, 2)
+}
+
+func TestOpenAPIFileNamesAndMIMETypesAreRequiredButMayBeEmpty(t *testing.T) {
+	doc := OpenAPIDocument()
+	for _, schemaName := range []string{"FileSearchRow", "FileMetadataResponse"} {
+		t.Run(schemaName, func(t *testing.T) {
+			assertions := assert.New(t)
+			requirements := require.New(t)
+			schema := doc.Components.Schemas.Map()[schemaName]
+			requirements.NotNil(schema)
+			for _, property := range []string{"filename", "mime_type"} {
+				assertions.Contains(schema.Required, property)
+				field := schema.Properties[property]
+				requirements.NotNil(field)
+				assertions.Equal("string", field.Type)
+				assertions.Nil(field.MinLength, "empty %s is legitimate archive metadata", property)
+			}
+		})
+	}
+}
+
+func TestOpenAPIClientUsesPresenceAwareFileMetadataStrings(t *testing.T) {
+	publicSchemas := OpenAPIDocument().Components.Schemas.Map()
+	clientSchemas := openAPIClientDocument().Components.Schemas.Map()
+	for _, schemaName := range []string{"FileSearchRow", "FileMetadataResponse"} {
+		t.Run(schemaName, func(t *testing.T) {
+			assertions := assert.New(t)
+			for _, property := range []string{"filename", "mime_type"} {
+				assertions.Contains(publicSchemas[schemaName].Required, property)
+				assertions.False(publicSchemas[schemaName].Properties[property].Nullable)
+				assertions.Contains(clientSchemas[schemaName].Required, property)
+				assertions.True(clientSchemas[schemaName].Properties[property].Nullable,
+					"client generation needs a pointer to distinguish missing from present empty")
+			}
+		})
+	}
 }
 
 func TestOpenAPIJSONVersionPrettyPrintsSchema(t *testing.T) {
@@ -168,6 +235,149 @@ func TestOpenAPIBinaryRoutesDocumentJSONErrors(t *testing.T) {
 	}
 }
 
+func TestOpenAPISavedViewMutationsDocumentBadRequests(t *testing.T) {
+	doc := OpenAPIDocument()
+
+	for name, operation := range map[string]*huma.Operation{
+		"create": doc.Paths["/api/v1/saved-views"].Post,
+		"patch":  doc.Paths["/api/v1/saved-views/{id}"].Patch,
+	} {
+		t.Run(name, func(t *testing.T) {
+			requirements := require.New(t)
+			requirements.NotNil(operation)
+			response := operation.Responses[strconv.Itoa(http.StatusBadRequest)]
+			requirements.NotNil(response)
+			media := response.Content["application/json"]
+			requirements.NotNil(media)
+			requirements.NotNil(media.Schema)
+			assert.Equal(t, "#/components/schemas/ErrorResponse", media.Schema.Ref)
+		})
+	}
+}
+
+func TestOpenAPIDocumentsAllExplorationOperations(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	doc := OpenAPIDocument()
+	operations := map[string]string{
+		"/api/v1/explore":              "explore",
+		"/api/v1/explore/groups":       "exploreGroups",
+		"/api/v1/explore/preflight":    "preflightExploreSelection",
+		"/api/v1/explore/match-counts": "countExploreMatches",
+		"/api/v1/explore/files":        "listExploreFiles",
+	}
+	for path, operationID := range operations {
+		t.Run(operationID, func(t *testing.T) {
+			assertions := assert.New(t)
+			requirements := require.New(t)
+			op := doc.Paths[path].Post
+			requirements.NotNil(op)
+			assertions.Equal(operationID, op.OperationID)
+			requirements.NotNil(op.RequestBody)
+			requirements.NotNil(op.Responses["200"])
+			requirements.NotNil(op.Responses["400"])
+			requirements.NotNil(op.Responses["409"])
+			requirements.NotNil(op.Responses["503"])
+		})
+	}
+	filter := doc.Components.Schemas.Map()["ExploreFilter"]
+	requirements.NotNil(filter)
+	requirements.NotNil(filter.Properties["dimension"])
+	assertions.ElementsMatch(
+		[]any{"source", "participant", "domain", "message_type", "after", "before", "deletion"},
+		filter.Properties["dimension"].Enum,
+	)
+	for schemaName, properties := range map[string][]string{
+		"ExploreFilter":              {"values"},
+		"ExploreHTTPResponse":        {"rows"},
+		"ExploreGroupsHTTPResponse":  {"rows"},
+		"ExploreFilesHTTPResponse":   {"files"},
+		"ExploreMatchCountsResponse": {"counts"},
+		"ExplorePreflightResponse":   {"unavailable_actions"},
+	} {
+		schema := doc.Components.Schemas.Map()[schemaName]
+		requirements.NotNil(schema, schemaName)
+		for _, property := range properties {
+			requirements.NotNil(schema.Properties[property], "%s.%s", schemaName, property)
+			assertions.False(schema.Properties[property].Nullable, "%s.%s must not be nullable", schemaName, property)
+		}
+	}
+}
+
+func TestOpenAPIExplorationUsesStructuredUnavailableUnion(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	doc := OpenAPIDocument()
+	for _, path := range []string{
+		"/api/v1/explore", "/api/v1/explore/groups", "/api/v1/explore/preflight",
+		"/api/v1/explore/match-counts", "/api/v1/explore/files",
+	} {
+		response := doc.Paths[path].Post.Responses["503"]
+		requirements.NotNil(response, path)
+		media := response.Content["application/json"]
+		requirements.NotNil(media, path)
+		requirements.NotNil(media.Schema, path)
+		requirements.Len(media.Schema.AnyOf, 2, path)
+		assertions.ElementsMatch([]string{
+			"#/components/schemas/ExploreCacheUnavailableResponse",
+			"#/components/schemas/ErrorResponse",
+		}, []string{media.Schema.AnyOf[0].Ref, media.Schema.AnyOf[1].Ref}, path)
+	}
+	schema := doc.Components.Schemas.Map()["ExploreCacheUnavailableResponse"]
+	requirements.NotNil(schema)
+	readiness := schema.Properties["readiness"]
+	requirements.NotNil(readiness)
+	assertions.ElementsMatch([]any{"absent", "interrupted", "stale_schema", "drifted"}, readiness.Enum)
+}
+
+func TestOpenAPIExplorationFiniteRequiredFieldsAreNonNull(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	doc := OpenAPIDocument()
+	schemas := doc.Components.Schemas.Map()
+	dimension := schemas["ExploreGroupDimension"]
+	requirements.NotNil(dimension)
+	assertions.ElementsMatch([]any{"source", "participant", "domain", "message_type", "kind", "year", "month"}, dimension.Enum)
+
+	for schemaName, properties := range map[string][]string{
+		"ExploreGroupsHTTPRequest":  {"grouping"},
+		"ExploreMatchCountsRequest": {"predicate", "row_keys"},
+		"ExplorePreflightRequest":   {"selection"},
+		"ExploreSelection":          {"predicate", "cache_revision"},
+		"ExploreFilesHTTPRequest":   {"predicate"},
+	} {
+		schema := schemas[schemaName]
+		requirements.NotNil(schema, schemaName)
+		for _, propertyName := range properties {
+			property := schema.Properties[propertyName]
+			requirements.NotNil(property, "%s.%s", schemaName, propertyName)
+			assertions.Contains(schema.Required, propertyName, "%s.%s", schemaName, propertyName)
+			assertions.False(property.Nullable, "%s.%s", schemaName, propertyName)
+		}
+	}
+	grouping := schemas["ExploreGroupsHTTPRequest"].Properties["grouping"]
+	requirements.NotNil(grouping.Items)
+	assertions.Equal("#/components/schemas/ExploreGroupDimension", grouping.Items.Ref)
+	assertions.Equal(1, *grouping.MinItems)
+	assertions.Equal(1, *grouping.MaxItems)
+	clientGrouping := openAPIClientDocument().Components.Schemas.Map()["ExploreGroupsHTTPRequest"].Properties["grouping"]
+	requirements.NotNil(clientGrouping.Extensions)
+	assertions.Equal(map[string]any{"validate": "required,min=1,max=1"}, clientGrouping.Extensions["x-oapi-codegen-extra-tags"])
+}
+
+func TestOpenAPIExploreGroupingEnumUsesServerCatalog(t *testing.T) {
+	dimensions := explorecatalog.GroupingDimensions()
+	want := make([]any, len(dimensions))
+	for index, dimension := range dimensions {
+		want[index] = dimension
+	}
+
+	assert.Equal(t, want, exploreGroupingEnum())
+	dimension := OpenAPIDocument().Components.Schemas.Map()["ExploreGroupDimension"]
+	require.NotNil(t, dimension)
+	assert.Equal(t, want, dimension.Enum)
+}
+
 func TestOpenAPIArtifactUpToDate(t *testing.T) {
 	got, err := OpenAPIYAML()
 	require.NoError(t, err, "render OpenAPI YAML")
@@ -221,6 +431,11 @@ func TestOpenAPIClientArtifactUpToDate(t *testing.T) {
 	cmd.Env = append(os.Environ(), "GOWORK=off")
 	out, err := cmd.CombinedOutput()
 	require.NoError(err, "generate client:\n%s", out)
+	fixer, err := filepath.Abs("../codegenfix/cmd")
+	require.NoError(err, "resolve generated-client validator fixup")
+	cmd = exec.Command("go", "run", fixer, filepath.Join(tmpGenerated, "types.go"))
+	out, err = cmd.CombinedOutput()
+	require.NoError(err, "apply generated-client validator fixup:\n%s", out)
 
 	gotFiles, err := generatedGoFiles(tmpGenerated)
 	require.NoError(

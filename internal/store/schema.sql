@@ -1,6 +1,11 @@
 -- msgvault unified schema
 -- Supports: Gmail, Apple Messages, Google Messages, WhatsApp
 
+CREATE TABLE IF NOT EXISTS archive_metadata (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
+
 -- ============================================================================
 -- SOURCES & IDENTITY
 -- ============================================================================
@@ -504,6 +509,20 @@ CREATE TABLE IF NOT EXISTS collection_sources (
 CREATE INDEX IF NOT EXISTS idx_collection_sources_source_id
     ON collection_sources(source_id);
 
+-- Daemon-owned analytical Saved Views. Canonical state contains only the
+-- query/view definition; result rows and transient selection remain client
+-- state and are never persisted here.
+CREATE TABLE IF NOT EXISTS saved_views (
+    id              INTEGER PRIMARY KEY,
+    name            TEXT NOT NULL UNIQUE,
+    description     TEXT,
+    canonical_state JSON NOT NULL,
+    schema_version  INTEGER NOT NULL,
+    revision        INTEGER NOT NULL DEFAULT 1,
+    created_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 -- ============================================================================
 -- ACCOUNT IDENTITIES
 -- ============================================================================
@@ -521,6 +540,22 @@ CREATE TABLE IF NOT EXISTS account_identities (
 
 CREATE INDEX IF NOT EXISTS idx_account_identities_address
     ON account_identities(address);
+
+-- User-asserted identity links between participants. Edges are normalized
+-- (participant_a < participant_b) and the graph is kept a forest: every
+-- edge joins two previously distinct clusters, so deleting an edge
+-- deterministically splits one cluster in two. Connected components resolve
+-- to a canonical cluster (smallest member ID) at read time.
+CREATE TABLE IF NOT EXISTS participant_links (
+    participant_a INTEGER NOT NULL REFERENCES participants(id) ON DELETE CASCADE,
+    participant_b INTEGER NOT NULL REFERENCES participants(id) ON DELETE CASCADE,
+    created_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (participant_a, participant_b),
+    CHECK (participant_a < participant_b)
+);
+
+CREATE INDEX IF NOT EXISTS idx_participant_links_b
+    ON participant_links(participant_b);
 
 -- ============================================================================
 -- APPLIED MIGRATIONS

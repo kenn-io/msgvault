@@ -43,6 +43,102 @@ type AnalyticsConfig struct {
 	AutoBuildCache bool   `toml:"auto_build_cache"` // Build stale/missing Parquet cache before using DuckDB
 }
 
+const (
+	WebSearchModeFullText = "full_text"
+	WebSearchModeSemantic = "semantic"
+	WebSearchModeHybrid   = "hybrid"
+	WebThemeSystem        = "system"
+	WebThemeLight         = "light"
+	WebThemeDark          = "dark"
+	WebDensityCompact     = "compact"
+	WebDensityComfortable = "comfortable"
+	windowsOS             = "windows"
+)
+
+// WebConfig stores browser-owned defaults that do not affect the CLI or TUI.
+type WebConfig struct {
+	DefaultSearchMode string `toml:"default_search_mode"`
+	Theme             string `toml:"theme"`
+	Density           string `toml:"density"`
+}
+
+func (w *WebConfig) ApplyDefaults() {
+	w.DefaultSearchMode = strings.ToLower(strings.TrimSpace(w.DefaultSearchMode))
+	if w.DefaultSearchMode == "" {
+		w.DefaultSearchMode = WebSearchModeFullText
+	}
+	w.Theme = strings.ToLower(strings.TrimSpace(w.Theme))
+	if w.Theme == "" {
+		w.Theme = WebThemeSystem
+	}
+	w.Density = strings.ToLower(strings.TrimSpace(w.Density))
+	if w.Density == "" {
+		w.Density = WebDensityCompact
+	}
+}
+
+func (w *WebConfig) Validate() error {
+	if !slices.Contains([]string{WebSearchModeFullText, WebSearchModeSemantic, WebSearchModeHybrid}, w.DefaultSearchMode) {
+		return fmt.Errorf("invalid [web] default_search_mode %q", w.DefaultSearchMode)
+	}
+	if !slices.Contains([]string{WebThemeSystem, WebThemeLight, WebThemeDark}, w.Theme) {
+		return fmt.Errorf("invalid [web] theme %q", w.Theme)
+	}
+	if !slices.Contains([]string{WebDensityCompact, WebDensityComfortable}, w.Density) {
+		return fmt.Errorf("invalid [web] density %q", w.Density)
+	}
+	return nil
+}
+
+// IntegrationsConfig groups optional, server-side integrations.
+type IntegrationsConfig struct {
+	Tasks TaskIntegrationConfig `toml:"tasks"`
+}
+
+// TaskIntegrationConfig configures a provider-neutral compatible task daemon.
+type TaskIntegrationConfig struct {
+	Enabled        bool   `toml:"enabled"`
+	Endpoint       string `toml:"endpoint"`
+	APIKey         string `toml:"api_key"`
+	DefaultProject string `toml:"default_project"`
+}
+
+func (t *TaskIntegrationConfig) ApplyDefaults() {
+	if strings.TrimSpace(t.DefaultProject) == "" {
+		t.DefaultProject = "msgvault"
+	}
+}
+
+func (t *TaskIntegrationConfig) Validate() error {
+	endpoint := strings.TrimSpace(t.Endpoint)
+	if endpoint == "" {
+		return nil
+	}
+	u, err := url.Parse(endpoint)
+	if err != nil || u.Scheme == "" {
+		return fmt.Errorf("invalid [integrations.tasks] endpoint %q", t.Endpoint)
+	}
+	switch strings.ToLower(u.Scheme) {
+	case "https":
+		if u.Host == "" {
+			return fmt.Errorf("invalid [integrations.tasks] endpoint %q", t.Endpoint)
+		}
+	case "http":
+		host := u.Hostname()
+		ip := net.ParseIP(host)
+		if host != "localhost" && (ip == nil || !ip.IsLoopback()) {
+			return fmt.Errorf("invalid [integrations.tasks] endpoint %q: remote plaintext HTTP is not allowed", t.Endpoint)
+		}
+	case "unix":
+		if u.Path == "" {
+			return fmt.Errorf("invalid [integrations.tasks] endpoint %q", t.Endpoint)
+		}
+	default:
+		return fmt.Errorf("invalid [integrations.tasks] endpoint %q", t.Endpoint)
+	}
+	return nil
+}
+
 func (a *AnalyticsConfig) ApplyDefaults() {
 	a.Engine = strings.ToLower(strings.TrimSpace(a.Engine))
 	if a.Engine == "" {
@@ -72,6 +168,7 @@ type ServerConfig struct {
 	CORSOrigins       []string      `toml:"cors_origins"`        // Allowed CORS origins (empty = disabled)
 	CORSCredentials   bool          `toml:"cors_credentials"`    // Allow credentials in CORS
 	CORSMaxAge        int           `toml:"cors_max_age"`        // Preflight cache duration in seconds
+	TrustedProxies    []string      `toml:"trusted_proxies"`     // Reverse proxy IP/CIDR allowlist for forwarded scheme and host
 	DaemonIdleTimeout time.Duration `toml:"daemon_idle_timeout"` // Background daemon idle timeout (0 disables)
 	DaemonAutoRestart string        `toml:"daemon_auto_restart"` // never, newer, or always
 }
@@ -86,7 +183,6 @@ func (s *ServerConfig) ApplyDefaults() {
 func (s *ServerConfig) Validate() error {
 	switch s.DaemonAutoRestart {
 	case DaemonAutoRestartNewer, DaemonAutoRestartNever, DaemonAutoRestartAlways:
-		return nil
 	default:
 		return fmt.Errorf("invalid [server] daemon_auto_restart %q (want %q, %q, or %q)",
 			s.DaemonAutoRestart,
@@ -94,6 +190,18 @@ func (s *ServerConfig) Validate() error {
 			DaemonAutoRestartNever,
 			DaemonAutoRestartAlways)
 	}
+	for _, entry := range s.TrustedProxies {
+		if entry == "" {
+			return errors.New("invalid [server] trusted_proxies entry: value must be an IP address or CIDR")
+		}
+		if ip := net.ParseIP(entry); ip != nil {
+			continue
+		}
+		if _, _, err := net.ParseCIDR(entry); err != nil {
+			return fmt.Errorf("invalid [server] trusted_proxies entry %q: must be an IP address or CIDR", entry)
+		}
+	}
+	return nil
 }
 
 // IsLoopback returns true if the bind address is a loopback address.
@@ -211,25 +319,27 @@ func (b *BackupConfig) Validate() error {
 }
 
 type Config struct {
-	Data        DataConfig         `toml:"data"`
-	Log         LogConfig          `toml:"log"`
-	OAuth       OAuthConfig        `toml:"oauth"`
-	Microsoft   MicrosoftConfig    `toml:"microsoft"`
-	Sync        SyncConfig         `toml:"sync"`
-	Chat        ChatConfig         `toml:"chat"`
-	Server      ServerConfig       `toml:"server"`
-	Analytics   AnalyticsConfig    `toml:"analytics"`
-	Remote      RemoteConfig       `toml:"remote"`
-	Vector      vector.Config      `toml:"vector"`
-	Identity    IdentityConfig     `toml:"identity"`
-	Accounts    []AccountSchedule  `toml:"accounts"`
-	SynctechSMS SynctechSMSConfig  `toml:"synctech_sms"`
-	GCal        []GCalSource       `toml:"gcal"`
-	Beeper      BeeperConfig       `toml:"beeper"`
-	Granola     []GranolaSource    `toml:"granola"`
-	Circleback  []CirclebackSource `toml:"circleback"`
-	Backup      BackupConfig       `toml:"backup"`
-	Discord     DiscordConfig      `toml:"discord"`
+	Data         DataConfig         `toml:"data"`
+	Log          LogConfig          `toml:"log"`
+	OAuth        OAuthConfig        `toml:"oauth"`
+	Microsoft    MicrosoftConfig    `toml:"microsoft"`
+	Sync         SyncConfig         `toml:"sync"`
+	Chat         ChatConfig         `toml:"chat"`
+	Server       ServerConfig       `toml:"server"`
+	Analytics    AnalyticsConfig    `toml:"analytics"`
+	Web          WebConfig          `toml:"web"`
+	Integrations IntegrationsConfig `toml:"integrations"`
+	Remote       RemoteConfig       `toml:"remote"`
+	Vector       vector.Config      `toml:"vector"`
+	Identity     IdentityConfig     `toml:"identity"`
+	Accounts     []AccountSchedule  `toml:"accounts"`
+	SynctechSMS  SynctechSMSConfig  `toml:"synctech_sms"`
+	GCal         []GCalSource       `toml:"gcal"`
+	Beeper       BeeperConfig       `toml:"beeper"`
+	Granola      []GranolaSource    `toml:"granola"`
+	Circleback   []CirclebackSource `toml:"circleback"`
+	Backup       BackupConfig       `toml:"backup"`
+	Discord      DiscordConfig      `toml:"discord"`
 
 	// Computed paths (not from config file)
 	HomeDir    string `toml:"-"`
@@ -397,6 +507,14 @@ func NewDefaultConfig() *Config {
 			Engine:         AnalyticsEngineAuto,
 			AutoBuildCache: true,
 		},
+		Web: WebConfig{
+			DefaultSearchMode: WebSearchModeFullText,
+			Theme:             WebThemeSystem,
+			Density:           WebDensityCompact,
+		},
+		Integrations: IntegrationsConfig{
+			Tasks: TaskIntegrationConfig{DefaultProject: "msgvault"},
+		},
 		Accounts:    []AccountSchedule{},
 		SynctechSMS: SynctechSMSConfig{Sources: []SynctechSMSSource{}},
 		GCal:        []GCalSource{},
@@ -404,6 +522,8 @@ func NewDefaultConfig() *Config {
 	cfg.Vector.ApplyDefaults()
 	cfg.Server.ApplyDefaults()
 	cfg.Discord.ApplyDefaults()
+	cfg.Web.ApplyDefaults()
+	cfg.Integrations.Tasks.ApplyDefaults()
 	return cfg
 }
 
@@ -441,19 +561,46 @@ func Load(path, homeDir string) (*Config, error) {
 		// Default config file is optional
 		return cfg, nil
 	}
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read config: %w", err)
+	}
+	return decodeConfig(cfg, path, explicit, homeDir != "", content)
+}
 
+// LoadConfigFile decodes the exact bytes captured by ReadConfigFile. Relative
+// paths resolve against the operator-specified logical path, matching daemon
+// startup even when that path is a symlink to a target in another directory.
+func LoadConfigFile(snapshot ConfigFile, homeDir string) (*Config, error) {
+	if !snapshot.Exists {
+		return NewDefaultConfig(), nil
+	}
+	cfg := NewDefaultConfig()
+	if homeDir != "" {
+		homeDir = expandPath(homeDir)
+		cfg.HomeDir = homeDir
+		cfg.Data.DataDir = homeDir
+	}
+	decodePath := snapshot.LogicalPath
+	if decodePath == "" {
+		decodePath = snapshot.Path
+	}
+	return decodeConfig(cfg, decodePath, true, homeDir != "", snapshot.Content)
+}
+
+func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content []byte) (*Config, error) {
 	cfg.configPath = path
 
 	// When --config points to a custom location without --home,
 	// derive HomeDir and default DataDir from the config file's parent
 	// directory so that tokens, database, attachments, etc. live alongside
 	// the config.
-	if explicit && homeDir == "" {
+	if explicit && !homeOverride {
 		cfg.HomeDir = filepath.Dir(path)
 		cfg.Data.DataDir = cfg.HomeDir
 	}
 
-	if _, err := toml.DecodeFile(path, cfg); err != nil {
+	if _, err := toml.Decode(string(content), cfg); err != nil {
 		if strings.Contains(err.Error(), "invalid escape") ||
 			strings.Contains(err.Error(), "hexadecimal digits after") {
 			return nil, fmt.Errorf("decode config: %w -- hint: Windows paths in TOML must use "+
@@ -503,6 +650,14 @@ func Load(path, homeDir string) (*Config, error) {
 	}
 	cfg.Analytics.ApplyDefaults()
 	if err := cfg.Analytics.Validate(); err != nil {
+		return nil, err
+	}
+	cfg.Web.ApplyDefaults()
+	if err := cfg.Web.Validate(); err != nil {
+		return nil, err
+	}
+	cfg.Integrations.Tasks.ApplyDefaults()
+	if err := cfg.Integrations.Tasks.Validate(); err != nil {
 		return nil, err
 	}
 	if err := cfg.Backup.Validate(); err != nil {
@@ -631,42 +786,45 @@ func (c *Config) ConfigFilePath() string {
 // Uses temp file + rename to prevent partial writes on crash.
 // Enforces 0600 permissions regardless of existing file mode.
 func (c *Config) Save() error {
-	path := c.ConfigFilePath()
+	return c.saveWithHooks(configSaveHooks{})
+}
 
-	// Resolve symlinks so atomic rename replaces the target, not
-	// the symlink itself. EvalSymlinks fails on dangling symlinks
-	// (target doesn't exist yet), so fall back to Readlink.
-	if resolved, err := filepath.EvalSymlinks(path); err == nil {
-		path = resolved
-	} else if target, lErr := os.Readlink(path); lErr == nil {
-		if !filepath.IsAbs(target) {
-			target = filepath.Join(filepath.Dir(path), target)
-		}
-		path = target
-	}
-
+func (c *Config) saveWithHooks(hooks configSaveHooks) error {
 	// Ensure home directory exists
 	if err := c.EnsureHomeDir(); err != nil {
 		return fmt.Errorf("create config directory: %w", err)
 	}
+	if err := ensureConfigParentDirectories(c.ConfigFilePath()); err != nil {
+		return err
+	}
+	path, pathRelease, err := prepareConfigSavePath(c.ConfigFilePath())
+	if err != nil {
+		return fmt.Errorf("validate config path: %w", err)
+	}
+	if pathRelease != nil {
+		defer func() { _ = pathRelease() }()
+	}
 
 	dir := filepath.Dir(path)
-	tmp, err := os.CreateTemp(dir, ".config-*.toml.tmp")
+	created, err := createConfigCandidate(dir)
 	if err != nil {
 		return fmt.Errorf("create temp config file: %w", err)
 	}
-	tmpPath := tmp.Name()
+	tmp, tmpPath := created.file, created.path
 
 	// Clean up temp file on any failure path
 	success := false
 	defer func() {
 		if !success {
 			_ = tmp.Close()
-			_ = os.Remove(tmpPath)
+			_ = created.cleanup()
+		}
+		if created.release != nil {
+			_ = created.release()
 		}
 	}()
 
-	if err := tmp.Chmod(0600); err != nil {
+	if err := secureConfigCandidate(tmp, tmpPath, 0o600); err != nil {
 		return fmt.Errorf("set config file permissions: %w", err)
 	}
 
@@ -682,8 +840,14 @@ func (c *Config) Save() error {
 		return fmt.Errorf("close config file: %w", err)
 	}
 
-	if err := os.Rename(tmpPath, path); err != nil {
-		return fmt.Errorf("rename config file: %w", err)
+	published, err := publishSavedConfig(tmpPath, path, created.retained, hooks)
+	if published {
+		// Publication transfers ownership of the candidate to the live config
+		// immediately. A later recovery-file error must not run candidate cleanup.
+		success = true
+	}
+	if err != nil {
+		return fmt.Errorf("publish config file: %w", err)
 	}
 
 	success = true
@@ -1071,7 +1235,7 @@ func expandPath(path string) string {
 	// Strip surrounding quotes left by Windows CMD (e.g. --home 'C:\Users\foo').
 	// Only on Windows — Unix shells strip quotes before the process sees them,
 	// and literal quote characters in Unix paths are valid (if unusual).
-	if runtime.GOOS == "windows" && len(path) >= 2 &&
+	if runtime.GOOS == windowsOS && len(path) >= 2 &&
 		((path[0] == '\'' && path[len(path)-1] == '\'') ||
 			(path[0] == '"' && path[len(path)-1] == '"')) {
 		path = path[1 : len(path)-1]

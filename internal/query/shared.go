@@ -20,10 +20,20 @@ import (
 // Analytics dataset names. Each is both the Parquet subdirectory under
 // analyticsDir and the view/probe key for that dataset's optional columns.
 const (
-	datasetMessages      = "messages"
-	datasetParticipants  = "participants"
-	datasetConversations = "conversations"
-	messageTypeEmail     = "email"
+	datasetMessages                 = "messages"
+	datasetSources                  = "sources"
+	datasetParticipants             = "participants"
+	datasetParticipantIdentifiers   = "participant_identifiers"
+	datasetConversations            = "conversations"
+	datasetConversationParticipants = "conversation_participants"
+	datasetOwnerParticipants        = "owner_participants"
+	datasetParticipantClusters      = "participant_clusters"
+	messageTypeDimension            = "message_type"
+	messageTypeEmail                = "email"
+	messageTypeCalendar             = "calendar_event"
+	timeGranularityMonth            = "month"
+	sortDirectionAsc                = "asc"
+	sortDirectionDesc               = "desc"
 )
 
 // emailOnlyFilterMsg is the SQL condition restricting to email messages with "msg." alias (DuckDB).

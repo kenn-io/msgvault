@@ -43,7 +43,7 @@ func defaultCORSAllowedMethods() []string {
 }
 
 func defaultCORSAllowedHeaders() []string {
-	return []string{"Accept", "Authorization", "Content-Type", "X-API-Key"}
+	return []string{"Accept", "Authorization", "Content-Type", "X-API-Key", csrfHeaderName}
 }
 
 // CORSMiddleware returns a middleware that handles CORS headers.
@@ -172,6 +172,54 @@ func clientIP(r *http.Request) string {
 func isLoopbackRequest(r *http.Request) bool {
 	parsed := net.ParseIP(clientIP(r))
 	return parsed != nil && parsed.IsLoopback()
+}
+
+type requestAuthentication struct {
+	Mode      AuthMode
+	SessionID string
+	Session   browserSession
+}
+
+func (s *Server) requestAuthentication(r *http.Request) requestAuthentication {
+	if security, ok := securityFromRequest(r); ok {
+		return security.auth
+	}
+	return s.classifyAPIRequestDirect(r)
+}
+
+func (s *Server) classifyAPIRequestDirect(r *http.Request) requestAuthentication {
+	// Preserve the existing keyless mode: secure startup confines the daemon to
+	// loopback unless the operator explicitly opts into unauthenticated remote
+	// access, and every request remains authorized when no key is configured.
+	if s.cfg.Server.APIKey == "" {
+		return requestAuthentication{Mode: AuthModeLoopback}
+	}
+
+	authHeader := r.Header.Get("Authorization")
+	if authHeader == "" {
+		authHeader = r.Header.Get("X-Api-Key")
+	}
+	if len(authHeader) > 7 && authHeader[:7] == "Bearer " {
+		authHeader = authHeader[7:]
+	}
+	if constantTimeAPIKeyEqual(authHeader, s.cfg.Server.APIKey) {
+		return requestAuthentication{Mode: AuthModeAPIKey}
+	}
+
+	if cookie, err := r.Cookie(sessionCookieName); err == nil && s.sessions != nil {
+		if session, ok := s.sessions.lookup(cookie.Value); ok {
+			return requestAuthentication{
+				Mode:      AuthModeSession,
+				SessionID: cookie.Value,
+				Session:   session,
+			}
+		}
+	}
+	return requestAuthentication{Mode: AuthModeRequired}
+}
+
+func (s *Server) apiRequestAuthorized(r *http.Request) bool {
+	return s.requestAuthentication(r).Mode != AuthModeRequired
 }
 
 // RateLimitMiddleware returns a middleware that rate limits requests by IP.

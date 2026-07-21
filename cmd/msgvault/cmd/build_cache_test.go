@@ -57,6 +57,7 @@ func setupTestSQLite(t *testing.T) string {
 			deleted_from_source_at TIMESTAMP,
 			sender_id INTEGER,
 			message_type TEXT NOT NULL DEFAULT 'email',
+			is_from_me BOOLEAN DEFAULT FALSE,
 			deleted_at DATETIME,
 			UNIQUE(source_id, source_message_id)
 		);
@@ -67,6 +68,16 @@ func setupTestSQLite(t *testing.T) string {
 			domain TEXT,
 			display_name TEXT,
 			phone_number TEXT
+		);
+
+		CREATE TABLE participant_identifiers (
+			id INTEGER PRIMARY KEY,
+			participant_id INTEGER NOT NULL REFERENCES participants(id),
+			identifier_type TEXT NOT NULL,
+			identifier_value TEXT NOT NULL,
+			display_value TEXT,
+			is_primary BOOLEAN DEFAULT FALSE,
+			UNIQUE(identifier_type, identifier_value)
 		);
 
 		CREATE TABLE message_recipients (
@@ -107,6 +118,33 @@ func setupTestSQLite(t *testing.T) string {
 			title TEXT,
 			conversation_type TEXT NOT NULL DEFAULT 'email'
 		);
+
+		CREATE TABLE conversation_participants (
+			conversation_id INTEGER NOT NULL REFERENCES conversations(id),
+			participant_id INTEGER NOT NULL REFERENCES participants(id),
+			PRIMARY KEY (conversation_id, participant_id)
+		);
+
+		CREATE TABLE archive_metadata (
+			key TEXT PRIMARY KEY,
+			value TEXT NOT NULL
+		);
+
+		CREATE TABLE account_identities (
+			source_id INTEGER NOT NULL REFERENCES sources(id),
+			address TEXT NOT NULL,
+			source_signal TEXT NOT NULL DEFAULT '',
+			confirmed_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			PRIMARY KEY (source_id, address)
+		);
+
+		CREATE TABLE participant_links (
+			participant_a INTEGER NOT NULL REFERENCES participants(id),
+			participant_b INTEGER NOT NULL REFERENCES participants(id),
+			created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			PRIMARY KEY (participant_a, participant_b),
+			CHECK (participant_a < participant_b)
+		);
 	`
 
 	if _, err := db.Exec(schema); err != nil {
@@ -125,6 +163,11 @@ func setupTestSQLite(t *testing.T) string {
 			(2, 'bob@company.org', 'company.org', 'Bob Jones'),
 			(3, 'carol@example.com', 'example.com', 'Carol White'),
 			(4, 'dan@other.net', 'other.net', 'Dan Brown');
+
+		INSERT INTO participant_identifiers
+			(participant_id, identifier_type, identifier_value, display_value, is_primary) VALUES
+			(1, 'email', 'alice@example.com', 'Alice Smith <alice@example.com>', 1),
+			(2, 'email', 'bob@company.org', 'bob@company.org', 1);
 
 		-- Labels
 		INSERT INTO labels (id, source_id, name) VALUES
@@ -184,6 +227,10 @@ func setupTestSQLite(t *testing.T) string {
 			(102, 1, 'thread102', 'Follow up Thread'),
 			(103, 1, 'thread103', 'Question Thread'),
 			(104, 1, 'thread104', 'Final Thread');
+
+		INSERT INTO conversation_participants (conversation_id, participant_id) VALUES
+			(101, 1), (101, 2), (101, 3), (102, 1), (102, 2),
+			(103, 1), (103, 2), (104, 1), (104, 2);
 	`
 
 	_, err = db.Exec(testData)
@@ -799,6 +846,7 @@ func TestBuildCache_BasicExport(t *testing.T) {
 		"messages",
 		"sources",
 		"participants",
+		"participant_identifiers",
 		"message_recipients",
 		"labels",
 		"message_labels",
@@ -822,6 +870,27 @@ func TestBuildCache_BasicExport(t *testing.T) {
 	require.NoError(json.Unmarshal(data, &state), "parse sync state")
 
 	assert.Equal(int64(5), state.LastMessageID)
+}
+
+func TestBuildCache_PublishesConversationParticipants(t *testing.T) {
+	require := require.New(t)
+	tmpDir := setupTestSQLite(t)
+	dbPath := filepath.Join(tmpDir, "test.db")
+	analyticsDir := filepath.Join(tmpDir, "analytics")
+
+	_, err := buildCache(dbPath, analyticsDir, false)
+	require.NoError(err)
+
+	duckdb, err := sql.Open("duckdb", "")
+	require.NoError(err)
+	defer func() { _ = duckdb.Close() }()
+	var count int64
+	err = duckdb.QueryRow(
+		`SELECT COUNT(*) FROM read_parquet(?)`,
+		filepath.Join(analyticsDir, "conversation_participants", "*.parquet"),
+	).Scan(&count)
+	require.NoError(err)
+	assert.Equal(t, int64(9), count)
 }
 
 // TestBuildCache_DataIntegrity verifies the exported Parquet data matches SQLite.
@@ -886,6 +955,10 @@ func TestBuildCache_DataIntegrity(t *testing.T) {
 	attQuery := "SELECT SUM(size) FROM read_parquet('" + filepath.Join(analyticsDir, "attachments", "*.parquet") + "')"
 	require.NoError(db.QueryRow(attQuery).Scan(&totalSize), "query attachments")
 	assert.Equal(int64(35000), totalSize, "expected total attachment size 10000+5000+20000")
+	var attachmentIDs int64
+	require.NoError(db.QueryRow("SELECT COUNT(DISTINCT attachment_id) FROM read_parquet('" +
+		filepath.Join(analyticsDir, "attachments", "*.parquet") + "')").Scan(&attachmentIDs))
+	assert.Equal(int64(3), attachmentIDs, "durable attachment IDs")
 }
 
 // TestBuildCache_IncrementalExport tests that incremental exports only add new messages.
@@ -1965,13 +2038,18 @@ func TestBuildCache_EmptyDatabase(t *testing.T) {
 	db, _ := sql.Open("sqlite3", dbPath)
 	_, _ = db.Exec(`
 		CREATE TABLE sources (id INTEGER PRIMARY KEY, source_type TEXT NOT NULL DEFAULT 'gmail', identifier TEXT);
-		CREATE TABLE messages (id INTEGER PRIMARY KEY, source_id INTEGER, source_message_id TEXT, sent_at TIMESTAMP, size_estimate INTEGER, has_attachments BOOLEAN, subject TEXT, snippet TEXT, conversation_id INTEGER, deleted_from_source_at TIMESTAMP, attachment_count INTEGER DEFAULT 0, sender_id INTEGER, message_type TEXT NOT NULL DEFAULT 'email', deleted_at DATETIME);
+		CREATE TABLE messages (id INTEGER PRIMARY KEY, source_id INTEGER, source_message_id TEXT, sent_at TIMESTAMP, size_estimate INTEGER, has_attachments BOOLEAN, subject TEXT, snippet TEXT, conversation_id INTEGER, deleted_from_source_at TIMESTAMP, attachment_count INTEGER DEFAULT 0, sender_id INTEGER, message_type TEXT NOT NULL DEFAULT 'email', is_from_me BOOLEAN DEFAULT FALSE, deleted_at DATETIME);
 		CREATE TABLE participants (id INTEGER PRIMARY KEY, email_address TEXT, domain TEXT, display_name TEXT, phone_number TEXT);
+		CREATE TABLE participant_identifiers (participant_id INTEGER, identifier_type TEXT, identifier_value TEXT, display_value TEXT, is_primary BOOLEAN);
 		CREATE TABLE message_recipients (message_id INTEGER, participant_id INTEGER, recipient_type TEXT, display_name TEXT);
 		CREATE TABLE labels (id INTEGER PRIMARY KEY, name TEXT);
 		CREATE TABLE message_labels (message_id INTEGER, label_id INTEGER);
-		CREATE TABLE attachments (message_id INTEGER, size INTEGER, filename TEXT);
+		CREATE TABLE attachments (id INTEGER PRIMARY KEY, message_id INTEGER, size INTEGER, filename TEXT);
 		CREATE TABLE conversations (id INTEGER PRIMARY KEY, source_conversation_id TEXT, title TEXT, conversation_type TEXT NOT NULL DEFAULT 'email');
+		CREATE TABLE conversation_participants (conversation_id INTEGER, participant_id INTEGER, PRIMARY KEY (conversation_id, participant_id));
+		CREATE TABLE archive_metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+		CREATE TABLE account_identities (source_id INTEGER, address TEXT, source_signal TEXT NOT NULL DEFAULT '', confirmed_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY (source_id, address));
+		CREATE TABLE participant_links (participant_a INTEGER, participant_b INTEGER, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY (participant_a, participant_b));
 	`)
 	_ = db.Close()
 
@@ -2147,6 +2225,7 @@ func BenchmarkBuildCache(b *testing.B) {
 		CREATE TABLE sources (id INTEGER PRIMARY KEY, identifier TEXT);
 		CREATE TABLE messages (id INTEGER PRIMARY KEY, source_id INTEGER, source_message_id TEXT, sent_at TIMESTAMP, size_estimate INTEGER, has_attachments BOOLEAN, subject TEXT, snippet TEXT, conversation_id INTEGER, deleted_from_source_at TIMESTAMP, attachment_count INTEGER DEFAULT 0, sender_id INTEGER, message_type TEXT NOT NULL DEFAULT 'email', deleted_at DATETIME);
 		CREATE TABLE participants (id INTEGER PRIMARY KEY, email_address TEXT UNIQUE, domain TEXT, display_name TEXT, phone_number TEXT);
+		CREATE TABLE participant_identifiers (participant_id INTEGER, identifier_type TEXT, identifier_value TEXT, display_value TEXT, is_primary BOOLEAN);
 		CREATE TABLE message_recipients (message_id INTEGER, participant_id INTEGER, recipient_type TEXT, display_name TEXT);
 		CREATE TABLE labels (id INTEGER PRIMARY KEY, name TEXT);
 		CREATE TABLE message_labels (message_id INTEGER, label_id INTEGER);
@@ -2233,6 +2312,7 @@ func setupTestSQLiteEmpty(t *testing.T) string {
 			deleted_from_source_at TIMESTAMP,
 			sender_id INTEGER,
 			message_type TEXT NOT NULL DEFAULT 'email',
+			is_from_me BOOLEAN DEFAULT FALSE,
 			deleted_at DATETIME,
 			UNIQUE(source_id, source_message_id)
 		);
@@ -2242,6 +2322,10 @@ func setupTestSQLiteEmpty(t *testing.T) string {
 			domain TEXT,
 			display_name TEXT,
 			phone_number TEXT
+		);
+		CREATE TABLE participant_identifiers (
+			participant_id INTEGER, identifier_type TEXT, identifier_value TEXT,
+			display_value TEXT, is_primary BOOLEAN
 		);
 		CREATE TABLE message_recipients (
 			id INTEGER PRIMARY KEY,
@@ -2276,6 +2360,32 @@ func setupTestSQLiteEmpty(t *testing.T) string {
 			source_conversation_id TEXT,
 			title TEXT,
 			conversation_type TEXT NOT NULL DEFAULT 'email'
+		);
+		CREATE TABLE conversation_participants (
+			conversation_id INTEGER NOT NULL REFERENCES conversations(id),
+			participant_id INTEGER NOT NULL REFERENCES participants(id),
+			PRIMARY KEY (conversation_id, participant_id)
+		);
+
+		CREATE TABLE archive_metadata (
+			key TEXT PRIMARY KEY,
+			value TEXT NOT NULL
+		);
+
+		CREATE TABLE account_identities (
+			source_id INTEGER NOT NULL REFERENCES sources(id),
+			address TEXT NOT NULL,
+			source_signal TEXT NOT NULL DEFAULT '',
+			confirmed_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			PRIMARY KEY (source_id, address)
+		);
+
+		CREATE TABLE participant_links (
+			participant_a INTEGER NOT NULL REFERENCES participants(id),
+			participant_b INTEGER NOT NULL REFERENCES participants(id),
+			created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			PRIMARY KEY (participant_a, participant_b),
+			CHECK (participant_a < participant_b)
 		);
 	`
 	_, err = db.Exec(schema)
@@ -2369,10 +2479,20 @@ func createFakeParquet(t *testing.T, analyticsDir string) {
 	require.NoError(t, os.MkdirAll(msgDir, 0755), "MkdirAll messages")
 	require.NoError(t, os.WriteFile(filepath.Join(msgDir, "data.parquet"), []byte("fake"), 0644), "write messages parquet")
 	// Other required tables use flat layout
-	for _, dir := range []string{"sources", "participants", "message_recipients", "labels", "message_labels", "attachments", "conversations"} {
+	for _, dir := range []string{"sources", "participants", "participant_identifiers", "message_recipients", "labels", "message_labels", "attachments", "conversations", "conversation_participants", tableOwnerParticipants, tableParticipantClusters} {
 		d := filepath.Join(analyticsDir, dir)
 		require.NoError(t, os.MkdirAll(d, 0755), "MkdirAll %s", dir)
 		require.NoError(t, os.WriteFile(filepath.Join(d, "data.parquet"), []byte("fake"), 0644), "write %s parquet", dir)
+	}
+	state, err := query.ReadCacheSyncState(analyticsDir)
+	if err == nil {
+		fingerprint, fingerprintErr := query.CacheDatasetFingerprint(analyticsDir)
+		require.NoError(t, fingerprintErr)
+		state.PublishedAt = time.Now().UTC()
+		state.DatasetFingerprint = fingerprint
+		data, marshalErr := json.Marshal(state)
+		require.NoError(t, marshalErr)
+		require.NoError(t, os.WriteFile(query.CacheStatePath(analyticsDir), data, 0o600))
 	}
 }
 
@@ -2578,6 +2698,111 @@ func TestCacheNeedsBuild(t *testing.T) {
 	}
 }
 
+func TestCacheNeedsBuild_DriftedPublicationForcesFullRebuild(t *testing.T) {
+	assert := assert.New(t)
+	tmpDir := setupTestSQLiteEmpty(t)
+	dbPath := filepath.Join(tmpDir, "test.db")
+	analyticsDir := filepath.Join(tmpDir, "analytics")
+	writeSyncState(t, analyticsDir, 0)
+	createFakeParquet(t, analyticsDir)
+	require.NoError(t, os.WriteFile(
+		filepath.Join(analyticsDir, "sources", "drift.parquet"), []byte("drift"), 0o600,
+	))
+
+	got := cacheNeedsBuild(dbPath, analyticsDir)
+	assert.True(got.NeedsBuild)
+	assert.True(got.FullRebuild)
+	assert.Contains(got.Reason, "drift")
+}
+
+// TestCacheNeedsBuild_IdentityRevisionChangeRequiresIncrementalBuild verifies
+// that identity drift (a link/unlink or confirmed identity since the last
+// build) alone requests a build but does not force a full rebuild: the
+// lightweight identity-dataset refresh path handles it without rewriting
+// message shards.
+//
+// This also exercises the cache's self-healing property against a
+// concurrent-mutation race in buildCacheLocked: if an identity mutation lands
+// between reading the identity revision/cluster snapshot and pinning the
+// message-export snapshot, the cache is stamped with a revision (N) that
+// lags the store's live revision (N+1). This test simulates exactly that
+// post-build state — sync state stamped at revision 0, store advanced to
+// revision 1 — and confirms the next staleness check reports NeedsBuild with
+// the "identity revision changed" reason rather than silently serving stale
+// identity data.
+func TestCacheNeedsBuild_IdentityRevisionChangeRequiresIncrementalBuild(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	tmpDir := setupTestSQLiteEmpty(t)
+
+	dbPath := filepath.Join(tmpDir, "test.db")
+	analyticsDir := filepath.Join(tmpDir, "analytics")
+	writeSyncState(t, analyticsDir, 0)
+	createFakeParquet(t, analyticsDir)
+
+	db, err := sql.Open("sqlite3", dbPath)
+	require.NoError(err, "open db")
+	_, err = db.Exec(`INSERT INTO archive_metadata (key, value) VALUES ('identity_revision', '1')`)
+	require.NoError(err, "bump identity revision")
+	require.NoError(db.Close())
+
+	got := cacheNeedsBuild(dbPath, analyticsDir)
+	assert.True(got.NeedsBuild, "identity drift alone should still request a build")
+	assert.True(got.HasIdentityDrift, "identity drift signal should be set")
+	assert.False(got.FullRebuild, "identity drift alone must not force a full rebuild")
+	assert.Equal("identity revision changed", got.Reason)
+}
+
+// TestCacheNeedsBuild_AccountIdentityRevisionChangeForcesFullRebuild covers
+// Finding 1 of the relationships-backend review: account-identity
+// mutations (confirming/removing a "me" address) change the is_from_me
+// flag baked into every message Parquet shard at export time, so unlike
+// plain participant-link drift, they must force a full rebuild rather than
+// being satisfied by the lightweight identity-only refresh.
+func TestCacheNeedsBuild_AccountIdentityRevisionChangeForcesFullRebuild(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	tmpDir := setupTestSQLiteEmpty(t)
+
+	dbPath := filepath.Join(tmpDir, "test.db")
+	analyticsDir := filepath.Join(tmpDir, "analytics")
+	writeSyncState(t, analyticsDir, 0)
+	createFakeParquet(t, analyticsDir)
+
+	db, err := sql.Open("sqlite3", dbPath)
+	require.NoError(err, "open db")
+	_, err = db.Exec(`INSERT INTO archive_metadata (key, value) VALUES ('account_identity_revision', '1')`)
+	require.NoError(err, "bump account identity revision")
+	require.NoError(db.Close())
+
+	got := cacheNeedsBuild(dbPath, analyticsDir)
+	assert.True(got.NeedsBuild, "account identity drift should request a build")
+	assert.True(got.HasAccountIdentityDrift, "account identity drift signal should be set")
+	assert.True(got.FullRebuild, "account identity drift must force a full rebuild")
+	assert.Contains(got.Reason, "identity mutations that invalidate baked message data")
+}
+
+// TestCacheNeedsBuild_AccountIdentityDriftIsNotIdentityDriftOnly verifies
+// that identityDriftOnly (the gate that picks the cheap identity-only
+// refresh path) rejects staleness reports with HasAccountIdentityDrift set,
+// even though AddAccountIdentity/RemoveAccountIdentity also bump
+// identity_revision and therefore set HasIdentityDrift on the same report.
+func TestCacheNeedsBuild_AccountIdentityDriftIsNotIdentityDriftOnly(t *testing.T) {
+	assert := assert.New(t)
+
+	staleness := cacheStaleness{
+		HasIdentityDrift:        true,
+		HasAccountIdentityDrift: true,
+		FullRebuild:             true,
+	}
+	assert.False(identityDriftOnly(staleness),
+		"account identity drift must never be satisfied by the identity-only refresh path")
+
+	linkOnly := cacheStaleness{HasIdentityDrift: true}
+	assert.True(identityDriftOnly(linkOnly),
+		"plain participant-link drift alone must still take the identity-only refresh path")
+}
+
 func TestCacheNeedsBuild_LabelOnlySyncRequiresFullRebuild(t *testing.T) {
 	require := require.New(t)
 	tmpDir := setupTestSQLiteEmpty(t)
@@ -2627,7 +2852,7 @@ func TestCacheNeedsBuild_LabelOnlySyncRequiresFullRebuild(t *testing.T) {
 	require.Contains(got.Reason, "updated", "cacheNeedsBuild() reason")
 }
 
-func TestCacheNeedsBuild_CalendarOnlyUpdateDoesNotRebuild(t *testing.T) {
+func TestCacheNeedsBuild_CalendarUpdateRebuildsModalityNeutralCache(t *testing.T) {
 	require := require.New(t)
 	tmpDir := setupTestSQLiteEmpty(t)
 	dbPath := filepath.Join(tmpDir, "test.db")
@@ -2660,7 +2885,9 @@ func TestCacheNeedsBuild_CalendarOnlyUpdateDoesNotRebuild(t *testing.T) {
 	require.NoError(err)
 
 	got := cacheNeedsBuild(dbPath, analyticsDir)
-	require.False(got.NeedsBuild, "calendar-only update must not invalidate searchable cache: %+v", got)
+	require.True(got.NeedsBuild, "calendar update must invalidate the modality-neutral cache: %+v", got)
+	require.True(got.FullRebuild)
+	require.Contains(got.Reason, "updated")
 }
 
 func TestCacheNeedsBuild_UpdatedSyncCompletionOrderAndFailure(t *testing.T) {
@@ -2842,6 +3069,7 @@ func TestCacheNeedsBuild_IgnoresAlreadyProcessedUpdatedSyncRun(t *testing.T) {
 // schema version other than the current one now forces a full rebuild.
 func TestCacheNeedsBuild_SchemaVersionMismatch(t *testing.T) {
 	require := require.New(t)
+	require.Equal(14, cacheSchemaVersion, "identifier-type-aware is_from_me derivation requires cache v14")
 	tmpDir := setupTestSQLiteEmpty(t)
 
 	dbPath := filepath.Join(tmpDir, "test.db")
@@ -2859,7 +3087,7 @@ func TestCacheNeedsBuild_SchemaVersionMismatch(t *testing.T) {
 	state := syncState{
 		LastMessageID: 10,
 		LastSyncAt:    time.Now(),
-		SchemaVersion: cacheSchemaVersion - 1,
+		SchemaVersion: 11,
 	}
 	data, err := json.Marshal(state)
 	require.NoError(err, "marshal sync state")
@@ -2870,6 +3098,23 @@ func TestCacheNeedsBuild_SchemaVersionMismatch(t *testing.T) {
 	require.True(got.NeedsBuild, "cacheNeedsBuild() = %+v, want NeedsBuild=true on schema mismatch", got)
 	require.True(got.FullRebuild, "cacheNeedsBuild() = %+v, want FullRebuild=true on schema mismatch", got)
 	require.Contains(got.Reason, "schema", "cacheNeedsBuild() reason should mention schema")
+
+	result, err := buildCache(dbPath, analyticsDir, false)
+	require.NoError(err, "upgrade v11 cache through normal build")
+	require.False(result.Skipped, "schema mismatch must execute a full rebuild")
+	upgraded, err := query.ReadCacheSyncState(analyticsDir)
+	require.NoError(err, "read upgraded cache state")
+	require.Equal(14, upgraded.SchemaVersion)
+	require.NoFileExists(filepath.Join(analyticsDir, tableParticipantIdentifiers, "data.parquet"),
+		"full rebuild must replace rather than extend the v11 identifier dataset")
+	identifierParquet := filepath.Join(analyticsDir, tableParticipantIdentifiers, "participant_identifiers.parquet")
+	require.FileExists(identifierParquet)
+	duckdb, err := sql.Open("duckdb", "")
+	require.NoError(err)
+	defer func() { require.NoError(duckdb.Close()) }()
+	var identifiers int64
+	require.NoError(duckdb.QueryRow(`SELECT COUNT(*) FROM read_parquet(?)`, identifierParquet).Scan(&identifiers))
+	require.Zero(identifiers, "synthetic archive has no explicit identifier rows")
 }
 
 // TestCacheNeedsBuild_DedupHidesAfterLastSync covers the regression
@@ -2998,6 +3243,7 @@ func BenchmarkBuildCacheIncremental(b *testing.B) {
 		CREATE TABLE sources (id INTEGER PRIMARY KEY, identifier TEXT);
 		CREATE TABLE messages (id INTEGER PRIMARY KEY, source_id INTEGER, source_message_id TEXT, sent_at TIMESTAMP, size_estimate INTEGER, has_attachments BOOLEAN, subject TEXT, snippet TEXT, conversation_id INTEGER, deleted_from_source_at TIMESTAMP, attachment_count INTEGER DEFAULT 0, sender_id INTEGER, message_type TEXT NOT NULL DEFAULT 'email', deleted_at DATETIME);
 		CREATE TABLE participants (id INTEGER PRIMARY KEY, email_address TEXT UNIQUE, domain TEXT, display_name TEXT, phone_number TEXT);
+		CREATE TABLE participant_identifiers (participant_id INTEGER, identifier_type TEXT, identifier_value TEXT, display_value TEXT, is_primary BOOLEAN);
 		CREATE TABLE message_recipients (message_id INTEGER, participant_id INTEGER, recipient_type TEXT, display_name TEXT);
 		CREATE TABLE labels (id INTEGER PRIMARY KEY, name TEXT);
 		CREATE TABLE message_labels (message_id INTEGER, label_id INTEGER);
