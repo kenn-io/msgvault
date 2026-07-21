@@ -95,6 +95,8 @@ export async function buildFrameDocument(options: FrameDocumentOptions): Promise
     '<meta charset="utf-8">' +
     `<meta http-equiv="Content-Security-Policy" content="${escapeAttribute(csp)}">` +
     '<meta name="referrer" content="no-referrer">' +
-    '<style>html{color-scheme:light dark}body{margin:0;padding:12px;overflow-wrap:anywhere;font:14px/1.5 system-ui,sans-serif}img{max-width:100%;height:auto}[data-archived-remote-image]{display:inline-block;padding:8px;border:1px dashed currentColor}</style>' +
+    // color-scheme is pinned to light: HTML mail assumes a white canvas, and
+    // the shell keeps that white surface (seamlessly styled) in dark mode too.
+    '<style>html{color-scheme:light}body{margin:0;padding:12px;overflow-wrap:anywhere;font:14px/1.5 system-ui,sans-serif}img{max-width:100%;height:auto}[data-archived-remote-image]{display:inline-block;padding:8px;border:1px dashed currentColor}</style>' +
     `</head><body>${encodedBody(options.html)}<script>${bridge}</script></body></html>`;
 }
