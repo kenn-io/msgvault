@@ -757,6 +757,68 @@ func TestRunServeRestartStartsWhenNoDaemonIsRunning(t *testing.T) {
 	assert.Empty(t, stderr.String())
 }
 
+func TestRunServeStartNotReadyPrintsWebUIURLForFixedPort(t *testing.T) {
+	dataDir := t.TempDir()
+	waitCh := make(chan error)
+	stubStartServeBackgroundProcess(t, func(*config.Config, backgroundServeStartOptions) (*backgroundServeProcess, error) {
+		return &backgroundServeProcess{
+			PID:     777,
+			LogPath: "/tmp/msgvault-serve.log",
+			Wait:    waitCh,
+		}, nil
+	})
+	stubWaitForBackgroundServeReady(t, func(
+		context.Context,
+		string,
+		<-chan error,
+		time.Duration,
+	) (*DaemonRuntime, bool, error) {
+		return nil, false, nil
+	})
+	cmd, stdout, stderr := lifecycleTestCommand()
+
+	require.NoError(t, runServeStart(cmd, lifecycleTestConfig(dataDir)))
+
+	assert.Equal(t,
+		"msgvault starting in background (pid 777)\n"+
+			"Web UI: http://127.0.0.1:8080\n"+
+			"Logs: /tmp/msgvault-serve.log\n",
+		stdout.String())
+	assert.Empty(t, stderr.String())
+}
+
+func TestRunServeStartNotReadyPointsAtStatusForAutoPort(t *testing.T) {
+	dataDir := t.TempDir()
+	waitCh := make(chan error)
+	stubStartServeBackgroundProcess(t, func(*config.Config, backgroundServeStartOptions) (*backgroundServeProcess, error) {
+		return &backgroundServeProcess{
+			PID:     776,
+			LogPath: "/tmp/msgvault-serve.log",
+			Wait:    waitCh,
+		}, nil
+	})
+	stubWaitForBackgroundServeReady(t, func(
+		context.Context,
+		string,
+		<-chan error,
+		time.Duration,
+	) (*DaemonRuntime, bool, error) {
+		return nil, false, nil
+	})
+	cfg := lifecycleTestConfig(dataDir)
+	cfg.Server.APIPort = 0
+	cmd, stdout, stderr := lifecycleTestCommand()
+
+	require.NoError(t, runServeStart(cmd, cfg))
+
+	assert.Equal(t,
+		"msgvault starting in background (pid 776)\n"+
+			"Web UI: run `msgvault daemon status` for the URL once ready\n"+
+			"Logs: /tmp/msgvault-serve.log\n",
+		stdout.String())
+	assert.Empty(t, stderr.String())
+}
+
 func TestServeStopGraceTimeoutCoversDaemonShutdownBudget(t *testing.T) {
 	assert.GreaterOrEqual(t,
 		serveStopGraceTimeout,
