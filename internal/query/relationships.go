@@ -222,6 +222,17 @@ func validateRelationshipsRequest(request RelationshipsRequest) error {
 // so "interactions" excludes such rows entirely rather than merely zeroing
 // their contribution: left in, they would still feed MAX(occurred_at) and
 // inflate LastAt/LastInteractionAt with a meeting the owner never attended.
+//
+// received_from_them credits only the AUTHOR of an incoming entry
+// ("author_links": the recipient_type='from' participant, or messages.
+// sender_id for sources that record senders directly), never co-recipients.
+// Without that restriction a mailing-list address accumulates one received
+// unit for every subscription message it merely appears on as a recipient,
+// which ranked lists and bots above real people. Chat conversations
+// ('conversation' entries) are exempt: a grouped chat has no single author,
+// so its per-conversation credit for every non-owner member is unchanged.
+// Non-author co-recipient rows stay in "interactions" so LastAt keeps
+// matching the timeline's "all shared messages" scope.
 func buildRelationshipsSQL(conditions, clustersGlob, ownersGlob string) string {
 	return buildExploreLogicalSQL(conditions) + fmt.Sprintf(`
 ), clusters AS (
@@ -239,6 +250,16 @@ func buildRelationshipsSQL(conditions, clustersGlob, ownersGlob string) string {
 ), le_with_owner AS (
     SELECT le.*, list_has_any(le.participant_ids, (SELECT list(participant_id) FROM owner_participant_ids)) AS with_owner
     FROM logical_entries le
+), author_links AS (
+    SELECT mr.message_id, cn.canonical_id
+    FROM message_recipients mr
+    JOIN canon cn ON cn.participant_id = mr.participant_id
+    WHERE mr.recipient_type = 'from'
+    UNION
+    SELECT m.id AS message_id, cn.canonical_id
+    FROM messages m
+    JOIN canon cn ON cn.participant_id = m.sender_id
+    WHERE m.sender_id IS NOT NULL
 ), interactions AS (
     SELECT DISTINCT
         le.entry_key,
@@ -247,6 +268,9 @@ func buildRelationshipsSQL(conditions, clustersGlob, ownersGlob string) string {
         le.occurred_at,
         le.is_from_me,
         le.with_owner,
+        EXISTS (SELECT 1 FROM author_links al
+                WHERE al.message_id = le.anchor_message_id
+                  AND al.canonical_id = cn.canonical_id) AS is_author,
         exp(-? * date_diff('day', le.occurred_at, ?)) AS decay
     FROM le_with_owner le
     CROSS JOIN UNNEST(le.participant_ids) AS pid(participant_id)
@@ -258,7 +282,9 @@ func buildRelationshipsSQL(conditions, clustersGlob, ownersGlob string) string {
         canonical_id,
         SUM(CASE WHEN is_from_me AND entry_kind IN ('email','conversation','item') THEN decay ELSE 0 END) AS sent_decayed,
         COUNT(CASE WHEN is_from_me AND entry_kind IN ('email','conversation','item') THEN 1 END) AS sent_count,
-        SUM(CASE WHEN NOT is_from_me AND entry_kind IN ('email','conversation','item') THEN decay ELSE 0 END) AS received_decayed,
+        SUM(CASE WHEN NOT is_from_me
+                  AND (entry_kind = 'conversation' OR (entry_kind IN ('email','item') AND is_author))
+                 THEN decay ELSE 0 END) AS received_decayed,
         SUM(CASE WHEN entry_kind IN ('event','meeting') AND with_owner THEN decay ELSE 0 END) AS meetings_decayed,
         COUNT(CASE WHEN entry_kind IN ('event','meeting') AND with_owner THEN 1 END) AS meeting_count,
         COUNT(DISTINCT CASE
