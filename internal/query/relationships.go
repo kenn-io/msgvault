@@ -115,6 +115,11 @@ type RelationshipAnalyzer interface {
 // clusters are excluded (you don't rank yourself); by default only
 // counterparts with at least one sent message or one shared meeting are
 // returned (the reciprocity gate), filtering out inbound-only newsletters.
+//
+// Ranked candidate lists are memoized per (cache revision, filters,
+// show_all, decay date) so repeat hub loads and cursor pages within one
+// committed cache snapshot skip the full-archive scan entirely; see
+// relationshipsMemo for the coherence argument.
 func (e *DuckDBEngine) Relationships(ctx context.Context, request RelationshipsRequest) (*RelationshipsResponse, error) {
 	if e.analyticsDir == "" {
 		return nil, &CacheUnavailableError{Readiness: CacheAbsent}
@@ -137,50 +142,13 @@ func (e *DuckDBEngine) Relationships(ctx context.Context, request RelationshipsR
 		now = time.Now().UTC()
 	}
 	conditions, args := buildExploreConditions(ExploreRequest{Context: request.Context})
-	queryText := buildRelationshipsSQL(conditions, e.parquetPath(datasetParticipantClusters), e.parquetPath(datasetOwnerParticipants))
-	args = append(args, math.Ln2/relationshipHalfLifeDays, now.UTC())
-
-	rows, err := e.db.QueryContext(ctx, queryText, args...)
-	if err != nil {
-		return nil, fmt.Errorf("query analytical relationships: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-
-	var candidates []RelationshipRow
-	for rows.Next() {
-		var row RelationshipRow
-		var memberIDsJSON string
-		if err := rows.Scan(
-			&row.CanonicalID, &row.DisplayLabel, &memberIDsJSON,
-			&row.Signals.SentToThem, &row.Signals.SentCount,
-			&row.Signals.ReceivedFromThem, &row.Signals.MeetingsTogether, &row.Signals.MeetingCount,
-			&row.Signals.Modalities, &row.LastAt,
-		); err != nil {
-			return nil, fmt.Errorf("scan analytical relationship: %w", err)
-		}
-		if err := json.Unmarshal([]byte(memberIDsJSON), &row.MemberIDs); err != nil {
-			return nil, fmt.Errorf("decode relationship member IDs: %w", err)
-		}
-		row.Signals.LastInteractionAt = row.LastAt
-		row.Score = RelationshipScore(row.Signals)
-		if !request.ShowAll && row.Signals.SentCount < 1 && row.Signals.MeetingCount < 1 {
-			continue
-		}
-		candidates = append(candidates, row)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate analytical relationships: %w", err)
-	}
-
-	sort.SliceStable(candidates, func(i, j int) bool {
-		if candidates[i].Score != candidates[j].Score {
-			return candidates[i].Score > candidates[j].Score
-		}
-		if !candidates[i].LastAt.Equal(candidates[j].LastAt) {
-			return candidates[i].LastAt.After(candidates[j].LastAt)
-		}
-		return candidates[i].DisplayLabel < candidates[j].DisplayLabel
+	key := relationshipsMemoKey(state.Revision(), conditions, args, request.ShowAll, now)
+	candidates, err := e.relMemo.rows(key, func() ([]RelationshipRow, error) {
+		return e.queryRelationshipCandidates(ctx, conditions, args, request.ShowAll, now)
 	})
+	if err != nil {
+		return nil, err
+	}
 
 	limit := request.Limit
 	if limit == 0 {
@@ -199,6 +167,60 @@ func (e *DuckDBEngine) Relationships(ctx context.Context, request RelationshipsR
 	return response, nil
 }
 
+// queryRelationshipCandidates runs the full ranking query and returns the
+// gated, scored, sorted candidate list. The result is stored in the memo and
+// shared across paginated responses, so callers must treat it as immutable.
+func (e *DuckDBEngine) queryRelationshipCandidates(
+	ctx context.Context, conditions string, args []any, showAll bool, now time.Time,
+) ([]RelationshipRow, error) {
+	e.relationshipsQueryRuns.Add(1)
+	queryText := buildRelationshipsSQL(conditions, e.parquetPath(datasetParticipantClusters), e.parquetPath(datasetOwnerParticipants))
+	queryArgs := append(append([]any{}, args...), math.Ln2/relationshipHalfLifeDays, now.UTC())
+
+	rows, err := e.db.QueryContext(ctx, queryText, queryArgs...)
+	if err != nil {
+		return nil, fmt.Errorf("query analytical relationships: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	candidates := make([]RelationshipRow, 0)
+	for rows.Next() {
+		var row RelationshipRow
+		var memberIDsJSON string
+		if err := rows.Scan(
+			&row.CanonicalID, &row.DisplayLabel, &memberIDsJSON,
+			&row.Signals.SentToThem, &row.Signals.SentCount,
+			&row.Signals.ReceivedFromThem, &row.Signals.MeetingsTogether, &row.Signals.MeetingCount,
+			&row.Signals.Modalities, &row.LastAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan analytical relationship: %w", err)
+		}
+		if err := json.Unmarshal([]byte(memberIDsJSON), &row.MemberIDs); err != nil {
+			return nil, fmt.Errorf("decode relationship member IDs: %w", err)
+		}
+		row.Signals.LastInteractionAt = row.LastAt
+		row.Score = RelationshipScore(row.Signals)
+		if !showAll && row.Signals.SentCount < 1 && row.Signals.MeetingCount < 1 {
+			continue
+		}
+		candidates = append(candidates, row)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate analytical relationships: %w", err)
+	}
+
+	sort.SliceStable(candidates, func(i, j int) bool {
+		if candidates[i].Score != candidates[j].Score {
+			return candidates[i].Score > candidates[j].Score
+		}
+		if !candidates[i].LastAt.Equal(candidates[j].LastAt) {
+			return candidates[i].LastAt.After(candidates[j].LastAt)
+		}
+		return candidates[i].DisplayLabel < candidates[j].DisplayLabel
+	})
+	return candidates, nil
+}
+
 func validateRelationshipsRequest(request RelationshipsRequest) error {
 	if request.Offset < 0 || request.Limit < 0 || request.Limit > maxRelationshipsLimit {
 		return fmt.Errorf("%w: relationships page is outside the supported range", ErrInvalidExploreRequest)
@@ -213,6 +235,16 @@ func validateRelationshipsRequest(request RelationshipsRequest) error {
 // computed in SQL from two trailing bound parameters (decay rate, now); the
 // gate, score, and sort order are applied in Go so RelationshipScore stays
 // the single source of truth for the weights.
+//
+// The now parameter is wrapped in CAST(? AS TIMESTAMP) because the Go DuckDB
+// driver binds time.Time as TIMESTAMP WITH TIME ZONE. Left uncast, date_diff
+// would coerce the naive-UTC occurred_at column to TIMESTAMPTZ on every
+// fanned-out row — a per-row ICU session-timezone conversion that tripled
+// whole-query time on a 2.5M-message archive — and would count day
+// boundaries in the server's session timezone, making decay depend on the
+// machine's locale. The cast pins the parameter to its UTC wall clock, so
+// decay counts UTC day boundaries deterministically and depends only on the
+// UTC date of now (which relationshipsMemoKey relies on).
 //
 // Owners may themselves be clustered, so "owner_canon" resolves every owner
 // participant to its cluster canonical ID and interactions exclude any
@@ -282,7 +314,7 @@ func buildRelationshipsSQL(conditions, clustersGlob, ownersGlob string) string {
         EXISTS (SELECT 1 FROM author_links al
                 WHERE al.message_id = le.anchor_message_id
                   AND al.canonical_id = cn.canonical_id) AS is_author,
-        exp(-? * date_diff('day', le.occurred_at, ?)) AS decay
+        exp(-? * date_diff('day', le.occurred_at, CAST(? AS TIMESTAMP))) AS decay
     FROM le_with_owner le
     CROSS JOIN UNNEST(le.participant_ids) AS pid(participant_id)
     JOIN canon cn ON cn.participant_id = pid.participant_id

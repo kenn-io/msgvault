@@ -84,6 +84,16 @@ type DuckDBEngine struct {
 	searchCacheTable string      // temp table name (e.g. "_search_matches_42")
 	searchCacheCount int64       // cached COUNT(*) from materialization
 	searchCacheStats *TotalStats // cached stats from Phase 4
+
+	// relMemo caches ranked relationship candidate lists keyed by committed
+	// cache revision plus request facets; see relationshipsMemo. The zero
+	// value is ready to use.
+	relMemo relationshipsMemo
+
+	// relationshipsQueryRuns counts full relationship-ranking query
+	// executions (not memo hits). Test hook only: memo tests assert cache
+	// hits and misses through it.
+	relationshipsQueryRuns atomic.Uint64
 }
 
 // DuckDBOptions configures optional DuckDB engine behavior.

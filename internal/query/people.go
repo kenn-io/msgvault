@@ -162,6 +162,8 @@ func (e *DuckDBEngine) searchPeople(
 		return nil, fmt.Errorf("read committed cache state: %w", err)
 	}
 	conditions, args := buildExploreConditions(request.Explore)
+	entriesCTE, entryArgs := personEntriesCTE(exactID, conditions)
+	args = append(args, entryArgs...)
 	personWhere := []string{"true"}
 	if exactID != nil {
 		personWhere = append(personWhere, "person_id = ?")
@@ -195,10 +197,7 @@ func (e *DuckDBEngine) searchPeople(
 		limit = defaultExploreLimit
 	}
 	args = append(args, limit, request.Page.Offset)
-	queryText := buildExploreLogicalSQL(conditions) + `
-), person_entries AS (
-	SELECT grouped.person_id, logical_entries.*
-	FROM logical_entries CROSS JOIN UNNEST(participant_ids) AS grouped(person_id)
+	queryText := buildExploreLogicalSQL(conditions) + entriesCTE + `
 ), person_population AS (
 	SELECT p.id AS person_id, COALESCE(p.display_name, '') AS display_name,
 		COALESCE(p.email_address, '') AS email_address, COALESCE(p.phone_number, '') AS phone_number,
@@ -257,6 +256,67 @@ FROM counted ORDER BY ` + order + ` LIMIT ? OFFSET ?`
 		return nil, fmt.Errorf("iterate analytical people: %w", err)
 	}
 	return response, nil
+}
+
+// personEntriesCTE returns the person_entries CTE (appended directly after
+// buildExploreLogicalSQL, so it opens by closing the logical_entries CTE)
+// plus the parameter values it binds. person_entries always projects exactly
+// the columns the aggregates in searchPeople consume: it is referenced more
+// than once, so DuckDB materializes it, and carrying logical_entries.* would
+// materialize every wide list/text column per row.
+//
+// Three shapes, cheapest applicable first:
+//
+//  1. Exact-ID lookup with no analytical conditions (the person-detail
+//     endpoint): membership is resolved with semi-joins against the raw
+//     link tables, never touching logical_entries.participant_ids —
+//     unnesting that column forces the analytical_entries view to assemble
+//     per-message participant lists for the entire archive, which dominated
+//     person-detail latency. Equivalence with the fan-out shape: a non-chat
+//     entry is one message whose participants are its recipients plus its
+//     sender (the view's message_participant_links); a conversation entry's
+//     participants are the message-level participants of the group's chat
+//     messages plus the conversation's own participant rows. conversation_id
+//     is globally unique and NOT NULL, so matching it alone reproduces the
+//     (source_id, conversation_id) grouping exactly.
+//  2. Exact-ID lookup with conditions: the fan-out filtered to one person
+//     before aggregation. The semi-join shape cannot be used because a
+//     conversation entry's participant list must only reflect messages
+//     inside the filtered context.
+//  3. Listing/search: the full fan-out across every participant.
+func personEntriesCTE(exactID *int64, conditions string) (string, []any) {
+	const fanOut = `
+), person_entries AS (
+	SELECT grouped.person_id, occurred_at, attachment_count, source_type
+	FROM logical_entries CROSS JOIN UNNEST(participant_ids) AS grouped(person_id)`
+	if exactID == nil {
+		return fanOut, nil
+	}
+	if conditions != "true" {
+		return fanOut + `
+	WHERE grouped.person_id = ?`, []any{*exactID}
+	}
+	return `
+), person_message_ids AS (
+	SELECT mr.message_id FROM message_recipients mr WHERE mr.participant_id = ?
+	UNION
+	SELECT m.id AS message_id FROM messages m WHERE m.sender_id = ?
+), person_chat_conversation_ids AS (
+	SELECT cp.conversation_id FROM conversation_participants cp WHERE cp.participant_id = ?
+	UNION
+	SELECT m.conversation_id
+	FROM person_message_ids pm
+	JOIN messages m ON m.id = pm.message_id
+	LEFT JOIN conversations c ON c.id = m.conversation_id
+	WHERE ` + sqlIsChatPredicate("m.message_type", "COALESCE(c.conversation_type, '')") + `
+), person_entries AS (
+	SELECT ?::BIGINT AS person_id, occurred_at, attachment_count, source_type
+	FROM logical_entries le
+	WHERE (le.entry_kind <> 'conversation'
+	       AND le.anchor_message_id IN (SELECT message_id FROM person_message_ids))
+	   OR (le.entry_kind = 'conversation'
+	       AND le.conversation_id IN (SELECT conversation_id FROM person_chat_conversation_ids))`,
+		[]any{*exactID, *exactID, *exactID, *exactID}
 }
 
 func (e *DuckDBEngine) SearchDomains(ctx context.Context, request DomainSearchRequest) (*DomainSearchResponse, error) {

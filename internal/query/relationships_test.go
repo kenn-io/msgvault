@@ -2,6 +2,8 @@ package query
 
 import (
 	"context"
+	"encoding/json"
+	"os"
 	"testing"
 	"time"
 
@@ -113,6 +115,74 @@ func TestRelationshipsRanksByReciprocityAndGatesNewsletters(t *testing.T) {
 			assert.InEpsilon(first.Rows[i].Score, second.Rows[i].Score, 1e-9)
 		}
 	})
+}
+
+// TestRelationshipsMemoizesRankedListPerRevision verifies the engine-level
+// memoization contract: within one committed cache revision, repeated calls
+// (including later same-UTC-day Now values and offset pagination) reuse one
+// ranking query; ShowAll keys separately; and any revision change — here an
+// identity-revision bump rewritten into the commit marker — forces a
+// recompute, so a stale list can never be served after identities change.
+func TestRelationshipsMemoizesRankedListPerRevision(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	b := NewTestDataBuilder(t)
+	srcID := b.AddSource("owner@example.com")
+	ownerID := b.AddParticipant("owner@example.com", "example.com", "Owner")
+	b.AddOwnerParticipant(srcID, ownerID)
+	bobID := b.AddParticipant("bob@example.com", "example.com", "Bob")
+	carolID := b.AddParticipant("carol@example.com", "example.com", "Carol")
+
+	now := time.Date(2026, 1, 10, 3, 0, 0, 0, time.UTC)
+	for _, recipient := range []struct {
+		id   int64
+		name string
+	}{{bobID, "Bob"}, {carolID, "Carol"}} {
+		msgID := b.AddMessage(MessageOpt{SourceID: srcID, IsFromMe: true, SentAt: now.AddDate(0, 0, -1)})
+		b.AddFrom(msgID, ownerID, "Owner")
+		b.AddTo(msgID, recipient.id, recipient.name)
+	}
+
+	engine := b.BuildEngine()
+	ctx := context.Background()
+
+	first, err := engine.Relationships(ctx, RelationshipsRequest{Now: now, Limit: 10})
+	require.NoError(err)
+	require.Len(first.Rows, 2)
+	require.Equal(uint64(1), engine.relationshipsQueryRuns.Load())
+
+	second, err := engine.Relationships(ctx, RelationshipsRequest{Now: now.Add(6 * time.Hour), Limit: 10})
+	require.NoError(err)
+	assert.Equal(uint64(1), engine.relationshipsQueryRuns.Load(),
+		"a same-revision, same-UTC-day repeat must not re-run the ranking query")
+	require.Len(second.Rows, 2)
+	assert.Equal(first.Rows[0].CanonicalID, second.Rows[0].CanonicalID)
+
+	page, err := engine.Relationships(ctx, RelationshipsRequest{Now: now, Limit: 1, Offset: 1})
+	require.NoError(err)
+	assert.Equal(uint64(1), engine.relationshipsQueryRuns.Load(),
+		"offset pages must slice the cached list, not re-query")
+	require.Len(page.Rows, 1)
+	assert.Equal(first.Rows[1].CanonicalID, page.Rows[0].CanonicalID)
+	assert.Equal(first.TotalCount, page.TotalCount)
+
+	_, err = engine.Relationships(ctx, RelationshipsRequest{Now: now, Limit: 10, ShowAll: true})
+	require.NoError(err)
+	assert.Equal(uint64(2), engine.relationshipsQueryRuns.Load(), "show_all must key separately")
+
+	state, err := ReadCacheSyncState(engine.analyticsDir)
+	require.NoError(err)
+	state.IdentityRevision++
+	stateData, err := json.Marshal(state)
+	require.NoError(err)
+	require.NoError(os.WriteFile(CacheStatePath(engine.analyticsDir), stateData, 0o600))
+
+	third, err := engine.Relationships(ctx, RelationshipsRequest{Now: now, Limit: 10})
+	require.NoError(err)
+	assert.Equal(uint64(3), engine.relationshipsQueryRuns.Load(),
+		"a revision bump must miss the memo and recompute")
+	assert.Equal(state.IdentityRevision, third.IdentityRevision)
 }
 
 // TestRelationshipsExcludesClusteredOwners verifies that when the owner's own

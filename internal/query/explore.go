@@ -392,6 +392,20 @@ func buildExploreLogicalSQL(conditions string) string {
 	return buildExploreLogicalSQLWithCandidateRank(conditions, "NULL::BIGINT")
 }
 
+// sqlIsChatPredicate renders the shared chat-classification predicate for a
+// message row. messageType and conversationType are SQL expressions that
+// must never be NULL (analytical_entries and the base views COALESCE them).
+// Any query that re-derives chat membership outside the classified CTE
+// (e.g. the exact-person fast path in people.go) must use this so
+// classifications cannot drift.
+func sqlIsChatPredicate(messageType, conversationType string) string {
+	return "lower(" + messageType + ") IN (" + TextMessageTypeSQLList + `)
+            OR (
+                lower(` + messageType + `) IN ('', 'chat', 'text')
+                AND lower(` + conversationType + `) IN ('direct_chat', 'group_chat', 'channel', 'chat')
+            )`
+}
+
 // buildExploreFilteredClassifiedCTE builds the "filtered" and "classified"
 // CTEs shared by every query that projects analytical_entries into
 // modality-neutral rows: buildExploreLogicalSQLWithCandidateRank's
@@ -408,11 +422,7 @@ WITH filtered AS (
 ), classified AS (
     SELECT *,
 		` + candidateRankExpression + ` AS candidate_rank,
-        lower(message_type) IN (` + TextMessageTypeSQLList + `)
-            OR (
-                lower(message_type) IN ('', 'chat', 'text')
-                AND lower(conversation_type) IN ('direct_chat', 'group_chat', 'channel', 'chat')
-            ) AS is_chat,
+        ` + sqlIsChatPredicate("message_type", "conversation_type") + ` AS is_chat,
         CASE
             WHEN lower(message_type) = 'email' OR message_type = '' THEN 'email'
             WHEN lower(message_type) = '` + messageTypeCalendar + `' THEN 'event'
