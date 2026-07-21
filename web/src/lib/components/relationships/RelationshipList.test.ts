@@ -66,6 +66,8 @@ describe('RelationshipList', () => {
     expect(screen.getByText('Bob Example')).toBeDefined();
     expect(screen.getByLabelText('1 modalities')).toBeDefined();
     expect(screen.getByLabelText('2 modalities')).toBeDefined();
+    expect(screen.getByText('3 sent')).toBeDefined();
+    expect(screen.getByText('6 sent')).toBeDefined();
     const bars = grid.querySelectorAll<HTMLElement>('.activity-bar');
     expect(bars).toHaveLength(2);
     expect(bars[0]!.style.width).toBe('50%');
@@ -88,6 +90,16 @@ describe('RelationshipList', () => {
     expect(props.onShowAllChange).toHaveBeenCalledWith(true);
   });
 
+  it('shows the show-all checkbox under the people facet', () => {
+    render(RelationshipList, baseProps());
+    expect(screen.getByRole('checkbox', { name: 'Show all senders' })).toBeDefined();
+  });
+
+  it('hides the show-all checkbox under the domains facet', () => {
+    render(RelationshipList, { ...baseProps(), facet: 'domains', rows: [domain('example.com')] });
+    expect(screen.queryByRole('checkbox', { name: 'Show all senders' })).toBeNull();
+  });
+
   it('switches from ranked rows to search results as the query and rows props change', async () => {
     const props = baseProps();
     const view = render(RelationshipList, props);
@@ -97,6 +109,7 @@ describe('RelationshipList', () => {
 
     await view.rerender({ ...props, query: 'ali', rows: [person(3, 'Alicia Searched')] });
     expect(screen.getByText('Alicia Searched')).toBeDefined();
+    expect(screen.getByText('4 items')).toBeDefined();
     expect(screen.queryByText('Alice Example')).toBeNull();
   });
 

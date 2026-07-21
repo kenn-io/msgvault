@@ -576,7 +576,7 @@
   .table-header, .data-row { display: grid; grid-template-columns: 112px minmax(150px, 1.5fr) minmax(120px, 1fr) 82px minmax(140px, 1.2fr) minmax(130px, 1fr) minmax(160px, 1.3fr) 105px; align-items: center; }
   .files-grid { display: flex; min-height: 0; flex: 1; flex-direction: column; overflow: auto; outline: none; }
   .files-grid:focus-visible { box-shadow: inset 0 0 0 2px var(--accent-blue); }
-  .table-header { position: sticky; z-index: 1; top: 0; min-height: var(--table-header-height); flex: 0 0 auto; border-bottom: 1px solid var(--border-default); background: var(--bg-inset); color: var(--text-muted); font-size: var(--font-size-2xs); font-weight: 700; text-transform: uppercase; }
+  .table-header { position: sticky; z-index: 1; top: 0; min-height: var(--table-header-height); flex: 0 0 auto; border-bottom: 1px solid var(--border-default); background: var(--bg-surface); color: var(--text-muted); font-size: var(--font-size-2xs); font-weight: 700; text-transform: uppercase; }
   .table-header span, .data-row span { min-width: 0; padding: 0 var(--space-3); overflow: hidden; text-align: left; text-overflow: ellipsis; white-space: nowrap; }
   .table-header button { width: 100%; height: var(--table-header-height); padding: 0; border: 0; background: transparent; color: inherit; cursor: pointer; font: inherit; text-align: left; text-transform: inherit; }
   .table-body { position: relative; min-height: 220px; flex: 0 0 auto; outline: none; }

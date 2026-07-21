@@ -26,6 +26,7 @@
     label: string;
     lastAt: string;
     itemCount: number;
+    itemUnit: 'sent' | 'items';
     modalities: number | null;
     score: number | null;
   }
@@ -80,6 +81,7 @@
         label: row.display_label,
         lastAt: row.signals.last_interaction_at,
         itemCount: row.signals.sent_count,
+        itemUnit: 'sent',
         modalities: row.signals.modalities,
         score: row.score
       };
@@ -91,6 +93,7 @@
         label: row.domain,
         lastAt: row.last_at,
         itemCount: row.activity_count,
+        itemUnit: 'items',
         modalities: null,
         score: null
       };
@@ -101,6 +104,7 @@
       label: row.display_label,
       lastAt: row.last_at,
       itemCount: row.activity_count,
+      itemUnit: 'items',
       modalities: null,
       score: null
     };
@@ -151,10 +155,12 @@
       options={[{ value: 'people', label: 'People' }, { value: 'domains', label: 'Domains' }]}
       onchange={(value) => onFacetChange(value as RelationshipFacet)} />
   </div>
-  <label class="show-all">
-    <input type="checkbox" checked={showAll} onchange={(event) => onShowAllChange(event.currentTarget.checked)} />
-    Show all senders
-  </label>
+  {#if facet === 'people'}
+    <label class="show-all">
+      <input type="checkbox" checked={showAll} onchange={(event) => onShowAllChange(event.currentTarget.checked)} />
+      Show all senders
+    </label>
+  {/if}
 
   {#if degraded === 'cache_unavailable'}
     <section class="named-state" role="status">
@@ -199,7 +205,7 @@
               </div>
               <div class="row-meta">
                 <span class="last-at">{formatDate(view.lastAt)}</span>
-                <span class="item-count">{view.itemCount.toLocaleString()} items</span>
+                <span class="item-count">{view.itemCount.toLocaleString()} {view.itemUnit}</span>
               </div>
               {#if view.score !== null}
                 <span class="activity-track" aria-label={`Activity score ${view.score.toFixed(2)}`}>
