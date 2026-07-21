@@ -299,7 +299,7 @@
 <style>
   .settings { max-width: 72rem; margin: 0 auto; }
   section { margin-block: 2rem; }
-  .field { display: grid; grid-template-columns: minmax(16rem, 1fr) minmax(14rem, 1fr) auto; gap: 1rem; align-items: center; padding: 1rem 0; border-top: 1px solid var(--border-muted); }
+  .field { display: grid; grid-template-columns: minmax(16rem, 1fr) minmax(14rem, 1fr) auto; gap: 1rem; align-items: center; padding: 1rem 0; border-top: 1px solid var(--border-default); }
   .field-copy { display: grid; gap: 0.25rem; }
   .field-copy span, small { color: var(--text-muted); }
   input:not([type='checkbox']), select { width: 100%; min-height: 2.25rem; }

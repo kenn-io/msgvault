@@ -96,7 +96,7 @@ test('legacy People URL lands on the Relationships hub and walks list, timeline,
   await expect(hub).toBeVisible();
   const list = page.getByRole('grid', { name: 'Relationship results' });
   await expect(list.getByText('Alice Example')).toBeVisible();
-  await expect(page.getByText('Select a person or domain to see activity.')).toBeVisible();
+  await expect(page.getByText('Select a person or domain', { exact: true })).toBeVisible();
   await expect(page.getByRole('radio', { name: 'People' })).toHaveAttribute('aria-checked', 'true');
 
   // Opening a person from the ranked list drives the controller and shows
@@ -135,5 +135,5 @@ test('legacy People URL lands on the Relationships hub and walks list, timeline,
   await expect(list.getByRole('row', { name: /Alice Example/ })).toHaveAttribute('aria-selected', 'false');
   await expect(page.getByRole('heading', { name: 'Alice Example' })).toBeHidden();
   await expect(reading).toBeHidden();
-  await expect(page.getByText('Select a person or domain to see activity.')).toBeVisible();
+  await expect(page.getByText('Select a person or domain', { exact: true })).toBeVisible();
 });
