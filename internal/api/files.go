@@ -247,7 +247,19 @@ func (s *Server) handleSearchPersonFiles(w http.ResponseWriter, r *http.Request)
 	if !ok {
 		return
 	}
-	scope := ExploreFilter{Dimension: "participant", Values: []string{strconv.FormatInt(id, 10)}}
+	// Widen the scope to the person's whole identity cluster so files owned
+	// only by a linked alias are found — the same identity the person detail
+	// header and the relationship timeline report. clusterMemberIDs returns
+	// nil for an unlinked participant, leaving the scope on id alone.
+	members := s.clusterMemberIDs(id)
+	if len(members) < 2 {
+		members = []int64{id}
+	}
+	values := make([]string, len(members))
+	for i, member := range members {
+		values[i] = strconv.FormatInt(member, 10)
+	}
+	scope := ExploreFilter{Dimension: "participant", Values: values}
 	s.handleSearchFilesWithScope(w, r, &scope)
 }
 

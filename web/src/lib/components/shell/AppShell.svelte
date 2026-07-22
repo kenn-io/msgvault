@@ -103,6 +103,18 @@
     arrivedWithoutExploreParam = false;
   }
 
+  // Transient replaces (active row, scroll anchor) are user navigation too:
+  // apply any pending typed search patch first so it cannot fire later and
+  // clobber the newer transient state with the null active row / scroll
+  // anchor it snapshotted at typing time. Unlike beforeCommit this does not
+  // disarm the landing fallback, because transient replaces also fire
+  // programmatically (e.g. the first loaded row auto-activating); a flush of
+  // a pending patch still disarms it inside the debounced callback itself.
+  function replaceTransient(patch: Partial<ExploreURLState>): void {
+    debouncedSearchPatch.flush();
+    exploreState.replaceTransient(patch);
+  }
+
   function commitNavigation(patch: Partial<ExploreURLState>): void {
     beforeCommit();
     exploreState.commitNavigation(patch);
@@ -926,8 +938,8 @@
           onInspect={drillGroup}
           onLoadMore={loader.loadMore}
           onLoadThroughEnd={loader.loadThroughEnd}
-          onActiveKey={(activeRow) => exploreState.replaceTransient({ activeRow })}
-          onScrollAnchor={(key, offset) => exploreState.replaceTransient({ scrollAnchor: { key, offset } })}
+          onActiveKey={(activeRow) => replaceTransient({ activeRow })}
+          onScrollAnchor={(key, offset) => replaceTransient({ scrollAnchor: { key, offset } })}
           onRetry={loader.retry}
         />
       {:else}
@@ -952,7 +964,7 @@
           onMIMEFamiliesChange={(fileMIMEFamilies) => commitNavigation({
             fileMIMEFamilies, activeRow: null, selectedRow: null, scrollAnchor: null
           })}
-          onActiveKey={(activeRow) => exploreState.replaceTransient({ activeRow })}
+          onActiveKey={(activeRow) => replaceTransient({ activeRow })}
           onSelectedKey={(selectedRow) => selectedRow
             ? commitNavigation({ selectedRow })
             : replaceCommittedNavigation({ selectedRow: null })}

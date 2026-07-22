@@ -220,4 +220,32 @@ describe('FileViewer', () => {
     expect(screen.getByRole('button', { name: 'Download archive.zip' })).toBeDefined();
     expect(fetchFn).toHaveBeenCalledOnce();
   });
+
+  it('downloads by navigating an anchor at the streaming content endpoint without buffering bytes', async () => {
+    const fetchFn = viewerFetch({
+      id: 7, message_id: 11, conversation_id: 21, filename: 'archive.zip', mime_type: 'application/zip',
+      size_bytes: 12, content_hash: 'c'.repeat(64), content_state: 'local_content', content_available: true
+    });
+    render(FileViewer, {
+      client: createAPIClient(fetchFn),
+      file: file({ filename: 'archive.zip', mime_type: 'application/zip', mime_family: 'archive' })
+    });
+    const downloadButton = await screen.findByRole('button', { name: 'Download archive.zip' });
+
+    let capturedHref: string | undefined;
+    let capturedDownload: string | undefined;
+    const originalClick = HTMLAnchorElement.prototype.click;
+    HTMLAnchorElement.prototype.click = function capture(this: HTMLAnchorElement) {
+      capturedHref = this.getAttribute('href') ?? undefined;
+      capturedDownload = this.download;
+    };
+    try {
+      await fireEvent.click(downloadButton);
+      await waitFor(() => expect(capturedHref).toBe('/api/v1/files/7/content'));
+      expect(capturedDownload).toBe('archive.zip');
+    } finally {
+      HTMLAnchorElement.prototype.click = originalClick;
+    }
+    expect(fetchFn).toHaveBeenCalledOnce();
+  });
 });

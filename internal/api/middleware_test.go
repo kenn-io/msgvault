@@ -71,6 +71,98 @@ func TestCORSMiddleware(t *testing.T) {
 	}
 }
 
+func TestCORSMiddlewareCredentialsMatrix(t *testing.T) {
+	tests := []struct {
+		name             string
+		allowedOrigins   []string
+		allowCredentials bool
+		origin           string
+		wantAllowOrigin  string
+		wantCredentials  string
+	}{
+		{
+			name:             "wildcard with credentials never reflects origin or allows credentials",
+			allowedOrigins:   []string{"*"},
+			allowCredentials: true,
+			origin:           "http://attacker.example:3000",
+			wantAllowOrigin:  "*",
+			wantCredentials:  "",
+		},
+		{
+			name:            "wildcard without credentials emits literal wildcard",
+			allowedOrigins:  []string{"*"},
+			origin:          "http://localhost:3000",
+			wantAllowOrigin: "*",
+			wantCredentials: "",
+		},
+		{
+			name:             "exact origin with credentials reflects origin and allows credentials",
+			allowedOrigins:   []string{"http://dashboard.example"},
+			allowCredentials: true,
+			origin:           "http://dashboard.example",
+			wantAllowOrigin:  "http://dashboard.example",
+			wantCredentials:  "true",
+		},
+		{
+			name:            "exact origin without credentials reflects origin only",
+			allowedOrigins:  []string{"http://dashboard.example"},
+			origin:          "http://dashboard.example",
+			wantAllowOrigin: "http://dashboard.example",
+			wantCredentials: "",
+		},
+		{
+			name:             "exact match wins over wildcard and keeps credentials",
+			allowedOrigins:   []string{"*", "http://dashboard.example"},
+			allowCredentials: true,
+			origin:           "http://dashboard.example",
+			wantAllowOrigin:  "http://dashboard.example",
+			wantCredentials:  "true",
+		},
+		{
+			name:             "unlisted origin gets no CORS headers",
+			allowedOrigins:   []string{"http://dashboard.example"},
+			allowCredentials: true,
+			origin:           "http://attacker.example",
+			wantAllowOrigin:  "",
+			wantCredentials:  "",
+		},
+		{
+			name:             "literal star Origin header never matches exactly",
+			allowedOrigins:   []string{"*"},
+			allowCredentials: true,
+			origin:           "*",
+			wantAllowOrigin:  "*",
+			wantCredentials:  "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := CORSConfig{
+				AllowedOrigins:   tt.allowedOrigins,
+				AllowedMethods:   defaultCORSAllowedMethods(),
+				AllowedHeaders:   defaultCORSAllowedHeaders(),
+				AllowCredentials: tt.allowCredentials,
+			}
+			handler := CORSMiddleware(cfg)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusOK)
+			}))
+
+			req := httptest.NewRequest(http.MethodGet, "/api/v1/stats", nil)
+			req.Header.Set("Origin", tt.origin)
+			w := httptest.NewRecorder()
+			handler.ServeHTTP(w, req)
+
+			assert.Equal(t, tt.wantAllowOrigin, w.Header().Get("Access-Control-Allow-Origin"),
+				"Access-Control-Allow-Origin")
+			assert.Equal(t, tt.wantCredentials, w.Header().Get("Access-Control-Allow-Credentials"),
+				"Access-Control-Allow-Credentials")
+			assert.Contains(t, w.Header().Values("Vary"), "Origin",
+				"CORS responses must vary on Origin")
+		})
+	}
+}
+
 func TestCORSPreflightHeaders(t *testing.T) {
 	assert := assert.New(t)
 	cfg := DefaultCORSConfig()

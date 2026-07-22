@@ -1258,7 +1258,10 @@ type cacheSourceSnapshot struct {
 }
 
 func openCacheSourceSnapshot(duckDB *sql.DB, dbPath string) (*cacheSourceSnapshot, error) {
-	if runtime.GOOS != "windows" {
+	// MSGVAULT_FORCE_CSV_SNAPSHOT lets tests exercise the CSV fallback that
+	// Windows always takes, so drift between the COPY queries and the CSV
+	// views fails on every platform instead of only on Windows CI.
+	if runtime.GOOS != "windows" && os.Getenv("MSGVAULT_FORCE_CSV_SNAPSHOT") == "" {
 		// Try sqlite_scanner; fall back to CSV when the extension is unavailable
 		// (for example in an air-gapped installation). Parallel scanner workers
 		// open independent SQLite connections, so disable only that parallelism
@@ -1338,9 +1341,9 @@ func (s *cacheSourceSnapshot) Prepare() error {
 
 	// Tables and the SELECT queries to export them.
 	// Column lists match what the COPY-to-Parquet queries expect.
-	attachmentQuery := "SELECT id AS attachment_id, message_id, size, filename, '' AS mime_type FROM attachments"
+	attachmentQuery := "SELECT id, message_id, size, filename, '' AS mime_type FROM attachments"
 	if s.hasAttachmentMIME {
-		attachmentQuery = "SELECT id AS attachment_id, message_id, size, filename, mime_type FROM attachments"
+		attachmentQuery = "SELECT id, message_id, size, filename, mime_type FROM attachments"
 	}
 	tables := []struct {
 		name          string
@@ -1352,7 +1355,7 @@ func (s *cacheSourceSnapshot) Prepare() error {
 		// on the sqlite_scanner path; otherwise DuckDB binds against a
 		// CSV view that lacks the column and the export fails on Windows.
 		{tableMessages, "SELECT id, source_id, source_message_id, conversation_id, subject, snippet, sent_at, size_estimate, has_attachments, attachment_count, deleted_from_source_at, deleted_at, sender_id, message_type, is_from_me FROM messages WHERE sent_at IS NOT NULL",
-			"types={'sent_at': 'TIMESTAMP', 'deleted_from_source_at': 'TIMESTAMP', 'deleted_at': 'TIMESTAMP'}"},
+			"types={'sent_at': 'TIMESTAMP', 'deleted_from_source_at': 'TIMESTAMP', 'deleted_at': 'TIMESTAMP', 'is_from_me': 'BOOLEAN'}"},
 		{"message_recipients", "SELECT message_id, participant_id, recipient_type, display_name FROM message_recipients", ""},
 		{"message_labels", "SELECT message_id, label_id FROM message_labels", ""},
 		{tableAttachments, attachmentQuery, ""},

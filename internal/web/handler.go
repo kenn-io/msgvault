@@ -23,6 +23,21 @@ const (
 	viteManifestPath = ".vite/manifest.json"
 )
 
+// assetContentTypes pins Content-Type headers for the embedded asset
+// extensions. mime.TypeByExtension consults OS-level tables (the registry on
+// Windows), so relying on it would let the host system change what the
+// handler serves. Values match Go's built-in table so behavior is unchanged
+// on Linux and macOS.
+var assetContentTypes = map[string]string{
+	".css":   "text/css; charset=utf-8",
+	".html":  "text/html; charset=utf-8",
+	".js":    "text/javascript; charset=utf-8",
+	".json":  "application/json",
+	".mjs":   "text/javascript; charset=utf-8",
+	".svg":   "image/svg+xml",
+	".woff2": "font/woff2",
+}
+
 type viteManifestEntry struct {
 	File   string   `json:"file"`
 	CSS    []string `json:"css"`
@@ -61,6 +76,9 @@ func NewHandler(assets fs.FS, fallback http.Handler) http.Handler {
 			info, err := fs.Stat(assets, name)
 			if err == nil && !info.IsDir() {
 				w.Header().Set("X-Content-Type-Options", "nosniff")
+				if contentType, ok := assetContentTypes[strings.ToLower(path.Ext(name))]; ok {
+					w.Header().Set("Content-Type", contentType)
+				}
 				if _, ok := immutableAssets[name]; ok {
 					w.Header().Set("Cache-Control", immutableCache)
 				}

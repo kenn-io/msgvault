@@ -75,11 +75,14 @@ test('50,000 rows keep a bounded keyed DOM and stable grid focus', async ({ page
   await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
   expect(
     await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--accent-blue').trim())
-  ).toBe('#006b61');
+  ).toBe('#2257d6');
   const mutedContrast = await page.evaluate(() => {
     const style = getComputedStyle(document.documentElement);
     const luminance = (color: string) => {
-      const channels = color.match(/[0-9a-f]{2}/gi)!.map((part) => Number.parseInt(part, 16) / 255);
+      // The production CSS minifier emits shorthand hex (#fff for #ffffff).
+      const hex = color.replace('#', '');
+      const expanded = hex.length === 3 ? [...hex].map((digit) => digit + digit).join('') : hex;
+      const channels = expanded.match(/[0-9a-f]{2}/gi)!.map((part) => Number.parseInt(part, 16) / 255);
       const linear = channels.map((value) => value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4);
       return 0.2126 * linear[0]! + 0.7152 * linear[1]! + 0.0722 * linear[2]!;
     };
@@ -119,7 +122,22 @@ test('50,000 rows keep a bounded keyed DOM and stable grid focus', async ({ page
   await expect(grid).toHaveAttribute('aria-busy', 'true');
   await expect(page.getByText(/^Loading more…/)).toBeVisible();
   await expect(grid).toBeFocused();
-  await expect(grid).toHaveAttribute('aria-activedescendant', /message-3a-50000/, { timeout: 15_000 });
+  // End drains at most 20 pages (LOAD_THROUGH_END_MAX_PAGES) per press, then
+  // pauses on the last loaded row and announces how to continue so a huge
+  // view cannot spiral into unbounded sequential round-trips.
+  await expect(grid).toHaveAttribute('aria-activedescendant', /message-3a-11000$/, { timeout: 15_000 });
+  await expect(page.getByRole('status', { name: 'Sort status' }))
+    .toContainText('press End again to continue');
+  const activeRowNumber = async () => {
+    const active = await grid.getAttribute('aria-activedescendant');
+    return Number(active?.match(/message-3a-(\d+)$/)?.[1] ?? 0);
+  };
+  for (let previous = await activeRowNumber(); previous < total; previous = await activeRowNumber()) {
+    await expect(grid).toBeFocused();
+    await page.keyboard.press('End');
+    await expect.poll(activeRowNumber, { timeout: 15_000 }).toBeGreaterThan(previous);
+  }
+  await expect(grid).toHaveAttribute('aria-activedescendant', /message-3a-50000$/);
   await expect(grid.getByText('Synthetic subject 50000')).toBeVisible();
   expect(requests).toHaveLength(100);
   expect(requests.every(({ limit }) => (limit ?? 0) <= pageSize)).toBe(true);

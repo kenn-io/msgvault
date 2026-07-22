@@ -301,6 +301,106 @@ func TestRelationshipsWithOwnerResolvesAlias(t *testing.T) {
 	assert.Equal(int64(1), result.Rows[0].Signals.MeetingCount)
 }
 
+// TestRelationshipsOwnerIdentitiesAreGlobalAcrossSources pins the deliberate
+// person-level owner semantics in a multi-source archive (see the
+// buildRelationshipsSQL doc comment): an address confirmed as an owner
+// identity on source A is the owner everywhere, so cross-account self-mail it
+// authors into source B must not rank it as a counterpart or credit it as an
+// author of received mail — while genuine counterparts on each source rank
+// normally and source-A-scoped results are unaffected by source-B traffic.
+//
+// Fixture note: the source-B self-mail is added with IsFromMe false, matching
+// the production cache build, which derives is_from_me strictly from the
+// message's own source's account identities (the personal address is not an
+// identity on source B).
+func TestRelationshipsOwnerIdentitiesAreGlobalAcrossSources(t *testing.T) {
+	b := NewTestDataBuilder(t)
+	srcA := b.AddSource("owner@personal.example")
+	srcB := b.AddSource("owner@work.example")
+	personalID := b.AddParticipant("owner@personal.example", "personal.example", "Owner Personal")
+	workID := b.AddParticipant("owner@work.example", "work.example", "Owner Work")
+	b.AddOwnerParticipant(srcA, personalID)
+	b.AddOwnerParticipant(srcB, workID)
+
+	aliceID := b.AddParticipant("alice@example.com", "example.com", "Alice")
+	bobID := b.AddParticipant("bob@example.com", "example.com", "Bob")
+
+	now := time.Date(2026, 1, 10, 0, 0, 0, 0, time.UTC)
+
+	// Source A: a normal reciprocal contact.
+	sentA := b.AddMessage(MessageOpt{SourceID: srcA, IsFromMe: true, SentAt: now.AddDate(0, 0, -3)})
+	b.AddFrom(sentA, personalID, "Owner Personal")
+	b.AddTo(sentA, aliceID, "Alice")
+	recvA := b.AddMessage(MessageOpt{SourceID: srcA, SentAt: now.AddDate(0, 0, -2)})
+	b.AddFrom(recvA, aliceID, "Alice")
+	b.AddTo(recvA, personalID, "Owner Personal")
+
+	// Source B: heavy cross-account self-mail authored by the source-A
+	// owner identity, plus one genuine reciprocal contact.
+	for i := range 5 {
+		selfMail := b.AddMessage(MessageOpt{SourceID: srcB, SentAt: now.AddDate(0, 0, -(5 + i))})
+		b.AddFrom(selfMail, personalID, "Owner Personal")
+		b.AddTo(selfMail, workID, "Owner Work")
+	}
+	sentB := b.AddMessage(MessageOpt{SourceID: srcB, IsFromMe: true, SentAt: now.AddDate(0, 0, -4)})
+	b.AddFrom(sentB, workID, "Owner Work")
+	b.AddTo(sentB, bobID, "Bob")
+	recvB := b.AddMessage(MessageOpt{SourceID: srcB, SentAt: now.AddDate(0, 0, -1)})
+	b.AddFrom(recvB, bobID, "Bob")
+	b.AddTo(recvB, workID, "Owner Work")
+
+	engine := b.BuildEngine()
+	ctx := context.Background()
+
+	rowsByCanonicalID := func(t *testing.T, sourceIDs []int64) map[int64]RelationshipRow {
+		t.Helper()
+		result, err := engine.Relationships(ctx, RelationshipsRequest{
+			Context: Context{SourceIDs: sourceIDs},
+			Now:     now, Limit: 10, ShowAll: true,
+		})
+		require.NoError(t, err)
+		byID := make(map[int64]RelationshipRow, len(result.Rows))
+		for _, row := range result.Rows {
+			byID[row.CanonicalID] = row
+		}
+		return byID
+	}
+
+	t.Run("archive-wide ranking excludes every owner identity", func(t *testing.T) {
+		assert := assert.New(t)
+		byID := rowsByCanonicalID(t, nil)
+		assert.Len(byID, 2)
+		assert.Contains(byID, aliceID)
+		assert.Contains(byID, bobID)
+		assert.NotContains(byID, personalID,
+			"a source-A owner identity authoring source-B self-mail must never rank as a counterpart")
+		assert.NotContains(byID, workID)
+	})
+
+	t.Run("source-B scope still excludes the source-A owner identity", func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
+		byID := rowsByCanonicalID(t, []int64{srcB})
+		require.Len(byID, 1)
+		require.Contains(byID, bobID)
+		bob := byID[bobID]
+		assert.Equal(int64(1), bob.Signals.SentCount)
+		assert.Positive(bob.Signals.ReceivedFromThem,
+			"the genuine source-B author keeps received credit")
+	})
+
+	t.Run("source-A results are unaffected by source-B traffic", func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
+		byID := rowsByCanonicalID(t, []int64{srcA})
+		require.Len(byID, 1)
+		require.Contains(byID, aliceID)
+		alice := byID[aliceID]
+		assert.Equal(int64(1), alice.Signals.SentCount)
+		assert.Positive(alice.Signals.ReceivedFromThem)
+	})
+}
+
 // TestRelationshipsOwnerAbsentMeetingContributesNoModality verifies that a
 // meeting/event entry the archive owner did not attend contributes no
 // signal at all: no modality (rather than being miscounted as a phantom

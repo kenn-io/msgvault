@@ -27,6 +27,35 @@ func openConfigDirectoryForSync(string) (syncDirectoryHandle, error) {
 func (windowsDirectoryDurabilityBoundary) Sync() error  { return nil }
 func (windowsDirectoryDurabilityBoundary) Close() error { return nil }
 
+// configFileAllAccess is FILE_ALL_ACCESS. When an ACE granting GENERIC_ALL is
+// stored on a file object (via SeAssignSecurity at creation or SetSecurityInfo
+// afterwards), Windows maps the generic right to this object-specific mask, so
+// read-back verification observes FILE_ALL_ACCESS rather than GENERIC_ALL.
+const configFileAllAccess = windows.STANDARD_RIGHTS_REQUIRED | windows.SYNCHRONIZE | 0x1FF
+
+// verifyConfigOwnerSID accepts the current user as the file owner. It also
+// accepts BUILTIN\Administrators when the process token is a member of that
+// group: administrator tokens assign Administrators as the default owner of
+// objects they create (the "System objects: default owner" policy), so files
+// this very process wrote can carry that owner. OpenSSH for Windows applies
+// the same rule when checking key file ownership.
+func verifyConfigOwnerSID(owner, user *windows.SID) error {
+	if owner.Equals(user) {
+		return nil
+	}
+	if owner.IsWellKnown(windows.WinBuiltinAdministratorsSid) {
+		// Token 0 makes CheckTokenMembership evaluate the caller's own token.
+		member, err := windows.Token(0).IsMember(owner)
+		if err != nil {
+			return fmt.Errorf("check Administrators membership: %w", err)
+		}
+		if member {
+			return nil
+		}
+	}
+	return errors.New("config owner is not the current user")
+}
+
 func secureConfigCandidate(file *os.File, _ string, mode fs.FileMode) error {
 	if err := file.Chmod(mode); err != nil {
 		return err
@@ -107,9 +136,10 @@ func validateOpenedConfigSecurity(file *os.File) error {
 }
 
 // ensureConfigHandleOwnerOnly migrates legacy files created with an inherited
-// DACL only after proving the already-opened file is owned by the current user.
-// All hardening and verification remains bound to that handle, so a pathname
-// substitution cannot redirect the metadata change after ownership proof.
+// DACL only after proving the already-opened file has an acceptable owner (the
+// current user, or Administrators for an administrator token). All hardening
+// and verification remains bound to that handle, so a pathname substitution
+// cannot redirect the metadata change after ownership proof.
 func ensureConfigHandleOwnerOnly(handle windows.Handle, user *windows.SID) error {
 	if err := verifyConfigHandleOwnerOnly(handle, user); err == nil {
 		return nil
@@ -119,8 +149,11 @@ func ensureConfigHandleOwnerOnly(handle windows.Handle, user *windows.SID) error
 		return fmt.Errorf("read legacy config owner: %w", err)
 	}
 	owner, _, err := descriptor.Owner()
-	if err != nil || owner == nil || !owner.Equals(user) {
-		return errors.New("legacy config owner is not the current user")
+	if err != nil || owner == nil {
+		return errors.New("legacy config owner is unavailable")
+	}
+	if err := verifyConfigOwnerSID(owner, user); err != nil {
+		return fmt.Errorf("legacy config owner rejected: %w", err)
 	}
 	acl, err := ownerOnlyConfigACL(user)
 	if err != nil {
@@ -144,8 +177,8 @@ func verifyConfigHandleOwnerOnly(handle windows.Handle, user *windows.SID) error
 	if err != nil || owner == nil {
 		return fmt.Errorf("read config owner: %w", err)
 	}
-	if !owner.Equals(user) {
-		return errors.New("config owner is not the current user")
+	if err := verifyConfigOwnerSID(owner, user); err != nil {
+		return err
 	}
 	control, _, err := descriptor.Control()
 	if err != nil {
@@ -172,8 +205,9 @@ func verifyConfigHandleOwnerOnly(handle windows.Handle, user *windows.SID) error
 	if err := windows.GetAce(dacl, 0, &ace); err != nil {
 		return fmt.Errorf("read config owner ACE: %w", err)
 	}
-	if ace.Header.AceType != windows.ACCESS_ALLOWED_ACE_TYPE || ace.Mask != windows.GENERIC_ALL {
-		return errors.New("config DACL does not grant exactly GENERIC_ALL")
+	if ace.Header.AceType != windows.ACCESS_ALLOWED_ACE_TYPE ||
+		(ace.Mask != windows.GENERIC_ALL && ace.Mask != configFileAllAccess) {
+		return errors.New("config DACL does not grant exactly full control")
 	}
 	if ace.Header.AceFlags&windows.INHERITED_ACE != 0 {
 		return errors.New("config DACL contains inherited access")

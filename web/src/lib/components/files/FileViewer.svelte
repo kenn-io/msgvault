@@ -138,21 +138,19 @@
     }
   }
 
-  async function download(): Promise<void> {
+  // Navigates an anchor straight at the same-origin, session-authenticated
+  // content endpoint so the browser streams the file to disk itself — no JS
+  // buffering, so a multi-gigabyte attachment cannot exhaust tab memory. The
+  // server's Content-Disposition: attachment header carries the authoritative
+  // filename; the download attribute only names the fallback when the archive
+  // recorded no filename.
+  function download(): void {
     if (!metadata || metadata.content_state !== 'local_content') return;
-    const downloadController = new AbortController();
-    try {
-      const { bytes, contentType } = await loadBytes(metadata, downloadController.signal, Number.MAX_SAFE_INTEGER);
-      const blob = new Blob([new Uint8Array(bytes).buffer], { type: contentType ?? metadata.mime_type });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = displayFilename;
-      link.click();
-      queueMicrotask(() => URL.revokeObjectURL(url));
-    } catch (downloadError) {
-      error = errorMessage(downloadError);
-    }
+    const link = document.createElement('a');
+    link.href = `/api/v1/files/${metadata.id}/content`;
+    link.download = displayFilename;
+    link.rel = 'noopener';
+    link.click();
   }
 
   async function close(): Promise<void> {
@@ -277,7 +275,7 @@
         <button type="button" disabled={!metadata && !file.entry_key} onclick={openItem}>Open containing item</button>
         <button type="button" disabled={!metadata && !file.entry_key} onclick={openConversation}>Open containing conversation</button>
         {#if metadata?.content_state === 'local_content'}
-          <button type="button" aria-label={`Download ${displayFilename}`} onclick={() => { void download(); }}>Download</button>
+          <button type="button" aria-label={`Download ${displayFilename}`} onclick={download}>Download</button>
         {/if}
       </div>
     </footer>

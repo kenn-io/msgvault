@@ -710,17 +710,28 @@ func canonicalScopedExploreHash(request ExploreHTTPRequest, scope *ExploreFilter
 func applyIdentityScope(context *query.Context, scope ExploreFilter) error {
 	switch scope.Dimension {
 	case "participant":
-		if len(scope.Values) != 1 {
-			return errors.New("participant identity scope requires one exact ID")
+		// One or more IDs: identity-scoped endpoints pass every member of
+		// the requested participant's cluster so alias-owned activity is in
+		// scope. A base-predicate participant filter narrows the cluster to
+		// the members it allows rather than being overwritten.
+		if len(scope.Values) == 0 {
+			return errors.New("participant identity scope requires at least one exact ID")
 		}
-		id, err := strconv.ParseInt(scope.Values[0], 10, 64)
-		if err != nil || id < 1 {
-			return errors.New("participant identity scope requires a positive integer ID")
+		ids := make([]int64, len(scope.Values))
+		for i, value := range scope.Values {
+			id, err := strconv.ParseInt(value, 10, 64)
+			if err != nil || id < 1 {
+				return errors.New("participant identity scope requires positive integer IDs")
+			}
+			ids[i] = id
 		}
-		if len(context.ParticipantIDs) > 0 && !slices.Contains(context.ParticipantIDs, id) {
-			return errors.New("the base predicate excludes the requested participant")
+		if len(context.ParticipantIDs) > 0 {
+			ids = slices.DeleteFunc(ids, func(id int64) bool { return !slices.Contains(context.ParticipantIDs, id) })
+			if len(ids) == 0 {
+				return errors.New("the base predicate excludes the requested participant")
+			}
 		}
-		context.ParticipantIDs = []int64{id}
+		context.ParticipantIDs = ids
 	case "domain":
 		if len(scope.Values) != 1 {
 			return errors.New("domain identity scope requires one exact domain")

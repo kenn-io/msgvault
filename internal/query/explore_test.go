@@ -629,6 +629,54 @@ func TestExploreCounterpartParticipantIDNilWhenOwnerOnly(t *testing.T) {
 	assert.Nil(t, response.Rows[0].CounterpartParticipantID)
 }
 
+// TestExploreCounterpartSkipsOwnerIdentityFromAnotherSource pins the
+// person-level owner semantics for counterpart selection in a multi-source
+// archive (see buildExploreSQL / buildRelationshipsSQL): an address confirmed
+// as an owner identity on source A is never "the other side" of a source-B
+// entry. The source-A identity has the smallest raw participant ID, so
+// source-scoped owner filtering would regress to picking it. Cross-account
+// self-mail with no third participant must yield a nil counterpart, not the
+// owner's other address.
+func TestExploreCounterpartSkipsOwnerIdentityFromAnotherSource(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	b := NewTestDataBuilder(t)
+	srcA := b.AddSource("owner@personal.example")
+	srcB := b.AddSource("owner@work.example")
+	personalID := b.AddParticipant("owner@personal.example", "personal.example", "Owner Personal")
+	workID := b.AddParticipant("owner@work.example", "work.example", "Owner Work")
+	b.AddOwnerParticipant(srcA, personalID)
+	b.AddOwnerParticipant(srcB, workID)
+	bobID := b.AddParticipant("bob@example.com", "example.com", "Bob")
+
+	forwardID := b.AddMessage(MessageOpt{SourceID: srcB, Subject: "Forwarded with Bob"})
+	b.AddFrom(forwardID, personalID, "Owner Personal")
+	b.AddTo(forwardID, workID, "Owner Work")
+	b.AddTo(forwardID, bobID, "Bob")
+
+	selfMailID := b.AddMessage(MessageOpt{SourceID: srcB, Subject: "Note to self"})
+	b.AddFrom(selfMailID, personalID, "Owner Personal")
+	b.AddTo(selfMailID, workID, "Owner Work")
+
+	response, err := b.BuildEngine().Explore(context.Background(), ExploreRequest{
+		Context: Context{SourceIDs: []int64{srcB}},
+	})
+	require.NoError(err)
+	require.Len(response.Rows, 2)
+
+	counterpartsBySubject := make(map[string]*int64, len(response.Rows))
+	for _, row := range response.Rows {
+		counterpartsBySubject[row.Title] = row.CounterpartParticipantID
+	}
+	require.Contains(counterpartsBySubject, "Forwarded with Bob")
+	require.NotNil(counterpartsBySubject["Forwarded with Bob"])
+	assert.Equal(bobID, *counterpartsBySubject["Forwarded with Bob"],
+		"the source-A owner identity must be skipped even though it has the smallest participant ID")
+	require.Contains(counterpartsBySubject, "Note to self")
+	assert.Nil(counterpartsBySubject["Note to self"],
+		"cross-account self-mail has no counterpart")
+}
+
 // TestExploreCounterpartParticipantIDNilWhenOwnerUnknown verifies that when
 // no owner_participants rows exist at all (the owner set is unknown), the
 // column is nil rather than guessing the smallest participant ID overall —

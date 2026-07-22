@@ -17,6 +17,7 @@ import (
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/query/querytest"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil"
 )
 
 type fixedFileBlobStore struct{ content []byte }
@@ -120,6 +121,53 @@ func TestFilesSearchUsesAnalyticalQueryAndOneCatalogBatch(t *testing.T) {
 	assertions.Equal("report", engine.request.FilenameQuery)
 	assertions.Equal([]query.FileMIMEFamily{query.FileMIMEImage, query.FileMIMEPDF}, engine.request.MIMEFamilies)
 	assertions.Equal(query.SortSpec{Field: "size", Direction: "asc"}, engine.request.Sort)
+}
+
+// TestPersonFilesSearchWidensScopeToIdentityCluster covers the identity
+// consistency between the Relationships hub panes: the person-scoped files
+// search must see the same cluster the person detail header and relationship
+// timeline report, so files attached only to a linked alias's messages are
+// found. An unlinked participant stays scoped to its own ID.
+func TestPersonFilesSearchWidensScopeToIdentityCluster(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	st := testutil.NewTestStore(t)
+	primary, err := st.EnsureParticipant("primary@example.com", "Primary", "example.com")
+	requirements.NoError(err)
+	secondary, err := st.EnsureParticipant("secondary@example.com", "Secondary", "example.com")
+	requirements.NoError(err)
+	solo, err := st.EnsureParticipant("solo@example.com", "Solo", "example.com")
+	requirements.NoError(err)
+	_, err = st.LinkParticipants(primary, secondary)
+	requirements.NoError(err)
+
+	engine := &fileSearchEngine{MockEngine: &querytest.MockEngine{}, result: &query.FileSearchResponse{
+		Files: []query.FileRow{}, TotalCount: 0, CacheRevision: "cache-files",
+	}}
+	srv := NewServerWithOptions(ServerOptions{
+		Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}},
+		Store:  st, Engine: engine, Logger: testLogger(),
+	})
+	search := func(participantID int64) {
+		request := httptest.NewRequest(http.MethodPost,
+			fmt.Sprintf("/api/v1/people/%d/files/search", participantID), bytes.NewBufferString(`{"predicate":{}}`))
+		request.Header.Set("Content-Type", "application/json")
+		response := httptest.NewRecorder()
+		srv.Router().ServeHTTP(response, request)
+		requirements.Equal(http.StatusOK, response.Code, response.Body.String())
+	}
+
+	search(primary)
+	assertions.ElementsMatch([]int64{primary, secondary}, engine.request.Explore.Context.ParticipantIDs,
+		"a linked participant's files search must scope to every cluster member")
+
+	search(secondary)
+	assertions.ElementsMatch([]int64{primary, secondary}, engine.request.Explore.Context.ParticipantIDs,
+		"any cluster member resolves the same scope")
+
+	search(solo)
+	assertions.Equal([]int64{solo}, engine.request.Explore.Context.ParticipantIDs,
+		"an unlinked participant stays scoped to its own ID")
 }
 
 func TestFileMetadataNamesEveryContentStateAndContainingAuthorities(t *testing.T) {

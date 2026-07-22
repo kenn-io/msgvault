@@ -103,8 +103,12 @@ test('Escape closes an authenticated image once, suspends background shortcuts, 
   await page.keyboard.press('Home');
   await expect.poll(() => {
     const encoded = new URL(page.url()).searchParams.get('explore');
-    return encoded ? (JSON.parse(encoded) as { activeRow?: string }).activeRow : undefined;
-  }).toBe('file:7');
+    if (!encoded) return undefined;
+    const state = JSON.parse(encoded) as { activeRow?: string; fileFilenameQuery?: string };
+    return { activeRow: state.activeRow, fileFilenameQuery: state.fileFilenameQuery };
+  }).toEqual({ activeRow: 'file:7', fileFilenameQuery: 'pixel' });
+  await expect(grid).toHaveAttribute('aria-busy', 'false');
+  await expect(grid).toHaveAttribute('aria-activedescendant', 'file-row-7');
   const filteredURL = page.url();
   await page.keyboard.press('Enter');
   await expect(page.getByRole('img', { name: 'Preview pixel.png' })).toBeVisible();

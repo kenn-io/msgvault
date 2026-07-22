@@ -119,6 +119,158 @@ func TestSessionCSRFRequestMatrix(t *testing.T) {
 	}
 }
 
+func TestSessionCookieRequiresSameOrigin(t *testing.T) {
+	tests := []struct {
+		name            string
+		corsOrigins     []string
+		corsCredentials bool
+		path            string
+		origin          string
+		useCookie       bool
+		useAPIKey       bool
+		wantStatus      int
+		wantAllowOrigin string
+		wantCredentials string
+	}{
+		{
+			name:            "wildcard cross-origin cookie GET is refused",
+			corsOrigins:     []string{"*"},
+			corsCredentials: true,
+			origin:          "http://attacker.example",
+			useCookie:       true,
+			wantStatus:      http.StatusForbidden,
+			wantAllowOrigin: "*",
+		},
+		{
+			name:            "wildcard same-site other port cookie GET is refused",
+			corsOrigins:     []string{"*"},
+			corsCredentials: true,
+			origin:          "http://example.com:3000",
+			useCookie:       true,
+			wantStatus:      http.StatusForbidden,
+			wantAllowOrigin: "*",
+		},
+		{
+			name:            "wildcard cross-origin cookie session bootstrap is refused",
+			corsOrigins:     []string{"*"},
+			corsCredentials: true,
+			path:            sessionPath,
+			origin:          "http://attacker.example",
+			useCookie:       true,
+			wantStatus:      http.StatusForbidden,
+			wantAllowOrigin: "*",
+		},
+		{
+			name:            "wildcard same-origin cookie GET works",
+			corsOrigins:     []string{"*"},
+			corsCredentials: true,
+			origin:          "http://example.com",
+			useCookie:       true,
+			wantStatus:      http.StatusOK,
+			wantAllowOrigin: "*",
+		},
+		{
+			name:            "wildcard cookie GET without Origin header works",
+			corsOrigins:     []string{"*"},
+			corsCredentials: true,
+			useCookie:       true,
+			wantStatus:      http.StatusOK,
+		},
+		{
+			name:            "wildcard cross-origin API-key GET works without credentials header",
+			corsOrigins:     []string{"*"},
+			corsCredentials: true,
+			origin:          "http://attacker.example",
+			useAPIKey:       true,
+			wantStatus:      http.StatusOK,
+			wantAllowOrigin: "*",
+		},
+		{
+			name:            "API key exempts a cross-origin request that also carries a cookie",
+			corsOrigins:     []string{"*"},
+			corsCredentials: true,
+			origin:          "http://attacker.example",
+			useCookie:       true,
+			useAPIKey:       true,
+			wantStatus:      http.StatusOK,
+			wantAllowOrigin: "*",
+		},
+		{
+			name:            "explicitly listed origin still cannot use cookies cross-origin",
+			corsOrigins:     []string{"http://dashboard.example"},
+			corsCredentials: true,
+			origin:          "http://dashboard.example",
+			useCookie:       true,
+			wantStatus:      http.StatusForbidden,
+			wantAllowOrigin: "http://dashboard.example",
+			wantCredentials: "true",
+		},
+		{
+			name:            "explicitly listed origin keeps credentialed CORS headers for API-key clients",
+			corsOrigins:     []string{"http://dashboard.example"},
+			corsCredentials: true,
+			origin:          "http://dashboard.example",
+			useAPIKey:       true,
+			wantStatus:      http.StatusOK,
+			wantAllowOrigin: "http://dashboard.example",
+			wantCredentials: "true",
+		},
+		{
+			name:       "no CORS config same-origin cookie GET works",
+			origin:     "http://example.com",
+			useCookie:  true,
+			wantStatus: http.StatusOK,
+		},
+		{
+			name:       "no CORS config cross-origin cookie GET is refused",
+			origin:     "http://attacker.example",
+			useCookie:  true,
+			wantStatus: http.StatusForbidden,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertions := assert.New(t)
+			srv := NewServer(&config.Config{Server: config.ServerConfig{
+				APIKey:          testSessionAPIKey,
+				CORSOrigins:     tt.corsOrigins,
+				CORSCredentials: tt.corsCredentials,
+			}}, nil, nil, testLogger())
+			t.Cleanup(func() {
+				require.NoError(t, srv.Shutdown(context.Background()))
+			})
+
+			login := performSessionRequest(t, srv, http.MethodPost, sessionLoginPath,
+				[]byte(`{"api_key":"`+testSessionAPIKey+`"}`), nil, false)
+			require.Equal(t, http.StatusOK, login.Code, login.Body.String())
+			cookie := requireSessionCookie(t, login)
+
+			headers := make(http.Header)
+			if tt.useCookie {
+				headers.Set("Cookie", cookie.String())
+			}
+			if tt.useAPIKey {
+				headers.Set("X-Api-Key", testSessionAPIKey)
+			}
+			if tt.origin != "" {
+				headers.Set("Origin", tt.origin)
+			}
+			path := tt.path
+			if path == "" {
+				path = "/api/v1/health"
+			}
+
+			resp := performSessionRequest(t, srv, http.MethodGet, path, nil, headers, false)
+			assertions.Equal(tt.wantStatus, resp.Code, resp.Body.String())
+			assertions.Equal(tt.wantAllowOrigin, resp.Header().Get("Access-Control-Allow-Origin"),
+				"Access-Control-Allow-Origin")
+			assertions.Equal(tt.wantCredentials, resp.Header().Get("Access-Control-Allow-Credentials"),
+				"Access-Control-Allow-Credentials")
+		})
+	}
+}
+
 func TestRejectedSessionMutationDoesNotReachOperationGate(t *testing.T) {
 	gate := &recordingOperationGate{allow: true}
 	srv := NewServerWithOptions(ServerOptions{

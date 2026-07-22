@@ -246,6 +246,19 @@ func validateRelationshipsRequest(request RelationshipsRequest) error {
 // decay counts UTC day boundaries deterministically and depends only on the
 // UTC date of now (which relationshipsMemoKey relies on).
 //
+// The "owners" set is deliberately person-level, not source-level: the
+// owner_participants dataset carries (source_id, participant_id), and this
+// query unions participants across sources on purpose. Every source in an
+// archive belongs to the same person, so an address confirmed as "me" on any
+// account is the owner everywhere: cross-account self-mail (forwarding
+// personal mail into a work archive, calendar copies, self-CC) must not rank
+// the owner's other address as a top "relationship" or credit it as an
+// author of received mail. Scoping owners to each entry's source would do
+// exactly that whenever the owner's identities are not yet clustered.
+// Per-message direction is source-scoped where it matters: is_from_me is
+// baked at cache build against the message's own source's account
+// identities, so sent credit never leaks between accounts.
+//
 // Owners may themselves be clustered, so "owner_canon" resolves every owner
 // participant to its cluster canonical ID and interactions exclude any
 // canonical identity that appears there — you never rank yourself.

@@ -30,14 +30,35 @@ func (s *Server) requestSecurityMiddleware(next http.Handler) http.Handler {
 			writeError(w, http.StatusBadRequest, "invalid_forwarded_headers", "Invalid forwarded scheme or host")
 			return
 		}
+		auth := s.classifyAPIRequestDirect(r)
+		if auth.Mode == AuthModeSession && !sessionOriginAllowed(r, scheme, host) {
+			writeError(w, http.StatusForbidden, "cross_origin_session",
+				"Session-cookie requests must be same-origin; use API-key authentication for cross-origin access")
+			return
+		}
 		security := requestSecurity{
-			auth:   s.classifyAPIRequestDirect(r),
+			auth:   auth,
 			scheme: scheme,
 			host:   host,
 		}
 		ctx := context.WithValue(r.Context(), requestSecurityContextKey{}, security)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
+}
+
+// sessionOriginAllowed reports whether a session-cookie-authenticated request
+// may proceed. Browser session cookies are ambient credentials, so they are
+// strictly same-origin for every method (including GET/HEAD): when the browser
+// discloses an Origin it must exactly match the request's own scheme and host.
+// Requests without an Origin header (same-origin navigations, curl, other
+// non-browser clients) pass. API-key requests never reach this check — the
+// Authorization header is an explicit credential, not an ambient one — so
+// cross-origin API clients are unaffected.
+func sessionOriginAllowed(r *http.Request, scheme, host string) bool {
+	if len(r.Header.Values("Origin")) == 0 {
+		return true
+	}
+	return requestOriginMatches(r, scheme, host)
 }
 
 func securityFromRequest(r *http.Request) (requestSecurity, bool) {

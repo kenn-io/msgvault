@@ -341,11 +341,15 @@ func buildExploreConditions(request ExploreRequest) (string, []any) {
 
 // buildExploreSQL builds the entry-row page query. counterpart_participant_id
 // reuses the exact owner-cluster resolution buildRelationshipsSQL uses (see
-// its doc comment): owners are expanded through participant_clusters so an
-// owner's clustered alias is still recognized as the owner, and the smallest
-// non-owner participant ID on the entry is returned. If the owner_participants
-// dataset has no rows at all, the owner is unknown and the column is NULL —
-// never a guess at "the other side" from participant_ids[0] alone.
+// its doc comment): owners are unioned across sources (an address confirmed
+// as "me" on any account is never "the other side" of an entry, even in a
+// different source's archive — see buildRelationshipsSQL on why owner
+// identities are person-level) and expanded through participant_clusters so
+// an owner's clustered alias is still recognized as the owner, and the
+// smallest non-owner participant ID on the entry is returned. If the
+// owner_participants dataset has no rows at all, the owner is unknown and
+// the column is NULL — never a guess at "the other side" from
+// participant_ids[0] alone.
 func buildExploreSQL(conditions, candidateRankExpression, clustersGlob, ownersGlob string) string {
 	return buildExploreLogicalSQLWithCandidateRank(conditions, candidateRankExpression) + fmt.Sprintf(`
 ), counted AS (

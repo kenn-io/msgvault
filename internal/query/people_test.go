@@ -131,23 +131,37 @@ func TestGetPersonAndDomainAreExactAndBounded(t *testing.T) {
 	assertions.Nil(missingDomain)
 }
 
-func TestGetPersonWithClusterMemberIDsSpansIdentifiersAcrossCluster(t *testing.T) {
+func TestGetPersonWithClusterMemberIDsSpansIdentifiersAndMetricsAcrossCluster(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	b := NewTestDataBuilder(t)
-	source := b.AddSource("archive@example.com")
+	mailSource := b.AddSourceWithType("archive-a@example.com", "gmail")
+	chatSource := b.AddSourceWithType("archive-b@example.com", "whatsapp")
 	primary := b.AddParticipant("primary@example.com", "example.com", "Primary")
 	secondary := b.AddParticipant("secondary@example.com", "example.com", "Secondary")
 	b.AddParticipantIdentifier(primary, "email", "primary@example.com", "Primary <primary@example.com>", true)
 	b.AddParticipantIdentifier(secondary, "phone", "+15550100002", "+1 555 010 0002", true)
-	message := b.AddMessage(MessageOpt{SourceID: source, Subject: "Cluster", SentAt: time.Date(2026, 7, 16, 9, 0, 0, 0, time.UTC)})
+	primaryAt := time.Date(2026, 7, 16, 9, 0, 0, 0, time.UTC)
+	message := b.AddMessage(MessageOpt{SourceID: mailSource, ConversationID: 301, Subject: "Cluster", SentAt: primaryAt})
 	b.AddFrom(message, primary, "Primary")
+	// Activity and an attachment owned only by the linked alias, in a
+	// different source, before and after the primary's single message.
+	aliasEarlier := b.AddMessage(MessageOpt{SourceID: mailSource, ConversationID: 302, Subject: "Alias earlier", SentAt: primaryAt.Add(-time.Hour)})
+	b.AddFrom(aliasEarlier, secondary, "Secondary")
+	b.AddAttachmentWithMIME(801, aliasEarlier, 100, "alias.pdf", "application/pdf")
+	aliasLater := b.AddMessage(MessageOpt{SourceID: chatSource, ConversationID: 303, SentAt: primaryAt.Add(time.Hour), MessageType: "whatsapp", ConversationType: "direct_chat"})
+	b.AddFrom(aliasLater, secondary, "Secondary")
+	b.AddConversationParticipant(303, secondary)
 	engine := b.BuildEngine()
 
 	solo, err := engine.GetPerson(context.Background(), primary, Context{}, nil)
 	requirements.NoError(err)
 	requirements.NotNil(solo)
 	requirements.Len(solo.Identifiers, 1, "without cluster member IDs, identifiers stay scoped to the requested participant")
+	assertions.Equal(int64(1), solo.ActivityCount, "without cluster member IDs, metrics stay scoped to the requested participant")
+	assertions.Equal(int64(0), solo.FileCount)
+	assertions.Equal(primaryAt, solo.FirstAt)
+	assertions.Equal(primaryAt, solo.LastAt)
 
 	clustered, err := engine.GetPerson(context.Background(), primary, Context{}, []int64{primary, secondary})
 	requirements.NoError(err)
@@ -161,10 +175,25 @@ func TestGetPersonWithClusterMemberIDsSpansIdentifiersAcrossCluster(t *testing.T
 	requirements.Contains(byParticipant, secondary)
 	assertions.Equal("email", byParticipant[primary].Type)
 	assertions.Equal("phone", byParticipant[secondary].Type)
-	// Row-level metrics still reflect only the exact requested participant,
-	// never the whole cluster's combined activity.
+	// Metrics aggregate every member: counts, files, date range, and source
+	// coverage all include activity owned only by the linked alias, matching
+	// what the cluster-aware relationship timeline shows.
 	assertions.Equal(primary, clustered.ID)
-	assertions.Equal(int64(1), clustered.ActivityCount)
+	assertions.Equal(int64(3), clustered.ActivityCount)
+	assertions.Equal(int64(1), clustered.FileCount)
+	assertions.Equal(primaryAt.Add(-time.Hour), clustered.FirstAt)
+	assertions.Equal(primaryAt.Add(time.Hour), clustered.LastAt)
+	assertions.Equal([]SourceCount{{SourceType: "gmail", Count: 2}, {SourceType: "whatsapp", Count: 1}}, clustered.SourceCounts)
+
+	// The filtered shape (an analytical context present) must widen the same
+	// way: scoped to the mail source, the alias's mail entry still counts.
+	filtered, err := engine.GetPerson(context.Background(), primary, Context{SourceIDs: []int64{mailSource}}, []int64{primary, secondary})
+	requirements.NoError(err)
+	requirements.NotNil(filtered)
+	assertions.Equal(int64(2), filtered.ActivityCount)
+	assertions.Equal(int64(1), filtered.FileCount)
+	assertions.Equal(primaryAt.Add(-time.Hour), filtered.FirstAt)
+	assertions.Equal(primaryAt, filtered.LastAt)
 }
 
 func TestContextualPersonAndDomainSummariesUseTheExactCanonicalPopulation(t *testing.T) {

@@ -45,7 +45,10 @@ func Parse(data []byte) (*Message, error) {
 		return nil, errors.New("emlx: no newline after byte count")
 	}
 	countStr := strings.TrimSpace(string(data[:newline]))
-	byteCount, err := strconv.ParseInt(countStr, 10, 64)
+	// bitSize 0 bounds the parsed count to the platform int, so the int()
+	// conversion below can never truncate; absurd counts fail here with a
+	// range error.
+	byteCount, err := strconv.ParseInt(countStr, 10, 0)
 	if err != nil {
 		return nil, fmt.Errorf("emlx: invalid byte count %q: %w", countStr, err)
 	}

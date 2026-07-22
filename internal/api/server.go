@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/http/pprof"
 	"net/netip"
+	"slices"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -404,6 +405,10 @@ func (s *Server) setupRouter() http.Handler {
 	}
 	if corsConfig.MaxAge == 0 && len(corsConfig.AllowedOrigins) > 0 {
 		corsConfig.MaxAge = 86400
+	}
+	if corsConfig.AllowCredentials && slices.Contains(corsConfig.AllowedOrigins, "*") {
+		s.logger.Warn("cors_origins contains \"*\": wildcard matches never receive " +
+			"Access-Control-Allow-Credentials; list exact origins in cors_origins to allow credentialed CORS")
 	}
 
 	// Rate limiting (10 req/sec with burst of 20)

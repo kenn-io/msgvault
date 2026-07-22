@@ -1,8 +1,17 @@
+//go:build !windows
+
+// Reverse-index disk persistence is only supported where cache files can be
+// secured with Unix permission and ownership semantics; on Windows every
+// persistence path fails closed with ErrDiskCacheSecurityUnsupported (see
+// index_security_windows.go). These tests assert persistence round-trips,
+// persistence-derived status reasons, and Unix file modes, so they run on
+// Unix lanes only; index_security_windows_test.go covers the Windows
+// contract.
+
 package tasklinks
 
 import (
 	"context"
-	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -12,32 +21,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/taskclient"
 )
-
-type listClient struct {
-	pages   []taskclient.TaskList
-	errAt   int
-	calls   int
-	limits  []int
-	cursors []string
-}
-
-func (c *listClient) ListTasks(_ context.Context, _ string, limit int, cursor string) (taskclient.TaskList, error) {
-	c.calls++
-	c.limits = append(c.limits, limit)
-	c.cursors = append(c.cursors, cursor)
-	if c.errAt == c.calls {
-		return taskclient.TaskList{}, errors.New("unavailable")
-	}
-	return c.pages[c.calls-1], nil
-}
-
-func indexedTask(id, title string, identity MessageIdentity) taskclient.Task {
-	return taskclient.Task{ID: id, Project: "project", Title: title, Revision: "r1", Metadata: MetadataWithLink(nil, NewMailLink(identity, time.Now()))}
-}
-
-func testCacheIdentity() CacheIdentity {
-	return CacheIdentity{Project: "project", ArchiveUID: "archive-a", ArchiveRevision: "archive-rev-1"}
-}
 
 func TestReverseIndexBuildPaginationPersistenceAndArchiveChange(t *testing.T) {
 	assert := assert.New(t)

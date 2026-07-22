@@ -253,10 +253,10 @@ func (s *Server) handleGetPerson(w http.ResponseWriter, r *http.Request) {
 // clusterMemberIDs returns id's sorted cluster member IDs, or nil if the
 // store has no ClusterLookupStore capability, the lookup fails, or id is
 // unlinked (fewer than two members) — in every one of those cases the
-// person detail stays scoped to id alone, matching pre-cluster-aware
-// behavior. Errors are swallowed here rather than failing the request: an
-// unavailable cluster lookup must degrade the detail to unlinked, not break
-// the whole person-detail endpoint.
+// caller (person detail, person-scoped files search) stays scoped to id
+// alone, matching pre-cluster-aware behavior. Errors are swallowed here
+// rather than failing the request: an unavailable cluster lookup must
+// degrade to unlinked, not break the whole endpoint.
 func (s *Server) clusterMemberIDs(id int64) []int64 {
 	lookup, ok := s.store.(ClusterLookupStore)
 	if !ok {

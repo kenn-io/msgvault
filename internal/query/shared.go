@@ -36,6 +36,14 @@ const (
 	sortDirectionDesc               = "desc"
 )
 
+// sqlSortDirections maps validated request sort directions to fixed SQL
+// keywords. ORDER BY fragments must interpolate these literal values — never
+// the request string itself — so request-provided text cannot reach SQL.
+var sqlSortDirections = map[string]string{
+	sortDirectionAsc:  "ASC",
+	sortDirectionDesc: "DESC",
+}
+
 // emailOnlyFilterMsg is the SQL condition restricting to email messages with "msg." alias (DuckDB).
 // NULL and empty string handle old data where message_type was not yet populated.
 const emailOnlyFilterMsg = "(msg.message_type = '" + messageTypeEmail + "' OR msg.message_type IS NULL OR msg.message_type = '')"

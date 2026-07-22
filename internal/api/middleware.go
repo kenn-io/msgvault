@@ -3,6 +3,7 @@ package api
 import (
 	"net"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -47,37 +48,47 @@ func defaultCORSAllowedHeaders() []string {
 }
 
 // CORSMiddleware returns a middleware that handles CORS headers.
+//
+// Origins listed exactly in cfg.AllowedOrigins are reflected and may carry
+// Access-Control-Allow-Credentials when cfg.AllowCredentials is set. A "*"
+// entry only ever emits the literal wildcard and never credentials: reflecting
+// arbitrary origins alongside Allow-Credentials would let any page — including
+// same-site pages on other ports of the same host — read cookie-authenticated
+// responses. Cross-origin clients matched by the wildcard must authenticate
+// explicitly (API key), not with ambient cookies.
 func CORSMiddleware(cfg CORSConfig) func(http.Handler) http.Handler {
+	allowAnyOrigin := slices.Contains(cfg.AllowedOrigins, "*")
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			origin := r.Header.Get("Origin")
-
-			// Check if origin is allowed
-			allowed := false
-			for _, o := range cfg.AllowedOrigins {
-				if o == "*" || o == origin {
-					allowed = true
-					break
-				}
+			if len(cfg.AllowedOrigins) > 0 {
+				// The Allow-Origin value depends on the request Origin.
+				w.Header().Add("Vary", "Origin")
 			}
+			origin := r.Header.Get("Origin")
+			exact := origin != "" && origin != "*" && slices.Contains(cfg.AllowedOrigins, origin)
 
-			if allowed && origin != "" {
+			switch {
+			case exact:
 				w.Header().Set("Access-Control-Allow-Origin", origin)
-
 				if cfg.AllowCredentials {
 					w.Header().Set("Access-Control-Allow-Credentials", "true")
 				}
+			case allowAnyOrigin && origin != "":
+				w.Header().Set("Access-Control-Allow-Origin", "*")
+			default:
+				next.ServeHTTP(w, r)
+				return
+			}
 
-				// Handle preflight
-				if r.Method == http.MethodOptions {
-					w.Header().Set("Access-Control-Allow-Methods", strings.Join(cfg.AllowedMethods, ", "))
-					w.Header().Set("Access-Control-Allow-Headers", strings.Join(cfg.AllowedHeaders, ", "))
-					if cfg.MaxAge > 0 {
-						w.Header().Set("Access-Control-Max-Age", strconv.Itoa(cfg.MaxAge))
-					}
-					w.WriteHeader(http.StatusNoContent)
-					return
+			// Handle preflight
+			if r.Method == http.MethodOptions {
+				w.Header().Set("Access-Control-Allow-Methods", strings.Join(cfg.AllowedMethods, ", "))
+				w.Header().Set("Access-Control-Allow-Headers", strings.Join(cfg.AllowedHeaders, ", "))
+				if cfg.MaxAge > 0 {
+					w.Header().Set("Access-Control-Max-Age", strconv.Itoa(cfg.MaxAge))
 				}
+				w.WriteHeader(http.StatusNoContent)
+				return
 			}
 
 			next.ServeHTTP(w, r)

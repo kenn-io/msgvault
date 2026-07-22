@@ -28,6 +28,9 @@ func TestEvaluateStatusStates(t *testing.T) {
 	})
 
 	t.Run("authentication required", func(t *testing.T) {
+		if runtime.GOOS == "windows" {
+			t.Skip("descriptor discovery requires Unix file security and fails closed on Windows")
+		}
 		path := writeDescriptor(t, descriptor{
 			ProtocolVersion: ProtocolVersion,
 			InstanceID:      "instance-test",

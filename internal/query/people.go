@@ -109,12 +109,15 @@ func (e *DuckDBEngine) SearchPeople(ctx context.Context, request PersonSearchReq
 }
 
 // GetPerson returns one participant's analytical summary. clusterMemberIDs,
-// when it has two or more entries, widens the returned Identifiers to span
-// every listed participant (each tagged with its own ParticipantID) instead
-// of just id — the caller (the person-detail HTTP handler) resolves cluster
-// membership from the store and passes it in, keeping this query layer free
-// of a store dependency. A nil/single-element list leaves Identifiers scoped
-// to id alone, matching the pre-cluster-aware behavior.
+// when it has two or more entries, widens the whole summary to span every
+// listed participant: Identifiers carry each member's own ParticipantID, and
+// the row metrics (ActivityCount, FileCount, SourceCounts, FirstAt/LastAt)
+// aggregate activity owned by any member — matching what the cluster-aware
+// relationship timeline and files search report for the same identity. The
+// caller (the person-detail HTTP handler) resolves cluster membership from
+// the store and passes it in, keeping this query layer free of a store
+// dependency. A nil/single-element list leaves everything scoped to id
+// alone, matching the pre-cluster-aware behavior.
 func (e *DuckDBEngine) GetPerson(ctx context.Context, id int64, analyticalContext Context, clusterMemberIDs []int64) (*PersonSummary, error) {
 	if id < 1 {
 		return nil, fmt.Errorf("%w: person ID must be positive", ErrInvalidExploreRequest)
@@ -136,7 +139,7 @@ func (e *DuckDBEngine) GetPersonSummary(ctx context.Context, id int64, explore E
 }
 
 func (e *DuckDBEngine) searchPeople(
-	ctx context.Context, request PersonSearchRequest, exactID *int64, identifierScopeIDs []int64,
+	ctx context.Context, request PersonSearchRequest, exactID *int64, clusterMemberIDs []int64,
 ) (*PersonSearchResponse, error) {
 	if e.analyticsDir == "" {
 		return nil, &CacheUnavailableError{Readiness: CacheAbsent}
@@ -162,7 +165,7 @@ func (e *DuckDBEngine) searchPeople(
 		return nil, fmt.Errorf("read committed cache state: %w", err)
 	}
 	conditions, args := buildExploreConditions(request.Explore)
-	entriesCTE, entryArgs := personEntriesCTE(exactID, conditions)
+	entriesCTE, entryArgs := personEntriesCTE(exactID, clusterMemberIDs, conditions)
 	args = append(args, entryArgs...)
 	personWhere := []string{"true"}
 	if exactID != nil {
@@ -178,15 +181,15 @@ func (e *DuckDBEngine) searchPeople(
 		args = append(args, searchText, searchText, searchText, searchText, searchText)
 	}
 	// identifierFilter scopes the per-row identifiers subquery below. Absent
-	// a caller-supplied cluster (identifierScopeIDs has fewer than two
+	// a caller-supplied cluster (clusterMemberIDs has fewer than two
 	// entries — the common listing/search case), it stays scoped to the
 	// row's own person_id. GetPerson passes every cluster member so a
 	// linked participant's identifiers span the whole cluster instead of
 	// just the requested ID.
 	identifierFilter := "pi.participant_id = counted.person_id"
-	if len(identifierScopeIDs) > 1 {
-		placeholders := make([]string, len(identifierScopeIDs))
-		for i, memberID := range identifierScopeIDs {
+	if len(clusterMemberIDs) > 1 {
+		placeholders := make([]string, len(clusterMemberIDs))
+		for i, memberID := range clusterMemberIDs {
 			placeholders[i] = "?"
 			args = append(args, memberID)
 		}
@@ -265,6 +268,12 @@ FROM counted ORDER BY ` + order + ` LIMIT ? OFFSET ?`
 // than once, so DuckDB materializes it, and carrying logical_entries.* would
 // materialize every wide list/text column per row.
 //
+// For exact-ID lookups, memberIDs (the identity cluster GetPerson resolved;
+// empty means the requested ID alone) widens membership so an entry owned by
+// any linked alias counts once toward the requested person's metrics — every
+// matched entry projects exactID as its person_id, so the aggregates and the
+// participants join downstream still key on the requested row.
+//
 // Three shapes, cheapest applicable first:
 //
 //  1. Exact-ID lookup with no analytical conditions (the person-detail
@@ -279,12 +288,13 @@ FROM counted ORDER BY ` + order + ` LIMIT ? OFFSET ?`
 //     messages plus the conversation's own participant rows. conversation_id
 //     is globally unique and NOT NULL, so matching it alone reproduces the
 //     (source_id, conversation_id) grouping exactly.
-//  2. Exact-ID lookup with conditions: the fan-out filtered to one person
-//     before aggregation. The semi-join shape cannot be used because a
-//     conversation entry's participant list must only reflect messages
-//     inside the filtered context.
+//  2. Exact-ID lookup with conditions: logical entries containing any member
+//     in participant_ids, filtered inside the analytical context. The
+//     semi-join shape cannot be used because a conversation entry's
+//     participant list must only reflect messages inside the filtered
+//     context.
 //  3. Listing/search: the full fan-out across every participant.
-func personEntriesCTE(exactID *int64, conditions string) (string, []any) {
+func personEntriesCTE(exactID *int64, memberIDs []int64, conditions string) (string, []any) {
 	const fanOut = `
 ), person_entries AS (
 	SELECT grouped.person_id, occurred_at, attachment_count, source_type
@@ -292,17 +302,38 @@ func personEntriesCTE(exactID *int64, conditions string) (string, []any) {
 	if exactID == nil {
 		return fanOut, nil
 	}
-	if conditions != "true" {
-		return fanOut + `
-	WHERE grouped.person_id = ?`, []any{*exactID}
+	if len(memberIDs) == 0 {
+		memberIDs = []int64{*exactID}
 	}
+	if conditions != "true" {
+		contains := make([]string, len(memberIDs))
+		args := make([]any, 0, len(memberIDs)+1)
+		args = append(args, *exactID)
+		for i, memberID := range memberIDs {
+			contains[i] = "list_contains(participant_ids, ?)"
+			args = append(args, memberID)
+		}
+		return `
+), person_entries AS (
+	SELECT ?::BIGINT AS person_id, occurred_at, attachment_count, source_type
+	FROM logical_entries
+	WHERE (` + strings.Join(contains, " OR ") + `)`, args
+	}
+	memberList := "(" + strings.TrimSuffix(strings.Repeat("?,", len(memberIDs)), ",") + ")"
+	args := make([]any, 0, len(memberIDs)*3+1)
+	for range 3 {
+		for _, memberID := range memberIDs {
+			args = append(args, memberID)
+		}
+	}
+	args = append(args, *exactID)
 	return `
 ), person_message_ids AS (
-	SELECT mr.message_id FROM message_recipients mr WHERE mr.participant_id = ?
+	SELECT mr.message_id FROM message_recipients mr WHERE mr.participant_id IN ` + memberList + `
 	UNION
-	SELECT m.id AS message_id FROM messages m WHERE m.sender_id = ?
+	SELECT m.id AS message_id FROM messages m WHERE m.sender_id IN ` + memberList + `
 ), person_chat_conversation_ids AS (
-	SELECT cp.conversation_id FROM conversation_participants cp WHERE cp.participant_id = ?
+	SELECT cp.conversation_id FROM conversation_participants cp WHERE cp.participant_id IN ` + memberList + `
 	UNION
 	SELECT m.conversation_id
 	FROM person_message_ids pm
@@ -316,7 +347,7 @@ func personEntriesCTE(exactID *int64, conditions string) (string, []any) {
 	       AND le.anchor_message_id IN (SELECT message_id FROM person_message_ids))
 	   OR (le.entry_kind = 'conversation'
 	       AND le.conversation_id IN (SELECT conversation_id FROM person_chat_conversation_ids))`,
-		[]any{*exactID, *exactID, *exactID, *exactID}
+		args
 }
 
 func (e *DuckDBEngine) SearchDomains(ctx context.Context, request DomainSearchRequest) (*DomainSearchResponse, error) {
@@ -446,7 +477,8 @@ func identitySearchOrder(sort SortSpec, labelField, tieField string) (string, er
 	if sort.Field == "" {
 		sort = SortSpec{Field: "activity_count", Direction: sortDirectionDesc}
 	}
-	if sort.Direction != sortDirectionAsc && sort.Direction != sortDirectionDesc {
+	direction, ok := sqlSortDirections[sort.Direction]
+	if !ok {
 		return "", fmt.Errorf("%w: unknown identity sort direction %q", ErrInvalidExploreRequest, sort.Direction)
 	}
 	var column string
@@ -460,5 +492,5 @@ func identitySearchOrder(sort SortSpec, labelField, tieField string) (string, er
 	default:
 		return "", fmt.Errorf("%w: unknown identity sort field %q", ErrInvalidExploreRequest, sort.Field)
 	}
-	return column + " " + strings.ToUpper(sort.Direction) + ", " + tieField + " ASC", nil
+	return column + " " + direction + ", " + tieField + " ASC", nil
 }

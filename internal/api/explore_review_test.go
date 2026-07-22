@@ -132,6 +132,25 @@ func TestApplyIdentityScopeAcceptsCaseEquivalentDomain(t *testing.T) {
 	assert.Equal(t, []string{"example.com"}, context.Domains)
 }
 
+func TestApplyIdentityScopeNarrowsParticipantClusterToBasePredicate(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	open := query.Context{}
+	err := applyIdentityScope(&open, ExploreFilter{Dimension: "participant", Values: []string{"2", "3"}})
+	require.NoError(err)
+	assert.Equal([]int64{2, 3}, open.ParticipantIDs, "an open base predicate takes every cluster member")
+
+	narrowed := query.Context{ParticipantIDs: []int64{2, 5}}
+	err = applyIdentityScope(&narrowed, ExploreFilter{Dimension: "participant", Values: []string{"2", "3"}})
+	require.NoError(err)
+	assert.Equal([]int64{2}, narrowed.ParticipantIDs, "a base participant filter keeps only the members it allows")
+
+	excluded := query.Context{ParticipantIDs: []int64{9}}
+	err = applyIdentityScope(&excluded, ExploreFilter{Dimension: "participant", Values: []string{"2", "3"}})
+	require.Error(err, "a base predicate excluding every member must fail loudly")
+}
+
 func TestExploreRejectsTamperedCursorsOnEveryPaginatedSurface(t *testing.T) {
 	tests := []struct {
 		name      string

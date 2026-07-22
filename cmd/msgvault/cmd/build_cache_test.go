@@ -2432,6 +2432,27 @@ func TestBuildCache_ZeroMessagesNoRepeatedRebuilds(t *testing.T) {
 	assert.True(result2.Skipped, "expected second build to be skipped (no new messages), but it ran")
 }
 
+// TestBuildCacheCSVSnapshotFallback exercises the CSV snapshot path that
+// Windows always uses, so column or type drift between the COPY queries and
+// the CSV views fails on every platform instead of only on Windows CI.
+func TestBuildCacheCSVSnapshotFallback(t *testing.T) {
+	t.Setenv("MSGVAULT_FORCE_CSV_SNAPSHOT", "1")
+
+	t.Run("populated", func(t *testing.T) {
+		tmpDir := setupTestSQLite(t)
+		result, err := buildCache(filepath.Join(tmpDir, "test.db"), filepath.Join(tmpDir, "analytics"), true)
+		require.NoError(t, err)
+		assert.Positive(t, result.ExportedCount)
+	})
+
+	t.Run("empty", func(t *testing.T) {
+		tmpDir := setupTestSQLiteEmpty(t)
+		result, err := buildCache(filepath.Join(tmpDir, "test.db"), filepath.Join(tmpDir, "analytics"), true)
+		require.NoError(t, err)
+		assert.Equal(t, int64(0), result.ExportedCount)
+	})
+}
+
 func TestBuildCacheSnapshotPredicateAcceptsCSVStringIDs(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

@@ -560,7 +560,12 @@ func queryInChunks[T any](db chunkQuerier, ids []T, prefixArgs []any, queryTempl
 		chunk := ids[i:end]
 
 		placeholders := make([]string, len(chunk))
-		args := make([]any, 0, len(prefixArgs)+len(chunk))
+		totalArgs := len(prefixArgs) + len(chunk)
+		if totalArgs < len(chunk) {
+			return fmt.Errorf("query chunk parameter count overflows int: %d prefix args + %d ids",
+				len(prefixArgs), len(chunk))
+		}
+		args := make([]any, 0, totalArgs)
 		args = append(args, prefixArgs...)
 		for j, id := range chunk {
 			placeholders[j] = "?"
@@ -632,7 +637,12 @@ func execInChunks[T any](db chunkQuerier, ids []T, prefixArgs []any, queryTempla
 		chunk := ids[i:end]
 
 		placeholders := make([]string, len(chunk))
-		args := make([]any, 0, len(prefixArgs)+len(chunk))
+		totalArgs := len(prefixArgs) + len(chunk)
+		if totalArgs < len(chunk) {
+			return fmt.Errorf("exec chunk parameter count overflows int: %d prefix args + %d ids",
+				len(prefixArgs), len(chunk))
+		}
+		args := make([]any, 0, totalArgs)
 		args = append(args, prefixArgs...)
 		for j, id := range chunk {
 			placeholders[j] = "?"

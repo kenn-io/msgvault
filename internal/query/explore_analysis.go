@@ -109,7 +109,8 @@ func exploreGroupOrder(sort SortSpec) (string, error) {
 	if sort.Field == "" {
 		sort = SortSpec{Field: "count", Direction: sortDirectionDesc}
 	}
-	if sort.Direction != sortDirectionAsc && sort.Direction != sortDirectionDesc {
+	direction, ok := sqlSortDirections[sort.Direction]
+	if !ok {
 		return "", fmt.Errorf("%w: unknown group sort direction %q", ErrInvalidExploreRequest, sort.Direction)
 	}
 	var column string
@@ -125,7 +126,7 @@ func exploreGroupOrder(sort SortSpec) (string, error) {
 	default:
 		return "", fmt.Errorf("%w: unknown group sort field %q", ErrInvalidExploreRequest, sort.Field)
 	}
-	return column + " " + strings.ToUpper(sort.Direction) + ", group_key ASC", nil
+	return column + " " + direction + ", group_key ASC", nil
 }
 
 func (e *DuckDBEngine) ExploreSelectionStats(ctx context.Context, request ExploreSelectionRequest) (*ExploreSelectionStats, error) {

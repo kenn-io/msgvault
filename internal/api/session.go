@@ -2,7 +2,6 @@ package api
 
 import (
 	"crypto/rand"
-	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base64"
 	"fmt"
@@ -112,8 +111,22 @@ func (s *sessionStore) randomToken() (string, error) {
 	return base64.RawURLEncoding.EncodeToString(raw), nil
 }
 
+// constantTimeAPIKeyEqual reports whether a presented API key matches the
+// configured one. Both values are compared over buffers padded to a common
+// size, so the full-width subtle.ConstantTimeCompare always runs and no
+// content-dependent timing or length-mismatch early exit exists; the length
+// check only gates the final result. The key is a bearer credential the
+// daemon must hold in plaintext (clients present it verbatim), so no digest
+// is derived or stored from it.
 func constantTimeAPIKeyEqual(got, want string) bool {
-	gotHash := sha256.Sum256([]byte(got))
-	wantHash := sha256.Sum256([]byte(want))
-	return subtle.ConstantTimeCompare(gotHash[:], wantHash[:]) == 1
+	size := max(len(got), len(want))
+	paddedGot := make([]byte, size)
+	paddedWant := make([]byte, size)
+	copy(paddedGot, got)
+	copy(paddedWant, want)
+	lengthsEqual := 0
+	if len(got) == len(want) {
+		lengthsEqual = 1
+	}
+	return subtle.ConstantTimeCompare(paddedGot, paddedWant)&lengthsEqual == 1
 }
