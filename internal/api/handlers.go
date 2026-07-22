@@ -259,8 +259,13 @@ type MessageSummary struct {
 type MessageDetail struct {
 	MessageSummary
 
-	Body        string           `json:"body"`
-	BodyHTML    string           `json:"body_html,omitempty"`
+	Body     string `json:"body"`
+	BodyHTML string `json:"body_html,omitempty"`
+	// BodyOmitted marks a conversation-window message whose body was left
+	// out to keep the response within the cumulative inline-body budget.
+	// The snippet is still present; fetch the full body via
+	// GET /api/v1/messages/{id}.
+	BodyOmitted bool             `json:"body_omitted,omitempty"`
 	Attachments []AttachmentInfo `json:"attachments"`
 }
 
@@ -651,6 +656,7 @@ func (s *Server) handleGetMessage(w http.ResponseWriter, r *http.Request) {
 	detail := MessageDetail{
 		MessageSummary: toMessageSummary(*msg),
 		Body:           msg.Body,
+		BodyHTML:       msg.BodyHTML,
 	}
 
 	attachments := make([]AttachmentInfo, 0, len(msg.Attachments))

@@ -70,6 +70,7 @@ type APIMessage struct {
 	Body                 string
 	BodyText             string
 	BodyHTML             string
+	BodyOmitted          bool
 	Headers              map[string]string
 	Attachments          []APIAttachment
 }

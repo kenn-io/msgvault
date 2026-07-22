@@ -18,6 +18,13 @@
       };
 
   export type ReadingPaneStatus = 'ready' | 'loading' | 'missing' | 'error' | 'unavailable';
+
+  /** Rows archived before message types existed carry a blank message_type
+   * and count as email, matching the server's task-link gate
+   * (store.IsEmailMessageType). */
+  function isEmailMessageType(messageType: string): boolean {
+    return messageType === '' || messageType === 'email';
+  }
 </script>
 
 <script lang="ts">
@@ -100,7 +107,7 @@
     selection?.kind === 'entry' ? selection.row.counterpart_participant_id : undefined
   );
   const showTasks = $derived(selection?.kind === 'entry' &&
-    selection.row.message_type === 'email' && selection.row.anchor_message_id !== undefined);
+    isEmailMessageType(selection.row.message_type) && selection.row.anchor_message_id !== undefined);
 
   const metaStrip = $derived.by((): string => {
     if (!selection) return '';

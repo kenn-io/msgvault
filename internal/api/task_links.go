@@ -20,7 +20,6 @@ import (
 )
 
 const (
-	taskLinkEmailMessageType = "email"
 	MaxTaskLinkRequestBytes  = 64 << 10
 	maxTaskSearchQueryLength = 256
 )
@@ -88,7 +87,7 @@ func (s *Server) taskMessage(r *http.Request) (tasklinks.MessageIdentity, *apiHT
 	if err != nil {
 		return tasklinks.MessageIdentity{}, newAPIHTTPError(http.StatusNotFound, "not_found", "Message not found")
 	}
-	if message.MessageType != taskLinkEmailMessageType {
+	if !store.IsEmailMessageType(message.MessageType) {
 		return tasklinks.MessageIdentity{}, newAPIHTTPError(http.StatusUnprocessableEntity, "email_required", "Task links are available only for concrete email rows")
 	}
 	identity, err := s.taskIdentityResolver(r.Context(), message)

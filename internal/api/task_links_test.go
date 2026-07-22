@@ -156,6 +156,26 @@ func TestCreateTaskRejectsOversizedAndTrailingJSONBodies(t *testing.T) {
 	}
 }
 
+func TestTaskLinkAPIsTreatLegacyBlankMessageTypeAsEmail(t *testing.T) {
+	srv := taskLinkServer(t, "", &fakeTaskLinkOperations{})
+	for _, tc := range []struct {
+		method, path, body string
+		want               int
+	}{
+		{method: http.MethodGet, path: "/api/v1/messages/42/tasks", want: http.StatusOK},
+		{method: http.MethodPost, path: "/api/v1/messages/42/tasks", body: `{"task_id":"task-1","added_at":"2026-07-19T01:02:03Z"}`, want: http.StatusCreated},
+		{method: http.MethodDelete, path: "/api/v1/messages/42/tasks/task-1", want: http.StatusOK},
+	} {
+		req := httptest.NewRequest(tc.method, tc.path, strings.NewReader(tc.body))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-Api-Key", "test-key")
+		req.Header.Set("X-Request-Id", "browser-request-1")
+		resp := httptest.NewRecorder()
+		srv.Router().ServeHTTP(resp, req)
+		assert.Equal(t, tc.want, resp.Code, resp.Body.String())
+	}
+}
+
 func TestTaskLinkAPIsRejectNonEmailConcreteRows(t *testing.T) {
 	srv := taskLinkServer(t, "imessage", &fakeTaskLinkOperations{})
 	for _, tc := range []struct{ method, path string }{

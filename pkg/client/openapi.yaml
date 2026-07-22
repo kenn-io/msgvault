@@ -2548,6 +2548,8 @@ components:
           type: string
         body_html:
           type: string
+        body_omitted:
+          type: boolean
         cc:
           items:
             type: string
@@ -4257,7 +4259,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 1.26.0
+  version: 1.27.0
 openapi: 3.0.3
 paths:
   /api/ping:

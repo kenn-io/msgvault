@@ -159,6 +159,25 @@ describe('MessageCard', () => {
     expect(screen.queryByText('⋯')).toBeNull();
   });
 
+  it('shows a loading state instead of the body while an omitted body is fetched', () => {
+    const { container } = render(MessageCard, {
+      props: { message: detail({ body: '' }), expanded: true, bodyPending: true }
+    });
+
+    expect(screen.getByRole('status').textContent).toContain('Loading message');
+    expect(container.querySelector('pre')).toBeNull();
+    expect(container.querySelector('iframe')).toBeNull();
+  });
+
+  it('shows the body fetch error in place of the body', () => {
+    const { container } = render(MessageCard, {
+      props: { message: detail({ body: '' }), expanded: true, bodyError: 'Could not load message body' }
+    });
+
+    expect(screen.getByRole('alert').textContent).toContain('Could not load message body');
+    expect(container.querySelector('pre')).toBeNull();
+  });
+
   it('falls back to plain text when HTML is rejected by sanitization', () => {
     const { container } = render(MessageCard, {
       props: {

@@ -23,6 +23,10 @@ function message(id: number, type = 'email') {
   };
 }
 
+function omittedMessage(id: number) {
+  return { ...message(id), body: '', body_html: '', body_omitted: true };
+}
+
 describe('ConversationView', () => {
   it('loads the thread with the anchor expanded and the rest as one-line collapsed cards', async () => {
     const requests: Request[] = [];
@@ -289,6 +293,132 @@ describe('ConversationView', () => {
     });
 
     expect((await screen.findByRole('alert')).textContent).toContain('Conversation details are unavailable');
+  });
+
+  it('keeps omitted-body messages as snippet cards without fetching their bodies', async () => {
+    const requests: Request[] = [];
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      requests.push(request);
+      return Response.json({
+        id: 7, anchor_id: 2, messages: [omittedMessage(1), message(2), omittedMessage(3)],
+        has_before: false, has_after: false, total: 3
+      });
+    });
+
+    render(ConversationView, {
+      props: { client: createAPIClient(fetchFn), conversationId: 7, anchorId: 2 }
+    });
+
+    await screen.findByRole('article', { name: 'Message 2' });
+    expect(screen.getByText('Preview 1')).toBeTruthy();
+    expect(screen.getByText('Preview 3')).toBeTruthy();
+    expect(requests).toHaveLength(1);
+    expect(new URL(requests[0]!.url).pathname).toBe('/api/v1/conversations/7');
+  });
+
+  it('fetches an omitted body through the message endpoint when its card expands', async () => {
+    const requests: Request[] = [];
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      requests.push(request);
+      const url = new URL(request.url);
+      if (url.pathname === '/api/v1/messages/1') {
+        return Response.json({ ...message(1), body: 'Fetched body 1', body_html: '' });
+      }
+      return Response.json({
+        id: 7, anchor_id: 2, messages: [omittedMessage(1), message(2)],
+        has_before: false, has_after: false, total: 2
+      });
+    });
+
+    render(ConversationView, {
+      props: { client: createAPIClient(fetchFn), conversationId: 7, anchorId: 2 }
+    });
+
+    await screen.findByRole('article', { name: 'Message 2' });
+    await fireEvent.click(screen.getByRole('button', { name: /Expand message 1/ }));
+
+    const card = await screen.findByRole('article', { name: 'Message 1' });
+    await waitFor(() => expect(card.textContent).toContain('Fetched body 1'));
+    expect(requests).toHaveLength(2);
+    expect(new URL(requests[1]!.url).pathname).toBe('/api/v1/messages/1');
+  });
+
+  it('surfaces a failed body fetch inside the card and retries on re-expand', async () => {
+    let bodyRequests = 0;
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      const url = new URL(request.url);
+      if (url.pathname === '/api/v1/messages/1') {
+        bodyRequests += 1;
+        if (bodyRequests === 1) {
+          return Response.json({ error: 'internal_error', message: 'Failed to retrieve message' },
+            { status: 500 });
+        }
+        return Response.json({ ...message(1), body: 'Recovered body 1', body_html: '' });
+      }
+      return Response.json({
+        id: 7, anchor_id: 2, messages: [omittedMessage(1), message(2)],
+        has_before: false, has_after: false, total: 2
+      });
+    });
+
+    render(ConversationView, {
+      props: { client: createAPIClient(fetchFn), conversationId: 7, anchorId: 2 }
+    });
+
+    await screen.findByRole('article', { name: 'Message 2' });
+    await fireEvent.click(screen.getByRole('button', { name: /Expand message 1/ }));
+    expect((await screen.findByRole('alert')).textContent).toContain('Failed to retrieve message');
+
+    await fireEvent.click(screen.getByRole('button', { name: /Collapse message 1/ }));
+    await fireEvent.click(screen.getByRole('button', { name: /Expand message 1/ }));
+    const card = await screen.findByRole('article', { name: 'Message 1' });
+    await waitFor(() => expect(card.textContent).toContain('Recovered body 1'));
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('ignores a stale body response after navigating to another conversation', async () => {
+    let resolveBody: ((response: Response) => void) | undefined;
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      const url = new URL(request.url);
+      if (url.pathname === '/api/v1/messages/1') {
+        return await new Promise<Response>((resolve) => {
+          resolveBody = resolve;
+        });
+      }
+      const conversation = Number(url.pathname.split('/').at(-1));
+      if (conversation === 8) {
+        return Response.json({
+          id: 8, anchor_id: 80, messages: [{ ...message(9), id: 80 }],
+          has_before: false, has_after: false, total: 1
+        });
+      }
+      return Response.json({
+        id: 7, anchor_id: 2, messages: [omittedMessage(1), message(2)],
+        has_before: false, has_after: false, total: 2
+      });
+    });
+    const client = createAPIClient(fetchFn);
+    const rendered = render(ConversationView, {
+      props: { client, conversationId: 7, anchorId: 2 }
+    });
+    await screen.findByRole('article', { name: 'Message 2' });
+    await fireEvent.click(screen.getByRole('button', { name: /Expand message 1/ }));
+    await waitFor(() => expect(resolveBody).toBeDefined());
+
+    await rendered.rerender({ client, conversationId: 8, anchorId: 80 });
+    await screen.findByRole('article', { name: 'Message 80' });
+    resolveBody!(Response.json({
+      ...message(1), body: 'Stale body 1', body_html: '<p>Stale body 1</p>'
+    }));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(screen.getByRole('article', { name: 'Message 80' })).toBeTruthy();
+    expect(screen.queryByText('Stale body 1')).toBeNull();
+    expect(screen.queryByRole('alert')).toBeNull();
   });
 
   it('notes bounded windows with quiet notices instead of chrome', async () => {

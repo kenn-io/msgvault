@@ -2441,6 +2441,7 @@ type MessageDetail struct {
 	Bcc             []string         `json:"bcc,omitempty"`
 	Body            string           `json:"body" validate:"required"`
 	BodyHTML        *string          `json:"body_html,omitempty"`
+	BodyOmitted     *bool            `json:"body_omitted,omitempty"`
 	Cc              []string         `json:"cc,omitempty"`
 	ConversationID  *int64           `json:"conversation_id,omitempty"`
 	DeletedAt       *string          `json:"deleted_at,omitempty"`

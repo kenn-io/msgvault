@@ -12,6 +12,10 @@
     anchor?: boolean;
     viewMode?: MessageViewMode;
     sanitizationFailed?: boolean;
+    /** The body was omitted from the window response and is being fetched. */
+    bodyPending?: boolean;
+    /** The on-demand body fetch failed; shown in place of the body. */
+    bodyError?: string;
     onToggle?: (id: number) => void;
     onViewModeChange?: (id: number, mode: MessageViewMode) => void;
     client?: APIClient;
@@ -23,6 +27,8 @@
     anchor = false,
     viewMode = 'html',
     sanitizationFailed = false,
+    bodyPending = false,
+    bodyError = '',
     onToggle,
     onViewModeChange,
     client = undefined
@@ -94,7 +100,11 @@
 
     <div class="body-reveal">
       <section class="card-body" aria-label="Message body">
-        {#if renderAsHTML}
+        {#if bodyError}
+          <p class="body-state" role="alert">{bodyError}</p>
+        {:else if bodyPending}
+          <p class="body-state" role="status">Loading message…</p>
+        {:else if renderAsHTML}
           <ContentFrame
             {client}
             messageId={message.id}
@@ -318,6 +328,12 @@
     margin: var(--space-2) var(--space-4) 0;
     color: var(--text-secondary);
     font-size: var(--font-size-xs);
+  }
+
+  .body-state {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
   }
 
   .card-body {

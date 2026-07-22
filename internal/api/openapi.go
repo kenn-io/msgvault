@@ -111,7 +111,16 @@ import (
 // unrestricted deletion context was narrowed to active messages (vector
 // indexes cover only live rows). Additive (minor bump): existing callers
 // that ignore the field see no behavior change.
-const APISchemaVersion = "1.26.0"
+// 1.27.0 bounds GET /api/v1/conversations/{id} responses: inline message
+// bodies are capped by a cumulative uncompressed-body budget (the anchor's
+// body is always inlined). Messages beyond the budget carry the additive
+// body_omitted flag with empty body fields and an intact snippet; clients
+// fetch those bodies individually via GET /api/v1/messages/{id}. The
+// store-backed single-message path now also returns body_html. Additive
+// (minor bump): typical threads still inline every body, and existing
+// callers that ignore the flag see empty bodies only on threads that would
+// previously have produced unbounded responses.
+const APISchemaVersion = "1.27.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.

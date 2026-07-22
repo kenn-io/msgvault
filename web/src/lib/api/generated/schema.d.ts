@@ -2812,6 +2812,7 @@ export interface components {
             bcc?: string[] | null;
             body: string;
             body_html?: string;
+            body_omitted?: boolean;
             cc?: string[] | null;
             /** Format: int64 */
             conversation_id?: number;

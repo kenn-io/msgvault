@@ -16,6 +16,15 @@ type ConversationWindow struct {
 	Total          int64
 }
 
+// ConversationInlineBodyBudget caps the cumulative body content (text + HTML,
+// measured as SQL LENGTH — characters, a lower bound on UTF-8 bytes) inlined
+// into a single conversation window. The anchor's body is always inlined;
+// further messages are inlined in chronological order while they fit. Messages
+// beyond the budget are returned with BodyOmitted set and no body so a thread
+// of many large messages cannot exhaust daemon or client memory; callers fetch
+// those bodies individually via the single-message lookup.
+const ConversationInlineBodyBudget = 4 << 20
+
 // ErrConversationAnchorOutsideRange is returned by
 // GetConversationWindowContext when the anchor message exists in the
 // conversation but falls outside the requested [start, end) time bounds.
@@ -156,8 +165,7 @@ func (s *Store) GetConversationWindowContext(
 			m.has_attachments,
 			COALESCE(m.size_estimate, 0),
 			m.deleted_from_source_at,
-			COALESCE(mb.body_text, ''),
-			COALESCE(mb.body_html, ''),
+			COALESCE(LENGTH(mb.body_text), 0) + COALESCE(LENGTH(mb.body_html), 0),
 			selected.position,
 			selected.total_count,
 			selected.anchor_position
@@ -187,10 +195,11 @@ func (s *Store) GetConversationWindowContext(
 
 	window := &ConversationWindow{Messages: []APIMessage{}}
 	ids := make([]int64, 0, before+after+1)
+	bodySizes := make([]int64, 0, before+after+1)
 	for rows.Next() {
 		var message APIMessage
 		var sentAt, deletedAt nullableTimestamp
-		var position int64
+		var position, bodySize int64
 		if err := rows.Scan(
 			&message.ID,
 			&message.SourceID,
@@ -208,8 +217,7 @@ func (s *Store) GetConversationWindowContext(
 			&message.HasAttachments,
 			&message.SizeEstimate,
 			&deletedAt,
-			&message.BodyText,
-			&message.BodyHTML,
+			&bodySize,
 			&position,
 			&window.Total,
 			&window.AnchorPosition,
@@ -223,20 +231,20 @@ func (s *Store) GetConversationWindowContext(
 			deleted := deletedAt.Time
 			message.DeletedAt = &deleted
 		}
-		if message.BodyText != "" {
-			message.Body = message.BodyText
-		} else {
-			message.Body = message.BodyHTML
-		}
 		message.Headers = map[string]string{}
 		window.Messages = append(window.Messages, message)
 		ids = append(ids, message.ID)
+		bodySizes = append(bodySizes, bodySize)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate conversation messages: %w", err)
 	}
 	if len(ids) == 0 {
 		return window, nil
+	}
+	inlineIDs := applyConversationBodyBudget(window.Messages, bodySizes, anchorID)
+	if err := s.batchPopulateBodies(ctx, window.Messages, inlineIDs); err != nil {
+		return nil, err
 	}
 	if err := s.batchPopulateContext(ctx, window.Messages, ids); err != nil {
 		return nil, fmt.Errorf("populate conversation participants: %w", err)
@@ -245,6 +253,91 @@ func (s *Store) GetConversationWindowContext(
 		return nil, err
 	}
 	return window, nil
+}
+
+// applyConversationBodyBudget selects which window messages get inline bodies
+// under ConversationInlineBodyBudget. The anchor is always inlined (its cost
+// still counts against the budget); the rest are inlined in chronological
+// order when they fit the remaining budget. Messages left out are marked
+// BodyOmitted so clients know to fetch the body individually. Returns the IDs
+// whose bodies should be loaded.
+func applyConversationBodyBudget(messages []APIMessage, bodySizes []int64, anchorID int64) []int64 {
+	remaining := int64(ConversationInlineBodyBudget)
+	inlineIDs := make([]int64, 0, len(messages))
+	for i := range messages {
+		if messages[i].ID != anchorID {
+			continue
+		}
+		remaining -= bodySizes[i]
+		if bodySizes[i] > 0 {
+			inlineIDs = append(inlineIDs, messages[i].ID)
+		}
+	}
+	for i := range messages {
+		message := &messages[i]
+		if message.ID == anchorID || bodySizes[i] == 0 {
+			continue
+		}
+		if bodySizes[i] > remaining {
+			message.BodyOmitted = true
+			continue
+		}
+		remaining -= bodySizes[i]
+		inlineIDs = append(inlineIDs, message.ID)
+	}
+	return inlineIDs
+}
+
+// batchPopulateBodies loads message bodies for the budget-selected IDs via a
+// primary-key IN lookup on message_bodies — the only sanctioned access path
+// for that table — and assigns BodyText/BodyHTML/Body on the matching
+// messages.
+func (s *Store) batchPopulateBodies(ctx context.Context, messages []APIMessage, ids []int64) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	placeholders := make([]string, len(ids))
+	args := make([]any, len(ids))
+	for i, id := range ids {
+		placeholders[i] = "?"
+		args[i] = id
+	}
+	indexByID := make(map[int64]int, len(messages))
+	for i := range messages {
+		indexByID[messages[i].ID] = i
+	}
+	rows, err := s.db.QueryContext(ctx, s.dialect.Rebind(fmt.Sprintf(`
+		SELECT message_id, COALESCE(body_text, ''), COALESCE(body_html, '')
+		FROM message_bodies
+		WHERE message_id IN (%s)
+	`, strings.Join(placeholders, ","))), args...)
+	if err != nil {
+		return fmt.Errorf("get conversation bodies: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var messageID int64
+		var bodyText, bodyHTML string
+		if err := rows.Scan(&messageID, &bodyText, &bodyHTML); err != nil {
+			return fmt.Errorf("scan conversation body: %w", err)
+		}
+		index, ok := indexByID[messageID]
+		if !ok {
+			continue
+		}
+		message := &messages[index]
+		message.BodyText = bodyText
+		message.BodyHTML = bodyHTML
+		if message.BodyText != "" {
+			message.Body = message.BodyText
+		} else {
+			message.Body = message.BodyHTML
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterate conversation bodies: %w", err)
+	}
+	return nil
 }
 
 func (s *Store) batchPopulateAttachments(ctx context.Context, messages []APIMessage, ids []int64) error {

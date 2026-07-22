@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -94,6 +95,76 @@ func TestConversationWindowReturnsIndividualChatMessages(t *testing.T) {
 	require.Len(response.Messages, 3)
 	assert.Equal("imessage", response.Messages[0].MessageType)
 	assert.Equal(ids[1], response.AnchorID)
+}
+
+func TestConversationWindowCapsInlineBodiesAndServesOmittedBodiesByID(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource("test", "archive@example.com")
+	require.NoError(err)
+	conversationID, err := st.EnsureConversationWithType(
+		source.ID, "oversized-thread", "email_thread", "Oversized thread",
+	)
+	require.NoError(err)
+
+	// Three bodies of just under half the budget each: the anchor (first) and
+	// one more fit, the third exceeds the remaining budget.
+	bodySize := store.ConversationInlineBodyBudget/2 - 16
+	ids := make([]int64, 0, 3)
+	for i := range 3 {
+		id, upsertErr := st.UpsertMessage(&store.Message{
+			ConversationID:  conversationID,
+			SourceID:        source.ID,
+			SourceMessageID: fmt.Sprintf("oversized-%d", i),
+			MessageType:     "email",
+			SentAt:          sql.NullTime{Time: time.Date(2026, time.January, i+1, 12, 0, 0, 0, time.UTC), Valid: true},
+			Snippet:         sql.NullString{String: fmt.Sprintf("Preview %d", i), Valid: true},
+		})
+		require.NoError(upsertErr)
+		require.NoError(st.UpsertMessageBody(id,
+			sql.NullString{String: strings.Repeat("b", bodySize), Valid: true},
+			sql.NullString{}))
+		ids = append(ids, id)
+	}
+	srv := NewServer(&config.Config{Server: config.ServerConfig{APIPort: 8080}}, st, nil, testLogger())
+
+	req := httptest.NewRequest(http.MethodGet,
+		fmt.Sprintf("/api/v1/conversations/%d?anchor=%d", conversationID, ids[0]), nil)
+	w := httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+
+	require.Equal(http.StatusOK, w.Code)
+	// The wire response stays bounded: inline bodies never exceed the budget
+	// (plus the always-inlined anchor), regardless of cumulative thread size.
+	assert.Less(w.Body.Len(), store.ConversationInlineBodyBudget+bodySize+1<<16)
+	var response ConversationResponse
+	require.NoError(json.NewDecoder(w.Body).Decode(&response))
+	require.Len(response.Messages, 3)
+
+	inlineTotal := 0
+	for _, message := range response.Messages {
+		inlineTotal += len(message.Body) + len(message.BodyHTML)
+	}
+	assert.LessOrEqual(inlineTotal, store.ConversationInlineBodyBudget+bodySize)
+
+	assert.False(response.Messages[0].BodyOmitted, "anchor body is always inline")
+	assert.Len(response.Messages[0].Body, bodySize)
+	assert.False(response.Messages[1].BodyOmitted)
+	assert.Len(response.Messages[1].Body, bodySize)
+	assert.True(response.Messages[2].BodyOmitted)
+	assert.Empty(response.Messages[2].Body)
+	assert.Equal("Preview 2", response.Messages[2].Snippet)
+
+	// The omitted body is fully served by the single-message PK lookup.
+	req = httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/v1/messages/%d", ids[2]), nil)
+	w = httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+	require.Equal(http.StatusOK, w.Code)
+	var detail MessageDetail
+	require.NoError(json.NewDecoder(w.Body).Decode(&detail))
+	assert.Equal(strings.Repeat("b", bodySize), detail.Body)
+	assert.False(detail.BodyOmitted)
 }
 
 func TestConversationWindowRejectsMissingOrForeignAnchor(t *testing.T) {

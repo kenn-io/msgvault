@@ -59,6 +59,14 @@ themselves. `POST /api/v1/deletions` accepts structured filters and/or
 internal message IDs, resolves the Gmail IDs on the server, and supports
 `"dry_run": true` to preview the count and a sample before writing anything.
 
+Actually staging depends on the request shape. An explicit `message_ids` list
+stages directly. Filter-based staging requires a preflighted selection: run
+the reviewed predicate through
+[`POST /api/v1/explore/preflight`](/api-server/#post-apiv1explorepreflight)
+to get a single-use `operation_token` (valid for five minutes), then stage
+with the same selection and token. A non-dry-run filter request without a
+preflighted selection is rejected with `428 preflight_required`.
+
 The API can also list and cancel staged manifests:
 
 ```bash
@@ -91,7 +99,10 @@ continues to require the explicit `delete-staged` execution step and the
 **From the HTTP API:**
 
 1. Send a dry-run `POST /api/v1/deletions` request to confirm the selection
-2. Send the same request without `dry_run` to create a pending manifest
+2. Stage: send `message_ids` without `dry_run` to create a pending manifest
+   directly, or — for filter-based staging — preflight the selection via
+   `POST /api/v1/explore/preflight` and send the selection with its
+   `operation_token` to `POST /api/v1/deletions`
 3. Review with `GET /api/v1/deletions` or the CLI commands above
 
 ## Selection Keys

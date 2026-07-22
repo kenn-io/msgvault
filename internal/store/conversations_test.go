@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -138,6 +139,102 @@ func TestConversationWindowContextScopesToTimeRange(t *testing.T) {
 
 	_, err = st.GetConversationWindowContext(context.Background(), conversationID, ids[0], 25, 25, &start, &end)
 	require.ErrorIs(err, store.ErrConversationAnchorOutsideRange)
+}
+
+// seedBudgetConversation creates a thread of messages with the given body-text
+// sizes (0 means no body row) plus snippets, returning the store, conversation
+// ID, and message IDs in chronological order.
+func seedBudgetConversation(t *testing.T, bodySizes []int) (*store.Store, int64, []int64) {
+	t.Helper()
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource("gmail", "archive@example.com")
+	require.NoError(t, err)
+	conversationID, err := st.EnsureConversation(source.ID, "budget-thread", "Budget thread")
+	require.NoError(t, err)
+	ids := make([]int64, 0, len(bodySizes))
+	base := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
+	for i, size := range bodySizes {
+		id, err := st.UpsertMessage(&store.Message{
+			ConversationID:  conversationID,
+			SourceID:        source.ID,
+			SourceMessageID: fmt.Sprintf("budget-message-%d", i),
+			MessageType:     "email",
+			SentAt:          sql.NullTime{Time: base.Add(time.Duration(i) * time.Minute), Valid: true},
+			Snippet:         sql.NullString{String: fmt.Sprintf("Preview %d", i), Valid: true},
+		})
+		require.NoError(t, err)
+		if size > 0 {
+			require.NoError(t, st.UpsertMessageBody(id,
+				sql.NullString{String: strings.Repeat("a", size), Valid: true},
+				sql.NullString{}))
+		}
+		ids = append(ids, id)
+	}
+	return st, conversationID, ids
+}
+
+func TestConversationWindowOmitsBodiesBeyondInlineBudget(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	half := store.ConversationInlineBodyBudget / 2
+	st, conversationID, ids := seedBudgetConversation(t, []int{half, half, half, 4})
+
+	// Anchor is the third message: its body is always inlined (half), the
+	// first message still fits (half), and the second and fourth exceed the
+	// exhausted budget and are omitted with snippets intact.
+	window, err := st.GetConversationWindow(conversationID, ids[2], 25, 25)
+	require.NoError(err)
+	require.Len(window.Messages, 4)
+
+	inlineTotal := 0
+	for _, message := range window.Messages {
+		inlineTotal += len(message.BodyText) + len(message.BodyHTML)
+	}
+	assert.LessOrEqual(inlineTotal, store.ConversationInlineBodyBudget)
+
+	assert.False(window.Messages[0].BodyOmitted)
+	assert.Len(window.Messages[0].BodyText, half)
+	assert.True(window.Messages[1].BodyOmitted)
+	assert.Empty(window.Messages[1].Body)
+	assert.Empty(window.Messages[1].BodyText)
+	assert.Equal("Preview 1", window.Messages[1].Snippet)
+	assert.False(window.Messages[2].BodyOmitted)
+	assert.Len(window.Messages[2].BodyText, half)
+	assert.True(window.Messages[3].BodyOmitted)
+	assert.Equal("Preview 3", window.Messages[3].Snippet)
+}
+
+func TestConversationWindowAlwaysInlinesAnchorBodyEvenOverBudget(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	oversized := store.ConversationInlineBodyBudget + 16
+	st, conversationID, ids := seedBudgetConversation(t, []int{8, oversized, 8})
+
+	window, err := st.GetConversationWindow(conversationID, ids[1], 25, 25)
+	require.NoError(err)
+	require.Len(window.Messages, 3)
+
+	assert.False(window.Messages[1].BodyOmitted)
+	assert.Len(window.Messages[1].BodyText, oversized)
+	assert.Equal(window.Messages[1].BodyText, window.Messages[1].Body)
+	assert.True(window.Messages[0].BodyOmitted)
+	assert.True(window.Messages[2].BodyOmitted)
+}
+
+func TestConversationWindowInlinesAllBodiesWithinBudget(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st, conversationID, ids := seedBudgetConversation(t, []int{16, 0, 32})
+
+	window, err := st.GetConversationWindow(conversationID, ids[0], 25, 25)
+	require.NoError(err)
+	require.Len(window.Messages, 3)
+	for _, message := range window.Messages {
+		assert.False(message.BodyOmitted)
+	}
+	assert.Len(window.Messages[0].BodyText, 16)
+	assert.Empty(window.Messages[1].BodyText)
+	assert.Len(window.Messages[2].BodyText, 32)
 }
 
 func TestConversationMetadataGetSetAndClear(t *testing.T) {
