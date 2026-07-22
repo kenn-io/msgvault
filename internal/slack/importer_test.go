@@ -216,20 +216,24 @@ func TestImportIncrementalCatchesNewMessagesAndLateReplies(t *testing.T) {
 	_, err := imp.Import(context.Background(), opts)
 	require.NoError(err)
 
-	// A new top-level message and a late reply to the (old) thread root.
+	// A new top-level message and a late reply to the (old) thread root —
+	// both created "now" (real arrivals are never back-dated); the clock
+	// warps forward so the next run's window pins past them.
+	newTop := tsFresh(0)
 	f.mu.Lock()
 	general := f.conv("C01")
-	general.Msgs = append(general.Msgs, fakeMsg{TS: ts(200), User: "UBOB", Text: "fresh news"})
-	lateReply := tsFresh(0)
+	general.Msgs = append(general.Msgs, fakeMsg{TS: newTop, User: "UBOB", Text: "fresh news"})
+	lateReply := tsFresh(1)
 	root := general.findRoot(ts(5))
 	root.Replies = append(root.Replies, fakeMsg{TS: lateReply, ThreadTS: root.TS, User: "UALICE", Text: "late reply"})
 	f.mu.Unlock()
 
+	imp.now = func() time.Time { return time.Now().Add(time.Minute) }
 	sum, err := imp.Import(context.Background(), opts)
 	require.NoError(err)
 	assert.Equal(1, sum.RepliesFetched, "only the late reply is new; earlier replies are behind the thread cursor")
 
-	for _, id := range []string{"C01:" + ts(200), "C01:" + lateReply} {
+	for _, id := range []string{"C01:" + newTop, "C01:" + lateReply} {
 		var n int
 		require.NoError(st.DB().QueryRow(st.Rebind(
 			`SELECT COUNT(*) FROM messages WHERE source_message_id = ?`), id).Scan(&n))
@@ -246,16 +250,20 @@ func TestImportIncrementalMidWindowFailureDoesNotAdvanceCursor(t *testing.T) {
 	_, err := imp.Import(context.Background(), opts)
 	require.NoError(err)
 
-	// Five new messages: an incremental window of two pages (fake pageSize 3,
-	// newest-first). Page one serves ts(304)..ts(302); page two dies.
+	// Five new messages arriving "now": an incremental window of two pages
+	// (fake pageSize 3, newest-first). Page one serves the newest three;
+	// page two dies.
+	burst := make([]string, 5)
 	f.mu.Lock()
 	general := f.conv("C01")
 	for i := range 5 {
-		general.Msgs = append(general.Msgs, fakeMsg{TS: ts(300 + i), User: "UBOB", Text: "burst " + strconv.Itoa(i)})
+		burst[i] = tsFresh(i)
+		general.Msgs = append(general.Msgs, fakeMsg{TS: burst[i], User: "UBOB", Text: "burst " + strconv.Itoa(i)})
 	}
 	f.failHistoryContinuations = true
 	f.mu.Unlock()
 
+	imp.now = func() time.Time { return time.Now().Add(time.Minute) }
 	_, err = imp.Import(context.Background(), opts)
 	require.Error(err, "a run with fetch errors must not report success")
 
@@ -269,7 +277,7 @@ func TestImportIncrementalMidWindowFailureDoesNotAdvanceCursor(t *testing.T) {
 	for i := range 5 {
 		var n int
 		require.NoError(st.DB().QueryRow(st.Rebind(
-			`SELECT COUNT(*) FROM messages WHERE source_message_id = ?`), "C01:"+ts(300+i)).Scan(&n))
+			`SELECT COUNT(*) FROM messages WHERE source_message_id = ?`), "C01:"+burst[i]).Scan(&n))
 		assert.Equal(t, 1, n, "burst message %d", i)
 	}
 }
@@ -524,7 +532,239 @@ func TestSweepWatermarkHoldsOnCanonicalFetchFailure(t *testing.T) {
 	assert.Equal(distinct, total)
 }
 
-func TestSweepCertificationStaysBehindLagHorizon(t *testing.T) {
+func TestSweepOverlapRecoversLateIndexedReplies(t *testing.T) {
+	require := require.New(t)
+	f, rootTS := oldThreadWorkspace(t)
+	imp, opts := testImporter(t, f)
+	st := imp.store
+
+	_, err := imp.Import(context.Background(), opts)
+	require.NoError(err)
+
+	// A reply lands, but the search index has not served it yet when the
+	// next sweep runs: the watermark (this sweep's pin) advances PAST its
+	// creation time. The stored boundary means "archived through boundary
+	// minus the lag margin", and the next sweep's floor overlaps back by
+	// that margin — without the overlap, the late-indexed reply would sit
+	// below the floor forever.
+	lateReply := tsFresh(0)
+	f.mu.Lock()
+	root := f.conv("C09").findRoot(rootTS)
+	root.Replies = append(root.Replies, fakeMsg{TS: lateReply, ThreadTS: rootTS, User: "UME", Text: "late reply"})
+	f.searchIndexedThrough = tsMinusMicro(lateReply) // index lag: hit not served yet
+	f.mu.Unlock()
+
+	imp.now = func() time.Time { return time.Now().Add(time.Minute) }
+	sum, err := imp.Import(context.Background(), opts)
+	require.NoError(err)
+	var n int
+	require.NoError(st.DB().QueryRow(st.Rebind(
+		`SELECT COUNT(*) FROM messages WHERE source_message_id = ?`), "C09:"+lateReply).Scan(&n))
+	require.Zero(n, "test setup: the reply must be invisible to search on this run")
+	state := imp.loadResumeState(sum.SourceID)
+	require.True(tsLess(lateReply, state.SweepWatermark),
+		"test setup: the watermark must have advanced past the unindexed reply")
+
+	// The index catches up; the overlapped floor must recover the reply.
+	f.mu.Lock()
+	f.searchIndexedThrough = ""
+	f.mu.Unlock()
+	imp.now = func() time.Time { return time.Now().Add(2 * time.Minute) }
+	_, err = imp.Import(context.Background(), opts)
+	require.NoError(err)
+	require.NoError(st.DB().QueryRow(st.Rebind(
+		`SELECT COUNT(*) FROM messages WHERE source_message_id = ?`), "C09:"+lateReply).Scan(&n))
+	require.Equal(1, n, "the overlapped floor must re-cover replies the index served late")
+}
+
+func TestWindowOverlapAbsorbsClockSkew(t *testing.T) {
+	require := require.New(t)
+	f := testWorkspace(t)
+	imp, opts := testImporter(t, f)
+	st := imp.store
+
+	// Run 1's clock runs 5 minutes AHEAD of Slack's: the window pin (our
+	// clock) lands above message ts values (Slack's clock) that don't exist
+	// yet. A message then arrives with a ts BELOW the stored pin.
+	imp.now = func() time.Time { return time.Now().Add(5 * time.Minute) }
+	_, err := imp.Import(context.Background(), opts)
+	require.NoError(err)
+
+	skewed := tsFresh(0) // real-clock ts, below run 1's skewed pin
+	f.mu.Lock()
+	f.conv("C01").Msgs = append(f.conv("C01").Msgs, fakeMsg{TS: skewed, User: "UBOB", Text: "skewed arrival"})
+	f.mu.Unlock()
+
+	// The next window's floor overlaps back by the lag margin, so a
+	// message hidden under the pin by clock skew is still fetched.
+	imp.now = func() time.Time { return time.Now().Add(6 * time.Minute) }
+	_, err = imp.Import(context.Background(), opts)
+	require.NoError(err)
+	var n int
+	require.NoError(st.DB().QueryRow(st.Rebind(
+		`SELECT COUNT(*) FROM messages WHERE source_message_id = ?`), "C01:"+skewed).Scan(&n))
+	require.Equal(1, n, "a message below the pin by clock skew must be recovered by the window overlap")
+}
+
+func TestLimitOneSweepConverges(t *testing.T) {
+	require := require.New(t)
+	f, rootTS := oldThreadWorkspace(t)
+	imp, opts := testImporter(t, f)
+	st := imp.store
+
+	_, err := imp.Import(context.Background(), opts)
+	require.NoError(err)
+
+	lateReply := tsFresh(0)
+	f.mu.Lock()
+	root := f.conv("C09").findRoot(rootTS)
+	root.Replies = append(root.Replies, fakeMsg{TS: lateReply, ThreadTS: rootTS, User: "UME", Text: "late reply"})
+	f.mu.Unlock()
+
+	// Guaranteed-first-unit rule: at --limit 1 the sweep's day-charge alone
+	// exhausts the budget, so without the progress guarantee every run
+	// would park at the same boundary before its first fetch, forever.
+	imp.now = func() time.Time { return time.Now().Add(time.Minute) }
+	limited := opts
+	limited.Limit = 1
+	for range 3 {
+		_, err = imp.Import(context.Background(), limited)
+		require.NoError(err)
+	}
+	var n int
+	require.NoError(st.DB().QueryRow(st.Rebind(
+		`SELECT COUNT(*) FROM messages WHERE source_message_id = ?`), "C09:"+lateReply).Scan(&n))
+	require.Equal(1, n, "--limit 1 sweeps must still make durable progress every run")
+}
+
+func TestFullRepairSurvivesInterruption(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := testWorkspace(t)
+	imp, opts := testImporter(t, f)
+	st := imp.store
+
+	_, err := imp.Import(context.Background(), opts)
+	require.NoError(err)
+
+	// An old message is edited at the source; --full is the repair path.
+	f.mu.Lock()
+	f.conv("C01").Msgs[0].Text = "hello 0 (repaired)"
+	baseline := f.historyCalls
+	f.mu.Unlock()
+
+	// The repair run dies mid-walk. Its generation-stamped checkpoint must
+	// SUPERSEDE the pre-repair success blob — field-wise blending would OR
+	// the old Done flags over the fresh partial cursors and silently
+	// abandon the repair half-done.
+	full := opts
+	full.Full = true
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		for {
+			f.mu.Lock()
+			served := f.historyCalls > baseline
+			f.mu.Unlock()
+			if served {
+				cancel()
+				return
+			}
+			time.Sleep(time.Millisecond)
+		}
+	}()
+	_, _ = imp.Import(ctx, full)
+
+	// A PLAIN run continues (and completes) the repair session.
+	_, err = imp.Import(context.Background(), opts)
+	require.NoError(err)
+
+	var body string
+	require.NoError(st.DB().QueryRow(st.Rebind(`
+		SELECT mb.body_text FROM message_bodies mb
+		JOIN messages m ON m.id = mb.message_id WHERE m.source_message_id = ?`), "C01:"+ts(0)).Scan(&body))
+	assert.Equal("hello 0 (repaired)", body, "an interrupted --full must be finished by later runs, not abandoned")
+	var total, distinct int
+	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages WHERE message_type='slack'`).Scan(&total))
+	require.NoError(st.DB().QueryRow(`SELECT COUNT(DISTINCT source_message_id) FROM messages WHERE message_type='slack'`).Scan(&distinct))
+	assert.Equal(distinct, total)
+
+	src, err := st.GetOrCreateSource("slack", "T01:UME")
+	require.NoError(err)
+	state := imp.loadResumeState(src.ID)
+	assert.False(state.RepairPending, "the repair session clears once everything is walked and paid")
+}
+
+func TestScopedFullRepairConverges(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := testWorkspace(t)
+	imp, opts := testImporter(t, f)
+	st := imp.store
+
+	_, err := imp.Import(context.Background(), opts)
+	require.NoError(err)
+
+	// The OLDEST message is edited: a --full that restarts at the newest
+	// page on every invocation would never reach it under a small --limit.
+	f.mu.Lock()
+	f.conv("C01").Msgs[0].Text = "hello 0 (deep repair)"
+	f.mu.Unlock()
+
+	full := opts
+	full.Full = true
+	full.Limit = 3
+	for range 12 {
+		_, err = imp.Import(context.Background(), full)
+		require.NoError(err)
+	}
+
+	var body string
+	require.NoError(st.DB().QueryRow(st.Rebind(`
+		SELECT mb.body_text FROM message_bodies mb
+		JOIN messages m ON m.id = mb.message_id WHERE m.source_message_id = ?`), "C01:"+ts(0)).Scan(&body))
+	assert.Equal("hello 0 (deep repair)", body, "repeated --full --limit runs must converge on the repair, not restart it")
+
+	src, err := st.GetOrCreateSource("slack", "T01:UME")
+	require.NoError(err)
+	state := imp.loadResumeState(src.ID)
+	assert.False(state.RepairPending)
+}
+
+func TestSweepProcessesUnarchivedParent(t *testing.T) {
+	require := require.New(t)
+	f, _ := oldThreadWorkspace(t)
+	imp, opts := testImporter(t, f)
+	st := imp.store
+
+	_, err := imp.Import(context.Background(), opts)
+	require.NoError(err)
+
+	// A brand-new root gets an instant reply, and the window walk that
+	// would archive the root FAILS this run. The sweep still discovers the
+	// reply; the canonical fetch must process the (missing) parent so the
+	// thread link resolves — skipping it unconditionally would persist the
+	// reply with a permanently NULL parent link.
+	newRoot, newReply := tsFresh(0), tsFresh(1)
+	f.mu.Lock()
+	f.conv("C09").Msgs = append(f.conv("C09").Msgs, fakeMsg{TS: newRoot, User: "UME", Text: "instant root",
+		Replies: []fakeMsg{{TS: newReply, ThreadTS: newRoot, User: "UME", Text: "instant reply"}}})
+	f.failHistory["C09"] = true
+	f.mu.Unlock()
+
+	imp.now = func() time.Time { return time.Now().Add(time.Hour) }
+	_, err = imp.Import(context.Background(), opts)
+	require.Error(err, "the failed window walk keeps the run partial")
+
+	var linked int
+	require.NoError(st.DB().QueryRow(st.Rebind(`
+		SELECT COUNT(*) FROM messages child
+		JOIN messages parent ON parent.id = child.reply_to_message_id
+		WHERE child.source_message_id = ? AND parent.source_message_id = ?`),
+		"C09:"+newReply, "C09:"+newRoot).Scan(&linked))
+	require.Equal(1, linked, "the sweep must archive AND link a reply whose root it is first to see")
+}
+
+func TestSweepFetchDoesNotRefreshArchivedParent(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	f, rootTS := oldThreadWorkspace(t)
@@ -534,31 +774,30 @@ func TestSweepCertificationStaysBehindLagHorizon(t *testing.T) {
 	_, err := imp.Import(context.Background(), opts)
 	require.NoError(err)
 
-	// A reply created "now" — inside the lag window, newer than anything
-	// the search index is certified to have served. The canonical fetch
-	// still archives it, but certification must NOT follow fetched content
-	// past the horizon: a not-yet-indexed reply in an UNRELATED thread
-	// would land below the watermark and be skipped forever.
+	// A reaction lands on the archived root, then a late reply arrives.
+	// The sweep's canonical fetch must skip the already-archived parent:
+	// refreshing its content and reactions is post-capture mutation repair,
+	// which belongs to --maintenance, not the sweep.
 	lateReply := tsFresh(0)
 	f.mu.Lock()
 	root := f.conv("C09").findRoot(rootTS)
+	root.Reactions = []map[string]any{{"name": "eyes", "users": []string{"UME"}, "count": 1}}
 	root.Replies = append(root.Replies, fakeMsg{TS: lateReply, ThreadTS: rootTS, User: "UME", Text: "late reply"})
 	f.mu.Unlock()
 
-	sum, err := imp.Import(context.Background(), opts)
+	imp.now = func() time.Time { return time.Now().Add(time.Minute) }
+	_, err = imp.Import(context.Background(), opts)
 	require.NoError(err)
 
 	var n int
 	require.NoError(st.DB().QueryRow(st.Rebind(
 		`SELECT COUNT(*) FROM messages WHERE source_message_id = ?`), "C09:"+lateReply).Scan(&n))
-	assert.Equal(1, n, "replies inside the lag window are still archived")
-
-	state := imp.loadResumeState(sum.SourceID)
-	require.NotEmpty(state.SweepWatermark)
-	horizon := time.Now().Add(-sweepLagMargin)
-	assert.True(tsTime(state.SweepWatermark).Before(horizon.Add(time.Second)),
-		"certification %s must stay behind the lag horizon %s, never follow fetched content",
-		state.SweepWatermark, tsFormat(horizon.UTC()))
+	require.Equal(1, n, "the late reply itself is archived")
+	var reactions int
+	require.NoError(st.DB().QueryRow(st.Rebind(`
+		SELECT COUNT(*) FROM reactions r JOIN messages m ON m.id = r.message_id
+		WHERE m.source_message_id = ?`), "C09:"+rootTS).Scan(&reactions))
+	assert.Zero(reactions, "a sweep fetch must not refresh the archived parent's reactions outside --maintenance")
 }
 
 func TestSweepTruncatedDayFailsRunAndHalts(t *testing.T) {
@@ -1010,16 +1249,19 @@ func TestImportLimitedRunsDrainIncrementalBacklog(t *testing.T) {
 	_, err := imp.Import(context.Background(), opts)
 	require.NoError(err)
 
-	// A 9-message backlog against a standing --limit 2: without the
-	// incremental window checkpoint, every limited run restarts from the
-	// newest page and the backlog never drains.
+	// A 9-message backlog arriving "now" against a standing --limit 2:
+	// without the persisted window page cursor, every limited run would
+	// restart from the newest page and the backlog would never drain.
+	backlog := make([]string, 9)
 	f.mu.Lock()
 	general := f.conv("C01")
 	for i := range 9 {
-		general.Msgs = append(general.Msgs, fakeMsg{TS: ts(400 + i), User: "UBOB", Text: "backlog " + strconv.Itoa(i)})
+		backlog[i] = tsFresh(i)
+		general.Msgs = append(general.Msgs, fakeMsg{TS: backlog[i], User: "UBOB", Text: "backlog " + strconv.Itoa(i)})
 	}
 	f.mu.Unlock()
 
+	imp.now = func() time.Time { return time.Now().Add(time.Minute) }
 	limited := opts
 	limited.Limit = 2
 	limited.NoThreads = true
@@ -1030,7 +1272,7 @@ func TestImportLimitedRunsDrainIncrementalBacklog(t *testing.T) {
 	for i := range 9 {
 		var n int
 		require.NoError(st.DB().QueryRow(st.Rebind(
-			`SELECT COUNT(*) FROM messages WHERE source_message_id = ?`), "C01:"+ts(400+i)).Scan(&n))
+			`SELECT COUNT(*) FROM messages WHERE source_message_id = ?`), "C01:"+backlog[i]).Scan(&n))
 		assert.Equal(t, 1, n, "backlog message %d must be drained by repeated limited runs", i)
 	}
 }

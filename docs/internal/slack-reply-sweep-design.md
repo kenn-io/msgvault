@@ -57,18 +57,29 @@ for incremental sync. Consequences:
   those replies are lost permanently. DMs/group DMs (non-`C` IDs, where
   the `in:` scope form is unprobed) recover through the blunter thread
   catch-up walk (`ThreadsPending`) instead.
-- **Certification derives only from fully-searched intervals — never
-  from fetched content.** A canonical fetch returns the whole thread,
-  including replies newer than `now − lag margin` that the search index
-  may not serve yet; letting those advance the watermark would skip
-  not-yet-indexed replies in *other* threads forever. So: each cleanly
-  completed day certifies to its end (capped at the lag horizon, and
-  checkpointed per day so multi-day catch-ups drain across runs); a
-  failed canonical fetch parks certification just before the failed
-  thread's first hit; the search itself still runs through *now*, so
-  in-lag-window replies are archived early and simply re-swept next run
-  (idempotent upserts). Both boundaries advance only behind persisted
-  work.
+- **Boundaries are pins; floors overlap.** Stored boundaries (the
+  watermark, the `SweptThrough` stamps, the per-conversation `Cursor`)
+  are the run's own start instant — the pin — never a lagged or
+  forward-rounded value. A boundary means "covered through boundary −
+  margin for sure"; every consumer's floor overlaps back by the lag
+  margin, re-covering the trailing interval into idempotent upserts.
+  The overlap absorbs the two clock uncertainties in the system: search
+  index lag (a reply created just before a sweep may not be indexed yet
+  — the next sweep's floor reaches back behind it) and clock skew
+  between our pin (local clock) and message ts (Slack's clock) on the
+  window walks. Boundaries advance only from fully-searched/walked
+  intervals — never from fetched content — capped at the pin,
+  checkpointed per day (sweeps) or per page (walks), and never rounded
+  forward: a forward-rounded pin claims coverage of instants nothing
+  has covered. Sweep hits above the pin are acted on when the index
+  serves them early (harmless upserts; the next window re-covers them),
+  which is safe because phase order guarantees their roots: the window
+  walks run before the sweep, so any acted-on hit's root is already
+  archived — and the canonical fetch keeps an existence check as the
+  belt for the one leak (a failed window walk in the same run),
+  processing the parent only when it is genuinely missing and skipping
+  it otherwise (refreshing an archived root's content and reactions is
+  --maintenance work).
 - Date modifiers are evaluated in the searching user's *current profile
   timezone at query time* (verified, including retroactive re-filing
   after a tz change) **using the IANA zone's historical DST rules**
@@ -103,8 +114,19 @@ for incremental sync. Consequences:
   `threads:replies` filtering makes it Enterprise-scale rare.
   Cursormark pagination is not supported on this method (parameter
   silently ignored).
+- **Guaranteed first unit.** A budget may end a run early, but it must
+  never gate a phase's FIRST unit of durable progress — the invariant
+  behind every convergence guarantee here. Violations recur as stalls:
+  a drain page that could be all-parent (fixed by the floor-2 page), a
+  catch-up flag that re-visited its final page forever (fixed by
+  clearing at walk end), a sweep day-charge that starved the fetch that
+  would advance the boundary (fixed by parking only once the run has
+  progressed). Budget-site audit: window walks and catch-up pages are
+  ≥1 message and advance a persisted cursor; drain pages are ≥2 (the
+  response may lead with the parent); the sweep parks only when
+  exhausted AND progressed.
 - **`--limit` bounds committed work via a resumable thread drain.** The
-  backfill records each discovered root as durable debt on a
+  window walks record each discovered root as durable debt on a
   per-conversation pending list — `(root ts, drained-to ts, remaining
   reply_count forecast)` — before the page cursor advances, charging the
   forecast against the run budget so root progress stays loosely aligned
@@ -141,11 +163,22 @@ for incremental sync. Consequences:
   postdate the watermark by creation time), and the pin keeps the
   newest-first pagination window stable during the walk.
 - **Limited runs sweep too**, with a work budget: searched days and
-  canonically fetched messages charge it, and exhaustion parks
-  certification at the last safe boundary without failing the run.
-  Per-day commits are durable, so a standing `--limit` schedule converges
-  on reply discovery like every other path — a permanently-capped sync
-  must never mean "no replies, ever".
+  canonically fetched messages charge it, and exhaustion parks the
+  boundary at the last safe point without failing the run. Per-day
+  commits are durable, so a standing `--limit` schedule converges on
+  reply discovery like every other path — a permanently-capped sync
+  must never mean "no replies, ever". (A standing limit below the
+  workspace's message rate falls progressively behind — a throughput
+  ceiling, never a completeness loss.)
+- **`--full` is a repair SESSION, not a one-shot.** It resets the state
+  under a bumped generation and sets a repair-pending flag; every
+  subsequent run — full, plain, or limited — continues the repair
+  through the ordinary resumable walks until everything is Done and all
+  debt is paid. Merge treats generations as lineage: a newer generation
+  wins wholesale (an interrupted repair's checkpoint supersedes the
+  pre-repair success blob; field-wise blending would OR the old Done
+  flags over fresh partial cursors and silently abandon the repair),
+  and an older one is ignored.
 - **Duplicate file content keeps one row per Slack file ID** via the
   Discord alias pattern: the schema's `(message_id, content_hash)`
   uniqueness keeps the real hash on the first row; same-content siblings
@@ -155,14 +188,21 @@ for incremental sync. Consequences:
   dropped. The re-derivation is provider-gated to `discord:`/`slack:`
   deliberately: a Beeper hashless local path means pending/untrusted and
   must stay hashless.
-- **Backfill owes threads as recorded debt**: the history walker records
-  each discovered root on the pending-drain list before the containing
-  page's cursor advances, so "cursor past page" means "page durable and
-  its thread debt recorded" (the debt and the cursor persist in the same
-  checkpointed blob). Unlimited runs drain a page's debt immediately
-  after the page, which reduces to the old inline behavior; limited runs
-  carry the remainder across runs. Incremental needs no root fetching at
-  all: any reply is created after some watermark and the sweep finds it.
+- **One walk, pinned windows**: the initial backfill and every
+  incremental fetch are the SAME pinned window walk — backfill covers
+  `("", pin]`, every later walk covers `(Cursor − margin, pin]` — with
+  identical pagination, drain, budget, and resume machinery (`Cursor`
+  is a covered-through pin, advanced only when its window completes;
+  `BackfillCursor`/`BackfillLatest` are the in-flight walk's page
+  cursor and pin). The walker records each discovered root on the
+  pending-drain list before the containing page's cursor advances, so
+  "cursor past page" means "page durable and its thread debt recorded"
+  (the debt and the cursor persist in the same checkpointed blob).
+  Unlimited runs drain a page's debt immediately after the page;
+  limited runs carry the remainder across runs. Replies to window
+  roots therefore archive immediately with no search dependency; the
+  sweep's remaining job is late replies to roots below the previous
+  boundary.
 
 ## Sweep algorithm
 
@@ -178,7 +218,15 @@ zone = current user IANA tz (users cache; historical DST rules — probed);
 #   it, and the pin always postdates the watermark at completion time);
 #   the watermark is correct for legacy pre-stamp state.
 
-# Gap recovery, per target certified behind the watermark:
+pin = tsFormat(now)                    # this sweep's boundary
+
+# Stamp adoption (targets without a SweptThrough):
+#   max(own walk pin, watermark) — the pin is exact for a freshly
+#   completed backfill (inline drains covered everything up to it, and
+#   the pin always postdates the watermark at completion time); the
+#   watermark is correct for legacy pre-stamp state.
+
+# Gap recovery, per target stamped behind the watermark:
 for conv C with SweptThrough < SweepWatermark:
     if C is not a channel ID: set ThreadsPending; stamp = watermark
     else: sweepRange(scope=C, floor=SweptThrough, searchEnd=watermark,
@@ -186,48 +234,58 @@ for conv C with SweptThrough < SweepWatermark:
 
 # Workspace sweep:
 floor = SweepWatermark, or min(SweptThrough of targets) on first sweep
-sweepRange(scope=none, floor, searchEnd=now, ceiling=now − lagMargin)
-    → watermark advances per day; targets certified through the floor
+sweepRange(scope=none, floor, searchEnd=now, ceiling=pin)
+    → watermark advances per day; targets stamped at or past the floor
       are stamped forward with it (a conversation parked behind by a
       failed gap sweep keeps its stamp and retries next run)
 
 sweepRange(scope, floor, searchEnd, ceiling):
-    for day D = day(floor, offset) … day(searchEnd, offset):   // ascending
+    queryFloor = floor − lagMargin                 # the OVERLAP
+    budget: one charge per day; parks only when exhausted AND the run
+            has already fetched something (guaranteed first unit)
+    for day D = day(queryFloor, zone) … day(searchEnd, zone):  // ascending
         for page = 1 … min(pages, 100):
             q = `[in:<#scope>] threads:replies on:D -"<nonce>"`
             stop if echoed page ≠ requested page               // clamp tell
             collect hits: (channel_id, ts, permalink)
-        hits ∩ sweep targets, above floor, ascending by ts
+        hits ∩ sweep targets, above queryFloor, ascending by ts
         group by permalink thread_ts (fallback: per hit)
         for each group (ascending by min hit ts):
             conversations.replies(channel, ts=hit, oldest=minHit−1µs)
-            persist via the standard upsert path
-            on fetch failure: certify min(minHit−1µs, ceiling); halt
+            persist via the standard upsert path (archived parents
+            skipped; missing parents processed)
+            on fetch failure or blocked budget:
+                advance to min(minHit−1µs, ceiling) if > floor; halt
         if day total > 10k ceiling:
-            certify min(last processed hit, ceiling); FAIL RUN; halt
-        certify min(end of D, ceiling); checkpoint             // per-day drain
+            advance to min(last hit, ceiling) if > floor; FAIL RUN; halt
+        advance to min(end of D, ceiling) if > floor; checkpoint
 ```
 
-Certification never passes unpersisted work and never derives from
-fetched content (fetches return whole threads, including replies newer
-than the index horizon); searchEnd exceeding the ceiling means fresh
-replies are archived early and re-swept next run. An aborted sweep
-resumes exactly where it stopped; everything downstream of discovery is
-the existing idempotent upsert machinery.
+The boundary never passes unpersisted work, never derives from fetched
+content, and never regresses (overlap-region parks sit below the stored
+floor and are dropped). An aborted sweep resumes exactly where it
+stopped; everything downstream of discovery is the existing idempotent
+upsert machinery.
 
 ## State
 
 ```go
 type SyncState struct {
     Conversations  map[string]*ConvState
-    SweepWatermark string // UTC ts: the current target set's certification boundary
+    SweepWatermark string // pin of the last workspace sweep; covered through this − margin
     SweepOffset    int    // tz_offset in effect when the watermark was written (audit)
+    Generation     int    // state lineage; --full bumps it (newer supersedes wholesale)
+    RepairPending  bool   // an in-flight --full repair session
 }
 
 type ConvState struct {
-    // …cursors…
-    SweptThrough   string          // UTC ts: this conversation's own reply certification
+    Cursor         string          // covered-through pin (window walks resume from this − margin)
+    BackfillCursor string          // in-flight window walk's page cursor
+    BackfillLatest string          // in-flight window walk's pin
+    Done           bool            // initial walk reached the beginning of history
+    SweptThrough   string          // pin of the last sweep covering this conversation
     PendingThreads []PendingThread // outstanding thread-drain debt (≤ one page's roots)
+    ThreadsPending bool            // a catch-up walk is owed
     CatchUpCursor  string          // resumable catch-up walk page cursor
     CatchUpLatest  string          // the pin the walk was started under
 }
@@ -239,13 +297,15 @@ type PendingThread struct {
 }
 ```
 
-`ConvState` loses `Threads` (old checkpoints carrying a `threads` key
-load cleanly; the field is simply gone) and gains `SweptThrough` plus the
-bounded, transient `PendingThreads` work queue. Merge
-rules: the further-advanced watermark wins, carrying its offset with it;
-`SweptThrough` merges further-advanced-wins per conversation;
-`PendingThreads` merges like the backfill cursor (non-empty wins,
-emptiness never clears).
+`ConvState` loses `Threads` and the incremental window cursors
+(`incr_cursor`/`incr_max_ts`) — old checkpoints carrying those keys load
+cleanly; an upgraded mid-window checkpoint re-walks at most one window
+into idempotent upserts. Merge rules: generations gate everything (newer
+wins wholesale, older is ignored); within a generation the
+further-advanced watermark wins, carrying its offset with it;
+`SweptThrough`/`Cursor` merge further-advanced-wins per conversation;
+page cursors, pins, and `PendingThreads` follow non-empty-wins /
+emptiness-never-clears.
 
 ## Probe ledger
 
@@ -273,8 +333,9 @@ emptiness never clears).
   pagination **including the page-clamp behavior**, and accurate totals.
 - e2e: late reply to an ancient thread discovered by sweep (the old
   blind spot); watermark holds on canonical-fetch failure and resumes;
-  not-done conversations skipped; multi-page sweep days; certification
-  stays behind the lag horizon even when fetches return fresher content;
+  not-done conversations skipped; multi-page sweep days; the overlapped
+  floor recovers late-indexed replies past an advanced watermark and
+  clock-skew-hidden window arrivals;
   a truncated day fails the run without certifying past it; an
   excluded-then-re-included channel recovers its gap via the scoped
   sweep; `--limit` bounds thread replies and leaves the page resumable;

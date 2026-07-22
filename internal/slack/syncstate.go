@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 )
 
-// PendingThread is one thread whose replies the backfill still owes: the
+// PendingThread is one thread whose replies a window walk still owes: the
 // containing history page was consumed (and the page cursor advanced), but
 // the reply fetch was deferred or clipped by the --limit budget.
 type PendingThread struct {
@@ -22,43 +22,42 @@ type PendingThread struct {
 
 // ConvState tracks one conversation's sync progress.
 //
-// Cursor is the max top-level message ts persisted; incremental history
-// fetches oldest=Cursor. Backfill is the resumable oldest-ward walk toward
-// the beginning of history: BackfillCursor is the page cursor to resume from
-// and BackfillLatest pins the walk's upper bound so messages arriving during
-// a long backfill cannot shift its pagination. Done means the backfill
+// Every fetch of top-level history is a pinned WINDOW WALK — the initial
+// backfill walks ("", pin]; every later (incremental) walk covers
+// (Cursor, pin]. Cursor is therefore a covered-through bound: top-level
+// messages at or before it are persisted and their threads' replies (as of
+// each walk) drained. BackfillLatest pins an in-flight walk's upper bound
+// (arrivals must not shift the pinned newest-first pagination) and
+// BackfillCursor is its resumable page cursor; both clear when the walk
+// completes and Cursor advances to the pin. Done means the initial walk
 // reached the beginning of history.
 type ConvState struct {
 	Cursor         string `json:"cursor,omitempty"`
 	BackfillCursor string `json:"backfill_cursor,omitempty"`
 	BackfillLatest string `json:"backfill_latest,omitempty"`
 	Done           bool   `json:"done,omitempty"`
-	// IncrCursor/IncrMaxTS checkpoint a partially-walked incremental window
-	// (interrupted by --limit or a fetch error), so limited runs drain a
-	// backlog across runs instead of restarting from the newest page. The
-	// main Cursor still only advances once the window is exhausted.
-	IncrCursor string `json:"incr_cursor,omitempty"`
-	IncrMaxTS  string `json:"incr_max_ts,omitempty"`
-	// ThreadsPending marks conversation-level thread debt: a backfill that
-	// consumed pages under --no-threads, or a non-channel conversation
-	// recovering a sweep gap. The thread catch-up walk pays it and clears
-	// the flag on a clean finish; CatchUpCursor/CatchUpLatest checkpoint a
-	// partially-walked catch-up (the page cursor to resume from and the
-	// pin the walk was started under — page cursors are only valid against
-	// the bound they were minted with), so limited runs drain the walk
-	// across runs instead of restarting it.
+	// ThreadsPending marks conversation-level thread debt: an initial
+	// backfill that consumed pages under --no-threads, or a non-channel
+	// conversation recovering a sweep gap. The thread catch-up walk pays it
+	// and clears the flag when the walk finishes; CatchUpCursor/
+	// CatchUpLatest checkpoint a partially-walked catch-up (the page cursor
+	// to resume from and the pin the walk was started under — page cursors
+	// are only valid against the bound they were minted with), so limited
+	// runs drain the walk across runs instead of restarting it.
 	ThreadsPending bool   `json:"threads_pending,omitempty"`
 	CatchUpCursor  string `json:"catch_up_cursor,omitempty"`
 	CatchUpLatest  string `json:"catch_up_latest,omitempty"`
-	// PendingThreads is the backfill's outstanding thread-drain debt,
-	// bounded by one history page's roots: the walk never fetches a new
+	// PendingThreads is the window walks' outstanding thread-drain debt,
+	// bounded by one history page's roots: a walk never fetches a new
 	// page while any entry is outstanding. Drained head-first; an entry
 	// leaves the list only when its thread is fully fetched (or the
 	// thread is gone).
 	PendingThreads []PendingThread `json:"pending_threads,omitempty"`
-	// SweptThrough is this conversation's reply-certification boundary
-	// (UTC ts): every thread reply created at or before it has been
-	// archived. It normally tracks the workspace SweepWatermark; it lags
+	// SweptThrough is this conversation's reply-sweep boundary: the pin of
+	// the last sweep that covered it (replies created at or before
+	// SweptThrough − the lag margin are certainly archived; the margin is
+	// re-covered by the next sweep's overlapped floor, absorbing search
+	// index lag). It normally tracks the workspace SweepWatermark; it lags
 	// when the conversation missed sweeps (excluded, gone, or filtered
 	// while the watermark advanced), which the next sweep repairs with a
 	// channel-scoped gap sweep before stamping it forward.
@@ -68,21 +67,33 @@ type ConvState struct {
 // SyncState holds per-conversation cursors plus the reply-sweep watermark
 // for one Slack source, persisted as JSON in sync_runs.cursor_after
 // (checkpointed mid-run in cursor_before). Legacy blobs carrying per-root
-// "threads" maps load cleanly; the field no longer exists.
+// "threads" maps or incremental window cursors ("incr_cursor"/"incr_max_ts")
+// load cleanly; those fields no longer exist (an upgraded mid-window
+// checkpoint re-walks at most one window into idempotent upserts).
 type SyncState struct {
 	Conversations map[string]*ConvState `json:"conversations"` // key = channel ID
-	// SweepWatermark is a UTC ts: the reply-sweep certification boundary
-	// for the current target set as a whole (each conversation's own
-	// boundary is its SweptThrough, which lags for conversations that
-	// missed sweeps — see docs/internal/slack-reply-sweep-design.md). It
-	// derives only from fully-searched intervals, advances only behind
-	// persisted work, and never passes now − lag margin.
+	// SweepWatermark is the pin of the last completed workspace sweep for
+	// the current target set (each conversation's own boundary is its
+	// SweptThrough). Replies created at or before it minus the lag margin
+	// are certainly archived; the trailing margin is re-covered by the next
+	// sweep's overlapped floor. It advances only behind persisted work.
 	SweepWatermark string `json:"sweep_watermark,omitempty"`
 	// SweepOffset records the user tz_offset (seconds) in effect when the
 	// watermark was written. Audit trail only: sweep-day arithmetic always
-	// uses the offset current at query time, because search date modifiers
-	// are evaluated in the user's CURRENT profile timezone (probed live).
+	// uses the IANA zone current at query time (probed live).
 	SweepOffset int `json:"sweep_offset,omitempty"`
+	// Generation identifies the state lineage. --full starts a repair
+	// session by bumping it and resetting the state; Merge treats a newer
+	// generation as wholesale-authoritative, so an interrupted repair's
+	// checkpoint SUPERSEDES the pre-repair success blob instead of blending
+	// with it (blending OR'd the old Done flags over fresh partial cursors,
+	// silently abandoning the repair).
+	Generation int `json:"generation,omitempty"`
+	// RepairPending marks an in-flight --full repair session. While set,
+	// every run — full, plain, or limited — continues the repair through
+	// the ordinary resumable walks; it clears when every conversation is
+	// Done with all thread debt paid.
+	RepairPending bool `json:"repair_pending,omitempty"`
 }
 
 func NewSyncState() *SyncState {
@@ -140,12 +151,38 @@ func (s *SyncState) EnsureConv(channelID string) *ConvState {
 	return cs
 }
 
-// Merge incorporates cursors from other (a newer checkpoint) into s. Message
-// ts cursors compare numerically; the more-advanced value wins. Backfill page
-// cursors are opaque, so other's non-empty value wins wholesale (Teams
-// deltaLink precedent). Done flags are OR'd.
+// RepairComplete reports whether an in-flight repair session has finished:
+// every conversation's initial walk is done and all thread debt is paid.
+func (s *SyncState) RepairComplete() bool {
+	for _, cs := range s.Conversations {
+		if !cs.Done || cs.ThreadsPending || len(cs.PendingThreads) > 0 {
+			return false
+		}
+	}
+	return true
+}
+
+// Merge incorporates cursors from other (a newer checkpoint) into s.
+//
+// Generations gate everything: a newer generation is a deliberate reset
+// (--full repair session) and wins wholesale; an older one is pre-reset
+// residue and is ignored entirely. Within a generation: message ts cursors
+// compare numerically and the more-advanced value wins; page cursors and
+// pins are opaque, so other's non-empty value wins and emptiness never
+// clears (staleness only re-walks into idempotent upserts); Done and debt
+// flags are OR'd.
 func (s *SyncState) Merge(other *SyncState) {
 	if other == nil {
+		return
+	}
+	if other.Generation > s.Generation {
+		*s = *other
+		if s.Conversations == nil {
+			s.Conversations = map[string]*ConvState{}
+		}
+		return
+	}
+	if other.Generation < s.Generation {
 		return
 	}
 	for channelID, ocs := range other.Conversations {
@@ -153,24 +190,8 @@ func (s *SyncState) Merge(other *SyncState) {
 			continue
 		}
 		cs := s.EnsureConv(channelID)
-		// Cursor and IncrCursor/IncrMaxTS form ONE resume unit: a window page
-		// cursor is only valid relative to the oldest=Cursor bound it was
-		// minted under. The more-advanced unit wins wholesale — including
-		// cleared fields, so a completed window's clear is authoritative and
-		// a stale checkpoint's mid-window state never pairs with a newer
-		// cursor.
-		switch {
-		case ocs.Cursor != "" && (cs.Cursor == "" || tsLess(cs.Cursor, ocs.Cursor)):
+		if ocs.Cursor != "" && (cs.Cursor == "" || tsLess(cs.Cursor, ocs.Cursor)) {
 			cs.Cursor = ocs.Cursor
-			cs.IncrCursor = ocs.IncrCursor
-			cs.IncrMaxTS = ocs.IncrMaxTS
-		case ocs.Cursor == cs.Cursor:
-			if ocs.IncrCursor != "" {
-				cs.IncrCursor = ocs.IncrCursor
-			}
-			if ocs.IncrMaxTS != "" && (cs.IncrMaxTS == "" || tsLess(cs.IncrMaxTS, ocs.IncrMaxTS)) {
-				cs.IncrMaxTS = ocs.IncrMaxTS
-			}
 		}
 		if ocs.BackfillCursor != "" {
 			cs.BackfillCursor = ocs.BackfillCursor
@@ -178,7 +199,7 @@ func (s *SyncState) Merge(other *SyncState) {
 		if ocs.BackfillLatest != "" {
 			cs.BackfillLatest = ocs.BackfillLatest
 		}
-		// Pending thread debt follows the BackfillCursor rule: other's
+		// Pending thread debt follows the page-cursor rule: other's
 		// non-empty list wins wholesale, and emptiness never clears. A
 		// stale list is only ever wasteful (re-drains resolve into
 		// idempotent upserts and empty out again); dropping a live list
@@ -189,9 +210,6 @@ func (s *SyncState) Merge(other *SyncState) {
 		}
 		cs.Done = cs.Done || ocs.Done
 		cs.ThreadsPending = cs.ThreadsPending || ocs.ThreadsPending
-		// The catch-up walk unit follows the backfill-cursor rule: opaque,
-		// non-empty wins, emptiness never clears. Staleness only re-walks
-		// already-drained pages into idempotent upserts.
 		if ocs.CatchUpCursor != "" {
 			cs.CatchUpCursor = ocs.CatchUpCursor
 		}
@@ -202,10 +220,10 @@ func (s *SyncState) Merge(other *SyncState) {
 			cs.SweptThrough = ocs.SweptThrough
 		}
 	}
-	// The further-advanced watermark wins, carrying its audit offset with it
-	// (the pair is one unit, like the incremental cursor group).
+	// The further-advanced watermark wins, carrying its audit offset with it.
 	if other.SweepWatermark != "" && (s.SweepWatermark == "" || tsLess(s.SweepWatermark, other.SweepWatermark)) {
 		s.SweepWatermark = other.SweepWatermark
 		s.SweepOffset = other.SweepOffset
 	}
+	s.RepairPending = s.RepairPending || other.RepairPending
 }

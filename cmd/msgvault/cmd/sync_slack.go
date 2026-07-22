@@ -31,10 +31,10 @@ incremental, fetching only new messages and polling recent threads for late
 replies. Backfills are resumable: re-run after an interruption and the sync
 continues where it stopped.
 
-Requires a workspace added with 'add-slack'. Use --full to ignore stored
-cursors and re-fetch every message; re-fetched messages are upserted in
-place, so this repairs existing rows (and catches old thread replies beyond
-the tracking window) without creating duplicates.
+Requires a workspace added with 'add-slack'. Use --full to start a repair
+session: every message is re-fetched and upserted in place, so existing rows
+are repaired without duplicates. A repair session survives interruptions and
+--limit scoping — subsequent runs of any kind continue it until complete.
 
 Examples:
   msgvault sync-slack
@@ -121,7 +121,7 @@ Examples:
 		},
 	}
 	cmd.Flags().IntVar(&syncSlackLimit, "limit", 0, "max messages of work per conversation this run, thread replies and a workspace-wide sweep budget included (0 = no limit; every phase resumes next run so standing limited schedules converge; only the maintenance rescan is skipped)")
-	cmd.Flags().BoolVar(&syncSlackFull, "full", false, "ignore stored cursors and re-fetch every message (repairs/backfills existing rows in place)")
+	cmd.Flags().BoolVar(&syncSlackFull, "full", false, "start (or continue) a repair session: re-fetch every message, upserting in place; interrupted or --limit-scoped repairs resume across later runs until complete")
 	cmd.Flags().BoolVar(&syncSlackNoThreads, "no-threads", false, "skip thread-reply fetching (backfill inline fetches and the reply sweep) for this run")
 	cmd.Flags().BoolVar(&syncSlackMaintenance, "maintenance", false, "run the maintenance rescan: repair edits and reaction changes on recent messages (archives ignore post-capture mutations by default)")
 	cmd.Flags().BoolVar(&syncSlackNoMedia, "no-media", false, "skip file downloads for this run (files are recorded as pending; backfill-slack-media fetches them later)")

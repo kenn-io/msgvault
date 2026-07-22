@@ -139,6 +139,9 @@ type fakeSlack struct {
 	// regardless of the actual match count, emulating a day beyond the
 	// reachable-result ceiling.
 	searchTotalOverride int
+	// searchIndexedThrough hides hits newer than this ts, simulating search
+	// index lag ("" = everything indexed instantly).
+	searchIndexedThrough string
 	// failHistoryContinuations fails only history requests carrying a page
 	// cursor, emulating a walk that dies partway through a multi-page window.
 	failHistoryContinuations bool
@@ -433,6 +436,9 @@ func (f *fakeSlack) handleSearch(w http.ResponseWriter, r *http.Request) {
 	}
 	day := func(ts string) string { return tsTime(ts).UTC().Format("2006-01-02") }
 	keep := func(ts string) bool {
+		if f.searchIndexedThrough != "" && tsLess(f.searchIndexedThrough, ts) {
+			return false // not yet indexed
+		}
 		d := day(ts)
 		if onDay != "" && d != onDay {
 			return false

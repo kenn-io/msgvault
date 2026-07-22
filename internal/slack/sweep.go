@@ -37,9 +37,22 @@ type sweepTarget struct {
 // through months of queries on a run that promised to be small. Exhaustion
 // parks certification at the last safe boundary WITHOUT failing the run —
 // per-day commits are durable, so repeated limited runs converge.
-type sweepBudget struct{ limit, used int }
+type sweepBudget struct {
+	limit, used int
+	// progressed marks that this run has completed at least one canonical
+	// fetch. Guaranteed-first-unit rule: a budget may end a run early, but
+	// it must never gate the run's FIRST unit of durable progress — without
+	// it, a small limit's day-charge could starve the very fetch that would
+	// advance the boundary, and repeated runs would park at the same spot
+	// forever.
+	progressed bool
+}
 
 func (b *sweepBudget) exhausted() bool { return b.limit > 0 && b.used >= b.limit }
+
+// blocked reports the budget is spent AND the run has already made durable
+// progress — the only state in which parking is allowed to stop a fetch.
+func (b *sweepBudget) blocked() bool { return b.exhausted() && b.progressed }
 
 // sweepReplies discovers thread replies created since each conversation's
 // certification stamp via search.messages (threads:replies) and archives
@@ -68,7 +81,14 @@ func (imp *Importer) sweepReplies(ctx context.Context, syncID int64, targets map
 	offset := imp.res.tzOffset(imp.opts.UserID)
 	budget := &sweepBudget{limit: imp.opts.Limit}
 	now := imp.now().UTC()
-	horizon := tsFormat(now.Add(-sweepLagMargin))
+	// The sweep's boundary is its own PIN (this run's start instant): the
+	// stored watermark/stamps mean "replies at or before boundary − lag
+	// margin are certainly archived", and every floor overlaps back by the
+	// margin so replies the index had not yet served at boundary time are
+	// re-covered by the next sweep. One boundary per run, shared with the
+	// window walks; index lag is absorbed by the overlap, not by a lagged
+	// certification.
+	pin := tsFormat(now)
 
 	ids := make([]string, 0, len(targets))
 	for cid := range targets {
@@ -140,10 +160,10 @@ func (imp *Importer) sweepReplies(ctx context.Context, syncID int64, targets map
 	if floor == "" {
 		return nil // nothing backfilled yet; backfill owns all replies so far
 	}
-	// Search runs through NOW — replies inside the lag window are archived
-	// too — but certification caps at the horizon, so anything the index
-	// may not have served yet is re-swept next run (idempotent upserts).
-	return imp.sweepRange(ctx, syncID, "", floor, now, horizon, targets, loc, budget, state, sum,
+	// Hits above the pin (created after this sweep started) are acted on
+	// too when the index serves them early — harmless upserts; the next
+	// sweep's window re-covers them by construction.
+	return imp.sweepRange(ctx, syncID, "", floor, now, pin, targets, loc, budget, state, sum,
 		func(certified string) {
 			state.SweepWatermark, state.SweepOffset = certified, offset
 			for _, cid := range ids {
@@ -159,18 +179,26 @@ func (imp *Importer) sweepReplies(ctx context.Context, syncID int64, targets map
 		})
 }
 
-// sweepRange drains the threads:replies search from floor's day through
-// searchEnd's day for one scope ("" = workspace-wide; a channel ID =
-// in:<#ID>-scoped), day by day in the user's current timezone, archiving
-// every hit above floor. commit is invoked with each newly certified
-// boundary — end of a completed day, capped at ceiling (the lag horizon for
-// the workspace sweep; searchEnd may exceed it so fresh replies are fetched
-// without being certified) — so multi-day catch-ups checkpoint per day.
-// Discovery and fetch failures are recorded, certification parks at the
-// last safe boundary, and the sweep stops; only store/context failures
-// return an error.
+// sweepRange drains the threads:replies search for one scope ("" =
+// workspace-wide; a channel ID = in:<#ID>-scoped), day by day in the user's
+// current timezone. floor is the stored boundary (a pin); the query and hit
+// filter OVERLAP back by the lag margin so replies the search index had not
+// served by the previous sweep are re-covered (into idempotent upserts).
+// commit is invoked with each newly advanced boundary — end of a completed
+// day, capped at ceiling and never regressing below floor — so multi-day
+// catch-ups checkpoint per day. Discovery and fetch failures are recorded,
+// the boundary parks at the last safe point, and the sweep stops; only
+// store/context failures return an error.
 func (imp *Importer) sweepRange(ctx context.Context, syncID int64, scope, floor string, searchEnd time.Time, ceiling string, targets map[string]sweepTarget, loc *time.Location, budget *sweepBudget, state *SyncState, sum *ImportSummary, commit func(certified string)) error {
-	day := tsTime(floor).In(loc)
+	queryFloor := overlapFloor(floor)
+	// The boundary only ever advances: overlap-region parks and yesterday's
+	// day-end sit below the stored floor and must not regress it.
+	advance := func(v string) {
+		if c := minTS(v, ceiling); tsLess(floor, c) {
+			commit(c)
+		}
+	}
+	day := tsTime(queryFloor).In(loc)
 	day = time.Date(day.Year(), day.Month(), day.Day(), 0, 0, 0, 0, loc)
 	end := searchEnd.In(loc)
 	for !day.After(end) {
@@ -195,14 +223,15 @@ func (imp *Importer) sweepRange(ctx context.Context, syncID int64, scope, floor 
 			sum.Errors++
 			return nil
 		}
-		complete, parked, err := imp.fetchSweepHits(ctx, syncID, hits, floor, targets, budget, sum)
+		complete, parked, err := imp.fetchSweepHits(ctx, syncID, hits, queryFloor, targets, budget, sum)
 		if err != nil {
 			return err // store/context failure: fatal for the run
 		}
 		if !complete {
-			// A canonical fetch failed mid-day; resume from just before it.
-			if parked != "" && tsLess(floor, parked) {
-				commit(minTS(parked, ceiling))
+			// A canonical fetch failed mid-day (or the budget blocked);
+			// resume from just before the unfetched hit.
+			if parked != "" {
+				advance(parked)
 			}
 			return nil
 		}
@@ -215,13 +244,13 @@ func (imp *Importer) sweepRange(ctx context.Context, syncID int64, scope, floor 
 				fmt.Errorf("day %s exceeds the %d reachable results per query; run --full to recover its replies (see the sweep design doc)", dayStr, sweepTruncationCeiling))
 			sum.FetchErrors++
 			sum.Errors++
-			if len(hits) > 0 && tsLess(floor, hits[len(hits)-1].TS) {
-				commit(minTS(hits[len(hits)-1].TS, ceiling))
+			if len(hits) > 0 {
+				advance(hits[len(hits)-1].TS)
 			}
 			return nil
 		}
 		nextDay := nextDayStart(day, loc)
-		commit(minTS(tsFormat(nextDay.UTC()), ceiling))
+		advance(tsFormat(nextDay.UTC()))
 		imp.checkpoint(syncID, state, sum)
 		day = nextDay
 	}
@@ -274,11 +303,12 @@ func (imp *Importer) sweepQuery(scope, day string, syncID int64, page int) strin
 
 // fetchSweepHits archives discovered replies via canonical
 // conversations.replies fetches, grouped one fetch per thread. Hits at or
-// below floor are already archived (certification semantics) and skipped.
-// Returns (complete, parked boundary, fatal error): on a fetch failure,
-// complete=false and the parked boundary sits just before the failed
-// thread's first hit — everything before it was fetched (ascending order).
-func (imp *Importer) fetchSweepHits(ctx context.Context, syncID int64, hits []SearchMatch, floor string, targets map[string]sweepTarget, budget *sweepBudget, sum *ImportSummary) (bool, string, error) {
+// below queryFloor (the overlapped floor: stored boundary − lag margin) are
+// already archived and skipped. Returns (complete, parked boundary, fatal
+// error): on a fetch failure or a blocked budget, complete=false and the
+// parked boundary sits just before the first unfetched hit — everything
+// before it was fetched (ascending order).
+func (imp *Importer) fetchSweepHits(ctx context.Context, syncID int64, hits []SearchMatch, queryFloor string, targets map[string]sweepTarget, budget *sweepBudget, sum *ImportSummary) (bool, string, error) {
 	type group struct {
 		channelID string
 		anchorTS  string // any ts within the thread; replies resolves it
@@ -287,8 +317,8 @@ func (imp *Importer) fetchSweepHits(ctx context.Context, syncID int64, hits []Se
 	var groups []group
 	index := map[string]int{}
 	for _, h := range hits {
-		if !tsLess(floor, h.TS) {
-			continue // at/below the certification boundary: already archived
+		if !tsLess(queryFloor, h.TS) {
+			continue // at/below the overlapped floor: already archived
 		}
 		key := h.ChannelID + ":" + h.RootTS
 		if h.RootTS == "" {
@@ -309,15 +339,20 @@ func (imp *Importer) fetchSweepHits(ctx context.Context, syncID int64, hits []Se
 		if err := ctx.Err(); err != nil {
 			return false, "", err
 		}
-		if budget.exhausted() {
+		if budget.blocked() {
 			// Budget-park, not a failure: everything before this group is
 			// fetched (ascending order), so resuming here next run is safe.
+			// blocked (not exhausted) guarantees the run's FIRST fetch always
+			// happens even when day-charges consumed the whole budget.
 			return false, tsMinusMicro(g.minHit), nil
 		}
 		target := targets[g.channelID]
 		cc := &convScope{channelID: g.channelID, convID: target.convID, sourceID: imp.sourceID, syncID: syncID, opts: imp.opts}
 		err := imp.fetchThread(ctx, cc, g.anchorTS, tsMinusMicro(g.minHit), sum)
 		budget.used += cc.budgetUsed
+		if err == nil {
+			budget.progressed = true
+		}
 		if errors.Is(err, ErrNotFound) {
 			// Thread/channel gone between discovery and fetch: expected churn.
 			imp.recordItem(syncID, sourceMessageID(g.channelID, g.anchorTS), "sweep", store.SyncRunItemStatusSkipped, "slack_thread_gone", err)
@@ -345,6 +380,13 @@ func (imp *Importer) fetchSweepHits(ctx context.Context, syncID int64, hits []Se
 // an hour the day's query never served.
 func nextDayStart(day time.Time, loc *time.Location) time.Time {
 	return time.Date(day.Year(), day.Month(), day.Day()+1, 0, 0, 0, 0, loc)
+}
+
+// overlapFloor returns the boundary minus the lag margin: the instant from
+// which queries and hit filters resume, re-covering replies the search
+// index may not have served when the boundary was written.
+func overlapFloor(boundary string) string {
+	return tsFormat(tsTime(boundary).Add(-sweepLagMargin))
 }
 
 // tsFormat renders a UTC instant as a Slack ts string (microsecond fraction).

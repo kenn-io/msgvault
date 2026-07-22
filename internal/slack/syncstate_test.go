@@ -86,40 +86,47 @@ func TestSyncStateMergePrefersAdvancedCursors(t *testing.T) {
 		"an empty list must never clear outstanding thread debt")
 }
 
-func TestSyncStateMergeCursorUnitIsAtomic(t *testing.T) {
+func TestSyncStateMergeGenerationsSupersede(t *testing.T) {
 	assert := assert.New(t)
-	// A baseline holding an interrupted window (Cursor + IncrCursor pair)
-	// merged with a NEWER checkpoint that completed the window (advanced
-	// Cursor, cleared IncrCursor): the clear is authoritative. Keeping the
-	// stale page cursor would pair it with a window bound it was not minted
-	// under — invalid pagination, possible cursor regression via stale
-	// IncrMaxTS.
-	base := NewSyncState()
-	bcs := base.EnsureConv("C01")
-	bcs.Cursor = "100.000001"
-	bcs.IncrCursor = "opaque-page-3"
-	bcs.IncrMaxTS = "150.000001"
+	// A --full repair session resets the state under a bumped generation.
+	// Merging must treat generations as lineage, not fields: a NEWER
+	// generation wins wholesale (an interrupted repair's checkpoint
+	// supersedes the pre-repair success blob — field-wise blending would
+	// OR the old Done flags over fresh partial cursors and silently
+	// abandon the repair), and an OLDER generation is ignored entirely.
+	preRepair := NewSyncState()
+	pcs := preRepair.EnsureConv("C01")
+	pcs.Cursor = "200.000001"
+	pcs.Done = true
+	preRepair.SweepWatermark = "180.000001"
 
-	newer := NewSyncState()
-	ncs := newer.EnsureConv("C01")
-	ncs.Cursor = "150.000001" // window completed: cursor advanced, incr cleared
+	repair := NewSyncState()
+	repair.Generation = 1
+	repair.RepairPending = true
+	repair.EnsureConv("C01").BackfillCursor = "opaque-mid-repair"
 
-	base.Merge(newer)
-	mcs := base.EnsureConv("C01")
-	assert.Equal("150.000001", mcs.Cursor)
-	assert.Empty(mcs.IncrCursor, "a completed window's cleared page cursor must win")
-	assert.Empty(mcs.IncrMaxTS)
+	// Newer generation overlaid on older base: wholesale adoption.
+	merged, err := LoadSyncState(mustMarshal(t, preRepair))
+	require.NoError(t, err)
+	merged.Merge(repair)
+	assert.Equal(1, merged.Generation)
+	assert.True(merged.RepairPending)
+	assert.False(merged.EnsureConv("C01").Done, "pre-repair Done flags must not blend into the repair lineage")
+	assert.Empty(merged.SweepWatermark)
+	assert.Equal("opaque-mid-repair", merged.EnsureConv("C01").BackfillCursor)
 
-	// The reverse: a STALE checkpoint (cursor behind) must not inject its
-	// mid-window state under the advanced cursor.
-	stale := NewSyncState()
-	scs := stale.EnsureConv("C01")
-	scs.Cursor = "100.000001"
-	scs.IncrCursor = "opaque-page-1"
-	scs.IncrMaxTS = "120.000001"
-	base.Merge(stale)
-	mcs = base.EnsureConv("C01")
-	assert.Equal("150.000001", mcs.Cursor)
-	assert.Empty(mcs.IncrCursor, "a stale checkpoint's page cursor must not pair with a newer window")
-	assert.Empty(mcs.IncrMaxTS)
+	// Older generation overlaid on newer base: ignored entirely.
+	merged2, err := LoadSyncState(mustMarshal(t, repair))
+	require.NoError(t, err)
+	merged2.Merge(preRepair)
+	assert.False(merged2.EnsureConv("C01").Done, "pre-repair residue must not blend into the repair lineage")
+	assert.Empty(merged2.SweepWatermark)
+	assert.True(merged2.RepairPending)
+}
+
+func mustMarshal(t *testing.T, s *SyncState) string {
+	t.Helper()
+	blob, err := s.Marshal()
+	require.NoError(t, err)
+	return blob
 }
