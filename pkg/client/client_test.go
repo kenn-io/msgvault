@@ -79,7 +79,7 @@ func TestGeneratedFileMetadataRequiresPresenceButAcceptsEmptyLegacyStrings(t *te
 		requirements := require.New(t)
 		var present generated.FileMetadataResponse
 		requirements.NoError(json.Unmarshal([]byte(
-			`{"content_state":"metadata_only","filename":"","mime_type":""}`,
+			`{"content_state":"metadata_only","entry_key":"source:1:message:m1","filename":"","mime_type":""}`,
 		), &present))
 		requirements.NotNil(present.Filename)
 		requirements.NotNil(present.MimeType)
