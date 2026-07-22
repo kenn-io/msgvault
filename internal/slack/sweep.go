@@ -118,6 +118,12 @@ func (imp *Importer) sweepReplies(ctx context.Context, syncID int64, targets map
 			// the flag persists until a clean pass, so stamping forward
 			// here cannot lose the debt.
 			cs.ThreadsPending = true
+			// An in-flight catch-up walk was pinned BEFORE the gap: roots
+			// created between its pin and the absence would never be
+			// anchored, while the stamp below claims them covered. Reset
+			// the walk so it re-pins at its own start (re-walking resolves
+			// into idempotent upserts).
+			cs.CatchUpCursor, cs.CatchUpLatest = "", ""
 			cs.SweptThrough = state.SweepWatermark
 			continue
 		}
@@ -315,7 +321,17 @@ func (imp *Importer) recordSweepDebt(ctx context.Context, syncID int64, hits []S
 			continue
 		}
 		index[key] = len(groups)
-		groups = append(groups, group{channelID: h.ChannelID, anchorTS: h.TS, minHit: h.TS})
+		// Anchor at the parsed root when available: an anchor is the ts the
+		// drain's replies call resolves the thread by, and a hit REPLY can
+		// be deleted between discovery and drain — a dead anchor would drop
+		// the whole entry as thread-gone, losing its sibling hits below the
+		// already-advanced watermark. Roots are the stable choice (and they
+		// dedupe against walk-recorded entries for the same thread).
+		anchor := h.RootTS
+		if anchor == "" {
+			anchor = h.TS
+		}
+		groups = append(groups, group{channelID: h.ChannelID, anchorTS: anchor, minHit: h.TS})
 	}
 
 	touched := map[string]bool{}

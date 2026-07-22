@@ -508,8 +508,8 @@ func TestSweepFetchFailureParksAsDrainDebt(t *testing.T) {
 	f.mu.Lock()
 	root := f.conv("C09").findRoot(rootTS)
 	root.Replies = append(root.Replies, fakeMsg{TS: lateReply, ThreadTS: rootTS, User: "UME", Text: "late reply"})
-	// The canonical fetch is anchored at the discovered hit's ts.
-	f.failReplies[lateReply] = true
+	// The drain anchors its replies call at the thread's parsed ROOT ts.
+	f.failReplies[rootTS] = true
 	f.mu.Unlock()
 
 	sum, err := imp.Import(context.Background(), opts)
@@ -523,7 +523,7 @@ func TestSweepFetchFailureParksAsDrainDebt(t *testing.T) {
 	// Healed: the watermark parked before the failed hit, so the next sweep
 	// re-discovers and archives it — exactly once.
 	f.mu.Lock()
-	delete(f.failReplies, lateReply)
+	delete(f.failReplies, rootTS)
 	f.mu.Unlock()
 	_, err = imp.Import(context.Background(), opts)
 	require.NoError(err)
@@ -701,6 +701,173 @@ func TestBackfillMediaReportsInvalidRaw(t *testing.T) {
 	pending, err := st.ListSlackPendingAttachmentMessages(src.ID)
 	require.NoError(err)
 	require.Len(pending, 1)
+}
+
+func TestSweepDebtSurvivesDeletedAnchorReply(t *testing.T) {
+	require := require.New(t)
+	f, rootTS := oldThreadWorkspace(t)
+	imp, opts := testImporter(t, f)
+	st := imp.store
+
+	_, err := imp.Import(context.Background(), opts)
+	require.NoError(err)
+
+	// Two late replies are discovered together; the budget defers their
+	// drain to a later run. Between discovery and drain, the FIRST reply
+	// is deleted at the source. The debt entry must anchor at the thread's
+	// root — anchored at the (now dead) hit, the drain would drop the
+	// whole entry as thread-gone and lose the surviving sibling below the
+	// already-advanced watermark.
+	r1, r2 := tsFresh(0), tsFresh(1)
+	f.mu.Lock()
+	root := f.conv("C09").findRoot(rootTS)
+	root.Replies = append(root.Replies,
+		fakeMsg{TS: r1, ThreadTS: rootTS, User: "UME", Text: "first"},
+		fakeMsg{TS: r2, ThreadTS: rootTS, User: "UME", Text: "second"})
+	f.mu.Unlock()
+
+	// Discovery run: --limit 1 exhausts on the day-charge, so the debt is
+	// recorded but undrained; the watermark advances well past both hits.
+	imp.now = func() time.Time { return time.Now().Add(15 * time.Minute) }
+	limited := opts
+	limited.Limit = 1
+	_, err = imp.Import(context.Background(), limited)
+	require.NoError(err)
+	var n int
+	require.NoError(st.DB().QueryRow(st.Rebind(
+		`SELECT COUNT(*) FROM messages WHERE source_message_id = ?`), "C09:"+r2).Scan(&n))
+	require.Zero(n, "test setup: the drain must have been deferred")
+
+	// The first reply is deleted at the source; later sweeps cannot help
+	// (their overlapped floor is already above both hits).
+	f.mu.Lock()
+	root = f.conv("C09").findRoot(rootTS)
+	root.Replies = root.Replies[:len(root.Replies)-2]
+	root.Replies = append(root.Replies, fakeMsg{TS: r2, ThreadTS: rootTS, User: "UME", Text: "second"})
+	f.mu.Unlock()
+
+	imp.now = func() time.Time { return time.Now().Add(16 * time.Minute) }
+	_, err = imp.Import(context.Background(), limited)
+	require.NoError(err)
+	imp.now = func() time.Time { return time.Now().Add(17 * time.Minute) }
+	_, err = imp.Import(context.Background(), opts)
+	require.NoError(err)
+
+	require.NoError(st.DB().QueryRow(st.Rebind(
+		`SELECT COUNT(*) FROM messages WHERE source_message_id = ?`), "C09:"+r2).Scan(&n))
+	require.Equal(1, n, "the surviving sibling must be drained via the root anchor despite the deleted hit")
+}
+
+func TestGapRecoveryResetsInFlightCatchUp(t *testing.T) {
+	require := require.New(t)
+	f := newFakeSlack(t)
+	f.users = []map[string]any{
+		{"id": "UME", "name": "me", "profile": map[string]any{"email": "me@example.com"}},
+	}
+	// A legacy G-prefixed channel (non-C: gap recovery uses the catch-up
+	// walk) big enough that a limited catch-up stays mid-flight for
+	// several runs, plus a channel keeping the watermark moving.
+	oldRoot := fakeMsg{TS: ts(0), User: "UME", Text: "old root",
+		Replies: []fakeMsg{{TS: ts(1), ThreadTS: ts(0), User: "UME", Text: "old reply"}}}
+	legacy := &fakeConv{ID: "G05", Name: "legacy", Kind: "private", Members: []string{"UME"}, Msgs: []fakeMsg{oldRoot}}
+	for i := range 12 {
+		legacy.Msgs = append(legacy.Msgs, fakeMsg{TS: ts(100 + i), User: "UME", Text: "top " + strconv.Itoa(i)})
+	}
+	f.convs = []*fakeConv{legacy,
+		{ID: "C11", Name: "keep", Kind: "public", Members: []string{"UME"},
+			Msgs: []fakeMsg{{TS: ts(2), User: "UME", Text: "keep hi"}}}}
+	imp, opts := testImporter(t, f)
+	st := imp.store
+
+	// --no-threads backfill leaves catch-up debt; one limited threaded run
+	// starts the walk and leaves it MID-FLIGHT under its original pin.
+	noThreads := opts
+	noThreads.NoThreads = true
+	_, err := imp.Import(context.Background(), noThreads)
+	require.NoError(err)
+	limited := opts
+	limited.Limit = 4
+	_, err = imp.Import(context.Background(), limited)
+	require.NoError(err)
+
+	// A new root arrives ABOVE the walk's pin and is archived by a window
+	// walk whose own pin lands well past it — so later windows' overlap
+	// floors (cursor − margin) sit above the root and never re-fetch it,
+	// exactly like a months-old root in production. Then, while the
+	// channel is excluded, it gains a reply and the watermark certifies
+	// past it.
+	newRoot := tsFresh(0)
+	f.mu.Lock()
+	f.conv("G05").Msgs = append(f.conv("G05").Msgs, fakeMsg{TS: newRoot, User: "UME", Text: "root above pin"})
+	f.mu.Unlock()
+	imp.now = func() time.Time { return time.Now().Add(20 * time.Minute) }
+	_, err = imp.Import(context.Background(), limited)
+	require.NoError(err)
+
+	gapReply := tsFresh(5)
+	f.mu.Lock()
+	f.conv("G05").findRoot(newRoot).Replies = []fakeMsg{{TS: gapReply, ThreadTS: newRoot, User: "UME", Text: "reply while excluded"}}
+	f.mu.Unlock()
+	excluded := opts
+	excluded.ExcludeChannels = []string{"legacy"}
+	imp.now = func() time.Time { return time.Now().Add(time.Hour) }
+	_, err = imp.Import(context.Background(), excluded)
+	require.NoError(err)
+
+	// Re-entry: gap recovery fires while the old walk is still mid-flight.
+	// It must RESET the walk — resumed under its original pin, the walk
+	// would never anchor the new root, then clear the flag as if done,
+	// and the stamped-forward boundary would certify the reply covered.
+	imp.now = func() time.Time { return time.Now().Add(2 * time.Hour) }
+	_, err = imp.Import(context.Background(), limited)
+	require.NoError(err)
+	imp.now = func() time.Time { return time.Now().Add(3 * time.Hour) }
+	for range 8 {
+		_, err = imp.Import(context.Background(), opts)
+		require.NoError(err)
+	}
+
+	var n int
+	require.NoError(st.DB().QueryRow(st.Rebind(
+		`SELECT COUNT(*) FROM messages WHERE source_message_id = ?`), "G05:"+gapReply).Scan(&n))
+	require.Equal(1, n, "gap recovery must re-pin an in-flight catch-up walk so absence-era replies to post-pin roots are anchored")
+}
+
+func TestFileWithoutPermalinkKeepsPendingMarker(t *testing.T) {
+	require := require.New(t)
+	f := testWorkspace(t)
+	// Slack serves a hosted file with NO permalink: the marker row must
+	// still land (the store silently skips empty-storage-path rows, which
+	// would make the file invisible to backfill forever, with no error).
+	f.conv("C01").Msgs[6].Files = []map[string]any{
+		{"id": "F_NOPERM", "name": "n.png", "mimetype": "image/png", "size": 5,
+			"url_private": "https://files.slack.com/files-pri/T01-F_NOPERM/n.png"},
+	}
+	prevInterval := checkpointMinInterval
+	checkpointMinInterval = 0
+	t.Cleanup(func() { checkpointMinInterval = prevInterval })
+	srv := f.serve()
+	client := NewClient(srv.URL, "xoxp-test")
+	client.disableRateLimits()
+	client.mediaTransport = &recordingTransport{body: "png07"}
+	st := testutil.NewTestStore(t)
+	imp := NewImporter(st, client, "T01")
+
+	opts := ImportOptions{TeamID: "T01", UserID: "UME", NoMedia: true, AttachmentsDir: t.TempDir()}
+	_, err := imp.Import(context.Background(), opts)
+	require.NoError(err)
+
+	src, err := st.GetOrCreateSource("slack", "T01:UME")
+	require.NoError(err)
+	pending, err := st.ListSlackPendingAttachmentMessages(src.ID)
+	require.NoError(err)
+	require.Len(pending, 1, "a permalink-less file must still leave a durable pending marker")
+
+	// And the backfill can pay it.
+	opts.NoMedia = false
+	sum, err := imp.BackfillMedia(context.Background(), opts)
+	require.NoError(err)
+	require.Equal(1, sum.AttachmentsDownloaded)
 }
 
 func TestStoreWriteFailureHoldsCursorAndResumes(t *testing.T) {

@@ -147,10 +147,25 @@ func (imp *Importer) persistFiles(ctx context.Context, syncID, messageID int64, 
 			refs = append(refs, prev)
 			continue
 		}
+		fetchRef := f.URLPrivate
+		if fetchRef == "" {
+			fetchRef = f.URLPrivateDownload
+		}
+		// The store write silently skips rows with an empty storage path, so
+		// a file Slack serves without a permalink would lose its marker (and
+		// with it any chance of backfill) with no error. Fall back to the
+		// fetch URL, then to a deterministic sentinel: the row must exist.
+		storageRef := f.Permalink
+		if storageRef == "" {
+			storageRef = fetchRef
+		}
+		if storageRef == "" {
+			storageRef = "slack:pending:" + f.ID
+		}
 		linkRow := store.AttachmentRef{
 			Filename:           f.Name,
 			MimeType:           f.Mimetype,
-			StoragePath:        f.Permalink,
+			StoragePath:        storageRef,
 			Size:               int(f.Size),
 			SourceAttachmentID: sourceAttID,
 			MediaType:          "link",
@@ -166,11 +181,6 @@ func (imp *Importer) persistFiles(ctx context.Context, syncID, messageID int64, 
 			if status == store.SyncRunItemStatusError {
 				sum.Errors++
 			}
-		}
-
-		fetchRef := f.URLPrivate
-		if fetchRef == "" {
-			fetchRef = f.URLPrivateDownload
 		}
 		if _, herr := fetchableURL(fetchRef); herr != nil || f.IsExternal {
 			// Off-host / external: never fetched with the token (see mediaHost).
