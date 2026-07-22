@@ -123,7 +123,11 @@ describe('MessageCard', () => {
     const srcdoc = container.querySelector('iframe')?.getAttribute('srcdoc') ?? '';
     expect(srcdoc).toContain('Content-Security-Policy');
     expect(srcdoc).toContain("default-src 'none'");
-    expect(srcdoc.match(/<script>/g)).toHaveLength(1);
+    // The only script is the same-origin static bridge; no inline script or
+    // style survives into the archived document.
+    expect(srcdoc.match(/<script\b/g)).toHaveLength(1);
+    expect(srcdoc).toContain('src="http://localhost:3000/archived-frame.js"');
+    expect(srcdoc).not.toMatch(/<script>|<style>/);
     expect(srcdoc).not.toContain('stolen');
     expect(srcdoc).not.toContain('tracking.example');
   });

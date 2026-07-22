@@ -4,6 +4,11 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="description" content="Explore a local msgvault archive." />
+    <!-- Static bridge + chrome for archived mail frames: preloading warms the
+         cache before the first message opens and keeps the files reachable in
+         the validated release graph (scripts/check-web-assets.mjs). -->
+    <link rel="preload" href="/archived-frame.js" as="script" />
+    <link rel="preload" href="/archived-frame.css" as="style" />
     <title>msgvault</title>
   </head>
   <body>

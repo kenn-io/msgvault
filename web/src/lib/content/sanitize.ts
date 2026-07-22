@@ -9,6 +9,10 @@ export interface SanitizedArchivedHTML {
   html: string;
   remoteImages: string[];
   inlineImages: ArchivedInlineImage[];
+  /** True when the sender authored a visual design (backgrounds, explicit
+   * container colors, or multi-column layout tables). Designed mail renders
+   * on its own white canvas; everything else inherits the shell theme. */
+  designed: boolean;
 }
 
 export interface ArchivedInlineImage {
@@ -32,6 +36,57 @@ const EMAIL_ATTRIBUTES = [
 
 const SAFE_DATA_IMAGE = /^data:image\/(?:gif|jpe?g|png|webp);base64,[a-z0-9+/=\s]+$/i;
 
+/** Quote chains longer than this collapse behind a "Show quoted text" toggle. */
+export const QUOTE_COLLAPSE_THRESHOLD = 300;
+
+const QUOTE_ROOT_SELECTOR = 'blockquote, div[class*="gmail_quote"]';
+
+// Elements whose explicit text color signals an authored design rather than
+// incidental inline markup (spans, links, font tags in signatures).
+const DESIGN_COLOR_CONTAINERS = new Set([
+  'body', 'table', 'tbody', 'thead', 'tfoot', 'tr', 'td', 'th',
+  'div', 'p', 'center', 'section', 'article', 'main', 'header', 'footer'
+]);
+
+const BACKGROUND_DECLARATION =
+  /(?:^|;)\s*background(?:-color|-image)?\s*:\s*(?!(?:transparent|none|inherit|initial|unset)\s*(?:;|$))/i;
+const COLOR_DECLARATION = /(?:^|;)\s*color\s*:/i;
+
+/**
+ * Decides whether archived HTML mail carries an authored visual design.
+ * Detection runs on the raw message HTML (parsed inertly, before
+ * sanitization) because sanitization strips every style carrier — the
+ * original markup is the only place backgrounds and colors are visible.
+ *
+ * Designed mail: any background color/image declaration, an explicit text
+ * color on a layout container, or a layout table wider than one column.
+ * Plain replies (paragraphs, breaks, quote chains) stay theme-native.
+ */
+export function detectDesignedEmail(input: string): boolean {
+  const parsed = new DOMParser().parseFromString(input, 'text/html');
+  for (const style of parsed.querySelectorAll('style')) {
+    if (/background(?:-color|-image)?\s*:/i.test(style.textContent ?? '')) return true;
+  }
+  for (const element of [parsed.body, ...parsed.body.querySelectorAll<HTMLElement>('*')]) {
+    if (element.hasAttribute('bgcolor') || element.hasAttribute('background')) return true;
+    const style = element.getAttribute('style') ?? '';
+    if (style !== '') {
+      if (BACKGROUND_DECLARATION.test(style)) return true;
+      if (DESIGN_COLOR_CONTAINERS.has(element.localName) && COLOR_DECLARATION.test(style)) {
+        return true;
+      }
+    }
+    if (element.localName === 'tr') {
+      let cells = 0;
+      for (const child of element.children) {
+        if (child.localName === 'td' || child.localName === 'th') cells += 1;
+      }
+      if (cells >= 2) return true;
+    }
+  }
+  return false;
+}
+
 function remoteImageURL(value: string): string | undefined {
   try {
     if (/[;\u0000-\u001f\u007f]/.test(value)) return undefined;
@@ -48,10 +103,23 @@ function remoteImageURL(value: string): string | undefined {
   return undefined;
 }
 
-function blockedImage(document: Document, alt: string, index: number): HTMLElement {
+export function imagePlaceholderBlock(document: Document, caption: string): HTMLElement {
   const placeholder = document.createElement('span');
+  placeholder.setAttribute('data-archived-image-placeholder', '');
+  const glyph = document.createElement('span');
+  glyph.setAttribute('data-archived-image-glyph', '');
+  glyph.setAttribute('aria-hidden', 'true');
+  const label = document.createElement('span');
+  label.setAttribute('data-archived-image-caption', '');
+  label.textContent = caption;
+  placeholder.append(glyph, label);
+  return placeholder;
+}
+
+function blockedImage(document: Document, alt: string, index: number): HTMLElement {
+  const placeholder = imagePlaceholderBlock(document, alt || 'Remote image');
   placeholder.setAttribute('data-archived-remote-image', String(index));
-  placeholder.textContent = `Remote image blocked${alt ? `: ${alt}` : ''}`;
+  placeholder.setAttribute('title', `Remote image not loaded${alt ? `: ${alt}` : ''}`);
   return placeholder;
 }
 
@@ -126,5 +194,39 @@ export function sanitizeArchivedHTML(
     element.removeAttribute('src');
   }
 
-  return { html: template.innerHTML, remoteImages, inlineImages };
+  collapseQuoteChains(template.content);
+
+  return {
+    html: template.innerHTML,
+    remoteImages,
+    inlineImages,
+    designed: detectDesignedEmail(input)
+  };
+}
+
+/**
+ * Marks top-level quote blocks (blockquote and Gmail quote containers) for
+ * muted styling and folds long chains behind a native details/summary toggle
+ * so the frame needs no additional script for Show/Hide quoted text.
+ */
+function collapseQuoteChains(content: DocumentFragment): void {
+  for (const root of content.querySelectorAll<HTMLElement>(QUOTE_ROOT_SELECTOR)) {
+    if (root.parentElement?.closest(QUOTE_ROOT_SELECTOR)) continue;
+    root.setAttribute('data-archived-quote', '');
+    const long = (root.textContent ?? '').trim().length > QUOTE_COLLAPSE_THRESHOLD ||
+      root.querySelector(QUOTE_ROOT_SELECTOR) !== null;
+    if (!long || root.closest('details') !== null) continue;
+    const details = document.createElement('details');
+    details.setAttribute('data-archived-quote-toggle', '');
+    const summary = document.createElement('summary');
+    const show = document.createElement('span');
+    show.setAttribute('data-archived-quote-show', '');
+    show.textContent = 'Show quoted text';
+    const hide = document.createElement('span');
+    hide.setAttribute('data-archived-quote-hide', '');
+    hide.textContent = 'Hide quoted text';
+    summary.append(show, hide);
+    root.replaceWith(details);
+    details.append(summary, root);
+  }
 }

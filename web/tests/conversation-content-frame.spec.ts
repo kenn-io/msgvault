@@ -139,13 +139,28 @@ test('archived content has an opaque capability boundary and durable conversatio
   expect(inlineRequests[0]?.cookie).toContain('msgvault_session=synthetic-session');
   const initialCSP = await frame.contentFrame().locator('meta[http-equiv="Content-Security-Policy"]').getAttribute('content');
   expect(initialCSP).toContain('img-src data:');
-  expect(initialCSP).not.toContain('127.0.0.1');
+  // Only shell-origin static assets may execute or style; images stay data:.
+  const imgDirective = initialCSP?.split(';').find((directive) => directive.trim().startsWith('img-src'));
+  expect(imgDirective?.trim()).toBe('img-src data:');
+  const shellOrigin = new URL(page.url()).origin;
+  expect(initialCSP).toContain(`script-src ${shellOrigin}/archived-frame.js`);
+  expect(initialCSP).toContain(`style-src ${shellOrigin}/archived-frame.css`);
+  expect(initialCSP).not.toContain("'unsafe-inline'");
   expect(networkRequests).toEqual([]);
   expect(unintendedRequests).toEqual([]);
   const archivedDocument = await frame.getAttribute('srcdoc');
-  const shellOrigin = new URL(page.url()).origin;
-  expect(archivedDocument).toContain(`const o=${JSON.stringify(shellOrigin)}`);
-  expect(archivedDocument).not.toContain("postMessage({channel:c,nonce:n,type:'key',key:e.key},'*')");
+  expect(archivedDocument).toContain(`data-bridge-origin="${shellOrigin}"`);
+  expect(archivedDocument).not.toMatch(/<script>|<style>/);
+
+  // The bridge sizes the frame to its content — the height must leave the
+  // shell's compact default, and the archived document itself must not
+  // scroll internally (the thread is the only scroller).
+  await expect.poll(async () => Number.parseFloat(await frame.evaluate(
+    (element: HTMLIFrameElement) => element.style.height
+  ))).toBeGreaterThan(96);
+  await expect.poll(() => frame.contentFrame().locator('html').evaluate((html) =>
+    html.scrollHeight - html.clientHeight
+  )).toBeLessThanOrEqual(1);
 
   // Re-embedding the exact document below an opaque unexpected parent cannot
   // receive bridge messages because targetOrigin remains pinned to the shell.

@@ -324,13 +324,15 @@
     padding: var(--space-3) var(--space-4) var(--space-4);
   }
 
-  /* Plain text renders on the theme surface with theme text. */
+  /* Plain text renders on the theme surface with theme text, in the same
+   * reading type and measure as themed HTML mail. */
   pre {
+    max-width: 680px;
     margin: 0;
-    overflow-wrap: anywhere;
+    overflow-wrap: break-word;
     color: var(--text-primary);
-    font-family: var(--font-mono);
-    font-size: var(--font-size-sm);
+    font-family: var(--font-sans);
+    font-size: 14px;
     line-height: 1.55;
     white-space: pre-wrap;
   }

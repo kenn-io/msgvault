@@ -1,5 +1,6 @@
 import type { APIClient } from '../../api/client';
 import type { ArchivedInlineImage } from '../../content/sanitize';
+import { imagePlaceholderBlock } from '../../content/sanitize';
 
 export const MAX_ARCHIVED_INLINE_IMAGE_CIDS = 32;
 export const MAX_ARCHIVED_INLINE_IMAGE_BYTES = 5 * 1024 * 1024;
@@ -53,9 +54,7 @@ function hardBoundedLimit(value: number | undefined, hardLimit: number): number 
 }
 
 function unavailableInlineImage(alt: string): HTMLElement {
-  const placeholder = document.createElement('span');
-  placeholder.textContent = `Inline image unavailable${alt ? `: ${alt}` : ''}`;
-  return placeholder;
+  return imagePlaceholderBlock(document, `Inline image unavailable${alt ? `: ${alt}` : ''}`);
 }
 
 function bytesToDataURL(bytes: Uint8Array, mimeType: string): string {

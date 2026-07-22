@@ -2,13 +2,27 @@ export const ARCHIVED_CONTENT_CHANNEL = 'msgvault-archived-content';
 export const MAX_ARCHIVED_SCROLL_DELTA = 10_000;
 export const MAX_ARCHIVED_FRAME_HEIGHT = 65_536;
 
-// This generated script is the only executable content admitted by the frame
-// CSP. Its sole dynamic value is a validated, JSON-serialized shell origin.
-// Besides key/scroll forwarding it reports the document's natural height so
-// the shell can size the frame to its content (the thread scrolls as one
-// column; the frame itself never scrolls internally).
-export function archivedContentBridge(targetOrigin: string): string {
-  return `(()=>{const n=document.documentElement.dataset.bridgeNonce;const c='${ARCHIVED_CONTENT_CHANNEL}';const o=${JSON.stringify(targetOrigin)};const keys=new Set(['Escape','PageUp','PageDown','Home','End','ArrowUp','ArrowDown']);addEventListener('keydown',e=>{if(keys.has(e.key))parent.postMessage({channel:c,nonce:n,type:'key',key:e.key},o)});addEventListener('wheel',e=>{if(Number.isFinite(e.deltaY)&&Math.abs(e.deltaY)<=${MAX_ARCHIVED_SCROLL_DELTA})parent.postMessage({channel:c,nonce:n,type:'scroll',deltaY:e.deltaY},o)},{passive:true});const h=()=>{const v=Math.min(Math.ceil(document.documentElement.scrollHeight),${MAX_ARCHIVED_FRAME_HEIGHT});if(v>0)parent.postMessage({channel:c,nonce:n,type:'height',height:v},o)};if(typeof ResizeObserver==='function')new ResizeObserver(h).observe(document.body);addEventListener('load',h);h()})()`;
+// The frame's executable and styling surface is exactly two same-origin
+// static assets. Everything the frame needs beyond archived HTML travels as
+// data attributes on <html>: the message-scoped bridge nonce, the validated
+// shell origin messages are pinned to, and the rendering mode/scheme the
+// stylesheet keys on.
+//
+// Static assets — not inline — because the daemon serves the shell with a
+// Content-Security-Policy of script-src 'self'; style-src 'self', and
+// sandboxed srcdoc frames inherit that policy in addition to their own meta
+// CSP. Inline <script>/<style> (even hash-authorized in the meta CSP) is
+// blocked by the inherited policy; same-origin URLs satisfy both.
+export const ARCHIVED_FRAME_SCRIPT_PATH = '/archived-frame.js';
+export const ARCHIVED_FRAME_STYLE_PATH = '/archived-frame.css';
+
+export type FrameColorScheme = 'light' | 'dark';
+
+export interface FrameAppearance {
+  /** 'canvas': designed mail on its own white canvas. 'themed': simple mail
+   * rendered transparently on the shell surface with shell inks. */
+  mode: 'canvas' | 'themed';
+  colorScheme: FrameColorScheme;
 }
 
 export interface FrameDocumentOptions {
@@ -16,6 +30,7 @@ export interface FrameDocumentOptions {
   nonce: string;
   targetOrigin: string;
   remoteImages?: string[];
+  appearance?: FrameAppearance;
 }
 
 function escapeAttribute(value: string): string {
@@ -48,14 +63,6 @@ function validImageSource(value: string): string | undefined {
   }
 }
 
-async function sha256Base64(value: string): Promise<string> {
-  const bytes = new TextEncoder().encode(value);
-  const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', bytes));
-  let binary = '';
-  for (const byte of digest) binary += String.fromCharCode(byte);
-  return btoa(binary);
-}
-
 function exactHTTPOrigin(value: string): string {
   let parsed: URL;
   try {
@@ -70,8 +77,10 @@ function exactHTTPOrigin(value: string): string {
 }
 
 export async function buildFrameDocument(options: FrameDocumentOptions): Promise<string> {
-  const bridge = archivedContentBridge(exactHTTPOrigin(options.targetOrigin));
-  const scriptHash = await sha256Base64(bridge);
+  const appearance = options.appearance ?? { mode: 'canvas' as const, colorScheme: 'light' as const };
+  const origin = exactHTTPOrigin(options.targetOrigin);
+  const bridgeURL = `${origin}${ARCHIVED_FRAME_SCRIPT_PATH}`;
+  const styleURL = `${origin}${ARCHIVED_FRAME_STYLE_PATH}`;
   const remoteSources = [...new Set((options.remoteImages ?? [])
     .map(validImageSource)
     .filter((source): source is string => source !== undefined))];
@@ -82,21 +91,26 @@ export async function buildFrameDocument(options: FrameDocumentOptions): Promise
     `img-src ${imageSources}`,
     "media-src 'none'",
     "font-src data:",
-    "style-src 'unsafe-inline'",
-    `script-src 'sha256-${scriptHash}'`,
+    `style-src ${escapeAttribute(styleURL)}`,
+    `script-src ${escapeAttribute(bridgeURL)}`,
     "object-src 'none'",
     "frame-src 'none'",
     "base-uri 'none'",
     "form-action 'none'"
   ].join('; ');
 
+  // Designed mail keeps its assumed white light canvas in both shell themes;
+  // simple mail adopts the shell scheme and renders transparently on the
+  // theme surface. archived-frame.css keys on the data attributes.
   return '<!doctype html>' +
-    `<html data-bridge-nonce="${escapeAttribute(options.nonce)}"><head>` +
+    `<html data-bridge-nonce="${escapeAttribute(options.nonce)}"` +
+    ` data-bridge-origin="${escapeAttribute(origin)}"` +
+    ` data-mode="${appearance.mode}"` +
+    ` data-scheme="${appearance.mode === 'canvas' ? 'light' : appearance.colorScheme}"><head>` +
     '<meta charset="utf-8">' +
     `<meta http-equiv="Content-Security-Policy" content="${escapeAttribute(csp)}">` +
     '<meta name="referrer" content="no-referrer">' +
-    // color-scheme is pinned to light: HTML mail assumes a white canvas, and
-    // the shell keeps that white surface (seamlessly styled) in dark mode too.
-    '<style>html{color-scheme:light}body{margin:0;padding:12px;overflow-wrap:anywhere;font:14px/1.5 system-ui,sans-serif}img{max-width:100%;height:auto}[data-archived-remote-image]{display:inline-block;padding:8px;border:1px dashed currentColor}</style>' +
-    `</head><body>${encodedBody(options.html)}<script>${bridge}</script></body></html>`;
+    `<link rel="stylesheet" href="${escapeAttribute(styleURL)}">` +
+    `</head><body>${encodedBody(options.html)}` +
+    `<script src="${escapeAttribute(bridgeURL)}"></script></body></html>`;
 }

@@ -2,6 +2,7 @@
   import { onDestroy, onMount, untrack } from 'svelte';
 
   import type { APIClient } from '../../api/client';
+  import type { FrameColorScheme } from '../../content/frame-document';
   import { buildFrameDocument } from '../../content/frame-document';
   import { sanitizeArchivedHTML } from '../../content/sanitize';
   import {
@@ -29,15 +30,22 @@
 
   let host = $state<HTMLElement>();
   let frame = $state<HTMLIFrameElement>();
-  let frameDocument = $state<{ generation: number; srcdoc: string }>();
+  let frameDocument = $state<{ generation: number; srcdoc: string; mode: 'canvas' | 'themed' }>();
   let documentState = $state<'building' | 'loading' | 'ready' | 'failed'>('building');
   let remoteImageCount = $state(0);
   let remoteImagesAllowed = $state(false);
   let frameHeight = $state(96);
   let nonce = $state(createFrameNonce());
+  let colorScheme = $state<FrameColorScheme>(resolvedColorScheme());
   let documentGeneration = 0;
   let messageIdentity = '';
   let inlineController: AbortController | undefined;
+  let themeObserver: MutationObserver | undefined;
+
+  function resolvedColorScheme(): FrameColorScheme {
+    if (typeof document === 'undefined') return 'light';
+    return document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light';
+  }
 
   function invalidateDocument(): void {
     documentGeneration += 1;
@@ -50,10 +58,15 @@
     const currentMessageID = messageId;
     const currentHTML = html;
     const currentClient = client;
+    const currentScheme = colorScheme;
     const nextIdentity = `${currentMessageID}\u0000${currentHTML}`;
     const identityChanged = nextIdentity !== messageIdentity;
     messageIdentity = nextIdentity;
     if (identityChanged && remoteImagesAllowed) remoteImagesAllowed = false;
+    // A new message starts from the compact default height; the bridge
+    // reports the real content height as soon as the document loads. Reusing
+    // the previous message's height would leave a tall empty frame.
+    if (identityChanged) frameHeight = 96;
     const allowRemoteImages = identityChanged ? false : remoteImagesAllowed;
     untrack(invalidateDocument);
     const generation = documentGeneration;
@@ -63,6 +76,7 @@
       allowRemoteImages
     });
     remoteImageCount = sanitized.remoteImages.length;
+    const mode = sanitized.designed ? 'canvas' as const : 'themed' as const;
     inlineController = new AbortController();
     const signal = inlineController.signal;
     void resolveArchivedInlineImages({
@@ -75,11 +89,12 @@
       html: resolvedHTML,
       nonce: buildNonce,
       targetOrigin: window.location.origin,
-      remoteImages: allowRemoteImages ? sanitized.remoteImages : []
+      remoteImages: allowRemoteImages ? sanitized.remoteImages : [],
+      appearance: { mode, colorScheme: currentScheme }
     })).then((document) => {
       if (generation !== documentGeneration || signal.aborted) return;
       nonce = buildNonce;
-      frameDocument = { generation, srcdoc: document };
+      frameDocument = { generation, srcdoc: document, mode };
       documentState = 'loading';
     }).catch((error) => {
       if (generation !== documentGeneration || signal.aborted) return;
@@ -152,9 +167,17 @@
     onHeight: (height) => { frameHeight = height; }
   });
 
-  onMount(() => window.addEventListener('message', messageHandler));
+  onMount(() => {
+    window.addEventListener('message', messageHandler);
+    themeObserver = new MutationObserver(() => { colorScheme = resolvedColorScheme(); });
+    themeObserver.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ['data-theme']
+    });
+  });
   onDestroy(() => {
     window.removeEventListener('message', messageHandler);
+    themeObserver?.disconnect();
     inlineController?.abort();
     documentGeneration += 1;
   });
@@ -186,6 +209,7 @@
            forwards Escape back out to the surrounding scroller. -->
       <iframe
         bind:this={frame}
+        class:canvas={frameDocument.mode === 'canvas'}
         title={title}
         sandbox="allow-scripts"
         referrerpolicy="no-referrer"
@@ -239,13 +263,23 @@
     font-size: var(--font-size-xs);
   }
 
-  /* HTML mail assumes a white canvas; keep it white in both themes but
-   * seamless — rounded, borderless, sized to its content by the bridge. */
+  /* Simple mail renders transparently on the theme surface; the bridge sizes
+   * the frame to its content, so the thread is the only scroller. */
   iframe {
     display: block;
     width: 100%;
     border: 0;
-    border-radius: var(--radius-sm);
+    background: transparent;
+  }
+
+  /* Designed mail keeps the white canvas it was authored for — bounded by a
+   * hairline so it reads as an artifact rather than a hole in dark mode.
+   * content-box keeps the styled height equal to the inner viewport, so the
+   * hairline never steals bridge-reported content height. */
+  iframe.canvas {
+    box-sizing: content-box;
+    border: 1px solid var(--border-muted);
+    border-radius: 6px;
     background: white;
   }
 

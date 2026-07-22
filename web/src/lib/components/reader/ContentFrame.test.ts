@@ -211,7 +211,8 @@ describe('ContentFrame', () => {
     expect(screen.getByText('1 remote image is not loaded.')).toBeDefined();
     await waitFor(() => {
       const srcdoc = container.querySelector('iframe')?.getAttribute('srcdoc');
-      expect(srcdoc).toContain('Remote image blocked: Chart');
+      expect(srcdoc).toContain('data-archived-remote-image="0"');
+      expect(srcdoc).toContain('Chart');
       expect(srcdoc).not.toContain('images.example');
     });
     await fireEvent.load(container.querySelector('iframe')!);
@@ -263,5 +264,95 @@ describe('ContentFrame', () => {
     }));
 
     await waitFor(() => expect(frame.style.height).toBe('732px'));
+  });
+
+  it('lets a very long email grow the frame and shrink again, with no interim cap', async () => {
+    const longEmail = `<p>${'A very long archived paragraph. '.repeat(64)}</p>`.repeat(8);
+    const { container } = render(ContentFrame, {
+      props: { messageId: 42, html: longEmail, title: 'Archived message' }
+    });
+    await waitFor(() => expect(container.querySelector('iframe')).not.toBeNull());
+    const frame = container.querySelector('iframe') as HTMLIFrameElement;
+    const nonce = /data-bridge-nonce="([^"]+)"/.exec(frame.getAttribute('srcdoc') ?? '')?.[1];
+    const report = (height: number): void => {
+      window.dispatchEvent(new MessageEvent('message', {
+        source: frame.contentWindow,
+        origin: 'null',
+        data: { channel: 'msgvault-archived-content', nonce, type: 'height', height }
+      }));
+    };
+
+    report(48_000);
+    await waitFor(() => expect(frame.style.height).toBe('48000px'));
+    // Late reflow (images resolving, quote toggles) may legitimately shrink
+    // the document; the shell must follow instead of ratcheting upward.
+    report(410);
+    await waitFor(() => expect(frame.style.height).toBe('410px'));
+  });
+
+  it('drops the previous message height when a new message renders', async () => {
+    const rendered = render(ContentFrame, {
+      props: { messageId: 1, html: '<p>Tall message</p>', title: 'Archived message' }
+    });
+    await waitFor(() => expect(rendered.container.querySelector('iframe')).not.toBeNull());
+    const frame = rendered.container.querySelector('iframe') as HTMLIFrameElement;
+    const nonce = /data-bridge-nonce="([^"]+)"/.exec(frame.getAttribute('srcdoc') ?? '')?.[1];
+    window.dispatchEvent(new MessageEvent('message', {
+      source: frame.contentWindow,
+      origin: 'null',
+      data: { channel: 'msgvault-archived-content', nonce, type: 'height', height: 12_000 }
+    }));
+    await waitFor(() => expect(frame.style.height).toBe('12000px'));
+
+    await rendered.rerender({ messageId: 2, html: '<p>Short message</p>', title: 'Archived message' });
+    await waitFor(() => {
+      const next = rendered.container.querySelector('iframe') as HTMLIFrameElement;
+      expect(next.style.height).toBe('96px');
+    });
+  });
+
+  it('gives simple mail a theme-native frame and designed mail a white canvas', async () => {
+    const rendered = render(ContentFrame, {
+      props: {
+        messageId: 1,
+        html: '<div dir="ltr">Plain reply<br><blockquote>quoted</blockquote></div>',
+        title: 'Archived message'
+      }
+    });
+    await waitFor(() => expect(rendered.container.querySelector('iframe')).not.toBeNull());
+    let frame = rendered.container.querySelector('iframe') as HTMLIFrameElement;
+    expect(frame.classList.contains('canvas')).toBe(false);
+    expect(frame.getAttribute('srcdoc')).toContain('data-mode="themed"');
+
+    await rendered.rerender({
+      messageId: 2,
+      html: '<table bgcolor="#f4f4f4"><tr><td>Column A</td><td>Column B</td></tr></table>',
+      title: 'Archived message'
+    });
+    await waitFor(() => {
+      frame = rendered.container.querySelector('iframe') as HTMLIFrameElement;
+      expect(frame.classList.contains('canvas')).toBe(true);
+    });
+    expect(frame.getAttribute('srcdoc')).toContain('data-mode="canvas"');
+    expect(frame.getAttribute('srcdoc')).toContain('data-scheme="light"');
+  });
+
+  it('rebuilds the themed frame in the dark scheme when the shell theme flips', async () => {
+    document.documentElement.dataset.theme = 'light';
+    const { container } = render(ContentFrame, {
+      props: { messageId: 42, html: '<p>Plain reply</p>', title: 'Archived message' }
+    });
+    await waitFor(() =>
+      expect(container.querySelector('iframe')?.getAttribute('srcdoc')).toContain('data-scheme="light"')
+    );
+
+    document.documentElement.dataset.theme = 'dark';
+    try {
+      await waitFor(() =>
+        expect(container.querySelector('iframe')?.getAttribute('srcdoc')).toContain('data-scheme="dark"')
+      );
+    } finally {
+      delete document.documentElement.dataset.theme;
+    }
   });
 });
