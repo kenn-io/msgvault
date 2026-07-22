@@ -1134,10 +1134,16 @@ func (s *Server) resolveExploreVectorSearch(ctx context.Context, w http.Response
 		writeError(w, http.StatusBadRequest, "invalid_filter", err.Error())
 		return query.SearchSpec{}, "", false
 	}
-	if len(exploreCtx.ParticipantIDs) > 0 || len(exploreCtx.Domains) > 0 {
-		writeError(w, http.StatusBadRequest, "semantic_filter_unavailable", "Semantic ranking cannot safely apply participant or domain filters")
-		return query.SearchSpec{}, "", false
-	}
+	// Participant and domain filters are absent from the vector filter
+	// vocabulary (vector.Filter has directional from:/to: groups but no
+	// "involves this person or domain in any role" dimension), so they are
+	// never pushed into the ranking predicate. They still apply: the
+	// analytical context carries them into DuckDB, which narrows the ranked
+	// candidate set post-ranking — exact within the pool, whose completeness
+	// CandidatePoolSaturated already reports. Identity-scoped explore
+	// endpoints apply their participant/domain scope over semantic
+	// candidates the same way (see applyIdentityScope in
+	// handleExploreWithScope).
 	if exploreCtx.Deletion == query.DeletionDeleted {
 		writeError(w, http.StatusBadRequest, "semantic_deletion_unsupported", "Semantic and hybrid search cover active messages only; remove the deletion:deleted filter to search")
 		return query.SearchSpec{}, "", false

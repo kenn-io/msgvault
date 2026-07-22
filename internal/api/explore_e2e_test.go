@@ -96,10 +96,13 @@ func TestExploreParticipantGroupsResolveDurableLabelsEndToEnd(t *testing.T) {
 		Rows []query.ExploreGroupRow `json:"rows"`
 	}
 	requirements.NoError(json.Unmarshal(response.Body.Bytes(), &body))
-	requirements.Len(body.Rows, 1)
+	requirements.Len(body.Rows, 2)
 	assertions.Equal("1", body.Rows[0].Key)
 	assertions.Equal("Alice", body.Rows[0].Label)
 	assertions.Equal(int64(3), body.Rows[0].Count)
+	assertions.Equal("2", body.Rows[1].Key)
+	assertions.Equal("Bob", body.Rows[1].Label)
+	assertions.Equal(int64(1), body.Rows[1].Count)
 }
 
 func TestExplorePreflightPinsRevisionAndExcludesCompletePredicate(t *testing.T) {
@@ -386,9 +389,9 @@ func newExploreDuckDBFixtureWithDir(t *testing.T) (*query.DuckDBEngine, string) 
 				(3::BIGINT, 2::BIGINT, 'm3', 103::BIGINT, 'Other source', 'beta', TIMESTAMP '2026-07-18 09:00:00', 300::BIGINT, false, 0::INTEGER, NULL::TIMESTAMP, NULL::BIGINT, 'email', 2026, 7)`,
 		},
 		{dir: "sources", file: "sources.parquet", columns: "id, account_email, source_type", values: `(1::BIGINT, 'archive-a@example.com', 'gmail'), (2::BIGINT, 'archive-b@example.com', 'imap')`},
-		{dir: "participants", file: "participants.parquet", columns: "id, email_address, domain, display_name, phone_number", values: `(1::BIGINT, 'alice@example.com', 'example.com', 'Alice', '')`},
-		{dir: "participant_identifiers", file: "participant_identifiers.parquet", columns: "participant_id, identifier_type, identifier_value, display_value, is_primary", values: `(1::BIGINT, 'email', 'alice@example.com', 'alice@example.com', true)`},
-		{dir: "message_recipients", file: "message_recipients.parquet", columns: "message_id, participant_id, recipient_type, display_name", values: `(1::BIGINT, 1::BIGINT, 'from', 'Alice'), (2::BIGINT, 1::BIGINT, 'from', 'Alice'), (3::BIGINT, 1::BIGINT, 'from', 'Alice')`},
+		{dir: "participants", file: "participants.parquet", columns: "id, email_address, domain, display_name, phone_number", values: `(1::BIGINT, 'alice@example.com', 'example.com', 'Alice', ''), (2::BIGINT, 'bob@members.example', 'members.example', 'Bob', '')`},
+		{dir: "participant_identifiers", file: "participant_identifiers.parquet", columns: "participant_id, identifier_type, identifier_value, display_value, is_primary", values: `(1::BIGINT, 'email', 'alice@example.com', 'alice@example.com', true), (2::BIGINT, 'email', 'bob@members.example', 'bob@members.example', true)`},
+		{dir: "message_recipients", file: "message_recipients.parquet", columns: "message_id, participant_id, recipient_type, display_name", values: `(1::BIGINT, 1::BIGINT, 'from', 'Alice'), (2::BIGINT, 1::BIGINT, 'from', 'Alice'), (3::BIGINT, 1::BIGINT, 'from', 'Alice'), (3::BIGINT, 2::BIGINT, 'to', 'Bob')`},
 		{dir: "labels", file: "labels.parquet", columns: "id, name", values: `(0::BIGINT, '')`, empty: true},
 		{dir: "message_labels", file: "message_labels.parquet", columns: "message_id, label_id", values: `(0::BIGINT, 0::BIGINT)`, empty: true},
 		{dir: "attachments", file: "attachments.parquet", columns: "attachment_id, message_id, size, filename", values: `(11::BIGINT, 1::BIGINT, 10::BIGINT, 'older.txt'), (12::BIGINT, 2::BIGINT, 20::BIGINT, 'newest.pdf')`},

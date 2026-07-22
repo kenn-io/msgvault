@@ -562,6 +562,133 @@ func (e *recordingExploreEngine) Explore(ctx context.Context, request query.Expl
 	return e.Explorer.Explore(ctx, request)
 }
 
+// newReviewSemanticIntersectionServer builds a semantic explore server whose
+// vector backend ranks all three fixture messages, so participant and domain
+// filters can partition the candidate set: messages 1 and 2 involve only
+// Alice (participant 1, example.com) while message 3 also involves Bob
+// (participant 2, members.example).
+func newReviewSemanticIntersectionServer(t *testing.T) (*Server, *fakeVectorBackend) {
+	t.Helper()
+	backend := &fakeVectorBackend{
+		active: &vector.Generation{ID: 7, Model: "test", Dimension: 2, Fingerprint: "test:2", State: vector.GenerationActive},
+		searchHits: []vector.Hit{
+			{MessageID: 1, Score: .9, Rank: 1}, {MessageID: 2, Score: .8, Rank: 2}, {MessageID: 3, Score: .7, Rank: 3},
+		},
+	}
+	hybridEngine := hybrid.NewEngine(backend, nil, realEmbedder{dim: 2}, hybrid.Config{ExpectedFingerprint: "test:2"})
+	store := &mockStore{messages: []APIMessage{{ID: 1}, {ID: 2}, {ID: 3}}, total: 3, stats: &StoreStats{}}
+	srv := NewServerWithOptions(ServerOptions{
+		Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}}, Store: store,
+		Engine: newExploreDuckDBFixture(t), HybridEngine: hybridEngine, Backend: backend, Logger: testLogger(),
+	})
+	return srv, backend
+}
+
+func TestExploreSemanticParticipantAndDomainFiltersNarrowRankedCandidates(t *testing.T) {
+	tests := []struct {
+		name   string
+		filter string
+	}{
+		{name: "participant filter", filter: `{"dimension":"participant","values":["2"]}`},
+		{name: "domain filter", filter: `{"dimension":"domain","values":["members.example"]}`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertions := assert.New(t)
+			requirements := require.New(t)
+			srv, backend := newReviewSemanticIntersectionServer(t)
+
+			response := postExploreJSON(t, srv, "/api/v1/explore", fmt.Sprintf(
+				`{"query":"alpha","search_mode":"semantic","limit":10,"filters":[%s]}`, tt.filter,
+			))
+			requirements.Equal(http.StatusOK, response.Code, response.Body.String())
+			var body ExploreHTTPResponse
+			requirements.NoError(json.Unmarshal(response.Body.Bytes(), &body))
+			requirements.Len(body.Rows, 1, "only the ranked candidate involving the person or domain survives")
+			assertions.Equal("source:2:message:m3", body.Rows[0].Key)
+			assertions.False(body.CandidatePoolSaturated)
+			requirements.NotNil(body.SearchProvenance.VectorGeneration)
+			assertions.Equal(int64(7), *body.SearchProvenance.VectorGeneration)
+			assertions.NotEmpty(body.CandidateSnapshotID)
+			assertions.True(backend.searchFilter.IsEmpty(), "participant and domain filters must stay out of the vector ranking predicate")
+			assertions.Equal(exploreMaxLimit, backend.searchLimit, "the vector query still ranks the unnarrowed population")
+		})
+	}
+}
+
+func TestExploreSemanticGroupsAndPreflightAcceptParticipantFilter(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	srv, _ := newReviewSemanticIntersectionServer(t)
+
+	groups := postExploreJSON(t, srv, "/api/v1/explore/groups", `{
+		"grouping":["source"],"query":"alpha","search_mode":"semantic",
+		"filters":[{"dimension":"participant","values":["2"]}]
+	}`)
+	requirements.Equal(http.StatusOK, groups.Code, groups.Body.String())
+	var groupsBody ExploreGroupsHTTPResponse
+	requirements.NoError(json.Unmarshal(groups.Body.Bytes(), &groupsBody))
+	requirements.Len(groupsBody.Rows, 1)
+	assertions.Equal("2", groupsBody.Rows[0].Key, "only message 3's source remains after the participant intersection")
+	assertions.Equal(int64(1), groupsBody.Rows[0].Count)
+	assertions.Equal(int64(1), groupsBody.TotalCount)
+
+	list := postExploreJSON(t, srv, "/api/v1/explore", `{
+		"query":"alpha","search_mode":"semantic","limit":10,
+		"filters":[{"dimension":"participant","values":["2"]}]
+	}`)
+	requirements.Equal(http.StatusOK, list.Code, list.Body.String())
+	var listBody ExploreHTTPResponse
+	requirements.NoError(json.Unmarshal(list.Body.Bytes(), &listBody))
+	requirements.NotEmpty(listBody.CandidateSnapshotID)
+
+	preflight := postExploreJSON(t, srv, "/api/v1/explore/preflight", fmt.Sprintf(`{
+		"selection":{"mode":"all_matching","predicate":{"query":"alpha","search_mode":"semantic",
+		"filters":[{"dimension":"participant","values":["2"]}]},
+		"cache_revision":%q,"search_provenance":{"vector_generation":7},"candidate_snapshot_id":%q}
+	}`, listBody.CacheRevision, listBody.CandidateSnapshotID))
+	requirements.Equal(http.StatusOK, preflight.Code, preflight.Body.String())
+	var preflightBody ExplorePreflightResponse
+	requirements.NoError(json.Unmarshal(preflight.Body.Bytes(), &preflightBody))
+	assertions.Equal(int64(1), preflightBody.Count, "preflight counts the filtered candidate intersection")
+	assertions.Equal(int64(300), preflightBody.EstimatedBytes)
+	requirements.NotNil(preflightBody.SearchProvenance.VectorGeneration)
+	assertions.Equal(int64(7), *preflightBody.SearchProvenance.VectorGeneration)
+}
+
+func TestExploreHybridParticipantFilterNarrowsFusedCandidates(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	backend := &fakeFusingBackend{
+		fakeVectorBackend: &fakeVectorBackend{
+			active: &vector.Generation{ID: 7, Model: "test", Dimension: 2, Fingerprint: "test:2", State: vector.GenerationActive},
+		},
+		fusedHits: []vector.FusedHit{
+			{MessageID: 2, RRFScore: .9, VectorScore: .9}, {MessageID: 3, RRFScore: .8, VectorScore: .8},
+		},
+	}
+	hybridEngine := hybrid.NewEngine(backend, nil, realEmbedder{dim: 2}, hybrid.Config{ExpectedFingerprint: "test:2"})
+	store := &mockStore{messages: []APIMessage{{ID: 1}, {ID: 2}, {ID: 3}}, total: 3, stats: &StoreStats{}}
+	srv := NewServerWithOptions(ServerOptions{
+		Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}}, Store: store,
+		Engine: newExploreDuckDBFixture(t), HybridEngine: hybridEngine, Backend: backend, Logger: testLogger(),
+	})
+
+	response := postExploreJSON(t, srv, "/api/v1/explore", `{
+		"query":"alpha","search_mode":"hybrid","limit":10,
+		"filters":[{"dimension":"participant","values":["2"]}]
+	}`)
+	requirements.Equal(http.StatusOK, response.Code, response.Body.String())
+	var body ExploreHTTPResponse
+	requirements.NoError(json.Unmarshal(response.Body.Bytes(), &body))
+	requirements.Len(body.Rows, 1)
+	assertions.Equal("source:2:message:m3", body.Rows[0].Key)
+	requirements.NotNil(body.SearchProvenance.VectorGeneration)
+	assertions.Equal(int64(7), *body.SearchProvenance.VectorGeneration)
+	assertions.NotEmpty(body.SearchProvenance.LexicalIndexRevision)
+	assertions.Equal(1, backend.fusedCalls, "the fused ranking runs once, unnarrowed by the participant filter")
+}
+
 func TestExploreHybridMatchCountsUseCompleteLexicalMembership(t *testing.T) {
 	requirements := require.New(t)
 	srv := newReviewSemanticServerWithHits(t, []vector.Hit{{MessageID: 1, Score: .9, Rank: 1}})

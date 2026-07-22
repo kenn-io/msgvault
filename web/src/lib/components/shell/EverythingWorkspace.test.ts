@@ -764,6 +764,85 @@ describe('EverythingWorkspace', () => {
   });
 
 
+  it('drills and selects a People group during semantic search end-to-end', async () => {
+    window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
+    const requests: Request[] = [];
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      requests.push(request);
+      const path = new URL(request.url).pathname;
+      if (path.endsWith('/coverage')) return Response.json({
+        status: 'ready', eligible_count: 3, embedded_count: 3, percentage: 100,
+        vector_generation: 7, cache_revision: 'cache-1', actions: []
+      });
+      if (path.endsWith('/explore/files')) return Response.json({
+        files: [], total_count: 0, cache_revision: 'cache-1',
+        search_provenance: { vector_generation: 7 }, candidate_snapshot_id: 'snapshot-files'
+      });
+      if (path.endsWith('/groups')) {
+        const body = await request.clone().json();
+        const filtered = Array.isArray(body.filters) && body.filters.length > 0;
+        return Response.json({
+          rows: filtered
+            ? [{ key: '2', label: 'Bob', count: 1, estimated_bytes: 300, latest_at: '2026-07-18T12:00:00Z' }]
+            : [
+                { key: '1', label: 'Alice', count: 3, estimated_bytes: 630, latest_at: '2026-07-18T12:00:00Z' },
+                { key: '2', label: 'Bob', count: 1, estimated_bytes: 300, latest_at: '2026-07-18T12:00:00Z' }
+              ],
+          total_count: filtered ? 1 : 2,
+          cache_revision: 'cache-1',
+          search_provenance: { vector_generation: 7 },
+          candidate_snapshot_id: 'snapshot-groups'
+        });
+      }
+      return Response.json(exploreResponse({
+        rows: [entry(3)], total_count: 1,
+        search_provenance: { vector_generation: 7 },
+        candidate_snapshot_id: 'snapshot-entries'
+      }));
+    });
+    const state = new ExploreState(window);
+    state.replaceSearchDraft('alpha', 'semantic');
+    state.replaceTransient({ groupingChain: ['participant'] });
+    const rendered = render(AppShell, { client: createAPIClient(fetchFn), state });
+
+    await screen.findByText('Bob');
+    await fireEvent.click(screen.getByRole('button', { name: 'Drill into Bob' }));
+    await screen.findByText('Synthetic subject 3');
+
+    const entryRequest = requests.find((request) => new URL(request.url).pathname === '/api/v1/explore');
+    expect(entryRequest).toBeDefined();
+    const entryBody = await entryRequest!.clone().json();
+    expect(entryBody).toMatchObject({
+      query: 'alpha',
+      search_mode: 'semantic',
+      filters: [{ dimension: 'participant', values: ['2'] }]
+    });
+    expect(entryBody.candidate_snapshot_id).toBeUndefined();
+
+    const groupsBodies = async () => Promise.all(requests
+      .filter((request) => new URL(request.url).pathname === '/api/v1/explore/groups')
+      .map((request) => request.clone().json()));
+    await waitFor(async () => {
+      expect((await groupsBodies()).some((body) => body.limit === 1)).toBe(true);
+    });
+    const detailBody = (await groupsBodies()).find((body) => body.limit === 1);
+    expect(detailBody).toMatchObject({
+      query: 'alpha',
+      search_mode: 'semantic',
+      filters: [{ dimension: 'participant', values: ['2'] }],
+      grouping: ['participant'],
+      limit: 1
+    });
+    expect(detailBody.candidate_snapshot_id).toBeUndefined();
+    expect(state.current.selectedRow).toBe('group:participant:2');
+    expect(state.current.filters).toEqual([{ dimension: 'participant', values: ['2'] }]);
+    expect(state.current.groupingChain).toEqual([]);
+    rendered.unmount();
+    state.destroy();
+  });
+
+
   it('aborts superseded and destroyed requests without destroying injected state', async () => {
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
     const signals: AbortSignal[] = [];
