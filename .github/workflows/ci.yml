@@ -109,6 +109,9 @@ jobs:
       - name: Install container build tools
         run: apt-get update && apt-get install -y --no-install-recommends make unzip
 
+      - name: Trust the checkout in the container
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version-file: web/package.json
@@ -144,7 +147,10 @@ jobs:
           go-version-file: go.mod
 
       - name: Install container build tools
-        run: apt-get update && apt-get install -y --no-install-recommends make unzip
+        run: apt-get update && apt-get install -y --no-install-recommends gcc g++ make unzip
+
+      - name: Trust the checkout in the container
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:

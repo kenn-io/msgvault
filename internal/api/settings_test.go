@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -70,7 +71,9 @@ func TestPatchSettingsPreservesFileAndReturnsNewETag(t *testing.T) {
 	require := require.New(t)
 	srv, path := newSettingsTestServer(t, "# operator comment\n[unknown]\nkeep = true\n\n"+
 		"[web]\ntheme = \"system\" # display\n")
-	require.NoError(os.Chmod(path, 0o640))
+	if runtime.GOOS != "windows" {
+		require.NoError(os.Chmod(path, 0o640))
+	}
 	get := performSettingsRequest(t, srv, http.MethodGet, settingsPath, nil, "", "")
 	etag := get.Header().Get("ETag")
 
@@ -81,9 +84,14 @@ func TestPatchSettingsPreservesFileAndReturnsNewETag(t *testing.T) {
 	got, err := os.ReadFile(path)
 	require.NoError(err)
 	assert.Equal("# operator comment\n[unknown]\nkeep = true\n\n[web]\ntheme = \"dark\" # display\n", string(got))
-	info, err := os.Stat(path)
-	require.NoError(err)
-	assert.Equal(os.FileMode(0o640), info.Mode().Perm())
+	if runtime.GOOS != "windows" {
+		// Unix mode preservation. Windows security lives in the DACL, which
+		// the config package's own Windows tests verify; Stat mode bits there
+		// are synthetic.
+		info, err := os.Stat(path)
+		require.NoError(err)
+		assert.Equal(os.FileMode(0o640), info.Mode().Perm())
+	}
 }
 
 func TestPatchSettingsValidatesWholeCandidateAndRejectsUnknownKeys(t *testing.T) {
@@ -217,9 +225,7 @@ func TestPatchSettingsRejectsTrailingJSON(t *testing.T) {
 func TestPatchSettingsClassifiesFilesystemFailureAsServerError(t *testing.T) {
 	srv, path := newSettingsTestServer(t, "[web]\ntheme = \"system\"\n")
 	get := performSettingsRequest(t, srv, http.MethodGet, settingsPath, nil, "", "")
-	dir := filepath.Dir(path)
-	require.NoError(t, os.Chmod(dir, 0o500))
-	t.Cleanup(func() { require.NoError(t, os.Chmod(dir, 0o700)) })
+	blockSettingsConfigFilesystem(t, path)
 
 	resp := performSettingsRequest(t, srv, http.MethodPatch, settingsPath,
 		[]byte(`{"updates":[{"key":"web.theme","value":{"string":"dark"}}]}`),

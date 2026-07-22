@@ -16,10 +16,25 @@ import (
 func writeSecureWindowsTestConfig(t *testing.T, path string, content []byte) {
 	t.Helper()
 	require.NoError(t, os.WriteFile(path, content, 0o600))
-	file, err := os.OpenFile(path, os.O_RDWR, 0)
+	// os.OpenFile never requests WRITE_DAC, which SetSecurityInfo requires,
+	// so open the fixture with an explicit access mask. The deferred close
+	// keeps a failed hardening attempt from leaking a handle that would block
+	// TempDir cleanup.
+	encoded, err := windows.UTF16PtrFromString(path)
 	require.NoError(t, err)
+	handle, err := windows.CreateFile(
+		encoded,
+		windows.GENERIC_READ|windows.GENERIC_WRITE|windows.READ_CONTROL|windows.WRITE_DAC,
+		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE,
+		nil,
+		windows.OPEN_EXISTING,
+		windows.FILE_ATTRIBUTE_NORMAL,
+		0,
+	)
+	require.NoError(t, err)
+	file := os.NewFile(uintptr(handle), path)
+	defer func() { require.NoError(t, file.Close()) }()
 	require.NoError(t, secureConfigCandidate(file, path, 0o600))
-	require.NoError(t, file.Close())
 }
 
 func TestWindowsConfigReplacementSupportsVerifiedRollback(t *testing.T) {
@@ -110,6 +125,9 @@ func TestWindowsRetainedAuthorityBlocksIntermediateRenameAndAllowsReplace(t *tes
 	require.NoError(t, err)
 	authority, err := pinWindowsConfigParent(target)
 	require.NoError(t, err)
+	// Release is idempotent; this cleanup only matters when an assertion
+	// aborts the test before the explicit release below.
+	t.Cleanup(func() { require.NoError(t, authority.Release()) })
 	encodedParent, err := windows.UTF16PtrFromString(parent)
 	require.NoError(t, err)
 	deleter, err := windows.CreateFile(encodedParent, windows.DELETE,
@@ -124,6 +142,7 @@ func TestWindowsRetainedAuthorityBlocksIntermediateRenameAndAllowsReplace(t *tes
 	require.Error(t, err, "retained intermediate handle must deny rename")
 	replacement, err := beginConfigReplacement(candidate, target, candidateBefore, targetBefore)
 	require.NoError(t, err, "ReplaceFileW on a child must work while parent handles are retained")
+	t.Cleanup(func() { _ = replacement.release() })
 	assert.Equal(t, []byte("new"), mustReadFile(t, target))
 	require.NotNil(t, replacement.cleanupDisplaced)
 	require.NoError(t, replacement.cleanupDisplaced())
@@ -147,12 +166,14 @@ func TestWindowsRetainedAuthorityAllowsMissingPublication(t *testing.T) {
 	require.NoError(t, err)
 	authority, err := pinWindowsConfigParent(target)
 	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, authority.Release()) })
 
 	retained, err := retainWindowsConfigArtifact(candidate, mustConfigIdentity(t, candidate))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, retained.Close()) })
 	publication, err := publishNewConfig(candidate, retained, before)
 	require.NoError(t, err, "MoveFileExW on a child must work while parent handles are retained")
+	t.Cleanup(func() { _ = publication.release() })
 	assert.Equal(t, []byte("new"), mustReadFile(t, target))
 	require.NoError(t, publication.release())
 	require.NoError(t, authority.Release())
