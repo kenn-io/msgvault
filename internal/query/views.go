@@ -384,10 +384,20 @@ func createConvenienceViews(db *sql.DB) error {
 	return nil
 }
 
+// sqlAnalyticalEntriesParticipantLabel renders the canonical participant
+// label used by every analytical participant list: display name, then phone
+// number, then email address, then empty string. alias is the participants
+// table alias. Any query that rebuilds participant labels outside the
+// analytical_entries view (the explore/files page-enrichment fast paths)
+// must use this so labels cannot drift from the view's.
+func sqlAnalyticalEntriesParticipantLabel(alias string) string {
+	return "COALESCE(NULLIF(" + alias + ".display_name, ''), NULLIF(" + alias + ".phone_number, ''), " + alias + ".email_address, '')"
+}
+
 // sqlAnalyticalEntries normalizes every durable message-shaped source row.
 // Logical row-unit selection deliberately remains in Explore so Context can be
 // applied before chat conversations are aggregated.
-const sqlAnalyticalEntries = `
+var sqlAnalyticalEntries = `
 CREATE OR REPLACE VIEW analytical_entries AS
 WITH message_participant_links AS (
     SELECT message_id, participant_id
@@ -400,7 +410,7 @@ WITH message_participant_links AS (
     SELECT
         link.message_id,
         list_sort(list_distinct(list(link.participant_id))) AS participant_ids,
-        list_sort(list_distinct(list(COALESCE(NULLIF(p.display_name, ''), NULLIF(p.phone_number, ''), p.email_address, '')))) AS participant_labels,
+        list_sort(list_distinct(list(` + sqlAnalyticalEntriesParticipantLabel("p") + `))) AS participant_labels,
         list_sort(list_distinct(list(COALESCE(p.domain, '')))) AS participant_domains
     FROM message_participant_links link
     JOIN participants p ON p.id = link.participant_id
@@ -409,7 +419,7 @@ WITH message_participant_links AS (
     SELECT
         cp.conversation_id,
         list_sort(list_distinct(list(cp.participant_id))) AS participant_ids,
-        list_sort(list_distinct(list(COALESCE(NULLIF(p.display_name, ''), NULLIF(p.phone_number, ''), p.email_address, '')))) AS participant_labels,
+        list_sort(list_distinct(list(` + sqlAnalyticalEntriesParticipantLabel("p") + `))) AS participant_labels,
         list_sort(list_distinct(list(COALESCE(p.domain, '')))) AS participant_domains
     FROM conversation_participants cp
     JOIN participants p ON p.id = cp.participant_id

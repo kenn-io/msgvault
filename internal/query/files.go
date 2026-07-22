@@ -105,13 +105,23 @@ func (e *DuckDBEngine) SearchFiles(ctx context.Context, request FileSearchReques
 	if err != nil {
 		return nil, fmt.Errorf("read committed cache state: %w", err)
 	}
-	population, args := filteredFilePopulationSQL(request.Explore, request.FilenameQuery, request.MIMEFamilies)
+	exploreConditions, exploreArgs := buildExploreConditions(request.Explore)
+	fileConditions, fileArgs := buildFileConditions(request.FilenameQuery, request.MIMEFamilies)
 	limit := request.Page.Limit
 	if limit == 0 {
 		limit = 100
 	}
+	args := append(append([]any{}, exploreArgs...), fileArgs...)
 	args = append(args, limit, request.Page.Offset)
-	rows, err := e.db.QueryContext(ctx, fileSearchSQL(population, order), args...)
+	var queryText string
+	if !e.exploreFastPathDisabled && !exploreConditionsTouchParticipantLists(request.Explore) {
+		queryText = buildFileSearchFastSQL(exploreConditions, fileConditions, order)
+		args = append(args, exploreArgs...) // total-count scan
+		args = append(args, fileArgs...)
+	} else {
+		queryText = fileSearchSQL(filePopulationSQL(exploreConditions, fileConditions), order)
+	}
+	rows, err := e.db.QueryContext(ctx, queryText, args...)
 	if err != nil {
 		return nil, fmt.Errorf("search analytical files: %w", err)
 	}
@@ -238,9 +248,19 @@ func filteredFilePopulationSQL(
 	mimeFamilies []FileMIMEFamily,
 ) (string, []any) {
 	conditions, args := buildExploreConditions(explore)
-	fileConditions := []string{"true"}
+	fileConditions, fileArgs := buildFileConditions(filenameQuery, mimeFamilies)
+	return filePopulationSQL(conditions, fileConditions), append(args, fileArgs...)
+}
+
+// buildFileConditions renders the attachment-level predicates (filename
+// substring, MIME family) applied on top of the explore conditions. The
+// returned SQL references the filename and mime_family columns of the
+// classified attachment population.
+func buildFileConditions(filenameQuery string, mimeFamilies []FileMIMEFamily) (string, []any) {
+	conditions := []string{"true"}
+	var args []any
 	if query := strings.TrimSpace(filenameQuery); query != "" {
-		fileConditions = append(fileConditions, "contains(lower(filename), lower(?))")
+		conditions = append(conditions, "contains(lower(filename), lower(?))")
 		args = append(args, query)
 	}
 	if len(mimeFamilies) > 0 {
@@ -249,9 +269,9 @@ func filteredFilePopulationSQL(
 			parts[i] = "?"
 			args = append(args, family)
 		}
-		fileConditions = append(fileConditions, "mime_family IN ("+strings.Join(parts, ",")+")")
+		conditions = append(conditions, "mime_family IN ("+strings.Join(parts, ",")+")")
 	}
-	return filePopulationSQL(conditions, strings.Join(fileConditions, " AND ")), args
+	return strings.Join(conditions, " AND "), args
 }
 
 func fileGroupExpressions(dimension string) (key, label, fromSuffix, whereSuffix string, err error) {
@@ -304,7 +324,32 @@ func fileSearchOrder(sort SortSpec) (string, error) {
 	}
 }
 
-func filePopulationSQL(exploreConditions, fileConditions string) string {
+// sqlFileMIMEFamilyExpr renders the attachment MIME-type → mime_family
+// mapping. alias is the attachments table alias. Shared by the population
+// CTE and the fast-path count scan so classifications cannot drift.
+func sqlFileMIMEFamilyExpr(alias string) string {
+	mime := "lower(" + alias + ".mime_type)"
+	return `CASE
+			WHEN ` + mime + ` LIKE 'image/%' THEN 'image'
+			WHEN ` + mime + ` = 'application/pdf' THEN 'pdf'
+			WHEN ` + mime + ` LIKE 'audio/%' THEN 'audio'
+			WHEN ` + mime + ` LIKE 'video/%' THEN 'video'
+			WHEN ` + mime + ` LIKE 'text/%' THEN 'text'
+			WHEN ` + mime + ` IN ('application/msword', 'application/rtf',
+				'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+				'application/vnd.oasis.opendocument.text') THEN 'document'
+			WHEN ` + mime + ` IN ('application/zip', 'application/gzip', 'application/x-tar',
+				'application/x-7z-compressed', 'application/x-rar-compressed') THEN 'archive'
+			ELSE 'other'
+		END`
+}
+
+// fileFilteredCTE renders the selected → classified → filtered CTE chain
+// shared by filePopulationSQL and buildFileSearchFastSQL: the analytical
+// population narrowed by explore conditions, joined to attachments, with
+// attachment-level predicates applied. The WITH clause is left open for the
+// caller to append further CTEs.
+func fileFilteredCTE(exploreConditions, fileConditions string) string {
 	return `
 WITH selected AS (
 	SELECT * FROM analytical_entries WHERE ` + exploreConditions + `
@@ -312,24 +357,16 @@ WITH selected AS (
 	SELECT
 		a.attachment_id, a.message_id, COALESCE(a.size, 0)::BIGINT AS size,
 		COALESCE(a.filename, '') AS filename, COALESCE(a.mime_type, '') AS mime_type,
-		CASE
-			WHEN lower(a.mime_type) LIKE 'image/%' THEN 'image'
-			WHEN lower(a.mime_type) = 'application/pdf' THEN 'pdf'
-			WHEN lower(a.mime_type) LIKE 'audio/%' THEN 'audio'
-			WHEN lower(a.mime_type) LIKE 'video/%' THEN 'video'
-			WHEN lower(a.mime_type) LIKE 'text/%' THEN 'text'
-			WHEN lower(a.mime_type) IN ('application/msword', 'application/rtf',
-				'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-				'application/vnd.oasis.opendocument.text') THEN 'document'
-			WHEN lower(a.mime_type) IN ('application/zip', 'application/gzip', 'application/x-tar',
-				'application/x-7z-compressed', 'application/x-rar-compressed') THEN 'archive'
-			ELSE 'other'
-		END AS mime_family,
+		` + sqlFileMIMEFamilyExpr("a") + ` AS mime_family,
 		s.*
 	FROM selected s JOIN attachments a ON a.message_id = s.message_id
 ), filtered AS (
 	SELECT * FROM classified WHERE ` + fileConditions + `
-), file_population AS (
+)`
+}
+
+func filePopulationSQL(exploreConditions, fileConditions string) string {
+	return fileFilteredCTE(exploreConditions, fileConditions) + `, file_population AS (
 	SELECT *,
 		list_sort(list_distinct(list_concat(participant_ids, conversation_participant_ids))) AS file_participant_ids,
 		list_sort(list_distinct(list_concat(participant_domains, conversation_participant_domains))) AS file_participant_domains
@@ -362,4 +399,79 @@ SELECT
 	CAST(COALESCE(to_json(file_participant_domains), '[]') AS VARCHAR),
 	total_count
 FROM counted ORDER BY ` + order + ` LIMIT ? OFFSET ?`
+}
+
+// buildFileSearchFastSQL builds the two-phase file page query used when
+// exploreConditionsTouchParticipantLists is false. Phase one orders and
+// limits the filtered attachment population without referencing any
+// participant list column, so the whole-archive per-message list assembly
+// inside analytical_entries is pruned; phase two rebuilds the participant
+// facts for the ≤limit page rows only from the base tables, with the same
+// union the view's per-message lists concatenated with the conversation
+// lists reduce to: recipients plus sender (message_participant_links in
+// sqlAnalyticalEntries) plus the message's conversation participants.
+//
+// The total count runs as its own slim aggregate: COUNT(*) OVER () on the
+// page pipeline would materialize every pre-LIMIT row with its string
+// columns (measured 3x slower on a 208k-attachment archive). Bind order:
+// explore condition args (selected), file condition args (filtered), limit,
+// offset (page), explore condition args again and file condition args again
+// (total).
+//
+// Output columns, ordering, and pagination are identical to fileSearchSQL;
+// TestSearchFilesFastPathMatchesLegacy pins the equivalence.
+func buildFileSearchFastSQL(exploreConditions, fileConditions, order string) string {
+	return fileFilteredCTE(exploreConditions, fileConditions) + `, page AS (
+	SELECT * FROM filtered
+	ORDER BY ` + order + ` LIMIT ? OFFSET ?
+), total AS (
+	SELECT COUNT(*) AS total_count FROM (
+		SELECT COALESCE(a.filename, '') AS filename, ` + sqlFileMIMEFamilyExpr("a") + ` AS mime_family
+		FROM (SELECT message_id FROM analytical_entries WHERE ` + exploreConditions + `) s
+		JOIN attachments a ON a.message_id = s.message_id
+	) WHERE ` + fileConditions + `
+), page_ids AS (
+	SELECT DISTINCT message_id, conversation_id FROM page
+), page_links AS (
+	SELECT pid.message_id, mr.participant_id
+	FROM page_ids pid JOIN message_recipients mr ON mr.message_id = pid.message_id
+	UNION ALL
+	SELECT pid.message_id, msg.sender_id AS participant_id
+	FROM page_ids pid JOIN messages msg ON msg.id = pid.message_id
+	WHERE msg.sender_id IS NOT NULL
+	UNION ALL
+	SELECT pid.message_id, cp.participant_id
+	FROM page_ids pid JOIN conversation_participants cp ON cp.conversation_id = pid.conversation_id
+), page_facts AS (
+	SELECT links.message_id,
+		list_sort(list_distinct(list(links.participant_id))) AS file_participant_ids,
+		list_sort(list_distinct(list(` + sqlAnalyticalEntriesParticipantLabel("pt") + `))) AS file_participant_labels,
+		list_sort(list_distinct(list(COALESCE(pt.domain, '')))) AS file_participant_domains
+	FROM page_links links
+	JOIN participants pt ON pt.id = links.participant_id
+	GROUP BY links.message_id
+), enriched AS (
+	SELECT page.*, f.file_participant_ids, f.file_participant_labels, f.file_participant_domains,
+		(SELECT total_count FROM total) AS total_count
+	FROM page LEFT JOIN page_facts f ON f.message_id = page.message_id
+)
+SELECT
+	attachment_id,
+	CASE WHEN lower(message_type) IN (` + TextMessageTypeSQLList + `)
+		OR (lower(message_type) IN ('', 'chat', 'text') AND lower(conversation_type) IN ('direct_chat', 'group_chat', 'channel', 'chat'))
+		THEN 'source:' || CAST(source_id AS VARCHAR) || ':conversation:' || CAST(conversation_id AS VARCHAR) || ':file:' || CAST(attachment_id AS VARCHAR)
+		ELSE 'source:' || CAST(source_id AS VARCHAR) || ':message:' || COALESCE(NULLIF(source_message_id, ''), CAST(message_id AS VARCHAR)) || ':file:' || CAST(attachment_id AS VARCHAR) END,
+	CASE WHEN lower(message_type) IN (` + TextMessageTypeSQLList + `)
+		OR (lower(message_type) IN ('', 'chat', 'text') AND lower(conversation_type) IN ('direct_chat', 'group_chat', 'channel', 'chat'))
+		THEN 'source:' || CAST(source_id AS VARCHAR) || ':conversation:' || CAST(conversation_id AS VARCHAR)
+		ELSE 'source:' || CAST(source_id AS VARCHAR) || ':message:' || COALESCE(NULLIF(source_message_id, ''), CAST(message_id AS VARCHAR)) END,
+	message_id, conversation_id, occurred_at, source_id, source_type, source_identifier,
+	COALESCE(NULLIF(subject, ''), NULLIF(conversation_title, ''), snippet, ''),
+	snippet,
+	filename, mime_type, mime_family, size,
+	CAST(COALESCE(to_json(file_participant_ids), '[]') AS VARCHAR),
+	CAST(COALESCE(to_json(file_participant_labels), '[]') AS VARCHAR),
+	CAST(COALESCE(to_json(file_participant_domains), '[]') AS VARCHAR),
+	total_count
+FROM enriched ORDER BY ` + order
 }

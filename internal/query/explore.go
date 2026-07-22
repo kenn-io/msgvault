@@ -53,15 +53,24 @@ func (e *DuckDBEngine) Explore(ctx context.Context, request ExploreRequest) (*Ex
 	if err != nil {
 		return nil, fmt.Errorf("read committed cache state: %w", err)
 	}
-	conditions, args := buildExploreConditions(request)
+	conditions, conditionArgs := buildExploreConditions(request)
 	candidateRankExpression, candidateRankArgs := buildExploreCandidateRank(request.Search)
-	queryText := buildExploreSQL(conditions, candidateRankExpression, e.parquetPath(datasetParticipantClusters), e.parquetPath(datasetOwnerParticipants))
-	args = append(args, candidateRankArgs...)
 	limit := request.Page.Limit
 	if limit == 0 {
 		limit = defaultExploreLimit
 	}
-	args = append(args, limit, request.Page.Offset)
+	countArgs := append(append([]any{}, conditionArgs...), candidateRankArgs...)
+	args := append(append([]any{}, countArgs...), limit, request.Page.Offset)
+	var queryText string
+	if !e.exploreFastPathDisabled && !exploreConditionsTouchParticipantLists(request) {
+		queryText = buildExploreFastListingSQL(conditions, candidateRankExpression,
+			e.parquetPath(datasetParticipantClusters), e.parquetPath(datasetOwnerParticipants))
+		args = append(args, conditionArgs...) // membership rescan
+		args = append(args, conditionArgs...) // total-count scan
+	} else {
+		queryText = buildExploreSQL(conditions, candidateRankExpression,
+			e.parquetPath(datasetParticipantClusters), e.parquetPath(datasetOwnerParticipants))
+	}
 
 	rows, err := e.db.QueryContext(ctx, queryText, args...)
 	if err != nil {
@@ -116,7 +125,6 @@ func (e *DuckDBEngine) Explore(ctx context.Context, request ExploreRequest) (*Ex
 		return nil, fmt.Errorf("iterate analytical entries: %w", err)
 	}
 	if len(response.Rows) == 0 && request.Page.Offset > 0 {
-		countArgs := args[:len(args)-2]
 		if err := e.db.QueryRowContext(ctx, buildExploreCountSQL(conditions, candidateRankExpression), countArgs...).Scan(&response.TotalCount); err != nil {
 			return nil, fmt.Errorf("count analytical entries beyond page: %w", err)
 		}
@@ -293,12 +301,17 @@ func buildExploreConditions(request ExploreRequest) (string, []any) {
 		}
 	}
 	appendStringAnyOf(request.Context.MessageTypes, "lower(message_type) = lower(?)")
+	// CAST(? AS TIMESTAMP) pins the bound time to its UTC wall clock. The Go
+	// DuckDB driver binds time.Time as TIMESTAMP WITH TIME ZONE; left uncast,
+	// the comparison would coerce the naive-UTC occurred_at column to
+	// TIMESTAMPTZ on every row — a per-row ICU session-timezone conversion
+	// (see buildRelationshipsSQL for the measured cost of the same hazard).
 	if request.Context.After != nil {
-		conditions = append(conditions, "occurred_at >= ?")
+		conditions = append(conditions, "occurred_at >= CAST(? AS TIMESTAMP)")
 		args = append(args, request.Context.After.UTC())
 	}
 	if request.Context.Before != nil {
-		conditions = append(conditions, "occurred_at < ?")
+		conditions = append(conditions, "occurred_at < CAST(? AS TIMESTAMP)")
 		args = append(args, request.Context.Before.UTC())
 	}
 	switch request.Context.Deletion {
@@ -388,6 +401,136 @@ func buildExploreCountSQL(conditions, candidateRankExpression string) string {
 SELECT COUNT(*) FROM logical_entries`
 }
 
+// exploreConditionsTouchParticipantLists reports whether buildExploreConditions
+// renders predicates over the per-message participant list columns for this
+// request. Those predicates force analytical_entries to assemble participant
+// lists for the whole archive during filtering, so the two-phase listing fast
+// path (which rescans the filtered population) would pay that cost twice; such
+// requests keep the single-pass legacy query.
+func exploreConditionsTouchParticipantLists(request ExploreRequest) bool {
+	return len(request.Context.ParticipantIDs) > 0 || len(request.Context.Domains) > 0
+}
+
+// buildExploreFastListingSQL builds the two-phase entry-row page query used
+// when exploreConditionsTouchParticipantLists is false. Phase one selects the
+// page (ORDER BY + LIMIT/OFFSET) from logical entries WITHOUT participant
+// list columns, so the whole-archive per-message list aggregation inside
+// analytical_entries is pruned; phase two rebuilds participant_ids and
+// participant_labels for the ≤limit page rows only, from the same base tables
+// with the same expressions the view uses:
+//
+//   - a non-conversation entry is one message (its anchor), whose analytical
+//     participant list is its recipients plus its sender
+//     (message_participant_links in sqlAnalyticalEntries);
+//   - a conversation entry aggregates the message-level lists of the chat
+//     messages that pass the same filter conditions ("membership" re-applies
+//     them), plus the conversation's own participant rows. Per-message
+//     conversation-level lists are constant across a group, so the flattened
+//     concat in the legacy chat arm reduces to this union.
+//
+// The total count runs as its own aggregate over the filtered population:
+// COUNT(*) OVER () on the page pipeline would materialize every pre-LIMIT
+// row, and a scalar subquery on logical_entries would force DuckDB to
+// materialize the doubly-referenced CTE with its string columns (both
+// measured slower). Bind order: condition args (filtered), candidate-rank
+// args (classified), limit, offset (page), condition args again (membership),
+// condition args again (total).
+//
+// Output columns, ordering, and pagination are identical to buildExploreSQL;
+// TestExploreListingFastPathMatchesLegacy pins the equivalence.
+func buildExploreFastListingSQL(conditions, candidateRankExpression, clustersGlob, ownersGlob string) string {
+	return buildExploreFilteredClassifiedCTE(conditions, candidateRankExpression) +
+		exploreLogicalEntriesCTE(false) + fmt.Sprintf(`
+), page AS (
+    SELECT * FROM logical_entries
+    ORDER BY occurred_at DESC, source_id ASC, entry_key ASC
+    LIMIT ? OFFSET ?
+), membership AS (
+    SELECT source_id, conversation_id, message_id
+    FROM analytical_entries
+    WHERE (%s) AND (%s)
+), page_messages AS (
+    SELECT p.entry_key, p.anchor_message_id AS message_id
+    FROM page p WHERE p.entry_kind <> 'conversation'
+    UNION ALL
+    SELECT p.entry_key, m.message_id
+    FROM page p JOIN membership m
+      ON m.source_id = p.source_id AND m.conversation_id = p.conversation_id
+    WHERE p.entry_kind = 'conversation'
+), page_participant_links AS (
+    SELECT pm.entry_key, mr.participant_id
+    FROM page_messages pm JOIN message_recipients mr ON mr.message_id = pm.message_id
+    UNION ALL
+    SELECT pm.entry_key, msg.sender_id AS participant_id
+    FROM page_messages pm JOIN messages msg ON msg.id = pm.message_id
+    WHERE msg.sender_id IS NOT NULL
+    UNION ALL
+    SELECT p.entry_key, cp.participant_id
+    FROM page p JOIN conversation_participants cp ON cp.conversation_id = p.conversation_id
+    WHERE p.entry_kind = 'conversation'
+), page_participant_facts AS (
+    SELECT links.entry_key,
+        list_sort(list_distinct(list(links.participant_id))) AS participant_ids,
+        list_sort(list_distinct(list(%s))) AS participant_labels
+    FROM page_participant_links links
+    JOIN participants pt ON pt.id = links.participant_id
+    GROUP BY links.entry_key
+), total AS (
+    SELECT COUNT(*) FILTER (WHERE NOT is_chat)
+         + COUNT(DISTINCT (source_id, conversation_id)) FILTER (WHERE is_chat) AS total_count
+    FROM (
+        SELECT source_id, conversation_id,
+            %s AS is_chat
+        FROM analytical_entries
+        WHERE %s
+    )
+), clusters AS (
+    SELECT participant_id, canonical_id FROM read_parquet('%s')
+), owners AS (
+    SELECT DISTINCT participant_id FROM read_parquet('%s')
+), canon AS (
+    SELECT p.id AS participant_id, COALESCE(c.canonical_id, p.id) AS canonical_id
+    FROM participants p LEFT JOIN clusters c ON c.participant_id = p.id
+), owner_canon AS (
+    SELECT DISTINCT cn.canonical_id FROM owners o JOIN canon cn ON cn.participant_id = o.participant_id
+), owner_participant_ids AS (
+    SELECT DISTINCT cn.participant_id FROM canon cn
+    WHERE cn.canonical_id IN (SELECT canonical_id FROM owner_canon)
+)
+SELECT
+    p.entry_key,
+    p.entry_kind,
+    p.anchor_message_id,
+    p.conversation_id,
+    p.occurred_at,
+    p.source_id,
+    p.source_type,
+    p.source_identifier,
+    p.message_type,
+    p.conversation_type,
+    p.title,
+    p.preview,
+    CAST(COALESCE(to_json(f.participant_ids), '[]') AS VARCHAR) AS participant_ids,
+    CAST(COALESCE(to_json(f.participant_labels), '[]') AS VARCHAR) AS participant_labels,
+	p.strongest_matched_message_id,
+    p.message_count,
+    p.has_attachments,
+    p.attachment_count,
+    p.attachment_size,
+    p.deleted_from_source,
+    (SELECT total_count FROM total) AS total_count,
+    CASE WHEN NOT EXISTS (SELECT 1 FROM owners) THEN NULL
+        ELSE (SELECT MIN(pid) FROM UNNEST(COALESCE(f.participant_ids, []::BIGINT[])) AS u(pid)
+              WHERE pid NOT IN (SELECT participant_id FROM owner_participant_ids))
+    END AS counterpart_participant_id
+FROM page p LEFT JOIN page_participant_facts f ON f.entry_key = p.entry_key
+ORDER BY p.occurred_at DESC, p.source_id ASC, p.entry_key ASC`,
+		conditions, sqlIsChatPredicate("message_type", "conversation_type"),
+		sqlAnalyticalEntriesParticipantLabel("pt"),
+		sqlIsChatPredicate("message_type", "conversation_type"), conditions,
+		clustersGlob, ownersGlob)
+}
+
 func buildExploreLogicalSQL(conditions string) string {
 	return buildExploreLogicalSQLWithCandidateRank(conditions, "NULL::BIGINT")
 }
@@ -434,7 +577,31 @@ WITH filtered AS (
 }
 
 func buildExploreLogicalSQLWithCandidateRank(conditions, candidateRankExpression string) string {
-	return buildExploreFilteredClassifiedCTE(conditions, candidateRankExpression) + `, logical_entries AS (
+	return buildExploreFilteredClassifiedCTE(conditions, candidateRankExpression) +
+		exploreLogicalEntriesCTE(true)
+}
+
+// exploreLogicalEntriesCTE renders the logical_entries CTE (appended directly
+// after buildExploreFilteredClassifiedCTE, left unclosed for the caller).
+// withParticipantLists controls whether the three participant list columns
+// are projected. They come from per-message list aggregation over the whole
+// archive inside analytical_entries, which dominates listing latency; the
+// Explore fast path omits them here and rebuilds them for the ≤limit page
+// rows only (see buildExploreFastListingSQL).
+func exploreLogicalEntriesCTE(withParticipantLists bool) string {
+	messageLists := ""
+	conversationLists := ""
+	if withParticipantLists {
+		messageLists = `
+        participant_ids,
+        participant_labels,
+		list_sort(list_distinct(list_concat(participant_domains, conversation_participant_domains))) AS participant_domains,`
+		conversationLists = `
+        list_sort(list_distinct(flatten(list(list_concat(participant_ids, conversation_participant_ids))))) AS participant_ids,
+        list_sort(list_distinct(flatten(list(list_concat(participant_labels, conversation_participant_labels))))) AS participant_labels,
+		list_sort(list_distinct(flatten(list(list_concat(participant_domains, conversation_participant_domains))))) AS participant_domains,`
+	}
+	return `, logical_entries AS (
     SELECT
         'source:' || CAST(source_id AS VARCHAR) || ':message:' || COALESCE(NULLIF(source_message_id, ''), CAST(message_id AS VARCHAR)) AS entry_key,
         entry_kind,
@@ -447,10 +614,7 @@ func buildExploreLogicalSQLWithCandidateRank(conditions, candidateRankExpression
         message_type,
         conversation_type,
         COALESCE(NULLIF(subject, ''), NULLIF(conversation_title, ''), snippet, '') AS title,
-        snippet AS preview,
-        participant_ids,
-        participant_labels,
-		list_sort(list_distinct(list_concat(participant_domains, conversation_participant_domains))) AS participant_domains,
+        snippet AS preview,` + messageLists + `
 		CASE WHEN candidate_rank IS NOT NULL THEN message_id ELSE NULL END AS strongest_matched_message_id,
 		1::BIGINT AS message_count,
 		(size_estimate + attachment_size)::BIGINT AS estimated_bytes,
@@ -478,10 +642,7 @@ func buildExploreLogicalSQLWithCandidateRank(conditions, candidateRankExpression
         arg_max(message_type, struct_pack(occurred_at := occurred_at, message_id := message_id)) AS message_type,
         arg_max(conversation_type, struct_pack(occurred_at := occurred_at, message_id := message_id)) AS conversation_type,
         COALESCE(NULLIF(MAX(conversation_title), ''), 'Conversation') AS title,
-        arg_max(snippet, struct_pack(occurred_at := occurred_at, message_id := message_id)) AS preview,
-        list_sort(list_distinct(flatten(list(list_concat(participant_ids, conversation_participant_ids))))) AS participant_ids,
-        list_sort(list_distinct(flatten(list(list_concat(participant_labels, conversation_participant_labels))))) AS participant_labels,
-		list_sort(list_distinct(flatten(list(list_concat(participant_domains, conversation_participant_domains))))) AS participant_domains,
+        arg_max(snippet, struct_pack(occurred_at := occurred_at, message_id := message_id)) AS preview,` + conversationLists + `
 		arg_min(message_id, struct_pack(candidate_rank := candidate_rank, message_id := message_id))
 			FILTER (WHERE candidate_rank IS NOT NULL) AS strongest_matched_message_id,
 		COUNT(*)::BIGINT AS message_count,

@@ -94,6 +94,11 @@ type DuckDBEngine struct {
 	// executions (not memo hits). Test hook only: memo tests assert cache
 	// hits and misses through it.
 	relationshipsQueryRuns atomic.Uint64
+
+	// exploreFastPathDisabled forces Explore and SearchFiles onto the
+	// single-pass legacy listing queries. Test hook only: the fast-path
+	// equivalence tests compare both shapes on the same engine.
+	exploreFastPathDisabled bool
 }
 
 // DuckDBOptions configures optional DuckDB engine behavior.
@@ -2239,11 +2244,11 @@ func (e *DuckDBEngine) GetGmailIDsByFilter(ctx context.Context, filter MessageFi
 	}
 
 	if filter.After != nil {
-		conditions = append(conditions, "msg.sent_at >= ?")
+		conditions = append(conditions, "msg.sent_at >= CAST(? AS TIMESTAMP)")
 		args = append(args, queryTimeUTC(*filter.After))
 	}
 	if filter.Before != nil {
-		conditions = append(conditions, "msg.sent_at < ?")
+		conditions = append(conditions, "msg.sent_at < CAST(? AS TIMESTAMP)")
 		args = append(args, queryTimeUTC(*filter.Before))
 	}
 
