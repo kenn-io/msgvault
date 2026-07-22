@@ -401,6 +401,67 @@ func TestRelationshipsOwnerIdentitiesAreGlobalAcrossSources(t *testing.T) {
 	})
 }
 
+// TestRelationshipsClusterLabelPrefersNamedMember pins the shared cluster
+// label policy on the ranked list: a cluster's display label is the best
+// non-empty display_name across ALL members — not whatever the smallest-ID
+// (canonical) member's row happens to hold — so linking an older unnamed
+// participant to a named alias upgrades the label instead of degrading it.
+// When no member is named the canonical identifier fallback is unchanged,
+// unlinked participants are unaffected, and a cluster with several named
+// members deterministically renders the smallest-ID member's name.
+func TestRelationshipsClusterLabelPrefersNamedMember(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	b := NewTestDataBuilder(t)
+	srcID := b.AddSource("owner@example.com")
+	ownerID := b.AddParticipant("owner@example.com", "example.com", "Owner")
+	b.AddOwnerParticipant(srcID, ownerID)
+
+	// Canonical (smallest ID) has no name; the linked alias does.
+	aOldID := b.AddParticipant("a-old@example.com", "example.com", "")
+	aNewID := b.AddParticipant("a-new@example.com", "example.com", "Alice Named")
+	b.LinkCluster(aOldID, aNewID)
+
+	// No member of this cluster is named: identifier fallback stays.
+	bOldID := b.AddParticipant("b-old@example.com", "example.com", "")
+	bNewID := b.AddParticipant("b-new@example.com", "example.com", "")
+	b.LinkCluster(bOldID, bNewID)
+
+	// Unlinked and unnamed: own identifier fallback, unaffected.
+	cID := b.AddParticipant("c@example.com", "example.com", "")
+
+	// Both members named: the smallest-ID member's name wins.
+	dFirstID := b.AddParticipant("d1@example.com", "example.com", "Dana First")
+	dSecondID := b.AddParticipant("d2@example.com", "example.com", "Dana Second")
+	b.LinkCluster(dFirstID, dSecondID)
+
+	now := time.Date(2026, 1, 10, 0, 0, 0, 0, time.UTC)
+	for _, counterpartID := range []int64{aOldID, bOldID, cID, dSecondID} {
+		msgID := b.AddMessage(MessageOpt{SourceID: srcID, IsFromMe: true, SentAt: now.AddDate(0, 0, -1)})
+		b.AddFrom(msgID, ownerID, "Owner")
+		b.AddTo(msgID, counterpartID, "")
+	}
+
+	engine := b.BuildEngine()
+	result, err := engine.Relationships(context.Background(), RelationshipsRequest{Now: now, Limit: 10})
+	require.NoError(err)
+	require.Len(result.Rows, 4)
+
+	labelsByCanonicalID := make(map[int64]string, len(result.Rows))
+	for _, row := range result.Rows {
+		labelsByCanonicalID[row.CanonicalID] = row.DisplayLabel
+	}
+	assert.Equal("Alice Named", labelsByCanonicalID[aOldID],
+		"an unnamed canonical must borrow its named alias's display name")
+	assert.Equal("b-old@example.com", labelsByCanonicalID[bOldID],
+		"with no named member, the canonical identifier fallback is unchanged")
+	assert.Equal("c@example.com", labelsByCanonicalID[cID],
+		"an unlinked participant keeps its own fallback label")
+	assert.Equal("Dana First", labelsByCanonicalID[dFirstID],
+		"with several named members, the smallest participant ID's name wins deterministically")
+}
+
 // TestRelationshipsOwnerAbsentMeetingContributesNoModality verifies that a
 // meeting/event entry the archive owner did not attend contributes no
 // signal at all: no modality (rather than being miscounted as a phantom

@@ -167,6 +167,19 @@ func (e *DuckDBEngine) searchPeople(
 	conditions, args := buildExploreConditions(request.Explore)
 	entriesCTE, entryArgs := personEntriesCTE(exactID, clusterMemberIDs, conditions)
 	args = append(args, entryArgs...)
+	// bestNameExpr is the shared cluster label policy (see person_label.go):
+	// with a caller-supplied cluster, the best non-empty display_name across
+	// every member; otherwise the row participant's own name. Its member
+	// placeholders bind here, before the personWhere and identifier args,
+	// matching its position inside person_population.
+	bestNameExpr := "NULLIF(TRIM(p.display_name), '')"
+	if len(clusterMemberIDs) > 1 {
+		placeholders := strings.TrimSuffix(strings.Repeat("?,", len(clusterMemberIDs)), ",")
+		bestNameExpr = sqlClusterBestNameExpr("pbn.id IN (" + placeholders + ")")
+		for _, memberID := range clusterMemberIDs {
+			args = append(args, memberID)
+		}
+	}
 	personWhere := []string{"true"}
 	if exactID != nil {
 		personWhere = append(personWhere, "person_id = ?")
@@ -204,23 +217,21 @@ func (e *DuckDBEngine) searchPeople(
 ), person_population AS (
 	SELECT p.id AS person_id, COALESCE(p.display_name, '') AS display_name,
 		COALESCE(p.email_address, '') AS email_address, COALESCE(p.phone_number, '') AS phone_number,
-		COALESCE(NULLIF(TRIM(p.display_name), ''), NULLIF(TRIM(p.phone_number), ''),
-			NULLIF(TRIM(p.email_address), ''),
-			(SELECT COALESCE(NULLIF(TRIM(pi.display_value), ''), pi.identifier_value)
-			 FROM participant_identifiers pi WHERE pi.participant_id = p.id
-			 ORDER BY pi.is_primary DESC, pi.identifier_type, pi.identifier_value LIMIT 1),
-			'Unknown person #' || CAST(p.id AS VARCHAR)) AS display_label,
+		` + bestNameExpr + ` AS best_display_name,
+		` + sqlPersonIdentifierFallbackExpr("p") + ` AS fallback_label,
 		COUNT(*)::BIGINT AS activity_count, COALESCE(SUM(pe.attachment_count), 0)::BIGINT AS file_count,
 		MIN(pe.occurred_at) AS first_at, MAX(pe.occurred_at) AS last_at
 	FROM person_entries pe JOIN participants p ON p.id = pe.person_id
 	GROUP BY p.id, p.display_name, p.email_address, p.phone_number
 ), filtered_people AS (
-	SELECT * FROM person_population WHERE ` + strings.Join(personWhere, " AND ") + `
+	SELECT *, COALESCE(best_display_name, fallback_label) AS display_label,
+		(best_display_name IS NULL) AS partial_label
+	FROM person_population WHERE ` + strings.Join(personWhere, " AND ") + `
 ), counted AS (
 	SELECT *, COUNT(*) OVER () AS total_count FROM filtered_people
 )
 SELECT person_id, display_label, display_name,
-	(TRIM(display_name) = '') AS partial_label,
+	partial_label,
 	COALESCE(CAST((SELECT to_json(list(struct_pack(
 		type := pi.identifier_type, value := pi.identifier_value, display_value := pi.display_value,
 		is_primary := pi.is_primary, provenance := 'participant_identifiers', participant_id := pi.participant_id)

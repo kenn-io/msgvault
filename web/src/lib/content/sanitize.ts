@@ -76,9 +76,14 @@ const BACKGROUND_DECLARATION =
 
 /**
  * Decides whether archived HTML mail carries an authored visual design.
- * Detection runs on the raw message HTML (parsed inertly, before
- * sanitization) so signals the sanitizer drops — style elements,
- * background-image declarations — still count.
+ * Detection runs on the raw message HTML before sanitization so signals
+ * the sanitizer drops — style elements, background-image declarations —
+ * still count. Because the input is sender-controlled and unsanitized, the
+ * parse MUST stay inert: DOMParser documents have no browsing context, so
+ * no subresource (tracking pixel, iframe, stylesheet) is ever fetched.
+ * Never swap this for innerHTML on a div — even a detached div fetches
+ * <img src> in Chromium, leaking IP and message-open time to the sender.
+ * The regression test lives in tests/conversation-content-frame.spec.ts.
  *
  * Designed mail: any background color/image declaration or a layout table
  * wider than one column. Text color alone is deliberately not a signal:
@@ -103,6 +108,20 @@ export function detectDesignedEmail(input: string): boolean {
     }
   }
   return false;
+}
+
+/**
+ * Parses HTML into a detached template element. Template contents belong
+ * to a contents-owner document without a browsing context, so parsing is
+ * inert: no subresources load and no scripts run. Every parse of HTML
+ * that may still carry sender-controlled remote URLs must go through this
+ * (or DOMParser) — innerHTML on a div, even detached, fetches <img src>
+ * in Chromium and would fire tracking pixels before sanitization.
+ */
+export function inertTemplate(html: string): HTMLTemplateElement {
+  const template = document.createElement('template');
+  template.innerHTML = html;
+  return template;
 }
 
 function remoteImageURL(value: string): string | undefined {
@@ -157,8 +176,7 @@ export function sanitizeArchivedHTML(
   input: string,
   options: ArchivedHTMLSanitizeOptions
 ): SanitizedArchivedHTML {
-  const source = document.createElement('template');
-  source.innerHTML = input;
+  const source = inertTemplate(input);
   for (const container of source.content.querySelectorAll('svg, math')) {
     container.replaceWith(document.createTextNode(container.textContent ?? ''));
   }
@@ -170,8 +188,9 @@ export function sanitizeArchivedHTML(
     FORBID_CONTENTS: ['script', 'style', 'template', 'noscript'],
     SANITIZE_NAMED_PROPS: true
   });
-  const template = document.createElement('template');
-  template.innerHTML = sanitized;
+  // DOMPurify output still carries remote img URLs at this point (they are
+  // stripped to placeholders in the loop below), so this parse must be inert.
+  const template = inertTemplate(sanitized);
   const remoteImages: string[] = [];
   const inlineImages: ArchivedInlineImage[] = [];
 

@@ -260,3 +260,81 @@ test('archived content has an opaque capability boundary and durable conversatio
   await expect(grid).toBeFocused();
   expect(page.url()).toBe(priorURL);
 });
+
+// Regression guard for the content pipeline's inert-parse invariant: raw
+// sender HTML is parsed (designed-mail detection, sanitization, inline-image
+// reassembly) before remote URLs are stripped. Those parses must never fetch
+// — a leaky parse (e.g. innerHTML on a detached div) fires tracking pixels
+// on mere message open, leaking IP, timestamp, and a read receipt. Only the
+// explicit "Load images" consent may contact a sender host, and only for the
+// img URL — never for iframe/link URLs the sanitizer strips.
+test('opening a message fires no sender-host request until images are enabled', async ({ page, baseURL }) => {
+  const sentinelRequests: string[] = [];
+  if (!baseURL) throw new Error('Playwright baseURL is required');
+  await page.context().addCookies([{
+    name: 'msgvault_session', value: 'synthetic-session', url: new URL(baseURL).origin
+  }]);
+  await page.route('**/api/session', (route) =>
+    route.fulfill({ json: { auth_mode: 'session', https: false, plain_http_warning: false } })
+  );
+  await page.route('**/api/v1/explore', (route) => route.fulfill({ json: {
+    rows: [row], total_count: 1, cache_revision: 'cache-tracking', search_provenance: {}
+  } }));
+  await page.route('**/api/v1/conversations/7**', (route) => route.fulfill({ json: {
+    id: 7,
+    anchor_id: 42,
+    messages: [{
+      id: 42,
+      conversation_id: 7,
+      subject: row.title,
+      message_type: 'email',
+      from: 'alice@example.com',
+      to: ['bob@example.com'],
+      sent_at: row.occurred_at,
+      snippet: row.preview,
+      labels: [],
+      has_attachments: false,
+      size_bytes: 10,
+      body: 'Plain archived body',
+      body_html: [
+        '<table bgcolor="#0b5cad"><tr><td>Designed</td><td>newsletter</td></tr></table>',
+        '<img src="https://tracking.example/pixel.gif" width="1" height="1" alt="">',
+        '<iframe src="https://tracking.example/frame.html"></iframe>',
+        '<link rel="stylesheet" href="https://tracking.example/style.css">',
+        '<p>Tracked archived words</p>'
+      ].join(''),
+      attachments: []
+    }],
+    has_before: false,
+    has_after: false,
+    total: 1
+  } }));
+  await page.route('https://tracking.example/**', async (route) => {
+    sentinelRequests.push(route.request().url());
+    await route.fulfill({
+      contentType: 'image/png',
+      body: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', 'base64')
+    });
+  });
+
+  const explore = encodeURIComponent(JSON.stringify({ workspace: 'everything' }));
+  await page.goto(`/?feature=reader-security&explore=${explore}`);
+  const grid = page.getByRole('grid', { name: 'Everything results' });
+  await expect(grid.getByText(row.title)).toBeVisible();
+  await grid.focus();
+  await page.keyboard.press('Enter');
+
+  // The archived body renders fully — raw HTML has been parsed, sanitized,
+  // and reassembled — yet the sender's host has seen nothing.
+  const frame = page.locator('[data-message-id="42"]').locator('iframe[title="Message body"]');
+  await expect(frame.contentFrame().getByText('Tracked archived words')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Load 1 remote image' })).toBeVisible();
+  expect(sentinelRequests).toEqual([]);
+
+  // Explicit consent fetches exactly the blocked img URL; the iframe and
+  // stylesheet URLs the sanitizer removed stay unfetched forever.
+  await page.getByRole('button', { name: 'Load 1 remote image' }).click();
+  await expect.poll(() => sentinelRequests.length).toBe(1);
+  await expect(frame.contentFrame().locator('img[src="https://tracking.example/pixel.gif"]')).toHaveCount(1);
+  expect(sentinelRequests).toEqual(['https://tracking.example/pixel.gif']);
+});

@@ -117,7 +117,7 @@ export class AppearancePreferences {
       delete next[kind];
       this.#override = next;
     } else this.#override = {};
-    if (typeof sessionStorage !== 'undefined') sessionStorage.removeItem(STORAGE_KEY);
+    storageRemove(STORAGE_KEY);
     if (Object.keys(this.#override).length > 0) writeOverride(this.#override);
     this.#apply();
   }
@@ -166,25 +166,56 @@ function validDefaults(defaults: AppearanceDefaults): AppearanceDefaults {
 }
 
 function readOverride(): Partial<AppearanceDefaults> {
-  if (typeof sessionStorage === 'undefined') return {};
+  const stored = storageGet(STORAGE_KEY);
+  if (stored === null) return {};
   try {
-    const parsed = JSON.parse(sessionStorage.getItem(STORAGE_KEY) ?? '{}') as Partial<AppearanceDefaults>;
+    const parsed = JSON.parse(stored) as Partial<AppearanceDefaults>;
     const sanitized = {
       ...(parsed.theme && isTheme(parsed.theme) ? { theme: parsed.theme } : {}),
       ...(parsed.density && isDensity(parsed.density) ? { density: parsed.density } : {})
     };
-    if (Object.keys(sanitized).length === 0) sessionStorage.removeItem(STORAGE_KEY);
-    else sessionStorage.setItem(STORAGE_KEY, JSON.stringify(sanitized));
+    if (Object.keys(sanitized).length === 0) storageRemove(STORAGE_KEY);
+    else storageSet(STORAGE_KEY, JSON.stringify(sanitized));
     return sanitized;
   } catch {
-    sessionStorage.removeItem(STORAGE_KEY);
+    storageRemove(STORAGE_KEY);
     return {};
   }
 }
 
 function writeOverride(override: Partial<AppearanceDefaults>): void {
+  storageSet(STORAGE_KEY, JSON.stringify(override));
+}
+
+// Appearance overrides are a session nicety: every storage access is
+// best-effort because sessionStorage can be absent (SSR) or throw on any
+// call (Safari private mode, disabled storage, quota). A failed read or
+// write must never abort app initialization.
+function storageGet(key: string): string | null {
+  if (typeof sessionStorage === 'undefined') return null;
+  try {
+    return sessionStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function storageSet(key: string, value: string): void {
   if (typeof sessionStorage === 'undefined') return;
-  sessionStorage.setItem(STORAGE_KEY, JSON.stringify(override));
+  try {
+    sessionStorage.setItem(key, value);
+  } catch {
+    // Best-effort: the override simply does not persist.
+  }
+}
+
+function storageRemove(key: string): void {
+  if (typeof sessionStorage === 'undefined') return;
+  try {
+    sessionStorage.removeItem(key);
+  } catch {
+    // Best-effort: stale data is re-sanitized on the next read.
+  }
 }
 
 function isTheme(value: string): value is ThemePreference {

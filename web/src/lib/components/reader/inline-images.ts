@@ -1,6 +1,6 @@
 import type { APIClient } from '../../api/client';
 import type { ArchivedInlineImage } from '../../content/sanitize';
-import { imagePlaceholderBlock } from '../../content/sanitize';
+import { imagePlaceholderBlock, inertTemplate } from '../../content/sanitize';
 
 export const MAX_ARCHIVED_INLINE_IMAGE_CIDS = 32;
 export const MAX_ARCHIVED_INLINE_IMAGE_BYTES = 5 * 1024 * 1024;
@@ -157,8 +157,9 @@ export async function resolveArchivedInlineImages(options: {
   signal: AbortSignal;
   publicationLimits?: InlineImagePublicationLimits;
 }): Promise<string> {
-  const template = document.createElement('template');
-  template.innerHTML = options.html;
+  // Sanitized HTML retains consented remote img URLs, so the parse must stay
+  // inert: nothing may be fetched while the document is being reassembled.
+  const template = inertTemplate(options.html);
   const placeholders = new Map<number, HTMLElement>();
   for (const element of template.content.querySelectorAll<HTMLElement>('[data-archived-inline-image]')) {
     const index = Number(element.dataset.archivedInlineImage);

@@ -11,8 +11,8 @@ describe('appearance preferences', () => {
     document.documentElement.className = '';
     document.documentElement.removeAttribute('data-theme');
     document.documentElement.removeAttribute('data-density');
-    sessionStorage.clear();
     vi.unstubAllGlobals();
+    sessionStorage.clear();
   });
 
   it('applies daemon settings as authoritative defaults', () => {
@@ -75,6 +75,45 @@ describe('appearance preferences', () => {
     } else {
       expect(sessionStorage.getItem('msgvault.appearance.override')).toBe(JSON.stringify(retained));
     }
+  });
+
+  it('initializes and operates when every sessionStorage access throws', () => {
+    const denied = (): never => { throw new DOMException('The operation is insecure.', 'SecurityError'); };
+    vi.stubGlobal('sessionStorage', {
+      getItem: denied, setItem: denied, removeItem: denied, clear: denied, key: denied, length: 0
+    });
+
+    const preferences = createAppearancePreferences({ theme: 'dark', density: 'comfortable' });
+    expect(preferences.current).toEqual({ theme: 'dark', density: 'comfortable', overridden: false });
+
+    preferences.setTemporary({ theme: 'light', density: 'compact' });
+    expect(preferences.current).toEqual({ theme: 'light', density: 'compact', overridden: true });
+    expect(document.documentElement.dataset.theme).toBe('light');
+
+    preferences.clearTemporary('theme');
+    expect(preferences.current).toEqual({ theme: 'dark', density: 'compact', overridden: true });
+    preferences.clearTemporary();
+    expect(preferences.current).toEqual({ theme: 'dark', density: 'comfortable', overridden: false });
+  });
+
+  it('discards a corrupt override even when removeItem throws', () => {
+    const removals: string[] = [];
+    vi.stubGlobal('sessionStorage', {
+      getItem: () => 'not-json{',
+      setItem: (): never => { throw new DOMException('QuotaExceededError'); },
+      removeItem: (key: string): never => {
+        removals.push(key);
+        throw new DOMException('The operation is insecure.', 'SecurityError');
+      },
+      clear: () => undefined,
+      key: () => null,
+      length: 1
+    });
+
+    const preferences = createAppearancePreferences({ theme: 'system', density: 'compact' });
+    expect(preferences.temporary).toEqual({});
+    expect(preferences.current).toEqual({ theme: 'system', density: 'compact', overridden: false });
+    expect(removals).toEqual(['msgvault.appearance.override']);
   });
 
   it('derives row geometry from the computed CSS token', async () => {

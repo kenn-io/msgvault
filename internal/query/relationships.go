@@ -289,7 +289,14 @@ func validateRelationshipsRequest(request RelationshipsRequest) error {
 // so its per-conversation credit for every non-owner member is unchanged.
 // Non-author co-recipient rows stay in "interactions" so LastAt keeps
 // matching the timeline's "all shared messages" scope.
+//
+// display_label applies the shared cluster label policy (see person_label.go):
+// the best non-empty display_name across the whole cluster (members resolved
+// through canon, so an unlinked counterpart is just itself), falling back to
+// the canonical participant's identifiers only when no member is named.
 func buildRelationshipsSQL(conditions, clustersGlob, ownersGlob string) string {
+	labelExpr := sqlPersonDisplayLabelExpr(sqlClusterBestNameExpr(
+		"pbn.id IN (SELECT cnl.participant_id FROM canon cnl WHERE cnl.canonical_id = p2.id)"), "p2")
 	return buildExploreLogicalSQL(conditions) + fmt.Sprintf(`
 ), clusters AS (
     SELECT participant_id, canonical_id FROM read_parquet('%s')
@@ -354,13 +361,10 @@ func buildRelationshipsSQL(conditions, clustersGlob, ownersGlob string) string {
 )
 SELECT
     a.canonical_id,
-    (SELECT COALESCE(NULLIF(TRIM(p2.display_name), ''), NULLIF(TRIM(p2.phone_number), ''), NULLIF(TRIM(p2.email_address), ''),
-        (SELECT COALESCE(NULLIF(TRIM(pi.display_value), ''), pi.identifier_value) FROM participant_identifiers pi
-         WHERE pi.participant_id = p2.id ORDER BY pi.is_primary DESC, pi.identifier_type, pi.identifier_value LIMIT 1),
-        'Unknown person #' || CAST(p2.id AS VARCHAR))
+    (SELECT %s
      FROM participants p2 WHERE p2.id = a.canonical_id) AS display_label,
     CAST(COALESCE((SELECT to_json(list(cn2.participant_id ORDER BY cn2.participant_id))
         FROM canon cn2 WHERE cn2.canonical_id = a.canonical_id), '[]') AS VARCHAR) AS member_ids,
     a.sent_decayed, a.sent_count, a.received_decayed, a.meetings_decayed, a.meeting_count, a.modalities, a.last_at
-FROM aggregated a`, clustersGlob, ownersGlob)
+FROM aggregated a`, clustersGlob, ownersGlob, labelExpr)
 }

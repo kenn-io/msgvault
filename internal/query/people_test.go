@@ -196,6 +196,61 @@ func TestGetPersonWithClusterMemberIDsSpansIdentifiersAndMetricsAcrossCluster(t 
 	assertions.Equal(primaryAt, filtered.LastAt)
 }
 
+// TestGetPersonClusterLabelPrefersNamedMember pins the shared cluster label
+// policy on the person header: with cluster member IDs supplied, the display
+// label is the best non-empty display_name across ALL members (smallest
+// participant ID wins ties deterministically) and PartialLabel turns false;
+// with no named member the requested row's identifier fallback is unchanged;
+// an unlinked participant is unaffected.
+func TestGetPersonClusterLabelPrefersNamedMember(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	b := NewTestDataBuilder(t)
+	source := b.AddSource("archive@example.com")
+
+	primary := b.AddParticipant("old@example.com", "example.com", "")
+	alias := b.AddParticipant("new@example.com", "example.com", "Real Name")
+	namelessA := b.AddParticipant("nameless-a@example.com", "example.com", "")
+	namelessB := b.AddParticipant("nameless-b@example.com", "example.com", "")
+	namedFirst := b.AddParticipant("named-first@example.com", "example.com", "First Name")
+	namedSecond := b.AddParticipant("named-second@example.com", "example.com", "Second Name")
+
+	sentAt := time.Date(2026, 7, 16, 9, 0, 0, 0, time.UTC)
+	for _, senderID := range []int64{primary, namelessA, namedSecond} {
+		message := b.AddMessage(MessageOpt{SourceID: source, Subject: "Activity", SentAt: sentAt})
+		b.AddFrom(message, senderID, "")
+	}
+	engine := b.BuildEngine()
+	ctx := context.Background()
+
+	clustered, err := engine.GetPerson(ctx, primary, Context{}, []int64{primary, alias})
+	requirements.NoError(err)
+	requirements.NotNil(clustered)
+	assertions.Equal("Real Name", clustered.DisplayLabel,
+		"an unnamed member linked to a named alias must show the alias's name")
+	assertions.False(clustered.PartialLabel, "a real cluster name is not a partial label")
+
+	solo, err := engine.GetPerson(ctx, primary, Context{}, nil)
+	requirements.NoError(err)
+	requirements.NotNil(solo)
+	assertions.Equal("old@example.com", solo.DisplayLabel, "an unlinked participant keeps its own fallback label")
+	assertions.True(solo.PartialLabel)
+
+	nameless, err := engine.GetPerson(ctx, namelessA, Context{}, []int64{namelessA, namelessB})
+	requirements.NoError(err)
+	requirements.NotNil(nameless)
+	assertions.Equal("nameless-a@example.com", nameless.DisplayLabel,
+		"with no named member, the requested row's identifier fallback is unchanged")
+	assertions.True(nameless.PartialLabel)
+
+	bothNamed, err := engine.GetPerson(ctx, namedSecond, Context{}, []int64{namedFirst, namedSecond})
+	requirements.NoError(err)
+	requirements.NotNil(bothNamed)
+	assertions.Equal("First Name", bothNamed.DisplayLabel,
+		"with several named members, the smallest participant ID's name wins deterministically")
+	assertions.False(bothNamed.PartialLabel)
+}
+
 func TestContextualPersonAndDomainSummariesUseTheExactCanonicalPopulation(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
