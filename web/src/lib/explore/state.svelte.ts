@@ -390,6 +390,13 @@ export class ExploreState {
   commitWorkspace(workspace: ExploreWorkspace): void {
     this.navigate({
       workspace,
+      // The Relationships ranking and cluster-timeline endpoints accept no
+      // text query (ranking is over reciprocity signals, not lexical), so a
+      // carried search query could only ever half-apply (domains and files
+      // yes, ranked people and cluster timeline no). Entering the hub drops
+      // the carried query — visibly, in the URL state — so every surface
+      // consistently reflects no text filter.
+      ...(workspace === 'relationships' ? { query: '' } : {}),
       analysisTarget: null,
       selectedIdentifier: null,
       activeRow: null,

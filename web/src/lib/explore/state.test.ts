@@ -223,6 +223,27 @@ describe('relationships workspace state', () => {
     });
   });
 
+  it('clears the carried search query when entering the Relationships workspace', async () => {
+    window.history.replaceState(null, '', '/');
+    const state = new ExploreState(window);
+    state.commitWorkspace('everything');
+    state.commitSearch('quarterly plan', 'full_text');
+
+    state.commitWorkspace('relationships');
+
+    expect(state.current.workspace).toBe('relationships');
+    expect(state.current.query).toBe('');
+    expect(state.predicate()).not.toHaveProperty('query');
+    expect(state.predicate()).not.toHaveProperty('search_mode');
+    expect(parseExploreURLState(window.location.search).query).toBe('');
+
+    window.history.back();
+    await new Promise((resolve) => window.addEventListener('popstate', resolve, { once: true }));
+    expect(state.current.workspace).toBe('everything');
+    expect(state.current.query).toBe('quarterly plan');
+    state.destroy();
+  });
+
   it('rejects invalid facet/target shapes', () => {
     const restored = parseExploreURLState(serializeExploreURLState({
       ...defaultExploreURLState,

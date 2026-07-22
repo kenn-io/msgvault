@@ -108,6 +108,47 @@ describe('SourcesWorkspace', () => {
     rendered.unmount();
   });
 
+  it('keeps polling while the scheduler still holds the sync lock after a run completes', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    let statusReads = 0;
+    const completed = () => run('completed', 8, { completed_at: '2026-07-19T10:01:00Z' });
+    const fetchFn = vi.fn<typeof fetch>(async () => {
+      statusReads += 1;
+      if (statusReads === 1) {
+        return Response.json({ sources: [source({
+          can_sync: false, sync_unavailable_reason: 'sync_already_running', active_sync: run('running', 5)
+        })] });
+      }
+      // The run has completed (no active_sync), but the scheduler still
+      // reports sync_already_running while it rebuilds caches.
+      if (statusReads <= 3) {
+        return Response.json({ sources: [source({
+          can_sync: false, sync_unavailable_reason: 'sync_already_running', latest_sync: completed()
+        })] });
+      }
+      return Response.json({ sources: [source({ latest_sync: completed() })] });
+    });
+    const rendered = render(SourcesWorkspace, { client: createAPIClient(fetchFn) });
+
+    await screen.findByText('5 processed');
+    await vi.advanceTimersByTimeAsync(500);
+    await waitFor(() => expect(statusReads).toBe(2));
+    expect(screen.getByText('sync_already_running')).toBeDefined();
+    expect(screen.queryByRole('button', { name: 'Sync now Archive' })).toBeNull();
+
+    // Polling continues (with backoff) while the lock is held...
+    await vi.advanceTimersByTimeAsync(1_000);
+    await waitFor(() => expect(statusReads).toBe(3));
+    await vi.advanceTimersByTimeAsync(2_000);
+    await waitFor(() => expect(statusReads).toBe(4));
+
+    // ...and stops once the lock clears and Sync now is available again.
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Sync now Archive' })).toBeDefined());
+    await vi.advanceTimersByTimeAsync(8_000);
+    expect(statusReads).toBe(4);
+    rendered.unmount();
+  });
+
   it('observes an accepted sync that finishes between status polls', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     let statusReads = 0;

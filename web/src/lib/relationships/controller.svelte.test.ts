@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { createAPIClient } from '../api/client';
-import type { DomainSummary, PersonSummary } from '../explore/models';
+import type { DomainSummary, ExplorePredicate, PersonSummary } from '../explore/models';
 import { RelationshipsController } from './controller.svelte';
 import type { RelationshipRow, RelationshipTimelineRow } from './models';
 
@@ -155,6 +155,76 @@ describe('RelationshipsController.loadList', () => {
     expect(controller.degraded).toBe('cache_unavailable');
     expect(controller.listError).toBeNull();
     expect(controller.listLoading).toBe(false);
+  });
+});
+
+describe('RelationshipsController text-query consistency', () => {
+  // The relationships ranking and cluster-timeline endpoints accept no text
+  // query, so the hub applies a carried workspace query to NO surface: a
+  // predicate that still carries one (e.g. a stale deep link) must be
+  // stripped uniformly rather than half-applied to some endpoints.
+  it('drops a carried text query from every surface: ranked list, searches, and both timelines', async () => {
+    const carried: ExplorePredicate = {
+      query: 'quarterly plan',
+      search_mode: 'full_text',
+      filters: [{ dimension: 'source', values: ['1'] }],
+      presentation: 'table'
+    };
+    const requests: Request[] = [];
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      requests.push(request);
+      const path = pathOf(request);
+      if (path === '/api/v1/relationships') {
+        return Response.json({ rows: [], total_count: 0, cache_revision: 'cache-rel', identity_revision: 1 });
+      }
+      if (path === '/api/v1/people/search' || path === '/api/v1/domains/search') {
+        return Response.json({ rows: [], total_count: 0, cache_revision: 'cache-rel', search_provenance: {} });
+      }
+      if (path === '/api/v1/people/12' && request.method === 'GET') return Response.json(person(12));
+      if (path === '/api/v1/relationships/12/timeline') {
+        return Response.json({ canonical_id: 12, identity_revision: 1, rows: [], total_count: 0, cache_revision: 'cache-rel' });
+      }
+      if (path === '/api/v1/domains/example.com' && request.method === 'GET') {
+        return Response.json(domainSummary('example.com'));
+      }
+      if (path === '/api/v1/domains/example.com/timeline') {
+        return Response.json({ rows: [], total_count: 0, cache_revision: 'cache-rel', search_provenance: {} });
+      }
+      throw new Error(`unexpected path ${path}`);
+    });
+    const controller = new RelationshipsController(createAPIClient(fetchFn), () => 'UTC');
+
+    await controller.loadList(carried);
+    controller.query = 'ali';
+    await controller.loadList(carried);
+    controller.query = '';
+    controller.facet = 'domains';
+    await controller.loadList(carried);
+    await controller.openTarget('cluster:12', carried);
+    await controller.openTarget('domain:example.com', carried);
+
+    const posts = requests.filter((request) => request.method === 'POST');
+    expect(posts.map(pathOf).sort()).toEqual([
+      '/api/v1/domains/example.com/timeline',
+      '/api/v1/domains/search',
+      '/api/v1/people/search',
+      '/api/v1/relationships',
+      '/api/v1/relationships/12/timeline'
+    ]);
+    for (const post of posts) {
+      const body = (await post.clone().json()) as Record<string, unknown>;
+      expect(body, pathOf(post)).not.toHaveProperty('query');
+      expect(body, pathOf(post)).not.toHaveProperty('search_mode');
+      expect(body.predicate ?? {}, pathOf(post)).not.toHaveProperty('query');
+      expect(body.predicate ?? {}, pathOf(post)).not.toHaveProperty('search_mode');
+    }
+    // Every surface still receives the carried filters, so the shared
+    // workspace context (minus the unsupported text query) stays applied.
+    const relationshipsBody = (await posts
+      .find((post) => pathOf(post) === '/api/v1/relationships')!
+      .clone().json()) as Record<string, unknown>;
+    expect(relationshipsBody.filters).toEqual([{ dimension: 'source', values: ['1'] }]);
   });
 });
 

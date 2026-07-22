@@ -7,6 +7,7 @@ import (
 	"io"
 	"math"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/danielgtaylor/huma/v2"
@@ -71,8 +72,13 @@ type settingDefinition struct {
 	kind     string
 	options  []string
 	testable bool
-	secret   func(*config.Config) bool
-	read     func(*config.Config) any
+	// localOnly settings are visible over HTTP but can only be changed by
+	// editing config.toml on the daemon host. Used for values that select
+	// daemon-side resources (such as environment variable names) which a
+	// remote session must never control.
+	localOnly bool
+	secret    func(*config.Config) bool
+	read      func(*config.Config) any
 }
 
 var settingsCatalog = []settingDefinition{
@@ -91,7 +97,7 @@ var settingsCatalog = []settingDefinition{
 	stringSetting("vector.db_path", "search", nil, func(c *config.Config) string { return c.Vector.DBPath }),
 	boolSetting("vector.skip_extension_create", "search", func(c *config.Config) bool { return c.Vector.SkipExtensionCreate }),
 	testableStringSetting("vector.embeddings.endpoint", "search", func(c *config.Config) string { return c.Vector.Embeddings.Endpoint }),
-	stringSetting("vector.embeddings.api_key_env", "search", nil, func(c *config.Config) string { return c.Vector.Embeddings.APIKeyEnv }),
+	localOnlyStringSetting("vector.embeddings.api_key_env", "search", func(c *config.Config) string { return c.Vector.Embeddings.APIKeyEnv }),
 	stringSetting("vector.embeddings.model", "search", nil, func(c *config.Config) string { return c.Vector.Embeddings.Model }),
 	intSetting("vector.embeddings.dimension", "search", func(c *config.Config) int { return c.Vector.Embeddings.Dimension }),
 	intSetting("vector.embeddings.batch_size", "search", func(c *config.Config) int { return c.Vector.Embeddings.BatchSize }),
@@ -160,6 +166,12 @@ func testableStringSetting(key, group string, read func(*config.Config) string) 
 	return definition
 }
 
+func localOnlyStringSetting(key, group string, read func(*config.Config) string) settingDefinition {
+	definition := stringSetting(key, group, nil, read)
+	definition.localOnly = true
+	return definition
+}
+
 func intSetting(key, group string, read func(*config.Config) int) settingDefinition {
 	return settingDefinition{key: key, group: group, kind: "integer", read: func(c *config.Config) any { return read(c) }}
 }
@@ -220,7 +232,12 @@ func (s *Server) handlePatchSettings(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "bad_request", "At least one settings update is required")
 		return
 	}
-	edits, changesAPIKey, err := settingsEdits(request.Updates)
+	_, current, err := s.readPersistedSettings()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "settings_read_failed", err.Error())
+		return
+	}
+	edits, changesAPIKey, err := settingsEdits(current, request.Updates)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "bad_request", err.Error())
 		return
@@ -314,7 +331,81 @@ func buildSettingsResponse(cfg *config.Config, pendingRestart bool) SettingsResp
 	return SettingsResponse{Settings: settings, PendingRestart: pendingRestart}
 }
 
-func settingsEdits(updates []SettingUpdate) ([]config.Edit, bool, error) {
+// credentialBinding ties an endpoint setting to the credential that gets sent
+// to it. When the endpoint's origin changes, the stored credential must not
+// silently follow: it is cleared unless the same PATCH explicitly provides a
+// replacement, so a retained secret can never be replayed to a new
+// destination after restart.
+type credentialBinding struct {
+	endpointKey     string
+	credentialKey   string
+	currentEndpoint func(*config.Config) string
+	credentialSet   func(*config.Config) bool
+}
+
+var credentialBindings = []credentialBinding{
+	{
+		endpointKey:     "integrations.tasks.endpoint",
+		credentialKey:   "integrations.tasks.api_key",
+		currentEndpoint: func(c *config.Config) string { return c.Integrations.Tasks.Endpoint },
+		credentialSet:   func(c *config.Config) bool { return c.Integrations.Tasks.APIKey != "" },
+	},
+	{
+		endpointKey:     "vector.embeddings.endpoint",
+		credentialKey:   "vector.embeddings.api_key_env",
+		currentEndpoint: func(c *config.Config) string { return c.Vector.Embeddings.Endpoint },
+		credentialSet:   func(c *config.Config) bool { return c.Vector.Embeddings.APIKeyEnv != "" },
+	},
+}
+
+// endpointOrigin reduces an endpoint to the destination that would receive
+// credentials: scheme plus host for URLs with a host, the socket or opaque
+// path otherwise, and the trimmed raw value when it is not a URL. Values that
+// cannot be proven to name the same destination compare as different, which
+// errs toward clearing the credential.
+func endpointOrigin(endpoint string) string {
+	trimmed := strings.TrimSpace(endpoint)
+	parsed, err := url.Parse(trimmed)
+	if err != nil || parsed.Scheme == "" {
+		return trimmed
+	}
+	scheme := strings.ToLower(parsed.Scheme)
+	if parsed.Host != "" {
+		return scheme + "://" + strings.ToLower(parsed.Host)
+	}
+	return scheme + "://" + parsed.Opaque + parsed.Path
+}
+
+// credentialSeveranceEdits returns the extra edits that clear stored
+// credentials whose endpoint origin is being changed by this PATCH without an
+// explicit credential update alongside it.
+func credentialSeveranceEdits(current *config.Config, edits []config.Edit) []config.Edit {
+	byKey := make(map[string]any, len(edits))
+	for _, edit := range edits {
+		byKey[edit.Key] = edit.Value
+	}
+	var severance []config.Edit
+	for _, binding := range credentialBindings {
+		endpointValue, endpointEdited := byKey[binding.endpointKey]
+		if !endpointEdited {
+			continue
+		}
+		endpoint, ok := endpointValue.(string)
+		if !ok || endpointOrigin(endpoint) == endpointOrigin(binding.currentEndpoint(current)) {
+			continue
+		}
+		if _, credentialEdited := byKey[binding.credentialKey]; credentialEdited {
+			continue
+		}
+		if !binding.credentialSet(current) {
+			continue
+		}
+		severance = append(severance, config.Edit{Key: binding.credentialKey, Value: ""})
+	}
+	return severance
+}
+
+func settingsEdits(current *config.Config, updates []SettingUpdate) ([]config.Edit, bool, error) {
 	definitions := settingsDefinitionByKey()
 	seen := make(map[string]struct{}, len(updates))
 	edits := make([]config.Edit, 0, len(updates))
@@ -323,6 +414,11 @@ func settingsEdits(updates []SettingUpdate) ([]config.Edit, bool, error) {
 		definition, ok := definitions[update.Key]
 		if !ok {
 			return nil, false, fmt.Errorf("setting %q is not browser-managed", update.Key)
+		}
+		if definition.localOnly {
+			return nil, false, fmt.Errorf(
+				"setting %q names an environment variable on the machine running msgvault; edit config.toml on that machine to change it",
+				update.Key)
 		}
 		if _, duplicate := seen[update.Key]; duplicate {
 			return nil, false, fmt.Errorf("setting %q is updated more than once", update.Key)
@@ -362,6 +458,7 @@ func settingsEdits(updates []SettingUpdate) ([]config.Edit, bool, error) {
 		}
 		edits = append(edits, config.Edit{Key: update.Key, Value: value})
 	}
+	edits = append(edits, credentialSeveranceEdits(current, edits)...)
 	return edits, changesAPIKey, nil
 }
 

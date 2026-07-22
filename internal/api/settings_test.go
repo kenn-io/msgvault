@@ -189,6 +189,138 @@ func TestPatchSettingsProtectsAPIKeyRestartSequencing(t *testing.T) {
 	})
 }
 
+func TestPatchSettingsClearsTaskAPIKeyWhenEndpointOriginChanges(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	srv, path := newSettingsTestServer(t,
+		"[integrations.tasks]\nendpoint = \"https://tasks.example.com/api\"\napi_key = \"task-secret\"\n")
+
+	resp := patchSettings(t, srv,
+		`{"updates":[{"key":"integrations.tasks.endpoint","value":{"string":"https://elsewhere.example.net/api"}}]}`)
+	require.Equal(http.StatusOK, resp.Code, resp.Body.String())
+
+	got, err := os.ReadFile(path)
+	require.NoError(err)
+	assert.Contains(string(got), "endpoint = \"https://elsewhere.example.net/api\"")
+	assert.Contains(string(got), "api_key = \"\"")
+	assert.NotContains(string(got), "task-secret")
+
+	var body SettingsResponse
+	require.NoError(json.Unmarshal(resp.Body.Bytes(), &body))
+	byKey := settingsByKey(body.Settings)
+	assert.Equal(&SecretSettingState{Configured: false}, byKey["integrations.tasks.api_key"].Secret)
+	assert.True(body.PendingRestart)
+}
+
+func TestPatchSettingsKeepsNewTaskAPIKeyProvidedWithEndpointChange(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	srv, path := newSettingsTestServer(t,
+		"[integrations.tasks]\nendpoint = \"https://tasks.example.com/api\"\napi_key = \"task-secret\"\n")
+
+	resp := patchSettings(t, srv,
+		`{"updates":[`+
+			`{"key":"integrations.tasks.endpoint","value":{"string":"https://elsewhere.example.net/api"}},`+
+			`{"key":"integrations.tasks.api_key","secret":{"action":"set","value":"rotated-secret"}}]}`)
+	require.Equal(http.StatusOK, resp.Code, resp.Body.String())
+
+	got, err := os.ReadFile(path)
+	require.NoError(err)
+	assert.Contains(string(got), "endpoint = \"https://elsewhere.example.net/api\"")
+	assert.Contains(string(got), "api_key = \"rotated-secret\"")
+
+	var body SettingsResponse
+	require.NoError(json.Unmarshal(resp.Body.Bytes(), &body))
+	assert.Equal(&SecretSettingState{Configured: true},
+		settingsByKey(body.Settings)["integrations.tasks.api_key"].Secret)
+}
+
+func TestPatchSettingsRetainsTaskAPIKeyWhenEndpointOriginIsUnchanged(t *testing.T) {
+	tests := []struct {
+		name     string
+		endpoint string
+	}{
+		{name: "identical endpoint", endpoint: "https://tasks.example.com/api"},
+		{name: "same origin different path", endpoint: "https://tasks.example.com/v2"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			srv, path := newSettingsTestServer(t,
+				"[integrations.tasks]\nendpoint = \"https://tasks.example.com/api\"\napi_key = \"task-secret\"\n")
+
+			resp := patchSettings(t, srv, fmt.Sprintf(
+				`{"updates":[{"key":"integrations.tasks.endpoint","value":{"string":%q}}]}`, tt.endpoint))
+			require.Equal(http.StatusOK, resp.Code, resp.Body.String())
+
+			got, err := os.ReadFile(path)
+			require.NoError(err)
+			assert.Contains(string(got), "api_key = \"task-secret\"")
+
+			var body SettingsResponse
+			require.NoError(json.Unmarshal(resp.Body.Bytes(), &body))
+			assert.Equal(&SecretSettingState{Configured: true},
+				settingsByKey(body.Settings)["integrations.tasks.api_key"].Secret)
+		})
+	}
+}
+
+func TestPatchSettingsEndpointChangeWithoutStoredCredentialAddsNoKey(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	srv, path := newSettingsTestServer(t,
+		"[integrations.tasks]\nendpoint = \"https://tasks.example.com/api\"\n")
+
+	resp := patchSettings(t, srv,
+		`{"updates":[{"key":"integrations.tasks.endpoint","value":{"string":"https://elsewhere.example.net/api"}}]}`)
+	require.Equal(http.StatusOK, resp.Code, resp.Body.String())
+
+	got, err := os.ReadFile(path)
+	require.NoError(err)
+	assert.Contains(string(got), "endpoint = \"https://elsewhere.example.net/api\"")
+	assert.NotContains(string(got), "api_key")
+}
+
+func TestPatchSettingsClearsEmbeddingsAPIKeyEnvWhenEndpointOriginChanges(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	srv, path := newSettingsTestServer(t,
+		"[vector.embeddings]\nendpoint = \"https://embed.example.com/v1\"\napi_key_env = \"MSGVAULT_EMBED_API_KEY\"\n")
+
+	resp := patchSettings(t, srv,
+		`{"updates":[{"key":"vector.embeddings.endpoint","value":{"string":"https://elsewhere.example.net/v1"}}]}`)
+	require.Equal(http.StatusOK, resp.Code, resp.Body.String())
+
+	got, err := os.ReadFile(path)
+	require.NoError(err)
+	assert.Contains(string(got), "endpoint = \"https://elsewhere.example.net/v1\"")
+	assert.Contains(string(got), "api_key_env = \"\"")
+
+	var body SettingsResponse
+	require.NoError(json.Unmarshal(resp.Body.Bytes(), &body))
+	byKey := settingsByKey(body.Settings)
+	require.NotNil(byKey["vector.embeddings.api_key_env"].Value)
+	require.NotNil(byKey["vector.embeddings.api_key_env"].Value.String)
+	assert.Empty(*byKey["vector.embeddings.api_key_env"].Value.String)
+}
+
+func TestPatchSettingsRejectsEmbeddingsAPIKeyEnvUpdates(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	before := "[vector.embeddings]\nendpoint = \"https://embed.example.com/v1\"\napi_key_env = \"MSGVAULT_EMBED_API_KEY\"\n"
+	srv, path := newSettingsTestServer(t, before)
+
+	resp := patchSettings(t, srv,
+		`{"updates":[{"key":"vector.embeddings.api_key_env","value":{"string":"AWS_SECRET_ACCESS_KEY"}}]}`)
+	require.Equal(http.StatusBadRequest, resp.Code, resp.Body.String())
+	assert.Contains(resp.Body.String(), "edit config.toml")
+
+	got, err := os.ReadFile(path)
+	require.NoError(err)
+	assert.Equal(before, string(got))
+}
+
 func TestSettingsErrorsAreNotCached(t *testing.T) {
 	srv, _ := newSettingsTestServer(t, "[web]\ntheme = \"system\"\n")
 	resp := performSettingsRequest(t, srv, http.MethodPatch, settingsPath,
@@ -367,6 +499,16 @@ func performSettingsRequest(
 	resp := httptest.NewRecorder()
 	srv.Router().ServeHTTP(resp, req)
 	return resp
+}
+
+// patchSettings performs a GET to obtain the current ETag and issues a PATCH
+// with the supplied JSON body against an unauthenticated test server.
+func patchSettings(t *testing.T, srv *Server, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	get := performSettingsRequest(t, srv, http.MethodGet, settingsPath, nil, "", "")
+	require.Equal(t, http.StatusOK, get.Code, get.Body.String())
+	return performSettingsRequest(t, srv, http.MethodPatch, settingsPath, []byte(body),
+		get.Header().Get("ETag"), "")
 }
 
 func settingsByKey(settings []Setting) map[string]Setting {

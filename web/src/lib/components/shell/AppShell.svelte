@@ -735,6 +735,11 @@
   function openRelationship(participantID: number): void {
     commitNavigation({
       workspace: 'relationships',
+      // Entering the hub never carries the text query (see
+      // ExploreState.commitWorkspace): the relationships ranking and
+      // cluster-timeline endpoints have no text-query input, so a carried
+      // query would half-apply across the hub's surfaces.
+      query: '',
       relationshipFacet: 'people',
       relationshipTarget: `cluster:${participantID}`,
       relationshipShowAll: false,

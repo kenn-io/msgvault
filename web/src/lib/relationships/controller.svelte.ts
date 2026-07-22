@@ -389,8 +389,16 @@ export class RelationshipsController {
   }
 }
 
+// Also drops the workspace text query: the relationships ranking and
+// cluster-timeline endpoints accept no text query, so the hub applies none on
+// ANY surface — a predicate that still carries one (a deep link minted before
+// the workspace transition started clearing it) must not half-apply to the
+// domain/people search surfaces only.
 function contextPredicate(predicate: ExplorePredicate): ExplorePredicate {
-  const { cursor: _cursor, grouping: _grouping, candidate_snapshot_id: _snapshot, ...context } = predicate;
+  const {
+    cursor: _cursor, grouping: _grouping, candidate_snapshot_id: _snapshot,
+    query: _query, search_mode: _searchMode, ...context
+  } = predicate;
   return { ...context, presentation: 'table' };
 }
 

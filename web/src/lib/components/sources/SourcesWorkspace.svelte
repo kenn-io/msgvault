@@ -65,13 +65,26 @@
     }
   }
 
+  // A completed run can disappear from active_sync while the scheduler still
+  // holds the sync lock (e.g. cache rebuild after the run): the source then
+  // reports sync_unavailable_reason 'sync_already_running' with no active
+  // sync. Polling must continue through that window or "Sync now" would stay
+  // unavailable until a remount.
+  function schedulerHoldsSyncLock(source: Source): boolean {
+    return source.sync_unavailable_reason === 'sync_already_running';
+  }
+
   // allowIdle bypasses the active-sync gate below for error-path retries:
   // a status-load failure must be able to reschedule itself even when no
   // source is actively syncing and no accepted run is being awaited, or an
   // initial/inactive-source failure would be unrecoverable until remount.
   function schedulePoll(delay: number, allowIdle = false): void {
     if (disposed || document.hidden) return;
-    if (!allowIdle && !sources.some((source) => source.active_sync) && awaitingSourceID === undefined) return;
+    if (
+      !allowIdle &&
+      !sources.some((source) => source.active_sync || schedulerHoldsSyncLock(source)) &&
+      awaitingSourceID === undefined
+    ) return;
     if (timer !== undefined) clearTimeout(timer);
     timer = setTimeout(() => {
       timer = undefined;
@@ -126,6 +139,9 @@
       }
       if (next.some((source) => source.active_sync)) {
         pollDelay = advanced ? MIN_POLL_MS : Math.min(MAX_POLL_MS, pollDelay * 2);
+        nextDelay = pollDelay;
+      } else if (next.some(schedulerHoldsSyncLock)) {
+        pollDelay = Math.min(MAX_POLL_MS, pollDelay * 2);
         nextDelay = pollDelay;
       }
       sources = next;

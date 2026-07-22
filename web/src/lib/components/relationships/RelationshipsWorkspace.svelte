@@ -155,8 +155,15 @@
     return () => observer.disconnect();
   });
 
+  // Mirrors the controller's contextPredicate: the hub applies no text query
+  // on any surface (the relationships ranking/cluster-timeline endpoints have
+  // no text-query input), so the files pane and reading pane must not apply
+  // one either when a stale URL still carries it.
   function contextPredicate(value: ExplorePredicate): ExplorePredicate {
-    const { cursor: _cursor, grouping: _grouping, candidate_snapshot_id: _snapshot, ...context } = value;
+    const {
+      cursor: _cursor, grouping: _grouping, candidate_snapshot_id: _snapshot,
+      query: _query, search_mode: _searchMode, ...context
+    } = value;
     return { ...context, presentation: 'table' };
   }
 
