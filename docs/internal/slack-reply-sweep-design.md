@@ -114,6 +114,21 @@ for incremental sync. Consequences:
   `threads:replies` filtering makes it Enterprise-scale rare.
   Cursormark pagination is not supported on this method (parameter
   silently ignored).
+- **Failure taxonomy.** FETCH failures (network/API) are isolated per
+  item — recorded, counted as `FetchErrors`, cursors held where coverage
+  is incomplete — and the run reports partial; this includes membership
+  listing outages (isolation and honesty are orthogonal). STORE failures
+  are fatal with the cursor held: a failed database write means the
+  local store is sick, and counting-and-continuing would advance cursors
+  past permanently omitted rows while reporting success (sharpest for
+  attachment rows, whose loss also orphans downloaded CAS bytes with no
+  pending marker for backfill to find — media download failures are
+  non-fatal ONLY because their durable marker write is itself fatally
+  checked). The one exemption is FTS: derived data with a repo-wide
+  self-healing path (`FTSNeedsBackfill` + `rebuild-fts` exist precisely
+  because every importer warn-and-continues on it), so it stays a
+  counter. Telemetry writes and checkpoint flushes stay best-effort —
+  their loss degrades observability or resume granularity, never data.
 - **Guaranteed first unit.** A budget may end a run early, but it must
   never gate a phase's FIRST unit of durable progress — the invariant
   behind every convergence guarantee here. Violations recur as stalls:

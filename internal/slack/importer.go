@@ -366,7 +366,11 @@ func (imp *Importer) ensureMembership(ctx context.Context, syncID, convID int64,
 				imp.recordItem(syncID, c.ID, "membership", store.SyncRunItemStatusSkipped, "slack_channel_gone", err)
 				return nil
 			}
+			// Isolated (message archiving proceeds) but honest: a members
+			// listing outage is a fetch failure and the run must report
+			// partial, not success.
 			imp.recordItem(syncID, c.ID, "membership", store.SyncRunItemStatusError, "slack_fetch_error", err)
+			sum.FetchErrors++
 			sum.Errors++
 			return nil
 		}
@@ -752,7 +756,11 @@ func (imp *Importer) rescanHead(ctx context.Context, cc *convScope, sum *ImportS
 
 // processMessage persists one message and its auxiliary rows. Store-level
 // failures are fatal (they indicate DB problems); per-item auxiliary
-// failures (FTS, recipients, reactions) are counted but do not abort the run.
+// failures are fatal too — a failed write means the local database is sick,
+// and the held cursor makes the abort resumable — with ONE documented
+// exemption: FTS, which is derived data with a repo-wide self-healing path
+// (FTSNeedsBackfill + rebuild-fts exist precisely because importers
+// warn-and-continue on it).
 func (imp *Importer) processMessage(ctx context.Context, cc *convScope, m *Message, sum *ImportSummary) error {
 	if m.Type != "message" || m.TS == "" {
 		return nil
@@ -788,21 +796,27 @@ func (imp *Importer) processMessage(ctx context.Context, cc *convScope, m *Messa
 	if err := imp.store.UpsertMessageRawWithFormat(messageID, raw, "slack_json"); err != nil {
 		return fmt.Errorf("archive slack message raw: %w", err)
 	}
+	// FTS is the one warn-and-continue store write: the index is derived
+	// from the (fatally-checked) message row and body, holes are detected
+	// by FTSNeedsBackfill's anti-join, and rebuild-fts repopulates them —
+	// the same policy every other importer follows.
 	if err := imp.store.UpsertFTS(messageID, "", text, imp.res.displayName(m.User), "", ""); err != nil {
 		sum.Errors++
 	}
 	if m.Edited != nil {
 		if err := imp.store.SetMessageEdited(messageID); err != nil {
-			sum.Errors++
+			return fmt.Errorf("set message edited: %w", err)
 		}
 	}
 
-	imp.persistFiles(ctx, cc.syncID, messageID, m, cc.opts, sum)
-
-	if err := imp.persistMentions(messageID, m, sum); err != nil {
+	if err := imp.persistFiles(ctx, cc.syncID, messageID, m, cc.opts, sum); err != nil {
 		return err
 	}
-	if err := imp.persistReactions(messageID, m, sum); err != nil {
+
+	if err := imp.persistMentions(messageID, m); err != nil {
+		return err
+	}
+	if err := imp.persistReactions(messageID, m); err != nil {
 		return err
 	}
 
@@ -812,7 +826,7 @@ func (imp *Importer) processMessage(ctx context.Context, cc *convScope, m *Messa
 	// SetReplyTo resolves to NULL harmlessly if one is missing.
 	if m.IsThreadReply() {
 		if err := imp.store.SetReplyTo(cc.sourceID, sourceMessageID(cc.channelID, m.TS), sourceMessageID(cc.channelID, m.ThreadTS)); err != nil {
-			sum.Errors++
+			return fmt.Errorf("link thread reply: %w", err)
 		}
 	}
 
@@ -824,7 +838,7 @@ func (imp *Importer) processMessage(ctx context.Context, cc *convScope, m *Messa
 // persistMentions writes "mention" recipient rows. No from/to rows are
 // written: sender attribution lives in messages.sender_id and membership in
 // conversation_participants (WhatsApp/Beeper precedent).
-func (imp *Importer) persistMentions(messageID int64, m *Message, sum *ImportSummary) error {
+func (imp *Importer) persistMentions(messageID int64, m *Message) error {
 	var ids []int64
 	var names []string
 	for _, uid := range m.MentionedUserIDs() {
@@ -838,10 +852,7 @@ func (imp *Importer) persistMentions(messageID int64, m *Message, sum *ImportSum
 		ids = append(ids, pid)
 		names = append(names, imp.res.displayName(uid))
 	}
-	if err := imp.store.ReplaceMessageRecipients(messageID, "mention", ids, names); err != nil {
-		sum.Errors++
-	}
-	return nil
+	return imp.store.ReplaceMessageRecipients(messageID, "mention", ids, names)
 }
 
 // persistReactions replaces the message's reactions from the embedded
@@ -849,7 +860,7 @@ func (imp *Importer) persistMentions(messageID int64, m *Message, sum *ImportSum
 // with the target message's timestamp (cosmetic only). The API may truncate
 // a reaction's user list on very popular messages — the archived raw JSON
 // preserves the counts.
-func (imp *Importer) persistReactions(messageID int64, m *Message, sum *ImportSummary) error {
+func (imp *Importer) persistReactions(messageID int64, m *Message) error {
 	var reactions []store.ReactionRef
 	for _, rc := range m.Reactions {
 		for _, uid := range rc.Users {
@@ -868,10 +879,7 @@ func (imp *Importer) persistReactions(messageID int64, m *Message, sum *ImportSu
 			})
 		}
 	}
-	if err := imp.store.ReplaceReactions(messageID, reactions); err != nil {
-		sum.Errors++
-	}
-	return nil
+	return imp.store.ReplaceReactions(messageID, reactions)
 }
 
 // checkpoint persists the sync state mid-run so an interrupted run resumes.
@@ -968,7 +976,9 @@ func (imp *Importer) BackfillMedia(ctx context.Context, opts ImportOptions) (*Im
 			sum.Errors++
 			continue
 		}
-		imp.persistFiles(ctx, syncID, item.MessageID, &m, opts, sum)
+		if err = imp.persistFiles(ctx, syncID, item.MessageID, &m, opts, sum); err != nil {
+			return sum, err
+		}
 		sum.MessagesProcessed++
 	}
 	imp.checkpointNow(syncID, state, sum)

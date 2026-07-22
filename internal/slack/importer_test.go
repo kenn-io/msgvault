@@ -609,6 +609,106 @@ func TestWindowOverlapAbsorbsClockSkew(t *testing.T) {
 	require.Equal(1, n, "a message below the pin by clock skew must be recovered by the window overlap")
 }
 
+func TestStoreWriteFailureHoldsCursorAndResumes(t *testing.T) {
+	require := require.New(t)
+	f := testWorkspace(t)
+	imp, opts := testImporter(t, f)
+	st := imp.store
+
+	_, err := imp.Import(context.Background(), opts)
+	require.NoError(err)
+
+	// A new message arrives carrying reactions, and the reactions table is
+	// gone (standing in for any sick-database write failure). The run must
+	// FAIL with the cursor held — counting the failure and advancing would
+	// permanently omit the rows while reporting success.
+	fresh := tsFresh(0)
+	f.mu.Lock()
+	f.conv("C01").Msgs = append(f.conv("C01").Msgs, fakeMsg{TS: fresh, User: "UALICE", Text: "reacted",
+		Reactions: []map[string]any{{"name": "tada", "users": []string{"UME", "UBOB"}, "count": 2}}})
+	f.mu.Unlock()
+	_, err = st.DB().Exec(`DROP TABLE reactions`)
+	require.NoError(err)
+
+	imp.now = func() time.Time { return time.Now().Add(time.Minute) }
+	_, err = imp.Import(context.Background(), opts)
+	require.Error(err, "a failed auxiliary store write must fail the run, not count and continue")
+
+	// The database heals (InitSchema is idempotent); the held cursor makes
+	// the next run refetch the message and persist everything exactly once.
+	require.NoError(st.InitSchema())
+	_, err = imp.Import(context.Background(), opts)
+	require.NoError(err)
+	var reactions int
+	require.NoError(st.DB().QueryRow(st.Rebind(`
+		SELECT COUNT(*) FROM reactions r JOIN messages m ON m.id = r.message_id
+		WHERE m.source_message_id = ?`), "C01:"+fresh).Scan(&reactions))
+	require.Equal(2, reactions, "the held cursor must let the healed run recover the lost rows")
+	var total, distinct int
+	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages WHERE message_type='slack'`).Scan(&total))
+	require.NoError(st.DB().QueryRow(`SELECT COUNT(DISTINCT source_message_id) FROM messages WHERE message_type='slack'`).Scan(&distinct))
+	require.Equal(distinct, total)
+}
+
+func TestAttachmentRowFailureFailsRun(t *testing.T) {
+	require := require.New(t)
+	f := testWorkspace(t)
+	imp, opts := testImporter(t, f)
+	st := imp.store
+
+	_, err := imp.Import(context.Background(), opts)
+	require.NoError(err)
+
+	// A new message carries a file, and the attachment rows cannot be
+	// written. This is THE permanent-loss vector: without a durable pending
+	// marker the file is invisible to backfill-slack-media forever, so the
+	// run must stop rather than advance past it.
+	fresh := tsFresh(0)
+	f.mu.Lock()
+	f.conv("C01").Msgs = append(f.conv("C01").Msgs, fakeMsg{TS: fresh, User: "UALICE", Text: "with file",
+		Files: []map[string]any{{"id": "F_HELD", "name": "h.png", "mimetype": "image/png", "size": 5,
+			"url_private": "https://files.slack.com/files-pri/T01-F_HELD/h.png",
+			"permalink":   "https://testers.slack.com/files/F_HELD"}}})
+	f.mu.Unlock()
+	_, err = st.DB().Exec(`DROP TABLE attachments`)
+	require.NoError(err)
+
+	imp.now = func() time.Time { return time.Now().Add(time.Minute) }
+	_, err = imp.Import(context.Background(), opts)
+	require.Error(err, "a failed attachment row write must fail the run — the marker was never durable")
+
+	// Heal: the dropped table also lost its migration-created unique index,
+	// so clear that marker before the idempotent re-init (a test-only
+	// artifact of injecting failure via DROP TABLE).
+	_, err = st.DB().Exec(st.Rebind(`DELETE FROM applied_migrations WHERE name = ?`), "attachments_content_hash_unique_index")
+	require.NoError(err)
+	require.NoError(st.InitSchema())
+	_, err = imp.Import(context.Background(), opts)
+	require.NoError(err)
+	var marker int
+	require.NoError(st.DB().QueryRow(st.Rebind(
+		`SELECT COUNT(*) FROM attachments WHERE source_attachment_id = ?`), "slack:F_HELD").Scan(&marker))
+	require.Equal(1, marker, "the healed run must persist the (pending) attachment row exactly once")
+}
+
+func TestMembershipFetchFailureMarksRunPartial(t *testing.T) {
+	require := require.New(t)
+	f := testWorkspace(t)
+	f.failMembers["C01"] = true
+	imp, opts := testImporter(t, f)
+	st := imp.store
+
+	// Membership failures stay ISOLATED (message archiving proceeds) but
+	// honest: the run reports partial instead of success.
+	sum, err := imp.Import(context.Background(), opts)
+	require.Error(err, "a members-listing outage is a fetch failure; the run must not report success")
+	require.Positive(sum.FetchErrors)
+	var n int
+	require.NoError(st.DB().QueryRow(st.Rebind(
+		`SELECT COUNT(*) FROM messages WHERE source_message_id = ?`), "C01:"+ts(0)).Scan(&n))
+	require.Equal(1, n, "isolation: the channel's messages still archive despite the membership failure")
+}
+
 func TestLimitedSweepDrainsBigTailAcrossRuns(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

@@ -123,10 +123,11 @@ type fakeSlack struct {
 	mu    sync.Mutex
 	users []map[string]any
 	convs []*fakeConv
-	// failHistory / failReplies make the named channel / root ts answer a
-	// method error (a non-retryable fetch failure).
+	// failHistory / failReplies / failMembers make the named channel / root
+	// ts answer a method error (a non-retryable fetch failure).
 	failHistory map[string]bool
 	failReplies map[string]bool
+	failMembers map[string]bool
 	// failSearch makes search.messages answer a method error.
 	failSearch bool
 	// searchMissingScope makes search.messages answer missing_scope (a
@@ -160,6 +161,7 @@ func newFakeSlack(t *testing.T) *fakeSlack {
 	return &fakeSlack{
 		t: t, pageSize: 3,
 		failHistory: map[string]bool{}, failReplies: map[string]bool{},
+		failMembers: map[string]bool{},
 	}
 }
 
@@ -292,6 +294,10 @@ func (f *fakeSlack) handleMembers(w http.ResponseWriter, r *http.Request) {
 	c := f.conv(r.FormValue("channel"))
 	if c == nil {
 		f.replyErr(w, "channel_not_found")
+		return
+	}
+	if f.failMembers[c.ID] {
+		f.replyErr(w, "internal_error")
 		return
 	}
 	from, to, next := f.page(r, len(c.Members))

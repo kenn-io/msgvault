@@ -117,14 +117,18 @@ func (c *Client) DownloadFile(ctx context.Context, rawURL string, maxBytes int64
 // off-host files become metadata-only link rows (media_type "link", the
 // permalink as storage path); failed or over-cap downloads leave a pending
 // marker row (no content hash) for BackfillMedia to retry.
-func (imp *Importer) persistFiles(ctx context.Context, syncID, messageID int64, m *Message, opts ImportOptions, sum *ImportSummary) {
+//
+// DOWNLOAD failures are non-fatal because they leave that durable marker;
+// STORE failures are fatal and hold the cursor — a row write that fails
+// leaves downloaded bytes orphaned in CAS with no marker, invisible to
+// backfill forever, so the run must stop rather than advance past it.
+func (imp *Importer) persistFiles(ctx context.Context, syncID, messageID int64, m *Message, opts ImportOptions, sum *ImportSummary) error {
 	existing, err := imp.store.MessageSlackAttachments(messageID)
 	if err != nil {
-		sum.Errors++
-		return
+		return fmt.Errorf("read attachment rows: %w", err)
 	}
 	if len(m.Files) == 0 && len(existing) == 0 {
-		return
+		return nil
 	}
 	maxBytes := opts.MaxMediaBytes
 	if maxBytes <= 0 {
@@ -238,10 +242,10 @@ func (imp *Importer) persistFiles(ctx context.Context, syncID, messageID int64, 
 		refs = append(refs, existing[id])
 	}
 	if err := imp.store.ReplaceMessageSlackAttachments(messageID, refs); err != nil {
-		sum.Errors++
-		return
+		return fmt.Errorf("replace attachment rows: %w", err)
 	}
 	if err := imp.store.RecomputeMessageAttachmentStats(messageID); err != nil {
-		sum.Errors++
+		return fmt.Errorf("recompute attachment stats: %w", err)
 	}
+	return nil
 }
