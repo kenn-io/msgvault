@@ -160,6 +160,10 @@ type Server struct {
 	inProgressInterval  time.Duration
 	daemonVersion       string
 	analyticsMode       string
+	// lexicalCandidateCap overrides query.MaxExploreCandidateMessageIDs in
+	// resolveExploreSearch. Tests shrink it to exercise cap behavior without
+	// building 10k-row fixtures; zero means the production cap.
+	lexicalCandidateCap int
 	router              http.Handler
 	server              *http.Server
 	rateLimiter         *RateLimiter

@@ -213,7 +213,7 @@ func (c *Client) ResolveProject(ctx context.Context, project string) (Project, e
 		return Project{}, err
 	}
 	var result Project
-	headers, err := c.doJSONWithHeaders(ctx, http.MethodGet, "/api/v1/projects/"+url.PathEscape(project), nil, nil, &result, http.StatusOK)
+	headers, err := c.doJSONWithHeaders(ctx, http.MethodGet, "/api/v1/projects/"+project, nil, nil, &result, http.StatusOK)
 	if err != nil {
 		return Project{}, err
 	}
@@ -244,7 +244,7 @@ func (c *Client) CreateTask(ctx context.Context, project, idempotencyKey string,
 	}
 	headers := http.Header{"Idempotency-Key": []string{idempotencyKey}}
 	var result Task
-	responseHeaders, err := c.doJSONWithHeaders(ctx, http.MethodPost, "/api/v1/projects/"+url.PathEscape(project)+"/tasks", create, headers, &result, http.StatusOK, http.StatusCreated)
+	responseHeaders, err := c.doJSONWithHeaders(ctx, http.MethodPost, "/api/v1/projects/"+project+"/tasks", create, headers, &result, http.StatusOK, http.StatusCreated)
 	if err != nil {
 		return Task{}, err
 	}
@@ -272,7 +272,7 @@ func (c *Client) listTasks(ctx context.Context, project string, query url.Values
 	if err := validatePathSegment(project); err != nil {
 		return TaskList{}, err
 	}
-	path := "/api/v1/projects/" + url.PathEscape(project) + "/tasks?" + query.Encode()
+	path := "/api/v1/projects/" + project + "/tasks?" + query.Encode()
 	var result TaskList
 	if err := c.doJSON(ctx, http.MethodGet, path, nil, nil, &result, http.StatusOK); err != nil {
 		return TaskList{}, err
@@ -295,7 +295,7 @@ func (c *Client) GetTask(ctx context.Context, project, taskID string) (Task, err
 		return Task{}, err
 	}
 	var result Task
-	path := "/api/v1/projects/" + url.PathEscape(project) + "/tasks/" + url.PathEscape(taskID)
+	path := "/api/v1/projects/" + project + "/tasks/" + taskID
 	headers, err := c.doJSONWithHeaders(ctx, http.MethodGet, path, nil, nil, &result, http.StatusOK)
 	if err != nil {
 		return Task{}, err
@@ -315,7 +315,7 @@ func (c *Client) MutateMetadata(ctx context.Context, project, taskID, revision s
 		return Task{}, ErrRevisionRequired
 	}
 	headers := http.Header{"If-Match": []string{revision}}
-	path := "/api/v1/projects/" + url.PathEscape(project) + "/tasks/" + url.PathEscape(taskID) + "/metadata"
+	path := "/api/v1/projects/" + project + "/tasks/" + taskID + "/metadata"
 	var result Task
 	responseHeaders, err := c.doJSONWithHeaders(ctx, http.MethodPatch, path, metadataMutation{Metadata: metadata}, headers, &result, http.StatusOK)
 	if err != nil {
@@ -330,10 +330,16 @@ func (c *Client) doJSON(ctx context.Context, method, path string, requestBody an
 	return err
 }
 
+// doJSONWithHeaders takes path as a decoded URL path — identifier segments are
+// embedded raw (validatePathSegment excludes separator characters) — with an
+// optional pre-encoded query after "?". Assigning the decoded path to
+// URL.Path with an empty RawPath makes URL.String percent-encode it exactly
+// once during serialization.
 func (c *Client) doJSONWithHeaders(ctx context.Context, method, path string, requestBody any, headers http.Header, result any, successStatuses ...int) (http.Header, error) {
 	target := *c.baseURL
 	parts := strings.SplitN(path, "?", 2)
 	target.Path = strings.TrimRight(target.Path, "/") + parts[0]
+	target.RawPath = ""
 	if len(parts) == 2 {
 		target.RawQuery = parts[1]
 	}
@@ -486,6 +492,8 @@ func isLoopbackHost(host string) bool {
 	return ip != nil && ip.IsLoopback()
 }
 
+// validatePathSegment rejects identifiers that could alter URL structure when
+// embedded raw as a single path segment (see doJSONWithHeaders).
 func validatePathSegment(value string) error {
 	if value == "" || value == "." || value == ".." || strings.ContainsAny(value, "/\\?#") {
 		return fmt.Errorf("%w: invalid path identity", ErrInvalidResponse)

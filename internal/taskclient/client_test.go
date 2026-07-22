@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -94,6 +95,128 @@ func TestClientProtocolOperations(t *testing.T) {
 	assertions.Equal(`"r2"`, mutated.Revision)
 	request = <-requests
 	assertions.Equal(`"r1"`, request.IfMatch)
+}
+
+func TestClientEncodesIdentifierPathSegmentsOnce(t *testing.T) {
+	tests := []struct {
+		name     string
+		project  string
+		taskID   string
+		wantPath string
+	}{
+		{name: "spaces", project: "test project", taskID: "task 1", wantPath: "/api/v1/projects/test%20project/tasks/task%201"},
+		{name: "percent", project: "50% done", taskID: "task%2F1", wantPath: "/api/v1/projects/50%25%20done/tasks/task%252F1"},
+		{name: "unicode", project: "prójekt", taskID: "tâche-1", wantPath: "/api/v1/projects/pr%C3%B3jekt/tasks/t%C3%A2che-1"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			escapedPaths := make(chan string, 1)
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				escapedPaths <- r.URL.EscapedPath()
+				if r.URL.Path != "/api/v1/projects/"+test.project+"/tasks/"+test.taskID {
+					http.NotFound(w, r)
+					return
+				}
+				writeTestJSON(t, w, Task{ID: test.taskID, Project: test.project, Title: "Synthetic task", Revision: `"r1"`})
+			}))
+			t.Cleanup(server.Close)
+			client := newLoopbackClient(t, server.URL, "encoding-test-key", nil)
+
+			task, err := client.GetTask(context.Background(), test.project, test.taskID)
+
+			require.NoError(t, err)
+			assert.Equal(t, test.wantPath, <-escapedPaths)
+			assert.Equal(t, test.taskID, task.ID)
+		})
+	}
+}
+
+func TestClientOperationsEncodeIdentifiersOnceAcrossEndpoints(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	const project = "team 50%"
+	const taskID = "task ñ1"
+	const escapedProject = "team%2050%25"
+	const escapedTask = "task%20%C3%B11"
+	type observedRequest struct {
+		Path  string
+		Query string
+	}
+	requests := make(chan observedRequest, 8)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests <- observedRequest{Path: r.URL.EscapedPath(), Query: r.URL.RawQuery}
+		task := Task{ID: taskID, Project: project, Title: "Synthetic task", Revision: `"r1"`}
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/projects/"+project:
+			writeTestJSON(t, w, Project{ID: "project-test", Name: project, Revision: `"p1"`})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/projects/"+project+"/tasks":
+			w.WriteHeader(http.StatusCreated)
+			writeTestJSON(t, w, task)
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/projects/"+project+"/tasks":
+			writeTestJSON(t, w, TaskList{Tasks: []Task{task}})
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/projects/"+project+"/tasks/"+taskID:
+			writeTestJSON(t, w, task)
+		case r.Method == http.MethodPatch && r.URL.Path == "/api/v1/projects/"+project+"/tasks/"+taskID+"/metadata":
+			writeTestJSON(t, w, task)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+	client := newLoopbackClient(t, server.URL, "encoding-test-key", nil)
+	ctx := context.Background()
+
+	resolved, err := client.ResolveProject(ctx, project)
+	requirements.NoError(err)
+	assertions.Equal(project, resolved.Name)
+	assertions.Equal(observedRequest{Path: "/api/v1/projects/" + escapedProject}, <-requests)
+
+	_, err = client.CreateTask(ctx, project, "idempotency-key-test", TaskCreate{Title: "Synthetic task"})
+	requirements.NoError(err)
+	assertions.Equal(observedRequest{Path: "/api/v1/projects/" + escapedProject + "/tasks"}, <-requests)
+
+	_, err = client.SearchTasks(ctx, project, "100% done", 25)
+	requirements.NoError(err)
+	assertions.Equal(observedRequest{
+		Path:  "/api/v1/projects/" + escapedProject + "/tasks",
+		Query: "limit=25&q=100%25+done",
+	}, <-requests)
+
+	_, err = client.ListTasks(ctx, project, 10, "cursor 1%")
+	requirements.NoError(err)
+	assertions.Equal(observedRequest{
+		Path:  "/api/v1/projects/" + escapedProject + "/tasks",
+		Query: "cursor=cursor+1%25&limit=10",
+	}, <-requests)
+
+	_, err = client.GetTask(ctx, project, taskID)
+	requirements.NoError(err)
+	assertions.Equal(observedRequest{Path: "/api/v1/projects/" + escapedProject + "/tasks/" + escapedTask}, <-requests)
+
+	_, err = client.MutateMetadata(ctx, project, taskID, `"r1"`, map[string]any{})
+	requirements.NoError(err)
+	assertions.Equal(observedRequest{Path: "/api/v1/projects/" + escapedProject + "/tasks/" + escapedTask + "/metadata"}, <-requests)
+}
+
+func TestClientRejectsIdentifiersWithPathDelimiters(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	var requestCount atomic.Int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestCount.Add(1)
+		http.NotFound(w, r)
+	}))
+	t.Cleanup(server.Close)
+	client := newLoopbackClient(t, server.URL, "rejection-test-key", nil)
+	ctx := context.Background()
+
+	for _, invalid := range []string{"", ".", "..", "a/b", `a\b`, "a?b", "a#b"} {
+		_, err := client.GetTask(ctx, invalid, "task-test")
+		requirements.ErrorIs(err, ErrInvalidResponse, "project %q", invalid)
+		_, err = client.GetTask(ctx, "test-project", invalid)
+		requirements.ErrorIs(err, ErrInvalidResponse, "task %q", invalid)
+	}
+	assertions.Zero(requestCount.Load())
 }
 
 func TestClientRequiresMutationSafetyHeaders(t *testing.T) {

@@ -947,12 +947,22 @@ func (s *Server) resolveExploreSearch(ctx context.Context, w http.ResponseWriter
 		writeError(w, http.StatusBadRequest, "invalid_query", err.Error())
 		return query.SearchSpec{}, "", false
 	}
+	filters, err := exploreContext(request.Filters)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_filter", err.Error())
+		return query.SearchSpec{}, "", false
+	}
+	matchable := applyLexicalFilterPushdown(parsed, filters)
+	candidateCap := s.lexicalCandidateCap
+	if candidateCap <= 0 {
+		candidateCap = query.MaxExploreCandidateMessageIDs
+	}
 	ids := make([]int64, 0)
 	seen := make(map[int64]struct{})
 	offset := 0
 	var reportedTotal int64
-	for {
-		remainingCapacity := query.MaxExploreCandidateMessageIDs - len(ids)
+	for matchable {
+		remainingCapacity := candidateCap - len(ids)
 		if remainingCapacity <= 0 {
 			break
 		}
@@ -1001,6 +1011,62 @@ func (s *Server) resolveExploreSearch(ctx context.Context, w http.ResponseWriter
 	}, "", true
 }
 
+// applyLexicalFilterPushdown narrows the parsed lexical query with the
+// request filters SQLite evaluates natively — source, message_type, after,
+// and before — so the bounded candidate cap applies to the filtered
+// population instead of truncating it before the filters run. Participant,
+// domain, and deletion filters stay DuckDB-side: they need junction or
+// derived data the lexical resolver does not model, and re-applying every
+// filter analytically keeps deferred dimensions correct (pushdown only
+// shrinks the candidate set, never widens results).
+//
+// Pushed dimensions intersect with any equivalent operator already present
+// in the query text (in:, message_type:, after:, before:) so the candidate
+// set never grows beyond what the parsed query alone would match. The
+// returned bool is false when such an intersection is empty, meaning the
+// combined predicate can match no messages and the resolver should skip
+// the index entirely.
+func applyLexicalFilterPushdown(parsed *search.Query, filters query.Context) bool {
+	if len(filters.SourceIDs) > 0 {
+		if len(parsed.AccountIDs) == 0 {
+			parsed.AccountIDs = slices.Clone(filters.SourceIDs)
+		} else {
+			parsed.AccountIDs = slices.DeleteFunc(slices.Clone(parsed.AccountIDs), func(id int64) bool {
+				return !slices.Contains(filters.SourceIDs, id)
+			})
+			if len(parsed.AccountIDs) == 0 {
+				return false
+			}
+		}
+	}
+	if len(filters.MessageTypes) > 0 {
+		// The parser lowercases message_type: values and stored types are
+		// lowercase, so lowercased filter values intersect exactly.
+		types := make([]string, 0, len(filters.MessageTypes))
+		for _, messageType := range filters.MessageTypes {
+			types = append(types, strings.ToLower(messageType))
+		}
+		if len(parsed.MessageTypes) > 0 {
+			types = slices.DeleteFunc(types, func(messageType string) bool {
+				return !slices.Contains(parsed.MessageTypes, messageType)
+			})
+			if len(types) == 0 {
+				return false
+			}
+		}
+		parsed.MessageTypes = types
+	}
+	if filters.After != nil && (parsed.AfterDate == nil || filters.After.After(*parsed.AfterDate)) {
+		bound := *filters.After
+		parsed.AfterDate = &bound
+	}
+	if filters.Before != nil && (parsed.BeforeDate == nil || filters.Before.Before(*parsed.BeforeDate)) {
+		bound := *filters.Before
+		parsed.BeforeDate = &bound
+	}
+	return true
+}
+
 func requireCompleteCandidatePool(w http.ResponseWriter, spec query.SearchSpec) bool {
 	if !spec.CandidatePoolSaturated {
 		return true
@@ -1047,8 +1113,12 @@ func (s *Server) resolveExploreVectorSearch(ctx context.Context, w http.Response
 	var lexicalSpec query.SearchSpec
 	if request.SearchMode == exploreSearchModeHybrid {
 		var ok bool
+		// Filters ride along so the lexical membership and its saturation
+		// flag describe the filtered population; an unfiltered branch could
+		// wrongly mark a narrow filtered result as saturated and block
+		// groups, files, and preflight.
 		lexicalSpec, _, ok = s.resolveExploreSearch(ctx, w, ExploreHTTPRequest{
-			Query: request.Query, SearchMode: exploreSearchModeFullText,
+			Query: request.Query, SearchMode: exploreSearchModeFullText, Filters: request.Filters,
 		})
 		if !ok {
 			return query.SearchSpec{}, "", false

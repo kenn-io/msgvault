@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -77,6 +78,260 @@ func TestExploreFullTextResolverBoundsCandidateTransfer(t *testing.T) {
 	}`, body.CacheRevision, body.SearchProvenance.LexicalIndexRevision))
 	assertions.Equal(http.StatusConflict, preflight.Code, preflight.Body.String())
 	assertions.Contains(preflight.Body.String(), "candidate_pool_saturated")
+}
+
+// filteredCandidateMockSearch returns a SearchMessagesQuery stub over a fixed
+// population split by source: unfiltered queries see every ID, while queries
+// scoped to sourceID see only filteredIDs — mirroring how the real store
+// applies AccountIDs inside SQLite before ranking and pagination.
+func filteredCandidateMockSearch(allIDs, filteredIDs []int64, sourceID int64) func(*search.Query, int, int) ([]APIMessage, int64, error) {
+	return func(q *search.Query, offset, limit int) ([]APIMessage, int64, error) {
+		population := allIDs
+		if slices.Equal(q.AccountIDs, []int64{sourceID}) {
+			population = filteredIDs
+		}
+		total := int64(len(population))
+		if offset >= len(population) {
+			return nil, total, nil
+		}
+		end := min(offset+limit, len(population))
+		messages := make([]APIMessage, 0, end-offset)
+		for _, id := range population[offset:end] {
+			messages = append(messages, APIMessage{ID: id})
+		}
+		return messages, total, nil
+	}
+}
+
+func TestExploreFullTextAppliesFiltersBeforeCandidateCap(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	allIDs := make([]int64, query.MaxExploreCandidateMessageIDs+50)
+	for i := range allIDs {
+		allIDs[i] = int64(i + 1)
+	}
+	filteredIDs := allIDs[query.MaxExploreCandidateMessageIDs:]
+	store := &mockStore{stats: &StoreStats{}}
+	store.searchMessagesQueryFunc = filteredCandidateMockSearch(allIDs, filteredIDs, 2)
+	base := newExploreDuckDBFixture(t)
+	engine := &recordingExploreEngine{Engine: base, Explorer: base}
+	srv := NewServerWithOptions(ServerOptions{
+		Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}},
+		Store:  store, Engine: engine, Logger: testLogger(),
+	})
+
+	response := postExploreJSON(t, srv, "/api/v1/explore", `{
+		"query":"alpha","search_mode":"full_text","limit":50,
+		"filters":[{"dimension":"source","values":["2"]}]
+	}`)
+	requirements.Equal(http.StatusOK, response.Code, response.Body.String())
+	var body ExploreHTTPResponse
+	requirements.NoError(json.Unmarshal(response.Body.Bytes(), &body))
+	requirements.NotNil(store.searchMessagesQueryLast)
+	assertions.Equal([]int64{2}, store.searchMessagesQueryLast.AccountIDs, "the source filter must reach the lexical resolver")
+	assertions.False(body.CandidatePoolSaturated, "the filtered population fits the candidate cap")
+	assertions.NotNil(body.TotalCount, "an unsaturated candidate pool publishes an exact total")
+	assertions.Equal(filteredIDs, engine.request.Search.CandidateMessageIDs, "candidates beyond the unfiltered cap must survive")
+
+	groups := postExploreJSON(t, srv, "/api/v1/explore/groups", `{
+		"grouping":["source"],"query":"alpha","search_mode":"full_text",
+		"filters":[{"dimension":"source","values":["2"]}]
+	}`)
+	assertions.Equal(http.StatusOK, groups.Code, groups.Body.String())
+}
+
+func TestExploreHybridLexicalBranchResolvesWithFilters(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	allIDs := make([]int64, query.MaxExploreCandidateMessageIDs+1)
+	for i := range allIDs {
+		allIDs[i] = int64(i + 1)
+	}
+	backend := &fakeFusingBackend{
+		fakeVectorBackend: &fakeVectorBackend{
+			active: &vector.Generation{ID: 7, Model: "test", Dimension: 2, Fingerprint: "test:2", State: vector.GenerationActive},
+		},
+		fusedHits: []vector.FusedHit{{MessageID: 1, RRFScore: .9, VectorScore: .9}},
+	}
+	hybridEngine := hybrid.NewEngine(backend, nil, realEmbedder{dim: 2}, hybrid.Config{ExpectedFingerprint: "test:2"})
+	store := &mockStore{stats: &StoreStats{}}
+	store.searchMessagesQueryFunc = filteredCandidateMockSearch(allIDs, []int64{1, 2}, 1)
+	srv := NewServerWithOptions(ServerOptions{
+		Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}},
+		Store:  store, Engine: newExploreDuckDBFixture(t),
+		HybridEngine: hybridEngine, Backend: backend, Logger: testLogger(),
+	})
+
+	response := postExploreJSON(t, srv, "/api/v1/explore", `{
+		"query":"alpha","search_mode":"hybrid","limit":10,
+		"filters":[{"dimension":"source","values":["1"]}]
+	}`)
+	requirements.Equal(http.StatusOK, response.Code, response.Body.String())
+	var body ExploreHTTPResponse
+	requirements.NoError(json.Unmarshal(response.Body.Bytes(), &body))
+	requirements.NotNil(store.searchMessagesQueryLast)
+	assertions.Equal([]int64{1}, store.searchMessagesQueryLast.AccountIDs, "the hybrid lexical branch must resolve with filters")
+	assertions.False(body.CandidatePoolSaturated, "saturation reflects the filtered lexical membership")
+	requirements.NotEmpty(body.CandidateSnapshotID)
+	snapshot, ok := srv.exploreState.snapshot(body.CandidateSnapshotID, exploreSnapshotRequestHash(ExploreHTTPRequest{
+		Query: "alpha", SearchMode: exploreSearchModeHybrid,
+		Filters: []ExploreFilter{{Dimension: "source", Values: []string{"1"}}},
+	}))
+	requirements.True(ok)
+	assertions.Equal([]int64{1, 2}, snapshot.LexicalIDs, "the snapshot stores the filtered lexical membership")
+}
+
+// fakeFusingBackend upgrades fakeVectorBackend with the FusingBackend
+// capability so hybrid-mode explore requests can run end to end.
+type fakeFusingBackend struct {
+	*fakeVectorBackend
+
+	fusedHits []vector.FusedHit
+}
+
+func (f *fakeFusingBackend) FusedSearch(_ context.Context, _ vector.FusedRequest) ([]vector.FusedHit, bool, error) {
+	return f.fusedHits, false, nil
+}
+
+func TestExploreFullTextSourceFilterFindsMatchesBeyondUnfilteredCap(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	st := testutil.NewSQLiteTestStore(t)
+	sourceA, err := st.GetOrCreateSource("gmail", "archive-a@example.com")
+	requirements.NoError(err)
+	sourceB, err := st.GetOrCreateSource("imap", "archive-b@example.com")
+	requirements.NoError(err)
+	conversationA, err := st.EnsureConversation(sourceA.ID, "thread-a", "Thread A")
+	requirements.NoError(err)
+	conversationB, err := st.EnsureConversation(sourceB.ID, "thread-b", "Thread B")
+	requirements.NoError(err)
+	messages := []struct {
+		sourceID       int64
+		conversationID int64
+		sourceMessage  string
+		sentAt         time.Time
+	}{
+		{sourceA.ID, conversationA, "m1", time.Date(2026, 7, 18, 10, 0, 0, 0, time.UTC)},
+		{sourceA.ID, conversationA, "m2", time.Date(2026, 7, 18, 11, 0, 0, 0, time.UTC)},
+		{sourceB.ID, conversationB, "m3", time.Date(2026, 7, 18, 9, 0, 0, 0, time.UTC)},
+	}
+	const sharedBody = "alpha shared message body"
+	for i, message := range messages {
+		messageID, err := st.UpsertMessage(&store.Message{
+			ConversationID: message.conversationID, SourceID: message.sourceID,
+			SourceMessageID: message.sourceMessage, MessageType: "email",
+			SentAt:  sql.NullTime{Time: message.sentAt, Valid: true},
+			Subject: sql.NullString{String: sharedBody, Valid: true}, SizeEstimate: 100,
+		})
+		requirements.NoError(err)
+		requirements.Equal(int64(i+1), messageID, "fixture IDs must align with committed analytical facts")
+		requirements.NoError(st.UpsertMessageBody(messageID, sql.NullString{String: sharedBody, Valid: true}, sql.NullString{}))
+	}
+	_, err = st.BackfillFTS(nil)
+	requirements.NoError(err)
+	srv := NewServerWithOptions(ServerOptions{
+		Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}}, Store: st,
+		Engine: newExploreDuckDBFixture(t), Logger: testLogger(),
+	})
+	srv.lexicalCandidateCap = 2
+
+	unfiltered := postExploreJSON(t, srv, "/api/v1/explore", `{"query":"alpha","search_mode":"full_text"}`)
+	requirements.Equal(http.StatusOK, unfiltered.Code, unfiltered.Body.String())
+	var unfilteredBody ExploreHTTPResponse
+	requirements.NoError(json.Unmarshal(unfiltered.Body.Bytes(), &unfilteredBody))
+	requirements.True(unfilteredBody.CandidatePoolSaturated, "the shrunken cap must bind for the unfiltered query")
+
+	filtered := postExploreJSON(t, srv, "/api/v1/explore", `{
+		"query":"alpha","search_mode":"full_text",
+		"filters":[{"dimension":"source","values":["2"]}]
+	}`)
+	requirements.Equal(http.StatusOK, filtered.Code, filtered.Body.String())
+	var body ExploreHTTPResponse
+	requirements.NoError(json.Unmarshal(filtered.Body.Bytes(), &body))
+	assertions.False(body.CandidatePoolSaturated, "the filtered population fits the cap")
+	requirements.Len(body.Rows, 1, "the filtered match ranked beyond the unfiltered cap must be found")
+	requirements.NotNil(body.Rows[0].AnchorMessageID)
+	assertions.Equal(int64(3), *body.Rows[0].AnchorMessageID)
+	requirements.NotNil(body.TotalCount)
+	assertions.Equal(int64(1), *body.TotalCount)
+}
+
+func TestApplyLexicalFilterPushdown(t *testing.T) {
+	afterFilter := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	beforeFilter := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
+	afterQuery := time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)
+	beforeQuery := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
+	tests := []struct {
+		name      string
+		parsed    search.Query
+		filters   query.Context
+		matchable bool
+		want      search.Query
+	}{
+		{
+			name:      "source filter fills empty accounts",
+			filters:   query.Context{SourceIDs: []int64{2, 3}},
+			matchable: true,
+			want:      search.Query{AccountIDs: []int64{2, 3}},
+		},
+		{
+			name:      "source filter intersects in operator",
+			parsed:    search.Query{AccountIDs: []int64{1, 2}},
+			filters:   query.Context{SourceIDs: []int64{2, 3}},
+			matchable: true,
+			want:      search.Query{AccountIDs: []int64{2}},
+		},
+		{
+			name:      "disjoint sources match nothing",
+			parsed:    search.Query{AccountIDs: []int64{1}},
+			filters:   query.Context{SourceIDs: []int64{2}},
+			matchable: false,
+			want:      search.Query{AccountIDs: []int64{}},
+		},
+		{
+			name:      "message type filter lowercases and intersects",
+			parsed:    search.Query{MessageTypes: []string{"sms", "mms"}},
+			filters:   query.Context{MessageTypes: []string{"SMS"}},
+			matchable: true,
+			want:      search.Query{MessageTypes: []string{"sms"}},
+		},
+		{
+			name:      "disjoint message types match nothing",
+			parsed:    search.Query{MessageTypes: []string{"email"}},
+			filters:   query.Context{MessageTypes: []string{"sms"}},
+			matchable: false,
+			want:      search.Query{MessageTypes: []string{"email"}},
+		},
+		{
+			name:      "date filters only tighten bounds",
+			parsed:    search.Query{AfterDate: &afterQuery, BeforeDate: &beforeQuery},
+			filters:   query.Context{After: &afterFilter, Before: &beforeFilter},
+			matchable: true,
+			want:      search.Query{AfterDate: &afterQuery, BeforeDate: &beforeQuery},
+		},
+		{
+			name:      "date filters narrow open bounds",
+			filters:   query.Context{After: &afterFilter, Before: &beforeFilter},
+			matchable: true,
+			want:      search.Query{AfterDate: &afterFilter, BeforeDate: &beforeFilter},
+		},
+		{
+			name:      "participant and domain filters stay analytical",
+			filters:   query.Context{ParticipantIDs: []int64{5}, Domains: []string{"example.com"}, Deletion: query.DeletionDeleted},
+			matchable: true,
+			want:      search.Query{},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			parsed := tt.parsed
+			matchable := applyLexicalFilterPushdown(&parsed, tt.filters)
+			assert.Equal(t, tt.matchable, matchable)
+			if matchable {
+				assert.Equal(t, tt.want, parsed)
+			}
+		})
+	}
 }
 
 type recordingExploreEngine struct {
