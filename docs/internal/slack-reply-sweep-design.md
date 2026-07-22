@@ -63,11 +63,20 @@ for incremental sync. Consequences:
   catch-up walk (`ThreadsPending`) instead. Initial `--no-threads` walks
   flag that debt UNCONDITIONALLY: the flag means "this history was
   walked without thread coverage", not "threads existed at walk time" —
-  a message can gain its first reply later, and for a never-swept
-  conversation the boundary adoption falls back to Cursor, which
-  threadless windows keep advancing past the reply. The catch-up walk
-  re-reads history at its own time, when such a message reports
-  reply_count, and recovers it.
+  a message can gain its first reply later, and Cursor advances with
+  every window, so no later boundary can be guessed from it. For the
+  same reason, a THREADED initial walk stamps its own `SweptThrough` at
+  completion (its inline drains covered every thread through the pin;
+  a run that dies before its sweep phase must not leave the boundary to
+  a fallback that reads a moved value), and any conversation that still
+  reaches the sweep stamp-less (legacy blobs, pre-stamping states) gets
+  the conservative treatment: flag a catch-up walk, reset its cursors,
+  stamp forward to the sweep's pin. Gone conversations stamp vacuously
+  so they don't churn through that path. Both debt channels are SENIOR
+  to new window work (drain first, then catch-up, then the window):
+  junior catch-up would starve forever under top-level traffic that
+  saturates --limit; a second-chance slot after the walk lets the run
+  that completes an initial backfill pay its debt immediately.
 - **Boundaries are pins; floors overlap.** Stored boundaries (the
   watermark, the `SweptThrough` stamps, the per-conversation `Cursor`)
   are the run's own start instant — the pin — never a lagged or
@@ -125,6 +134,13 @@ for incremental sync. Consequences:
   `threads:replies` filtering makes it Enterprise-scale rare.
   Cursormark pagination is not supported on this method (parameter
   silently ignored).
+- **Maintenance repairs replies too.** The rescan re-fetches each
+  in-window thread root's replies and re-processes everything — parent
+  included, deliberately without the archived-parent skip: repairing
+  post-capture mutations to source truth is the explicit repair pass's
+  purpose. Scope note: the window keys on MESSAGE age, not edit age — a
+  fresh edit to a reply on a root older than the window is only
+  repaired by `--full` (Slack exposes no edit feed to do better).
 - **Failure taxonomy.** FETCH failures (network/API) are isolated per
   item — recorded, counted as `FetchErrors`, cursors held where coverage
   is incomplete — and the run reports partial; this includes membership

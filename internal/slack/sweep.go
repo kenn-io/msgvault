@@ -82,26 +82,24 @@ func (imp *Importer) sweepReplies(ctx context.Context, syncID int64, targets map
 	}
 	sort.Strings(ids)
 
-	// Adopt a certification stamp for targets that never carried one:
-	// max(own backfill pin, workspace watermark). The pin is exact for a
-	// conversation that just completed backfill (inline thread fetches
-	// covered every reply up to it, and the pin always postdates the
-	// watermark at completion time); the watermark is the correct reading
-	// for legacy state written before per-conversation stamps existed,
-	// because that code swept every target on every run.
+	// A stamp-less done conversation has an UNKNOWABLE coverage start:
+	// threaded initial walks stamp themselves at completion, so reaching
+	// here means legacy state or a pre-stamping blob — and Cursor cannot
+	// serve as the boundary (it advances with every window walk; a run
+	// that died before its sweep phase leaves days of replies between the
+	// real coverage edge and the current pin). Conservative recovery
+	// mirrors the non-C gap fallback: flag a catch-up walk (re-reading
+	// history at ITS OWN time recovers every reply below its fresh pin)
+	// and stamp forward to this sweep's pin, whose trailing margin the
+	// next sweep re-covers.
 	for _, cid := range ids {
 		cs := state.EnsureConv(cid)
 		if cs.SweptThrough != "" {
 			continue
 		}
-		edge := cs.BackfillLatest
-		if edge == "" {
-			edge = cs.Cursor
-		}
-		cs.SweptThrough = edge
-		if tsLess(cs.SweptThrough, state.SweepWatermark) {
-			cs.SweptThrough = state.SweepWatermark
-		}
+		cs.ThreadsPending = true
+		cs.CatchUpCursor, cs.CatchUpLatest = "", ""
+		cs.SweptThrough = pin
 	}
 
 	// Gap recovery: a target certified behind the workspace watermark

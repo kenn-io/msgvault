@@ -316,11 +316,19 @@ func (imp *Importer) syncConversation(ctx context.Context, syncID, sourceID int6
 	cs := state.EnsureConv(c.ID)
 	cc := &convScope{channelID: c.ID, convID: convID, sourceID: sourceID, syncID: syncID, opts: opts, cs: cs}
 
-	// Pay outstanding thread-drain debt FIRST: the pages that recorded these
-	// roots have already advanced past them, so the debt is senior to any
-	// new work this run might take on.
+	// DEBT IS SENIOR TO NEW WORK — both debt channels, uniformly. The
+	// drain list first (its pages already advanced past these roots), then
+	// the catch-up walk (--no-threads backfills, non-channel gap recovery,
+	// stamp-less adoption): both are finite, and running them behind the
+	// window walk would let a channel whose top-level arrival rate
+	// saturates --limit starve the debt forever while the windows keep up.
 	if len(cs.PendingThreads) > 0 && !opts.NoThreads {
 		if err := imp.drainPendingThreads(ctx, cc, sum); err != nil {
+			return 0, err
+		}
+	}
+	if cs.Done && cs.ThreadsPending && !opts.NoThreads {
+		if err := imp.threadCatchUp(ctx, cc, state, sum); err != nil {
 			return 0, err
 		}
 	}
@@ -334,22 +342,21 @@ func (imp *Importer) syncConversation(ctx context.Context, syncID, sourceID int6
 			return 0, err
 		}
 	}
+	// Second chance for catch-up debt: the run that COMPLETES the initial
+	// walk pays it immediately (budget permitting) instead of waiting a
+	// run — the senior slot above ran while Done was still false. No
+	// starvation risk: already-Done conversations get the senior slot.
+	if cs.Done && cs.ThreadsPending && !opts.NoThreads {
+		if err := imp.threadCatchUp(ctx, cc, state, sum); err != nil {
+			return 0, err
+		}
+	}
 	// The maintenance rescan (edits and reaction repair) runs only when
 	// explicitly requested: archives ignore post-capture mutations by
 	// default. It never charges the fetch budget and is skipped on
 	// scoped runs regardless.
 	if cs.Done && opts.Maintenance && opts.Limit == 0 {
 		if err := imp.rescanHead(ctx, cc, sum); err != nil {
-			return 0, err
-		}
-	}
-	// Thread catch-up: conversation-level thread debt (--no-threads
-	// backfills, non-channel gap recovery). Runs as soon as the backfill is
-	// complete — including the run that completes it — on any threaded run;
-	// limited runs make budget-bounded progress through the persisted walk
-	// cursor, and the debt clears only after a clean finish.
-	if cs.Done && cs.ThreadsPending && !opts.NoThreads {
-		if err := imp.threadCatchUp(ctx, cc, state, sum); err != nil {
 			return 0, err
 		}
 	}
@@ -452,10 +459,15 @@ func (imp *Importer) walkWindow(ctx context.Context, cc *convScope, state *SyncS
 				// Enumerated but unreadable (observed live: a sandbox
 				// provisioning-bot DM) or since deleted. There is nothing to
 				// fetch — recording it as a hard error would wedge every
-				// future run into partial failure.
+				// future run into partial failure. A vacuous stamp keeps
+				// the stamp-less adoption from flagging catch-up churn for
+				// a channel with nothing to cover.
 				imp.recordItem(cc.syncID, cc.channelID, "fetch", store.SyncRunItemStatusSkipped, "slack_channel_gone", err)
 				cs.Done = true
 				cs.BackfillCursor, cs.BackfillLatest = "", ""
+				if cs.SweptThrough == "" {
+					cs.SweptThrough = tsFormat(imp.now())
+				}
 				return nil
 			}
 			imp.recordItem(cc.syncID, cc.channelID, "fetch", store.SyncRunItemStatusError, "slack_fetch_error", err)
@@ -509,6 +521,16 @@ func (imp *Importer) walkWindow(ctx context.Context, cc *convScope, state *SyncS
 			// older than the covered-through bound: Cursor never regresses.
 			if tsLess(cs.Cursor, cs.BackfillLatest) {
 				cs.Cursor = cs.BackfillLatest
+			}
+			// A THREADED initial walk certifies its own reply coverage at
+			// completion: the inline drains covered every thread through
+			// the pin. Stamping here (crash-safe via the conversation-loop
+			// checkpoint) means the sweep never has to GUESS this
+			// conversation's boundary — Cursor keeps advancing with every
+			// later window, so a run that dies before its sweep phase must
+			// not leave the stamp to a fallback that reads a moved value.
+			if initial && !cc.opts.NoThreads && cs.SweptThrough == "" {
+				cs.SweptThrough = cs.BackfillLatest
 			}
 			cs.BackfillLatest = ""
 			return nil
@@ -689,10 +711,16 @@ func (imp *Importer) threadCatchUp(ctx context.Context, cc *convScope, state *Sy
 			if errors.Is(err, ErrNotFound) {
 				// The conversation is gone: there is nothing left to fetch,
 				// ever. Clearing the debt here keeps one deleted channel
-				// from wedging every future workspace sync into failure.
+				// from wedging every future workspace sync into failure —
+				// and a vacuous stamp keeps the stamp-less adoption from
+				// re-flagging it (nothing exists to cover; the gap
+				// machinery owns any later resurrection).
 				imp.recordItem(cc.syncID, cc.channelID, "fetch", store.SyncRunItemStatusSkipped, "slack_channel_gone", err)
 				cs.ThreadsPending = false
 				cs.CatchUpCursor, cs.CatchUpLatest = "", ""
+				if cs.SweptThrough == "" {
+					cs.SweptThrough = tsFormat(imp.now())
+				}
 				return nil
 			}
 			imp.recordItem(cc.syncID, cc.channelID, "fetch", store.SyncRunItemStatusError, "slack_fetch_error", err)
@@ -794,12 +822,61 @@ func (imp *Importer) rescanHead(ctx context.Context, cc *convScope, sum *ImportS
 				return err
 			}
 		}
+		// Repair thread REPLIES too: history structurally excludes them,
+		// and the rescan's contract is edits/reactions on recent messages
+		// — replies included.
+		for i := range page.Messages {
+			m := &page.Messages[i]
+			if !m.IsThreadRoot() {
+				continue
+			}
+			if err := imp.rescanThread(ctx, cc, m.TS, sum); err != nil {
+				return err
+			}
+		}
 		if !page.HasMore || page.NextCursor == "" {
 			return nil
 		}
 		pageCursor = page.NextCursor
 	}
 	return nil
+}
+
+// rescanThread re-fetches a thread's replies during the maintenance rescan,
+// re-processing every message INCLUDING the archived parent — the one
+// deliberate exception to the archived-parent skip: repairing post-capture
+// mutations to source truth is exactly what the explicit repair pass is
+// for. Unlimited-only (like the rescan itself), full pages, idempotent.
+func (imp *Importer) rescanThread(ctx context.Context, cc *convScope, rootTS string, sum *ImportSummary) error {
+	pageCursor := ""
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		page, err := imp.client.repliesPageWithLimit(ctx, cc.channelID, rootTS, pageCursor, "", historyPageLimit)
+		if err != nil {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			if errors.Is(err, ErrNotFound) {
+				imp.recordItem(cc.syncID, sourceMessageID(cc.channelID, rootTS), "maintenance", store.SyncRunItemStatusSkipped, "slack_thread_gone", err)
+				return nil
+			}
+			imp.recordItem(cc.syncID, sourceMessageID(cc.channelID, rootTS), "maintenance", store.SyncRunItemStatusError, "slack_fetch_error", err)
+			sum.FetchErrors++
+			sum.Errors++
+			return nil
+		}
+		for i := range page.Messages {
+			if err := imp.processMessage(ctx, cc, &page.Messages[i], sum); err != nil {
+				return err
+			}
+		}
+		if !page.HasMore || page.NextCursor == "" {
+			return nil
+		}
+		pageCursor = page.NextCursor
+	}
 }
 
 // processMessage persists one message and its auxiliary rows. Store-level

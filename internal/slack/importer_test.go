@@ -870,6 +870,182 @@ func TestFileWithoutPermalinkKeepsPendingMarker(t *testing.T) {
 	require.Equal(1, sum.AttachmentsDownloaded)
 }
 
+func TestCatchUpDebtNotStarvedBySaturatedWindows(t *testing.T) {
+	require := require.New(t)
+	f := newFakeSlack(t)
+	f.users = []map[string]any{
+		{"id": "UME", "name": "me", "profile": map[string]any{"email": "me@example.com"}},
+	}
+	oldRoot := fakeMsg{TS: ts(0), User: "UME", Text: "old root"}
+	for i := range 3 {
+		oldRoot.Replies = append(oldRoot.Replies,
+			fakeMsg{TS: ts(i + 1), ThreadTS: oldRoot.TS, User: "UME", Text: "old reply " + strconv.Itoa(i)})
+	}
+	conv := &fakeConv{ID: "C70", Name: "busy", Kind: "public", Members: []string{"UME"}, Msgs: []fakeMsg{oldRoot}}
+	for i := range 5 {
+		conv.Msgs = append(conv.Msgs, fakeMsg{TS: ts(100 + i), User: "UME", Text: "old top " + strconv.Itoa(i)})
+	}
+	f.convs = []*fakeConv{conv}
+	imp, opts := testImporter(t, f)
+	st := imp.store
+
+	noThreads := opts
+	noThreads.NoThreads = true
+	_, err := imp.Import(context.Background(), noThreads)
+	require.NoError(err)
+
+	// Top-level traffic saturates the --limit budget EVERY run. Catch-up
+	// debt is finite; junior to the window walk it would get zero budget
+	// forever, while the windows keep up and the run looks healthy.
+	limited := opts
+	limited.Limit = 4
+	for k := 1; k <= 8; k++ {
+		f.mu.Lock()
+		for i := range 4 {
+			arrival := tsFormat(time.Now().Add(time.Duration(k-1)*time.Minute + time.Duration(10+i)*time.Second))
+			f.conv("C70").Msgs = append(f.conv("C70").Msgs, fakeMsg{TS: arrival, User: "UME", Text: "arrival"})
+		}
+		f.mu.Unlock()
+		warp := time.Duration(k) * time.Minute
+		imp.now = func() time.Time { return time.Now().Add(warp) }
+		_, err = imp.Import(context.Background(), limited)
+		require.NoError(err)
+	}
+
+	for i := range 3 {
+		var n int
+		require.NoError(st.DB().QueryRow(st.Rebind(
+			`SELECT COUNT(*) FROM messages WHERE source_message_id = ?`), "C70:"+ts(i+1)).Scan(&n))
+		require.Equal(1, n, "catch-up debt must converge even when windows saturate the budget (reply %d)", i)
+	}
+	src, err := st.GetOrCreateSource("slack", "T01:UME")
+	require.NoError(err)
+	require.False(imp.loadResumeState(src.ID).EnsureConv("C70").ThreadsPending,
+		"the finite catch-up debt must clear; it is senior to new window work")
+}
+
+func TestCrashBeforeSweepStampsCoverage(t *testing.T) {
+	require := require.New(t)
+	f := testWorkspace(t)
+	imp, opts := testImporter(t, f)
+	st := imp.store
+
+	// The very first (threaded) run completes #general's initial walk but
+	// dies at the LAST conversation — BEFORE the sweep phase ever runs, so
+	// no adoption happens. The completing walk must have stamped its own
+	// coverage: later runs advance Cursor with every window, and a
+	// boundary guessed from Cursor would sit past the interval.
+	checkpointMinInterval = time.Hour
+	f.mu.Lock()
+	f.onHistory = func(channelID string) {
+		if channelID == "D01" {
+			_, _ = st.DB().Exec(`DROP TABLE reactions`)
+		}
+	}
+	f.mu.Unlock()
+	sum, err := imp.Import(context.Background(), opts)
+	require.Error(err, "the store failure at the last conversation is fatal")
+	state := imp.loadResumeState(sum.SourceID)
+	require.True(state.EnsureConv("C01").Done, "the first conversation's walk completed")
+	require.NotEmpty(state.EnsureConv("C01").SweptThrough,
+		"a completing threaded initial walk must stamp its own reply coverage")
+
+	// A reply lands in the crash-to-restart interval; the healed run, 20
+	// minutes later, must sweep it — its floor derives from the stamp, not
+	// from the Cursor the new window is about to advance.
+	intervalReply := tsFresh(0)
+	f.mu.Lock()
+	f.onHistory = nil
+	root := f.conv("C01").findRoot(ts(5))
+	root.Replies = append(root.Replies, fakeMsg{TS: intervalReply, ThreadTS: ts(5), User: "UALICE", Text: "interval reply"})
+	f.mu.Unlock()
+	require.NoError(st.InitSchema())
+
+	imp.now = func() time.Time { return time.Now().Add(20 * time.Minute) }
+	_, err = imp.Import(context.Background(), opts)
+	require.NoError(err)
+	var n int
+	require.NoError(st.DB().QueryRow(st.Rebind(
+		`SELECT COUNT(*) FROM messages WHERE source_message_id = ?`), "C01:"+intervalReply).Scan(&n))
+	require.Equal(1, n, "a reply created between a crash-before-sweep and the restart must not fall below the boundary")
+}
+
+func TestLegacyStampLessStateTriggersCatchUp(t *testing.T) {
+	require := require.New(t)
+	f, rootTS := oldThreadWorkspace(t)
+	imp, opts := testImporter(t, f)
+	st := imp.store
+
+	// A legacy blob: conversation done, Cursor advanced by many windows,
+	// NO SweptThrough stamp (written before completion-stamping existed).
+	// The reply below Cursor − margin is invisible to any sweep whose
+	// boundary is guessed from Cursor; only a conservative catch-up walk
+	// can recover it.
+	legacyReply := tsFresh(0)
+	f.mu.Lock()
+	root := f.conv("C09").findRoot(rootTS)
+	root.Replies = append(root.Replies, fakeMsg{TS: legacyReply, ThreadTS: rootTS, User: "UME", Text: "pre-stamp reply"})
+	f.mu.Unlock()
+
+	src, err := st.GetOrCreateSource("slack", "T01:UME")
+	require.NoError(err)
+	legacy := NewSyncState()
+	lcs := legacy.EnsureConv("C09")
+	lcs.Done = true
+	lcs.Cursor = tsFormat(time.Now().Add(30 * time.Minute))
+	runA, err := st.StartSync(src.ID, "slack")
+	require.NoError(err)
+	require.NoError(st.CompleteSync(runA, mustMarshal(t, legacy)))
+
+	imp.now = func() time.Time { return time.Now().Add(31 * time.Minute) }
+	_, err = imp.Import(context.Background(), opts)
+	require.NoError(err)
+	imp.now = func() time.Time { return time.Now().Add(32 * time.Minute) }
+	_, err = imp.Import(context.Background(), opts)
+	require.NoError(err)
+
+	var n int
+	require.NoError(st.DB().QueryRow(st.Rebind(
+		`SELECT COUNT(*) FROM messages WHERE source_message_id = ?`), "C09:"+legacyReply).Scan(&n))
+	require.Equal(1, n, "a stamp-less legacy state must recover via the conservative catch-up walk, not a Cursor-guessed boundary")
+}
+
+func TestMaintenanceRepairsReplyEdits(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f, rootTS := oldThreadWorkspace(t)
+	imp, opts := testImporter(t, f)
+	st := imp.store
+
+	_, err := imp.Import(context.Background(), opts)
+	require.NoError(err)
+
+	// A REPLY is edited at the source. Plain runs ignore post-capture
+	// mutations; --maintenance promises to repair recent messages —
+	// replies included, which history alone can never serve.
+	f.mu.Lock()
+	f.conv("C09").findRoot(rootTS).Replies[0].Text = "ancient reply (stealth edit)"
+	f.mu.Unlock()
+
+	_, err = imp.Import(context.Background(), opts)
+	require.NoError(err)
+	replyID := "C09:" + f.conv("C09").findRoot(rootTS).Replies[0].TS
+	readBody := func() string {
+		var body string
+		require.NoError(st.DB().QueryRow(st.Rebind(`
+			SELECT mb.body_text FROM message_bodies mb
+			JOIN messages m ON m.id = mb.message_id WHERE m.source_message_id = ?`), replyID).Scan(&body))
+		return body
+	}
+	assert.Equal("ancient reply", readBody(), "plain runs ignore post-capture reply edits")
+
+	maint := opts
+	maint.Maintenance = true
+	_, err = imp.Import(context.Background(), maint)
+	require.NoError(err)
+	assert.Equal("ancient reply (stealth edit)", readBody(), "--maintenance must repair reply edits, not only top-level messages")
+}
+
 func TestFirstReplyToUnthreadedMessageRecoveredByCatchUp(t *testing.T) {
 	require := require.New(t)
 	f := newFakeSlack(t)

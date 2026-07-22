@@ -76,7 +76,7 @@ msgvault sync-slack --full
 | `--limit N` | Max messages of work per conversation this run — thread replies count via their `reply_count` forecast, and the reply sweep gets the same budget workspace-wide. Every phase resumes next run (large threads, catch-up walks, and the sweep all make durable progress), so standing limited schedules converge; only the maintenance rescan is skipped |
 | `--full` | Start (or continue) a repair session: re-fetch and upsert every message in place. Interrupted or `--limit`-scoped repairs resume across subsequent runs of any kind until complete |
 | `--no-threads` | Skip thread-reply fetching this run (a later threaded run pays the debt automatically) |
-| `--maintenance` | Repair edits and reaction changes on recent messages (archives ignore post-capture mutations by default) |
+| `--maintenance` | Repair edits and reaction changes on recent messages, thread replies included (archives ignore post-capture mutations by default; "recent" keys on message age — edits to older messages need `--full`) |
 | `--no-media` | Skip file downloads this run (files stay pending for `backfill-slack-media`) |
 
 Backfills are resumable: interrupt with Ctrl-C and the next run continues
