@@ -107,7 +107,18 @@ jobs:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
       - name: Install container build tools
-        run: apt-get update && apt-get install -y --no-install-recommends gcc g++ make unzip
+        # Mirror hiccups have hung plain apt-get for 15+ minutes; bounded
+        # timeouts plus retries turn an outage into a short delay.
+        run: |
+          for attempt in 1 2 3; do
+            if apt-get update -o Acquire::Retries=3 -o Acquire::http::Timeout=30 \
+              && apt-get install -y --no-install-recommends -o Acquire::Retries=3 -o Acquire::http::Timeout=30 gcc g++ make unzip; then
+              exit 0
+            fi
+            echo "apt attempt $attempt failed; retrying" >&2
+            sleep 30
+          done
+          exit 1
 
       - name: Trust the checkout in the container
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
@@ -157,7 +168,18 @@ jobs:
           go-version-file: go.mod
 
       - name: Install container build tools
-        run: apt-get update && apt-get install -y --no-install-recommends gcc g++ make unzip
+        # Mirror hiccups have hung plain apt-get for 15+ minutes; bounded
+        # timeouts plus retries turn an outage into a short delay.
+        run: |
+          for attempt in 1 2 3; do
+            if apt-get update -o Acquire::Retries=3 -o Acquire::http::Timeout=30 \
+              && apt-get install -y --no-install-recommends -o Acquire::Retries=3 -o Acquire::http::Timeout=30 gcc g++ make unzip; then
+              exit 0
+            fi
+            echo "apt attempt $attempt failed; retrying" >&2
+            sleep 30
+          done
+          exit 1
 
       - name: Trust the checkout in the container
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
