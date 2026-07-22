@@ -96,6 +96,7 @@ type FileMetadataResponse struct {
 	ID               int64            `json:"id"`
 	MessageID        int64            `json:"message_id"`
 	ConversationID   int64            `json:"conversation_id"`
+	EntryKey         string           `json:"entry_key"`
 	Filename         string           `json:"filename"`
 	MimeType         string           `json:"mime_type"`
 	Size             int64            `json:"size_bytes"`
@@ -430,6 +431,7 @@ func (s *Server) handleGetFile(w http.ResponseWriter, r *http.Request) {
 	state, available := fileContentState(*file)
 	writeJSON(w, http.StatusOK, FileMetadataResponse{
 		ID: file.ID, MessageID: file.MessageID, ConversationID: file.ConversationID,
+		EntryKey: fileEntryKey(*file),
 		Filename: file.Filename, MimeType: file.MimeType, Size: file.Size,
 		ContentHash: file.ContentHash, URL: file.URL, ContentState: state, ContentAvailable: available,
 	})
@@ -487,6 +489,17 @@ func (s *Server) handleGetFileContent(w http.ResponseWriter, r *http.Request) {
 	if err := errors.Join(copyErr, content.Close()); err != nil {
 		s.logger.Error("failed to stream file", "error", err, "file_id", id)
 	}
+}
+
+// fileEntryKey builds the canonical explore entry key of the attachment's
+// containing item through the same classification the explore engine renders
+// in SQL, so metadata-only deep links can match a listed entry exactly.
+func fileEntryKey(file store.FileMetadata) string {
+	return query.EntryKeyFacts{
+		SourceID: file.SourceID, SourceMessageID: file.SourceMessageID,
+		MessageID: file.MessageID, ConversationID: file.ConversationID,
+		MessageType: file.MessageType, ConversationType: file.ConversationType,
+	}.EntryKey()
 }
 
 func fileContentState(file store.FileMetadata) (FileContentState, bool) {

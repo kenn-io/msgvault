@@ -248,10 +248,7 @@ WITH selected AS (
 	SELECT * FROM analytical_entries WHERE ` + conditions + `
 ), facts AS (
 	SELECT
-		CASE WHEN lower(s.message_type) IN (` + TextMessageTypeSQLList + `)
-			OR (lower(s.message_type) IN ('', 'chat', 'text') AND lower(s.conversation_type) IN ('direct_chat', 'group_chat', 'channel', 'chat'))
-		THEN 'source:' || CAST(s.source_id AS VARCHAR) || ':conversation:' || CAST(s.conversation_id AS VARCHAR)
-		ELSE 'source:' || CAST(s.source_id AS VARCHAR) || ':message:' || COALESCE(NULLIF(s.source_message_id, ''), CAST(s.message_id AS VARCHAR)) END AS entry_key,
+		` + sqlEntryKeyExpr("s.") + ` AS entry_key,
 		s.message_id, s.conversation_id, s.occurred_at, s.source_id, s.source_identifier,
 		COALESCE(NULLIF(s.subject, ''), NULLIF(s.conversation_title, ''), s.snippet, '') AS title,
 		a.attachment_id, a.filename, a.mime_type, a.size

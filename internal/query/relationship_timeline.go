@@ -65,6 +65,12 @@ type RelationshipTimelineResponse struct {
 // conversation can contain thousands of short back-and-forth messages that
 // would otherwise drown out the rarer email/meeting entries.
 //
+// Event and meeting rows appear only when one of the archive owner's
+// identities participated, matching the relationship ranking's
+// owner-participation rule (buildRelationshipsSQL) — a shared-calendar
+// event the owner never attended is not an interaction and would otherwise
+// surface here despite contributing no ranking signal.
+//
 // The local day boundary is computed by DuckDB's ICU-backed timezone()
 // function (statically linked into the go-duckdb prebuilt binary — see
 // TestDuckDBTimezoneConversionUsesBundledICU), not by decay-style date_diff
@@ -123,7 +129,9 @@ func (e *DuckDBEngine) RelationshipTimeline(ctx context.Context, request Relatio
 	}
 	args = append(args, limit, request.Offset)
 
-	rows, err := e.db.QueryContext(ctx, buildRelationshipTimelineSQL(conditions), args...)
+	queryText := buildRelationshipTimelineSQL(conditions,
+		e.parquetPath(datasetParticipantClusters), e.parquetPath(datasetOwnerParticipants))
+	rows, err := e.db.QueryContext(ctx, queryText, args...)
 	if err != nil {
 		return nil, fmt.Errorf("query relationship timeline: %w", err)
 	}
@@ -264,10 +272,38 @@ func validateRelationshipTimelineRequest(request RelationshipTimelineRequest) er
 // doesn't collapse into a single burst. The trailing "?" binds the IANA
 // timezone name once, in the "day_bucketed" CTE; both branches read the
 // precomputed local_day column rather than re-evaluating timezone() per row.
-func buildRelationshipTimelineSQL(conditions string) string {
-	return buildExploreFilteredClassifiedCTE(conditions, "NULL::BIGINT") + `
-, day_bucketed AS (
-    SELECT *, strftime(timezone(?, timezone('UTC', occurred_at)), '%Y-%m-%d') AS local_day
+//
+// Event/meeting rows require owner participation, mirroring the
+// relationship ranking exactly (see the le_with_owner CTE and the
+// "interactions" exclusion in buildRelationshipsSQL, including its
+// person-level global-owners rationale): a subscribed or shared-calendar
+// event the owner never attended is not an interaction with the
+// counterpart, and the ranking already contributes no signal for it — the
+// timeline must not display what the ranking ignores. The
+// clusters/owners/canon/owner_canon/owner_participant_ids CTE chain is
+// copied verbatim from buildRelationshipsSQL so owner-cluster expansion
+// (owner participation under a clustered alias) resolves identically on
+// both surfaces. Email and chat rows are untouched: the timeline scopes by
+// counterpart-cluster membership, not owner involvement, so a counterpart's
+// email to a third party still appears.
+func buildRelationshipTimelineSQL(conditions, clustersGlob, ownersGlob string) string {
+	return buildExploreFilteredClassifiedCTE(conditions, "NULL::BIGINT") + fmt.Sprintf(`
+, clusters AS (
+    SELECT participant_id, canonical_id FROM read_parquet('%s')
+), owners AS (
+    SELECT DISTINCT participant_id FROM read_parquet('%s')
+), canon AS (
+    SELECT p.id AS participant_id, COALESCE(c.canonical_id, p.id) AS canonical_id
+    FROM participants p LEFT JOIN clusters c ON c.participant_id = p.id
+), owner_canon AS (
+    SELECT DISTINCT cn.canonical_id FROM owners o JOIN canon cn ON cn.participant_id = o.participant_id
+), owner_participant_ids AS (
+    SELECT DISTINCT cn.participant_id FROM canon cn
+    WHERE cn.canonical_id IN (SELECT canonical_id FROM owner_canon)
+), day_bucketed AS (
+    SELECT *,
+        strftime(timezone(?, timezone('UTC', occurred_at)), '%%Y-%%m-%%d') AS local_day,
+        list_has_any(participant_ids, (SELECT list(participant_id) FROM owner_participant_ids)) AS with_owner
     FROM classified
 ), timeline_entries AS (
     SELECT
@@ -284,6 +320,7 @@ func buildRelationshipTimelineSQL(conditions string) string {
         has_attachments
     FROM day_bucketed
     WHERE NOT is_chat
+      AND NOT (entry_kind IN ('event','meeting') AND NOT with_owner)
 
     UNION ALL
 
@@ -310,5 +347,5 @@ SELECT
     source_id, title, preview, message_count, has_attachments, total_count
 FROM counted
 ORDER BY occurred_at DESC, entry_key ASC
-LIMIT ? OFFSET ?`
+LIMIT ? OFFSET ?`, clustersGlob, ownersGlob)
 }

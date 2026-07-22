@@ -116,12 +116,13 @@ const (
 	messageTypeSMS               = "sms"
 	messageTypeRCS               = "rcs"
 	messageTypeIMessage          = "imessage"
+	messageTypeWhatsApp          = "whatsapp"
 	messageTypeMeetingTranscript = "meeting_transcript"
 )
 
 // TextMessageTypes lists the message_type values included in Texts mode.
 var TextMessageTypes = []string{
-	"whatsapp", messageTypeIMessage, messageTypeSMS, "mms", messageTypeRCS,
+	messageTypeWhatsApp, messageTypeIMessage, messageTypeSMS, "mms", messageTypeRCS,
 	"google_voice_text", "teams", "discord", "beeper", "fbmessenger",
 }
 
@@ -161,7 +162,7 @@ var KnownMessageTypes = []string{
 	messageTypeSMS,
 	"mms",
 	messageTypeRCS,
-	"whatsapp",
+	messageTypeWhatsApp,
 	messageTypeIMessage,
 	"teams",
 	"discord",

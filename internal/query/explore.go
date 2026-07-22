@@ -548,8 +548,8 @@ func buildExploreLogicalSQL(conditions string) string {
 func sqlIsChatPredicate(messageType, conversationType string) string {
 	return "lower(" + messageType + ") IN (" + TextMessageTypeSQLList + `)
             OR (
-                lower(` + messageType + `) IN ('', 'chat', 'text')
-                AND lower(` + conversationType + `) IN ('direct_chat', 'group_chat', 'channel', 'chat')
+                lower(` + messageType + `) IN (` + sqlQuotedList(chatFallbackMessageTypes) + `)
+                AND lower(` + conversationType + `) IN (` + sqlQuotedList(chatConversationTypes) + `)
             )`
 }
 
@@ -607,7 +607,7 @@ func exploreLogicalEntriesCTE(withParticipantLists bool) string {
 	}
 	return `, logical_entries AS (
     SELECT
-        'source:' || CAST(source_id AS VARCHAR) || ':message:' || COALESCE(NULLIF(source_message_id, ''), CAST(message_id AS VARCHAR)) AS entry_key,
+        ` + sqlMessageEntryKeyExpr("") + ` AS entry_key,
         entry_kind,
         message_id AS anchor_message_id,
         conversation_id,
@@ -635,7 +635,7 @@ func exploreLogicalEntriesCTE(withParticipantLists bool) string {
     UNION ALL
 
     SELECT
-        'source:' || CAST(source_id AS VARCHAR) || ':conversation:' || CAST(conversation_id AS VARCHAR) AS entry_key,
+        ` + sqlConversationEntryKeyExpr("") + ` AS entry_key,
         'conversation' AS entry_kind,
         arg_max(message_id, struct_pack(occurred_at := occurred_at, message_id := message_id)) AS anchor_message_id,
         conversation_id,

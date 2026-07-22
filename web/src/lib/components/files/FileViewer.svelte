@@ -210,16 +210,18 @@
     return value instanceof Error ? value.message : 'File preview failed.';
   }
 
+  // The metadata endpoint returns the canonical explore entry key for the
+  // containing item; never synthesize one locally — a synthesized key cannot
+  // match any listed explore entry.
   function openItem(): void {
-    const messageID = metadata?.message_id ?? file.message_id;
-    const entryKey = file.entry_key ?? (messageID ? `message:${messageID}` : undefined);
+    const entryKey = metadata?.entry_key ?? file.entry_key;
     if (entryKey) onOpenItem?.(entryKey);
   }
 
   function openConversation(): void {
     const messageID = metadata?.message_id ?? file.message_id;
     const conversationID = metadata?.conversation_id ?? file.conversation_id;
-    const entryKey = file.entry_key ?? (messageID ? `message:${messageID}` : undefined);
+    const entryKey = metadata?.entry_key ?? file.entry_key;
     if (entryKey && messageID && conversationID) onOpenConversation?.(entryKey, messageID, conversationID);
   }
 

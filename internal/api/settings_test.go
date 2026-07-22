@@ -311,7 +311,7 @@ func TestSettingsOpenAPIContract(t *testing.T) {
 	for _, status := range []string{"400", "409", "412", "422", "428"} {
 		assert.Contains(patch.Responses, status)
 	}
-	assert.Equal("1.24.0", doc.Info.Version)
+	assert.Equal("1.25.0", doc.Info.Version)
 
 	settingValue := doc.Components.Schemas.Map()["SettingValue"]
 	require.NotNil(settingValue)

@@ -291,6 +291,74 @@ func TestRelationshipTimelineIntersectsParticipantFilterWithClusterMembership(t 
 	assert.Equal("message:"+strconv.FormatInt(entryWithX, 10), filtered.Rows[0].Key)
 }
 
+// TestRelationshipTimelineExcludesOwnerAbsentEvents pins the timeline to
+// the ranking's owner-participation rule for event/meeting rows (see
+// TestRelationshipsOwnerAbsentMeetingContributesNoModality for the ranking
+// side): an event or meeting the archive owner never attended — e.g. a
+// subscribed or shared-calendar entry — must not appear in a counterpart's
+// timeline, while an event the owner DID attend (here via an alias linked
+// only through participant_clusters, proving owner-cluster expansion) and a
+// plain owner-absent email from the counterpart both remain — the timeline
+// scopes emails/chats by counterpart membership only, not owner involvement.
+func TestRelationshipTimelineExcludesOwnerAbsentEvents(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	b := NewTestDataBuilder(t)
+	srcID := b.AddSource("owner@example.com")
+	ownerID := b.AddParticipant("owner@example.com", "example.com", "Owner")
+	ownerAliasID := b.AddParticipant("owner@alias.example", "alias.example", "Owner Alias")
+	b.AddOwnerParticipant(srcID, ownerID)
+	b.LinkCluster(ownerID, ownerAliasID)
+
+	xID := b.AddParticipant("x@example.com", "example.com", "X")
+	yID := b.AddParticipant("y@example.com", "example.com", "Y")
+
+	unattendedEventID := b.AddMessage(MessageOpt{
+		SourceID: srcID, MessageType: "calendar_event",
+		SentAt: time.Date(2026, 1, 8, 9, 0, 0, 0, time.UTC),
+	})
+	b.AddFrom(unattendedEventID, xID, "X")
+	b.AddTo(unattendedEventID, yID, "Y")
+
+	unattendedMeetingID := b.AddMessage(MessageOpt{
+		SourceID: srcID, MessageType: "meeting_transcript",
+		SentAt: time.Date(2026, 1, 7, 9, 0, 0, 0, time.UTC),
+	})
+	b.AddFrom(unattendedMeetingID, xID, "X")
+	b.AddTo(unattendedMeetingID, yID, "Y")
+
+	attendedEventID := b.AddMessage(MessageOpt{
+		SourceID: srcID, MessageType: "calendar_event",
+		SentAt: time.Date(2026, 1, 6, 9, 0, 0, 0, time.UTC),
+	})
+	b.AddFrom(attendedEventID, xID, "X")
+	b.AddTo(attendedEventID, ownerAliasID, "Owner Alias")
+
+	emailID := b.AddMessage(MessageOpt{
+		SourceID: srcID, MessageType: "email",
+		SentAt: time.Date(2026, 1, 5, 9, 0, 0, 0, time.UTC),
+	})
+	b.AddFrom(emailID, xID, "X")
+	b.AddTo(emailID, yID, "Y")
+
+	engine := b.BuildEngine()
+	result, err := engine.RelationshipTimeline(context.Background(), RelationshipTimelineRequest{
+		CanonicalID: xID, Limit: 10,
+	})
+	require.NoError(err)
+	require.Len(result.Rows, 2,
+		"owner-absent event and meeting must be excluded; owner-attended event and owner-absent email remain")
+	assert.Equal(int64(2), result.TotalCount)
+
+	assert.Equal("message:"+strconv.FormatInt(attendedEventID, 10), result.Rows[0].Key,
+		"an event the owner attended via a clustered alias must remain")
+	assert.Equal("event", result.Rows[0].Kind)
+	assert.Equal("message:"+strconv.FormatInt(emailID, 10), result.Rows[1].Key,
+		"a plain email from the counterpart keeps its current owner-independent scope")
+	assert.Equal("email", result.Rows[1].Kind)
+}
+
 // TestResolveCanonicalParticipant covers both the linked case (any member ID
 // resolves to the shared canonical ID) and the miss case (an unlinked
 // participant is its own single-member cluster).

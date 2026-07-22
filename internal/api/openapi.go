@@ -101,7 +101,12 @@ import (
 // owner_participants rows) or every participant on the entry is the owner.
 // Additive (minor bump): existing callers that ignore the field see no
 // behavior change.
-const APISchemaVersion = "1.24.0"
+// 1.25.0 adds the entry_key field to FileMetadataResponse: the canonical
+// explore entry key of the attachment's containing item, built with the same
+// chat/message classification the explore listings render, so file deep
+// links can select a listed entry exactly. Additive (minor bump): existing
+// callers that ignore the field see no behavior change.
+const APISchemaVersion = "1.25.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.

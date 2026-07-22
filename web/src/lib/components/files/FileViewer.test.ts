@@ -23,8 +23,8 @@ vi.mock('./FileViewer.browser.svelte', () => ({
 function file(overrides: Partial<FileSearchRow> = {}): FileSearchRow {
   return {
     id: 7,
-    key: 'file:7',
-    entry_key: 'message:11',
+    key: 'source:1:message:m-11:file:7',
+    entry_key: 'source:1:message:m-11',
     message_id: 11,
     conversation_id: 21,
     occurred_at: '2026-07-18T12:00:00Z',
@@ -205,6 +205,43 @@ describe('FileViewer', () => {
     } finally {
       HTMLAnchorElement.prototype.click = originalClick;
     }
+  });
+
+  it('deep links a metadata-only target through the canonical entry key returned by the endpoint', async () => {
+    const onOpenItem = vi.fn();
+    const onOpenConversation = vi.fn();
+    const fetchFn = viewerFetch({
+      id: 7, message_id: 11, conversation_id: 21, entry_key: 'source:1:message:m-11',
+      filename: 'report.pdf', mime_type: 'application/pdf', size_bytes: 12,
+      content_state: 'metadata_only', content_available: false
+    });
+    render(FileViewer, { client: createAPIClient(fetchFn), file: { id: 7 }, onOpenItem, onOpenConversation });
+    await screen.findByText('This attachment has metadata only.');
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Open containing item' }));
+    expect(onOpenItem).toHaveBeenCalledExactlyOnceWith('source:1:message:m-11');
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Open containing conversation' }));
+    expect(onOpenConversation).toHaveBeenCalledExactlyOnceWith('source:1:message:m-11', 11, 21);
+    expect(fetchFn).toHaveBeenCalledOnce();
+  });
+
+  it('prefers the authoritative metadata entry key over the listing row key', async () => {
+    const onOpenItem = vi.fn();
+    const fetchFn = viewerFetch({
+      id: 7, message_id: 11, conversation_id: 21, entry_key: 'source:1:conversation:21',
+      filename: 'photo.png', mime_type: 'image/png', size_bytes: 12,
+      content_state: 'metadata_only', content_available: false
+    });
+    render(FileViewer, {
+      client: createAPIClient(fetchFn),
+      file: file({ content_state: 'metadata_only', content_available: false }),
+      onOpenItem
+    });
+    await screen.findByText('This attachment has metadata only.');
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Open containing item' }));
+    expect(onOpenItem).toHaveBeenCalledExactlyOnceWith('source:1:conversation:21');
   });
 
   it('clears loading and shows an error when the metadata request fails', async () => {

@@ -1966,6 +1966,8 @@ components:
         conversation_id:
           format: int64
           type: integer
+        entry_key:
+          type: string
         filename:
           nullable: true
           type: string
@@ -1987,6 +1989,7 @@ components:
         - id
         - message_id
         - conversation_id
+        - entry_key
         - filename
         - mime_type
         - size_bytes
@@ -4248,7 +4251,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 1.24.0
+  version: 1.25.0
 openapi: 3.0.3
 paths:
   /api/ping:

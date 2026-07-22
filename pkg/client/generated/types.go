@@ -1892,6 +1892,7 @@ type FileMetadataResponse struct {
 	ContentHash      *string                          `json:"content_hash,omitempty"`
 	ContentState     FileMetadataResponseContentState `json:"content_state" validate:"required"`
 	ConversationID   int64                            `json:"conversation_id"`
+	EntryKey         string                           `json:"entry_key" validate:"required"`
 	Filename         *string                          `json:"filename,omitempty" validate:"required"`
 	ID               int64                            `json:"id"`
 	MessageID        int64                            `json:"message_id"`
@@ -1906,6 +1907,9 @@ func (f FileMetadataResponse) Validate() error {
 		if err := v.Validate(); err != nil {
 			errors = errors.Append("ContentState", err)
 		}
+	}
+	if err := typesValidator.Var(f.EntryKey, "required"); err != nil {
+		errors = errors.Append("EntryKey", err)
 	}
 	if err := typesValidator.Var(f.Filename, "required"); err != nil {
 		errors = errors.Append("Filename", err)

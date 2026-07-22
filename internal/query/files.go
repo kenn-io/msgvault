@@ -377,14 +377,8 @@ func fileSearchSQL(population, order string) string {
 )
 SELECT
 	attachment_id,
-	CASE WHEN lower(message_type) IN (` + TextMessageTypeSQLList + `)
-		OR (lower(message_type) IN ('', 'chat', 'text') AND lower(conversation_type) IN ('direct_chat', 'group_chat', 'channel', 'chat'))
-		THEN 'source:' || CAST(source_id AS VARCHAR) || ':conversation:' || CAST(conversation_id AS VARCHAR) || ':file:' || CAST(attachment_id AS VARCHAR)
-		ELSE 'source:' || CAST(source_id AS VARCHAR) || ':message:' || COALESCE(NULLIF(source_message_id, ''), CAST(message_id AS VARCHAR)) || ':file:' || CAST(attachment_id AS VARCHAR) END,
-	CASE WHEN lower(message_type) IN (` + TextMessageTypeSQLList + `)
-		OR (lower(message_type) IN ('', 'chat', 'text') AND lower(conversation_type) IN ('direct_chat', 'group_chat', 'channel', 'chat'))
-		THEN 'source:' || CAST(source_id AS VARCHAR) || ':conversation:' || CAST(conversation_id AS VARCHAR)
-		ELSE 'source:' || CAST(source_id AS VARCHAR) || ':message:' || COALESCE(NULLIF(source_message_id, ''), CAST(message_id AS VARCHAR)) END,
+	` + sqlEntryKeyExpr("") + ` || ':file:' || CAST(attachment_id AS VARCHAR),
+	` + sqlEntryKeyExpr("") + `,
 	message_id, conversation_id, occurred_at, source_id, source_type, source_identifier,
 	COALESCE(NULLIF(subject, ''), NULLIF(conversation_title, ''), snippet, ''),
 	snippet,
@@ -452,14 +446,8 @@ func buildFileSearchFastSQL(exploreConditions, fileConditions, order string) str
 )
 SELECT
 	attachment_id,
-	CASE WHEN lower(message_type) IN (` + TextMessageTypeSQLList + `)
-		OR (lower(message_type) IN ('', 'chat', 'text') AND lower(conversation_type) IN ('direct_chat', 'group_chat', 'channel', 'chat'))
-		THEN 'source:' || CAST(source_id AS VARCHAR) || ':conversation:' || CAST(conversation_id AS VARCHAR) || ':file:' || CAST(attachment_id AS VARCHAR)
-		ELSE 'source:' || CAST(source_id AS VARCHAR) || ':message:' || COALESCE(NULLIF(source_message_id, ''), CAST(message_id AS VARCHAR)) || ':file:' || CAST(attachment_id AS VARCHAR) END,
-	CASE WHEN lower(message_type) IN (` + TextMessageTypeSQLList + `)
-		OR (lower(message_type) IN ('', 'chat', 'text') AND lower(conversation_type) IN ('direct_chat', 'group_chat', 'channel', 'chat'))
-		THEN 'source:' || CAST(source_id AS VARCHAR) || ':conversation:' || CAST(conversation_id AS VARCHAR)
-		ELSE 'source:' || CAST(source_id AS VARCHAR) || ':message:' || COALESCE(NULLIF(source_message_id, ''), CAST(message_id AS VARCHAR)) END,
+	` + sqlEntryKeyExpr("") + ` || ':file:' || CAST(attachment_id AS VARCHAR),
+	` + sqlEntryKeyExpr("") + `,
 	message_id, conversation_id, occurred_at, source_id, source_type, source_identifier,
 	COALESCE(NULLIF(subject, ''), NULLIF(conversation_title, ''), snippet, ''),
 	snippet,

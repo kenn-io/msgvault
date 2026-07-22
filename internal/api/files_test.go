@@ -209,6 +209,50 @@ func TestFileMetadataNamesEveryContentStateAndContainingAuthorities(t *testing.T
 	}
 }
 
+// TestGetFileEntryKeyMatchesExploreProducedKey pins the deep-link contract:
+// the metadata endpoint's entry_key must equal the entry key the committed
+// DuckDB read model produces for the same attachment, in the production
+// source:<source-id>:message:<source-message-id> shape, so a metadata-only
+// file deep link can select the containing explore entry exactly.
+func TestGetFileEntryKeyMatchesExploreProducedKey(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	engine := newExploreDuckDBFixture(t)
+	catalog := &fileCatalogStore{mockStore: &mockStore{}, files: map[int64]store.FileMetadata{
+		11: {ID: 11, MessageID: 1, ConversationID: 101, SourceID: 1, SourceMessageID: "m1",
+			MessageType: "email", ConversationType: "email", Filename: "older.txt"},
+		12: {ID: 12, MessageID: 2, ConversationID: 102, SourceID: 1, SourceMessageID: "m2",
+			MessageType: "email", ConversationType: "email", Filename: "newest.pdf"},
+	}}
+	srv := NewServerWithOptions(ServerOptions{
+		Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}},
+		Store:  catalog, Engine: engine, Logger: testLogger(),
+	})
+
+	search := httptest.NewRequest(http.MethodPost, "/api/v1/files/search",
+		bytes.NewBufferString(`{"predicate":{},"limit":10}`))
+	search.Header.Set("Content-Type", "application/json")
+	searchResponse := httptest.NewRecorder()
+	srv.Router().ServeHTTP(searchResponse, search)
+	requirements.Equal(http.StatusOK, searchResponse.Code, searchResponse.Body.String())
+	var searched FileSearchHTTPResponse
+	requirements.NoError(json.NewDecoder(searchResponse.Body).Decode(&searched))
+	requirements.Len(searched.Files, 2)
+
+	for _, file := range searched.Files {
+		metadata := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/v1/files/%d", file.ID), nil)
+		metadataResponse := httptest.NewRecorder()
+		srv.Router().ServeHTTP(metadataResponse, metadata)
+		requirements.Equal(http.StatusOK, metadataResponse.Code, metadataResponse.Body.String())
+		var decoded FileMetadataResponse
+		requirements.NoError(json.NewDecoder(metadataResponse.Body).Decode(&decoded))
+		assertions.Equal(file.EntryKey, decoded.EntryKey,
+			"metadata entry_key must match the explore-produced key for attachment %d", file.ID)
+	}
+	assertions.Equal("source:1:message:m2", searched.Files[0].EntryKey)
+	assertions.Equal("source:1:message:m1", searched.Files[1].EntryKey)
+}
+
 func TestFileContentUsesSelectedAttachmentMetadata(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)

@@ -2563,6 +2563,7 @@ export interface components {
             content_state: "metadata_only" | "url_only" | "missing_blob" | "local_content";
             /** Format: int64 */
             conversation_id: number;
+            entry_key: string;
             filename: string;
             /** Format: int64 */
             id: number;

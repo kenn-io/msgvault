@@ -58,7 +58,7 @@ async function prepare(page: Page, baseURL: string | undefined, row: ReturnType<
     files: [row], total_count: 1, cache_revision: 'cache-files', search_provenance: {}
   } }));
   await page.route('**/api/v1/files/7', (route) => route.fulfill({ json: {
-    id: 7, message_id: 11, conversation_id: 21, filename: row.filename,
+    id: 7, message_id: 11, conversation_id: 21, entry_key: row.entry_key, filename: row.filename,
     mime_type: row.mime_type, size_bytes: bytes.length, content_hash: 'a'.repeat(64),
     content_state: 'local_content', content_available: true
   } }));
