@@ -184,6 +184,69 @@ describe('RelationshipList', () => {
     expect(props.onSelect).toHaveBeenCalledWith('cluster:2');
   });
 
+  it('requests the next page when scroll nears the bottom while more pages exist', async () => {
+    const onLoadMore = vi.fn();
+    render(RelationshipList, { ...baseProps(), hasMore: true, onLoadMore });
+
+    await fireEvent.scroll(screen.getByRole('grid', { name: 'Relationship results' }));
+    expect(onLoadMore).toHaveBeenCalled();
+  });
+
+  it('does not request more while a page is loading, showing the inline loading line instead', async () => {
+    const onLoadMore = vi.fn();
+    render(RelationshipList, { ...baseProps(), hasMore: true, loadingMore: true, onLoadMore });
+
+    await fireEvent.scroll(screen.getByRole('grid', { name: 'Relationship results' }));
+    expect(onLoadMore).not.toHaveBeenCalled();
+    expect(screen.getByText('Loading more…')).toBeDefined();
+  });
+
+  it('does not request more once the last page has been reached', async () => {
+    const onLoadMore = vi.fn();
+    render(RelationshipList, { ...baseProps(), hasMore: false, onLoadMore });
+
+    await fireEvent.scroll(screen.getByRole('grid', { name: 'Relationship results' }));
+    expect(onLoadMore).not.toHaveBeenCalled();
+  });
+
+  it('keeps the active row when appended pages grow the list', async () => {
+    const props = { ...baseProps(), hasMore: true };
+    const view = render(RelationshipList, props);
+    const grid = screen.getByRole('grid', { name: 'Relationship results' });
+    grid.focus();
+    await fireEvent.keyDown(grid, { key: 'j' });
+
+    await view.rerender({
+      ...props,
+      rows: [relationshipRow(1, 'Alice Example'), relationshipRow(2, 'Bob Example'), relationshipRow(3, 'Cara Example')]
+    });
+
+    const activeRow = screen.getByText('Bob Example').closest('[role="row"]')!;
+    expect(activeRow.classList.contains('active')).toBe(true);
+    expect(screen.getByText('Cara Example')).toBeDefined();
+  });
+
+  it('announces the full result count on the grid when the total is known', () => {
+    render(RelationshipList, { ...baseProps(), totalCount: 1204 });
+
+    const grid = screen.getByRole('grid', { name: 'Relationship results' });
+    expect(grid.getAttribute('aria-rowcount')).toBe('1204');
+  });
+
+  it('keeps loaded rows visible under a slim banner when a later page fails', () => {
+    render(RelationshipList, { ...baseProps(), error: 'boom' });
+
+    expect(screen.getByRole('alert').textContent).toBe('boom');
+    expect(screen.getByText('Alice Example')).toBeDefined();
+  });
+
+  it('still replaces the list with the error state when nothing loaded', () => {
+    render(RelationshipList, { ...baseProps(), rows: [], error: 'boom' });
+
+    expect(screen.getByRole('alert').textContent).toBe('boom');
+    expect(screen.queryByRole('grid')).toBeNull();
+  });
+
   it('renders the named degraded state with an Open Everything action instead of the grid', async () => {
     const onOpenEverything = vi.fn();
     render(RelationshipList, { ...baseProps(), degraded: 'cache_unavailable', onOpenEverything });

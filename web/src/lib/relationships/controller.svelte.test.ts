@@ -158,6 +158,195 @@ describe('RelationshipsController.loadList', () => {
   });
 });
 
+describe('RelationshipsController.loadMoreList', () => {
+  it('keeps next_cursor/total_count from the first ranked page, appends deduped rows, and stops at the end', async () => {
+    const requests: Request[] = [];
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      requests.push(request);
+      if (pathOf(request) !== '/api/v1/relationships') throw new Error(`unexpected path ${pathOf(request)}`);
+      const body = (await request.clone().json()) as { cursor?: string };
+      if (body.cursor === undefined) {
+        return Response.json({
+          rows: [relationshipRow(1, 'Alice'), relationshipRow(2, 'Bob')], total_count: 3,
+          cache_revision: 'cache-rel', identity_revision: 1, next_cursor: 'page-2'
+        });
+      }
+      if (body.cursor === 'page-2') {
+        return Response.json({
+          rows: [relationshipRow(2, 'Bob'), relationshipRow(3, 'Cara')], total_count: 3,
+          cache_revision: 'cache-rel', identity_revision: 1
+        });
+      }
+      throw new Error(`unexpected cursor ${body.cursor}`);
+    });
+    const controller = new RelationshipsController(createAPIClient(fetchFn), () => 'UTC');
+    await controller.loadList({ filters: [], presentation: 'table' });
+
+    expect(controller.listCursor).toBe('page-2');
+    expect(controller.listTotalCount).toBe(3);
+
+    await controller.loadMoreList();
+
+    expect(controller.listRows).toEqual([
+      relationshipRow(1, 'Alice'), relationshipRow(2, 'Bob'), relationshipRow(3, 'Cara')
+    ]);
+    expect(controller.listCursor).toBeNull();
+    expect(controller.listLoadingMore).toBe(false);
+    await expect(requests[1]!.clone().json()).resolves.toMatchObject({ cursor: 'page-2' });
+
+    // No next_cursor on the last page: further calls are guarded no-ops.
+    await controller.loadMoreList();
+    expect(requests).toHaveLength(2);
+  });
+
+  it('pages a people search with the stored cursor in the request body, deduping by id', async () => {
+    const requests: Request[] = [];
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      requests.push(request);
+      if (pathOf(request) !== '/api/v1/people/search') throw new Error(`unexpected path ${pathOf(request)}`);
+      const body = (await request.clone().json()) as { cursor?: string };
+      if (body.cursor === undefined) {
+        return Response.json({
+          rows: [person(11)], total_count: 2, cache_revision: 'cache-rel',
+          search_provenance: {}, next_cursor: 'page-2'
+        });
+      }
+      return Response.json({
+        rows: [person(11), person(12)], total_count: 2, cache_revision: 'cache-rel', search_provenance: {}
+      });
+    });
+    const controller = new RelationshipsController(createAPIClient(fetchFn), () => 'UTC');
+    controller.query = 'ali';
+    await controller.loadList({ filters: [], presentation: 'table' });
+    expect(controller.listCursor).toBe('page-2');
+    expect(controller.listTotalCount).toBe(2);
+
+    await controller.loadMoreList();
+
+    expect(controller.listRows).toEqual([person(11), person(12)]);
+    expect(controller.listCursor).toBeNull();
+    await expect(requests[1]!.clone().json()).resolves.toMatchObject({ identity_query: 'ali', cursor: 'page-2' });
+  });
+
+  it('drops the cursor and total when the context changes, replacing rows rather than appending', async () => {
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      const path = pathOf(request);
+      if (path === '/api/v1/relationships') {
+        return Response.json({
+          rows: [relationshipRow(1, 'Alice')], total_count: 500,
+          cache_revision: 'cache-rel', identity_revision: 1, next_cursor: 'ranked-page-2'
+        });
+      }
+      if (path === '/api/v1/people/search') {
+        return Response.json({ rows: [person(11)], total_count: 1, cache_revision: 'cache-rel', search_provenance: {} });
+      }
+      throw new Error(`unexpected path ${path}`);
+    });
+    const controller = new RelationshipsController(createAPIClient(fetchFn), () => 'UTC');
+    await controller.loadList({ filters: [], presentation: 'table' });
+    expect(controller.listCursor).toBe('ranked-page-2');
+
+    controller.query = 'ali';
+    await controller.loadList({ filters: [], presentation: 'table' });
+
+    expect(controller.listRows).toEqual([person(11)]);
+    expect(controller.listCursor).toBeNull();
+    expect(controller.listTotalCount).toBe(1);
+
+    // The old ranked cursor is gone with its context: no stray page fetch.
+    await controller.loadMoreList();
+    expect(fetchFn).toHaveBeenCalledTimes(2);
+  });
+
+  it('ignores a late page response that resolves after a newer context load', async () => {
+    let resolveStalePage: ((response: Response) => void) | undefined;
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      const path = pathOf(request);
+      if (path === '/api/v1/relationships') {
+        const body = (await request.clone().json()) as { cursor?: string };
+        if (body.cursor === undefined) {
+          return Response.json({
+            rows: [relationshipRow(1, 'Alice')], total_count: 2,
+            cache_revision: 'cache-rel', identity_revision: 1, next_cursor: 'page-2'
+          });
+        }
+        return new Promise<Response>((resolve) => { resolveStalePage = resolve; });
+      }
+      if (path === '/api/v1/people/search') {
+        return Response.json({ rows: [person(11)], total_count: 1, cache_revision: 'cache-rel', search_provenance: {} });
+      }
+      throw new Error(`unexpected path ${path}`);
+    });
+    const controller = new RelationshipsController(createAPIClient(fetchFn), () => 'UTC');
+    await controller.loadList({ filters: [], presentation: 'table' });
+    const stalePage = controller.loadMoreList();
+    await Promise.resolve();
+
+    controller.query = 'ali';
+    await controller.loadList({ filters: [], presentation: 'table' });
+    expect(controller.listLoadingMore).toBe(false);
+
+    resolveStalePage?.(Response.json({
+      rows: [relationshipRow(2, 'Bob')], total_count: 2,
+      cache_revision: 'cache-rel', identity_revision: 1, next_cursor: 'page-3'
+    }));
+    await stalePage;
+
+    expect(controller.listRows).toEqual([person(11)]);
+    expect(controller.listCursor).toBeNull();
+    expect(controller.listLoadingMore).toBe(false);
+  });
+
+  it('stops paging with a named error when the server repeats a cursor without progress', async () => {
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      if (pathOf(request) !== '/api/v1/relationships') throw new Error(`unexpected path ${pathOf(request)}`);
+      return Response.json({
+        rows: [relationshipRow(1, 'Alice')], total_count: 2,
+        cache_revision: 'cache-rel', identity_revision: 1, next_cursor: 'page-2'
+      });
+    });
+    const controller = new RelationshipsController(createAPIClient(fetchFn), () => 'UTC');
+    await controller.loadList({ filters: [], presentation: 'table' });
+    await controller.loadMoreList();
+    expect(controller.listCursor).toBe('page-2');
+
+    await controller.loadMoreList();
+
+    expect(controller.listError).toBe('Pagination stopped because the server repeated a cursor without progress.');
+    expect(controller.listCursor).toBeNull();
+    expect(fetchFn).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps loaded rows but stops paging when a later page fails', async () => {
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      if (pathOf(request) !== '/api/v1/relationships') throw new Error(`unexpected path ${pathOf(request)}`);
+      const body = (await request.clone().json()) as { cursor?: string };
+      if (body.cursor === undefined) {
+        return Response.json({
+          rows: [relationshipRow(1, 'Alice')], total_count: 2,
+          cache_revision: 'cache-rel', identity_revision: 1, next_cursor: 'page-2'
+        });
+      }
+      return Response.json({ error: 'internal_error', message: 'boom' }, { status: 500 });
+    });
+    const controller = new RelationshipsController(createAPIClient(fetchFn), () => 'UTC');
+    await controller.loadList({ filters: [], presentation: 'table' });
+
+    await controller.loadMoreList();
+
+    expect(controller.listRows).toEqual([relationshipRow(1, 'Alice')]);
+    expect(controller.listError).toBe('boom');
+    expect(controller.listCursor).toBeNull();
+    expect(controller.listLoadingMore).toBe(false);
+  });
+});
+
 describe('RelationshipsController text-query consistency', () => {
   // The relationships ranking and cluster-timeline endpoints accept no text
   // query, so the hub applies a carried workspace query to NO surface: a

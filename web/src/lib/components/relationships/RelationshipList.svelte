@@ -10,6 +10,9 @@
   interface Props {
     rows: RelationshipRow[] | PersonSummary[] | DomainSummary[];
     loading: boolean;
+    loadingMore?: boolean;
+    hasMore?: boolean;
+    totalCount?: number | null;
     error: string | null;
     degraded: 'cache_unavailable' | null;
     facet: RelationshipFacet;
@@ -20,6 +23,7 @@
     onFacetChange: (facet: RelationshipFacet) => void;
     onShowAllChange: (value: boolean) => void;
     onSelect: (target: string) => void;
+    onLoadMore?: () => void;
     onOpenEverything?: () => void;
   }
 
@@ -34,6 +38,9 @@
   let {
     rows,
     loading,
+    loadingMore = false,
+    hasMore = false,
+    totalCount = null,
     error,
     degraded,
     facet,
@@ -44,8 +51,14 @@
     onFacetChange,
     onShowAllChange,
     onSelect,
+    onLoadMore = undefined,
     onOpenEverything = undefined
   }: Props = $props();
+
+  /* Quiet infinite scroll (same scroll-proximity idiom as
+   * RelationshipTimeline): once the remaining scroll runway shrinks below
+   * this, the next page loads with only the inline "Loading more…" line. */
+  const LOAD_MORE_PROXIMITY_PX = 200;
 
   let gridElement = $state<HTMLDivElement>();
   let activeKey = $state<string | null>(null);
@@ -139,6 +152,14 @@
     activeKey = view.key;
     onSelect(view.target);
   }
+
+  // Fires on user scrolling and on the scrollIntoView calls moveTo makes, so
+  // keyboard navigation toward the end also pulls the next page in.
+  function handleScroll(): void {
+    if (!gridElement || !hasMore || loadingMore || loading) return;
+    const remaining = gridElement.scrollHeight - gridElement.scrollTop - gridElement.clientHeight;
+    if (remaining <= LOAD_MORE_PROXIMITY_PX) onLoadMore?.();
+  }
 </script>
 
 <aside class="relationship-list" aria-label="Relationship search and results">
@@ -168,18 +189,25 @@
       <span>Rebuild the analytical cache with <code>msgvault build-cache</code>, then retry.</span>
       <div><Button label="Open Everything" surface="outline" onclick={() => onOpenEverything?.()} /></div>
     </section>
-  {:else if error}
+  {:else if error && views.length === 0}
     <section class="named-state" role="alert">{error}</section>
   {:else}
+    {#if error}
+      <!-- A failed page fetch mid-scroll must not wipe the rows already
+           loaded: keep the list and surface the failure as a slim banner. -->
+      <p class="list-error" role="alert">{error}</p>
+    {/if}
     <div
       class="results-grid"
       role="grid"
       aria-label="Relationship results"
-      aria-busy={loading}
+      aria-busy={loading || loadingMore}
+      aria-rowcount={totalCount ?? undefined}
       tabindex="0"
       data-scroll
       bind:this={gridElement}
       onkeydown={handleKeydown}
+      onscroll={handleScroll}
     >
       {#if loading && views.length === 0}
         <p class="list-empty" role="status">Loading relationships…</p>
@@ -219,6 +247,9 @@
             </div>
           </div>
         {/each}
+        {#if loadingMore}
+          <p class="list-more" role="status">Loading more…</p>
+        {/if}
       {/if}
     </div>
   {/if}
@@ -282,6 +313,23 @@
     padding: var(--space-8) var(--space-5);
     color: var(--text-muted);
     font-size: var(--font-size-sm);
+    text-align: center;
+  }
+
+  .list-error {
+    margin: 0;
+    padding: var(--space-2) var(--space-3);
+    border-radius: var(--radius-sm);
+    background: color-mix(in srgb, var(--accent-red) 10%, transparent);
+    color: var(--text-primary);
+    font-size: var(--font-size-xs);
+  }
+
+  .list-more {
+    margin: 0;
+    padding: var(--space-3) var(--space-5);
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
     text-align: center;
   }
 

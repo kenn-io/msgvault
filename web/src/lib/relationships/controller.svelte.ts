@@ -14,6 +14,22 @@ export type LinkOutcome =
   | { ok: true; identityRevision: number; cacheState: 'ready' | 'stale' }
   | { ok: false; code: 'already_linked' | 'invalid' | 'error'; message: string };
 
+type ListRow = RelationshipRow | PersonSummary | DomainSummary;
+type ListRows = RelationshipRow[] | PersonSummary[] | DomainSummary[];
+
+/** Snapshot of the query context a list page belongs to, captured by
+ * loadList so loadMoreList replays the exact same endpoint and body (plus
+ * the cursor) even if `facet`/`query`/`showAll` have since been reassigned. */
+type ListPageRequest =
+  | { kind: 'relationships'; filters: ExplorePredicate['filters']; showAll: boolean }
+  | { kind: 'people' | 'domains'; context: ExplorePredicate; query: string };
+
+interface ListPageResponse {
+  data?: { rows?: unknown[] | null; next_cursor?: string; total_count?: number };
+  error?: unknown;
+  response: Response;
+}
+
 const RANKED_LIST_LIMIT = 200;
 const SEARCH_LIST_LIMIT = 500;
 const TIMELINE_PAGE_LIMIT = 200;
@@ -41,9 +57,14 @@ export class RelationshipsController {
   facet = $state<RelationshipFacet>('people');
   query = $state('');
   showAll = $state(false);
-  listRows = $state<RelationshipRow[] | PersonSummary[] | DomainSummary[]>([]);
+  listRows = $state<ListRows>([]);
   listLoading = $state(false);
+  listLoadingMore = $state(false);
   listError = $state<string | null>(null);
+  /** Cursor for the next list page, scoped to the context loadList captured
+   * in `listPageRequest`; null when the last page has been reached. */
+  listCursor = $state<string | null>(null);
+  listTotalCount = $state<number | null>(null);
   degraded = $state<'cache_unavailable' | null>(null);
 
   target = $state<string | null>(null);
@@ -74,6 +95,8 @@ export class RelationshipsController {
   private detailAbort: AbortController | undefined;
   private listGeneration = 0;
   private detailGeneration = 0;
+  private listPageRequest: ListPageRequest | undefined;
+  private listSeenCursors = new Set<string>();
   private seenCursors = new Set<string>();
   private lastPredicate: ExplorePredicate | undefined;
   private lastListPredicate: ExplorePredicate | undefined;
@@ -90,30 +113,25 @@ export class RelationshipsController {
     const generation = ++this.listGeneration;
     this.lastListPredicate = predicate;
     this.listLoading = true;
+    this.listLoadingMore = false;
     this.listError = null;
     this.degraded = null;
-    const context = contextPredicate(predicate);
+    // A cursor belongs to the context that minted it: drop it (and the stale
+    // total) the moment a new context load starts, so the scroll sentinel can
+    // never fetch an old context's page into the new list.
+    this.listCursor = null;
+    this.listTotalCount = null;
+    this.listSeenCursors = new Set<string>();
     const query = this.query.trim();
+    const request: ListPageRequest = this.facet === 'domains'
+      ? { kind: 'domains', context: contextPredicate(predicate), query }
+      : query === ''
+        ? { kind: 'relationships', filters: predicate.filters, showAll: this.showAll }
+        : { kind: 'people', context: contextPredicate(predicate), query };
+    this.listPageRequest = request;
     try {
-      if (this.facet === 'domains') {
-        const response = await this.client.POST('/api/v1/domains/search', {
-          body: { predicate: context, identity_query: query, sort: DEFAULT_IDENTITY_SORT, limit: SEARCH_LIST_LIMIT },
-          signal: controller.signal
-        });
-        this.applyListResponse(generation, controller.signal, response);
-      } else if (query === '') {
-        const response = await this.client.POST('/api/v1/relationships', {
-          body: { filters: predicate.filters, show_all: this.showAll, limit: RANKED_LIST_LIMIT },
-          signal: controller.signal
-        });
-        this.applyListResponse(generation, controller.signal, response);
-      } else {
-        const response = await this.client.POST('/api/v1/people/search', {
-          body: { predicate: context, identity_query: query, sort: DEFAULT_IDENTITY_SORT, limit: SEARCH_LIST_LIMIT },
-          signal: controller.signal
-        });
-        this.applyListResponse(generation, controller.signal, response);
-      }
+      const response = await this.postListPage(request, undefined, controller.signal);
+      this.applyListResponse(generation, controller.signal, response, false);
     } catch (cause: unknown) {
       if (generation === this.listGeneration && !controller.signal.aborted) this.listError = errorMessage(cause, 0);
     } finally {
@@ -121,17 +139,77 @@ export class RelationshipsController {
     }
   }
 
+  /** Fetches the next list page for the context loadList captured, appending
+   * deduped rows. Guarded no-op while a load is in flight or at the end. */
+  async loadMoreList(): Promise<void> {
+    if (this.listLoading || this.listLoadingMore || !this.listCursor) return;
+    const request = this.listPageRequest;
+    const abort = this.listAbort;
+    if (!request || !abort) return;
+    const cursor = this.listCursor;
+    if (this.listSeenCursors.has(cursor)) {
+      this.listError = REPEATED_CURSOR_MESSAGE;
+      this.listCursor = null;
+      return;
+    }
+    const generation = this.listGeneration;
+    const signal = abort.signal;
+    this.listLoadingMore = true;
+    try {
+      const response = await this.postListPage(request, cursor, signal);
+      if (signal.aborted || generation !== this.listGeneration) return;
+      this.listSeenCursors.add(cursor);
+      this.applyListResponse(generation, signal, response, true);
+    } catch (cause: unknown) {
+      if (!signal.aborted && generation === this.listGeneration) {
+        this.listError = errorMessage(cause, 0);
+        this.listCursor = null;
+      }
+    } finally {
+      if (generation === this.listGeneration) this.listLoadingMore = false;
+    }
+  }
+
+  private postListPage(
+    request: ListPageRequest,
+    cursor: string | undefined,
+    signal: AbortSignal
+  ): Promise<ListPageResponse> {
+    const page = cursor === undefined ? {} : { cursor };
+    if (request.kind === 'relationships') {
+      return this.client.POST('/api/v1/relationships', {
+        body: { filters: request.filters, show_all: request.showAll, limit: RANKED_LIST_LIMIT, ...page },
+        signal
+      });
+    }
+    const body = {
+      predicate: request.context,
+      identity_query: request.query,
+      sort: DEFAULT_IDENTITY_SORT,
+      limit: SEARCH_LIST_LIMIT,
+      ...page
+    };
+    return request.kind === 'domains'
+      ? this.client.POST('/api/v1/domains/search', { body, signal })
+      : this.client.POST('/api/v1/people/search', { body, signal });
+  }
+
   private applyListResponse(
     generation: number,
     signal: AbortSignal,
-    response: { data?: { rows?: unknown[] | null }; error?: unknown; response: Response }
+    response: ListPageResponse,
+    append: boolean
   ): void {
     if (signal.aborted || generation !== this.listGeneration) return;
     const { data, error, response: res } = response;
     if (data) {
-      this.listRows = (data.rows ?? []) as RelationshipRow[] | PersonSummary[] | DomainSummary[];
+      const rows = (data.rows ?? []) as ListRow[];
+      this.listRows = (append ? mergeListRows(this.listRows as ListRow[], rows) : rows) as ListRows;
+      this.listCursor = data.next_cursor ?? null;
+      this.listTotalCount = data.total_count ?? null;
       return;
     }
+    this.listCursor = null;
     if (res.status === 503 && isCacheUnavailable(error)) {
       this.degraded = 'cache_unavailable';
       return;
@@ -400,6 +478,23 @@ function contextPredicate(predicate: ExplorePredicate): ExplorePredicate {
     query: _query, search_mode: _searchMode, ...context
   } = predicate;
   return { ...context, presentation: 'table' };
+}
+
+// The generated summary types carry `[key: string]: unknown` index
+// signatures, which defeat `in`-based narrowing (same limitation noted in
+// RelationshipList.svelte) — hence the casts after each runtime check.
+function listRowKey(row: ListRow): string {
+  if ('canonical_id' in row) return `cluster:${(row as RelationshipRow).canonical_id}`;
+  if ('domain' in row) return `domain:${(row as DomainSummary).domain}`;
+  return `cluster:${(row as PersonSummary).id}`;
+}
+
+/** Appends a page without duplicating a boundary row the backend re-served,
+ * keyed by the same canonical id / domain the list keys its rows with. */
+function mergeListRows(existing: ListRow[], incoming: ListRow[]): ListRow[] {
+  const merged = new Map(existing.map((row) => [listRowKey(row), row]));
+  for (const row of incoming) merged.set(listRowKey(row), row);
+  return [...merged.values()];
 }
 
 function mergeTimelineRows<Row extends { key: string }>(existing: Row[], incoming: Row[]): Row[] {

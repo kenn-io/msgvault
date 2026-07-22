@@ -351,6 +351,9 @@
   <RelationshipList
     rows={controller.listRows}
     loading={controller.listLoading}
+    loadingMore={controller.listLoadingMore}
+    hasMore={Boolean(controller.listCursor)}
+    totalCount={controller.listTotalCount}
     error={controller.listError}
     degraded={controller.degraded}
     {facet}
@@ -361,6 +364,7 @@
     {onFacetChange}
     {onShowAllChange}
     onSelect={selectListRow}
+    onLoadMore={() => { void controller.loadMoreList(); }}
     {onOpenEverything}
   />
 {/snippet}
