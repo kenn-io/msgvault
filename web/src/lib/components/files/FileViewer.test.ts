@@ -207,6 +207,41 @@ describe('FileViewer', () => {
     }
   });
 
+  it('clears loading and shows an error when the metadata request fails', async () => {
+    const fetchFn = vi.fn<typeof fetch>(async () => {
+      throw new TypeError('network unreachable');
+    });
+    render(FileViewer, { client: createAPIClient(fetchFn), file: file() });
+
+    expect((await screen.findByRole('alert')).textContent).toContain('network unreachable');
+    expect(screen.queryByText('Loading file metadata…')).toBeNull();
+  });
+
+  it('ignores a stale metadata failure after the viewed file changes', async () => {
+    let rejectStale: ((cause: Error) => void) | undefined;
+    const fetchFn = vi.fn<typeof fetch>((input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      if (new URL(request.url).pathname === '/api/v1/files/7') {
+        return new Promise<Response>((_resolve, reject) => { rejectStale = reject; });
+      }
+      return Promise.resolve(Response.json({
+        id: 8, message_id: 12, conversation_id: 22, filename: 'next.bin', mime_type: '',
+        size_bytes: 4, content_state: 'missing_blob', content_available: false
+      }));
+    });
+    const view = render(FileViewer, { client: createAPIClient(fetchFn), file: file() });
+    await waitFor(() => expect(rejectStale).toBeDefined());
+
+    await view.rerender({
+      file: file({ id: 8, key: 'file:8', filename: 'next.bin', content_state: 'missing_blob', content_available: false })
+    });
+    rejectStale!(new TypeError('stale network failure'));
+
+    expect(await screen.findByText('Archived bytes are missing.')).toBeDefined();
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(screen.queryByText('stale network failure')).toBeNull();
+  });
+
   it('keeps unsupported local content to metadata and an explicit download', async () => {
     const fetchFn = viewerFetch({
       id: 7, message_id: 11, conversation_id: 21, filename: 'archive.zip', mime_type: 'application/zip',

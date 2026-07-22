@@ -87,6 +87,7 @@
   let previousRowHeight = untrack(() => rowHeight);
   let pendingRestoration = $state<PendingRestoration>();
   let completingRestoration = '';
+  let previousSelectedKey = untrack(() => selectedKey);
 
   $effect(() => {
     const signature = JSON.stringify({ predicate, identityScope, expectedAuthority, sort, filenameQuery, mimeFamilies, restorationEpoch });
@@ -116,10 +117,19 @@
     if (providedActiveKey && rows.some((row) => row.key === providedActiveKey)) activeKey = providedActiveKey;
   });
 
+  // Controlled-selection sync: history navigation (Back/Forward) rewrites
+  // selectedKey from the URL, so a transition to null must also close an open
+  // viewer. Only a transition closes it — an unchanged null selection leaves
+  // locally opened viewers alone when this component is used uncontrolled.
   $effect(() => {
-    if (selectedKey) {
-      const file = rows.find((row) => row.key === selectedKey);
+    const controlledKey = selectedKey;
+    const clearedByNavigation = !controlledKey && Boolean(previousSelectedKey);
+    previousSelectedKey = controlledKey;
+    if (controlledKey) {
+      const file = rows.find((row) => row.key === controlledKey);
       if (file) viewerFile = file;
+    } else if (clearedByNavigation) {
+      viewerFile = undefined;
     }
   });
 

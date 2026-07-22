@@ -38,6 +38,13 @@ client_secret*.json
 *.pem
 *.key
 
+# Environment files anywhere in the tree (web/.env.local would otherwise be
+# copied into the frontend build stage and VITE_* values baked into artifacts)
+**/.env
+**/.env.*
+**/.envrc
+!**/.env.example
+
 # Documentation (exclude most .md files but keep embedded assets)
 *.md
 !cmd/msgvault/cmd/quickstart.md

@@ -203,6 +203,30 @@ test('opening a containing conversation and one Back restores the exact Files UR
   await expect(grid).toHaveAttribute('aria-activedescendant', 'file-row-7');
 });
 
+test('Back from an open file viewer closes it and restores the Files list URL', async ({ page, baseURL }) => {
+  await prepare(page, baseURL, file('fixture.pdf', 'application/pdf', 'pdf'), tinyPDF('Back close fixture'));
+  const grid = page.getByRole('grid', { name: 'Files results' });
+  await grid.focus();
+  await expect(grid).toHaveAttribute('aria-activedescendant', 'file-row-7');
+  await expect.poll(() => {
+    const encoded = new URL(page.url()).searchParams.get('explore');
+    return encoded ? (JSON.parse(encoded) as { activeRow?: string | null }).activeRow : undefined;
+  }).toBe('file:7');
+  const listURL = page.url();
+
+  await page.keyboard.press('Enter');
+  await expect(page.getByRole('dialog', { name: 'View fixture.pdf' })).toBeVisible();
+  await expect.poll(() => {
+    const encoded = new URL(page.url()).searchParams.get('explore');
+    return encoded ? (JSON.parse(encoded) as { selectedRow?: string | null }).selectedRow : undefined;
+  }).toBe('file:7');
+
+  await page.goBack();
+
+  await expect(page).toHaveURL(listURL);
+  await expect(page.getByRole('dialog', { name: 'View fixture.pdf' })).toHaveCount(0);
+});
+
 test('real PDF renders in-app and Escape closes with shortcut isolation and exact focus restoration', async ({ page, baseURL }) => {
   const pdf = tinyPDF('Fixture preview text');
   await prepare(page, baseURL, file('fixture.pdf', 'application/pdf', 'pdf'), pdf);

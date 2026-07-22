@@ -222,6 +222,26 @@ describe('FilesWorkspace', () => {
     await waitFor(() => expect(fetchFn).toHaveBeenCalledTimes(2));
   });
 
+  it('closes the viewer when the controlled selection is cleared by history navigation', async () => {
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const path = new URL(input instanceof Request ? input.url : String(input), document.baseURI).pathname;
+      if (path === '/api/v1/files/search') return Response.json(response());
+      return Response.json({
+        id: 7, message_id: 11, conversation_id: 21, filename: 'fixture.pdf', mime_type: 'application/pdf',
+        size_bytes: 2048, content_state: 'missing_blob', content_available: false
+      });
+    });
+    const view = render(FilesWorkspace, {
+      client: createAPIClient(fetchFn), predicate: { filters: [], presentation: 'table' },
+      sort: { field: 'occurred_at', direction: 'desc' }, selectedKey: 'file:7'
+    });
+    expect(await screen.findByRole('dialog', { name: 'View fixture.pdf' })).toBeDefined();
+
+    await view.rerender({ selectedKey: null });
+
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+  });
+
   it('restores ascending date sort and toggles it back to descending', async () => {
     const fetchFn = vi.fn<typeof fetch>(async () => Response.json(response()));
     const onSortChange = vi.fn();

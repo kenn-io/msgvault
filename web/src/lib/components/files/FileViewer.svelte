@@ -72,10 +72,20 @@
   });
 
   async function loadMetadata(currentGeneration: number, signal: AbortSignal): Promise<void> {
-    const { data, error: responseError } = await client.GET('/api/v1/files/{id}', {
-      params: { path: { id: file.id } },
-      signal
-    });
+    let metadataResponse;
+    try {
+      metadataResponse = await client.GET('/api/v1/files/{id}', {
+        params: { path: { id: file.id } },
+        signal
+      });
+    } catch (cause: unknown) {
+      if (!signal.aborted && currentGeneration === generation) {
+        error = cause instanceof Error ? cause.message : 'File metadata could not be loaded.';
+        loading = false;
+      }
+      return;
+    }
+    const { data, error: responseError } = metadataResponse;
     if (signal.aborted || currentGeneration !== generation) return;
     if (!data) {
       error = responseError && typeof responseError === 'object' && 'message' in responseError
