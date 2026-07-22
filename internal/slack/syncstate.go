@@ -66,10 +66,12 @@ type ConvState struct {
 
 // SyncState holds per-conversation cursors plus the reply-sweep watermark
 // for one Slack source, persisted as JSON in sync_runs.cursor_after
-// (checkpointed mid-run in cursor_before). Legacy blobs carrying per-root
-// "threads" maps or incremental window cursors ("incr_cursor"/"incr_max_ts")
-// load cleanly; those fields no longer exist (an upgraded mid-window
-// checkpoint re-walks at most one window into idempotent upserts).
+// (checkpointed mid-run in cursor_before). Resume selection is newest-blob-
+// wins — states are never blended field-wise (see loadResumeState). Legacy
+// blobs carrying per-root "threads" maps, incremental window cursors
+// ("incr_cursor"/"incr_max_ts"), or a "generation" marker load cleanly;
+// those fields no longer exist (an upgraded mid-window checkpoint re-walks
+// at most one window into idempotent upserts).
 type SyncState struct {
 	Conversations map[string]*ConvState `json:"conversations"` // key = channel ID
 	// SweepWatermark is the pin of the last completed workspace sweep for
@@ -82,17 +84,12 @@ type SyncState struct {
 	// watermark was written. Audit trail only: sweep-day arithmetic always
 	// uses the IANA zone current at query time (probed live).
 	SweepOffset int `json:"sweep_offset,omitempty"`
-	// Generation identifies the state lineage. --full starts a repair
-	// session by bumping it and resetting the state; Merge treats a newer
-	// generation as wholesale-authoritative, so an interrupted repair's
-	// checkpoint SUPERSEDES the pre-repair success blob instead of blending
-	// with it (blending OR'd the old Done flags over fresh partial cursors,
-	// silently abandoning the repair).
-	Generation int `json:"generation,omitempty"`
 	// RepairPending marks an in-flight --full repair session. While set,
 	// every run — full, plain, or limited — continues the repair through
-	// the ordinary resumable walks; it clears when every conversation is
-	// Done with all thread debt paid.
+	// the ordinary resumable walks; it clears when every eligible
+	// conversation is Done with all thread debt paid. The --full reset it
+	// rides on needs no lineage marker: resume selection is newest-blob-
+	// wins (see loadResumeState), so the reset state simply supersedes.
 	RepairPending bool `json:"repair_pending,omitempty"`
 }
 
@@ -181,70 +178,4 @@ func (s *SyncState) RepairComplete(eligible map[string]bool) bool {
 		}
 	}
 	return true
-}
-
-// Merge incorporates cursors from other (a newer checkpoint) into s.
-//
-// Generations gate everything: a newer generation is a deliberate reset
-// (--full repair session) and wins wholesale; an older one is pre-reset
-// residue and is ignored entirely. Within a generation: message ts cursors
-// compare numerically and the more-advanced value wins; page cursors and
-// pins are opaque, so other's non-empty value wins and emptiness never
-// clears (staleness only re-walks into idempotent upserts); Done and debt
-// flags are OR'd.
-func (s *SyncState) Merge(other *SyncState) {
-	if other == nil {
-		return
-	}
-	if other.Generation > s.Generation {
-		*s = *other
-		if s.Conversations == nil {
-			s.Conversations = map[string]*ConvState{}
-		}
-		return
-	}
-	if other.Generation < s.Generation {
-		return
-	}
-	for channelID, ocs := range other.Conversations {
-		if ocs == nil {
-			continue
-		}
-		cs := s.EnsureConv(channelID)
-		if ocs.Cursor != "" && (cs.Cursor == "" || tsLess(cs.Cursor, ocs.Cursor)) {
-			cs.Cursor = ocs.Cursor
-		}
-		if ocs.BackfillCursor != "" {
-			cs.BackfillCursor = ocs.BackfillCursor
-		}
-		if ocs.BackfillLatest != "" {
-			cs.BackfillLatest = ocs.BackfillLatest
-		}
-		// Pending thread debt follows the page-cursor rule: other's
-		// non-empty list wins wholesale, and emptiness never clears. A
-		// stale list is only ever wasteful (re-drains resolve into
-		// idempotent upserts and empty out again); dropping a live list
-		// would lose replies, so the conservative direction is the safe
-		// one.
-		if len(ocs.PendingThreads) > 0 {
-			cs.PendingThreads = ocs.PendingThreads
-		}
-		cs.Done = cs.Done || ocs.Done
-		cs.ThreadsPending = cs.ThreadsPending || ocs.ThreadsPending
-		if ocs.CatchUpCursor != "" {
-			cs.CatchUpCursor = ocs.CatchUpCursor
-		}
-		if ocs.CatchUpLatest != "" {
-			cs.CatchUpLatest = ocs.CatchUpLatest
-		}
-		if ocs.SweptThrough != "" && (cs.SweptThrough == "" || tsLess(cs.SweptThrough, ocs.SweptThrough)) {
-			cs.SweptThrough = ocs.SweptThrough
-		}
-	}
-	// The further-advanced watermark wins, carrying its audit offset with it.
-	if other.SweepWatermark != "" && (s.SweepWatermark == "" || tsLess(s.SweepWatermark, other.SweepWatermark)) {
-		s.SweepWatermark = other.SweepWatermark
-		s.SweepOffset = other.SweepOffset
-	}
-	s.RepairPending = s.RepairPending || other.RepairPending
 }

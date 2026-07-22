@@ -109,21 +109,30 @@ func NewImporter(s *store.Store, c *Client, teamID string) *Importer {
 	return &Importer{store: s, client: c, res: newParticipantResolver(s, teamID), now: time.Now}
 }
 
-// loadResumeState rebuilds the sync state for a source: the last successful
-// run's cursor blob merged with the latest interrupted checkpoint.
+// loadResumeState rebuilds the sync state for a source: NEWEST BLOB WINS,
+// wholesale. Every run's first act is to checkpoint its merged resume
+// state, so a checkpoint blob is by construction a superset of the success
+// blob it was seeded from — and GetLatestCheckpointedSync only returns
+// checkpoints from runs newer than the last success. Field-wise blending
+// across runs is therefore pure risk with zero benefit: it resurrected
+// cleared phase state (a completed window's cleared page cursor re-paired
+// with an advanced Cursor = invalid pagination against a foreign bound).
+//
+// Under CONCURRENT runs on one source (unsupported: daemon plus manual CLI
+// simultaneously) newest-wins can drop the older run's tail progress — the
+// safe direction: lower boundaries only re-fetch into idempotent upserts.
 func (imp *Importer) loadResumeState(sourceID int64) *SyncState {
-	state := NewSyncState()
+	if cp, err := imp.store.GetLatestCheckpointedSync(sourceID); err == nil && cp != nil && cp.CursorBefore.Valid {
+		if s, lerr := LoadSyncState(cp.CursorBefore.String); lerr == nil {
+			return s
+		}
+	}
 	if prev, err := imp.store.GetLastSuccessfulSync(sourceID); err == nil && prev != nil && prev.CursorAfter.Valid {
 		if s, lerr := LoadSyncState(prev.CursorAfter.String); lerr == nil {
-			state = s
+			return s
 		}
 	}
-	if cp, err := imp.store.GetLatestCheckpointedSync(sourceID); err == nil && cp != nil && cp.CursorBefore.Valid {
-		if cpState, lerr := LoadSyncState(cp.CursorBefore.String); lerr == nil {
-			state.Merge(cpState)
-		}
-	}
-	return state
+	return NewSyncState()
 }
 
 // Import runs a backfill-then-incremental sync of the workspace user's
@@ -144,17 +153,16 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (*ImportSum
 
 	state := imp.loadResumeState(src.ID)
 	if opts.Full {
-		// --full starts a repair SESSION, not a one-shot: the reset happens
-		// once, stamped with a new state generation (see Merge), and the
-		// session persists until every conversation's walk completes and
+		// --full starts a repair SESSION, not a one-shot: the reset is
+		// checkpointed as this run's first act, making it the newest state
+		// blob (which resume selection takes wholesale), and the session
+		// persists until every eligible conversation's walk completes and
 		// all thread debt is paid. A --full while a repair is already in
 		// flight therefore CONTINUES it — interrupted and --limit-scoped
 		// repairs converge across runs of any kind instead of restarting
 		// at the newest page forever.
 		if !state.RepairPending {
-			gen := state.Generation + 1
 			state = NewSyncState()
-			state.Generation = gen
 			state.RepairPending = true
 		}
 	}
@@ -962,18 +970,30 @@ func (imp *Importer) BackfillMedia(ctx context.Context, opts ImportOptions) (*Im
 	if err != nil {
 		return sum, err
 	}
+	invalidRaw := 0
 	for _, item := range pending {
 		if err = ctx.Err(); err != nil {
 			return sum, err
 		}
 		raw, rerr := imp.store.GetMessageRaw(item.MessageID)
-		if rerr != nil || len(raw) == 0 {
-			sum.Errors++
-			continue
+		if rerr != nil {
+			// Store-read failure: the local database is sick — fatal, like
+			// every store failure (see processMessage).
+			err = fmt.Errorf("read archived raw for %s: %w", item.SourceMessageID, rerr)
+			return sum, err
 		}
 		var m Message
-		if uerr := m.UnmarshalJSON(raw); uerr != nil {
+		if len(raw) == 0 || m.UnmarshalJSON(raw) != nil {
+			// The archived raw is missing or malformed: this pass cannot
+			// repair it (--full re-fetches the message and rewrites the
+			// raw). Record it actionably, keep the pending count honest —
+			// the markers stay in place and discoverable — and fail the run
+			// as partial below instead of reporting a clean sweep.
+			imp.recordItem(syncID, item.SourceMessageID, "attachment", store.SyncRunItemStatusError, "slack_raw_invalid",
+				fmt.Errorf("archived raw JSON for %s is missing or malformed; run sync-slack --full to re-fetch it", item.SourceMessageID))
 			sum.Errors++
+			invalidRaw++
+			sum.AttachmentsPending += imp.pendingMarkerCount(item.MessageID)
 			continue
 		}
 		if err = imp.persistFiles(ctx, syncID, item.MessageID, &m, opts, sum); err != nil {
@@ -982,9 +1002,36 @@ func (imp *Importer) BackfillMedia(ctx context.Context, opts ImportOptions) (*Im
 		sum.MessagesProcessed++
 	}
 	imp.checkpointNow(syncID, state, sum)
+	if invalidRaw > 0 {
+		sum.Duration = imp.now().Sub(start)
+		err = fmt.Errorf("partial Slack media backfill: %d message(s) with invalid archived raw JSON (run sync-slack --full to repair)", invalidRaw)
+		return sum, err
+	}
 	if err = imp.store.CompleteSync(syncID, stateBlob); err != nil {
 		return sum, err
 	}
 	sum.Duration = imp.now().Sub(start)
 	return sum, nil
+}
+
+// pendingMarkerCount counts a message's pending attachment markers (rows
+// with no content hash that are not metadata-only links), so a skipped
+// message still reports its undone work honestly. Best-effort: on a read
+// error it returns 1 — the message is in the pending list, so at least one
+// marker exists.
+func (imp *Importer) pendingMarkerCount(messageID int64) int {
+	refs, err := imp.store.MessageSlackAttachments(messageID)
+	if err != nil {
+		return 1
+	}
+	n := 0
+	for _, ref := range refs {
+		if ref.ContentHash == "" && ref.MediaType != "link" {
+			n++
+		}
+	}
+	if n == 0 {
+		return 1
+	}
+	return n
 }

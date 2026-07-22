@@ -8,6 +8,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
@@ -607,6 +608,99 @@ func TestWindowOverlapAbsorbsClockSkew(t *testing.T) {
 	require.NoError(st.DB().QueryRow(st.Rebind(
 		`SELECT COUNT(*) FROM messages WHERE source_message_id = ?`), "C01:"+skewed).Scan(&n))
 	require.Equal(1, n, "a message below the pin by clock skew must be recovered by the window overlap")
+}
+
+func TestLoadResumeStateNewestBlobWins(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := testWorkspace(t)
+	imp, _ := testImporter(t, f)
+	st := imp.store
+
+	src, err := st.GetOrCreateSource("slack", "T01:UME")
+	require.NoError(err)
+
+	// Run A: a --limit run that SUCCEEDED mid-window — its success blob
+	// carries a live (page cursor, pin) pair.
+	midWindow := NewSyncState()
+	mcs := midWindow.EnsureConv("C01")
+	mcs.Done = true
+	mcs.Cursor = "100.000001"
+	mcs.BackfillCursor = "opaque-page-3"
+	mcs.BackfillLatest = "150.000001"
+	runA, err := st.StartSync(src.ID, "slack")
+	require.NoError(err)
+	require.NoError(st.CompleteSync(runA, mustMarshal(t, midWindow)))
+
+	// Run B: completed that window (cleared the pair, advanced Cursor to
+	// the pin) but FAILED later — it exists only as a checkpoint.
+	cleared := NewSyncState()
+	ccs := cleared.EnsureConv("C01")
+	ccs.Done = true
+	ccs.Cursor = "150.000001"
+	runB, err := st.StartSync(src.ID, "slack")
+	require.NoError(err)
+	require.NoError(st.UpdateSyncCheckpoint(runB, &store.Checkpoint{PageToken: mustMarshal(t, cleared)}))
+	require.NoError(st.FailSync(runB, "unrelated fetch failure"))
+
+	// Resume must take the newest blob WHOLESALE. Blending would let run
+	// A's stale page cursor and pin survive B's clears — an advanced
+	// Cursor paired with a foreign page cursor and an inverted window.
+	state := imp.loadResumeState(src.ID)
+	got := state.EnsureConv("C01")
+	assert.Equal("150.000001", got.Cursor)
+	assert.Empty(got.BackfillCursor, "a completed window's cleared page cursor must not be resurrected")
+	assert.Empty(got.BackfillLatest, "a completed window's cleared pin must not be resurrected")
+}
+
+func mustMarshal(t *testing.T, s *SyncState) string {
+	t.Helper()
+	blob, err := s.Marshal()
+	require.NoError(t, err)
+	return blob
+}
+
+func TestBackfillMediaReportsInvalidRaw(t *testing.T) {
+	require := require.New(t)
+	f := testWorkspace(t)
+	f.conv("C01").Msgs[6].Files = []map[string]any{
+		{"id": "F_RAWBAD", "name": "b.png", "mimetype": "image/png", "size": 5,
+			"url_private": "https://files.slack.com/files-pri/T01-F_RAWBAD/b.png",
+			"permalink":   "https://testers.slack.com/files/F_RAWBAD"},
+	}
+	prevInterval := checkpointMinInterval
+	checkpointMinInterval = 0
+	t.Cleanup(func() { checkpointMinInterval = prevInterval })
+	srv := f.serve()
+	client := NewClient(srv.URL, "xoxp-test")
+	client.disableRateLimits()
+	st := testutil.NewTestStore(t)
+	imp := NewImporter(st, client, "T01")
+
+	// Import with media deferred: the file becomes a pending marker.
+	opts := ImportOptions{TeamID: "T01", UserID: "UME", NoMedia: true, AttachmentsDir: t.TempDir()}
+	_, err := imp.Import(context.Background(), opts)
+	require.NoError(err)
+
+	// The archived raw JSON is corrupted at rest. The media backfill must
+	// report the run as PARTIAL with the pending work still counted — not
+	// silently skip the message and report a clean, zero-pending sweep.
+	var messageID int64
+	require.NoError(st.DB().QueryRow(st.Rebind(
+		`SELECT id FROM messages WHERE source_message_id = ?`), "C01:"+ts(6)).Scan(&messageID))
+	require.NoError(st.UpsertMessageRawWithFormat(messageID, []byte("{not json"), "slack_json"))
+
+	opts.NoMedia = false
+	sum, err := imp.BackfillMedia(context.Background(), opts)
+	require.Error(err, "invalid archived raw must fail the media backfill as partial, not report success")
+	require.Positive(sum.AttachmentsPending, "the skipped message's markers must stay in the pending count")
+
+	// The marker remains discoverable for the next attempt (after --full).
+	src, err := st.GetOrCreateSource("slack", "T01:UME")
+	require.NoError(err)
+	pending, err := st.ListSlackPendingAttachmentMessages(src.ID)
+	require.NoError(err)
+	require.Len(pending, 1)
 }
 
 func TestStoreWriteFailureHoldsCursorAndResumes(t *testing.T) {

@@ -163,9 +163,7 @@ for incremental sync. Consequences:
   page's roots), and the drain runs before anything else touches the
   conversation — so a standing `--limit` schedule converges to a complete
   archive by itself, draining arbitrarily large threads across runs with
-  durable progress every run. The list merges like the backfill cursor
-  (non-empty wins; emptiness never clears — stale debt re-drains into
-  idempotent upserts, dropped debt would lose replies). Sweeps and
+  durable progress every run. Sweeps and
   catch-up walks only run unlimited, so their thread fetches stay
   whole-thread.
 - **The thread catch-up walk is resumable and budget-aware**, shaped like
@@ -292,12 +290,23 @@ upsert machinery.
 
 ## State
 
+Resume selection is **newest blob wins, wholesale** — states are never
+blended field-wise. Every run's first act is to checkpoint its resume
+state, so a checkpoint blob is by construction a superset of the success
+blob it was seeded from, and the store only surfaces checkpoints newer
+than the last success. Blending resurrected cleared phase state three
+separate times across reviews (a page cursor is only valid against the
+bound it was minted with); deleting the merge deletes the bug class. A
+`--full` reset needs no lineage marker for the same reason: the reset is
+the newest blob and simply supersedes. Concurrent runs on one source
+(unsupported) can drop the older run's tail progress under newest-wins —
+the safe direction: lower boundaries only re-fetch into upserts.
+
 ```go
 type SyncState struct {
     Conversations  map[string]*ConvState
     SweepWatermark string // pin of the last workspace sweep; covered through this − margin
     SweepOffset    int    // tz_offset in effect when the watermark was written (audit)
-    Generation     int    // state lineage; --full bumps it (newer supersedes wholesale)
     RepairPending  bool   // an in-flight --full repair session; completion is
                           // judged against the CURRENTLY ELIGIBLE conversations
                           // (departed/excluded ones must not wedge the session;
