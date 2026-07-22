@@ -131,6 +131,20 @@ func (cs *ConvState) RecordPendingThread(rootTS string, forecast int) {
 	cs.PendingThreads = append(cs.PendingThreads, PendingThread{RootTS: rootTS, Forecast: forecast})
 }
 
+// RecordPendingThreadTail records a thread whose replies are owed only from
+// drainedTo (exclusive) onward — the reply sweep's shape: anchorTS is any
+// in-thread ts (conversations.replies resolves it) and drainedTo sits just
+// before the earliest discovered hit. An existing entry for the same anchor
+// keeps its own drain progress (it covers at least as much).
+func (cs *ConvState) RecordPendingThreadTail(anchorTS, drainedTo string) {
+	for i := range cs.PendingThreads {
+		if cs.PendingThreads[i].RootTS == anchorTS {
+			return
+		}
+	}
+	cs.PendingThreads = append(cs.PendingThreads, PendingThread{RootTS: anchorTS, DrainedTo: drainedTo})
+}
+
 // PendingForecast sums the remaining reply forecasts of the outstanding
 // drain debt: the budget charge for work committed but not yet performed.
 func (cs *ConvState) PendingForecast() int {
@@ -152,10 +166,17 @@ func (s *SyncState) EnsureConv(channelID string) *ConvState {
 }
 
 // RepairComplete reports whether an in-flight repair session has finished:
-// every conversation's initial walk is done and all thread debt is paid.
-func (s *SyncState) RepairComplete() bool {
-	for _, cs := range s.Conversations {
-		if !cs.Done || cs.ThreadsPending || len(cs.PendingThreads) > 0 {
+// every ELIGIBLE conversation's initial walk is done and all its thread
+// debt is paid. Completion is a question about the currently eligible set
+// (the conversations this run enumerated), not the historical one: state is
+// deliberately retained for departed/excluded conversations (it powers gap
+// recovery and re-entry resume), and a conversation the repair can no
+// longer reach must not wedge the session open forever — its generation-
+// reset Done flag already guarantees a fresh walk if it ever re-enters.
+func (s *SyncState) RepairComplete(eligible map[string]bool) bool {
+	for cid := range eligible {
+		cs, ok := s.Conversations[cid]
+		if !ok || !cs.Done || cs.ThreadsPending || len(cs.PendingThreads) > 0 {
 			return false
 		}
 	}

@@ -120,11 +120,21 @@ for incremental sync. Consequences:
   a drain page that could be all-parent (fixed by the floor-2 page), a
   catch-up flag that re-visited its final page forever (fixed by
   clearing at walk end), a sweep day-charge that starved the fetch that
-  would advance the boundary (fixed by parking only once the run has
-  progressed). Budget-site audit: window walks and catch-up pages are
-  ≥1 message and advance a persisted cursor; drain pages are ≥2 (the
-  response may lead with the parent); the sweep parks only when
-  exhausted AND progressed.
+  would advance the boundary (fixed structurally: the sweep now records
+  debt, and recording is never budget-gated). Budget-site audit: window
+  walks and catch-up pages are ≥1 message and advance a persisted
+  cursor; drain pages are ≥2 (the response may lead with the parent);
+  sweep discoveries become durable debt before any fetch is attempted.
+- **Every reply fetch is drain debt.** The sweep does not fetch threads
+  itself: each discovered group becomes a pending-thread entry on its
+  conversation, seeded with `drained-to = minHit − 1µs` so the drain
+  fetches exactly the tail, then the affected conversations are drained
+  in-phase with the sweep budget threaded through. The day's boundary
+  advances once debt is RECORDED (the walks' "cursor past page means
+  debt recorded" invariant, applied to the sweep) — a fetch failure or
+  spent budget parks the entry, not the boundary, and the next run's
+  drain-first step resumes it at reply granularity. One fetcher, one
+  budget discipline, one failure model for walks, catch-up, and sweep.
 - **`--limit` bounds committed work via a resumable thread drain.** The
   window walks record each discovered root as durable debt on a
   per-conversation pending list — `(root ts, drained-to ts, remaining
@@ -241,21 +251,19 @@ sweepRange(scope=none, floor, searchEnd=now, ceiling=pin)
 
 sweepRange(scope, floor, searchEnd, ceiling):
     queryFloor = floor − lagMargin                 # the OVERLAP
-    budget: one charge per day; parks only when exhausted AND the run
-            has already fetched something (guaranteed first unit)
+    budget: one charge per day, plus drained messages; recording debt is
+            never gated (guaranteed first unit holds structurally)
     for day D = day(queryFloor, zone) … day(searchEnd, zone):  // ascending
         for page = 1 … min(pages, 100):
             q = `[in:<#scope>] threads:replies on:D -"<nonce>"`
             stop if echoed page ≠ requested page               // clamp tell
             collect hits: (channel_id, ts, permalink)
-        hits ∩ sweep targets, above queryFloor, ascending by ts
+        hits ∩ sweep targets, above queryFloor
         group by permalink thread_ts (fallback: per hit)
-        for each group (ascending by min hit ts):
-            conversations.replies(channel, ts=hit, oldest=minHit−1µs)
-            persist via the standard upsert path (archived parents
-            skipped; missing parents processed)
-            on fetch failure or blocked budget:
-                advance to min(minHit−1µs, ceiling) if > floor; halt
+        record each group as pending-thread debt on its conversation
+            (drained-to = minHit − 1µs), then drain each conversation
+            with the sweep budget threaded through — fetch failures and
+            spent budget park the DEBT ENTRY, never the boundary
         if day total > 10k ceiling:
             advance to min(last hit, ceiling) if > floor; FAIL RUN; halt
         advance to min(end of D, ceiling) if > floor; checkpoint
@@ -275,7 +283,11 @@ type SyncState struct {
     SweepWatermark string // pin of the last workspace sweep; covered through this − margin
     SweepOffset    int    // tz_offset in effect when the watermark was written (audit)
     Generation     int    // state lineage; --full bumps it (newer supersedes wholesale)
-    RepairPending  bool   // an in-flight --full repair session
+    RepairPending  bool   // an in-flight --full repair session; completion is
+                          // judged against the CURRENTLY ELIGIBLE conversations
+                          // (departed/excluded ones must not wedge the session;
+                          // their generation-reset Done flags re-walk them on
+                          // any later re-entry)
 }
 
 type ConvState struct {

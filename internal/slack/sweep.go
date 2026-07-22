@@ -2,7 +2,6 @@ package slack
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -37,22 +36,9 @@ type sweepTarget struct {
 // through months of queries on a run that promised to be small. Exhaustion
 // parks certification at the last safe boundary WITHOUT failing the run —
 // per-day commits are durable, so repeated limited runs converge.
-type sweepBudget struct {
-	limit, used int
-	// progressed marks that this run has completed at least one canonical
-	// fetch. Guaranteed-first-unit rule: a budget may end a run early, but
-	// it must never gate the run's FIRST unit of durable progress — without
-	// it, a small limit's day-charge could starve the very fetch that would
-	// advance the boundary, and repeated runs would park at the same spot
-	// forever.
-	progressed bool
-}
+type sweepBudget struct{ limit, used int }
 
 func (b *sweepBudget) exhausted() bool { return b.limit > 0 && b.used >= b.limit }
-
-// blocked reports the budget is spent AND the run has already made durable
-// progress — the only state in which parking is allowed to stop a fetch.
-func (b *sweepBudget) blocked() bool { return b.exhausted() && b.progressed }
 
 // sweepReplies discovers thread replies created since each conversation's
 // certification stamp via search.messages (threads:replies) and archives
@@ -223,17 +209,8 @@ func (imp *Importer) sweepRange(ctx context.Context, syncID int64, scope, floor 
 			sum.Errors++
 			return nil
 		}
-		complete, parked, err := imp.fetchSweepHits(ctx, syncID, hits, queryFloor, targets, budget, sum)
-		if err != nil {
+		if err := imp.recordSweepDebt(ctx, syncID, hits, queryFloor, targets, budget, state, sum); err != nil {
 			return err // store/context failure: fatal for the run
-		}
-		if !complete {
-			// A canonical fetch failed mid-day (or the budget blocked);
-			// resume from just before the unfetched hit.
-			if parked != "" {
-				advance(parked)
-			}
-			return nil
 		}
 		if truncated {
 			// Ascending order means the reachable results ARE the day's
@@ -301,14 +278,21 @@ func (imp *Importer) sweepQuery(scope, day string, syncID int64, page int) strin
 	return q
 }
 
-// fetchSweepHits archives discovered replies via canonical
-// conversations.replies fetches, grouped one fetch per thread. Hits at or
-// below queryFloor (the overlapped floor: stored boundary − lag margin) are
-// already archived and skipped. Returns (complete, parked boundary, fatal
-// error): on a fetch failure or a blocked budget, complete=false and the
-// parked boundary sits just before the first unfetched hit — everything
-// before it was fetched (ascending order).
-func (imp *Importer) fetchSweepHits(ctx context.Context, syncID int64, hits []SearchMatch, queryFloor string, targets map[string]sweepTarget, budget *sweepBudget, sum *ImportSummary) (bool, string, error) {
+// recordSweepDebt converts discovered hits into per-conversation drain
+// debt — one entry per thread, seeded to resume just before the group's
+// earliest hit — then drains each affected conversation with the sweep
+// budget threaded through. Hits at or below queryFloor (the overlapped
+// floor: stored boundary − lag margin) are already archived and skipped.
+//
+// Recording is never budget-gated: the recorded entry IS the durable
+// progress that lets the day's boundary advance (the walks' "cursor past
+// page means debt recorded" invariant, applied to the sweep), so the
+// guaranteed-first-unit rule holds structurally — a run whose budget is
+// gone still converts its discoveries into debt that the next run's
+// drain-first step pays. Fetching is entirely the drain's job:
+// budget-sized pages, reply-granular resume, gone-thread churn handling,
+// and the guarded parent skip all come with it.
+func (imp *Importer) recordSweepDebt(ctx context.Context, syncID int64, hits []SearchMatch, queryFloor string, targets map[string]sweepTarget, budget *sweepBudget, state *SyncState, sum *ImportSummary) error {
 	type group struct {
 		channelID string
 		anchorTS  string // any ts within the thread; replies resolves it
@@ -322,7 +306,7 @@ func (imp *Importer) fetchSweepHits(ctx context.Context, syncID int64, hits []Se
 		}
 		key := h.ChannelID + ":" + h.RootTS
 		if h.RootTS == "" {
-			key = h.ChannelID + ":solo:" + h.TS // unparseable permalink: per-hit fetch
+			key = h.ChannelID + ":solo:" + h.TS // unparseable permalink: per-hit entry
 		}
 		if i, ok := index[key]; ok {
 			if tsLess(h.TS, groups[i].minHit) {
@@ -333,43 +317,31 @@ func (imp *Importer) fetchSweepHits(ctx context.Context, syncID int64, hits []Se
 		index[key] = len(groups)
 		groups = append(groups, group{channelID: h.ChannelID, anchorTS: h.TS, minHit: h.TS})
 	}
-	sort.Slice(groups, func(i, j int) bool { return tsLess(groups[i].minHit, groups[j].minHit) })
 
+	touched := map[string]bool{}
 	for _, g := range groups {
-		if err := ctx.Err(); err != nil {
-			return false, "", err
-		}
-		if budget.blocked() {
-			// Budget-park, not a failure: everything before this group is
-			// fetched (ascending order), so resuming here next run is safe.
-			// blocked (not exhausted) guarantees the run's FIRST fetch always
-			// happens even when day-charges consumed the whole budget.
-			return false, tsMinusMicro(g.minHit), nil
-		}
-		target := targets[g.channelID]
-		cc := &convScope{channelID: g.channelID, convID: target.convID, sourceID: imp.sourceID, syncID: syncID, opts: imp.opts}
-		err := imp.fetchThread(ctx, cc, g.anchorTS, tsMinusMicro(g.minHit), sum)
-		budget.used += cc.budgetUsed
-		if err == nil {
-			budget.progressed = true
-		}
-		if errors.Is(err, ErrNotFound) {
-			// Thread/channel gone between discovery and fetch: expected churn.
-			imp.recordItem(syncID, sourceMessageID(g.channelID, g.anchorTS), "sweep", store.SyncRunItemStatusSkipped, "slack_thread_gone", err)
-			continue
-		}
-		if err != nil {
-			if ctx.Err() != nil {
-				return false, "", ctx.Err()
-			}
-			imp.recordItem(syncID, sourceMessageID(g.channelID, g.anchorTS), "sweep", store.SyncRunItemStatusError, "slack_fetch_error", err)
-			sum.FetchErrors++
-			sum.Errors++
-			// Ascending order: everything before this group is complete.
-			return false, tsMinusMicro(g.minHit), nil
-		}
+		state.EnsureConv(g.channelID).RecordPendingThreadTail(g.anchorTS, tsMinusMicro(g.minHit))
+		touched[g.channelID] = true
 	}
-	return true, "", nil
+	ids := make([]string, 0, len(touched))
+	for cid := range touched {
+		ids = append(ids, cid)
+	}
+	sort.Strings(ids)
+	for _, cid := range ids {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		// The drain gates on actuals; seeding from the sweep budget makes
+		// the workspace budget bound this phase's fetch work, and reading
+		// it back carries the spend across conversations and days.
+		cc := &convScope{channelID: cid, convID: targets[cid].convID, sourceID: imp.sourceID, syncID: syncID, opts: imp.opts, cs: state.Conversations[cid], budgetUsed: budget.used}
+		if err := imp.drainPendingThreads(ctx, cc, sum); err != nil {
+			return err
+		}
+		budget.used = cc.budgetUsed
+	}
+	return nil
 }
 
 // nextDayStart returns the start of the calendar day after day in loc,

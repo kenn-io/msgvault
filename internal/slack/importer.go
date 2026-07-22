@@ -232,9 +232,16 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (*ImportSum
 	if err = imp.store.RecomputeConversationStats(src.ID); err != nil {
 		return sum, err
 	}
-	// A repair session ends only on a clean pass that leaves nothing owed.
-	if state.RepairPending && sum.FetchErrors == 0 && state.RepairComplete() {
-		state.RepairPending = false
+	// A repair session ends only on a clean pass that leaves nothing owed
+	// among the conversations this run could actually reach.
+	if state.RepairPending && sum.FetchErrors == 0 {
+		eligible := make(map[string]bool, len(convs))
+		for i := range convs {
+			eligible[convs[i].ID] = true
+		}
+		if state.RepairComplete(eligible) {
+			state.RepairPending = false
+		}
 	}
 	// Mid-run checkpoints are throttled, so persist the final counters before
 	// completing (CompleteSync only writes status and cursor).
@@ -672,42 +679,6 @@ func (imp *Importer) threadCatchUp(ctx context.Context, cc *convScope, state *Sy
 			return nil // one-page invariant: pay before paging further
 		}
 		imp.checkpoint(cc.syncID, state, sum)
-	}
-}
-
-// fetchThread canonically fetches a whole thread from oldest (exclusive)
-// onward, persisting every message (the response's included parent
-// re-upserts harmlessly). Its callers — the reply sweep and the thread
-// catch-up walk — only run on unlimited syncs; budget-bounded thread
-// fetching is the backfill drain's job (see drainPendingThreads).
-func (imp *Importer) fetchThread(ctx context.Context, cc *convScope, anchorTS, oldest string, sum *ImportSummary) error {
-	pageCursor := ""
-	for {
-		page, err := imp.client.repliesPageWithLimit(ctx, cc.channelID, anchorTS, pageCursor, oldest, historyPageLimit)
-		if err != nil {
-			return err
-		}
-		for i := range page.Messages {
-			m := &page.Messages[i]
-			if !m.IsThreadReply() && imp.parentArchived(cc.sourceID, cc.channelID, m.TS) {
-				// The included parent: skipped when already archived (no
-				// write, no charge — refreshing root content and reactions
-				// is --maintenance work); processed only when this fetch is
-				// the first to see the root, so SetReplyTo finds it.
-				continue
-			}
-			if err := imp.processMessage(ctx, cc, m, sum); err != nil {
-				return err
-			}
-			cc.budgetUsed++
-			if m.IsThreadReply() {
-				sum.RepliesFetched++
-			}
-		}
-		if !page.HasMore || page.NextCursor == "" {
-			return nil
-		}
-		pageCursor = page.NextCursor
 	}
 }
 

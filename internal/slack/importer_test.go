@@ -490,7 +490,10 @@ func TestSweepFindsLateReplyToAncientThread(t *testing.T) {
 	assert.Equal(t, 1, linked, "the sweep must archive and link a late reply to an ancient root")
 }
 
-func TestSweepWatermarkHoldsOnCanonicalFetchFailure(t *testing.T) {
+// A failed canonical fetch parks the sweep's discovery as drain debt: the
+// boundary may advance (the debt entry owns recovery), the run stays
+// partial, and the next run's drain-first step archives the reply.
+func TestSweepFetchFailureParksAsDrainDebt(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	f, rootTS := oldThreadWorkspace(t)
@@ -604,6 +607,92 @@ func TestWindowOverlapAbsorbsClockSkew(t *testing.T) {
 	require.NoError(st.DB().QueryRow(st.Rebind(
 		`SELECT COUNT(*) FROM messages WHERE source_message_id = ?`), "C01:"+skewed).Scan(&n))
 	require.Equal(1, n, "a message below the pin by clock skew must be recovered by the window overlap")
+}
+
+func TestLimitedSweepDrainsBigTailAcrossRuns(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f, rootTS := oldThreadWorkspace(t)
+	imp, opts := testImporter(t, f)
+	st := imp.store
+
+	_, err := imp.Import(context.Background(), opts)
+	require.NoError(err)
+
+	// A swept thread grows a 30-reply tail. A limited sweep must not fetch
+	// it wholesale — the tail becomes drain debt, paid in budget-sized,
+	// reply-granular pages across runs.
+	tail := make([]string, 30)
+	f.mu.Lock()
+	root := f.conv("C09").findRoot(rootTS)
+	for i := range tail {
+		tail[i] = tsFresh(i)
+		root.Replies = append(root.Replies, fakeMsg{TS: tail[i], ThreadTS: rootTS, User: "UME", Text: "tail " + strconv.Itoa(i)})
+	}
+	f.mu.Unlock()
+
+	imp.now = func() time.Time { return time.Now().Add(time.Minute) }
+	limited := opts
+	limited.Limit = 4
+	_, err = imp.Import(context.Background(), limited)
+	require.NoError(err)
+	// Count just the tail replies present after one limited run.
+	tailCount := func() int {
+		n := 0
+		for _, ts := range tail {
+			var c int
+			require.NoError(st.DB().QueryRow(st.Rebind(
+				`SELECT COUNT(*) FROM messages WHERE source_message_id = ?`), "C09:"+ts).Scan(&c))
+			n += c
+		}
+		return n
+	}
+	assert.LessOrEqual(tailCount(), 8, "a --limit 4 run must not fetch a 30-reply tail wholesale")
+
+	for range 15 {
+		_, err = imp.Import(context.Background(), limited)
+		require.NoError(err)
+	}
+	assert.Equal(30, tailCount(), "repeated limited runs must drain the whole tail")
+	var total, distinct int
+	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages WHERE message_type='slack'`).Scan(&total))
+	require.NoError(st.DB().QueryRow(`SELECT COUNT(DISTINCT source_message_id) FROM messages WHERE message_type='slack'`).Scan(&distinct))
+	assert.Equal(distinct, total)
+}
+
+func TestRepairCompletesDespiteDepartedConversations(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := testWorkspace(t)
+	imp, opts := testImporter(t, f)
+	st := imp.store
+
+	_, err := imp.Import(context.Background(), opts)
+	require.NoError(err)
+
+	// A repair session starts and partially walks #general…
+	full := opts
+	full.Full = true
+	full.Limit = 3
+	_, err = imp.Import(context.Background(), full)
+	require.NoError(err)
+
+	// …then #general is excluded from scope. Completion is a question
+	// about the currently ELIGIBLE set: the unreachable conversation must
+	// not wedge the session open forever (its generation-reset Done flag
+	// already guarantees a fresh walk if it ever re-enters).
+	excluded := opts
+	excluded.ExcludeChannels = []string{"general"}
+	for range 3 {
+		_, err = imp.Import(context.Background(), excluded)
+		require.NoError(err)
+	}
+
+	src, err := st.GetOrCreateSource("slack", "T01:UME")
+	require.NoError(err)
+	state := imp.loadResumeState(src.ID)
+	assert.False(state.RepairPending,
+		"a conversation that left the eligible set must not hold the repair session open")
 }
 
 func TestLimitOneSweepConverges(t *testing.T) {
