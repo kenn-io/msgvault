@@ -46,6 +46,7 @@ function renderDialog(overrides: Partial<{
   const { unmount } = render(LinkIdentityDialog, {
     client: createAPIClient(fetchFn),
     excludeID: overrides.excludeID ?? 1,
+    personLabel: 'Alice Example',
     onConfirm,
     onClose
   });
@@ -81,7 +82,7 @@ describe('LinkIdentityDialog', () => {
         rows: [person(1, 'Self'), person(2, 'Bob')], total_count: 2, cache_revision: 'cache-rel', search_provenance: {}
       })
     });
-    render(LinkIdentityDialog, { client: createAPIClient(fetchFn), excludeID: 1, onConfirm: vi.fn(), onClose: vi.fn() });
+    render(LinkIdentityDialog, { client: createAPIClient(fetchFn), excludeID: 1, personLabel: 'Alice Example', onConfirm: vi.fn(), onClose: vi.fn() });
     await fireEvent.input(screen.getByRole('searchbox', { name: 'Search people to link' }), { target: { value: 'e' } });
 
     expect(await screen.findByText('Bob')).toBeDefined();
@@ -96,7 +97,7 @@ describe('LinkIdentityDialog', () => {
     await fireEvent.click(bobOption);
     expect(bobOption.getAttribute('aria-selected')).toBe('true');
 
-    await fireEvent.click(screen.getByRole('button', { name: 'Link' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'These are the same person' }));
     await waitFor(() => expect(onConfirm).toHaveBeenCalledWith(2));
   });
 
@@ -108,13 +109,13 @@ describe('LinkIdentityDialog', () => {
     await fireEvent.keyDown(caraOption, { key: 'Enter' });
     expect(caraOption.getAttribute('aria-selected')).toBe('true');
 
-    await fireEvent.click(screen.getByRole('button', { name: 'Link' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'These are the same person' }));
     await waitFor(() => expect(onConfirm).toHaveBeenCalledWith(3));
   });
 
-  it('disables Link until a result is selected', async () => {
+  it('disables the confirm action until a result is selected', async () => {
     renderDialog();
-    expect(screen.getByRole('button', { name: 'Link' })).toHaveProperty('disabled', true);
+    expect(screen.getByRole('button', { name: 'These are the same person' })).toHaveProperty('disabled', true);
   });
 
   it('closes silently on an ok/ready outcome', async () => {
@@ -123,7 +124,7 @@ describe('LinkIdentityDialog', () => {
     renderDialog({ onClose, onConfirm });
     await fireEvent.input(screen.getByRole('searchbox', { name: 'Search people to link' }), { target: { value: 'B' } });
     await fireEvent.click(await screen.findByRole('option', { name: /Bob/ }));
-    await fireEvent.click(screen.getByRole('button', { name: 'Link' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'These are the same person' }));
 
     await waitFor(() => expect(onClose).toHaveBeenCalled());
     expect(screen.queryByRole('alert')).toBeNull();
@@ -135,7 +136,7 @@ describe('LinkIdentityDialog', () => {
     renderDialog({ onClose, onConfirm });
     await fireEvent.input(screen.getByRole('searchbox', { name: 'Search people to link' }), { target: { value: 'B' } });
     await fireEvent.click(await screen.findByRole('option', { name: /Bob/ }));
-    await fireEvent.click(screen.getByRole('button', { name: 'Link' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'These are the same person' }));
 
     await waitFor(() => expect(onClose).toHaveBeenCalled());
   });
@@ -146,9 +147,9 @@ describe('LinkIdentityDialog', () => {
     renderDialog({ onClose, onConfirm });
     await fireEvent.input(screen.getByRole('searchbox', { name: 'Search people to link' }), { target: { value: 'B' } });
     await fireEvent.click(await screen.findByRole('option', { name: /Bob/ }));
-    await fireEvent.click(screen.getByRole('button', { name: 'Link' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'These are the same person' }));
 
-    expect((await screen.findByRole('alert')).textContent).toContain('These identities are already linked through another identifier.');
+    expect((await screen.findByRole('alert')).textContent).toContain('Already linked — these two are treated as the same person.');
     expect(onClose).not.toHaveBeenCalled();
   });
 
@@ -158,7 +159,7 @@ describe('LinkIdentityDialog', () => {
     renderDialog({ onClose, onConfirm });
     await fireEvent.input(screen.getByRole('searchbox', { name: 'Search people to link' }), { target: { value: 'B' } });
     await fireEvent.click(await screen.findByRole('option', { name: /Bob/ }));
-    await fireEvent.click(screen.getByRole('button', { name: 'Link' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'These are the same person' }));
 
     expect((await screen.findByRole('alert')).textContent).toContain('Request failed (500)');
     expect(onClose).not.toHaveBeenCalled();

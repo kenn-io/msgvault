@@ -3,6 +3,7 @@
 
   import type { DomainSummary, PersonSummary } from '../../explore/models';
   import type { RelationshipFacet, RelationshipRow } from '../../relationships/models';
+  import { compactDate } from '../../util/dates';
   import EmptyState from '../common/EmptyState.svelte';
   import IdentityAvatar from '../common/IdentityAvatar.svelte';
 
@@ -27,10 +28,7 @@
     target: string;
     label: string;
     lastAt: string;
-    itemCount: number;
-    itemUnit: 'sent' | 'items';
-    modalities: number | null;
-    score: number | null;
+    summary: string;
   }
 
   let {
@@ -53,7 +51,6 @@
   let activeKey = $state<string | null>(null);
 
   const views = $derived(rows.map(describeRow));
-  const maxScore = $derived(Math.max(1, ...views.map((view) => view.score ?? 0)));
   const activeIndex = $derived(activeKey ? views.findIndex((view) => view.key === activeKey) : -1);
 
   $effect(() => {
@@ -75,6 +72,15 @@
     return 'domain' in row;
   }
 
+  /** One quiet line of only the nonzero signals ("651 sent · 12 meetings");
+   * a fully quiet relationship keeps an empty line so row heights stay even. */
+  function signalSummary(row: RelationshipRow): string {
+    const parts: string[] = [];
+    if (row.signals.sent_count > 0) parts.push(`${row.signals.sent_count.toLocaleString()} sent`);
+    if (row.signals.meeting_count > 0) parts.push(`${row.signals.meeting_count.toLocaleString()} meetings`);
+    return parts.join(' · ');
+  }
+
   function describeRow(row: RelationshipRow | PersonSummary | DomainSummary): ListRowView {
     if (isRelationshipRow(row)) {
       return {
@@ -82,10 +88,7 @@
         target: `cluster:${row.canonical_id}`,
         label: row.display_label,
         lastAt: row.signals.last_interaction_at,
-        itemCount: row.signals.sent_count,
-        itemUnit: 'sent',
-        modalities: row.signals.modalities,
-        score: row.score
+        summary: signalSummary(row)
       };
     }
     if (isDomainSummary(row)) {
@@ -94,10 +97,7 @@
         target: `domain:${row.domain}`,
         label: row.domain,
         lastAt: row.last_at,
-        itemCount: row.activity_count,
-        itemUnit: 'items',
-        modalities: null,
-        score: null
+        summary: `${row.activity_count.toLocaleString()} items`
       };
     }
     return {
@@ -105,16 +105,8 @@
       target: `cluster:${row.id}`,
       label: row.display_label,
       lastAt: row.last_at,
-      itemCount: row.activity_count,
-      itemUnit: 'items',
-      modalities: null,
-      score: null
+      summary: `${row.activity_count.toLocaleString()} items`
     };
-  }
-
-  function formatDate(value: string): string {
-    const date = new Date(value);
-    return Number.isNaN(date.valueOf()) ? value : date.toLocaleDateString();
   }
 
   function editableTarget(target: EventTarget | null): boolean {
@@ -152,17 +144,23 @@
 <aside class="relationship-list" aria-label="Relationship search and results">
   <div class="toolbar">
     <SearchInput value={query} ariaLabel="Search people and domains" placeholder="Search names and identifiers…"
-      oninput={(value) => onQueryChange(value)} />
-    <SegmentedControl ariaLabel="Relationship facet" value={facet}
-      options={[{ value: 'people', label: 'People' }, { value: 'domains', label: 'Domains' }]}
-      onchange={(value) => onFacetChange(value as RelationshipFacet)} />
+      block oninput={(value) => onQueryChange(value)} />
+    <div class="toolbar-row">
+      <SegmentedControl ariaLabel="Relationship facet" value={facet}
+        options={[{ value: 'people', label: 'People' }, { value: 'domains', label: 'Domains' }]}
+        onchange={(value) => onFacetChange(value as RelationshipFacet)} />
+      {#if facet === 'people'}
+        <button
+          type="button"
+          class="show-all-chip"
+          aria-pressed={showAll}
+          onclick={() => onShowAllChange(!showAll)}
+        >
+          All senders
+        </button>
+      {/if}
+    </div>
   </div>
-  {#if facet === 'people'}
-    <label class="show-all">
-      <input type="checkbox" checked={showAll} onchange={(event) => onShowAllChange(event.currentTarget.checked)} />
-      Show all senders
-    </label>
-  {/if}
 
   {#if degraded === 'cache_unavailable'}
     <section class="named-state" role="status">
@@ -209,24 +207,14 @@
                 label={view.label}
                 seed={view.key}
                 shape={view.key.startsWith('domain:') ? 'domain' : 'person'}
-                size={28}
+                size={24}
               />
               <div class="row-body">
                 <div class="row-main">
                   <span class="label">{view.label}</span>
-                  <span class="last-at" data-mono>{formatDate(view.lastAt)}</span>
+                  <span class="last-at" data-mono>{compactDate(view.lastAt)}</span>
                 </div>
-                <div class="row-meta">
-                  <span class="item-count" data-mono>{view.itemCount.toLocaleString()} {view.itemUnit}</span>
-                  {#if view.modalities !== null}
-                    <span class="modality-badge" data-mono aria-label={`${view.modalities} modalities`}>{view.modalities}</span>
-                  {/if}
-                  {#if view.score !== null}
-                    <span class="activity-track" aria-label={`Activity score ${view.score.toFixed(2)}`}>
-                      <span class="activity-bar" style:width={`${Math.min(100, (view.score / maxScore) * 100)}%`}></span>
-                    </span>
-                  {/if}
-                </div>
+                <span class="row-summary" data-mono>{view.summary}</span>
               </div>
             </div>
           </div>
@@ -243,23 +231,48 @@
     min-height: 0;
     flex: 1;
     flex-direction: column;
-    gap: var(--space-3);
+    gap: var(--space-4);
     overflow: hidden;
     padding: var(--space-5) var(--space-4) 0;
   }
 
+  /* One cohesive header block on the 4px grid: search on top, the facet
+   * segment and the all-senders filter chip sharing one 24px-tall line. */
   .toolbar {
     display: flex;
     flex-direction: column;
-    gap: var(--space-3);
+    gap: var(--space-4);
   }
 
-  .show-all {
+  .toolbar-row {
     display: flex;
     align-items: center;
-    gap: var(--space-2);
-    color: var(--text-secondary);
+    justify-content: space-between;
+    gap: var(--space-4);
+  }
+
+  .show-all-chip {
+    flex: none;
+    border: 1px solid var(--border-muted);
+    border-radius: 999px;
+    background: transparent;
+    color: var(--text-muted);
     font-size: var(--font-size-xs);
+    line-height: 1;
+    padding: var(--space-2) var(--space-4);
+    cursor: pointer;
+    transition: background-color 80ms ease-out, color 80ms ease-out, border-color 80ms ease-out;
+  }
+
+  .show-all-chip:hover {
+    color: var(--text-secondary);
+    border-color: var(--border-strong);
+  }
+
+  .show-all-chip[aria-pressed='true'] {
+    border-color: color-mix(in srgb, var(--accent-blue) 45%, transparent);
+    background: color-mix(in srgb, var(--accent-blue) 12%, transparent);
+    color: var(--text-primary);
   }
 
   .list-empty {
@@ -287,7 +300,6 @@
     min-height: 0;
     flex: 1;
     flex-direction: column;
-    gap: 2px;
     overflow: auto;
     outline: none;
     margin-inline: calc(var(--space-2) * -1);
@@ -307,9 +319,10 @@
 
   .result-row [role='gridcell'] {
     display: flex;
+    min-height: 52px;
     align-items: center;
     gap: var(--space-4);
-    padding: var(--space-2) var(--space-3);
+    padding: var(--space-3) var(--space-4);
   }
 
   .row-body {
@@ -337,14 +350,14 @@
     display: flex;
     align-items: baseline;
     justify-content: space-between;
-    gap: var(--space-3);
+    gap: var(--space-4);
   }
 
   .label {
     overflow: hidden;
     color: var(--text-primary);
     font-size: var(--font-size-sm);
-    font-weight: 600;
+    font-weight: 500;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
@@ -353,48 +366,16 @@
     flex: none;
     color: var(--text-muted);
     font-size: var(--font-size-2xs);
+    font-variant-numeric: tabular-nums;
   }
 
-  .modality-badge {
-    display: inline-flex;
-    min-width: 16px;
-    flex: none;
-    align-items: center;
-    justify-content: center;
-    border: 1px solid var(--border-muted);
-    border-radius: 999px;
+  .row-summary {
+    min-height: 1em;
+    overflow: hidden;
     color: var(--text-muted);
     font-size: var(--font-size-2xs);
-    line-height: 1.4;
-    padding: 0 5px;
-  }
-
-  .row-meta {
-    display: flex;
-    align-items: center;
-    gap: var(--space-3);
-    color: var(--text-muted);
-    font-size: var(--font-size-2xs);
-  }
-
-  /* Fixed-width gauge on the row's right edge. The track itself stays
-   * invisible — only the accent fill shows, so low-score rows read as
-   * quiet instead of as a broken progress bar. */
-  .activity-track {
-    display: block;
-    width: 56px;
-    height: 3px;
-    flex: none;
-    align-self: center;
-    margin-left: auto;
-  }
-
-  .activity-bar {
-    display: block;
-    min-width: 3px;
-    height: 100%;
-    border-radius: 2px;
-    background: color-mix(in srgb, var(--accent-blue) 45%, transparent);
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   @media (prefers-reduced-motion: no-preference) {

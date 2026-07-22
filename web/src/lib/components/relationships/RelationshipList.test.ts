@@ -58,20 +58,52 @@ function baseProps() {
 }
 
 describe('RelationshipList', () => {
-  it('renders ranked rows with label, modality badge, last-interaction date, and a score-proportional bar', () => {
+  it('renders ranked rows as name, compact date, and one quiet signal summary — no badges or bars', () => {
     render(RelationshipList, baseProps());
 
     const grid = screen.getByRole('grid', { name: 'Relationship results' });
     expect(screen.getByText('Alice Example')).toBeDefined();
     expect(screen.getByText('Bob Example')).toBeDefined();
-    expect(screen.getByLabelText('1 modalities')).toBeDefined();
-    expect(screen.getByLabelText('2 modalities')).toBeDefined();
     expect(screen.getByText('3 sent')).toBeDefined();
     expect(screen.getByText('6 sent')).toBeDefined();
-    const bars = grid.querySelectorAll<HTMLElement>('.activity-bar');
-    expect(bars).toHaveLength(2);
-    expect(bars[0]!.style.width).toBe('50%');
-    expect(bars[1]!.style.width).toBe('100%');
+    expect(screen.queryByLabelText(/modalities/)).toBeNull();
+    expect(grid.querySelector('.activity-bar')).toBeNull();
+    expect(grid.querySelector('.modality-badge')).toBeNull();
+  });
+
+  it('joins only nonzero signals into the summary line', () => {
+    const rows = [
+      relationshipRow(1, 'Busy Person', {
+        signals: {
+          last_interaction_at: when, meeting_count: 12, meetings_together: 3, modalities: 2,
+          received_from_them: 4, sent_count: 651, sent_to_them: 5
+        }
+      }),
+      relationshipRow(2, 'Quiet Person', {
+        signals: {
+          last_interaction_at: when, meeting_count: 0, meetings_together: 0, modalities: 1,
+          received_from_them: 1, sent_count: 0, sent_to_them: 0
+        }
+      })
+    ];
+    render(RelationshipList, { ...baseProps(), rows });
+
+    expect(screen.getByText('651 sent · 12 meetings')).toBeDefined();
+    const quietRow = screen.getByText('Quiet Person').closest('[role="row"]')!;
+    expect(quietRow.querySelector('.row-summary')?.textContent).toBe('');
+  });
+
+  it('renders the last interaction as a compact relative date', () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      vi.setSystemTime(new Date('2026-07-21T10:00:00Z'));
+      render(RelationshipList, baseProps());
+
+      // when = 2026-07-19T10:00:00Z, exactly two days before the fake now.
+      expect(screen.getAllByText('2d')).toHaveLength(2);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('fires onFacetChange when the People/Domains toggle changes', async () => {
@@ -82,22 +114,32 @@ describe('RelationshipList', () => {
     expect(props.onFacetChange).toHaveBeenCalledWith('domains');
   });
 
-  it('fires onShowAllChange from the show-all checkbox', async () => {
+  it('fires onShowAllChange from the all-senders filter chip', async () => {
     const props = baseProps();
     render(RelationshipList, props);
 
-    await fireEvent.click(screen.getByRole('checkbox', { name: 'Show all senders' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'All senders' }));
     expect(props.onShowAllChange).toHaveBeenCalledWith(true);
   });
 
-  it('shows the show-all checkbox under the people facet', () => {
-    render(RelationshipList, baseProps());
-    expect(screen.getByRole('checkbox', { name: 'Show all senders' })).toBeDefined();
+  it('marks the all-senders chip pressed when showAll is on, and clicking it turns it off', async () => {
+    const props = { ...baseProps(), showAll: true };
+    render(RelationshipList, props);
+
+    const chip = screen.getByRole('button', { name: 'All senders' });
+    expect(chip.getAttribute('aria-pressed')).toBe('true');
+    await fireEvent.click(chip);
+    expect(props.onShowAllChange).toHaveBeenCalledWith(false);
   });
 
-  it('hides the show-all checkbox under the domains facet', () => {
+  it('shows the all-senders chip under the people facet', () => {
+    render(RelationshipList, baseProps());
+    expect(screen.getByRole('button', { name: 'All senders' })).toBeDefined();
+  });
+
+  it('hides the all-senders chip under the domains facet', () => {
     render(RelationshipList, { ...baseProps(), facet: 'domains', rows: [domain('example.com')] });
-    expect(screen.queryByRole('checkbox', { name: 'Show all senders' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'All senders' })).toBeNull();
   });
 
   it('switches from ranked rows to search results as the query and rows props change', async () => {

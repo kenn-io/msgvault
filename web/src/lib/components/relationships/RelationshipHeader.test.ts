@@ -92,15 +92,15 @@ function baseProps(overrides: Record<string, unknown> = {}) {
   };
 }
 
-/** Opens the Link identity dialog, searches for "Bob", selects the stubbed
- * search result (participant #99), and clicks Link to confirm. Exercises the
- * real LinkIdentityDialog end to end; its own search/select mechanics are
+/** Opens the "Same person…" dialog, searches for "Bob", selects the stubbed
+ * search result (participant #99), and confirms. Exercises the real
+ * LinkIdentityDialog end to end; its own search/select mechanics are
  * covered directly in LinkIdentityDialog.test.ts. */
 async function linkToSearchResult(): Promise<void> {
-  await fireEvent.click(screen.getByRole('button', { name: 'Link identity' }));
+  await fireEvent.click(screen.getByRole('button', { name: 'Same person…' }));
   await fireEvent.input(screen.getByRole('searchbox', { name: 'Search people to link' }), { target: { value: 'Bob' } });
   await fireEvent.click(await screen.findByRole('option', { name: /Bob Example/ }));
-  await fireEvent.click(screen.getByRole('button', { name: 'Link' }));
+  await fireEvent.click(screen.getByRole('button', { name: 'These are the same person' }));
 }
 
 describe('RelationshipHeader', () => {
@@ -118,22 +118,44 @@ describe('RelationshipHeader', () => {
     expect(screen.getByText(/3 files/)).toBeDefined();
     expect(screen.getByText('Alice')).toBeDefined();
     expect(screen.getByText('alice@example.com')).toBeDefined();
-    expect(screen.getByText(/email · Primary · participant_identifiers/)).toBeDefined();
     expect(screen.getByText('+15550100001')).toBeDefined();
-    expect(screen.getByText(/phone · Secondary · participant_identifiers/)).toBeDefined();
+    // Evidence detail lives in the tooltip, phrased in human words — never
+    // internal field names like participant_identifiers.
+    const emailChip = screen.getByLabelText('Identity Alice');
+    expect(emailChip.getAttribute('title')).toBe('email · primary · stored identifier');
+    const phoneChip = screen.getByLabelText('Identity +15550100001');
+    expect(phoneChip.getAttribute('title')).toBe('phone · secondary · stored identifier');
+    expect(document.body.textContent).not.toContain('participant_identifiers');
 
     await fireEvent.click(screen.getByRole('button', { name: 'Files 3' }));
     expect(onFilesToggle).toHaveBeenCalledWith(true);
   });
 
-  it('renders a domain by domain name and person count, without identity chips or a Link identity button', () => {
+  it('hides the identities section entirely for a single identity with nothing linked', () => {
+    const single = { ...person(), identifiers: [person().identifiers![0]!] };
+    render(RelationshipHeader, baseProps({ detail: single }));
+
+    expect(screen.queryByText('Identities')).toBeNull();
+    expect(screen.queryByLabelText('Linked identities')).toBeNull();
+  });
+
+  it('labels chips for linked cluster members as linked, and the open profile\'s own as this profile', () => {
+    render(RelationshipHeader, baseProps({ detail: clusteredPerson() }));
+
+    const own = screen.getByLabelText('Identity Alice');
+    expect(own.textContent).toContain('this profile');
+    const linked = screen.getByLabelText('Identity +15550100002');
+    expect(linked.textContent).toContain('linked');
+  });
+
+  it('renders a domain by domain name and person count, without identity chips or a Same person button', () => {
     render(RelationshipHeader, baseProps({ detail: domain() }));
 
     expect(screen.getByRole('heading', { name: 'example.com' })).toBeDefined();
     expect(screen.getByText(/100 items/)).toBeDefined();
     expect(screen.getByText(/8 people/)).toBeDefined();
-    expect(screen.queryByLabelText('Archive-wide identity evidence')).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Link identity' })).toBeNull();
+    expect(screen.queryByLabelText('Linked identities')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Same person…' })).toBeNull();
   });
 
   it('toggles Files off when already open', async () => {
@@ -144,14 +166,14 @@ describe('RelationshipHeader', () => {
     expect(onFilesToggle).toHaveBeenCalledWith(false);
   });
 
-  it('opens the Link identity dialog for a person, and Esc closes it', async () => {
+  it('opens the Same person dialog for a person, titled with their name, and Esc closes it', async () => {
     render(RelationshipHeader, baseProps());
 
-    await fireEvent.click(screen.getByRole('button', { name: 'Link identity' }));
-    expect(screen.getByRole('dialog', { name: 'Link identity' })).toBeDefined();
+    await fireEvent.click(screen.getByRole('button', { name: 'Same person…' }));
+    expect(screen.getByRole('dialog', { name: 'Link another identity for Alice Example' })).toBeDefined();
 
     await fireEvent.keyDown(window, { key: 'Escape' });
-    expect(screen.queryByRole('dialog', { name: 'Link identity' })).toBeNull();
+    expect(screen.queryByRole('dialog', { name: /Link another identity/ })).toBeNull();
   });
 
   it('links against the open cluster member ID; an ok/ready outcome closes the dialog silently', async () => {
@@ -161,7 +183,7 @@ describe('RelationshipHeader', () => {
     await linkToSearchResult();
 
     await waitFor(() => expect(onLinkParticipants).toHaveBeenCalledWith(12, 99));
-    expect(screen.queryByRole('dialog', { name: 'Link identity' })).toBeNull();
+    expect(screen.queryByRole('dialog', { name: /Link another identity/ })).toBeNull();
     expect(screen.queryByRole('alert')).toBeNull();
   });
 
@@ -174,9 +196,9 @@ describe('RelationshipHeader', () => {
     await linkToSearchResult();
 
     expect((await screen.findByRole('alert')).textContent).toContain(
-      'These identities are already linked through another identifier.'
+      'Already linked — these two are treated as the same person.'
     );
-    expect(screen.getByRole('dialog', { name: 'Link identity' })).toBeDefined();
+    expect(screen.getByRole('dialog', { name: /Link another identity/ })).toBeDefined();
   });
 
   it('raises the identity_cache_stale banner on an ok/stale outcome, and Retry re-invokes the same pair', async () => {
@@ -189,7 +211,7 @@ describe('RelationshipHeader', () => {
       'Identity saved; the cache refresh failed — groupings may be stale until a rebuild. Retrying is safe.'
     );
     expect(onLinkParticipants).toHaveBeenCalledWith(12, 99);
-    expect(screen.queryByRole('dialog', { name: 'Link identity' })).toBeNull();
+    expect(screen.queryByRole('dialog', { name: /Link another identity/ })).toBeNull();
 
     await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
     await waitFor(() => expect(onLinkParticipants).toHaveBeenCalledTimes(2));
@@ -204,12 +226,12 @@ describe('RelationshipHeader', () => {
     await screen.findByRole('alert');
 
     // The dialog closed itself on the ok outcome; the banner must still show.
-    expect(screen.queryByRole('dialog', { name: 'Link identity' })).toBeNull();
+    expect(screen.queryByRole('dialog', { name: /Link another identity/ })).toBeNull();
     expect(screen.getByRole('alert')).toBeDefined();
 
     // Reopening and closing the dialog without linking again must not
     // disturb the still-pending stale banner.
-    await fireEvent.click(screen.getByRole('button', { name: 'Link identity' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Same person…' }));
     await fireEvent.keyDown(window, { key: 'Escape' });
     expect(screen.getByRole('alert')).toBeDefined();
 
@@ -221,24 +243,24 @@ describe('RelationshipHeader', () => {
   it('shows an unlink × only on chips for other cluster members, never on the open cluster\'s own identifiers', () => {
     render(RelationshipHeader, baseProps({ detail: clusteredPerson() }));
 
-    expect(screen.queryByRole('button', { name: /Detach identity #12/ })).toBeNull();
-    expect(screen.getByRole('button', { name: 'Detach identity #34 from this cluster' })).toBeDefined();
-    expect(screen.getByRole('button', { name: 'Detach identity #56 from this cluster' })).toBeDefined();
+    expect(screen.queryByRole('button', { name: /Unlink alice@example.com|Unlink Alice/ })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Unlink +15550100002' })).toBeDefined();
+    expect(screen.getByRole('button', { name: 'Unlink carol@example.com' })).toBeDefined();
   });
 
   it('does not show unlink controls when the person has no cluster', () => {
     render(RelationshipHeader, baseProps());
-    expect(screen.queryByRole('button', { name: /Detach identity/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: /^Unlink / })).toBeNull();
   });
 
   it('renders a fallback chip with its own detach control for a cluster member with no identifier rows', async () => {
     const onUnlinkParticipants = vi.fn(async (): Promise<LinkOutcome> => ({ ok: true, identityRevision: 4, cacheState: 'ready' }));
     render(RelationshipHeader, baseProps({ detail: clusteredPersonWithBareMember(), onUnlinkParticipants }));
 
-    expect(screen.getByText(/identity #78/)).toBeDefined();
-    const detachButton = screen.getByRole('button', { name: 'Detach identity #78 from this cluster' });
+    expect(screen.getByLabelText('Linked profile 78').textContent).toContain('no stored address');
+    const detachButton = screen.getByRole('button', { name: 'Unlink profile 78' });
     await fireEvent.click(detachButton);
-    await fireEvent.click(screen.getByRole('button', { name: 'Detach' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Unlink' }));
 
     await waitFor(() => expect(onUnlinkParticipants).toHaveBeenCalledWith(12, 78));
   });
@@ -247,14 +269,14 @@ describe('RelationshipHeader', () => {
     const onUnlinkParticipants = vi.fn(async (): Promise<LinkOutcome> => ({ ok: true, identityRevision: 4, cacheState: 'ready' }));
     render(RelationshipHeader, baseProps({ detail: clusteredPerson(), onUnlinkParticipants }));
 
-    await fireEvent.click(screen.getByRole('button', { name: 'Detach identity #34 from this cluster' }));
-    expect(screen.getByRole('group', { name: 'Confirm detaching identity #34' })).toBeDefined();
-    await fireEvent.click(screen.getByRole('button', { name: 'Detach' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Unlink +15550100002' }));
+    expect(screen.getByRole('group', { name: 'Confirm unlinking +15550100002' })).toBeDefined();
+    await fireEvent.click(screen.getByRole('button', { name: 'Unlink' }));
 
     await waitFor(() => expect(onUnlinkParticipants).toHaveBeenCalledTimes(2));
     expect(onUnlinkParticipants).toHaveBeenCalledWith(12, 34);
     expect(onUnlinkParticipants).toHaveBeenCalledWith(34, 56);
-    expect(screen.queryByRole('group', { name: 'Confirm detaching identity #34' })).toBeNull();
+    expect(screen.queryByRole('group', { name: 'Confirm unlinking +15550100002' })).toBeNull();
     expect(screen.queryByRole('alert')).toBeNull();
   });
 
@@ -262,11 +284,11 @@ describe('RelationshipHeader', () => {
     const onUnlinkParticipants = vi.fn();
     render(RelationshipHeader, baseProps({ detail: clusteredPerson(), onUnlinkParticipants }));
 
-    await fireEvent.click(screen.getByRole('button', { name: 'Detach identity #56 from this cluster' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Unlink carol@example.com' }));
     await fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
 
-    expect(screen.queryByRole('group', { name: 'Confirm detaching identity #56' })).toBeNull();
-    expect(screen.getByRole('button', { name: 'Detach identity #56 from this cluster' })).toBeDefined();
+    expect(screen.queryByRole('group', { name: 'Confirm unlinking carol@example.com' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Unlink carol@example.com' })).toBeDefined();
     expect(onUnlinkParticipants).not.toHaveBeenCalled();
   });
 
@@ -276,20 +298,20 @@ describe('RelationshipHeader', () => {
     const onUnlinkParticipants = vi.fn(async (): Promise<LinkOutcome> => ({ ok: true, identityRevision: 5, cacheState: 'ready' }));
     render(RelationshipHeader, baseProps({ detail: clusteredPerson(), onUnlinkParticipants }));
 
-    await fireEvent.click(screen.getByRole('button', { name: 'Detach identity #34 from this cluster' }));
-    await fireEvent.click(screen.getByRole('button', { name: 'Detach' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Unlink +15550100002' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Unlink' }));
 
     await waitFor(() => expect(onUnlinkParticipants).toHaveBeenCalledTimes(2));
     expect(screen.queryByRole('alert')).toBeNull();
-    expect(screen.queryByRole('group', { name: 'Confirm detaching identity #34' })).toBeNull();
+    expect(screen.queryByRole('group', { name: 'Confirm unlinking +15550100002' })).toBeNull();
   });
 
   it('shows an inline error and keeps the confirm state on an unlink failure', async () => {
     const onUnlinkParticipants = vi.fn(async (): Promise<LinkOutcome> => ({ ok: false, code: 'error', message: 'Request failed (500)' }));
     render(RelationshipHeader, baseProps({ detail: clusteredPerson(), onUnlinkParticipants }));
 
-    await fireEvent.click(screen.getByRole('button', { name: 'Detach identity #34 from this cluster' }));
-    await fireEvent.click(screen.getByRole('button', { name: 'Detach' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Unlink +15550100002' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Unlink' }));
 
     expect((await screen.findByRole('alert')).textContent).toContain('Request failed (500)');
     expect(onUnlinkParticipants).toHaveBeenCalledTimes(1);
@@ -315,10 +337,10 @@ describe('RelationshipHeader', () => {
     );
     const { rerender } = render(RelationshipHeader, baseProps({ onLinkParticipants }));
 
-    await fireEvent.click(screen.getByRole('button', { name: 'Link identity' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Same person…' }));
     await fireEvent.input(screen.getByRole('searchbox', { name: 'Search people to link' }), { target: { value: 'Bob' } });
     await fireEvent.click(await screen.findByRole('option', { name: /Bob Example/ }));
-    await fireEvent.click(screen.getByRole('button', { name: 'Link' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'These are the same person' }));
     await waitFor(() => expect(onLinkParticipants).toHaveBeenCalledWith(12, 99));
 
     // Navigate to a different person while the link call for Alice (id 12)
@@ -333,7 +355,7 @@ describe('RelationshipHeader', () => {
     // for that close is what actually proves the full continuation,
     // including any (skipped) applyOutcome call, ran to completion.
     resolveLink?.({ ok: true, identityRevision: 9, cacheState: 'stale' });
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Link identity' })).toBeNull());
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: /Link another identity/ })).toBeNull());
 
     expect(screen.queryByRole('alert'), 'must not resurrect the banner for person 200').toBeNull();
   });
@@ -348,8 +370,8 @@ describe('RelationshipHeader', () => {
     });
     const { rerender } = render(RelationshipHeader, baseProps({ detail: clusteredPerson(), onUnlinkParticipants }));
 
-    await fireEvent.click(screen.getByRole('button', { name: 'Detach identity #34 from this cluster' }));
-    await fireEvent.click(screen.getByRole('button', { name: 'Detach' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Unlink +15550100002' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Unlink' }));
     await waitFor(() => expect(onUnlinkParticipants).toHaveBeenCalledWith(12, 34));
     await waitFor(() => expect(onUnlinkParticipants).toHaveBeenCalledWith(34, 56));
 

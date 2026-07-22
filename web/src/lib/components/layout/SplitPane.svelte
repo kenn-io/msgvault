@@ -16,6 +16,11 @@
      * handle, the persisted pixel size wins. */
     initialFraction?: number;
     minPrimary?: number;
+    /** Optional hard cap on the primary pane's size (horizontal panes only —
+     * a vertical pane is deliberately capped by the opposite pane's minimum
+     * alone). Double-clicking the handle resets to the initial size and
+     * forgets the persisted value. */
+    maxPrimary?: number;
     /** Defaults to 160 for vertical panes and 320 for horizontal ones. */
     minSecondary?: number;
     /** Collapses the split to the primary pane only (no handle, no
@@ -33,6 +38,7 @@
     initialSize = 360,
     initialFraction = undefined,
     minPrimary = 220,
+    maxPrimary = undefined,
     minSecondary = undefined,
     collapsed = false,
     primary,
@@ -77,11 +83,12 @@
   let resizeStartSize = 0;
   let dragCleanup: (() => void) | undefined;
 
-  const maximum = $derived(
-    available > 0
+  const maximum = $derived.by(() => {
+    const byAvailable = available > 0
       ? Math.max(0, available - minOther - handleThickness)
-      : Math.max(minSized, sizedSize)
-  );
+      : Math.max(minSized, sizedSize);
+    return !vertical && maxPrimary !== undefined ? Math.min(byAvailable, maxPrimary) : byAvailable;
+  });
   const minimum = $derived(Math.min(minSized, maximum));
 
   function clamp(size: number): number {
@@ -101,6 +108,22 @@
 
   function startResize(): void {
     resizeStartSize = sizedSize;
+  }
+
+  /** Double-clicking the handle returns to the default size and forgets the
+   * persisted value, so the pane follows defaults again on future mounts. */
+  function resetSize(): void {
+    try {
+      globalThis.localStorage?.removeItem(storageKey);
+    } catch {
+      // Storage can be unavailable without making the layout unusable.
+    }
+    userSized = false;
+    if (initialFraction !== undefined && available > 0) {
+      setSize(Math.round(available * initialFraction), false);
+    } else {
+      setSize(initialSize, false);
+    }
   }
 
   function resize(event: SplitResizeEvent): void {
@@ -173,12 +196,18 @@
         aria-label={ariaLabel}
         onkeydown={handleVerticalKeydown}
         onmousedown={startVerticalDrag}
+        ondblclick={resetSize}
       ></button>
       <section class="pane secondary" data-pane="secondary" style:flex-basis={`${sizedSize}px`}>
         {#if secondary}{@render secondary()}{/if}
       </section>
     {:else}
-      <SplitResizeHandle {ariaLabel} onResizeStart={startResize} onResize={resize} />
+      <!-- svelte-ignore a11y_no_static_element_interactions -- dblclick-to-reset
+           convenience wrapper around the kit handle button; keyboard users
+           reach the same default via the handle's own arrow-key steps. -->
+      <span class="handle-reset" ondblclick={resetSize}>
+        <SplitResizeHandle {ariaLabel} onResizeStart={startResize} onResize={resize} />
+      </span>
       <section class="pane secondary" data-pane="secondary">
         {#if secondary}{@render secondary()}{/if}
       </section>
@@ -223,6 +252,15 @@
     flex-grow: 0;
     flex-shrink: 0;
     overflow: hidden;
+  }
+
+  .handle-reset {
+    display: flex;
+    flex: none;
+  }
+
+  .handle-reset :global(.kit-split-resize-handle) {
+    height: 100%;
   }
 
   .vertical-handle {

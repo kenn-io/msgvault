@@ -31,17 +31,18 @@
 >{glyph}</span>
 
 <style>
-  /* Deterministic muted hue per identity: fixed low saturation and
-   * theme-appropriate lightness so the tiles sit quietly in both themes;
-   * the glyph is a deeper shade of the same hue. Presentation-only. */
+  /* Deterministic identity hue with a hollow touch: a ~13% tint of the hue
+   * as the fill, the initials in a deeper shade of the same hue. Rows stay
+   * text-first — the tile marks identity without competing with content.
+   * Presentation-only. */
   .identity-avatar {
     display: inline-flex;
     flex: none;
     align-items: center;
     justify-content: center;
     border-radius: 27%;
-    background: hsl(var(--avatar-hue, 210) 30% 87%);
-    color: hsl(var(--avatar-hue, 210) 45% 29%);
+    background: hsl(var(--avatar-hue, 210) 55% 45% / 0.13);
+    color: hsl(var(--avatar-hue, 210) 40% 36%);
     font-family: var(--font-sans);
     font-weight: 600;
     letter-spacing: 0.02em;
@@ -54,7 +55,7 @@
   }
 
   :global([data-theme='dark']) .identity-avatar {
-    background: hsl(var(--avatar-hue, 210) 22% 27%);
-    color: hsl(var(--avatar-hue, 210) 52% 80%);
+    background: hsl(var(--avatar-hue, 210) 55% 65% / 0.14);
+    color: hsl(var(--avatar-hue, 210) 45% 74%);
   }
 </style>

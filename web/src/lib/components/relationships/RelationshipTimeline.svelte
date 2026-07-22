@@ -388,8 +388,13 @@
     white-space: nowrap;
   }
 
+  /* Day/time markers hold a fixed right-edge column with tabular digits so
+   * the gutter reads ruled down the whole pane instead of ragged. */
   .timeline-row time {
+    min-width: 9ch;
     color: var(--text-muted);
     font-size: var(--font-size-2xs);
+    font-variant-numeric: tabular-nums;
+    text-align: right;
   }
 </style>

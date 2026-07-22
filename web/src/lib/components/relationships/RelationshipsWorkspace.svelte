@@ -340,50 +340,25 @@
   }
 </script>
 
-<!-- svelte-ignore a11y_no_noninteractive_element_interactions -- landmark container scoping the hub's own Esc-layering; not a control itself. -->
-<main
-  class="relationships-hub"
-  aria-label="Relationships"
-  class:layout-narrow={layout === 'narrow'}
-  bind:this={rootElement}
-  onkeydown={handleEscape}
->
-  <h1 class="kit-sr-only">Relationships</h1>
-  {#if layout === 'narrow'}
-    <Button
-      class="drawer-toggle"
-      label="Contacts"
-      ariaLabel="Show relationship list"
-      ariaExpanded={mobileListOpen}
-      onclick={() => (mobileListOpen = !mobileListOpen)}
-    />
-  {/if}
-  <!-- svelte-ignore a11y_no_static_element_interactions -- drawer-mode focus trap/inert host; not a control itself. -->
-  <div
-    class="pane-list"
-    class:drawer={layout === 'narrow'}
-    class:drawer-open={layout === 'narrow' && mobileListOpen}
-    inert={layout === 'narrow' && !mobileListOpen}
-    bind:this={listPaneElement}
-    onkeydown={layout === 'narrow' ? handleDrawerKeydown : undefined}
-  >
-    <RelationshipList
-      rows={controller.listRows}
-      loading={controller.listLoading}
-      error={controller.listError}
-      degraded={controller.degraded}
-      {facet}
-      query={queryInput}
-      {showAll}
-      activeTarget={target}
-      onQueryChange={handleQueryChange}
-      {onFacetChange}
-      {onShowAllChange}
-      onSelect={selectListRow}
-      {onOpenEverything}
-    />
-  </div>
+{#snippet listPane()}
+  <RelationshipList
+    rows={controller.listRows}
+    loading={controller.listLoading}
+    error={controller.listError}
+    degraded={controller.degraded}
+    {facet}
+    query={queryInput}
+    {showAll}
+    activeTarget={target}
+    onQueryChange={handleQueryChange}
+    {onFacetChange}
+    {onShowAllChange}
+    onSelect={selectListRow}
+    {onOpenEverything}
+  />
+{/snippet}
 
+{#snippet centerAndReading()}
   <div class="pane-center-and-reading">
     <SplitPane
       ariaLabel="Resize reading pane"
@@ -464,6 +439,54 @@
       {/snippet}
     </SplitPane>
   </div>
+{/snippet}
+
+<!-- svelte-ignore a11y_no_noninteractive_element_interactions -- landmark container scoping the hub's own Esc-layering; not a control itself. -->
+<main
+  class="relationships-hub"
+  aria-label="Relationships"
+  class:layout-narrow={layout === 'narrow'}
+  bind:this={rootElement}
+  onkeydown={handleEscape}
+>
+  <h1 class="kit-sr-only">Relationships</h1>
+  {#if layout === 'narrow'}
+    <Button
+      class="drawer-toggle"
+      label="Contacts"
+      ariaLabel="Show relationship list"
+      ariaExpanded={mobileListOpen}
+      onclick={() => (mobileListOpen = !mobileListOpen)}
+    />
+    <!-- svelte-ignore a11y_no_static_element_interactions -- drawer-mode focus trap/inert host; not a control itself. -->
+    <div
+      class="pane-list drawer"
+      class:drawer-open={mobileListOpen}
+      inert={!mobileListOpen}
+      bind:this={listPaneElement}
+      onkeydown={handleDrawerKeydown}
+    >
+      {@render listPane()}
+    </div>
+    {@render centerAndReading()}
+  {:else}
+    <SplitPane
+      ariaLabel="Resize relationship list"
+      storageKey="msgvault.relationships.list-pane.size"
+      initialSize={300}
+      minPrimary={240}
+      maxPrimary={440}
+    >
+      {#snippet primary()}
+        <div class="pane-list" bind:this={listPaneElement}>
+          {@render listPane()}
+        </div>
+      {/snippet}
+      {#snippet secondary()}
+        {@render centerAndReading()}
+      {/snippet}
+    </SplitPane>
+  {/if}
 </main>
 
 <style>
@@ -475,16 +498,31 @@
     background: var(--bg-canvas);
   }
 
-  /* Machined pane boundary: the darker hairline carries the edge, an
-   * ultra-faint sheen line beside it catches the light. */
   .pane-list {
     display: flex;
-    flex: 0 0 clamp(280px, 19vw, 340px);
+    width: 100%;
+    height: 100%;
     flex-direction: column;
     overflow: hidden;
     background: var(--bg-primary);
-    border-right: 1px solid var(--border-muted);
-    box-shadow: 1px 0 0 var(--hairline-sheen);
+  }
+
+  /* Machined, draggable pane boundary: the kit handle spans 4px of grab
+   * area but paints only a centered hairline, so the rail reads as a single
+   * machined edge until hovered/focused, when the accent fills the grip. */
+  .relationships-hub :global(.kit-split-resize-handle) {
+    background: linear-gradient(
+      to right,
+      transparent calc(50% - 0.5px),
+      var(--border-muted) calc(50% - 0.5px),
+      var(--border-muted) calc(50% + 0.5px),
+      transparent calc(50% + 0.5px)
+    );
+  }
+
+  .relationships-hub :global(.kit-split-resize-handle:hover),
+  .relationships-hub :global(.kit-split-resize-handle:focus-visible) {
+    background: var(--accent-blue);
   }
 
   .pane-list.drawer {
@@ -506,6 +544,7 @@
   .pane-center-and-reading {
     display: flex;
     min-width: 0;
+    height: 100%;
     flex: 1;
     overflow: hidden;
   }

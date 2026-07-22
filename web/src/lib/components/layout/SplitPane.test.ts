@@ -111,6 +111,80 @@ describe('SplitPane', () => {
     expect(localStorage.getItem('archive:test-split')).toBe('176');
   });
 
+  it('caps a horizontal primary pane at maxPrimary even when more width is available', async () => {
+    localStorage.setItem('archive:test-split', '900');
+    const { container } = render(SplitPane, {
+      props: {
+        storageKey: 'archive:test-split',
+        ariaLabel: 'Resize relationship list',
+        initialSize: 300,
+        minPrimary: 240,
+        maxPrimary: 440
+      }
+    });
+    const host = container.querySelector('[data-split-pane]')!;
+    const primary = container.querySelector('[data-pane="primary"]') as HTMLElement;
+
+    reportWidth(host, 1600);
+    await waitFor(() => expect(primary.style.flexBasis).toBe('440px'));
+
+    const handle = screen.getByRole('button', { name: 'Resize relationship list' });
+    await fireEvent.keyDown(handle, { key: 'ArrowRight' });
+    expect(primary.style.flexBasis).toBe('440px');
+
+    for (let step = 0; step < 12; step += 1) {
+      await fireEvent.keyDown(handle, { key: 'ArrowLeft' });
+    }
+    expect(primary.style.flexBasis).toBe('240px');
+  });
+
+  it('double-clicking the handle resets to the default size and forgets the persisted value', async () => {
+    const { container } = render(SplitPane, {
+      props: {
+        storageKey: 'archive:test-split',
+        ariaLabel: 'Resize relationship list',
+        initialSize: 300,
+        minPrimary: 240,
+        maxPrimary: 440
+      }
+    });
+    const host = container.querySelector('[data-split-pane]')!;
+    const primary = container.querySelector('[data-pane="primary"]') as HTMLElement;
+    reportWidth(host, 1200);
+    await waitFor(() => expect(primary.style.flexBasis).toBe('300px'));
+
+    const handle = screen.getByRole('button', { name: 'Resize relationship list' });
+    await fireEvent.keyDown(handle, { key: 'ArrowRight' });
+    expect(primary.style.flexBasis).toBe('324px');
+    expect(localStorage.getItem('archive:test-split')).toBe('324');
+
+    await fireEvent.dblClick(handle);
+    expect(primary.style.flexBasis).toBe('300px');
+    expect(localStorage.getItem('archive:test-split')).toBeNull();
+  });
+
+  it('double-clicking a vertical handle resets to the proportional default', async () => {
+    localStorage.setItem('archive:reading-pane', '600');
+    const { container } = render(SplitPane, {
+      props: {
+        storageKey: 'archive:reading-pane',
+        ariaLabel: 'Resize reading pane',
+        orientation: 'vertical',
+        initialFraction: 0.55,
+        minPrimary: 120,
+        minSecondary: 160
+      }
+    });
+    const host = container.querySelector('[data-split-pane]')!;
+    const secondary = container.querySelector('[data-pane="secondary"]') as HTMLElement;
+    reportSize(host, { height: 800 });
+    await waitFor(() => expect(secondary.style.flexBasis).toBe('600px'));
+
+    await fireEvent.dblClick(screen.getByRole('button', { name: 'Resize reading pane' }));
+    expect(secondary.style.flexBasis).toBe('440px');
+    expect(localStorage.getItem('archive:reading-pane')).toBeNull();
+  });
+
   it('sizes an untouched vertical secondary pane as a fraction of the container without persisting', async () => {
     const { container } = render(SplitPane, {
       props: {

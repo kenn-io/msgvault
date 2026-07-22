@@ -344,8 +344,8 @@ describe('RelationshipsWorkspace', () => {
     await props.controller.openTarget('cluster:1', props.predicate);
     await screen.findByRole('heading', { name: 'Alice Example' });
 
-    await fireEvent.click(screen.getByRole('button', { name: 'Link identity' }));
-    expect(screen.getByRole('dialog', { name: 'Link identity' })).toBeDefined();
+    await fireEvent.click(screen.getByRole('button', { name: 'Same person…' }));
+    expect(screen.getByRole('dialog', { name: /Link another identity/ })).toBeDefined();
 
     await fireEvent.keyDown(screen.getByRole('grid', { name: 'Relationship activity' }), { key: 'Escape' });
 
@@ -353,7 +353,7 @@ describe('RelationshipsWorkspace', () => {
     // open. Escape instead bubbles untouched to the Modal's own window-level
     // listener, which closes the dialog.
     expect(props.onTargetChange).not.toHaveBeenCalled();
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Link identity' })).toBeNull());
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: /Link another identity/ })).toBeNull());
   });
 
   it('calls the domain files endpoint, not the person one, when the open target is a domain', async () => {
@@ -462,6 +462,40 @@ describe('RelationshipsWorkspace', () => {
     expect(props.onTargetChange).toHaveBeenCalledWith(null);
     const listGrid = screen.getByRole('grid', { name: 'Relationship results' });
     await waitFor(() => expect(document.activeElement).toBe(listGrid));
+  });
+});
+
+describe('RelationshipsWorkspace resizable rail (wide layout)', () => {
+  it('resizes the list rail via the keyboard-accessible handle, persists the width, and double-click resets it', async () => {
+    const { fetchFn } = fetchHandler();
+    const { container } = render(RelationshipsWorkspace, { props: baseProps(fetchFn) });
+    await screen.findByText('Alice Example');
+
+    const primary = container.querySelector('[data-pane="primary"]') as HTMLElement;
+    expect(primary.style.flexBasis).toBe('300px');
+
+    const handle = screen.getByRole('button', { name: 'Resize relationship list' });
+    await fireEvent.keyDown(handle, { key: 'ArrowRight' });
+    expect(primary.style.flexBasis).toBe('324px');
+    expect(localStorage.getItem('msgvault.relationships.list-pane.size')).toBe('324');
+
+    await fireEvent.dblClick(handle);
+    expect(primary.style.flexBasis).toBe('300px');
+    expect(localStorage.getItem('msgvault.relationships.list-pane.size')).toBeNull();
+  });
+
+  it('restores a previously persisted rail width on mount', async () => {
+    localStorage.setItem('msgvault.relationships.list-pane.size', '412');
+    try {
+      const { fetchFn } = fetchHandler();
+      const { container } = render(RelationshipsWorkspace, { props: baseProps(fetchFn) });
+      await screen.findByText('Alice Example');
+
+      const primary = container.querySelector('[data-pane="primary"]') as HTMLElement;
+      expect(primary.style.flexBasis).toBe('412px');
+    } finally {
+      localStorage.removeItem('msgvault.relationships.list-pane.size');
+    }
   });
 });
 

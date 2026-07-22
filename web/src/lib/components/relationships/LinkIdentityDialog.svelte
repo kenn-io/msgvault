@@ -15,11 +15,14 @@
     /** The currently open cluster's own ID, excluded from results — linking
      * it to itself is rejected by the API and never a meaningful choice. */
     excludeID: number;
+    /** The open person's display name, woven into the dialog title so the
+     * flow reads in human terms ("Link another identity for Alice"). */
+    personLabel: string;
     onConfirm: (participantID: number) => Promise<LinkOutcome>;
     onClose: () => void;
   }
 
-  let { client, excludeID, onConfirm, onClose }: Props = $props();
+  let { client, excludeID, personLabel, onConfirm, onClose }: Props = $props();
 
   let query = $state('');
   let results = $state<PersonSummary[]>([]);
@@ -121,7 +124,7 @@
         return;
       }
       confirmError = outcome.code === 'already_linked'
-        ? 'These identities are already linked through another identifier.'
+        ? 'Already linked — these two are treated as the same person.'
         : outcome.message;
     } finally {
       confirming = false;
@@ -142,7 +145,11 @@
   }
 </script>
 
-<Modal title="Link identity" ariaLabel="Link identity" onclose={onClose}>
+<Modal
+  title={`Link another identity for ${personLabel}`}
+  ariaLabel={`Link another identity for ${personLabel}`}
+  onclose={onClose}
+>
   <div class="link-identity-dialog">
     <SearchInput
       value={query}
@@ -184,7 +191,7 @@
     <Button
       tone="info"
       surface="solid"
-      label="Link"
+      label="These are the same person"
       disabled={selectedID === null || confirming}
       onclick={() => void confirmLink()}
     />

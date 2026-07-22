@@ -74,6 +74,29 @@
     return (detail.cluster.member_ids ?? []).filter((id) => id !== detail.id && !known.has(id));
   });
 
+  /** A single identity with nothing linked has nothing to explain — the
+   * identities section only appears once there are at least two identities,
+   * or any linked cluster member (whose unlink control lives here and must
+   * therefore always be reachable). */
+  const showIdentities = $derived.by((): boolean => {
+    if (!detail || !isPersonDetail(detail)) return false;
+    const identifiers = detail.identifiers ?? [];
+    if (identifiers.length + unrepresentedMembers.length > 1) return true;
+    if (unrepresentedMembers.length > 0) return true;
+    if (!detail.cluster) return false;
+    const ownID = detail.id;
+    return identifiers.some((identifier) => identifier.participant_id !== ownID);
+  });
+
+  /** Evidence detail lives in the chip tooltip, in human words — internal
+   * provenance identifiers never reach user-visible text. */
+  function identifierTooltip(identifier: { type: string; is_primary: boolean; provenance: string }): string {
+    const parts = [identifier.type, identifier.is_primary ? 'primary' : 'secondary'];
+    if (identifier.provenance === 'participant_identifiers') parts.push('stored identifier');
+    else if (identifier.provenance) parts.push(identifier.provenance.replaceAll('_', ' '));
+    return parts.join(' · ');
+  }
+
   // Navigating to a different person must not leave behind a stale banner
   // (or its Retry) bound to the previous cluster's IDs, and must not leave
   // a pending unlink confirm open on a chip that no longer belongs to the
@@ -204,8 +227,8 @@
         />
         {#if isPersonDetail(detail)}
           <Button
-            label="Link identity"
-            ariaLabel="Link identity"
+            label="Same person…"
+            ariaLabel="Same person…"
             surface="outline"
             onclick={() => (dialogOpen = true)}
           />
@@ -225,28 +248,24 @@
         · {detail.person_count.toLocaleString()} people
       {/if}
     </p>
-    {#if isPersonDetail(detail)}
-      <span class="identity-label" data-section-label>Identity evidence</span>
-      <div class="identifiers" aria-label="Archive-wide identity evidence">
+    {#if isPersonDetail(detail) && showIdentities}
+      <span class="identity-label" data-section-label>Identities</span>
+      <div class="identifiers" aria-label="Linked identities">
         {#each detail.identifiers ?? [] as identifier (`${identifier.participant_id}:${identifier.type}:${identifier.value}`)}
           {@const isOtherMember = !!detail.cluster && identifier.participant_id !== detail.id}
-          <span class="chip" aria-label={`Identity evidence ${identifier.display_value || identifier.value}`}>
+          {@const chipName = identifier.display_value?.trim() || identifier.value}
+          <span class="chip" aria-label={`Identity ${chipName}`} title={identifierTooltip(identifier)}>
             {#if identifier.display_value?.trim() && identifier.display_value.trim() !== identifier.value}
               <span class="chip-display">{identifier.display_value}</span>
             {/if}
             <strong data-mono>{identifier.value}</strong>
-            <small>
-              {identifier.type} · {identifier.is_primary ? 'Primary' : 'Secondary'} · {identifier.provenance}
-              {#if detail.cluster}
-                · {isOtherMember ? `linked identity #${identifier.participant_id}` : 'this identity'}
-              {/if}
-            </small>
+            <small>{isOtherMember ? 'linked' : 'this profile'}</small>
             {#if isOtherMember}
               {#if confirmingParticipantID === identifier.participant_id}
-                <span class="chip-confirm" role="group" aria-label={`Confirm detaching identity #${identifier.participant_id}`}>
-                  <span>Detach from cluster?</span>
+                <span class="chip-confirm" role="group" aria-label={`Confirm unlinking ${chipName}`}>
+                  <span>Not the same person?</span>
                   <Button
-                    label="Detach"
+                    label="Unlink"
                     tone="danger"
                     surface="solid"
                     size="sm"
@@ -259,7 +278,7 @@
                 <button
                   type="button"
                   class="chip-unlink"
-                  aria-label={`Detach identity #${identifier.participant_id} from this cluster`}
+                  aria-label={`Unlink ${chipName}`}
                   onclick={() => startUnlink(identifier.participant_id)}
                 >
                   ×
@@ -269,13 +288,14 @@
           </span>
         {/each}
         {#each unrepresentedMembers as memberID (memberID)}
-          <span class="chip" aria-label={`Identity evidence for identity #${memberID}`}>
-            <small>identity #{memberID} · No stored identifier evidence · linked identity #{memberID}</small>
+          <span class="chip" aria-label={`Linked profile ${memberID}`}>
+            <strong>Linked profile</strong>
+            <small>linked · no stored address</small>
             {#if confirmingParticipantID === memberID}
-              <span class="chip-confirm" role="group" aria-label={`Confirm detaching identity #${memberID}`}>
-                <span>Detach from cluster?</span>
+              <span class="chip-confirm" role="group" aria-label={`Confirm unlinking profile ${memberID}`}>
+                <span>Not the same person?</span>
                 <Button
-                  label="Detach"
+                  label="Unlink"
                   tone="danger"
                   surface="solid"
                   size="sm"
@@ -288,7 +308,7 @@
               <button
                 type="button"
                 class="chip-unlink"
-                aria-label={`Detach identity #${memberID} from this cluster`}
+                aria-label={`Unlink profile ${memberID}`}
                 onclick={() => startUnlink(memberID)}
               >
                 ×
@@ -305,6 +325,7 @@
       <LinkIdentityDialog
         {client}
         excludeID={detail.id}
+        personLabel={detail.display_label}
         onConfirm={confirmLink}
         onClose={() => (dialogOpen = false)}
       />
@@ -380,21 +401,24 @@
     font-size: var(--font-size-sm);
   }
 
+  /* Chips size to their content and wrap — a row of quiet cards, not a
+   * stretched grid fighting the header for width. */
   .identifiers {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    display: flex;
+    flex-wrap: wrap;
     gap: var(--space-2);
   }
 
   .chip {
     position: relative;
     display: flex;
+    max-width: 100%;
     flex-direction: column;
     gap: 2px;
     border: 1px solid var(--border-muted);
     border-radius: var(--radius-sm);
     background: var(--bg-subtle);
-    padding: var(--space-2) var(--space-3);
+    padding: var(--space-2) var(--space-6) var(--space-2) var(--space-3);
   }
 
   .chip-display {
