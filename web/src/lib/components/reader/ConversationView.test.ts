@@ -148,6 +148,75 @@ describe('ConversationView', () => {
     expect(await screen.findByRole('article', { name: 'Message 99' })).toBeTruthy();
   });
 
+  it('hides the previous thread while a different conversation loads', async () => {
+    const pending = new Map<number, (response: Response) => void>();
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      const conversation = Number(new URL(request.url).pathname.split('/').at(-1));
+      return await new Promise<Response>((resolve) => {
+        pending.set(conversation, resolve);
+      });
+    });
+    const client = createAPIClient(fetchFn);
+    const rendered = render(ConversationView, {
+      props: { client, conversationId: 7, anchorId: 2 }
+    });
+    await waitFor(() => expect(pending.get(7)).toBeDefined());
+    pending.get(7)!(Response.json({
+      id: 7, anchor_id: 2, messages: [message(1), message(2)],
+      has_before: false, has_after: false, total: 2
+    }));
+    await screen.findByRole('article', { name: 'Message 2' });
+
+    await rendered.rerender({ client, conversationId: 8, anchorId: 80 });
+    await waitFor(() => expect(pending.get(8)).toBeDefined());
+
+    // The stale thread disappears immediately; loading is shown while B pends.
+    expect(screen.queryByRole('article', { name: 'Message 2' })).toBeNull();
+    expect(screen.queryByRole('button', { name: /Expand message 1/ })).toBeNull();
+    expect(screen.getByRole('status').textContent).toContain('Loading conversation');
+
+    pending.get(8)!(Response.json({
+      id: 8, anchor_id: 80, messages: [{ ...message(9), id: 80 }],
+      has_before: false, has_after: false, total: 1
+    }));
+    expect(await screen.findByRole('article', { name: 'Message 80' })).toBeTruthy();
+  });
+
+  it('ignores a late response from an abandoned conversation after navigating away', async () => {
+    const pending = new Map<number, (response: Response) => void>();
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      const conversation = Number(new URL(request.url).pathname.split('/').at(-1));
+      return await new Promise<Response>((resolve) => {
+        pending.set(conversation, resolve);
+      });
+    });
+    const client = createAPIClient(fetchFn);
+    const rendered = render(ConversationView, {
+      props: { client, conversationId: 7, anchorId: 2 }
+    });
+    await waitFor(() => expect(pending.get(7)).toBeDefined());
+
+    await rendered.rerender({ client, conversationId: 8, anchorId: 80 });
+    await waitFor(() => expect(pending.get(8)).toBeDefined());
+    pending.get(8)!(Response.json({
+      id: 8, anchor_id: 80, messages: [{ ...message(9), id: 80 }],
+      has_before: false, has_after: false, total: 1
+    }));
+    await screen.findByRole('article', { name: 'Message 80' });
+
+    pending.get(7)!(Response.json({
+      id: 7, anchor_id: 2, messages: [message(1), message(2)],
+      has_before: false, has_after: false, total: 2
+    }));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(screen.getByRole('article', { name: 'Message 80' })).toBeTruthy();
+    expect(screen.queryByRole('article', { name: 'Message 2' })).toBeNull();
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
   it('aborts a superseded window load and ignores stale resolve or reject settlements', async () => {
     const pending = new Map<number, {
       request: Request;
