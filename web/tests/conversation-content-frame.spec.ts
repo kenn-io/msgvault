@@ -145,7 +145,12 @@ test('archived content has an opaque capability boundary and durable conversatio
   const shellOrigin = new URL(page.url()).origin;
   expect(initialCSP).toContain(`script-src ${shellOrigin}/archived-frame.js`);
   expect(initialCSP).toContain(`style-src ${shellOrigin}/archived-frame.css`);
-  expect(initialCSP).not.toContain("'unsafe-inline'");
+  expect(initialCSP).toContain(`style-src-elem ${shellOrigin}/archived-frame.css`);
+  // Inline allowance is scoped to style attributes (sanitizer-allowlisted
+  // declarations only); scripts and stylesheet elements never get it.
+  expect(initialCSP).toContain("style-src-attr 'unsafe-inline'");
+  expect(initialCSP).not.toMatch(/script-src[^;]*'unsafe-inline'/);
+  expect(initialCSP).not.toMatch(/style-src(?:-elem)? [^;]*'unsafe-inline'/);
   expect(networkRequests).toEqual([]);
   expect(unintendedRequests).toEqual([]);
   const archivedDocument = await frame.getAttribute('srcdoc');

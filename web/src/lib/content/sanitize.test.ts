@@ -43,7 +43,7 @@ describe('sanitizeArchivedHTML', () => {
     expect(result.remoteImages).toEqual([]);
   });
 
-  it('removes every sender style without trying to parse hostile CSS', () => {
+  it('drops hostile CSS smuggling while keeping benign author styles', () => {
     const result = sanitizeArchivedHTML(`
       <p style="background:UrL(https://collector.example/mixed)">Mixed</p>
       <p style="background:u/**/rl(https://collector.example/comment)">Comment</p>
@@ -54,7 +54,12 @@ describe('sanitizeArchivedHTML', () => {
     `, { messageId: 42 });
 
     expect(result.html).toContain('Benign looking');
-    expect(result.html).not.toMatch(/style=|collector\.example|url\s*\(/i);
+    expect(result.html).not.toMatch(/collector\.example|url\s*\(|\\75|&#x75/i);
+    const template = document.createElement('template');
+    template.innerHTML = result.html;
+    const styled = [...template.content.querySelectorAll('[style]')];
+    expect(styled).toHaveLength(1);
+    expect(styled[0]?.getAttribute('style')).toBe('color: red');
   });
 
   it('extracts CID images into URL-free shell descriptors', () => {
@@ -165,6 +170,153 @@ describe('sanitizeArchivedHTML', () => {
   });
 });
 
+/** Sanitizes a single styled paragraph and returns the surviving style attribute. */
+function survivingStyle(style: string): string | null {
+  const result = sanitizeArchivedHTML(`<p style="${style}">Body</p>`, { messageId: 42 });
+  const template = document.createElement('template');
+  template.innerHTML = result.html;
+  return template.content.querySelector('p')?.getAttribute('style') ?? null;
+}
+
+describe('inline style allowlist', () => {
+  it.each([
+    ['text color', 'color:#333333', 'color: #333333'],
+    ['background color', 'background-color:#f4f4f4', 'background-color: #f4f4f4'],
+    ['background shorthand reduced to a plain color', 'background:#101827', 'background: #101827'],
+    ['named color', 'color:rebeccapurple', 'color: rebeccapurple'],
+    ['rgb color', 'color:rgb(16, 24, 39)', 'color: rgb(16, 24, 39)'],
+    ['rgba color', 'background-color:rgba(0, 0, 0, 0.5)', 'background-color: rgba(0, 0, 0, 0.5)'],
+    ['hsl color', 'color:hsl(210, 40%, 30%)', 'color: hsl(210, 40%, 30%)'],
+    ['font family list', 'font-family:Helvetica,Arial,sans-serif', 'font-family: Helvetica,Arial,sans-serif'],
+    ['font size', 'font-size:15px', 'font-size: 15px'],
+    ['font weight keyword', 'font-weight:bold', 'font-weight: bold'],
+    ['font weight number', 'font-weight:600', 'font-weight: 600'],
+    ['font style', 'font-style:italic', 'font-style: italic'],
+    ['text align', 'text-align:center', 'text-align: center'],
+    ['text decoration', 'text-decoration:none', 'text-decoration: none'],
+    ['text transform', 'text-transform:uppercase', 'text-transform: uppercase'],
+    ['line height', 'line-height:1.6', 'line-height: 1.6'],
+    ['letter spacing', 'letter-spacing:0.5px', 'letter-spacing: 0.5px'],
+    ['padding shorthand', 'padding:28px 32px', 'padding: 28px 32px'],
+    ['centering margin', 'margin:0 auto', 'margin: 0 auto'],
+    ['margin shorthand', 'margin:8px 0 0', 'margin: 8px 0 0'],
+    ['small negative margin', 'margin-left:-4px', 'margin-left: -4px'],
+    ['border shorthand', 'border:1px solid #eeeeee', 'border: 1px solid #eeeeee'],
+    ['border side shorthand', 'border-top:1px solid #eeeeee', 'border-top: 1px solid #eeeeee'],
+    ['border radius', 'border-radius:4px', 'border-radius: 4px'],
+    ['percentage width', 'width:100%', 'width: 100%'],
+    ['max width', 'max-width:600px', 'max-width: 600px'],
+    ['pixel height', 'height:240px', 'height: 240px'],
+    ['inline-block display', 'display:inline-block', 'display: inline-block'],
+    ['display none', 'display:none', 'display: none'],
+    ['table-cell display', 'display:table-cell', 'display: table-cell'],
+    ['vertical align', 'vertical-align:middle', 'vertical-align: middle'],
+    ['white space', 'white-space:nowrap', 'white-space: nowrap'],
+    ['border collapse', 'border-collapse:collapse', 'border-collapse: collapse'],
+    ['border spacing', 'border-spacing:0', 'border-spacing: 0'],
+    ['table layout', 'table-layout:fixed', 'table-layout: fixed'],
+    ['float', 'float:left', 'float: left'],
+    ['clear', 'clear:both', 'clear: both'],
+    ['direction', 'direction:rtl', 'direction: rtl'],
+    ['important flag stripped, declaration kept', 'color:#333333 !important', 'color: #333333'],
+    ['mixed hostile and benign declarations',
+      'background:url(https://collector.example/x);color:#ff0000', 'color: #ff0000']
+  ])('keeps %s', (_name, input, expected) => {
+    expect(survivingStyle(input)).toBe(expected);
+  });
+
+  it.each([
+    ['background url smuggling', 'background:url(https://collector.example/a)'],
+    ['background-image (never allowlisted)', 'background-image:url(https://collector.example/b)'],
+    ['background color plus url', 'background:#ffffff url(https://collector.example/c)'],
+    ['url hidden past a color function', 'color:rgb(1,2,3) url(https://collector.example/d)'],
+    ['nested function inside color args', 'color:rgb(calc(1),2,3)'],
+    ['escaped url', 'background:\\75\\72\\6c(https://collector.example/e)'],
+    ['expression()', 'width:expression(alert(1))'],
+    ['expression in color', 'color:expression(document.cookie)'],
+    ['javascript scheme in value', 'background:javascript:alert(1)'],
+    ['behavior binding', 'behavior:url(#default#time2)'],
+    ['moz binding', '-moz-binding:url(https://collector.example/f)'],
+    ['fixed positioning overlay', 'position:fixed'],
+    ['absolute positioning', 'position:absolute'],
+    ['z-index stacking', 'z-index:2147483647'],
+    ['transform', 'transform:translate(-9999px, 0)'],
+    ['transition', 'transition:opacity 1s'],
+    ['animation', 'animation:steal 1s infinite'],
+    ['filter', 'filter:blur(4px)'],
+    ['clip path', 'clip-path:inset(0)'],
+    ['generated content', "content:'phishing text'"],
+    ['custom property definition', '--stolen:url(https://collector.example/g)'],
+    ['var() indirection', 'color:var(--stolen)'],
+    ['quoted font family injection', 'font-family:"</style><script>alert(1)</script>"'],
+    ['clickjack negative margin', 'margin-top:-2000px'],
+    ['negative margin beyond the -8px clamp', 'margin:-9px 0'],
+    ['negative margin in non-px units', 'margin:-1em 0'],
+    ['flex display (outside the allowlisted set)', 'display:flex'],
+    ['width keyword outside lengths/percent', 'width:max-content'],
+    ['extra tokens after a color value', 'color:#fff f'],
+    ['control characters in a value', 'color:#fff\u0000red'],
+    ['unknown property', 'offset-path:ray(45deg)']
+  ])('drops %s', (_name, input) => {
+    expect(survivingStyle(input)).toBeNull();
+  });
+
+  it('keeps safe declarations from an overlay attack while dropping the positioning', () => {
+    const style = survivingStyle('display:block;position:fixed;top:0;left:0;width:100%;height:100%;z-index:9999');
+    expect(style).toBe('display: block; width: 100%; height: 100%');
+  });
+
+  it('keeps real marketing-mail styling end to end', () => {
+    const result = sanitizeArchivedHTML(
+      '<table><tr><td style="background-color:#101827;color:#ffffff;padding:28px 20px;font-family:Georgia,serif;font-size:26px">HEADER</td></tr></table>',
+      { messageId: 42 }
+    );
+    expect(result.html).toContain(
+      'background-color: #101827; color: #ffffff; padding: 28px 20px; font-family: Georgia,serif; font-size: 26px'
+    );
+  });
+});
+
+describe('legacy presentational attributes', () => {
+  it('keeps bgcolor on table structure with safe color values', () => {
+    const result = sanitizeArchivedHTML(
+      '<table bgcolor="#f2f2f2"><tr bgcolor="white"><td bgcolor="#ffffff">Cell</td></tr></table>',
+      { messageId: 42 }
+    );
+    expect(result.html).toContain('<table bgcolor="#f2f2f2">');
+    expect(result.html).toContain('<tr bgcolor="white">');
+    expect(result.html).toContain('<td bgcolor="#ffffff">');
+  });
+
+  it('keeps color on font tags and drops it elsewhere', () => {
+    const result = sanitizeArchivedHTML(
+      '<font color="#0000aa">Old school</font><span color="#00aa00">Span</span>',
+      { messageId: 42 }
+    );
+    expect(result.html).toContain('<font color="#0000aa">');
+    expect(result.html).not.toContain('<span color');
+  });
+
+  it('drops bgcolor with unsafe values or on non-table elements', () => {
+    const result = sanitizeArchivedHTML(
+      '<td bgcolor="url(https://collector.example/x)">A</td><div bgcolor="#ffffff">B</div>',
+      { messageId: 42 }
+    );
+    expect(result.html).not.toMatch(/bgcolor|collector\.example/);
+  });
+
+  it('keeps table sizing and alignment attributes marketing mail relies on', () => {
+    const result = sanitizeArchivedHTML(
+      '<table width="600" cellpadding="0" cellspacing="0" align="center"><tr><td width="50%" align="center" valign="top" height="40">Cell</td></tr></table>',
+      { messageId: 42 }
+    );
+    expect(result.html).toContain('width="600"');
+    expect(result.html).toContain('cellpadding="0"');
+    expect(result.html).toContain('cellspacing="0"');
+    expect(result.html).toContain('valign="top"');
+  });
+});
+
 describe('detectDesignedEmail', () => {
   it('classifies marketing table mail as designed', () => {
     expect(detectDesignedEmail(MARKETING_EMAIL)).toBe(true);
@@ -181,7 +333,6 @@ describe('detectDesignedEmail', () => {
     ['inline background style', '<div style="background:#101827"><p>Hero</p></div>'],
     ['background image style',
       '<table><tr><td style="background-image:url(banner.png)">Banner</td></tr></table>'],
-    ['container text color', '<div style="color:#8899aa">Footer legalese</div>'],
     ['style-element background', '<style>.card{background-color:#fff}</style><p>Body</p>'],
     ['multi-column layout table', '<table><tr><td>Left nav</td><td>Right content</td></tr></table>']
   ])('treats %s as designed', (_name, html) => {
@@ -191,6 +342,9 @@ describe('detectDesignedEmail', () => {
   it.each([
     ['bare paragraphs and breaks', '<p>Hello,</p><br><div>See you then.<br>— Bob</div>'],
     ['inline span color only', '<p>Note: <span style="color:#1f497d">tracked change</span></p>'],
+    ['a colored signature block in a plain reply',
+      '<p>Thanks, see you Tuesday.</p><div style="color:#500050">Alice Example<br>Example Corp</div>'],
+    ['container text color without any background', '<div style="color:#8899aa">Footer legalese</div>'],
     ['single-column table', '<table><tr><td>One column of text</td></tr></table>'],
     ['transparent background', '<div style="background:transparent">Quoted</div>'],
     ['full plain document', '<html><body><p>Plain reply body.</p></body></html>']

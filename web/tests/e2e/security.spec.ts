@@ -22,8 +22,12 @@ test('sanitized archived HTML requires remote-image consent and rejects forged f
     messages: [{ id: 42, conversation_id: 7, subject: secureRow.title, message_type: 'email',
       from: 'alice@example.com', to: ['bob@example.com'], sent_at: secureRow.occurred_at,
       snippet: secureRow.preview, body: 'Plain body', attachments: [],
-      body_html: '<script>parent.document.body.remove()</script><form action="https://collector.example/"><input autofocus></form><img src="https://images.example/remote.png" alt="Remote chart"><p>Safe body</p>' }]
+      body_html: '<script>parent.document.body.remove()</script><form action="https://collector.example/"><input autofocus></form><img src="https://images.example/remote.png" alt="Remote chart"><p>Safe body</p><p style="color:#b3261e;background:url(https://collector.example/steal);position:fixed;top:0;left:0;width:expression(alert(1))">Styled body</p>' }]
   } }));
+  await page.route('https://collector.example/**', (route) => {
+    remoteRequests.push(route.request().url());
+    return route.abort();
+  });
   await page.route('https://images.example/**', (route) => {
     remoteRequests.push(route.request().url());
     return route.fulfill({ contentType: 'image/png', body: Buffer.from(
@@ -49,6 +53,13 @@ test('sanitized archived HTML requires remote-image consent and rejects forged f
   expect(csp).toContain("default-src 'none'");
   expect(csp).toContain("object-src 'none'");
   expect(remoteRequests).toEqual([]);
+
+  // Author styling survives the allowlist, but url() smuggling, expression(),
+  // and positioning that could overlay the shell are all gone.
+  const styledBody = frame.contentFrame().getByText('Styled body');
+  await expect(styledBody).toHaveAttribute('style', 'color: #b3261e');
+  await expect(styledBody).toHaveCSS('color', 'rgb(179, 38, 30)');
+  await expect(styledBody).toHaveCSS('position', 'static');
 
   // A forged bridge message (wrong nonce) and a spoofed one (right nonce,
   // wrong source window) are both ignored; only the frame's own message

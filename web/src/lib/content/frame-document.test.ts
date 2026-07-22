@@ -29,7 +29,12 @@ describe('buildFrameDocument', () => {
     expect(document).toContain("media-src 'none'");
     expect(document).toContain('script-src https://archive.example/archived-frame.js');
     expect(document).toContain('style-src https://archive.example/archived-frame.css');
-    expect(document).not.toContain("'unsafe-inline'");
+    expect(document).toContain('style-src-elem https://archive.example/archived-frame.css');
+    // Only style attributes get the inline allowance — they carry nothing but
+    // declarations that survived the sanitizer's inline-style allowlist.
+    expect(document).toContain("style-src-attr 'unsafe-inline'");
+    expect(document).not.toMatch(/script-src[^;]*'unsafe-inline'/);
+    expect(document).not.toMatch(/style-src(?:-elem)? [^;]*'unsafe-inline'/);
     expect(document).not.toContain("'unsafe-eval'");
     expect(document).not.toContain("script-src 'self'");
     expect(document).not.toMatch(/<script>|<style>/);

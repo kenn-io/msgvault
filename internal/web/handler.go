@@ -15,8 +15,11 @@ const (
 	immutableCache    = "public, max-age=31536000, immutable"
 	// img-src allows blob: for FileViewer image previews (object URLs over
 	// verified archive bytes) and data: for sanitized inline images in the
-	// reader's srcdoc frame, which inherits this policy.
-	shellCSP         = "default-src 'self'; img-src 'self' data: blob:; script-src 'self'; style-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'"
+	// reader's srcdoc frame, which inherits this policy. style-src-attr
+	// permits inline style attributes: the reader frame needs them for
+	// allowlist-sanitized author mail styling, and stylesheet elements stay
+	// restricted to 'self' via style-src.
+	shellCSP         = "default-src 'self'; img-src 'self' data: blob:; script-src 'self'; style-src 'self'; style-src-attr 'unsafe-inline'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'"
 	viteManifestPath = ".vite/manifest.json"
 )
 

@@ -91,7 +91,14 @@ export async function buildFrameDocument(options: FrameDocumentOptions): Promise
     `img-src ${imageSources}`,
     "media-src 'none'",
     "font-src data:",
+    // Stylesheet elements stay pinned to the exact same-origin asset; style
+    // attributes are allowed because they only ever carry declarations that
+    // survived the sanitizer's inline-style allowlist (no url()/position/
+    // expression surface). Browsers without -elem/-attr support fall back to
+    // the strict style-src and simply render designed mail colorless.
     `style-src ${escapeAttribute(styleURL)}`,
+    `style-src-elem ${escapeAttribute(styleURL)}`,
+    "style-src-attr 'unsafe-inline'",
     `script-src ${escapeAttribute(bridgeURL)}`,
     "object-src 'none'",
     "frame-src 'none'",

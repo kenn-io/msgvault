@@ -1,5 +1,7 @@
 import DOMPurify from 'dompurify';
 
+import { sanitizeInlineStyle } from './style-allowlist';
+
 export interface ArchivedHTMLSanitizeOptions {
   messageId: number;
   allowRemoteImages?: boolean;
@@ -9,9 +11,9 @@ export interface SanitizedArchivedHTML {
   html: string;
   remoteImages: string[];
   inlineImages: ArchivedInlineImage[];
-  /** True when the sender authored a visual design (backgrounds, explicit
-   * container colors, or multi-column layout tables). Designed mail renders
-   * on its own white canvas; everything else inherits the shell theme. */
+  /** True when the sender authored a visual design (backgrounds or
+   * multi-column layout tables). Designed mail renders on its own white
+   * canvas; everything else inherits the shell theme. */
   designed: boolean;
 }
 
@@ -30,9 +32,37 @@ const EMAIL_TAGS = [
 ];
 
 const EMAIL_ATTRIBUTES = [
-  'abbr', 'align', 'alt', 'border', 'cellpadding', 'cellspacing', 'class', 'colspan',
-  'dir', 'height', 'href', 'id', 'lang', 'rowspan', 'src', 'title', 'valign', 'width'
+  'abbr', 'align', 'alt', 'bgcolor', 'border', 'cellpadding', 'cellspacing', 'class', 'color',
+  'colspan', 'dir', 'height', 'href', 'id', 'lang', 'rowspan', 'src', 'style', 'title',
+  'valign', 'width'
 ];
+
+// Legacy presentational color attributes old marketing mail relies on: bgcolor
+// on table structure, color on font tags. Values must be a hex color or a
+// bare color name — never anything URL- or script-shaped.
+const PRESENTATIONAL_COLOR = /^(?:#[0-9a-f]{3,8}|[a-z]+)$/i;
+const BGCOLOR_ELEMENTS = new Set([
+  'table', 'thead', 'tbody', 'tfoot', 'tr', 'td', 'th', 'col', 'colgroup'
+]);
+
+function keepPresentationalAttributes(element: HTMLElement): void {
+  const style = element.getAttribute('style');
+  if (style !== null) {
+    const kept = sanitizeInlineStyle(style);
+    if (kept === '') element.removeAttribute('style');
+    else element.setAttribute('style', kept);
+  }
+  const bgcolor = element.getAttribute('bgcolor');
+  if (bgcolor !== null && (!BGCOLOR_ELEMENTS.has(element.localName) ||
+      !PRESENTATIONAL_COLOR.test(bgcolor.trim()))) {
+    element.removeAttribute('bgcolor');
+  }
+  const color = element.getAttribute('color');
+  if (color !== null && (element.localName !== 'font' ||
+      !PRESENTATIONAL_COLOR.test(color.trim()))) {
+    element.removeAttribute('color');
+  }
+}
 
 const SAFE_DATA_IMAGE = /^data:image\/(?:gif|jpe?g|png|webp);base64,[a-z0-9+/=\s]+$/i;
 
@@ -41,26 +71,20 @@ export const QUOTE_COLLAPSE_THRESHOLD = 300;
 
 const QUOTE_ROOT_SELECTOR = 'blockquote, div[class*="gmail_quote"]';
 
-// Elements whose explicit text color signals an authored design rather than
-// incidental inline markup (spans, links, font tags in signatures).
-const DESIGN_COLOR_CONTAINERS = new Set([
-  'body', 'table', 'tbody', 'thead', 'tfoot', 'tr', 'td', 'th',
-  'div', 'p', 'center', 'section', 'article', 'main', 'header', 'footer'
-]);
-
 const BACKGROUND_DECLARATION =
   /(?:^|;)\s*background(?:-color|-image)?\s*:\s*(?!(?:transparent|none|inherit|initial|unset)\s*(?:;|$))/i;
-const COLOR_DECLARATION = /(?:^|;)\s*color\s*:/i;
 
 /**
  * Decides whether archived HTML mail carries an authored visual design.
  * Detection runs on the raw message HTML (parsed inertly, before
- * sanitization) because sanitization strips every style carrier — the
- * original markup is the only place backgrounds and colors are visible.
+ * sanitization) so signals the sanitizer drops — style elements,
+ * background-image declarations — still count.
  *
- * Designed mail: any background color/image declaration, an explicit text
- * color on a layout container, or a layout table wider than one column.
- * Plain replies (paragraphs, breaks, quote chains) stay theme-native.
+ * Designed mail: any background color/image declaration or a layout table
+ * wider than one column. Text color alone is deliberately not a signal:
+ * inline colors now survive sanitization, and a colored signature in an
+ * otherwise plain reply must stay theme-native. Plain replies (paragraphs,
+ * breaks, quote chains) stay theme-native.
  */
 export function detectDesignedEmail(input: string): boolean {
   const parsed = new DOMParser().parseFromString(input, 'text/html');
@@ -69,13 +93,7 @@ export function detectDesignedEmail(input: string): boolean {
   }
   for (const element of [parsed.body, ...parsed.body.querySelectorAll<HTMLElement>('*')]) {
     if (element.hasAttribute('bgcolor') || element.hasAttribute('background')) return true;
-    const style = element.getAttribute('style') ?? '';
-    if (style !== '') {
-      if (BACKGROUND_DECLARATION.test(style)) return true;
-      if (DESIGN_COLOR_CONTAINERS.has(element.localName) && COLOR_DECLARATION.test(style)) {
-        return true;
-      }
-    }
+    if (BACKGROUND_DECLARATION.test(element.getAttribute('style') ?? '')) return true;
     if (element.localName === 'tr') {
       let cells = 0;
       for (const child of element.children) {
@@ -167,7 +185,7 @@ export function sanitizeArchivedHTML(
         element.removeAttribute(attribute.name);
       }
     }
-    element.removeAttribute('style');
+    keepPresentationalAttributes(element);
 
     if (element instanceof HTMLAnchorElement) {
       const href = element.getAttribute('href')?.trim() ?? '';
