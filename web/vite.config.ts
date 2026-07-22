@@ -6,6 +6,15 @@ export default defineConfig({
   build: {
     manifest: true
   },
+  preview: {
+    headers: {
+      // Mirrors shellCSP in internal/web/handler.go so Playwright runs
+      // exercise the same policy intersection the daemon enforces on
+      // sandboxed srcdoc mail frames. Keep the two in sync.
+      'Content-Security-Policy':
+        "default-src 'self'; img-src 'self' data: blob: https: http:; script-src 'self'; style-src 'self'; style-src-attr 'unsafe-inline'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'"
+    }
+  },
   resolve: {
     conditions: ['browser']
   },

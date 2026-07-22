@@ -15,11 +15,17 @@ const (
 	immutableCache    = "public, max-age=31536000, immutable"
 	// img-src allows blob: for FileViewer image previews (object URLs over
 	// verified archive bytes) and data: for sanitized inline images in the
-	// reader's srcdoc frame, which inherits this policy. style-src-attr
+	// reader's srcdoc frame, which inherits this policy. https: and http: are
+	// required because sandboxed srcdoc frames enforce the intersection of
+	// this policy and their own meta CSP: the frame whitelists exact remote
+	// image URLs only after per-message user opt-in ("Load images"), and this
+	// policy must permit those schemes for that gate to be effective. The
+	// shell itself never renders unsanitized markup, so the scheme-wide
+	// allowance does not expand what archived content can load. style-src-attr
 	// permits inline style attributes: the reader frame needs them for
 	// allowlist-sanitized author mail styling, and stylesheet elements stay
 	// restricted to 'self' via style-src.
-	shellCSP         = "default-src 'self'; img-src 'self' data: blob:; script-src 'self'; style-src 'self'; style-src-attr 'unsafe-inline'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'"
+	shellCSP         = "default-src 'self'; img-src 'self' data: blob: https: http:; script-src 'self'; style-src 'self'; style-src-attr 'unsafe-inline'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'"
 	viteManifestPath = ".vite/manifest.json"
 )
 

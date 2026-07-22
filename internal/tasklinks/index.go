@@ -15,6 +15,9 @@ import (
 
 const (
 	DefaultStaleAfter = 15 * time.Minute
+	// DefaultFreshFor bounds how long a completed scan may keep serving
+	// lookups before callers should rebuild the reverse index.
+	DefaultFreshFor   = 5 * time.Minute
 	HardMaxTasks      = 5000
 	MaxCacheFileBytes = 8 << 20
 	indexFormatV1     = 1
@@ -323,6 +326,23 @@ func (i *Index) markLastGood(state IndexState, reason string) IndexStatus {
 		i.data.FormatVersion = indexFormatV1
 	}
 	return i.data.Status
+}
+
+// Fresh reports whether the cached index can serve lookups for expected
+// without a rebuild: the cache identity and remote revision must match the
+// last scan, the last scan must have completed (ready or partial), and it
+// must be newer than freshFor.
+func (i *Index) Fresh(expected CacheIdentity, remoteRevision string, freshFor time.Duration) bool {
+	if i.data.Identity != expected || i.data.Status.RemoteRevision != remoteRevision {
+		return false
+	}
+	if i.data.Status.State != StateReady && i.data.Status.State != StatePartial {
+		return false
+	}
+	if i.data.Status.LastScan.IsZero() {
+		return false
+	}
+	return i.now().Sub(i.data.Status.LastScan) <= freshFor
 }
 
 func (i *Index) Lookup(expected CacheIdentity, identity MessageIdentity, authenticated bool) LookupResult {

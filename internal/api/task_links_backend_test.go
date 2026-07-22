@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -41,6 +43,111 @@ func readyTaskBackendServer(t *testing.T, tasks []taskclient.Task) *httptest.Ser
 			http.NotFound(w, r)
 		}
 	}))
+}
+
+type countingTaskServer struct {
+	server    *httptest.Server
+	listCalls atomic.Int64
+	mu        sync.Mutex
+	revision  string
+}
+
+func (s *countingTaskServer) setRevision(revision string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.revision = revision
+}
+
+func (s *countingTaskServer) projectRevision() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.revision
+}
+
+func newCountingTaskServer(t *testing.T, tasks []taskclient.Task) *countingTaskServer {
+	t.Helper()
+	s := &countingTaskServer{revision: "project-r1"}
+	s.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/v1/capabilities":
+			assert.NoError(t, json.NewEncoder(w).Encode(taskclient.Capabilities{
+				ProtocolVersion: taskclient.ProtocolVersion, RevisionReads: true, ConditionalMutation: true,
+				ConflictResponses: true, IdempotentCreation: true, ProjectOperations: true, MetadataOperations: true,
+			}))
+		case "/api/v1/projects/project":
+			assert.NoError(t, json.NewEncoder(w).Encode(taskclient.Project{ID: "project-id", Name: "project", Revision: s.projectRevision()}))
+		case "/api/v1/projects/project/tasks":
+			s.listCalls.Add(1)
+			assert.NoError(t, json.NewEncoder(w).Encode(taskclient.TaskList{Tasks: tasks}))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(s.server.Close)
+	return s
+}
+
+func TestTaskLinkBackendReusesFreshReverseIndex(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	identity := tasklinks.MessageIdentity{ArchiveUID: "archive-a", ArchiveRevision: "1", MessageID: 42,
+		SourceType: "gmail", SourceIdentifier: "archive@example.com", SourceMessageID: "source-42"}
+	linked := taskclient.Task{ID: "task-1", Project: "project", Title: "Linked title", Revision: "r1",
+		Metadata: tasklinks.MetadataWithLink(nil, tasklinks.NewMailLink(identity, time.Now()))}
+	server := newCountingTaskServer(t, []taskclient.Task{linked})
+	now := time.Date(2026, 7, 22, 10, 0, 0, 0, time.UTC)
+	index := tasklinks.NewIndexWithOptions(filepath.Join(t.TempDir(), "cache", "tasks.json"),
+		tasklinks.IndexOptions{Now: func() time.Time { return now }})
+	backend := &taskLinkBackend{config: config.TaskIntegrationConfig{Enabled: true, Endpoint: server.server.URL,
+		APIKey: "test-key", DefaultProject: "project"}, index: index}
+
+	first := backend.Lookup(context.Background(), identity)
+	requirements.Len(first.Tasks, 1)
+	assertions.EqualValues(1, server.listCalls.Load(), "first lookup scans the remote tasks")
+
+	second := backend.Lookup(context.Background(), identity)
+	requirements.Len(second.Tasks, 1)
+	assertions.EqualValues(1, server.listCalls.Load(), "fresh index serves the second lookup without a remote scan")
+	assertions.Equal(tasklinks.StateReady, second.State)
+
+	server.setRevision("project-r2")
+	third := backend.Lookup(context.Background(), identity)
+	requirements.Len(third.Tasks, 1)
+	assertions.EqualValues(2, server.listCalls.Load(), "remote project revision change forces a rebuild")
+
+	now = now.Add(tasklinks.DefaultFreshFor + time.Second)
+	fourth := backend.Lookup(context.Background(), identity)
+	requirements.Len(fourth.Tasks, 1)
+	assertions.EqualValues(3, server.listCalls.Load(), "expired freshness window forces a rebuild")
+}
+
+func TestTaskLinkBackendConcurrentLookupsShareOneRebuild(t *testing.T) {
+	assertions := assert.New(t)
+	identity := tasklinks.MessageIdentity{ArchiveUID: "archive-a", ArchiveRevision: "1", MessageID: 42,
+		SourceType: "gmail", SourceIdentifier: "archive@example.com", SourceMessageID: "source-42"}
+	linked := taskclient.Task{ID: "task-1", Project: "project", Title: "Linked title", Revision: "r1",
+		Metadata: tasklinks.MetadataWithLink(nil, tasklinks.NewMailLink(identity, time.Now()))}
+	server := newCountingTaskServer(t, []taskclient.Task{linked})
+	index := tasklinks.NewIndex(filepath.Join(t.TempDir(), "cache", "tasks.json"), nil)
+	backend := &taskLinkBackend{config: config.TaskIntegrationConfig{Enabled: true, Endpoint: server.server.URL,
+		APIKey: "test-key", DefaultProject: "project"}, index: index}
+
+	const lookups = 8
+	results := make([]tasklinks.LookupResult, lookups)
+	var wg sync.WaitGroup
+	for i := range lookups {
+		wg.Go(func() {
+			results[i] = backend.Lookup(context.Background(), identity)
+		})
+	}
+	wg.Wait()
+
+	assertions.EqualValues(1, server.listCalls.Load(), "concurrent lookups share a single rebuild")
+	for i, result := range results {
+		assertions.Lenf(result.Tasks, 1, "lookup %d sees the rebuilt index", i)
+		assertions.Equal(tasklinks.StateReady, result.State)
+	}
 }
 
 func TestTaskLinkBackendSurfacesCachePersistenceFailuresWithoutIdentityRelabeling(t *testing.T) {

@@ -258,6 +258,38 @@ daemon_auto_restart = "sometimes"
 	assert.Contains(t, err.Error(), "invalid [server] daemon_auto_restart")
 }
 
+func TestLoadValidatesServerAPIPortBounds(t *testing.T) {
+	tests := []struct {
+		name    string
+		port    string
+		wantErr bool
+	}{
+		{name: "negative", port: "-1", wantErr: true},
+		{name: "above range", port: "65536", wantErr: true},
+		{name: "auto-select zero", port: "0", wantErr: false},
+		{name: "minimum real port", port: "1", wantErr: false},
+		{name: "maximum port", port: "65535", wantErr: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require := require.New(t)
+			tmpDir := t.TempDir()
+			configPath := filepath.Join(tmpDir, "config.toml")
+			content := "[server]\napi_port = " + tt.port + "\n"
+			require.NoError(os.WriteFile(configPath, []byte(content), 0o644))
+
+			_, err := Load(configPath, "")
+			if tt.wantErr {
+				require.Error(err)
+				assert.Contains(t, err.Error(), "invalid [server] api_port")
+			} else {
+				require.NoError(err)
+			}
+		})
+	}
+}
+
 func TestLoadWithServerTrustedProxies(t *testing.T) {
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "config.toml")

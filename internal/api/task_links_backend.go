@@ -116,13 +116,18 @@ func (b *taskLinkBackend) Lookup(ctx context.Context, identity tasklinks.Message
 		defer b.mu.Unlock()
 		return b.degradedLookup(expected, identity, err)
 	}
+	// Holding the mutex across the freshness check and the rebuild gives
+	// single-flight semantics: concurrent lookups queue behind one rebuild
+	// and then re-check freshness, so at most one remote scan runs per
+	// staleness window.
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	status, rebuildErr := b.index.Rebuild(ctx, client, expected, project.Revision, taskReverseIndexLimit)
-	b.lastIndexStatus, b.lastIndexErr = status, rebuildErr
+	if !b.index.Fresh(expected, project.Revision, tasklinks.DefaultFreshFor) {
+		b.lastIndexStatus, b.lastIndexErr = b.index.Rebuild(ctx, client, expected, project.Revision, taskReverseIndexLimit)
+	}
 	result := b.index.Lookup(expected, identity, true)
-	if rebuildErr != nil {
-		result.IndexStatus = indexFailureStatus(status, rebuildErr)
+	if b.lastIndexErr != nil {
+		result.IndexStatus = indexFailureStatus(b.lastIndexStatus, b.lastIndexErr)
 	}
 	return result
 }

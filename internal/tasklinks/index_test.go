@@ -240,6 +240,37 @@ func TestReverseIndexCacheFileSecurityAndSizeBounds(t *testing.T) {
 	require.Error(idx.Load(), "cache reads must be bounded")
 }
 
+func TestReverseIndexFreshness(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	now := time.Date(2026, 7, 19, 1, 0, 0, 0, time.UTC)
+	idx := NewIndex(filepath.Join(t.TempDir(), "index.json"), func() time.Time { return now })
+	cacheIdentity := testCacheIdentity()
+	assert.False(idx.Fresh(cacheIdentity, "remote-1", DefaultFreshFor), "empty index is never fresh")
+
+	client := &listClient{pages: []taskclient.TaskList{{Tasks: []taskclient.Task{indexedTask("one", "First", testIdentity())}}}}
+	_, err := idx.Rebuild(context.Background(), client, cacheIdentity, "remote-1", 100)
+	require.NoError(err)
+	assert.True(idx.Fresh(cacheIdentity, "remote-1", DefaultFreshFor))
+	assert.False(idx.Fresh(cacheIdentity, "remote-2", DefaultFreshFor), "remote revision change invalidates")
+	changedArchive := cacheIdentity
+	changedArchive.ArchiveRevision = "archive-rev-2"
+	assert.False(idx.Fresh(changedArchive, "remote-1", DefaultFreshFor), "archive revision change invalidates")
+
+	now = now.Add(DefaultFreshFor + time.Second)
+	assert.False(idx.Fresh(cacheIdentity, "remote-1", DefaultFreshFor), "freshness window expires")
+
+	partial := &listClient{pages: []taskclient.TaskList{{Tasks: []taskclient.Task{indexedTask("one", "First", testIdentity())}, NextCursor: "more"}}}
+	_, err = idx.Rebuild(context.Background(), partial, cacheIdentity, "remote-1", 1)
+	require.NoError(err)
+	assert.True(idx.Fresh(cacheIdentity, "remote-1", DefaultFreshFor), "partial scans stay fresh within the window")
+
+	unavailable := &listClient{errAt: 1}
+	_, err = idx.Rebuild(context.Background(), unavailable, cacheIdentity, "remote-2", 100)
+	require.Error(err)
+	assert.False(idx.Fresh(cacheIdentity, "remote-1", DefaultFreshFor), "failed rebuild leaves the index stale")
+}
+
 func TestReverseIndexSaveRepairsDirectoryAndUsesPrivateFileMode(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)

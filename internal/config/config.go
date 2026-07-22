@@ -181,6 +181,9 @@ func (s *ServerConfig) ApplyDefaults() {
 }
 
 func (s *ServerConfig) Validate() error {
+	if s.APIPort < 0 || s.APIPort > 65535 {
+		return fmt.Errorf("invalid [server] api_port %d: must be between 0 and 65535 (0 auto-selects an open port)", s.APIPort)
+	}
 	switch s.DaemonAutoRestart {
 	case DaemonAutoRestartNewer, DaemonAutoRestartNever, DaemonAutoRestartAlways:
 	default:
