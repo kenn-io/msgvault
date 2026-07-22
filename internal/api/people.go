@@ -397,7 +397,17 @@ func (s *Server) handlePersonTimeline(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	s.forwardIdentityTimeline(w, r, ExploreFilter{Dimension: "participant", Values: []string{strconv.FormatInt(id, 10)}})
+	// Scope the timeline to the whole identity cluster so alias-owned
+	// activity appears, matching the person summary and files search.
+	members := s.clusterMemberIDs(id)
+	if len(members) == 0 {
+		members = []int64{id}
+	}
+	values := make([]string, len(members))
+	for i, member := range members {
+		values[i] = strconv.FormatInt(member, 10)
+	}
+	s.forwardIdentityTimeline(w, r, ExploreFilter{Dimension: "participant", Values: values})
 }
 
 func (s *Server) handleDomainTimeline(w http.ResponseWriter, r *http.Request) {

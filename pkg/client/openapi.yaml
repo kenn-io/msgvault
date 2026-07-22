@@ -1654,6 +1654,8 @@ components:
           items:
             $ref: "#/components/schemas/ExploreGroupRow"
           type: array
+        search_deletion_scope:
+          type: string
         search_provenance:
           $ref: "#/components/schemas/SearchProvenance"
         total_count:
@@ -1729,6 +1731,8 @@ components:
           items:
             $ref: "#/components/schemas/EntryRow"
           type: array
+        search_deletion_scope:
+          type: string
         search_provenance:
           $ref: "#/components/schemas/SearchProvenance"
         total_count:
@@ -1798,6 +1802,8 @@ components:
           format: date-time
           type: string
         operation_token:
+          type: string
+        search_deletion_scope:
           type: string
         search_provenance:
           $ref: "#/components/schemas/SearchProvenance"
@@ -4251,7 +4257,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 1.25.0
+  version: 1.26.0
 openapi: 3.0.3
 paths:
   /api/ping:

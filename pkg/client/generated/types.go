@@ -1497,6 +1497,7 @@ type ExploreGroupsHTTPResponse struct {
 	CandidateSnapshotID *string           `json:"candidate_snapshot_id,omitempty"`
 	NextCursor          *string           `json:"next_cursor,omitempty"`
 	Rows                []ExploreGroupRow `json:"rows" validate:"required"`
+	SearchDeletionScope *string           `json:"search_deletion_scope,omitempty"`
 	SearchProvenance    SearchProvenance  `json:"search_provenance"`
 	TotalCount          int64             `json:"total_count"`
 }
@@ -1590,6 +1591,7 @@ type ExploreHTTPResponse struct {
 	CandidateSnapshotID    *string          `json:"candidate_snapshot_id,omitempty"`
 	NextCursor             *string          `json:"next_cursor,omitempty"`
 	Rows                   []EntryRow       `json:"rows" validate:"required"`
+	SearchDeletionScope    *string          `json:"search_deletion_scope,omitempty"`
 	SearchProvenance       SearchProvenance `json:"search_provenance"`
 	TotalCount             *int64           `json:"total_count,omitempty"`
 }
@@ -1687,14 +1689,15 @@ func (e ExplorePreflightRequest) Validate() error {
 }
 
 type ExplorePreflightResponse struct {
-	ActionTargets      []ExploreActionTarget      `json:"action_targets" validate:"required"`
-	CacheRevision      string                     `json:"cache_revision" validate:"required"`
-	Count              int64                      `json:"count"`
-	EstimatedBytes     int64                      `json:"estimated_bytes"`
-	ExpiresAt          time.Time                  `json:"expires_at" validate:"required"`
-	OperationToken     string                     `json:"operation_token" validate:"required"`
-	SearchProvenance   SearchProvenance           `json:"search_provenance"`
-	UnavailableActions []ExploreUnavailableAction `json:"unavailable_actions" validate:"required"`
+	ActionTargets       []ExploreActionTarget      `json:"action_targets" validate:"required"`
+	CacheRevision       string                     `json:"cache_revision" validate:"required"`
+	Count               int64                      `json:"count"`
+	EstimatedBytes      int64                      `json:"estimated_bytes"`
+	ExpiresAt           time.Time                  `json:"expires_at" validate:"required"`
+	OperationToken      string                     `json:"operation_token" validate:"required"`
+	SearchDeletionScope *string                    `json:"search_deletion_scope,omitempty"`
+	SearchProvenance    SearchProvenance           `json:"search_provenance"`
+	UnavailableActions  []ExploreUnavailableAction `json:"unavailable_actions" validate:"required"`
 }
 
 func (e ExplorePreflightResponse) Validate() error {

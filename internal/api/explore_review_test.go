@@ -186,10 +186,12 @@ func TestExploreHybridLexicalBranchResolvesWithFilters(t *testing.T) {
 type fakeFusingBackend struct {
 	*fakeVectorBackend
 
-	fusedHits []vector.FusedHit
+	fusedHits  []vector.FusedHit
+	fusedCalls int
 }
 
 func (f *fakeFusingBackend) FusedSearch(_ context.Context, _ vector.FusedRequest) ([]vector.FusedHit, bool, error) {
+	f.fusedCalls++
 	return f.fusedHits, false, nil
 }
 
@@ -332,6 +334,220 @@ func TestApplyLexicalFilterPushdown(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestExploreSemanticVectorFilterMergeMirrorsLexicalPushdown proves the
+// vector backend filter obeys the lexical pushdown semantics: request
+// filters intersect with equivalent query operators and date bounds only
+// tighten, so a filter can never broaden the candidate predicate beyond
+// what the query text alone would match.
+func TestExploreSemanticVectorFilterMergeMirrorsLexicalPushdown(t *testing.T) {
+	utcDate := func(month, day int) *time.Time {
+		bound := time.Date(2026, time.Month(month), day, 0, 0, 0, 0, time.UTC)
+		return &bound
+	}
+	tests := []struct {
+		name             string
+		body             string
+		wantSourceIDs    []int64
+		wantMessageTypes []string
+		wantAfter        *time.Time
+		wantBefore       *time.Time
+	}{
+		{
+			name: "filters fill open query dimensions",
+			body: `{"query":"alpha","search_mode":"semantic","filters":[
+				{"dimension":"source","values":["2"]},
+				{"dimension":"message_type","values":["email"]}]}`,
+			wantSourceIDs:    []int64{2},
+			wantMessageTypes: []string{"email"},
+		},
+		{
+			name: "message type filter intersects query operator instead of appending",
+			body: `{"query":"alpha message_type:sms","search_mode":"semantic","filters":[
+				{"dimension":"message_type","values":["SMS","email"]}]}`,
+			wantMessageTypes: []string{"sms"},
+		},
+		{
+			name: "tighter query date bounds survive looser filter bounds",
+			body: `{"query":"alpha after:2026-03-01 before:2026-05-01","search_mode":"semantic","filters":[
+				{"dimension":"after","values":["2026-01-01T00:00:00Z"]},
+				{"dimension":"before","values":["2026-07-01T00:00:00Z"]}]}`,
+			wantAfter:  utcDate(3, 1),
+			wantBefore: utcDate(5, 1),
+		},
+		{
+			name: "filter dates tighten open query bounds",
+			body: `{"query":"alpha","search_mode":"semantic","filters":[
+				{"dimension":"after","values":["2026-01-01T00:00:00Z"]}]}`,
+			wantAfter: utcDate(1, 1),
+		},
+	}
+	assertBound := func(t *testing.T, want, got *time.Time, bound string) {
+		t.Helper()
+		if want == nil {
+			assert.Nil(t, got, bound)
+			return
+		}
+		require.NotNil(t, got, bound)
+		assert.True(t, want.Equal(*got), "%s: want %s, got %s", bound, want, got)
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			requirements := require.New(t)
+			assertions := assert.New(t)
+			backend := &fakeVectorBackend{
+				active:     &vector.Generation{ID: 7, Model: "test", Dimension: 2, Fingerprint: "test:2", State: vector.GenerationActive},
+				searchHits: []vector.Hit{{MessageID: 1, Score: .9, Rank: 1}},
+			}
+			hybridEngine := hybrid.NewEngine(backend, nil, realEmbedder{dim: 2}, hybrid.Config{ExpectedFingerprint: "test:2"})
+			store := &mockStore{messages: []APIMessage{{ID: 1}}, total: 1, stats: &StoreStats{}}
+			srv := NewServerWithOptions(ServerOptions{
+				Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}}, Store: store,
+				Engine: newExploreDuckDBFixture(t), HybridEngine: hybridEngine, Backend: backend, Logger: testLogger(),
+			})
+
+			response := postExploreJSON(t, srv, "/api/v1/explore", tt.body)
+			requirements.Equal(http.StatusOK, response.Code, response.Body.String())
+			assertions.Equal(tt.wantSourceIDs, backend.searchFilter.SourceIDs, "SourceIDs")
+			assertions.Equal(tt.wantMessageTypes, backend.searchFilter.MessageTypes, "MessageTypes")
+			assertBound(t, tt.wantAfter, backend.searchFilter.After, "After")
+			assertBound(t, tt.wantBefore, backend.searchFilter.Before, "Before")
+		})
+	}
+}
+
+func TestExploreSemanticDisjointFilterShortCircuitsToEmptyCandidates(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	backend := &fakeVectorBackend{
+		active:     &vector.Generation{ID: 7, Model: "test", Dimension: 2, Fingerprint: "test:2", State: vector.GenerationActive},
+		searchHits: []vector.Hit{{MessageID: 3, Score: .9, Rank: 1}},
+	}
+	hybridEngine := hybrid.NewEngine(backend, nil, realEmbedder{dim: 2}, hybrid.Config{ExpectedFingerprint: "test:2"})
+	store := &mockStore{messages: []APIMessage{{ID: 3}}, total: 1, stats: &StoreStats{}}
+	srv := NewServerWithOptions(ServerOptions{
+		Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}}, Store: store,
+		Engine: newExploreDuckDBFixture(t), HybridEngine: hybridEngine, Backend: backend, Logger: testLogger(),
+	})
+
+	response := postExploreJSON(t, srv, "/api/v1/explore", `{
+		"query":"alpha message_type:email","search_mode":"semantic",
+		"filters":[{"dimension":"message_type","values":["sms"]}]
+	}`)
+	requirements.Equal(http.StatusOK, response.Code, response.Body.String())
+	var body ExploreHTTPResponse
+	requirements.NoError(json.Unmarshal(response.Body.Bytes(), &body))
+	assertions.Empty(body.Rows, "a disjoint operator/filter intersection matches nothing")
+	assertions.False(body.CandidatePoolSaturated)
+	assertions.Empty(body.NextCursor)
+	requirements.NotNil(body.SearchProvenance.VectorGeneration)
+	assertions.Equal(int64(7), *body.SearchProvenance.VectorGeneration)
+	assertions.NotEmpty(body.CandidateSnapshotID, "empty candidate sets still issue a snapshot for follow-up calls")
+	assertions.Zero(backend.searchLimit, "the vector index must not run a broadened query")
+}
+
+func TestExploreHybridDisjointFilterShortCircuitsToEmptyCandidates(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	backend := &fakeFusingBackend{
+		fakeVectorBackend: &fakeVectorBackend{
+			active: &vector.Generation{ID: 7, Model: "test", Dimension: 2, Fingerprint: "test:2", State: vector.GenerationActive},
+		},
+		fusedHits: []vector.FusedHit{{MessageID: 3, RRFScore: .9, VectorScore: .9}},
+	}
+	hybridEngine := hybrid.NewEngine(backend, nil, realEmbedder{dim: 2}, hybrid.Config{ExpectedFingerprint: "test:2"})
+	store := &mockStore{messages: []APIMessage{{ID: 3}}, total: 1, stats: &StoreStats{}}
+	srv := NewServerWithOptions(ServerOptions{
+		Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}}, Store: store,
+		Engine: newExploreDuckDBFixture(t), HybridEngine: hybridEngine, Backend: backend, Logger: testLogger(),
+	})
+
+	response := postExploreJSON(t, srv, "/api/v1/explore", `{
+		"query":"alpha message_type:email","search_mode":"hybrid",
+		"filters":[{"dimension":"message_type","values":["sms"]}]
+	}`)
+	requirements.Equal(http.StatusOK, response.Code, response.Body.String())
+	var body ExploreHTTPResponse
+	requirements.NoError(json.Unmarshal(response.Body.Bytes(), &body))
+	assertions.Empty(body.Rows)
+	requirements.NotNil(body.SearchProvenance.VectorGeneration)
+	assertions.Equal(int64(7), *body.SearchProvenance.VectorGeneration)
+	assertions.NotEmpty(body.SearchProvenance.LexicalIndexRevision, "hybrid provenance keeps the lexical revision")
+	assertions.Zero(backend.fusedCalls, "the fused query must not run for an unsatisfiable predicate")
+}
+
+func TestApplySemanticDeletionScope(t *testing.T) {
+	tests := []struct {
+		name         string
+		searchMode   string
+		deletion     query.DeletionFilter
+		wantScope    string
+		wantDeletion query.DeletionFilter
+	}{
+		{name: "full text leaves the context unrestricted", searchMode: exploreSearchModeFullText, deletion: query.DeletionAny, wantScope: "", wantDeletion: query.DeletionAny},
+		{name: "no search leaves the context unrestricted", searchMode: "", deletion: query.DeletionAny, wantScope: "", wantDeletion: query.DeletionAny},
+		{name: "semantic narrows unrestricted to active", searchMode: exploreSearchModeSemantic, deletion: query.DeletionAny, wantScope: "active", wantDeletion: query.DeletionActive},
+		{name: "hybrid narrows unrestricted to active", searchMode: exploreSearchModeHybrid, deletion: query.DeletionAny, wantScope: "active", wantDeletion: query.DeletionActive},
+		{name: "semantic keeps explicit active", searchMode: exploreSearchModeSemantic, deletion: query.DeletionActive, wantScope: "active", wantDeletion: query.DeletionActive},
+		{name: "semantic leaves deleted for the resolver to reject", searchMode: exploreSearchModeSemantic, deletion: query.DeletionDeleted, wantScope: "", wantDeletion: query.DeletionDeleted},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			context := query.Context{Deletion: tt.deletion}
+			scope := applySemanticDeletionScope(tt.searchMode, &context)
+			assert.Equal(t, tt.wantScope, scope)
+			assert.Equal(t, tt.wantDeletion, context.Deletion)
+		})
+	}
+}
+
+func TestExploreSemanticRejectsDeletedOnlyFilter(t *testing.T) {
+	srv := newReviewSemanticServer(t)
+	response := postExploreJSON(t, srv, "/api/v1/explore", `{
+		"query":"alpha","search_mode":"semantic",
+		"filters":[{"dimension":"deletion","values":["deleted"]}]
+	}`)
+	assert.Equal(t, http.StatusBadRequest, response.Code, response.Body.String())
+	assert.Contains(t, response.Body.String(), "semantic_deletion_unsupported")
+	assert.Contains(t, response.Body.String(), "active messages only")
+}
+
+func TestExploreSemanticNarrowsUnrestrictedDeletionToActive(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	base := newExploreDuckDBFixture(t)
+	engine := &recordingExploreEngine{Engine: base, Explorer: base}
+	backend := &fakeVectorBackend{
+		active:     &vector.Generation{ID: 7, Model: "test", Dimension: 2, Fingerprint: "test:2", State: vector.GenerationActive},
+		searchHits: []vector.Hit{{MessageID: 1, Score: .9, Rank: 1}},
+	}
+	hybridEngine := hybrid.NewEngine(backend, nil, realEmbedder{dim: 2}, hybrid.Config{ExpectedFingerprint: "test:2"})
+	store := &mockStore{messages: []APIMessage{{ID: 1}}, total: 1, stats: &StoreStats{}}
+	srv := NewServerWithOptions(ServerOptions{
+		Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}}, Store: store,
+		Engine: engine, HybridEngine: hybridEngine, Backend: backend, Logger: testLogger(),
+	})
+
+	semantic := postExploreJSON(t, srv, "/api/v1/explore", `{"query":"alpha","search_mode":"semantic"}`)
+	requirements.Equal(http.StatusOK, semantic.Code, semantic.Body.String())
+	var semanticBody ExploreHTTPResponse
+	requirements.NoError(json.Unmarshal(semantic.Body.Bytes(), &semanticBody))
+	assertions.Equal("active", semanticBody.SearchDeletionScope, "the narrowing must be declared, not silent")
+	assertions.Equal(query.DeletionActive, engine.request.Context.Deletion, "the analytical context must match the declared scope")
+
+	fullText := postExploreJSON(t, srv, "/api/v1/explore", `{"query":"alpha","search_mode":"full_text"}`)
+	requirements.Equal(http.StatusOK, fullText.Code, fullText.Body.String())
+	var raw map[string]json.RawMessage
+	requirements.NoError(json.Unmarshal(fullText.Body.Bytes(), &raw))
+	assertions.NotContains(raw, "search_deletion_scope", "full text keeps the unrestricted deletion context")
+	assertions.Equal(query.DeletionAny, engine.request.Context.Deletion)
+
+	groups := postExploreJSON(t, srv, "/api/v1/explore/groups", `{"grouping":["source"],"query":"alpha","search_mode":"semantic"}`)
+	requirements.Equal(http.StatusOK, groups.Code, groups.Body.String())
+	var groupsBody ExploreGroupsHTTPResponse
+	requirements.NoError(json.Unmarshal(groups.Body.Bytes(), &groupsBody))
+	assertions.Equal("active", groupsBody.SearchDeletionScope)
 }
 
 type recordingExploreEngine struct {

@@ -349,6 +349,52 @@ func TestGetPersonOmitsClusterBlockForUnlinkedParticipant(t *testing.T) {
 	assertions.Nil(body.Cluster)
 }
 
+// TestPersonTimelineWidensScopeToIdentityCluster covers identity consistency
+// between the person timeline and the rest of the person surface: the
+// timeline must scope to the same cluster the person summary and files
+// search resolve, so activity owned only by a linked alias is forwarded to
+// the engine as in-scope. An unlinked participant stays scoped to its own ID.
+func TestPersonTimelineWidensScopeToIdentityCluster(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	st := testutil.NewTestStore(t)
+	primary, err := st.EnsureParticipant("primary@example.com", "Primary", "example.com")
+	requirements.NoError(err)
+	secondary, err := st.EnsureParticipant("secondary@example.com", "Secondary", "example.com")
+	requirements.NoError(err)
+	solo, err := st.EnsureParticipant("solo@example.com", "Solo", "example.com")
+	requirements.NoError(err)
+	_, err = st.LinkParticipants(primary, secondary)
+	requirements.NoError(err)
+
+	engine := &peopleAPIEngine{MockEngine: &querytest.MockEngine{},
+		timelineResult: &query.ExploreResponse{Rows: []query.EntryRow{}, CacheRevision: "cache-timeline"}}
+	srv := NewServerWithOptions(ServerOptions{
+		Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}},
+		Store:  st, Engine: engine, Logger: testLogger(),
+	})
+	timeline := func(participantID int64) {
+		request := httptest.NewRequest(http.MethodPost,
+			fmt.Sprintf("/api/v1/people/%d/timeline", participantID), bytes.NewBufferString(`{}`))
+		request.Header.Set("Content-Type", "application/json")
+		response := httptest.NewRecorder()
+		srv.Router().ServeHTTP(response, request)
+		requirements.Equal(http.StatusOK, response.Code, response.Body.String())
+	}
+
+	timeline(primary)
+	assertions.ElementsMatch([]int64{primary, secondary}, engine.timeline.Context.ParticipantIDs,
+		"a linked participant's timeline must scope to every cluster member so alias-owned activity is included")
+
+	timeline(secondary)
+	assertions.ElementsMatch([]int64{primary, secondary}, engine.timeline.Context.ParticipantIDs,
+		"any cluster member resolves the same scope")
+
+	timeline(solo)
+	assertions.Equal([]int64{solo}, engine.timeline.Context.ParticipantIDs,
+		"an unlinked participant stays scoped to its own ID")
+}
+
 func TestPeopleEndpointsNameUnavailableCacheInsteadOfReturningEmpty(t *testing.T) {
 	assertions := assert.New(t)
 	engine := &peopleAPIEngine{MockEngine: &querytest.MockEngine{}, peopleErr: &query.CacheUnavailableError{Readiness: query.CacheStaleSchema}}

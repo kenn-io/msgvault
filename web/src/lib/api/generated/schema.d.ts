@@ -2444,6 +2444,7 @@ export interface components {
             candidate_snapshot_id?: string;
             next_cursor?: string;
             rows: components["schemas"]["ExploreGroupRow"][];
+            search_deletion_scope?: string;
             search_provenance: components["schemas"]["SearchProvenance"];
             /** Format: int64 */
             total_count: number;
@@ -2470,6 +2471,7 @@ export interface components {
             candidate_snapshot_id?: string;
             next_cursor?: string;
             rows: components["schemas"]["EntryRow"][];
+            search_deletion_scope?: string;
             search_provenance: components["schemas"]["SearchProvenance"];
             /** Format: int64 */
             total_count?: number;
@@ -2501,6 +2503,7 @@ export interface components {
             /** Format: date-time */
             expires_at: string;
             operation_token: string;
+            search_deletion_scope?: string;
             search_provenance: components["schemas"]["SearchProvenance"];
             unavailable_actions: components["schemas"]["ExploreUnavailableAction"][];
         } & {

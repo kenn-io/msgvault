@@ -106,7 +106,12 @@ import (
 // chat/message classification the explore listings render, so file deep
 // links can select a listed entry exactly. Additive (minor bump): existing
 // callers that ignore the field see no behavior change.
-const APISchemaVersion = "1.25.0"
+// 1.26.0 adds the search_deletion_scope field to explore, groups, and
+// preflight responses: semantic and hybrid searches declare that an
+// unrestricted deletion context was narrowed to active messages (vector
+// indexes cover only live rows). Additive (minor bump): existing callers
+// that ignore the field see no behavior change.
+const APISchemaVersion = "1.26.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.

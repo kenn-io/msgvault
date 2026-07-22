@@ -86,6 +86,11 @@ type ExploreHTTPResponse struct {
 	CandidateSnapshotID    string                 `json:"candidate_snapshot_id,omitempty"`
 	NextCursor             string                 `json:"next_cursor,omitempty"`
 	CandidatePoolSaturated bool                   `json:"candidate_pool_saturated,omitempty"`
+	// SearchDeletionScope is "active" when a semantic or hybrid search
+	// narrowed an unrestricted deletion context to active messages only —
+	// vector candidates never include source-deleted messages, and the
+	// narrowing is declared instead of silent.
+	SearchDeletionScope string `json:"search_deletion_scope,omitempty"`
 }
 
 type ExploreGroupSort struct {
@@ -111,6 +116,7 @@ type ExploreGroupsHTTPResponse struct {
 	SearchProvenance    query.SearchProvenance  `json:"search_provenance"`
 	NextCursor          string                  `json:"next_cursor,omitempty"`
 	CandidateSnapshotID string                  `json:"candidate_snapshot_id,omitempty"`
+	SearchDeletionScope string                  `json:"search_deletion_scope,omitempty"`
 }
 
 type ExploreSelection struct {
@@ -139,14 +145,15 @@ type ExploreActionTarget struct {
 }
 
 type ExplorePreflightResponse struct {
-	Count              int64                      `json:"count"`
-	EstimatedBytes     int64                      `json:"estimated_bytes"`
-	CacheRevision      string                     `json:"cache_revision"`
-	SearchProvenance   query.SearchProvenance     `json:"search_provenance"`
-	UnavailableActions []ExploreUnavailableAction `json:"unavailable_actions"`
-	ActionTargets      []ExploreActionTarget      `json:"action_targets"`
-	OperationToken     string                     `json:"operation_token"`
-	ExpiresAt          time.Time                  `json:"expires_at"`
+	Count               int64                      `json:"count"`
+	EstimatedBytes      int64                      `json:"estimated_bytes"`
+	CacheRevision       string                     `json:"cache_revision"`
+	SearchProvenance    query.SearchProvenance     `json:"search_provenance"`
+	UnavailableActions  []ExploreUnavailableAction `json:"unavailable_actions"`
+	ActionTargets       []ExploreActionTarget      `json:"action_targets"`
+	OperationToken      string                     `json:"operation_token"`
+	ExpiresAt           time.Time                  `json:"expires_at"`
+	SearchDeletionScope string                     `json:"search_deletion_scope,omitempty"`
 }
 
 type ExploreMatchCountsRequest struct {
@@ -184,10 +191,11 @@ type exploreCursor struct {
 }
 
 type explorePrepared struct {
-	request     ExploreHTTPRequest
-	query       query.ExploreRequest
-	requestHash string
-	offset      int
+	request             ExploreHTTPRequest
+	query               query.ExploreRequest
+	requestHash         string
+	offset              int
+	searchDeletionScope string
 }
 
 func (s *Server) registerExploreRoutes(api huma.API) {
@@ -284,6 +292,7 @@ func (s *Server) handleExploreWithScope(w http.ResponseWriter, r *http.Request, 
 	response := ExploreHTTPResponse{
 		Rows: result.Rows, CacheRevision: result.CacheRevision,
 		SearchProvenance: result.SearchProvenance, CandidateSnapshotID: snapshotID,
+		SearchDeletionScope: prepared.searchDeletionScope,
 	}
 	response.CandidatePoolSaturated = searchSpec.CandidatePoolSaturated
 	if snapshotID != "" && s.exploreState != nil {
@@ -349,6 +358,7 @@ func (s *Server) handleExploreGroups(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_filter", err.Error())
 		return
 	}
+	searchDeletionScope := applySemanticDeletionScope(request.SearchMode, &ctx)
 	if request.Limit == 0 {
 		request.Limit = exploreDefaultLimit
 	}
@@ -416,7 +426,7 @@ func (s *Server) handleExploreGroups(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	response := ExploreGroupsHTTPResponse{Rows: result.Rows, TotalCount: result.TotalCount, CacheRevision: result.CacheRevision, SearchProvenance: result.SearchProvenance, CandidateSnapshotID: snapshotID}
+	response := ExploreGroupsHTTPResponse{Rows: result.Rows, TotalCount: result.TotalCount, CacheRevision: result.CacheRevision, SearchProvenance: result.SearchProvenance, CandidateSnapshotID: snapshotID, SearchDeletionScope: searchDeletionScope}
 	if next := offset + len(result.Rows); next < int(result.TotalCount) {
 		response.NextCursor = s.encodeExploreCursor(exploreCursor{
 			Offset: next, Request: requestHash, Revision: result.CacheRevision,
@@ -536,6 +546,7 @@ func (s *Server) handleExplorePreflight(w http.ResponseWriter, r *http.Request) 
 		SearchProvenance: stats.SearchProvenance, UnavailableActions: unavailableActions,
 		ActionTargets:  actionTargets,
 		OperationToken: token, ExpiresAt: state.now().Add(exploreOperationTokenTTL),
+		SearchDeletionScope: predicate.searchDeletionScope,
 	})
 }
 
@@ -676,6 +687,7 @@ func (s *Server) prepareExploreRequest(w http.ResponseWriter, r *http.Request, s
 		writeError(w, http.StatusBadRequest, "invalid_filter", err.Error())
 		return explorePrepared{}, false
 	}
+	searchDeletionScope := applySemanticDeletionScope(request.SearchMode, &ctx)
 	requestHash := canonicalScopedExploreHash(request, scope)
 	offset := 0
 	if request.Cursor != "" {
@@ -688,6 +700,7 @@ func (s *Server) prepareExploreRequest(w http.ResponseWriter, r *http.Request, s
 	}
 	return explorePrepared{
 		request: request, requestHash: requestHash, offset: offset,
+		searchDeletionScope: searchDeletionScope,
 		query: query.ExploreRequest{
 			Context: ctx, Presentation: query.PresentationTable,
 			Sort: []query.SortSpec{{Field: "sent_at", Direction: apiSortDirectionDesc}},
@@ -921,9 +934,11 @@ func prepareExplorePredicate(request ExploreHTTPRequest) (explorePrepared, error
 	if err != nil {
 		return explorePrepared{}, err
 	}
+	searchDeletionScope := applySemanticDeletionScope(request.SearchMode, &ctx)
 	return explorePrepared{
 		request: request, requestHash: canonicalExploreHash(request),
-		query: query.ExploreRequest{Context: ctx},
+		searchDeletionScope: searchDeletionScope,
+		query:               query.ExploreRequest{Context: ctx},
 	}, nil
 }
 
@@ -1011,14 +1026,18 @@ func (s *Server) resolveExploreSearch(ctx context.Context, w http.ResponseWriter
 	}, "", true
 }
 
-// applyLexicalFilterPushdown narrows the parsed lexical query with the
-// request filters SQLite evaluates natively — source, message_type, after,
-// and before — so the bounded candidate cap applies to the filtered
-// population instead of truncating it before the filters run. Participant,
-// domain, and deletion filters stay DuckDB-side: they need junction or
-// derived data the lexical resolver does not model, and re-applying every
-// filter analytically keeps deferred dimensions correct (pushdown only
-// shrinks the candidate set, never widens results).
+// applyLexicalFilterPushdown narrows the parsed search query with the
+// request filters the candidate resolvers evaluate natively — source,
+// message_type, after, and before — so the bounded candidate cap applies
+// to the filtered population instead of truncating it before the filters
+// run. Both resolvers share it: the lexical resolver pushes the narrowed
+// query into SQLite FTS5, and the vector resolver builds its backend
+// filter from the narrowed query so semantic and hybrid candidates obey
+// identical intersection semantics. Participant, domain, and deletion
+// filters stay DuckDB-side: they need junction or derived data the
+// resolvers do not model, and re-applying every filter analytically keeps
+// deferred dimensions correct (pushdown only shrinks the candidate set,
+// never widens results).
 //
 // Pushed dimensions intersect with any equivalent operator already present
 // in the query text (in:, message_type:, after:, before:) so the candidate
@@ -1110,6 +1129,19 @@ func (s *Server) resolveExploreVectorSearch(ctx context.Context, w http.Response
 		writeError(w, http.StatusBadRequest, "invalid_query", err.Error())
 		return query.SearchSpec{}, "", false
 	}
+	exploreCtx, err := exploreContext(request.Filters)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_filter", err.Error())
+		return query.SearchSpec{}, "", false
+	}
+	if len(exploreCtx.ParticipantIDs) > 0 || len(exploreCtx.Domains) > 0 {
+		writeError(w, http.StatusBadRequest, "semantic_filter_unavailable", "Semantic ranking cannot safely apply participant or domain filters")
+		return query.SearchSpec{}, "", false
+	}
+	if exploreCtx.Deletion == query.DeletionDeleted {
+		writeError(w, http.StatusBadRequest, "semantic_deletion_unsupported", "Semantic and hybrid search cover active messages only; remove the deletion:deleted filter to search")
+		return query.SearchSpec{}, "", false
+	}
 	var lexicalSpec query.SearchSpec
 	if request.SearchMode == exploreSearchModeHybrid {
 		var ok bool
@@ -1129,27 +1161,20 @@ func (s *Server) resolveExploreVectorSearch(ctx context.Context, w http.Response
 		writeError(w, http.StatusBadRequest, "missing_free_text", "Semantic and hybrid exploration require free text")
 		return query.SearchSpec{}, "", false
 	}
+	// Mirror the lexical resolver's pushdown semantics: request source and
+	// message-type filters intersect with equivalent query operators, and
+	// date bounds only tighten. Because the vector backends OR the values
+	// within each filter dimension, appending here would broaden the
+	// candidate predicate beyond what the query text alone matches. An
+	// empty intersection can match nothing, so it skips the vector index
+	// entirely instead of running a broadened query.
+	if !applyLexicalFilterPushdown(parsed, exploreCtx) {
+		return s.resolveEmptyVectorCandidates(ctx, w, request, state, requestHash, lexicalSpec)
+	}
 	filter, err := hybridEngine.BuildFilter(ctx, parsed)
 	if err != nil {
 		writeError(w, http.StatusServiceUnavailable, "search_filter_unavailable", "The semantic search filter could not be resolved")
 		return query.SearchSpec{}, "", false
-	}
-	exploreCtx, err := exploreContext(request.Filters)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_filter", err.Error())
-		return query.SearchSpec{}, "", false
-	}
-	if len(exploreCtx.ParticipantIDs) > 0 || len(exploreCtx.Domains) > 0 || exploreCtx.Deletion == query.DeletionDeleted {
-		writeError(w, http.StatusBadRequest, "semantic_filter_unavailable", "Semantic ranking cannot safely apply participant, domain, or deleted-only filters")
-		return query.SearchSpec{}, "", false
-	}
-	filter.SourceIDs = append(filter.SourceIDs, exploreCtx.SourceIDs...)
-	filter.MessageTypes = append(filter.MessageTypes, exploreCtx.MessageTypes...)
-	if exploreCtx.After != nil {
-		filter.After = exploreCtx.After
-	}
-	if exploreCtx.Before != nil {
-		filter.Before = exploreCtx.Before
 	}
 	mode := hybrid.ModeVector
 	if request.SearchMode == exploreSearchModeHybrid {
@@ -1204,6 +1229,79 @@ func (s *Server) resolveExploreVectorSearch(ctx context.Context, w http.Response
 		spec.LexicalCandidateMessageIDs = lexicalSpec.CandidateMessageIDs
 	}
 	return spec, snapshotID, true
+}
+
+// resolveEmptyVectorCandidates terminates a semantic or hybrid search whose
+// structured predicate is unsatisfiable — a request filter intersected with
+// an equivalent query operator to the empty set — without embedding the query
+// or touching the vector index. The empty candidate set still carries full
+// provenance: the active generation is resolved with the same fingerprint
+// rules the hybrid engine applies, so pagination, preflight, and revision
+// pinning treat the empty result like any other resolved candidate set.
+func (s *Server) resolveEmptyVectorCandidates(
+	ctx context.Context,
+	w http.ResponseWriter,
+	request ExploreHTTPRequest,
+	state *exploreServerState,
+	requestHash string,
+	lexicalSpec query.SearchSpec,
+) (query.SearchSpec, string, bool) {
+	_, backend, cfg := s.vectorComponents()
+	if backend == nil {
+		writeError(w, http.StatusServiceUnavailable, "vector_not_enabled", "Vector search is not configured")
+		return query.SearchSpec{}, "", false
+	}
+	expectedFingerprint := ""
+	if cfg.Enabled {
+		expectedFingerprint = cfg.GenerationFingerprint()
+	}
+	active, err := vector.ResolveActiveForFingerprint(ctx, backend, expectedFingerprint)
+	if err != nil {
+		s.writeExploreVectorError(w, err)
+		return query.SearchSpec{}, "", false
+	}
+	generation := int64(active.ID)
+	ids := make([]int64, 0)
+	lexicalRevision := ""
+	if request.SearchMode == exploreSearchModeHybrid {
+		lexicalRevision = lexicalSpec.LexicalIndexRevision
+	}
+	snapshotID := state.issueSnapshot(exploreCandidateSnapshot{
+		RequestHash: requestHash, IDs: ids, LexicalIDs: lexicalSpec.CandidateMessageIDs,
+		Hits: make([]exploreCandidateHit, 0), Generation: generation,
+		LexicalRevision: lexicalRevision, PoolSaturated: lexicalSpec.CandidatePoolSaturated,
+	})
+	spec := query.SearchSpec{
+		Mode: query.SearchSemantic, Query: request.Query, CandidateMessageIDs: ids,
+		VectorGeneration: &generation, CandidatePoolSaturated: lexicalSpec.CandidatePoolSaturated,
+	}
+	if request.SearchMode == exploreSearchModeHybrid {
+		spec.Mode = query.SearchHybrid
+		spec.LexicalIndexRevision = lexicalRevision
+		spec.LexicalCandidateMessageIDs = lexicalSpec.CandidateMessageIDs
+	}
+	return spec, snapshotID, true
+}
+
+// applySemanticDeletionScope narrows an unrestricted deletion context to
+// active-only for semantic and hybrid searches and reports the narrowed
+// scope for the response. Vector generations embed live messages only and
+// both vector backends exclude source-deleted rows from every query path
+// (see semanticCoverageContext), so semantic candidates can never include
+// archived messages; declaring the narrowing keeps the analytical context
+// and the response contract explicit instead of silently returning
+// active-only results under an unrestricted deletion context. A
+// deletion:deleted context is left untouched — the vector resolver rejects
+// it with semantic_deletion_unsupported.
+func applySemanticDeletionScope(searchMode string, context *query.Context) string {
+	if searchMode != exploreSearchModeSemantic && searchMode != exploreSearchModeHybrid {
+		return ""
+	}
+	if context.Deletion == query.DeletionDeleted {
+		return ""
+	}
+	context.Deletion = query.DeletionActive
+	return string(query.DeletionActive)
 }
 
 func exploreSnapshotRequestHash(request ExploreHTTPRequest) string {
