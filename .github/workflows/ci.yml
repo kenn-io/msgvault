@@ -107,10 +107,14 @@ jobs:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
       - name: Install container build tools
-        run: apt-get update && apt-get install -y --no-install-recommends make unzip
+        run: apt-get update && apt-get install -y --no-install-recommends gcc g++ make unzip
 
       - name: Trust the checkout in the container
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
 
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
@@ -122,6 +126,12 @@ jobs:
 
       - name: Check, test, and build frontend
         run: make web-check web-test web-build
+
+      # The e2e specs generate their archive fixture by running a Go test;
+      # compile it here so the first Playwright test doesn't pay the cold
+      # cgo build inside its own timeout.
+      - name: Precompile e2e archive fixture
+        run: go test -tags "fts5 sqlite_vec" -run '^$' -count=1 ./internal/query
 
       - name: Run deterministic browser and visual tests
         run: make web-test-browser
@@ -159,6 +169,10 @@ jobs:
       - name: Install frontend dependencies
         working-directory: web
         run: bun install --frozen-lockfile
+
+      # See the frontend job: warm the cgo fixture compile outside test timeouts.
+      - name: Precompile e2e archive fixture
+        run: go test -tags "fts5 sqlite_vec" -run '^$' -count=1 ./internal/query
 
       - name: Run accessibility, keyboard, security, and mixed-archive gates
         run: make web-e2e

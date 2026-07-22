@@ -254,9 +254,14 @@ func TestEditConfigSynthesizesOnlyRequestedTables(t *testing.T) {
 	require.NoError(err)
 	assert.True(after.Exists)
 	assert.Equal("[web]\ntheme = \"dark\"\n\n[integrations.tasks]\nenabled = true\n", string(after.Content))
-	info, err := os.Stat(path)
-	require.NoError(err)
-	assert.Equal(os.FileMode(0o600), info.Mode().Perm())
+	if runtime.GOOS != "windows" {
+		// Unix permission enforcement. Windows security lives in the DACL,
+		// which the Windows-specific tests verify via verifyConfigOwnerOnly;
+		// Stat mode bits there are synthetic.
+		info, err := os.Stat(path)
+		require.NoError(err)
+		assert.Equal(os.FileMode(0o600), info.Mode().Perm())
+	}
 }
 
 func TestEditConfigTracksArrayTableBoundaries(t *testing.T) {
@@ -775,7 +780,10 @@ func TestEditConfigPreservesDisplacedArtifactWhenConflictRollbackFails(t *testin
 
 	_, err = editConfigFile(path, snapshot.ETag, []Edit{{Key: "web.theme", Value: "dark"}}, ops)
 	require.ErrorIs(err, ErrConfigChanged)
-	artifacts, globErr := filepath.Glob(filepath.Join(dir, ".config-edit-*.toml.tmp"))
+	// The displaced artifact keeps the candidate name on darwin/linux (native
+	// exchange) and gains a ".displaced" suffix on Windows (ReplaceFileW
+	// backup), so match both spellings.
+	artifacts, globErr := filepath.Glob(filepath.Join(dir, ".config-edit-*.toml.tmp*"))
 	require.NoError(globErr)
 	require.Len(artifacts, 1, "the displaced operator file must remain recoverable")
 	recovered, readErr := os.ReadFile(artifacts[0])
@@ -794,7 +802,11 @@ func TestConditionalReplaceRollbackPreservesLaterWriter(t *testing.T) {
 	require.NoError(os.WriteFile(target, beforeText, 0o600))
 	before, err := readConfigFileForEdit(target)
 	require.NoError(err)
-	t.Cleanup(func() { require.NoError(before.retained.Close()) })
+	// Windows snapshots do not retain a descriptor; only Unix ones must be
+	// closed here.
+	if before.retained != nil {
+		t.Cleanup(func() { require.NoError(before.retained.Close()) })
+	}
 	candidate := filepath.Join(filepath.Dir(before.Path), "candidate.toml")
 	require.NoError(os.WriteFile(candidate, candidateText, 0o600))
 
@@ -818,6 +830,12 @@ func TestConditionalReplaceRollbackPreservesLaterWriter(t *testing.T) {
 	}
 
 	replacement, err := conditionalReplace(target, candidate, before, replace, ReadConfigFile)
+	// Production callers release through editConfigFile's defer; calling
+	// conditionalReplace directly means releasing here, or the retained
+	// directory pins block TempDir cleanup on Windows.
+	if replacement.release != nil {
+		t.Cleanup(func() { _ = replacement.release() })
+	}
 	require.ErrorIs(err, ErrConfigChanged)
 	require.ErrorIs(err, ErrConfigConflict)
 	assert.Equal(t, laterText, mustReadFile(t, target))

@@ -13,6 +13,9 @@ export default defineConfig({
   // Serial execution keeps their timing and visual rasterization deterministic
   // across developer laptops and the Linux CI runner.
   workers: 1,
+  // CI containers run the archive-fixture generation and first renders much
+  // slower than developer machines; keep the strict budget locally.
+  timeout: process.env.CI ? 60_000 : 30_000,
   use: {
     baseURL: previewURL,
     viewport: { width: 1280, height: 720 },
