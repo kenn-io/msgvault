@@ -217,18 +217,30 @@ func (imp *Importer) sweepRange(ctx context.Context, syncID int64, scope, floor 
 			return err // store/context failure: fatal for the run
 		}
 		if truncated {
-			// Ascending order means the reachable results ARE the day's
-			// earliest, so the last processed hit is a safe boundary — but
-			// the rest of the day is unreachable and the run must fail
-			// loudly rather than skip past it.
+			// The rest of the day is unreachable to search, so it is
+			// converted into durable WALK debt instead of parking the
+			// boundary forever: the missed tail is thread replies in
+			// unknowable threads among the targets, and the catch-up walk
+			// re-fetches EVERY thread's replies, so flagging every in-scope
+			// target covers it regardless of where it landed (non-channel
+			// IDs included). With the debt recorded, the boundary advances
+			// past the day — the sweep's own invariant — so this failure
+			// happens ONCE and later runs converge by paying the flags,
+			// instead of re-truncating on the same day forever (which also
+			// wedged RepairPending sessions permanently: they demand a
+			// clean pass, while --full refuses to reset one in flight).
+			for cid := range targets {
+				cs := state.EnsureConv(cid)
+				cs.ThreadsPending = true
+				// An in-flight catch-up walk was pinned before this day's
+				// replies existed; roots created after its pin would never
+				// be anchored. Re-pin it (idempotent re-walk).
+				cs.CatchUpCursor, cs.CatchUpLatest = "", ""
+			}
 			imp.recordItem(syncID, item, "sweep", store.SyncRunItemStatusError, "slack_sweep_truncated",
-				fmt.Errorf("day %s exceeds the %d reachable results per query; run --full to recover its replies (see the sweep design doc)", dayStr, sweepTruncationCeiling))
+				fmt.Errorf("day %s exceeds the %d reachable results per query; the unreachable tail is recorded as thread catch-up debt and recovers on subsequent runs (see the sweep design doc)", dayStr, sweepTruncationCeiling))
 			sum.FetchErrors++
 			sum.Errors++
-			if len(hits) > 0 {
-				advance(hits[len(hits)-1].TS)
-			}
-			return nil
 		}
 		nextDay := nextDayStart(day, loc)
 		advance(tsFormat(nextDay.UTC()))

@@ -122,16 +122,28 @@ for incremental sync. Consequences:
   from the requested page, and bound itself by `min(paging.pages, 100)`.
   `pagination.total_count` is accurate and serves as the truncation
   tripwire. A single-day, single-scope result set beyond the ~10,000
-  reachable ceiling **parks and fails**: ascending order means the
-  reachable results are the day's earliest, so certification advances to
-  the last processed hit, the run fails loudly, and the sweep halts —
-  it never certifies past unreachable replies, and it cannot drain the
-  day across runs either (re-querying serves the same first 10k; `on:`
-  has no intra-day lower bound). Recovery today is `sync-slack --full`,
-  whose backfill-style inline thread fetches need no search; `in:`-batch
-  narrowing (a fresh 10k ceiling per channel scope) is the specified
-  sweep-native escape hatch, unbuilt until the tripwire ever fires —
-  `threads:replies` filtering makes it Enterprise-scale rare.
+  reachable ceiling **fails loudly and converts the unreachable tail
+  into durable walk debt**: the day cannot be drained by search at all
+  (re-querying serves the same first 10k ascending; `on:` has no
+  intra-day lower bound), so every in-scope target is flagged for a
+  thread catch-up walk — which re-fetches every thread's replies and
+  therefore recovers the tail wherever it landed, non-channel IDs
+  included — in-flight catch-up cursors are re-pinned (a walk pinned
+  before the day's replies existed would never anchor their roots),
+  and the day's boundary advances (debt recorded — the sweep's own
+  invariant). The failure therefore happens once per truncated day
+  (an in-progress day re-fails until it is behind the pin-capped
+  boundary, since its unreachable tail keeps growing) and later runs
+  converge automatically — no `--full` needed. The earlier
+  park-and-fail design left the boundary IN the day forever, which
+  permanently wedged an overlapping `--full` repair session: the
+  session only closes on a clean pass, `--full` refuses to reset one
+  in flight, and conversations walked before the day never re-walk —
+  their tail replies were unrecoverable by any command. `in:`-batch
+  narrowing (a fresh 10k ceiling per channel scope) remains the
+  specified sweep-native efficiency escape, unbuilt until the tripwire
+  ever fires — `threads:replies` filtering makes it Enterprise-scale
+  rare.
   Cursormark pagination is not supported on this method (parameter
   silently ignored).
 - **Maintenance repairs replies too.** The rescan re-fetches each

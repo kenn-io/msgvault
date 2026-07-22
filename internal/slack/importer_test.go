@@ -1602,7 +1602,7 @@ func TestSweepFetchDoesNotRefreshArchivedParent(t *testing.T) {
 	assert.Zero(reactions, "a sweep fetch must not refresh the archived parent's reactions outside --maintenance")
 }
 
-func TestSweepTruncatedDayFailsRunAndHalts(t *testing.T) {
+func TestSweepTruncatedDayFailsOnceAndConvergesViaCatchUp(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	f, rootTS := oldThreadWorkspace(t)
@@ -1612,35 +1612,100 @@ func TestSweepTruncatedDayFailsRunAndHalts(t *testing.T) {
 	_, err := imp.Import(context.Background(), opts)
 	require.NoError(err)
 
-	lateReply := tsFresh(0)
+	// The day gains a reachable reply and — on a DIFFERENT thread — one
+	// beyond the ceiling (hidden from search entirely, so no drain entry
+	// can reach it). The day persistently reports >10k results.
+	reachable, unreachable := tsFresh(0), tsFresh(5)
 	f.mu.Lock()
-	root := f.conv("C09").findRoot(rootTS)
-	root.Replies = append(root.Replies, fakeMsg{TS: lateReply, ThreadTS: rootTS, User: "UME", Text: "late reply"})
-	// The day reports more results than search can ever page to: whatever
-	// lies past the 10k ceiling is unreachable, so the run must fail
-	// loudly instead of certifying past unarchived replies.
-	f.searchTotalOverride = sweepTruncationCeiling + 1
+	f.conv("C09").findRoot(rootTS).Replies = append(f.conv("C09").findRoot(rootTS).Replies,
+		fakeMsg{TS: reachable, ThreadTS: rootTS, User: "UME", Text: "reachable reply"})
+	other := f.conv("C09").findRoot(ts(0))
+	other.Replies = append(other.Replies, fakeMsg{TS: unreachable, ThreadTS: ts(0), User: "UME", Text: "beyond the ceiling"})
+	f.searchHidden[unreachable] = true
+	f.searchTruncateDays[tsTime(unreachable).UTC().Format("2006-01-02")] = true
 	f.mu.Unlock()
 
+	imp.now = func() time.Time { return time.Now().Add(5 * time.Minute) }
 	sum, err := imp.Import(context.Background(), opts)
-	require.Error(err, "a truncated sweep day must fail the run, not silently skip unreachable replies")
+	require.Error(err, "a truncated sweep day must fail the run loudly")
 	assert.Positive(sum.FetchErrors)
-	// The reachable results (the day's earliest, ascending) were archived.
+	// The reachable results (the day's earliest, ascending) were archived,
+	// and the unreachable tail became durable catch-up debt.
 	var n int
 	require.NoError(st.DB().QueryRow(st.Rebind(
-		`SELECT COUNT(*) FROM messages WHERE source_message_id = ?`), "C09:"+lateReply).Scan(&n))
+		`SELECT COUNT(*) FROM messages WHERE source_message_id = ?`), "C09:"+reachable).Scan(&n))
 	assert.Equal(1, n)
-
-	// Healed (the day drained below the ceiling): a clean run, no dups.
-	f.mu.Lock()
-	f.searchTotalOverride = 0
-	f.mu.Unlock()
-	_, err = imp.Import(context.Background(), opts)
+	src, err := st.GetOrCreateSource("slack", "T01:UME")
 	require.NoError(err)
+	require.True(imp.loadResumeState(src.ID).EnsureConv("C09").ThreadsPending,
+		"the unreachable tail must be recorded as thread catch-up debt")
+
+	// Once the day is over, the boundary passes it (debt recorded — the
+	// day is never re-queried) and the catch-up walk recovers the reply
+	// search could never serve. The tool converges with NO manual --full.
+	imp.now = func() time.Time { return time.Now().Add(25 * time.Hour) }
+	_, err = imp.Import(context.Background(), opts)
+	require.Error(err, "the still-open truncated day re-fails until it is behind the boundary")
+	imp.now = func() time.Time { return time.Now().Add(26 * time.Hour) }
+	_, err = imp.Import(context.Background(), opts)
+	require.NoError(err, "past the truncated day the sweep must converge without --full")
+	require.NoError(st.DB().QueryRow(st.Rebind(
+		`SELECT COUNT(*) FROM messages WHERE source_message_id = ?`), "C09:"+unreachable).Scan(&n))
+	assert.Equal(1, n, "the catch-up walk must recover the reply beyond the search ceiling")
 	var total, distinct int
 	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages WHERE message_type='slack'`).Scan(&total))
 	require.NoError(st.DB().QueryRow(`SELECT COUNT(DISTINCT source_message_id) FROM messages WHERE message_type='slack'`).Scan(&distinct))
 	assert.Equal(distinct, total)
+}
+
+func TestTruncatedSweepDuringRepairUnwedgesSession(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f, rootTS := oldThreadWorkspace(t)
+	imp, opts := testImporter(t, f)
+	st := imp.store
+
+	_, err := imp.Import(context.Background(), opts)
+	require.NoError(err)
+
+	// A repair session overlaps a persistently truncated day. The session
+	// can only close on a clean pass, and --full refuses to reset one in
+	// flight — so if the sweep re-truncates on the same day forever, the
+	// tool is wedged permanently. Recording the tail as catch-up debt and
+	// advancing the boundary past the day must unwedge it.
+	reachable, unreachable := tsFresh(0), tsFresh(5)
+	f.mu.Lock()
+	f.conv("C09").findRoot(rootTS).Replies = append(f.conv("C09").findRoot(rootTS).Replies,
+		fakeMsg{TS: reachable, ThreadTS: rootTS, User: "UME", Text: "reachable reply"})
+	other := f.conv("C09").findRoot(ts(0))
+	other.Replies = append(other.Replies, fakeMsg{TS: unreachable, ThreadTS: ts(0), User: "UME", Text: "beyond the ceiling"})
+	f.searchHidden[unreachable] = true
+	f.searchTruncateDays[tsTime(unreachable).UTC().Format("2006-01-02")] = true
+	f.mu.Unlock()
+
+	full := opts
+	full.Full = true
+	imp.now = func() time.Time { return time.Now().Add(5 * time.Minute) }
+	_, err = imp.Import(context.Background(), full)
+	require.Error(err, "the truncated day fails the repair run loudly")
+	src, err := st.GetOrCreateSource("slack", "T01:UME")
+	require.NoError(err)
+	require.True(imp.loadResumeState(src.ID).RepairPending, "the failed pass must not close the session")
+
+	// Plain runs continue the session. Once the truncated day is behind
+	// the boundary, a clean pass pays the catch-up debt and closes it.
+	imp.now = func() time.Time { return time.Now().Add(25 * time.Hour) }
+	_, _ = imp.Import(context.Background(), opts)
+	imp.now = func() time.Time { return time.Now().Add(26 * time.Hour) }
+	_, err = imp.Import(context.Background(), opts)
+	require.NoError(err, "the session must converge; a permanently re-truncating sweep wedges RepairPending forever")
+	state := imp.loadResumeState(src.ID)
+	assert.False(state.RepairPending, "the clean pass closes the repair session")
+	assert.False(state.EnsureConv("C09").ThreadsPending)
+	var n int
+	require.NoError(st.DB().QueryRow(st.Rebind(
+		`SELECT COUNT(*) FROM messages WHERE source_message_id = ?`), "C09:"+unreachable).Scan(&n))
+	assert.Equal(1, n)
 }
 
 func TestSweepRecoversGapForReIncludedChannel(t *testing.T) {

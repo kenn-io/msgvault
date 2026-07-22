@@ -94,9 +94,9 @@ automatically when it returns: the importer runs a channel-scoped catch-up
 sweep over the days it missed before rejoining the workspace-wide sweep.
 One documented edge: a single day whose reply count exceeds search's
 ~10,000 reachable results per query cannot be fully swept — the run fails
-loudly (never silently skipping) and `sync-slack --full` recovers the
-replies without search; per-channel query narrowing for this case is
-planned.
+loudly (never silently skipping), records the unreachable remainder as
+thread catch-up debt, and later runs recover it automatically without
+search; per-channel query narrowing for this case is planned.
 Edits and reaction changes after capture are ignored by default; run
 `sync-slack --maintenance` to repair the recent window, or `--full` to
 repair everything.

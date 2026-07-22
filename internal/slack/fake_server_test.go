@@ -152,16 +152,16 @@ type fakeSlack struct {
 	// searchPageSize overrides the honored count for search pagination
 	// (0 = honor the requested count).
 	searchPageSize int
-	// searchTotalOverride reports this total (and pages derived from it)
-	// regardless of the actual match count, emulating a day beyond the
-	// reachable-result ceiling.
-	searchTotalOverride int
 	// searchIndexedThrough hides hits newer than this ts, simulating search
 	// index lag ("" = everything indexed instantly).
 	searchIndexedThrough string
 	// searchHidden hides individual hits by ts, simulating OUT-OF-ORDER
 	// index lag: a message indexed later than ones created after it.
 	searchHidden map[string]bool
+	// searchTruncateDays makes the named on: days report a total beyond
+	// the reachable-result ceiling, emulating a persistently >10k day
+	// while other days stay pageable.
+	searchTruncateDays map[string]bool
 	// searchOmitThreadTS strips thread_ts from result permalinks, so hits
 	// arrive with unparseable roots (the solo-entry degradation path).
 	searchOmitThreadTS bool
@@ -188,6 +188,7 @@ func newFakeSlack(t *testing.T) *fakeSlack {
 		t: t, pageSize: 3,
 		failHistory: map[string]bool{}, failReplies: map[string]bool{},
 		failMembers: map[string]bool{}, searchHidden: map[string]bool{},
+		searchTruncateDays: map[string]bool{},
 	}
 }
 
@@ -544,8 +545,8 @@ func (f *fakeSlack) handleSearch(w http.ResponseWriter, r *http.Request) {
 		page = 1 // probed live: past-the-ceiling pages are CLAMPED to page 1
 	}
 	total := len(hits)
-	if f.searchTotalOverride > 0 {
-		total = f.searchTotalOverride
+	if onDay != "" && f.searchTruncateDays[onDay] {
+		total = sweepTruncationCeiling + 1
 	}
 	pages := (total + count - 1) / count
 	from := min((page-1)*count, len(hits))
