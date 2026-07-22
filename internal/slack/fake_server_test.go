@@ -97,6 +97,22 @@ func (c *fakeConv) toJSON() map[string]any {
 	return out
 }
 
+// tombstone replaces the message at ts with its deleted-root form as probed
+// live: subtype "tombstone", USLACKBOT sender, canonical text, no reactions
+// or files — while reply_count survives (emitted from the kept Replies), so
+// the thread stays discoverable and its orphaned replies stay served.
+func (c *fakeConv) tombstone(ts string) {
+	m := c.findRoot(ts)
+	m.User = "USLACKBOT"
+	m.BotID = ""
+	m.Username = ""
+	m.Subtype = "tombstone"
+	m.Text = "This message was deleted."
+	m.Edited = false
+	m.Reactions = nil
+	m.Files = nil
+}
+
 // findRoot resolves ts — a root's ts OR any reply's ts — to the thread's
 // root fakeMsg, mimicking conversations.replies' anchor resolution.
 func (c *fakeConv) findRoot(ts string) *fakeMsg {
@@ -143,6 +159,9 @@ type fakeSlack struct {
 	// searchIndexedThrough hides hits newer than this ts, simulating search
 	// index lag ("" = everything indexed instantly).
 	searchIndexedThrough string
+	// searchHidden hides individual hits by ts, simulating OUT-OF-ORDER
+	// index lag: a message indexed later than ones created after it.
+	searchHidden map[string]bool
 	// searchOmitThreadTS strips thread_ts from result permalinks, so hits
 	// arrive with unparseable roots (the solo-entry degradation path).
 	searchOmitThreadTS bool
@@ -168,7 +187,7 @@ func newFakeSlack(t *testing.T) *fakeSlack {
 	return &fakeSlack{
 		t: t, pageSize: 3,
 		failHistory: map[string]bool{}, failReplies: map[string]bool{},
-		failMembers: map[string]bool{},
+		failMembers: map[string]bool{}, searchHidden: map[string]bool{},
 	}
 }
 
@@ -467,6 +486,9 @@ func (f *fakeSlack) handleSearch(w http.ResponseWriter, r *http.Request) {
 	}
 	day := func(ts string) string { return tsTime(ts).UTC().Format("2006-01-02") }
 	keep := func(ts string) bool {
+		if f.searchHidden[ts] {
+			return false // this message not yet indexed (out-of-order lag)
+		}
 		if f.searchIndexedThrough != "" && tsLess(f.searchIndexedThrough, ts) {
 			return false // not yet indexed
 		}

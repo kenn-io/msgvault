@@ -890,6 +890,25 @@ func (imp *Importer) processMessage(ctx context.Context, cc *convScope, m *Messa
 	if m.Type != "message" || m.TS == "" {
 		return nil
 	}
+	if m.Subtype == "tombstone" {
+		// A deleted thread root persists in history and replies as a
+		// tombstone row (USLACKBOT, reply_count kept — probed live). The
+		// archive keeps deleted content, so a tombstone never overwrites an
+		// archived original — not on window overlap, catch-up/gap re-reads,
+		// --full, or --maintenance (the empty tombstone would also wipe
+		// archived reactions via ReplaceReactions). It IS persisted when the
+		// message was never archived: the placeholder gives orphaned replies
+		// a row for SetReplyTo to resolve against. The existence probe
+		// cannot swallow its error toward "missing" — that direction
+		// overwrites — so store failure aborts like every other store op.
+		ids, err := imp.store.MessageExistsBatch(cc.sourceID, []string{sourceMessageID(cc.channelID, m.TS)})
+		if err != nil {
+			return fmt.Errorf("tombstone existence check: %w", err)
+		}
+		if len(ids) > 0 {
+			return nil
+		}
+	}
 
 	msg, text := mapMessage(m, cc.channelID, cc.convID, cc.sourceID, m.User == cc.opts.UserID, imp.res.displayName)
 	var senderPID int64

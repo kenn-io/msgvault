@@ -18,6 +18,15 @@ type PendingThread struct {
 	// fetches replies. Pacing and progress only — never a completeness
 	// signal (counts can be stale).
 	Forecast int `json:"forecast,omitempty"`
+	// Floor is the entry's coverage claim: replies are owed strictly after
+	// it ("" = from the root, the walks' full-drain claim; tail entries
+	// carry their seed). The entry has covered (Floor, DrainedTo] and will
+	// cover (Floor, ∞) when drained. Merges are decided against Floor, not
+	// DrainedTo: a re-discovered hit above the Floor is already owed
+	// (progress stands — rolling DrainedTo back would rewind the drain on
+	// every overlapped sweep and never converge), while a hit at or below
+	// it is genuinely outside the claim and widens the entry.
+	Floor string `json:"floor,omitempty"`
 }
 
 // ConvState tracks one conversation's sync progress.
@@ -109,6 +118,19 @@ func LoadSyncState(blob string) (*SyncState, error) {
 	if s.Conversations == nil {
 		s.Conversations = map[string]*ConvState{}
 	}
+	// Legacy drain entries predate the Floor field. An in-flight entry
+	// with progress but no floor is normalized to Floor = DrainedTo — the
+	// safe misread in both directions: a legacy TAIL read as full coverage
+	// would silently skip replies below its seed, while a legacy FULL walk
+	// entry read as a tail merely widens down and re-fetches an idempotent
+	// stretch if a hit surfaces beneath its progress.
+	for _, cs := range s.Conversations {
+		for i := range cs.PendingThreads {
+			if cs.PendingThreads[i].Floor == "" && cs.PendingThreads[i].DrainedTo != "" {
+				cs.PendingThreads[i].Floor = cs.PendingThreads[i].DrainedTo
+			}
+		}
+	}
 	return s, nil
 }
 
@@ -117,30 +139,57 @@ func (s *SyncState) Marshal() (string, error) {
 	return string(b), err
 }
 
-// RecordPendingThread appends a thread to the drain debt unless it is
-// already recorded (a page refetched after a failure re-discovers its
-// roots; the existing entry keeps its drain progress).
+// RecordPendingThread commits a thread to the drain debt as FULL coverage:
+// every reply from the root onward (Floor = ""). An existing entry with the
+// same claim keeps its progress — that progress is contiguous from the root
+// (a page refetched after a failure re-discovers its roots harmlessly). An
+// existing TAIL entry cannot satisfy the claim: its parked DrainedTo proves
+// nothing below its own seed, and keeping it would silently skip every
+// reply under that seed while the caller (a walk or catch-up) certifies
+// the thread covered. Such an entry WIDENS: progress resets to the root
+// and the fresh forecast is taken. The reset re-fetches the tail's stretch
+// into idempotent upserts, at most once — the widened entry answers every
+// later record as full coverage.
 func (cs *ConvState) RecordPendingThread(rootTS string, forecast int) {
 	for i := range cs.PendingThreads {
 		if cs.PendingThreads[i].RootTS == rootTS {
+			if cs.PendingThreads[i].Floor != "" {
+				cs.PendingThreads[i].Floor = ""
+				cs.PendingThreads[i].DrainedTo = ""
+				cs.PendingThreads[i].Forecast = forecast
+			}
 			return
 		}
 	}
 	cs.PendingThreads = append(cs.PendingThreads, PendingThread{RootTS: rootTS, Forecast: forecast})
 }
 
-// RecordPendingThreadTail records a thread whose replies are owed only from
+// RecordPendingThreadTail records a thread whose replies are owed from
 // drainedTo (exclusive) onward — the reply sweep's shape: anchorTS is any
 // in-thread ts (conversations.replies resolves it) and drainedTo sits just
-// before the earliest discovered hit. An existing entry for the same anchor
-// keeps its own drain progress (it covers at least as much).
+// before the earliest discovered hit. The merge with an existing entry is
+// decided against the entry's coverage Floor, NOT its progress:
+//   - seed at/above the Floor: the hit is already inside the entry's claim
+//     (fetched, or ahead of the resume point) — the entry stands. Sweep
+//     floors overlap, so live runs re-discover the SAME hits every pass;
+//     re-seeding progress from them would rewind the drain each run and a
+//     long tail would never converge.
+//   - seed below the Floor: a late-indexed reply surfaced beneath the
+//     claim; the day's certification is already advancing past it, so this
+//     merge is its last chance — the entry widens down (Floor and resume
+//     point drop to the seed). The re-fetch of the already-drained stretch
+//     above is an idempotent upsert.
 func (cs *ConvState) RecordPendingThreadTail(anchorTS, drainedTo string) {
 	for i := range cs.PendingThreads {
 		if cs.PendingThreads[i].RootTS == anchorTS {
+			if cs.PendingThreads[i].Floor != "" && tsLess(drainedTo, cs.PendingThreads[i].Floor) {
+				cs.PendingThreads[i].Floor = drainedTo
+				cs.PendingThreads[i].DrainedTo = drainedTo
+			}
 			return
 		}
 	}
-	cs.PendingThreads = append(cs.PendingThreads, PendingThread{RootTS: anchorTS, DrainedTo: drainedTo})
+	cs.PendingThreads = append(cs.PendingThreads, PendingThread{RootTS: anchorTS, DrainedTo: drainedTo, Floor: drainedTo})
 }
 
 // PendingForecast sums the remaining reply forecasts of the outstanding

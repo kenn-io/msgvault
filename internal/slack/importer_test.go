@@ -2189,3 +2189,249 @@ func TestImportChannelFilters(t *testing.T) {
 		SELECT COUNT(*) FROM conversations WHERE source_conversation_id = ?`), "D01").Scan(&n))
 	assert.Equal(1, n)
 }
+
+// tsAgo renders a Slack ts for a moment shortly in the past — close enough
+// to "now" that the next run's clock-skew window overlap re-covers it.
+func tsAgo(d time.Duration) string {
+	return strconv.FormatInt(time.Now().Add(-d).Unix(), 10) + ".000100"
+}
+
+// tombstoneWorkspace is a channel whose root (reactions, a reply) sits
+// minutes below the first run's pin, inside every later trigger surface:
+// the incremental window's clock-skew overlap, --full, and --maintenance.
+func tombstoneWorkspace(t *testing.T) (*fakeSlack, string, string) {
+	t.Helper()
+	f := newFakeSlack(t)
+	f.users = []map[string]any{
+		{"id": "UME", "name": "me", "profile": map[string]any{"email": "me@example.com"}},
+	}
+	rootTS := tsAgo(5 * time.Minute)
+	replyTS := tsAgo(4 * time.Minute)
+	f.convs = []*fakeConv{{
+		ID: "C80", Name: "keep", Kind: "public", Members: []string{"UME"},
+		Msgs: []fakeMsg{{
+			TS: rootTS, User: "UME", Text: "the original words",
+			Reactions: []map[string]any{{"name": "wave", "users": []string{"UME"}, "count": 1}},
+			Replies:   []fakeMsg{{TS: replyTS, ThreadTS: rootTS, User: "UME", Text: "kept reply"}},
+		}},
+	}}
+	return f, rootTS, replyTS
+}
+
+func TestTombstoneNeverOverwritesArchivedOriginal(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f, rootTS, _ := tombstoneWorkspace(t)
+	imp, opts := testImporter(t, f)
+	st := imp.store
+
+	_, err := imp.Import(context.Background(), opts)
+	require.NoError(err)
+
+	// The root is deleted at the source. Slack keeps serving the row as a
+	// tombstone (probed live), so every re-read path would upsert it over
+	// the archived original — the archive promises deleted messages stay.
+	f.mu.Lock()
+	f.conv("C80").tombstone(rootTS)
+	f.mu.Unlock()
+
+	rootID := "C80:" + rootTS
+	checkIntact := func(path string) {
+		t.Helper()
+		var body string
+		var msgID int64
+		require.NoError(st.DB().QueryRow(st.Rebind(`
+			SELECT m.id, mb.body_text FROM messages m
+			JOIN message_bodies mb ON mb.message_id = m.id
+			WHERE m.source_message_id = ?`), rootID).Scan(&msgID, &body))
+		assert.Equal("the original words", body, "%s must not overwrite the archived body with the tombstone", path)
+		var reactions int
+		require.NoError(st.DB().QueryRow(st.Rebind(`
+			SELECT COUNT(*) FROM reactions WHERE message_id = ?`), msgID).Scan(&reactions))
+		assert.Equal(1, reactions, "%s must not wipe archived reactions with the tombstone's empty set", path)
+		raw, err := st.GetMessageRaw(msgID)
+		require.NoError(err)
+		assert.Contains(string(raw), "the original words", "%s must not replace the archived raw JSON", path)
+	}
+
+	// Incremental: the window's clock-skew overlap re-serves the root.
+	imp.now = func() time.Time { return time.Now().Add(1 * time.Minute) }
+	_, err = imp.Import(context.Background(), opts)
+	require.NoError(err)
+	checkIntact("incremental overlap")
+
+	full := opts
+	full.Full = true
+	imp.now = func() time.Time { return time.Now().Add(2 * time.Minute) }
+	_, err = imp.Import(context.Background(), full)
+	require.NoError(err)
+	checkIntact("--full")
+
+	maint := opts
+	maint.Maintenance = true
+	imp.now = func() time.Time { return time.Now().Add(3 * time.Minute) }
+	_, err = imp.Import(context.Background(), maint)
+	require.NoError(err)
+	checkIntact("--maintenance")
+}
+
+func TestTombstonePlaceholderKeepsOrphanedReplies(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f, rootTS, replyTS := tombstoneWorkspace(t)
+	// Deleted BEFORE ever being archived: the tombstone is the only parent
+	// Slack will ever serve. It must be persisted as a placeholder so the
+	// orphaned replies (probed: they survive deletion) archive with a
+	// resolvable thread link.
+	f.conv("C80").tombstone(rootTS)
+	imp, opts := testImporter(t, f)
+	st := imp.store
+
+	_, err := imp.Import(context.Background(), opts)
+	require.NoError(err)
+
+	var body string
+	require.NoError(st.DB().QueryRow(st.Rebind(`
+		SELECT mb.body_text FROM messages m
+		JOIN message_bodies mb ON mb.message_id = m.id
+		WHERE m.source_message_id = ?`), "C80:"+rootTS).Scan(&body))
+	assert.Equal("This message was deleted.", body)
+	var linked int
+	require.NoError(st.DB().QueryRow(st.Rebind(`
+		SELECT COUNT(*) FROM messages
+		WHERE source_message_id = ? AND reply_to_message_id IS NOT NULL`), "C80:"+replyTS).Scan(&linked))
+	assert.Equal(1, linked, "the orphaned reply must link to the tombstone placeholder")
+
+	// Re-reads of the placeholder skip like any other archived tombstone.
+	imp.now = func() time.Time { return time.Now().Add(1 * time.Minute) }
+	_, err = imp.Import(context.Background(), opts)
+	require.NoError(err)
+	var n int
+	require.NoError(st.DB().QueryRow(st.Rebind(`
+		SELECT COUNT(*) FROM messages WHERE source_message_id = ?`), "C80:"+rootTS).Scan(&n))
+	assert.Equal(1, n)
+}
+
+func TestLateIndexedReplyMovesParkedDrainBackward(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f, rootTS := oldThreadWorkspace(t)
+	imp, opts := testImporter(t, f)
+	st := imp.store
+
+	_, err := imp.Import(context.Background(), opts)
+	require.NoError(err)
+
+	// Two replies land; R1 is indexed LATE (out of order), so the first
+	// sweep sees only R2 and seeds the drain entry just below it. The
+	// fetch failure parks that entry — and a parked entry must not anchor
+	// the thread's coverage above a hit discovered later.
+	r1, r2 := tsFresh(0), tsFresh(5)
+	f.mu.Lock()
+	root := f.conv("C09").findRoot(rootTS)
+	root.Replies = append(root.Replies,
+		fakeMsg{TS: r1, ThreadTS: rootTS, User: "UME", Text: "late-indexed reply"},
+		fakeMsg{TS: r2, ThreadTS: rootTS, User: "UME", Text: "promptly-indexed reply"})
+	f.searchHidden[r1] = true
+	f.failReplies[rootTS] = true
+	f.mu.Unlock()
+	imp.now = func() time.Time { return time.Now().Add(5 * time.Minute) }
+	_, err = imp.Import(context.Background(), opts)
+	require.Error(err, "the parked drain is a fetch failure; the run must not report success")
+
+	// R1 surfaces in the next sweep's overlap pass while the entry is
+	// still parked: its resume point must move BACKWARD below R1.
+	f.mu.Lock()
+	delete(f.searchHidden, r1)
+	f.mu.Unlock()
+	imp.now = func() time.Time { return time.Now().Add(20 * time.Minute) }
+	_, err = imp.Import(context.Background(), opts)
+	require.Error(err)
+
+	// By now the certified boundary is far above R1 — no future sweep will
+	// re-serve it. Only the merged-back entry can recover it.
+	f.mu.Lock()
+	delete(f.failReplies, rootTS)
+	f.mu.Unlock()
+	imp.now = func() time.Time { return time.Now().Add(40 * time.Minute) }
+	_, err = imp.Import(context.Background(), opts)
+	require.NoError(err)
+
+	var n int
+	require.NoError(st.DB().QueryRow(st.Rebind(`
+		SELECT COUNT(*) FROM messages WHERE source_message_id = ?`), "C09:"+r1).Scan(&n))
+	assert.Equal(1, n, "late-indexed reply below the parked entry's resume point must still be fetched")
+	require.NoError(st.DB().QueryRow(st.Rebind(`
+		SELECT COUNT(*) FROM messages WHERE source_message_id = ?`), "C09:"+r2).Scan(&n))
+	assert.Equal(1, n)
+}
+
+func TestCatchUpFullDrainOverridesParkedTailSeed(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newFakeSlack(t)
+	f.users = []map[string]any{
+		{"id": "UME", "name": "me", "profile": map[string]any{"email": "me@example.com"}},
+	}
+	rootTS := ts(0)
+	f.convs = []*fakeConv{{
+		ID: "C90", Name: "debtor", Kind: "public", Members: []string{"UME"},
+		Msgs: []fakeMsg{
+			{TS: rootTS, User: "UME", Text: "unthreaded-era root",
+				Replies: []fakeMsg{
+					{TS: ts(100), ThreadTS: rootTS, User: "UME", Text: "old reply one"},
+					{TS: ts(101), ThreadTS: rootTS, User: "UME", Text: "old reply two"},
+				}},
+			{TS: ts(1), User: "UME", Text: "filler one"},
+			{TS: ts(2), User: "UME", Text: "filler two"},
+		},
+	}}
+	imp, opts := testImporter(t, f)
+	st := imp.store
+	f.failReplies[rootTS] = true
+
+	// A --no-threads era leaves the root's old replies as catch-up debt.
+	noThreads := opts
+	noThreads.NoThreads = true
+	_, err := imp.Import(context.Background(), noThreads)
+	require.NoError(err)
+
+	// A NEW reply lands; saturated threaded runs let the sweep record a
+	// TAIL entry (seeded just below the new reply) that the failing drain
+	// parks. The catch-up walk then re-encounters the root: its full-drain
+	// claim must override the parked mid-thread seed, or the old replies
+	// are skipped forever while the flag clears as paid.
+	r3 := tsFresh(0)
+	f.mu.Lock()
+	root := f.conv("C90").findRoot(rootTS)
+	root.Replies = append(root.Replies, fakeMsg{TS: r3, ThreadTS: rootTS, User: "UME", Text: "fresh reply"})
+	f.mu.Unlock()
+
+	limited := opts
+	limited.Limit = 1
+	for i := range 4 {
+		imp.now = func() time.Time { return time.Now().Add(time.Duration(5+i) * time.Minute) }
+		// Partial failures are expected while the drain fetch fails; every
+		// run still persists its state (FailSyncWithCheckpoint).
+		_, _ = imp.Import(context.Background(), limited)
+	}
+
+	f.mu.Lock()
+	delete(f.failReplies, rootTS)
+	f.mu.Unlock()
+	imp.now = func() time.Time { return time.Now().Add(10 * time.Minute) }
+	_, err = imp.Import(context.Background(), opts)
+	require.NoError(err)
+
+	var n int
+	for _, tsWant := range []string{ts(100), ts(101), r3} {
+		require.NoError(st.DB().QueryRow(st.Rebind(`
+			SELECT COUNT(*) FROM messages WHERE source_message_id = ?`), "C90:"+tsWant).Scan(&n))
+		assert.Equal(1, n, "reply %s must be archived after catch-up", tsWant)
+	}
+	src, err := st.GetOrCreateSource("slack", "T01:UME")
+	require.NoError(err)
+	cs := imp.loadResumeState(src.ID).EnsureConv("C90")
+	assert.False(cs.ThreadsPending, "catch-up debt is paid")
+	assert.Empty(cs.PendingThreads, "drain debt is paid")
+}

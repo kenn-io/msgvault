@@ -102,7 +102,9 @@ Edits and reaction changes after capture are ignored by default; run
 repair everything.
 Deleted messages simply
 disappear from Slack — your archived copy is kept (archive semantics; nothing
-is ever deleted locally).
+is ever deleted locally). This holds on every re-read path, `--full` and
+`--maintenance` included: a deleted thread root that Slack still serves as a
+tombstone row never overwrites the archived original.
 
 ### Files
 

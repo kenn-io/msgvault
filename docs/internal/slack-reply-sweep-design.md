@@ -181,6 +181,35 @@ for incremental sync. Consequences:
   spent budget parks the entry, not the boundary, and the next run's
   drain-first step resumes it at reply granularity. One fetcher, one
   budget discipline, one failure model for walks, catch-up, and sweep.
+- **Entry merges are decided against the coverage Floor, not progress.**
+  An entry claims "replies strictly after Floor" and has covered
+  (Floor, DrainedTo]. A tail discovery at/above the Floor is already
+  inside the claim and leaves the entry alone — overlapped sweep floors
+  re-discover the SAME hits every live pass, and re-seeding progress
+  from them would rewind the drain each run (a long tail would never
+  converge). A tail discovery BELOW the Floor is a late-indexed reply
+  surfacing beneath the claim while certification advances past it:
+  the entry widens down (Floor and resume point drop to the seed) —
+  this merge is that reply's last chance. A FULL record (walk or
+  catch-up, Floor = "") over an existing tail widens it to the root:
+  a parked mid-thread seed proves nothing below itself, and keeping it
+  would let the catch-up walk certify old replies it never fetched.
+  Legacy floor-less entries normalize to Floor = DrainedTo on load —
+  the misread that over-fetches instead of the one that skips.
+- **Tombstones never overwrite archived originals.** A deleted thread
+  root keeps a history row (`subtype: tombstone`, USLACKBOT,
+  reply_count kept — probed), so every re-read path serves it: the
+  window's clock-skew overlap, catch-up and gap re-walks, `--full`,
+  and `--maintenance`. The archive's contract is that deleted messages
+  stay archived, so processMessage skips a tombstone whose message
+  already exists — body, raw, and reactions all stand (the tombstone's
+  empty reaction set would otherwise wipe them) — and persists it only
+  as a placeholder for a never-archived root, giving orphaned replies
+  a resolvable thread link. The existence probe's store error aborts
+  the run like any other store failure: uncertainty must not read as
+  "missing" when that direction overwrites. This resolves the
+  previously-open repair-semantics tension in favor of archive
+  semantics (deletion is not a repairable source mutation; edits are).
 - **`--limit` bounds committed work via a resumable thread drain.** The
   window walks record each discovered root as durable debt on a
   per-conversation pending list — `(root ts, drained-to ts, remaining
@@ -361,6 +390,8 @@ type PendingThread struct {
     RootTS    string // thread root (already archived with its page)
     DrainedTo string // newest reply fetched; drain resumes oldest=DrainedTo
     Forecast  int    // remaining reply_count estimate (budget pacing only)
+    Floor     string // coverage claim: replies owed strictly after this
+                     // ("" = from the root; tail entries carry their seed)
 }
 ```
 
@@ -394,7 +425,7 @@ emptiness-never-clears.
 | Reply-ts anchor serves ONLY that reply (root ts required for the thread) | verified — refutes the original any-ts assumption; no oldest/limit/cursor variant expands it | sandbox (2026-07-22) |
 | Root anchor includes the parent even below the `oldest` bound | verified | sandbox |
 | Deleting a REPLY: replies(ts=deleted) → thread_not_found; root anchor serves survivors | verified — drain entries must anchor at roots | sandbox |
-| Deleting a ROOT: thread persists as a `tombstone` (USLACKBOT, reply_count kept); root anchor, history row, and search indexing of orphaned replies all survive | verified — walk-recorded debt is safe; the parent-skip guard protects archived originals from tombstone overwrite | sandbox |
+| Deleting a ROOT: thread persists as a `tombstone` (USLACKBOT, reply_count kept); root anchor, history row, and search indexing of orphaned replies all survive | verified — walk-recorded debt is safe; processMessage skips tombstones for archived messages on EVERY path (the parent-skip guard alone left overlap/catch-up/--full/--maintenance exposed) | sandbox |
 | >10k single-day behavior | unprobed (needs 3h seeded corpus); clamp+tripwire characterize it | — |
 
 ## Testing
@@ -411,6 +442,11 @@ emptiness-never-clears.
   excluded-then-re-included channel recovers its gap via the scoped
   sweep; `--limit` bounds thread replies and leaves the page resumable;
   tombstoned/omitted files keep their archived attachment rows;
+  tombstoned ROOTS never overwrite archived originals (overlap, --full,
+  --maintenance) and persist as placeholders when never archived;
+  a late-indexed reply below a parked entry's resume point merges the
+  entry's floor back down; a catch-up full-drain claim widens a parked
+  tail seed to the root;
   `add-slack` rejects tokens without `search:read`.
 - Maintenance gating: edits invisible to plain incremental runs, caught
   by `--maintenance`.
