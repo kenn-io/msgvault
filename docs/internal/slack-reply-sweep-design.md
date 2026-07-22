@@ -60,7 +60,14 @@ for incremental sync. Consequences:
   without this, the workspace sweep's floor is already past the gap and
   those replies are lost permanently. DMs/group DMs (non-`C` IDs, where
   the `in:` scope form is unprobed) recover through the blunter thread
-  catch-up walk (`ThreadsPending`) instead.
+  catch-up walk (`ThreadsPending`) instead. Initial `--no-threads` walks
+  flag that debt UNCONDITIONALLY: the flag means "this history was
+  walked without thread coverage", not "threads existed at walk time" —
+  a message can gain its first reply later, and for a never-swept
+  conversation the boundary adoption falls back to Cursor, which
+  threadless windows keep advancing past the reply. The catch-up walk
+  re-reads history at its own time, when such a message reports
+  reply_count, and recovers it.
 - **Boundaries are pins; floors overlap.** Stored boundaries (the
   watermark, the `SweptThrough` stamps, the per-conversation `Cursor`)
   are the run's own start instant — the pin — never a lagged or
@@ -131,8 +138,12 @@ for incremental sync. Consequences:
   checked). The one exemption is FTS: derived data with a repo-wide
   self-healing path (`FTSNeedsBackfill` + `rebuild-fts` exist precisely
   because every importer warn-and-continues on it), so it stays a
-  counter. Telemetry writes and checkpoint flushes stay best-effort —
-  their loss degrades observability or resume granularity, never data.
+  counter. Checkpoint writes are fatal too: the initial checkpoint is
+  load-bearing (newest-wins resume and the --full reset exist only in it
+  until the run completes), and a failing run persists its in-memory
+  final state via FailSyncWithCheckpoint so resume granularity is the
+  failure instant, not the last throttled flush. The sole remaining
+  best-effort write is recordItem telemetry.
 - **Guaranteed first unit.** A budget may end a run early, but it must
   never gate a phase's FIRST unit of durable progress — the invariant
   behind every convergence guarantee here. Violations recur as stalls:

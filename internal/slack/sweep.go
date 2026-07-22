@@ -234,7 +234,9 @@ func (imp *Importer) sweepRange(ctx context.Context, syncID int64, scope, floor 
 		}
 		nextDay := nextDayStart(day, loc)
 		advance(tsFormat(nextDay.UTC()))
-		imp.checkpoint(syncID, state, sum)
+		if err := imp.checkpoint(syncID, state, sum); err != nil {
+			return err
+		}
 		day = nextDay
 	}
 	return nil

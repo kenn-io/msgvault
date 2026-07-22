@@ -157,6 +157,10 @@ type fakeSlack struct {
 	rateLimit429s int
 	// historyCalls counts conversations.history requests.
 	historyCalls int
+	// onHistory, when set, runs synchronously at the top of each
+	// conversations.history request (test-side fault injection at a
+	// deterministic mid-run point).
+	onHistory func(channelID string)
 }
 
 func newFakeSlack(t *testing.T) *fakeSlack {
@@ -339,6 +343,9 @@ func (f *fakeSlack) handleHistory(w http.ResponseWriter, r *http.Request) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.historyCalls++
+	if f.onHistory != nil {
+		f.onHistory(r.FormValue("channel"))
+	}
 	c := f.conv(r.FormValue("channel"))
 	if c == nil {
 		f.replyErr(w, "channel_not_found")

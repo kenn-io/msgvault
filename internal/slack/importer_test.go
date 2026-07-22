@@ -870,6 +870,145 @@ func TestFileWithoutPermalinkKeepsPendingMarker(t *testing.T) {
 	require.Equal(1, sum.AttachmentsDownloaded)
 }
 
+func TestFirstReplyToUnthreadedMessageRecoveredByCatchUp(t *testing.T) {
+	require := require.New(t)
+	f := newFakeSlack(t)
+	f.users = []map[string]any{
+		{"id": "UME", "name": "me", "profile": map[string]any{"email": "me@example.com"}},
+	}
+	// A channel with NO threads at all when the --no-threads backfill runs.
+	f.convs = []*fakeConv{{
+		ID: "C60", Name: "quiet", Kind: "public", Members: []string{"UME"},
+		Msgs: []fakeMsg{
+			{TS: ts(0), User: "UME", Text: "plain old message"},
+			{TS: ts(1), User: "UME", Text: "another plain one"},
+		},
+	}}
+	imp, opts := testImporter(t, f)
+	st := imp.store
+
+	noThreads := opts
+	noThreads.NoThreads = true
+	_, err := imp.Import(context.Background(), noThreads)
+	require.NoError(err)
+
+	// The old message gains its FIRST reply, and further --no-threads
+	// windows advance Cursor well past it. The conversation has never been
+	// swept, so the first threaded run's boundary adoption falls back to
+	// Cursor — the reply sits below every future sweep floor. Only an
+	// unconditionally-flagged catch-up walk (which re-reads history at ITS
+	// OWN time, when the message reports reply_count) can recover it.
+	firstReply := tsFresh(0)
+	f.mu.Lock()
+	f.conv("C60").findRoot(ts(0)).Replies = []fakeMsg{{TS: firstReply, ThreadTS: ts(0), User: "UME", Text: "first ever reply"}}
+	f.mu.Unlock()
+	imp.now = func() time.Time { return time.Now().Add(20 * time.Minute) }
+	_, err = imp.Import(context.Background(), noThreads)
+	require.NoError(err)
+
+	imp.now = func() time.Time { return time.Now().Add(21 * time.Minute) }
+	_, err = imp.Import(context.Background(), opts)
+	require.NoError(err)
+
+	var linked int
+	require.NoError(st.DB().QueryRow(st.Rebind(`
+		SELECT COUNT(*) FROM messages child
+		JOIN messages parent ON parent.id = child.reply_to_message_id
+		WHERE child.source_message_id = ? AND parent.source_message_id = ?`),
+		"C60:"+firstReply, "C60:"+ts(0)).Scan(&linked))
+	require.Equal(1, linked, "a first reply to a message that was unthreaded during a --no-threads backfill must be recovered")
+}
+
+func TestFailedRunPersistsFinalState(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := testWorkspace(t)
+	imp, opts := testImporter(t, f)
+	st := imp.store
+
+	sum, err := imp.Import(context.Background(), opts)
+	require.NoError(err)
+	before := imp.loadResumeState(sum.SourceID)
+
+	// Fresh work lands in TWO conversations; the store breaks between them
+	// (the fake drops the reactions table just before serving the LAST
+	// conversation's history, so the first conversation's window completes
+	// and the last one's persist fails fatally). With throttled flushes
+	// suppressed, the ONLY record of the first conversation's completed
+	// window is the failure-path checkpoint — a plain FailSync would
+	// resume from the pre-run baseline and silently discard that progress.
+	checkpointMinInterval = time.Hour
+	okMsg, badMsg := tsFresh(0), tsFresh(1)
+	f.mu.Lock()
+	f.conv("C01").Msgs = append(f.conv("C01").Msgs, fakeMsg{TS: okMsg, User: "UALICE", Text: "fine"})
+	f.conv("D01").Msgs = append(f.conv("D01").Msgs, fakeMsg{TS: badMsg, User: "UALICE", Text: "plain"})
+	f.onHistory = func(channelID string) {
+		if channelID == "D01" {
+			_, _ = st.DB().Exec(`DROP TABLE reactions`)
+		}
+	}
+	f.mu.Unlock()
+
+	imp.now = func() time.Time { return time.Now().Add(time.Minute) }
+	_, err = imp.Import(context.Background(), opts)
+	require.Error(err, "the reactions write failure is fatal")
+
+	after := imp.loadResumeState(sum.SourceID)
+	assert.True(tsLess(before.EnsureConv("C01").Cursor, after.EnsureConv("C01").Cursor),
+		"the failure-path checkpoint must persist the completed first conversation's progress")
+
+	f.mu.Lock()
+	f.onHistory = nil
+	f.mu.Unlock()
+	require.NoError(st.InitSchema())
+	_, err = imp.Import(context.Background(), opts)
+	require.NoError(err)
+	var total, distinct int
+	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages WHERE message_type='slack'`).Scan(&total))
+	require.NoError(st.DB().QueryRow(`SELECT COUNT(DISTINCT source_message_id) FROM messages WHERE message_type='slack'`).Scan(&distinct))
+	require.Equal(distinct, total)
+}
+
+func TestInitialWalkPinPersistsAcrossResumedRuns(t *testing.T) {
+	require := require.New(t)
+	f, rootTS := oldThreadWorkspace(t)
+	imp, opts := testImporter(t, f)
+	st := imp.store
+
+	// The initial walk spans several limited runs. Its pin must be the
+	// FIRST run's instant, persisted across resumes: on completion Cursor
+	// becomes that pin, and the sweep-boundary adoption stamps it — a pin
+	// refreshed per resume would stamp a later instant, and a reply
+	// created mid-backfill to an already-walked root would land below the
+	// adopted floor forever.
+	limited := opts
+	limited.Limit = 2
+	_, err := imp.Import(context.Background(), limited)
+	require.NoError(err)
+
+	midBackfillReply := tsFresh(0)
+	f.mu.Lock()
+	root := f.conv("C09").findRoot(rootTS)
+	root.Replies = append(root.Replies, fakeMsg{TS: midBackfillReply, ThreadTS: rootTS, User: "UME", Text: "mid-backfill reply"})
+	f.mu.Unlock()
+
+	// Later resumes run 20+ minutes on: a refreshed pin would place the
+	// adopted boundary (minus the overlap margin) above the reply.
+	imp.now = func() time.Time { return time.Now().Add(20 * time.Minute) }
+	for range 8 {
+		_, err = imp.Import(context.Background(), limited)
+		require.NoError(err)
+	}
+	imp.now = func() time.Time { return time.Now().Add(21 * time.Minute) }
+	_, err = imp.Import(context.Background(), opts)
+	require.NoError(err)
+
+	var n int
+	require.NoError(st.DB().QueryRow(st.Rebind(
+		`SELECT COUNT(*) FROM messages WHERE source_message_id = ?`), "C09:"+midBackfillReply).Scan(&n))
+	require.Equal(1, n, "a reply created mid-backfill must stay above the adopted sweep boundary (original pin)")
+}
+
 func TestStoreWriteFailureHoldsCursorAndResumes(t *testing.T) {
 	require := require.New(t)
 	f := testWorkspace(t)

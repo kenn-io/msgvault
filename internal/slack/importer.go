@@ -172,16 +172,23 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (*ImportSum
 		return nil, err
 	}
 	// Failures below must ASSIGN to err (never shadow it with :=) so this
-	// defer records them on the run.
+	// defer records them on the run — WITH the in-memory final state, so
+	// resume granularity is the failure instant, not the last throttled
+	// flush (best-effort on the way down: the failure may itself be a
+	// checkpoint write).
 	defer func() {
 		if err != nil {
-			_ = imp.store.FailSync(syncID, err.Error())
+			_ = imp.store.FailSyncWithCheckpoint(syncID, err.Error(), imp.failCheckpoint(state, sum))
 		}
 	}()
 
 	// Persist the merged resume state immediately: if this run fails before
 	// its first checkpoint, the next run must still find the prior progress.
-	imp.checkpointNow(syncID, state, sum)
+	// Load-bearing for newest-wins resume and the --full reset — fatal on
+	// failure, never silent.
+	if err = imp.checkpointNow(syncID, state, sum); err != nil {
+		return sum, err
+	}
 
 	// Identity resolution is load-bearing for cross-archive dedup: without
 	// the member cache every sender would resolve as a bare ID, splitting
@@ -222,7 +229,9 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (*ImportSum
 				idx+1, total, conversationTitle(c, imp.res.displayName), sum.MessagesProcessed-before))
 		}
 		// Flush checkpoint so an interrupted run resumes from this point.
-		imp.checkpoint(syncID, state, sum)
+		if err = imp.checkpoint(syncID, state, sum); err != nil {
+			return sum, err
+		}
 	}
 
 	// Reply sweep: discovers thread replies created since the watermark and
@@ -234,7 +243,9 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (*ImportSum
 		if err = imp.sweepReplies(ctx, syncID, targets, state, sum); err != nil {
 			return sum, err
 		}
-		imp.checkpoint(syncID, state, sum)
+		if err = imp.checkpoint(syncID, state, sum); err != nil {
+			return sum, err
+		}
 	}
 
 	if err = imp.store.RecomputeConversationStats(src.ID); err != nil {
@@ -253,7 +264,9 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (*ImportSum
 	}
 	// Mid-run checkpoints are throttled, so persist the final counters before
 	// completing (CompleteSync only writes status and cursor).
-	imp.checkpointNow(syncID, state, sum)
+	if err = imp.checkpointNow(syncID, state, sum); err != nil {
+		return sum, err
+	}
 	if sum.FetchErrors > 0 {
 		// Fetch failures are isolated so healthy conversations still sync,
 		// but the run must remain failed and caller-visible; the checkpoint
@@ -462,19 +475,21 @@ func (imp *Importer) walkWindow(ctx context.Context, cc *convScope, state *SyncS
 		// reply_count forecast against the budget (see committed), so a run
 		// commits to the reply work even when the drain is deferred.
 		if cc.opts.NoThreads {
-			// Initial-walk pages consumed threadless leave their roots
-			// un-fetched, and the sweep floor postdates those replies: flag
-			// the debt for the catch-up walk. Incremental windows need no
-			// flag — their roots' replies all postdate the (stalled, since
-			// sweeps skip --no-threads runs) watermark, so the next threaded
-			// sweep owns them by creation time.
+			// An initial walk consumed threadless flags catch-up debt
+			// UNCONDITIONALLY — the flag means "this history was walked
+			// without thread coverage", not "threads existed at walk time".
+			// A message with no replies today can gain its first reply
+			// later, and for a never-swept conversation the sweep-boundary
+			// adoption falls back to Cursor, which threadless windows keep
+			// advancing — the reply would land below every future floor.
+			// The catch-up walk re-reads history at ITS OWN time, when such
+			// a message reports reply_count and is recovered. Incremental
+			// windows still need no flag: their roots' replies all postdate
+			// the (stalled, since sweeps skip --no-threads runs) sweep
+			// boundaries, so the next threaded sweep owns them by creation
+			// time.
 			if initial {
-				for i := range page.Messages {
-					if page.Messages[i].IsThreadRoot() {
-						cs.ThreadsPending = true
-						break
-					}
-				}
+				cs.ThreadsPending = true
 			}
 		} else {
 			for i := range page.Messages {
@@ -509,7 +524,9 @@ func (imp *Importer) walkWindow(ctx context.Context, cc *convScope, state *SyncS
 		}
 		pages++
 		if pages%checkpointPageInterval == 0 {
-			imp.checkpoint(cc.syncID, state, sum)
+			if err := imp.checkpoint(cc.syncID, state, sum); err != nil {
+				return err
+			}
 		}
 	}
 }
@@ -711,7 +728,9 @@ func (imp *Importer) threadCatchUp(ctx context.Context, cc *convScope, state *Sy
 		if len(cs.PendingThreads) > 0 {
 			return nil // one-page invariant: pay before paging further
 		}
-		imp.checkpoint(cc.syncID, state, sum)
+		if err := imp.checkpoint(cc.syncID, state, sum); err != nil {
+			return err
+		}
 	}
 }
 
@@ -913,27 +932,49 @@ func (imp *Importer) persistReactions(messageID int64, m *Message) error {
 
 // checkpoint persists the sync state mid-run so an interrupted run resumes.
 // Flushes are throttled (see checkpointMinInterval).
-func (imp *Importer) checkpoint(syncID int64, state *SyncState, sum *ImportSummary) {
+func (imp *Importer) checkpoint(syncID int64, state *SyncState, sum *ImportSummary) error {
 	if time.Since(imp.lastCheckpoint) < checkpointMinInterval {
-		return
+		return nil
 	}
-	imp.checkpointNow(syncID, state, sum)
+	return imp.checkpointNow(syncID, state, sum)
 }
 
 // checkpointNow persists the sync state unconditionally: for the initial
 // resume-state write and the final counters, which must never be skipped.
-func (imp *Importer) checkpointNow(syncID int64, state *SyncState, sum *ImportSummary) {
+// Failures are FATAL like every store write (failure taxonomy): the initial
+// checkpoint is load-bearing — newest-wins resume and the --full reset both
+// exist only in it until the run completes — and a silently lost checkpoint
+// would let an interrupted repair evaporate with no error ever surfaced.
+func (imp *Importer) checkpointNow(syncID int64, state *SyncState, sum *ImportSummary) error {
 	blob, err := state.Marshal()
 	if err != nil {
-		return
+		return fmt.Errorf("marshal sync state: %w", err)
 	}
-	if imp.store.UpdateSyncCheckpoint(syncID, &store.Checkpoint{
+	if err := imp.store.UpdateSyncCheckpoint(syncID, &store.Checkpoint{
 		PageToken:         blob,
 		MessagesProcessed: int64(sum.MessagesProcessed),
 		MessagesAdded:     int64(sum.MessagesAdded),
 		ErrorsCount:       int64(sum.Errors),
-	}) == nil {
-		imp.lastCheckpoint = time.Now()
+	}); err != nil {
+		return fmt.Errorf("write sync checkpoint: %w", err)
+	}
+	imp.lastCheckpoint = time.Now()
+	return nil
+}
+
+// failCheckpoint builds the checkpoint persisted alongside a run failure,
+// so resume granularity is the failure instant, not the last throttled
+// flush. Nil when the state cannot marshal (FailSync alone then).
+func (imp *Importer) failCheckpoint(state *SyncState, sum *ImportSummary) *store.Checkpoint {
+	blob, err := state.Marshal()
+	if err != nil {
+		return nil
+	}
+	return &store.Checkpoint{
+		PageToken:         blob,
+		MessagesProcessed: int64(sum.MessagesProcessed),
+		MessagesAdded:     int64(sum.MessagesAdded),
+		ErrorsCount:       int64(sum.Errors),
 	}
 }
 
@@ -982,10 +1023,12 @@ func (imp *Importer) BackfillMedia(ctx context.Context, opts ImportOptions) (*Im
 	}
 	defer func() {
 		if err != nil {
-			_ = imp.store.FailSync(syncID, err.Error())
+			_ = imp.store.FailSyncWithCheckpoint(syncID, err.Error(), imp.failCheckpoint(state, sum))
 		}
 	}()
-	imp.checkpointNow(syncID, state, sum)
+	if err = imp.checkpointNow(syncID, state, sum); err != nil {
+		return sum, err
+	}
 
 	pending, err := imp.store.ListSlackPendingAttachmentMessages(src.ID)
 	if err != nil {
@@ -1022,7 +1065,9 @@ func (imp *Importer) BackfillMedia(ctx context.Context, opts ImportOptions) (*Im
 		}
 		sum.MessagesProcessed++
 	}
-	imp.checkpointNow(syncID, state, sum)
+	if err = imp.checkpointNow(syncID, state, sum); err != nil {
+		return sum, err
+	}
 	if invalidRaw > 0 {
 		sum.Duration = imp.now().Sub(start)
 		err = fmt.Errorf("partial Slack media backfill: %d message(s) with invalid archived raw JSON (run sync-slack --full to repair)", invalidRaw)

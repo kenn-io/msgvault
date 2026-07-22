@@ -36,9 +36,10 @@ type ConvState struct {
 	BackfillCursor string `json:"backfill_cursor,omitempty"`
 	BackfillLatest string `json:"backfill_latest,omitempty"`
 	Done           bool   `json:"done,omitempty"`
-	// ThreadsPending marks conversation-level thread debt: an initial
-	// backfill that consumed pages under --no-threads, or a non-channel
-	// conversation recovering a sweep gap. The thread catch-up walk pays it
+	// ThreadsPending marks conversation-level thread debt: any initial
+	// walk under --no-threads (unconditionally — a message can become a
+	// thread root after the walk), or a non-channel conversation
+	// recovering a sweep gap. The thread catch-up walk pays it
 	// and clears the flag when the walk finishes; CatchUpCursor/
 	// CatchUpLatest checkpoint a partially-walked catch-up (the page cursor
 	// to resume from and the pin the walk was started under — page cursors
