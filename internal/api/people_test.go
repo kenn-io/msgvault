@@ -24,6 +24,7 @@ type peopleAPIEngine struct {
 	peopleRequest        query.PersonSearchRequest
 	peopleResult         *query.PersonSearchResponse
 	personSummaryRequest query.ExploreRequest
+	personSummaryMembers []int64
 	personSummaryResult  *query.PersonSearchResponse
 	domainRequest        query.DomainSearchRequest
 	domainResult         *query.DomainSearchResponse
@@ -47,8 +48,9 @@ func (e *peopleAPIEngine) GetPerson(_ context.Context, _ int64, _ query.Context,
 	return e.person, e.peopleErr
 }
 
-func (e *peopleAPIEngine) GetPersonSummary(_ context.Context, _ int64, request query.ExploreRequest) (*query.PersonSearchResponse, error) {
+func (e *peopleAPIEngine) GetPersonSummary(_ context.Context, _ int64, request query.ExploreRequest, clusterMemberIDs []int64) (*query.PersonSearchResponse, error) {
 	e.personSummaryRequest = request
+	e.personSummaryMembers = clusterMemberIDs
 	return e.personSummaryResult, e.peopleErr
 }
 
@@ -392,6 +394,53 @@ func TestPersonTimelineWidensScopeToIdentityCluster(t *testing.T) {
 
 	timeline(solo)
 	assertions.Equal([]int64{solo}, engine.timeline.Context.ParticipantIDs,
+		"an unlinked participant stays scoped to its own ID")
+}
+
+// TestPersonContextSummaryWidensScopeToIdentityCluster covers identity
+// consistency for the contextual summary: the handler must resolve cluster
+// membership from the store and forward it to the query layer, so a predicate
+// matching only alias-owned activity still yields the canonical identity's
+// metrics — matching the person detail, timeline, and files search. An
+// unlinked participant stays scoped to its own ID.
+func TestPersonContextSummaryWidensScopeToIdentityCluster(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	st := testutil.NewTestStore(t)
+	primary, err := st.EnsureParticipant("primary@example.com", "Primary", "example.com")
+	requirements.NoError(err)
+	secondary, err := st.EnsureParticipant("secondary@example.com", "Secondary", "example.com")
+	requirements.NoError(err)
+	solo, err := st.EnsureParticipant("solo@example.com", "Solo", "example.com")
+	requirements.NoError(err)
+	_, err = st.LinkParticipants(primary, secondary)
+	requirements.NoError(err)
+
+	engine := &peopleAPIEngine{MockEngine: &querytest.MockEngine{},
+		personSummaryResult: &query.PersonSearchResponse{Rows: []query.PersonSummary{{ID: primary, DisplayLabel: "Primary", ActivityCount: 1}}, CacheRevision: "cache-person"}}
+	srv := NewServerWithOptions(ServerOptions{
+		Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}},
+		Store:  st, Engine: engine, Logger: testLogger(),
+	})
+	summary := func(participantID int64) {
+		request := httptest.NewRequest(http.MethodPost,
+			fmt.Sprintf("/api/v1/people/%d/summary", participantID), bytes.NewBufferString(`{}`))
+		request.Header.Set("Content-Type", "application/json")
+		response := httptest.NewRecorder()
+		srv.Router().ServeHTTP(response, request)
+		requirements.Equal(http.StatusOK, response.Code, response.Body.String())
+	}
+
+	summary(primary)
+	assertions.ElementsMatch([]int64{primary, secondary}, engine.personSummaryMembers,
+		"a linked participant's summary must scope to every cluster member so alias-owned activity counts")
+
+	summary(secondary)
+	assertions.ElementsMatch([]int64{primary, secondary}, engine.personSummaryMembers,
+		"any cluster member resolves the same scope")
+
+	summary(solo)
+	assertions.Nil(engine.personSummaryMembers,
 		"an unlinked participant stays scoped to its own ID")
 }
 

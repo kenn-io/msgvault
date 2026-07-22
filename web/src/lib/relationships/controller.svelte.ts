@@ -256,14 +256,28 @@ export class RelationshipsController {
     generation: number,
     signal: AbortSignal
   ): Promise<void> {
+    const context = contextPredicate(predicate);
     try {
-      const [personResponse] = await Promise.all([
+      // The unfiltered GET stays the source of cluster metadata (identifiers,
+      // members, edges) for the link/unlink UI; when filters are active the
+      // contextual /summary carries the header metrics so they agree with the
+      // filtered timeline and files below instead of the whole archive.
+      const [personResponse, , summaryResponse] = await Promise.all([
         this.client.GET('/api/v1/people/{id}', { params: { path: { id } }, signal }),
-        this.fetchClusterPage(id, predicate.filters ?? undefined, generation, undefined, signal)
+        this.fetchClusterPage(id, predicate.filters ?? undefined, generation, undefined, signal),
+        hasActiveFilters(context)
+          ? this.client.POST('/api/v1/people/{id}/summary', { params: { path: { id } }, body: context, signal })
+          : undefined
       ]);
       if (signal.aborted || generation !== this.detailGeneration) return;
-      if (personResponse.data) this.detail = personResponse.data;
-      else this.timelineError ||= errorMessage(personResponse.error, personResponse.response.status);
+      const summary = summaryResponse?.data?.summary;
+      const base = personResponse.data;
+      if (base) this.detail = summary ? mergePersonDetail(base, summary) : base;
+      else if (summary) this.detail = summary;
+      if (!base) this.timelineError ||= errorMessage(personResponse.error, personResponse.response.status);
+      if (summaryResponse && !summaryResponse.data) {
+        this.timelineError ||= errorMessage(summaryResponse.error, summaryResponse.response.status);
+      }
     } catch (cause: unknown) {
       if (!signal.aborted && generation === this.detailGeneration) this.timelineError ||= errorMessage(cause, 0);
     }
@@ -275,14 +289,24 @@ export class RelationshipsController {
     generation: number,
     signal: AbortSignal
   ): Promise<void> {
+    const context = contextPredicate(predicate);
     try {
-      const [detailResponse] = await Promise.all([
+      const [detailResponse, , summaryResponse] = await Promise.all([
         this.client.GET('/api/v1/domains/{domain}', { params: { path: { domain } }, signal }),
-        this.fetchDomainPage(domain, contextPredicate(predicate), generation, undefined, signal)
+        this.fetchDomainPage(domain, context, generation, undefined, signal),
+        hasActiveFilters(context)
+          ? this.client.POST('/api/v1/domains/{domain}/summary', { params: { path: { domain } }, body: context, signal })
+          : undefined
       ]);
       if (signal.aborted || generation !== this.detailGeneration) return;
-      if (detailResponse.data) this.detail = detailResponse.data;
-      else this.timelineError ||= errorMessage(detailResponse.error, detailResponse.response.status);
+      const summary = summaryResponse?.data?.summary;
+      const base = detailResponse.data;
+      if (base) this.detail = summary ? { ...base, ...summary } : base;
+      else if (summary) this.detail = summary;
+      if (!base) this.timelineError ||= errorMessage(detailResponse.error, detailResponse.response.status);
+      if (summaryResponse && !summaryResponse.data) {
+        this.timelineError ||= errorMessage(summaryResponse.error, summaryResponse.response.status);
+      }
     } catch (cause: unknown) {
       if (!signal.aborted && generation === this.detailGeneration) this.timelineError ||= errorMessage(cause, 0);
     }
@@ -478,6 +502,26 @@ function contextPredicate(predicate: ExplorePredicate): ExplorePredicate {
     query: _query, search_mode: _searchMode, ...context
   } = predicate;
   return { ...context, presentation: 'table' };
+}
+
+/** True when the workspace context carries filters that narrow the archive —
+ * the only predicate fields (after contextPredicate stripping) that change
+ * what the timeline and files show, and therefore the only case where the
+ * unfiltered GET header would contradict the filtered body. */
+function hasActiveFilters(context: ExplorePredicate): boolean {
+  return (context.filters ?? []).length > 0;
+}
+
+/** Contextual summary metrics win; the unfiltered GET remains the fallback
+ * source of cluster metadata (identifiers, member/edge graph) that the
+ * link/unlink UI needs and the summary row may omit. */
+function mergePersonDetail(base: PersonSummary, summary: PersonSummary): PersonSummary {
+  return {
+    ...base,
+    ...summary,
+    cluster: summary.cluster ?? base.cluster,
+    identifiers: summary.identifiers ?? base.identifiers
+  };
 }
 
 // The generated summary types carry `[key: string]: unknown` index

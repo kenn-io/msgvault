@@ -309,7 +309,10 @@ func (s *Server) handlePersonContextSummary(w http.ResponseWriter, r *http.Reque
 		writeExploreUnavailable(w, query.CacheAbsent)
 		return
 	}
-	result, err := analyzer.GetPersonSummary(r.Context(), id, explore)
+	// Scope the summary to the whole identity cluster so alias-owned
+	// activity counts, matching the person detail, timeline, and files
+	// search for the same identity.
+	result, err := analyzer.GetPersonSummary(r.Context(), id, explore, s.clusterMemberIDs(id))
 	if err != nil {
 		s.writeExploreError(w, err)
 		return

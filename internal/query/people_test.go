@@ -341,7 +341,7 @@ func TestContextualPersonAndDomainSummariesUseTheExactCanonicalPopulation(t *tes
 		Mode: SearchFullText, Query: "Included", CandidateMessageIDs: []int64{mailMessage}, LexicalIndexRevision: "fts5:context",
 	}}
 
-	people, err := engine.GetPersonSummary(context.Background(), person, explore)
+	people, err := engine.GetPersonSummary(context.Background(), person, explore, nil)
 	requirements.NoError(err)
 	requirements.Len(people.Rows, 1)
 	assertions.Equal(int64(1), people.Rows[0].ActivityCount)
@@ -358,6 +358,59 @@ func TestContextualPersonAndDomainSummariesUseTheExactCanonicalPopulation(t *tes
 	assertions.Equal(firstAt, domains.Rows[0].FirstAt)
 	assertions.Equal([]SourceCount{{SourceType: "gmail", Count: 1}}, domains.Rows[0].SourceCounts)
 	assertions.Equal(SearchProvenance{LexicalIndexRevision: "fts5:context"}, domains.SearchProvenance)
+}
+
+// TestGetPersonSummaryWithClusterMemberIDsCountsAliasOnlyActivity pins the
+// cluster-aware contextual summary: when the analytical predicate matches
+// activity owned ONLY by a linked alias, the summary for the canonical ID
+// must still report that activity — with the cluster best-name label and
+// cluster-wide identifiers — instead of returning no rows (a false 404).
+// Without cluster member IDs the summary stays scoped to the requested
+// participant alone, matching pre-cluster-aware behavior.
+func TestGetPersonSummaryWithClusterMemberIDsCountsAliasOnlyActivity(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	b := NewTestDataBuilder(t)
+	mailSource := b.AddSourceWithType("archive-a@example.com", "gmail")
+	chatSource := b.AddSourceWithType("archive-b@example.com", "whatsapp")
+	alicePrimary := b.AddParticipant("alice@example.com", "example.com", "Alice Example")
+	aliceAlias := b.AddParticipant("alice@other.example", "other.example", "")
+	b.AddParticipantIdentifier(alicePrimary, "email", "alice@example.com", "alice@example.com", true)
+	b.AddParticipantIdentifier(aliceAlias, "email", "alice@other.example", "alice@other.example", true)
+
+	start := time.Date(2026, 7, 10, 9, 0, 0, 0, time.UTC)
+	primaryChat := b.AddMessage(MessageOpt{SourceID: chatSource, ConversationID: 501, SentAt: start, MessageType: "whatsapp", ConversationType: "direct_chat"})
+	b.AddFrom(primaryChat, alicePrimary, "Alice Example")
+	b.AddConversationParticipant(501, alicePrimary)
+	// The predicate (mail source only) matches activity owned ONLY by the
+	// linked alias, in a different source than the primary's chat message.
+	aliasMail := b.AddMessage(MessageOpt{SourceID: mailSource, ConversationID: 502, Subject: "From alias", SentAt: start.Add(time.Hour)})
+	b.AddFrom(aliasMail, aliceAlias, "")
+	b.AddAttachmentWithMIME(902, aliasMail, 100, "alias.pdf", "application/pdf")
+	engine := b.BuildEngine()
+	ctx := context.Background()
+	explore := ExploreRequest{Context: Context{SourceIDs: []int64{mailSource}}}
+
+	clustered, err := engine.GetPersonSummary(ctx, alicePrimary, explore, []int64{alicePrimary, aliceAlias})
+	requirements.NoError(err)
+	requirements.Len(clustered.Rows, 1, "alias-only activity must keep the canonical identity present in the context")
+	row := clustered.Rows[0]
+	assertions.Equal(alicePrimary, row.ID)
+	assertions.Equal("Alice Example", row.DisplayLabel, "the best name across the cluster labels the summary")
+	assertions.False(row.PartialLabel)
+	assertions.Equal(int64(1), row.ActivityCount, "the alias's in-context entry counts toward the canonical identity")
+	assertions.Equal(int64(1), row.FileCount)
+	assertions.Equal(start.Add(time.Hour), row.FirstAt)
+	assertions.Equal(start.Add(time.Hour), row.LastAt)
+	assertions.Equal([]SourceCount{{SourceType: "gmail", Count: 1}}, row.SourceCounts)
+	assertions.Equal([]PersonIdentifier{
+		{Type: "email", Value: "alice@example.com", DisplayValue: "alice@example.com", IsPrimary: true, Provenance: "participant_identifiers", ParticipantID: alicePrimary},
+		{Type: "email", Value: "alice@other.example", DisplayValue: "alice@other.example", IsPrimary: true, Provenance: "participant_identifiers", ParticipantID: aliceAlias},
+	}, row.Identifiers, "identifiers span every cluster member, as the person detail does")
+
+	solo, err := engine.GetPersonSummary(ctx, alicePrimary, explore, nil)
+	requirements.NoError(err)
+	assertions.Empty(solo.Rows, "without cluster member IDs the summary stays scoped to the requested participant")
 }
 
 func TestPeopleAndDomainSearchRejectUnboundedOrUnknownSorts(t *testing.T) {

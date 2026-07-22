@@ -131,11 +131,16 @@ func (e *DuckDBEngine) GetPerson(ctx context.Context, id int64, analyticalContex
 
 // GetPersonSummary returns contextual metrics for one durable identity. Unlike
 // GetPerson, its population is the exact resolved canonical Explore predicate.
-func (e *DuckDBEngine) GetPersonSummary(ctx context.Context, id int64, explore ExploreRequest) (*PersonSearchResponse, error) {
+// clusterMemberIDs widens the summary across a linked identity cluster exactly
+// as GetPerson documents: metrics aggregate activity owned by any member, the
+// label follows the shared cluster best-name policy, and identifiers span every
+// member — so a predicate matching only alias-owned activity still reports it
+// instead of returning an empty (not-found) summary.
+func (e *DuckDBEngine) GetPersonSummary(ctx context.Context, id int64, explore ExploreRequest, clusterMemberIDs []int64) (*PersonSearchResponse, error) {
 	if id < 1 {
 		return nil, fmt.Errorf("%w: person ID must be positive", ErrInvalidExploreRequest)
 	}
-	return e.searchPeople(ctx, PersonSearchRequest{Explore: explore, Page: PageSpec{Limit: 1}}, &id, nil)
+	return e.searchPeople(ctx, PersonSearchRequest{Explore: explore, Page: PageSpec{Limit: 1}}, &id, clusterMemberIDs)
 }
 
 func (e *DuckDBEngine) searchPeople(

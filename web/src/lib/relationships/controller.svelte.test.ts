@@ -371,11 +371,17 @@ describe('RelationshipsController text-query consistency', () => {
         return Response.json({ rows: [], total_count: 0, cache_revision: 'cache-rel', search_provenance: {} });
       }
       if (path === '/api/v1/people/12' && request.method === 'GET') return Response.json(person(12));
+      if (path === '/api/v1/people/12/summary') {
+        return Response.json({ summary: person(12), cache_revision: 'cache-rel', search_provenance: {} });
+      }
       if (path === '/api/v1/relationships/12/timeline') {
         return Response.json({ canonical_id: 12, identity_revision: 1, rows: [], total_count: 0, cache_revision: 'cache-rel' });
       }
       if (path === '/api/v1/domains/example.com' && request.method === 'GET') {
         return Response.json(domainSummary('example.com'));
+      }
+      if (path === '/api/v1/domains/example.com/summary') {
+        return Response.json({ summary: domainSummary('example.com'), cache_revision: 'cache-rel', search_provenance: {} });
       }
       if (path === '/api/v1/domains/example.com/timeline') {
         return Response.json({ rows: [], total_count: 0, cache_revision: 'cache-rel', search_provenance: {} });
@@ -395,8 +401,10 @@ describe('RelationshipsController text-query consistency', () => {
 
     const posts = requests.filter((request) => request.method === 'POST');
     expect(posts.map(pathOf).sort()).toEqual([
+      '/api/v1/domains/example.com/summary',
       '/api/v1/domains/example.com/timeline',
       '/api/v1/domains/search',
+      '/api/v1/people/12/summary',
       '/api/v1/people/search',
       '/api/v1/relationships',
       '/api/v1/relationships/12/timeline'
@@ -425,6 +433,9 @@ describe('RelationshipsController.openTarget', () => {
       requests.push(request);
       const path = pathOf(request);
       if (path === '/api/v1/people/12' && request.method === 'GET') return Response.json(person(12));
+      if (path === '/api/v1/people/12/summary') {
+        return Response.json({ summary: person(12), cache_revision: 'cache-rel', search_provenance: {} });
+      }
       if (path === '/api/v1/relationships/12/timeline') {
         return Response.json({
           canonical_id: 12, identity_revision: 3, rows: [timelineRow('t1')], total_count: 1, cache_revision: 'cache-rel'
@@ -523,6 +534,178 @@ describe('RelationshipsController.openTarget', () => {
     expect(controller.detail).toEqual(person(2));
     expect(controller.canonicalID).toBe(2);
     expect(controller.timelineRows).toEqual([timelineRow('t2')]);
+  });
+});
+
+describe('RelationshipsController filtered header metrics', () => {
+  const sourceFilter = { dimension: 'source' as const, values: ['1'] };
+  const filtered: ExplorePredicate = { filters: [sourceFilter], presentation: 'table' };
+
+  function clusterPerson(id: number): PersonSummary {
+    return {
+      ...person(id),
+      activity_count: 500,
+      file_count: 90,
+      first_at: '2010-01-01T00:00:00Z',
+      identifiers: [
+        { participant_id: id, type: 'email', value: `p${id}@example.com`, is_primary: true, provenance: 'message_headers' }
+      ],
+      cluster: { canonical_id: id, member_ids: [id, id + 100], edges: [{ participant_a: id, participant_b: id + 100 }] }
+    };
+  }
+
+  function filteredPersonSummary(id: number): PersonSummary {
+    return { ...person(id), activity_count: 7, file_count: 2, first_at: '2026-01-05T00:00:00Z', identifiers: null };
+  }
+
+  it('shows the contextual person summary metrics, keeping cluster metadata from the unfiltered GET', async () => {
+    const requests: Request[] = [];
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      requests.push(request);
+      const path = pathOf(request);
+      if (path === '/api/v1/people/12' && request.method === 'GET') return Response.json(clusterPerson(12));
+      if (path === '/api/v1/people/12/summary') {
+        return Response.json({ summary: filteredPersonSummary(12), cache_revision: 'cache-rel', search_provenance: {} });
+      }
+      if (path === '/api/v1/relationships/12/timeline') {
+        return Response.json({ canonical_id: 12, identity_revision: 1, rows: [], total_count: 0, cache_revision: 'cache-rel' });
+      }
+      throw new Error(`unexpected path ${path}`);
+    });
+    const controller = new RelationshipsController(createAPIClient(fetchFn), () => 'UTC');
+
+    await controller.openTarget('cluster:12', filtered);
+
+    const detail = controller.detail as PersonSummary;
+    expect(detail.activity_count).toBe(7);
+    expect(detail.file_count).toBe(2);
+    expect(detail.first_at).toBe('2026-01-05T00:00:00Z');
+    expect(detail.cluster).toEqual(clusterPerson(12).cluster);
+    expect(detail.identifiers).toEqual(clusterPerson(12).identifiers);
+    expect(controller.timelineError).toBeNull();
+    const summaryRequest = requests.find((request) => pathOf(request) === '/api/v1/people/12/summary');
+    await expect(summaryRequest!.clone().json()).resolves.toEqual({ filters: [sourceFilter], presentation: 'table' });
+  });
+
+  it('shows the contextual domain summary metrics with the active filters applied', async () => {
+    const requests: Request[] = [];
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      requests.push(request);
+      const path = pathOf(request);
+      if (path === '/api/v1/domains/example.com' && request.method === 'GET') {
+        return Response.json({ ...domainSummary('example.com'), activity_count: 900, file_count: 40, person_count: 60 });
+      }
+      if (path === '/api/v1/domains/example.com/summary') {
+        return Response.json({
+          summary: { ...domainSummary('example.com'), activity_count: 5, file_count: 1, person_count: 2 },
+          cache_revision: 'cache-rel',
+          search_provenance: {}
+        });
+      }
+      if (path === '/api/v1/domains/example.com/timeline') {
+        return Response.json({ rows: [], total_count: 0, cache_revision: 'cache-rel', search_provenance: {} });
+      }
+      throw new Error(`unexpected path ${path}`);
+    });
+    const controller = new RelationshipsController(createAPIClient(fetchFn), () => 'UTC');
+
+    await controller.openTarget('domain:example.com', filtered);
+
+    const detail = controller.detail as DomainSummary;
+    expect(detail.activity_count).toBe(5);
+    expect(detail.file_count).toBe(1);
+    expect(detail.person_count).toBe(2);
+    const summaryRequest = requests.find((request) => pathOf(request) === '/api/v1/domains/example.com/summary');
+    await expect(summaryRequest!.clone().json()).resolves.toEqual({ filters: [sourceFilter], presentation: 'table' });
+  });
+
+  it('skips the summary endpoints entirely when no filters are active', async () => {
+    const requests: Request[] = [];
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      requests.push(request);
+      const path = pathOf(request);
+      if (path === '/api/v1/people/12' && request.method === 'GET') return Response.json(clusterPerson(12));
+      if (path === '/api/v1/relationships/12/timeline') {
+        return Response.json({ canonical_id: 12, identity_revision: 1, rows: [], total_count: 0, cache_revision: 'cache-rel' });
+      }
+      if (path === '/api/v1/domains/example.com' && request.method === 'GET') {
+        return Response.json(domainSummary('example.com'));
+      }
+      if (path === '/api/v1/domains/example.com/timeline') {
+        return Response.json({ rows: [], total_count: 0, cache_revision: 'cache-rel', search_provenance: {} });
+      }
+      throw new Error(`unexpected path ${path}`);
+    });
+    const controller = new RelationshipsController(createAPIClient(fetchFn), () => 'UTC');
+
+    await controller.openTarget('cluster:12', { filters: [], presentation: 'table' });
+    expect(controller.detail).toEqual(clusterPerson(12));
+
+    await controller.openTarget('domain:example.com', { filters: [], presentation: 'table' });
+    expect(controller.detail).toEqual(domainSummary('example.com'));
+
+    expect(requests.some((request) => pathOf(request).endsWith('/summary'))).toBe(false);
+  });
+
+  it('keeps the unfiltered GET header and surfaces an error when the summary request fails', async () => {
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      const path = pathOf(request);
+      if (path === '/api/v1/people/12' && request.method === 'GET') return Response.json(clusterPerson(12));
+      if (path === '/api/v1/people/12/summary') {
+        return Response.json({ error: 'internal_error', message: 'summary boom' }, { status: 500 });
+      }
+      if (path === '/api/v1/relationships/12/timeline') {
+        return Response.json({ canonical_id: 12, identity_revision: 1, rows: [], total_count: 0, cache_revision: 'cache-rel' });
+      }
+      throw new Error(`unexpected path ${path}`);
+    });
+    const controller = new RelationshipsController(createAPIClient(fetchFn), () => 'UTC');
+
+    await controller.openTarget('cluster:12', filtered);
+
+    expect(controller.detail).toEqual(clusterPerson(12));
+    expect(controller.timelineError).toBe('summary boom');
+  });
+
+  it('discards a stale summary that resolves after a newer openTarget call', async () => {
+    let resolveStaleSummary: ((response: Response) => void) | undefined;
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      const path = pathOf(request);
+      if (path === '/api/v1/people/1' && request.method === 'GET') return Response.json(clusterPerson(1));
+      if (path === '/api/v1/people/1/summary') {
+        return new Promise<Response>((resolve) => { resolveStaleSummary = resolve; });
+      }
+      if (path === '/api/v1/relationships/1/timeline') {
+        return Response.json({ canonical_id: 1, identity_revision: 1, rows: [], total_count: 0, cache_revision: 'cache-rel' });
+      }
+      if (path === '/api/v1/people/2' && request.method === 'GET') return Response.json(clusterPerson(2));
+      if (path === '/api/v1/people/2/summary') {
+        return Response.json({ summary: filteredPersonSummary(2), cache_revision: 'cache-rel', search_provenance: {} });
+      }
+      if (path === '/api/v1/relationships/2/timeline') {
+        return Response.json({ canonical_id: 2, identity_revision: 1, rows: [], total_count: 0, cache_revision: 'cache-rel' });
+      }
+      throw new Error(`unexpected path ${path}`);
+    });
+    const controller = new RelationshipsController(createAPIClient(fetchFn), () => 'UTC');
+
+    const firstOpen = controller.openTarget('cluster:1', filtered);
+    await controller.openTarget('cluster:2', filtered);
+    expect((controller.detail as PersonSummary).id).toBe(2);
+    expect((controller.detail as PersonSummary).activity_count).toBe(7);
+
+    resolveStaleSummary?.(Response.json({
+      summary: { ...filteredPersonSummary(1), activity_count: 999 }, cache_revision: 'cache-rel', search_provenance: {}
+    }));
+    await firstOpen;
+
+    expect((controller.detail as PersonSummary).id).toBe(2);
+    expect((controller.detail as PersonSummary).activity_count).toBe(7);
   });
 });
 

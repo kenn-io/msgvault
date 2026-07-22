@@ -131,7 +131,7 @@ type FileGrouper interface {
 type PeopleAnalyzer interface {
 	SearchPeople(ctx context.Context, request PersonSearchRequest) (*PersonSearchResponse, error)
 	GetPerson(ctx context.Context, id int64, analyticalContext Context, clusterMemberIDs []int64) (*PersonSummary, error)
-	GetPersonSummary(ctx context.Context, id int64, explore ExploreRequest) (*PersonSearchResponse, error)
+	GetPersonSummary(ctx context.Context, id int64, explore ExploreRequest, clusterMemberIDs []int64) (*PersonSearchResponse, error)
 	SearchDomains(ctx context.Context, request DomainSearchRequest) (*DomainSearchResponse, error)
 	GetDomain(ctx context.Context, domain string, analyticalContext Context) (*DomainSummary, error)
 	GetDomainSummary(ctx context.Context, domain string, explore ExploreRequest) (*DomainSearchResponse, error)
