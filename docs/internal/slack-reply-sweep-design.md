@@ -34,11 +34,15 @@ for incremental sync. Consequences:
 - **Search is discovery only; `conversations.replies` is the archival
   fetch.** Search result objects are not native message JSON; archiving
   them would fork `raw_format`. Instead each hit is a pointer
-  (channel id, reply ts): `conversations.replies` accepts *any* message
-  ts in a thread and returns the thread with its true parent first, so
-  root resolution is authoritative from the API. The permalink's
-  `thread_ts` parameter is used only to group hits into one fetch per
-  thread; a parse failure degrades to per-hit fetches, never data loss.
+  (channel id, reply ts). CORRECTED (probed live, 2026-07-22): a REPLY
+  ts anchor serves ONLY that reply — no bound, limit, or cursor expands
+  it — so full-thread fetches require the ROOT ts. Drain entries anchor
+  at the permalink-parsed root; an unparseable permalink degrades to a
+  solo entry anchored at the reply, which the drain re-anchors to the
+  true root from the fetched reply's own `thread_ts` (rolling its resume
+  point back so the reply re-serves AFTER its parent, keeping the thread
+  link resolvable). Root anchors include the parent even below an
+  `oldest` bound (probed).
 - **Membership boundary is enforced by our filter, not the API.**
   Verified: search returns hits from public channels the user never
   joined (both scoped and unscoped queries). Hits are matched against
@@ -360,6 +364,10 @@ emptiness-never-clears.
 | Cursormark pagination unsupported (ignored) | verified — 10k/query ceiling stands | sandbox |
 | `sort=timestamp asc` stable across full 11-page walk, no dups | verified | sandbox (1,099-message corpus) |
 | `pagination.total_count` accurate | verified at 1k scale | sandbox |
+| Reply-ts anchor serves ONLY that reply (root ts required for the thread) | verified — refutes the original any-ts assumption; no oldest/limit/cursor variant expands it | sandbox (2026-07-22) |
+| Root anchor includes the parent even below the `oldest` bound | verified | sandbox |
+| Deleting a REPLY: replies(ts=deleted) → thread_not_found; root anchor serves survivors | verified — drain entries must anchor at roots | sandbox |
+| Deleting a ROOT: thread persists as a `tombstone` (USLACKBOT, reply_count kept); root anchor, history row, and search indexing of orphaned replies all survive | verified — walk-recorded debt is safe; the parent-skip guard protects archived originals from tombstone overwrite | sandbox |
 | >10k single-day behavior | unprobed (needs 3h seeded corpus); clamp+tripwire characterize it | — |
 
 ## Testing

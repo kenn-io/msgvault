@@ -557,8 +557,20 @@ func (imp *Importer) drainPendingThreads(ctx context.Context, cc *convScope, sum
 			return nil // entry parked at DrainedTo; retried next run
 		}
 		progressed := false
+		reanchored := false
+		preDrained := pt.DrainedTo
 		for i := range page.Messages {
 			m := &page.Messages[i]
+			if m.IsThreadReply() && m.ThreadTS != pt.RootTS {
+				// The entry was anchored at a REPLY (an unparseable-permalink
+				// sweep hit): replies(ts=<reply>) serves ONLY that reply
+				// (probed live — no bound or limit changes it). The reply's
+				// own thread_ts names the true root; adopt it and keep
+				// draining so the FULL thread is fetched, the parent guard
+				// can fire, and sibling replies are covered.
+				pt.RootTS = m.ThreadTS
+				reanchored = true
+			}
 			if !m.IsThreadReply() {
 				// The response leads with the parent regardless of bounds.
 				// Skip it when already archived — no write, no charge:
@@ -589,6 +601,15 @@ func (imp *Importer) drainPendingThreads(ctx context.Context, cc *convScope, sum
 			}
 		}
 		if !page.HasMore || page.NextCursor == "" {
+			if reanchored {
+				// Re-fetch from the true root before settling — and roll the
+				// resume point back below the solo reply, so the root-
+				// anchored pass re-serves it AFTER its parent (SetReplyTo
+				// resolves at persist time; a reply persisted before its
+				// missing parent would keep a NULL thread link forever).
+				pt.DrainedTo = preDrained
+				continue
+			}
 			cs.PendingThreads = cs.PendingThreads[1:]
 			continue
 		}

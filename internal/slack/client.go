@@ -389,10 +389,13 @@ func (c *Client) historyPageWithLimit(ctx context.Context, p HistoryParams, limi
 	return &HistoryPage{Messages: out.Messages, HasMore: out.HasMore, NextCursor: out.Metadata.NextCursor}, nil
 }
 
-// RepliesPage fetches one page of a thread's replies (rootTS = the thread
-// root's ts, or ANY message ts within the thread — Slack resolves to the
-// thread either way, returning the true parent as the first message).
-// Callers must skip or idempotently re-upsert the included root.
+// RepliesPage fetches one page of a thread's replies. rootTS must be the
+// thread ROOT's ts for full-thread results: probed live, a reply's ts
+// serves ONLY that reply (no bound or limit expands it), while a root
+// anchor serves the whole thread with the parent first — included even
+// below an oldest bound. Callers must skip or idempotently re-upsert the
+// included root, and re-anchor via a returned reply's thread_ts when they
+// only had a reply ts to start from (see drainPendingThreads).
 func (c *Client) RepliesPage(ctx context.Context, channelID, rootTS, cursor, oldest string) (*HistoryPage, error) {
 	return c.repliesPageWithLimit(ctx, channelID, rootTS, cursor, oldest, historyPageLimit)
 }
@@ -413,9 +416,9 @@ type SearchMatch struct {
 	ChannelID string
 	TS        string
 	// RootTS is the thread root ts parsed from the permalink's thread_ts
-	// query parameter ("" when unparseable — the hit is then fetched
-	// per-message, which conversations.replies resolves to the thread
-	// anyway).
+	// query parameter ("" when unparseable — the hit then becomes a solo
+	// drain entry anchored at the reply itself, which the drain re-anchors
+	// to the true root from the fetched reply's own thread_ts).
 	RootTS string
 }
 

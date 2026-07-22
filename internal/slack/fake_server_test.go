@@ -143,6 +143,9 @@ type fakeSlack struct {
 	// searchIndexedThrough hides hits newer than this ts, simulating search
 	// index lag ("" = everything indexed instantly).
 	searchIndexedThrough string
+	// searchOmitThreadTS strips thread_ts from result permalinks, so hits
+	// arrive with unparseable roots (the solo-entry degradation path).
+	searchOmitThreadTS bool
 	// failHistoryContinuations fails only history requests carrying a page
 	// cursor, emulating a walk that dies partway through a multi-page window.
 	failHistoryContinuations bool
@@ -380,8 +383,23 @@ func (f *fakeSlack) handleReplies(w http.ResponseWriter, r *http.Request) {
 		f.replyErr(w, "thread_not_found")
 		return
 	}
+	if root.TS != rootTS {
+		// Probed live: a REPLY ts anchor serves ONLY that reply — no
+		// oldest/limit/cursor combination expands it to the thread.
+		for i := range root.Replies {
+			if root.Replies[i].TS == rootTS {
+				f.reply(w, map[string]any{
+					"messages":          []map[string]any{root.Replies[i].toJSON()},
+					"has_more":          false,
+					"response_metadata": map[string]any{"next_cursor": ""},
+				})
+				return
+			}
+		}
+	}
 	oldest := r.FormValue("oldest")
-	// The real API serves the root first, then replies oldest→newest.
+	// The real API serves the root first (even below the oldest bound —
+	// probed live), then replies oldest→newest.
 	all := []fakeMsg{*root}
 	for _, reply := range root.Replies {
 		if oldest != "" && !tsLess(oldest, reply.TS) {
@@ -507,7 +525,7 @@ func (f *fakeSlack) handleSearch(w http.ResponseWriter, r *http.Request) {
 	matches := make([]map[string]any, 0, to-from)
 	for _, h := range hits[from:to] {
 		permalink := "https://testers.slack.com/archives/" + h.channelID + "/p" + strings.ReplaceAll(h.ts, ".", "")
-		if h.rootTS != "" {
+		if h.rootTS != "" && !f.searchOmitThreadTS {
 			permalink += "?thread_ts=" + h.rootTS + "&cid=" + h.channelID
 		}
 		matches = append(matches, map[string]any{

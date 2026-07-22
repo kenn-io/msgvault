@@ -1214,6 +1214,43 @@ func TestSweepProcessesUnarchivedParent(t *testing.T) {
 	require.Equal(1, linked, "the sweep must archive AND link a reply whose root it is first to see")
 }
 
+func TestSoloSweepEntryReanchorsToTrueRoot(t *testing.T) {
+	require := require.New(t)
+	f, _ := oldThreadWorkspace(t)
+	imp, opts := testImporter(t, f)
+	st := imp.store
+
+	_, err := imp.Import(context.Background(), opts)
+	require.NoError(err)
+
+	// A brand-new root gets an instant reply, the window walk that would
+	// archive the root FAILS, and the hit's permalink carries no thread_ts
+	// — so the sweep records a SOLO entry anchored at the reply. Probed
+	// live: replies(ts=<reply>) serves ONLY that reply, so the drain must
+	// re-anchor at the reply's own thread_ts and re-serve it after the
+	// parent — otherwise the parent is never fetched and the reply keeps a
+	// NULL thread link forever.
+	newRoot, newReply := tsFresh(0), tsFresh(1)
+	f.mu.Lock()
+	f.conv("C09").Msgs = append(f.conv("C09").Msgs, fakeMsg{TS: newRoot, User: "UME", Text: "solo root",
+		Replies: []fakeMsg{{TS: newReply, ThreadTS: newRoot, User: "UME", Text: "solo reply"}}})
+	f.failHistory["C09"] = true
+	f.searchOmitThreadTS = true
+	f.mu.Unlock()
+
+	imp.now = func() time.Time { return time.Now().Add(time.Hour) }
+	_, err = imp.Import(context.Background(), opts)
+	require.Error(err, "the failed window walk keeps the run partial")
+
+	var linked int
+	require.NoError(st.DB().QueryRow(st.Rebind(`
+		SELECT COUNT(*) FROM messages child
+		JOIN messages parent ON parent.id = child.reply_to_message_id
+		WHERE child.source_message_id = ? AND parent.source_message_id = ?`),
+		"C09:"+newReply, "C09:"+newRoot).Scan(&linked))
+	require.Equal(1, linked, "a solo drain entry must re-anchor at the true root and link the reply")
+}
+
 func TestSweepFetchDoesNotRefreshArchivedParent(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
