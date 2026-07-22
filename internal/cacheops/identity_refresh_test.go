@@ -3,6 +3,8 @@ package cacheops
 import (
 	"context"
 	"database/sql"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -56,6 +58,8 @@ func TestRefreshIdentityDatasetsUpdatesClustersAndRevision(t *testing.T) {
 	clusters := readInt64PairsParquet(t, dir, datasetParticipantClusters, "participant_id", "canonical_id")
 	want := map[int64]int64{a: min(a, b), b: min(a, b)}
 	assert.Equal(want, clusters, "participant_clusters parquet")
+
+	assertNoIdentityPublishLitter(t, dir)
 }
 
 // TestRefreshIdentityDatasetsPreservesAccountIdentityRevision covers Finding
@@ -226,6 +230,166 @@ func TestRefreshIdentityDatasetsNoCommittedCache(t *testing.T) {
 	_, err := RefreshIdentityDatasets(context.Background(), f.Store, dir)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrNoCommittedCache)
+}
+
+// TestPublishIdentityDatasetsFailureKeepsCommittedStateUsable injects a
+// fault at each step of the publication sequence and pins the transactional
+// contract: a failed publish must leave the previous committed publication
+// fully usable (marker, datasets, and matching fingerprint — never
+// ErrNoCommittedCache on retry), a retry after the fault clears must
+// succeed and commit the new revision, and a completed refresh must leave
+// no staging or backup litter behind.
+func TestPublishIdentityDatasetsFailureKeepsCommittedStateUsable(t *testing.T) {
+	cases := []struct {
+		name   string
+		inject func(t *testing.T, dir string) (disarm func())
+	}{
+		{
+			name: "backing up first live dataset fails",
+			inject: func(t *testing.T, dir string) func() {
+				t.Helper()
+				return failIdentityPublishRename(t, func(oldpath, _ string) bool {
+					return oldpath == filepath.Join(dir, datasetOwnerParticipants)
+				})
+			},
+		},
+		{
+			name: "publishing first staged dataset fails",
+			inject: func(t *testing.T, dir string) func() {
+				t.Helper()
+				return failIdentityPublishRename(t, func(_, newpath string) bool {
+					return newpath == filepath.Join(dir, datasetOwnerParticipants)
+				})
+			},
+		},
+		{
+			name: "publishing second staged dataset fails",
+			inject: func(t *testing.T, dir string) func() {
+				t.Helper()
+				return failIdentityPublishRename(t, func(_, newpath string) bool {
+					return newpath == filepath.Join(dir, datasetParticipantClusters)
+				})
+			},
+		},
+		{
+			name: "fingerprinting swapped datasets fails",
+			inject: func(t *testing.T, dir string) func() {
+				t.Helper()
+				identityPublishFingerprint = func(string) (string, error) {
+					return "", errors.New("injected fingerprint failure")
+				}
+				disarm := func() { identityPublishFingerprint = query.CacheDatasetFingerprint }
+				t.Cleanup(disarm)
+				return disarm
+			},
+		},
+		{
+			name: "staging new marker fails",
+			inject: func(t *testing.T, dir string) func() {
+				t.Helper()
+				identityPublishWriteFile = func(string, []byte, os.FileMode) error {
+					return errors.New("injected marker write failure")
+				}
+				disarm := func() { identityPublishWriteFile = os.WriteFile }
+				t.Cleanup(disarm)
+				return disarm
+			},
+		},
+		{
+			name: "committing new marker fails",
+			inject: func(t *testing.T, dir string) func() {
+				t.Helper()
+				return failIdentityPublishRename(t, func(_, newpath string) bool {
+					return newpath == query.CacheStatePath(dir)
+				})
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+
+			f := storetest.New(t)
+			st := f.Store
+			a := f.EnsureParticipant("alice@example.com", "Alice", "example.com")
+			b := f.EnsureParticipant("alice@personal.example", "Alice P", "personal.example")
+
+			dir := writeCacheStatsFixture(t)
+			before, err := query.ReadCacheSyncState(dir)
+			require.NoError(err, "ReadCacheSyncState before refresh")
+
+			wantRevision, err := st.LinkParticipants(a, b)
+			require.NoError(err, "LinkParticipants")
+
+			disarm := tc.inject(t, dir)
+			_, err = RefreshIdentityDatasets(context.Background(), st, dir)
+			require.Error(err, "refresh with injected fault must fail")
+			require.ErrorContains(err, "injected")
+			require.NotErrorIs(err, ErrNoCommittedCache)
+
+			state, err := query.ReadCacheSyncState(dir)
+			require.NoError(err, "committed marker must survive a failed publish")
+			assert.Equal(before.IdentityRevision, state.IdentityRevision,
+				"failed publish must keep the pre-refresh identity revision")
+			assert.Equal(before.DatasetFingerprint, state.DatasetFingerprint,
+				"failed publish must keep the pre-refresh fingerprint")
+			readiness, err := query.InspectCacheReadiness(dir)
+			require.NoError(err, "InspectCacheReadiness after failed publish")
+			assert.Equal(query.CacheReady, readiness,
+				"restored publication must stay fully consistent (datasets match the marker fingerprint)")
+
+			disarm()
+			gotRevision, err := RefreshIdentityDatasets(context.Background(), st, dir)
+			require.NoError(err, "retry after the fault clears must succeed without a full rebuild")
+			assert.Equal(wantRevision, gotRevision, "retry must return the linked revision")
+
+			state, err = query.ReadCacheSyncState(dir)
+			require.NoError(err, "ReadCacheSyncState after successful retry")
+			assert.Equal(wantRevision, state.IdentityRevision, "retry must commit the new revision")
+
+			clusters := readInt64PairsParquet(t, dir, datasetParticipantClusters, "participant_id", "canonical_id")
+			want := map[int64]int64{a: min(a, b), b: min(a, b)}
+			assert.Equal(want, clusters, "retry must publish the new participant_clusters data")
+
+			assertNoIdentityPublishLitter(t, dir)
+		})
+	}
+}
+
+// failIdentityPublishRename swaps identityPublishRename for one that fails
+// any rename matched by match and delegates the rest to os.Rename. The
+// returned disarm restores the real rename; t.Cleanup also restores it in
+// case a test fails before calling disarm.
+func failIdentityPublishRename(t *testing.T, match func(oldpath, newpath string) bool) func() {
+	t.Helper()
+	identityPublishRename = func(oldpath, newpath string) error {
+		if match(oldpath, newpath) {
+			return fmt.Errorf("injected rename failure: %s -> %s", oldpath, newpath)
+		}
+		return os.Rename(oldpath, newpath)
+	}
+	disarm := func() { identityPublishRename = os.Rename }
+	t.Cleanup(disarm)
+	return disarm
+}
+
+// assertNoIdentityPublishLitter verifies a completed refresh left no
+// staging directory (which also holds the dataset backups and the staged
+// marker) next to the analytics dir and no backup directory inside it.
+func assertNoIdentityPublishLitter(t *testing.T, dir string) {
+	t.Helper()
+	parent := filepath.Dir(filepath.Clean(dir))
+	entries, err := os.ReadDir(parent)
+	require.NoError(t, err, "list analytics parent directory")
+	prefix := "." + filepath.Base(filepath.Clean(dir)) + ".identity-"
+	for _, entry := range entries {
+		assert.False(t, strings.HasPrefix(entry.Name(), prefix),
+			"staging/backup directory %s must not survive a completed refresh", entry.Name())
+	}
+	_, err = os.Stat(filepath.Join(dir, "backup"))
+	assert.True(t, os.IsNotExist(err), "no backup directory may be left inside the analytics dir")
 }
 
 // readInt64PairsParquet reads a two-BIGINT-column dataset (any *.parquet

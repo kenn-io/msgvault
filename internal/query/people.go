@@ -165,15 +165,21 @@ func (e *DuckDBEngine) searchPeople(
 		return nil, fmt.Errorf("read committed cache state: %w", err)
 	}
 	conditions, args := buildExploreConditions(request.Explore)
-	entriesCTE, entryArgs := personEntriesCTE(exactID, clusterMemberIDs, conditions)
+	entriesCTE, entryArgs := personEntriesCTE(exactID, clusterMemberIDs, conditions, e.parquetPath(datasetParticipantClusters))
 	args = append(args, entryArgs...)
-	// bestNameExpr is the shared cluster label policy (see person_label.go):
-	// with a caller-supplied cluster, the best non-empty display_name across
-	// every member; otherwise the row participant's own name. Its member
-	// placeholders bind here, before the personWhere and identifier args,
-	// matching its position inside person_population.
+	// bestNameExpr is the shared cluster label policy (see person_label.go).
+	// Listing/search rows are canonical identities, so the label evaluates
+	// every member of the row's cluster (resolved through the canon CTE that
+	// personEntriesCTE emits), exactly as the ranked relationships list does.
+	// Exact-ID lookups have no canon CTE: with a caller-supplied cluster the
+	// members bind as placeholders here, before the personWhere and
+	// identifier args, matching their position inside person_population;
+	// otherwise the row participant's own name applies.
 	bestNameExpr := "NULLIF(TRIM(p.display_name), '')"
-	if len(clusterMemberIDs) > 1 {
+	switch {
+	case exactID == nil:
+		bestNameExpr = sqlClusterBestNameExpr("pbn.id IN (SELECT cnl.participant_id FROM canon cnl WHERE cnl.canonical_id = p.id)")
+	case len(clusterMemberIDs) > 1:
 		placeholders := strings.TrimSuffix(strings.Repeat("?,", len(clusterMemberIDs)), ",")
 		bestNameExpr = sqlClusterBestNameExpr("pbn.id IN (" + placeholders + ")")
 		for _, memberID := range clusterMemberIDs {
@@ -186,21 +192,40 @@ func (e *DuckDBEngine) searchPeople(
 		args = append(args, *exactID)
 	}
 	if searchText := strings.TrimSpace(request.Query); searchText != "" {
-		personWhere = append(personWhere, `(contains(lower(display_name), lower(?))
+		// Listing/search rows key on the canonical identity, so a term must
+		// match when it matches ANY cluster member's name, address, phone, or
+		// stored identifier evidence — otherwise a linked alias would be
+		// unfindable by the identifier it was linked under.
+		matchExpr := `(EXISTS (SELECT 1 FROM canon cq JOIN participants pq ON pq.id = cq.participant_id
+			WHERE cq.canonical_id = person_id
+				AND (contains(lower(COALESCE(pq.display_name, '')), lower(?))
+					OR contains(lower(COALESCE(pq.email_address, '')), lower(?))
+					OR contains(lower(COALESCE(pq.phone_number, '')), lower(?))))
+			OR EXISTS (SELECT 1 FROM participant_identifiers pi
+				JOIN canon cq ON cq.participant_id = pi.participant_id
+				WHERE cq.canonical_id = person_id AND (contains(lower(pi.identifier_value), lower(?))
+					OR contains(lower(pi.display_value), lower(?)))))`
+		if exactID != nil {
+			matchExpr = `(contains(lower(display_name), lower(?))
 			OR contains(lower(email_address), lower(?)) OR contains(lower(phone_number), lower(?))
 			OR EXISTS (SELECT 1 FROM participant_identifiers pi
 				WHERE pi.participant_id = person_id AND (contains(lower(pi.identifier_value), lower(?))
-					OR contains(lower(pi.display_value), lower(?)))))`)
+					OR contains(lower(pi.display_value), lower(?)))))`
+		}
+		personWhere = append(personWhere, matchExpr)
 		args = append(args, searchText, searchText, searchText, searchText, searchText)
 	}
-	// identifierFilter scopes the per-row identifiers subquery below. Absent
-	// a caller-supplied cluster (clusterMemberIDs has fewer than two
-	// entries — the common listing/search case), it stays scoped to the
-	// row's own person_id. GetPerson passes every cluster member so a
-	// linked participant's identifiers span the whole cluster instead of
-	// just the requested ID.
+	// identifierFilter scopes the per-row identifiers subquery below. For
+	// listing/search rows the canonical identity's identifiers span its whole
+	// cluster (via canon), matching what the person-detail endpoint returns
+	// for the same row. GetPerson passes every cluster member explicitly so
+	// a linked participant's identifiers span the whole cluster; an exact-ID
+	// lookup without members stays scoped to the row's own person_id.
 	identifierFilter := "pi.participant_id = counted.person_id"
-	if len(clusterMemberIDs) > 1 {
+	switch {
+	case exactID == nil:
+		identifierFilter = "pi.participant_id IN (SELECT cni.participant_id FROM canon cni WHERE cni.canonical_id = counted.person_id)"
+	case len(clusterMemberIDs) > 1:
 		placeholders := make([]string, len(clusterMemberIDs))
 		for i, memberID := range clusterMemberIDs {
 			placeholders[i] = "?"
@@ -304,14 +329,29 @@ FROM counted ORDER BY ` + order + ` LIMIT ? OFFSET ?`
 //     semi-join shape cannot be used because a conversation entry's
 //     participant list must only reflect messages inside the filtered
 //     context.
-//  3. Listing/search: the full fan-out across every participant.
-func personEntriesCTE(exactID *int64, memberIDs []int64, conditions string) (string, []any) {
-	const fanOut = `
-), person_entries AS (
-	SELECT grouped.person_id, occurred_at, attachment_count, source_type
-	FROM logical_entries CROSS JOIN UNNEST(participant_ids) AS grouped(person_id)`
+//  3. Listing/search: the full fan-out across every participant, resolved to
+//     canonical identities through the committed participant_clusters
+//     dataset (clustersGlob) so a linked identity aggregates as ONE row
+//     keyed by its canonical ID — matching the ranked relationships list
+//     instead of splitting cluster members into partial rows. The DISTINCT
+//     mirrors the relationships ranking: an entry listing several raw
+//     members of one cluster (e.g. cc'ing a contact's work and personal
+//     addresses) collapses to a single (entry, canonical) row, so
+//     aggregation never double-counts the entry. entry_key is projected
+//     only to carry per-entry uniqueness through that DISTINCT.
+func personEntriesCTE(exactID *int64, memberIDs []int64, conditions, clustersGlob string) (string, []any) {
 	if exactID == nil {
-		return fanOut, nil
+		return fmt.Sprintf(`
+), clusters AS (
+	SELECT participant_id, canonical_id FROM read_parquet('%s')
+), canon AS (
+	SELECT p.id AS participant_id, COALESCE(c.canonical_id, p.id) AS canonical_id
+	FROM participants p LEFT JOIN clusters c ON c.participant_id = p.id
+), person_entries AS (
+	SELECT DISTINCT le.entry_key, cn.canonical_id AS person_id, le.occurred_at, le.attachment_count, le.source_type
+	FROM logical_entries le
+	CROSS JOIN UNNEST(le.participant_ids) AS grouped(person_id)
+	JOIN canon cn ON cn.participant_id = grouped.person_id`, clustersGlob), nil
 	}
 	if len(memberIDs) == 0 {
 		memberIDs = []int64{*exactID}

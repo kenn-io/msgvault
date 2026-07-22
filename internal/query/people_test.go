@@ -52,6 +52,77 @@ func TestSearchPeopleKeepsSameNamePeopleSeparateAndUnifiesExplicitIdentifiers(t 
 	assertions.NotEmpty(result.CacheRevision)
 }
 
+// TestSearchPeopleAggregatesLinkedIdentitiesAsOneCanonicalRow pins the
+// cluster-aware people search: a term matching only ONE member of a linked
+// identity returns a single row keyed by the canonical (smallest member) ID
+// with cluster-wide counts, files, date range, identifiers, and the shared
+// best-name label — identical to the same identity's row in the unfiltered
+// list. An entry naming several members counts once, and unlinked
+// participants are unaffected.
+func TestSearchPeopleAggregatesLinkedIdentitiesAsOneCanonicalRow(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	b := NewTestDataBuilder(t)
+	source := b.AddSourceWithType("archive@example.com", "gmail")
+	alicePrimary := b.AddParticipant("alice@example.com", "example.com", "Alice Example")
+	aliceAlias := b.AddParticipant("alice@other.example", "other.example", "")
+	bob := b.AddParticipant("bob@example.com", "example.com", "Bob Example")
+	b.AddParticipantIdentifier(alicePrimary, "email", "alice@example.com", "alice@example.com", true)
+	b.AddParticipantIdentifier(aliceAlias, "email", "alice@other.example", "alice@other.example", true)
+	b.LinkCluster(alicePrimary, aliceAlias)
+
+	start := time.Date(2026, 7, 10, 9, 0, 0, 0, time.UTC)
+	primaryMail := b.AddMessage(MessageOpt{SourceID: source, ConversationID: 401, Subject: "From primary", SentAt: start})
+	b.AddFrom(primaryMail, alicePrimary, "Alice Example")
+	aliasMail := b.AddMessage(MessageOpt{SourceID: source, ConversationID: 402, Subject: "From alias", SentAt: start.Add(time.Hour)})
+	b.AddFrom(aliasMail, aliceAlias, "")
+	b.AddAttachmentWithMIME(901, aliasMail, 100, "alias.pdf", "application/pdf")
+	// One entry addressed to BOTH members must count once for the cluster.
+	bothMail := b.AddMessage(MessageOpt{SourceID: source, ConversationID: 403, Subject: "To both", SentAt: start.Add(2 * time.Hour)})
+	b.AddFrom(bothMail, bob, "Bob Example")
+	b.AddTo(bothMail, alicePrimary, "Alice Example")
+	b.AddTo(bothMail, aliceAlias, "")
+	engine := b.BuildEngine()
+	ctx := context.Background()
+
+	searched, err := engine.SearchPeople(ctx, PersonSearchRequest{Query: "other.example", Page: PageSpec{Limit: 25}})
+	requirements.NoError(err)
+	requirements.Len(searched.Rows, 1, "a term matching one member must return the whole cluster once, never a split alias row")
+	assertions.Equal(int64(1), searched.TotalCount)
+	row := searched.Rows[0]
+	assertions.Equal(alicePrimary, row.ID, "the row keys on the canonical (smallest member) participant ID")
+	assertions.Equal("Alice Example", row.DisplayLabel, "the best name across the cluster labels the row")
+	assertions.False(row.PartialLabel)
+	assertions.Equal(int64(3), row.ActivityCount, "counts span every member; the entry naming both members counts once")
+	assertions.Equal(int64(1), row.FileCount)
+	assertions.Equal(start, row.FirstAt)
+	assertions.Equal(start.Add(2*time.Hour), row.LastAt)
+	assertions.Equal([]SourceCount{{SourceType: "gmail", Count: 3}}, row.SourceCounts)
+	assertions.Equal([]PersonIdentifier{
+		{Type: "email", Value: "alice@example.com", DisplayValue: "alice@example.com", IsPrimary: true, Provenance: "participant_identifiers", ParticipantID: alicePrimary},
+		{Type: "email", Value: "alice@other.example", DisplayValue: "alice@other.example", IsPrimary: true, Provenance: "participant_identifiers", ParticipantID: aliceAlias},
+	}, row.Identifiers, "identifiers span every cluster member, as the person detail does")
+
+	unfiltered, err := engine.SearchPeople(ctx, PersonSearchRequest{Page: PageSpec{Limit: 25}})
+	requirements.NoError(err)
+	requirements.Len(unfiltered.Rows, 2, "the unfiltered list holds the cluster row and the unlinked participant")
+	var unfilteredCluster *PersonSummary
+	for i := range unfiltered.Rows {
+		if unfiltered.Rows[i].ID == alicePrimary {
+			unfilteredCluster = &unfiltered.Rows[i]
+		}
+	}
+	requirements.NotNil(unfilteredCluster)
+	assertions.Equal(*unfilteredCluster, row, "the searched row is identical to the unfiltered list's row for the same identity")
+
+	bobSearch, err := engine.SearchPeople(ctx, PersonSearchRequest{Query: "bob", Page: PageSpec{Limit: 25}})
+	requirements.NoError(err)
+	requirements.Len(bobSearch.Rows, 1)
+	assertions.Equal(bob, bobSearch.Rows[0].ID, "unlinked participants search exactly as before")
+	assertions.Equal("Bob Example", bobSearch.Rows[0].DisplayLabel)
+	assertions.Equal(int64(1), bobSearch.Rows[0].ActivityCount)
+}
+
 func TestSearchPeopleShowsPartialIdentityLabelsHonestly(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)

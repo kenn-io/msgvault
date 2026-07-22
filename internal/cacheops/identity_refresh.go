@@ -303,13 +303,44 @@ func (s *identityStaging) cleanup() error {
 	return os.RemoveAll(s.root)
 }
 
+// Fault-injection seams for publication tests, mirroring cmd's
+// buildCacheWriteStateFile convention. Production code always leaves these
+// at their os/query defaults.
+var (
+	identityPublishRename      = os.Rename
+	identityPublishWriteFile   = os.WriteFile
+	identityPublishFingerprint = query.CacheDatasetFingerprint
+)
+
+// identityDatasetBackup records where a live dataset directory was moved so
+// a failed publish can restore it.
+type identityDatasetBackup struct {
+	live   string
+	backup string
+}
+
 // publishIdentityDatasets replaces the live owner_participants and
 // participant_clusters directories with their staged replacements and
-// commits the updated identity revision, mirroring cmd's publishCache:
-// invalidate the commit marker first, then rename, then re-fingerprint and
-// write the new marker. state is the CacheSyncState already read by
-// RefreshIdentityDatasets; only IdentityRevision, PublishedAt, and
-// DatasetFingerprint change.
+// commits the updated identity revision. state is the CacheSyncState
+// already read by RefreshIdentityDatasets; only IdentityRevision,
+// PublishedAt, and DatasetFingerprint change.
+//
+// The previous committed publication stays recoverable until the very last
+// step: live datasets are moved aside into staging as backups (never
+// deleted), the existing _last_sync.json is left untouched while the
+// datasets swap, and the new marker is staged to a sibling file and
+// atomically renamed over the old one as the single commit point
+// (os.Rename replaces an existing destination file on every supported
+// platform, including Windows). A failure at any earlier step restores the
+// backups, so the previous state — marker, datasets, and matching
+// fingerprint — remains fully usable and a retry refreshes again instead
+// of failing with ErrNoCommittedCache and forcing a full rebuild.
+//
+// Readers never observe the mid-swap window: callers hold the cache build
+// lock exclusively (see RefreshIdentityDatasets) while readers acquire it
+// shared. A reader that bypassed the lock would find the old marker's
+// DatasetFingerprint disagreeing with the half-swapped files and classify
+// the cache as drifted rather than serving mismatched data.
 //
 // state.AccountIdentityRevision is deliberately left untouched: this
 // refresh only re-exports owner_participants/participant_clusters, never
@@ -318,22 +349,77 @@ func (s *identityStaging) cleanup() error {
 // make a stale is_from_me look fresh and permanently suppress the full
 // rebuild that HasAccountIdentityDrift is meant to force.
 func publishIdentityDatasets(staging *identityStaging, analyticsDir string, state query.CacheSyncState, revision int64) error {
-	statePath := query.CacheStatePath(analyticsDir)
-	if err := invalidateIdentityStateFile(statePath); err != nil {
+	backups, err := swapInStagedIdentityDatasets(staging, analyticsDir)
+	if err != nil {
 		return err
 	}
+	if err := commitIdentityState(staging, analyticsDir, state, revision); err != nil {
+		return errors.Join(err, restoreIdentityBackups(backups))
+	}
+	return nil
+}
 
+// swapInStagedIdentityDatasets moves each live identity dataset aside into
+// staging as a recoverable backup, then renames its staged replacement into
+// place. On failure it restores every backup taken so far and returns the
+// combined error. On success the backups stay under staging until the
+// caller's deferred staging cleanup removes them after the marker commit.
+func swapInStagedIdentityDatasets(staging *identityStaging, analyticsDir string) ([]identityDatasetBackup, error) {
+	backupRoot := filepath.Join(staging.root, "backup")
+	if err := os.MkdirAll(backupRoot, 0o755); err != nil {
+		return nil, fmt.Errorf("create identity publish backup directory: %w", err)
+	}
+	var backups []identityDatasetBackup
 	for _, dataset := range identityDatasets {
-		dest := filepath.Join(analyticsDir, dataset)
-		if err := os.RemoveAll(dest); err != nil {
-			return fmt.Errorf("remove live %s dataset: %w", dataset, err)
+		live := filepath.Join(analyticsDir, dataset)
+		backup := filepath.Join(backupRoot, dataset)
+		switch err := identityPublishRename(live, backup); {
+		case err == nil:
+			backups = append(backups, identityDatasetBackup{live: live, backup: backup})
+		case os.IsNotExist(err):
+			// A prior interrupted refresh can leave a committed marker with
+			// this dataset directory missing; there is nothing to back up.
+		default:
+			return nil, errors.Join(
+				fmt.Errorf("back up live %s dataset: %w", dataset, err),
+				restoreIdentityBackups(backups),
+			)
 		}
-		if err := os.Rename(staging.datasetDir(dataset), dest); err != nil {
-			return fmt.Errorf("publish %s dataset: %w", dataset, err)
+		if err := identityPublishRename(staging.datasetDir(dataset), live); err != nil {
+			return nil, errors.Join(
+				fmt.Errorf("publish %s dataset: %w", dataset, err),
+				restoreIdentityBackups(backups),
+			)
 		}
 	}
+	return backups, nil
+}
 
-	fingerprint, err := query.CacheDatasetFingerprint(analyticsDir)
+// restoreIdentityBackups puts backed-up live datasets back after a failed
+// publish so the previous committed publication remains fully usable. It
+// calls os.Rename directly rather than the injectable seam so a test's
+// injected fault cannot also break recovery.
+func restoreIdentityBackups(backups []identityDatasetBackup) error {
+	var errs []error
+	for _, b := range backups {
+		if err := os.RemoveAll(b.live); err != nil {
+			errs = append(errs, fmt.Errorf("remove partially published dataset %s: %w", b.live, err))
+			continue
+		}
+		if err := os.Rename(b.backup, b.live); err != nil {
+			errs = append(errs, fmt.Errorf("restore backed-up dataset %s: %w", b.live, err))
+		}
+	}
+	return errors.Join(errs...)
+}
+
+// commitIdentityState fingerprints the swapped-in datasets, stages the
+// updated commit marker inside staging, and atomically renames it over
+// _last_sync.json — the publication's single commit point. The marker is
+// never absent or truncated on disk: readers see either the previous
+// committed state or the new one.
+func commitIdentityState(staging *identityStaging, analyticsDir string, state query.CacheSyncState, revision int64) error {
+	fingerprint, err := identityPublishFingerprint(analyticsDir)
 	if err != nil {
 		return fmt.Errorf("fingerprint published analytics cache: %w", err)
 	}
@@ -344,26 +430,12 @@ func publishIdentityDatasets(staging *identityStaging, analyticsDir string, stat
 	if err != nil {
 		return fmt.Errorf("encode cache sync state: %w", err)
 	}
-	if err := os.WriteFile(statePath, data, 0o600); err != nil {
-		return fmt.Errorf("save cache sync state: %w", err)
+	stagedPath := filepath.Join(staging.root, "_last_sync.json")
+	if err := identityPublishWriteFile(stagedPath, data, 0o600); err != nil {
+		return fmt.Errorf("stage cache sync state: %w", err)
 	}
-	return nil
-}
-
-// invalidateIdentityStateFile makes _last_sync.json unusable while the
-// dataset directories below it are mid-rename, mirroring cmd's
-// invalidateSyncStateFile: a reader racing the rename must see a
-// missing/unparseable commit marker rather than one naming a dataset that
-// no longer matches the files on disk. Removal first; if that fails (e.g.
-// no directory write permission), overwrite with content that fails to
-// parse. Only when neither works does it return an error.
-func invalidateIdentityStateFile(statePath string) error {
-	removeErr := os.Remove(statePath)
-	if removeErr == nil || os.IsNotExist(removeErr) {
-		return nil
-	}
-	if writeErr := os.WriteFile(statePath, []byte("invalidated"), 0o600); writeErr != nil {
-		return fmt.Errorf("invalidate cache sync state: remove: %w; overwrite: %w", removeErr, writeErr)
+	if err := identityPublishRename(stagedPath, query.CacheStatePath(analyticsDir)); err != nil {
+		return fmt.Errorf("commit cache sync state: %w", err)
 	}
 	return nil
 }
