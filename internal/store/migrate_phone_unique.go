@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 )
 
@@ -131,7 +132,9 @@ func (s *Store) dedupeParticipantsByPhone(ctx context.Context, tx *loggedTx) err
 
 // mergeParticipant moves every reference from loser onto winner,
 // deleting any rows whose new (winner-scoped) key would clash with an
-// existing row, then deletes loser from participants.
+// existing row, fills the winner's empty metadata fields (email_address,
+// domain, display_name) from the loser, then deletes loser from
+// participants.
 func (s *Store) mergeParticipant(ctx context.Context, tx *loggedTx, winner, loser int64) error {
 	// (1) message_recipients UNIQUE(message_id, participant_id, recipient_type)
 	if _, err := tx.ExecContext(ctx, `
@@ -245,7 +248,41 @@ func (s *Store) mergeParticipant(ctx context.Context, tx *loggedTx, winner, lose
 		return fmt.Errorf("bump account identity revision (loser=%d, winner=%d): %w", loser, winner, err)
 	}
 
-	// (7) Finally drop the loser. participant_identifiers cascades; the
+	// (7) Preserve contact metadata: fill the winner's empty fields from
+	// the loser before the delete below discards them, mirroring the
+	// coalesce in MergeParticipants (messages.go). email_address is
+	// UNIQUE (idx_participants_email on both backends), so the loser must
+	// release its value before the winner can take it — inside this same
+	// tx, so a failure rolls the whole migration back. phone_number needs
+	// no transfer: winner and loser share it by construction (that is
+	// what made them a duplicate group). display_name is coalesced too
+	// (phone-keyed participants often carry a name and nothing else).
+	// With multiple losers this runs once per loser in ascending-id
+	// order, so for each field the lowest-id loser holding a value wins;
+	// later losers only fill fields still empty on the winner.
+	var loserEmail, loserDomain, loserName sql.NullString
+	if err := tx.QueryRowContext(ctx, `
+		SELECT NULLIF(email_address, ''), NULLIF(domain, ''), NULLIF(display_name, '')
+		  FROM participants WHERE id = ?`, loser,
+	).Scan(&loserEmail, &loserDomain, &loserName); err != nil {
+		return fmt.Errorf("read loser metadata (loser=%d): %w", loser, err)
+	}
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE participants SET email_address = NULL WHERE id = ?`, loser,
+	); err != nil {
+		return fmt.Errorf("release loser email (loser=%d): %w", loser, err)
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE participants SET
+			email_address = COALESCE(NULLIF(email_address, ''), ?),
+			domain        = COALESCE(NULLIF(domain, ''), ?),
+			display_name  = COALESCE(NULLIF(display_name, ''), ?)
+		WHERE id = ?`, loserEmail, loserDomain, loserName, winner,
+	); err != nil {
+		return fmt.Errorf("coalesce metadata onto winner (winner=%d, loser=%d): %w", winner, loser, err)
+	}
+
+	// (8) Finally drop the loser. participant_identifiers cascades; the
 	// other FKs are already cleared by the repoints above.
 	if _, err := tx.ExecContext(ctx, `DELETE FROM participants WHERE id = ?`, loser); err != nil {
 		return fmt.Errorf("delete loser participant id=%d: %w", loser, err)
