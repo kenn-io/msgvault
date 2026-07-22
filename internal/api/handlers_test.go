@@ -528,6 +528,25 @@ func TestHandleCLICollectionMutations(t *testing.T) {
 	require.ErrorIs(err, store.ErrCollectionNotFound, "collection deleted")
 }
 
+func TestDocsPageDisabledOpenAPISpecStillServed(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	srv := NewServer(&config.Config{Server: config.ServerConfig{APIPort: 8080}}, st, nil, testLogger())
+
+	docs := httptest.NewRecorder()
+	srv.Router().ServeHTTP(docs, httptest.NewRequest(http.MethodGet, "/docs", nil))
+	assert.Equal(http.StatusNotFound, docs.Code, "docs status: %s", docs.Body.String())
+	assert.NotContains(docs.Body.String(), "unpkg.com", "docs response must not reference CDN scripts")
+
+	spec := httptest.NewRecorder()
+	srv.Router().ServeHTTP(spec, httptest.NewRequest(http.MethodGet, "/openapi.json", nil))
+	require.Equal(http.StatusOK, spec.Code, "openapi status: %s", spec.Body.String())
+	var doc map[string]any
+	require.NoError(json.NewDecoder(spec.Body).Decode(&doc), "decode openapi")
+	assert.Equal("3.1.0", doc["openapi"], "openapi version")
+}
+
 func TestOpenAPIExportsCLIIdentityContracts(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

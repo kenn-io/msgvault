@@ -104,6 +104,12 @@ func (s *Server) setupHumaAPI(mux humago.Mux) huma.API {
 	setupHumaErrors()
 
 	config := huma.DefaultConfig("msgvault API", APISchemaVersion)
+	// Disable huma's built-in /docs page: it loads Stoplight Elements from
+	// unpkg.com on the same origin as the browser session cookie, so a
+	// compromised CDN response could use the session to read archive data or
+	// call authenticated mutations. The OpenAPI document at /openapi.json is
+	// unaffected.
+	config.DocsPath = ""
 	// DefaultConfig's only CreateHook installs huma's SchemaLinkTransformer,
 	// which injects a `$schema` field (and Link header) into typed
 	// huma.Register response bodies. Clearing the hook keeps those routes'

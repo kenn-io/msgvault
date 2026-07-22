@@ -386,7 +386,7 @@ msgvault daemon restart
 
 Archive-access CLI commands use the HTTP API by default. If `[remote].url` is configured, the CLI talks to that remote server. Otherwise, it discovers or starts the local background daemon instead of opening the SQLite database itself. This keeps local and remote CLI behavior aligned and avoids repeated startup cost on large archives. Use `--local` to force the local daemon when a remote server is configured.
 
-The server exposes the first-party analytical web UI at `/`, its generated OpenAPI document at `/openapi.json`, and interactive API docs at `/docs`.
+The server exposes the first-party analytical web UI at `/` and its generated OpenAPI document at `/openapi.json`.
 
 Configure scheduled syncs in `config.toml`:
 

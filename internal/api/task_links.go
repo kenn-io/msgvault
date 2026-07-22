@@ -84,8 +84,18 @@ func (s *Server) taskMessage(r *http.Request) (tasklinks.MessageIdentity, *apiHT
 		return tasklinks.MessageIdentity{}, newAPIHTTPError(http.StatusBadRequest, "invalid_message_id", "Message ID must be a positive integer")
 	}
 	message, err := s.getMessage(r.Context(), id)
-	if err != nil {
+	switch {
+	case errors.Is(err, store.ErrMessageNotFound):
 		return tasklinks.MessageIdentity{}, newAPIHTTPError(http.StatusNotFound, "not_found", "Message not found")
+	case errors.Is(err, context.DeadlineExceeded):
+		return tasklinks.MessageIdentity{}, newAPIHTTPError(http.StatusServiceUnavailable, "query_timeout",
+			"the query exceeded the server time limit; narrow the query and retry")
+	case errors.Is(err, context.Canceled):
+		return tasklinks.MessageIdentity{}, newAPIHTTPError(http.StatusServiceUnavailable, "query_canceled",
+			"the query was canceled before it completed")
+	case err != nil:
+		s.logger.Error("failed to load message for task links", "id", id, "error", err)
+		return tasklinks.MessageIdentity{}, newAPIHTTPError(http.StatusInternalServerError, "internal_error", "Failed to retrieve message")
 	}
 	if !store.IsEmailMessageType(message.MessageType) {
 		return tasklinks.MessageIdentity{}, newAPIHTTPError(http.StatusUnprocessableEntity, "email_required", "Task links are available only for concrete email rows")

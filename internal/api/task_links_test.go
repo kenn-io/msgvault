@@ -5,6 +5,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -14,6 +16,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/taskclient"
 	"go.kenn.io/msgvault/internal/tasklinks"
 )
@@ -22,11 +25,15 @@ type taskLinkMessageStore struct {
 	*mockStore
 
 	message *APIMessage
+	err     error
 }
 
 func (s *taskLinkMessageStore) GetMessage(id int64) (*APIMessage, error) {
+	if s.err != nil {
+		return nil, s.err
+	}
 	if s.message == nil || s.message.ID != id {
-		return nil, errors.New("not found")
+		return nil, store.ErrMessageNotFound
 	}
 	return s.message, nil
 }
@@ -73,8 +80,13 @@ func emailMessage(messageType string) *APIMessage {
 
 func taskLinkServer(t *testing.T, messageType string, operations TaskLinkOperations) *Server {
 	t.Helper()
+	return taskLinkServerWithStore(t, &taskLinkMessageStore{mockStore: &mockStore{}, message: emailMessage(messageType)}, testLogger(), operations)
+}
+
+func taskLinkServerWithStore(t *testing.T, messageStore MessageStore, logger *slog.Logger, operations TaskLinkOperations) *Server {
+	t.Helper()
 	return NewServerWithOptions(ServerOptions{Config: &config.Config{Server: config.ServerConfig{APIKey: "test-key"}},
-		Store: &taskLinkMessageStore{mockStore: &mockStore{}, message: emailMessage(messageType)}, Logger: testLogger(), TaskLinkOperations: operations,
+		Store: messageStore, Logger: logger, TaskLinkOperations: operations,
 		TaskIdentityResolver: func(_ context.Context, message *APIMessage) (tasklinks.MessageIdentity, error) {
 			return tasklinks.MessageIdentity{ArchiveUID: "archive-a", ArchiveRevision: "1", MessageID: message.ID, ConversationID: message.ConversationID,
 				Subject: message.Subject, From: message.From, SentAt: message.SentAt, SourceType: "gmail",
@@ -173,6 +185,48 @@ func TestTaskLinkAPIsTreatLegacyBlankMessageTypeAsEmail(t *testing.T) {
 		resp := httptest.NewRecorder()
 		srv.Router().ServeHTTP(resp, req)
 		assert.Equal(t, tc.want, resp.Code, resp.Body.String())
+	}
+}
+
+func TestTaskMessageLookupErrorClassification(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		storeErr  error
+		wantCode  int
+		wantError string
+	}{
+		{name: "wrapped not found", storeErr: fmt.Errorf("message 42: %w", store.ErrMessageNotFound), wantCode: http.StatusNotFound, wantError: "not_found"},
+		{name: "deadline exceeded", storeErr: context.DeadlineExceeded, wantCode: http.StatusServiceUnavailable, wantError: "query_timeout"},
+		{name: "canceled", storeErr: context.Canceled, wantCode: http.StatusServiceUnavailable, wantError: "query_canceled"},
+		{name: "storage failure", storeErr: errors.New("disk I/O error"), wantCode: http.StatusInternalServerError, wantError: "internal_error"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			buf := &bytes.Buffer{}
+			logger := slog.New(slog.NewJSONHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+			srv := taskLinkServerWithStore(t, &taskLinkMessageStore{mockStore: &mockStore{}, err: tc.storeErr}, logger, &fakeTaskLinkOperations{})
+			for _, endpoint := range []struct{ method, path, body string }{
+				{http.MethodGet, "/api/v1/messages/42/tasks", ""},
+				{http.MethodPost, "/api/v1/messages/42/tasks", `{"task_id":"task-1","added_at":"2026-07-19T01:02:03Z"}`},
+				{http.MethodDelete, "/api/v1/messages/42/tasks/task-1", ""},
+			} {
+				req := httptest.NewRequest(endpoint.method, endpoint.path, strings.NewReader(endpoint.body))
+				req.Header.Set("Content-Type", "application/json")
+				req.Header.Set("X-Api-Key", "test-key")
+				req.Header.Set("X-Request-Id", "browser-request-1")
+				resp := httptest.NewRecorder()
+				srv.Router().ServeHTTP(resp, req)
+				assert.Equal(tc.wantCode, resp.Code, resp.Body.String())
+				var got ErrorResponse
+				require.NoError(json.Unmarshal(resp.Body.Bytes(), &got))
+				assert.Equal(tc.wantError, got.Error)
+			}
+			if tc.wantCode == http.StatusInternalServerError {
+				logLine := findJSONLogLine(t, buf.String(), "failed to load message for task links")
+				assert.Equal("disk I/O error", logLine["error"])
+			}
+		})
 	}
 }
 
