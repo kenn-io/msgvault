@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -29,9 +30,22 @@ type deletionMockStore struct {
 	getErr      error
 	cancelled   []string
 	cancelErr   error
+
+	saveErr     error
+	saveStarted chan struct{} // if non-nil, receives one value when a save begins
+	saveRelease chan struct{} // if non-nil, save blocks until this channel is closed
 }
 
 func (s *deletionMockStore) SaveCLIDeletionManifest(_ context.Context, m *deletion.Manifest) error {
+	if s.saveStarted != nil {
+		s.saveStarted <- struct{}{}
+	}
+	if s.saveRelease != nil {
+		<-s.saveRelease
+	}
+	if s.saveErr != nil {
+		return s.saveErr
+	}
 	s.saved = append(s.saved, m)
 	return nil
 }
@@ -255,6 +269,85 @@ func TestStageDeletionSelectionRequiresAndConsumesExactPreflightAuthority(t *tes
 	assertions.Equal(http.StatusConflict, reused.Code, reused.Body.String())
 	assertions.Contains(reused.Body.String(), "operation_token_invalid")
 	assertions.Len(st.saved, 1, "one-shot authority must not create another manifest")
+}
+
+// preflightDeletionSelection runs explore + preflight against the
+// DuckDB fixture and returns the selection JSON (source 1 minus m1,
+// i.e. exactly m2) with its one-shot operation token.
+func preflightDeletionSelection(t *testing.T, srv *Server) (selection, token string) {
+	t.Helper()
+	requirements := require.New(t)
+
+	explore := postExploreJSON(t, srv, "/api/v1/explore", `{"filters":[{"dimension":"source","values":["1"]}]}`)
+	requirements.Equal(http.StatusOK, explore.Code, explore.Body.String())
+	var explored struct {
+		CacheRevision string `json:"cache_revision"`
+	}
+	requirements.NoError(json.Unmarshal(explore.Body.Bytes(), &explored))
+	selection = fmt.Sprintf(`{"mode":"all_matching","predicate":{"filters":[{"dimension":"source","values":["1"]}]},"exclusions":["source:1:message:m1"],"cache_revision":%q}`, explored.CacheRevision)
+
+	preflight := postExploreJSON(t, srv, "/api/v1/explore/preflight", `{"selection":`+selection+`}`)
+	requirements.Equal(http.StatusOK, preflight.Code, preflight.Body.String())
+	var reviewed ExplorePreflightResponse
+	requirements.NoError(json.Unmarshal(preflight.Body.Bytes(), &reviewed))
+	requirements.NotEmpty(reviewed.OperationToken)
+	return selection, reviewed.OperationToken
+}
+
+func TestStageDeletionPersistFailureLeavesTokenRetryable(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	engine := newExploreDuckDBFixture(t)
+	st := &deletionMockStore{saveErr: errors.New("disk full")}
+	srv := newDeletionTestServer(t, st, engine)
+
+	selection, token := preflightDeletionSelection(t, srv)
+	body := fmt.Sprintf(`{"selection":%s,"operation_token":%q}`, selection, token)
+
+	failed := postDeletions(t, srv, body)
+	requirements.Equal(http.StatusInternalServerError, failed.Code, failed.Body.String())
+	assertions.Contains(failed.Body.String(), "stage_deletion_failed")
+	assertions.Empty(st.saved, "failed persistence must not record a manifest")
+
+	// Persistence failure rolls the reservation back: the same token
+	// must authorize a retry without a fresh preflight.
+	st.saveErr = nil
+	retry := postDeletions(t, srv, body)
+	requirements.Equal(http.StatusCreated, retry.Code, retry.Body.String())
+	requirements.Len(st.saved, 1)
+	assertions.Equal([]string{"m2"}, st.saved[0].GmailIDs)
+
+	reused := postDeletions(t, srv, body)
+	assertions.Equal(http.StatusConflict, reused.Code, reused.Body.String())
+	assertions.Contains(reused.Body.String(), "operation_token_invalid")
+	assertions.Len(st.saved, 1, "committed token must not stage again")
+}
+
+func TestStageDeletionConcurrentDoubleSubmitStagesExactlyOnce(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	engine := newExploreDuckDBFixture(t)
+	st := &deletionMockStore{saveStarted: make(chan struct{}), saveRelease: make(chan struct{})}
+	srv := newDeletionTestServer(t, st, engine)
+
+	selection, token := preflightDeletionSelection(t, srv)
+	body := fmt.Sprintf(`{"selection":%s,"operation_token":%q}`, selection, token)
+
+	first := make(chan *httptest.ResponseRecorder, 1)
+	go func() { first <- postDeletions(t, srv, body) }()
+	<-st.saveStarted // first request holds the reservation, parked in persistence
+
+	// The duplicate must fail on the reserved token while the first
+	// request is still in flight — no second manifest, no waiting.
+	second := postDeletions(t, srv, body)
+	assertions.Equal(http.StatusConflict, second.Code, second.Body.String())
+	assertions.Contains(second.Body.String(), "operation_token_invalid")
+
+	close(st.saveRelease)
+	winner := <-first
+	requirements.Equal(http.StatusCreated, winner.Code, winner.Body.String())
+	requirements.Len(st.saved, 1, "exactly one manifest staged")
+	assertions.Equal([]string{"m2"}, st.saved[0].GmailIDs)
 }
 
 func TestStageDeletionRejectsEmptyFilter(t *testing.T) {

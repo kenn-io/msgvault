@@ -249,10 +249,6 @@ func (e *DuckDBEngine) QuerySQL(
 	}
 	defer release()
 
-	// Refresh views if the cache changed since startup, so the registered
-	// views match the current Parquet schema.
-	e.ensureFreshOptionalCols()
-
 	// codeql[go/sql-injection] -- QuerySQL is an explicit trusted-user SQL
 	// interface over the user's local archive, not an injection boundary.
 	rows, err := e.db.QueryContext(ctx, sqlStr)
@@ -292,7 +288,8 @@ func (e *DuckDBEngine) QuerySQL(
 
 // acquireQuerySlot blocks until a DuckDB query slot is free or ctx is done,
 // bounding concurrent heavy queries (see duckDBQueryConcurrency), then takes
-// the shared cache lock for the query's duration (see acquireCacheRead). The
+// the shared cache lock for the query's duration and refreshes the registered
+// views if the cache was republished (see acquireCacheRead). The
 // returned release function frees both and must be deferred by the caller.
 // Callers must not nest acquisitions — every gated method is a top-level
 // entry point that does not call another gated method, so the slots cannot
@@ -320,11 +317,23 @@ func (e *DuckDBEngine) acquireQuerySlot(ctx context.Context) (func(), error) {
 // replace Parquet files mid-read. Shared holders never conflict with each
 // other; a reader blocks only while a build runs (seconds). Engines opened
 // without an analytics directory have no cache to guard.
+//
+// After the lock is held, the probed optional-column set and registered SQL
+// views are refreshed if the committed cache was republished since the last
+// query (see ensureFreshOptionalCols). Because the lock is held until release,
+// the schema cannot change again for the query's duration, so every reader —
+// view-based endpoints (Explore, People, Relationships, timelines) and
+// parquetCTEs-based ones alike — sees views that match the current Parquet.
 func (e *DuckDBEngine) acquireCacheRead(ctx context.Context) (func(), error) {
 	if e.analyticsDir == "" {
 		return func() {}, nil
 	}
-	return AcquireReadyCacheReadLock(ctx, e.analyticsDir)
+	release, err := AcquireReadyCacheReadLock(ctx, e.analyticsDir)
+	if err != nil {
+		return nil, err
+	}
+	e.ensureFreshOptionalCols()
+	return release, nil
 }
 
 // hasSQLite returns true if DuckDB's sqlite_scanner extension is loaded,
@@ -406,12 +415,15 @@ func stableOptionalColumns(
 
 // ensureFreshOptionalCols re-probes the Parquet schema (and re-registers the
 // SQL views) when the analytics cache has changed since the last probe. This
-// guards long-running engines (e.g. the mcp-http server) against a binder
-// error when build-cache rewrites the cache with a different column set:
-// without it, a stale "column present" verdict puts a now-absent column into a
-// SELECT * REPLACE list, which DuckDB rejects with
+// guards long-running engines (e.g. the daemon) against a binder error when
+// build-cache republishes the cache with a different column set: without it,
+// a stale "column present" verdict puts a now-absent column into a SELECT *
+// REPLACE list, which DuckDB rejects with
 // "Column ... in REPLACE list not found in FROM clause". Cheap on the common
 // no-change path (a handful of os.Stat calls).
+//
+// Runs centrally from acquireCacheRead, so every query path — slot-gated and
+// detail lookups alike — refreshes before touching Parquet or the views.
 func (e *DuckDBEngine) ensureFreshOptionalCols() {
 	fp := e.cacheFingerprint()
 
@@ -456,11 +468,10 @@ func (e *DuckDBEngine) currentCacheFingerprint() string {
 // Optional columns (phone_number, attachment_count, sender_id, message_type)
 // are handled gracefully: if the Parquet file predates their addition, they
 // are synthesised with sensible defaults instead of causing a binder error.
+// Every caller holds the shared cache read lock (via acquireQuerySlot or
+// acquireCacheRead), whose acquisition already re-probed the schema, so the
+// REPLACE list below never references a column the current Parquet lacks.
 func (e *DuckDBEngine) parquetCTEs() string {
-	// Re-probe if build-cache/sync rewrote the cache underneath us, so the
-	// REPLACE list below never references a column the current Parquet lacks.
-	e.ensureFreshOptionalCols()
-
 	// --- messages CTE ---
 	msgReplace := []string{
 		"CAST(id AS BIGINT) AS id",
@@ -2790,13 +2801,11 @@ func (e *DuckDBEngine) SearchFastWithStats(ctx context.Context, q *search.Query,
 	e.searchCacheMu.Lock()
 	defer e.searchCacheMu.Unlock()
 
-	// Refresh before checking the search cache. A cache-hit page query may call
-	// parquetCTEs(), but that is too late to decide whether the already
-	// materialized temp table still represents the current Parquet data.
-	e.ensureFreshOptionalCols()
-
 	// Check cache: same conditions+args+Parquet fingerprint means same search,
-	// serve from cached table.
+	// serve from cached table. The fingerprint was refreshed when the query
+	// slot acquired the cache read lock, and the lock is held until release,
+	// so it decides whether the already materialized temp table still
+	// represents the current Parquet data.
 	cacheKey := searchCacheKeyFor(conditions, args, e.currentCacheFingerprint())
 	if cacheKey == e.searchCacheKey && e.searchCacheTable != "" {
 		// Retry stats if a previous attempt failed (transient error).

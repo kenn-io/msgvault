@@ -188,9 +188,10 @@ func (s *Server) handleStageDeletion(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var gmailIDs []string
+	var claim *deletionOperationClaim
 	if req.Selection != nil {
 		var ok bool
-		gmailIDs, ok = s.resolveAuthorizedDeletionSelection(w, r, *req.Selection, req.OperationToken, req.DryRun)
+		gmailIDs, claim, ok = s.resolveAuthorizedDeletionSelection(w, r, *req.Selection, req.OperationToken)
 		if !ok {
 			return
 		}
@@ -246,10 +247,27 @@ func (s *Server) handleStageDeletion(w http.ResponseWriter, r *http.Request) {
 	}
 	manifest.RawFilter = raw
 
+	// All deterministic validation is done; claim the one-shot token
+	// only now, immediately before persistence. Reservation (not
+	// deletion) keeps concurrent reuse of the token impossible while
+	// still allowing a retry if persistence fails below.
+	if claim != nil {
+		if !claim.reserve() {
+			writeError(w, http.StatusConflict, "operation_token_invalid",
+				"Deletion preflight was already used or expired; run preflight again")
+			return
+		}
+	}
 	if err := saver.SaveCLIDeletionManifest(r.Context(), manifest); err != nil {
+		if claim != nil {
+			claim.rollback()
+		}
 		s.logger.Error("failed to save staged deletion manifest", "id", manifest.ID, "error", err)
 		writeError(w, http.StatusInternalServerError, "stage_deletion_failed", "Failed to save deletion manifest")
 		return
+	}
+	if claim != nil {
+		claim.commit()
 	}
 	writeJSON(w, http.StatusCreated, StageDeletionResponse{
 		MessageCount: len(gmailIDs),
@@ -259,42 +277,65 @@ func (s *Server) handleStageDeletion(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// deletionOperationClaim defers one-shot consumption of a preflight
+// operation token until the staged manifest has persisted. reserve
+// atomically claims the grant (concurrent requests with the same token
+// fail immediately), commit invalidates it permanently, and rollback
+// restores it so a failed persistence attempt can be retried.
+type deletionOperationClaim struct {
+	state         *exploreServerState
+	token         string
+	selectionHash string
+}
+
+func (c *deletionOperationClaim) reserve() bool {
+	_, ok := c.state.reserveOperation(c.token, c.selectionHash)
+	return ok
+}
+
+func (c *deletionOperationClaim) commit() { c.state.commitOperation(c.token) }
+
+func (c *deletionOperationClaim) rollback() { c.state.rollbackOperation(c.token) }
+
+// resolveAuthorizedDeletionSelection validates the reviewed selection
+// against the preflight grant without consuming it; the returned claim
+// lets the caller reserve/commit/rollback the token around manifest
+// persistence.
 func (s *Server) resolveAuthorizedDeletionSelection(
 	w http.ResponseWriter,
 	r *http.Request,
 	selection ExploreSelection,
 	token string,
-	dryRun bool,
-) ([]string, bool) {
+) ([]string, *deletionOperationClaim, bool) {
 	if token == "" {
 		writeError(w, http.StatusPreconditionRequired, "preflight_required",
 			"operation_token from deletion preflight is required")
-		return nil, false
+		return nil, nil, false
 	}
 	if selection.Mode != "explicit" && selection.Mode != "all_matching" {
 		writeError(w, http.StatusBadRequest, "invalid_selection", "selection mode must be explicit or all_matching")
-		return nil, false
+		return nil, nil, false
 	}
 	predicate, err := prepareExplorePredicate(selection.Predicate)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_selection_predicate", err.Error())
-		return nil, false
+		return nil, nil, false
 	}
 	if selection.CacheRevision == "" {
 		writeError(w, http.StatusBadRequest, "invalid_selection", "cache_revision is required")
-		return nil, false
+		return nil, nil, false
 	}
 	if predicate.request.SearchMode == exploreSearchModeSemantic || predicate.request.SearchMode == exploreSearchModeHybrid {
 		if selection.CandidateSnapshotID == "" {
 			writeError(w, http.StatusBadRequest, "candidate_snapshot_required",
 				"Semantic and hybrid deletion staging require the server-issued candidate snapshot")
-			return nil, false
+			return nil, nil, false
 		}
 		predicate.request.CandidateSnapshotID = selection.CandidateSnapshotID
 	}
 	searchSpec, _, resolved := s.resolveExploreSearch(r.Context(), w, predicate.request)
 	if !resolved || !requireCompleteCandidatePool(w, searchSpec) {
-		return nil, false
+		return nil, nil, false
 	}
 	predicate.query.Search = searchSpec
 	selectionRequest := query.ExploreSelectionRequest{
@@ -303,73 +344,67 @@ func (s *Server) resolveAuthorizedDeletionSelection(
 	if selection.Mode == "explicit" {
 		if selection.RowKeys == nil {
 			writeError(w, http.StatusBadRequest, "invalid_selection", "explicit selection requires row_keys")
-			return nil, false
+			return nil, nil, false
 		}
 		selectionRequest.IncludedKeys = selection.RowKeys
 	}
 	analyzer, ok := s.engine.(query.Explorer)
 	if !ok {
 		writeExploreUnavailable(w, query.CacheAbsent)
-		return nil, false
+		return nil, nil, false
 	}
 	stats, err := analyzer.ExploreSelectionStats(r.Context(), selectionRequest)
 	if err != nil {
 		s.writeExploreError(w, err)
-		return nil, false
+		return nil, nil, false
 	}
 	if selection.CacheRevision != stats.CacheRevision {
 		writeError(w, http.StatusConflict, "archive_revision_changed", "The committed analytical cache changed; run preflight again")
-		return nil, false
+		return nil, nil, false
 	}
 	if searchSpec.Mode != query.SearchNone && !sameSearchProvenance(selection.SearchProvenance, stats.SearchProvenance) {
 		writeError(w, http.StatusConflict, "search_revision_changed", "The search index revision changed; run preflight again")
-		return nil, false
+		return nil, nil, false
 	}
 	selectionHash := hashCanonicalValue(&selection, false)
 	state := s.exploreState
 	if state == nil {
 		writeError(w, http.StatusConflict, "operation_token_invalid", "Deletion preflight expired; run preflight again")
-		return nil, false
+		return nil, nil, false
 	}
 	grant, authorized := state.operation(token, selectionHash)
 	if !authorized || grant.Revision != stats.CacheRevision || grant.Count != stats.Count {
 		writeError(w, http.StatusConflict, "operation_token_invalid", "Deletion preflight expired or no longer matches; run preflight again")
-		return nil, false
+		return nil, nil, false
 	}
 	if stats.Count == 0 {
 		writeError(w, http.StatusBadRequest, "no_messages_matched", "No messages matched the reviewed selection")
-		return nil, false
+		return nil, nil, false
 	}
 	if stats.DeletableCount != stats.Count {
 		writeError(w, http.StatusConflict, "selection_not_deletable",
 			"The reviewed selection contains items that cannot be deleted from their source")
-		return nil, false
+		return nil, nil, false
 	}
 	resolver, ok := s.engine.(deletionMessageIDResolver)
 	if !ok {
 		writeError(w, http.StatusServiceUnavailable, "engine_unavailable",
 			"selection deletion staging is not supported by this query engine")
-		return nil, false
+		return nil, nil, false
 	}
 	gmailIDs, err := resolver.GetGmailIDsByMessageIDs(r.Context(), stats.DeletableMessageIDs)
 	if err != nil {
 		s.logger.Error("stage deletion selection resolution failed", "error", err)
 		writeError(w, http.StatusInternalServerError, "internal_error", "Gmail ID query failed")
-		return nil, false
+		return nil, nil, false
 	}
 	if int64(len(gmailIDs)) != stats.Count {
 		writeError(w, http.StatusConflict, "selection_changed",
 			"The reviewed selection changed before staging; run preflight again")
-		return nil, false
+		return nil, nil, false
 	}
-	if !dryRun {
-		consumed, taken := state.takeOperation(token, selectionHash)
-		if !taken || consumed.Revision != grant.Revision || consumed.Count != grant.Count {
-			writeError(w, http.StatusConflict, "operation_token_invalid", "Deletion preflight was already used or expired; run preflight again")
-			return nil, false
-		}
-	}
-	return gmailIDs, true
+	claim := &deletionOperationClaim{state: state, token: token, selectionHash: selectionHash}
+	return gmailIDs, claim, true
 }
 
 // resolveStageDeletionAccount maps the staged Gmail IDs to their owning

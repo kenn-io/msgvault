@@ -42,6 +42,10 @@ type exploreOperationGrant struct {
 	Count         int64
 	Revision      string
 	ExpiresAt     time.Time
+	// Reserved marks the grant as claimed by an in-flight operation:
+	// concurrent requests with the same token fail immediately, while a
+	// rollback after a failed operation restores the grant for retry.
+	Reserved bool
 }
 
 type exploreServerState struct {
@@ -211,14 +215,42 @@ func (s *exploreServerState) operation(token, selectionHash string) (exploreOper
 	return grant, true
 }
 
-func (s *exploreServerState) takeOperation(token, selectionHash string) (exploreOperationGrant, bool) {
+// reserveOperation atomically claims the grant for one in-flight
+// operation. A concurrent request with the same token fails here, so
+// the one-shot guarantee holds while consumption is deferred. The
+// caller must finish with commitOperation once the operation has
+// durably succeeded, or rollbackOperation so the client can retry.
+func (s *exploreServerState) reserveOperation(token, selectionHash string) (exploreOperationGrant, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.pruneLocked(s.now())
 	grant, ok := s.operations[token]
-	if !ok || grant.SelectionHash != selectionHash {
+	if !ok || grant.SelectionHash != selectionHash || grant.Reserved {
 		return exploreOperationGrant{}, false
 	}
-	delete(s.operations, token)
+	grant.Reserved = true
+	s.operations[token] = grant
 	return grant, true
+}
+
+// commitOperation permanently invalidates a reserved grant after the
+// operation it authorized succeeded.
+func (s *exploreServerState) commitOperation(token string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.operations, token)
+}
+
+// rollbackOperation releases a reservation after the authorized
+// operation failed, restoring the grant so the same token can be
+// retried before it expires.
+func (s *exploreServerState) rollbackOperation(token string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	grant, ok := s.operations[token]
+	if !ok {
+		return
+	}
+	grant.Reserved = false
+	s.operations[token] = grant
 }

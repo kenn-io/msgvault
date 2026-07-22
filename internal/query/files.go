@@ -97,10 +97,6 @@ func (e *DuckDBEngine) SearchFiles(ctx context.Context, request FileSearchReques
 		return nil, err
 	}
 	defer release()
-	// The acquired cache read lock is the authority for both schema refresh and
-	// query execution. A long-running server may otherwise retain views bound to
-	// the previous attachment schema after an atomic cache publication.
-	e.ensureFreshOptionalCols()
 	state, err := ReadCacheSyncState(e.analyticsDir)
 	if err != nil {
 		return nil, fmt.Errorf("read committed cache state: %w", err)
@@ -188,7 +184,6 @@ func (e *DuckDBEngine) GroupFiles(ctx context.Context, request FileGroupRequest)
 		return nil, err
 	}
 	defer release()
-	e.ensureFreshOptionalCols()
 	state, err := ReadCacheSyncState(e.analyticsDir)
 	if err != nil {
 		return nil, fmt.Errorf("read committed cache state: %w", err)
