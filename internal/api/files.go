@@ -374,7 +374,7 @@ func (s *Server) handleSearchFilesWithScope(w http.ResponseWriter, r *http.Reque
 			writeError(w, http.StatusConflict, "file_metadata_changed", "The authoritative file metadata changed; refresh the Files workspace")
 			return
 		}
-		state, available := fileContentState(authority)
+		state, available := s.fileContentState(r.Context(), authority)
 		response.Files = append(response.Files, FileSearchRow{
 			ID: file.ID, Key: file.Key, EntryKey: file.EntryKey, MessageID: file.MessageID,
 			ConversationID: file.ConversationID, OccurredAt: file.OccurredAt,
@@ -428,7 +428,7 @@ func (s *Server) handleGetFile(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "file_not_found", "File not found")
 		return
 	}
-	state, available := fileContentState(*file)
+	state, available := s.fileContentState(r.Context(), *file)
 	writeJSON(w, http.StatusOK, FileMetadataResponse{
 		ID: file.ID, MessageID: file.MessageID, ConversationID: file.ConversationID,
 		EntryKey: fileEntryKey(*file),
@@ -457,18 +457,11 @@ func (s *Server) handleGetFileContent(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "file_not_found", "File not found")
 		return
 	}
-	if state, available := fileContentState(*file); state != FileContentLocal || !available {
+	if file.URL != "" || file.ContentHash == "" {
 		writeError(w, http.StatusNotFound, "file_content_unavailable", "File content is not available")
 		return
 	}
-	var content io.ReadCloser
-	var length int64
-	if s.blobStore != nil {
-		content, length, err = s.blobStore.OpenStream(r.Context(), file.ContentHash)
-	}
-	if s.blobStore == nil || errors.Is(err, os.ErrNotExist) {
-		content, length, err = openLooseAttachmentContent(s.cfg.AttachmentsDir(), file.ContentHash, file.StoragePath)
-	}
+	content, length, err := s.openFileContent(r.Context(), *file)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			writeError(w, http.StatusNotFound, "file_content_unavailable", "File content is not available")
@@ -502,15 +495,50 @@ func fileEntryKey(file store.FileMetadata) string {
 	}.EntryKey()
 }
 
-func fileContentState(file store.FileMetadata) (FileContentState, bool) {
+// openFileContent resolves attachment bytes hash-first: the packed CAS blob
+// store, then the loose content-addressed path, then the recorded storage
+// path kept by legacy loose rows. The caller must have already excluded
+// URL-backed and hash-less rows.
+func (s *Server) openFileContent(ctx context.Context, file store.FileMetadata) (io.ReadCloser, int64, error) {
+	var content io.ReadCloser
+	var length int64
+	err := os.ErrNotExist
+	if s.blobStore != nil {
+		content, length, err = s.blobStore.OpenStream(ctx, file.ContentHash)
+	}
+	if errors.Is(err, os.ErrNotExist) {
+		content, length, err = openLooseAttachmentContent(s.cfg.AttachmentsDir(), file.ContentHash, "")
+	}
+	if errors.Is(err, os.ErrNotExist) && file.StoragePath != "" {
+		content, length, err = openLooseAttachmentContent(s.cfg.AttachmentsDir(), file.ContentHash, file.StoragePath)
+	}
+	return content, length, err
+}
+
+// fileContentState classifies one authoritative attachment row. Packed
+// attachments legitimately carry only a content hash, so availability of a
+// row without a recorded storage path is determined through the blob
+// resolver — the packed CAS store first, then the loose content-addressed
+// fallback. Rows with a recorded storage path are reported as local without
+// probing, matching the legacy loose-file contract.
+func (s *Server) fileContentState(ctx context.Context, file store.FileMetadata) (FileContentState, bool) {
 	if file.URL != "" {
 		return FileContentURLOnly, false
 	}
 	if file.ContentHash == "" {
 		return FileContentMetadataOnly, false
 	}
-	if file.StoragePath == "" {
+	if file.StoragePath == "" && !s.fileContentResolvable(ctx, file) {
 		return FileContentMissingBlob, false
 	}
 	return FileContentLocal, true
+}
+
+func (s *Server) fileContentResolvable(ctx context.Context, file store.FileMetadata) bool {
+	content, _, err := s.openFileContent(ctx, file)
+	if err != nil {
+		return false
+	}
+	_ = content.Close()
+	return true
 }

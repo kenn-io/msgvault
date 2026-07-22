@@ -315,6 +315,61 @@ var operationGateExemptPaths = map[string]bool{
 	backupFreezeEndPath:              true,
 }
 
+// readOnlyPostRoutePatterns lists the analytical POST routes whose handlers
+// only read committed archive state (plus process-local in-memory state such
+// as explore candidate snapshots and preflight operation tokens). They use
+// POST solely because their requests are structured predicate bodies, so
+// queueing them on the operation gate would serialize pure reads behind long
+// archive mutations. Reads never needed the gate: every GET already bypasses
+// it and relies on the committed-cache revision/snapshot machinery for
+// consistency instead.
+//
+// The classification stays deny-by-default: a POST route not listed here
+// still gates. TestReadOnlyPostRoutePatternsMatchExplorationRoutes keeps this
+// table in sync with the routes registered through registerExploreRoute and
+// registerSearchCoverageRoute (the OpenAPI "Exploration" tag), so a new
+// analytical route forces a conscious classification decision here.
+var readOnlyPostRoutePatterns = []string{
+	"/api/v1/explore",
+	"/api/v1/explore/groups",
+	"/api/v1/explore/preflight",
+	"/api/v1/explore/match-counts",
+	"/api/v1/explore/files",
+	"/api/v1/files/search",
+	"/api/v1/files/groups",
+	"/api/v1/people/search",
+	"/api/v1/people/{id}/summary",
+	"/api/v1/people/{id}/timeline",
+	"/api/v1/people/{id}/files/search",
+	"/api/v1/domains/search",
+	"/api/v1/domains/{domain}/summary",
+	"/api/v1/domains/{domain}/timeline",
+	"/api/v1/domains/{domain}/files/search",
+	"/api/v1/relationships",
+	"/api/v1/relationships/{id}/timeline",
+	"/api/v1/search/coverage",
+}
+
+var (
+	readOnlyPostRouteOnce sync.Once
+	readOnlyPostRouteMux  *http.ServeMux
+)
+
+// readOnlyPostRouteRequest reports whether r targets one of the read-only
+// analytical POST routes. Matching goes through a net/http ServeMux built
+// from readOnlyPostRoutePatterns so the path-parameter routes ({id},
+// {domain}) match with the same semantics as the API router itself.
+func readOnlyPostRouteRequest(r *http.Request) bool {
+	readOnlyPostRouteOnce.Do(func() {
+		readOnlyPostRouteMux = http.NewServeMux()
+		for _, pattern := range readOnlyPostRoutePatterns {
+			readOnlyPostRouteMux.Handle("POST "+pattern, http.NotFoundHandler())
+		}
+	})
+	_, pattern := readOnlyPostRouteMux.Handler(r)
+	return pattern != ""
+}
+
 func operationGateRequest(r *http.Request) (bool, string, error) {
 	if r.URL.Path == DaemonShutdownPath {
 		return false, "", nil
@@ -324,6 +379,9 @@ func operationGateRequest(r *http.Request) (bool, string, error) {
 		return false, "", nil
 	}
 	if operationGateExemptPaths[r.URL.Path] {
+		return false, "", nil
+	}
+	if readOnlyPostRouteRequest(r) {
 		return false, "", nil
 	}
 	if r.URL.Path == "/api/v1/cli/run" {

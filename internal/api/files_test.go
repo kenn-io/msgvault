@@ -8,6 +8,10 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -24,6 +28,18 @@ type fixedFileBlobStore struct{ content []byte }
 
 func (s fixedFileBlobStore) OpenStream(context.Context, string) (io.ReadCloser, int64, error) {
 	return io.NopCloser(bytes.NewReader(s.content)), int64(len(s.content)), nil
+}
+
+// packedFileBlobStore mimics the packed-CAS resolver: content is served by
+// hash alone and misses satisfy errors.Is(err, fs.ErrNotExist).
+type packedFileBlobStore struct{ blobs map[string][]byte }
+
+func (s packedFileBlobStore) OpenStream(_ context.Context, hash string) (io.ReadCloser, int64, error) {
+	content, ok := s.blobs[hash]
+	if !ok {
+		return nil, 0, fmt.Errorf("open packed blob %s: %w", hash, os.ErrNotExist)
+	}
+	return io.NopCloser(bytes.NewReader(content)), int64(len(content)), nil
 }
 
 type fileSearchEngine struct {
@@ -273,6 +289,129 @@ func TestFileContentUsesSelectedAttachmentMetadata(t *testing.T) {
 	assertions.Equal("image/png", response.Header().Get("Content-Type"))
 	assertions.Contains(response.Header().Get("Content-Disposition"), "selected.png")
 	assertions.Equal("png", response.Body.String())
+}
+
+// TestPackedFileWithoutStoragePathDownloadsAndReportsAvailable is the
+// regression for packed attachments that carry only a content hash: the row
+// must resolve through the blob store, not be rejected as missing because its
+// storage path is empty — in the download, the metadata endpoint, and the
+// search listing's availability flag.
+func TestPackedFileWithoutStoragePathDownloadsAndReportsAvailable(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	hash := strings.Repeat("cd", 32)
+	packed := []byte("packed png bytes")
+	catalog := &fileCatalogStore{mockStore: &mockStore{}, files: map[int64]store.FileMetadata{
+		7: {ID: 7, MessageID: 11, ConversationID: 21, Filename: "packed.png", MimeType: "image/png", ContentHash: hash},
+	}}
+	engine := &fileSearchEngine{MockEngine: &querytest.MockEngine{}, result: &query.FileSearchResponse{
+		Files: []query.FileRow{{
+			ID: 7, Key: "file:7", EntryKey: "message:11", MessageID: 11, ConversationID: 21,
+			OccurredAt: time.Date(2026, 7, 20, 12, 0, 0, 0, time.UTC),
+			Filename:   "packed.png", MimeType: "image/png", MIMEFamily: query.FileMIMEImage,
+		}},
+		TotalCount: 1, CacheRevision: "cache-packed",
+	}}
+	srv := NewServerWithOptions(ServerOptions{
+		Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}, Data: config.DataConfig{DataDir: t.TempDir()}},
+		Store:  catalog, Engine: engine,
+		BlobStore: packedFileBlobStore{blobs: map[string][]byte{hash: packed}},
+		Logger:    testLogger(),
+	})
+
+	download := httptest.NewRecorder()
+	srv.Router().ServeHTTP(download, httptest.NewRequest(http.MethodGet, "/api/v1/files/7/content", nil))
+	requirements.Equal(http.StatusOK, download.Code, download.Body.String())
+	assertions.Equal("image/png", download.Header().Get("Content-Type"))
+	assertions.Equal(strconv.Itoa(len(packed)), download.Header().Get("Content-Length"))
+	assertions.Equal(string(packed), download.Body.String())
+
+	metadata := httptest.NewRecorder()
+	srv.Router().ServeHTTP(metadata, httptest.NewRequest(http.MethodGet, "/api/v1/files/7", nil))
+	requirements.Equal(http.StatusOK, metadata.Code, metadata.Body.String())
+	var decoded FileMetadataResponse
+	requirements.NoError(json.NewDecoder(metadata.Body).Decode(&decoded))
+	assertions.Equal(FileContentLocal, decoded.ContentState)
+	assertions.True(decoded.ContentAvailable)
+
+	search := httptest.NewRequest(http.MethodPost, "/api/v1/files/search", bytes.NewBufferString(`{"predicate":{}}`))
+	search.Header.Set("Content-Type", "application/json")
+	listing := httptest.NewRecorder()
+	srv.Router().ServeHTTP(listing, search)
+	requirements.Equal(http.StatusOK, listing.Code, listing.Body.String())
+	var searched FileSearchHTTPResponse
+	requirements.NoError(json.NewDecoder(listing.Body).Decode(&searched))
+	requirements.Len(searched.Files, 1)
+	assertions.Equal(FileContentLocal, searched.Files[0].ContentState)
+	assertions.True(searched.Files[0].ContentAvailable)
+}
+
+// TestPackedFileMissingBlobReportsMissingNotError covers a hash-only row whose
+// blob is truly absent from both the packed store and the loose layout: the
+// download must answer 404 file_content_unavailable, and the metadata must
+// classify the row missing_blob.
+func TestPackedFileMissingBlobReportsMissingNotError(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	hash := strings.Repeat("ef", 32)
+	catalog := &fileCatalogStore{mockStore: &mockStore{}, files: map[int64]store.FileMetadata{
+		8: {ID: 8, MessageID: 12, ConversationID: 22, Filename: "gone.bin", ContentHash: hash},
+	}}
+	srv := NewServerWithOptions(ServerOptions{
+		Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}, Data: config.DataConfig{DataDir: t.TempDir()}},
+		Store:  catalog, Engine: &querytest.MockEngine{},
+		BlobStore: packedFileBlobStore{blobs: map[string][]byte{}},
+		Logger:    testLogger(),
+	})
+
+	download := httptest.NewRecorder()
+	srv.Router().ServeHTTP(download, httptest.NewRequest(http.MethodGet, "/api/v1/files/8/content", nil))
+	assertions.Equal(http.StatusNotFound, download.Code, download.Body.String())
+	assertions.Contains(download.Body.String(), "file_content_unavailable")
+
+	metadata := httptest.NewRecorder()
+	srv.Router().ServeHTTP(metadata, httptest.NewRequest(http.MethodGet, "/api/v1/files/8", nil))
+	requirements.Equal(http.StatusOK, metadata.Code, metadata.Body.String())
+	var decoded FileMetadataResponse
+	requirements.NoError(json.NewDecoder(metadata.Body).Decode(&decoded))
+	assertions.Equal(FileContentMissingBlob, decoded.ContentState)
+	assertions.False(decoded.ContentAvailable)
+}
+
+// TestLegacyLooseFileWithRecordedPathStillDownloads keeps the legacy loose-row
+// contract: when the packed store misses and the loose content-addressed path
+// is absent, the recorded storage path still serves the bytes.
+func TestLegacyLooseFileWithRecordedPathStillDownloads(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	hash := strings.Repeat("ab", 32)
+	loose := []byte("legacy loose bytes")
+	cfg := &config.Config{Server: config.ServerConfig{APIPort: 8080}, Data: config.DataConfig{DataDir: t.TempDir()}}
+	legacyDir := filepath.Join(cfg.AttachmentsDir(), "legacy")
+	requirements.NoError(os.MkdirAll(legacyDir, 0o755))
+	requirements.NoError(os.WriteFile(filepath.Join(legacyDir, "report.pdf"), loose, 0o644))
+	catalog := &fileCatalogStore{mockStore: &mockStore{}, files: map[int64]store.FileMetadata{
+		9: {ID: 9, MessageID: 13, ConversationID: 23, Filename: "report.pdf", MimeType: "application/pdf",
+			ContentHash: hash, StoragePath: "legacy/report.pdf"},
+	}}
+	srv := NewServerWithOptions(ServerOptions{
+		Config: cfg, Store: catalog, Engine: &querytest.MockEngine{},
+		BlobStore: packedFileBlobStore{blobs: map[string][]byte{}}, Logger: testLogger(),
+	})
+
+	download := httptest.NewRecorder()
+	srv.Router().ServeHTTP(download, httptest.NewRequest(http.MethodGet, "/api/v1/files/9/content", nil))
+	requirements.Equal(http.StatusOK, download.Code, download.Body.String())
+	assertions.Equal("application/pdf", download.Header().Get("Content-Type"))
+	assertions.Equal(string(loose), download.Body.String())
+
+	metadata := httptest.NewRecorder()
+	srv.Router().ServeHTTP(metadata, httptest.NewRequest(http.MethodGet, "/api/v1/files/9", nil))
+	requirements.Equal(http.StatusOK, metadata.Code, metadata.Body.String())
+	var decoded FileMetadataResponse
+	requirements.NoError(json.NewDecoder(metadata.Body).Decode(&decoded))
+	assertions.Equal(FileContentLocal, decoded.ContentState)
+	assertions.True(decoded.ContentAvailable)
 }
 
 func TestFilesSearchNamesUnavailableCache(t *testing.T) {
