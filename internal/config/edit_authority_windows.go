@@ -26,10 +26,16 @@ type windowsFileAttributeTagInfo struct {
 	ReparseTag     uint32
 }
 
-// pinWindowsConfigParent retains every ordinary directory component with
-// share-read only. That denies later write/delete opens of the directory
-// objects, preventing rename, deletion, or reparse conversion while child
-// operations continue through the verified pathname.
+// pinWindowsConfigParent retains every ordinary directory component for the
+// duration of a transaction. Each retained handle denies FILE_SHARE_DELETE,
+// so no pinned component can be renamed, deleted, or replaced while child
+// operations continue through the verified pathname. Write sharing stays
+// permitted: publishing renames open the target directory with
+// FILE_WRITE_DATA | SYNCHRONIZE (see the FILE_RENAME_INFORMATION contract),
+// so a share-read-only pin would make the transaction's own MoveFileExW and
+// ReplaceFileW calls fail with a sharing violation. A transient share-read
+// probe still rejects directories that already have a write- or
+// delete-capable handle open when the pin is taken.
 func pinWindowsConfigParent(path string) (*windowsPathAuthority, error) {
 	absolute, err := filepath.Abs(path)
 	if err != nil {
@@ -117,15 +123,20 @@ func openWindowsAuthorityDirectory(path string) (windows.Handle, error) {
 	if err != nil {
 		return 0, fmt.Errorf("encode Windows config directory: %w", err)
 	}
-	handle, err := windows.CreateFile(
-		encoded,
-		windows.FILE_TRAVERSE|windows.FILE_READ_ATTRIBUTES|windows.READ_CONTROL|windows.SYNCHRONIZE,
-		windows.FILE_SHARE_READ,
-		nil,
-		windows.OPEN_EXISTING,
-		windows.FILE_FLAG_OPEN_REPARSE_POINT|windows.FILE_FLAG_BACKUP_SEMANTICS,
-		0,
-	)
+	// The share-read probe fails while any existing handle holds write or
+	// delete access, so a transaction never starts under a concurrent
+	// directory writer.
+	probe, err := openWindowsDirectoryHandle(encoded, windows.FILE_SHARE_READ)
+	if err != nil {
+		return 0, fmt.Errorf("pin Windows config directory %s: %w", path, err)
+	}
+	// The durable pin adds FILE_SHARE_WRITE because publishing renames open
+	// the target directory with FILE_WRITE_DATA. Excluding FILE_SHARE_DELETE
+	// still blocks rename, deletion, and replacement of the component. The
+	// probe closes only after the durable pin exists, so the directory is
+	// never unpinned in between.
+	handle, err := openWindowsDirectoryHandle(encoded, windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE)
+	_ = windows.CloseHandle(probe)
 	if err != nil {
 		return 0, fmt.Errorf("pin Windows config directory %s: %w", path, err)
 	}
@@ -146,6 +157,18 @@ func openWindowsAuthorityDirectory(path string) (windows.Handle, error) {
 			fmt.Errorf("Windows config directory %s is not an ordinary directory", path))
 	}
 	return handle, nil
+}
+
+func openWindowsDirectoryHandle(encoded *uint16, share uint32) (windows.Handle, error) {
+	return windows.CreateFile(
+		encoded,
+		windows.FILE_TRAVERSE|windows.FILE_READ_ATTRIBUTES|windows.READ_CONTROL|windows.SYNCHRONIZE,
+		share,
+		nil,
+		windows.OPEN_EXISTING,
+		windows.FILE_FLAG_OPEN_REPARSE_POINT|windows.FILE_FLAG_BACKUP_SEMANTICS,
+		0,
+	)
 }
 
 func (authority *windowsPathAuthority) Release() error {

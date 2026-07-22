@@ -106,8 +106,8 @@ jobs:
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
-      - name: Install unzip for setup-bun
-        run: apt-get update && apt-get install -y --no-install-recommends unzip
+      - name: Install container build tools
+        run: apt-get update && apt-get install -y --no-install-recommends make unzip
 
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
@@ -143,8 +143,8 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Install unzip for setup-bun
-        run: apt-get update && apt-get install -y --no-install-recommends unzip
+      - name: Install container build tools
+        run: apt-get update && apt-get install -y --no-install-recommends make unzip
 
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:

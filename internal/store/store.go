@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -560,13 +561,7 @@ func queryInChunks[T any](db chunkQuerier, ids []T, prefixArgs []any, queryTempl
 		chunk := ids[i:end]
 
 		placeholders := make([]string, len(chunk))
-		totalArgs := len(prefixArgs) + len(chunk)
-		if totalArgs < len(chunk) {
-			return fmt.Errorf("query chunk parameter count overflows int: %d prefix args + %d ids",
-				len(prefixArgs), len(chunk))
-		}
-		args := make([]any, 0, totalArgs)
-		args = append(args, prefixArgs...)
+		args := slices.Clone(prefixArgs)
 		for j, id := range chunk {
 			placeholders[j] = "?"
 			args = append(args, id)
@@ -637,13 +632,7 @@ func execInChunks[T any](db chunkQuerier, ids []T, prefixArgs []any, queryTempla
 		chunk := ids[i:end]
 
 		placeholders := make([]string, len(chunk))
-		totalArgs := len(prefixArgs) + len(chunk)
-		if totalArgs < len(chunk) {
-			return fmt.Errorf("exec chunk parameter count overflows int: %d prefix args + %d ids",
-				len(prefixArgs), len(chunk))
-		}
-		args := make([]any, 0, totalArgs)
-		args = append(args, prefixArgs...)
+		args := slices.Clone(prefixArgs)
 		for j, id := range chunk {
 			placeholders[j] = "?"
 			args = append(args, id)

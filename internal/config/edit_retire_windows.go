@@ -12,6 +12,11 @@ import (
 	"golang.org/x/sys/windows"
 )
 
+// retainWindowsConfigArtifact pins the identity of the file currently at
+// path. The handle requests attribute access only: such opens neither update
+// nor are checked against the file's sharing state, so a retained identity
+// never conflicts with ReplaceFileW (which opens the replacement file with no
+// sharing mode) or with the DELETE-access opens that renames perform.
 func retainWindowsConfigArtifact(path, expectedIdentity string) (*os.File, error) {
 	encoded, err := windows.UTF16PtrFromString(path)
 	if err != nil {
@@ -19,8 +24,8 @@ func retainWindowsConfigArtifact(path, expectedIdentity string) (*os.File, error
 	}
 	handle, err := windows.CreateFile(
 		encoded,
-		windows.GENERIC_READ|windows.READ_CONTROL,
-		windows.FILE_SHARE_READ|windows.FILE_SHARE_DELETE,
+		windows.FILE_READ_ATTRIBUTES|windows.READ_CONTROL,
+		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE,
 		nil,
 		windows.OPEN_EXISTING,
 		windows.FILE_ATTRIBUTE_NORMAL|windows.FILE_FLAG_OPEN_REPARSE_POINT,

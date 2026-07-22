@@ -73,28 +73,24 @@ func createConfigCandidate(dir string) (configCandidate, error) {
 			_ = authority.Release()
 			return configCandidate{}, statErr
 		}
-		_, ok := openedFileIdentity(file, info)
+		identity, ok := openedFileIdentity(file, info)
 		if !ok {
 			_ = file.Close()
 			_ = authority.Release()
 			return configCandidate{}, errors.New("config candidate identity is unavailable")
 		}
-		process := windows.CurrentProcess()
-		var retainedHandle windows.Handle
-		if err := windows.DuplicateHandle(
-			process,
-			handle,
-			process,
-			&retainedHandle,
-			windows.GENERIC_READ|windows.READ_CONTROL,
-			false,
-			0,
-		); err != nil {
+		// A fresh attributes-only open replaces a DuplicateHandle retention:
+		// a duplicated handle would keep the writable open's sharing footprint
+		// on the file object alive after the write handle closes, which would
+		// make ReplaceFileW's no-sharing open of the candidate fail. Matching
+		// the identity against the still-open create handle proves the
+		// retained descriptor names the same file.
+		retained, err := retainWindowsConfigArtifact(path, identity)
+		if err != nil {
 			_ = file.Close()
 			_ = authority.Release()
 			return configCandidate{}, fmt.Errorf("retain Windows config candidate: %w", err)
 		}
-		retained := os.NewFile(uintptr(retainedHandle), path)
 		return configCandidate{
 			file:     file,
 			retained: retained,

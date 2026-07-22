@@ -112,12 +112,12 @@ func TestWindowsRetainedAuthorityBlocksIntermediateRenameAndAllowsReplace(t *tes
 	require.NoError(t, err)
 	encodedParent, err := windows.UTF16PtrFromString(parent)
 	require.NoError(t, err)
-	writer, err := windows.CreateFile(encodedParent, windows.GENERIC_WRITE,
+	deleter, err := windows.CreateFile(encodedParent, windows.DELETE,
 		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE,
 		nil, windows.OPEN_EXISTING,
 		windows.FILE_FLAG_OPEN_REPARSE_POINT|windows.FILE_FLAG_BACKUP_SEMANTICS, 0)
-	require.Error(t, err, "retained parent handle must deny reparse-capable write opens")
-	assert.Equal(t, windows.InvalidHandle, writer)
+	require.Error(t, err, "retained parent handle must deny delete-capable opens")
+	assert.Equal(t, windows.InvalidHandle, deleter)
 	assert.ErrorIs(t, err, windows.ERROR_SHARING_VIOLATION)
 
 	err = os.Rename(intermediate, filepath.Join(root, "redirected"))
