@@ -6,6 +6,7 @@ import type {
   ExploreFilesResponse,
   ExploreGroupDimension,
   ExploreGroupLoadResult,
+  ExploreGroupsPredicate,
   ExploreGroupsResponse,
   ExploreLoadResult,
   ExplorePredicate,
@@ -82,7 +83,7 @@ function messageFor(error: unknown, status: number): string {
 export interface ExploreAPI {
   explore(predicate: ExplorePredicate, signal?: AbortSignal): Promise<ExploreLoadResult>;
   groups(
-    predicate: ExplorePredicate,
+    predicate: ExploreGroupsPredicate,
     dimension: ExploreGroupDimension,
     signal?: AbortSignal
   ): Promise<ExploreGroupLoadResult>;
@@ -142,6 +143,7 @@ export function createExploreAPI(client: APIClient): ExploreAPI {
         ...(predicate.cursor ? { cursor: predicate.cursor } : {}),
         ...(predicate.filters ? { filters: predicate.filters } : {}),
         ...(predicate.query ? { query: predicate.query, search_mode: predicate.search_mode } : {}),
+        ...(predicate.group_key ? { group_key: predicate.group_key } : {}),
         grouping: [dimension],
         limit: predicate.limit,
         presentation: 'table' as const

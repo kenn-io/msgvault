@@ -2446,6 +2446,7 @@ export interface components {
         ExploreGroupsHTTPRequest: {
             cursor?: string;
             filters?: components["schemas"]["ExploreFilter"][] | null;
+            group_key?: string;
             grouping: components["schemas"]["ExploreGroupDimension"][];
             /** Format: int64 */
             limit?: number;

@@ -168,8 +168,15 @@ type ExploreCoverageResult struct {
 type ExploreGroupRequest struct {
 	Explore   ExploreRequest `json:"explore"`
 	Dimension string         `json:"dimension"`
-	Sort      SortSpec       `json:"sort"`
-	Page      PageSpec       `json:"page"`
+	// GroupKey, when non-empty, restricts the response to the single group
+	// whose rendered key equals it exactly — the same key ExploreGroupRow
+	// reports for the dimension (canonical participant IDs and source IDs as
+	// VARCHAR, domain strings, message types, year/month buckets). TotalCount
+	// then reports the matched-row count (0 or 1), not the full group
+	// population under the predicate.
+	GroupKey string   `json:"group_key,omitempty"`
+	Sort     SortSpec `json:"sort"`
+	Page     PageSpec `json:"page"`
 }
 
 type ExploreGroupRow struct {

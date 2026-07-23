@@ -3,7 +3,6 @@ import { appShortcuts } from '@kenn-io/kit-ui';
 import { describe, expect, it, vi } from 'vitest';
 
 import { createAPIClient } from '../../api/client';
-import { GROUP_DETAIL_PAGE_SIZE } from '../../explore/group-detail';
 import { LOAD_THROUGH_END_MAX_PAGES } from '../../explore/paging';
 import { ExploreState, parseExploreURLState } from '../../explore/state.svelte';
 import AppShell from './AppShell.svelte';
@@ -757,7 +756,8 @@ describe('EverythingWorkspace', () => {
     await expect(detailRequest!.clone().json()).resolves.toMatchObject({
       filters: [{ dimension: 'source', values: ['7'] }],
       grouping: ['source'],
-      limit: GROUP_DETAIL_PAGE_SIZE
+      group_key: '7',
+      limit: 1
     });
     expect(state.current.groupingChain).toEqual([]);
     rendered.unmount();
@@ -825,15 +825,16 @@ describe('EverythingWorkspace', () => {
       .filter((request) => new URL(request.url).pathname === '/api/v1/explore/groups')
       .map((request) => request.clone().json()));
     await waitFor(async () => {
-      expect((await groupsBodies()).some((body) => body.limit === GROUP_DETAIL_PAGE_SIZE)).toBe(true);
+      expect((await groupsBodies()).some((body) => body.group_key === '2')).toBe(true);
     });
-    const detailBody = (await groupsBodies()).find((body) => body.limit === GROUP_DETAIL_PAGE_SIZE);
+    const detailBody = (await groupsBodies()).find((body) => body.group_key === '2');
     expect(detailBody).toMatchObject({
       query: 'alpha',
       search_mode: 'semantic',
       filters: [{ dimension: 'participant', values: ['2'] }],
       grouping: ['participant'],
-      limit: GROUP_DETAIL_PAGE_SIZE
+      group_key: '2',
+      limit: 1
     });
     expect(detailBody.candidate_snapshot_id).toBeUndefined();
     expect(state.current.selectedRow).toBe('group:participant:2');
@@ -1107,7 +1108,8 @@ describe('EverythingWorkspace', () => {
       query: 'alpha',
       search_mode: 'full_text',
       grouping: ['participant'],
-      limit: GROUP_DETAIL_PAGE_SIZE,
+      group_key: '42',
+      limit: 1,
       presentation: 'table'
     });
     rendered.unmount();
@@ -1131,13 +1133,17 @@ describe('EverythingWorkspace', () => {
         const body = await request.clone().json();
         // Filtering by participant 2 does not make them the sole group:
         // co-participant Alice appears on every matching entry and ranks
-        // first, so a top-1 request would resolve the wrong group.
+        // first, so an unkeyed top-1 request would resolve the wrong group.
+        // The daemon's group_key filter returns the exact match instead.
         const rows = [
           { key: '1', label: 'Alice', count: 8, estimated_bytes: 800, latest_at: '2026-07-18T12:00:00Z' },
           { key: '2', label: 'Bob', count: 5, estimated_bytes: 500, latest_at: '2026-07-18T12:00:00Z' }
         ];
+        const matched = body.group_key
+          ? rows.filter((row) => row.key === body.group_key)
+          : rows.slice(0, body.limit ?? rows.length);
         return Response.json({
-          rows: rows.slice(0, body.limit ?? rows.length), total_count: rows.length,
+          rows: matched, total_count: body.group_key ? matched.length : rows.length,
           cache_revision: 'cache-1', search_provenance: {}
         });
       }
@@ -1157,7 +1163,7 @@ describe('EverythingWorkspace', () => {
   });
 
 
-  it('pages the group detail lookup until the requested key appears on a later page', async () => {
+  it('hydrates a group ranked beyond any bounded page walk with one keyed request', async () => {
     const initialState = {
       schemaVersion: 1, workspace: 'everything', query: '', searchMode: 'full_text',
       filters: [{ dimension: 'participant', values: ['2'] }], groupingChain: [],
@@ -1173,19 +1179,27 @@ describe('EverythingWorkspace', () => {
       if (new URL(request.url).pathname.endsWith('/groups')) {
         groupRequests.push(request);
         const body = await request.clone().json();
-        if (body.cursor === 'groups-page-2') {
+        // Bob ranks 601st: a paging client capped at 5 pages of 100 rows
+        // would never reach him. The daemon's group_key filter returns the
+        // exact match; unkeyed requests page the ranked co-participants.
+        const ranked = Array.from({ length: 600 }, (_, index) => ({
+          key: `co-${index}`, label: `Co-participant ${index}`, count: 601 - index,
+          estimated_bytes: 90, latest_at: '2026-07-18T12:00:00Z'
+        }));
+        ranked.push({ key: '2', label: 'Bob', count: 5, estimated_bytes: 500, latest_at: '2026-07-18T12:00:00Z' });
+        if (body.group_key) {
+          const matched = ranked.filter((row) => row.key === body.group_key);
           return Response.json({
-            rows: [{ key: '2', label: 'Bob', count: 5, estimated_bytes: 500, latest_at: '2026-07-18T12:00:00Z' }],
-            total_count: 101, cache_revision: 'cache-1', search_provenance: {}
+            rows: matched, total_count: matched.length,
+            cache_revision: 'cache-1', search_provenance: {}
           });
         }
+        const offset = body.cursor ? Number(body.cursor) : 0;
+        const page = ranked.slice(offset, offset + (body.limit ?? 100));
+        const next = offset + page.length;
         return Response.json({
-          rows: Array.from({ length: body.limit ?? 100 }, (_, index) => ({
-            key: `co-${index}`, label: `Co-participant ${index}`, count: 9,
-            estimated_bytes: 90, latest_at: '2026-07-18T12:00:00Z'
-          })),
-          total_count: 101, cache_revision: 'cache-1',
-          search_provenance: {}, next_cursor: 'groups-page-2'
+          rows: page, total_count: ranked.length, cache_revision: 'cache-1', search_provenance: {},
+          ...(next < ranked.length ? { next_cursor: String(next) } : {})
         });
       }
       if (new URL(request.url).pathname.endsWith('/files')) {
@@ -1198,10 +1212,10 @@ describe('EverythingWorkspace', () => {
 
     const reading = await screen.findByRole('complementary', { name: 'Reading pane: Bob' });
     expect(within(reading).getByText(/5 items/)).toBeDefined();
-    expect(groupRequests).toHaveLength(2);
-    await expect(groupRequests[1]!.clone().json()).resolves.toMatchObject({
-      cursor: 'groups-page-2',
-      limit: GROUP_DETAIL_PAGE_SIZE
+    expect(groupRequests).toHaveLength(1);
+    await expect(groupRequests[0]!.clone().json()).resolves.toMatchObject({
+      group_key: '2',
+      limit: 1
     });
     rendered.unmount();
     state.destroy();

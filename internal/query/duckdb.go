@@ -1157,7 +1157,7 @@ func (e *DuckDBEngine) runAggregation(ctx context.Context, def aggViewDef, where
 
 // sortClause returns ORDER BY clause for aggregates.
 func (e *DuckDBEngine) sortClause(opts AggregateOptions) string {
-	field := "count"
+	field := sortFieldCount
 	switch opts.SortField {
 	case SortBySize:
 		field = "total_size"

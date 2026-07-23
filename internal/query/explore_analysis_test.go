@@ -2,6 +2,7 @@ package query
 
 import (
 	"context"
+	"strconv"
 	"testing"
 	"time"
 
@@ -68,6 +69,86 @@ func TestExploreGroupsMessageTypeCollapsesLegacyRowsIntoEmail(t *testing.T) {
 	})
 	requirements.NoError(err)
 	assertions.Equal(result.Rows[0].Count, drilled.TotalCount, "drill-down filter must reproduce the group count")
+}
+
+// TestExploreGroupsGroupKeyReturnsExactGroupRegardlessOfRank pins the
+// exact-key lookup group detail hydration depends on: the requested group
+// must be returned even when other groups outrank it, so a top-N page can
+// never make a valid selection look unavailable.
+func TestExploreGroupsGroupKeyReturnsExactGroupRegardlessOfRank(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	b := NewTestDataBuilder(t)
+	source := b.AddSource("archive@example.com")
+	alice := b.AddParticipant("alice@example.com", "example.com", "Alice Example")
+	bob := b.AddParticipant("bob@example.net", "example.net", "Bob Example")
+	first := b.AddMessage(MessageOpt{SourceID: source, Subject: "One", SizeEstimate: 100})
+	b.AddTo(first, alice, "")
+	second := b.AddMessage(MessageOpt{SourceID: source, Subject: "Two", SizeEstimate: 50})
+	b.AddTo(second, alice, "")
+	b.AddCc(second, bob, "")
+
+	result, err := b.BuildEngine().ExploreGroups(context.Background(), ExploreGroupRequest{
+		Explore: ExploreRequest{}, Dimension: "participant", GroupKey: strconv.FormatInt(bob, 10),
+		Sort: SortSpec{Field: "count", Direction: "desc"}, Page: PageSpec{Limit: 1},
+	})
+	requirements.NoError(err)
+	requirements.Len(result.Rows, 1, "Alice outranks Bob at limit 1; group_key must still resolve Bob")
+	assertions.Equal(int64(1), result.TotalCount, "total_count reports the matched-row count")
+	assertions.Equal(strconv.FormatInt(bob, 10), result.Rows[0].Key)
+	assertions.Equal("Bob Example", result.Rows[0].Label)
+	assertions.Equal(int64(1), result.Rows[0].Count)
+	assertions.Equal(int64(50), result.Rows[0].EstimatedBytes)
+}
+
+func TestExploreGroupsGroupKeyWithoutMatchReturnsZeroRows(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	b := NewTestDataBuilder(t)
+	b.AddSource("archive@example.com")
+	b.AddMessage(MessageOpt{Subject: "One"})
+
+	result, err := b.BuildEngine().ExploreGroups(context.Background(), ExploreGroupRequest{
+		Explore: ExploreRequest{}, Dimension: "source", GroupKey: "999",
+		Sort: SortSpec{Field: "count", Direction: "desc"}, Page: PageSpec{Limit: 10},
+	})
+	requirements.NoError(err)
+	assertions.Empty(result.Rows)
+	assertions.Equal(int64(0), result.TotalCount)
+	assertions.NotEmpty(result.CacheRevision)
+}
+
+func TestExploreGroupsGroupKeyComposesWithContextFilters(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	b := NewTestDataBuilder(t)
+	first := b.AddSource("archive-a@example.com")
+	second := b.AddSource("archive-b@example.com")
+	bob := b.AddParticipant("bob@example.net", "example.net", "Bob Example")
+	carol := b.AddParticipant("carol@example.net", "example.net", "Carol Example")
+	inFirst := b.AddMessage(MessageOpt{SourceID: first, Subject: "In first"})
+	b.AddTo(inFirst, bob, "")
+	inSecond := b.AddMessage(MessageOpt{SourceID: second, Subject: "In second"})
+	b.AddTo(inSecond, carol, "")
+	engine := b.BuildEngine()
+
+	filtered, err := engine.ExploreGroups(context.Background(), ExploreGroupRequest{
+		Explore:   ExploreRequest{Context: Context{SourceIDs: []int64{first}}},
+		Dimension: "domain", GroupKey: "example.net",
+		Sort: SortSpec{Field: "count", Direction: "desc"}, Page: PageSpec{Limit: 10},
+	})
+	requirements.NoError(err)
+	requirements.Len(filtered.Rows, 1)
+	assertions.Equal("example.net", filtered.Rows[0].Key)
+	assertions.Equal(int64(1), filtered.Rows[0].Count, "the source filter must scope the keyed group's count")
+
+	unfiltered, err := engine.ExploreGroups(context.Background(), ExploreGroupRequest{
+		Explore: ExploreRequest{}, Dimension: "domain", GroupKey: "example.net",
+		Sort: SortSpec{Field: "count", Direction: "desc"}, Page: PageSpec{Limit: 10},
+	})
+	requirements.NoError(err)
+	requirements.Len(unfiltered.Rows, 1)
+	assertions.Equal(int64(2), unfiltered.Rows[0].Count)
 }
 
 func TestExploreGroupsParticipantLabelsUseDurableIdentityPrecedence(t *testing.T) {

@@ -1433,6 +1433,7 @@ func (e ExploreGroupSort) Validate() error {
 type ExploreGroupsHTTPRequest struct {
 	Cursor       *string                               `json:"cursor,omitempty"`
 	Filters      []ExploreFilter                       `json:"filters,omitempty"`
+	GroupKey     *string                               `json:"group_key,omitempty"`
 	Grouping     []ExploreGroupDimension               `json:"grouping" validate:"required,min=1,max=1"`
 	Limit        *int64                                `json:"limit,omitempty" validate:"omitempty,gte=0,lte=500"`
 	Presentation *ExploreGroupsHTTPRequestPresentation `json:"presentation,omitempty"`

@@ -107,6 +107,10 @@ type ExploreGroupsHTTPRequest struct {
 	Sort         []ExploreGroupSort      `json:"sort,omitempty" maxItems:"1"`
 	Cursor       string                  `json:"cursor,omitempty"`
 	Limit        int                     `json:"limit,omitempty" minimum:"0" maximum:"500"`
+	// GroupKey restricts the response to the single group whose key equals it
+	// exactly, regardless of the group's rank under the predicate. total_count
+	// then reports the matched-row count (0 or 1).
+	GroupKey string `json:"group_key,omitempty"`
 }
 
 type ExploreGroupsHTTPResponse struct {
@@ -340,6 +344,7 @@ func (s *Server) handleExploreGroups(w http.ResponseWriter, r *http.Request) {
 	request.Query = strings.TrimSpace(request.Query)
 	request.SearchMode = strings.ToLower(strings.TrimSpace(request.SearchMode))
 	request.Presentation = strings.ToLower(strings.TrimSpace(request.Presentation))
+	request.GroupKey = strings.TrimSpace(request.GroupKey)
 	if err := validateExploreSearchPair(request.Query, request.SearchMode); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_search", err.Error())
 		return
@@ -419,7 +424,8 @@ func (s *Server) handleExploreGroups(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	result, err := analyzer.ExploreGroups(r.Context(), query.ExploreGroupRequest{
-		Explore: query.ExploreRequest{Context: ctx, Search: searchSpec}, Dimension: string(dimension), Sort: sortSpec,
+		Explore: query.ExploreRequest{Context: ctx, Search: searchSpec}, Dimension: string(dimension),
+		GroupKey: request.GroupKey, Sort: sortSpec,
 		Page: query.PageSpec{Limit: request.Limit, Offset: offset},
 	})
 	if err != nil {

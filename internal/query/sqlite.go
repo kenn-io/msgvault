@@ -275,7 +275,7 @@ func sortClause(opts AggregateOptions) (string, error) {
 	var field string
 	switch opts.SortField {
 	case SortByCount:
-		field = "count"
+		field = sortFieldCount
 	case SortBySize:
 		field = "total_size"
 	case SortByAttachmentSize:

@@ -142,7 +142,12 @@ import (
 // can no longer trigger authenticated outbound fetches. The response
 // (image bytes) is unchanged. The endpoint shipped in 1.29.0 and had no
 // released non-browser consumers, so this replaces the GET form outright.
-const APISchemaVersion = "1.30.0"
+// 1.31.0 adds the optional group_key field to POST /api/v1/explore/groups:
+// when set, the response contains only the group whose key equals it exactly
+// (any rank), and total_count reports the matched-row count (0 or 1). Clients
+// use it to hydrate a selected group without paging the ranked listing.
+// Additive (minor bump): omitting the field preserves the ranked listing.
+const APISchemaVersion = "1.31.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.

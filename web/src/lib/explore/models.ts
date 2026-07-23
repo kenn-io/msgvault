@@ -29,6 +29,12 @@ export type ExploreGroupDimension = components['schemas']['ExploreGroupDimension
 export type ExploreGroupRow = components['schemas']['ExploreGroupRow'];
 export type ExploreGroupsResponse = components['schemas']['ExploreGroupsHTTPResponse'];
 export type ExplorePredicate = components['schemas']['ExploreHTTPRequest'];
+/**
+ * Predicate for the groups listing: the shared explore predicate plus the
+ * groups-only exact-key filter (see ExploreGroupsHTTPRequest.group_key).
+ */
+export type ExploreGroupsPredicate = ExplorePredicate &
+  Pick<components['schemas']['ExploreGroupsHTTPRequest'], 'group_key'>;
 export type ExploreResponse = components['schemas']['ExploreHTTPResponse'];
 export type ExploreSearchMode = NonNullable<ExplorePredicate['search_mode']>;
 export type ExploreSort = components['schemas']['ExploreSort'];

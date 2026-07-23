@@ -1673,6 +1673,8 @@ components:
           type:
             - array
             - "null"
+        group_key:
+          type: string
         grouping:
           items:
             $ref: "#/components/schemas/ExploreGroupDimension"
@@ -4461,7 +4463,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 1.30.0
+  version: 1.31.0
 openapi: 3.1.0
 paths:
   /api/ping:

@@ -6,12 +6,6 @@ import type {
   ExplorePredicate
 } from './models';
 
-/** Page size for the bounded exact-key lookup behind group detail hydration. */
-export const GROUP_DETAIL_PAGE_SIZE = 100;
-
-/** Upper bound on pages walked before the lookup degrades to "missing". */
-export const GROUP_DETAIL_MAX_PAGES = 5;
-
 export type GroupDetailLookup =
   | { status: 'found'; row: ExploreGroupRow }
   | { status: 'missing' }
@@ -23,9 +17,9 @@ export type GroupDetailLookup =
  * Filtering by a multi-valued dimension (participant, domain) does not make
  * the requested group the sole — or even the first — row: every
  * co-participant/co-domain of the matching entries forms a group too, and
- * one of them can outrank the requested key. The groups endpoint has no
- * exact-key parameter, so this pages through the listing until the key is
- * found, the listing ends, or the bounded page cap is reached.
+ * one of them can outrank the requested key. The groups endpoint's group_key
+ * filter resolves the key server-side regardless of its rank, so an empty
+ * response is authoritative absence rather than a paging cap.
  */
 export async function findGroupDetail(
   api: Pick<ExploreAPI, 'groups'>,
@@ -34,20 +28,10 @@ export async function findGroupDetail(
   key: string,
   signal?: AbortSignal
 ): Promise<GroupDetailLookup> {
-  let cursor: string | undefined;
-  for (let page = 0; page < GROUP_DETAIL_MAX_PAGES; page += 1) {
-    const loaded = await api.groups(
-      { ...predicate, limit: GROUP_DETAIL_PAGE_SIZE, ...(cursor === undefined ? {} : { cursor }) },
-      dimension,
-      signal
-    );
-    if (loaded.status === 'unavailable') {
-      return { status: 'unavailable', unavailable: loaded.unavailable };
-    }
-    const row = loaded.result.rows.find((candidate) => candidate.key === key);
-    if (row) return { status: 'found', row };
-    cursor = loaded.result.nextCursor;
-    if (cursor === undefined) return { status: 'missing' };
+  const loaded = await api.groups({ ...predicate, limit: 1, group_key: key }, dimension, signal);
+  if (loaded.status === 'unavailable') {
+    return { status: 'unavailable', unavailable: loaded.unavailable };
   }
-  return { status: 'missing' };
+  const row = loaded.result.rows.find((candidate) => candidate.key === key);
+  return row ? { status: 'found', row } : { status: 'missing' };
 }

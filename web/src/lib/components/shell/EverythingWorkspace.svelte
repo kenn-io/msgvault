@@ -247,7 +247,7 @@
     };
     // Filtering by target.key does not make it the top-ranked group: every
     // co-participant/co-domain of the matching entries forms a group too, so
-    // findGroupDetail pages through the listing for the exact key.
+    // findGroupDetail resolves the exact key server-side via group_key.
     void findGroupDetail(api, detailPredicate, target.dimension, target.key, controller.signal)
       .then((lookup) => {
         if (generation !== session.readingDetailGeneration || controller.signal.aborted) return;

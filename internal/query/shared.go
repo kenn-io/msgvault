@@ -34,6 +34,7 @@ const (
 	timeGranularityMonth            = "month"
 	sortDirectionAsc                = "asc"
 	sortDirectionDesc               = "desc"
+	sortFieldCount                  = "count"
 )
 
 // sqlSortDirections maps validated request sort directions to fixed SQL

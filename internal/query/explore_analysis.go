@@ -45,6 +45,12 @@ func (e *DuckDBEngine) ExploreGroups(ctx context.Context, request ExploreGroupRe
 	if limit == 0 {
 		limit = defaultExploreLimit
 	}
+	// GroupKey filters the already-rendered group_key projection, so the
+	// exact-key lookup works identically for every dimension's key expression.
+	keyFilter := ""
+	if request.GroupKey != "" {
+		keyFilter = " WHERE group_key = ?"
+	}
 	queryText := buildExploreLogicalSQL(conditions) + spec.cte + `
 ), grouped AS (
 	SELECT ` + spec.key + ` AS group_key, ` + spec.label + ` AS group_label,
@@ -54,10 +60,13 @@ func (e *DuckDBEngine) ExploreGroups(ctx context.Context, request ExploreGroupRe
 	FROM ` + spec.source + spec.fromSuffix + spec.whereSuffix + `
 	GROUP BY ` + spec.groupBy + `
 ), counted AS (
-	SELECT *, COUNT(*) OVER () AS total_count FROM grouped
+	SELECT *, COUNT(*) OVER () AS total_count FROM grouped` + keyFilter + `
 )
 SELECT group_key, group_label, group_count, estimated_bytes, latest_at, total_count
 FROM counted ORDER BY ` + order + ` LIMIT ? OFFSET ?`
+	if request.GroupKey != "" {
+		args = append(args, request.GroupKey)
+	}
 	args = append(args, limit, request.Page.Offset)
 	rows, err := e.db.QueryContext(ctx, queryText, args...)
 	if err != nil {
@@ -252,7 +261,7 @@ ORDER BY member_id`, e.parquetPath(datasetParticipantClusters), strings.Join(pla
 
 func exploreGroupOrder(sort SortSpec) (string, error) {
 	if sort.Field == "" {
-		sort = SortSpec{Field: "count", Direction: sortDirectionDesc}
+		sort = SortSpec{Field: sortFieldCount, Direction: sortDirectionDesc}
 	}
 	direction, ok := sqlSortDirections[sort.Direction]
 	if !ok {
@@ -262,7 +271,7 @@ func exploreGroupOrder(sort SortSpec) (string, error) {
 	switch sort.Field {
 	case "key":
 		column = "group_key"
-	case "count":
+	case sortFieldCount:
 		column = "group_count"
 	case "estimated_bytes":
 		column = "estimated_bytes"

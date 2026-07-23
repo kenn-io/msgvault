@@ -105,6 +105,41 @@ func TestExploreParticipantGroupsResolveDurableLabelsEndToEnd(t *testing.T) {
 	assertions.Equal(int64(1), body.Rows[1].Count)
 }
 
+// TestExploreGroupsGroupKeyHydratesLowRankedGroupEndToEnd pins the wire
+// mapping of the group_key request field: at limit 1 the default count-desc
+// ranking returns Alice, so the keyed request resolving Bob proves the exact
+// lookup reaches the engine instead of the ranked listing.
+func TestExploreGroupsGroupKeyHydratesLowRankedGroupEndToEnd(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	srv := newTestServerWithEngine(t, newExploreDuckDBFixture(t))
+
+	response := postExploreJSON(t, srv, "/api/v1/explore/groups", `{
+		"grouping":["participant"],"group_key":"2","limit":1
+	}`)
+	requirements.Equal(http.StatusOK, response.Code, response.Body.String())
+	var body struct {
+		Rows       []query.ExploreGroupRow `json:"rows"`
+		TotalCount int64                   `json:"total_count"`
+		NextCursor string                  `json:"next_cursor"`
+	}
+	requirements.NoError(json.Unmarshal(response.Body.Bytes(), &body))
+	requirements.Len(body.Rows, 1, "Alice outranks Bob; group_key must still resolve Bob at limit 1")
+	assertions.Equal("2", body.Rows[0].Key)
+	assertions.Equal("Bob", body.Rows[0].Label)
+	assertions.Equal(int64(1), body.Rows[0].Count)
+	assertions.Equal(int64(1), body.TotalCount)
+	assertions.Empty(body.NextCursor)
+
+	missing := postExploreJSON(t, srv, "/api/v1/explore/groups", `{
+		"grouping":["participant"],"group_key":"999","limit":1
+	}`)
+	requirements.Equal(http.StatusOK, missing.Code, missing.Body.String())
+	requirements.NoError(json.Unmarshal(missing.Body.Bytes(), &body))
+	assertions.Empty(body.Rows)
+	assertions.Equal(int64(0), body.TotalCount)
+}
+
 func TestExplorePreflightPinsRevisionAndExcludesCompletePredicate(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
