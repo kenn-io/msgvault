@@ -10,11 +10,13 @@ import {
 } from './inline-images';
 
 // Consented remote images are fetched by the authenticated shell through the
-// daemon's SSRF-hardened proxy (GET /api/v1/content/remote-image) and
+// daemon's SSRF-hardened proxy (POST /api/v1/content/remote-image) and
 // injected into the archived document as data: URIs. The srcdoc frame's CSP
 // therefore allowlists no remote origin, and the browser never contacts a
 // sender-controlled host — the daemon validates every resolved address and
-// redirect hop server-side, which also closes DNS rebinding.
+// redirect hop server-side, which also closes DNS rebinding. The proxy is
+// POST so the daemon's session CSRF machinery (same-origin + X-Csrf-Token,
+// injected by the API client for unsafe methods) guards every fetch.
 export const MAX_ARCHIVED_REMOTE_IMAGE_URLS = 64;
 export const MAX_ARCHIVED_REMOTE_IMAGE_BYTES = 10 * 1024 * 1024;
 export const MAX_ARCHIVED_REMOTE_IMAGE_TOTAL_BYTES = 30 * 1024 * 1024;
@@ -35,8 +37,8 @@ async function fetchRemoteImage(
   signal: AbortSignal
 ): Promise<string> {
   throwIfAborted(signal);
-  const { data, response } = await client.GET('/api/v1/content/remote-image', {
-    params: { query: { url } },
+  const { data, response } = await client.POST('/api/v1/content/remote-image', {
+    body: { url },
     parseAs: 'stream',
     signal
   });

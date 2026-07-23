@@ -234,8 +234,10 @@ describe('ContentFrame', () => {
     });
     expect(fetchFn).toHaveBeenCalledOnce();
     const request = fetchFn.mock.calls[0]?.[0] as Request;
+    expect(request.method).toBe('POST');
     expect(new URL(request.url).pathname).toBe('/api/v1/content/remote-image');
-    expect(new URL(request.url).searchParams.get('url')).toBe('https://images.example/chart.png');
+    expect(((await request.clone().json()) as { url: string }).url)
+      .toBe('https://images.example/chart.png');
     expect(screen.queryByRole('button', { name: /remote image/ })).toBeNull();
   });
 

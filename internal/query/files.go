@@ -312,7 +312,7 @@ func fileGroupExpressions(dimension, clustersGlob string) (groupExpressions, err
 		spec.whereSuffix = " WHERE group_value <> ''"
 		return spec, nil
 	case messageTypeDimension:
-		return simple(messageTypeDimension), nil
+		return simple(sqlMessageTypeGroupExpr()), nil
 	case "kind":
 		return simple("'file'"), nil
 	case "year":

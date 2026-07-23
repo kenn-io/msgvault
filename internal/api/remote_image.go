@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net"
@@ -14,19 +15,28 @@ import (
 	"time"
 )
 
-// GET /api/v1/content/remote-image is the SSRF-hardened proxy consented
+// POST /api/v1/content/remote-image is the SSRF-hardened proxy consented
 // remote mail images load through. The browser never contacts a
 // sender-controlled host directly: the daemon fetches the image itself,
 // which closes DNS rebinding (a public hostname resolving to a private
 // address at fetch time) because every resolved address is validated here
 // and the connection is dialed against the validated IP only. It also stops
 // mail senders from learning the reader's browser IP.
+//
+// The route is POST (JSON body) rather than GET on purpose: browsers cannot
+// make an <img> element or a navigation issue a POST, and the session CSRF
+// middleware enforces same-origin plus X-Csrf-Token on every unsafe method,
+// so a same-site sibling origin cannot trigger authenticated outbound
+// fetches through a victim's session.
 const (
-	remoteImageMaxBytes     = 10 << 20 // 10 MiB hard cap on the proxied body
-	remoteImageTimeout      = 15 * time.Second
-	remoteImageMaxRedirects = 3
-	remoteImageMaxURLBytes  = 4096
-	remoteImageUserAgent    = "msgvault-image-proxy"
+	remoteImagePath = "/api/v1/content/remote-image"
+
+	remoteImageMaxBytes        = 10 << 20 // 10 MiB hard cap on the proxied body
+	remoteImageTimeout         = 15 * time.Second
+	remoteImageMaxRedirects    = 3
+	remoteImageMaxURLBytes     = 4096
+	remoteImageMaxRequestBytes = 16 << 10 // JSON body carries one bounded URL
+	remoteImageUserAgent       = "msgvault-image-proxy"
 
 	remoteImageErrInvalidURL      = "invalid_url"
 	remoteImageErrProhibitedHost  = "prohibited_host"
@@ -323,13 +333,13 @@ func (f *remoteImageFetcher) doPinned(
 	// SSRF mitigation. validateTarget rejected private/reserved hosts and
 	// resolved addresses, and the transport above dials only the pinned,
 	// validated IP.
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target.String(), nil) //nolint:gosec // G704: destination validated and IP-pinned by validateTarget/doPinned
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target.String(), nil)
 	if err != nil {
 		return nil, fmt.Errorf("building remote image request: %w", err)
 	}
 	req.Header.Set("Accept", "image/*")
 	req.Header.Set("User-Agent", remoteImageUserAgent)
-	resp, err := client.Do(req) //nolint:gosec // G704: destination validated and IP-pinned by validateTarget/doPinned
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("fetching remote image: %w", err)
 	}
@@ -403,13 +413,23 @@ func (f *remoteImageFetcher) readImageBody(resp *http.Response) (string, []byte,
 	return contentType, body, nil
 }
 
-// handleRemoteImage serves GET /api/v1/content/remote-image. Success passes
+// RemoteImageRequest is the JSON body of POST /api/v1/content/remote-image.
+type RemoteImageRequest struct {
+	URL string `json:"url" doc:"Absolute http(s) URL of the consented remote image"`
+}
+
+// handleRemoteImage serves POST /api/v1/content/remote-image. Success passes
 // through only the upstream Content-Type plus the bytes; the API-wide
 // Cache-Control: no-store middleware covers caching.
 func (s *Server) handleRemoteImage(w http.ResponseWriter, r *http.Request) {
-	rawURL := r.URL.Query().Get("url")
-	if rawURL == "" {
-		writeError(w, http.StatusBadRequest, "missing_url", "Missing 'url' query parameter")
+	var req RemoteImageRequest
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, remoteImageMaxRequestBytes))
+	if err := decoder.Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "Request body must be a JSON object with a 'url' field")
+		return
+	}
+	if req.URL == "" {
+		writeError(w, http.StatusBadRequest, "missing_url", "Missing 'url' in request body")
 		return
 	}
 	fetcher := s.remoteImages
@@ -418,7 +438,7 @@ func (s *Server) handleRemoteImage(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), remoteImageTimeout)
 	defer cancel()
-	contentType, body, ferr := fetcher.fetch(ctx, rawURL)
+	contentType, body, ferr := fetcher.fetch(ctx, req.URL)
 	if ferr != nil {
 		writeError(w, ferr.status, ferr.code, ferr.message)
 		return
@@ -429,5 +449,5 @@ func (s *Server) handleRemoteImage(w http.ResponseWriter, r *http.Request) {
 	// Not XSS-reachable: readImageBody enforced a non-SVG image/* content
 	// type, nosniff pins it, and the frontend consumes the bytes as a blob
 	// URL inside a sandboxed srcdoc frame.
-	_, _ = w.Write(body) //nolint:gosec // G705: content type restricted to non-SVG image/* with nosniff
+	_, _ = w.Write(body)
 }

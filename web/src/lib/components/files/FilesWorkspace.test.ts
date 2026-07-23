@@ -455,6 +455,103 @@ describe('FilesWorkspace', () => {
     }
   );
 
+  it('resumes deep-state restoration after retrying a transient cursor failure', async () => {
+    const first = response();
+    first.files[0] = { ...first.files[0]!, id: 1, key: 'file:1', filename: 'first.pdf' };
+    Object.assign(first, { total_count: 2, next_cursor: 'page-2' });
+    const second = response();
+    second.files[0] = { ...second.files[0]!, id: 900, key: 'file:900', filename: 'deep.pdf' };
+    second.total_count = 2;
+    let cursorCalls = 0;
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      const path = new URL(request.url, document.baseURI).pathname;
+      if (path === '/api/v1/files/900') return Response.json({
+        id: 900, message_id: 11, conversation_id: 21, filename: 'deep.pdf', mime_type: 'application/pdf',
+        size_bytes: 2048, content_state: 'missing_blob', content_available: false
+      });
+      const body = await request.clone().json() as { cursor?: string };
+      if (!body.cursor) return Response.json(first);
+      cursorCalls += 1;
+      if (cursorCalls === 1) return Response.json({
+        error: 'analytical_cache_unavailable', message: 'Synthetic cursor cache outage.',
+        readiness: 'absent', recovery_action: 'msgvault build-cache'
+      }, { status: 503 });
+      return Response.json(second);
+    });
+    const onRestorationComplete = vi.fn();
+    const { container } = render(FilesWorkspace, {
+      client: createAPIClient(fetchFn), predicate: { filters: [], presentation: 'table' },
+      sort: { field: 'occurred_at', direction: 'desc' }, selectedKey: 'file:900',
+      activeKey: 'file:900', restorationEpoch: 7, onRestorationComplete
+    });
+
+    expect((await screen.findByRole('alert')).textContent).toContain('Synthetic cursor cache outage.');
+    expect(onRestorationComplete).not.toHaveBeenCalled();
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Retry loading more files' }));
+
+    await waitFor(() => expect(onRestorationComplete).toHaveBeenCalledWith(7));
+    const grid = screen.getByRole('grid', { name: 'Files results' });
+    expect(grid.getAttribute('aria-activedescendant')).toBe('file-row-900');
+    expect(container.querySelector('#file-row-900')).not.toBeNull();
+    expect(await screen.findByRole('dialog', { name: 'View deep.pdf' })).toBeDefined();
+    expect(cursorCalls).toBe(2);
+  });
+
+  it('restarts deep-state restoration against the fresh listing after a terminal cursor reload', async () => {
+    const first = response();
+    first.files[0] = { ...first.files[0]!, id: 1, key: 'file:1', filename: 'first.pdf' };
+    Object.assign(first, { total_count: 2, next_cursor: 'page-2' });
+    const reloadedFirst = response();
+    reloadedFirst.files[0] = { ...reloadedFirst.files[0]!, id: 1, key: 'file:1', filename: 'first.pdf' };
+    Object.assign(reloadedFirst, { total_count: 2, next_cursor: 'page-2b' });
+    const reloadedSecond = response();
+    reloadedSecond.files[0] = { ...reloadedSecond.files[0]!, id: 900, key: 'file:900', filename: 'deep.pdf' };
+    reloadedSecond.total_count = 2;
+    let initialCalls = 0;
+    let deadCursorCalls = 0;
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      const path = new URL(request.url, document.baseURI).pathname;
+      if (path === '/api/v1/files/900') return Response.json({
+        id: 900, message_id: 11, conversation_id: 21, filename: 'deep.pdf', mime_type: 'application/pdf',
+        size_bytes: 2048, content_state: 'missing_blob', content_available: false
+      });
+      const body = await request.clone().json() as { cursor?: string };
+      if (body.cursor === 'page-2') {
+        deadCursorCalls += 1;
+        return Response.json(
+          { error: 'archive_revision_changed', message: 'Results changed under this cursor.' },
+          { status: 409 }
+        );
+      }
+      if (body.cursor === 'page-2b') return Response.json(reloadedSecond);
+      initialCalls += 1;
+      return Response.json(initialCalls === 1 ? first : reloadedFirst);
+    });
+    const onRestorationComplete = vi.fn();
+    const { container } = render(FilesWorkspace, {
+      client: createAPIClient(fetchFn), predicate: { filters: [], presentation: 'table' },
+      sort: { field: 'occurred_at', direction: 'desc' }, selectedKey: 'file:900',
+      activeKey: 'file:900', restorationEpoch: 9, onRestorationComplete
+    });
+
+    expect((await screen.findByRole('alert')).textContent).toContain('Results changed under this cursor.');
+    expect(onRestorationComplete).not.toHaveBeenCalled();
+    expect(screen.queryByRole('button', { name: 'Retry loading more files' })).toBeNull();
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Reload files' }));
+
+    await waitFor(() => expect(onRestorationComplete).toHaveBeenCalledWith(9));
+    const grid = screen.getByRole('grid', { name: 'Files results' });
+    expect(grid.getAttribute('aria-activedescendant')).toBe('file-row-900');
+    expect(container.querySelector('#file-row-900')).not.toBeNull();
+    expect(await screen.findByRole('dialog', { name: 'View deep.pdf' })).toBeDefined();
+    expect(initialCalls).toBe(2);
+    expect(deadCursorCalls).toBe(1);
+  });
+
   it('shows a consistency failure beside loaded rows and recovers via reload', async () => {
     const first = response();
     Object.assign(first, { total_count: 2, next_cursor: 'page-2' });

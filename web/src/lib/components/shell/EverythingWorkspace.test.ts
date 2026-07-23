@@ -3,6 +3,7 @@ import { appShortcuts } from '@kenn-io/kit-ui';
 import { describe, expect, it, vi } from 'vitest';
 
 import { createAPIClient } from '../../api/client';
+import { GROUP_DETAIL_PAGE_SIZE } from '../../explore/group-detail';
 import { LOAD_THROUGH_END_MAX_PAGES } from '../../explore/paging';
 import { ExploreState, parseExploreURLState } from '../../explore/state.svelte';
 import AppShell from './AppShell.svelte';
@@ -756,7 +757,7 @@ describe('EverythingWorkspace', () => {
     await expect(detailRequest!.clone().json()).resolves.toMatchObject({
       filters: [{ dimension: 'source', values: ['7'] }],
       grouping: ['source'],
-      limit: 1
+      limit: GROUP_DETAIL_PAGE_SIZE
     });
     expect(state.current.groupingChain).toEqual([]);
     rendered.unmount();
@@ -824,15 +825,15 @@ describe('EverythingWorkspace', () => {
       .filter((request) => new URL(request.url).pathname === '/api/v1/explore/groups')
       .map((request) => request.clone().json()));
     await waitFor(async () => {
-      expect((await groupsBodies()).some((body) => body.limit === 1)).toBe(true);
+      expect((await groupsBodies()).some((body) => body.limit === GROUP_DETAIL_PAGE_SIZE)).toBe(true);
     });
-    const detailBody = (await groupsBodies()).find((body) => body.limit === 1);
+    const detailBody = (await groupsBodies()).find((body) => body.limit === GROUP_DETAIL_PAGE_SIZE);
     expect(detailBody).toMatchObject({
       query: 'alpha',
       search_mode: 'semantic',
       filters: [{ dimension: 'participant', values: ['2'] }],
       grouping: ['participant'],
-      limit: 1
+      limit: GROUP_DETAIL_PAGE_SIZE
     });
     expect(detailBody.candidate_snapshot_id).toBeUndefined();
     expect(state.current.selectedRow).toBe('group:participant:2');
@@ -1106,9 +1107,133 @@ describe('EverythingWorkspace', () => {
       query: 'alpha',
       search_mode: 'full_text',
       grouping: ['participant'],
-      limit: 1,
+      limit: GROUP_DETAIL_PAGE_SIZE,
       presentation: 'table'
     });
+    rendered.unmount();
+    state.destroy();
+  });
+
+
+  it('hydrates the requested participant group when a co-participant ranks first', async () => {
+    const initialState = {
+      schemaVersion: 1, workspace: 'everything', query: '', searchMode: 'full_text',
+      filters: [{ dimension: 'participant', values: ['2'] }], groupingChain: [],
+      presentation: 'table', sort: [{ field: 'occurred_at', direction: 'desc' }],
+      columns: ['kind', 'people', 'title', 'excerpt', 'time', 'attachments'], columnWidths: {},
+      activeRow: null, selectedRow: 'group:participant:2', inspectorPinned: true,
+      conversationAnchor: null, scrollAnchor: null
+    };
+    window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify(initialState))}`);
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      if (new URL(request.url).pathname.endsWith('/groups')) {
+        const body = await request.clone().json();
+        // Filtering by participant 2 does not make them the sole group:
+        // co-participant Alice appears on every matching entry and ranks
+        // first, so a top-1 request would resolve the wrong group.
+        const rows = [
+          { key: '1', label: 'Alice', count: 8, estimated_bytes: 800, latest_at: '2026-07-18T12:00:00Z' },
+          { key: '2', label: 'Bob', count: 5, estimated_bytes: 500, latest_at: '2026-07-18T12:00:00Z' }
+        ];
+        return Response.json({
+          rows: rows.slice(0, body.limit ?? rows.length), total_count: rows.length,
+          cache_revision: 'cache-1', search_provenance: {}
+        });
+      }
+      if (new URL(request.url).pathname.endsWith('/files')) {
+        return Response.json({ files: [], total_count: 0, cache_revision: 'cache-1', search_provenance: {} });
+      }
+      return Response.json(exploreResponse());
+    });
+    const state = new ExploreState(window);
+    const rendered = render(AppShell, { client: createAPIClient(fetchFn), state });
+
+    const reading = await screen.findByRole('complementary', { name: 'Reading pane: Bob' });
+    expect(within(reading).getByText(/5 items/)).toBeDefined();
+    expect(screen.queryByRole('complementary', { name: 'Reading pane: Alice' })).toBeNull();
+    rendered.unmount();
+    state.destroy();
+  });
+
+
+  it('pages the group detail lookup until the requested key appears on a later page', async () => {
+    const initialState = {
+      schemaVersion: 1, workspace: 'everything', query: '', searchMode: 'full_text',
+      filters: [{ dimension: 'participant', values: ['2'] }], groupingChain: [],
+      presentation: 'table', sort: [{ field: 'occurred_at', direction: 'desc' }],
+      columns: ['kind', 'people', 'title', 'excerpt', 'time', 'attachments'], columnWidths: {},
+      activeRow: null, selectedRow: 'group:participant:2', inspectorPinned: true,
+      conversationAnchor: null, scrollAnchor: null
+    };
+    window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify(initialState))}`);
+    const groupRequests: Request[] = [];
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      if (new URL(request.url).pathname.endsWith('/groups')) {
+        groupRequests.push(request);
+        const body = await request.clone().json();
+        if (body.cursor === 'groups-page-2') {
+          return Response.json({
+            rows: [{ key: '2', label: 'Bob', count: 5, estimated_bytes: 500, latest_at: '2026-07-18T12:00:00Z' }],
+            total_count: 101, cache_revision: 'cache-1', search_provenance: {}
+          });
+        }
+        return Response.json({
+          rows: Array.from({ length: body.limit ?? 100 }, (_, index) => ({
+            key: `co-${index}`, label: `Co-participant ${index}`, count: 9,
+            estimated_bytes: 90, latest_at: '2026-07-18T12:00:00Z'
+          })),
+          total_count: 101, cache_revision: 'cache-1',
+          search_provenance: {}, next_cursor: 'groups-page-2'
+        });
+      }
+      if (new URL(request.url).pathname.endsWith('/files')) {
+        return Response.json({ files: [], total_count: 0, cache_revision: 'cache-1', search_provenance: {} });
+      }
+      return Response.json(exploreResponse());
+    });
+    const state = new ExploreState(window);
+    const rendered = render(AppShell, { client: createAPIClient(fetchFn), state });
+
+    const reading = await screen.findByRole('complementary', { name: 'Reading pane: Bob' });
+    expect(within(reading).getByText(/5 items/)).toBeDefined();
+    expect(groupRequests).toHaveLength(2);
+    await expect(groupRequests[1]!.clone().json()).resolves.toMatchObject({
+      cursor: 'groups-page-2',
+      limit: GROUP_DETAIL_PAGE_SIZE
+    });
+    rendered.unmount();
+    state.destroy();
+  });
+
+
+  it('reports an absent group key truthfully instead of selecting a top-ranked wrong group', async () => {
+    const initialState = {
+      schemaVersion: 1, workspace: 'everything', query: '', searchMode: 'full_text',
+      filters: [{ dimension: 'participant', values: ['2'] }], groupingChain: [],
+      presentation: 'table', sort: [{ field: 'occurred_at', direction: 'desc' }],
+      columns: ['kind', 'people', 'title', 'excerpt', 'time', 'attachments'], columnWidths: {},
+      activeRow: null, selectedRow: 'group:participant:2', inspectorPinned: true,
+      conversationAnchor: null, scrollAnchor: null
+    };
+    window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify(initialState))}`);
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      if (new URL(request.url).pathname.endsWith('/groups')) {
+        return Response.json({
+          rows: [{ key: '1', label: 'Alice', count: 8, estimated_bytes: 800, latest_at: '2026-07-18T12:00:00Z' }],
+          total_count: 1, cache_revision: 'cache-1', search_provenance: {}
+        });
+      }
+      return Response.json(exploreResponse());
+    });
+    const state = new ExploreState(window);
+    const rendered = render(AppShell, { client: createAPIClient(fetchFn), state });
+
+    expect((await screen.findByRole('alert')).textContent).toContain('selected group is no longer available');
+    expect(screen.queryByRole('complementary', { name: 'Reading pane: Alice' })).toBeNull();
+    expect(state.current.selectedRow).toBe('group:participant:2');
     rendered.unmount();
     state.destroy();
   });

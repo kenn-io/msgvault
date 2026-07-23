@@ -680,10 +680,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Fetch a consented remote mail image through the SSRF-hardened daemon proxy */
-        get: operations["getRemoteImage"];
+        get?: never;
         put?: never;
-        post?: never;
+        /** Fetch a consented remote mail image through the SSRF-hardened daemon proxy */
+        post: operations["getRemoteImage"];
         delete?: never;
         options?: never;
         head?: never;
@@ -3078,6 +3078,10 @@ export interface components {
             total_count: number;
         } & {
             [key: string]: unknown;
+        };
+        RemoteImageRequest: {
+            /** @description Absolute http(s) URL of the consented remote image */
+            url: string;
         };
         RemoveRequest: {
             account: string;
@@ -5654,15 +5658,16 @@ export interface operations {
     };
     getRemoteImage: {
         parameters: {
-            query: {
-                /** @description Absolute http(s) URL of the consented remote image */
-                url: string;
-            };
+            query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RemoteImageRequest"];
+            };
+        };
         responses: {
             /** @description OK */
             200: {

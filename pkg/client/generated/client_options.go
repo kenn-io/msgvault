@@ -1531,7 +1531,7 @@ func (o *VerifyCLIRequestOptions) GetHeader() (map[string]string, error) {
 
 // GetRemoteImageRequestOptions is the options needed to make a request to GetRemoteImage.
 type GetRemoteImageRequestOptions struct {
-	Query *GetRemoteImageQuery
+	Body *GetRemoteImageBody
 }
 
 // Validate validates all the fields in the options.
@@ -1539,10 +1539,10 @@ type GetRemoteImageRequestOptions struct {
 func (o *GetRemoteImageRequestOptions) Validate() error {
 	var errors runtime.ValidationErrors
 
-	if o.Query != nil {
-		if v, ok := any(o.Query).(runtime.Validator); ok {
+	if o.Body != nil {
+		if v, ok := any(o.Body).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
-				errors = errors.Append("Query", err)
+				errors = errors.Append("Body", err)
 			}
 		}
 	}
@@ -1560,12 +1560,12 @@ func (o *GetRemoteImageRequestOptions) GetPathParams() (map[string]any, error) {
 
 // GetQuery returns the query params as a map.
 func (o *GetRemoteImageRequestOptions) GetQuery() (map[string]any, error) {
-	return runtime.AsMap[any](o.Query)
+	return nil, nil
 }
 
 // GetBody returns the payload in any type that can be marshalled to JSON by the client.
 func (o *GetRemoteImageRequestOptions) GetBody() any {
-	return nil
+	return o.Body
 }
 
 // GetHeader returns the headers as a map.

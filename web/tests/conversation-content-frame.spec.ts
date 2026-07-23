@@ -104,7 +104,7 @@ test('archived content has an opaque capability boundary and durable conversatio
   });
   await page.route('**/api/v1/content/remote-image**', async (route) => {
     proxiedImageRequests.push({
-      url: new URL(route.request().url()).searchParams.get('url'),
+      url: (route.request().postDataJSON() as { url: string }).url,
       cookie: route.request().headers()['cookie']
     });
     await remoteImageGate;
@@ -345,7 +345,7 @@ test('opening a message fires no sender-host request until images are enabled', 
     await route.abort();
   });
   await page.route('**/api/v1/content/remote-image**', async (route) => {
-    proxiedURLs.push(new URL(route.request().url()).searchParams.get('url'));
+    proxiedURLs.push((route.request().postDataJSON() as { url: string }).url);
     await route.fulfill({
       contentType: 'image/png',
       body: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', 'base64')

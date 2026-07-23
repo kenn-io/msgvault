@@ -89,6 +89,11 @@
   let previousRowHeight = untrack(() => rowHeight);
   let pendingRestoration = $state<PendingRestoration>();
   let completingRestoration = '';
+  // The restoration epoch that has not been acknowledged yet. It outlives a
+  // cursor failure inside restoreDeepState so retry and reload can resume the
+  // deep restoration instead of abandoning later-page targets. Cleared only
+  // when the epoch is acknowledged or the request signature changes.
+  let unacknowledgedRestorationEpoch: number | undefined;
   let previousSelectedKey = untrack(() => selectedKey);
 
   $effect(() => {
@@ -96,6 +101,7 @@
     signature;
     if (signature === requestSignature) return;
     requestSignature = signature;
+    unacknowledgedRestorationEpoch = restorationEpoch;
     const { generation: currentGeneration, signal } = restartListing();
     void loadPage(currentGeneration, undefined, signal).then(() =>
       restoreDeepState(currentGeneration, restorationEpoch, controller?.signal));
@@ -218,8 +224,12 @@
   }
 
   function reloadListing(): void {
+    // Reload restarts from page one; when a restoration epoch is still
+    // unacknowledged the deep restoration restarts against the fresh listing.
+    const epoch = unacknowledgedRestorationEpoch;
     const { generation: currentGeneration, signal } = restartListing();
-    void loadPage(currentGeneration, undefined, signal);
+    void loadPage(currentGeneration, undefined, signal).then(() =>
+      restoreDeepState(currentGeneration, epoch, signal));
   }
 
   async function loadPage(currentGeneration: number, cursor: string | undefined, signal: AbortSignal): Promise<boolean> {
@@ -373,6 +383,7 @@
         if (!grid?.querySelector(`#${rowID(target)}`)) return;
       }
       pendingRestoration = undefined;
+      if (unacknowledgedRestorationEpoch === pending.epoch) unacknowledgedRestorationEpoch = undefined;
       onRestorationComplete?.(pending.epoch);
     } finally {
       if (completingRestoration === signature) completingRestoration = '';
@@ -388,6 +399,14 @@
   async function loadMore(): Promise<void> {
     if (!nextCursor || loadingMore || !controller) return;
     pageError = '';
+    // A transient cursor failure may have interrupted restoreDeepState. Resume
+    // the restoration loop so later-page targets are still found, scrolled to,
+    // and the epoch acknowledged only after focus completes. pendingRestoration
+    // set means the loop already handed off; page normally in that case.
+    if (unacknowledgedRestorationEpoch !== undefined && pendingRestoration === undefined) {
+      await restoreDeepState(generation, unacknowledgedRestorationEpoch, controller.signal);
+      return;
+    }
     loadingMore = true;
     await loadPage(generation, nextCursor, controller.signal);
   }

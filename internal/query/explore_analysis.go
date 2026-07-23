@@ -132,6 +132,18 @@ func sqlCanonicalPersonGroupLabelExpr() string {
 		" FROM participants p2 WHERE p2.id = person_id)"
 }
 
+// sqlMessageTypeGroupExpr renders the message-type group key/label: NULL or
+// blank message_type collapses into "email" because rows imported before
+// message_type existed are email (see store.IsEmailMessageType). This is the
+// grouping counterpart of duckDBMessageTypeCondition — the filter a
+// message-type group drill-down applies — which treats "email" as also
+// matching NULL/empty, so the drilled count reproduces the group row's count.
+// Both exploreGroupExpressions and fileGroupExpressions must use this so the
+// two group surfaces cannot drift.
+func sqlMessageTypeGroupExpr() string {
+	return "COALESCE(NULLIF(" + messageTypeDimension + ", ''), '" + messageTypeEmail + "')"
+}
+
 // exploreGroupExpressions maps a grouping dimension onto the grouped
 // aggregate ExploreGroups builds over logical_entries. The "participant"
 // dimension groups by canonical identity-cluster IDs: raw participant_ids
@@ -167,7 +179,7 @@ func exploreGroupExpressions(dimension, clustersGlob string) (groupExpressions, 
 		spec.whereSuffix = " WHERE group_value <> ''"
 		return spec, nil
 	case messageTypeDimension:
-		return simple(messageTypeDimension), nil
+		return simple(sqlMessageTypeGroupExpr()), nil
 	case "kind":
 		return simple("entry_kind"), nil
 	case "year":

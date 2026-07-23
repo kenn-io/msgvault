@@ -2923,6 +2923,15 @@ func (r RelationshipsHTTPResponse) Validate() error {
 	return errors
 }
 
+type RemoteImageRequest struct {
+	// URL Absolute http(s) URL of the consented remote image
+	URL string `json:"url" validate:"required"`
+}
+
+func (r RemoteImageRequest) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(r))
+}
+
 type RemoveRequest struct {
 	Account    string `json:"account" validate:"required"`
 	Identifier string `json:"identifier" validate:"required"`

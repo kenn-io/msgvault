@@ -38,6 +38,8 @@ type AddCLIIdentityBody = AddRequest
 
 type RunCLIBody = CLIRunRequest
 
+type GetRemoteImageBody = RemoteImageRequest
+
 type StageDeletionBody = StageDeletionRequest
 
 type SearchDomainsBody = IdentitySearchHTTPRequest

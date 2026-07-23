@@ -135,7 +135,14 @@ import (
 // hop), and enforces an image/* content type and a 10 MiB body cap. The
 // browser therefore never contacts sender-controlled hosts directly.
 // Additive (minor bump): the major-version compatibility gate stays at 1.
-const APISchemaVersion = "1.29.0"
+// 1.30.0 changes /api/v1/content/remote-image from GET (url query parameter)
+// to POST with a required JSON body {"url": "..."}. POST makes the proxy an
+// unsafe method for browsers, so the session CSRF machinery (same-origin
+// Origin check plus X-Csrf-Token) applies and a sibling-origin <img> embed
+// can no longer trigger authenticated outbound fetches. The response
+// (image bytes) is unchanged. The endpoint shipped in 1.29.0 and had no
+// released non-browser consumers, so this replaces the GET form outright.
+const APISchemaVersion = "1.30.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.

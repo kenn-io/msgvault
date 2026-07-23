@@ -491,21 +491,30 @@ func TestOperationGateMiddlewareSkipsReadOnlyAnalyticalPosts(t *testing.T) {
 // read-only POST table to the registered analytical routes: every POST
 // operation tagged "Exploration" (registerExploreRoute and the search
 // coverage route) must be classified read-only, and the table must not
-// carry stale entries for routes that no longer exist.
+// carry stale entries for routes that no longer exist. The remote-image
+// proxy is the one pinned non-Exploration entry — POST purely for the CSRF
+// unsafe-method machinery, reading no archive state — and it must remain a
+// registered POST route for its table entry to stay valid.
 func TestReadOnlyPostRoutePatternsMatchExplorationRoutes(t *testing.T) {
+	require := require.New(t)
 	doc := OpenAPIDocument()
-	explorationPosts := []string{}
+	remoteImage := doc.Paths[remoteImagePath]
+	require.NotNil(remoteImage, "remote-image proxy route must exist")
+	require.NotNil(remoteImage.Post, "remote-image proxy must be registered as POST")
+	require.Nil(remoteImage.Get, "remote-image proxy must not be reachable via GET")
+
+	expected := []string{remoteImagePath}
 	for path, item := range doc.Paths {
 		if item.Post != nil && slices.Contains(item.Post.Tags, "Exploration") {
-			explorationPosts = append(explorationPosts, path)
+			expected = append(expected, path)
 		}
 	}
-	slices.Sort(explorationPosts)
+	slices.Sort(expected)
 	table := slices.Clone(readOnlyPostRoutePatterns)
 	slices.Sort(table)
-	assert.Equal(t, explorationPosts, table,
-		"readOnlyPostRoutePatterns must match the POST routes tagged Exploration; "+
-			"classify new analytical routes consciously in operation_gate.go")
+	assert.Equal(t, expected, table,
+		"readOnlyPostRoutePatterns must match the POST routes tagged Exploration plus the "+
+			"remote-image proxy; classify new analytical routes consciously in operation_gate.go")
 }
 
 // gateAnalyticsEngine backs the read-only analytical routes with minimal

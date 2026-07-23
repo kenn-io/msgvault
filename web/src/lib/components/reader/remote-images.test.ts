@@ -46,11 +46,13 @@ describe('resolveArchivedRemoteImages', () => {
     });
 
     expect(fetchFn).toHaveBeenCalledTimes(2);
-    const requested = fetchFn.mock.calls.map((call) => {
-      const url = new URL((call[0] as Request).url);
-      expect(url.pathname).toBe('/api/v1/content/remote-image');
-      return url.searchParams.get('url');
-    });
+    const requested = await Promise.all(fetchFn.mock.calls.map(async (call) => {
+      const request = call[0] as Request;
+      expect(request.method).toBe('POST');
+      expect(new URL(request.url).pathname).toBe('/api/v1/content/remote-image');
+      const body = (await request.clone().json()) as { url: string };
+      return body.url;
+    }));
     expect(requested).toEqual([
       'https://images.example/chart.png?token=synthetic',
       'https://cdn.example/logo.png'

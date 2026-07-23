@@ -1,13 +1,14 @@
 package api
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
-	"net/url"
 	"strings"
 	"sync"
 	"testing"
@@ -83,9 +84,18 @@ func newRemoteImageTestServer(t *testing.T, seams *remoteImageSeams) *Server {
 	return srv
 }
 
-func getRemoteImage(srv *Server, target string) *httptest.ResponseRecorder {
-	req := httptest.NewRequest(http.MethodGet,
-		"/api/v1/content/remote-image?url="+url.QueryEscape(target), nil)
+func remoteImageBody(t *testing.T, target string) []byte {
+	t.Helper()
+	body, err := json.Marshal(RemoteImageRequest{URL: target})
+	require.NoError(t, err)
+	return body
+}
+
+func postRemoteImage(t *testing.T, srv *Server, target string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost, remoteImagePath,
+		bytes.NewReader(remoteImageBody(t, target)))
+	req.Header.Set("Content-Type", "application/json")
 	resp := httptest.NewRecorder()
 	srv.Router().ServeHTTP(resp, req)
 	return resp
@@ -138,7 +148,7 @@ func TestRemoteImageRejectsProhibitedTargetsBeforeAnyNetworkUse(t *testing.T) {
 			seams := &remoteImageSeams{answers: map[string][]netip.Addr{}}
 			srv := newRemoteImageTestServer(t, seams)
 
-			resp := getRemoteImage(srv, tc.url)
+			resp := postRemoteImage(t, srv, tc.url)
 
 			assert.Equal(http.StatusBadRequest, resp.Code, "body: %s", resp.Body.String())
 			assert.Contains(resp.Body.String(), tc.wantCode)
@@ -148,18 +158,141 @@ func TestRemoteImageRejectsProhibitedTargetsBeforeAnyNetworkUse(t *testing.T) {
 	}
 }
 
-func TestRemoteImageMissingURLParameter(t *testing.T) {
+func TestRemoteImageRejectsMissingOrInvalidBody(t *testing.T) {
+	cases := []struct {
+		name     string
+		body     string
+		wantCode string
+	}{
+		{"empty body", "", "invalid_request"},
+		{"malformed json", "{not json", "invalid_request"},
+		{"missing url field", "{}", "missing_url"},
+		{"empty url", `{"url":""}`, "missing_url"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+			seams := &remoteImageSeams{answers: map[string][]netip.Addr{}}
+			srv := newRemoteImageTestServer(t, seams)
+
+			req := httptest.NewRequest(http.MethodPost, remoteImagePath, strings.NewReader(tc.body))
+			req.Header.Set("Content-Type", "application/json")
+			resp := httptest.NewRecorder()
+			srv.Router().ServeHTTP(resp, req)
+
+			assert.Equal(http.StatusBadRequest, resp.Code, "body: %s", resp.Body.String())
+			assert.Contains(resp.Body.String(), tc.wantCode)
+			assert.Empty(seams.lookups)
+			assert.Zero(seams.dialCount())
+		})
+	}
+}
+
+// TestRemoteImageGetIsNotServed pins the CSRF posture: the proxy must only
+// exist as POST, because a GET registration would let browsers trigger it
+// via <img> or navigation as a CSRF-safe method with ambient session
+// cookies attached.
+func TestRemoteImageGetIsNotServed(t *testing.T) {
 	assert := assert.New(t)
-	seams := &remoteImageSeams{answers: map[string][]netip.Addr{}}
+	seams := &remoteImageSeams{answers: map[string][]netip.Addr{
+		"images.example": {netip.MustParseAddr("203.0.113.7")},
+	}}
 	srv := newRemoteImageTestServer(t, seams)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/content/remote-image", nil)
+	req := httptest.NewRequest(http.MethodGet,
+		remoteImagePath+"?url=http%3A%2F%2Fimages.example%2Fchart.png", nil)
 	resp := httptest.NewRecorder()
 	srv.Router().ServeHTTP(resp, req)
 
-	assert.Equal(http.StatusBadRequest, resp.Code)
-	assert.Contains(resp.Body.String(), "missing_url")
+	assert.Equal(http.StatusNotFound, resp.Code, "body: %s", resp.Body.String())
+	assert.Contains(resp.Body.String(), "not_found")
+	assert.Empty(seams.lookups, "a GET must never reach the fetcher")
 	assert.Zero(seams.dialCount())
+}
+
+// TestRemoteImageSessionCSRFEnforcement exercises the full router with a
+// real browser session: cross-origin or token-less POSTs are rejected by the
+// origin/CSRF middleware before the fetcher is reached, while a well-formed
+// same-origin POST with the session's CSRF token still proxies the image.
+func TestRemoteImageSessionCSRFEnforcement(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "image/png")
+		_, _ = w.Write(fakePNG)
+	}))
+	defer upstream.Close()
+
+	cases := []struct {
+		name       string
+		origin     string
+		useToken   bool
+		wantStatus int
+		wantError  string
+	}{
+		{
+			name:       "cross-origin POST with valid token is rejected",
+			origin:     "https://attacker.example",
+			useToken:   true,
+			wantStatus: http.StatusForbidden,
+			wantError:  "cross_origin_session",
+		},
+		{
+			name:       "same-origin POST without CSRF token is rejected",
+			origin:     "http://example.com",
+			useToken:   false,
+			wantStatus: http.StatusForbidden,
+			wantError:  "csrf_rejected",
+		},
+		{
+			name:       "same-origin POST with CSRF token proxies the image",
+			origin:     "http://example.com",
+			useToken:   true,
+			wantStatus: http.StatusOK,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			srv := newSessionTestServer(t, testSessionAPIKey)
+			seams := &remoteImageSeams{
+				answers:  map[string][]netip.Addr{"images.example": {netip.MustParseAddr("203.0.113.7")}},
+				upstream: upstream.Listener.Addr().String(),
+			}
+			srv.remoteImages = &remoteImageFetcher{
+				lookupNetIP:  seams.lookup,
+				dialContext:  seams.dial,
+				maxBytes:     remoteImageMaxBytes,
+				maxRedirects: remoteImageMaxRedirects,
+			}
+
+			login := performSessionRequest(t, srv, http.MethodPost, sessionLoginPath,
+				[]byte(`{"api_key":"`+testSessionAPIKey+`"}`), nil, false)
+			require.Equal(http.StatusOK, login.Code, login.Body.String())
+			status := decodeSessionStatus(t, login)
+			cookie := requireSessionCookie(t, login)
+
+			headers := make(http.Header)
+			headers.Set("Cookie", cookie.String())
+			headers.Set("Origin", tc.origin)
+			if tc.useToken {
+				headers.Set(csrfHeaderName, status.CSRFToken)
+			}
+
+			resp := performSessionRequest(t, srv, http.MethodPost, remoteImagePath,
+				remoteImageBody(t, "http://images.example/chart.png"), headers, false)
+
+			assert.Equal(tc.wantStatus, resp.Code, "body: %s", resp.Body.String())
+			if tc.wantStatus == http.StatusOK {
+				assert.Equal("image/png", resp.Header().Get("Content-Type"))
+				assert.Equal(fakePNG, resp.Body.Bytes())
+				assert.Equal([]string{"203.0.113.7:80"}, seams.dialedAddresses())
+				return
+			}
+			assert.Contains(resp.Body.String(), tc.wantError)
+			assert.Empty(seams.lookups, "rejected requests must never reach the fetcher")
+			assert.Zero(seams.dialCount())
+		})
+	}
 }
 
 // TestRemoteImageRejectsRebindingResolution is the DNS rebinding case the
@@ -189,7 +322,7 @@ func TestRemoteImageRejectsRebindingResolution(t *testing.T) {
 			}}
 			srv := newRemoteImageTestServer(t, seams)
 
-			resp := getRemoteImage(srv, "http://rebind.example/pixel.png")
+			resp := postRemoteImage(t, srv, "http://rebind.example/pixel.png")
 
 			assert.Equal(http.StatusBadGateway, resp.Code, "body: %s", resp.Body.String())
 			assert.Contains(resp.Body.String(), "prohibited_destination")
@@ -252,7 +385,7 @@ func TestRemoteImageRejectsTranslatedPrivateResolution(t *testing.T) {
 			}}
 			srv := newRemoteImageTestServer(t, seams)
 
-			resp := getRemoteImage(srv, "http://nat64.example/pixel.png")
+			resp := postRemoteImage(t, srv, "http://nat64.example/pixel.png")
 
 			assert.Equal(http.StatusBadGateway, resp.Code, "body: %s", resp.Body.String())
 			assert.Contains(resp.Body.String(), "prohibited_destination")
@@ -280,7 +413,7 @@ func TestRemoteImageHappyPathPinsValidatedAddress(t *testing.T) {
 	}
 	srv := newRemoteImageTestServer(t, seams)
 
-	resp := getRemoteImage(srv, "http://images.example/chart.png?token=synthetic")
+	resp := postRemoteImage(t, srv, "http://images.example/chart.png?token=synthetic")
 
 	require.Equal(http.StatusOK, resp.Code, "body: %s", resp.Body.String())
 	assert.Equal("image/png", resp.Header().Get("Content-Type"))
@@ -309,7 +442,7 @@ func TestRemoteImageRedirectToPrivateTargetIsRejected(t *testing.T) {
 	}
 	srv := newRemoteImageTestServer(t, seams)
 
-	resp := getRemoteImage(srv, "http://images.example/chart.png")
+	resp := postRemoteImage(t, srv, "http://images.example/chart.png")
 
 	assert.Equal(http.StatusBadGateway, resp.Code, "body: %s", resp.Body.String())
 	assert.Contains(resp.Body.String(), "prohibited_destination")
@@ -338,7 +471,7 @@ func TestRemoteImageRedirectToNAT64PrivateTargetIsRejected(t *testing.T) {
 	}
 	srv := newRemoteImageTestServer(t, seams)
 
-	resp := getRemoteImage(srv, "http://images.example/chart.png")
+	resp := postRemoteImage(t, srv, "http://images.example/chart.png")
 
 	assert.Equal(http.StatusBadGateway, resp.Code, "body: %s", resp.Body.String())
 	assert.Contains(resp.Body.String(), "prohibited_destination")
@@ -360,7 +493,7 @@ func TestRemoteImageRedirectToPrivateLiteralIsRejected(t *testing.T) {
 	}
 	srv := newRemoteImageTestServer(t, seams)
 
-	resp := getRemoteImage(srv, "http://images.example/chart.png")
+	resp := postRemoteImage(t, srv, "http://images.example/chart.png")
 
 	assert.Equal(http.StatusBadRequest, resp.Code, "body: %s", resp.Body.String())
 	assert.Contains(resp.Body.String(), "prohibited_host")
@@ -381,7 +514,7 @@ func TestRemoteImageRedirectChainIsCapped(t *testing.T) {
 	}
 	srv := newRemoteImageTestServer(t, seams)
 
-	resp := getRemoteImage(srv, "http://images.example/a")
+	resp := postRemoteImage(t, srv, "http://images.example/a")
 
 	assert.Equal(http.StatusBadGateway, resp.Code, "body: %s", resp.Body.String())
 	assert.Contains(resp.Body.String(), "too_many_redirects")
@@ -418,7 +551,7 @@ func TestRemoteImageRejectsNonImageContent(t *testing.T) {
 			}
 			srv := newRemoteImageTestServer(t, seams)
 
-			resp := getRemoteImage(srv, "http://images.example/page")
+			resp := postRemoteImage(t, srv, "http://images.example/page")
 
 			assert.Equal(http.StatusUnsupportedMediaType, resp.Code, "body: %s", resp.Body.String())
 			assert.Contains(resp.Body.String(), "unsupported_type")
@@ -443,7 +576,7 @@ func TestRemoteImageEnforcesByteCapWhileStreaming(t *testing.T) {
 	srv := newRemoteImageTestServer(t, seams)
 	srv.remoteImages.maxBytes = 1024
 
-	resp := getRemoteImage(srv, "http://images.example/huge.png")
+	resp := postRemoteImage(t, srv, "http://images.example/huge.png")
 
 	assert.Equal(http.StatusBadGateway, resp.Code, "body: %s", resp.Body.String())
 	assert.Contains(resp.Body.String(), "image_too_large")
@@ -462,7 +595,7 @@ func TestRemoteImageUpstreamErrorStatus(t *testing.T) {
 	}
 	srv := newRemoteImageTestServer(t, seams)
 
-	resp := getRemoteImage(srv, "http://images.example/missing.png")
+	resp := postRemoteImage(t, srv, "http://images.example/missing.png")
 
 	assert.Equal(http.StatusBadGateway, resp.Code, "body: %s", resp.Body.String())
 	assert.Contains(resp.Body.String(), "upstream_error")
@@ -484,7 +617,7 @@ func TestRemoteImageRequiresAuthentication(t *testing.T) {
 		maxRedirects: remoteImageMaxRedirects,
 	}
 
-	resp := getRemoteImage(srv, "http://images.example/chart.png")
+	resp := postRemoteImage(t, srv, "http://images.example/chart.png")
 
 	assert.Equal(http.StatusUnauthorized, resp.Code, "body: %s", resp.Body.String())
 	assert.Empty(seams.lookups, "unauthenticated requests must not reach the fetcher")

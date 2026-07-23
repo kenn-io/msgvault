@@ -3083,6 +3083,15 @@ components:
         - cache_revision
         - identity_revision
       type: object
+    RemoteImageRequest:
+      additionalProperties: false
+      properties:
+        url:
+          description: Absolute http(s) URL of the consented remote image
+          type: string
+      required:
+        - url
+      type: object
     RemoveRequest:
       additionalProperties: false
       properties:
@@ -4261,7 +4270,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 1.29.0
+  version: 1.30.0
 openapi: 3.0.3
 paths:
   /api/ping:
@@ -6024,15 +6033,14 @@ paths:
       tags:
         - API
   /api/v1/content/remote-image:
-    get:
+    post:
       operationId: getRemoteImage
-      parameters:
-        - description: Absolute http(s) URL of the consented remote image
-          in: query
-          name: url
-          required: true
-          schema:
-            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RemoteImageRequest"
+        required: true
       responses:
         "200":
           content:

@@ -183,6 +183,49 @@ func TestGroupFilesUsesExactFilteredFilePopulation(t *testing.T) {
 	assertions.Equal(files.TotalCount, grouped.Rows[0].Count, "group count must equal filtered Files rows")
 }
 
+// TestGroupFilesMessageTypeCollapsesLegacyRowsIntoEmail pins the file-group
+// side of the legacy-row rule: attachments on rows imported before
+// message_type existed (blank value) are email files (see
+// duckDBMessageTypeCondition and store.IsEmailMessageType), so the
+// message-type dimension must fold them into the 'email' group instead of
+// emitting a separate unlabeled row — and the 'email' file filter that group
+// row drills into must reproduce the group row's count.
+func TestGroupFilesMessageTypeCollapsesLegacyRowsIntoEmail(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	b := NewTestDataBuilder(t)
+	b.AddSource("archive@example.com")
+	base := time.Date(2024, 3, 1, 9, 0, 0, 0, time.UTC)
+	typed := b.AddMessage(MessageOpt{Subject: "typed email", MessageType: messageTypeEmail, SentAt: base})
+	b.AddAttachmentWithMIME(401, typed, 100, "typed.pdf", "application/pdf")
+	legacy := b.AddMessage(MessageOpt{Subject: "legacy email", LegacyEmptyMessageType: true, SentAt: base.Add(time.Hour)})
+	b.AddAttachmentWithMIME(402, legacy, 30, "legacy.pdf", "application/pdf")
+	calendar := b.AddMessage(MessageOpt{Subject: "calendar", MessageType: messageTypeCalendar, SentAt: base.Add(2 * time.Hour)})
+	b.AddAttachmentWithMIME(403, calendar, 7, "invite.ics", "text/calendar")
+	engine := b.BuildEngine()
+
+	result, err := engine.GroupFiles(context.Background(), FileGroupRequest{
+		Dimension: messageTypeDimension,
+		Sort:      SortSpec{Field: "count", Direction: "desc"}, Page: PageSpec{Limit: 10},
+	})
+	requirements.NoError(err)
+	requirements.Len(result.Rows, 2, "legacy blank rows must fold into 'email', not form a third group")
+	assertions.Equal(int64(2), result.TotalCount)
+	assertions.Equal(messageTypeEmail, result.Rows[0].Key)
+	assertions.Equal(messageTypeEmail, result.Rows[0].Label)
+	assertions.Equal(int64(2), result.Rows[0].Count, "'email' group must include the legacy row's file")
+	assertions.Equal(int64(130), result.Rows[0].EstimatedBytes)
+	assertions.Equal(messageTypeCalendar, result.Rows[1].Key)
+	assertions.Equal(int64(1), result.Rows[1].Count)
+
+	drilled, err := engine.SearchFiles(context.Background(), FileSearchRequest{
+		Explore: ExploreRequest{Context: Context{MessageTypes: []string{messageTypeEmail}}},
+		Sort:    SortSpec{Field: "occurred_at", Direction: "desc"}, Page: PageSpec{Limit: 10},
+	})
+	requirements.NoError(err)
+	assertions.Equal(result.Rows[0].Count, drilled.TotalCount, "drill-down file filter must reproduce the group count")
+}
+
 func TestGroupFilesDeduplicatesParticipantAndDomainMembershipPerFile(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)

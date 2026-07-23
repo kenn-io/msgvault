@@ -34,7 +34,7 @@ test('sanitized archived HTML requires remote-image consent and rejects forged f
     return route.abort();
   });
   await page.route('**/api/v1/content/remote-image**', (route) => {
-    proxiedURLs.push(new URL(route.request().url()).searchParams.get('url'));
+    proxiedURLs.push((route.request().postDataJSON() as { url: string }).url);
     return route.fulfill({ contentType: 'image/png', body: Buffer.from(
       'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', 'base64') });
   });

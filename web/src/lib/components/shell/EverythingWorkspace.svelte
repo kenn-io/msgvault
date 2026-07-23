@@ -18,6 +18,7 @@
   } from '../../explore/models';
   import { createExploreAPI } from '../../explore/api';
   import { filtersForGroup, parseGroupSelection } from '../../explore/group-context';
+  import { findGroupDetail } from '../../explore/group-detail';
   import type { ExploreLoader } from '../../explore/loader.svelte';
   import { groupingByDimension } from '../../grouping/catalog';
   import { canonicalFingerprint, createAllMatchingSelection, predicateFingerprint } from '../../explore/selection';
@@ -242,18 +243,19 @@
       candidate_snapshot_id: undefined,
       grouping: undefined,
       filters,
-      limit: 1,
       presentation: 'table' as const
     };
-    void api.groups(detailPredicate, target.dimension, controller.signal)
-      .then((loaded) => {
+    // Filtering by target.key does not make it the top-ranked group: every
+    // co-participant/co-domain of the matching entries forms a group too, so
+    // findGroupDetail pages through the listing for the exact key.
+    void findGroupDetail(api, detailPredicate, target.dimension, target.key, controller.signal)
+      .then((lookup) => {
         if (generation !== session.readingDetailGeneration || controller.signal.aborted) return;
-        if (loaded.status === 'unavailable') {
-          readingDetailUnavailable = loaded.unavailable;
+        if (lookup.status === 'unavailable') {
+          readingDetailUnavailable = lookup.unavailable;
           return;
         }
-        const row = loaded.result.rows.find((candidate) => candidate.key === target.key);
-        if (!row) {
+        if (lookup.status === 'missing') {
           readingDetailError = 'The selected group is no longer available in this context.';
           return;
         }
@@ -261,10 +263,10 @@
           kind: 'group',
           dimension: target.dimension,
           key: target.key,
-          label: row.label,
-          count: row.count,
-          estimatedBytes: row.estimated_bytes,
-          latestAt: row.latest_at
+          label: lookup.row.label,
+          count: lookup.row.count,
+          estimatedBytes: lookup.row.estimated_bytes,
+          latestAt: lookup.row.latest_at
         };
         session.readingDetailFingerprint = loadedKey;
       })

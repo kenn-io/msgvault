@@ -318,10 +318,13 @@ func (s *Server) registerHumaRoutes(api huma.API, apiV1 huma.API) {
 		http.StatusNotImplemented,
 		http.StatusServiceUnavailable,
 	)
-	registerAPIV1RawHumaBinaryRoute(
+	// POST (not GET) so browsers treat the proxy as an unsafe method: the
+	// session CSRF middleware then requires same-origin plus X-Csrf-Token,
+	// and an <img> embed can never trigger an authenticated outbound fetch.
+	registerAPIV1RawHumaBinaryRouteWithRequest[RemoteImageRequest](
 		apiV1,
 		"getRemoteImage",
-		http.MethodGet,
+		http.MethodPost,
 		"/content/remote-image",
 		"Fetch a consented remote mail image through the SSRF-hardened daemon proxy",
 		"image/*",
@@ -429,6 +432,22 @@ func registerAPIV1RawHumaBinaryRoute(
 	errorStatuses ...int,
 ) {
 	op := rawAPIV1Operation(operationID, method, path, summary)
+	op.Responses = binaryResponsesFor(api, contentType, errorStatuses...)
+	registerRawHumaRoute(api, op, handler)
+}
+
+func registerAPIV1RawHumaBinaryRouteWithRequest[Req any](
+	api huma.API,
+	operationID string,
+	method string,
+	path string,
+	summary string,
+	contentType string,
+	handler http.HandlerFunc,
+	errorStatuses ...int,
+) {
+	op := rawAPIV1Operation(operationID, method, path, summary)
+	op.RequestBody = jsonRequestBodyFor[Req](api)
 	op.Responses = binaryResponsesFor(api, contentType, errorStatuses...)
 	registerRawHumaRoute(api, op, handler)
 }
@@ -565,10 +584,6 @@ func rawRouteParameters(operationID string) []*huma.Param {
 		return []*huma.Param{
 			pathIntegerParam("Message ID"),
 			queryStringParam("cid", "Inline MIME Content-ID", true),
-		}
-	case "getRemoteImage":
-		return []*huma.Param{
-			queryStringParam("url", "Absolute http(s) URL of the consented remote image", true),
 		}
 	case "searchMessages":
 		return append([]*huma.Param{

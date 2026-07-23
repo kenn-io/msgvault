@@ -3192,9 +3192,10 @@ func (c *Client) VerifyCLI(ctx context.Context, options *VerifyCLIRequestOptions
 func (c *Client) GetRemoteImage(ctx context.Context, options *GetRemoteImageRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetRemoteImageResponse, error) {
 	var err error
 	reqParams := runtime.RequestOptionsParameters{
-		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/content/remote-image",
-		Method:     "GET",
-		Options:    options,
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/content/remote-image",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
 	}
 
 	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)

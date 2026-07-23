@@ -32,6 +32,44 @@ func TestExploreGroupsAggregatesCompleteLogicalPopulation(t *testing.T) {
 	assertions.NotEmpty(result.CacheRevision)
 }
 
+// TestExploreGroupsMessageTypeCollapsesLegacyRowsIntoEmail pins the grouping
+// side of the legacy-row rule: rows imported before message_type existed
+// carry a blank value and are email (see duckDBMessageTypeCondition and
+// store.IsEmailMessageType), so the message-type dimension must fold them
+// into the 'email' group instead of emitting a separate unlabeled row — and
+// drilling into 'email' (the filter that group row applies) must reproduce
+// the group row's count.
+func TestExploreGroupsMessageTypeCollapsesLegacyRowsIntoEmail(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	b := NewTestDataBuilder(t)
+	b.AddSource("archive@example.com")
+	base := time.Date(2024, 3, 1, 9, 0, 0, 0, time.UTC)
+	b.AddMessage(MessageOpt{Subject: "typed email", MessageType: messageTypeEmail, SentAt: base})
+	b.AddMessage(MessageOpt{Subject: "legacy email", LegacyEmptyMessageType: true, SentAt: base.Add(time.Hour)})
+	b.AddMessage(MessageOpt{Subject: "calendar", MessageType: messageTypeCalendar, SentAt: base.Add(2 * time.Hour)})
+	engine := b.BuildEngine()
+
+	result, err := engine.ExploreGroups(context.Background(), ExploreGroupRequest{
+		Explore: ExploreRequest{}, Dimension: messageTypeDimension,
+		Sort: SortSpec{Field: "count", Direction: "desc"}, Page: PageSpec{Limit: 10},
+	})
+	requirements.NoError(err)
+	requirements.Len(result.Rows, 2, "legacy blank rows must fold into 'email', not form a third group")
+	assertions.Equal(int64(2), result.TotalCount)
+	assertions.Equal(messageTypeEmail, result.Rows[0].Key)
+	assertions.Equal(messageTypeEmail, result.Rows[0].Label)
+	assertions.Equal(int64(2), result.Rows[0].Count, "'email' group must include the legacy row")
+	assertions.Equal(messageTypeCalendar, result.Rows[1].Key)
+	assertions.Equal(int64(1), result.Rows[1].Count)
+
+	drilled, err := engine.Explore(context.Background(), ExploreRequest{
+		Context: Context{MessageTypes: []string{messageTypeEmail}}, Page: PageSpec{Limit: 10},
+	})
+	requirements.NoError(err)
+	assertions.Equal(result.Rows[0].Count, drilled.TotalCount, "drill-down filter must reproduce the group count")
+}
+
 func TestExploreGroupsParticipantLabelsUseDurableIdentityPrecedence(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)

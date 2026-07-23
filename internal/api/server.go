@@ -224,7 +224,7 @@ type Server struct {
 	// fall back to the legacy loose-file open.
 	blobStore AttachmentBlobStore
 	// remoteImages is the SSRF-hardened fetcher behind
-	// GET /api/v1/content/remote-image. Tests replace it to inject a fake
+	// POST /api/v1/content/remote-image. Tests replace it to inject a fake
 	// resolver and dialer.
 	remoteImages *remoteImageFetcher
 	spaHandler   http.Handler
