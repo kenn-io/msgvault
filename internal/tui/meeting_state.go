@@ -12,6 +12,7 @@ const meetingMessageType = "meeting_transcript"
 const (
 	meetingSourceGranola    = "granola"
 	meetingSourceCircleback = "circleback"
+	meetingSourceImported   = "meeting_import"
 )
 
 type meetingViewLevel int
@@ -76,7 +77,7 @@ func (m Model) meetingAccounts() []query.AccountInfo {
 	accounts := make([]query.AccountInfo, 0, len(m.accounts))
 	for _, account := range m.accounts {
 		switch strings.ToLower(strings.TrimSpace(account.SourceType)) {
-		case meetingSourceGranola, meetingSourceCircleback:
+		case meetingSourceGranola, meetingSourceCircleback, meetingSourceImported:
 			accounts = append(accounts, account)
 		}
 	}
