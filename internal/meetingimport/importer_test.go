@@ -203,6 +203,50 @@ func TestImporterRetriesUpdateSameMessageAndReplacePeople(t *testing.T) {
 	assert.Len(identities, 2)
 }
 
+func TestImporterPreservesDisplayNameWhenRetryOmitsIt(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	st := testutil.NewTestStore(t)
+	importer := NewImporter(st, Hooks{})
+	initial := validImportRequest(t)
+	initial.Source.DisplayName = "Named Meeting Source"
+
+	created, err := importer.Import(context.Background(), initial)
+	require.NoError(err)
+	assert.Equal(StatusCreated, created.Status)
+
+	retry := validImportRequest(t)
+	retry.Source.DisplayName = ""
+	updated, err := importer.Import(context.Background(), retry)
+	require.NoError(err)
+	assert.Equal(StatusUpdated, updated.Status)
+
+	sources, err := st.ListSources(SourceType)
+	require.NoError(err)
+	require.Len(sources, 1)
+	assert.Equal("Named Meeting Source", sources[0].DisplayName.String)
+}
+
+func TestImporterDefaultsDisplayNameOnFirstImport(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	st := testutil.NewTestStore(t)
+	importer := NewImporter(st, Hooks{})
+	req := validImportRequest(t)
+	req.Source.DisplayName = ""
+
+	result, err := importer.Import(context.Background(), req)
+	require.NoError(err)
+	assert.Equal(StatusCreated, result.Status)
+
+	sources, err := st.ListSources(SourceType)
+	require.NoError(err)
+	require.Len(sources, 1)
+	assert.Equal("local-meetings", sources[0].DisplayName.String)
+}
+
 func TestImporterScopesExternalIDsBySource(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)

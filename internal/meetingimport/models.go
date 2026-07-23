@@ -112,9 +112,6 @@ func normalizeSource(source Source) (Source, error) {
 	if err := validateBoundedOptional("source.display_name", source.DisplayName, maxSourceDisplayNameBytes); err != nil {
 		return Source{}, err
 	}
-	if source.DisplayName == "" {
-		source.DisplayName = source.Identifier
-	}
 
 	accountEmail, err := normalizeEmail("source.account_email", source.AccountEmail)
 	if err != nil {

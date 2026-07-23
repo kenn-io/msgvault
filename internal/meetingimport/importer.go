@@ -65,8 +65,14 @@ func (i *Importer) Import(ctx context.Context, req Request) (result Result, retE
 	result.SourceID = source.ID
 	result.SourceMessageID = snapshot.SourceMessageID
 
-	if err := i.store.UpdateSourceDisplayName(source.ID, snapshot.SourceDisplayName); err != nil {
-		return result, fmt.Errorf("update meeting source display name: %w", err)
+	displayName := snapshot.SourceDisplayName
+	if displayName == "" && (!source.DisplayName.Valid || strings.TrimSpace(source.DisplayName.String) == "") {
+		displayName = snapshot.SourceIdentifier
+	}
+	if displayName != "" && (!source.DisplayName.Valid || source.DisplayName.String != displayName) {
+		if err := i.store.UpdateSourceDisplayName(source.ID, displayName); err != nil {
+			return result, fmt.Errorf("update meeting source display name: %w", err)
+		}
 	}
 	if err := i.store.AddAccountIdentity(source.ID, snapshot.AccountEmail, "account-email"); err != nil {
 		return result, fmt.Errorf("confirm meeting source identity: %w", err)

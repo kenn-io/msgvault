@@ -177,9 +177,9 @@ that know speaker boundaries. Each segment requires non-empty `speaker` and
 non-negative. Segment offsets must be non-decreasing.
 
 The caller supplies speaker identity. Passing `Speaker 1` preserves that
-anonymous label; passing `Test Speaker` renders `Test Speaker`. Msgvault does not perform
-speaker diarization, voice recognition, attendee-to-voice matching, or
-cross-meeting speaker identification.
+anonymous label; passing `Test Speaker` renders `Test Speaker`. Msgvault does
+not perform speaker diarization, voice recognition, attendee-to-voice matching,
+or cross-meeting speaker identification.
 
 `transcript` and `transcript_segments` are mutually exclusive after trimming
 empty values. This avoids storing two competing versions of the same
