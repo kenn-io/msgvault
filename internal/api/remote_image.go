@@ -62,35 +62,70 @@ var remoteImageProhibitedV4 = []netip.Prefix{
 }
 
 // remoteImageProhibitedV6 lists the IPv6 counterparts: ULA, link-local, and
-// multicast. Loopback/unspecified and the IPv4-embedded forms are handled in
-// prohibitedRemoteIP by validating the embedded IPv4 address.
+// multicast. Loopback/unspecified and the IPv4-embedding transition forms are
+// handled in prohibitedRemoteIP by validating the embedded IPv4 address.
 var remoteImageProhibitedV6 = []netip.Prefix{
 	netip.MustParsePrefix("fc00::/7"),
 	netip.MustParsePrefix("fe80::/10"),
 	netip.MustParsePrefix("ff00::/8"),
+	// 64:ff9b:1::/48 is the RFC 8215 local-use IPv4/IPv6 translation space.
+	// Unlike the well-known NAT64 prefix, the embedded-IPv4 layout is
+	// network-specific (RFC 8215 permits several prefix lengths), so the
+	// embedded destination cannot be reliably extracted; the whole range is
+	// rejected instead.
+	netip.MustParsePrefix("64:ff9b:1::/48"),
+}
+
+// IPv6 transition mechanisms that embed an IPv4 destination at a fixed,
+// well-defined offset. A translated packet is ultimately delivered to the
+// embedded IPv4 address, so these ranges are validated against the IPv4
+// prohibited list rather than the IPv6 one.
+var (
+	// ::/96 — deprecated IPv4-compatible addresses (::a.b.c.d).
+	remoteImageV4CompatPrefix = netip.MustParsePrefix("::/96")
+	// 64:ff9b::/96 — RFC 6052 well-known NAT64/DNS64 translation prefix.
+	remoteImageNAT64Prefix = netip.MustParsePrefix("64:ff9b::/96")
+	// 2002::/16 — RFC 3056 6to4; the IPv4 address follows the prefix.
+	remoteImage6to4Prefix = netip.MustParsePrefix("2002::/16")
+	// 2001::/32 — RFC 4380 Teredo; the client IPv4 is the last four bytes,
+	// each XORed with 0xFF.
+	remoteImageTeredoPrefix = netip.MustParsePrefix("2001::/32")
+)
+
+// embeddedIPv4 extracts the IPv4 destination embedded in an IPv6 transition
+// address, reporting false for addresses that embed none.
+func embeddedIPv4(addr netip.Addr) (netip.Addr, bool) {
+	raw := addr.As16()
+	switch {
+	case remoteImageV4CompatPrefix.Contains(addr) || remoteImageNAT64Prefix.Contains(addr):
+		// The IPv4 address is the last four bytes. ::/128 and ::1/128 map to
+		// 0.0.0.0/8 here and stay prohibited.
+		return netip.AddrFrom4([4]byte{raw[12], raw[13], raw[14], raw[15]}), true
+	case remoteImage6to4Prefix.Contains(addr):
+		return netip.AddrFrom4([4]byte{raw[2], raw[3], raw[4], raw[5]}), true
+	case remoteImageTeredoPrefix.Contains(addr):
+		return netip.AddrFrom4([4]byte{
+			raw[12] ^ 0xff, raw[13] ^ 0xff, raw[14] ^ 0xff, raw[15] ^ 0xff,
+		}), true
+	default:
+		return netip.Addr{}, false
+	}
 }
 
 // prohibitedRemoteIP reports whether a resolved or literal address is a
-// destination the image proxy must never dial. IPv4-mapped (::ffff:a.b.c.d)
-// and deprecated IPv4-compatible (::a.b.c.d) forms defer to the embedded
-// IPv4 rules so an obfuscated loopback cannot slip through as IPv6.
+// destination the image proxy must never dial. IPv6 forms that embed an IPv4
+// destination — IPv4-mapped (::ffff:a.b.c.d), deprecated IPv4-compatible
+// (::a.b.c.d), NAT64 (64:ff9b::a.b.c.d), 6to4 (2002::/16), and Teredo
+// (2001::/32) — defer to the embedded IPv4 rules so an obfuscated loopback or
+// NAT64-translated private destination cannot slip through as IPv6.
 func prohibitedRemoteIP(addr netip.Addr) bool {
 	if !addr.IsValid() || addr.Zone() != "" {
 		return true
 	}
 	addr = addr.Unmap()
 	if addr.Is6() {
-		raw := addr.As16()
-		embedded := true
-		for _, b := range raw[:12] {
-			if b != 0 {
-				embedded = false
-				break
-			}
-		}
-		if embedded {
-			// ::/128 and ::1/128 map to 0.0.0.0/8 here and stay prohibited.
-			addr = netip.AddrFrom4([4]byte{raw[12], raw[13], raw[14], raw[15]})
+		if v4, ok := embeddedIPv4(addr); ok {
+			addr = v4
 		}
 	}
 	prefixes := remoteImageProhibitedV4

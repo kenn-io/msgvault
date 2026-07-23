@@ -220,6 +220,77 @@ func TestGroupFilesDeduplicatesParticipantAndDomainMembershipPerFile(t *testing.
 	assertions.Equal(int64(125), domains.Rows[0].EstimatedBytes)
 }
 
+// linkedParticipantFilesFixture builds an attachment archive where alice and
+// her work alias are one linked identity cluster (canonical = alice, the
+// smallest member ID): one file's message lists BOTH aliases, one file's
+// message lists only the alias, and one file involves only the unlinked bob.
+func linkedParticipantFilesFixture(t *testing.T) (b *TestDataBuilder, alice, alias int64) {
+	t.Helper()
+	b = NewTestDataBuilder(t)
+	source := b.AddSource("archive@example.com")
+	alice = b.AddParticipant("alice@example.com", "example.com", "Alice Example")
+	alias = b.AddParticipant("alice@work.example", "work.example", "Alice (Work)")
+	bob := b.AddParticipant("bob@example.com", "example.com", "Bob Example")
+	b.LinkCluster(alice, alias)
+
+	both := b.AddMessage(MessageOpt{SourceID: source, Subject: "Both aliases",
+		SentAt: time.Date(2026, 7, 1, 10, 0, 0, 0, time.UTC)})
+	b.AddTo(both, alice, "")
+	b.AddCc(both, alias, "")
+	b.AddAttachmentWithMIME(301, both, 100, "both.pdf", "application/pdf")
+	aliasOnly := b.AddMessage(MessageOpt{SourceID: source, Subject: "Alias only",
+		SentAt: time.Date(2026, 7, 2, 10, 0, 0, 0, time.UTC)})
+	b.AddTo(aliasOnly, alias, "")
+	b.AddAttachmentWithMIME(302, aliasOnly, 30, "alias.pdf", "application/pdf")
+	bobOnly := b.AddMessage(MessageOpt{SourceID: source, Subject: "Bob only",
+		SentAt: time.Date(2026, 7, 3, 10, 0, 0, 0, time.UTC)})
+	b.AddTo(bobOnly, bob, "")
+	b.AddAttachmentWithMIME(303, bobOnly, 7, "bob.pdf", "application/pdf")
+	return b, alice, alias
+}
+
+func TestGroupFilesMergesLinkedParticipantIdentities(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	b, _, _ := linkedParticipantFilesFixture(t)
+
+	result, err := b.BuildEngine().GroupFiles(context.Background(), FileGroupRequest{
+		Dimension: "participant", Sort: SortSpec{Field: "key", Direction: "asc"}, Page: PageSpec{Limit: 10},
+	})
+	requirements.NoError(err)
+	requirements.Len(result.Rows, 2, "linked aliases must merge into one canonical row")
+	// The file whose message lists both aliases counts ONCE; the alias-only
+	// file merges into the canonical row; the label follows the cluster
+	// best-name policy (smallest named member), not the latest alias's name.
+	assertions.Equal([]ExploreGroupRow{
+		{Key: "1", Label: "Alice Example", Count: 2, EstimatedBytes: 130, LatestAt: result.Rows[0].LatestAt},
+		{Key: "3", Label: "Bob Example", Count: 1, EstimatedBytes: 7, LatestAt: result.Rows[1].LatestAt},
+	}, result.Rows)
+}
+
+func TestSearchFilesParticipantFilterMatchesLinkedAliases(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	b, alice, alias := linkedParticipantFilesFixture(t)
+	engine := b.BuildEngine()
+
+	byCanonical, err := engine.SearchFiles(context.Background(), FileSearchRequest{
+		Explore: ExploreRequest{Context: Context{ParticipantIDs: []int64{alice}}},
+		Sort:    SortSpec{Field: "occurred_at", Direction: "desc"}, Page: PageSpec{Limit: 10},
+	})
+	requirements.NoError(err)
+	requirements.Len(byCanonical.Files, 2, "canonical-ID filter must include alias-owned files")
+	assertions.Equal(int64(302), byCanonical.Files[0].ID, "alias-only file")
+	assertions.Equal(int64(301), byCanonical.Files[1].ID)
+
+	byAlias, err := engine.SearchFiles(context.Background(), FileSearchRequest{
+		Explore: ExploreRequest{Context: Context{ParticipantIDs: []int64{alias}}},
+		Sort:    SortSpec{Field: "occurred_at", Direction: "desc"}, Page: PageSpec{Limit: 10},
+	})
+	requirements.NoError(err)
+	assertions.Len(byAlias.Files, 2, "a member ID widens to its whole cluster")
+}
+
 func TestGroupFilesNamesUnavailableCache(t *testing.T) {
 	engine, err := NewDuckDBEngine("", "", nil)
 	require.NoError(t, err)

@@ -242,6 +242,87 @@ describe('FilesWorkspace', () => {
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
   });
 
+  it('clears a stale viewer and shows a pending state when history selects an unloaded file', async () => {
+    const first = response();
+    Object.assign(first, { total_count: 2, next_cursor: 'page-2' });
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const path = new URL(input instanceof Request ? input.url : String(input), document.baseURI).pathname;
+      if (path === '/api/v1/files/7') return Response.json({
+        id: 7, message_id: 11, conversation_id: 21, filename: 'fixture.pdf', mime_type: 'application/pdf',
+        size_bytes: 2048, content_state: 'missing_blob', content_available: false
+      });
+      return Response.json(first);
+    });
+    const view = render(FilesWorkspace, {
+      client: createAPIClient(fetchFn), predicate: { filters: [], presentation: 'table' },
+      sort: { field: 'occurred_at', direction: 'desc' }, selectedKey: 'file:7'
+    });
+    expect(await screen.findByRole('dialog', { name: 'View fixture.pdf' })).toBeDefined();
+
+    await view.rerender({ selectedKey: 'file:900' });
+
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    expect(screen.getByText('Opening file…')).toBeDefined();
+    expect(screen.queryByRole('button', { name: 'Open containing item' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Download fixture.pdf' })).toBeNull();
+  });
+
+  it('resolves the pending viewer when the requested file arrives on a later page', async () => {
+    const first = response();
+    Object.assign(first, { total_count: 2, next_cursor: 'page-2' });
+    const second = response();
+    second.files[0] = { ...second.files[0]!, id: 900, key: 'file:900', filename: 'deep.pdf' };
+    second.total_count = 2;
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      const path = new URL(request.url, document.baseURI).pathname;
+      if (path === '/api/v1/files/7' || path === '/api/v1/files/900') return Response.json({
+        id: path.endsWith('900') ? 900 : 7, message_id: 11, conversation_id: 21,
+        filename: path.endsWith('900') ? 'deep.pdf' : 'fixture.pdf', mime_type: 'application/pdf',
+        size_bytes: 2048, content_state: 'missing_blob', content_available: false
+      });
+      const body = await request.clone().json() as { cursor?: string };
+      return Response.json(body.cursor ? second : first);
+    });
+    const view = render(FilesWorkspace, {
+      client: createAPIClient(fetchFn), predicate: { filters: [], presentation: 'table' },
+      sort: { field: 'occurred_at', direction: 'desc' }, selectedKey: 'file:7'
+    });
+    expect(await screen.findByRole('dialog', { name: 'View fixture.pdf' })).toBeDefined();
+
+    await view.rerender({ selectedKey: 'file:900' });
+    await screen.findByText('Opening file…');
+
+    await fireEvent.scroll(screen.getByRole('grid', { name: 'Files results' }));
+
+    expect(await screen.findByRole('dialog', { name: 'View deep.pdf' })).toBeDefined();
+    expect(screen.queryByText('Opening file…')).toBeNull();
+    expect(screen.queryByText('The selected file is not in the current results.')).toBeNull();
+  });
+
+  it('shows a missing state when the listing settles without the selected file', async () => {
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const path = new URL(input instanceof Request ? input.url : String(input), document.baseURI).pathname;
+      if (path === '/api/v1/files/7') return Response.json({
+        id: 7, message_id: 11, conversation_id: 21, filename: 'fixture.pdf', mime_type: 'application/pdf',
+        size_bytes: 2048, content_state: 'missing_blob', content_available: false
+      });
+      return Response.json(response());
+    });
+    const view = render(FilesWorkspace, {
+      client: createAPIClient(fetchFn), predicate: { filters: [], presentation: 'table' },
+      sort: { field: 'occurred_at', direction: 'desc' }, selectedKey: 'file:7'
+    });
+    expect(await screen.findByRole('dialog', { name: 'View fixture.pdf' })).toBeDefined();
+
+    await view.rerender({ selectedKey: 'file:900' });
+
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toContain('The selected file is not in the current results.');
+    expect(screen.queryByText('Opening file…')).toBeNull();
+  });
+
   it('restores ascending date sort and toggles it back to descending', async () => {
     const fetchFn = vi.fn<typeof fetch>(async () => Response.json(response()));
     const onSortChange = vi.fn();

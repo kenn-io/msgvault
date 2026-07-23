@@ -53,6 +53,13 @@ func (e *DuckDBEngine) Explore(ctx context.Context, request ExploreRequest) (*Ex
 	if err != nil {
 		return nil, fmt.Errorf("read committed cache state: %w", err)
 	}
+	// Participant filters carry canonical "People" group-row keys, so they
+	// widen across the whole identity cluster before rendering conditions —
+	// see expandParticipantFilterClusters.
+	request, err = e.expandParticipantFilterClusters(ctx, request)
+	if err != nil {
+		return nil, err
+	}
 	conditions, conditionArgs := buildExploreConditions(request)
 	candidateRankExpression, candidateRankArgs := buildExploreCandidateRank(request.Search)
 	limit := request.Page.Limit

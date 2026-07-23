@@ -64,8 +64,82 @@ func TestExploreGroupsParticipantLabelsUseDurableIdentityPrecedence(t *testing.T
 		{Key: "1", Label: "Alice Example", Count: 2, LatestAt: result.Rows[0].LatestAt},
 		{Key: "2", Label: "+15551234567", Count: 1, LatestAt: result.Rows[1].LatestAt},
 		{Key: "3", Label: "email-only@example.net", Count: 1, LatestAt: result.Rows[2].LatestAt},
-		{Key: "4", Label: "4", Count: 1, LatestAt: result.Rows[3].LatestAt},
+		{Key: "4", Label: "Unknown person #4", Count: 1, LatestAt: result.Rows[3].LatestAt},
 	}, result.Rows)
+}
+
+// linkedParticipantExploreFixture builds an archive where alice and her work
+// alias are one linked identity cluster (canonical = alice, the smallest
+// member ID): one entry lists BOTH aliases, one entry lists only the alias,
+// and one entry involves only the unlinked bob.
+func linkedParticipantExploreFixture(t *testing.T) (b *TestDataBuilder, alice, alias int64) {
+	t.Helper()
+	b = NewTestDataBuilder(t)
+	source := b.AddSource("archive@example.com")
+	alice = b.AddParticipant("alice@example.com", "example.com", "Alice Example")
+	alias = b.AddParticipant("alice@work.example", "work.example", "Alice (Work)")
+	bob := b.AddParticipant("bob@example.com", "example.com", "Bob Example")
+	b.LinkCluster(alice, alias)
+
+	both := b.AddMessage(MessageOpt{SourceID: source, Subject: "Both aliases", SizeEstimate: 100,
+		SentAt: time.Date(2026, 7, 1, 10, 0, 0, 0, time.UTC)})
+	b.AddTo(both, alice, "")
+	b.AddCc(both, alias, "")
+	aliasOnly := b.AddMessage(MessageOpt{SourceID: source, Subject: "Alias only", SizeEstimate: 30,
+		SentAt: time.Date(2026, 7, 2, 10, 0, 0, 0, time.UTC)})
+	b.AddTo(aliasOnly, alias, "")
+	bobOnly := b.AddMessage(MessageOpt{SourceID: source, Subject: "Bob only", SizeEstimate: 7,
+		SentAt: time.Date(2026, 7, 3, 10, 0, 0, 0, time.UTC)})
+	b.AddTo(bobOnly, bob, "")
+	return b, alice, alias
+}
+
+func TestExploreGroupsMergesLinkedParticipantIdentities(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	b, _, _ := linkedParticipantExploreFixture(t)
+
+	result, err := b.BuildEngine().ExploreGroups(context.Background(), ExploreGroupRequest{
+		Explore: ExploreRequest{}, Dimension: "participant",
+		Sort: SortSpec{Field: "key", Direction: "asc"}, Page: PageSpec{Limit: 10},
+	})
+	requirements.NoError(err)
+	requirements.Len(result.Rows, 2, "linked aliases must merge into one canonical row")
+	assertions.Equal(int64(2), result.TotalCount)
+	// The entry listing both aliases counts ONCE; the alias-only entry merges
+	// into the canonical row; the label follows the cluster best-name policy
+	// (smallest named member), not the latest alias's own name.
+	assertions.Equal([]ExploreGroupRow{
+		{Key: "1", Label: "Alice Example", Count: 2, EstimatedBytes: 130, LatestAt: result.Rows[0].LatestAt},
+		{Key: "3", Label: "Bob Example", Count: 1, EstimatedBytes: 7, LatestAt: result.Rows[1].LatestAt},
+	}, result.Rows)
+}
+
+func TestExploreParticipantFilterMatchesLinkedAliases(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	b, alice, alias := linkedParticipantExploreFixture(t)
+	engine := b.BuildEngine()
+
+	byCanonical, err := engine.Explore(context.Background(), ExploreRequest{
+		Context: Context{ParticipantIDs: []int64{alice}}, Page: PageSpec{Limit: 10},
+	})
+	requirements.NoError(err)
+	requirements.Len(byCanonical.Rows, 2, "canonical-ID filter must include alias-owned entries")
+	assertions.Equal("source:1:message:msg2", byCanonical.Rows[0].Key, "alias-only entry")
+	assertions.Equal("source:1:message:msg1", byCanonical.Rows[1].Key)
+
+	byAlias, err := engine.Explore(context.Background(), ExploreRequest{
+		Context: Context{ParticipantIDs: []int64{alias}}, Page: PageSpec{Limit: 10},
+	})
+	requirements.NoError(err)
+	assertions.Len(byAlias.Rows, 2, "a member ID widens to its whole cluster")
+
+	stats, err := engine.ExploreSelectionStats(context.Background(), ExploreSelectionRequest{
+		Explore: ExploreRequest{Context: Context{ParticipantIDs: []int64{alice}}},
+	})
+	requirements.NoError(err)
+	assertions.Equal(int64(2), stats.Count, "select-all preflight must match the merged group count")
 }
 
 func TestExploreSelectionStatsCoversPredicateAndExclusions(t *testing.T) {

@@ -101,7 +101,11 @@ func (e *DuckDBEngine) SearchFiles(ctx context.Context, request FileSearchReques
 	if err != nil {
 		return nil, fmt.Errorf("read committed cache state: %w", err)
 	}
-	exploreConditions, exploreArgs := buildExploreConditions(request.Explore)
+	explore, err := e.expandParticipantFilterClusters(ctx, request.Explore)
+	if err != nil {
+		return nil, err
+	}
+	exploreConditions, exploreArgs := buildExploreConditions(explore)
 	fileConditions, fileArgs := buildFileConditions(request.FilenameQuery, request.MIMEFamilies)
 	limit := request.Page.Limit
 	if limit == 0 {
@@ -110,7 +114,7 @@ func (e *DuckDBEngine) SearchFiles(ctx context.Context, request FileSearchReques
 	args := append(append([]any{}, exploreArgs...), fileArgs...)
 	args = append(args, limit, request.Page.Offset)
 	var queryText string
-	if !e.exploreFastPathDisabled && !exploreConditionsTouchParticipantLists(request.Explore) {
+	if !e.exploreFastPathDisabled && !exploreConditionsTouchParticipantLists(explore) {
 		queryText = buildFileSearchFastSQL(exploreConditions, fileConditions, order)
 		args = append(args, exploreArgs...) // total-count scan
 		args = append(args, fileArgs...)
@@ -171,7 +175,7 @@ func (e *DuckDBEngine) GroupFiles(ctx context.Context, request FileGroupRequest)
 	if err := validateFileMIMEFamilies(request.MIMEFamilies); err != nil {
 		return nil, err
 	}
-	groupExpr, labelExpr, fromSuffix, whereSuffix, err := fileGroupExpressions(request.Dimension)
+	spec, err := fileGroupExpressions(request.Dimension, e.parquetPath(datasetParticipantClusters))
 	if err != nil {
 		return nil, err
 	}
@@ -188,19 +192,23 @@ func (e *DuckDBEngine) GroupFiles(ctx context.Context, request FileGroupRequest)
 	if err != nil {
 		return nil, fmt.Errorf("read committed cache state: %w", err)
 	}
-	population, args := filteredFilePopulationSQL(request.Explore, request.FilenameQuery, request.MIMEFamilies)
+	explore, err := e.expandParticipantFilterClusters(ctx, request.Explore)
+	if err != nil {
+		return nil, err
+	}
+	population, args := filteredFilePopulationSQL(explore, request.FilenameQuery, request.MIMEFamilies)
 	limit := request.Page.Limit
 	if limit == 0 {
 		limit = defaultExploreLimit
 	}
-	queryText := population + `
+	queryText := population + spec.cte + `
 , grouped AS (
-	SELECT ` + groupExpr + ` AS group_key, ` + labelExpr + ` AS group_label,
+	SELECT ` + spec.key + ` AS group_key, ` + spec.label + ` AS group_label,
 		COUNT(*)::BIGINT AS group_count,
 		COALESCE(SUM(size), 0)::BIGINT AS estimated_bytes,
 		MAX(occurred_at) AS latest_at
-	FROM file_population` + fromSuffix + whereSuffix + `
-	GROUP BY ` + groupExpr + `
+	FROM ` + spec.source + spec.fromSuffix + spec.whereSuffix + `
+	GROUP BY ` + spec.groupBy + `
 ), counted AS (
 	SELECT *, COUNT(*) OVER () AS total_count FROM grouped
 )
@@ -269,33 +277,50 @@ func buildFileConditions(filenameQuery string, mimeFamilies []FileMIMEFamily) (s
 	return strings.Join(conditions, " AND "), args
 }
 
-func fileGroupExpressions(dimension string) (key, label, fromSuffix, whereSuffix string, err error) {
+// fileGroupExpressions maps a grouping dimension onto the grouped aggregate
+// GroupFiles builds over file_population. The "participant" dimension groups
+// by canonical identity-cluster IDs exactly as exploreGroupExpressions does
+// for entries: raw file_participant_ids members resolve through canon before
+// grouping, and the DISTINCT collapses a file whose message lists several
+// aliases of one person to a single (file, canonical) row, so the file is
+// never double-counted (attachment_id carries per-file uniqueness).
+func fileGroupExpressions(dimension, clustersGlob string) (groupExpressions, error) {
+	simple := func(key string) groupExpressions {
+		return groupExpressions{key: key, label: key, groupBy: key, source: "file_population"}
+	}
 	switch dimension {
 	case "source":
-		return "CAST(source_id AS VARCHAR)", "arg_max(source_identifier, occurred_at)", "", "", nil
+		return groupExpressions{
+			key: "CAST(source_id AS VARCHAR)", label: "arg_max(source_identifier, occurred_at)",
+			groupBy: "CAST(source_id AS VARCHAR)", source: "file_population",
+		}, nil
 	case "participant":
-		participantLabel := `COALESCE(
-			NULLIF(TRIM(grouped_participant.display_name), ''),
-			NULLIF(TRIM(grouped_participant.phone_number), ''),
-			NULLIF(TRIM(grouped_participant.email_address), ''),
-			CAST(grouped_participant.id AS VARCHAR)
-		)`
-		return "CAST(group_value AS VARCHAR)", "arg_max(" + participantLabel + ", occurred_at)",
-			" CROSS JOIN UNNEST(file_participant_ids) AS grouped(group_value)" +
-				" JOIN participants AS grouped_participant ON grouped_participant.id = group_value", "", nil
+		return groupExpressions{
+			key: "CAST(person_id AS VARCHAR)", label: sqlCanonicalPersonGroupLabelExpr(), groupBy: "person_id",
+			cte: `
+, ` + sqlClustersCanonCTE(clustersGlob) + `, participant_files AS (
+	SELECT DISTINCT f.attachment_id, cn.canonical_id AS person_id, f.occurred_at, f.size
+	FROM file_population f
+	CROSS JOIN UNNEST(f.file_participant_ids) AS unnested(participant_id)
+	JOIN canon cn ON cn.participant_id = unnested.participant_id
+)`,
+			source: "participant_files",
+		}, nil
 	case "domain":
-		return "group_value", "group_value", ", UNNEST(file_participant_domains) AS grouped(group_value)",
-			" WHERE group_value <> ''", nil
+		spec := simple("group_value")
+		spec.fromSuffix = ", UNNEST(file_participant_domains) AS grouped(group_value)"
+		spec.whereSuffix = " WHERE group_value <> ''"
+		return spec, nil
 	case messageTypeDimension:
-		return messageTypeDimension, messageTypeDimension, "", "", nil
+		return simple(messageTypeDimension), nil
 	case "kind":
-		return "'file'", "'file'", "", "", nil
+		return simple("'file'"), nil
 	case "year":
-		return "strftime(occurred_at, '%Y')", "strftime(occurred_at, '%Y')", "", "", nil
+		return simple("strftime(occurred_at, '%Y')"), nil
 	case timeGranularityMonth:
-		return "strftime(occurred_at, '%Y-%m')", "strftime(occurred_at, '%Y-%m')", "", "", nil
+		return simple("strftime(occurred_at, '%Y-%m')"), nil
 	default:
-		return "", "", "", "", fmt.Errorf("%w: unknown file group dimension %q", ErrInvalidExploreRequest, dimension)
+		return groupExpressions{}, fmt.Errorf("%w: unknown file group dimension %q", ErrInvalidExploreRequest, dimension)
 	}
 }
 

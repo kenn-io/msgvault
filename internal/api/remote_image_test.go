@@ -111,6 +111,10 @@ func TestRemoteImageRejectsProhibitedTargetsBeforeAnyNetworkUse(t *testing.T) {
 		{"ipv6 ula", "http://[fd00::2]/a.png", "prohibited_host"},
 		{"ipv4-mapped loopback", "http://[::ffff:127.0.0.1]/a.png", "prohibited_host"},
 		{"ipv4-compatible loopback", "http://[::7f00:1]/a.png", "prohibited_host"},
+		{"nat64 private literal", "http://[64:ff9b::10.0.0.5]/a.png", "prohibited_host"},
+		{"nat64 local-use literal", "http://[64:ff9b:1::a]/a.png", "prohibited_host"},
+		{"6to4 private literal", "http://[2002:a00:1::]/a.png", "prohibited_host"},
+		{"teredo private literal", "http://[2001:0:1234:5678::f5ff:fffe]/a.png", "prohibited_host"},
 		{"decimal ipv4 obfuscation", "http://2130706433/a.png", "prohibited_host"},
 		{"hex ipv4 obfuscation", "http://0x7f000001/a.png", "prohibited_host"},
 		{"octal ipv4 obfuscation", "http://017700000001/a.png", "prohibited_host"},
@@ -195,6 +199,69 @@ func TestRemoteImageRejectsRebindingResolution(t *testing.T) {
 	}
 }
 
+// TestProhibitedRemoteIPTranslatedIPv4 covers the IPv6 transition mechanisms
+// that embed an IPv4 destination: NAT64 (RFC 6052), the RFC 8215 local-use
+// translation space, 6to4 (RFC 3056), and Teredo (RFC 4380). A prohibited
+// embedded IPv4 prohibits the IPv6 address; a public one passes — except in
+// the local-use space, where the layout is unknown and the whole /48 is
+// rejected.
+func TestProhibitedRemoteIPTranslatedIPv4(t *testing.T) {
+	cases := []struct {
+		name string
+		addr string
+		want bool
+	}{
+		{"nat64 rfc1918", "64:ff9b::10.0.0.5", true},
+		{"nat64 metadata", "64:ff9b::169.254.169.254", true},
+		{"nat64 loopback", "64:ff9b::127.0.0.1", true},
+		{"nat64 public", "64:ff9b::8.8.8.8", false},
+		{"local-use base", "64:ff9b:1::", true},
+		{"local-use with public-looking tail", "64:ff9b:1::8.8.8.8", true},
+		{"6to4 rfc1918", "2002:a00:1::", true},
+		{"6to4 public", "2002:808:808::", false},
+		{"teredo private client", "2001:0:1234:5678::f5ff:fffe", true},
+		{"teredo public client", "2001:0:1234:5678::f7f7:f7f7", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := prohibitedRemoteIP(netip.MustParseAddr(tc.addr))
+			assert.Equal(t, tc.want, got)
+		})
+	}
+}
+
+// TestRemoteImageRejectsTranslatedPrivateResolution: a DNS64 or malicious
+// resolver can answer with an IPv6 transition address whose embedded IPv4
+// destination is private, reaching the LAN through the translator. Every
+// such answer must be rejected before any dial.
+func TestRemoteImageRejectsTranslatedPrivateResolution(t *testing.T) {
+	cases := []struct {
+		name   string
+		answer string
+	}{
+		{"nat64 private answer", "64:ff9b::10.0.0.5"},
+		{"nat64 local-use answer", "64:ff9b:1::203.0.113.7"},
+		{"6to4 private answer", "2002:a00:1::"},
+		{"teredo private client answer", "2001:0:1234:5678::f5ff:fffe"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+			seams := &remoteImageSeams{answers: map[string][]netip.Addr{
+				"nat64.example": {netip.MustParseAddr(tc.answer)},
+			}}
+			srv := newRemoteImageTestServer(t, seams)
+
+			resp := getRemoteImage(srv, "http://nat64.example/pixel.png")
+
+			assert.Equal(http.StatusBadGateway, resp.Code, "body: %s", resp.Body.String())
+			assert.Contains(resp.Body.String(), "prohibited_destination")
+			assert.Equal([]string{"nat64.example"}, seams.lookups)
+			assert.Zero(seams.dialCount(), "translated private destination must never be dialed")
+		})
+	}
+}
+
 func TestRemoteImageHappyPathPinsValidatedAddress(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -237,6 +304,35 @@ func TestRemoteImageRedirectToPrivateTargetIsRejected(t *testing.T) {
 		answers: map[string][]netip.Addr{
 			"images.example":           {netip.MustParseAddr("203.0.113.7")},
 			"internal-service.example": {netip.MustParseAddr("10.0.0.5")},
+		},
+		upstream: upstream.Listener.Addr().String(),
+	}
+	srv := newRemoteImageTestServer(t, seams)
+
+	resp := getRemoteImage(srv, "http://images.example/chart.png")
+
+	assert.Equal(http.StatusBadGateway, resp.Code, "body: %s", resp.Body.String())
+	assert.Contains(resp.Body.String(), "prohibited_destination")
+	assert.Equal([]string{"203.0.113.7:80"}, seams.dialedAddresses(),
+		"only the first validated hop may be dialed")
+}
+
+// TestRemoteImageRedirectToNAT64PrivateTargetIsRejected re-validates redirect
+// hops against the transition-address rules: the second hop resolves to a
+// NAT64 address embedding a private IPv4 destination and must be rejected
+// without a second dial.
+func TestRemoteImageRedirectToNAT64PrivateTargetIsRejected(t *testing.T) {
+	assert := assert.New(t)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Location", "http://nat64-gateway.example/secret.png")
+		w.WriteHeader(http.StatusFound)
+	}))
+	defer upstream.Close()
+
+	seams := &remoteImageSeams{
+		answers: map[string][]netip.Addr{
+			"images.example":        {netip.MustParseAddr("203.0.113.7")},
+			"nat64-gateway.example": {netip.MustParseAddr("64:ff9b::10.0.0.5")},
 		},
 		upstream: upstream.Listener.Addr().String(),
 	}

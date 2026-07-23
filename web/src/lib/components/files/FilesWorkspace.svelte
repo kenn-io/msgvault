@@ -77,6 +77,7 @@
   let scrollTop = $state(0);
   let activeKey = $state<string | null>(untrack(() => providedActiveKey));
   let viewerFile = $state<FileSearchRow>();
+  let pendingViewerKey = $state<string | null>(null);
   let viewerReturnFocus = $state<HTMLElement>();
   let controller: AbortController | undefined;
   let generation = 0;
@@ -107,16 +108,35 @@
   // selectedKey from the URL, so a transition to null must also close an open
   // viewer. Only a transition closes it — an unchanged null selection leaves
   // locally opened viewers alone when this component is used uncontrolled.
+  // A transition to a key whose row has not loaded yet must also close the
+  // stale viewer immediately — its download and open actions would target the
+  // previous file — and remember the requested key until it resolves or the
+  // listing settles without it.
   $effect(() => {
     const controlledKey = selectedKey;
-    const clearedByNavigation = !controlledKey && Boolean(previousSelectedKey);
+    const keyChanged = controlledKey !== previousSelectedKey;
     previousSelectedKey = controlledKey;
     if (controlledKey) {
       const file = rows.find((row) => row.key === controlledKey);
-      if (file) viewerFile = file;
-    } else if (clearedByNavigation) {
+      if (file) {
+        viewerFile = file;
+        pendingViewerKey = null;
+      } else if (keyChanged) {
+        viewerFile = undefined;
+        pendingViewerKey = controlledKey;
+      }
+    } else if (keyChanged) {
       viewerFile = undefined;
+      pendingViewerKey = null;
     }
+  });
+
+  const pendingViewerState = $derived.by(() => {
+    if (!pendingViewerKey || viewerFile) return undefined;
+    if (rows.some((row) => row.key === pendingViewerKey)) return undefined;
+    if (loading || loadingMore) return 'pending';
+    if (error || pageError || unavailable) return 'missing';
+    return nextCursor ? 'pending' : 'missing';
   });
 
   const slice = $derived.by(() => {
@@ -383,6 +403,7 @@
     onActiveKey?.(row.key);
     viewerReturnFocus = returnFocus;
     viewerFile = row;
+    pendingViewerKey = null;
     onSelectedKey?.(row.key);
   }
 
@@ -561,6 +582,13 @@
           </div></div></div>
         {/if}
         {#if loadingMore}<div role="row"><div role="gridcell" aria-colspan="8"><div class="progress" role="status">Loading more…</div></div></div>{/if}
+        {#if pendingViewerState === 'pending'}
+          <div role="row"><div role="gridcell" aria-colspan="8"><div class="progress" role="status">Opening file…</div></div></div>
+        {:else if pendingViewerState === 'missing'}
+          <div role="row"><div role="gridcell" aria-colspan="8"><div class="page-error" role="alert">
+            <span>The selected file is not in the current results.</span>
+          </div></div></div>
+        {/if}
       </div>
     </div>
   </section>
