@@ -982,7 +982,7 @@ func TestRemoveAccountCmd_TeamsRemovesGraphToken(t *testing.T) {
 	require.NoError(err, "create source")
 	_ = s.Close()
 
-	mgr := microsoft.NewGraphManager("client-id", "", tokensDir, nil)
+	mgr := microsoft.NewGraphManager("client-id", "", "", tokensDir, nil)
 	tokenPath := mgr.TokenPath("tok@example.com")
 	require.NoError(os.WriteFile(tokenPath, []byte(`{}`), 0600), "write teams token")
 

@@ -359,15 +359,17 @@ func (m *Manager) browserFlow(ctx context.Context, email string, scopes []string
 	// URI embedded in the authorization request matches exactly. Failing fast
 	// here produces a clear error instead of a silent hang.
 
-	bindHost := "localhost"
-	if host == "localhost" || host == "" {
+	ip := net.ParseIP(host)
+	var bindHost string
+	switch {
+	case host == "localhost" || host == "":
 		bindHost = "localhost"
-	} else if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() {
+	case ip != nil && ip.IsLoopback():
 		// Allow 127.x.x.x, ::1 — use the configured loopback address so the
 		// bind address matches the redirect URI (browser sends callback to
 		// 127.0.0.1, server listens on 127.0.0.1, etc.).
 		bindHost = host
-	} else {
+	default:
 		return nil, "", fmt.Errorf(
 			"redirect URI host %q must be localhost or a loopback address", host,
 		)
@@ -404,7 +406,7 @@ func (m *Manager) browserFlow(ctx context.Context, email string, scopes []string
 		ln = tls.NewListener(ln, tlsCfg)
 	}
 
-	defer ln.Close()
+	defer func() { _ = ln.Close() }()
 
 	cfg := m.oauthConfig(scopes)
 
@@ -536,7 +538,7 @@ func generateSelfSignedCert(hosts []string) (tls.Certificate, error) {
 		SerialNumber: big.NewInt(time.Now().UnixNano()),
 		NotBefore:    time.Now().Add(-24 * time.Hour),
 		NotAfter:     time.Now().Add(1 * time.Hour),
-		KeyUsage: x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
+		KeyUsage:     x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
 		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 		IPAddresses:  []net.IP{net.ParseIP("127.0.0.1"), net.ParseIP("::1")},
 	}
@@ -563,9 +565,12 @@ func generateSelfSignedCert(hosts []string) (tls.Certificate, error) {
 		return tls.Certificate{}, fmt.Errorf("encode key: %w", err)
 	}
 
-	return tls.X509KeyPair(buf.Bytes(), buf.Bytes())
+	cert, err := tls.X509KeyPair(buf.Bytes(), buf.Bytes())
+	if err != nil {
+		return tls.Certificate{}, fmt.Errorf("parse generated certificate and key: %w", err)
+	}
+	return cert, nil
 }
-
 
 // resolveTokenEmail verifies the ID token and validates the authenticated
 // email matches the expected address. Uses OIDC signature/issuer/audience
