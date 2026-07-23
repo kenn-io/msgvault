@@ -22,6 +22,7 @@ import (
 	"go.kenn.io/msgvault/internal/query/querytest"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
+	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
 type fixedFileBlobStore struct{ content []byte }
@@ -548,4 +549,57 @@ func TestFileGroupsCursorBindsRequestAndCacheRevision(t *testing.T) {
 	srv.Router().ServeHTTP(staleResponse, staleRequest)
 	assert.Equal(t, http.StatusConflict, staleResponse.Code)
 	assert.Contains(t, staleResponse.Body.String(), "archive_revision_changed")
+}
+
+// TestFileEndpointsReturnNotFoundForDedupHiddenMessageAttachments proves the
+// by-ID metadata and content endpoints cannot resolve an attachment whose
+// message was hidden by dedup (deleted_at set), while the surviving message's
+// attachment — even one sharing the same content hash — still serves.
+func TestFileEndpointsReturnNotFoundForDedupHiddenMessageAttachments(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	f := storetest.New(t)
+	survivorID := f.CreateMessage("dedup-file-keep")
+	hiddenID := f.CreateMessage("dedup-file-drop")
+	requirements.NoError(f.Store.UpsertAttachment(
+		survivorID, "shared.pdf", "application/pdf", "aa/shared", "sharedhash", 2048,
+	))
+	requirements.NoError(f.Store.UpsertAttachment(
+		hiddenID, "shared.pdf", "application/pdf", "aa/shared", "sharedhash", 2048,
+	))
+	survivorFileID := apiSingleAttachmentID(t, f, survivorID)
+	hiddenFileID := apiSingleAttachmentID(t, f, hiddenID)
+	_, err := f.Store.MergeDuplicates(survivorID, []int64{hiddenID}, "dedup-file-batch")
+	requirements.NoError(err)
+	srv := NewServer(&config.Config{Server: config.ServerConfig{APIPort: 8080}}, f.Store, nil, testLogger())
+
+	metadata := httptest.NewRecorder()
+	srv.Router().ServeHTTP(metadata, httptest.NewRequest(
+		http.MethodGet, fmt.Sprintf("/api/v1/files/%d", hiddenFileID), nil))
+	assertions.Equal(http.StatusNotFound, metadata.Code, "hidden metadata: %s", metadata.Body.String())
+	assertions.Contains(metadata.Body.String(), "file_not_found")
+
+	content := httptest.NewRecorder()
+	srv.Router().ServeHTTP(content, httptest.NewRequest(
+		http.MethodGet, fmt.Sprintf("/api/v1/files/%d/content", hiddenFileID), nil))
+	assertions.Equal(http.StatusNotFound, content.Code, "hidden content: %s", content.Body.String())
+	assertions.Contains(content.Body.String(), "file_not_found")
+
+	live := httptest.NewRecorder()
+	srv.Router().ServeHTTP(live, httptest.NewRequest(
+		http.MethodGet, fmt.Sprintf("/api/v1/files/%d", survivorFileID), nil))
+	requirements.Equal(http.StatusOK, live.Code, "survivor metadata: %s", live.Body.String())
+	var decoded FileMetadataResponse
+	requirements.NoError(json.NewDecoder(live.Body).Decode(&decoded))
+	assertions.Equal(survivorID, decoded.MessageID)
+	assertions.Equal("sharedhash", decoded.ContentHash)
+}
+
+func apiSingleAttachmentID(t *testing.T, f *storetest.Fixture, messageID int64) int64 {
+	t.Helper()
+	var id int64
+	err := f.Store.DB().QueryRow(f.Store.Rebind(
+		"SELECT id FROM attachments WHERE message_id = ?"), messageID).Scan(&id)
+	require.NoError(t, err, "look up attachment for message %d", messageID)
+	return id
 }

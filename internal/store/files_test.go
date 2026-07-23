@@ -61,3 +61,40 @@ func TestGetFileMetadataReturnsNotFoundWithoutError(t *testing.T) {
 	require.NoError(t, err)
 	assert.Nil(t, file)
 }
+
+func TestGetFileMetadataHidesAttachmentsOnDedupHiddenMessages(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	f := storetest.New(t)
+	survivorID := f.CreateMessage("dedup-file-keep")
+	hiddenID := f.CreateMessage("dedup-file-drop")
+	requirements.NoError(f.Store.UpsertAttachment(
+		survivorID, "shared.pdf", "application/pdf", "aa/shared", "sharedhash", 2048,
+	))
+	requirements.NoError(f.Store.UpsertAttachment(
+		hiddenID, "shared.pdf", "application/pdf", "aa/shared", "sharedhash", 2048,
+	))
+	survivorFileID := singleAttachmentID(t, f, survivorID)
+	hiddenFileID := singleAttachmentID(t, f, hiddenID)
+	_, err := f.Store.MergeDuplicates(survivorID, []int64{hiddenID}, "dedup-file-batch")
+	requirements.NoError(err)
+
+	hidden, err := f.Store.GetFileMetadata(t.Context(), hiddenFileID)
+	requirements.NoError(err)
+	assertions.Nil(hidden, "attachment on a dedup-hidden message must not resolve")
+
+	files, err := f.Store.GetFileMetadataBatch(t.Context(), []int64{survivorFileID, hiddenFileID})
+	requirements.NoError(err)
+	requirements.Len(files, 1)
+	assertions.Equal(survivorID, files[survivorFileID].MessageID)
+	assertions.Equal("sharedhash", files[survivorFileID].ContentHash)
+}
+
+func singleAttachmentID(t *testing.T, f *storetest.Fixture, messageID int64) int64 {
+	t.Helper()
+	var id int64
+	err := f.Store.DB().QueryRow(f.Store.Rebind(
+		"SELECT id FROM attachments WHERE message_id = ?"), messageID).Scan(&id)
+	require.NoError(t, err, "look up attachment for message %d", messageID)
+	return id
+}

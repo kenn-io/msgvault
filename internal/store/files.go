@@ -41,6 +41,9 @@ func (s *Store) GetFileMetadata(ctx context.Context, id int64) (*FileMetadata, e
 }
 
 // GetFileMetadataBatch resolves one bounded page in one database query.
+// Attachments on dedup-hidden messages (deleted_at IS NOT NULL) are
+// omitted so known-ID lookups cannot resolve rows the archive hides;
+// source-deleted messages stay visible, matching archive views.
 func (s *Store) GetFileMetadataBatch(ctx context.Context, ids []int64) (map[int64]FileMetadata, error) {
 	result := make(map[int64]FileMetadata, len(ids))
 	if len(ids) == 0 {
@@ -74,6 +77,7 @@ func (s *Store) GetFileMetadataBatch(ctx context.Context, ids []int64) (map[int6
 		JOIN messages m ON m.id = a.message_id
 		JOIN conversations c ON c.id = m.conversation_id
 		WHERE a.id IN (`+strings.Join(placeholders, ",")+`)
+		  AND `+LiveMessagesWhere("m", false)+`
 		ORDER BY a.id`), args...)
 	if err != nil {
 		return nil, fmt.Errorf("get file metadata batch: %w", err)
