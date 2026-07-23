@@ -7,12 +7,7 @@ All notable changes to msgvault, grouped by release.
 
 ## Unreleased
 
-**New features**
-
-- An authenticated `POST /api/v1/import/meeting` endpoint accepts one
-  provider-neutral meeting from local scripts and automations. Stable source
-  and external IDs update imports in place, and the resulting transcripts are
-  searchable and visible alongside other meeting sources.
+No notable changes yet.
 
 ---
 

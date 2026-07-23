@@ -1,21 +1,20 @@
 ---
 title: Meeting Transcripts
-description: Archive meeting notes and transcripts from direct API imports, Granola, and Circleback.
+description: Archive AI meeting notes and transcripts from Granola and Circleback into your searchable local archive.
 ---
 
-msgvault can accept one normalized meeting over HTTP or sync meeting notes and
-transcripts from supported services into the same database as your email. Each
-meeting becomes one searchable message: the subject is the meeting title, the
-body carries the summary followed by the full speaker-labeled transcript, and
-the organizer and attendees join the same contact graph as the people you
-email.
+msgvault can archive meeting notes and transcripts from AI meeting-notes
+services into the same local database as your email. Each meeting becomes one
+searchable message: the subject is the meeting title, the body carries the AI
+summary followed by the full speaker-labeled transcript, and the organizer and
+attendees join the same contact graph as the people you email.
 
-Provider sync is **read-only**: msgvault never modifies anything in the source
-service. Direct imports only write to the msgvault archive. Meetings are cached
-and fully searchable with `msgvault search` and the TUI. An unscoped search
-intentionally returns every cached message type, including meetings and chats.
-Ordinary analytics remain email-only unless you explicitly filter by message
-type, so meeting attendees do not inflate email sender/recipient statistics.
+Meeting sync is **read-only**: msgvault never modifies anything in the source
+service. Meetings are cached and fully searchable with `msgvault search` and
+the TUI. An unscoped search intentionally returns every cached message type,
+including meetings and chats. Ordinary analytics remain email-only unless you
+explicitly filter by message type, so meeting attendees do not inflate email
+sender/recipient statistics.
 
 ## Source labels and account identity
 
@@ -45,87 +44,6 @@ When the primary email or aliases change, run a full provider sync to repair
 msgvault sync-granola work --full
 msgvault sync-circleback work --full
 ```
-
-## Import one meeting over HTTP
-
-An automation or local script can send one completed meeting to a running
-msgvault server without installing a provider integration:
-
-```bash
-curl --fail-with-body \
-  -H "X-API-Key: $MSGVAULT_API_KEY" \
-  -H "Content-Type: application/json" \
-  --data-binary @- \
-  "$MSGVAULT_URL/api/v1/import/meeting" <<'JSON'
-{
-  "source": {
-    "identifier": "local-meetings",
-    "display_name": "Local Meetings",
-    "account_email": "user@example.com"
-  },
-  "meeting": {
-    "external_id": "synthetic-meeting-42",
-    "title": "Weekly planning",
-    "started_at": "2026-07-23T18:00:00Z",
-    "ended_at": "2026-07-23T18:30:00Z",
-    "summary_markdown": "## Summary\n\nReviewed the launch plan.",
-    "transcript_segments": [
-      {
-        "speaker": "Test Speaker",
-        "text": "Let's review the launch plan.",
-        "offset_seconds": 4
-      }
-    ],
-    "organizer": {
-      "name": "Test Organizer",
-      "email": "organizer@example.com"
-    },
-    "attendees": [
-      {
-        "name": "Test Attendee",
-        "email": "attendee@example.com"
-      }
-    ],
-    "metadata": {
-      "calendar_event_id": "synthetic-event-42"
-    }
-  }
-}
-JSON
-```
-
-The first delivery returns `201 Created`:
-
-```json
-{
-  "status": "created",
-  "source_id": 3,
-  "message_id": 901,
-  "source_message_id": "meeting:synthetic-meeting-42"
-}
-```
-
-The pair `source.identifier` and `meeting.external_id` is the idempotency key.
-Sending the same pair again atomically replaces the archived snapshot, keeps
-the same message ID, and returns `200 OK` with `"status": "updated"`. Use stable
-values and retry failed deliveries; a cache-refresh error can be returned after
-the database write, and the same request remains safe to retry.
-
-Supply either `transcript` as ready-to-store text or
-`transcript_segments` as structured speaker turns, not both. Segment speaker
-labels are stored exactly as supplied. msgvault does not diarize audio,
-recognize voices, or map labels such as `Speaker 1` to attendee names. The
-caller must do that before import if its meeting tool has better speaker data.
-
-At least one summary or transcript field is required. Markdown summaries take
-precedence over plain-text summaries when both are supplied. Organizer and
-attendee email addresses become structured participants. Values in `metadata`
-are stored as supplied, so the caller should remove tokens, private URLs, raw
-provider payloads, or other fields it does not want archived.
-
-A local adapter only needs to react to its meeting tool's completion event,
-translate the provider record into this JSON shape, and make the authenticated
-request. It does not need direct database access or a msgvault client binary.
 
 ## Granola
 
@@ -192,14 +110,13 @@ without a limit to continue normal incremental operation.
 ### Browse in the TUI
 
 Launch `msgvault tui` and press `m` until the title bar shows **Meetings**.
-The list combines directly imported, Granola, and Circleback meetings and shows
-their date, title, organizer, and source. Press `A` to select one meeting
-source, `/` to search meeting titles, people, transcripts, and notes, and
-`Enter` to open the full transcript. The detail view renders summary Markdown
-with terminal-friendly headings, lists, emphasis, code, and preserved
-transcript line breaks. Inside the detail view, `/` finds text and `n`/`N`
-moves between matches. Meetings mode is read-only; selection and deletion
-actions are not available.
+The list combines Granola and Circleback meetings and shows their date, title,
+organizer, and source. Press `A` to select one meeting source, `/` to search
+meeting titles, people, transcripts, and notes, and `Enter` to open the full
+transcript. The detail view renders summary Markdown with terminal-friendly
+headings, lists, emphasis, code, and preserved transcript line breaks. Inside
+the detail view, `/` finds text and `n`/`N` moves between matches. Meetings
+mode is read-only; selection and deletion actions are not available.
 
 Meetings remains available in the mode cycle when the archive is empty and
 shows setup guidance. If Texts mode is unavailable, `m` skips it and still
