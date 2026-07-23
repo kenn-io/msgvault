@@ -7,7 +7,7 @@ import type {
   IdentitySearchSort,
   PersonSummary
 } from '../explore/models';
-import { predicateFingerprint } from '../explore/selection';
+import { canonicalFingerprint, predicateFingerprint } from '../explore/selection';
 import type { RelationshipFacet, RelationshipRow, RelationshipTimelineRow } from './models';
 
 export type LinkOutcome =
@@ -96,6 +96,10 @@ export class RelationshipsController {
   private listGeneration = 0;
   private detailGeneration = 0;
   private listPageRequest: ListPageRequest | undefined;
+  /** Fingerprint of the context (endpoint + facet/query/showAll/filters) the
+   * visible rows were loaded for — lets loadList tell a fresh-context load
+   * (clear the stale rows) apart from a same-context reload (keep them). */
+  private listContextSignature: string | undefined;
   private listSeenCursors = new Set<string>();
   private seenCursors = new Set<string>();
   private lastPredicate: ExplorePredicate | undefined;
@@ -129,6 +133,18 @@ export class RelationshipsController {
         ? { kind: 'relationships', filters: predicate.filters, showAll: this.showAll }
         : { kind: 'people', context: contextPredicate(predicate), query };
     this.listPageRequest = request;
+    const signature = canonicalFingerprint(request);
+    if (signature !== this.listContextSignature) {
+      // A fresh-context load must not leave the previous context's rows
+      // visible and selectable while the response is in flight: on a slow
+      // request a click on one would open a result the current controls no
+      // longer describe. Clearing drops the list into its loading state.
+      // A same-context reload (link/unlink refresh, retry after a failure)
+      // keeps whatever is shown — clearing there would flash the list for a
+      // response describing the same rows.
+      this.listContextSignature = signature;
+      this.listRows = [];
+    }
     try {
       const response = await this.postListPage(request, undefined, controller.signal);
       this.applyListResponse(generation, controller.signal, response, false);

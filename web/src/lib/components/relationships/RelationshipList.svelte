@@ -226,6 +226,13 @@
         />
       {:else}
         {#each views as view, index (view.key)}
+          <!-- pointerdown only tracks the active row and focuses the grid for
+               keyboard nav; opening waits for a completed primary-button click
+               so a touch scroll that starts on a row never selects it (which
+               would also close the mobile drawer) and right/middle presses
+               do nothing. -->
+          <!-- svelte-ignore a11y_click_events_have_key_events -- Enter on
+               the focused grid opens the same row via handleKeydown. -->
           <div
             class="result-row"
             class:active={index === activeIndex}
@@ -235,7 +242,8 @@
             data-row-key={view.key}
             aria-selected={view.target === activeTarget}
             style:--reveal-index={index}
-            onpointerdown={() => selectRow(view)}
+            onpointerdown={() => { activeKey = view.key; gridElement?.focus(); }}
+            onclick={(event) => { if (event.button === 0) selectRow(view); }}
           >
             <div role="gridcell">
               <IdentityAvatar

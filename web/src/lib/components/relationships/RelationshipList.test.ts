@@ -180,8 +180,34 @@ describe('RelationshipList', () => {
     const props = baseProps();
     render(RelationshipList, props);
 
-    await fireEvent.pointerDown(screen.getByText('Bob Example').closest('[role="row"]')!);
+    await fireEvent.click(screen.getByText('Bob Example').closest('[role="row"]')!);
     expect(props.onSelect).toHaveBeenCalledWith('cluster:2');
+  });
+
+  it('does not open a row from pointerdown alone, so a touch scroll starting on it cannot select', async () => {
+    const props = baseProps();
+    render(RelationshipList, props);
+    const row = screen.getByText('Bob Example').closest('[role="row"]')!;
+
+    // A scroll gesture on touch begins with pointerdown but never completes a
+    // click: the row may become active (highlight) but must not open.
+    await fireEvent.pointerDown(row);
+    expect(props.onSelect).not.toHaveBeenCalled();
+    expect(row.classList.contains('active')).toBe(true);
+
+    await fireEvent.click(row);
+    expect(props.onSelect).toHaveBeenCalledWith('cluster:2');
+  });
+
+  it('ignores non-primary-button presses and clicks', async () => {
+    const props = baseProps();
+    render(RelationshipList, props);
+    const row = screen.getByText('Bob Example').closest('[role="row"]')!;
+
+    await fireEvent.mouseDown(row, { button: 2 });
+    await fireEvent.click(row, { button: 2 });
+    await fireEvent.click(row, { button: 1 });
+    expect(props.onSelect).not.toHaveBeenCalled();
   });
 
   it('requests the next page when scroll nears the bottom while more pages exist', async () => {

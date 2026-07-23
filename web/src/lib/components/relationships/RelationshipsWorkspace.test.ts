@@ -100,7 +100,7 @@ describe('RelationshipsWorkspace', () => {
     const props = baseProps(fetchFn);
     render(RelationshipsWorkspace, { props });
 
-    await fireEvent.pointerDown((await screen.findByText('Alice Example')).closest('[role="row"]')!);
+    await fireEvent.click((await screen.findByText('Alice Example')).closest('[role="row"]')!);
     expect(props.onTargetChange).toHaveBeenCalledWith('cluster:1');
 
     await waitFor(() => expect(requests.some((request) => pathOf(request) === '/api/v1/people/1')).toBe(true));

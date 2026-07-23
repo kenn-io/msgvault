@@ -189,6 +189,77 @@ describe('RelationshipsController.loadList', () => {
     expect(controller.listLoading).toBe(false);
   });
 
+  it('clears previous-context rows while a fresh-context load is in flight, so none stay clickable', async () => {
+    let resolveSearch: ((response: Response) => void) | undefined;
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      const path = pathOf(request);
+      if (path === '/api/v1/relationships') {
+        return Response.json({
+          rows: [relationshipRow(1, 'Alice')], total_count: 1, cache_revision: 'cache-rel', identity_revision: 1
+        });
+      }
+      if (path === '/api/v1/people/search') {
+        return new Promise<Response>((resolve) => { resolveSearch = resolve; });
+      }
+      throw new Error(`unexpected path ${path}`);
+    });
+    const controller = new RelationshipsController(createAPIClient(fetchFn), () => 'UTC');
+    await controller.loadList({ filters: [], presentation: 'table' });
+    expect(controller.listRows).toEqual([relationshipRow(1, 'Alice')]);
+
+    controller.query = 'ali';
+    const pending = controller.loadList({ filters: [], presentation: 'table' });
+    await vi.waitFor(() => expect(resolveSearch).toBeDefined());
+
+    // The hanging search must not leave the old ranked rows selectable under
+    // the new query: the list shows its loading state instead.
+    expect(controller.listRows).toEqual([]);
+    expect(controller.listLoading).toBe(true);
+
+    resolveSearch?.(Response.json({
+      rows: [person(11)], total_count: 1, cache_revision: 'cache-rel', search_provenance: {}
+    }));
+    await pending;
+
+    expect(controller.listRows).toEqual([person(11)]);
+    expect(controller.listLoading).toBe(false);
+  });
+
+  it('keeps the visible rows through a same-context reload (no flash-clear)', async () => {
+    let calls = 0;
+    let resolveReload: ((response: Response) => void) | undefined;
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      if (pathOf(request) !== '/api/v1/relationships') throw new Error(`unexpected path ${pathOf(request)}`);
+      calls += 1;
+      if (calls === 1) {
+        return Response.json({
+          rows: [relationshipRow(1, 'Alice')], total_count: 1, cache_revision: 'cache-rel', identity_revision: 1
+        });
+      }
+      return new Promise<Response>((resolve) => { resolveReload = resolve; });
+    });
+    const controller = new RelationshipsController(createAPIClient(fetchFn), () => 'UTC');
+    const predicate: ExplorePredicate = { filters: [], presentation: 'table' };
+    await controller.loadList(predicate);
+    expect(controller.listRows).toEqual([relationshipRow(1, 'Alice')]);
+
+    // The same context reloading (as after a link/unlink) keeps its rows
+    // visible until the refreshed page lands.
+    const pending = controller.loadList(predicate);
+    await vi.waitFor(() => expect(resolveReload).toBeDefined());
+    expect(controller.listRows).toEqual([relationshipRow(1, 'Alice')]);
+    expect(controller.listLoading).toBe(true);
+
+    resolveReload?.(Response.json({
+      rows: [relationshipRow(2, 'Bob')], total_count: 1, cache_revision: 'cache-rel', identity_revision: 2
+    }));
+    await pending;
+
+    expect(controller.listRows).toEqual([relationshipRow(2, 'Bob')]);
+  });
+
   it('ignores a stale failure from a superseded load, keeping the newer rows', async () => {
     let rejectStale: ((cause: Error) => void) | undefined;
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
@@ -272,6 +343,37 @@ describe('RelationshipsController.loadMoreList', () => {
     // No next_cursor on the last page: further calls are guarded no-ops.
     await controller.loadMoreList();
     expect(requests).toHaveLength(2);
+  });
+
+  it('keeps the loaded rows visible while a next page is in flight (pagination never clears)', async () => {
+    let resolvePage: ((response: Response) => void) | undefined;
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      if (pathOf(request) !== '/api/v1/relationships') throw new Error(`unexpected path ${pathOf(request)}`);
+      const body = (await request.clone().json()) as { cursor?: string };
+      if (body.cursor === undefined) {
+        return Response.json({
+          rows: [relationshipRow(1, 'Alice')], total_count: 2,
+          cache_revision: 'cache-rel', identity_revision: 1, next_cursor: 'page-2'
+        });
+      }
+      return new Promise<Response>((resolve) => { resolvePage = resolve; });
+    });
+    const controller = new RelationshipsController(createAPIClient(fetchFn), () => 'UTC');
+    await controller.loadList({ filters: [], presentation: 'table' });
+
+    const pending = controller.loadMoreList();
+    await vi.waitFor(() => expect(resolvePage).toBeDefined());
+
+    expect(controller.listRows).toEqual([relationshipRow(1, 'Alice')]);
+    expect(controller.listLoadingMore).toBe(true);
+
+    resolvePage?.(Response.json({
+      rows: [relationshipRow(2, 'Bob')], total_count: 2, cache_revision: 'cache-rel', identity_revision: 1
+    }));
+    await pending;
+
+    expect(controller.listRows).toEqual([relationshipRow(1, 'Alice'), relationshipRow(2, 'Bob')]);
   });
 
   it('pages a people search with the stored cursor in the request body, deduping by id', async () => {
