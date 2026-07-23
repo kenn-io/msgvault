@@ -96,6 +96,23 @@ func CORSMiddleware(cfg CORSConfig) func(http.Handler) http.Handler {
 	}
 }
 
+// apiCacheControlMiddleware applies a default Cache-Control: no-store to every
+// /api/ response so shared caches (reverse proxies, CDN edges) never store an
+// authenticated payload — file downloads, attachment bytes, message bodies,
+// JSON listings — under its predictable URL and replay it to a requester that
+// never reached the authentication middleware. The header is set before the
+// handler runs, so handlers that deliberately permit caching (e.g. inline MIME
+// images send "private, max-age=…, immutable") override the default. Non-API
+// routes (SPA shell, static assets) keep the web handler's own caching policy.
+func apiCacheControlMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/api/") {
+			w.Header().Set("Cache-Control", "no-store")
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 // rateLimiterEntry tracks a limiter and when it was last used for TTL eviction.
 type rateLimiterEntry struct {
 	limiter  *rate.Limiter

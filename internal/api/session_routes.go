@@ -79,15 +79,6 @@ func (s *Server) registerSessionRoutes(api huma.API) {
 	registerRawHumaRoute(api, logout, s.handleSessionLogout)
 }
 
-func sessionCacheControlMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == sessionPath || r.URL.Path == sessionLoginPath {
-			w.Header().Set("Cache-Control", "no-store")
-		}
-		next.ServeHTTP(w, r)
-	})
-}
-
 func (s *Server) handleSessionLogin(w http.ResponseWriter, r *http.Request) {
 	var input SessionLoginRequest
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20))

@@ -323,6 +323,7 @@ export class ExploreState {
   restorationEpoch = $state(1);
   private readonly browser: ExploreWindow;
   private readonly preferenceStorage: SearchModeStorage | null;
+  private configuredDefaultSearchMode: ExploreSearchMode | undefined;
   private committed: ExploreURLState;
   private pendingRestorationEpoch = $state<number | undefined>(1);
   private pendingSearchPriorFocus?: Pick<ExploreURLState, 'activeRow' | 'scrollAnchor'>;
@@ -345,6 +346,25 @@ export class ExploreState {
     this.current = this.readURLState();
     this.committed = normalize(this.current);
     browser.addEventListener('popstate', this.handlePopState);
+  }
+
+  // The daemon-configured web.default_search_mode arrives asynchronously
+  // (the settings fetch completes after this state is constructed), so it is
+  // applied here rather than in the constructor. Re-resolving against the
+  // live URL and saved preference keeps the precedence intact: an explicit
+  // URL mode or a saved browser preference — including one written by an
+  // in-session mode change, whose navigation also stamped the mode into the
+  // URL — still wins over the configured default.
+  setConfiguredDefaultSearchMode(mode: ExploreSearchMode | undefined): void {
+    this.configuredDefaultSearchMode = mode;
+    const resolved = resolveInitialSearchMode(
+      explicitSearchModeFromURL(this.browser.location.search),
+      this.preferenceStorage,
+      mode
+    );
+    if (resolved === this.current.searchMode) return;
+    this.current.searchMode = resolved;
+    this.committed = normalize({ ...this.committed, searchMode: resolved });
   }
 
   replaceTransient(patch: Partial<ExploreURLState>): void {
@@ -465,7 +485,8 @@ export class ExploreState {
     const parsed = parseExploreURLState(this.browser.location.search);
     parsed.searchMode = resolveInitialSearchMode(
       explicitSearchModeFromURL(this.browser.location.search),
-      this.preferenceStorage
+      this.preferenceStorage,
+      this.configuredDefaultSearchMode
     );
     return parsed;
   }

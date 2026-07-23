@@ -296,6 +296,61 @@ describe('ExploreState history ownership', () => {
     explicit.destroy();
   });
 
+  it('adopts the configured default mode when URL and saved preference are silent', () => {
+    const emptyStorage = {
+      getItem: () => null,
+      setItem: () => undefined
+    };
+    window.history.replaceState(null, '', '/');
+    const state = new ExploreState(window, emptyStorage);
+    expect(state.current.searchMode).toBe('full_text');
+
+    state.setConfiguredDefaultSearchMode('semantic');
+
+    expect(state.current.searchMode).toBe('semantic');
+    state.commitNavigation({ selectedRow: 'message:1' });
+    expect(parseExploreURLState(window.location.search).searchMode).toBe('semantic');
+    state.destroy();
+  });
+
+  it('keeps a saved browser preference over the configured default', () => {
+    const values = new Map([[SEARCH_MODE_PREFERENCE_KEY, 'full_text']]);
+    const storage = {
+      getItem: (key: string) => values.get(key) ?? null,
+      setItem: (key: string, value: string) => values.set(key, value)
+    };
+    window.history.replaceState(null, '', '/');
+    const state = new ExploreState(window, storage);
+
+    state.setConfiguredDefaultSearchMode('semantic');
+
+    expect(state.current.searchMode).toBe('full_text');
+    state.destroy();
+  });
+
+  it('keeps an explicit URL mode over the configured default', () => {
+    window.history.replaceState(null, '', serializeExploreURLState({
+      ...defaultExploreURLState, searchMode: 'hybrid'
+    }));
+    const state = new ExploreState(window, null);
+
+    state.setConfiguredDefaultSearchMode('semantic');
+
+    expect(state.current.searchMode).toBe('hybrid');
+    state.destroy();
+  });
+
+  it('does not clobber an in-session explicit mode choice when the configured default arrives late', () => {
+    window.history.replaceState(null, '', '/');
+    const state = new ExploreState(window, null);
+    state.replaceSearchDraft('quarterly plan', 'hybrid');
+
+    state.setConfiguredDefaultSearchMode('semantic');
+
+    expect(state.current.searchMode).toBe('hybrid');
+    state.destroy();
+  });
+
   it('advances restoration epochs only for initial URL ownership and popstate', () => {
     window.history.replaceState(null, '', '/');
     const state = new ExploreState(window);

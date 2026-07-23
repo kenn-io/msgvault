@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/danielgtaylor/huma/v2"
 	"go.kenn.io/msgvault/internal/query"
@@ -69,99 +70,154 @@ func (s *Server) handleSearchCoverage(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_filter", err.Error())
 		return
 	}
-	_, _, cfg := s.vectorComponents()
+	_, backend, cfg := s.vectorComponents()
 	ctx = semanticCoverageContext(ctx, cfg.Embed.Scope.BuildScope())
 	explorer, ok := s.engine.(query.Explorer)
 	if !ok {
 		writeExploreUnavailable(w, query.CacheAbsent)
 		return
 	}
-	s.refreshVectorStatusIfStale(r.Context())
-	status, detail := s.VectorStatus()
 	response := SearchCoverageResponse{
 		Actions: make([]SearchCoverageAction, 0),
 	}
+	coverage := s.resolveSearchCoverageState(r.Context(), backend, cfg)
+	generation := coverage.generation
+	if generation == nil {
+		// Without a usable generation there is nothing to intersect: report
+		// the state immediately instead of scanning the archive (the UI polls
+		// this endpoint while semantic search is disabled or initializing).
+		response.Status, response.Detail = coverage.status, coverage.detail
+		response.Actions = s.searchCoverageActions(coverage.status, coverage.fullBuildAvailable)
+		writeJSON(w, http.StatusOK, response)
+		return
+	}
+	counter, _ := backend.(vector.FilteredCoverageBackend)
+	generationID := int64(generation.ID)
+	response.VectorGeneration = &generationID
+	response.VectorFingerprint = generation.Fingerprint
+
+	state := s.exploreState
+	if state == nil {
+		state = newExploreServerState(time.Now)
+		s.exploreState = state
+	}
+	probe, err := explorer.ExploreSelectionStats(r.Context(), query.ExploreSelectionRequest{
+		Explore: query.ExploreRequest{Context: ctx}, IncludedKeys: []string{},
+	})
+	if err != nil {
+		s.writeExploreError(w, err)
+		return
+	}
+	contextHash := hashCanonicalValue(ctx, false)
+	if entry, found := state.getCoverage(searchCoverageCacheKey(contextHash, probe.CacheRevision, *generation)); found {
+		response.EligibleCount, response.EmbeddedCount = entry.EligibleCount, entry.EmbeddedCount
+		response.CacheRevision = probe.CacheRevision
+		s.writeSearchCoverageCounts(w, response, coverage)
+		return
+	}
+
+	countFailed := false
+	result, err := explorer.ExploreCoverage(r.Context(), query.ExploreCoverageRequest{
+		Context: ctx, BatchSize: vector.FilteredCoverageBatchSize,
+	}, func(messageIDs []int64) error {
+		count, countErr := counter.EmbeddedMessageCountForIDs(r.Context(), generation.ID, messageIDs)
+		if countErr != nil {
+			countFailed = true
+			return countErr
+		}
+		response.EmbeddedCount += count
+		return nil
+	})
+	if err != nil {
+		if countFailed {
+			response.EmbeddedCount = 0
+			response.Status = SearchCoverageUnavailable
+			response.Detail = "Filtered semantic coverage could not be read"
+			response.Actions = s.searchCoverageActions(SearchCoverageUnavailable, false)
+			writeJSON(w, http.StatusOK, response)
+			return
+		}
+		s.writeExploreError(w, err)
+		return
+	}
+	currentStatus, _, current, _ := resolveSearchCoverageGeneration(
+		r.Context(), backend, cfg, coverage.resolvedStatus, coverage.detail,
+	)
+	if !sameCoverageGeneration(coverage.resolvedStatus, *generation, currentStatus, current) {
+		writeError(w, http.StatusServiceUnavailable, "vector_generation_changed",
+			"Vector generation changed while coverage was computed; retry")
+		return
+	}
+	response.EligibleCount = result.EligibleCount
+	response.CacheRevision = result.CacheRevision
+	state.putCoverage(
+		searchCoverageCacheKey(contextHash, result.CacheRevision, *generation),
+		result.EligibleCount, response.EmbeddedCount,
+	)
+	s.writeSearchCoverageCounts(w, response, coverage)
+}
+
+// searchCoverageState is the resolved vector-side half of one coverage
+// request: the reportable status, the usable generation to intersect (nil
+// when no scan should run), and the status snapshot used to detect a
+// generation swap after the archive scan completes.
+type searchCoverageState struct {
+	status             SearchCoverageStatus
+	detail             string
+	generation         *vector.Generation
+	fullBuildAvailable bool
+	resolvedStatus     SearchCoverageStatus
+}
+
+func (s *Server) resolveSearchCoverageState(
+	ctx context.Context,
+	backend vector.Backend,
+	cfg vector.Config,
+) searchCoverageState {
+	s.refreshVectorStatusIfStale(ctx)
+	status, detail := s.VectorStatus()
 	backendStatus := coverageStatusForVectorStatus(status)
-	_, backend, _ := s.vectorComponents()
-	var generation *vector.Generation
-	fullBuildAvailable := false
-	resolvedStatus := backendStatus
+	state := searchCoverageState{status: backendStatus, detail: detail, resolvedStatus: backendStatus}
 	if backend != nil && backendStatus != SearchCoverageDisabled && backendStatus != SearchCoverageUnavailable {
-		backendStatus, detail, generation, fullBuildAvailable = resolveSearchCoverageGeneration(
-			r.Context(), backend, cfg, backendStatus, detail,
+		state.status, state.detail, state.generation, state.fullBuildAvailable = resolveSearchCoverageGeneration(
+			ctx, backend, cfg, backendStatus, detail,
 		)
-		resolvedStatus = backendStatus
+		state.resolvedStatus = state.status
 	}
-	counter, canCount := backend.(vector.FilteredCoverageBackend)
-	if generation != nil && !canCount {
-		backendStatus = SearchCoverageUnavailable
-		detail = "The vector backend cannot report filtered coverage"
-		generation = nil
-		fullBuildAvailable = false
+	if _, canCount := backend.(vector.FilteredCoverageBackend); state.generation != nil && !canCount {
+		state.status = SearchCoverageUnavailable
+		state.detail = "The vector backend cannot report filtered coverage"
+		state.generation = nil
+		state.fullBuildAvailable = false
 	}
-	if generation != nil {
-		generationID := int64(generation.ID)
-		response.VectorGeneration = &generationID
-		response.VectorFingerprint = generation.Fingerprint
-	}
+	return state
+}
 
-	var afterMessageID int64
-	for {
-		population, err := explorer.ExploreCoverage(r.Context(), query.ExploreCoverageRequest{
-			Context: ctx, AfterMessageID: afterMessageID, Limit: vector.FilteredCoverageBatchSize,
-		})
-		if err != nil {
-			s.writeExploreError(w, err)
-			return
-		}
-		if response.CacheRevision == "" {
-			response.CacheRevision = population.CacheRevision
-		} else if response.CacheRevision != population.CacheRevision {
-			writeError(w, http.StatusServiceUnavailable, "cache_changed", "Analytical cache changed while coverage was computed; retry")
-			return
-		}
-		if err := validateCoveragePage(afterMessageID, population.MessageIDs, population.NextAfterMessageID); err != nil {
-			writeError(w, http.StatusInternalServerError, "coverage_page_invalid", err.Error())
-			return
-		}
-		response.EligibleCount += int64(len(population.MessageIDs))
-		if generation != nil {
-			count, err := counter.EmbeddedMessageCountForIDs(r.Context(), generation.ID, population.MessageIDs)
-			if err != nil {
-				response.EmbeddedCount = 0
-				backendStatus = SearchCoverageUnavailable
-				detail = "Filtered semantic coverage could not be read"
-				generation = nil
-				fullBuildAvailable = false
-			} else {
-				response.EmbeddedCount += count
-			}
-		}
-		if population.NextAfterMessageID == nil {
-			break
-		}
-		afterMessageID = *population.NextAfterMessageID
-	}
-	if generation != nil {
-		currentStatus, _, current, _ := resolveSearchCoverageGeneration(
-			r.Context(), backend, cfg, resolvedStatus, detail,
-		)
-		if !sameCoverageGeneration(resolvedStatus, *generation, currentStatus, current) {
-			writeError(w, http.StatusServiceUnavailable, "vector_generation_changed",
-				"Vector generation changed while coverage was computed; retry")
-			return
-		}
-	}
-
+// writeSearchCoverageCounts finalizes and writes a coverage response that
+// was computed (or served from cache) against a usable vector generation.
+func (s *Server) writeSearchCoverageCounts(
+	w http.ResponseWriter,
+	response SearchCoverageResponse,
+	coverage searchCoverageState,
+) {
 	response.Percentage = coveragePercentage(response.EmbeddedCount, response.EligibleCount)
-	response.Status, response.Detail = backendStatus, detail
-	if generation != nil && backendStatus != SearchCoverageStale && response.EmbeddedCount < response.EligibleCount {
+	response.Status, response.Detail = coverage.status, coverage.detail
+	if coverage.status != SearchCoverageStale && response.EmbeddedCount < response.EligibleCount {
 		response.Status = SearchCoverageIncomplete
-	} else if generation != nil && backendStatus != SearchCoverageStale {
+	} else if coverage.status != SearchCoverageStale {
 		response.Status = SearchCoverageReady
 	}
-	response.Actions = s.searchCoverageActions(response.Status, fullBuildAvailable)
+	response.Actions = s.searchCoverageActions(response.Status, coverage.fullBuildAvailable)
 	writeJSON(w, http.StatusOK, response)
+}
+
+// searchCoverageCacheKey identifies one coverage computation: the canonical
+// coverage context, the committed analytical cache revision it was computed
+// against, and the full identity of the vector generation it intersected.
+func searchCoverageCacheKey(contextHash, cacheRevision string, generation vector.Generation) string {
+	return fmt.Sprintf("%s|%s|%d|%s|%s|%d",
+		contextHash, cacheRevision,
+		generation.ID, generation.State, generation.Fingerprint, generation.MessageCount)
 }
 
 func resolveSearchCoverageGeneration(
@@ -223,20 +279,6 @@ func sameCoverageGeneration(
 	return got != nil && gotStatus == wantStatus && got.ID == want.ID &&
 		got.State == want.State && got.Fingerprint == want.Fingerprint &&
 		got.MessageCount == want.MessageCount
-}
-
-func validateCoveragePage(afterMessageID int64, ids []int64, next *int64) error {
-	previous := afterMessageID
-	for _, id := range ids {
-		if id <= previous {
-			return fmt.Errorf("coverage page is not strictly ordered after message %d", previous)
-		}
-		previous = id
-	}
-	if next != nil && (len(ids) == 0 || *next != previous) {
-		return errors.New("coverage page cursor does not match its final message")
-	}
-	return nil
 }
 
 func semanticCoverageContext(ctx query.Context, scope vector.BuildScope) query.Context {

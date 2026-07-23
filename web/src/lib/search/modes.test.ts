@@ -4,6 +4,7 @@ import {
   SEARCH_MODE_PREFERENCE_KEY,
   VisibleLexicalCountCache,
   loadRememberedSearchMode,
+  parseSearchMode,
   rememberSearchMode,
   resolveInitialSearchMode
 } from './modes';
@@ -59,10 +60,27 @@ describe('search mode preference', () => {
     expect(resolveInitialSearchMode(undefined, storage)).toBe('semantic');
   });
 
+  it('uses the configured default only when URL and saved preference are absent', () => {
+    const empty = memoryStorage();
+    const saved = memoryStorage({ [SEARCH_MODE_PREFERENCE_KEY]: 'full_text' });
+
+    expect(resolveInitialSearchMode(undefined, empty, 'semantic')).toBe('semantic');
+    expect(resolveInitialSearchMode(undefined, empty)).toBe('full_text');
+    expect(resolveInitialSearchMode(undefined, saved, 'semantic')).toBe('full_text');
+    expect(resolveInitialSearchMode('hybrid', saved, 'semantic')).toBe('hybrid');
+  });
+
+  it('rejects unknown configured modes', () => {
+    expect(parseSearchMode('semantic')).toBe('semantic');
+    expect(parseSearchMode('magic')).toBeUndefined();
+    expect(parseSearchMode(undefined)).toBeUndefined();
+    expect(resolveInitialSearchMode(undefined, memoryStorage(), parseSearchMode('magic'))).toBe('full_text');
+  });
+
   it('falls back safely and persists explicit user choices', () => {
     const storage = memoryStorage({ [SEARCH_MODE_PREFERENCE_KEY]: 'invalid' });
 
-    expect(loadRememberedSearchMode(storage)).toBe('full_text');
+    expect(loadRememberedSearchMode(storage)).toBeUndefined();
     rememberSearchMode('hybrid', storage);
     expect(storage.setItem).toHaveBeenCalledWith(SEARCH_MODE_PREFERENCE_KEY, 'hybrid');
   });
@@ -73,7 +91,7 @@ describe('search mode preference', () => {
       setItem: vi.fn(() => { throw new DOMException('denied', 'SecurityError'); })
     };
 
-    expect(loadRememberedSearchMode(storage)).toBe('full_text');
+    expect(loadRememberedSearchMode(storage)).toBeUndefined();
     expect(() => rememberSearchMode('semantic', storage)).not.toThrow();
   });
 });

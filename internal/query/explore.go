@@ -137,11 +137,18 @@ const (
 	maxExploreCoverageBatchSize     = 512
 )
 
-// ExploreCoverage returns one bounded page of exact live message IDs in the
-// committed analytical context. It deliberately does not aggregate chat
+// ExploreCoverage resolves the exact live message-ID population of the
+// committed analytical context in one streamed query. It counts the
+// population set-wise and invokes visit with bounded, strictly ascending
+// batches so callers can intersect the population with a vector index
+// without paging the archive. It deliberately does not aggregate chat
 // messages into row units: each message is independently eligible for an
-// embedding.
-func (e *DuckDBEngine) ExploreCoverage(ctx context.Context, request ExploreCoverageRequest) (*ExploreCoverageResponse, error) {
+// embedding. A visit error aborts the scan and is returned verbatim.
+func (e *DuckDBEngine) ExploreCoverage(
+	ctx context.Context,
+	request ExploreCoverageRequest,
+	visit func(messageIDs []int64) error,
+) (*ExploreCoverageResult, error) {
 	if e.analyticsDir == "" {
 		return nil, &CacheUnavailableError{Readiness: CacheAbsent}
 	}
@@ -155,42 +162,57 @@ func (e *DuckDBEngine) ExploreCoverage(ctx context.Context, request ExploreCover
 		request.Context.Deletion != DeletionDeleted {
 		return nil, fmt.Errorf("%w: unknown deletion filter %q", ErrInvalidExploreRequest, request.Context.Deletion)
 	}
-	limit := request.Limit
-	if limit == 0 {
-		limit = defaultExploreCoverageBatchSize
+	batchSize := request.BatchSize
+	if batchSize == 0 {
+		batchSize = defaultExploreCoverageBatchSize
 	}
-	if limit < 1 || limit > maxExploreCoverageBatchSize {
-		return nil, fmt.Errorf("%w: coverage limit must be between 1 and %d", ErrInvalidExploreRequest, maxExploreCoverageBatchSize)
+	if batchSize < 1 || batchSize > maxExploreCoverageBatchSize {
+		return nil, fmt.Errorf("%w: coverage batch size must be between 1 and %d", ErrInvalidExploreRequest, maxExploreCoverageBatchSize)
 	}
 	state, err := ReadCacheSyncState(e.analyticsDir)
 	if err != nil {
 		return nil, fmt.Errorf("read committed cache state: %w", err)
 	}
 	conditions, args := buildExploreConditions(ExploreRequest{Context: request.Context})
-	conditions += " AND NOT internally_deleted AND NOT deleted_from_source AND message_id > ?"
-	args = append(args, request.AfterMessageID, limit+1)
+	conditions += " AND NOT internally_deleted AND NOT deleted_from_source"
 	rows, err := e.db.QueryContext(ctx,
-		"SELECT message_id FROM analytical_entries WHERE "+conditions+" ORDER BY message_id LIMIT ?", args...)
+		"SELECT message_id FROM analytical_entries WHERE "+conditions+" ORDER BY message_id", args...)
 	if err != nil {
 		return nil, fmt.Errorf("resolve analytical coverage context: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
-	response := &ExploreCoverageResponse{MessageIDs: make([]int64, 0), CacheRevision: state.Revision()}
+	result := &ExploreCoverageResult{CacheRevision: state.Revision()}
+	batch := make([]int64, 0, batchSize)
+	var previous int64
 	for rows.Next() {
 		var id int64
 		if err := rows.Scan(&id); err != nil {
 			return nil, fmt.Errorf("scan analytical coverage message: %w", err)
 		}
-		response.MessageIDs = append(response.MessageIDs, id)
+		if id <= previous {
+			return nil, fmt.Errorf("analytical coverage scan is not strictly ordered after message %d", previous)
+		}
+		previous = id
+		result.EligibleCount++
+		batch = append(batch, id)
+		if len(batch) == batchSize {
+			if visit != nil {
+				if err := visit(batch); err != nil {
+					return nil, err
+				}
+			}
+			batch = batch[:0]
+		}
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate analytical coverage messages: %w", err)
 	}
-	if len(response.MessageIDs) > limit {
-		response.MessageIDs = response.MessageIDs[:limit]
-		response.NextAfterMessageID = new(response.MessageIDs[len(response.MessageIDs)-1])
+	if len(batch) > 0 && visit != nil {
+		if err := visit(batch); err != nil {
+			return nil, err
+		}
 	}
-	return response, nil
+	return result, nil
 }
 
 func buildExploreCandidateRank(search SearchSpec) (string, []any) {

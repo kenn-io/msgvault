@@ -73,8 +73,8 @@ func (e *peopleAPIEngine) Explore(_ context.Context, request query.ExploreReques
 	return e.timelineResult, e.peopleErr
 }
 
-func (e *peopleAPIEngine) ExploreCoverage(context.Context, query.ExploreCoverageRequest) (*query.ExploreCoverageResponse, error) {
-	return &query.ExploreCoverageResponse{}, e.peopleErr
+func (e *peopleAPIEngine) ExploreCoverage(context.Context, query.ExploreCoverageRequest, func([]int64) error) (*query.ExploreCoverageResult, error) {
+	return &query.ExploreCoverageResult{}, e.peopleErr
 }
 
 func (e *peopleAPIEngine) ExploreGroups(context.Context, query.ExploreGroupRequest) (*query.ExploreGroupResponse, error) {

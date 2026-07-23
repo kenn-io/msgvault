@@ -6497,6 +6497,7 @@ func TestHandleGetAttachmentContent(t *testing.T) {
 	assert.Equal("application/pdf", w.Header().Get("Content-Type"), "Content-Type")
 	assert.Equal(`attachment; filename="report.pdf"`, w.Header().Get("Content-Disposition"), "Content-Disposition")
 	assert.Equal(strconv.Itoa(len(content)), w.Header().Get("Content-Length"), "Content-Length")
+	assert.Equal("no-store", w.Header().Get("Cache-Control"), "Cache-Control")
 	assert.Equal(content, w.Body.Bytes(), "body")
 }
 

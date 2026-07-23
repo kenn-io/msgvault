@@ -107,7 +107,7 @@ type Engine interface {
 // must never become a modality-specific fallback for exploration.
 type Explorer interface {
 	Explore(ctx context.Context, request ExploreRequest) (*ExploreResponse, error)
-	ExploreCoverage(ctx context.Context, request ExploreCoverageRequest) (*ExploreCoverageResponse, error)
+	ExploreCoverage(ctx context.Context, request ExploreCoverageRequest, visit func(messageIDs []int64) error) (*ExploreCoverageResult, error)
 	ExploreGroups(ctx context.Context, request ExploreGroupRequest) (*ExploreGroupResponse, error)
 	ExploreSelectionStats(ctx context.Context, request ExploreSelectionRequest) (*ExploreSelectionStats, error)
 	ExploreFiles(ctx context.Context, request ExploreFilesRequest) (*ExploreFilesResponse, error)

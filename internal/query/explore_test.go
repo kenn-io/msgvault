@@ -2,6 +2,7 @@ package query
 
 import (
 	"context"
+	"errors"
 	"reflect"
 	"testing"
 	"time"
@@ -83,7 +84,7 @@ func TestExploreTenThousandFragmentConversationKeepsConstantMatchState(t *testin
 	assertExploreBoundedStrongestMatch(t, result.Rows[0], nil)
 }
 
-func TestExploreCoveragePagesExactLiveMessagesWithoutDuplicates(t *testing.T) {
+func TestExploreCoverageStreamsExactLiveMessagesInOneScan(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	b := NewTestDataBuilder(t)
@@ -101,30 +102,45 @@ func TestExploreCoveragePagesExactLiveMessagesWithoutDuplicates(t *testing.T) {
 	engine := b.BuildEngine()
 
 	var got []int64
-	var after int64
-	pageCalls := 0
-	for {
-		page, err := engine.ExploreCoverage(context.Background(), ExploreCoverageRequest{
-			Context:        Context{SourceIDs: []int64{selected}},
-			AfterMessageID: after,
-			Limit:          128,
-		})
-		require.NoError(err)
-		pageCalls++
-		assert.LessOrEqual(len(page.MessageIDs), 128)
-		got = append(got, page.MessageIDs...)
-		if page.NextAfterMessageID == nil {
-			break
-		}
-		assert.Greater(*page.NextAfterMessageID, after)
-		after = *page.NextAfterMessageID
-	}
+	batchCalls := 0
+	result, err := engine.ExploreCoverage(context.Background(), ExploreCoverageRequest{
+		Context:   Context{SourceIDs: []int64{selected}},
+		BatchSize: 128,
+	}, func(messageIDs []int64) error {
+		batchCalls++
+		assert.LessOrEqual(len(messageIDs), 128)
+		got = append(got, messageIDs...)
+		return nil
+	})
+	require.NoError(err)
 
-	assert.Greater(pageCalls, 1)
+	assert.Greater(batchCalls, 1)
+	assert.Equal(int64(liveCount), result.EligibleCount)
+	assert.NotEmpty(result.CacheRevision)
 	require.Len(got, liveCount)
 	for i, id := range got {
 		assert.Equal(int64(i+1), id)
 	}
+}
+
+func TestExploreCoverageStopsOnVisitError(t *testing.T) {
+	require := require.New(t)
+	b := NewTestDataBuilder(t)
+	source := b.AddSource("selected@example.com")
+	for range 5 {
+		b.AddMessage(MessageOpt{SourceID: source, MessageType: "email"})
+	}
+	engine := b.BuildEngine()
+
+	visitErr := errors.New("intersection backend failed")
+	visitCalls := 0
+	_, err := engine.ExploreCoverage(context.Background(), ExploreCoverageRequest{BatchSize: 2},
+		func([]int64) error {
+			visitCalls++
+			return visitErr
+		})
+	require.ErrorIs(err, visitErr)
+	require.Equal(1, visitCalls)
 }
 
 func TestExploreCoverageHonorsCancellation(t *testing.T) {
@@ -135,7 +151,7 @@ func TestExploreCoverageHonorsCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	_, err := engine.ExploreCoverage(ctx, ExploreCoverageRequest{Limit: 10})
+	_, err := engine.ExploreCoverage(ctx, ExploreCoverageRequest{BatchSize: 10}, func([]int64) error { return nil })
 	require.ErrorIs(t, err, context.Canceled)
 }
 

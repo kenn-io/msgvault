@@ -32,6 +32,7 @@ func TestSearchCoverageRealGenerationStateMatrix(t *testing.T) {
 		generation   string
 		vectorStatus VectorStatus
 		wantStatus   SearchCoverageStatus
+		wantEligible int64
 		wantEmbedded int64
 		wantActions  []SearchCoverageAction
 	}{
@@ -52,11 +53,11 @@ func TestSearchCoverageRealGenerationStateMatrix(t *testing.T) {
 		},
 		{
 			name: "matching active", generation: "active-matching",
-			wantStatus: SearchCoverageReady, wantEmbedded: 2,
+			wantStatus: SearchCoverageReady, wantEligible: 2, wantEmbedded: 2,
 		},
 		{
 			name: "stale active", generation: "active-different",
-			wantStatus: SearchCoverageStale, wantEmbedded: 2,
+			wantStatus: SearchCoverageStale, wantEligible: 2, wantEmbedded: 2,
 			wantActions: []SearchCoverageAction{SearchCoverageActionBuildIndex},
 		},
 	}
@@ -80,7 +81,7 @@ func TestSearchCoverageRealGenerationStateMatrix(t *testing.T) {
 			var body SearchCoverageResponse
 			require.NoError(t, json.Unmarshal(response.Body.Bytes(), &body))
 			assert.Equal(t, tt.wantStatus, body.Status)
-			assert.Equal(t, int64(2), body.EligibleCount)
+			assert.Equal(t, tt.wantEligible, body.EligibleCount)
 			assert.Equal(t, tt.wantEmbedded, body.EmbeddedCount)
 			assert.ElementsMatch(t, tt.wantActions, body.Actions)
 		})

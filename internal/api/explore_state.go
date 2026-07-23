@@ -12,6 +12,7 @@ const (
 	exploreOperationTokenTTL    = 5 * time.Minute
 	exploreCandidateSnapshotTTL = 5 * time.Minute
 	exploreMatchCountTTL        = 2 * time.Minute
+	exploreCoverageTTL          = 30 * time.Second
 	exploreStateMaxEntries      = 128
 )
 
@@ -37,6 +38,17 @@ type exploreMatchCountEntry struct {
 	ExpiresAt time.Time
 }
 
+// exploreCoverageEntry caches one computed semantic-coverage readout. The
+// cache key folds the canonical coverage context, the analytical cache
+// revision, and the vector generation identity, so an entry can only be
+// served while both sides of the intersection are unchanged; the TTL bounds
+// staleness of in-place index fills that do not touch the generation row.
+type exploreCoverageEntry struct {
+	EligibleCount int64
+	EmbeddedCount int64
+	ExpiresAt     time.Time
+}
+
 type exploreOperationGrant struct {
 	SelectionHash string
 	Count         int64
@@ -54,6 +66,7 @@ type exploreServerState struct {
 	operations  map[string]exploreOperationGrant
 	snapshots   map[string]exploreCandidateSnapshot
 	matchCounts map[string]exploreMatchCountEntry
+	coverage    map[string]exploreCoverageEntry
 }
 
 func newExploreServerState(now func() time.Time) *exploreServerState {
@@ -63,6 +76,7 @@ func newExploreServerState(now func() time.Time) *exploreServerState {
 	return &exploreServerState{
 		now: now, operations: make(map[string]exploreOperationGrant),
 		snapshots: make(map[string]exploreCandidateSnapshot), matchCounts: make(map[string]exploreMatchCountEntry),
+		coverage: make(map[string]exploreCoverageEntry),
 	}
 }
 
@@ -147,6 +161,39 @@ func (s *exploreServerState) pruneLocked(now time.Time) {
 		if !entry.ExpiresAt.After(now) {
 			delete(s.matchCounts, key)
 		}
+	}
+	for key, entry := range s.coverage {
+		if !entry.ExpiresAt.After(now) {
+			delete(s.coverage, key)
+		}
+	}
+}
+
+func (s *exploreServerState) getCoverage(key string) (exploreCoverageEntry, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.pruneLocked(s.now())
+	entry, ok := s.coverage[key]
+	return entry, ok
+}
+
+func (s *exploreServerState) putCoverage(key string, eligible, embedded int64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	now := s.now()
+	s.pruneLocked(now)
+	for len(s.coverage) >= exploreStateMaxEntries {
+		var oldestKey string
+		var oldest time.Time
+		for candidate, entry := range s.coverage {
+			if oldestKey == "" || entry.ExpiresAt.Before(oldest) {
+				oldestKey, oldest = candidate, entry.ExpiresAt
+			}
+		}
+		delete(s.coverage, oldestKey)
+	}
+	s.coverage[key] = exploreCoverageEntry{
+		EligibleCount: eligible, EmbeddedCount: embedded, ExpiresAt: now.Add(exploreCoverageTTL),
 	}
 }
 

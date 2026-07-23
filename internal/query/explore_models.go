@@ -154,15 +154,15 @@ type ExploreResponse struct {
 // embed messages even when exploration later aggregates them into logical
 // conversation rows.
 type ExploreCoverageRequest struct {
-	Context        Context `json:"context"`
-	AfterMessageID int64   `json:"after_message_id,omitempty"`
-	Limit          int     `json:"limit,omitempty"`
+	Context   Context `json:"context"`
+	BatchSize int     `json:"batch_size,omitempty"`
 }
 
-type ExploreCoverageResponse struct {
-	MessageIDs         []int64 `json:"message_ids"`
-	NextAfterMessageID *int64  `json:"next_after_message_id,omitempty"`
-	CacheRevision      string  `json:"cache_revision"`
+// ExploreCoverageResult reports one full coverage scan: the set-wise
+// eligible total and the committed cache revision the scan observed.
+type ExploreCoverageResult struct {
+	EligibleCount int64  `json:"eligible_count"`
+	CacheRevision string `json:"cache_revision"`
 }
 
 type ExploreGroupRequest struct {

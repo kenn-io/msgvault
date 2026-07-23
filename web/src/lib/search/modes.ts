@@ -41,14 +41,17 @@ export function availableSearchModeStorage(): SearchModeStorage | null {
   }
 }
 
-export function loadRememberedSearchMode(storage: SearchModeStorage | null): ExploreSearchMode {
+export function parseSearchMode(value: unknown): ExploreSearchMode | undefined {
+  return SEARCH_MODES.includes(value as ExploreSearchMode)
+    ? value as ExploreSearchMode
+    : undefined;
+}
+
+export function loadRememberedSearchMode(storage: SearchModeStorage | null): ExploreSearchMode | undefined {
   try {
-    const value = storage?.getItem(SEARCH_MODE_PREFERENCE_KEY);
-    return SEARCH_MODES.includes(value as ExploreSearchMode)
-      ? value as ExploreSearchMode
-      : 'full_text';
+    return parseSearchMode(storage?.getItem(SEARCH_MODE_PREFERENCE_KEY));
   } catch {
-    return 'full_text';
+    return undefined;
   }
 }
 
@@ -62,9 +65,10 @@ export function rememberSearchMode(mode: ExploreSearchMode, storage: SearchModeS
 
 export function resolveInitialSearchMode(
   explicitURLMode: ExploreSearchMode | undefined,
-  storage: SearchModeStorage | null
+  storage: SearchModeStorage | null,
+  configuredDefault?: ExploreSearchMode
 ): ExploreSearchMode {
-  return explicitURLMode ?? loadRememberedSearchMode(storage);
+  return explicitURLMode ?? loadRememberedSearchMode(storage) ?? configuredDefault ?? 'full_text';
 }
 
 export function explicitSearchModeFromURL(search: string, parameter = 'explore'): ExploreSearchMode | undefined {
@@ -72,9 +76,7 @@ export function explicitSearchModeFromURL(search: string, parameter = 'explore')
   if (encoded === null) return undefined;
   try {
     const value = JSON.parse(encoded) as { searchMode?: unknown };
-    return SEARCH_MODES.includes(value.searchMode as ExploreSearchMode)
-      ? value.searchMode as ExploreSearchMode
-      : undefined;
+    return parseSearchMode(value.searchMode);
   } catch {
     return undefined;
   }

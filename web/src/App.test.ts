@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 import App from './App.svelte';
 import { createAPIClient } from './lib/api/client';
 import { createSessionController } from './lib/api/session.svelte';
+import { SEARCH_MODE_PREFERENCE_KEY } from './lib/search/modes';
 
 describe('application foundation', () => {
   it('mounts the Relationships landmark as the default landing workspace', () => {
@@ -148,6 +149,48 @@ describe('application foundation', () => {
     expect(settingsRequests).toBe(1);
     await new Promise((resolve) => setTimeout(resolve));
     expect(settingsRequests).toBe(1);
+  });
+
+  it.each([
+    ['semantic', 'Semantic'],
+    ['magic', 'Full text']
+  ])('starts in the configured default search mode %s when URL and browser preference are silent', async (configured, expectedLabel) => {
+    localStorage.removeItem(SEARCH_MODE_PREFERENCE_KEY);
+    window.history.replaceState(
+      null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`
+    );
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      const path = new URL(request.url).pathname;
+      if (path === '/api/session') {
+        return Response.json({ auth_mode: 'loopback', https: false, plain_http_warning: false });
+      }
+      if (path === '/api/v1/settings') {
+        return Response.json({
+          settings: [{ key: 'web.default_search_mode', value: { string: configured } }],
+          pending_restart: false
+        });
+      }
+      if (path === '/api/v1/explore') {
+        return Response.json({ rows: [], total_count: 0, cache_revision: 'boot', search_provenance: {} });
+      }
+      return Response.json({}, { status: 404 });
+    });
+    const session = createSessionController(fetchFn);
+    render(App, { session });
+    await session.bootstrap();
+
+    const settingsLoaded = () => fetchFn.mock.calls.some((call) => {
+      const request = call[0];
+      return request instanceof Request && new URL(request.url).pathname === '/api/v1/settings';
+    });
+    await waitFor(() => expect(settingsLoaded()).toBe(true));
+    await new Promise((resolve) => setTimeout(resolve));
+
+    await waitFor(() => expect(
+      screen.getByRole('radio', { name: expectedLabel }).getAttribute('aria-checked')
+    ).toBe('true'));
+    window.history.replaceState(null, '', '/');
   });
 });
 

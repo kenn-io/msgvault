@@ -55,6 +55,7 @@
     enabled?: boolean;
     settings?: Snippet;
     appearanceDefaults?: AppearanceDefaults;
+    searchModeDefault?: ExploreSearchMode;
   }
 
   let {
@@ -62,7 +63,8 @@
     state: providedState = undefined,
     enabled = true,
     settings = undefined,
-    appearanceDefaults = { theme: 'system', density: 'compact' }
+    appearanceDefaults = { theme: 'system', density: 'compact' },
+    searchModeDefault = undefined
   }: Props = $props();
 
   const ownsState = untrack(() => providedState === undefined);
@@ -226,6 +228,11 @@
   $effect(() => {
     const defaults = appearanceDefaults;
     untrack(() => appearance.setDefaults(defaults));
+  });
+
+  $effect(() => {
+    const mode = searchModeDefault;
+    untrack(() => exploreState.setConfiguredDefaultSearchMode(mode));
   });
 
   // sortNotice is shared across workspaces (Everything, Files, etc.). A

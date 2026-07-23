@@ -301,15 +301,6 @@ func (s *Server) readPersistedSettings() (config.ConfigFile, *config.Config, err
 	return snapshot, loaded, nil
 }
 
-func settingsNoStoreMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == settingsPath {
-			w.Header().Set("Cache-Control", "no-store")
-		}
-		next.ServeHTTP(w, r)
-	})
-}
-
 func buildSettingsResponse(cfg *config.Config, pendingRestart bool) SettingsResponse {
 	settings := make([]Setting, 0, len(settingsCatalog))
 	for _, definition := range settingsCatalog {

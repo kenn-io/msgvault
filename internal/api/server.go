@@ -435,8 +435,7 @@ func (s *Server) setupRouter() http.Handler {
 	h = s.recoverMiddleware(h)
 	h = s.loggerMiddleware(h)
 	h = requestIDMiddleware(h)
-	h = sessionCacheControlMiddleware(h)
-	h = settingsNoStoreMiddleware(h)
+	h = apiCacheControlMiddleware(h)
 	return h
 }
 

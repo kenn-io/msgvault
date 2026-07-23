@@ -518,8 +518,8 @@ func (e *gateAnalyticsEngine) Explore(context.Context, query.ExploreRequest) (*q
 	return &query.ExploreResponse{CacheRevision: "rev"}, nil
 }
 
-func (e *gateAnalyticsEngine) ExploreCoverage(context.Context, query.ExploreCoverageRequest) (*query.ExploreCoverageResponse, error) {
-	return &query.ExploreCoverageResponse{}, nil
+func (e *gateAnalyticsEngine) ExploreCoverage(context.Context, query.ExploreCoverageRequest, func([]int64) error) (*query.ExploreCoverageResult, error) {
+	return &query.ExploreCoverageResult{}, nil
 }
 
 func (e *gateAnalyticsEngine) ExploreGroups(context.Context, query.ExploreGroupRequest) (*query.ExploreGroupResponse, error) {

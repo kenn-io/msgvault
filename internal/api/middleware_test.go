@@ -4,11 +4,16 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+	"testing/fstest"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/query/querytest"
+	"go.kenn.io/msgvault/internal/store"
+	webapp "go.kenn.io/msgvault/internal/web"
 )
 
 func TestCORSMiddleware(t *testing.T) {
@@ -397,4 +402,53 @@ func TestExistingAPIKeyAuthenticationKeepsKeylessLoopbackTrusted(t *testing.T) {
 	srv.Router().ServeHTTP(resp, req)
 
 	assert.Equal(t, http.StatusOK, resp.Code, resp.Body.String())
+}
+
+// TestAPICacheControlDefaultsToNoStore covers the shared-cache bypass: every
+// /api/ response — streamed file bytes and JSON alike — must default to
+// Cache-Control: no-store so a shared proxy never stores an authenticated
+// payload under its predictable URL and replays it to an unauthenticated
+// requester. Web routes outside /api/ keep their own caching policy.
+func TestAPICacheControlDefaultsToNoStore(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	hash := strings.Repeat("ab", 32)
+	catalog := &fileCatalogStore{mockStore: &mockStore{}, files: map[int64]store.FileMetadata{
+		7: {ID: 7, MessageID: 11, ConversationID: 21, Filename: "statement.pdf",
+			MimeType: "application/pdf", ContentHash: hash},
+	}}
+	spa := webapp.NewHandler(fstest.MapFS{
+		"index.html":  &fstest.MapFile{Data: []byte("<!doctype html><title>shell</title>")},
+		"favicon.svg": &fstest.MapFile{Data: []byte("<svg xmlns=\"http://www.w3.org/2000/svg\"/>")},
+	}, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		writeError(w, http.StatusNotFound, "not_found", "No route matches "+r.URL.Path)
+	}))
+	srv := NewServerWithOptions(ServerOptions{
+		Config:     &config.Config{Server: config.ServerConfig{APIPort: 8080}},
+		Store:      catalog,
+		Engine:     &querytest.MockEngine{},
+		BlobStore:  fixedFileBlobStore{content: []byte("pdf bytes")},
+		Logger:     testLogger(),
+		SPAHandler: spa,
+	})
+
+	download := httptest.NewRecorder()
+	srv.Router().ServeHTTP(download, httptest.NewRequest(http.MethodGet, "/api/v1/files/7/content", nil))
+	requirements.Equal(http.StatusOK, download.Code, download.Body.String())
+	assertions.Equal("no-store", download.Header().Get("Cache-Control"), "file download must not be cacheable")
+
+	metadata := httptest.NewRecorder()
+	srv.Router().ServeHTTP(metadata, httptest.NewRequest(http.MethodGet, "/api/v1/files/7", nil))
+	requirements.Equal(http.StatusOK, metadata.Code, metadata.Body.String())
+	assertions.Equal("no-store", metadata.Header().Get("Cache-Control"), "JSON API response must not be cacheable")
+
+	unknown := httptest.NewRecorder()
+	srv.Router().ServeHTTP(unknown, httptest.NewRequest(http.MethodGet, "/api/v1/not-a-real-route", nil))
+	requirements.Equal(http.StatusNotFound, unknown.Code)
+	assertions.Equal("no-store", unknown.Header().Get("Cache-Control"), "API error response must not be cacheable")
+
+	asset := httptest.NewRecorder()
+	srv.Router().ServeHTTP(asset, httptest.NewRequest(http.MethodGet, "/favicon.svg", nil))
+	requirements.Equal(http.StatusOK, asset.Code)
+	assertions.Empty(asset.Header().Get("Cache-Control"), "static assets keep the web handler's caching policy")
 }
