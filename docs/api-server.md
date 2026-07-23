@@ -189,7 +189,7 @@ use for message-type filtering when you do not need full-text ranking.
 | `recipient` / `recipient_name` | string | — | Recipient address/phone or display-name filter |
 | `domain` | string | — | Participant domain filter |
 | `label` | string | — | Label filter |
-| `message_type` | string | — | Stored message type, for example `email`, `teams`, `calendar_event`, or `sms` |
+| `message_type` | string | — | Stored message type, for example `email`, `teams`, `discord`, `calendar_event`, or `sms` |
 | `source_id` | int | — | Restrict to one source |
 | `conversation_id` | int | — | Restrict to one conversation/thread |
 | `after` / `before` | date | — | RFC3339 or `YYYY-MM-DD` bounds |
@@ -369,8 +369,8 @@ to `mode=fts` instead.
 | `explain` | 0/1 | `0` | When `1` and `mode=vector|hybrid`, include per-signal scores |
 
 `message_type` uses the same values as local search: `email`,
-`calendar_event`, `meeting_transcript`, `beeper`, `teams`, `sms`, `mms`,
-`whatsapp`, `imessage`, `fbmessenger`, `synctech_sms_call`,
+`calendar_event`, `meeting_transcript`, `beeper`, `teams`, `discord`, `sms`,
+`mms`, `whatsapp`, `imessage`, `fbmessenger`, `synctech_sms_call`,
 `google_voice_text`, `google_voice_call`, and `google_voice_voicemail`. The
 query string can also carry `message_type:` / `message_type=` operators inside
 `q`.
@@ -819,7 +819,9 @@ cors_max_age = 3600
 
 ## Scheduled Sync
 
-The server can automatically sync Gmail and IMAP accounts on a cron-based schedule. Add `[[accounts]]` sections to your config:
+The server can automatically sync Gmail, IMAP, Microsoft Teams, and registered
+Discord guild sources on a cron-based schedule. Add `[[accounts]]` sections to
+your config:
 
 ```toml
 [[accounts]]
@@ -828,17 +830,30 @@ schedule = "0 * * * *"    # every hour
 enabled = true
 
 [[accounts]]
-email = "you@fastmail.com"
+email = "user@example.com"
 schedule = "*/15 * * * *" # every 15 minutes
+enabled = true
+
+[[accounts]]
+email = "123456789012345678" # exact registered Discord guild ID
+schedule = "*/30 * * * *"
 enabled = true
 ```
 
-The scheduler starts automatically with `msgvault serve` when account schedules are configured. It resolves each entry to a syncable source type, including Gmail and IMAP. Use the `/api/v1/scheduler/status` endpoint to monitor schedule state, and `/api/v1/sync/{account}` to trigger a manual sync outside the schedule.
+The scheduler starts automatically with `msgvault serve` when account schedules
+are configured. Discord schedules require the exact guild ID because display
+names are mutable and can be duplicated. Use `/api/v1/scheduler/status` to
+monitor schedule state and `/api/v1/sync/{account}` to trigger supported
+account syncs outside the schedule. Discord's dedicated manual command is
+`msgvault sync-discord`.
 
 The same HTTP server backs configured remote CLI access and the local background daemon used by archive-access CLI commands.
 
 !!! note
-    Each account must have completed an initial full sync (`msgvault sync-full`) before scheduled sync will work. Gmail scheduled syncs use incremental history sync. IMAP scheduled syncs run the IMAP sync path and skip messages already present locally.
+    Gmail accounts must have completed an initial `msgvault sync-full` before
+    scheduled incremental sync. IMAP schedules scan the mailbox and skip known
+    messages. Teams and Discord importers detect and checkpoint their own
+    first-run history backfills.
 
 `msgvault serve` also runs scheduled SyncTech SMS Backup & Restore Drive sources configured under `[[synctech_sms.sources]]`; see [Configuration](/configuration/#synctech-sms-sources).
 
@@ -888,7 +903,7 @@ All server settings go in the `[server]` section of `config.toml`. Account sched
 
 | Key | Default | Description |
 |---|---|---|
-| `email` | (required) | Gmail/IMAP account identifier or display name |
+| `email` | (required) | Gmail/IMAP/Teams identifier or display name, or exact Discord guild ID |
 | `schedule` | — | Cron expression for sync schedule |
 | `enabled` | `true` | Whether scheduled sync is active |
 

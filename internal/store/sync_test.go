@@ -129,6 +129,40 @@ func TestStore_GetLatestSync(t *testing.T) {
 	assert.Equal(store.SyncStatusRunning, run.Status, "Status")
 }
 
+func TestStore_GetLatestCheckpointedSyncFallsBackPastUncheckpointedRun(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := storetest.New(t)
+	checkpointedID := f.StartSync()
+	require.NoError(f.Store.UpdateSyncCheckpoint(checkpointedID, &store.Checkpoint{PageToken: "cursor-1"}))
+	require.NoError(f.Store.FailSync(checkpointedID, "interrupted after checkpoint"))
+	newerID := f.StartSync()
+
+	run, err := f.Store.GetLatestCheckpointedSync(f.Source.ID)
+	require.NoError(err)
+	assert.Equal(checkpointedID, run.ID)
+	assert.Equal("cursor-1", run.CursorBefore.String)
+
+	require.NoError(f.Store.FailSync(newerID, "interrupted before checkpoint"))
+	run, err = f.Store.GetLatestCheckpointedSync(f.Source.ID)
+	require.NoError(err)
+	assert.Equal(checkpointedID, run.ID, "an uncheckpointed failed run must not hide recoverable state")
+}
+
+func TestStore_GetLatestCheckpointedSyncNeverFallsBackPastCompletion(t *testing.T) {
+	require := require.New(t)
+	f := storetest.New(t)
+	checkpointedID := f.StartSync()
+	require.NoError(f.Store.UpdateSyncCheckpoint(checkpointedID, &store.Checkpoint{PageToken: "stale-cursor"}))
+	require.NoError(f.Store.FailSync(checkpointedID, "interrupted"))
+	completedID := f.StartSync()
+	require.NoError(f.Store.CompleteSync(completedID, "completed-cursor"))
+	_ = f.StartSync()
+
+	_, err := f.Store.GetLatestCheckpointedSync(f.Source.ID)
+	require.ErrorIs(err, store.ErrSyncRunNotFound)
+}
+
 func TestStore_SyncRunItems(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

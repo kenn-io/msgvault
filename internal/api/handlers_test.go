@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -28,6 +29,7 @@ import (
 	"go.kenn.io/kit/packstore"
 	"go.kenn.io/msgvault/internal/attachmentstore"
 	"go.kenn.io/msgvault/internal/cacheops"
+	"go.kenn.io/msgvault/internal/clirun"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/deletion"
@@ -1317,6 +1319,9 @@ func TestHandleCLIRunBackupSubcommandAdmission(t *testing.T) {
 		{"remove-account still allowed", []string{"remove-account", "alice@example.com", "--yes"}, true},
 		{"pack-attachments allowed", []string{"pack-attachments"}, true},
 		{"repack-attachments allowed", []string{"repack-attachments"}, true},
+		{"add-discord allowed", []string{"add-discord"}, true},
+		{"sync-discord allowed", []string{"sync-discord", "113456789012345678"}, true},
+		{"backfill-discord-media allowed", []string{"backfill-discord-media", "113456789012345678"}, true},
 		{"unpack-attachments rejected", []string{"unpack-attachments"}, false},
 	}
 	for _, tc := range cases {
@@ -1346,6 +1351,56 @@ func TestHandleCLIRunBackupSubcommandAdmission(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestHandleCLIRunAcceptsDiscordTokenEnvWithoutExposingSecret(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	const secret = "synthetic-discord-secret"
+	runs := 0
+	st := &mockStore{runFunc: func(
+		_ context.Context, req CLIRunRequest, emit func(CLIRunEvent) error,
+	) error {
+		runs++
+		assert.Equal(map[string]string{clirun.EnvDiscordToken: secret}, req.Env)
+		if err := emit(CLIRunEvent{Type: "stdout", Data: "Discord setup started\n"}); err != nil {
+			return err
+		}
+		return errors.New("synthetic Discord runner failure")
+	}}
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	srv := NewServer(&config.Config{Server: config.ServerConfig{APIPort: 8080}}, st, nil, logger)
+
+	body, err := json.Marshal(CLIRunRequest{
+		Args: []string{"add-discord"}, Env: map[string]string{clirun.EnvDiscordToken: secret},
+	})
+	require.NoError(err)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/cli/run", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp := httptest.NewRecorder()
+	srv.Router().ServeHTTP(resp, req)
+
+	assert.Equal(http.StatusOK, resp.Code, "status: %s", resp.Body.String())
+	assert.Contains(resp.Body.String(), "synthetic Discord runner failure")
+	assert.Contains(logs.String(), "synthetic Discord runner failure")
+	assert.NotContains(resp.Body.String(), secret)
+	assert.NotContains(logs.String(), secret)
+	assert.Equal(1, runs)
+
+	badBody, err := json.Marshal(CLIRunRequest{
+		Args: []string{"add-discord"}, Env: map[string]string{"UNSAFE_ENV": "value"},
+	})
+	require.NoError(err)
+	badReq := httptest.NewRequest(http.MethodPost, "/api/v1/cli/run", bytes.NewReader(badBody))
+	badReq.Header.Set("Content-Type", "application/json")
+	badResp := httptest.NewRecorder()
+	srv.Router().ServeHTTP(badResp, badReq)
+	assert.Equal(http.StatusBadRequest, badResp.Code)
+	assert.Contains(badResp.Body.String(), "env_not_allowed")
+	assert.NotContains(badResp.Body.String(), secret)
+	assert.NotContains(logs.String(), secret)
+	assert.Equal(1, runs, "rejected environment must not reach runner")
 }
 
 func TestCLIDeleteDedupedPlansAndExecutesThroughDaemon(t *testing.T) {

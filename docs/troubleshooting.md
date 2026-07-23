@@ -148,12 +148,18 @@ services:
    curl -H "X-API-Key: KEY" http://localhost:8080/api/v1/scheduler/status
    ```
 
-4. Make sure you've run the initial full sync — the scheduler only runs incremental syncs.
-   Run `sync-full` through the container's CLI; it will connect to the running
-   daemon over HTTP and stream progress back to your terminal:
+4. For Gmail, make sure you've run the initial full sync before relying on its
+   incremental schedule. Run `sync-full` through the container's CLI; it will
+   connect to the running daemon over HTTP and stream progress back to your
+   terminal:
    ```bash
    docker exec msgvault msgvault sync-full you@gmail.com
    ```
+
+   Discord does not require a separate initial manual sync: its first
+   scheduled run backfills history and checkpoints progress. Register the
+   guild with `add-discord` first, and use its exact guild ID (not its display
+   name) as the `[[accounts]].email` value.
 
 ### "No source found for email"
 

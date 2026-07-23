@@ -43,6 +43,7 @@ func preflightAddO365Authorize(cmd *cobra.Command, email string) error {
 	msMgr := microsoft.NewManager(
 		cfg.Microsoft.ClientID,
 		microsoftTenantID(o365TenantID),
+		cfg.Microsoft.EffectiveRedirectURI(),
 		cfg.TokensDir(),
 		logger,
 	)
@@ -91,6 +92,7 @@ func runAddO365Local(cmd *cobra.Command, args []string) error {
 	msMgr := microsoft.NewManager(
 		cfg.Microsoft.ClientID,
 		microsoftTenantID(o365TenantID),
+		cfg.Microsoft.EffectiveRedirectURI(),
 		cfg.TokensDir(),
 		logger,
 	)

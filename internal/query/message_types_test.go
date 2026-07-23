@@ -25,3 +25,8 @@ func TestKnownMessageTypesIncludesTextTypes(t *testing.T) {
 		assert.True(t, IsKnownMessageType(mt), "text type %q must be a known message type", mt)
 	}
 }
+
+func TestDiscordIsKnownTextMessageType(t *testing.T) {
+	assert.True(t, IsKnownMessageType("discord"))
+	assert.True(t, IsTextMessageType("discord"))
+}

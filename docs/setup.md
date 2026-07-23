@@ -316,6 +316,22 @@ Teams messages become searchable with `--message-type teams`. See
 [Microsoft Teams](/usage/teams/) for required Graph permissions, scheduling,
 and inline media backfill.
 
+## Optional: Sync Discord
+
+To archive Discord guild channels and threads, create a dedicated bot with
+Message Content Intent, View Channels, and Read Message History, then register
+and sync a guild:
+
+```bash
+msgvault add-discord --guild 123456789012345678
+msgvault sync-discord 123456789012345678
+```
+
+Discord messages become searchable with `--message-type discord`. The bot API
+is guild-only and does not expose personal direct-message history. See
+[Discord](/usage/discord/) for least-privilege setup, scheduling, filters,
+repair behavior, and attachment limits.
+
 ## Optional: Configure Backups
 
 Create a backup repository before relying on the archive as your source of

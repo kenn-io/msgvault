@@ -40,6 +40,7 @@ func preflightAddTeamsAuthorize(cmd *cobra.Command, email string) error {
 	mgr := microsoft.NewGraphManager(
 		cfg.Microsoft.ClientID,
 		microsoftTenantID(teamsTenantID),
+		cfg.Microsoft.EffectiveRedirectURI(),
 		cfg.TokensDir(),
 		logger,
 	)
@@ -93,6 +94,7 @@ func runAddTeamsLocal(cmd *cobra.Command, args []string) error {
 		mgr := microsoft.NewGraphManager(
 			cfg.Microsoft.ClientID,
 			microsoftTenantID(teamsTenantID),
+			cfg.Microsoft.EffectiveRedirectURI(),
 			cfg.TokensDir(),
 			logger,
 		)

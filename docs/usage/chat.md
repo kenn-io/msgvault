@@ -82,7 +82,7 @@ cap it at 50. `search_message_bodies`, `semantic_search_messages`, and `list_mes
 Gmail-only operators such as `list:` are rejected because msgvault does
 not index `List-ID` locally; use Gmail-side validation for those checks.
 To restrict mixed archives to values such as `email`, `calendar_event`,
-`teams`, `sms`, or `mms`, include a `message_type:` operator in the query
+`teams`, `discord`, `sms`, or `mms`, include a `message_type:` operator in the query
 (for example `message_type:teams incident review`). `find_similar_messages`
 accepts a dedicated `message_type` parameter; `list_messages` does not
 support message-type filtering.

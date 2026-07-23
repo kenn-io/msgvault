@@ -1,9 +1,14 @@
 ---
 title: Text Messages
-description: Import chats and text messages from WhatsApp, iMessage, Google Voice, Facebook Messenger, and SMS Backup & Restore, and browse Teams conversations, in msgvault.
+description: Import chats and texts from common exports, and browse synchronized Teams and Discord conversations in msgvault.
 ---
 
-msgvault can import chats and text messages from WhatsApp, iMessage, Google Voice, Facebook Messenger, and SMS Backup & Restore. It can also sync Microsoft Teams chats and channels through [Microsoft Teams](/usage/teams/). These records are stored in the same database as email, and you can browse text/chat conversations in the [TUI](/usage/tui/) by pressing `m` to switch to text mode.
+msgvault can import chats and text messages from WhatsApp, iMessage, Google
+Voice, Facebook Messenger, and SMS Backup & Restore. It can also sync Microsoft
+Teams chats and channels through [Microsoft Teams](/usage/teams/) and Discord
+guild channels and threads through [Discord](/usage/discord/). These records
+are stored in the same database as email, and you can browse text/chat
+conversations in the [TUI](/usage/tui/) by pressing `m` to switch to text mode.
 
 ## import-whatsapp
 
@@ -245,7 +250,10 @@ Imports use checkpoint-based resumption. If interrupted (Ctrl+C, power loss), ru
 
 ## After Importing
 
-Most chat import commands rebuild the analytics cache automatically after import. If a newly imported or synced source does not appear in aggregate views immediately, run `msgvault build-cache`. Your imported texts and Teams conversations are then available for TUI browsing.
+Most chat import and sync commands rebuild the analytics cache automatically.
+If a newly imported or synced source does not appear in aggregate views
+immediately, run `msgvault build-cache`. Your imported texts, Teams messages,
+and Discord conversations are then available for TUI browsing.
 
 ```bash
 # Launch the TUI and press 'm' for text mode

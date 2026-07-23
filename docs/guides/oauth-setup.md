@@ -255,11 +255,12 @@ You need to register an application in Microsoft Entra (Azure AD) before using `
 2. Set the fields:
    - **Name:** `msgvault`
    - **Supported account types:** "Accounts in any organizational directory and personal Microsoft accounts"
-   - **Redirect URI:** Platform = **Mobile and desktop applications**, URI = `http://localhost:8089/callback/microsoft`
+    - **Redirect URI:** Platform = **Mobile and desktop applications**, URI = your `redirect_uri` from `config.toml` (default: `http://localhost:8089/callback/microsoft`)
 3. Click **Register**
 4. Under **API permissions**, click **Add a permission > APIs my organization uses**, search for **Office 365 Exchange Online**, select **Delegated permissions**, then add `IMAP.AccessAsUser.All`
 5. Under **Authentication**, enable **Allow public client flows** (required for PKCE)
-6. Copy the **Application (client) ID** from the app's Overview page
+6. If you will use a custom `redirect_uri` in `config.toml`, make sure the Redirect URI in the app registration matches it exactly — including scheme, host, port, and path. For `https://localhost/` on a privileged port (e.g. 443), register that exact URI.
+7. Copy the **Application (client) ID** from the app's Overview page
 
 ### Configure msgvault
 

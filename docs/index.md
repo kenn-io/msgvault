@@ -1,6 +1,6 @@
 ---
 title: msgvault
-description: Offline email, chat, and meeting archive with full-text search, an interactive TUI, backup snapshots, and multi-account support. Sync Gmail, IMAP, Google Calendar, Microsoft Teams, Beeper, Granola, and Circleback.
+description: Offline email, chat, and meeting archive with full-text search, an interactive TUI, backup snapshots, and multi-account support. Sync Gmail, IMAP, Google Calendar, Microsoft Teams, Discord, Beeper, Granola, and Circleback.
 ---
 
 # msgvault
@@ -18,7 +18,7 @@ search, and local AI workflows.
   <img src="/assets/generated/tui-senders.svg" alt="msgvault TUI showing the Senders view" loading="eager">
 </figure>
 
-Supports Gmail, Google Calendar, Microsoft Teams, Granola, Circleback, Beeper
+Supports Gmail, Google Calendar, Microsoft Teams, Discord, Granola, Circleback, Beeper
 Desktop, IMAP, and Microsoft 365 mail sync; verifiable backup snapshots; PST,
 MBOX, and Apple Mail import; and chat/text import from WhatsApp, iMessage,
 Google Voice, Facebook Messenger, and SMS Backup & Restore.
@@ -52,7 +52,8 @@ syncing](/setup/). You can also [build from source](/setup/#build-from-source).
 Your email and message data is yours. msgvault downloads a complete local copy
 of your email (from Gmail, IMAP, or local archives) and imports chats and texts
 from WhatsApp, iMessage, Google Voice, Facebook Messenger, and SMS Backup &
-Restore, and can sync Beeper chats plus Granola and Circleback meeting notes.
+Restore, and can sync Teams conversations, Discord guilds, Beeper chats, plus
+Granola and Circleback meeting notes.
 Keyword search, analytics, the TUI, and the MCP server query your archive.
 **Source services are contacted only by authorization/registration, sync,
 media-backfill, and deletion workflows that you run or schedule explicitly.**
@@ -79,6 +80,10 @@ it lives in an archive on disk that you own and control.
   <section>
     <h3>Teams Sync</h3>
     <p>Archive Microsoft Teams chats, channels, replies, link attachments, and inline media through delegated Microsoft Graph. Teams records use <code>message_type = teams</code> so they can be searched and queried separately from email.</p>
+  </section>
+  <section>
+    <h3>Discord Sync</h3>
+    <p>Archive guild channels, threads, forum posts, and attachments through a dedicated read-only bot. Resumable per-container checkpoints and bounded repair preserve history safely under <code>message_type = discord</code>.</p>
   </section>
   <section>
     <h3>Meetings &amp; Beeper</h3>

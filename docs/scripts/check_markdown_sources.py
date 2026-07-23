@@ -44,6 +44,7 @@ PUBLIC_MARKDOWN = {
     "usage/chat.md",
     "usage/deduplication.md",
     "usage/deletion.md",
+    "usage/discord.md",
     "usage/exporting.md",
     "usage/importing.md",
     "usage/multi-account.md",

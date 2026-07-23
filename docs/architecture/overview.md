@@ -4,7 +4,7 @@ description: Package structure and data flow.
 ---
 
 msgvault syncs Gmail, Google Calendar, IMAP, Microsoft 365 mail, Microsoft
-Teams, Beeper Desktop, Granola, and Circleback into a local SQLite database by
+Teams, Discord, Beeper Desktop, Granola, and Circleback into a local SQLite database by
 default and can import local PST/MBOX archives, Apple Mail exports, and common
 chat/text formats. PostgreSQL is available as an opt-in backend for new
 archives. Keyword search, analytics, the TUI, and the MCP server run against
@@ -48,6 +48,7 @@ msgvault/
 │   ├── synctechsms/         # SMS Backup & Restore import
 │   ├── microsoft/           # Microsoft 365 OAuth
 │   ├── teams/               # Microsoft Teams Graph ingestion
+│   ├── discord/             # Discord REST client and guild importer
 │   ├── beeper/              # Beeper Desktop client and importer
 │   ├── granola/             # Granola meeting-note client and importer
 │   ├── circleback/          # Circleback MCP/OAuth client and importer
@@ -87,6 +88,7 @@ msgvault/
 | `internal/synctechsms` | SMS Backup & Restore XML/ZIP parsing and Drive source sync |
 | `internal/microsoft` | Microsoft 365 OAuth flow |
 | `internal/teams` | Microsoft Teams Graph client mapping, sync cursors, and importer |
+| `internal/discord` | Read-only Discord REST client, credential bindings, channel/thread checkpoints, mapping, and media archival |
 | `internal/beeper` | Beeper Desktop local-API client, resumable sync state, media download, and message mapping |
 | `internal/granola` / `internal/circleback` | Meeting-note provider clients, authentication, formatting, and archive ingestion |
 | `internal/mime` | MIME message parsing, charset detection |

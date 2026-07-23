@@ -31,7 +31,7 @@ func TestGraphScopes(t *testing.T) {
 }
 
 func TestNewGraphManager_DefaultsTenant(t *testing.T) {
-	m := NewGraphManager("client", "", "tmp/tokens", nil)
+	m := NewGraphManager("client", "", "", "tmp/tokens", nil)
 	assert.Equal(t, DefaultTenant, m.tenantID, "tenantID should default to common")
 	require.NotNil(t, m.logger, "logger should default")
 }
@@ -40,7 +40,7 @@ func TestGraphManager_SaveLoadHasToken(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	dir := t.TempDir()
-	m := NewGraphManager("client", "common", dir, slog.Default())
+	m := NewGraphManager("client", "common", "", dir, slog.Default())
 
 	assert.False(m.HasToken("user@example.com"), "HasToken false before save")
 
@@ -66,7 +66,7 @@ func TestGraphManager_Authorize_PersistsGraphToken(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	dir := t.TempDir()
-	m := NewGraphManager("test-client", "common", dir, slog.Default())
+	m := NewGraphManager("test-client", "common", "", dir, slog.Default())
 	m.verifyIDTokenFn = testVerifyFn
 
 	var gotScopes []string
@@ -93,7 +93,7 @@ func TestGraphManager_Authorize_PersistsGraphToken(t *testing.T) {
 
 func TestGraphManager_Authorize_Mismatch(t *testing.T) {
 	dir := t.TempDir()
-	m := NewGraphManager("test-client", "common", dir, slog.Default())
+	m := NewGraphManager("test-client", "common", "", dir, slog.Default())
 	m.verifyIDTokenFn = testVerifyFn
 	m.browserFlowFn = func(_ context.Context, _ string, _ []string) (*oauth2.Token, string, error) {
 		idToken := makeIDToken(t, map[string]any{"email": "other@example.com"})
@@ -109,7 +109,7 @@ func TestGraphManager_Authorize_Mismatch(t *testing.T) {
 
 func TestGraphManager_TokenSource_NoIMAPValidation(t *testing.T) {
 	dir := t.TempDir()
-	m := NewGraphManager("test-client", "common", dir, slog.Default())
+	m := NewGraphManager("test-client", "common", "", dir, slog.Default())
 
 	// Save a Graph token. There is no IMAP scope; the IMAP Manager would
 	// reject this, but GraphManager must accept it.
@@ -124,7 +124,7 @@ func TestGraphManager_TokenSource_NoIMAPValidation(t *testing.T) {
 func TestGraphManager_TokenSource_StaleGraphScopesReturnsError(t *testing.T) {
 	require := require.New(t)
 	dir := t.TempDir()
-	m := NewGraphManager("test-client", "common", dir, slog.Default())
+	m := NewGraphManager("test-client", "common", "", dir, slog.Default())
 
 	token := &oauth2.Token{AccessToken: "graph-access", RefreshToken: "graph-refresh", TokenType: "Bearer"}
 	oldScopes := []string{
@@ -147,7 +147,7 @@ func TestGraphManager_TokenSource_StaleGraphScopesReturnsError(t *testing.T) {
 }
 
 func TestGraphManager_TokenSource_MissingToken(t *testing.T) {
-	m := NewGraphManager("test-client", "common", t.TempDir(), slog.Default())
+	m := NewGraphManager("test-client", "common", "", t.TempDir(), slog.Default())
 	_, err := m.TokenSource(t.Context(), "nobody@example.com")
 	require.Error(t, err, "expected error for missing token")
 	assert.ErrorContains(t, err, "no valid token")
@@ -155,7 +155,7 @@ func TestGraphManager_TokenSource_MissingToken(t *testing.T) {
 
 func TestGraphManager_TokenSource_Concurrent(t *testing.T) {
 	dir := t.TempDir()
-	m := NewGraphManager("test-client", "common", dir, slog.Default())
+	m := NewGraphManager("test-client", "common", "", dir, slog.Default())
 	token := &oauth2.Token{AccessToken: "graph-access", RefreshToken: "graph-refresh", TokenType: "Bearer"}
 	require.NoError(t, m.saveToken("user@company.com", token, GraphScopes(), "org-tid"))
 

@@ -15,7 +15,7 @@ Archive a lifetime of email. Analytics and search in milliseconds, entirely offl
 
 Your messages are yours. Decades of correspondence, attachments, and history shouldn't be locked behind a web interface or an API. By default, msgvault downloads a complete local copy and then everything runs offline. Search, analytics, and the MCP server all work against your msgvault archive with no mailbox network access required. If you configure a remote deployment, the archive lives on your own server rather than a hosted msgvault service.
 
-Currently supports Gmail, Google Calendar, Microsoft Teams, Granola,
+Currently supports Gmail, Google Calendar, Microsoft Teams, Discord, Granola,
 Circleback, Beeper Desktop, and IMAP sync, plus offline imports from MBOX
 exports, Apple Mail (`.emlx`) directories, PST archives, and common chat/text
 export formats.
@@ -25,6 +25,7 @@ export formats.
 - **Full Gmail backup**: raw MIME, attachments, labels, and metadata
 - **Google Calendar sync**: archive events, organizers, and attendees; searchable alongside email
 - **Microsoft Teams sync**: archive delegated Graph chats, channels, replies, and inline media with `message_type = teams`
+- **Discord sync**: archive guild channels, threads, forum posts, and attachments through a read-only bot with `message_type = discord`
 - **Meeting notes**: sync Granola and Circleback notes and transcripts, then browse them in the TUI
 - **Beeper Desktop sync**: archive chats and media from every network bridged through Beeper's local API
 - **IMAP sync**: archive mail from any standard IMAP server
@@ -101,6 +102,8 @@ msgvault tui
 | `sync-calendar NAME\|EMAIL` | Sync Google Calendar events (full first run, then incremental) |
 | `add-teams EMAIL` | Authorize delegated Microsoft Graph access for Teams |
 | `sync-teams EMAIL` | Sync Microsoft Teams chats and channels |
+| `add-discord` / `sync-discord` | Register a read-only bot and sync Discord guild channels and threads |
+| `backfill-discord-media` | Retry incomplete Discord attachment downloads |
 | `add-granola` / `sync-granola` | Register and sync Granola meeting notes and transcripts |
 | `add-circleback` / `sync-circleback` | Authorize and sync Circleback meetings, notes, and transcripts |
 | `add-beeper` / `sync-beeper` | Register and sync Beeper Desktop chats and media |
@@ -234,6 +237,21 @@ msgvault search "incident review" --message-type teams
 
 See the [Microsoft Teams guide](https://msgvault.io/usage/teams/) for Graph
 permissions, scheduling, channel sync behavior, and inline media backfill.
+
+### Discord
+
+Archive guild text and announcement channels, threads, forum posts, and
+attachments through a dedicated read-only bot:
+
+```bash
+msgvault add-discord --guild 123456789012345678
+msgvault sync-discord 123456789012345678
+msgvault search "incident review" --message-type discord
+```
+
+See the [Discord guide](https://msgvault.io/usage/discord/) for bot permissions,
+credential bindings, channel filters, scheduling, consistency limits, and
+media backfill.
 
 ### Backup Snapshots
 
@@ -391,6 +409,7 @@ daemon_idle_timeout = "20m" # background daemon idle timeout; "0s" disables
 - [Search ranking across backends](https://msgvault.io/architecture/search-ranking/): how result order differs between SQLite and PostgreSQL
 - [PostgreSQL backend](https://msgvault.io/architecture/postgresql/): run msgvault on PostgreSQL with pgvector semantic/hybrid search
 - [Interactive TUI](https://msgvault.io/usage/tui/): keybindings, views, deletion staging
+- [Discord](https://msgvault.io/usage/discord/): guild bot setup, sync behavior, filters, and media backfill
 - [CLI Reference](https://msgvault.io/cli-reference/): all commands and flags
 - [Multi-Account](https://msgvault.io/usage/multi-account/): managing multiple Gmail accounts
 - [Configuration](https://msgvault.io/configuration/): config file and environment variables

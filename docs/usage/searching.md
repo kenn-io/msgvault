@@ -97,8 +97,8 @@ SQLite FTS ranking is weighted to better match PostgreSQL-backed search behavior
 ## Filtering by Message Type
 
 Archives can hold more than email — Google Calendar events, Microsoft Teams
-messages, text messages, calls, voicemails, and Messenger imports all live in
-the same database. Restrict a search to one or more kinds with the
+and Discord messages, text messages, calls, voicemails, and Messenger imports
+all live in the same database. Restrict a search to one or more kinds with the
 `message_type:` operator or the repeatable/comma-separated `--message-type`
 flag:
 
@@ -109,12 +109,15 @@ msgvault search "standup" --message-type calendar_event
 # Only Microsoft Teams messages
 msgvault search "message_type:teams incident review"
 
+# Only Discord guild messages
+msgvault search "release planning" --message-type discord
+
 # Only SMS/MMS text messages
 msgvault search "dinner" --message-type sms --message-type mms
 ```
 
 Valid values are `email`, `calendar_event`, `meeting_transcript`, `beeper`,
-`sms`, `mms`, `whatsapp`, `imessage`, `teams`, `fbmessenger`,
+`sms`, `mms`, `whatsapp`, `imessage`, `teams`, `discord`, `fbmessenger`,
 `synctech_sms_call`, `google_voice_text`, `google_voice_call`, and
 `google_voice_voicemail`. `message_type:email` also includes legacy rows whose
 type is empty because older msgvault versions created them before the column

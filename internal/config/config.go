@@ -166,6 +166,40 @@ type BackupConfig struct {
 	ZstdLevel int    `toml:"zstd_level"` // 0 (default) or 1-19
 }
 
+const (
+	DefaultDiscordMaxMediaBytes    int64         = 50 << 20
+	DefaultDiscordEditRescanWindow time.Duration = 7 * 24 * time.Hour
+)
+
+// DiscordConfig holds provider-wide Discord import settings and optional
+// per-guild message-container filters.
+type DiscordConfig struct {
+	MaxMediaBytes    int64                         `toml:"max_media_bytes"`
+	EditRescanWindow time.Duration                 `toml:"edit_rescan_window"`
+	Guilds           map[string]DiscordGuildConfig `toml:"guilds"`
+}
+
+// DiscordGuildConfig filters channels, threads, and forum posts for one guild.
+// Empty Include means every accessible message container is eligible.
+type DiscordGuildConfig struct {
+	Include []string `toml:"include"`
+	Exclude []string `toml:"exclude"`
+}
+
+// ApplyDefaults restores Discord provider defaults for omitted or zero-valued
+// settings while preserving explicitly configured filters.
+func (d *DiscordConfig) ApplyDefaults() {
+	if d.MaxMediaBytes <= 0 {
+		d.MaxMediaBytes = DefaultDiscordMaxMediaBytes
+	}
+	if d.EditRescanWindow <= 0 {
+		d.EditRescanWindow = DefaultDiscordEditRescanWindow
+	}
+	if d.Guilds == nil {
+		d.Guilds = map[string]DiscordGuildConfig{}
+	}
+}
+
 // Validate enforces the zstd compression level range: 0 (meaning "use
 // kit/pack's default") or 1-19, matching the range the zstd encoder
 // actually accepts.
@@ -195,6 +229,7 @@ type Config struct {
 	Granola     []GranolaSource    `toml:"granola"`
 	Circleback  []CirclebackSource `toml:"circleback"`
 	Backup      BackupConfig       `toml:"backup"`
+	Discord     DiscordConfig      `toml:"discord"`
 
 	// Computed paths (not from config file)
 	HomeDir    string `toml:"-"`
@@ -305,8 +340,18 @@ func (o *OAuthConfig) HasAnyConfig() bool {
 
 // MicrosoftConfig holds Microsoft 365 / Azure AD OAuth configuration.
 type MicrosoftConfig struct {
-	ClientID string `toml:"client_id"`
-	TenantID string `toml:"tenant_id"`
+	ClientID    string `toml:"client_id"`
+	TenantID    string `toml:"tenant_id"`
+	RedirectURI string `toml:"redirect_uri"`
+}
+
+// EffectiveRedirectURI returns the redirect URI, defaulting to the
+// standard OAuth callback URI for local development.
+func (c *MicrosoftConfig) EffectiveRedirectURI() string {
+	if c.RedirectURI != "" {
+		return c.RedirectURI
+	}
+	return "http://localhost:8089/callback/microsoft"
 }
 
 // EffectiveTenantID returns the tenant ID, defaulting to "common"
@@ -368,6 +413,7 @@ func NewDefaultConfig() *Config {
 	}
 	cfg.Vector.ApplyDefaults()
 	cfg.Server.ApplyDefaults()
+	cfg.Discord.ApplyDefaults()
 	return cfg
 }
 
@@ -461,6 +507,7 @@ func Load(path, homeDir string) (*Config, error) {
 	// an explicit false in the file stays false.
 	cfg.Vector.ApplyDefaults()
 	cfg.Server.ApplyDefaults()
+	cfg.Discord.ApplyDefaults()
 	if err := cfg.Server.Validate(); err != nil {
 		return nil, err
 	}
