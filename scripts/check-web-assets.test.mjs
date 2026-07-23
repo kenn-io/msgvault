@@ -143,6 +143,34 @@ test('rejects missing, escaping, mapped, and external nested JavaScript referenc
   assert.throws(() => validateWebAssets(external), /external runtime asset/);
 });
 
+test('rejects hidden and credential-pattern files anywhere in the shipped trees', (t) => {
+  const hidden = releaseCopy(t);
+  writeReleaseFile(hidden, '.env', 'MSGVAULT_SECRET=1');
+  assert.throws(() => validateWebAssets(hidden), /hidden file or directory/);
+
+  const nestedHidden = releaseCopy(t);
+  writeReleaseFile(nestedHidden, 'assets/.credentials/token.json', '{}');
+  assert.throws(() => validateWebAssets(nestedHidden), /hidden file or directory/);
+
+  for (const name of ['client_secret_web.json', 'oauth_client_prod.json', 'server.pem', 'private.key', 'config.toml']) {
+    const credential = releaseCopy(t);
+    writeReleaseFile(credential, name, 'synthetic credential bytes');
+    assert.throws(() => validateWebAssets(credential), /credential filename pattern/, name);
+  }
+
+  const embeddedOnlyCredential = releaseCopy(t);
+  writeFileSync(resolve(embeddedOnlyCredential.embedded, 'client_secret.json'), '{}');
+  assert.throws(() => validateWebAssets(embeddedOnlyCredential), /credential filename pattern/);
+
+  const embeddedOnlyStray = releaseCopy(t);
+  writeFileSync(resolve(embeddedOnlyStray.embedded, 'notes.txt'), 'stray file');
+  assert.throws(() => validateWebAssets(embeddedOnlyStray), /untracked embedded asset/);
+
+  const stub = releaseCopy(t);
+  writeFileSync(resolve(stub.embedded, 'stub.html'), 'ok\n');
+  validateWebAssets(stub);
+});
+
 test('requires immutable release assets to carry Vite hash-bearing names', (t) => {
   const paths = releaseCopy(t);
   const manifestPath = resolve(paths.dist, '.vite/manifest.json');

@@ -33,7 +33,9 @@ type SettingValue struct {
 	Strings *[]string `json:"strings,omitempty"`
 }
 
-// Setting describes one browser-managed allowlisted config value.
+// Setting describes one browser-managed allowlisted config value. ReadOnly
+// marks settings that are visible over HTTP but can only be changed by
+// editing config.toml on the daemon host; PATCH rejects updates to them.
 type Setting struct {
 	Key             string              `json:"key"`
 	Group           string              `json:"group"`
@@ -43,6 +45,7 @@ type Setting struct {
 	Options         []string            `json:"options,omitempty"`
 	RestartRequired bool                `json:"restart_required"`
 	Testable        bool                `json:"testable,omitempty"`
+	ReadOnly        bool                `json:"read_only,omitempty"`
 }
 
 type SettingsResponse struct {
@@ -311,6 +314,7 @@ func buildSettingsResponse(cfg *config.Config, pendingRestart bool) SettingsResp
 			Options:         definition.options,
 			RestartRequired: true,
 			Testable:        definition.testable,
+			ReadOnly:        definition.localOnly,
 		}
 		if definition.secret != nil {
 			setting.Secret = &SecretSettingState{Configured: definition.secret(cfg)}

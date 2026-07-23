@@ -147,18 +147,22 @@ web-e2e:
 web-build: web-generate
 	cd web && bun run build
 
-# Replace prior generated output while preserving the compilation stub, then
-# copy Vite's complete production distribution into the Go embed tree.
+# Replace prior generated output while preserving the compilation stub, copy
+# Vite's complete production distribution into the Go embed tree, then validate
+# the staged embed. Validation is a mandatory part of embedding: the tree is
+# served without authentication, so every build that embeds it must reject
+# hidden files, credential-pattern names, and untracked assets.
 web-embed: web-build
 	@mkdir -p internal/web/dist
 	@find internal/web/dist -mindepth 1 -maxdepth 1 ! -name stub.html -exec rm -rf {} +
 	@cp -R web/dist/. internal/web/dist/
+	node scripts/check-web-assets.mjs
 
-# Validate Vite's parsed release graph against the staged embed. The node test
-# drives the same validator through missing, escaping, external, and stale cases.
+# Validate Vite's parsed release graph against the staged embed (runs as the
+# final step of web-embed). The node test drives the same validator through
+# missing, escaping, external, hidden/credential, and stale cases.
 web-assets-check: web-embed
 	node --test scripts/check-web-assets.test.mjs
-	node scripts/check-web-assets.mjs
 
 smoke-web-release:
 	node --test scripts/smoke-web-release.test.mjs
@@ -280,8 +284,8 @@ help:
 	@echo "  web-test       - Run browser application unit tests"
 	@echo "  web-test-browser - Run browser application Playwright tests"
 	@echo "  web-build      - Build the browser application"
-	@echo "  web-embed      - Build and stage browser assets for Go embedding"
-	@echo "  web-assets-check - Validate the complete release asset graph and staged embed"
+	@echo "  web-embed      - Build, stage, and validate browser assets for Go embedding"
+	@echo "  web-assets-check - Validate the release asset graph and run the validator's tests"
 	@echo "  smoke-web-release - Build and exercise an isolated release-style daemon"
 	@echo "  install-hooks  - Install pre-commit hook via prek"
 	@echo "  clean          - Remove build artifacts"

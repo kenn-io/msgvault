@@ -7,28 +7,77 @@ import { createSessionController } from './lib/api/session.svelte';
 import { SEARCH_MODE_PREFERENCE_KEY } from './lib/search/modes';
 
 describe('application foundation', () => {
-  it('mounts the Relationships landmark as the default landing workspace', () => {
+  it('mounts the Relationships landmark once bootstrap succeeds', async () => {
     const session = createSessionController(async () =>
       Response.json({ auth_mode: 'loopback', https: false, plain_http_warning: true })
     );
     render(App, { session });
 
-    expect(screen.getByRole('main', { name: 'Relationships' })).toBeDefined();
+    expect(await screen.findByRole('main', { name: 'Relationships' })).toBeDefined();
   });
 
-  it('shows login only when bootstrap reports authentication required', async () => {
+  it('shows a quiet connecting state until bootstrap resolves, then login when required', async () => {
     const session = createSessionController(async () =>
       Response.json({ auth_mode: 'required', https: false, plain_http_warning: true })
     );
     render(App, { session });
 
-    expect(screen.getByRole('main', { name: 'Relationships' })).toBeDefined();
+    expect(screen.getByRole('main', { name: 'Connecting' })).toBeDefined();
+    expect(screen.queryByRole('main', { name: 'Relationships' })).toBeNull();
     expect(screen.queryByRole('form', { name: 'Log in' })).toBeNull();
 
     await session.bootstrap();
 
     expect(await screen.findByRole('form', { name: 'Log in' })).toBeDefined();
     expect(screen.queryByRole('main', { name: 'Relationships' })).toBeNull();
+  });
+
+  it('shows a bootstrap error with retry instead of the shell, and recovers on retry', async () => {
+    let sessionCalls = 0;
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      const path = new URL(request.url).pathname;
+      if (path === '/api/session') {
+        sessionCalls += 1;
+        if (sessionCalls === 1) throw new TypeError('Failed to fetch');
+        return Response.json({ auth_mode: 'loopback', https: false, plain_http_warning: false });
+      }
+      if (path === '/api/v1/settings') {
+        return Response.json({
+          settings: [{ key: 'web.density', value: { string: 'comfortable' } }],
+          pending_restart: false
+        });
+      }
+      if (path === '/api/v1/explore') {
+        return Response.json({ rows: [], total_count: 0, cache_revision: 'boot', search_provenance: {} });
+      }
+      return Response.json({}, { status: 404 });
+    });
+    const session = createSessionController(fetchFn);
+    render(App, { session });
+
+    const retry = await screen.findByRole('button', { name: 'Retry' });
+    expect(screen.getByRole('main', { name: 'Connection error' })).toBeDefined();
+    expect(screen.getByRole('alert')).toBeDefined();
+    expect(screen.queryByRole('main', { name: 'Relationships' })).toBeNull();
+    expect(screen.queryByRole('form', { name: 'Log in' })).toBeNull();
+
+    await fireEvent.click(retry);
+
+    expect(await screen.findByRole('main', { name: 'Relationships' })).toBeDefined();
+    expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
+    await waitFor(() => expect(document.documentElement.dataset.density).toBe('comfortable'));
+  });
+
+  it('routes an unauthorized bootstrap to login, not the connection error state', async () => {
+    const session = createSessionController(async () =>
+      Response.json({ error: 'unauthorized', message: 'Session expired' }, { status: 401 })
+    );
+    render(App, { session });
+
+    expect(await screen.findByRole('form', { name: 'Log in' })).toBeDefined();
+    expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
+    expect(screen.queryByRole('main', { name: 'Connection error' })).toBeNull();
   });
 
   it('requests health from the same-origin API', async () => {

@@ -78,7 +78,7 @@ func NewHandler(assets fs.FS, fallback http.Handler) http.Handler {
 		}
 
 		name := strings.TrimPrefix(path.Clean(r.URL.Path), "/")
-		if name != "." && name != "index.html" && name != viteManifestPath && fs.ValidPath(name) {
+		if name != "." && name != "index.html" && fs.ValidPath(name) && !forbiddenAssetPath(name) {
 			info, err := fs.Stat(assets, name)
 			if err == nil && !info.IsDir() {
 				w.Header().Set("X-Content-Type-Options", "nosniff")
@@ -106,6 +106,33 @@ func NewHandler(assets fs.FS, fallback http.Handler) http.Handler {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		http.ServeContent(w, r, "index.html", time.Time{}, bytes.NewReader(index))
 	})
+}
+
+// forbiddenAssetPath reports whether an embedded file must never be served.
+// Vite copies web/public into the distribution unchanged and the embedded tree
+// is served without authentication, so hidden paths (any dot-prefixed segment,
+// which also covers .env and the Vite manifest) and credential-style filenames
+// (client_secret*.json, oauth_client*.json, *.pem, *.key, config.toml) are
+// refused even if they slip past the build-time asset validation. Blocked
+// requests fall through to the SPA shell or the API fallback.
+func forbiddenAssetPath(name string) bool {
+	for segment := range strings.SplitSeq(name, "/") {
+		if strings.HasPrefix(segment, ".") {
+			return true
+		}
+	}
+	base := strings.ToLower(path.Base(name))
+	if strings.Contains(base, "client_secret") || strings.Contains(base, "oauth_client") {
+		return true
+	}
+	if base == "config.toml" {
+		return true
+	}
+	switch path.Ext(base) {
+	case ".pem", ".key":
+		return true
+	}
+	return false
 }
 
 func readImmutableAssets(assets fs.FS) map[string]struct{} {

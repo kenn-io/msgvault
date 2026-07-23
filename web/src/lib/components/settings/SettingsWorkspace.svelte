@@ -92,10 +92,12 @@
 
   async function saveSettings() {
     const updates: SettingUpdate[] = [
-      ...Object.entries(drafts).map(([key, value]) => ({
-        key,
-        value: typedValue(settings.find((setting) => setting.key === key), value)
-      })),
+      ...Object.entries(drafts)
+        .filter(([key]) => !settings.find((setting) => setting.key === key)?.read_only)
+        .map(([key, value]) => ({
+          key,
+          value: typedValue(settings.find((setting) => setting.key === key), value)
+        })),
       ...Object.entries(secretUpdates).map(([key, secret]) => ({ key, secret }))
     ];
     if (updates.length === 0) return;
@@ -208,7 +210,12 @@
                 {#if setting.restart_required}<small>Restart required</small>{/if}
               </div>
 
-              {#if setting.kind === 'secret'}
+              {#if setting.read_only}
+                <div class="readonly-control">
+                  <span>{stringValue(setting) || 'Not set'}</span>
+                  <small>Set via config.toml on the daemon host.</small>
+                </div>
+              {:else if setting.kind === 'secret'}
                 <div class="secret-control">
                   <span>{setting.secret?.configured ? 'Set' : 'Not set'}</span>
                   <label>
@@ -304,6 +311,8 @@
   .field-copy span, small { color: var(--text-muted); }
   input:not([type='checkbox']), select { width: 100%; min-height: 2.25rem; }
   .secret-control { display: grid; gap: 0.5rem; }
+  .readonly-control { display: grid; gap: 0.25rem; }
+  .readonly-control small { color: var(--text-muted); }
   .warning, .pending { padding: 0.75rem 1rem; border-left: 0.25rem solid var(--status-warning-ink); background: var(--status-warning-bg); color: var(--status-warning-ink); }
   .error { padding: 0.75rem 1rem; border-left: 0.25rem solid var(--status-error-ink); background: var(--status-error-bg); color: var(--status-error-ink); }
   .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }

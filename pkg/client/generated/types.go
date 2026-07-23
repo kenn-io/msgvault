@@ -3295,6 +3295,7 @@ type Setting struct {
 	Key             string              `json:"key" validate:"required"`
 	Kind            SettingKind         `json:"kind" validate:"required"`
 	Options         []string            `json:"options,omitempty"`
+	ReadOnly        *bool               `json:"read_only,omitempty"`
 	RestartRequired bool                `json:"restart_required"`
 	Secret          *SecretSettingState `json:"secret,omitempty"`
 	Testable        *bool               `json:"testable,omitempty"`

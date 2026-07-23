@@ -3446,6 +3446,8 @@ components:
             type: string
           nullable: true
           type: array
+        read_only:
+          type: boolean
         restart_required:
           type: boolean
         secret:
@@ -4259,7 +4261,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 1.27.0
+  version: 1.28.0
 openapi: 3.0.3
 paths:
   /api/ping:

@@ -3220,6 +3220,7 @@ export interface components {
             /** @enum {string} */
             kind: "string" | "integer" | "number" | "boolean" | "string_array" | "secret";
             options?: string[] | null;
+            read_only?: boolean;
             restart_required: boolean;
             secret?: components["schemas"]["SecretSettingState"];
             testable?: boolean;

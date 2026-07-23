@@ -44,6 +44,7 @@ func TestGetSettingsUsesAllowlistETagAndSecretStates(t *testing.T) {
 	assert.NotContains(byKey, "unsupported.private_value")
 	for _, setting := range body.Settings {
 		assert.True(setting.RestartRequired, setting.Key)
+		assert.Equal(setting.Key == "vector.embeddings.api_key_env", setting.ReadOnly, setting.Key)
 	}
 	assert.NotContains(resp.Body.String(), "test-api-key")
 	assert.NotContains(resp.Body.String(), "task-secret")
@@ -305,6 +306,25 @@ func TestPatchSettingsClearsEmbeddingsAPIKeyEnvWhenEndpointOriginChanges(t *test
 	assert.Empty(*byKey["vector.embeddings.api_key_env"].Value.String)
 }
 
+func TestPatchSettingsEditableChangeSucceedsWhileReadOnlySettingIsConfigured(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	srv, path := newSettingsTestServer(t, "[web]\ntheme = \"system\"\n"+
+		"[vector.embeddings]\napi_key_env = \"MSGVAULT_EMBED_API_KEY\"\n")
+
+	resp := patchSettings(t, srv, `{"updates":[{"key":"web.theme","value":{"string":"dark"}}]}`)
+	require.Equal(http.StatusOK, resp.Code, resp.Body.String())
+
+	got, err := os.ReadFile(path)
+	require.NoError(err)
+	assert.Contains(string(got), "theme = \"dark\"")
+	assert.Contains(string(got), "api_key_env = \"MSGVAULT_EMBED_API_KEY\"")
+
+	var body SettingsResponse
+	require.NoError(json.Unmarshal(resp.Body.Bytes(), &body))
+	assert.True(settingsByKey(body.Settings)["vector.embeddings.api_key_env"].ReadOnly)
+}
+
 func TestPatchSettingsRejectsEmbeddingsAPIKeyEnvUpdates(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
@@ -443,7 +463,7 @@ func TestSettingsOpenAPIContract(t *testing.T) {
 	for _, status := range []string{"400", "409", "412", "422", "428"} {
 		assert.Contains(patch.Responses, status)
 	}
-	assert.Equal("1.27.0", doc.Info.Version)
+	assert.Equal("1.28.0", doc.Info.Version)
 
 	settingValue := doc.Components.Schemas.Map()["SettingValue"]
 	require.NotNil(settingValue)

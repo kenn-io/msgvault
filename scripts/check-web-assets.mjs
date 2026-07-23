@@ -66,6 +66,30 @@ function rootReference(value, label) {
   return releaseReference(value, 'index.html', label);
 }
 
+// Vite copies web/public into the distribution unchanged and the embedded
+// tree is served without authentication, so hidden files and credential-style
+// filenames must never reach the release output. Only Vite's own manifest is
+// allowed to live under a dot-prefixed directory.
+const allowedHiddenPaths = new Set(['.vite/manifest.json']);
+
+function assertServableName(logicalPath, label) {
+  if (allowedHiddenPaths.has(logicalPath)) return;
+  for (const segment of logicalPath.split('/')) {
+    if (segment.startsWith('.')) {
+      throw new Error(`${label} is a hidden file or directory: ${logicalPath}`);
+    }
+  }
+  const base = posix.basename(logicalPath).toLowerCase();
+  if (
+    base.includes('client_secret') ||
+    base.includes('oauth_client') ||
+    base === 'config.toml' ||
+    /\.(?:pem|key)$/.test(base)
+  ) {
+    throw new Error(`${label} matches a credential filename pattern: ${logicalPath}`);
+  }
+}
+
 function assertImmutableName(logicalPath) {
   if (!logicalPath.startsWith('assets/')) return;
   if (!/-[A-Za-z0-9_-]{8}(?:\.[A-Za-z0-9]+)+$/.test(posix.basename(logicalPath))) {
@@ -179,6 +203,9 @@ export function validateWebAssets(options = {}) {
     throw new Error(`release web output is incomplete under ${dist}; run 'make web-build'`);
   }
 
+  const distFiles = distributionFiles(dist);
+  for (const file of distFiles) assertServableName(file, 'release output');
+
   const JSDOM = loadHTMLParser();
   const parsers = loadAssetParsers();
   const document = new JSDOM(readFileSync(indexPath, 'utf8')).window.document;
@@ -189,6 +216,7 @@ export function validateWebAssets(options = {}) {
     if (!allowSourceMaps && /\.map$/i.test(logicalPath)) {
       throw new Error(`source map is present in release graph: ${logicalPath}`);
     }
+    assertServableName(logicalPath, label);
     assertImmutableName(logicalPath);
     if (!references.has(logicalPath)) {
       references.add(logicalPath);
@@ -218,10 +246,18 @@ export function validateWebAssets(options = {}) {
   }
   files.sort((left, right) => left.path.localeCompare(right.path));
   const recorded = new Set(files.map((file) => file.path));
-  const untracked = distributionFiles(dist).filter((file) => !recorded.has(file));
+  const untracked = distFiles.filter((file) => !recorded.has(file));
   if (untracked.length > 0) throw new Error(`untracked release asset: ${untracked.join(', ')}`);
 
   if (options.checkEmbedded !== false) {
+    // The embedded tree ships in the binary and is served unauthenticated, so
+    // it may contain only the release graph plus the compilation stub.
+    const embeddedFiles = distributionFiles(embedded).filter((file) => file !== 'stub.html');
+    for (const file of embeddedFiles) assertServableName(file, 'embedded asset');
+    const untrackedEmbedded = embeddedFiles.filter((file) => !recorded.has(file));
+    if (untrackedEmbedded.length > 0) {
+      throw new Error(`untracked embedded asset: ${untrackedEmbedded.join(', ')}`);
+    }
     for (const file of files) {
       const embeddedPath = resolve(embedded, file.path);
       if (!existsSync(embeddedPath) || !lstatSync(embeddedPath).isFile()) {

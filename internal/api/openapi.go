@@ -120,7 +120,14 @@ import (
 // (minor bump): typical threads still inline every body, and existing
 // callers that ignore the flag see empty bodies only on threads that would
 // previously have produced unbounded responses.
-const APISchemaVersion = "1.27.0"
+// 1.28.0 adds the additive read_only field to Setting: settings marked
+// read_only (currently vector.embeddings.api_key_env) are visible over HTTP
+// but can only be changed by editing config.toml on the daemon host, and
+// PATCH /api/v1/settings continues to reject updates to them. Clients use
+// the flag to render such settings as non-editable and exclude them from
+// atomic updates. Additive (minor bump): existing callers that ignore the
+// field see no behavior change.
+const APISchemaVersion = "1.28.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.

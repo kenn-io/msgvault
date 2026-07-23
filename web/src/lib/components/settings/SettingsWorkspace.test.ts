@@ -9,6 +9,7 @@ const initialSettings = {
     setting('web.theme', 'system', { options: ['system', 'light', 'dark'] }),
     setting('server.api_key', undefined, { kind: 'secret', secret: { configured: true } }),
     setting('vector.embeddings.endpoint', 'http://127.0.0.1:11434', { testable: true }),
+    setting('vector.embeddings.api_key_env', 'MSGVAULT_EMBED_API_KEY', { read_only: true }),
     setting('integrations.tasks.api_key', undefined, {
       kind: 'secret',
       secret: { configured: false }
@@ -113,6 +114,27 @@ describe('SettingsWorkspace', () => {
         }
       ],
       confirm_api_key_restart: true
+    });
+  });
+
+  it('renders read-only settings without an input and excludes them from saves', async () => {
+    const fetchFn = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(settingsResponse(initialSettings, '"etag-a"'))
+      .mockResolvedValueOnce(settingsResponse({ ...initialSettings, pending_restart: true }, '"etag-b"'));
+    render(SettingsWorkspace, { client: createAPIClient(fetchFn) });
+
+    expect(await screen.findByText('MSGVAULT_EMBED_API_KEY')).toBeDefined();
+    expect(screen.getByText('Set via config.toml on the daemon host.')).toBeDefined();
+    expect(screen.queryByLabelText('Embedding key environment variable')).toBeNull();
+
+    await fireEvent.change(screen.getByLabelText('Theme'), { target: { value: 'dark' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Save settings' }));
+    await waitFor(() => expect(fetchFn).toHaveBeenCalledTimes(2));
+    const request = fetchFn.mock.calls[1]?.[0] as Request;
+    await expect(request.clone().json()).resolves.toEqual({
+      updates: [{ key: 'web.theme', value: { string: 'dark' } }],
+      confirm_api_key_restart: false
     });
   });
 

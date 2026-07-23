@@ -274,6 +274,51 @@ func TestWebHandlerDoesNotExposeViteManifest(t *testing.T) {
 	assert.NotContains(t, recorder.Body.String(), "DV9xHoWC")
 }
 
+func TestWebHandlerRefusesHiddenAndCredentialAssets(t *testing.T) {
+	const secretMarker = "SYNTHETIC-SECRET-BYTES"
+	assets := fstest.MapFS{
+		"index.html":               {Data: []byte(testIndex)},
+		".vite/manifest.json":      {Data: []byte(testViteManifest)},
+		"assets/index-DV9xHoWC.js": {Data: []byte(`console.log("bundle")`)},
+		".env":                     {Data: []byte(secretMarker)},
+		".credentials/token.json":  {Data: []byte(secretMarker)},
+		"client_secret_web.json":   {Data: []byte(secretMarker)},
+		"oauth_client_prod.json":   {Data: []byte(secretMarker)},
+		"assets/server.pem":        {Data: []byte(secretMarker)},
+		"assets/private.key":       {Data: []byte(secretMarker)},
+		"config.toml":              {Data: []byte(secretMarker)},
+	}
+	handler := NewHandler(assets, jsonNotFoundHandler())
+
+	for _, path := range []string{
+		"/.env",
+		"/.credentials/token.json",
+		"/client_secret_web.json",
+		"/oauth_client_prod.json",
+		"/assets/server.pem",
+		"/assets/private.key",
+		"/config.toml",
+	} {
+		t.Run(path, func(t *testing.T) {
+			assert := assert.New(t)
+			recorder := httptest.NewRecorder()
+			handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, path, nil))
+
+			assert.Equal(http.StatusNotFound, recorder.Code)
+			assert.Equal("application/json", recorder.Header().Get("Content-Type"))
+			assert.NotContains(recorder.Body.String(), secretMarker)
+		})
+	}
+
+	t.Run("legitimate asset still served", func(t *testing.T) {
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/assets/index-DV9xHoWC.js", nil))
+
+		assert.Equal(t, http.StatusOK, recorder.Code)
+		assert.Equal(t, `console.log("bundle")`, recorder.Body.String())
+	})
+}
+
 func TestWebHandlerDelegatesWhenEmbeddedIndexIsAbsent(t *testing.T) {
 	handler := NewHandler(fstest.MapFS{
 		"stub.html": &fstest.MapFile{Data: []byte("ok\n")},
