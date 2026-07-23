@@ -967,6 +967,12 @@ func (s *Server) resolveExploreSearch(ctx context.Context, w http.ResponseWriter
 		writeError(w, http.StatusBadRequest, "invalid_filter", err.Error())
 		return query.SearchSpec{}, "", false
 	}
+	// Candidate resolution must cover the same population the analytical
+	// deletion filter selects: with the historical hard-coded active-only
+	// scope, deletion:deleted full-text searches always intersected to
+	// empty and unrestricted searches silently omitted source-deleted
+	// messages the FTS index does contain.
+	parsed.DeletionScope = lexicalDeletionScope(filters.Deletion)
 	matchable := applyLexicalFilterPushdown(parsed, filters)
 	candidateCap := s.lexicalCandidateCap
 	if candidateCap <= 0 {
@@ -1154,9 +1160,14 @@ func (s *Server) resolveExploreVectorSearch(ctx context.Context, w http.Response
 		// Filters ride along so the lexical membership and its saturation
 		// flag describe the filtered population; an unfiltered branch could
 		// wrongly mark a narrow filtered result as saturated and block
-		// groups, files, and preflight.
+		// groups, files, and preflight. The deletion dimension is pinned to
+		// active: applySemanticDeletionScope narrows the hybrid analytical
+		// context to active-only, so the lexical branch must resolve the
+		// same population instead of the requested (possibly unrestricted)
+		// scope. deletion:deleted never reaches here — it was rejected above.
 		lexicalSpec, _, ok = s.resolveExploreSearch(ctx, w, ExploreHTTPRequest{
-			Query: request.Query, SearchMode: exploreSearchModeFullText, Filters: request.Filters,
+			Query: request.Query, SearchMode: exploreSearchModeFullText,
+			Filters: withActiveDeletionFilter(request.Filters),
 		})
 		if !ok {
 			return query.SearchSpec{}, "", false
@@ -1315,6 +1326,41 @@ func applySemanticDeletionScope(searchMode string, context *query.Context) strin
 	}
 	context.Deletion = query.DeletionActive
 	return string(query.DeletionActive)
+}
+
+// withActiveDeletionFilter returns the filters with the deletion dimension
+// replaced by (or set to) deletion:active. The hybrid lexical branch uses it
+// so the lexical candidate population matches the active-only analytical
+// context that applySemanticDeletionScope declares.
+func withActiveDeletionFilter(filters []ExploreFilter) []ExploreFilter {
+	result := make([]ExploreFilter, 0, len(filters)+1)
+	for _, filter := range filters {
+		if filter.Dimension != "deletion" {
+			result = append(result, filter)
+		}
+	}
+	return append(result, ExploreFilter{
+		Dimension: "deletion", Values: []string{string(query.DeletionActive)},
+	})
+}
+
+// lexicalDeletionScope maps the analytical deletion filter onto the scope
+// the store's lexical candidate resolver applies, so full-text candidates
+// cover exactly the population the DuckDB deletion filter selects. Note the
+// differing zero values: an absent deletion filter is unrestricted
+// (query.DeletionAny == ""), while the search zero value is active-only.
+func lexicalDeletionScope(deletion query.DeletionFilter) search.DeletionScope {
+	switch deletion {
+	case query.DeletionDeleted:
+		return search.DeletionScopeDeleted
+	case query.DeletionAny:
+		return search.DeletionScopeAny
+	case query.DeletionActive:
+		return search.DeletionScopeActive
+	}
+	// exploreContext rejects unknown deletion values before resolution;
+	// fail closed to the narrowest population if one ever slips through.
+	return search.DeletionScopeActive
 }
 
 func exploreSnapshotRequestHash(request ExploreHTTPRequest) string {

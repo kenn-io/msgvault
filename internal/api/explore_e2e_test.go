@@ -370,7 +370,24 @@ func (e *rawExploreEngine) GetMessageRaw(_ context.Context, id int64) ([]byte, e
 	return nil, nil
 }
 
+// exploreFixtureDefaultMessages is the standard messages table for the
+// explore DuckDB fixture: two live messages in source 1 and one in source 2.
+const exploreFixtureDefaultMessages = `(1::BIGINT, 1::BIGINT, 'm1', 101::BIGINT, 'Older', 'alpha match', TIMESTAMP '2026-07-18 10:00:00', 100::BIGINT, true, 1::INTEGER, NULL::TIMESTAMP, NULL::BIGINT, 'email', 2026, 7),
+	(2::BIGINT, 1::BIGINT, 'm2', 102::BIGINT, 'Newest', 'alpha beta', TIMESTAMP '2026-07-18 11:00:00', 200::BIGINT, true, 1::INTEGER, NULL::TIMESTAMP, NULL::BIGINT, 'email', 2026, 7),
+	(3::BIGINT, 2::BIGINT, 'm3', 103::BIGINT, 'Other source', 'beta', TIMESTAMP '2026-07-18 09:00:00', 300::BIGINT, false, 0::INTEGER, NULL::TIMESTAMP, NULL::BIGINT, 'email', 2026, 7)`
+
 func newExploreDuckDBFixtureWithDir(t *testing.T) (*query.DuckDBEngine, string) {
+	t.Helper()
+	return newExploreDuckDBFixtureWithMessages(t, exploreFixtureDefaultMessages, 3)
+}
+
+// newExploreDuckDBFixtureWithMessages builds the explore Parquet fixture with
+// a caller-supplied messages VALUES list (matching the standard column list
+// below) so tests can vary message rows — e.g. mark one source-deleted —
+// while sharing the surrounding sources/participants/attachments tables.
+func newExploreDuckDBFixtureWithMessages(
+	t *testing.T, messageValues string, lastMessageID int64,
+) (*query.DuckDBEngine, string) {
 	t.Helper()
 	analyticsDir := t.TempDir()
 	db, err := sql.Open("duckdb", "")
@@ -384,9 +401,7 @@ func newExploreDuckDBFixtureWithDir(t *testing.T) (*query.DuckDBEngine, string) 
 		{
 			dir: "messages/year=2026", file: "messages.parquet",
 			columns: "id, source_id, source_message_id, conversation_id, subject, snippet, sent_at, size_estimate, has_attachments, attachment_count, deleted_from_source_at, sender_id, message_type, year, month",
-			values: `(1::BIGINT, 1::BIGINT, 'm1', 101::BIGINT, 'Older', 'alpha match', TIMESTAMP '2026-07-18 10:00:00', 100::BIGINT, true, 1::INTEGER, NULL::TIMESTAMP, NULL::BIGINT, 'email', 2026, 7),
-				(2::BIGINT, 1::BIGINT, 'm2', 102::BIGINT, 'Newest', 'alpha beta', TIMESTAMP '2026-07-18 11:00:00', 200::BIGINT, true, 1::INTEGER, NULL::TIMESTAMP, NULL::BIGINT, 'email', 2026, 7),
-				(3::BIGINT, 2::BIGINT, 'm3', 103::BIGINT, 'Other source', 'beta', TIMESTAMP '2026-07-18 09:00:00', 300::BIGINT, false, 0::INTEGER, NULL::TIMESTAMP, NULL::BIGINT, 'email', 2026, 7)`,
+			values:  messageValues,
 		},
 		{dir: "sources", file: "sources.parquet", columns: "id, account_email, source_type", values: `(1::BIGINT, 'archive-a@example.com', 'gmail'), (2::BIGINT, 'archive-b@example.com', 'imap')`},
 		{dir: "participants", file: "participants.parquet", columns: "id, email_address, domain, display_name, phone_number", values: `(1::BIGINT, 'alice@example.com', 'example.com', 'Alice', ''), (2::BIGINT, 'bob@members.example', 'members.example', 'Bob', '')`},
@@ -414,7 +429,7 @@ func newExploreDuckDBFixtureWithDir(t *testing.T) (*query.DuckDBEngine, string) 
 	fingerprint, err := query.CacheDatasetFingerprint(analyticsDir)
 	require.NoError(t, err)
 	state, err := json.Marshal(query.CacheSyncState{
-		LastMessageID: 3, LastSyncAt: time.Date(2026, 7, 18, 12, 0, 0, 0, time.UTC),
+		LastMessageID: lastMessageID, LastSyncAt: time.Date(2026, 7, 18, 12, 0, 0, 0, time.UTC),
 		SchemaVersion: query.CacheSchemaVersion, PublishedAt: time.Date(2026, 7, 18, 12, 1, 0, 0, time.UTC),
 		DatasetFingerprint: fingerprint,
 	})

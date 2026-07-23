@@ -452,7 +452,23 @@ func (s *Store) searchMessagesQueryImpl(
 	var conditions []string
 	var args []any
 
-	conditions = append(conditions, LiveMessagesWhere("m", true))
+	// The FTS index covers source-deleted messages too: soft deletion only
+	// stamps deleted_from_source_at, leaving the FTS5 row (and the PG
+	// tsvector on the surviving messages row) intact. Honoring the
+	// caller-requested scope here lets the explore lexical resolver search
+	// deleted or unrestricted populations; every caller that leaves the
+	// scope at its zero value keeps the historical active-only behavior.
+	switch q.DeletionScope {
+	case search.DeletionScopeDeleted:
+		conditions = append(conditions, SourceDeletedMessagesWhere("m"))
+	case search.DeletionScopeAny:
+		conditions = append(conditions, LiveMessagesWhere("m", false))
+	case search.DeletionScopeActive:
+		conditions = append(conditions, LiveMessagesWhere("m", true))
+	default:
+		// Unknown scope values fail closed to the narrowest population.
+		conditions = append(conditions, LiveMessagesWhere("m", true))
+	}
 
 	// FTS text terms. ftsEnabled is the authoritative signal that FTS is
 	// active — ftsJoin may be empty on dialects (e.g. PostgreSQL) whose

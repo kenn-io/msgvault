@@ -531,6 +531,29 @@ func TestApplySemanticDeletionScope(t *testing.T) {
 	}
 }
 
+func TestLexicalDeletionScope(t *testing.T) {
+	assertions := assert.New(t)
+	assertions.Equal(search.DeletionScopeAny, lexicalDeletionScope(query.DeletionAny),
+		"an absent deletion filter is unrestricted, not active-only")
+	assertions.Equal(search.DeletionScopeActive, lexicalDeletionScope(query.DeletionActive))
+	assertions.Equal(search.DeletionScopeDeleted, lexicalDeletionScope(query.DeletionDeleted))
+	assertions.Equal(search.DeletionScopeActive, lexicalDeletionScope(query.DeletionFilter("bogus")),
+		"unknown values fail closed to the narrowest population")
+}
+
+func TestWithActiveDeletionFilterPinsHybridLexicalScope(t *testing.T) {
+	pinned := withActiveDeletionFilter([]ExploreFilter{
+		{Dimension: "source", Values: []string{"1"}},
+		{Dimension: "deletion", Values: []string{"any"}},
+	})
+	assert.Equal(t, []ExploreFilter{
+		{Dimension: "source", Values: []string{"1"}},
+		{Dimension: "deletion", Values: []string{"active"}},
+	}, pinned, "an existing deletion filter is replaced, not duplicated")
+	assert.Equal(t, []ExploreFilter{{Dimension: "deletion", Values: []string{"active"}}},
+		withActiveDeletionFilter(nil), "the active pin is added when no deletion filter exists")
+}
+
 func TestExploreSemanticRejectsDeletedOnlyFilter(t *testing.T) {
 	srv := newReviewSemanticServer(t)
 	response := postExploreJSON(t, srv, "/api/v1/explore", `{
