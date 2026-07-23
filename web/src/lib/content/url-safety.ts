@@ -9,11 +9,14 @@
  * are private by address or by reserved/conventional name, so consented
  * image loads may target only public-looking hosts.
  *
- * Residual risk: DNS rebinding — a public hostname whose A/AAAA record
- * points at a private address at fetch time — cannot be detected in the
- * browser; that requires a server-side fetch proxy that validates resolved
- * addresses and redirects, which this archive deliberately does not run.
- * The gate eliminates the direct-addressing class only.
+ * DNS rebinding — a public hostname whose A/AAAA record points at a private
+ * address at fetch time — cannot be detected in the browser. That class is
+ * closed by the daemon's hardened image proxy (GET
+ * /api/v1/content/remote-image): consented remote images are fetched
+ * server-side, where every resolved address and redirect hop is validated
+ * and the connection is pinned to the validated IP. This browser gate
+ * remains as a cheap defense-in-depth pre-filter for the direct-addressing
+ * class, so prohibited URLs are never even offered for consent.
  */
 
 const PROHIBITED_HOST_SUFFIXES = ['localhost', 'local', 'internal', 'home.arpa'];

@@ -17,6 +17,7 @@ import (
 
 	"github.com/BurntSushi/toml"
 	"go.kenn.io/msgvault/internal/fileutil"
+	"go.kenn.io/msgvault/internal/taskclient"
 	"go.kenn.io/msgvault/internal/vector"
 )
 
@@ -109,32 +110,20 @@ func (t *TaskIntegrationConfig) ApplyDefaults() {
 	}
 }
 
+// Validate rejects endpoint shapes the runtime task client would refuse, so a
+// saved configuration cannot silently break task integration after restart.
+// Shape rules live in taskclient.ValidateEndpoint; runtime-only checks
+// (authentication, socket existence and ownership) still happen when the
+// client connects.
 func (t *TaskIntegrationConfig) Validate() error {
 	endpoint := strings.TrimSpace(t.Endpoint)
 	if endpoint == "" {
 		return nil
 	}
-	u, err := url.Parse(endpoint)
-	if err != nil || u.Scheme == "" {
-		return fmt.Errorf("invalid [integrations.tasks] endpoint %q", t.Endpoint)
-	}
-	switch strings.ToLower(u.Scheme) {
-	case "https":
-		if u.Host == "" {
-			return fmt.Errorf("invalid [integrations.tasks] endpoint %q", t.Endpoint)
-		}
-	case "http":
-		host := u.Hostname()
-		ip := net.ParseIP(host)
-		if host != "localhost" && (ip == nil || !ip.IsLoopback()) {
-			return fmt.Errorf("invalid [integrations.tasks] endpoint %q: remote plaintext HTTP is not allowed", t.Endpoint)
-		}
-	case "unix":
-		if u.Path == "" {
-			return fmt.Errorf("invalid [integrations.tasks] endpoint %q", t.Endpoint)
-		}
-	default:
-		return fmt.Errorf("invalid [integrations.tasks] endpoint %q", t.Endpoint)
+	if err := taskclient.ValidateEndpoint(endpoint); err != nil {
+		return fmt.Errorf("invalid [integrations.tasks] endpoint %q: %w "+
+			"(valid forms: https://tasks.example.com, http://localhost:8080, unix:///path/to/socket.sock)",
+			t.Endpoint, err)
 	}
 	return nil
 }

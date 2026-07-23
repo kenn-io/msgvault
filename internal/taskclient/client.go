@@ -124,10 +124,11 @@ type metadataMutation struct {
 
 func New(options ClientOptions) (*Client, error) {
 	endpoint := strings.TrimSpace(options.Endpoint)
-	u, kind, socketPath, err := validateEndpoint(endpoint)
+	parsed, err := parseEndpoint(endpoint)
 	if err != nil {
 		return nil, err
 	}
+	u, kind, socketPath := parsed.url, parsed.kind, parsed.socketPath
 	key := strings.TrimSpace(options.APIKey)
 	if kind == EndpointLoopbackHTTP && key == "" {
 		return nil, ErrAuthenticationRequired
@@ -454,33 +455,70 @@ func readBounded(reader io.Reader, maximum int64) ([]byte, error) {
 	return data, nil
 }
 
-func validateEndpoint(endpoint string) (*url.URL, EndpointKind, string, error) {
+// ValidateEndpoint checks that an endpoint has one of the shapes the runtime
+// client accepts: https://host, loopback http (http://localhost or a loopback
+// IP), or unix:///absolute/socket/path with no host. URLs carrying userinfo, a
+// query string, or a fragment are rejected for every scheme. Runtime-only
+// requirements (API keys, socket existence and ownership) are checked by New,
+// not here, so configuration validation can share this without touching the
+// filesystem or credentials.
+func ValidateEndpoint(endpoint string) error {
+	_, err := parseEndpoint(endpoint)
+	return err
+}
+
+// parsedEndpoint is the shape-validated form of an endpoint: the base URL the
+// client dials, its kind, and (for unix endpoints) the socket path.
+type parsedEndpoint struct {
+	url        *url.URL
+	kind       EndpointKind
+	socketPath string
+}
+
+func parseEndpoint(endpoint string) (parsedEndpoint, error) {
 	if endpoint == "" {
-		return nil, "", "", fmt.Errorf("%w: endpoint is empty", ErrInsecureEndpoint)
+		return parsedEndpoint{}, fmt.Errorf("%w: endpoint is empty", ErrInsecureEndpoint)
 	}
 	u, err := url.Parse(endpoint)
-	if err != nil || u.Scheme == "" || u.User != nil || u.Fragment != "" || u.RawQuery != "" {
-		return nil, "", "", ErrInsecureEndpoint
+	if err != nil || u.Scheme == "" {
+		return parsedEndpoint{}, fmt.Errorf("%w: endpoint must be an absolute URL", ErrInsecureEndpoint)
+	}
+	if u.User != nil {
+		return parsedEndpoint{}, fmt.Errorf("%w: endpoint must not contain userinfo", ErrInsecureEndpoint)
+	}
+	if u.Fragment != "" {
+		return parsedEndpoint{}, fmt.Errorf("%w: endpoint must not contain a fragment", ErrInsecureEndpoint)
+	}
+	if u.RawQuery != "" {
+		return parsedEndpoint{}, fmt.Errorf("%w: endpoint must not contain a query string", ErrInsecureEndpoint)
 	}
 	switch strings.ToLower(u.Scheme) {
 	case "https":
 		if u.Host == "" {
-			return nil, "", "", ErrInsecureEndpoint
+			return parsedEndpoint{}, fmt.Errorf("%w: https endpoint requires a host", ErrInsecureEndpoint)
 		}
-		return u, EndpointHTTPS, "", nil
+		return parsedEndpoint{url: u, kind: EndpointHTTPS}, nil
 	case "http":
 		if u.Host == "" || !isLoopbackHost(u.Hostname()) {
-			return nil, "", "", ErrInsecureEndpoint
+			return parsedEndpoint{}, fmt.Errorf(
+				"%w: remote plaintext HTTP is not allowed; use https:// or a loopback host like http://localhost",
+				ErrInsecureEndpoint)
 		}
-		return u, EndpointLoopbackHTTP, "", nil
+		return parsedEndpoint{url: u, kind: EndpointLoopbackHTTP}, nil
 	case "unix":
 		if u.Host != "" || !strings.HasPrefix(u.Path, "/") {
-			return nil, "", "", ErrInsecureEndpoint
+			return parsedEndpoint{}, fmt.Errorf(
+				"%w: unix endpoint requires an absolute socket path and no host (unix:///path/to/socket.sock)",
+				ErrInsecureEndpoint)
 		}
-		socketPath := u.Path
-		return &url.URL{Scheme: "http", Host: "unix"}, EndpointUnix, socketPath, nil
+		return parsedEndpoint{
+			url:        &url.URL{Scheme: "http", Host: "unix"},
+			kind:       EndpointUnix,
+			socketPath: u.Path,
+		}, nil
 	default:
-		return nil, "", "", ErrInsecureEndpoint
+		return parsedEndpoint{}, fmt.Errorf("%w: unsupported scheme %q (use https, http, or unix)",
+			ErrInsecureEndpoint, u.Scheme)
 	}
 }
 

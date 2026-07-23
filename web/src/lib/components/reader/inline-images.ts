@@ -9,7 +9,9 @@ export const MAX_ARCHIVED_INLINE_IMAGE_CONCURRENCY = 1;
 export const MAX_ARCHIVED_INLINE_IMAGE_OCCURRENCES = 128;
 export const MAX_ARCHIVED_INLINE_IMAGE_SERIALIZED_BYTES = 24 * 1024 * 1024;
 
-const INLINE_IMAGE_TYPES = new Set(['image/gif', 'image/jpeg', 'image/png', 'image/webp']);
+/** Image MIME types the shell will decode into data: URIs — for CID inline
+ * parts and proxied remote images alike. */
+export const ARCHIVED_IMAGE_TYPES = new Set(['image/gif', 'image/jpeg', 'image/png', 'image/webp']);
 
 interface InlineOccurrence {
   alt: string;
@@ -24,8 +26,14 @@ interface InlineGroup {
   dataURL?: string;
 }
 
-interface DecodedByteBudget {
+export interface DecodedByteBudget {
   used: number;
+}
+
+/** Per-image and cumulative decoded-byte caps for one bounded stream read. */
+export interface DecodedByteLimits {
+  imageBytes: number;
+  totalBytes: number;
 }
 
 interface InlineImagePublicationLimits {
@@ -33,11 +41,11 @@ interface InlineImagePublicationLimits {
   dataURLBytes?: number;
 }
 
-function abortError(): DOMException {
+export function abortError(): DOMException {
   return new DOMException('Aborted', 'AbortError');
 }
 
-function throwIfAborted(signal: AbortSignal): void {
+export function throwIfAborted(signal: AbortSignal): void {
   if (signal.aborted) throw abortError();
 }
 
@@ -57,7 +65,7 @@ function unavailableInlineImage(alt: string): HTMLElement {
   return imagePlaceholderBlock(document, `Inline image unavailable${alt ? `: ${alt}` : ''}`);
 }
 
-function bytesToDataURL(bytes: Uint8Array, mimeType: string): string {
+export function bytesToDataURL(bytes: Uint8Array, mimeType: string): string {
   let binary = '';
   const chunkSize = 0x8000;
   for (let offset = 0; offset < bytes.length; offset += chunkSize) {
@@ -66,10 +74,11 @@ function bytesToDataURL(bytes: Uint8Array, mimeType: string): string {
   return `data:${mimeType};base64,${btoa(binary)}`;
 }
 
-async function readBoundedStream(
+export async function readBoundedStream(
   stream: ReadableStream<Uint8Array>,
   budget: DecodedByteBudget,
-  signal: AbortSignal
+  signal: AbortSignal,
+  limits: DecodedByteLimits
 ): Promise<Uint8Array> {
   const reader = stream.getReader();
   const chunks: Uint8Array[] = [];
@@ -88,9 +97,9 @@ async function readBoundedStream(
       if (done) break;
       const nextImageTotal = total + value.byteLength;
       const nextAggregateTotal = budget.used + value.byteLength;
-      if (nextImageTotal > MAX_ARCHIVED_INLINE_IMAGE_BYTES ||
-        nextAggregateTotal > MAX_ARCHIVED_INLINE_IMAGE_TOTAL_BYTES) {
-        budget.used = Math.min(MAX_ARCHIVED_INLINE_IMAGE_TOTAL_BYTES, nextAggregateTotal);
+      if (nextImageTotal > limits.imageBytes ||
+        nextAggregateTotal > limits.totalBytes) {
+        budget.used = Math.min(limits.totalBytes, nextAggregateTotal);
         await reader.cancel();
         throw new Error('Inline image exceeds decoded byte budget');
       }
@@ -130,7 +139,7 @@ async function fetchInlineImage(
   }
   if (!response.ok || !(data instanceof ReadableStream)) throw new Error('Inline image unavailable');
   const mimeType = (response.headers.get('Content-Type') ?? '').split(';', 1)[0]!.trim().toLowerCase();
-  if (!INLINE_IMAGE_TYPES.has(mimeType)) {
+  if (!ARCHIVED_IMAGE_TYPES.has(mimeType)) {
     await data.cancel();
     throw new Error('Inline image type is not permitted');
   }
@@ -144,7 +153,10 @@ async function fetchInlineImage(
       throw new Error('Inline image exceeds decoded byte budget');
     }
   }
-  const bytes = await readBoundedStream(data, budget, signal);
+  const bytes = await readBoundedStream(data, budget, signal, {
+    imageBytes: MAX_ARCHIVED_INLINE_IMAGE_BYTES,
+    totalBytes: MAX_ARCHIVED_INLINE_IMAGE_TOTAL_BYTES
+  });
   throwIfAborted(signal);
   return { bytes, mimeType };
 }

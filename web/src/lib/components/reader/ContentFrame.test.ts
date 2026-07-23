@@ -200,8 +200,12 @@ describe('ContentFrame', () => {
   });
 
   it('keeps remote image consent as one quiet inline notice and rebuilds only after consent', async () => {
+    const fetchFn = vi.fn<typeof fetch>(async () => new Response(onePixelPNG, {
+      headers: { 'Content-Type': 'image/png' }
+    }));
     const { container } = render(ContentFrame, {
       props: {
+        client: createAPIClient(fetchFn),
         messageId: 42,
         html: '<img src="https://images.example/chart.png" alt="Chart">',
         title: 'Archived message'
@@ -215,21 +219,57 @@ describe('ContentFrame', () => {
       expect(srcdoc).toContain('Chart');
       expect(srcdoc).not.toContain('images.example');
     });
+    // Nothing is fetched before consent — not even through the proxy.
+    expect(fetchFn).not.toHaveBeenCalled();
     await fireEvent.load(container.querySelector('iframe')!);
 
     await fireEvent.click(consent);
 
-    await waitFor(() =>
-      expect(container.querySelector('iframe')?.getAttribute('srcdoc')).toContain(
-        'https://images.example/chart.png'
-      )
-    );
+    // Consent fetches through the daemon proxy in the authenticated shell
+    // and embeds the returned bytes; the sender URL never enters the frame.
+    await waitFor(() => {
+      const srcdoc = container.querySelector('iframe')?.getAttribute('srcdoc') ?? '';
+      expect(srcdoc).toContain('src="data:image/png;base64,');
+      expect(srcdoc).not.toContain('images.example');
+    });
+    expect(fetchFn).toHaveBeenCalledOnce();
+    const request = fetchFn.mock.calls[0]?.[0] as Request;
+    expect(new URL(request.url).pathname).toBe('/api/v1/content/remote-image');
+    expect(new URL(request.url).searchParams.get('url')).toBe('https://images.example/chart.png');
     expect(screen.queryByRole('button', { name: /remote image/ })).toBeNull();
   });
 
-  it('detaches the consent-superseded frame before the newly capable document renders', async () => {
+  it('degrades a failed proxy fetch to the unavailable placeholder after consent', async () => {
+    const fetchFn = vi.fn<typeof fetch>(async () =>
+      new Response('{"error":"bad_gateway"}', { status: 502 }));
     const { container } = render(ContentFrame, {
       props: {
+        client: createAPIClient(fetchFn),
+        messageId: 42,
+        html: '<img src="https://images.example/chart.png" alt="Chart">',
+        title: 'Archived message'
+      }
+    });
+    const consent = await screen.findByRole('button', { name: 'Load 1 remote image' });
+    await waitFor(() => expect(container.querySelector('iframe')).not.toBeNull());
+    await fireEvent.load(container.querySelector('iframe')!);
+
+    await fireEvent.click(consent);
+
+    await waitFor(() => {
+      const srcdoc = container.querySelector('iframe')?.getAttribute('srcdoc') ?? '';
+      expect(srcdoc).toContain('Remote image unavailable: Chart');
+      expect(srcdoc).not.toContain('images.example');
+    });
+  });
+
+  it('detaches the consent-superseded frame before the newly capable document renders', async () => {
+    const fetchFn = vi.fn<typeof fetch>(async () => new Response(onePixelPNG, {
+      headers: { 'Content-Type': 'image/png' }
+    }));
+    const { container } = render(ContentFrame, {
+      props: {
+        client: createAPIClient(fetchFn),
         messageId: 42,
         html: '<p>Words</p><img src="https://images.example/chart.png" alt="Chart">',
         title: 'Archived message'
@@ -244,7 +284,7 @@ describe('ContentFrame', () => {
     expect(container.querySelector('iframe')).toBeNull();
     expect(priorFrame?.isConnected).toBe(false);
     await waitFor(() =>
-      expect(container.querySelector('iframe')?.getAttribute('srcdoc')).toContain('images.example')
+      expect(container.querySelector('iframe')?.getAttribute('srcdoc')).toContain('data:image/png;base64,')
     );
   });
 

@@ -10,6 +10,7 @@
     createFrameNonce
   } from './ContentFrame.browser.svelte';
   import { resolveArchivedInlineImages } from './inline-images';
+  import { resolveArchivedRemoteImages } from './remote-images';
 
   let {
     client = undefined,
@@ -71,10 +72,7 @@
     untrack(invalidateDocument);
     const generation = documentGeneration;
     const buildNonce = createFrameNonce();
-    const sanitized = sanitizeArchivedHTML(currentHTML, {
-      messageId: currentMessageID,
-      allowRemoteImages
-    });
+    const sanitized = sanitizeArchivedHTML(currentHTML, { messageId: currentMessageID });
     remoteImageCount = sanitized.remoteImages.length;
     const mode = sanitized.designed ? 'canvas' as const : 'themed' as const;
     inlineController = new AbortController();
@@ -85,11 +83,21 @@
       client: currentClient,
       messageId: currentMessageID,
       signal
-    }).then((resolvedHTML) => buildFrameDocument({
+    }).then((resolvedHTML) => allowRemoteImages
+      // Consent routes every approved remote URL through the daemon's
+      // hardened proxy in the authenticated shell; the frame itself only
+      // ever receives data: images and its CSP allows no remote origin.
+      ? resolveArchivedRemoteImages({
+          html: resolvedHTML,
+          remoteImages: sanitized.remoteImages,
+          client: currentClient,
+          signal
+        })
+      : resolvedHTML
+    ).then((resolvedHTML) => buildFrameDocument({
       html: resolvedHTML,
       nonce: buildNonce,
       targetOrigin: window.location.origin,
-      remoteImages: allowRemoteImages ? sanitized.remoteImages : [],
       appearance: { mode, colorScheme: currentScheme }
     })).then((document) => {
       if (generation !== documentGeneration || signal.aborted) return;

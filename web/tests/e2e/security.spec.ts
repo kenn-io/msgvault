@@ -11,6 +11,7 @@ const secureRow = {
 
 test('sanitized archived HTML requires remote-image consent and rejects forged frame messages', async ({ page }) => {
   const remoteRequests: string[] = [];
+  const proxiedURLs: Array<string | null> = [];
   await page.route('**/api/session', (route) => route.fulfill({ json: {
     auth_mode: 'session', csrf_token: 'csrf', https: true, plain_http_warning: false
   } }));
@@ -30,6 +31,10 @@ test('sanitized archived HTML requires remote-image consent and rejects forged f
   });
   await page.route('https://images.example/**', (route) => {
     remoteRequests.push(route.request().url());
+    return route.abort();
+  });
+  await page.route('**/api/v1/content/remote-image**', (route) => {
+    proxiedURLs.push(new URL(route.request().url()).searchParams.get('url'));
     return route.fulfill({ contentType: 'image/png', body: Buffer.from(
       'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', 'base64') });
   });
@@ -78,10 +83,14 @@ test('sanitized archived HTML requires remote-image consent and rejects forged f
   }, '*'), nonce);
   await expect(thread).toBeFocused();
 
-  // Remote images stay blocked behind one quiet inline notice.
+  // Remote images stay blocked behind one quiet inline notice. Consent
+  // fetches through the daemon's SSRF-hardened proxy only — the browser
+  // never contacts the sender host, before or after consent.
   await expect(page.getByText('1 remote image is not loaded.')).toBeVisible();
   await page.getByRole('button', { name: 'Load 1 remote image' }).click();
-  await expect.poll(() => remoteRequests).toHaveLength(1);
+  await expect.poll(() => proxiedURLs).toHaveLength(1);
+  expect(proxiedURLs).toEqual(['https://images.example/remote.png']);
+  expect(remoteRequests).toEqual([]);
   await expect(page.getByText('1 remote image is not loaded.')).toBeHidden();
 });
 

@@ -318,6 +318,19 @@ func (s *Server) registerHumaRoutes(api huma.API, apiV1 huma.API) {
 		http.StatusNotImplemented,
 		http.StatusServiceUnavailable,
 	)
+	registerAPIV1RawHumaBinaryRoute(
+		apiV1,
+		"getRemoteImage",
+		http.MethodGet,
+		"/content/remote-image",
+		"Fetch a consented remote mail image through the SSRF-hardened daemon proxy",
+		"image/*",
+		s.handleRemoteImage,
+		http.StatusBadRequest,
+		http.StatusUnauthorized,
+		http.StatusUnsupportedMediaType,
+		http.StatusBadGateway,
+	)
 	registerAPIV1RawHumaJSONOneOfRoute(apiV1, "searchMessages", http.MethodGet, "/search", "Search messages", s.handleSearch, reflect.TypeFor[SearchResult](), reflect.TypeFor[hybridSearchResponse]())
 
 	registerAPIV1RawHumaJSONRouteWithRequest[QueryRequest, query.QueryResult](apiV1, "runQuery", http.MethodPost, "/query", "Run an aggregate query", s.handleQuery)
@@ -552,6 +565,10 @@ func rawRouteParameters(operationID string) []*huma.Param {
 		return []*huma.Param{
 			pathIntegerParam("Message ID"),
 			queryStringParam("cid", "Inline MIME Content-ID", true),
+		}
+	case "getRemoteImage":
+		return []*huma.Param{
+			queryStringParam("url", "Absolute http(s) URL of the consented remote image", true),
 		}
 	case "searchMessages":
 		return append([]*huma.Param{

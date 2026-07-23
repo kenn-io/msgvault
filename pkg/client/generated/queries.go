@@ -240,6 +240,15 @@ func (v VerifyCLIQuery) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(v))
 }
 
+type GetRemoteImageQuery struct {
+	// URL Absolute http(s) URL of the consented remote image
+	URL string `json:"url" validate:"required"`
+}
+
+func (g GetRemoteImageQuery) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(g))
+}
+
 type GetConversationQuery struct {
 	// Anchor Selected message ID anchoring the chronological window
 	Anchor int64 `json:"anchor"`

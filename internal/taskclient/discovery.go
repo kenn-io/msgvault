@@ -74,10 +74,11 @@ func Discover(_ context.Context, options DiscoveryOptions) (*Client, error) {
 	}
 
 	apiKey := strings.TrimSpace(options.APIKey)
-	_, kind, _, err := validateEndpoint(strings.TrimSpace(value.Endpoint))
+	parsed, err := parseEndpoint(strings.TrimSpace(value.Endpoint))
 	if err != nil {
 		return nil, err
 	}
+	kind := parsed.kind
 	if kind == EndpointLoopbackHTTP && apiKey == "" && value.TokenFile != "" {
 		if !filepath.IsAbs(value.TokenFile) {
 			return nil, fmt.Errorf("%w: token file must be absolute", ErrInsecureDescriptor)

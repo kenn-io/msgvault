@@ -5,7 +5,6 @@ import { prohibitedRemoteHost } from './url-safety';
 
 export interface ArchivedHTMLSanitizeOptions {
   messageId: number;
-  allowRemoteImages?: boolean;
 }
 
 export interface SanitizedArchivedHTML {
@@ -142,9 +141,11 @@ function classifyRemoteImageSource(value: string): RemoteImageSource {
     if (url.username || url.password) return { kind: 'invalid' };
     // Private destinations (loopback/RFC 1918/link-local addresses, reserved
     // names) are prohibited outright — a consented image load must never
-    // reach services on the reader's own machine or network. DNS rebinding
-    // (a public name resolving to a private address at fetch time) cannot be
-    // validated in the browser; see url-safety.ts for the residual risk.
+    // reach services on the reader's own machine or network. This gate is a
+    // cheap pre-filter: consented loads go through the daemon's hardened
+    // image proxy, which re-validates the hostname, every resolved address,
+    // and every redirect hop server-side (closing DNS rebinding, which the
+    // browser cannot detect); see url-safety.ts.
     if (prohibitedRemoteHost(url.hostname)) return { kind: 'private' };
     url.hash = '';
     return { kind: 'public', url: url.toString() };
@@ -169,6 +170,7 @@ export function imagePlaceholderBlock(document: Document, caption: string): HTML
 function blockedImage(document: Document, alt: string, index: number): HTMLElement {
   const placeholder = imagePlaceholderBlock(document, alt || 'Remote image');
   placeholder.setAttribute('data-archived-remote-image', String(index));
+  placeholder.setAttribute('data-archived-remote-alt', alt);
   placeholder.setAttribute('title', `Remote image not loaded${alt ? `: ${alt}` : ''}`);
   return placeholder;
 }
@@ -182,8 +184,9 @@ function inlineImagePlaceholder(document: Document, alt: string, index: number):
 
 /**
  * Sanitizes sender-controlled archived HTML before it is put into srcdoc.
- * Remote URLs are returned to the shell separately and never retained in the
- * archived DOM until the user explicitly opts in.
+ * Remote URLs are returned to the shell separately and are never retained in
+ * the archived DOM: after explicit consent the shell fetches them through
+ * the daemon's hardened image proxy and injects data: images instead.
  */
 export function sanitizeArchivedHTML(
   input: string,
@@ -236,9 +239,12 @@ export function sanitizeArchivedHTML(
     if (SAFE_DATA_IMAGE.test(source)) continue;
     const remote = classifyRemoteImageSource(source);
     if (remote.kind === 'public') {
+      // Public remote images always become indexed placeholders — the
+      // sanitized DOM never carries a sender URL. On consent the shell
+      // fetches each URL through the daemon's hardened proxy and swaps the
+      // placeholder for a data: image (see reader/remote-images.ts).
       const index = remoteImages.push(remote.url) - 1;
-      if (options.allowRemoteImages) element.setAttribute('src', remote.url);
-      else element.replaceWith(blockedImage(document, element.getAttribute('alt') ?? '', index));
+      element.replaceWith(blockedImage(document, element.getAttribute('alt') ?? '', index));
       continue;
     }
     if (remote.kind === 'private') {

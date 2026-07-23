@@ -142,12 +142,54 @@ func TestWebConfigRejectsInvalidValues(t *testing.T) {
 	}
 }
 
-func TestTaskIntegrationRejectsRemotePlaintextEndpoint(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "config.toml")
-	require.NoError(t, os.WriteFile(path, []byte("[integrations.tasks]\nendpoint = \"http://tasks.example.com\"\n"), 0o600))
-	_, err := Load(path, "")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "remote plaintext HTTP is not allowed")
+func TestTaskIntegrationEndpointShapes(t *testing.T) {
+	tests := []struct {
+		name     string
+		endpoint string
+		wantErr  string // empty means the endpoint must be accepted
+	}{
+		{name: "https", endpoint: "https://tasks.example.com"},
+		{name: "https with port and path", endpoint: "https://tasks.example.com:8443/api"},
+		{name: "http localhost", endpoint: "http://localhost:8080"},
+		{name: "http loopback ip", endpoint: "http://127.0.0.1:8080"},
+		{name: "unix absolute path", endpoint: "unix:///tmp/tasks.sock"},
+		{name: "empty disables integration", endpoint: ""},
+		{name: "userinfo", endpoint: "https://user:pass@tasks.example.com",
+			wantErr: "must not contain userinfo"},
+		{name: "query string", endpoint: "https://tasks.example.com/api?tenant=1",
+			wantErr: "must not contain a query string"},
+		{name: "fragment", endpoint: "https://tasks.example.com/api#section",
+			wantErr: "must not contain a fragment"},
+		{name: "unix with host", endpoint: "unix://somehost/tmp/tasks.sock",
+			wantErr: "absolute socket path and no host"},
+		{name: "unix relative path", endpoint: "unix:tasks.sock",
+			wantErr: "absolute socket path and no host"},
+		{name: "remote plaintext http", endpoint: "http://tasks.example.com",
+			wantErr: "remote plaintext HTTP is not allowed"},
+		{name: "unsupported scheme", endpoint: "ftp://tasks.example.com",
+			wantErr: "unsupported scheme"},
+		{name: "missing scheme", endpoint: "tasks.example.com",
+			wantErr: "invalid [integrations.tasks] endpoint"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			path := filepath.Join(t.TempDir(), "config.toml")
+			content := "[integrations.tasks]\nendpoint = \"" + tt.endpoint + "\"\n"
+			require.NoError(os.WriteFile(path, []byte(content), 0o600))
+			cfg, err := Load(path, "")
+			if tt.wantErr == "" {
+				require.NoError(err)
+				assert.Equal(tt.endpoint, cfg.Integrations.Tasks.Endpoint)
+				return
+			}
+			require.Error(err)
+			assert.Contains(err.Error(), "invalid [integrations.tasks] endpoint")
+			assert.Contains(err.Error(), tt.wantErr)
+			assert.Contains(err.Error(), "valid forms:")
+		})
+	}
 }
 
 func TestAccountScheduleEmpty(t *testing.T) {

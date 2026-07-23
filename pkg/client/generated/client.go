@@ -211,6 +211,10 @@ type ClientInterface interface {
 	VerifyCLI(ctx context.Context, options *VerifyCLIRequestOptions, reqEditors ...runtime.RequestEditorFn) (*VerifyCLIResponse, error)
 	VerifyCLIWithResponse(ctx context.Context, options *VerifyCLIRequestOptions, reqEditors ...runtime.RequestEditorFn) (*VerifyCLIResp, error)
 
+	// GetRemoteImage Fetch a consented remote mail image through the SSRF-hardened daemon proxy
+	GetRemoteImage(ctx context.Context, options *GetRemoteImageRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetRemoteImageResponse, error)
+	GetRemoteImageWithResponse(ctx context.Context, options *GetRemoteImageRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetRemoteImageResp, error)
+
 	// GetConversation Get a bounded containing conversation
 	GetConversation(ctx context.Context, options *GetConversationRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetConversationResponse, error)
 	GetConversationWithResponse(ctx context.Context, options *GetConversationRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetConversationResp, error)
@@ -3178,6 +3182,55 @@ func (c *Client) VerifyCLI(ctx context.Context, options *VerifyCLIRequestOptions
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/cli/verify")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// GetRemoteImage Fetch a consented remote mail image through the SSRF-hardened daemon proxy
+func (c *Client) GetRemoteImage(ctx context.Context, options *GetRemoteImageRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetRemoteImageResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/content/remote-image",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*GetRemoteImageResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(GetRemoteImageErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "GetRemoteImageErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		result := GetRemoteImageResponse(bodyBytes)
+		return &result, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/content/remote-image")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}

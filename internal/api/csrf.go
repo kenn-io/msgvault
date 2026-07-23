@@ -15,6 +15,8 @@ import (
 
 const csrfHeaderName = "X-Csrf-Token"
 
+const schemeHTTPS = "https"
+
 type requestSecurityContextKey struct{}
 
 type requestSecurity struct {
@@ -118,7 +120,7 @@ func requestOriginMatches(r *http.Request, scheme, host string) bool {
 func (s *Server) effectiveRequestOrigin(r *http.Request) (string, string, error) {
 	scheme := "http"
 	if r.TLS != nil {
-		scheme = "https"
+		scheme = schemeHTTPS
 	}
 	host := r.Host
 	if !s.isTrustedProxy(r) {
@@ -221,7 +223,7 @@ func singleForwardedValue(name string, values []string) (string, error) {
 }
 
 func validateForwardedOrigin(scheme, host string) error {
-	if scheme != "http" && scheme != "https" {
+	if scheme != "http" && scheme != schemeHTTPS {
 		return fmt.Errorf("unsupported forwarded scheme %q", scheme)
 	}
 	parsed, err := url.Parse(scheme + "://" + host)

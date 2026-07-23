@@ -222,9 +222,13 @@ type Server struct {
 	// blobStore serves attachment bytes for handleCLIAttachment. Nil in tests
 	// and embedded callers that construct a Server without options, which
 	// fall back to the legacy loose-file open.
-	blobStore  AttachmentBlobStore
-	spaHandler http.Handler
-	sessions   *sessionStore
+	blobStore AttachmentBlobStore
+	// remoteImages is the SSRF-hardened fetcher behind
+	// GET /api/v1/content/remote-image. Tests replace it to inject a fake
+	// resolver and dialer.
+	remoteImages *remoteImageFetcher
+	spaHandler   http.Handler
+	sessions     *sessionStore
 	// trustedProxies contains only explicitly configured direct proxy peers.
 	// Forwarded scheme/host data is ignored for every other RemoteAddr.
 	trustedProxies   []netip.Prefix
@@ -366,6 +370,7 @@ func NewServerWithOptions(opts ServerOptions) *Server {
 		idleTracker:          opts.IdleTracker,
 		operationGate:        opts.OperationGate,
 		blobStore:            opts.BlobStore,
+		remoteImages:         newRemoteImageFetcher(),
 		spaHandler:           opts.SPAHandler,
 		sessions:             newSessionStore(defaultSessionTTL),
 		exploreState:         newExploreServerState(time.Now),

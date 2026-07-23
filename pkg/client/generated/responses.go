@@ -293,6 +293,16 @@ type VerifyCLIResponse = []byte
 
 type VerifyCLIErrorResponse = ErrorResponse
 
+type GetRemoteImageResponse = []byte
+
+type GetRemoteImageErrorResponse = ErrorResponse
+
+type GetRemoteImageErrorResponseJSON = ErrorResponse
+
+type GetRemoteImageErrorResponseJSON415 = ErrorResponse
+
+type GetRemoteImageErrorResponseJSON502 = ErrorResponse
+
 type GetConversationResponse = ConversationResponse
 
 type GetConversationErrorResponse = ErrorResponse
@@ -1694,6 +1704,16 @@ type VerifyCLIResp struct {
 	HTTPResponse *http.Response
 	Body         []byte
 	StatusCode   int
+}
+
+type GetRemoteImageResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON400      *GetRemoteImageErrorResponse
+	JSON401      *GetRemoteImageErrorResponseJSON
+	JSON415      *GetRemoteImageErrorResponseJSON415
+	JSON502      *GetRemoteImageErrorResponseJSON502
 }
 
 type GetConversationResp struct {

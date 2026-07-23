@@ -42,59 +42,20 @@ describe('buildFrameDocument', () => {
     expect(document).toContain('data-bridge-origin="https://archive.example"');
   });
 
-  it('allows only non-network data images unless remote consent is explicit', async () => {
-    const blocked = await buildFrameDocument({
+  it('never allowlists a remote origin for images — data: is the entire img-src', async () => {
+    // Remote images arrive as data: URIs via the daemon's hardened proxy
+    // (reader/remote-images.ts); the frame's browsing context must never be
+    // able to contact a sender-controlled host, consented or not.
+    const document = await buildFrameDocument({
       html: '<p>Archived content</p>', nonce: 'n', targetOrigin: 'https://archive.example'
     });
-    expect(blocked).toContain("img-src data:");
-    expect(blocked).not.toContain('img-src data: https://archive.example');
-    expect(blocked).not.toContain('images.example');
-
-    const consented = await buildFrameDocument({
-      html: '<img src="https://images.example/chart.png">',
-      nonce: 'n',
-      targetOrigin: 'https://archive.example',
-      remoteImages: ['https://images.example/chart.png']
-    });
-    expect(consented).toContain('https://images.example/chart.png');
-  });
-
-  it('rejects CSP-delimiter, credentialed, and non-HTTP remote sources', async () => {
-    const document = await buildFrameDocument({
-      html: '<p>Archived content</p>',
-      nonce: 'n',
-      targetOrigin: 'https://archive.example',
-      remoteImages: [
-        'https://images.example/good.png?token=synthetic',
-        'https://images.example/a.png; img-src https://collector.example',
-        'https://user:pass@images.example/credential.png',
-        'javascript:alert(1)'
-      ]
-    });
-
-    expect(document).toContain('https://images.example/good.png?token=synthetic');
-    expect(document).not.toContain('collector.example');
-    expect(document).not.toContain('user:pass');
-    expect(document).not.toContain('javascript:');
-  });
-
-  it('keeps private-network destinations out of the img-src allowlist', async () => {
-    const document = await buildFrameDocument({
-      html: '<p>Archived content</p>',
-      nonce: 'n',
-      targetOrigin: 'https://archive.example',
-      remoteImages: [
-        'http://192.168.1.10/router.png',
-        'http://localhost:8080/daemon.png',
-        'http://169.254.169.254/latest/meta-data',
-        'http://[::1]/loopback.png',
-        'http://printer.local/status.png',
-        'https://images.example/chart.png'
-      ]
-    });
-
-    expect(document).toContain('img-src data: https://images.example/chart.png');
-    expect(document).not.toMatch(/192\.168|localhost|169\.254|\[::1\]|printer\.local/);
+    const imgDirective = document
+      .match(/content="([^"]*)"/)?.[1]
+      ?.split(';')
+      .find((directive) => directive.trim().startsWith('img-src'));
+    expect(imgDirective?.trim()).toBe('img-src data:');
+    expect(document).not.toContain('img-src data: https://archive.example');
+    expect(document).not.toContain('images.example');
   });
 
   it('escapes shell-generated nonce and archived closing tags', async () => {

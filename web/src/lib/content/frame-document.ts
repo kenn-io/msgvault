@@ -1,5 +1,3 @@
-import { prohibitedRemoteHost } from './url-safety';
-
 export const ARCHIVED_CONTENT_CHANNEL = 'msgvault-archived-content';
 export const MAX_ARCHIVED_SCROLL_DELTA = 10_000;
 export const MAX_ARCHIVED_FRAME_HEIGHT = 65_536;
@@ -31,7 +29,6 @@ export interface FrameDocumentOptions {
   html: string;
   nonce: string;
   targetOrigin: string;
-  remoteImages?: string[];
   appearance?: FrameAppearance;
 }
 
@@ -53,22 +50,6 @@ function encodedBody(html: string): string {
     .replace(/<\/html/gi, '&lt;/html');
 }
 
-function validImageSource(value: string): string | undefined {
-  try {
-    const url = new URL(value);
-    if (url.protocol !== 'https:' && url.protocol !== 'http:') return undefined;
-    if (url.username || url.password || /[;\u0000-\u001f\u007f]/.test(value)) return undefined;
-    // Second layer behind the sanitizer's gate: a private destination that
-    // slips into a caller's remoteImages list still never enters the frame's
-    // img-src allowlist, so the browser refuses the fetch.
-    if (prohibitedRemoteHost(url.hostname)) return undefined;
-    url.hash = '';
-    return url.toString();
-  } catch {
-    return undefined;
-  }
-}
-
 function exactHTTPOrigin(value: string): string {
   let parsed: URL;
   try {
@@ -87,14 +68,15 @@ export async function buildFrameDocument(options: FrameDocumentOptions): Promise
   const origin = exactHTTPOrigin(options.targetOrigin);
   const bridgeURL = `${origin}${ARCHIVED_FRAME_SCRIPT_PATH}`;
   const styleURL = `${origin}${ARCHIVED_FRAME_STYLE_PATH}`;
-  const remoteSources = [...new Set((options.remoteImages ?? [])
-    .map(validImageSource)
-    .filter((source): source is string => source !== undefined))];
-  const imageSources = ['data:', ...remoteSources].map(escapeAttribute).join(' ');
   const csp = [
     "default-src 'none'",
     "connect-src 'none'",
-    `img-src ${imageSources}`,
+    // The frame can render only embedded data: images. Remote images never
+    // load from inside the frame: after consent the shell fetches them
+    // through the daemon's hardened proxy and injects data: URIs, so no
+    // remote origin ever enters this allowlist and the frame's browsing
+    // context never contacts a sender-controlled host.
+    'img-src data:',
     "media-src 'none'",
     "font-src data:",
     // Stylesheet elements stay pinned to the exact same-origin asset; style

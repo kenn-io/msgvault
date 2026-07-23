@@ -127,7 +127,15 @@ import (
 // the flag to render such settings as non-editable and exclude them from
 // atomic updates. Additive (minor bump): existing callers that ignore the
 // field see no behavior change.
-const APISchemaVersion = "1.28.0"
+// 1.29.0 adds GET /api/v1/content/remote-image: an SSRF-hardened proxy the
+// browser uses to load consented remote mail images. The daemon validates
+// the URL (http/https, no credentials, hostname gate), rejects private or
+// reserved destinations, resolves DNS itself and validates every answer,
+// dials only the validated address (re-validating each bounded redirect
+// hop), and enforces an image/* content type and a 10 MiB body cap. The
+// browser therefore never contacts sender-controlled hosts directly.
+// Additive (minor bump): the major-version compatibility gate stays at 1.
+const APISchemaVersion = "1.29.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.

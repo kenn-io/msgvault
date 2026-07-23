@@ -365,3 +365,37 @@ func TestResolveProjectBindsConfiguredIdentityAndRevision(t *testing.T) {
 		require.ErrorIs(t, err, ErrInvalidResponse)
 	})
 }
+
+func TestValidateEndpoint(t *testing.T) {
+	tests := []struct {
+		name     string
+		endpoint string
+		valid    bool
+	}{
+		{name: "https", endpoint: "https://tasks.example.com", valid: true},
+		{name: "http localhost", endpoint: "http://localhost:8080", valid: true},
+		{name: "http loopback ip", endpoint: "http://127.0.0.1:8080", valid: true},
+		// Shape-only: an absolute unix path passes even when no socket exists;
+		// New still performs the socket existence and ownership checks.
+		{name: "unix absolute path without socket", endpoint: "unix:///nonexistent/tasks.sock", valid: true},
+		{name: "empty", endpoint: ""},
+		{name: "userinfo", endpoint: "https://user:pass@tasks.example.com"},
+		{name: "query string", endpoint: "https://tasks.example.com/api?tenant=1"},
+		{name: "fragment", endpoint: "https://tasks.example.com/api#section"},
+		{name: "unix with host", endpoint: "unix://somehost/tmp/tasks.sock"},
+		{name: "unix relative path", endpoint: "unix:tasks.sock"},
+		{name: "remote plaintext http", endpoint: "http://tasks.example.com"},
+		{name: "unsupported scheme", endpoint: "ftp://tasks.example.com"},
+		{name: "missing scheme", endpoint: "tasks.example.com"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateEndpoint(tt.endpoint)
+			if tt.valid {
+				assert.NoError(t, err)
+				return
+			}
+			assert.ErrorIs(t, err, ErrInsecureEndpoint)
+		})
+	}
+}

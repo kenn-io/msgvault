@@ -116,18 +116,23 @@ describe('sanitizeArchivedHTML', () => {
       .toBe('Remote image');
   });
 
-  it('allows only explicitly consented remote image URLs', () => {
+  it('never retains remote URLs in the DOM — consent resolves through the daemon proxy', () => {
     const result = sanitizeArchivedHTML(
       '<img src="https://images.example/chart.png" alt="Chart"><p style="background:url(https://tracker.example/bg)">Text</p>',
-      { messageId: 42, allowRemoteImages: true }
+      { messageId: 42 }
     );
 
-    expect(result.html).toContain('src="https://images.example/chart.png"');
-    expect(result.html).not.toContain('tracker.example');
+    // The URL travels only in the shell-side consent list; the sanitized DOM
+    // carries an indexed placeholder the proxy resolver later swaps for a
+    // data: image (reader/remote-images.ts).
     expect(result.remoteImages).toEqual(['https://images.example/chart.png']);
+    expect(result.html).not.toContain('images.example');
+    expect(result.html).not.toContain('tracker.example');
+    expect(result.html).toContain('data-archived-remote-image="0"');
+    expect(result.html).toContain('data-archived-remote-alt="Chart"');
   });
 
-  it('never loads private-network images, even after remote consent', () => {
+  it('never offers private-network images for consent', () => {
     const result = sanitizeArchivedHTML(`
       <img src="http://192.168.1.10/router.png" alt="Router">
       <img src="http://localhost:8080/daemon.png" alt="Daemon">
@@ -136,13 +141,12 @@ describe('sanitizeArchivedHTML', () => {
       <img src="http://printer.local/status.png" alt="Printer">
       <img src="http://nas/share.png" alt="NAS">
       <img src="https://images.example/chart.png" alt="Chart">
-    `, { messageId: 42, allowRemoteImages: true });
+    `, { messageId: 42 });
 
-    // The one public image loads; no private destination is retained
-    // anywhere — not in the HTML, not in the consent list.
+    // The one public image is offered for consent; no private destination is
+    // retained anywhere — not in the HTML, not in the consent list.
     expect(result.remoteImages).toEqual(['https://images.example/chart.png']);
-    expect(result.html).toContain('src="https://images.example/chart.png"');
-    expect(result.html).not.toMatch(/192\.168|localhost|169\.254|::1|printer\.local|nas/);
+    expect(result.html).not.toMatch(/192\.168|localhost|169\.254|::1|printer\.local|nas|images\.example/);
 
     const template = document.createElement('template');
     template.innerHTML = result.html;
@@ -154,7 +158,8 @@ describe('sanitizeArchivedHTML', () => {
       'Image unavailable: Metadata',
       'Image unavailable: Loopback',
       'Image unavailable: Printer',
-      'Image unavailable: NAS'
+      'Image unavailable: NAS',
+      'Chart'
     ]);
   });
 

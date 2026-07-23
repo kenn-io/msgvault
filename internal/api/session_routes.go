@@ -153,7 +153,7 @@ func sessionStatus(mode AuthMode, csrfToken string, https bool) SessionStatus {
 
 func requestUsesHTTPS(r *http.Request) bool {
 	if security, ok := securityFromRequest(r); ok {
-		return security.scheme == "https"
+		return security.scheme == schemeHTTPS
 	}
 	return r.TLS != nil
 }

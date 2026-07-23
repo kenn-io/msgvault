@@ -24,10 +24,10 @@ const row = {
 };
 
 test('archived content has an opaque capability boundary and durable conversation history', async ({ page, baseURL }) => {
-  const networkRequests: string[] = [];
+  const directSenderRequests: string[] = [];
+  const proxiedImageRequests: Array<{ url: string | null; cookie?: string }> = [];
   const unintendedRequests: string[] = [];
   const inlineRequests: Array<{ url: string; cookie?: string }> = [];
-  const remoteReferrers: Array<string | undefined> = [];
   let releaseInitialInline!: () => void;
   const initialInlineGate = new Promise<void>((resolve) => { releaseInitialInline = resolve; });
   let delayInitialInline = true;
@@ -96,9 +96,17 @@ test('archived content has an opaque capability boundary and durable conversatio
     unintendedRequests.push(route.request().url());
     await route.abort();
   });
+  // The browser must never contact the sender host directly — consented
+  // remote images travel through the daemon's SSRF-hardened proxy instead.
   await page.route('https://images.example/**', async (route) => {
-    networkRequests.push(route.request().url());
-    remoteReferrers.push(route.request().headers()['referer']);
+    directSenderRequests.push(route.request().url());
+    await route.abort();
+  });
+  await page.route('**/api/v1/content/remote-image**', async (route) => {
+    proxiedImageRequests.push({
+      url: new URL(route.request().url()).searchParams.get('url'),
+      cookie: route.request().headers()['cookie']
+    });
     await remoteImageGate;
     await route.fulfill({
       contentType: 'image/png',
@@ -151,7 +159,8 @@ test('archived content has an opaque capability boundary and durable conversatio
   expect(initialCSP).toContain("style-src-attr 'unsafe-inline'");
   expect(initialCSP).not.toMatch(/script-src[^;]*'unsafe-inline'/);
   expect(initialCSP).not.toMatch(/style-src(?:-elem)? [^;]*'unsafe-inline'/);
-  expect(networkRequests).toEqual([]);
+  expect(directSenderRequests).toEqual([]);
+  expect(proxiedImageRequests).toEqual([]);
   expect(unintendedRequests).toEqual([]);
   const archivedDocument = await frame.getAttribute('srcdoc');
   expect(archivedDocument).toContain(`data-bridge-origin="${shellOrigin}"`);
@@ -220,20 +229,29 @@ test('archived content has an opaque capability boundary and durable conversatio
   }, '*'), nonce);
   await expect(thread).toBeFocused();
 
-  // Remote-image consent rebuilds the document: the old incapable frame is
-  // detached before the newly-capable one loads, and the remote fetch goes
-  // out without referrer or credentials leaking.
+  // Remote-image consent rebuilds the document: the old frame is detached
+  // first, and the image is fetched by the authenticated shell through the
+  // daemon proxy — the sender host still sees zero browser requests.
   await page.getByRole('button', { name: 'Load 1 remote image' }).click();
   await expect(page.getByText('1 remote image is not loaded.')).toHaveCount(0);
   expect(await frameHandle!.evaluate((element) => element.isConnected)).toBe(false);
-  await expect.poll(() => networkRequests.length).toBe(1);
-  expect(networkRequests[0]).toBe('https://images.example/chart.png?token=synthetic');
-  expect(remoteReferrers).toEqual([undefined]);
+  await expect.poll(() => proxiedImageRequests.length).toBe(1);
+  expect(proxiedImageRequests[0]?.url).toBe('https://images.example/chart.png?token=synthetic');
+  expect(proxiedImageRequests[0]?.cookie).toContain('msgvault_session=synthetic-session');
+  expect(directSenderRequests).toEqual([]);
   expect(unintendedRequests).toEqual([]);
   releaseRemoteImage();
   const consentedNonce = await frame.contentFrame().locator('html').getAttribute('data-bridge-nonce');
   expect(consentedNonce).toBeTruthy();
   expect(consentedNonce).not.toBe(nonce);
+  // The consented document embeds the proxied bytes as data: and its CSP
+  // still allowlists no remote origin — even after consent, the frame's
+  // browsing context cannot reach the sender.
+  await expect(frame.contentFrame().locator('img[alt="Chart"]')).toHaveAttribute('src', /^data:image\/png;base64,/);
+  const consentedCSP = await frame.contentFrame().locator('meta[http-equiv="Content-Security-Policy"]').getAttribute('content');
+  const consentedImgDirective = consentedCSP?.split(';').find((directive) => directive.trim().startsWith('img-src'));
+  expect(consentedImgDirective?.trim()).toBe('img-src data:');
+  expect(directSenderRequests).toEqual([]);
 
   // Browser Back closes the reading pane, restores the pre-open URL, and
   // returns focus to the grid.
@@ -276,11 +294,13 @@ test('archived content has an opaque capability boundary and durable conversatio
 // sender HTML is parsed (designed-mail detection, sanitization, inline-image
 // reassembly) before remote URLs are stripped. Those parses must never fetch
 // — a leaky parse (e.g. innerHTML on a detached div) fires tracking pixels
-// on mere message open, leaking IP, timestamp, and a read receipt. Only the
-// explicit "Load images" consent may contact a sender host, and only for the
-// img URL — never for iframe/link URLs the sanitizer strips.
+// on mere message open, leaking IP, timestamp, and a read receipt. Even the
+// explicit "Load images" consent never contacts the sender host from the
+// browser: only the daemon proxy fetches, and only the img URL — never the
+// iframe/link URLs the sanitizer strips.
 test('opening a message fires no sender-host request until images are enabled', async ({ page, baseURL }) => {
   const sentinelRequests: string[] = [];
+  const proxiedURLs: Array<string | null> = [];
   if (!baseURL) throw new Error('Playwright baseURL is required');
   await page.context().addCookies([{
     name: 'msgvault_session', value: 'synthetic-session', url: new URL(baseURL).origin
@@ -322,6 +342,10 @@ test('opening a message fires no sender-host request until images are enabled', 
   } }));
   await page.route('https://tracking.example/**', async (route) => {
     sentinelRequests.push(route.request().url());
+    await route.abort();
+  });
+  await page.route('**/api/v1/content/remote-image**', async (route) => {
+    proxiedURLs.push(new URL(route.request().url()).searchParams.get('url'));
     await route.fulfill({
       contentType: 'image/png',
       body: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', 'base64')
@@ -341,11 +365,14 @@ test('opening a message fires no sender-host request until images are enabled', 
   await expect(frame.contentFrame().getByText('Tracked archived words')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Load 1 remote image' })).toBeVisible();
   expect(sentinelRequests).toEqual([]);
+  expect(proxiedURLs).toEqual([]);
 
-  // Explicit consent fetches exactly the blocked img URL; the iframe and
+  // Explicit consent proxies exactly the blocked img URL through the daemon;
+  // the sender host never sees a browser request, and the iframe and
   // stylesheet URLs the sanitizer removed stay unfetched forever.
   await page.getByRole('button', { name: 'Load 1 remote image' }).click();
-  await expect.poll(() => sentinelRequests.length).toBe(1);
-  await expect(frame.contentFrame().locator('img[src="https://tracking.example/pixel.gif"]')).toHaveCount(1);
-  expect(sentinelRequests).toEqual(['https://tracking.example/pixel.gif']);
+  await expect.poll(() => proxiedURLs.length).toBe(1);
+  await expect(frame.contentFrame().locator('img[src^="data:image/png;base64,"]')).toHaveCount(1);
+  expect(proxiedURLs).toEqual(['https://tracking.example/pixel.gif']);
+  expect(sentinelRequests).toEqual([]);
 });
