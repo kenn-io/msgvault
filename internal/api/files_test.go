@@ -415,6 +415,76 @@ func TestLegacyLooseFileWithRecordedPathStillDownloads(t *testing.T) {
 	assertions.True(decoded.ContentAvailable)
 }
 
+// TestDuplicateContentAliasFileRecoversHashAndServesContent covers Discord
+// duplicate-content aliases: schema uniqueness on (message_id, content_hash)
+// leaves later aliases with an empty hash but a trusted CAS-layout storage
+// path. The metadata authority must recover the hash so the metadata endpoint
+// reports the alias available and the content endpoint streams its bytes,
+// while a hashless row with a non-CAS path stays metadata-only.
+func TestDuplicateContentAliasFileRecoversHashAndServesContent(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	f := storetest.New(t)
+	hash := strings.Repeat("ad", 32)
+	blob := []byte("alias png bytes")
+	casPath := hash[:2] + "/" + hash
+	aliasMessageID := f.CreateMessage("discord-cas-alias")
+	looseMessageID := f.CreateMessage("discord-loose-hashless")
+	insert := func(messageID int64, filename, storagePath string) {
+		_, err := f.Store.DB().Exec(f.Store.Rebind(`
+			INSERT INTO attachments
+				(message_id, filename, mime_type, storage_path, content_hash, size, created_at)
+			VALUES (?, ?, ?, ?, '', ?, CURRENT_TIMESTAMP)`),
+			messageID, filename, "image/png", storagePath, len(blob),
+		)
+		requirements.NoError(err)
+	}
+	insert(aliasMessageID, "alias.png", casPath)
+	insert(looseMessageID, "loose.png", "legacy/loose.png")
+	aliasFileID := apiSingleAttachmentID(t, f, aliasMessageID)
+	looseFileID := apiSingleAttachmentID(t, f, looseMessageID)
+	srv := NewServerWithOptions(ServerOptions{
+		Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}, Data: config.DataConfig{DataDir: t.TempDir()}},
+		Store:  f.Store, Engine: &querytest.MockEngine{},
+		BlobStore: packedFileBlobStore{blobs: map[string][]byte{hash: blob}},
+		Logger:    testLogger(),
+	})
+
+	metadata := httptest.NewRecorder()
+	srv.Router().ServeHTTP(metadata, httptest.NewRequest(
+		http.MethodGet, fmt.Sprintf("/api/v1/files/%d", aliasFileID), nil))
+	requirements.Equal(http.StatusOK, metadata.Code, metadata.Body.String())
+	var decoded FileMetadataResponse
+	requirements.NoError(json.NewDecoder(metadata.Body).Decode(&decoded))
+	assertions.Equal(FileContentLocal, decoded.ContentState)
+	assertions.True(decoded.ContentAvailable)
+	assertions.Equal(hash, decoded.ContentHash, "the alias must expose its recovered hash")
+
+	download := httptest.NewRecorder()
+	srv.Router().ServeHTTP(download, httptest.NewRequest(
+		http.MethodGet, fmt.Sprintf("/api/v1/files/%d/content", aliasFileID), nil))
+	requirements.Equal(http.StatusOK, download.Code, download.Body.String())
+	assertions.Equal("image/png", download.Header().Get("Content-Type"))
+	assertions.Equal(string(blob), download.Body.String())
+
+	looseMetadata := httptest.NewRecorder()
+	srv.Router().ServeHTTP(looseMetadata, httptest.NewRequest(
+		http.MethodGet, fmt.Sprintf("/api/v1/files/%d", looseFileID), nil))
+	requirements.Equal(http.StatusOK, looseMetadata.Code, looseMetadata.Body.String())
+	var looseDecoded FileMetadataResponse
+	requirements.NoError(json.NewDecoder(looseMetadata.Body).Decode(&looseDecoded))
+	assertions.Equal(FileContentMetadataOnly, looseDecoded.ContentState,
+		"a non-CAS hashless row must not be reported available")
+	assertions.False(looseDecoded.ContentAvailable)
+	assertions.Empty(looseDecoded.ContentHash)
+
+	looseDownload := httptest.NewRecorder()
+	srv.Router().ServeHTTP(looseDownload, httptest.NewRequest(
+		http.MethodGet, fmt.Sprintf("/api/v1/files/%d/content", looseFileID), nil))
+	assertions.Equal(http.StatusNotFound, looseDownload.Code, looseDownload.Body.String())
+	assertions.Contains(looseDownload.Body.String(), "file_content_unavailable")
+}
+
 func TestFilesSearchNamesUnavailableCache(t *testing.T) {
 	srv := NewServerWithOptions(ServerOptions{
 		Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}},

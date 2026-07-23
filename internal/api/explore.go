@@ -181,6 +181,13 @@ type exploreCursor struct {
 	Snapshot         string `json:"snapshot,omitempty"`
 	IdentityRevision int64  `json:"identity_revision,omitempty"`
 
+	// DecayDate pins the UTC decay date (time.DateOnly) a relationship
+	// listing was first ranked with, so subsequent pages reuse it instead of
+	// re-reading the clock (see handleRelationships). Without it, pagination
+	// crossing UTC midnight would re-rank with a new decay date and silently
+	// duplicate or skip rows without any cursor revision changing.
+	DecayDate string `json:"decay_date,omitempty"`
+
 	// Timezone and CanonicalID pin a relationship timeline cursor (see
 	// handleRelationshipTimeline) to the request that produced it. Unlike
 	// every other explore-style cursor, a mismatch on any field here —

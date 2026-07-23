@@ -111,7 +111,7 @@ func normalizeDiscordAttachmentRefs(refs []AttachmentRef) []AttachmentRef {
 		}
 		contentHash := strings.ToLower(normalized[i].ContentHash)
 		if contentHash == "" {
-			pathHash, ok := discordCASPathHash(normalized[i].StoragePath)
+			pathHash, ok := casPathHash(normalized[i].StoragePath)
 			if !ok {
 				continue
 			}
@@ -132,14 +132,18 @@ func normalizeDiscordAttachmentRefs(refs []AttachmentRef) []AttachmentRef {
 // URLs, provider sentinels, malformed paths, and hash/path mismatches are not
 // considered downloaded.
 func IsDiscordAttachmentDownloaded(ref AttachmentRef) bool {
-	pathHash, ok := discordCASPathHash(ref.StoragePath)
+	pathHash, ok := casPathHash(ref.StoragePath)
 	if !ok {
 		return false
 	}
 	return ref.ContentHash == "" || ref.ContentHash == pathHash
 }
 
-func discordCASPathHash(storagePath string) (string, bool) {
+// casPathHash extracts the SHA-256 content hash from a trusted local
+// content-addressed storage path in the <hash[:2]>/<hash> layout. Any other
+// layout — URLs, provider sentinels, uppercase or malformed hex, prefix
+// mismatches — returns false.
+func casPathHash(storagePath string) (string, bool) {
 	if len(storagePath) != 67 || storagePath[2] != '/' {
 		return "", false
 	}
@@ -161,7 +165,7 @@ func (s *Store) MessageDiscordAttachments(messageID int64) (map[string]Attachmen
 	}
 	for sourceAttachmentID, ref := range refs {
 		if ref.ContentHash == "" {
-			if pathHash, ok := discordCASPathHash(ref.StoragePath); ok {
+			if pathHash, ok := casPathHash(ref.StoragePath); ok {
 				ref.ContentHash = pathHash
 				refs[sourceAttachmentID] = ref
 			}

@@ -1,6 +1,7 @@
 package store_test
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -53,6 +54,46 @@ func TestGetFileMetadataBatchUsesTransactionalAttachmentAuthority(t *testing.T) 
 	assertions.Equal("https://example.com/reference", files[ids[1]].URL)
 	assertions.Empty(files[ids[1]].ContentHash)
 	assertions.Empty(files[ids[1]].StoragePath)
+}
+
+// TestGetFileMetadataBatchRecoversHashFromTrustedCASPath covers
+// duplicate-content aliases: the attachments schema's (message_id,
+// content_hash) uniqueness leaves later Discord aliases with an empty hash but
+// a trusted CAS-layout storage path, and the file metadata authority must
+// recover that hash so the alias stays downloadable. A hashless row with a
+// non-CAS path stays metadata-only.
+func TestGetFileMetadataBatchRecoversHashFromTrustedCASPath(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	f := storetest.New(t)
+	hash := strings.Repeat("ad", 32)
+	casPath := hash[:2] + "/" + hash
+	aliasMessageID := f.CreateMessage("file-cas-alias")
+	looseMessageID := f.CreateMessage("file-loose-hashless")
+	insert := func(messageID int64, filename, storagePath string) {
+		_, err := f.Store.DB().Exec(f.Store.Rebind(`
+			INSERT INTO attachments
+				(message_id, filename, mime_type, storage_path, content_hash, size, created_at)
+			VALUES (?, ?, ?, ?, '', ?, CURRENT_TIMESTAMP)`),
+			messageID, filename, "image/png", storagePath, 512,
+		)
+		requirements.NoError(err)
+	}
+	insert(aliasMessageID, "alias.png", casPath)
+	insert(looseMessageID, "loose.png", "legacy/loose.png")
+	aliasFileID := singleAttachmentID(t, f, aliasMessageID)
+	looseFileID := singleAttachmentID(t, f, looseMessageID)
+
+	files, err := f.Store.GetFileMetadataBatch(t.Context(), []int64{aliasFileID, looseFileID})
+	requirements.NoError(err)
+	requirements.Len(files, 2)
+	assertions.Equal(hash, files[aliasFileID].ContentHash,
+		"a trusted CAS path must yield its content hash")
+	assertions.Equal(casPath, files[aliasFileID].StoragePath)
+	assertions.Empty(files[aliasFileID].URL)
+	assertions.Empty(files[looseFileID].ContentHash,
+		"a non-CAS path must not fabricate a content hash")
+	assertions.Equal("legacy/loose.png", files[looseFileID].StoragePath)
 }
 
 func TestGetFileMetadataReturnsNotFoundWithoutError(t *testing.T) {

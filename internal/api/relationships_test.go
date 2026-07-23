@@ -231,6 +231,127 @@ func TestRelationshipsCursorReportsIdentityDriftDistinctlyFromArchiveDrift(t *te
 	assert.NotContains(resp.Body.String(), "archive_revision_changed")
 }
 
+// relationshipsPage POSTs /api/v1/relationships with the given body and
+// decodes the 200 response, halting the test on any other status.
+func relationshipsPage(t *testing.T, srv *Server, body string) RelationshipsHTTPResponse {
+	t.Helper()
+	response := postExploreJSON(t, srv, "/api/v1/relationships", body)
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	var page RelationshipsHTTPResponse
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &page))
+	return page
+}
+
+// relationshipRowOf returns the row with the given canonical ID, halting the
+// test if the page has no such row.
+func relationshipRowOf(t *testing.T, page RelationshipsHTTPResponse, canonicalID int64) query.RelationshipRow {
+	t.Helper()
+	for _, row := range page.Rows {
+		if row.CanonicalID == canonicalID {
+			return row
+		}
+	}
+	require.Failf(t, "row not found", "no row with canonical ID %d", canonicalID)
+	return query.RelationshipRow{}
+}
+
+func TestRelationshipsPaginationPinsDecayDateAcrossUTCMidnight(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	beforeMidnight := time.Date(2026, 1, 10, 23, 58, 0, 0, time.UTC)
+	srv := newTestServerWithEngine(t, newRelationshipsDuckDBFixture(t, beforeMidnight))
+	current := beforeMidnight
+	srv.clock = func() time.Time { return current }
+
+	baseline := relationshipsPage(t, srv, `{"show_all":true}`)
+	require.Len(baseline.Rows, 2)
+	first := relationshipsPage(t, srv, `{"show_all":true,"limit":1}`)
+	require.Len(first.Rows, 1)
+	require.NotEmpty(first.NextCursor)
+	assert.Equal(baseline.Rows[0].CanonicalID, first.Rows[0].CanonicalID)
+
+	decoded, err := srv.decodeExploreCursor(first.NextCursor)
+	require.NoError(err)
+	assert.Equal("2026-01-10", decoded.DecayDate, "the first page must pin its UTC decay date into the cursor")
+
+	// Cross UTC midnight, then fetch page 2 with the pinned cursor: it must
+	// rank with the first page's decay date, not the new clock date.
+	current = time.Date(2026, 1, 11, 0, 2, 0, 0, time.UTC)
+	second := relationshipsPage(t, srv, `{"show_all":true,"limit":1,"cursor":"`+first.NextCursor+`"}`)
+	require.Len(second.Rows, 1)
+	assert.Equal(baseline.Rows[1].CanonicalID, second.Rows[0].CanonicalID,
+		"pages must cover the baseline listing exactly, with no duplicated or skipped rows")
+	assert.Equal(baseline.Rows[1], second.Rows[0],
+		"page 2 must reuse the decay date pinned before midnight")
+
+	// Guard: a fresh listing on the new date scores differently, so the
+	// equality above genuinely proves the cursor date was used.
+	fresh := relationshipsPage(t, srv, `{"show_all":true}`)
+	assert.NotEqual(
+		relationshipRowOf(t, baseline, second.Rows[0].CanonicalID).Score,
+		relationshipRowOf(t, fresh, second.Rows[0].CanonicalID).Score,
+		"advancing the clock a day must change decay scores")
+}
+
+func TestRelationshipsCursorWithoutDecayDateFallsBackToCurrentDate(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	beforeMidnight := time.Date(2026, 1, 10, 23, 58, 0, 0, time.UTC)
+	srv := newTestServerWithEngine(t, newRelationshipsDuckDBFixture(t, beforeMidnight))
+	current := beforeMidnight
+	srv.clock = func() time.Time { return current }
+
+	first := relationshipsPage(t, srv, `{"show_all":true,"limit":1}`)
+	require.NotEmpty(first.NextCursor)
+
+	// Simulate a cursor minted before DecayDate existed: strip the field and
+	// re-sign with the real server key.
+	decoded, err := srv.decodeExploreCursor(first.NextCursor)
+	require.NoError(err)
+	decoded.DecayDate = ""
+	legacy := srv.encodeExploreCursor(decoded)
+
+	current = time.Date(2026, 1, 11, 0, 2, 0, 0, time.UTC)
+	second := relationshipsPage(t, srv, `{"show_all":true,"limit":1,"cursor":"`+legacy+`"}`)
+	require.Len(second.Rows, 1)
+
+	fresh := relationshipsPage(t, srv, `{"show_all":true}`)
+	assert.Equal(
+		relationshipRowOf(t, fresh, second.Rows[0].CanonicalID), second.Rows[0],
+		"a cursor without a decay date must fall back to ranking with the current date")
+}
+
+func TestRelationshipsCursorRejectsInvalidDecayDate(t *testing.T) {
+	now := time.Date(2026, 1, 10, 23, 58, 0, 0, time.UTC)
+	srv := newTestServerWithEngine(t, newRelationshipsDuckDBFixture(t, now))
+	srv.clock = func() time.Time { return now }
+
+	first := relationshipsPage(t, srv, `{"show_all":true,"limit":1}`)
+	require.NotEmpty(t, first.NextCursor)
+	decoded, err := srv.decodeExploreCursor(first.NextCursor)
+	require.NoError(t, err)
+
+	tests := []struct {
+		name, decayDate string
+	}{
+		{"malformed", "not-a-date"},
+		{"beyond clock skew tolerance", "2026-01-12"},
+		{"before the Unix epoch", "1969-12-31"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			doctored := decoded
+			doctored.DecayDate = tt.decayDate
+			response := postExploreJSON(t, srv, "/api/v1/relationships",
+				`{"show_all":true,"limit":1,"cursor":"`+srv.encodeExploreCursor(doctored)+`"}`)
+			assert.Equal(t, http.StatusBadRequest, response.Code, response.Body.String())
+			assert.Contains(t, response.Body.String(), "invalid_cursor")
+		})
+	}
+}
+
 func TestRelationshipsRejectsOutOfRangeLimit(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)

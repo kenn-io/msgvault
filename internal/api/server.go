@@ -230,11 +230,23 @@ type Server struct {
 	trustedProxies   []netip.Prefix
 	exploreState     *exploreServerState
 	exploreCursorKey [32]byte
+	// clock overrides the wall clock for handlers that pin a date into a
+	// pagination cursor (see handleRelationships); nil means time.Now. Tests
+	// inject a fixed clock to exercise pagination across UTC midnight.
+	clock func() time.Time
 	// taskIntegrationProbe performs server-side discovery and capability
 	// validation. It is never exposed to the browser with its credentials.
 	taskIntegrationProbe TaskIntegrationProbe
 	taskLinkOperations   TaskLinkOperations
 	taskIdentityResolver TaskIdentityResolver
+}
+
+// clockNow returns the current wall time, honoring the test-injected clock.
+func (s *Server) clockNow() time.Time {
+	if s.clock != nil {
+		return s.clock()
+	}
+	return time.Now()
 }
 
 type SQLQueryRunner func(ctx context.Context, sql string) (*query.QueryResult, error)

@@ -291,7 +291,7 @@ func (s *Store) GetMessageContext(ctx context.Context, id int64) (*APIMessage, e
 			att.ContentHash = ""
 			att.URL = storagePath
 		} else if att.ContentHash == "" && strings.HasPrefix(sourceAttachmentID, "discord:") {
-			if pathHash, ok := discordCASPathHash(storagePath); ok {
+			if pathHash, ok := casPathHash(storagePath); ok {
 				att.ContentHash = pathHash
 			}
 		}

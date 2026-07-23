@@ -91,10 +91,18 @@ func (s *Store) GetFileMetadataBatch(ctx context.Context, ids []int64) (map[int6
 			return nil, fmt.Errorf("scan file metadata: %w", err)
 		}
 		lowerPath := strings.ToLower(file.StoragePath)
-		if strings.HasPrefix(lowerPath, "http://") || strings.HasPrefix(lowerPath, "https://") {
+		switch {
+		case strings.HasPrefix(lowerPath, "http://") || strings.HasPrefix(lowerPath, "https://"):
 			file.URL = file.StoragePath
 			file.StoragePath = ""
 			file.ContentHash = ""
+		case file.ContentHash == "":
+			// Duplicate-content aliases (see normalizeDiscordAttachmentRefs)
+			// keep a trusted CAS path with an empty hash. Recover the hash so
+			// the file endpoints classify the alias as locally available.
+			if pathHash, ok := casPathHash(file.StoragePath); ok {
+				file.ContentHash = pathHash
+			}
 		}
 		result[file.ID] = file
 	}

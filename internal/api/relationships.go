@@ -72,6 +72,10 @@ func (s *Server) handleRelationships(w http.ResponseWriter, r *http.Request) {
 	if request.Cursor != "" {
 		cursor, _ = s.decodeExploreCursor(request.Cursor)
 	}
+	decayDate, ok := s.relationshipDecayDate(w, cursor)
+	if !ok {
+		return
+	}
 
 	analyzer, ok := s.engine.(query.RelationshipAnalyzer)
 	if !ok {
@@ -79,7 +83,7 @@ func (s *Server) handleRelationships(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	result, err := analyzer.Relationships(r.Context(), query.RelationshipsRequest{
-		Context: analyticalContext, ShowAll: request.ShowAll, Limit: request.Limit, Offset: offset, Now: time.Now().UTC(),
+		Context: analyticalContext, ShowAll: request.ShowAll, Limit: request.Limit, Offset: offset, Now: decayDate,
 	})
 	if err != nil {
 		s.writeExploreError(w, err)
@@ -108,9 +112,35 @@ func (s *Server) handleRelationships(w http.ResponseWriter, r *http.Request) {
 	if next := offset + len(result.Rows); next < int(result.TotalCount) {
 		response.NextCursor = s.encodeExploreCursor(exploreCursor{
 			Offset: next, Request: requestHash, Revision: result.CacheRevision, IdentityRevision: result.IdentityRevision,
+			DecayDate: decayDate.Format(time.DateOnly),
 		})
 	}
 	writeJSON(w, http.StatusOK, response)
+}
+
+// relationshipDecayDate returns the UTC decay date every page of one
+// relationship listing must rank with: midnight UTC of the current date for a
+// first page, or the date pinned in the cursor for subsequent pages, so
+// pagination crossing UTC midnight cannot re-rank rows mid-listing. Decay and
+// the ranking memo key depend only on the UTC date of the timestamp (see
+// buildRelationshipsSQL and relationshipsMemoKey in internal/query), so
+// midnight is equivalent to any instant on the same date, and pinned pages
+// share the first page's memoized candidate list. Cursors minted before the
+// field existed carry no date and fall back to the current date — the prior
+// behavior. Cursors are HMAC-signed, so the bounds check below is
+// defense-in-depth against server bugs, not against tampering: dates before
+// the Unix epoch or more than a day ahead of the clock are rejected.
+func (s *Server) relationshipDecayDate(w http.ResponseWriter, cursor exploreCursor) (time.Time, bool) {
+	now := s.clockNow().UTC()
+	if cursor.DecayDate == "" {
+		return now.Truncate(24 * time.Hour), true
+	}
+	pinned, err := time.Parse(time.DateOnly, cursor.DecayDate)
+	if err != nil || pinned.Before(time.Unix(0, 0).UTC()) || pinned.After(now.AddDate(0, 0, 1)) {
+		writeError(w, http.StatusBadRequest, "invalid_cursor", "cursor decay date is invalid")
+		return time.Time{}, false
+	}
+	return pinned, true
 }
 
 // RelationshipTimelineHTTPRequest scopes and pages one counterpart's
