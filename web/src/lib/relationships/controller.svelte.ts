@@ -133,7 +133,10 @@ export class RelationshipsController {
       const response = await this.postListPage(request, undefined, controller.signal);
       this.applyListResponse(generation, controller.signal, response, false);
     } catch (cause: unknown) {
-      if (generation === this.listGeneration && !controller.signal.aborted) this.listError = errorMessage(cause, 0);
+      if (generation === this.listGeneration && !controller.signal.aborted) {
+        this.listRows = [];
+        this.listError = errorMessage(cause, 0);
+      }
     } finally {
       if (generation === this.listGeneration) this.listLoading = false;
     }
@@ -210,6 +213,10 @@ export class RelationshipsController {
       return;
     }
     this.listCursor = null;
+    // A failed fresh-context load must not leave the previous context's rows
+    // selectable under the new controls; a failed pagination page keeps the
+    // rows already loaded (the list surfaces the error as a slim banner).
+    if (!append) this.listRows = [];
     if (res.status === 503 && isCacheUnavailable(error)) {
       this.degraded = 'cache_unavailable';
       return;

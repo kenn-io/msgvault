@@ -143,6 +143,80 @@ describe('RelationshipsController.loadList', () => {
     await expect(requests[0]!.clone().json()).resolves.toMatchObject({ identity_query: '' });
   });
 
+  it('clears previous-context rows when a fresh-context load fails, so none stay selectable', async () => {
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      const path = pathOf(request);
+      if (path === '/api/v1/relationships') {
+        return Response.json({
+          rows: [relationshipRow(1, 'Alice')], total_count: 1, cache_revision: 'cache-rel', identity_revision: 1
+        });
+      }
+      if (path === '/api/v1/people/search') {
+        return Response.json({ error: 'internal_error', message: 'search boom' }, { status: 500 });
+      }
+      throw new Error(`unexpected path ${path}`);
+    });
+    const controller = new RelationshipsController(createAPIClient(fetchFn), () => 'UTC');
+    await controller.loadList({ filters: [], presentation: 'table' });
+    expect(controller.listRows).toEqual([relationshipRow(1, 'Alice')]);
+
+    controller.query = 'ali';
+    await controller.loadList({ filters: [], presentation: 'table' });
+
+    expect(controller.listRows).toEqual([]);
+    expect(controller.listError).toBe('search boom');
+    expect(controller.listLoading).toBe(false);
+  });
+
+  it('clears previous-context rows when a fresh-context fetch throws (network failure)', async () => {
+    let fail = false;
+    const fetchFn = vi.fn<typeof fetch>(async () => {
+      if (fail) throw new TypeError('network down');
+      return Response.json({
+        rows: [relationshipRow(1, 'Alice')], total_count: 1, cache_revision: 'cache-rel', identity_revision: 1
+      });
+    });
+    const controller = new RelationshipsController(createAPIClient(fetchFn), () => 'UTC');
+    await controller.loadList({ filters: [], presentation: 'table' });
+    expect(controller.listRows).toEqual([relationshipRow(1, 'Alice')]);
+
+    fail = true;
+    await controller.loadList({ filters: [{ dimension: 'source', values: ['2'] }], presentation: 'table' });
+
+    expect(controller.listRows).toEqual([]);
+    expect(controller.listError).toBe('network down');
+    expect(controller.listLoading).toBe(false);
+  });
+
+  it('ignores a stale failure from a superseded load, keeping the newer rows', async () => {
+    let rejectStale: ((cause: Error) => void) | undefined;
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      const path = pathOf(request);
+      if (path === '/api/v1/relationships') {
+        return new Promise<Response>((_resolve, reject) => { rejectStale = reject; });
+      }
+      if (path === '/api/v1/people/search') {
+        return Response.json({ rows: [person(11)], total_count: 1, cache_revision: 'cache-rel', search_provenance: {} });
+      }
+      throw new Error(`unexpected path ${path}`);
+    });
+    const controller = new RelationshipsController(createAPIClient(fetchFn), () => 'UTC');
+    const stale = controller.loadList({ filters: [], presentation: 'table' });
+    await Promise.resolve();
+
+    controller.query = 'ali';
+    await controller.loadList({ filters: [], presentation: 'table' });
+    expect(controller.listRows).toEqual([person(11)]);
+
+    rejectStale?.(new Error('stale boom'));
+    await stale;
+
+    expect(controller.listRows).toEqual([person(11)]);
+    expect(controller.listError).toBeNull();
+  });
+
   it('names cache unavailability as a degraded state instead of throwing', async () => {
     const fetchFn = vi.fn<typeof fetch>(async () => Response.json({
       error: 'analytical_cache_unavailable', message: 'The committed analytical cache is unavailable',
