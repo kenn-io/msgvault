@@ -1,6 +1,7 @@
 package query
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -76,6 +77,15 @@ type DuckDBEngine struct {
 	optColsMu    sync.RWMutex
 	optionalCols map[string]map[string]bool
 	cacheFP      string // fingerprint of the Parquet cache at last probe
+
+	// Memoized readiness validation for the per-query path (see
+	// validateCommittedCache): the raw commit-marker bytes and the shard stat
+	// signature observed at the last successful full readiness inspection.
+	// While both are unchanged, queries skip the full fingerprint walk that
+	// InspectCacheReadiness performs.
+	cacheValidMu     sync.RWMutex
+	validatedMarker  []byte
+	validatedStatSig string
 
 	// Search result cache: keeps the materialized temp table alive across
 	// pagination calls for the same search query, avoiding repeated Parquet scans.
@@ -185,12 +195,19 @@ func NewDuckDBEngine(analyticsDir string, sqlitePath string, sqliteDB *sql.DB, o
 	}
 	var releaseInitialCacheRead func()
 	if analyticsDir != "" {
-		releaseInitialCacheRead, err = AcquireReadyCacheReadLock(context.Background(), analyticsDir)
+		releaseInitialCacheRead, err = AcquireCacheReadLock(context.Background(), analyticsDir)
 		if err != nil {
 			_ = db.Close()
 			return nil, err
 		}
 		defer releaseInitialCacheRead()
+		// First full readiness inspection; seeds the memo so subsequent
+		// queries validate against the marker + stat signature instead of
+		// re-walking every shard (see validateCommittedCache).
+		if err := engine.validateCommittedCache(engine.cacheFingerprint()); err != nil {
+			_ = db.Close()
+			return nil, err
+		}
 	}
 
 	// Probe Parquet schemas for optional columns added in PR #160 (WhatsApp import).
@@ -318,22 +335,85 @@ func (e *DuckDBEngine) acquireQuerySlot(ctx context.Context) (func(), error) {
 // other; a reader blocks only while a build runs (seconds). Engines opened
 // without an analytics directory have no cache to guard.
 //
-// After the lock is held, the probed optional-column set and registered SQL
-// views are refreshed if the committed cache was republished since the last
-// query (see ensureFreshOptionalCols). Because the lock is held until release,
-// the schema cannot change again for the query's duration, so every reader —
-// view-based endpoints (Explore, People, Relationships, timelines) and
-// parquetCTEs-based ones alike — sees views that match the current Parquet.
+// After the lock is held, the cache is validated as a committed publication
+// (see validateCommittedCache — memoized, so an unchanged cache costs one
+// marker read plus one shard stat pass, not a full fingerprint walk), and the
+// probed optional-column set and registered SQL views are refreshed if the
+// cache was republished since the last query (see ensureFreshOptionalCols).
+// Because the lock is held until release, the schema cannot change again for
+// the query's duration, so every reader — view-based endpoints (Explore,
+// People, Relationships, timelines) and parquetCTEs-based ones alike — sees
+// views that match the current Parquet.
 func (e *DuckDBEngine) acquireCacheRead(ctx context.Context) (func(), error) {
 	if e.analyticsDir == "" {
 		return func() {}, nil
 	}
-	release, err := AcquireReadyCacheReadLock(ctx, e.analyticsDir)
+	release, err := AcquireCacheReadLock(ctx, e.analyticsDir)
 	if err != nil {
 		return nil, err
 	}
-	e.ensureFreshOptionalCols()
+	statSig := e.cacheFingerprint()
+	if err := e.validateCommittedCache(statSig); err != nil {
+		release()
+		return nil, err
+	}
+	e.ensureFreshOptionalCols(statSig)
 	return release, nil
+}
+
+// validateCommittedCache confirms the analytics cache is a fully committed
+// publication before a query touches any Parquet path. Callers must hold the
+// shared cache lock and pass the stat signature they just computed via
+// cacheFingerprint.
+//
+// The full readiness inspection (InspectCacheReadiness: directory walk,
+// per-file stat, sort, and hash against the marker's DatasetFingerprint) runs
+// only when the commit marker bytes or the shard stat signature changed since
+// the last successful validation. Every publication rewrites the marker, so a
+// committed swap always triggers revalidation; out-of-band mutation of any
+// shard the stat globs cover (the layouts the cache builder writes) changes
+// the stat signature and is likewise caught on the next query. The only
+// narrowing versus inspecting on every query: a Parquet file planted at a
+// depth the publisher never uses is invisible to the stat globs and is
+// detected at the next publication, engine startup, or explicit
+// InspectCacheReadiness call instead of the next query.
+func (e *DuckDBEngine) validateCommittedCache(statSig string) error {
+	marker, markerErr := os.ReadFile(CacheStatePath(e.analyticsDir))
+	if markerErr == nil {
+		e.cacheValidMu.RLock()
+		hit := e.cacheValidationHitLocked(marker, statSig)
+		e.cacheValidMu.RUnlock()
+		if hit {
+			return nil
+		}
+	}
+
+	e.cacheValidMu.Lock()
+	defer e.cacheValidMu.Unlock()
+	if markerErr == nil && e.cacheValidationHitLocked(marker, statSig) {
+		return nil
+	}
+	e.validatedMarker = nil
+	readiness, err := InspectCacheReadiness(e.analyticsDir)
+	if err != nil {
+		return err
+	}
+	if readiness != CacheReady {
+		return &CacheUnavailableError{Readiness: readiness}
+	}
+	if markerErr == nil {
+		e.validatedMarker = marker
+		e.validatedStatSig = statSig
+	}
+	return nil
+}
+
+// cacheValidationHitLocked reports whether the observed marker bytes and stat
+// signature match the last successful validation. Callers hold cacheValidMu.
+func (e *DuckDBEngine) cacheValidationHitLocked(marker []byte, statSig string) bool {
+	return e.validatedMarker != nil &&
+		bytes.Equal(marker, e.validatedMarker) &&
+		statSig == e.validatedStatSig
 }
 
 // hasSQLite returns true if DuckDB's sqlite_scanner extension is loaded,
@@ -420,13 +500,12 @@ func stableOptionalColumns(
 // a stale "column present" verdict puts a now-absent column into a SELECT *
 // REPLACE list, which DuckDB rejects with
 // "Column ... in REPLACE list not found in FROM clause". Cheap on the common
-// no-change path (a handful of os.Stat calls).
+// no-change path (one string comparison — the caller passes the stat
+// signature it already computed for validateCommittedCache).
 //
 // Runs centrally from acquireCacheRead, so every query path — slot-gated and
 // detail lookups alike — refreshes before touching Parquet or the views.
-func (e *DuckDBEngine) ensureFreshOptionalCols() {
-	fp := e.cacheFingerprint()
-
+func (e *DuckDBEngine) ensureFreshOptionalCols(fp string) {
 	e.optColsMu.RLock()
 	unchanged := fp == e.cacheFP
 	e.optColsMu.RUnlock()

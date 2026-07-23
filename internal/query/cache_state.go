@@ -108,9 +108,19 @@ func ReadCacheSyncState(analyticsDir string) (CacheSyncState, error) {
 	return state, nil
 }
 
+// inspectDatasetFingerprint indirects CacheDatasetFingerprint for readiness
+// inspection so tests can count full fingerprint walks. Production code never
+// replaces it.
+var inspectDatasetFingerprint = CacheDatasetFingerprint
+
 // InspectCacheReadiness classifies only committed live cache paths. Sibling
 // staging directories are deliberately outside analyticsDir and never enter
 // this inspection.
+//
+// This is the full-cost integrity check: it walks and stats every Parquet
+// shard to compare against the marker's DatasetFingerprint. Per-query readers
+// use DuckDBEngine.validateCommittedCache, which memoizes this inspection and
+// reruns it only when the commit marker or the shard stat signature changes.
 func InspectCacheReadiness(analyticsDir string) (CacheReadiness, error) {
 	info, err := os.Stat(analyticsDir)
 	switch {
@@ -148,7 +158,7 @@ func InspectCacheReadiness(analyticsDir string) (CacheReadiness, error) {
 		if state.PublishedAt.IsZero() || state.DatasetFingerprint == "" {
 			return CacheInterrupted, nil
 		}
-		fingerprint, fingerprintErr := CacheDatasetFingerprint(analyticsDir)
+		fingerprint, fingerprintErr := inspectDatasetFingerprint(analyticsDir)
 		if fingerprintErr != nil {
 			return "", fingerprintErr
 		}

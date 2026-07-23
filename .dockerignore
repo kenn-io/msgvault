@@ -35,6 +35,7 @@ analytics/
 # Sensitive config files (prevent secrets in build context)
 config.toml
 client_secret*.json
+oauth_client*.json
 *.pem
 *.key
 

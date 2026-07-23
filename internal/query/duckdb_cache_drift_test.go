@@ -309,6 +309,61 @@ func TestDuckDBEngine_AnalyticalEndpointsFollowCommittedCacheSchemaSwap(t *testi
 		"new cache revision must miss the relationships memo and recompute")
 }
 
+// TestDuckDBEngine_QueryPathMemoizesFullFingerprintWalks is the performance
+// contract for per-query readiness validation: repeated queries against an
+// unchanged committed cache perform exactly one full dataset fingerprint walk
+// (at engine startup); a commit-marker republication triggers exactly one
+// revalidation; and an out-of-band shard mutation without a marker change
+// still forces a full inspection on the next query and is rejected as drift.
+func TestDuckDBEngine_QueryPathMemoizesFullFingerprintWalks(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	walks := 0
+	original := inspectDatasetFingerprint
+	inspectDatasetFingerprint = func(analyticsDir string) (string, error) {
+		walks++
+		return CacheDatasetFingerprint(analyticsDir)
+	}
+	t.Cleanup(func() { inspectDatasetFingerprint = original })
+
+	analyticsDir, cleanup := buildStandardTestData(t).Build()
+	t.Cleanup(cleanup)
+
+	engine, err := NewDuckDBEngine(analyticsDir, "", nil)
+	require.NoError(err, "NewDuckDBEngine")
+	t.Cleanup(func() { _ = engine.Close() })
+	require.Equal(1, walks, "startup performs the single full fingerprint walk")
+
+	ctx := context.Background()
+	for range 5 {
+		_, err := engine.Aggregate(ctx, ViewSenders, DefaultAggregateOptions())
+		require.NoError(err, "Aggregate against unchanged cache")
+	}
+	assert.Equal(1, walks, "queries against an unchanged cache must not re-walk the dataset")
+
+	// A committed republication rewrites the marker: the next query must run
+	// exactly one full revalidation, then memoize again.
+	republishCacheStateForTest(t, analyticsDir)
+	_, err = engine.Aggregate(ctx, ViewSenders, DefaultAggregateOptions())
+	require.NoError(err, "Aggregate after committed republication")
+	assert.Equal(2, walks, "marker change triggers exactly one revalidation")
+	_, err = engine.Aggregate(ctx, ViewSenders, DefaultAggregateOptions())
+	require.NoError(err, "Aggregate after revalidation")
+	assert.Equal(2, walks, "revalidated cache memoizes again")
+
+	// An out-of-band shard mutation without a marker change alters the stat
+	// signature, forcing a full inspection that classifies the cache as
+	// drifted.
+	touchParquetForTest(t, firstRequiredParquetForTest(t, analyticsDir, datasetMessages))
+	_, err = engine.Aggregate(ctx, ViewSenders, DefaultAggregateOptions())
+	require.ErrorIs(err, ErrCacheUnavailable)
+	var unavailable *CacheUnavailableError
+	require.ErrorAs(err, &unavailable)
+	assert.Equal(CacheDrifted, unavailable.Readiness)
+	assert.Equal(3, walks, "out-of-band shard change forces a full inspection")
+}
+
 // republishCacheStateForTest recommits the cache state after an out-of-band
 // Parquet rewrite, simulating an atomic live cache publication as build-cache
 // performs it: the dataset fingerprint matches the new files and the
