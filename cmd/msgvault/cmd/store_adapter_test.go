@@ -55,6 +55,8 @@ func TestStoreAPIAdapterContextReadsHonorCancellation(t *testing.T) {
 }
 
 func TestStoreAPIAdapterMeetingImport(t *testing.T) {
+	require := require.New(t)
+
 	st := testutil.NewTestStore(t)
 	req, err := meetingimport.DecodeRequest(strings.NewReader(`{
 		"source": {
@@ -67,14 +69,14 @@ func TestStoreAPIAdapterMeetingImport(t *testing.T) {
 			"transcript": "Speaker 1: synthetic transcript"
 		}
 	}`), meetingimport.MaxRequestBytes)
-	require.NoError(t, err)
+	require.NoError(err)
 	adapter := &storeAPIAdapter{
 		store:           st,
 		meetingImporter: meetingimport.NewImporter(st, meetingimport.Hooks{}),
 	}
 
 	result, err := adapter.ImportMeeting(context.Background(), req)
-	require.NoError(t, err)
-	require.Equal(t, meetingimport.StatusCreated, result.Status)
-	require.NotZero(t, result.MessageID)
+	require.NoError(err)
+	require.Equal(meetingimport.StatusCreated, result.Status)
+	require.NotZero(result.MessageID)
 }

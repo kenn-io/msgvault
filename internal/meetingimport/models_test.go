@@ -18,27 +18,30 @@ func decodedValidRequest(t *testing.T) Request {
 }
 
 func TestRequestNormalizeCanonicalizesValues(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
 	req := decodedValidRequest(t)
 	req.Meeting.Attendees = append(req.Meeting.Attendees,
 		Person{Name: "Duplicate", Email: "attendee@EXAMPLE.com"},
 	)
 
 	got, err := req.Normalize()
-	require.NoError(t, err)
+	require.NoError(err)
 
-	assert.Equal(t, "local-meetings", got.Source.Identifier)
-	assert.Equal(t, "Local Meetings", got.Source.DisplayName)
-	assert.Equal(t, "user@example.com", got.Source.AccountEmail)
-	assert.Equal(t, "42", got.Meeting.ExternalID)
-	assert.Equal(t, "Weekly planning", got.Meeting.Title)
-	assert.Equal(t, time.Date(2026, 7, 23, 18, 0, 0, 0, time.UTC), got.Meeting.StartedAt)
-	require.NotNil(t, got.Meeting.EndedAt)
-	assert.Equal(t, time.Date(2026, 7, 23, 18, 30, 0, 0, time.UTC), *got.Meeting.EndedAt)
-	require.NotNil(t, got.Meeting.Organizer)
-	assert.Equal(t, Person{Name: "Test Organizer", Email: "organizer@example.com"}, *got.Meeting.Organizer)
-	assert.Equal(t, []Person{{Name: "Test Attendee", Email: "attendee@example.com"}}, got.Meeting.Attendees)
-	assert.Equal(t, "Test Speaker", got.Meeting.TranscriptSegments[0].Speaker)
-	assert.Equal(t, "Let's review the launch plan.", got.Meeting.TranscriptSegments[0].Text)
+	assert.Equal("local-meetings", got.Source.Identifier)
+	assert.Equal("Local Meetings", got.Source.DisplayName)
+	assert.Equal("user@example.com", got.Source.AccountEmail)
+	assert.Equal("42", got.Meeting.ExternalID)
+	assert.Equal("Weekly planning", got.Meeting.Title)
+	assert.Equal(time.Date(2026, 7, 23, 18, 0, 0, 0, time.UTC), got.Meeting.StartedAt)
+	require.NotNil(got.Meeting.EndedAt)
+	assert.Equal(time.Date(2026, 7, 23, 18, 30, 0, 0, time.UTC), *got.Meeting.EndedAt)
+	require.NotNil(got.Meeting.Organizer)
+	assert.Equal(Person{Name: "Test Organizer", Email: "organizer@example.com"}, *got.Meeting.Organizer)
+	assert.Equal([]Person{{Name: "Test Attendee", Email: "attendee@example.com"}}, got.Meeting.Attendees)
+	assert.Equal("Test Speaker", got.Meeting.TranscriptSegments[0].Speaker)
+	assert.Equal("Let's review the launch plan.", got.Meeting.TranscriptSegments[0].Text)
 }
 
 func TestRequestNormalizeValidatesRequiredAndBoundedFields(t *testing.T) {
@@ -149,16 +152,19 @@ func TestRequestNormalizeValidatesMeetingContent(t *testing.T) {
 }
 
 func TestRequestNormalizeAllowsEqualTimesAndPlainTranscript(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
 	req := decodedValidRequest(t)
 	req.Meeting.EndedAt = req.Meeting.StartedAt
 	req.Meeting.TranscriptSegments = nil
 	req.Meeting.Transcript = "\nSpeaker 1: hello\nSpeaker 2: hi\n"
 
 	got, err := req.Normalize()
-	require.NoError(t, err)
+	require.NoError(err)
 
-	assert.Equal(t, "Speaker 1: hello\nSpeaker 2: hi", got.Meeting.Transcript)
-	assert.Empty(t, got.Meeting.TranscriptSegments)
-	require.NotNil(t, got.Meeting.EndedAt)
-	assert.True(t, got.Meeting.EndedAt.Equal(got.Meeting.StartedAt))
+	assert.Equal("Speaker 1: hello\nSpeaker 2: hi", got.Meeting.Transcript)
+	assert.Empty(got.Meeting.TranscriptSegments)
+	require.NotNil(got.Meeting.EndedAt)
+	assert.True(got.Meeting.EndedAt.Equal(got.Meeting.StartedAt))
 }

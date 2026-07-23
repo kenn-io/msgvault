@@ -42,6 +42,7 @@ const (
 
 type fakeMeetingImportStore struct {
 	*mockStore
+
 	result meetingimport.Result
 	err    error
 	calls  int
@@ -62,7 +63,9 @@ func newMeetingImportTestServer(t *testing.T, importer MeetingImporter) *Server 
 	base := &mockStore{stats: &StoreStats{}}
 	var store MessageStore = base
 	if importer != nil {
-		store = importer.(MessageStore)
+		typed, ok := importer.(MessageStore)
+		require.True(t, ok, "test importer must implement MessageStore")
+		store = typed
 	}
 	return NewServer(
 		&config.Config{Server: config.ServerConfig{APIKey: meetingImportTestAPIKey}},
@@ -113,6 +116,9 @@ func TestMeetingImportReturnsCreatedAndUpdated(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+
 			store := &fakeMeetingImportStore{
 				mockStore: &mockStore{stats: &StoreStats{}},
 				result: meetingimport.Result{
@@ -129,15 +135,15 @@ func TestMeetingImportReturnsCreatedAndUpdated(t *testing.T) {
 
 			srv.Router().ServeHTTP(resp, req)
 
-			require.Equal(t, tt.wantStatus, resp.Code, "body: %s", resp.Body.String())
-			assert.Equal(t, 1, store.calls)
-			assert.Equal(t, "42", store.req.Meeting.ExternalID)
+			require.Equal(tt.wantStatus, resp.Code, "body: %s", resp.Body.String())
+			assert.Equal(1, store.calls)
+			assert.Equal("42", store.req.Meeting.ExternalID)
 			var body MeetingImportResponse
-			require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
-			assert.Equal(t, tt.status, body.Status)
-			assert.Equal(t, int64(3), body.SourceID)
-			assert.Equal(t, int64(901), body.MessageID)
-			assert.Equal(t, "meeting:42", body.SourceMessageID)
+			require.NoError(json.NewDecoder(resp.Body).Decode(&body))
+			assert.Equal(tt.status, body.Status)
+			assert.Equal(int64(3), body.SourceID)
+			assert.Equal(int64(901), body.MessageID)
+			assert.Equal("meeting:42", body.SourceMessageID)
 		})
 	}
 }
@@ -177,23 +183,29 @@ func TestMeetingImportRejectsInvalidRequests(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+
 			req := meetingImportRequest(tt.body)
 			req.Header.Set("Content-Type", tt.mediaType)
 			resp := httptest.NewRecorder()
 
 			srv.Router().ServeHTTP(resp, req)
 
-			require.Equal(t, tt.wantCode, resp.Code, "body: %s", resp.Body.String())
+			require.Equal(tt.wantCode, resp.Code, "body: %s", resp.Body.String())
 			var body ErrorResponse
-			require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
-			assert.Equal(t, tt.wantError, body.Error)
-			assert.NotContains(t, body.Message, "Review the launch plan")
+			require.NoError(json.NewDecoder(resp.Body).Decode(&body))
+			assert.Equal(tt.wantError, body.Error)
+			assert.NotContains(body.Message, "Review the launch plan")
 		})
 	}
 	assert.Equal(t, 0, store.calls)
 }
 
 func TestMeetingImportRejectsOversizedBody(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
 	store := &fakeMeetingImportStore{mockStore: &mockStore{stats: &StoreStats{}}}
 	srv := newMeetingImportTestServer(t, store)
 	req := meetingImportRequest(strings.Repeat("x", int(meetingimport.MaxRequestBytes)+1))
@@ -201,26 +213,32 @@ func TestMeetingImportRejectsOversizedBody(t *testing.T) {
 
 	srv.Router().ServeHTTP(resp, req)
 
-	require.Equal(t, http.StatusRequestEntityTooLarge, resp.Code, "body: %s", resp.Body.String())
+	require.Equal(http.StatusRequestEntityTooLarge, resp.Code, "body: %s", resp.Body.String())
 	var body ErrorResponse
-	require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
-	assert.Equal(t, "request_too_large", body.Error)
-	assert.Equal(t, 0, store.calls)
+	require.NoError(json.NewDecoder(resp.Body).Decode(&body))
+	assert.Equal("request_too_large", body.Error)
+	assert.Equal(0, store.calls)
 }
 
 func TestMeetingImportReturnsUnavailableWithoutCapability(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
 	srv := newMeetingImportTestServer(t, nil)
 	resp := httptest.NewRecorder()
 
 	srv.Router().ServeHTTP(resp, meetingImportRequest(validMeetingImportBody))
 
-	require.Equal(t, http.StatusServiceUnavailable, resp.Code, "body: %s", resp.Body.String())
+	require.Equal(http.StatusServiceUnavailable, resp.Code, "body: %s", resp.Body.String())
 	var body ErrorResponse
-	require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
-	assert.Equal(t, "service_unavailable", body.Error)
+	require.NoError(json.NewDecoder(resp.Body).Decode(&body))
+	assert.Equal("service_unavailable", body.Error)
 }
 
 func TestMeetingImportSanitizesInternalErrors(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
 	store := &fakeMeetingImportStore{
 		mockStore: &mockStore{stats: &StoreStats{}},
 		err:       errors.New("database failed near secret transcript content"),
@@ -230,14 +248,17 @@ func TestMeetingImportSanitizesInternalErrors(t *testing.T) {
 
 	srv.Router().ServeHTTP(resp, meetingImportRequest(validMeetingImportBody))
 
-	require.Equal(t, http.StatusInternalServerError, resp.Code, "body: %s", resp.Body.String())
+	require.Equal(http.StatusInternalServerError, resp.Code, "body: %s", resp.Body.String())
 	var body ErrorResponse
-	require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
-	assert.Equal(t, "internal_error", body.Error)
-	assert.NotContains(t, body.Message, "secret transcript content")
+	require.NoError(json.NewDecoder(resp.Body).Decode(&body))
+	assert.Equal("internal_error", body.Error)
+	assert.NotContains(body.Message, "secret transcript content")
 }
 
 func TestMeetingImportOpenAPIDocument(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
 	store := &fakeMeetingImportStore{mockStore: &mockStore{stats: &StoreStats{}}}
 	srv := newMeetingImportTestServer(t, store)
 	req := httptest.NewRequest(http.MethodGet, "/openapi.json", nil)
@@ -245,17 +266,21 @@ func TestMeetingImportOpenAPIDocument(t *testing.T) {
 
 	srv.Router().ServeHTTP(resp, req)
 
-	require.Equal(t, http.StatusOK, resp.Code)
+	require.Equal(http.StatusOK, resp.Code)
 	var doc map[string]any
-	require.NoError(t, json.NewDecoder(resp.Body).Decode(&doc))
-	paths := doc["paths"].(map[string]any)
-	path := paths["/api/v1/import/meeting"].(map[string]any)
-	post := path["post"].(map[string]any)
-	assert.Equal(t, "importMeeting", post["operationId"])
-	assert.NotEmpty(t, post["security"])
-	responses := post["responses"].(map[string]any)
-	assert.Contains(t, responses, "200")
-	assert.Contains(t, responses, "201")
+	require.NoError(json.NewDecoder(resp.Body).Decode(&doc))
+	paths, ok := doc["paths"].(map[string]any)
+	require.True(ok, "paths object")
+	path, ok := paths["/api/v1/import/meeting"].(map[string]any)
+	require.True(ok, "meeting import path object")
+	post, ok := path["post"].(map[string]any)
+	require.True(ok, "meeting import operation object")
+	assert.Equal("importMeeting", post["operationId"])
+	assert.NotEmpty(post["security"])
+	responses, ok := post["responses"].(map[string]any)
+	require.True(ok, "responses object")
+	assert.Contains(responses, "200")
+	assert.Contains(responses, "201")
 }
 
 func TestMeetingImportBodyLimitDoesNotReadPastBoundary(t *testing.T) {

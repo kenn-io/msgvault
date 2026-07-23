@@ -20,6 +20,9 @@ func validImportRequest(t *testing.T) Request {
 }
 
 func TestImporterCreatesCanonicalMeetingAndSyncRun(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
 	st := testutil.NewTestStore(t)
 	sourceHookCalls := 0
 	var cacheLabels []string
@@ -35,29 +38,29 @@ func TestImporterCreatesCanonicalMeetingAndSyncRun(t *testing.T) {
 	})
 
 	result, err := importer.Import(context.Background(), validImportRequest(t))
-	require.NoError(t, err)
+	require.NoError(err)
 
-	assert.Equal(t, StatusCreated, result.Status)
-	assert.Equal(t, "meeting:42", result.SourceMessageID)
-	assert.NotZero(t, result.SourceID)
-	assert.NotZero(t, result.MessageID)
-	assert.Equal(t, 1, sourceHookCalls)
-	assert.Equal(t, []string{"meeting_import:local-meetings"}, cacheLabels)
+	assert.Equal(StatusCreated, result.Status)
+	assert.Equal("meeting:42", result.SourceMessageID)
+	assert.NotZero(result.SourceID)
+	assert.NotZero(result.MessageID)
+	assert.Equal(1, sourceHookCalls)
+	assert.Equal([]string{"meeting_import:local-meetings"}, cacheLabels)
 
 	var sourceType, identifier, displayName string
-	require.NoError(t, st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRow(st.Rebind(`
 		SELECT source_type, identifier, display_name
 		FROM sources WHERE id = ?
 	`), result.SourceID).Scan(&sourceType, &identifier, &displayName))
-	assert.Equal(t, SourceType, sourceType)
-	assert.Equal(t, "local-meetings", identifier)
-	assert.Equal(t, "Local Meetings", displayName)
+	assert.Equal(SourceType, sourceType)
+	assert.Equal("local-meetings", identifier)
+	assert.Equal("Local Meetings", displayName)
 
 	identities, err := st.ListAccountIdentities(result.SourceID)
-	require.NoError(t, err)
-	require.Len(t, identities, 1)
-	assert.Equal(t, "user@example.com", identities[0].Address)
-	assert.Contains(t, identities[0].SourceSignal, "account-email")
+	require.NoError(err)
+	require.Len(identities, 1)
+	assert.Equal("user@example.com", identities[0].Address)
+	assert.Contains(identities[0].SourceSignal, "account-email")
 
 	var (
 		messageType, sourceMessageID, subject string
@@ -67,7 +70,7 @@ func TestImporterCreatesCanonicalMeetingAndSyncRun(t *testing.T) {
 		body, rawFormat, metadataJSON         string
 		messageCount, participantCount        int
 	)
-	require.NoError(t, st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRow(st.Rebind(`
 		SELECT m.message_type, m.source_message_id, m.subject, m.is_from_me,
 		       p.email_address, c.conversation_type, c.source_conversation_id,
 		       mb.body_text, mr.raw_format, m.metadata,
@@ -84,64 +87,67 @@ func TestImporterCreatesCanonicalMeetingAndSyncRun(t *testing.T) {
 		&body, &rawFormat, &metadataJSON,
 		&messageCount, &participantCount,
 	))
-	assert.Equal(t, MessageType, messageType)
-	assert.Equal(t, "meeting:42", sourceMessageID)
-	assert.Equal(t, "Weekly planning", subject)
-	assert.False(t, isFromMe)
-	assert.Equal(t, "organizer@example.com", senderEmail.String)
-	assert.Equal(t, ConversationType, conversationType)
-	assert.Equal(t, "meeting:42", conversationKey)
-	assert.Contains(t, body, "[00:04] Test Speaker: Let's review the launch plan.")
-	assert.Equal(t, RawFormat, rawFormat)
-	assert.Equal(t, 1, messageCount)
-	assert.Equal(t, 1, participantCount)
+	assert.Equal(MessageType, messageType)
+	assert.Equal("meeting:42", sourceMessageID)
+	assert.Equal("Weekly planning", subject)
+	assert.False(isFromMe)
+	assert.Equal("organizer@example.com", senderEmail.String)
+	assert.Equal(ConversationType, conversationType)
+	assert.Equal("meeting:42", conversationKey)
+	assert.Contains(body, "[00:04] Test Speaker: Let's review the launch plan.")
+	assert.Equal(RawFormat, rawFormat)
+	assert.Equal(1, messageCount)
+	assert.Equal(1, participantCount)
 
 	var metadata map[string]any
-	require.NoError(t, json.Unmarshal([]byte(metadataJSON), &metadata))
-	assert.Equal(t, SourceType, metadata["platform"])
+	require.NoError(json.Unmarshal([]byte(metadataJSON), &metadata))
+	assert.Equal(SourceType, metadata["platform"])
 
 	raw, err := st.GetMessageRaw(result.MessageID)
-	require.NoError(t, err)
-	assert.NotContains(t, string(raw), "account_email")
-	assert.Contains(t, string(raw), `"external_id":"42"`)
+	require.NoError(err)
+	assert.NotContains(string(raw), "account_email")
+	assert.Contains(string(raw), `"external_id":"42"`)
 
 	var fromCount, toCount, memberCount int
-	require.NoError(t, st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRow(st.Rebind(`
 		SELECT COUNT(*) FROM message_recipients
 		WHERE message_id = ? AND recipient_type = 'from'
 	`), result.MessageID).Scan(&fromCount))
-	require.NoError(t, st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRow(st.Rebind(`
 		SELECT COUNT(*) FROM message_recipients
 		WHERE message_id = ? AND recipient_type = 'to'
 	`), result.MessageID).Scan(&toCount))
-	require.NoError(t, st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRow(st.Rebind(`
 		SELECT COUNT(*) FROM conversation_participants cp
 		JOIN messages m ON m.conversation_id = cp.conversation_id
 		WHERE m.id = ?
 	`), result.MessageID).Scan(&memberCount))
-	assert.Equal(t, 1, fromCount)
-	assert.Equal(t, 1, toCount)
-	assert.Equal(t, 1, memberCount)
+	assert.Equal(1, fromCount)
+	assert.Equal(1, toCount)
+	assert.Equal(1, memberCount)
 
 	latest, err := st.GetLatestSync(result.SourceID)
-	require.NoError(t, err)
-	assert.Equal(t, store.SyncStatusCompleted, latest.Status)
-	assert.Equal(t, int64(1), latest.MessagesProcessed)
-	assert.Equal(t, int64(1), latest.MessagesAdded)
-	assert.Equal(t, int64(0), latest.MessagesUpdated)
+	require.NoError(err)
+	assert.Equal(store.SyncStatusCompleted, latest.Status)
+	assert.Equal(int64(1), latest.MessagesProcessed)
+	assert.Equal(int64(1), latest.MessagesAdded)
+	assert.Equal(int64(0), latest.MessagesUpdated)
 }
 
 func TestImporterRetriesUpdateSameMessageAndReplacePeople(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
 	st := testutil.NewTestStore(t)
 	importer := NewImporter(st, Hooks{})
 
 	first, err := importer.Import(context.Background(), validImportRequest(t))
-	require.NoError(t, err)
+	require.NoError(err)
 
 	second, err := importer.Import(context.Background(), validImportRequest(t))
-	require.NoError(t, err)
-	assert.Equal(t, StatusUpdated, second.Status)
-	assert.Equal(t, first.MessageID, second.MessageID)
+	require.NoError(err)
+	assert.Equal(StatusUpdated, second.Status)
+	assert.Equal(first.MessageID, second.MessageID)
 
 	changed := validImportRequest(t)
 	changed.Source.DisplayName = "Renamed Meetings"
@@ -154,50 +160,53 @@ func TestImporterRetriesUpdateSameMessageAndReplacePeople(t *testing.T) {
 	changed.Meeting.Attendees = nil
 
 	third, err := importer.Import(context.Background(), changed)
-	require.NoError(t, err)
-	assert.Equal(t, StatusUpdated, third.Status)
-	assert.Equal(t, first.MessageID, third.MessageID)
+	require.NoError(err)
+	assert.Equal(StatusUpdated, third.Status)
+	assert.Equal(first.MessageID, third.MessageID)
 
 	var count int
-	require.NoError(t, st.DB().QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&count))
-	assert.Equal(t, 1, count)
+	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&count))
+	assert.Equal(1, count)
 
 	var subject, body, displayName string
 	var senderID sql.NullInt64
-	require.NoError(t, st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRow(st.Rebind(`
 		SELECT m.subject, mb.body_text, m.sender_id, s.display_name
 		FROM messages m
 		JOIN message_bodies mb ON mb.message_id = m.id
 		JOIN sources s ON s.id = m.source_id
 		WHERE m.id = ?
 	`), first.MessageID).Scan(&subject, &body, &senderID, &displayName))
-	assert.Equal(t, "Replacement title", subject)
-	assert.Contains(t, body, "Replacement summary")
-	assert.Contains(t, body, "Speaker 1: replacement transcript")
-	assert.False(t, senderID.Valid)
-	assert.Equal(t, "Renamed Meetings", displayName)
+	assert.Equal("Replacement title", subject)
+	assert.Contains(body, "Replacement summary")
+	assert.Contains(body, "Speaker 1: replacement transcript")
+	assert.False(senderID.Valid)
+	assert.Equal("Renamed Meetings", displayName)
 
 	for _, tableQuery := range []string{
 		`SELECT COUNT(*) FROM message_recipients WHERE message_id = ?`,
 		`SELECT COUNT(*) FROM conversation_participants cp
 		 JOIN messages m ON m.conversation_id = cp.conversation_id WHERE m.id = ?`,
 	} {
-		require.NoError(t, st.DB().QueryRow(st.Rebind(tableQuery), first.MessageID).Scan(&count))
-		assert.Equal(t, 0, count)
+		require.NoError(st.DB().QueryRow(st.Rebind(tableQuery), first.MessageID).Scan(&count))
+		assert.Equal(0, count)
 	}
 
 	latest, err := st.GetLatestSync(first.SourceID)
-	require.NoError(t, err)
-	assert.Equal(t, store.SyncStatusCompleted, latest.Status)
-	assert.Equal(t, int64(0), latest.MessagesAdded)
-	assert.Equal(t, int64(1), latest.MessagesUpdated)
+	require.NoError(err)
+	assert.Equal(store.SyncStatusCompleted, latest.Status)
+	assert.Equal(int64(0), latest.MessagesAdded)
+	assert.Equal(int64(1), latest.MessagesUpdated)
 
 	identities, err := st.ListAccountIdentities(first.SourceID)
-	require.NoError(t, err)
-	assert.Len(t, identities, 2)
+	require.NoError(err)
+	assert.Len(identities, 2)
 }
 
 func TestImporterScopesExternalIDsBySource(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
 	st := testutil.NewTestStore(t)
 	importer := NewImporter(st, Hooks{})
 	firstRequest := validImportRequest(t)
@@ -205,13 +214,13 @@ func TestImporterScopesExternalIDsBySource(t *testing.T) {
 	secondRequest.Source.Identifier = "second-stream"
 
 	first, err := importer.Import(context.Background(), firstRequest)
-	require.NoError(t, err)
+	require.NoError(err)
 	second, err := importer.Import(context.Background(), secondRequest)
-	require.NoError(t, err)
+	require.NoError(err)
 
-	assert.NotEqual(t, first.SourceID, second.SourceID)
-	assert.NotEqual(t, first.MessageID, second.MessageID)
-	assert.Equal(t, first.SourceMessageID, second.SourceMessageID)
+	assert.NotEqual(first.SourceID, second.SourceID)
+	assert.NotEqual(first.MessageID, second.MessageID)
+	assert.Equal(first.SourceMessageID, second.SourceMessageID)
 }
 
 func TestImporterMarksOrganizerFromConfirmedAccountAsFromMe(t *testing.T) {
@@ -231,6 +240,9 @@ func TestImporterMarksOrganizerFromConfirmedAccountAsFromMe(t *testing.T) {
 }
 
 func TestImporterMarksCacheFailureAndSafelyRetries(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
 	st := testutil.NewTestStore(t)
 	cacheErr := errors.New("synthetic cache failure")
 	failCache := true
@@ -244,33 +256,36 @@ func TestImporterMarksCacheFailureAndSafelyRetries(t *testing.T) {
 	})
 
 	_, err := importer.Import(context.Background(), validImportRequest(t))
-	require.ErrorIs(t, err, cacheErr)
+	require.ErrorIs(err, cacheErr)
 
 	var messageID, sourceID int64
-	require.NoError(t, st.DB().QueryRow(`
+	require.NoError(st.DB().QueryRow(`
 		SELECT id, source_id FROM messages WHERE source_message_id = 'meeting:42'
 	`).Scan(&messageID, &sourceID))
-	assert.NotZero(t, messageID, "message remains durable after cache failure")
+	assert.NotZero(messageID, "message remains durable after cache failure")
 
 	failed, err := st.GetLatestSync(sourceID)
-	require.NoError(t, err)
-	assert.Equal(t, store.SyncStatusFailed, failed.Status)
-	assert.Equal(t, int64(1), failed.MessagesProcessed)
-	assert.Equal(t, int64(1), failed.MessagesAdded)
+	require.NoError(err)
+	assert.Equal(store.SyncStatusFailed, failed.Status)
+	assert.Equal(int64(1), failed.MessagesProcessed)
+	assert.Equal(int64(1), failed.MessagesAdded)
 
 	failCache = false
 	result, err := importer.Import(context.Background(), validImportRequest(t))
-	require.NoError(t, err)
-	assert.Equal(t, StatusUpdated, result.Status)
-	assert.Equal(t, messageID, result.MessageID)
+	require.NoError(err)
+	assert.Equal(StatusUpdated, result.Status)
+	assert.Equal(messageID, result.MessageID)
 
 	completed, err := st.GetLatestSync(sourceID)
-	require.NoError(t, err)
-	assert.Equal(t, store.SyncStatusCompleted, completed.Status)
-	assert.Equal(t, int64(1), completed.MessagesUpdated)
+	require.NoError(err)
+	assert.Equal(store.SyncStatusCompleted, completed.Status)
+	assert.Equal(int64(1), completed.MessagesUpdated)
 }
 
 func TestImporterSourceHookFailureStopsBeforeSync(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
 	st := testutil.NewTestStore(t)
 	hookErr := errors.New("synthetic migration failure")
 	importer := NewImporter(st, Hooks{
@@ -278,13 +293,13 @@ func TestImporterSourceHookFailureStopsBeforeSync(t *testing.T) {
 	})
 
 	_, err := importer.Import(context.Background(), validImportRequest(t))
-	require.ErrorIs(t, err, hookErr)
+	require.ErrorIs(err, hookErr)
 
 	var count int
-	require.NoError(t, st.DB().QueryRow(`SELECT COUNT(*) FROM sync_runs`).Scan(&count))
-	assert.Equal(t, 0, count)
-	require.NoError(t, st.DB().QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&count))
-	assert.Equal(t, 0, count)
+	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM sync_runs`).Scan(&count))
+	assert.Equal(0, count)
+	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&count))
+	assert.Equal(0, count)
 }
 
 func TestImporterCancellationStopsBeforeSourceSetup(t *testing.T) {
@@ -302,10 +317,13 @@ func TestImporterCancellationStopsBeforeSourceSetup(t *testing.T) {
 }
 
 func TestImporterRawFailureRollsBackCanonicalSnapshot(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
 	testutil.SkipIfPostgres(t, "uses a SQLite trigger to inject a raw archive failure")
 	st := testutil.NewTestStore(t)
 	importer := NewImporter(st, Hooks{})
-	require.True(t, st.FTS5Available())
+	require.True(st.FTS5Available())
 	_, err := st.DB().Exec(`
 		CREATE TRIGGER fail_meeting_import_raw
 		BEFORE INSERT ON message_raw
@@ -314,11 +332,11 @@ func TestImporterRawFailureRollsBackCanonicalSnapshot(t *testing.T) {
 			SELECT RAISE(ABORT, 'forced meeting import raw failure');
 		END
 	`)
-	require.NoError(t, err)
+	require.NoError(err)
 
 	_, err = importer.Import(context.Background(), validImportRequest(t))
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "persist meeting")
+	require.Error(err)
+	assert.Contains(err.Error(), "persist meeting")
 
 	for table, want := range map[string]int{
 		"messages":           0,
@@ -329,34 +347,37 @@ func TestImporterRawFailureRollsBackCanonicalSnapshot(t *testing.T) {
 		"messages_fts":       0,
 	} {
 		var got int
-		require.NoError(t, st.DB().QueryRow("SELECT COUNT(*) FROM "+table).Scan(&got), table)
-		assert.Equal(t, want, got, table)
+		require.NoError(st.DB().QueryRow("SELECT COUNT(*) FROM "+table).Scan(&got), table)
+		assert.Equal(want, got, table)
 	}
 
 	sources, err := st.ListSources(SourceType)
-	require.NoError(t, err)
-	require.Len(t, sources, 1)
+	require.NoError(err)
+	require.Len(sources, 1)
 	latest, err := st.GetLatestSync(sources[0].ID)
-	require.NoError(t, err)
-	assert.Equal(t, store.SyncStatusFailed, latest.Status)
-	assert.Contains(t, latest.ErrorMessage.String, "persist meeting")
+	require.NoError(err)
+	assert.Equal(store.SyncStatusFailed, latest.Status)
+	assert.Contains(latest.ErrorMessage.String, "persist meeting")
 }
 
 func TestImporterIndexesSubjectBodyAndAddresses(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
 	testutil.SkipIfPostgres(t, "asserts against the SQLite FTS5 virtual table")
 	st := testutil.NewTestStore(t)
 	importer := NewImporter(st, Hooks{})
 
 	result, err := importer.Import(context.Background(), validImportRequest(t))
-	require.NoError(t, err)
+	require.NoError(err)
 
 	var subject, body, fromAddr, toAddrs string
-	require.NoError(t, st.DB().QueryRow(`
+	require.NoError(st.DB().QueryRow(`
 		SELECT subject, body, from_addr, to_addr
 		FROM messages_fts WHERE rowid = ?
 	`, result.MessageID).Scan(&subject, &body, &fromAddr, &toAddrs))
-	assert.Equal(t, "Weekly planning", subject)
-	assert.Contains(t, body, "launch plan")
-	assert.Equal(t, "organizer@example.com", fromAddr)
-	assert.Equal(t, "attendee@example.com", strings.TrimSpace(toAddrs))
+	assert.Equal("Weekly planning", subject)
+	assert.Contains(body, "launch plan")
+	assert.Equal("organizer@example.com", fromAddr)
+	assert.Equal("attendee@example.com", strings.TrimSpace(toAddrs))
 }

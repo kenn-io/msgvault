@@ -11,7 +11,7 @@ import (
 )
 
 type MeetingImporter interface {
-	ImportMeeting(context.Context, meetingimport.Request) (meetingimport.Result, error)
+	ImportMeeting(ctx context.Context, req meetingimport.Request) (meetingimport.Result, error)
 }
 
 type MeetingImportResponse struct {

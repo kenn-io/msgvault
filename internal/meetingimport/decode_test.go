@@ -1,7 +1,6 @@
 package meetingimport
 
 import (
-	"errors"
 	"strings"
 	"testing"
 
@@ -48,15 +47,20 @@ const validRequestJSON = `{
 }`
 
 func TestDecodeRequestAcceptsCompleteStrictRequest(t *testing.T) {
-	req, err := DecodeRequest(strings.NewReader(validRequestJSON), MaxRequestBytes)
-	require.NoError(t, err)
+	assert := assert.New(t)
+	require := require.New(t)
 
-	assert.Equal(t, " local-meetings ", req.Source.Identifier)
-	assert.Equal(t, " 42 ", req.Meeting.ExternalID)
-	require.Len(t, req.Meeting.TranscriptSegments, 1)
-	require.NotNil(t, req.Meeting.TranscriptSegments[0].OffsetSeconds)
-	assert.Equal(t, float64(4), *req.Meeting.TranscriptSegments[0].OffsetSeconds)
-	assert.Equal(t, true, req.Meeting.Metadata["nested"].(map[string]any)["accepted"])
+	req, err := DecodeRequest(strings.NewReader(validRequestJSON), MaxRequestBytes)
+	require.NoError(err)
+
+	assert.Equal(" local-meetings ", req.Source.Identifier)
+	assert.Equal(" 42 ", req.Meeting.ExternalID)
+	require.Len(req.Meeting.TranscriptSegments, 1)
+	require.NotNil(req.Meeting.TranscriptSegments[0].OffsetSeconds)
+	assert.InDelta(float64(4), *req.Meeting.TranscriptSegments[0].OffsetSeconds, 0)
+	nested, ok := req.Meeting.Metadata["nested"].(map[string]any)
+	require.True(ok, "nested metadata object")
+	assert.Equal(true, nested["accepted"])
 }
 
 func TestDecodeRequestRejectsMalformedAndTrailingJSON(t *testing.T) {
@@ -77,9 +81,12 @@ func TestDecodeRequestRejectsMalformedAndTrailingJSON(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+
 			_, err := DecodeRequest(strings.NewReader(tt.body), MaxRequestBytes)
-			require.Error(t, err)
-			assert.ErrorIs(t, err, ErrMalformedRequest)
+			require.Error(err)
+			assert.ErrorIs(err, ErrMalformedRequest)
 		})
 	}
 }
@@ -98,11 +105,13 @@ func TestDecodeRequestAllowsUnknownProviderMetadata(t *testing.T) {
 }
 
 func TestDecodeRequestEnforcesBodyLimit(t *testing.T) {
+	require := require.New(t)
+
 	_, err := DecodeRequest(strings.NewReader(validRequestJSON), int64(len(validRequestJSON)-1))
-	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrRequestTooLarge)
+	require.Error(err)
+	require.ErrorIs(err, ErrRequestTooLarge)
 
 	_, err = DecodeRequest(strings.NewReader(`{}`), 0)
-	require.Error(t, err)
-	assert.True(t, errors.Is(err, ErrRequestTooLarge))
+	require.Error(err)
+	require.ErrorIs(err, ErrRequestTooLarge)
 }

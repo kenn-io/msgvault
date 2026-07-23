@@ -164,9 +164,13 @@ func normalizeMeeting(meeting Meeting) (NormalizedMeeting, error) {
 		return NormalizedMeeting{}, validationError("meeting requires a summary or transcript")
 	}
 
-	organizer, err := normalizeOptionalPerson("meeting.organizer", meeting.Organizer)
-	if err != nil {
-		return NormalizedMeeting{}, err
+	var organizer *Person
+	if meeting.Organizer != nil {
+		normalizedOrganizer, normalizeErr := normalizePerson("meeting.organizer", *meeting.Organizer)
+		if normalizeErr != nil {
+			return NormalizedMeeting{}, normalizeErr
+		}
+		organizer = &normalizedOrganizer
 	}
 	attendees, err := normalizeAttendees(meeting.Attendees)
 	if err != nil {
@@ -220,15 +224,12 @@ func normalizeSegments(segments []TranscriptSegment) ([]TranscriptSegment, error
 	return out, nil
 }
 
-func normalizeOptionalPerson(field string, person *Person) (*Person, error) {
-	if person == nil {
-		return nil, nil
-	}
+func normalizePerson(field string, person Person) (Person, error) {
 	email, err := normalizeEmail(field+".email", person.Email)
 	if err != nil {
-		return nil, err
+		return Person{}, err
 	}
-	return &Person{
+	return Person{
 		Name:  strings.TrimSpace(person.Name),
 		Email: email,
 	}, nil
@@ -238,9 +239,9 @@ func normalizeAttendees(attendees []Person) ([]Person, error) {
 	out := make([]Person, 0, len(attendees))
 	seen := make(map[string]struct{}, len(attendees))
 	for idx := range attendees {
-		person, err := normalizeOptionalPerson(
+		person, err := normalizePerson(
 			fmt.Sprintf("meeting.attendees[%d]", idx),
-			&attendees[idx],
+			attendees[idx],
 		)
 		if err != nil {
 			return nil, err
@@ -250,7 +251,7 @@ func normalizeAttendees(attendees []Person) ([]Person, error) {
 			continue
 		}
 		seen[key] = struct{}{}
-		out = append(out, *person)
+		out = append(out, person)
 	}
 	return out, nil
 }

@@ -3,6 +3,7 @@ package meetingimport
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"unicode/utf8"
@@ -18,7 +19,7 @@ func DecodeRequest(r io.Reader, maxBytes int64) (Request, error) {
 
 	body, err := io.ReadAll(io.LimitReader(r, maxBytes+1))
 	if err != nil {
-		return Request{}, fmt.Errorf("%w: read body: %v", ErrMalformedRequest, err)
+		return Request{}, fmt.Errorf("%w: read body: %w", ErrMalformedRequest, err)
 	}
 	if int64(len(body)) > maxBytes {
 		return Request{}, ErrRequestTooLarge
@@ -34,7 +35,7 @@ func DecodeRequest(r io.Reader, maxBytes int64) (Request, error) {
 	decoder.DisallowUnknownFields()
 	var req Request
 	if err := decoder.Decode(&req); err != nil {
-		return Request{}, fmt.Errorf("%w: %v", ErrMalformedRequest, err)
+		return Request{}, fmt.Errorf("%w: %w", ErrMalformedRequest, err)
 	}
 
 	var trailing any
@@ -42,8 +43,8 @@ func DecodeRequest(r io.Reader, maxBytes int64) (Request, error) {
 	if err == nil {
 		return Request{}, fmt.Errorf("%w: trailing JSON value", ErrMalformedRequest)
 	}
-	if err != io.EOF {
-		return Request{}, fmt.Errorf("%w: trailing data: %v", ErrMalformedRequest, err)
+	if !errors.Is(err, io.EOF) {
+		return Request{}, fmt.Errorf("%w: trailing data: %w", ErrMalformedRequest, err)
 	}
 	return req, nil
 }

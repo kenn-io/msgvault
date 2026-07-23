@@ -141,13 +141,17 @@ func TestOpenAPIMeetingImportContract(t *testing.T) {
 	schemas := doc.Components.Schemas.Map()
 	requestSchema := schemas["MeetingImportRequest"]
 	require.NotNil(requestSchema, "request component")
-	assert.False(requestSchema.AdditionalProperties.(bool), "request rejects unknown fields")
+	requestAdditionalProperties, ok := requestSchema.AdditionalProperties.(bool)
+	require.True(ok, "request additionalProperties is boolean")
+	assert.False(requestAdditionalProperties, "request rejects unknown fields")
 	assert.ElementsMatch([]string{"source", "meeting"}, requestSchema.Required)
 
 	for _, name := range []string{"Source", "Meeting", "Person", "TranscriptSegment"} {
 		schema := schemas[name]
 		require.NotNil(schema, "%s component", name)
-		assert.False(schema.AdditionalProperties.(bool), "%s rejects unknown fields", name)
+		additionalProperties, ok := schema.AdditionalProperties.(bool)
+		require.True(ok, "%s additionalProperties is boolean", name)
+		assert.False(additionalProperties, "%s rejects unknown fields", name)
 	}
 	assert.ElementsMatch(
 		[]string{"external_id", "started_at"},
