@@ -5,6 +5,7 @@
   import type { APIClient } from '../../api/client';
   import { analyticalAuthority } from '../../explore/authority';
   import type { ExplorePredicate, FileMIMEFamily, FileSearchResponse, FileSearchRow, FileSearchSort } from '../../explore/models';
+  import { isRetryableStatus } from '../../relationships/controller.svelte';
   import { rebaseVirtualScroll, RowGeometry, tableViewportHeight } from '../../theme/preferences.svelte';
   import FileViewer from './FileViewer.svelte';
 
@@ -249,6 +250,8 @@
     } catch (cause: unknown) {
       if (!signal.aborted && currentGeneration === generation) {
         const message = cause instanceof Error ? cause.message : 'Files could not be loaded.';
+        // A network throw is transient: keep the cursor so a retry can
+        // re-attempt the same page.
         if (cursor) pageError = message;
         else error = message;
         loading = false;
@@ -264,9 +267,15 @@
       const message = responseError && typeof responseError === 'object' && 'message' in responseError
         ? String(responseError.message)
         : 'Files could not be loaded.';
-      // Cursor-page failures (including a 503 mid-scroll) must not wipe the
-      // rows already loaded: keep them and surface a retryable page error.
-      if (cursor) pageError = message;
+      // Cursor-page failures must not wipe the rows already loaded. A
+      // transient status (429, 5xx — including a 503 mid-scroll) keeps the
+      // cursor and surfaces a retryable page error; any other status (e.g. a
+      // revision-changed 409) rejected the cursor itself, so retrying it
+      // would fail forever — clear it and offer a reload instead.
+      if (cursor) {
+        if (isRetryableStatus(response.status)) pageError = message;
+        else failPaging(message);
+      }
       else if (response.status === 503) unavailable = message;
       else error = message;
       return false;

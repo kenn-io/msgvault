@@ -592,8 +592,9 @@ function parseDomainName(target: string | null): string | undefined {
 /** Transient failures — network throws (status 0), rate limiting, and server
  * errors — keep the continuation cursor so a retry can re-attempt the same
  * page. Any other status rejected the cursor itself (invalid, revision
- * changed), so retrying it would fail forever. */
-function isRetryableStatus(status: number): boolean {
+ * changed), so retrying it would fail forever. Shared with other cursor-paged
+ * workspaces (e.g. Files) so every listing classifies failures the same way. */
+export function isRetryableStatus(status: number): boolean {
   return status === 0 || status === 429 || status >= 500;
 }
 

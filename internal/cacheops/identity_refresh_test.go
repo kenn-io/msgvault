@@ -59,6 +59,160 @@ func TestRefreshIdentityDatasetsUpdatesClustersAndRevision(t *testing.T) {
 	want := map[int64]int64{a: min(a, b), b: min(a, b)}
 	assert.Equal(want, clusters, "participant_clusters parquet")
 
+	readiness, err := query.InspectCacheReadiness(dir)
+	require.NoError(err, "InspectCacheReadiness after refresh")
+	assert.Equal(query.CacheReady, readiness, "a refresh of a healthy cache must republish a fully consistent one")
+
+	assertNoIdentityPublishLitter(t, dir)
+}
+
+// TestRefreshIdentityDatasetsRejectsDriftedMessageShard covers the
+// integrity guard: a message shard modified outside the ETL after the last
+// publication makes the cache detectably drifted (its fingerprint no longer
+// matches the commit marker). An identity-only refresh must reject rather
+// than recompute and commit a fingerprint over the drifted tree, which
+// would stamp the damage as valid and hide it from readers.
+func TestRefreshIdentityDatasetsRejectsDriftedMessageShard(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	f := storetest.New(t)
+	st := f.Store
+	a := f.EnsureParticipant("alice@example.com", "Alice", "example.com")
+	b := f.EnsureParticipant("alice@personal.example", "Alice P", "personal.example")
+
+	dir := writeCacheStatsFixture(t)
+	messagesFile := filepath.Join(dir, tableMessages, "year=2024", "data.parquet")
+	require.NoError(os.WriteFile(messagesFile, []byte("drifted outside the ETL"), 0o600),
+		"corrupt messages shard after publication")
+
+	before, err := query.ReadCacheSyncState(dir)
+	require.NoError(err, "ReadCacheSyncState before refresh")
+
+	_, err = st.LinkParticipants(a, b)
+	require.NoError(err, "LinkParticipants")
+
+	_, err = RefreshIdentityDatasets(context.Background(), st, dir)
+	require.Error(err, "refresh over a drifted message shard must be rejected")
+	require.ErrorIs(err, ErrCacheNotRefreshable)
+
+	after, err := query.ReadCacheSyncState(dir)
+	require.NoError(err, "ReadCacheSyncState after rejected refresh")
+	assert.Equal(before.DatasetFingerprint, after.DatasetFingerprint,
+		"rejected refresh must not rewrite the committed fingerprint")
+	assert.Equal(before.IdentityRevision, after.IdentityRevision,
+		"rejected refresh must not advance the committed identity revision")
+	assert.Equal(before.PublishedAt, after.PublishedAt,
+		"rejected refresh must not restamp PublishedAt")
+
+	readiness, err := query.InspectCacheReadiness(dir)
+	require.NoError(err, "InspectCacheReadiness after rejected refresh")
+	assert.Equal(query.CacheDrifted, readiness,
+		"the drift must remain detectable after the rejected refresh")
+}
+
+// TestRefreshIdentityDatasetsRejectsMissingNonIdentityDataset pins the
+// narrow repair allowance: only missing identity datasets may be repaired
+// by the identity refresh. A missing non-identity dataset — even alongside
+// a missing identity dataset — is a non-identity interruption the refresh
+// must not paper over with a fresh fingerprint.
+func TestRefreshIdentityDatasetsRejectsMissingNonIdentityDataset(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	f := storetest.New(t)
+	st := f.Store
+	a := f.EnsureParticipant("alice@example.com", "Alice", "example.com")
+	b := f.EnsureParticipant("alice@personal.example", "Alice P", "personal.example")
+
+	dir := writeCacheStatsFixture(t)
+	require.NoError(os.RemoveAll(filepath.Join(dir, "labels")), "remove labels dataset")
+	require.NoError(os.RemoveAll(filepath.Join(dir, datasetParticipantClusters)), "remove clusters dataset")
+
+	before, err := query.ReadCacheSyncState(dir)
+	require.NoError(err, "ReadCacheSyncState before refresh")
+
+	_, err = st.LinkParticipants(a, b)
+	require.NoError(err, "LinkParticipants")
+
+	_, err = RefreshIdentityDatasets(context.Background(), st, dir)
+	require.Error(err, "refresh with a missing non-identity dataset must be rejected")
+	require.ErrorIs(err, ErrCacheNotRefreshable)
+	require.ErrorContains(err, "labels", "error must name the missing non-identity dataset")
+
+	after, err := query.ReadCacheSyncState(dir)
+	require.NoError(err, "ReadCacheSyncState after rejected refresh")
+	assert.Equal(before.DatasetFingerprint, after.DatasetFingerprint,
+		"rejected refresh must not rewrite the committed fingerprint")
+	assert.Equal(before.IdentityRevision, after.IdentityRevision,
+		"rejected refresh must not advance the committed identity revision")
+}
+
+// TestRefreshIdentityDatasetsRejectsInterruptedMarker rejects a commit
+// marker that itself records an interrupted publication (no committed
+// fingerprint): the refresh cannot know what the datasets should look like,
+// so stamping a fresh fingerprint would legitimize whatever is on disk.
+func TestRefreshIdentityDatasetsRejectsInterruptedMarker(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	f := storetest.New(t)
+	st := f.Store
+	a := f.EnsureParticipant("alice@example.com", "Alice", "example.com")
+	b := f.EnsureParticipant("alice@personal.example", "Alice P", "personal.example")
+
+	dir := writeCacheStatsFixture(t)
+	state, err := query.ReadCacheSyncState(dir)
+	require.NoError(err, "ReadCacheSyncState")
+	state.DatasetFingerprint = ""
+	writeCacheStatsState(t, dir, state)
+
+	_, err = st.LinkParticipants(a, b)
+	require.NoError(err, "LinkParticipants")
+
+	_, err = RefreshIdentityDatasets(context.Background(), st, dir)
+	require.Error(err, "refresh over an interrupted marker must be rejected")
+	require.ErrorIs(err, ErrCacheNotRefreshable)
+	assert.ErrorContains(err, "interrupted publication")
+}
+
+// TestRefreshIdentityDatasetsRepairsMissingIdentityDatasets pins the one
+// discrepancy the integrity guard allows: identity dataset directories
+// missing (e.g. after a prior interrupted refresh) are exactly what the
+// refresh regenerates, so it must proceed and leave a fully consistent
+// publication behind.
+func TestRefreshIdentityDatasetsRepairsMissingIdentityDatasets(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	f := storetest.New(t)
+	st := f.Store
+	a := f.EnsureParticipant("alice@example.com", "Alice", "example.com")
+	b := f.EnsureParticipant("alice@personal.example", "Alice P", "personal.example")
+
+	dir := writeCacheStatsFixture(t)
+	require.NoError(os.RemoveAll(filepath.Join(dir, datasetOwnerParticipants)), "remove owner_participants dataset")
+	require.NoError(os.RemoveAll(filepath.Join(dir, datasetParticipantClusters)), "remove participant_clusters dataset")
+
+	wantRevision, err := st.LinkParticipants(a, b)
+	require.NoError(err, "LinkParticipants")
+
+	gotRevision, err := RefreshIdentityDatasets(context.Background(), st, dir)
+	require.NoError(err, "refresh must repair missing identity datasets")
+	assert.Equal(wantRevision, gotRevision, "returned revision")
+
+	state, err := query.ReadCacheSyncState(dir)
+	require.NoError(err, "ReadCacheSyncState after repair")
+	assert.Equal(wantRevision, state.IdentityRevision, "repaired marker must carry the new identity revision")
+
+	clusters := readInt64PairsParquet(t, dir, datasetParticipantClusters, "participant_id", "canonical_id")
+	want := map[int64]int64{a: min(a, b), b: min(a, b)}
+	assert.Equal(want, clusters, "regenerated participant_clusters parquet")
+
+	readiness, err := query.InspectCacheReadiness(dir)
+	require.NoError(err, "InspectCacheReadiness after repair")
+	assert.Equal(query.CacheReady, readiness, "repaired publication must be fully consistent")
+
 	assertNoIdentityPublishLitter(t, dir)
 }
 

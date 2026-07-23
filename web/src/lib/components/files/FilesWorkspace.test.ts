@@ -405,6 +405,56 @@ describe('FilesWorkspace', () => {
     expect(cursorCalls).toBe(2);
   });
 
+  it.each(['archive_revision_changed', 'search_revision_changed'])(
+    'clears the cursor and offers reload when a cursor page returns 409 %s',
+    async (code) => {
+      const first = response();
+      Object.assign(first, { total_count: 2, next_cursor: 'page-2' });
+      const reloaded = response();
+      reloaded.files = [
+        first.files[0]!,
+        { ...first.files[0]!, id: 8, key: 'file:8', filename: 'recovered.pdf' }
+      ];
+      reloaded.total_count = 2;
+      let initialCalls = 0;
+      let cursorCalls = 0;
+      const fetchFn = vi.fn<typeof fetch>(async (input) => {
+        const request = input instanceof Request ? input : new Request(input);
+        const body = await request.clone().json() as { cursor?: string };
+        if (body.cursor) {
+          cursorCalls += 1;
+          return Response.json(
+            { error: code, message: 'Results changed under this cursor.' }, { status: 409 }
+          );
+        }
+        initialCalls += 1;
+        return Response.json(initialCalls === 1 ? first : reloaded);
+      });
+      render(FilesWorkspace, {
+        client: createAPIClient(fetchFn), predicate: { filters: [], presentation: 'table' },
+        sort: { field: 'occurred_at', direction: 'desc' }
+      });
+      const grid = await screen.findByRole('grid', { name: 'Files results' });
+      await screen.findByRole('row', { name: /fixture.pdf/ });
+      await fireEvent.scroll(grid);
+
+      const alert = await screen.findByRole('alert');
+      expect(alert.textContent).toContain('Results changed under this cursor.');
+      expect(screen.getByRole('row', { name: /fixture.pdf/ })).toBeDefined();
+      expect(screen.queryByRole('button', { name: 'Retry loading more files' })).toBeNull();
+
+      // The cursor is dead: the scroll sentinel must not re-attempt it.
+      await fireEvent.scroll(grid);
+      expect(cursorCalls).toBe(1);
+
+      await fireEvent.click(screen.getByRole('button', { name: 'Reload files' }));
+      expect(await screen.findByText('recovered.pdf')).toBeDefined();
+      expect(screen.queryByRole('alert')).toBeNull();
+      expect(initialCalls).toBe(2);
+      expect(cursorCalls).toBe(1);
+    }
+  );
+
   it('shows a consistency failure beside loaded rows and recovers via reload', async () => {
     const first = response();
     Object.assign(first, { total_count: 2, next_cursor: 'page-2' });
