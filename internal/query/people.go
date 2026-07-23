@@ -470,8 +470,14 @@ func (e *DuckDBEngine) searchDomains(ctx context.Context, request DomainSearchRe
 		limit = defaultExploreLimit
 	}
 	args = append(args, limit, request.Page.Offset)
+	// person_count counts identities with at least one address on the domain:
+	// participants are filtered to the domain by their OWN address first, then
+	// resolved to canonical cluster IDs (canon, sqlClustersCanonCTE) so linked
+	// aliases on the same domain count once — matching the cluster-aware People
+	// and Relationships views. Canonicalizing after the domain filter keeps a
+	// cluster whose canonical member lives on another domain counted here.
 	queryText := buildExploreLogicalSQL(conditions) + `
-), domain_entries AS (
+), ` + sqlClustersCanonCTE(e.parquetPath(datasetParticipantClusters)) + `, domain_entries AS (
 	SELECT lower(grouped.domain) AS domain, logical_entries.*
 	FROM logical_entries CROSS JOIN UNNEST(participant_domains) AS grouped(domain)
 ), domain_population AS (
@@ -485,9 +491,10 @@ func (e *DuckDBEngine) searchDomains(ctx context.Context, request DomainSearchRe
 	SELECT *, COUNT(*) OVER () AS total_count FROM filtered_domains
 )
 SELECT domain, activity_count,
-	(SELECT COUNT(DISTINCT person_id)::BIGINT FROM (
+	(SELECT COUNT(DISTINCT cn.canonical_id)::BIGINT FROM (
 		SELECT UNNEST(participant_ids) AS person_id FROM domain_entries de WHERE de.domain = counted.domain
-	) people JOIN participants p ON p.id = people.person_id AND lower(COALESCE(p.domain, '')) = counted.domain) AS person_count,
+	) people JOIN participants p ON p.id = people.person_id AND lower(COALESCE(p.domain, '')) = counted.domain
+	JOIN canon cn ON cn.participant_id = people.person_id) AS person_count,
 	file_count,
 	COALESCE(CAST((SELECT to_json(list(struct_pack(source_type := source_type, count := source_count)
 		ORDER BY source_type)) FROM (SELECT source_type, COUNT(*)::BIGINT AS source_count

@@ -43,9 +43,20 @@ func defaultCORSAllowedMethods() []string {
 	}
 }
 
+// defaultCORSAllowedHeaders lists the request headers cross-origin clients
+// send: If-Match carries the concurrency token for settings and saved-view
+// updates, X-Request-Id the idempotency key for task creation.
 func defaultCORSAllowedHeaders() []string {
-	return []string{"Accept", "Authorization", "Content-Type", "X-API-Key", csrfHeaderName}
+	return []string{
+		"Accept", "Authorization", "Content-Type", "If-Match",
+		"X-API-Key", "X-Request-Id", csrfHeaderName,
+	}
 }
+
+// corsExposedHeaders is the Access-Control-Expose-Headers value: ETag is the
+// only non-safelisted response header clients read (settings and saved-view
+// concurrency tokens).
+const corsExposedHeaders = "ETag"
 
 // CORSMiddleware returns a middleware that handles CORS headers.
 //
@@ -91,6 +102,7 @@ func CORSMiddleware(cfg CORSConfig) func(http.Handler) http.Handler {
 				return
 			}
 
+			w.Header().Set("Access-Control-Expose-Headers", corsExposedHeaders)
 			next.ServeHTTP(w, r)
 		})
 	}

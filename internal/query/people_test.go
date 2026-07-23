@@ -172,6 +172,68 @@ func TestSearchDomainsSpansSourcesAndModalitiesWithoutOrganizationClaims(t *test
 	assertions.NotEmpty(result.CacheRevision)
 }
 
+// TestSearchDomainsCountsLinkedAliasesAsOnePerson pins the cluster-aware
+// domain person_count: two linked addresses on the same domain are ONE
+// identity, so the domain counts them once — matching the cluster-aware
+// People and Relationships views — while unlinked participants still count
+// individually and per-entry metrics stay per-entry.
+func TestSearchDomainsCountsLinkedAliasesAsOnePerson(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	b := NewTestDataBuilder(t)
+	source := b.AddSourceWithType("archive@example.com", "gmail")
+	alice := b.AddParticipant("alice@example.com", "example.com", "Alice Example")
+	aliceAlias := b.AddParticipant("alice2@example.com", "example.com", "")
+	bob := b.AddParticipant("bob@example.com", "example.com", "Bob Example")
+	b.LinkCluster(alice, aliceAlias)
+
+	when := time.Date(2026, 7, 12, 9, 0, 0, 0, time.UTC)
+	toAlice := b.AddMessage(MessageOpt{SourceID: source, ConversationID: 601, Subject: "To alice", SentAt: when})
+	b.AddTo(toAlice, alice, "Alice Example")
+	toAlias := b.AddMessage(MessageOpt{SourceID: source, ConversationID: 602, Subject: "To alias", SentAt: when.Add(time.Hour)})
+	b.AddTo(toAlias, aliceAlias, "")
+	toBob := b.AddMessage(MessageOpt{SourceID: source, ConversationID: 603, Subject: "To bob", SentAt: when.Add(2 * time.Hour)})
+	b.AddTo(toBob, bob, "Bob Example")
+
+	result, err := b.BuildEngine().SearchDomains(context.Background(), DomainSearchRequest{Page: PageSpec{Limit: 25}})
+	requirements.NoError(err)
+	requirements.Len(result.Rows, 1)
+	assertions.Equal("example.com", result.Rows[0].Domain)
+	assertions.Equal(int64(2), result.Rows[0].PersonCount, "linked same-domain aliases are one identity, not two")
+	assertions.Equal(int64(3), result.Rows[0].ActivityCount, "activity stays per-entry")
+}
+
+// TestSearchDomainsCountsClusterWithCanonicalOnAnotherDomain guards the
+// canonicalization order: a cluster whose canonical (smallest-ID) member is
+// on ANOTHER domain still counts on this domain, because membership is the
+// participant's own address — canonical resolution must never drop it.
+func TestSearchDomainsCountsClusterWithCanonicalOnAnotherDomain(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	b := NewTestDataBuilder(t)
+	source := b.AddSourceWithType("archive@example.com", "gmail")
+	// Created first, so the work address is the smallest ID — the canonical.
+	aliceWork := b.AddParticipant("alice@work.example", "work.example", "Alice (Work)")
+	alice := b.AddParticipant("alice@example.com", "example.com", "Alice Example")
+	b.LinkCluster(aliceWork, alice)
+
+	when := time.Date(2026, 7, 12, 9, 0, 0, 0, time.UTC)
+	toAlice := b.AddMessage(MessageOpt{SourceID: source, ConversationID: 701, Subject: "To personal", SentAt: when})
+	b.AddTo(toAlice, alice, "Alice Example")
+	toWork := b.AddMessage(MessageOpt{SourceID: source, ConversationID: 702, Subject: "To work", SentAt: when.Add(time.Hour)})
+	b.AddTo(toWork, aliceWork, "Alice (Work)")
+
+	result, err := b.BuildEngine().SearchDomains(context.Background(), DomainSearchRequest{
+		Sort: SortSpec{Field: "display_label", Direction: "asc"}, Page: PageSpec{Limit: 25},
+	})
+	requirements.NoError(err)
+	requirements.Len(result.Rows, 2)
+	assertions.Equal("example.com", result.Rows[0].Domain)
+	assertions.Equal(int64(1), result.Rows[0].PersonCount, "the identity counts here through its address on this domain")
+	assertions.Equal("work.example", result.Rows[1].Domain)
+	assertions.Equal(int64(1), result.Rows[1].PersonCount)
+}
+
 func TestGetPersonAndDomainAreExactAndBounded(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)

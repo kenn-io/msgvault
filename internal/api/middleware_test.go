@@ -177,7 +177,7 @@ func TestCORSPreflightHeaders(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
-	req := httptest.NewRequest(http.MethodOptions, "/api/v1/stats", nil)
+	req := httptest.NewRequest(http.MethodOptions, "/api/v1/settings", nil)
 	req.Header.Set("Origin", "http://localhost:3000")
 	w := httptest.NewRecorder()
 
@@ -188,8 +188,63 @@ func TestCORSPreflightHeaders(t *testing.T) {
 	methods := w.Header().Get("Access-Control-Allow-Methods")
 	assert.NotEmpty(methods, "missing Access-Control-Allow-Methods")
 	assert.Contains(methods, http.MethodPatch, "preflight methods should include PATCH")
-	assert.NotEmpty(w.Header().Get("Access-Control-Allow-Headers"), "missing Access-Control-Allow-Headers")
+	headers := w.Header().Get("Access-Control-Allow-Headers")
+	assert.NotEmpty(headers, "missing Access-Control-Allow-Headers")
+	assert.Contains(headers, "If-Match",
+		"preflight must allow If-Match for settings and saved-view concurrency tokens")
+	assert.Contains(headers, "X-Request-Id",
+		"preflight must allow X-Request-Id for task-creation idempotency keys")
 	assert.NotEmpty(w.Header().Get("Access-Control-Max-Age"), "missing Access-Control-Max-Age")
+}
+
+func TestCORSExposeHeaders(t *testing.T) {
+	tests := []struct {
+		name           string
+		allowedOrigins []string
+		origin         string
+		wantExposed    string
+	}{
+		{
+			name:           "exact origin exposes ETag",
+			allowedOrigins: []string{"http://dashboard.example"},
+			origin:         "http://dashboard.example",
+			wantExposed:    "ETag",
+		},
+		{
+			name:           "wildcard origin exposes ETag",
+			allowedOrigins: []string{"*"},
+			origin:         "http://localhost:3000",
+			wantExposed:    "ETag",
+		},
+		{
+			name:           "unlisted origin gets no expose header",
+			allowedOrigins: []string{"http://dashboard.example"},
+			origin:         "http://attacker.example",
+			wantExposed:    "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := CORSConfig{
+				AllowedOrigins: tt.allowedOrigins,
+				AllowedMethods: defaultCORSAllowedMethods(),
+				AllowedHeaders: defaultCORSAllowedHeaders(),
+			}
+			handler := CORSMiddleware(cfg)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("ETag", `"etag-a"`)
+				w.WriteHeader(http.StatusOK)
+			}))
+
+			req := httptest.NewRequest(http.MethodGet, "/api/v1/settings", nil)
+			req.Header.Set("Origin", tt.origin)
+			w := httptest.NewRecorder()
+			handler.ServeHTTP(w, req)
+
+			assert.Equal(t, tt.wantExposed, w.Header().Get("Access-Control-Expose-Headers"),
+				"Access-Control-Expose-Headers")
+		})
+	}
 }
 
 func TestRateLimiter(t *testing.T) {
