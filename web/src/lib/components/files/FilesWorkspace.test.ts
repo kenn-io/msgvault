@@ -287,4 +287,112 @@ describe('FilesWorkspace', () => {
     expect(await screen.findByText('recovered.pdf')).toBeDefined();
     expect(cursorCalls).toBe(2);
   });
+
+  it('keeps loaded rows and offers retry when a cursor page returns 503', async () => {
+    const first = response();
+    Object.assign(first, { total_count: 2, next_cursor: 'page-2' });
+    const second = response();
+    second.files[0] = { ...second.files[0]!, id: 8, key: 'file:8', filename: 'recovered.pdf' };
+    second.total_count = 2;
+    let cursorCalls = 0;
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      const body = await request.clone().json() as { cursor?: string };
+      if (!body.cursor) return Response.json(first);
+      cursorCalls += 1;
+      if (cursorCalls === 1) return Response.json({
+        error: 'analytical_cache_unavailable', message: 'Synthetic cursor cache outage.',
+        readiness: 'absent', recovery_action: 'msgvault build-cache'
+      }, { status: 503 });
+      return Response.json(second);
+    });
+    render(FilesWorkspace, {
+      client: createAPIClient(fetchFn), predicate: { filters: [], presentation: 'table' },
+      sort: { field: 'occurred_at', direction: 'desc' }
+    });
+    const grid = await screen.findByRole('grid', { name: 'Files results' });
+    await screen.findByRole('row', { name: /fixture.pdf/ });
+    await fireEvent.scroll(grid);
+
+    expect((await screen.findByRole('alert')).textContent).toContain('Synthetic cursor cache outage.');
+    expect(screen.getByRole('row', { name: /fixture.pdf/ })).toBeDefined();
+    expect(screen.queryByText('Analytical cache unavailable')).toBeNull();
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Retry loading more files' }));
+    expect(await screen.findByText('recovered.pdf')).toBeDefined();
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(cursorCalls).toBe(2);
+  });
+
+  it('shows a consistency failure beside loaded rows and recovers via reload', async () => {
+    const first = response();
+    Object.assign(first, { total_count: 2, next_cursor: 'page-2' });
+    const drifted = response();
+    drifted.files[0] = { ...drifted.files[0]!, id: 8, key: 'file:8', filename: 'drifted.pdf' };
+    drifted.cache_revision = 'cache-files-b';
+    const reloaded = response();
+    reloaded.files = [
+      first.files[0]!,
+      { ...first.files[0]!, id: 8, key: 'file:8', filename: 'recovered.pdf' }
+    ];
+    reloaded.total_count = 2;
+    reloaded.cache_revision = 'cache-files-b';
+    let initialCalls = 0;
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      const body = await request.clone().json() as { cursor?: string };
+      if (body.cursor) return Response.json(drifted);
+      initialCalls += 1;
+      return Response.json(initialCalls === 1 ? first : reloaded);
+    });
+    render(FilesWorkspace, {
+      client: createAPIClient(fetchFn), predicate: { filters: [], presentation: 'table' },
+      sort: { field: 'occurred_at', direction: 'desc' }
+    });
+    const grid = await screen.findByRole('grid', { name: 'Files results' });
+    await screen.findByRole('row', { name: /fixture.pdf/ });
+    await fireEvent.scroll(grid);
+
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toContain('Results changed while loading another page. Reload this view.');
+    expect(screen.getByRole('row', { name: /fixture.pdf/ })).toBeDefined();
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Reload files' }));
+    expect(await screen.findByText('recovered.pdf')).toBeDefined();
+    expect(screen.getByText('fixture.pdf')).toBeDefined();
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(initialCalls).toBe(2);
+  });
+
+  it('ignores a cursor failure from a superseded request', async () => {
+    const first = response();
+    first.files[0] = { ...first.files[0]!, filename: 'first.pdf' };
+    Object.assign(first, { total_count: 2, next_cursor: 'page-2' });
+    const fresh = response();
+    fresh.files[0] = { ...fresh.files[0]!, id: 9, key: 'file:9', filename: 'fresh.pdf' };
+    let rejectCursor: ((cause: unknown) => void) | undefined;
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      const body = await request.clone().json() as { cursor?: string; filename_query?: string };
+      if (body.cursor) return new Promise<Response>((_, reject) => { rejectCursor = reject; });
+      return Response.json(body.filename_query ? fresh : first);
+    });
+    const view = render(FilesWorkspace, {
+      client: createAPIClient(fetchFn), predicate: { filters: [], presentation: 'table' },
+      sort: { field: 'occurred_at', direction: 'desc' }
+    });
+    const grid = await screen.findByRole('grid', { name: 'Files results' });
+    await screen.findByRole('row', { name: /first.pdf/ });
+    await fireEvent.scroll(grid);
+    await waitFor(() => expect(rejectCursor).toBeDefined());
+
+    await view.rerender({ filenameQuery: 'fresh' });
+    await screen.findByRole('row', { name: /fresh.pdf/ });
+    rejectCursor!(new TypeError('stale cursor failure'));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(screen.queryByText(/stale cursor failure/)).toBeNull();
+    expect(screen.getByRole('row', { name: /fresh.pdf/ })).toBeDefined();
+  });
 });

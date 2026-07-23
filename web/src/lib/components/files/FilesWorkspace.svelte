@@ -94,22 +94,8 @@
     signature;
     if (signature === requestSignature) return;
     requestSignature = signature;
-    const currentGeneration = ++generation;
-    controller?.abort();
-    controller = new AbortController();
-    rows = [];
-    totalCount = 0;
-    nextCursor = undefined;
-    cacheRevision = '';
-    pageAuthority = '';
-    seenCursors = new Set<string>();
-    error = '';
-    pageError = '';
-    unavailable = '';
-    pendingRestoration = undefined;
-    completingRestoration = '';
-    loading = true;
-    void loadPage(currentGeneration, undefined, controller.signal).then(() =>
+    const { generation: currentGeneration, signal } = restartListing();
+    void loadPage(currentGeneration, undefined, signal).then(() =>
       restoreDeepState(currentGeneration, restorationEpoch, controller?.signal));
   });
 
@@ -190,6 +176,31 @@
   });
   onDestroy(() => { controller?.abort(); geometry.destroy(); });
 
+  function restartListing(): { generation: number; signal: AbortSignal } {
+    const currentGeneration = ++generation;
+    controller?.abort();
+    const nextController = new AbortController();
+    controller = nextController;
+    rows = [];
+    totalCount = 0;
+    nextCursor = undefined;
+    cacheRevision = '';
+    pageAuthority = '';
+    seenCursors = new Set<string>();
+    error = '';
+    pageError = '';
+    unavailable = '';
+    pendingRestoration = undefined;
+    completingRestoration = '';
+    loading = true;
+    return { generation: currentGeneration, signal: nextController.signal };
+  }
+
+  function reloadListing(): void {
+    const { generation: currentGeneration, signal } = restartListing();
+    void loadPage(currentGeneration, undefined, signal);
+  }
+
   async function loadPage(currentGeneration: number, cursor: string | undefined, signal: AbortSignal): Promise<boolean> {
     if (cursor) {
       if (seenCursors.has(cursor)) {
@@ -233,8 +244,10 @@
       const message = responseError && typeof responseError === 'object' && 'message' in responseError
         ? String(responseError.message)
         : 'Files could not be loaded.';
-      if (response.status === 503) unavailable = message;
-      else if (cursor) pageError = message;
+      // Cursor-page failures (including a 503 mid-scroll) must not wipe the
+      // rows already loaded: keep them and surface a retryable page error.
+      if (cursor) pageError = message;
+      else if (response.status === 503) unavailable = message;
       else error = message;
       return false;
     }
@@ -531,6 +544,15 @@
             {/each}
           </div>
         </div>
+        {/if}
+        {#if error && rows.length > 0}
+          <!-- Pagination that cannot continue (results changed underneath the
+               cursor) stays visible next to the rows already loaded; Reload
+               restarts the listing from page one. -->
+          <div role="row"><div role="gridcell" aria-colspan="8"><div class="page-error" role="alert">
+            <span>{error}</span>
+            <Button size="sm" surface="outline" label="Reload files" onclick={reloadListing} />
+          </div></div></div>
         {/if}
         {#if pageError}
           <div role="row"><div role="gridcell" aria-colspan="8"><div class="page-error" role="alert">
