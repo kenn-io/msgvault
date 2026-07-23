@@ -484,9 +484,6 @@
   git diff --check origin/main...HEAD
   git diff --stat origin/main...HEAD
   git diff origin/main...HEAD
-  rg -n -i '/users/|umbrel\\.local|\\.ts\\.net|api[_-]?key[=:][^[:space:]]+' \
-    internal api pkg/client docs/superpowers/specs/2026-07-23-generic-meeting-ingestion-design.md \
-    docs/usage/meetings.md docs/api-server.md docs/changelog.md
   ```
 
   Expected: no private downstream names, personal paths, secrets, or unrelated
