@@ -1,6 +1,7 @@
 package meetingimport
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -61,6 +62,32 @@ func TestDecodeRequestAcceptsCompleteStrictRequest(t *testing.T) {
 	nested, ok := req.Meeting.Metadata["nested"].(map[string]any)
 	require.True(ok, "nested metadata object")
 	assert.Equal(true, nested["accepted"])
+}
+
+func TestDecodeRequestPreservesLargeNestedMetadataNumbers(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	body := strings.Replace(
+		validRequestJSON,
+		`"nested": {"accepted": true}`,
+		`"nested": {"accepted": true, "large_id": 9007199254740993, "deep": {"another_id": 18446744073709551615}}`,
+		1,
+	)
+
+	req, err := DecodeRequest(strings.NewReader(body), MaxRequestBytes)
+	require.NoError(err)
+
+	nested, ok := req.Meeting.Metadata["nested"].(map[string]any)
+	require.True(ok, "nested metadata object")
+	largeID, ok := nested["large_id"].(json.Number)
+	require.True(ok, "large metadata identifier")
+	assert.Equal("9007199254740993", largeID.String())
+	deep, ok := nested["deep"].(map[string]any)
+	require.True(ok, "deep metadata object")
+	anotherID, ok := deep["another_id"].(json.Number)
+	require.True(ok, "deep metadata identifier")
+	assert.Equal("18446744073709551615", anotherID.String())
 }
 
 func TestDecodeRequestRejectsMalformedAndTrailingJSON(t *testing.T) {

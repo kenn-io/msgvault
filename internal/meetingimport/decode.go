@@ -33,6 +33,7 @@ func DecodeRequest(r io.Reader, maxBytes int64) (Request, error) {
 
 	decoder := json.NewDecoder(bytes.NewReader(body))
 	decoder.DisallowUnknownFields()
+	decoder.UseNumber()
 	var req Request
 	if err := decoder.Decode(&req); err != nil {
 		return Request{}, fmt.Errorf("%w: %w", ErrMalformedRequest, err)

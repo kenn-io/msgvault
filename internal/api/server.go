@@ -471,9 +471,9 @@ func (s *Server) timeoutMiddleware(next http.Handler) http.Handler {
 
 // requestTimeoutForPath returns the context deadline to impose on a request
 // and whether one applies at all. POST /api/v1/query gets its own generous
-// ceiling; the streaming/long-running CLI operations stay unbounded (they
-// report progress and are gated by the operation gate); everything else gets
-// the standard per-request timeout.
+// ceiling; the streaming/long-running CLI operations and meeting imports stay
+// unbounded (they report progress and are gated by the operation gate);
+// everything else gets the standard per-request timeout.
 func (s *Server) requestTimeoutForPath(path string) (time.Duration, bool) {
 	if path == queryEndpointPath {
 		return s.queryTimeout, true
@@ -488,6 +488,7 @@ func isLongDaemonRequest(path string) bool {
 	switch path {
 	case "/api/v1/cli/build-cache",
 		"/api/v1/cli/deduplicate/plan",
+		"/api/v1/import/meeting",
 		"/api/v1/cli/rebuild-fts",
 		"/api/v1/cli/repair-encoding",
 		"/api/v1/cli/run",

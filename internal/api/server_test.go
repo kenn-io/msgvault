@@ -966,6 +966,11 @@ func TestTimeoutMiddlewareClearsWriteDeadlineForLongRequests(t *testing.T) {
 	require.Len(long.deadlines, 1, "long request clears the write deadline")
 	assert.True(long.deadlines[0].IsZero(), "deadline cleared, not extended")
 
+	meetingImport := &deadlineClearingRecorder{ResponseRecorder: httptest.NewRecorder()}
+	handler.ServeHTTP(meetingImport, httptest.NewRequest(http.MethodPost, "/api/v1/import/meeting", nil))
+	require.Len(meetingImport.deadlines, 1, "meeting import clears the write deadline")
+	assert.True(meetingImport.deadlines[0].IsZero(), "meeting import deadline cleared, not extended")
+
 	bounded := &deadlineClearingRecorder{ResponseRecorder: httptest.NewRecorder()}
 	handler.ServeHTTP(bounded, httptest.NewRequest(http.MethodGet, "/api/v1/cli/stats", nil))
 	assert.Empty(bounded.deadlines, "bounded request keeps the server write deadline")
