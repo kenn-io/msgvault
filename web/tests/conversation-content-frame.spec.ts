@@ -247,6 +247,17 @@ test('archived content has an opaque capability boundary and durable conversatio
   // visible placeholder.
   await page.keyboard.press('Enter');
   await expect(reading).toBeVisible();
+  // The reopened pane rebuilds the anchor's frame asynchronously: the
+  // "Preparing message…" placeholder is replaced by a 96px iframe, which the
+  // bridge's height report then grows to content height. Each step shifts the
+  // collapsed peer button down in a single frame, so a click resolved against
+  // the earlier layout dispatches onto the anchor's sandboxed iframe and is
+  // swallowed. Wait for the final shift — the bridge height report — before
+  // clicking, as the first-open path above already does.
+  await expect(frame).toHaveCount(1);
+  await expect.poll(async () => Number.parseFloat(await frame.evaluate(
+    (element: HTMLIFrameElement) => element.style.height
+  ))).toBeGreaterThan(96);
   await reading.getByRole('button', { name: 'Expand message 43 from alice@example.com' }).click();
   const peerCard = page.locator('[data-message-id="43"]');
   await expect(peerCard).toHaveAttribute('aria-current', 'true');
