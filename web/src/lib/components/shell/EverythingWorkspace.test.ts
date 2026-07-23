@@ -2093,4 +2093,64 @@ describe('EverythingWorkspace', () => {
     rendered.unmount();
     state.destroy();
   });
+
+  it('discloses the active-only semantic deletion scope for list and grouped results', async () => {
+    window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      const path = new URL(request.url).pathname;
+      if (path.endsWith('/search/coverage')) return Response.json({
+        status: 'ready', eligible_count: 2, embedded_count: 2, percentage: 100,
+        vector_generation: 7, cache_revision: 'cache-1', actions: []
+      });
+      if (path.endsWith('/explore/groups')) return Response.json({
+        rows: [{ key: '7', label: 'Example source', count: 2, estimated_bytes: 42, latest_at: '2026-07-18T12:00:00Z' }],
+        total_count: 1, cache_revision: 'cache-1',
+        search_provenance: { vector_generation: 7 },
+        search_deletion_scope: 'active'
+      });
+      return Response.json(exploreResponse({
+        rows: [entry(1)], total_count: 1,
+        search_provenance: { vector_generation: 7 },
+        candidate_snapshot_id: 'snapshot-1',
+        search_deletion_scope: 'active'
+      }));
+    });
+    const state = new ExploreState(window);
+    state.replaceSearchDraft('alpha', 'semantic');
+    const rendered = render(AppShell, { client: createAPIClient(fetchFn), state });
+
+    await screen.findByText('Synthetic subject 1');
+    expect(await screen.findByText('Semantic search covers active messages only.')).toBeDefined();
+
+    state.commitNavigation({ groupingChain: ['source'] });
+    await screen.findByText('Example source');
+    expect(screen.getByText('Semantic search covers active messages only.')).toBeDefined();
+    rendered.unmount();
+    state.destroy();
+  });
+
+  it('shows no deletion-scope notice when a lexical response declares none', async () => {
+    window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      const path = new URL(request.url).pathname;
+      if (path.endsWith('/match-counts')) return Response.json({
+        counts: [], cache_revision: 'cache-1',
+        lexical_index_revision: 'fts-1', canonical_query_hash: 'query-1'
+      });
+      return Response.json(exploreResponse({
+        rows: [entry(1)], total_count: 1,
+        search_provenance: { lexical_index_revision: 'fts-1' }
+      }));
+    });
+    const state = new ExploreState(window);
+    state.replaceSearchDraft('alpha', 'full_text');
+    const rendered = render(AppShell, { client: createAPIClient(fetchFn), state });
+
+    await screen.findByText('Synthetic subject 1');
+    expect(screen.queryByText(/active messages only/)).toBeNull();
+    rendered.unmount();
+    state.destroy();
+  });
 });

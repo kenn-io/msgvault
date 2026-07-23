@@ -542,6 +542,10 @@
   />
   <span class="kit-sr-only" role="status" aria-label="Sort status" aria-live="polite">{sortNotice}</span>
 
+  {#if loader.result?.searchDeletionScope === 'active'}
+    <p class="scope-note" role="status">Semantic search covers active messages only.</p>
+  {/if}
+
   <div class="results-split">
     <SplitPane
       ariaLabel="Resize reading pane"
@@ -736,6 +740,12 @@
   .query-control {
     min-width: 240px;
     flex: 1;
+  }
+
+  .scope-note {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
   }
 
   .results-split {

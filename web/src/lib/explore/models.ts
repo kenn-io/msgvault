@@ -133,6 +133,9 @@ export interface ExploreResult {
   searchProvenance: SearchProvenance;
   candidateSnapshotId?: string;
   candidatePoolSaturated: boolean;
+  /** "active" when the backend narrowed a semantic or hybrid search to
+   * active (non-deleted) messages; absent when no narrowing was declared. */
+  searchDeletionScope?: string;
   nextCursor?: string;
 }
 
@@ -142,6 +145,9 @@ export interface ExploreGroupResult {
   cacheRevision: string;
   searchProvenance: SearchProvenance;
   candidateSnapshotId?: string;
+  /** "active" when the backend narrowed a semantic or hybrid search to
+   * active (non-deleted) messages; absent when no narrowing was declared. */
+  searchDeletionScope?: string;
   nextCursor?: string;
 }
 

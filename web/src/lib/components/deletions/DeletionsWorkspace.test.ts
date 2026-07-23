@@ -153,6 +153,26 @@ describe('DeletionsWorkspace', () => {
     expect((await screen.findAllByText('cancelled')).length).toBeGreaterThan(0);
   });
 
+  it('discloses the active-only deletion scope reported by the preflight review', async () => {
+    let scoped = false;
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      if (new URL(request.url).pathname.endsWith('/explore/preflight')) {
+        return Response.json(preflight(scoped ? { search_deletion_scope: 'active' } : {}));
+      }
+      return Response.json({ manifests: [] });
+    });
+    render(DeletionsWorkspace, { client: createAPIClient(fetchFn), selection: explicit });
+
+    await fireEvent.click(await screen.findByRole('button', { name: 'Review selection' }));
+    await screen.findByText('1 item · 120 bytes');
+    expect(screen.queryByText(/active messages only/)).toBeNull();
+
+    scoped = true;
+    await fireEvent.click(screen.getByRole('button', { name: 'Review selection' }));
+    expect(await screen.findByText('Semantic search covers active messages only.')).toBeDefined();
+  });
+
   it('shows server-supplied action reasons and disables staging', async () => {
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);

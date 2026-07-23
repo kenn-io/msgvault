@@ -42,17 +42,22 @@ function normalize(data: ExploreResponse): ExploreResult {
     searchProvenance: data.search_provenance,
     candidateSnapshotId: data.candidate_snapshot_id,
     candidatePoolSaturated: data.candidate_pool_saturated ?? false,
+    searchDeletionScope: data.search_deletion_scope,
     nextCursor: data.next_cursor
   };
 }
 
 function normalizeGroups(data: ExploreGroupsResponse | FileGroupsResponse): Extract<ExploreGroupLoadResult, { status: 'ready' }>['result'] {
+  // File-group responses never declare a deletion scope; on the union that
+  // access widens to unknown, so keep only the declared string form.
+  const scope = data.search_deletion_scope;
   return {
     rows: data.rows,
     totalCount: data.total_count,
     cacheRevision: data.cache_revision,
     searchProvenance: data.search_provenance,
     candidateSnapshotId: data.candidate_snapshot_id,
+    searchDeletionScope: typeof scope === 'string' ? scope : undefined,
     nextCursor: data.next_cursor
   };
 }

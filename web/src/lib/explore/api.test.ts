@@ -135,6 +135,46 @@ describe('ExploreAPI routing', () => {
     });
   });
 
+  it('preserves the declared active-only deletion scope for entry and grouped results', async () => {
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      const grouped = new URL(request.url).pathname.endsWith('/explore/groups');
+      return Response.json({
+        rows: [], total_count: 0, cache_revision: 'cache-1',
+        search_provenance: { vector_generation: 7 },
+        ...(grouped ? {} : { candidate_snapshot_id: 'snapshot-1' }),
+        search_deletion_scope: 'active'
+      });
+    });
+    const api = createExploreAPI(createAPIClient(fetchFn));
+
+    const entries = await api.explore({ query: 'alpha', search_mode: 'semantic', filters: [], presentation: 'table' });
+    const groups = await api.groups(
+      { query: 'alpha', search_mode: 'semantic', filters: [], presentation: 'table', limit: 500 },
+      'source'
+    );
+
+    expect(entries.status === 'ready' && entries.result.searchDeletionScope).toBe('active');
+    expect(groups.status === 'ready' && groups.result.searchDeletionScope).toBe('active');
+  });
+
+  it('leaves the deletion scope absent when a lexical response does not declare one', async () => {
+    const fetchFn = vi.fn<typeof fetch>(async () => Response.json({
+      rows: [], total_count: 0, cache_revision: 'cache-1',
+      search_provenance: { lexical_index_revision: 'fts-1' }
+    }));
+    const api = createExploreAPI(createAPIClient(fetchFn));
+
+    const entries = await api.explore({ query: 'alpha', search_mode: 'full_text', filters: [], presentation: 'table' });
+    const groups = await api.groups(
+      { query: 'alpha', search_mode: 'full_text', filters: [], presentation: 'table', limit: 500 },
+      'source'
+    );
+
+    expect(entries.status === 'ready' && entries.result.searchDeletionScope).toBeUndefined();
+    expect(groups.status === 'ready' && groups.result.searchDeletionScope).toBeUndefined();
+  });
+
   it('loads one bounded attachment-fact page with cancellation and canonical context', async () => {
     const requests: Request[] = [];
     const fetchFn = vi.fn<typeof fetch>(async (input) => {

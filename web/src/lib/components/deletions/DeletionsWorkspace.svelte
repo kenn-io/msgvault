@@ -227,6 +227,9 @@
       <div class="review" role="status">
         <strong>{reviewed.count.toLocaleString()} {reviewed.count === 1 ? 'item' : 'items'} · {reviewed.estimated_bytes.toLocaleString()} bytes</strong>
         <span>Authority expires {reviewed.expires_at}</span>
+        {#if reviewed.search_deletion_scope === 'active'}
+          <span>Semantic search covers active messages only.</span>
+        {/if}
         {#each reviewed.unavailable_actions as unavailable (`${unavailable.action}:${unavailable.reason}`)}
           <span class="reason">{unavailable.action}: {unavailable.reason}</span>
         {/each}

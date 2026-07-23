@@ -206,6 +206,7 @@ export class ExploreLoader {
             searchProvenance: groupResult.searchProvenance,
             candidateSnapshotId: groupResult.candidateSnapshotId,
             candidatePoolSaturated: false,
+            searchDeletionScope: groupResult.searchDeletionScope,
             nextCursor: groupResult.nextCursor
           };
           this.rows = [];

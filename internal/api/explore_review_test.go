@@ -188,11 +188,40 @@ type fakeFusingBackend struct {
 
 	fusedHits  []vector.FusedHit
 	fusedCalls int
+	fusedLast  *vector.FusedRequest
 }
 
-func (f *fakeFusingBackend) FusedSearch(_ context.Context, _ vector.FusedRequest) ([]vector.FusedHit, bool, error) {
+func (f *fakeFusingBackend) FusedSearch(_ context.Context, req vector.FusedRequest) ([]vector.FusedHit, bool, error) {
 	f.fusedCalls++
+	f.fusedLast = &req
 	return f.fusedHits, false, nil
+}
+
+func TestExploreHybridLowercasesSubjectTermsForBoost(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	backend := &fakeFusingBackend{
+		fakeVectorBackend: &fakeVectorBackend{
+			active: &vector.Generation{ID: 7, Model: "test", Dimension: 2, Fingerprint: "test:2", State: vector.GenerationActive},
+		},
+		fusedHits: []vector.FusedHit{{MessageID: 1, RRFScore: .9, VectorScore: .9}},
+	}
+	hybridEngine := hybrid.NewEngine(backend, nil, realEmbedder{dim: 2}, hybrid.Config{ExpectedFingerprint: "test:2"})
+	store := &mockStore{stats: &StoreStats{}}
+	store.searchMessagesQueryFunc = filteredCandidateMockSearch([]int64{1}, nil, -1)
+	srv := NewServerWithOptions(ServerOptions{
+		Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}},
+		Store:  store, Engine: newExploreDuckDBFixture(t),
+		HybridEngine: hybridEngine, Backend: backend, Logger: testLogger(),
+	})
+
+	response := postExploreJSON(t, srv, "/api/v1/explore", `{
+		"query":"Quarterly Report","search_mode":"hybrid","limit":10
+	}`)
+	requirements.Equal(http.StatusOK, response.Code, response.Body.String())
+	requirements.NotNil(backend.fusedLast, "the hybrid request must reach the fusing backend")
+	assertions.Equal([]string{"quarterly", "report"}, backend.fusedLast.SubjectTerms,
+		"subject-boost terms must be lowercased to match lowercased subjects")
 }
 
 func TestExploreFullTextSourceFilterFindsMatchesBeyondUnfilteredCap(t *testing.T) {
