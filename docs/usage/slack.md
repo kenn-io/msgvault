@@ -118,6 +118,9 @@ msgvault backfill-slack-media
 ```
 
 retries them (idempotent; already-downloaded files are never re-fetched).
+The command always downloads, even while `[slack].media = false` keeps the
+scheduled syncs deferring files — that setting's documented workflow (defer
+now, backfill later) depends on it.
 
 ## Daemon scheduling
 

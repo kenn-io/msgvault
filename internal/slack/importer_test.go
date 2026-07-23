@@ -2500,3 +2500,96 @@ func TestCatchUpFullDrainOverridesParkedTailSeed(t *testing.T) {
 	assert.False(cs.ThreadsPending, "catch-up debt is paid")
 	assert.Empty(cs.PendingThreads, "drain debt is paid")
 }
+
+func TestSweepSmallPagesBeyondWalkBoundRecordedAsDebt(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f, rootTS := oldThreadWorkspace(t)
+	imp, opts := testImporter(t, f)
+	st := imp.store
+
+	_, err := imp.Import(context.Background(), opts)
+	require.NoError(err)
+
+	// The server serves ONE hit per page, so a 102-hit day claims 102
+	// pages while its total sits far below the 10k ceiling — the pager's
+	// 100-page walk cannot consume it. The unserved tail (the day's
+	// NEWEST hits, ascending order) lands on a second thread that gets no
+	// drain entry from the served hits, so only recorded catch-up debt
+	// can ever recover it.
+	f.mu.Lock()
+	f.searchPageSize = 1
+	bigRoot := f.conv("C09").findRoot(rootTS)
+	for i := range 101 {
+		bigRoot.Replies = append(bigRoot.Replies,
+			fakeMsg{TS: tsFresh(i), ThreadTS: rootTS, User: "UME", Text: "burst " + strconv.Itoa(i)})
+	}
+	beyondWalk := tsFresh(110)
+	other := f.conv("C09").findRoot(ts(0))
+	other.Replies = append(other.Replies, fakeMsg{TS: beyondWalk, ThreadTS: ts(0), User: "UME", Text: "past the page walk"})
+	f.mu.Unlock()
+
+	imp.now = func() time.Time { return time.Now().Add(5 * time.Minute) }
+	_, err = imp.Import(context.Background(), opts)
+	require.Error(err, "a day the pager cannot fully consume must fail loudly, not certify past unserved hits")
+	src, err := st.GetOrCreateSource("slack", "T01:UME")
+	require.NoError(err)
+	require.True(imp.loadResumeState(src.ID).EnsureConv("C09").ThreadsPending,
+		"the unserved tail must be recorded as thread catch-up debt")
+
+	// The catch-up walk recovers the reply the pager could never serve;
+	// once the day is behind the boundary the sweep runs clean again.
+	imp.now = func() time.Time { return time.Now().Add(25 * time.Hour) }
+	_, _ = imp.Import(context.Background(), opts)
+	imp.now = func() time.Time { return time.Now().Add(26 * time.Hour) }
+	_, err = imp.Import(context.Background(), opts)
+	require.NoError(err)
+	var n int
+	require.NoError(st.DB().QueryRow(st.Rebind(
+		`SELECT COUNT(*) FROM messages WHERE source_message_id = ?`), "C09:"+beyondWalk).Scan(&n))
+	assert.Equal(1, n, "the reply beyond the 100-page walk must be recovered via catch-up")
+	var total, distinct int
+	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages WHERE message_type='slack'`).Scan(&total))
+	require.NoError(st.DB().QueryRow(`SELECT COUNT(DISTINCT source_message_id) FROM messages WHERE message_type='slack'`).Scan(&distinct))
+	assert.Equal(distinct, total)
+}
+
+func TestBackfillMediaDownloadsDespiteNoMediaConfig(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := testWorkspace(t)
+	f.conv("C01").Msgs[6].Files = []map[string]any{
+		{"id": "F_CFGOFF", "name": "c.png", "mimetype": "image/png", "size": 5,
+			"url_private": "https://files.slack.com/files-pri/T01-F_CFGOFF/c.png",
+			"permalink":   "https://testers.slack.com/files/F_CFGOFF"},
+	}
+	prevInterval := checkpointMinInterval
+	checkpointMinInterval = 0
+	t.Cleanup(func() { checkpointMinInterval = prevInterval })
+	srv := f.serve()
+	client := NewClient(srv.URL, "xoxp-test")
+	client.disableRateLimits()
+	client.mediaTransport = &recordingTransport{body: "png03"}
+	st := testutil.NewTestStore(t)
+	imp := NewImporter(st, client, "T01")
+
+	// [slack].media = false shapes the options with NoMedia set — for the
+	// sync AND, via the shared options builder, for backfill-slack-media.
+	// The sync defers the file as a pending marker; the explicit backfill
+	// must download it anyway: it IS the payment for that deferral, and
+	// honoring the flag would no-op the exact workflow the config
+	// documents (defer now, backfill later).
+	opts := ImportOptions{TeamID: "T01", UserID: "UME", NoMedia: true, AttachmentsDir: t.TempDir()}
+	_, err := imp.Import(context.Background(), opts)
+	require.NoError(err)
+
+	bsum, err := imp.BackfillMedia(context.Background(), opts)
+	require.NoError(err)
+	assert.Equal(1, bsum.AttachmentsDownloaded, "backfill-slack-media must download even when [slack].media=false shaped its options")
+	assert.Zero(bsum.AttachmentsPending)
+	var hash string
+	require.NoError(st.DB().QueryRow(st.Rebind(`
+		SELECT COALESCE(a.content_hash,'') FROM attachments a
+		WHERE a.source_attachment_id = ?`), "slack:F_CFGOFF").Scan(&hash))
+	assert.NotEmpty(hash)
+}

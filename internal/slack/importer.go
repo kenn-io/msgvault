@@ -1095,6 +1095,13 @@ func (imp *Importer) recordItem(syncID int64, sourceMessageID, phase, status, ki
 // raw JSON and its files re-persisted. Idempotent (content-addressed
 // storage, replace-by-prefix rows).
 func (imp *Importer) BackfillMedia(ctx context.Context, opts ImportOptions) (*ImportSummary, error) {
+	// An explicit media backfill IS the download request. NoMedia means
+	// "defer downloads, leave pending markers for backfill-slack-media" —
+	// honoring it here would make the payer re-record the markers and
+	// report success while downloading nothing, a no-op for exactly the
+	// configuration ([slack].media = false) whose documented workflow
+	// depends on this command.
+	opts.NoMedia = false
 	start := imp.now()
 	if opts.AttachmentsDir == "" {
 		return nil, errors.New("attachments dir required")

@@ -120,8 +120,19 @@ for incremental sync. Consequences:
 - **Pager rules** (verified): `page` beyond 100 is silently *clamped to
   page 1* — the pager must stop when the echoed `paging.page` differs
   from the requested page, and bound itself by `min(paging.pages, 100)`.
-  `pagination.total_count` is accurate and serves as the truncation
-  tripwire. A single-day, single-scope result set beyond the ~10,000
+  A day certifies only from CONSUMPTION: the walk is complete only when
+  it exhausted the server's claimed pages, and every other exit — the
+  100-page bound with pages still claimed (nothing guarantees full
+  pages, so a sub-10k day can span more than 100 of them), a clamp-echo
+  mismatch, or empty pages — counts as truncation. The accurate
+  `pagination.total_count` is a secondary tripwire for a total beyond
+  the reachable ceiling even when the claimed page count fits the walk.
+  Degraded-mode note: if the server ever served persistently small
+  pages at moderate volume, every affected day would truncate — loud
+  failures plus catch-up churn, converging on unlimited runs — which is
+  noisy-but-safe (versus silently certifying past unserved hits) and
+  would be the signal to build `in:`-batch narrowing. A single-day,
+  single-scope result set beyond the ~10,000
   reachable ceiling **fails loudly and converts the unreachable tail
   into durable walk debt**: the day cannot be drained by search at all
   (re-querying serves the same first 10k ascending; `on:` has no

@@ -258,6 +258,7 @@ func (imp *Importer) sweepRange(ctx context.Context, syncID int64, scope, floor 
 func (imp *Importer) sweepDay(ctx context.Context, syncID int64, scope, day string, targets map[string]sweepTarget) ([]SearchMatch, bool, error) {
 	var hits []SearchMatch
 	truncated := false
+	complete := false
 	for page := 1; page <= maxSearchPages; page++ {
 		sp, err := imp.client.SearchMessagesPage(ctx, imp.sweepQuery(scope, day, syncID, page), page)
 		if err != nil {
@@ -274,11 +275,25 @@ func (imp *Importer) sweepDay(ctx context.Context, syncID int64, scope, day stri
 			}
 		}
 		if page == 1 && sp.Total > sweepTruncationCeiling {
+			// The reported total already exceeds what paging can reach —
+			// flagged even when the claimed page count fits the walk.
 			truncated = true
 		}
 		if page >= sp.Pages {
+			complete = true
 			break
 		}
+	}
+	// Certification derives from CONSUMPTION, never from an inferred
+	// ceiling: the day is complete only when the walk exited by exhausting
+	// the server's claimed pages. Every other exit — the page bound with
+	// pages still claimed (the server may serve smaller pages than
+	// requested, putting a sub-10k day past 100 pages), a clamp-echo
+	// mismatch, or empty pages that never advance to the claimed count —
+	// leaves unserved results and must be treated as truncation, feeding
+	// the recorded-debt recovery instead of certifying past unseen replies.
+	if !complete {
+		truncated = true
 	}
 	sort.Slice(hits, func(i, j int) bool { return tsLess(hits[i].TS, hits[j].TS) })
 	return hits, truncated, nil
