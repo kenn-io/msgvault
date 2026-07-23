@@ -341,7 +341,7 @@ func buildRelationshipsSQL(conditions, clustersGlob, ownersGlob string) string {
         EXISTS (SELECT 1 FROM author_links al
                 WHERE al.message_id = le.anchor_message_id
                   AND al.canonical_id = cn.canonical_id) AS is_author,
-        exp(-? * date_diff('day', le.occurred_at, CAST(? AS TIMESTAMP))) AS decay
+        exp(-? * GREATEST(0, date_diff('day', le.occurred_at, CAST(? AS TIMESTAMP)))) AS decay
     FROM le_with_owner le
     CROSS JOIN UNNEST(le.participant_ids) AS pid(participant_id)
     JOIN canon cn ON cn.participant_id = pid.participant_id

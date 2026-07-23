@@ -593,3 +593,29 @@ func TestRelationshipsOwnerAbsentMeetingContributesNoModality(t *testing.T) {
 	assert.WithinDuration(now.AddDate(0, 0, -5), row.LastAt, 0,
 		"LastAt must reflect the email, not the later owner-absent meeting")
 }
+
+func TestRelationshipsClampsFutureEntryDecayAtOne(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	b := NewTestDataBuilder(t)
+	srcID := b.AddSource("owner@example.com")
+	ownerID := b.AddParticipant("owner@example.com", "example.com", "Owner")
+	b.AddOwnerParticipant(srcID, ownerID)
+	xID := b.AddParticipant("x@example.com", "example.com", "X")
+
+	// An upcoming meeting a year out has a negative age; its decay weight
+	// must clamp at exp(0) = 1, not grow to exp(+rate*365).
+	now := time.Date(2026, 1, 10, 0, 0, 0, 0, time.UTC)
+	meetingID := b.AddMessage(MessageOpt{SourceID: srcID, MessageType: "calendar_event",
+		SentAt: now.AddDate(1, 0, 0)})
+	b.AddFrom(meetingID, ownerID, "Owner")
+	b.AddTo(meetingID, xID, "X")
+
+	engine := b.BuildEngine()
+	result, err := engine.Relationships(context.Background(), RelationshipsRequest{Now: now, Limit: 10, ShowAll: true})
+	require.NoError(err)
+	require.Len(result.Rows, 1)
+	assert.InDelta(1.0, result.Rows[0].Signals.MeetingsTogether, 1e-9,
+		"a future meeting must weigh no more than one held today")
+}
