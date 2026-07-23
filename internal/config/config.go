@@ -226,6 +226,7 @@ type Config struct {
 	SynctechSMS SynctechSMSConfig  `toml:"synctech_sms"`
 	GCal        []GCalSource       `toml:"gcal"`
 	Beeper      BeeperConfig       `toml:"beeper"`
+	Slack       SlackConfig        `toml:"slack"`
 	Granola     []GranolaSource    `toml:"granola"`
 	Circleback  []CirclebackSource `toml:"circleback"`
 	Backup      BackupConfig       `toml:"backup"`
@@ -748,6 +749,38 @@ type BeeperConfig struct {
 	Media *bool `toml:"media"`
 	// MaxMediaMB caps individual attachment downloads in MiB (0 = 100).
 	MaxMediaMB int `toml:"max_media_mb"`
+}
+
+// SlackConfig configures Slack workspace archive sources ([slack] table).
+// One block covers every registered workspace: tokens are per-workspace
+// files, so no per-workspace config entries are needed.
+type SlackConfig struct {
+	// Enabled gates the daemon scheduler job.
+	Enabled bool `toml:"enabled"`
+	// Schedule is a 5-field cron expression; empty = not daemon-scheduled.
+	Schedule string `toml:"schedule"`
+	// Channels is a channel-name include filter (no "#"; empty = archive
+	// every membership). DMs and group DMs are never filtered.
+	Channels []string `toml:"channels"`
+	// ExcludeChannels skips specific channel names.
+	ExcludeChannels []string `toml:"exclude_channels"`
+	// Media toggles file download (nil/absent = enabled).
+	Media *bool `toml:"media"`
+	// MaxMediaMB caps individual file downloads in MiB (0 = 100).
+	MaxMediaMB int `toml:"max_media_mb"`
+}
+
+// MediaEnabled reports whether file download is on (default true).
+func (s SlackConfig) MediaEnabled() bool {
+	return s.Media == nil || *s.Media
+}
+
+// MaxMediaBytes returns the per-file download cap in bytes (0 = importer default).
+func (s SlackConfig) MaxMediaBytes() int64 {
+	if s.MaxMediaMB > 0 {
+		return int64(s.MaxMediaMB) << 20
+	}
+	return 0
 }
 
 // MediaEnabled reports whether attachment download is on (default true).

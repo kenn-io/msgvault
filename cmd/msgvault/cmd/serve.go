@@ -298,6 +298,26 @@ func runServe(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	if cfg.Slack.Enabled && cfg.Slack.Schedule == "" {
+		logger.Warn("slack is enabled but has no schedule — the daemon will not sync it; its freshness will eventually go stale",
+			"hint", `set a cron schedule (e.g. "*/30 * * * *") on the [slack] entry`)
+	}
+	if cfg.Slack.Enabled && cfg.Slack.Schedule != "" {
+		if err := sched.AddJob(scheduler.Job{
+			Name:     "slack",
+			Schedule: cfg.Slack.Schedule,
+			Run: func(ctx context.Context) error {
+				return runScheduledSource(ctx, attachmentMaint, true, func(ctx context.Context) error {
+					return runConfiguredSlackSync(ctx, s)
+				})
+			},
+		}); err != nil {
+			logger.Error("failed to schedule slack sync", "error", err)
+		} else {
+			logger.Info("scheduled slack sync", "schedule", cfg.Slack.Schedule)
+		}
+	}
+
 	// Meeting sources (Granola/Circleback) mirror the gcal treatment: warn
 	// when enabled but unscheduled, then register the scheduled ones.
 	for _, src := range cfg.Granola {

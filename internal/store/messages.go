@@ -2860,6 +2860,114 @@ func (s *Store) ListBeeperPendingAttachmentMessages(sourceID int64) ([]BeeperPen
 	return s.listPendingAttachmentMessages(sourceID, "beeper:")
 }
 
+// ListSlackPendingAttachmentMessages returns the messages of a slack source
+// that still have pending attachment markers. Metadata-only link rows
+// (media_type "link") are deliberate non-downloads, and hashless
+// duplicate-content alias rows resolving to a trusted local CAS path are
+// downloaded (see normalizeSlackAttachmentRefs) — neither is pending work.
+func (s *Store) ListSlackPendingAttachmentMessages(sourceID int64) ([]PendingAttachmentMessage, error) {
+	rows, err := s.db.Query(`
+		SELECT m.id, m.source_message_id, c.source_conversation_id,
+		       a.storage_path, COALESCE(a.content_hash, ''), COALESCE(a.media_type, '')
+		FROM messages m
+		JOIN conversations c ON c.id = m.conversation_id
+		JOIN attachments a ON a.message_id = m.id
+		WHERE m.source_id = ?
+		  AND a.source_attachment_id LIKE ?
+		ORDER BY m.id, a.id
+	`, sourceID, "slack:%")
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	var pending []PendingAttachmentMessage
+	var current PendingAttachmentMessage
+	var haveCurrent, currentPending bool
+	flushCurrent := func() {
+		if haveCurrent && currentPending {
+			pending = append(pending, current)
+		}
+	}
+	for rows.Next() {
+		var item PendingAttachmentMessage
+		var ref AttachmentRef
+		if err := rows.Scan(
+			&item.MessageID, &item.SourceMessageID, &item.ChatID,
+			&ref.StoragePath, &ref.ContentHash, &ref.MediaType,
+		); err != nil {
+			return nil, err
+		}
+		if !haveCurrent || item.MessageID != current.MessageID {
+			flushCurrent()
+			current = item
+			haveCurrent = true
+			currentPending = false
+		}
+		if ref.MediaType != "link" && ref.ContentHash == "" && !casAttachmentDownloaded(ref) {
+			currentPending = true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	flushCurrent()
+	return pending, nil
+}
+
+// ReplaceMessageSlackAttachments replaces Slack-managed attachment rows for
+// a message (rows whose source_attachment_id carries the "slack:" prefix).
+// Duplicate-content refs are normalized into alias rows first (see
+// normalizeSlackAttachmentRefs) so every Slack file ID keeps a row.
+func (s *Store) ReplaceMessageSlackAttachments(messageID int64, refs []AttachmentRef) error {
+	refs = normalizeSlackAttachmentRefs(refs)
+	return s.replaceMessageProviderAttachments(messageID, "slack:", refs)
+}
+
+// normalizeSlackAttachmentRefs preserves one row per Slack file ID when
+// several files on a message share one CAS blob. The schema's
+// (message_id, content_hash) uniqueness keeps the real hash on the first
+// row; later duplicates retain the same trusted local path with an empty
+// hash (the Discord alias pattern). Pending markers and link rows carry
+// permalink URLs, never CAS paths, so they pass through untouched.
+func normalizeSlackAttachmentRefs(refs []AttachmentRef) []AttachmentRef {
+	normalized := append([]AttachmentRef(nil), refs...)
+	seen := make(map[string]struct{}, len(normalized))
+	for i := range normalized {
+		contentHash := strings.ToLower(normalized[i].ContentHash)
+		if contentHash == "" {
+			continue
+		}
+		if _, ok := seen[contentHash]; ok {
+			normalized[i].ContentHash = ""
+			continue
+		}
+		seen[contentHash] = struct{}{}
+	}
+	return normalized
+}
+
+// MessageSlackAttachments returns the message's existing Slack-managed
+// attachment rows keyed by source_attachment_id, so re-persisting a message
+// can keep already-downloaded media without re-fetching it. Alias rows get
+// their hash re-derived from the CAS path, so callers see them as
+// downloaded.
+func (s *Store) MessageSlackAttachments(messageID int64) (map[string]AttachmentRef, error) {
+	refs, err := s.messageProviderAttachments(messageID, "slack:")
+	if err != nil {
+		return nil, err
+	}
+	for sourceAttachmentID, ref := range refs {
+		if ref.ContentHash == "" {
+			if pathHash, ok := casPathHash(ref.StoragePath); ok {
+				ref.ContentHash = pathHash
+				refs[sourceAttachmentID] = ref
+			}
+		}
+	}
+	return refs, nil
+}
+
 // ReplaceMessageLinkAttachments replaces URL-backed attachment rows for a message.
 // It intentionally leaves content-addressed local attachment paths (for example
 // downloaded inline media) untouched.

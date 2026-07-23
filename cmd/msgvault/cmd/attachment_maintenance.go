@@ -298,6 +298,7 @@ func attachmentProducingCommand(args []string) bool {
 	switch args[0] {
 	case "backfill-beeper-media",
 		"backfill-discord-media",
+		"backfill-slack-media",
 		"backfill-teams-media",
 		"import",
 		"import-emlx",
@@ -310,6 +311,7 @@ func attachmentProducingCommand(args []string) bool {
 		"import-whatsapp",
 		"sync-beeper",
 		"sync-discord",
+		"sync-slack",
 		"sync-synctech-sms",
 		"sync-teams":
 		return true

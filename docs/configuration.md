@@ -393,6 +393,31 @@ max_media_mb = 100                # per-attachment download cap (MiB)
 | `media` | `true` | Download attachment bytes (failed downloads retry via `backfill-beeper-media`) |
 | `max_media_mb` | `100` | Per-attachment download cap in MiB (over-cap media leaves a retry marker) |
 
+### `[slack]`
+
+Archive [Slack workspaces](/usage/slack/). A single block covers every
+registered workspace (tokens are per-workspace files). Authorize each
+workspace first with `msgvault add-slack`.
+
+```toml
+[slack]
+enabled = true                    # gate for the daemon schedule
+schedule = "*/30 * * * *"         # 5-field cron; empty = manual sync only
+channels = []                     # channel-name include filter (empty = all memberships)
+exclude_channels = []             # channel names to skip, e.g. ["noise"]
+media = true                      # download shared-file bytes
+max_media_mb = 100                # per-file download cap (MiB)
+```
+
+| Key | Default | Description |
+|---|---|---|
+| `enabled` | `false` | Whether the daemon schedules Slack sync |
+| `schedule` | — | Cron expression used by `msgvault serve` |
+| `channels` | all | Channel names to sync (include filter; DMs are never filtered) |
+| `exclude_channels` | — | Channel names to skip (wins over `channels`) |
+| `media` | `true` | Download shared-file bytes (failed downloads retry via `backfill-slack-media`) |
+| `max_media_mb` | `100` | Per-file download cap in MiB (over-cap files leave a retry marker) |
+
 ### Granola Sources
 
 Granola meeting-notes sync is configured with top-level `[[granola]]` entries.
