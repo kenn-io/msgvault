@@ -701,6 +701,10 @@ func (e *DuckDBEngine) parquetCTEs() string {
 		convCTE)
 }
 
+// duckDBMessageTypeCondition builds a message_type predicate for the parquet
+// datasets. An "email" value also matches NULL/empty message_type: rows
+// imported before message_type existed are email (see emailOnlyFilterMsg and
+// store.IsEmailMessageType). An empty alias renders an unqualified column.
 func duckDBMessageTypeCondition(alias string, messageTypes []string) (string, []any) {
 	var conditions []string
 	var args []any
@@ -719,7 +723,10 @@ func duckDBMessageTypeCondition(alias string, messageTypes []string) (string, []
 		exact = append(exact, typ)
 	}
 
-	col := alias + ".message_type"
+	col := messageTypeDimension
+	if alias != "" {
+		col = alias + ".message_type"
+	}
 	if includeEmail {
 		conditions = append(conditions,
 			fmt.Sprintf("(%s = ? OR %s IS NULL OR %s = '')", col, col, col))

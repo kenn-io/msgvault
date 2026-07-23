@@ -158,8 +158,11 @@
       ? value.message : fallback;
   }
 
-  const mutationReady = $derived(integrationState === 'ready' && indexState === 'ready');
+  // Mutations go through the live task service, so a partial reverse index
+  // only limits lookup completeness — it does not block create/link/unlink.
+  const mutationReady = $derived(integrationState === 'ready' && (indexState === 'ready' || indexState === 'partial'));
   const degraded = $derived(!mutationReady);
+  const partialIndex = $derived(mutationReady && indexState === 'partial');
   const sessionOnlyIndex = $derived(mutationReady && reason === 'cache_persistence_unsupported');
   const stateMessage = $derived(integrationState !== 'ready' && integrationState !== 'loading'
     ? `Task integration ${integrationState}: ${integrationMessage || 'No status detail was provided.'}`
@@ -180,6 +183,7 @@
   {#if loading}<p role="status">Loading linked tasks…</p>
   {:else}
     {#if degraded}<div class="degraded" role="alert"><p>{stateMessage} Mutations are disabled.</p><Button size="sm" surface="soft" label="Open Settings" onclick={onsettings} /></div>{/if}
+    {#if partialIndex}<p role="alert">{stateMessage}</p>{/if}
     {#if sessionOnlyIndex}<p role="status">Linked-task index updates are available for this session but are not persisted to disk on this platform.</p>{/if}
     {#if tasks.length > 0}
       <ul>{#each tasks as task (task.id)}<li><span>{task.title}</span><Button size="sm" surface="outline" label={`Unlink ${task.title}`} disabled={mutating || !mutationReady} onclick={() => void unlink(task.id)} /></li>{/each}</ul>

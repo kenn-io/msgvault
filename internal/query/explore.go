@@ -289,18 +289,6 @@ func buildExploreConditions(request ExploreRequest) (string, []any) {
 		}
 		conditions = append(conditions, "("+strings.Join(parts, " OR ")+")")
 	}
-	appendStringAnyOf := func(values []string, expression string) {
-		if len(values) == 0 {
-			return
-		}
-		parts := make([]string, len(values))
-		for i, value := range values {
-			parts[i] = expression
-			args = append(args, value)
-		}
-		conditions = append(conditions, "("+strings.Join(parts, " OR ")+")")
-	}
-
 	appendIntAnyOf(request.Context.SourceIDs, "source_id = ?")
 	if len(request.Context.ParticipantIDs) > 0 {
 		parts := make([]string, len(request.Context.ParticipantIDs))
@@ -322,7 +310,12 @@ func buildExploreConditions(request ExploreRequest) (string, []any) {
 			args = append(args, value, value, value)
 		}
 	}
-	appendStringAnyOf(request.Context.MessageTypes, "lower(message_type) = lower(?)")
+	// duckDBMessageTypeCondition treats "email" as also matching NULL/empty
+	// message_type: legacy rows imported before message_type existed are email.
+	if messageTypeCondition, messageTypeArgs := duckDBMessageTypeCondition("", request.Context.MessageTypes); messageTypeCondition != "" {
+		conditions = append(conditions, messageTypeCondition)
+		args = append(args, messageTypeArgs...)
+	}
 	// CAST(? AS TIMESTAMP) pins the bound time to its UTC wall clock. The Go
 	// DuckDB driver binds time.Time as TIMESTAMP WITH TIME ZONE; left uncast,
 	// the comparison would coerce the naive-UTC occurred_at column to

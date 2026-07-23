@@ -36,10 +36,22 @@ type MessageFixture struct {
 	InternalDeletedAt   *time.Time // nil = omitted from legacy fixtures / NULL in opted-in fixtures
 	DeletedFromSourceAt *time.Time // nil = NULL
 	SenderID            *int64     // nil = NULL (direct sender for WhatsApp/chat messages)
-	MessageType         string     // e.g. "email", "whatsapp"
-	IsFromMe            bool
-	Year                int
-	Month               int
+	MessageType         string     // e.g. "email", "whatsapp"; "" defaults to "email"
+	// LegacyEmptyMessageType writes '' instead of the "email" default,
+	// modeling rows imported before message_type existed.
+	LegacyEmptyMessageType bool
+	IsFromMe               bool
+	Year                   int
+	Month                  int
+}
+
+// resolvedMessageType returns the message_type value written to Parquet:
+// the explicit type, an empty string for legacy rows, or the "email" default.
+func (m MessageFixture) resolvedMessageType() string {
+	if m.MessageType == "" && !m.LegacyEmptyMessageType {
+		return "email"
+	}
+	return m.MessageType
 }
 
 // SourceFixture defines a source row for Parquet test data.
@@ -229,10 +241,13 @@ type MessageOpt struct {
 	SourceID            int64  // defaults to 1
 	ConversationID      int64  // 0 = auto-assign
 	MessageType         string // defaults to "email"
-	SenderID            *int64 // nil = NULL (direct sender for text/chat messages)
-	IsFromMe            bool
-	ConversationType    string // defaults from MessageType
-	ConversationTitle   string
+	// LegacyEmptyMessageType writes '' instead of the "email" default,
+	// modeling rows imported before message_type existed.
+	LegacyEmptyMessageType bool
+	SenderID               *int64 // nil = NULL (direct sender for text/chat messages)
+	IsFromMe               bool
+	ConversationType       string // defaults from MessageType
+	ConversationTitle      string
 }
 
 // AddMessage adds a message and returns its ID.
@@ -260,23 +275,24 @@ func (b *TestDataBuilder) AddMessage(opt MessageOpt) int64 {
 	}
 
 	b.messages = append(b.messages, MessageFixture{
-		ID:                  id,
-		SourceID:            srcID,
-		SourceMessageID:     fmt.Sprintf("msg%d", id),
-		ConversationID:      convID,
-		Subject:             opt.Subject,
-		Snippet:             snippet,
-		SentAt:              sentAt,
-		SizeEstimate:        opt.SizeEstimate,
-		HasAttachments:      opt.HasAttachments,
-		DeletedAt:           opt.DeletedAt,
-		InternalDeletedAt:   opt.InternalDeletedAt,
-		DeletedFromSourceAt: opt.DeletedFromSourceAt,
-		SenderID:            opt.SenderID,
-		MessageType:         opt.MessageType,
-		IsFromMe:            opt.IsFromMe,
-		Year:                sentAt.Year(),
-		Month:               int(sentAt.Month()),
+		ID:                     id,
+		SourceID:               srcID,
+		SourceMessageID:        fmt.Sprintf("msg%d", id),
+		ConversationID:         convID,
+		Subject:                opt.Subject,
+		Snippet:                snippet,
+		SentAt:                 sentAt,
+		SizeEstimate:           opt.SizeEstimate,
+		HasAttachments:         opt.HasAttachments,
+		DeletedAt:              opt.DeletedAt,
+		InternalDeletedAt:      opt.InternalDeletedAt,
+		DeletedFromSourceAt:    opt.DeletedFromSourceAt,
+		SenderID:               opt.SenderID,
+		MessageType:            opt.MessageType,
+		LegacyEmptyMessageType: opt.LegacyEmptyMessageType,
+		IsFromMe:               opt.IsFromMe,
+		Year:                   sentAt.Year(),
+		Month:                  int(sentAt.Month()),
 	})
 
 	// Track conversation if not already present
@@ -433,10 +449,7 @@ func (m MessageFixture) toSQL() string {
 	if m.SenderID != nil {
 		senderID = fmt.Sprintf("%d::BIGINT", *m.SenderID)
 	}
-	msgType := m.MessageType
-	if msgType == "" {
-		msgType = "email"
-	}
+	msgType := m.resolvedMessageType()
 	return fmt.Sprintf("(%d::BIGINT, %d::BIGINT, %s, %d::BIGINT, %s, %s, TIMESTAMP '%s', %d::BIGINT, %v, %d, %s, %s, %s, %v, %d, %d)",
 		m.ID, m.SourceID, sqlStr(m.SourceMessageID), m.ConversationID,
 		sqlStr(m.Subject), sqlStr(m.Snippet),
@@ -460,10 +473,7 @@ func (m MessageFixture) toSQLWithInternalDeletion() string {
 	if m.SenderID != nil {
 		senderID = fmt.Sprintf("%d::BIGINT", *m.SenderID)
 	}
-	msgType := m.MessageType
-	if msgType == "" {
-		msgType = "email"
-	}
+	msgType := m.resolvedMessageType()
 	return fmt.Sprintf("(%d::BIGINT, %d::BIGINT, %s, %d::BIGINT, %s, %s, TIMESTAMP '%s', %d::BIGINT, %v, %d, %s, %s, %s, %s, %v, %d, %d)",
 		m.ID, m.SourceID, sqlStr(m.SourceMessageID), m.ConversationID,
 		sqlStr(m.Subject), sqlStr(m.Snippet),

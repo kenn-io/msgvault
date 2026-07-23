@@ -78,6 +78,50 @@ describe('TaskLinks', () => {
     }
   );
 
+  it('enables create, link, and unlink on a partial index while keeping the incompleteness warning', async () => {
+    const requests: Request[] = [];
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      requests.push(request);
+      if (request.url.endsWith('/integrations/tasks/status')) return Response.json({ state: 'ready', project: 'project', message: 'Ready' });
+      if (request.url.includes('/integrations/tasks/search')) return Response.json({ tasks: [{ id: 'task-2', title: 'Search result', revision: 'r1' }] });
+      if (request.method === 'POST') return Response.json({ task: { id: 'task-2', project: 'project', title: 'Search result', revision: 'r1' } }, { status: 201 });
+      return Response.json({
+        state: 'partial', complete: false, reason: 'safety_limit', last_scan: '2026-07-19T01:00:00Z',
+        tasks: [{ id: 'task-1', title: 'Partial task' }], outbound_metadata: {}
+      });
+    });
+    render(TaskLinks, { client: createAPIClient(fetchFn), messageId: 42, title: 'Synthetic', sourceType: 'gmail', sourceIdentifier: 'archive@example.com' });
+
+    expect(await screen.findByText('Partial task')).toBeDefined();
+    expect(screen.getByRole('alert').textContent).toContain('partial');
+    expect(screen.getByRole('alert').textContent).not.toContain('Mutations are disabled');
+    expect(screen.getByRole('button', { name: 'Create task' })).toBeDefined();
+    expect((screen.getByRole('button', { name: 'Unlink Partial task' }) as HTMLButtonElement).disabled).toBe(false);
+
+    await fireEvent.input(screen.getByLabelText('Search tasks'), { target: { value: 'Search' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Search' }));
+    await fireEvent.click(await screen.findByRole('button', { name: 'Link Search result' }));
+    await waitFor(() => expect(requests.some((request) => request.method === 'POST')).toBe(true));
+  });
+
+  it.each(['stale', 'unavailable', 'authentication_required', 'incompatible', 'disabled', 'not_found', 'wrong_project'])(
+    'keeps mutations disabled when the index state is %s even with a ready integration',
+    async (state) => {
+      render(TaskLinks, { client: createAPIClient(vi.fn(async (input) => {
+        const request = input instanceof Request ? input : new Request(input);
+        return request.url.endsWith('/integrations/tasks/status')
+          ? Response.json({ state: 'ready', project: 'project', message: 'Ready' })
+          : Response.json({ state, complete: false, reason: state, tasks: [{ id: 'task-1', title: 'Cached task' }], outbound_metadata: {} });
+      })), messageId: 42, title: 'Synthetic', sourceType: 'gmail', sourceIdentifier: 'archive@example.com' });
+
+      expect(await screen.findByText('Cached task')).toBeDefined();
+      expect((screen.getByRole('button', { name: 'Unlink Cached task' }) as HTMLButtonElement).disabled).toBe(true);
+      expect(screen.queryByRole('button', { name: 'Create task' })).toBeNull();
+      expect(screen.getByRole('alert').textContent).toContain('Mutations are disabled');
+    }
+  );
+
   it('explains unsupported disk persistence while keeping safe current-session mutations ready', async () => {
     render(TaskLinks, { client: createAPIClient(vi.fn(async (input) => {
       const request = input instanceof Request ? input : new Request(input);

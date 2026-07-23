@@ -84,6 +84,53 @@ func TestExploreTenThousandFragmentConversationKeepsConstantMatchState(t *testin
 	assertExploreBoundedStrongestMatch(t, result.Rows[0], nil)
 }
 
+// TestExploreMessageTypeEmailIncludesLegacyRows pins the legacy-row rule for
+// the explore context filter: rows imported before message_type existed carry
+// an empty value and count as email (see emailOnlyFilterMsg,
+// store.IsEmailMessageType), so an "email" filter must include them while
+// non-email filters must not.
+func TestExploreMessageTypeEmailIncludesLegacyRows(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	b := NewTestDataBuilder(t)
+	b.AddSource("owner@example.com")
+	base := time.Date(2024, 3, 1, 9, 0, 0, 0, time.UTC)
+	legacyEmail := b.AddMessage(MessageOpt{
+		Subject: "legacy email", LegacyEmptyMessageType: true, SentAt: base,
+	})
+	typedEmail := b.AddMessage(MessageOpt{
+		Subject: "typed email", MessageType: "email", SentAt: base.Add(time.Hour),
+	})
+	sms := b.AddMessage(MessageOpt{
+		Snippet: "sms text", MessageType: messageTypeSMS,
+		ConversationType: "direct_chat", SentAt: base.Add(2 * time.Hour),
+	})
+	engine := b.BuildEngine()
+
+	anchorIDs := func(response *ExploreResponse) []int64 {
+		ids := make([]int64, 0, len(response.Rows))
+		for _, row := range response.Rows {
+			require.NotNil(row.AnchorMessageID, "row %s must carry an anchor", row.Key)
+			ids = append(ids, *row.AnchorMessageID)
+		}
+		return ids
+	}
+
+	emailFast, emailLegacyPath := runExploreBothPaths(t, engine, ExploreRequest{
+		Context: Context{MessageTypes: []string{"email"}}, Page: PageSpec{Limit: 50},
+	})
+	assert.Equal(emailLegacyPath, emailFast)
+	assert.Equal(int64(2), emailFast.TotalCount)
+	assert.ElementsMatch([]int64{legacyEmail, typedEmail}, anchorIDs(emailFast))
+
+	smsFast, smsLegacyPath := runExploreBothPaths(t, engine, ExploreRequest{
+		Context: Context{MessageTypes: []string{messageTypeSMS}}, Page: PageSpec{Limit: 50},
+	})
+	assert.Equal(smsLegacyPath, smsFast)
+	assert.Equal(int64(1), smsFast.TotalCount)
+	assert.ElementsMatch([]int64{sms}, anchorIDs(smsFast))
+}
+
 func TestExploreCoverageStreamsExactLiveMessagesInOneScan(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
