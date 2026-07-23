@@ -216,7 +216,14 @@ func (e *DuckDBEngine) queryRelationshipCandidates(
 		if !candidates[i].LastAt.Equal(candidates[j].LastAt) {
 			return candidates[i].LastAt.After(candidates[j].LastAt)
 		}
-		return candidates[i].DisplayLabel < candidates[j].DisplayLabel
+		if candidates[i].DisplayLabel != candidates[j].DisplayLabel {
+			return candidates[i].DisplayLabel < candidates[j].DisplayLabel
+		}
+		// CanonicalID is the unique final tie-breaker: without it, rows with
+		// identical score, timestamp, and label keep whatever order the
+		// database returned them in, which can differ across memo evictions
+		// or restarts and duplicate/omit rows across offset-based pages.
+		return candidates[i].CanonicalID < candidates[j].CanonicalID
 	})
 	return candidates, nil
 }

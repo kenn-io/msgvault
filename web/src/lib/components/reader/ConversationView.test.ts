@@ -128,6 +128,40 @@ describe('ConversationView', () => {
     expect(fetchFn).toHaveBeenCalledTimes(1);
   });
 
+  it('scrolls the requested anchor into view on an anchor change within the loaded window', async () => {
+    // jsdom reports offsetTop as 0 everywhere; derive it from the message id
+    // so revealAnchor's scroll target is observable per card.
+    const offsetTopDescriptor = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'offsetTop')!;
+    Object.defineProperty(HTMLElement.prototype, 'offsetTop', {
+      configurable: true,
+      get(this: HTMLElement) {
+        return Number(this.getAttribute('data-message-id') ?? 0) * 100;
+      }
+    });
+    try {
+      const fetchFn = vi.fn<typeof fetch>(async () => Response.json({
+        id: 7, anchor_id: 2, messages: [message(1), message(2), message(3)],
+        has_before: false, has_after: false, total: 3
+      }));
+      const client = createAPIClient(fetchFn);
+      const rendered = render(ConversationView, {
+        props: { client, conversationId: 7, anchorId: 2 }
+      });
+      await screen.findByRole('article', { name: 'Message 2' });
+      const scroller = screen.getByRole('region', { name: 'Conversation thread' });
+      await waitFor(() => expect(scroller.scrollTop).toBe(2 * 100 - 8));
+
+      scroller.scrollTop = 0;
+      await rendered.rerender({ client, conversationId: 7, anchorId: 3 });
+
+      expect(await screen.findByRole('article', { name: 'Message 3' })).toBeTruthy();
+      await waitFor(() => expect(scroller.scrollTop).toBe(3 * 100 - 8));
+      expect(fetchFn).toHaveBeenCalledTimes(1);
+    } finally {
+      Object.defineProperty(HTMLElement.prototype, 'offsetTop', offsetTopDescriptor);
+    }
+  });
+
   it('refetches only when the requested anchor falls outside the loaded window', async () => {
     const requests: Request[] = [];
     const fetchFn = vi.fn<typeof fetch>(async (input) => {

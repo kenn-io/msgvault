@@ -3,6 +3,7 @@ package query
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"testing"
 	"time"
@@ -460,6 +461,91 @@ func TestRelationshipsClusterLabelPrefersNamedMember(t *testing.T) {
 		"an unlinked participant keeps its own fallback label")
 	assert.Equal("Dana First", labelsByCanonicalID[dFirstID],
 		"with several named members, the smallest participant ID's name wins deterministically")
+}
+
+// purgeRelationshipsMemo drops every memoized ranked candidate list so the
+// next Relationships call re-runs the ranking query, simulating memo eviction
+// or a daemon restart between offset pages.
+func purgeRelationshipsMemo(engine *DuckDBEngine) {
+	engine.relMemo.mu.Lock()
+	defer engine.relMemo.mu.Unlock()
+	engine.relMemo.entries = nil
+	engine.relMemo.order = nil
+}
+
+// TestRelationshipsPaginationStableAcrossFullyTiedRows pins the unique final
+// sort key: counterparts with identical score, LastAt, and display label must
+// still order deterministically (by CanonicalID) so offset pages computed
+// from independent ranking-query runs — after memo eviction or a daemon
+// restart — never duplicate or drop a row. The fixture makes twelve unlinked
+// counterparts fully tied: each receives exactly one owner-sent message at
+// the same instant and shares one display name, so score, timestamp, and
+// label all collide and only CanonicalID can break the tie.
+func TestRelationshipsPaginationStableAcrossFullyTiedRows(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	b := NewTestDataBuilder(t)
+	srcID := b.AddSource("owner@example.com")
+	ownerID := b.AddParticipant("owner@example.com", "example.com", "Owner")
+	b.AddOwnerParticipant(srcID, ownerID)
+
+	now := time.Date(2026, 1, 10, 0, 0, 0, 0, time.UTC)
+	sentAt := now.AddDate(0, 0, -1)
+	const tiedCount = 12
+	tiedIDs := make([]int64, 0, tiedCount)
+	for i := range tiedCount {
+		tiedID := b.AddParticipant(fmt.Sprintf("tied-%02d@example.com", i), "example.com", "Tied Contact")
+		tiedIDs = append(tiedIDs, tiedID)
+		msgID := b.AddMessage(MessageOpt{SourceID: srcID, IsFromMe: true, SentAt: sentAt})
+		b.AddFrom(msgID, ownerID, "Owner")
+		b.AddTo(msgID, tiedID, "Tied Contact")
+	}
+
+	engine := b.BuildEngine()
+	ctx := context.Background()
+
+	const pageSize = 5
+	fetchAllPages := func() []RelationshipRow {
+		t.Helper()
+		var rows []RelationshipRow
+		for offset := 0; offset < tiedCount; offset += pageSize {
+			// Each page must survive a fresh ranking-query run, not just
+			// slice one memoized list.
+			purgeRelationshipsMemo(engine)
+			page, err := engine.Relationships(ctx, RelationshipsRequest{Now: now, Limit: pageSize, Offset: offset})
+			require.NoError(err)
+			require.Equal(int64(tiedCount), page.TotalCount)
+			rows = append(rows, page.Rows...)
+		}
+		return rows
+	}
+
+	firstPass := fetchAllPages()
+	require.Len(firstPass, tiedCount)
+
+	seen := make(map[int64]bool, tiedCount)
+	for _, row := range firstPass {
+		assert.False(seen[row.CanonicalID], "canonical ID %d returned on more than one page", row.CanonicalID)
+		seen[row.CanonicalID] = true
+	}
+	for _, tiedID := range tiedIDs {
+		assert.True(seen[tiedID], "canonical ID %d omitted from every page", tiedID)
+	}
+	for i := 1; i < len(firstPass); i++ {
+		require.InEpsilon(firstPass[i-1].Score, firstPass[i].Score, 1e-12, "fixture rows must be fully tied on score")
+		require.True(firstPass[i-1].LastAt.Equal(firstPass[i].LastAt), "fixture rows must be fully tied on LastAt")
+		require.Equal(firstPass[i-1].DisplayLabel, firstPass[i].DisplayLabel, "fixture rows must be fully tied on label")
+		assert.Less(firstPass[i-1].CanonicalID, firstPass[i].CanonicalID,
+			"fully tied rows must order by ascending CanonicalID")
+	}
+
+	secondPass := fetchAllPages()
+	require.Len(secondPass, tiedCount)
+	for i := range firstPass {
+		assert.Equal(firstPass[i].CanonicalID, secondPass[i].CanonicalID,
+			"repeated paginated reads must return an identical order")
+	}
 }
 
 // TestRelationshipsOwnerAbsentMeetingContributesNoModality verifies that a
