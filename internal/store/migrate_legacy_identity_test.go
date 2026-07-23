@@ -5,9 +5,46 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
+
+func TestSourceTypeUsesEmailIdentity(t *testing.T) {
+	tests := []struct {
+		sourceType string
+		want       bool
+	}{
+		// Email archives: identity column holds email addresses.
+		{"gmail", true},
+		{"imap", true},
+		{"o365", true},
+		{"mbox", true},
+		{"hey", true},
+		{"apple-mail", true},
+		{"pst", true},
+		// Phone/handle-keyed sources.
+		{"whatsapp", false},
+		{"apple_messages", false},
+		{"synctech_sms", false},
+		{"google_voice", false},
+		{"beeper", false},
+		{"discord", false},
+		{"facebook_messenger", false},
+		// Email-keyed chat/meeting sources confirm their own identifier
+		// at add time and are excluded from the legacy email migration.
+		{"teams", false},
+		{"gcal", false},
+		{"granola", false},
+		{"circleback", false},
+		{"", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.sourceType, func(t *testing.T) {
+			assert.Equal(t, tt.want, store.SourceTypeUsesEmailIdentity(tt.sourceType))
+		})
+	}
+}
 
 func TestMigrateLegacyIdentityConfig_Basic(t *testing.T) {
 	require := require.New(t)
@@ -37,6 +74,41 @@ func TestMigrateLegacyIdentityConfig_Basic(t *testing.T) {
 			assert.Equal("config_migration", id.SourceSignal, "source_signal")
 		}
 	}
+}
+
+// TestMigrateLegacyIdentityConfig_PstIncludedPhoneSkipped verifies that
+// a default PST import source ("pst") receives migrated legacy email
+// addresses while a phone-keyed source is skipped. Regression test:
+// "pst" was missing from SourceTypeUsesEmailIdentity, so normal PST
+// imports were bypassed by the legacy identity migration.
+func TestMigrateLegacyIdentityConfig_PstIncludedPhoneSkipped(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := storetest.New(t)
+	st := f.Store
+
+	pstSrc, err := st.GetOrCreateSource("pst", "archive@example.com")
+	require.NoError(err, "create pst source")
+	phoneSrc, err := st.GetOrCreateSource("whatsapp", "+15550001111")
+	require.NoError(err, "create whatsapp source")
+
+	applied, deferred, sources, addrs, err := st.MigrateLegacyIdentityConfig([]string{"alice@example.com"})
+	require.NoError(err, "MigrateLegacyIdentityConfig")
+
+	assert.True(applied, "applied")
+	assert.False(deferred, "deferred")
+	assert.Equal(2, sources, "eligible sources: default gmail fixture + pst")
+	assert.Equal(1, addrs, "addrs")
+
+	pstIDs, err := st.ListAccountIdentities(pstSrc.ID)
+	require.NoError(err, "ListAccountIdentities pst")
+	require.Len(pstIDs, 1, "pst source should receive the legacy address")
+	assert.Equal("alice@example.com", pstIDs[0].Address, "pst address")
+	assert.Equal("config_migration", pstIDs[0].SourceSignal, "pst source_signal")
+
+	phoneIDs, err := st.ListAccountIdentities(phoneSrc.ID)
+	require.NoError(err, "ListAccountIdentities whatsapp")
+	assert.Empty(phoneIDs, "phone-keyed source must not receive email identities")
 }
 
 // TestMigrateLegacyIdentityConfig_BumpsRevisionsOnlyWhenItInserts verifies

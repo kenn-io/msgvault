@@ -171,8 +171,15 @@ export class ExploreLoader {
     this.error = '';
     this.pageError = '';
     this.unavailable = undefined;
-    if (this.pageKind === 'groups') this.groupRows = [];
-    if (this.pageKind === 'files') this.fileFacts = [];
+    // A fresh predicate load must not leave the previous result visible and
+    // interactive under the new search/filter state: stale rows would route
+    // clicks to the wrong context, and a stale count/authority could be read
+    // against the new predicate mid-flight. Clearing here drops the tables
+    // into their loading skeletons until the new response lands.
+    this.rows = [];
+    this.groupRows = [];
+    this.fileFacts = [];
+    this.result = undefined;
     const request = grouping.length > 0
       ? (filesGrouping
         ? this.api.fileGroups(

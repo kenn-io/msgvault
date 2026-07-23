@@ -397,6 +397,75 @@ describe('ExploreLoader', () => {
     state.destroy();
   });
 
+  it('clears stale rows and result the moment a fresh predicate load starts', async () => {
+    window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
+    let resolveSecond: ((response: Response) => void) | undefined;
+    let exploreCalls = 0;
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
+      if (path !== '/api/v1/explore') return Response.json(exploreResponse());
+      exploreCalls += 1;
+      if (exploreCalls === 1) {
+        return Response.json(exploreResponse({ rows: [entry(1)], total_count: 1 }));
+      }
+      return new Promise<Response>((resolve) => {
+        resolveSecond = resolve;
+      });
+    });
+    const state = new ExploreState(window);
+    const { loader, cleanup } = setup(fetchFn, state);
+    await vi.waitFor(() => expect(loader.rows).toHaveLength(1));
+    expect(loader.result).toBeDefined();
+
+    state.commitNavigation({ filters: [{ dimension: 'source', values: ['1'] }] });
+    flushSync();
+
+    expect(loader.rows).toHaveLength(0);
+    expect(loader.result).toBeUndefined();
+    expect(loader.loading).toBe(true);
+
+    await vi.waitFor(() => expect(resolveSecond).toBeDefined());
+    resolveSecond!(Response.json(exploreResponse({ rows: [entry(2)], total_count: 1 })));
+    await vi.waitFor(() => expect(loader.rows.map((row) => row.key)).toEqual(['message:2']));
+    expect(loader.result?.totalCount).toBe(1);
+    expect(loader.loading).toBe(false);
+
+    cleanup();
+    state.destroy();
+  });
+
+  it('ignores a superseded fresh-load response that resolves after a newer predicate load', async () => {
+    window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
+    let resolveFirst: ((response: Response) => void) | undefined;
+    let exploreCalls = 0;
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
+      if (path !== '/api/v1/explore') return Response.json(exploreResponse());
+      exploreCalls += 1;
+      if (exploreCalls === 1) {
+        return new Promise<Response>((resolve) => {
+          resolveFirst = resolve;
+        });
+      }
+      return Response.json(exploreResponse({ rows: [entry(2)], total_count: 1 }));
+    });
+    const state = new ExploreState(window);
+    const { loader, cleanup } = setup(fetchFn, state);
+    await vi.waitFor(() => expect(resolveFirst).toBeDefined());
+
+    state.commitNavigation({ filters: [{ dimension: 'source', values: ['1'] }] });
+    flushSync();
+    await vi.waitFor(() => expect(loader.rows.map((row) => row.key)).toEqual(['message:2']));
+
+    resolveFirst!(Response.json(exploreResponse({ rows: [entry(1)], total_count: 1 })));
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(loader.rows.map((row) => row.key)).toEqual(['message:2']);
+    expect(loader.error).toBe('');
+
+    cleanup();
+    state.destroy();
+  });
+
   it('exhausts finite pages once when a distinct selected row is missing', async () => {
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
     let explorePostCount = 0;

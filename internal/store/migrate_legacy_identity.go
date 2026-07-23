@@ -258,13 +258,19 @@ func (s *Store) RunStartupMigrations(legacyIdentityAddresses []string) (StartupM
 	return res, nil
 }
 
-// SourceTypeUsesEmailIdentity reports whether a source type's identity
-// column holds email-shaped addresses. Used by the legacy [identity]
-// migration to skip phone/handle-keyed sources (whatsapp, imessage,
-// google_voice*, sms) so email addresses don't get written to them.
+// SourceTypeUsesEmailIdentity reports whether a source type is an email
+// archive whose identity column holds email-shaped addresses. Used by
+// the legacy [identity] migration to skip phone/handle-keyed sources
+// (whatsapp, apple_messages, google_voice, synctech_sms) so email
+// addresses don't get written to them, and by import commands to decide
+// whether the account identifier should be confirmed as an email
+// identity. Email-keyed chat/meeting sources (teams, gcal, granola,
+// circleback) are deliberately excluded: they confirm their own
+// identifier at add time, and the legacy [identity] block only ever
+// described email-archive accounts.
 func SourceTypeUsesEmailIdentity(sourceType string) bool {
 	switch sourceType {
-	case "gmail", "imap", "o365", "mbox", "hey", "apple-mail":
+	case "gmail", "imap", "o365", "mbox", "hey", "apple-mail", "pst":
 		return true
 	}
 	return false

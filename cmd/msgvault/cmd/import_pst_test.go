@@ -61,7 +61,7 @@ func TestImportPstRunsPostSourceMigrationForEligibleSourceTypes(t *testing.T) {
 	require.NoError(
 		err, "pst fixture path")
 
-	importPstSourceType = "mbox"
+	importPstSourceType = "pst"
 	importPstNoResume = true
 	importPstCheckpointInterval = 200
 	importPstNoAttachments = true
@@ -96,7 +96,7 @@ func TestImportPstRunsPostSourceMigrationForEligibleSourceTypes(t *testing.T) {
 		err, "get imported source")
 
 	require.Len(pstSources, 1, "imported source")
-	assert.Equal("mbox", pstSources[0].SourceType, "imported source type")
+	assert.Equal("pst", pstSources[0].SourceType, "imported source type")
 	pstIDs, err := st.ListAccountIdentities(pstSources[0].ID)
 	require.NoError(
 		err, "ListAccountIdentities imported source")
