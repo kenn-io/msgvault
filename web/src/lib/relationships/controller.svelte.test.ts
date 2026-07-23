@@ -396,7 +396,46 @@ describe('RelationshipsController.loadMoreList', () => {
     expect(fetchFn).toHaveBeenCalledTimes(2);
   });
 
-  it('keeps loaded rows but stops paging when a later page fails', async () => {
+  it('keeps loaded rows and the cursor when a later page fails transiently, so a retry appends the same page', async () => {
+    let failPage = true;
+    const requests: Request[] = [];
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      requests.push(request);
+      if (pathOf(request) !== '/api/v1/relationships') throw new Error(`unexpected path ${pathOf(request)}`);
+      const body = (await request.clone().json()) as { cursor?: string };
+      if (body.cursor === undefined) {
+        return Response.json({
+          rows: [relationshipRow(1, 'Alice')], total_count: 2,
+          cache_revision: 'cache-rel', identity_revision: 1, next_cursor: 'page-2'
+        });
+      }
+      if (failPage) return Response.json({ error: 'internal_error', message: 'boom' }, { status: 500 });
+      return Response.json({
+        rows: [relationshipRow(2, 'Bob')], total_count: 2, cache_revision: 'cache-rel', identity_revision: 1
+      });
+    });
+    const controller = new RelationshipsController(createAPIClient(fetchFn), () => 'UTC');
+    await controller.loadList({ filters: [], presentation: 'table' });
+
+    await controller.loadMoreList();
+
+    expect(controller.listRows).toEqual([relationshipRow(1, 'Alice')]);
+    expect(controller.listError).toBe('boom');
+    expect(controller.listCursor).toBe('page-2');
+    expect(controller.listLoadingMore).toBe(false);
+
+    failPage = false;
+    await controller.loadMoreList();
+
+    expect(controller.listRows).toEqual([relationshipRow(1, 'Alice'), relationshipRow(2, 'Bob')]);
+    expect(controller.listError).toBeNull();
+    expect(controller.listCursor).toBeNull();
+    await expect(requests[2]!.clone().json()).resolves.toMatchObject({ cursor: 'page-2' });
+  });
+
+  it('keeps the cursor when a page fetch throws (network failure), so a retry re-attempts the same page', async () => {
+    let failPage = true;
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
       if (pathOf(request) !== '/api/v1/relationships') throw new Error(`unexpected path ${pathOf(request)}`);
@@ -407,7 +446,10 @@ describe('RelationshipsController.loadMoreList', () => {
           cache_revision: 'cache-rel', identity_revision: 1, next_cursor: 'page-2'
         });
       }
-      return Response.json({ error: 'internal_error', message: 'boom' }, { status: 500 });
+      if (failPage) throw new TypeError('network down');
+      return Response.json({
+        rows: [relationshipRow(2, 'Bob')], total_count: 2, cache_revision: 'cache-rel', identity_revision: 1
+      });
     });
     const controller = new RelationshipsController(createAPIClient(fetchFn), () => 'UTC');
     await controller.loadList({ filters: [], presentation: 'table' });
@@ -415,9 +457,46 @@ describe('RelationshipsController.loadMoreList', () => {
     await controller.loadMoreList();
 
     expect(controller.listRows).toEqual([relationshipRow(1, 'Alice')]);
-    expect(controller.listError).toBe('boom');
-    expect(controller.listCursor).toBeNull();
+    expect(controller.listError).toBe('network down');
+    expect(controller.listCursor).toBe('page-2');
     expect(controller.listLoadingMore).toBe(false);
+
+    failPage = false;
+    await controller.loadMoreList();
+
+    expect(controller.listRows).toEqual([relationshipRow(1, 'Alice'), relationshipRow(2, 'Bob')]);
+    expect(controller.listError).toBeNull();
+    expect(controller.listCursor).toBeNull();
+  });
+
+  it('discards the cursor when a page fails with a terminal status (409 revision change)', async () => {
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      if (pathOf(request) !== '/api/v1/relationships') throw new Error(`unexpected path ${pathOf(request)}`);
+      const body = (await request.clone().json()) as { cursor?: string };
+      if (body.cursor === undefined) {
+        return Response.json({
+          rows: [relationshipRow(1, 'Alice')], total_count: 2,
+          cache_revision: 'cache-rel', identity_revision: 1, next_cursor: 'page-2'
+        });
+      }
+      return Response.json(
+        { error: 'archive_revision_changed', message: 'The committed analytical cache changed; restart pagination' },
+        { status: 409 }
+      );
+    });
+    const controller = new RelationshipsController(createAPIClient(fetchFn), () => 'UTC');
+    await controller.loadList({ filters: [], presentation: 'table' });
+
+    await controller.loadMoreList();
+
+    expect(controller.listRows).toEqual([relationshipRow(1, 'Alice')]);
+    expect(controller.listError).toBe('The committed analytical cache changed; restart pagination');
+    expect(controller.listCursor).toBeNull();
+
+    // With the cursor discarded, further calls are guarded no-ops.
+    await controller.loadMoreList();
+    expect(fetchFn).toHaveBeenCalledTimes(2);
   });
 });
 
@@ -865,6 +944,7 @@ describe('RelationshipsController.loadMoreTimeline', () => {
   });
 
   it('resets timelineLoadingMore on every early return, so a failed page never wedges pagination', async () => {
+    let failPage = true;
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
       const path = pathOf(request);
@@ -877,7 +957,10 @@ describe('RelationshipsController.loadMoreTimeline', () => {
             cache_revision: 'cache-rel', next_cursor: 'page-2'
           });
         }
-        return Response.json({ error: 'internal_error', message: 'boom' }, { status: 500 });
+        if (failPage) return Response.json({ error: 'internal_error', message: 'boom' }, { status: 500 });
+        return Response.json({
+          canonical_id: 1, identity_revision: 1, rows: [timelineRow('t2')], total_count: 2, cache_revision: 'cache-rel'
+        });
       }
       throw new Error(`unexpected path ${path}`);
     });
@@ -893,12 +976,139 @@ describe('RelationshipsController.loadMoreTimeline', () => {
 
     expect(controller.timelineLoadingMore).toBe(false);
     expect(controller.timelineError).toBe('boom');
-    expect(controller.timelineCursor).toBeNull();
+    // A transient 500 keeps the cursor so a retry can re-attempt the page.
+    expect(controller.timelineCursor).toBe('page-2');
 
-    // Pagination stopped (cursor cleared on failure): calling again is a guarded no-op,
-    // not a second in-flight request left stuck at loadingMore = true forever.
+    failPage = false;
     await controller.loadMoreTimeline();
+
     expect(controller.timelineLoadingMore).toBe(false);
+    expect(controller.timelineError).toBeNull();
+    expect(controller.timelineRows).toEqual([timelineRow('t1'), timelineRow('t2')]);
+    expect(controller.timelineCursor).toBeNull();
+  });
+
+  it('keeps the timeline cursor when a page fetch throws (network failure), so a retry re-attempts it', async () => {
+    let failPage = true;
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      const path = pathOf(request);
+      if (path === '/api/v1/people/1' && request.method === 'GET') return Response.json(person(1));
+      if (path === '/api/v1/relationships/1/timeline') {
+        const body = (await request.clone().json()) as { cursor?: string };
+        if (body.cursor === undefined) {
+          return Response.json({
+            canonical_id: 1, identity_revision: 1, rows: [timelineRow('t1')], total_count: 2,
+            cache_revision: 'cache-rel', next_cursor: 'page-2'
+          });
+        }
+        if (failPage) throw new TypeError('network down');
+        return Response.json({
+          canonical_id: 1, identity_revision: 1, rows: [timelineRow('t2')], total_count: 2, cache_revision: 'cache-rel'
+        });
+      }
+      throw new Error(`unexpected path ${path}`);
+    });
+    const controller = new RelationshipsController(createAPIClient(fetchFn), () => 'UTC');
+    await controller.openTarget('cluster:1', { filters: [], presentation: 'table' });
+
+    await controller.loadMoreTimeline();
+
+    expect(controller.timelineError).toBe('network down');
+    expect(controller.timelineCursor).toBe('page-2');
+    expect(controller.timelineLoadingMore).toBe(false);
+
+    failPage = false;
+    await controller.loadMoreTimeline();
+
+    expect(controller.timelineError).toBeNull();
+    expect(controller.timelineRows).toEqual([timelineRow('t1'), timelineRow('t2')]);
+    expect(controller.timelineCursor).toBeNull();
+  });
+
+  it('restarts a domain timeline from page 1 exactly once on a 409 archive_revision_changed', async () => {
+    let timelineCalls = 0;
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      const path = pathOf(request);
+      if (path === '/api/v1/domains/example.com' && request.method === 'GET') {
+        return Response.json(domainSummary('example.com'));
+      }
+      if (path === '/api/v1/domains/example.com/timeline') {
+        timelineCalls += 1;
+        const body = (await request.clone().json()) as { cursor?: string };
+        if (body.cursor === undefined && timelineCalls === 1) {
+          return Response.json({
+            rows: [timelineRow('t1')], total_count: 3, cache_revision: 'cache-rel',
+            search_provenance: {}, next_cursor: 'page-2'
+          });
+        }
+        if (body.cursor === 'page-2') {
+          return Response.json(
+            { error: 'archive_revision_changed', message: 'The committed analytical cache changed; restart pagination' },
+            { status: 409 }
+          );
+        }
+        if (body.cursor === undefined && timelineCalls === 3) {
+          return Response.json({
+            rows: [timelineRow('t1-restart')], total_count: 1, cache_revision: 'cache-rel-2', search_provenance: {}
+          });
+        }
+        throw new Error(`unexpected timeline call ${timelineCalls} body ${JSON.stringify(body)}`);
+      }
+      throw new Error(`unexpected path ${path}`);
+    });
+    const controller = new RelationshipsController(createAPIClient(fetchFn), () => 'UTC');
+    await controller.openTarget('domain:example.com', { filters: [], presentation: 'table' });
+    expect(controller.timelineCursor).toBe('page-2');
+
+    await controller.loadMoreTimeline();
+
+    expect(timelineCalls).toBe(3);
+    expect(controller.timelineRows).toEqual([timelineRow('t1-restart')]);
+    expect(controller.timelineCursor).toBeNull();
+    expect(controller.timelineLoadingMore).toBe(false);
+    expect(controller.timelineError).toBeNull();
+    expect(controller.timelineRestartNotice).toBe('Timeline restarted: the archive changed.');
+  });
+
+  it('keeps a domain timeline cursor through a transient failure, so a retry appends the same page', async () => {
+    let failPage = true;
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      const path = pathOf(request);
+      if (path === '/api/v1/domains/example.com' && request.method === 'GET') {
+        return Response.json(domainSummary('example.com'));
+      }
+      if (path === '/api/v1/domains/example.com/timeline') {
+        const body = (await request.clone().json()) as { cursor?: string };
+        if (body.cursor === undefined) {
+          return Response.json({
+            rows: [timelineRow('t1')], total_count: 2, cache_revision: 'cache-rel',
+            search_provenance: {}, next_cursor: 'page-2'
+          });
+        }
+        if (failPage) return Response.json({ error: 'internal_error', message: 'boom' }, { status: 500 });
+        return Response.json({
+          rows: [timelineRow('t2')], total_count: 2, cache_revision: 'cache-rel', search_provenance: {}
+        });
+      }
+      throw new Error(`unexpected path ${path}`);
+    });
+    const controller = new RelationshipsController(createAPIClient(fetchFn), () => 'UTC');
+    await controller.openTarget('domain:example.com', { filters: [], presentation: 'table' });
+
+    await controller.loadMoreTimeline();
+
+    expect(controller.timelineError).toBe('boom');
+    expect(controller.timelineCursor).toBe('page-2');
+
+    failPage = false;
+    await controller.loadMoreTimeline();
+
+    expect(controller.timelineError).toBeNull();
+    expect(controller.timelineRows).toEqual([timelineRow('t1'), timelineRow('t2')]);
+    expect(controller.timelineCursor).toBeNull();
   });
 });
 

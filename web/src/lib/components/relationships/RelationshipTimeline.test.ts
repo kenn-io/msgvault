@@ -111,6 +111,33 @@ describe('RelationshipTimeline', () => {
     expect(screen.getByText('Loading more…')).toBeDefined();
   });
 
+  it('offers a retry action on a pagination error while the cursor survived', async () => {
+    const onLoadMore = vi.fn();
+    render(RelationshipTimeline, {
+      rows: [emailRow('message:1', '2026-07-18T12:00:00Z')],
+      error: 'boom',
+      hasMore: true,
+      onLoadMore,
+      onRowOpen: vi.fn()
+    });
+
+    expect(screen.getByRole('alert').textContent).toContain('boom');
+    await fireEvent.click(screen.getByRole('button', { name: 'Retry loading more' }));
+    expect(onLoadMore).toHaveBeenCalledOnce();
+  });
+
+  it('hides the retry action for a terminal timeline error (no cursor left)', () => {
+    render(RelationshipTimeline, {
+      rows: [emailRow('message:1', '2026-07-18T12:00:00Z')],
+      error: 'Pagination stopped because the server repeated a cursor without progress.',
+      hasMore: false,
+      onRowOpen: vi.fn()
+    });
+
+    expect(screen.getByRole('alert')).toBeDefined();
+    expect(screen.queryByRole('button', { name: 'Retry loading more' })).toBeNull();
+  });
+
   it('shows the 409-restart notice as a persistent one-line status', () => {
     render(RelationshipTimeline, {
       rows: [emailRow('message:1', '2026-07-18T12:00:00Z')],

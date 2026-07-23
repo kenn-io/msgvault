@@ -236,8 +236,22 @@ describe('RelationshipList', () => {
   it('keeps loaded rows visible under a slim banner when a later page fails', () => {
     render(RelationshipList, { ...baseProps(), error: 'boom' });
 
-    expect(screen.getByRole('alert').textContent).toBe('boom');
+    expect(screen.getByRole('alert').textContent?.trim()).toBe('boom');
     expect(screen.getByText('Alice Example')).toBeDefined();
+  });
+
+  it('offers a retry action on the pagination banner while the cursor survived', async () => {
+    const onLoadMore = vi.fn();
+    render(RelationshipList, { ...baseProps(), error: 'boom', hasMore: true, onLoadMore });
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Retry loading more' }));
+    expect(onLoadMore).toHaveBeenCalledOnce();
+  });
+
+  it('hides the retry action once pagination is terminal (no cursor left)', () => {
+    render(RelationshipList, { ...baseProps(), error: 'boom', hasMore: false });
+
+    expect(screen.queryByRole('button', { name: 'Retry loading more' })).toBeNull();
   });
 
   it('still replaces the list with the error state when nothing loaded', () => {

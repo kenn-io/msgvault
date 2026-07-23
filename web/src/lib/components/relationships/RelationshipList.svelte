@@ -194,8 +194,15 @@
   {:else}
     {#if error}
       <!-- A failed page fetch mid-scroll must not wipe the rows already
-           loaded: keep the list and surface the failure as a slim banner. -->
-      <p class="list-error" role="alert">{error}</p>
+           loaded: keep the list and surface the failure as a slim banner.
+           While the cursor survived (a transient failure), offer a quiet
+           retry that re-attempts the same page. -->
+      <div class="list-error" role="alert">
+        <span>{error}</span>
+        {#if hasMore}
+          <Button size="sm" surface="outline" label="Retry loading more" onclick={() => onLoadMore?.()} />
+        {/if}
+      </div>
     {/if}
     <div
       class="results-grid"
@@ -317,6 +324,10 @@
   }
 
   .list-error {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-3);
     margin: 0;
     padding: var(--space-2) var(--space-3);
     border-radius: var(--radius-sm);

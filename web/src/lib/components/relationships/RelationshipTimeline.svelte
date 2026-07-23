@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { virtualSlice } from '@kenn-io/kit-ui';
+  import { Button, virtualSlice } from '@kenn-io/kit-ui';
   import { onDestroy, onMount } from 'svelte';
 
   import type { RelationshipTimelineRow } from '../../relationships/models';
@@ -171,7 +171,17 @@
 
 <section class="relationship-timeline" aria-label="Relationship timeline">
   {#if restartNotice}<p class="restart-notice" role="status">{restartNotice}</p>{/if}
-  {#if error}<p class="timeline-error" role="alert">{error}</p>{/if}
+  {#if error}
+    <!-- A failed page fetch keeps the rows already loaded; while the cursor
+         survived (a transient failure), offer a quiet retry that re-attempts
+         the same page. -->
+    <div class="timeline-error" role="alert">
+      <span>{error}</span>
+      {#if hasMore}
+        <Button size="sm" surface="outline" label="Retry loading more" onclick={() => onLoadMore?.()} />
+      {/if}
+    </div>
+  {/if}
   <div
     class="timeline-grid"
     role="grid"
@@ -250,6 +260,13 @@
     padding: var(--space-2) var(--space-3);
     border-radius: var(--radius-sm);
     font-size: var(--font-size-xs);
+  }
+
+  .timeline-error {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-3);
   }
 
   .restart-notice {

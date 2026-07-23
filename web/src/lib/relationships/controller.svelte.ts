@@ -161,12 +161,15 @@ export class RelationshipsController {
     try {
       const response = await this.postListPage(request, cursor, signal);
       if (signal.aborted || generation !== this.listGeneration) return;
-      this.listSeenCursors.add(cursor);
+      // Only a served page marks its cursor as seen: a failed attempt keeps
+      // the cursor retryable without tripping the repeated-cursor guard.
+      if (response.data) this.listSeenCursors.add(cursor);
       this.applyListResponse(generation, signal, response, true);
     } catch (cause: unknown) {
       if (!signal.aborted && generation === this.listGeneration) {
+        // A network failure is transient: keep the cursor so a retry (or the
+        // scroll sentinel) can re-attempt the same page.
         this.listError = errorMessage(cause, 0);
-        this.listCursor = null;
       }
     } finally {
       if (generation === this.listGeneration) this.listLoadingMore = false;
@@ -210,13 +213,22 @@ export class RelationshipsController {
       this.listRows = (append ? mergeListRows(this.listRows as ListRow[], rows) : rows) as ListRows;
       this.listCursor = data.next_cursor ?? null;
       this.listTotalCount = data.total_count ?? null;
+      this.listError = null;
       return;
     }
-    this.listCursor = null;
+    if (append) {
+      // A failed pagination page keeps the rows already loaded (the list
+      // surfaces the error as a slim banner). Transient failures also keep
+      // the cursor so a retry re-attempts the same page; a terminal status
+      // rejected the cursor itself, so retrying it would fail forever.
+      if (!isRetryableStatus(res.status)) this.listCursor = null;
+      this.listError = errorMessage(error, res.status);
+      return;
+    }
     // A failed fresh-context load must not leave the previous context's rows
-    // selectable under the new controls; a failed pagination page keeps the
-    // rows already loaded (the list surfaces the error as a slim banner).
-    if (!append) this.listRows = [];
+    // selectable under the new controls.
+    this.listCursor = null;
+    this.listRows = [];
     if (res.status === 503 && isCacheUnavailable(error)) {
       this.degraded = 'cache_unavailable';
       return;
@@ -373,7 +385,7 @@ export class RelationshipsController {
   ): Promise<void> {
     try {
       if (cursor && this.seenCursors.has(cursor)) {
-        this.applyTimelineFailure(generation, REPEATED_CURSOR_MESSAGE);
+        this.applyTimelineFailure(generation, REPEATED_CURSOR_MESSAGE, false);
         return;
       }
       const response = await this.client.POST('/api/v1/relationships/{id}/timeline', {
@@ -392,7 +404,7 @@ export class RelationshipsController {
           await this.fetchClusterPage(id, filters, generation, undefined, signal);
           return;
         }
-        this.applyTimelineFailure(generation, errorMessage(error, res.status));
+        this.applyTimelineFailure(generation, errorMessage(error, res.status), retryableCursorFailure(cursor, res.status));
         return;
       }
       this.timelineError = null;
@@ -417,7 +429,7 @@ export class RelationshipsController {
   ): Promise<void> {
     try {
       if (cursor && this.seenCursors.has(cursor)) {
-        this.applyTimelineFailure(generation, REPEATED_CURSOR_MESSAGE);
+        this.applyTimelineFailure(generation, REPEATED_CURSOR_MESSAGE, false);
         return;
       }
       const response = await this.client.POST('/api/v1/domains/{domain}/timeline', {
@@ -428,7 +440,19 @@ export class RelationshipsController {
       if (signal.aborted || generation !== this.detailGeneration) return;
       const { data, error, response: res } = response;
       if (!data) {
-        this.applyTimelineFailure(generation, errorMessage(error, res.status));
+        // The domain timeline forwards to the explore engine, whose cursor
+        // invalidation surfaces as 409 archive_revision_changed (unlike the
+        // cluster timeline's cursor_invalidated): restart from page 1 the
+        // same way rather than truncating the timeline.
+        if (cursor && res.status === 409 && isErrorCode(error, 'archive_revision_changed')) {
+          this.timelineRows = [];
+          this.timelineCursor = null;
+          this.seenCursors = new Set<string>();
+          this.timelineRestartNotice = TIMELINE_RESTART_MESSAGE;
+          await this.fetchDomainPage(domain, context, generation, undefined, signal);
+          return;
+        }
+        this.applyTimelineFailure(generation, errorMessage(error, res.status), retryableCursorFailure(cursor, res.status));
         return;
       }
       this.timelineError = null;
@@ -442,10 +466,10 @@ export class RelationshipsController {
     }
   }
 
-  private applyTimelineFailure(generation: number, message: string): void {
+  private applyTimelineFailure(generation: number, message: string, keepCursor: boolean): void {
     if (generation !== this.detailGeneration) return;
     this.timelineError = message;
-    this.timelineCursor = null;
+    if (!keepCursor) this.timelineCursor = null;
   }
 
   async linkParticipants(a: number, b: number): Promise<LinkOutcome> {
@@ -563,6 +587,21 @@ function parseClusterID(target: string | null): number | undefined {
 
 function parseDomainName(target: string | null): string | undefined {
   return target?.startsWith('domain:') ? target.slice('domain:'.length) : undefined;
+}
+
+/** Transient failures — network throws (status 0), rate limiting, and server
+ * errors — keep the continuation cursor so a retry can re-attempt the same
+ * page. Any other status rejected the cursor itself (invalid, revision
+ * changed), so retrying it would fail forever. */
+function isRetryableStatus(status: number): boolean {
+  return status === 0 || status === 429 || status >= 500;
+}
+
+/** A timeline failure keeps its cursor only when it was a pagination page
+ * (not the fresh first page, which has no cursor to keep) that failed with a
+ * transient status. */
+function retryableCursorFailure(cursor: string | undefined, status: number): boolean {
+  return cursor !== undefined && isRetryableStatus(status);
 }
 
 function isCacheUnavailable(value: unknown): value is ExploreCacheUnavailable {
