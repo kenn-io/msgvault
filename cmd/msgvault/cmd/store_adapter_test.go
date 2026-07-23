@@ -2,10 +2,12 @@ package cmd
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/api"
+	"go.kenn.io/msgvault/internal/meetingimport"
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
@@ -20,6 +22,7 @@ func TestStoreAPIAdapterImplementsCtxMessageStore(t *testing.T) {
 }
 
 var _ api.CtxMessageStore = (*storeAPIAdapter)(nil)
+var _ api.MeetingImporter = (*storeAPIAdapter)(nil)
 
 // TestStoreAPIAdapterContextReadsHonorCancellation verifies the adapter's
 // context-aware read methods thread the caller's context into the underlying
@@ -49,4 +52,31 @@ func TestStoreAPIAdapterContextReadsHonorCancellation(t *testing.T) {
 
 	_, err = adapter.GetMessagesSummariesByIDsContext(ctx, []int64{1})
 	require.ErrorIs(err, context.Canceled, "GetMessagesSummariesByIDsContext must honor a cancelled context")
+}
+
+func TestStoreAPIAdapterMeetingImport(t *testing.T) {
+	require := require.New(t)
+
+	st := testutil.NewTestStore(t)
+	req, err := meetingimport.DecodeRequest(strings.NewReader(`{
+		"source": {
+			"identifier": "local-meetings",
+			"account_email": "user@example.com"
+		},
+		"meeting": {
+			"external_id": "42",
+			"started_at": "2026-07-23T18:00:00Z",
+			"transcript": "Speaker 1: synthetic transcript"
+		}
+	}`), meetingimport.MaxRequestBytes)
+	require.NoError(err)
+	adapter := &storeAPIAdapter{
+		store:           st,
+		meetingImporter: meetingimport.NewImporter(st, meetingimport.Hooks{}),
+	}
+
+	result, err := adapter.ImportMeeting(context.Background(), req)
+	require.NoError(err)
+	require.Equal(meetingimport.StatusCreated, result.Status)
+	require.NotZero(result.MessageID)
 }

@@ -22,6 +22,7 @@ import (
 	"go.kenn.io/msgvault/internal/deletion"
 	"go.kenn.io/msgvault/internal/discord"
 	"go.kenn.io/msgvault/internal/gmail"
+	"go.kenn.io/msgvault/internal/meetingimport"
 	"go.kenn.io/msgvault/internal/microsoft"
 	"go.kenn.io/msgvault/internal/oauth"
 	"go.kenn.io/msgvault/internal/query"
@@ -352,7 +353,17 @@ func runServe(cmd *cobra.Command, args []string) error {
 	sched.Start()
 
 	// Create adapters for the API interfaces
-	storeAdapter := &storeAPIAdapter{store: s, attachmentMaintenance: attachmentMaint}
+	meetingImporter := meetingimport.NewImporter(s, meetingimport.Hooks{
+		AfterSourceSetup: func() error {
+			return runPostSourceCreateMigrations(s)
+		},
+		RefreshCache: rebuildCacheAfterScheduledSync,
+	})
+	storeAdapter := &storeAPIAdapter{
+		store:                 s,
+		attachmentMaintenance: attachmentMaint,
+		meetingImporter:       meetingImporter,
+	}
 	schedAdapter := &schedulerAdapter{scheduler: sched}
 
 	// Create and start API server
@@ -730,10 +741,12 @@ func newDaemonIdleTracker(c *config.Config, stop context.CancelFunc) *api.IdleTr
 type storeAPIAdapter struct {
 	store                 *store.Store
 	attachmentMaintenance *attachmentMaintenance
+	meetingImporter       *meetingimport.Importer
 }
 
 var _ api.MessageStore = (*storeAPIAdapter)(nil)
 var _ api.CtxMessageStore = (*storeAPIAdapter)(nil)
+var _ api.MeetingImporter = (*storeAPIAdapter)(nil)
 var _ api.SourceStatusStore = (*storeAPIAdapter)(nil)
 var _ api.CLIStore = (*storeAPIAdapter)(nil)
 var _ api.CLIStartupMigrationStore = (*storeAPIAdapter)(nil)
@@ -753,6 +766,16 @@ var _ api.CLIDedupDeleteStore = (*storeAPIAdapter)(nil)
 
 func (a *storeAPIAdapter) GetStats() (*api.StoreStats, error) {
 	return a.store.GetStats()
+}
+
+func (a *storeAPIAdapter) ImportMeeting(
+	ctx context.Context,
+	req meetingimport.Request,
+) (meetingimport.Result, error) {
+	if a == nil || a.meetingImporter == nil {
+		return meetingimport.Result{}, meetingimport.ErrUnavailable
+	}
+	return a.meetingImporter.Import(ctx, req)
 }
 
 func (a *storeAPIAdapter) GetStatsContext(ctx context.Context) (*api.StoreStats, error) {

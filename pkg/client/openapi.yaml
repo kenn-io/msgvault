@@ -1445,6 +1445,72 @@ components:
         - gmail_ids
         - status
       type: object
+    Meeting:
+      additionalProperties: false
+      properties:
+        attendees:
+          items:
+            $ref: "#/components/schemas/Person"
+          nullable: true
+          type: array
+        ended_at:
+          type: string
+        external_id:
+          type: string
+        metadata:
+          additionalProperties:
+            x-go-type: any
+          type: object
+        organizer:
+          $ref: "#/components/schemas/Person"
+        started_at:
+          type: string
+        summary_markdown:
+          type: string
+        summary_text:
+          type: string
+        title:
+          type: string
+        transcript:
+          type: string
+        transcript_segments:
+          items:
+            $ref: "#/components/schemas/TranscriptSegment"
+          nullable: true
+          type: array
+      required:
+        - external_id
+        - started_at
+      type: object
+    MeetingImportRequest:
+      additionalProperties: false
+      properties:
+        meeting:
+          $ref: "#/components/schemas/Meeting"
+        source:
+          $ref: "#/components/schemas/Source"
+      required:
+        - source
+        - meeting
+      type: object
+    MeetingImportResponse:
+      properties:
+        message_id:
+          format: int64
+          type: integer
+        source_id:
+          format: int64
+          type: integer
+        source_message_id:
+          type: string
+        status:
+          type: string
+      required:
+        - status
+        - source_id
+        - message_id
+        - source_message_id
+      type: object
     MessageDetail:
       properties:
         attachments:
@@ -1633,6 +1699,16 @@ components:
           type: string
       required:
         - busy
+      type: object
+    Person:
+      additionalProperties: false
+      properties:
+        email:
+          type: string
+        name:
+          type: string
+      required:
+        - email
       type: object
     PingInfo:
       properties:
@@ -1827,6 +1903,19 @@ components:
         - returned
         - generation
         - messages
+      type: object
+    Source:
+      additionalProperties: false
+      properties:
+        account_email:
+          type: string
+        display_name:
+          type: string
+        identifier:
+          type: string
+      required:
+        - identifier
+        - account_email
       type: object
     SourceStatus:
       properties:
@@ -2265,6 +2354,20 @@ components:
         - label_count
         - account_count
       type: object
+    TranscriptSegment:
+      additionalProperties: false
+      properties:
+        offset_seconds:
+          format: double
+          type: number
+        speaker:
+          type: string
+        text:
+          type: string
+      required:
+        - speaker
+        - text
+      type: object
     UpdateRequest:
       additionalProperties: false
       properties:
@@ -2302,7 +2405,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 1.5.0
+  version: 1.6.0
 openapi: 3.0.3
 paths:
   /api/ping:
@@ -4106,6 +4209,39 @@ paths:
       security:
         - apiKey: []
       summary: Get authenticated health details
+      tags:
+        - API
+  /api/v1/import/meeting:
+    post:
+      operationId: importMeeting
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MeetingImportRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MeetingImportResponse"
+          description: OK
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MeetingImportResponse"
+          description: Created
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Import one meeting
       tags:
         - API
   /api/v1/messages:

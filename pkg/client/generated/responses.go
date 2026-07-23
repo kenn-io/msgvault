@@ -301,6 +301,12 @@ type GetHealthResponse = HealthResponse
 
 type GetHealthErrorResponse = ErrorResponse
 
+type ImportMeetingResponse = MeetingImportResponse
+
+type ImportMeetingResponseJSON = MeetingImportResponse
+
+type ImportMeetingErrorResponse = ErrorResponse
+
 type ListMessagesResponse = MessageListResponse
 
 type ListMessagesErrorResponse = ErrorResponse
@@ -814,6 +820,14 @@ type GetHealthResp struct {
 	Body         []byte
 	StatusCode   int
 	JSON200      *GetHealthResponse
+}
+
+type ImportMeetingResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *ImportMeetingResponse
+	JSON201      *ImportMeetingResponseJSON
 }
 
 type ListMessagesResp struct {

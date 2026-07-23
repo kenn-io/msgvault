@@ -196,6 +196,41 @@ func TestAddAccountAcceptsIdempotentOK(t *testing.T) {
 	assert.Equal("account already exists", got.Message, "message")
 }
 
+func TestImportMeetingAcceptsIdempotentOK(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(http.MethodPost, r.Method, "method")
+		assert.Equal("/api/v1/import/meeting", r.URL.Path, "path")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(
+			`{"status":"updated","source_id":3,"message_id":901,"source_message_id":"meeting:synthetic-meeting-42"}`,
+		))
+	}))
+	t.Cleanup(server.Close)
+
+	c, err := New(server.URL)
+	require.NoError(err, "New")
+
+	got, err := c.ImportMeeting(context.Background(), &generated.ImportMeetingRequestOptions{
+		Body: &generated.ImportMeetingBody{
+			Source: generated.Source{
+				Identifier:   "local-meetings",
+				AccountEmail: "user@example.com",
+			},
+			Meeting: generated.Meeting{
+				ExternalID: "synthetic-meeting-42",
+				StartedAt:  "2026-07-23T18:00:00Z",
+			},
+		},
+	})
+	require.NoError(err, "ImportMeeting update")
+
+	assert.Equal("updated", got.Status, "status")
+	assert.Equal(int64(901), got.MessageID, "message id")
+}
+
 func TestStageDeletionAcceptsDryRunOK(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)

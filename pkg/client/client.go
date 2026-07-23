@@ -222,6 +222,30 @@ func (c *Client) AddAccount(
 	return nil, fmt.Errorf("add account: %w", err)
 }
 
+// ImportMeeting accepts both documented success statuses. The generated
+// convenience method treats only 201 as success even though an idempotent
+// update returns 200.
+func (c *Client) ImportMeeting(
+	ctx context.Context,
+	options *generated.ImportMeetingRequestOptions,
+	reqEditors ...runtime.RequestEditorFn,
+) (*generated.ImportMeetingResponseJSON, error) {
+	resp, err := c.ImportMeetingWithResponse(ctx, options, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	if resp.JSON201 != nil {
+		return resp.JSON201, nil
+	}
+	if resp.JSON200 != nil {
+		return resp.JSON200, nil
+	}
+	err = runtime.NewClientAPIError(
+		fmt.Errorf("unexpected status code: %d", resp.StatusCode),
+		runtime.WithStatusCode(resp.StatusCode))
+	return nil, fmt.Errorf("import meeting: %w", err)
+}
+
 // StageDeletion accepts both documented success statuses. The generated
 // convenience method treats only 201 as success even though the daemon
 // returns 200 for dry-run staging requests.
