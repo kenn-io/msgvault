@@ -13,6 +13,7 @@
     hasMore?: boolean;
     generation?: number;
     error?: string;
+    pageError?: string;
     unavailable?: ExploreCacheUnavailable;
     onOpen?: (row: EntryRow) => void;
     onRetry?: () => void;
@@ -29,7 +30,7 @@
   }
 
   let { rows, totalCount = undefined, loading = false, loadingMore = false, hasMore = false,
-    generation = 0, error = '', unavailable = undefined, onOpen = undefined, onRetry = undefined,
+    generation = 0, error = '', pageError = '', unavailable = undefined, onOpen = undefined, onRetry = undefined,
     onLoadMore = undefined, onLoadThroughEnd = undefined, selection: providedSelection = undefined,
     focusedKey = null, inspectedKey = null, scrollAnchor = null, restoring = false,
     onActiveKey = undefined, onScrollAnchor = undefined, onVisibleRows = undefined }: Props = $props();
@@ -42,7 +43,7 @@
     <span>{totalCount === undefined ? 'Bounded timeline' : `${totalCount.toLocaleString()} items`}</span>
   </header>
   <EverythingTable {rows} {selection} {loading} {loadingMore} {hasMore} {generation} {error}
-    {unavailable} {totalCount} {onOpen} {onRetry} {onLoadMore} {onLoadThroughEnd}
+    {pageError} {unavailable} {totalCount} {onOpen} {onRetry} {onLoadMore} {onLoadThroughEnd}
     {focusedKey} {inspectedKey} {scrollAnchor} {restoring} {onActiveKey} {onScrollAnchor} {onVisibleRows} />
 </section>
 

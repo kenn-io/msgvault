@@ -13,6 +13,7 @@
     totalCount = undefined,
     generation = 0,
     error = '',
+    pageError = '',
     unavailable = undefined,
     focusedKey = null,
     scrollAnchor = null,
@@ -31,6 +32,7 @@
     totalCount?: number;
     generation?: number;
     error?: string;
+    pageError?: string;
     unavailable?: ExploreCacheUnavailable;
     focusedKey?: string | null;
     scrollAnchor?: ExploreScrollAnchor | null;
@@ -71,7 +73,7 @@
     activeFile && renderedFiles.some((file) => file.key === activeFile.key) ? activeFile : undefined
   );
   const accessibilityRowCount = $derived.by(() => {
-    if (loading || loadingMore || unavailable || (error && files.length === 0)) return undefined;
+    if (loading || loadingMore || unavailable || pageError || (error && files.length === 0)) return undefined;
     if (files.length === 0 || !slice || rowHeight === undefined) return 2;
     return (totalCount ?? files.length) + 1;
   });
@@ -313,8 +315,21 @@
             {/each}
           </div>
         </div>
-        {#if error}
-          <div role="row"><div role="gridcell" aria-colspan="5"><div class="progress progress--error" role="alert"><span>{error}</span><Button label="Retry loading more files" surface="outline" onclick={() => onLoadMore?.()} /></div></div></div>
+        {#if pageError}
+          <!-- A failed cursor page keeps the files already loaded. While the
+               cursor survived (a transient failure), offer a quiet retry that
+               re-attempts the same page; a terminal failure dropped the
+               cursor, so the only recovery is reloading the view. -->
+          <div role="row"><div role="gridcell" aria-colspan="5"><div class="progress progress--error" role="alert">
+            <span>{pageError}</span>
+            {#if hasMore}
+              <Button size="sm" label="Retry loading more files" surface="outline" onclick={() => void onLoadMore?.()} />
+            {:else}
+              <Button size="sm" label="Reload view" surface="outline" onclick={() => onRetry?.()} />
+            {/if}
+          </div></div></div>
+        {:else if error}
+          <div role="row"><div role="gridcell" aria-colspan="5"><div class="progress progress--error" role="alert"><span>{error}</span><Button label="Retry request" surface="outline" onclick={() => onRetry?.()} /></div></div></div>
         {:else if loadingMore}
           <div role="row"><div role="gridcell" aria-colspan="5"><div class="progress" role="status">Loading more… {files.length.toLocaleString()} loaded</div></div></div>
         {:else if hasMore}

@@ -91,6 +91,40 @@ describe('GroupTable', () => {
     expect(onRetry).toHaveBeenCalledTimes(2);
   });
 
+  it('keeps loaded groups visible with an inline retry when a cursor page fails', async () => {
+    const onLoadMore = vi.fn().mockResolvedValue(undefined);
+    const onRetry = vi.fn();
+    const rendered = render(GroupTable, {
+      rows,
+      dimension: 'source',
+      hasMore: true,
+      pageError: 'The next group page could not be loaded.',
+      onDrill: vi.fn(),
+      onLoadMore,
+      onRetry
+    });
+
+    expect(screen.getByRole('row', { name: /Example source/ })).toBeDefined();
+    expect(screen.getByRole('alert').textContent).toContain('The next group page could not be loaded.');
+    await fireEvent.click(screen.getByRole('button', { name: 'Retry loading more' }));
+    expect(onLoadMore).toHaveBeenCalledOnce();
+    expect(onRetry).not.toHaveBeenCalled();
+
+    await rendered.rerender({
+      rows,
+      dimension: 'source',
+      hasMore: false,
+      pageError: 'Results changed while loading another page. Reload this view.',
+      onDrill: vi.fn(),
+      onLoadMore,
+      onRetry
+    });
+    expect(screen.getByRole('row', { name: /Second source/ })).toBeDefined();
+    expect(screen.queryByRole('button', { name: 'Retry loading more' })).toBeNull();
+    await fireEvent.click(screen.getByRole('button', { name: 'Reload view' }));
+    expect(onRetry).toHaveBeenCalledOnce();
+  });
+
   it('uses the observed viewport, durable group key and one-based virtual row indices', async () => {
     let resizeCallback: ResizeObserverCallback | undefined;
     const observe = vi.fn();

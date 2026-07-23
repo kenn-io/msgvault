@@ -127,6 +127,55 @@ describe('sanitizeArchivedHTML', () => {
     expect(result.remoteImages).toEqual(['https://images.example/chart.png']);
   });
 
+  it('never loads private-network images, even after remote consent', () => {
+    const result = sanitizeArchivedHTML(`
+      <img src="http://192.168.1.10/router.png" alt="Router">
+      <img src="http://localhost:8080/daemon.png" alt="Daemon">
+      <img src="http://169.254.169.254/latest/meta-data" alt="Metadata">
+      <img src="http://[::1]/loopback.png" alt="Loopback">
+      <img src="http://printer.local/status.png" alt="Printer">
+      <img src="http://nas/share.png" alt="NAS">
+      <img src="https://images.example/chart.png" alt="Chart">
+    `, { messageId: 42, allowRemoteImages: true });
+
+    // The one public image loads; no private destination is retained
+    // anywhere — not in the HTML, not in the consent list.
+    expect(result.remoteImages).toEqual(['https://images.example/chart.png']);
+    expect(result.html).toContain('src="https://images.example/chart.png"');
+    expect(result.html).not.toMatch(/192\.168|localhost|169\.254|::1|printer\.local|nas/);
+
+    const template = document.createElement('template');
+    template.innerHTML = result.html;
+    const captions = [...template.content.querySelectorAll('[data-archived-image-caption]')]
+      .map((caption) => caption.textContent);
+    expect(captions).toEqual([
+      'Image unavailable: Router',
+      'Image unavailable: Daemon',
+      'Image unavailable: Metadata',
+      'Image unavailable: Loopback',
+      'Image unavailable: Printer',
+      'Image unavailable: NAS'
+    ]);
+  });
+
+  it('blocks obfuscated private IP literals before consent is ever offered', () => {
+    const result = sanitizeArchivedHTML(`
+      <img src="http://2130706433/decimal.png" alt="Decimal">
+      <img src="http://0x7f000001/hex.png" alt="Hex">
+      <img src="http://017700000001/octal.png" alt="Octal">
+      <img src="http://127.1/short.png" alt="Short">
+      <img src="http://[::ffff:127.0.0.1]/mapped.png" alt="Mapped">
+    `, { messageId: 42 });
+
+    expect(result.remoteImages).toEqual([]);
+    expect(result.html).not.toMatch(/127\.0\.0\.1|2130706433|0x7f|::ffff/i);
+    expect(result.html).toContain('Image unavailable: Decimal');
+    expect(result.html).toContain('Image unavailable: Hex');
+    expect(result.html).toContain('Image unavailable: Octal');
+    expect(result.html).toContain('Image unavailable: Short');
+    expect(result.html).toContain('Image unavailable: Mapped');
+  });
+
   it('handles malformed HTML without restoring stripped content', () => {
     const result = sanitizeArchivedHTML(
       '<div><p>Readable<script><img src=https://tracker.example/pixel></div><img src="javascript:alert(1)">',

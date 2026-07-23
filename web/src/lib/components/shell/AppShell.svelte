@@ -940,6 +940,7 @@
           totalCount={loader.result?.totalCount}
           generation={loader.resultGeneration}
           error={loader.error}
+          pageError={loader.pageError}
           unavailable={loader.unavailable}
           drillable={groupingByDimension(exploreState.current.groupingChain[0]!).requestable}
           focusedKey={exploreState.current.activeRow}

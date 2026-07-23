@@ -22,7 +22,7 @@ import type { ExploreState } from './state.svelte';
 export type PageLoadOutcome =
   | { status: 'advanced' }
   | { status: 'exhausted' }
-  | { status: 'failed' | 'unavailable' | 'aborted' | 'stale' };
+  | { status: 'failed' | 'aborted' | 'stale' };
 
 /** Cross-cutting seams the loader cannot own itself: `sortNotice` is shared
  * with the Files-shell grouped view and the reverse-sort-attempt message
@@ -73,6 +73,10 @@ export class ExploreLoader {
   loading = $state(false);
   loadingMore = $state(false);
   error = $state('');
+  /** Cursor-page failure. Kept apart from `error` so a failed later page
+   * never hides the rows already loaded; while `nextCursor` survived (a
+   * transient failure) a retry re-attempts the same page. */
+  pageError = $state('');
   nextCursor = $state<string>();
   resultFingerprint = $state('');
   restoring = $state(false);
@@ -165,6 +169,7 @@ export class ExploreLoader {
     this.loadingMore = false;
     this.loading = true;
     this.error = '';
+    this.pageError = '';
     this.unavailable = undefined;
     if (this.pageKind === 'groups') this.groupRows = [];
     if (this.pageKind === 'files') this.fileFacts = [];
@@ -248,8 +253,20 @@ export class ExploreLoader {
       });
   }
 
+  /** A deep-restoration walk behaves like one composite initial load: its
+   * retry must restart from page one, so failures while restoring keep the
+   * established global-error "Retry restoration" contract. Interactive
+   * pagination failures go to `pageError` so loaded rows stay visible. */
+  private failPage(message: string): void {
+    if (this.restoring) this.error = message;
+    else this.pageError = message;
+  }
+
+  /** Terminal pagination failures (repeated cursor, no row progress,
+   * changed page authority) keep the rows already loaded but drop the
+   * cursor: the only recovery is a fresh reload of the view. */
   private failPaging(message: string): PageLoadOutcome {
-    this.error = message;
+    this.failPage(message);
     this.nextCursor = undefined;
     return { status: 'failed' };
   }
@@ -268,7 +285,7 @@ export class ExploreLoader {
       ? this.groupRows.length
       : this.pageKind === 'files' ? this.fileFacts.length : this.rows.length;
     this.loadingMore = true;
-    this.error = '';
+    this.pageError = '';
     try {
       const predicate = { ...this.pagePredicate, cursor };
       const loaded = this.pageKind === 'groups' && this.pageGrouping
@@ -283,9 +300,16 @@ export class ExploreLoader {
           : await this.api.explore({ ...predicate, grouping: undefined, presentation: 'table' }, this.requestController.signal);
       if (generation !== this.requestGeneration) return { status: 'stale' };
       if (loaded.status === 'unavailable') {
-        this.unavailable = loaded.unavailable;
-        this.nextCursor = undefined;
-        return { status: 'unavailable' };
+        if (this.restoring) {
+          this.unavailable = loaded.unavailable;
+          this.nextCursor = undefined;
+          return { status: 'failed' };
+        }
+        // A cursor-page 503 must not wipe the rows already loaded: keep them
+        // (and the cursor, so a retry re-attempts the same page) and surface
+        // a pagination error instead of flipping the global unavailable state.
+        this.pageError = loaded.unavailable.message;
+        return { status: 'failed' };
       }
       if (!samePageAuthority(loaded.result, first)) {
         return this.failPaging(REVISION_CHANGED_NOTICE);
@@ -326,7 +350,7 @@ export class ExploreLoader {
     } catch (cause: unknown) {
       if (generation !== this.requestGeneration) return { status: 'stale' };
       if (cause instanceof DOMException && cause.name === 'AbortError') return { status: 'aborted' };
-      this.error = cause instanceof Error ? cause.message : 'Could not load more Everything results.';
+      this.failPage(cause instanceof Error ? cause.message : 'Could not load more Everything results.');
       return { status: 'failed' };
     } finally {
       if (generation === this.requestGeneration) this.loadingMore = false;
@@ -415,7 +439,7 @@ export class ExploreLoader {
       generation === this.requestGeneration &&
       this.state.peekRestorationEpoch() === epoch &&
       (keys.every((key) => this.hasRestorationKey(key)) ||
-        (this.pageAuthority !== undefined && !this.nextCursor && !this.error && !this.unavailable))
+        (this.pageAuthority !== undefined && !this.nextCursor && !this.error && !this.pageError && !this.unavailable))
     ) {
       await tick();
       if (generation === this.requestGeneration && this.state.peekRestorationEpoch() === epoch) {

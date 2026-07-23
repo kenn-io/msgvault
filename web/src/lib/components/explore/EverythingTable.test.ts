@@ -353,6 +353,39 @@ describe('EverythingTable', () => {
     expect(screen.queryByText('No items match this view')).toBeNull();
   });
 
+  it('keeps loaded rows visible with an inline retry when a cursor page fails', async () => {
+    const selection = new ExploreSelectionState();
+    const onLoadMore = vi.fn().mockResolvedValue(undefined);
+    const onRetry = vi.fn();
+    const { rerender } = render(EverythingTable, {
+      rows: [row(1), row(2)],
+      selection,
+      hasMore: true,
+      pageError: 'The next page could not be loaded.',
+      onLoadMore,
+      onRetry
+    });
+
+    expect(screen.getByRole('row', { name: /Synthetic subject 1/ })).toBeDefined();
+    expect(screen.getByRole('alert').textContent).toContain('The next page could not be loaded.');
+    await fireEvent.click(screen.getByRole('button', { name: 'Retry loading more' }));
+    expect(onLoadMore).toHaveBeenCalledOnce();
+    expect(onRetry).not.toHaveBeenCalled();
+
+    await rerender({
+      rows: [row(1), row(2)],
+      selection,
+      hasMore: false,
+      pageError: 'Results changed while loading another page. Reload this view.',
+      onLoadMore,
+      onRetry
+    });
+    expect(screen.getByRole('row', { name: /Synthetic subject 2/ })).toBeDefined();
+    expect(screen.queryByRole('button', { name: 'Retry loading more' })).toBeNull();
+    await fireEvent.click(screen.getByRole('button', { name: 'Reload view' }));
+    expect(onRetry).toHaveBeenCalledOnce();
+  });
+
   it('renders request errors as an exclusive state rather than an empty result', () => {
     render(EverythingTable, {
       rows: [],

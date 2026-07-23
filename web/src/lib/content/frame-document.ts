@@ -1,3 +1,5 @@
+import { prohibitedRemoteHost } from './url-safety';
+
 export const ARCHIVED_CONTENT_CHANNEL = 'msgvault-archived-content';
 export const MAX_ARCHIVED_SCROLL_DELTA = 10_000;
 export const MAX_ARCHIVED_FRAME_HEIGHT = 65_536;
@@ -56,6 +58,10 @@ function validImageSource(value: string): string | undefined {
     const url = new URL(value);
     if (url.protocol !== 'https:' && url.protocol !== 'http:') return undefined;
     if (url.username || url.password || /[;\u0000-\u001f\u007f]/.test(value)) return undefined;
+    // Second layer behind the sanitizer's gate: a private destination that
+    // slips into a caller's remoteImages list still never enters the frame's
+    // img-src allowlist, so the browser refuses the fetch.
+    if (prohibitedRemoteHost(url.hostname)) return undefined;
     url.hash = '';
     return url.toString();
   } catch {

@@ -568,6 +568,7 @@
       totalCount={loader.result?.totalCount}
       generation={loader.resultGeneration}
       error={loader.error}
+      pageError={loader.pageError}
       unavailable={loader.unavailable}
       drillable={groupingByDimension(exploreState.current.groupingChain[0]!).requestable}
       focusedKey={exploreState.current.activeRow}
@@ -591,6 +592,7 @@
         totalCount={loader.result?.totalCount}
         generation={loader.resultGeneration}
         error={loader.error}
+        pageError={loader.pageError}
         unavailable={loader.unavailable}
         focusedKey={exploreState.current.activeRow}
         scrollAnchor={exploreState.current.scrollAnchor}
@@ -621,6 +623,7 @@
           generation={loader.resultGeneration}
           unavailable={loader.unavailable}
           error={loader.error}
+          pageError={loader.pageError}
           focusedKey={exploreState.current.activeRow}
           inspectedKey={readingTargetKey}
           scrollAnchor={exploreState.current.scrollAnchor}
@@ -650,6 +653,7 @@
         generation={loader.resultGeneration}
         unavailable={loader.unavailable}
         error={loader.error}
+        pageError={loader.pageError}
         onOpen={openRow}
         onColumnsChange={(columns: ExploreColumn[]) => exploreState.replaceTransient({ columns })}
         onScrollAnchor={(key, offset) => exploreState.replaceTransient({ scrollAnchor: { key, offset } })}

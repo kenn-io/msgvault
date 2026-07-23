@@ -78,6 +78,25 @@ describe('buildFrameDocument', () => {
     expect(document).not.toContain('javascript:');
   });
 
+  it('keeps private-network destinations out of the img-src allowlist', async () => {
+    const document = await buildFrameDocument({
+      html: '<p>Archived content</p>',
+      nonce: 'n',
+      targetOrigin: 'https://archive.example',
+      remoteImages: [
+        'http://192.168.1.10/router.png',
+        'http://localhost:8080/daemon.png',
+        'http://169.254.169.254/latest/meta-data',
+        'http://[::1]/loopback.png',
+        'http://printer.local/status.png',
+        'https://images.example/chart.png'
+      ]
+    });
+
+    expect(document).toContain('img-src data: https://images.example/chart.png');
+    expect(document).not.toMatch(/192\.168|localhost|169\.254|\[::1\]|printer\.local/);
+  });
+
   it('escapes shell-generated nonce and archived closing tags', async () => {
     const document = await buildFrameDocument({
       html: '<p title="</body><script>bad()</script>">Words</p>',

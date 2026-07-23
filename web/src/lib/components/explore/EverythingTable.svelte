@@ -25,6 +25,7 @@
     totalCount?: number;
     generation?: number;
     error?: string;
+    pageError?: string;
     unavailable?: ExploreCacheUnavailable;
     focusedKey?: string | null;
     inspectedKey?: string | null;
@@ -51,6 +52,7 @@
     totalCount = undefined,
     generation = 0,
     error = '',
+    pageError = '',
     unavailable = undefined,
     focusedKey = null,
     inspectedKey = null,
@@ -179,7 +181,7 @@
   });
   const renderedRows = $derived(slice ? rows.slice(slice.start, slice.end) : []);
   const accessibilityRowCount = $derived.by(() => {
-    if (loading || loadingMore || unavailable || error) return undefined;
+    if (loading || loadingMore || unavailable || error || pageError) return undefined;
     if (rows.length === 0 || !slice || rowHeight === undefined) return 2;
     return (totalCount ?? rows.length) + 1;
   });
@@ -568,6 +570,22 @@
           </div>
         </div>
       {/if}
+      {#if pageError}
+        <!-- A failed cursor page keeps the rows already loaded. While the
+             cursor survived (a transient failure), offer a quiet retry that
+             re-attempts the same page; a terminal failure dropped the
+             cursor, so the only recovery is reloading the view. -->
+        <div role="row"><div role="gridcell" aria-colspan={visibleColumns.length}>
+          <div class="page-error" role="alert">
+            <span>{pageError}</span>
+            {#if hasMore}
+              <Button size="sm" surface="outline" label="Retry loading more" onclick={() => void onLoadMore?.()} />
+            {:else}
+              <Button size="sm" surface="outline" label="Reload view" onclick={() => onRetry?.()} />
+            {/if}
+          </div>
+        </div></div>
+      {/if}
       {#if loadingMore}
         <div role="row"><div role="gridcell" aria-colspan={visibleColumns.length}>
           <div class="page-progress" role="status">Loading more… {rows.length.toLocaleString()} loaded</div>
@@ -825,6 +843,19 @@
     border-left: 4px solid var(--accent-red);
     color: var(--text-primary);
     font-size: var(--font-size-sm);
+  }
+
+  .page-error {
+    position: sticky;
+    bottom: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-3);
+    padding: var(--space-2) var(--space-4);
+    background: var(--bg-surface);
+    color: var(--text-danger);
+    font-size: var(--font-size-xs);
   }
 
   .page-progress {

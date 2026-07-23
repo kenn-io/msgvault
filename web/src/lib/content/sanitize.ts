@@ -1,6 +1,7 @@
 import DOMPurify from 'dompurify';
 
 import { sanitizeInlineStyle } from './style-allowlist';
+import { prohibitedRemoteHost } from './url-safety';
 
 export interface ArchivedHTMLSanitizeOptions {
   messageId: number;
@@ -124,20 +125,32 @@ export function inertTemplate(html: string): HTMLTemplateElement {
   return template;
 }
 
-function remoteImageURL(value: string): string | undefined {
+type RemoteImageSource =
+  | { kind: 'public'; url: string }
+  | { kind: 'private' }
+  | { kind: 'invalid' };
+
+function classifyRemoteImageSource(value: string): RemoteImageSource {
   try {
-    if (/[;\u0000-\u001f\u007f]/.test(value)) return undefined;
+    if (/[;\u0000-\u001f\u007f]/.test(value)) return { kind: 'invalid' };
     const url = /^https?:\/\//i.test(value)
       ? new URL(value)
       : value.startsWith('//') ? new URL(`https:${value}`) : undefined;
-    if (!url || (url.protocol !== 'https:' && url.protocol !== 'http:')) return undefined;
-    if (url.username || url.password) return undefined;
+    if (!url || (url.protocol !== 'https:' && url.protocol !== 'http:')) {
+      return { kind: 'invalid' };
+    }
+    if (url.username || url.password) return { kind: 'invalid' };
+    // Private destinations (loopback/RFC 1918/link-local addresses, reserved
+    // names) are prohibited outright — a consented image load must never
+    // reach services on the reader's own machine or network. DNS rebinding
+    // (a public name resolving to a private address at fetch time) cannot be
+    // validated in the browser; see url-safety.ts for the residual risk.
+    if (prohibitedRemoteHost(url.hostname)) return { kind: 'private' };
     url.hash = '';
-    return url.toString();
+    return { kind: 'public', url: url.toString() };
   } catch {
-    return undefined;
+    return { kind: 'invalid' };
   }
-  return undefined;
 }
 
 export function imagePlaceholderBlock(document: Document, caption: string): HTMLElement {
@@ -221,11 +234,20 @@ export function sanitizeArchivedHTML(
       continue;
     }
     if (SAFE_DATA_IMAGE.test(source)) continue;
-    const remote = remoteImageURL(source);
-    if (remote) {
-      const index = remoteImages.push(remote) - 1;
-      if (options.allowRemoteImages) element.setAttribute('src', remote);
+    const remote = classifyRemoteImageSource(source);
+    if (remote.kind === 'public') {
+      const index = remoteImages.push(remote.url) - 1;
+      if (options.allowRemoteImages) element.setAttribute('src', remote.url);
       else element.replaceWith(blockedImage(document, element.getAttribute('alt') ?? '', index));
+      continue;
+    }
+    if (remote.kind === 'private') {
+      // Never loadable, so never offered for consent: the image renders as
+      // the unavailable placeholder and its URL is not retained anywhere.
+      const alt = element.getAttribute('alt') ?? '';
+      element.replaceWith(
+        imagePlaceholderBlock(document, `Image unavailable${alt ? `: ${alt}` : ''}`)
+      );
       continue;
     }
     element.removeAttribute('src');

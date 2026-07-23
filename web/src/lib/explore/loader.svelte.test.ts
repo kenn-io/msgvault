@@ -203,6 +203,200 @@ describe('ExploreLoader', () => {
     state.destroy();
   });
 
+  it('keeps loaded rows and retries the same cursor after a transient load-more failure', async () => {
+    window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
+    const cursorsSeen: (string | undefined)[] = [];
+    let cursorCalls = 0;
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = input as Request;
+      if (new URL(request.url).pathname !== '/api/v1/explore') return Response.json(exploreResponse());
+      const body = await request.clone().json() as { cursor?: string };
+      if (!body.cursor) {
+        return Response.json(exploreResponse({ rows: [entry(1)], total_count: 2, next_cursor: 'cursor-1' }));
+      }
+      cursorsSeen.push(body.cursor);
+      cursorCalls += 1;
+      if (cursorCalls === 1) return Response.json({ message: 'Synthetic page failure' }, { status: 500 });
+      return Response.json(exploreResponse({ rows: [entry(2)], total_count: 2 }));
+    });
+    const state = new ExploreState(window);
+    const { loader, cleanup } = setup(fetchFn, state);
+    await vi.waitFor(() => expect(loader.rows).toHaveLength(1));
+
+    const failed = await loader.loadMore();
+    expect(failed.status).toBe('failed');
+    expect(loader.rows).toHaveLength(1);
+    expect(loader.pageError).toBe('Synthetic page failure');
+    expect(loader.error).toBe('');
+    expect(loader.unavailable).toBeUndefined();
+    expect(loader.nextCursor).toBe('cursor-1');
+
+    const retried = await loader.loadMore();
+    expect(retried.status).toBe('exhausted');
+    expect(cursorsSeen).toEqual(['cursor-1', 'cursor-1']);
+    expect(loader.rows.map((row) => row.key)).toEqual(['message:1', 'message:2']);
+    expect(loader.pageError).toBe('');
+
+    cleanup();
+    state.destroy();
+  });
+
+  it('does not flip the global unavailable state when a cursor page returns 503', async () => {
+    window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = input as Request;
+      if (new URL(request.url).pathname !== '/api/v1/explore') return Response.json(exploreResponse());
+      const body = await request.clone().json() as { cursor?: string };
+      if (!body.cursor) {
+        return Response.json(exploreResponse({ rows: [entry(1)], total_count: 2, next_cursor: 'cursor-1' }));
+      }
+      return Response.json({
+        error: 'cache_unavailable',
+        message: 'The analytical cache is rebuilding.',
+        readiness: 'building',
+        recovery_action: 'msgvault build-cache'
+      }, { status: 503 });
+    });
+    const state = new ExploreState(window);
+    const { loader, cleanup } = setup(fetchFn, state);
+    await vi.waitFor(() => expect(loader.rows).toHaveLength(1));
+
+    const outcome = await loader.loadMore();
+
+    expect(outcome.status).toBe('failed');
+    expect(loader.rows).toHaveLength(1);
+    expect(loader.unavailable).toBeUndefined();
+    expect(loader.error).toBe('');
+    expect(loader.pageError).toBe('The analytical cache is rebuilding.');
+    expect(loader.nextCursor).toBe('cursor-1');
+
+    cleanup();
+    state.destroy();
+  });
+
+  it('keeps loaded groups and retries the same grouped cursor after a failure', async () => {
+    window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
+    let cursorCalls = 0;
+    const group = (index: number) => ({
+      key: String(index), label: `Group ${index}`, count: index,
+      estimated_bytes: 10, latest_at: '2026-07-18T12:00:00Z'
+    });
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = input as Request;
+      if (new URL(request.url).pathname !== '/api/v1/explore/groups') return Response.json(exploreResponse());
+      const body = await request.clone().json() as { cursor?: string };
+      if (!body.cursor) {
+        return Response.json(exploreResponse({ rows: [group(1)], total_count: 2, next_cursor: 'group-cursor-1' }));
+      }
+      cursorCalls += 1;
+      if (cursorCalls === 1) return Response.json({ message: 'Synthetic group page failure' }, { status: 500 });
+      return Response.json(exploreResponse({ rows: [group(2)], total_count: 2 }));
+    });
+    const state = new ExploreState(window);
+    state.commitGrouping('source');
+    const { loader, cleanup } = setup(fetchFn, state);
+    await vi.waitFor(() => expect(loader.groupRows).toHaveLength(1));
+
+    const failed = await loader.loadMore();
+    expect(failed.status).toBe('failed');
+    expect(loader.groupRows).toHaveLength(1);
+    expect(loader.pageError).toBe('Synthetic group page failure');
+    expect(loader.error).toBe('');
+
+    const retried = await loader.loadMore();
+    expect(retried.status).toBe('exhausted');
+    expect(loader.groupRows.map((row) => row.key)).toEqual(['1', '2']);
+    expect(loader.pageError).toBe('');
+
+    cleanup();
+    state.destroy();
+  });
+
+  it('keeps a terminal authority-change failure inline while dropping the cursor', async () => {
+    window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = input as Request;
+      if (new URL(request.url).pathname !== '/api/v1/explore') return Response.json(exploreResponse());
+      const body = await request.clone().json() as { cursor?: string };
+      if (!body.cursor) {
+        return Response.json(exploreResponse({ rows: [entry(1)], total_count: 2, next_cursor: 'cursor-1' }));
+      }
+      return Response.json(exploreResponse({
+        rows: [entry(2)], total_count: 2, cache_revision: 'cache-2'
+      }));
+    });
+    const state = new ExploreState(window);
+    const { loader, cleanup } = setup(fetchFn, state);
+    await vi.waitFor(() => expect(loader.rows).toHaveLength(1));
+
+    const outcome = await loader.loadMore();
+
+    expect(outcome.status).toBe('failed');
+    expect(loader.rows).toHaveLength(1);
+    expect(loader.pageError).toContain('Reload this view.');
+    expect(loader.error).toBe('');
+    expect(loader.nextCursor).toBeUndefined();
+
+    cleanup();
+    state.destroy();
+  });
+
+  it('leaves initial-load failures on the global error state', async () => {
+    window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = input as Request;
+      if (new URL(request.url).pathname !== '/api/v1/explore') return Response.json(exploreResponse());
+      return Response.json({ message: 'Synthetic initial failure' }, { status: 500 });
+    });
+    const state = new ExploreState(window);
+    const { loader, cleanup } = setup(fetchFn, state);
+
+    await vi.waitFor(() => expect(loader.error).toBe('Synthetic initial failure'));
+    expect(loader.rows).toHaveLength(0);
+    expect(loader.pageError).toBe('');
+
+    cleanup();
+    state.destroy();
+  });
+
+  it('ignores a superseded cursor-page failure', async () => {
+    window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
+    let rejectCursorPage: ((cause: Error) => void) | undefined;
+    let exploreCalls = 0;
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = input as Request;
+      if (new URL(request.url).pathname !== '/api/v1/explore') return Response.json(exploreResponse());
+      const body = await request.clone().json() as { cursor?: string };
+      exploreCalls += 1;
+      if (body.cursor) {
+        return new Promise<Response>((_, reject) => {
+          rejectCursorPage = reject;
+        });
+      }
+      return Response.json(exploreResponse({
+        rows: [entry(exploreCalls)], total_count: 2,
+        ...(exploreCalls === 1 ? { next_cursor: 'cursor-1' } : {})
+      }));
+    });
+    const state = new ExploreState(window);
+    const { loader, cleanup } = setup(fetchFn, state);
+    await vi.waitFor(() => expect(loader.rows).toHaveLength(1));
+
+    const pending = loader.loadMore();
+    await vi.waitFor(() => expect(rejectCursorPage).toBeDefined());
+    state.commitNavigation({ filters: [{ dimension: 'source', values: ['1'] }] });
+    flushSync();
+    rejectCursorPage!(new Error('Synthetic superseded failure'));
+
+    const outcome = await pending;
+    expect(outcome.status).toBe('stale');
+    expect(loader.pageError).toBe('');
+    expect(loader.error).toBe('');
+
+    cleanup();
+    state.destroy();
+  });
+
   it('exhausts finite pages once when a distinct selected row is missing', async () => {
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
     let explorePostCount = 0;

@@ -73,10 +73,11 @@ describe('FilesPresentation', () => {
     const onLoadMore = vi.fn(async () => ({ status: 'advanced' }));
     render(FilesPresentation, {
       files, hasMore: true, totalCount: 10_000,
-      error: 'The next file page could not be loaded.', onLoadMore
+      pageError: 'The next file page could not be loaded.', onLoadMore
     });
 
     expect(screen.getByText('file-1.pdf')).toBeDefined();
+    expect(screen.getByRole('alert').textContent).toContain('The next file page could not be loaded.');
     await fireEvent.click(screen.getByRole('button', { name: 'Retry loading more files' }));
     expect(onLoadMore).toHaveBeenCalledTimes(1);
   });
