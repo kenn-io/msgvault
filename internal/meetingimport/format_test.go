@@ -33,7 +33,7 @@ Attendees: Test Attendee
 Reviewed the launch plan.
 
 Transcript:
-[00:04] Steve: Let's review the launch plan.`, snapshot.Body)
+[00:04] Test Speaker: Let's review the launch plan.`, snapshot.Body)
 	assert.Equal(t, snapshot.Body, snapshot.Snippet)
 }
 
@@ -57,7 +57,7 @@ func TestBuildSnapshotRendersStructuredSpeakerLabelsAndOffsets(t *testing.T) {
 	overHour := 3661.9
 	req.Meeting.TranscriptSegments = []TranscriptSegment{
 		{Speaker: "Speaker 1", Text: "Anonymous speaker.", OffsetSeconds: &fourSeconds},
-		{Speaker: "Steve", Text: "Named speaker.", OffsetSeconds: &overHour},
+		{Speaker: "Test Speaker", Text: "Named speaker.", OffsetSeconds: &overHour},
 		{Speaker: "Speaker 2", Text: "No timestamp."},
 	}
 
@@ -65,7 +65,7 @@ func TestBuildSnapshotRendersStructuredSpeakerLabelsAndOffsets(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Contains(t, snapshot.Body, "[00:04] Speaker 1: Anonymous speaker.")
-	assert.Contains(t, snapshot.Body, "[1:01:01] Steve: Named speaker.")
+	assert.Contains(t, snapshot.Body, "[1:01:01] Test Speaker: Named speaker.")
 	assert.Contains(t, snapshot.Body, "Speaker 2: No timestamp.")
 }
 

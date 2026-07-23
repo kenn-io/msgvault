@@ -38,4 +38,6 @@ type RunCLIBody = CLIRunRequest
 
 type StageDeletionBody = StageDeletionRequest
 
+type ImportMeetingBody = MeetingImportRequest
+
 type RunQueryBody = QueryRequest

@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/danielgtaylor/huma/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -112,6 +113,59 @@ func TestOpenAPIFastSearchDocumentsSourceIDs(t *testing.T) {
 		return
 	}
 	assert.Fail("source_ids query parameter is not documented for fastSearch")
+}
+
+func TestOpenAPIMeetingImportContract(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	assert.Equal("1.6.0", APISchemaVersion, "meeting import is an additive schema release")
+
+	doc := OpenAPIDocument()
+	path := doc.Paths["/api/v1/import/meeting"]
+	require.NotNil(path, "meeting import path")
+	op := path.Post
+	require.NotNil(op, "meeting import operation")
+	assert.Equal("importMeeting", op.OperationID)
+	require.Len(op.Security, 1, "API-key security requirement")
+	_, secured := op.Security[0]["apiKey"]
+	assert.True(secured, "apiKey security requirement")
+
+	require.NotNil(op.RequestBody, "request body")
+	assert.True(op.RequestBody.Required, "request body is required")
+	requestMedia := op.RequestBody.Content["application/json"]
+	require.NotNil(requestMedia, "JSON request media type")
+	require.NotNil(requestMedia.Schema, "request schema")
+	assert.Equal("#/components/schemas/MeetingImportRequest", requestMedia.Schema.Ref)
+
+	schemas := doc.Components.Schemas.Map()
+	requestSchema := schemas["MeetingImportRequest"]
+	require.NotNil(requestSchema, "request component")
+	assert.False(requestSchema.AdditionalProperties.(bool), "request rejects unknown fields")
+	assert.ElementsMatch([]string{"source", "meeting"}, requestSchema.Required)
+
+	for _, name := range []string{"Source", "Meeting", "Person", "TranscriptSegment"} {
+		schema := schemas[name]
+		require.NotNil(schema, "%s component", name)
+		assert.False(schema.AdditionalProperties.(bool), "%s rejects unknown fields", name)
+	}
+	assert.ElementsMatch(
+		[]string{"external_id", "started_at"},
+		schemas["Meeting"].Required,
+	)
+	metadata := schemas["Meeting"].Properties["metadata"]
+	require.NotNil(metadata, "metadata schema")
+	_, extensible := metadata.AdditionalProperties.(*huma.Schema)
+	assert.True(extensible, "metadata accepts provider-specific values")
+
+	for _, status := range []string{"200", "201"} {
+		response := op.Responses[status]
+		require.NotNil(response, "response %s", status)
+		media := response.Content["application/json"]
+		require.NotNil(media, "response %s JSON media type", status)
+		require.NotNil(media.Schema, "response %s schema", status)
+		assert.Equal("#/components/schemas/MeetingImportResponse", media.Schema.Ref)
+	}
 }
 
 func TestOpenAPIBinaryRoutesDocumentJSONErrors(t *testing.T) {
@@ -242,6 +296,29 @@ func TestOpenAPIClientArtifactUpToDate(t *testing.T) {
 			normalizeGeneratedArtifact(got),
 			"%s is stale; run `make api-generate`", filepath.Join(openAPIClientGeneratedDir, name))
 	}
+}
+
+func TestOpenAPIGeneratedMeetingImportClient(t *testing.T) {
+	assertGeneratedFileContains(t, "client.go",
+		"ImportMeeting(ctx context.Context, options *ImportMeetingRequestOptions")
+	assertGeneratedFileContains(t, "client_options.go",
+		"type ImportMeetingRequestOptions struct")
+	assertGeneratedFileContains(t, "payloads.go",
+		"type ImportMeetingBody = MeetingImportRequest")
+	assertGeneratedFileContains(t, "responses.go",
+		"type ImportMeetingResp struct")
+	assertGeneratedFileContains(t, "types.go",
+		"type MeetingImportResponse struct")
+	assertGeneratedFileContains(t, "types.go",
+		"Metadata           map[string]any")
+}
+
+func assertGeneratedFileContains(t *testing.T, name, expected string) {
+	t.Helper()
+	content, err := os.ReadFile(filepath.Join(openAPIClientGeneratedDir, name))
+	require.NoError(t, err, "read generated client file %s", name)
+	assert.Contains(t, string(content), expected,
+		"%s is missing the meeting import contract; run `make api-generate`", name)
 }
 
 func normalizeGeneratedArtifact(src []byte) string {

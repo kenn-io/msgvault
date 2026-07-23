@@ -31,10 +31,14 @@ var (
 	ErrValidation       = errors.New("meeting import validation failed")
 )
 
-type Request struct {
+type MeetingImportRequest struct {
 	Source  Source  `json:"source"`
 	Meeting Meeting `json:"meeting"`
 }
+
+// Request is kept as a concise internal alias for the meeting import wire
+// contract. The named type gives generated API clients an unambiguous schema.
+type Request = MeetingImportRequest
 
 type Source struct {
 	Identifier   string `json:"identifier"`

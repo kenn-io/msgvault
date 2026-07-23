@@ -71,6 +71,77 @@ Health check endpoint. Does not require authentication.
 
 ---
 
+### Import one meeting {#post-apiv1importmeeting}
+
+**Endpoint:** `POST /api/v1/import/meeting`
+
+Import one provider-neutral meeting into the canonical meeting archive. The
+request must use `Content-Type: application/json`, is limited to 16 MiB, and
+requires the same API-key authentication as other `/api/v1` endpoints.
+
+```json
+{
+  "source": {
+    "identifier": "local-meetings",
+    "display_name": "Local Meetings",
+    "account_email": "user@example.com"
+  },
+  "meeting": {
+    "external_id": "synthetic-meeting-42",
+    "title": "Weekly planning",
+    "started_at": "2026-07-23T18:00:00Z",
+    "ended_at": "2026-07-23T18:30:00Z",
+    "summary_markdown": "## Summary\n\nReviewed the launch plan.",
+    "transcript_segments": [
+      {
+        "speaker": "Test Speaker",
+        "text": "Let's review the launch plan.",
+        "offset_seconds": 4
+      }
+    ],
+    "organizer": {
+      "name": "Test Organizer",
+      "email": "organizer@example.com"
+    },
+    "attendees": [
+      {
+        "name": "Test Attendee",
+        "email": "attendee@example.com"
+      }
+    ],
+    "metadata": {
+      "calendar_event_id": "synthetic-event-42"
+    }
+  }
+}
+```
+
+`source.identifier` and `meeting.external_id` form the stable idempotency key.
+The first delivery returns `201 Created`; later deliveries replace the same
+archived meeting and return `200 OK` with the same identifiers:
+
+```json
+{
+  "status": "created",
+  "source_id": 3,
+  "message_id": 901,
+  "source_message_id": "meeting:synthetic-meeting-42"
+}
+```
+
+Use either the plain `transcript` field or structured
+`transcript_segments`. Structured speaker labels are preserved as supplied;
+the server does not perform diarization or voice recognition. Unknown fields
+are rejected except within `meeting.metadata`, whose values are archived
+unchanged. Callers are responsible for removing provider secrets and other
+private fields before import. A retry remains safe even if a post-write cache
+refresh caused the previous request to return an error.
+
+See [Meeting Transcripts](/usage/meetings/) for a complete `curl` example and
+field behavior.
+
+---
+
 ### Archive statistics {#get-apiv1stats}
 
 **Endpoint:** `GET /api/v1/stats`

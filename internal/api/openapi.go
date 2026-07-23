@@ -43,7 +43,11 @@ import (
 // echoes to total statistics. The echoes let remote clients fail closed when
 // a released older daemon ignores an additive request filter.
 // Additive (minor bump): the major-version compatibility gate stays at 1.
-const APISchemaVersion = "1.5.0"
+//
+// 1.6.0 adds provider-neutral single-meeting ingestion with strict request
+// schemas and idempotent create/update responses.
+// Additive (minor bump): the major-version compatibility gate stays at 1.
+const APISchemaVersion = "1.6.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.
@@ -133,19 +137,35 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 	if doc == nil || doc.Components == nil || doc.Components.Schemas == nil {
 		return
 	}
-	queryResult := doc.Components.Schemas.Map()["QueryResult"]
-	if queryResult == nil || queryResult.Properties == nil {
+	schemas := doc.Components.Schemas.Map()
+	queryResult := schemas["QueryResult"]
+	if queryResult != nil && queryResult.Properties != nil {
+		rows := queryResult.Properties["rows"]
+		if rows != nil && rows.Items != nil && rows.Items.Items != nil {
+			setCodegenGoType(rows.Items.Items, "any")
+		}
+	}
+
+	meeting := schemas["Meeting"]
+	if meeting == nil || meeting.Properties == nil {
 		return
 	}
-	rows := queryResult.Properties["rows"]
-	if rows == nil || rows.Items == nil || rows.Items.Items == nil {
+	metadata := meeting.Properties["metadata"]
+	if metadata == nil {
 		return
 	}
-	cell := rows.Items.Items
-	if cell.Extensions == nil {
-		cell.Extensions = map[string]any{}
+	values, ok := metadata.AdditionalProperties.(*huma.Schema)
+	if !ok {
+		return
 	}
-	cell.Extensions["x-go-type"] = "any"
+	setCodegenGoType(values, "any")
+}
+
+func setCodegenGoType(schema *huma.Schema, goType string) {
+	if schema.Extensions == nil {
+		schema.Extensions = map[string]any{}
+	}
+	schema.Extensions["x-go-type"] = goType
 }
 
 func replaceStrictResponseAdditionalProperties(doc *huma.OpenAPI, replacement any) {

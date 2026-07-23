@@ -91,7 +91,7 @@ func TestImporterCreatesCanonicalMeetingAndSyncRun(t *testing.T) {
 	assert.Equal(t, "organizer@example.com", senderEmail.String)
 	assert.Equal(t, ConversationType, conversationType)
 	assert.Equal(t, "meeting:42", conversationKey)
-	assert.Contains(t, body, "[00:04] Steve: Let's review the launch plan.")
+	assert.Contains(t, body, "[00:04] Test Speaker: Let's review the launch plan.")
 	assert.Equal(t, RawFormat, rawFormat)
 	assert.Equal(t, 1, messageCount)
 	assert.Equal(t, 1, participantCount)

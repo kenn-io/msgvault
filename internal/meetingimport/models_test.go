@@ -37,7 +37,7 @@ func TestRequestNormalizeCanonicalizesValues(t *testing.T) {
 	require.NotNil(t, got.Meeting.Organizer)
 	assert.Equal(t, Person{Name: "Test Organizer", Email: "organizer@example.com"}, *got.Meeting.Organizer)
 	assert.Equal(t, []Person{{Name: "Test Attendee", Email: "attendee@example.com"}}, got.Meeting.Attendees)
-	assert.Equal(t, "Steve", got.Meeting.TranscriptSegments[0].Speaker)
+	assert.Equal(t, "Test Speaker", got.Meeting.TranscriptSegments[0].Speaker)
 	assert.Equal(t, "Let's review the launch plan.", got.Meeting.TranscriptSegments[0].Text)
 }
 

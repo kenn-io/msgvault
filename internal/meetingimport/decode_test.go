@@ -25,7 +25,7 @@ const validRequestJSON = `{
     "transcript": "",
     "transcript_segments": [
       {
-        "speaker": " Steve ",
+        "speaker": " Test Speaker ",
         "text": " Let's review the launch plan. ",
         "offset_seconds": 4
       }

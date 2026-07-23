@@ -101,7 +101,7 @@ Authentication uses the server's existing API-key support. The endpoint accepts
     "transcript": "",
     "transcript_segments": [
       {
-        "speaker": "Steve",
+        "speaker": "Test Speaker",
         "text": "Let's review the launch plan.",
         "offset_seconds": 4
       }
@@ -177,7 +177,7 @@ that know speaker boundaries. Each segment requires non-empty `speaker` and
 non-negative. Segment offsets must be non-decreasing.
 
 The caller supplies speaker identity. Passing `Speaker 1` preserves that
-anonymous label; passing `Steve` renders `Steve`. Msgvault does not perform
+anonymous label; passing `Test Speaker` renders `Test Speaker`. Msgvault does not perform
 speaker diarization, voice recognition, attendee-to-voice matching, or
 cross-meeting speaker identification.
 
@@ -252,7 +252,7 @@ Attendees: Test Attendee
 Reviewed the launch plan.
 
 Transcript:
-[00:04] Steve: Let's review the launch plan.
+[00:04] Test Speaker: Let's review the launch plan.
 ```
 
 The rules are:
