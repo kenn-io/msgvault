@@ -13,6 +13,8 @@ import (
 
 type Status string
 
+var ErrUnavailable = errors.New("meeting importer is unavailable")
+
 const (
 	StatusCreated Status = "created"
 	StatusUpdated Status = "updated"
@@ -41,7 +43,7 @@ func NewImporter(s *store.Store, hooks Hooks) *Importer {
 
 func (i *Importer) Import(ctx context.Context, req Request) (result Result, retErr error) {
 	if i == nil || i.store == nil {
-		return Result{}, errors.New("meeting importer store is unavailable")
+		return Result{}, ErrUnavailable
 	}
 	if err := ctx.Err(); err != nil {
 		return Result{}, err

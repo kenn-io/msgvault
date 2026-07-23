@@ -251,6 +251,7 @@ func (s *Server) registerHumaRoutes(api huma.API, apiV1 huma.API) {
 
 	registerAPIV1RawHumaJSONRoute[MessageListResponse](apiV1, "listMessages", http.MethodGet, "/messages", "List messages", s.handleListMessages)
 	registerAPIV1RawHumaJSONRoute[MessageDetail](apiV1, "getMessage", http.MethodGet, "/messages/{id}", "Get one message", s.handleGetMessage)
+	s.registerMeetingImportRoute(apiV1)
 	registerAPIV1RawHumaJSONRoute[AttachmentInfo](apiV1, "getAttachment", http.MethodGet, "/attachments/{id}", "Get attachment metadata", s.handleGetAttachment)
 	registerAPIV1RawHumaBinaryRoute(
 		apiV1,
