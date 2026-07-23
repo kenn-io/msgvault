@@ -309,6 +309,7 @@ func buildAPIClient(ctx context.Context, src *store.Source, getOAuthMgr func(str
 			msMgr := microsoft.NewManager(
 				cfg.Microsoft.ClientID,
 				cfg.Microsoft.EffectiveTenantID(),
+				cfg.Microsoft.EffectiveRedirectURI(),
 				cfg.TokensDir(),
 				logger,
 			)
@@ -773,6 +774,7 @@ func imapSkipReason(src *store.Source) (string, error) {
 		msMgr := microsoft.NewManager(
 			cfg.Microsoft.ClientID,
 			cfg.Microsoft.EffectiveTenantID(),
+			cfg.Microsoft.EffectiveRedirectURI(),
 			cfg.TokensDir(),
 			logger,
 		)

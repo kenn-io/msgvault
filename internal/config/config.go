@@ -340,8 +340,18 @@ func (o *OAuthConfig) HasAnyConfig() bool {
 
 // MicrosoftConfig holds Microsoft 365 / Azure AD OAuth configuration.
 type MicrosoftConfig struct {
-	ClientID string `toml:"client_id"`
-	TenantID string `toml:"tenant_id"`
+	ClientID    string `toml:"client_id"`
+	TenantID    string `toml:"tenant_id"`
+	RedirectURI string `toml:"redirect_uri"`
+}
+
+// EffectiveRedirectURI returns the redirect URI, defaulting to the
+// standard OAuth callback URI for local development.
+func (c *MicrosoftConfig) EffectiveRedirectURI() string {
+	if c.RedirectURI != "" {
+		return c.RedirectURI
+	}
+	return "http://localhost:8089/callback/microsoft"
 }
 
 // EffectiveTenantID returns the tenant ID, defaulting to "common"

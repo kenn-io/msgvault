@@ -58,6 +58,7 @@ Examples:
 		mgr := microsoft.NewGraphManager(
 			cfg.Microsoft.ClientID,
 			cfg.Microsoft.EffectiveTenantID(),
+			cfg.Microsoft.EffectiveRedirectURI(),
 			cfg.TokensDir(),
 			logger,
 		)
