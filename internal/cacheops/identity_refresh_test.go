@@ -176,12 +176,14 @@ func TestRefreshIdentityDatasetsRejectsInterruptedMarker(t *testing.T) {
 	assert.ErrorContains(err, "interrupted publication")
 }
 
-// TestRefreshIdentityDatasetsRepairsMissingIdentityDatasets pins the one
-// discrepancy the integrity guard allows: identity dataset directories
-// missing (e.g. after a prior interrupted refresh) are exactly what the
-// refresh regenerates, so it must proceed and leave a fully consistent
-// publication behind.
-func TestRefreshIdentityDatasetsRepairsMissingIdentityDatasets(t *testing.T) {
+// TestRefreshIdentityDatasetsRejectsMissingIdentityDatasetAlone pins the
+// force-rebuild behavior: even when only identity dataset directories are
+// missing (no non-identity dataset missing), the refresh no longer repairs
+// them in place. The committed DatasetFingerprint spans the whole tree, so
+// once any dataset is absent it can no longer verify the remaining datasets
+// are intact, and proceeding to republish would stamp a fresh fingerprint
+// over a tree whose integrity was never actually confirmed.
+func TestRefreshIdentityDatasetsRejectsMissingIdentityDatasetAlone(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 
@@ -194,26 +196,82 @@ func TestRefreshIdentityDatasetsRepairsMissingIdentityDatasets(t *testing.T) {
 	require.NoError(os.RemoveAll(filepath.Join(dir, datasetOwnerParticipants)), "remove owner_participants dataset")
 	require.NoError(os.RemoveAll(filepath.Join(dir, datasetParticipantClusters)), "remove participant_clusters dataset")
 
-	wantRevision, err := st.LinkParticipants(a, b)
+	before, err := query.ReadCacheSyncState(dir)
+	require.NoError(err, "ReadCacheSyncState before refresh")
+
+	_, err = st.LinkParticipants(a, b)
 	require.NoError(err, "LinkParticipants")
 
-	gotRevision, err := RefreshIdentityDatasets(context.Background(), st, dir)
-	require.NoError(err, "refresh must repair missing identity datasets")
-	assert.Equal(wantRevision, gotRevision, "returned revision")
+	_, err = RefreshIdentityDatasets(context.Background(), st, dir)
+	require.Error(err, "refresh over missing identity datasets alone must now be rejected")
+	require.ErrorIs(err, ErrCacheNotRefreshable)
 
-	state, err := query.ReadCacheSyncState(dir)
-	require.NoError(err, "ReadCacheSyncState after repair")
-	assert.Equal(wantRevision, state.IdentityRevision, "repaired marker must carry the new identity revision")
+	after, err := query.ReadCacheSyncState(dir)
+	require.NoError(err, "ReadCacheSyncState after rejected refresh")
+	assert.Equal(before.DatasetFingerprint, after.DatasetFingerprint,
+		"rejected refresh must not rewrite the committed fingerprint")
+	assert.Equal(before.PublishedAt, after.PublishedAt,
+		"rejected refresh must not restamp PublishedAt")
+	assert.Equal(before.IdentityRevision, after.IdentityRevision,
+		"rejected refresh must not advance the committed identity revision")
 
-	clusters := readInt64PairsParquet(t, dir, datasetParticipantClusters, "participant_id", "canonical_id")
-	want := map[int64]int64{a: min(a, b), b: min(a, b)}
-	assert.Equal(want, clusters, "regenerated participant_clusters parquet")
+	_, ownerStatErr := os.Stat(filepath.Join(dir, datasetOwnerParticipants))
+	assert.True(os.IsNotExist(ownerStatErr), "rejected refresh must not regenerate the missing owner_participants dataset")
+}
 
-	readiness, err := query.InspectCacheReadiness(dir)
-	require.NoError(err, "InspectCacheReadiness after repair")
-	assert.Equal(query.CacheReady, readiness, "repaired publication must be fully consistent")
+// TestRefreshIdentityDatasetsRejectsMissingIdentityWithCorruptedNonIdentity
+// is the regression test for the integrity hole the force-rebuild behavior
+// closes: before this fix, a missing identity dataset short-circuited
+// validation entirely (returning nil without ever checking the remaining
+// datasets against the committed fingerprint), so a modified or truncated
+// non-identity dataset sitting right next to it went completely unchecked —
+// and the subsequent republish would recompute the whole-tree fingerprint
+// over the corrupted tree and stamp it as valid, hiding the damage from
+// readers that would otherwise detect it. The refresh must now reject
+// before touching anything, leaving the committed marker and the corrupted
+// file exactly as they were.
+func TestRefreshIdentityDatasetsRejectsMissingIdentityWithCorruptedNonIdentity(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
 
-	assertNoIdentityPublishLitter(t, dir)
+	f := storetest.New(t)
+	st := f.Store
+	a := f.EnsureParticipant("alice@example.com", "Alice", "example.com")
+	b := f.EnsureParticipant("alice@personal.example", "Alice P", "personal.example")
+
+	dir := writeCacheStatsFixture(t)
+	require.NoError(os.RemoveAll(filepath.Join(dir, datasetOwnerParticipants)),
+		"remove owner_participants identity dataset")
+	labelsFile := filepath.Join(dir, "labels", "data.parquet")
+	require.NoError(os.WriteFile(labelsFile, []byte("corrupted outside the ETL"), 0o600),
+		"corrupt the labels dataset without removing it, so it still counts as present")
+
+	before, err := query.ReadCacheSyncState(dir)
+	require.NoError(err, "ReadCacheSyncState before refresh")
+
+	_, err = st.LinkParticipants(a, b)
+	require.NoError(err, "LinkParticipants")
+
+	_, err = RefreshIdentityDatasets(context.Background(), st, dir)
+	require.Error(err, "refresh over a missing identity dataset plus a corrupted non-identity dataset must be rejected")
+	require.ErrorIs(err, ErrCacheNotRefreshable)
+	require.ErrorContains(err, "identity dataset", "error must explain the missing identity dataset forced the rebuild")
+
+	after, err := query.ReadCacheSyncState(dir)
+	require.NoError(err, "ReadCacheSyncState after rejected refresh")
+	assert.Equal(before.DatasetFingerprint, after.DatasetFingerprint,
+		"rejected refresh must not rewrite the committed fingerprint over the corrupted tree")
+	assert.Equal(before.PublishedAt, after.PublishedAt,
+		"rejected refresh must not restamp PublishedAt")
+	assert.Equal(before.IdentityRevision, after.IdentityRevision,
+		"rejected refresh must not advance the committed identity revision")
+
+	_, ownerStatErr := os.Stat(filepath.Join(dir, datasetOwnerParticipants))
+	assert.True(os.IsNotExist(ownerStatErr), "rejected refresh must not regenerate the missing identity dataset")
+	corrupted, err := os.ReadFile(labelsFile)
+	require.NoError(err, "read labels file after rejected refresh")
+	assert.Equal([]byte("corrupted outside the ETL"), corrupted,
+		"rejected refresh must not touch or re-legitimize the corrupted non-identity dataset")
 }
 
 // TestRefreshIdentityDatasetsPreservesAccountIdentityRevision covers Finding
@@ -513,26 +571,30 @@ func TestPublishIdentityDatasetsFailureKeepsCommittedStateUsable(t *testing.T) {
 }
 
 // TestPublishIdentityDatasetsRollbackRemovesNewlyCreatedIdentityDataset is
-// the end-to-end proof for the rollback finding. It starts from the state a
-// prior interrupted refresh leaves behind — one identity dataset directory
-// absent while the committed marker is retained — then faults the marker
-// commit (the last publication step) so publish rolls back after both
-// datasets have been swapped into place. Rollback must REMOVE the identity
-// dataset it just created (the one with no prior live version to restore),
-// not strand it: a stranded dataset the retained old marker's fingerprint
-// never accounted for would read as unaccounted-for drift on the next
-// refresh and force a full rebuild via ErrCacheNotRefreshable. The dataset
-// that did have a prior version must be restored from its backup, the old
-// marker must be unchanged, and a subsequent refresh must repair the
-// still-missing dataset and succeed.
+// the end-to-end proof for the rollback finding, exercised directly against
+// publishIdentityDatasets: RefreshIdentityDatasets's
+// validateCommittedPublication now rejects any missing dataset (see
+// TestRefreshIdentityDatasetsRejectsMissingIdentityDatasetAlone) before ever
+// reaching publish, so a missing identity dataset can no longer reach this
+// code through that public entry point. The underlying rollback primitive
+// still needs to behave correctly, though — a live dataset with no prior
+// version to restore is exactly the state a failed rollback or an external
+// deletion can leave behind — so this test calls publishIdentityDatasets
+// directly with that state prepared.
+//
+// It starts from one identity dataset directory absent while the committed
+// marker is retained, then faults the marker commit (the last publication
+// step) so publish rolls back after both datasets have been swapped into
+// place. Rollback must REMOVE the identity dataset it just created (the one
+// with no prior live version to restore), not strand it: a stranded dataset
+// the retained old marker's fingerprint never accounted for would read as
+// unaccounted-for drift on the next refresh. The dataset that did have a
+// prior version must be restored from its backup, the old marker must be
+// unchanged, and a subsequent publish must repair the still-missing dataset
+// and succeed.
 func TestPublishIdentityDatasetsRollbackRemovesNewlyCreatedIdentityDataset(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-
-	f := storetest.New(t)
-	st := f.Store
-	a := f.EnsureParticipant("alice@example.com", "Alice", "example.com")
-	b := f.EnsureParticipant("alice@personal.example", "Alice P", "personal.example")
 
 	dir := writeCacheStatsFixture(t)
 	ownerDir := filepath.Join(dir, datasetOwnerParticipants)
@@ -541,18 +603,18 @@ func TestPublishIdentityDatasetsRollbackRemovesNewlyCreatedIdentityDataset(t *te
 		"remove owner_participants to mirror a prior interrupted refresh")
 
 	before, err := query.ReadCacheSyncState(dir)
-	require.NoError(err, "ReadCacheSyncState before refresh")
+	require.NoError(err, "ReadCacheSyncState before publish")
+	nextRevision := before.IdentityRevision + 1
 
-	wantRevision, err := st.LinkParticipants(a, b)
-	require.NoError(err, "LinkParticipants")
-
+	staging := stageIdentityDatasets(t, dir)
 	disarm := failIdentityPublishRename(t, func(_, newpath string) bool {
 		return newpath == query.CacheStatePath(dir)
 	})
 
-	_, err = RefreshIdentityDatasets(context.Background(), st, dir)
-	require.Error(err, "refresh with the marker commit faulted must fail")
+	err = publishIdentityDatasets(staging, dir, before, nextRevision)
+	require.Error(err, "publish with the marker commit faulted must fail")
 	require.ErrorContains(err, "injected")
+	require.NoError(staging.cleanup(), "clean up first staging attempt, mirroring RefreshIdentityDatasets's deferred cleanup")
 
 	_, ownerStatErr := os.Stat(ownerDir)
 	assert.True(os.IsNotExist(ownerStatErr),
@@ -569,21 +631,47 @@ func TestPublishIdentityDatasetsRollbackRemovesNewlyCreatedIdentityDataset(t *te
 		"failed publish must keep the pre-refresh fingerprint")
 
 	disarm()
-	gotRevision, err := RefreshIdentityDatasets(context.Background(), st, dir)
-	require.NotErrorIs(err, ErrCacheNotRefreshable,
-		"a subsequent refresh must not be forced into a full rebuild")
-	require.NoError(err, "subsequent refresh must repair the missing identity dataset and succeed")
-	assert.Equal(wantRevision, gotRevision, "subsequent refresh returns the linked revision")
+	retryStaging := stageIdentityDatasets(t, dir)
+	require.NoError(publishIdentityDatasets(retryStaging, dir, before, nextRevision),
+		"retry after the fault clears must repair the missing identity dataset and succeed")
+	require.NoError(retryStaging.cleanup(), "clean up retry staging, mirroring RefreshIdentityDatasets's deferred cleanup")
 
 	state, err := query.ReadCacheSyncState(dir)
 	require.NoError(err, "ReadCacheSyncState after repair")
-	assert.Equal(wantRevision, state.IdentityRevision, "repaired marker must carry the new identity revision")
+	assert.Equal(nextRevision, state.IdentityRevision, "repaired marker must carry the new identity revision")
 
 	readiness, err := query.InspectCacheReadiness(dir)
 	require.NoError(err, "InspectCacheReadiness after repair")
 	assert.Equal(query.CacheReady, readiness, "repaired publication must be fully consistent")
 
 	assertNoIdentityPublishLitter(t, dir)
+}
+
+// stageIdentityDatasets creates a fresh identity staging directory next to
+// dir and writes a placeholder Parquet file into each staged identity
+// dataset, mirroring what exportOwnerParticipants/exportParticipantClusters
+// leave behind before publishIdentityDatasets runs. The staging content
+// itself is not under test here (only the swap/rollback mechanics are), so
+// the file contents are arbitrary; CacheDatasetFingerprint hashes file
+// metadata, not Parquet contents, so a placeholder is sufficient. The
+// caller must call staging.cleanup() itself once done with it — mirroring
+// RefreshIdentityDatasets's own deferred cleanup, which runs before its
+// caller can observe a litter-free analytics directory — instead of relying
+// on this helper's t.Cleanup, which only runs after the test function
+// returns and would leave staging/backup directories visible to a
+// same-test litter check like assertNoIdentityPublishLitter. t.Cleanup here
+// is only a safety net for a test that fails before reaching its own
+// explicit cleanup call.
+func stageIdentityDatasets(t *testing.T, dir string) *identityStaging {
+	t.Helper()
+	staging, err := newIdentityStaging(dir)
+	require.NoError(t, err, "newIdentityStaging")
+	t.Cleanup(func() { _ = staging.cleanup() })
+	for _, dataset := range identityDatasets {
+		path := filepath.Join(staging.datasetDir(dataset), dataset+".parquet")
+		require.NoError(t, os.WriteFile(path, []byte("staged"), 0o600), "write staged %s placeholder", dataset)
+	}
+	return staging
 }
 
 // failIdentityPublishRename swaps identityPublishRename for one that fails

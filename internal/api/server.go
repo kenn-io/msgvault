@@ -246,6 +246,14 @@ type Server struct {
 	taskIntegrationProbe TaskIntegrationProbe
 	taskLinkOperations   TaskLinkOperations
 	taskIdentityResolver TaskIdentityResolver
+	// listenerBound is set true once StartOnListener binds a real listener
+	// (the sole production serve path). It stays false for direct-handler unit
+	// tests that drive s.Router() without starting a listener, leaving the
+	// keyless-loopback Host guard inert for them.
+	listenerBound bool
+	// listenPort is the actual TCP port StartOnListener bound. The keyless-
+	// loopback Host guard requires the request authority's port to match it.
+	listenPort int
 }
 
 // clockNow returns the current wall time, honoring the test-injected clock.
@@ -516,6 +524,11 @@ func (s *Server) StartOnListener(ln net.Listener) error {
 	if s.cfg.Server.APIKey == "" {
 		s.logger.Warn("API server running without authentication — set [server] api_key in config.toml")
 	}
+
+	if tcpAddr, ok := ln.Addr().(*net.TCPAddr); ok {
+		s.listenPort = tcpAddr.Port
+	}
+	s.listenerBound = true
 
 	// WriteTimeout must comfortably exceed the request-context timeout;
 	// otherwise a request whose context deadline equals the server

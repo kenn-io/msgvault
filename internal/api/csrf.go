@@ -6,6 +6,7 @@ import (
 	"crypto/subtle"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"net/netip"
 	"net/url"
@@ -33,6 +34,11 @@ func (s *Server) requestSecurityMiddleware(next http.Handler) http.Handler {
 			return
 		}
 		auth := s.classifyAPIRequestDirect(r)
+		if auth.Mode == AuthModeLoopback && !s.keylessLoopbackHostAllowed(r) {
+			writeError(w, http.StatusForbidden, "untrusted_host",
+				"Keyless loopback daemon rejects requests for unrecognized hosts; connect via 127.0.0.1 or localhost")
+			return
+		}
 		if auth.Mode == AuthModeSession && !ambientOriginAllowed(r, scheme, host) {
 			writeError(w, http.StatusForbidden, "cross_origin_session",
 				"Session-cookie requests must be same-origin; use API-key authentication for cross-origin access")
@@ -68,6 +74,47 @@ func ambientOriginAllowed(r *http.Request, scheme, host string) bool {
 		return true
 	}
 	return requestOriginMatches(r, scheme, host)
+}
+
+// keylessLoopbackHostAllowed defends a keyless (no API key) loopback-confined
+// daemon against DNS rebinding. Such a daemon authorizes every request purely
+// because it reached loopback, and the same-origin checks below derive their
+// trusted host from r.Host — so an attacker page whose hostname is rebound to
+// 127.0.0.1 would pass them. The request authority must instead match this
+// server's real listener: a loopback literal or "localhost" on the actual
+// bound port. Registered hostnames (the rebinding vector) are rejected.
+//
+// The guard is inert unless a real listener was bound (StartOnListener), so
+// direct-handler unit tests are unaffected. It also does not apply when the
+// daemon is bound non-loopback (the operator opted into unauthenticated
+// remote access via AllowInsecure) or when the request arrives through an
+// explicitly trusted proxy (a same-host reverse proxy may legitimately
+// forward an external Host; rebinding attacks arrive as direct loopback
+// connections, not through the operator's trusted proxy).
+func (s *Server) keylessLoopbackHostAllowed(r *http.Request) bool {
+	if !s.listenerBound || !s.cfg.Server.IsLoopback() || s.isTrustedProxy(r) {
+		return true
+	}
+	return isLoopbackAuthority(r.Host, s.listenPort)
+}
+
+// isLoopbackAuthority reports whether host (an HTTP Host header, host or
+// host:port) targets a loopback address or "localhost" on listenPort. A
+// port present in host must equal listenPort; the hostname must be
+// "localhost" (case-insensitive) or an IP literal that is loopback.
+func isLoopbackAuthority(host string, listenPort int) bool {
+	hostname := host
+	if h, port, err := net.SplitHostPort(host); err == nil {
+		hostname = h
+		if listenPort != 0 && port != strconv.Itoa(listenPort) {
+			return false
+		}
+	}
+	if strings.EqualFold(hostname, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(hostname)
+	return ip != nil && ip.IsLoopback()
 }
 
 func securityFromRequest(r *http.Request) (requestSecurity, bool) {

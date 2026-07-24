@@ -38,12 +38,14 @@ var ErrNoCommittedCache = errors.New("cacheops: no committed analytics cache to 
 // committed publication fails integrity validation in a way the
 // identity-only refresh cannot repair: the on-disk datasets no longer match
 // the committed DatasetFingerprint (modified, truncated, or corrupted
-// outside the ETL), a required non-identity dataset is missing, or the
-// commit marker itself records an interrupted publication. Proceeding would
-// re-fingerprint the damaged tree and stamp it as valid, hiding corruption
-// that readers currently detect. The only discrepancy the refresh may
-// repair is missing identity dataset(s) — regenerating those is exactly its
-// job.
+// outside the ETL), a required dataset (identity or non-identity) is
+// missing, or the commit marker itself records an interrupted publication.
+// Proceeding would re-fingerprint the damaged tree and stamp it as valid,
+// hiding corruption that readers currently detect. Even a missing identity
+// dataset forces this error: the committed DatasetFingerprint spans the
+// whole tree, so once any dataset is absent that fingerprint can no longer
+// verify the remaining datasets are intact, and a full rebuild is the only
+// safe response.
 var ErrCacheNotRefreshable = errors.New(
 	"cacheops: analytics cache failed integrity validation and an identity-only refresh would mask the damage; " +
 		"rebuild the cache with 'msgvault build-cache --full-rebuild'")
@@ -162,19 +164,18 @@ func identityDatasetsExist(analyticsDir string) bool {
 
 // validateCommittedPublication checks the committed publication at
 // analyticsDir against its own commit marker before an identity-only refresh
-// republishes on top of it. It permits exactly one discrepancy — missing
-// identity dataset(s), which the refresh regenerates from scratch — and
-// returns an error wrapping ErrCacheNotRefreshable for anything else: an
-// interrupted commit marker, a missing non-identity dataset, or datasets
-// that no longer match the committed DatasetFingerprint.
+// republishes on top of it. Any missing required dataset — identity or
+// non-identity — forces a full rebuild: the committed DatasetFingerprint
+// spans the whole tree, so once a dataset is absent that fingerprint cannot
+// verify the remaining datasets are intact, and this refresh has no
+// per-dataset fingerprint to fall back on. It returns an error wrapping
+// ErrCacheNotRefreshable for that case, for an interrupted commit marker, or
+// for datasets that no longer match the committed DatasetFingerprint.
 //
-// When an identity dataset is missing, its files no longer contribute the
-// records the committed fingerprint was computed over, so the whole-tree
-// comparison cannot match and is skipped; the remaining datasets are then
-// only checked for presence. This deliberately calls
-// query.CacheDatasetFingerprint directly, not the identityPublishFingerprint
-// seam: fault-injection tests target the publish-time fingerprint, and
-// validation must observe the real on-disk state.
+// This deliberately calls query.CacheDatasetFingerprint directly, not the
+// identityPublishFingerprint seam: fault-injection tests target the
+// publish-time fingerprint, and validation must observe the real on-disk
+// state.
 func validateCommittedPublication(analyticsDir string, state query.CacheSyncState) error {
 	if state.LastSyncAt.IsZero() || state.PublishedAt.IsZero() || state.DatasetFingerprint == "" {
 		return fmt.Errorf("%w: %s: commit marker records an interrupted publication", ErrCacheNotRefreshable, analyticsDir)
@@ -194,7 +195,9 @@ func validateCommittedPublication(analyticsDir string, state query.CacheSyncStat
 			return fmt.Errorf("%w: %s: required dataset(s) missing beyond the identity datasets this refresh regenerates: %s",
 				ErrCacheNotRefreshable, analyticsDir, strings.Join(nonIdentity, ", "))
 		}
-		return nil
+		return fmt.Errorf("%w: %s: identity dataset(s) missing (%s); the committed fingerprint spans the whole tree and "+
+			"cannot verify the remaining datasets are intact once identity files are absent",
+			ErrCacheNotRefreshable, analyticsDir, strings.Join(missing, ", "))
 	}
 	fingerprint, err := query.CacheDatasetFingerprint(analyticsDir)
 	if err != nil {
