@@ -428,6 +428,9 @@ func (s *Server) handleRemoteImage(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_request", "Request body must be a JSON object with a 'url' field")
 		return
 	}
+	if !requireSingleJSONValue(w, decoder, "invalid_request") {
+		return
+	}
 	if req.URL == "" {
 		writeError(w, http.StatusBadRequest, "missing_url", "Missing 'url' in request body")
 		return

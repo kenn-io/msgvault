@@ -133,7 +133,8 @@ func (s *Server) handleIdentityLinkMutation(
 }
 
 // decodeIdentityLinkRequest decodes the request body, rejecting unknown
-// fields so a typo in participant_a/participant_b is not silently ignored.
+// fields so a typo in participant_a/participant_b is not silently ignored,
+// and trailing data so only one JSON value can drive the mutation.
 func decodeIdentityLinkRequest(w http.ResponseWriter, r *http.Request, req *IdentityLinkRequest) bool {
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
@@ -142,7 +143,7 @@ func decodeIdentityLinkRequest(w http.ResponseWriter, r *http.Request, req *Iden
 			fmt.Sprintf("invalid JSON request body: %v", err))
 		return false
 	}
-	return true
+	return requireSingleJSONValue(w, dec, "invalid_request")
 }
 
 // refreshIdentityCacheState attempts the synchronous identity-dataset cache

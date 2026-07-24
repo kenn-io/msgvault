@@ -1675,9 +1675,13 @@ type AddAccountRequest struct {
 // POST /api/v1/accounts.
 func (s *Server) handleAddAccount(w http.ResponseWriter, r *http.Request) {
 	var req AddAccountRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	dec := json.NewDecoder(r.Body)
+	if err := dec.Decode(&req); err != nil {
 		s.logger.Warn("invalid account request JSON", "error", err)
 		writeError(w, http.StatusBadRequest, "invalid_json", "Invalid request JSON format")
+		return
+	}
+	if !requireSingleJSONValue(w, dec, "invalid_json") {
 		return
 	}
 
@@ -1765,8 +1769,12 @@ var errSQLQueryEngineUnavailable = errors.New("SQL query requires DuckDB engine 
 // POST /api/v1/query.
 func (s *Server) handleQuery(w http.ResponseWriter, r *http.Request) {
 	var req QueryRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	dec := json.NewDecoder(r.Body)
+	if err := dec.Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_json", "Invalid request body")
+		return
+	}
+	if !requireSingleJSONValue(w, dec, "invalid_json") {
 		return
 	}
 	if req.SQL == "" {

@@ -170,6 +170,9 @@ func (s *Server) handleStageDeletion(w http.ResponseWriter, r *http.Request) {
 			fmt.Sprintf("invalid JSON request body: %v", err))
 		return
 	}
+	if !requireSingleJSONValue(w, dec, "invalid_request") {
+		return
+	}
 	if req.Selection != nil && (!req.Filter.isEmpty() || len(req.MessageIDs) > 0) {
 		writeError(w, http.StatusBadRequest, "invalid_request", "selection cannot be combined with filter or message_ids")
 		return

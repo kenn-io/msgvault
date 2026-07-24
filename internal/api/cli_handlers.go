@@ -871,8 +871,12 @@ func (s *Server) handleCLIRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req CLIRunRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	dec := json.NewDecoder(r.Body)
+	if err := dec.Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON request body")
+		return
+	}
+	if !requireSingleJSONValue(w, dec, "invalid_request") {
 		return
 	}
 	if len(req.Args) == 0 {
@@ -910,8 +914,12 @@ func (s *Server) handleCLIAddCalendarPlan(w http.ResponseWriter, r *http.Request
 		return
 	}
 	var req CLIAddCalendarPlanRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	dec := json.NewDecoder(r.Body)
+	if err := dec.Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON request body")
+		return
+	}
+	if !requireSingleJSONValue(w, dec, "invalid_request") {
 		return
 	}
 	resp, err := planner.PlanCLIAddCalendar(r.Context(), req)
@@ -929,8 +937,12 @@ func (s *Server) handleCLIEmbeddingsPlan(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	var req CLIEmbeddingsPlanRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	dec := json.NewDecoder(r.Body)
+	if err := dec.Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON request body")
+		return
+	}
+	if !requireSingleJSONValue(w, dec, "invalid_request") {
 		return
 	}
 	resp, err := planner.PlanCLIEmbeddings(r.Context(), req)
@@ -948,8 +960,12 @@ func (s *Server) handleCLIDeleteStagedPlan(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	var req CLIDeleteStagedPlanRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	dec := json.NewDecoder(r.Body)
+	if err := dec.Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON request body")
+		return
+	}
+	if !requireSingleJSONValue(w, dec, "invalid_request") {
 		return
 	}
 	resp, err := planner.PlanCLIDeleteStaged(r.Context(), req)
@@ -967,8 +983,12 @@ func (s *Server) handleCLICreateDeletionManifest(w http.ResponseWriter, r *http.
 		return
 	}
 	var manifest deletion.Manifest
-	if err := json.NewDecoder(r.Body).Decode(&manifest); err != nil {
+	dec := json.NewDecoder(r.Body)
+	if err := dec.Decode(&manifest); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON request body")
+		return
+	}
+	if !requireSingleJSONValue(w, dec, "invalid_request") {
 		return
 	}
 	if err := validateCLIDeletionManifest(&manifest); err != nil {

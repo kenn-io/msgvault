@@ -33,9 +33,14 @@ func (s *Server) requestSecurityMiddleware(next http.Handler) http.Handler {
 			return
 		}
 		auth := s.classifyAPIRequestDirect(r)
-		if auth.Mode == AuthModeSession && !sessionOriginAllowed(r, scheme, host) {
+		if auth.Mode == AuthModeSession && !ambientOriginAllowed(r, scheme, host) {
 			writeError(w, http.StatusForbidden, "cross_origin_session",
 				"Session-cookie requests must be same-origin; use API-key authentication for cross-origin access")
+			return
+		}
+		if auth.Mode == AuthModeLoopback && !isSafeMethod(r.Method) && !ambientOriginAllowed(r, scheme, host) {
+			writeError(w, http.StatusForbidden, "cross_origin_loopback",
+				"Keyless loopback mutations must be same-origin; configure an API key for cross-origin access")
 			return
 		}
 		security := requestSecurity{
@@ -48,15 +53,17 @@ func (s *Server) requestSecurityMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-// sessionOriginAllowed reports whether a session-cookie-authenticated request
-// may proceed. Browser session cookies are ambient credentials, so they are
-// strictly same-origin for every method (including GET/HEAD): when the browser
-// discloses an Origin it must exactly match the request's own scheme and host.
-// Requests without an Origin header (same-origin navigations, curl, other
-// non-browser clients) pass. API-key requests never reach this check — the
-// Authorization header is an explicit credential, not an ambient one — so
-// cross-origin API clients are unaffected.
-func sessionOriginAllowed(r *http.Request, scheme, host string) bool {
+// ambientOriginAllowed reports whether a request authorized by an ambient
+// credential may proceed. Browser session cookies are ambient credentials, so
+// they are strictly same-origin for every method (including GET/HEAD); keyless
+// loopback access is equally ambient, so its unsafe methods get the same
+// discipline: when the browser discloses an Origin it must exactly match the
+// request's own scheme and host. Requests without an Origin header
+// (same-origin navigations, curl, the TUI/CLI, other non-browser clients)
+// pass. API-key requests never reach this check — the Authorization header is
+// an explicit credential, not an ambient one — so cross-origin API clients
+// are unaffected.
+func ambientOriginAllowed(r *http.Request, scheme, host string) bool {
 	if len(r.Header.Values("Origin")) == 0 {
 		return true
 	}

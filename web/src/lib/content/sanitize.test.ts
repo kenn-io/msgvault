@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
-import { detectDesignedEmail, QUOTE_COLLAPSE_THRESHOLD, sanitizeArchivedHTML } from './sanitize';
+import {
+  detectDesignedEmail,
+  MAX_ARCHIVED_DATA_IMAGE_DECODED_BYTES,
+  MAX_ARCHIVED_DATA_IMAGE_OCCURRENCES,
+  QUOTE_COLLAPSE_THRESHOLD,
+  sanitizeArchivedHTML
+} from './sanitize';
 
 // Real-world-shaped fixtures for the designed-mail heuristic and the reading
 // affordances built on top of sanitization.
@@ -221,6 +227,92 @@ describe('sanitizeArchivedHTML', () => {
     expect(template.content.querySelector('details[data-archived-quote-toggle]')).toBeNull();
     expect(template.content.querySelector('blockquote')?.hasAttribute('data-archived-quote'))
       .toBe(true);
+  });
+});
+
+const SMALL_DATA_PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUg==';
+
+function placeholderCaptions(html: string): Array<string | null> {
+  const template = document.createElement('template');
+  template.innerHTML = html;
+  return [...template.content.querySelectorAll('[data-archived-image-caption]')]
+    .map((caption) => caption.textContent);
+}
+
+describe('direct data: images', () => {
+  it('keeps a small allowed data:image/png unchanged', () => {
+    const result = sanitizeArchivedHTML(
+      `<img src="${SMALL_DATA_PNG}" alt="Badge">`,
+      { messageId: 42 }
+    );
+
+    expect(result.html).toContain(`src="${SMALL_DATA_PNG}"`);
+    expect(result.html).not.toContain('Image unavailable');
+    expect(result.remoteImages).toEqual([]);
+    expect(result.inlineImages).toEqual([]);
+  });
+
+  it('replaces a data: image over the per-image decoded cap with a placeholder', () => {
+    const oversized = `data:image/png;base64,${'A'.repeat(
+      Math.ceil((MAX_ARCHIVED_DATA_IMAGE_DECODED_BYTES * 4) / 3) + 4
+    )}`;
+    const result = sanitizeArchivedHTML(
+      `<img src="${oversized}" alt="Big"><img src="${SMALL_DATA_PNG}" alt="Small">`,
+      { messageId: 42 }
+    );
+
+    expect(placeholderCaptions(result.html)).toEqual(['Image unavailable: Big']);
+    expect(result.html).not.toContain(oversized);
+    expect(result.html).toContain(`src="${SMALL_DATA_PNG}"`);
+  });
+
+  it('caps data: image occurrences per document — excess become placeholders', () => {
+    const count = MAX_ARCHIVED_DATA_IMAGE_OCCURRENCES + 1;
+    const images = Array.from(
+      { length: count },
+      (_, index) => `<img src="${SMALL_DATA_PNG}" alt="Image ${index}">`
+    ).join('');
+    const result = sanitizeArchivedHTML(images, { messageId: 42 });
+
+    const template = document.createElement('template');
+    template.innerHTML = result.html;
+    expect(template.content.querySelectorAll('img')).toHaveLength(
+      MAX_ARCHIVED_DATA_IMAGE_OCCURRENCES
+    );
+    expect(placeholderCaptions(result.html)).toEqual([
+      `Image unavailable: Image ${MAX_ARCHIVED_DATA_IMAGE_OCCURRENCES}`
+    ]);
+  });
+
+  it('enforces the cumulative serialized budget — later images become placeholders', () => {
+    const result = sanitizeArchivedHTML(
+      `<img src="${SMALL_DATA_PNG}" alt="First"><img src="${SMALL_DATA_PNG}" alt="Second">`,
+      { messageId: 42, dataImageLimits: { serializedBytes: SMALL_DATA_PNG.length } }
+    );
+
+    const template = document.createElement('template');
+    template.innerHTML = result.html;
+    expect(template.content.querySelectorAll('img')).toHaveLength(1);
+    expect(template.content.querySelector('img')?.getAttribute('alt')).toBe('First');
+    expect(placeholderCaptions(result.html)).toEqual(['Image unavailable: Second']);
+  });
+
+  it('never renders data:image/svg+xml — it becomes a placeholder', () => {
+    const result = sanitizeArchivedHTML(
+      '<img src="data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=" alt="Vector">',
+      { messageId: 42 }
+    );
+
+    expect(placeholderCaptions(result.html)).toEqual(['Image unavailable: Vector']);
+    expect(result.html).not.toMatch(/svg|PHN2Zz/i);
+  });
+
+  it('starts every sanitize invocation with a fresh data: image budget', () => {
+    const html = `<img src="${SMALL_DATA_PNG}" alt="Only">`;
+    const options = { messageId: 42, dataImageLimits: { occurrences: 1 } };
+
+    expect(sanitizeArchivedHTML(html, options).html).toContain(`src="${SMALL_DATA_PNG}"`);
+    expect(sanitizeArchivedHTML(html, options).html).toContain(`src="${SMALL_DATA_PNG}"`);
   });
 });
 

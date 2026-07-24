@@ -1,6 +1,8 @@
 import type { APIClient } from '../../api/client';
 import type { ArchivedInlineImage } from '../../content/sanitize';
-import { imagePlaceholderBlock, inertTemplate } from '../../content/sanitize';
+import { hardBoundedLimit, imagePlaceholderBlock, inertTemplate } from '../../content/sanitize';
+
+export { hardBoundedLimit };
 
 export const MAX_ARCHIVED_INLINE_IMAGE_CIDS = 32;
 export const MAX_ARCHIVED_INLINE_IMAGE_BYTES = 5 * 1024 * 1024;
@@ -53,12 +55,6 @@ function normalizedCID(value: string): string {
   let cid = value.trim();
   if (cid.startsWith('<') && cid.endsWith('>')) cid = cid.slice(1, -1).trim();
   return cid;
-}
-
-export function hardBoundedLimit(value: number | undefined, hardLimit: number): number {
-  if (value === undefined) return hardLimit;
-  if (!Number.isFinite(value) || value <= 0) return 0;
-  return Math.min(Math.floor(value), hardLimit);
 }
 
 function unavailableInlineImage(alt: string): HTMLElement {

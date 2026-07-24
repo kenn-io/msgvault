@@ -5,6 +5,16 @@ import { prohibitedRemoteHost } from './url-safety';
 
 export interface ArchivedHTMLSanitizeOptions {
   messageId: number;
+  /** Tightens the direct data:-image caps below their hard limits — a test
+   * seam mirroring the resolvers' publicationLimits. Values are clamped by
+   * hardBoundedLimit and can never raise the hard caps. */
+  dataImageLimits?: DataImageLimits;
+}
+
+export interface DataImageLimits {
+  decodedBytes?: number;
+  occurrences?: number;
+  serializedBytes?: number;
 }
 
 export interface SanitizedArchivedHTML {
@@ -65,6 +75,25 @@ function keepPresentationalAttributes(element: HTMLElement): void {
 }
 
 const SAFE_DATA_IMAGE = /^data:image\/(?:gif|jpe?g|png|webp);base64,[a-z0-9+/=\s]+$/i;
+
+// Caps for sender-authored data: images, enforced at sanitize time (nothing
+// is fetched — the payload is already serialized in the message HTML). The
+// values mirror the archived inline-image family in reader/inline-images.ts,
+// because a direct data: URI is the same payload a cid: part would resolve
+// into: 5 MiB decoded per image, 128 occurrences, 24 MiB serialized per
+// document. The counters are independent of the CID/remote resolvers'
+// publication budgets, which charge separately after consent.
+export const MAX_ARCHIVED_DATA_IMAGE_DECODED_BYTES = 5 * 1024 * 1024;
+export const MAX_ARCHIVED_DATA_IMAGE_OCCURRENCES = 128;
+export const MAX_ARCHIVED_DATA_IMAGE_SERIALIZED_BYTES = 24 * 1024 * 1024;
+
+/** Clamps an optional limit override into (0, hardLimit]; the hard limit can
+ * be tightened but never raised, and undefined keeps the hard limit. */
+export function hardBoundedLimit(value: number | undefined, hardLimit: number): number {
+  if (value === undefined) return hardLimit;
+  if (!Number.isFinite(value) || value <= 0) return 0;
+  return Math.min(Math.floor(value), hardLimit);
+}
 
 /** Quote chains longer than this collapse behind a "Show quoted text" toggle. */
 export const QUOTE_COLLAPSE_THRESHOLD = 300;
@@ -209,6 +238,20 @@ export function sanitizeArchivedHTML(
   const template = inertTemplate(sanitized);
   const remoteImages: string[] = [];
   const inlineImages: ArchivedInlineImage[] = [];
+  const maxDataImageDecodedBytes = hardBoundedLimit(
+    options.dataImageLimits?.decodedBytes,
+    MAX_ARCHIVED_DATA_IMAGE_DECODED_BYTES
+  );
+  const maxDataImageOccurrences = hardBoundedLimit(
+    options.dataImageLimits?.occurrences,
+    MAX_ARCHIVED_DATA_IMAGE_OCCURRENCES
+  );
+  const maxDataImageSerializedBytes = hardBoundedLimit(
+    options.dataImageLimits?.serializedBytes,
+    MAX_ARCHIVED_DATA_IMAGE_SERIALIZED_BYTES
+  );
+  let dataImageOccurrences = 0;
+  let dataImageSerializedBytes = 0;
 
   for (const element of template.content.querySelectorAll<HTMLElement>('*')) {
     for (const attribute of [...element.attributes]) {
@@ -236,7 +279,30 @@ export function sanitizeArchivedHTML(
       element.replaceWith(inlineImagePlaceholder(document, alt, index));
       continue;
     }
-    if (SAFE_DATA_IMAGE.test(source)) continue;
+    if (/^data:/i.test(source)) {
+      // Decoded size is estimated from the base64 payload: 3 bytes per 4
+      // chars, ignoring padding precision. The data URL is ASCII, so
+      // source.length is its exact serialized byte charge against the
+      // per-document budget.
+      const decodedBytes = Math.floor(((source.length - source.indexOf(',') - 1) * 3) / 4);
+      const allowed = SAFE_DATA_IMAGE.test(source) &&
+        decodedBytes <= maxDataImageDecodedBytes &&
+        dataImageOccurrences < maxDataImageOccurrences &&
+        dataImageSerializedBytes + source.length <= maxDataImageSerializedBytes;
+      if (allowed) {
+        dataImageOccurrences += 1;
+        dataImageSerializedBytes += source.length;
+        continue;
+      }
+      // Disallowed payloads (data:image/svg+xml, non-image or non-base64
+      // data:) and over-budget images render as the URL-free unavailable
+      // placeholder, matching the private-remote-image copy.
+      const alt = element.getAttribute('alt') ?? '';
+      element.replaceWith(
+        imagePlaceholderBlock(document, `Image unavailable${alt ? `: ${alt}` : ''}`)
+      );
+      continue;
+    }
     const remote = classifyRemoteImageSource(source);
     if (remote.kind === 'public') {
       // Public remote images always become indexed placeholders — the

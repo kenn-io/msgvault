@@ -87,6 +87,9 @@ func (s *Server) handleSessionLogin(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "bad_request", "Invalid session login request")
 		return
 	}
+	if !requireSingleJSONValue(w, decoder, "bad_request") {
+		return
+	}
 	if s.cfg.Server.APIKey == "" || !constantTimeAPIKeyEqual(input.APIKey, s.cfg.Server.APIKey) {
 		writeError(w, http.StatusUnauthorized, "unauthorized", "Invalid API key")
 		return

@@ -914,6 +914,9 @@ func schemaFor[T any](api huma.API) *huma.Schema {
 }
 
 func registerRawHumaRoute(api huma.API, op huma.Operation, handler http.HandlerFunc) {
+	if operationDeclaresJSONRequestBody(&op) {
+		handler = enforceJSONRequestMediaType(handler)
+	}
 	if op.Responses == nil {
 		status := http.StatusOK
 		if op.Method == http.MethodHead {
