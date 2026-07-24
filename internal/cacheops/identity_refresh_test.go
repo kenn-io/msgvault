@@ -512,6 +512,80 @@ func TestPublishIdentityDatasetsFailureKeepsCommittedStateUsable(t *testing.T) {
 	}
 }
 
+// TestPublishIdentityDatasetsRollbackRemovesNewlyCreatedIdentityDataset is
+// the end-to-end proof for the rollback finding. It starts from the state a
+// prior interrupted refresh leaves behind — one identity dataset directory
+// absent while the committed marker is retained — then faults the marker
+// commit (the last publication step) so publish rolls back after both
+// datasets have been swapped into place. Rollback must REMOVE the identity
+// dataset it just created (the one with no prior live version to restore),
+// not strand it: a stranded dataset the retained old marker's fingerprint
+// never accounted for would read as unaccounted-for drift on the next
+// refresh and force a full rebuild via ErrCacheNotRefreshable. The dataset
+// that did have a prior version must be restored from its backup, the old
+// marker must be unchanged, and a subsequent refresh must repair the
+// still-missing dataset and succeed.
+func TestPublishIdentityDatasetsRollbackRemovesNewlyCreatedIdentityDataset(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	f := storetest.New(t)
+	st := f.Store
+	a := f.EnsureParticipant("alice@example.com", "Alice", "example.com")
+	b := f.EnsureParticipant("alice@personal.example", "Alice P", "personal.example")
+
+	dir := writeCacheStatsFixture(t)
+	ownerDir := filepath.Join(dir, datasetOwnerParticipants)
+	clustersDir := filepath.Join(dir, datasetParticipantClusters)
+	require.NoError(os.RemoveAll(ownerDir),
+		"remove owner_participants to mirror a prior interrupted refresh")
+
+	before, err := query.ReadCacheSyncState(dir)
+	require.NoError(err, "ReadCacheSyncState before refresh")
+
+	wantRevision, err := st.LinkParticipants(a, b)
+	require.NoError(err, "LinkParticipants")
+
+	disarm := failIdentityPublishRename(t, func(_, newpath string) bool {
+		return newpath == query.CacheStatePath(dir)
+	})
+
+	_, err = RefreshIdentityDatasets(context.Background(), st, dir)
+	require.Error(err, "refresh with the marker commit faulted must fail")
+	require.ErrorContains(err, "injected")
+
+	_, ownerStatErr := os.Stat(ownerDir)
+	assert.True(os.IsNotExist(ownerStatErr),
+		"rollback must remove the newly created owner_participants dataset (no prior version to restore)")
+	_, clustersStatErr := os.Stat(clustersDir)
+	require.NoError(clustersStatErr,
+		"rollback must restore the previously present participant_clusters dataset from its backup")
+
+	after, err := query.ReadCacheSyncState(dir)
+	require.NoError(err, "committed marker must survive the failed publish")
+	assert.Equal(before.IdentityRevision, after.IdentityRevision,
+		"failed publish must keep the pre-refresh identity revision")
+	assert.Equal(before.DatasetFingerprint, after.DatasetFingerprint,
+		"failed publish must keep the pre-refresh fingerprint")
+
+	disarm()
+	gotRevision, err := RefreshIdentityDatasets(context.Background(), st, dir)
+	require.NotErrorIs(err, ErrCacheNotRefreshable,
+		"a subsequent refresh must not be forced into a full rebuild")
+	require.NoError(err, "subsequent refresh must repair the missing identity dataset and succeed")
+	assert.Equal(wantRevision, gotRevision, "subsequent refresh returns the linked revision")
+
+	state, err := query.ReadCacheSyncState(dir)
+	require.NoError(err, "ReadCacheSyncState after repair")
+	assert.Equal(wantRevision, state.IdentityRevision, "repaired marker must carry the new identity revision")
+
+	readiness, err := query.InspectCacheReadiness(dir)
+	require.NoError(err, "InspectCacheReadiness after repair")
+	assert.Equal(query.CacheReady, readiness, "repaired publication must be fully consistent")
+
+	assertNoIdentityPublishLitter(t, dir)
+}
+
 // failIdentityPublishRename swaps identityPublishRename for one that fails
 // any rename matched by match and delegates the rest to os.Rename. The
 // returned disarm restores the real rename; t.Cleanup also restores it in

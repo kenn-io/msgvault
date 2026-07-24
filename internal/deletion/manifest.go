@@ -212,6 +212,37 @@ func (m *Manifest) Save(path string) error {
 	return fileutil.SecureWriteFile(path, data, 0600)
 }
 
+// SaveIfPresent writes the manifest to path only when the file already exists,
+// never creating it. It opens the destination with O_WRONLY|O_TRUNC and no
+// O_CREATE, so a concurrent daemon cancel that renamed the file out of
+// in_progress/ cannot be undone by a resurrecting write: the open fails with
+// os.ErrNotExist and the caller stops as cancelled. This is the race-tight,
+// cross-platform primitive for best-effort checkpoint writes — POSIX rename
+// always creates its destination, so a temp+rename write could resurrect a
+// moved manifest, whereas an in-place truncating write cannot. The
+// authoritative crash-safe commit remains the move-first rename in
+// finalizeExecution.
+//
+// Callers detect the moved-away case with errors.Is(err, os.ErrNotExist).
+func (m *Manifest) SaveIfPresent(path string) error {
+	data, err := json.MarshalIndent(m, "", "  ")
+	if err != nil {
+		return err
+	}
+
+	// codeql[go/path-injection] -- manifest paths are explicit local CLI
+	// inputs from the privileged user, not a security boundary.
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_TRUNC, 0)
+	if err != nil {
+		return err
+	}
+	if _, err := f.Write(data); err != nil {
+		_ = f.Close()
+		return err
+	}
+	return f.Close()
+}
+
 // FormatSummary returns a human-readable summary of the deletion.
 func (m *Manifest) FormatSummary() string {
 	var sb strings.Builder
@@ -322,6 +353,27 @@ func (m *Manager) InProgressManifestExists(id string) bool {
 		return false
 	}
 	path := filepath.Join(m.dirForStatus(StatusInProgress), id+".json")
+	_, err := os.Stat(path)
+	return err == nil
+}
+
+// ManifestCancelled reports whether the manifest has a file in the cancelled/
+// directory.
+//
+// A daemon cancel moves in_progress/<id>.json to cancelled/<id>.json and leaves
+// it there (CancelManifest re-saves the inline status in place at the cancelled
+// path). This makes cancelled/<id>.json a durable cancellation marker that a
+// resurrecting checkpoint write cannot erase: even if a stale in-place write had
+// somehow recreated in_progress/<id>.json, the cancelled/ copy remains. The
+// executor treats this as authoritative cancellation in addition to the absence
+// of the in_progress/ file. Any stat error (including permission errors) is
+// treated as "not cancelled" here; the in_progress-absence check is the primary
+// stop signal and this is the durable belt-and-suspenders marker.
+func (m *Manager) ManifestCancelled(id string) bool {
+	if err := ValidateManifestID(id); err != nil {
+		return false
+	}
+	path := filepath.Join(m.dirForStatus(StatusCancelled), id+".json")
 	_, err := os.Stat(path)
 	return err == nil
 }

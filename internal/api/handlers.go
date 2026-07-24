@@ -21,7 +21,6 @@ import (
 	"go.kenn.io/msgvault/internal/daemonclient"
 	msgexport "go.kenn.io/msgvault/internal/export"
 	"go.kenn.io/msgvault/internal/fileutil"
-	"go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/scheduler"
 	"go.kenn.io/msgvault/internal/search"
@@ -3520,49 +3519,56 @@ func (s *Server) handleMessageInline(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var raw []byte
-	if reader, ok := s.store.(archivedMessageRawReader); ok {
-		raw, err = reader.GetArchivedMessageRaw(r.Context(), id)
-	} else {
-		raw, err = s.engine.GetMessageRaw(r.Context(), id)
+	loadRaw := func(ctx context.Context) ([]byte, error) {
+		if reader, ok := s.store.(archivedMessageRawReader); ok {
+			return reader.GetArchivedMessageRaw(ctx, id)
+		}
+		return s.engine.GetMessageRaw(ctx, id)
 	}
+
+	entry, err := s.inlineCache.parsed(r.Context(), id, loadRaw)
 	if err != nil {
-		if isEngineUnsupported(err) {
+		switch {
+		case isEngineUnsupported(err):
 			writeError(w, http.StatusNotImplemented, "not_supported", "Inline MIME parts are not available on this engine")
-			return
+		case errors.Is(err, errInlineRawNotFound):
+			writeError(w, http.StatusNotFound, "not_found", "Message raw data not found")
+		default:
+			s.logger.Error("failed to get raw MIME for inline part", "error", err, "id", id, "cid", cidParam)
+			writeError(w, http.StatusInternalServerError, "internal_error", "Failed to load message")
 		}
-		s.logger.Error("failed to get raw MIME for inline part", "error", err, "id", id, "cid", cidParam)
-		writeError(w, http.StatusInternalServerError, "internal_error", "Failed to load message")
 		return
 	}
-	if raw == nil {
-		writeError(w, http.StatusNotFound, "not_found", "Message raw data not found")
+	if entry.err != nil {
+		switch {
+		case errors.Is(entry.err, errInlineRawTooLarge):
+			writeError(w, http.StatusRequestEntityTooLarge, "request_too_large", "Message too large to render inline images")
+		case errors.Is(entry.err, errInlineTooManyParts):
+			writeError(w, http.StatusUnprocessableEntity, "too_many_inline_parts", "Message has too many inline parts to render")
+		default:
+			s.logger.Error("failed to parse MIME for inline part", "error", entry.err, "id", id, "cid", cidParam)
+			writeError(w, http.StatusInternalServerError, "internal_error", "Failed to parse message")
+		}
 		return
 	}
 
-	parsed, err := mime.Parse(raw)
-	if err != nil {
-		s.logger.Error("failed to parse MIME for inline part", "error", err, "id", id, "cid", cidParam)
-		writeError(w, http.StatusInternalServerError, "internal_error", "Failed to parse message")
+	part, ok := entry.parts[cidParam]
+	if !ok {
+		writeError(w, http.StatusNotFound, "not_found", "Inline part not found")
 		return
 	}
-
-	for _, att := range parsed.Attachments {
-		if !att.IsInline || att.ContentID != cidParam {
-			continue
-		}
-		ct := strings.ToLower(strings.TrimSpace(att.ContentType))
-		if !strings.HasPrefix(ct, "image/") || strings.HasPrefix(ct, "image/svg") {
-			writeError(w, http.StatusUnsupportedMediaType, "unsupported_type", "Inline content type not permitted")
-			return
-		}
-		w.Header().Set("Content-Type", ct)
-		w.Header().Set("Content-Disposition", "inline")
-		w.Header().Set("Cache-Control", "private, max-age=31536000, immutable")
-		w.Header().Set("X-Content-Type-Options", "nosniff")
-		_, _ = w.Write(att.Content)
+	ct := strings.ToLower(strings.TrimSpace(part.contentType))
+	if !strings.HasPrefix(ct, "image/") || strings.HasPrefix(ct, "image/svg") {
+		writeError(w, http.StatusUnsupportedMediaType, "unsupported_type", "Inline content type not permitted")
 		return
 	}
-
-	writeError(w, http.StatusNotFound, "not_found", "Inline part not found")
+	if len(part.content) > maxInlinePartBytes {
+		writeError(w, http.StatusRequestEntityTooLarge, "request_too_large", "Inline part exceeds size cap")
+		return
+	}
+	w.Header().Set("Content-Type", ct)
+	w.Header().Set("Content-Disposition", "inline")
+	w.Header().Set("Cache-Control", "private, max-age=31536000, immutable")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	_, _ = w.Write(part.content)
 }

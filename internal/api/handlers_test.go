@@ -19,6 +19,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -6424,6 +6425,191 @@ func TestHandleMessageInline_UnsupportedEngine(t *testing.T) {
 			assert.Equal(t, http.StatusNotImplemented, w.Code, "status")
 		})
 	}
+}
+
+// inlineImagePart describes one inline image for a multi-CID MIME fixture.
+type inlineImagePart struct {
+	cid         string
+	contentType string
+	body        []byte
+}
+
+// rawMIMEWithInlineImages builds a multipart/related message whose HTML body
+// references each part by cid and carries every part as an inline attachment.
+// This exercises the fan-out path where opening one message triggers many
+// per-cid requests.
+func rawMIMEWithInlineImages(parts []inlineImagePart) []byte {
+	boundary := "test-boundary-multi"
+	var b strings.Builder
+	b.WriteString("MIME-Version: 1.0\r\n")
+	b.WriteString("Content-Type: multipart/related; boundary=\"" + boundary + "\"\r\n")
+	b.WriteString("Subject: test\r\n\r\n")
+	b.WriteString("--" + boundary + "\r\n")
+	b.WriteString("Content-Type: text/html; charset=utf-8\r\n\r\n<html><body>")
+	for _, p := range parts {
+		b.WriteString("<img src=\"cid:" + p.cid + "\">")
+	}
+	b.WriteString("</body></html>\r\n")
+	for _, p := range parts {
+		b.WriteString("--" + boundary + "\r\n")
+		b.WriteString("Content-Type: " + p.contentType + "\r\n")
+		b.WriteString("Content-Disposition: inline\r\n")
+		b.WriteString("Content-ID: <" + p.cid + ">\r\n")
+		b.WriteString("Content-Transfer-Encoding: base64\r\n\r\n")
+		b.WriteString(base64.StdEncoding.EncodeToString(p.body))
+		b.WriteString("\r\n")
+	}
+	b.WriteString("--" + boundary + "--\r\n")
+	return []byte(b.String())
+}
+
+// countingRawEngine wraps a raw-MIME map and counts how many times the raw
+// bytes are loaded, which is a faithful proxy for how many times the handler
+// parses the message: the parse-once cache loads and parses together inside a
+// single singleflight call, so a load count of 1 proves a single parse.
+type countingRawEngine struct {
+	querytest.MockEngine
+
+	raw   []byte
+	loads atomic.Int64
+}
+
+func (e *countingRawEngine) GetMessageRaw(ctx context.Context, id int64) ([]byte, error) {
+	if e.GetMessageRawFunc != nil {
+		return e.GetMessageRawFunc(ctx, id)
+	}
+	e.loads.Add(1)
+	return append([]byte(nil), e.raw...), nil
+}
+
+func inlineImageFixture(n int) []inlineImagePart {
+	parts := make([]inlineImagePart, n)
+	for i := range parts {
+		parts[i] = inlineImagePart{
+			cid:         fmt.Sprintf("img%d@example", i),
+			contentType: "image/png",
+			body:        fmt.Appendf(nil, "PNG-DATA-%d", i),
+		}
+	}
+	return parts
+}
+
+// inlineTestMessageID is the message id every inline-handler test fixture is
+// stored under.
+const inlineTestMessageID int64 = 1
+
+func requestInline(t *testing.T, srv *Server, cid string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodGet, inlineURL(inlineTestMessageID, cid), nil)
+	w := httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+	return w
+}
+
+// TestHandleMessageInline_ParseOnce verifies that fetching every distinct cid
+// of one message loads and parses the raw MIME exactly once while each cid still
+// returns its own bytes and content type.
+func TestHandleMessageInline_ParseOnce(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	parts := inlineImageFixture(8)
+	engine := &countingRawEngine{raw: rawMIMEWithInlineImages(parts)}
+	srv := newTestServerWithEngine(t, engine)
+
+	for _, p := range parts {
+		w := requestInline(t, srv, p.cid)
+		require.Equal(http.StatusOK, w.Code, "status for %s (body: %s)", p.cid, w.Body.String())
+		assert.Equal("image/png", w.Header().Get("Content-Type"), "content type for %s", p.cid)
+		assert.Equal(p.body, w.Body.Bytes(), "body for %s", p.cid)
+	}
+	assert.Equal(int64(1), engine.loads.Load(), "raw loads (parses) for 8 distinct cids")
+}
+
+// TestHandleMessageInline_ConcurrentSingleParse verifies that a burst of
+// concurrent first-fetches for the same message collapses to one parse via
+// singleflight, and every response is correct.
+func TestHandleMessageInline_ConcurrentSingleParse(t *testing.T) {
+	parts := inlineImageFixture(4)
+	engine := &countingRawEngine{raw: rawMIMEWithInlineImages(parts)}
+	// Block the first load until all goroutines are in flight so they contend
+	// on the same singleflight key rather than serializing behind a fast cache
+	// fill.
+	release := make(chan struct{})
+	var gate sync.Once
+	engine.GetMessageRawFunc = func(_ context.Context, _ int64) ([]byte, error) {
+		gate.Do(func() { <-release })
+		engine.loads.Add(1)
+		return append([]byte(nil), engine.raw...), nil
+	}
+	srv := newTestServerWithEngine(t, engine)
+
+	const n = 16
+	var wg sync.WaitGroup
+	codes := make([]int, n)
+	for i := range n {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			codes[idx] = requestInline(t, srv, parts[idx%len(parts)].cid).Code
+		}(i)
+	}
+	// Give goroutines a moment to enter singleflight, then release the load.
+	time.Sleep(20 * time.Millisecond)
+	close(release)
+	wg.Wait()
+
+	for i, code := range codes {
+		assert.Equal(t, http.StatusOK, code, "status for request %d", i)
+	}
+	assert.Equal(t, int64(1), engine.loads.Load(), "raw loads (parses) under concurrent fan-out")
+}
+
+// TestHandleMessageInline_RawTooLarge verifies that a raw message over the size
+// cap is rejected before parsing with 413.
+func TestHandleMessageInline_RawTooLarge(t *testing.T) {
+	oversized := bytes.Repeat([]byte("x"), maxInlineRawBytes+1)
+	engine := &querytest.MockEngine{RawMessages: map[int64][]byte{1: oversized}}
+	srv := newTestServerWithEngine(t, engine)
+
+	w := requestInline(t, srv, "any@cid")
+	assert.Equal(t, http.StatusRequestEntityTooLarge, w.Code, "status for oversized raw")
+}
+
+// TestHandleMessageInline_TooManyParts verifies that a message carrying more
+// than the distinct-part cap is denied wholesale.
+func TestHandleMessageInline_TooManyParts(t *testing.T) {
+	parts := inlineImageFixture(maxInlinePartsPerMessage + 1)
+	engine := &querytest.MockEngine{RawMessages: map[int64][]byte{1: rawMIMEWithInlineImages(parts)}}
+	srv := newTestServerWithEngine(t, engine)
+
+	w := requestInline(t, srv, parts[0].cid)
+	assert.Equal(t, http.StatusUnprocessableEntity, w.Code, "status for too many inline parts")
+}
+
+// TestHandleMessageInline_TwoCIDsHappyPath verifies the ordinary small-message
+// case: both cids serve their own bytes.
+func TestHandleMessageInline_TwoCIDsHappyPath(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	parts := []inlineImagePart{
+		{cid: "a@example", contentType: "image/png", body: []byte{0x89, 'P', 'N', 'G'}},
+		{cid: "b@example", contentType: "image/gif", body: []byte("GIF89a-data")},
+	}
+	engine := &querytest.MockEngine{RawMessages: map[int64][]byte{1: rawMIMEWithInlineImages(parts)}}
+	srv := newTestServerWithEngine(t, engine)
+
+	first := requestInline(t, srv, "a@example")
+	require.Equal(http.StatusOK, first.Code, "status for a@example (body: %s)", first.Body.String())
+	assert.Equal("image/png", first.Header().Get("Content-Type"), "content type a")
+	assert.Equal(parts[0].body, first.Body.Bytes(), "body a")
+
+	second := requestInline(t, srv, "b@example")
+	require.Equal(http.StatusOK, second.Code, "status for b@example (body: %s)", second.Body.String())
+	assert.Equal("image/gif", second.Header().Get("Content-Type"), "content type b")
+	assert.Equal(parts[1].body, second.Body.Bytes(), "body b")
+
+	unknown := requestInline(t, srv, "missing@example")
+	assert.Equal(http.StatusNotFound, unknown.Code, "status for unknown cid")
 }
 
 // TestHandleGetMessage_EngineUnsupportedFallsBackToStore verifies that when

@@ -139,29 +139,40 @@ func (e *Executor) deleteOne(ctx context.Context, gmailID string, method Method)
 	return resultFailed, err
 }
 
-// manifestCancelled reports whether the manifest was cancelled out of
-// in_progress/ by a concurrent daemon cancel. The executor polls this cheaply
-// between deletions so a cross-process cancel stops it promptly.
+// manifestCancelled reports whether the manifest was cancelled by a concurrent
+// daemon cancel. The executor polls this cheaply between deletions so a
+// cross-process cancel stops it promptly. Two independent signals are checked:
+//
+//   - the durable cancelled/<id>.json marker (Manager.ManifestCancelled). A
+//     cancel leaves this in place permanently, so it stays authoritative even
+//     if a stray write had recreated the in_progress file.
+//   - the absence of in_progress/<id>.json (a cancel renames it away).
+//
+// Either condition means "stop". The durable marker is listed first so a
+// resurrected in_progress file can never mask a cancellation.
 func (e *Executor) manifestCancelled(manifestID string) bool {
-	return !e.manager.InProgressManifestExists(manifestID)
+	return e.manager.ManifestCancelled(manifestID) ||
+		!e.manager.InProgressManifestExists(manifestID)
 }
 
-// saveCheckpoint persists the current execution progress to disk, but only
-// while the manifest is still in in_progress/. A concurrent cancel moves the
-// file to cancelled/; recreating it here would resurrect a cancelled deletion,
-// so the checkpoint is skipped once the file is gone. This is the periodic-save
-// resurrection guard; finalizeExecution is the authoritative safety net (it
+// saveCheckpoint persists the current execution progress to disk without ever
+// creating the manifest file. It uses Manifest.SaveIfPresent, which opens the
+// destination without O_CREATE: if a concurrent daemon cancel already renamed
+// in_progress/<id>.json to cancelled/, the open fails with os.ErrNotExist and
+// the checkpoint is skipped rather than resurrecting the cancelled deletion.
+// This closes the stat-then-write TOCTOU that a create-if-missing save left
+// open. finalizeExecution remains the authoritative crash-safe commit (it
 // claims the file with an atomic rename before completing).
 func (e *Executor) saveCheckpoint(manifest *Manifest, manifestID, path string, index, succeeded, failed int, failedIDs []string) {
-	if e.manifestCancelled(manifestID) {
-		e.logger.Info("manifest no longer in progress; skipping checkpoint", "manifest", manifestID)
-		return
-	}
 	manifest.Execution.LastProcessedIndex = index
 	manifest.Execution.Succeeded = succeeded
 	manifest.Execution.Failed = failed
 	manifest.Execution.FailedIDs = failedIDs
-	if err := manifest.Save(path); err != nil {
+	if err := manifest.SaveIfPresent(path); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			e.logger.Info("manifest no longer in progress; skipping checkpoint", "manifest", manifestID)
+			return
+		}
 		e.logger.Error("failed to save checkpoint", "error", err)
 	}
 }
@@ -215,6 +226,15 @@ func (e *Executor) prepareExecution(manifestID string, method Method) (*Manifest
 // force-completing. Only after we own the file at the target location do we
 // persist the final execution state there.
 func (e *Executor) finalizeExecution(manifestID string, manifest *Manifest, succeeded, failed int, failedIDs []string, failOnAllErrors bool) error {
+	// A durable cancelled/ marker is authoritative: even in the pathological
+	// case where a stray write recreated in_progress/<id>.json, completing here
+	// would leave the manifest in both cancelled/ and completed/ (a double
+	// copy). Refuse to finalize when cancellation is on record.
+	if e.manager.ManifestCancelled(manifestID) {
+		e.logger.Info("manifest cancelled; not finalizing", "manifest", manifestID)
+		return ErrManifestCancelled
+	}
+
 	var targetStatus Status
 	if failed == 0 || succeeded > 0 || !failOnAllErrors {
 		targetStatus = StatusCompleted
@@ -334,7 +354,16 @@ func (e *Executor) ExecuteBatch(ctx context.Context, manifestID string) error {
 		e.logger.Info("deletion cancelled before batch start; stopping", "manifest", manifestID)
 		return ErrManifestCancelled
 	}
-	if err := manifest.Save(path); err != nil {
+	// The manifest is already claimed into in_progress/ by prepareExecution,
+	// so this initial checkpoint normally has a file to overwrite. Route it
+	// through the non-creating writer anyway: a daemon cancel could land in the
+	// window between the check above and this write, and SaveIfPresent must not
+	// recreate a manifest that cancel just moved to cancelled/.
+	if err := manifest.SaveIfPresent(path); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			e.logger.Info("deletion cancelled before batch start; stopping", "manifest", manifestID)
+			return ErrManifestCancelled
+		}
 		return fmt.Errorf("save manifest: %w", err)
 	}
 

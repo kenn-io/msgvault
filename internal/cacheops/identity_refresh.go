@@ -423,11 +423,19 @@ var (
 	identityPublishFingerprint = query.CacheDatasetFingerprint
 )
 
-// identityDatasetBackup records where a live dataset directory was moved so
-// a failed publish can restore it.
+// identityDatasetBackup records one published destination so a failed publish
+// can undo it. hadPrevious distinguishes the two rollback cases:
+//   - hadPrevious=true: a prior live dataset existed and was moved aside to
+//     backup; rollback removes the (partial) new dataset and renames backup
+//     back into place.
+//   - hadPrevious=false: no prior live dataset existed (the os.IsNotExist
+//     branch, left by an earlier interrupted refresh); backup is empty and
+//     rollback only removes the newly created destination, returning the tree
+//     to "dataset absent" so the retained old marker still describes it.
 type identityDatasetBackup struct {
-	live   string
-	backup string
+	live        string
+	backup      string
+	hadPrevious bool
 }
 
 // publishIdentityDatasets replaces the live owner_participants and
@@ -471,10 +479,14 @@ func publishIdentityDatasets(staging *identityStaging, analyticsDir string, stat
 }
 
 // swapInStagedIdentityDatasets moves each live identity dataset aside into
-// staging as a recoverable backup, then renames its staged replacement into
-// place. On failure it restores every backup taken so far and returns the
-// combined error. On success the backups stay under staging until the
-// caller's deferred staging cleanup removes them after the marker commit.
+// staging as a recoverable backup (or, when no live dataset exists yet,
+// records a removable new-destination entry), then renames its staged
+// replacement into place. Every published destination is tracked before its
+// staged->live rename so that a failure of that rename or any later step
+// rolls back the destination — restoring a backed-up predecessor or removing
+// a freshly created one. On failure it undoes every recorded entry so far and
+// returns the combined error. On success the backups stay under staging until
+// the caller's deferred staging cleanup removes them after the marker commit.
 func swapInStagedIdentityDatasets(staging *identityStaging, analyticsDir string) ([]identityDatasetBackup, error) {
 	backupRoot := filepath.Join(staging.root, "backup")
 	if err := os.MkdirAll(backupRoot, 0o755); err != nil {
@@ -486,10 +498,18 @@ func swapInStagedIdentityDatasets(staging *identityStaging, analyticsDir string)
 		backup := filepath.Join(backupRoot, dataset)
 		switch err := identityPublishRename(live, backup); {
 		case err == nil:
-			backups = append(backups, identityDatasetBackup{live: live, backup: backup})
+			backups = append(backups, identityDatasetBackup{live: live, backup: backup, hadPrevious: true})
 		case os.IsNotExist(err):
 			// A prior interrupted refresh can leave a committed marker with
-			// this dataset directory missing; there is nothing to back up.
+			// this dataset directory missing, so there is nothing to back up.
+			// Record a removable new-destination entry BEFORE the staged->live
+			// rename below: if that rename or any later publication step
+			// fails, rollback must remove the destination this refresh
+			// creates. Otherwise the freshly published dataset would survive
+			// alongside the retained old marker whose fingerprint never
+			// accounted for it, and the next refresh would read that as
+			// unaccounted-for drift and reject with ErrCacheNotRefreshable.
+			backups = append(backups, identityDatasetBackup{live: live, hadPrevious: false})
 		default:
 			return nil, errors.Join(
 				fmt.Errorf("back up live %s dataset: %w", dataset, err),
@@ -497,6 +517,12 @@ func swapInStagedIdentityDatasets(staging *identityStaging, analyticsDir string)
 			)
 		}
 		if err := identityPublishRename(staging.datasetDir(dataset), live); err != nil {
+			// The just-failed staged->live rename either left live absent (no
+			// prior version) or already moved it to backup (prior version).
+			// Its destination is already recorded above, so rollback removes
+			// the empty/absent live and, for a prior version, restores the
+			// backup. A RemoveAll of an absent path is a no-op, so this is
+			// safe in both cases.
 			return nil, errors.Join(
 				fmt.Errorf("publish %s dataset: %w", dataset, err),
 				restoreIdentityBackups(backups),
@@ -506,15 +532,25 @@ func swapInStagedIdentityDatasets(staging *identityStaging, analyticsDir string)
 	return backups, nil
 }
 
-// restoreIdentityBackups puts backed-up live datasets back after a failed
-// publish so the previous committed publication remains fully usable. It
-// calls os.Rename directly rather than the injectable seam so a test's
-// injected fault cannot also break recovery.
+// restoreIdentityBackups undoes each recorded published destination after a
+// failed publish so the previous committed publication remains fully usable.
+// For entries with a prior live version it removes the partially published
+// dataset and renames the backup back into place; for entries with no prior
+// version (hadPrevious=false) it removes the newly created destination only,
+// returning the tree to "dataset absent" to match the retained old marker.
+// It calls os.Rename/os.RemoveAll directly rather than the injectable seam so
+// a test's injected fault cannot also break recovery.
 func restoreIdentityBackups(backups []identityDatasetBackup) error {
 	var errs []error
 	for _, b := range backups {
 		if err := os.RemoveAll(b.live); err != nil {
 			errs = append(errs, fmt.Errorf("remove partially published dataset %s: %w", b.live, err))
+			continue
+		}
+		if !b.hadPrevious {
+			// No prior live dataset existed, so removing the newly created
+			// destination above completes the rollback: there is no backup to
+			// restore.
 			continue
 		}
 		if err := os.Rename(b.backup, b.live); err != nil {

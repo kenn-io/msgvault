@@ -1067,6 +1067,65 @@ func TestExecutor_ExecuteBatch_CooperativeCancel(t *testing.T) {
 	tc.AssertCancelledCount(1)
 }
 
+// TestExecutor_SaveCheckpoint_DoesNotResurrectCancelledManifest drives the
+// exact checkpoint-write race: a manifest is claimed into in_progress/, then a
+// daemon cancel moves it to cancelled/ in the window where the executor's
+// cancellation stat would previously have already passed. The subsequent
+// checkpoint write must NOT recreate in_progress/<id>.json; the manifest must
+// remain only in cancelled/.
+func TestExecutor_SaveCheckpoint_DoesNotResurrectCancelledManifest(t *testing.T) {
+	tc := NewTestContext(t)
+	manifest := tc.CreateManifest("checkpoint race", msgIDs(10))
+
+	// Claim into in_progress/ as prepareExecution would.
+	require.NoError(t, tc.Mgr.MoveManifest(manifest.ID, StatusPending, StatusInProgress), "MoveManifest")
+	manifest.Status = StatusInProgress
+	manifest.Execution = &Execution{StartedAt: time.Now(), Method: MethodTrash}
+	path := tc.Mgr.InProgressDir() + "/" + manifest.ID + ".json"
+
+	// The daemon cancels right before the checkpoint write lands.
+	require.NoError(t, tc.Mgr.CancelManifest(manifest.ID), "daemon CancelManifest")
+
+	// Invoke the checkpoint write directly at the race boundary.
+	tc.Exec.saveCheckpoint(manifest, manifest.ID, path, 5, 5, 0, nil)
+
+	// The in_progress file must not be resurrected; the manifest lives only
+	// in cancelled/.
+	_, statErr := os.Stat(path)
+	assert.True(t, os.IsNotExist(statErr), "in_progress file must not be recreated by checkpoint")
+	tc.AssertInProgressCount(0)
+	tc.AssertCompletedCount(0)
+	tc.AssertCancelledCount(1)
+}
+
+// TestExecutor_Finalize_RefusesWhenDurablyCancelled verifies that finalize
+// refuses to complete a manifest whose cancelled/ marker is present, even if a
+// stray in_progress/<id>.json exists (simulating a resurrected file). This
+// guards against a double copy in cancelled/ and completed/.
+func TestExecutor_Finalize_RefusesWhenDurablyCancelled(t *testing.T) {
+	require := require.New(t)
+	tc := NewTestContext(t)
+	manifest := tc.CreateManifest("finalize durable cancel", msgIDs(3))
+
+	require.NoError(tc.Mgr.MoveManifest(manifest.ID, StatusPending, StatusInProgress), "MoveManifest")
+	manifest.Status = StatusInProgress
+	manifest.Execution = &Execution{StartedAt: time.Now(), Method: MethodTrash}
+
+	// Daemon cancels (durable marker in cancelled/).
+	require.NoError(tc.Mgr.CancelManifest(manifest.ID), "daemon CancelManifest")
+
+	// Simulate a resurrected in_progress file so MoveManifest alone would
+	// otherwise succeed and create a completed/ copy.
+	inProgressPath := tc.Mgr.InProgressDir() + "/" + manifest.ID + ".json"
+	require.NoError(manifest.Save(inProgressPath), "resurrect in_progress file")
+
+	err := tc.Exec.finalizeExecution(manifest.ID, manifest, 3, 0, nil, true)
+	require.ErrorIs(err, ErrManifestCancelled, "finalizeExecution error")
+
+	tc.AssertCompletedCount(0)
+	tc.AssertCancelledCount(1)
+}
+
 // TestNullProgress_AllMethods exercises all NullProgress methods for coverage.
 func TestNullProgress_AllMethods(t *testing.T) {
 	p := NullProgress{}

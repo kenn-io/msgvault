@@ -227,8 +227,11 @@ type Server struct {
 	// POST /api/v1/content/remote-image. Tests replace it to inject a fake
 	// resolver and dialer.
 	remoteImages *remoteImageFetcher
-	spaHandler   http.Handler
-	sessions     *sessionStore
+	// inlineCache parses each message's raw MIME once and serves every cid: from
+	// that result, collapsing the per-cid fan-out (see inline_cache.go).
+	inlineCache *inlineParseCache
+	spaHandler  http.Handler
+	sessions    *sessionStore
 	// trustedProxies contains only explicitly configured direct proxy peers.
 	// Forwarded scheme/host data is ignored for every other RemoteAddr.
 	trustedProxies   []netip.Prefix
@@ -371,6 +374,7 @@ func NewServerWithOptions(opts ServerOptions) *Server {
 		operationGate:        opts.OperationGate,
 		blobStore:            opts.BlobStore,
 		remoteImages:         newRemoteImageFetcher(),
+		inlineCache:          newInlineParseCache(inlineCacheMaxEntries, inlineCacheMaxBytes),
 		spaHandler:           opts.SPAHandler,
 		sessions:             newSessionStore(defaultSessionTTL),
 		exploreState:         newExploreServerState(time.Now),
