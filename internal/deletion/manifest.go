@@ -428,6 +428,130 @@ func (m *Manager) FinalizeInProgress(id string, target Status) error {
 	return nil
 }
 
+// ClaimManifest atomically transitions a pending manifest into in_progress/
+// (or resumes one already there) for execution, holding the per-manifest
+// lock for the entire operation. This replaces the old "load manifest, check
+// its inline Status, MoveManifest, mutate the returned struct in memory"
+// sequence, which had two gaps: the unlocked MoveManifest rename could
+// interleave with a concurrent cancelManifestLocked, and the initialized
+// in_progress state (Status=InProgress + Execution) existed only in memory
+// until the first checkpoint — a crash before that checkpoint left
+// in_progress/<id>.json still serialized with "status": "pending", pointing
+// a resume at a pending/ file that no longer exists.
+//
+// The manifest's directory location is authoritative here, exactly as in
+// FinalizeInProgress and GetManifestWithStatus, not its serialized Status
+// field (which can be stale after a crash):
+//
+//   - in_progress/<id>.json present: this is a resume. Its Execution is left
+//     untouched if already set (it records real checkpoint progress —
+//     LastProcessedIndex, Succeeded, Failed); it is only initialized when nil.
+//   - pending/<id>.json present (and no in_progress file): this is a fresh
+//     claim. The manifest is fully initialized in memory (Status +
+//     Execution) and that initialized state is published to
+//     in_progress/<id>.json via the same atomic temp+rename writeManifestAtomic
+//     uses for checkpoints BEFORE pending/<id>.json is removed. A crash
+//     between the write and the removal leaves an authoritative, fully
+//     initialized in_progress file plus a harmless stale pending file: a
+//     later ClaimManifest or resume reads in_progress first and never
+//     revisits pending/.
+//   - neither present: the manifest is cancelled or already in a terminal
+//     state. A durable cancelled/ marker (checked first, like
+//     FinalizeInProgress) yields ErrManifestCancelled; a terminal-directory
+//     file yields a "cannot execute" error; otherwise the manifest does not
+//     exist.
+//
+// Holding the lock for the whole check-then-act sequence serializes claims
+// against cancelManifestLocked: either the claim completes first (the file is
+// in in_progress/ when cancel runs, so cancel moves it to cancelled/) or the
+// cancel wins first (claim observes the cancelled/ marker and returns
+// ErrManifestCancelled). Only one manifest's lock is ever held at a time, so
+// there is no lock-ordering cycle to deadlock on.
+func (m *Manager) ClaimManifest(id string, method Method) (*Manifest, error) {
+	if err := ValidateManifestID(id); err != nil {
+		return nil, err
+	}
+	lock, err := m.acquireManifestLock(id)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = lock.Unlock() }()
+
+	cancelledPath := filepath.Join(m.dirForStatus(StatusCancelled), id+".json")
+	if _, err := os.Stat(cancelledPath); err == nil {
+		return nil, ErrManifestCancelled
+	}
+
+	inProgressPath := filepath.Join(m.dirForStatus(StatusInProgress), id+".json")
+	manifest, err := LoadManifest(inProgressPath)
+	switch {
+	case err == nil:
+		return m.resumeClaimedManifest(manifest, inProgressPath, method)
+	case !errors.Is(err, os.ErrNotExist):
+		return nil, fmt.Errorf("load in-progress manifest %s: %w", id, err)
+	}
+
+	pendingPath := filepath.Join(m.dirForStatus(StatusPending), id+".json")
+	manifest, err = LoadManifest(pendingPath)
+	switch {
+	case err == nil:
+		return m.claimPendingManifest(manifest, pendingPath, inProgressPath, method)
+	case !errors.Is(err, os.ErrNotExist):
+		return nil, fmt.Errorf("load pending manifest %s: %w", id, err)
+	}
+
+	for _, status := range []Status{StatusCompleted, StatusFailed} {
+		if _, err := os.Stat(filepath.Join(m.dirForStatus(status), id+".json")); err == nil {
+			return nil, fmt.Errorf("manifest %s is %s, cannot execute", id, status)
+		}
+	}
+	return nil, fmt.Errorf("manifest %s not found", id)
+}
+
+// resumeClaimedManifest handles the ClaimManifest resume branch: the manifest
+// is already in in_progress/. An existing Execution is left untouched so
+// checkpoint progress is never lost; it is only initialized when nil, e.g. a
+// manifest whose file was moved into in_progress/ without ever going through
+// ClaimManifest (the exact crash-before-checkpoint scenario this fix closes).
+// The inline Status field is corrected to InProgress and, if either it or a
+// freshly-initialized Execution changed, republished so the on-disk record
+// matches what is returned in memory.
+func (m *Manager) resumeClaimedManifest(manifest *Manifest, inProgressPath string, method Method) (*Manifest, error) {
+	needsWrite := manifest.Status != StatusInProgress
+	if manifest.Execution == nil {
+		manifest.Execution = &Execution{StartedAt: time.Now(), Method: method}
+		needsWrite = true
+	}
+	manifest.Status = StatusInProgress
+	if needsWrite {
+		if err := writeManifestAtomic(manifest, inProgressPath); err != nil {
+			return nil, fmt.Errorf("persist resumed execution for %s: %w", manifest.ID, err)
+		}
+	}
+	return manifest, nil
+}
+
+// claimPendingManifest handles the ClaimManifest fresh-claim branch: the
+// manifest is initialized and published to in_progress/<id>.json before
+// pending/<id>.json is removed, so a crash between the two leaves the
+// authoritative initialized in_progress file in place and only a harmless
+// stale pending file behind (a later claim/resume never looks at pending/
+// once in_progress/ has a file).
+func (m *Manager) claimPendingManifest(
+	manifest *Manifest, pendingPath, inProgressPath string, method Method,
+) (*Manifest, error) {
+	manifest.Status = StatusInProgress
+	manifest.Execution = &Execution{StartedAt: time.Now(), Method: method}
+	if err := writeManifestAtomic(manifest, inProgressPath); err != nil {
+		return nil, fmt.Errorf("claim manifest %s into in_progress: %w", manifest.ID, err)
+	}
+	if err := os.Remove(pendingPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+		log.Printf("WARNING: claimed manifest %s but could not remove stale pending file: %v",
+			manifest.ID, err)
+	}
+	return manifest, nil
+}
+
 // dirForStatus returns the directory path for a given status.
 // Uses explicit mapping to decouple Status values from directory names.
 func (m *Manager) dirForStatus(s Status) string {

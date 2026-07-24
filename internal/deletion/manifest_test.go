@@ -1140,3 +1140,203 @@ func TestManager_CheckpointCancelStress(t *testing.T) {
 		assertSingleValidManifest(t, mgr, id)
 	}
 }
+
+// TestManager_ClaimManifest_PersistsInProgressState verifies that claiming a
+// pending manifest publishes both Status=InProgress and a non-nil Execution
+// to in_progress/<id>.json on disk — not just to the returned in-memory
+// struct. This closes the crash-before-checkpoint gap: reloading the file
+// from disk must never still say "pending" once ClaimManifest has returned.
+func TestManager_ClaimManifest_PersistsInProgressState(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	mgr := testManager(t)
+	m := createTestManifest(t, mgr, "claim persists")
+
+	claimed, err := mgr.ClaimManifest(m.ID, MethodTrash)
+	require.NoError(err, "ClaimManifest")
+	assert.Equal(StatusInProgress, claimed.Status)
+	require.NotNil(claimed.Execution, "in-memory Execution")
+
+	loaded, err := LoadManifest(filepath.Join(mgr.InProgressDir(), m.ID+".json"))
+	require.NoError(err, "reload claimed manifest from disk")
+	assert.Equal(StatusInProgress, loaded.Status, "on-disk status must not still say pending")
+	require.NotNil(loaded.Execution, "on-disk Execution")
+	assert.Equal(MethodTrash, loaded.Execution.Method)
+
+	_, statErr := os.Stat(filepath.Join(mgr.PendingDir(), m.ID+".json"))
+	assert.True(os.IsNotExist(statErr), "pending file must be removed after claim")
+	assertSingleValidManifest(t, mgr, m.ID)
+}
+
+// TestManager_ClaimManifest_CrashThenResume simulates a crash immediately
+// after ClaimManifest claims a pending manifest, before any checkpoint is
+// written, by discarding the returned in-memory result and reloading purely
+// from what is durable on disk. A subsequent claim (as a restarted CLI
+// process would issue) must resume successfully using only the in_progress
+// file, without depending on the now-removed pending file.
+func TestManager_ClaimManifest_CrashThenResume(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	mgr := testManager(t)
+	m := createTestManifest(t, mgr, "claim crash resume")
+
+	_, err := mgr.ClaimManifest(m.ID, MethodTrash)
+	require.NoError(err, "initial ClaimManifest")
+
+	// Simulate a crash: reload strictly from what is durable on disk.
+	manifest, status, err := mgr.GetManifestWithStatus(m.ID)
+	require.NoError(err, "GetManifestWithStatus after simulated crash")
+	assert.Equal(StatusInProgress, status)
+	require.NotNil(manifest.Execution, "Execution survives a crash before the first checkpoint")
+
+	resumed, err := mgr.ClaimManifest(m.ID, MethodTrash)
+	require.NoError(err, "resume ClaimManifest")
+	assert.Equal(StatusInProgress, resumed.Status)
+	require.NotNil(resumed.Execution)
+	assertSingleValidManifest(t, mgr, m.ID)
+}
+
+// TestManager_ClaimManifest_ResumePreservesProgress verifies that claiming an
+// already in_progress manifest with existing checkpoint progress is a resume:
+// LastProcessedIndex/Succeeded/Failed and the original Method are preserved,
+// rather than Execution being reset to a fresh StartedAt with zeroed counters.
+func TestManager_ClaimManifest_ResumePreservesProgress(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	mgr := testManager(t)
+	m := createTestManifest(t, mgr, "claim resume progress")
+	require.NoError(mgr.MoveManifest(m.ID, StatusPending, StatusInProgress), "MoveManifest")
+	original := &Execution{
+		StartedAt:          time.Now().Add(-time.Hour).Truncate(time.Second),
+		Method:             MethodTrash,
+		Succeeded:          7,
+		Failed:             1,
+		FailedIDs:          []string{"msg-x"},
+		LastProcessedIndex: 8,
+	}
+	m.Status = StatusInProgress
+	m.Execution = original
+	require.NoError(
+		writeManifestAtomic(m, filepath.Join(mgr.InProgressDir(), m.ID+".json")),
+		"seed in_progress state",
+	)
+
+	// Resume with a different method argument: it must be ignored because an
+	// Execution already exists.
+	resumed, err := mgr.ClaimManifest(m.ID, MethodDelete)
+	require.NoError(err, "ClaimManifest resume")
+	assert.Equal(StatusInProgress, resumed.Status)
+	require.NotNil(resumed.Execution)
+	assert.Equal(7, resumed.Execution.Succeeded, "Succeeded preserved")
+	assert.Equal(1, resumed.Execution.Failed, "Failed preserved")
+	assert.Equal(8, resumed.Execution.LastProcessedIndex, "LastProcessedIndex preserved")
+	assert.Equal(MethodTrash, resumed.Execution.Method, "Method preserved, not overwritten by resume arg")
+	assert.True(
+		original.StartedAt.Equal(resumed.Execution.StartedAt),
+		"StartedAt not reset: want %v, got %v", original.StartedAt, resumed.Execution.StartedAt,
+	)
+}
+
+// TestManager_ClaimManifest_ResumeIgnoresStaleInlineStatus verifies that a
+// manifest file living in in_progress/ is claimed as a resume based on its
+// directory location, even when its serialized Status field still says
+// "pending" — exactly the state a crash before the first checkpoint used to
+// leave behind. The directory is authoritative, consistent with
+// FinalizeInProgress and GetManifestWithStatus.
+func TestManager_ClaimManifest_ResumeIgnoresStaleInlineStatus(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	mgr := testManager(t)
+	m := createTestManifest(t, mgr, "stale inline status")
+	require.NoError(mgr.MoveManifest(m.ID, StatusPending, StatusInProgress), "MoveManifest")
+
+	onDiskBefore, err := LoadManifest(filepath.Join(mgr.InProgressDir(), m.ID+".json"))
+	require.NoError(err, "reload before claim")
+	require.Equal(StatusPending, onDiskBefore.Status, "precondition: inline status is stale")
+
+	claimed, err := mgr.ClaimManifest(m.ID, MethodTrash)
+	require.NoError(err, "ClaimManifest on directory-in_progress/inline-pending manifest")
+	assert.Equal(StatusInProgress, claimed.Status)
+	require.NotNil(claimed.Execution)
+
+	loaded, err := LoadManifest(filepath.Join(mgr.InProgressDir(), m.ID+".json"))
+	require.NoError(err, "reload after claim")
+	assert.Equal(StatusInProgress, loaded.Status, "inline status corrected on disk")
+}
+
+// TestManager_ClaimManifest_CancelledMarker verifies that a durable
+// cancelled/ marker wins: claiming returns ErrManifestCancelled and does not
+// create or resurrect an in_progress file.
+func TestManager_ClaimManifest_CancelledMarker(t *testing.T) {
+	mgr := testManager(t)
+	m := createTestManifest(t, mgr, "claim vs cancel marker")
+	require.NoError(t, mgr.CancelManifest(m.ID), "CancelManifest")
+
+	_, err := mgr.ClaimManifest(m.ID, MethodTrash)
+	require.ErrorIs(t, err, ErrManifestCancelled, "ClaimManifest after cancel")
+
+	_, statErr := os.Stat(filepath.Join(mgr.InProgressDir(), m.ID+".json"))
+	assert.True(t, os.IsNotExist(statErr), "in_progress file must not be created")
+	assertSingleValidManifest(t, mgr, m.ID)
+}
+
+// TestManager_ClaimManifest_TerminalOrAbsent verifies that claiming a
+// completed, failed, or nonexistent manifest returns an error distinct from
+// ErrManifestCancelled.
+func TestManager_ClaimManifest_TerminalOrAbsent(t *testing.T) {
+	require := require.New(t)
+	mgr := testManager(t)
+
+	completed := createTestManifest(t, mgr, "claim completed")
+	require.NoError(mgr.MoveManifest(completed.ID, StatusPending, StatusInProgress), "move to in_progress")
+	require.NoError(mgr.FinalizeInProgress(completed.ID, StatusCompleted), "finalize completed")
+	_, err := mgr.ClaimManifest(completed.ID, MethodTrash)
+	require.Error(err, "ClaimManifest on completed manifest")
+	require.NotErrorIs(err, ErrManifestCancelled, "completed is not the same as cancelled")
+
+	failed := createTestManifest(t, mgr, "claim failed")
+	require.NoError(mgr.MoveManifest(failed.ID, StatusPending, StatusInProgress), "move to in_progress")
+	require.NoError(mgr.FinalizeInProgress(failed.ID, StatusFailed), "finalize failed")
+	_, err = mgr.ClaimManifest(failed.ID, MethodTrash)
+	require.Error(err, "ClaimManifest on failed manifest")
+
+	_, err = mgr.ClaimManifest("does-not-exist", MethodTrash)
+	require.Error(err, "ClaimManifest on absent manifest")
+}
+
+// TestManager_ClaimCancelStress races repeated claim attempts against a
+// concurrent cancel on the same manifest ID. Regardless of interleaving, the
+// manifest must end up in exactly one status directory: either the claim wins
+// the lock first (landing the file in in_progress/, which the cancel then
+// moves on to cancelled/) or the cancel wins first (the claim then observes
+// the durable cancelled/ marker and returns ErrManifestCancelled without
+// creating anything). Run with -race to surface data races in the locked
+// critical sections.
+func TestManager_ClaimCancelStress(t *testing.T) {
+	for range 50 {
+		mgr := testManager(t)
+		m := createTestManifest(t, mgr, "claim cancel stress")
+		id := m.ID
+
+		var wg sync.WaitGroup
+		wg.Add(2)
+		claimErrs := make(chan error, 1)
+		go func() {
+			defer wg.Done()
+			_, err := mgr.ClaimManifest(id, MethodTrash)
+			claimErrs <- err
+		}()
+		go func() {
+			defer wg.Done()
+			// assert (not require) inside a goroutine: require's FailNow is
+			// illegal off the test's own goroutine.
+			assert.NoError(t, mgr.CancelManifest(id), "CancelManifest")
+		}()
+		wg.Wait()
+
+		if claimErr := <-claimErrs; claimErr != nil {
+			require.ErrorIs(t, claimErr, ErrManifestCancelled, "claim error")
+		}
+		assertSingleValidManifest(t, mgr, id)
+	}
+}

@@ -177,38 +177,20 @@ func (e *Executor) saveCheckpoint(manifest *Manifest, manifestID string, index, 
 	}
 }
 
-// prepareExecution loads a manifest, validates its status, and transitions it
-// to InProgress if pending.
+// prepareExecution claims a manifest into in_progress/ (or resumes one
+// already there) via Manager.ClaimManifest, which persists the initialized
+// in-progress state to disk under the per-manifest lock before returning. See
+// ClaimManifest for why that lock and disk-before-return ordering matter: it
+// serializes the claim against a concurrent daemon cancel and closes the
+// crash window where an in_progress file could still say "pending".
 func (e *Executor) prepareExecution(manifestID string, method Method) (*Manifest, error) {
-	manifest, _, err := e.manager.GetManifest(manifestID)
+	manifest, err := e.manager.ClaimManifest(manifestID, method)
 	if err != nil {
-		return nil, fmt.Errorf("load manifest: %w", err)
-	}
-
-	if manifest.Status == StatusCancelled {
-		return nil, fmt.Errorf("manifest %s: %w", manifestID, ErrManifestCancelled)
-	}
-
-	if manifest.Status != StatusPending && manifest.Status != StatusInProgress {
-		return nil, fmt.Errorf("manifest %s is %s, cannot execute", manifestID, manifest.Status)
-	}
-
-	if manifest.Status == StatusPending {
-		if err := e.manager.MoveManifest(manifestID, StatusPending, StatusInProgress); err != nil {
-			return nil, fmt.Errorf("move to in_progress: %w", err)
+		if errors.Is(err, ErrManifestCancelled) {
+			return nil, fmt.Errorf("manifest %s: %w", manifestID, err)
 		}
-		manifest.Status = StatusInProgress
-		manifest.Execution = &Execution{
-			StartedAt: time.Now(),
-			Method:    method,
-		}
-	} else if manifest.Execution == nil {
-		manifest.Execution = &Execution{
-			StartedAt: time.Now(),
-			Method:    method,
-		}
+		return nil, fmt.Errorf("claim manifest: %w", err)
 	}
-
 	return manifest, nil
 }
 

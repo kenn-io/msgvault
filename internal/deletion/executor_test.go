@@ -681,15 +681,20 @@ func TestExecutor_ExecuteBatch_Scenarios(t *testing.T) {
 	}
 }
 
+// TestExecutor_ExecuteBatch_InvalidStatus verifies that a manifest already in
+// a terminal state cannot be executed again. A manifest whose file merely
+// lives in in_progress/ (e.g. moved there directly, without an inline status
+// update) is a valid claim target, not an invalid one — see
+// TestManager_ClaimManifest_ResumeIgnoresStaleInlineStatus — so this test
+// exercises the genuinely invalid case: completed.
 func TestExecutor_ExecuteBatch_InvalidStatus(t *testing.T) {
 	ctx := NewTestContext(t)
 	manifest := ctx.CreateManifest("wrong status", msgIDs(1))
 
-	// Move to in_progress
-	require.NoError(t, ctx.Mgr.MoveManifest(manifest.ID, StatusPending, StatusInProgress), "MoveManifest()")
+	require.NoError(t, ctx.ExecuteBatch(manifest.ID), "ExecuteBatch() first run")
 
 	err := ctx.ExecuteBatch(manifest.ID)
-	assert.Error(t, err, "ExecuteBatch() should error for non-pending manifest")
+	assert.Error(t, err, "ExecuteBatch() should error for a completed manifest")
 }
 
 func TestExecutor_ExecuteBatch_ContextCancelled(t *testing.T) {
@@ -1124,6 +1129,28 @@ func TestExecutor_Finalize_RefusesWhenDurablyCancelled(t *testing.T) {
 
 	tc.AssertCompletedCount(0)
 	tc.AssertCancelledCount(1)
+}
+
+// TestExecutor_PrepareExecution_PersistsInProgressState verifies that
+// claiming a pending manifest through the executor's prepareExecution (backed
+// by Manager.ClaimManifest) writes Status=InProgress and a non-nil Execution
+// to in_progress/<id>.json on disk immediately — not just to the returned
+// in-memory manifest. A crash before the first checkpoint must never leave an
+// in_progress file that still says "pending".
+func TestExecutor_PrepareExecution_PersistsInProgressState(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	tc := NewTestContext(t)
+	manifest := tc.CreateManifest("prepare persists", msgIDs(3))
+
+	_, err := tc.Exec.prepareExecution(manifest.ID, MethodTrash)
+	require.NoError(err, "prepareExecution")
+
+	inProgressPath := tc.Mgr.InProgressDir() + "/" + manifest.ID + ".json"
+	loaded, err := LoadManifest(inProgressPath)
+	require.NoError(err, "reload in_progress manifest from disk")
+	assert.Equal(StatusInProgress, loaded.Status, "on-disk status must not still say pending")
+	require.NotNil(loaded.Execution, "on-disk Execution must be initialized")
 }
 
 // TestNullProgress_AllMethods exercises all NullProgress methods for coverage.
