@@ -1,8 +1,8 @@
-import { render, screen } from '@testing-library/svelte';
+import { render, screen, waitFor } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
 
 import { createAPIClient } from '../../api/client';
-import type { EntryRow, ExplorePredicate } from '../../explore/models';
+import type { EntryRow, ExploreFilter, ExplorePredicate } from '../../explore/models';
 import ReadingPane from './ReadingPane.svelte';
 
 function entryRow(overrides: Partial<EntryRow> = {}): EntryRow {
@@ -57,5 +57,33 @@ describe('ReadingPane task gating', () => {
   it('hides Tasks when the entry has no anchor message', () => {
     renderPane(entryRow({ anchor_message_id: undefined }));
     expect(screen.queryByLabelText('Tasks for this message')).toBeNull();
+  });
+});
+
+describe('ReadingPane group file drill-down', () => {
+  it('intersects a drilled-into participant group with an existing participant filter', async () => {
+    const requests: Request[] = [];
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      requests.push(request);
+      return Response.json({ files: [], total_count: 0, cache_revision: 'cache-1', search_provenance: {} });
+    });
+
+    render(ReadingPane, {
+      props: {
+        client: createAPIClient(fetchFn),
+        selection: { kind: 'group', dimension: 'participant', key: '99', label: 'Bob' },
+        predicate: {
+          filters: [{ dimension: 'participant', values: ['42'] }]
+        } satisfies ExplorePredicate
+      }
+    });
+
+    await waitFor(() => expect(requests).toHaveLength(1));
+    const body = (await requests[0]!.clone().json()) as { predicate: { filters: ExploreFilter[] } };
+    expect(body.predicate.filters).toEqual([
+      { dimension: 'participant', values: ['42'] },
+      { dimension: 'participant', values: ['99'] }
+    ]);
   });
 });

@@ -99,14 +99,16 @@ func (e *DuckDBEngine) RelationshipTimeline(ctx context.Context, request Relatio
 		return nil, err
 	}
 	// Cluster membership scopes the timeline, but any caller-supplied
-	// participant filter (request.Context.ParticipantIDs, set via a
-	// "participant" filter dimension) must further restrict it rather than
-	// be silently overwritten — the filter is part of the cursor hash and
-	// the caller has no way to tell it was dropped. buildExploreConditions
-	// only expresses one participant-membership OR-group per Context, so
-	// the cluster-membership condition is built separately here and AND'd
-	// onto whatever buildExploreConditions produced for the caller's own
-	// Context (including any participant filter already in it). That caller
+	// participant filter (request.Context.ParticipantIDs and any
+	// conjunctive AdditionalParticipantGroups, set via repeated "participant"
+	// filter dimensions) must further restrict it rather than be silently
+	// overwritten — the filter is part of the cursor hash and the caller has
+	// no way to tell it was dropped. The subject cluster-membership
+	// condition is its own OR-group with different semantics (any message
+	// touching the subject's cluster) than a caller participant filter, so
+	// it is built separately here and AND'd onto whatever
+	// buildExploreConditions produced for the caller's own Context
+	// (including any participant filter(s) already in it). That caller
 	// filter is first widened across its identity cluster (like Explore/Files)
 	// so a secondary participant filter by canonical ID also matches alias
 	// activity; the subject cluster-membership condition below is already

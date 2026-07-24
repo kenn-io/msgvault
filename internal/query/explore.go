@@ -324,6 +324,36 @@ func buildExploreConditions(request ExploreRequest) (string, []any) {
 			args = append(args, value, value, value)
 		}
 	}
+	// AdditionalParticipantGroups/AdditionalDomainGroups implement a
+	// drill-down conjunction (A∩B): each group is its own parenthesized OR
+	// using the same predicate shape as the primary group above, and every
+	// group is AND'd into the overall condition list alongside it.
+	for _, group := range request.Context.AdditionalParticipantGroups {
+		if len(group) == 0 {
+			continue
+		}
+		parts := make([]string, len(group))
+		for i := range parts {
+			parts[i] = "(sender_id = ? OR list_contains(participant_ids, ?) OR list_contains(conversation_participant_ids, ?))"
+		}
+		conditions = append(conditions, "("+strings.Join(parts, " OR ")+")")
+		for _, value := range group {
+			args = append(args, value, value, value)
+		}
+	}
+	for _, group := range request.Context.AdditionalDomainGroups {
+		if len(group) == 0 {
+			continue
+		}
+		parts := make([]string, len(group))
+		for i := range parts {
+			parts[i] = "(lower(sender_domain) = lower(?) OR list_contains(participant_domains, lower(?)) OR list_contains(conversation_participant_domains, lower(?)))"
+		}
+		conditions = append(conditions, "("+strings.Join(parts, " OR ")+")")
+		for _, value := range group {
+			args = append(args, value, value, value)
+		}
+	}
 	// duckDBMessageTypeCondition treats "email" as also matching NULL/empty
 	// message_type: legacy rows imported before message_type existed are email.
 	if messageTypeCondition, messageTypeArgs := duckDBMessageTypeCondition("", request.Context.MessageTypes); messageTypeCondition != "" {
@@ -441,7 +471,8 @@ SELECT COUNT(*) FROM logical_entries`
 // path (which rescans the filtered population) would pay that cost twice; such
 // requests keep the single-pass legacy query.
 func exploreConditionsTouchParticipantLists(request ExploreRequest) bool {
-	return len(request.Context.ParticipantIDs) > 0 || len(request.Context.Domains) > 0
+	return len(request.Context.ParticipantIDs) > 0 || len(request.Context.Domains) > 0 ||
+		len(request.Context.AdditionalParticipantGroups) > 0 || len(request.Context.AdditionalDomainGroups) > 0
 }
 
 // buildExploreFastListingSQL builds the two-phase entry-row page query used

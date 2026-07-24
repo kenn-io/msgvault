@@ -33,6 +33,7 @@
 
   import type { APIClient } from '../../api/client';
   import { createExploreAPI } from '../../explore/api';
+  import { filtersForGroup } from '../../explore/group-context';
   import type { ExploreCacheUnavailable, ExploreFileFact, ExploreFilter } from '../../explore/models';
   import EmptyState from '../common/EmptyState.svelte';
   import TaskLinks from '../tasks/TaskLinks.svelte';
@@ -148,10 +149,12 @@
     const controller = new AbortController();
     requestController = controller;
     filesLoading = true;
-    const filters: ExploreFilter[] = [
-      ...(currentPredicate.filters ?? []).filter((filter) => filter.dimension !== selected.dimension),
-      { dimension: selected.dimension, values: [selected.key] }
-    ];
+    // filtersForGroup appends the group membership filter alongside any
+    // existing filter(s) on the same dimension (participant/domain), so a
+    // drill-down under an existing filter narrows to their intersection
+    // rather than widening to every entry in the drilled-into group alone.
+    const filters: ExploreFilter[] =
+      filtersForGroup(currentPredicate.filters ?? [], selected.dimension, selected.key) ?? [];
     const filePredicate: ExplorePredicate = {
       ...currentPredicate,
       cursor: undefined,

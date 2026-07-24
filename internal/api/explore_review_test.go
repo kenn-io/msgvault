@@ -544,13 +544,13 @@ func TestLexicalDeletionScope(t *testing.T) {
 func TestWithActiveDeletionFilterPinsHybridLexicalScope(t *testing.T) {
 	pinned := withActiveDeletionFilter([]ExploreFilter{
 		{Dimension: "source", Values: []string{"1"}},
-		{Dimension: "deletion", Values: []string{"any"}},
+		{Dimension: exploreFilterDeletion, Values: []string{"any"}},
 	})
 	assert.Equal(t, []ExploreFilter{
 		{Dimension: "source", Values: []string{"1"}},
-		{Dimension: "deletion", Values: []string{"active"}},
+		{Dimension: exploreFilterDeletion, Values: []string{"active"}},
 	}, pinned, "an existing deletion filter is replaced, not duplicated")
-	assert.Equal(t, []ExploreFilter{{Dimension: "deletion", Values: []string{"active"}}},
+	assert.Equal(t, []ExploreFilter{{Dimension: exploreFilterDeletion, Values: []string{"active"}}},
 		withActiveDeletionFilter(nil), "the active pin is added when no deletion filter exists")
 }
 
@@ -777,7 +777,7 @@ func TestExploreSnapshotPreservesResolvedEmptyLexicalMembership(t *testing.T) {
 
 func TestApplyIdentityScopeAcceptsCaseEquivalentDomain(t *testing.T) {
 	context := query.Context{Domains: []string{"EXAMPLE.COM"}}
-	err := applyIdentityScope(&context, ExploreFilter{Dimension: "domain", Values: []string{"example.com"}})
+	err := applyIdentityScope(&context, ExploreFilter{Dimension: exploreFilterDomain, Values: []string{"example.com"}})
 	require.NoError(t, err)
 	assert.Equal(t, []string{"example.com"}, context.Domains)
 }
@@ -787,18 +787,79 @@ func TestApplyIdentityScopeNarrowsParticipantClusterToBasePredicate(t *testing.T
 	require := require.New(t)
 
 	open := query.Context{}
-	err := applyIdentityScope(&open, ExploreFilter{Dimension: "participant", Values: []string{"2", "3"}})
+	err := applyIdentityScope(&open, ExploreFilter{Dimension: exploreFilterParticipant, Values: []string{"2", "3"}})
 	require.NoError(err)
 	assert.Equal([]int64{2, 3}, open.ParticipantIDs, "an open base predicate takes every cluster member")
 
 	narrowed := query.Context{ParticipantIDs: []int64{2, 5}}
-	err = applyIdentityScope(&narrowed, ExploreFilter{Dimension: "participant", Values: []string{"2", "3"}})
+	err = applyIdentityScope(&narrowed, ExploreFilter{Dimension: exploreFilterParticipant, Values: []string{"2", "3"}})
 	require.NoError(err)
 	assert.Equal([]int64{2}, narrowed.ParticipantIDs, "a base participant filter keeps only the members it allows")
 
 	excluded := query.Context{ParticipantIDs: []int64{9}}
-	err = applyIdentityScope(&excluded, ExploreFilter{Dimension: "participant", Values: []string{"2", "3"}})
+	err = applyIdentityScope(&excluded, ExploreFilter{Dimension: exploreFilterParticipant, Values: []string{"2", "3"}})
 	require.Error(err, "a base predicate excluding every member must fail loudly")
+}
+
+// TestExploreContextRepeatedParticipantFilterIsConjunctive proves that a
+// second "participant" filter maps to AdditionalParticipantGroups (an AND
+// against the first, primary group) instead of being rejected or replacing
+// it — the fix for drill-downs widening an existing filter.
+func TestExploreContextRepeatedParticipantFilterIsConjunctive(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	ctx, err := exploreContext([]ExploreFilter{
+		{Dimension: exploreFilterParticipant, Values: []string{"2"}},
+		{Dimension: exploreFilterParticipant, Values: []string{"3", "4"}},
+	})
+	require.NoError(err)
+	assert.Equal([]int64{2}, ctx.ParticipantIDs, "the first occurrence stays the primary group")
+	assert.Equal([][]int64{{3, 4}}, ctx.AdditionalParticipantGroups, "later occurrences append conjunctive groups")
+}
+
+// TestExploreContextRepeatedDomainFilterIsConjunctive is the domain analogue
+// of TestExploreContextRepeatedParticipantFilterIsConjunctive.
+func TestExploreContextRepeatedDomainFilterIsConjunctive(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	ctx, err := exploreContext([]ExploreFilter{
+		{Dimension: exploreFilterDomain, Values: []string{"a.example"}},
+		{Dimension: exploreFilterDomain, Values: []string{"b.example"}},
+	})
+	require.NoError(err)
+	assert.Equal([]string{"a.example"}, ctx.Domains, "the first occurrence stays the primary group")
+	assert.Equal([][]string{{"b.example"}}, ctx.AdditionalDomainGroups, "later occurrences append conjunctive groups")
+}
+
+// TestExploreContextRejectsRepeatedSingleValuedFilters pins that dimensions
+// with no conjunctive meaning (source, message_type, after, before,
+// deletion) still reject a repeat, unlike participant/domain.
+func TestExploreContextRejectsRepeatedSingleValuedFilters(t *testing.T) {
+	tests := []struct {
+		name    string
+		filters []ExploreFilter
+	}{
+		{name: "source", filters: []ExploreFilter{
+			{Dimension: "source", Values: []string{"1"}}, {Dimension: "source", Values: []string{"2"}},
+		}},
+		{name: exploreFilterMessageType, filters: []ExploreFilter{
+			{Dimension: exploreFilterMessageType, Values: []string{"email"}},
+			{Dimension: exploreFilterMessageType, Values: []string{"sms"}},
+		}},
+		{name: exploreFilterDeletion, filters: []ExploreFilter{
+			{Dimension: exploreFilterDeletion, Values: []string{"active"}},
+			{Dimension: exploreFilterDeletion, Values: []string{"deleted"}},
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := exploreContext(tt.filters)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "may appear only once")
+		})
+	}
 }
 
 func TestExploreRejectsTamperedCursorsOnEveryPaginatedSurface(t *testing.T) {

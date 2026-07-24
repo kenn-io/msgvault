@@ -5,12 +5,41 @@ import { filtersForGroup, parseGroupSelection } from './group-context';
 describe('group context', () => {
   it.each([
     ['source', '7'],
-    ['participant', '42'],
-    ['domain', 'example.com'],
     ['message_type', 'email']
-  ] as const)('constrains %s details with the canonical scalar filter', (dimension, key) => {
+  ] as const)('constrains %s details by replacing the existing filter', (dimension, key) => {
     expect(filtersForGroup(
       [{ dimension: 'deletion', values: ['active'] }, { dimension, values: ['old'] }],
+      dimension,
+      key
+    )).toEqual([
+      { dimension: 'deletion', values: ['active'] },
+      { dimension, values: [key] }
+    ]);
+  });
+
+  it.each([
+    ['participant', '42'],
+    ['domain', 'example.com']
+  ] as const)('appends a %s drill-down instead of replacing the existing filter', (dimension, key) => {
+    // Drilling into a co-participant/domain group (B) under an existing
+    // filter (A) must intersect (A∩B), not widen the scope by discarding A.
+    expect(filtersForGroup(
+      [{ dimension: 'deletion', values: ['active'] }, { dimension, values: ['old'] }],
+      dimension,
+      key
+    )).toEqual([
+      { dimension: 'deletion', values: ['active'] },
+      { dimension, values: ['old'] },
+      { dimension, values: [key] }
+    ]);
+  });
+
+  it.each([
+    ['participant', '42'],
+    ['domain', 'example.com']
+  ] as const)('does not duplicate an identical %s group filter already present', (dimension, key) => {
+    expect(filtersForGroup(
+      [{ dimension: 'deletion', values: ['active'] }, { dimension, values: [key] }],
       dimension,
       key
     )).toEqual([

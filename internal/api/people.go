@@ -410,7 +410,7 @@ func (s *Server) handlePersonTimeline(w http.ResponseWriter, r *http.Request) {
 	for i, member := range members {
 		values[i] = strconv.FormatInt(member, 10)
 	}
-	s.forwardIdentityTimeline(w, r, ExploreFilter{Dimension: "participant", Values: values})
+	s.forwardIdentityTimeline(w, r, ExploreFilter{Dimension: exploreFilterParticipant, Values: values})
 }
 
 func (s *Server) handleDomainTimeline(w http.ResponseWriter, r *http.Request) {
@@ -418,7 +418,7 @@ func (s *Server) handleDomainTimeline(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	s.forwardIdentityTimeline(w, r, ExploreFilter{Dimension: "domain", Values: []string{domain}})
+	s.forwardIdentityTimeline(w, r, ExploreFilter{Dimension: exploreFilterDomain, Values: []string{domain}})
 }
 
 func (s *Server) forwardIdentityTimeline(w http.ResponseWriter, r *http.Request, exact ExploreFilter) {

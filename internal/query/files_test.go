@@ -107,7 +107,7 @@ func TestSearchFilesUsesStableDateNameAndSizeSorts(t *testing.T) {
 		sort      SortSpec
 		wantFirst int64
 	}{
-		{name: "date", sort: SortSpec{Field: "occurred_at", Direction: "desc"}, wantFirst: 51},
+		{name: "date", sort: SortSpec{Field: sortFieldOccurredAt, Direction: "desc"}, wantFirst: 51},
 		{name: "name", sort: SortSpec{Field: "filename", Direction: "asc"}, wantFirst: 53},
 		{name: "size", sort: SortSpec{Field: "size", Direction: "asc"}, wantFirst: 53},
 	}
@@ -177,7 +177,7 @@ func TestGroupFilesUsesExactFilteredFilePopulation(t *testing.T) {
 
 	files, err := engine.SearchFiles(context.Background(), FileSearchRequest{
 		Explore: request.Explore, FilenameQuery: request.FilenameQuery, MIMEFamilies: request.MIMEFamilies,
-		Sort: SortSpec{Field: "occurred_at", Direction: "desc"}, Page: PageSpec{Limit: 10},
+		Sort: SortSpec{Field: sortFieldOccurredAt, Direction: "desc"}, Page: PageSpec{Limit: 10},
 	})
 	requirements.NoError(err)
 	assertions.Equal(files.TotalCount, grouped.Rows[0].Count, "group count must equal filtered Files rows")
@@ -220,7 +220,7 @@ func TestGroupFilesMessageTypeCollapsesLegacyRowsIntoEmail(t *testing.T) {
 
 	drilled, err := engine.SearchFiles(context.Background(), FileSearchRequest{
 		Explore: ExploreRequest{Context: Context{MessageTypes: []string{messageTypeEmail}}},
-		Sort:    SortSpec{Field: "occurred_at", Direction: "desc"}, Page: PageSpec{Limit: 10},
+		Sort:    SortSpec{Field: sortFieldOccurredAt, Direction: "desc"}, Page: PageSpec{Limit: 10},
 	})
 	requirements.NoError(err)
 	assertions.Equal(result.Rows[0].Count, drilled.TotalCount, "drill-down file filter must reproduce the group count")
@@ -319,7 +319,7 @@ func TestSearchFilesParticipantFilterMatchesLinkedAliases(t *testing.T) {
 
 	byCanonical, err := engine.SearchFiles(context.Background(), FileSearchRequest{
 		Explore: ExploreRequest{Context: Context{ParticipantIDs: []int64{alice}}},
-		Sort:    SortSpec{Field: "occurred_at", Direction: "desc"}, Page: PageSpec{Limit: 10},
+		Sort:    SortSpec{Field: sortFieldOccurredAt, Direction: "desc"}, Page: PageSpec{Limit: 10},
 	})
 	requirements.NoError(err)
 	requirements.Len(byCanonical.Files, 2, "canonical-ID filter must include alias-owned files")
@@ -328,10 +328,47 @@ func TestSearchFilesParticipantFilterMatchesLinkedAliases(t *testing.T) {
 
 	byAlias, err := engine.SearchFiles(context.Background(), FileSearchRequest{
 		Explore: ExploreRequest{Context: Context{ParticipantIDs: []int64{alias}}},
-		Sort:    SortSpec{Field: "occurred_at", Direction: "desc"}, Page: PageSpec{Limit: 10},
+		Sort:    SortSpec{Field: sortFieldOccurredAt, Direction: "desc"}, Page: PageSpec{Limit: 10},
 	})
 	requirements.NoError(err)
 	assertions.Len(byAlias.Files, 2, "a member ID widens to its whole cluster")
+}
+
+// TestSearchFilesAdditionalParticipantGroupIntersects proves the files
+// endpoint honors a conjunctive drill-down (A∩B) rather than replacing the
+// base participant filter with the drilled-into group.
+func TestSearchFilesAdditionalParticipantGroupIntersects(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	b := NewTestDataBuilder(t)
+	source := b.AddSource("archive@example.com")
+	alice := b.AddParticipant("alice@example.com", "example.com", "Alice")
+	bob := b.AddParticipant("bob@example.com", "example.com", "Bob")
+
+	onlyAlice := b.AddMessage(MessageOpt{SourceID: source,
+		SentAt: time.Date(2026, 7, 1, 10, 0, 0, 0, time.UTC)})
+	b.AddTo(onlyAlice, alice, "")
+	b.AddAttachmentWithMIME(401, onlyAlice, 10, "alice.pdf", "application/pdf")
+	onlyBob := b.AddMessage(MessageOpt{SourceID: source,
+		SentAt: time.Date(2026, 7, 2, 10, 0, 0, 0, time.UTC)})
+	b.AddTo(onlyBob, bob, "")
+	b.AddAttachmentWithMIME(402, onlyBob, 10, "bob.pdf", "application/pdf")
+	both := b.AddMessage(MessageOpt{SourceID: source,
+		SentAt: time.Date(2026, 7, 3, 10, 0, 0, 0, time.UTC)})
+	b.AddTo(both, alice, "")
+	b.AddCc(both, bob, "")
+	b.AddAttachmentWithMIME(403, both, 10, "both.pdf", "application/pdf")
+	engine := b.BuildEngine()
+
+	result, err := engine.SearchFiles(context.Background(), FileSearchRequest{
+		Explore: ExploreRequest{Context: Context{
+			ParticipantIDs: []int64{alice}, AdditionalParticipantGroups: [][]int64{{bob}},
+		}},
+		Sort: SortSpec{Field: sortFieldOccurredAt, Direction: "desc"}, Page: PageSpec{Limit: 10},
+	})
+	requirements.NoError(err)
+	requirements.Len(result.Files, 1, "only the file on the entry involving both Alice and Bob must match")
+	assertions.Equal(int64(403), result.Files[0].ID)
 }
 
 func TestGroupFilesNamesUnavailableCache(t *testing.T) {

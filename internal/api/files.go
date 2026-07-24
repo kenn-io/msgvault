@@ -260,7 +260,7 @@ func (s *Server) handleSearchPersonFiles(w http.ResponseWriter, r *http.Request)
 	for i, member := range members {
 		values[i] = strconv.FormatInt(member, 10)
 	}
-	scope := ExploreFilter{Dimension: "participant", Values: values}
+	scope := ExploreFilter{Dimension: exploreFilterParticipant, Values: values}
 	s.handleSearchFilesWithScope(w, r, &scope)
 }
 
@@ -269,7 +269,7 @@ func (s *Server) handleSearchDomainFiles(w http.ResponseWriter, r *http.Request)
 	if !ok {
 		return
 	}
-	scope := ExploreFilter{Dimension: "domain", Values: []string{domain}}
+	scope := ExploreFilter{Dimension: exploreFilterDomain, Values: []string{domain}}
 	s.handleSearchFilesWithScope(w, r, &scope)
 }
 

@@ -808,3 +808,122 @@ func TestExploreCoverageParticipantFilterMatchesExploreAcrossClusters(t *testing
 	assert.ElementsMatch(coverageIDs, exploreIDs,
 		"coverage and Explore must resolve the same message set for the same filter")
 }
+
+// TestExploreAdditionalParticipantGroupsIntersectRatherThanUnion proves that
+// drilling a co-participant group (B) under an existing participant filter
+// (A) narrows to entries involving BOTH A and B, instead of widening to
+// every entry that involves either.
+func TestExploreAdditionalParticipantGroupsIntersectRatherThanUnion(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	b := NewTestDataBuilder(t)
+	source := b.AddSource("archive@example.com")
+	alice := b.AddParticipant("alice@example.com", "example.com", "Alice")
+	bob := b.AddParticipant("bob@example.com", "example.com", "Bob")
+	carol := b.AddParticipant("carol@example.com", "example.com", "Carol")
+
+	when := time.Date(2026, 7, 12, 9, 0, 0, 0, time.UTC)
+	onlyAlice := b.AddMessage(MessageOpt{SourceID: source, MessageType: "email", SentAt: when})
+	b.AddFrom(onlyAlice, alice, "Alice")
+	b.AddTo(onlyAlice, carol, "Carol")
+	onlyBob := b.AddMessage(MessageOpt{SourceID: source, MessageType: "email", SentAt: when.Add(time.Hour)})
+	b.AddFrom(onlyBob, bob, "Bob")
+	b.AddTo(onlyBob, carol, "Carol")
+	both := b.AddMessage(MessageOpt{SourceID: source, MessageType: "email", SentAt: when.Add(2 * time.Hour)})
+	b.AddFrom(both, alice, "Alice")
+	b.AddTo(both, bob, "Bob")
+	engine := b.BuildEngine()
+	ctx := context.Background()
+
+	response, err := engine.Explore(ctx, ExploreRequest{
+		Context: Context{ParticipantIDs: []int64{alice}, AdditionalParticipantGroups: [][]int64{{bob}}},
+		Page:    PageSpec{Limit: 10},
+	})
+	require.NoError(err)
+	require.Len(response.Rows, 1, "only the entry involving both Alice and Bob must match the conjunction")
+	require.NotNil(response.Rows[0].AnchorMessageID)
+	assert.Equal(both, *response.Rows[0].AnchorMessageID)
+	assert.Equal(int64(1), response.TotalCount)
+
+	aliceOnly, err := engine.Explore(ctx, ExploreRequest{
+		Context: Context{ParticipantIDs: []int64{alice}}, Page: PageSpec{Limit: 10},
+	})
+	require.NoError(err)
+	assert.Len(aliceOnly.Rows, 2, "sanity check: the base Alice filter alone matches both Alice entries")
+}
+
+// TestExploreAdditionalDomainGroupsIntersectRatherThanUnion is the domain
+// analogue of TestExploreAdditionalParticipantGroupsIntersectRatherThanUnion.
+func TestExploreAdditionalDomainGroupsIntersectRatherThanUnion(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	b := NewTestDataBuilder(t)
+	source := b.AddSource("archive@example.com")
+	alice := b.AddParticipant("alice@domain-a.example", "domain-a.example", "Alice")
+	bob := b.AddParticipant("bob@domain-b.example", "domain-b.example", "Bob")
+	carol := b.AddParticipant("carol@domain-c.example", "domain-c.example", "Carol")
+
+	when := time.Date(2026, 7, 12, 9, 0, 0, 0, time.UTC)
+	onlyA := b.AddMessage(MessageOpt{SourceID: source, MessageType: "email", SentAt: when})
+	b.AddFrom(onlyA, alice, "Alice")
+	b.AddTo(onlyA, carol, "Carol")
+	onlyB := b.AddMessage(MessageOpt{SourceID: source, MessageType: "email", SentAt: when.Add(time.Hour)})
+	b.AddFrom(onlyB, bob, "Bob")
+	b.AddTo(onlyB, carol, "Carol")
+	both := b.AddMessage(MessageOpt{SourceID: source, MessageType: "email", SentAt: when.Add(2 * time.Hour)})
+	b.AddFrom(both, alice, "Alice")
+	b.AddTo(both, bob, "Bob")
+	engine := b.BuildEngine()
+	ctx := context.Background()
+
+	response, err := engine.Explore(ctx, ExploreRequest{
+		Context: Context{
+			Domains:                []string{"domain-a.example"},
+			AdditionalDomainGroups: [][]string{{"domain-b.example"}},
+		},
+		Page: PageSpec{Limit: 10},
+	})
+	require.NoError(err)
+	require.Len(response.Rows, 1, "only the entry touching both domains must match the conjunction")
+	require.NotNil(response.Rows[0].AnchorMessageID)
+	assert.Equal(both, *response.Rows[0].AnchorMessageID)
+}
+
+// TestExploreAdditionalParticipantGroupExpandsThroughIdentityClusters proves
+// that a conjunctive drill-down group is identity-cluster expanded exactly
+// like the primary participant filter: a non-canonical alias in the
+// additional group still matches entries recorded under its canonical
+// identity.
+func TestExploreAdditionalParticipantGroupExpandsThroughIdentityClusters(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	b := NewTestDataBuilder(t)
+	source := b.AddSource("archive@example.com")
+	alice := b.AddParticipant("alice@example.com", "example.com", "Alice")
+	bobCanonical := b.AddParticipant("bob@example.com", "example.com", "Bob")
+	bobAlias := b.AddParticipant("bob@work.example", "work.example", "Bob (Work)")
+	b.LinkCluster(bobCanonical, bobAlias)
+	carol := b.AddParticipant("carol@example.com", "example.com", "Carol")
+
+	when := time.Date(2026, 7, 12, 9, 0, 0, 0, time.UTC)
+	onlyAlice := b.AddMessage(MessageOpt{SourceID: source, MessageType: "email", SentAt: when})
+	b.AddFrom(onlyAlice, alice, "Alice")
+	b.AddTo(onlyAlice, carol, "Carol")
+	// This entry involves Bob's CANONICAL identity, never the alias.
+	aliceAndBobCanonical := b.AddMessage(MessageOpt{SourceID: source, MessageType: "email", SentAt: when.Add(time.Hour)})
+	b.AddFrom(aliceAndBobCanonical, alice, "Alice")
+	b.AddTo(aliceAndBobCanonical, bobCanonical, "Bob")
+	engine := b.BuildEngine()
+	ctx := context.Background()
+
+	// Filtering by Alice AND the alias must still match the entry recorded
+	// against Bob's canonical identity.
+	response, err := engine.Explore(ctx, ExploreRequest{
+		Context: Context{ParticipantIDs: []int64{alice}, AdditionalParticipantGroups: [][]int64{{bobAlias}}},
+		Page:    PageSpec{Limit: 10},
+	})
+	require.NoError(err)
+	require.Len(response.Rows, 1, "the additional group must widen the alias to its whole identity cluster")
+	require.NotNil(response.Rows[0].AnchorMessageID)
+	assert.Equal(aliceAndBobCanonical, *response.Rows[0].AnchorMessageID)
+}

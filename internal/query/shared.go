@@ -35,6 +35,7 @@ const (
 	sortDirectionAsc                = "asc"
 	sortDirectionDesc               = "desc"
 	sortFieldCount                  = "count"
+	sortFieldOccurredAt             = "occurred_at"
 )
 
 // sqlSortDirections maps validated request sort directions to fixed SQL

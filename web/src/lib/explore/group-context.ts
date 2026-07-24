@@ -20,16 +20,14 @@ export function filtersForGroup(
   dimension: ExploreGroupDimension,
   key: string
 ): ExploreFilter[] | undefined {
-  if (
-    dimension === 'source' ||
-    dimension === 'participant' ||
-    dimension === 'domain' ||
-    dimension === 'message_type'
-  ) {
+  if (dimension === 'source' || dimension === 'message_type') {
     return [
       ...filters.filter((filter) => filter.dimension !== dimension),
       { dimension, values: [key] }
     ];
+  }
+  if (dimension === 'participant' || dimension === 'domain') {
+    return appendGroupMembershipFilter(filters, dimension, key);
   }
   if (dimension === 'year' && /^\d{4}$/.test(key)) {
     const year = Number(key);
@@ -46,6 +44,24 @@ export function filtersForGroup(
     );
   }
   return undefined;
+}
+
+// appendGroupMembershipFilter keeps any existing filter(s) on the same
+// dimension (participant/domain) and appends a new one for the drilled-into
+// group, so drilling B under an existing filter on A narrows to A∩B (both
+// filters ANDed by the backend) instead of replacing A with B. An identical
+// filter already present (same dimension, same single value) is not
+// duplicated.
+function appendGroupMembershipFilter(
+  filters: readonly ExploreFilter[],
+  dimension: 'participant' | 'domain',
+  key: string
+): ExploreFilter[] {
+  const alreadyPresent = filters.some(
+    (filter) => filter.dimension === dimension && filter.values.length === 1 && filter.values[0] === key
+  );
+  if (alreadyPresent) return [...filters];
+  return [...filters, { dimension, values: [key] }];
 }
 
 function replaceTimeFilters(

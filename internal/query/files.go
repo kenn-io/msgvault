@@ -326,14 +326,14 @@ func fileGroupExpressions(dimension, clustersGlob string) (groupExpressions, err
 
 func fileSearchOrder(sort SortSpec) (string, error) {
 	if sort.Field == "" {
-		sort = SortSpec{Field: "occurred_at", Direction: sortDirectionDesc}
+		sort = SortSpec{Field: sortFieldOccurredAt, Direction: sortDirectionDesc}
 	}
 	direction, ok := sqlSortDirections[sort.Direction]
 	if !ok {
 		return "", fmt.Errorf("%w: invalid file sort direction %q", ErrInvalidExploreRequest, sort.Direction)
 	}
 	switch sort.Field {
-	case "occurred_at":
+	case sortFieldOccurredAt:
 		return "occurred_at " + direction + ", message_id ASC, attachment_id ASC", nil
 	case "filename":
 		return "lower(filename) " + direction + ", filename " + direction + ", occurred_at DESC, attachment_id ASC", nil

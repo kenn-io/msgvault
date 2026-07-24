@@ -40,6 +40,17 @@ type ExploreFilter struct {
 	Values    []string `json:"values" minItems:"1"`
 }
 
+// Explore filter dimension names, matching ExploreFilter.Dimension's enum tag.
+const (
+	exploreFilterSource      = "source"
+	exploreFilterParticipant = "participant"
+	exploreFilterDomain      = "domain"
+	exploreFilterMessageType = "message_type"
+	exploreFilterAfter       = "after"
+	exploreFilterBefore      = "before"
+	exploreFilterDeletion    = "deletion"
+)
+
 type ExploreSort struct {
 	Field     string `json:"field" enum:"occurred_at"`
 	Direction string `json:"direction" enum:"desc"`
@@ -735,7 +746,7 @@ func canonicalScopedExploreHash(request ExploreHTTPRequest, scope *ExploreFilter
 
 func applyIdentityScope(context *query.Context, scope ExploreFilter) error {
 	switch scope.Dimension {
-	case "participant":
+	case exploreFilterParticipant:
 		// One or more IDs: identity-scoped endpoints pass every member of
 		// the requested participant's cluster so alias-owned activity is in
 		// scope. A base-predicate participant filter narrows the cluster to
@@ -758,7 +769,7 @@ func applyIdentityScope(context *query.Context, scope ExploreFilter) error {
 			}
 		}
 		context.ParticipantIDs = ids
-	case "domain":
+	case exploreFilterDomain:
 		if len(scope.Values) != 1 {
 			return errors.New("domain identity scope requires one exact domain")
 		}
@@ -779,19 +790,27 @@ func applyIdentityScope(context *query.Context, scope ExploreFilter) error {
 	return nil
 }
 
+// exploreContext parses the filter list into a query.Context. Repeated
+// "participant" or "domain" filters are conjunctive (AND): each additional
+// occurrence narrows the entries to those also involving that group, on top
+// of the primary group carried in ParticipantIDs/Domains. Every other
+// dimension is single-valued per request and rejects a repeat.
 func exploreContext(filters []ExploreFilter) (query.Context, error) {
 	var result query.Context
 	seen := map[string]struct{}{}
 	for _, filter := range filters {
-		if _, ok := seen[filter.Dimension]; ok {
-			return result, fmt.Errorf("filter dimension %q may appear only once", filter.Dimension)
+		conjunctive := filter.Dimension == exploreFilterParticipant || filter.Dimension == exploreFilterDomain
+		if !conjunctive {
+			if _, ok := seen[filter.Dimension]; ok {
+				return result, fmt.Errorf("filter dimension %q may appear only once", filter.Dimension)
+			}
+			seen[filter.Dimension] = struct{}{}
 		}
-		seen[filter.Dimension] = struct{}{}
 		if len(filter.Values) == 0 {
 			return result, fmt.Errorf("filter dimension %q requires at least one value", filter.Dimension)
 		}
 		switch filter.Dimension {
-		case "source", "participant":
+		case exploreFilterSource:
 			ids := make([]int64, len(filter.Values))
 			for i, value := range filter.Values {
 				id, err := strconv.ParseInt(value, 10, 64)
@@ -800,16 +819,31 @@ func exploreContext(filters []ExploreFilter) (query.Context, error) {
 				}
 				ids[i] = id
 			}
-			if filter.Dimension == "source" {
-				result.SourceIDs = ids
-			} else {
-				result.ParticipantIDs = ids
+			result.SourceIDs = ids
+		case exploreFilterParticipant:
+			ids := make([]int64, len(filter.Values))
+			for i, value := range filter.Values {
+				id, err := strconv.ParseInt(value, 10, 64)
+				if err != nil || id < 1 {
+					return result, fmt.Errorf("filter dimension %q requires positive integer IDs", filter.Dimension)
+				}
+				ids[i] = id
 			}
-		case "domain":
-			result.Domains = append([]string(nil), filter.Values...)
-		case "message_type":
+			if len(result.ParticipantIDs) == 0 {
+				result.ParticipantIDs = ids
+			} else {
+				result.AdditionalParticipantGroups = append(result.AdditionalParticipantGroups, ids)
+			}
+		case exploreFilterDomain:
+			domains := append([]string(nil), filter.Values...)
+			if len(result.Domains) == 0 {
+				result.Domains = domains
+			} else {
+				result.AdditionalDomainGroups = append(result.AdditionalDomainGroups, domains)
+			}
+		case exploreFilterMessageType:
 			result.MessageTypes = append([]string(nil), filter.Values...)
-		case "after", "before":
+		case exploreFilterAfter, exploreFilterBefore:
 			if len(filter.Values) != 1 {
 				return result, fmt.Errorf("filter dimension %q requires exactly one timestamp", filter.Dimension)
 			}
@@ -817,18 +851,18 @@ func exploreContext(filters []ExploreFilter) (query.Context, error) {
 			if err != nil {
 				return result, fmt.Errorf("filter dimension %q requires an RFC3339 timestamp", filter.Dimension)
 			}
-			if filter.Dimension == "after" {
+			if filter.Dimension == exploreFilterAfter {
 				result.After = &value
 			} else {
 				result.Before = &value
 			}
-		case "deletion":
+		case exploreFilterDeletion:
 			if len(filter.Values) != 1 {
-				return result, errors.New("filter dimension \"deletion\" requires exactly one value")
+				return result, fmt.Errorf("filter dimension %q requires exactly one value", exploreFilterDeletion)
 			}
 			result.Deletion = query.DeletionFilter(filter.Values[0])
 			if result.Deletion != query.DeletionActive && result.Deletion != query.DeletionDeleted && result.Deletion != query.DeletionAny {
-				return result, errors.New("filter dimension \"deletion\" accepts active or deleted")
+				return result, fmt.Errorf("filter dimension %q accepts active or deleted", exploreFilterDeletion)
 			}
 		default:
 			return result, fmt.Errorf("unknown filter dimension %q", filter.Dimension)
@@ -1348,12 +1382,12 @@ func applySemanticDeletionScope(searchMode string, context *query.Context) strin
 func withActiveDeletionFilter(filters []ExploreFilter) []ExploreFilter {
 	result := make([]ExploreFilter, 0, len(filters)+1)
 	for _, filter := range filters {
-		if filter.Dimension != "deletion" {
+		if filter.Dimension != exploreFilterDeletion {
 			result = append(result, filter)
 		}
 	}
 	return append(result, ExploreFilter{
-		Dimension: "deletion", Values: []string{string(query.DeletionActive)},
+		Dimension: exploreFilterDeletion, Values: []string{string(query.DeletionActive)},
 	})
 }
 

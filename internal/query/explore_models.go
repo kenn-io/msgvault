@@ -15,13 +15,25 @@ type ExploreRequest struct {
 
 // Context narrows the archive before logical chat rows are aggregated.
 type Context struct {
-	SourceIDs      []int64        `json:"source_ids,omitempty"`
-	ParticipantIDs []int64        `json:"participant_ids,omitempty"`
-	Domains        []string       `json:"domains,omitempty"`
-	MessageTypes   []string       `json:"message_types,omitempty"`
-	After          *time.Time     `json:"after,omitempty"`
-	Before         *time.Time     `json:"before,omitempty"`
-	Deletion       DeletionFilter `json:"deletion,omitempty"`
+	SourceIDs      []int64  `json:"source_ids,omitempty"`
+	ParticipantIDs []int64  `json:"participant_ids,omitempty"`
+	Domains        []string `json:"domains,omitempty"`
+	// AdditionalParticipantGroups holds extra participant filters beyond the
+	// primary ParticipantIDs group. Each inner slice is OR'd internally (any
+	// member matches) but the groups themselves are AND'd together, and
+	// AND'd with the primary ParticipantIDs group: an entry must involve at
+	// least one participant from every group. This lets a drill-down narrow
+	// an existing participant filter (A) by a second participant/group (B)
+	// to A∩B instead of replacing A with B.
+	AdditionalParticipantGroups [][]int64 `json:"additional_participant_groups,omitempty"`
+	// AdditionalDomainGroups is the domain analogue of
+	// AdditionalParticipantGroups: each inner slice is OR'd internally, the
+	// groups are AND'd together and AND'd with the primary Domains group.
+	AdditionalDomainGroups [][]string     `json:"additional_domain_groups,omitempty"`
+	MessageTypes           []string       `json:"message_types,omitempty"`
+	After                  *time.Time     `json:"after,omitempty"`
+	Before                 *time.Time     `json:"before,omitempty"`
+	Deletion               DeletionFilter `json:"deletion,omitempty"`
 }
 
 type DeletionFilter string

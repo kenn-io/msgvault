@@ -212,9 +212,33 @@ func exploreGroupExpressions(dimension, clustersGlob string) (groupExpressions, 
 // unknown) IDs pass through unchanged, so archives without identity links
 // keep their exact pre-cluster filter semantics.
 func (e *DuckDBEngine) expandParticipantFilterClusters(ctx context.Context, explore ExploreRequest) (ExploreRequest, error) {
-	ids := explore.Context.ParticipantIDs
+	expanded, err := e.expandParticipantClusterMembers(ctx, explore.Context.ParticipantIDs)
+	if err != nil {
+		return explore, err
+	}
+	explore.Context.ParticipantIDs = expanded
+	// AdditionalParticipantGroups carries conjunctive drill-down groups (see
+	// query.Context doc comment); each group gets the same identity-cluster
+	// expansion as the primary group so a conjunctive filter on a
+	// non-canonical alias still matches entries recorded under its
+	// canonical identity or other linked aliases.
+	for i, group := range explore.Context.AdditionalParticipantGroups {
+		expandedGroup, err := e.expandParticipantClusterMembers(ctx, group)
+		if err != nil {
+			return explore, err
+		}
+		explore.Context.AdditionalParticipantGroups[i] = expandedGroup
+	}
+	return explore, nil
+}
+
+// expandParticipantClusterMembers widens a set of participant IDs to every
+// member of each requested ID's identity cluster (see
+// expandParticipantFilterClusters). An empty input returns nil without
+// querying the cache.
+func (e *DuckDBEngine) expandParticipantClusterMembers(ctx context.Context, ids []int64) ([]int64, error) {
 	if len(ids) == 0 {
-		return explore, nil
+		return nil, nil
 	}
 	placeholders := make([]string, len(ids))
 	args := make([]any, len(ids))
@@ -241,22 +265,21 @@ SELECT DISTINCT member_id FROM (
 ORDER BY member_id`, e.parquetPath(datasetParticipantClusters), strings.Join(placeholders, ","))
 	rows, err := e.db.QueryContext(ctx, queryText, args...)
 	if err != nil {
-		return explore, fmt.Errorf("expand participant filter clusters: %w", err)
+		return nil, fmt.Errorf("expand participant filter clusters: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
 	members := make([]int64, 0, len(ids))
 	for rows.Next() {
 		var member int64
 		if err := rows.Scan(&member); err != nil {
-			return explore, fmt.Errorf("scan participant cluster member: %w", err)
+			return nil, fmt.Errorf("scan participant cluster member: %w", err)
 		}
 		members = append(members, member)
 	}
 	if err := rows.Err(); err != nil {
-		return explore, fmt.Errorf("iterate participant cluster members: %w", err)
+		return nil, fmt.Errorf("iterate participant cluster members: %w", err)
 	}
-	explore.Context.ParticipantIDs = members
-	return explore, nil
+	return members, nil
 }
 
 func exploreGroupOrder(sort SortSpec) (string, error) {
