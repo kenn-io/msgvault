@@ -50,7 +50,7 @@ test('archive management workspaces preserve reviewed authority and daemon job b
       ...(active ? { sync_unavailable_reason: 'sync_already_running' } : {})
     }] } });
   });
-  await page.route('**/api/v1/sync/archive%40example.com', (route) => {
+  await page.route('**/api/v1/sync/archive%40example.com**', (route) => {
     sourceRequests.push({ method: route.request().method(), accept: route.request().headers().accept ?? null });
     syncStarted = true;
     return route.fulfill({ status: 202, json: { status: 'accepted', message: 'started' } });
