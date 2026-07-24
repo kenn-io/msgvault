@@ -48,7 +48,6 @@ if [[ -z "$python_bin" ]]; then
   fi
 fi
 "$python_bin" docs/scripts/check_markdown_sources.py
-"$python_bin" docs/scripts/selftest_check_built_site.py
 
 if ! command -v rg >/dev/null 2>&1; then
   printf 'rg not found; cannot validate docs media references\n' >&2
@@ -97,5 +96,6 @@ fi
   cd docs
   uv run --frozen bash ./zensical-docs.sh build
   uv run --frozen python scripts/check_built_site.py
+  uv run --frozen python scripts/selftest_check_built_site.py
   uv run --frozen python scripts/check_vercel_redirects.py
 )
