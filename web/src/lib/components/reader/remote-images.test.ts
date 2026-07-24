@@ -3,6 +3,8 @@ import { describe, expect, it, vi } from 'vitest';
 import { createAPIClient } from '../../api/client';
 import {
   MAX_ARCHIVED_REMOTE_IMAGE_BYTES,
+  MAX_ARCHIVED_REMOTE_IMAGE_OCCURRENCES,
+  MAX_ARCHIVED_REMOTE_IMAGE_SERIALIZED_BYTES,
   MAX_ARCHIVED_REMOTE_IMAGE_TOTAL_BYTES,
   MAX_ARCHIVED_REMOTE_IMAGE_URLS,
   resolveArchivedRemoteImages
@@ -30,6 +32,8 @@ describe('resolveArchivedRemoteImages', () => {
     expect(MAX_ARCHIVED_REMOTE_IMAGE_URLS).toBe(64);
     expect(MAX_ARCHIVED_REMOTE_IMAGE_BYTES).toBe(10 * 1024 * 1024);
     expect(MAX_ARCHIVED_REMOTE_IMAGE_TOTAL_BYTES).toBe(30 * 1024 * 1024);
+    expect(MAX_ARCHIVED_REMOTE_IMAGE_OCCURRENCES).toBe(128);
+    expect(MAX_ARCHIVED_REMOTE_IMAGE_SERIALIZED_BYTES).toBe(36 * 1024 * 1024);
   });
 
   it('fetches each consented URL through the daemon proxy and embeds data: images', async () => {
@@ -79,6 +83,45 @@ describe('resolveArchivedRemoteImages', () => {
 
     expect(fetchFn).toHaveBeenCalledOnce();
     expect(parse(html).querySelectorAll('img')).toHaveLength(2);
+  });
+
+  it('caps published occurrences of one image, degrading the excess to placeholders', async () => {
+    const fetchFn = vi.fn<typeof fetch>(async () => pngResponse(16));
+
+    const html = await resolveArchivedRemoteImages({
+      html: fixture(['One', 'Two', 'Three']),
+      remoteImages: Array.from({ length: 3 }, () => 'https://images.example/pixel.png'),
+      client: createAPIClient(fetchFn),
+      signal: new AbortController().signal,
+      publicationLimits: { occurrences: 2 }
+    });
+
+    expect(fetchFn).toHaveBeenCalledOnce();
+    const output = parse(html);
+    expect(output.querySelectorAll('img')).toHaveLength(2);
+    expect(output.querySelector('[data-archived-image-caption]')?.textContent)
+      .toBe('Remote image unavailable: Three');
+    expect(html).not.toContain('images.example');
+  });
+
+  it('caps cumulative serialized data-URL bytes across occurrences', async () => {
+    const fetchFn = vi.fn<typeof fetch>(async () => pngResponse(16));
+    // One 16-byte PNG serializes to a data URL of ~44 chars; a budget that
+    // admits one occurrence but not two keeps the srcdoc bounded.
+    const oneDataURLBudget = 'data:image/png;base64,'.length + Math.ceil(16 / 3) * 4 + 4;
+
+    const html = await resolveArchivedRemoteImages({
+      html: fixture(['One', 'Two']),
+      remoteImages: ['https://images.example/pixel.png', 'https://images.example/pixel.png'],
+      client: createAPIClient(fetchFn),
+      signal: new AbortController().signal,
+      publicationLimits: { dataURLBytes: oneDataURLBudget }
+    });
+
+    const output = parse(html);
+    expect(output.querySelectorAll('img')).toHaveLength(1);
+    expect(output.querySelector('[data-archived-image-caption]')?.textContent)
+      .toBe('Remote image unavailable: Two');
   });
 
   it.each([

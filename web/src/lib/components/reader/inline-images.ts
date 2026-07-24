@@ -55,7 +55,7 @@ function normalizedCID(value: string): string {
   return cid;
 }
 
-function hardBoundedLimit(value: number | undefined, hardLimit: number): number {
+export function hardBoundedLimit(value: number | undefined, hardLimit: number): number {
   if (value === undefined) return hardLimit;
   if (!Number.isFinite(value) || value <= 0) return 0;
   return Math.min(Math.floor(value), hardLimit);

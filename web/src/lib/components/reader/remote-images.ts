@@ -4,6 +4,7 @@ import {
   abortError,
   ARCHIVED_IMAGE_TYPES,
   bytesToDataURL,
+  hardBoundedLimit,
   readBoundedStream,
   throwIfAborted,
   type DecodedByteBudget
@@ -20,6 +21,13 @@ import {
 export const MAX_ARCHIVED_REMOTE_IMAGE_URLS = 64;
 export const MAX_ARCHIVED_REMOTE_IMAGE_BYTES = 10 * 1024 * 1024;
 export const MAX_ARCHIVED_REMOTE_IMAGE_TOTAL_BYTES = 30 * 1024 * 1024;
+export const MAX_ARCHIVED_REMOTE_IMAGE_OCCURRENCES = 128;
+export const MAX_ARCHIVED_REMOTE_IMAGE_SERIALIZED_BYTES = 36 * 1024 * 1024;
+
+interface RemoteImagePublicationLimits {
+  occurrences?: number;
+  dataURLBytes?: number;
+}
 
 interface RemoteGroup {
   url: string;
@@ -72,6 +80,7 @@ export async function resolveArchivedRemoteImages(options: {
   remoteImages: string[];
   client: APIClient | undefined;
   signal: AbortSignal;
+  publicationLimits?: RemoteImagePublicationLimits;
 }): Promise<string> {
   // The placeholders are URL-free, but the reassembled document may carry
   // data: images from earlier passes — keep the parse inert regardless.
@@ -108,9 +117,26 @@ export async function resolveArchivedRemoteImages(options: {
     }
   }
 
+  const maxPublishedOccurrences = hardBoundedLimit(
+    options.publicationLimits?.occurrences,
+    MAX_ARCHIVED_REMOTE_IMAGE_OCCURRENCES
+  );
+  const maxSerializedBytes = hardBoundedLimit(
+    options.publicationLimits?.dataURLBytes,
+    MAX_ARCHIVED_REMOTE_IMAGE_SERIALIZED_BYTES
+  );
+  let publishedOccurrences = 0;
+  let serializedBytes = 0;
   for (const occurrence of occurrences) {
     const dataURL = occurrence.url ? groups.get(occurrence.url)?.dataURL : undefined;
-    if (dataURL === undefined) {
+    // Data URLs are ASCII, so string length is their exact serialized byte
+    // charge. Occurrence and cumulative caps mirror the inline-image path so
+    // a crafted message cannot repeat one fetched image into an unbounded
+    // srcdoc; excess occurrences degrade to the unavailable placeholder.
+    const publishable = dataURL !== undefined &&
+      publishedOccurrences < maxPublishedOccurrences &&
+      serializedBytes + dataURL.length <= maxSerializedBytes;
+    if (!publishable) {
       occurrence.placeholder.replaceWith(unavailableRemoteImage(occurrence.alt));
       continue;
     }
@@ -118,6 +144,8 @@ export async function resolveArchivedRemoteImages(options: {
     image.alt = occurrence.alt;
     image.src = dataURL;
     occurrence.placeholder.replaceWith(image);
+    publishedOccurrences += 1;
+    serializedBytes += dataURL.length;
   }
   throwIfAborted(options.signal);
   return template.innerHTML;
