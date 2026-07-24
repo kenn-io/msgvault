@@ -1379,6 +1379,14 @@ func (s *Server) sourceStatus(statusStore SourceStatusStore, source *store.Sourc
 			}
 			break
 		}
+		// Non-account sources (synctech-sms, gcal, granola, circleback,
+		// beeper) aren't governed by the account scheduler above; they're
+		// driven by one of the scheduler's generic jobs instead. Only
+		// consult it when the account scheduler didn't already find this
+		// source, so gmail/imap behavior stays byte-identical.
+		if !status.Scheduled {
+			schedulerRunning = s.applyGenericJobStatus(&status, source) || schedulerRunning
+		}
 	}
 	switch {
 	case status.ActiveSync != nil || schedulerRunning:
@@ -1410,6 +1418,31 @@ func (s *Server) sourceStatus(statusStore SourceStatusStore, source *store.Sourc
 	}
 
 	return status, nil
+}
+
+// applyGenericJobStatus populates status.Scheduled/Schedule/SchedulerLastError/
+// NextSyncAt from the scheduler's generic-job state (see
+// SchedulerJobNameForSource) when source's type is driven by one of those
+// jobs rather than the account scheduler. It reports whether that job is
+// currently running (false if no matching job exists).
+func (s *Server) applyGenericJobStatus(status *SourceStatus, source *store.Source) bool {
+	jobName, ok := SchedulerJobNameForSource(source.SourceType, source.Identifier)
+	if !ok {
+		return false
+	}
+	for _, job := range s.scheduler.JobStatus() {
+		if job.Name != jobName {
+			continue
+		}
+		status.Scheduled = true
+		status.Schedule = job.Schedule
+		status.SchedulerLastError = job.LastError
+		if !job.NextRun.IsZero() {
+			status.NextSyncAt = nullableTimePtr(job.NextRun)
+		}
+		return job.Running
+	}
+	return false
 }
 
 func (s *Server) hydrateSyncRunStatus(statusStore SourceStatusStore, status *SyncRunStatus) error {

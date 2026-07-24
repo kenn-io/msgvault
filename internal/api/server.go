@@ -127,10 +127,18 @@ type SyncScheduler interface {
 	AddAccount(email, schedule string) error
 	Status() []AccountStatus
 	IsRunning() bool
+	// JobStatus reports every generic (non-account) scheduled job — the
+	// synctech-sms, gcal, granola, circleback, and beeper sources — so
+	// sourceStatus can surface their scheduled/running/error state via
+	// SchedulerJobNameForSource. See scheduler_jobs.go.
+	JobStatus() []JobStatus
 }
 
 // AccountStatus is an alias for scheduler.AccountStatus — single source of truth.
 type AccountStatus = scheduler.AccountStatus
+
+// JobStatus is an alias for scheduler.JobStatus — single source of truth.
+type JobStatus = scheduler.JobStatus
 
 // AttachmentBlobStore serves attachment bytes by content hash from packed or
 // loose storage. Implemented by the daemon attachment store. Not-found errors satisfy

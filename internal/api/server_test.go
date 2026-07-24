@@ -178,11 +178,12 @@ func testLogger() *slog.Logger {
 
 // mockScheduler implements SyncScheduler for tests.
 type mockScheduler struct {
-	scheduled  map[string]bool
-	running    bool
-	statuses   []AccountStatus
-	triggerFn  func(email string) error
-	addedAccts []string // emails added via AddAccount
+	scheduled   map[string]bool
+	running     bool
+	statuses    []AccountStatus
+	jobStatuses []JobStatus // generic (non-account) job statuses, see JobStatus()
+	triggerFn   func(email string) error
+	addedAccts  []string // emails added via AddAccount
 }
 
 func newMockScheduler() *mockScheduler {
@@ -215,6 +216,10 @@ func (m *mockScheduler) Status() []AccountStatus {
 
 func (m *mockScheduler) IsRunning() bool {
 	return m.running
+}
+
+func (m *mockScheduler) JobStatus() []JobStatus {
+	return m.jobStatuses
 }
 
 // mockStore implements MessageStore for tests.

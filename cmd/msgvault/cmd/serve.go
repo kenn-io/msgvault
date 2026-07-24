@@ -20,10 +20,12 @@ import (
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/cacheops"
+	"go.kenn.io/msgvault/internal/circleback"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/deletion"
 	"go.kenn.io/msgvault/internal/discord"
 	"go.kenn.io/msgvault/internal/gmail"
+	"go.kenn.io/msgvault/internal/granola"
 	"go.kenn.io/msgvault/internal/microsoft"
 	"go.kenn.io/msgvault/internal/oauth"
 	"go.kenn.io/msgvault/internal/query"
@@ -32,6 +34,7 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/sync"
 	"go.kenn.io/msgvault/internal/syncerr"
+	"go.kenn.io/msgvault/internal/synctechsms"
 	"go.kenn.io/msgvault/internal/teams"
 	"golang.org/x/oauth2"
 )
@@ -238,7 +241,15 @@ func runServe(cmd *cobra.Command, args []string) error {
 
 	for _, src := range cfg.ScheduledSynctechSMSSources() {
 		source := src
-		jobName := "synctech-sms:" + source.Name
+		// The job name must match the store identity (OwnerPhone) that
+		// synctechsms.Importer uses for GetOrCreateSource, so
+		// api.SchedulerJobNameForSource can find this job from a source
+		// row. See internal/api/scheduler_jobs.go.
+		jobName, ok := api.SchedulerJobNameForSource(synctechsms.SourceType, source.OwnerPhone)
+		if !ok {
+			logger.Error("no scheduler job mapping for synctech-sms source", "source", source.Name)
+			continue
+		}
 		if err := sched.AddJob(scheduler.Job{
 			Name:     jobName,
 			Schedule: source.Schedule,
@@ -267,7 +278,12 @@ func runServe(cmd *cobra.Command, args []string) error {
 
 	for _, src := range cfg.ScheduledGCalSources() {
 		source := src
-		jobName := "gcal:" + source.Name
+		// The job name is keyed on the normalized account email so it
+		// matches every per-calendar store source's identity
+		// ("<accountEmail>/<calendarID>", see internal/calsync/calsync.go
+		// sourceIdentifier) via api.SchedulerJobNameForSource, even when
+		// the config [[gcal]] entry's Name differs from its Email.
+		jobName := api.GCalJobNameForAccountEmail(normalizeCalendarAccountEmail(source.Email))
 		if err := sched.AddJob(scheduler.Job{
 			Name:     jobName,
 			Schedule: source.Schedule,
@@ -311,7 +327,14 @@ func runServe(cmd *cobra.Command, args []string) error {
 	}
 	for _, src := range cfg.ScheduledGranolaSources() {
 		source := src
-		jobName := "granola:" + source.Identifier
+		// Already matches the store identity (config Identifier ==
+		// GetOrCreateSource identifier); routed through the shared helper
+		// so registration and api.sourceStatus can never drift.
+		jobName, ok := api.SchedulerJobNameForSource(granola.SourceType, source.Identifier)
+		if !ok {
+			logger.Error("no scheduler job mapping for granola source", "source", source.Identifier)
+			continue
+		}
 		if err := sched.AddJob(scheduler.Job{
 			Name:     jobName,
 			Schedule: source.Schedule,
@@ -333,7 +356,14 @@ func runServe(cmd *cobra.Command, args []string) error {
 	}
 	for _, src := range cfg.ScheduledCirclebackSources() {
 		source := src
-		jobName := "circleback:" + source.Identifier
+		// Already matches the store identity (config Identifier ==
+		// GetOrCreateSource identifier); routed through the shared helper
+		// so registration and api.sourceStatus can never drift.
+		jobName, ok := api.SchedulerJobNameForSource(circleback.SourceType, source.Identifier)
+		if !ok {
+			logger.Error("no scheduler job mapping for circleback source", "source", source.Identifier)
+			continue
+		}
 		if err := sched.AddJob(scheduler.Job{
 			Name:     jobName,
 			Schedule: source.Schedule,
@@ -1339,6 +1369,10 @@ func (a *schedulerAdapter) IsRunning() bool {
 
 func (a *schedulerAdapter) Status() []api.AccountStatus {
 	return a.scheduler.Status()
+}
+
+func (a *schedulerAdapter) JobStatus() []api.JobStatus {
+	return a.scheduler.JobStatus()
 }
 
 // runScheduledSync performs a sync for a scheduled account. It resolves

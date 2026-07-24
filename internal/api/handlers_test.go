@@ -30,16 +30,19 @@ import (
 	"go.kenn.io/kit/packstore"
 	"go.kenn.io/msgvault/internal/attachmentstore"
 	"go.kenn.io/msgvault/internal/cacheops"
+	"go.kenn.io/msgvault/internal/circleback"
 	"go.kenn.io/msgvault/internal/clirun"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/deletion"
 	"go.kenn.io/msgvault/internal/gcal"
+	"go.kenn.io/msgvault/internal/granola"
 	"go.kenn.io/msgvault/internal/opserr"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/query/querytest"
 	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/synctechsms"
 	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 	"go.kenn.io/msgvault/internal/vector"
@@ -3178,6 +3181,172 @@ func TestHandleSourceStatusNoSyncRuns(t *testing.T) {
 	assert.Nil(resp.Sources[0].LastSuccessfulSync, "LastSuccessfulSync")
 	assert.False(resp.Sources[0].CanSync)
 	assert.Equal("scheduler_unavailable", resp.Sources[0].SyncUnavailableReason)
+}
+
+// TestHandleSourceStatusGenericJobScheduled is a regression test for a MEDIUM
+// finding: sourceStatus only consulted the account scheduler, so non-account
+// sources (synctech-sms, gcal, granola, circleback, beeper) always reported
+// scheduled=false / sync_not_configured even when a generic scheduler job
+// governed them. A granola source whose matching generic job is idle and
+// scheduled must report Scheduled=true, surface the job's schedule/next-run,
+// and set CanSync=true.
+func TestHandleSourceStatusGenericJobScheduled(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	sched := newMockScheduler()
+	sched.jobStatuses = []JobStatus{{
+		Name:     "granola:acct-1",
+		Schedule: "0 */6 * * *",
+		NextRun:  time.Date(2026, 7, 20, 0, 0, 0, 0, time.UTC),
+	}}
+	source, err := st.GetOrCreateSource(granola.SourceType, "acct-1")
+	require.NoError(err, "GetOrCreateSource granola")
+	srv := NewServer(&config.Config{Server: config.ServerConfig{APIPort: 8080}}, st, sched, testLogger())
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/sources/status", nil)
+	w := httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+
+	require.Equal(http.StatusOK, w.Code, w.Body.String())
+	var resp SourceStatusResponse
+	require.NoError(json.NewDecoder(w.Body).Decode(&resp), "decode response")
+	require.Len(resp.Sources, 1, "sources")
+
+	got := resp.Sources[0]
+	assert.Equal(source.ID, got.ID, "ID")
+	assert.True(got.Scheduled, "Scheduled")
+	assert.Equal("0 */6 * * *", got.Schedule, "Schedule")
+	require.NotNil(got.NextSyncAt, "NextSyncAt")
+	assert.Equal("2026-07-20T00:00:00Z", *got.NextSyncAt, "NextSyncAt")
+	assert.True(got.CanSync, "idle scheduled generic-job source can sync")
+	assert.Empty(got.SyncUnavailableReason, "SyncUnavailableReason")
+}
+
+// TestHandleSourceStatusGenericJobRunning covers the running branch of the
+// same generic-job path: a running matching job must report
+// sync_already_running and CanSync=false, exactly like a running account job.
+func TestHandleSourceStatusGenericJobRunning(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	sched := newMockScheduler()
+	sched.jobStatuses = []JobStatus{{
+		Name:      "synctech-sms:+15551234567",
+		Schedule:  "*/30 * * * *",
+		Running:   true,
+		LastError: "previous timeout",
+	}}
+	_, err := st.GetOrCreateSource(synctechsms.SourceType, "+15551234567")
+	require.NoError(err, "GetOrCreateSource synctech-sms")
+	srv := NewServer(&config.Config{Server: config.ServerConfig{APIPort: 8080}}, st, sched, testLogger())
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/sources/status", nil)
+	w := httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+
+	require.Equal(http.StatusOK, w.Code, w.Body.String())
+	var resp SourceStatusResponse
+	require.NoError(json.NewDecoder(w.Body).Decode(&resp), "decode response")
+	require.Len(resp.Sources, 1, "sources")
+
+	got := resp.Sources[0]
+	assert.True(got.Scheduled, "Scheduled")
+	assert.Equal("previous timeout", got.SchedulerLastError, "SchedulerLastError")
+	assert.False(got.CanSync, "a running generic job cannot start a conflicting sync")
+	assert.Equal("sync_already_running", got.SyncUnavailableReason)
+}
+
+// TestHandleSourceStatusGenericJobUnscheduled asserts an unscheduled
+// generic-job-type source (no matching job registered) still reports
+// sync_not_configured, rather than falling through to some other reason.
+func TestHandleSourceStatusGenericJobUnscheduled(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	sched := newMockScheduler() // no jobStatuses configured
+	_, err := st.GetOrCreateSource(circleback.SourceType, "acct-2")
+	require.NoError(err, "GetOrCreateSource circleback")
+	srv := NewServer(&config.Config{Server: config.ServerConfig{APIPort: 8080}}, st, sched, testLogger())
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/sources/status", nil)
+	w := httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+
+	require.Equal(http.StatusOK, w.Code, w.Body.String())
+	var resp SourceStatusResponse
+	require.NoError(json.NewDecoder(w.Body).Decode(&resp), "decode response")
+	require.Len(resp.Sources, 1, "sources")
+
+	got := resp.Sources[0]
+	assert.False(got.Scheduled, "Scheduled")
+	assert.False(got.CanSync, "CanSync")
+	assert.Equal("sync_not_configured", got.SyncUnavailableReason)
+}
+
+// TestHandleSourceStatusBeeperSharesSingleJob covers the beeper N:1 fan-in:
+// every beeper store source (one per beeper AccountID) is driven by the same
+// singleton "beeper" scheduler job, so two beeper sources must both surface
+// that one job's scheduled/running state.
+func TestHandleSourceStatusBeeperSharesSingleJob(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	sched := newMockScheduler()
+	sched.jobStatuses = []JobStatus{{
+		Name:     BeeperJobName,
+		Schedule: "*/30 * * * *",
+	}}
+	_, err := st.GetOrCreateSource("beeper", "beeper-account-1")
+	require.NoError(err, "GetOrCreateSource beeper account 1")
+	_, err = st.GetOrCreateSource("beeper", "beeper-account-2")
+	require.NoError(err, "GetOrCreateSource beeper account 2")
+	srv := NewServer(&config.Config{Server: config.ServerConfig{APIPort: 8080}}, st, sched, testLogger())
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/sources/status?source_type=beeper", nil)
+	w := httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+
+	require.Equal(http.StatusOK, w.Code, w.Body.String())
+	var resp SourceStatusResponse
+	require.NoError(json.NewDecoder(w.Body).Decode(&resp), "decode response")
+	require.Len(resp.Sources, 2, "sources")
+
+	for _, got := range resp.Sources {
+		assert.True(got.Scheduled, "Scheduled for %s", got.Identifier)
+		assert.Equal("*/30 * * * *", got.Schedule, "Schedule for %s", got.Identifier)
+		assert.True(got.CanSync, "CanSync for %s", got.Identifier)
+	}
+}
+
+// TestSchedulerJobNameForSource covers every generic-job source type plus an
+// account-scheduler type (gmail), which must report ok=false since it's
+// governed by the account scheduler, not a generic job.
+func TestSchedulerJobNameForSource(t *testing.T) {
+	assert := assert.New(t)
+
+	cases := []struct {
+		name       string
+		sourceType string
+		identifier string
+		wantName   string
+		wantOK     bool
+	}{
+		{"synctech-sms", synctechsms.SourceType, "+15551234567", "synctech-sms:+15551234567", true},
+		{"gcal", gcal.SourceType, "alice@example.com/primary", "gcal:alice@example.com", true},
+		{"gcal no calendar id", gcal.SourceType, "alice@example.com", "", false},
+		{"granola", granola.SourceType, "acct-1", "granola:acct-1", true},
+		{"circleback", circleback.SourceType, "acct-2", "circleback:acct-2", true},
+		{"beeper", "beeper", "beeper-account-1", "beeper", true},
+		{"account scheduler type", "gmail", "alice@example.com", "", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			gotName, gotOK := SchedulerJobNameForSource(tc.sourceType, tc.identifier)
+			assert.Equal(tc.wantOK, gotOK, "ok")
+			assert.Equal(tc.wantName, gotName, "name")
+		})
+	}
 }
 
 func TestHandleGetMessage(t *testing.T) {
