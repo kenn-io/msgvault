@@ -182,20 +182,25 @@
     unlinking = true;
     unlinkError = null;
     try {
+      // The edge set was captured above, and the whole sequence runs to
+      // completion even if the user navigates away mid-loop: stopping after
+      // the current edge would persist a half-split cluster (some aliases
+      // detached, others still merged) with no error anywhere. Navigating
+      // away only makes the outcomes stale for THIS component's state
+      // (which the $effect above already reset for whoever is open now), so
+      // staleness suppresses the UI writes, never the mutations.
       for (const edge of incident) {
         const outcome = await onUnlinkParticipants(edge.participant_a, edge.participant_b);
-        // Navigating away mid-loop means this and every remaining edge's
-        // result belongs to a person that's no longer open — stop touching
-        // this component's state (which the $effect above already reset
-        // for whoever is open now) rather than writing over it.
-        if (currentPersonID() !== id) return;
-        applyOutcome(outcome, 'unlink', edge.participant_a, edge.participant_b);
+        const stale = currentPersonID() !== id;
+        if (!stale) applyOutcome(outcome, 'unlink', edge.participant_a, edge.participant_b);
         if (!outcome.ok) {
-          unlinkError = outcome.message;
+          // A genuine failure still ends the sequence — every call is
+          // idempotent, so re-confirming retries the remaining edges safely.
+          if (!stale) unlinkError = outcome.message;
           return;
         }
       }
-      confirmingParticipantID = null;
+      if (currentPersonID() === id) confirmingParticipantID = null;
     } finally {
       unlinking = false;
     }

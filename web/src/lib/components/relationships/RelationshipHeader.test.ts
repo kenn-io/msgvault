@@ -388,4 +388,39 @@ describe('RelationshipHeader', () => {
 
     expect(screen.queryByRole('alert'), 'a stale failure must not surface on the wrong person').toBeNull();
   });
+
+  it('finishes unlinking every captured edge after navigating away mid-sequence, without stale UI on the new view', async () => {
+    let resolveFirstEdge: ((outcome: LinkOutcome) => void) | undefined;
+    let callCount = 0;
+    const onUnlinkParticipants = vi.fn((): Promise<LinkOutcome> => {
+      callCount += 1;
+      if (callCount === 1) return new Promise<LinkOutcome>((resolve) => { resolveFirstEdge = resolve; });
+      // ok/stale would raise the cache banner if a stale outcome were still
+      // applied to whichever person is showing now.
+      return Promise.resolve({ ok: true, identityRevision: 4, cacheState: 'stale' });
+    });
+    const { rerender } = render(RelationshipHeader, baseProps({ detail: clusteredPerson(), onUnlinkParticipants }));
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Unlink +15550100002' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Unlink' }));
+    await waitFor(() => expect(onUnlinkParticipants).toHaveBeenCalledWith(12, 34));
+    expect(onUnlinkParticipants).toHaveBeenCalledTimes(1);
+
+    // Navigate to a different person while the first edge's unlink call is
+    // still in flight.
+    const otherPerson = { ...clusteredPerson(), id: 200 };
+    await rerender(baseProps({ detail: otherPerson, onUnlinkParticipants }));
+
+    resolveFirstEdge?.({ ok: true, identityRevision: 3, cacheState: 'ready' });
+    // Every captured edge must still be unlinked: stopping after the current
+    // edge would persist a half-split cluster (some aliases detached, others
+    // still merged) with no error anywhere.
+    await waitFor(() => expect(onUnlinkParticipants).toHaveBeenCalledWith(34, 56));
+    expect(onUnlinkParticipants).toHaveBeenCalledTimes(2);
+
+    // Drain the loop's continuation, then confirm the second edge's stale
+    // ok/stale outcome was not applied to person 200's header.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(screen.queryByRole('alert'), 'stale outcome must not raise the banner for person 200').toBeNull();
+  });
 });

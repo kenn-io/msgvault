@@ -81,10 +81,19 @@
     return typeof value === 'object' && value !== null && 'message' in value && typeof value.message === 'string'
       ? value.message : 'Unable to create task.';
   }
+
+  /** Every dismissal path (Cancel, Escape, backdrop, the × button) funnels
+   * through here: while the create request is in flight the dialog must stay
+   * visible until the outcome is known — hiding it would let the task be
+   * created (or fail) invisibly. */
+  function requestClose(): void {
+    if (pending) return;
+    onclose();
+  }
 </script>
 
-<Modal title="Create task" onclose={onclose}>
-  <form onsubmit={(event) => { event.preventDefault(); void create(); }}>
+<Modal title="Create task" onclose={requestClose}>
+  <form aria-busy={pending} onsubmit={(event) => { event.preventDefault(); void create(); }}>
     <p class="project"><span>Project</span><strong>{project}</strong></p>
     <label>Task title<input aria-label="Task title" bind:value={title} autocomplete="off" /></label>
     <label>Description<textarea aria-label="Description" bind:value={description}></textarea></label>
@@ -111,7 +120,7 @@
     </details>
     {#if error}<p role="alert">{error}</p>{/if}
     <div class="actions">
-      <Button surface="soft" label="Cancel" onclick={onclose} />
+      <Button surface="soft" label="Cancel" disabled={pending} onclick={requestClose} />
       <Button type="submit" tone="info" surface="solid" label="Create task" disabled={pending || !title.trim()} />
     </div>
   </form>

@@ -181,6 +181,45 @@ describe('LinkIdentityDialog', () => {
     expect(onConfirm).not.toHaveBeenCalled();
   });
 
+  it('blocks Cancel, Escape, backdrop, and the close button while a confirm is pending', async () => {
+    let resolveConfirm: ((outcome: LinkOutcome) => void) | undefined;
+    const onConfirm = vi.fn(() => new Promise<LinkOutcome>((resolve) => { resolveConfirm = resolve; }));
+    const onClose = vi.fn();
+    renderDialog({ onClose, onConfirm });
+    await fireEvent.input(screen.getByRole('searchbox', { name: 'Search people to link' }), { target: { value: 'B' } });
+    await fireEvent.click(await screen.findByRole('option', { name: /Bob/ }));
+    await fireEvent.click(screen.getByRole('button', { name: 'These are the same person' }));
+    await waitFor(() => expect(onConfirm).toHaveBeenCalledWith(2));
+
+    expect(screen.getByRole('button', { name: 'Cancel' })).toHaveProperty('disabled', true);
+    await fireEvent.keyDown(window, { key: 'Escape' });
+    await fireEvent.pointerDown(document.querySelector('.kit-modal-overlay')!);
+    await fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+    expect(onClose, 'no dismissal path may hide a pending confirm').not.toHaveBeenCalled();
+
+    // Success still closes the dialog itself once the outcome is known.
+    resolveConfirm?.({ ok: true, identityRevision: 4, cacheState: 'ready' });
+    await waitFor(() => expect(onClose).toHaveBeenCalledOnce());
+  });
+
+  it('stays open with the error and re-enabled dismissal after a failed confirm', async () => {
+    let resolveConfirm: ((outcome: LinkOutcome) => void) | undefined;
+    const onConfirm = vi.fn(() => new Promise<LinkOutcome>((resolve) => { resolveConfirm = resolve; }));
+    const onClose = vi.fn();
+    renderDialog({ onClose, onConfirm });
+    await fireEvent.input(screen.getByRole('searchbox', { name: 'Search people to link' }), { target: { value: 'B' } });
+    await fireEvent.click(await screen.findByRole('option', { name: /Bob/ }));
+    await fireEvent.click(screen.getByRole('button', { name: 'These are the same person' }));
+    await waitFor(() => expect(onConfirm).toHaveBeenCalledWith(2));
+
+    resolveConfirm?.({ ok: false, code: 'error', message: 'Request failed (500)' });
+    expect((await screen.findByRole('alert')).textContent).toContain('Request failed (500)');
+    expect(screen.getByRole('button', { name: 'Cancel' })).toHaveProperty('disabled', false);
+
+    await fireEvent.keyDown(window, { key: 'Escape' });
+    expect(onClose).toHaveBeenCalledOnce();
+  });
+
   it('cancels a pending debounced search and aborts an in-flight request when the dialog unmounts', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     try {

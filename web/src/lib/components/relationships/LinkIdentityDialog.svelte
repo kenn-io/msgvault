@@ -131,6 +131,15 @@
     }
   }
 
+  /** Every dismissal path (Cancel, Escape, backdrop, the × button) funnels
+   * through here: while a confirm is in flight the dialog must stay visible
+   * until the outcome is known — hiding it would let the link land (or fail)
+   * invisibly. Same idiom as CreateTaskDialog. */
+  function requestClose(): void {
+    if (confirming) return;
+    onClose();
+  }
+
   function identifiersSummary(row: PersonSummary): string {
     const labels = (row.identifiers ?? []).map((identifier) => identifier.display_value?.trim() || identifier.value);
     return labels.length > 0 ? labels.join(', ') : 'No stored identifiers';
@@ -148,9 +157,9 @@
 <Modal
   title={`Link another identity for ${personLabel}`}
   ariaLabel={`Link another identity for ${personLabel}`}
-  onclose={onClose}
+  onclose={requestClose}
 >
-  <div class="link-identity-dialog">
+  <div class="link-identity-dialog" aria-busy={confirming}>
     <SearchInput
       value={query}
       ariaLabel="Search people to link"
@@ -187,7 +196,7 @@
     {/if}
   </div>
   {#snippet footer()}
-    <Button surface="soft" label="Cancel" onclick={onClose} />
+    <Button surface="soft" label="Cancel" disabled={confirming} onclick={requestClose} />
     <Button
       tone="info"
       surface="solid"
