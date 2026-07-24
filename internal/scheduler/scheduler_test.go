@@ -168,6 +168,66 @@ func TestSchedulerGenericJobStatus(t *testing.T) {
 	assert.Equal("30 4 * * *", status[0].Schedule, "status[0].Schedule")
 }
 
+// TestStartJobIsAsync proves StartJob returns before the job body finishes,
+// unlike TriggerJob which blocks for the job's full duration. This is the
+// property handleTriggerSync depends on to avoid self-deadlocking on the
+// daemon's operation gate: an HTTP handler holding that gate must be able to
+// return (and release the gate) before the job's beginWork tries to acquire
+// it, which only happens if the job runs in its own goroutine.
+func TestStartJobIsAsync(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	started := make(chan struct{})
+	release := make(chan struct{})
+	var ran atomic.Int32
+	s := New(func(context.Context, string) error { return nil })
+	require.NoError(s.AddJob(Job{
+		Name:     "granola:default",
+		Schedule: "0 0 1 1 *",
+		Run: func(context.Context) error {
+			close(started)
+			<-release
+			ran.Add(1)
+			return nil
+		},
+	}), "AddJob")
+
+	returned := make(chan error, 1)
+	go func() { returned <- s.StartJob("granola:default") }()
+
+	select {
+	case err := <-returned:
+		require.NoError(err, "StartJob")
+	case <-time.After(time.Second):
+		require.FailNow("StartJob did not return; it is blocking like TriggerJob")
+	}
+
+	// StartJob returned, but the job body must still be blocked in Run,
+	// proving the return happened before (not because of) job completion.
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		require.FailNow("job never started")
+	}
+	assert.Equal(int32(0), ran.Load(), "job body must still be blocked after StartJob returns")
+
+	status := s.JobStatus()
+	require.Len(status, 1)
+	assert.True(status[0].Running, "job should be recorded as running while blocked")
+	assert.True(s.IsJobScheduled("granola:default"), "job remains scheduled while running")
+
+	// A second StartJob while the first is still running must be a no-op:
+	// no error, and it must not spawn a second concurrent run.
+	require.NoError(s.StartJob("granola:default"), "second StartJob while running")
+
+	close(release)
+	require.Eventually(func() bool {
+		return !s.JobStatus()[0].Running
+	}, time.Second, time.Millisecond, "job finishes after release")
+	assert.Equal(int32(1), ran.Load(), "job body must run exactly once")
+}
+
 func TestStartStop(t *testing.T) {
 	s := New(func(ctx context.Context, email string) error {
 		return nil

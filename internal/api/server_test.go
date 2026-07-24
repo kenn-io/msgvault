@@ -185,6 +185,8 @@ type mockScheduler struct {
 	scheduledJobs map[string]bool // generic job names recognized by IsJobScheduled
 	triggeredJobs []string        // generic job names passed to TriggerJob
 	triggerJobFn  func(name string) error
+	startedJobs   []string // generic job names passed to StartJob
+	startJobFn    func(name string) error
 	triggerFn     func(email string) error
 	addedAccts    []string // emails added via AddAccount
 }
@@ -233,6 +235,14 @@ func (m *mockScheduler) TriggerJob(name string) error {
 	m.triggeredJobs = append(m.triggeredJobs, name)
 	if m.triggerJobFn != nil {
 		return m.triggerJobFn(name)
+	}
+	return nil
+}
+
+func (m *mockScheduler) StartJob(name string) error {
+	m.startedJobs = append(m.startedJobs, name)
+	if m.startJobFn != nil {
+		return m.startJobFn(name)
 	}
 	return nil
 }

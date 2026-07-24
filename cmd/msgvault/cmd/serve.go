@@ -1383,6 +1383,10 @@ func (a *schedulerAdapter) TriggerJob(name string) error {
 	return a.scheduler.TriggerJob(name)
 }
 
+func (a *schedulerAdapter) StartJob(name string) error {
+	return a.scheduler.StartJob(name)
+}
+
 // runScheduledSync performs a sync for a scheduled account. It resolves
 // ALL syncable source rows for the identifier (gmail, imap, teams, discord) and
 // dispatches each in turn. When no source row matches, it falls back to

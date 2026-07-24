@@ -8660,7 +8660,10 @@ export interface operations {
     };
     triggerSync: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Source type; required to trigger a generic (non-account) source */
+                source_type?: string;
+            };
             header?: never;
             path: {
                 /** @description Account email or configured source identifier */

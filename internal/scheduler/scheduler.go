@@ -458,24 +458,66 @@ func (s *Scheduler) IsJobScheduled(name string) bool {
 	return ok
 }
 
+// TriggerJob synchronously reserves and runs the named generic job. It is
+// used by the cron scheduler (which fires jobs from its own goroutine with
+// no gate held) and relies on running to completion before returning so
+// lastRun/lastErr are recorded synchronously.
 func (s *Scheduler) TriggerJob(name string) error {
+	run, ok, err := s.reserveGenericJob(name)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return nil
+	}
+	return s.runJob(name, run)
+}
+
+// StartJob asynchronously reserves and runs the named generic job in a new
+// goroutine, returning as soon as the reservation succeeds. This is used by
+// callers (e.g. an HTTP handler) that may already hold the daemon's
+// operation gate, so the job's gate acquisition must happen after the
+// caller has had a chance to return and release it.
+func (s *Scheduler) StartJob(name string) error {
+	run, ok, err := s.reserveGenericJob(name)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return nil
+	}
+	go func() {
+		_ = s.runJob(name, run)
+	}()
+	return nil
+}
+
+// reserveGenericJob validates and reserves the named generic job under the
+// lock, mirroring TriggerSync's reservation of an account sync. ok is false
+// when the job is already running (a no-op, not an error).
+func (s *Scheduler) reserveGenericJob(name string) (run func(context.Context) error, ok bool, err error) {
 	s.mu.Lock()
-	run := s.genericFuncs[name]
+	defer s.mu.Unlock()
+
+	run = s.genericFuncs[name]
 	if run == nil {
-		s.mu.Unlock()
-		return fmt.Errorf("job %q is not scheduled", name)
+		return nil, false, fmt.Errorf("job %q is not scheduled", name)
 	}
 	if s.stopped {
-		s.mu.Unlock()
-		return errors.New("scheduler is stopped")
+		return nil, false, errors.New("scheduler is stopped")
 	}
 	if s.genericRunning[name] {
-		s.mu.Unlock()
-		return nil
+		return nil, false, nil
 	}
 	s.genericRunning[name] = true
 	s.wg.Add(1)
-	s.mu.Unlock()
+	return run, true, nil
+}
+
+// runJob executes an already-reserved generic job and records the result.
+// The caller must have set genericRunning[name] = true and called
+// s.wg.Add(1) before invoking runJob.
+func (s *Scheduler) runJob(name string, run func(context.Context) error) error {
 	defer s.wg.Done()
 
 	done, ok := s.beginWork()

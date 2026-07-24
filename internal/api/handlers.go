@@ -1366,26 +1366,28 @@ func (s *Server) sourceStatus(statusStore SourceStatusStore, source *store.Sourc
 	}
 	schedulerRunning := false
 	if s.scheduler != nil {
-		status.Scheduled = s.scheduler.IsScheduled(source.Identifier)
-		for _, scheduled := range s.scheduler.Status() {
-			if scheduled.Email != source.Identifier {
-				continue
+		// Dispatch by source type first: generic-job source types
+		// (synctech-sms, gcal, granola, circleback, beeper) are never
+		// governed by the account scheduler, even if their identifier
+		// happens to collide with a scheduled account email. Only fall
+		// back to the account-scheduler path for source types that don't
+		// map to a generic job, so gmail/imap behavior stays byte-identical.
+		if _, ok := SchedulerJobNameForSource(source.SourceType, source.Identifier); ok {
+			schedulerRunning = s.applyGenericJobStatus(&status, source)
+		} else {
+			status.Scheduled = s.scheduler.IsScheduled(source.Identifier)
+			for _, scheduled := range s.scheduler.Status() {
+				if scheduled.Email != source.Identifier {
+					continue
+				}
+				status.Schedule = scheduled.Schedule
+				status.SchedulerLastError = scheduled.LastError
+				schedulerRunning = scheduled.Running
+				if !scheduled.NextRun.IsZero() {
+					status.NextSyncAt = nullableTimePtr(scheduled.NextRun)
+				}
+				break
 			}
-			status.Schedule = scheduled.Schedule
-			status.SchedulerLastError = scheduled.LastError
-			schedulerRunning = scheduled.Running
-			if !scheduled.NextRun.IsZero() {
-				status.NextSyncAt = nullableTimePtr(scheduled.NextRun)
-			}
-			break
-		}
-		// Non-account sources (synctech-sms, gcal, granola, circleback,
-		// beeper) aren't governed by the account scheduler above; they're
-		// driven by one of the scheduler's generic jobs instead. Only
-		// consult it when the account scheduler didn't already find this
-		// source, so gmail/imap behavior stays byte-identical.
-		if !status.Scheduled {
-			schedulerRunning = s.applyGenericJobStatus(&status, source) || schedulerRunning
 		}
 	}
 	switch {
@@ -1523,15 +1525,25 @@ func (s *Server) handleTriggerSync(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "missing_account", "Account email is required")
 		return
 	}
+	sourceType := r.URL.Query().Get("source_type")
 
-	// Account-scheduler sources (gmail, imap, ...) are keyed by email.
-	if s.scheduler.IsScheduled(account) {
-		if err := s.scheduler.TriggerSync(account); err != nil {
-			s.logger.Error("failed to trigger sync", "account", account, "error", err)
+	// Generic (non-account) sources — synctech-sms, gcal, granola, circleback,
+	// beeper — are driven by named generic scheduler jobs. The caller passes
+	// the source type explicitly so this dispatches authoritatively, without
+	// scanning the store for a matching identifier (which could otherwise
+	// collide with a scheduled account email and trigger the wrong sync).
+	if jobName, ok := SchedulerJobNameForSource(sourceType, account); ok {
+		if !s.scheduler.IsJobScheduled(jobName) {
+			writeError(w, http.StatusNotFound, "not_found", "Account is not scheduled: "+account)
+			return
+		}
+		if err := s.scheduler.StartJob(jobName); err != nil {
+			s.logger.Error("failed to trigger generic sync job",
+				"job", jobName, "identifier", account, "error", err)
 			writeError(w, http.StatusConflict, "sync_error", err.Error())
 			return
 		}
-		s.logger.Info("sync triggered via API", "account", account)
+		s.logger.Info("generic sync triggered via API", "job", jobName, "identifier", account)
 		writeJSON(w, http.StatusAccepted, StatusMessageResponse{
 			Status:  "accepted",
 			Message: "Sync started for " + account,
@@ -1539,71 +1551,21 @@ func (s *Server) handleTriggerSync(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Generic (non-account) sources — synctech-sms, gcal, granola, circleback,
-	// beeper — are driven by named generic scheduler jobs. The trigger path
-	// carries only the store identifier, so resolve the source's type to build
-	// its job name via the shared SchedulerJobNameForSource mapping, matching
-	// how sourceStatus reports CanSync for these sources.
-	if s.triggerGenericSync(w, account) {
+	// Account-scheduler sources (gmail, imap, ...) are keyed by email.
+	if !s.scheduler.IsScheduled(account) {
+		writeError(w, http.StatusNotFound, "not_found", "Account is not scheduled: "+account)
 		return
 	}
-
-	writeError(w, http.StatusNotFound, "not_found", "Account is not scheduled: "+account)
-}
-
-// triggerGenericSync triggers the generic scheduler job(s) that drive the store
-// source(s) with the given identifier and writes the HTTP response. It reports
-// whether it handled the request: false means no scheduled generic job governs
-// the identifier (the caller then responds 404), true means it either started
-// the job(s) or already wrote an error. Distinct source types can share an
-// identifier (granola and circleback both default to "default"), but they map
-// to distinct job names, so every matching scheduled job is triggered; multiple
-// sources of one type that share a job (gcal calendars, beeper accounts)
-// collapse to a single trigger.
-func (s *Server) triggerGenericSync(w http.ResponseWriter, identifier string) bool {
-	statusStore, ok := s.store.(SourceStatusStore)
-	if !ok {
-		return false
+	if err := s.scheduler.TriggerSync(account); err != nil {
+		s.logger.Error("failed to trigger sync", "account", account, "error", err)
+		writeError(w, http.StatusConflict, "sync_error", err.Error())
+		return
 	}
-	sources, err := statusStore.ListSources("")
-	if err != nil {
-		s.logger.Error("failed to list sources for generic sync trigger", "identifier", identifier, "error", err)
-		writeError(w, http.StatusInternalServerError, "internal_error", "Failed to resolve source for sync")
-		return true
-	}
-	seen := make(map[string]struct{})
-	jobNames := make([]string, 0, 1)
-	for _, src := range sources {
-		if src.Identifier != identifier {
-			continue
-		}
-		jobName, ok := SchedulerJobNameForSource(src.SourceType, src.Identifier)
-		if !ok || !s.scheduler.IsJobScheduled(jobName) {
-			continue
-		}
-		if _, dup := seen[jobName]; dup {
-			continue
-		}
-		seen[jobName] = struct{}{}
-		jobNames = append(jobNames, jobName)
-	}
-	if len(jobNames) == 0 {
-		return false
-	}
-	for _, jobName := range jobNames {
-		if err := s.scheduler.TriggerJob(jobName); err != nil {
-			s.logger.Error("failed to trigger generic sync job",
-				"job", jobName, "identifier", identifier, "error", err)
-			writeError(w, http.StatusConflict, "sync_error", err.Error())
-			return true
-		}
-		s.logger.Info("generic sync triggered via API", "job", jobName, "identifier", identifier)
-	}
+	s.logger.Info("sync triggered via API", "account", account)
 	writeJSON(w, http.StatusAccepted, StatusMessageResponse{
 		Status:  "accepted",
-		Message: "Sync started for " + identifier,
+		Message: "Sync started for " + account,
 	})
-	return true
 }
 
 // handleSchedulerStatus returns the scheduler status.

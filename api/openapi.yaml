@@ -9130,6 +9130,11 @@ paths:
           required: true
           schema:
             type: string
+        - description: Source type; required to trigger a generic (non-account) source
+          in: query
+          name: source_type
+          schema:
+            type: string
       responses:
         "202":
           content:

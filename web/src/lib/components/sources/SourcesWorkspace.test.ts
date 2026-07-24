@@ -94,7 +94,9 @@ describe('SourcesWorkspace', () => {
 
     await fireEvent.click(await screen.findByRole('button', { name: 'Sync now Archive' }));
     expect(requests[1]!.method).toBe('POST');
-    expect(new URL(requests[1]!.url).pathname).toBe('/api/v1/sync/archive%40example.com');
+    const triggerURL = new URL(requests[1]!.url);
+    expect(triggerURL.pathname).toBe('/api/v1/sync/archive%40example.com');
+    expect(triggerURL.searchParams.get('source_type')).toBe('gmail');
 
     await vi.advanceTimersByTimeAsync(500);
     expect(screen.getByText('Awaiting accepted sync run…')).toBeDefined();
@@ -199,6 +201,29 @@ describe('SourcesWorkspace', () => {
     expect(reads).toBe(4);
     await vi.advanceTimersByTimeAsync(8_000);
     expect(reads).toBe(4);
+    rendered.unmount();
+  });
+
+  it('sends source_type and triggers successfully for a generic (non-account) source', async () => {
+    const requests: Request[] = [];
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      requests.push(request);
+      if (request.method === 'POST') return Response.json({ status: 'accepted', message: 'started' }, { status: 202 });
+      return Response.json({ sources: [source({
+        id: 3, source_type: 'granola', identifier: 'default', display_name: 'Granola'
+      })] });
+    });
+    const rendered = render(SourcesWorkspace, { client: createAPIClient(fetchFn) });
+
+    await fireEvent.click(await screen.findByRole('button', { name: 'Sync now Granola' }));
+
+    const triggerRequest = requests.find((request) => request.method === 'POST');
+    expect(triggerRequest).toBeDefined();
+    const triggerURL = new URL(triggerRequest!.url);
+    expect(triggerURL.pathname).toBe('/api/v1/sync/default');
+    expect(triggerURL.searchParams.get('source_type')).toBe('granola');
+    expect(screen.queryByRole('alert')).toBeNull();
     rendered.unmount();
   });
 

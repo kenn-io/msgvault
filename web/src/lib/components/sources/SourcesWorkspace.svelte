@@ -180,7 +180,7 @@
     triggerError = '';
     try {
       const { data, error: responseError, response } = await client.POST('/api/v1/sync/{account}', {
-        params: { path: { account: source.identifier } }
+        params: { path: { account: source.identifier }, query: { source_type: source.source_type } }
       });
       if (response.status !== 202 || !data) {
         throw new Error(messageFor(responseError, `Unable to start sync for ${source.identifier}.`));

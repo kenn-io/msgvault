@@ -670,6 +670,11 @@ type GetTotalStatsQuery struct {
 	GroupBy *string `json:"group_by,omitempty"`
 }
 
+type TriggerSyncQuery struct {
+	// SourceType Source type; required to trigger a generic (non-account) source
+	SourceType *string `json:"source_type,omitempty"`
+}
+
 type GetTextAggregatesQuery struct {
 	// ViewType Text aggregate view type
 	ViewType *string `json:"view_type,omitempty"`

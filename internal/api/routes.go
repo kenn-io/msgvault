@@ -684,7 +684,10 @@ func rawRouteParameters(operationID string) []*huma.Param {
 	case "listSourceStatus":
 		return []*huma.Param{queryStringParam("source_type", "Restrict to one source type", false)}
 	case "triggerSync":
-		return []*huma.Param{pathStringParam("account", "Account email or configured source identifier")}
+		return []*huma.Param{
+			pathStringParam("account", "Account email or configured source identifier"),
+			queryStringParam("source_type", "Source type; required to trigger a generic (non-account) source", false),
+		}
 	case "uploadToken":
 		return []*huma.Param{pathStringParam("email", "Account email address")}
 	default:

@@ -3322,57 +3322,110 @@ func TestHandleSourceStatusBeeperSharesSingleJob(t *testing.T) {
 // TestHandleTriggerSyncGenericSource is a regression test for a MEDIUM finding:
 // sourceStatus reports CanSync=true for generic (non-account) sources, but the
 // trigger endpoint only recognized account jobs, so "Sync Now" for a granola /
-// gcal / synctech / circleback / beeper source returned 404. Triggering a
-// generic source now resolves its type to a scheduler job name and runs it.
+// gcal / synctech / circleback / beeper source returned 404. The caller now
+// passes source_type explicitly, so the handler resolves the generic job name
+// authoritatively (no store scan) and starts it asynchronously via StartJob.
 func TestHandleTriggerSyncGenericSource(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	st := testutil.NewTestStore(t)
 	sched := newMockScheduler()
 	sched.scheduledJobs = map[string]bool{"granola:acct-1": true}
-	_, err := st.GetOrCreateSource(granola.SourceType, "acct-1")
-	require.NoError(err, "GetOrCreateSource granola")
-	srv := NewServer(&config.Config{Server: config.ServerConfig{APIPort: 8080}}, st, sched, testLogger())
+	srv := NewServer(&config.Config{Server: config.ServerConfig{APIPort: 8080}}, nil, sched, testLogger())
 
-	resp := servePOSTTestRequest(srv, "/api/v1/sync/acct-1")
+	resp := servePOSTTestRequest(srv, "/api/v1/sync/acct-1?source_type=granola")
 
 	require.Equal(http.StatusAccepted, resp.Code, resp.Body.String())
-	assert.Equal([]string{"granola:acct-1"}, sched.triggeredJobs, "triggered generic job")
+	assert.Equal([]string{"granola:acct-1"}, sched.startedJobs, "started generic job")
+	assert.Empty(sched.triggeredJobs, "TriggerJob must not be used for the async trigger path")
 }
 
 // TestHandleTriggerSyncBeeperSource confirms a beeper source (one of many under
-// the singleton "beeper" job) triggers that shared job.
+// the singleton "beeper" job) starts that shared job.
 func TestHandleTriggerSyncBeeperSource(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	st := testutil.NewTestStore(t)
 	sched := newMockScheduler()
 	sched.scheduledJobs = map[string]bool{BeeperJobName: true}
-	_, err := st.GetOrCreateSource("beeper", "beeper-account-1")
-	require.NoError(err, "GetOrCreateSource beeper")
-	srv := NewServer(&config.Config{Server: config.ServerConfig{APIPort: 8080}}, st, sched, testLogger())
+	srv := NewServer(&config.Config{Server: config.ServerConfig{APIPort: 8080}}, nil, sched, testLogger())
 
-	resp := servePOSTTestRequest(srv, "/api/v1/sync/beeper-account-1")
+	resp := servePOSTTestRequest(srv, "/api/v1/sync/beeper-account-1?source_type=beeper")
 
 	require.Equal(http.StatusAccepted, resp.Code, resp.Body.String())
-	assert.Equal([]string{BeeperJobName}, sched.triggeredJobs, "triggered beeper job")
+	assert.Equal([]string{BeeperJobName}, sched.startedJobs, "started beeper job")
 }
 
 // TestHandleTriggerSyncGenericSourceNotScheduled confirms a generic source
-// whose job is not scheduled still returns 404 and triggers nothing.
+// whose job is not scheduled still returns 404 and starts nothing.
 func TestHandleTriggerSyncGenericSourceNotScheduled(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	st := testutil.NewTestStore(t)
 	sched := newMockScheduler() // no scheduledJobs
-	_, err := st.GetOrCreateSource(circleback.SourceType, "acct-2")
-	require.NoError(err, "GetOrCreateSource circleback")
-	srv := NewServer(&config.Config{Server: config.ServerConfig{APIPort: 8080}}, st, sched, testLogger())
+	srv := NewServer(&config.Config{Server: config.ServerConfig{APIPort: 8080}}, nil, sched, testLogger())
 
-	resp := servePOSTTestRequest(srv, "/api/v1/sync/acct-2")
+	resp := servePOSTTestRequest(srv, "/api/v1/sync/acct-2?source_type=circleback")
 
 	require.Equal(http.StatusNotFound, resp.Code, resp.Body.String())
-	assert.Empty(sched.triggeredJobs, "no job triggered")
+	assert.Empty(sched.startedJobs, "no job started")
+}
+
+// TestHandleTriggerSyncGenericIdentifierCollidesWithScheduledAccount is a
+// regression test for the wrong-scheduler-resolution bug: a granola source
+// whose store identifier happens to equal a scheduled account email must
+// still trigger the GRANOLA job via source_type dispatch, never the account
+// scheduler's TriggerSync for that email.
+func TestHandleTriggerSyncGenericIdentifierCollidesWithScheduledAccount(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	const collidingIdentifier = "shared@example.com"
+	sched := newMockScheduler()
+	sched.scheduled[collidingIdentifier] = true // an account is also scheduled under this identifier
+	sched.scheduledJobs = map[string]bool{"granola:" + collidingIdentifier: true}
+	srv := NewServer(&config.Config{Server: config.ServerConfig{APIPort: 8080}}, nil, sched, testLogger())
+
+	resp := servePOSTTestRequest(srv, "/api/v1/sync/"+collidingIdentifier+"?source_type=granola")
+
+	require.Equal(http.StatusAccepted, resp.Code, resp.Body.String())
+	assert.Equal([]string{"granola:" + collidingIdentifier}, sched.startedJobs, "started the granola job")
+	assert.Empty(sched.triggeredJobs, "must not touch the account scheduler's TriggerJob path")
+}
+
+// TestHandleSourceStatusGenericIdentifierCollidesWithScheduledAccount is the
+// sourceStatus counterpart of the wrong-scheduler-resolution regression: a
+// granola source whose identifier equals a scheduled account email must
+// report the generic job's state, not the account scheduler's.
+func TestHandleSourceStatusGenericIdentifierCollidesWithScheduledAccount(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	const collidingIdentifier = "shared@example.com"
+	st := testutil.NewTestStore(t)
+	sched := newMockScheduler()
+	sched.scheduled[collidingIdentifier] = true
+	sched.statuses = []AccountStatus{{
+		Email:    collidingIdentifier,
+		Schedule: "0 3 * * *",
+		Running:  true,
+	}}
+	sched.jobStatuses = []JobStatus{{
+		Name:     "granola:" + collidingIdentifier,
+		Schedule: "*/15 * * * *",
+		Running:  false,
+	}}
+	_, err := st.GetOrCreateSource(granola.SourceType, collidingIdentifier)
+	require.NoError(err, "GetOrCreateSource granola")
+	srv := NewServer(&config.Config{Server: config.ServerConfig{APIPort: 8080}}, st, sched, testLogger())
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/sources/status?source_type=granola", nil)
+	w := httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+
+	require.Equal(http.StatusOK, w.Code, w.Body.String())
+	var resp SourceStatusResponse
+	require.NoError(json.NewDecoder(w.Body).Decode(&resp), "decode response")
+	require.Len(resp.Sources, 1, "sources")
+
+	got := resp.Sources[0]
+	assert.Equal("*/15 * * * *", got.Schedule, "must report the generic job's schedule")
+	assert.True(got.CanSync, "generic job is scheduled and not running")
 }
 
 // TestSchedulerJobNameForSource covers every generic-job source type plus an
