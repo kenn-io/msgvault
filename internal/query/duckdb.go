@@ -1,6 +1,7 @@
 package query
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -77,6 +78,15 @@ type DuckDBEngine struct {
 	optionalCols map[string]map[string]bool
 	cacheFP      string // fingerprint of the Parquet cache at last probe
 
+	// Memoized readiness validation for the per-query path (see
+	// validateCommittedCache): the raw commit-marker bytes and the shard stat
+	// signature observed at the last successful full readiness inspection.
+	// While both are unchanged, queries skip the full fingerprint walk that
+	// InspectCacheReadiness performs.
+	cacheValidMu     sync.RWMutex
+	validatedMarker  []byte
+	validatedStatSig string
+
 	// Search result cache: keeps the materialized temp table alive across
 	// pagination calls for the same search query, avoiding repeated Parquet scans.
 	searchCacheMu    sync.Mutex  // protects cache fields from concurrent goroutines
@@ -84,6 +94,21 @@ type DuckDBEngine struct {
 	searchCacheTable string      // temp table name (e.g. "_search_matches_42")
 	searchCacheCount int64       // cached COUNT(*) from materialization
 	searchCacheStats *TotalStats // cached stats from Phase 4
+
+	// relMemo caches ranked relationship candidate lists keyed by committed
+	// cache revision plus request facets; see relationshipsMemo. The zero
+	// value is ready to use.
+	relMemo relationshipsMemo
+
+	// relationshipsQueryRuns counts full relationship-ranking query
+	// executions (not memo hits). Test hook only: memo tests assert cache
+	// hits and misses through it.
+	relationshipsQueryRuns atomic.Uint64
+
+	// exploreFastPathDisabled forces Explore and SearchFiles onto the
+	// single-pass legacy listing queries. Test hook only: the fast-path
+	// equivalence tests compare both shapes on the same engine.
+	exploreFastPathDisabled bool
 }
 
 // DuckDBOptions configures optional DuckDB engine behavior.
@@ -170,12 +195,19 @@ func NewDuckDBEngine(analyticsDir string, sqlitePath string, sqliteDB *sql.DB, o
 	}
 	var releaseInitialCacheRead func()
 	if analyticsDir != "" {
-		releaseInitialCacheRead, err = AcquireReadyCacheReadLock(context.Background(), analyticsDir)
+		releaseInitialCacheRead, err = AcquireCacheReadLock(context.Background(), analyticsDir)
 		if err != nil {
 			_ = db.Close()
 			return nil, err
 		}
 		defer releaseInitialCacheRead()
+		// First full readiness inspection; seeds the memo so subsequent
+		// queries validate against the marker + stat signature instead of
+		// re-walking every shard (see validateCommittedCache).
+		if err := engine.validateCommittedCache(engine.cacheFingerprint()); err != nil {
+			_ = db.Close()
+			return nil, err
+		}
 	}
 
 	// Probe Parquet schemas for optional columns added in PR #160 (WhatsApp import).
@@ -188,7 +220,7 @@ func NewDuckDBEngine(analyticsDir string, sqlitePath string, sqliteDB *sql.DB, o
 		{datasetParticipants, "phone_number"},
 		{datasetMessages, "attachment_count"},
 		{datasetMessages, "sender_id"},
-		{datasetMessages, "message_type"},
+		{datasetMessages, messageTypeDimension},
 		{datasetConversations, "title"},
 		{datasetConversations, "conversation_type"},
 		{"sources", "source_type"},
@@ -234,10 +266,6 @@ func (e *DuckDBEngine) QuerySQL(
 	}
 	defer release()
 
-	// Refresh views if the cache changed since startup, so the registered
-	// views match the current Parquet schema.
-	e.ensureFreshOptionalCols()
-
 	// codeql[go/sql-injection] -- QuerySQL is an explicit trusted-user SQL
 	// interface over the user's local archive, not an injection boundary.
 	rows, err := e.db.QueryContext(ctx, sqlStr)
@@ -277,7 +305,8 @@ func (e *DuckDBEngine) QuerySQL(
 
 // acquireQuerySlot blocks until a DuckDB query slot is free or ctx is done,
 // bounding concurrent heavy queries (see duckDBQueryConcurrency), then takes
-// the shared cache lock for the query's duration (see acquireCacheRead). The
+// the shared cache lock for the query's duration and refreshes the registered
+// views if the cache was republished (see acquireCacheRead). The
 // returned release function frees both and must be deferred by the caller.
 // Callers must not nest acquisitions — every gated method is a top-level
 // entry point that does not call another gated method, so the slots cannot
@@ -305,11 +334,86 @@ func (e *DuckDBEngine) acquireQuerySlot(ctx context.Context) (func(), error) {
 // replace Parquet files mid-read. Shared holders never conflict with each
 // other; a reader blocks only while a build runs (seconds). Engines opened
 // without an analytics directory have no cache to guard.
+//
+// After the lock is held, the cache is validated as a committed publication
+// (see validateCommittedCache — memoized, so an unchanged cache costs one
+// marker read plus one shard stat pass, not a full fingerprint walk), and the
+// probed optional-column set and registered SQL views are refreshed if the
+// cache was republished since the last query (see ensureFreshOptionalCols).
+// Because the lock is held until release, the schema cannot change again for
+// the query's duration, so every reader — view-based endpoints (Explore,
+// People, Relationships, timelines) and parquetCTEs-based ones alike — sees
+// views that match the current Parquet.
 func (e *DuckDBEngine) acquireCacheRead(ctx context.Context) (func(), error) {
 	if e.analyticsDir == "" {
 		return func() {}, nil
 	}
-	return AcquireReadyCacheReadLock(ctx, e.analyticsDir)
+	release, err := AcquireCacheReadLock(ctx, e.analyticsDir)
+	if err != nil {
+		return nil, err
+	}
+	statSig := e.cacheFingerprint()
+	if err := e.validateCommittedCache(statSig); err != nil {
+		release()
+		return nil, err
+	}
+	e.ensureFreshOptionalCols(statSig)
+	return release, nil
+}
+
+// validateCommittedCache confirms the analytics cache is a fully committed
+// publication before a query touches any Parquet path. Callers must hold the
+// shared cache lock and pass the stat signature they just computed via
+// cacheFingerprint.
+//
+// The full readiness inspection (InspectCacheReadiness: directory walk,
+// per-file stat, sort, and hash against the marker's DatasetFingerprint) runs
+// only when the commit marker bytes or the shard stat signature changed since
+// the last successful validation. Every publication rewrites the marker, so a
+// committed swap always triggers revalidation; out-of-band mutation of any
+// shard the stat globs cover (the layouts the cache builder writes) changes
+// the stat signature and is likewise caught on the next query. The only
+// narrowing versus inspecting on every query: a Parquet file planted at a
+// depth the publisher never uses is invisible to the stat globs and is
+// detected at the next publication, engine startup, or explicit
+// InspectCacheReadiness call instead of the next query.
+func (e *DuckDBEngine) validateCommittedCache(statSig string) error {
+	marker, markerErr := os.ReadFile(CacheStatePath(e.analyticsDir))
+	if markerErr == nil {
+		e.cacheValidMu.RLock()
+		hit := e.cacheValidationHitLocked(marker, statSig)
+		e.cacheValidMu.RUnlock()
+		if hit {
+			return nil
+		}
+	}
+
+	e.cacheValidMu.Lock()
+	defer e.cacheValidMu.Unlock()
+	if markerErr == nil && e.cacheValidationHitLocked(marker, statSig) {
+		return nil
+	}
+	e.validatedMarker = nil
+	readiness, err := InspectCacheReadiness(e.analyticsDir)
+	if err != nil {
+		return err
+	}
+	if readiness != CacheReady {
+		return &CacheUnavailableError{Readiness: readiness}
+	}
+	if markerErr == nil {
+		e.validatedMarker = marker
+		e.validatedStatSig = statSig
+	}
+	return nil
+}
+
+// cacheValidationHitLocked reports whether the observed marker bytes and stat
+// signature match the last successful validation. Callers hold cacheValidMu.
+func (e *DuckDBEngine) cacheValidationHitLocked(marker []byte, statSig string) bool {
+	return e.validatedMarker != nil &&
+		bytes.Equal(marker, e.validatedMarker) &&
+		statSig == e.validatedStatSig
 }
 
 // hasSQLite returns true if DuckDB's sqlite_scanner extension is loaded,
@@ -391,15 +495,17 @@ func stableOptionalColumns(
 
 // ensureFreshOptionalCols re-probes the Parquet schema (and re-registers the
 // SQL views) when the analytics cache has changed since the last probe. This
-// guards long-running engines (e.g. the mcp-http server) against a binder
-// error when build-cache rewrites the cache with a different column set:
-// without it, a stale "column present" verdict puts a now-absent column into a
-// SELECT * REPLACE list, which DuckDB rejects with
+// guards long-running engines (e.g. the daemon) against a binder error when
+// build-cache republishes the cache with a different column set: without it,
+// a stale "column present" verdict puts a now-absent column into a SELECT *
+// REPLACE list, which DuckDB rejects with
 // "Column ... in REPLACE list not found in FROM clause". Cheap on the common
-// no-change path (a handful of os.Stat calls).
-func (e *DuckDBEngine) ensureFreshOptionalCols() {
-	fp := e.cacheFingerprint()
-
+// no-change path (one string comparison — the caller passes the stat
+// signature it already computed for validateCommittedCache).
+//
+// Runs centrally from acquireCacheRead, so every query path — slot-gated and
+// detail lookups alike — refreshes before touching Parquet or the views.
+func (e *DuckDBEngine) ensureFreshOptionalCols(fp string) {
 	e.optColsMu.RLock()
 	unchanged := fp == e.cacheFP
 	e.optColsMu.RUnlock()
@@ -441,11 +547,10 @@ func (e *DuckDBEngine) currentCacheFingerprint() string {
 // Optional columns (phone_number, attachment_count, sender_id, message_type)
 // are handled gracefully: if the Parquet file predates their addition, they
 // are synthesised with sensible defaults instead of causing a binder error.
+// Every caller holds the shared cache read lock (via acquireQuerySlot or
+// acquireCacheRead), whose acquisition already re-probed the schema, so the
+// REPLACE list below never references a column the current Parquet lacks.
 func (e *DuckDBEngine) parquetCTEs() string {
-	// Re-probe if build-cache/sync rewrote the cache underneath us, so the
-	// REPLACE list below never references a column the current Parquet lacks.
-	e.ensureFreshOptionalCols()
-
 	// --- messages CTE ---
 	msgReplace := []string{
 		"CAST(id AS BIGINT) AS id",
@@ -468,7 +573,7 @@ func (e *DuckDBEngine) parquetCTEs() string {
 	} else {
 		msgExtra = append(msgExtra, "NULL::BIGINT AS sender_id")
 	}
-	if e.hasCol(datasetMessages, "message_type") {
+	if e.hasCol(datasetMessages, messageTypeDimension) {
 		msgReplace = append(msgReplace, "COALESCE(CAST(message_type AS VARCHAR), '') AS message_type")
 	} else {
 		msgExtra = append(msgExtra, "'' AS message_type")
@@ -477,6 +582,11 @@ func (e *DuckDBEngine) parquetCTEs() string {
 		msgReplace = append(msgReplace, "TRY_CAST(deleted_at AS TIMESTAMP) AS deleted_at")
 	} else {
 		msgExtra = append(msgExtra, "NULL::TIMESTAMP AS deleted_at")
+	}
+	if e.hasCol(datasetMessages, "is_from_me") {
+		msgReplace = append(msgReplace, "COALESCE(TRY_CAST(is_from_me AS BOOLEAN), false) AS is_from_me")
+	} else {
+		msgExtra = append(msgExtra, "false AS is_from_me")
 	}
 	msgCTE := fmt.Sprintf("SELECT * REPLACE (\n\t\t\t\t%s\n\t\t\t)", strings.Join(msgReplace, ",\n\t\t\t\t"))
 	if len(msgExtra) > 0 {
@@ -591,6 +701,10 @@ func (e *DuckDBEngine) parquetCTEs() string {
 		convCTE)
 }
 
+// duckDBMessageTypeCondition builds a message_type predicate for the parquet
+// datasets. An "email" value also matches NULL/empty message_type: rows
+// imported before message_type existed are email (see emailOnlyFilterMsg and
+// store.IsEmailMessageType). An empty alias renders an unqualified column.
 func duckDBMessageTypeCondition(alias string, messageTypes []string) (string, []any) {
 	var conditions []string
 	var args []any
@@ -609,7 +723,10 @@ func duckDBMessageTypeCondition(alias string, messageTypes []string) (string, []
 		exact = append(exact, typ)
 	}
 
-	col := alias + ".message_type"
+	col := messageTypeDimension
+	if alias != "" {
+		col = alias + ".message_type"
+	}
 	if includeEmail {
 		conditions = append(conditions,
 			fmt.Sprintf("(%s = ? OR %s IS NULL OR %s = '')", col, col, col))
@@ -1040,7 +1157,7 @@ func (e *DuckDBEngine) runAggregation(ctx context.Context, def aggViewDef, where
 
 // sortClause returns ORDER BY clause for aggregates.
 func (e *DuckDBEngine) sortClause(opts AggregateOptions) string {
-	field := "count"
+	field := sortFieldCount
 	switch opts.SortField {
 	case SortBySize:
 		field = "total_size"
@@ -2224,11 +2341,11 @@ func (e *DuckDBEngine) GetGmailIDsByFilter(ctx context.Context, filter MessageFi
 	}
 
 	if filter.After != nil {
-		conditions = append(conditions, "msg.sent_at >= ?")
+		conditions = append(conditions, "msg.sent_at >= CAST(? AS TIMESTAMP)")
 		args = append(args, queryTimeUTC(*filter.After))
 	}
 	if filter.Before != nil {
-		conditions = append(conditions, "msg.sent_at < ?")
+		conditions = append(conditions, "msg.sent_at < CAST(? AS TIMESTAMP)")
 		args = append(args, queryTimeUTC(*filter.Before))
 	}
 
@@ -2364,11 +2481,15 @@ var RequiredParquetDirs = []string{
 	datasetMessages,
 	"sources",
 	datasetParticipants,
+	datasetParticipantIdentifiers,
 	"message_recipients",
 	"labels",
 	"message_labels",
 	"attachments",
 	datasetConversations,
+	datasetConversationParticipants,
+	datasetOwnerParticipants,
+	datasetParticipantClusters,
 }
 
 // SearchFast searches message metadata in Parquet files (no body text).
@@ -2766,13 +2887,11 @@ func (e *DuckDBEngine) SearchFastWithStats(ctx context.Context, q *search.Query,
 	e.searchCacheMu.Lock()
 	defer e.searchCacheMu.Unlock()
 
-	// Refresh before checking the search cache. A cache-hit page query may call
-	// parquetCTEs(), but that is too late to decide whether the already
-	// materialized temp table still represents the current Parquet data.
-	e.ensureFreshOptionalCols()
-
 	// Check cache: same conditions+args+Parquet fingerprint means same search,
-	// serve from cached table.
+	// serve from cached table. The fingerprint was refreshed when the query
+	// slot acquired the cache read lock, and the lock is held until release,
+	// so it decides whether the already materialized temp table still
+	// represents the current Parquet data.
 	cacheKey := searchCacheKeyFor(conditions, args, e.currentCacheFingerprint())
 	if cacheKey == e.searchCacheKey && e.searchCacheTable != "" {
 		// Retry stats if a previous attempt failed (transient error).

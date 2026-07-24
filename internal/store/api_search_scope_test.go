@@ -83,3 +83,65 @@ func TestSearchMessagesQuery_AccountScoping(t *testing.T) {
 		})
 	}
 }
+
+// TestSearchMessagesQuery_DeletionScope verifies that Query.DeletionScope
+// selects which population the full-text search covers relative to source
+// deletion. The FTS index keeps entries for source-deleted messages (soft
+// deletion only stamps deleted_from_source_at), so scope=deleted must return
+// them and scope=any must return everything; the zero value keeps the
+// historical active-only behavior. Runs under SQLite and PostgreSQL.
+func TestSearchMessagesQuery_DeletionScope(t *testing.T) {
+	require := require.New(t)
+	f := storetest.New(t)
+
+	live := f.NewMessage().
+		WithSourceMessageID("scope-live").
+		WithSubject("ledger summary live").
+		WithSnippet("quarterly ledger totals").
+		Create(t, f.Store)
+	require.NoError(f.Store.UpsertMessageBody(live,
+		sql.NullString{String: "ledger body live", Valid: true},
+		sql.NullString{}), "UpsertMessageBody live")
+
+	deleted := f.NewMessage().
+		WithSourceMessageID("scope-deleted").
+		WithSubject("ledger summary archived").
+		WithSnippet("quarterly ledger totals").
+		Create(t, f.Store)
+	require.NoError(f.Store.UpsertMessageBody(deleted,
+		sql.NullString{String: "ledger body archived", Valid: true},
+		sql.NullString{}), "UpsertMessageBody deleted")
+
+	_, err := f.Store.BackfillFTS(nil)
+	require.NoError(err, "BackfillFTS")
+	require.NoError(f.Store.MarkMessageDeleted(f.Source.ID, "scope-deleted"),
+		"MarkMessageDeleted")
+
+	cases := []struct {
+		name    string
+		scope   search.DeletionScope
+		wantIDs []int64
+	}{
+		{"zero_value_defaults_to_active", search.DeletionScope(""), []int64{live}},
+		{"active", search.DeletionScopeActive, []int64{live}},
+		{"deleted", search.DeletionScopeDeleted, []int64{deleted}},
+		{"any", search.DeletionScopeAny, []int64{live, deleted}},
+		{"unknown_fails_closed_to_active", search.DeletionScope("bogus"), []int64{live}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+			msgs, total, err := f.Store.SearchMessagesQuery(&search.Query{
+				TextTerms:     []string{"ledger"},
+				DeletionScope: tc.scope,
+			}, 0, 50)
+			require.NoError(err, "scoped search")
+			assert.Equal(int64(len(tc.wantIDs)), total, "scoped total")
+			gotIDs := make([]int64, 0, len(msgs))
+			for _, msg := range msgs {
+				gotIDs = append(gotIDs, msg.ID)
+			}
+			assert.ElementsMatch(tc.wantIDs, gotIDs, "scoped message IDs")
+		})
+	}
+}

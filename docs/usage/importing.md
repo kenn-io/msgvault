@@ -5,7 +5,7 @@ description: Import PST archives, MBOX archives, and Apple Mail exports into msg
 
 msgvault can import email from local files, not just Gmail. This lets you archive Microsoft Outlook PST files, messages from any provider that supports MBOX export, or Apple Mail's on-disk storage. For live syncing from non-Gmail providers, see [IMAP account setup](/setup/#add-an-imap-account).
 
-Imported messages are stored in the same database as Gmail messages. You can search, browse, export, and analyze them with all the same tools (TUI, CLI, MCP server, web server). Labels, threading, attachments, and full-text search all work the same way.
+Imported messages are stored in the same database as Gmail messages. You can search, browse, export, and analyze them with all the same tools (Web UI, TUI, CLI, MCP server, and REST API). Labels, threading, attachments, and full-text search all work the same way.
 
 ## import-pst
 
@@ -228,7 +228,9 @@ Individual messages that fail to parse are logged and skipped; the import contin
 
 ## After Importing
 
-Imported messages are immediately available for search, TUI browsing, and MCP queries. To update the Parquet analytics cache (used by the TUI for fast aggregation), run:
+Imported messages are immediately available for search, direct lookup, and
+MCP queries. To update the Parquet analytical cache used by the Web UI and TUI
+for fast aggregation, run:
 
 ```bash
 msgvault build-cache
@@ -239,6 +241,9 @@ Then explore your imported messages:
 ```bash
 # Search imported messages
 msgvault search from:alice@example.com
+
+# Open the browser interface
+msgvault serve
 
 # Launch the TUI
 msgvault tui

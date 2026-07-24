@@ -3,30 +3,38 @@ package query
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	_ "github.com/duckdb/duckdb-go/v2"
+	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/search"
 )
 
-const benchMessageCount = 100_000
+const (
+	benchChatMessageCount = 100_000
+	benchAuxMessageCount  = 4
+	benchMessageCount     = benchChatMessageCount + benchAuxMessageCount
+)
 
-// buildBenchData generates a 100K-message Parquet dataset directly via
+// buildBenchData generates a mixed 100K+-message Parquet dataset directly via
 // DuckDB SQL (no Go-side row generation). This produces realistic
-// cardinality: 500 participants across 50 domains, 10 labels,
-// varied subjects/snippets, and 20% attachment rate.
-func buildBenchData(b *testing.B) *DuckDBEngine {
-	b.Helper()
+// cardinality: 100 chat conversations containing 100K raw fragments plus
+// email, calendar, meeting-note, and file-bearing records, 500 participants
+// across 50 domains, 10 labels, varied subjects/snippets, and 20% attachment
+// rate.
+func buildBenchData(tb testing.TB) *DuckDBEngine {
+	tb.Helper()
+	requirements := require.New(tb)
 
-	tmpDir := b.TempDir()
+	tmpDir := tb.TempDir()
 
 	db, err := sql.Open("duckdb", "")
-	if err != nil {
-		b.Fatalf("open duckdb: %v", err)
-	}
+	requirements.NoError(err, "open duckdb")
 	defer func() { _ = db.Close() }()
 
 	// Seed tables as DuckDB views, then COPY to Parquet.
@@ -34,7 +42,7 @@ func buildBenchData(b *testing.B) *DuckDBEngine {
 		-- Sources
 		CREATE TABLE bench_sources AS
 		SELECT 1::BIGINT AS id,
-			   'bench@gmail.com' AS identifier,
+			   'bench@example.com' AS account_email,
 			   'gmail' AS source_type;
 
 		-- 500 participants across 50 domains
@@ -65,6 +73,12 @@ func buildBenchData(b *testing.B) *DuckDBEngine {
 		FROM generate_series(1, 500) t(i)
 		JOIN bench_domains d ON d.idx = ((i - 1) %% 50) + 1;
 
+		CREATE TABLE bench_participant_identifiers AS
+		SELECT id AS participant_id, 'email' AS identifier_type,
+		       email_address AS identifier_value, email_address AS display_value,
+		       true AS is_primary
+		FROM bench_participants;
+
 		-- 10 labels
 		CREATE TABLE bench_labels AS
 		SELECT * FROM (VALUES
@@ -89,13 +103,13 @@ func buildBenchData(b *testing.B) *DuckDBEngine {
 			('Customer feedback analysis report')
 		) AS t(template);
 
-		-- 100K messages spanning 2020-2025
+		-- 100K chat fragments plus mixed durable archive items.
 		CREATE TABLE bench_messages AS
 		SELECT
 			i::BIGINT AS id,
 			1::BIGINT AS source_id,
 			'msg' || i AS source_message_id,
-			(200 + (i %% 5000))::BIGINT AS conversation_id,
+			CASE WHEN i <= %d THEN (200 + ((i - 1) %% 100))::BIGINT ELSE (10000 + i)::BIGINT END AS conversation_id,
 			CASE (i %% 10)
 				WHEN 0 THEN 'Q' || (i/10000+1) || ' budget review meeting notes'
 				WHEN 1 THEN 'Re: Project alpha deployment plan #' || i
@@ -114,8 +128,14 @@ func buildBenchData(b *testing.B) *DuckDBEngine {
 			(i %% 5 = 0)::BOOLEAN AS has_attachments,
 			NULL::TIMESTAMP AS deleted_from_source_at,
 			(i %% 5 = 0)::INTEGER AS attachment_count,
-			NULL::BIGINT AS sender_id,
-			'email' AS message_type,
+			CASE WHEN i <= %d THEN ((i %% 500) + 1)::BIGINT ELSE NULL::BIGINT END AS sender_id,
+			CASE
+				WHEN i <= %d THEN 'imessage'
+				WHEN i %% 4 = 0 THEN 'email'
+				WHEN i %% 4 = 1 THEN 'calendar_event'
+				WHEN i %% 4 = 2 THEN 'meeting_note'
+				ELSE 'file_item'
+			END AS message_type,
 			EXTRACT(YEAR FROM TIMESTAMP '2020-01-01' + INTERVAL (i * 30) MINUTE)::INTEGER AS year,
 			EXTRACT(MONTH FROM TIMESTAMP '2020-01-01' + INTERVAL (i * 30) MINUTE)::INTEGER AS month
 		FROM generate_series(1, %d) t(i);
@@ -160,9 +180,11 @@ func buildBenchData(b *testing.B) *DuckDBEngine {
 		-- attachments on ~20%% of messages
 		CREATE TABLE bench_attachments AS
 		SELECT
+			row_number() OVER (ORDER BY m.id)::BIGINT AS attachment_id,
 			m.id AS message_id,
 			(1000 + m.id * 10)::BIGINT AS size,
-			'file' || m.id || '.pdf' AS filename
+			'file' || m.id || '.pdf' AS filename,
+			'application/pdf' AS mime_type
 		FROM bench_messages m
 		WHERE m.id %% 5 = 0;
 
@@ -171,13 +193,18 @@ func buildBenchData(b *testing.B) *DuckDBEngine {
 		SELECT DISTINCT
 			conversation_id AS id,
 			'thread' || conversation_id AS source_conversation_id,
-			'' AS title
+			CASE WHEN conversation_id BETWEEN 200 AND 299 THEN 'Synthetic chat ' || conversation_id ELSE '' END AS title,
+			CASE WHEN conversation_id BETWEEN 200 AND 299 THEN 'direct_chat' ELSE 'email' END AS conversation_type
 		FROM bench_messages;
-	`, benchMessageCount)
 
-	if _, err := db.Exec(seedSQL); err != nil {
-		b.Fatalf("seed bench data: %v", err)
-	}
+		CREATE TABLE bench_conversation_participants AS
+		SELECT id AS conversation_id, (((id - 200) %% 500) + 1)::BIGINT AS participant_id
+		FROM bench_conversations
+		WHERE id BETWEEN 200 AND 299;
+	`, benchChatMessageCount, benchChatMessageCount, benchChatMessageCount, benchMessageCount)
+
+	_, err = db.Exec(seedSQL)
+	requirements.NoError(err, "seed bench data")
 
 	// Write Parquet files in the layout the engine expects.
 	type tableSpec struct {
@@ -187,39 +214,45 @@ func buildBenchData(b *testing.B) *DuckDBEngine {
 	}
 
 	tables := []tableSpec{
-		{"SELECT id, identifier, source_type FROM bench_sources",
+		{"SELECT id, account_email, source_type FROM bench_sources",
 			"sources", "sources.parquet"},
 		{"SELECT id, email_address, domain, display_name, phone_number FROM bench_participants",
 			"participants", "participants.parquet"},
+		{"SELECT participant_id, identifier_type, identifier_value, display_value, is_primary FROM bench_participant_identifiers",
+			"participant_identifiers", "participant_identifiers.parquet"},
 		{"SELECT message_id, participant_id, recipient_type, display_name FROM bench_recipients",
 			"message_recipients", "message_recipients.parquet"},
 		{"SELECT id, name FROM bench_labels",
 			"labels", "labels.parquet"},
 		{"SELECT message_id, label_id FROM bench_message_labels",
 			"message_labels", "message_labels.parquet"},
-		{"SELECT message_id, size, filename FROM bench_attachments",
+		{"SELECT attachment_id, message_id, size, filename, mime_type FROM bench_attachments",
 			"attachments", "attachments.parquet"},
-		{"SELECT id, source_conversation_id, title FROM bench_conversations",
+		{"SELECT id, source_conversation_id, title, conversation_type FROM bench_conversations",
 			"conversations", "conversations.parquet"},
+		{"SELECT conversation_id, participant_id FROM bench_conversation_participants",
+			"conversation_participants", "conversation_participants.parquet"},
+		// No confirmed identities or linked participants in the benchmark
+		// fixture; write empty, schema-bearing files so RequiredParquetDirs
+		// stays complete.
+		{"SELECT 0::BIGINT AS source_id, 0::BIGINT AS participant_id WHERE false",
+			datasetOwnerParticipants, datasetOwnerParticipants + ".parquet"},
+		{"SELECT 0::BIGINT AS participant_id, 0::BIGINT AS canonical_id WHERE false",
+			datasetParticipantClusters, datasetParticipantClusters + ".parquet"},
 	}
 
 	for _, t := range tables {
 		dir := filepath.Join(tmpDir, t.subdir)
-		if err := os.MkdirAll(dir, 0755); err != nil {
-			b.Fatalf("mkdir %s: %v", dir, err)
-		}
+		requirements.NoError(os.MkdirAll(dir, 0o755), "mkdir %s", dir)
 		path := escapePath(filepath.Join(dir, t.file))
 		q := fmt.Sprintf("COPY (%s) TO '%s' (FORMAT PARQUET)", t.query, path)
-		if _, err := db.Exec(q); err != nil {
-			b.Fatalf("write parquet %s: %v", t.file, err)
-		}
+		_, err = db.Exec(q)
+		requirements.NoError(err, "write parquet %s", t.file)
 	}
 
 	// Messages are hive-partitioned by year.
 	msgDir := filepath.Join(tmpDir, "messages")
-	if err := os.MkdirAll(msgDir, 0755); err != nil {
-		b.Fatalf("mkdir messages: %v", err)
-	}
+	requirements.NoError(os.MkdirAll(msgDir, 0o755), "mkdir messages")
 	msgPath := escapePath(msgDir)
 	msgCopy := fmt.Sprintf(`
 		COPY (
@@ -230,15 +263,23 @@ func buildBenchData(b *testing.B) *DuckDBEngine {
 			FROM bench_messages
 		) TO '%s' (FORMAT PARQUET, PARTITION_BY (year), OVERWRITE_OR_IGNORE)
 	`, msgPath)
-	if _, err := db.Exec(msgCopy); err != nil {
-		b.Fatalf("write messages parquet: %v", err)
-	}
+	_, err = db.Exec(msgCopy)
+	requirements.NoError(err, "write messages parquet")
+	fingerprint, err := CacheDatasetFingerprint(tmpDir)
+	requirements.NoError(err, "fingerprint benchmark cache")
+	state, err := json.Marshal(CacheSyncState{
+		LastMessageID:      benchMessageCount,
+		LastSyncAt:         time.Date(2026, 1, 3, 12, 0, 0, 0, time.UTC),
+		PublishedAt:        time.Date(2026, 1, 3, 12, 1, 0, 0, time.UTC),
+		SchemaVersion:      CacheSchemaVersion,
+		DatasetFingerprint: fingerprint,
+	})
+	requirements.NoError(err, "marshal benchmark cache state")
+	requirements.NoError(os.WriteFile(CacheStatePath(tmpDir), state, 0o600), "write benchmark cache state")
 
 	engine, err := NewDuckDBEngine(tmpDir, "", nil)
-	if err != nil {
-		b.Fatalf("NewDuckDBEngine: %v", err)
-	}
-	b.Cleanup(func() { _ = engine.Close() })
+	requirements.NoError(err, "NewDuckDBEngine")
+	tb.Cleanup(func() { requirements.NoError(engine.Close()) })
 	return engine
 }
 
@@ -252,9 +293,7 @@ func BenchmarkSearchFast(b *testing.B) {
 		for b.Loop() {
 			_, err := engine.SearchFast(ctx, q,
 				MessageFilter{}, 50, 0)
-			if err != nil {
-				b.Fatal(err)
-			}
+			require.NoError(b, err)
 		}
 	})
 
@@ -264,9 +303,7 @@ func BenchmarkSearchFast(b *testing.B) {
 		for b.Loop() {
 			_, err := engine.SearchFast(ctx, q,
 				MessageFilter{}, 50, 0)
-			if err != nil {
-				b.Fatal(err)
-			}
+			require.NoError(b, err)
 		}
 	})
 
@@ -276,9 +313,7 @@ func BenchmarkSearchFast(b *testing.B) {
 		for b.Loop() {
 			_, err := engine.SearchFast(ctx, q,
 				MessageFilter{}, 50, 0)
-			if err != nil {
-				b.Fatal(err)
-			}
+			require.NoError(b, err)
 		}
 	})
 
@@ -288,9 +323,7 @@ func BenchmarkSearchFast(b *testing.B) {
 		for b.Loop() {
 			_, err := engine.SearchFast(ctx, q,
 				MessageFilter{}, 50, 0)
-			if err != nil {
-				b.Fatal(err)
-			}
+			require.NoError(b, err)
 		}
 	})
 
@@ -303,9 +336,7 @@ func BenchmarkSearchFast(b *testing.B) {
 		for b.Loop() {
 			_, err := engine.SearchFast(ctx, q,
 				filter, 50, 0)
-			if err != nil {
-				b.Fatal(err)
-			}
+			require.NoError(b, err)
 		}
 	})
 }
@@ -321,9 +352,7 @@ func BenchmarkSearchFastWithStats(b *testing.B) {
 			_, err := engine.SearchFastWithStats(ctx, q,
 				"budget", MessageFilter{},
 				ViewSenders, 50, 0)
-			if err != nil {
-				b.Fatal(err)
-			}
+			require.NoError(b, err)
 		}
 	})
 
@@ -334,9 +363,7 @@ func BenchmarkSearchFastWithStats(b *testing.B) {
 			_, err := engine.SearchFastWithStats(ctx, q,
 				"quarterly report financials",
 				MessageFilter{}, ViewSenders, 50, 0)
-			if err != nil {
-				b.Fatal(err)
-			}
+			require.NoError(b, err)
 		}
 	})
 }
@@ -350,9 +377,7 @@ func BenchmarkAggregate(b *testing.B) {
 		b.ResetTimer()
 		for b.Loop() {
 			_, err := engine.Aggregate(ctx, ViewSenders, opts)
-			if err != nil {
-				b.Fatal(err)
-			}
+			require.NoError(b, err)
 		}
 	})
 
@@ -360,9 +385,7 @@ func BenchmarkAggregate(b *testing.B) {
 		b.ResetTimer()
 		for b.Loop() {
 			_, err := engine.Aggregate(ctx, ViewDomains, opts)
-			if err != nil {
-				b.Fatal(err)
-			}
+			require.NoError(b, err)
 		}
 	})
 
@@ -370,9 +393,7 @@ func BenchmarkAggregate(b *testing.B) {
 		b.ResetTimer()
 		for b.Loop() {
 			_, err := engine.Aggregate(ctx, ViewLabels, opts)
-			if err != nil {
-				b.Fatal(err)
-			}
+			require.NoError(b, err)
 		}
 	})
 
@@ -380,9 +401,7 @@ func BenchmarkAggregate(b *testing.B) {
 		b.ResetTimer()
 		for b.Loop() {
 			_, err := engine.Aggregate(ctx, ViewTime, opts)
-			if err != nil {
-				b.Fatal(err)
-			}
+			require.NoError(b, err)
 		}
 	})
 
@@ -394,9 +413,7 @@ func BenchmarkAggregate(b *testing.B) {
 		b.ResetTimer()
 		for b.Loop() {
 			_, err := engine.Aggregate(ctx, ViewSenders, opts)
-			if err != nil {
-				b.Fatal(err)
-			}
+			require.NoError(b, err)
 		}
 	})
 }
@@ -409,9 +426,7 @@ func BenchmarkGetTotalStats(b *testing.B) {
 		b.ResetTimer()
 		for b.Loop() {
 			_, err := engine.GetTotalStats(ctx, StatsOptions{})
-			if err != nil {
-				b.Fatal(err)
-			}
+			require.NoError(b, err)
 		}
 	})
 
@@ -420,9 +435,7 @@ func BenchmarkGetTotalStats(b *testing.B) {
 		b.ResetTimer()
 		for b.Loop() {
 			_, err := engine.GetTotalStats(ctx, opts)
-			if err != nil {
-				b.Fatal(err)
-			}
+			require.NoError(b, err)
 		}
 	})
 }
@@ -435,9 +448,7 @@ func BenchmarkListMessages(b *testing.B) {
 		b.ResetTimer()
 		for b.Loop() {
 			_, err := engine.ListMessages(ctx, MessageFilter{})
-			if err != nil {
-				b.Fatal(err)
-			}
+			require.NoError(b, err)
 		}
 	})
 
@@ -446,9 +457,7 @@ func BenchmarkListMessages(b *testing.B) {
 		b.ResetTimer()
 		for b.Loop() {
 			_, err := engine.ListMessages(ctx, filter)
-			if err != nil {
-				b.Fatal(err)
-			}
+			require.NoError(b, err)
 		}
 	})
 
@@ -457,9 +466,7 @@ func BenchmarkListMessages(b *testing.B) {
 		b.ResetTimer()
 		for b.Loop() {
 			_, err := engine.ListMessages(ctx, filter)
-			if err != nil {
-				b.Fatal(err)
-			}
+			require.NoError(b, err)
 		}
 	})
 
@@ -468,9 +475,7 @@ func BenchmarkListMessages(b *testing.B) {
 		b.ResetTimer()
 		for b.Loop() {
 			_, err := engine.ListMessages(ctx, filter)
-			if err != nil {
-				b.Fatal(err)
-			}
+			require.NoError(b, err)
 		}
 	})
 }
@@ -486,9 +491,7 @@ func BenchmarkSubAggregate(b *testing.B) {
 		for b.Loop() {
 			_, err := engine.SubAggregate(ctx, filter,
 				ViewLabels, opts)
-			if err != nil {
-				b.Fatal(err)
-			}
+			require.NoError(b, err)
 		}
 	})
 
@@ -498,9 +501,7 @@ func BenchmarkSubAggregate(b *testing.B) {
 		for b.Loop() {
 			_, err := engine.SubAggregate(ctx, filter,
 				ViewSenders, opts)
-			if err != nil {
-				b.Fatal(err)
-			}
+			require.NoError(b, err)
 		}
 	})
 }

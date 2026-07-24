@@ -92,6 +92,106 @@ func TestDiscordConfigTOMLRoundTrip(t *testing.T) {
 	assert.Equal(cfg.Discord.Guilds, loaded.Discord.Guilds)
 }
 
+func TestWebAndTaskIntegrationConfig(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	cfg := NewDefaultConfig()
+	assert.Equal("full_text", cfg.Web.DefaultSearchMode)
+	assert.Equal("system", cfg.Web.Theme)
+	assert.Equal("compact", cfg.Web.Density)
+
+	path := filepath.Join(t.TempDir(), "config.toml")
+	content := "[web]\n" +
+		"default_search_mode = \"hybrid\"\n" +
+		"theme = \"dark\"\n" +
+		"density = \"comfortable\"\n\n" +
+		"[integrations.tasks]\n" +
+		"enabled = true\n" +
+		"endpoint = \"https://tasks.example.com\"\n" +
+		"api_key = \"test-secret\"\n" +
+		"default_project = \"archive\"\n"
+	require.NoError(os.WriteFile(path, []byte(content), 0o600))
+	loaded, err := Load(path, "")
+	require.NoError(err)
+	assert.Equal("hybrid", loaded.Web.DefaultSearchMode)
+	assert.Equal("dark", loaded.Web.Theme)
+	assert.Equal("comfortable", loaded.Web.Density)
+	assert.True(loaded.Integrations.Tasks.Enabled)
+	assert.Equal("https://tasks.example.com", loaded.Integrations.Tasks.Endpoint)
+	assert.Equal("test-secret", loaded.Integrations.Tasks.APIKey)
+	assert.Equal("archive", loaded.Integrations.Tasks.DefaultProject)
+}
+
+func TestWebConfigRejectsInvalidValues(t *testing.T) {
+	tests := []struct {
+		key   string
+		value string
+	}{
+		{key: "default_search_mode", value: "magic"},
+		{key: "theme", value: "sepia"},
+		{key: "density", value: "roomy"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.key, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "config.toml")
+			require.NoError(t, os.WriteFile(path, []byte("[web]\n"+tt.key+" = \""+tt.value+"\"\n"), 0o600))
+			_, err := Load(path, "")
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "invalid [web] "+tt.key)
+		})
+	}
+}
+
+func TestTaskIntegrationEndpointShapes(t *testing.T) {
+	tests := []struct {
+		name     string
+		endpoint string
+		wantErr  string // empty means the endpoint must be accepted
+	}{
+		{name: "https", endpoint: "https://tasks.example.com"},
+		{name: "https with port and path", endpoint: "https://tasks.example.com:8443/api"},
+		{name: "http localhost", endpoint: "http://localhost:8080"},
+		{name: "http loopback ip", endpoint: "http://127.0.0.1:8080"},
+		{name: "unix absolute path", endpoint: "unix:///tmp/tasks.sock"},
+		{name: "empty disables integration", endpoint: ""},
+		{name: "userinfo", endpoint: "https://user:pass@tasks.example.com",
+			wantErr: "must not contain userinfo"},
+		{name: "query string", endpoint: "https://tasks.example.com/api?tenant=1",
+			wantErr: "must not contain a query string"},
+		{name: "fragment", endpoint: "https://tasks.example.com/api#section",
+			wantErr: "must not contain a fragment"},
+		{name: "unix with host", endpoint: "unix://somehost/tmp/tasks.sock",
+			wantErr: "absolute socket path and no host"},
+		{name: "unix relative path", endpoint: "unix:tasks.sock",
+			wantErr: "absolute socket path and no host"},
+		{name: "remote plaintext http", endpoint: "http://tasks.example.com",
+			wantErr: "remote plaintext HTTP is not allowed"},
+		{name: "unsupported scheme", endpoint: "ftp://tasks.example.com",
+			wantErr: "unsupported scheme"},
+		{name: "missing scheme", endpoint: "tasks.example.com",
+			wantErr: "invalid [integrations.tasks] endpoint"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			path := filepath.Join(t.TempDir(), "config.toml")
+			content := "[integrations.tasks]\nendpoint = \"" + tt.endpoint + "\"\n"
+			require.NoError(os.WriteFile(path, []byte(content), 0o600))
+			cfg, err := Load(path, "")
+			if tt.wantErr == "" {
+				require.NoError(err)
+				assert.Equal(tt.endpoint, cfg.Integrations.Tasks.Endpoint)
+				return
+			}
+			require.Error(err)
+			assert.Contains(err.Error(), "invalid [integrations.tasks] endpoint")
+			assert.Contains(err.Error(), tt.wantErr)
+			assert.Contains(err.Error(), "valid forms:")
+		})
+	}
+}
+
 func TestAccountScheduleEmpty(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("MSGVAULT_HOME", tmpDir)
@@ -198,6 +298,81 @@ daemon_auto_restart = "sometimes"
 
 	require.Error(t, err, "Load()")
 	assert.Contains(t, err.Error(), "invalid [server] daemon_auto_restart")
+}
+
+func TestLoadValidatesServerAPIPortBounds(t *testing.T) {
+	tests := []struct {
+		name    string
+		port    string
+		wantErr bool
+	}{
+		{name: "negative", port: "-1", wantErr: true},
+		{name: "above range", port: "65536", wantErr: true},
+		{name: "auto-select zero", port: "0", wantErr: false},
+		{name: "minimum real port", port: "1", wantErr: false},
+		{name: "maximum port", port: "65535", wantErr: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require := require.New(t)
+			tmpDir := t.TempDir()
+			configPath := filepath.Join(tmpDir, "config.toml")
+			content := "[server]\napi_port = " + tt.port + "\n"
+			require.NoError(os.WriteFile(configPath, []byte(content), 0o644))
+
+			_, err := Load(configPath, "")
+			if tt.wantErr {
+				require.Error(err)
+				assert.Contains(t, err.Error(), "invalid [server] api_port")
+			} else {
+				require.NoError(err)
+			}
+		})
+	}
+}
+
+func TestLoadWithServerTrustedProxies(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.toml")
+	require.NoError(t, os.WriteFile(configPath, []byte(`
+[server]
+trusted_proxies = ["127.0.0.1", "10.20.0.0/16", "2001:db8::1", "2001:db8:abcd::/48"]
+`), 0o644))
+
+	cfg, err := Load(configPath, "")
+	require.NoError(t, err)
+	assert.Equal(t, []string{
+		"127.0.0.1",
+		"10.20.0.0/16",
+		"2001:db8::1",
+		"2001:db8:abcd::/48",
+	}, cfg.Server.TrustedProxies)
+}
+
+func TestLoadRejectsMalformedServerTrustedProxy(t *testing.T) {
+	tests := []struct {
+		name  string
+		entry string
+	}{
+		{name: "hostname", entry: "proxy.example.com"},
+		{name: "invalid CIDR", entry: "10.0.0.0/99"},
+		{name: "IP with port", entry: "127.0.0.1:8080"},
+		{name: "empty", entry: ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			configPath := filepath.Join(tmpDir, "config.toml")
+			content := "[server]\ntrusted_proxies = [\"" + tt.entry + "\"]\n"
+			require.NoError(t, os.WriteFile(configPath, []byte(content), 0o644))
+
+			_, err := Load(configPath, "")
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "invalid [server] trusted_proxies entry")
+		})
+	}
 }
 
 func TestLoadWithAnalyticsConfig(t *testing.T) {
@@ -939,6 +1114,18 @@ func TestSave_CreatesFileWithSecurePermissions(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		assert.Zero(t, info.Mode().Perm()&0077, "config perm = %04o, want no group/other access", info.Mode().Perm())
 	}
+}
+
+func TestSaveCreatesMissingCustomConfigDirectories(t *testing.T) {
+	require := require.New(t)
+	root := t.TempDir()
+	cfg := NewDefaultConfig()
+	cfg.HomeDir = filepath.Join(root, "home")
+	cfg.configPath = filepath.Join(root, "custom", "nested", "config.toml")
+
+	require.NoError(cfg.Save())
+	_, err := os.Stat(cfg.configPath)
+	require.NoError(err)
 }
 
 func TestSave_TightensWeakPermissions(t *testing.T) {

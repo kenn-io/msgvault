@@ -147,8 +147,12 @@ func (s *Server) handleBackupFreezeEnd(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req backupFreezeEndRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	dec := json.NewDecoder(r.Body)
+	if err := dec.Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON request body")
+		return
+	}
+	if !requireSingleJSONValue(w, dec, "invalid_request") {
 		return
 	}
 

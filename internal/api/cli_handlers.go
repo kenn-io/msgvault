@@ -871,8 +871,12 @@ func (s *Server) handleCLIRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req CLIRunRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	dec := json.NewDecoder(r.Body)
+	if err := dec.Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON request body")
+		return
+	}
+	if !requireSingleJSONValue(w, dec, "invalid_request") {
 		return
 	}
 	if len(req.Args) == 0 {
@@ -910,8 +914,12 @@ func (s *Server) handleCLIAddCalendarPlan(w http.ResponseWriter, r *http.Request
 		return
 	}
 	var req CLIAddCalendarPlanRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	dec := json.NewDecoder(r.Body)
+	if err := dec.Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON request body")
+		return
+	}
+	if !requireSingleJSONValue(w, dec, "invalid_request") {
 		return
 	}
 	resp, err := planner.PlanCLIAddCalendar(r.Context(), req)
@@ -929,8 +937,12 @@ func (s *Server) handleCLIEmbeddingsPlan(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	var req CLIEmbeddingsPlanRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	dec := json.NewDecoder(r.Body)
+	if err := dec.Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON request body")
+		return
+	}
+	if !requireSingleJSONValue(w, dec, "invalid_request") {
 		return
 	}
 	resp, err := planner.PlanCLIEmbeddings(r.Context(), req)
@@ -948,8 +960,12 @@ func (s *Server) handleCLIDeleteStagedPlan(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	var req CLIDeleteStagedPlanRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	dec := json.NewDecoder(r.Body)
+	if err := dec.Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON request body")
+		return
+	}
+	if !requireSingleJSONValue(w, dec, "invalid_request") {
 		return
 	}
 	resp, err := planner.PlanCLIDeleteStaged(r.Context(), req)
@@ -967,8 +983,12 @@ func (s *Server) handleCLICreateDeletionManifest(w http.ResponseWriter, r *http.
 		return
 	}
 	var manifest deletion.Manifest
-	if err := json.NewDecoder(r.Body).Decode(&manifest); err != nil {
+	dec := json.NewDecoder(r.Body)
+	if err := dec.Decode(&manifest); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON request body")
+		return
+	}
+	if !requireSingleJSONValue(w, dec, "invalid_request") {
 		return
 	}
 	if err := validateCLIDeletionManifest(&manifest); err != nil {
@@ -1877,7 +1897,7 @@ func (s *Server) getCLIIdentities(
 	return cliIdentitiesResponse{Rows: rows}, nil
 }
 
-func (s *Server) addCLIIdentity(req identityops.AddRequest) (identityops.AddResult, error) {
+func (s *Server) addCLIIdentity(ctx context.Context, req identityops.AddRequest) (identityops.AddResult, error) {
 	cliStore, apiErr := s.cliStore()
 	if apiErr != nil {
 		return identityops.AddResult{}, apiErr
@@ -1891,10 +1911,25 @@ func (s *Server) addCLIIdentity(req identityops.AddRequest) (identityops.AddResu
 			"Failed to add identity",
 		)
 	}
+	// AddAccountIdentity bumps the identity revision when it confirms a
+	// brand new (source_id, address) pair, changing owner_participants; the
+	// refresh is attempted unconditionally since it is an idempotent
+	// full re-export and the mutation already committed either way.
+	result.CacheState = s.refreshIdentityCacheState(ctx)
+	// Confirming a brand new pair also changes the is_from_me flag baked
+	// into the message Parquet shards, which the identity-only refresh
+	// above never re-derives — only a full cache rebuild does. Merging a
+	// signal into an already-confirmed address does not change ownership,
+	// so only the "added" outcome schedules one and reports the cache as
+	// stale until it lands.
+	if result.Outcome == identityops.AddOutcomeAdded {
+		s.scheduleAccountIdentityCacheRebuild(ctx)
+		result.CacheState = identityCacheStateStale
+	}
 	return result, nil
 }
 
-func (s *Server) removeCLIIdentity(req identityops.RemoveRequest) (identityops.RemoveResult, error) {
+func (s *Server) removeCLIIdentity(ctx context.Context, req identityops.RemoveRequest) (identityops.RemoveResult, error) {
 	cliStore, apiErr := s.cliStore()
 	if apiErr != nil {
 		return identityops.RemoveResult{}, apiErr
@@ -1908,7 +1943,61 @@ func (s *Server) removeCLIIdentity(req identityops.RemoveRequest) (identityops.R
 			"Failed to remove identity",
 		)
 	}
+	// RemoveAccountIdentity only bumps the identity revision on an actual
+	// deletion, but the refresh is attempted unconditionally for the same
+	// reason as addCLIIdentity: it is an idempotent full re-export and the
+	// mutation already committed either way.
+	result.CacheState = s.refreshIdentityCacheState(ctx)
+	// An actual deletion (Removed > 0 — the only way Remove succeeds)
+	// also invalidates the message-baked is_from_me flag, so it needs the
+	// same full-rebuild scheduling as addCLIIdentity and the same stale
+	// cache report until that rebuild lands.
+	if result.Removed > 0 {
+		s.scheduleAccountIdentityCacheRebuild(ctx)
+		result.CacheState = identityCacheStateStale
+	}
 	return result, nil
+}
+
+// scheduleAccountIdentityCacheRebuild starts a background analytics cache
+// build after a mutating account-identity change. Callers report cache_state
+// "stale" alongside it, because the is_from_me flag baked into the message
+// Parquet shards stays wrong until that build publishes.
+//
+// The mutation already bumped the store's account-identity revision, so the
+// build's own staleness recheck (under the cross-process build lock — see
+// buildCacheLocked and HasAccountIdentityDrift in cmd/msgvault/cmd) upgrades
+// itself to the full rebuild that re-derives is_from_me, or skips when
+// another process repaired the cache first. That recheck is also why
+// concurrent mutations are safe without single-flighting here: queued builds
+// serialize on the build lock and the redundant ones no-op. Without this
+// kick nothing schedules a build at all — the daemon only re-evaluates
+// staleness at startup and after syncs — so direction and relationship
+// analytics would silently serve stale is_from_me values until then.
+func (s *Server) scheduleAccountIdentityCacheRebuild(ctx context.Context) {
+	builder, ok := s.store.(CLICacheBuilder)
+	if !ok {
+		s.logger.Warn("account identity changed but no cache builder is available; " +
+			"is_from_me analytics stay stale until the next cache build")
+		return
+	}
+	// WithoutCancel: the build must outlive the HTTP request that queued it.
+	buildCtx := context.WithoutCancel(ctx)
+	go func() {
+		// Background gate work, not request work: nothing waits on this
+		// build, and it must not preempt a scheduled sync holding the gate.
+		done, ok := s.beginBackgroundOperationGateWork(buildCtx, "an analytics cache rebuild")
+		if !ok {
+			s.logger.Warn("analytics cache rebuild after account identity change did not start; " +
+				"is_from_me analytics stay stale until the next cache build")
+			return
+		}
+		defer done()
+		discard := func(CLICacheBuildEvent) error { return nil }
+		if err := builder.BuildCLICache(buildCtx, false, discard); err != nil {
+			s.logger.Error("analytics cache rebuild after account identity change failed", "error", err)
+		}
+	}()
 }
 
 func (s *Server) operationError(

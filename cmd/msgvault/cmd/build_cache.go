@@ -124,21 +124,17 @@ var buildCacheWriteStateFile = os.WriteFile
 // columns are added/removed/renamed in the COPY queries below so that
 // incremental builds automatically trigger a full rebuild instead of
 // producing Parquet files with mismatched schemas.
-const cacheSchemaVersion = 7 // v7: include meeting transcripts in the searchable Parquet cache
+const cacheSchemaVersion = query.CacheSchemaVersion
 
-// sentCacheExportMessageWhere identifies rows eligible for the searchable
-// Parquet cache. Calendar events are the sole archived message type excluded
-// from this dataset; analytics eligibility is enforced separately by the
-// query engine.
+// sentCacheExportMessageWhere identifies every timestamped durable row eligible
+// for the modality-neutral analytical cache. Modality scoping belongs in query
+// code, never in publication.
 func sentCacheExportMessageWhere(alias string) string {
 	qualifier := ""
 	if alias != "" {
 		qualifier = alias + "."
 	}
-	return fmt.Sprintf(
-		"%ssent_at IS NOT NULL AND COALESCE(%smessage_type, '') <> 'calendar_event'",
-		qualifier, qualifier,
-	)
+	return qualifier + "sent_at IS NOT NULL"
 }
 
 func exportableMessageWhere(alias string) string {
@@ -189,8 +185,7 @@ func readCacheSyncCounters(db sqlRowQuerier) (cacheSyncCounters, error) {
 		JOIN sources src ON src.id = sr.source_id
 		WHERE sr.status IN ('completed', 'failed')
 		  AND sr.completed_at IS NOT NULL
-		  AND src.source_type <> ?
-	`, sourceTypeCalendar).Scan(
+	`).Scan(
 		&counters.additions,
 		&counters.updates,
 		&counters.failedRunCount,
@@ -212,6 +207,7 @@ during export (especially for incremental updates).
 The cache files are stored in ~/.msgvault/analytics/:
   - messages/year=*/     Core message data, partitioned by year
   - participants/        Email addresses and domains
+  - participant_identifiers/  Explicit participant identity evidence
   - message_recipients/  Links messages to participants (from/to/cc/bcc)
   - labels/              Label definitions
   - message_labels/      Links messages to labels
@@ -290,9 +286,12 @@ func runBuildCacheLocal(fullRebuild, auto bool) error {
 		return err
 	}
 
-	if result.Skipped {
+	switch {
+	case result.Skipped:
 		fmt.Println("No new messages to export.")
-	} else {
+	case result.IdentityOnly:
+		fmt.Println("Refreshed identity datasets (no message changes).")
+	default:
 		fmt.Printf("Exported %d messages to %s\n", result.ExportedCount, result.OutputDir)
 	}
 	fmt.Println("\nCache build complete! The TUI will now use fast cached queries.")
@@ -315,6 +314,7 @@ type buildResult struct {
 	MaxMessageID  int64
 	OutputDir     string
 	Skipped       bool
+	IdentityOnly  bool // true when only owner_participants/participant_clusters were refreshed
 }
 
 // buildCache honors an explicit full rebuild unconditionally. Default builds
@@ -361,6 +361,43 @@ func acquireCacheBuildLock(analyticsDir string) (*flock.Flock, error) {
 	return buildLock, nil
 }
 
+// identityDriftOnly reports whether HasIdentityDrift is the only staleness
+// signal set: no new, deleted, or updated messages, and no account-identity
+// drift — just participant links changing which participants are owners.
+// In that case a full message rebuild is unnecessary — refreshIdentityDatasetsOnly
+// re-exports only the two identity datasets. A full rebuild triggered by
+// any other signal refreshes identity data naturally, so this check only
+// matters when HasIdentityDrift fires alone.
+//
+// HasAccountIdentityDrift is excluded even though it also bumps
+// identity_revision (and therefore HasIdentityDrift): confirming or
+// removing an account identity changes the is_from_me flag baked into
+// message Parquet shards, which the lightweight identity-only refresh does
+// not re-derive. Account-identity drift must always take the full-rebuild
+// path.
+func identityDriftOnly(staleness cacheStaleness) bool {
+	return staleness.HasIdentityDrift && !staleness.HasNew && !staleness.HasDeleted &&
+		!staleness.HasUpdated && !staleness.HasAccountIdentityDrift
+}
+
+// refreshIdentityDatasetsOnly re-exports owner_participants and
+// participant_clusters via cacheops.RefreshIdentityDatasets, leaving every
+// message-derived dataset untouched. The caller already holds the
+// exclusive cross-process cache build lock (buildCacheLocked's precondition),
+// satisfying RefreshIdentityDatasets' own locking precondition.
+func refreshIdentityDatasetsOnly(dbPath, analyticsDir string) (*buildResult, error) {
+	st, err := store.Open(dbPath)
+	if err != nil {
+		return nil, fmt.Errorf("open store for identity refresh: %w", err)
+	}
+	defer func() { _ = st.Close() }()
+
+	if _, err := cacheops.RefreshIdentityDatasets(context.Background(), st, analyticsDir); err != nil {
+		return nil, fmt.Errorf("refresh identity datasets: %w", err)
+	}
+	return &buildResult{OutputDir: analyticsDir, IdentityOnly: true}, nil
+}
+
 // buildCacheLocked exports and publishes a cache while the caller holds the
 // exclusive cross-process cache lock.
 func buildCacheLocked(dbPath, analyticsDir string, fullRebuild, recheckStaleness bool) (*buildResult, error) {
@@ -371,6 +408,9 @@ func buildCacheLocked(dbPath, analyticsDir string, fullRebuild, recheckStaleness
 		staleness := cacheNeedsBuild(dbPath, analyticsDir)
 		if !staleness.NeedsBuild {
 			return &buildResult{Skipped: true, OutputDir: analyticsDir}, nil
+		}
+		if identityDriftOnly(staleness) {
+			return refreshIdentityDatasetsOnly(dbPath, analyticsDir)
 		}
 		fullRebuild = staleness.FullRebuild
 	}
@@ -397,6 +437,44 @@ func buildCacheLocked(dbPath, analyticsDir string, fullRebuild, recheckStaleness
 			hasPreviousState = true
 			lastMessageID = state.LastMessageID
 		}
+	}
+
+	// Read the identity revision and computed participant clusters through
+	// their own short-lived connection, before the SQLite snapshot below pins
+	// a read transaction. ParticipantClusters does its own graph traversal in
+	// Go (internal/store), so it cannot be expressed as a COPY query the way
+	// owner_participants can.
+	//
+	// Invariant: the identity revision is read before (or atomically with) the
+	// cluster snapshot and before the message-export snapshot is pinned. A
+	// concurrent identity mutation therefore makes the stamped revision LAG
+	// the store, which HasIdentityDrift detects on the next staleness check —
+	// the cache self-heals. Never move this read after the export. The same
+	// invariant applies to the account-identity revision read alongside it:
+	// this full build derives is_from_me fresh from the current store state,
+	// so stamping a lagging account-identity revision here is likewise
+	// self-healing — HasAccountIdentityDrift catches it on the next check.
+	identityStore, err := store.Open(dbPath)
+	if err != nil {
+		return nil, fmt.Errorf("open store for identity export: %w", err)
+	}
+	identityRevision, err := identityStore.IdentityRevision()
+	if err != nil {
+		_ = identityStore.Close()
+		return nil, fmt.Errorf("read identity revision: %w", err)
+	}
+	accountIdentityRevision, err := identityStore.AccountIdentityRevision()
+	if err != nil {
+		_ = identityStore.Close()
+		return nil, fmt.Errorf("read account identity revision: %w", err)
+	}
+	participantClusters, err := identityStore.ParticipantClusters()
+	if err != nil {
+		_ = identityStore.Close()
+		return nil, fmt.Errorf("read participant clusters: %w", err)
+	}
+	if err := identityStore.Close(); err != nil {
+		return nil, fmt.Errorf("close store after identity export: %w", err)
 	}
 
 	// Keep metadata reads and every source-table export on one SQLite snapshot.
@@ -489,6 +567,13 @@ func buildCacheLocked(dbPath, analyticsDir string, fullRebuild, recheckStaleness
 	if buildCacheAfterSnapshotHook != nil {
 		buildCacheAfterSnapshotHook()
 	}
+	var attachmentMIMEColumnCount int
+	if err := sourceSnapshot.QueryRow(`
+		SELECT COUNT(*) FROM pragma_table_info('attachments') WHERE name = 'mime_type'
+	`).Scan(&attachmentMIMEColumnCount); err != nil {
+		return nil, fmt.Errorf("inspect attachment MIME schema: %w", err)
+	}
+	sourceSnapshot.hasAttachmentMIME = attachmentMIMEColumnCount > 0
 	if err := sourceSnapshot.Prepare(); err != nil {
 		return nil, err
 	}
@@ -522,8 +607,8 @@ func buildCacheLocked(dbPath, analyticsDir string, fullRebuild, recheckStaleness
 	}
 
 	// Junction rows are searchable exactly when their parent message is
-	// exportable. This includes meeting attendees and excludes calendar
-	// invitees, hidden rows, and messages without a timestamp.
+	// exportable. This includes calendar invitees and meeting attendees while
+	// excluding hidden rows and messages without a timestamp.
 	exportableJunctionWhere := fmt.Sprintf(
 		"TRY_CAST(message_id AS BIGINT) IN (SELECT CAST(m.id AS BIGINT) FROM sqlite_db.messages m WHERE %s AND TRY_CAST(m.id AS BIGINT) <= %d)",
 		exportableMessageWhere("m"), maxID,
@@ -606,18 +691,24 @@ func buildCacheLocked(dbPath, analyticsDir string, fullRebuild, recheckStaleness
 		attachmentsFilter = fmt.Sprintf(" WHERE message_id > %d", lastMessageID)
 	}
 	attachmentsFilter = junctionFilter(attachmentsFilter)
+	attachmentMIMEExpression := "'' AS mime_type"
+	if sourceSnapshot.hasAttachmentMIME {
+		attachmentMIMEExpression = "COALESCE(TRY_CAST(mime_type AS VARCHAR), '') AS mime_type"
+	}
 	if err := runExport(tableAttachments, fmt.Sprintf(`
 	COPY (
 		SELECT
+			id AS attachment_id,
 			message_id,
 			size,
-			COALESCE(TRY_CAST(filename AS VARCHAR), '') as filename
+			COALESCE(TRY_CAST(filename AS VARCHAR), '') as filename,
+			%s
 		FROM sqlite_db.attachments%s
 	) TO '%s/%s' (
 		FORMAT PARQUET,
 		COMPRESSION 'zstd'
 	)
-	`, attachmentsFilter, escapedAttachmentsDir, junctionFile)); err != nil {
+	`, attachmentMIMEExpression, attachmentsFilter, escapedAttachmentsDir, junctionFile)); err != nil {
 		return nil, fmt.Errorf("export attachments: %w", err)
 	}
 
@@ -639,6 +730,115 @@ func buildCacheLocked(dbPath, analyticsDir string, fullRebuild, recheckStaleness
 	)
 	`, escapedParticipantsDir)); err != nil {
 		return nil, fmt.Errorf("export participants: %w", err)
+	}
+
+	participantIdentifiersDir := filepath.Join(staging.root, tableParticipantIdentifiers)
+	escapedParticipantIdentifiersDir := strings.ReplaceAll(participantIdentifiersDir, "'", "''")
+	if err := runExport(tableParticipantIdentifiers, fmt.Sprintf(`
+	COPY (
+		SELECT participant_id,
+			COALESCE(TRY_CAST(identifier_type AS VARCHAR), '') AS identifier_type,
+			COALESCE(TRY_CAST(identifier_value AS VARCHAR), '') AS identifier_value,
+			COALESCE(TRY_CAST(display_value AS VARCHAR), '') AS display_value,
+			COALESCE(TRY_CAST(is_primary AS BOOLEAN), false) AS is_primary
+		FROM sqlite_db.participant_identifiers
+	) TO '%s/participant_identifiers.parquet' (
+		FORMAT PARQUET,
+		COMPRESSION 'zstd'
+	)
+	`, escapedParticipantIdentifiersDir)); err != nil {
+		return nil, fmt.Errorf("export participant identifiers: %w", err)
+	}
+
+	// Owner participants: every participant row that a confirmed
+	// account_identities address resolves to for its source, matched
+	// case-insensitively against either the durable participant email or an
+	// explicit participant_identifiers email, or verbatim against any
+	// non-email participant_identifiers row (phone, chat handle, etc. — see
+	// the identity CLI contract: identifiers are stored verbatim, and only
+	// email comparisons fold case). Always fully replaced (not filtered by
+	// lastMessageID) since identities are cheap to recompute and independent
+	// of the message ID watermark.
+	ownerParticipantsDir := filepath.Join(staging.root, tableOwnerParticipants)
+	escapedOwnerParticipantsDir := strings.ReplaceAll(ownerParticipantsDir, "'", "''")
+	if err := runExport(tableOwnerParticipants, fmt.Sprintf(`
+	COPY (
+		SELECT DISTINCT ai.source_id, p.id AS participant_id
+		FROM sqlite_db.account_identities ai
+		JOIN sqlite_db.participants p
+		  ON p.email_address IS NOT NULL AND lower(p.email_address) = lower(ai.address)
+		UNION
+		SELECT DISTINCT ai.source_id, pi.participant_id
+		FROM sqlite_db.account_identities ai
+		JOIN sqlite_db.participant_identifiers pi
+		  ON (pi.identifier_type = 'email' AND lower(pi.identifier_value) = lower(ai.address))
+		  OR (pi.identifier_type != 'email' AND pi.identifier_value = ai.address)
+	) TO '%s/owner_participants.parquet' (
+		FORMAT PARQUET,
+		COMPRESSION 'zstd'
+	)
+	`, escapedOwnerParticipantsDir)); err != nil {
+		return nil, fmt.Errorf("export owner participants: %w", err)
+	}
+
+	// Participant clusters: participant_id -> canonical (smallest member)
+	// cluster ID, computed in Go (ParticipantClusters does graph traversal
+	// that SQL cannot express directly) and staged through a DuckDB temp
+	// table so it can be COPYed to Parquet like every other dataset. Always
+	// written, even when there are no linked participants, so the dataset
+	// directory required by RequiredParquetDirs always exists.
+	participantClustersDir := filepath.Join(staging.root, tableParticipantClusters)
+	escapedParticipantClustersDir := strings.ReplaceAll(participantClustersDir, "'", "''")
+	if _, err := exportDB.Exec(
+		`CREATE TEMP TABLE tmp_participant_clusters (participant_id BIGINT, canonical_id BIGINT)`,
+	); err != nil {
+		return nil, fmt.Errorf("create participant clusters temp table: %w", err)
+	}
+	if len(participantClusters) > 0 {
+		values := make([]string, 0, len(participantClusters))
+		for participantID, canonicalID := range participantClusters {
+			values = append(values, fmt.Sprintf("(%d, %d)", participantID, canonicalID))
+		}
+		insertSQL := "INSERT INTO tmp_participant_clusters (participant_id, canonical_id) VALUES " +
+			strings.Join(values, ", ")
+		if _, err := exportDB.Exec(insertSQL); err != nil {
+			return nil, fmt.Errorf("populate participant clusters temp table: %w", err)
+		}
+	}
+	if err := runExport(tableParticipantClusters, fmt.Sprintf(`
+	COPY (
+		SELECT participant_id, canonical_id FROM tmp_participant_clusters
+	) TO '%s/participant_clusters.parquet' (
+		FORMAT PARQUET,
+		COMPRESSION 'zstd'
+	)
+	`, escapedParticipantClustersDir)); err != nil {
+		return nil, fmt.Errorf("export participant clusters: %w", err)
+	}
+	if _, err := exportDB.Exec(`DROP TABLE tmp_participant_clusters`); err != nil {
+		return nil, fmt.Errorf("drop participant clusters temp table: %w", err)
+	}
+
+	conversationParticipantsDir := filepath.Join(staging.root, tableConversationParticipants)
+	escapedConversationParticipantsDir := strings.ReplaceAll(conversationParticipantsDir, "'", "''")
+	if err := runExport(tableConversationParticipants, fmt.Sprintf(`
+	COPY (
+		SELECT
+			cp.conversation_id,
+			cp.participant_id
+		FROM sqlite_db.conversation_participants cp
+		WHERE EXISTS (
+			SELECT 1 FROM sqlite_db.messages m
+			WHERE m.conversation_id = cp.conversation_id
+			  AND `+exportableMessageWhere("m")+`
+			  AND TRY_CAST(m.id AS BIGINT) <= %d
+		)
+	) TO '%s/conversation_participants.parquet' (
+		FORMAT PARQUET,
+		COMPRESSION 'zstd'
+	)
+	`, maxID, escapedConversationParticipantsDir)); err != nil {
+		return nil, fmt.Errorf("export conversation participants: %w", err)
 	}
 
 	// 5. Export labels
@@ -727,6 +927,19 @@ func buildCacheLocked(dbPath, analyticsDir string, fullRebuild, recheckStaleness
 			m.deleted_from_source_at,
 			m.sender_id,
 			COALESCE(TRY_CAST(m.message_type AS VARCHAR), '') as message_type,
+			(COALESCE(m.is_from_me, FALSE) OR EXISTS (
+				SELECT 1 FROM sqlite_db.account_identities ai
+				JOIN sqlite_db.participants sp ON sp.id = m.sender_id
+				WHERE ai.source_id = m.source_id
+				  AND sp.email_address IS NOT NULL
+				  AND lower(sp.email_address) = lower(ai.address)
+			) OR EXISTS (
+				SELECT 1 FROM sqlite_db.account_identities ai
+				JOIN sqlite_db.participant_identifiers spi ON spi.participant_id = m.sender_id
+				WHERE ai.source_id = m.source_id
+				  AND ((spi.identifier_type = 'email' AND lower(spi.identifier_value) = lower(ai.address))
+				       OR (spi.identifier_type != 'email' AND spi.identifier_value = ai.address))
+			)) AS is_from_me,
 			CAST(EXTRACT(YEAR FROM m.sent_at) AS INTEGER) as year,
 			CAST(EXTRACT(MONTH FROM m.sent_at) AS INTEGER) as month
 		FROM sqlite_db.messages m
@@ -773,6 +986,19 @@ func buildCacheLocked(dbPath, analyticsDir string, fullRebuild, recheckStaleness
 				m.deleted_from_source_at,
 				m.sender_id,
 				COALESCE(TRY_CAST(m.message_type AS VARCHAR), '') as message_type,
+				(COALESCE(m.is_from_me, FALSE) OR EXISTS (
+					SELECT 1 FROM sqlite_db.account_identities ai
+					JOIN sqlite_db.participants sp ON sp.id = m.sender_id
+					WHERE ai.source_id = m.source_id
+					  AND sp.email_address IS NOT NULL
+					  AND lower(sp.email_address) = lower(ai.address)
+				) OR EXISTS (
+					SELECT 1 FROM sqlite_db.account_identities ai
+					JOIN sqlite_db.participant_identifiers spi ON spi.participant_id = m.sender_id
+					WHERE ai.source_id = m.source_id
+					  AND ((spi.identifier_type = 'email' AND lower(spi.identifier_value) = lower(ai.address))
+					       OR (spi.identifier_type != 'email' AND spi.identifier_value = ai.address))
+				)) AS is_from_me,
 				CAST(EXTRACT(MONTH FROM m.sent_at) AS INTEGER) as month
 			FROM sqlite_db.messages m
 			WHERE 1 = 0
@@ -828,14 +1054,16 @@ func buildCacheLocked(dbPath, analyticsDir string, fullRebuild, recheckStaleness
 	// Save sync state using the pre-export watermark so any deletion
 	// that occurs during or after the build is detected as stale.
 	state := syncState{
-		LastMessageID:          maxID,
-		LastSyncAt:             cacheWatermark,
-		SchemaVersion:          cacheSchemaVersion,
-		LastCompletedSyncRunID: lastCompletedSyncRunID,
-		LastCacheAdditionCount: syncCounters.additions,
-		LastCacheUpdateCount:   syncCounters.updates,
-		LastFailedSyncRunCount: syncCounters.failedRunCount,
-		LastFailedSyncRunIDSum: syncCounters.failedRunIDSum,
+		LastMessageID:           maxID,
+		LastSyncAt:              cacheWatermark,
+		SchemaVersion:           cacheSchemaVersion,
+		LastCompletedSyncRunID:  lastCompletedSyncRunID,
+		LastCacheAdditionCount:  syncCounters.additions,
+		LastCacheUpdateCount:    syncCounters.updates,
+		LastFailedSyncRunCount:  syncCounters.failedRunCount,
+		LastFailedSyncRunIDSum:  syncCounters.failedRunIDSum,
+		IdentityRevision:        identityRevision,
+		AccountIdentityRevision: accountIdentityRevision,
 	}
 	stateData, err := json.Marshal(state)
 	if err != nil {
@@ -950,6 +1178,20 @@ func printCacheStats(out io.Writer, errOut io.Writer, stats *cacheops.CacheStats
 		if err := writeCacheStatsLine(out, "Run 'msgvault build-cache' to repair it.\n"); err != nil {
 			return err
 		}
+	case cacheops.StatusStaleSchema:
+		if err := writeCacheStatsLine(out, "Analytics cache schema is stale.\n"); err != nil {
+			return err
+		}
+		if err := writeCacheStatsLine(out, "Run 'msgvault build-cache --full-rebuild' to upgrade it.\n"); err != nil {
+			return err
+		}
+	case cacheops.StatusDrifted:
+		if err := writeCacheStatsLine(out, "Analytics cache files do not match the committed publication.\n"); err != nil {
+			return err
+		}
+		if err := writeCacheStatsLine(out, "Run 'msgvault build-cache --full-rebuild' to repair them.\n"); err != nil {
+			return err
+		}
 	case cacheops.StatusReady:
 		if err := writeCacheStatsLine(out, "Cache Statistics:\n"); err != nil {
 			return err
@@ -1007,15 +1249,19 @@ func writeCacheStatsLine(w io.Writer, format string, args ...any) error {
 // transaction directly. The fallback exports every table from one go-sqlite3
 // transaction before DuckDB reads the resulting static CSV files.
 type cacheSourceSnapshot struct {
-	duckDB   *sql.DB
-	duckTx   *sql.Tx
-	sqliteDB *sql.DB
-	sqliteTx *sql.Tx
-	tmpDir   string
+	duckDB            *sql.DB
+	duckTx            *sql.Tx
+	sqliteDB          *sql.DB
+	sqliteTx          *sql.Tx
+	tmpDir            string
+	hasAttachmentMIME bool
 }
 
 func openCacheSourceSnapshot(duckDB *sql.DB, dbPath string) (*cacheSourceSnapshot, error) {
-	if runtime.GOOS != "windows" {
+	// MSGVAULT_FORCE_CSV_SNAPSHOT lets tests exercise the CSV fallback that
+	// Windows always takes, so drift between the COPY queries and the CSV
+	// views fails on every platform instead of only on Windows CI.
+	if runtime.GOOS != "windows" && os.Getenv("MSGVAULT_FORCE_CSV_SNAPSHOT") == "" {
 		// Try sqlite_scanner; fall back to CSV when the extension is unavailable
 		// (for example in an air-gapped installation). Parallel scanner workers
 		// open independent SQLite connections, so disable only that parallelism
@@ -1095,6 +1341,10 @@ func (s *cacheSourceSnapshot) Prepare() error {
 
 	// Tables and the SELECT queries to export them.
 	// Column lists match what the COPY-to-Parquet queries expect.
+	attachmentQuery := "SELECT id, message_id, size, filename, '' AS mime_type FROM attachments"
+	if s.hasAttachmentMIME {
+		attachmentQuery = "SELECT id, message_id, size, filename, mime_type FROM attachments"
+	}
 	tables := []struct {
 		name          string
 		query         string
@@ -1104,15 +1354,18 @@ func (s *cacheSourceSnapshot) Prepare() error {
 		// `deleted_at IS NULL` filter on this path the same way it does
 		// on the sqlite_scanner path; otherwise DuckDB binds against a
 		// CSV view that lacks the column and the export fails on Windows.
-		{tableMessages, "SELECT id, source_id, source_message_id, conversation_id, subject, snippet, sent_at, size_estimate, has_attachments, attachment_count, deleted_from_source_at, deleted_at, sender_id, message_type FROM messages WHERE sent_at IS NOT NULL",
-			"types={'sent_at': 'TIMESTAMP', 'deleted_from_source_at': 'TIMESTAMP', 'deleted_at': 'TIMESTAMP'}"},
+		{tableMessages, "SELECT id, source_id, source_message_id, conversation_id, subject, snippet, sent_at, size_estimate, has_attachments, attachment_count, deleted_from_source_at, deleted_at, sender_id, message_type, is_from_me FROM messages WHERE sent_at IS NOT NULL",
+			"types={'sent_at': 'TIMESTAMP', 'deleted_from_source_at': 'TIMESTAMP', 'deleted_at': 'TIMESTAMP', 'is_from_me': 'BOOLEAN'}"},
 		{"message_recipients", "SELECT message_id, participant_id, recipient_type, display_name FROM message_recipients", ""},
 		{"message_labels", "SELECT message_id, label_id FROM message_labels", ""},
-		{tableAttachments, "SELECT message_id, size, filename FROM attachments", ""},
+		{tableAttachments, attachmentQuery, ""},
 		{tableParticipants, "SELECT id, email_address, domain, display_name, phone_number FROM participants", ""},
+		{"account_identities", "SELECT source_id, address FROM account_identities", ""},
+		{tableParticipantIdentifiers, "SELECT participant_id, identifier_type, identifier_value, display_value, is_primary FROM participant_identifiers", ""},
 		{tableLabels, "SELECT id, name FROM labels", ""},
 		{"sources", "SELECT id, identifier, source_type FROM sources", ""},
 		{tableConversations, "SELECT id, source_conversation_id, title, COALESCE(conversation_type, 'email_thread') AS conversation_type FROM conversations", ""},
+		{tableConversationParticipants, "SELECT conversation_id, participant_id FROM conversation_participants", ""},
 	}
 
 	for _, t := range tables {
@@ -1259,7 +1512,11 @@ func rebuildCacheAfterWrite(dbPath string) error {
 	if err != nil {
 		return fmt.Errorf("refresh analytics cache: %w", err)
 	}
-	if !result.Skipped {
+	switch {
+	case result.Skipped:
+	case result.IdentityOnly:
+		logger.Info("identity datasets refreshed")
+	default:
 		logger.Info("cache rebuilt", "exported", result.ExportedCount)
 	}
 	return nil

@@ -17,12 +17,11 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 )
 
-// TestBuildCache_ExcludesCalendarEvents is the Parquet-leak regression: calendar
-// events (and their attendee junction rows) must be excluded from the email
-// analytics Parquet, or attendees would surface in Sender/Recipient/Domain
-// aggregates and per-view counts would stop reconciling with the email-gated
-// stats header.
-func TestBuildCache_ExcludesCalendarEvents(t *testing.T) {
+// TestBuildCache_IncludesCalendarEventsInModalityNeutralCache verifies calendar
+// rows and attendees are available to the common analytical read model. Legacy
+// email aggregates remain email-scoped in query code rather than by dropping
+// non-email rows during publication.
+func TestBuildCache_IncludesCalendarEventsInModalityNeutralCache(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	tmp := t.TempDir()
@@ -84,25 +83,25 @@ func TestBuildCache_ExcludesCalendarEvents(t *testing.T) {
 	require.NoError(err)
 	defer func() { _ = duckdb.Close() }()
 
-	// messages Parquet: only the email, never the calendar event.
+	// messages Parquet is modality-neutral: email and calendar event coexist.
 	msgPattern := filepath.Join(analyticsDir, "messages", "**", "*.parquet")
 	var msgCount int
 	require.NoError(duckdb.QueryRow(
 		`SELECT COUNT(*) FROM read_parquet(?, hive_partitioning=true)`, msgPattern).Scan(&msgCount))
-	assert.Equal(1, msgCount, "only the email message should be exported")
+	assert.Equal(2, msgCount, "email and calendar event should be exported")
 
 	var calCount int
 	require.NoError(duckdb.QueryRow(
 		`SELECT COUNT(*) FROM read_parquet(?, hive_partitioning=true) WHERE message_type = 'calendar_event'`,
 		msgPattern).Scan(&calCount))
-	assert.Equal(0, calCount, "no calendar_event rows in the messages Parquet")
+	assert.Equal(1, calCount, "calendar_event row in the messages Parquet")
 
-	// message_recipients Parquet: carol (email) present, bob (attendee) absent.
+	// Both email recipients and event attendees are analytical participants.
 	recPattern := filepath.Join(analyticsDir, "message_recipients", "*.parquet")
 	var bobRows int
 	require.NoError(duckdb.QueryRow(
 		`SELECT COUNT(*) FROM read_parquet(?) WHERE participant_id = ?`, recPattern, bobID).Scan(&bobRows))
-	assert.Equal(0, bobRows, "calendar attendee must not leak into the recipients Parquet")
+	assert.Equal(1, bobRows, "calendar attendee should be exported")
 
 	var carolRows int
 	require.NoError(duckdb.QueryRow(
@@ -113,10 +112,10 @@ func TestBuildCache_ExcludesCalendarEvents(t *testing.T) {
 	require.NoError(duckdb.QueryRow(
 		`SELECT COUNT(*) FROM read_parquet(?) WHERE conversation_type = 'calendar'`,
 		filepath.Join(analyticsDir, "conversations", "*.parquet")).Scan(&calendarConversationRows))
-	assert.Equal(0, calendarConversationRows, "calendar conversation must not leak into conversations Parquet")
+	assert.Equal(1, calendarConversationRows, "calendar conversation should be exported")
 }
 
-func TestBuildCache_AllCalendarEventsWritesEmptyCacheState(t *testing.T) {
+func TestBuildCache_AllCalendarEventsWritesAnalyticalCacheState(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	tmp := t.TempDir()
@@ -143,9 +142,9 @@ func TestBuildCache_AllCalendarEventsWritesEmptyCacheState(t *testing.T) {
 	require.NoError(st.Close())
 
 	result, err := buildCache(dbPath, analyticsDir, false)
-	require.NoError(err, "buildCache should accept an archive with no exportable email messages")
+	require.NoError(err, "buildCache should accept a calendar-only archive")
 	require.False(result.Skipped, "calendar-only database still advances cache state")
-	assert.Equal(int64(0), result.ExportedCount, "calendar events are intentionally excluded from email analytics")
+	assert.Equal(int64(1), result.ExportedCount, "calendar events are part of the modality-neutral cache")
 
 	data, err := os.ReadFile(filepath.Join(analyticsDir, "_last_sync.json"))
 	require.NoError(err, "cache state should be written")

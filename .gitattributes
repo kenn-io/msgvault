@@ -1,0 +1,9 @@
+# go:embed bakes internal/web/dist into the binary, and tests compare the
+# embedded bytes exactly. Force LF for the text asset types so Windows
+# checkouts (core.autocrlf=true) embed the same bytes as other platforms.
+internal/web/dist/**/*.css text eol=lf
+internal/web/dist/**/*.html text eol=lf
+internal/web/dist/**/*.js text eol=lf
+internal/web/dist/**/*.json text eol=lf
+internal/web/dist/**/*.mjs text eol=lf
+internal/web/dist/**/*.svg text eol=lf

@@ -183,7 +183,7 @@ func aggDimensionForView(d Dialect, view ViewType, timeGranularity TimeGranulari
 		case TimeYear:
 			gran = "year"
 		case TimeMonth:
-			gran = "month"
+			gran = timeGranularityMonth
 		case TimeDay:
 			gran = "day"
 		default:
@@ -275,7 +275,7 @@ func sortClause(opts AggregateOptions) (string, error) {
 	var field string
 	switch opts.SortField {
 	case SortByCount:
-		field = "count"
+		field = sortFieldCount
 	case SortBySize:
 		field = "total_size"
 	case SortByAttachmentSize:
@@ -552,11 +552,11 @@ func (e *SQLiteEngine) buildFilterJoinsAndConditions(filter MessageFilter, table
 		case TimeYear:
 			gran = "year"
 		case TimeMonth:
-			gran = "month"
+			gran = timeGranularityMonth
 		case TimeDay:
 			gran = "day"
 		default:
-			gran = "month"
+			gran = timeGranularityMonth
 		}
 		timeExpr := e.dialect.TimeTruncExpression(prefix+"sent_at", gran)
 		conditions = append(conditions, timeExpr+" = ?")
@@ -647,7 +647,7 @@ func sqliteMessageTypeCondition(alias string, messageTypes []string) (string, []
 		exact = append(exact, typ)
 	}
 
-	col := "message_type"
+	col := messageTypeDimension
 	if alias != "" {
 		col = alias + ".message_type"
 	}
@@ -1422,11 +1422,11 @@ func (e *SQLiteEngine) GetGmailIDsByFilter(ctx context.Context, filter MessageFi
 		case TimeYear:
 			gran = "year"
 		case TimeMonth:
-			gran = "month"
+			gran = timeGranularityMonth
 		case TimeDay:
 			gran = "day"
 		default:
-			gran = "month"
+			gran = timeGranularityMonth
 		}
 		timeExpr := e.dialect.TimeTruncExpression("m.sent_at", gran)
 		conditions = append(conditions, timeExpr+" = ?")

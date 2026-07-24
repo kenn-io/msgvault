@@ -28,6 +28,14 @@ type Query struct {
 	MessageTypes  []string   // message_type filter (e.g. sms, mms, whatsapp, teams)
 	HideDeleted   bool       // exclude messages where deleted_from_source_at IS NOT NULL
 
+	// DeletionScope selects which messages the Store search path
+	// (Store.SearchMessagesQuery*) covers relative to source deletion
+	// (messages.deleted_from_source_at). It is caller-set context — the
+	// parser never populates it — and the zero value keeps the historical
+	// active-only behavior, so callers that never set it are unaffected.
+	// The DuckDB SearchFast path ignores it and keeps honoring HideDeleted.
+	DeletionScope DeletionScope
+
 	// UnsupportedOperators records recognized Gmail operators that msgvault
 	// does not implement locally. The original token is still kept as a text
 	// term for backwards-compatible callers; front doors that need strict
@@ -41,6 +49,22 @@ type Query struct {
 	// Err before searching.
 	parseErrs []error
 }
+
+// DeletionScope selects which messages a search covers relative to
+// upstream deletion (messages.deleted_from_source_at). Dedup-hidden rows
+// (deleted_at IS NOT NULL) are always excluded regardless of scope.
+type DeletionScope string
+
+const (
+	// DeletionScopeActive matches live messages only. It is the zero
+	// value so existing callers keep the historical active-only behavior.
+	DeletionScopeActive DeletionScope = ""
+	// DeletionScopeDeleted matches archived messages that were deleted
+	// from their source account.
+	DeletionScopeDeleted DeletionScope = "deleted"
+	// DeletionScopeAny matches both live and source-deleted messages.
+	DeletionScopeAny DeletionScope = "any"
+)
 
 // Err returns a combined error describing every known operator that was
 // given an invalid value, or nil if the query parsed cleanly. Front doors

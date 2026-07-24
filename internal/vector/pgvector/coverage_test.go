@@ -153,3 +153,41 @@ func TestCoverageSplit_ScopedEmbeddedHoldsInvariant(t *testing.T) {
 	assert.Equal(live, embeddedCount+blank+missing,
 		"invariant: live == embedded + blank + missing")
 }
+
+func TestFilteredCoverageRequiresLiveGenerationStampAndVector(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	ctx := context.Background()
+	db := openPGTestDB(t)
+	b, err := Open(ctx, Options{DB: db, Dimension: 8})
+	require.NoError(err)
+	t.Cleanup(func() { _ = b.Close() })
+
+	_, err = db.ExecContext(ctx, `
+		INSERT INTO messages (id, embed_gen, deleted_at, deleted_from_source_at) VALUES
+			(1, NULL, NULL, NULL),
+			(2, NULL, NULL, NULL),
+			(3, NULL, CURRENT_TIMESTAMP, NULL),
+			(4, NULL, NULL, CURRENT_TIMESTAMP),
+			(5, 999, NULL, NULL),
+			(6, NULL, NULL, NULL)`)
+	require.NoError(err)
+	gen, err := b.CreateGeneration(ctx, "test-model", 8, "fp")
+	require.NoError(err)
+	_, err = db.ExecContext(ctx, `UPDATE messages SET embed_gen = $1 WHERE id IN (1, 3, 4, 6)`, int64(gen))
+	require.NoError(err)
+	chunks := make([]vector.Chunk, 0, 5)
+	for i, id := range []int64{1, 2, 3, 4, 5} {
+		v := make([]float32, 8)
+		v[i] = 1
+		chunks = append(chunks, vector.Chunk{MessageID: id, Vector: v})
+	}
+	require.NoError(b.Upsert(ctx, gen, chunks))
+
+	count, err := b.EmbeddedMessageCountForIDs(ctx, gen, []int64{1, 2, 3, 4, 5, 6})
+	require.NoError(err)
+	assert.Equal(int64(1), count)
+
+	_, err = b.EmbeddedMessageCountForIDs(ctx, gen, make([]int64, vector.FilteredCoverageBatchSize+1))
+	assert.ErrorIs(err, vector.ErrCoverageBatchTooLarge)
+}

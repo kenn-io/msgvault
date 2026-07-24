@@ -20,11 +20,30 @@ import (
 // Analytics dataset names. Each is both the Parquet subdirectory under
 // analyticsDir and the view/probe key for that dataset's optional columns.
 const (
-	datasetMessages      = "messages"
-	datasetParticipants  = "participants"
-	datasetConversations = "conversations"
-	messageTypeEmail     = "email"
+	datasetMessages                 = "messages"
+	datasetSources                  = "sources"
+	datasetParticipants             = "participants"
+	datasetParticipantIdentifiers   = "participant_identifiers"
+	datasetConversations            = "conversations"
+	datasetConversationParticipants = "conversation_participants"
+	datasetOwnerParticipants        = "owner_participants"
+	datasetParticipantClusters      = "participant_clusters"
+	messageTypeDimension            = "message_type"
+	messageTypeEmail                = "email"
+	messageTypeCalendar             = "calendar_event"
+	timeGranularityMonth            = "month"
+	sortDirectionAsc                = "asc"
+	sortDirectionDesc               = "desc"
+	sortFieldCount                  = "count"
 )
+
+// sqlSortDirections maps validated request sort directions to fixed SQL
+// keywords. ORDER BY fragments must interpolate these literal values — never
+// the request string itself — so request-provided text cannot reach SQL.
+var sqlSortDirections = map[string]string{
+	sortDirectionAsc:  "ASC",
+	sortDirectionDesc: "DESC",
+}
 
 // emailOnlyFilterMsg is the SQL condition restricting to email messages with "msg." alias (DuckDB).
 // NULL and empty string handle old data where message_type was not yet populated.

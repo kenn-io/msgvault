@@ -40,15 +40,15 @@ Environment variables:
 
 Examples:
   # Export token to NAS over HTTPS
-  msgvault export-token user@gmail.com --to https://nas:8080 --api-key YOUR_KEY
+  msgvault export-token user@example.com --to https://archive.example:8080 --api-key YOUR_KEY
 
   # Using environment variables
-  export MSGVAULT_REMOTE_URL=https://nas:8080
+  export MSGVAULT_REMOTE_URL=https://archive.example:8080
   export MSGVAULT_REMOTE_API_KEY=your-key
-  msgvault export-token user@gmail.com
+  msgvault export-token user@example.com
 
   # With Tailscale (trusted network, HTTP allowed)
-  msgvault export-token user@gmail.com --to http://homebase.tail49367.ts.net:8080 --api-key KEY --allow-insecure`,
+  msgvault export-token user@example.com --to http://archive.example:8080 --api-key KEY --allow-insecure`,
 	Args: cobra.ExactArgs(1),
 	RunE: runExportToken,
 }

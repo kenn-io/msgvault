@@ -8,10 +8,18 @@ new archives or fresh re-syncs. There is currently no SQLite to PostgreSQL
 migration command.
 
 On PostgreSQL, sync, full-text search, vector and hybrid semantic search,
-deletion staging, attachment metadata, stats, and the TUI, HTTP, and MCP read
-paths all run against PostgreSQL. Optional semantic search uses the
-[pgvector](https://github.com/pgvector/pgvector) extension and stores embeddings
-in the same database as the message archive.
+deletion staging, attachment metadata, stats, and the Web UI, TUI, HTTP, and MCP read
+paths all run against PostgreSQL. This covers the basic message-listing API
+(`GET /api/v1/messages`), aggregate views (Senders/Domains/Labels/Time), and
+search — the paths served by the dialect-aware query engine directly. The
+Web UI's cache-backed analytical surfaces — Explore (its base listing as
+well as the grouping/coverage/selection endpoints), Files, the People and
+domains workspaces, and Relationships (ranking, timeline, and the identity
+link/unlink cache refresh) — require the SQLite + DuckDB/Parquet analytics
+cache and are unavailable on PostgreSQL; see Storage Differences below.
+Optional semantic search uses the
+[pgvector](https://github.com/pgvector/pgvector) extension and
+stores embeddings in the same database as the message archive.
 
 ## Prerequisites
 
@@ -127,17 +135,31 @@ run_after_sync = true
 | Analytics cache | DuckDB over Parquet | Live SQL through the query engine |
 
 PostgreSQL does not currently have a Parquet acceleration layer equivalent to
-the default SQLite TUI path. Aggregate views run as live SQL, so very large
-archives should be validated with realistic data before PostgreSQL becomes your
-primary backend.
+the default SQLite TUI path. The TUI's Senders/Domains/Labels/Time aggregate
+views run as live SQL, so very large archives should be validated with
+realistic data before PostgreSQL becomes your primary backend.
+
+`msgvault build-cache` is SQLite-only — it refuses to run against a
+PostgreSQL `database_url`. This means the Web UI's cache-backed analytical
+surfaces (Explore, including its base listing and its
+grouping/coverage/selection endpoints; Files; the People and domains
+workspaces; and Relationships' ranking, timeline, and identity link/unlink
+cache refresh) have no PostgreSQL equivalent: those endpoints detect the
+missing DuckDB/Parquet cache and return a named unavailable-cache state
+rather than falling back to live SQL. If you see that state on a PostgreSQL
+backend, it is expected — the [cache troubleshooting guidance](/web-ui/#cache-states)
+applies to SQLite archives only.
 
 ## Current Scope
 
 Implemented:
 
 - PostgreSQL schema initialization and legacy column migrations.
-- Store, query, TUI, HTTP, and MCP read paths through a dialect-aware query
-  layer.
+- Store, query, Web UI, TUI, HTTP, and MCP read paths through a dialect-aware
+  query layer, covering the basic message-listing API, aggregate views,
+  search, and stats. The cache-only analytical surfaces (Explore, Files,
+  People and domains, Relationships) are not part of this layer — see Not
+  implemented below.
 - Full-text search with PostgreSQL `tsvector` and `ts_rank`.
 - Deletion staging and execution metadata updates.
 - Attachment metadata and cleanup paths.
@@ -149,6 +171,12 @@ Not implemented:
 
 - SQLite to PostgreSQL archive migration.
 - PostgreSQL Parquet or materialized aggregate acceleration.
+- The Web UI's cache-backed analytical surfaces (Explore, including its
+  base listing and its grouping/coverage/selection endpoints; Files; the
+  People and domains workspaces; and Relationships' ranking, timeline, and
+  identity link/unlink cache refresh): these require the DuckDB/Parquet
+  cache, which `build-cache` refuses to build against PostgreSQL, so they
+  return an unavailable-cache state rather than running as live SQL.
 - PostgreSQL corruption checks inside `msgvault verify`; use PostgreSQL
   operational tooling such as `pg_amcheck`.
 

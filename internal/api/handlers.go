@@ -84,15 +84,21 @@ type SourceStatusResponse struct {
 
 // SourceStatus represents one source and its read-only sync status.
 type SourceStatus struct {
-	ID                 int64          `json:"id"`
-	SourceType         string         `json:"source_type"`
-	Identifier         string         `json:"identifier"`
-	DisplayName        *string        `json:"display_name"`
-	LastSyncAt         *string        `json:"last_sync_at"`
-	UpdatedAt          string         `json:"updated_at"`
-	ActiveSync         *SyncRunStatus `json:"active_sync"`
-	LatestSync         *SyncRunStatus `json:"latest_sync"`
-	LastSuccessfulSync *SyncRunStatus `json:"last_successful_sync"`
+	ID                    int64          `json:"id"`
+	SourceType            string         `json:"source_type"`
+	Identifier            string         `json:"identifier"`
+	DisplayName           *string        `json:"display_name"`
+	LastSyncAt            *string        `json:"last_sync_at"`
+	UpdatedAt             string         `json:"updated_at"`
+	ActiveSync            *SyncRunStatus `json:"active_sync"`
+	LatestSync            *SyncRunStatus `json:"latest_sync"`
+	LastSuccessfulSync    *SyncRunStatus `json:"last_successful_sync"`
+	CanSync               bool           `json:"can_sync"`
+	SyncUnavailableReason string         `json:"sync_unavailable_reason,omitempty"`
+	Scheduled             bool           `json:"scheduled"`
+	Schedule              string         `json:"schedule,omitempty"`
+	NextSyncAt            *string        `json:"next_sync_at"`
+	SchedulerLastError    string         `json:"scheduler_last_error,omitempty"`
 }
 
 // SyncRunStatus represents the API-visible details for a sync run.
@@ -253,8 +259,13 @@ type MessageSummary struct {
 type MessageDetail struct {
 	MessageSummary
 
-	Body        string           `json:"body"`
-	BodyHTML    string           `json:"body_html,omitempty"`
+	Body     string `json:"body"`
+	BodyHTML string `json:"body_html,omitempty"`
+	// BodyOmitted marks a conversation-window message whose body was left
+	// out to keep the response within the cumulative inline-body budget.
+	// The snippet is still present; fetch the full body via
+	// GET /api/v1/messages/{id}.
+	BodyOmitted bool             `json:"body_omitted,omitempty"`
 	Attachments []AttachmentInfo `json:"attachments"`
 }
 
@@ -645,6 +656,7 @@ func (s *Server) handleGetMessage(w http.ResponseWriter, r *http.Request) {
 	detail := MessageDetail{
 		MessageSummary: toMessageSummary(*msg),
 		Body:           msg.Body,
+		BodyHTML:       msg.BodyHTML,
 	}
 
 	attachments := make([]AttachmentInfo, 0, len(msg.Attachments))
@@ -713,7 +725,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		parsedQuery.AccountIDs = append(parsedQuery.AccountIDs, sourceIDs...)
 	}
 
-	if mode == "vector" || mode == "hybrid" {
+	if mode == "vector" || mode == exploreSearchModeHybrid {
 		page, _, err := queryInt(r, "page")
 		if err != nil {
 			s.rejectBadParam(w, err)
@@ -1353,6 +1365,32 @@ func (s *Server) sourceStatus(statusStore SourceStatusStore, source *store.Sourc
 	if err := s.hydrateSyncRunStatus(statusStore, status.ActiveSync); err != nil {
 		return SourceStatus{}, err
 	}
+	schedulerRunning := false
+	if s.scheduler != nil {
+		status.Scheduled = s.scheduler.IsScheduled(source.Identifier)
+		for _, scheduled := range s.scheduler.Status() {
+			if scheduled.Email != source.Identifier {
+				continue
+			}
+			status.Schedule = scheduled.Schedule
+			status.SchedulerLastError = scheduled.LastError
+			schedulerRunning = scheduled.Running
+			if !scheduled.NextRun.IsZero() {
+				status.NextSyncAt = nullableTimePtr(scheduled.NextRun)
+			}
+			break
+		}
+	}
+	switch {
+	case status.ActiveSync != nil || schedulerRunning:
+		status.SyncUnavailableReason = "sync_already_running"
+	case s.scheduler == nil:
+		status.SyncUnavailableReason = "scheduler_unavailable"
+	case !status.Scheduled:
+		status.SyncUnavailableReason = "sync_not_configured"
+	default:
+		status.CanSync = true
+	}
 
 	latest, err := statusStore.GetLatestSync(source.ID)
 	if err != nil && !errors.Is(err, store.ErrSyncRunNotFound) {
@@ -1637,9 +1675,13 @@ type AddAccountRequest struct {
 // POST /api/v1/accounts.
 func (s *Server) handleAddAccount(w http.ResponseWriter, r *http.Request) {
 	var req AddAccountRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	dec := json.NewDecoder(r.Body)
+	if err := dec.Decode(&req); err != nil {
 		s.logger.Warn("invalid account request JSON", "error", err)
 		writeError(w, http.StatusBadRequest, "invalid_json", "Invalid request JSON format")
+		return
+	}
+	if !requireSingleJSONValue(w, dec, "invalid_json") {
 		return
 	}
 
@@ -1727,8 +1769,12 @@ var errSQLQueryEngineUnavailable = errors.New("SQL query requires DuckDB engine 
 // POST /api/v1/query.
 func (s *Server) handleQuery(w http.ResponseWriter, r *http.Request) {
 	var req QueryRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	dec := json.NewDecoder(r.Body)
+	if err := dec.Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_json", "Invalid request body")
+		return
+	}
+	if !requireSingleJSONValue(w, dec, "invalid_json") {
 		return
 	}
 	if req.SQL == "" {
@@ -1855,7 +1901,7 @@ type TextMessagesResponse struct {
 // aggregateViewTypes are the accepted view_type values, surfaced in 400 messages.
 var aggregateViewTypes = []string{
 	"senders", "sender_names", "recipients", "recipient_names",
-	"domains", "labels", "time",
+	"domains", "labels", "time", //nolint:goconst // "labels" here names a view_type enum value, not the Parquet dataset test fixtures also spell "labels"; a shared constant would blur two unrelated concepts
 }
 
 // parseViewType parses a view type string into query.ViewType.
@@ -1907,7 +1953,7 @@ var (
 	aggregateSortFields = []string{"count", "size", "attachment_size", "name"}
 	messageSortFields   = []string{"date", "size", "subject"}
 	textSortFields      = []string{"last_message", "count", "name"}
-	sortDirections      = []string{"asc", "desc"}
+	sortDirections      = []string{"asc", apiSortDirectionDesc}
 	timeGranularities   = []string{"year", "month", "day"}
 )
 
@@ -1932,7 +1978,7 @@ func parseSortDirection(s string) (query.SortDirection, bool) {
 	switch strings.ToLower(s) {
 	case "asc":
 		return query.SortAsc, true
-	case "desc":
+	case apiSortDirectionDesc:
 		return query.SortDesc, true
 	default:
 		return query.SortDesc, false
@@ -3447,6 +3493,10 @@ func isEngineUnsupported(err error) bool {
 	return errors.Is(err, query.ErrNotImplemented) || errors.Is(err, daemonclient.ErrNotSupported)
 }
 
+type archivedMessageRawReader interface {
+	GetArchivedMessageRaw(ctx context.Context, id int64) ([]byte, error)
+}
+
 // handleMessageInline serves a CID-referenced inline MIME part (e.g. an
 // embedded image) from the raw message data. The CID is passed as a `cid`
 // query parameter so values containing `/` (legal per RFC 5322) round-trip
@@ -3470,7 +3520,12 @@ func (s *Server) handleMessageInline(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	raw, err := s.engine.GetMessageRaw(r.Context(), id)
+	var raw []byte
+	if reader, ok := s.store.(archivedMessageRawReader); ok {
+		raw, err = reader.GetArchivedMessageRaw(r.Context(), id)
+	} else {
+		raw, err = s.engine.GetMessageRaw(r.Context(), id)
+	}
 	if err != nil {
 		if isEngineUnsupported(err) {
 			writeError(w, http.StatusNotImplemented, "not_supported", "Inline MIME parts are not available on this engine")

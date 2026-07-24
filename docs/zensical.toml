@@ -1,7 +1,7 @@
 [project]
 site_name = "msgvault"
 site_url = "https://msgvault.io"
-site_description = "Offline email, chat, and meeting archive with full-text search and an interactive TUI. Sync Gmail, IMAP, Teams, Discord, Beeper, Granola, and Circleback; import PST, MBOX, Apple Mail, and common chat exports."
+site_description = "Offline email, chat, calendar, and meeting archive with a daemon-served analytical Web UI, full-text and semantic search, and sync for Gmail, IMAP, Teams, Discord, Beeper, Granola, and Circleback."
 site_author = "Kenn Software LLC"
 copyright = 'Copyright &copy; 2026 <a href="https://kenn.io">Kenn Software LLC</a>. MIT License.'
 docs_dir = "docs"
@@ -14,11 +14,12 @@ use_directory_urls = true
 nav = [
   {"Introduction" = "introduction.md"},
   {"Setup Guide" = "setup.md"},
+  {"Web UI" = "web-ui.md"},
   {"Interactive TUI" = "usage/tui.md"},
   {"Configuration" = "configuration.md"},
   {"CLI Reference" = "cli-reference.md"},
   {"MCP Server" = "usage/chat.md"},
-  {"Web Server" = "api-server.md"},
+  {"Web UI & API Server" = "api-server.md"},
   {"Changelog" = "changelog.md"},
   {"CLI Usage" = [
     {"Searching" = "usage/searching.md"},

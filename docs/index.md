@@ -1,6 +1,6 @@
 ---
 title: msgvault
-description: Offline email, chat, and meeting archive with full-text search, an interactive TUI, backup snapshots, and multi-account support. Sync Gmail, IMAP, Google Calendar, Microsoft Teams, Discord, Beeper, Granola, and Circleback.
+description: Offline email, chat, calendar, and meeting archive with a daemon-served analytical Web UI, full-text and semantic search, a keyboard-driven TUI, and sync for Gmail, IMAP, Teams, Discord, Beeper, Granola, and Circleback.
 ---
 
 # msgvault
@@ -54,7 +54,7 @@ of your email (from Gmail, IMAP, or local archives) and imports chats and texts
 from WhatsApp, iMessage, Google Voice, Facebook Messenger, and SMS Backup &
 Restore, and can sync Teams conversations, Discord guilds, Beeper chats, plus
 Granola and Circleback meeting notes.
-Keyword search, analytics, the TUI, and the MCP server query your archive.
+Keyword search, analytics, the Web UI, the TUI, and the MCP server query your archive.
 **Source services are contacted only by authorization/registration, sync,
 media-backfill, and deletion workflows that you run or schedule explicitly.**
 Optional vector search calls only the embedding endpoint you configure; use a
@@ -87,7 +87,7 @@ it lives in an archive on disk that you own and control.
   </section>
   <section>
     <h3>Meetings &amp; Beeper</h3>
-    <p>Sync Granola and Circleback notes and transcripts into a dedicated TUI browser, and archive chats and media from networks bridged through Beeper Desktop. Search each source separately by message type.</p>
+    <p>Sync Granola and Circleback notes and transcripts, and archive chats and media from networks bridged through Beeper Desktop. Explore each source in the Web UI or its dedicated TUI mode.</p>
   </section>
   <section>
     <h3>Backup Snapshots</h3>
@@ -103,7 +103,7 @@ it lives in an archive on disk that you own and control.
   </section>
   <section>
     <h3>Semantic &amp; Hybrid Search</h3>
-    <p>Opt-in semantic search with vectors stored locally, plus hybrid ranking that fuses BM25 and vector similarity via Reciprocal Rank Fusion. Point msgvault at a local or self-hosted OpenAI-compatible embedding endpoint and query by meaning, not just keywords. Exposed through local CLI search, the HTTP API, and MCP server.</p>
+    <p>Opt-in semantic search with vectors stored locally, plus hybrid ranking that fuses BM25 and vector similarity via Reciprocal Rank Fusion. Point msgvault at a local or self-hosted OpenAI-compatible embedding endpoint and query by meaning, not just keywords. Search mode and index coverage stay explicit in the Web UI.</p>
   </section>
   <section>
     <h3>Multi-Account</h3>
@@ -122,8 +122,8 @@ it lives in an archive on disk that you own and control.
     <p>Install bundled read-only skills that teach Claude Code and Codex how to search the archive, retrieve attachments, and run analytics from the terminal.</p>
   </section>
   <section>
-    <h3>Web Server</h3>
-    <p>REST API for programmatic access to your archive. Optional cron-based background sync scheduling. Build dashboards, automations, and integrations.</p>
+    <h3>Analytical Web UI &amp; API</h3>
+    <p>Open a dense, keyboard-driven archive interface served directly by the daemon. Search and group across modalities, inspect people and files, monitor sources, review deletions, or use the same server through its REST API.</p>
   </section>
   <section>
     <h3>Local Import</h3>
@@ -131,7 +131,7 @@ it lives in an archive on disk that you own and control.
   </section>
   <section>
     <h3>Safe Deletion</h3>
-    <p>Stage messages for deletion in the TUI or via AI assistant, review manifests, then permanently delete from Gmail or IMAP provider.</p>
+    <p>Review and stage messages in the Web UI, TUI, or via an AI assistant, then explicitly execute the manifest against Gmail or your IMAP provider while preserving the local archive.</p>
   </section>
 </div>
 

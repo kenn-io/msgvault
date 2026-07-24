@@ -1,14 +1,18 @@
 ---
-title: Web Server
-description: REST API for programmatic access to your msgvault archive, with optional background sync scheduling.
+title: Web UI & API Server
+description: Daemon-served analytical Web UI and REST API for your msgvault archive, with optional background sync scheduling.
 ---
 
 
 ## Overview
 
-`msgvault serve` starts an HTTP server that exposes your email archive over a REST API. It optionally runs a background sync scheduler to keep accounts up to date on a cron-based schedule.
+`msgvault serve` starts an HTTP server that exposes your archive through the
+first-party Web UI at `/` and a REST API under `/api`. It optionally runs a
+background sync scheduler to keep accounts up to date on a cron-based schedule.
+The complete UI is embedded in the release binary; see [Web UI](/web-ui/) for
+browser login, secure remote deployment, search states, and keyboard controls.
 
-The API is registered through Huma and exposes a generated OpenAPI document at `/openapi.json`; interactive docs are available at `/docs`. You can also run `msgvault openapi` to print the same checked-in contract without starting a daemon or opening the archive database. The OpenAPI `info.version` is the API schema version used for client/server compatibility; the running daemon binary version is exposed separately in the generated document metadata. The API queries the same archive database and attachment store as the CLI and TUI. SQLite is the default archive database; PostgreSQL is supported when `[data].database_url` is a PostgreSQL DSN. Keyword search and ordinary archive reads stay local to that database. If vector search is enabled, semantic and hybrid search also call the embedding endpoint configured in `[vector.embeddings]`. The server is designed for local integrations, dashboards, and automation scripts.
+The API is registered through Huma and exposes a generated OpenAPI document at `/openapi.json`. You can also run `msgvault openapi` to print the same checked-in contract without starting a daemon or opening the archive database. The OpenAPI `info.version` is the API schema version used for client/server compatibility; the running daemon binary version is exposed separately in the generated document metadata. The API queries the same archive database and attachment store as the CLI, Web UI, and TUI. SQLite is the default archive database; PostgreSQL is supported when `[data].database_url` is a PostgreSQL DSN. Keyword search and ordinary archive reads stay local to that database. If vector search is enabled, semantic and hybrid search also call the embedding endpoint configured in `[vector.embeddings]`. The server is designed for interactive archive use, local integrations, dashboards, and automation scripts.
 
 Go integrations can use the generated client in `pkg/client`. The wrapper
 handles msgvault-specific response details such as deletion staging dry-runs
@@ -45,7 +49,10 @@ curl http://localhost:8080/openapi.json
 
 ## Authentication
 
-All endpoints except `/health` require authentication when `api_key` is set in your config. Three authentication methods are supported:
+Archive API endpoints require authentication when `api_key` is set in your
+config. The public application shell, `/health`, and the browser-session
+bootstrap/login routes remain reachable so the UI can determine whether login
+is required. Three API-key authentication methods are supported:
 
 | Method | Header | Example |
 |---|---|---|
@@ -687,17 +694,116 @@ Scheduler state and per-account schedule details.
 
 ---
 
+### Preflight an analytical selection {#post-apiv1explorepreflight}
+
+**Endpoint:** `POST /api/v1/explore/preflight`
+
+Validates a revision-pinned selection of canonical archive entries and issues
+the single-use `operation_token` required to stage that selection for
+deletion. Selections are built from the analytical explore endpoints
+(`POST /api/v1/explore` and `POST /api/v1/explore/groups`), whose responses
+carry the `cache_revision`, `search_provenance`, and — for semantic/hybrid
+search — `candidate_snapshot_id` values a selection must echo back. The full
+explore contract is in the generated OpenAPI document (`/openapi.json`).
+
+**Request:**
+
+```json
+{
+  "selection": {
+    "mode": "all_matching",
+    "predicate": {
+      "filters": [
+        { "dimension": "domain", "values": ["example.com"] },
+        { "dimension": "before", "values": ["2020-01-01"] }
+      ]
+    },
+    "cache_revision": "<cache_revision from the explore response>",
+    "search_provenance": {}
+  }
+}
+```
+
+`selection` fields:
+
+| Field | Description |
+|---|---|
+| `mode` | `all_matching` selects everything the predicate matches; `explicit` selects only the listed `row_keys` |
+| `predicate` | The explore request being acted on: `filters` (dimensions `source`, `participant`, `domain`, `message_type`, `after`, `before`, `deletion`), plus `query` / `search_mode` for search-backed selections. Cursors are rejected |
+| `row_keys` | Explore row keys (the `key` field of explore rows) to include; required when `mode` is `explicit` |
+| `exclusions` | Row keys to exclude from an `all_matching` selection |
+| `cache_revision` | Required. The `cache_revision` from the explore response being reviewed |
+| `search_provenance` | The `search_provenance` from the explore response; checked when the predicate has a `search_mode` |
+| `candidate_snapshot_id` | The snapshot ID from the explore response; required for `semantic` / `hybrid` predicates (`400 candidate_snapshot_required` otherwise) |
+
+**Response (200):**
+
+```json
+{
+  "count": 1234,
+  "estimated_bytes": 52428800,
+  "cache_revision": "<current cache revision>",
+  "search_provenance": {},
+  "unavailable_actions": [
+    { "action": "export", "reason": "browser_export_requires_single_message" },
+    { "action": "open_in_source", "reason": "trusted_source_link_unavailable" }
+  ],
+  "action_targets": [],
+  "operation_token": "3q2fF0kaVYlIuXQ8yYb-KzGH5mo2vNc1",
+  "expires_at": "2026-07-06T15:35:00Z"
+}
+```
+
+`unavailable_actions` lists actions this selection does not support. A
+`stage_deletion` entry means the selection includes items that cannot be
+deleted from their source; staging it would fail with
+`409 selection_not_deletable`.
+
+The `operation_token` is bound to this exact selection, its match count, and
+the current cache revision. It expires at `expires_at` (five minutes after
+issue) and is single-use: staging a manifest consumes it, while a staging
+attempt that fails before the manifest persists leaves it valid for retry. A
+reused or expired token is rejected with `409 operation_token_invalid`.
+
+Malformed selections return `400` with `invalid_selection` (bad `mode`,
+missing `cache_revision`, or `mode: "explicit"` without `row_keys`) or
+`invalid_selection_predicate`. If the analytical cache or search index changes
+after the explore response was produced, preflight fails with
+`409 archive_revision_changed` or `409 search_revision_changed` — re-run
+explore and preflight against the new revision. Staging repeats all of these
+checks.
+
+---
+
 ### Stage messages for deletion {#post-apiv1deletions}
 
 **Endpoint:** `POST /api/v1/deletions`
 
-Stages messages for deletion by writing a pending deletion manifest. The
-server resolves matching Gmail IDs from a filter and/or an explicit list of
-internal message IDs (as returned by `/messages` and `/search`), unions and
-deduplicates them. Staging never touches Gmail — execution remains exclusively
-the `delete-staged` command.
+Stages messages for deletion by writing a pending deletion manifest. Staging
+never touches Gmail — execution remains exclusively the `delete-staged`
+command. The endpoint accepts three request shapes:
 
-**Request:**
+- **Dry run** — `"dry_run": true` with a `filter` and/or `message_ids`
+  resolves and counts without staging anything.
+- **Explicit message IDs** — `message_ids` alone (internal IDs as returned by
+  `/messages` and `/search`) stages directly.
+- **Preflighted selection** — a `selection` plus the `operation_token` issued
+  by [`/api/v1/explore/preflight`](#post-apiv1explorepreflight). This is the
+  only way to stage a filter-based deletion: a non-dry-run request with a
+  `filter` is rejected with `428 preflight_required`.
+
+In every shape, resolution is restricted to live Gmail-source messages, and a
+staged manifest executes against a single mailbox: the selection must resolve
+to exactly one Gmail account. The resolved account is stamped on the manifest
+(`delete-staged` uses it to pick the mailbox) and reported in the response;
+selections spanning multiple accounts are rejected with
+`400 multi_account_selection` — scope the request (for example with
+`filter.source_id` or a `source` filter dimension) or stage per account.
+Unknown JSON fields are rejected with `400 invalid_request` so a typo'd filter
+key cannot silently widen the selection, and requests with no criteria at all
+are rejected with `400 empty_filter`, so the entire archive cannot be staged.
+
+#### Dry run
 
 ```json
 {
@@ -707,31 +813,15 @@ the `delete-staged` command.
     "after": "2019-01-01",
     "before": "2020-01-01"
   },
-  "message_ids": [123, 456],
-  "description": "old newsletters",
-  "dry_run": false
+  "dry_run": true
 }
 ```
 
 Supported `filter` fields: `sender`, `sender_name`, `recipient`,
 `recipient_name`, `domain`, `label` (strings), `source_id` (integer), and
-`after` / `before` (RFC3339 or `YYYY-MM-DD` dates). At least one filter
-criterion or `message_ids` entry is required — requests with no criteria are
-rejected with `400 empty_filter`, so the entire archive cannot be staged.
-Unknown JSON fields are rejected with `400 invalid_request` so a typo'd
-filter key cannot silently widen the selection. Resolution is always
-restricted to live Gmail-source messages; deleted and non-Gmail message IDs
-are silently dropped.
-
-A staged manifest executes against a single mailbox, so the selection must
-resolve to exactly one Gmail account. The resolved account is stamped on the
-manifest (`delete-staged` uses it to pick the mailbox) and reported in the
-response; selections spanning multiple accounts are rejected with
-`400 multi_account_selection` — scope the request with `filter.source_id` or
-stage per account.
-
-With `"dry_run": true` the server resolves and counts without staging
-anything, returning `200`:
+`after` / `before` (RFC3339 or `YYYY-MM-DD` dates). The filter can be combined
+with `message_ids`; matches are unioned and deduplicated. The server resolves
+the request and returns `200` without writing anything:
 
 ```json
 {
@@ -742,19 +832,83 @@ anything, returning `200`:
 }
 ```
 
-Otherwise a pending manifest is written and `201` returned:
+#### Staging explicit message IDs
+
+A non-dry-run request whose only criterion is `message_ids` stages directly —
+the IDs are already an explicit, reviewed list:
+
+```json
+{
+  "message_ids": [123, 456],
+  "description": "old newsletters"
+}
+```
+
+A pending manifest is written and `201` returned:
 
 ```json
 {
   "dry_run": false,
-  "message_count": 1234,
+  "message_count": 2,
   "account": "you@gmail.com",
   "id": "20260706-153000-old-newsletters-a1b2",
   "status": "pending"
 }
 ```
 
-Criteria that match nothing return `400 no_messages_matched`.
+#### Staging a preflighted selection
+
+Filter-based staging goes through preflight so the reviewed selection — not a
+re-evaluated filter — is what gets staged:
+
+1. `POST /api/v1/explore` with the predicate; review the rows and note
+   `cache_revision` (plus `search_provenance` and `candidate_snapshot_id` for
+   search-backed predicates).
+2. `POST /api/v1/explore/preflight` with the `selection`; review `count` and
+   `estimated_bytes`, and keep the `operation_token`.
+3. `POST /api/v1/deletions` with the same `selection` and the token:
+
+```json
+{
+  "selection": {
+    "mode": "all_matching",
+    "predicate": {
+      "filters": [
+        { "dimension": "domain", "values": ["example.com"] },
+        { "dimension": "before", "values": ["2020-01-01"] }
+      ]
+    },
+    "cache_revision": "<cache_revision from the explore response>",
+    "search_provenance": {}
+  },
+  "operation_token": "<operation_token from preflight>",
+  "description": "old example.com mail"
+}
+```
+
+The response is the same `201` manifest shape as above. `selection` cannot be
+combined with `filter` or `message_ids` (`400 invalid_request`). The server
+re-validates the selection against the preflight grant before staging: the
+selection, its match count, and the cache/search revisions must be unchanged,
+and every selected item must be deletable. `"dry_run": true` may be combined
+with a selection to preview the resolved count and sample; the token is
+validated but not consumed.
+
+#### Errors
+
+| Status | Code | When |
+|---|---|---|
+| `400` | `empty_filter` | No filter criterion, `message_ids` entry, or `selection` |
+| `400` | `invalid_request` | Unknown JSON fields, or `selection` combined with `filter` / `message_ids` |
+| `400` | `invalid_date` | `after` / `before` is not RFC3339 or `YYYY-MM-DD` |
+| `400` | `no_messages_matched` | The criteria or reviewed selection match nothing |
+| `400` | `multi_account_selection` | The selection spans more than one Gmail account |
+| `428` | `preflight_required` | Non-dry-run `filter` request without a preflighted selection, or `selection` without `operation_token` |
+| `409` | `operation_token_invalid` | Token expired, already used, or does not match the selection, count, and revision |
+| `409` | `archive_revision_changed` | The analytical cache changed since preflight |
+| `409` | `search_revision_changed` | The search index revision changed since preflight |
+| `409` | `selection_not_deletable` | The selection contains items that cannot be deleted from their source |
+| `409` | `selection_changed` | The matching messages changed between preflight and staging |
 
 ---
 
@@ -894,7 +1048,7 @@ All server settings go in the `[server]` section of `config.toml`. Account sched
 
 | Key | Default | Description |
 |---|---|---|
-| `engine` | `auto` | Aggregate engine for TUI and aggregate HTTP views: `auto`, `sql`, or `duckdb` |
+| `engine` | `auto` | Aggregate engine for Web UI, TUI, and aggregate HTTP views: `auto`, `sql`, or `duckdb` |
 | `auto_build_cache` | `true` | Build stale or missing Parquet cache files before the daemon opens DuckDB |
 
 `engine = "sql"` forces live SQL for aggregate views. `engine = "duckdb"` requires a usable Parquet cache and fails daemon startup if the cache cannot be built or opened. `auto_build_cache = false` leaves cache rebuilds to explicit `msgvault build-cache` runs. These settings replace the TUI/MCP analytics flags deprecated in 0.17.0; see [Configuration: analytics](/configuration/#analytics).

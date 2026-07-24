@@ -1,6 +1,11 @@
 -- msgvault PostgreSQL schema
 -- Native PostgreSQL types and identity columns, parallel to schema.sql.
 
+CREATE TABLE IF NOT EXISTS archive_metadata (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
+
 -- ============================================================================
 -- SOURCES & IDENTITY
 -- ============================================================================
@@ -344,6 +349,20 @@ CREATE TABLE IF NOT EXISTS collection_sources (
 CREATE INDEX IF NOT EXISTS idx_collection_sources_source_id
     ON collection_sources(source_id);
 
+-- Daemon-owned analytical Saved Views. Canonical state contains only the
+-- query/view definition; result rows and transient selection remain client
+-- state and are never persisted here.
+CREATE TABLE IF NOT EXISTS saved_views (
+    id              BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    name            TEXT NOT NULL UNIQUE,
+    description     TEXT,
+    canonical_state JSONB NOT NULL,
+    schema_version  INTEGER NOT NULL,
+    revision        BIGINT NOT NULL DEFAULT 1,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 -- Confirmed per-account "me" identities used by sent-message detection
 -- in dedup. Identity is account-scoped: an address confirmed for one
 -- source does not imply it is "me" in any other source.
@@ -354,6 +373,22 @@ CREATE TABLE IF NOT EXISTS account_identities (
     confirmed_at  TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (source_id, address)
 );
+
+-- User-asserted identity links between participants. Edges are normalized
+-- (participant_a < participant_b) and the graph is kept a forest: every
+-- edge joins two previously distinct clusters, so deleting an edge
+-- deterministically splits one cluster in two. Connected components resolve
+-- to a canonical cluster (smallest member ID) at read time.
+CREATE TABLE IF NOT EXISTS participant_links (
+    participant_a BIGINT NOT NULL REFERENCES participants(id) ON DELETE CASCADE,
+    participant_b BIGINT NOT NULL REFERENCES participants(id) ON DELETE CASCADE,
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (participant_a, participant_b),
+    CHECK (participant_a < participant_b)
+);
+
+CREATE INDEX IF NOT EXISTS idx_participant_links_b
+    ON participant_links(participant_b);
 
 -- Marks one-time data migrations that have already run. Schema DDL is
 -- idempotent via IF NOT EXISTS; this table is for *data* migrations

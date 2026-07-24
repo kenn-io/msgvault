@@ -16,8 +16,10 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/gofrs/flock"
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/api"
+	"go.kenn.io/msgvault/internal/cacheops"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/deletion"
 	"go.kenn.io/msgvault/internal/discord"
@@ -352,14 +354,15 @@ func runServe(cmd *cobra.Command, args []string) error {
 	sched.Start()
 
 	// Create adapters for the API interfaces
-	storeAdapter := &storeAPIAdapter{store: s, attachmentMaintenance: attachmentMaint}
+	storeAdapter := &storeAPIAdapter{store: s, attachmentMaintenance: attachmentMaint, analyticsDir: cfg.AnalyticsDir()}
 	schedAdapter := &schedulerAdapter{scheduler: sched}
 
 	// Create and start API server
 	apiOpts := api.ServerOptions{
-		Config: cfg,
-		Store:  storeAdapter,
-		Engine: engine,
+		Config:         cfg,
+		Store:          storeAdapter,
+		SavedViewStore: s,
+		Engine:         engine,
 		SQLQueryRunner: func(ctx context.Context, sql string) (*query.QueryResult, error) {
 			return runDaemonSQLQuery(ctx, cfg, s, engine, sql)
 		},
@@ -373,6 +376,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		OperationGate: operationGate,
 		BlobStore:     blobStore,
 	}
+	applyServerRuntimeConfig(&apiOpts, cfg)
 	if cfg.Vector.Enabled {
 		apiOpts.VectorStatus = api.VectorStatusInitializing
 	}
@@ -456,6 +460,10 @@ func runServe(cmd *cobra.Command, args []string) error {
 	}
 
 	return nil
+}
+
+func applyServerRuntimeConfig(options *api.ServerOptions, cfg *config.Config) {
+	options.VectorCfg = cfg.Vector
 }
 
 func listenServeAPI(bindAddr string, port int) (net.Listener, error) {
@@ -730,6 +738,10 @@ func newDaemonIdleTracker(c *config.Config, stop context.CancelFunc) *api.IdleTr
 type storeAPIAdapter struct {
 	store                 *store.Store
 	attachmentMaintenance *attachmentMaintenance
+	// analyticsDir is the daemon's Parquet analytics cache directory, used
+	// by RefreshIdentityDatasets to locate both the cache build lock and
+	// the identity dataset files it re-exports.
+	analyticsDir string
 }
 
 var _ api.MessageStore = (*storeAPIAdapter)(nil)
@@ -750,6 +762,23 @@ var _ api.DeletionManifestCanceller = (*storeAPIAdapter)(nil)
 var _ api.CLIDeduplicatePlanner = (*storeAPIAdapter)(nil)
 var _ api.CLIEmbeddingsPlanner = (*storeAPIAdapter)(nil)
 var _ api.CLIDedupDeleteStore = (*storeAPIAdapter)(nil)
+var _ api.IdentityLinkStore = (*storeAPIAdapter)(nil)
+var _ api.IdentityCacheRefresher = (*storeAPIAdapter)(nil)
+var _ api.ClusterLookupStore = (*storeAPIAdapter)(nil)
+var _ api.ConversationWindowStore = (*storeAPIAdapter)(nil)
+
+func (a *storeAPIAdapter) ConversationExistsContext(ctx context.Context, conversationID int64) (bool, error) {
+	return a.store.ConversationExistsContext(ctx, conversationID)
+}
+
+func (a *storeAPIAdapter) GetConversationWindowContext(
+	ctx context.Context,
+	conversationID, anchorID int64,
+	before, after int,
+	start, end *time.Time,
+) (*store.ConversationWindow, error) {
+	return a.store.GetConversationWindowContext(ctx, conversationID, anchorID, before, after, start, end)
+}
 
 func (a *storeAPIAdapter) GetStats() (*api.StoreStats, error) {
 	return a.store.GetStats()
@@ -773,6 +802,21 @@ func (a *storeAPIAdapter) GetMessagesSummariesByIDsContext(
 	ctx context.Context, ids []int64,
 ) ([]api.APIMessage, error) {
 	return a.store.GetMessagesSummariesByIDsContext(ctx, ids)
+}
+
+func (a *storeAPIAdapter) GetFileMetadata(ctx context.Context, id int64) (*store.FileMetadata, error) {
+	return a.store.GetFileMetadata(ctx, id)
+}
+
+func (a *storeAPIAdapter) GetFileMetadataBatch(ctx context.Context, ids []int64) (map[int64]store.FileMetadata, error) {
+	return a.store.GetFileMetadataBatch(ctx, ids)
+}
+
+func (a *storeAPIAdapter) GetArchivedMessageRaw(ctx context.Context, id int64) ([]byte, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return a.store.GetMessageRaw(id)
 }
 
 func (a *storeAPIAdapter) GetStatsForScope(sourceIDs []int64) (*store.Stats, error) {
@@ -1210,6 +1254,44 @@ func (a *storeAPIAdapter) AddAccountIdentity(sourceID int64, address, signal str
 
 func (a *storeAPIAdapter) RemoveAccountIdentity(sourceID int64, address string) (int64, error) {
 	return a.store.RemoveAccountIdentity(sourceID, address)
+}
+
+func (a *storeAPIAdapter) LinkParticipants(participantA, participantB int64) (int64, error) {
+	return a.store.LinkParticipants(participantA, participantB)
+}
+
+func (a *storeAPIAdapter) UnlinkParticipants(participantA, participantB int64) (int64, error) {
+	return a.store.UnlinkParticipants(participantA, participantB)
+}
+
+func (a *storeAPIAdapter) ClusterMembers(id int64) ([]int64, error) {
+	return a.store.ClusterMembers(id)
+}
+
+func (a *storeAPIAdapter) ClusterEdges(id int64) ([]store.LinkEdge, error) {
+	return a.store.ClusterEdges(id)
+}
+
+// RefreshIdentityDatasets re-exports the owner_participants and
+// participant_clusters Parquet datasets after an identity mutation (a
+// participant link/unlink or an account identity add/remove) commits.
+// cacheops.RefreshIdentityDatasets requires its caller to hold the
+// cross-process analytics cache build lock exclusively; this acquires it
+// non-blocking, so a build already in progress makes the refresh fail fast
+// rather than stalling the HTTP request. The API layer treats any error,
+// including lock contention, as cache_state "stale" — the identity mutation
+// itself already committed and is not affected.
+func (a *storeAPIAdapter) RefreshIdentityDatasets(ctx context.Context) (int64, error) {
+	lock := flock.New(query.CacheBuildLockPath(a.analyticsDir))
+	locked, err := lock.TryLock()
+	if err != nil {
+		return 0, fmt.Errorf("acquire analytics cache build lock for identity refresh: %w", err)
+	}
+	if !locked {
+		return 0, errors.New("analytics cache build lock is held by another process")
+	}
+	defer func() { _ = lock.Unlock() }()
+	return cacheops.RefreshIdentityDatasets(ctx, a.store, a.analyticsDir)
 }
 
 func (a *storeAPIAdapter) GetActiveSync(sourceID int64) (*store.SyncRun, error) {

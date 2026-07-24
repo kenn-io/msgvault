@@ -307,6 +307,25 @@ func (m *Manager) PendingDir() string { return m.dirForStatus(StatusPending) }
 // InProgressDir returns the path to the in_progress directory.
 func (m *Manager) InProgressDir() string { return m.dirForStatus(StatusInProgress) }
 
+// InProgressManifestExists reports whether the manifest's file is still present
+// in the in_progress/ directory.
+//
+// Deletions execute in a separate CLI process while the daemon serves cancel
+// requests; the two coordinate only through manifest files on disk. A cancel
+// moves in_progress/<id>.json to cancelled/<id>.json, so its absence here is
+// the executor's cross-process signal that the deletion was cancelled and must
+// stop without recreating the file. Any stat error (including permission
+// errors) is treated as "gone" so the executor errs toward stopping rather
+// than continuing to delete.
+func (m *Manager) InProgressManifestExists(id string) bool {
+	if err := ValidateManifestID(id); err != nil {
+		return false
+	}
+	path := filepath.Join(m.dirForStatus(StatusInProgress), id+".json")
+	_, err := os.Stat(path)
+	return err == nil
+}
+
 // CompletedDir returns the path to the completed directory.
 func (m *Manager) CompletedDir() string { return m.dirForStatus(StatusCompleted) }
 

@@ -43,9 +43,12 @@ func AcquireCacheReadLock(ctx context.Context, analyticsDir string) (func(), err
 	return func() { _ = lock.Unlock() }, nil
 }
 
-// AcquireReadyCacheReadLock takes the shared cache lock and validates the
-// commit marker before any Parquet path is touched. Callers must release the
-// returned lock after their read completes.
+// AcquireReadyCacheReadLock takes the shared cache lock and runs the full
+// readiness inspection (including the complete dataset fingerprint walk)
+// before any Parquet path is touched. Callers must release the returned lock
+// after their read completes. This is the explicit full-validation entry
+// point; the DuckDB engine's per-query path memoizes the inspection instead
+// (see DuckDBEngine.validateCommittedCache).
 func AcquireReadyCacheReadLock(ctx context.Context, analyticsDir string) (func(), error) {
 	release, err := AcquireCacheReadLock(ctx, analyticsDir)
 	if err != nil {
@@ -58,7 +61,7 @@ func AcquireReadyCacheReadLock(ctx context.Context, analyticsDir string) (func()
 	}
 	if readiness != CacheReady {
 		release()
-		return nil, fmt.Errorf("%w: cache is %s", ErrCacheUnavailable, readiness)
+		return nil, &CacheUnavailableError{Readiness: readiness}
 	}
 	return release, nil
 }

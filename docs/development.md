@@ -5,6 +5,10 @@ description: Build, test, lint, and code conventions.
 
 ## Build
 
+Source builds require Go 1.26+, Bun 1.3.14+, and a C/C++ compiler. The Make
+targets install the pinned browser dependencies when `web/package.json` or
+`web/bun.lock` changes, then embed the production UI in the Go binary.
+
 ### macOS and Linux
 
 ```bash
@@ -78,6 +82,8 @@ go vet ./...
 
 ## Code Conventions
 
+- **Web UI**: Svelte with TypeScript, generated OpenAPI types, and components
+  from the shared UI toolkit
 - **TUI**: Bubble Tea for model/update, lipgloss for styling
 - **Database**: All DB operations through the `Store` struct (`internal/store`)
 - **Error handling**: Return `error`, wrap with context via `fmt.Errorf`
@@ -113,6 +119,8 @@ WHERE EXISTS (
 
 | Library | Purpose |
 |---|---|
+| `svelte` | Embedded analytical Web UI |
+| `openapi-fetch` | Typed browser API client |
 | `cobra` | CLI framework |
 | `charmbracelet/bubbletea` | TUI framework |
 | `charmbracelet/lipgloss` | TUI styling |

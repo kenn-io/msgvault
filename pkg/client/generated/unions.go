@@ -3,8 +3,562 @@
 package generated
 
 import (
+	"encoding/json"
+
 	"github.com/doordash-oss/oapi-codegen-dd/v3/pkg/runtime"
 )
+
+type SettingValue_OneOf_0 struct {
+	String string `json:"string" validate:"required"`
+}
+
+func (s SettingValue_OneOf_0) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(s))
+}
+
+type SettingValue_OneOf_1 struct {
+	Integer int64 `json:"integer"`
+}
+
+type SettingValue_OneOf_2 struct {
+	Number float64 `json:"number"`
+}
+
+type SettingValue_OneOf_3 struct {
+	Boolean bool `json:"boolean"`
+}
+
+type SettingValue_OneOf_4 struct {
+	Strings []string `json:"strings" validate:"required"`
+}
+
+func (s SettingValue_OneOf_4) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(s))
+}
+
+type SettingValue_OneOf struct {
+	union json.RawMessage
+}
+
+func (s *SettingValue_OneOf) Validate() error {
+	// NOTE: Validation is not supported for unions with more than 2 elements.
+	// Validating would require unmarshaling against each possible type, which is inefficient.
+	// Use AsValidated<Type>() methods to validate after retrieving the specific type.
+	return nil
+}
+
+// Raw returns the union data inside the SettingValue_OneOf as bytes
+func (s *SettingValue_OneOf) Raw() json.RawMessage {
+	return s.union
+}
+
+// AsSettingValue_OneOf_0 returns the union data inside the SettingValue_OneOf as a SettingValue_OneOf_0
+func (s *SettingValue_OneOf) AsSettingValue_OneOf_0() (SettingValue_OneOf_0, error) {
+	return runtime.UnmarshalAs[SettingValue_OneOf_0](s.union)
+}
+
+// AsValidatedSettingValue_OneOf_0 returns the union data inside the SettingValue_OneOf as a validated SettingValue_OneOf_0
+func (s *SettingValue_OneOf) AsValidatedSettingValue_OneOf_0() (SettingValue_OneOf_0, error) {
+	val, err := s.AsSettingValue_OneOf_0()
+	if err != nil {
+		var zero SettingValue_OneOf_0
+		return zero, err
+	}
+	if err := s.validateSettingValue_OneOf_0(val); err != nil {
+		var zero SettingValue_OneOf_0
+		return zero, err
+	}
+	return val, nil
+}
+
+// FromSettingValue_OneOf_0 overwrites any union data inside the SettingValue_OneOf as the provided SettingValue_OneOf_0
+func (s *SettingValue_OneOf) FromSettingValue_OneOf_0(val SettingValue_OneOf_0) error {
+	// Validate before storing
+	if err := s.validateSettingValue_OneOf_0(val); err != nil {
+		return err
+	}
+	bts, err := json.Marshal(val)
+	s.union = bts
+	return err
+}
+
+// AsSettingValue_OneOf_1 returns the union data inside the SettingValue_OneOf as a SettingValue_OneOf_1
+func (s *SettingValue_OneOf) AsSettingValue_OneOf_1() (SettingValue_OneOf_1, error) {
+	return runtime.UnmarshalAs[SettingValue_OneOf_1](s.union)
+}
+
+// AsValidatedSettingValue_OneOf_1 returns the union data inside the SettingValue_OneOf as a validated SettingValue_OneOf_1
+func (s *SettingValue_OneOf) AsValidatedSettingValue_OneOf_1() (SettingValue_OneOf_1, error) {
+	val, err := s.AsSettingValue_OneOf_1()
+	if err != nil {
+		var zero SettingValue_OneOf_1
+		return zero, err
+	}
+	if err := s.validateSettingValue_OneOf_1(val); err != nil {
+		var zero SettingValue_OneOf_1
+		return zero, err
+	}
+	return val, nil
+}
+
+// FromSettingValue_OneOf_1 overwrites any union data inside the SettingValue_OneOf as the provided SettingValue_OneOf_1
+func (s *SettingValue_OneOf) FromSettingValue_OneOf_1(val SettingValue_OneOf_1) error {
+	// Validate before storing
+	if err := s.validateSettingValue_OneOf_1(val); err != nil {
+		return err
+	}
+	bts, err := json.Marshal(val)
+	s.union = bts
+	return err
+}
+
+// AsSettingValue_OneOf_2 returns the union data inside the SettingValue_OneOf as a SettingValue_OneOf_2
+func (s *SettingValue_OneOf) AsSettingValue_OneOf_2() (SettingValue_OneOf_2, error) {
+	return runtime.UnmarshalAs[SettingValue_OneOf_2](s.union)
+}
+
+// AsValidatedSettingValue_OneOf_2 returns the union data inside the SettingValue_OneOf as a validated SettingValue_OneOf_2
+func (s *SettingValue_OneOf) AsValidatedSettingValue_OneOf_2() (SettingValue_OneOf_2, error) {
+	val, err := s.AsSettingValue_OneOf_2()
+	if err != nil {
+		var zero SettingValue_OneOf_2
+		return zero, err
+	}
+	if err := s.validateSettingValue_OneOf_2(val); err != nil {
+		var zero SettingValue_OneOf_2
+		return zero, err
+	}
+	return val, nil
+}
+
+// FromSettingValue_OneOf_2 overwrites any union data inside the SettingValue_OneOf as the provided SettingValue_OneOf_2
+func (s *SettingValue_OneOf) FromSettingValue_OneOf_2(val SettingValue_OneOf_2) error {
+	// Validate before storing
+	if err := s.validateSettingValue_OneOf_2(val); err != nil {
+		return err
+	}
+	bts, err := json.Marshal(val)
+	s.union = bts
+	return err
+}
+
+// AsSettingValue_OneOf_3 returns the union data inside the SettingValue_OneOf as a SettingValue_OneOf_3
+func (s *SettingValue_OneOf) AsSettingValue_OneOf_3() (SettingValue_OneOf_3, error) {
+	return runtime.UnmarshalAs[SettingValue_OneOf_3](s.union)
+}
+
+// AsValidatedSettingValue_OneOf_3 returns the union data inside the SettingValue_OneOf as a validated SettingValue_OneOf_3
+func (s *SettingValue_OneOf) AsValidatedSettingValue_OneOf_3() (SettingValue_OneOf_3, error) {
+	val, err := s.AsSettingValue_OneOf_3()
+	if err != nil {
+		var zero SettingValue_OneOf_3
+		return zero, err
+	}
+	if err := s.validateSettingValue_OneOf_3(val); err != nil {
+		var zero SettingValue_OneOf_3
+		return zero, err
+	}
+	return val, nil
+}
+
+// FromSettingValue_OneOf_3 overwrites any union data inside the SettingValue_OneOf as the provided SettingValue_OneOf_3
+func (s *SettingValue_OneOf) FromSettingValue_OneOf_3(val SettingValue_OneOf_3) error {
+	// Validate before storing
+	if err := s.validateSettingValue_OneOf_3(val); err != nil {
+		return err
+	}
+	bts, err := json.Marshal(val)
+	s.union = bts
+	return err
+}
+
+// AsSettingValue_OneOf_4 returns the union data inside the SettingValue_OneOf as a SettingValue_OneOf_4
+func (s *SettingValue_OneOf) AsSettingValue_OneOf_4() (SettingValue_OneOf_4, error) {
+	return runtime.UnmarshalAs[SettingValue_OneOf_4](s.union)
+}
+
+// AsValidatedSettingValue_OneOf_4 returns the union data inside the SettingValue_OneOf as a validated SettingValue_OneOf_4
+func (s *SettingValue_OneOf) AsValidatedSettingValue_OneOf_4() (SettingValue_OneOf_4, error) {
+	val, err := s.AsSettingValue_OneOf_4()
+	if err != nil {
+		var zero SettingValue_OneOf_4
+		return zero, err
+	}
+	if err := s.validateSettingValue_OneOf_4(val); err != nil {
+		var zero SettingValue_OneOf_4
+		return zero, err
+	}
+	return val, nil
+}
+
+// FromSettingValue_OneOf_4 overwrites any union data inside the SettingValue_OneOf as the provided SettingValue_OneOf_4
+func (s *SettingValue_OneOf) FromSettingValue_OneOf_4(val SettingValue_OneOf_4) error {
+	// Validate before storing
+	if err := s.validateSettingValue_OneOf_4(val); err != nil {
+		return err
+	}
+	bts, err := json.Marshal(val)
+	s.union = bts
+	return err
+}
+
+// validateSettingValue_OneOf_0 validates a SettingValue_OneOf_0 value
+func (s *SettingValue_OneOf) validateSettingValue_OneOf_0(val SettingValue_OneOf_0) error {
+	if v, ok := any(val).(runtime.Validator); ok {
+		return v.Validate()
+	}
+	return nil
+}
+
+// validateSettingValue_OneOf_1 validates a SettingValue_OneOf_1 value
+func (s *SettingValue_OneOf) validateSettingValue_OneOf_1(val SettingValue_OneOf_1) error {
+	if v, ok := any(val).(runtime.Validator); ok {
+		return v.Validate()
+	}
+	return nil
+}
+
+// validateSettingValue_OneOf_2 validates a SettingValue_OneOf_2 value
+func (s *SettingValue_OneOf) validateSettingValue_OneOf_2(val SettingValue_OneOf_2) error {
+	if v, ok := any(val).(runtime.Validator); ok {
+		return v.Validate()
+	}
+	return nil
+}
+
+// validateSettingValue_OneOf_3 validates a SettingValue_OneOf_3 value
+func (s *SettingValue_OneOf) validateSettingValue_OneOf_3(val SettingValue_OneOf_3) error {
+	if v, ok := any(val).(runtime.Validator); ok {
+		return v.Validate()
+	}
+	return nil
+}
+
+// validateSettingValue_OneOf_4 validates a SettingValue_OneOf_4 value
+func (s *SettingValue_OneOf) validateSettingValue_OneOf_4(val SettingValue_OneOf_4) error {
+	if v, ok := any(val).(runtime.Validator); ok {
+		return v.Validate()
+	}
+	return nil
+}
+
+func (s SettingValue_OneOf) MarshalJSON() ([]byte, error) {
+	bts, err := s.union.MarshalJSON()
+
+	return bts, err
+}
+
+func (s *SettingValue_OneOf) UnmarshalJSON(bts []byte) error {
+	err := s.union.UnmarshalJSON(bts)
+
+	return err
+}
+
+type SearchDomains_ErrorResponse_503_AnyOf struct {
+	runtime.Either[ExploreCacheUnavailableResponse, ErrorResponse]
+}
+
+func (s *SearchDomains_ErrorResponse_503_AnyOf) Validate() error {
+	if s.IsA() {
+		if v, ok := any(s.A).(runtime.Validator); ok {
+			return v.Validate()
+		}
+	}
+	if s.IsB() {
+		if v, ok := any(s.B).(runtime.Validator); ok {
+			return v.Validate()
+		}
+	}
+	return nil
+}
+
+type SearchDomainFiles_ErrorResponse_503_AnyOf struct {
+	runtime.Either[ExploreCacheUnavailableResponse, ErrorResponse]
+}
+
+func (s *SearchDomainFiles_ErrorResponse_503_AnyOf) Validate() error {
+	if s.IsA() {
+		if v, ok := any(s.A).(runtime.Validator); ok {
+			return v.Validate()
+		}
+	}
+	if s.IsB() {
+		if v, ok := any(s.B).(runtime.Validator); ok {
+			return v.Validate()
+		}
+	}
+	return nil
+}
+
+type GetDomainContextSummary_ErrorResponse_503_AnyOf struct {
+	runtime.Either[ExploreCacheUnavailableResponse, ErrorResponse]
+}
+
+func (g *GetDomainContextSummary_ErrorResponse_503_AnyOf) Validate() error {
+	if g.IsA() {
+		if v, ok := any(g.A).(runtime.Validator); ok {
+			return v.Validate()
+		}
+	}
+	if g.IsB() {
+		if v, ok := any(g.B).(runtime.Validator); ok {
+			return v.Validate()
+		}
+	}
+	return nil
+}
+
+type GetDomainTimeline_ErrorResponse_503_AnyOf struct {
+	runtime.Either[ExploreCacheUnavailableResponse, ErrorResponse]
+}
+
+func (g *GetDomainTimeline_ErrorResponse_503_AnyOf) Validate() error {
+	if g.IsA() {
+		if v, ok := any(g.A).(runtime.Validator); ok {
+			return v.Validate()
+		}
+	}
+	if g.IsB() {
+		if v, ok := any(g.B).(runtime.Validator); ok {
+			return v.Validate()
+		}
+	}
+	return nil
+}
+
+type Explore_ErrorResponse_503_AnyOf struct {
+	runtime.Either[ExploreCacheUnavailableResponse, ErrorResponse]
+}
+
+func (e *Explore_ErrorResponse_503_AnyOf) Validate() error {
+	if e.IsA() {
+		if v, ok := any(e.A).(runtime.Validator); ok {
+			return v.Validate()
+		}
+	}
+	if e.IsB() {
+		if v, ok := any(e.B).(runtime.Validator); ok {
+			return v.Validate()
+		}
+	}
+	return nil
+}
+
+type ListExploreFiles_ErrorResponse_503_AnyOf struct {
+	runtime.Either[ExploreCacheUnavailableResponse, ErrorResponse]
+}
+
+func (l *ListExploreFiles_ErrorResponse_503_AnyOf) Validate() error {
+	if l.IsA() {
+		if v, ok := any(l.A).(runtime.Validator); ok {
+			return v.Validate()
+		}
+	}
+	if l.IsB() {
+		if v, ok := any(l.B).(runtime.Validator); ok {
+			return v.Validate()
+		}
+	}
+	return nil
+}
+
+type ExploreGroups_ErrorResponse_503_AnyOf struct {
+	runtime.Either[ExploreCacheUnavailableResponse, ErrorResponse]
+}
+
+func (e *ExploreGroups_ErrorResponse_503_AnyOf) Validate() error {
+	if e.IsA() {
+		if v, ok := any(e.A).(runtime.Validator); ok {
+			return v.Validate()
+		}
+	}
+	if e.IsB() {
+		if v, ok := any(e.B).(runtime.Validator); ok {
+			return v.Validate()
+		}
+	}
+	return nil
+}
+
+type CountExploreMatches_ErrorResponse_503_AnyOf struct {
+	runtime.Either[ExploreCacheUnavailableResponse, ErrorResponse]
+}
+
+func (c *CountExploreMatches_ErrorResponse_503_AnyOf) Validate() error {
+	if c.IsA() {
+		if v, ok := any(c.A).(runtime.Validator); ok {
+			return v.Validate()
+		}
+	}
+	if c.IsB() {
+		if v, ok := any(c.B).(runtime.Validator); ok {
+			return v.Validate()
+		}
+	}
+	return nil
+}
+
+type PreflightExploreSelection_ErrorResponse_503_AnyOf struct {
+	runtime.Either[ExploreCacheUnavailableResponse, ErrorResponse]
+}
+
+func (p *PreflightExploreSelection_ErrorResponse_503_AnyOf) Validate() error {
+	if p.IsA() {
+		if v, ok := any(p.A).(runtime.Validator); ok {
+			return v.Validate()
+		}
+	}
+	if p.IsB() {
+		if v, ok := any(p.B).(runtime.Validator); ok {
+			return v.Validate()
+		}
+	}
+	return nil
+}
+
+type GroupFiles_ErrorResponse_503_AnyOf struct {
+	runtime.Either[ExploreCacheUnavailableResponse, ErrorResponse]
+}
+
+func (g *GroupFiles_ErrorResponse_503_AnyOf) Validate() error {
+	if g.IsA() {
+		if v, ok := any(g.A).(runtime.Validator); ok {
+			return v.Validate()
+		}
+	}
+	if g.IsB() {
+		if v, ok := any(g.B).(runtime.Validator); ok {
+			return v.Validate()
+		}
+	}
+	return nil
+}
+
+type SearchFiles_ErrorResponse_503_AnyOf struct {
+	runtime.Either[ExploreCacheUnavailableResponse, ErrorResponse]
+}
+
+func (s *SearchFiles_ErrorResponse_503_AnyOf) Validate() error {
+	if s.IsA() {
+		if v, ok := any(s.A).(runtime.Validator); ok {
+			return v.Validate()
+		}
+	}
+	if s.IsB() {
+		if v, ok := any(s.B).(runtime.Validator); ok {
+			return v.Validate()
+		}
+	}
+	return nil
+}
+
+type SearchPeople_ErrorResponse_503_AnyOf struct {
+	runtime.Either[ExploreCacheUnavailableResponse, ErrorResponse]
+}
+
+func (s *SearchPeople_ErrorResponse_503_AnyOf) Validate() error {
+	if s.IsA() {
+		if v, ok := any(s.A).(runtime.Validator); ok {
+			return v.Validate()
+		}
+	}
+	if s.IsB() {
+		if v, ok := any(s.B).(runtime.Validator); ok {
+			return v.Validate()
+		}
+	}
+	return nil
+}
+
+type SearchPersonFiles_ErrorResponse_503_AnyOf struct {
+	runtime.Either[ExploreCacheUnavailableResponse, ErrorResponse]
+}
+
+func (s *SearchPersonFiles_ErrorResponse_503_AnyOf) Validate() error {
+	if s.IsA() {
+		if v, ok := any(s.A).(runtime.Validator); ok {
+			return v.Validate()
+		}
+	}
+	if s.IsB() {
+		if v, ok := any(s.B).(runtime.Validator); ok {
+			return v.Validate()
+		}
+	}
+	return nil
+}
+
+type GetPersonContextSummary_ErrorResponse_503_AnyOf struct {
+	runtime.Either[ExploreCacheUnavailableResponse, ErrorResponse]
+}
+
+func (g *GetPersonContextSummary_ErrorResponse_503_AnyOf) Validate() error {
+	if g.IsA() {
+		if v, ok := any(g.A).(runtime.Validator); ok {
+			return v.Validate()
+		}
+	}
+	if g.IsB() {
+		if v, ok := any(g.B).(runtime.Validator); ok {
+			return v.Validate()
+		}
+	}
+	return nil
+}
+
+type GetPersonTimeline_ErrorResponse_503_AnyOf struct {
+	runtime.Either[ExploreCacheUnavailableResponse, ErrorResponse]
+}
+
+func (g *GetPersonTimeline_ErrorResponse_503_AnyOf) Validate() error {
+	if g.IsA() {
+		if v, ok := any(g.A).(runtime.Validator); ok {
+			return v.Validate()
+		}
+	}
+	if g.IsB() {
+		if v, ok := any(g.B).(runtime.Validator); ok {
+			return v.Validate()
+		}
+	}
+	return nil
+}
+
+type ListRelationships_ErrorResponse_503_AnyOf struct {
+	runtime.Either[ExploreCacheUnavailableResponse, ErrorResponse]
+}
+
+func (l *ListRelationships_ErrorResponse_503_AnyOf) Validate() error {
+	if l.IsA() {
+		if v, ok := any(l.A).(runtime.Validator); ok {
+			return v.Validate()
+		}
+	}
+	if l.IsB() {
+		if v, ok := any(l.B).(runtime.Validator); ok {
+			return v.Validate()
+		}
+	}
+	return nil
+}
+
+type GetRelationshipTimeline_ErrorResponse_503_AnyOf struct {
+	runtime.Either[ExploreCacheUnavailableResponse, ErrorResponse]
+}
+
+func (g *GetRelationshipTimeline_ErrorResponse_503_AnyOf) Validate() error {
+	if g.IsA() {
+		if v, ok := any(g.A).(runtime.Validator); ok {
+			return v.Validate()
+		}
+	}
+	if g.IsB() {
+		if v, ok := any(g.B).(runtime.Validator); ok {
+			return v.Validate()
+		}
+	}
+	return nil
+}
 
 type SearchMessages_Response_OneOf struct {
 	runtime.Either[SearchResult, HybridSearchResponse]

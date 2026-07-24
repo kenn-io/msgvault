@@ -80,7 +80,7 @@ Every dedup-related command sits on one of five rungs (00 through 04). Rung 00 i
 - **Rung 04, remote delete.** This rung is two parts, stage then execute, and only the staging part is dedup-specific. To stage, run `deduplicate --delete-dups-from-source-server`; it writes pending deletion manifests only for pruned copies whose loser and survivor share a source (same-source-only), so a group spanning two sources stages nothing. To execute, run `delete-staged`, the generic executor for any staged deletion manifest (not just dedup), which acts on the source server and leaves your local archive untouched. Inspect first with `delete-staged --list`, target one batch with `delete-staged <batch-id>`, and note that execution is gated behind `MSGVAULT_ENABLE_REMOTE_DELETE=1`. The same-source restriction lives in the staging step, not in `delete-staged`. See [Deleting Email](/usage/deletion/) for how remote deletion works.
 
 !!! note "What \"hidden\" means"
-    A hidden copy is excluded from search, the TUI, vector and hybrid retrieval, the API, MCP responses, exports, and stats, while still living on disk. Every read path applies the same visibility rule, so a hidden duplicate cannot leak back into results through one backend.
+    A hidden copy is excluded from search, the Web UI, the TUI, vector and hybrid retrieval, the API, MCP responses, exports, and stats, while still living on disk. Every read path applies the same visibility rule, so a hidden duplicate cannot leak back into results through one backend.
 
 ## A Worked Walkthrough
 

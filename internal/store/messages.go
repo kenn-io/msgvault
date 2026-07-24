@@ -2118,6 +2118,27 @@ func (s *Store) MergeParticipants(oldID, newID int64) error {
 		if _, err := tx.Exec(`UPDATE participant_identifiers SET participant_id = ? WHERE participant_id = ?`, newID, oldID); err != nil {
 			return err
 		}
+		// Repoint (and, if needed, restructure) any link edges referencing
+		// oldID before the delete below drops them via ON DELETE CASCADE.
+		if err := s.rewriteLinksForMerge(tx, oldID, newID); err != nil {
+			return err
+		}
+		// Bump unconditionally, even when the merge touched no link edges:
+		// absorbing a participant whose email matches a confirmed account
+		// identity changes owner_participants' content (the baked dataset
+		// still lists the deleted oldID), and the refresh this triggers is
+		// cheap and idempotent, so it is not worth tracking that case
+		// separately from the link-touching one.
+		if _, err := s.bumpIdentityRevision(tx); err != nil {
+			return err
+		}
+		// Also bump the account-identity revision: the merge repoints
+		// messages.sender_id, so a merge involving the sender of any
+		// message with a baked is_from_me leaves that flag stale in the
+		// message Parquet shards, which only a full rebuild re-derives.
+		if err := s.bumpAccountIdentityRevision(tx); err != nil {
+			return err
+		}
 		_, err := tx.Exec(`DELETE FROM participants WHERE id = ?`, oldID)
 		return err
 	})

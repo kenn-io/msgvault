@@ -74,7 +74,7 @@ daemon_idle_timeout = "20m" # background daemon idle timeout; "0s" disables
 daemon_auto_restart = "newer" # newer, never, or always
 
 [analytics]
-# Daemon-side analytics engine for TUI and aggregate HTTP views:
+# Daemon-side analytics engine for Web UI, TUI, and aggregate HTTP views:
 # "auto" uses DuckDB/Parquet when usable, otherwise live SQL.
 # "sql" always uses live SQL. "duckdb" requires a usable Parquet cache.
 engine = "auto"
@@ -244,7 +244,7 @@ Use `msgvault logs` to view and tail log files from the selected local or remote
 
 ### `[server]`
 
-Settings for the web server started by `msgvault serve`. The same HTTP server is used by remote CLI access and by the local background daemon for archive-access CLI commands. See [Web Server](/api-server/) for endpoint documentation, or fetch `/openapi.json` from a running server for the generated OpenAPI contract.
+Settings for the Web UI and API server started by `msgvault serve`. The same HTTP server is used by remote CLI access and by the local background daemon for archive-access CLI commands. See [Web UI & API Server](/api-server/) for endpoint documentation, or fetch `/openapi.json` from a running server for the generated OpenAPI contract.
 
 | Key | Default | Description |
 |---|---|---|
@@ -255,6 +255,7 @@ Settings for the web server started by `msgvault serve`. The same HTTP server is
 | `cors_origins` | `[]` | Allowed CORS origins |
 | `cors_credentials` | `false` | Allow credentials in CORS requests |
 | `cors_max_age` | `0` | CORS preflight cache duration in seconds |
+| `trusted_proxies` | `[]` | IP addresses or CIDRs allowed to supply forwarded HTTPS/host headers |
 | `daemon_idle_timeout` | `20m` | Idle timeout for lifecycle-managed background daemons; set to `"0s"` to disable |
 | `daemon_auto_restart` | `newer` | Local daemon restart policy when the CLI finds a different daemon binary version: `newer`, `never`, or `always` |
 
@@ -262,9 +263,48 @@ Settings for the web server started by `msgvault serve`. The same HTTP server is
 
 `daemon_auto_restart = "newer"` replaces an older compatible local daemon with the current CLI binary. Use `"never"` when another supervisor owns the daemon lifecycle, or `"always"` to restart whenever the recorded daemon version differs. Remote servers are never auto-restarted by a CLI client.
 
+Browser sessions are additive to API-key authentication. Existing CLI and
+programmatic clients continue to send the configured key. For remote browser
+access, terminate TLS at a reverse proxy and list that proxy—not arbitrary
+clients—in `trusted_proxies`. See [Web UI](/web-ui/) for the complete security
+model and the plain-HTTP warning.
+
+### `[web]`
+
+Defaults for the daemon-served browser application. These values can also be
+changed from Settings; `config.toml` remains authoritative.
+
+| Key | Default | Description |
+|---|---|---|
+| `default_search_mode` | `full_text` | Initial mode: `full_text`, `semantic`, or `hybrid` |
+| `theme` | `system` | Color theme: `system`, `light`, or `dark` |
+| `density` | `compact` | Table density: `compact` or `comfortable` |
+
+Browser-managed settings are validated and written with optimistic concurrency.
+They are restart-required unless the UI explicitly says otherwise; a pending
+restart banner means the file is saved but the running daemon still has its old
+value. Changing `server.api_key` requires a confirmation and takes effect only
+after restart, which also invalidates browser sessions.
+
+### `[integrations.tasks]`
+
+Optional provider-neutral task integration:
+
+| Key | Default | Description |
+|---|---|---|
+| `enabled` | `false` | Enable discovery and capability checks |
+| `endpoint` | — | Explicit loopback HTTP, Unix socket, or HTTPS endpoint; empty requests secure local discovery |
+| `api_key` | — | Server-side credential; never returned to the browser |
+| `default_project` | `msgvault` | Fixed project used for create/link/search operations |
+
+Remote plaintext HTTP is rejected. An endpoint is usable only when it supports
+the required idempotency and compare-and-swap capabilities; the UI distinguishes
+disabled, authentication required, incompatible, partial, stale, unavailable,
+and ready states.
+
 ### `[analytics]`
 
-Settings for daemon-side aggregate query behavior. The TUI, MCP server, and aggregate list commands use these settings through the local daemon or a configured remote server.
+Settings for daemon-side aggregate query behavior. The Web UI, TUI, MCP server, and aggregate list commands use these settings through the local daemon or a configured remote server.
 
 | Key | Default | Description |
 |---|---|---|
@@ -272,6 +312,8 @@ Settings for daemon-side aggregate query behavior. The TUI, MCP server, and aggr
 | `auto_build_cache` | `true` | Build a stale or missing Parquet cache before the daemon opens DuckDB for aggregate views |
 
 Deprecated in 0.17.0: per-command analytics flags such as `msgvault tui --force-sql`, `msgvault mcp --force-sql`, `msgvault tui --no-cache-build`, and `--no-sqlite-scanner` were replaced by this daemon-level section. Use `engine = "sql"` for live SQL, `auto_build_cache = false` to skip automatic daemon cache builds, or `msgvault build-cache` to prebuild cache files on the daemon host. If `engine = "duckdb"` and the cache cannot be built or opened, `msgvault serve` fails instead of silently falling back.
+
+This setting governs the aggregate views (Senders/Domains/Labels/Time) and is ignored entirely when `[data].database_url` points at PostgreSQL — a PostgreSQL backend always uses live SQL for those views, and `build-cache` refuses to run against it. It does not affect the Web UI's Explore, Files, or People/domains workspaces, which require the SQLite + DuckDB/Parquet cache regardless of this setting and are unavailable on PostgreSQL; see [PostgreSQL Backend](/architecture/postgresql/) for the current scope.
 
 ### `[backup]`
 
@@ -574,4 +616,4 @@ All data lives under the msgvault home directory (`~/.msgvault` on macOS/Linux, 
 | `attachments/` | Content-addressed attachment files |
 | `tokens/` | OAuth tokens per account |
 | `logs/` | Structured log files (when [file logging](/configuration/#log) is enabled) |
-| `analytics/` | Parquet cache files for TUI |
+| `analytics/` | Parquet cache files for Web UI and TUI analytical views |

@@ -9,7 +9,28 @@ permissions:
   contents: write
 
 jobs:
+  build-web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.3.14
+
+      - name: Build canonical browser application
+        run: |
+          make web-install web-build
+          node scripts/check-web-assets.mjs --no-embedded
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-web-dist
+          path: web/dist/
+          include-hidden-files: true
+
   build-linux:
+    needs: build-web
     strategy:
       fail-fast: false
       matrix:
@@ -47,6 +68,27 @@ jobs:
           echo "/usr/local/go/bin" >> "$GITHUB_PATH"
           echo "$HOME/go/bin" >> "$GITHUB_PATH"
 
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.3.14
+
+      - name: Install browser asset validator
+        run: |
+          export PATH="/usr/local/go/bin:$HOME/go/bin:$PATH"
+          make web-install
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-web-dist
+          path: web/dist
+
+      - name: Stage canonical browser application
+        run: |
+          mkdir -p internal/web/dist
+          find internal/web/dist -mindepth 1 -maxdepth 1 ! -name stub.html -exec rm -rf {} +
+          cp -R web/dist/. internal/web/dist/
+          node scripts/check-web-assets.mjs
+
       - name: Build
         env:
           GOOS: linux
@@ -76,6 +118,9 @@ jobs:
           echo "$SMOKE_OUT"
           echo "$SMOKE_OUT" | grep -q "v${VERSION}" || { echo "FATAL: version output doesn't match tag"; exit 1; }
 
+          node scripts/check-web-assets.mjs --binary dist/msgvault \
+            --json "dist/web-assets-linux-${{ matrix.goarch }}.json"
+
           cd dist
           ARCHIVE="msgvault_${VERSION}_linux_${{ matrix.goarch }}.tar.gz"
           tar czf "$ARCHIVE" msgvault
@@ -84,9 +129,12 @@ jobs:
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: msgvault-linux-${{ matrix.goarch }}
-          path: dist/*.tar.gz
+          path: |
+            dist/*.tar.gz
+            dist/web-assets-*.json
 
   build-darwin:
+    needs: build-web
     strategy:
       matrix:
         include:
@@ -102,6 +150,25 @@ jobs:
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.3.14
+
+      - name: Install browser asset validator
+        run: make web-install
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-web-dist
+          path: web/dist
+
+      - name: Stage canonical browser application
+        run: |
+          mkdir -p internal/web/dist
+          find internal/web/dist -mindepth 1 -maxdepth 1 ! -name stub.html -exec rm -rf {} +
+          cp -R web/dist/. internal/web/dist/
+          node scripts/check-web-assets.mjs
 
       - name: Build
         env:
@@ -137,6 +204,9 @@ jobs:
             echo "--- Smoke test skipped (cross-compiled) ---"
           fi
 
+          node scripts/check-web-assets.mjs --binary dist/msgvault \
+            --json "dist/web-assets-darwin-${{ matrix.goarch }}.json"
+
           cd dist
           ARCHIVE="msgvault_${VERSION}_darwin_${{ matrix.goarch }}.tar.gz"
           tar czf "$ARCHIVE" msgvault
@@ -145,9 +215,12 @@ jobs:
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: msgvault-darwin-${{ matrix.goarch }}
-          path: dist/*.tar.gz
+          path: |
+            dist/*.tar.gz
+            dist/web-assets-*.json
 
   build-windows:
+    needs: build-web
     strategy:
       fail-fast: false
       matrix:
@@ -166,6 +239,40 @@ jobs:
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.3.14
+
+      - name: Install browser asset validator
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Push-Location web
+          try {
+            bun install --frozen-lockfile
+            if ($LASTEXITCODE -ne 0) { throw "bun install failed with exit code $LASTEXITCODE" }
+          } finally {
+            Pop-Location
+          }
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-web-dist
+          path: web/dist
+
+      - name: Stage canonical browser application
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $staged = Join-Path $env:GITHUB_WORKSPACE 'internal/web/dist'
+          New-Item -ItemType Directory -Path $staged -Force | Out-Null
+          Get-ChildItem -LiteralPath $staged -Force |
+            Where-Object Name -ne 'stub.html' |
+            Remove-Item -Recurse -Force
+          Get-ChildItem -LiteralPath (Join-Path $env:GITHUB_WORKSPACE 'web/dist') -Force |
+            Copy-Item -Destination $staged -Recurse -Force
+          node scripts/check-web-assets.mjs
 
       # sqlite-vec's CGo bindings need sqlite3.h at compile time and
       # arrow-go/v18's cdata helpers need GNU89 inline semantics on
@@ -309,6 +416,9 @@ jobs:
             dist/msgvault.exe --home "$SMOKE_HOME" serve stop || true
           fi
 
+          node scripts/check-web-assets.mjs --binary dist/msgvault.exe \
+            --json "dist/web-assets-windows-${{ matrix.goarch }}.json"
+
           # Package as zip
           ARCHIVE="msgvault_${VERSION}_windows_${{ matrix.goarch }}.zip"
           cd dist
@@ -318,21 +428,41 @@ jobs:
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: msgvault-windows-${{ matrix.goarch }}
-          path: dist/*.zip
+          path: |
+            dist/*.zip
+            dist/web-assets-*.json
 
   release:
-    needs: [build-linux, build-darwin, build-windows]
+    needs: [build-web, build-linux, build-darwin, build-windows]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
+          pattern: msgvault-*
           path: artifacts
           merge-multiple: true
 
       - name: Validate artifacts
         run: |
+          echo "--- Comparing embedded web manifests ---"
+          manifest_count=0
+          reference_manifest=""
+          for manifest in artifacts/web-assets-*.json; do
+            test -f "$manifest" || { echo "FATAL: release web manifests are missing"; exit 1; }
+            manifest_count=$((manifest_count + 1))
+            if [ -z "$reference_manifest" ]; then
+              reference_manifest="$manifest"
+            else
+              cmp "$reference_manifest" "$manifest" || {
+                echo "FATAL: web asset manifests differ: $reference_manifest and $manifest"
+                exit 1
+              }
+            fi
+          done
+          test "$manifest_count" -eq 6 || { echo "FATAL: expected 6 platform manifests, found $manifest_count"; exit 1; }
+
           echo "--- Validating all archives ---"
           for archive in artifacts/*.tar.gz; do
             echo "Checking $archive..."
@@ -347,6 +477,37 @@ jobs:
               cat /tmp/smoke_out.txt
               VERSION="${GITHUB_REF#refs/tags/v}"
               grep -q "v${VERSION}" /tmp/smoke_out.txt || { echo "FATAL: extracted linux_amd64 binary version mismatch"; exit 1; }
+
+              smoke_home=$(mktemp -d)
+              smoke_pid=""
+              cleanup_smoke() {
+                if [ -n "$smoke_pid" ]; then
+                  kill "$smoke_pid" 2>/dev/null || true
+                  wait "$smoke_pid" 2>/dev/null || true
+                fi
+                rm -rf "$smoke_home"
+              }
+              trap cleanup_smoke EXIT
+              printf '[server]\napi_port = 0\nbind_addr = "127.0.0.1"\n' > "$smoke_home/config.toml"
+              MSGVAULT_HOME="$smoke_home" "$tmpdir/msgvault" serve > "$smoke_home/serve.log" 2>&1 &
+              smoke_pid=$!
+              attempt=0
+              smoke_url=""
+              while [ "$attempt" -lt 60 ]; do
+                attempt=$((attempt + 1))
+                smoke_url=$(sed -n 's/^  API server: //p' "$smoke_home/serve.log" | tail -1)
+                if [ -n "$smoke_url" ] && curl -fsS "$smoke_url/" > "$smoke_home/index.html"; then
+                  break
+                fi
+                sleep 0.25
+              done
+              test -s "$smoke_home/index.html" || { cat "$smoke_home/serve.log"; echo "FATAL: embedded shell was not served"; exit 1; }
+              asset=$(grep -oE '/assets/[^" ]+\.(js|css)' "$smoke_home/index.html" | head -1)
+              test -n "$asset" || { cat "$smoke_home/index.html"; echo "FATAL: shell did not reference a hashed asset"; exit 1; }
+              curl -fsS "$smoke_url$asset" > "$smoke_home/asset"
+              test -s "$smoke_home/asset" || { echo "FATAL: embedded asset was empty"; exit 1; }
+              cleanup_smoke
+              trap - EXIT
               echo "  linux_amd64 smoke: OK"
             fi
 
@@ -370,7 +531,7 @@ jobs:
       - name: Generate checksums
         run: |
           cd artifacts
-          sha256sum *.tar.gz *.zip > SHA256SUMS
+          sha256sum -- ./*.tar.gz ./*.zip > SHA256SUMS
           cat SHA256SUMS
 
       - name: Get tag message
@@ -381,7 +542,7 @@ jobs:
           TAG_TYPE=$(git cat-file -t "$TAG_NAME")
           if [ "$TAG_TYPE" != "tag" ]; then
             echo "Warning: $TAG_NAME is a lightweight tag, using auto-generated notes"
-            echo "has_body=false" >> $GITHUB_OUTPUT
+            echo "has_body=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
@@ -389,12 +550,14 @@ jobs:
 
           if [ -n "$TAG_MSG" ]; then
             DELIM="TAGMSG_$(date +%s%N)"
-            echo "body<<$DELIM" >> $GITHUB_OUTPUT
-            echo "$TAG_MSG" >> $GITHUB_OUTPUT
-            echo "$DELIM" >> $GITHUB_OUTPUT
-            echo "has_body=true" >> $GITHUB_OUTPUT
+            {
+              echo "body<<$DELIM"
+              echo "$TAG_MSG"
+              echo "$DELIM"
+              echo "has_body=true"
+            } >> "$GITHUB_OUTPUT"
           else
-            echo "has_body=false" >> $GITHUB_OUTPUT
+            echo "has_body=false" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Create Release

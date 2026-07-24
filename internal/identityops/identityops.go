@@ -36,6 +36,12 @@ type AddResult struct {
 	Identifier string `json:"identifier"`
 	Signal     string `json:"signal"`
 	Outcome    string `json:"outcome"`
+	// CacheState reports whether the synchronous identity-dataset cache
+	// refresh that follows the mutation succeeded ("ready") or failed
+	// ("stale"). Set by the API layer after Add returns; empty when the
+	// caller does not support cache refresh (e.g. non-daemon callers of
+	// this package).
+	CacheState string `json:"cache_state,omitempty" enum:"ready,stale"`
 }
 
 type RemoveRequest struct {
@@ -48,6 +54,12 @@ type RemoveResult struct {
 	Identifier string `json:"identifier"`
 	Removed    int64  `json:"removed"`
 	NoIdentity bool   `json:"no_identity,omitempty"`
+	// CacheState reports whether the synchronous identity-dataset cache
+	// refresh that follows the mutation succeeded ("ready") or failed
+	// ("stale"). Set by the API layer after Remove returns; empty when the
+	// caller does not support cache refresh (e.g. non-daemon callers of
+	// this package).
+	CacheState string `json:"cache_state,omitempty" enum:"ready,stale"`
 }
 
 func Add(st Store, req AddRequest) (AddResult, error) {

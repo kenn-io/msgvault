@@ -18,6 +18,8 @@ const (
 	StatusNoCacheFiles = "no_cache_files"
 	StatusNoCacheData  = "no_cache_data"
 	StatusInterrupted  = "interrupted"
+	StatusStaleSchema  = "stale_schema"
+	StatusDrifted      = "drifted"
 
 	tableAttachments = "attachments"
 	tableMessages    = "messages"
@@ -57,6 +59,10 @@ func CollectStats(ctx context.Context, analyticsDir string) (*CacheStats, error)
 		return &CacheStats{Status: StatusNoCacheFiles}, nil
 	case query.CacheInterrupted:
 		return &CacheStats{Status: StatusInterrupted}, nil
+	case query.CacheStaleSchema:
+		return &CacheStats{Status: StatusStaleSchema}, nil
+	case query.CacheDrifted:
+		return &CacheStats{Status: StatusDrifted}, nil
 	case query.CacheReady:
 		// Continue while holding the same shared lock through all Parquet reads.
 	default:

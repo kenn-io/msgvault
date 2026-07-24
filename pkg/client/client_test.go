@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -15,6 +16,106 @@ import (
 	"go.kenn.io/msgvault/internal/contentverify"
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
+
+func TestGeneratedSavedViewStateRoundTripsCanonicalDefinition(t *testing.T) {
+	want := `{
+		"query":"invoice",
+		"search_mode":"full_text",
+		"filters":[{"field":"source_id","operator":"eq","values":["9007199254740993"]}],
+		"grouping":["sender"],
+		"presentation":"table",
+		"sort":[{"field":"sent_at","direction":"desc"}],
+		"columns":["sender","subject"],
+		"inspector_pinned":true
+	}`
+
+	var state generated.SavedViewStateEnvelope
+	require.NoError(t, json.Unmarshal([]byte(want), &state))
+	got, err := json.Marshal(state)
+	require.NoError(t, err)
+	assert.JSONEq(t, want, string(got))
+}
+
+func TestGeneratedEnumNamesPreserveSavedViewCompatibilityAndQualifyExploration(t *testing.T) {
+	assertions := assert.New(t)
+	assertions.Equal(generated.Asc, generated.SavedViewSortDirection("asc"))
+	assertions.Equal(generated.Desc, generated.SavedViewSortDirection("desc"))
+	assertions.Equal(generated.IdentitySearchSortDirectionAsc, generated.IdentitySearchSortDirection("asc"))
+	assertions.Equal(generated.IdentitySearchSortDirectionDesc, generated.IdentitySearchSortDirection("desc"))
+	assertions.Equal(generated.Files, generated.SavedViewStateEnvelopePresentation("files"))
+	assertions.Equal(generated.Table, generated.SavedViewStateEnvelopePresentation("table"))
+	assertions.Equal(generated.Timeline, generated.SavedViewStateEnvelopePresentation("timeline"))
+	assertions.Equal(generated.ExploreFilterDimensionAfter, generated.ExploreFilterDimension("after"))
+	assertions.Equal(generated.ExploreGroupSortDirectionAsc, generated.ExploreGroupSortDirection("asc"))
+	assertions.Equal(generated.ExploreGroupDimensionSource, generated.ExploreGroupDimension("source"))
+	assertions.Equal(generated.ExploreGroupsHTTPRequestSearchModeFullText, generated.ExploreGroupsHTTPRequestSearchMode("full_text"))
+}
+
+func TestGeneratedExploreGroupingValidatesExactlyOneDimension(t *testing.T) {
+	requirements := require.New(t)
+	valid := generated.ExploreGroupsHTTPRequest{Grouping: []generated.ExploreGroupDimension{
+		generated.ExploreGroupDimensionSource,
+	}}
+	requirements.NoError(valid.Validate())
+
+	requirements.Error((generated.ExploreGroupsHTTPRequest{}).Validate(), "empty grouping")
+	requirements.Error((generated.ExploreGroupsHTTPRequest{Grouping: []generated.ExploreGroupDimension{
+		generated.ExploreGroupDimensionSource, generated.ExploreGroupDimensionMonth,
+	}}).Validate(), "multiple grouping dimensions")
+
+	fileValid := generated.FileGroupsHTTPRequest{Grouping: []generated.ExploreGroupDimension{
+		generated.ExploreGroupDimensionSource,
+	}}
+	requirements.NoError(fileValid.Validate())
+	requirements.Error((generated.FileGroupsHTTPRequest{}).Validate(), "empty file grouping")
+	requirements.Error((generated.FileGroupsHTTPRequest{Grouping: []generated.ExploreGroupDimension{
+		generated.ExploreGroupDimensionSource, generated.ExploreGroupDimensionMonth,
+	}}).Validate(), "multiple file grouping dimensions")
+}
+
+func TestGeneratedFileMetadataRequiresPresenceButAcceptsEmptyLegacyStrings(t *testing.T) {
+	t.Run("metadata response", func(t *testing.T) {
+		assertions := assert.New(t)
+		requirements := require.New(t)
+		var present generated.FileMetadataResponse
+		requirements.NoError(json.Unmarshal([]byte(
+			`{"content_state":"metadata_only","entry_key":"source:1:message:m1","filename":"","mime_type":""}`,
+		), &present))
+		requirements.NotNil(present.Filename)
+		requirements.NotNil(present.MimeType)
+		assertions.Empty(*present.Filename)
+		assertions.Empty(*present.MimeType)
+		requirements.NoError(present.Validate(), "present empty strings are legitimate legacy metadata")
+
+		missingFilename := present
+		missingFilename.Filename = nil
+		requirements.Error(missingFilename.Validate(), "missing required filename")
+		missingMIME := present
+		missingMIME.MimeType = nil
+		requirements.Error(missingMIME.Validate(), "missing required MIME type")
+	})
+
+	t.Run("search row", func(t *testing.T) {
+		assertions := assert.New(t)
+		requirements := require.New(t)
+		var present generated.FileSearchRow
+		requirements.NoError(json.Unmarshal([]byte(
+			`{"containing_title":"item","content_state":"metadata_only","entry_key":"message:1","filename":"","key":"file:1","mime_family":"other","mime_type":"","occurred_at":"2026-07-19T12:00:00Z","source_identifier":"archive@example.com","source_type":"synthetic"}`,
+		), &present))
+		requirements.NotNil(present.Filename)
+		requirements.NotNil(present.MimeType)
+		assertions.Empty(*present.Filename)
+		assertions.Empty(*present.MimeType)
+		requirements.NoError(present.Validate(), "present empty strings are legitimate legacy metadata")
+
+		missingFilename := present
+		missingFilename.Filename = nil
+		requirements.Error(missingFilename.Validate(), "missing required filename")
+		missingMIME := present
+		missingMIME.MimeType = nil
+		requirements.Error(missingMIME.Validate(), "missing required MIME type")
+	})
+}
 
 func TestGeneratedGetAttachmentContentReturnsBinaryBytes(t *testing.T) {
 	assert := assert.New(t)

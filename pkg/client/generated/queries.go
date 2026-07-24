@@ -240,9 +240,35 @@ func (v VerifyCLIQuery) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(v))
 }
 
+type GetConversationQuery struct {
+	// Anchor Selected message ID anchoring the chronological window
+	Anchor int64 `json:"anchor"`
+
+	// Before Messages before the anchor (default 25, max 50)
+	Before *int64 `json:"before,omitempty"`
+
+	// After Messages after the anchor (default 25, max 50)
+	After *int64 `json:"after,omitempty"`
+
+	// Start Lower UTC bound, inclusive (RFC3339). Restricts the window, before/after counts, and has_before/has_after to messages in [start, end)
+	Start *string `json:"start,omitempty"`
+
+	// End Upper UTC bound, exclusive (RFC3339). Restricts the window, before/after counts, and has_before/has_after to messages in [start, end)
+	End *string `json:"end,omitempty"`
+}
+
 type ListDeletionsQuery struct {
 	// Status Filter manifests by status (pending, in_progress, completed, failed, cancelled)
 	Status *string `json:"status,omitempty"`
+}
+
+type SearchIntegrationTasksQuery struct {
+	// Q Task title search within the configured project
+	Q string `json:"q" validate:"required"`
+}
+
+func (s SearchIntegrationTasksQuery) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(s))
 }
 
 type ListMessagesQuery struct {

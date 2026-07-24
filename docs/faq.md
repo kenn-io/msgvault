@@ -17,7 +17,11 @@ The MCP server's lack of sync capability offers some protection here, since an a
 
 <p class="faq-question">What is the web server for?</p>
 
-`msgvault serve` starts a web server that lets you query your archive programmatically via a REST API. It is useful for building dashboards, running automations, or integrating with other tools. The server can also run background sync on a cron schedule to keep your archive up to date. See [Web Server](/api-server/) for details.
+`msgvault serve` starts the first-party analytical Web UI and the REST API it
+uses. Open it to search and group across email, chat, calendar, and meeting
+data, inspect people and files, monitor sources, and review staged deletions.
+The same server supports automations, integrations, and scheduled background
+sync. See [Web UI](/web-ui/) and [Web UI & API Server](/api-server/) for details.
 
 <p class="faq-question">Where is my email data stored?</p>
 
@@ -29,10 +33,10 @@ Yes. You can sync any standard IMAP server, Microsoft 365 mail and Teams,
 Discord guilds, Beeper Desktop chats, Google Calendar, and supported meeting
 note services. You can also import email from PST, MBOX, or Apple Mail and
 chats/texts from WhatsApp, iMessage, Google Voice, Facebook Messenger, and SMS
-Backup & Restore. All messages use the same search, TUI, MCP, web-server, and
-export surfaces. See [Setup Guide](/setup/#add-an-imap-account), [Importing
-Local Email](/usage/importing/), [Text Messages](/usage/text-messages/), and
-[Discord](/usage/discord/).
+Backup & Restore. All messages use the same Web UI, search, TUI, MCP, REST API,
+and export surfaces. See [Setup Guide](/setup/#add-an-imap-account),
+[Importing Local Email](/usage/importing/), [Text Messages](/usage/text-messages/),
+and [Discord](/usage/discord/).
 
 <p class="faq-question">Can msgvault archive Discord direct messages?</p>
 
@@ -43,7 +47,7 @@ archive accessible guild channels, threads, forum posts, and attachments; see
 
 <p class="faq-question">Does deleting email in msgvault delete it from Gmail?</p>
 
-Only if you explicitly run the full deletion workflow. Staging messages for deletion in the TUI does not touch Gmail or your IMAP provider. You must run `MSGVAULT_ENABLE_REMOTE_DELETE=1 msgvault delete-staged` to execute staged deletions. Gmail messages move to trash by default; `--permanent` opts into permanent Gmail deletion. IMAP deletion removes messages from the provider. Your local archive is always preserved. See [Deleting Email](/usage/deletion/) for the complete process.
+Only if you explicitly run the full deletion workflow. Staging messages for deletion in the Web UI or TUI does not touch Gmail or your IMAP provider. You must run `MSGVAULT_ENABLE_REMOTE_DELETE=1 msgvault delete-staged` to execute staged deletions. Gmail messages move to trash by default; `--permanent` opts into permanent Gmail deletion. IMAP deletion removes messages from the provider. Your local archive is always preserved. See [Deleting Email](/usage/deletion/) for the complete process.
 
 ---
 

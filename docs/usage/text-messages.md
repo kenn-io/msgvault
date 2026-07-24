@@ -7,8 +7,9 @@ msgvault can import chats and text messages from WhatsApp, iMessage, Google
 Voice, Facebook Messenger, and SMS Backup & Restore. It can also sync Microsoft
 Teams chats and channels through [Microsoft Teams](/usage/teams/) and Discord
 guild channels and threads through [Discord](/usage/discord/). These records
-are stored in the same database as email, and you can browse text/chat
-conversations in the [TUI](/usage/tui/) by pressing `m` to switch to text mode.
+are stored in the same database as email. The [Web UI](/web-ui/) presents chats
+as conversation rows in Everything, with individual messages available on
+drill-down; in the [TUI](/usage/tui/), press `m` to switch to text mode.
 
 ## import-whatsapp
 
@@ -230,9 +231,17 @@ msgvault sync-synctech-sms phone-backups
 | `--schedule` | `30 4 * * *` | Cron schedule used by `msgvault serve` |
 | `--oauth-app` | — | Named Google OAuth app to use |
 
-## Browsing Texts in the TUI
+## Browsing Texts
 
-After importing, launch the TUI and press `m` to cycle from Email to Texts mode. Text mode shows a conversations list; select a conversation to drill down into its messages. Pressing `m` again reaches Meetings, then returns to Email.
+Start `msgvault serve` and open the [Web UI](/web-ui/) to search email, chats,
+calendar events, and meeting notes together. Chat results stay grouped as
+conversations so short message fragments do not overwhelm Everything. Open a
+conversation to inspect its matching messages in context.
+
+For terminal browsing, launch the TUI and press `m` to cycle from Email to
+Texts mode. Text mode shows a conversations list; select a conversation to
+drill down into its messages. Pressing `m` again reaches Meetings, then returns
+to Email.
 
 ```bash
 msgvault tui
@@ -253,7 +262,7 @@ Imports use checkpoint-based resumption. If interrupted (Ctrl+C, power loss), ru
 Most chat import and sync commands rebuild the analytics cache automatically.
 If a newly imported or synced source does not appear in aggregate views
 immediately, run `msgvault build-cache`. Your imported texts, Teams messages,
-and Discord conversations are then available for TUI browsing.
+and Discord conversations are then available in the Web UI and TUI.
 
 ```bash
 # Launch the TUI and press 'm' for text mode

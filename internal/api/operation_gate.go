@@ -293,10 +293,11 @@ func writeOperationGateBusy(w http.ResponseWriter, gate OperationGate) {
 	writeError(w, http.StatusServiceUnavailable, "operation_in_progress", message)
 }
 
-// operationGateExemptPaths are non-GET endpoints that only read: they must
-// not queue behind long mutating operations, and they never mutate the
-// archive themselves. Verify is NOT exempt: its subprocess opens the store
-// read-write and runs schema init/migrations.
+// operationGateExemptPaths are non-GET endpoints that do not mutate the
+// archive: they must not queue behind long archive operations. Most only read;
+// the session endpoints mutate process-local authentication state. Verify is
+// NOT exempt: its subprocess opens the store read-write and runs schema
+// init/migrations.
 //
 // The backup freeze endpoints are exempt for a different reason: begin
 // acquires the operation gate itself (see beginLabeledOperationGateWork in
@@ -304,12 +305,76 @@ func writeOperationGateBusy(w http.ResponseWriter, gate OperationGate) {
 // gate as well would deadlock begin against its own acquisition.
 var operationGateExemptPaths = map[string]bool{
 	queryEndpointPath:                true,
+	sessionPath:                      true,
+	sessionLoginPath:                 true,
 	"/api/v1/cli/add-calendar/plan":  true,
 	"/api/v1/cli/delete-staged/plan": true,
 	"/api/v1/cli/embeddings/plan":    true,
 	"/api/v1/cli/deduplicate/plan":   true,
 	backupFreezeBeginPath:            true,
 	backupFreezeEndPath:              true,
+}
+
+// readOnlyPostRoutePatterns lists the analytical POST routes whose handlers
+// only read committed archive state (plus process-local in-memory state such
+// as explore candidate snapshots and preflight operation tokens). They use
+// POST solely because their requests are structured predicate bodies, so
+// queueing them on the operation gate would serialize pure reads behind long
+// archive mutations. Reads never needed the gate: every GET already bypasses
+// it and relies on the committed-cache revision/snapshot machinery for
+// consistency instead.
+//
+// The classification stays deny-by-default: a POST route not listed here
+// still gates. TestReadOnlyPostRoutePatternsMatchExplorationRoutes keeps this
+// table in sync with the routes registered through registerExploreRoute and
+// registerSearchCoverageRoute (the OpenAPI "Exploration" tag), so a new
+// analytical route forces a conscious classification decision here.
+//
+// The remote-image proxy is the one non-Exploration entry: it is POST only
+// so the session CSRF middleware treats it as an unsafe method (same-origin
+// plus X-Csrf-Token), and its handler touches no archive state at all — it
+// performs one SSRF-validated outbound fetch — so it must stay available
+// while a long archive operation holds the gate.
+var readOnlyPostRoutePatterns = []string{
+	remoteImagePath,
+	"/api/v1/explore",
+	"/api/v1/explore/groups",
+	"/api/v1/explore/preflight",
+	"/api/v1/explore/match-counts",
+	"/api/v1/explore/files",
+	"/api/v1/files/search",
+	"/api/v1/files/groups",
+	"/api/v1/people/search",
+	"/api/v1/people/{id}/summary",
+	"/api/v1/people/{id}/timeline",
+	"/api/v1/people/{id}/files/search",
+	"/api/v1/domains/search",
+	"/api/v1/domains/{domain}/summary",
+	"/api/v1/domains/{domain}/timeline",
+	"/api/v1/domains/{domain}/files/search",
+	"/api/v1/relationships",
+	"/api/v1/relationships/{id}/timeline",
+	"/api/v1/search/coverage",
+}
+
+var (
+	readOnlyPostRouteOnce sync.Once
+	readOnlyPostRouteMux  *http.ServeMux
+)
+
+// readOnlyPostRouteRequest reports whether r targets one of the read-only
+// analytical POST routes. Matching goes through a net/http ServeMux built
+// from readOnlyPostRoutePatterns so the path-parameter routes ({id},
+// {domain}) match with the same semantics as the API router itself.
+func readOnlyPostRouteRequest(r *http.Request) bool {
+	readOnlyPostRouteOnce.Do(func() {
+		readOnlyPostRouteMux = http.NewServeMux()
+		for _, pattern := range readOnlyPostRoutePatterns {
+			readOnlyPostRouteMux.Handle("POST "+pattern, http.NotFoundHandler())
+		}
+	})
+	_, pattern := readOnlyPostRouteMux.Handler(r)
+	return pattern != ""
 }
 
 func operationGateRequest(r *http.Request) (bool, string, error) {
@@ -321,6 +386,9 @@ func operationGateRequest(r *http.Request) (bool, string, error) {
 		return false, "", nil
 	}
 	if operationGateExemptPaths[r.URL.Path] {
+		return false, "", nil
+	}
+	if readOnlyPostRouteRequest(r) {
 		return false, "", nil
 	}
 	if r.URL.Path == "/api/v1/cli/run" {

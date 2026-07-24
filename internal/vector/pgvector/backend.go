@@ -23,6 +23,7 @@ import (
 // Compile-time check that *Backend satisfies vector.Backend.
 var _ vector.Backend = (*Backend)(nil)
 var _ vector.ChunkScoringBackend = (*Backend)(nil)
+var _ vector.FilteredCoverageBackend = (*Backend)(nil)
 
 // annOverFetchFactor multiplies k for the inner ANN scan so that after
 // GROUP BY dedup across multi-chunk messages, at least k distinct
@@ -1270,6 +1271,28 @@ func (b *Backend) EmbeddedMessageCount(ctx context.Context, gen vector.Generatio
 		return 0, fmt.Errorf("count embedded messages: %w", err)
 	}
 	return n, nil
+}
+
+func (b *Backend) EmbeddedMessageCountForIDs(ctx context.Context, gen vector.GenerationID, messageIDs []int64) (int64, error) {
+	if len(messageIDs) == 0 {
+		return 0, nil
+	}
+	if len(messageIDs) > vector.FilteredCoverageBatchSize {
+		return 0, fmt.Errorf("%w: got %d, maximum %d", vector.ErrCoverageBatchTooLarge, len(messageIDs), vector.FilteredCoverageBatchSize)
+	}
+	var count int64
+	if err := b.db.QueryRowContext(ctx, `
+		SELECT COUNT(DISTINCT e.message_id)
+		FROM embeddings e
+		JOIN messages m ON m.id = e.message_id
+		WHERE e.generation_id = $1
+		  AND e.message_id = ANY($2)
+		  AND m.embed_gen = $1
+		  AND `+store.LiveMessagesWhere("m", true),
+		int64(gen), messageIDs).Scan(&count); err != nil {
+		return 0, fmt.Errorf("count filtered embedded messages: %w", err)
+	}
+	return count, nil
 }
 
 // ScoreMessageChunks scores every embedded chunk of messageID in gen

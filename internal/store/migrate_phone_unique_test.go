@@ -206,3 +206,165 @@ func TestEnsureParticipantsPhoneUniqueIndex_LegacyNonUnique(t *testing.T) {
 	require.NoError(err, "EnsureParticipantByPhone")
 	assert.Equal(winner, gotID, "EnsureParticipantByPhone returned id %d, want winner %d (ON CONFLICT must find the unique index)", gotID, winner)
 }
+
+// TestEnsureParticipantsPhoneUniqueIndex_RewritesLinkEdges covers the
+// migration's underlying mergeParticipant path (used by
+// dedupeParticipantsByPhone), which is a second, tx-level merge
+// implementation distinct from the public MergeParticipants. It must be
+// link-aware the same way: a link edge on the loser participant must
+// survive the merge by repointing onto the winner rather than being
+// silently dropped by participant_links' ON DELETE CASCADE, and the
+// identity revision must bump since the merge changed the link graph.
+func TestEnsureParticipantsPhoneUniqueIndex_RewritesLinkEdges(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	dbPath := filepath.Join(t.TempDir(), "phone_unique_links.db")
+	st, err := Open(dbPath)
+	require.NoError(err, "Open")
+	t.Cleanup(func() { _ = st.Close() })
+	require.NoError(st.InitSchema(), "InitSchema")
+
+	_, err = st.db.Exec(`DELETE FROM applied_migrations WHERE name = ?`, migrationPhoneUniqueIndex)
+	require.NoError(err, "clear migration sentinel")
+	_, err = st.db.Exec(`DROP INDEX IF EXISTS idx_participants_phone`)
+	require.NoError(err, "drop unique idx")
+	_, err = st.db.Exec(`
+		CREATE INDEX idx_participants_phone ON participants(phone_number)
+		    WHERE phone_number IS NOT NULL
+	`)
+	require.NoError(err, "create legacy non-unique idx")
+
+	insertParticipant := func(phone, displayName string) int64 {
+		t.Helper()
+		var id int64
+		err := st.db.QueryRow(`
+			INSERT INTO participants (phone_number, display_name, created_at, updated_at)
+			VALUES (?, ?, datetime('now'), datetime('now'))
+			RETURNING id
+		`, phone, displayName).Scan(&id)
+		require.NoError(err, "insert participant %s", phone)
+		return id
+	}
+	winner := insertParticipant("+15555551234", "Alice")
+	loser := insertParticipant("+15555551234", "Alice (dup)")
+	third, err := st.EnsureParticipant("carol@example.com", "Carol", "example.com")
+	require.NoError(err, "EnsureParticipant third")
+
+	// Link the loser (not the winner) to a third participant, mirroring a
+	// user having asserted "loser and carol are the same person" before an
+	// unrelated phone-based dedupe absorbs loser into winner.
+	_, err = st.LinkParticipants(loser, third)
+	require.NoError(err, "LinkParticipants loser-third")
+	revBeforeMerge, err := st.IdentityRevision()
+	require.NoError(err, "IdentityRevision before merge")
+	acctRevBeforeMerge, err := st.AccountIdentityRevision()
+	require.NoError(err, "AccountIdentityRevision before merge")
+
+	require.NoError(st.ensureParticipantsPhoneUniqueIndex(), "ensureParticipantsPhoneUniqueIndex")
+
+	revAfter, err := st.IdentityRevision()
+	require.NoError(err, "IdentityRevision after merge")
+	assert.Equal(revBeforeMerge+1, revAfter, "dedupe merge must bump identity revision when it touches links")
+	acctRevAfter, err := st.AccountIdentityRevision()
+	require.NoError(err, "AccountIdentityRevision after merge")
+	assert.Equal(acctRevBeforeMerge+1, acctRevAfter,
+		"dedupe merge must bump the account identity revision (it repoints messages.sender_id)")
+
+	clusters, err := st.ParticipantClusters()
+	require.NoError(err, "ParticipantClusters")
+	canonical := min(winner, third)
+	assert.Equal(map[int64]int64{winner: canonical, third: canonical}, clusters,
+		"link must repoint from loser to winner")
+}
+
+// TestEnsureParticipantsPhoneUniqueIndex_PreservesMetadata verifies that
+// the dedupe merge does not discard contact metadata held only by a
+// loser row: before deleting each loser, the winner's empty
+// email_address, domain, and display_name are filled from it (mirroring
+// MergeParticipants). email_address is UNIQUE, so the transfer must
+// release the loser's value first — the migration completing without a
+// constraint error is part of what this test proves.
+//
+// Precedence rule: losers merge in ascending-id order and only fill
+// fields still empty on the winner, so for each field the lowest-id
+// participant holding a value wins.
+func TestEnsureParticipantsPhoneUniqueIndex_PreservesMetadata(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	dbPath := filepath.Join(t.TempDir(), "phone_unique_meta.db")
+	st, err := Open(dbPath)
+	require.NoError(err, "Open")
+	t.Cleanup(func() { _ = st.Close() })
+	require.NoError(st.InitSchema(), "InitSchema")
+
+	// Roll back to the "legacy" state so duplicate phones can be seeded.
+	_, err = st.db.Exec(`DELETE FROM applied_migrations WHERE name = ?`, migrationPhoneUniqueIndex)
+	require.NoError(err, "clear migration sentinel")
+	_, err = st.db.Exec(`DROP INDEX IF EXISTS idx_participants_phone`)
+	require.NoError(err, "drop unique idx")
+	_, err = st.db.Exec(`
+		CREATE INDEX idx_participants_phone ON participants(phone_number)
+		    WHERE phone_number IS NOT NULL
+	`)
+	require.NoError(err, "create legacy non-unique idx")
+
+	insertParticipant := func(phone, email, domain, displayName string) int64 {
+		t.Helper()
+		var id int64
+		err := st.db.QueryRow(`
+			INSERT INTO participants (phone_number, email_address, domain, display_name, created_at, updated_at)
+			VALUES (?, NULLIF(?, ''), NULLIF(?, ''), NULLIF(?, ''), datetime('now'), datetime('now'))
+			RETURNING id
+		`, phone, email, domain, displayName).Scan(&id)
+		require.NoError(err, "insert participant %s", phone)
+		return id
+	}
+	readMeta := func(id int64) (email, domain, displayName string) {
+		t.Helper()
+		err := st.db.QueryRow(`
+			SELECT COALESCE(email_address, ''), COALESCE(domain, ''), COALESCE(display_name, '')
+			  FROM participants WHERE id = ?
+		`, id).Scan(&email, &domain, &displayName)
+		require.NoError(err, "read participant %d metadata", id)
+		return email, domain, displayName
+	}
+
+	// (a) Winner sparse, loser rich: the loser's email (UNIQUE column),
+	// domain, and display_name must move onto the winner.
+	sparseWinner := insertParticipant("+15555550001", "", "", "")
+	richLoser := insertParticipant("+15555550001", "bob@example.com", "example.com", "Bob")
+
+	// (b) Winner already populated: the loser's values are discarded.
+	richWinner := insertParticipant("+15555550002", "carol@example.com", "example.com", "Carol")
+	ignoredLoser := insertParticipant("+15555550002", "carol.alt@example.org", "example.org", "Carol Alt")
+
+	// (c) Multiple losers: loser1 (lower id) fills email + display_name,
+	// then loser2 fills only the still-empty domain.
+	multiWinner := insertParticipant("+15555550003", "", "", "")
+	multiLoser1 := insertParticipant("+15555550003", "dan@example.com", "", "Dan")
+	multiLoser2 := insertParticipant("+15555550003", "dana@example.org", "example.org", "Dana")
+
+	require.NoError(st.ensureParticipantsPhoneUniqueIndex(), "ensureParticipantsPhoneUniqueIndex")
+
+	for _, loser := range []int64{richLoser, ignoredLoser, multiLoser1, multiLoser2} {
+		var count int
+		require.NoError(st.db.QueryRow(`SELECT COUNT(*) FROM participants WHERE id = ?`, loser).Scan(&count),
+			"count loser %d", loser)
+		assert.Equal(0, count, "loser participant %d still present after merge", loser)
+	}
+
+	email, domain, name := readMeta(sparseWinner)
+	assert.Equal("bob@example.com", email, "sparse winner email")
+	assert.Equal("example.com", domain, "sparse winner domain")
+	assert.Equal("Bob", name, "sparse winner display_name")
+
+	email, domain, name = readMeta(richWinner)
+	assert.Equal("carol@example.com", email, "populated winner keeps its email")
+	assert.Equal("example.com", domain, "populated winner keeps its domain")
+	assert.Equal("Carol", name, "populated winner keeps its display_name")
+
+	email, domain, name = readMeta(multiWinner)
+	assert.Equal("dan@example.com", email, "multi-loser winner email from lowest-id loser")
+	assert.Equal("example.org", domain, "multi-loser winner domain from the only loser holding one")
+	assert.Equal("Dan", name, "multi-loser winner display_name from lowest-id loser")
+}

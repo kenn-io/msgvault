@@ -152,7 +152,7 @@ func (SQLiteQueryDialect) TimeTruncExpression(column string, granularity string)
 	switch granularity {
 	case "year":
 		return fmt.Sprintf("strftime('%%Y', %s)", column)
-	case "month":
+	case timeGranularityMonth:
 		return fmt.Sprintf("strftime('%%Y-%%m', %s)", column)
 	case "day":
 		return fmt.Sprintf("strftime('%%Y-%%m-%%d', %s)", column)
@@ -253,7 +253,7 @@ func (PostgreSQLQueryDialect) TimeTruncExpression(column string, granularity str
 	switch granularity {
 	case "year":
 		return fmt.Sprintf("to_char(%s AT TIME ZONE 'UTC', 'YYYY')", column)
-	case "month":
+	case timeGranularityMonth:
 		return fmt.Sprintf("to_char(%s AT TIME ZONE 'UTC', 'YYYY-MM')", column)
 	case "day":
 		return fmt.Sprintf("to_char(%s AT TIME ZONE 'UTC', 'YYYY-MM-DD')", column)

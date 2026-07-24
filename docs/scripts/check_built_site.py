@@ -41,6 +41,7 @@ ROUTES = [
     "/usage/text-messages/",
     "/usage/tui/",
     "/usage/vector-search/",
+    "/web-ui/",
 ]
 
 REQUIRED_SITEMAP_URLS = [
@@ -73,6 +74,7 @@ REQUIRED_SITEMAP_URLS = [
     "https://msgvault.io/usage/text-messages/",
     "https://msgvault.io/usage/tui/",
     "https://msgvault.io/usage/vector-search/",
+    "https://msgvault.io/web-ui/",
 ]
 
 REQUIRED_METADATA = [
@@ -215,6 +217,7 @@ class LinkParser(html.parser.HTMLParser):
         super().__init__()
         self.ids: set[str] = set()
         self.links: list[str] = []
+        self.nav_links: list[str] = []
         self.assets: list[str] = []
         self.style_attrs: list[str] = []
         self.style_blocks: list[str] = []
@@ -233,6 +236,8 @@ class LinkParser(html.parser.HTMLParser):
         if tag == "a" and "href" in attr:
             self.links.append(attr["href"])
             classes = set(attr.get("class", "").split())
+            if "md-nav__link" in classes:
+                self.nav_links.append(attr["href"])
             if "md-nav__link" in classes and attr["href"].startswith("#"):
                 self._nav_label_href = attr["href"]
                 self._nav_label_text = []
@@ -423,6 +428,14 @@ def main() -> None:
             fail(f"forbidden generated marker found: {pattern}")
 
     parsed_by_file = {path.resolve(): parse_html(path) for path in html_files}
+    index_parser = parsed_by_file[(SITE / "index.html").resolve()]
+    web_ui_route = route_to_file("/web-ui/").resolve()
+    if not any(
+        (target_file(SITE / "index.html", href) or pathlib.Path()).resolve()
+        == web_ui_route
+        for href in index_parser.nav_links
+    ):
+        fail("Web UI is missing from the rendered primary navigation")
     for current, parser in parsed_by_file.items():
         for href in parser.links:
             parsed = urllib.parse.urlparse(href)

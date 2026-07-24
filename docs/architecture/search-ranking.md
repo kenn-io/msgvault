@@ -3,7 +3,7 @@ title: Search Ranking Across Backends
 description: Why SQLite and PostgreSQL can order the same matching messages differently.
 ---
 
-`msgvault search`, the TUI, the HTTP API, and the MCP server can rank results
+`msgvault search`, the Web UI, the TUI, the HTTP API, and the MCP server can rank results
 with different database engines depending on your archive backend and search
 mode. Result sets usually match, but result order can differ because each
 backend uses a different scoring model.

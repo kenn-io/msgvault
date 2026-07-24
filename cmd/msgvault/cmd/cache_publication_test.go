@@ -1,15 +1,49 @@
 package cmd
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/query"
 )
+
+func TestCachePublicationCommitsRevisionTimestampAndDatasetFingerprint(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	parent := t.TempDir()
+	analyticsDir := filepath.Join(parent, "analytics")
+	staging, err := newCacheStaging(analyticsDir)
+	require.NoError(err)
+	t.Cleanup(func() { _ = staging.cleanup() })
+	writePublicationTree(t, staging.root, "new.parquet")
+	input, err := json.Marshal(query.CacheSyncState{
+		SchemaVersion:          query.CacheSchemaVersion,
+		LastMessageID:          41,
+		LastSyncAt:             time.Date(2026, 7, 18, 12, 0, 0, 0, time.UTC),
+		LastCacheUpdateCount:   3,
+		LastFailedSyncRunCount: 2,
+		LastFailedSyncRunIDSum: 19,
+	})
+	require.NoError(err)
+
+	require.NoError(publishCache(staging, analyticsDir, true, input))
+	state, err := query.ReadCacheSyncState(analyticsDir)
+	require.NoError(err)
+	assert.False(state.PublishedAt.IsZero())
+	fingerprint, err := query.CacheDatasetFingerprint(analyticsDir)
+	require.NoError(err)
+	assert.Equal(fingerprint, state.DatasetFingerprint)
+	assert.NotEmpty(state.Revision())
+	readiness, err := query.InspectCacheReadiness(analyticsDir)
+	require.NoError(err)
+	assert.Equal(query.CacheReady, readiness)
+}
 
 func TestCachePublicationFullReplacesEveryDatasetAndWritesStateLast(t *testing.T) {
 	require := require.New(t)
@@ -34,7 +68,11 @@ func TestCachePublicationFullReplacesEveryDatasetAndWritesStateLast(t *testing.T
 	}
 	gotState, err := os.ReadFile(query.CacheStatePath(analyticsDir))
 	require.NoError(err)
-	assert.Equal(newState, gotState)
+	var committed query.CacheSyncState
+	require.NoError(json.Unmarshal(gotState, &committed))
+	assert.Equal(time.Date(2026, 7, 15, 11, 0, 0, 0, time.UTC), committed.LastSyncAt)
+	assert.False(committed.PublishedAt.IsZero())
+	assert.NotEmpty(committed.DatasetFingerprint)
 }
 
 func TestIncrementalPublicationReplacesDimensionsAndPrefixesAppends(t *testing.T) {
@@ -54,7 +92,7 @@ func TestIncrementalPublicationReplacesDimensionsAndPrefixesAppends(t *testing.T
 	require.NoError(publishCache(staging, analyticsDir, false,
 		[]byte(`{"last_sync_at":"2026-07-15T11:00:00Z"}`)))
 
-	for _, dataset := range []string{"participants", "labels", "sources", "conversations"} {
+	for _, dataset := range []string{"participants", "participant_identifiers", "labels", "sources", "conversations"} {
 		assert.False(publicationFileExists(analyticsDir, dataset, "old.parquet"), dataset)
 		assert.True(publicationFileExists(analyticsDir, dataset, "data.parquet"), dataset)
 	}

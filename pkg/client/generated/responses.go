@@ -15,6 +15,16 @@ type DaemonPingResponse = PingInfo
 
 type DaemonPingErrorResponse = ErrorResponse
 
+type LogoutSessionErrorResponse = ErrorResponse
+
+type GetSessionResponse = SessionStatus
+
+type GetSessionErrorResponse = ErrorResponse
+
+type LoginSessionResponse = SessionStatus
+
+type LoginSessionErrorResponse = ErrorResponse
+
 type ListAccountsResponse = AccountListResponse
 
 type ListAccountsErrorResponse = ErrorResponse
@@ -283,6 +293,20 @@ type VerifyCLIResponse = []byte
 
 type VerifyCLIErrorResponse = ErrorResponse
 
+type GetRemoteImageResponse = []byte
+
+type GetRemoteImageErrorResponse = ErrorResponse
+
+type GetRemoteImageErrorResponseJSON = ErrorResponse
+
+type GetRemoteImageErrorResponseJSON415 = ErrorResponse
+
+type GetRemoteImageErrorResponseJSON502 = ErrorResponse
+
+type GetConversationResponse = ConversationResponse
+
+type GetConversationErrorResponse = ErrorResponse
+
 type ListDeletionsResponseJSON = ListDeletionsResponse
 
 type ListDeletionsErrorResponse = ErrorResponse
@@ -297,9 +321,537 @@ type CancelDeletionResponseJSON = CancelDeletionResponse
 
 type CancelDeletionErrorResponse = ErrorResponse
 
+type GetDeletionResponse = DeletionManifestDetail
+
+type GetDeletionErrorResponse = ErrorResponse
+
+type SearchDomainsResponse = DomainSearchHTTPResponse
+
+type SearchDomainsErrorResponse = ErrorResponse
+
+type SearchDomainsErrorResponseJSON = ErrorResponse
+
+type SearchDomainsErrorResponseJSON503 struct {
+	SearchDomains_ErrorResponse_503_AnyOf *SearchDomains_ErrorResponse_503_AnyOf `json:"-"`
+}
+
+func (s SearchDomainsErrorResponseJSON503) MarshalJSON() ([]byte, error) {
+	var parts []json.RawMessage
+
+	{
+		b, err := runtime.MarshalJSON(s.SearchDomains_ErrorResponse_503_AnyOf)
+		if err != nil {
+			return nil, fmt.Errorf("SearchDomains_ErrorResponse_503_AnyOf marshal: %w", err)
+		}
+		parts = append(parts, b)
+	}
+
+	return runtime.CoalesceOrMerge(parts...)
+}
+
+func (s *SearchDomainsErrorResponseJSON503) UnmarshalJSON(data []byte) error {
+	trim := bytes.TrimSpace(data)
+	if bytes.Equal(trim, []byte("null")) {
+		return nil
+	}
+	if len(trim) == 0 {
+		return fmt.Errorf("empty JSON input")
+	}
+
+	if s.SearchDomains_ErrorResponse_503_AnyOf == nil {
+		s.SearchDomains_ErrorResponse_503_AnyOf = &SearchDomains_ErrorResponse_503_AnyOf{}
+	}
+
+	if err := runtime.UnmarshalJSON(data, s.SearchDomains_ErrorResponse_503_AnyOf); err != nil {
+		return fmt.Errorf("SearchDomains_ErrorResponse_503_AnyOf unmarshal: %w", err)
+	}
+
+	return nil
+}
+
+type GetDomainResponse = DomainSummary
+
+type GetDomainErrorResponse = ErrorResponse
+
+type SearchDomainFilesResponse = FileSearchHTTPResponse
+
+type SearchDomainFilesErrorResponse = ErrorResponse
+
+type SearchDomainFilesErrorResponseJSON = ErrorResponse
+
+type SearchDomainFilesErrorResponseJSON503 struct {
+	SearchDomainFiles_ErrorResponse_503_AnyOf *SearchDomainFiles_ErrorResponse_503_AnyOf `json:"-"`
+}
+
+func (s SearchDomainFilesErrorResponseJSON503) MarshalJSON() ([]byte, error) {
+	var parts []json.RawMessage
+
+	{
+		b, err := runtime.MarshalJSON(s.SearchDomainFiles_ErrorResponse_503_AnyOf)
+		if err != nil {
+			return nil, fmt.Errorf("SearchDomainFiles_ErrorResponse_503_AnyOf marshal: %w", err)
+		}
+		parts = append(parts, b)
+	}
+
+	return runtime.CoalesceOrMerge(parts...)
+}
+
+func (s *SearchDomainFilesErrorResponseJSON503) UnmarshalJSON(data []byte) error {
+	trim := bytes.TrimSpace(data)
+	if bytes.Equal(trim, []byte("null")) {
+		return nil
+	}
+	if len(trim) == 0 {
+		return fmt.Errorf("empty JSON input")
+	}
+
+	if s.SearchDomainFiles_ErrorResponse_503_AnyOf == nil {
+		s.SearchDomainFiles_ErrorResponse_503_AnyOf = &SearchDomainFiles_ErrorResponse_503_AnyOf{}
+	}
+
+	if err := runtime.UnmarshalJSON(data, s.SearchDomainFiles_ErrorResponse_503_AnyOf); err != nil {
+		return fmt.Errorf("SearchDomainFiles_ErrorResponse_503_AnyOf unmarshal: %w", err)
+	}
+
+	return nil
+}
+
+type GetDomainContextSummaryResponse = DomainContextSummaryHTTPResponse
+
+type GetDomainContextSummaryErrorResponse = ErrorResponse
+
+type GetDomainContextSummaryErrorResponseJSON = ErrorResponse
+
+type GetDomainContextSummaryErrorResponseJSON503 struct {
+	GetDomainContextSummary_ErrorResponse_503_AnyOf *GetDomainContextSummary_ErrorResponse_503_AnyOf `json:"-"`
+}
+
+func (g GetDomainContextSummaryErrorResponseJSON503) MarshalJSON() ([]byte, error) {
+	var parts []json.RawMessage
+
+	{
+		b, err := runtime.MarshalJSON(g.GetDomainContextSummary_ErrorResponse_503_AnyOf)
+		if err != nil {
+			return nil, fmt.Errorf("GetDomainContextSummary_ErrorResponse_503_AnyOf marshal: %w", err)
+		}
+		parts = append(parts, b)
+	}
+
+	return runtime.CoalesceOrMerge(parts...)
+}
+
+func (g *GetDomainContextSummaryErrorResponseJSON503) UnmarshalJSON(data []byte) error {
+	trim := bytes.TrimSpace(data)
+	if bytes.Equal(trim, []byte("null")) {
+		return nil
+	}
+	if len(trim) == 0 {
+		return fmt.Errorf("empty JSON input")
+	}
+
+	if g.GetDomainContextSummary_ErrorResponse_503_AnyOf == nil {
+		g.GetDomainContextSummary_ErrorResponse_503_AnyOf = &GetDomainContextSummary_ErrorResponse_503_AnyOf{}
+	}
+
+	if err := runtime.UnmarshalJSON(data, g.GetDomainContextSummary_ErrorResponse_503_AnyOf); err != nil {
+		return fmt.Errorf("GetDomainContextSummary_ErrorResponse_503_AnyOf unmarshal: %w", err)
+	}
+
+	return nil
+}
+
+type GetDomainTimelineResponse = ExploreHTTPResponse
+
+type GetDomainTimelineErrorResponse = ErrorResponse
+
+type GetDomainTimelineErrorResponseJSON = ErrorResponse
+
+type GetDomainTimelineErrorResponseJSON503 struct {
+	GetDomainTimeline_ErrorResponse_503_AnyOf *GetDomainTimeline_ErrorResponse_503_AnyOf `json:"-"`
+}
+
+func (g GetDomainTimelineErrorResponseJSON503) MarshalJSON() ([]byte, error) {
+	var parts []json.RawMessage
+
+	{
+		b, err := runtime.MarshalJSON(g.GetDomainTimeline_ErrorResponse_503_AnyOf)
+		if err != nil {
+			return nil, fmt.Errorf("GetDomainTimeline_ErrorResponse_503_AnyOf marshal: %w", err)
+		}
+		parts = append(parts, b)
+	}
+
+	return runtime.CoalesceOrMerge(parts...)
+}
+
+func (g *GetDomainTimelineErrorResponseJSON503) UnmarshalJSON(data []byte) error {
+	trim := bytes.TrimSpace(data)
+	if bytes.Equal(trim, []byte("null")) {
+		return nil
+	}
+	if len(trim) == 0 {
+		return fmt.Errorf("empty JSON input")
+	}
+
+	if g.GetDomainTimeline_ErrorResponse_503_AnyOf == nil {
+		g.GetDomainTimeline_ErrorResponse_503_AnyOf = &GetDomainTimeline_ErrorResponse_503_AnyOf{}
+	}
+
+	if err := runtime.UnmarshalJSON(data, g.GetDomainTimeline_ErrorResponse_503_AnyOf); err != nil {
+		return fmt.Errorf("GetDomainTimeline_ErrorResponse_503_AnyOf unmarshal: %w", err)
+	}
+
+	return nil
+}
+
+type ExploreResponse = ExploreHTTPResponse
+
+type ExploreErrorResponse = ErrorResponse
+
+type ExploreErrorResponseJSON = ErrorResponse
+
+type ExploreErrorResponseJSON503 struct {
+	Explore_ErrorResponse_503_AnyOf *Explore_ErrorResponse_503_AnyOf `json:"-"`
+}
+
+func (e ExploreErrorResponseJSON503) MarshalJSON() ([]byte, error) {
+	var parts []json.RawMessage
+
+	{
+		b, err := runtime.MarshalJSON(e.Explore_ErrorResponse_503_AnyOf)
+		if err != nil {
+			return nil, fmt.Errorf("Explore_ErrorResponse_503_AnyOf marshal: %w", err)
+		}
+		parts = append(parts, b)
+	}
+
+	return runtime.CoalesceOrMerge(parts...)
+}
+
+func (e *ExploreErrorResponseJSON503) UnmarshalJSON(data []byte) error {
+	trim := bytes.TrimSpace(data)
+	if bytes.Equal(trim, []byte("null")) {
+		return nil
+	}
+	if len(trim) == 0 {
+		return fmt.Errorf("empty JSON input")
+	}
+
+	if e.Explore_ErrorResponse_503_AnyOf == nil {
+		e.Explore_ErrorResponse_503_AnyOf = &Explore_ErrorResponse_503_AnyOf{}
+	}
+
+	if err := runtime.UnmarshalJSON(data, e.Explore_ErrorResponse_503_AnyOf); err != nil {
+		return fmt.Errorf("Explore_ErrorResponse_503_AnyOf unmarshal: %w", err)
+	}
+
+	return nil
+}
+
+type ListExploreFilesResponse = ExploreFilesHTTPResponse
+
+type ListExploreFilesErrorResponse = ErrorResponse
+
+type ListExploreFilesErrorResponseJSON = ErrorResponse
+
+type ListExploreFilesErrorResponseJSON503 struct {
+	ListExploreFiles_ErrorResponse_503_AnyOf *ListExploreFiles_ErrorResponse_503_AnyOf `json:"-"`
+}
+
+func (l ListExploreFilesErrorResponseJSON503) MarshalJSON() ([]byte, error) {
+	var parts []json.RawMessage
+
+	{
+		b, err := runtime.MarshalJSON(l.ListExploreFiles_ErrorResponse_503_AnyOf)
+		if err != nil {
+			return nil, fmt.Errorf("ListExploreFiles_ErrorResponse_503_AnyOf marshal: %w", err)
+		}
+		parts = append(parts, b)
+	}
+
+	return runtime.CoalesceOrMerge(parts...)
+}
+
+func (l *ListExploreFilesErrorResponseJSON503) UnmarshalJSON(data []byte) error {
+	trim := bytes.TrimSpace(data)
+	if bytes.Equal(trim, []byte("null")) {
+		return nil
+	}
+	if len(trim) == 0 {
+		return fmt.Errorf("empty JSON input")
+	}
+
+	if l.ListExploreFiles_ErrorResponse_503_AnyOf == nil {
+		l.ListExploreFiles_ErrorResponse_503_AnyOf = &ListExploreFiles_ErrorResponse_503_AnyOf{}
+	}
+
+	if err := runtime.UnmarshalJSON(data, l.ListExploreFiles_ErrorResponse_503_AnyOf); err != nil {
+		return fmt.Errorf("ListExploreFiles_ErrorResponse_503_AnyOf unmarshal: %w", err)
+	}
+
+	return nil
+}
+
+type ExploreGroupsResponse = ExploreGroupsHTTPResponse
+
+type ExploreGroupsErrorResponse = ErrorResponse
+
+type ExploreGroupsErrorResponseJSON = ErrorResponse
+
+type ExploreGroupsErrorResponseJSON503 struct {
+	ExploreGroups_ErrorResponse_503_AnyOf *ExploreGroups_ErrorResponse_503_AnyOf `json:"-"`
+}
+
+func (e ExploreGroupsErrorResponseJSON503) MarshalJSON() ([]byte, error) {
+	var parts []json.RawMessage
+
+	{
+		b, err := runtime.MarshalJSON(e.ExploreGroups_ErrorResponse_503_AnyOf)
+		if err != nil {
+			return nil, fmt.Errorf("ExploreGroups_ErrorResponse_503_AnyOf marshal: %w", err)
+		}
+		parts = append(parts, b)
+	}
+
+	return runtime.CoalesceOrMerge(parts...)
+}
+
+func (e *ExploreGroupsErrorResponseJSON503) UnmarshalJSON(data []byte) error {
+	trim := bytes.TrimSpace(data)
+	if bytes.Equal(trim, []byte("null")) {
+		return nil
+	}
+	if len(trim) == 0 {
+		return fmt.Errorf("empty JSON input")
+	}
+
+	if e.ExploreGroups_ErrorResponse_503_AnyOf == nil {
+		e.ExploreGroups_ErrorResponse_503_AnyOf = &ExploreGroups_ErrorResponse_503_AnyOf{}
+	}
+
+	if err := runtime.UnmarshalJSON(data, e.ExploreGroups_ErrorResponse_503_AnyOf); err != nil {
+		return fmt.Errorf("ExploreGroups_ErrorResponse_503_AnyOf unmarshal: %w", err)
+	}
+
+	return nil
+}
+
+type CountExploreMatchesResponse = ExploreMatchCountsResponse
+
+type CountExploreMatchesErrorResponse = ErrorResponse
+
+type CountExploreMatchesErrorResponseJSON = ErrorResponse
+
+type CountExploreMatchesErrorResponseJSON503 struct {
+	CountExploreMatches_ErrorResponse_503_AnyOf *CountExploreMatches_ErrorResponse_503_AnyOf `json:"-"`
+}
+
+func (c CountExploreMatchesErrorResponseJSON503) MarshalJSON() ([]byte, error) {
+	var parts []json.RawMessage
+
+	{
+		b, err := runtime.MarshalJSON(c.CountExploreMatches_ErrorResponse_503_AnyOf)
+		if err != nil {
+			return nil, fmt.Errorf("CountExploreMatches_ErrorResponse_503_AnyOf marshal: %w", err)
+		}
+		parts = append(parts, b)
+	}
+
+	return runtime.CoalesceOrMerge(parts...)
+}
+
+func (c *CountExploreMatchesErrorResponseJSON503) UnmarshalJSON(data []byte) error {
+	trim := bytes.TrimSpace(data)
+	if bytes.Equal(trim, []byte("null")) {
+		return nil
+	}
+	if len(trim) == 0 {
+		return fmt.Errorf("empty JSON input")
+	}
+
+	if c.CountExploreMatches_ErrorResponse_503_AnyOf == nil {
+		c.CountExploreMatches_ErrorResponse_503_AnyOf = &CountExploreMatches_ErrorResponse_503_AnyOf{}
+	}
+
+	if err := runtime.UnmarshalJSON(data, c.CountExploreMatches_ErrorResponse_503_AnyOf); err != nil {
+		return fmt.Errorf("CountExploreMatches_ErrorResponse_503_AnyOf unmarshal: %w", err)
+	}
+
+	return nil
+}
+
+type PreflightExploreSelectionResponse = ExplorePreflightResponse
+
+type PreflightExploreSelectionErrorResponse = ErrorResponse
+
+type PreflightExploreSelectionErrorResponseJSON = ErrorResponse
+
+type PreflightExploreSelectionErrorResponseJSON503 struct {
+	PreflightExploreSelection_ErrorResponse_503_AnyOf *PreflightExploreSelection_ErrorResponse_503_AnyOf `json:"-"`
+}
+
+func (p PreflightExploreSelectionErrorResponseJSON503) MarshalJSON() ([]byte, error) {
+	var parts []json.RawMessage
+
+	{
+		b, err := runtime.MarshalJSON(p.PreflightExploreSelection_ErrorResponse_503_AnyOf)
+		if err != nil {
+			return nil, fmt.Errorf("PreflightExploreSelection_ErrorResponse_503_AnyOf marshal: %w", err)
+		}
+		parts = append(parts, b)
+	}
+
+	return runtime.CoalesceOrMerge(parts...)
+}
+
+func (p *PreflightExploreSelectionErrorResponseJSON503) UnmarshalJSON(data []byte) error {
+	trim := bytes.TrimSpace(data)
+	if bytes.Equal(trim, []byte("null")) {
+		return nil
+	}
+	if len(trim) == 0 {
+		return fmt.Errorf("empty JSON input")
+	}
+
+	if p.PreflightExploreSelection_ErrorResponse_503_AnyOf == nil {
+		p.PreflightExploreSelection_ErrorResponse_503_AnyOf = &PreflightExploreSelection_ErrorResponse_503_AnyOf{}
+	}
+
+	if err := runtime.UnmarshalJSON(data, p.PreflightExploreSelection_ErrorResponse_503_AnyOf); err != nil {
+		return fmt.Errorf("PreflightExploreSelection_ErrorResponse_503_AnyOf unmarshal: %w", err)
+	}
+
+	return nil
+}
+
+type GroupFilesResponse = FileGroupsHTTPResponse
+
+type GroupFilesErrorResponse = ErrorResponse
+
+type GroupFilesErrorResponseJSON = ErrorResponse
+
+type GroupFilesErrorResponseJSON503 struct {
+	GroupFiles_ErrorResponse_503_AnyOf *GroupFiles_ErrorResponse_503_AnyOf `json:"-"`
+}
+
+func (g GroupFilesErrorResponseJSON503) MarshalJSON() ([]byte, error) {
+	var parts []json.RawMessage
+
+	{
+		b, err := runtime.MarshalJSON(g.GroupFiles_ErrorResponse_503_AnyOf)
+		if err != nil {
+			return nil, fmt.Errorf("GroupFiles_ErrorResponse_503_AnyOf marshal: %w", err)
+		}
+		parts = append(parts, b)
+	}
+
+	return runtime.CoalesceOrMerge(parts...)
+}
+
+func (g *GroupFilesErrorResponseJSON503) UnmarshalJSON(data []byte) error {
+	trim := bytes.TrimSpace(data)
+	if bytes.Equal(trim, []byte("null")) {
+		return nil
+	}
+	if len(trim) == 0 {
+		return fmt.Errorf("empty JSON input")
+	}
+
+	if g.GroupFiles_ErrorResponse_503_AnyOf == nil {
+		g.GroupFiles_ErrorResponse_503_AnyOf = &GroupFiles_ErrorResponse_503_AnyOf{}
+	}
+
+	if err := runtime.UnmarshalJSON(data, g.GroupFiles_ErrorResponse_503_AnyOf); err != nil {
+		return fmt.Errorf("GroupFiles_ErrorResponse_503_AnyOf unmarshal: %w", err)
+	}
+
+	return nil
+}
+
+type SearchFilesResponse = FileSearchHTTPResponse
+
+type SearchFilesErrorResponse = ErrorResponse
+
+type SearchFilesErrorResponseJSON = ErrorResponse
+
+type SearchFilesErrorResponseJSON503 struct {
+	SearchFiles_ErrorResponse_503_AnyOf *SearchFiles_ErrorResponse_503_AnyOf `json:"-"`
+}
+
+func (s SearchFilesErrorResponseJSON503) MarshalJSON() ([]byte, error) {
+	var parts []json.RawMessage
+
+	{
+		b, err := runtime.MarshalJSON(s.SearchFiles_ErrorResponse_503_AnyOf)
+		if err != nil {
+			return nil, fmt.Errorf("SearchFiles_ErrorResponse_503_AnyOf marshal: %w", err)
+		}
+		parts = append(parts, b)
+	}
+
+	return runtime.CoalesceOrMerge(parts...)
+}
+
+func (s *SearchFilesErrorResponseJSON503) UnmarshalJSON(data []byte) error {
+	trim := bytes.TrimSpace(data)
+	if bytes.Equal(trim, []byte("null")) {
+		return nil
+	}
+	if len(trim) == 0 {
+		return fmt.Errorf("empty JSON input")
+	}
+
+	if s.SearchFiles_ErrorResponse_503_AnyOf == nil {
+		s.SearchFiles_ErrorResponse_503_AnyOf = &SearchFiles_ErrorResponse_503_AnyOf{}
+	}
+
+	if err := runtime.UnmarshalJSON(data, s.SearchFiles_ErrorResponse_503_AnyOf); err != nil {
+		return fmt.Errorf("SearchFiles_ErrorResponse_503_AnyOf unmarshal: %w", err)
+	}
+
+	return nil
+}
+
+type GetFileResponse = FileMetadataResponse
+
+type GetFileErrorResponse = ErrorResponse
+
+type GetFileContentResponse = []byte
+
+type GetFileContentErrorResponse = ErrorResponse
+
+type GetFileContentErrorResponseJSON = ErrorResponse
+
+type GetFileContentErrorResponseJSON404 = ErrorResponse
+
+type GetFileContentErrorResponseJSON500 = ErrorResponse
+
+type GetFileContentErrorResponseJSON503 = ErrorResponse
+
 type GetHealthResponse = HealthResponse
 
 type GetHealthErrorResponse = ErrorResponse
+
+type LinkIdentityParticipantsResponse = IdentityLinkResponse
+
+type LinkIdentityParticipantsErrorResponse = ErrorResponse
+
+type UnlinkIdentityParticipantsResponse = IdentityLinkResponse
+
+type UnlinkIdentityParticipantsErrorResponse = ErrorResponse
+
+type SearchIntegrationTasksResponse = TaskSearchResponse
+
+type SearchIntegrationTasksErrorResponse = ErrorResponse
+
+type GetTaskIntegrationStatusResponse = TaskIntegrationStatusResponse
+
+type GetTaskIntegrationStatusErrorResponse = ErrorResponse
+
+type TestTaskIntegrationResponse = TaskIntegrationStatusResponse
+
+type TestTaskIntegrationErrorResponse = ErrorResponse
 
 type ListMessagesResponse = MessageListResponse
 
@@ -333,9 +885,333 @@ type GetMessageInlinePartErrorResponseJSON501 = ErrorResponse
 
 type GetMessageInlinePartErrorResponseJSON503 = ErrorResponse
 
+type ListMessageTasksResponse = TaskLinkLookupResponse
+
+type ListMessageTasksErrorResponse = ErrorResponse
+
+type CreateOrLinkMessageTaskResponse = TaskLinkMutationResponse
+
+type CreateOrLinkMessageTaskErrorResponse = ErrorResponse
+
+type UnlinkMessageTaskResponse = TaskLinkMutationResponse
+
+type UnlinkMessageTaskErrorResponse = ErrorResponse
+
+type SearchPeopleResponse = PersonSearchHTTPResponse
+
+type SearchPeopleErrorResponse = ErrorResponse
+
+type SearchPeopleErrorResponseJSON = ErrorResponse
+
+type SearchPeopleErrorResponseJSON503 struct {
+	SearchPeople_ErrorResponse_503_AnyOf *SearchPeople_ErrorResponse_503_AnyOf `json:"-"`
+}
+
+func (s SearchPeopleErrorResponseJSON503) MarshalJSON() ([]byte, error) {
+	var parts []json.RawMessage
+
+	{
+		b, err := runtime.MarshalJSON(s.SearchPeople_ErrorResponse_503_AnyOf)
+		if err != nil {
+			return nil, fmt.Errorf("SearchPeople_ErrorResponse_503_AnyOf marshal: %w", err)
+		}
+		parts = append(parts, b)
+	}
+
+	return runtime.CoalesceOrMerge(parts...)
+}
+
+func (s *SearchPeopleErrorResponseJSON503) UnmarshalJSON(data []byte) error {
+	trim := bytes.TrimSpace(data)
+	if bytes.Equal(trim, []byte("null")) {
+		return nil
+	}
+	if len(trim) == 0 {
+		return fmt.Errorf("empty JSON input")
+	}
+
+	if s.SearchPeople_ErrorResponse_503_AnyOf == nil {
+		s.SearchPeople_ErrorResponse_503_AnyOf = &SearchPeople_ErrorResponse_503_AnyOf{}
+	}
+
+	if err := runtime.UnmarshalJSON(data, s.SearchPeople_ErrorResponse_503_AnyOf); err != nil {
+		return fmt.Errorf("SearchPeople_ErrorResponse_503_AnyOf unmarshal: %w", err)
+	}
+
+	return nil
+}
+
+type GetPersonResponse = PersonSummary
+
+type GetPersonErrorResponse = ErrorResponse
+
+type SearchPersonFilesResponse = FileSearchHTTPResponse
+
+type SearchPersonFilesErrorResponse = ErrorResponse
+
+type SearchPersonFilesErrorResponseJSON = ErrorResponse
+
+type SearchPersonFilesErrorResponseJSON503 struct {
+	SearchPersonFiles_ErrorResponse_503_AnyOf *SearchPersonFiles_ErrorResponse_503_AnyOf `json:"-"`
+}
+
+func (s SearchPersonFilesErrorResponseJSON503) MarshalJSON() ([]byte, error) {
+	var parts []json.RawMessage
+
+	{
+		b, err := runtime.MarshalJSON(s.SearchPersonFiles_ErrorResponse_503_AnyOf)
+		if err != nil {
+			return nil, fmt.Errorf("SearchPersonFiles_ErrorResponse_503_AnyOf marshal: %w", err)
+		}
+		parts = append(parts, b)
+	}
+
+	return runtime.CoalesceOrMerge(parts...)
+}
+
+func (s *SearchPersonFilesErrorResponseJSON503) UnmarshalJSON(data []byte) error {
+	trim := bytes.TrimSpace(data)
+	if bytes.Equal(trim, []byte("null")) {
+		return nil
+	}
+	if len(trim) == 0 {
+		return fmt.Errorf("empty JSON input")
+	}
+
+	if s.SearchPersonFiles_ErrorResponse_503_AnyOf == nil {
+		s.SearchPersonFiles_ErrorResponse_503_AnyOf = &SearchPersonFiles_ErrorResponse_503_AnyOf{}
+	}
+
+	if err := runtime.UnmarshalJSON(data, s.SearchPersonFiles_ErrorResponse_503_AnyOf); err != nil {
+		return fmt.Errorf("SearchPersonFiles_ErrorResponse_503_AnyOf unmarshal: %w", err)
+	}
+
+	return nil
+}
+
+type GetPersonContextSummaryResponse = PersonContextSummaryHTTPResponse
+
+type GetPersonContextSummaryErrorResponse = ErrorResponse
+
+type GetPersonContextSummaryErrorResponseJSON = ErrorResponse
+
+type GetPersonContextSummaryErrorResponseJSON503 struct {
+	GetPersonContextSummary_ErrorResponse_503_AnyOf *GetPersonContextSummary_ErrorResponse_503_AnyOf `json:"-"`
+}
+
+func (g GetPersonContextSummaryErrorResponseJSON503) MarshalJSON() ([]byte, error) {
+	var parts []json.RawMessage
+
+	{
+		b, err := runtime.MarshalJSON(g.GetPersonContextSummary_ErrorResponse_503_AnyOf)
+		if err != nil {
+			return nil, fmt.Errorf("GetPersonContextSummary_ErrorResponse_503_AnyOf marshal: %w", err)
+		}
+		parts = append(parts, b)
+	}
+
+	return runtime.CoalesceOrMerge(parts...)
+}
+
+func (g *GetPersonContextSummaryErrorResponseJSON503) UnmarshalJSON(data []byte) error {
+	trim := bytes.TrimSpace(data)
+	if bytes.Equal(trim, []byte("null")) {
+		return nil
+	}
+	if len(trim) == 0 {
+		return fmt.Errorf("empty JSON input")
+	}
+
+	if g.GetPersonContextSummary_ErrorResponse_503_AnyOf == nil {
+		g.GetPersonContextSummary_ErrorResponse_503_AnyOf = &GetPersonContextSummary_ErrorResponse_503_AnyOf{}
+	}
+
+	if err := runtime.UnmarshalJSON(data, g.GetPersonContextSummary_ErrorResponse_503_AnyOf); err != nil {
+		return fmt.Errorf("GetPersonContextSummary_ErrorResponse_503_AnyOf unmarshal: %w", err)
+	}
+
+	return nil
+}
+
+type GetPersonTimelineResponse = ExploreHTTPResponse
+
+type GetPersonTimelineErrorResponse = ErrorResponse
+
+type GetPersonTimelineErrorResponseJSON = ErrorResponse
+
+type GetPersonTimelineErrorResponseJSON503 struct {
+	GetPersonTimeline_ErrorResponse_503_AnyOf *GetPersonTimeline_ErrorResponse_503_AnyOf `json:"-"`
+}
+
+func (g GetPersonTimelineErrorResponseJSON503) MarshalJSON() ([]byte, error) {
+	var parts []json.RawMessage
+
+	{
+		b, err := runtime.MarshalJSON(g.GetPersonTimeline_ErrorResponse_503_AnyOf)
+		if err != nil {
+			return nil, fmt.Errorf("GetPersonTimeline_ErrorResponse_503_AnyOf marshal: %w", err)
+		}
+		parts = append(parts, b)
+	}
+
+	return runtime.CoalesceOrMerge(parts...)
+}
+
+func (g *GetPersonTimelineErrorResponseJSON503) UnmarshalJSON(data []byte) error {
+	trim := bytes.TrimSpace(data)
+	if bytes.Equal(trim, []byte("null")) {
+		return nil
+	}
+	if len(trim) == 0 {
+		return fmt.Errorf("empty JSON input")
+	}
+
+	if g.GetPersonTimeline_ErrorResponse_503_AnyOf == nil {
+		g.GetPersonTimeline_ErrorResponse_503_AnyOf = &GetPersonTimeline_ErrorResponse_503_AnyOf{}
+	}
+
+	if err := runtime.UnmarshalJSON(data, g.GetPersonTimeline_ErrorResponse_503_AnyOf); err != nil {
+		return fmt.Errorf("GetPersonTimeline_ErrorResponse_503_AnyOf unmarshal: %w", err)
+	}
+
+	return nil
+}
+
 type RunQueryResponse = QueryResult
 
 type RunQueryErrorResponse = ErrorResponse
+
+type ListRelationshipsResponse = RelationshipsHTTPResponse
+
+type ListRelationshipsErrorResponse = ErrorResponse
+
+type ListRelationshipsErrorResponseJSON = ErrorResponse
+
+type ListRelationshipsErrorResponseJSON503 struct {
+	ListRelationships_ErrorResponse_503_AnyOf *ListRelationships_ErrorResponse_503_AnyOf `json:"-"`
+}
+
+func (l ListRelationshipsErrorResponseJSON503) MarshalJSON() ([]byte, error) {
+	var parts []json.RawMessage
+
+	{
+		b, err := runtime.MarshalJSON(l.ListRelationships_ErrorResponse_503_AnyOf)
+		if err != nil {
+			return nil, fmt.Errorf("ListRelationships_ErrorResponse_503_AnyOf marshal: %w", err)
+		}
+		parts = append(parts, b)
+	}
+
+	return runtime.CoalesceOrMerge(parts...)
+}
+
+func (l *ListRelationshipsErrorResponseJSON503) UnmarshalJSON(data []byte) error {
+	trim := bytes.TrimSpace(data)
+	if bytes.Equal(trim, []byte("null")) {
+		return nil
+	}
+	if len(trim) == 0 {
+		return fmt.Errorf("empty JSON input")
+	}
+
+	if l.ListRelationships_ErrorResponse_503_AnyOf == nil {
+		l.ListRelationships_ErrorResponse_503_AnyOf = &ListRelationships_ErrorResponse_503_AnyOf{}
+	}
+
+	if err := runtime.UnmarshalJSON(data, l.ListRelationships_ErrorResponse_503_AnyOf); err != nil {
+		return fmt.Errorf("ListRelationships_ErrorResponse_503_AnyOf unmarshal: %w", err)
+	}
+
+	return nil
+}
+
+type GetRelationshipTimelineResponse = RelationshipTimelineHTTPResponse
+
+type GetRelationshipTimelineErrorResponse = ErrorResponse
+
+type GetRelationshipTimelineErrorResponseJSON = ErrorResponse
+
+type GetRelationshipTimelineErrorResponseJSON503 struct {
+	GetRelationshipTimeline_ErrorResponse_503_AnyOf *GetRelationshipTimeline_ErrorResponse_503_AnyOf `json:"-"`
+}
+
+func (g GetRelationshipTimelineErrorResponseJSON503) MarshalJSON() ([]byte, error) {
+	var parts []json.RawMessage
+
+	{
+		b, err := runtime.MarshalJSON(g.GetRelationshipTimeline_ErrorResponse_503_AnyOf)
+		if err != nil {
+			return nil, fmt.Errorf("GetRelationshipTimeline_ErrorResponse_503_AnyOf marshal: %w", err)
+		}
+		parts = append(parts, b)
+	}
+
+	return runtime.CoalesceOrMerge(parts...)
+}
+
+func (g *GetRelationshipTimelineErrorResponseJSON503) UnmarshalJSON(data []byte) error {
+	trim := bytes.TrimSpace(data)
+	if bytes.Equal(trim, []byte("null")) {
+		return nil
+	}
+	if len(trim) == 0 {
+		return fmt.Errorf("empty JSON input")
+	}
+
+	if g.GetRelationshipTimeline_ErrorResponse_503_AnyOf == nil {
+		g.GetRelationshipTimeline_ErrorResponse_503_AnyOf = &GetRelationshipTimeline_ErrorResponse_503_AnyOf{}
+	}
+
+	if err := runtime.UnmarshalJSON(data, g.GetRelationshipTimeline_ErrorResponse_503_AnyOf); err != nil {
+		return fmt.Errorf("GetRelationshipTimeline_ErrorResponse_503_AnyOf unmarshal: %w", err)
+	}
+
+	return nil
+}
+
+type ListSavedViewsResponse = SavedViewsResponse
+
+type ListSavedViewsErrorResponse = ErrorResponse
+
+type CreateSavedViewResponse = SavedView
+
+type CreateSavedViewErrorResponse = ErrorResponse
+
+type CreateSavedViewErrorResponseJSON = ErrorResponse
+
+type CreateSavedViewErrorResponseJSON503 = ErrorResponse
+
+type DeleteSavedViewErrorResponse = ErrorResponse
+
+type DeleteSavedViewErrorResponseJSON = ErrorResponse
+
+type DeleteSavedViewErrorResponseJSON404 = ErrorResponse
+
+type DeleteSavedViewErrorResponseJSON409 = ErrorResponse
+
+type DeleteSavedViewErrorResponseJSON428 = ErrorResponse
+
+type DeleteSavedViewErrorResponseJSON500 = ErrorResponse
+
+type DeleteSavedViewErrorResponseJSON503 = ErrorResponse
+
+type GetSavedViewResponse = SavedView
+
+type GetSavedViewErrorResponse = ErrorResponse
+
+type GetSavedViewErrorResponseJSON = ErrorResponse
+
+type PatchSavedViewResponse = SavedView
+
+type PatchSavedViewErrorResponse = ErrorResponse
+
+type PatchSavedViewErrorResponseJSON = ErrorResponse
+
+type PatchSavedViewErrorResponseJSON409 = ErrorResponse
+
+type PatchSavedViewErrorResponseJSON428 = ErrorResponse
+
+type PatchSavedViewErrorResponseJSON503 = ErrorResponse
 
 type GetSchedulerStatusResponse = SchedulerStatusResponse
 
@@ -381,6 +1257,12 @@ func (s *SearchMessagesResponse) UnmarshalJSON(data []byte) error {
 
 type SearchMessagesErrorResponse = ErrorResponse
 
+type GetSearchCoverageResponse = SearchCoverageResponse
+
+type GetSearchCoverageErrorResponse = ErrorResponse
+
+type GetSearchCoverageErrorResponseJSON = ErrorResponse
+
 type DeepSearchResponseJSON = DeepSearchResponse
 
 type DeepSearchErrorResponse = ErrorResponse
@@ -396,6 +1278,22 @@ type FastSearchErrorResponse = ErrorResponse
 type FindSimilarMessagesResponse = SimilarSearchResponse
 
 type FindSimilarMessagesErrorResponse = ErrorResponse
+
+type GetSettingsResponse = SettingsResponse
+
+type GetSettingsErrorResponse = ErrorResponse
+
+type PatchSettingsResponse = SettingsResponse
+
+type PatchSettingsErrorResponse = ErrorResponse
+
+type PatchSettingsErrorResponseJSON = ErrorResponse
+
+type PatchSettingsErrorResponseJSON412 = ErrorResponse
+
+type PatchSettingsErrorResponseJSON422 = ErrorResponse
+
+type PatchSettingsErrorResponseJSON428 = ErrorResponse
 
 type ListSourceStatusResponse = SourceStatusResponse
 
@@ -442,6 +1340,27 @@ type DaemonPingResp struct {
 	Body         []byte
 	StatusCode   int
 	JSON200      *DaemonPingResponse
+}
+
+type LogoutSessionResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON429      *LogoutSessionErrorResponse
+}
+
+type GetSessionResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *GetSessionResponse
+}
+
+type LoginSessionResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *LoginSessionResponse
 }
 
 type ListAccountsResp struct {
@@ -787,6 +1706,23 @@ type VerifyCLIResp struct {
 	StatusCode   int
 }
 
+type GetRemoteImageResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON400      *GetRemoteImageErrorResponse
+	JSON401      *GetRemoteImageErrorResponseJSON
+	JSON415      *GetRemoteImageErrorResponseJSON415
+	JSON502      *GetRemoteImageErrorResponseJSON502
+}
+
+type GetConversationResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *GetConversationResponse
+}
+
 type ListDeletionsResp struct {
 	HTTPResponse *http.Response
 	Body         []byte
@@ -809,11 +1745,188 @@ type CancelDeletionResp struct {
 	JSON200      *CancelDeletionResponseJSON
 }
 
+type GetDeletionResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *GetDeletionResponse
+}
+
+type SearchDomainsResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *SearchDomainsResponse
+	JSON400      *SearchDomainsErrorResponse
+	JSON409      *SearchDomainsErrorResponseJSON
+	JSON503      *SearchDomainsErrorResponseJSON503
+}
+
+type GetDomainResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *GetDomainResponse
+}
+
+type SearchDomainFilesResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *SearchDomainFilesResponse
+	JSON400      *SearchDomainFilesErrorResponse
+	JSON409      *SearchDomainFilesErrorResponseJSON
+	JSON503      *SearchDomainFilesErrorResponseJSON503
+}
+
+type GetDomainContextSummaryResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *GetDomainContextSummaryResponse
+	JSON400      *GetDomainContextSummaryErrorResponse
+	JSON409      *GetDomainContextSummaryErrorResponseJSON
+	JSON503      *GetDomainContextSummaryErrorResponseJSON503
+}
+
+type GetDomainTimelineResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *GetDomainTimelineResponse
+	JSON400      *GetDomainTimelineErrorResponse
+	JSON409      *GetDomainTimelineErrorResponseJSON
+	JSON503      *GetDomainTimelineErrorResponseJSON503
+}
+
+type ExploreResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *ExploreResponse
+	JSON400      *ExploreErrorResponse
+	JSON409      *ExploreErrorResponseJSON
+	JSON503      *ExploreErrorResponseJSON503
+}
+
+type ListExploreFilesResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *ListExploreFilesResponse
+	JSON400      *ListExploreFilesErrorResponse
+	JSON409      *ListExploreFilesErrorResponseJSON
+	JSON503      *ListExploreFilesErrorResponseJSON503
+}
+
+type ExploreGroupsResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *ExploreGroupsResponse
+	JSON400      *ExploreGroupsErrorResponse
+	JSON409      *ExploreGroupsErrorResponseJSON
+	JSON503      *ExploreGroupsErrorResponseJSON503
+}
+
+type CountExploreMatchesResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *CountExploreMatchesResponse
+	JSON400      *CountExploreMatchesErrorResponse
+	JSON409      *CountExploreMatchesErrorResponseJSON
+	JSON503      *CountExploreMatchesErrorResponseJSON503
+}
+
+type PreflightExploreSelectionResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *PreflightExploreSelectionResponse
+	JSON400      *PreflightExploreSelectionErrorResponse
+	JSON409      *PreflightExploreSelectionErrorResponseJSON
+	JSON503      *PreflightExploreSelectionErrorResponseJSON503
+}
+
+type GroupFilesResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *GroupFilesResponse
+	JSON400      *GroupFilesErrorResponse
+	JSON409      *GroupFilesErrorResponseJSON
+	JSON503      *GroupFilesErrorResponseJSON503
+}
+
+type SearchFilesResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *SearchFilesResponse
+	JSON400      *SearchFilesErrorResponse
+	JSON409      *SearchFilesErrorResponseJSON
+	JSON503      *SearchFilesErrorResponseJSON503
+}
+
+type GetFileResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *GetFileResponse
+}
+
+type GetFileContentResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON400      *GetFileContentErrorResponse
+	JSON401      *GetFileContentErrorResponseJSON
+	JSON404      *GetFileContentErrorResponseJSON404
+	JSON500      *GetFileContentErrorResponseJSON500
+	JSON503      *GetFileContentErrorResponseJSON503
+}
+
 type GetHealthResp struct {
 	HTTPResponse *http.Response
 	Body         []byte
 	StatusCode   int
 	JSON200      *GetHealthResponse
+}
+
+type LinkIdentityParticipantsResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *LinkIdentityParticipantsResponse
+}
+
+type UnlinkIdentityParticipantsResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *UnlinkIdentityParticipantsResponse
+}
+
+type SearchIntegrationTasksResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *SearchIntegrationTasksResponse
+}
+
+type GetTaskIntegrationStatusResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *GetTaskIntegrationStatusResponse
+}
+
+type TestTaskIntegrationResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *TestTaskIntegrationResponse
 }
 
 type ListMessagesResp struct {
@@ -857,11 +1970,165 @@ type GetMessageInlinePartResp struct {
 	JSON503      *GetMessageInlinePartErrorResponseJSON503
 }
 
+type ListMessageTasksResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *ListMessageTasksResponse
+}
+
+type CreateOrLinkMessageTaskResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON201      *CreateOrLinkMessageTaskResponse
+}
+
+type UnlinkMessageTaskResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *UnlinkMessageTaskResponse
+}
+
+type SearchPeopleResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *SearchPeopleResponse
+	JSON400      *SearchPeopleErrorResponse
+	JSON409      *SearchPeopleErrorResponseJSON
+	JSON503      *SearchPeopleErrorResponseJSON503
+}
+
+type GetPersonResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *GetPersonResponse
+}
+
+type SearchPersonFilesResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *SearchPersonFilesResponse
+	JSON400      *SearchPersonFilesErrorResponse
+	JSON409      *SearchPersonFilesErrorResponseJSON
+	JSON503      *SearchPersonFilesErrorResponseJSON503
+}
+
+type GetPersonContextSummaryResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *GetPersonContextSummaryResponse
+	JSON400      *GetPersonContextSummaryErrorResponse
+	JSON409      *GetPersonContextSummaryErrorResponseJSON
+	JSON503      *GetPersonContextSummaryErrorResponseJSON503
+}
+
+type GetPersonTimelineResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *GetPersonTimelineResponse
+	JSON400      *GetPersonTimelineErrorResponse
+	JSON409      *GetPersonTimelineErrorResponseJSON
+	JSON503      *GetPersonTimelineErrorResponseJSON503
+}
+
 type RunQueryResp struct {
 	HTTPResponse *http.Response
 	Body         []byte
 	StatusCode   int
 	JSON200      *RunQueryResponse
+}
+
+type ListRelationshipsResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *ListRelationshipsResponse
+	JSON400      *ListRelationshipsErrorResponse
+	JSON409      *ListRelationshipsErrorResponseJSON
+	JSON503      *ListRelationshipsErrorResponseJSON503
+}
+
+type GetRelationshipTimelineResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *GetRelationshipTimelineResponse
+	JSON400      *GetRelationshipTimelineErrorResponse
+	JSON409      *GetRelationshipTimelineErrorResponseJSON
+	JSON503      *GetRelationshipTimelineErrorResponseJSON503
+}
+
+type ListSavedViewsResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *ListSavedViewsResponse
+}
+
+type CreateSavedViewResp201Headers struct {
+	ETag string `header:"ETag"`
+}
+
+type CreateSavedViewResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON201      *CreateSavedViewResponse
+	Headers201   *CreateSavedViewResp201Headers
+	JSON400      *CreateSavedViewErrorResponse
+	JSON409      *CreateSavedViewErrorResponseJSON
+	JSON503      *CreateSavedViewErrorResponseJSON503
+}
+
+type DeleteSavedViewResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON400      *DeleteSavedViewErrorResponse
+	JSON401      *DeleteSavedViewErrorResponseJSON
+	JSON404      *DeleteSavedViewErrorResponseJSON404
+	JSON409      *DeleteSavedViewErrorResponseJSON409
+	JSON428      *DeleteSavedViewErrorResponseJSON428
+	JSON500      *DeleteSavedViewErrorResponseJSON500
+	JSON503      *DeleteSavedViewErrorResponseJSON503
+}
+
+type GetSavedViewResp200Headers struct {
+	ETag string `header:"ETag"`
+}
+
+type GetSavedViewResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *GetSavedViewResponse
+	Headers200   *GetSavedViewResp200Headers
+	JSON404      *GetSavedViewErrorResponse
+	JSON503      *GetSavedViewErrorResponseJSON
+}
+
+type PatchSavedViewResp200Headers struct {
+	ETag string `header:"ETag"`
+}
+
+type PatchSavedViewResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *PatchSavedViewResponse
+	Headers200   *PatchSavedViewResp200Headers
+	JSON400      *PatchSavedViewErrorResponse
+	JSON404      *PatchSavedViewErrorResponseJSON
+	JSON409      *PatchSavedViewErrorResponseJSON409
+	JSON428      *PatchSavedViewErrorResponseJSON428
+	JSON503      *PatchSavedViewErrorResponseJSON503
 }
 
 type GetSchedulerStatusResp struct {
@@ -876,6 +2143,15 @@ type SearchMessagesResp struct {
 	Body         []byte
 	StatusCode   int
 	JSON200      *SearchMessagesResponse
+}
+
+type GetSearchCoverageResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *GetSearchCoverageResponse
+	JSON400      *GetSearchCoverageErrorResponse
+	JSON503      *GetSearchCoverageErrorResponseJSON
 }
 
 type DeepSearchResp struct {
@@ -904,6 +2180,35 @@ type FindSimilarMessagesResp struct {
 	Body         []byte
 	StatusCode   int
 	JSON200      *FindSimilarMessagesResponse
+}
+
+type GetSettingsResp200Headers struct {
+	ETag string `header:"ETag"`
+}
+
+type GetSettingsResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *GetSettingsResponse
+	Headers200   *GetSettingsResp200Headers
+}
+
+type PatchSettingsResp200Headers struct {
+	ETag string `header:"ETag"`
+}
+
+type PatchSettingsResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *PatchSettingsResponse
+	Headers200   *PatchSettingsResp200Headers
+	JSON400      *PatchSettingsErrorResponse
+	JSON409      *PatchSettingsErrorResponseJSON
+	JSON412      *PatchSettingsErrorResponseJSON412
+	JSON422      *PatchSettingsErrorResponseJSON422
+	JSON428      *PatchSettingsErrorResponseJSON428
 }
 
 type ListSourceStatusResp struct {

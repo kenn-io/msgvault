@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"slices"
 	"strings"
 	"time"
@@ -12,6 +13,13 @@ import (
 	"go.kenn.io/msgvault/internal/gmail"
 	"go.kenn.io/msgvault/internal/store"
 )
+
+// ErrManifestCancelled reports that a deletion manifest was cancelled
+// (its file was moved out of in_progress/ by a concurrent daemon cancel)
+// while the executor was running. Callers use errors.Is to distinguish a
+// cooperative cancellation from context cancellation and from real failures,
+// and treat it as a clean stop rather than an error to surface.
+var ErrManifestCancelled = errors.New("deletion manifest cancelled")
 
 // isNotFoundError checks if an error indicates the message was already deleted.
 // Treating 404 as success makes deletion idempotent.
@@ -131,8 +139,24 @@ func (e *Executor) deleteOne(ctx context.Context, gmailID string, method Method)
 	return resultFailed, err
 }
 
-// saveCheckpoint persists the current execution progress to disk.
-func (e *Executor) saveCheckpoint(manifest *Manifest, path string, index, succeeded, failed int, failedIDs []string) {
+// manifestCancelled reports whether the manifest was cancelled out of
+// in_progress/ by a concurrent daemon cancel. The executor polls this cheaply
+// between deletions so a cross-process cancel stops it promptly.
+func (e *Executor) manifestCancelled(manifestID string) bool {
+	return !e.manager.InProgressManifestExists(manifestID)
+}
+
+// saveCheckpoint persists the current execution progress to disk, but only
+// while the manifest is still in in_progress/. A concurrent cancel moves the
+// file to cancelled/; recreating it here would resurrect a cancelled deletion,
+// so the checkpoint is skipped once the file is gone. This is the periodic-save
+// resurrection guard; finalizeExecution is the authoritative safety net (it
+// claims the file with an atomic rename before completing).
+func (e *Executor) saveCheckpoint(manifest *Manifest, manifestID, path string, index, succeeded, failed int, failedIDs []string) {
+	if e.manifestCancelled(manifestID) {
+		e.logger.Info("manifest no longer in progress; skipping checkpoint", "manifest", manifestID)
+		return
+	}
 	manifest.Execution.LastProcessedIndex = index
 	manifest.Execution.Succeeded = succeeded
 	manifest.Execution.Failed = failed
@@ -148,6 +172,10 @@ func (e *Executor) prepareExecution(manifestID string, method Method) (*Manifest
 	manifest, _, err := e.manager.GetManifest(manifestID)
 	if err != nil {
 		return nil, "", fmt.Errorf("load manifest: %w", err)
+	}
+
+	if manifest.Status == StatusCancelled {
+		return nil, "", fmt.Errorf("manifest %s: %w", manifestID, ErrManifestCancelled)
 	}
 
 	if manifest.Status != StatusPending && manifest.Status != StatusInProgress {
@@ -178,7 +206,30 @@ func (e *Executor) prepareExecution(manifestID string, method Method) (*Manifest
 // When failOnAllErrors is true, the manifest is marked as Failed if all deletions
 // failed (succeeded == 0). When false (batch mode), it is always marked Completed
 // even with failures, preserving the batch semantics where partial progress is expected.
-func (e *Executor) finalizeExecution(manifestID string, manifest *Manifest, path string, succeeded, failed int, failedIDs []string, failOnAllErrors bool) {
+//
+// The manifest is claimed out of in_progress/ with an atomic rename BEFORE any
+// final state is written. This is the authoritative anti-resurrection guard: a
+// concurrent daemon cancel is also a rename of the same source path, so exactly
+// one of the two renames wins. If the cancel won, our MoveManifest fails with
+// ENOENT and we report ErrManifestCancelled without recreating the file or
+// force-completing. Only after we own the file at the target location do we
+// persist the final execution state there.
+func (e *Executor) finalizeExecution(manifestID string, manifest *Manifest, succeeded, failed int, failedIDs []string, failOnAllErrors bool) error {
+	var targetStatus Status
+	if failed == 0 || succeeded > 0 || !failOnAllErrors {
+		targetStatus = StatusCompleted
+	} else {
+		targetStatus = StatusFailed
+	}
+
+	if err := e.manager.MoveManifest(manifestID, StatusInProgress, targetStatus); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			e.logger.Info("manifest cancelled during finalize; not completing", "manifest", manifestID)
+			return ErrManifestCancelled
+		}
+		return fmt.Errorf("finalize manifest %s: %w", manifestID, err)
+	}
+
 	if manifest.Execution == nil {
 		manifest.Execution = &Execution{StartedAt: time.Now(), Method: "unknown"}
 	}
@@ -188,21 +239,9 @@ func (e *Executor) finalizeExecution(manifestID string, manifest *Manifest, path
 	manifest.Execution.Succeeded = succeeded
 	manifest.Execution.Failed = failed
 	manifest.Execution.FailedIDs = failedIDs
-
-	var targetStatus Status
-	if failed == 0 || succeeded > 0 || !failOnAllErrors {
-		targetStatus = StatusCompleted
-	} else {
-		targetStatus = StatusFailed
-	}
-
 	manifest.Status = targetStatus
-	if err := manifest.Save(path); err != nil {
+	if err := e.manager.SaveManifest(manifest); err != nil {
 		e.logger.Warn("failed to save final state", "error", err)
-	}
-
-	if err := e.manager.MoveManifest(manifestID, StatusInProgress, targetStatus); err != nil {
-		e.logger.Warn("failed to move manifest", "error", err)
 	}
 
 	e.progress.OnComplete(succeeded, failed)
@@ -212,6 +251,7 @@ func (e *Executor) finalizeExecution(manifestID string, manifest *Manifest, path
 		"succeeded", succeeded,
 		"failed", failed,
 	)
+	return nil
 }
 
 // Execute performs the deletion for a manifest.
@@ -248,9 +288,17 @@ func (e *Executor) Execute(ctx context.Context, manifestID string, opts *Execute
 	for i := startIndex; i < len(manifest.GmailIDs); i++ {
 		select {
 		case <-ctx.Done():
-			e.saveCheckpoint(manifest, path, i, succeeded, failed, failedIDs)
+			e.saveCheckpoint(manifest, manifestID, path, i, succeeded, failed, failedIDs)
 			return ctx.Err()
 		default:
+		}
+
+		// Cooperative cross-process cancellation: a daemon cancel moved the
+		// manifest out of in_progress/. Stop before deleting the next message
+		// and do not checkpoint (which would resurrect the file).
+		if e.manifestCancelled(manifestID) {
+			e.logger.Info("deletion cancelled; stopping", "manifest", manifestID, "processed", i)
+			return ErrManifestCancelled
 		}
 
 		result, delErr := e.deleteOne(ctx, manifest.GmailIDs[i], opts.Method)
@@ -258,7 +306,7 @@ func (e *Executor) Execute(ctx context.Context, manifestID string, opts *Execute
 		case resultSuccess:
 			succeeded++
 		case resultFatal:
-			e.saveCheckpoint(manifest, path, i, succeeded, failed, failedIDs)
+			e.saveCheckpoint(manifest, manifestID, path, i, succeeded, failed, failedIDs)
 			return fmt.Errorf("delete message: %w", delErr)
 		case resultFailed:
 			failed++
@@ -267,13 +315,12 @@ func (e *Executor) Execute(ctx context.Context, manifestID string, opts *Execute
 
 		// Save checkpoint periodically
 		if (i+1)%opts.BatchSize == 0 {
-			e.saveCheckpoint(manifest, path, i+1, succeeded, failed, failedIDs)
+			e.saveCheckpoint(manifest, manifestID, path, i+1, succeeded, failed, failedIDs)
 			e.progress.OnProgress(i+1, succeeded, failed)
 		}
 	}
 
-	e.finalizeExecution(manifestID, manifest, path, succeeded, failed, failedIDs, true)
-	return nil
+	return e.finalizeExecution(manifestID, manifest, succeeded, failed, failedIDs, true)
 }
 
 // ExecuteBatch performs batch deletion (more efficient but permanent).
@@ -283,6 +330,10 @@ func (e *Executor) ExecuteBatch(ctx context.Context, manifestID string) error {
 		return err
 	}
 
+	if e.manifestCancelled(manifestID) {
+		e.logger.Info("deletion cancelled before batch start; stopping", "manifest", manifestID)
+		return ErrManifestCancelled
+	}
 	if err := manifest.Save(path); err != nil {
 		return fmt.Errorf("save manifest: %w", err)
 	}
@@ -337,9 +388,14 @@ func (e *Executor) ExecuteBatch(ctx context.Context, manifestID string) error {
 			select {
 			case <-ctx.Done():
 				remaining := slices.Concat(failedIDs, retryIDs[ri:])
-				e.saveCheckpoint(manifest, path, startIndex, succeeded, len(remaining), remaining)
+				e.saveCheckpoint(manifest, manifestID, path, startIndex, succeeded, len(remaining), remaining)
 				return ctx.Err()
 			default:
+			}
+
+			if e.manifestCancelled(manifestID) {
+				e.logger.Info("deletion cancelled during retry; stopping", "manifest", manifestID, "retried", ri)
+				return ErrManifestCancelled
 			}
 
 			result, delErr := e.deleteOne(ctx, gmailID, MethodDelete)
@@ -348,7 +404,7 @@ func (e *Executor) ExecuteBatch(ctx context.Context, manifestID string) error {
 				succeeded++
 			case resultFatal:
 				remaining := slices.Concat(failedIDs, retryIDs[ri:])
-				e.saveCheckpoint(manifest, path, startIndex, succeeded, len(remaining), remaining)
+				e.saveCheckpoint(manifest, manifestID, path, startIndex, succeeded, len(remaining), remaining)
 				return fmt.Errorf("delete message: %w", delErr)
 			case resultFailed:
 				failed++
@@ -364,9 +420,14 @@ func (e *Executor) ExecuteBatch(ctx context.Context, manifestID string) error {
 	for i := startIndex; i < len(manifest.GmailIDs); i += batchSize {
 		select {
 		case <-ctx.Done():
-			e.saveCheckpoint(manifest, path, i, succeeded, failed, failedIDs)
+			e.saveCheckpoint(manifest, manifestID, path, i, succeeded, failed, failedIDs)
 			return ctx.Err()
 		default:
+		}
+
+		if e.manifestCancelled(manifestID) {
+			e.logger.Info("deletion cancelled; stopping", "manifest", manifestID, "processed", i)
+			return ErrManifestCancelled
 		}
 
 		end := min(i+batchSize, len(manifest.GmailIDs))
@@ -377,7 +438,7 @@ func (e *Executor) ExecuteBatch(ctx context.Context, manifestID string) error {
 
 		if err := e.client.BatchDeleteMessages(ctx, batch); err != nil {
 			if isInsufficientScopeError(err) {
-				e.saveCheckpoint(manifest, path, i, succeeded, failed, failedIDs)
+				e.saveCheckpoint(manifest, manifestID, path, i, succeeded, failed, failedIDs)
 				return fmt.Errorf("batch delete: %w", err)
 			}
 			e.logger.Warn("batch delete failed, falling back to individual deletes", "start_index", i, "error", err)
@@ -385,9 +446,14 @@ func (e *Executor) ExecuteBatch(ctx context.Context, manifestID string) error {
 			for j, gmailID := range batch {
 				select {
 				case <-ctx.Done():
-					e.saveCheckpoint(manifest, path, i+j, succeeded, failed, failedIDs)
+					e.saveCheckpoint(manifest, manifestID, path, i+j, succeeded, failed, failedIDs)
 					return ctx.Err()
 				default:
+				}
+
+				if e.manifestCancelled(manifestID) {
+					e.logger.Info("deletion cancelled during fallback; stopping", "manifest", manifestID, "processed", i+j)
+					return ErrManifestCancelled
 				}
 
 				result, delErr := e.deleteOne(ctx, gmailID, MethodDelete)
@@ -395,7 +461,7 @@ func (e *Executor) ExecuteBatch(ctx context.Context, manifestID string) error {
 				case resultSuccess:
 					succeeded++
 				case resultFatal:
-					e.saveCheckpoint(manifest, path, i+j, succeeded, failed, failedIDs)
+					e.saveCheckpoint(manifest, manifestID, path, i+j, succeeded, failed, failedIDs)
 					return fmt.Errorf("delete message: %w", delErr)
 				case resultFailed:
 					failed++
@@ -414,6 +480,5 @@ func (e *Executor) ExecuteBatch(ctx context.Context, manifestID string) error {
 		e.progress.OnProgress(end, succeeded, failed)
 	}
 
-	e.finalizeExecution(manifestID, manifest, path, succeeded, failed, failedIDs, false)
-	return nil
+	return e.finalizeExecution(manifestID, manifest, succeeded, failed, failedIDs, false)
 }

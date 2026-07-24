@@ -250,13 +250,16 @@ type mockStore struct {
 	// Call counts so tests can assert that bulk hydration paths use
 	// GetMessagesSummariesByIDs (one round-trip) instead of looping
 	// GetMessage (per-hit N+1).
-	getMessageCalls          atomic.Int32
-	getSummariesByIDsCalls   atomic.Int32
-	getSummariesByIDsLastIDs []int64
-	searchMessagesCalls      atomic.Int32
-	searchMessagesQueryCalls atomic.Int32
-	searchMessagesQueryLast  *search.Query
-	needsFTSBackfillCalls    atomic.Int32
+	getMessageCalls                atomic.Int32
+	getSummariesByIDsCalls         atomic.Int32
+	getSummariesByIDsLastIDs       []int64
+	searchMessagesCalls            atomic.Int32
+	searchMessagesQueryCalls       atomic.Int32
+	searchMessagesQueryLast        *search.Query
+	searchMessagesQueryFunc        func(*search.Query, int, int) ([]APIMessage, int64, error)
+	searchMessagesQueryLimits      []int
+	searchMessagesQueryTransferred int
+	needsFTSBackfillCalls          atomic.Int32
 
 	sourcesByLookup    map[string][]*store.Source
 	sourcesByLookupErr error
@@ -339,6 +342,7 @@ func (m *mockStore) SearchMessagesQueryContext(ctx context.Context, q *search.Qu
 
 func (m *mockStore) SearchMessagesQuery(q *search.Query, offset, limit int) ([]APIMessage, int64, error) {
 	m.searchMessagesQueryCalls.Add(1)
+	m.searchMessagesQueryLimits = append(m.searchMessagesQueryLimits, limit)
 	if q != nil {
 		cp := *q
 		cp.AccountIDs = append([]int64(nil), q.AccountIDs...)
@@ -347,6 +351,12 @@ func (m *mockStore) SearchMessagesQuery(q *search.Query, offset, limit int) ([]A
 	} else {
 		m.searchMessagesQueryLast = nil
 	}
+	if m.searchMessagesQueryFunc != nil {
+		messages, total, err := m.searchMessagesQueryFunc(q, offset, limit)
+		m.searchMessagesQueryTransferred += len(messages)
+		return messages, total, err
+	}
+	m.searchMessagesQueryTransferred += len(m.messages)
 	return m.messages, m.total, nil
 }
 

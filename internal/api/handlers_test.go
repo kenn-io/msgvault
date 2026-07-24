@@ -528,6 +528,25 @@ func TestHandleCLICollectionMutations(t *testing.T) {
 	require.ErrorIs(err, store.ErrCollectionNotFound, "collection deleted")
 }
 
+func TestDocsPageDisabledOpenAPISpecStillServed(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	srv := NewServer(&config.Config{Server: config.ServerConfig{APIPort: 8080}}, st, nil, testLogger())
+
+	docs := httptest.NewRecorder()
+	srv.Router().ServeHTTP(docs, httptest.NewRequest(http.MethodGet, "/docs", nil))
+	assert.Equal(http.StatusNotFound, docs.Code, "docs status: %s", docs.Body.String())
+	assert.NotContains(docs.Body.String(), "unpkg.com", "docs response must not reference CDN scripts")
+
+	spec := httptest.NewRecorder()
+	srv.Router().ServeHTTP(spec, httptest.NewRequest(http.MethodGet, "/openapi.json", nil))
+	require.Equal(http.StatusOK, spec.Code, "openapi status: %s", spec.Body.String())
+	var doc map[string]any
+	require.NoError(json.NewDecoder(spec.Body).Decode(&doc), "decode openapi")
+	assert.Equal("3.1.0", doc["openapi"], "openapi version")
+}
+
 func TestOpenAPIExportsCLIIdentityContracts(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -2991,6 +3010,7 @@ func TestHandleSourceStatus(t *testing.T) {
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
 	sched := newMockScheduler()
+	sched.scheduled["alice@example.com"] = true
 	srv := NewServer(&config.Config{Server: config.ServerConfig{APIPort: 8080}}, st, sched, testLogger())
 
 	gmail, err := st.GetOrCreateSource("gmail", "alice@example.com")
@@ -3052,6 +3072,8 @@ func TestHandleSourceStatus(t *testing.T) {
 	require.NotNil(got.LastSyncAt, "LastSyncAt")
 	assert.NotEmpty(*got.LastSyncAt, "LastSyncAt")
 	assert.NotEmpty(got.UpdatedAt, "UpdatedAt")
+	assert.False(got.CanSync, "active source cannot start a conflicting sync")
+	assert.Equal("sync_already_running", got.SyncUnavailableReason)
 
 	require.NotNil(got.ActiveSync, "ActiveSync")
 	assert.Equal(runningID, got.ActiveSync.ID, "ActiveSync.ID")
@@ -3073,6 +3095,62 @@ func TestHandleSourceStatus(t *testing.T) {
 	assert.NotEmpty(got.LastSuccessfulSync.ItemErrors[0].CreatedAt, "LastSuccessfulSync.ItemErrors[0].CreatedAt")
 	require.NotNil(got.LastSuccessfulSync.CursorAfter, "LastSuccessfulSync.CursorAfter")
 	assert.Equal("history-2", *got.LastSuccessfulSync.CursorAfter, "LastSuccessfulSync.CursorAfter")
+}
+
+func TestHandleSourceStatusExposesServerAuthorizedSyncCapability(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	st := testutil.NewTestStore(t)
+	sched := newMockScheduler()
+	sched.scheduled["ready@example.com"] = true
+	sched.statuses = []AccountStatus{{
+		Email: "ready@example.com", Schedule: "0 */6 * * *",
+		NextRun: time.Date(2026, 7, 20, 0, 0, 0, 0, time.UTC), LastError: "previous timeout",
+	}}
+	_, err := st.GetOrCreateSource("gmail", "ready@example.com")
+	requirements.NoError(err)
+	srv := NewServer(&config.Config{Server: config.ServerConfig{APIPort: 8080}}, st, sched, testLogger())
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/sources/status", nil)
+	w := httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+
+	requirements.Equal(http.StatusOK, w.Code, w.Body.String())
+	var response SourceStatusResponse
+	requirements.NoError(json.Unmarshal(w.Body.Bytes(), &response))
+	requirements.Len(response.Sources, 1)
+	assertions.True(response.Sources[0].CanSync)
+	assertions.Empty(response.Sources[0].SyncUnavailableReason)
+	assertions.True(response.Sources[0].Scheduled)
+	assertions.Equal("0 */6 * * *", response.Sources[0].Schedule)
+	requirements.NotNil(response.Sources[0].NextSyncAt)
+	assertions.Equal("2026-07-20T00:00:00Z", *response.Sources[0].NextSyncAt)
+	assertions.Equal("previous timeout", response.Sources[0].SchedulerLastError)
+}
+
+func TestHandleSourceStatusDisablesSyncWhileSchedulerReportsAccountRunning(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	st := testutil.NewTestStore(t)
+	sched := newMockScheduler()
+	sched.scheduled["running@example.com"] = true
+	sched.statuses = []AccountStatus{{
+		Email: "running@example.com", Running: true, Schedule: "0 */6 * * *",
+	}}
+	_, err := st.GetOrCreateSource("gmail", "running@example.com")
+	requirements.NoError(err)
+	srv := NewServer(&config.Config{Server: config.ServerConfig{APIPort: 8080}}, st, sched, testLogger())
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/sources/status", nil)
+	w := httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+
+	requirements.Equal(http.StatusOK, w.Code, w.Body.String())
+	var response SourceStatusResponse
+	requirements.NoError(json.Unmarshal(w.Body.Bytes(), &response))
+	requirements.Len(response.Sources, 1)
+	assertions.False(response.Sources[0].CanSync)
+	assertions.Equal("sync_already_running", response.Sources[0].SyncUnavailableReason)
 }
 
 func TestHandleSourceStatusNoSyncRuns(t *testing.T) {
@@ -3097,6 +3175,8 @@ func TestHandleSourceStatusNoSyncRuns(t *testing.T) {
 	assert.Nil(resp.Sources[0].ActiveSync, "ActiveSync")
 	assert.Nil(resp.Sources[0].LatestSync, "LatestSync")
 	assert.Nil(resp.Sources[0].LastSuccessfulSync, "LastSuccessfulSync")
+	assert.False(resp.Sources[0].CanSync)
+	assert.Equal("scheduler_unavailable", resp.Sources[0].SyncUnavailableReason)
 }
 
 func TestHandleGetMessage(t *testing.T) {
@@ -6148,6 +6228,30 @@ func rawMIMEWithInlineImage(cid, contentType string, body []byte) []byte {
 	return rawMIMEWithImagePart(cid, contentType, "inline", body)
 }
 
+type archiveRawMessageStore struct {
+	*mockStore
+
+	raw []byte
+}
+
+func (s *archiveRawMessageStore) GetArchivedMessageRaw(context.Context, int64) ([]byte, error) {
+	return append([]byte(nil), s.raw...), nil
+}
+
+func TestHandleMessageInlineUsesArchiveAwareRawAuthority(t *testing.T) {
+	raw := rawMIMEWithInlineImage("retained@example", "image/png", []byte("retained"))
+	srv := NewServerWithOptions(ServerOptions{
+		Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}},
+		Store:  &archiveRawMessageStore{mockStore: &mockStore{stats: &StoreStats{}}, raw: raw},
+		Engine: &querytest.MockEngine{}, Logger: testLogger(),
+	})
+	response := httptest.NewRecorder()
+	srv.Router().ServeHTTP(response, httptest.NewRequest(http.MethodGet, inlineURL(7, "retained@example"), nil))
+
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	assert.Equal(t, "retained", response.Body.String())
+}
+
 func TestHandleMessageInline_ImagePNG(t *testing.T) {
 	assert := assert.New(t)
 	imgData := []byte{0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A}
@@ -6393,6 +6497,7 @@ func TestHandleGetAttachmentContent(t *testing.T) {
 	assert.Equal("application/pdf", w.Header().Get("Content-Type"), "Content-Type")
 	assert.Equal(`attachment; filename="report.pdf"`, w.Header().Get("Content-Disposition"), "Content-Disposition")
 	assert.Equal(strconv.Itoa(len(content)), w.Header().Get("Content-Length"), "Content-Length")
+	assert.Equal("no-store", w.Header().Get("Cache-Control"), "Cache-Control")
 	assert.Equal(content, w.Body.Bytes(), "body")
 }
 

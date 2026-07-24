@@ -206,6 +206,136 @@ func TestGetIdentitiesForScope_EmptyInput(t *testing.T) {
 	assert.Empty(scope, "want empty scope")
 }
 
+// TestAddAccountIdentity_BumpsIdentityRevisionOnNewIdentity verifies that
+// confirming a brand new (source_id, address) pair bumps both the identity
+// revision (since it changes which participants are owners for the source —
+// the owner_participants cache dataset) and the account-identity revision
+// (since it changes the message-baked is_from_me derivation, which only a
+// full cache rebuild can re-derive).
+func TestAddAccountIdentity_BumpsIdentityRevisionOnNewIdentity(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := storetest.New(t)
+	st := f.Store
+
+	before, err := st.IdentityRevision()
+	require.NoError(err, "IdentityRevision before")
+	acctBefore, err := st.AccountIdentityRevision()
+	require.NoError(err, "AccountIdentityRevision before")
+
+	require.NoError(st.AddAccountIdentity(f.Source.ID, "alice@example.com", "manual"))
+
+	after, err := st.IdentityRevision()
+	require.NoError(err, "IdentityRevision after")
+	assert.Equal(before+1, after, "adding a new identity should bump the identity revision")
+	acctAfter, err := st.AccountIdentityRevision()
+	require.NoError(err, "AccountIdentityRevision after")
+	assert.Equal(acctBefore+1, acctAfter, "adding a new identity should bump the account identity revision")
+}
+
+// TestAddAccountIdentity_DuplicateAddDoesNotBumpRevision guards
+// idempotency: re-adding the exact same (source_id, address, signal) is a
+// no-op for owner_participants, so it must not bump either revision.
+func TestAddAccountIdentity_DuplicateAddDoesNotBumpRevision(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := storetest.New(t)
+	st := f.Store
+
+	require.NoError(st.AddAccountIdentity(f.Source.ID, "alice@example.com", "manual"))
+	after1, err := st.IdentityRevision()
+	require.NoError(err, "IdentityRevision after first add")
+	acctAfter1, err := st.AccountIdentityRevision()
+	require.NoError(err, "AccountIdentityRevision after first add")
+
+	require.NoError(st.AddAccountIdentity(f.Source.ID, "alice@example.com", "manual"))
+	after2, err := st.IdentityRevision()
+	require.NoError(err, "IdentityRevision after duplicate add")
+	assert.Equal(after1, after2, "re-adding the same identity should not bump the identity revision")
+	acctAfter2, err := st.AccountIdentityRevision()
+	require.NoError(err, "AccountIdentityRevision after duplicate add")
+	assert.Equal(acctAfter1, acctAfter2, "re-adding the same identity should not bump the account identity revision")
+}
+
+// TestAddAccountIdentity_NewSignalOnExistingAddressDoesNotBumpRevision
+// guards that merging a new signal into an already-confirmed address does
+// not bump either revision: the (source_id, address) mapping that
+// owner_participants derives from is unchanged, only the evidence trail is.
+func TestAddAccountIdentity_NewSignalOnExistingAddressDoesNotBumpRevision(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := storetest.New(t)
+	st := f.Store
+
+	require.NoError(st.AddAccountIdentity(f.Source.ID, "alice@example.com", "manual"))
+	after1, err := st.IdentityRevision()
+	require.NoError(err, "IdentityRevision after first add")
+	acctAfter1, err := st.AccountIdentityRevision()
+	require.NoError(err, "AccountIdentityRevision after first add")
+
+	require.NoError(st.AddAccountIdentity(f.Source.ID, "alice@example.com", "account-identifier"))
+	after2, err := st.IdentityRevision()
+	require.NoError(err, "IdentityRevision after signal augment")
+	assert.Equal(after1, after2, "adding a new signal to an existing address should not bump the identity revision")
+	acctAfter2, err := st.AccountIdentityRevision()
+	require.NoError(err, "AccountIdentityRevision after signal augment")
+	assert.Equal(acctAfter1, acctAfter2,
+		"adding a new signal to an existing address should not bump the account identity revision")
+}
+
+// TestRemoveAccountIdentity_BumpsIdentityRevisionOnHit verifies that
+// removing a confirmed identity bumps both the identity revision and the
+// account-identity revision, since it changes which participants are
+// owners for the source and invalidates the message-baked is_from_me flag.
+func TestRemoveAccountIdentity_BumpsIdentityRevisionOnHit(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := storetest.New(t)
+	st := f.Store
+
+	require.NoError(st.AddAccountIdentity(f.Source.ID, "alice@example.com", "manual"))
+	before, err := st.IdentityRevision()
+	require.NoError(err, "IdentityRevision before remove")
+	acctBefore, err := st.AccountIdentityRevision()
+	require.NoError(err, "AccountIdentityRevision before remove")
+
+	removed, err := st.RemoveAccountIdentity(f.Source.ID, "alice@example.com")
+	require.NoError(err, "RemoveAccountIdentity")
+	require.Equal(int64(1), removed, "removed")
+
+	after, err := st.IdentityRevision()
+	require.NoError(err, "IdentityRevision after remove")
+	assert.Equal(before+1, after, "removing an existing identity should bump the identity revision")
+	acctAfter, err := st.AccountIdentityRevision()
+	require.NoError(err, "AccountIdentityRevision after remove")
+	assert.Equal(acctBefore+1, acctAfter, "removing an existing identity should bump the account identity revision")
+}
+
+// TestRemoveAccountIdentity_MissDoesNotBumpRevision guards idempotency:
+// removing an identity that does not exist must not bump either revision.
+func TestRemoveAccountIdentity_MissDoesNotBumpRevision(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := storetest.New(t)
+	st := f.Store
+
+	before, err := st.IdentityRevision()
+	require.NoError(err, "IdentityRevision before")
+	acctBefore, err := st.AccountIdentityRevision()
+	require.NoError(err, "AccountIdentityRevision before")
+
+	removed, err := st.RemoveAccountIdentity(f.Source.ID, "nope@example.com")
+	require.NoError(err, "RemoveAccountIdentity")
+	assert.Equal(int64(0), removed, "removed on miss")
+
+	after, err := st.IdentityRevision()
+	require.NoError(err, "IdentityRevision after")
+	assert.Equal(before, after, "removing a missing identity should not bump the identity revision")
+	acctAfter, err := st.AccountIdentityRevision()
+	require.NoError(err, "AccountIdentityRevision after")
+	assert.Equal(acctBefore, acctAfter, "removing a missing identity should not bump the account identity revision")
+}
+
 func TestRemoveAccountIdentity_Hit(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

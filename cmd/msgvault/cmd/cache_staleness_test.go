@@ -34,8 +34,8 @@ func TestCacheNeedsBuild_MeetingMutation(t *testing.T) {
 	}{
 		{name: "meeting source deletion", messageType: "meeting_transcript", mutationField: "deleted_from_source_at", wantStale: true},
 		{name: "meeting dedup hide", messageType: "meeting_transcript", mutationField: "deleted_at", wantStale: true},
-		{name: "calendar source deletion", messageType: "calendar_event", mutationField: "deleted_from_source_at", wantStale: false},
-		{name: "calendar dedup hide", messageType: "calendar_event", mutationField: "deleted_at", wantStale: false},
+		{name: "calendar source deletion", messageType: "calendar_event", mutationField: "deleted_from_source_at", wantStale: true},
+		{name: "calendar dedup hide", messageType: "calendar_event", mutationField: "deleted_at", wantStale: true},
 	}
 
 	for _, tt := range tests {

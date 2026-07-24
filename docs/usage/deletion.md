@@ -4,7 +4,29 @@ description: Staging messages for deletion, reviewing manifests, and executing d
 ---
 
 
-msgvault supports a staged deletion workflow: select messages in the TUI or stage them via an AI assistant, review what will be deleted, then execute against Gmail or your IMAP provider. **Deletion only removes messages from the remote mail server. Your local archive is never modified.** This means you can always search, browse, and export deleted messages from your local copy.
+msgvault supports a staged deletion workflow: select messages in the Web UI or
+TUI, or stage them via an AI assistant; review what will be deleted; then
+execute against Gmail or your IMAP provider. **Deletion only removes messages
+from the remote mail server. Your local archive is never modified.** This means
+you can always search, browse, and export deleted messages from your local copy.
+
+## Staging in the Web UI
+
+In Everything, select individual rows or all rows matching the current
+canonical filter, then press `d` or `D` to open the Deletions workspace. The UI
+runs a server-side preflight before it enables staging and requires a separate
+confirmation to create the manifest. The Deletions workspace also lists,
+inspects, and cancels staged manifests. It never executes remote deletion;
+that final step remains the explicit CLI command described below.
+
+Preflight validates the selection itself (that it still matches, that the
+cache/search revision hasn't moved) but does not check which accounts the
+matched messages belong to. Each deletion manifest executes against exactly
+one mailbox, so if you stage "all matching" across an unfiltered or
+multi-account view, confirming the stage fails with a `multi_account_selection`
+error even though preflight succeeded. Filter to one source/account
+(the `a` key in the TUI, or the equivalent source filter in the Web UI) before
+staging an all-matching selection that could span more than one account.
 
 ## Bulk Deletion via Aggregate Groups
 
@@ -36,6 +58,14 @@ Web dashboards and automation scripts can stage deletion manifests through the
 themselves. `POST /api/v1/deletions` accepts structured filters and/or
 internal message IDs, resolves the Gmail IDs on the server, and supports
 `"dry_run": true` to preview the count and a sample before writing anything.
+
+Actually staging depends on the request shape. An explicit `message_ids` list
+stages directly. Filter-based staging requires a preflighted selection: run
+the reviewed predicate through
+[`POST /api/v1/explore/preflight`](/api-server/#post-apiv1explorepreflight)
+to get a single-use `operation_token` (valid for five minutes), then stage
+with the same selection and token. A non-dry-run filter request without a
+preflighted selection is rejected with `428 preflight_required`.
 
 The API can also list and cancel staged manifests:
 
@@ -69,7 +99,10 @@ continues to require the explicit `delete-staged` execution step and the
 **From the HTTP API:**
 
 1. Send a dry-run `POST /api/v1/deletions` request to confirm the selection
-2. Send the same request without `dry_run` to create a pending manifest
+2. Stage: send `message_ids` without `dry_run` to create a pending manifest
+   directly, or — for filter-based staging — preflight the selection via
+   `POST /api/v1/explore/preflight` and send the selection with its
+   `operation_token` to `POST /api/v1/deletions`
 3. Review with `GET /api/v1/deletions` or the CLI commands above
 
 ## Selection Keys

@@ -7,6 +7,10 @@ msgvault
 mimeshootout
 bin/
 dist/
+/web/node_modules/
+/web/dist/
+!internal/web/dist/
+!internal/web/dist/**
 
 # IDE/editor
 .idea/
@@ -31,8 +35,16 @@ analytics/
 # Sensitive config files (prevent secrets in build context)
 config.toml
 client_secret*.json
+oauth_client*.json
 *.pem
 *.key
+
+# Environment files anywhere in the tree (web/.env.local would otherwise be
+# copied into the frontend build stage and VITE_* values baked into artifacts)
+**/.env
+**/.env.*
+**/.envrc
+!**/.env.example
 
 # Documentation (exclude most .md files but keep embedded assets)
 *.md

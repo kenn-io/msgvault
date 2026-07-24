@@ -235,6 +235,19 @@ type Backend interface {
 	Close() error
 }
 
+// FilteredCoverageBackend is the optional exact-coverage capability used by
+// analytical search. The caller resolves the canonical filtered population in
+// DuckDB; the vector backend intersects that population with one generation.
+type FilteredCoverageBackend interface {
+	EmbeddedMessageCountForIDs(ctx context.Context, gen GenerationID, messageIDs []int64) (int64, error)
+}
+
+// FilteredCoverageBatchSize is the maximum number of canonical message IDs a
+// filtered coverage backend accepts per call. Coverage callers page at this
+// boundary so neither SQL bind arrays nor cross-database JSON blobs grow with
+// archive size.
+const FilteredCoverageBatchSize = 256
+
 // FusingBackend is an optional capability implemented by backends that
 // can fuse FTS5 + ANN in a single SQL query. The hybrid engine checks
 // for this via type assertion.

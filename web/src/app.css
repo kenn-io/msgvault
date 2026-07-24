@@ -1,0 +1,32 @@
+@import '@kenn-io/kit-ui/theme.css';
+@import './styles/tokens.css';
+@import './styles/theme-light.css';
+@import './styles/theme-dark.css';
+@import './styles/density.css';
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  min-width: 320px;
+  min-height: 100vh;
+  margin: 0;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  font-size: var(--font-size-root);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+.kit-command-palette__option.highlighted {
+  box-shadow: inset 2px 0 0 var(--accent-blue);
+}

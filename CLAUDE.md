@@ -192,12 +192,12 @@ The TUI automatically builds/updates the Parquet cache on launch when new messag
 - **Parquet ETL**: DuckDB-based SQLite → Parquet export with incremental updates
 - **Query Engine**: DuckDB over Parquet for fast aggregate analytics
 - **TUI**: Full-featured TUI with drill-down navigation, search, selection, deletion staging
+- **Web UI**: First-party daemon-served analytical interface for cross-modality search, grouping, timelines, files, people/domains, Saved Views, source status, deletions, settings, and optional task links
 - **UTF-8 Repair**: Comprehensive encoding repair for all string fields
 - **Deletion Execution**: Execute staged deletions via Gmail API (trash or permanent delete)
 
 ### Not Yet Implemented
 - **App-level encryption**: Encrypt database and attachments at rest
-- **Web UI**: Browser-based interface
 
 ## Testing with Real Gmail Data
 

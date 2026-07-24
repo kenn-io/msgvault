@@ -226,11 +226,25 @@ If the TUI launches but shows no data:
 2. Rebuild the Parquet cache: `msgvault build-cache --full-rebuild`
 3. Check the in-TUI account filter (shown in the title bar): press `A` to open the account selector and switch to "All Accounts"
 
-## Web Server Issues
+## Web UI and API Server Issues
 
 ### "api_key is required for non-loopback bind address"
 
-You set `bind_addr` to a non-loopback address (e.g., `0.0.0.0`) without configuring an API key. Either add an `api_key` to your `[server]` config, or set `allow_insecure = true` if you understand the security implications. See [Web Server: Security Model](/api-server/#security-model).
+You set `bind_addr` to a non-loopback address (e.g., `0.0.0.0`) without configuring an API key. Either add an `api_key` to your `[server]` config, or set `allow_insecure = true` if you understand the security implications. See [Web UI & API Server: Security Model](/api-server/#security-model).
+
+### The UI reports a missing, stale, or unavailable analytical cache
+
+Run `msgvault build-cache`, then restart a daemon that was already running. The
+Web UI preserves the reported cache state instead of silently switching some
+modalities to a different query engine. See [Web UI: Cache states](/web-ui/#cache-states)
+and [Configuration: analytics](/configuration/#analytics).
+
+### The UI warns that the session cookie is not secure
+
+The browser reached a remote daemon over plain HTTP. Prefer HTTPS at a reverse
+proxy and configure that proxy in `server.trusted_proxies`. Do not trust a whole
+client network merely to suppress the warning. See [Web UI: Remote access and
+HTTPS](/web-ui/#remote-access-and-https).
 
 ### Port already in use
 

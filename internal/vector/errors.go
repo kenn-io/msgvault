@@ -70,4 +70,8 @@ var (
 	// index built only for message_type=sms must not answer an unscoped
 	// vector query over email + SMS.
 	ErrIndexScopeMismatch = errors.New("index scope mismatch")
+
+	// ErrCoverageBatchTooLarge rejects an analytical coverage intersection
+	// that would exceed the fixed backend parameter bound.
+	ErrCoverageBatchTooLarge = errors.New("filtered coverage batch too large")
 )

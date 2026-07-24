@@ -45,7 +45,10 @@ conda install -c conda-forge msgvault
 
 ## Build From Source
 
-Requires Go 1.26+ and a C/C++ compiler (GCC or Clang). CGO is required because msgvault uses `mattn/go-sqlite3` (SQLite with FTS5) and `duckdb-go/v2` (Parquet analytics), both of which compile native extensions.
+Requires Go 1.26+, Bun 1.3.14+, and a C/C++ compiler (GCC or Clang). Bun builds
+the browser application embedded in the binary. CGO is required because
+msgvault uses `mattn/go-sqlite3` (SQLite with FTS5) and `duckdb-go/v2` (Parquet
+analytics), both of which compile native extensions.
 
 ```bash
 git clone https://github.com/kenn-io/msgvault.git
@@ -168,7 +171,8 @@ After adding the account, sync it the same way as a Gmail account:
 msgvault sync-full
 ```
 
-IMAP accounts are stored in the same database as Gmail accounts. All tools (TUI, search, MCP, web server) work with IMAP messages the same way.
+IMAP accounts are stored in the same database as Gmail accounts. All tools
+(Web UI, TUI, search, MCP, and REST API) work with IMAP messages the same way.
 
 !!! tip "Microsoft 365 / Outlook.com"
     For Outlook, Hotmail, Live.com, and Microsoft 365 accounts, `add-o365` provides OAuth-based access without app passwords. It auto-detects the correct IMAP host and configures XOAUTH2 authentication. See the [OAuth Setup guide](/guides/oauth-setup/#microsoft-365-outlook-hotmail) for details.
@@ -219,7 +223,7 @@ Gmail's "storage used" number includes attachments at full size. Your on-disk fo
 
 - **Message metadata + bodies** go into the SQLite database, compressed ~3-5x.
 - **Attachments** are extracted and stored as-is (PDFs, images, etc. are already compressed). Identical attachments across messages are deduplicated by content hash.
-- **Parquet analytics cache** is a lightweight projection for the TUI — typically a few MB even for large archives.
+- **Parquet analytics cache** is a lightweight projection for the Web UI and TUI — typically a few MB even for large archives.
 
 Use `--limit` or a date range for your first sync to gauge the ratio for your mailbox before committing to a full sync. After syncing, `msgvault stats` shows the actual sizes. See [Data Storage](/architecture/storage/) for details on compression and storage layers.
 
@@ -277,6 +281,9 @@ Sync operations are **read-only**. They use only `messages.list` and `messages.g
 # Search your archive
 msgvault search from:alice@example.com
 
+# Open the analytical Web UI
+msgvault serve
+
 # Launch the interactive TUI
 msgvault tui
 
@@ -286,7 +293,8 @@ msgvault stats
 <figure class="screenshot" data-lightbox>
   <img src="/assets/generated/tui-senders.svg" alt="msgvault TUI showing the Senders view" loading="lazy">
 </figure>
-See [Searching](/usage/searching/) and [Interactive TUI](/usage/tui/) for more.
+See [Web UI](/web-ui/), [Searching](/usage/searching/), and [Interactive
+TUI](/usage/tui/) for more.
 
 ## Optional: Sync Google Calendar
 
@@ -301,6 +309,27 @@ msgvault sync-calendar you@gmail.com
 Calendar sync is read-only. Events become searchable with
 `--message-type calendar_event`; see [Google Calendar](/usage/calendar/) for the
 full workflow, scheduled sync, and headless-server setup.
+
+## Open the Web UI
+
+Build the analytical cache and start the daemon:
+
+```bash
+msgvault build-cache
+msgvault serve
+```
+
+Open the `API server` URL printed at startup. With the default loopback bind,
+the browser is trusted locally. A daemon bound to another interface must use an
+API key; the browser presents a login screen and stores only an in-memory
+daemon session. The release binary contains the complete UI, so no frontend
+runtime or separately installed web files are required.
+
+For a server or NAS, prefer HTTPS at a reverse proxy and configure only that
+proxy in `server.trusted_proxies`. Plain HTTP is an explicit private-network
+tradeoff because its session cookie cannot be marked `Secure`. See [Web UI](/web-ui/)
+for URL discovery, search/index states, keyboard controls, and deployment
+examples.
 
 ## Optional: Sync Microsoft Teams
 

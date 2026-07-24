@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -306,8 +307,25 @@ func runServeStartWithOptions(cmd *cobra.Command, c *config.Config, opts backgro
 	}
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(),
 		"msgvault starting in background (pid %d)\n", proc.PID)
+	_, _ = fmt.Fprint(cmd.OutOrStdout(), webUIStartupHint(c))
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Logs: %s\n", proc.LogPath)
 	return nil
+}
+
+// webUIStartupHint tells the user where the web application will be reachable
+// when a background daemon has not finished starting within the ready wait.
+// With a fixed api_port the URL is known up front; with an auto-selected port
+// it is only discoverable from the runtime record once the daemon binds.
+func webUIStartupHint(c *config.Config) string {
+	if c.Server.APIPort == 0 {
+		return "Web UI: run `msgvault daemon status` for the URL once ready\n"
+	}
+	host := c.Server.BindAddr
+	switch host {
+	case "", "0.0.0.0", "::":
+		host = defaultDaemonBindAddr
+	}
+	return "Web UI: http://" + net.JoinHostPort(host, strconv.Itoa(c.Server.APIPort)) + "\n"
 }
 
 func runServeStopWithAPIKey(cmd *cobra.Command, dataDir string, apiKey string) error {

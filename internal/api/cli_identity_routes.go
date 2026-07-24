@@ -58,8 +58,8 @@ func (s *Server) registerCLIIdentityHumaRoutes(api huma.API) {
 		Summary:          "Add a confirmed identifier to an account identity",
 		SkipValidateBody: true,
 		Errors:           []int{http.StatusBadRequest, http.StatusInternalServerError, http.StatusServiceUnavailable},
-	}), func(_ context.Context, input *cliIdentityAddInput) (*cliIdentityAddOutput, error) {
-		result, err := s.addCLIIdentity(input.Body)
+	}), func(ctx context.Context, input *cliIdentityAddInput) (*cliIdentityAddOutput, error) {
+		result, err := s.addCLIIdentity(ctx, input.Body)
 		if err != nil {
 			return nil, err
 		}
@@ -74,8 +74,8 @@ func (s *Server) registerCLIIdentityHumaRoutes(api huma.API) {
 		Summary:          "Remove a confirmed identifier from an account identity",
 		SkipValidateBody: true,
 		Errors:           []int{http.StatusBadRequest, http.StatusInternalServerError, http.StatusServiceUnavailable},
-	}), func(_ context.Context, input *cliIdentityRemoveInput) (*cliIdentityRemoveOutput, error) {
-		result, err := s.removeCLIIdentity(input.Body)
+	}), func(ctx context.Context, input *cliIdentityRemoveInput) (*cliIdentityRemoveOutput, error) {
+		result, err := s.removeCLIIdentity(ctx, input.Body)
 		if err != nil {
 			return nil, err
 		}

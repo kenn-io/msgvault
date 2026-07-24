@@ -375,7 +375,7 @@ curl "http://localhost:8080/api/v1/search?q=planning+offsite&mode=vector&explain
 ```
 
 Response shape differs from the FTS path; see the
-[Web Server](/api-server/#get-apiv1search) reference for details.
+[Web UI & API Server](/api-server/#get-apiv1search) reference for details.
 HTTP vector/hybrid responses support only the first page; bump
 `page_size` (capped at `max_page_size_hybrid`) to retrieve a larger
 candidate page.
@@ -510,6 +510,6 @@ are marked complete and not sent to the embedding endpoint.
 
 ## See Also
 
-- [Web Server](/api-server/): HTTP API reference (search, stats).
+- [Web UI & API Server](/api-server/): browser interface and HTTP API reference.
 - [Searching](/usage/searching/): Full-text search syntax.
 - [Search Ranking Across Backends](/architecture/search-ranking/): Ranking differences between SQLite, PostgreSQL, sqlite-vec, and pgvector.

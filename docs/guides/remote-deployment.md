@@ -240,6 +240,16 @@ After setup, your data directory contains:
 └── analytics/            # Parquet cache for fast queries
 ```
 
+## Open the Remote Web UI
+
+Open the daemon URL in a browser and sign in with the configured API key. For
+regular remote use, terminate HTTPS at a reverse proxy and add only that
+proxy's address or CIDR to `server.trusted_proxies`; the daemon uses trusted
+forwarding information to mark its browser session cookie `Secure`. Plain HTTP
+on a private network is supported as an explicit tradeoff and produces a UI
+warning because the cookie is not encrypted in transit. See [Web UI](/web-ui/)
+for the complete session and proxy model.
+
 ## Using the Local CLI Against Remote
 
 When your local machine config has:

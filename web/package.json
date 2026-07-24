@@ -1,0 +1,39 @@
+{
+  "name": "msgvault-web",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "packageManager": "bun@1.3.14",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "check": "svelte-check --tsconfig ./tsconfig.json",
+    "generate": "bun ../scripts/generate-web-client.mjs",
+    "test": "vitest run",
+    "test:browser": "playwright test",
+    "test:e2e": "playwright test e2e conversation-content-frame.spec.ts files-viewer.spec.ts"
+  },
+  "dependencies": {
+    "@kenn-io/kit-ui": "github:kenn-io/kit-ui#1e9dc7d45525a471040b72b894432c4956542c38",
+    "@tanstack/svelte-virtual": "3.13.32",
+    "dompurify": "3.4.11",
+    "openapi-fetch": "0.17.0",
+    "pdfjs-dist": "5.4.296"
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "4.10.2",
+    "@playwright/test": "1.61.1",
+    "@sveltejs/vite-plugin-svelte": "7.1.2",
+    "@testing-library/svelte": "5.4.2",
+    "@tsconfig/svelte": "5.0.8",
+    "es-module-lexer": "2.3.1",
+    "jsdom": "29.1.1",
+    "openapi-typescript": "7.13.0",
+    "postcss": "8.5.19",
+    "svelte": "5.56.1",
+    "svelte-check": "4.6.0",
+    "typescript": "5.9.3",
+    "vite": "8.1.3",
+    "vitest": "4.1.10"
+  }
+}

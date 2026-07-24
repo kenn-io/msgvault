@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -560,8 +561,7 @@ func queryInChunks[T any](db chunkQuerier, ids []T, prefixArgs []any, queryTempl
 		chunk := ids[i:end]
 
 		placeholders := make([]string, len(chunk))
-		args := make([]any, 0, len(prefixArgs)+len(chunk))
-		args = append(args, prefixArgs...)
+		args := slices.Clone(prefixArgs)
 		for j, id := range chunk {
 			placeholders[j] = "?"
 			args = append(args, id)
@@ -632,8 +632,7 @@ func execInChunks[T any](db chunkQuerier, ids []T, prefixArgs []any, queryTempla
 		chunk := ids[i:end]
 
 		placeholders := make([]string, len(chunk))
-		args := make([]any, 0, len(prefixArgs)+len(chunk))
-		args = append(args, prefixArgs...)
+		args := slices.Clone(prefixArgs)
 		for j, id := range chunk {
 			placeholders[j] = "?"
 			args = append(args, id)
@@ -697,7 +696,6 @@ func (s *Store) InitSchema() error {
 			return fmt.Errorf("execute %s: %w", filename, err)
 		}
 	}
-
 	// Legacy databases may hold duplicate (message_id, content_hash)
 	// attachment rows from the old SELECT-then-INSERT UpsertAttachment.
 	// Dedupe before creating the partial unique index that enforces
@@ -978,6 +976,9 @@ func (s *Store) InitSchema() error {
 			// Module not compiled in; availability stays false. Fall
 			// through so the rest of schema init still runs.
 		}
+	}
+	if err := s.ensureArchiveUID(); err != nil {
+		return err
 	}
 
 	// Probe availability through the dialect so it works uniformly for

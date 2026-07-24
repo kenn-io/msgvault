@@ -1,0 +1,174 @@
+/* Chrome for archived mail frames (see web/src/lib/content/frame-document.ts).
+ *
+ * Served as a same-origin static asset because the daemon's shell CSP
+ * (style-src 'self') is inherited by sandboxed srcdoc frames and blocks every
+ * inline style. Rendering mode and scheme arrive as html[data-mode] /
+ * html[data-scheme] attributes:
+ *   - canvas: designed mail on its own white, light canvas in both themes
+ *   - themed: simple mail rendered transparently with shell inks
+ * Themed ink values mirror web/src/styles/theme-light.css / theme-dark.css.
+ */
+
+html {
+  --mail-text: #20242a;
+  --mail-muted: #59626e;
+  --mail-link: #1a5fce;
+  --mail-border: #d8dade;
+
+  color-scheme: light;
+}
+
+html[data-mode='themed'][data-scheme='light'] {
+  --mail-text: #191b1f;
+  --mail-muted: #555a62;
+  --mail-link: #2257d6;
+  --mail-border: #d8dade;
+}
+
+html[data-mode='themed'][data-scheme='dark'] {
+  --mail-text: #f2f3f5;
+  --mail-muted: #a4a8af;
+  --mail-link: #74acfe;
+  --mail-border: #3a3d42;
+
+  color-scheme: dark;
+}
+
+body {
+  margin: 0;
+  overflow-wrap: break-word;
+}
+
+html[data-mode='canvas'] body {
+  max-width: 680px;
+  margin: 0 auto;
+  padding: 20px 24px;
+  background: #ffffff;
+}
+
+html[data-mode='themed'] body {
+  /* Simple mail keeps a readable measure on wide panes; left-aligned so it
+   * reads as part of the thread rather than a centered artifact. */
+  max-width: 680px;
+  padding: 2px 0;
+  background: transparent;
+}
+
+/* Reading typography as low-specificity defaults: author styles in designed
+ * mail always win over :where() rules. */
+:where(body) {
+  color: var(--mail-text);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial,
+    sans-serif;
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+:where(body > :first-child) {
+  margin-top: 0;
+}
+
+:where(body > :last-child) {
+  margin-bottom: 0;
+}
+
+:where(a) {
+  color: var(--mail-link);
+}
+
+:where(pre) {
+  white-space: pre-wrap;
+}
+
+:where(hr) {
+  border: 0;
+  border-top: 1px solid var(--mail-border);
+}
+
+:where(table) {
+  max-width: 100%;
+}
+
+img {
+  max-width: 100%;
+  height: auto;
+}
+
+/* Quotes: muted ink behind a left hairline; long chains fold behind the
+ * details/summary toggle emitted by sanitize.ts. */
+:where(blockquote, [data-archived-quote]) {
+  margin: 8px 0;
+  padding: 0 0 0 12px;
+  border-left: 2px solid var(--mail-border);
+  color: var(--mail-muted);
+}
+
+details[data-archived-quote-toggle] {
+  margin: 10px 0;
+}
+
+details[data-archived-quote-toggle] > summary {
+  display: inline-block;
+  padding: 2px 10px;
+  border: 1px solid var(--mail-border);
+  border-radius: 10px;
+  color: var(--mail-muted);
+  cursor: pointer;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial,
+    sans-serif;
+  font-size: 12px;
+  line-height: 1.4;
+  list-style: none;
+  user-select: none;
+}
+
+details[data-archived-quote-toggle] > summary::-webkit-details-marker {
+  display: none;
+}
+
+details[data-archived-quote-toggle] > summary:hover {
+  color: var(--mail-text);
+}
+
+details[data-archived-quote-toggle]:not([open]) > summary [data-archived-quote-hide] {
+  display: none;
+}
+
+details[data-archived-quote-toggle][open] > summary [data-archived-quote-show] {
+  display: none;
+}
+
+/* Blocked remote images and unavailable inline images render as compact
+ * captioned blocks instead of raw alt text flowing as body copy. */
+[data-archived-image-placeholder] {
+  display: inline-flex;
+  max-width: 100%;
+  max-height: 80px;
+  box-sizing: border-box;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border: 1px solid var(--mail-border);
+  border-radius: 6px;
+  color: var(--mail-muted);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial,
+    sans-serif;
+  font-size: 12px;
+  line-height: 1.4;
+  vertical-align: middle;
+}
+
+[data-archived-image-placeholder] [data-archived-image-caption] {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+[data-archived-image-glyph] {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  background: currentColor;
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='3' y='3' width='18' height='18' rx='2'/%3E%3Ccircle cx='8.5' cy='8.5' r='1.5'/%3E%3Cpath d='m21 15-5-5L5 21'/%3E%3C/svg%3E") center / contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='3' y='3' width='18' height='18' rx='2'/%3E%3Ccircle cx='8.5' cy='8.5' r='1.5'/%3E%3Cpath d='m21 15-5-5L5 21'/%3E%3C/svg%3E") center / contain no-repeat;
+}

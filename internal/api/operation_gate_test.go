@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -13,6 +14,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/query"
+	"go.kenn.io/msgvault/internal/query/querytest"
+	"go.kenn.io/msgvault/internal/store"
 )
 
 type recordingOperationGate struct {
@@ -438,6 +442,215 @@ func TestOperationGateMiddlewareSkipsReadOnlyPaths(t *testing.T) {
 			assert.Equal(0, begin, "begin calls")
 		})
 	}
+}
+
+func TestOperationGateMiddlewareSkipsReadOnlyAnalyticalPosts(t *testing.T) {
+	paths := []string{
+		"/api/v1/explore",
+		"/api/v1/explore/groups",
+		"/api/v1/explore/preflight",
+		"/api/v1/explore/match-counts",
+		"/api/v1/explore/files",
+		"/api/v1/files/search",
+		"/api/v1/files/groups",
+		"/api/v1/people/search",
+		"/api/v1/people/7/summary",
+		"/api/v1/people/7/timeline",
+		"/api/v1/people/7/files/search",
+		"/api/v1/domains/search",
+		"/api/v1/domains/example.com/summary",
+		"/api/v1/domains/example.com/timeline",
+		"/api/v1/domains/example.com/files/search",
+		"/api/v1/relationships",
+		"/api/v1/relationships/7/timeline",
+		"/api/v1/search/coverage",
+	}
+	for _, path := range paths {
+		t.Run(path, func(t *testing.T) {
+			assert := assert.New(t)
+			gate := &recordingOperationGate{allow: false}
+			called := false
+			handler := operationGateMiddleware(gate, nil)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				called = true
+				w.WriteHeader(http.StatusNoContent)
+			}))
+
+			req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{}`))
+			resp := httptest.NewRecorder()
+			handler.ServeHTTP(resp, req)
+
+			assert.True(called, "read-only analytical POST should bypass the gate")
+			assert.Equal(http.StatusNoContent, resp.Code, "status")
+			begin, _ := gate.counts()
+			assert.Equal(0, begin, "begin calls")
+		})
+	}
+}
+
+// TestReadOnlyPostRoutePatternsMatchExplorationRoutes pins the gate's
+// read-only POST table to the registered analytical routes: every POST
+// operation tagged "Exploration" (registerExploreRoute and the search
+// coverage route) must be classified read-only, and the table must not
+// carry stale entries for routes that no longer exist. The remote-image
+// proxy is the one pinned non-Exploration entry — POST purely for the CSRF
+// unsafe-method machinery, reading no archive state — and it must remain a
+// registered POST route for its table entry to stay valid.
+func TestReadOnlyPostRoutePatternsMatchExplorationRoutes(t *testing.T) {
+	require := require.New(t)
+	doc := OpenAPIDocument()
+	remoteImage := doc.Paths[remoteImagePath]
+	require.NotNil(remoteImage, "remote-image proxy route must exist")
+	require.NotNil(remoteImage.Post, "remote-image proxy must be registered as POST")
+	require.Nil(remoteImage.Get, "remote-image proxy must not be reachable via GET")
+
+	expected := []string{remoteImagePath}
+	for path, item := range doc.Paths {
+		if item.Post != nil && slices.Contains(item.Post.Tags, "Exploration") {
+			expected = append(expected, path)
+		}
+	}
+	slices.Sort(expected)
+	table := slices.Clone(readOnlyPostRoutePatterns)
+	slices.Sort(table)
+	assert.Equal(t, expected, table,
+		"readOnlyPostRoutePatterns must match the POST routes tagged Exploration plus the "+
+			"remote-image proxy; classify new analytical routes consciously in operation_gate.go")
+}
+
+// gateAnalyticsEngine backs the read-only analytical routes with minimal
+// successful responses so gate-bypass tests can assert 200s end to end.
+type gateAnalyticsEngine struct {
+	*querytest.MockEngine
+}
+
+func (e *gateAnalyticsEngine) Explore(context.Context, query.ExploreRequest) (*query.ExploreResponse, error) {
+	return &query.ExploreResponse{CacheRevision: "rev"}, nil
+}
+
+func (e *gateAnalyticsEngine) ExploreCoverage(context.Context, query.ExploreCoverageRequest, func([]int64) error) (*query.ExploreCoverageResult, error) {
+	return &query.ExploreCoverageResult{}, nil
+}
+
+func (e *gateAnalyticsEngine) ExploreGroups(context.Context, query.ExploreGroupRequest) (*query.ExploreGroupResponse, error) {
+	return &query.ExploreGroupResponse{}, nil
+}
+
+func (e *gateAnalyticsEngine) ExploreSelectionStats(context.Context, query.ExploreSelectionRequest) (*query.ExploreSelectionStats, error) {
+	return &query.ExploreSelectionStats{}, nil
+}
+
+func (e *gateAnalyticsEngine) ExploreFiles(context.Context, query.ExploreFilesRequest) (*query.ExploreFilesResponse, error) {
+	return &query.ExploreFilesResponse{}, nil
+}
+
+func (e *gateAnalyticsEngine) ExploreMatchCounts(context.Context, query.ExploreMatchCountsRequest) (*query.ExploreMatchCountsResponse, error) {
+	return &query.ExploreMatchCountsResponse{}, nil
+}
+
+func (e *gateAnalyticsEngine) SearchPeople(context.Context, query.PersonSearchRequest) (*query.PersonSearchResponse, error) {
+	return &query.PersonSearchResponse{}, nil
+}
+
+func (e *gateAnalyticsEngine) GetPerson(context.Context, int64, query.Context, []int64) (*query.PersonSummary, error) {
+	return &query.PersonSummary{ID: 7}, nil
+}
+
+func (e *gateAnalyticsEngine) GetPersonSummary(context.Context, int64, query.ExploreRequest, []int64) (*query.PersonSearchResponse, error) {
+	return &query.PersonSearchResponse{Rows: []query.PersonSummary{{ID: 7}}}, nil
+}
+
+func (e *gateAnalyticsEngine) SearchDomains(context.Context, query.DomainSearchRequest) (*query.DomainSearchResponse, error) {
+	return &query.DomainSearchResponse{}, nil
+}
+
+func (e *gateAnalyticsEngine) GetDomain(context.Context, string, query.Context) (*query.DomainSummary, error) {
+	return &query.DomainSummary{}, nil
+}
+
+func (e *gateAnalyticsEngine) GetDomainSummary(context.Context, string, query.ExploreRequest) (*query.DomainSearchResponse, error) {
+	return &query.DomainSearchResponse{}, nil
+}
+
+func (e *gateAnalyticsEngine) Relationships(context.Context, query.RelationshipsRequest) (*query.RelationshipsResponse, error) {
+	return &query.RelationshipsResponse{}, nil
+}
+
+func (e *gateAnalyticsEngine) RelationshipTimeline(context.Context, query.RelationshipTimelineRequest) (*query.RelationshipTimelineResponse, error) {
+	return &query.RelationshipTimelineResponse{}, nil
+}
+
+func (e *gateAnalyticsEngine) ResolveCanonicalParticipant(_ context.Context, id int64) (int64, error) {
+	return id, nil
+}
+
+func (e *gateAnalyticsEngine) SearchFiles(context.Context, query.FileSearchRequest) (*query.FileSearchResponse, error) {
+	return &query.FileSearchResponse{}, nil
+}
+
+// gateFilesStore adds the file-metadata catalog capability the files search
+// route requires so the gate-bypass test can exercise it end to end.
+type gateFilesStore struct {
+	*mockStore
+}
+
+func (s *gateFilesStore) GetFileMetadata(context.Context, int64) (*store.FileMetadata, error) {
+	return &store.FileMetadata{}, nil
+}
+
+func (s *gateFilesStore) GetFileMetadataBatch(context.Context, []int64) (map[int64]store.FileMetadata, error) {
+	return map[int64]store.FileMetadata{}, nil
+}
+
+// TestServerReadOnlyAnalyticalPostsBypassHeldOperationGate is the regression
+// for read-only analytical POSTs queueing behind archive operations: while a
+// long operation holds the gate, representative analytical endpoints must
+// answer immediately instead of returning operation_in_progress, and a
+// mutating POST must still be turned away naming the holder.
+func TestServerReadOnlyAnalyticalPostsBypassHeldOperationGate(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	oldLimit := operationGateWaitLimit
+	operationGateWaitLimit = 20 * time.Millisecond
+	t.Cleanup(func() { operationGateWaitLimit = oldLimit })
+
+	gate := NewSerialOperationGate()
+	release, ok := gate.BeginLabeledWorkContext(context.Background(), "msgvault embeddings build")
+	require.True(ok, "occupy gate")
+	defer release()
+
+	srv := NewServerWithOptions(ServerOptions{
+		Config:        &config.Config{Server: config.ServerConfig{APIPort: 8080}},
+		Store:         &gateFilesStore{mockStore: &mockStore{}},
+		Engine:        &gateAnalyticsEngine{MockEngine: &querytest.MockEngine{}},
+		Logger:        testLogger(),
+		OperationGate: gate,
+	})
+
+	readOnly := []string{
+		"/api/v1/explore",
+		"/api/v1/relationships",
+		"/api/v1/people/search",
+		"/api/v1/files/search",
+		"/api/v1/people/7/summary",
+	}
+	for _, path := range readOnly {
+		req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{}`))
+		req.Header.Set("Content-Type", "application/json")
+		resp := httptest.NewRecorder()
+		srv.Router().ServeHTTP(resp, req)
+		assert.Equal(http.StatusOK, resp.Code, "%s must succeed while the gate is held: %s", path, resp.Body.String())
+	}
+
+	mutating := httptest.NewRequest(http.MethodPost, "/api/v1/deletions", strings.NewReader(`{}`))
+	mutating.Header.Set("Content-Type", "application/json")
+	resp := httptest.NewRecorder()
+	srv.Router().ServeHTTP(resp, mutating)
+	require.Equal(http.StatusServiceUnavailable, resp.Code, "mutating POST must still gate")
+	var errResp ErrorResponse
+	require.NoError(json.Unmarshal(resp.Body.Bytes(), &errResp), "decode error envelope")
+	assert.Equal("operation_in_progress", errResp.Error, "error code")
+	assert.Contains(errResp.Message, "msgvault embeddings build", "message names the holder")
 }
 
 func TestOperationGateMiddlewareNamesHolderWhenBusy(t *testing.T) {

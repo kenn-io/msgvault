@@ -31,6 +31,7 @@ export formats.
 - **IMAP sync**: archive mail from any standard IMAP server
 - **Incremental backup snapshots**: verifiable `msgvault backup` repositories for the SQLite archive and attachments
 - **MBOX / Apple Mail / PST import**: import email from local export formats
+- **First-party web UI**: dense, keyboard-driven search, grouping, people/domain, file, source, and deletion workspaces served directly by the daemon
 - **Interactive TUI**: drill-down analytics over your entire message history, powered by DuckDB over Parquet — connects to a remote `msgvault serve` instance or runs locally
 - **Full-text search**: FTS5 with Gmail-like query syntax (`from:`, `has:attachment`, date ranges)
 - **MCP server**: access your full archive at the speed of thought in Claude Desktop and other MCP-capable AI agents
@@ -61,7 +62,8 @@ powershell -ExecutionPolicy ByPass -c "irm https://msgvault.io/install.ps1 | iex
 
 The installer detects your OS and architecture, downloads the latest release from [GitHub Releases](https://github.com/kenn-io/msgvault/releases), verifies the SHA-256 checksum, and installs the binary. You can review the script ([bash](https://msgvault.io/install.sh), [PowerShell](https://msgvault.io/install.ps1)) before running, or download a release binary directly from GitHub.
 
-To build from source instead (requires **Go 1.26+** and a C/C++ compiler for CGO and to statically link DuckDB):
+To build from source instead (requires **Go 1.26+**, **Bun 1.3.14+**, and a
+C/C++ compiler for CGO and to statically link DuckDB):
 
 ```bash
 git clone https://github.com/kenn-io/msgvault.git
@@ -87,8 +89,14 @@ conda install -c conda-forge msgvault
 msgvault init-db
 msgvault add-account you@gmail.com          # opens browser for OAuth
 msgvault sync-full you@gmail.com --limit 100
-msgvault tui
+msgvault serve
 ```
+
+Open the `API server` URL printed by `msgvault serve`. The same release binary
+serves the complete browser application; Node, Bun, and a separate asset
+directory are not needed at runtime. See the [Web UI guide](docs/web-ui.md) for
+search modes, keyboard controls, and secure remote access. The TUI remains
+available with `msgvault tui`.
 
 ## Commands
 
@@ -378,7 +386,7 @@ msgvault daemon restart
 
 Archive-access CLI commands use the HTTP API by default. If `[remote].url` is configured, the CLI talks to that remote server. Otherwise, it discovers or starts the local background daemon instead of opening the SQLite database itself. This keeps local and remote CLI behavior aligned and avoids repeated startup cost on large archives. Use `--local` to force the local daemon when a remote server is configured.
 
-The server exposes its generated OpenAPI document at `/openapi.json` and interactive API docs at `/docs`.
+The server exposes the first-party analytical web UI at `/` and its generated OpenAPI document at `/openapi.json`.
 
 Configure scheduled syncs in `config.toml`:
 
@@ -400,7 +408,7 @@ api_key = "your-secret-key"
 daemon_idle_timeout = "20m" # background daemon idle timeout; "0s" disables
 ```
 
-`daemon_idle_timeout` applies to lifecycle-managed background daemons started by `msgvault daemon start` or auto-started by a CLI command. A foreground `msgvault serve` keeps running until you stop it. See the [Web Server reference](https://msgvault.io/api-server/) or `/openapi.json` on a running server for the HTTP API.
+`daemon_idle_timeout` applies to lifecycle-managed background daemons started by `msgvault daemon start` or auto-started by a CLI command. A foreground `msgvault serve` keeps running until you stop it. See the [Web UI & API Server reference](https://msgvault.io/api-server/) or `/openapi.json` on a running server for the HTTP API.
 
 ## Documentation
 
@@ -409,6 +417,7 @@ daemon_idle_timeout = "20m" # background daemon idle timeout; "0s" disables
 - [Search ranking across backends](https://msgvault.io/architecture/search-ranking/): how result order differs between SQLite and PostgreSQL
 - [PostgreSQL backend](https://msgvault.io/architecture/postgresql/): run msgvault on PostgreSQL with pgvector semantic/hybrid search
 - [Interactive TUI](https://msgvault.io/usage/tui/): keybindings, views, deletion staging
+- [Web UI](docs/web-ui.md): analytical browser interface and deployment security
 - [Discord](https://msgvault.io/usage/discord/): guild bot setup, sync behavior, filters, and media backfill
 - [CLI Reference](https://msgvault.io/cli-reference/): all commands and flags
 - [Multi-Account](https://msgvault.io/usage/multi-account/): managing multiple Gmail accounts

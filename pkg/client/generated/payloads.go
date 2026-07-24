@@ -2,6 +2,8 @@
 
 package generated
 
+type LoginSessionBody = SessionLoginRequest
+
 type AddAccountBody = AddAccountRequest
 
 type UploadTokenBody = TokenUploadRequest
@@ -36,6 +38,56 @@ type AddCLIIdentityBody = AddRequest
 
 type RunCLIBody = CLIRunRequest
 
+type GetRemoteImageBody = RemoteImageRequest
+
 type StageDeletionBody = StageDeletionRequest
 
+type SearchDomainsBody = IdentitySearchHTTPRequest
+
+type SearchDomainFilesBody = FileSearchHTTPRequest
+
+type GetDomainContextSummaryBody = ExploreHTTPRequest
+
+type GetDomainTimelineBody = ExploreHTTPRequest
+
+type ExploreBody = ExploreHTTPRequest
+
+type ListExploreFilesBody = ExploreFilesHTTPRequest
+
+type ExploreGroupsBody = ExploreGroupsHTTPRequest
+
+type CountExploreMatchesBody = ExploreMatchCountsRequest
+
+type PreflightExploreSelectionBody = ExplorePreflightRequest
+
+type GroupFilesBody = FileGroupsHTTPRequest
+
+type SearchFilesBody = FileSearchHTTPRequest
+
+type LinkIdentityParticipantsBody = IdentityLinkRequest
+
+type UnlinkIdentityParticipantsBody = IdentityLinkRequest
+
+type CreateOrLinkMessageTaskBody = TaskLinkMutationRequest
+
+type SearchPeopleBody = IdentitySearchHTTPRequest
+
+type SearchPersonFilesBody = FileSearchHTTPRequest
+
+type GetPersonContextSummaryBody = ExploreHTTPRequest
+
+type GetPersonTimelineBody = ExploreHTTPRequest
+
 type RunQueryBody = QueryRequest
+
+type ListRelationshipsBody = RelationshipsHTTPRequest
+
+type GetRelationshipTimelineBody = RelationshipTimelineHTTPRequest
+
+type CreateSavedViewBody = CreateSavedViewRequest
+
+type PatchSavedViewBody = PatchSavedViewRequest
+
+type GetSearchCoverageBody = SearchCoverageRequest
+
+type PatchSettingsBody = SettingsPatchRequest

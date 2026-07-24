@@ -3,6 +3,7 @@ package api
 import (
 	"net"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -42,47 +43,86 @@ func defaultCORSAllowedMethods() []string {
 	}
 }
 
+// defaultCORSAllowedHeaders lists the request headers cross-origin clients
+// send: If-Match carries the concurrency token for settings and saved-view
+// updates, X-Request-Id the idempotency key for task creation.
 func defaultCORSAllowedHeaders() []string {
-	return []string{"Accept", "Authorization", "Content-Type", "X-API-Key"}
+	return []string{
+		"Accept", "Authorization", "Content-Type", "If-Match",
+		"X-API-Key", "X-Request-Id", csrfHeaderName,
+	}
 }
 
+// corsExposedHeaders is the Access-Control-Expose-Headers value: ETag is the
+// only non-safelisted response header clients read (settings and saved-view
+// concurrency tokens).
+const corsExposedHeaders = "ETag"
+
 // CORSMiddleware returns a middleware that handles CORS headers.
+//
+// Origins listed exactly in cfg.AllowedOrigins are reflected and may carry
+// Access-Control-Allow-Credentials when cfg.AllowCredentials is set. A "*"
+// entry only ever emits the literal wildcard and never credentials: reflecting
+// arbitrary origins alongside Allow-Credentials would let any page — including
+// same-site pages on other ports of the same host — read cookie-authenticated
+// responses. Cross-origin clients matched by the wildcard must authenticate
+// explicitly (API key), not with ambient cookies.
 func CORSMiddleware(cfg CORSConfig) func(http.Handler) http.Handler {
+	allowAnyOrigin := slices.Contains(cfg.AllowedOrigins, "*")
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			origin := r.Header.Get("Origin")
-
-			// Check if origin is allowed
-			allowed := false
-			for _, o := range cfg.AllowedOrigins {
-				if o == "*" || o == origin {
-					allowed = true
-					break
-				}
+			if len(cfg.AllowedOrigins) > 0 {
+				// The Allow-Origin value depends on the request Origin.
+				w.Header().Add("Vary", "Origin")
 			}
+			origin := r.Header.Get("Origin")
+			exact := origin != "" && origin != "*" && slices.Contains(cfg.AllowedOrigins, origin)
 
-			if allowed && origin != "" {
+			switch {
+			case exact:
 				w.Header().Set("Access-Control-Allow-Origin", origin)
-
 				if cfg.AllowCredentials {
 					w.Header().Set("Access-Control-Allow-Credentials", "true")
 				}
-
-				// Handle preflight
-				if r.Method == http.MethodOptions {
-					w.Header().Set("Access-Control-Allow-Methods", strings.Join(cfg.AllowedMethods, ", "))
-					w.Header().Set("Access-Control-Allow-Headers", strings.Join(cfg.AllowedHeaders, ", "))
-					if cfg.MaxAge > 0 {
-						w.Header().Set("Access-Control-Max-Age", strconv.Itoa(cfg.MaxAge))
-					}
-					w.WriteHeader(http.StatusNoContent)
-					return
-				}
+			case allowAnyOrigin && origin != "":
+				w.Header().Set("Access-Control-Allow-Origin", "*")
+			default:
+				next.ServeHTTP(w, r)
+				return
 			}
 
+			// Handle preflight
+			if r.Method == http.MethodOptions {
+				w.Header().Set("Access-Control-Allow-Methods", strings.Join(cfg.AllowedMethods, ", "))
+				w.Header().Set("Access-Control-Allow-Headers", strings.Join(cfg.AllowedHeaders, ", "))
+				if cfg.MaxAge > 0 {
+					w.Header().Set("Access-Control-Max-Age", strconv.Itoa(cfg.MaxAge))
+				}
+				w.WriteHeader(http.StatusNoContent)
+				return
+			}
+
+			w.Header().Set("Access-Control-Expose-Headers", corsExposedHeaders)
 			next.ServeHTTP(w, r)
 		})
 	}
+}
+
+// apiCacheControlMiddleware applies a default Cache-Control: no-store to every
+// /api/ response so shared caches (reverse proxies, CDN edges) never store an
+// authenticated payload — file downloads, attachment bytes, message bodies,
+// JSON listings — under its predictable URL and replay it to a requester that
+// never reached the authentication middleware. The header is set before the
+// handler runs, so handlers that deliberately permit caching (e.g. inline MIME
+// images send "private, max-age=…, immutable") override the default. Non-API
+// routes (SPA shell, static assets) keep the web handler's own caching policy.
+func apiCacheControlMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/api/") {
+			w.Header().Set("Cache-Control", "no-store")
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // rateLimiterEntry tracks a limiter and when it was last used for TTL eviction.
@@ -172,6 +212,54 @@ func clientIP(r *http.Request) string {
 func isLoopbackRequest(r *http.Request) bool {
 	parsed := net.ParseIP(clientIP(r))
 	return parsed != nil && parsed.IsLoopback()
+}
+
+type requestAuthentication struct {
+	Mode      AuthMode
+	SessionID string
+	Session   browserSession
+}
+
+func (s *Server) requestAuthentication(r *http.Request) requestAuthentication {
+	if security, ok := securityFromRequest(r); ok {
+		return security.auth
+	}
+	return s.classifyAPIRequestDirect(r)
+}
+
+func (s *Server) classifyAPIRequestDirect(r *http.Request) requestAuthentication {
+	// Preserve the existing keyless mode: secure startup confines the daemon to
+	// loopback unless the operator explicitly opts into unauthenticated remote
+	// access, and every request remains authorized when no key is configured.
+	if s.cfg.Server.APIKey == "" {
+		return requestAuthentication{Mode: AuthModeLoopback}
+	}
+
+	authHeader := r.Header.Get("Authorization")
+	if authHeader == "" {
+		authHeader = r.Header.Get("X-Api-Key")
+	}
+	if len(authHeader) > 7 && authHeader[:7] == "Bearer " {
+		authHeader = authHeader[7:]
+	}
+	if constantTimeAPIKeyEqual(authHeader, s.cfg.Server.APIKey) {
+		return requestAuthentication{Mode: AuthModeAPIKey}
+	}
+
+	if cookie, err := r.Cookie(sessionCookieName); err == nil && s.sessions != nil {
+		if session, ok := s.sessions.lookup(cookie.Value); ok {
+			return requestAuthentication{
+				Mode:      AuthModeSession,
+				SessionID: cookie.Value,
+				Session:   session,
+			}
+		}
+	}
+	return requestAuthentication{Mode: AuthModeRequired}
+}
+
+func (s *Server) apiRequestAuthorized(r *http.Request) bool {
+	return s.requestAuthentication(r).Mode != AuthModeRequired
 }
 
 // RateLimitMiddleware returns a middleware that rate limits requests by IP.
