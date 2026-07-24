@@ -1375,6 +1375,14 @@ func (a *schedulerAdapter) JobStatus() []api.JobStatus {
 	return a.scheduler.JobStatus()
 }
 
+func (a *schedulerAdapter) IsJobScheduled(name string) bool {
+	return a.scheduler.IsJobScheduled(name)
+}
+
+func (a *schedulerAdapter) TriggerJob(name string) error {
+	return a.scheduler.TriggerJob(name)
+}
+
 // runScheduledSync performs a sync for a scheduled account. It resolves
 // ALL syncable source rows for the identifier (gmail, imap, teams, discord) and
 // dispatches each in turn. When no source row matches, it falls back to

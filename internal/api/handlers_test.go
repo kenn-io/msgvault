@@ -3319,6 +3319,62 @@ func TestHandleSourceStatusBeeperSharesSingleJob(t *testing.T) {
 	}
 }
 
+// TestHandleTriggerSyncGenericSource is a regression test for a MEDIUM finding:
+// sourceStatus reports CanSync=true for generic (non-account) sources, but the
+// trigger endpoint only recognized account jobs, so "Sync Now" for a granola /
+// gcal / synctech / circleback / beeper source returned 404. Triggering a
+// generic source now resolves its type to a scheduler job name and runs it.
+func TestHandleTriggerSyncGenericSource(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	sched := newMockScheduler()
+	sched.scheduledJobs = map[string]bool{"granola:acct-1": true}
+	_, err := st.GetOrCreateSource(granola.SourceType, "acct-1")
+	require.NoError(err, "GetOrCreateSource granola")
+	srv := NewServer(&config.Config{Server: config.ServerConfig{APIPort: 8080}}, st, sched, testLogger())
+
+	resp := servePOSTTestRequest(srv, "/api/v1/sync/acct-1")
+
+	require.Equal(http.StatusAccepted, resp.Code, resp.Body.String())
+	assert.Equal([]string{"granola:acct-1"}, sched.triggeredJobs, "triggered generic job")
+}
+
+// TestHandleTriggerSyncBeeperSource confirms a beeper source (one of many under
+// the singleton "beeper" job) triggers that shared job.
+func TestHandleTriggerSyncBeeperSource(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	sched := newMockScheduler()
+	sched.scheduledJobs = map[string]bool{BeeperJobName: true}
+	_, err := st.GetOrCreateSource("beeper", "beeper-account-1")
+	require.NoError(err, "GetOrCreateSource beeper")
+	srv := NewServer(&config.Config{Server: config.ServerConfig{APIPort: 8080}}, st, sched, testLogger())
+
+	resp := servePOSTTestRequest(srv, "/api/v1/sync/beeper-account-1")
+
+	require.Equal(http.StatusAccepted, resp.Code, resp.Body.String())
+	assert.Equal([]string{BeeperJobName}, sched.triggeredJobs, "triggered beeper job")
+}
+
+// TestHandleTriggerSyncGenericSourceNotScheduled confirms a generic source
+// whose job is not scheduled still returns 404 and triggers nothing.
+func TestHandleTriggerSyncGenericSourceNotScheduled(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	sched := newMockScheduler() // no scheduledJobs
+	_, err := st.GetOrCreateSource(circleback.SourceType, "acct-2")
+	require.NoError(err, "GetOrCreateSource circleback")
+	srv := NewServer(&config.Config{Server: config.ServerConfig{APIPort: 8080}}, st, sched, testLogger())
+
+	resp := servePOSTTestRequest(srv, "/api/v1/sync/acct-2")
+
+	require.Equal(http.StatusNotFound, resp.Code, resp.Body.String())
+	assert.Empty(sched.triggeredJobs, "no job triggered")
+}
+
 // TestSchedulerJobNameForSource covers every generic-job source type plus an
 // account-scheduler type (gmail), which must report ok=false since it's
 // governed by the account scheduler, not a generic job.

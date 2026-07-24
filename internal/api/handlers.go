@@ -1524,23 +1524,86 @@ func (s *Server) handleTriggerSync(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !s.scheduler.IsScheduled(account) {
-		writeError(w, http.StatusNotFound, "not_found", "Account is not scheduled: "+account)
+	// Account-scheduler sources (gmail, imap, ...) are keyed by email.
+	if s.scheduler.IsScheduled(account) {
+		if err := s.scheduler.TriggerSync(account); err != nil {
+			s.logger.Error("failed to trigger sync", "account", account, "error", err)
+			writeError(w, http.StatusConflict, "sync_error", err.Error())
+			return
+		}
+		s.logger.Info("sync triggered via API", "account", account)
+		writeJSON(w, http.StatusAccepted, StatusMessageResponse{
+			Status:  "accepted",
+			Message: "Sync started for " + account,
+		})
 		return
 	}
 
-	err := s.scheduler.TriggerSync(account)
+	// Generic (non-account) sources — synctech-sms, gcal, granola, circleback,
+	// beeper — are driven by named generic scheduler jobs. The trigger path
+	// carries only the store identifier, so resolve the source's type to build
+	// its job name via the shared SchedulerJobNameForSource mapping, matching
+	// how sourceStatus reports CanSync for these sources.
+	if s.triggerGenericSync(w, account) {
+		return
+	}
+
+	writeError(w, http.StatusNotFound, "not_found", "Account is not scheduled: "+account)
+}
+
+// triggerGenericSync triggers the generic scheduler job(s) that drive the store
+// source(s) with the given identifier and writes the HTTP response. It reports
+// whether it handled the request: false means no scheduled generic job governs
+// the identifier (the caller then responds 404), true means it either started
+// the job(s) or already wrote an error. Distinct source types can share an
+// identifier (granola and circleback both default to "default"), but they map
+// to distinct job names, so every matching scheduled job is triggered; multiple
+// sources of one type that share a job (gcal calendars, beeper accounts)
+// collapse to a single trigger.
+func (s *Server) triggerGenericSync(w http.ResponseWriter, identifier string) bool {
+	statusStore, ok := s.store.(SourceStatusStore)
+	if !ok {
+		return false
+	}
+	sources, err := statusStore.ListSources("")
 	if err != nil {
-		s.logger.Error("failed to trigger sync", "account", account, "error", err)
-		writeError(w, http.StatusConflict, "sync_error", err.Error())
-		return
+		s.logger.Error("failed to list sources for generic sync trigger", "identifier", identifier, "error", err)
+		writeError(w, http.StatusInternalServerError, "internal_error", "Failed to resolve source for sync")
+		return true
 	}
-
-	s.logger.Info("sync triggered via API", "account", account)
+	seen := make(map[string]struct{})
+	jobNames := make([]string, 0, 1)
+	for _, src := range sources {
+		if src.Identifier != identifier {
+			continue
+		}
+		jobName, ok := SchedulerJobNameForSource(src.SourceType, src.Identifier)
+		if !ok || !s.scheduler.IsJobScheduled(jobName) {
+			continue
+		}
+		if _, dup := seen[jobName]; dup {
+			continue
+		}
+		seen[jobName] = struct{}{}
+		jobNames = append(jobNames, jobName)
+	}
+	if len(jobNames) == 0 {
+		return false
+	}
+	for _, jobName := range jobNames {
+		if err := s.scheduler.TriggerJob(jobName); err != nil {
+			s.logger.Error("failed to trigger generic sync job",
+				"job", jobName, "identifier", identifier, "error", err)
+			writeError(w, http.StatusConflict, "sync_error", err.Error())
+			return true
+		}
+		s.logger.Info("generic sync triggered via API", "job", jobName, "identifier", identifier)
+	}
 	writeJSON(w, http.StatusAccepted, StatusMessageResponse{
 		Status:  "accepted",
-		Message: "Sync started for " + account,
+		Message: "Sync started for " + identifier,
 	})
+	return true
 }
 
 // handleSchedulerStatus returns the scheduler status.

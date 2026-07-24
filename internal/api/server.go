@@ -132,6 +132,11 @@ type SyncScheduler interface {
 	// sourceStatus can surface their scheduled/running/error state via
 	// SchedulerJobNameForSource. See scheduler_jobs.go.
 	JobStatus() []JobStatus
+	// IsJobScheduled and TriggerJob manually run a generic (non-account)
+	// scheduler job by name, the trigger counterpart to JobStatus used by
+	// handleTriggerSync for generic sources.
+	IsJobScheduled(name string) bool
+	TriggerJob(name string) error
 }
 
 // AccountStatus is an alias for scheduler.AccountStatus — single source of truth.
