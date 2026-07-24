@@ -909,6 +909,14 @@ Examples:
 					return nil
 				}
 
+				// A concurrent cancel (e.g. from the web UI/daemon) moved this
+				// batch out of in_progress. Report it plainly and move on to the
+				// next batch rather than surfacing it as a failure.
+				if errors.Is(execErr, deletion.ErrManifestCancelled) {
+					fmt.Printf("  Cancelled: %s\n", m.ID)
+					continue
+				}
+
 				// Check if this is a scope error - offer to re-authorize (Gmail only)
 				if src.SourceType == sourceTypeGmail && isInsufficientScopeError(execErr) {
 					if cfg.OAuth.ServiceAccountKeyFor(sourceOAuthApp(src)) != "" {

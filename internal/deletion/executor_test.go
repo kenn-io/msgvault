@@ -154,6 +154,14 @@ func (c *TestContext) AssertFailedCount(want int) {
 	assert.Len(c.t, failed, want, "ListFailed()")
 }
 
+// AssertCancelledCount verifies the number of cancelled manifests.
+func (c *TestContext) AssertCancelledCount(want int) {
+	c.t.Helper()
+	cancelled, err := c.Mgr.ListCancelled()
+	require.NoError(c.t, err, "ListCancelled()")
+	assert.Len(c.t, cancelled, want, "ListCancelled()")
+}
+
 // AssertManifestExecution verifies the persisted execution state of a manifest.
 func (c *TestContext) AssertManifestExecution(id string, wantSucc, wantFail int, wantFailedIDs ...string) {
 	c.t.Helper()
@@ -960,6 +968,103 @@ func TestExecutor_OnStartRetryDoesNotShow100Percent(t *testing.T) {
 
 	// Should show 7 (succeeded), not 10 (startIndex == total)
 	assert.Equal(t, 7, tc.Progress.startProcessed, "OnStart alreadyProcessed (succeeded, not startIndex)")
+}
+
+// TestExecutor_Execute_CooperativeCancel verifies that a cross-process cancel
+// (the daemon moving the manifest out of in_progress/ while the CLI executor
+// runs) stops the executor promptly: it does not delete every message, returns
+// ErrManifestCancelled, and leaves the manifest cancelled rather than resurrected
+// or completed.
+func TestExecutor_Execute_CooperativeCancel(t *testing.T) {
+	tc := NewTestContext(t)
+	manifest := tc.CreateManifest("coop cancel", msgIDs(10))
+
+	callCount := 0
+	tc.MockAPI.BeforeTrash = func(string) error {
+		callCount++
+		if callCount == 1 {
+			// Simulate the daemon cancelling the in-progress batch mid-run.
+			require.NoError(t, tc.Mgr.CancelManifest(manifest.ID), "daemon CancelManifest")
+		}
+		return nil
+	}
+
+	err := tc.Execute(manifest.ID)
+	require.ErrorIs(t, err, ErrManifestCancelled, "Execute() error")
+
+	assert.Less(t, len(tc.MockAPI.TrashCalls), 10, "stopped before deleting all messages")
+	tc.AssertNotCompleted()
+	tc.AssertInProgressCount(0)
+	tc.AssertCompletedCount(0)
+	tc.AssertFailedCount(0)
+	tc.AssertCancelledCount(1)
+}
+
+// TestExecutor_Execute_NoResurrectionOnFinalize cancels the manifest on the
+// final item so the per-item loop check does not fire; the move-first finalize
+// must still refuse to recreate the in_progress file or mark it completed.
+func TestExecutor_Execute_NoResurrectionOnFinalize(t *testing.T) {
+	tc := NewTestContext(t)
+	manifest := tc.CreateManifest("finalize cancel", msgIDs(1))
+
+	tc.MockAPI.BeforeTrash = func(string) error {
+		// Cancel during the only delete, after the loop's pre-delete check.
+		require.NoError(t, tc.Mgr.CancelManifest(manifest.ID), "daemon CancelManifest")
+		return nil
+	}
+
+	err := tc.Execute(manifest.ID)
+	require.ErrorIs(t, err, ErrManifestCancelled, "Execute() error")
+
+	tc.AssertNotCompleted()
+	tc.AssertInProgressCount(0)
+	tc.AssertCompletedCount(0)
+	tc.AssertCancelledCount(1)
+}
+
+// TestExecutor_Execute_CancelledBeforeClaim verifies that a manifest cancelled
+// while still pending cannot be executed: prepareExecution reports it as
+// ErrManifestCancelled and nothing is deleted or completed.
+func TestExecutor_Execute_CancelledBeforeClaim(t *testing.T) {
+	tc := NewTestContext(t)
+	manifest := tc.CreateManifest("cancel before claim", msgIDs(3))
+
+	require.NoError(t, tc.Mgr.CancelManifest(manifest.ID), "CancelManifest")
+
+	err := tc.Execute(manifest.ID)
+	require.ErrorIs(t, err, ErrManifestCancelled, "Execute() error")
+
+	tc.AssertTrashCalls(0)
+	tc.AssertNotCompleted()
+	tc.AssertCompletedCount(0)
+	tc.AssertInProgressCount(0)
+	tc.AssertCancelledCount(1)
+}
+
+// TestExecutor_ExecuteBatch_CooperativeCancel verifies the batch path honors a
+// cross-process cancel between batches without deleting every batch or
+// resurrecting the manifest.
+func TestExecutor_ExecuteBatch_CooperativeCancel(t *testing.T) {
+	tc := NewTestContext(t)
+	manifest := tc.CreateManifest("coop cancel batch", msgIDs(2500))
+
+	batchCount := 0
+	tc.MockAPI.BeforeBatchDelete = func([]string) error {
+		batchCount++
+		if batchCount == 1 {
+			require.NoError(t, tc.Mgr.CancelManifest(manifest.ID), "daemon CancelManifest")
+		}
+		return nil
+	}
+
+	err := tc.ExecuteBatch(manifest.ID)
+	require.ErrorIs(t, err, ErrManifestCancelled, "ExecuteBatch() error")
+
+	assert.Less(t, len(tc.MockAPI.BatchDeleteCalls), 3, "stopped before processing all batches")
+	tc.AssertNotCompleted()
+	tc.AssertInProgressCount(0)
+	tc.AssertCompletedCount(0)
+	tc.AssertCancelledCount(1)
 }
 
 // TestNullProgress_AllMethods exercises all NullProgress methods for coverage.
