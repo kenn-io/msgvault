@@ -760,3 +760,51 @@ func TestExploreCounterpartParticipantIDNilWhenOwnerUnknown(t *testing.T) {
 	require.Len(response.Rows, 1)
 	assert.Nil(t, response.Rows[0].CounterpartParticipantID)
 }
+
+// TestExploreCoverageParticipantFilterMatchesExploreAcrossClusters guards that
+// the coverage population widens a participant filter across the whole identity
+// cluster, so the coverage message-ID set for a canonical participant filter
+// matches Explore's set for the same filter — both include alias-owned
+// messages. Before the fix, coverage omitted alias-only messages and disagreed
+// with Explore.
+func TestExploreCoverageParticipantFilterMatchesExploreAcrossClusters(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	b := NewTestDataBuilder(t)
+	source := b.AddSource("archive@example.com")
+	canonical := b.AddParticipant("alice@example.com", "example.com", "Alice")
+	alias := b.AddParticipant("alice@work.example", "work.example", "Alice (Work)")
+	b.LinkCluster(canonical, alias)
+
+	when := time.Date(2026, 7, 12, 9, 0, 0, 0, time.UTC)
+	toCanonical := b.AddMessage(MessageOpt{SourceID: source, MessageType: "email", SentAt: when})
+	b.AddTo(toCanonical, canonical, "Alice")
+	toAliasFirst := b.AddMessage(MessageOpt{SourceID: source, MessageType: "email", SentAt: when.Add(time.Hour)})
+	b.AddTo(toAliasFirst, alias, "Alice (Work)")
+	toAliasSecond := b.AddMessage(MessageOpt{SourceID: source, MessageType: "email", SentAt: when.Add(2 * time.Hour)})
+	b.AddTo(toAliasSecond, alias, "Alice (Work)")
+	engine := b.BuildEngine()
+	ctx := context.Background()
+
+	filter := Context{ParticipantIDs: []int64{canonical}}
+
+	var coverageIDs []int64
+	_, err := engine.ExploreCoverage(ctx, ExploreCoverageRequest{Context: filter, BatchSize: 10},
+		func(messageIDs []int64) error {
+			coverageIDs = append(coverageIDs, messageIDs...)
+			return nil
+		})
+	require.NoError(err)
+	assert.Equal([]int64{toCanonical, toAliasFirst, toAliasSecond}, coverageIDs,
+		"coverage must include alias-owned messages under a canonical-ID filter")
+
+	explored, err := engine.Explore(ctx, ExploreRequest{Context: filter, Page: PageSpec{Limit: 10}})
+	require.NoError(err)
+	exploreIDs := make([]int64, 0, len(explored.Rows))
+	for _, row := range explored.Rows {
+		require.NotNil(row.AnchorMessageID)
+		exploreIDs = append(exploreIDs, *row.AnchorMessageID)
+	}
+	assert.ElementsMatch(coverageIDs, exploreIDs,
+		"coverage and Explore must resolve the same message set for the same filter")
+}

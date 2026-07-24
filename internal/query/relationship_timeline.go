@@ -106,8 +106,16 @@ func (e *DuckDBEngine) RelationshipTimeline(ctx context.Context, request Relatio
 	// only expresses one participant-membership OR-group per Context, so
 	// the cluster-membership condition is built separately here and AND'd
 	// onto whatever buildExploreConditions produced for the caller's own
-	// Context (including any participant filter already in it).
-	conditions, args := buildExploreConditions(ExploreRequest{Context: request.Context})
+	// Context (including any participant filter already in it). That caller
+	// filter is first widened across its identity cluster (like Explore/Files)
+	// so a secondary participant filter by canonical ID also matches alias
+	// activity; the subject cluster-membership condition below is already
+	// cluster-correct and stays as-is.
+	explore, err := e.expandParticipantFilterClusters(ctx, ExploreRequest{Context: request.Context})
+	if err != nil {
+		return nil, err
+	}
+	conditions, args := buildExploreConditions(explore)
 	membershipCondition, membershipArgs := participantMembershipCondition(members)
 	if membershipCondition != "" {
 		if conditions == "true" {

@@ -619,3 +619,51 @@ func TestRelationshipsClampsFutureEntryDecayAtOne(t *testing.T) {
 	assert.InDelta(1.0, result.Rows[0].Signals.MeetingsTogether, 1e-9,
 		"a future meeting must weigh no more than one held today")
 }
+
+// TestRelationshipsParticipantFilterExpandsClusters guards that a secondary
+// participant Context filter widens across the whole identity cluster before
+// scoping the ranking population. Owner mail to a canonical address and to a
+// linked alias must all count when the ranking is filtered by either the
+// canonical ID or the alias ID, so the two filters agree and both include the
+// alias-owned activity — matching Explore/Files.
+func TestRelationshipsParticipantFilterExpandsClusters(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+
+	b := NewTestDataBuilder(t)
+	srcID := b.AddSource("owner@example.com")
+	ownerID := b.AddParticipant("owner@example.com", "example.com", "Owner")
+	b.AddOwnerParticipant(srcID, ownerID)
+	canonical := b.AddParticipant("alice@example.com", "example.com", "Alice")
+	alias := b.AddParticipant("alice@work.example", "work.example", "Alice (Work)")
+	b.LinkCluster(canonical, alias)
+
+	now := time.Date(2026, 1, 10, 0, 0, 0, 0, time.UTC)
+	toCanonical := b.AddMessage(MessageOpt{SourceID: srcID, IsFromMe: true, SentAt: now.AddDate(0, 0, -1)})
+	b.AddFrom(toCanonical, ownerID, "Owner")
+	b.AddTo(toCanonical, canonical, "Alice")
+	for i := range 2 {
+		toAlias := b.AddMessage(MessageOpt{SourceID: srcID, IsFromMe: true, SentAt: now.AddDate(0, 0, -(2 + i))})
+		b.AddFrom(toAlias, ownerID, "Owner")
+		b.AddTo(toAlias, alias, "Alice (Work)")
+	}
+
+	engine := b.BuildEngine()
+	ctx := context.Background()
+
+	byCanonical, err := engine.Relationships(ctx, RelationshipsRequest{
+		Context: Context{ParticipantIDs: []int64{canonical}}, Now: now, Limit: 10,
+	})
+	requirements.NoError(err)
+	requirements.Len(byCanonical.Rows, 1)
+	assertions.Equal(int64(3), byCanonical.Rows[0].Signals.SentCount,
+		"a canonical-ID filter must count activity recorded under a linked alias")
+
+	byAlias, err := engine.Relationships(ctx, RelationshipsRequest{
+		Context: Context{ParticipantIDs: []int64{alias}}, Now: now, Limit: 10,
+	})
+	requirements.NoError(err)
+	requirements.Len(byAlias.Rows, 1)
+	assertions.Equal(byCanonical.Rows[0].Signals.SentCount, byAlias.Rows[0].Signals.SentCount,
+		"filtering by the alias ID must agree with the canonical ID")
+}

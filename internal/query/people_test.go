@@ -548,3 +548,88 @@ func TestSearchDomainsProjectsResolvedCanonicalSearchCandidates(t *testing.T) {
 	assertions.Equal("other.example", result.Rows[0].Domain)
 	assertions.Equal(SearchProvenance{LexicalIndexRevision: "fts5:domain"}, result.SearchProvenance)
 }
+
+// TestGetPersonSummarySecondaryParticipantFilterExpandsClusters guards the
+// person-detail path's secondary participant Context filter: viewing a
+// person's summary while scoping to a linked counterpart cluster must count
+// activity recorded under any cluster member. Filtering by the counterpart's
+// canonical ID and by its alias ID must agree and both include alias-owned
+// entries, matching Explore/Files.
+func TestGetPersonSummarySecondaryParticipantFilterExpandsClusters(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	b := NewTestDataBuilder(t)
+	source := b.AddSource("archive@example.com")
+	subject := b.AddParticipant("subject@example.com", "example.com", "Subject")
+	canonical := b.AddParticipant("peer@example.com", "example.com", "Peer")
+	alias := b.AddParticipant("peer@work.example", "work.example", "Peer (Work)")
+	b.LinkCluster(canonical, alias)
+
+	when := time.Date(2026, 7, 12, 9, 0, 0, 0, time.UTC)
+	withCanonical := b.AddMessage(MessageOpt{SourceID: source, ConversationID: 901, Subject: "With canonical", SentAt: when})
+	b.AddTo(withCanonical, subject, "Subject")
+	b.AddCc(withCanonical, canonical, "Peer")
+	for i := range 2 {
+		withAlias := b.AddMessage(MessageOpt{SourceID: source, ConversationID: int64(902 + i), Subject: "With alias", SentAt: when.Add(time.Duration(i+1) * time.Hour)})
+		b.AddTo(withAlias, subject, "Subject")
+		b.AddCc(withAlias, alias, "Peer (Work)")
+	}
+	engine := b.BuildEngine()
+	ctx := context.Background()
+
+	byCanonical, err := engine.GetPersonSummary(ctx, subject,
+		ExploreRequest{Context: Context{ParticipantIDs: []int64{canonical}}}, nil)
+	requirements.NoError(err)
+	requirements.Len(byCanonical.Rows, 1)
+	assertions.Equal(int64(3), byCanonical.Rows[0].ActivityCount,
+		"a canonical-ID secondary filter must count entries recorded under a linked alias")
+
+	byAlias, err := engine.GetPersonSummary(ctx, subject,
+		ExploreRequest{Context: Context{ParticipantIDs: []int64{alias}}}, nil)
+	requirements.NoError(err)
+	requirements.Len(byAlias.Rows, 1)
+	assertions.Equal(byCanonical.Rows[0].ActivityCount, byAlias.Rows[0].ActivityCount,
+		"filtering by the alias ID must agree with the canonical ID")
+}
+
+// TestGetDomainSummaryParticipantFilterExpandsClusters guards the
+// domain-detail path's participant Context filter: a domain summary scoped to
+// a linked counterpart cluster must count activity recorded under any cluster
+// member. Filtering by the counterpart's canonical ID and by its alias ID
+// must agree and both include alias-owned entries, matching Explore/Files.
+func TestGetDomainSummaryParticipantFilterExpandsClusters(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	b := NewTestDataBuilder(t)
+	source := b.AddSource("archive@example.com")
+	onDomain := b.AddParticipant("target@target.example", "target.example", "Target")
+	canonical := b.AddParticipant("peer@example.com", "example.com", "Peer")
+	alias := b.AddParticipant("peer@work.example", "work.example", "Peer (Work)")
+	b.LinkCluster(canonical, alias)
+
+	when := time.Date(2026, 7, 12, 9, 0, 0, 0, time.UTC)
+	withCanonical := b.AddMessage(MessageOpt{SourceID: source, ConversationID: 951, Subject: "With canonical", SentAt: when})
+	b.AddTo(withCanonical, onDomain, "Target")
+	b.AddCc(withCanonical, canonical, "Peer")
+	for i := range 2 {
+		withAlias := b.AddMessage(MessageOpt{SourceID: source, ConversationID: int64(952 + i), Subject: "With alias", SentAt: when.Add(time.Duration(i+1) * time.Hour)})
+		b.AddTo(withAlias, onDomain, "Target")
+		b.AddCc(withAlias, alias, "Peer (Work)")
+	}
+	engine := b.BuildEngine()
+	ctx := context.Background()
+
+	byCanonical, err := engine.GetDomainSummary(ctx, "target.example",
+		ExploreRequest{Context: Context{ParticipantIDs: []int64{canonical}}})
+	requirements.NoError(err)
+	requirements.Len(byCanonical.Rows, 1)
+	assertions.Equal(int64(3), byCanonical.Rows[0].ActivityCount,
+		"a canonical-ID filter must count domain activity recorded under a linked alias")
+
+	byAlias, err := engine.GetDomainSummary(ctx, "target.example",
+		ExploreRequest{Context: Context{ParticipantIDs: []int64{alias}}})
+	requirements.NoError(err)
+	requirements.Len(byAlias.Rows, 1)
+	assertions.Equal(byCanonical.Rows[0].ActivityCount, byAlias.Rows[0].ActivityCount,
+		"filtering by the alias ID must agree with the canonical ID")
+}

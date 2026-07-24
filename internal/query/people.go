@@ -169,6 +169,14 @@ func (e *DuckDBEngine) searchPeople(
 	if err != nil {
 		return nil, fmt.Errorf("read committed cache state: %w", err)
 	}
+	// Widen any secondary participant filter (Context.ParticipantIDs) across
+	// its identity cluster before rendering conditions, matching Explore/Files.
+	// The row's own identity flows through personEntriesCTE/clusterMemberIDs
+	// below and is left untouched.
+	request.Explore, err = e.expandParticipantFilterClusters(ctx, request.Explore)
+	if err != nil {
+		return nil, err
+	}
 	conditions, args := buildExploreConditions(request.Explore)
 	entriesCTE, entryArgs := personEntriesCTE(exactID, clusterMemberIDs, conditions, e.parquetPath(datasetParticipantClusters))
 	args = append(args, entryArgs...)
@@ -454,6 +462,13 @@ func (e *DuckDBEngine) searchDomains(ctx context.Context, request DomainSearchRe
 	state, err := ReadCacheSyncState(e.analyticsDir)
 	if err != nil {
 		return nil, fmt.Errorf("read committed cache state: %w", err)
+	}
+	// Widen any participant filter (Context.ParticipantIDs) across its identity
+	// cluster before rendering conditions, matching Explore/Files, so a domain
+	// scoped to a canonical person also counts alias-owned activity.
+	request.Explore, err = e.expandParticipantFilterClusters(ctx, request.Explore)
+	if err != nil {
+		return nil, err
 	}
 	conditions, args := buildExploreConditions(request.Explore)
 	domainWhere := []string{"domain <> ''"}

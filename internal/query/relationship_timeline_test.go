@@ -387,3 +387,52 @@ func TestResolveCanonicalParticipant(t *testing.T) {
 	require.NoError(err)
 	assert.Equal(loneID, resolvedLone, "an unlinked participant is a single-member cluster of itself")
 }
+
+// TestRelationshipTimelineSecondaryParticipantFilterExpandsClusters guards
+// that the secondary participant Context filter widens across the whole
+// identity cluster before intersecting with the subject's membership. When
+// the filter names one member of a linked cluster, the timeline must keep the
+// subject's entries that involve ANY member of that cluster — so filtering by
+// the canonical ID and by the alias ID agree and both include alias-owned
+// entries, matching Explore/Files.
+func TestRelationshipTimelineSecondaryParticipantFilterExpandsClusters(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	b := NewTestDataBuilder(t)
+	srcID := b.AddSource("owner@example.com")
+	ownerID := b.AddParticipant("owner@example.com", "example.com", "Owner")
+	b.AddOwnerParticipant(srcID, ownerID)
+
+	pID := b.AddParticipant("pat@example.com", "example.com", "Pat")
+	xCanonical := b.AddParticipant("x@example.com", "example.com", "X")
+	xAlias := b.AddParticipant("x@work.example", "work.example", "X (Work)")
+	b.LinkCluster(xCanonical, xAlias)
+
+	entryCanonical := b.AddMessage(MessageOpt{SourceID: srcID, MessageType: "email", SentAt: time.Date(2026, 1, 10, 12, 0, 0, 0, time.UTC)})
+	b.AddFrom(entryCanonical, pID, "Pat")
+	b.AddTo(entryCanonical, ownerID, "Owner")
+	b.AddCc(entryCanonical, xCanonical, "X")
+
+	entryAlias := b.AddMessage(MessageOpt{SourceID: srcID, MessageType: "email", SentAt: time.Date(2026, 1, 9, 12, 0, 0, 0, time.UTC)})
+	b.AddFrom(entryAlias, pID, "Pat")
+	b.AddTo(entryAlias, ownerID, "Owner")
+	b.AddCc(entryAlias, xAlias, "X (Work)")
+
+	engine := b.BuildEngine()
+	ctx := context.Background()
+
+	byCanonical, err := engine.RelationshipTimeline(ctx, RelationshipTimelineRequest{
+		CanonicalID: pID, Limit: 10, Context: Context{ParticipantIDs: []int64{xCanonical}},
+	})
+	require.NoError(err)
+	require.Len(byCanonical.Rows, 2, "a canonical-ID secondary filter must keep entries involving a linked alias")
+	assert.Equal(int64(2), byCanonical.TotalCount)
+
+	byAlias, err := engine.RelationshipTimeline(ctx, RelationshipTimelineRequest{
+		CanonicalID: pID, Limit: 10, Context: Context{ParticipantIDs: []int64{xAlias}},
+	})
+	require.NoError(err)
+	assert.Equal(byCanonical.TotalCount, byAlias.TotalCount,
+		"filtering by the alias ID must agree with the canonical ID")
+}

@@ -180,7 +180,14 @@ func (e *DuckDBEngine) ExploreCoverage(
 	if err != nil {
 		return nil, fmt.Errorf("read committed cache state: %w", err)
 	}
-	conditions, args := buildExploreConditions(ExploreRequest{Context: request.Context})
+	// Widen any participant filter across its identity cluster before rendering
+	// conditions so the coverage population matches Explore's set for the same
+	// filter — see expandParticipantFilterClusters.
+	explore, err := e.expandParticipantFilterClusters(ctx, ExploreRequest{Context: request.Context})
+	if err != nil {
+		return nil, err
+	}
+	conditions, args := buildExploreConditions(explore)
 	conditions += " AND NOT internally_deleted AND NOT deleted_from_source"
 	rows, err := e.db.QueryContext(ctx,
 		"SELECT message_id FROM analytical_entries WHERE "+conditions+" ORDER BY message_id", args...)

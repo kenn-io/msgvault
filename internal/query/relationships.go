@@ -141,7 +141,15 @@ func (e *DuckDBEngine) Relationships(ctx context.Context, request RelationshipsR
 	if now.IsZero() {
 		now = time.Now().UTC()
 	}
-	conditions, args := buildExploreConditions(ExploreRequest{Context: request.Context})
+	// Widen any participant filter across its whole identity cluster before
+	// rendering conditions, so ranking a canonical person credits activity
+	// recorded under a linked alias — matching Explore/Files. Expansion runs
+	// before relationshipsMemoKey so the memo keys on the expanded filter.
+	explore, err := e.expandParticipantFilterClusters(ctx, ExploreRequest{Context: request.Context})
+	if err != nil {
+		return nil, err
+	}
+	conditions, args := buildExploreConditions(explore)
 	key := relationshipsMemoKey(state.Revision(), conditions, args, request.ShowAll, now)
 	candidates, err := e.relMemo.rows(key, func() ([]RelationshipRow, error) {
 		return e.queryRelationshipCandidates(ctx, conditions, args, request.ShowAll, now)
