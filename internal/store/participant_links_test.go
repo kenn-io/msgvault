@@ -178,6 +178,93 @@ func TestClusterEdgesFiltersToTheRequestedComponent(t *testing.T) {
 	assert.Empty(empty, "an unlinked participant has no cluster edges")
 }
 
+// TestParticipantClustersMultipleDisjointComponents drives the public
+// ParticipantClusters through the real store over several disconnected
+// identity-link components at once, the workload the quadratic-cluster fix
+// targets. Every member must map to its component's smallest ID. The last
+// pair is linked in reversed order (11-10 normalizes to 10-11) to pin that
+// the canonical root is the smallest member regardless of insertion order.
+func TestParticipantClustersMultipleDisjointComponents(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := storetest.New(t)
+
+	// Component 1: a-b-c (a chain).
+	a := f.EnsureParticipant("a@example.com", "A", "example.com")
+	b := f.EnsureParticipant("b@example.com", "B", "example.com")
+	c := f.EnsureParticipant("c@example.com", "C", "example.com")
+	// Component 2: d-e (a pair).
+	d := f.EnsureParticipant("d@example.com", "D", "example.com")
+	e := f.EnsureParticipant("e@example.com", "E", "example.com")
+	// Component 3: a star centered on the first-created (smallest) member.
+	center := f.EnsureParticipant("center@example.com", "Center", "example.com")
+	leaf1 := f.EnsureParticipant("leaf1@example.com", "Leaf1", "example.com")
+	leaf2 := f.EnsureParticipant("leaf2@example.com", "Leaf2", "example.com")
+	// Component 4: a pair whose smaller ID was created first.
+	x := f.EnsureParticipant("x@example.com", "X", "example.com")
+	y := f.EnsureParticipant("y@example.com", "Y", "example.com")
+
+	_, err := f.Store.LinkParticipants(a, b)
+	require.NoError(err)
+	_, err = f.Store.LinkParticipants(b, c)
+	require.NoError(err)
+	_, err = f.Store.LinkParticipants(d, e)
+	require.NoError(err)
+	_, err = f.Store.LinkParticipants(center, leaf1)
+	require.NoError(err)
+	_, err = f.Store.LinkParticipants(center, leaf2)
+	require.NoError(err)
+	_, err = f.Store.LinkParticipants(y, x) // reversed: normalizes to (x, y)
+	require.NoError(err)
+
+	clusters, err := f.Store.ParticipantClusters()
+	require.NoError(err)
+
+	want := map[int64]int64{
+		a: a, b: a, c: a,
+		d: d, e: d,
+		center: center, leaf1: center, leaf2: center,
+		x: x, y: x,
+	}
+	assert.Equal(want, clusters)
+}
+
+// TestClusterMembersAndEdgesWithinMultiComponentGraph pins that the
+// single-lookup resolvers still isolate one component when several exist. The
+// smallest-root parity above changed how ParticipantClusters walks the graph,
+// so this guards that ClusterMembers/ClusterEdges (which keep the
+// build-adjacency-per-call path) report exactly one component's members and
+// edges, never bleeding into a disjoint cluster.
+func TestClusterMembersAndEdgesWithinMultiComponentGraph(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := storetest.New(t)
+
+	a := f.EnsureParticipant("a@example.com", "A", "example.com")
+	b := f.EnsureParticipant("b@example.com", "B", "example.com")
+	c := f.EnsureParticipant("c@example.com", "C", "example.com")
+	d := f.EnsureParticipant("d@example.com", "D", "example.com")
+	e := f.EnsureParticipant("e@example.com", "E", "example.com")
+
+	_, err := f.Store.LinkParticipants(a, b)
+	require.NoError(err)
+	_, err = f.Store.LinkParticipants(b, c)
+	require.NoError(err)
+	_, err = f.Store.LinkParticipants(d, e)
+	require.NoError(err)
+
+	members, err := f.Store.ClusterMembers(b)
+	require.NoError(err)
+	assert.Equal([]int64{a, b, c}, members, "ClusterMembers must return only b's own component, sorted")
+
+	loAB, hiAB := normalizeEdgeForTest(a, b)
+	loBC, hiBC := normalizeEdgeForTest(b, c)
+	edges, err := f.Store.ClusterEdges(b)
+	require.NoError(err)
+	assert.ElementsMatch([]store.LinkEdge{{A: loAB, B: hiAB}, {A: loBC, B: hiBC}}, edges,
+		"ClusterEdges must return only b's own component edges")
+}
+
 // normalizeEdgeForTest mirrors the unexported normalizeEdge in
 // participant_links.go (participant_a < participant_b), since this test is
 // in package store_test and cannot call it directly.

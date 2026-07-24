@@ -7,6 +7,7 @@ import (
 	"runtime"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -964,4 +965,178 @@ func TestIsValidStatus(t *testing.T) {
 	}
 	assert.False(t, IsValidStatus(Status("bogus")))
 	assert.False(t, IsValidStatus(Status("")))
+}
+
+// setupInProgress creates a manifest and claims it into in_progress/, returning
+// the in-memory manifest with an initialized Execution.
+func setupInProgress(t *testing.T, mgr *Manager, desc string) *Manifest {
+	t.Helper()
+	m := createTestManifest(t, mgr, desc)
+	require.NoError(t, mgr.MoveManifest(m.ID, StatusPending, StatusInProgress), "MoveManifest")
+	m.Status = StatusInProgress
+	m.Execution = &Execution{StartedAt: time.Now(), Method: MethodTrash}
+	return m
+}
+
+// assertSingleValidManifest verifies that id resolves to exactly one on-disk
+// manifest, that its file is non-empty, and that it parses as a full Manifest.
+// This is the invariant a torn checkpoint write would violate.
+func assertSingleValidManifest(t *testing.T, mgr *Manager, id string) {
+	t.Helper()
+	found := 0
+	for _, status := range persistedStatuses {
+		path := filepath.Join(mgr.dirForStatus(status), id+".json")
+		info, err := os.Stat(path)
+		if err != nil {
+			continue
+		}
+		found++
+		require.Positive(t, info.Size(), "manifest %s in %s must not be empty", id, status)
+		loaded, err := LoadManifest(path)
+		require.NoError(t, err, "manifest %s in %s must be fully parseable", id, status)
+		require.Equal(t, id, loaded.ID, "parsed manifest %s in %s has wrong ID", id, status)
+	}
+	require.Equal(t, 1, found, "manifest %s must exist in exactly one status directory", id)
+}
+
+// TestManager_CheckpointCancelSerialize deterministically drives the
+// rename-vs-write critical section: an in-flight checkpoint holds the
+// per-manifest lock while a cancel attempts to run. The cancel must block until
+// the checkpoint's atomic write completes and the lock is released, after which
+// the whole valid record moves to cancelled/ — never a torn or empty file, and
+// never a resurrected in_progress file.
+func TestManager_CheckpointCancelSerialize(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	mgr := testManager(t)
+	m := setupInProgress(t, mgr, "serialize")
+	inProgressPath := filepath.Join(mgr.InProgressDir(), m.ID+".json")
+
+	// Simulate an in-flight checkpoint write by holding the per-manifest lock.
+	held, err := mgr.acquireManifestLock(m.ID)
+	require.NoError(err, "acquireManifestLock")
+
+	cancelDone := make(chan error, 1)
+	go func() { cancelDone <- mgr.CancelManifest(m.ID) }()
+
+	// The cancel rename must not proceed while the checkpoint holds the lock.
+	select {
+	case <-cancelDone:
+		require.FailNow("cancel ran while checkpoint held the lock")
+	case <-time.After(150 * time.Millisecond):
+	}
+
+	// Complete the checkpoint's atomic write, then release the lock.
+	m.Execution.LastProcessedIndex = 5
+	require.NoError(writeManifestAtomic(m, inProgressPath), "writeManifestAtomic")
+	require.NoError(held.Unlock(), "Unlock")
+
+	require.NoError(<-cancelDone, "CancelManifest")
+
+	// The whole valid record moved to cancelled/; in_progress/ is empty.
+	_, statErr := os.Stat(inProgressPath)
+	assert.True(os.IsNotExist(statErr), "in_progress file must be gone, got err=%v", statErr)
+	loaded, err := LoadManifest(filepath.Join(mgr.dirForStatus(StatusCancelled), m.ID+".json"))
+	require.NoError(err, "cancelled manifest must be fully parseable")
+	assert.Equal(StatusCancelled, loaded.Status)
+	require.NotNil(loaded.Execution, "checkpoint content preserved")
+	assert.Equal(5, loaded.Execution.LastProcessedIndex, "checkpoint content preserved in cancelled record")
+	assertSingleValidManifest(t, mgr, m.ID)
+}
+
+// TestManager_WriteInProgressCheckpoint_Writes verifies the happy path: a
+// checkpoint on a live in_progress manifest publishes its content atomically.
+func TestManager_WriteInProgressCheckpoint_Writes(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	mgr := testManager(t)
+	m := setupInProgress(t, mgr, "checkpoint happy")
+	m.Execution.LastProcessedIndex = 7
+
+	require.NoError(mgr.WriteInProgressCheckpoint(m, m.ID), "WriteInProgressCheckpoint")
+
+	loaded, err := LoadManifest(filepath.Join(mgr.InProgressDir(), m.ID+".json"))
+	require.NoError(err, "reload checkpoint")
+	require.NotNil(loaded.Execution)
+	assert.Equal(7, loaded.Execution.LastProcessedIndex)
+	// No stray temp files left in the status directory.
+	entries, err := os.ReadDir(mgr.InProgressDir())
+	require.NoError(err, "ReadDir")
+	for _, e := range entries {
+		assert.False(strings.HasSuffix(e.Name(), ".tmp"), "leftover temp file %s", e.Name())
+	}
+}
+
+// TestManager_WriteInProgressCheckpoint_Cancelled verifies that a checkpoint on
+// a manifest a cancel already moved out of in_progress/ returns
+// ErrManifestCancelled and writes nothing (no resurrection).
+func TestManager_WriteInProgressCheckpoint_Cancelled(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	mgr := testManager(t)
+	m := setupInProgress(t, mgr, "checkpoint cancelled")
+	require.NoError(mgr.CancelManifest(m.ID), "CancelManifest")
+
+	err := mgr.WriteInProgressCheckpoint(m, m.ID)
+	require.ErrorIs(err, ErrManifestCancelled, "checkpoint after cancel")
+
+	_, statErr := os.Stat(filepath.Join(mgr.InProgressDir(), m.ID+".json"))
+	assert.True(os.IsNotExist(statErr), "in_progress must not be resurrected, got err=%v", statErr)
+	loaded, err := LoadManifest(filepath.Join(mgr.dirForStatus(StatusCancelled), m.ID+".json"))
+	require.NoError(err, "cancelled manifest parseable")
+	assert.Equal(StatusCancelled, loaded.Status)
+	assertSingleValidManifest(t, mgr, m.ID)
+}
+
+// TestManager_FinalizeInProgress_Cancelled verifies that a finalize losing to a
+// concurrent cancel returns ErrManifestCancelled rather than creating a second
+// copy in a terminal directory.
+func TestManager_FinalizeInProgress_Cancelled(t *testing.T) {
+	mgr := testManager(t)
+	m := setupInProgress(t, mgr, "finalize cancelled")
+	require.NoError(t, mgr.CancelManifest(m.ID), "CancelManifest")
+
+	err := mgr.FinalizeInProgress(m.ID, StatusCompleted)
+	require.ErrorIs(t, err, ErrManifestCancelled, "finalize after cancel")
+	assertSingleValidManifest(t, mgr, m.ID)
+}
+
+// TestManager_CheckpointCancelStress races repeated checkpoint writes against a
+// cancel on the same manifest ID. Regardless of interleaving, the manifest must
+// always end up as exactly one fully valid, non-empty on-disk record — never
+// torn, empty, resurrected, or duplicated. Run with -race to surface data races
+// in the locked critical sections.
+func TestManager_CheckpointCancelStress(t *testing.T) {
+	for range 50 {
+		mgr := testManager(t)
+		m := setupInProgress(t, mgr, "stress")
+		id := m.ID
+
+		// The checkpoint goroutine mutates its own copy of the manifest.
+		cp := *m
+		exec := *m.Execution
+		cp.Execution = &exec
+
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			for i := range 20 {
+				cp.Execution.LastProcessedIndex = i
+				if err := mgr.WriteInProgressCheckpoint(&cp, id); err != nil {
+					// assert (not require) inside a goroutine: require's FailNow
+					// is illegal off the test's own goroutine.
+					assert.ErrorIs(t, err, ErrManifestCancelled, "checkpoint error")
+					return
+				}
+			}
+		}()
+		go func() {
+			defer wg.Done()
+			assert.NoError(t, mgr.CancelManifest(id), "CancelManifest")
+		}()
+		wg.Wait()
+
+		assertSingleValidManifest(t, mgr, id)
+	}
 }

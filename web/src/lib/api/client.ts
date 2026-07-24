@@ -20,6 +20,26 @@ export function createAPIClient(fetchFn: typeof fetch = fetch) {
 type CSRFTokenProvider = () => string | undefined;
 type UnauthorizedHandler = () => void;
 
+// The daemon tags its own expired/invalid browser-session 401s with this error
+// code (humaAuthMiddleware, the session login route, and the daemon shutdown
+// route all emit it). A downstream integration such as the task service that
+// needs its OWN re-auth surfaces a different code (e.g. "authentication_required"),
+// which must not tear down the perfectly valid msgvault session.
+const SESSION_UNAUTHORIZED_CODE = 'unauthorized';
+
+// Reads the small {error,message} envelope from a 401 without disturbing the
+// body the caller still needs. Returns false on any non-JSON/empty/unreadable
+// body so a spurious logout never fires; a genuine session-expiry carries the
+// session code and is matched here.
+async function isSessionUnauthorized(response: Response): Promise<boolean> {
+  try {
+    const body = (await response.clone().json()) as { error?: unknown };
+    return body?.error === SESSION_UNAUTHORIZED_CODE;
+  } catch {
+    return false;
+  }
+}
+
 export function createSessionAwareAPIClient(
   fetchFn: typeof fetch = fetch,
   csrfToken: CSRFTokenProvider = () => undefined,
@@ -40,7 +60,7 @@ export function createSessionAwareAPIClient(
     }
 
     const response = await fetchFn(request);
-    if (response.status === 401) onUnauthorized();
+    if (response.status === 401 && (await isSessionUnauthorized(response))) onUnauthorized();
     return response;
   };
 

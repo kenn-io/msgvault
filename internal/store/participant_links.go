@@ -78,8 +78,12 @@ func (s *Store) loadLinkEdgesTx(tx *loggedTx) ([]linkEdge, error) {
 	return scanLinkEdges(rows)
 }
 
-// buildAdjacency turns an edge list into an undirected adjacency map.
-func buildAdjacency(edges []linkEdge) map[int64][]int64 {
+// buildAdjacency turns an edge list into an undirected adjacency map. It is a
+// package variable rather than a plain func only so tests can count how often
+// it runs: the quadratic-cluster fix hinges on ParticipantClusters building
+// adjacency exactly once for the whole graph (via clustersFromEdges) instead
+// of once per component, and the counting test pins that invariant.
+var buildAdjacency = func(edges []linkEdge) map[int64][]int64 {
 	adj := make(map[int64][]int64, 2*len(edges))
 	for _, e := range edges {
 		adj[e.a] = append(adj[e.a], e.b)
@@ -88,11 +92,13 @@ func buildAdjacency(edges []linkEdge) map[int64][]int64 {
 	return adj
 }
 
-// componentOf returns the connected component containing id (including id
-// itself), found by breadth-first traversal of edges. An id with no edges
-// returns the single-element set {id}.
-func componentOf(id int64, edges []linkEdge) map[int64]struct{} {
-	adj := buildAdjacency(edges)
+// componentOfAdj returns the connected component containing id (including id
+// itself), found by breadth-first traversal of an already-built adjacency
+// map. An id absent from adj (no edges) returns the single-element set {id}.
+// Callers that resolve many components against one graph (ParticipantClusters)
+// build adjacency once and call this per root, so the whole pass stays
+// O(nodes + edges) rather than rebuilding adjacency for every component.
+func componentOfAdj(id int64, adj map[int64][]int64) map[int64]struct{} {
 	visited := map[int64]struct{}{id: {}}
 	queue := []int64{id}
 	for len(queue) > 0 {
@@ -106,6 +112,16 @@ func componentOf(id int64, edges []linkEdge) map[int64]struct{} {
 		}
 	}
 	return visited
+}
+
+// componentOf returns the connected component containing id (including id
+// itself). It builds adjacency from edges once, then delegates to
+// componentOfAdj. Single-lookup callers (ClusterMembers, ClusterEdges, and
+// the LinkParticipants connectivity check) resolve one component per call, so
+// building adjacency once here is fine. ParticipantClusters, which resolves
+// every component, instead shares one adjacency map via componentOfAdj.
+func componentOf(id int64, edges []linkEdge) map[int64]struct{} {
+	return componentOfAdj(id, buildAdjacency(edges))
 }
 
 // normalizeEdge orders a pair so the smaller ID comes first, matching the
@@ -424,14 +440,12 @@ func deleteClusterEdges(tx *loggedTx, ids []int64) error {
 	return nil
 }
 
-// ParticipantClusters returns participant_id → canonical cluster ID
-// (the smallest member ID) for every participant that appears in a link
-// edge. Unlinked participants are their own cluster and are not returned.
-func (s *Store) ParticipantClusters() (map[int64]int64, error) {
-	edges, err := s.loadLinkEdges()
-	if err != nil {
-		return nil, err
-	}
+// clustersFromEdges maps each participant that appears in an edge to its
+// cluster's canonical ID (the smallest member). It builds adjacency once for
+// the whole graph and visits each node and edge once across all components,
+// so the whole pass is O(nodes + edges) regardless of how many disconnected
+// components the edge list contains.
+func clustersFromEdges(edges []linkEdge) map[int64]int64 {
 	adj := buildAdjacency(edges)
 
 	ids := make([]int64, 0, len(adj))
@@ -450,13 +464,25 @@ func (s *Store) ParticipantClusters() (map[int64]int64, error) {
 		// node overall, and therefore the smallest member of its own
 		// component: any smaller member would already be visited,
 		// either as an earlier component's root or reached via BFS
-		// from one.
-		for member := range componentOf(id, edges) {
+		// from one. Traversing the shared adj keeps the whole pass
+		// linear instead of rebuilding adjacency for each component.
+		for member := range componentOfAdj(id, adj) {
 			clusters[member] = id
 			visited[member] = struct{}{}
 		}
 	}
-	return clusters, nil
+	return clusters
+}
+
+// ParticipantClusters returns participant_id → canonical cluster ID
+// (the smallest member ID) for every participant that appears in a link
+// edge. Unlinked participants are their own cluster and are not returned.
+func (s *Store) ParticipantClusters() (map[int64]int64, error) {
+	edges, err := s.loadLinkEdges()
+	if err != nil {
+		return nil, err
+	}
+	return clustersFromEdges(edges), nil
 }
 
 // ClusterMembers returns all participant IDs in the cluster containing id

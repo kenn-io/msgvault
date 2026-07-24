@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gofrs/flock"
 	"go.kenn.io/msgvault/internal/fileutil"
 )
 
@@ -212,37 +213,6 @@ func (m *Manifest) Save(path string) error {
 	return fileutil.SecureWriteFile(path, data, 0600)
 }
 
-// SaveIfPresent writes the manifest to path only when the file already exists,
-// never creating it. It opens the destination with O_WRONLY|O_TRUNC and no
-// O_CREATE, so a concurrent daemon cancel that renamed the file out of
-// in_progress/ cannot be undone by a resurrecting write: the open fails with
-// os.ErrNotExist and the caller stops as cancelled. This is the race-tight,
-// cross-platform primitive for best-effort checkpoint writes — POSIX rename
-// always creates its destination, so a temp+rename write could resurrect a
-// moved manifest, whereas an in-place truncating write cannot. The
-// authoritative crash-safe commit remains the move-first rename in
-// finalizeExecution.
-//
-// Callers detect the moved-away case with errors.Is(err, os.ErrNotExist).
-func (m *Manifest) SaveIfPresent(path string) error {
-	data, err := json.MarshalIndent(m, "", "  ")
-	if err != nil {
-		return err
-	}
-
-	// codeql[go/path-injection] -- manifest paths are explicit local CLI
-	// inputs from the privileged user, not a security boundary.
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_TRUNC, 0)
-	if err != nil {
-		return err
-	}
-	if _, err := f.Write(data); err != nil {
-		_ = f.Close()
-		return err
-	}
-	return f.Close()
-}
-
 // FormatSummary returns a human-readable summary of the deletion.
 func (m *Manifest) FormatSummary() string {
 	var sb strings.Builder
@@ -318,8 +288,144 @@ func NewManager(baseDir string) (*Manager, error) {
 			return nil, fmt.Errorf("create dir for %s: %w", status, err)
 		}
 	}
+	if err := os.MkdirAll(m.locksDir(), 0700); err != nil {
+		return nil, fmt.Errorf("create deletion locks dir: %w", err)
+	}
 
 	return m, nil
+}
+
+// locksDir holds per-manifest lock files. It sits beside the status
+// directories (never inside one) so a manifest's lock path is stable across
+// the pending -> in_progress -> cancelled/completed renames: unlike the
+// manifest file, the lock is never moved, so checkpoint writes and cancels
+// keyed by ID always contend on the same file. It is not a persisted status
+// directory, so it is never listed or scanned as manifests.
+func (m *Manager) locksDir() string {
+	return filepath.Join(m.baseDir, "locks")
+}
+
+// manifestLockPath returns the stable per-manifest lock file path.
+func (m *Manager) manifestLockPath(id string) string {
+	return filepath.Join(m.locksDir(), id+".lock")
+}
+
+// acquireManifestLock takes the exclusive cross-process lock guarding a single
+// manifest's status transitions and checkpoint writes. The caller MUST release
+// it. Only one lock is ever held per manifest and it is always acquired then
+// released within a single method, so there is no lock ordering to deadlock on.
+func (m *Manager) acquireManifestLock(id string) (*flock.Flock, error) {
+	if err := ValidateManifestID(id); err != nil {
+		return nil, err
+	}
+	if err := os.MkdirAll(m.locksDir(), 0700); err != nil {
+		return nil, fmt.Errorf("create deletion locks dir: %w", err)
+	}
+	lock := flock.New(m.manifestLockPath(id), flock.SetPermissions(0600))
+	if err := lock.Lock(); err != nil {
+		return nil, fmt.Errorf("lock manifest %s: %w", id, err)
+	}
+	return lock, nil
+}
+
+// writeManifestAtomic serializes manifest and publishes it at path via a
+// temp-file + os.Rename, so a reader never observes an empty or partially
+// written file: the previous contents at path remain intact until the rename
+// atomically replaces them. The temp file is written in the destination
+// directory (same filesystem, required for an atomic rename) and removed on any
+// error so no ".tmp" file is left behind. Callers must hold the per-manifest
+// lock and verify the destination's presence under that lock; the rename then
+// replaces the existing file rather than resurrecting a moved one.
+func writeManifestAtomic(manifest *Manifest, path string) (retErr error) {
+	data, err := json.MarshalIndent(manifest, "", "  ")
+	if err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".manifest-*.tmp")
+	if err != nil {
+		return fmt.Errorf("create temp manifest: %w", err)
+	}
+	tmpPath := tmp.Name()
+	defer func() {
+		if retErr != nil {
+			_ = os.Remove(tmpPath)
+		}
+	}()
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("write temp manifest: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("close temp manifest: %w", err)
+	}
+	if err := fileutil.SecureChmod(tmpPath, 0600); err != nil {
+		return fmt.Errorf("protect temp manifest: %w", err)
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		return fmt.Errorf("publish manifest: %w", err)
+	}
+	return nil
+}
+
+// WriteInProgressCheckpoint persists the manifest's current execution progress
+// to in_progress/<id>.json under the per-manifest lock. It serializes with
+// CancelManifest and FinalizeInProgress so a checkpoint can never race a cancel
+// rename: while the lock is held, cancel cannot move the file, so the atomic
+// temp+rename write below replaces the verified-present destination without
+// tearing it or resurrecting a moved record. If the manifest is no longer in
+// in_progress/ (a cancel already moved it), it returns ErrManifestCancelled and
+// writes nothing.
+func (m *Manager) WriteInProgressCheckpoint(manifest *Manifest, id string) error {
+	lock, err := m.acquireManifestLock(id)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = lock.Unlock() }()
+
+	path := filepath.Join(m.dirForStatus(StatusInProgress), id+".json")
+	if _, err := os.Stat(path); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return ErrManifestCancelled
+		}
+		return fmt.Errorf("stat in-progress manifest %s: %w", id, err)
+	}
+	return writeManifestAtomic(manifest, path)
+}
+
+// FinalizeInProgress atomically claims in_progress/<id>.json into a terminal
+// status (completed or failed) under the per-manifest lock. Holding the lock
+// stops a concurrent cancel from interleaving between the cancellation check
+// and the rename, so exactly one of finalize and cancel wins. It returns
+// ErrManifestCancelled when a durable cancelled/ marker is present or the
+// in_progress file has already been moved away.
+func (m *Manager) FinalizeInProgress(id string, target Status) error {
+	if err := ValidateManifestID(id); err != nil {
+		return err
+	}
+	switch target {
+	case StatusCompleted, StatusFailed:
+		// allowed terminal states
+	default:
+		return fmt.Errorf("cannot finalize to status %s", target)
+	}
+	lock, err := m.acquireManifestLock(id)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = lock.Unlock() }()
+
+	if _, err := os.Stat(filepath.Join(m.dirForStatus(StatusCancelled), id+".json")); err == nil {
+		return ErrManifestCancelled
+	}
+	fromPath := filepath.Join(m.dirForStatus(StatusInProgress), id+".json")
+	toPath := filepath.Join(m.dirForStatus(target), id+".json")
+	if err := os.Rename(fromPath, toPath); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return ErrManifestCancelled
+		}
+		return fmt.Errorf("finalize manifest %s: %w", id, err)
+	}
+	return nil
 }
 
 // dirForStatus returns the directory path for a given status.
@@ -578,6 +684,21 @@ func (m *Manager) CancelManifest(id string) error {
 	if err := ValidateManifestID(id); err != nil {
 		return err
 	}
+	lock, err := m.acquireManifestLock(id)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = lock.Unlock() }()
+	return m.cancelManifestLocked(id)
+}
+
+// cancelManifestLocked performs the cancel rename and inline-status rewrite
+// while the caller holds the per-manifest lock. Serializing with
+// WriteInProgressCheckpoint and FinalizeInProgress through that lock guarantees
+// the rename cannot interleave a checkpoint's atomic write, so cancelled/<id>.json
+// always ends up as a fully valid manifest and in_progress/<id>.json is never
+// left torn or resurrected.
+func (m *Manager) cancelManifestLocked(id string) error {
 	for _, fromStatus := range []Status{StatusPending, StatusInProgress} {
 		fromPath := filepath.Join(m.dirForStatus(fromStatus), id+".json")
 		if _, err := os.Stat(fromPath); os.IsNotExist(err) {

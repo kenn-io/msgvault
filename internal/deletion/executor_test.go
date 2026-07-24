@@ -1087,7 +1087,7 @@ func TestExecutor_SaveCheckpoint_DoesNotResurrectCancelledManifest(t *testing.T)
 	require.NoError(t, tc.Mgr.CancelManifest(manifest.ID), "daemon CancelManifest")
 
 	// Invoke the checkpoint write directly at the race boundary.
-	tc.Exec.saveCheckpoint(manifest, manifest.ID, path, 5, 5, 0, nil)
+	tc.Exec.saveCheckpoint(manifest, manifest.ID, 5, 5, 0, nil)
 
 	// The in_progress file must not be resurrected; the manifest lives only
 	// in cancelled/.
