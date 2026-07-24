@@ -2,12 +2,15 @@
 # Pin by digest for reproducibility; update periodically
 FROM golang:1.26-bookworm@sha256:18aedc16aa19b3fd7ded7245fc14b109e054d65d22ed53c355c899582bbb2113 AS builder
 
-# Install build dependencies for CGO (SQLite, DuckDB)
+# Install build dependencies for CGO (SQLite, DuckDB).
+# libsqlite3-dev provides sqlite3.h, required to compile the sqlite-vec
+# extension (asg017/sqlite-vec-go-bindings) under -tags sqlite_vec.
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
     gcc \
     g++ \
     make \
     git \
+    libsqlite3-dev \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /src
@@ -25,7 +28,7 @@ ARG BUILD_DATE=unknown
 
 # Note: Module path must match go.mod (go.kenn.io/msgvault)
 RUN CGO_ENABLED=1 go build \
-    -tags fts5 \
+    -tags "fts5 sqlite_vec" \
     -trimpath \
     -ldflags="-s -w \
         -X go.kenn.io/msgvault/cmd/msgvault/cmd.Version=${VERSION} \
