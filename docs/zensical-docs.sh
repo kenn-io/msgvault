@@ -53,6 +53,42 @@ fi
 mv "$tmp_config_base" "$tmp_config"
 tmp_config_base=""
 
+# Local credential/secret artifacts that must never enter the public docs tree.
+# Keep in sync with FORBIDDEN_SITE_FILENAMES in docs/scripts/check_built_site.py.
+credential_globs=(
+  'client_secret*.json'
+  'oauth_client*.json'
+  'credentials*.json'
+  'service_account*.json'
+  'service-account*.json'
+  'token.json'
+  'tokens.json'
+  'token-*.json'
+  '*.pem'
+  '*.key'
+  '*.crt'
+  '*.cer'
+  '*.der'
+  '*.p12'
+  '*.pfx'
+  '*.p8'
+  '*.jks'
+  '*.keystore'
+  '*.ppk'
+  'id_rsa*'
+  'id_dsa*'
+  'id_ecdsa*'
+  'id_ed25519*'
+  '*.tfstate'
+  '*.tfstate.backup'
+  '*.tfvars'
+)
+
+tar_credential_excludes=()
+for glob in "${credential_globs[@]}"; do
+  tar_credential_excludes+=(--exclude "./$glob")
+done
+
 (
   cd "$docs_root"
   tar \
@@ -61,8 +97,7 @@ tmp_config_base=""
     --exclude './.env' \
     --exclude './.env.*' \
     --exclude './.env*.local' \
-    --exclude './client_secret*.json' \
-    --exclude './oauth_client*.json' \
+    "${tar_credential_excludes[@]}" \
     --exclude './site' \
     --exclude './zensical-public-docs.*' \
     --exclude './.zensical-build.*' \
@@ -85,11 +120,13 @@ tmp_config_base=""
 
 # The temporary docs tree is the public publishing boundary. Keep ignored local
 # credentials and dotfiles out even if a future tar implementation misses a glob.
-find "$tmp_docs" -depth \( \
-  -name '.*' -o \
-  -iname 'client_secret*.json' -o \
-  -iname 'oauth_client*.json' \
-\) -exec rm -rf {} +
+# This backstop matches at any depth (tar excludes above only anchor the root).
+find_prune_expr=('(' -name '.*')
+for glob in "${credential_globs[@]}"; do
+  find_prune_expr+=(-o -iname "$glob")
+done
+find_prune_expr+=(')')
+find "$tmp_docs" -depth "${find_prune_expr[@]}" -exec rm -rf {} +
 
 awk -v docs_dir="$tmp_docs_name" -v site_dir="$site_dir" '
   $0 == "docs_dir = \"docs\"" {

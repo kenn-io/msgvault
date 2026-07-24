@@ -137,9 +137,36 @@ FORBIDDEN_PATTERNS = [
     "sl-markdown-content",
 ]
 
+# Local credential/secret artifacts that must never appear in the published site.
+# Keep in sync with credential_globs in docs/zensical-docs.sh. Patterns are matched
+# against the lowercased file name, so they must be written lowercase.
 FORBIDDEN_SITE_FILENAMES = [
     "client_secret*.json",
     "oauth_client*.json",
+    "credentials*.json",
+    "service_account*.json",
+    "service-account*.json",
+    "token.json",
+    "tokens.json",
+    "token-*.json",
+    "*.pem",
+    "*.key",
+    "*.crt",
+    "*.cer",
+    "*.der",
+    "*.p12",
+    "*.pfx",
+    "*.p8",
+    "*.jks",
+    "*.keystore",
+    "*.ppk",
+    "id_rsa*",
+    "id_dsa*",
+    "id_ecdsa*",
+    "id_ed25519*",
+    "*.tfstate",
+    "*.tfstate.backup",
+    "*.tfvars",
 ]
 
 ALLOWED_MISSING_LOCAL_PATHS = {
@@ -371,9 +398,9 @@ def check_fragment_nav_labels(current: pathlib.Path, parser: LinkParser) -> None
                 )
 
 
-def check_public_site_file_inventory() -> None:
-    for path in SITE.rglob("*"):
-        rel = path.relative_to(SITE)
+def check_public_site_file_inventory(site: pathlib.Path = SITE) -> None:
+    for path in site.rglob("*"):
+        rel = path.relative_to(site)
         for part in rel.parts:
             if part.startswith("."):
                 fail(f"forbidden public site dotfile: {rel.as_posix()}")
