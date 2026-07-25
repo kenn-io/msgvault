@@ -28,42 +28,7 @@ func runStats(cmd *cobra.Command, _ []string) error {
 	out := cmd.OutOrStdout()
 	scoped := statsAccount != "" || statsCollection != ""
 
-	if scoped {
-		return runHTTPScopedStats(cmd, out)
-	}
-
 	s, info, err := OpenHTTPStore(cmd.Context())
-	if err != nil {
-		return fmt.Errorf("open store: %w", err)
-	}
-	defer func() { _ = s.Close() }()
-
-	dbStats, err := s.GetStats()
-	if err != nil {
-		logger.Warn("stats failed", "error", err.Error())
-		return fmt.Errorf("get stats: %w", err)
-	}
-	logger.Info("stats",
-		tableMessages, dbStats.MessageCount,
-		"threads", dbStats.ThreadCount,
-		tableAttachments, dbStats.AttachmentCount,
-		tableLabels, dbStats.LabelCount,
-		"accounts", dbStats.SourceCount,
-		"db_bytes", dbStats.DatabaseSize,
-	)
-
-	if info.Kind == HTTPStoreConfiguredRemote {
-		_, _ = fmt.Fprintf(out, "Remote: %s\n", info.URL)
-	} else {
-		_, _ = fmt.Fprintf(out, "Database: %s\n", cfg.DatabaseDSN())
-	}
-
-	printStats(out, dbStats)
-	return nil
-}
-
-func runHTTPScopedStats(cmd *cobra.Command, out io.Writer) error {
-	s, _, err := OpenHTTPStore(cmd.Context())
 	if err != nil {
 		return fmt.Errorf("open store: %w", err)
 	}
@@ -74,24 +39,36 @@ func runHTTPScopedStats(cmd *cobra.Command, out io.Writer) error {
 		logger.Warn("stats failed", "error", err.Error())
 		return fmt.Errorf("get stats: %w", err)
 	}
+	dbStats := resp.Stats
 	logger.Info("stats",
-		tableMessages, resp.Stats.MessageCount,
-		"threads", resp.Stats.ThreadCount,
-		tableAttachments, resp.Stats.AttachmentCount,
-		tableLabels, resp.Stats.LabelCount,
-		"accounts", resp.Stats.SourceCount,
-		"db_bytes", resp.Stats.DatabaseSize,
+		tableMessages, dbStats.MessageCount,
+		"threads", dbStats.ThreadCount,
+		tableAttachments, dbStats.AttachmentCount,
+		tableLabels, dbStats.LabelCount,
+		"accounts", dbStats.SourceCount,
+		"db_bytes", dbStats.DatabaseSize,
 	)
 
-	label := resp.ScopeLabel
-	if label == "" {
-		if statsAccount != "" {
-			label = statsAccount
-		} else {
-			label = statsCollection
+	if scoped {
+		label := resp.ScopeLabel
+		if label == "" {
+			if statsAccount != "" {
+				label = statsAccount
+			} else {
+				label = statsCollection
+			}
 		}
+		printScopedStats(out, dbStats, statsAccount != "", label, resp.ScopeSourceCount)
+		return nil
 	}
-	printScopedStats(out, resp.Stats, statsAccount != "", label, resp.ScopeSourceCount)
+
+	if info.Kind == HTTPStoreConfiguredRemote {
+		_, _ = fmt.Fprintf(out, "Remote: %s\n", info.URL)
+	} else {
+		_, _ = fmt.Fprintf(out, "Database: %s\n", cfg.DatabaseDSN())
+	}
+
+	printStats(out, dbStats)
 	return nil
 }
 

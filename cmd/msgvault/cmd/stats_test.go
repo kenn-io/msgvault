@@ -96,7 +96,7 @@ func TestStatsCommand_EmptyCollectionRejected(t *testing.T) {
 
 func TestStatsCommand_ScopedUsesLocalDaemonHTTPAndPreservesLocalOutput(t *testing.T) {
 	require := require.New(t)
-	assert := assert.New(t)
+	assertions := assert.New(t)
 	dataDir := t.TempDir()
 	testCfg := &config.Config{
 		HomeDir: dataDir,
@@ -133,9 +133,9 @@ func TestStatsCommand_ScopedUsesLocalDaemonHTTPAndPreservesLocalOutput(t *testin
 	err := cmd.Execute()
 	require.NoError(err, "stats command")
 
-	assert.Equal(1, int(statsRequests.Load()), "stats endpoint calls")
-	assert.Empty(stderr.String(), "stderr")
-	assert.Equal(`Stats for collection "Important" (2 accounts):
+	assert.Equal(t, int32(1), statsRequests.Load(), "exactly one CLI stats request")
+	assertions.Empty(stderr.String(), "stderr")
+	assertions.Equal(`Stats for collection "Important" (2 accounts):
   Messages:    8
   Threads:     6
   Attachments: 3
@@ -149,7 +149,7 @@ Note: Size is global (not scoped).
 
 func TestStatsCommand_UnscopedUsesLocalDaemonHTTPAndPreservesLocalOutput(t *testing.T) {
 	require := require.New(t)
-	assert := assert.New(t)
+	assertions := assert.New(t)
 	dataDir := t.TempDir()
 	testCfg := &config.Config{
 		HomeDir: dataDir,
@@ -186,9 +186,9 @@ func TestStatsCommand_UnscopedUsesLocalDaemonHTTPAndPreservesLocalOutput(t *test
 	err := cmd.Execute()
 	require.NoError(err, "stats command")
 
-	assert.Equal(1, int(statsRequests.Load()), "stats endpoint calls")
-	assert.Empty(stderr.String(), "stderr")
-	assert.Equal("Database: "+testCfg.DatabaseDSN()+`
+	assert.Equal(t, int32(1), statsRequests.Load(), "exactly one CLI stats request")
+	assertions.Empty(stderr.String(), "stderr")
+	assertions.Equal("Database: "+testCfg.DatabaseDSN()+`
   Messages:    3
   Threads:     2
   Attachments: 5
@@ -206,46 +206,45 @@ func statsHTTPDaemon(t *testing.T) (*httptest.Server, *atomic.Int32) {
 		Service: daemonService,
 		Version: Version,
 	}))
-	mux.HandleFunc("/api/v1/stats", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-		if !isLocalDaemonAuthProbe(r) {
-			statsRequests.Add(1)
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{
-			"total_messages": 3,
-			"total_threads": 2,
-			"total_accounts": 1,
-			"total_labels": 4,
-			"total_attachments": 5,
-			"database_size_bytes": 1048576
-		}`))
+	mux.HandleFunc("/api/v1/stats", func(w http.ResponseWriter, _ *http.Request) {
+		assert.Fail(t, "stats command must not use the general statistics route")
+		http.Error(w, "use /api/v1/cli/stats", http.StatusInternalServerError)
 	})
 	mux.HandleFunc("/api/v1/cli/stats", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		if r.URL.Query().Get("collection") != "Important" {
-			http.Error(w, "missing collection", http.StatusBadRequest)
-			return
-		}
 		statsRequests.Add(1)
 		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Query().Get("collection") == "Important" {
+			_, _ = w.Write([]byte(`{
+				"stats": {
+					"total_messages": 8,
+					"total_threads": 6,
+					"total_accounts": 2,
+					"total_labels": 9,
+					"total_attachments": 3,
+					"database_size_bytes": 2097152
+				},
+				"scope_label": "Important",
+				"scope_source_count": 2
+			}`))
+			return
+		}
+		if r.URL.Query().Get("account") != "" || r.URL.Query().Get("collection") != "" {
+			http.Error(w, "unexpected scope", http.StatusBadRequest)
+			return
+		}
 		_, _ = w.Write([]byte(`{
 			"stats": {
-				"total_messages": 8,
-				"total_threads": 6,
-				"total_accounts": 2,
-				"total_labels": 9,
-				"total_attachments": 3,
-				"database_size_bytes": 2097152
-			},
-			"scope_label": "Important",
-			"scope_source_count": 2
+				"total_messages": 3,
+				"total_threads": 2,
+				"total_accounts": 1,
+				"total_labels": 4,
+				"total_attachments": 5,
+				"database_size_bytes": 1048576
+			}
 		}`))
 	})
 	server := httptest.NewServer(mux)
@@ -254,14 +253,10 @@ func statsHTTPDaemon(t *testing.T) (*httptest.Server, *atomic.Int32) {
 }
 
 func registerStatsProbeHandler(mux *http.ServeMux) {
-	mux.HandleFunc("/api/v1/stats", func(w http.ResponseWriter, _ *http.Request) {
+	mux.HandleFunc("/api/v1/health", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"total_messages":0}`))
+		_, _ = w.Write([]byte(`{"status":"ok"}`))
 	})
-}
-
-func isLocalDaemonAuthProbe(r *http.Request) bool {
-	return r.Header.Get(localDaemonAuthProbeHeader) == localDaemonAuthProbeValue
 }
 
 func writeStatsHTTPDaemonRuntime(t *testing.T, dataDir string, server *httptest.Server) {

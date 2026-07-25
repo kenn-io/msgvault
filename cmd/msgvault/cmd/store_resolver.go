@@ -603,7 +603,7 @@ func probeLocalDaemonAuth(ctx context.Context, rt *DaemonRuntime, c *config.Conf
 	probeCtx, cancel := context.WithTimeout(ctx, localDaemonAuthProbeTimeout)
 	defer cancel()
 
-	req, err := http.NewRequestWithContext(probeCtx, http.MethodGet, url+"/api/v1/stats", nil)
+	req, err := http.NewRequestWithContext(probeCtx, http.MethodGet, url+"/api/v1/health", nil)
 	if err != nil {
 		return fmt.Errorf("create local daemon auth probe: %w", err)
 	}
