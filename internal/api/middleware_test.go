@@ -10,6 +10,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/apiprotocol"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/query/querytest"
 	"go.kenn.io/msgvault/internal/store"
@@ -457,6 +458,48 @@ func TestExistingAPIKeyAuthenticationKeepsKeylessLoopbackTrusted(t *testing.T) {
 	srv.Router().ServeHTTP(resp, req)
 
 	assert.Equal(t, http.StatusOK, resp.Code, resp.Body.String())
+}
+
+func TestInvalidCLIAuthenticationCannotOptIntoTimeoutPolicy(t *testing.T) {
+	srv := NewServer(
+		&config.Config{Server: config.ServerConfig{APIKey: cliTimeoutTestAPIKey}},
+		nil, nil, testLogger(),
+	)
+	t.Cleanup(func() {
+		require.NoError(t, srv.Shutdown(context.Background()))
+	})
+
+	invalid := httptest.NewRequest(http.MethodGet, "/api/v1/health", nil)
+	invalid.Header.Set("X-Api-Key", "wrong")
+	invalid.Header.Set(apiprotocol.ClientClassHeader, apiprotocol.ClientClassCLI)
+	assert.False(t, srv.requestUsesCLITimeoutPolicy(invalid))
+
+	invalidResp := httptest.NewRecorder()
+	srv.Router().ServeHTTP(invalidResp, invalid)
+	assert.Equal(t, http.StatusUnauthorized, invalidResp.Code)
+}
+
+func TestProxiedCLIMarkerCannotOptIntoTimeoutPolicy(t *testing.T) {
+	srv := NewServer(
+		&config.Config{Server: config.ServerConfig{
+			APIKey:         cliTimeoutTestAPIKey,
+			TrustedProxies: []string{"127.0.0.1/32"},
+		}},
+		nil, nil, testLogger(),
+	)
+	t.Cleanup(func() {
+		require.NoError(t, srv.Shutdown(context.Background()))
+	})
+
+	proxied := httptest.NewRequest(http.MethodGet, "/api/v1/health", nil)
+	proxied.RemoteAddr = "127.0.0.1:4242"
+	proxied.Header.Set("X-Forwarded-For", "203.0.113.10")
+	proxied.Header.Set(apiprotocol.ClientClassHeader, apiprotocol.ClientClassCLI)
+	assert.False(t, srv.requestUsesCLITimeoutPolicy(proxied))
+
+	proxiedResp := httptest.NewRecorder()
+	srv.Router().ServeHTTP(proxiedResp, proxied)
+	assert.Equal(t, http.StatusUnauthorized, proxiedResp.Code)
 }
 
 // TestAPICacheControlDefaultsToNoStore covers the shared-cache bypass: every

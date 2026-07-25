@@ -18,12 +18,15 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/kit/daemon"
+	"go.kenn.io/msgvault/internal/apiprotocol"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/deletion"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/store"
 )
+
+const cliTimeoutTestAPIKey = "cli-timeout-test-key"
 
 // syncBuffer is a concurrency-safe buffer for capturing slog output written
 // from the logger goroutine while the test goroutine reads it.
@@ -976,22 +979,26 @@ func TestCORSDisabledByDefault(t *testing.T) {
 		"expected no CORS header when no origins configured")
 }
 
-// deadlineClearingRecorder records SetWriteDeadline calls so tests can verify
-// the timeout middleware clears the absolute write deadline for long requests.
+// deadlineClearingRecorder records deadline calls so tests can verify the
+// timeout middleware clears absolute connection deadlines for long requests.
 type deadlineClearingRecorder struct {
 	*httptest.ResponseRecorder
 
-	deadlines []time.Time
+	readDeadlines  []time.Time
+	writeDeadlines []time.Time
 }
 
-func (w *deadlineClearingRecorder) SetWriteDeadline(t time.Time) error {
-	w.deadlines = append(w.deadlines, t)
+func (w *deadlineClearingRecorder) SetReadDeadline(deadline time.Time) error {
+	w.readDeadlines = append(w.readDeadlines, deadline)
 	return nil
 }
 
-func TestTimeoutMiddlewareClearsWriteDeadlineForLongRequests(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
+func (w *deadlineClearingRecorder) SetWriteDeadline(deadline time.Time) error {
+	w.writeDeadlines = append(w.writeDeadlines, deadline)
+	return nil
+}
+
+func TestTimeoutMiddlewareClearsReadAndWriteDeadlines(t *testing.T) {
 	srv := NewServerWithOptions(ServerOptions{
 		Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}},
 		Logger: testLogger(),
@@ -1001,12 +1008,164 @@ func TestTimeoutMiddlewareClearsWriteDeadlineForLongRequests(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
-	long := &deadlineClearingRecorder{ResponseRecorder: httptest.NewRecorder()}
-	handler.ServeHTTP(long, httptest.NewRequest(http.MethodPost, "/api/v1/cli/sync-full", nil))
-	require.Len(long.deadlines, 1, "long request clears the write deadline")
-	assert.True(long.deadlines[0].IsZero(), "deadline cleared, not extended")
+	longPath := httptest.NewRequest(http.MethodPost, "/api/v1/cli/sync-full", nil)
+	marked := httptest.NewRequest(http.MethodGet, "/api/v1/cli/stats", nil)
+	marked.Header.Set(apiprotocol.ClientClassHeader, apiprotocol.ClientClassCLI)
+	bounded := httptest.NewRequest(http.MethodGet, "/api/v1/cli/stats", nil)
 
-	bounded := &deadlineClearingRecorder{ResponseRecorder: httptest.NewRecorder()}
-	handler.ServeHTTP(bounded, httptest.NewRequest(http.MethodGet, "/api/v1/cli/stats", nil))
-	assert.Empty(bounded.deadlines, "bounded request keeps the server write deadline")
+	tests := []struct {
+		name      string
+		request   *http.Request
+		wantClear bool
+	}{
+		{name: "long path", request: longPath, wantClear: true},
+		{name: "marked request", request: marked, wantClear: true},
+		{name: "bounded request", request: bounded},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			recorder := &deadlineClearingRecorder{ResponseRecorder: httptest.NewRecorder()}
+			handler.ServeHTTP(recorder, tt.request)
+			if tt.wantClear {
+				require.Len(t, recorder.readDeadlines, 1, "read deadline changes")
+				assert.True(t, recorder.readDeadlines[0].IsZero(), "read deadline cleared, not extended")
+				require.Len(t, recorder.writeDeadlines, 1, "write deadline changes")
+				assert.True(t, recorder.writeDeadlines[0].IsZero(), "write deadline cleared, not extended")
+				return
+			}
+			assert.Empty(t, recorder.readDeadlines, "bounded request keeps the server read deadline")
+			assert.Empty(t, recorder.writeDeadlines, "bounded request keeps the server write deadline")
+		})
+	}
+}
+
+func TestCLIRequestDurationPolicy(t *testing.T) {
+	tests := []struct {
+		name        string
+		apiKey      string
+		configure   func(*Server, *http.Request)
+		wantTimeout bool
+	}{
+		{
+			name: "keyless loopback CLI",
+			configure: func(_ *Server, req *http.Request) {
+				req.RemoteAddr = "127.0.0.1:4242"
+				req.Header.Set(apiprotocol.ClientClassHeader, apiprotocol.ClientClassCLI)
+			},
+		},
+		{
+			name:   "API key CLI",
+			apiKey: cliTimeoutTestAPIKey,
+			configure: func(_ *Server, req *http.Request) {
+				req.Header.Set("X-Api-Key", cliTimeoutTestAPIKey)
+				req.Header.Set(apiprotocol.ClientClassHeader, apiprotocol.ClientClassCLI)
+			},
+		},
+		{
+			name:        "unmarked API request",
+			wantTimeout: true,
+		},
+		{
+			name:        "browser session cannot opt in",
+			apiKey:      cliTimeoutTestAPIKey,
+			wantTimeout: true,
+			configure: func(srv *Server, req *http.Request) {
+				id, _, err := srv.sessions.create()
+				require.NoError(t, err, "create session")
+				req.AddCookie(&http.Cookie{
+					Name:     sessionCookieName,
+					Value:    id,
+					Secure:   true,
+					HttpOnly: true,
+					SameSite: http.SameSiteStrictMode,
+				})
+				req.Header.Set(apiprotocol.ClientClassHeader, apiprotocol.ClientClassCLI)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv := NewServerWithOptions(ServerOptions{
+				Config: &config.Config{Server: config.ServerConfig{
+					APIPort: 8080,
+					APIKey:  tt.apiKey,
+				}},
+				Logger:         testLogger(),
+				RequestTimeout: 5 * time.Millisecond,
+			})
+			t.Cleanup(func() {
+				require.NoError(t, srv.Shutdown(context.Background()))
+			})
+
+			handlerResult := make(chan error, 1)
+			handler := srv.timeoutMiddleware(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+				select {
+				case <-time.After(40 * time.Millisecond):
+					handlerResult <- nil
+				case <-r.Context().Done():
+					handlerResult <- r.Context().Err()
+				}
+			}))
+			req := httptest.NewRequest(http.MethodGet, "/api/v1/cli/stats", nil)
+			if tt.configure != nil {
+				tt.configure(srv, req)
+			}
+
+			handler.ServeHTTP(httptest.NewRecorder(), req)
+			err := <-handlerResult
+			if tt.wantTimeout {
+				assert.ErrorIs(t, err, context.DeadlineExceeded)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestTimeoutMiddlewareMarkedRequestPreservesCallerCancellation(t *testing.T) {
+	srv := NewServerWithOptions(ServerOptions{
+		Config:         &config.Config{Server: config.ServerConfig{APIPort: 8080}},
+		Logger:         testLogger(),
+		RequestTimeout: 5 * time.Millisecond,
+	})
+
+	started := make(chan struct{})
+	handlerResult := make(chan error, 1)
+	handler := srv.timeoutMiddleware(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		close(started)
+		<-r.Context().Done()
+		handlerResult <- r.Context().Err()
+	}))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/cli/stats", nil).WithContext(ctx)
+	req.Header.Set(apiprotocol.ClientClassHeader, apiprotocol.ClientClassCLI)
+	requestDone := make(chan struct{})
+	go func() {
+		handler.ServeHTTP(httptest.NewRecorder(), req)
+		close(requestDone)
+	}()
+
+	require.Eventually(t, func() bool {
+		select {
+		case <-started:
+			return true
+		default:
+			return false
+		}
+	}, time.Second, time.Millisecond, "handler starts")
+	cancel()
+
+	select {
+	case err := <-handlerResult:
+		require.ErrorIs(t, err, context.Canceled)
+	case <-time.After(time.Second):
+		require.FailNow(t, "handler did not observe caller cancellation")
+	}
+	select {
+	case <-requestDone:
+	case <-time.After(time.Second):
+		require.FailNow(t, "marked request did not return after caller cancellation")
+	}
 }

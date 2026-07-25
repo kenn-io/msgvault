@@ -28,6 +28,7 @@ import (
 	"go.kenn.io/kit/daemon"
 	"go.kenn.io/kit/pack"
 	"go.kenn.io/kit/packstore"
+	"go.kenn.io/msgvault/internal/apiprotocol"
 	"go.kenn.io/msgvault/internal/attachmentstore"
 	"go.kenn.io/msgvault/internal/cacheops"
 	"go.kenn.io/msgvault/internal/circleback"
@@ -1045,6 +1046,83 @@ func TestHandleQueryEnforcesQueryTimeout(t *testing.T) {
 
 	require.Equal(http.StatusServiceUnavailable, resp.Code, "body: %s", resp.Body.String())
 	assert.Contains(resp.Body.String(), "query_timeout")
+}
+
+func TestMarkedCLIQueryCancellationInterruptsDuckDB(t *testing.T) {
+	engine, err := query.NewDuckDBEngine("", "", nil)
+	require.NoError(t, err, "NewDuckDBEngine")
+	t.Cleanup(func() { _ = engine.Close() })
+
+	queryStarted := make(chan struct{})
+	queryReturned := make(chan struct{})
+	queryErr := make(chan error, 1)
+	queryHasDeadline := make(chan bool, 1)
+	srv := NewServerWithOptions(ServerOptions{
+		Config: &config.Config{Server: config.ServerConfig{
+			APIPort: 8080,
+			APIKey:  cliTimeoutTestAPIKey,
+		}},
+		Logger: testLogger(),
+		SQLQueryRunner: func(ctx context.Context, sql string) (*query.QueryResult, error) {
+			_, hasDeadline := ctx.Deadline()
+			queryHasDeadline <- hasDeadline
+			close(queryStarted)
+			result, err := engine.QuerySQL(ctx, sql)
+			queryErr <- err
+			close(queryReturned)
+			return result, err
+		},
+	})
+	srv.queryTimeout = 20 * time.Millisecond
+	httpServer := httptest.NewServer(srv.Router())
+	t.Cleanup(httpServer.Close)
+
+	const slowSQL = `SELECT COUNT(*) FROM range(1000000) a, range(1000000) b
+		WHERE (a.range * b.range) % 7 = 0`
+	body := strings.NewReader(`{"sql":` + strconv.Quote(slowSQL) + `}`)
+	ctx, cancel := context.WithCancel(context.Background())
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, httpServer.URL+queryEndpointPath, body)
+	require.NoError(t, err, "NewRequestWithContext")
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Api-Key", cliTimeoutTestAPIKey)
+	req.Header.Set(apiprotocol.ClientClassHeader, apiprotocol.ClientClassCLI)
+
+	requestDone := make(chan error, 1)
+	go func() {
+		resp, err := http.DefaultClient.Do(req)
+		if resp != nil {
+			_ = resp.Body.Close()
+		}
+		requestDone <- err
+	}()
+
+	require.Eventually(t, func() bool {
+		select {
+		case <-queryStarted:
+			return true
+		default:
+			return false
+		}
+	}, 2*time.Second, 10*time.Millisecond, "DuckDB query starts")
+	assert.False(t, <-queryHasDeadline, "marked query context must not have a server deadline")
+	assert.Never(t, func() bool {
+		select {
+		case <-queryReturned:
+			return true
+		default:
+			return false
+		}
+	}, 60*time.Millisecond, 5*time.Millisecond,
+		"marked query survives the 20ms ordinary query ceiling")
+
+	cancel()
+	select {
+	case <-queryReturned:
+		require.Error(t, <-queryErr, "DuckDB returns cancellation")
+	case <-time.After(5 * time.Second):
+		require.FailNow(t, "DuckDB continued after marked HTTP cancellation")
+	}
+	require.Error(t, <-requestDone, "client observes cancellation")
 }
 
 func TestHandleCLIRunRejectsDisallowedEnv(t *testing.T) {

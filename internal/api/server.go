@@ -18,6 +18,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"go.kenn.io/msgvault/internal/apiprotocol"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/scheduler"
@@ -585,18 +586,34 @@ func (s *Server) Router() http.Handler {
 	return s.router
 }
 
+func (s *Server) requestUsesCLITimeoutPolicy(r *http.Request) bool {
+	if r.Header.Get(apiprotocol.ClientClassHeader) != apiprotocol.ClientClassCLI {
+		return false
+	}
+	switch s.requestAuthentication(r).Mode {
+	case AuthModeAPIKey, AuthModeLoopback:
+		return true
+	default:
+		return false
+	}
+}
+
+func serveWithoutRequestDeadlines(
+	w http.ResponseWriter,
+	r *http.Request,
+	next http.Handler,
+) {
+	controller := http.NewResponseController(w)
+	_ = controller.SetReadDeadline(time.Time{})
+	_ = controller.SetWriteDeadline(time.Time{})
+	next.ServeHTTP(w, r)
+}
+
 func (s *Server) timeoutMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		timeout, bounded := s.requestTimeoutForPath(r.URL.Path)
-		if !bounded {
-			// Long-running request (multi-hour sync, import, embeddings
-			// build): the server's absolute WriteTimeout would sever the
-			// response at the 30-minute mark regardless of activity, so
-			// clear the connection's write deadline for this request. A
-			// disconnected client still ends the work via r.Context()
-			// cancellation. Best-effort: test recorders lack deadlines.
-			_ = http.NewResponseController(w).SetWriteDeadline(time.Time{})
-			next.ServeHTTP(w, r)
+		if s.requestUsesCLITimeoutPolicy(r) || !bounded {
+			serveWithoutRequestDeadlines(w, r, next)
 			return
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), timeout)
