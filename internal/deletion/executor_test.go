@@ -647,26 +647,29 @@ func TestExecutor_Execute_ResumeRetryStillFailing(t *testing.T) {
 // terminal directory, so the file that lands there already carries them
 // instead of depending on a post-rename save.
 //
-// The crash window is simulated by making the terminal directory unwritable,
-// which fails the rename at exactly the point a crash would interrupt it. The
-// durable record must still hold the final state: with the write ordered
-// after the move, the interrupted manifest would be left serialized as
-// in_progress with no CompletedAt.
+// The crash window is simulated by occupying the manifest's destination path
+// in completed/ with a directory, which fails the rename on every OS at
+// exactly the point a crash would interrupt it (unlike chmod, which does not
+// make a directory unwritable on Windows). The durable record must still hold
+// the final state: with the write ordered after the move, the interrupted
+// manifest would be left serialized as in_progress with no CompletedAt.
 func TestExecutor_Finalize_TerminalFileCarriesFinalState(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	tc := NewTestContext(t)
 
 	manifest := tc.CreateManifest("final state", msgIDs(3))
-	completedDir := tc.Mgr.CompletedDir()
-	info, err := os.Stat(completedDir)
-	require.NoError(err, "stat completed dir")
-	require.NoError(os.Chmod(completedDir, 0o500), "make completed dir unwritable")
-	t.Cleanup(func() { _ = os.Chmod(completedDir, info.Mode().Perm()) })
+	blocker := filepath.Join(tc.Mgr.CompletedDir(), manifest.ID+".json")
+	// Occupied only once execution is under way: a terminal file present
+	// beforehand is (correctly) refused by ClaimManifest as an already
+	// finished batch, which would never reach finalization.
+	tc.Exec.WithProgress(&onStartProgress{hook: func() {
+		require.NoError(os.Mkdir(blocker, 0o755), "occupy the terminal destination path")
+	}})
 
-	err = tc.ExecuteWithOpts(manifest.ID, trashOpts(100))
+	err := tc.ExecuteWithOpts(manifest.ID, trashOpts(100))
 	require.Error(err, "the interrupted move must surface")
-	require.NoError(os.Chmod(completedDir, info.Mode().Perm()), "restore permissions")
+	require.NoError(os.Remove(blocker), "clear the blocking directory")
 
 	loaded, err := LoadManifest(filepath.Join(tc.Mgr.InProgressDir(), manifest.ID+".json"))
 	require.NoError(err, "load the durable record left by the interrupted finalize")
@@ -700,33 +703,50 @@ func TestExecutor_Finalize_CompletedFileIsSelfConsistent(t *testing.T) {
 	assert.True(os.IsNotExist(statErr), "in_progress file removed by the finalize rename")
 }
 
+// onStartProgress runs a hook when execution starts — after the manifest is
+// claimed into in_progress/, before any message is deleted — so a test can
+// disturb the manifest's on-disk state mid-execution.
+type onStartProgress struct {
+	hook func()
+}
+
+func (p *onStartProgress) OnStart(total, alreadyProcessed int)         { p.hook() }
+func (p *onStartProgress) OnProgress(processed, succeeded, failed int) {}
+func (p *onStartProgress) OnComplete(succeeded, failed int)            {}
+
 // TestExecutor_Finalize_PropagatesPersistFailure verifies that a failure to
-// persist the final state is returned rather than logged and swallowed: the
-// manifest stays in in_progress/ (resumable) and the caller does not report
-// success. The in_progress directory is made read-only to fail the write.
+// persist the final state is returned rather than logged and swallowed, so
+// the caller never reports success over a manifest whose durable record was
+// never updated.
+//
+// The write is failed by replacing the claimed in_progress file with a
+// directory once execution is under way, which defeats the atomic writer's
+// final rename on every OS (chmod does not make a directory unwritable on
+// Windows).
 func TestExecutor_Finalize_PropagatesPersistFailure(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	tc := NewTestContext(t)
 
 	manifest := tc.CreateManifest("persist failure", msgIDs(2))
-	_, err := tc.Mgr.ClaimManifest(manifest.ID, MethodTrash)
-	require.NoError(err, "ClaimManifest")
+	inProgressPath := filepath.Join(tc.Mgr.InProgressDir(), manifest.ID+".json")
+	tc.Exec.WithProgress(&onStartProgress{hook: func() {
+		require.NoError(os.Remove(inProgressPath), "remove the claimed manifest file")
+		require.NoError(os.Mkdir(inProgressPath, 0o755), "occupy its path with a directory")
+	}})
 
-	inProgressDir := tc.Mgr.InProgressDir()
-	info, err := os.Stat(inProgressDir)
-	require.NoError(err, "stat in_progress dir")
-	require.NoError(os.Chmod(inProgressDir, 0o500), "make in_progress read-only")
-	t.Cleanup(func() { _ = os.Chmod(inProgressDir, info.Mode().Perm()) })
-
-	err = tc.ExecuteWithOpts(manifest.ID, trashOpts(100))
+	err := tc.ExecuteWithOpts(manifest.ID, trashOpts(100))
 	require.Error(err, "a final-state write failure must surface")
 	assert.Contains(err.Error(), "persist final state")
-	tc.AssertNotCompleted()
 
-	require.NoError(os.Chmod(inProgressDir, info.Mode().Perm()), "restore permissions")
-	tc.AssertInProgressCount(1)
+	// The manifest was not moved into a terminal directory, and no stray temp
+	// file was left behind by the failed atomic write.
 	tc.AssertCompletedCount(0)
+	tc.AssertFailedCount(0)
+	require.NoError(os.Remove(inProgressPath), "clear the blocking directory")
+	entries, err := os.ReadDir(tc.Mgr.InProgressDir())
+	require.NoError(err, "ReadDir in_progress")
+	assert.Empty(entries, "no leftover temp files from the failed write")
 }
 
 func TestExecutor_ExecuteBatch_Scenarios(t *testing.T) {
