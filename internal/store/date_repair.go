@@ -23,23 +23,32 @@ type MessageDateRepair struct {
 	ExpectedLastModifiedAt string
 }
 
+func (s *Store) messageDateOutsideBoundsPredicate(column string) string {
+	boundExpr := "?"
+	if !s.IsPostgreSQL() {
+		column = "julianday(" + column + ")"
+		boundExpr = "julianday(?)"
+	}
+	return column + " < " + boundExpr + " OR " + column + " > " + boundExpr
+}
+
 // ListMessageDateRepairCandidates returns email rows whose canonical sent time
 // is missing or outside the inclusive bounds.
 func (s *Store) ListMessageDateRepairCandidates(
 	ctx context.Context,
 	lowerBound, upperBound time.Time,
 ) ([]MessageDateRepairCandidate, error) {
-	rows, err := s.db.QueryContext(ctx, `
+	query := fmt.Sprintf(`
 		SELECT m.id, m.sent_at, m.internal_date, CAST(m.last_modified AS TEXT)
 		FROM messages m
 		WHERE m.message_type = 'email'
 		  AND (
 			m.sent_at IS NULL
-			OR m.sent_at < ?
-			OR m.sent_at > ?
+			OR %s
 		  )
 		ORDER BY m.id
-	`, lowerBound.UTC(), upperBound.UTC())
+	`, s.messageDateOutsideBoundsPredicate("m.sent_at"))
+	rows, err := s.db.QueryContext(ctx, query, lowerBound.UTC(), upperBound.UTC())
 	if err != nil {
 		return nil, fmt.Errorf("query date repair candidates: %w", err)
 	}
@@ -72,19 +81,22 @@ func (s *Store) ApplyMessageDateRepairs(
 	repairs []MessageDateRepair,
 	lowerBound, upperBound time.Time,
 ) error {
+	updateSQL := fmt.Sprintf(`
+		UPDATE messages
+		SET sent_at = ?
+		WHERE id = ?
+		  AND (
+			sent_at IS NULL
+			OR %s
+		  )
+		  AND CAST(last_modified AS TEXT) = ?
+	`, s.messageDateOutsideBoundsPredicate("sent_at"))
+
 	return s.withTx(func(tx *loggedTx) error {
 		for _, repair := range repairs {
-			result, err := tx.ExecContext(ctx, `
-				UPDATE messages
-				SET sent_at = ?
-				WHERE id = ?
-				  AND (
-					sent_at IS NULL
-					OR sent_at < ?
-					OR sent_at > ?
-				  )
-				  AND CAST(last_modified AS TEXT) = ?
-			`,
+			result, err := tx.ExecContext(
+				ctx,
+				updateSQL,
 				repair.SentAt.UTC(),
 				repair.ID,
 				lowerBound.UTC(),

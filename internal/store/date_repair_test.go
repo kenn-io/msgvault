@@ -72,6 +72,107 @@ func TestMessageDateRepairsListAndApplyCandidates(t *testing.T) {
 	}
 }
 
+func TestMessageDateRepairsCompareOffsetTimestampsByInstant(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := storetest.New(t)
+	lower := time.Date(1990, 1, 1, 0, 0, 0, 0, time.UTC)
+	upper := time.Date(2026, 8, 22, 12, 0, 0, 0, time.UTC)
+
+	tests := []struct {
+		sourceID string
+		sentAt   string
+	}{
+		{
+			sourceID: "valid-after-lower",
+			sentAt:   "1989-12-31T19:30:00-05:00",
+		},
+		{
+			sourceID: "invalid-before-lower",
+			sentAt:   "1990-01-01 00:30:00+01:00",
+		},
+		{
+			sourceID: "valid-before-upper",
+			sentAt:   "2026-08-22 13:30:00+02:00",
+		},
+		{
+			sourceID: "invalid-after-upper",
+			sentAt:   "2026-08-22 07:30:00-05:00",
+		},
+	}
+
+	ids := make([]int64, 0, len(tests))
+	for _, tc := range tests {
+		id := f.NewMessage().
+			WithSourceMessageID(tc.sourceID).
+			WithSentAt(lower).
+			Create(t, f.Store)
+		_, err := f.Store.DB().Exec(
+			f.Store.Rebind("UPDATE messages SET sent_at = ? WHERE id = ?"),
+			tc.sentAt,
+			id,
+		)
+		require.NoError(err, "store offset timestamp %s", tc.sourceID)
+		ids = append(ids, id)
+	}
+
+	candidates, err := f.Store.ListMessageDateRepairCandidates(t.Context(), lower, upper)
+	require.NoError(err)
+	require.Len(candidates, 2)
+	assert.Equal(
+		[]int64{ids[1], ids[3]},
+		[]int64{candidates[0].ID, candidates[1].ID},
+	)
+
+	err = f.Store.ApplyMessageDateRepairs(t.Context(), []store.MessageDateRepair{
+		{
+			ID:                     candidates[0].ID,
+			SentAt:                 lower.Add(time.Hour),
+			ExpectedLastModifiedAt: candidates[0].LastModifiedAt,
+		},
+		{
+			ID:                     candidates[1].ID,
+			SentAt:                 upper.Add(-time.Hour),
+			ExpectedLastModifiedAt: candidates[1].LastModifiedAt,
+		},
+	}, lower, upper)
+	require.NoError(err)
+
+	var validSentAt time.Time
+	var validLastModified string
+	require.NoError(
+		f.Store.DB().QueryRow(
+			f.Store.Rebind(`
+				SELECT sent_at, CAST(last_modified AS TEXT)
+				FROM messages
+				WHERE id = ?
+			`),
+			ids[0],
+		).Scan(&validSentAt, &validLastModified),
+	)
+
+	err = f.Store.ApplyMessageDateRepairs(t.Context(), []store.MessageDateRepair{{
+		ID:                     ids[0],
+		SentAt:                 lower.Add(2 * time.Hour),
+		ExpectedLastModifiedAt: validLastModified,
+	}}, lower, upper)
+	require.ErrorContains(err, "changed after date repair planning")
+
+	var unchangedSentAt time.Time
+	require.NoError(
+		f.Store.DB().QueryRow(
+			f.Store.Rebind("SELECT sent_at FROM messages WHERE id = ?"),
+			ids[0],
+		).Scan(&unchangedSentAt),
+	)
+	assert.True(
+		validSentAt.Equal(unchangedSentAt),
+		"valid timestamp changed from %v to %v",
+		validSentAt,
+		unchangedSentAt,
+	)
+}
+
 func TestApplyMessageDateRepairsRejectsChangedRowsAtomically(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
