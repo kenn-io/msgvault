@@ -843,14 +843,28 @@ func (m *Manager) CancelManifest(id string) error {
 // the rename cannot interleave a checkpoint's atomic write, so cancelled/<id>.json
 // always ends up as a fully valid manifest and in_progress/<id>.json is never
 // left torn or resurrected.
+//
+// in_progress/ is checked before pending/: a crash in claimPendingManifest's
+// publish/remove window leaves a stale pending copy alongside the
+// authoritative initialized in_progress file (see ClaimManifest). Cancelling
+// the in_progress record and removing the stale copy keeps the manifest a
+// single on-disk file — cancelling the pending copy instead would orphan the
+// in_progress file, so lookups would keep reporting the batch as in progress.
 func (m *Manager) cancelManifestLocked(id string) error {
-	for _, fromStatus := range []Status{StatusPending, StatusInProgress} {
+	for _, fromStatus := range []Status{StatusInProgress, StatusPending} {
 		fromPath := filepath.Join(m.dirForStatus(fromStatus), id+".json")
 		if _, err := os.Stat(fromPath); os.IsNotExist(err) {
 			continue
 		}
 		if err := m.MoveManifest(id, fromStatus, StatusCancelled); err != nil {
 			return fmt.Errorf("move manifest %s to cancelled: %w", id, err)
+		}
+		if fromStatus == StatusInProgress {
+			pendingPath := filepath.Join(m.dirForStatus(StatusPending), id+".json")
+			if err := os.Remove(pendingPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+				log.Printf("WARNING: cancelled manifest %s but could not remove stale pending copy: %v",
+					id, err)
+			}
 		}
 		toPath := filepath.Join(m.dirForStatus(StatusCancelled), id+".json")
 		manifest, err := LoadManifest(toPath)

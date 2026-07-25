@@ -1336,6 +1336,43 @@ func TestManager_FinalizeInProgress_RemovesStalePending(t *testing.T) {
 	assertSingleValidManifest(t, mgr, m.ID)
 }
 
+// TestManager_CancelManifest_PrefersInProgressOverStalePending simulates a
+// crash in claimPendingManifest's publish/remove window (in_progress written,
+// pending not yet removed) followed by a cancel. The cancel must move the
+// authoritative in_progress record to cancelled/ and remove the stale pending
+// copy — cancelling the pending copy instead would orphan the in_progress
+// file, so lookups would keep reporting the batch as in progress.
+func TestManager_CancelManifest_PrefersInProgressOverStalePending(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	mgr := testManager(t)
+	m := createTestManifest(t, mgr, "cancel stale pending")
+
+	// Simulate the crash window: publish the initialized in_progress copy
+	// exactly as claimPendingManifest does, but leave the pending file behind.
+	m.Status = StatusInProgress
+	m.Execution = &Execution{StartedAt: time.Now(), Method: MethodTrash}
+	require.NoError(
+		writeManifestAtomic(m, filepath.Join(mgr.InProgressDir(), m.ID+".json")),
+		"publish in_progress copy",
+	)
+	_, err := os.Stat(filepath.Join(mgr.PendingDir(), m.ID+".json"))
+	require.NoError(err, "precondition: stale pending copy present")
+
+	require.NoError(mgr.CancelManifest(m.ID), "CancelManifest")
+
+	_, statErr := os.Stat(filepath.Join(mgr.InProgressDir(), m.ID+".json"))
+	assert.True(os.IsNotExist(statErr), "in_progress record moved to cancelled, got err=%v", statErr)
+	_, statErr = os.Stat(filepath.Join(mgr.PendingDir(), m.ID+".json"))
+	assert.True(os.IsNotExist(statErr), "stale pending copy removed, got err=%v", statErr)
+
+	loaded, status, err := mgr.GetManifestWithStatus(m.ID)
+	require.NoError(err, "GetManifestWithStatus after cancel")
+	assert.Equal(StatusCancelled, status, "lookups must not report the batch as in progress")
+	require.NotNil(loaded.Execution, "cancelled record keeps the initialized execution state")
+	assertSingleValidManifest(t, mgr, m.ID)
+}
+
 // TestManager_ClaimManifest_TerminalWinsOverStalePending covers the guard for
 // a stale pending copy that survives even finalization (a second crash between
 // FinalizeInProgress's rename and its pending cleanup): with both
