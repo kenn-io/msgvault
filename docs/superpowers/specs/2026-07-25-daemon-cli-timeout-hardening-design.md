@@ -97,6 +97,13 @@ in. Authentication and authorization middleware continue to make the final
 access decision; the marker grants no endpoint permission and bypasses no
 operation gate, rate limit, CSRF check, or validation.
 
+The timeout middleware must obtain this mode from the same
+`requestAuthentication` classification used by access-control middleware. It
+must not reproduce API-key, loopback, proxy, forwarded-header, or browser
+session logic in a second classifier. That shared classification is the single
+source of truth for both authorization and eligibility for CLI duration
+policy.
+
 Possession of a valid API key already permits invoking existing unbounded
 maintenance endpoints. The marker therefore changes request-duration policy,
 not the authorization model.
@@ -106,13 +113,19 @@ not the authorization model.
 The internal client gains an explicit CLI request mode. In that mode:
 
 - generated and raw requests include the CLI-origin header;
-- `http.Client.Timeout` is disabled so response-header and response-body time
-  are governed by the caller's context; and
+- the whole-request `http.Client.Timeout` is disabled so response-header and
+  response-body time are governed by the caller's context;
+- bounded transport-level connection establishment and TLS handshake deadlines
+  are retained, including for configured remote daemons, so a black-holed or
+  unreachable host fails promptly; and
 - streaming and non-streaming methods use the same cancellation semantics.
 
 Ordinary bounded construction remains available for liveness checks and tests.
 All production constructors used by CLI commands are audited and placed in CLI
 mode, including the normal `OpenHTTPStore` path and backup freeze coordination.
+Existing bounded-client coverage, including the intent of
+`TestNew_DefaultTimeout`, is retained and adapted to distinguish bounded
+construction from CLI mode rather than deleted.
 
 The CLI request context supplied to `OpenHTTPStore` becomes the fallback
 context for legacy adapter methods whose required interfaces do not accept a
@@ -148,6 +161,21 @@ The existing long-route behavior is implemented through the same deadline
 clearing helper so marked CLI requests and explicitly long API routes do not
 drift apart.
 
+### Raw SQL cancellation safety
+
+Raw SQL is the highest-risk request to make unbounded because one pathological
+DuckDB query can consume every core for minutes. CLI raw SQL may bypass the
+120-second server ceiling only after an integration test demonstrates that
+canceling the marked HTTP request interrupts the underlying query engine work,
+not merely the handler's wait for a result.
+
+The production DuckDB path already uses `QueryContext`, and its engine-level
+cancellation test proves the driver can interrupt a long cross join. The new
+test must cover the complete marked request path through the daemon handler and
+observe prompt query termination after cancellation. If that proof cannot be
+made reliable on supported platforms, CLI raw SQL retains the 120-second
+ceiling while the rest of the CLI policy proceeds.
+
 ### Local daemon authentication probe
 
 The local-daemon authentication probe keeps its two-second deadline but calls
@@ -182,8 +210,10 @@ For each interaction, the audit checks:
 1. the request carries CLI-origin classification;
 2. no whole-operation client timeout remains;
 3. the caller's context reaches the HTTP request;
-4. the server handler passes the request context into database, filesystem, or
-   query-engine work when a context-aware production method exists;
+4. the server handler passes the request context into every potentially
+   blocking database, filesystem, or query-engine operation; a missing
+   context-aware method must be added or the operation must retain its existing
+   safety ceiling until interruption is demonstrably supported;
 5. streaming responses flush progress and remain cancelable; and
 6. operation-gate retries stop when the caller context is canceled.
 
@@ -251,9 +281,13 @@ All Go tests use testify and the required `fts5 sqlite_vec` build tags.
 - A browser-session request cannot opt into CLI timeout behavior.
 - An invalid API key plus the CLI marker is rejected and does not invoke the
   protected handler.
+- A proxied non-loopback request carrying the marker without a valid API key
+  remains bounded and is rejected; forwarded headers cannot manufacture
+  loopback or CLI trust.
 - Canceling the caller context stops a marked request.
 - The raw-query deadline remains effective for unmarked traffic and is removed
-  for authenticated CLI traffic.
+  for authenticated CLI traffic only after a canceled marked raw query is
+  proven to interrupt the underlying DuckDB work promptly.
 - Existing long routes and marked CLI requests share deadline-clearing
   behavior.
 
@@ -263,6 +297,10 @@ All Go tests use testify and the required `fts5 sqlite_vec` build tags.
 - CLI-mode raw and streaming requests carry the same marker.
 - CLI mode has no `http.Client.Timeout`; bounded mode retains its configured
   timeout.
+- CLI mode retains bounded dial and TLS-handshake behavior while leaving
+  response-header and response-body duration to the caller context.
+- The existing default-timeout test is reworked to keep asserting bounded
+  construction while separate coverage asserts unbounded CLI operation time.
 - Canceling the command/root context cancels legacy context-free adapter
   requests.
 - Busy-operation retries stop after caller cancellation.
@@ -286,12 +324,21 @@ All Go tests use testify and the required `fts5 sqlite_vec` build tags.
 ## Acceptance Criteria
 
 - No archive operation initiated through msgvault's internal CLI client has a
-  fixed client or server wall-clock deadline.
+  fixed client or server wall-clock deadline once its cancellation path is
+  proven to interrupt the underlying work.
 - Ctrl+C and caller-context cancellation still terminate those operations.
+- Canceling marked CLI raw SQL demonstrably interrupts the underlying DuckDB
+  query. Raw SQL retains its existing 120-second server ceiling until this
+  criterion passes, and the hardening work is reported as incomplete if the
+  proof cannot be made reliable.
 - Local daemon discovery and authentication fail promptly when the daemon is
   unreachable or rejects credentials.
+- Configured remote daemons retain bounded dial and TLS-handshake timeouts even
+  though CLI operation time is caller-governed.
 - Browser sessions and ordinary API clients retain existing protective
   deadlines.
+- Timeout eligibility and endpoint authorization use the same
+  `requestAuthentication` result, including its proxy and loopback rules.
 - The two reported failure modes are covered: authentication no longer invokes
   statistics, and `msgvault stats` can run beyond the standard daemon timeout.
 - The full repository test suite, formatting, vetting, and lint checks pass
