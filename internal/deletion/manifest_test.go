@@ -1304,6 +1304,66 @@ func TestManager_ClaimManifest_TerminalOrAbsent(t *testing.T) {
 	require.Error(err, "ClaimManifest on absent manifest")
 }
 
+// TestManager_FinalizeInProgress_RemovesStalePending simulates a crash in
+// claimPendingManifest's publish/remove window (in_progress/<id>.json written,
+// pending/<id>.json not yet removed) followed by a successful execution.
+// FinalizeInProgress must remove the stale pending copy so a later
+// ClaimManifest cannot reclaim and re-execute the completed deletion.
+func TestManager_FinalizeInProgress_RemovesStalePending(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	mgr := testManager(t)
+	m := createTestManifest(t, mgr, "stale pending finalize")
+
+	// Simulate the crash window: publish the initialized in_progress copy
+	// exactly as claimPendingManifest does, but leave the pending file behind.
+	m.Status = StatusInProgress
+	m.Execution = &Execution{StartedAt: time.Now(), Method: MethodTrash}
+	require.NoError(
+		writeManifestAtomic(m, filepath.Join(mgr.InProgressDir(), m.ID+".json")),
+		"publish in_progress copy",
+	)
+	_, err := os.Stat(filepath.Join(mgr.PendingDir(), m.ID+".json"))
+	require.NoError(err, "precondition: stale pending copy present")
+
+	require.NoError(mgr.FinalizeInProgress(m.ID, StatusCompleted), "FinalizeInProgress")
+
+	_, statErr := os.Stat(filepath.Join(mgr.PendingDir(), m.ID+".json"))
+	assert.True(os.IsNotExist(statErr), "stale pending copy removed by finalize, got err=%v", statErr)
+
+	_, err = mgr.ClaimManifest(m.ID, MethodTrash)
+	require.ErrorContains(err, "completed", "completed manifest must not be reclaimable")
+	assertSingleValidManifest(t, mgr, m.ID)
+}
+
+// TestManager_ClaimManifest_TerminalWinsOverStalePending covers the guard for
+// a stale pending copy that survives even finalization (a second crash between
+// FinalizeInProgress's rename and its pending cleanup): with both
+// pending/<id>.json and completed/<id>.json present, ClaimManifest must refuse
+// to re-execute the deletion and remove the stale pending copy.
+func TestManager_ClaimManifest_TerminalWinsOverStalePending(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	mgr := testManager(t)
+	m := createTestManifest(t, mgr, "terminal wins stale pending")
+
+	completed := *m
+	completed.Status = StatusCompleted
+	require.NoError(
+		completed.Save(filepath.Join(mgr.CompletedDir(), m.ID+".json")),
+		"seed completed record alongside stale pending copy",
+	)
+
+	_, err := mgr.ClaimManifest(m.ID, MethodTrash)
+	require.ErrorContains(err, "completed", "ClaimManifest with terminal record present")
+
+	_, statErr := os.Stat(filepath.Join(mgr.PendingDir(), m.ID+".json"))
+	assert.True(os.IsNotExist(statErr), "stale pending copy removed by claim guard, got err=%v", statErr)
+	_, statErr = os.Stat(filepath.Join(mgr.InProgressDir(), m.ID+".json"))
+	assert.True(os.IsNotExist(statErr), "no in_progress file created")
+	assertSingleValidManifest(t, mgr, m.ID)
+}
+
 // TestManager_ClaimCancelStress races repeated claim attempts against a
 // concurrent cancel on the same manifest ID. Regardless of interleaving, the
 // manifest must end up in exactly one status directory: either the claim wins

@@ -397,7 +397,10 @@ func (m *Manager) WriteInProgressCheckpoint(manifest *Manifest, id string) error
 // stops a concurrent cancel from interleaving between the cancellation check
 // and the rename, so exactly one of finalize and cancel wins. It returns
 // ErrManifestCancelled when a durable cancelled/ marker is present or the
-// in_progress file has already been moved away.
+// in_progress file has already been moved away. After the rename it also
+// removes any stale pending/<id>.json left by a crash in
+// claimPendingManifest's publish/remove window, so the terminal record is the
+// manifest's only file and a later ClaimManifest cannot re-execute it.
 func (m *Manager) FinalizeInProgress(id string, target Status) error {
 	if err := ValidateManifestID(id); err != nil {
 		return err
@@ -425,6 +428,11 @@ func (m *Manager) FinalizeInProgress(id string, target Status) error {
 		}
 		return fmt.Errorf("finalize manifest %s: %w", id, err)
 	}
+	pendingPath := filepath.Join(m.dirForStatus(StatusPending), id+".json")
+	if err := os.Remove(pendingPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+		log.Printf("WARNING: finalized manifest %s but could not remove stale pending copy: %v",
+			id, err)
+	}
 	return nil
 }
 
@@ -446,20 +454,25 @@ func (m *Manager) FinalizeInProgress(id string, target Status) error {
 //   - in_progress/<id>.json present: this is a resume. Its Execution is left
 //     untouched if already set (it records real checkpoint progress —
 //     LastProcessedIndex, Succeeded, Failed); it is only initialized when nil.
-//   - pending/<id>.json present (and no in_progress file): this is a fresh
-//     claim. The manifest is fully initialized in memory (Status +
+//   - completed/ or failed/<id>.json present: the manifest already reached a
+//     terminal state and must never be re-executed. This is checked BEFORE
+//     pending/ because a crash in claimPendingManifest's publish/remove
+//     window leaves a stale pending copy that survives finalization if the
+//     process also crashes before FinalizeInProgress's cleanup; honoring it
+//     would repeat an already-completed deletion. The stale copy is removed
+//     here (best-effort) and a "cannot execute" error is returned.
+//   - pending/<id>.json present (and no in_progress or terminal file): this
+//     is a fresh claim. The manifest is fully initialized in memory (Status +
 //     Execution) and that initialized state is published to
 //     in_progress/<id>.json via the same atomic temp+rename writeManifestAtomic
 //     uses for checkpoints BEFORE pending/<id>.json is removed. A crash
 //     between the write and the removal leaves an authoritative, fully
-//     initialized in_progress file plus a harmless stale pending file: a
-//     later ClaimManifest or resume reads in_progress first and never
-//     revisits pending/.
-//   - neither present: the manifest is cancelled or already in a terminal
-//     state. A durable cancelled/ marker (checked first, like
-//     FinalizeInProgress) yields ErrManifestCancelled; a terminal-directory
-//     file yields a "cannot execute" error; otherwise the manifest does not
-//     exist.
+//     initialized in_progress file plus a stale pending file: a later
+//     ClaimManifest or resume reads in_progress first and never revisits
+//     pending/, and FinalizeInProgress removes the stale copy on completion.
+//   - none present: a durable cancelled/ marker (checked first, like
+//     FinalizeInProgress) yields ErrManifestCancelled; otherwise the manifest
+//     does not exist.
 //
 // Holding the lock for the whole check-then-act sequence serializes claims
 // against cancelManifestLocked: either the claim completes first (the file is
@@ -492,6 +505,17 @@ func (m *Manager) ClaimManifest(id string, method Method) (*Manifest, error) {
 	}
 
 	pendingPath := filepath.Join(m.dirForStatus(StatusPending), id+".json")
+	for _, status := range []Status{StatusCompleted, StatusFailed} {
+		if _, err := os.Stat(filepath.Join(m.dirForStatus(status), id+".json")); err != nil {
+			continue
+		}
+		if err := os.Remove(pendingPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+			log.Printf("WARNING: manifest %s is %s but stale pending copy could not be removed: %v",
+				id, status, err)
+		}
+		return nil, fmt.Errorf("manifest %s is %s, cannot execute", id, status)
+	}
+
 	manifest, err = LoadManifest(pendingPath)
 	switch {
 	case err == nil:
@@ -500,11 +524,6 @@ func (m *Manager) ClaimManifest(id string, method Method) (*Manifest, error) {
 		return nil, fmt.Errorf("load pending manifest %s: %w", id, err)
 	}
 
-	for _, status := range []Status{StatusCompleted, StatusFailed} {
-		if _, err := os.Stat(filepath.Join(m.dirForStatus(status), id+".json")); err == nil {
-			return nil, fmt.Errorf("manifest %s is %s, cannot execute", id, status)
-		}
-	}
 	return nil, fmt.Errorf("manifest %s not found", id)
 }
 
@@ -534,9 +553,11 @@ func (m *Manager) resumeClaimedManifest(manifest *Manifest, inProgressPath strin
 // claimPendingManifest handles the ClaimManifest fresh-claim branch: the
 // manifest is initialized and published to in_progress/<id>.json before
 // pending/<id>.json is removed, so a crash between the two leaves the
-// authoritative initialized in_progress file in place and only a harmless
-// stale pending file behind (a later claim/resume never looks at pending/
-// once in_progress/ has a file).
+// authoritative initialized in_progress file in place and only a stale
+// pending file behind. The stale copy is inert: a later claim/resume never
+// looks at pending/ once in_progress/ has a file, FinalizeInProgress removes
+// it when the execution reaches a terminal status, and ClaimManifest refuses
+// (and removes) a pending copy shadowed by a terminal record.
 func (m *Manager) claimPendingManifest(
 	manifest *Manifest, pendingPath, inProgressPath string, method Method,
 ) (*Manifest, error) {
