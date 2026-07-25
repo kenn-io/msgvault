@@ -251,16 +251,19 @@
   }
 
   // Esc closes the reading pane before it ever clears `target` (see
-  // handleEscape below), so an in-component walk-back never reaches here
-  // with a pane still open. An EXTERNAL clear — browser Back/Forward, which
-  // drives `target` straight to null via the URL without going through
-  // handleEscape at all — skips that ordering, so without this the reading
-  // pane could keep showing a message from the cluster/domain that just
-  // closed underneath it. Plain state reset only, no focus side effect:
-  // AppShell owns focus restoration for history navigation already.
+  // handleEscape below), and selectListRow closes it before switching, so an
+  // in-component walk-back never reaches here with a pane still open. An
+  // EXTERNAL change — browser Back/Forward, which rewrites `target` via the
+  // URL without going through either path — skips that ordering, and can
+  // jump straight between two non-null targets as well as clear to null.
+  // Reset on ANY target change so the reading pane never keeps showing a
+  // message from the cluster/domain that just closed underneath it. Plain
+  // state reset only, no focus side effect: AppShell owns focus restoration
+  // for history navigation already.
+  let previousTarget: string | null = untrack(() => target);
   $effect(() => {
-    if (target !== null) return;
-    if (selection === undefined && conversationAnchorId === undefined && conversationBounds === undefined) return;
+    if (target === previousTarget) return;
+    previousTarget = target;
     selection = undefined;
     conversationAnchorId = undefined;
     conversationBounds = undefined;

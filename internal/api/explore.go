@@ -744,13 +744,19 @@ func canonicalScopedExploreHash(request ExploreHTTPRequest, scope *ExploreFilter
 	}{Request: request, Scope: *scope}, false)
 }
 
+// applyIdentityScope pins an identity-scoped endpoint's person or domain onto
+// the base predicate. Identity filters are conjunctive (see exploreContext):
+// when the base predicate already carries a participant or domain group, the
+// endpoint's scope is appended as an additional AND group rather than
+// replacing or narrowing it, so e.g. a context filtered to domain A can open
+// domain B's timeline or files and see the entries they share (A∩B). A scope
+// group the predicate already carries is not duplicated.
 func applyIdentityScope(context *query.Context, scope ExploreFilter) error {
 	switch scope.Dimension {
 	case exploreFilterParticipant:
 		// One or more IDs: identity-scoped endpoints pass every member of
 		// the requested participant's cluster so alias-owned activity is in
-		// scope. A base-predicate participant filter narrows the cluster to
-		// the members it allows rather than being overwritten.
+		// scope.
 		if len(scope.Values) == 0 {
 			return errors.New("participant identity scope requires at least one exact ID")
 		}
@@ -762,13 +768,17 @@ func applyIdentityScope(context *query.Context, scope ExploreFilter) error {
 			}
 			ids[i] = id
 		}
-		if len(context.ParticipantIDs) > 0 {
-			ids = slices.DeleteFunc(ids, func(id int64) bool { return !slices.Contains(context.ParticipantIDs, id) })
-			if len(ids) == 0 {
-				return errors.New("the base predicate excludes the requested participant")
-			}
+		if len(context.ParticipantIDs) == 0 {
+			context.ParticipantIDs = ids
+			return nil
 		}
-		context.ParticipantIDs = ids
+		duplicate := sameIDSet(context.ParticipantIDs, ids) ||
+			slices.ContainsFunc(context.AdditionalParticipantGroups, func(group []int64) bool {
+				return sameIDSet(group, ids)
+			})
+		if !duplicate {
+			context.AdditionalParticipantGroups = append(context.AdditionalParticipantGroups, ids)
+		}
 	case exploreFilterDomain:
 		if len(scope.Values) != 1 {
 			return errors.New("domain identity scope requires one exact domain")
@@ -777,17 +787,51 @@ func applyIdentityScope(context *query.Context, scope ExploreFilter) error {
 		if domain == "" {
 			return errors.New("domain identity scope requires an exact domain")
 		}
-		compatible := slices.ContainsFunc(context.Domains, func(candidate string) bool {
-			return strings.EqualFold(strings.TrimSpace(candidate), domain)
-		})
-		if len(context.Domains) > 0 && !compatible {
-			return errors.New("the base predicate excludes the requested domain")
+		if len(context.Domains) == 0 {
+			context.Domains = []string{domain}
+			return nil
 		}
-		context.Domains = []string{domain}
+		group := []string{domain}
+		duplicate := sameDomainSet(context.Domains, group) ||
+			slices.ContainsFunc(context.AdditionalDomainGroups, func(candidate []string) bool {
+				return sameDomainSet(candidate, group)
+			})
+		if !duplicate {
+			context.AdditionalDomainGroups = append(context.AdditionalDomainGroups, group)
+		}
 	default:
 		return fmt.Errorf("unsupported identity scope %q", scope.Dimension)
 	}
 	return nil
+}
+
+// sameIDSet reports whether a and b contain the same IDs regardless of order.
+func sameIDSet(a, b []int64) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	as, bs := slices.Clone(a), slices.Clone(b)
+	slices.Sort(as)
+	slices.Sort(bs)
+	return slices.Equal(as, bs)
+}
+
+// sameDomainSet reports whether a and b contain the same domains regardless of
+// order, case, and surrounding whitespace (the query engine compares domains
+// case-insensitively).
+func sameDomainSet(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	normalize := func(values []string) []string {
+		result := make([]string, len(values))
+		for i, value := range values {
+			result[i] = strings.ToLower(strings.TrimSpace(value))
+		}
+		slices.Sort(result)
+		return result
+	}
+	return slices.Equal(normalize(a), normalize(b))
 }
 
 // exploreContext parses the filter list into a query.Context. Repeated

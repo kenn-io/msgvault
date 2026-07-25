@@ -274,6 +274,30 @@ describe('RelationshipsWorkspace', () => {
     expect(screen.queryByRole('complementary', { name: /Reading pane/ })).toBeNull();
   });
 
+  it('clears the reading pane when Back/Forward jumps straight between two targets without clearing to null', async () => {
+    const { fetchFn } = fetchHandler({
+      '/api/v1/people/1': async () => Response.json(person(1, 'Alice Example')),
+      '/api/v1/relationships/1/timeline': async () => Response.json({
+        canonical_id: 1, identity_revision: 1, cache_revision: 'cache-rel',
+        rows: [{ key: 'message:1', kind: 'email', occurred_at: when, preview: 'Preview', source_id: 1, title: 'Subject', has_attachments: false, message_count: 1 }],
+        total_count: 1
+      })
+    });
+    const props = { ...baseProps(fetchFn), target: 'cluster:1' };
+    const { rerender } = render(RelationshipsWorkspace, { props });
+    await props.controller.openTarget('cluster:1', props.predicate);
+
+    await fireEvent.click((await screen.findByText('Subject')).closest('[role="row"]')!);
+    await screen.findByRole('complementary', { name: /Reading pane/ });
+
+    // A history hop can rewrite the URL from one open relationship directly
+    // to another, so the target prop moves between two non-null values —
+    // the previous target's message must not stay open under the new one.
+    await rerender({ ...props, target: 'cluster:2' });
+
+    expect(screen.queryByRole('complementary', { name: /Reading pane/ })).toBeNull();
+  });
+
   it('does not scope the embedded FilesWorkspace to the previous cluster while a fast target switch is still resolving', async () => {
     const { fetchFn } = fetchHandler({
       '/api/v1/people/1': async () => Response.json(person(1, 'Alice Example')),

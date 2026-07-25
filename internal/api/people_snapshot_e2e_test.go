@@ -176,7 +176,7 @@ func TestIdentitySemanticSnapshotRejectsWrongPredicateAndExpiry(t *testing.T) {
 	assertExploreError(t, expiredFiles, http.StatusConflict, "candidate_snapshot_expired")
 }
 
-func TestIdentityScopeRejectsConflictingPredicateAndCrossIdentityCursor(t *testing.T) {
+func TestIdentityScopeIntersectsBasePredicateAndRejectsCrossIdentityCursor(t *testing.T) {
 	requirements := require.New(t)
 	srv := newReviewSemanticServerWithHits(t, []vector.Hit{
 		{MessageID: 1, Score: .9, Rank: 1},
@@ -188,10 +188,19 @@ func TestIdentityScopeRejectsConflictingPredicateAndCrossIdentityCursor(t *testi
 		11: {ID: 11, MessageID: 1, ConversationID: 101, Filename: "older.txt"},
 		12: {ID: 12, MessageID: 2, ConversationID: 102, Filename: "newest.pdf"},
 	}}
-	conflict := postExploreJSON(t, srv, "/api/v1/people/1/timeline", `{
+	// A base participant filter naming a DIFFERENT person is conjunctive with
+	// the endpoint's identity scope: person 1's timeline restricted to entries
+	// also involving participant 2 — in this fixture only message 3 — instead
+	// of an identity_scope_conflict error.
+	intersection := postExploreJSON(t, srv, "/api/v1/people/1/timeline", `{
 		"filters":[{"dimension":"participant","values":["2"]}]
 	}`)
-	assertExploreError(t, conflict, http.StatusConflict, "identity_scope_conflict")
+	requirements.Equal(http.StatusOK, intersection.Code, intersection.Body.String())
+	var intersectionBody ExploreHTTPResponse
+	requirements.NoError(json.Unmarshal(intersection.Body.Bytes(), &intersectionBody))
+	requirements.Len(intersectionBody.Rows, 1)
+	requirements.NotNil(intersectionBody.Rows[0].AnchorMessageID)
+	requirements.Equal(int64(3), *intersectionBody.Rows[0].AnchorMessageID)
 
 	snapshot := mintIdentitySnapshot(t, srv, "/api/v1/people/search", `{
 		"predicate":{"query":"alpha","search_mode":"semantic"},"limit":25
@@ -223,7 +232,9 @@ func TestIdentityScopeRejectsConflictingPredicateAndCrossIdentityCursor(t *testi
 	assertExploreError(t, crossIdentityFiles, http.StatusBadRequest, "invalid_cursor")
 }
 
-func TestIdentityScopeNarrowsCompatibleMultiValueBaseFilter(t *testing.T) {
+// A multi-value base participant filter AND-composes with the identity scope:
+// (1∨2) ∧ scope(1) leaves only person 1's own message in scope.
+func TestIdentityScopeIntersectsCompatibleMultiValueBaseFilter(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	srv := newIdentityScopeSemanticServer(t)

@@ -100,8 +100,20 @@
     const signature = JSON.stringify({ predicate, identityScope, expectedAuthority, sort, filenameQuery, mimeFamilies, restorationEpoch });
     signature;
     if (signature === requestSignature) return;
+    const isInitialLoad = requestSignature === '';
     requestSignature = signature;
     unacknowledgedRestorationEpoch = restorationEpoch;
+    // The refreshed context may exclude the file the viewer is showing —
+    // close it rather than let its download/open actions keep targeting a
+    // file outside the new predicate or identity scope. A controlled
+    // selection becomes pending until the refreshed listing resolves its
+    // row (reopening the viewer with fresh data) or settles without it.
+    // The initial load is exempt: there is no stale viewer yet, and deep
+    // restoration owns resolving a mount-time controlled selection.
+    if (!isInitialLoad) {
+      viewerFile = undefined;
+      pendingViewerKey = untrack(() => selectedKey) ?? null;
+    }
     const { generation: currentGeneration, signal } = restartListing();
     void loadPage(currentGeneration, undefined, signal).then(() =>
       restoreDeepState(currentGeneration, restorationEpoch, controller?.signal));

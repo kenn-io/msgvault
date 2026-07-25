@@ -779,10 +779,16 @@ func TestApplyIdentityScopeAcceptsCaseEquivalentDomain(t *testing.T) {
 	context := query.Context{Domains: []string{"EXAMPLE.COM"}}
 	err := applyIdentityScope(&context, ExploreFilter{Dimension: exploreFilterDomain, Values: []string{"example.com"}})
 	require.NoError(t, err)
-	assert.Equal(t, []string{"example.com"}, context.Domains)
+	assert.Equal(t, []string{"EXAMPLE.COM"}, context.Domains, "the base group is preserved")
+	assert.Empty(t, context.AdditionalDomainGroups, "a case-equivalent scope is not duplicated")
 }
 
-func TestApplyIdentityScopeNarrowsParticipantClusterToBasePredicate(t *testing.T) {
+// TestApplyIdentityScopeIsConjunctiveWithBaseParticipantFilter proves the
+// endpoint's identity scope AND-composes with a base participant filter
+// instead of narrowing or rejecting it: identity filters are conjunctive
+// (see exploreContext), so a base group naming a different person yields the
+// intersection rather than identity_scope_conflict.
+func TestApplyIdentityScopeIsConjunctiveWithBaseParticipantFilter(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -791,14 +797,41 @@ func TestApplyIdentityScopeNarrowsParticipantClusterToBasePredicate(t *testing.T
 	require.NoError(err)
 	assert.Equal([]int64{2, 3}, open.ParticipantIDs, "an open base predicate takes every cluster member")
 
-	narrowed := query.Context{ParticipantIDs: []int64{2, 5}}
-	err = applyIdentityScope(&narrowed, ExploreFilter{Dimension: exploreFilterParticipant, Values: []string{"2", "3"}})
+	overlapping := query.Context{ParticipantIDs: []int64{2, 5}}
+	err = applyIdentityScope(&overlapping, ExploreFilter{Dimension: exploreFilterParticipant, Values: []string{"2", "3"}})
 	require.NoError(err)
-	assert.Equal([]int64{2}, narrowed.ParticipantIDs, "a base participant filter keeps only the members it allows")
+	assert.Equal([]int64{2, 5}, overlapping.ParticipantIDs, "the base group is preserved")
+	assert.Equal([][]int64{{2, 3}}, overlapping.AdditionalParticipantGroups, "the scope becomes a conjunctive group")
 
-	excluded := query.Context{ParticipantIDs: []int64{9}}
-	err = applyIdentityScope(&excluded, ExploreFilter{Dimension: exploreFilterParticipant, Values: []string{"2", "3"}})
-	require.Error(err, "a base predicate excluding every member must fail loudly")
+	disjoint := query.Context{ParticipantIDs: []int64{9}}
+	err = applyIdentityScope(&disjoint, ExploreFilter{Dimension: exploreFilterParticipant, Values: []string{"2", "3"}})
+	require.NoError(err, "a disjoint base group intersects instead of conflicting")
+	assert.Equal([]int64{9}, disjoint.ParticipantIDs)
+	assert.Equal([][]int64{{2, 3}}, disjoint.AdditionalParticipantGroups)
+
+	duplicate := query.Context{ParticipantIDs: []int64{3, 2}}
+	err = applyIdentityScope(&duplicate, ExploreFilter{Dimension: exploreFilterParticipant, Values: []string{"2", "3"}})
+	require.NoError(err)
+	assert.Empty(duplicate.AdditionalParticipantGroups, "a scope equal to the base group is not duplicated")
+}
+
+// TestApplyIdentityScopeIsConjunctiveWithBaseDomainFilter is the domain
+// analogue: a context filtered to domain A can open domain B's scoped
+// endpoints and see A∩B instead of identity_scope_conflict.
+func TestApplyIdentityScopeIsConjunctiveWithBaseDomainFilter(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	other := query.Context{Domains: []string{"a.example"}}
+	err := applyIdentityScope(&other, ExploreFilter{Dimension: exploreFilterDomain, Values: []string{"b.example"}})
+	require.NoError(err, "a different base domain intersects instead of conflicting")
+	assert.Equal([]string{"a.example"}, other.Domains)
+	assert.Equal([][]string{{"b.example"}}, other.AdditionalDomainGroups)
+
+	repeated := query.Context{Domains: []string{"a.example"}, AdditionalDomainGroups: [][]string{{"b.example"}}}
+	err = applyIdentityScope(&repeated, ExploreFilter{Dimension: exploreFilterDomain, Values: []string{"B.EXAMPLE"}})
+	require.NoError(err)
+	assert.Equal([][]string{{"b.example"}}, repeated.AdditionalDomainGroups, "an already-present scope group is not duplicated")
 }
 
 // TestExploreContextRepeatedParticipantFilterIsConjunctive proves that a

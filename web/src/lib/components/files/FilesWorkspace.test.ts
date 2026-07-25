@@ -300,6 +300,67 @@ describe('FilesWorkspace', () => {
     expect(screen.queryByText('The selected file is not in the current results.')).toBeNull();
   });
 
+  it('closes a locally opened viewer when the predicate changes and the refreshed listing excludes the file', async () => {
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      const path = new URL(request.url, document.baseURI).pathname;
+      if (path === '/api/v1/files/7') return Response.json({
+        id: 7, message_id: 11, conversation_id: 21, filename: 'fixture.pdf', mime_type: 'application/pdf',
+        size_bytes: 2048, content_state: 'missing_blob', content_available: false
+      });
+      const body = await request.clone().json() as { predicate?: { query?: string } };
+      return Response.json(body.predicate?.query === 'other'
+        ? { files: [], total_count: 0, cache_revision: 'cache-other', search_provenance: {} }
+        : response());
+    });
+    const view = render(FilesWorkspace, {
+      client: createAPIClient(fetchFn), predicate: { filters: [], presentation: 'table' },
+      sort: { field: 'occurred_at', direction: 'desc' }
+    });
+    const grid = await screen.findByRole('grid', { name: 'Files results' });
+    await screen.findByRole('row', { name: /fixture.pdf/ });
+    grid.focus();
+    await fireEvent.keyDown(grid, { key: 'Enter' });
+    expect(await screen.findByRole('dialog', { name: 'View fixture.pdf' })).toBeDefined();
+
+    await view.rerender({
+      predicate: { query: 'other', search_mode: 'full_text', filters: [], presentation: 'table' }
+    });
+
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+  });
+
+  it('re-resolves an unchanged controlled selection against a changed predicate instead of keeping the stale viewer', async () => {
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      const path = new URL(request.url, document.baseURI).pathname;
+      if (path === '/api/v1/files/7') return Response.json({
+        id: 7, message_id: 11, conversation_id: 21, filename: 'fixture.pdf', mime_type: 'application/pdf',
+        size_bytes: 2048, content_state: 'missing_blob', content_available: false
+      });
+      const body = await request.clone().json() as { predicate?: { query?: string } };
+      return Response.json(body.predicate?.query === 'other'
+        ? { files: [], total_count: 0, cache_revision: 'cache-other', search_provenance: {} }
+        : response());
+    });
+    const view = render(FilesWorkspace, {
+      client: createAPIClient(fetchFn), predicate: { filters: [], presentation: 'table' },
+      sort: { field: 'occurred_at', direction: 'desc' }, selectedKey: 'file:7'
+    });
+    expect(await screen.findByRole('dialog', { name: 'View fixture.pdf' })).toBeDefined();
+
+    // selectedKey stays 'file:7' while the context underneath it changes;
+    // the refreshed listing excludes the file, so the viewer must close and
+    // the selection settle as missing rather than keep the stale row.
+    await view.rerender({
+      predicate: { query: 'other', search_mode: 'full_text', filters: [], presentation: 'table' }
+    });
+
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toContain('The selected file is not in the current results.');
+  });
+
   it('shows a missing state when the listing settles without the selected file', async () => {
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const path = new URL(input instanceof Request ? input.url : String(input), document.baseURI).pathname;
