@@ -18,7 +18,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/kit/daemon"
-	"go.kenn.io/msgvault/internal/api"
+	"go.kenn.io/msgvault/internal/apiprotocol"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/daemonclient"
 )
@@ -43,10 +43,22 @@ func TestOpenHTTPStoreUsesConfiguredRemoteWithoutDaemonAutostart(t *testing.T) {
 	assert.Equal(t, "http://daemonclient.example:8080", info.URL)
 }
 
-func TestOpenHTTPStoreUsesLongTimeoutForConfiguredRemote(t *testing.T) {
+func TestOpenHTTPStoreUsesCLIModeForConfiguredRemote(t *testing.T) {
+	var marker atomic.Value
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/health", r.URL.Path)
+		assert.Equal(t, "remote-daemon-secret", r.Header.Get("X-Api-Key"))
+		marker.Store(r.Header.Get(apiprotocol.ClientClassHeader))
+		w.Header().Set("Content-Type", "application/json")
+		_, err := w.Write([]byte(`{"status":"ok"}`))
+		assert.NoError(t, err, "write health response")
+	}))
+	t.Cleanup(srv.Close)
+
 	withStoreResolverConfig(t, &config.Config{
 		Remote: config.RemoteConfig{
-			URL:           "http://daemonclient.example:8080",
+			URL:           srv.URL,
+			APIKey:        "remote-daemon-secret",
 			AllowInsecure: true,
 		},
 	})
@@ -55,7 +67,66 @@ func TestOpenHTTPStoreUsesLongTimeoutForConfiguredRemote(t *testing.T) {
 	require.NoError(t, err, "OpenHTTPStore")
 	t.Cleanup(func() { _ = st.Close() })
 
-	assert.Equal(t, api.DaemonLongRequestTimeout, remoteStoreTimeoutForTest(t, st))
+	assert.Zero(t, st.Timeout(), "configured remote operations use caller duration")
+	_, err = st.GetHealth(context.Background())
+	require.NoError(t, err, "GetHealth")
+	assert.Equal(t, apiprotocol.ClientClassCLI, marker.Load())
+}
+
+func TestOpenHTTPStoreRootContextCancelsLocalDaemonRequest(t *testing.T) {
+	var marker atomic.Value
+	requestCanceled := make(chan struct{})
+	mux := http.NewServeMux()
+	mux.Handle("/api/ping", daemon.NewPingHandler(daemon.PingHandlerOptions{
+		Service: daemonService,
+		Version: Version,
+	}))
+	mux.HandleFunc("/api/v1/health", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, err := w.Write([]byte(`{"status":"ok"}`))
+		assert.NoError(t, err, "write health response")
+	})
+	mux.HandleFunc("/api/v1/stats", func(_ http.ResponseWriter, r *http.Request) {
+		marker.Store(r.Header.Get(apiprotocol.ClientClassHeader))
+		<-r.Context().Done()
+		close(requestCanceled)
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	dataDir := t.TempDir()
+	withStoreResolverConfig(t, lifecycleTestConfig(dataDir))
+	rt := daemonRuntimeForHTTPServer(t, srv, daemonAPIKeyFingerprint(""))
+	_, err := daemonRuntimeStore(dataDir).Write(rt.Record)
+	require.NoError(t, err, "write daemon runtime")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	st, _, err := OpenHTTPStore(ctx)
+	require.NoError(t, err, "OpenHTTPStore")
+	t.Cleanup(func() { _ = st.Close() })
+	assert.Zero(t, st.Timeout(), "local daemon operations use caller duration")
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := st.GetStats()
+		done <- err
+	}()
+	require.Eventually(t, func() bool {
+		return marker.Load() != nil
+	}, 2*time.Second, 10*time.Millisecond, "stats request starts")
+	cancel()
+
+	require.Eventually(t, func() bool {
+		select {
+		case <-requestCanceled:
+			return true
+		default:
+			return false
+		}
+	}, 2*time.Second, 10*time.Millisecond, "root cancellation reaches stats request")
+	assert.Equal(t, apiprotocol.ClientClassCLI, marker.Load())
+	require.Error(t, <-done, "canceled stats request")
 }
 
 func TestOpenHTTPStoreStartsLocalDaemonWhenNoRemoteConfigured(t *testing.T) {
@@ -770,12 +841,6 @@ func withStoreResolverConfig(t *testing.T, c *config.Config) {
 		cfg = oldCfg
 		useLocal = oldUseLocal
 	})
-}
-
-func remoteStoreTimeoutForTest(t *testing.T, st *daemonclient.Client) time.Duration {
-	t.Helper()
-	require.NotNil(t, st, "daemon client")
-	return st.Timeout()
 }
 
 func captureStderrDuring(t *testing.T, fn func()) string {

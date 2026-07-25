@@ -13,7 +13,6 @@ import (
 	"unicode/utf8"
 
 	"github.com/gofrs/flock"
-	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/store"
@@ -131,7 +130,7 @@ func OpenHTTPStore(ctx context.Context) (*daemonclient.Client, HTTPStoreInfo, er
 		return nil, HTTPStoreInfo{}, errors.New("nil config")
 	}
 	if IsRemoteMode() {
-		st, err := openRemoteStoreWithTimeout(api.DaemonLongRequestTimeout)
+		st, err := openRemoteStore(ctx)
 		if err != nil {
 			return nil, HTTPStoreInfo{}, err
 		}
@@ -146,11 +145,10 @@ func OpenHTTPStore(ctx context.Context) (*daemonclient.Client, HTTPStoreInfo, er
 		return nil, HTTPStoreInfo{}, err
 	}
 	url := urlFromDaemonRuntime(rt)
-	st, err := daemonclient.New(daemonclient.Config{
+	st, err := newDaemonCLIClient(ctx, daemonclient.Config{
 		URL:           url,
 		APIKey:        cfg.Server.APIKey,
 		AllowInsecure: true,
-		Timeout:       api.DaemonLongRequestTimeout,
 	})
 	if err != nil {
 		return nil, HTTPStoreInfo{}, err
@@ -168,12 +166,17 @@ func reportDaemonBusyWait(message string) {
 	_, _ = fmt.Fprintf(os.Stderr, "Waiting: %s (Ctrl+C to cancel).\n", message)
 }
 
-func openRemoteStoreWithTimeout(timeout time.Duration) (*daemonclient.Client, error) {
-	st, err := daemonclient.New(daemonclient.Config{
+func newDaemonCLIClient(ctx context.Context, clientConfig daemonclient.Config) (*daemonclient.Client, error) {
+	clientConfig.Context = ctx
+	clientConfig.RequestMode = daemonclient.RequestModeCLI
+	return daemonclient.New(clientConfig)
+}
+
+func openRemoteStore(ctx context.Context) (*daemonclient.Client, error) {
+	st, err := newDaemonCLIClient(ctx, daemonclient.Config{
 		URL:           cfg.Remote.URL,
 		APIKey:        cfg.Remote.APIKey,
 		AllowInsecure: cfg.Remote.AllowInsecure,
-		Timeout:       timeout,
 	})
 	if err != nil {
 		return nil, err
