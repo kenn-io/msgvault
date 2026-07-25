@@ -13,7 +13,7 @@ import (
 // GetStats fetches stats from the daemon API.
 func (c *Client) GetStats() (*store.Stats, error) {
 	resp, err := APIResponse(c, func(client *apiclient.Client) (*generated.GetStatsResp, error) {
-		return client.GetStatsWithResponse(context.Background())
+		return client.GetStatsWithResponse(c.requestContext())
 	})
 	if err != nil {
 		return nil, err
@@ -175,7 +175,7 @@ func (c *Client) ListMessages(offset, limit int) ([]store.APIMessage, int64, err
 	page := (offset / limit) + 1
 
 	resp, err := APIResponse(c, func(client *apiclient.Client) (*generated.ListMessagesResp, error) {
-		return client.ListMessagesWithResponse(context.Background(), &generated.ListMessagesRequestOptions{
+		return client.ListMessagesWithResponse(c.requestContext(), &generated.ListMessagesRequestOptions{
 			Query: &generated.ListMessagesQuery{
 				Page:     int64FromInt(page),
 				PageSize: int64FromInt(limit),
@@ -193,7 +193,7 @@ func (c *Client) GetMessage(id int64) (*store.APIMessage, error) {
 	resp, err := APIResponseWithNotFound(
 		c,
 		func(client *apiclient.Client) (*generated.GetMessageResp, error) {
-			return client.GetMessageWithResponse(context.Background(), &generated.GetMessageRequestOptions{
+			return client.GetMessageWithResponse(c.requestContext(), &generated.GetMessageRequestOptions{
 				PathParams: &generated.GetMessagePath{ID: id},
 			})
 		},
@@ -217,7 +217,7 @@ func (c *Client) SearchMessages(query string, offset, limit int) ([]store.APIMes
 	page := (offset / limit) + 1
 
 	resp, err := APIResponse(c, func(client *apiclient.Client) (*generated.SearchMessagesResp, error) {
-		return client.SearchMessagesWithResponse(context.Background(), &generated.SearchMessagesRequestOptions{
+		return client.SearchMessagesWithResponse(c.requestContext(), &generated.SearchMessagesRequestOptions{
 			Query: &generated.SearchMessagesQuery{
 				Q:        query,
 				Page:     int64FromInt(page),
@@ -251,7 +251,7 @@ type AccountInfo struct {
 // ListAccounts fetches configured accounts from the daemon API.
 func (c *Client) ListAccounts() ([]AccountInfo, error) {
 	resp, err := APIResponse(c, func(client *apiclient.Client) (*generated.ListAccountsResp, error) {
-		return client.ListAccountsWithResponse(context.Background())
+		return client.ListAccountsWithResponse(c.requestContext())
 	})
 	if err != nil {
 		return nil, err

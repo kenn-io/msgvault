@@ -10,8 +10,16 @@ import (
 	"time"
 
 	"github.com/doordash-oss/oapi-codegen-dd/v3/pkg/runtime"
+	"go.kenn.io/msgvault/internal/apiprotocol"
 	apiclient "go.kenn.io/msgvault/pkg/client"
 	"go.kenn.io/msgvault/pkg/client/generated"
+)
+
+type RequestMode uint8
+
+const (
+	RequestModeBounded RequestMode = iota
+	RequestModeCLI
 )
 
 // Config holds configuration for creating a daemon HTTP client.
@@ -21,6 +29,8 @@ type Config struct {
 	AllowInsecure bool
 	Timeout       time.Duration
 	HTTPClient    *http.Client
+	Context       context.Context
+	RequestMode   RequestMode
 }
 
 // Client provides HTTP access to a local or configured remote msgvault daemon.
@@ -30,6 +40,8 @@ type Client struct {
 	httpClient  *http.Client
 	typedClient *apiclient.Client
 	busyNotify  func(message string)
+	rootContext context.Context
+	requestMode RequestMode
 }
 
 // SetBusyNotifier registers a callback invoked when the daemon reports that
@@ -99,8 +111,14 @@ func New(cfg Config) (*Client, error) {
 	}
 
 	timeout := cfg.Timeout
-	if timeout == 0 {
+	if cfg.RequestMode == RequestModeCLI {
+		timeout = 0
+	} else if timeout == 0 {
 		timeout = 30 * time.Second
+	}
+	rootContext := cfg.Context
+	if rootContext == nil {
+		rootContext = context.Background()
 	}
 
 	httpClient := &http.Client{}
@@ -111,9 +129,11 @@ func New(cfg Config) (*Client, error) {
 	httpClient.Timeout = timeout
 
 	c := &Client{
-		baseURL:    strings.TrimSuffix(cfg.URL, "/"),
-		apiKey:     cfg.APIKey,
-		httpClient: httpClient,
+		baseURL:     strings.TrimSuffix(cfg.URL, "/"),
+		apiKey:      cfg.APIKey,
+		httpClient:  httpClient,
+		rootContext: rootContext,
+		requestMode: cfg.RequestMode,
 	}
 	if _, err := c.GeneratedClient(); err != nil {
 		return nil, err
@@ -142,6 +162,13 @@ func (c *Client) Timeout() time.Duration {
 	return c.httpClient.Timeout
 }
 
+func (c *Client) requestContext() context.Context {
+	if c == nil || c.rootContext == nil {
+		return context.Background()
+	}
+	return c.rootContext
+}
+
 // GeneratedClient returns the typed OpenAPI client used for daemon requests.
 func (c *Client) GeneratedClient() (*apiclient.Client, error) {
 	if c.typedClient != nil {
@@ -150,7 +177,7 @@ func (c *Client) GeneratedClient() (*apiclient.Client, error) {
 	apiClient, err := apiclient.New(
 		c.baseURL,
 		runtime.WithHTTPClient(httpDoer{client: c.httpClient}),
-		runtime.WithRequestEditorFn(requestEditor(c.apiKey)),
+		runtime.WithRequestEditorFn(requestEditor(c.apiKey, c.requestMode)),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("create generated API client: %w", err)
@@ -243,10 +270,13 @@ func (d httpDoer) Do(ctx context.Context, req *http.Request) (*http.Response, er
 	return client.Do(req)
 }
 
-func requestEditor(apiKey string) apiclient.RequestEditorFn {
+func requestEditor(apiKey string, mode RequestMode) apiclient.RequestEditorFn {
 	return func(_ context.Context, req *http.Request) error {
 		if apiKey != "" {
 			req.Header.Set("X-Api-Key", apiKey)
+		}
+		if mode == RequestModeCLI {
+			req.Header.Set(apiprotocol.ClientClassHeader, apiprotocol.ClientClassCLI)
 		}
 		req.Header.Set("Accept", "application/json")
 		return nil

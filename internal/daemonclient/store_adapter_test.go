@@ -18,6 +18,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"go.kenn.io/msgvault/internal/apiprotocol"
 	"go.kenn.io/msgvault/internal/contentverify"
 	"go.kenn.io/msgvault/internal/deletion"
 	"go.kenn.io/msgvault/internal/store"
@@ -92,7 +93,7 @@ func TestNew_DefaultTimeout(t *testing.T) {
 		APIKey: "key",
 	})
 	require.NoError(t, err, "New()")
-	assert.NotZero(t, s.Timeout(), "httpClient.Timeout should have a default")
+	assert.Equal(t, 30*time.Second, s.Timeout(), "httpClient.Timeout should have a 30-second default")
 }
 
 func TestRunCLISyncStreamsWithoutAbsoluteClientTimeout(t *testing.T) {
@@ -102,6 +103,7 @@ func TestRunCLISyncStreamsWithoutAbsoluteClientTimeout(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(http.MethodPost, r.Method, "method")
 		assert.Equal("/api/v1/cli/sync-full", r.URL.Path, "path")
+		assert.Equal(apiprotocol.ClientClassCLI, r.Header.Get(apiprotocol.ClientClassHeader), "client class")
 
 		w.Header().Set("Content-Type", "application/x-ndjson")
 		_, _ = w.Write([]byte(`{"type":"stdout","data":"begin\n"}` + "\n"))
@@ -118,6 +120,7 @@ func TestRunCLISyncStreamsWithoutAbsoluteClientTimeout(t *testing.T) {
 		AllowInsecure: true,
 		Timeout:       10 * time.Millisecond,
 		HTTPClient:    srv.Client(),
+		RequestMode:   RequestModeCLI,
 	})
 	require.NoError(err, "New")
 
@@ -129,6 +132,53 @@ func TestRunCLISyncStreamsWithoutAbsoluteClientTimeout(t *testing.T) {
 	})
 	require.NoError(err, "streaming CLI sync should not use http.Client.Timeout as an absolute body-read timeout")
 	assert.Equal("begin\n", output.String(), "streamed output")
+}
+
+func TestLegacyAdapterUsesClientRootContext(t *testing.T) {
+	requestStarted := make(chan struct{})
+	requestCanceled := make(chan struct{})
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		close(requestStarted)
+		select {
+		case <-r.Context().Done():
+			close(requestCanceled)
+		case <-release:
+		}
+	}))
+	t.Cleanup(func() {
+		close(release)
+		srv.Close()
+	})
+
+	root, cancel := context.WithCancel(context.Background())
+	c, err := New(Config{
+		URL: srv.URL, AllowInsecure: true, Context: root,
+		RequestMode: RequestModeCLI,
+	})
+	require.NoError(t, err, "New")
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := c.GetStats()
+		done <- err
+	}()
+	select {
+	case <-requestStarted:
+	case <-time.After(2 * time.Second):
+		require.FailNow(t, "legacy adapter request did not start")
+	}
+	cancel()
+
+	require.Eventually(t, func() bool {
+		select {
+		case <-requestCanceled:
+			return true
+		default:
+			return false
+		}
+	}, 2*time.Second, 10*time.Millisecond, "root cancellation reaches HTTP request")
+	require.Error(t, <-done, "canceled compatibility request")
 }
 
 func TestRunCLICommandStreamsOutput(t *testing.T) {

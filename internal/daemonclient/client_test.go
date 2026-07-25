@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -15,6 +16,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"go.kenn.io/msgvault/internal/apiprotocol"
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
 
@@ -62,6 +64,44 @@ func TestNewDefaultTimeout(t *testing.T) {
 	c, err := New(Config{URL: "https://nas:8080", APIKey: "key"})
 	require.NoError(t, err, "New")
 	assert.Equal(t, 30*time.Second, c.Timeout(), "timeout")
+}
+
+func TestNewCLIModeDisablesWholeRequestTimeoutAndPreservesTransport(t *testing.T) {
+	transport := &http.Transport{
+		DialContext:         (&net.Dialer{Timeout: 7 * time.Second}).DialContext,
+		TLSHandshakeTimeout: 11 * time.Second,
+	}
+	base := &http.Client{Transport: transport, Timeout: 45 * time.Second}
+
+	c, err := New(Config{
+		URL:         "https://nas.example:8443",
+		HTTPClient:  base,
+		RequestMode: RequestModeCLI,
+	})
+	require.NoError(t, err, "New")
+
+	assert.Zero(t, c.Timeout(), "CLI operations are governed by their context")
+	assert.Same(t, transport, c.httpClient.Transport, "transport-level bounds are retained")
+	assert.Equal(t, 11*time.Second, transport.TLSHandshakeTimeout)
+	assert.Equal(t, 45*time.Second, base.Timeout, "caller-owned client is not mutated")
+}
+
+func TestCLIModeGeneratedRequestCarriesClassAndAPIKey(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, apiprotocol.ClientClassCLI, r.Header.Get(apiprotocol.ClientClassHeader))
+		assert.Equal(t, "secret-key", r.Header.Get("X-Api-Key"))
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"columns":["n"],"rows":[[1]],"row_count":1}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	c, err := New(Config{
+		URL: srv.URL, APIKey: "secret-key", AllowInsecure: true,
+		RequestMode: RequestModeCLI,
+	})
+	require.NoError(t, err, "New")
+	_, err = c.RunSQLQuery(context.Background(), "SELECT 1")
+	require.NoError(t, err, "RunSQLQuery")
 }
 
 func TestGeneratedClientUsesTransportAndAuth(t *testing.T) {
