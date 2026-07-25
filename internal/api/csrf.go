@@ -87,12 +87,18 @@ func ambientOriginAllowed(r *http.Request, scheme, host string) bool {
 // The guard is inert unless a real listener was bound (StartOnListener), so
 // direct-handler unit tests are unaffected. It also does not apply when the
 // daemon is bound non-loopback (the operator opted into unauthenticated
-// remote access via AllowInsecure) or when the request arrives through an
-// explicitly trusted proxy (a same-host reverse proxy may legitimately
-// forward an external Host; rebinding attacks arrive as direct loopback
-// connections, not through the operator's trusted proxy).
+// remote access via AllowInsecure).
+//
+// There is deliberately no trusted-proxy exemption. isTrustedProxy matches on
+// r.RemoteAddr, and a loopback-bound daemon receives every connection from
+// loopback — so a same-host reverse proxy listed in trusted_proxies is
+// indistinguishable from the rebound browser this guard exists to stop, and
+// the exemption would hand an attacker page exactly the bypass it needs.
+// Fronting the daemon with a proxy that forwards an external Host therefore
+// requires an API key: key-authenticated requests are not AuthModeLoopback
+// and never reach this check.
 func (s *Server) keylessLoopbackHostAllowed(r *http.Request) bool {
-	if !s.listenerBound || !s.cfg.Server.IsLoopback() || s.isTrustedProxy(r) {
+	if !s.listenerBound || !s.cfg.Server.IsLoopback() {
 		return true
 	}
 	return isLoopbackAuthority(r.Host, s.listenPort)

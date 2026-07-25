@@ -210,13 +210,23 @@ func (e *Executor) prepareExecution(manifestID string, method Method) (*Manifest
 // failed (succeeded == 0). When false (batch mode), it is always marked Completed
 // even with failures, preserving the batch semantics where partial progress is expected.
 //
-// The manifest is claimed out of in_progress/ with an atomic rename BEFORE any
-// final state is written. This is the authoritative anti-resurrection guard: a
-// concurrent daemon cancel is also a rename of the same source path, so exactly
-// one of the two renames wins. If the cancel won, our MoveManifest fails with
-// ENOENT and we report ErrManifestCancelled without recreating the file or
-// force-completing. Only after we own the file at the target location do we
-// persist the final execution state there.
+// Ordering: the final state is written into in_progress/<id>.json through the
+// locked atomic checkpoint writer FIRST, then that already-final file is
+// claimed into the terminal directory with an atomic rename. The rename is
+// the authoritative anti-resurrection guard: a concurrent daemon cancel is
+// also a rename of the same source path, so exactly one of the two wins. If
+// the cancel won, the checkpoint write returns ErrManifestCancelled (or the
+// rename fails with ENOENT) and we stop without recreating the file or
+// force-completing.
+//
+// Writing before the rename — rather than saving into the terminal directory
+// afterwards — means the file that lands in completed/ or failed/ already
+// carries its final status and counters. A crash in between leaves the
+// manifest in in_progress/ holding that final state, which the
+// directory-authoritative resume path re-finalizes idempotently (its
+// LastProcessedIndex covers every ID, so no message is deleted twice). The
+// reverse order could report success while leaving a completed manifest
+// serialized as in_progress.
 func (e *Executor) finalizeExecution(manifestID string, manifest *Manifest, succeeded, failed int, failedIDs []string, failOnAllErrors bool) error {
 	// A durable cancelled/ marker is authoritative: even in the pathological
 	// case where a stray write recreated in_progress/<id>.json, completing here
@@ -234,14 +244,6 @@ func (e *Executor) finalizeExecution(manifestID string, manifest *Manifest, succ
 		targetStatus = StatusFailed
 	}
 
-	if err := e.manager.FinalizeInProgress(manifestID, targetStatus); err != nil {
-		if errors.Is(err, ErrManifestCancelled) || errors.Is(err, os.ErrNotExist) {
-			e.logger.Info("manifest cancelled during finalize; not completing", "manifest", manifestID)
-			return ErrManifestCancelled
-		}
-		return fmt.Errorf("finalize manifest %s: %w", manifestID, err)
-	}
-
 	if manifest.Execution == nil {
 		manifest.Execution = &Execution{StartedAt: time.Now(), Method: "unknown"}
 	}
@@ -252,8 +254,20 @@ func (e *Executor) finalizeExecution(manifestID string, manifest *Manifest, succ
 	manifest.Execution.Failed = failed
 	manifest.Execution.FailedIDs = failedIDs
 	manifest.Status = targetStatus
-	if err := e.manager.SaveManifest(manifest); err != nil {
-		e.logger.Warn("failed to save final state", "error", err)
+	if err := e.manager.WriteInProgressCheckpoint(manifest, manifestID); err != nil {
+		if errors.Is(err, ErrManifestCancelled) {
+			e.logger.Info("manifest cancelled during finalize; not completing", "manifest", manifestID)
+			return ErrManifestCancelled
+		}
+		return fmt.Errorf("persist final state for manifest %s: %w", manifestID, err)
+	}
+
+	if err := e.manager.FinalizeInProgress(manifestID, targetStatus); err != nil {
+		if errors.Is(err, ErrManifestCancelled) || errors.Is(err, os.ErrNotExist) {
+			e.logger.Info("manifest cancelled during finalize; not completing", "manifest", manifestID)
+			return ErrManifestCancelled
+		}
+		return fmt.Errorf("finalize manifest %s: %w", manifestID, err)
 	}
 
 	e.progress.OnComplete(succeeded, failed)

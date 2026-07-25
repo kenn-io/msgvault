@@ -176,6 +176,41 @@ func TestBuildDeleteStagedPlanPinsPlannedBatches(t *testing.T) {
 	assert.NotEqual(plan.PlanFingerprint, changed.PlanFingerprint, "fingerprint should change when confirmed manifest content changes")
 }
 
+// TestBuildDeleteStagedPlanRejectsMethodFlagMismatch verifies that resuming an
+// in-progress batch with a --permanent flag that disagrees with the method it
+// was started with is refused during planning. The summary, confirmation
+// prompt, and OAuth scopes are all derived from the flag, so continuing would
+// take a trash confirmation for an unrecoverable deletion (or the reverse).
+func TestBuildDeleteStagedPlanRejectsMethodFlagMismatch(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	dataDir := t.TempDir()
+	withStoreResolverConfig(t, lifecycleTestConfig(dataDir))
+
+	mgr, err := deletion.NewManager(filepath.Join(dataDir, "deletions"))
+	require.NoError(err, "NewManager")
+	batch, err := mgr.CreateManifest("resumed batch", []string{"gmail-1"}, deletion.Filters{Account: "alice@example.com"})
+	require.NoError(err, "CreateManifest")
+
+	// A batch already claimed for permanent deletion.
+	claimed, err := mgr.ClaimManifest(batch.ID, deletion.MethodDelete)
+	require.NoError(err, "ClaimManifest")
+	require.Equal(deletion.MethodDelete, claimed.Execution.Method)
+
+	_, err = buildDeleteStagedPlan(deleteStagedPlanOptions{RemoteDeleteEnabled: true, Yes: true})
+	require.Error(err, "trash-flag resume of a permanent batch must be refused")
+	assert.Contains(err.Error(), "must be resumed with it")
+	assert.Contains(err.Error(), "--permanent")
+
+	// The same batch plans cleanly once the flag matches the stored method.
+	plan, err := buildDeleteStagedPlan(deleteStagedPlanOptions{
+		RemoteDeleteEnabled: true, Yes: true, Permanent: true,
+	})
+	require.NoError(err, "matching flag plans cleanly")
+	assert.Contains(plan.Stdout, "PERMANENT DELETE", "summary describes the confirmed method")
+}
+
 func TestPlanCLIDeleteStagedReportsDeletionScopeEscalation(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

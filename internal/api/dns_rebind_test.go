@@ -122,6 +122,42 @@ func TestDNSRebind_InertWithoutBoundListener(t *testing.T) {
 	assertNotRejectedAsUntrustedHost(t, w)
 }
 
+// TestDNSRebind_TrustedLoopbackProxyDoesNotExemptRebind proves the guard has
+// no trusted-proxy escape hatch. A loopback-bound daemon sees every
+// connection — including the rebound browser's — as coming from loopback, so
+// listing a same-host proxy such as 127.0.0.1 in trusted_proxies must not
+// turn the attack path into a trusted one.
+func TestDNSRebind_TrustedLoopbackProxyDoesNotExemptRebind(t *testing.T) {
+	assert := assert.New(t)
+	srv, _ := newTestServerWithMockStore(t)
+	srv.listenerBound = true
+	srv.listenPort = 8080
+	srv.trustedProxies = trustedProxyPrefixes([]string{"127.0.0.1"})
+
+	// The rebound browser connects to the loopback listener itself, so its
+	// RemoteAddr is the very address listed in trusted_proxies — the daemon
+	// cannot tell it apart from a same-host reverse proxy.
+	rebound := func(method, host, origin string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(method, "/api/v1/settings", nil)
+		req.RemoteAddr = "127.0.0.1:54321"
+		req.Host = host
+		if origin != "" {
+			req.Header.Set("Origin", origin)
+		}
+		w := httptest.NewRecorder()
+		srv.Router().ServeHTTP(w, req)
+		return w
+	}
+
+	read := rebound(http.MethodGet, "attacker.example:8080", "")
+	assert.Equal(http.StatusForbidden, read.Code, "body: %s", read.Body.String())
+	assert.Equal("untrusted_host", decodeError(t, read).Error)
+
+	mutation := rebound(http.MethodPatch, "evil.com:8080", "http://evil.com:8080")
+	assert.Equal(http.StatusForbidden, mutation.Code, "body: %s", mutation.Body.String())
+	assert.Equal("untrusted_host", decodeError(t, mutation).Error)
+}
+
 func TestIsLoopbackAuthority(t *testing.T) {
 	tests := []struct {
 		name       string

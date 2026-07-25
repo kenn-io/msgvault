@@ -421,6 +421,16 @@ func buildDeleteStagedPlan(opts deleteStagedPlanOptions) (deleteStagedPlan, erro
 		return plan, nil
 	}
 
+	// Everything below — the summary, the confirmation prompt, and the OAuth
+	// scopes requested by the caller — is derived from opts.Permanent, while
+	// execution honors the method a resumed batch was started with. Refuse
+	// rather than let those disagree: resuming a permanent-delete batch
+	// without --permanent would print "trash (30-day recovery)" and take a
+	// trash confirmation for what is actually an unrecoverable deletion.
+	if err := assertDeleteStagedMethodMatchesFlag(manifests, opts.Permanent); err != nil {
+		return deleteStagedPlan{}, err
+	}
+
 	totalMessages := 0
 	for _, m := range manifests {
 		totalMessages += len(m.GmailIDs)
@@ -468,6 +478,34 @@ func buildDeleteStagedPlan(opts deleteStagedPlanOptions) (deleteStagedPlan, erro
 	}
 	plan.Stdout = out.String()
 	return plan, nil
+}
+
+// assertDeleteStagedMethodMatchesFlag rejects a run whose --permanent flag
+// disagrees with the method an in-progress batch was already started with.
+// A resumed batch is executed with its persisted method (and the executor
+// refuses a mismatch outright), so continuing here would confirm one
+// operation and perform another.
+func assertDeleteStagedMethodMatchesFlag(manifests []*deletion.Manifest, permanent bool) error {
+	wantMethod := deletion.MethodTrash
+	if permanent {
+		wantMethod = deletion.MethodDelete
+	}
+	for _, m := range manifests {
+		if m.Status != deletion.StatusInProgress || m.Execution == nil {
+			continue
+		}
+		if m.Execution.Method == wantMethod {
+			continue
+		}
+		rerun := "msgvault delete-staged --permanent"
+		if m.Execution.Method == deletion.MethodTrash {
+			rerun = "msgvault delete-staged"
+		}
+		return fmt.Errorf(
+			"batch %s was started with method %q and must be resumed with it; rerun with '%s'",
+			m.ID, m.Execution.Method, rerun)
+	}
+	return nil
 }
 
 func loadExecutableDeletionManifest(manager *deletion.Manager, batchID string) (*deletion.Manifest, error) {
@@ -898,12 +936,13 @@ Examples:
 			fmt.Printf("  [%d/%d] %s (%d messages)\n", i+1, len(manifests), m.Description, len(m.GmailIDs))
 
 			var execErr error
-			// For in-progress manifests, honor the stored method to avoid
-			// accidentally switching between trash and permanent mid-batch.
+			// The confirmed method wins: the summary, the confirmation, and
+			// the OAuth scopes above all describe this flag. Planning already
+			// refused a batch whose stored method disagrees, and the executor
+			// refuses again before touching a message, so a batch resumed
+			// through the wrong path fails loudly instead of silently
+			// switching between trash and permanent deletion.
 			useTrash := !deletePermanent
-			if m.Status == deletion.StatusInProgress && m.Execution != nil {
-				useTrash = (m.Execution.Method == deletion.MethodTrash)
-			}
 
 			if useTrash {
 				// Use individual trash calls (slower but recoverable)

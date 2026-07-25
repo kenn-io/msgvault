@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -639,6 +640,93 @@ func TestExecutor_Execute_ResumeRetryStillFailing(t *testing.T) {
 
 	tc.AssertManifestExecution(manifest.ID, 4, 1, "msg1")
 	tc.AssertCompletedCount(1)
+}
+
+// TestExecutor_Finalize_TerminalFileCarriesFinalState verifies that the final
+// status and counters are durable BEFORE the manifest is moved into its
+// terminal directory, so the file that lands there already carries them
+// instead of depending on a post-rename save.
+//
+// The crash window is simulated by making the terminal directory unwritable,
+// which fails the rename at exactly the point a crash would interrupt it. The
+// durable record must still hold the final state: with the write ordered
+// after the move, the interrupted manifest would be left serialized as
+// in_progress with no CompletedAt.
+func TestExecutor_Finalize_TerminalFileCarriesFinalState(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	tc := NewTestContext(t)
+
+	manifest := tc.CreateManifest("final state", msgIDs(3))
+	completedDir := tc.Mgr.CompletedDir()
+	info, err := os.Stat(completedDir)
+	require.NoError(err, "stat completed dir")
+	require.NoError(os.Chmod(completedDir, 0o500), "make completed dir unwritable")
+	t.Cleanup(func() { _ = os.Chmod(completedDir, info.Mode().Perm()) })
+
+	err = tc.ExecuteWithOpts(manifest.ID, trashOpts(100))
+	require.Error(err, "the interrupted move must surface")
+	require.NoError(os.Chmod(completedDir, info.Mode().Perm()), "restore permissions")
+
+	loaded, err := LoadManifest(filepath.Join(tc.Mgr.InProgressDir(), manifest.ID+".json"))
+	require.NoError(err, "load the durable record left by the interrupted finalize")
+	assert.Equal(StatusCompleted, loaded.Status, "final status persisted before the move")
+	require.NotNil(loaded.Execution, "execution state")
+	assert.Equal(3, loaded.Execution.Succeeded)
+	assert.Equal(3, loaded.Execution.LastProcessedIndex)
+	require.NotNil(loaded.Execution.CompletedAt, "CompletedAt persisted before the move")
+}
+
+// TestExecutor_Finalize_CompletedFileIsSelfConsistent verifies the ordinary
+// path: the file in completed/ carries its own final status and counters, so
+// readers never depend on the directory to correct a stale inline status.
+func TestExecutor_Finalize_CompletedFileIsSelfConsistent(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	tc := NewTestContext(t)
+
+	manifest := tc.CreateManifest("self consistent", msgIDs(3))
+	require.NoError(tc.ExecuteWithOpts(manifest.ID, trashOpts(100)), "Execute()")
+
+	loaded, err := LoadManifest(filepath.Join(tc.Mgr.CompletedDir(), manifest.ID+".json"))
+	require.NoError(err, "load completed manifest")
+	assert.Equal(StatusCompleted, loaded.Status)
+	require.NotNil(loaded.Execution)
+	assert.Equal(3, loaded.Execution.Succeeded)
+	assert.Equal(0, loaded.Execution.Failed)
+	require.NotNil(loaded.Execution.CompletedAt)
+
+	_, statErr := os.Stat(filepath.Join(tc.Mgr.InProgressDir(), manifest.ID+".json"))
+	assert.True(os.IsNotExist(statErr), "in_progress file removed by the finalize rename")
+}
+
+// TestExecutor_Finalize_PropagatesPersistFailure verifies that a failure to
+// persist the final state is returned rather than logged and swallowed: the
+// manifest stays in in_progress/ (resumable) and the caller does not report
+// success. The in_progress directory is made read-only to fail the write.
+func TestExecutor_Finalize_PropagatesPersistFailure(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	tc := NewTestContext(t)
+
+	manifest := tc.CreateManifest("persist failure", msgIDs(2))
+	_, err := tc.Mgr.ClaimManifest(manifest.ID, MethodTrash)
+	require.NoError(err, "ClaimManifest")
+
+	inProgressDir := tc.Mgr.InProgressDir()
+	info, err := os.Stat(inProgressDir)
+	require.NoError(err, "stat in_progress dir")
+	require.NoError(os.Chmod(inProgressDir, 0o500), "make in_progress read-only")
+	t.Cleanup(func() { _ = os.Chmod(inProgressDir, info.Mode().Perm()) })
+
+	err = tc.ExecuteWithOpts(manifest.ID, trashOpts(100))
+	require.Error(err, "a final-state write failure must surface")
+	assert.Contains(err.Error(), "persist final state")
+	tc.AssertNotCompleted()
+
+	require.NoError(os.Chmod(inProgressDir, info.Mode().Perm()), "restore permissions")
+	tc.AssertInProgressCount(1)
+	tc.AssertCompletedCount(0)
 }
 
 func TestExecutor_ExecuteBatch_Scenarios(t *testing.T) {
