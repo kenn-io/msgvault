@@ -209,6 +209,15 @@ func TestParseDate(t *testing.T) {
 		{"numeric offset with different paren TZ", "Mon, 02 Jan 2006 15:04:05 +0700 (UTC)",
 			time.Date(2006, 1, 2, 8, 4, 5, 0, time.UTC)},
 
+		// mbox-derived Date headers with a stray unindented continuation
+		// line ("."), which enmime folds onto the header value
+		{"trailing malformed continuation dot", "Thu, 27 May 2004 17:06:42 -0500 .",
+			time.Date(2004, 5, 27, 22, 6, 42, 0, time.UTC)},
+
+		// US-style weekday + month-day order, no comma after day
+		{"weekday US month-day order", "Tue, Oct 17 2000 02:15:24 -0700",
+			time.Date(2000, 10, 17, 9, 15, 24, 0, time.UTC)},
+
 		// Invalid/unparseable dates should return zero time
 		{"empty", "", time.Time{}},
 		{"garbage", "not a date", time.Time{}},
@@ -342,6 +351,25 @@ func TestParse_MinimalMessage(t *testing.T) {
 	assert.Equal(t, "Test", msg.Subject)
 
 	assert.Equal(t, "Body text", msg.BodyText)
+}
+
+// TestParse_MalformedContinuationLineAfterDate reproduces an mbox-derived
+// message where a stray, unindented "." line follows the Date header.
+// enmime folds it onto the Date value as a continuation instead of erroring,
+// so Parse must still recover the sent date.
+func TestParse_MalformedContinuationLineAfterDate(t *testing.T) {
+	raw := []byte("X-Mozilla-Status: 7001\n" +
+		"X-Mozilla-Status2: 00000000\n" +
+		"Date: Thu, 27 May 2004 17:06:42 -0500\n" +
+		".\n" +
+		"Content-Type: text/plain; charset=ISO-8859-1\n" +
+		"\n" +
+		"Body text.")
+
+	msg := mustParse(t, raw)
+
+	assert.True(t, msg.Date.Equal(time.Date(2004, 5, 27, 22, 6, 42, 0, time.UTC)),
+		"msg.Date = %v", msg.Date)
 }
 
 // TestParse_InvalidCharset verifies enmime handles malformed charsets gracefully.

@@ -220,6 +220,7 @@ var dateFormats = []string{
 	"2006-01-02T15:04:05-07:00",             // ISO 8601 with offset
 	"2006-01-02 15:04:05 -0700",             // SQL-like format
 	"2006-01-02 15:04:05",                   // SQL-like without TZ
+	"Mon, Jan 2 2006 15:04:05 -0700",        // Weekday, US month-day order, no comma after day
 }
 
 // numericOffsetRe matches numeric timezone offsets like +0000, -0700, +00:00, -07:00.
@@ -256,6 +257,12 @@ func toUTC(t time.Time, numericOffset bool) time.Time {
 func parseDate(s string) time.Time {
 	// Normalize whitespace efficiently: split on whitespace runs and rejoin
 	s = strings.Join(strings.Fields(s), " ")
+
+	// Some mbox-derived sources have a stray, unindented continuation line
+	// (a lone ".") directly after the Date header. enmime folds it onto the
+	// header value instead of treating it as a parse error, leaving a
+	// trailing " ." that no real Date header would ever contain.
+	s = strings.TrimSuffix(s, " .")
 
 	// Strip trailing timezone name in parentheses like "(UTC)" or "(PST)"
 	// but keep the numeric offset for parsing
