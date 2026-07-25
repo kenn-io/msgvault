@@ -61,3 +61,5 @@ docs/assets/static/
 docs/assets/generated/
 docs/screenshots/demo-data/
 .kata.local.toml
+
+*.code-workspace
