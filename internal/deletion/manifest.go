@@ -718,6 +718,16 @@ func (m *Manager) listManifests(status Status) ([]*Manifest, error) {
 	return manifests, nil
 }
 
+// manifestLookupOrder is the directory search order for by-ID lookups.
+// in_progress/ is checked before pending/ because a crash in
+// claimPendingManifest's publish/remove window can leave a stale pending copy
+// alongside the authoritative initialized in_progress record; the in_progress
+// copy carries the real execution state (method, checkpoint progress) and
+// must win so callers plan against it rather than the stale copy.
+var manifestLookupOrder = []Status{
+	StatusInProgress, StatusPending, StatusCompleted, StatusFailed, StatusCancelled,
+}
+
 // GetManifest loads a manifest by ID from any status directory.
 func (m *Manager) GetManifest(id string) (*Manifest, string, error) {
 	if strings.TrimSpace(id) == "" {
@@ -727,7 +737,7 @@ func (m *Manager) GetManifest(id string) (*Manifest, string, error) {
 		return nil, "", err
 	}
 	filename := id + ".json"
-	for _, status := range persistedStatuses {
+	for _, status := range manifestLookupOrder {
 		dir := m.dirForStatus(status)
 		path := filepath.Join(dir, filename)
 		if manifest, err := LoadManifest(path); err == nil {
@@ -749,7 +759,7 @@ func (m *Manager) GetManifestWithStatus(id string) (*Manifest, Status, error) {
 		return nil, "", err
 	}
 	filename := id + ".json"
-	for _, status := range persistedStatuses {
+	for _, status := range manifestLookupOrder {
 		path := filepath.Join(m.dirForStatus(status), filename)
 		manifest, err := LoadManifest(path)
 		if err != nil {

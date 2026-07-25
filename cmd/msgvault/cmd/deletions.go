@@ -371,8 +371,20 @@ func buildDeleteStagedPlan(opts deleteStagedPlanOptions) (deleteStagedPlan, erro
 		if err != nil {
 			return deleteStagedPlan{}, fmt.Errorf("list in progress: %w", err)
 		}
-		manifests = append(manifests, pending...)
+		// In-progress records are authoritative: a claim crash can leave a
+		// stale pending copy of a manifest that also (correctly) sits in
+		// in_progress/. Planning from the stale copy would lose the stored
+		// execution method, so keep only the in_progress record.
 		manifests = append(manifests, inProgress...)
+		claimed := make(map[string]struct{}, len(inProgress))
+		for _, m := range inProgress {
+			claimed[m.ID] = struct{}{}
+		}
+		for _, m := range pending {
+			if _, ok := claimed[m.ID]; !ok {
+				manifests = append(manifests, m)
+			}
+		}
 	}
 
 	var out strings.Builder

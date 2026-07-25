@@ -191,6 +191,17 @@ func (e *Executor) prepareExecution(manifestID string, method Method) (*Manifest
 		}
 		return nil, fmt.Errorf("claim manifest: %w", err)
 	}
+	// A resumed manifest keeps the method it was started with (ClaimManifest
+	// preserves Execution.Method); executing the remainder with a different
+	// one would silently switch a recoverable trash batch to permanent
+	// deletion (or the reverse). Fresh claims always match — ClaimManifest
+	// initializes Execution.Method from the argument — so a mismatch is
+	// always a resume through the wrong entry point or flag.
+	if manifest.Execution != nil && manifest.Execution.Method != method {
+		return nil, fmt.Errorf(
+			"manifest %s was started with method %q and cannot be resumed with method %q; rerun with the original method",
+			manifestID, manifest.Execution.Method, method)
+	}
 	return manifest, nil
 }
 
@@ -268,23 +279,67 @@ func (e *Executor) Execute(ctx context.Context, manifestID string, opts *Execute
 
 	// Determine starting point
 	startIndex := 0
-	if opts.Resume && manifest.Execution != nil {
+	succeeded := manifest.Execution.Succeeded
+	failed := manifest.Execution.Failed
+	failedIDs := manifest.Execution.FailedIDs
+	var retryIDs []string
+	if opts.Resume {
 		startIndex = manifest.Execution.LastProcessedIndex
+		// Retry checkpointed transient failures before continuing, mirroring
+		// ExecuteBatch: a resume that only continued from LastProcessedIndex
+		// would permanently skip messages that failed before the interruption
+		// and still finalize as completed.
+		if len(failedIDs) > 0 {
+			retryIDs = failedIDs
+			failedIDs = nil
+			failed = 0
+		}
 	}
 
 	e.logger.Debug("executing deletion",
 		"manifest", manifestID,
 		"total", len(manifest.GmailIDs),
 		"start_index", startIndex,
+		"retry_ids", len(retryIDs),
 		"method", opts.Method,
 	)
 
-	e.progress.OnStart(len(manifest.GmailIDs), startIndex)
+	// When retries are pending, report succeeded count (not startIndex)
+	// to avoid showing 100% while retry work is still running.
+	alreadyProcessed := startIndex
+	if len(retryIDs) > 0 {
+		alreadyProcessed = succeeded
+	}
+	e.progress.OnStart(len(manifest.GmailIDs), alreadyProcessed)
 
-	// Execute deletions
-	succeeded := manifest.Execution.Succeeded
-	failed := manifest.Execution.Failed
-	failedIDs := manifest.Execution.FailedIDs
+	// Retry previously failed IDs before continuing with remaining messages
+	for ri, gmailID := range retryIDs {
+		select {
+		case <-ctx.Done():
+			remaining := slices.Concat(failedIDs, retryIDs[ri:])
+			e.saveCheckpoint(manifest, manifestID, startIndex, succeeded, len(remaining), remaining)
+			return ctx.Err()
+		default:
+		}
+
+		if e.manifestCancelled(manifestID) {
+			e.logger.Info("deletion cancelled during retry; stopping", "manifest", manifestID, "retried", ri)
+			return ErrManifestCancelled
+		}
+
+		result, delErr := e.deleteOne(ctx, gmailID, opts.Method)
+		switch result {
+		case resultSuccess:
+			succeeded++
+		case resultFatal:
+			remaining := slices.Concat(failedIDs, retryIDs[ri:])
+			e.saveCheckpoint(manifest, manifestID, startIndex, succeeded, len(remaining), remaining)
+			return fmt.Errorf("delete message: %w", delErr)
+		case resultFailed:
+			failed++
+			failedIDs = append(failedIDs, gmailID)
+		}
+	}
 
 	for i := startIndex; i < len(manifest.GmailIDs); i++ {
 		select {

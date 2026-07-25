@@ -1336,6 +1336,38 @@ func TestManager_FinalizeInProgress_RemovesStalePending(t *testing.T) {
 	assertSingleValidManifest(t, mgr, m.ID)
 }
 
+// TestManager_GetManifest_PrefersInProgressOverStalePending verifies that
+// by-ID lookups return the authoritative in_progress record when a claim
+// crash left a stale pending copy beside it: the in_progress copy carries the
+// real execution state (method, checkpoint progress) that planning relies on.
+func TestManager_GetManifest_PrefersInProgressOverStalePending(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	mgr := testManager(t)
+	m := createTestManifest(t, mgr, "lookup stale pending")
+
+	// Simulate the crash window: publish the initialized in_progress copy
+	// exactly as claimPendingManifest does, but leave the pending file behind.
+	m.Status = StatusInProgress
+	m.Execution = &Execution{StartedAt: time.Now(), Method: MethodTrash, LastProcessedIndex: 3}
+	require.NoError(
+		writeManifestAtomic(m, filepath.Join(mgr.InProgressDir(), m.ID+".json")),
+		"publish in_progress copy",
+	)
+
+	loaded, path, err := mgr.GetManifest(m.ID)
+	require.NoError(err, "GetManifest")
+	assert.Equal(filepath.Join(mgr.InProgressDir(), m.ID+".json"), path, "in_progress path wins")
+	require.NotNil(loaded.Execution, "execution state from the in_progress record")
+	assert.Equal(MethodTrash, loaded.Execution.Method)
+
+	withStatus, status, err := mgr.GetManifestWithStatus(m.ID)
+	require.NoError(err, "GetManifestWithStatus")
+	assert.Equal(StatusInProgress, status, "directory-derived status prefers in_progress")
+	require.NotNil(withStatus.Execution)
+	assert.Equal(3, withStatus.Execution.LastProcessedIndex)
+}
+
 // TestManager_CancelManifest_PrefersInProgressOverStalePending simulates a
 // crash in claimPendingManifest's publish/remove window (in_progress written,
 // pending not yet removed) followed by a cancel. The cancel must move the

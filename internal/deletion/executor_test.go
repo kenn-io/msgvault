@@ -534,6 +534,113 @@ func TestExecutor_Execute_ResumeFromInProgress(t *testing.T) {
 	tc.AssertManifestExecution(manifest.ID, 5, 0)
 }
 
+// TestExecutor_Execute_RejectsMethodMismatchOnResume verifies that a manifest
+// claimed and checkpointed with one method cannot be resumed with another:
+// resuming a permanent-delete batch through the trash path (or the reverse)
+// must fail before any message is touched, leaving the manifest resumable.
+func TestExecutor_Execute_RejectsMethodMismatchOnResume(t *testing.T) {
+	require := require.New(t)
+	tc := NewTestContext(t)
+
+	manifest := NewManifest("method mismatch", msgIDs(5))
+	manifest.Status = StatusInProgress
+	manifest.Execution = &Execution{
+		StartedAt:          time.Now().Add(-time.Hour),
+		Method:             MethodDelete,
+		Succeeded:          2,
+		LastProcessedIndex: 2,
+	}
+	require.NoError(tc.Mgr.SaveManifest(manifest), "SaveManifest()")
+
+	err := tc.ExecuteWithOpts(manifest.ID, trashOpts(100))
+	require.ErrorContains(err, "cannot be resumed with method", "trash resume of a delete batch")
+	tc.AssertTrashCalls(0)
+	tc.AssertDeleteCalls(0)
+	tc.AssertInProgressCount(1)
+}
+
+// TestExecutor_ExecuteBatch_RejectsTrashResume verifies the reverse and more
+// dangerous direction: ExecuteBatch always deletes permanently, so resuming a
+// recoverable trash batch through it must be rejected rather than silently
+// switching the remaining messages to permanent deletion. The batch then
+// resumes cleanly through the trash path it was started with.
+func TestExecutor_ExecuteBatch_RejectsTrashResume(t *testing.T) {
+	require := require.New(t)
+	tc := NewTestContext(t)
+
+	manifest := NewManifest("trash resumed as batch", msgIDs(5))
+	manifest.Status = StatusInProgress
+	manifest.Execution = &Execution{
+		StartedAt:          time.Now().Add(-time.Hour),
+		Method:             MethodTrash,
+		Succeeded:          2,
+		LastProcessedIndex: 2,
+	}
+	require.NoError(tc.Mgr.SaveManifest(manifest), "SaveManifest()")
+
+	err := tc.ExecuteBatch(manifest.ID)
+	require.ErrorContains(err, "cannot be resumed with method", "batch resume of a trash batch")
+	tc.AssertBatchDeleteCalls(0)
+	tc.AssertDeleteCalls(0)
+	tc.AssertInProgressCount(1)
+
+	require.NoError(tc.ExecuteWithOpts(manifest.ID, trashOpts(100)), "trash resume after rejection")
+	tc.AssertTrashCalls(3)
+	tc.AssertManifestExecution(manifest.ID, 5, 0)
+}
+
+// TestExecutor_Execute_ResumeRetriesFailedIDs verifies that resuming a trash
+// manifest retries checkpointed transient failures before continuing from
+// LastProcessedIndex, mirroring ExecuteBatch — instead of skipping them and
+// finalizing as completed while the messages remain undeleted.
+func TestExecutor_Execute_ResumeRetriesFailedIDs(t *testing.T) {
+	tc := NewTestContext(t)
+
+	manifest := NewManifest("trash retry", msgIDs(5))
+	manifest.Status = StatusInProgress
+	manifest.Execution = &Execution{
+		StartedAt:          time.Now().Add(-time.Hour),
+		Method:             MethodTrash,
+		Succeeded:          2,
+		Failed:             1,
+		FailedIDs:          []string{"msg1"},
+		LastProcessedIndex: 3, // msg0..msg2 processed; msg1 failed transiently
+	}
+	require.NoError(t, tc.Mgr.SaveManifest(manifest), "SaveManifest()")
+
+	require.NoError(t, tc.ExecuteWithOpts(manifest.ID, trashOpts(100)), "Execute()")
+
+	// msg1 retried, then msg3 and msg4 continued.
+	tc.AssertTrashCalls(3)
+	tc.AssertManifestExecution(manifest.ID, 5, 0)
+	tc.AssertCompletedCount(1)
+}
+
+// TestExecutor_Execute_ResumeRetryStillFailing verifies that a checkpointed
+// failure that fails again on the resume retry stays recorded in FailedIDs
+// rather than being double-counted or dropped.
+func TestExecutor_Execute_ResumeRetryStillFailing(t *testing.T) {
+	tc := NewTestContext(t)
+	tc.SimulateTrashError("msg1")
+
+	manifest := NewManifest("trash retry still failing", msgIDs(5))
+	manifest.Status = StatusInProgress
+	manifest.Execution = &Execution{
+		StartedAt:          time.Now().Add(-time.Hour),
+		Method:             MethodTrash,
+		Succeeded:          2,
+		Failed:             1,
+		FailedIDs:          []string{"msg1"},
+		LastProcessedIndex: 3,
+	}
+	require.NoError(t, tc.Mgr.SaveManifest(manifest), "SaveManifest()")
+
+	require.NoError(t, tc.ExecuteWithOpts(manifest.ID, trashOpts(100)), "Execute()")
+
+	tc.AssertManifestExecution(manifest.ID, 4, 1, "msg1")
+	tc.AssertCompletedCount(1)
+}
+
 func TestExecutor_ExecuteBatch_Scenarios(t *testing.T) {
 	tests := []struct {
 		name       string
