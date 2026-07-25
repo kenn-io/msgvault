@@ -131,6 +131,10 @@ func tuiAccountsHandler(requests *atomic.Int32, email string) http.Handler {
 		Service: daemonService,
 		Version: Version,
 	}))
+	mux.HandleFunc("/api/v1/health", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"status":"ok"}`))
+	})
 	mux.HandleFunc("/api/v1/stats", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"total_messages":42}`))
