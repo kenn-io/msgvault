@@ -1044,6 +1044,38 @@ func TestFullSyncDateFallbackToInternalDate(t *testing.T) {
 	assertDateFallback(t, env.Store, "msg-bad-date", "2024-01-15", "12:00:00")
 }
 
+func TestFullSyncImplausibleDateUsesOldestReceivedTimestamp(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	env := newTestEnv(t)
+
+	raw := []byte("From: sender@example.com\r\n" +
+		"To: recipient@example.com\r\n" +
+		"Date: Thu, 01 Jan 1970 00:00:00 +0000\r\n" +
+		"Received: from relay.example.net by mx.example.net; Wed, 03 Jan 2007 15:04:05 +0000\r\n" +
+		"Received: from sender.example.net by relay.example.net; Tue, 02 Jan 2007 15:04:05 +0000\r\n" +
+		"Subject: date resolution\r\n\r\nbody\r\n")
+
+	env.Mock.Profile.MessagesTotal = 1
+	env.Mock.Profile.HistoryID = 12345
+	env.Mock.Messages["msg-implausible-date"] = &gmail.RawMessage{
+		ID:           "msg-implausible-date",
+		ThreadID:     "thread-implausible-date",
+		LabelIDs:     []string{"INBOX"},
+		Raw:          raw,
+		InternalDate: 1430827200000, // 2015-05-05T12:00:00Z
+	}
+	env.Mock.MessagePages = [][]string{{"msg-implausible-date"}}
+
+	runFullSync(t, env)
+
+	sentAt, internalDate, err := env.Store.InspectMessageDates("msg-implausible-date")
+	require.NoError(err, "InspectMessageDates")
+	assert.Contains(sentAt, "2007-01-02", "sent_at")
+	assert.Contains(internalDate, "2015-05-05", "internal_date")
+	assert.NotEqual(internalDate, sentAt)
+}
+
 func TestFullSyncEmptyRawMIME(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

@@ -16,20 +16,25 @@ import (
 
 // Message represents a parsed email message.
 type Message struct {
-	Subject     string
-	Date        time.Time
-	From        []Address
-	To          []Address
-	Cc          []Address
-	Bcc         []Address
-	ReplyTo     []Address
-	MessageID   string
-	InReplyTo   string
-	References  []string
-	BodyText    string
-	BodyHTML    string
-	Attachments []Attachment
-	Errors      []string // Non-fatal parsing errors
+	Subject string
+	Date    time.Time
+	// RawDateHeader holds the unparsed Date header even when Date could not
+	// be resolved, so callers can distinguish a missing header from one that
+	// failed to parse.
+	RawDateHeader string
+	ReceivedDates []time.Time
+	From          []Address
+	To            []Address
+	Cc            []Address
+	Bcc           []Address
+	ReplyTo       []Address
+	MessageID     string
+	InReplyTo     string
+	References    []string
+	BodyText      string
+	BodyHTML      string
+	Attachments   []Attachment
+	Errors        []string // Non-fatal parsing errors
 }
 
 // Address represents an email address with optional display name.
@@ -67,10 +72,12 @@ func Parse(raw []byte) (*Message, error) {
 
 	// Parse date
 	if dateStr := env.GetHeader("Date"); dateStr != "" {
+		msg.RawDateHeader = dateStr
 		if t := parseDate(dateStr); !t.IsZero() {
 			msg.Date = t
 		}
 	}
+	msg.ReceivedDates = ParseReceivedChain(env.GetHeaderValues("Received"))
 
 	// Parse addresses using enmime's AddressList (handles edge cases better)
 	msg.From = parseAddressList(env, "From")

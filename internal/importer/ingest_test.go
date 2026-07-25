@@ -1,6 +1,7 @@
 package importer
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"log/slog"
@@ -195,4 +196,82 @@ func TestIngestRawMessage_InvalidUTF8_RecipientLinkage(t *testing.T) {
 			"invalid UTF-8 in display_name: %q", name)
 	}
 	require.NoError(rows.Err(), "display_name rows")
+}
+
+func TestIngestRawMessage_ResolvesImplausibleDateFromReceivedChain(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	require.NoError(err, "open store")
+	t.Cleanup(func() { _ = st.Close() })
+	require.NoError(st.InitSchema(), "init schema")
+
+	src, err := st.GetOrCreateSource("test", "owner@example.com")
+	require.NoError(err, "get/create source")
+
+	raw := []byte("From: sender@example.com\r\n" +
+		"To: owner@example.com\r\n" +
+		"Date: Thu, 01 Jan 1970 00:00:00 +0000\r\n" +
+		"Received: from relay.example.net by mx.example.net; Wed, 03 Jan 2007 15:04:05 +0000\r\n" +
+		"Received: from sender.example.net by relay.example.net; Tue, 02 Jan 2007 15:04:05 +0000\r\n" +
+		"Subject: date resolution\r\n\r\nbody\r\n")
+	fallback := time.Date(2015, 5, 5, 12, 0, 0, 0, time.UTC)
+
+	err = IngestRawMessage(
+		context.Background(), st,
+		src.ID, "owner@example.com", "",
+		nil, "source-msg-date", "fakehash",
+		raw, fallback, slog.Default(),
+	)
+	require.NoError(err, "IngestRawMessage")
+
+	var sentAt, internalDate time.Time
+	err = st.DB().QueryRow(
+		`SELECT sent_at, internal_date FROM messages
+		 WHERE source_message_id = ?`,
+		"source-msg-date",
+	).Scan(&sentAt, &internalDate)
+	require.NoError(err, "query dates")
+	assert.Equal(time.Date(2007, 1, 2, 15, 4, 5, 0, time.UTC), sentAt.UTC())
+	assert.Equal(fallback, internalDate.UTC())
+}
+
+func TestIngestRawMessage_LeavesCanonicalDateUnsetWhenNoDateIsPlausible(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	require.NoError(err, "open store")
+	t.Cleanup(func() { _ = st.Close() })
+	require.NoError(st.InitSchema(), "init schema")
+
+	src, err := st.GetOrCreateSource("test", "owner@example.com")
+	require.NoError(err, "get/create source")
+	raw := []byte("From: sender@example.com\r\n" +
+		"To: owner@example.com\r\n" +
+		"Date: Thu, 01 Jan 1970 00:00:00 +0000\r\n" +
+		"Subject: no plausible date\r\n\r\nbody\r\n")
+	fallback := time.Date(1980, 5, 5, 12, 0, 0, 0, time.UTC)
+	var logs bytes.Buffer
+	log := slog.New(slog.NewTextHandler(&logs, nil))
+
+	err = IngestRawMessage(
+		context.Background(), st,
+		src.ID, "owner@example.com", "",
+		nil, "source-msg-no-date", "fakehash",
+		raw, fallback, log,
+	)
+	require.NoError(err, "IngestRawMessage")
+
+	var sentAt, internalDate sql.NullTime
+	err = st.DB().QueryRow(
+		`SELECT sent_at, internal_date FROM messages
+		 WHERE source_message_id = ?`,
+		"source-msg-no-date",
+	).Scan(&sentAt, &internalDate)
+	require.NoError(err, "query dates")
+	assert.False(sentAt.Valid)
+	require.True(internalDate.Valid)
+	assert.Equal(fallback, internalDate.Time.UTC())
+	assert.Contains(logs.String(), "ignored implausible email Date header")
+	assert.Contains(logs.String(), "replacement_source=none")
 }

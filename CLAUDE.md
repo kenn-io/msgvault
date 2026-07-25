@@ -82,6 +82,8 @@ make lint                     # Run linter
 
 # Maintenance
 ./msgvault repair-encoding                            # Fix UTF-8 encoding issues
+./msgvault repair-dates                              # Preview missing/implausible date repairs
+./msgvault repair-dates --apply                      # Apply repairs (and rebuild SQLite analytics cache)
 
 # Agent skills
 ./msgvault skills install                             # Install agent skills (Claude Code, Codex)

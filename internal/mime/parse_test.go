@@ -370,6 +370,7 @@ func TestParse_MalformedContinuationLineAfterDate(t *testing.T) {
 
 	assert.True(t, msg.Date.Equal(time.Date(2004, 5, 27, 22, 6, 42, 0, time.UTC)),
 		"msg.Date = %v", msg.Date)
+	assert.Equal(t, "Thu, 27 May 2004 17:06:42 -0500 .", msg.RawDateHeader)
 }
 
 // TestParse_InvalidCharset verifies enmime handles malformed charsets gracefully.

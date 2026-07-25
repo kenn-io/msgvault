@@ -508,10 +508,6 @@ func (s *Syncer) parseToModel(sourceID int64, raw *gmail.RawMessage, threadID st
 			Subject:  extractSubjectFromSnippet(raw.Snippet),
 			BodyText: fmt.Sprintf("[MIME parsing failed: %s]\n\nRaw MIME data is preserved in message_raw table.", errMsg),
 		}
-		// Set date from InternalDate if available
-		if raw.InternalDate > 0 {
-			parsed.Date = time.UnixMilli(raw.InternalDate).UTC()
-		}
 		s.logger.Warn("MIME parse failed, storing with placeholder",
 			"id", raw.ID,
 			"error", errMsg)
@@ -595,16 +591,29 @@ func (s *Syncer) parseToModel(sourceID int64, raw *gmail.RawMessage, threadID st
 		AttachmentCount: len(parsed.Attachments),
 	}
 
-	// Set dates - always store in UTC for consistent querying
+	// Set dates - always store in UTC for consistent querying.
+	now := time.Now().UTC()
+	var fallbackDate time.Time
 	if raw.InternalDate > 0 {
-		t := time.UnixMilli(raw.InternalDate).UTC()
-		msg.InternalDate = sql.NullTime{Time: t, Valid: true}
+		fallbackDate = time.UnixMilli(raw.InternalDate).UTC()
+		msg.InternalDate = sql.NullTime{Time: fallbackDate, Valid: true}
 	}
-	if !parsed.Date.IsZero() {
-		msg.SentAt = sql.NullTime{Time: parsed.Date, Valid: true}
-	} else if msg.InternalDate.Valid {
-		// Fall back to InternalDate if Date header couldn't be parsed
-		msg.SentAt = msg.InternalDate
+	resolvedDate, dateSource := mime.ResolveMessageDate(
+		parsed.Date,
+		parsed.ReceivedDates,
+		fallbackDate,
+		now,
+	)
+	if !parsed.Date.IsZero() && !mime.IsPlausibleDate(parsed.Date, now) {
+		s.logger.Warn(
+			"ignored implausible email Date header",
+			"id", raw.ID,
+			"header_date", parsed.Date.UTC(),
+			"replacement_source", dateSource,
+		)
+	}
+	if !resolvedDate.IsZero() {
+		msg.SentAt = sql.NullTime{Time: resolvedDate, Valid: true}
 	}
 
 	return &messageData{

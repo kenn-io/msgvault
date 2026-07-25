@@ -25,7 +25,7 @@ import (
 //   - sourceMsgID: stable dedup key for source_message_id column
 //   - rawHash: sha256 hex of raw bytes, used as thread fallback
 //   - raw: the raw RFC 5322 MIME bytes
-//   - fallbackDate: used when MIME Date header is missing/unparseable
+//   - fallbackDate: source timestamp used when MIME headers have no plausible date
 //   - log: logger (must not be nil)
 func IngestRawMessage(
 	ctx context.Context, st *store.Store,
@@ -40,9 +40,6 @@ func IngestRawMessage(
 		parsed = &mime.Message{
 			Subject:  "(MIME parse error)",
 			BodyText: fmt.Sprintf("[MIME parsing failed: %s]\n\nRaw MIME data is preserved in message_raw table.", errMsg),
-		}
-		if !fallbackDate.IsZero() {
-			parsed.Date = fallbackDate
 		}
 	}
 
@@ -103,11 +100,28 @@ func IngestRawMessage(
 		return fmt.Errorf("ensure conversation: %w", err)
 	}
 
+	now := time.Now().UTC()
+	resolvedDate, dateSource := mime.ResolveMessageDate(
+		parsed.Date,
+		parsed.ReceivedDates,
+		fallbackDate,
+		now,
+	)
+	if !parsed.Date.IsZero() && !mime.IsPlausibleDate(parsed.Date, now) {
+		log.Warn(
+			"ignored implausible email Date header",
+			"source_message_id", sourceMsgID,
+			"header_date", parsed.Date.UTC(),
+			"replacement_source", dateSource,
+		)
+	}
 	var sentAt sql.NullTime
-	if !parsed.Date.IsZero() {
-		sentAt = sql.NullTime{Time: parsed.Date.UTC(), Valid: true}
-	} else if !fallbackDate.IsZero() {
-		sentAt = sql.NullTime{Time: fallbackDate.UTC(), Valid: true}
+	if !resolvedDate.IsZero() {
+		sentAt = sql.NullTime{Time: resolvedDate, Valid: true}
+	}
+	var internalDate sql.NullTime
+	if !fallbackDate.IsZero() {
+		internalDate = sql.NullTime{Time: fallbackDate.UTC(), Valid: true}
 	}
 
 	snippet := snippetFromBody(bodyText)
@@ -120,6 +134,7 @@ func IngestRawMessage(
 		SourceMessageID: sourceMsgID,
 		MessageType:     "email",
 		SentAt:          sentAt,
+		InternalDate:    internalDate,
 		SenderID:        senderID,
 		IsFromMe:        isFromMe,
 		Subject: sql.NullString{

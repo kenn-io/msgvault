@@ -1341,6 +1341,7 @@ func TestHandleCLIRunBackupSubcommandAdmission(t *testing.T) {
 		{"logs still allowed", []string{"logs"}, true},
 		{"remove-account still allowed", []string{"remove-account", "alice@example.com", "--yes"}, true},
 		{"pack-attachments allowed", []string{"pack-attachments"}, true},
+		{"repair-dates apply allowed", []string{"repair-dates", "--apply"}, true},
 		{"repack-attachments allowed", []string{"repack-attachments"}, true},
 		{"add-discord allowed", []string{"add-discord"}, true},
 		{"sync-discord allowed", []string{"sync-discord", "113456789012345678"}, true},

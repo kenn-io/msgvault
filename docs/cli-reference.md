@@ -1593,6 +1593,29 @@ msgvault repair-encoding
 
 ---
 
+## repair-dates
+
+Report email messages whose canonical `sent_at` is missing, before 1990, or
+more than 30 days in the future. The command resolves replacements from a
+plausible `Date` header, the oldest plausible `Received` timestamp, or stored
+source metadata, in that order.
+
+The default is a read-only report. Pass `--apply` to update the archive and
+write a JSON audit ledger under the data directory. SQLite archives also
+rebuild the Parquet analytics cache; PostgreSQL archives do not use that cache.
+Original source files and remote servers are never modified.
+
+```bash
+msgvault repair-dates
+msgvault repair-dates --apply
+```
+
+| Flag | Description |
+|---|---|
+| `--apply` | Write repaired dates to the archive |
+
+---
+
 ## update
 
 Update msgvault to the latest version.

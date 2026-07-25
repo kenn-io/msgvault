@@ -135,6 +135,7 @@ available with `msgvault tui`.
 | `update` | Update msgvault to the latest version |
 | `setup` | Interactive first-run configuration wizard |
 | `repair-encoding` | Fix UTF-8 encoding issues |
+| `repair-dates` | Report or repair missing and implausible email sent dates |
 | `list-senders` / `list-domains` / `list-labels` | Explore metadata |
 
 See the [CLI Reference](https://msgvault.io/cli-reference/) for full details.
@@ -149,7 +150,7 @@ msgvault can search your archive semantically using vector embeddings in additio
 
 A separate MCP tool, `find_similar_messages`, returns nearest neighbors for a seed message. See the [Vector Search guide](https://msgvault.io/usage/vector-search/) for setup, backfill, and troubleshooting.
 
-> **Archive writes are daemon-owned.** CLI writer commands such as `msgvault sync-full`, `msgvault embeddings build`, `msgvault repair-encoding`, and `msgvault rebuild-fts` send their work to the configured remote server or local background daemon. The daemon serializes archive mutations and streams progress back to your terminal, so normal CLI ergonomics stay the same without opening a second SQLite writer process.
+> **Archive writes are daemon-owned.** CLI writer commands such as `msgvault sync-full`, `msgvault embeddings build`, `msgvault repair-dates --apply`, and `msgvault rebuild-fts` send their work to the configured remote server or local background daemon. The daemon serializes archive mutations and streams progress back to your terminal, so normal CLI ergonomics stay the same without opening a second SQLite writer process.
 
 Large archives can scope an embedding generation with `[vector.embed.scope] message_types = ["sms", "mms"]`. Scoped vector and hybrid searches must include a matching `message_type` filter so a partial index is never used as if it covered the whole archive.
 
