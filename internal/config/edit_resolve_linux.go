@@ -14,7 +14,7 @@ import (
 func openPinnedPathEntry(parent *os.File, name, displayPath string) (*os.File, fs.FileInfo, error) {
 	fd, err := unix.Openat(int(parent.Fd()), name, unix.O_PATH|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, fmt.Errorf("open pinned path entry: %w", err)
 	}
 	file := os.NewFile(uintptr(fd), displayPath)
 	info, err := file.Stat()
@@ -30,7 +30,7 @@ func readPinnedSymlink(file *os.File) (string, error) {
 	for {
 		n, err := unix.Readlinkat(int(file.Fd()), "", buffer)
 		if err != nil {
-			return "", err
+			return "", fmt.Errorf("read pinned symlink: %w", err)
 		}
 		if n < len(buffer) {
 			return string(buffer[:n]), nil
