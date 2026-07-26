@@ -25,4 +25,4 @@ jobs:
   run:
     uses: kenn-io/msgvault/.github/workflows/docker.yml@main
     with:
-      checkout_ref: refs/pull/${{ github.event.pull_request.number }}/merge
+      checkout_ref: ${{ github.sha }}
