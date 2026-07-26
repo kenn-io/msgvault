@@ -24,5 +24,3 @@ permissions: read-all
 jobs:
   run:
     uses: kenn-io/msgvault/.github/workflows/docker.yml@main
-    with:
-      checkout_ref: ${{ github.sha }}
