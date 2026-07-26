@@ -79,7 +79,7 @@ jobs:
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
-          cache: true
+          cache: 'true'
 
       - name: Install golangci-lint
         run: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2
@@ -126,7 +126,7 @@ jobs:
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
-          cache: ${{ !(github.repository == 'kenn-io/msgvault' && (github.ref == 'refs/heads/main' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.base.repo.full_name == github.repository))) }}
+          cache: ${{ github.repository == 'kenn-io/msgvault' && (github.ref == 'refs/heads/main' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.base.repo.full_name == github.repository)) && 'false' || 'true' }}
 
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
@@ -167,7 +167,7 @@ jobs:
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
-          cache: ${{ !(github.repository == 'kenn-io/msgvault' && (github.ref == 'refs/heads/main' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.base.repo.full_name == github.repository))) }}
+          cache: ${{ github.repository == 'kenn-io/msgvault' && (github.ref == 'refs/heads/main' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.base.repo.full_name == github.repository)) && 'false' || 'true' }}
 
       - name: Install container build tools
         # Mirror hiccups have hung plain apt-get for 15+ minutes; bounded
@@ -219,7 +219,7 @@ jobs:
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
-          cache: true
+          cache: 'true'
 
       - name: Run mixed-archive analytical reference benchmark
         run: |
@@ -242,7 +242,7 @@ jobs:
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
-          cache: true
+          cache: 'true'
 
       # sqlite-vec's CGo bindings #include <sqlite3.h>, which isn't on
       # the default windows-latest include path. Install it from MSYS2
@@ -303,7 +303,7 @@ jobs:
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
-          cache: true
+          cache: 'true'
 
       - name: Install sqlite3 dev headers
         shell: pwsh
@@ -343,7 +343,7 @@ jobs:
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
-          cache: true
+          cache: 'true'
 
       - name: Install sqlite3 dev headers
         shell: pwsh
@@ -377,7 +377,7 @@ jobs:
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
-          cache: true
+          cache: 'true'
 
       - name: Install sqlite3 dev headers
         shell: pwsh
@@ -432,7 +432,7 @@ jobs:
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
-          cache: ${{ !(github.repository == 'kenn-io/msgvault' && (github.ref == 'refs/heads/main' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.base.repo.full_name == github.repository))) }}
+          cache: ${{ github.repository == 'kenn-io/msgvault' && (github.ref == 'refs/heads/main' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.base.repo.full_name == github.repository)) && 'false' || 'true' }}
 
       - name: Install psql client
         run: |
@@ -488,7 +488,7 @@ jobs:
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
-          cache: ${{ !(github.repository == 'kenn-io/msgvault' && (github.ref == 'refs/heads/main' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.base.repo.full_name == github.repository))) }}
+          cache: ${{ github.repository == 'kenn-io/msgvault' && (github.ref == 'refs/heads/main' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.base.repo.full_name == github.repository)) && 'false' || 'true' }}
 
       # This lane uses a stock postgres:16 image (no pgvector extension), so it
       # must NOT build the pgvector tag — those tests CREATE EXTENSION "vector"
