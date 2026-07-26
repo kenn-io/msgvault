@@ -19,8 +19,8 @@ env:
 jobs:
   # PR validation: build and smoke-test only, no registry access
   validate:
-    if: (github.event_name == 'pull_request' || github.event_name == 'pull_request_target')
-    runs-on: ${{ (github.event_name == 'pull_request_target' || github.ref == 'refs/heads/main') && 'kenn-linux-x64-public' || 'ubuntu-latest' }}
+    if: github.event_name == 'pull_request'
+    runs-on: ${{ (github.ref == 'refs/heads/main' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.base.repo.full_name == github.repository)) && 'kenn-linux-x64-public' || 'ubuntu-latest' }}
     permissions:
       contents: read
 
@@ -72,8 +72,8 @@ jobs:
 
   # Publish: build multi-arch and push to GHCR (main/tags only)
   publish:
-    if: (github.event_name != 'pull_request' && github.event_name != 'pull_request_target')
-    runs-on: ${{ (github.event_name == 'pull_request_target' || github.ref == 'refs/heads/main') && 'kenn-linux-x64-public' || 'ubuntu-latest' }}
+    if: github.event_name != 'pull_request'
+    runs-on: ${{ (github.ref == 'refs/heads/main' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.base.repo.full_name == github.repository)) && 'kenn-linux-x64-public' || 'ubuntu-latest' }}
     permissions:
       contents: read
       packages: write
