@@ -265,19 +265,23 @@ ORDER BY t.canonical_id`
 
 func buildDomainRollupsSQL(paths ActivityPaths) string {
 	return LogicalActivitySQL(paths, "true") + `,
-domain_totals AS (
+domain_entries AS (
+	SELECT u.entry_key, k.domain, u.source_type, u.attachment_count,
+	       u.occurred_at
+	FROM logical_domain_keys k
+	JOIN logical_units u USING (entry_key)
+	WHERE k.domain <> ''
+), domain_totals AS (
 	SELECT domain,
 	       count(*)::BIGINT AS activity_count,
 	       coalesce(sum(attachment_count), 0)::BIGINT AS file_count,
 	       min(occurred_at)::TIMESTAMP AS first_at,
 	       max(occurred_at)::TIMESTAMP AS last_at
-	FROM logical_domains
-	WHERE domain <> ''
+	FROM domain_entries
 	GROUP BY domain
 ), domain_source_counts AS (
 	SELECT domain, source_type, count(*)::BIGINT AS source_count
-	FROM logical_domains
-	WHERE domain <> ''
+	FROM domain_entries
 	GROUP BY domain, source_type
 ), domain_sources AS (
 	SELECT domain,
@@ -287,8 +291,7 @@ domain_totals AS (
 	GROUP BY domain
 ), domain_people AS (
 	SELECT domain, count(DISTINCT canonical_id)::BIGINT AS person_count
-	FROM logical_domains
-	CROSS JOIN unnest(canonical_ids) AS person(canonical_id)
+	FROM logical_person_domains
 	WHERE domain <> ''
 	GROUP BY domain
 )
