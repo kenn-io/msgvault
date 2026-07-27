@@ -234,6 +234,12 @@ func (s *Store) exportMessageConversations(
 	counts *MessageExportCounts,
 ) error {
 	predicate, args := messageExportPredicate("m", filter, true)
+	var sourcePredicate string
+	if len(filter.SourceIDs) > 0 {
+		clause, sourceArgs := messageExportInClause("c.source_id", filter.SourceIDs)
+		sourcePredicate = " AND " + clause
+		args = append(args, sourceArgs...)
+	}
 	rows, err := s.db.QueryContext(ctx, s.dialect.Rebind(`
 		SELECT s.source_type, s.identifier, c.source_conversation_id,
 		       COALESCE(c.title, ''), c.conversation_type,
@@ -244,7 +250,7 @@ func (s *Store) exportMessageConversations(
 			SELECT 1
 			FROM messages m
 			WHERE m.conversation_id = c.id AND `+predicate+`
-		)
+		)`+sourcePredicate+`
 		ORDER BY s.source_type, s.identifier, c.source_conversation_id
 	`), args...)
 	if err != nil {

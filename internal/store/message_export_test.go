@@ -216,6 +216,74 @@ func TestExportMessagesFiltersSourcesAndMessageTypes(t *testing.T) {
 	assertions.Equal("first-text", sink.messages[0].ID)
 }
 
+func TestExportMessagesSourceFilterBoundsConversationScan(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	if st.IsPostgreSQL() {
+		t.Skip("SQLite query-plan regression")
+	}
+	requirements := require.New(t)
+	selected, err := st.GetOrCreateSource("text", "selected")
+	requirements.NoError(err)
+	unrelated, err := st.GetOrCreateSource("text", "unrelated")
+	requirements.NoError(err)
+	start := time.Date(2026, 7, 20, 0, 0, 0, 0, time.UTC)
+	selectedConversation := insertMessageExportConversation(
+		t, st, selected.ID, "selected-conversation", "", "direct_chat", `{}`,
+	)
+
+	tx, err := st.DB().Begin()
+	requirements.NoError(err)
+	conversationStatement, err := tx.Prepare(st.Rebind(`
+		INSERT INTO conversations (
+			source_id, source_conversation_id, conversation_type, title
+		) VALUES (?, ?, 'direct_chat', '')
+	`))
+	requirements.NoError(err)
+	defer func() {
+		requirements.NoError(conversationStatement.Close())
+	}()
+	for i := range 10_000 {
+		_, err = conversationStatement.Exec(unrelated.ID, fmt.Sprintf("unrelated-%d", i))
+		requirements.NoError(err)
+	}
+
+	messageStatement, err := tx.Prepare(st.Rebind(`
+		INSERT INTO messages (
+			conversation_id, source_id, source_message_id, message_type,
+			sent_at, received_at
+		) VALUES (?, ?, ?, 'other', ?, ?)
+	`))
+	requirements.NoError(err)
+	defer func() {
+		requirements.NoError(messageStatement.Close())
+	}()
+	for i := range 1_000 {
+		_, err = messageStatement.Exec(
+			selectedConversation,
+			selected.ID,
+			fmt.Sprintf("selected-%d", i),
+			start,
+			start,
+		)
+		requirements.NoError(err)
+	}
+	requirements.NoError(tx.Commit())
+
+	ctx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
+	defer cancel()
+	sink := &collectingMessageExportSink{}
+	counts, err := st.ExportMessages(ctx, store.MessageExportFilter{
+		Start:        start,
+		End:          start.Add(time.Hour),
+		SourceIDs:    []int64{selected.ID},
+		MessageTypes: []string{"wanted"},
+	}, sink)
+	requirements.NoError(err)
+	assert.Equal(t, store.MessageExportCounts{Sources: 1}, counts)
+	assert.Empty(t, sink.conversations)
+	assert.Empty(t, sink.messages)
+}
+
 func TestExportMessagesEmitsExplicitEmptySources(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
