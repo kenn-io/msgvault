@@ -329,7 +329,12 @@ func (s *Store) exportMessageRows(
 			       COALESCE(m.subject, ''), COALESCE(m.metadata, '{}'),
 			       COALESCE(m.sent_at, m.received_at, m.internal_date),
 			       m.deleted_from_source_at, p_sender.id,
-			       COALESCE(mr_from.display_name, ''),
+			       CASE
+			           WHEN m.sender_id IS NULL
+			                OR mr_from.participant_id = m.sender_id
+			           THEN COALESCE(mr_from.display_name, '')
+			           ELSE ''
+			       END,
 			       COALESCE(p_sender.display_name, ''),
 			       COALESCE(p_sender.email_address, p_sender.phone_number, '')
 			FROM messages m
@@ -341,7 +346,7 @@ func (s *Store) exportMessageRows(
 				ORDER BY mr.id LIMIT 1
 			)
 			LEFT JOIN participants p_sender
-			       ON p_sender.id = COALESCE(mr_from.participant_id, m.sender_id)
+			       ON p_sender.id = COALESCE(m.sender_id, mr_from.participant_id)
 			WHERE `+pagePredicate+`
 			ORDER BY s.source_type, s.identifier, c.source_conversation_id,
 			         COALESCE(m.sent_at, m.received_at, m.internal_date),

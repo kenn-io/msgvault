@@ -435,6 +435,45 @@ func TestExportMessagesUsesLegacyFromRecipientAuthor(t *testing.T) {
 	assertions.Equal("author@example.test", sink.messages[0].Author.Address)
 }
 
+func TestExportMessagesPrefersCanonicalSenderOverStaleFromRecipient(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource("gmail", "person@example.test")
+	requirements.NoError(err)
+	conversationID := insertMessageExportConversation(
+		t, st, source.ID, "conversation", "", "email_thread", `{}`,
+	)
+	canonicalID := insertMessageExportParticipant(
+		t, st, "canonical@example.test", "Canonical Author",
+	)
+	staleID := insertMessageExportParticipant(
+		t, st, "stale@example.test", "Stale Participant",
+	)
+	start := time.Date(2026, 7, 20, 0, 0, 0, 0, time.UTC)
+	messageID := insertMessageExportMessage(
+		t, st, source.ID, conversationID, "message", "email",
+		start, "", "", canonicalID, false, false,
+	)
+	_, err = st.DB().Exec(st.Rebind(`
+		INSERT INTO message_recipients (
+			message_id, participant_id, recipient_type, display_name
+		) VALUES (?, ?, 'from', ?)
+	`), messageID, staleID, "Stale Message Author")
+	requirements.NoError(err)
+
+	sink := &collectingMessageExportSink{}
+	_, err = st.ExportMessages(context.Background(), store.MessageExportFilter{
+		Start: start,
+		End:   start.Add(time.Hour),
+	}, sink)
+	requirements.NoError(err)
+	requirements.Len(sink.messages, 1)
+	requirements.NotNil(sink.messages[0].Author)
+	assertions.Equal("Canonical Author", sink.messages[0].Author.DisplayName)
+	assertions.Equal("canonical@example.test", sink.messages[0].Author.Address)
+}
+
 type hidingMessageExportSink struct {
 	collectingMessageExportSink
 
