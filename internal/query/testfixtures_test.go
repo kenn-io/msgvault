@@ -168,7 +168,8 @@ type TestDataBuilder struct {
 	ownerParticipants        []OwnerParticipantFixture
 	participantClusters      []ParticipantClusterFixture
 
-	emptyAttachments bool // if true, write empty attachments file
+	emptyAttachments   bool // if true, write empty attachments file
+	relationshipAnchor time.Time
 }
 
 // NewTestDataBuilder creates a new typed test data builder.
@@ -183,6 +184,13 @@ func NewTestDataBuilder(tb testing.TB) *TestDataBuilder {
 		nextConvID:  200,
 		nextAttID:   1,
 	}
+}
+
+// SetRelationshipAnchor overrides the production-like default anchor used
+// when deriving relationship fixture rollups.
+func (b *TestDataBuilder) SetRelationshipAnchor(anchor time.Time) {
+	b.t.Helper()
+	b.relationshipAnchor = anchor.UTC().Truncate(24 * time.Hour)
 }
 
 // AddSource adds a source and returns its ID.
@@ -588,6 +596,7 @@ func (b *TestDataBuilder) Build() (string, func()) {
 	b.t.Helper()
 
 	pb := newParquetBuilder(b.t)
+	pb.relationshipAnchor = b.relationshipAnchor
 	b.addMessageTables(pb)
 	b.addAuxiliaryTables(pb)
 	b.addAttachmentsTable(pb)
@@ -684,8 +693,9 @@ type parquetTable struct {
 
 // parquetBuilder creates a temp directory with Parquet test data files.
 type parquetBuilder struct {
-	t      testing.TB
-	tables []parquetTable
+	t                  testing.TB
+	tables             []parquetTable
+	relationshipAnchor time.Time
 }
 
 // newParquetBuilder creates a new builder for Parquet test fixtures.
@@ -738,7 +748,10 @@ func (b *parquetBuilder) build() (string, func()) {
 	defer func() { _ = db.Close() }()
 
 	b.writeParquetFiles(db, tmpDir)
-	anchor := time.Date(2026, 7, 15, 0, 0, 0, 0, time.UTC)
+	anchor := b.relationshipAnchor
+	if anchor.IsZero() {
+		anchor = time.Date(2026, 7, 15, 0, 0, 0, 0, time.UTC)
+	}
 	derived, err := identityindex.Build(context.Background(), db, identityindex.BuildOptions{
 		Mode:           identityindex.ModeFull,
 		StagedBaseRoot: tmpDir,

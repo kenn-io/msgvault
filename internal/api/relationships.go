@@ -121,11 +121,9 @@ func (s *Server) handleRelationships(w http.ResponseWriter, r *http.Request) {
 // relationshipDecayDate returns the UTC decay date every page of one
 // relationship listing must rank with: midnight UTC of the current date for a
 // first page, or the date pinned in the cursor for subsequent pages, so
-// pagination crossing UTC midnight cannot re-rank rows mid-listing. Decay and
-// the ranking memo key depend only on the UTC date of the timestamp (see
-// buildRelationshipsSQL and relationshipsMemoKey in internal/query), so
-// midnight is equivalent to any instant on the same date, and pinned pages
-// share the first page's memoized candidate list. Cursors minted before the
+// pagination crossing UTC midnight cannot re-rank rows mid-listing. The
+// indexed ranking depends only on the UTC date of the timestamp, so midnight
+// is equivalent to any instant on the same date. Cursors minted before the
 // field existed carry no date and fall back to the current date — the prior
 // behavior. Cursors are HMAC-signed, so the bounds check below is
 // defense-in-depth against server bugs, not against tampering: dates before

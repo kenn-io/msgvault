@@ -300,14 +300,13 @@ func TestDuckDBEngine_AnalyticalEndpointsFollowCommittedCacheSchemaSwap(t *testi
 	assert.False(engine.hasCol(datasetMessages, "message_type"),
 		"optional-column probe must reflect the swapped-in schema")
 
-	queryRunsBefore := engine.relationshipsQueryRuns.Load()
 	relAfter, err := engine.Relationships(ctx, RelationshipsRequest{Now: now, Limit: 10, ShowAll: true})
 	require.NoError(err, "Relationships after committed schema swap")
 	require.Len(relAfter.Rows, 1)
 	assert.Equal("Bob", relAfter.Rows[0].DisplayLabel)
 	assert.Equal(exploreAfter.CacheRevision, relAfter.CacheRevision)
-	assert.Equal(queryRunsBefore+1, engine.relationshipsQueryRuns.Load(),
-		"new cache revision must miss the relationships memo and recompute")
+	assert.NotEqual(relBefore.CacheRevision, relAfter.CacheRevision,
+		"relationship reads must report the newly committed revision")
 }
 
 // TestDuckDBEngine_QueryPathMemoizesFullFingerprintWalks is the performance

@@ -8,6 +8,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/identityindex"
 )
 
 func TestRelationshipScore(t *testing.T) {
@@ -73,6 +74,20 @@ func TestRelationshipScore(t *testing.T) {
 	}
 }
 
+func TestModalitiesFromMask(t *testing.T) {
+	assert.Equal(t, 0, modalitiesFromMask(0))
+	assert.Equal(t, 1, modalitiesFromMask(identityindex.ModalityEmail))
+	assert.Equal(t, 2, modalitiesFromMask(
+		identityindex.ModalityChat|identityindex.ModalityMeeting,
+	))
+	assert.Equal(t, 3, modalitiesFromMask(
+		identityindex.ModalityEmail|
+			identityindex.ModalityChat|
+			identityindex.ModalityMeeting|
+			0x80,
+	))
+}
+
 // TestRelationshipScoreLogCompressesReceivedVolume pins the real-archive
 // regression this fix addresses: on a 2.5M-message archive, a high-volume
 // one-way sender (a GitHub collaborator whose notifications the owner merely
@@ -132,6 +147,7 @@ func TestRelationshipsReceivedCreditsOnlyAuthors(t *testing.T) {
 	// date-diff for the same instant may be off by a day, so decayed sums
 	// are asserted with tolerance, and zero sums exactly).
 	now := time.Date(2026, 1, 10, 0, 0, 0, 0, time.UTC)
+	b.SetRelationshipAnchor(now)
 
 	// 100 incoming list messages: authored by rotating third parties, with
 	// the list address and the owner both in To.
@@ -177,6 +193,7 @@ func TestRelationshipsReceivedCountsAuthoredMessages(t *testing.T) {
 	authorID := b.AddParticipant("carol@example.com", "example.com", "Carol")
 
 	now := time.Date(2026, 1, 10, 0, 0, 0, 0, time.UTC)
+	b.SetRelationshipAnchor(now)
 	for range 20 {
 		msgID := b.AddMessage(MessageOpt{SourceID: srcID, SentAt: now})
 		b.AddFrom(msgID, authorID, "Carol")
@@ -213,6 +230,7 @@ func TestRelationshipsChatReceivedCreditUnchanged(t *testing.T) {
 	silentID := b.AddParticipant("erin@chat.example", "chat.example", "Erin")
 
 	now := time.Date(2026, 1, 10, 0, 0, 0, 0, time.UTC)
+	b.SetRelationshipAnchor(now)
 	chatID := b.AddMessage(MessageOpt{SourceID: srcID, MessageType: "imessage", SentAt: now})
 	b.AddFrom(chatID, speakerID, "Dave")
 	b.AddTo(chatID, ownerID, "Owner")

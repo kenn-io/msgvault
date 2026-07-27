@@ -165,6 +165,9 @@ func (e *DuckDBEngine) resolveIdentityPathPlaceholders(sql string) string {
 	for _, dataset := range []string{
 		identityindex.DatasetDirectEdges,
 		identityindex.DatasetConversationEdges,
+		identityindex.DatasetDirectory,
+		identityindex.DatasetRelationships,
+		identityindex.DatasetRelationshipFuture,
 	} {
 		path := strings.ReplaceAll(e.identityDatasetPath(dataset), "'", "''")
 		sql = strings.ReplaceAll(sql, quoteIdentityPathPlaceholder(dataset), path)

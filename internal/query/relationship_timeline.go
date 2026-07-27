@@ -67,7 +67,7 @@ type RelationshipTimelineResponse struct {
 //
 // Event and meeting rows appear only when one of the archive owner's
 // identities participated, matching the relationship ranking's
-// owner-participation rule (buildRelationshipsSQL) — a shared-calendar
+// owner-participation rule in the relationship index — a shared-calendar
 // event the owner never attended is not an interaction and would otherwise
 // surface here despite contributing no ranking signal.
 //
@@ -284,14 +284,13 @@ func validateRelationshipTimelineRequest(request RelationshipTimelineRequest) er
 // precomputed local_day column rather than re-evaluating timezone() per row.
 //
 // Event/meeting rows require owner participation, mirroring the
-// relationship ranking exactly (see the le_with_owner CTE and the
-// "interactions" exclusion in buildRelationshipsSQL, including its
-// person-level global-owners rationale): a subscribed or shared-calendar
+// relationship ranking exactly, including its person-level global-owner
+// semantics: a subscribed or shared-calendar
 // event the owner never attended is not an interaction with the
 // counterpart, and the ranking already contributes no signal for it — the
 // timeline must not display what the ranking ignores. The
-// clusters/owners/canon/owner_canon/owner_participant_ids CTE chain is
-// copied verbatim from buildRelationshipsSQL so owner-cluster expansion
+// clusters/owners/canon/owner_canon/owner_participant_ids CTE chain preserves
+// the same owner-cluster expansion
 // (owner participation under a clustered alias) resolves identically on
 // both surfaces. Email and chat rows are untouched: the timeline scopes by
 // counterpart-cluster membership, not owner involvement, so a counterpart's

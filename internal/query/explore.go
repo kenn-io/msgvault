@@ -366,7 +366,7 @@ func buildExploreConditions(request ExploreRequest) (string, []any) {
 	// DuckDB driver binds time.Time as TIMESTAMP WITH TIME ZONE; left uncast,
 	// the comparison would coerce the naive-UTC occurred_at column to
 	// TIMESTAMPTZ on every row — a per-row ICU session-timezone conversion
-	// (see buildRelationshipsSQL for the measured cost of the same hazard).
+	// (the relationship index avoids the same measured conversion hazard).
 	if request.Context.After != nil {
 		conditions = append(conditions, "occurred_at >= CAST(? AS TIMESTAMP)")
 		args = append(args, request.Context.After.UTC())
@@ -401,11 +401,10 @@ func buildExploreConditions(request ExploreRequest) (string, []any) {
 }
 
 // buildExploreSQL builds the entry-row page query. counterpart_participant_id
-// reuses the exact owner-cluster resolution buildRelationshipsSQL uses (see
-// its doc comment): owners are unioned across sources (an address confirmed
+// reuses the exact person-level owner-cluster resolution used by relationship
+// analytics: owners are unioned across sources (an address confirmed
 // as "me" on any account is never "the other side" of an entry, even in a
-// different source's archive — see buildRelationshipsSQL on why owner
-// identities are person-level) and expanded through participant_clusters so
+// different source's archive) and expanded through participant_clusters so
 // an owner's clustered alias is still recognized as the owner, and the
 // smallest non-owner participant ID on the entry is returned. If the
 // owner_participants dataset has no rows at all, the owner is unknown and

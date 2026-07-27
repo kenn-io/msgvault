@@ -733,7 +733,7 @@ func TestExploreCounterpartParticipantIDNilWhenOwnerOnly(t *testing.T) {
 
 // TestExploreCounterpartSkipsOwnerIdentityFromAnotherSource pins the
 // person-level owner semantics for counterpart selection in a multi-source
-// archive (see buildExploreSQL / buildRelationshipsSQL): an address confirmed
+// archive (see buildExploreSQL and the relationship index): an address confirmed
 // as an owner identity on source A is never "the other side" of a source-B
 // entry. The source-A identity has the smallest raw participant ID, so
 // source-scoped owner filtering would regress to picking it. Cross-account

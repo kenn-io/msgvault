@@ -117,8 +117,8 @@ type groupExpressions struct {
 // sqlClustersCanonCTE renders the shared clusters/canon CTE pair mapping
 // every participant to its identity-cluster canonical ID (itself when
 // unlinked), resolved through the committed participant_clusters dataset —
-// the same resolution buildExploreSQL, buildRelationshipsSQL, and
-// personEntriesCTE inline. Returned closed, without surrounding commas.
+// the same resolution buildExploreSQL, relationship analytics, and
+// personEntriesCTE use. Returned closed, without surrounding commas.
 func sqlClustersCanonCTE(clustersGlob string) string {
 	return fmt.Sprintf(`clusters AS (
 	SELECT participant_id, canonical_id FROM read_parquet('%s')
@@ -157,7 +157,7 @@ func sqlMessageTypeGroupExpr() string {
 // aggregate ExploreGroups builds over logical_entries. The "participant"
 // dimension groups by canonical identity-cluster IDs: raw participant_ids
 // members are resolved through canon before grouping, and the DISTINCT
-// mirrors personEntriesCTE/buildRelationshipsSQL — an entry listing several
+// mirrors personEntriesCTE and the relationship index — an entry listing several
 // aliases of one person collapses to a single (entry, canonical) row, so the
 // entry is never double-counted (entry_key is projected only to carry
 // per-entry uniqueness through that DISTINCT).

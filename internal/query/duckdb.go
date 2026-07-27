@@ -98,16 +98,6 @@ type DuckDBEngine struct {
 	searchCacheCount int64       // cached COUNT(*) from materialization
 	searchCacheStats *TotalStats // cached stats from Phase 4
 
-	// relMemo caches ranked relationship candidate lists keyed by committed
-	// cache revision plus request facets; see relationshipsMemo. The zero
-	// value is ready to use.
-	relMemo relationshipsMemo
-
-	// relationshipsQueryRuns counts full relationship-ranking query
-	// executions (not memo hits). Test hook only: memo tests assert cache
-	// hits and misses through it.
-	relationshipsQueryRuns atomic.Uint64
-
 	// exploreFastPathDisabled forces Explore and SearchFiles onto the
 	// single-pass legacy listing queries. Test hook only: the fast-path
 	// equivalence tests compare both shapes on the same engine.
@@ -367,9 +357,9 @@ func (e *DuckDBEngine) acquireQuerySlot(ctx context.Context) (func(), error) {
 // probed optional-column set and registered SQL views are refreshed if the
 // cache was republished since the last query (see ensureFreshOptionalCols).
 // Because the lock is held until release, the schema cannot change again for
-// the query's duration, so every reader — view-based endpoints (Explore,
-// People, Relationships, timelines) and parquetCTEs-based ones alike — sees
-// views that match the current Parquet.
+// the query's duration, so every reader — legacy view-based endpoints
+// (Explore and timelines) and direct-Parquet identity endpoints alike — sees
+// one coherent committed cache.
 func (e *DuckDBEngine) acquireCacheRead(ctx context.Context) (func(), error) {
 	if e.analyticsDir == "" {
 		return func() {}, nil
