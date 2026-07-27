@@ -1326,7 +1326,7 @@ func (s *Store) MarkMessageDeleted(sourceID int64, sourceMessageID string) error
 	_, err := s.db.Exec(fmt.Sprintf(`
 		UPDATE messages
 		SET deleted_from_source_at = %s
-		WHERE source_id = ? AND source_message_id = ?
+		WHERE source_id = ? AND source_message_id = ? AND deleted_from_source_at IS NULL
 	`, s.dialect.Now()), sourceID, sourceMessageID)
 	return err
 }
@@ -1348,7 +1348,7 @@ func (s *Store) MarkMessagesDeletedBatch(sourceID int64, sourceMessageIDs []stri
 		return nil
 	}
 	return execInChunks(s.db, sourceMessageIDs, []any{sourceID},
-		fmt.Sprintf(`UPDATE messages SET deleted_from_source_at = %s WHERE source_id = ? AND source_message_id IN (%%s)`, s.dialect.Now()))
+		fmt.Sprintf(`UPDATE messages SET deleted_from_source_at = %s WHERE source_id = ? AND source_message_id IN (%%s) AND deleted_from_source_at IS NULL`, s.dialect.Now()))
 }
 
 // MarkMessagesDeletedFromReader consumes newline-delimited source message IDs
@@ -1373,7 +1373,7 @@ func (s *Store) MarkMessagesDeletedFromReader(sourceID int64, reader io.Reader, 
 			return nil
 		}
 		if err := execInChunks(tx, batch, []any{sourceID},
-			fmt.Sprintf(`UPDATE messages SET deleted_from_source_at = %s WHERE source_id = ? AND source_message_id IN (%%s)`, s.dialect.Now())); err != nil {
+			fmt.Sprintf(`UPDATE messages SET deleted_from_source_at = %s WHERE source_id = ? AND source_message_id IN (%%s) AND deleted_from_source_at IS NULL`, s.dialect.Now())); err != nil {
 			return err
 		}
 		batch = batch[:0]
@@ -1430,7 +1430,7 @@ func (s *Store) MarkMessageDeletedByGmailID(permanent bool, gmailID string) erro
 	_, err := s.db.Exec(fmt.Sprintf(`
 		UPDATE messages
 		SET deleted_from_source_at = %s
-		WHERE source_message_id = ?
+		WHERE source_message_id = ? AND deleted_from_source_at IS NULL
 	`, s.dialect.Now()), gmailID)
 	return err
 }
@@ -1468,7 +1468,7 @@ func (s *Store) MarkMessagesDeletedByGmailIDBatch(gmailIDs []string) error {
 
 		// A2 (deferred): unscoped by source_id — see function doc.
 		query := fmt.Sprintf(
-			`UPDATE messages SET deleted_from_source_at = %s WHERE source_message_id IN (%s)`,
+			`UPDATE messages SET deleted_from_source_at = %s WHERE source_message_id IN (%s) AND deleted_from_source_at IS NULL`,
 			s.dialect.Now(), strings.Join(placeholders, ","))
 
 		if _, err := s.db.Exec(query, args...); err != nil {
