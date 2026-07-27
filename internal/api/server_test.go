@@ -1347,7 +1347,7 @@ func TestMarkedCLIProtectiveRouteCanReadBodyPastOrdinaryServerTimeout(t *testing
 		require.ErrorIs(t, <-serveErr, http.ErrServerClosed, "serve result")
 	})
 
-	slowBodyStatus := func(t *testing.T, path string, marked bool) int {
+	slowBodyStatus := func(t *testing.T, path string, marked bool) (int, error) {
 		t.Helper()
 		conn, err := net.Dial("tcp", listener.Addr().String())
 		require.NoError(t, err, "dial server")
@@ -1390,17 +1390,28 @@ func TestMarkedCLIProtectiveRouteCanReadBodyPastOrdinaryServerTimeout(t *testing
 		}
 
 		resp, err := http.ReadResponse(bufio.NewReader(conn), &http.Request{Method: http.MethodPost})
-		require.NoError(t, err, "read response")
+		if err != nil {
+			return 0, err
+		}
 		defer func() { _ = resp.Body.Close() }()
-		return resp.StatusCode
+		return resp.StatusCode, nil
 	}
 
 	t.Run("protective route extends read deadline", func(t *testing.T) {
-		assert.Equal(t, http.StatusNoContent,
-			slowBodyStatus(t, "/api/v1/cli/build-cache", true))
+		status, err := slowBodyStatus(t, "/api/v1/cli/build-cache", true)
+		require.NoError(t, err, "read marked response")
+		assert.Equal(t, http.StatusNoContent, status)
 	})
 	t.Run("unmarked route keeps ordinary read deadline", func(t *testing.T) {
-		assert.Equal(t, http.StatusRequestTimeout,
-			slowBodyStatus(t, "/api/v1/cli/stats", false))
+		status, err := slowBodyStatus(t, "/api/v1/cli/stats", false)
+		if err != nil {
+			// net/http may write a 408 before closing the connection, or the
+			// platform may abort the connection as soon as the read deadline
+			// expires. Either outcome proves the delayed body was bounded.
+			var netErr *net.OpError
+			require.ErrorAs(t, err, &netErr, "read deadline closes the connection")
+			return
+		}
+		assert.Equal(t, http.StatusRequestTimeout, status)
 	})
 }
