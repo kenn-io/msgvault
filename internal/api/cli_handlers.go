@@ -1067,6 +1067,7 @@ func cliRunCommandAllowed(args []string) bool {
 		"deduplicate",
 		"delete-staged",
 		"embeddings",
+		"export-discord",
 		"import",
 		"import-emlx",
 		"import-gvoice",
