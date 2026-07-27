@@ -30,9 +30,11 @@ The stream begins with a manifest, emits source and conversation records before
 message records, and ends with a completion record. The completion record and
 record counts let consumers reject a truncated stream.
 
-The current unmerged `export-discord` command and
-`msgvault-discord-export/1` schema are replaced rather than retained or
-deprecated.
+Although `export-discord` and `msgvault-discord-export/1` have not shipped
+from msgvault's main branch, an active downstream integration already consumes
+them. The generic contract therefore rolls out additively: `export-messages`
+ships first, the downstream migrates and verifies parity, and only then is the
+provider-specific command removed.
 
 ## Goals
 
@@ -192,26 +194,48 @@ its own freshness policy.
   "source_identifier": "123456789012345678",
   "id": "987654321098765432",
   "title": "release-thread",
-  "conversation_type": "channel",
+  "conversation_type": "thread",
   "parent_id": "876543210987654321"
 }
 ```
 
 `id` is the provider or importer conversation identity, not msgvault's integer
 primary key. The source key plus `id` uniquely identifies the conversation in
-the stream. `title` is an empty string when absent. `conversation_type` is the
-normalized archive value. `parent_id` is nullable and contains the normalized
-source conversation ID of a parent when the provider has hierarchical
-conversations.
+the stream. `title` is an empty string when absent. `parent_id` is nullable and
+contains the normalized source conversation ID of a parent when the provider
+has hierarchical conversations.
+
+`conversation_type` is a closed v1 vocabulary:
+
+- `email_thread`
+- `channel`
+- `thread`
+- `direct_chat`
+- `group_chat`
+- `meeting`
+- `calendar`
+- `other`
+
+The export mapping normalizes existing storage values into this vocabulary.
+Discord channel types 10, 11, and 12 become `thread`; other Discord containers
+become `channel`. Email threads, provider channels, direct and group chats,
+meetings, and calendar conversations use their corresponding values. A
+conversation that cannot be classified without exposing provider-specific
+semantics becomes `other`. Adding another public value requires a schema
+version change, so strict consumers never need to guess whether a new raw
+storage value is valid.
 
 Only conversations referenced by exported messages are emitted. They are
 emitted before messages so a streaming consumer can resolve each message
 without buffering future context.
 
-Provider-specific fields such as Discord channel type and thread archive state
-are not exported. A provider importer may normalize a generally useful
-relationship into the fields above, but its raw metadata object is not part of
-this schema.
+Provider-specific fields such as the raw Discord channel type and thread
+archive state are not exported. Thread versus channel is normalized through
+`conversation_type`, and hierarchy through `parent_id`. Archive state is
+deliberately omitted: it is not a cross-provider conversation lifecycle, and
+the existing downstream integration validates but does not use it. A provider
+importer may normalize a generally useful relationship into the fields above,
+but its raw metadata object is not part of this schema.
 
 ### Message
 
@@ -229,7 +253,7 @@ this schema.
     "display_name": "Example User",
     "address": ""
   },
-  "sent_at": "2026-07-24T18:20:31Z",
+  "occurred_at": "2026-07-24T18:20:31Z",
   "deleted_from_source": false
 }
 ```
@@ -243,7 +267,9 @@ The source key plus `id` uniquely identifies a message in the stream.
 available. Provider mappings may derive these normalized values internally,
 but the source metadata from which they were derived is not exported.
 
-`sent_at` is the effective timestamp used for the bounded filter.
+`occurred_at` is the effective timestamp used for the bounded filter. It is
+named for its contract meaning because the stored value may come from
+`sent_at`, `received_at`, or `internal_date`.
 `deleted_from_source` preserves archived content while identifying a row that a
 later provider scan found deleted. Locally hidden or dedup-suppressed rows are
 not exported.
@@ -410,17 +436,31 @@ required for publication.
 ## Documentation and compatibility
 
 The public exporting guide documents the generic command, record types,
-filtering, half-open bounds, deletion semantics, and partial-stream validation.
-The CLI reference is regenerated from the command.
+conversation-type vocabulary, filtering, half-open bounds, deletion semantics,
+and partial-stream validation. The CLI reference is regenerated from the
+command.
 
-Because `export-discord` and `msgvault-discord-export/1` exist only on the
-current unmerged feature branch, the generic design replaces them outright.
-There is no released compatibility surface to preserve and no deprecation
-period.
+The source repository alone does not define the compatibility surface. An
+active downstream already invokes `export-discord`, validates
+`msgvault-discord-export/1`, and consumes its URL and container fields. The
+cutover is therefore explicitly additive:
+
+1. ship `export-messages` and `msgvault-message-export/1` while retaining the
+   existing Discord command and schema;
+1. migrate the downstream adapter to the JSONL stream, including consumer-side
+   URL extraction, deliberate removal of unused thread archive state, and
+   strict `channel`/`thread` validation for Discord sources;
+1. verify a representative live window against both contracts; then
+1. remove `export-discord` and `msgvault-discord-export/1` in a coordinated
+   follow-up.
+
+The compatibility command need not become a permanent alias. It remains only
+long enough to prevent a delete-first break while the known consumer migrates.
 
 Future additive record fields require consumers to tolerate unknown fields
 within a known schema. Changes to identity, ordering, record phases, field
-meaning, or required validation advance the schema version.
+meaning, required validation, or the closed `conversation_type` vocabulary
+advance the schema version.
 
 ## Alternatives considered
 
