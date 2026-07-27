@@ -124,6 +124,11 @@ jobs:
         # Mirror hiccups have hung plain apt-get for 15+ minutes; bounded
         # timeouts plus retries turn an outage into a short delay.
         run: |
+          # The pinned Playwright image already provides Node, while its
+          # preconfigured NodeSource repository rejects CI runner traffic.
+          # Bun is installed separately below, so only Ubuntu sources are
+          # needed for the native build toolchain.
+          rm -f /etc/apt/sources.list.d/nodesource.list
           for attempt in 1 2 3; do
             if apt-get update -o Acquire::Retries=3 -o Acquire::http::Timeout=30 \
               && apt-get install -y --no-install-recommends -o Acquire::Retries=3 -o Acquire::http::Timeout=30 gcc g++ make unzip; then
@@ -187,6 +192,11 @@ jobs:
         # Mirror hiccups have hung plain apt-get for 15+ minutes; bounded
         # timeouts plus retries turn an outage into a short delay.
         run: |
+          # The pinned Playwright image already provides Node, while its
+          # preconfigured NodeSource repository rejects CI runner traffic.
+          # Bun is installed separately below, so only Ubuntu sources are
+          # needed for the native build toolchain.
+          rm -f /etc/apt/sources.list.d/nodesource.list
           for attempt in 1 2 3; do
             if apt-get update -o Acquire::Retries=3 -o Acquire::http::Timeout=30 \
               && apt-get install -y --no-install-recommends -o Acquire::Retries=3 -o Acquire::http::Timeout=30 gcc g++ make unzip; then
