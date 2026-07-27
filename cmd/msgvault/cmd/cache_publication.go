@@ -7,9 +7,11 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
+	"go.kenn.io/msgvault/internal/identityindex"
 	"go.kenn.io/msgvault/internal/query"
 )
 
@@ -76,32 +78,88 @@ type cachePublishMove struct {
 	replace     bool
 }
 
-func replacesCacheDataset(dataset string, replaceAll bool) bool {
+type cachePublishPlan struct {
+	Append  map[string]bool
+	Replace map[string]bool
+}
+
+func cachePublishPlanForMode(replaceAll bool) cachePublishPlan {
+	plan := cachePublishPlan{
+		Append:  make(map[string]bool),
+		Replace: make(map[string]bool),
+	}
 	if replaceAll {
-		return true
+		for _, dataset := range append(
+			slices.Clone(query.RequiredParquetDirs),
+			identityindex.DatasetEntryFacts,
+			identityindex.DatasetDirectEdges,
+			identityindex.DatasetConversationEdges,
+			identityindex.DatasetDirectory,
+		) {
+			plan.Replace[dataset] = true
+		}
+		return plan
 	}
-	switch dataset {
-	case "participants", "participant_identifiers", "labels", "sources", "conversations", "conversation_participants",
-		tableOwnerParticipants, tableParticipantClusters:
-		return true
-	default:
-		return false
+	for _, dataset := range []string{
+		tableMessages,
+		"message_recipients",
+		"message_labels",
+		tableAttachments,
+		identityindex.DatasetEntryFacts,
+		identityindex.DatasetDirectEdges,
+	} {
+		plan.Append[dataset] = true
 	}
+	for _, dataset := range []string{
+		tableParticipants,
+		tableParticipantIdentifiers,
+		tableLabels,
+		"sources",
+		tableConversations,
+		tableConversationParticipants,
+		tableOwnerParticipants,
+		tableParticipantClusters,
+		identityindex.DatasetConversationEdges,
+		identityindex.DatasetDirectory,
+	} {
+		plan.Replace[dataset] = true
+	}
+	return plan
+}
+
+func (p cachePublishPlan) datasets() []string {
+	datasets := make([]string, 0, len(p.Append)+len(p.Replace))
+	for _, dataset := range query.RequiredParquetDirs {
+		if p.Append[dataset] || p.Replace[dataset] {
+			datasets = append(datasets, dataset)
+		}
+	}
+	for _, dataset := range []string{
+		identityindex.DatasetEntryFacts,
+		identityindex.DatasetDirectEdges,
+		identityindex.DatasetConversationEdges,
+		identityindex.DatasetDirectory,
+	} {
+		if p.Append[dataset] || p.Replace[dataset] {
+			datasets = append(datasets, dataset)
+		}
+	}
+	return datasets
 }
 
 func planCacheMoves(
 	staging *cacheStaging,
 	analyticsDir string,
-	replaceAll bool,
+	plan cachePublishPlan,
 ) ([]cachePublishMove, error) {
 	if staging == nil || staging.root == "" || staging.buildID == "" {
 		return nil, errors.New("plan analytics cache publication: invalid staging directory")
 	}
 	var moves []cachePublishMove
-	for _, dataset := range query.RequiredParquetDirs {
+	for _, dataset := range plan.datasets() {
 		stagedDataset := filepath.Join(staging.root, dataset)
 		liveDataset := filepath.Join(analyticsDir, dataset)
-		if replacesCacheDataset(dataset, replaceAll) {
+		if plan.Replace[dataset] {
 			if info, err := os.Stat(stagedDataset); err != nil {
 				return nil, fmt.Errorf("plan analytics cache publication for %s: %w", dataset, err)
 			} else if !info.IsDir() {
@@ -149,8 +207,13 @@ func planCacheMoves(
 	return moves, nil
 }
 
-func publishCache(staging *cacheStaging, analyticsDir string, replaceAll bool, stateData []byte) error {
-	moves, err := planCacheMoves(staging, analyticsDir, replaceAll)
+func publishCache(
+	staging *cacheStaging,
+	analyticsDir string,
+	plan cachePublishPlan,
+	stateData []byte,
+) error {
+	moves, err := planCacheMoves(staging, analyticsDir, plan)
 	if err != nil {
 		return err
 	}

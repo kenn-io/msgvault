@@ -1,6 +1,7 @@
 package query
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -14,6 +15,7 @@ import (
 	_ "github.com/duckdb/duckdb-go/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/identityindex"
 )
 
 // ---------------------------------------------------------------------------
@@ -589,7 +591,41 @@ func (b *TestDataBuilder) Build() (string, func()) {
 	b.addAuxiliaryTables(pb)
 	b.addAttachmentsTable(pb)
 
-	return pb.build()
+	analyticsDir, cleanup := pb.build()
+	db, err := sql.Open("duckdb", "")
+	if err != nil {
+		cleanup()
+		require.NoError(b.t, err, "open DuckDB for identity fixture derivation")
+	}
+	derived, buildErr := identityindex.Build(context.Background(), db, identityindex.BuildOptions{
+		Mode:           identityindex.ModeFull,
+		StagedBaseRoot: analyticsDir,
+		OutputRoot:     analyticsDir,
+		AnchorDate:     time.Date(2026, 7, 15, 0, 0, 0, 0, time.UTC),
+	})
+	closeErr := db.Close()
+	if buildErr != nil || closeErr != nil {
+		cleanup()
+		require.NoError(b.t, buildErr, "derive identity fixture datasets")
+		require.NoError(b.t, closeErr, "close identity fixture DuckDB")
+	}
+	state, err := ReadCacheSyncState(analyticsDir)
+	if err != nil {
+		cleanup()
+		require.NoError(b.t, err, "read identity fixture cache state")
+	}
+	state.ConversationParticipantsFingerprint = derived.ConversationParticipantsFingerprint
+	state.Stats = derived.Stats
+	stateData, err := json.Marshal(state)
+	if err != nil {
+		cleanup()
+		require.NoError(b.t, err, "marshal identity fixture cache state")
+	}
+	if err := os.WriteFile(CacheStatePath(analyticsDir), stateData, 0o600); err != nil {
+		cleanup()
+		require.NoError(b.t, err, "write identity fixture cache state")
+	}
+	return analyticsDir, cleanup
 }
 
 // addMessageTables partitions messages by year and adds each partition to the builder.

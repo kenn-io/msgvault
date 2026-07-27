@@ -66,6 +66,26 @@ func TestCacheSyncStateEncodesStatsAsNestedObject(t *testing.T) {
 	assert.Equal(t, state.Stats, stats)
 }
 
+func TestDataBuilderPublishesProductionIdentityDatasets(t *testing.T) {
+	dir, cleanup := buildStandardTestData(t).Build()
+	t.Cleanup(cleanup)
+
+	for _, dataset := range []string{
+		identityindex.DatasetEntryFacts,
+		identityindex.DatasetDirectEdges,
+		identityindex.DatasetConversationEdges,
+		identityindex.DatasetDirectory,
+	} {
+		hasParquet, err := datasetHasParquet(dir, dataset)
+		require.NoError(t, err)
+		assert.True(t, hasParquet, dataset)
+	}
+	state, err := ReadCacheSyncState(dir)
+	require.NoError(t, err)
+	assert.Equal(t, int64(5), state.Stats.TotalMessages)
+	assert.NotEmpty(t, state.ConversationParticipantsFingerprint)
+}
+
 func TestAcquireReadyCacheReadLockRejectsAbsentCache(t *testing.T) {
 	_, err := AcquireReadyCacheReadLock(context.Background(), t.TempDir())
 	require.ErrorIs(t, err, ErrCacheUnavailable)

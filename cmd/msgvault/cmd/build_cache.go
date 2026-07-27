@@ -24,6 +24,7 @@ import (
 	"go.kenn.io/msgvault/internal/cacheops"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/duckdbutil"
+	"go.kenn.io/msgvault/internal/identityindex"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/store"
 )
@@ -171,6 +172,9 @@ type sqlRunner interface {
 	sqlRowQuerier
 	Exec(query string, args ...any) (sql.Result, error)
 	Query(query string, args ...any) (*sql.Rows, error)
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
 }
 
 func readCacheSyncCounters(db sqlRowQuerier) (cacheSyncCounters, error) {
@@ -1011,6 +1015,22 @@ func buildCacheLocked(dbPath, analyticsDir string, fullRebuild, recheckStaleness
 		}
 	}
 
+	buildMode := identityindex.ModeIncremental
+	if replaceAll {
+		buildMode = identityindex.ModeFull
+	}
+	derived, err := identityindex.Build(context.Background(), exportDB, identityindex.BuildOptions{
+		Mode:           buildMode,
+		CommittedRoot:  analyticsDir,
+		StagedBaseRoot: staging.root,
+		OutputRoot:     staging.root,
+		AnchorDate:     time.Now().UTC(),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("build identity index: %w", err)
+	}
+	publicationPlan := cachePublishPlanForMode(replaceAll)
+
 	fmt.Printf("  %-25s %s\n", "Total:", time.Since(buildStart).Round(time.Millisecond))
 
 	stagedCount, err := countStagedMessages(exportDB, messagesDir, replaceAll)
@@ -1021,7 +1041,7 @@ func buildCacheLocked(dbPath, analyticsDir string, fullRebuild, recheckStaleness
 		return nil, fmt.Errorf("staged message row count %d does not match SQLite snapshot count %d; retry",
 			stagedCount, expectedBatchCount)
 	}
-	if err := validateStagedReplacementDatasets(exportDB, staging.root, replaceAll); err != nil {
+	if err := validateStagedReplacementDatasets(exportDB, staging.root, publicationPlan); err != nil {
 		return nil, err
 	}
 	if err := sourceSnapshot.Close(); err != nil {
@@ -1057,22 +1077,24 @@ func buildCacheLocked(dbPath, analyticsDir string, fullRebuild, recheckStaleness
 	// Save sync state using the pre-export watermark so any deletion
 	// that occurs during or after the build is detected as stale.
 	state := syncState{
-		LastMessageID:           maxID,
-		LastSyncAt:              cacheWatermark,
-		SchemaVersion:           cacheSchemaVersion,
-		LastCompletedSyncRunID:  lastCompletedSyncRunID,
-		LastCacheAdditionCount:  syncCounters.additions,
-		LastCacheUpdateCount:    syncCounters.updates,
-		LastFailedSyncRunCount:  syncCounters.failedRunCount,
-		LastFailedSyncRunIDSum:  syncCounters.failedRunIDSum,
-		IdentityRevision:        identityRevision,
-		AccountIdentityRevision: accountIdentityRevision,
+		LastMessageID:                       maxID,
+		LastSyncAt:                          cacheWatermark,
+		SchemaVersion:                       cacheSchemaVersion,
+		LastCompletedSyncRunID:              lastCompletedSyncRunID,
+		LastCacheAdditionCount:              syncCounters.additions,
+		LastCacheUpdateCount:                syncCounters.updates,
+		LastFailedSyncRunCount:              syncCounters.failedRunCount,
+		LastFailedSyncRunIDSum:              syncCounters.failedRunIDSum,
+		IdentityRevision:                    identityRevision,
+		AccountIdentityRevision:             accountIdentityRevision,
+		ConversationParticipantsFingerprint: derived.ConversationParticipantsFingerprint,
+		Stats:                               derived.Stats,
 	}
 	stateData, err := json.Marshal(state)
 	if err != nil {
 		return nil, fmt.Errorf("marshal sync state: %w", err)
 	}
-	if err := publishCache(staging, analyticsDir, replaceAll, stateData); err != nil {
+	if err := publishCache(staging, analyticsDir, publicationPlan, stateData); err != nil {
 		return nil, err
 	}
 
@@ -1104,10 +1126,14 @@ func countStagedMessages(db sqlRowQuerier, messagesDir string, requireShard bool
 	return count, nil
 }
 
-func validateStagedReplacementDatasets(db sqlRowQuerier, stagingDir string, replaceAll bool) error {
-	for _, dataset := range query.RequiredParquetDirs {
+func validateStagedReplacementDatasets(
+	db sqlRowQuerier,
+	stagingDir string,
+	plan cachePublishPlan,
+) error {
+	for _, dataset := range plan.datasets() {
 		// countStagedMessages already verifies and reads every message shard.
-		if dataset == tableMessages || !replacesCacheDataset(dataset, replaceAll) {
+		if dataset == tableMessages || !plan.Replace[dataset] {
 			continue
 		}
 		pattern := filepath.Join(stagingDir, dataset, "*.parquet")

@@ -10,6 +10,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/identityindex"
 	"go.kenn.io/msgvault/internal/query"
 )
 
@@ -32,7 +33,7 @@ func TestCachePublicationCommitsRevisionTimestampAndDatasetFingerprint(t *testin
 	})
 	require.NoError(err)
 
-	require.NoError(publishCache(staging, analyticsDir, true, input))
+	require.NoError(publishCache(staging, analyticsDir, cachePublishPlanForMode(true), input))
 	state, err := query.ReadCacheSyncState(analyticsDir)
 	require.NoError(err)
 	assert.False(state.PublishedAt.IsZero())
@@ -60,7 +61,7 @@ func TestCachePublicationFullReplacesEveryDatasetAndWritesStateLast(t *testing.T
 	writePublicationTree(t, staging.root, "new.parquet")
 	newState := []byte(`{"last_sync_at":"2026-07-15T11:00:00Z"}`)
 
-	require.NoError(publishCache(staging, analyticsDir, true, newState))
+	require.NoError(publishCache(staging, analyticsDir, cachePublishPlanForMode(true), newState))
 
 	for _, dataset := range query.RequiredParquetDirs {
 		assert.False(publicationFileExists(analyticsDir, dataset, "old.parquet"), dataset)
@@ -89,14 +90,28 @@ func TestIncrementalPublicationReplacesDimensionsAndPrefixesAppends(t *testing.T
 	t.Cleanup(func() { _ = staging.cleanup() })
 	writePublicationTree(t, staging.root, "data.parquet")
 
-	require.NoError(publishCache(staging, analyticsDir, false,
+	require.NoError(publishCache(staging, analyticsDir, cachePublishPlanForMode(false),
 		[]byte(`{"last_sync_at":"2026-07-15T11:00:00Z"}`)))
 
-	for _, dataset := range []string{"participants", "participant_identifiers", "labels", "sources", "conversations"} {
+	for _, dataset := range []string{
+		"participants",
+		"participant_identifiers",
+		"labels",
+		"sources",
+		"conversations",
+		identityindex.DatasetConversationEdges,
+		identityindex.DatasetDirectory,
+	} {
 		assert.False(publicationFileExists(analyticsDir, dataset, "old.parquet"), dataset)
 		assert.True(publicationFileExists(analyticsDir, dataset, "data.parquet"), dataset)
 	}
-	for _, dataset := range []string{"message_recipients", "message_labels", "attachments"} {
+	for _, dataset := range []string{
+		"message_recipients",
+		"message_labels",
+		"attachments",
+		identityindex.DatasetEntryFacts,
+		identityindex.DatasetDirectEdges,
+	} {
 		assert.True(publicationFileExists(analyticsDir, dataset, "old.parquet"), dataset)
 		assert.True(publicationFileExists(analyticsDir, dataset, staging.buildID+"-data.parquet"), dataset)
 	}
@@ -120,7 +135,7 @@ func TestCachePublicationCollisionFailsBeforeInvalidation(t *testing.T) {
 	collision := filepath.Join(analyticsDir, "message_recipients", staging.buildID+"-data.parquet")
 	require.NoError(os.WriteFile(collision, []byte("collision"), 0o600))
 
-	err = publishCache(staging, analyticsDir, false,
+	err = publishCache(staging, analyticsDir, cachePublishPlanForMode(false),
 		[]byte(`{"last_sync_at":"2026-07-15T11:00:00Z"}`))
 	require.ErrorContains(err, "already exists")
 	gotState, readErr := os.ReadFile(query.CacheStatePath(analyticsDir))
@@ -144,7 +159,7 @@ func TestCachePublicationFailureAfterInvalidationLeavesInterruptedState(t *testi
 	publishErr := errors.New("publish interrupted")
 	buildCacheAfterStateInvalidationHook = func() error { return publishErr }
 	t.Cleanup(func() { buildCacheAfterStateInvalidationHook = nil })
-	err = publishCache(staging, analyticsDir, true,
+	err = publishCache(staging, analyticsDir, cachePublishPlanForMode(true),
 		[]byte(`{"last_sync_at":"2026-07-15T11:00:00Z"}`))
 	require.ErrorIs(err, publishErr)
 
@@ -172,7 +187,7 @@ func TestCachePublicationCleansOnlyPrivateStagingDirectories(t *testing.T) {
 
 func writePublicationTree(t *testing.T, root, filename string) {
 	t.Helper()
-	for _, dataset := range query.RequiredParquetDirs {
+	for _, dataset := range cachePublishPlanForMode(true).datasets() {
 		dir := filepath.Join(root, dataset)
 		if dataset == "messages" {
 			dir = filepath.Join(dir, "year=2024")

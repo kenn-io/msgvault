@@ -19,6 +19,7 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/identityindex"
 	"go.kenn.io/msgvault/internal/query"
 )
 
@@ -852,6 +853,10 @@ func TestBuildCache_BasicExport(t *testing.T) {
 		"message_labels",
 		"attachments",
 		"conversations",
+		identityindex.DatasetEntryFacts,
+		identityindex.DatasetDirectEdges,
+		identityindex.DatasetConversationEdges,
+		identityindex.DatasetDirectory,
 	}
 
 	for _, dir := range expectedDirs {
@@ -870,6 +875,9 @@ func TestBuildCache_BasicExport(t *testing.T) {
 	require.NoError(json.Unmarshal(data, &state), "parse sync state")
 
 	assert.Equal(int64(5), state.LastMessageID)
+	assert.Equal(int64(5), state.Stats.TotalMessages)
+	assert.Equal(int64(1), state.Stats.Sources)
+	assert.NotEmpty(state.ConversationParticipantsFingerprint)
 }
 
 func TestBuildCache_PublishesConversationParticipants(t *testing.T) {
@@ -1034,6 +1042,10 @@ func TestBuildCache_IncrementalExport(t *testing.T) {
 	// Attachments: 4 total (3 original + 1 new)
 	assert.Equal(int64(4), countRows(filepath.Join(analyticsDir, "attachments", "*.parquet")), "attachments")
 
+	// Identity facts append at the same message watermark.
+	assert.Equal(int64(7), countRows(filepath.Join(
+		analyticsDir, identityindex.DatasetEntryFacts, "*.parquet")), "identity entry facts")
+
 	// Participants: 4 (overwritten each run, not appended)
 	assert.Equal(int64(4), countRows(filepath.Join(analyticsDir, "participants", "*.parquet")), "participants")
 
@@ -1060,6 +1072,8 @@ func TestBuildCache_IncrementalExport(t *testing.T) {
 	_ = json.Unmarshal(data, &state)
 
 	assert.Equal(int64(7), state.LastMessageID)
+	assert.Equal(int64(7), state.Stats.TotalMessages)
+	assert.Equal(int64(35500), state.Stats.AttachmentSizeBytes)
 }
 
 func hasPublishedBuildIDPrefix(paths []string, stagedBase string) bool {

@@ -1,5 +1,7 @@
 package cmd
 
+import "go.kenn.io/msgvault/internal/identityindex"
+
 // Source-type identifiers stored in sources.source_type and matched against
 // when dispatching sync/import logic per account kind.
 const (
@@ -19,15 +21,19 @@ const (
 // names that happen to share these strings use their own literals/constants,
 // so renaming a storage entity cannot silently change an external contract.
 const (
-	tableMessages                 = "messages"
-	tableLabels                   = "labels"
-	tableAttachments              = "attachments"
-	tableParticipants             = "participants"
-	tableParticipantIdentifiers   = "participant_identifiers"
-	tableConversations            = "conversations"
-	tableConversationParticipants = "conversation_participants"
-	tableOwnerParticipants        = "owner_participants"
-	tableParticipantClusters      = "participant_clusters"
+	tableMessages                  = "messages"
+	tableLabels                    = "labels"
+	tableAttachments               = "attachments"
+	tableParticipants              = "participants"
+	tableParticipantIdentifiers    = "participant_identifiers"
+	tableConversations             = "conversations"
+	tableConversationParticipants  = "conversation_participants"
+	tableOwnerParticipants         = "owner_participants"
+	tableParticipantClusters       = "participant_clusters"
+	tableIdentityEntryFacts        = identityindex.DatasetEntryFacts
+	tableIdentityDirectEdges       = identityindex.DatasetDirectEdges
+	tableIdentityConversationEdges = identityindex.DatasetConversationEdges
+	tableIdentityDirectory         = identityindex.DatasetDirectory
 )
 
 // flagJSON is the name of the boolean --json output flag. It is kept distinct
