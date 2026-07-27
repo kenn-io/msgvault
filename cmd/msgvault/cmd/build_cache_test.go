@@ -2497,9 +2497,10 @@ func writeSyncStateAt(t *testing.T, analyticsDir string, lastMessageID int64, sy
 	t.Helper()
 	require.NoError(t, os.MkdirAll(analyticsDir, 0755), "MkdirAll analytics")
 	state := syncState{
-		LastMessageID: lastMessageID,
-		LastSyncAt:    syncAt,
-		SchemaVersion: cacheSchemaVersion,
+		LastMessageID:                       lastMessageID,
+		LastSyncAt:                          syncAt,
+		SchemaVersion:                       cacheSchemaVersion,
+		ConversationParticipantsFingerprint: "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
 	}
 	data, err := json.Marshal(state)
 	require.NoError(t, err, "marshal sync state")
@@ -2822,7 +2823,7 @@ func TestCacheNeedsBuild_AccountIdentityRevisionChangeForcesFullRebuild(t *testi
 }
 
 // TestCacheNeedsBuild_AccountIdentityDriftIsNotIdentityDriftOnly verifies
-// that identityDriftOnly (the gate that picks the cheap identity-only
+// that derivedDriftOnly (the gate that picks the cheap derived-only
 // refresh path) rejects staleness reports with HasAccountIdentityDrift set,
 // even though AddAccountIdentity/RemoveAccountIdentity also bump
 // identity_revision and therefore set HasIdentityDrift on the same report.
@@ -2834,12 +2835,16 @@ func TestCacheNeedsBuild_AccountIdentityDriftIsNotIdentityDriftOnly(t *testing.T
 		HasAccountIdentityDrift: true,
 		FullRebuild:             true,
 	}
-	assert.False(identityDriftOnly(staleness),
+	assert.False(derivedDriftOnly(staleness),
 		"account identity drift must never be satisfied by the identity-only refresh path")
 
 	linkOnly := cacheStaleness{HasIdentityDrift: true}
-	assert.True(identityDriftOnly(linkOnly),
+	assert.True(derivedDriftOnly(linkOnly),
 		"plain participant-link drift alone must still take the identity-only refresh path")
+
+	conversationOnly := cacheStaleness{HasConversationParticipantDrift: true}
+	assert.True(derivedDriftOnly(conversationOnly),
+		"conversation participant drift alone must take the derived-only refresh path")
 }
 
 func TestCacheNeedsBuild_LabelOnlySyncRequiresFullRebuild(t *testing.T) {
@@ -3054,11 +3059,12 @@ func TestCacheNeedsBuild_IgnoresAlreadyProcessedUpdatedSyncRun(t *testing.T) {
 	stateTime := time.Date(2026, 3, 18, 12, 0, 0, 0, time.UTC)
 	require.NoError(os.MkdirAll(analyticsDir, 0755), "MkdirAll analytics")
 	state := syncState{
-		LastMessageID:          5,
-		LastSyncAt:             stateTime,
-		LastCompletedSyncRunID: 7,
-		LastCacheUpdateCount:   2,
-		SchemaVersion:          cacheSchemaVersion,
+		LastMessageID:                       5,
+		LastSyncAt:                          stateTime,
+		LastCompletedSyncRunID:              7,
+		LastCacheUpdateCount:                2,
+		SchemaVersion:                       cacheSchemaVersion,
+		ConversationParticipantsFingerprint: "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
 	}
 	data, err := json.Marshal(state)
 	require.NoError(err, "marshal sync state")

@@ -13,6 +13,7 @@ import (
 	"github.com/gofrs/flock"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/identityindex"
 	"go.kenn.io/msgvault/internal/query"
 )
 
@@ -56,6 +57,7 @@ func TestCollectStatsClassifiesCacheReadiness(t *testing.T) {
 		require.NoError(err)
 		assert.Equal(StatusReady, stats.Status)
 		assert.Equal(int64(1), stats.TotalMessages)
+		assert.Equal(int64(25), stats.AttachmentSizeBytes)
 		assert.Equal(int64(7), *stats.LastMessageID)
 	})
 
@@ -112,6 +114,24 @@ func TestCollectStatsClassifiesCacheReadiness(t *testing.T) {
 	})
 }
 
+func TestCollectStatsUsesCommittedMarkerWithoutScanningParquet(t *testing.T) {
+	dir := writeCacheStatsFixture(t)
+	broken := filepath.Join(dir, "messages", "year=2024", "data.parquet")
+	require.NoError(t, os.WriteFile(broken, []byte("not parquet"), 0o600))
+
+	state, err := query.ReadCacheSyncState(dir)
+	require.NoError(t, err)
+	state.DatasetFingerprint, err = query.CacheDatasetFingerprint(dir)
+	require.NoError(t, err)
+	writeCacheStatsState(t, dir, state)
+
+	stats, err := CollectStats(context.Background(), dir)
+	require.NoError(t, err)
+	assert.Equal(t, StatusReady, stats.Status)
+	assert.Equal(t, state.Stats.TotalMessages, stats.TotalMessages)
+	assert.Equal(t, state.Stats.AttachmentSizeBytes, stats.AttachmentSizeBytes)
+}
+
 func writeCacheStatsFixture(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -143,15 +163,37 @@ func writeCacheStatsFixture(t *testing.T) string {
 		_, err := db.Exec("COPY (" + selectSQL + ") TO '" + path + "' (FORMAT PARQUET)")
 		require.NoError(t, err, "write %s fixture", dataset)
 	}
+	for _, dataset := range query.RequiredParquetDirs {
+		if _, exists := datasets[dataset]; exists {
+			continue
+		}
+		datasetDir := filepath.Join(dir, dataset)
+		require.NoError(t, os.MkdirAll(datasetDir, 0o755))
+		path := strings.ReplaceAll(filepath.Join(datasetDir, "data.parquet"), "'", "''")
+		_, err := db.Exec("COPY (SELECT 1::BIGINT AS value) TO '" + path + "' (FORMAT PARQUET)")
+		require.NoError(t, err, "write %s fixture", dataset)
+	}
 
 	fingerprint, err := query.CacheDatasetFingerprint(dir)
 	require.NoError(t, err)
+	minYear := int64(2024)
+	maxYear := int64(2024)
 	writeCacheStatsState(t, dir, query.CacheSyncState{
 		LastMessageID:      7,
 		LastSyncAt:         time.Date(2026, time.July, 15, 12, 0, 0, 0, time.UTC),
 		SchemaVersion:      query.CacheSchemaVersion,
 		PublishedAt:        time.Date(2026, time.July, 15, 12, 1, 0, 0, time.UTC),
 		DatasetFingerprint: fingerprint,
+		Stats: identityindex.CacheStatsSummary{
+			TotalMessages:       1,
+			Sources:             1,
+			UniqueSenders:       1,
+			UniqueDomains:       1,
+			MinYear:             &minYear,
+			MaxYear:             &maxYear,
+			TotalSizeBytes:      100,
+			AttachmentSizeBytes: 25,
+		},
 	})
 	return dir
 }

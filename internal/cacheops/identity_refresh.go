@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	_ "github.com/duckdb/duckdb-go/v2" // DuckDB driver (database/sql)
+	"go.kenn.io/msgvault/internal/duckdbutil"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/store"
 )
@@ -126,9 +126,12 @@ func RefreshIdentityDatasets(ctx context.Context, st *store.Store, analyticsDir 
 	}
 	defer func() { _ = staging.cleanup() }()
 
-	db, err := sql.Open("duckdb", "")
+	db, err := duckdbutil.Open(
+		ctx,
+		duckdbutil.BuilderPolicy(filepath.Join(staging.root, "duckdb-tmp")),
+	)
 	if err != nil {
-		return 0, fmt.Errorf("open duckdb for identity refresh: %w", err)
+		return 0, fmt.Errorf("open bounded duckdb for identity refresh: %w", err)
 	}
 	defer func() { _ = db.Close() }()
 

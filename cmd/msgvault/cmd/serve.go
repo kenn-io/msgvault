@@ -16,10 +16,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/gofrs/flock"
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/api"
-	"go.kenn.io/msgvault/internal/cacheops"
 	"go.kenn.io/msgvault/internal/circleback"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/deletion"
@@ -74,6 +72,20 @@ const daemonIdleTimeoutEnv = "MSGVAULT_DAEMON_IDLE_TIMEOUT"
 // not redo (or erase) its work.
 var buildCacheSubprocessForRun = func(ctx context.Context, fullRebuild bool) error {
 	return buildCacheSubprocess(ctx, fullRebuild, true)
+}
+
+var executeBuildCacheSubprocessMode = buildCacheSubprocessMode
+
+var runDerivedCacheSubprocess = func(ctx context.Context) error {
+	err := executeBuildCacheSubprocessMode(ctx, buildCacheModeDerived)
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, ErrDerivedRefreshRequiresFullBuild) ||
+		strings.Contains(err.Error(), ErrDerivedRefreshRequiresFullBuild.Error()) {
+		return executeBuildCacheSubprocessMode(ctx, buildCacheModeFull)
+	}
+	return err
 }
 
 var (
@@ -777,8 +789,7 @@ type storeAPIAdapter struct {
 	store                 *store.Store
 	attachmentMaintenance *attachmentMaintenance
 	// analyticsDir is the daemon's Parquet analytics cache directory, used
-	// by RefreshIdentityDatasets to locate both the cache build lock and
-	// the identity dataset files it re-exports.
+	// to read the revision committed by the derived-refresh child.
 	analyticsDir string
 }
 
@@ -1479,26 +1490,18 @@ func (a *storeAPIAdapter) ClusterEdges(id int64) ([]store.LinkEdge, error) {
 	return a.store.ClusterEdges(id)
 }
 
-// RefreshIdentityDatasets re-exports the owner_participants and
-// participant_clusters Parquet datasets after an identity mutation (a
-// participant link/unlink or an account identity add/remove) commits.
-// cacheops.RefreshIdentityDatasets requires its caller to hold the
-// cross-process analytics cache build lock exclusively; this acquires it
-// non-blocking, so a build already in progress makes the refresh fail fast
-// rather than stalling the HTTP request. The API layer treats any error,
-// including lock contention, as cache_state "stale" — the identity mutation
-// itself already committed and is not affected.
+// RefreshIdentityDatasets rebuilds identity-derived Parquet in a short-lived,
+// resource-bounded child. The child owns the cache lock and its DuckDB
+// allocator exits with the process; the long-lived daemon does neither.
 func (a *storeAPIAdapter) RefreshIdentityDatasets(ctx context.Context) (int64, error) {
-	lock := flock.New(query.CacheBuildLockPath(a.analyticsDir))
-	locked, err := lock.TryLock()
+	if err := runDerivedCacheSubprocess(ctx); err != nil {
+		return 0, err
+	}
+	state, err := query.ReadCacheSyncState(a.analyticsDir)
 	if err != nil {
-		return 0, fmt.Errorf("acquire analytics cache build lock for identity refresh: %w", err)
+		return 0, fmt.Errorf("read refreshed cache revision: %w", err)
 	}
-	if !locked {
-		return 0, errors.New("analytics cache build lock is held by another process")
-	}
-	defer func() { _ = lock.Unlock() }()
-	return cacheops.RefreshIdentityDatasets(ctx, a.store, a.analyticsDir)
+	return state.IdentityRevision, nil
 }
 
 func (a *storeAPIAdapter) GetActiveSync(sourceID int64) (*store.SyncRun, error) {

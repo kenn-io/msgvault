@@ -89,6 +89,58 @@ func TestCacheNeedsBuild_MeetingMutation(t *testing.T) {
 	}
 }
 
+func TestCacheNeedsBuildConversationParticipantDriftUsesDerivedRefresh(t *testing.T) {
+	tmp := t.TempDir()
+	dbPath := filepath.Join(tmp, "msgvault.db")
+	analyticsDir := filepath.Join(tmp, "analytics")
+
+	st, err := store.Open(dbPath)
+	require.NoError(t, err)
+	require.NoError(t, st.InitSchema())
+	source, err := st.GetOrCreateSource("test", "owner@example.com")
+	require.NoError(t, err)
+	conversationID, err := st.EnsureConversationWithType(
+		source.ID,
+		"old-email-thread",
+		"email_thread",
+		"Old email thread",
+	)
+	require.NoError(t, err)
+	_, err = st.UpsertMessage(&store.Message{
+		ConversationID:  conversationID,
+		SourceID:        source.ID,
+		SourceMessageID: "old-message",
+		MessageType:     "email",
+		SentAt: sql.NullTime{
+			Time:  time.Date(2025, time.January, 1, 10, 0, 0, 0, time.UTC),
+			Valid: true,
+		},
+	})
+	require.NoError(t, err)
+	require.NoError(t, st.Close())
+
+	_, err = buildCache(dbPath, analyticsDir, true)
+	require.NoError(t, err)
+
+	st, err = store.Open(dbPath)
+	require.NoError(t, err)
+	participantID, err := st.EnsureParticipant("late-member@example.com", "Late Member", "example.com")
+	require.NoError(t, err)
+	_, err = st.DB().Exec(`
+		INSERT INTO conversation_participants (conversation_id, participant_id)
+		VALUES (?, ?)
+	`, conversationID, participantID)
+	require.NoError(t, err)
+	require.NoError(t, st.Close())
+
+	got := cacheNeedsBuild(dbPath, analyticsDir)
+	assert.True(t, got.NeedsBuild)
+	assert.True(t, got.HasConversationParticipantDrift)
+	assert.False(t, got.FullRebuild)
+	assert.True(t, derivedDriftOnly(got))
+	assert.Contains(t, got.Reason, "conversation participants changed")
+}
+
 func explainQueryPlan(t *testing.T, s *store.Store, sql string, args ...any) string {
 	t.Helper()
 	rows, err := s.DB().Query("EXPLAIN QUERY PLAN "+sql, args...)

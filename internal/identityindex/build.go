@@ -2,14 +2,12 @@ package identityindex
 
 import (
 	"context"
-	"crypto/sha256"
 	"database/sql"
 	"errors"
 	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 )
@@ -156,9 +154,12 @@ func Build(ctx context.Context, db sqlExecutor, opts BuildOptions) (BuildResult,
 	if err != nil {
 		return BuildResult{}, err
 	}
-	stats, err := collectCacheStats(ctx, db, b.statsRelations())
-	if err != nil {
-		return BuildResult{}, err
+	var stats CacheStatsSummary
+	if opts.Mode != ModeDerivedOnly {
+		stats, err = collectCacheStats(ctx, db, b.statsRelations())
+		if err != nil {
+			return BuildResult{}, err
+		}
 	}
 	return BuildResult{
 		ConversationParticipantsFingerprint: fingerprint,
@@ -354,23 +355,11 @@ func conversationParticipantsFingerprint(
 	}
 	defer func() { _ = rows.Close() }()
 
-	hash := sha256.New()
-	encoded := make([]byte, 0, 48)
-	for rows.Next() {
-		var conversationID, participantID int64
-		if err := rows.Scan(&conversationID, &participantID); err != nil {
-			return "", fmt.Errorf("scan conversation participant fingerprint: %w", err)
-		}
-		encoded = strconv.AppendInt(encoded[:0], conversationID, 10)
-		encoded = append(encoded, ':')
-		encoded = strconv.AppendInt(encoded, participantID, 10)
-		encoded = append(encoded, '\n')
-		_, _ = hash.Write(encoded)
+	fingerprint, err := FingerprintConversationParticipants(rows)
+	if rowsErr := rows.Err(); rowsErr != nil && err == nil {
+		return "", fmt.Errorf("iterate conversation participant fingerprint rows: %w", rowsErr)
 	}
-	if err := rows.Err(); err != nil {
-		return "", fmt.Errorf("iterate conversation participant fingerprint: %w", err)
-	}
-	return fmt.Sprintf("sha256:%x", hash.Sum(nil)), nil
+	return fingerprint, err
 }
 
 func collectCacheStats(

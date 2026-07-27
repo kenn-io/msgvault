@@ -31,8 +31,18 @@ import (
 
 var fullRebuild bool
 var buildCacheAutoFlag bool
+var buildCacheDerivedOnlyFlag bool
 
 const buildCacheDaemonSubprocessEnv = "MSGVAULT_DAEMON_BUILD_CACHE_PARENT_PID"
+
+type buildCacheMode uint8
+
+const (
+	buildCacheModeDefault buildCacheMode = iota
+	buildCacheModeFull
+	buildCacheModeAuto
+	buildCacheModeDerived
+)
 
 // buildCacheMu serializes concurrent buildCache calls. The scheduler may
 // trigger syncs for multiple accounts in parallel, each of which calls
@@ -218,13 +228,46 @@ The cache files are stored in ~/.msgvault/analytics/:
   - attachments/         Attachment metadata
 
 By default, this performs an incremental update (only adding new messages).
-Use --full-rebuild to recreate all cache files from scratch.`,
+	Use --full-rebuild to recreate all cache files from scratch.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		mode, err := requestedBuildCacheMode(
+			fullRebuild,
+			buildCacheAutoFlag,
+			buildCacheDerivedOnlyFlag,
+		)
+		if err != nil {
+			return err
+		}
 		if isDaemonBuildCacheChild() {
-			return runBuildCacheLocal(fullRebuild, buildCacheAutoFlag)
+			return runBuildCacheLocalMode(mode)
+		}
+		if mode == buildCacheModeDerived || mode == buildCacheModeAuto {
+			return errors.New("--auto and --derived-only are internal daemon-child modes")
 		}
 		return runBuildCacheHTTP(cmd, fullRebuild)
 	},
+}
+
+func requestedBuildCacheMode(full, auto, derived bool) (buildCacheMode, error) {
+	selected := 0
+	for _, enabled := range []bool{full, auto, derived} {
+		if enabled {
+			selected++
+		}
+	}
+	if selected > 1 {
+		return 0, errors.New("--full-rebuild, --auto, and --derived-only are mutually exclusive")
+	}
+	switch {
+	case full:
+		return buildCacheModeFull, nil
+	case auto:
+		return buildCacheModeAuto, nil
+	case derived:
+		return buildCacheModeDerived, nil
+	default:
+		return buildCacheModeDefault, nil
+	}
 }
 
 func runBuildCacheHTTP(cmd *cobra.Command, fullRebuild bool) error {
@@ -252,6 +295,14 @@ func runBuildCacheHTTP(cmd *cobra.Command, fullRebuild bool) error {
 }
 
 func runBuildCacheLocal(fullRebuild, auto bool) error {
+	mode, err := requestedBuildCacheMode(fullRebuild, auto, false)
+	if err != nil {
+		return err
+	}
+	return runBuildCacheLocalMode(mode)
+}
+
+func runBuildCacheLocalMode(mode buildCacheMode) error {
 	dbPath := cfg.DatabaseDSN()
 	analyticsDir := cfg.AnalyticsDir()
 
@@ -281,10 +332,17 @@ func runBuildCacheLocal(fullRebuild, auto bool) error {
 	// source's own address — the exact race the daemon defers it to avoid.
 
 	var result *buildResult
-	if auto {
+	switch mode {
+	case buildCacheModeAuto:
 		result, err = buildCacheAuto(dbPath, analyticsDir)
-	} else {
-		result, err = buildCache(dbPath, analyticsDir, fullRebuild)
+	case buildCacheModeDerived:
+		result, err = buildCacheDerivedOnly(dbPath, analyticsDir)
+	case buildCacheModeFull:
+		result, err = buildCache(dbPath, analyticsDir, true)
+	case buildCacheModeDefault:
+		result, err = buildCache(dbPath, analyticsDir, false)
+	default:
+		return fmt.Errorf("unknown build-cache mode %d", mode)
 	}
 	if err != nil {
 		return err
@@ -300,6 +358,18 @@ func runBuildCacheLocal(fullRebuild, auto bool) error {
 	}
 	fmt.Println("\nCache build complete! The TUI will now use fast cached queries.")
 	return nil
+}
+
+func buildCacheDerivedOnly(dbPath, analyticsDir string) (*buildResult, error) {
+	buildCacheMu.Lock()
+	defer buildCacheMu.Unlock()
+
+	buildLock, err := acquireCacheBuildLock(analyticsDir)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = buildLock.Unlock() }()
+	return refreshDerivedDatasetsOnly(context.Background(), dbPath, analyticsDir)
 }
 
 func acquireBuildCacheWriteLock(cfg *config.Config) (func(), error) {
@@ -365,13 +435,10 @@ func acquireCacheBuildLock(analyticsDir string) (*flock.Flock, error) {
 	return buildLock, nil
 }
 
-// identityDriftOnly reports whether HasIdentityDrift is the only staleness
-// signal set: no new, deleted, or updated messages, and no account-identity
-// drift — just participant links changing which participants are owners.
-// In that case a full message rebuild is unnecessary — refreshIdentityDatasetsOnly
-// re-exports only the two identity datasets. A full rebuild triggered by
-// any other signal refreshes identity data naturally, so this check only
-// matters when HasIdentityDrift fires alone.
+// derivedDriftOnly reports whether identity or conversation-membership drift
+// is the only staleness signal. The derived refresh can rebuild identity
+// dimensions, origin-aware conversation edges, and all downstream rollups
+// without rewriting immutable message facts.
 //
 // HasAccountIdentityDrift is excluded even though it also bumps
 // identity_revision (and therefore HasIdentityDrift): confirming or
@@ -379,27 +446,17 @@ func acquireCacheBuildLock(analyticsDir string) (*flock.Flock, error) {
 // message Parquet shards, which the lightweight identity-only refresh does
 // not re-derive. Account-identity drift must always take the full-rebuild
 // path.
-func identityDriftOnly(staleness cacheStaleness) bool {
-	return staleness.HasIdentityDrift && !staleness.HasNew && !staleness.HasDeleted &&
+func derivedDriftOnly(staleness cacheStaleness) bool {
+	return (staleness.HasIdentityDrift || staleness.HasConversationParticipantDrift) &&
+		!staleness.HasNew && !staleness.HasDeleted &&
 		!staleness.HasUpdated && !staleness.HasAccountIdentityDrift
 }
 
-// refreshIdentityDatasetsOnly re-exports owner_participants and
-// participant_clusters via cacheops.RefreshIdentityDatasets, leaving every
-// message-derived dataset untouched. The caller already holds the
-// exclusive cross-process cache build lock (buildCacheLocked's precondition),
-// satisfying RefreshIdentityDatasets' own locking precondition.
+// refreshIdentityDatasetsOnly rebuilds every identity-derived dataset while
+// leaving immutable message facts untouched. The caller already holds the
+// exclusive cross-process cache build lock.
 func refreshIdentityDatasetsOnly(dbPath, analyticsDir string) (*buildResult, error) {
-	st, err := store.Open(dbPath)
-	if err != nil {
-		return nil, fmt.Errorf("open store for identity refresh: %w", err)
-	}
-	defer func() { _ = st.Close() }()
-
-	if _, err := cacheops.RefreshIdentityDatasets(context.Background(), st, analyticsDir); err != nil {
-		return nil, fmt.Errorf("refresh identity datasets: %w", err)
-	}
-	return &buildResult{OutputDir: analyticsDir, IdentityOnly: true}, nil
+	return refreshDerivedDatasetsOnly(context.Background(), dbPath, analyticsDir)
 }
 
 // buildCacheLocked exports and publishes a cache while the caller holds the
@@ -413,7 +470,7 @@ func buildCacheLocked(dbPath, analyticsDir string, fullRebuild, recheckStaleness
 		if !staleness.NeedsBuild {
 			return &buildResult{Skipped: true, OutputDir: analyticsDir}, nil
 		}
-		if identityDriftOnly(staleness) {
+		if derivedDriftOnly(staleness) {
 			return refreshIdentityDatasetsOnly(dbPath, analyticsDir)
 		}
 		fullRebuild = staleness.FullRebuild
@@ -1287,6 +1344,12 @@ type cacheSourceSnapshot struct {
 	hasAttachmentMIME bool
 }
 
+type cacheSnapshotTable struct {
+	name          string
+	query         string
+	typeOverrides string
+}
+
 func openCacheSourceSnapshot(duckDB *sql.DB, dbPath string) (*cacheSourceSnapshot, error) {
 	// MSGVAULT_FORCE_CSV_SNAPSHOT lets tests exercise the CSV fallback that
 	// Windows always takes, so drift between the COPY queries and the CSV
@@ -1365,21 +1428,41 @@ func (s *cacheSourceSnapshot) DuckDB() sqlRunner {
 // read transaction. sqlite_scanner needs no preparation because DuckDB's
 // transaction reads the attached database directly.
 func (s *cacheSourceSnapshot) Prepare() error {
-	if s.sqliteTx == nil {
-		return nil
-	}
+	return s.prepareTables(s.tables())
+}
 
-	// Tables and the SELECT queries to export them.
-	// Column lists match what the COPY-to-Parquet queries expect.
+// PrepareDatasets materializes only the named SQLite tables on the CSV
+// fallback path. sqlite_scanner needs no materialization. Derived refreshes
+// use this to avoid exporting unrelated multi-million-row junction tables.
+func (s *cacheSourceSnapshot) PrepareDatasets(names ...string) error {
+	wanted := make(map[string]bool, len(names))
+	for _, name := range names {
+		wanted[name] = true
+	}
+	var selected []cacheSnapshotTable
+	for _, table := range s.tables() {
+		if wanted[table.name] {
+			selected = append(selected, table)
+			delete(wanted, table.name)
+		}
+	}
+	if len(wanted) > 0 {
+		missing := make([]string, 0, len(wanted))
+		for name := range wanted {
+			missing = append(missing, name)
+		}
+		return fmt.Errorf("prepare SQLite cache snapshot: unknown datasets %s",
+			strings.Join(missing, ", "))
+	}
+	return s.prepareTables(selected)
+}
+
+func (s *cacheSourceSnapshot) tables() []cacheSnapshotTable {
 	attachmentQuery := "SELECT id, message_id, size, filename, '' AS mime_type FROM attachments"
 	if s.hasAttachmentMIME {
 		attachmentQuery = "SELECT id, message_id, size, filename, mime_type FROM attachments"
 	}
-	tables := []struct {
-		name          string
-		query         string
-		typeOverrides string // DuckDB types parameter for read_csv_auto (empty = infer all)
-	}{
+	return []cacheSnapshotTable{
 		// deleted_at is exported so the main COPY query can apply the
 		// `deleted_at IS NULL` filter on this path the same way it does
 		// on the sqlite_scanner path; otherwise DuckDB binds against a
@@ -1397,7 +1480,12 @@ func (s *cacheSourceSnapshot) Prepare() error {
 		{tableConversations, "SELECT id, source_conversation_id, title, COALESCE(conversation_type, 'email_thread') AS conversation_type FROM conversations", ""},
 		{tableConversationParticipants, "SELECT conversation_id, participant_id FROM conversation_participants", ""},
 	}
+}
 
+func (s *cacheSourceSnapshot) prepareTables(tables []cacheSnapshotTable) error {
+	if s.sqliteTx == nil {
+		return nil
+	}
 	for _, t := range tables {
 		csvPath := filepath.Join(s.tmpDir, t.name+".csv")
 		if err := exportToCSV(s.sqliteTx, t.query, csvPath); err != nil {
@@ -1576,12 +1664,23 @@ func rebuildCacheAfterWrite(dbPath string) error {
 // keeps the child from writing to the daemon's log file; its output is
 // captured and surfaced on failure instead.
 func buildCacheSubprocess(ctx context.Context, fullRebuild, auto bool) error {
+	mode := buildCacheModeDefault
+	switch {
+	case auto:
+		mode = buildCacheModeAuto
+	case fullRebuild:
+		mode = buildCacheModeFull
+	}
+	return buildCacheSubprocessMode(ctx, mode)
+}
+
+func buildCacheSubprocessMode(ctx context.Context, mode buildCacheMode) error {
 	// Serialize with each other so parallel per-account syncs in the
 	// daemon don't spawn concurrent cache builds racing on shared files.
 	buildCacheMu.Lock()
 	defer buildCacheMu.Unlock()
 
-	cmd, err := newBuildCacheSubprocessCommand(ctx, fullRebuild, auto)
+	cmd, err := newBuildCacheSubprocessCommand(ctx, mode)
 	if err != nil {
 		return err
 	}
@@ -1603,7 +1702,14 @@ func buildCacheSubprocessStream(
 	buildCacheMu.Lock()
 	defer buildCacheMu.Unlock()
 
-	cmd, err := newBuildCacheSubprocessCommand(ctx, fullRebuild, auto)
+	mode := buildCacheModeDefault
+	switch {
+	case auto:
+		mode = buildCacheModeAuto
+	case fullRebuild:
+		mode = buildCacheModeFull
+	}
+	cmd, err := newBuildCacheSubprocessCommand(ctx, mode)
 	if err != nil {
 		return err
 	}
@@ -1652,7 +1758,7 @@ func buildCacheSubprocessStream(
 	return nil
 }
 
-func newBuildCacheSubprocessCommand(ctx context.Context, fullRebuild, auto bool) (*exec.Cmd, error) {
+func newBuildCacheSubprocessCommand(ctx context.Context, mode buildCacheMode) (*exec.Cmd, error) {
 	exe, err := os.Executable()
 	if err != nil {
 		return nil, fmt.Errorf("locate msgvault executable: %w", err)
@@ -1660,11 +1766,16 @@ func newBuildCacheSubprocessCommand(ctx context.Context, fullRebuild, auto bool)
 
 	args := globalConfigFlagArgs()
 	args = append(args, "--no-log-file", "build-cache")
-	if fullRebuild {
+	switch mode {
+	case buildCacheModeDefault:
+	case buildCacheModeFull:
 		args = append(args, "--full-rebuild")
-	}
-	if auto {
+	case buildCacheModeAuto:
 		args = append(args, "--auto")
+	case buildCacheModeDerived:
+		args = append(args, "--derived-only")
+	default:
+		return nil, fmt.Errorf("construct build-cache subprocess: unknown mode %d", mode)
 	}
 
 	// exe is this binary (os.Executable) and args are our own fixed subcommand
@@ -1791,4 +1902,11 @@ func init() {
 	// stay unconditional. Internal, so hidden.
 	buildCacheCmd.Flags().BoolVar(&buildCacheAutoFlag, "auto", false, "Internal: staleness-derived build; re-evaluated under the build lock")
 	_ = buildCacheCmd.Flags().MarkHidden("auto")
+	buildCacheCmd.Flags().BoolVar(
+		&buildCacheDerivedOnlyFlag,
+		"derived-only",
+		false,
+		"Internal: refresh version-15 derived identity datasets",
+	)
+	_ = buildCacheCmd.Flags().MarkHidden("derived-only")
 }

@@ -2,14 +2,9 @@ package cacheops
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
-	"os"
-	"path/filepath"
-	"strings"
 	"time"
 
-	_ "github.com/duckdb/duckdb-go/v2" // DuckDB driver (database/sql)
 	"go.kenn.io/msgvault/internal/query"
 )
 
@@ -21,8 +16,7 @@ const (
 	StatusStaleSchema  = "stale_schema"
 	StatusDrifted      = "drifted"
 
-	tableAttachments = "attachments"
-	tableMessages    = "messages"
+	tableMessages = "messages"
 )
 
 type CacheStats struct {
@@ -74,71 +68,17 @@ func CollectStats(ctx context.Context, analyticsDir string) (*CacheStats, error)
 		return nil, fmt.Errorf("read analytics cache state: %w", err)
 	}
 
-	db, err := sql.Open("duckdb", "")
-	if err != nil {
-		return nil, fmt.Errorf("open duckdb: %w", err)
+	result := &CacheStats{
+		Status:              StatusReady,
+		TotalMessages:       state.Stats.TotalMessages,
+		Sources:             state.Stats.Sources,
+		UniqueSenders:       state.Stats.UniqueSenders,
+		UniqueDomains:       state.Stats.UniqueDomains,
+		MinYear:             state.Stats.MinYear,
+		MaxYear:             state.Stats.MaxYear,
+		TotalSizeBytes:      state.Stats.TotalSizeBytes,
+		AttachmentSizeBytes: state.Stats.AttachmentSizeBytes,
 	}
-	defer func() { _ = db.Close() }()
-
-	escapedDir := strings.ReplaceAll(analyticsDir, "'", "''")
-	statsSQL := fmt.Sprintf(`
-		WITH msg AS (
-			SELECT * FROM read_parquet('%s/messages/**/*.parquet', hive_partitioning=true)
-		),
-		mr AS (
-			SELECT * FROM read_parquet('%s/message_recipients/*.parquet')
-		),
-		p AS (
-			SELECT * FROM read_parquet('%s/participants/*.parquet')
-		)
-		SELECT
-			COUNT(*) as total_messages,
-			COUNT(DISTINCT m.source_id) as sources,
-			(SELECT COUNT(DISTINCT p2.email_address)
-			 FROM mr mr2
-			 JOIN p p2 ON p2.id = mr2.participant_id
-			 WHERE mr2.recipient_type = 'from') as unique_senders,
-			(SELECT COUNT(DISTINCT p2.domain)
-			 FROM mr mr2
-			 JOIN p p2 ON p2.id = mr2.participant_id
-			 WHERE mr2.recipient_type = 'from') as unique_domains,
-			MIN(m.year) as min_year,
-			MAX(m.year) as max_year,
-			COALESCE(SUM(m.size_estimate), 0) as total_size
-		FROM msg m
-		`, escapedDir, escapedDir, escapedDir)
-
-	var minYear, maxYear sql.NullInt64
-	result := &CacheStats{Status: StatusReady}
-	err = db.QueryRow(statsSQL).Scan(
-		&result.TotalMessages,
-		&result.Sources,
-		&result.UniqueSenders,
-		&result.UniqueDomains,
-		&minYear,
-		&maxYear,
-		&result.TotalSizeBytes,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("query stats: %w", err)
-	}
-	if minYear.Valid {
-		result.MinYear = &minYear.Int64
-	}
-	if maxYear.Valid {
-		result.MaxYear = &maxYear.Int64
-	}
-
-	attachmentsDir := filepath.Join(analyticsDir, tableAttachments)
-	if _, err := os.Stat(attachmentsDir); err == nil {
-		attachSQL := fmt.Sprintf(`
-			SELECT COALESCE(SUM(size), 0) FROM read_parquet('%s/attachments/*.parquet')
-			`, escapedDir)
-		if err := db.QueryRow(attachSQL).Scan(&result.AttachmentSizeBytes); err != nil {
-			result.Warnings = append(result.Warnings, fmt.Sprintf("could not read attachment stats: %v", err))
-		}
-	}
-
 	result.LastSyncAt = &state.LastSyncAt
 	result.LastMessageID = &state.LastMessageID
 

@@ -1,9 +1,11 @@
 package cmd
 
 import (
+	"database/sql"
 	"fmt"
 	"strings"
 
+	"go.kenn.io/msgvault/internal/identityindex"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/store"
 )
@@ -19,8 +21,13 @@ type cacheStaleness struct {
 	// HasAccountIdentityDrift is set (AddAccountIdentity/RemoveAccountIdentity
 	// bump both revisions together), so callers deciding whether the cheap
 	// identity-only refresh applies must check HasAccountIdentityDrift too —
-	// see identityDriftOnly in build_cache.go.
+	// see derivedDriftOnly in build_cache.go.
 	HasIdentityDrift bool
+	// HasConversationParticipantDrift signals conversation membership changed
+	// for a conversation already represented by the committed message
+	// watermark. The derived refresh can rebuild the conversation edges and
+	// downstream rollups without rewriting message facts.
+	HasConversationParticipantDrift bool
 	// HasAccountIdentityDrift signals an identity mutation that invalidates
 	// baked message data since the last build: an account identity was
 	// confirmed or removed, or two participants were merged (merges repoint
@@ -257,7 +264,7 @@ func cacheNeedsBuild(dbPath, analyticsDir string) cacheStaleness {
 	// cannot be repaired by the lightweight identity-only refresh —
 	// incremental appends can't rewrite already-exported shards — so it
 	// always forces a full rebuild. Checked before HasIdentityDrift, and
-	// independently of it, so identityDriftOnly (build_cache.go) never
+	// independently of it, so derivedDriftOnly (build_cache.go) never
 	// mistakes this for the cheap-refresh case even though the same
 	// mutation also bumps identity_revision below.
 	accountIdentityRevision, err := db.AccountIdentityRevision()
@@ -292,10 +299,52 @@ func cacheNeedsBuild(dbPath, analyticsDir string) cacheStaleness {
 		reasons = append(reasons, "identity revision changed")
 	}
 
+	conversationFingerprint, err := sourceConversationParticipantsFingerprint(
+		db.DB(),
+		state.LastMessageID,
+	)
+	if err != nil {
+		return cacheStaleness{
+			NeedsBuild: true, FullRebuild: true,
+			Reason: "cannot verify conversation participants",
+		}
+	}
+	if conversationFingerprint != state.ConversationParticipantsFingerprint {
+		result.HasConversationParticipantDrift = true
+		reasons = append(reasons, "conversation participants changed")
+	}
+
 	if len(reasons) > 0 {
 		result.NeedsBuild = true
 		result.Reason = strings.Join(reasons, "; ")
 	}
 
 	return result
+}
+
+func sourceConversationParticipantsFingerprint(
+	db *sql.DB,
+	lastMessageID int64,
+) (string, error) {
+	rows, err := db.Query(`
+		SELECT cp.conversation_id, cp.participant_id
+		FROM conversation_participants cp
+		WHERE EXISTS (
+			SELECT 1
+			FROM messages m
+			WHERE m.conversation_id = cp.conversation_id
+			  AND `+exportableMessageWhere("m")+`
+			  AND m.id <= ?
+		)
+		ORDER BY cp.conversation_id, cp.participant_id
+	`, lastMessageID)
+	if err != nil {
+		return "", fmt.Errorf("query conversation participants for fingerprint: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	fingerprint, err := identityindex.FingerprintConversationParticipants(rows)
+	if rowsErr := rows.Err(); rowsErr != nil && err == nil {
+		return "", fmt.Errorf("iterate conversation participants for fingerprint: %w", rowsErr)
+	}
+	return fingerprint, err
 }

@@ -2,17 +2,222 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"io/fs"
+	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
+	"github.com/gofrs/flock"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/duckdbutil"
+	"go.kenn.io/msgvault/internal/identityindex"
 	"go.kenn.io/msgvault/internal/oauth"
+	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/store"
 )
+
+func TestDerivedOnlyRefusesStaleSchemaBeforeCreatingStaging(t *testing.T) {
+	parent := t.TempDir()
+	dbPath := filepath.Join(parent, "msgvault.db")
+	analyticsDir := filepath.Join(parent, "analytics")
+	st, err := store.Open(dbPath)
+	require.NoError(t, err)
+	require.NoError(t, st.InitSchema())
+	require.NoError(t, st.Close())
+
+	require.NoError(t, os.MkdirAll(analyticsDir, 0o755))
+	marker, err := json.Marshal(query.CacheSyncState{
+		LastSyncAt:    time.Now().UTC(),
+		SchemaVersion: query.CacheSchemaVersion - 1,
+	})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(query.CacheStatePath(analyticsDir), marker, 0o600))
+
+	_, err = buildCacheDerivedOnly(dbPath, analyticsDir)
+	require.ErrorIs(t, err, ErrDerivedRefreshRequiresFullBuild)
+	staging, globErr := filepath.Glob(filepath.Join(
+		parent,
+		cacheStagingPrefix(analyticsDir)+"*",
+	))
+	require.NoError(t, globErr)
+	assert.Empty(t, staging)
+}
+
+func TestDerivedOnlyRefreshCarriesStatsAndRefreshesMembershipRollups(t *testing.T) {
+	tmp := setupTestSQLite(t)
+	dbPath := filepath.Join(tmp, "test.db")
+	analyticsDir := filepath.Join(tmp, "analytics")
+	_, err := buildCache(dbPath, analyticsDir, true)
+	require.NoError(t, err)
+	before, err := query.ReadCacheSyncState(analyticsDir)
+	require.NoError(t, err)
+	factsBefore := snapshotDatasetBytes(t, analyticsDir, identityindex.DatasetEntryFacts)
+
+	st, err := store.Open(dbPath)
+	require.NoError(t, err)
+	_, err = st.DB().Exec(`
+		INSERT INTO conversation_participants (conversation_id, participant_id)
+		VALUES (102, 3)
+	`)
+	require.NoError(t, err)
+	require.NoError(t, st.Close())
+
+	result, err := buildCacheDerivedOnly(dbPath, analyticsDir)
+	require.NoError(t, err)
+	assert.True(t, result.IdentityOnly)
+
+	after, err := query.ReadCacheSyncState(analyticsDir)
+	require.NoError(t, err)
+	assert.Equal(t, before.Stats, after.Stats)
+	assert.NotEqual(t,
+		before.ConversationParticipantsFingerprint,
+		after.ConversationParticipantsFingerprint,
+	)
+	assert.Equal(t, time.Now().UTC().Format(time.DateOnly), after.RelationshipAnchorDate)
+	assert.False(t, after.PublishedAt.Before(before.PublishedAt))
+	fingerprint, err := query.CacheDatasetFingerprint(analyticsDir)
+	require.NoError(t, err)
+	assert.Equal(t, fingerprint, after.DatasetFingerprint)
+	assert.Equal(t, factsBefore,
+		snapshotDatasetBytes(t, analyticsDir, identityindex.DatasetEntryFacts))
+
+	duckDB, err := duckdbutil.Open(
+		context.Background(),
+		duckdbutil.BuilderPolicy(filepath.Join(tmp, "test-duckdb-tmp")),
+	)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, duckDB.Close()) }()
+	var edgeCount int64
+	require.NoError(t, duckDB.QueryRow(`
+		SELECT count(*)
+		FROM read_parquet(?)
+		WHERE conversation_id = 102 AND participant_id = 3
+	`, filepath.Join(
+		analyticsDir,
+		identityindex.DatasetConversationEdges,
+		"*.parquet",
+	)).Scan(&edgeCount))
+	assert.Equal(t, int64(1), edgeCount)
+}
+
+func TestDerivedOnlyFailureRestoresDatasetsAndMarker(t *testing.T) {
+	tmp := setupTestSQLite(t)
+	dbPath := filepath.Join(tmp, "test.db")
+	analyticsDir := filepath.Join(tmp, "analytics")
+	_, err := buildCache(dbPath, analyticsDir, true)
+	require.NoError(t, err)
+
+	st, err := store.Open(dbPath)
+	require.NoError(t, err)
+	_, err = st.LinkParticipants(2, 3)
+	require.NoError(t, err)
+	require.NoError(t, st.Close())
+
+	before := snapshotCacheBytes(t, analyticsDir)
+	sentinel := errors.New("derived publication sentinel")
+	derivedPublishBeforeMarkerHook = func() error { return sentinel }
+	t.Cleanup(func() { derivedPublishBeforeMarkerHook = nil })
+
+	_, err = buildCacheDerivedOnly(dbPath, analyticsDir)
+	require.ErrorIs(t, err, sentinel)
+	assert.Equal(t, before, snapshotCacheBytes(t, analyticsDir))
+}
+
+func TestStoreAPIIdentityRefreshLaunchesChildWithoutParentCacheLock(t *testing.T) {
+	tmp := t.TempDir()
+	dbPath := filepath.Join(tmp, "msgvault.db")
+	analyticsDir := filepath.Join(tmp, "analytics")
+	st, err := store.Open(dbPath)
+	require.NoError(t, err)
+	require.NoError(t, st.InitSchema())
+	t.Cleanup(func() { require.NoError(t, st.Close()) })
+	require.NoError(t, os.MkdirAll(analyticsDir, 0o755))
+
+	const revision = int64(42)
+	marker, err := json.Marshal(query.CacheSyncState{IdentityRevision: revision})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(query.CacheStatePath(analyticsDir), marker, 0o600))
+
+	old := runDerivedCacheSubprocess
+	runDerivedCacheSubprocess = func(context.Context) error {
+		lock := flock.New(query.CacheBuildLockPath(analyticsDir))
+		locked, lockErr := lock.TryLock()
+		require.NoError(t, lockErr)
+		require.True(t, locked, "parent daemon must not hold the cache lock")
+		require.NoError(t, lock.Unlock())
+		return nil
+	}
+	t.Cleanup(func() { runDerivedCacheSubprocess = old })
+
+	adapter := &storeAPIAdapter{store: st, analyticsDir: analyticsDir}
+	got, err := adapter.RefreshIdentityDatasets(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, revision, got)
+}
+
+func TestDerivedChildEscalatesTypedPreconditionFailureToFullBuild(t *testing.T) {
+	old := executeBuildCacheSubprocessMode
+	var modes []buildCacheMode
+	executeBuildCacheSubprocessMode = func(
+		_ context.Context,
+		mode buildCacheMode,
+	) error {
+		modes = append(modes, mode)
+		if mode == buildCacheModeDerived {
+			return ErrDerivedRefreshRequiresFullBuild
+		}
+		return nil
+	}
+	t.Cleanup(func() { executeBuildCacheSubprocessMode = old })
+
+	require.NoError(t, runDerivedCacheSubprocess(context.Background()))
+	assert.Equal(t,
+		[]buildCacheMode{buildCacheModeDerived, buildCacheModeFull},
+		modes,
+	)
+}
+
+func TestBuildCacheInternalModesAreMutuallyExclusive(t *testing.T) {
+	_, err := requestedBuildCacheMode(true, true, false)
+	require.ErrorContains(t, err, "mutually exclusive")
+	_, err = requestedBuildCacheMode(false, true, true)
+	require.ErrorContains(t, err, "mutually exclusive")
+}
+
+func snapshotCacheBytes(t *testing.T, root string) map[string]string {
+	t.Helper()
+	out := make(map[string]string)
+	require.NoError(t, filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		out[filepath.ToSlash(rel)] = string(data)
+		return nil
+	}))
+	return out
+}
+
+func snapshotDatasetBytes(t *testing.T, root, dataset string) map[string]string {
+	t.Helper()
+	return snapshotCacheBytes(t, filepath.Join(root, dataset))
+}
 
 func TestRebuildCacheAfterWriteReturnsError(t *testing.T) {
 	require := require.New(t)

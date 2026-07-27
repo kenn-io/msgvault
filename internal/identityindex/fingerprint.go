@@ -1,0 +1,45 @@
+package identityindex
+
+import (
+	"crypto/sha256"
+	"encoding/binary"
+	"fmt"
+)
+
+// ConversationParticipantRows is the streaming subset of sql.Rows needed to
+// hash ordered conversation membership without retaining it in memory.
+type ConversationParticipantRows interface {
+	Next() bool
+	Scan(dest ...any) error
+	Err() error
+}
+
+// FingerprintConversationParticipants hashes ordered
+// (conversation_id, participant_id) pairs using two fixed-width big-endian
+// signed-ID bit patterns per row.
+func FingerprintConversationParticipants(rows ConversationParticipantRows) (string, error) {
+	hash := sha256.New()
+	var encoded [16]byte
+	for rows.Next() {
+		var conversationID, participantID int64
+		if err := rows.Scan(&conversationID, &participantID); err != nil {
+			return "", fmt.Errorf("scan conversation participant fingerprint: %w", err)
+		}
+		// IDs are non-negative database keys. Encoding their int64 bit pattern
+		// keeps the fingerprint fixed-width and unambiguous.
+		if conversationID < 0 || participantID < 0 {
+			return "", fmt.Errorf(
+				"fingerprint conversation participants: negative IDs (%d, %d)",
+				conversationID,
+				participantID,
+			)
+		}
+		binary.BigEndian.PutUint64(encoded[:8], uint64(conversationID))
+		binary.BigEndian.PutUint64(encoded[8:], uint64(participantID))
+		_, _ = hash.Write(encoded[:])
+	}
+	if err := rows.Err(); err != nil {
+		return "", fmt.Errorf("iterate conversation participant fingerprint: %w", err)
+	}
+	return fmt.Sprintf("sha256:%x", hash.Sum(nil)), nil
+}

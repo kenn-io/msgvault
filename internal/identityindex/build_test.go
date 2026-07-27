@@ -454,7 +454,8 @@ func TestBuildDerivedOnlyUsesCommittedBaseAndStagedIdentityDimensions(t *testing
 		WHERE canonical_id = 2
 	`, identityParquetGlob(stagedRoot, DatasetDirectory)).Scan(&memberIDs))
 	assert.JSONEq(t, `[2,3,4]`, memberIDs)
-	assert.Equal(t, int64(1), result.Stats.TotalMessages)
+	assert.Equal(t, CacheStatsSummary{}, result.Stats,
+		"derived refresh must preserve committed marker stats without rescanning raw Parquet")
 	assert.NoDirExists(t, filepath.Join(stagedRoot, DatasetEntryFacts))
 	assert.NoDirExists(t, filepath.Join(stagedRoot, DatasetDirectEdges))
 	assert.NoDirExists(t, filepath.Join(stagedRoot, DatasetConversationEdges))
