@@ -539,7 +539,10 @@ func newBackupFreezer(ctx context.Context) (backup.FreezeCoordinator, func(), er
 		return nil, func() {}, errors.New(
 			"backup create: no running msgvault daemon found; refusing to back up an unfrozen archive")
 	}
-	client, err := newDaemonCLIClient(ctx, daemonclient.Config{
+	// Begin and End deliberately use separate per-call contexts. Keep command
+	// values on the client root without letting command cancellation poison the
+	// cleanup request that releases an already-open freeze window.
+	client, err := newDaemonCLIClient(context.WithoutCancel(ctx), daemonclient.Config{
 		URL:           urlFromDaemonRuntime(rt),
 		APIKey:        cfg.Server.APIKey,
 		AllowInsecure: true,

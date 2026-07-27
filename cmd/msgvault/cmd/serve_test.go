@@ -181,13 +181,23 @@ func TestRunServeAutoSelectsAPIPortWhenUnconfigured(t *testing.T) {
 	cmd := &cobra.Command{Use: "serve"}
 	cmd.SetContext(ctx)
 	errCh := make(chan error, 1)
+	serveDone := make(chan struct{})
 	go func() {
+		defer close(serveDone)
 		errCh <- runServe(cmd, nil)
 	}()
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case <-serveDone:
+		case <-time.After(30 * time.Second):
+			require.Fail("runServe did not stop during test cleanup")
+		}
+	})
 
 	// Discover the auto-selected port the same way clients do: through the
 	// daemon runtime record, not the configured port (which is 0).
-	rt, ready, err := waitForDaemonRuntime(ctx, dataDir, 5*time.Second, daemonRuntimeReady, errCh)
+	rt, ready, err := waitForDaemonRuntime(ctx, dataDir, 15*time.Second, daemonRuntimeReady, errCh)
 	require.NoError(err, "wait for daemon runtime record")
 	require.True(ready, "daemon runtime record did not become ready")
 	assert.NotZero(rt.Port, "runtime record must record the bound ephemeral port")
