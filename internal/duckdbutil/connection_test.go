@@ -13,6 +13,7 @@ import (
 )
 
 func TestPolicyAppliesEffectiveSettings(t *testing.T) {
+	assertionsForTest := assert.New(t)
 	tempDir := filepath.Join(t.TempDir(), "spill")
 	policy := Policy{
 		MemoryLimit:          "512MB",
@@ -37,15 +38,15 @@ func TestPolicyAppliesEffectiveSettings(t *testing.T) {
 		       current_setting('preserve_insertion_order')::BOOLEAN
 	`).Scan(&threads, &memory, &configuredTemp, &spill, &preserveInsertionOrder)
 	require.NoError(t, err)
-
-	assert.Equal(t, 3, threads)
-	assert.InDelta(t, 512_000_000, parseDuckDBBytes(t, memory), 1_048_576)
-	assert.Equal(t, filepath.Clean(tempDir), filepath.Clean(configuredTemp))
-	// DuckDB renders GiB settings with one decimal place, so parsing the
-	// displayed value loses up to 0.05 GiB of precision.
-	assert.InDelta(t, 2_000_000_000, parseDuckDBBytes(t, spill), 1<<27)
-	assert.False(t, preserveInsertionOrder)
-	assert.DirExists(t, tempDir)
+	assertionsForTest.Equal(3, threads)
+	assertionsForTest.InDelta(512_000_000, parseDuckDBBytes(t, memory), 1_048_576)
+	assertionsForTest.Equal(filepath.Clean(tempDir), filepath.Clean(configuredTemp))
+	assertionsForTest.
+		// DuckDB renders GiB settings with one decimal place, so parsing the
+		// displayed value loses up to 0.05 GiB of precision.
+		InDelta(2_000_000_000, parseDuckDBBytes(t, spill), 1<<27)
+	assertionsForTest.False(preserveInsertionOrder)
+	assertionsForTest.DirExists(tempDir)
 }
 
 func TestPolicyRejectsIncompleteOrUnsafeSettings(t *testing.T) {
@@ -79,15 +80,15 @@ func TestPolicyRejectsIncompleteOrUnsafeSettings(t *testing.T) {
 }
 
 func TestPolicyConstructorsCapThreads(t *testing.T) {
+	assertionsForTest := assert.New(t)
 	interactive := InteractivePolicy(filepath.Join(t.TempDir(), "interactive"))
 	builder := BuilderPolicy(filepath.Join(t.TempDir(), "builder"))
-
-	assert.Equal(t, min(runtime.GOMAXPROCS(0), 4), interactive.Threads)
-	assert.Equal(t, "512MB", interactive.MemoryLimit)
-	assert.Equal(t, "2GB", interactive.MaxTempDirectorySize)
-	assert.Equal(t, min(runtime.GOMAXPROCS(0), 8), builder.Threads)
-	assert.Equal(t, "2GB", builder.MemoryLimit)
-	assert.Equal(t, "8GB", builder.MaxTempDirectorySize)
+	assertionsForTest.Equal(min(runtime.GOMAXPROCS(0), 4), interactive.Threads)
+	assertionsForTest.Equal("512MB", interactive.MemoryLimit)
+	assertionsForTest.Equal("2GB", interactive.MaxTempDirectorySize)
+	assertionsForTest.Equal(min(runtime.GOMAXPROCS(0), 2), builder.Threads)
+	assertionsForTest.Equal("1536MB", builder.MemoryLimit)
+	assertionsForTest.Equal("8GB", builder.MaxTempDirectorySize)
 }
 
 func parseDuckDBBytes(t *testing.T, value string) int64 {

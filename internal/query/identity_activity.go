@@ -219,12 +219,13 @@ func (e *DuckDBEngine) searchPeople(
 	)
 	var queryText string
 	args := make([]any, 0, len(candidateArgs)+2)
+	widenAcrossMembers := len(clusterMemberIDs) > 1
 	if identityRequestIsUnfiltered(request.Explore) {
-		queryText = e.unfilteredPeopleSQL(candidates, order)
+		queryText = e.unfilteredPeopleSQL(candidates, order, widenAcrossMembers)
 		args = append(args, candidateArgs...)
 	} else {
 		logicalSQL, logicalArgs := e.buildIdentityLogicalSQL(request.Explore, candidates)
-		queryText = e.filteredPeopleSQL(logicalSQL, order)
+		queryText = e.filteredPeopleSQL(logicalSQL, order, widenAcrossMembers)
 		args = append(args, logicalArgs...)
 		args = append(args, candidateArgs...)
 	}
@@ -332,10 +333,39 @@ func (e *DuckDBEngine) identityPeopleCandidatesSQL(
 	`, personID, directoryRelation, where), args
 }
 
-func (e *DuckDBEngine) unfilteredPeopleSQL(candidates, order string) string {
+func (e *DuckDBEngine) unfilteredPeopleSQL(
+	candidates, order string,
+	widenAcrossMembers bool,
+) string {
 	rollups := quoteIdentitySQLPath(
 		e.identityDatasetPath(identityindex.DatasetRollups),
 	)
+	if !widenAcrossMembers {
+		// Directory and rollup rows share the same canonical key. Keeping the
+		// ordinary list/search path one-to-one avoids grouping 75K rows that
+		// carry member and search-value lists merely to recover the same row.
+		return `WITH identity_candidates AS (` + candidates + `
+), population AS (
+	SELECT c.*,
+	       r.activity_count,
+	       r.file_count,
+	       r.first_at,
+	       r.last_at,
+	       r.source_counts
+	FROM identity_candidates c
+	JOIN read_parquet('` + rollups + `') r USING (canonical_id)
+), counted AS (
+	SELECT *, count(*) OVER ()::BIGINT AS total_count
+	FROM population
+), paged AS (
+	SELECT *, row_number() OVER (ORDER BY ` + order + `) AS page_rank
+	FROM counted ORDER BY ` + order + ` LIMIT ? OFFSET ?
+)
+` + e.peoplePageSelectSQL()
+	}
+	// Detail callers may explicitly widen an otherwise-unlinked person
+	// across several supplied members. That bounded one-row path must merge
+	// each member's independent rollup.
 	return `WITH identity_candidates AS (` + candidates + `
 ), people_totals AS (
 	SELECT c.*,
@@ -376,7 +406,14 @@ func (e *DuckDBEngine) unfilteredPeopleSQL(candidates, order string) string {
 ` + e.peoplePageSelectSQL()
 }
 
-func (e *DuckDBEngine) filteredPeopleSQL(logicalSQL, order string) string {
+func (e *DuckDBEngine) filteredPeopleSQL(
+	logicalSQL, order string,
+	widenAcrossMembers bool,
+) string {
+	peopleJoin := "p.canonical_id = c.canonical_id"
+	if widenAcrossMembers {
+		peopleJoin = "list_contains(c.member_ids, p.canonical_id)"
+	}
 	return logicalSQL + `,
 person_totals AS (
 	SELECT c.canonical_id,
@@ -386,13 +423,13 @@ person_totals AS (
 	       max(p.occurred_at)::TIMESTAMP AS last_at
 	FROM logical_people p
 	JOIN identity_candidates c
-	  ON list_contains(c.member_ids, p.canonical_id)
+	  ON ` + peopleJoin + `
 	GROUP BY c.canonical_id
 ), person_source_counts AS (
 	SELECT c.canonical_id, p.source_type, count(*)::BIGINT AS source_count
 	FROM logical_people p
 	JOIN identity_candidates c
-	  ON list_contains(c.member_ids, p.canonical_id)
+	  ON ` + peopleJoin + `
 	GROUP BY c.canonical_id, p.source_type
 ), person_sources AS (
 	SELECT canonical_id,

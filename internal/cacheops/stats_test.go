@@ -115,18 +115,19 @@ func TestCollectStatsClassifiesCacheReadiness(t *testing.T) {
 }
 
 func TestCollectStatsUsesCommittedMarkerWithoutScanningParquet(t *testing.T) {
+	requirementsForTest := require.New(t)
 	dir := writeCacheStatsFixture(t)
 	broken := filepath.Join(dir, "messages", "year=2024", "data.parquet")
-	require.NoError(t, os.WriteFile(broken, []byte("not parquet"), 0o600))
+	requirementsForTest.NoError(os.WriteFile(broken, []byte("not parquet"), 0o600))
 
 	state, err := query.ReadCacheSyncState(dir)
-	require.NoError(t, err)
+	requirementsForTest.NoError(err)
 	state.DatasetFingerprint, err = query.CacheDatasetFingerprint(dir)
-	require.NoError(t, err)
+	requirementsForTest.NoError(err)
 	writeCacheStatsState(t, dir, state)
 
 	stats, err := CollectStats(context.Background(), dir)
-	require.NoError(t, err)
+	requirementsForTest.NoError(err)
 	assert.Equal(t, StatusReady, stats.Status)
 	assert.Equal(t, state.Stats.TotalMessages, stats.TotalMessages)
 	assert.Equal(t, state.Stats.AttachmentSizeBytes, stats.AttachmentSizeBytes)
@@ -134,9 +135,10 @@ func TestCollectStatsUsesCommittedMarkerWithoutScanningParquet(t *testing.T) {
 
 func writeCacheStatsFixture(t *testing.T) string {
 	t.Helper()
+	requirementsForTest := require.New(t)
 	dir := t.TempDir()
 	db, err := sql.Open("duckdb", "")
-	require.NoError(t, err)
+	requirementsForTest.NoError(err)
 	defer func() { _ = db.Close() }()
 
 	datasets := map[string]string{
@@ -158,24 +160,24 @@ func writeCacheStatsFixture(t *testing.T) string {
 		if dataset == tableMessages {
 			datasetDir = filepath.Join(datasetDir, "year=2024")
 		}
-		require.NoError(t, os.MkdirAll(datasetDir, 0o755))
+		requirementsForTest.NoError(os.MkdirAll(datasetDir, 0o755))
 		path := strings.ReplaceAll(filepath.Join(datasetDir, "data.parquet"), "'", "''")
 		_, err := db.Exec("COPY (" + selectSQL + ") TO '" + path + "' (FORMAT PARQUET)")
-		require.NoError(t, err, "write %s fixture", dataset)
+		requirementsForTest.NoError(err, "write %s fixture", dataset)
 	}
 	for _, dataset := range query.RequiredParquetDirs {
 		if _, exists := datasets[dataset]; exists {
 			continue
 		}
 		datasetDir := filepath.Join(dir, dataset)
-		require.NoError(t, os.MkdirAll(datasetDir, 0o755))
+		requirementsForTest.NoError(os.MkdirAll(datasetDir, 0o755))
 		path := strings.ReplaceAll(filepath.Join(datasetDir, "data.parquet"), "'", "''")
 		_, err := db.Exec("COPY (SELECT 1::BIGINT AS value) TO '" + path + "' (FORMAT PARQUET)")
-		require.NoError(t, err, "write %s fixture", dataset)
+		requirementsForTest.NoError(err, "write %s fixture", dataset)
 	}
 
 	fingerprint, err := query.CacheDatasetFingerprint(dir)
-	require.NoError(t, err)
+	requirementsForTest.NoError(err)
 	minYear := int64(2024)
 	maxYear := int64(2024)
 	writeCacheStatsState(t, dir, query.CacheSyncState{

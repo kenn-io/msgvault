@@ -23,78 +23,80 @@ import (
 )
 
 func TestDerivedOnlyRefusesStaleSchemaBeforeCreatingStaging(t *testing.T) {
+	requirementsForTest := require.New(t)
 	parent := t.TempDir()
 	dbPath := filepath.Join(parent, "msgvault.db")
 	analyticsDir := filepath.Join(parent, "analytics")
 	st, err := store.Open(dbPath)
-	require.NoError(t, err)
-	require.NoError(t, st.InitSchema())
-	require.NoError(t, st.Close())
-
-	require.NoError(t, os.MkdirAll(analyticsDir, 0o755))
+	requirementsForTest.NoError(err)
+	requirementsForTest.NoError(st.InitSchema())
+	requirementsForTest.NoError(st.Close())
+	requirementsForTest.NoError(os.MkdirAll(analyticsDir, 0o755))
 	marker, err := json.Marshal(query.CacheSyncState{
 		LastSyncAt:    time.Now().UTC(),
 		SchemaVersion: query.CacheSchemaVersion - 1,
 	})
-	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(query.CacheStatePath(analyticsDir), marker, 0o600))
+	requirementsForTest.NoError(err)
+	requirementsForTest.NoError(os.WriteFile(query.CacheStatePath(analyticsDir), marker, 0o600))
 
 	_, err = buildCacheDerivedOnly(dbPath, analyticsDir)
-	require.ErrorIs(t, err, ErrDerivedRefreshRequiresFullBuild)
+	requirementsForTest.ErrorIs(err, ErrDerivedRefreshRequiresFullBuild)
 	staging, globErr := filepath.Glob(filepath.Join(
 		parent,
 		cacheStagingPrefix(analyticsDir)+"*",
 	))
-	require.NoError(t, globErr)
+	requirementsForTest.NoError(globErr)
 	assert.Empty(t, staging)
 }
 
 func TestDerivedOnlyRefreshCarriesStatsAndRefreshesMembershipRollups(t *testing.T) {
+	requirementsForTest := require.New(t)
+	assertionsForTest := assert.New(t)
 	tmp := setupTestSQLite(t)
 	dbPath := filepath.Join(tmp, "test.db")
 	analyticsDir := filepath.Join(tmp, "analytics")
 	_, err := buildCache(dbPath, analyticsDir, true)
-	require.NoError(t, err)
+	requirementsForTest.NoError(err)
 	before, err := query.ReadCacheSyncState(analyticsDir)
-	require.NoError(t, err)
+	requirementsForTest.NoError(err)
 	factsBefore := snapshotDatasetBytes(t, analyticsDir, identityindex.DatasetEntryFacts)
 
 	st, err := store.Open(dbPath)
-	require.NoError(t, err)
+	requirementsForTest.NoError(err)
 	_, err = st.DB().Exec(`
 		INSERT INTO conversation_participants (conversation_id, participant_id)
 		VALUES (102, 3)
 	`)
-	require.NoError(t, err)
-	require.NoError(t, st.Close())
+	requirementsForTest.NoError(err)
+	requirementsForTest.NoError(st.Close())
 
 	result, err := buildCacheDerivedOnly(dbPath, analyticsDir)
-	require.NoError(t, err)
-	assert.True(t, result.IdentityOnly)
+	requirementsForTest.NoError(err)
+	assertionsForTest.True(result.IdentityOnly)
 
 	after, err := query.ReadCacheSyncState(analyticsDir)
-	require.NoError(t, err)
-	assert.Equal(t, before.Stats, after.Stats)
-	assert.NotEqual(t,
+	requirementsForTest.NoError(err)
+	assertionsForTest.Equal(before.Stats, after.Stats)
+	assertionsForTest.NotEqual(
 		before.ConversationParticipantsFingerprint,
 		after.ConversationParticipantsFingerprint,
 	)
-	assert.Equal(t, time.Now().UTC().Format(time.DateOnly), after.RelationshipAnchorDate)
-	assert.False(t, after.PublishedAt.Before(before.PublishedAt))
+	assertionsForTest.Equal(time.Now().UTC().Format(time.DateOnly), after.RelationshipAnchorDate)
+	assertionsForTest.False(after.PublishedAt.Before(before.PublishedAt))
 	fingerprint, err := query.CacheDatasetFingerprint(analyticsDir)
-	require.NoError(t, err)
-	assert.Equal(t, fingerprint, after.DatasetFingerprint)
-	assert.Equal(t, factsBefore,
+	requirementsForTest.NoError(err)
+	assertionsForTest.Equal(fingerprint, after.DatasetFingerprint)
+	assertionsForTest.Equal(factsBefore,
 		snapshotDatasetBytes(t, analyticsDir, identityindex.DatasetEntryFacts))
 
 	duckDB, err := duckdbutil.Open(
 		context.Background(),
 		duckdbutil.BuilderPolicy(filepath.Join(tmp, "test-duckdb-tmp")),
 	)
-	require.NoError(t, err)
+	requirementsForTest.NoError(err)
 	defer func() { require.NoError(t, duckDB.Close()) }()
 	var edgeCount int64
-	require.NoError(t, duckDB.QueryRow(`
+	requirementsForTest.NoError(duckDB.QueryRow(`
 		SELECT count(*)
 		FROM read_parquet(?)
 		WHERE conversation_id = 102 AND participant_id = 3
@@ -103,21 +105,22 @@ func TestDerivedOnlyRefreshCarriesStatsAndRefreshesMembershipRollups(t *testing.
 		identityindex.DatasetConversationEdges,
 		"*.parquet",
 	)).Scan(&edgeCount))
-	assert.Equal(t, int64(1), edgeCount)
+	assertionsForTest.Equal(int64(1), edgeCount)
 }
 
 func TestDerivedOnlyFailureRestoresDatasetsAndMarker(t *testing.T) {
+	requirementsForTest := require.New(t)
 	tmp := setupTestSQLite(t)
 	dbPath := filepath.Join(tmp, "test.db")
 	analyticsDir := filepath.Join(tmp, "analytics")
 	_, err := buildCache(dbPath, analyticsDir, true)
-	require.NoError(t, err)
+	requirementsForTest.NoError(err)
 
 	st, err := store.Open(dbPath)
-	require.NoError(t, err)
+	requirementsForTest.NoError(err)
 	_, err = st.LinkParticipants(2, 3)
-	require.NoError(t, err)
-	require.NoError(t, st.Close())
+	requirementsForTest.NoError(err)
+	requirementsForTest.NoError(st.Close())
 
 	before := snapshotCacheBytes(t, analyticsDir)
 	sentinel := errors.New("derived publication sentinel")
@@ -125,24 +128,25 @@ func TestDerivedOnlyFailureRestoresDatasetsAndMarker(t *testing.T) {
 	t.Cleanup(func() { derivedPublishBeforeMarkerHook = nil })
 
 	_, err = buildCacheDerivedOnly(dbPath, analyticsDir)
-	require.ErrorIs(t, err, sentinel)
+	requirementsForTest.ErrorIs(err, sentinel)
 	assert.Equal(t, before, snapshotCacheBytes(t, analyticsDir))
 }
 
 func TestStoreAPIIdentityRefreshLaunchesChildWithoutParentCacheLock(t *testing.T) {
+	requirementsForTest := require.New(t)
 	tmp := t.TempDir()
 	dbPath := filepath.Join(tmp, "msgvault.db")
 	analyticsDir := filepath.Join(tmp, "analytics")
 	st, err := store.Open(dbPath)
-	require.NoError(t, err)
-	require.NoError(t, st.InitSchema())
+	requirementsForTest.NoError(err)
+	requirementsForTest.NoError(st.InitSchema())
 	t.Cleanup(func() { require.NoError(t, st.Close()) })
-	require.NoError(t, os.MkdirAll(analyticsDir, 0o755))
+	requirementsForTest.NoError(os.MkdirAll(analyticsDir, 0o755))
 
 	const revision = int64(42)
 	marker, err := json.Marshal(query.CacheSyncState{IdentityRevision: revision})
-	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(query.CacheStatePath(analyticsDir), marker, 0o600))
+	requirementsForTest.NoError(err)
+	requirementsForTest.NoError(os.WriteFile(query.CacheStatePath(analyticsDir), marker, 0o600))
 
 	old := runDerivedCacheSubprocess
 	runDerivedCacheSubprocess = func(context.Context) error {
@@ -157,7 +161,7 @@ func TestStoreAPIIdentityRefreshLaunchesChildWithoutParentCacheLock(t *testing.T
 
 	adapter := &storeAPIAdapter{store: st, analyticsDir: analyticsDir}
 	got, err := adapter.RefreshIdentityDatasets(context.Background())
-	require.NoError(t, err)
+	requirementsForTest.NoError(err)
 	assert.Equal(t, revision, got)
 }
 

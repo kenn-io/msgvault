@@ -96,6 +96,7 @@ FROM aggregated a`, clustersGlob, ownersGlob, labelExpr)
 }
 
 func TestRelationshipRollupMatchesLegacyOracleForOneSentEntry(t *testing.T) {
+	assertionsForTest := assert.New(t)
 	b := NewTestDataBuilder(t)
 	now := time.Date(2026, 7, 15, 0, 0, 0, 0, time.UTC)
 	b.SetRelationshipAnchor(now)
@@ -146,12 +147,12 @@ func TestRelationshipRollupMatchesLegacyOracleForOneSentEntry(t *testing.T) {
 	)
 	require.NoError(t, err)
 	require.Len(t, indexed.Rows, 1)
-	assert.Equal(t, legacy.CanonicalID, indexed.Rows[0].CanonicalID)
-	assert.Equal(t, legacy.DisplayLabel, indexed.Rows[0].DisplayLabel)
-	assert.Equal(t, legacy.Signals.SentCount, indexed.Rows[0].Signals.SentCount)
-	assert.Equal(t, legacy.Signals.Modalities, indexed.Rows[0].Signals.Modalities)
-	assert.Equal(t, legacy.LastAt, indexed.Rows[0].LastAt)
-	assert.InDelta(t,
+	assertionsForTest.Equal(legacy.CanonicalID, indexed.Rows[0].CanonicalID)
+	assertionsForTest.Equal(legacy.DisplayLabel, indexed.Rows[0].DisplayLabel)
+	assertionsForTest.Equal(legacy.Signals.SentCount, indexed.Rows[0].Signals.SentCount)
+	assertionsForTest.Equal(legacy.Signals.Modalities, indexed.Rows[0].Signals.Modalities)
+	assertionsForTest.Equal(legacy.LastAt, indexed.Rows[0].LastAt)
+	assertionsForTest.InDelta(
 		legacy.Signals.SentToThem,
 		indexed.Rows[0].Signals.SentToThem,
 		1e-12,
@@ -164,12 +165,13 @@ func legacyRelationshipRowsForEquivalence(
 	request RelationshipsRequest,
 ) []RelationshipRow {
 	t.Helper()
+	requirementsForTest := require.New(t)
 	now := request.Now.UTC()
 	explore, err := engine.expandParticipantFilterClusters(
 		t.Context(),
 		ExploreRequest{Context: request.Context},
 	)
-	require.NoError(t, err)
+	requirementsForTest.NoError(err)
 	conditions, args := buildExploreConditions(explore)
 	queryText := buildLegacyRelationshipsSQLForEquivalence(
 		conditions,
@@ -179,14 +181,14 @@ func legacyRelationshipRowsForEquivalence(
 	args = append(args, identityindex.RelationshipDecayRate, duckDBDateParam(now))
 
 	rows, err := engine.db.QueryContext(t.Context(), queryText, args...)
-	require.NoError(t, err)
+	requirementsForTest.NoError(err)
 	defer func() { require.NoError(t, rows.Close()) }()
 
 	result := make([]RelationshipRow, 0)
 	for rows.Next() {
 		var row RelationshipRow
 		var memberIDsJSON string
-		require.NoError(t, rows.Scan(
+		requirementsForTest.NoError(rows.Scan(
 			&row.CanonicalID,
 			&row.DisplayLabel,
 			&memberIDsJSON,
@@ -198,14 +200,14 @@ func legacyRelationshipRowsForEquivalence(
 			&row.Signals.Modalities,
 			&row.LastAt,
 		))
-		require.NoError(t, json.Unmarshal([]byte(memberIDsJSON), &row.MemberIDs))
+		requirementsForTest.NoError(json.Unmarshal([]byte(memberIDsJSON), &row.MemberIDs))
 		row.Signals.LastInteractionAt = row.LastAt
 		row.Score = RelationshipScore(row.Signals)
 		if request.ShowAll || row.Signals.SentCount > 0 || row.Signals.MeetingCount > 0 {
 			result = append(result, row)
 		}
 	}
-	require.NoError(t, rows.Err())
+	requirementsForTest.NoError(rows.Err())
 	sort.SliceStable(result, func(i, j int) bool {
 		if result[i].Score != result[j].Score {
 			return result[i].Score > result[j].Score
@@ -227,20 +229,21 @@ func requireRelationshipRowsEquivalent(
 	got []RelationshipRow,
 ) {
 	t.Helper()
+	assertionsForTest := assert.New(t)
 	require.Len(t, got, len(want))
 	for index := range want {
-		assert.Equal(t, want[index].CanonicalID, got[index].CanonicalID)
-		assert.Equal(t, want[index].DisplayLabel, got[index].DisplayLabel)
-		assert.Equal(t, want[index].MemberIDs, got[index].MemberIDs)
-		assert.Equal(t, want[index].Signals.SentCount, got[index].Signals.SentCount)
-		assert.Equal(t, want[index].Signals.MeetingCount, got[index].Signals.MeetingCount)
-		assert.Equal(t, want[index].Signals.Modalities, got[index].Signals.Modalities)
-		assert.Equal(t, want[index].LastAt, got[index].LastAt)
-		assert.Equal(t, want[index].Signals.LastInteractionAt, got[index].Signals.LastInteractionAt)
-		assert.InDelta(t, want[index].Signals.SentToThem, got[index].Signals.SentToThem, 1e-12)
-		assert.InDelta(t, want[index].Signals.ReceivedFromThem, got[index].Signals.ReceivedFromThem, 1e-12)
-		assert.InDelta(t, want[index].Signals.MeetingsTogether, got[index].Signals.MeetingsTogether, 1e-12)
-		assert.InDelta(t, want[index].Score, got[index].Score, 1e-12)
+		assertionsForTest.Equal(want[index].CanonicalID, got[index].CanonicalID)
+		assertionsForTest.Equal(want[index].DisplayLabel, got[index].DisplayLabel)
+		assertionsForTest.Equal(want[index].MemberIDs, got[index].MemberIDs)
+		assertionsForTest.Equal(want[index].Signals.SentCount, got[index].Signals.SentCount)
+		assertionsForTest.Equal(want[index].Signals.MeetingCount, got[index].Signals.MeetingCount)
+		assertionsForTest.Equal(want[index].Signals.Modalities, got[index].Signals.Modalities)
+		assertionsForTest.Equal(want[index].LastAt, got[index].LastAt)
+		assertionsForTest.Equal(want[index].Signals.LastInteractionAt, got[index].Signals.LastInteractionAt)
+		assertionsForTest.InDelta(want[index].Signals.SentToThem, got[index].Signals.SentToThem, 1e-12)
+		assertionsForTest.InDelta(want[index].Signals.ReceivedFromThem, got[index].Signals.ReceivedFromThem, 1e-12)
+		assertionsForTest.InDelta(want[index].Signals.MeetingsTogether, got[index].Signals.MeetingsTogether, 1e-12)
+		assertionsForTest.InDelta(want[index].Score, got[index].Score, 1e-12)
 	}
 }
 
@@ -267,6 +270,8 @@ func compareRelationshipIndexWithLegacy(
 }
 
 func TestRelationshipIndexMatchesLegacyForAuthoredLinkedCoRecipient(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
 	builder := NewTestDataBuilder(t)
 	now := time.Date(2026, 7, 15, 0, 0, 0, 0, time.UTC)
 	builder.SetRelationshipAnchor(now)
@@ -289,14 +294,16 @@ func TestRelationshipIndexMatchesLegacyForAuthoredLinkedCoRecipient(t *testing.T
 	rows := compareRelationshipIndexWithLegacy(t, engine, RelationshipsRequest{
 		Now: now, Limit: 25, ShowAll: true,
 	})
-	require.Len(t, rows, 1)
-	assert.Equal(t, authorID, rows[0].CanonicalID)
-	assert.Equal(t, []int64{authorID, coRecipientID}, rows[0].MemberIDs)
-	assert.InDelta(t, float64(1), rows[0].Signals.ReceivedFromThem, 1e-12,
+	requirements.Len(rows, 1)
+	assertions.Equal(authorID, rows[0].CanonicalID)
+	assertions.Equal([]int64{authorID, coRecipientID}, rows[0].MemberIDs)
+	assertions.InDelta(float64(1), rows[0].Signals.ReceivedFromThem, 1e-12,
 		"bool-or merged authorship must credit one incoming unit, not zero or two")
 }
 
 func TestRelationshipIndexMatchesLegacyAcrossAdversarialSemantics(t *testing.T) {
+	requirementsForTest := require.New(t)
+	assertionsForTest := assert.New(t)
 	builder := NewTestDataBuilder(t)
 	now := time.Date(2026, 7, 15, 0, 0, 0, 0, time.UTC)
 	builder.SetRelationshipAnchor(now)
@@ -382,39 +389,39 @@ func TestRelationshipIndexMatchesLegacyAcrossAdversarialSemantics(t *testing.T) 
 
 	engine := builder.BuildEngine()
 	_, err := engine.db.ExecContext(t.Context(), "SET TimeZone = 'America/New_York'")
-	require.NoError(t, err,
+	requirementsForTest.NoError(err,
 		"equivalence must not depend on DuckDB's session or host timezone")
 	allRows := compareRelationshipIndexWithLegacy(t, engine, RelationshipsRequest{
 		Now: now, Limit: 25, ShowAll: true,
 	})
-	require.Len(t, allRows, 2)
-	assert.Equal(t, 3, allRows[0].Signals.Modalities)
-	assert.Equal(t, futureIDTime(builder, futureID), allRows[0].LastAt)
+	requirementsForTest.Len(allRows, 2)
+	assertionsForTest.Equal(3, allRows[0].Signals.Modalities)
+	assertionsForTest.Equal(futureIDTime(builder, futureID), allRows[0].LastAt)
 	page := compareRelationshipIndexWithLegacy(t, engine, RelationshipsRequest{
 		Now: now, Limit: 1, Offset: 1, ShowAll: true,
 	})
-	require.Len(t, page, 1)
-	assert.Equal(t, allRows[1].CanonicalID, page[0].CanonicalID)
+	requirementsForTest.Len(page, 1)
+	assertionsForTest.Equal(allRows[1].CanonicalID, page[0].CanonicalID)
 
 	conversationFiltered := compareRelationshipIndexWithLegacy(t, engine, RelationshipsRequest{
 		Context: Context{ParticipantIDs: []int64{conversationOnlyID}},
 		Now:     now, Limit: 25, ShowAll: true,
 	})
-	require.Len(t, conversationFiltered, 1)
-	assert.Equal(t, contactID, conversationFiltered[0].CanonicalID)
-	assert.Equal(t, int64(0), conversationFiltered[0].Signals.SentCount)
-	assert.Positive(t, conversationFiltered[0].Signals.ReceivedFromThem)
-	assert.Less(t, conversationFiltered[0].Signals.ReceivedFromThem, float64(1))
+	requirementsForTest.Len(conversationFiltered, 1)
+	assertionsForTest.Equal(contactID, conversationFiltered[0].CanonicalID)
+	assertionsForTest.Equal(int64(0), conversationFiltered[0].Signals.SentCount)
+	assertionsForTest.Positive(conversationFiltered[0].Signals.ReceivedFromThem)
+	assertionsForTest.Less(conversationFiltered[0].Signals.ReceivedFromThem, float64(1))
 
 	chatFiltered := compareRelationshipIndexWithLegacy(t, engine, RelationshipsRequest{
 		Context: Context{MessageTypes: []string{"imessage"}},
 		Now:     now, Limit: 25, ShowAll: true,
 	})
-	require.Len(t, chatFiltered, 1)
-	assert.Equal(t, int64(1), chatFiltered[0].Signals.SentCount,
+	requirementsForTest.Len(chatFiltered, 1)
+	assertionsForTest.Equal(int64(1), chatFiltered[0].Signals.SentCount,
 		"the higher message ID wins an equal-timestamp chat direction tie")
-	assert.InDelta(t, float64(0), chatFiltered[0].Signals.ReceivedFromThem, 1e-12)
-	assert.Equal(t, 1, chatFiltered[0].Signals.Modalities)
+	assertionsForTest.InDelta(float64(0), chatFiltered[0].Signals.ReceivedFromThem, 1e-12)
+	assertionsForTest.Equal(1, chatFiltered[0].Signals.Modalities)
 }
 
 func futureIDTime(builder *TestDataBuilder, messageID int64) time.Time {

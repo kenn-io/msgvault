@@ -3883,7 +3883,10 @@ func TestDuckDBEngine_HideDeletedFromSource(t *testing.T) {
 // deleted_at and is_from_me. The engine should synthesise sensible defaults
 // instead of failing with a binder error.
 func TestDuckDBEngine_StaleParquetSchema(t *testing.T) {
-	// Old-style column definitions (pre-WhatsApp).
+	requirementsForTest :=
+		// Old-style column definitions (pre-WhatsApp).
+		require.New(t)
+
 	const oldMessagesCols = "id, source_id, source_message_id, conversation_id, subject, snippet, sent_at, size_estimate, has_attachments, deleted_from_source_at, year, month"
 	const oldParticipantsCols = "id, email_address, domain, display_name"
 	const oldConversationsCols = "id, source_conversation_id"
@@ -3928,14 +3931,14 @@ func TestDuckDBEngine_StaleParquetSchema(t *testing.T) {
 			(101::BIGINT, 'thread101')
 		`)
 	state, err := ReadCacheSyncState(analyticsDir)
-	require.NoError(t, err)
+	requirementsForTest.NoError(err)
 	state.DatasetFingerprint, err = CacheDatasetFingerprint(analyticsDir)
-	require.NoError(t, err)
+	requirementsForTest.NoError(err)
 	stateData, err := json.Marshal(state)
-	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(CacheStatePath(analyticsDir), stateData, 0o600))
+	requirementsForTest.NoError(err)
+	requirementsForTest.NoError(os.WriteFile(CacheStatePath(analyticsDir), stateData, 0o600))
 	engine, err := NewDuckDBEngine(analyticsDir, "", nil)
-	require.NoError(t, err)
+	requirementsForTest.NoError(err)
 	t.Cleanup(func() { require.NoError(t, engine.Close()) })
 
 	ctx := context.Background()

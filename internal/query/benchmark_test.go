@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -20,7 +21,25 @@ const (
 	benchChatMessageCount = 100_000
 	benchAuxMessageCount  = 4
 	benchMessageCount     = benchChatMessageCount + benchAuxMessageCount
+
+	relationshipScaleMessages     = int64(2_500_000)
+	relationshipScaleEdges        = int64(6_000_000)
+	relationshipScaleParticipants = int64(75_000)
+
+	relationshipScaleBenchEnv = "MSGVAULT_RELATIONSHIPS_SCALE_BENCH"
+	relationshipScaleHomeEnv  = "MSGVAULT_RELATIONSHIPS_BENCH_HOME"
 )
+
+func requireRelationshipScaleBenchmarkHome(tb testing.TB) string {
+	tb.Helper()
+	if os.Getenv(relationshipScaleBenchEnv) != "1" {
+		tb.Skip("set " + relationshipScaleBenchEnv + "=1")
+	}
+	home := strings.TrimSpace(os.Getenv(relationshipScaleHomeEnv))
+	require.NotEmpty(tb, home,
+		relationshipScaleHomeEnv+" must name a generated benchmark vault")
+	return home
+}
 
 // buildBenchData generates a mixed 100K+-message Parquet dataset directly via
 // DuckDB SQL (no Go-side row generation). This produces realistic

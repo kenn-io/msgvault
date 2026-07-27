@@ -38,8 +38,8 @@ func InteractivePolicy(tempDirectory string) Policy {
 // BuilderPolicy returns the bounded policy for cache derivation processes.
 func BuilderPolicy(tempDirectory string) Policy {
 	return Policy{
-		MemoryLimit:          "2GB",
-		Threads:              min(runtime.GOMAXPROCS(0), 8),
+		MemoryLimit:          "1536MB",
+		Threads:              min(runtime.GOMAXPROCS(0), 2),
 		TempDirectory:        tempDirectory,
 		MaxTempDirectorySize: "8GB",
 	}

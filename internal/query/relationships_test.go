@@ -171,6 +171,7 @@ func TestRelationshipsRepeatedRequestsAreIndependentAndRevisioned(t *testing.T) 
 }
 
 func TestRelationshipsCanceledWaiterUsesItsOwnContext(t *testing.T) {
+	requirementsForTest := require.New(t)
 	b := NewTestDataBuilder(t)
 	sourceID := b.AddSource("owner@example.com")
 	ownerID := b.AddParticipant("owner@example.com", "example.com", "Owner")
@@ -184,26 +185,27 @@ func TestRelationshipsCanceledWaiterUsesItsOwnContext(t *testing.T) {
 	b.AddFrom(messageID, ownerID, "Owner")
 	b.AddTo(messageID, personID, "Person")
 	engine := b.BuildEngine()
-
-	require.NoError(t, engine.querySem.Acquire(context.Background(), 1))
+	requirementsForTest.NoError(engine.querySem.Acquire(context.Background(), 1))
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	_, err := engine.Relationships(ctx, RelationshipsRequest{
 		Now:   time.Date(2026, 1, 10, 0, 0, 0, 0, time.UTC),
 		Limit: 10,
 	})
-	require.ErrorIs(t, err, context.Canceled)
+	requirementsForTest.ErrorIs(err, context.Canceled)
 	engine.querySem.Release(1)
 
 	result, err := engine.Relationships(context.Background(), RelationshipsRequest{
 		Now:   time.Date(2026, 1, 10, 0, 0, 0, 0, time.UTC),
 		Limit: 10,
 	})
-	require.NoError(t, err)
-	require.Len(t, result.Rows, 1)
+	requirementsForTest.NoError(err)
+	requirementsForTest.Len(result.Rows, 1)
 }
 
 func TestRelationshipsDoNotRequireLegacyAnalyticalViews(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
 	b := NewTestDataBuilder(t)
 	sourceID := b.AddSource("owner@example.com")
 	ownerID := b.AddParticipant("owner@example.com", "example.com", "Owner")
@@ -225,8 +227,8 @@ func TestRelationshipsDoNotRequireLegacyAnalyticalViews(t *testing.T) {
 		nil,
 		DuckDBOptions{DisableLegacyAnalyticalViews: true},
 	)
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, engine.Close()) })
+	requirements.NoError(err)
+	t.Cleanup(func() { requirements.NoError(engine.Close()) })
 
 	now := time.Date(2026, 1, 10, 0, 0, 0, 0, time.UTC)
 	for _, request := range []RelationshipsRequest{
@@ -237,9 +239,9 @@ func TestRelationshipsDoNotRequireLegacyAnalyticalViews(t *testing.T) {
 			context.Background(),
 			request,
 		)
-		require.NoError(t, relationshipErr)
-		require.Len(t, result.Rows, 1)
-		assert.Equal(t, personID, result.Rows[0].CanonicalID)
+		requirements.NoError(relationshipErr)
+		requirements.Len(result.Rows, 1)
+		assertions.Equal(personID, result.Rows[0].CanonicalID)
 	}
 }
 
@@ -663,6 +665,7 @@ func TestRelationshipsClampsFutureEntryDecayAtOne(t *testing.T) {
 }
 
 func TestRelationshipsClampsBackwardAnchorAdvancement(t *testing.T) {
+	requirementsForTest := require.New(t)
 	b := NewTestDataBuilder(t)
 	sourceID := b.AddSource("owner@example.com")
 	ownerID := b.AddParticipant("owner@example.com", "example.com", "Owner")
@@ -684,8 +687,8 @@ func TestRelationshipsClampsBackwardAnchorAdvancement(t *testing.T) {
 			Limit: 10,
 		},
 	)
-	require.NoError(t, err)
-	require.Len(t, atAnchor.Rows, 1)
+	requirementsForTest.NoError(err)
+	requirementsForTest.Len(atAnchor.Rows, 1)
 
 	beforeAnchor, err := engine.Relationships(
 		context.Background(),
@@ -694,8 +697,8 @@ func TestRelationshipsClampsBackwardAnchorAdvancement(t *testing.T) {
 			Limit: 10,
 		},
 	)
-	require.NoError(t, err)
-	require.Len(t, beforeAnchor.Rows, 1)
+	requirementsForTest.NoError(err)
+	requirementsForTest.Len(beforeAnchor.Rows, 1)
 	assert.InDelta(t,
 		atAnchor.Rows[0].Signals.SentToThem,
 		beforeAnchor.Rows[0].Signals.SentToThem,
@@ -705,6 +708,8 @@ func TestRelationshipsClampsBackwardAnchorAdvancement(t *testing.T) {
 }
 
 func TestRelationshipsFutureRowsPreserveGateModalitiesAndLastTimestamp(t *testing.T) {
+	requirementsForTest := require.New(t)
+	assertionsForTest := assert.New(t)
 	b := NewTestDataBuilder(t)
 	b.SetRelationshipAnchor(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 	sourceID := b.AddSource("owner@example.com")
@@ -750,17 +755,17 @@ func TestRelationshipsFutureRowsPreserveGateModalitiesAndLastTimestamp(t *testin
 			Limit: 10,
 		},
 	)
-	require.NoError(t, err)
-	require.Len(t, result.Rows, 1,
+	requirementsForTest.NoError(err)
+	requirementsForTest.Len(result.Rows, 1,
 		"future raw sent/meeting counts must pass the default reciprocity gate")
 	row := result.Rows[0]
-	assert.Equal(t, personID, row.CanonicalID)
-	assert.InDelta(t, 1.0, row.Signals.SentToThem, 1e-9)
-	assert.InDelta(t, 1.0, row.Signals.MeetingsTogether, 1e-9)
-	assert.Equal(t, int64(1), row.Signals.SentCount)
-	assert.Equal(t, int64(1), row.Signals.MeetingCount)
-	assert.Equal(t, 2, row.Signals.Modalities)
-	assert.Equal(t, meetingAt, row.LastAt,
+	assertionsForTest.Equal(personID, row.CanonicalID)
+	assertionsForTest.InDelta(1.0, row.Signals.SentToThem, 1e-9)
+	assertionsForTest.InDelta(1.0, row.Signals.MeetingsTogether, 1e-9)
+	assertionsForTest.Equal(int64(1), row.Signals.SentCount)
+	assertionsForTest.Equal(int64(1), row.Signals.MeetingCount)
+	assertionsForTest.Equal(2, row.Signals.Modalities)
+	assertionsForTest.Equal(meetingAt, row.LastAt,
 		"future rollups must preserve the full timestamp, not day granularity")
 
 	showAll, err := engine.Relationships(
@@ -771,10 +776,10 @@ func TestRelationshipsFutureRowsPreserveGateModalitiesAndLastTimestamp(t *testin
 			ShowAll: true,
 		},
 	)
-	require.NoError(t, err)
-	require.Len(t, showAll.Rows, 1,
+	requirementsForTest.NoError(err)
+	requirementsForTest.Len(showAll.Rows, 1,
 		"ShowAll must not synthesize a row for an identity with no qualifying interaction")
-	assert.Equal(t, personID, showAll.Rows[0].CanonicalID)
+	assertionsForTest.Equal(personID, showAll.Rows[0].CanonicalID)
 }
 
 // TestRelationshipsParticipantFilterExpandsClusters guards that a secondary

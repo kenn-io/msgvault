@@ -42,18 +42,28 @@ WITH clusters AS (
 	       AS canonical_id
 	FROM %s o
 	LEFT JOIN clusters c ON c.participant_id = o.participant_id
+), filtered_facts AS (
+	SELECT f.*
+	FROM %s f
+	WHERE %s
 ), direct_edges AS (
-	SELECT message_id::BIGINT AS message_id,
-	       participant_id::BIGINT AS participant_id,
-	       participant_domain::VARCHAR AS participant_domain,
-	       is_sender::BOOLEAN AS is_sender,
-	       is_author::BOOLEAN AS is_author
-	FROM %s
+	SELECT d.message_id::BIGINT AS message_id,
+	       d.participant_id::BIGINT AS participant_id,
+	       d.participant_domain::VARCHAR AS participant_domain,
+	       d.is_sender::BOOLEAN AS is_sender,
+	       d.is_author::BOOLEAN AS is_author
+	FROM %s d
+	JOIN filtered_facts f ON f.message_id = d.message_id
 ), conversation_edges AS (
-	SELECT conversation_id::BIGINT AS conversation_id,
-	       participant_id::BIGINT AS participant_id,
-	       participant_domain::VARCHAR AS participant_domain
-	FROM %s
+	SELECT d.conversation_id::BIGINT AS conversation_id,
+	       d.participant_id::BIGINT AS participant_id,
+	       d.participant_domain::VARCHAR AS participant_domain
+	FROM %s d
+	JOIN (
+		SELECT DISTINCT conversation_id
+		FROM filtered_facts
+		WHERE conversation_id IS NOT NULL
+	) f ON f.conversation_id = d.conversation_id
 ), canonical_message_domain_edges AS (
 	SELECT d.message_id::BIGINT AS message_id,
 	       coalesce(c.canonical_id, d.participant_id)::BIGINT AS canonical_id,
@@ -81,10 +91,6 @@ WITH clusters AS (
 ), canonical_conversation_edges AS (
 	SELECT DISTINCT conversation_id, canonical_id
 	FROM canonical_conversation_domain_edges
-), filtered_facts AS (
-	SELECT f.*
-	FROM %s f
-	WHERE %s
 ), nonchat_units AS (
 	SELECT ('message:' || f.message_id)::VARCHAR AS entry_key,
 	       f.message_id::BIGINT AS anchor_message_id,
@@ -222,10 +228,10 @@ WITH clusters AS (
 )`,
 		clusters,
 		owners,
-		directEdges,
-		conversationEdges,
 		facts,
 		filterSQL,
+		directEdges,
+		conversationEdges,
 	)
 }
 

@@ -447,25 +447,25 @@ func TestOpenDaemonAnalyticsEngineAutoBuildsCacheAtStartup(t *testing.T) {
 }
 
 func TestOpenDaemonDuckDBEngineUsesOwnedSpillDirectory(t *testing.T) {
+	requirementsForTest := require.New(t)
 	c, s := openTestDaemonAnalyticsStore(t)
 	_, err := buildCache(c.DatabaseDSN(), c.AnalyticsDir(), true)
-	require.NoError(t, err)
+	requirementsForTest.NoError(err)
 
 	engine, err := openDaemonDuckDBEngine(c, s)
-	require.NoError(t, err)
+	requirementsForTest.NoError(err)
 
 	result, err := engine.QuerySQL(context.Background(), "SELECT current_setting('temp_directory')")
-	require.NoError(t, err)
-	require.Len(t, result.Rows, 1)
-	require.Len(t, result.Rows[0], 1)
+	requirementsForTest.NoError(err)
+	requirementsForTest.Len(result.Rows, 1)
+	requirementsForTest.Len(result.Rows[0], 1)
 
 	want := filepath.Join(c.HomeDir, "tmp", fmt.Sprintf("duckdb-query-%d", os.Getpid()))
 	got, ok := result.Rows[0][0].(string)
-	require.True(t, ok, "temp_directory setting must be a string")
+	requirementsForTest.True(ok, "temp_directory setting must be a string")
 	assert.Equal(t, filepath.Clean(want), filepath.Clean(got))
 	assert.DirExists(t, want)
-
-	require.NoError(t, engine.Close())
+	requirementsForTest.NoError(engine.Close())
 	assert.NoDirExists(t, want)
 }
 

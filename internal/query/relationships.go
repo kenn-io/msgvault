@@ -1,6 +1,7 @@
 package query
 
 import (
+	"container/heap"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -154,44 +155,45 @@ func (e *DuckDBEngine) Relationships(ctx context.Context, request RelationshipsR
 	if err != nil {
 		return nil, err
 	}
-	candidates, err := e.queryRelationshipCandidates(
+	limit := request.Limit
+	if limit == 0 {
+		limit = defaultRelationshipsLimit
+	}
+	page, totalCount, err := e.queryRelationshipCandidates(
 		ctx,
 		explore,
 		request.ShowAll,
 		now.UTC(),
 		anchor,
+		request.Offset,
+		limit,
 	)
 	if err != nil {
 		return nil, err
 	}
 
-	limit := request.Limit
-	if limit == 0 {
-		limit = defaultRelationshipsLimit
-	}
 	response := &RelationshipsResponse{
-		Rows:             make([]RelationshipRow, 0),
-		TotalCount:       int64(len(candidates)),
+		Rows:             page,
+		TotalCount:       totalCount,
 		CacheRevision:    state.Revision(),
 		IdentityRevision: state.IdentityRevision,
-	}
-	if request.Offset < len(candidates) {
-		end := min(request.Offset+limit, len(candidates))
-		response.Rows = candidates[request.Offset:end]
 	}
 	return response, nil
 }
 
 // queryRelationshipCandidates runs either the compact rollup query or the
 // narrow filtered reduction, then applies the shared gate, score, and total
-// ordering in Go.
+// ordering in Go. It retains only the best offset+limit rows while streaming
+// the full population so the default page does not allocate one Go object
+// graph per identity.
 func (e *DuckDBEngine) queryRelationshipCandidates(
 	ctx context.Context,
 	explore ExploreRequest,
 	showAll bool,
 	now time.Time,
 	anchor time.Time,
-) ([]RelationshipRow, error) {
+	offset, limit int,
+) ([]RelationshipRow, int64, error) {
 	var queryText string
 	var queryArgs []any
 	unfiltered := identityRequestIsUnfiltered(explore)
@@ -204,11 +206,14 @@ func (e *DuckDBEngine) queryRelationshipCandidates(
 
 	rows, err := e.db.QueryContext(ctx, queryText, queryArgs...)
 	if err != nil {
-		return nil, fmt.Errorf("query indexed relationships: %w", err)
+		return nil, 0, fmt.Errorf("query indexed relationships: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
 
-	candidates := make([]RelationshipRow, 0)
+	maxKeep := offset + limit
+	candidates := &relationshipWorstHeap{}
+	heap.Init(candidates)
+	var totalCount int64
 	for rows.Next() {
 		var row RelationshipRow
 		var memberIDsJSON string
@@ -220,10 +225,10 @@ func (e *DuckDBEngine) queryRelationshipCandidates(
 			&row.Signals.ReceivedFromThem, &row.Signals.MeetingsTogether, &row.Signals.MeetingCount,
 			&modalityMask, &row.LastAt,
 		); err != nil {
-			return nil, fmt.Errorf("scan indexed relationship: %w", err)
+			return nil, 0, fmt.Errorf("scan indexed relationship: %w", err)
 		}
 		if unfiltered && !rowAnchor.Equal(anchor) {
-			return nil, fmt.Errorf(
+			return nil, 0, fmt.Errorf(
 				"%w: relationship rollup anchor %s does not match marker anchor %s",
 				errInvalidCacheState,
 				rowAnchor.UTC().Format(time.DateOnly),
@@ -231,7 +236,7 @@ func (e *DuckDBEngine) queryRelationshipCandidates(
 			)
 		}
 		if err := json.Unmarshal([]byte(memberIDsJSON), &row.MemberIDs); err != nil {
-			return nil, fmt.Errorf("decode relationship member IDs: %w", err)
+			return nil, 0, fmt.Errorf("decode relationship member IDs: %w", err)
 		}
 		row.Signals.Modalities = modalitiesFromMask(modalityMask)
 		row.Signals.LastInteractionAt = row.LastAt
@@ -239,29 +244,74 @@ func (e *DuckDBEngine) queryRelationshipCandidates(
 		if !showAll && row.Signals.SentCount < 1 && row.Signals.MeetingCount < 1 {
 			continue
 		}
-		candidates = append(candidates, row)
+		totalCount++
+		switch {
+		case maxKeep == 0:
+		case candidates.Len() < maxKeep:
+			heap.Push(candidates, row)
+		case relationshipRowBefore(row, (*candidates)[0]):
+			heap.Pop(candidates)
+			heap.Push(candidates, row)
+		}
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate indexed relationships: %w", err)
+		return nil, 0, fmt.Errorf("iterate indexed relationships: %w", err)
 	}
 
-	sort.SliceStable(candidates, func(i, j int) bool {
-		if candidates[i].Score != candidates[j].Score {
-			return candidates[i].Score > candidates[j].Score
-		}
-		if !candidates[i].LastAt.Equal(candidates[j].LastAt) {
-			return candidates[i].LastAt.After(candidates[j].LastAt)
-		}
-		if candidates[i].DisplayLabel != candidates[j].DisplayLabel {
-			return candidates[i].DisplayLabel < candidates[j].DisplayLabel
-		}
-		// CanonicalID is the unique final tie-breaker: without it, rows with
-		// identical score, timestamp, and label keep whatever order the
-		// database returned them in, which can differ across memo evictions
-		// or restarts and duplicate/omit rows across offset-based pages.
-		return candidates[i].CanonicalID < candidates[j].CanonicalID
+	pageCandidates := []RelationshipRow(*candidates)
+	sort.Slice(pageCandidates, func(i, j int) bool {
+		return relationshipRowBefore(pageCandidates[i], pageCandidates[j])
 	})
-	return candidates, nil
+	if offset >= len(pageCandidates) {
+		return []RelationshipRow{}, totalCount, nil
+	}
+	end := min(offset+limit, len(pageCandidates))
+	page := append([]RelationshipRow(nil), pageCandidates[offset:end]...)
+	return page, totalCount, nil
+}
+
+func relationshipRowBefore(left, right RelationshipRow) bool {
+	if left.Score != right.Score {
+		return left.Score > right.Score
+	}
+	if !left.LastAt.Equal(right.LastAt) {
+		return left.LastAt.After(right.LastAt)
+	}
+	if left.DisplayLabel != right.DisplayLabel {
+		return left.DisplayLabel < right.DisplayLabel
+	}
+	// CanonicalID is the unique final tie-breaker: without it, rows with
+	// identical score, timestamp, and label can duplicate or disappear across
+	// offset-based pages when the database changes its physical scan order.
+	return left.CanonicalID < right.CanonicalID
+}
+
+// relationshipWorstHeap keeps the worst retained row at index zero, allowing
+// the streaming ranker to discard it whenever a better row arrives.
+type relationshipWorstHeap []RelationshipRow
+
+func (h *relationshipWorstHeap) Len() int { return len(*h) }
+
+func (h *relationshipWorstHeap) Less(i, j int) bool {
+	return relationshipRowBefore((*h)[j], (*h)[i])
+}
+
+func (h *relationshipWorstHeap) Swap(i, j int) { (*h)[i], (*h)[j] = (*h)[j], (*h)[i] }
+
+func (h *relationshipWorstHeap) Push(value any) {
+	row, ok := value.(RelationshipRow)
+	if !ok {
+		panic("relationshipWorstHeap received a non-RelationshipRow value")
+	}
+	*h = append(*h, row)
+}
+
+func (h *relationshipWorstHeap) Pop() any {
+	old := *h
+	last := len(old) - 1
+	value := old[last]
+	*h = old[:last]
+	return value
 }
 
 func relationshipAnchorDate(value string) (time.Time, error) {

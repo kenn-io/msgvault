@@ -35,6 +35,8 @@ func TestSharedChatClassificationSQL(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
+			requirements := require.New(t)
+			assertions := assert.New(t)
 			var sqlResult bool
 			err := engine.db.QueryRow(
 				"SELECT "+sqlIsChatPredicate("message_type", "conversation_type")+
@@ -42,10 +44,10 @@ func TestSharedChatClassificationSQL(t *testing.T) {
 				test.messageType,
 				test.conversationType,
 			).Scan(&sqlResult)
-			require.NoError(t, err)
-			assert.Equal(t, test.want, identityindex.IsChat(test.messageType, test.conversationType))
-			assert.Equal(t, test.want, IsChatEntry(test.messageType, test.conversationType))
-			assert.Equal(t, test.want, sqlResult)
+			requirements.NoError(err)
+			assertions.Equal(test.want, identityindex.IsChat(test.messageType, test.conversationType))
+			assertions.Equal(test.want, IsChatEntry(test.messageType, test.conversationType))
+			assertions.Equal(test.want, sqlResult)
 		})
 	}
 }

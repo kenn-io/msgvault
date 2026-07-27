@@ -38,28 +38,29 @@ type relationshipIndexHTTPFixture struct {
 
 func newRelationshipIndexHTTPFixture(t *testing.T) relationshipIndexHTTPFixture {
 	t.Helper()
+	requirementsForTest := require.New(t)
 
 	root := t.TempDir()
 	dbPath := filepath.Join(root, "msgvault.db")
 	st, err := store.OpenForTest(dbPath)
-	require.NoError(t, err)
+	requirementsForTest.NoError(err)
 	t.Cleanup(func() { require.NoError(t, st.Close()) })
-	require.NoError(t, st.InitSchema())
+	requirementsForTest.NoError(st.InitSchema())
 
 	source, err := st.GetOrCreateSource("gmail", "owner@example.test")
-	require.NoError(t, err)
+	requirementsForTest.NoError(err)
 	ownerID, err := st.EnsureParticipant("owner@example.test", "Owner", "example.test")
-	require.NoError(t, err)
+	requirementsForTest.NoError(err)
 	personID, err := st.EnsureParticipant("alex@people.test", "Alex Example", "people.test")
-	require.NoError(t, err)
+	requirementsForTest.NoError(err)
 	lateID, err := st.EnsureParticipant("late-member@late.test", "Late Member", "late.test")
-	require.NoError(t, err)
-	require.NoError(t, st.AddAccountIdentity(source.ID, "owner@example.test", "test"))
+	requirementsForTest.NoError(err)
+	requirementsForTest.NoError(st.AddAccountIdentity(source.ID, "owner@example.test", "test"))
 
 	conversationID, err := st.EnsureConversation(source.ID, "thread-index-http", "Index HTTP")
-	require.NoError(t, err)
-	require.NoError(t, st.EnsureConversationParticipant(conversationID, ownerID, "member"))
-	require.NoError(t, st.EnsureConversationParticipant(conversationID, personID, "member"))
+	requirementsForTest.NoError(err)
+	requirementsForTest.NoError(st.EnsureConversationParticipant(conversationID, ownerID, "member"))
+	requirementsForTest.NoError(st.EnsureConversationParticipant(conversationID, personID, "member"))
 
 	firstAt := time.Date(2026, 7, 20, 10, 0, 0, 0, time.UTC)
 	lastAt := time.Date(2026, 7, 21, 11, 0, 0, 0, time.UTC)
@@ -75,7 +76,7 @@ func newRelationshipIndexHTTPFixture(t *testing.T) relationshipIndexHTTPFixture 
 		Snippet:         sql.NullString{String: "needle candidate", Valid: true},
 		SizeEstimate:    100,
 	})
-	require.NoError(t, st.ReplaceMessageRecipients(outgoingID, "to", []int64{personID}, []string{"Alex Example"}))
+	requirementsForTest.NoError(st.ReplaceMessageRecipients(outgoingID, "to", []int64{personID}, []string{"Alex Example"}))
 
 	incomingID := insertRelationshipIndexMessage(t, st, store.Message{
 		ConversationID:  conversationID,
@@ -89,20 +90,19 @@ func newRelationshipIndexHTTPFixture(t *testing.T) relationshipIndexHTTPFixture 
 		Snippet:         sql.NullString{String: "ordinary reply", Valid: true},
 		SizeEstimate:    200,
 	})
-	require.NoError(t, st.ReplaceMessageRecipients(incomingID, "to", []int64{ownerID}, []string{"Owner"}))
-
-	require.NoError(t, st.UpsertMessageBody(
+	requirementsForTest.NoError(st.ReplaceMessageRecipients(incomingID, "to", []int64{ownerID}, []string{"Owner"}))
+	requirementsForTest.NoError(st.UpsertMessageBody(
 		outgoingID,
 		sql.NullString{String: "needle project body", Valid: true},
 		sql.NullString{},
 	))
 	_, err = st.BackfillFTS(nil)
-	require.NoError(t, err)
+	requirementsForTest.NoError(err)
 
 	analyticsDir := filepath.Join(root, "analytics")
 	result, err := buildCache(dbPath, analyticsDir, true)
-	require.NoError(t, err)
-	require.False(t, result.Skipped)
+	requirementsForTest.NoError(err)
+	requirementsForTest.False(result.Skipped)
 
 	return relationshipIndexHTTPFixture{
 		store: st, dbPath: dbPath, analyticsDir: analyticsDir,
@@ -175,6 +175,8 @@ func decodeRelationshipIndexHTTP[T any](t *testing.T, response *httptest.Respons
 }
 
 func TestRelationshipIndexMigratedHTTPRoutesNeedNoLegacyViews(t *testing.T) {
+	requirementsForTest := require.New(t)
+	assertionsForTest := assert.New(t)
 	fixture := newRelationshipIndexHTTPFixture(t)
 	server, _ := fixture.newServer(t, true)
 	handler := server.Router()
@@ -187,14 +189,14 @@ func TestRelationshipIndexMigratedHTTPRoutesNeedNoLegacyViews(t *testing.T) {
 			"limit":    25,
 		}),
 	)
-	require.Len(t, relationships.Rows, 1)
-	assert.Equal(t, int64(1), relationships.TotalCount)
-	assert.NotEmpty(t, relationships.CacheRevision)
-	assert.Equal(t, fixture.personID, relationships.Rows[0].CanonicalID)
-	assert.Equal(t, []int64{fixture.personID}, relationships.Rows[0].MemberIDs)
-	assert.Equal(t, fixture.lastAt, relationships.Rows[0].LastAt)
-	assert.Equal(t, int64(1), relationships.Rows[0].Signals.SentCount)
-	assert.Equal(t, int64(0), relationships.Rows[0].Signals.MeetingCount)
+	requirementsForTest.Len(relationships.Rows, 1)
+	assertionsForTest.Equal(int64(1), relationships.TotalCount)
+	assertionsForTest.NotEmpty(relationships.CacheRevision)
+	assertionsForTest.Equal(fixture.personID, relationships.Rows[0].CanonicalID)
+	assertionsForTest.Equal([]int64{fixture.personID}, relationships.Rows[0].MemberIDs)
+	assertionsForTest.Equal(fixture.lastAt, relationships.Rows[0].LastAt)
+	assertionsForTest.Equal(int64(1), relationships.Rows[0].Signals.SentCount)
+	assertionsForTest.Equal(int64(0), relationships.Rows[0].Signals.MeetingCount)
 
 	people := decodeRelationshipIndexHTTP[api.PersonSearchHTTPResponse](
 		t,
@@ -205,21 +207,21 @@ func TestRelationshipIndexMigratedHTTPRoutesNeedNoLegacyViews(t *testing.T) {
 			"limit":          25,
 		}),
 	)
-	require.Len(t, people.Rows, 1)
-	assert.Equal(t, int64(1), people.TotalCount)
-	assert.NotEmpty(t, people.CacheRevision)
-	assert.Equal(t, fixture.personID, people.Rows[0].ID)
-	assert.Equal(t, int64(2), people.Rows[0].ActivityCount)
-	assert.Equal(t, fixture.firstAt, people.Rows[0].FirstAt)
-	assert.Equal(t, fixture.lastAt, people.Rows[0].LastAt)
+	requirementsForTest.Len(people.Rows, 1)
+	assertionsForTest.Equal(int64(1), people.TotalCount)
+	assertionsForTest.NotEmpty(people.CacheRevision)
+	assertionsForTest.Equal(fixture.personID, people.Rows[0].ID)
+	assertionsForTest.Equal(int64(2), people.Rows[0].ActivityCount)
+	assertionsForTest.Equal(fixture.firstAt, people.Rows[0].FirstAt)
+	assertionsForTest.Equal(fixture.lastAt, people.Rows[0].LastAt)
 
 	person := decodeRelationshipIndexHTTP[query.PersonSummary](
 		t,
 		relationshipIndexHTTPJSON(t, handler, http.MethodGet, personPath, nil),
 	)
-	assert.Equal(t, fixture.personID, person.ID)
-	assert.Equal(t, int64(2), person.ActivityCount)
-	assert.NotEmpty(t, person.CacheRevision)
+	assertionsForTest.Equal(fixture.personID, person.ID)
+	assertionsForTest.Equal(int64(2), person.ActivityCount)
+	assertionsForTest.NotEmpty(person.CacheRevision)
 
 	domains := decodeRelationshipIndexHTTP[api.DomainSearchHTTPResponse](
 		t,
@@ -230,20 +232,20 @@ func TestRelationshipIndexMigratedHTTPRoutesNeedNoLegacyViews(t *testing.T) {
 			"limit":          25,
 		}),
 	)
-	require.Len(t, domains.Rows, 1)
-	assert.Equal(t, int64(1), domains.TotalCount)
-	assert.NotEmpty(t, domains.CacheRevision)
-	assert.Equal(t, "people.test", domains.Rows[0].Domain)
-	assert.Equal(t, int64(2), domains.Rows[0].ActivityCount)
-	assert.Equal(t, int64(1), domains.Rows[0].PersonCount)
+	requirementsForTest.Len(domains.Rows, 1)
+	assertionsForTest.Equal(int64(1), domains.TotalCount)
+	assertionsForTest.NotEmpty(domains.CacheRevision)
+	assertionsForTest.Equal("people.test", domains.Rows[0].Domain)
+	assertionsForTest.Equal(int64(2), domains.Rows[0].ActivityCount)
+	assertionsForTest.Equal(int64(1), domains.Rows[0].PersonCount)
 
 	domain := decodeRelationshipIndexHTTP[query.DomainSummary](
 		t,
 		relationshipIndexHTTPJSON(t, handler, http.MethodGet, "/api/v1/domains/people.test", nil),
 	)
-	assert.Equal(t, "people.test", domain.Domain)
-	assert.Equal(t, int64(2), domain.ActivityCount)
-	assert.NotEmpty(t, domain.CacheRevision)
+	assertionsForTest.Equal("people.test", domain.Domain)
+	assertionsForTest.Equal(int64(2), domain.ActivityCount)
+	assertionsForTest.NotEmpty(domain.CacheRevision)
 
 	filters := []map[string]any{
 		{"dimension": "source", "values": []string{strconv.FormatInt(fixture.sourceID, 10)}},
@@ -268,18 +270,18 @@ func TestRelationshipIndexMigratedHTTPRoutesNeedNoLegacyViews(t *testing.T) {
 			"limit":          25,
 		}),
 	)
-	require.Len(t, filteredPeople.Rows, 1)
-	assert.Equal(t, int64(1), filteredPeople.TotalCount)
-	assert.Equal(t, fixture.personID, filteredPeople.Rows[0].ID)
-	assert.Equal(t, int64(1), filteredPeople.Rows[0].ActivityCount)
+	requirementsForTest.Len(filteredPeople.Rows, 1)
+	assertionsForTest.Equal(int64(1), filteredPeople.TotalCount)
+	assertionsForTest.Equal(fixture.personID, filteredPeople.Rows[0].ID)
+	assertionsForTest.Equal(int64(1), filteredPeople.Rows[0].ActivityCount)
 
 	personSummary := decodeRelationshipIndexHTTP[api.PersonContextSummaryHTTPResponse](
 		t,
 		relationshipIndexHTTPJSON(t, handler, http.MethodPost, personPath+"/summary", filteredPredicate),
 	)
-	assert.Equal(t, fixture.personID, personSummary.Summary.ID)
-	assert.Equal(t, int64(1), personSummary.Summary.ActivityCount)
-	assert.NotEmpty(t, personSummary.CacheRevision)
+	assertionsForTest.Equal(fixture.personID, personSummary.Summary.ID)
+	assertionsForTest.Equal(int64(1), personSummary.Summary.ActivityCount)
+	assertionsForTest.NotEmpty(personSummary.CacheRevision)
 
 	filteredDomains := decodeRelationshipIndexHTTP[api.DomainSearchHTTPResponse](
 		t,
@@ -290,18 +292,18 @@ func TestRelationshipIndexMigratedHTTPRoutesNeedNoLegacyViews(t *testing.T) {
 			"limit":          25,
 		}),
 	)
-	require.Len(t, filteredDomains.Rows, 1)
-	assert.Equal(t, int64(1), filteredDomains.TotalCount)
-	assert.Equal(t, "people.test", filteredDomains.Rows[0].Domain)
-	assert.Equal(t, int64(1), filteredDomains.Rows[0].ActivityCount)
+	requirementsForTest.Len(filteredDomains.Rows, 1)
+	assertionsForTest.Equal(int64(1), filteredDomains.TotalCount)
+	assertionsForTest.Equal("people.test", filteredDomains.Rows[0].Domain)
+	assertionsForTest.Equal(int64(1), filteredDomains.Rows[0].ActivityCount)
 
 	domainSummary := decodeRelationshipIndexHTTP[api.DomainContextSummaryHTTPResponse](
 		t,
 		relationshipIndexHTTPJSON(t, handler, http.MethodPost, "/api/v1/domains/people.test/summary", filteredPredicate),
 	)
-	assert.Equal(t, "people.test", domainSummary.Summary.Domain)
-	assert.Equal(t, int64(1), domainSummary.Summary.ActivityCount)
-	assert.NotEmpty(t, domainSummary.CacheRevision)
+	assertionsForTest.Equal("people.test", domainSummary.Summary.Domain)
+	assertionsForTest.Equal(int64(1), domainSummary.Summary.ActivityCount)
+	assertionsForTest.NotEmpty(domainSummary.CacheRevision)
 
 	filteredRelationships := decodeRelationshipIndexHTTP[api.RelationshipsHTTPResponse](
 		t,
@@ -311,11 +313,11 @@ func TestRelationshipIndexMigratedHTTPRoutesNeedNoLegacyViews(t *testing.T) {
 			"limit":    25,
 		}),
 	)
-	require.Len(t, filteredRelationships.Rows, 1)
-	assert.Equal(t, int64(1), filteredRelationships.TotalCount)
-	assert.Equal(t, fixture.personID, filteredRelationships.Rows[0].CanonicalID)
-	assert.Equal(t, int64(1), filteredRelationships.Rows[0].Signals.SentCount)
-	assert.NotEmpty(t, filteredRelationships.CacheRevision)
+	requirementsForTest.Len(filteredRelationships.Rows, 1)
+	assertionsForTest.Equal(int64(1), filteredRelationships.TotalCount)
+	assertionsForTest.Equal(fixture.personID, filteredRelationships.Rows[0].CanonicalID)
+	assertionsForTest.Equal(int64(1), filteredRelationships.Rows[0].Signals.SentCount)
+	assertionsForTest.NotEmpty(filteredRelationships.CacheRevision)
 }
 
 func TestRelationshipIndexLeavesLegacyRoutesOutsideMigrationBoundary(t *testing.T) {
@@ -339,58 +341,61 @@ func TestRelationshipIndexLeavesLegacyRoutesOutsideMigrationBoundary(t *testing.
 
 	for _, route := range routes {
 		t.Run(route.name, func(t *testing.T) {
+			requirements := require.New(t)
+			assertions := assert.New(t)
 			normal := relationshipIndexHTTPJSON(t, normalServer.Router(), http.MethodPost, route.path, route.body)
-			require.Equal(t, http.StatusOK, normal.Code, normal.Body.String())
+			requirements.Equal(http.StatusOK, normal.Code, normal.Body.String())
 
 			guarded := relationshipIndexHTTPJSON(t, guardServer.Router(), http.MethodPost, route.path, route.body)
-			assert.Equal(t, http.StatusInternalServerError, guarded.Code, guarded.Body.String())
+			assertions.Equal(http.StatusInternalServerError, guarded.Code, guarded.Body.String())
 			var response struct {
 				Error string `json:"error"`
 			}
-			require.NoError(t, json.Unmarshal(guarded.Body.Bytes(), &response))
-			assert.Equal(t, "explore_failed", response.Error)
+			requirements.NoError(json.Unmarshal(guarded.Body.Bytes(), &response))
+			assertions.Equal("explore_failed", response.Error)
 		})
 	}
 }
 
 func TestRelationshipIndexDerivedRefreshHealsLateConversationMembership(t *testing.T) {
+	requirementsForTest := require.New(t)
+	assertionsForTest := assert.New(t)
 	fixture := newRelationshipIndexHTTPFixture(t)
 	before, err := query.ReadCacheSyncState(fixture.analyticsDir)
-	require.NoError(t, err)
+	requirementsForTest.NoError(err)
 	beforeRevision := before.Revision()
-
-	require.NoError(t, fixture.store.EnsureConversationParticipant(
+	requirementsForTest.NoError(fixture.store.EnsureConversationParticipant(
 		fixture.conversationID,
 		fixture.lateID,
 		"member",
 	))
 
 	staleness := cacheNeedsBuild(fixture.dbPath, fixture.analyticsDir)
-	require.True(t, staleness.NeedsBuild)
-	assert.True(t, staleness.HasConversationParticipantDrift)
-	assert.False(t, staleness.FullRebuild)
+	requirementsForTest.True(staleness.NeedsBuild)
+	assertionsForTest.True(staleness.HasConversationParticipantDrift)
+	assertionsForTest.False(staleness.FullRebuild)
 
 	result, err := buildCacheDerivedOnly(fixture.dbPath, fixture.analyticsDir)
-	require.NoError(t, err)
-	assert.True(t, result.IdentityOnly)
+	requirementsForTest.NoError(err)
+	assertionsForTest.True(result.IdentityOnly)
 
 	after, err := query.ReadCacheSyncState(fixture.analyticsDir)
-	require.NoError(t, err)
-	assert.Equal(t, before.LastMessageID, after.LastMessageID)
-	assert.Equal(t, before.Stats, after.Stats)
-	assert.NotEqual(t,
+	requirementsForTest.NoError(err)
+	assertionsForTest.Equal(before.LastMessageID, after.LastMessageID)
+	assertionsForTest.Equal(before.Stats, after.Stats)
+	assertionsForTest.NotEqual(
 		before.ConversationParticipantsFingerprint,
 		after.ConversationParticipantsFingerprint,
 	)
-	assert.False(t, after.PublishedAt.Before(before.PublishedAt))
-	assert.Equal(t, time.Now().UTC().Format(time.DateOnly), after.RelationshipAnchorDate)
-	assert.NotEqual(t, beforeRevision, after.Revision())
+	assertionsForTest.False(after.PublishedAt.Before(before.PublishedAt))
+	assertionsForTest.Equal(time.Now().UTC().Format(time.DateOnly), after.RelationshipAnchorDate)
+	assertionsForTest.NotEqual(beforeRevision, after.Revision())
 
 	inspectionDB, err := sql.Open("duckdb", "")
-	require.NoError(t, err)
+	requirementsForTest.NoError(err)
 	t.Cleanup(func() { require.NoError(t, inspectionDB.Close()) })
 	var lateEdgeCount int64
-	require.NoError(t, inspectionDB.QueryRow(`
+	requirementsForTest.NoError(inspectionDB.QueryRow(`
 		SELECT count(*)
 		FROM read_parquet(?)
 		WHERE conversation_id = ? AND participant_id = ?
@@ -399,7 +404,7 @@ func TestRelationshipIndexDerivedRefreshHealsLateConversationMembership(t *testi
 		identityindex.DatasetConversationEdges,
 		"*.parquet",
 	), fixture.conversationID, fixture.lateID).Scan(&lateEdgeCount))
-	assert.Equal(t, int64(1), lateEdgeCount)
+	assertionsForTest.Equal(int64(1), lateEdgeCount)
 
 	_, engine := fixture.newServer(t, true)
 	people, err := engine.SearchPeople(t.Context(), query.PersonSearchRequest{
@@ -409,12 +414,12 @@ func TestRelationshipIndexDerivedRefreshHealsLateConversationMembership(t *testi
 		Sort: query.SortSpec{Field: "activity_count", Direction: "desc"},
 		Page: query.PageSpec{Limit: 25},
 	})
-	require.NoError(t, err)
-	assert.Equal(t, int64(2), people.TotalCount)
-	assert.ElementsMatch(t, []int64{fixture.ownerID, fixture.personID}, personSummaryIDs(people.Rows))
+	requirementsForTest.NoError(err)
+	assertionsForTest.Equal(int64(2), people.TotalCount)
+	assertionsForTest.ElementsMatch([]int64{fixture.ownerID, fixture.personID}, personSummaryIDs(people.Rows))
 	for _, person := range people.Rows {
-		assert.Equal(t, int64(2), person.ActivityCount)
-		assert.NotEqual(t, fixture.lateID, person.ID,
+		assertionsForTest.Equal(int64(2), person.ActivityCount)
+		assertionsForTest.NotEqual(fixture.lateID, person.ID,
 			"conversation-only membership must not enter non-chat people fan-out")
 	}
 
@@ -425,14 +430,14 @@ func TestRelationshipIndexDerivedRefreshHealsLateConversationMembership(t *testi
 		Sort: query.SortSpec{Field: "activity_count", Direction: "desc"},
 		Page: query.PageSpec{Limit: 25},
 	})
-	require.NoError(t, err)
-	assert.Equal(t, int64(3), domains.TotalCount)
-	assert.ElementsMatch(t,
+	requirementsForTest.NoError(err)
+	assertionsForTest.Equal(int64(3), domains.TotalCount)
+	assertionsForTest.ElementsMatch(
 		[]string{"example.test", "people.test", "late.test"},
 		domainSummaryNames(domains.Rows),
 	)
 	for _, domain := range domains.Rows {
-		assert.Equal(t, int64(2), domain.ActivityCount)
+		assertionsForTest.Equal(int64(2), domain.ActivityCount)
 	}
 }
 

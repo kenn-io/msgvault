@@ -17,6 +17,8 @@ import (
 )
 
 func TestBuildFactsEdgesAndDirectory(t *testing.T) {
+	requirementsForTest := require.New(t)
+	assertionsForTest := assert.New(t)
 	root, db := writeIdentityBaseFixture(t, false)
 
 	result, err := Build(context.Background(), db, BuildOptions{
@@ -25,39 +27,37 @@ func TestBuildFactsEdgesAndDirectory(t *testing.T) {
 		OutputRoot:     root,
 		AnchorDate:     time.Date(2026, 7, 27, 0, 0, 0, 0, time.UTC),
 	})
-	require.NoError(t, err)
-
-	assert.NotEmpty(t, result.ConversationParticipantsFingerprint)
-	assert.Equal(t, int64(1), result.Stats.TotalMessages)
-	assert.Equal(t, int64(1), result.Stats.Sources)
-	assert.Equal(t, int64(1), result.Stats.UniqueSenders)
-	assert.Equal(t, int64(1), result.Stats.UniqueDomains)
-	assert.Equal(t, int64(50), result.Stats.TotalSizeBytes)
-	assert.Equal(t, int64(12), result.Stats.AttachmentSizeBytes)
-	require.NotNil(t, result.Stats.MinYear)
-	require.NotNil(t, result.Stats.MaxYear)
-	assert.Equal(t, int64(2026), *result.Stats.MinYear)
-	assert.Equal(t, int64(2026), *result.Stats.MaxYear)
-
-	assert.Equal(t, int64(1), parquetCount(t, db, root, DatasetEntryFacts))
-	assert.Equal(t, int64(2), parquetCount(t, db, root, DatasetDirectEdges))
-	assert.Equal(t, int64(1), parquetCount(t, db, root, DatasetConversationEdges))
+	requirementsForTest.NoError(err)
+	assertionsForTest.NotEmpty(result.ConversationParticipantsFingerprint)
+	assertionsForTest.Equal(int64(1), result.Stats.TotalMessages)
+	assertionsForTest.Equal(int64(1), result.Stats.Sources)
+	assertionsForTest.Equal(int64(1), result.Stats.UniqueSenders)
+	assertionsForTest.Equal(int64(1), result.Stats.UniqueDomains)
+	assertionsForTest.Equal(int64(50), result.Stats.TotalSizeBytes)
+	assertionsForTest.Equal(int64(12), result.Stats.AttachmentSizeBytes)
+	requirementsForTest.NotNil(result.Stats.MinYear)
+	requirementsForTest.NotNil(result.Stats.MaxYear)
+	assertionsForTest.Equal(int64(2026), *result.Stats.MinYear)
+	assertionsForTest.Equal(int64(2026), *result.Stats.MaxYear)
+	assertionsForTest.Equal(int64(1), parquetCount(t, db, root, DatasetEntryFacts))
+	assertionsForTest.Equal(int64(2), parquetCount(t, db, root, DatasetDirectEdges))
+	assertionsForTest.Equal(int64(1), parquetCount(t, db, root, DatasetConversationEdges))
 
 	var authored, sender bool
-	require.NoError(t, db.QueryRow(identityParquetSQL(root, DatasetDirectEdges)+
+	requirementsForTest.NoError(db.QueryRow(identityParquetSQL(root, DatasetDirectEdges)+
 		" WHERE participant_id = 1").Scan(new(int64), new(int16), new(int64), new(string), &sender, &authored))
-	assert.True(t, sender)
-	assert.True(t, authored)
+	assertionsForTest.True(sender)
+	assertionsForTest.True(authored)
 
 	var conversationID, conversationParticipantID int64
-	require.NoError(t, db.QueryRow(identityParquetSQL(root, DatasetConversationEdges)).
+	requirementsForTest.NoError(db.QueryRow(identityParquetSQL(root, DatasetConversationEdges)).
 		Scan(&conversationID, &conversationParticipantID, new(string)))
-	assert.Equal(t, int64(10), conversationID)
-	assert.Equal(t, int64(4), conversationParticipantID)
+	assertionsForTest.Equal(int64(10), conversationID)
+	assertionsForTest.Equal(int64(4), conversationParticipantID)
 
 	var label, memberIDs, searchValues string
 	var partial, owner bool
-	require.NoError(t, db.QueryRow(`
+	requirementsForTest.NoError(db.QueryRow(`
 		SELECT display_label, partial_label,
 		       CAST(to_json(member_ids) AS VARCHAR),
 		       CAST(to_json(search_values) AS VARCHAR),
@@ -66,12 +66,12 @@ func TestBuildFactsEdgesAndDirectory(t *testing.T) {
 		WHERE canonical_id = 2
 	`, identityParquetGlob(root, DatasetDirectory)).
 		Scan(&label, &partial, &memberIDs, &searchValues, &owner))
-	assert.Equal(t, "Bob Alias", label)
-	assert.False(t, partial)
-	assert.JSONEq(t, `[2,3]`, memberIDs)
-	assert.Contains(t, searchValues, "bob@example.net")
-	assert.Contains(t, searchValues, "bob alias")
-	assert.False(t, owner)
+	assertionsForTest.Equal("Bob Alias", label)
+	assertionsForTest.False(partial)
+	assertionsForTest.JSONEq(`[2,3]`, memberIDs)
+	assertionsForTest.Contains(searchValues, "bob@example.net")
+	assertionsForTest.Contains(searchValues, "bob alias")
+	assertionsForTest.False(owner)
 }
 
 func TestBuildEmptySchemas(t *testing.T) {
@@ -125,23 +125,27 @@ func TestBuildEmptySchemas(t *testing.T) {
 	for dataset, wantColumns := range expected {
 		assert.Equal(t, int64(0), parquetCount(t, db, root, dataset), dataset)
 		t.Run(dataset, func(t *testing.T) {
+			requirements := require.New(t)
+			assertions := assert.New(t)
 			rows, queryErr := db.Query(identityParquetSQL(root, dataset) + " LIMIT 0")
-			require.NoError(t, queryErr)
+			requirements.NoError(queryErr)
 			defer func() {
-				require.NoError(t, rows.Close())
+				requirements.NoError(rows.Close())
 			}()
 			gotColumns, columnsErr := rows.Columns()
-			require.NoError(t, columnsErr)
-			require.NoError(t, rows.Err())
-			assert.Equal(t, wantColumns, gotColumns)
+			requirements.NoError(columnsErr)
+			requirements.NoError(rows.Err())
+			assertions.Equal(wantColumns, gotColumns)
 		})
 	}
 }
 
 func TestAuthoredAliasRollupReceivesOnceAndPreservesFutureSignals(t *testing.T) {
+	requirementsForTest := require.New(t)
+	assertionsForTest := assert.New(t)
 	root, db := writeIdentityBaseFixture(t, false)
 	for _, dataset := range []string{"messages", "message_recipients"} {
-		require.NoError(t, os.RemoveAll(filepath.Join(root, dataset)))
+		requirementsForTest.NoError(os.RemoveAll(filepath.Join(root, dataset)))
 	}
 	writeIdentityParquet(t, db, root, "messages", `
 		SELECT * FROM (VALUES
@@ -166,43 +170,45 @@ func TestAuthoredAliasRollupReceivesOnceAndPreservesFutureSignals(t *testing.T) 
 		OutputRoot:     root,
 		AnchorDate:     time.Date(2026, 7, 27, 0, 0, 0, 0, time.UTC),
 	})
-	require.NoError(t, err)
+	requirementsForTest.NoError(err)
 
 	var relationshipCount, receivedUnits int64
-	require.NoError(t, db.QueryRow(`
+	requirementsForTest.NoError(db.QueryRow(`
 		SELECT count(*), coalesce(sum(f.received_units), 0)::BIGINT
 		FROM read_parquet(?) r
 		LEFT JOIN read_parquet(?) f USING (canonical_id)
 	`, identityParquetGlob(root, DatasetRelationships),
 		identityParquetGlob(root, DatasetRelationshipFuture)).
 		Scan(&relationshipCount, &receivedUnits))
-	assert.Equal(t, int64(1), relationshipCount)
-	assert.Equal(t, int64(1), receivedUnits)
+	assertionsForTest.Equal(int64(1), relationshipCount)
+	assertionsForTest.Equal(int64(1), receivedUnits)
 
 	var activityCount, fileCount int64
-	require.NoError(t, db.QueryRow(`
+	requirementsForTest.NoError(db.QueryRow(`
 		SELECT activity_count, file_count
 		FROM read_parquet(?) WHERE canonical_id = 2
 	`, identityParquetGlob(root, DatasetRollups)).Scan(&activityCount, &fileCount))
-	assert.Equal(t, int64(1), activityCount)
-	assert.Equal(t, int64(1), fileCount)
+	assertionsForTest.Equal(int64(1), activityCount)
+	assertionsForTest.Equal(int64(1), fileCount)
 
 	var domainActivity, domainPeople int64
-	require.NoError(t, db.QueryRow(`
+	requirementsForTest.NoError(db.QueryRow(`
 		SELECT activity_count, person_count
 		FROM read_parquet(?) WHERE domain = 'community.test'
 	`, identityParquetGlob(root, DatasetDomainRollups)).
 		Scan(&domainActivity, &domainPeople))
-	assert.Equal(t, int64(1), domainActivity,
+	assertionsForTest.Equal(int64(1), domainActivity,
 		"conversation membership contributes non-chat domain activity")
-	assert.Equal(t, int64(0), domainPeople,
+	assertionsForTest.Equal(int64(0), domainPeople,
 		"conversation-only non-chat members do not contribute people fan-out")
 }
 
 func TestLogicalChatReductionUsesNewestFilteredMessage(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
 	root, db := writeIdentityBaseFixture(t, false)
 	for _, dataset := range []string{"messages", "message_recipients", "conversations"} {
-		require.NoError(t, os.RemoveAll(filepath.Join(root, dataset)))
+		requirements.NoError(os.RemoveAll(filepath.Join(root, dataset)))
 	}
 	writeIdentityParquet(t, db, root, "messages", `
 		SELECT * FROM (VALUES
@@ -235,7 +241,7 @@ func TestLogicalChatReductionUsesNewestFilteredMessage(t *testing.T) {
 		OutputRoot:     root,
 		AnchorDate:     time.Date(2026, 7, 27, 0, 0, 0, 0, time.UTC),
 	})
-	require.NoError(t, err)
+	requirements.NoError(err)
 
 	paths := ActivityPaths{
 		Facts:             identityParquetGlob(root, DatasetEntryFacts),
@@ -259,7 +265,7 @@ func TestLogicalChatReductionUsesNewestFilteredMessage(t *testing.T) {
 	assertLogicalUnit(t, "f.message_id = 100", 100, false)
 
 	var chatMemberActivity, chatMemberPeople int64
-	require.NoError(t, db.QueryRow(`
+	requirements.NoError(db.QueryRow(`
 		SELECT r.activity_count, d.person_count
 		FROM read_parquet(?) r
 		JOIN read_parquet(?) d ON d.domain = 'community.test'
@@ -267,15 +273,17 @@ func TestLogicalChatReductionUsesNewestFilteredMessage(t *testing.T) {
 	`, identityParquetGlob(root, DatasetRollups),
 		identityParquetGlob(root, DatasetDomainRollups)).
 		Scan(&chatMemberActivity, &chatMemberPeople))
-	assert.Equal(t, int64(1), chatMemberActivity,
+	assertions.Equal(int64(1), chatMemberActivity,
 		"conversation membership contributes chat people fan-out")
-	assert.Equal(t, int64(1), chatMemberPeople)
+	assertions.Equal(int64(1), chatMemberPeople)
 }
 
 func TestFutureRelationshipRollupKeepsRawGateMaskAndTimestamp(t *testing.T) {
+	requirementsForTest := require.New(t)
+	assertionsForTest := assert.New(t)
 	root, db := writeIdentityBaseFixture(t, false)
 	for _, dataset := range []string{"messages", "message_recipients"} {
-		require.NoError(t, os.RemoveAll(filepath.Join(root, dataset)))
+		requirementsForTest.NoError(os.RemoveAll(filepath.Join(root, dataset)))
 	}
 	writeIdentityParquet(t, db, root, "messages", `
 		SELECT * FROM (VALUES
@@ -310,36 +318,36 @@ func TestFutureRelationshipRollupKeepsRawGateMaskAndTimestamp(t *testing.T) {
 		OutputRoot:     root,
 		AnchorDate:     time.Date(2026, 7, 27, 0, 0, 0, 0, time.UTC),
 	})
-	require.NoError(t, err)
+	requirementsForTest.NoError(err)
 
 	var canonicalID, sentCount, meetingCount int64
 	var modalityMask uint8
 	var lastAt time.Time
-	require.NoError(t, db.QueryRow(`
+	requirementsForTest.NoError(db.QueryRow(`
 		SELECT canonical_id, sent_count, meeting_count, modality_mask, last_at
 		FROM read_parquet(?)
 	`, identityParquetGlob(root, DatasetRelationships)).
 		Scan(&canonicalID, &sentCount, &meetingCount, &modalityMask, &lastAt))
-	assert.Equal(t, int64(2), canonicalID)
-	assert.Equal(t, int64(1), sentCount)
-	assert.Equal(t, int64(1), meetingCount)
-	assert.Equal(t, ModalityEmail|ModalityMeeting, modalityMask)
-	assert.Equal(t, time.Date(2026, 7, 29, 15, 45, 12, 0, time.UTC), lastAt)
+	assertionsForTest.Equal(int64(2), canonicalID)
+	assertionsForTest.Equal(int64(1), sentCount)
+	assertionsForTest.Equal(int64(1), meetingCount)
+	assertionsForTest.Equal(ModalityEmail|ModalityMeeting, modalityMask)
+	assertionsForTest.Equal(time.Date(2026, 7, 29, 15, 45, 12, 0, time.UTC), lastAt)
 
 	var futureRows, futureSent, futureMeetings int64
 	var futureMask uint8
 	var futureLastAt time.Time
-	require.NoError(t, db.QueryRow(`
+	requirementsForTest.NoError(db.QueryRow(`
 		SELECT count(*), sum(sent_units)::BIGINT, sum(meeting_units)::BIGINT,
 		       bit_or(modality_mask)::UTINYINT, max(last_at)
 		FROM read_parquet(?)
 	`, identityParquetGlob(root, DatasetRelationshipFuture)).
 		Scan(&futureRows, &futureSent, &futureMeetings, &futureMask, &futureLastAt))
-	assert.Equal(t, int64(2), futureRows)
-	assert.Equal(t, int64(1), futureSent)
-	assert.Equal(t, int64(1), futureMeetings)
-	assert.Equal(t, ModalityEmail|ModalityMeeting, futureMask)
-	assert.Equal(t, lastAt, futureLastAt)
+	assertionsForTest.Equal(int64(2), futureRows)
+	assertionsForTest.Equal(int64(1), futureSent)
+	assertionsForTest.Equal(int64(1), futureMeetings)
+	assertionsForTest.Equal(ModalityEmail|ModalityMeeting, futureMask)
+	assertionsForTest.Equal(lastAt, futureLastAt)
 }
 
 func TestValidateRejectsFutureIdentityWithoutRelationshipRollup(t *testing.T) {
@@ -383,6 +391,7 @@ func TestValidateRejectsFutureIdentityWithoutRelationshipRollup(t *testing.T) {
 }
 
 func TestBuildIncrementalEmitsDeltaAndComputesPostPublicationStats(t *testing.T) {
+	assertionsForTest := assert.New(t)
 	committedRoot, db := writeIdentityBaseFixture(t, false)
 	_, err := Build(context.Background(), db, BuildOptions{
 		Mode:           ModeFull,
@@ -403,24 +412,23 @@ func TestBuildIncrementalEmitsDeltaAndComputesPostPublicationStats(t *testing.T)
 		AnchorDate:     time.Date(2026, 7, 27, 0, 0, 0, 0, time.UTC),
 	})
 	require.NoError(t, err)
-
-	assert.Equal(t, int64(1), parquetCount(t, db, stagedRoot, DatasetEntryFacts))
-	assert.Equal(t, int64(2), parquetCount(t, db, stagedRoot, DatasetDirectEdges))
+	assertionsForTest.Equal(int64(1), parquetCount(t, db, stagedRoot, DatasetEntryFacts))
+	assertionsForTest.Equal(int64(2), parquetCount(t, db, stagedRoot, DatasetDirectEdges))
 	var messageID int64
 	require.NoError(t, db.QueryRow(identityParquetSQL(stagedRoot, DatasetEntryFacts)).
 		Scan(&messageID, new(int64), new(int64), new(string), new(time.Time),
 			new(string), new(string), new(string), new(bool), new(bool), new(bool),
 			new(int32), new(bool), new(int16)))
-	assert.Equal(t, int64(200), messageID)
-
-	assert.Equal(t, int64(2), result.Stats.TotalMessages)
-	assert.Equal(t, int64(1), result.Stats.Sources)
-	assert.Equal(t, int64(100), result.Stats.TotalSizeBytes)
-	assert.Equal(t, int64(24), result.Stats.AttachmentSizeBytes)
-	assert.Equal(t, int64(1), parquetCount(t, db, committedRoot, DatasetEntryFacts))
+	assertionsForTest.Equal(int64(200), messageID)
+	assertionsForTest.Equal(int64(2), result.Stats.TotalMessages)
+	assertionsForTest.Equal(int64(1), result.Stats.Sources)
+	assertionsForTest.Equal(int64(100), result.Stats.TotalSizeBytes)
+	assertionsForTest.Equal(int64(24), result.Stats.AttachmentSizeBytes)
+	assertionsForTest.Equal(int64(1), parquetCount(t, db, committedRoot, DatasetEntryFacts))
 }
 
 func TestBuildDerivedOnlyUsesCommittedBaseAndStagedIdentityDimensions(t *testing.T) {
+	assertionsForTest := assert.New(t)
 	committedRoot, db := writeIdentityBaseFixture(t, false)
 	_, err := Build(context.Background(), db, BuildOptions{
 		Mode:           ModeFull,
@@ -453,18 +461,20 @@ func TestBuildDerivedOnlyUsesCommittedBaseAndStagedIdentityDimensions(t *testing
 		FROM read_parquet(?)
 		WHERE canonical_id = 2
 	`, identityParquetGlob(stagedRoot, DatasetDirectory)).Scan(&memberIDs))
-	assert.JSONEq(t, `[2,3,4]`, memberIDs)
-	assert.Equal(t, CacheStatsSummary{}, result.Stats,
+	assertionsForTest.JSONEq(`[2,3,4]`, memberIDs)
+	assertionsForTest.Equal(CacheStatsSummary{}, result.Stats,
 		"derived refresh must preserve committed marker stats without rescanning raw Parquet")
-	assert.NoDirExists(t, filepath.Join(stagedRoot, DatasetEntryFacts))
-	assert.NoDirExists(t, filepath.Join(stagedRoot, DatasetDirectEdges))
-	assert.NoDirExists(t, filepath.Join(stagedRoot, DatasetConversationEdges))
+	assertionsForTest.NoDirExists(filepath.Join(stagedRoot, DatasetEntryFacts))
+	assertionsForTest.NoDirExists(filepath.Join(stagedRoot, DatasetDirectEdges))
+	assertionsForTest.NoDirExists(filepath.Join(stagedRoot, DatasetConversationEdges))
 }
 
 func TestBuildStatsPreserveMessageSourceAndSenderValueSemantics(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
 	root, db := writeIdentityBaseFixture(t, false)
 	for _, dataset := range []string{"sources", "participants", "message_recipients"} {
-		require.NoError(t, os.RemoveAll(filepath.Join(root, dataset)))
+		requirements.NoError(os.RemoveAll(filepath.Join(root, dataset)))
 	}
 	writeIdentityParquet(t, db, root, "sources", `
 		SELECT * FROM (VALUES
@@ -492,10 +502,10 @@ func TestBuildStatsPreserveMessageSourceAndSenderValueSemantics(t *testing.T) {
 		OutputRoot:     root,
 		AnchorDate:     time.Date(2026, 7, 27, 0, 0, 0, 0, time.UTC),
 	})
-	require.NoError(t, err)
-	assert.Equal(t, int64(1), result.Stats.Sources)
-	assert.Equal(t, int64(1), result.Stats.UniqueSenders)
-	assert.Equal(t, int64(1), result.Stats.UniqueDomains)
+	requirements.NoError(err)
+	assertions.Equal(int64(1), result.Stats.Sources)
+	assertions.Equal(int64(1), result.Stats.UniqueSenders)
+	assertions.Equal(int64(1), result.Stats.UniqueDomains)
 }
 
 func writeIdentityBaseFixture(t *testing.T, empty bool) (string, *sql.DB) {

@@ -19,6 +19,7 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/fakevault"
 	"go.kenn.io/msgvault/internal/identityindex"
 	"go.kenn.io/msgvault/internal/query"
 )
@@ -2292,6 +2293,41 @@ func BenchmarkBuildCache(b *testing.B) {
 	}
 }
 
+func BenchmarkBuildCacheRelationshipIndexScale(b *testing.B) {
+	if os.Getenv("MSGVAULT_RELATIONSHIPS_SCALE_BENCH") != "1" {
+		b.Skip("set MSGVAULT_RELATIONSHIPS_SCALE_BENCH=1")
+	}
+	requirements := require.New(b)
+	for b.Loop() {
+		b.StopTimer()
+		root := b.TempDir()
+		vaultDir := filepath.Join(root, "vault")
+		_, err := fakevault.Generate(context.Background(), fakevault.Options{
+			Dir:              vaultDir,
+			Messages:         2_500_000,
+			Participants:     75_000,
+			ParticipantEdges: 6_000_000,
+			AttachmentBytes:  0,
+			Seed:             1,
+		})
+		requirements.NoError(err)
+
+		b.StartTimer()
+		result, buildErr := buildCache(
+			filepath.Join(vaultDir, "msgvault.db"),
+			filepath.Join(vaultDir, "analytics"),
+			true,
+		)
+		b.StopTimer()
+		requirements.NoError(buildErr)
+		requirements.Equal(int64(2_500_000), result.ExportedCount)
+		requirements.NoError(os.RemoveAll(root))
+		b.StartTimer()
+	}
+	b.ReportMetric(2_500_000, "messages/op")
+	b.ReportMetric(6_000_000, "participant-edges/op")
+}
+
 // setupTestSQLiteEmpty creates a test SQLite database with schema and metadata
 // (sources, labels, participants) but zero messages. This simulates a freshly
 // initialized account that has been synced but has no exportable messages.
@@ -2511,28 +2547,30 @@ func writeSyncStateAt(t *testing.T, analyticsDir string, lastMessageID int64, sy
 // to simulate a complete existing cache.
 func createFakeParquet(t *testing.T, analyticsDir string) {
 	t.Helper()
+	requirementsForTest := require.New(t)
+
 	// Messages use hive-partitioned layout
 	msgDir := filepath.Join(analyticsDir, "messages", "year=2024")
-	require.NoError(t, os.MkdirAll(msgDir, 0755), "MkdirAll messages")
-	require.NoError(t, os.WriteFile(filepath.Join(msgDir, "data.parquet"), []byte("fake"), 0644), "write messages parquet")
+	requirementsForTest.NoError(os.MkdirAll(msgDir, 0755), "MkdirAll messages")
+	requirementsForTest.NoError(os.WriteFile(filepath.Join(msgDir, "data.parquet"), []byte("fake"), 0644), "write messages parquet")
 	// Other required tables use flat layout.
 	for _, dir := range query.RequiredParquetDirs {
 		if dir == tableMessages {
 			continue
 		}
 		d := filepath.Join(analyticsDir, dir)
-		require.NoError(t, os.MkdirAll(d, 0755), "MkdirAll %s", dir)
-		require.NoError(t, os.WriteFile(filepath.Join(d, "data.parquet"), []byte("fake"), 0644), "write %s parquet", dir)
+		requirementsForTest.NoError(os.MkdirAll(d, 0755), "MkdirAll %s", dir)
+		requirementsForTest.NoError(os.WriteFile(filepath.Join(d, "data.parquet"), []byte("fake"), 0644), "write %s parquet", dir)
 	}
 	state, err := query.ReadCacheSyncState(analyticsDir)
 	if err == nil {
 		fingerprint, fingerprintErr := query.CacheDatasetFingerprint(analyticsDir)
-		require.NoError(t, fingerprintErr)
+		requirementsForTest.NoError(fingerprintErr)
 		state.PublishedAt = time.Now().UTC()
 		state.DatasetFingerprint = fingerprint
 		data, marshalErr := json.Marshal(state)
-		require.NoError(t, marshalErr)
-		require.NoError(t, os.WriteFile(query.CacheStatePath(analyticsDir), data, 0o600))
+		requirementsForTest.NoError(marshalErr)
+		requirementsForTest.NoError(os.WriteFile(query.CacheStatePath(analyticsDir), data, 0o600))
 	}
 }
 
@@ -2703,17 +2741,19 @@ func TestCacheNeedsBuild(t *testing.T) {
 			name: "MissingRequiredParquetTables_NeedsBuild",
 			setup: func(t *testing.T, dbPath, analyticsDir string) {
 				t.Helper()
+				requirementsForTest := require.New(t)
+
 				// Only messages parquet exists, missing other required tables
 				db, err := sql.Open("sqlite3", dbPath)
-				require.NoError(t, err, "open db")
+				requirementsForTest.NoError(err, "open db")
 				defer func() { _ = db.Close() }()
 				_, err = db.Exec(`INSERT INTO messages (id, source_id, source_message_id, sent_at) VALUES (5, 1, 'msg5', datetime('now'))`)
-				require.NoError(t, err, "insert message")
+				requirementsForTest.NoError(err, "insert message")
 				writeSyncState(t, analyticsDir, 5)
 				// Only create messages parquet — other required dirs missing
 				msgDir := filepath.Join(analyticsDir, "messages", "year=2024")
-				require.NoError(t, os.MkdirAll(msgDir, 0755), "MkdirAll")
-				require.NoError(t, os.WriteFile(filepath.Join(msgDir, "data.parquet"), []byte("fake"), 0644), "write parquet")
+				requirementsForTest.NoError(os.MkdirAll(msgDir, 0755), "MkdirAll")
+				requirementsForTest.NoError(os.WriteFile(filepath.Join(msgDir, "data.parquet"), []byte("fake"), 0644), "write parquet")
 			},
 			wantBuild:  true,
 			wantReason: "analytics cache publication interrupted",

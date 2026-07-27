@@ -13,10 +13,25 @@ import (
 // fakeVaultCmd is a hidden developer tool: benchmark harnesses and tests
 // need multi-gigabyte msgvault archives that cannot be checked into any
 // repository, so they generate them on demand instead.
-var fakeVaultCmd = &cobra.Command{
-	Use:   "fake-vault",
-	Short: "Generate a synthetic vault for benchmarking and testing",
-	Long: `Generate a synthetic msgvault archive: a schema-valid msgvault.db
+var fakeVaultCmd = newFakeVaultCommand()
+
+type fakeVaultCommandOptions struct {
+	output           string
+	messages         int64
+	participants     int64
+	participantEdges int64
+	attachmentSize   string
+	seed             uint64
+	appendMode       bool
+	quiet            bool
+}
+
+func newFakeVaultCommand() *cobra.Command {
+	var opts fakeVaultCommandOptions
+	command := &cobra.Command{
+		Use:   "fake-vault",
+		Short: "Generate a synthetic vault for benchmarking and testing",
+		Long: `Generate a synthetic msgvault archive: a schema-valid msgvault.db
 plus a content-addressed attachments tree, deterministic for a given seed.
 
 The output directory receives msgvault.db and attachments/. Generation is
@@ -24,65 +39,70 @@ sized by --messages (database bulk: bodies, raw MIME, metadata rows) and
 --attachment-bytes (content tree bulk). With --append, an existing generated
 vault is extended in place — the incremental-backup benchmarking mode.
 
+Setting --participants and --participant-edges selects the set-wise
+relationship benchmark generator. Participant edges count the union of one
+sender edge per message and all generated recipient rows.
+
 The generated data is synthetic and worthless; the tool exists to measure
 how msgvault (backup, search, sync machinery) behaves at scale.`,
-	Hidden: true,
-	Args:   cobra.NoArgs,
-	RunE:   runFakeVault,
+		Hidden: true,
+		Args:   cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return runFakeVault(cmd, opts)
+		},
+	}
+	command.Flags().StringVarP(&opts.output, "output", "o", "",
+		"vault directory to create (msgvault.db and attachments/ inside)")
+	command.Flags().Int64Var(&opts.messages, "messages", 10_000,
+		"number of messages to generate")
+	command.Flags().Int64Var(&opts.participants, "participants", 0,
+		"exact participant count (zero keeps the adaptive default)")
+	command.Flags().Int64Var(&opts.participantEdges, "participant-edges", 0,
+		"exact sender plus recipient edge count (zero keeps the default generator)")
+	command.Flags().StringVar(&opts.attachmentSize, "attachment-bytes", "50MB",
+		"target total size of attachment content (e.g. 500MB, 5GB)")
+	command.Flags().Uint64Var(&opts.seed, "seed", 1,
+		"deterministic generation seed")
+	command.Flags().BoolVar(&opts.appendMode, "append", false,
+		"extend an existing generated vault instead of creating one")
+	command.Flags().BoolVar(&opts.quiet, "quiet", false,
+		"suppress progress output")
+	_ = command.MarkFlagRequired("output")
+	return command
 }
 
-var (
-	fakeVaultOutput     string
-	fakeVaultMessages   int64
-	fakeVaultAttachSize string
-	fakeVaultSeed       uint64
-	fakeVaultAppend     bool
-	fakeVaultQuiet      bool
-)
-
 func init() {
-	fakeVaultCmd.Flags().StringVarP(&fakeVaultOutput, "output", "o", "",
-		"vault directory to create (msgvault.db and attachments/ inside)")
-	fakeVaultCmd.Flags().Int64Var(&fakeVaultMessages, "messages", 10_000,
-		"number of messages to generate")
-	fakeVaultCmd.Flags().StringVar(&fakeVaultAttachSize, "attachment-bytes", "50MB",
-		"target total size of attachment content (e.g. 500MB, 5GB)")
-	fakeVaultCmd.Flags().Uint64Var(&fakeVaultSeed, "seed", 1,
-		"deterministic generation seed")
-	fakeVaultCmd.Flags().BoolVar(&fakeVaultAppend, "append", false,
-		"extend an existing generated vault instead of creating one")
-	fakeVaultCmd.Flags().BoolVar(&fakeVaultQuiet, "quiet", false,
-		"suppress progress output")
-	_ = fakeVaultCmd.MarkFlagRequired("output")
 	rootCmd.AddCommand(fakeVaultCmd)
 }
 
-func runFakeVault(cmd *cobra.Command, args []string) error {
-	attachBytes, err := parseByteSize(fakeVaultAttachSize)
+func runFakeVault(cmd *cobra.Command, opts fakeVaultCommandOptions) error {
+	attachBytes, err := parseByteSize(opts.attachmentSize)
 	if err != nil {
 		return usageErr(cmd, fmt.Errorf("--attachment-bytes: %w", err))
 	}
 	progress := func(done, total int64) {
-		if !fakeVaultQuiet {
+		if !opts.quiet {
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "\rGenerating messages: %d/%d", done, total)
 		}
 	}
 	sum, err := fakevault.Generate(cmd.Context(), fakevault.Options{
-		Dir:             fakeVaultOutput,
-		Messages:        fakeVaultMessages,
-		AttachmentBytes: attachBytes,
-		Seed:            fakeVaultSeed,
-		Append:          fakeVaultAppend,
-		Progress:        progress,
+		Dir:              opts.output,
+		Messages:         opts.messages,
+		Participants:     opts.participants,
+		ParticipantEdges: opts.participantEdges,
+		AttachmentBytes:  attachBytes,
+		Seed:             opts.seed,
+		Append:           opts.appendMode,
+		Progress:         progress,
 	})
 	if err != nil {
 		return err
 	}
-	if !fakeVaultQuiet {
+	if !opts.quiet {
 		_, _ = fmt.Fprintln(cmd.OutOrStdout())
 	}
 	out := cmd.OutOrStdout()
-	_, _ = fmt.Fprintf(out, "Vault: %s\n", fakeVaultOutput)
+	_, _ = fmt.Fprintf(out, "Vault: %s\n", opts.output)
 	_, _ = fmt.Fprintf(out, "Messages: %d (in %d conversations)\n", sum.Messages, sum.Conversations)
 	_, _ = fmt.Fprintf(out, "Attachment rows: %d\n", sum.AttachmentRows)
 	_, _ = fmt.Fprintf(out, "Attachment content written: %d files, %s\n",

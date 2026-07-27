@@ -39,6 +39,7 @@ func TestCacheRevisionIncludesRelationshipAnchor(t *testing.T) {
 }
 
 func TestCacheSyncStateEncodesStatsAsNestedObject(t *testing.T) {
+	requirementsForTest := require.New(t)
 	minYear := int64(2004)
 	maxYear := int64(2026)
 	state := CacheSyncState{
@@ -55,31 +56,32 @@ func TestCacheSyncStateEncodesStatsAsNestedObject(t *testing.T) {
 	}
 
 	data, err := json.Marshal(state)
-	require.NoError(t, err)
+	requirementsForTest.NoError(err)
 
 	var encoded map[string]json.RawMessage
-	require.NoError(t, json.Unmarshal(data, &encoded))
-	require.Contains(t, encoded, "stats")
+	requirementsForTest.NoError(json.Unmarshal(data, &encoded))
+	requirementsForTest.Contains(encoded, "stats")
 
 	var stats identityindex.CacheStatsSummary
-	require.NoError(t, json.Unmarshal(encoded["stats"], &stats))
+	requirementsForTest.NoError(json.Unmarshal(encoded["stats"], &stats))
 	assert.Equal(t, state.Stats, stats)
 }
 
 func TestDataBuilderPublishesProductionIdentityDatasets(t *testing.T) {
+	assertionsForTest := assert.New(t)
 	dir, cleanup := buildStandardTestData(t).Build()
 	t.Cleanup(cleanup)
 
 	for _, dataset := range identityindex.RequiredDatasets {
 		hasParquet, err := datasetHasParquet(dir, dataset)
 		require.NoError(t, err)
-		assert.True(t, hasParquet, dataset)
+		assertionsForTest.True(hasParquet, dataset)
 	}
 	state, err := ReadCacheSyncState(dir)
 	require.NoError(t, err)
-	assert.Equal(t, int64(5), state.Stats.TotalMessages)
-	assert.NotEmpty(t, state.ConversationParticipantsFingerprint)
-	assert.Equal(t, "2026-07-15", state.RelationshipAnchorDate)
+	assertionsForTest.Equal(int64(5), state.Stats.TotalMessages)
+	assertionsForTest.NotEmpty(state.ConversationParticipantsFingerprint)
+	assertionsForTest.Equal("2026-07-15", state.RelationshipAnchorDate)
 }
 
 func TestAcquireReadyCacheReadLockRejectsAbsentCache(t *testing.T) {

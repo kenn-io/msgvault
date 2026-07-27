@@ -75,12 +75,13 @@ func TestRelationshipScore(t *testing.T) {
 }
 
 func TestModalitiesFromMask(t *testing.T) {
-	assert.Equal(t, 0, modalitiesFromMask(0))
-	assert.Equal(t, 1, modalitiesFromMask(identityindex.ModalityEmail))
-	assert.Equal(t, 2, modalitiesFromMask(
+	assertionsForTest := assert.New(t)
+	assertionsForTest.Equal(0, modalitiesFromMask(0))
+	assertionsForTest.Equal(1, modalitiesFromMask(identityindex.ModalityEmail))
+	assertionsForTest.Equal(2, modalitiesFromMask(
 		identityindex.ModalityChat|identityindex.ModalityMeeting,
 	))
-	assert.Equal(t, 3, modalitiesFromMask(
+	assertionsForTest.Equal(3, modalitiesFromMask(
 		identityindex.ModalityEmail|
 			identityindex.ModalityChat|
 			identityindex.ModalityMeeting|

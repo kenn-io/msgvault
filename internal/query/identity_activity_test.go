@@ -10,6 +10,7 @@ import (
 )
 
 func TestIdentityActivityPreservesNonChatConversationEdgeSemantics(t *testing.T) {
+	requirementsForTest := require.New(t)
 	builder := NewTestDataBuilder(t)
 	sourceID := builder.AddSourceWithType("archive@example.com", "gmail")
 	direct := builder.AddParticipant("direct@example.com", "direct.example", "Direct")
@@ -35,8 +36,8 @@ func TestIdentityActivityPreservesNonChatConversationEdgeSemantics(t *testing.T)
 		}},
 		Page: PageSpec{Limit: 25},
 	})
-	require.NoError(t, err)
-	require.Len(t, people.Rows, 1)
+	requirementsForTest.NoError(err)
+	requirementsForTest.Len(people.Rows, 1)
 	assert.Equal(t, direct, people.Rows[0].ID,
 		"conversation membership qualifies the fact filter but not non-chat people fan-out")
 
@@ -47,8 +48,8 @@ func TestIdentityActivityPreservesNonChatConversationEdgeSemantics(t *testing.T)
 		Sort: SortSpec{Field: "display_label", Direction: "asc"},
 		Page: PageSpec{Limit: 25},
 	})
-	require.NoError(t, err)
-	require.Len(t, domains.Rows, 2)
+	requirementsForTest.NoError(err)
+	requirementsForTest.Len(domains.Rows, 2)
 	assert.Equal(t,
 		[]string{"community.example", "direct.example"},
 		[]string{domains.Rows[0].Domain, domains.Rows[1].Domain},
@@ -56,6 +57,7 @@ func TestIdentityActivityPreservesNonChatConversationEdgeSemantics(t *testing.T)
 }
 
 func TestUnfilteredIdentityIndexMatchesLegacyPeopleAndDomains(t *testing.T) {
+	requirementsForTest := require.New(t)
 	builder := NewTestDataBuilder(t)
 	mailSource := builder.AddSourceWithType("archive-a@example.com", "gmail")
 	chatSource := builder.AddSourceWithType("archive-b@example.com", "whatsapp")
@@ -82,14 +84,14 @@ func TestUnfilteredIdentityIndexMatchesLegacyPeopleAndDomains(t *testing.T) {
 		Page: PageSpec{Limit: 25},
 	}
 	gotPeople, err := engine.SearchPeople(context.Background(), peopleRequest)
-	require.NoError(t, err)
+	requirementsForTest.NoError(err)
 	wantPeople, err := engine.searchPeopleLegacy(
 		context.Background(),
 		peopleRequest,
 		nil,
 		nil,
 	)
-	require.NoError(t, err)
+	requirementsForTest.NoError(err)
 	assert.Equal(t, wantPeople, gotPeople)
 
 	domainRequest := DomainSearchRequest{
@@ -97,17 +99,19 @@ func TestUnfilteredIdentityIndexMatchesLegacyPeopleAndDomains(t *testing.T) {
 		Page: PageSpec{Limit: 25},
 	}
 	gotDomains, err := engine.SearchDomains(context.Background(), domainRequest)
-	require.NoError(t, err)
+	requirementsForTest.NoError(err)
 	wantDomains, err := engine.searchDomainsLegacy(
 		context.Background(),
 		domainRequest,
 		"",
 	)
-	require.NoError(t, err)
+	requirementsForTest.NoError(err)
 	assert.Equal(t, wantDomains, gotDomains)
 }
 
 func TestIdentityActivityMergesAuthorshipAcrossLinkedAliases(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
 	builder := NewTestDataBuilder(t)
 	sourceID := builder.AddSourceWithType("archive@example.com", "gmail")
 	author := builder.AddParticipant("author@example.com", "example.com", "Author")
@@ -130,14 +134,16 @@ func TestIdentityActivityMergesAuthorshipAcrossLinkedAliases(t *testing.T) {
 		Explore: ExploreRequest{Context: Context{SourceIDs: []int64{sourceID}}},
 		Page:    PageSpec{Limit: 25},
 	})
-	require.NoError(t, err)
-	require.Len(t, response.Rows, 1)
-	assert.Equal(t, author, response.Rows[0].ID)
-	assert.Equal(t, int64(1), response.Rows[0].ActivityCount,
+	requirements.NoError(err)
+	requirements.Len(response.Rows, 1)
+	assertions.Equal(author, response.Rows[0].ID)
+	assertions.Equal(int64(1), response.Rows[0].ActivityCount,
 		"authored and co-recipient aliases merge into one canonical entry")
 }
 
 func TestIdentityActivityAppliesFactFilters(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
 	builder := NewTestDataBuilder(t)
 	selectedSource := builder.AddSourceWithType("selected@example.com", "gmail")
 	otherSource := builder.AddSourceWithType("other@example.com", "gmail")
@@ -200,16 +206,17 @@ func TestIdentityActivityAppliesFactFilters(t *testing.T) {
 		},
 		Page: PageSpec{Limit: 25},
 	})
-	require.NoError(t, err)
-	require.Len(t, response.Rows, 1)
-	assert.Equal(t, "target@example.com", response.Rows[0].DisplayLabel)
-	assert.Equal(t,
+	requirements.NoError(err)
+	requirements.Len(response.Rows, 1)
+	assertions.Equal("target@example.com", response.Rows[0].DisplayLabel)
+	assertions.Equal(
 		SearchProvenance{LexicalIndexRevision: "fts5:identity-facts"},
 		response.SearchProvenance,
 	)
 }
 
 func TestIdentityActivityDateFiltersBindUTCWallClock(t *testing.T) {
+	assertionsForTest := assert.New(t)
 	zone := time.FixedZone("fixture-offset", -4*60*60)
 	after := time.Date(2026, 7, 20, 9, 30, 0, 0, zone)
 	before := after.Add(2 * time.Hour)
@@ -217,15 +224,15 @@ func TestIdentityActivityDateFiltersBindUTCWallClock(t *testing.T) {
 	conditions, args := buildIdentityFactConditions(ExploreRequest{
 		Context: Context{After: &after, Before: &before},
 	})
-
-	assert.Contains(t, conditions, "f.occurred_at >= CAST(? AS TIMESTAMP)")
-	assert.Contains(t, conditions, "f.occurred_at < CAST(? AS TIMESTAMP)")
+	assertionsForTest.Contains(conditions, "f.occurred_at >= CAST(? AS TIMESTAMP)")
+	assertionsForTest.Contains(conditions, "f.occurred_at < CAST(? AS TIMESTAMP)")
 	require.Len(t, args, 2)
-	assert.Equal(t, "2026-07-20 13:30:00", args[0])
-	assert.Equal(t, "2026-07-20 15:30:00", args[1])
+	assertionsForTest.Equal("2026-07-20 13:30:00", args[0])
+	assertionsForTest.Equal("2026-07-20 15:30:00", args[1])
 }
 
 func TestIdentityEndpointsDoNotRequireLegacyAnalyticalViews(t *testing.T) {
+	requirementsForTest := require.New(t)
 	builder := NewTestDataBuilder(t)
 	sourceID := builder.AddSourceWithType("archive@example.com", "gmail")
 	personID := builder.AddParticipant("person@example.com", "example.com", "Indexed Person")
@@ -245,12 +252,12 @@ func TestIdentityEndpointsDoNotRequireLegacyAnalyticalViews(t *testing.T) {
 		nil,
 		DuckDBOptions{DisableLegacyAnalyticalViews: true},
 	)
-	require.NoError(t, err)
+	requirementsForTest.NoError(err)
 	t.Cleanup(func() { require.NoError(t, engine.Close()) })
 
 	for _, view := range []string{"analytical_entries", "messages", "message_recipients"} {
 		var count int64
-		require.NoError(t, engine.db.QueryRow(`
+		requirementsForTest.NoError(engine.db.QueryRow(`
 			SELECT count(*)
 			FROM duckdb_views()
 			WHERE view_name = ?
@@ -262,11 +269,11 @@ func TestIdentityEndpointsDoNotRequireLegacyAnalyticalViews(t *testing.T) {
 		Query: "indexed",
 		Page:  PageSpec{Limit: 25},
 	})
-	require.NoError(t, err)
-	require.Len(t, people.Rows, 1)
+	requirementsForTest.NoError(err)
+	requirementsForTest.Len(people.Rows, 1)
 
 	person, err := engine.GetPerson(context.Background(), personID, Context{}, nil)
-	require.NoError(t, err)
+	requirementsForTest.NoError(err)
 	assert.Equal(t, personID, person.ID)
 
 	personSummary, err := engine.GetPersonSummary(
@@ -275,18 +282,18 @@ func TestIdentityEndpointsDoNotRequireLegacyAnalyticalViews(t *testing.T) {
 		ExploreRequest{Context: Context{SourceIDs: []int64{sourceID}}},
 		nil,
 	)
-	require.NoError(t, err)
-	require.Len(t, personSummary.Rows, 1)
+	requirementsForTest.NoError(err)
+	requirementsForTest.Len(personSummary.Rows, 1)
 
 	domains, err := engine.SearchDomains(context.Background(), DomainSearchRequest{
 		Query: "example",
 		Page:  PageSpec{Limit: 25},
 	})
-	require.NoError(t, err)
-	require.Len(t, domains.Rows, 1)
+	requirementsForTest.NoError(err)
+	requirementsForTest.Len(domains.Rows, 1)
 
 	domain, err := engine.GetDomain(context.Background(), "example.com", Context{})
-	require.NoError(t, err)
+	requirementsForTest.NoError(err)
 	assert.Equal(t, "example.com", domain.Domain)
 
 	domainSummary, err := engine.GetDomainSummary(
@@ -294,6 +301,6 @@ func TestIdentityEndpointsDoNotRequireLegacyAnalyticalViews(t *testing.T) {
 		"example.com",
 		ExploreRequest{Context: Context{SourceIDs: []int64{sourceID}}},
 	)
-	require.NoError(t, err)
-	require.Len(t, domainSummary.Rows, 1)
+	requirementsForTest.NoError(err)
+	requirementsForTest.Len(domainSummary.Rows, 1)
 }

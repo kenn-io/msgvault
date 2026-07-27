@@ -46,11 +46,12 @@ func openVaultDB(t *testing.T, dir string) *sql.DB {
 // A mismatch would make backup.Create fail on the generated vault.
 func verifyAttachmentTree(t *testing.T, dir string) (hashes []string) {
 	t.Helper()
+	requirementsForTest := require.New(t)
 	db := openVaultDB(t, dir)
 	rows, err := db.Query(`SELECT content_hash, storage_path, size FROM attachments
 		UNION SELECT thumbnail_hash, thumbnail_path, NULL FROM attachments
 		WHERE thumbnail_hash IS NOT NULL`)
-	require.NoError(t, err)
+	requirementsForTest.NoError(err)
 	defer func() {
 		require.NoError(t, rows.Err())
 		require.NoError(t, rows.Close())
@@ -58,16 +59,16 @@ func verifyAttachmentTree(t *testing.T, dir string) (hashes []string) {
 	for rows.Next() {
 		var hash, storagePath string
 		var size sql.NullInt64
-		require.NoError(t, rows.Scan(&hash, &storagePath, &size))
-		require.Equal(t, hash[:2]+"/"+hash, storagePath)
+		requirementsForTest.NoError(rows.Scan(&hash, &storagePath, &size))
+		requirementsForTest.Equal(hash[:2]+"/"+hash, storagePath)
 		content, err := os.ReadFile(filepath.Join(dir, "attachments",
 			filepath.FromSlash(storagePath)))
-		require.NoError(t, err, "attachment %s must exist on disk", hash)
+		requirementsForTest.NoError(err, "attachment %s must exist on disk", hash)
 		sum := sha256.Sum256(content)
-		require.Equal(t, hash, hex.EncodeToString(sum[:]),
+		requirementsForTest.Equal(hash, hex.EncodeToString(sum[:]),
 			"attachment bytes must match their recorded content hash")
 		if size.Valid {
-			require.Equal(t, size.Int64, int64(len(content)))
+			requirementsForTest.Equal(size.Int64, int64(len(content)))
 		}
 		hashes = append(hashes, hash)
 	}
@@ -189,4 +190,114 @@ func TestGenerateTargetStateGuards(t *testing.T) {
 		Dir: t.TempDir(), Messages: 10, Seed: 1, Append: true,
 	})
 	require.ErrorContains(err, "cannot append")
+}
+
+func TestGenerateSetWiseRelationshipScaleShape(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	dir := t.TempDir()
+	summary, err := fakevault.Generate(t.Context(), fakevault.Options{
+		Dir:              dir,
+		Messages:         40,
+		Participants:     17,
+		ParticipantEdges: 96,
+		AttachmentBytes:  0,
+		Seed:             1,
+	})
+	requirements.NoError(err)
+	assertions.Equal(int64(40), summary.Messages)
+	assertions.Zero(summary.AttachmentRows)
+
+	db := openVaultDB(t, dir)
+	assertions.Equal(int64(17), countRows(t, db, "participants"))
+	assertions.Equal(int64(56), countRows(t, db, "message_recipients"))
+
+	var directEdges int64
+	requirements.NoError(db.QueryRow(`
+		SELECT
+			(SELECT count(*) FROM messages WHERE sender_id IS NOT NULL) +
+			(SELECT count(*) FROM message_recipients)
+	`).Scan(&directEdges))
+	assertions.Equal(int64(96), directEdges)
+
+	var duplicateOrSenderEdges int64
+	requirements.NoError(db.QueryRow(`
+		SELECT count(*)
+		FROM (
+			SELECT message_id, participant_id
+			FROM (
+				SELECT id AS message_id, sender_id AS participant_id
+				FROM messages
+				UNION ALL
+				SELECT message_id, participant_id
+				FROM message_recipients
+			)
+			GROUP BY message_id, participant_id
+			HAVING count(*) > 1
+		)
+	`).Scan(&duplicateOrSenderEdges))
+	assertions.Zero(duplicateOrSenderEdges)
+
+	var messageTypes int64
+	requirements.NoError(db.QueryRow(
+		"SELECT count(DISTINCT message_type) FROM messages",
+	).Scan(&messageTypes))
+	assertions.GreaterOrEqual(messageTypes, int64(4))
+
+	var linkedAliases int64
+	requirements.NoError(db.QueryRow(
+		"SELECT count(*) FROM participant_links",
+	).Scan(&linkedAliases))
+	assertions.Positive(linkedAliases)
+
+	var owners int64
+	requirements.NoError(db.QueryRow(`
+		SELECT count(*)
+		FROM account_identities ai
+		JOIN participants p ON lower(p.email_address) = lower(ai.address)
+	`).Scan(&owners))
+	assertions.GreaterOrEqual(owners, int64(2))
+
+	var futureRows int64
+	requirements.NoError(db.QueryRow(
+		"SELECT count(*) FROM messages WHERE sent_at > '2030-01-01'",
+	).Scan(&futureRows))
+	assertions.Positive(futureRows)
+}
+
+func TestGenerateRejectsInvalidRelationshipScale(t *testing.T) {
+	testCases := []struct {
+		name string
+		opts fakevault.Options
+		want string
+	}{
+		{
+			name: "fewer edges than messages",
+			opts: fakevault.Options{
+				Messages: 10, Participants: 5, ParticipantEdges: 9,
+			},
+			want: "participant edge count must be at least the message count",
+		},
+		{
+			name: "duplicate-free capacity exceeded",
+			opts: fakevault.Options{
+				Messages: 10, Participants: 2, ParticipantEdges: 21,
+			},
+			want: "participant edge count exceeds duplicate-free capacity",
+		},
+		{
+			name: "scale append unsupported",
+			opts: fakevault.Options{
+				Messages: 10, Participants: 5, ParticipantEdges: 20, Append: true,
+			},
+			want: "set-wise relationship scale mode does not support append",
+		},
+	}
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			testCase.opts.Dir = t.TempDir()
+			_, err := fakevault.Generate(t.Context(), testCase.opts)
+			require.ErrorContains(t, err, testCase.want)
+		})
+	}
 }
