@@ -235,15 +235,15 @@ func (d *SQLiteDialect) SchemaFTS() string {
 // transaction (finding S1). SQLite DDL is transactional, so DROP/CREATE of
 // the virtual table run fine inside the tx runMaintenance opens; SQLite has
 // no statement_timeout, so the hatch is a plain transaction here.
-func (d *SQLiteDialect) FTSRebuildSchema(q querier) error {
-	if _, err := q.Exec("DROP TABLE IF EXISTS messages_fts"); err != nil {
+func (d *SQLiteDialect) FTSRebuildSchema(ctx context.Context, q contextQuerier) error {
+	if _, err := q.ExecContext(ctx, "DROP TABLE IF EXISTS messages_fts"); err != nil {
 		return fmt.Errorf("drop messages_fts: %w", err)
 	}
 	schema, err := schemaFS.ReadFile("schema_sqlite.sql")
 	if err != nil {
 		return fmt.Errorf("read schema_sqlite.sql: %w", err)
 	}
-	if _, err := q.Exec(string(schema)); err != nil {
+	if _, err := q.ExecContext(ctx, string(schema)); err != nil {
 		if d.IsNoSuchModuleError(err) {
 			return errors.New("cannot rebuild FTS: this msgvault binary was built without " +
 				"FTS5 support (rebuild with `-tags fts5`)",
@@ -302,13 +302,23 @@ func (d *SQLiteDialect) LegacyColumnMigrations() []ColumnMigration {
 
 // DatabaseSize returns the on-disk size of the SQLite database file.
 // Returns (0, nil) for in-memory databases or when the file cannot be stat'd.
-func (d *SQLiteDialect) DatabaseSize(_ *sql.DB, dbPath string) (int64, error) {
+func (d *SQLiteDialect) DatabaseSize(
+	ctx context.Context,
+	_ *sql.DB,
+	dbPath string,
+) (int64, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
 	if dbPath == "" || dbPath == ":memory:" || strings.Contains(dbPath, ":memory:") {
 		return 0, nil
 	}
 	info, err := os.Stat(dbPath)
 	if err != nil {
 		return 0, nil //nolint:nilerr // missing/unstattable db file reports 0 size, not an error
+	}
+	if err := ctx.Err(); err != nil {
+		return 0, err
 	}
 	return info.Size(), nil
 }

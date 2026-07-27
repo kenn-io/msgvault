@@ -57,12 +57,16 @@ func readAccountIdentityRevision(q rowQuerier) (int64, error) {
 // mergeParticipant); none of them expose the new value, so unlike
 // bumpIdentityRevision this returns only an error.
 func (s *Store) bumpAccountIdentityRevision(tx *loggedTx) error {
-	if _, err := tx.Exec(s.dialect.InsertOrIgnore(
+	return s.bumpAccountIdentityRevisionContext(context.Background(), tx)
+}
+
+func (s *Store) bumpAccountIdentityRevisionContext(ctx context.Context, tx *loggedTx) error {
+	if _, err := tx.ExecContext(ctx, s.dialect.InsertOrIgnore(
 		`INSERT OR IGNORE INTO archive_metadata (key, value) VALUES (?, '0')`),
 		accountIdentityRevisionKey); err != nil {
 		return fmt.Errorf("seed account identity revision: %w", err)
 	}
-	if _, err := tx.Exec(
+	if _, err := tx.ExecContext(ctx,
 		`UPDATE archive_metadata SET value = CAST(CAST(value AS INTEGER) + 1 AS TEXT)
 		 WHERE key = ?`,
 		accountIdentityRevisionKey); err != nil {
@@ -129,6 +133,15 @@ func looksLikeEmail(addr string) bool {
 // unique-key violation is caught by the retry loop, which then sees the
 // other writer's row and merges into it.
 func (s *Store) AddAccountIdentity(sourceID int64, address, signal string) error {
+	return s.AddAccountIdentityContext(context.Background(), sourceID, address, signal)
+}
+
+// AddAccountIdentityContext is the request-aware form of AddAccountIdentity.
+func (s *Store) AddAccountIdentityContext(
+	ctx context.Context,
+	sourceID int64,
+	address, signal string,
+) error {
 	addr := strings.TrimSpace(address)
 	if addr == "" {
 		return nil
@@ -137,10 +150,12 @@ func (s *Store) AddAccountIdentity(sourceID int64, address, signal string) error
 		return fmt.Errorf("signal names cannot contain commas: %q", signal)
 	}
 	match := newIdentifierMatch(addr)
-	ctx := context.Background()
 
 	const maxAttempts = 5
 	for range maxAttempts {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		err := s.addAccountIdentityOnce(ctx, sourceID, addr, signal, match)
 		if err == nil {
 			return nil
@@ -158,8 +173,8 @@ func (s *Store) AddAccountIdentity(sourceID int64, address, signal string) error
 func (s *Store) addAccountIdentityOnce(
 	ctx context.Context, sourceID int64, addr, signal string, match identifierMatch,
 ) error {
-	return s.withTx(func(tx *loggedTx) error {
-		if err := s.lockIdentityMutationTx(tx); err != nil {
+	return s.withTxContext(ctx, func(tx *loggedTx) error {
+		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
 			return err
 		}
 
@@ -180,10 +195,10 @@ func (s *Store) addAccountIdentityOnce(
 			// A brand new (source_id, address) pair changes owner_participants;
 			// merging a signal into an existing row (the default case below)
 			// does not, so only this branch bumps the revisions.
-			if _, err := s.bumpIdentityRevision(tx); err != nil {
+			if _, err := s.bumpIdentityRevisionContext(ctx, tx); err != nil {
 				return err
 			}
-			if err := s.bumpAccountIdentityRevision(tx); err != nil {
+			if err := s.bumpAccountIdentityRevisionContext(ctx, tx); err != nil {
 				return err
 			}
 		case err != nil:
@@ -232,7 +247,16 @@ func mergeSignalSet(existing, signal string) string {
 
 // ListAccountIdentities returns all identities for one source, ordered by address.
 func (s *Store) ListAccountIdentities(sourceID int64) ([]AccountIdentity, error) {
-	rows, err := s.db.Query(`
+	return s.ListAccountIdentitiesContext(context.Background(), sourceID)
+}
+
+// ListAccountIdentitiesContext is the request-aware form of
+// ListAccountIdentities.
+func (s *Store) ListAccountIdentitiesContext(
+	ctx context.Context,
+	sourceID int64,
+) ([]AccountIdentity, error) {
+	rows, err := s.db.QueryContext(ctx, `
 		SELECT source_id, address, source_signal, confirmed_at
 		FROM account_identities
 		WHERE source_id = ?
@@ -276,13 +300,23 @@ func (s *Store) ListAccountIdentities(sourceID int64) ([]AccountIdentity, error)
 // AddAccountIdentity so every identity mutation serializes against the
 // others.
 func (s *Store) RemoveAccountIdentity(sourceID int64, address string) (int64, error) {
+	return s.RemoveAccountIdentityContext(context.Background(), sourceID, address)
+}
+
+// RemoveAccountIdentityContext is the request-aware form of
+// RemoveAccountIdentity.
+func (s *Store) RemoveAccountIdentityContext(
+	ctx context.Context,
+	sourceID int64,
+	address string,
+) (int64, error) {
 	match := newIdentifierMatch(address)
 	var removed int64
-	err := s.withTx(func(tx *loggedTx) error {
-		if err := s.lockIdentityMutationTx(tx); err != nil {
+	err := s.withTxContext(ctx, func(tx *loggedTx) error {
+		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
 			return err
 		}
-		res, err := tx.Exec(
+		res, err := tx.ExecContext(ctx,
 			`DELETE FROM account_identities WHERE source_id = ? AND `+match.WhereClause("address"),
 			sourceID, match.BindValue(),
 		)
@@ -297,10 +331,10 @@ func (s *Store) RemoveAccountIdentity(sourceID int64, address string) (int64, er
 		if n == 0 {
 			return nil
 		}
-		if _, err := s.bumpIdentityRevision(tx); err != nil {
+		if _, err := s.bumpIdentityRevisionContext(ctx, tx); err != nil {
 			return err
 		}
-		return s.bumpAccountIdentityRevision(tx)
+		return s.bumpAccountIdentityRevisionContext(ctx, tx)
 	})
 	if err != nil {
 		return 0, err

@@ -129,7 +129,7 @@ type Dialect interface {
 	// PG path includes a full-table tsvector clear (same cost as FTSClearSQL)
 	// plus a GIN rebuild over a populated table, both of which can exceed the
 	// pool-wide 30s timeout on a large archive (finding S1).
-	FTSRebuildSchema(q querier) error
+	FTSRebuildSchema(ctx context.Context, q contextQuerier) error
 
 	// EnsureFTSIndex idempotently creates any FTS index that must be created
 	// AFTER LegacyColumnMigrations have added the FTS column. SQLite is a
@@ -172,7 +172,7 @@ type Dialect interface {
 	// bytes. For SQLite: file size at dbPath. For PostgreSQL: queries
 	// pg_database_size(). Returns 0 if the size cannot be determined;
 	// an error only for genuine failures (not missing files).
-	DatabaseSize(db *sql.DB, dbPath string) (int64, error)
+	DatabaseSize(ctx context.Context, db *sql.DB, dbPath string) (int64, error)
 
 	// Connection lifecycle
 

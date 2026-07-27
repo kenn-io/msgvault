@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -32,7 +33,16 @@ const migrationLegacyIdentity = "legacy_identity_to_per_account"
 // is no longer load-bearing; the dedup engine should read from
 // account_identities instead.
 func (s *Store) MigrateLegacyIdentityConfig(addresses []string) (applied, deferred bool, sourceCount, addressCount int, err error) {
-	already, err := s.IsMigrationApplied(migrationLegacyIdentity)
+	return s.MigrateLegacyIdentityConfigContext(context.Background(), addresses)
+}
+
+// MigrateLegacyIdentityConfigContext is the request-aware form of
+// MigrateLegacyIdentityConfig.
+func (s *Store) MigrateLegacyIdentityConfigContext(
+	ctx context.Context,
+	addresses []string,
+) (applied, deferred bool, sourceCount, addressCount int, err error) {
+	already, err := s.IsMigrationAppliedContext(ctx, migrationLegacyIdentity)
 	if err != nil {
 		return false, false, 0, 0, err
 	}
@@ -61,13 +71,13 @@ func (s *Store) MigrateLegacyIdentityConfig(addresses []string) (applied, deferr
 	}
 
 	if len(normalized) == 0 {
-		if err := s.MarkMigrationApplied(migrationLegacyIdentity); err != nil {
+		if err := s.MarkMigrationAppliedContext(ctx, migrationLegacyIdentity); err != nil {
 			return false, false, 0, 0, err
 		}
 		return false, false, 0, 0, nil
 	}
 
-	sources, err := s.ListSources("")
+	sources, err := s.ListSourcesContext(ctx, "")
 	if err != nil {
 		return false, false, 0, 0, fmt.Errorf("list sources for identity migration: %w", err)
 	}
@@ -100,9 +110,9 @@ func (s *Store) MigrateLegacyIdentityConfig(addresses []string) (applied, deferr
 		return false, true, 0, len(normalized), nil
 	}
 
-	if err := s.withTx(func(tx *loggedTx) error {
+	if err := s.withTxContext(ctx, func(tx *loggedTx) error {
 		var appliedMarker string
-		err := tx.QueryRow(
+		err := tx.QueryRowContext(ctx,
 			`SELECT name FROM applied_migrations WHERE name = ?`,
 			migrationLegacyIdentity,
 		).Scan(&appliedMarker)
@@ -130,14 +140,14 @@ func (s *Store) MigrateLegacyIdentityConfig(addresses []string) (applied, deferr
 				// identifier_match.go.
 				match := newIdentifierMatch(addr)
 				var existing string
-				qerr := tx.QueryRow(
+				qerr := tx.QueryRowContext(ctx,
 					`SELECT source_signal FROM account_identities
 					 WHERE source_id = ? AND `+match.WhereClause("address"),
 					src.ID, match.BindValue(),
 				).Scan(&existing)
 				switch {
 				case errors.Is(qerr, sql.ErrNoRows):
-					_, txErr := tx.Exec(
+					_, txErr := tx.ExecContext(ctx,
 						`INSERT INTO account_identities (source_id, address, source_signal)
 						 VALUES (?, ?, ?)`,
 						src.ID, addr, "config_migration",
@@ -155,7 +165,7 @@ func (s *Store) MigrateLegacyIdentityConfig(addresses []string) (applied, deferr
 				default:
 					merged := mergeSignalSet(existing, "config_migration")
 					if merged != existing {
-						_, uerr := tx.Exec(
+						_, uerr := tx.ExecContext(ctx,
 							`UPDATE account_identities
 							 SET source_signal = ?
 							 WHERE source_id = ? AND `+match.WhereClause("address"),
@@ -185,7 +195,7 @@ func (s *Store) MigrateLegacyIdentityConfig(addresses []string) (applied, deferr
 			}
 		}
 
-		_, txErr := tx.Exec(
+		_, txErr := tx.ExecContext(ctx,
 			s.dialect.InsertOrIgnore(`INSERT OR IGNORE INTO applied_migrations (name) VALUES (?)`),
 			migrationLegacyIdentity,
 		)
@@ -229,7 +239,19 @@ type StartupMigrationResult struct {
 // stderr. The structured fields let the caller log the deferred and applied
 // paths distinctly.
 func (s *Store) RunStartupMigrations(legacyIdentityAddresses []string) (StartupMigrationResult, error) {
-	applied, deferred, sources, addrs, err := s.MigrateLegacyIdentityConfig(legacyIdentityAddresses)
+	return s.RunStartupMigrationsContext(context.Background(), legacyIdentityAddresses)
+}
+
+// RunStartupMigrationsContext is the request-aware form of
+// RunStartupMigrations.
+func (s *Store) RunStartupMigrationsContext(
+	ctx context.Context,
+	legacyIdentityAddresses []string,
+) (StartupMigrationResult, error) {
+	applied, deferred, sources, addrs, err := s.MigrateLegacyIdentityConfigContext(
+		ctx,
+		legacyIdentityAddresses,
+	)
 	if err != nil {
 		return StartupMigrationResult{}, err
 	}

@@ -18,7 +18,12 @@ var ErrSourceNotFound = errors.New("source not found")
 // GetSourceByID returns the source with the given ID, or
 // ErrSourceNotFound (wrapped) if no row matches.
 func (s *Store) GetSourceByID(id int64) (*Source, error) {
-	row := s.db.QueryRow(`
+	return s.GetSourceByIDContext(context.Background(), id)
+}
+
+// GetSourceByIDContext is the request-aware form of GetSourceByID.
+func (s *Store) GetSourceByIDContext(ctx context.Context, id int64) (*Source, error) {
+	row := s.db.QueryRowContext(ctx, `
 		SELECT id, source_type, identifier, display_name, google_user_id,
 		       last_sync_at, sync_cursor, sync_config, oauth_app,
 		       created_at, updated_at
@@ -70,7 +75,16 @@ func (s *Store) GetSourcesByIdentifier(
 // display_name matches the given value. This is the preferred single-query
 // lookup when resolving a user-supplied email or identifier string.
 func (s *Store) GetSourcesByIdentifierOrDisplayName(query string) ([]*Source, error) {
-	rows, err := s.db.Query(`
+	return s.GetSourcesByIdentifierOrDisplayNameContext(context.Background(), query)
+}
+
+// GetSourcesByIdentifierOrDisplayNameContext is the request-aware form of
+// GetSourcesByIdentifierOrDisplayName.
+func (s *Store) GetSourcesByIdentifierOrDisplayNameContext(
+	ctx context.Context,
+	query string,
+) ([]*Source, error) {
+	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, source_type, identifier, display_name,
 		       google_user_id, last_sync_at, sync_cursor, sync_config,
 		       oauth_app, created_at, updated_at
@@ -136,7 +150,16 @@ func (s *Store) GetSourcesByDisplayName(displayName string) ([]*Source, error) {
 // account's sources is small, so this is not a hot path. A source whose
 // sync_config is NULL or unparseable is skipped rather than aborting the scan.
 func (s *Store) GetSourcesByTypeAndAccount(sourceType, accountEmail string) ([]*Source, error) {
-	all, err := s.ListSources(sourceType)
+	return s.GetSourcesByTypeAndAccountContext(context.Background(), sourceType, accountEmail)
+}
+
+// GetSourcesByTypeAndAccountContext is the request-aware form of
+// GetSourcesByTypeAndAccount.
+func (s *Store) GetSourcesByTypeAndAccountContext(
+	ctx context.Context,
+	sourceType, accountEmail string,
+) ([]*Source, error) {
+	all, err := s.ListSourcesContext(ctx, sourceType)
 	if err != nil {
 		return nil, fmt.Errorf("list sources by type %q: %w", sourceType, err)
 	}

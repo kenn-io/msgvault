@@ -611,8 +611,19 @@ func serveWithoutRequestDeadlines(
 
 func (s *Server) timeoutMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if s.requestUsesCLITimeoutPolicy(r) {
+			if cliRequestNeedsProtectiveCeiling(r) {
+				ctx, cancel := context.WithTimeout(r.Context(), DaemonLongRequestTimeout)
+				defer cancel()
+				next.ServeHTTP(w, r.WithContext(ctx))
+				return
+			}
+			serveWithoutRequestDeadlines(w, r, next)
+			return
+		}
+
 		timeout, bounded := s.requestTimeoutForPath(r.URL.Path)
-		if s.requestUsesCLITimeoutPolicy(r) || !bounded {
+		if !bounded {
 			serveWithoutRequestDeadlines(w, r, next)
 			return
 		}
@@ -620,6 +631,32 @@ func (s *Server) timeoutMiddleware(next http.Handler) http.Handler {
 		defer cancel()
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
+}
+
+// cliRequestNeedsProtectiveCeiling identifies marked CLI routes whose
+// production work still includes a filesystem, planner, or synchronous cache
+// phase that cannot be interrupted at every point. They get the generous
+// daemon ceiling until end-to-end cancellation is proven for the whole route.
+func cliRequestNeedsProtectiveCeiling(r *http.Request) bool {
+	switch r.Method + " " + r.URL.Path {
+	case "GET /api/v1/cli/cache-stats",
+		"POST /api/v1/cli/build-cache",
+		"POST /api/v1/cli/add-calendar/plan",
+		"POST /api/v1/cli/delete-staged/plan",
+		"POST /api/v1/cli/deletion-manifests",
+		"POST /api/v1/cli/embeddings/plan",
+		"GET /api/v1/cli/message",
+		"GET /api/v1/cli/message/raw",
+		"GET /api/v1/cli/attachment",
+		"GET /api/v1/cli/search",
+		"POST /api/v1/cli/deduplicate/plan",
+		"POST /api/v1/cli/delete-deduped",
+		"POST /api/v1/cli/identities",
+		"DELETE /api/v1/cli/identities":
+		return true
+	default:
+		return false
+	}
 }
 
 // requestTimeoutForPath returns the context deadline to impose on a request

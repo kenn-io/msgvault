@@ -64,8 +64,8 @@ func (s *Server) registerCLIDedupHumaRoutes(api huma.API) {
 		Summary:          "Plan deletion of dedup-hidden messages for CLI use",
 		SkipValidateBody: true,
 		Errors:           []int{http.StatusBadRequest, http.StatusInternalServerError, http.StatusServiceUnavailable},
-	}), func(_ context.Context, input *cliDeleteDedupedPlanInput) (*cliDeleteDedupedPlanOutput, error) {
-		result, err := s.planCLIDeleteDeduped(input.Body)
+	}), func(ctx context.Context, input *cliDeleteDedupedPlanInput) (*cliDeleteDedupedPlanOutput, error) {
+		result, err := s.planCLIDeleteDeduped(ctx, input.Body)
 		if err != nil {
 			return nil, err
 		}
@@ -80,8 +80,8 @@ func (s *Server) registerCLIDedupHumaRoutes(api huma.API) {
 		Summary:          "Delete dedup-hidden messages for CLI use",
 		SkipValidateBody: true,
 		Errors:           []int{http.StatusBadRequest, http.StatusConflict, http.StatusInternalServerError, http.StatusServiceUnavailable},
-	}), func(_ context.Context, input *cliDeleteDedupedExecuteInput) (*cliDeleteDedupedExecuteOutput, error) {
-		result, err := s.executeCLIDeleteDeduped(input.Body)
+	}), func(ctx context.Context, input *cliDeleteDedupedExecuteInput) (*cliDeleteDedupedExecuteOutput, error) {
+		result, err := s.executeCLIDeleteDeduped(ctx, input.Body)
 		if err != nil {
 			return nil, err
 		}

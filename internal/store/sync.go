@@ -675,11 +675,16 @@ func (s *Store) TouchSourceLastSyncAt(sourceID int64) error {
 // ListSources returns all sources, optionally filtered by source type.
 // Pass an empty string to return all sources.
 func (s *Store) ListSources(sourceType string) ([]*Source, error) {
+	return s.ListSourcesContext(context.Background(), sourceType)
+}
+
+// ListSourcesContext is the request-aware form of ListSources.
+func (s *Store) ListSourcesContext(ctx context.Context, sourceType string) ([]*Source, error) {
 	var rows *loggedRows
 	var err error
 
 	if sourceType != "" {
-		rows, err = s.db.Query(`
+		rows, err = s.db.QueryContext(ctx, `
 			SELECT id, source_type, identifier, display_name, google_user_id,
 			       last_sync_at, sync_cursor, sync_config, oauth_app,
 			       created_at, updated_at
@@ -688,7 +693,7 @@ func (s *Store) ListSources(sourceType string) ([]*Source, error) {
 			ORDER BY identifier
 		`, sourceType)
 	} else {
-		rows, err = s.db.Query(`
+		rows, err = s.db.QueryContext(ctx, `
 			SELECT id, source_type, identifier, display_name, google_user_id,
 			       last_sync_at, sync_cursor, sync_config, oauth_app,
 			       created_at, updated_at
@@ -718,7 +723,17 @@ func (s *Store) ListSources(sourceType string) ([]*Source, error) {
 
 // UpdateSourceDisplayName updates the display name for a source.
 func (s *Store) UpdateSourceDisplayName(sourceID int64, displayName string) error {
-	_, err := s.db.Exec(fmt.Sprintf(`
+	return s.UpdateSourceDisplayNameContext(context.Background(), sourceID, displayName)
+}
+
+// UpdateSourceDisplayNameContext is the request-aware form of
+// UpdateSourceDisplayName.
+func (s *Store) UpdateSourceDisplayNameContext(
+	ctx context.Context,
+	sourceID int64,
+	displayName string,
+) error {
+	_, err := s.db.ExecContext(ctx, fmt.Sprintf(`
 		UPDATE sources
 		SET display_name = ?, updated_at = %s
 		WHERE id = ?

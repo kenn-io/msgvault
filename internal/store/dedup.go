@@ -382,11 +382,19 @@ func (s *Store) UndoDedup(batchID string) (int64, error) {
 // Attachments cascade-delete from the metadata row; on-disk blobs are
 // content-addressed and survive until separate cleanup.
 func (s *Store) DeleteDedupedBatch(batchID string) (int64, error) {
+	return s.DeleteDedupedBatchContext(context.Background(), batchID)
+}
+
+// DeleteDedupedBatchContext is the request-aware form of DeleteDedupedBatch.
+func (s *Store) DeleteDedupedBatchContext(
+	ctx context.Context,
+	batchID string,
+) (int64, error) {
 	// runMaintenance disables the pool-wide 30s statement_timeout for this
 	// tx: the cascade DELETE is unbounded and exceeds 30s on a large archive
 	// (finding S1). No-op timeout reset on SQLite.
 	var deleted int64
-	err := s.runMaintenance(context.Background(), func(ctx context.Context, tx *loggedTx) error {
+	err := s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
 		result, err := tx.ExecContext(ctx, `
 			DELETE FROM messages
 			WHERE delete_batch_id = ? AND deleted_at IS NOT NULL
@@ -401,11 +409,23 @@ func (s *Store) DeleteDedupedBatch(batchID string) (int64, error) {
 }
 
 func (s *Store) CountDedupedBatches(batchIDs []string) ([]DedupedBatchCount, int64, error) {
+	return s.CountDedupedBatchesContext(context.Background(), batchIDs)
+}
+
+// CountDedupedBatchesContext is the request-aware form of
+// CountDedupedBatches.
+func (s *Store) CountDedupedBatchesContext(
+	ctx context.Context,
+	batchIDs []string,
+) ([]DedupedBatchCount, int64, error) {
 	stats := make([]DedupedBatchCount, 0, len(batchIDs))
 	var total int64
 	for _, id := range batchIDs {
+		if err := ctx.Err(); err != nil {
+			return nil, 0, err
+		}
 		var count int64
-		err := s.db.QueryRow(
+		err := s.db.QueryRowContext(ctx,
 			s.Rebind("SELECT COUNT(*) FROM messages WHERE delete_batch_id = ? AND deleted_at IS NOT NULL"),
 			id,
 		).Scan(&count)
@@ -419,12 +439,19 @@ func (s *Store) CountDedupedBatches(batchIDs []string) ([]DedupedBatchCount, int
 }
 
 func (s *Store) CountAllDeduped() (total int64, distinctBatches int64, err error) {
-	if err := s.db.QueryRow(
+	return s.CountAllDedupedContext(context.Background())
+}
+
+// CountAllDedupedContext is the request-aware form of CountAllDeduped.
+func (s *Store) CountAllDedupedContext(
+	ctx context.Context,
+) (total int64, distinctBatches int64, err error) {
+	if err := s.db.QueryRowContext(ctx,
 		s.Rebind("SELECT COUNT(*) FROM messages WHERE deleted_at IS NOT NULL AND delete_batch_id IS NOT NULL"),
 	).Scan(&total); err != nil {
 		return 0, 0, fmt.Errorf("count hidden messages: %w", err)
 	}
-	if err := s.db.QueryRow(
+	if err := s.db.QueryRowContext(ctx,
 		s.Rebind("SELECT COUNT(DISTINCT delete_batch_id) FROM messages WHERE deleted_at IS NOT NULL AND delete_batch_id IS NOT NULL"),
 	).Scan(&distinctBatches); err != nil {
 		return 0, 0, fmt.Errorf("count distinct batches: %w", err)
@@ -448,12 +475,19 @@ func (s *Store) CountAllDeduped() (total int64, distinctBatches int64, err error
 // Attachments cascade-delete from the metadata row; on-disk blobs are
 // content-addressed and survive until separate cleanup.
 func (s *Store) DeleteAllDeduped() (deleted int64, distinctBatches int64, err error) {
+	return s.DeleteAllDedupedContext(context.Background())
+}
+
+// DeleteAllDedupedContext is the request-aware form of DeleteAllDeduped.
+func (s *Store) DeleteAllDedupedContext(
+	ctx context.Context,
+) (deleted int64, distinctBatches int64, err error) {
 	// runMaintenance wraps the count + cascade DELETE in one transaction with
 	// the pool-wide 30s statement_timeout disabled: the unbounded cascade
 	// DELETE exceeds 30s on a large archive (finding S1). The count and the
 	// delete share the tx so they observe the same snapshot, as before.
 	// No-op timeout reset on SQLite.
-	err = s.runMaintenance(context.Background(), func(ctx context.Context, tx *loggedTx) error {
+	err = s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
 		if err := tx.QueryRowContext(ctx, `
 			SELECT COUNT(DISTINCT delete_batch_id)
 			FROM messages
@@ -482,6 +516,12 @@ func (s *Store) DeleteAllDeduped() (deleted int64, distinctBatches int64, err er
 }
 
 func (s *Store) CountActiveMessages(sourceIDs ...int64) (int64, error) {
+	return s.CountActiveMessagesContext(context.Background(), sourceIDs...)
+}
+
+// CountActiveMessagesContext is the request-aware form of
+// CountActiveMessages.
+func (s *Store) CountActiveMessagesContext(ctx context.Context, sourceIDs ...int64) (int64, error) {
 	query := "SELECT COUNT(*) FROM messages WHERE " + LiveMessagesWhere("", true)
 	var args []any
 	if len(sourceIDs) > 0 {
@@ -493,7 +533,7 @@ func (s *Store) CountActiveMessages(sourceIDs ...int64) (int64, error) {
 		query += " AND source_id IN (" + strings.Join(placeholders, ",") + ")"
 	}
 	var count int64
-	err := s.db.QueryRow(query, args...).Scan(&count)
+	err := s.db.QueryRowContext(ctx, query, args...).Scan(&count)
 	return count, err
 }
 
@@ -502,6 +542,15 @@ func (s *Store) CountActiveMessages(sourceIDs ...int64) (int64, error) {
 // complement of CountActiveMessages within the non-dedup-hidden population, so
 // active + source-deleted is the canonical archived total.
 func (s *Store) CountSourceDeletedMessages(sourceIDs ...int64) (int64, error) {
+	return s.CountSourceDeletedMessagesContext(context.Background(), sourceIDs...)
+}
+
+// CountSourceDeletedMessagesContext is the request-aware form of
+// CountSourceDeletedMessages.
+func (s *Store) CountSourceDeletedMessagesContext(
+	ctx context.Context,
+	sourceIDs ...int64,
+) (int64, error) {
 	query := "SELECT COUNT(*) FROM messages WHERE " + SourceDeletedMessagesWhere("")
 	var args []any
 	if len(sourceIDs) > 0 {
@@ -513,7 +562,7 @@ func (s *Store) CountSourceDeletedMessages(sourceIDs ...int64) (int64, error) {
 		query += " AND source_id IN (" + strings.Join(placeholders, ",") + ")"
 	}
 	var count int64
-	err := s.db.QueryRow(query, args...).Scan(&count)
+	err := s.db.QueryRowContext(ctx, query, args...).Scan(&count)
 	return count, err
 }
 

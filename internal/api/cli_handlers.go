@@ -62,6 +62,139 @@ type ctxCLIStatsStore interface {
 	GetStatsForScopeContext(ctx context.Context, sourceIDs []int64) (*store.Stats, error)
 }
 
+// ContextCLIStore is the production request-aware extension for CLIStore
+// database reads and maintenance work. bindCLIStoreContext keeps the legacy
+// CLIStore surface available to in-process compatibility implementations while
+// statically checked production adapters implement this complete extension.
+type ContextCLIStore interface {
+	GetStatsForScopeContext(ctx context.Context, sourceIDs []int64) (*store.Stats, error)
+	GetSourcesByIdentifierOrDisplayNameContext(ctx context.Context, query string) ([]*store.Source, error)
+	GetSourcesByTypeAndAccountContext(ctx context.Context, sourceType, accountEmail string) ([]*store.Source, error)
+	GetCollectionByNameContext(ctx context.Context, name string) (*store.CollectionWithSources, error)
+	ListCollectionsContext(ctx context.Context) ([]*store.CollectionWithSources, error)
+	CreateCollectionContext(
+		ctx context.Context,
+		name, description string,
+		sourceIDs []int64,
+	) (*store.Collection, error)
+	AddSourcesToCollectionContext(ctx context.Context, name string, sourceIDs []int64) error
+	RemoveSourcesFromCollectionContext(ctx context.Context, name string, sourceIDs []int64) error
+	DeleteCollectionContext(ctx context.Context, name string) error
+	UpdateSourceDisplayNameContext(ctx context.Context, sourceID int64, displayName string) error
+	ListSourcesContext(ctx context.Context, sourceType string) ([]*store.Source, error)
+	GetSourceByIDContext(ctx context.Context, id int64) (*store.Source, error)
+	ListAccountIdentitiesContext(ctx context.Context, sourceID int64) ([]store.AccountIdentity, error)
+	AddAccountIdentityContext(ctx context.Context, sourceID int64, address, signal string) error
+	RemoveAccountIdentityContext(ctx context.Context, sourceID int64, address string) (int64, error)
+	CountMessagesForSourceContext(ctx context.Context, sourceID int64) (int64, error)
+	CountSourceDeletedMessagesContext(ctx context.Context, sourceIDs ...int64) (int64, error)
+	RebuildFTSContext(ctx context.Context, progress func(done, total int64)) (int64, error)
+}
+
+type requestCLIStore struct {
+	CLIStore
+
+	contextStore ContextCLIStore
+	ctx          context.Context
+}
+
+func bindCLIStoreContext(ctx context.Context, st CLIStore) CLIStore {
+	contextStore, ok := st.(ContextCLIStore)
+	if !ok {
+		// Intentional compatibility fallback for in-process stores that
+		// predate ContextCLIStore. The daemon production adapter has a static
+		// interface assertion and production-path cancellation coverage.
+		return st
+	}
+	return &requestCLIStore{CLIStore: st, contextStore: contextStore, ctx: ctx}
+}
+
+func (s *requestCLIStore) GetStatsForScope(sourceIDs []int64) (*store.Stats, error) {
+	return s.contextStore.GetStatsForScopeContext(s.ctx, sourceIDs)
+}
+
+func (s *requestCLIStore) GetStatsForScopeContext(
+	ctx context.Context,
+	sourceIDs []int64,
+) (*store.Stats, error) {
+	return s.contextStore.GetStatsForScopeContext(ctx, sourceIDs)
+}
+
+func (s *requestCLIStore) GetSourcesByIdentifierOrDisplayName(query string) ([]*store.Source, error) {
+	return s.contextStore.GetSourcesByIdentifierOrDisplayNameContext(s.ctx, query)
+}
+
+func (s *requestCLIStore) GetSourcesByTypeAndAccount(
+	sourceType, accountEmail string,
+) ([]*store.Source, error) {
+	return s.contextStore.GetSourcesByTypeAndAccountContext(s.ctx, sourceType, accountEmail)
+}
+
+func (s *requestCLIStore) GetCollectionByName(name string) (*store.CollectionWithSources, error) {
+	return s.contextStore.GetCollectionByNameContext(s.ctx, name)
+}
+
+func (s *requestCLIStore) ListCollections() ([]*store.CollectionWithSources, error) {
+	return s.contextStore.ListCollectionsContext(s.ctx)
+}
+
+func (s *requestCLIStore) CreateCollection(
+	name, description string,
+	sourceIDs []int64,
+) (*store.Collection, error) {
+	return s.contextStore.CreateCollectionContext(s.ctx, name, description, sourceIDs)
+}
+
+func (s *requestCLIStore) AddSourcesToCollection(name string, sourceIDs []int64) error {
+	return s.contextStore.AddSourcesToCollectionContext(s.ctx, name, sourceIDs)
+}
+
+func (s *requestCLIStore) RemoveSourcesFromCollection(name string, sourceIDs []int64) error {
+	return s.contextStore.RemoveSourcesFromCollectionContext(s.ctx, name, sourceIDs)
+}
+
+func (s *requestCLIStore) DeleteCollection(name string) error {
+	return s.contextStore.DeleteCollectionContext(s.ctx, name)
+}
+
+func (s *requestCLIStore) UpdateSourceDisplayName(sourceID int64, displayName string) error {
+	return s.contextStore.UpdateSourceDisplayNameContext(s.ctx, sourceID, displayName)
+}
+
+func (s *requestCLIStore) ListSources(sourceType string) ([]*store.Source, error) {
+	return s.contextStore.ListSourcesContext(s.ctx, sourceType)
+}
+
+func (s *requestCLIStore) GetSourceByID(id int64) (*store.Source, error) {
+	return s.contextStore.GetSourceByIDContext(s.ctx, id)
+}
+
+func (s *requestCLIStore) ListAccountIdentities(sourceID int64) ([]store.AccountIdentity, error) {
+	return s.contextStore.ListAccountIdentitiesContext(s.ctx, sourceID)
+}
+
+func (s *requestCLIStore) AddAccountIdentity(sourceID int64, address, signal string) error {
+	return s.contextStore.AddAccountIdentityContext(s.ctx, sourceID, address, signal)
+}
+
+func (s *requestCLIStore) RemoveAccountIdentity(sourceID int64, address string) (int64, error) {
+	return s.contextStore.RemoveAccountIdentityContext(s.ctx, sourceID, address)
+}
+
+func (s *requestCLIStore) CountMessagesForSource(sourceID int64) (int64, error) {
+	return s.contextStore.CountMessagesForSourceContext(s.ctx, sourceID)
+}
+
+func (s *requestCLIStore) CountSourceDeletedMessages(sourceIDs ...int64) (int64, error) {
+	return s.contextStore.CountSourceDeletedMessagesContext(s.ctx, sourceIDs...)
+}
+
+func (s *requestCLIStore) RebuildFTS(
+	progress func(done, total int64),
+) (int64, error) {
+	return s.contextStore.RebuildFTSContext(s.ctx, progress)
+}
+
 func getCLIStatsForScope(
 	ctx context.Context,
 	st CLIStore,
@@ -76,7 +209,10 @@ func getCLIStatsForScope(
 // CLIStartupMigrationStore exposes one-time startup migrations needed by
 // setup-style CLI commands while keeping writes inside the daemon process.
 type CLIStartupMigrationStore interface {
-	RunStartupMigrations(legacyIdentityAddresses []string) (store.StartupMigrationResult, error)
+	RunStartupMigrationsContext(
+		ctx context.Context,
+		legacyIdentityAddresses []string,
+	) (store.StartupMigrationResult, error)
 }
 
 // CLICacheBuilder runs the user-facing analytics cache build while streaming
@@ -134,6 +270,65 @@ type CLIDedupDeleteStore interface {
 	DeleteAllDeduped() (int64, int64, error)
 	DeleteDedupedBatch(batchID string) (int64, error)
 	BackupDatabase(dst string) error
+}
+
+// ContextCLIDedupDeleteStore is the production request-aware extension for
+// destructive dedup-delete planning, backup, and execution.
+type ContextCLIDedupDeleteStore interface {
+	CountAllDedupedContext(ctx context.Context) (int64, int64, error)
+	CountDedupedBatchesContext(
+		ctx context.Context,
+		batchIDs []string,
+	) ([]store.DedupedBatchCount, int64, error)
+	DeleteAllDedupedContext(ctx context.Context) (int64, int64, error)
+	DeleteDedupedBatchContext(ctx context.Context, batchID string) (int64, error)
+	BackupDatabaseContext(ctx context.Context, dst string) error
+}
+
+type requestCLIDedupDeleteStore struct {
+	CLIDedupDeleteStore
+
+	contextStore ContextCLIDedupDeleteStore
+	ctx          context.Context
+}
+
+func bindCLIDedupDeleteStoreContext(
+	ctx context.Context,
+	st CLIDedupDeleteStore,
+) CLIDedupDeleteStore {
+	contextStore, ok := st.(ContextCLIDedupDeleteStore)
+	if !ok {
+		// Compatibility fallback for in-process stores. The production daemon
+		// adapter is statically checked against the context extension.
+		return st
+	}
+	return &requestCLIDedupDeleteStore{
+		CLIDedupDeleteStore: st,
+		contextStore:        contextStore,
+		ctx:                 ctx,
+	}
+}
+
+func (s *requestCLIDedupDeleteStore) CountAllDeduped() (int64, int64, error) {
+	return s.contextStore.CountAllDedupedContext(s.ctx)
+}
+
+func (s *requestCLIDedupDeleteStore) CountDedupedBatches(
+	batchIDs []string,
+) ([]store.DedupedBatchCount, int64, error) {
+	return s.contextStore.CountDedupedBatchesContext(s.ctx, batchIDs)
+}
+
+func (s *requestCLIDedupDeleteStore) DeleteAllDeduped() (int64, int64, error) {
+	return s.contextStore.DeleteAllDedupedContext(s.ctx)
+}
+
+func (s *requestCLIDedupDeleteStore) DeleteDedupedBatch(batchID string) (int64, error) {
+	return s.contextStore.DeleteDedupedBatchContext(s.ctx, batchID)
+}
+
+func (s *requestCLIDedupDeleteStore) BackupDatabase(dst string) error {
+	return s.contextStore.BackupDatabaseContext(s.ctx, dst)
 }
 
 func (s *Server) cliStore() (CLIStore, *apiHTTPError) {
@@ -609,6 +804,7 @@ func (s *Server) handleCLIStats(w http.ResponseWriter, r *http.Request) {
 		writeAPIHTTPError(w, apiErr)
 		return
 	}
+	cliStore = bindCLIStoreContext(r.Context(), cliStore)
 
 	scope, err := resolveCLIStatsScope(cliStore, account, collection)
 	if err != nil {
@@ -637,7 +833,7 @@ func (s *Server) handleCLIStats(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (s *Server) handleCLIInitDB(w http.ResponseWriter, _ *http.Request) {
+func (s *Server) handleCLIInitDB(w http.ResponseWriter, r *http.Request) {
 	if s.store == nil {
 		writeError(w, http.StatusServiceUnavailable, "store_unavailable", "Database not available")
 		return
@@ -653,8 +849,11 @@ func (s *Server) handleCLIInitDB(w http.ResponseWriter, _ *http.Request) {
 	if s.cfg != nil {
 		legacyIdentityAddresses = s.cfg.Identity.Addresses
 	}
-	migration, err := migrator.RunStartupMigrations(legacyIdentityAddresses)
+	migration, err := migrator.RunStartupMigrationsContext(r.Context(), legacyIdentityAddresses)
 	if err != nil {
+		if s.writeIfContextError(w, err) {
+			return
+		}
 		s.logger.Error("startup migration failed", "error", err)
 		writeError(w, http.StatusInternalServerError, "startup_migration_failed", "Startup migrations failed")
 		return
@@ -670,8 +869,11 @@ func (s *Server) handleCLIInitDB(w http.ResponseWriter, _ *http.Request) {
 			"sources", migration.SourceCount)
 	}
 
-	stats, err := s.store.GetStats()
+	stats, err := s.getStats(r.Context())
 	if err != nil {
+		if s.writeIfContextError(w, err) {
+			return
+		}
 		s.logger.Error("failed to get CLI init-db stats", "error", err)
 		writeError(w, http.StatusInternalServerError, "internal_error", "Failed to retrieve statistics")
 		return
@@ -1165,11 +1367,15 @@ func (s *Server) cliDedupDeleteStore() (CLIDedupDeleteStore, *apiHTTPError) {
 	return dedupStore, nil
 }
 
-func (s *Server) planCLIDeleteDeduped(req cliDeleteDedupedPlanRequest) (cliDeleteDedupedPlanResponse, error) {
+func (s *Server) planCLIDeleteDeduped(
+	ctx context.Context,
+	req cliDeleteDedupedPlanRequest,
+) (cliDeleteDedupedPlanResponse, error) {
 	dedupStore, apiErr := s.cliDedupDeleteStore()
 	if apiErr != nil {
 		return cliDeleteDedupedPlanResponse{}, apiErr
 	}
+	dedupStore = bindCLIDedupDeleteStoreContext(ctx, dedupStore)
 
 	result, err := planCLIDeleteDedupedWith(dedupStore, req.scope())
 	if err != nil {
@@ -1178,11 +1384,15 @@ func (s *Server) planCLIDeleteDeduped(req cliDeleteDedupedPlanRequest) (cliDelet
 	return result, nil
 }
 
-func (s *Server) executeCLIDeleteDeduped(req cliDeleteDedupedExecuteRequest) (cliDeleteDedupedExecuteResponse, error) {
+func (s *Server) executeCLIDeleteDeduped(
+	ctx context.Context,
+	req cliDeleteDedupedExecuteRequest,
+) (cliDeleteDedupedExecuteResponse, error) {
 	dedupStore, apiErr := s.cliDedupDeleteStore()
 	if apiErr != nil {
 		return cliDeleteDedupedExecuteResponse{}, apiErr
 	}
+	dedupStore = bindCLIDedupDeleteStoreContext(ctx, dedupStore)
 
 	plan, err := planCLIDeleteDedupedWith(dedupStore, req.scope())
 	if err != nil {
@@ -1391,6 +1601,7 @@ func (s *Server) handleCLISearch(w http.ResponseWriter, r *http.Request) {
 		writeAPIHTTPError(w, apiErr)
 		return
 	}
+	cliStore = bindCLIStoreContext(r.Context(), cliStore)
 
 	account := r.URL.Query().Get("account")
 	collection := r.URL.Query().Get("collection")
@@ -1566,12 +1777,13 @@ func (s *Server) backfillFTSWithActivity(cliStore CLIStore) (int64, error) {
 	return n, nil
 }
 
-func (s *Server) handleCLIRebuildFTS(w http.ResponseWriter, _ *http.Request) {
+func (s *Server) handleCLIRebuildFTS(w http.ResponseWriter, r *http.Request) {
 	cliStore, apiErr := s.cliStore()
 	if apiErr != nil {
 		writeAPIHTTPError(w, apiErr)
 		return
 	}
+	cliStore = bindCLIStoreContext(r.Context(), cliStore)
 
 	writeEvent := newCLINDJSONEventWriter[cliRebuildFTSEvent](w)
 
@@ -1638,6 +1850,7 @@ func (s *Server) handleCLIAccounts(w http.ResponseWriter, r *http.Request) {
 		writeAPIHTTPError(w, apiErr)
 		return
 	}
+	cliStore = bindCLIStoreContext(r.Context(), cliStore)
 
 	sources, err := cliStore.ListSources("")
 	if err != nil {
@@ -1689,11 +1902,15 @@ func (s *Server) handleCLIAccounts(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, cliAccountsResponse{Accounts: accounts})
 }
 
-func (s *Server) updateCLIAccount(req accountops.UpdateRequest) (accountops.UpdateResult, error) {
+func (s *Server) updateCLIAccount(
+	ctx context.Context,
+	req accountops.UpdateRequest,
+) (accountops.UpdateResult, error) {
 	cliStore, apiErr := s.cliStore()
 	if apiErr != nil {
 		return accountops.UpdateResult{}, apiErr
 	}
+	cliStore = bindCLIStoreContext(ctx, cliStore)
 
 	result, err := accountops.UpdateDisplayName(cliStore, req)
 	if err != nil {
@@ -1712,6 +1929,7 @@ func (s *Server) handleCLICollections(w http.ResponseWriter, r *http.Request) {
 		writeAPIHTTPError(w, apiErr)
 		return
 	}
+	cliStore = bindCLIStoreContext(r.Context(), cliStore)
 
 	collections, err := cliStore.ListCollections()
 	if err != nil {
@@ -1739,6 +1957,7 @@ func (s *Server) handleCLICollection(w http.ResponseWriter, r *http.Request) {
 		writeAPIHTTPError(w, apiErr)
 		return
 	}
+	cliStore = bindCLIStoreContext(r.Context(), cliStore)
 	name := r.URL.Query().Get("name")
 	if name == "" {
 		writeError(w, http.StatusBadRequest, "missing_name", "Collection name is required")
@@ -1764,12 +1983,14 @@ func (s *Server) handleCLICollection(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) createCLICollection(
+	ctx context.Context,
 	req collectionops.CreateRequest,
 ) (collectionops.MutationResult, error) {
 	cliStore, apiErr := s.cliStore()
 	if apiErr != nil {
 		return collectionops.MutationResult{}, apiErr
 	}
+	cliStore = bindCLIStoreContext(ctx, cliStore)
 	result, err := collectionops.Create(cliStore, req)
 	if err != nil {
 		return collectionops.MutationResult{}, s.operationError(
@@ -1782,6 +2003,7 @@ func (s *Server) createCLICollection(
 }
 
 func (s *Server) addCLICollectionSources(
+	ctx context.Context,
 	name string,
 	req collectionops.SourcesRequest,
 ) (collectionops.MutationResult, error) {
@@ -1789,6 +2011,7 @@ func (s *Server) addCLICollectionSources(
 	if apiErr != nil {
 		return collectionops.MutationResult{}, apiErr
 	}
+	cliStore = bindCLIStoreContext(ctx, cliStore)
 	result, err := collectionops.AddSources(cliStore, name, req)
 	if err != nil {
 		return collectionops.MutationResult{}, s.operationError(
@@ -1801,6 +2024,7 @@ func (s *Server) addCLICollectionSources(
 }
 
 func (s *Server) removeCLICollectionSources(
+	ctx context.Context,
 	name string,
 	req collectionops.SourcesRequest,
 ) (collectionops.MutationResult, error) {
@@ -1808,6 +2032,7 @@ func (s *Server) removeCLICollectionSources(
 	if apiErr != nil {
 		return collectionops.MutationResult{}, apiErr
 	}
+	cliStore = bindCLIStoreContext(ctx, cliStore)
 	result, err := collectionops.RemoveSources(cliStore, name, req)
 	if err != nil {
 		return collectionops.MutationResult{}, s.operationError(
@@ -1819,11 +2044,15 @@ func (s *Server) removeCLICollectionSources(
 	return result, nil
 }
 
-func (s *Server) deleteCLICollection(name string) (collectionops.MutationResult, error) {
+func (s *Server) deleteCLICollection(
+	ctx context.Context,
+	name string,
+) (collectionops.MutationResult, error) {
 	cliStore, apiErr := s.cliStore()
 	if apiErr != nil {
 		return collectionops.MutationResult{}, apiErr
 	}
+	cliStore = bindCLIStoreContext(ctx, cliStore)
 	result, err := collectionops.Delete(cliStore, name)
 	if err != nil {
 		return collectionops.MutationResult{}, s.operationError(
@@ -1840,6 +2069,7 @@ func (s *Server) cliScopeError(err error) *apiHTTPError {
 }
 
 func (s *Server) getCLIIdentities(
+	ctx context.Context,
 	account string,
 	collection string,
 	primaryOnly bool,
@@ -1855,6 +2085,7 @@ func (s *Server) getCLIIdentities(
 	if apiErr != nil {
 		return cliIdentitiesResponse{}, apiErr
 	}
+	cliStore = bindCLIStoreContext(ctx, cliStore)
 
 	if account != "" && collection != "" {
 		return cliIdentitiesResponse{}, newAPIHTTPError(
@@ -1927,6 +2158,7 @@ func (s *Server) addCLIIdentity(ctx context.Context, req identityops.AddRequest)
 	if apiErr != nil {
 		return identityops.AddResult{}, apiErr
 	}
+	cliStore = bindCLIStoreContext(ctx, cliStore)
 
 	result, err := identityops.Add(cliStore, req)
 	if err != nil {
@@ -1959,6 +2191,7 @@ func (s *Server) removeCLIIdentity(ctx context.Context, req identityops.RemoveRe
 	if apiErr != nil {
 		return identityops.RemoveResult{}, apiErr
 	}
+	cliStore = bindCLIStoreContext(ctx, cliStore)
 
 	result, err := identityops.Remove(cliStore, req)
 	if err != nil {

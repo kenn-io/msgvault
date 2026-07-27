@@ -343,6 +343,11 @@ set `pull_policy: always`, so `up -d` reconciles against GHCR. The explicit
 `pull` followed by `up -d` sequence remains the clearest update procedure
 across NAS Compose implementations.
 
+Bundles generated before `pull_policy: always` was added are not rewritten
+automatically. Existing installations should either regenerate the bundle,
+add `pull_policy: always` to the service manually, or keep updating explicitly
+with `docker compose pull` followed by `docker compose up -d`.
+
 ### Health Checks
 
 The container includes a health check that polls `/health` every 30 seconds.

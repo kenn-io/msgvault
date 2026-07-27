@@ -3,11 +3,17 @@ package cmd
 import (
 	"context"
 	"database/sql"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/api"
+	"go.kenn.io/msgvault/internal/apiprotocol"
+	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
@@ -23,6 +29,251 @@ func TestStoreAPIAdapterImplementsCtxMessageStore(t *testing.T) {
 }
 
 var _ api.CtxMessageStore = (*storeAPIAdapter)(nil)
+
+type scopedStatsProductionAdapter struct {
+	*storeAPIAdapter
+
+	source   *store.Source
+	returned chan error
+}
+
+func (a *scopedStatsProductionAdapter) GetSourcesByIdentifierOrDisplayName(
+	string,
+) ([]*store.Source, error) {
+	return []*store.Source{a.source}, nil
+}
+
+func (a *scopedStatsProductionAdapter) GetSourcesByIdentifierOrDisplayNameContext(
+	context.Context,
+	string,
+) ([]*store.Source, error) {
+	return []*store.Source{a.source}, nil
+}
+
+func (a *scopedStatsProductionAdapter) GetSourcesByTypeAndAccount(
+	string,
+	string,
+) ([]*store.Source, error) {
+	return nil, nil
+}
+
+func (a *scopedStatsProductionAdapter) GetSourcesByTypeAndAccountContext(
+	context.Context,
+	string,
+	string,
+) ([]*store.Source, error) {
+	return nil, nil
+}
+
+func (a *scopedStatsProductionAdapter) GetStatsForScopeContext(
+	ctx context.Context,
+	sourceIDs []int64,
+) (*store.Stats, error) {
+	stats, err := a.storeAPIAdapter.GetStatsForScopeContext(ctx, sourceIDs)
+	a.returned <- err
+	return stats, err
+}
+
+// TestMarkedCLIScopedStatsCancellationReachesProductionAdapter guards the
+// complete marked handler -> optional context extension -> daemon adapter ->
+// database path. The wrapper only supplies deterministic scope resolution and
+// observes the real production adapter returning; it does not replace the
+// scoped statistics query.
+func TestMarkedCLIScopedStatsCancellationReachesProductionAdapter(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	st.DB().SetMaxOpenConns(1)
+	conn, err := st.DB().Conn(t.Context())
+	require.NoError(t, err, "hold the only database connection")
+	t.Cleanup(func() { _ = conn.Close() })
+
+	returned := make(chan error, 1)
+	adapter := &scopedStatsProductionAdapter{
+		storeAPIAdapter: &storeAPIAdapter{store: st},
+		source: &store.Source{
+			ID:         42,
+			SourceType: "gmail",
+			Identifier: "alice@example.com",
+		},
+		returned: returned,
+	}
+	srv := api.NewServerWithOptions(api.ServerOptions{
+		Config: &config.Config{Server: config.ServerConfig{
+			APIKey: "secret-key",
+		}},
+		Store:  adapter,
+		Logger: slog.New(slog.DiscardHandler),
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	req := httptest.NewRequest(
+		http.MethodGet,
+		"/api/v1/cli/stats?account=alice@example.com",
+		nil,
+	).WithContext(ctx)
+	req.Header.Set("X-Api-Key", "secret-key")
+	req.Header.Set(apiprotocol.ClientClassHeader, apiprotocol.ClientClassCLI)
+
+	requestDone := make(chan struct{})
+	go func() {
+		srv.Router().ServeHTTP(httptest.NewRecorder(), req)
+		close(requestDone)
+	}()
+
+	require.Eventually(t, func() bool {
+		return st.DB().Stats().WaitCount > 0
+	}, 2*time.Second, 10*time.Millisecond, "scoped statistics waits for the production database")
+	cancel()
+
+	select {
+	case err := <-returned:
+		require.ErrorIs(t, err, context.Canceled, "production scoped statistics returns request cancellation")
+	case <-time.After(2 * time.Second):
+		require.FailNow(t, "production scoped statistics continued after marked request cancellation")
+	}
+	select {
+	case <-requestDone:
+	case <-time.After(2 * time.Second):
+		require.FailNow(t, "marked scoped statistics handler did not return after cancellation")
+	}
+}
+
+func TestMarkedCLIRequestCancellationStopsProductionStoreWork(t *testing.T) {
+	tests := []struct {
+		name   string
+		method string
+		path   string
+		body   string
+	}{
+		{
+			name:   "init database",
+			method: http.MethodPost,
+			path:   "/api/v1/cli/init-db",
+		},
+		{
+			name:   "list accounts",
+			method: http.MethodGet,
+			path:   "/api/v1/cli/accounts",
+		},
+		{
+			name:   "list collections",
+			method: http.MethodGet,
+			path:   "/api/v1/cli/collections",
+		},
+		{
+			name:   "rebuild FTS",
+			method: http.MethodPost,
+			path:   "/api/v1/cli/rebuild-fts",
+		},
+		{
+			name:   "update account",
+			method: http.MethodPost,
+			path:   "/api/v1/cli/account",
+			body:   `{"email":"alice@example.com","display_name":"Alice"}`,
+		},
+		{
+			name:   "create collection",
+			method: http.MethodPost,
+			path:   "/api/v1/cli/collections",
+			body:   `{"name":"Work","accounts":["alice@example.com"]}`,
+		},
+		{
+			name:   "add collection sources",
+			method: http.MethodPatch,
+			path:   "/api/v1/cli/collections/Work/sources",
+			body:   `{"accounts":["alice@example.com"]}`,
+		},
+		{
+			name:   "remove collection sources",
+			method: http.MethodDelete,
+			path:   "/api/v1/cli/collections/Work/sources",
+			body:   `{"accounts":["alice@example.com"]}`,
+		},
+		{
+			name:   "delete collection",
+			method: http.MethodDelete,
+			path:   "/api/v1/cli/collections/Work",
+		},
+		{
+			name:   "list identities",
+			method: http.MethodGet,
+			path:   "/api/v1/cli/identities",
+		},
+		{
+			name:   "add identity",
+			method: http.MethodPost,
+			path:   "/api/v1/cli/identities",
+			body:   `{"account":"alice@example.com","identifier":"alias@example.com","signal":"manual"}`,
+		},
+		{
+			name:   "remove identity",
+			method: http.MethodDelete,
+			path:   "/api/v1/cli/identities",
+			body:   `{"account":"alice@example.com","identifier":"alias@example.com"}`,
+		},
+		{
+			name:   "plan dedup deletion",
+			method: http.MethodPost,
+			path:   "/api/v1/cli/delete-deduped/plan",
+			body:   `{"all_hidden":true}`,
+		},
+		{
+			name:   "execute dedup deletion",
+			method: http.MethodPost,
+			path:   "/api/v1/cli/delete-deduped",
+			body:   `{"all_hidden":true,"no_backup":true,"expected_total":0,"expected_batch_count":0,"expected_batches":[]}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			st := testutil.NewTestStore(t)
+			st.DB().SetMaxOpenConns(1)
+			conn, err := st.DB().Conn(t.Context())
+			require.NoError(t, err, "hold the only database connection")
+			t.Cleanup(func() { _ = conn.Close() })
+
+			srv := api.NewServerWithOptions(api.ServerOptions{
+				Config: &config.Config{Server: config.ServerConfig{
+					APIKey: "secret-key",
+				}},
+				Store:  &storeAPIAdapter{store: st},
+				Logger: slog.New(slog.DiscardHandler),
+			})
+
+			ctx, cancel := context.WithCancel(context.Background())
+			var body *strings.Reader
+			if tt.body == "" {
+				body = strings.NewReader("")
+			} else {
+				body = strings.NewReader(tt.body)
+			}
+			req := httptest.NewRequest(tt.method, tt.path, body).WithContext(ctx)
+			req.Header.Set("X-Api-Key", "secret-key")
+			req.Header.Set(apiprotocol.ClientClassHeader, apiprotocol.ClientClassCLI)
+			if tt.body != "" {
+				req.Header.Set("Content-Type", "application/json")
+			}
+
+			waitCount := st.DB().Stats().WaitCount
+			requestDone := make(chan struct{})
+			go func() {
+				srv.Router().ServeHTTP(httptest.NewRecorder(), req)
+				close(requestDone)
+			}()
+
+			require.Eventually(t, func() bool {
+				return st.DB().Stats().WaitCount > waitCount
+			}, 2*time.Second, 10*time.Millisecond, "handler reaches production database work")
+			cancel()
+
+			select {
+			case <-requestDone:
+			case <-time.After(500 * time.Millisecond):
+				require.FailNow(t, "production store work continued after marked request cancellation")
+			}
+		})
+	}
+}
 
 // TestStoreAPIAdapterContextReadsHonorCancellation verifies the adapter's
 // context-aware read methods thread the caller's context into the underlying

@@ -25,8 +25,8 @@ func (s *Server) registerCLIAccountHumaRoutes(api huma.API) {
 		Summary:          "Update an account for CLI use",
 		SkipValidateBody: true,
 		Errors:           []int{http.StatusBadRequest, http.StatusNotFound, http.StatusInternalServerError, http.StatusServiceUnavailable},
-	}), func(_ context.Context, input *cliAccountUpdateInput) (*cliAccountUpdateOutput, error) {
-		result, err := s.updateCLIAccount(input.Body)
+	}), func(ctx context.Context, input *cliAccountUpdateInput) (*cliAccountUpdateOutput, error) {
+		result, err := s.updateCLIAccount(ctx, input.Body)
 		if err != nil {
 			return nil, err
 		}

@@ -42,8 +42,8 @@ func (s *Server) registerCLIIdentityHumaRoutes(api huma.API) {
 		Tags:        []string{cliRouteTag},
 		Summary:     "List confirmed account identities",
 		Errors:      []int{http.StatusBadRequest, http.StatusInternalServerError, http.StatusServiceUnavailable},
-	}), func(_ context.Context, input *cliIdentityListInput) (*cliIdentitiesOutput, error) {
-		resp, err := s.getCLIIdentities(input.Account, input.Collection, input.PrimaryOnly)
+	}), func(ctx context.Context, input *cliIdentityListInput) (*cliIdentitiesOutput, error) {
+		resp, err := s.getCLIIdentities(ctx, input.Account, input.Collection, input.PrimaryOnly)
 		if err != nil {
 			return nil, err
 		}

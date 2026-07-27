@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -176,13 +177,20 @@ func (s *Store) currentIdentityRevisionTx(tx *loggedTx) (int64, error) {
 // bumpIdentityRevision increments the revision inside tx and returns the
 // new value, seeding the row with 0 first if it does not exist yet.
 func (s *Store) bumpIdentityRevision(tx *loggedTx) (int64, error) {
-	if _, err := tx.Exec(s.dialect.InsertOrIgnore(
+	return s.bumpIdentityRevisionContext(context.Background(), tx)
+}
+
+func (s *Store) bumpIdentityRevisionContext(
+	ctx context.Context,
+	tx *loggedTx,
+) (int64, error) {
+	if _, err := tx.ExecContext(ctx, s.dialect.InsertOrIgnore(
 		`INSERT OR IGNORE INTO archive_metadata (key, value) VALUES (?, '0')`),
 		identityRevisionKey); err != nil {
 		return 0, fmt.Errorf("seed identity revision: %w", err)
 	}
 	var revision int64
-	if err := tx.QueryRow(
+	if err := tx.QueryRowContext(ctx,
 		`UPDATE archive_metadata SET value = CAST(CAST(value AS INTEGER) + 1 AS TEXT)
 		 WHERE key = ? RETURNING CAST(value AS INTEGER)`,
 		identityRevisionKey).Scan(&revision); err != nil {
@@ -204,12 +212,19 @@ func (s *Store) bumpIdentityRevision(tx *loggedTx) (int64, error) {
 // lock on the identity-revision row, so concurrent link/unlink
 // transactions queue on it.
 func (s *Store) lockIdentityMutationTx(tx *loggedTx) error {
-	if _, err := tx.Exec(s.dialect.InsertOrIgnore(
+	return s.lockIdentityMutationTxContext(context.Background(), tx)
+}
+
+func (s *Store) lockIdentityMutationTxContext(
+	ctx context.Context,
+	tx *loggedTx,
+) error {
+	if _, err := tx.ExecContext(ctx, s.dialect.InsertOrIgnore(
 		`INSERT OR IGNORE INTO archive_metadata (key, value) VALUES (?, '0')`),
 		identityRevisionKey); err != nil {
 		return fmt.Errorf("seed identity revision: %w", err)
 	}
-	if _, err := tx.Exec(
+	if _, err := tx.ExecContext(ctx,
 		`UPDATE archive_metadata SET value = value WHERE key = ?`,
 		identityRevisionKey); err != nil {
 		return fmt.Errorf("lock identity revision: %w", err)

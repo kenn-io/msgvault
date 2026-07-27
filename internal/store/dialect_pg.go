@@ -299,14 +299,14 @@ func (d *PostgreSQLDialect) SchemaFTS() string {
 // has the same cost as FTSClearSQL (which is already hatched), and the GIN
 // rebuild over a populated table can likewise exceed the pool-wide 30s
 // statement_timeout on a large archive (finding S1).
-func (d *PostgreSQLDialect) FTSRebuildSchema(q querier) error {
-	if _, err := q.Exec("DROP INDEX IF EXISTS messages_search_fts_idx"); err != nil {
+func (d *PostgreSQLDialect) FTSRebuildSchema(ctx context.Context, q contextQuerier) error {
+	if _, err := q.ExecContext(ctx, "DROP INDEX IF EXISTS messages_search_fts_idx"); err != nil {
 		return fmt.Errorf("drop messages_search_fts_idx: %w", err)
 	}
-	if _, err := q.Exec("UPDATE messages SET search_fts = NULL"); err != nil {
+	if _, err := q.ExecContext(ctx, "UPDATE messages SET search_fts = NULL"); err != nil {
 		return fmt.Errorf("clear search_fts: %w", err)
 	}
-	if _, err := q.Exec(
+	if _, err := q.ExecContext(ctx,
 		"CREATE INDEX IF NOT EXISTS messages_search_fts_idx ON messages USING GIN (search_fts)",
 	); err != nil {
 		return fmt.Errorf("create messages_search_fts_idx: %w", err)
@@ -428,9 +428,13 @@ func (d *PostgreSQLDialect) EnsureTriggers(q querier) error {
 }
 
 // DatabaseSize queries pg_database_size() for the current database.
-func (d *PostgreSQLDialect) DatabaseSize(db *sql.DB, _ string) (int64, error) {
+func (d *PostgreSQLDialect) DatabaseSize(
+	ctx context.Context,
+	db *sql.DB,
+	_ string,
+) (int64, error) {
 	var size int64
-	err := db.QueryRow("SELECT pg_database_size(current_database())").Scan(&size)
+	err := db.QueryRowContext(ctx, "SELECT pg_database_size(current_database())").Scan(&size)
 	if err != nil {
 		return 0, fmt.Errorf("pg_database_size: %w", err)
 	}

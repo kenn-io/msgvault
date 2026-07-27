@@ -34,8 +34,8 @@ func (s *Server) registerCLICollectionHumaRoutes(api huma.API) {
 		Summary:          "Create a collection for CLI use",
 		SkipValidateBody: true,
 		Errors:           []int{http.StatusBadRequest, http.StatusNotFound, http.StatusInternalServerError, http.StatusServiceUnavailable},
-	}), func(_ context.Context, input *cliCollectionCreateInput) (*cliCollectionMutationOutput, error) {
-		result, err := s.createCLICollection(input.Body)
+	}), func(ctx context.Context, input *cliCollectionCreateInput) (*cliCollectionMutationOutput, error) {
+		result, err := s.createCLICollection(ctx, input.Body)
 		if err != nil {
 			return nil, err
 		}
@@ -50,8 +50,8 @@ func (s *Server) registerCLICollectionHumaRoutes(api huma.API) {
 		Summary:          "Add accounts to a CLI collection",
 		SkipValidateBody: true,
 		Errors:           []int{http.StatusBadRequest, http.StatusNotFound, http.StatusInternalServerError, http.StatusServiceUnavailable},
-	}), func(_ context.Context, input *cliCollectionSourcesInput) (*cliCollectionMutationOutput, error) {
-		result, err := s.addCLICollectionSources(input.Name, input.Body)
+	}), func(ctx context.Context, input *cliCollectionSourcesInput) (*cliCollectionMutationOutput, error) {
+		result, err := s.addCLICollectionSources(ctx, input.Name, input.Body)
 		if err != nil {
 			return nil, err
 		}
@@ -66,8 +66,8 @@ func (s *Server) registerCLICollectionHumaRoutes(api huma.API) {
 		Summary:          "Remove accounts from a CLI collection",
 		SkipValidateBody: true,
 		Errors:           []int{http.StatusBadRequest, http.StatusNotFound, http.StatusInternalServerError, http.StatusServiceUnavailable},
-	}), func(_ context.Context, input *cliCollectionSourcesInput) (*cliCollectionMutationOutput, error) {
-		result, err := s.removeCLICollectionSources(input.Name, input.Body)
+	}), func(ctx context.Context, input *cliCollectionSourcesInput) (*cliCollectionMutationOutput, error) {
+		result, err := s.removeCLICollectionSources(ctx, input.Name, input.Body)
 		if err != nil {
 			return nil, err
 		}
@@ -81,8 +81,8 @@ func (s *Server) registerCLICollectionHumaRoutes(api huma.API) {
 		Tags:        []string{cliRouteTag},
 		Summary:     "Delete a CLI collection",
 		Errors:      []int{http.StatusBadRequest, http.StatusNotFound, http.StatusInternalServerError, http.StatusServiceUnavailable},
-	}), func(_ context.Context, input *cliCollectionDeleteInput) (*cliCollectionMutationOutput, error) {
-		result, err := s.deleteCLICollection(input.Name)
+	}), func(ctx context.Context, input *cliCollectionDeleteInput) (*cliCollectionMutationOutput, error) {
+		result, err := s.deleteCLICollection(ctx, input.Name)
 		if err != nil {
 			return nil, err
 		}

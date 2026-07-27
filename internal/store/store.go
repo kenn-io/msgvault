@@ -380,6 +380,11 @@ func (s *Store) DB() *sql.DB {
 // to dst using VACUUM INTO. PostgreSQL deployments should be backed up with
 // pg_dump, pg_basebackup, or replication tooling outside msgvault.
 func (s *Store) BackupDatabase(dst string) error {
+	return s.BackupDatabaseContext(context.Background(), dst)
+}
+
+// BackupDatabaseContext is the request-aware form of BackupDatabase.
+func (s *Store) BackupDatabaseContext(ctx context.Context, dst string) error {
 	if s.IsPostgreSQL() {
 		return errors.New("backup-before-dedup is SQLite-only (uses VACUUM INTO); " +
 			"snapshot the PostgreSQL database with pg_dump out-of-band, " +
@@ -389,7 +394,10 @@ func (s *Store) BackupDatabase(dst string) error {
 	if _, err := os.Stat(dst); err == nil {
 		return fmt.Errorf("backup target already exists: %s", dst)
 	}
-	if _, err := s.DB().Exec("VACUUM INTO ?", dst); err != nil {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if _, err := s.DB().ExecContext(ctx, "VACUUM INTO ?", dst); err != nil {
 		return fmt.Errorf("vacuum into %s: %w", dst, err)
 	}
 	return nil
@@ -451,9 +459,16 @@ func (s *Store) WithExclusiveLock(ctx context.Context, fn func() error) error {
 // receives *loggedTx so every statement inside the transaction goes through
 // the dialect's Rebind automatically.
 func (s *Store) withTx(fn func(tx *loggedTx) error) error {
+	return s.withTxContext(context.Background(), fn)
+}
+
+// withTxContext is the request-aware form of withTx. Cancelling ctx aborts
+// connection acquisition and every context-aware statement in the
+// transaction.
+func (s *Store) withTxContext(ctx context.Context, fn func(tx *loggedTx) error) error {
 	start := time.Now()
 	slog.Debug("sql tx begin")
-	tx, err := s.db.Begin()
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		slog.Warn("sql tx begin failed", "error", err.Error())
 		return fmt.Errorf("begin tx: %w", err)
@@ -1212,8 +1227,10 @@ func (s *Store) GetStatsForScopeContext(ctx context.Context, sourceIDs []int64) 
 	}
 
 	// DatabaseSize: file size for SQLite, pg_database_size() for PostgreSQL.
-	if size, err := s.dialect.DatabaseSize(s.db.DB, s.dbPath); err == nil {
+	if size, err := s.dialect.DatabaseSize(ctx, s.db.DB, s.dbPath); err == nil {
 		stats.DatabaseSize = size
+	} else if ctxErr := ctx.Err(); ctxErr != nil {
+		return nil, ctxErr
 	}
 
 	return stats, nil

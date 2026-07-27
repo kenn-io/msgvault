@@ -778,6 +778,7 @@ var _ api.MessageStore = (*storeAPIAdapter)(nil)
 var _ api.CtxMessageStore = (*storeAPIAdapter)(nil)
 var _ api.SourceStatusStore = (*storeAPIAdapter)(nil)
 var _ api.CLIStore = (*storeAPIAdapter)(nil)
+var _ api.ContextCLIStore = (*storeAPIAdapter)(nil)
 var _ api.CLIStartupMigrationStore = (*storeAPIAdapter)(nil)
 var _ api.CLICacheBuilder = (*storeAPIAdapter)(nil)
 var _ api.CLISyncRunner = (*storeAPIAdapter)(nil)
@@ -792,6 +793,7 @@ var _ api.DeletionManifestCanceller = (*storeAPIAdapter)(nil)
 var _ api.CLIDeduplicatePlanner = (*storeAPIAdapter)(nil)
 var _ api.CLIEmbeddingsPlanner = (*storeAPIAdapter)(nil)
 var _ api.CLIDedupDeleteStore = (*storeAPIAdapter)(nil)
+var _ api.ContextCLIDedupDeleteStore = (*storeAPIAdapter)(nil)
 var _ api.IdentityLinkStore = (*storeAPIAdapter)(nil)
 var _ api.IdentityCacheRefresher = (*storeAPIAdapter)(nil)
 var _ api.ClusterLookupStore = (*storeAPIAdapter)(nil)
@@ -853,6 +855,13 @@ func (a *storeAPIAdapter) GetStatsForScope(sourceIDs []int64) (*store.Stats, err
 	return a.store.GetStatsForScope(sourceIDs)
 }
 
+func (a *storeAPIAdapter) GetStatsForScopeContext(
+	ctx context.Context,
+	sourceIDs []int64,
+) (*store.Stats, error) {
+	return a.store.GetStatsForScopeContext(ctx, sourceIDs)
+}
+
 func (a *storeAPIAdapter) ListMessages(offset, limit int) ([]api.APIMessage, int64, error) {
 	return a.store.ListMessages(offset, limit)
 }
@@ -897,10 +906,18 @@ func (a *storeAPIAdapter) RebuildFTS(progress func(done, total int64)) (int64, e
 	return a.store.RebuildFTS(progress)
 }
 
-func (a *storeAPIAdapter) RunStartupMigrations(
+func (a *storeAPIAdapter) RebuildFTSContext(
+	ctx context.Context,
+	progress func(done, total int64),
+) (int64, error) {
+	return a.store.RebuildFTSContext(ctx, progress)
+}
+
+func (a *storeAPIAdapter) RunStartupMigrationsContext(
+	ctx context.Context,
 	legacyIdentityAddresses []string,
 ) (store.StartupMigrationResult, error) {
-	return a.store.RunStartupMigrations(legacyIdentityAddresses)
+	return a.store.RunStartupMigrationsContext(ctx, legacyIdentityAddresses)
 }
 
 func (a *storeAPIAdapter) BuildCLICache(
@@ -1201,36 +1218,90 @@ func (a *storeAPIAdapter) CountAllDeduped() (int64, int64, error) {
 	return a.store.CountAllDeduped()
 }
 
+func (a *storeAPIAdapter) CountAllDedupedContext(ctx context.Context) (int64, int64, error) {
+	return a.store.CountAllDedupedContext(ctx)
+}
+
 func (a *storeAPIAdapter) CountDedupedBatches(batchIDs []string) ([]store.DedupedBatchCount, int64, error) {
 	return a.store.CountDedupedBatches(batchIDs)
+}
+
+func (a *storeAPIAdapter) CountDedupedBatchesContext(
+	ctx context.Context,
+	batchIDs []string,
+) ([]store.DedupedBatchCount, int64, error) {
+	return a.store.CountDedupedBatchesContext(ctx, batchIDs)
 }
 
 func (a *storeAPIAdapter) DeleteAllDeduped() (int64, int64, error) {
 	return a.store.DeleteAllDeduped()
 }
 
+func (a *storeAPIAdapter) DeleteAllDedupedContext(ctx context.Context) (int64, int64, error) {
+	return a.store.DeleteAllDedupedContext(ctx)
+}
+
 func (a *storeAPIAdapter) DeleteDedupedBatch(batchID string) (int64, error) {
 	return a.store.DeleteDedupedBatch(batchID)
+}
+
+func (a *storeAPIAdapter) DeleteDedupedBatchContext(
+	ctx context.Context,
+	batchID string,
+) (int64, error) {
+	return a.store.DeleteDedupedBatchContext(ctx, batchID)
 }
 
 func (a *storeAPIAdapter) BackupDatabase(dst string) error {
 	return a.store.BackupDatabase(dst)
 }
 
+func (a *storeAPIAdapter) BackupDatabaseContext(ctx context.Context, dst string) error {
+	return a.store.BackupDatabaseContext(ctx, dst)
+}
+
 func (a *storeAPIAdapter) CountMessagesForSource(sourceID int64) (int64, error) {
 	return a.store.CountMessagesForSource(sourceID)
+}
+
+func (a *storeAPIAdapter) CountMessagesForSourceContext(
+	ctx context.Context,
+	sourceID int64,
+) (int64, error) {
+	return a.store.CountMessagesForSourceContext(ctx, sourceID)
 }
 
 func (a *storeAPIAdapter) CountSourceDeletedMessages(sourceIDs ...int64) (int64, error) {
 	return a.store.CountSourceDeletedMessages(sourceIDs...)
 }
 
+func (a *storeAPIAdapter) CountSourceDeletedMessagesContext(
+	ctx context.Context,
+	sourceIDs ...int64,
+) (int64, error) {
+	return a.store.CountSourceDeletedMessagesContext(ctx, sourceIDs...)
+}
+
 func (a *storeAPIAdapter) ListSources(sourceType string) ([]*store.Source, error) {
 	return a.store.ListSources(sourceType)
 }
 
+func (a *storeAPIAdapter) ListSourcesContext(
+	ctx context.Context,
+	sourceType string,
+) ([]*store.Source, error) {
+	return a.store.ListSourcesContext(ctx, sourceType)
+}
+
 func (a *storeAPIAdapter) GetSourcesByIdentifierOrDisplayName(query string) ([]*store.Source, error) {
 	return a.store.GetSourcesByIdentifierOrDisplayName(query)
+}
+
+func (a *storeAPIAdapter) GetSourcesByIdentifierOrDisplayNameContext(
+	ctx context.Context,
+	query string,
+) ([]*store.Source, error) {
+	return a.store.GetSourcesByIdentifierOrDisplayNameContext(ctx, query)
 }
 
 func (a *storeAPIAdapter) GetSourcesByTypeAndAccount(
@@ -1239,12 +1310,32 @@ func (a *storeAPIAdapter) GetSourcesByTypeAndAccount(
 	return a.store.GetSourcesByTypeAndAccount(sourceType, accountEmail)
 }
 
+func (a *storeAPIAdapter) GetSourcesByTypeAndAccountContext(
+	ctx context.Context,
+	sourceType, accountEmail string,
+) ([]*store.Source, error) {
+	return a.store.GetSourcesByTypeAndAccountContext(ctx, sourceType, accountEmail)
+}
+
 func (a *storeAPIAdapter) GetCollectionByName(name string) (*store.CollectionWithSources, error) {
 	return a.store.GetCollectionByName(name)
 }
 
+func (a *storeAPIAdapter) GetCollectionByNameContext(
+	ctx context.Context,
+	name string,
+) (*store.CollectionWithSources, error) {
+	return a.store.GetCollectionByNameContext(ctx, name)
+}
+
 func (a *storeAPIAdapter) ListCollections() ([]*store.CollectionWithSources, error) {
 	return a.store.ListCollections()
+}
+
+func (a *storeAPIAdapter) ListCollectionsContext(
+	ctx context.Context,
+) ([]*store.CollectionWithSources, error) {
+	return a.store.ListCollectionsContext(ctx)
 }
 
 func (a *storeAPIAdapter) CreateCollection(
@@ -1254,36 +1345,99 @@ func (a *storeAPIAdapter) CreateCollection(
 	return a.store.CreateCollection(name, description, sourceIDs)
 }
 
+func (a *storeAPIAdapter) CreateCollectionContext(
+	ctx context.Context,
+	name, description string,
+	sourceIDs []int64,
+) (*store.Collection, error) {
+	return a.store.CreateCollectionContext(ctx, name, description, sourceIDs)
+}
+
 func (a *storeAPIAdapter) AddSourcesToCollection(name string, sourceIDs []int64) error {
 	return a.store.AddSourcesToCollection(name, sourceIDs)
+}
+
+func (a *storeAPIAdapter) AddSourcesToCollectionContext(
+	ctx context.Context,
+	name string,
+	sourceIDs []int64,
+) error {
+	return a.store.AddSourcesToCollectionContext(ctx, name, sourceIDs)
 }
 
 func (a *storeAPIAdapter) RemoveSourcesFromCollection(name string, sourceIDs []int64) error {
 	return a.store.RemoveSourcesFromCollection(name, sourceIDs)
 }
 
+func (a *storeAPIAdapter) RemoveSourcesFromCollectionContext(
+	ctx context.Context,
+	name string,
+	sourceIDs []int64,
+) error {
+	return a.store.RemoveSourcesFromCollectionContext(ctx, name, sourceIDs)
+}
+
 func (a *storeAPIAdapter) DeleteCollection(name string) error {
 	return a.store.DeleteCollection(name)
+}
+
+func (a *storeAPIAdapter) DeleteCollectionContext(ctx context.Context, name string) error {
+	return a.store.DeleteCollectionContext(ctx, name)
 }
 
 func (a *storeAPIAdapter) UpdateSourceDisplayName(sourceID int64, displayName string) error {
 	return a.store.UpdateSourceDisplayName(sourceID, displayName)
 }
 
+func (a *storeAPIAdapter) UpdateSourceDisplayNameContext(
+	ctx context.Context,
+	sourceID int64,
+	displayName string,
+) error {
+	return a.store.UpdateSourceDisplayNameContext(ctx, sourceID, displayName)
+}
+
 func (a *storeAPIAdapter) GetSourceByID(id int64) (*store.Source, error) {
 	return a.store.GetSourceByID(id)
+}
+
+func (a *storeAPIAdapter) GetSourceByIDContext(ctx context.Context, id int64) (*store.Source, error) {
+	return a.store.GetSourceByIDContext(ctx, id)
 }
 
 func (a *storeAPIAdapter) ListAccountIdentities(sourceID int64) ([]store.AccountIdentity, error) {
 	return a.store.ListAccountIdentities(sourceID)
 }
 
+func (a *storeAPIAdapter) ListAccountIdentitiesContext(
+	ctx context.Context,
+	sourceID int64,
+) ([]store.AccountIdentity, error) {
+	return a.store.ListAccountIdentitiesContext(ctx, sourceID)
+}
+
 func (a *storeAPIAdapter) AddAccountIdentity(sourceID int64, address, signal string) error {
 	return a.store.AddAccountIdentity(sourceID, address, signal)
 }
 
+func (a *storeAPIAdapter) AddAccountIdentityContext(
+	ctx context.Context,
+	sourceID int64,
+	address, signal string,
+) error {
+	return a.store.AddAccountIdentityContext(ctx, sourceID, address, signal)
+}
+
 func (a *storeAPIAdapter) RemoveAccountIdentity(sourceID int64, address string) (int64, error) {
 	return a.store.RemoveAccountIdentity(sourceID, address)
+}
+
+func (a *storeAPIAdapter) RemoveAccountIdentityContext(
+	ctx context.Context,
+	sourceID int64,
+	address string,
+) (int64, error) {
+	return a.store.RemoveAccountIdentityContext(ctx, sourceID, address)
 }
 
 func (a *storeAPIAdapter) LinkParticipants(participantA, participantB int64) (int64, error) {

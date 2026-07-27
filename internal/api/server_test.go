@@ -1194,3 +1194,59 @@ func TestTimeoutMiddlewareMarkedRequestPreservesCallerCancellation(t *testing.T)
 		require.FailNow(t, "marked request did not return after caller cancellation")
 	}
 }
+
+func TestMarkedCLIProtectiveCeilingInventory(t *testing.T) {
+	srv := NewServerWithOptions(ServerOptions{
+		Config: &config.Config{Server: config.ServerConfig{
+			APIPort: 8080,
+			APIKey:  cliTimeoutTestAPIKey,
+		}},
+		Logger: testLogger(),
+	})
+
+	protectiveRoutes := []struct {
+		method string
+		path   string
+	}{
+		{method: http.MethodGet, path: "/api/v1/cli/cache-stats"},
+		{method: http.MethodPost, path: "/api/v1/cli/build-cache"},
+		{method: http.MethodPost, path: "/api/v1/cli/add-calendar/plan"},
+		{method: http.MethodPost, path: "/api/v1/cli/delete-staged/plan"},
+		{method: http.MethodPost, path: "/api/v1/cli/deletion-manifests"},
+		{method: http.MethodPost, path: "/api/v1/cli/embeddings/plan"},
+		{method: http.MethodGet, path: "/api/v1/cli/message"},
+		{method: http.MethodGet, path: "/api/v1/cli/message/raw"},
+		{method: http.MethodGet, path: "/api/v1/cli/attachment"},
+		{method: http.MethodGet, path: "/api/v1/cli/search"},
+		{method: http.MethodPost, path: "/api/v1/cli/deduplicate/plan"},
+		{method: http.MethodPost, path: "/api/v1/cli/delete-deduped"},
+		{method: http.MethodPost, path: "/api/v1/cli/identities"},
+		{method: http.MethodDelete, path: "/api/v1/cli/identities"},
+	}
+
+	for _, route := range protectiveRoutes {
+		name := route.method + " " + route.path
+		t.Run(name, func(t *testing.T) {
+			var deadline time.Time
+			var hasDeadline bool
+			handler := srv.timeoutMiddleware(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+				deadline, hasDeadline = r.Context().Deadline()
+			}))
+			req := httptest.NewRequest(route.method, route.path, nil)
+			req.Header.Set("X-Api-Key", cliTimeoutTestAPIKey)
+			req.Header.Set(apiprotocol.ClientClassHeader, apiprotocol.ClientClassCLI)
+			recorder := &deadlineClearingRecorder{ResponseRecorder: httptest.NewRecorder()}
+
+			started := time.Now()
+			handler.ServeHTTP(recorder, req)
+
+			require.True(t, hasDeadline, "protective route receives a context deadline")
+			remaining := time.Until(deadline)
+			assert.Greater(t, remaining, DaemonLongRequestTimeout-time.Second)
+			assert.LessOrEqual(t, remaining, DaemonLongRequestTimeout)
+			assert.False(t, deadline.Before(started), "protective deadline is in the future")
+			assert.Empty(t, recorder.readDeadlines, "protective route keeps the server read deadline")
+			assert.Empty(t, recorder.writeDeadlines, "protective route keeps the server write deadline")
+		})
+	}
+}

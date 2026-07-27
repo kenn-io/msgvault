@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -94,6 +95,15 @@ func (s *Store) EnsureDefaultCollection() error {
 func (s *Store) CreateCollection(
 	name, description string, sourceIDs []int64,
 ) (*Collection, error) {
+	return s.CreateCollectionContext(context.Background(), name, description, sourceIDs)
+}
+
+// CreateCollectionContext is the request-aware form of CreateCollection.
+func (s *Store) CreateCollectionContext(
+	ctx context.Context,
+	name, description string,
+	sourceIDs []int64,
+) (*Collection, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return nil, errors.New("collection name is required")
@@ -114,14 +124,14 @@ func (s *Store) CreateCollection(
 	}
 
 	unique := uniqueInt64s(sourceIDs)
-	if err := s.validateSourceIDs(unique); err != nil {
+	if err := s.validateSourceIDsContext(ctx, unique); err != nil {
 		return nil, err
 	}
 
 	var created *Collection
-	err := s.withTx(func(tx *loggedTx) error {
+	err := s.withTxContext(ctx, func(tx *loggedTx) error {
 		var id int64
-		err := tx.QueryRow(
+		err := tx.QueryRowContext(ctx,
 			`INSERT INTO collections (name, description)
 			 VALUES (?, ?)
 			 RETURNING id`,
@@ -139,7 +149,7 @@ func (s *Store) CreateCollection(
 		}
 
 		for _, sid := range unique {
-			if _, err := tx.Exec(
+			if _, err := tx.ExecContext(ctx,
 				`INSERT INTO collection_sources
 				  (collection_id, source_id)
 				 VALUES (?, ?)`,
@@ -149,7 +159,7 @@ func (s *Store) CreateCollection(
 			}
 		}
 
-		row := tx.QueryRow(
+		row := tx.QueryRowContext(ctx,
 			`SELECT id, name, description, created_at
 			 FROM collections WHERE id = ?`, id,
 		)
@@ -171,7 +181,16 @@ func (s *Store) CreateCollection(
 func (s *Store) GetCollectionByName(
 	name string,
 ) (*CollectionWithSources, error) {
-	row := s.db.QueryRow(
+	return s.GetCollectionByNameContext(context.Background(), name)
+}
+
+// GetCollectionByNameContext is the request-aware form of
+// GetCollectionByName.
+func (s *Store) GetCollectionByNameContext(
+	ctx context.Context,
+	name string,
+) (*CollectionWithSources, error) {
+	row := s.db.QueryRowContext(ctx,
 		`SELECT id, name, description, created_at
 		 FROM collections WHERE name = ?`, name,
 	)
@@ -182,13 +201,18 @@ func (s *Store) GetCollectionByName(
 		}
 		return nil, err
 	}
-	return s.hydrateCollection(c)
+	return s.hydrateCollectionContext(ctx, c)
 }
 
 // ListCollections returns every collection with source IDs and
 // message counts.
 func (s *Store) ListCollections() ([]*CollectionWithSources, error) {
-	rows, err := s.db.Query(
+	return s.ListCollectionsContext(context.Background())
+}
+
+// ListCollectionsContext is the request-aware form of ListCollections.
+func (s *Store) ListCollectionsContext(ctx context.Context) ([]*CollectionWithSources, error) {
+	rows, err := s.db.QueryContext(ctx,
 		`SELECT id, name, description, created_at
 		 FROM collections ORDER BY name`,
 	)
@@ -211,7 +235,7 @@ func (s *Store) ListCollections() ([]*CollectionWithSources, error) {
 
 	result := make([]*CollectionWithSources, 0, len(collections))
 	for _, c := range collections {
-		hydrated, err := s.hydrateCollection(c)
+		hydrated, err := s.hydrateCollectionContext(ctx, c)
 		if err != nil {
 			return nil, err
 		}
@@ -220,10 +244,9 @@ func (s *Store) ListCollections() ([]*CollectionWithSources, error) {
 	return result, nil
 }
 
-// getCollectionID looks up a collection ID by name without hydrating.
-func (s *Store) getCollectionID(name string) (int64, error) {
+func (s *Store) getCollectionIDContext(ctx context.Context, name string) (int64, error) {
 	var id int64
-	err := s.db.QueryRow(
+	err := s.db.QueryRowContext(ctx,
 		`SELECT id FROM collections WHERE name = ?`, name,
 	).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -238,19 +261,29 @@ func (s *Store) getCollectionID(name string) (int64, error) {
 // AddSourcesToCollection attaches sources to a collection. Idempotent.
 // Rejects mutations of the auto-managed default collection.
 func (s *Store) AddSourcesToCollection(name string, sourceIDs []int64) error {
+	return s.AddSourcesToCollectionContext(context.Background(), name, sourceIDs)
+}
+
+// AddSourcesToCollectionContext is the request-aware form of
+// AddSourcesToCollection.
+func (s *Store) AddSourcesToCollectionContext(
+	ctx context.Context,
+	name string,
+	sourceIDs []int64,
+) error {
 	if name == DefaultCollectionName {
 		return ErrCollectionImmutable
 	}
-	if err := s.validateSourceIDs(sourceIDs); err != nil {
+	if err := s.validateSourceIDsContext(ctx, sourceIDs); err != nil {
 		return err
 	}
-	collID, err := s.getCollectionID(name)
+	collID, err := s.getCollectionIDContext(ctx, name)
 	if err != nil {
 		return err
 	}
-	return s.withTx(func(tx *loggedTx) error {
+	return s.withTxContext(ctx, func(tx *loggedTx) error {
 		for _, sid := range sourceIDs {
-			if _, err := tx.Exec(
+			if _, err := tx.ExecContext(ctx,
 				s.dialect.InsertOrIgnore(
 					`INSERT OR IGNORE INTO collection_sources
 					  (collection_id, source_id)
@@ -268,19 +301,29 @@ func (s *Store) AddSourcesToCollection(name string, sourceIDs []int64) error {
 // RemoveSourcesFromCollection detaches sources. Idempotent.
 // Rejects mutations of the auto-managed default collection.
 func (s *Store) RemoveSourcesFromCollection(name string, sourceIDs []int64) error {
+	return s.RemoveSourcesFromCollectionContext(context.Background(), name, sourceIDs)
+}
+
+// RemoveSourcesFromCollectionContext is the request-aware form of
+// RemoveSourcesFromCollection.
+func (s *Store) RemoveSourcesFromCollectionContext(
+	ctx context.Context,
+	name string,
+	sourceIDs []int64,
+) error {
 	if name == DefaultCollectionName {
 		return ErrCollectionImmutable
 	}
-	if err := s.validateSourceIDs(sourceIDs); err != nil {
+	if err := s.validateSourceIDsContext(ctx, sourceIDs); err != nil {
 		return err
 	}
-	collID, err := s.getCollectionID(name)
+	collID, err := s.getCollectionIDContext(ctx, name)
 	if err != nil {
 		return err
 	}
-	return s.withTx(func(tx *loggedTx) error {
+	return s.withTxContext(ctx, func(tx *loggedTx) error {
 		for _, sid := range sourceIDs {
-			if _, err := tx.Exec(
+			if _, err := tx.ExecContext(ctx,
 				`DELETE FROM collection_sources
 				 WHERE collection_id = ? AND source_id = ?`,
 				collID, sid,
@@ -295,10 +338,15 @@ func (s *Store) RemoveSourcesFromCollection(name string, sourceIDs []int64) erro
 // DeleteCollection drops the collection. Sources and messages untouched.
 // Rejects deletion of the auto-managed default collection.
 func (s *Store) DeleteCollection(name string) error {
+	return s.DeleteCollectionContext(context.Background(), name)
+}
+
+// DeleteCollectionContext is the request-aware form of DeleteCollection.
+func (s *Store) DeleteCollectionContext(ctx context.Context, name string) error {
 	if name == DefaultCollectionName {
 		return ErrCollectionImmutable
 	}
-	res, err := s.db.Exec(
+	res, err := s.db.ExecContext(ctx,
 		`DELETE FROM collections WHERE name = ?`, name,
 	)
 	if err != nil {
@@ -311,10 +359,11 @@ func (s *Store) DeleteCollection(name string) error {
 	return nil
 }
 
-func (s *Store) hydrateCollection(
+func (s *Store) hydrateCollectionContext(
+	ctx context.Context,
 	c *Collection,
 ) (*CollectionWithSources, error) {
-	rows, err := s.db.Query(
+	rows, err := s.db.QueryContext(ctx,
 		`SELECT source_id FROM collection_sources
 		 WHERE collection_id = ?
 		 ORDER BY source_id`,
@@ -342,11 +391,11 @@ func (s *Store) hydrateCollection(
 
 	var count, sourceDeleted int64
 	if len(sourceIDs) > 0 {
-		count, err = s.CountActiveMessages(sourceIDs...)
+		count, err = s.CountActiveMessagesContext(ctx, sourceIDs...)
 		if err != nil {
 			return nil, err
 		}
-		sourceDeleted, err = s.CountSourceDeletedMessages(sourceIDs...)
+		sourceDeleted, err = s.CountSourceDeletedMessagesContext(ctx, sourceIDs...)
 		if err != nil {
 			return nil, err
 		}
@@ -372,7 +421,7 @@ func scanCollection(row interface {
 	return &c, nil
 }
 
-func (s *Store) validateSourceIDs(ids []int64) error {
+func (s *Store) validateSourceIDsContext(ctx context.Context, ids []int64) error {
 	if len(ids) == 0 {
 		return nil
 	}
@@ -384,7 +433,7 @@ func (s *Store) validateSourceIDs(ids []int64) error {
 	}
 	query := "SELECT id FROM sources WHERE id IN (" +
 		strings.Join(placeholders, ",") + ")"
-	rows, err := s.db.Query(query, args...)
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return fmt.Errorf("validate source IDs: %w", err)
 	}

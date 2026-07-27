@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"fmt"
 )
 
@@ -18,8 +19,13 @@ const (
 // IsMigrationApplied reports whether the named one-time data migration
 // has already run.
 func (s *Store) IsMigrationApplied(name string) (bool, error) {
+	return s.IsMigrationAppliedContext(context.Background(), name)
+}
+
+// IsMigrationAppliedContext is the request-aware form of IsMigrationApplied.
+func (s *Store) IsMigrationAppliedContext(ctx context.Context, name string) (bool, error) {
 	var count int
-	err := s.db.QueryRow(
+	err := s.db.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM applied_migrations WHERE name = ?`, name,
 	).Scan(&count)
 	if err != nil {
@@ -30,7 +36,13 @@ func (s *Store) IsMigrationApplied(name string) (bool, error) {
 
 // MarkMigrationApplied records that a migration has run. Idempotent.
 func (s *Store) MarkMigrationApplied(name string) error {
-	_, err := s.db.Exec(
+	return s.MarkMigrationAppliedContext(context.Background(), name)
+}
+
+// MarkMigrationAppliedContext is the request-aware form of
+// MarkMigrationApplied.
+func (s *Store) MarkMigrationAppliedContext(ctx context.Context, name string) error {
+	_, err := s.db.ExecContext(ctx,
 		s.dialect.InsertOrIgnore(`INSERT OR IGNORE INTO applied_migrations (name) VALUES (?)`),
 		name,
 	)
