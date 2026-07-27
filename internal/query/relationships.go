@@ -338,7 +338,7 @@ JOIN read_parquet('` + directory + `') d USING (canonical_id)
 WHERE NOT d.is_owner`
 	return queryText, []any{
 		identityindex.RelationshipDecayRate,
-		now.UTC(),
+		duckDBDateParam(now),
 	}
 }
 
@@ -403,8 +403,8 @@ FROM aggregated a
 JOIN read_parquet('` + directory + `') d USING (canonical_id)`
 	args = append(args,
 		identityindex.RelationshipDecayRate,
-		now.UTC(),
-		now.UTC(),
+		duckDBDateParam(now),
+		duckDBDateParam(now),
 	)
 	return queryText, args
 }

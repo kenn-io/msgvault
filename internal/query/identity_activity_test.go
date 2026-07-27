@@ -209,6 +209,22 @@ func TestIdentityActivityAppliesFactFilters(t *testing.T) {
 	)
 }
 
+func TestIdentityActivityDateFiltersBindUTCWallClock(t *testing.T) {
+	zone := time.FixedZone("fixture-offset", -4*60*60)
+	after := time.Date(2026, 7, 20, 9, 30, 0, 0, zone)
+	before := after.Add(2 * time.Hour)
+
+	conditions, args := buildIdentityFactConditions(ExploreRequest{
+		Context: Context{After: &after, Before: &before},
+	})
+
+	assert.Contains(t, conditions, "f.occurred_at >= CAST(? AS TIMESTAMP)")
+	assert.Contains(t, conditions, "f.occurred_at < CAST(? AS TIMESTAMP)")
+	require.Len(t, args, 2)
+	assert.Equal(t, "2026-07-20 13:30:00", args[0])
+	assert.Equal(t, "2026-07-20 15:30:00", args[1])
+}
+
 func TestIdentityEndpointsDoNotRequireLegacyAnalyticalViews(t *testing.T) {
 	builder := NewTestDataBuilder(t)
 	sourceID := builder.AddSourceWithType("archive@example.com", "gmail")

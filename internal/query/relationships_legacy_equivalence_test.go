@@ -2,7 +2,9 @@ package query
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"sort"
 	"testing"
 	"time"
 
@@ -116,7 +118,7 @@ func TestRelationshipRollupMatchesLegacyOracleForOneSentEntry(t *testing.T) {
 		engine.parquetPath(datasetParticipantClusters),
 		engine.parquetPath(datasetOwnerParticipants),
 	)
-	args = append(args, identityindex.RelationshipDecayRate, now)
+	args = append(args, identityindex.RelationshipDecayRate, duckDBDateParam(now))
 
 	var legacy RelationshipRow
 	var memberIDsJSON string
@@ -154,4 +156,284 @@ func TestRelationshipRollupMatchesLegacyOracleForOneSentEntry(t *testing.T) {
 		indexed.Rows[0].Signals.SentToThem,
 		1e-12,
 	)
+}
+
+func legacyRelationshipRowsForEquivalence(
+	t *testing.T,
+	engine *DuckDBEngine,
+	request RelationshipsRequest,
+) []RelationshipRow {
+	t.Helper()
+	now := request.Now.UTC()
+	explore, err := engine.expandParticipantFilterClusters(
+		t.Context(),
+		ExploreRequest{Context: request.Context},
+	)
+	require.NoError(t, err)
+	conditions, args := buildExploreConditions(explore)
+	queryText := buildLegacyRelationshipsSQLForEquivalence(
+		conditions,
+		engine.parquetPath(datasetParticipantClusters),
+		engine.parquetPath(datasetOwnerParticipants),
+	)
+	args = append(args, identityindex.RelationshipDecayRate, duckDBDateParam(now))
+
+	rows, err := engine.db.QueryContext(t.Context(), queryText, args...)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, rows.Close()) }()
+
+	result := make([]RelationshipRow, 0)
+	for rows.Next() {
+		var row RelationshipRow
+		var memberIDsJSON string
+		require.NoError(t, rows.Scan(
+			&row.CanonicalID,
+			&row.DisplayLabel,
+			&memberIDsJSON,
+			&row.Signals.SentToThem,
+			&row.Signals.SentCount,
+			&row.Signals.ReceivedFromThem,
+			&row.Signals.MeetingsTogether,
+			&row.Signals.MeetingCount,
+			&row.Signals.Modalities,
+			&row.LastAt,
+		))
+		require.NoError(t, json.Unmarshal([]byte(memberIDsJSON), &row.MemberIDs))
+		row.Signals.LastInteractionAt = row.LastAt
+		row.Score = RelationshipScore(row.Signals)
+		if request.ShowAll || row.Signals.SentCount > 0 || row.Signals.MeetingCount > 0 {
+			result = append(result, row)
+		}
+	}
+	require.NoError(t, rows.Err())
+	sort.SliceStable(result, func(i, j int) bool {
+		if result[i].Score != result[j].Score {
+			return result[i].Score > result[j].Score
+		}
+		if !result[i].LastAt.Equal(result[j].LastAt) {
+			return result[i].LastAt.After(result[j].LastAt)
+		}
+		if result[i].DisplayLabel != result[j].DisplayLabel {
+			return result[i].DisplayLabel < result[j].DisplayLabel
+		}
+		return result[i].CanonicalID < result[j].CanonicalID
+	})
+	return result
+}
+
+func requireRelationshipRowsEquivalent(
+	t *testing.T,
+	want []RelationshipRow,
+	got []RelationshipRow,
+) {
+	t.Helper()
+	require.Len(t, got, len(want))
+	for index := range want {
+		assert.Equal(t, want[index].CanonicalID, got[index].CanonicalID)
+		assert.Equal(t, want[index].DisplayLabel, got[index].DisplayLabel)
+		assert.Equal(t, want[index].MemberIDs, got[index].MemberIDs)
+		assert.Equal(t, want[index].Signals.SentCount, got[index].Signals.SentCount)
+		assert.Equal(t, want[index].Signals.MeetingCount, got[index].Signals.MeetingCount)
+		assert.Equal(t, want[index].Signals.Modalities, got[index].Signals.Modalities)
+		assert.Equal(t, want[index].LastAt, got[index].LastAt)
+		assert.Equal(t, want[index].Signals.LastInteractionAt, got[index].Signals.LastInteractionAt)
+		assert.InDelta(t, want[index].Signals.SentToThem, got[index].Signals.SentToThem, 1e-12)
+		assert.InDelta(t, want[index].Signals.ReceivedFromThem, got[index].Signals.ReceivedFromThem, 1e-12)
+		assert.InDelta(t, want[index].Signals.MeetingsTogether, got[index].Signals.MeetingsTogether, 1e-12)
+		assert.InDelta(t, want[index].Score, got[index].Score, 1e-12)
+	}
+}
+
+func compareRelationshipIndexWithLegacy(
+	t *testing.T,
+	engine *DuckDBEngine,
+	request RelationshipsRequest,
+) []RelationshipRow {
+	t.Helper()
+	allWant := legacyRelationshipRowsForEquivalence(t, engine, request)
+	indexed, err := engine.Relationships(t.Context(), request)
+	require.NoError(t, err)
+	assert.Equal(t, int64(len(allWant)), indexed.TotalCount)
+	limit := request.Limit
+	if limit == 0 {
+		limit = defaultRelationshipsLimit
+	}
+	var want []RelationshipRow
+	if request.Offset < len(allWant) {
+		want = allWant[request.Offset:min(request.Offset+limit, len(allWant))]
+	}
+	requireRelationshipRowsEquivalent(t, want, indexed.Rows)
+	return indexed.Rows
+}
+
+func TestRelationshipIndexMatchesLegacyForAuthoredLinkedCoRecipient(t *testing.T) {
+	builder := NewTestDataBuilder(t)
+	now := time.Date(2026, 7, 15, 0, 0, 0, 0, time.UTC)
+	builder.SetRelationshipAnchor(now)
+	sourceID := builder.AddSource("owner@example.com")
+	ownerID := builder.AddParticipant("owner@example.com", "example.com", "Owner")
+	authorID := builder.AddParticipant("author@example.com", "example.com", "Author")
+	coRecipientID := builder.AddParticipant("alias@example.net", "example.net", "Alias")
+	builder.AddOwnerParticipant(sourceID, ownerID)
+	builder.LinkCluster(authorID, coRecipientID)
+
+	messageID := builder.AddMessage(MessageOpt{
+		SourceID: sourceID,
+		SentAt:   now,
+	})
+	builder.AddFrom(messageID, authorID, "Author")
+	builder.AddTo(messageID, ownerID, "Owner")
+	builder.AddCc(messageID, coRecipientID, "Alias")
+	engine := builder.BuildEngine()
+
+	rows := compareRelationshipIndexWithLegacy(t, engine, RelationshipsRequest{
+		Now: now, Limit: 25, ShowAll: true,
+	})
+	require.Len(t, rows, 1)
+	assert.Equal(t, authorID, rows[0].CanonicalID)
+	assert.Equal(t, []int64{authorID, coRecipientID}, rows[0].MemberIDs)
+	assert.InDelta(t, float64(1), rows[0].Signals.ReceivedFromThem, 1e-12,
+		"bool-or merged authorship must credit one incoming unit, not zero or two")
+}
+
+func TestRelationshipIndexMatchesLegacyAcrossAdversarialSemantics(t *testing.T) {
+	builder := NewTestDataBuilder(t)
+	now := time.Date(2026, 7, 15, 0, 0, 0, 0, time.UTC)
+	builder.SetRelationshipAnchor(now)
+	sourceID := builder.AddSource("owner@example.com")
+	ownerID := builder.AddParticipant("owner@example.com", "example.com", "Owner")
+	ownerAliasID := builder.AddParticipant("owner@alias.example", "alias.example", "Owner Alias")
+	contactID := builder.AddParticipant("contact@example.com", "example.com", "Contact")
+	contactAliasID := builder.AddParticipant("contact@chat.example", "chat.example", "Contact Chat")
+	conversationOnlyID := builder.AddParticipant("member@room.example", "room.example", "Room Member")
+	bystanderID := builder.AddParticipant("bystander@example.net", "example.net", "Bystander")
+	unnamedID := builder.AddParticipant("unnamed@example.org", "example.org", "")
+	builder.AddOwnerParticipant(sourceID, ownerID)
+	builder.LinkCluster(ownerID, ownerAliasID)
+	builder.LinkCluster(contactID, contactAliasID)
+
+	nonChatConversationID := int64(900)
+	incomingID := builder.AddMessage(MessageOpt{
+		SourceID: sourceID, ConversationID: nonChatConversationID,
+		SentAt: now.AddDate(0, 0, -4),
+	})
+	builder.AddFrom(incomingID, contactID, "Contact")
+	builder.AddTo(incomingID, ownerID, "Owner")
+	builder.AddConversationParticipant(nonChatConversationID, conversationOnlyID)
+
+	outgoingID := builder.AddMessage(MessageOpt{
+		SourceID: sourceID, IsFromMe: true,
+		SentAt: now.AddDate(0, 0, -3),
+	})
+	builder.AddFrom(outgoingID, ownerAliasID, "Owner Alias")
+	builder.AddTo(outgoingID, contactAliasID, "Contact Chat")
+
+	chatConversationID := int64(901)
+	chatAt := now.AddDate(0, 0, -2).Add(10 * time.Hour)
+	incomingChatID := builder.AddMessage(MessageOpt{
+		SourceID: sourceID, ConversationID: chatConversationID,
+		MessageType: "imessage", ConversationType: "imessage",
+		SentAt: chatAt, IsFromMe: false,
+	})
+	builder.AddFrom(incomingChatID, contactAliasID, "Contact Chat")
+	builder.AddTo(incomingChatID, ownerID, "Owner")
+	outgoingChatID := builder.AddMessage(MessageOpt{
+		SourceID: sourceID, ConversationID: chatConversationID,
+		MessageType: "imessage", ConversationType: "imessage",
+		SentAt: chatAt, IsFromMe: true,
+	})
+	builder.AddFrom(outgoingChatID, ownerID, "Owner")
+	builder.AddTo(outgoingChatID, contactAliasID, "Contact Chat")
+
+	meetingID := builder.AddMessage(MessageOpt{
+		SourceID: sourceID, MessageType: "calendar_event",
+		SentAt: now.AddDate(0, 0, -1),
+	})
+	builder.AddFrom(meetingID, ownerID, "Owner")
+	builder.AddTo(meetingID, contactID, "Contact")
+
+	ownerlessMeetingID := builder.AddMessage(MessageOpt{
+		SourceID: sourceID, MessageType: "meeting_note",
+		SentAt: now.Add(-12 * time.Hour),
+	})
+	builder.AddFrom(ownerlessMeetingID, contactID, "Contact")
+	builder.AddTo(ownerlessMeetingID, bystanderID, "Bystander")
+
+	itemID := builder.AddMessage(MessageOpt{
+		SourceID: sourceID, MessageType: "slack",
+		SentAt: now.Add(-6 * time.Hour),
+	})
+	builder.AddFrom(itemID, contactID, "Contact")
+	builder.AddTo(itemID, ownerID, "Owner")
+
+	futureID := builder.AddMessage(MessageOpt{
+		SourceID: sourceID, IsFromMe: true,
+		SentAt: now.AddDate(0, 0, 2),
+	})
+	builder.AddFrom(futureID, ownerID, "Owner")
+	builder.AddTo(futureID, contactID, "Contact")
+
+	unnamedIDMessage := builder.AddMessage(MessageOpt{
+		SourceID: sourceID, IsFromMe: true,
+		SentAt: now.AddDate(0, 0, -5),
+	})
+	builder.AddFrom(unnamedIDMessage, ownerID, "Owner")
+	builder.AddTo(unnamedIDMessage, unnamedID, "")
+
+	engine := builder.BuildEngine()
+	_, err := engine.db.ExecContext(t.Context(), "SET TimeZone = 'America/New_York'")
+	require.NoError(t, err,
+		"equivalence must not depend on DuckDB's session or host timezone")
+	allRows := compareRelationshipIndexWithLegacy(t, engine, RelationshipsRequest{
+		Now: now, Limit: 25, ShowAll: true,
+	})
+	require.Len(t, allRows, 2)
+	assert.Equal(t, 3, allRows[0].Signals.Modalities)
+	assert.Equal(t, futureIDTime(builder, futureID), allRows[0].LastAt)
+	page := compareRelationshipIndexWithLegacy(t, engine, RelationshipsRequest{
+		Now: now, Limit: 1, Offset: 1, ShowAll: true,
+	})
+	require.Len(t, page, 1)
+	assert.Equal(t, allRows[1].CanonicalID, page[0].CanonicalID)
+
+	conversationFiltered := compareRelationshipIndexWithLegacy(t, engine, RelationshipsRequest{
+		Context: Context{ParticipantIDs: []int64{conversationOnlyID}},
+		Now:     now, Limit: 25, ShowAll: true,
+	})
+	require.Len(t, conversationFiltered, 1)
+	assert.Equal(t, contactID, conversationFiltered[0].CanonicalID)
+	assert.Equal(t, int64(0), conversationFiltered[0].Signals.SentCount)
+	assert.Positive(t, conversationFiltered[0].Signals.ReceivedFromThem)
+	assert.Less(t, conversationFiltered[0].Signals.ReceivedFromThem, float64(1))
+
+	chatFiltered := compareRelationshipIndexWithLegacy(t, engine, RelationshipsRequest{
+		Context: Context{MessageTypes: []string{"imessage"}},
+		Now:     now, Limit: 25, ShowAll: true,
+	})
+	require.Len(t, chatFiltered, 1)
+	assert.Equal(t, int64(1), chatFiltered[0].Signals.SentCount,
+		"the higher message ID wins an equal-timestamp chat direction tie")
+	assert.InDelta(t, float64(0), chatFiltered[0].Signals.ReceivedFromThem, 1e-12)
+	assert.Equal(t, 1, chatFiltered[0].Signals.Modalities)
+}
+
+func futureIDTime(builder *TestDataBuilder, messageID int64) time.Time {
+	for _, message := range builder.messages {
+		if message.ID == messageID {
+			return message.SentAt
+		}
+	}
+	return time.Time{}
+}
+
+func TestRelationshipIndexMatchesLegacyForEmptyArchive(t *testing.T) {
+	builder := NewTestDataBuilder(t)
+	now := time.Date(2026, 7, 15, 0, 0, 0, 0, time.UTC)
+	builder.SetRelationshipAnchor(now)
+	engine := builder.BuildEngine()
+
+	rows := compareRelationshipIndexWithLegacy(t, engine, RelationshipsRequest{
+		Now: now, Limit: 25, ShowAll: true,
+	})
+	assert.Empty(t, rows)
 }

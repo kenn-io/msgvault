@@ -122,11 +122,11 @@ func buildIdentityFactConditions(request ExploreRequest) (string, []any) {
 	}
 	if request.Context.After != nil {
 		conditions = append(conditions, "f.occurred_at >= CAST(? AS TIMESTAMP)")
-		args = append(args, request.Context.After.UTC())
+		args = append(args, duckDBDateParam(*request.Context.After))
 	}
 	if request.Context.Before != nil {
 		conditions = append(conditions, "f.occurred_at < CAST(? AS TIMESTAMP)")
-		args = append(args, request.Context.Before.UTC())
+		args = append(args, duckDBDateParam(*request.Context.Before))
 	}
 	switch request.Context.Deletion {
 	case DeletionAny:
