@@ -2,6 +2,7 @@ package store_test
 
 import (
 	"context"
+	"database/sql"
 	"testing"
 	"time"
 
@@ -54,14 +55,18 @@ func insertDiscordExportConversation(
 	t *testing.T, st *store.Store, sourceID int64, id, name, metadata string,
 ) int64 {
 	t.Helper()
-	result, err := st.DB().Exec(st.Rebind(`
+	var conversationID int64
+	err := st.DB().QueryRow(st.Rebind(`
 		INSERT INTO conversations (
-			source_id, source_conversation_id, conversation_type, title, metadata
-		) VALUES (?, ?, 'channel', ?, ?)
-	`), sourceID, id, name, metadata)
+			source_id, source_conversation_id, conversation_type, title
+		) VALUES (?, ?, 'channel', ?)
+		RETURNING id
+	`), sourceID, id, name).Scan(&conversationID)
 	require.NoError(t, err)
-	conversationID, err := result.LastInsertId()
-	require.NoError(t, err)
+	require.NoError(t, st.SetConversationMetadata(
+		conversationID,
+		sql.NullString{String: metadata, Valid: true},
+	))
 	return conversationID
 }
 
@@ -83,16 +88,23 @@ func insertDiscordExportMessage(
 	if hidden {
 		deletedAt = sentAt.Add(time.Hour)
 	}
-	result, err := st.DB().Exec(st.Rebind(`
+	var messageID int64
+	err := st.DB().QueryRow(st.Rebind(`
 		INSERT INTO messages (
 			conversation_id, source_id, source_message_id, message_type,
-			sent_at, received_at, metadata, deleted_from_source_at, deleted_at
-		) VALUES (?, ?, ?, 'discord', ?, ?, ?, ?, ?)
+			sent_at, received_at, deleted_from_source_at, deleted_at
+		) VALUES (?, ?, ?, 'discord', ?, ?, ?, ?)
+		RETURNING id
 	`), conversationID, sourceID, id, sentAt, sentAt,
-		`{"author_display_name":"`+author+`"}`, deletedFromSource, deletedAt)
+		deletedFromSource, deletedAt).Scan(&messageID)
 	require.NoError(t, err)
-	messageID, err := result.LastInsertId()
-	require.NoError(t, err)
+	require.NoError(t, st.SetMessageMetadata(
+		messageID,
+		sql.NullString{
+			String: `{"author_display_name":"` + author + `"}`,
+			Valid:  true,
+		},
+	))
 	_, err = st.DB().Exec(st.Rebind(`
 		INSERT INTO message_bodies (message_id, body_text) VALUES (?, ?)
 	`), messageID, body)
