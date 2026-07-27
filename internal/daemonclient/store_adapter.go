@@ -190,10 +190,15 @@ func (c *Client) ListMessages(offset, limit int) ([]store.APIMessage, int64, err
 
 // GetMessage fetches a single message by ID.
 func (c *Client) GetMessage(id int64) (*store.APIMessage, error) {
+	return c.GetMessageContext(c.requestContext(), id)
+}
+
+// GetMessageContext fetches a single message by ID using the supplied context.
+func (c *Client) GetMessageContext(ctx context.Context, id int64) (*store.APIMessage, error) {
 	resp, err := APIResponseWithNotFound(
 		c,
 		func(client *apiclient.Client) (*generated.GetMessageResp, error) {
-			return client.GetMessageWithResponse(c.requestContext(), &generated.GetMessageRequestOptions{
+			return client.GetMessageWithResponse(ctx, &generated.GetMessageRequestOptions{
 				PathParams: &generated.GetMessagePath{ID: id},
 			})
 		},

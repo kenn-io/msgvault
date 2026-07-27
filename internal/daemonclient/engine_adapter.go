@@ -635,7 +635,7 @@ func (e *Engine) ListMessages(ctx context.Context, filter query.MessageFilter) (
 
 // GetMessage returns a single message by ID.
 func (e *Engine) GetMessage(ctx context.Context, id int64) (*query.MessageDetail, error) {
-	msg, err := e.store.GetMessage(id)
+	msg, err := e.store.GetMessageContext(ctx, id)
 	if errors.Is(err, store.ErrMessageNotFound) {
 		return nil, nil //nolint:nilnil // engine API uses (nil, nil) for not-found
 	}

@@ -393,6 +393,87 @@ func TestEngineGetMessageRendersLargeIDInPath(t *testing.T) {
 	assert.Equal("Large ID detail", msg.Subject, "Subject")
 }
 
+func TestEngineGetMessageUsesPerCallContext(t *testing.T) {
+	requestStarted := make(chan struct{})
+	requestCanceled := make(chan struct{})
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		close(requestStarted)
+		select {
+		case <-r.Context().Done():
+			close(requestCanceled)
+		case <-release:
+			writeJSONResponse(t, w, map[string]any{
+				"id":      42,
+				"subject": "released",
+				"from":    "alice@example.com",
+				"sent_at": "2024-01-15T10:30:00Z",
+			})
+		}
+	}))
+	t.Cleanup(srv.Close)
+	t.Cleanup(func() {
+		select {
+		case <-release:
+		default:
+			close(release)
+		}
+	})
+
+	rootCtx, cancelRoot := context.WithCancel(context.Background())
+	t.Cleanup(cancelRoot)
+	store, err := New(Config{
+		URL:           srv.URL,
+		AllowInsecure: true,
+		HTTPClient:    srv.Client(),
+		Context:       rootCtx,
+	})
+	require.NoError(t, err, "New")
+	engine := NewEngineAdapter(store)
+
+	callCtx, cancelCall := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		_, err := engine.GetMessage(callCtx, 42)
+		done <- err
+	}()
+
+	select {
+	case <-requestStarted:
+	case <-time.After(time.Second):
+		require.FailNow(t, "GetMessage request did not start")
+	}
+	cancelCall()
+
+	select {
+	case err = <-done:
+	case <-time.After(time.Second):
+		close(release)
+		err = <-done
+	}
+
+	require.ErrorIs(t, err, context.Canceled)
+	require.NoError(t, rootCtx.Err(), "client root context remains live")
+	select {
+	case <-requestCanceled:
+	case <-time.After(time.Second):
+		require.FailNow(t, "per-call cancellation did not reach the HTTP request")
+	}
+}
+
+func TestEngineGetMessagePreservesNotFoundSemantics(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	t.Cleanup(srv.Close)
+
+	engine := NewEngineAdapter(newTestStore(srv, ""))
+	msg, err := engine.GetMessage(context.Background(), 999)
+
+	require.NoError(t, err)
+	assert.Nil(t, msg)
+}
+
 func TestEngineGetMessagePreservesPhoneOnlyGeneratedSender(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

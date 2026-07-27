@@ -3,7 +3,7 @@
 ## Request policy
 
 The shared daemon-client request editor marks generated JSON, raw downloads,
-and NDJSON streams with `X-Msgvault-Client-Class: cli`. The server applies the
+and NDJSON streams with `X-Msgvault-Client: cli`. The server applies the
 CLI duration policy only after the request authenticates by API key or trusted
 loopback; a browser session cannot opt into it.
 
