@@ -1,20 +1,9 @@
 package query
 
 import (
-	"slices"
 	"strconv"
-	"strings"
-)
 
-// Chat classification shared by the Go and SQL entry-key builders. Messages
-// whose type is a known text/chat type — or whose type is ambiguous while the
-// containing conversation is chat-shaped — collapse into one conversation
-// entry; every other message stays its own entry.
-const conversationTypeDirectChat = "direct_chat"
-
-var (
-	chatFallbackMessageTypes = []string{"", "chat", "text"}
-	chatConversationTypes    = []string{conversationTypeDirectChat, "group_chat", "channel", "chat"}
+	"go.kenn.io/msgvault/internal/identityindex"
 )
 
 // EntryKeyFacts carries the archive identities that determine the canonical
@@ -50,17 +39,7 @@ func (f EntryKeyFacts) EntryKey() string {
 // IsChatEntry reports whether a message is grouped under its conversation
 // entry. It is the Go equivalent of sqlIsChatPredicate.
 func IsChatEntry(messageType, conversationType string) bool {
-	messageType = strings.ToLower(messageType)
-	if slices.Contains(TextMessageTypes, messageType) {
-		return true
-	}
-	return slices.Contains(chatFallbackMessageTypes, messageType) &&
-		slices.Contains(chatConversationTypes, strings.ToLower(conversationType))
-}
-
-// sqlQuotedList renders trusted package constants as a quoted SQL IN-list.
-func sqlQuotedList(values []string) string {
-	return "'" + strings.Join(values, "','") + "'"
+	return identityindex.IsChat(messageType, conversationType)
 }
 
 // sqlMessageEntryKeyExpr renders the per-message entry key. alias prefixes

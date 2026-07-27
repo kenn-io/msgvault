@@ -8,9 +8,63 @@ import (
 	"testing"
 	"time"
 
+	"go.kenn.io/msgvault/internal/identityindex"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestRelationshipIndexDatasetCatalog(t *testing.T) {
+	assert.ElementsMatch(t, []string{
+		"identity_entry_facts",
+		"identity_direct_edges",
+		"identity_conversation_edges",
+		"identity_directory",
+		"identity_rollups",
+		"domain_rollups",
+		"relationship_rollups",
+		"relationship_future_daily",
+	}, identityindex.RequiredDatasets)
+}
+
+func TestCacheRevisionIncludesRelationshipAnchor(t *testing.T) {
+	state := CacheSyncState{
+		SchemaVersion:          15,
+		PublishedAt:            time.Date(2026, 7, 27, 12, 0, 0, 0, time.UTC),
+		RelationshipAnchorDate: "2026-07-27",
+	}
+	changed := state
+	changed.RelationshipAnchorDate = "2026-07-28"
+	assert.NotEqual(t, state.Revision(), changed.Revision())
+}
+
+func TestCacheSyncStateEncodesStatsAsNestedObject(t *testing.T) {
+	minYear := int64(2004)
+	maxYear := int64(2026)
+	state := CacheSyncState{
+		Stats: identityindex.CacheStatsSummary{
+			TotalMessages:       23,
+			Sources:             4,
+			UniqueSenders:       11,
+			UniqueDomains:       7,
+			MinYear:             &minYear,
+			MaxYear:             &maxYear,
+			TotalSizeBytes:      1024,
+			AttachmentSizeBytes: 256,
+		},
+	}
+
+	data, err := json.Marshal(state)
+	require.NoError(t, err)
+
+	var encoded map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(data, &encoded))
+	require.Contains(t, encoded, "stats")
+
+	var stats identityindex.CacheStatsSummary
+	require.NoError(t, json.Unmarshal(encoded["stats"], &stats))
+	assert.Equal(t, state.Stats, stats)
+}
 
 func TestAcquireReadyCacheReadLockRejectsAbsentCache(t *testing.T) {
 	_, err := AcquireReadyCacheReadLock(context.Background(), t.TempDir())

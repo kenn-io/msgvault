@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+
+	"go.kenn.io/msgvault/internal/identityindex"
 )
 
 var ErrInvalidExploreRequest = errors.New("invalid exploration request")
@@ -606,11 +608,7 @@ func buildExploreLogicalSQL(conditions string) string {
 // (e.g. the exact-person fast path in people.go) must use this so
 // classifications cannot drift.
 func sqlIsChatPredicate(messageType, conversationType string) string {
-	return "lower(" + messageType + ") IN (" + TextMessageTypeSQLList + `)
-            OR (
-                lower(` + messageType + `) IN (` + sqlQuotedList(chatFallbackMessageTypes) + `)
-                AND lower(` + conversationType + `) IN (` + sqlQuotedList(chatConversationTypes) + `)
-            )`
+	return identityindex.IsChatSQL(messageType, conversationType)
 }
 
 // buildExploreFilteredClassifiedCTE builds the "filtered" and "classified"
@@ -630,12 +628,7 @@ WITH filtered AS (
     SELECT *,
 		` + candidateRankExpression + ` AS candidate_rank,
         ` + sqlIsChatPredicate("message_type", "conversation_type") + ` AS is_chat,
-        CASE
-            WHEN lower(message_type) = 'email' OR message_type = '' THEN 'email'
-            WHEN lower(message_type) = '` + messageTypeCalendar + `' THEN 'event'
-            WHEN lower(message_type) IN ('meeting_transcript', 'meeting_note', 'meeting_minutes') THEN 'meeting'
-            ELSE 'item'
-        END AS entry_kind
+        ` + identityindex.EntryKindSQL("message_type") + ` AS entry_kind
     FROM filtered
 )`
 }

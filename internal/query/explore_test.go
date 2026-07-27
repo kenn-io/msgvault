@@ -7,9 +7,48 @@ import (
 	"testing"
 	"time"
 
+	"go.kenn.io/msgvault/internal/identityindex"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestSharedChatClassificationSQL(t *testing.T) {
+	engine, err := NewDuckDBEngine("", "", nil)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, engine.Close())
+	})
+
+	tests := []struct {
+		name             string
+		messageType      string
+		conversationType string
+		want             bool
+	}{
+		{name: "email thread", messageType: "email", conversationType: "email_thread", want: false},
+		{name: "known text type", messageType: "iMessage", conversationType: "email_thread", want: true},
+		{name: "fallback chat type", messageType: "", conversationType: "group_chat", want: true},
+		{name: "fallback outside chat", messageType: "text", conversationType: "email_thread", want: false},
+		{name: "unknown type in chat", messageType: "unknown", conversationType: "direct_chat", want: false},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var sqlResult bool
+			err := engine.db.QueryRow(
+				"SELECT "+sqlIsChatPredicate("message_type", "conversation_type")+
+					" FROM (VALUES (?::VARCHAR, ?::VARCHAR)) AS input(message_type, conversation_type)",
+				test.messageType,
+				test.conversationType,
+			).Scan(&sqlResult)
+			require.NoError(t, err)
+			assert.Equal(t, test.want, identityindex.IsChat(test.messageType, test.conversationType))
+			assert.Equal(t, test.want, IsChatEntry(test.messageType, test.conversationType))
+			assert.Equal(t, test.want, sqlResult)
+		})
+	}
+}
 
 func TestExploreKeepsSemanticMatchStateConstantPerLogicalRow(t *testing.T) {
 	requirements := require.New(t)

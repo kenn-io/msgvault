@@ -4,6 +4,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"go.kenn.io/msgvault/internal/identityindex"
 )
 
 // TextViewType represents the type of view in Texts mode.
@@ -121,10 +123,7 @@ const (
 )
 
 // TextMessageTypes lists the message_type values included in Texts mode.
-var TextMessageTypes = []string{
-	messageTypeWhatsApp, messageTypeIMessage, messageTypeSMS, "mms", messageTypeRCS,
-	"google_voice_text", "teams", "discord", "beeper", "fbmessenger",
-}
+var TextMessageTypes = identityindex.TextMessageTypes
 
 // TextMessageTypeSQLList renders TextMessageTypes as a quoted SQL IN-list
 // ("'whatsapp','imessage',...") so filters derive from the one canonical

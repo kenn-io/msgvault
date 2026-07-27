@@ -10,6 +10,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"go.kenn.io/msgvault/internal/identityindex"
 )
 
 // CacheSchemaVersion is the sole schema compatibility version shared by the
@@ -44,6 +46,10 @@ type CacheSyncState struct {
 	AccountIdentityRevision int64     `json:"account_identity_revision,omitempty"`
 	PublishedAt             time.Time `json:"published_at"`
 	DatasetFingerprint      string    `json:"dataset_fingerprint"`
+
+	RelationshipAnchorDate              string                          `json:"relationship_anchor_date,omitempty"`
+	ConversationParticipantsFingerprint string                          `json:"conversation_participants_fingerprint,omitempty"`
+	Stats                               identityindex.CacheStatsSummary `json:"stats"`
 }
 
 type CacheReadiness string
@@ -76,7 +82,7 @@ func (e *CacheUnavailableError) Unwrap() error { return ErrCacheUnavailable }
 // Revision identifies one committed cache publication. It intentionally uses
 // only commit-marker fields, never ambient filesystem state.
 func (s CacheSyncState) Revision() string {
-	payload := fmt.Sprintf("v=%d|message=%d|watermark=%s|run=%d|add=%d|update=%d|fail_count=%d|fail_sum=%d|identity=%d|account_identity=%d|published=%s",
+	payload := fmt.Sprintf("v=%d|message=%d|watermark=%s|run=%d|add=%d|update=%d|fail_count=%d|fail_sum=%d|identity=%d|account_identity=%d|relationship_anchor=%s|published=%s",
 		s.SchemaVersion,
 		s.LastMessageID,
 		s.LastSyncAt.UTC().Format(time.RFC3339Nano),
@@ -87,6 +93,7 @@ func (s CacheSyncState) Revision() string {
 		s.LastFailedSyncRunIDSum,
 		s.IdentityRevision,
 		s.AccountIdentityRevision,
+		s.RelationshipAnchorDate,
 		s.PublishedAt.UTC().Format(time.RFC3339Nano),
 	)
 	return fmt.Sprintf("cache-%x", sha256.Sum256([]byte(payload)))
