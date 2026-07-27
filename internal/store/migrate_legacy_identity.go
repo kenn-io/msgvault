@@ -187,10 +187,10 @@ func (s *Store) MigrateLegacyIdentityConfigContext(
 		// into an already-migrated address changes nothing those datasets
 		// depend on.
 		if insertedAny {
-			if _, err := s.bumpIdentityRevision(tx); err != nil {
+			if _, err := s.bumpIdentityRevisionContext(ctx, tx); err != nil {
 				return err
 			}
-			if err := s.bumpAccountIdentityRevision(tx); err != nil {
+			if err := s.bumpAccountIdentityRevisionContext(ctx, tx); err != nil {
 				return err
 			}
 		}

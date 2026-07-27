@@ -1,11 +1,14 @@
 package api
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -1035,6 +1038,7 @@ func TestTimeoutMiddlewareClearsReadAndWriteDeadlines(t *testing.T) {
 
 	longPath := httptest.NewRequest(http.MethodPost, "/api/v1/cli/sync-full", nil)
 	marked := httptest.NewRequest(http.MethodGet, "/api/v1/cli/stats", nil)
+	marked.RemoteAddr = "127.0.0.1:4242"
 	marked.Header.Set(apiprotocol.ClientClassHeader, apiprotocol.ClientClassCLI)
 	bounded := httptest.NewRequest(http.MethodGet, "/api/v1/cli/stats", nil)
 
@@ -1068,6 +1072,8 @@ func TestCLIRequestDurationPolicy(t *testing.T) {
 	tests := []struct {
 		name        string
 		apiKey      string
+		bindAddr    string
+		allowUnsafe bool
 		configure   func(*Server, *http.Request)
 		wantTimeout bool
 	}{
@@ -1079,9 +1085,34 @@ func TestCLIRequestDurationPolicy(t *testing.T) {
 			},
 		},
 		{
+			name:        "keyless remote CLI remains bounded",
+			bindAddr:    "0.0.0.0",
+			allowUnsafe: true,
+			wantTimeout: true,
+			configure: func(srv *Server, req *http.Request) {
+				req.RemoteAddr = "198.51.100.23:4242"
+				req.Header.Set(apiprotocol.ClientClassHeader, apiprotocol.ClientClassCLI)
+				assert.True(t, srv.apiRequestAuthorized(req), "allow-insecure keyless remote request stays authorized")
+			},
+		},
+		{
+			name:        "forwarded loopback cannot spoof keyless remote CLI",
+			bindAddr:    "0.0.0.0",
+			allowUnsafe: true,
+			wantTimeout: true,
+			configure: func(srv *Server, req *http.Request) {
+				req.RemoteAddr = "198.51.100.23:4242"
+				req.Header.Set("Forwarded", "for=127.0.0.1")
+				req.Header.Set("X-Forwarded-For", "127.0.0.1")
+				req.Header.Set(apiprotocol.ClientClassHeader, apiprotocol.ClientClassCLI)
+				assert.True(t, srv.apiRequestAuthorized(req), "allow-insecure keyless remote request stays authorized")
+			},
+		},
+		{
 			name:   "API key CLI",
 			apiKey: cliTimeoutTestAPIKey,
 			configure: func(_ *Server, req *http.Request) {
+				req.RemoteAddr = "198.51.100.23:4242"
 				req.Header.Set("X-Api-Key", cliTimeoutTestAPIKey)
 				req.Header.Set(apiprotocol.ClientClassHeader, apiprotocol.ClientClassCLI)
 			},
@@ -1113,8 +1144,10 @@ func TestCLIRequestDurationPolicy(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			srv := NewServerWithOptions(ServerOptions{
 				Config: &config.Config{Server: config.ServerConfig{
-					APIPort: 8080,
-					APIKey:  tt.apiKey,
+					APIPort:       8080,
+					APIKey:        tt.apiKey,
+					BindAddr:      tt.bindAddr,
+					AllowInsecure: tt.allowUnsafe,
 				}},
 				Logger:         testLogger(),
 				RequestTimeout: 5 * time.Millisecond,
@@ -1245,8 +1278,94 @@ func TestMarkedCLIProtectiveCeilingInventory(t *testing.T) {
 			assert.Greater(t, remaining, DaemonLongRequestTimeout-time.Second)
 			assert.LessOrEqual(t, remaining, DaemonLongRequestTimeout)
 			assert.False(t, deadline.Before(started), "protective deadline is in the future")
-			assert.Empty(t, recorder.readDeadlines, "protective route keeps the server read deadline")
+			require.Len(t, recorder.readDeadlines, 1, "protective route extends the server read deadline")
+			readRemaining := time.Until(recorder.readDeadlines[0])
+			assert.Greater(t, readRemaining, DaemonLongRequestTimeout-time.Second)
+			assert.LessOrEqual(t, readRemaining, DaemonLongRequestTimeout)
 			assert.Empty(t, recorder.writeDeadlines, "protective route keeps the server write deadline")
 		})
 	}
+}
+
+func TestMarkedCLIProtectiveRouteCanReadBodyPastOrdinaryServerTimeout(t *testing.T) {
+	const ordinaryReadTimeout = 25 * time.Millisecond
+
+	srv := NewServerWithOptions(ServerOptions{
+		Config: &config.Config{Server: config.ServerConfig{
+			APIPort: 8080,
+			APIKey:  cliTimeoutTestAPIKey,
+		}},
+		Logger: testLogger(),
+	})
+	srv.readTimeout = ordinaryReadTimeout
+	srv.router = srv.timeoutMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusRequestTimeout)
+			return
+		}
+		if string(body) != "ab" {
+			http.Error(w, "unexpected body", http.StatusBadRequest)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err, "listen")
+	serveErr := make(chan error, 1)
+	go func() {
+		serveErr <- srv.StartOnListener(listener)
+	}()
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		require.NoError(t, srv.Shutdown(ctx), "shutdown")
+		require.ErrorIs(t, <-serveErr, http.ErrServerClosed, "serve result")
+	})
+
+	slowBodyStatus := func(t *testing.T, path string, marked bool) int {
+		t.Helper()
+		conn, err := net.Dial("tcp", listener.Addr().String())
+		require.NoError(t, err, "dial server")
+		defer func() { _ = conn.Close() }()
+		require.NoError(t, conn.SetDeadline(time.Now().Add(2*time.Second)), "bound test connection")
+
+		marker := ""
+		if marked {
+			marker = fmt.Sprintf("%s: %s\r\n",
+				apiprotocol.ClientClassHeader, apiprotocol.ClientClassCLI)
+		}
+		_, err = fmt.Fprintf(conn,
+			"POST %s HTTP/1.1\r\n"+
+				"Host: %s\r\n"+
+				"X-Api-Key: %s\r\n"+
+				"%s"+
+				"Content-Length: 2\r\n\r\n"+
+				"a",
+			path,
+			listener.Addr().String(),
+			cliTimeoutTestAPIKey,
+			marker,
+		)
+		require.NoError(t, err, "write headers and first body byte")
+
+		time.Sleep(4 * ordinaryReadTimeout)
+		_, err = conn.Write([]byte("b"))
+		require.NoError(t, err, "write delayed body byte")
+
+		resp, err := http.ReadResponse(bufio.NewReader(conn), &http.Request{Method: http.MethodPost})
+		require.NoError(t, err, "read response")
+		defer func() { _ = resp.Body.Close() }()
+		return resp.StatusCode
+	}
+
+	t.Run("protective route extends read deadline", func(t *testing.T) {
+		assert.Equal(t, http.StatusNoContent,
+			slowBodyStatus(t, "/api/v1/cli/build-cache", true))
+	})
+	t.Run("unmarked route keeps ordinary read deadline", func(t *testing.T) {
+		assert.Equal(t, http.StatusRequestTimeout,
+			slowBodyStatus(t, "/api/v1/cli/stats", false))
+	})
 }

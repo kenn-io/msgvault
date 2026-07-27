@@ -168,10 +168,10 @@ type Dialect interface {
 	// already present in schema.sql / schema_pg.sql.
 	LegacyColumnMigrations() []ColumnMigration
 
-	// DatabaseSize returns the on-disk or logical size of the database in
-	// bytes. For SQLite: file size at dbPath. For PostgreSQL: queries
-	// pg_database_size(). Returns 0 if the size cannot be determined;
-	// an error only for genuine failures (not missing files).
+	// DatabaseSize returns the logical allocated size of the database in
+	// bytes. SQLite multiplies the main database's page_count by page_size
+	// (excluding WAL/SHM sidecar overhead); PostgreSQL queries
+	// pg_database_size(). In-memory SQLite databases report 0.
 	DatabaseSize(ctx context.Context, db *sql.DB, dbPath string) (int64, error)
 
 	// Connection lifecycle

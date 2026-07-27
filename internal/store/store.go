@@ -1226,7 +1226,8 @@ func (s *Store) GetStatsForScopeContext(ctx context.Context, sourceIDs []int64) 
 		}
 	}
 
-	// DatabaseSize: file size for SQLite, pg_database_size() for PostgreSQL.
+	// DatabaseSize: logical main-database page allocation for SQLite,
+	// pg_database_size() for PostgreSQL.
 	if size, err := s.dialect.DatabaseSize(ctx, s.db.DB, s.dbPath); err == nil {
 		stats.DatabaseSize = size
 	} else if ctxErr := ctx.Err(); ctxErr != nil {

@@ -215,9 +215,10 @@ func isLoopbackRequest(r *http.Request) bool {
 }
 
 type requestAuthentication struct {
-	Mode      AuthMode
-	SessionID string
-	Session   browserSession
+	Mode                  AuthMode
+	SessionID             string
+	Session               browserSession
+	trustedForCLIDuration bool
 }
 
 func (s *Server) requestAuthentication(r *http.Request) requestAuthentication {
@@ -232,7 +233,10 @@ func (s *Server) classifyAPIRequestDirect(r *http.Request) requestAuthentication
 	// loopback unless the operator explicitly opts into unauthenticated remote
 	// access, and every request remains authorized when no key is configured.
 	if s.cfg.Server.APIKey == "" {
-		return requestAuthentication{Mode: AuthModeLoopback}
+		return requestAuthentication{
+			Mode:                  AuthModeLoopback,
+			trustedForCLIDuration: isLoopbackRequest(r),
+		}
 	}
 
 	authHeader := r.Header.Get("Authorization")
@@ -243,7 +247,10 @@ func (s *Server) classifyAPIRequestDirect(r *http.Request) requestAuthentication
 		authHeader = authHeader[7:]
 	}
 	if constantTimeAPIKeyEqual(authHeader, s.cfg.Server.APIKey) {
-		return requestAuthentication{Mode: AuthModeAPIKey}
+		return requestAuthentication{
+			Mode:                  AuthModeAPIKey,
+			trustedForCLIDuration: true,
+		}
 	}
 
 	if cookie, err := r.Cookie(sessionCookieName); err == nil && s.sessions != nil {

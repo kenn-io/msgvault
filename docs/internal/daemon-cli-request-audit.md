@@ -37,6 +37,13 @@ complete context-aware CLI store extension. A compatibility fallback remains
 for older in-process test/embedding stores; cancellation claims above describe
 the production adapter, not that fallback.
 
+SQLite database size is read through context-aware `PRAGMA page_count` and
+`PRAGMA page_size` queries. It reports the logical allocated size of the main
+database, including committed pages still represented in WAL, but excludes WAL
+framing and `-wal`/`-shm` sidecar overhead. This replaces the prior
+noninterruptible main-file `stat` and keeps `/cli/stats` and `/cli/init-db`
+fully request-cancellable.
+
 ## Protective-ceiling exceptions
 
 The routes below retain a generous `DaemonLongRequestTimeout` (30 minutes) even

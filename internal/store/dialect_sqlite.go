@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"os"
 	"strings"
 	"unicode"
 
@@ -300,11 +299,13 @@ func (d *SQLiteDialect) LegacyColumnMigrations() []ColumnMigration {
 	}
 }
 
-// DatabaseSize returns the on-disk size of the SQLite database file.
-// Returns (0, nil) for in-memory databases or when the file cannot be stat'd.
+// DatabaseSize returns SQLite's logical main-database allocation:
+// PRAGMA page_count multiplied by PRAGMA page_size. The query sees committed
+// pages that still reside in WAL, while deliberately excluding WAL framing and
+// SHM sidecar overhead. In-memory databases retain the historical 0 result.
 func (d *SQLiteDialect) DatabaseSize(
 	ctx context.Context,
-	_ *sql.DB,
+	db *sql.DB,
 	dbPath string,
 ) (int64, error) {
 	if err := ctx.Err(); err != nil {
@@ -313,14 +314,16 @@ func (d *SQLiteDialect) DatabaseSize(
 	if dbPath == "" || dbPath == ":memory:" || strings.Contains(dbPath, ":memory:") {
 		return 0, nil
 	}
-	info, err := os.Stat(dbPath)
-	if err != nil {
-		return 0, nil //nolint:nilerr // missing/unstattable db file reports 0 size, not an error
+
+	var pageCount int64
+	if err := db.QueryRowContext(ctx, "PRAGMA page_count").Scan(&pageCount); err != nil {
+		return 0, fmt.Errorf("query SQLite page count: %w", err)
 	}
-	if err := ctx.Err(); err != nil {
-		return 0, err
+	var pageSize int64
+	if err := db.QueryRowContext(ctx, "PRAGMA page_size").Scan(&pageSize); err != nil {
+		return 0, fmt.Errorf("query SQLite page size: %w", err)
 	}
-	return info.Size(), nil
+	return pageCount * pageSize, nil
 }
 
 // InitConn is a no-op for SQLite — PRAGMAs are set via DSN parameters.
