@@ -111,6 +111,7 @@ available with `msgvault tui`.
 | `add-teams EMAIL` | Authorize delegated Microsoft Graph access for Teams |
 | `sync-teams EMAIL` | Sync Microsoft Teams chats and channels |
 | `add-discord` / `sync-discord` | Register a read-only bot and sync Discord guild channels and threads |
+| `export-discord` | Export a bounded Discord history window as stable, versioned JSON |
 | `backfill-discord-media` | Retry incomplete Discord attachment downloads |
 | `add-granola` / `sync-granola` | Register and sync Granola meeting notes and transcripts |
 | `add-circleback` / `sync-circleback` | Authorize and sync Circleback meetings, notes, and transcripts |
@@ -255,6 +256,8 @@ attachments through a dedicated read-only bot:
 ```bash
 msgvault add-discord --guild 123456789012345678
 msgvault sync-discord 123456789012345678
+msgvault export-discord 123456789012345678 \
+  --start 2026-07-20T00:00:00Z --end 2026-07-27T00:00:00Z
 msgvault search "incident review" --message-type discord
 ```
 

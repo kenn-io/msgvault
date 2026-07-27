@@ -176,6 +176,8 @@ See [OAuth Setup: Google Workspace Accounts](/guides/oauth-setup/#google-workspa
 
 Discord's `--oauth-app` value is only a protected bot-token binding label. It
 is not resolved from this section and does not require an `[oauth.apps]` entry.
+`export-discord` uses the same daemon and database configuration as other read
+commands. It does not load a Discord bot token or make provider API calls.
 
 When `service_account_key` is configured, `msgvault add-account <email>` validates the delegated Gmail profile and registers the account without storing a per-user refresh token. The service account key file must be owner-only on Unix-like systems, for example `chmod 600 /path/to/service-account.json`.
 

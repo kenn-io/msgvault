@@ -203,6 +203,33 @@ mass-deletes messages or discards the cursor. A successful later scan clears
 the marker. Messages deleted before msgvault first observed them cannot be
 recovered.
 
+## Export a bounded history window
+
+Export one registered guild from the archive without contacting Discord:
+
+```bash
+msgvault export-discord 123456789012345678 \
+  --start 2026-07-20T00:00:00Z \
+  --end 2026-07-27T00:00:00Z \
+  --format json
+```
+
+The bounds are a half-open interval: `--start` is included and `--end` is
+excluded. Both must be RFC3339 timestamps. The command requires at least one
+successful sync and records that sync's completion time in the output. It
+returns channels and threads in stable ID order, with messages ordered by
+timestamp and message ID. Source-deleted messages retain their archived content
+and carry `"deleted": true`; locally hidden duplicate rows are omitted.
+
+The JSON envelope uses schema `msgvault-discord-export/1`. It includes the
+msgvault version, guild identity, UTC bounds, channel/thread metadata, rendered
+message text, author handles, timestamps, and URLs extracted from message
+content.
+
+Like `sync-discord`, the public command routes through the running local or
+remote msgvault daemon. The export path reads only the archive: it does not load
+Discord credentials or call the Discord API.
+
 ## Attachment backfill and limits
 
 Retry attachment downloads after a transient failure or after raising

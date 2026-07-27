@@ -35,6 +35,21 @@ func TestDiscordCommandsRouteThroughDaemonCLIRunner(t *testing.T) {
 			args:     []string{"113456789012345678", "--full", "--after", "2026-01-01"},
 		},
 		{
+			name: "export Discord",
+			wantArgs: []string{
+				"export-discord", "--end=2026-07-21T00:00:00Z",
+				"--format=json", "--start=2026-07-20T00:00:00Z",
+				"113456789012345678",
+			},
+			command: newExportDiscordCmd,
+			args: []string{
+				"113456789012345678",
+				"--start", "2026-07-20T00:00:00Z",
+				"--end", "2026-07-21T00:00:00Z",
+				"--format", "json",
+			},
+		},
+		{
 			name:     "backfill Discord media",
 			wantArgs: []string{"backfill-discord-media", "--only-incomplete", "113456789012345678"},
 			command:  newBackfillDiscordMediaCmd,
