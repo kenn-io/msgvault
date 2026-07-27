@@ -15,12 +15,9 @@ import (
 )
 
 // CacheSchemaVersion is the sole schema compatibility version shared by the
-// cache publisher and analytical readers. Bumped to 14 because ffe9904a
-// widened owner_participants/is_from_me matching from email-only to
-// identifier-type-aware (phone, chat handle, etc.): caches built under v13
-// before that change baked the narrower email-only derivation, and without
-// this bump they would never be flagged stale by schema-version comparison.
-const CacheSchemaVersion = 14
+// cache publisher and analytical readers. Version 15 adds the complete
+// origin-aware identity fact, edge, directory, and rollup read model.
+const CacheSchemaVersion = 15
 
 // CacheSyncState is the commit marker written after a complete analytics
 // cache publication. SQLite remains authoritative; these watermarks only
@@ -220,29 +217,19 @@ func CacheDatasetFingerprint(analyticsDir string) (string, error) {
 
 func datasetHasParquet(analyticsDir, dataset string) (bool, error) {
 	datasetDir := filepath.Join(analyticsDir, dataset)
-	entries, err := os.ReadDir(datasetDir)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return false, nil
+	found := false
+	err := filepath.WalkDir(datasetDir, func(_ string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
 		}
-		return false, err
-	}
-	for _, entry := range entries {
 		if !entry.IsDir() && strings.EqualFold(filepath.Ext(entry.Name()), ".parquet") {
-			return true, nil
+			found = true
+			return filepath.SkipAll
 		}
-		if dataset != datasetMessages || !entry.IsDir() {
-			continue
-		}
-		partitionEntries, err := os.ReadDir(filepath.Join(datasetDir, entry.Name()))
-		if err != nil {
-			return false, err
-		}
-		for _, partitionEntry := range partitionEntries {
-			if !partitionEntry.IsDir() && strings.EqualFold(filepath.Ext(partitionEntry.Name()), ".parquet") {
-				return true, nil
-			}
-		}
+		return nil
+	})
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
 	}
-	return false, nil
+	return found, err
 }

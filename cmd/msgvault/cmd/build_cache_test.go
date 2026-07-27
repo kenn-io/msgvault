@@ -878,6 +878,7 @@ func TestBuildCache_BasicExport(t *testing.T) {
 	assert.Equal(int64(5), state.Stats.TotalMessages)
 	assert.Equal(int64(1), state.Stats.Sources)
 	assert.NotEmpty(state.ConversationParticipantsFingerprint)
+	assert.Equal(state.LastSyncAt.UTC().Format(time.DateOnly), state.RelationshipAnchorDate)
 }
 
 func TestBuildCache_PublishesConversationParticipants(t *testing.T) {
@@ -1044,7 +1045,7 @@ func TestBuildCache_IncrementalExport(t *testing.T) {
 
 	// Identity facts append at the same message watermark.
 	assert.Equal(int64(7), countRows(filepath.Join(
-		analyticsDir, identityindex.DatasetEntryFacts, "*.parquet")), "identity entry facts")
+		analyticsDir, identityindex.DatasetEntryFacts, "**", "*.parquet")), "identity entry facts")
 
 	// Participants: 4 (overwritten each run, not appended)
 	assert.Equal(int64(4), countRows(filepath.Join(analyticsDir, "participants", "*.parquet")), "participants")
@@ -2513,8 +2514,11 @@ func createFakeParquet(t *testing.T, analyticsDir string) {
 	msgDir := filepath.Join(analyticsDir, "messages", "year=2024")
 	require.NoError(t, os.MkdirAll(msgDir, 0755), "MkdirAll messages")
 	require.NoError(t, os.WriteFile(filepath.Join(msgDir, "data.parquet"), []byte("fake"), 0644), "write messages parquet")
-	// Other required tables use flat layout
-	for _, dir := range []string{"sources", "participants", "participant_identifiers", "message_recipients", "labels", "message_labels", "attachments", "conversations", "conversation_participants", tableOwnerParticipants, tableParticipantClusters} {
+	// Other required tables use flat layout.
+	for _, dir := range query.RequiredParquetDirs {
+		if dir == tableMessages {
+			continue
+		}
 		d := filepath.Join(analyticsDir, dir)
 		require.NoError(t, os.MkdirAll(d, 0755), "MkdirAll %s", dir)
 		require.NoError(t, os.WriteFile(filepath.Join(d, "data.parquet"), []byte("fake"), 0644), "write %s parquet", dir)
@@ -3104,7 +3108,7 @@ func TestCacheNeedsBuild_IgnoresAlreadyProcessedUpdatedSyncRun(t *testing.T) {
 // schema version other than the current one now forces a full rebuild.
 func TestCacheNeedsBuild_SchemaVersionMismatch(t *testing.T) {
 	require := require.New(t)
-	require.Equal(14, cacheSchemaVersion, "identifier-type-aware is_from_me derivation requires cache v14")
+	require.Equal(15, cacheSchemaVersion, "identity rollups require cache v15")
 	tmpDir := setupTestSQLiteEmpty(t)
 
 	dbPath := filepath.Join(tmpDir, "test.db")
@@ -3139,7 +3143,7 @@ func TestCacheNeedsBuild_SchemaVersionMismatch(t *testing.T) {
 	require.False(result.Skipped, "schema mismatch must execute a full rebuild")
 	upgraded, err := query.ReadCacheSyncState(analyticsDir)
 	require.NoError(err, "read upgraded cache state")
-	require.Equal(14, upgraded.SchemaVersion)
+	require.Equal(15, upgraded.SchemaVersion)
 	require.NoFileExists(filepath.Join(analyticsDir, tableParticipantIdentifiers, "data.parquet"),
 		"full rebuild must replace rather than extend the v11 identifier dataset")
 	identifierParquet := filepath.Join(analyticsDir, tableParticipantIdentifiers, "participant_identifiers.parquet")

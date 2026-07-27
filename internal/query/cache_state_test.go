@@ -70,12 +70,7 @@ func TestDataBuilderPublishesProductionIdentityDatasets(t *testing.T) {
 	dir, cleanup := buildStandardTestData(t).Build()
 	t.Cleanup(cleanup)
 
-	for _, dataset := range []string{
-		identityindex.DatasetEntryFacts,
-		identityindex.DatasetDirectEdges,
-		identityindex.DatasetConversationEdges,
-		identityindex.DatasetDirectory,
-	} {
+	for _, dataset := range identityindex.RequiredDatasets {
 		hasParquet, err := datasetHasParquet(dir, dataset)
 		require.NoError(t, err)
 		assert.True(t, hasParquet, dataset)
@@ -84,6 +79,7 @@ func TestDataBuilderPublishesProductionIdentityDatasets(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, int64(5), state.Stats.TotalMessages)
 	assert.NotEmpty(t, state.ConversationParticipantsFingerprint)
+	assert.Equal(t, "2026-07-15", state.RelationshipAnchorDate)
 }
 
 func TestAcquireReadyCacheReadLockRejectsAbsentCache(t *testing.T) {
@@ -209,10 +205,10 @@ func TestInspectCacheReadinessNamesStaleSchemaAndDrift(t *testing.T) {
 	assert.Equal(CacheDrifted, readiness)
 }
 
-func TestCacheSchemaVersionRequiresParticipantIdentifierPublication(t *testing.T) {
+func TestCacheSchemaVersionRequiresIdentityRollupPublication(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
-	assertions.Equal(14, CacheSchemaVersion)
+	assertions.Equal(15, CacheSchemaVersion)
 
 	dir := completeReadinessCache(t)
 	state, err := ReadCacheSyncState(dir)

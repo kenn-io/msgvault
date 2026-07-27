@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -394,16 +395,20 @@ func rewriteParquetForTest(t *testing.T, path, columns, values string) {
 
 func firstRequiredParquetForTest(t *testing.T, analyticsDir, dir string) string {
 	t.Helper()
-	patterns := []string{filepath.Join(analyticsDir, dir, "*.parquet")}
-	if dir == datasetMessages {
-		patterns = append([]string{filepath.Join(analyticsDir, dir, "*", "*.parquet")}, patterns...)
-	}
-	for _, pattern := range patterns {
-		matches, err := filepath.Glob(pattern)
-		require.NoError(t, err, "glob parquet files")
-		if len(matches) > 0 {
-			return matches[0]
-		}
+	var match string
+	err := filepath.WalkDir(filepath.Join(analyticsDir, dir),
+		func(path string, entry os.DirEntry, walkErr error) error {
+			require.NoError(t, walkErr)
+			if !entry.IsDir() && strings.EqualFold(filepath.Ext(entry.Name()), ".parquet") {
+				match = path
+				return filepath.SkipAll
+			}
+			return nil
+		},
+	)
+	require.NoError(t, err, "walk parquet files")
+	if match != "" {
+		return match
 	}
 	require.FailNow(t, "required parquet file not found", "dir %s", dir)
 	return ""

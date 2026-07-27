@@ -591,41 +591,7 @@ func (b *TestDataBuilder) Build() (string, func()) {
 	b.addAuxiliaryTables(pb)
 	b.addAttachmentsTable(pb)
 
-	analyticsDir, cleanup := pb.build()
-	db, err := sql.Open("duckdb", "")
-	if err != nil {
-		cleanup()
-		require.NoError(b.t, err, "open DuckDB for identity fixture derivation")
-	}
-	derived, buildErr := identityindex.Build(context.Background(), db, identityindex.BuildOptions{
-		Mode:           identityindex.ModeFull,
-		StagedBaseRoot: analyticsDir,
-		OutputRoot:     analyticsDir,
-		AnchorDate:     time.Date(2026, 7, 15, 0, 0, 0, 0, time.UTC),
-	})
-	closeErr := db.Close()
-	if buildErr != nil || closeErr != nil {
-		cleanup()
-		require.NoError(b.t, buildErr, "derive identity fixture datasets")
-		require.NoError(b.t, closeErr, "close identity fixture DuckDB")
-	}
-	state, err := ReadCacheSyncState(analyticsDir)
-	if err != nil {
-		cleanup()
-		require.NoError(b.t, err, "read identity fixture cache state")
-	}
-	state.ConversationParticipantsFingerprint = derived.ConversationParticipantsFingerprint
-	state.Stats = derived.Stats
-	stateData, err := json.Marshal(state)
-	if err != nil {
-		cleanup()
-		require.NoError(b.t, err, "marshal identity fixture cache state")
-	}
-	if err := os.WriteFile(CacheStatePath(analyticsDir), stateData, 0o600); err != nil {
-		cleanup()
-		require.NoError(b.t, err, "write identity fixture cache state")
-	}
-	return analyticsDir, cleanup
+	return pb.build()
 }
 
 // addMessageTables partitions messages by year and adds each partition to the builder.
@@ -771,13 +737,24 @@ func (b *parquetBuilder) build() (string, func()) {
 	defer func() { _ = db.Close() }()
 
 	b.writeParquetFiles(db, tmpDir)
+	anchor := time.Date(2026, 7, 15, 0, 0, 0, 0, time.UTC)
+	derived, err := identityindex.Build(context.Background(), db, identityindex.BuildOptions{
+		Mode:           identityindex.ModeFull,
+		StagedBaseRoot: tmpDir,
+		OutputRoot:     tmpDir,
+		AnchorDate:     anchor,
+	})
+	require.NoError(b.t, err, "derive identity fixture datasets")
 	fingerprint, err := CacheDatasetFingerprint(tmpDir)
 	require.NoError(b.t, err, "fingerprint cache fixture")
 	stateData, err := json.Marshal(CacheSyncState{
-		LastSyncAt:         time.Date(2026, 7, 15, 12, 0, 0, 0, time.UTC),
-		PublishedAt:        time.Date(2026, 7, 15, 12, 1, 0, 0, time.UTC),
-		SchemaVersion:      CacheSchemaVersion,
-		DatasetFingerprint: fingerprint,
+		LastSyncAt:                          time.Date(2026, 7, 15, 12, 0, 0, 0, time.UTC),
+		PublishedAt:                         time.Date(2026, 7, 15, 12, 1, 0, 0, time.UTC),
+		SchemaVersion:                       CacheSchemaVersion,
+		DatasetFingerprint:                  fingerprint,
+		RelationshipAnchorDate:              anchor.Format(time.DateOnly),
+		ConversationParticipantsFingerprint: derived.ConversationParticipantsFingerprint,
+		Stats:                               derived.Stats,
 	})
 	require.NoError(b.t, err, "marshal cache state")
 	require.NoError(b.t, os.WriteFile(CacheStatePath(tmpDir), stateData, 0o600),

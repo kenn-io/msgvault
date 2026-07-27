@@ -19,6 +19,7 @@ import (
 	"golang.org/x/sync/semaphore"
 
 	"go.kenn.io/msgvault/internal/duckdbutil"
+	"go.kenn.io/msgvault/internal/identityindex"
 	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/store"
 )
@@ -443,6 +444,10 @@ func (e *DuckDBEngine) parquetGlob() string {
 
 // parquetPath returns the path pattern for a specific Parquet table.
 func (e *DuckDBEngine) parquetPath(table string) string {
+	if table == identityindex.DatasetEntryFacts ||
+		table == identityindex.DatasetDirectEdges {
+		return filepath.Join(e.analyticsDir, table, "**", "*.parquet")
+	}
 	return filepath.Join(e.analyticsDir, table, "*.parquet")
 }
 
@@ -481,13 +486,20 @@ func (e *DuckDBEngine) cacheFingerprint() string {
 }
 
 func (e *DuckDBEngine) cacheFingerprintGlobs() []string {
-	globs := make([]string, 0, len(RequiredParquetDirs))
+	globs := make([]string, 0, len(RequiredParquetDirs)+2)
 	for _, dir := range RequiredParquetDirs {
 		if dir == datasetMessages {
 			globs = append(globs, filepath.Join(e.analyticsDir, dir, "*", "*.parquet"))
 			continue
 		}
 		globs = append(globs, e.parquetPath(dir))
+		if dir == identityindex.DatasetEntryFacts ||
+			dir == identityindex.DatasetDirectEdges {
+			// Empty partitioned datasets carry one schema-only root shard.
+			// Go's filepath.Glob does not give ** DuckDB's zero-directory
+			// semantics, so include that root shape explicitly.
+			globs = append(globs, filepath.Join(e.analyticsDir, dir, "*.parquet"))
+		}
 	}
 	return globs
 }
@@ -2504,6 +2516,14 @@ var RequiredParquetDirs = []string{
 	datasetConversationParticipants,
 	datasetOwnerParticipants,
 	datasetParticipantClusters,
+	identityindex.DatasetEntryFacts,
+	identityindex.DatasetDirectEdges,
+	identityindex.DatasetConversationEdges,
+	identityindex.DatasetDirectory,
+	identityindex.DatasetRollups,
+	identityindex.DatasetDomainRollups,
+	identityindex.DatasetRelationships,
+	identityindex.DatasetRelationshipFuture,
 }
 
 // SearchFast searches message metadata in Parquet files (no body text).

@@ -34,6 +34,10 @@ const (
 	tableIdentityDirectEdges       = identityindex.DatasetDirectEdges
 	tableIdentityConversationEdges = identityindex.DatasetConversationEdges
 	tableIdentityDirectory         = identityindex.DatasetDirectory
+	tableIdentityRollups           = identityindex.DatasetRollups
+	tableDomainRollups             = identityindex.DatasetDomainRollups
+	tableRelationshipRollups       = identityindex.DatasetRelationships
+	tableRelationshipFuture        = identityindex.DatasetRelationshipFuture
 )
 
 // flagJSON is the name of the boolean --json output flag. It is kept distinct

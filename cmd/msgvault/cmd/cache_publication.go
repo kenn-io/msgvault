@@ -7,7 +7,6 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"time"
 
@@ -89,13 +88,7 @@ func cachePublishPlanForMode(replaceAll bool) cachePublishPlan {
 		Replace: make(map[string]bool),
 	}
 	if replaceAll {
-		for _, dataset := range append(
-			slices.Clone(query.RequiredParquetDirs),
-			identityindex.DatasetEntryFacts,
-			identityindex.DatasetDirectEdges,
-			identityindex.DatasetConversationEdges,
-			identityindex.DatasetDirectory,
-		) {
+		for _, dataset := range query.RequiredParquetDirs {
 			plan.Replace[dataset] = true
 		}
 		return plan
@@ -121,6 +114,10 @@ func cachePublishPlanForMode(replaceAll bool) cachePublishPlan {
 		tableParticipantClusters,
 		identityindex.DatasetConversationEdges,
 		identityindex.DatasetDirectory,
+		identityindex.DatasetRollups,
+		identityindex.DatasetDomainRollups,
+		identityindex.DatasetRelationships,
+		identityindex.DatasetRelationshipFuture,
 	} {
 		plan.Replace[dataset] = true
 	}
@@ -130,16 +127,6 @@ func cachePublishPlanForMode(replaceAll bool) cachePublishPlan {
 func (p cachePublishPlan) datasets() []string {
 	datasets := make([]string, 0, len(p.Append)+len(p.Replace))
 	for _, dataset := range query.RequiredParquetDirs {
-		if p.Append[dataset] || p.Replace[dataset] {
-			datasets = append(datasets, dataset)
-		}
-	}
-	for _, dataset := range []string{
-		identityindex.DatasetEntryFacts,
-		identityindex.DatasetDirectEdges,
-		identityindex.DatasetConversationEdges,
-		identityindex.DatasetDirectory,
-	} {
 		if p.Append[dataset] || p.Replace[dataset] {
 			datasets = append(datasets, dataset)
 		}

@@ -103,6 +103,24 @@ func TestBuildEmptySchemas(t *testing.T) {
 			"canonical_id", "display_label", "partial_label",
 			"member_ids", "search_values", "is_owner",
 		},
+		DatasetRollups: {
+			"canonical_id", "activity_count", "file_count",
+			"first_at", "last_at", "source_counts",
+		},
+		DatasetDomainRollups: {
+			"domain", "activity_count", "person_count", "file_count",
+			"first_at", "last_at", "source_counts",
+		},
+		DatasetRelationships: {
+			"canonical_id", "anchor_date", "sent_decayed", "received_decayed",
+			"meetings_decayed", "sent_count", "meeting_count",
+			"modality_mask", "last_at",
+		},
+		DatasetRelationshipFuture: {
+			"canonical_id", "event_date", "sent_units", "received_units",
+			"meeting_units", "sent_count", "meeting_count",
+			"modality_mask", "last_at",
+		},
 	}
 	for dataset, wantColumns := range expected {
 		assert.Equal(t, int64(0), parquetCount(t, db, root, dataset), dataset)
@@ -118,6 +136,250 @@ func TestBuildEmptySchemas(t *testing.T) {
 			assert.Equal(t, wantColumns, gotColumns)
 		})
 	}
+}
+
+func TestAuthoredAliasRollupReceivesOnceAndPreservesFutureSignals(t *testing.T) {
+	root, db := writeIdentityBaseFixture(t, false)
+	for _, dataset := range []string{"messages", "message_recipients"} {
+		require.NoError(t, os.RemoveAll(filepath.Join(root, dataset)))
+	}
+	writeIdentityParquet(t, db, root, "messages", `
+		SELECT * FROM (VALUES
+			(100::BIGINT, 1::BIGINT, 'm-100'::VARCHAR, 10::BIGINT,
+			 'Subject'::VARCHAR, 'Preview'::VARCHAR,
+			 TIMESTAMP '2026-07-30 17:45:00', 50::BIGINT, true,
+			 1::INTEGER, NULL::TIMESTAMP, 2::BIGINT, 'email'::VARCHAR,
+			 false, 2026::INTEGER, 7::INTEGER)
+		) AS t(id, source_id, source_message_id, conversation_id, subject,
+			snippet, sent_at, size_estimate, has_attachments, attachment_count,
+			deleted_from_source_at, sender_id, message_type, is_from_me, year, month)`)
+	writeIdentityParquet(t, db, root, "message_recipients", `
+		SELECT * FROM (VALUES
+			(100::BIGINT, 2::BIGINT, 'from'::VARCHAR, 'Bob'::VARCHAR),
+			(100::BIGINT, 3::BIGINT, 'to'::VARCHAR, 'Bob Alias'::VARCHAR),
+			(100::BIGINT, 1::BIGINT, 'to'::VARCHAR, 'Alice'::VARCHAR)
+		) AS t(message_id, participant_id, recipient_type, display_name)`)
+
+	_, err := Build(context.Background(), db, BuildOptions{
+		Mode:           ModeFull,
+		StagedBaseRoot: root,
+		OutputRoot:     root,
+		AnchorDate:     time.Date(2026, 7, 27, 0, 0, 0, 0, time.UTC),
+	})
+	require.NoError(t, err)
+
+	var relationshipCount, receivedUnits int64
+	require.NoError(t, db.QueryRow(`
+		SELECT count(*), coalesce(sum(f.received_units), 0)::BIGINT
+		FROM read_parquet(?) r
+		LEFT JOIN read_parquet(?) f USING (canonical_id)
+	`, identityParquetGlob(root, DatasetRelationships),
+		identityParquetGlob(root, DatasetRelationshipFuture)).
+		Scan(&relationshipCount, &receivedUnits))
+	assert.Equal(t, int64(1), relationshipCount)
+	assert.Equal(t, int64(1), receivedUnits)
+
+	var activityCount, fileCount int64
+	require.NoError(t, db.QueryRow(`
+		SELECT activity_count, file_count
+		FROM read_parquet(?) WHERE canonical_id = 2
+	`, identityParquetGlob(root, DatasetRollups)).Scan(&activityCount, &fileCount))
+	assert.Equal(t, int64(1), activityCount)
+	assert.Equal(t, int64(1), fileCount)
+
+	var domainActivity, domainPeople int64
+	require.NoError(t, db.QueryRow(`
+		SELECT activity_count, person_count
+		FROM read_parquet(?) WHERE domain = 'community.test'
+	`, identityParquetGlob(root, DatasetDomainRollups)).
+		Scan(&domainActivity, &domainPeople))
+	assert.Equal(t, int64(1), domainActivity,
+		"conversation membership contributes non-chat domain activity")
+	assert.Equal(t, int64(0), domainPeople,
+		"conversation-only non-chat members do not contribute people fan-out")
+}
+
+func TestLogicalChatReductionUsesNewestFilteredMessage(t *testing.T) {
+	root, db := writeIdentityBaseFixture(t, false)
+	for _, dataset := range []string{"messages", "message_recipients", "conversations"} {
+		require.NoError(t, os.RemoveAll(filepath.Join(root, dataset)))
+	}
+	writeIdentityParquet(t, db, root, "messages", `
+		SELECT * FROM (VALUES
+			(100::BIGINT, 1::BIGINT, 'm-100'::VARCHAR, 10::BIGINT,
+			 ''::VARCHAR, ''::VARCHAR, TIMESTAMP '2026-07-20 10:30:00',
+			 10::BIGINT, false, 0::INTEGER, NULL::TIMESTAMP,
+			 2::BIGINT, 'sms'::VARCHAR, false, 2026::INTEGER, 7::INTEGER),
+			(101::BIGINT, 1::BIGINT, 'm-101'::VARCHAR, 10::BIGINT,
+			 ''::VARCHAR, ''::VARCHAR, TIMESTAMP '2026-07-20 10:30:00',
+			 10::BIGINT, false, 0::INTEGER, NULL::TIMESTAMP,
+			 1::BIGINT, 'sms'::VARCHAR, true, 2026::INTEGER, 7::INTEGER)
+		) AS t(id, source_id, source_message_id, conversation_id, subject,
+			snippet, sent_at, size_estimate, has_attachments, attachment_count,
+			deleted_from_source_at, sender_id, message_type, is_from_me, year, month)`)
+	writeIdentityParquet(t, db, root, "message_recipients", `
+		SELECT * FROM (VALUES
+			(100::BIGINT, 2::BIGINT, 'from'::VARCHAR, 'Bob'::VARCHAR),
+			(100::BIGINT, 1::BIGINT, 'to'::VARCHAR, 'Alice'::VARCHAR),
+			(101::BIGINT, 1::BIGINT, 'from'::VARCHAR, 'Alice'::VARCHAR),
+			(101::BIGINT, 2::BIGINT, 'to'::VARCHAR, 'Bob'::VARCHAR)
+		) AS t(message_id, participant_id, recipient_type, display_name)`)
+	writeIdentityParquet(t, db, root, "conversations", `
+		SELECT * FROM (VALUES
+			(10::BIGINT, 'thread-10'::VARCHAR, 'Thread'::VARCHAR, 'direct_chat'::VARCHAR)
+		) AS t(id, source_conversation_id, title, conversation_type)`)
+
+	_, err := Build(context.Background(), db, BuildOptions{
+		Mode:           ModeFull,
+		StagedBaseRoot: root,
+		OutputRoot:     root,
+		AnchorDate:     time.Date(2026, 7, 27, 0, 0, 0, 0, time.UTC),
+	})
+	require.NoError(t, err)
+
+	paths := ActivityPaths{
+		Facts:             identityParquetGlob(root, DatasetEntryFacts),
+		DirectEdges:       identityParquetGlob(root, DatasetDirectEdges),
+		ConversationEdges: identityParquetGlob(root, DatasetConversationEdges),
+		Directory:         identityParquetGlob(root, DatasetDirectory),
+		Clusters:          identityParquetGlob(root, "participant_clusters"),
+		Owners:            identityParquetGlob(root, "owner_participants"),
+	}
+	assertLogicalUnit := func(t *testing.T, filter string, wantID int64, wantFromMe bool) {
+		t.Helper()
+		var gotID int64
+		var gotFromMe bool
+		query := LogicalActivitySQL(paths, filter) +
+			" SELECT anchor_message_id, is_from_me FROM logical_units"
+		require.NoError(t, db.QueryRow(query).Scan(&gotID, &gotFromMe))
+		assert.Equal(t, wantID, gotID)
+		assert.Equal(t, wantFromMe, gotFromMe)
+	}
+	assertLogicalUnit(t, "true", 101, true)
+	assertLogicalUnit(t, "f.message_id = 100", 100, false)
+
+	var chatMemberActivity, chatMemberPeople int64
+	require.NoError(t, db.QueryRow(`
+		SELECT r.activity_count, d.person_count
+		FROM read_parquet(?) r
+		JOIN read_parquet(?) d ON d.domain = 'community.test'
+		WHERE r.canonical_id = 4
+	`, identityParquetGlob(root, DatasetRollups),
+		identityParquetGlob(root, DatasetDomainRollups)).
+		Scan(&chatMemberActivity, &chatMemberPeople))
+	assert.Equal(t, int64(1), chatMemberActivity,
+		"conversation membership contributes chat people fan-out")
+	assert.Equal(t, int64(1), chatMemberPeople)
+}
+
+func TestFutureRelationshipRollupKeepsRawGateMaskAndTimestamp(t *testing.T) {
+	root, db := writeIdentityBaseFixture(t, false)
+	for _, dataset := range []string{"messages", "message_recipients"} {
+		require.NoError(t, os.RemoveAll(filepath.Join(root, dataset)))
+	}
+	writeIdentityParquet(t, db, root, "messages", `
+		SELECT * FROM (VALUES
+			(100::BIGINT, 1::BIGINT, 'm-100'::VARCHAR, 10::BIGINT,
+			 'Sent'::VARCHAR, ''::VARCHAR, TIMESTAMP '2026-07-28 09:00:00',
+			 10::BIGINT, false, 0::INTEGER, NULL::TIMESTAMP,
+			 1::BIGINT, 'email'::VARCHAR, true, 2026::INTEGER, 7::INTEGER),
+			(101::BIGINT, 1::BIGINT, 'm-101'::VARCHAR, 10::BIGINT,
+			 'Meeting'::VARCHAR, ''::VARCHAR, TIMESTAMP '2026-07-29 15:45:12',
+			 10::BIGINT, false, 0::INTEGER, NULL::TIMESTAMP,
+			 1::BIGINT, 'calendar_event'::VARCHAR, true, 2026::INTEGER, 7::INTEGER),
+			(102::BIGINT, 1::BIGINT, 'm-102'::VARCHAR, 10::BIGINT,
+			 'Owner absent'::VARCHAR, ''::VARCHAR, TIMESTAMP '2026-07-31 22:11:09',
+			 10::BIGINT, false, 0::INTEGER, NULL::TIMESTAMP,
+			 2::BIGINT, 'meeting_note'::VARCHAR, false, 2026::INTEGER, 7::INTEGER)
+		) AS t(id, source_id, source_message_id, conversation_id, subject,
+			snippet, sent_at, size_estimate, has_attachments, attachment_count,
+			deleted_from_source_at, sender_id, message_type, is_from_me, year, month)`)
+	writeIdentityParquet(t, db, root, "message_recipients", `
+		SELECT * FROM (VALUES
+			(100::BIGINT, 1::BIGINT, 'from'::VARCHAR, 'Alice'::VARCHAR),
+			(100::BIGINT, 2::BIGINT, 'to'::VARCHAR, 'Bob'::VARCHAR),
+			(101::BIGINT, 1::BIGINT, 'from'::VARCHAR, 'Alice'::VARCHAR),
+			(101::BIGINT, 2::BIGINT, 'to'::VARCHAR, 'Bob'::VARCHAR),
+			(102::BIGINT, 2::BIGINT, 'from'::VARCHAR, 'Bob'::VARCHAR),
+			(102::BIGINT, 4::BIGINT, 'to'::VARCHAR, 'Member'::VARCHAR)
+		) AS t(message_id, participant_id, recipient_type, display_name)`)
+
+	_, err := Build(context.Background(), db, BuildOptions{
+		Mode:           ModeFull,
+		StagedBaseRoot: root,
+		OutputRoot:     root,
+		AnchorDate:     time.Date(2026, 7, 27, 0, 0, 0, 0, time.UTC),
+	})
+	require.NoError(t, err)
+
+	var canonicalID, sentCount, meetingCount int64
+	var modalityMask uint8
+	var lastAt time.Time
+	require.NoError(t, db.QueryRow(`
+		SELECT canonical_id, sent_count, meeting_count, modality_mask, last_at
+		FROM read_parquet(?)
+	`, identityParquetGlob(root, DatasetRelationships)).
+		Scan(&canonicalID, &sentCount, &meetingCount, &modalityMask, &lastAt))
+	assert.Equal(t, int64(2), canonicalID)
+	assert.Equal(t, int64(1), sentCount)
+	assert.Equal(t, int64(1), meetingCount)
+	assert.Equal(t, ModalityEmail|ModalityMeeting, modalityMask)
+	assert.Equal(t, time.Date(2026, 7, 29, 15, 45, 12, 0, time.UTC), lastAt)
+
+	var futureRows, futureSent, futureMeetings int64
+	var futureMask uint8
+	var futureLastAt time.Time
+	require.NoError(t, db.QueryRow(`
+		SELECT count(*), sum(sent_units)::BIGINT, sum(meeting_units)::BIGINT,
+		       bit_or(modality_mask)::UTINYINT, max(last_at)
+		FROM read_parquet(?)
+	`, identityParquetGlob(root, DatasetRelationshipFuture)).
+		Scan(&futureRows, &futureSent, &futureMeetings, &futureMask, &futureLastAt))
+	assert.Equal(t, int64(2), futureRows)
+	assert.Equal(t, int64(1), futureSent)
+	assert.Equal(t, int64(1), futureMeetings)
+	assert.Equal(t, ModalityEmail|ModalityMeeting, futureMask)
+	assert.Equal(t, lastAt, futureLastAt)
+}
+
+func TestValidateRejectsFutureIdentityWithoutRelationshipRollup(t *testing.T) {
+	root, db := writeIdentityBaseFixture(t, false)
+	anchor := time.Date(2026, 7, 19, 0, 0, 0, 0, time.UTC)
+	_, err := Build(context.Background(), db, BuildOptions{
+		Mode:           ModeFull,
+		StagedBaseRoot: root,
+		OutputRoot:     root,
+		AnchorDate:     anchor,
+	})
+	require.NoError(t, err)
+
+	oldRelationships := filepath.Join(root, DatasetRelationships+"-old")
+	require.NoError(t, os.Rename(
+		filepath.Join(root, DatasetRelationships),
+		oldRelationships,
+	))
+	writeIdentityParquet(t, db, root, DatasetRelationships, `
+		SELECT * FROM read_parquet('`+
+		strings.ReplaceAll(filepath.Join(oldRelationships, "*.parquet"), "'", "''")+`')
+		WHERE false`)
+
+	err = Validate(context.Background(), db, ValidationOptions{
+		OutputRoot:             root,
+		RequiredOutputDatasets: RequiredDatasets,
+		Activity: ActivityPaths{
+			Facts:             identityParquetGlob(root, DatasetEntryFacts),
+			DirectEdges:       identityParquetGlob(root, DatasetDirectEdges),
+			ConversationEdges: identityParquetGlob(root, DatasetConversationEdges),
+			Directory:         identityParquetGlob(root, DatasetDirectory),
+			Clusters:          identityParquetGlob(root, "participant_clusters"),
+			Owners:            identityParquetGlob(root, "owner_participants"),
+		},
+		Participants:  identityParquetGlob(root, "participants"),
+		Conversations: identityParquetGlob(root, "conversations"),
+		AnchorDate:    anchor,
+	})
+	require.ErrorContains(t, err,
+		"validate relationship_future_daily: 1 future identities have no relationship rollup")
 }
 
 func TestBuildIncrementalEmitsDeltaAndComputesPostPublicationStats(t *testing.T) {
@@ -374,18 +636,28 @@ func writeIdentityParquet(t *testing.T, db *sql.DB, root, dataset, query string)
 func parquetCount(t *testing.T, db *sql.DB, root, dataset string) int64 {
 	t.Helper()
 	var count int64
-	require.NoError(t, db.QueryRow(
-		"SELECT count(*) FROM read_parquet(?)",
-		identityParquetGlob(root, dataset),
-	).Scan(&count), dataset)
+	query := "SELECT count(*) FROM read_parquet(?)"
+	if dataset == DatasetEntryFacts || dataset == DatasetDirectEdges {
+		query = "SELECT count(*) FROM read_parquet(?, hive_partitioning=true, union_by_name=true)"
+	}
+	require.NoError(t, db.QueryRow(query, identityParquetGlob(root, dataset)).
+		Scan(&count), dataset)
 	return count
 }
 
 func identityParquetSQL(root, dataset string) string {
+	options := ""
+	if dataset == DatasetEntryFacts || dataset == DatasetDirectEdges {
+		options = ", hive_partitioning=true, union_by_name=true"
+	}
 	return "SELECT * FROM read_parquet('" +
-		strings.ReplaceAll(identityParquetGlob(root, dataset), "'", "''") + "')"
+		strings.ReplaceAll(identityParquetGlob(root, dataset), "'", "''") + "'" +
+		options + ")"
 }
 
 func identityParquetGlob(root, dataset string) string {
+	if dataset == DatasetEntryFacts || dataset == DatasetDirectEdges {
+		return filepath.Join(root, dataset, "**", "*.parquet")
+	}
 	return filepath.Join(root, dataset, "*.parquet")
 }

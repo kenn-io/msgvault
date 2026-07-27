@@ -3,6 +3,7 @@
 package identityindex
 
 import (
+	"math"
 	"slices"
 	"strings"
 )
@@ -20,6 +21,9 @@ const (
 	ModalityEmail   uint8 = 1
 	ModalityChat    uint8 = 2
 	ModalityMeeting uint8 = 4
+
+	RelationshipHalfLifeDays = 365.0
+	RelationshipDecayRate    = math.Ln2 / RelationshipHalfLifeDays
 )
 
 var (

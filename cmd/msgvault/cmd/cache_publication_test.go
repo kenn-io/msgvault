@@ -101,6 +101,10 @@ func TestIncrementalPublicationReplacesDimensionsAndPrefixesAppends(t *testing.T
 		"conversations",
 		identityindex.DatasetConversationEdges,
 		identityindex.DatasetDirectory,
+		identityindex.DatasetRollups,
+		identityindex.DatasetDomainRollups,
+		identityindex.DatasetRelationships,
+		identityindex.DatasetRelationshipFuture,
 	} {
 		assert.False(publicationFileExists(analyticsDir, dataset, "old.parquet"), dataset)
 		assert.True(publicationFileExists(analyticsDir, dataset, "data.parquet"), dataset)

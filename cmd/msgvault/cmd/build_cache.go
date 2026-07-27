@@ -1024,7 +1024,7 @@ func buildCacheLocked(dbPath, analyticsDir string, fullRebuild, recheckStaleness
 		CommittedRoot:  analyticsDir,
 		StagedBaseRoot: staging.root,
 		OutputRoot:     staging.root,
-		AnchorDate:     time.Now().UTC(),
+		AnchorDate:     cacheWatermark,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("build identity index: %w", err)
@@ -1087,6 +1087,7 @@ func buildCacheLocked(dbPath, analyticsDir string, fullRebuild, recheckStaleness
 		LastFailedSyncRunIDSum:              syncCounters.failedRunIDSum,
 		IdentityRevision:                    identityRevision,
 		AccountIdentityRevision:             accountIdentityRevision,
+		RelationshipAnchorDate:              cacheWatermark.Format(time.DateOnly),
 		ConversationParticipantsFingerprint: derived.ConversationParticipantsFingerprint,
 		Stats:                               derived.Stats,
 	}
@@ -1136,7 +1137,7 @@ func validateStagedReplacementDatasets(
 		if dataset == tableMessages || !plan.Replace[dataset] {
 			continue
 		}
-		pattern := filepath.Join(stagingDir, dataset, "*.parquet")
+		pattern := filepath.Join(stagingDir, dataset, "**", "*.parquet")
 		escaped := strings.ReplaceAll(pattern, "'", "''")
 		var ignored int64
 		if err := db.QueryRow(fmt.Sprintf(

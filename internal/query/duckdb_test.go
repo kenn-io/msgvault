@@ -3,6 +3,7 @@ package query
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -3887,16 +3888,16 @@ func TestDuckDBEngine_StaleParquetSchema(t *testing.T) {
 	const oldParticipantsCols = "id, email_address, domain, display_name"
 	const oldConversationsCols = "id, source_conversation_id"
 
-	engine := createEngineFromBuilder(t, newParquetBuilder(t).
-		addTable("messages", "messages/year=2024", "data.parquet", oldMessagesCols, `
-			(1::BIGINT, 1::BIGINT, 'msg1', 100::BIGINT, 'Stale Hello', 'snip1', TIMESTAMP '2024-01-15 10:00:00', 1000::BIGINT, false, NULL::TIMESTAMP, 2024, 1),
-			(2::BIGINT, 1::BIGINT, 'msg2', 101::BIGINT, 'Stale Goodbye', 'snip2', TIMESTAMP '2024-01-16 10:00:00', 2000::BIGINT, true, NULL::TIMESTAMP, 2024, 1)
+	pb := newParquetBuilder(t).
+		addTable("messages", "messages/year=2024", "data.parquet", messagesCols, `
+			(1::BIGINT, 1::BIGINT, 'msg1', 100::BIGINT, 'Stale Hello', 'snip1', TIMESTAMP '2024-01-15 10:00:00', 1000::BIGINT, false, 0::INTEGER, NULL::TIMESTAMP, NULL::BIGINT, 'email', false, 2024, 1),
+			(2::BIGINT, 1::BIGINT, 'msg2', 101::BIGINT, 'Stale Goodbye', 'snip2', TIMESTAMP '2024-01-16 10:00:00', 2000::BIGINT, true, 0::INTEGER, NULL::TIMESTAMP, NULL::BIGINT, 'email', false, 2024, 1)
 		`).
 		addTable("sources", "sources", "sources.parquet", sourcesCols, `
 			(1::BIGINT, 'test@gmail.com', 'gmail')
 		`).
-		addTable("participants", "participants", "participants.parquet", oldParticipantsCols, `
-			(1::BIGINT, 'alice@test.com', 'test.com', 'Alice')
+		addTable("participants", "participants", "participants.parquet", participantsCols, `
+			(1::BIGINT, 'alice@test.com', 'test.com', 'Alice', '')
 		`).
 		addTable("message_recipients", "message_recipients", "message_recipients.parquet", messageRecipientsCols, `
 			(1::BIGINT, 1::BIGINT, 'from', 'Alice'),
@@ -3905,10 +3906,37 @@ func TestDuckDBEngine_StaleParquetSchema(t *testing.T) {
 		addEmptyTable("labels", "labels", "labels.parquet", labelsCols, `(1::BIGINT, 'x')`).
 		addEmptyTable("message_labels", "message_labels", "message_labels.parquet", messageLabelsCols, `(1::BIGINT, 1::BIGINT)`).
 		addEmptyTable("attachments", "attachments", "attachments.parquet", attachmentsCols, `(1::BIGINT, 1::BIGINT, 100::BIGINT, 'x', '')`).
-		addTable("conversations", "conversations", "conversations.parquet", oldConversationsCols, `
+		addTable("conversations", "conversations", "conversations.parquet", conversationsCols, `
+			(100::BIGINT, 'thread100', '', 'email'),
+			(101::BIGINT, 'thread101', '', 'email')
+		`)
+	analyticsDir, cleanup := pb.build()
+	t.Cleanup(cleanup)
+	rewriteParquetForTest(t,
+		filepath.Join(analyticsDir, "messages", "year=2024", "data.parquet"),
+		oldMessagesCols, `
+			(1::BIGINT, 1::BIGINT, 'msg1', 100::BIGINT, 'Stale Hello', 'snip1', TIMESTAMP '2024-01-15 10:00:00', 1000::BIGINT, false, NULL::TIMESTAMP, 2024, 1),
+			(2::BIGINT, 1::BIGINT, 'msg2', 101::BIGINT, 'Stale Goodbye', 'snip2', TIMESTAMP '2024-01-16 10:00:00', 2000::BIGINT, true, NULL::TIMESTAMP, 2024, 1)
+		`)
+	rewriteParquetForTest(t,
+		filepath.Join(analyticsDir, "participants", "participants.parquet"),
+		oldParticipantsCols, `(1::BIGINT, 'alice@test.com', 'test.com', 'Alice')`)
+	rewriteParquetForTest(t,
+		filepath.Join(analyticsDir, "conversations", "conversations.parquet"),
+		oldConversationsCols, `
 			(100::BIGINT, 'thread100'),
 			(101::BIGINT, 'thread101')
-		`))
+		`)
+	state, err := ReadCacheSyncState(analyticsDir)
+	require.NoError(t, err)
+	state.DatasetFingerprint, err = CacheDatasetFingerprint(analyticsDir)
+	require.NoError(t, err)
+	stateData, err := json.Marshal(state)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(CacheStatePath(analyticsDir), stateData, 0o600))
+	engine, err := NewDuckDBEngine(analyticsDir, "", nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, engine.Close()) })
 
 	ctx := context.Background()
 

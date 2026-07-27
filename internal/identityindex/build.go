@@ -82,7 +82,13 @@ func Build(ctx context.Context, db sqlExecutor, opts BuildOptions) (BuildResult,
 			}
 		}
 	}
-	outputs := []string{DatasetDirectory}
+	outputs := []string{
+		DatasetDirectory,
+		DatasetRollups,
+		DatasetDomainRollups,
+		DatasetRelationships,
+		DatasetRelationshipFuture,
+	}
 	if opts.Mode != ModeDerivedOnly {
 		outputs = append(outputs, DatasetEntryFacts, DatasetDirectEdges, DatasetConversationEdges)
 	} else if datasetContainsParquet(opts.StagedBaseRoot, "conversation_participants") {
@@ -112,6 +118,37 @@ func Build(ctx context.Context, db sqlExecutor, opts BuildOptions) (BuildResult,
 		}
 	}
 	if err := b.copyDataset(ctx, DatasetDirectory, buildDirectorySQL(b.base)); err != nil {
+		return BuildResult{}, err
+	}
+	activityPaths := b.activityPaths()
+	if err := b.copyDataset(ctx, DatasetRollups, buildIdentityRollupsSQL(activityPaths)); err != nil {
+		return BuildResult{}, err
+	}
+	if err := b.copyDataset(ctx, DatasetDomainRollups, buildDomainRollupsSQL(activityPaths)); err != nil {
+		return BuildResult{}, err
+	}
+	if err := b.copyDataset(
+		ctx,
+		DatasetRelationships,
+		buildRelationshipRollupsSQL(activityPaths, opts.AnchorDate),
+	); err != nil {
+		return BuildResult{}, err
+	}
+	if err := b.copyDataset(
+		ctx,
+		DatasetRelationshipFuture,
+		buildRelationshipFutureSQL(activityPaths, opts.AnchorDate),
+	); err != nil {
+		return BuildResult{}, err
+	}
+	if err := Validate(ctx, db, ValidationOptions{
+		OutputRoot:             opts.OutputRoot,
+		RequiredOutputDatasets: outputs,
+		Activity:               activityPaths,
+		Participants:           b.base("participants"),
+		Conversations:          b.base("conversations"),
+		AnchorDate:             opts.AnchorDate,
+	}); err != nil {
 		return BuildResult{}, err
 	}
 
@@ -163,6 +200,33 @@ func (b builder) committed(dataset string) string {
 	return parquetDatasetGlob(b.opts.CommittedRoot, dataset)
 }
 
+func (b builder) activityPaths() ActivityPaths {
+	facts := []string{b.output(DatasetEntryFacts)}
+	directEdges := []string{b.output(DatasetDirectEdges)}
+	switch b.opts.Mode {
+	case ModeFull:
+	case ModeIncremental:
+		facts = append([]string{b.committed(DatasetEntryFacts)}, facts...)
+		directEdges = append([]string{b.committed(DatasetDirectEdges)}, directEdges...)
+	case ModeDerivedOnly:
+		facts = []string{b.committed(DatasetEntryFacts)}
+		directEdges = []string{b.committed(DatasetDirectEdges)}
+	}
+	conversationEdges := b.output(DatasetConversationEdges)
+	if b.opts.Mode == ModeDerivedOnly &&
+		!datasetContainsParquet(b.opts.StagedBaseRoot, "conversation_participants") {
+		conversationEdges = b.committed(DatasetConversationEdges)
+	}
+	return ActivityPaths{
+		Facts:             readParquetRelation(facts, true),
+		DirectEdges:       readParquetRelation(directEdges, false),
+		ConversationEdges: conversationEdges,
+		Directory:         b.output(DatasetDirectory),
+		Clusters:          b.base("participant_clusters"),
+		Owners:            b.base("owner_participants"),
+	}
+}
+
 func (b builder) statsRelations() cacheStatsRelations {
 	inputs := cacheStatsRelations{
 		messages:     readParquetRelation([]string{b.base("messages")}, true),
@@ -197,10 +261,24 @@ func (b builder) statsRelations() cacheStatsRelations {
 
 func (b builder) copyDataset(ctx context.Context, dataset, query string) error {
 	output := filepath.Join(b.opts.OutputRoot, dataset, "data.parquet")
+	copyOptions := "FORMAT PARQUET, COMPRESSION 'zstd'"
+	if dataset == DatasetEntryFacts || dataset == DatasetDirectEdges {
+		output = filepath.Join(b.opts.OutputRoot, dataset)
+		copyOptions += ", PARTITION_BY (occurred_year), WRITE_PARTITION_COLUMNS true, OVERWRITE_OR_IGNORE"
+	}
 	statement := "COPY (" + query + ") TO '" + quoteSQLString(output) +
-		"' (FORMAT PARQUET, COMPRESSION 'zstd')"
+		"' (" + copyOptions + ")"
 	if _, err := b.db.ExecContext(ctx, statement); err != nil {
 		return fmt.Errorf("build %s: %w", dataset, err)
+	}
+	if (dataset == DatasetEntryFacts || dataset == DatasetDirectEdges) &&
+		!datasetContainsParquet(b.opts.OutputRoot, dataset) {
+		emptyOutput := filepath.Join(b.opts.OutputRoot, dataset, "empty.parquet")
+		emptyStatement := "COPY (SELECT * FROM (" + query + ") WHERE false) TO '" +
+			quoteSQLString(emptyOutput) + "' (FORMAT PARQUET, COMPRESSION 'zstd')"
+		if _, err := b.db.ExecContext(ctx, emptyStatement); err != nil {
+			return fmt.Errorf("build empty %s: %w", dataset, err)
+		}
 	}
 	return nil
 }
@@ -218,6 +296,9 @@ func validateBuildOptions(opts BuildOptions) error {
 		if opts.CommittedRoot == "" || !filepath.IsAbs(opts.CommittedRoot) {
 			return errors.New("build identity index: committed root must be absolute outside full mode")
 		}
+	}
+	if opts.AnchorDate.IsZero() {
+		return errors.New("build identity index: relationship anchor date is required")
 	}
 	return nil
 }
@@ -368,7 +449,9 @@ func readParquetRelation(paths []string, hivePartitioning bool) string {
 }
 
 func parquetDatasetGlob(root, dataset string) string {
-	if dataset == "messages" {
+	if dataset == "messages" ||
+		dataset == DatasetEntryFacts ||
+		dataset == DatasetDirectEdges {
 		return filepath.Join(root, dataset, "**", "*.parquet")
 	}
 	return filepath.Join(root, dataset, "*.parquet")
