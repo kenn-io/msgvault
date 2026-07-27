@@ -1,7 +1,7 @@
 name: Docker
 
-# Build and smoke-test the PR image without registry credentials. Same-repository
-# PRs use the managed public fleet; forks stay on GitHub-hosted runners.
+# Build and smoke-test the PR image without registry credentials. Keep this
+# branch-defined workflow on a GitHub-hosted runner.
 on:
   pull_request:
     paths:
@@ -22,7 +22,7 @@ permissions: read-all
 
 jobs:
   validate:
-    runs-on: ${{ github.repository == 'kenn-io/msgvault' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.base.repo.full_name == github.repository && 'kenn-linux-x64-public' || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
 
     steps:
       - name: Checkout
