@@ -1346,6 +1346,7 @@ func TestHandleCLIRunBackupSubcommandAdmission(t *testing.T) {
 		{"add-discord allowed", []string{"add-discord"}, true},
 		{"sync-discord allowed", []string{"sync-discord", "113456789012345678"}, true},
 		{"export-discord allowed", []string{"export-discord", "113456789012345678"}, true},
+		{"export-messages allowed", []string{"export-messages", "--start", "2026-07-20T00:00:00Z", "--end", "2026-07-21T00:00:00Z"}, true},
 		{"backfill-discord-media allowed", []string{"backfill-discord-media", "113456789012345678"}, true},
 		{"unpack-attachments rejected", []string{"unpack-attachments"}, false},
 	}

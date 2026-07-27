@@ -218,6 +218,27 @@ func TestOperationGateMiddlewareStillGatesMutatingCLIRun(t *testing.T) {
 	assert.Equal(1, done, "done calls")
 }
 
+func TestOperationGateMiddlewareGatesMessageExport(t *testing.T) {
+	assert := assert.New(t)
+	gate := &recordingOperationGate{allow: true}
+	handler := operationGateMiddleware(gate, nil)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/cli/run",
+		strings.NewReader(`{"args":["export-messages","--start","2026-07-20T00:00:00Z","--end","2026-07-21T00:00:00Z"]}`),
+	)
+	resp := httptest.NewRecorder()
+	handler.ServeHTTP(resp, req)
+
+	assert.Equal(http.StatusNoContent, resp.Code, "status")
+	begin, done := gate.counts()
+	assert.Equal(1, begin, "begin calls")
+	assert.Equal(1, done, "done calls")
+}
+
 func TestOperationGateMiddlewareRejectsUnavailableGate(t *testing.T) {
 	assert := assert.New(t)
 
