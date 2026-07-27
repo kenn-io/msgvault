@@ -10,10 +10,12 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
 func TestBackupDatabaseContext_AtomicallyPublishesValidBackup(t *testing.T) {
+	testutil.SkipIfPostgres(t, "VACUUM INTO backup publication is SQLite-only")
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
@@ -45,6 +47,7 @@ func TestBackupDatabaseContext_AtomicallyPublishesValidBackup(t *testing.T) {
 }
 
 func TestBackupDatabaseContext_CancellationRemovesUnpublishedBackup(t *testing.T) {
+	testutil.SkipIfPostgres(t, "VACUUM INTO backup cancellation is SQLite-only")
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)

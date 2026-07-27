@@ -8,6 +8,7 @@ import (
 	"github.com/mattn/go-sqlite3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
@@ -68,6 +69,7 @@ func TestDeleteDedupedBatch_UnknownBatch(t *testing.T) {
 }
 
 func TestDeleteDedupedBatchesContext_CancellationRollsBackEveryBatch(t *testing.T) {
+	testutil.SkipIfPostgres(t, "uses a SQLite trigger and registered driver function to pause the second batch")
 	require := require.New(t)
 	f := storetest.New(t)
 	f.Store.DB().SetMaxOpenConns(1)
