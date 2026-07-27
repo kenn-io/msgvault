@@ -330,6 +330,54 @@ func TestRebuildCLIFTSRetriesWhileOperationInProgress(t *testing.T) {
 	assert.Equal(int64(3), hits.Load(), "two busy responses then success")
 }
 
+func TestGeneratedNonStreamingBusyRetryReturnsRootContextCancellation(t *testing.T) {
+	oldDelay := operationBusyRetryDelay
+	operationBusyRetryDelay = time.Second
+	t.Cleanup(func() { operationBusyRetryDelay = oldDelay })
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/api/v1/stats", r.URL.Path, "path")
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, err := w.Write([]byte(
+			`{"error":"operation_in_progress","message":"a scheduled sync has been running for 5m"}`,
+		))
+		assert.NoError(t, err, "write busy response")
+	}))
+	t.Cleanup(srv.Close)
+
+	rootCtx, cancel := context.WithCancel(context.Background())
+	c, err := New(Config{
+		URL:           srv.URL,
+		APIKey:        "key",
+		AllowInsecure: true,
+		Context:       rootCtx,
+	})
+	require.NoError(t, err, "New")
+
+	waiting := make(chan struct{})
+	c.SetBusyNotifier(func(string) { close(waiting) })
+	done := make(chan error, 1)
+	go func() {
+		_, err := c.GetStats()
+		done <- err
+	}()
+
+	select {
+	case <-waiting:
+	case <-time.After(time.Second):
+		require.FailNow(t, "generated response did not enter busy retry wait")
+	}
+	cancel()
+
+	select {
+	case err := <-done:
+		require.ErrorIs(t, err, context.Canceled)
+	case <-time.After(time.Second):
+		require.FailNow(t, "generated response did not return after root context cancellation")
+	}
+}
+
 func TestRunCLICommandStopsRetryingWhenContextCancelled(t *testing.T) {
 	require := require.New(t)
 

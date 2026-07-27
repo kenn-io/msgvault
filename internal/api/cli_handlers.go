@@ -55,6 +55,24 @@ type CLIStore interface {
 	RebuildFTS(progress func(done, total int64)) (int64, error)
 }
 
+// ctxCLIStatsStore is an optional extension of CLIStore for stores that can
+// cancel scoped statistics queries with the request. Older CLIStore
+// implementations retain the context-free compatibility path.
+type ctxCLIStatsStore interface {
+	GetStatsForScopeContext(ctx context.Context, sourceIDs []int64) (*store.Stats, error)
+}
+
+func getCLIStatsForScope(
+	ctx context.Context,
+	st CLIStore,
+	sourceIDs []int64,
+) (*store.Stats, error) {
+	if ctxStore, ok := st.(ctxCLIStatsStore); ok {
+		return ctxStore.GetStatsForScopeContext(ctx, sourceIDs)
+	}
+	return st.GetStatsForScope(sourceIDs)
+}
+
 // CLIStartupMigrationStore exposes one-time startup migrations needed by
 // setup-style CLI commands while keeping writes inside the daemon process.
 type CLIStartupMigrationStore interface {
@@ -571,8 +589,11 @@ func (s *Server) handleCLIStats(w http.ResponseWriter, r *http.Request) {
 	account := r.URL.Query().Get("account")
 	collection := r.URL.Query().Get("collection")
 	if account == "" && collection == "" {
-		stats, err := s.store.GetStats()
+		stats, err := s.getStats(r.Context())
 		if err != nil {
+			if s.writeIfContextError(w, err) {
+				return
+			}
 			s.logger.Error("failed to get CLI stats", "error", err)
 			writeError(w, http.StatusInternalServerError, "internal_error", "Failed to retrieve statistics")
 			return
@@ -600,8 +621,11 @@ func (s *Server) handleCLIStats(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	stats, err := cliStore.GetStatsForScope(sourceIDs)
+	stats, err := getCLIStatsForScope(r.Context(), cliStore, sourceIDs)
 	if err != nil {
+		if s.writeIfContextError(w, err) {
+			return
+		}
 		s.logger.Error("failed to get scoped CLI stats", "error", err)
 		writeError(w, http.StatusInternalServerError, "internal_error", "Failed to retrieve statistics")
 		return

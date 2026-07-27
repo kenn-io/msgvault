@@ -159,8 +159,12 @@ func generatedResponse[R any](
 		if checkErr == nil {
 			return resp, nil
 		}
-		if waiter.wait(c.requestContext(), checkErr) {
+		waitCtx := c.requestContext()
+		if waiter.wait(waitCtx, checkErr) {
 			continue
+		}
+		if err := waitCtx.Err(); err != nil {
+			return zero, err
 		}
 		return zero, checkErr
 	}

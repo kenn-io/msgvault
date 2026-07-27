@@ -277,8 +277,12 @@ type mockStore struct {
 
 	// Error injection for the context-aware read paths, used to verify
 	// handlers map context deadline/cancellation to a structured 503.
-	statsErr     error
-	summariesErr error
+	statsErr              error
+	getStatsFunc          func()
+	getStatsContextFunc   func(context.Context) error
+	getScopedStatsFunc    func([]int64)
+	getScopedStatsCtxFunc func(context.Context, []int64) error
+	summariesErr          error
 
 	// Call counts so tests can assert that bulk hydration paths use
 	// GetMessagesSummariesByIDs (one round-trip) instead of looping
@@ -300,6 +304,10 @@ type mockStore struct {
 }
 
 func (m *mockStore) GetStats() (*StoreStats, error) {
+	if m.getStatsFunc != nil {
+		m.getStatsFunc()
+		return &StoreStats{}, nil
+	}
 	if m.stats == nil {
 		return &StoreStats{}, nil
 	}
@@ -338,7 +346,10 @@ func (m *mockStore) GetMessagesSummariesByIDs(ids []int64) ([]APIMessage, error)
 
 // The Context variants make mockStore satisfy CtxMessageStore, so handler
 // tests exercise the same context-aware read path used in production.
-func (m *mockStore) GetStatsContext(_ context.Context) (*StoreStats, error) {
+func (m *mockStore) GetStatsContext(ctx context.Context) (*StoreStats, error) {
+	if m.getStatsContextFunc != nil {
+		return nil, m.getStatsContextFunc(ctx)
+	}
 	if m.statsErr != nil {
 		return nil, m.statsErr
 	}
@@ -393,11 +404,25 @@ func (m *mockStore) SearchMessagesQuery(q *search.Query, offset, limit int) ([]A
 	return m.messages, m.total, nil
 }
 
-func (m *mockStore) GetStatsForScope([]int64) (*store.Stats, error) {
+func (m *mockStore) GetStatsForScope(sourceIDs []int64) (*store.Stats, error) {
+	if m.getScopedStatsFunc != nil {
+		m.getScopedStatsFunc(sourceIDs)
+		return &store.Stats{}, nil
+	}
 	if m.stats == nil {
 		return &store.Stats{}, nil
 	}
 	return m.stats, nil
+}
+
+func (m *mockStore) GetStatsForScopeContext(
+	ctx context.Context,
+	sourceIDs []int64,
+) (*store.Stats, error) {
+	if m.getScopedStatsCtxFunc != nil {
+		return nil, m.getScopedStatsCtxFunc(ctx, sourceIDs)
+	}
+	return m.GetStatsForScope(sourceIDs)
 }
 
 func (m *mockStore) GetSourcesByIdentifierOrDisplayName(input string) ([]*store.Source, error) {

@@ -250,6 +250,109 @@ func TestHandleCLIStatsAccountLookupErrorReturnsInternal(t *testing.T) {
 	assert.Equal("Failed to resolve CLI scope", resp.Message, "error message")
 }
 
+func TestMarkedCLIGlobalStatsCancellationInterruptsStore(t *testing.T) {
+	testMarkedCLIStatsCancellationInterruptsStore(t, "/api/v1/cli/stats", false)
+}
+
+func TestMarkedCLIScopedStatsCancellationInterruptsStore(t *testing.T) {
+	testMarkedCLIStatsCancellationInterruptsStore(
+		t,
+		"/api/v1/cli/stats?collection=Important",
+		true,
+	)
+}
+
+func testMarkedCLIStatsCancellationInterruptsStore(t *testing.T, target string, scoped bool) {
+	t.Helper()
+
+	callStarted := make(chan struct{})
+	callReturned := make(chan struct{})
+	releaseLegacyCall := make(chan struct{})
+	handlerDone := make(chan struct{})
+
+	legacyCall := func() {
+		close(callStarted)
+		<-releaseLegacyCall
+		close(callReturned)
+	}
+	contextCall := func(ctx context.Context) error {
+		close(callStarted)
+		<-ctx.Done()
+		close(callReturned)
+		return ctx.Err()
+	}
+
+	st := &mockStore{
+		collections: map[string]*store.CollectionWithSources{
+			"Important": {
+				Collection: store.Collection{Name: "Important"},
+				SourceIDs:  []int64{7},
+			},
+		},
+	}
+	if scoped {
+		st.getScopedStatsFunc = func([]int64) {
+			legacyCall()
+		}
+		st.getScopedStatsCtxFunc = func(ctx context.Context, _ []int64) error {
+			return contextCall(ctx)
+		}
+	} else {
+		st.getStatsFunc = legacyCall
+		st.getStatsContextFunc = contextCall
+	}
+
+	srv := NewServerWithOptions(ServerOptions{
+		Config: &config.Config{Server: config.ServerConfig{
+			APIPort: 8080,
+			APIKey:  cliTimeoutTestAPIKey,
+		}},
+		Store:  st,
+		Logger: testLogger(),
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	req := httptest.NewRequest(http.MethodGet, target, nil).WithContext(ctx)
+	req.Header.Set("X-Api-Key", cliTimeoutTestAPIKey)
+	req.Header.Set(apiprotocol.ClientClassHeader, apiprotocol.ClientClassCLI)
+	resp := httptest.NewRecorder()
+	go func() {
+		srv.Router().ServeHTTP(resp, req)
+		close(handlerDone)
+	}()
+	t.Cleanup(func() {
+		close(releaseLegacyCall)
+		select {
+		case <-handlerDone:
+		case <-time.After(time.Second):
+			assert.Fail(t, "CLI stats handler did not finish during cleanup")
+		}
+	})
+
+	select {
+	case <-callStarted:
+	case <-time.After(time.Second):
+		require.FailNow(t, "CLI stats store call did not start")
+	}
+	cancel()
+
+	select {
+	case <-callReturned:
+	case <-time.After(time.Second):
+		require.FailNow(t, "CLI stats store call continued after marked request cancellation")
+	}
+	select {
+	case <-handlerDone:
+	case <-time.After(time.Second):
+		require.FailNow(t, "CLI stats handler did not return after store cancellation")
+	}
+
+	require.Equal(t, http.StatusServiceUnavailable, resp.Code, "status (body: %s)", resp.Body.String())
+	var errResp ErrorResponse
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&errResp), "decode error response")
+	assert.Equal(t, "query_canceled", errResp.Error, "error code")
+}
+
 func TestHandleCLICreateDeletionManifest(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
