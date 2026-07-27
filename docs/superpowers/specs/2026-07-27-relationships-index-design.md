@@ -1,6 +1,6 @@
 # Relationships Analytical Index
 
-Status: revised after adversarial review; awaiting approval.
+Status: approved after two adversarial-review rounds.
 
 ## Summary
 
@@ -116,8 +116,8 @@ requests, and create unacceptable allocator pressure before interruption.
   provisional until measured with the new narrow datasets at four threads.
 - Keep interactive analytical queries independent of the width and join
   complexity of `analytical_entries`.
-- Bound interactive DuckDB buffer-manager memory to 512 MiB and execution to
-  at most four worker threads.
+- Bound interactive DuckDB buffer-manager memory to DuckDB's decimal
+  `512MB` setting and execution to at most four worker threads.
 - Keep daemon RSS growth below 1.5 GiB during an interactive analytical query
   and below 256 MiB above the pre-query baseline after the query settles.
 - Keep a full cache rebuild for the reference archive at or below 25 seconds
@@ -272,11 +272,12 @@ Direct edges are first mapped to canonical IDs per message. Deduplication
 groups by `(message_id, canonical_id)` and merges `is_sender` and `is_author`
 with `bool_or`. Consequently, if an authored alias and a co-recipient alias
 become linked on a non-chat message, the canonical identity remains the author
-and does not receive incoming credit. Chat participant membership is unioned
-across the selected messages after this canonicalization; chat received credit
-does not consult `is_author` today. If an author flag is retained on a chat
-logical unit for validation, it comes from the canonicalized
-`anchor_message_id`, not `bool_or` across every message in the conversation.
+and is credited as the author of the incoming entry: one received unit, not
+zero and not two. Chat participant membership is unioned across the selected
+messages after this canonicalization; chat received credit does not consult
+`is_author` today. If an author flag is retained on a chat logical unit for
+validation, it comes from the canonicalized `anchor_message_id`, not `bool_or`
+across every message in the conversation.
 
 ### `identity_directory`
 
@@ -322,7 +323,8 @@ domain. Domain results retain exact canonical person counts.
 
 ### `relationship_rollups`
 
-`relationship_rollups` contains one row per non-owner canonical identity:
+`relationship_rollups` contains one row per non-owner canonical identity with
+at least one qualifying interaction:
 
 - `anchor_date`, the UTC decay anchor;
 - decayed sent, received, and meeting sums at the anchor date;
@@ -512,7 +514,8 @@ conversation-edge refreshes run through a hidden cache-builder child mode:
    - `relationship_future_daily`.
 4. It reads committed scalar facts and raw edges, captures a fresh anchor,
    fingerprints the staged result, and publishes all affected datasets and
-   marker state atomically.
+   marker state atomically. It carries the full builder's committed stats
+   summary forward unchanged rather than recomputing it.
 5. It exits, returning all DuckDB allocator state to the operating system.
 
 An identity-only refresh skips the conversation-edge export. A
@@ -520,6 +523,12 @@ conversation-edge refresh replaces it and may also incorporate the current
 identity revision. Base messages, recipients, scalar facts, and direct edges
 are untouched by either mode. Account-identity changes that alter baked
 `is_from_me` still require a full rebuild.
+
+`--derived-only` requires a committed version-15 cache containing all scalar
+facts and raw edge datasets. The child refuses version 14 or an incomplete
+version-15 cache before staging any output; the daemon treats that result as a
+full-rebuild requirement. Normal stale-schema detection should select the full
+build first, but the child enforces the precondition independently.
 
 The parent daemon does not hold the publication lock while waiting for the
 child, because the child is the lock owner. Failure leaves the old committed
@@ -629,7 +638,10 @@ context-cancelable and cannot begin native execution after their caller has
 left. The daemon creates its process-specific spill directory outside the
 committed analytics directory so spill files cannot alter the cache
 fingerprint. Startup removes only validated stale `duckdb-query-<pid>`
-directories under that dedicated parent; normal shutdown removes the current
+directories under that dedicated parent. “Validated stale” means the basename
+strictly parses as the expected prefix plus a positive PID and the platform
+process-liveness check confirms that PID is not running; malformed names and
+live-PID directories are never removed. Normal shutdown removes the current
 directory. A query that exhausts both its buffer and 2 GiB spill budgets fails
 with DuckDB's out-of-memory error rather than consuming unbounded disk.
 
@@ -685,7 +697,9 @@ must fit its latency and memory budget when allowed to complete.
 - An interactive DuckDB out-of-memory error returns the existing analytical
   error response and is logged with the endpoint and cache revision.
 - Cache validation verifies that every canonical ID in a rollup exists in the
-  directory and that owner IDs do not appear in relationship rollups.
+  directory, every canonical ID in `relationship_future_daily` has a
+  `relationship_rollups` row, and owner IDs do not appear in either
+  relationship dataset.
 - Empty archives publish schema-correct empty shards for every required
   dataset.
 
@@ -839,7 +853,8 @@ The first review's findings are resolved in the specification as follows:
 1. Split scalar facts, direct edges, and all-conversation edges; pin the filter
    and fan-out matrix.
 2. Pin post-filter chat `max`/`arg_max` semantics and tie-breaking.
-3. Canonicalize per message with `bool_or(is_author)`.
+3. Canonicalize per message with `bool_or(is_author)` and credit an incoming
+   authored/co-recipient cluster exactly once.
 4. Give future-daily rows raw counts, modality masks, and full timestamps;
    define bit values and marker-owned anchor behavior.
 5. Move identity/derived refresh into a bounded subprocess and remove DuckDB
