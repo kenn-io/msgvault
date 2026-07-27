@@ -1256,6 +1256,17 @@ func (a *storeAPIAdapter) DeleteDedupedBatchContext(
 	return a.store.DeleteDedupedBatchContext(ctx, batchID)
 }
 
+func (a *storeAPIAdapter) DeleteDedupedBatches(batchIDs []string) (int64, error) {
+	return a.store.DeleteDedupedBatches(batchIDs)
+}
+
+func (a *storeAPIAdapter) DeleteDedupedBatchesContext(
+	ctx context.Context,
+	batchIDs []string,
+) (int64, error) {
+	return a.store.DeleteDedupedBatchesContext(ctx, batchIDs)
+}
+
 func (a *storeAPIAdapter) BackupDatabase(dst string) error {
 	return a.store.BackupDatabase(dst)
 }

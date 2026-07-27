@@ -1141,7 +1141,8 @@ The CLI sends the request to the configured remote daemon, or to the
 auto-started local daemon when no remote is configured. It no longer opens the
 SQLite database directly. The delete cannot be undone with `deduplicate --undo`;
 when backups are enabled, the daemon writes the backup next to the database it
-owns before deleting.
+owns before deleting. Repeated `--batch` selections commit as one transaction;
+if the request is canceled, none of the selected batches are left half-deleted.
 
 | Flag | Description |
 |---|---|

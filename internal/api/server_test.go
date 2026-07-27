@@ -1040,6 +1040,13 @@ func TestTimeoutMiddlewareDeadlinePolicy(t *testing.T) {
 	marked := httptest.NewRequest(http.MethodGet, "/api/v1/cli/stats", nil)
 	marked.RemoteAddr = "127.0.0.1:4242"
 	marked.Header.Set(apiprotocol.ClientClassHeader, apiprotocol.ClientClassCLI)
+	markedDeleteDeduped := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/cli/delete-deduped",
+		nil,
+	)
+	markedDeleteDeduped.RemoteAddr = "127.0.0.1:4242"
+	markedDeleteDeduped.Header.Set(apiprotocol.ClientClassHeader, apiprotocol.ClientClassCLI)
 	bounded := httptest.NewRequest(http.MethodGet, "/api/v1/cli/stats", nil)
 
 	tests := []struct {
@@ -1050,23 +1057,31 @@ func TestTimeoutMiddlewareDeadlinePolicy(t *testing.T) {
 	}{
 		{name: "unmarked long path", request: longPath, wantWriteClear: true},
 		{name: "marked request", request: marked, wantReadClear: true, wantWriteClear: true},
+		{
+			name:           "marked atomic dedup deletion",
+			request:        markedDeleteDeduped,
+			wantReadClear:  true,
+			wantWriteClear: true,
+		},
 		{name: "bounded request", request: bounded},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
 			recorder := &deadlineClearingRecorder{ResponseRecorder: httptest.NewRecorder()}
 			handler.ServeHTTP(recorder, tt.request)
 			if tt.wantReadClear {
-				require.Len(t, recorder.readDeadlines, 1, "read deadline changes")
-				assert.True(t, recorder.readDeadlines[0].IsZero(), "read deadline cleared, not extended")
+				require.Len(recorder.readDeadlines, 1, "read deadline changes")
+				assert.True(recorder.readDeadlines[0].IsZero(), "read deadline cleared, not extended")
 			} else {
-				assert.Empty(t, recorder.readDeadlines, "request keeps the server read deadline")
+				assert.Empty(recorder.readDeadlines, "request keeps the server read deadline")
 			}
 			if tt.wantWriteClear {
-				require.Len(t, recorder.writeDeadlines, 1, "write deadline changes")
-				assert.True(t, recorder.writeDeadlines[0].IsZero(), "write deadline cleared, not extended")
+				require.Len(recorder.writeDeadlines, 1, "write deadline changes")
+				assert.True(recorder.writeDeadlines[0].IsZero(), "write deadline cleared, not extended")
 			} else {
-				assert.Empty(t, recorder.writeDeadlines, "request keeps the server write deadline")
+				assert.Empty(recorder.writeDeadlines, "request keeps the server write deadline")
 			}
 		})
 	}
@@ -1186,6 +1201,7 @@ func TestCLIRequestDurationPolicy(t *testing.T) {
 }
 
 func TestTimeoutMiddlewareMarkedRequestPreservesCallerCancellation(t *testing.T) {
+	require := require.New(t)
 	srv := NewServerWithOptions(ServerOptions{
 		Config:         &config.Config{Server: config.ServerConfig{APIPort: 8080}},
 		Logger:         testLogger(),
@@ -1209,7 +1225,7 @@ func TestTimeoutMiddlewareMarkedRequestPreservesCallerCancellation(t *testing.T)
 		close(requestDone)
 	}()
 
-	require.Eventually(t, func() bool {
+	require.Eventually(func() bool {
 		select {
 		case <-started:
 			return true
@@ -1221,14 +1237,14 @@ func TestTimeoutMiddlewareMarkedRequestPreservesCallerCancellation(t *testing.T)
 
 	select {
 	case err := <-handlerResult:
-		require.ErrorIs(t, err, context.Canceled)
+		require.ErrorIs(err, context.Canceled)
 	case <-time.After(time.Second):
-		require.FailNow(t, "handler did not observe caller cancellation")
+		require.FailNow("handler did not observe caller cancellation")
 	}
 	select {
 	case <-requestDone:
 	case <-time.After(time.Second):
-		require.FailNow(t, "marked request did not return after caller cancellation")
+		require.FailNow("marked request did not return after caller cancellation")
 	}
 }
 
@@ -1256,7 +1272,6 @@ func TestMarkedCLIProtectiveCeilingInventory(t *testing.T) {
 		{method: http.MethodGet, path: "/api/v1/cli/attachment"},
 		{method: http.MethodGet, path: "/api/v1/cli/search"},
 		{method: http.MethodPost, path: "/api/v1/cli/deduplicate/plan"},
-		{method: http.MethodPost, path: "/api/v1/cli/delete-deduped"},
 		{method: http.MethodPost, path: "/api/v1/cli/identities"},
 		{method: http.MethodDelete, path: "/api/v1/cli/identities"},
 	}
@@ -1264,6 +1279,8 @@ func TestMarkedCLIProtectiveCeilingInventory(t *testing.T) {
 	for _, route := range protectiveRoutes {
 		name := route.method + " " + route.path
 		t.Run(name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
 			var deadline time.Time
 			var hasDeadline bool
 			handler := srv.timeoutMiddleware(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
@@ -1277,16 +1294,16 @@ func TestMarkedCLIProtectiveCeilingInventory(t *testing.T) {
 			started := time.Now()
 			handler.ServeHTTP(recorder, req)
 
-			require.True(t, hasDeadline, "protective route receives a context deadline")
+			require.True(hasDeadline, "protective route receives a context deadline")
 			remaining := time.Until(deadline)
-			assert.Greater(t, remaining, DaemonLongRequestTimeout-time.Second)
-			assert.LessOrEqual(t, remaining, DaemonLongRequestTimeout)
-			assert.False(t, deadline.Before(started), "protective deadline is in the future")
-			require.Len(t, recorder.readDeadlines, 1, "protective route extends the server read deadline")
+			assert.Greater(remaining, DaemonLongRequestTimeout-time.Second)
+			assert.LessOrEqual(remaining, DaemonLongRequestTimeout)
+			assert.False(deadline.Before(started), "protective deadline is in the future")
+			require.Len(recorder.readDeadlines, 1, "protective route extends the server read deadline")
 			readRemaining := time.Until(recorder.readDeadlines[0])
-			assert.Greater(t, readRemaining, DaemonLongRequestTimeout-time.Second)
-			assert.LessOrEqual(t, readRemaining, DaemonLongRequestTimeout)
-			assert.Empty(t, recorder.writeDeadlines, "protective route keeps the server write deadline")
+			assert.Greater(readRemaining, DaemonLongRequestTimeout-time.Second)
+			assert.LessOrEqual(readRemaining, DaemonLongRequestTimeout)
+			assert.Empty(recorder.writeDeadlines, "protective route keeps the server write deadline")
 		})
 	}
 }

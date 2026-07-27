@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -176,7 +177,10 @@ func (c *Client) GeneratedClient() (*apiclient.Client, error) {
 	}
 	apiClient, err := apiclient.New(
 		c.baseURL,
-		runtime.WithHTTPClient(httpDoer{client: c.httpClient}),
+		runtime.WithHTTPClient(httpDoer{
+			client:      c.httpClient,
+			rootContext: c.requestContext(),
+		}),
 		runtime.WithRequestEditorFn(requestEditor(c.apiKey, c.requestMode)),
 	)
 	if err != nil {
@@ -237,7 +241,7 @@ func (c *Client) doGeneratedRequestWithHTTPClient(
 	if httpClient == nil {
 		httpClient = http.DefaultClient
 	}
-	resp, err := httpClient.Do(req)
+	resp, err := doRequestWithRootContext(c.requestContext(), httpClient, req)
 	if err != nil {
 		return nil, fmt.Errorf("request failed: %w", err)
 	}
@@ -254,7 +258,8 @@ func httpClientWithoutTimeout(client *http.Client) *http.Client {
 }
 
 type httpDoer struct {
-	client *http.Client
+	client      *http.Client
+	rootContext context.Context
 }
 
 func (d httpDoer) Do(ctx context.Context, req *http.Request) (*http.Response, error) {
@@ -265,9 +270,60 @@ func (d httpDoer) Do(ctx context.Context, req *http.Request) (*http.Response, er
 	if ctx != nil {
 		req = req.WithContext(ctx)
 	}
+	return doRequestWithRootContext(d.rootContext, client, req)
+}
+
+func doRequestWithRootContext(
+	rootContext context.Context,
+	client *http.Client,
+	req *http.Request,
+) (*http.Response, error) {
+	requestContext := req.Context()
+	switch {
+	case rootContext == nil || rootContext.Done() == nil:
+		// The per-call context remains the only cancellation source.
+	case requestContext.Done() == nil:
+		req = req.WithContext(rootContext)
+	default:
+		mergedContext, cancel := context.WithCancelCause(requestContext)
+		stopRootCancellation := context.AfterFunc(rootContext, func() {
+			cancel(context.Cause(rootContext))
+		})
+		req = req.WithContext(mergedContext)
+
+		// #nosec G704 -- daemonclient intentionally sends requests to the
+		// caller-resolved msgvault daemon URL after New validates the scheme.
+		resp, err := client.Do(req)
+		if err != nil {
+			stopRootCancellation()
+			cancel(nil)
+			return nil, err
+		}
+		resp.Body = &cancelOnCloseBody{
+			ReadCloser:           resp.Body,
+			stopRootCancellation: stopRootCancellation,
+			cancel:               cancel,
+		}
+		return resp, nil
+	}
+
 	// #nosec G704 -- daemonclient intentionally sends requests to the
 	// caller-resolved msgvault daemon URL after New validates the scheme.
 	return client.Do(req)
+}
+
+type cancelOnCloseBody struct {
+	io.ReadCloser
+
+	stopRootCancellation func() bool
+	cancel               context.CancelCauseFunc
+}
+
+func (b *cancelOnCloseBody) Close() error {
+	err := b.ReadCloser.Close()
+	b.stopRootCancellation()
+	b.cancel(nil)
+	return err
 }
 
 func requestEditor(apiKey string, mode RequestMode) apiclient.RequestEditorFn {

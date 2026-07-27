@@ -44,14 +44,16 @@ func TestOpenHTTPStoreUsesConfiguredRemoteWithoutDaemonAutostart(t *testing.T) {
 }
 
 func TestOpenHTTPStoreUsesCLIModeForConfiguredRemote(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	var marker atomic.Value
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "/health", r.URL.Path)
-		assert.Equal(t, "remote-daemon-secret", r.Header.Get("X-Api-Key"))
+		assert.Equal("/health", r.URL.Path)
+		assert.Equal("remote-daemon-secret", r.Header.Get("X-Api-Key"))
 		marker.Store(r.Header.Get(apiprotocol.ClientClassHeader))
 		w.Header().Set("Content-Type", "application/json")
 		_, err := w.Write([]byte(`{"status":"ok"}`))
-		assert.NoError(t, err, "write health response")
+		assert.NoError(err, "write health response")
 	}))
 	t.Cleanup(srv.Close)
 
@@ -64,16 +66,18 @@ func TestOpenHTTPStoreUsesCLIModeForConfiguredRemote(t *testing.T) {
 	})
 
 	st, _, err := OpenHTTPStore(context.Background())
-	require.NoError(t, err, "OpenHTTPStore")
+	require.NoError(err, "OpenHTTPStore")
 	t.Cleanup(func() { _ = st.Close() })
 
-	assert.Zero(t, st.Timeout(), "configured remote operations use caller duration")
+	assert.Zero(st.Timeout(), "configured remote operations use caller duration")
 	_, err = st.GetHealth(context.Background())
-	require.NoError(t, err, "GetHealth")
-	assert.Equal(t, apiprotocol.ClientClassCLI, marker.Load())
+	require.NoError(err, "GetHealth")
+	assert.Equal(apiprotocol.ClientClassCLI, marker.Load())
 }
 
 func TestOpenHTTPStoreRootContextCancelsLocalDaemonRequest(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	var marker atomic.Value
 	requestCanceled := make(chan struct{})
 	mux := http.NewServeMux()
@@ -84,7 +88,7 @@ func TestOpenHTTPStoreRootContextCancelsLocalDaemonRequest(t *testing.T) {
 	mux.HandleFunc("/api/v1/health", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, err := w.Write([]byte(`{"status":"ok"}`))
-		assert.NoError(t, err, "write health response")
+		assert.NoError(err, "write health response")
 	})
 	mux.HandleFunc("/api/v1/stats", func(_ http.ResponseWriter, r *http.Request) {
 		marker.Store(r.Header.Get(apiprotocol.ClientClassHeader))
@@ -98,26 +102,26 @@ func TestOpenHTTPStoreRootContextCancelsLocalDaemonRequest(t *testing.T) {
 	withStoreResolverConfig(t, lifecycleTestConfig(dataDir))
 	rt := daemonRuntimeForHTTPServer(t, srv, daemonAPIKeyFingerprint(""))
 	_, err := daemonRuntimeStore(dataDir).Write(rt.Record)
-	require.NoError(t, err, "write daemon runtime")
+	require.NoError(err, "write daemon runtime")
 
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	st, _, err := OpenHTTPStore(ctx)
-	require.NoError(t, err, "OpenHTTPStore")
+	require.NoError(err, "OpenHTTPStore")
 	t.Cleanup(func() { _ = st.Close() })
-	assert.Zero(t, st.Timeout(), "local daemon operations use caller duration")
+	assert.Zero(st.Timeout(), "local daemon operations use caller duration")
 
 	done := make(chan error, 1)
 	go func() {
 		_, err := st.GetStats()
 		done <- err
 	}()
-	require.Eventually(t, func() bool {
+	require.Eventually(func() bool {
 		return marker.Load() != nil
 	}, 2*time.Second, 10*time.Millisecond, "stats request starts")
 	cancel()
 
-	require.Eventually(t, func() bool {
+	require.Eventually(func() bool {
 		select {
 		case <-requestCanceled:
 			return true
@@ -125,8 +129,8 @@ func TestOpenHTTPStoreRootContextCancelsLocalDaemonRequest(t *testing.T) {
 			return false
 		}
 	}, 2*time.Second, 10*time.Millisecond, "root cancellation reaches stats request")
-	assert.Equal(t, apiprotocol.ClientClassCLI, marker.Load())
-	require.Error(t, <-done, "canceled stats request")
+	assert.Equal(apiprotocol.ClientClassCLI, marker.Load())
+	require.Error(<-done, "canceled stats request")
 }
 
 func TestOpenHTTPStoreStartsLocalDaemonWhenNoRemoteConfigured(t *testing.T) {

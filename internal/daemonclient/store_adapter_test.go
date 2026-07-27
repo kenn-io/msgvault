@@ -135,6 +135,7 @@ func TestRunCLISyncStreamsWithoutAbsoluteClientTimeout(t *testing.T) {
 }
 
 func TestLegacyAdapterUsesClientRootContext(t *testing.T) {
+	require := require.New(t)
 	requestStarted := make(chan struct{})
 	requestCanceled := make(chan struct{})
 	release := make(chan struct{})
@@ -156,7 +157,7 @@ func TestLegacyAdapterUsesClientRootContext(t *testing.T) {
 		URL: srv.URL, AllowInsecure: true, Context: root,
 		RequestMode: RequestModeCLI,
 	})
-	require.NoError(t, err, "New")
+	require.NoError(err, "New")
 
 	done := make(chan error, 1)
 	go func() {
@@ -166,11 +167,11 @@ func TestLegacyAdapterUsesClientRootContext(t *testing.T) {
 	select {
 	case <-requestStarted:
 	case <-time.After(2 * time.Second):
-		require.FailNow(t, "legacy adapter request did not start")
+		require.FailNow("legacy adapter request did not start")
 	}
 	cancel()
 
-	require.Eventually(t, func() bool {
+	require.Eventually(func() bool {
 		select {
 		case <-requestCanceled:
 			return true
@@ -178,7 +179,7 @@ func TestLegacyAdapterUsesClientRootContext(t *testing.T) {
 			return false
 		}
 	}, 2*time.Second, 10*time.Millisecond, "root cancellation reaches HTTP request")
-	require.Error(t, <-done, "canceled compatibility request")
+	require.Error(<-done, "canceled compatibility request")
 }
 
 func TestRunCLICommandStreamsOutput(t *testing.T) {

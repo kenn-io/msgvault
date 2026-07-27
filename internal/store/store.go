@@ -384,21 +384,50 @@ func (s *Store) BackupDatabase(dst string) error {
 }
 
 // BackupDatabaseContext is the request-aware form of BackupDatabase.
-func (s *Store) BackupDatabaseContext(ctx context.Context, dst string) error {
+func (s *Store) BackupDatabaseContext(ctx context.Context, dst string) (returnErr error) {
 	if s.IsPostgreSQL() {
 		return errors.New("backup-before-dedup is SQLite-only (uses VACUUM INTO); " +
 			"snapshot the PostgreSQL database with pg_dump out-of-band, " +
 			"then rerun with --no-backup",
 		)
 	}
-	if _, err := os.Stat(dst); err == nil {
+	if _, err := os.Lstat(dst); err == nil {
 		return fmt.Errorf("backup target already exists: %s", dst)
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("inspect backup target %s: %w", dst, err)
 	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if _, err := s.DB().ExecContext(ctx, "VACUUM INTO ?", dst); err != nil {
-		return fmt.Errorf("vacuum into %s: %w", dst, err)
+
+	tempDir, err := os.MkdirTemp(
+		filepath.Dir(dst),
+		"."+filepath.Base(dst)+".tmp-*",
+	)
+	if err != nil {
+		return fmt.Errorf("create temporary backup directory for %s: %w", dst, err)
+	}
+	defer func() {
+		if err := os.RemoveAll(tempDir); err != nil {
+			cleanupErr := fmt.Errorf("remove temporary backup directory %s: %w", tempDir, err)
+			returnErr = errors.Join(returnErr, cleanupErr)
+		}
+	}()
+
+	tempPath := filepath.Join(tempDir, "backup.db")
+	if _, err := s.DB().ExecContext(ctx, "VACUUM INTO ?", tempPath); err != nil {
+		return fmt.Errorf("vacuum into temporary backup for %s: %w", dst, err)
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if _, err := os.Lstat(dst); err == nil {
+		return fmt.Errorf("backup target already exists: %s", dst)
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("inspect backup target %s: %w", dst, err)
+	}
+	if err := os.Rename(tempPath, dst); err != nil {
+		return fmt.Errorf("publish backup %s: %w", dst, err)
 	}
 	return nil
 }

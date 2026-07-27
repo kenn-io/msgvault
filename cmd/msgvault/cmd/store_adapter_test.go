@@ -93,10 +93,11 @@ func (a *scopedStatsProductionAdapter) GetStatsForScopeContext(
 // observes the real production adapter returning; it does not replace the
 // scoped statistics query.
 func TestMarkedCLIScopedStatsCancellationReachesProductionAdapter(t *testing.T) {
+	require := require.New(t)
 	st := testutil.NewTestStore(t)
 	st.DB().SetMaxOpenConns(1)
 	conn, err := st.DB().Conn(t.Context())
-	require.NoError(t, err, "hold the only database connection")
+	require.NoError(err, "hold the only database connection")
 	t.Cleanup(func() { _ = conn.Close() })
 
 	returned := make(chan error, 1)
@@ -132,21 +133,21 @@ func TestMarkedCLIScopedStatsCancellationReachesProductionAdapter(t *testing.T) 
 		close(requestDone)
 	}()
 
-	require.Eventually(t, func() bool {
+	require.Eventually(func() bool {
 		return st.DB().Stats().WaitCount > 0
 	}, 2*time.Second, 10*time.Millisecond, "scoped statistics waits for the production database")
 	cancel()
 
 	select {
 	case err := <-returned:
-		require.ErrorIs(t, err, context.Canceled, "production scoped statistics returns request cancellation")
+		require.ErrorIs(err, context.Canceled, "production scoped statistics returns request cancellation")
 	case <-time.After(2 * time.Second):
-		require.FailNow(t, "production scoped statistics continued after marked request cancellation")
+		require.FailNow("production scoped statistics continued after marked request cancellation")
 	}
 	select {
 	case <-requestDone:
 	case <-time.After(2 * time.Second):
-		require.FailNow(t, "marked scoped statistics handler did not return after cancellation")
+		require.FailNow("marked scoped statistics handler did not return after cancellation")
 	}
 }
 
@@ -155,14 +156,15 @@ func TestMarkedCLIScopedStatsCancellationReachesProductionAdapter(t *testing.T) 
 // dialect query chain. The held real database connection makes the quick probe
 // wait for a connection until the marked request is cancelled.
 func TestMarkedCLISearchCancellationReturnsFromProductionQuickFTSProbe(t *testing.T) {
+	require := require.New(t)
 	st := testutil.NewTestStore(t)
-	require.True(t, st.FTS5Available(), "tagged test store has FTS5")
+	require.True(st.FTS5Available(), "tagged test store has FTS5")
 	engine := query.NewEngine(st.DB(), st.IsPostgreSQL())
 	t.Cleanup(func() { _ = engine.Close() })
 
 	st.DB().SetMaxOpenConns(1)
 	conn, err := st.DB().Conn(t.Context())
-	require.NoError(t, err, "hold the only database connection")
+	require.NoError(err, "hold the only database connection")
 	t.Cleanup(func() { _ = conn.Close() })
 
 	returned := make(chan bool, 1)
@@ -195,7 +197,7 @@ func TestMarkedCLISearchCancellationReturnsFromProductionQuickFTSProbe(t *testin
 		close(requestDone)
 	}()
 
-	require.Eventually(t, func() bool {
+	require.Eventually(func() bool {
 		return st.DB().Stats().WaitCount > waitCount
 	}, 2*time.Second, 10*time.Millisecond, "quick FTS probe waits for the production database")
 	cancel()
@@ -203,12 +205,12 @@ func TestMarkedCLISearchCancellationReturnsFromProductionQuickFTSProbe(t *testin
 	select {
 	case <-returned:
 	case <-time.After(500 * time.Millisecond):
-		require.FailNow(t, "production quick FTS probe continued after marked request cancellation")
+		require.FailNow("production quick FTS probe continued after marked request cancellation")
 	}
 	select {
 	case <-requestDone:
 	case <-time.After(500 * time.Millisecond):
-		require.FailNow(t, "marked CLI search did not return after cancellation")
+		require.FailNow("marked CLI search did not return after cancellation")
 	}
 }
 

@@ -274,6 +274,7 @@ type CLIDedupDeleteStore interface {
 	CountDedupedBatches(batchIDs []string) ([]store.DedupedBatchCount, int64, error)
 	DeleteAllDeduped() (int64, int64, error)
 	DeleteDedupedBatch(batchID string) (int64, error)
+	DeleteDedupedBatches(batchIDs []string) (int64, error)
 	BackupDatabase(dst string) error
 }
 
@@ -287,6 +288,7 @@ type ContextCLIDedupDeleteStore interface {
 	) ([]store.DedupedBatchCount, int64, error)
 	DeleteAllDedupedContext(ctx context.Context) (int64, int64, error)
 	DeleteDedupedBatchContext(ctx context.Context, batchID string) (int64, error)
+	DeleteDedupedBatchesContext(ctx context.Context, batchIDs []string) (int64, error)
 	BackupDatabaseContext(ctx context.Context, dst string) error
 }
 
@@ -330,6 +332,10 @@ func (s *requestCLIDedupDeleteStore) DeleteAllDeduped() (int64, int64, error) {
 
 func (s *requestCLIDedupDeleteStore) DeleteDedupedBatch(batchID string) (int64, error) {
 	return s.contextStore.DeleteDedupedBatchContext(s.ctx, batchID)
+}
+
+func (s *requestCLIDedupDeleteStore) DeleteDedupedBatches(batchIDs []string) (int64, error) {
+	return s.contextStore.DeleteDedupedBatchesContext(s.ctx, batchIDs)
 }
 
 func (s *requestCLIDedupDeleteStore) BackupDatabase(dst string) error {
@@ -1459,12 +1465,9 @@ func (s *Server) executeCLIDeleteDeduped(
 		batchCount = distinct
 	} else {
 		batchCount = int64(len(req.BatchIDs))
-		for _, id := range req.BatchIDs {
-			deleted, err := dedupStore.DeleteDedupedBatch(id)
-			if err != nil {
-				return cliDeleteDedupedExecuteResponse{}, fmt.Errorf("delete dedup batch %q: %w", id, err)
-			}
-			deletedTotal += deleted
+		deletedTotal, err = dedupStore.DeleteDedupedBatches(req.BatchIDs)
+		if err != nil {
+			return cliDeleteDedupedExecuteResponse{}, fmt.Errorf("delete selected dedup batches: %w", err)
 		}
 	}
 

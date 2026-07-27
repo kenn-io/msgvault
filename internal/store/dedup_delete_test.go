@@ -1,8 +1,11 @@
 package store_test
 
 import (
+	"context"
 	"testing"
+	"time"
 
+	"github.com/mattn/go-sqlite3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
@@ -62,6 +65,82 @@ func TestDeleteDedupedBatch_UnknownBatch(t *testing.T) {
 	deleted, err := f.Store.DeleteDedupedBatch("no-such-batch")
 	require.NoError(t, err, "DeleteDedupedBatch unknown batch")
 	assert.Equal(t, int64(0), deleted, "DeleteDedupedBatch deleted")
+}
+
+func TestDeleteDedupedBatchesContext_CancellationRollsBackEveryBatch(t *testing.T) {
+	require := require.New(t)
+	f := storetest.New(t)
+	f.Store.DB().SetMaxOpenConns(1)
+
+	idKeepA := newRFC822Message(t, f, "keep-a", "rfc822-cancel-a")
+	idDropA := newRFC822Message(t, f, "drop-a", "rfc822-cancel-a")
+	_, err := f.Store.MergeDuplicates(idKeepA, []int64{idDropA}, "batch-alpha")
+	require.NoError(err, "MergeDuplicates alpha")
+
+	idKeepB := newRFC822Message(t, f, "keep-b", "rfc822-cancel-b")
+	idDropB := newRFC822Message(t, f, "drop-b", "rfc822-cancel-b")
+	_, err = f.Store.MergeDuplicates(idKeepB, []int64{idDropB}, "batch-beta")
+	require.NoError(err, "MergeDuplicates beta")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	secondBatchStarted := make(chan struct{})
+	conn, err := f.Store.DB().Conn(context.Background())
+	require.NoError(err, "get SQLite connection")
+	err = conn.Raw(func(driverConn any) error {
+		sqliteConn, ok := driverConn.(*sqlite3.SQLiteConn)
+		require.True(ok, "driver connection is SQLite")
+		return sqliteConn.RegisterFunc("wait_for_dedup_cancel", func() int {
+			close(secondBatchStarted)
+			<-ctx.Done()
+			return 0
+		}, true)
+	})
+	require.NoError(err, "register cancellation function")
+	require.NoError(conn.Close(), "return SQLite connection to pool")
+
+	_, err = f.Store.DB().Exec(`
+		CREATE TRIGGER wait_before_second_dedup_batch
+		BEFORE DELETE ON messages
+		WHEN OLD.delete_batch_id = 'batch-beta'
+		BEGIN
+			SELECT wait_for_dedup_cancel();
+		END
+	`)
+	require.NoError(err, "create cancellation trigger")
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := f.Store.DeleteDedupedBatchesContext(
+			ctx,
+			[]string{"batch-alpha", "batch-beta"},
+		)
+		done <- err
+	}()
+
+	select {
+	case <-secondBatchStarted:
+	case <-time.After(time.Second):
+		require.FailNow("second batch deletion did not start")
+	}
+	cancel()
+
+	select {
+	case err = <-done:
+	case <-time.After(time.Second):
+		require.FailNow("batch deletion did not stop after cancellation")
+	}
+	require.ErrorIs(err, context.Canceled)
+
+	for _, batchID := range []string{"batch-alpha", "batch-beta"} {
+		var count int64
+		err = f.Store.DB().QueryRow(
+			"SELECT COUNT(*) FROM messages WHERE delete_batch_id = ?",
+			batchID,
+		).Scan(&count)
+		require.NoError(err, "count %s after cancellation", batchID)
+		assert.Equal(t, int64(1), count, "%s should be restored by transaction rollback", batchID)
+	}
 }
 
 // TestDeleteAllDeduped_MultiplesBatches verifies that DeleteAllDeduped removes

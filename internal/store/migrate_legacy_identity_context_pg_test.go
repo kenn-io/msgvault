@@ -31,19 +31,21 @@ func TestMigrateLegacyIdentityConfigContextCancelsBlockedRevisionUpdate(t *testi
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
 			st := newPGStoreInternal(t, dbURL)
 			source, err := st.GetOrCreateSource("gmail", "alice@example.com")
-			require.NoError(t, err, "create source")
+			require.NoError(err, "create source")
 
 			_, err = st.DB().Exec(`
 				INSERT INTO archive_metadata (key, value)
 				VALUES ($1, '0'), ($2, '0')
 				ON CONFLICT (key) DO NOTHING`,
 				identityRevisionKey, accountIdentityRevisionKey)
-			require.NoError(t, err, "seed revision rows")
+			require.NoError(err, "seed revision rows")
 
 			blocker, err := st.DB().BeginTx(context.Background(), nil)
-			require.NoError(t, err, "begin blocker transaction")
+			require.NoError(err, "begin blocker transaction")
 			blockerOpen := true
 			t.Cleanup(func() {
 				if blockerOpen {
@@ -52,12 +54,12 @@ func TestMigrateLegacyIdentityConfigContextCancelsBlockedRevisionUpdate(t *testi
 			})
 
 			var blockerPID int
-			require.NoError(t,
+			require.NoError(
 				blocker.QueryRow(`SELECT pg_backend_pid()`).Scan(&blockerPID),
 				"read blocker backend pid",
 			)
 			var revisionValue string
-			require.NoError(t, blocker.QueryRow(
+			require.NoError(blocker.QueryRow(
 				`SELECT value FROM archive_metadata WHERE key = $1 FOR UPDATE`,
 				tt.revisionKey,
 			).Scan(&revisionValue), "lock revision row")
@@ -72,7 +74,7 @@ func TestMigrateLegacyIdentityConfigContextCancelsBlockedRevisionUpdate(t *testi
 				migrationDone <- migrationErr
 			}()
 
-			require.Eventually(t, func() bool {
+			require.Eventually(func() bool {
 				var waiting bool
 				queryErr := st.DB().QueryRow(`
 					SELECT EXISTS (
@@ -92,30 +94,30 @@ func TestMigrateLegacyIdentityConfigContextCancelsBlockedRevisionUpdate(t *testi
 			cancel()
 			select {
 			case migrationErr := <-migrationDone:
-				require.ErrorIs(t, migrationErr, context.Canceled)
+				require.ErrorIs(migrationErr, context.Canceled)
 			case <-time.After(time.Second):
-				require.NoError(t, blocker.Rollback(), "release blocker after cancellation timeout")
+				require.NoError(blocker.Rollback(), "release blocker after cancellation timeout")
 				blockerOpen = false
 				<-migrationDone
-				require.FailNow(t, "migration did not stop after context cancellation")
+				require.FailNow("migration did not stop after context cancellation")
 			}
 
 			var identityCount int
-			require.NoError(t, st.DB().QueryRow(
+			require.NoError(st.DB().QueryRow(
 				`SELECT COUNT(*) FROM account_identities
 				 WHERE source_id = $1 AND address = $2`,
 				source.ID, "legacy@example.com",
 			).Scan(&identityCount), "count rolled-back identity")
-			assert.Zero(t, identityCount, "migration identity insert must roll back")
+			assert.Zero(identityCount, "migration identity insert must roll back")
 
 			var markerCount int
-			require.NoError(t, st.DB().QueryRow(
+			require.NoError(st.DB().QueryRow(
 				`SELECT COUNT(*) FROM applied_migrations WHERE name = $1`,
 				migrationLegacyIdentity,
 			).Scan(&markerCount), "count rolled-back migration marker")
-			assert.Zero(t, markerCount, "migration marker must not commit")
+			assert.Zero(markerCount, "migration marker must not commit")
 
-			require.NoError(t, blocker.Rollback(), "release blocker")
+			require.NoError(blocker.Rollback(), "release blocker")
 			blockerOpen = false
 		})
 	}

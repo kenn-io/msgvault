@@ -390,22 +390,51 @@ func (s *Store) DeleteDedupedBatchContext(
 	ctx context.Context,
 	batchID string,
 ) (int64, error) {
+	return s.DeleteDedupedBatchesContext(ctx, []string{batchID})
+}
+
+// DeleteDedupedBatches permanently deletes all hidden rows associated with
+// the selected dedup batches in one transaction.
+func (s *Store) DeleteDedupedBatches(batchIDs []string) (int64, error) {
+	return s.DeleteDedupedBatchesContext(context.Background(), batchIDs)
+}
+
+// DeleteDedupedBatchesContext is the request-aware form of
+// DeleteDedupedBatches. The selected batches commit or roll back as one unit,
+// so cancellation cannot leave only a prefix deleted.
+func (s *Store) DeleteDedupedBatchesContext(
+	ctx context.Context,
+	batchIDs []string,
+) (int64, error) {
+	if len(batchIDs) == 0 {
+		return 0, nil
+	}
+
 	// runMaintenance disables the pool-wide 30s statement_timeout for this
 	// tx: the cascade DELETE is unbounded and exceeds 30s on a large archive
 	// (finding S1). No-op timeout reset on SQLite.
 	var deleted int64
 	err := s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
-		result, err := tx.ExecContext(ctx, `
-			DELETE FROM messages
-			WHERE delete_batch_id = ? AND deleted_at IS NOT NULL
-		`, batchID)
-		if err != nil {
-			return fmt.Errorf("delete dedup batch %q: %w", batchID, err)
+		for _, batchID := range batchIDs {
+			result, err := tx.ExecContext(ctx, `
+				DELETE FROM messages
+				WHERE delete_batch_id = ? AND deleted_at IS NOT NULL
+			`, batchID)
+			if err != nil {
+				return fmt.Errorf("delete dedup batch %q: %w", batchID, err)
+			}
+			affected, err := result.RowsAffected()
+			if err != nil {
+				return fmt.Errorf("count deleted dedup batch %q: %w", batchID, err)
+			}
+			deleted += affected
 		}
-		deleted, err = result.RowsAffected()
-		return err
+		return nil
 	})
-	return deleted, err
+	if err != nil {
+		return 0, err
+	}
+	return deleted, nil
 }
 
 func (s *Store) CountDedupedBatches(batchIDs []string) ([]DedupedBatchCount, int64, error) {

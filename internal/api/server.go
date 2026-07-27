@@ -674,7 +674,6 @@ func cliRequestNeedsProtectiveCeiling(r *http.Request) bool {
 		"GET /api/v1/cli/attachment",
 		"GET /api/v1/cli/search",
 		"POST /api/v1/cli/deduplicate/plan",
-		"POST /api/v1/cli/delete-deduped",
 		"POST /api/v1/cli/identities",
 		"DELETE /api/v1/cli/identities":
 		return true

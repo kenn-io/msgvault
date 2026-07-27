@@ -394,6 +394,7 @@ func TestEngineGetMessageRendersLargeIDInPath(t *testing.T) {
 }
 
 func TestEngineGetMessageUsesPerCallContext(t *testing.T) {
+	require := require.New(t)
 	requestStarted := make(chan struct{})
 	requestCanceled := make(chan struct{})
 	release := make(chan struct{})
@@ -428,7 +429,7 @@ func TestEngineGetMessageUsesPerCallContext(t *testing.T) {
 		HTTPClient:    srv.Client(),
 		Context:       rootCtx,
 	})
-	require.NoError(t, err, "New")
+	require.NoError(err, "New")
 	engine := NewEngineAdapter(store)
 
 	callCtx, cancelCall := context.WithCancel(context.Background())
@@ -441,7 +442,7 @@ func TestEngineGetMessageUsesPerCallContext(t *testing.T) {
 	select {
 	case <-requestStarted:
 	case <-time.After(time.Second):
-		require.FailNow(t, "GetMessage request did not start")
+		require.FailNow("GetMessage request did not start")
 	}
 	cancelCall()
 
@@ -452,12 +453,80 @@ func TestEngineGetMessageUsesPerCallContext(t *testing.T) {
 		err = <-done
 	}
 
-	require.ErrorIs(t, err, context.Canceled)
-	require.NoError(t, rootCtx.Err(), "client root context remains live")
+	require.ErrorIs(err, context.Canceled)
+	require.NoError(rootCtx.Err(), "client root context remains live")
 	select {
 	case <-requestCanceled:
 	case <-time.After(time.Second):
-		require.FailNow(t, "per-call cancellation did not reach the HTTP request")
+		require.FailNow("per-call cancellation did not reach the HTTP request")
+	}
+}
+
+func TestEngineGetMessageUsesClientRootContext(t *testing.T) {
+	require := require.New(t)
+	requestStarted := make(chan struct{})
+	requestCanceled := make(chan struct{})
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		close(requestStarted)
+		select {
+		case <-r.Context().Done():
+			close(requestCanceled)
+		case <-release:
+			writeJSONResponse(t, w, map[string]any{
+				"id":      42,
+				"subject": "released",
+				"from":    "alice@example.com",
+				"sent_at": "2024-01-15T10:30:00Z",
+			})
+		}
+	}))
+	t.Cleanup(srv.Close)
+	t.Cleanup(func() {
+		select {
+		case <-release:
+		default:
+			close(release)
+		}
+	})
+
+	rootCtx, cancelRoot := context.WithCancel(context.Background())
+	t.Cleanup(cancelRoot)
+	store, err := New(Config{
+		URL:           srv.URL,
+		AllowInsecure: true,
+		HTTPClient:    srv.Client(),
+		Context:       rootCtx,
+		RequestMode:   RequestModeCLI,
+	})
+	require.NoError(err, "New")
+	engine := NewEngineAdapter(store)
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := engine.GetMessage(context.Background(), 42)
+		done <- err
+	}()
+
+	select {
+	case <-requestStarted:
+	case <-time.After(time.Second):
+		require.FailNow("GetMessage request did not start")
+	}
+	cancelRoot()
+
+	select {
+	case err = <-done:
+	case <-time.After(time.Second):
+		close(release)
+		err = <-done
+	}
+
+	require.ErrorIs(err, context.Canceled)
+	select {
+	case <-requestCanceled:
+	case <-time.After(time.Second):
+		require.FailNow("root cancellation did not reach the HTTP request")
 	}
 }
 

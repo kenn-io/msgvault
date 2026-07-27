@@ -67,6 +67,7 @@ func TestNewDefaultTimeout(t *testing.T) {
 }
 
 func TestNewCLIModeDisablesWholeRequestTimeoutAndPreservesTransport(t *testing.T) {
+	assert := assert.New(t)
 	transport := &http.Transport{
 		DialContext:         (&net.Dialer{Timeout: 7 * time.Second}).DialContext,
 		TLSHandshakeTimeout: 11 * time.Second,
@@ -80,10 +81,10 @@ func TestNewCLIModeDisablesWholeRequestTimeoutAndPreservesTransport(t *testing.T
 	})
 	require.NoError(t, err, "New")
 
-	assert.Zero(t, c.Timeout(), "CLI operations are governed by their context")
-	assert.Same(t, transport, c.httpClient.Transport, "transport-level bounds are retained")
-	assert.Equal(t, 11*time.Second, transport.TLSHandshakeTimeout)
-	assert.Equal(t, 45*time.Second, base.Timeout, "caller-owned client is not mutated")
+	assert.Zero(c.Timeout(), "CLI operations are governed by their context")
+	assert.Same(transport, c.httpClient.Transport, "transport-level bounds are retained")
+	assert.Equal(11*time.Second, transport.TLSHandshakeTimeout)
+	assert.Equal(45*time.Second, base.Timeout, "caller-owned client is not mutated")
 }
 
 func TestCLIModeGeneratedRequestCarriesClassAndAPIKey(t *testing.T) {
@@ -331,6 +332,7 @@ func TestRebuildCLIFTSRetriesWhileOperationInProgress(t *testing.T) {
 }
 
 func TestGeneratedNonStreamingBusyRetryReturnsRootContextCancellation(t *testing.T) {
+	require := require.New(t)
 	oldDelay := operationBusyRetryDelay
 	operationBusyRetryDelay = time.Second
 	t.Cleanup(func() { operationBusyRetryDelay = oldDelay })
@@ -353,7 +355,7 @@ func TestGeneratedNonStreamingBusyRetryReturnsRootContextCancellation(t *testing
 		AllowInsecure: true,
 		Context:       rootCtx,
 	})
-	require.NoError(t, err, "New")
+	require.NoError(err, "New")
 
 	waiting := make(chan struct{})
 	c.SetBusyNotifier(func(string) { close(waiting) })
@@ -366,15 +368,100 @@ func TestGeneratedNonStreamingBusyRetryReturnsRootContextCancellation(t *testing
 	select {
 	case <-waiting:
 	case <-time.After(time.Second):
-		require.FailNow(t, "generated response did not enter busy retry wait")
+		require.FailNow("generated response did not enter busy retry wait")
 	}
 	cancel()
 
 	select {
 	case err := <-done:
-		require.ErrorIs(t, err, context.Canceled)
+		require.ErrorIs(err, context.Canceled)
 	case <-time.After(time.Second):
-		require.FailNow(t, "generated response did not return after root context cancellation")
+		require.FailNow("generated response did not return after root context cancellation")
+	}
+}
+
+func TestRawAndStreamingRequestsUseClientRootContext(t *testing.T) {
+	tests := []struct {
+		name    string
+		request func(*Client) (*http.Response, error)
+	}{
+		{
+			name: "raw",
+			request: func(c *Client) (*http.Response, error) {
+				return c.DoGeneratedRequestWithContext(
+					context.Background(),
+					http.MethodGet,
+					"/api/v1/stats",
+					&generated.RunCLIRequestOptions{},
+				)
+			},
+		},
+		{
+			name: "streaming",
+			request: func(c *Client) (*http.Response, error) {
+				return c.DoGeneratedStreamingRequestWithContext(
+					context.Background(),
+					http.MethodPost,
+					"/api/v1/cli/run",
+					&generated.RunCLIRequestOptions{},
+				)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require := require.New(t)
+			requestStarted := make(chan struct{})
+			release := make(chan struct{})
+			srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
+				close(requestStarted)
+				<-release
+			}))
+			t.Cleanup(srv.Close)
+			t.Cleanup(func() {
+				select {
+				case <-release:
+				default:
+					close(release)
+				}
+			})
+
+			rootCtx, cancelRoot := context.WithCancel(context.Background())
+			t.Cleanup(cancelRoot)
+			c, err := New(Config{
+				URL:           srv.URL,
+				AllowInsecure: true,
+				HTTPClient:    srv.Client(),
+				Context:       rootCtx,
+				RequestMode:   RequestModeCLI,
+			})
+			require.NoError(err, "New")
+
+			done := make(chan error, 1)
+			go func() {
+				resp, err := tt.request(c)
+				if resp != nil {
+					_ = resp.Body.Close()
+				}
+				done <- err
+			}()
+
+			select {
+			case <-requestStarted:
+			case <-time.After(time.Second):
+				require.FailNow("request did not start")
+			}
+			cancelRoot()
+
+			select {
+			case err = <-done:
+			case <-time.After(time.Second):
+				close(release)
+				err = <-done
+			}
+			require.ErrorIs(err, context.Canceled)
+		})
 	}
 }
 

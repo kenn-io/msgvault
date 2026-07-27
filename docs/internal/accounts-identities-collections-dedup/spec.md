@@ -757,8 +757,11 @@ time zone in the format `20060102-150405`.
 ### Mechanism
 
 Backup uses SQLite's `VACUUM INTO` to produce a point-in-time
-consistent copy. Implementations must reject non-file DSNs (e.g.
-`postgres://`) up front rather than at the first backup attempt.
+consistent copy. It writes into a uniquely owned temporary directory beside
+the destination, removes that staging output on failure or cancellation, and
+atomically renames the completed database to the advertised filename.
+Implementations must reject non-file DSNs (e.g. `postgres://`) up front rather
+than at the first backup attempt.
 
 ### Opt-out
 

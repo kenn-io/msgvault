@@ -30,11 +30,11 @@ reserved for trusted marked CLI requests.
 | `POST /cli/account` | Account resolution and display-name update | Production-adapter blocked-database cancellation regression |
 | `POST /cli/collections`, `PATCH /cli/collections/{name}/sources`, `DELETE /cli/collections/{name}/sources`, `DELETE /cli/collections/{name}` | Account resolution and collection mutation | Production-adapter blocked-database cancellation regressions |
 | `GET /cli/identities` | Scope resolution, source listing, and identity listing | Production-adapter blocked-database cancellation regression |
-| `POST /cli/delete-deduped/plan`, `POST /cli/delete-deduped` | Plan counts, optional SQLite backup, and destructive SQL | Context-aware count/backup/delete path plus production-adapter cancellation regressions; execute retains the protective ceiling below until backup cancellation is proven |
+| `POST /cli/delete-deduped/plan`, `POST /cli/delete-deduped` | Plan counts, optional SQLite backup, and destructive SQL | Context-aware count/backup/delete path; canceled backups remove private staging output, and selected batches roll back as one transaction |
 | `POST /cli/rebuild-fts` | FTS schema maintenance and batched rebuild | Fully context-aware store maintenance path plus production-adapter cancellation regression |
 | `GET /cli/search` | Scope resolution, quick FTS-index probe, and foreground search | Request context reaches the production quick probe and search SQL; a blocked-database marked-search regression proves cancellation returns from the quick probe, while the full first-search check/backfill remains deliberately detached maintenance |
 | `POST /cli/sync`, `POST /cli/sync-full`, `POST /cli/verify`, `POST /cli/repair-encoding`, `POST /cli/run` | Streaming runner, operation-gate wait, subprocess/network/database work | Existing runner interfaces take the request context and streaming cancellation tests cover their specialized paths |
-| `GET /messages/{id}` | Generated message-detail lookup used by daemon-backed query and MCP callers | The engine's per-call context reaches the generated HTTP request; cancellation is independent of the longer-lived daemon client root |
+| `GET /messages/{id}` | Generated message-detail lookup used by daemon-backed query and MCP callers | Per-call and client-root cancellation both reach the generated HTTP request, including calls made with `context.Background()` |
 
 The production `storeAPIAdapter` is statically asserted to implement the
 complete context-aware CLI store extension. A compatibility fallback remains
@@ -69,7 +69,6 @@ because identity reads and mutations share a path but not the same risk.
 | `GET /cli/attachment` | Packed/loose attachment filesystem reads and streaming |
 | `GET /cli/search` | Query-engine planning and result materialization do not yet have complete end-to-end cancellation proof; the foreground quick FTS probe is context-aware |
 | `POST /cli/deduplicate/plan` | Deep duplicate scan and planner work |
-| `POST /cli/delete-deduped` | Optional SQLite backup; cleanup of a canceled partial target is not yet proven |
 | `POST /cli/identities` | Synchronous post-mutation identity-cache refresh |
 | `DELETE /cli/identities` | Synchronous post-mutation identity-cache refresh |
 

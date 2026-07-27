@@ -1152,8 +1152,10 @@ func TestHandleQueryEnforcesQueryTimeout(t *testing.T) {
 }
 
 func TestMarkedCLIQueryCancellationInterruptsDuckDB(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	engine, err := query.NewDuckDBEngine("", "", nil)
-	require.NoError(t, err, "NewDuckDBEngine")
+	require.NoError(err, "NewDuckDBEngine")
 	t.Cleanup(func() { _ = engine.Close() })
 
 	queryStarted := make(chan struct{})
@@ -1185,7 +1187,7 @@ func TestMarkedCLIQueryCancellationInterruptsDuckDB(t *testing.T) {
 	body := strings.NewReader(`{"sql":` + strconv.Quote(slowSQL) + `}`)
 	ctx, cancel := context.WithCancel(context.Background())
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, httpServer.URL+queryEndpointPath, body)
-	require.NoError(t, err, "NewRequestWithContext")
+	require.NoError(err, "NewRequestWithContext")
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Api-Key", cliTimeoutTestAPIKey)
 	req.Header.Set(apiprotocol.ClientClassHeader, apiprotocol.ClientClassCLI)
@@ -1199,7 +1201,7 @@ func TestMarkedCLIQueryCancellationInterruptsDuckDB(t *testing.T) {
 		requestDone <- err
 	}()
 
-	require.Eventually(t, func() bool {
+	require.Eventually(func() bool {
 		select {
 		case <-queryStarted:
 			return true
@@ -1207,8 +1209,8 @@ func TestMarkedCLIQueryCancellationInterruptsDuckDB(t *testing.T) {
 			return false
 		}
 	}, 2*time.Second, 10*time.Millisecond, "DuckDB query starts")
-	assert.False(t, <-queryHasDeadline, "marked query context must not have a server deadline")
-	assert.Never(t, func() bool {
+	assert.False(<-queryHasDeadline, "marked query context must not have a server deadline")
+	assert.Never(func() bool {
 		select {
 		case <-queryReturned:
 			return true
@@ -1221,11 +1223,11 @@ func TestMarkedCLIQueryCancellationInterruptsDuckDB(t *testing.T) {
 	cancel()
 	select {
 	case <-queryReturned:
-		require.Error(t, <-queryErr, "DuckDB returns cancellation")
+		require.Error(<-queryErr, "DuckDB returns cancellation")
 	case <-time.After(5 * time.Second):
-		require.FailNow(t, "DuckDB continued after marked HTTP cancellation")
+		require.FailNow("DuckDB continued after marked HTTP cancellation")
 	}
-	require.Error(t, <-requestDone, "client observes cancellation")
+	require.Error(<-requestDone, "client observes cancellation")
 }
 
 func TestHandleCLIRunRejectsDisallowedEnv(t *testing.T) {
