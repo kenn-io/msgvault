@@ -1,7 +1,7 @@
 # Generic Message Export
 
-Design for a provider-neutral, machine-readable archive export. Status: draft
-for review.
+Design for a provider-neutral, machine-readable archive export. Status:
+approved for implementation.
 
 ## Summary
 
