@@ -466,7 +466,7 @@ jobs:
           psql -h localhost -U msgvault_test -d msgvault_test -c "CREATE EXTENSION IF NOT EXISTS vector"
 
       - name: Test (pgvector-tagged)
-        run: go test -p=8 -parallel=8 -timeout=20m -tags "fts5 sqlite_vec pgvector" -count=1 ./internal/vector/... ./internal/scheduler/... ./cmd/msgvault/cmd/...
+        run: go test -tags "fts5 sqlite_vec pgvector" -count=1 ./internal/vector/... ./internal/scheduler/... ./cmd/msgvault/cmd/...
 
   nix-build:
     runs-on: ${{ github.repository == 'kenn-io/msgvault' && (github.event_name == 'push' && github.ref == 'refs/heads/main' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.base.repo.full_name == github.repository)) && 'kenn-linux-x64-public' || 'ubuntu-latest' }}
@@ -519,7 +519,7 @@ jobs:
       # against a pgvector/pgvector image. (Run go test directly rather than
       # `make test-pg`, whose PG_TEST_TAGS include pgvector.)
       - name: Test (PostgreSQL)
-        run: go test -p=8 -parallel=8 -timeout=20m -tags "fts5 sqlite_vec" ./...
+        run: go test -tags "fts5 sqlite_vec" ./...
 
       - name: Concurrency tests (-count=5)
         run: |
