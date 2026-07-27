@@ -255,8 +255,8 @@ Expected: pass.
 ## Task 3: Document the generic export
 
 **Files:** modify `docs/usage/exporting.md`, `docs/usage/discord.md`,
-`docs/configuration.md`, generated CLI reference artifacts, and the README
-only where the command is already surfaced.
+`docs/configuration.md`, the hand-maintained `docs/cli-reference.md`, and the
+README only where the command is already surfaced.
 
 - [ ] Document required bounds, half-open window semantics, repeatable source
   and message-type filters, the five JSONL phases, deterministic order,
@@ -266,8 +266,9 @@ only where the command is already surfaced.
   scopes. Do not document raw provider metadata layouts.
 - [ ] Mark the provider-specific export as a temporary compatibility surface
   without naming or describing any downstream consumer.
-- [ ] Regenerate the CLI reference using the repository's existing generator;
-  do not hand-edit generated sections.
+- [ ] Update the hand-maintained CLI reference. This repository has no Cobra
+  reference generator; `make docs-check` validates the Markdown source and
+  rendered result.
 - [ ] Run:
 
 ```bash

@@ -952,6 +952,39 @@ Deprecated in 0.17.0: the older TUI-only `--force-sql`, `--no-cache-build`, and 
 
 ---
 
+## export-messages
+
+Export a bounded, provider-neutral message window as deterministic JSON Lines.
+The command reads the archive through the configured daemon and never contacts
+a provider.
+
+```bash
+msgvault export-messages \
+  --start <RFC3339> \
+  --end <RFC3339> \
+  [--message-type <type>] \
+  [--source <type:identifier>] \
+  [--format jsonl]
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--start` | required | Inclusive RFC3339 lower bound |
+| `--end` | required | Exclusive RFC3339 upper bound |
+| `--message-type` | all | Exact message type to include; repeatable |
+| `--source` | all | Exact typed source selector; repeatable |
+| `--format` | `jsonl` | Output format; v1 accepts only `jsonl` |
+
+The stream schema is `msgvault-message-export/1`. Records appear as one
+manifest, all sources, all conversations, all messages, and one completion
+record with counts. A missing completion record means the stream is partial
+and must be rejected. Stdout contains JSONL only; diagnostics use stderr.
+
+See [Exporting Data](/usage/exporting/) for the full record, identity, ordering,
+and validation contract.
+
+---
+
 ## export-eml
 
 Export a message as a `.eml` file. Accepts either a numeric database ID or a Gmail message ID.
