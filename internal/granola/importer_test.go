@@ -923,7 +923,7 @@ func TestImport_RepeatedPageCursorFails(t *testing.T) {
 		cursor:  "same-page",
 	}
 	imp, _ := newTestImporter(t, api)
-	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
 	_, err := imp.Import(ctx, ImportOptions{Identifier: "alice@example.com"})

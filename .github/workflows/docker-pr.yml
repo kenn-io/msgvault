@@ -1,13 +1,15 @@
 name: Docker
 
-# Build and smoke-test the PR image without registry credentials. Keep this
-# branch-defined workflow on a GitHub-hosted runner.
+# Bootstrap the split between validation and publishing on a GitHub-hosted
+# runner. Follow-up PRs can return this dispatcher to docker.yml@main once
+# that read-only reusable workflow is present on the default branch.
 on:
   pull_request:
     paths:
       - 'Dockerfile'
       - '.dockerignore'
       - '.github/workflows/docker.yml'
+      - '.github/workflows/docker-publish.yml'
       - 'go.mod'
       - 'go.sum'
       - 'Makefile'
