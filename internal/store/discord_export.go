@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"regexp"
 	"strings"
@@ -42,6 +43,14 @@ type discordExportConversationMetadata struct {
 
 type discordExportMessageMetadata struct {
 	AuthorDisplayName string `json:"author_display_name"`
+}
+
+type discordExportMessageRow struct {
+	id                     int64
+	containerID, messageID string
+	rawMetadata            string
+	sentAt                 time.Time
+	deletedFromSource      bool
 }
 
 var discordExportURLPattern = regexp.MustCompile(`https?://[^\s"'<>()]+`)
@@ -91,59 +100,112 @@ func (s *Store) DiscordExport(
 		return nil, fmt.Errorf("close Discord export containers: %w", err)
 	}
 
-	messageRows, err := s.db.QueryContext(ctx, s.dialect.Rebind(`
-		SELECT c.source_conversation_id,
-		       m.source_message_id,
-		       COALESCE(mb.body_text, ''),
-		       COALESCE(m.metadata, '{}'),
-		       COALESCE(m.sent_at, m.received_at, m.internal_date),
-		       m.deleted_from_source_at
-		FROM messages m
-		JOIN conversations c ON c.id = m.conversation_id
-		LEFT JOIN message_bodies mb ON mb.message_id = m.id
-		WHERE m.source_id = ?
-		  AND m.deleted_at IS NULL
-		  AND COALESCE(m.sent_at, m.received_at, m.internal_date) >= ?
-		  AND COALESCE(m.sent_at, m.received_at, m.internal_date) < ?
-		ORDER BY c.source_conversation_id,
-		         COALESCE(m.sent_at, m.received_at, m.internal_date),
-		         m.source_message_id
-	`), sourceID, start, end)
-	if err != nil {
-		return nil, fmt.Errorf("query Discord export messages: %w", err)
-	}
-	defer func() { _ = messageRows.Close() }()
+	var cursor *discordExportMessageRow
+	for {
+		cursorPredicate := ""
+		args := []any{sourceID, start, end}
+		if cursor != nil {
+			cursorPredicate = `
+			  AND (
+			      c.source_conversation_id,
+			      COALESCE(m.sent_at, m.received_at, m.internal_date),
+			      m.source_message_id,
+			      m.id
+			  ) > (?, ?, ?, ?)
+			`
+			args = append(args,
+				cursor.containerID, cursor.sentAt, cursor.messageID, cursor.id,
+			)
+		}
+		args = append(args, messageExportPageSize)
+		messageRows, err := s.db.QueryContext(ctx, s.dialect.Rebind(`
+			SELECT m.id,
+			       c.source_conversation_id,
+			       m.source_message_id,
+			       COALESCE(m.metadata, '{}'),
+			       COALESCE(m.sent_at, m.received_at, m.internal_date),
+			       m.deleted_from_source_at
+			FROM messages m
+			JOIN conversations c ON c.id = m.conversation_id
+			WHERE m.source_id = ?
+			  AND m.deleted_at IS NULL
+			  AND COALESCE(m.sent_at, m.received_at, m.internal_date) >= ?
+			  AND COALESCE(m.sent_at, m.received_at, m.internal_date) < ?
+			`+cursorPredicate+`
+			ORDER BY c.source_conversation_id,
+			         COALESCE(m.sent_at, m.received_at, m.internal_date),
+			         m.source_message_id,
+			         m.id
+			LIMIT ?
+		`), args...)
+		if err != nil {
+			return nil, fmt.Errorf("query Discord export messages: %w", err)
+		}
 
-	for messageRows.Next() {
-		var containerID, id, content, rawMetadata string
-		var sentAt nullableTimestamp
-		var deletedAt sql.NullTime
-		if err := messageRows.Scan(
-			&containerID, &id, &content, &rawMetadata, &sentAt, &deletedAt,
-		); err != nil {
-			return nil, fmt.Errorf("scan Discord export message: %w", err)
+		var page []discordExportMessageRow
+		for messageRows.Next() {
+			var message discordExportMessageRow
+			var sentAt nullableTimestamp
+			var deletedAt sql.NullTime
+			if err := messageRows.Scan(
+				&message.id, &message.containerID, &message.messageID,
+				&message.rawMetadata, &sentAt, &deletedAt,
+			); err != nil {
+				_ = messageRows.Close()
+				return nil, fmt.Errorf("scan Discord export message: %w", err)
+			}
+			message.sentAt = sentAt.Time
+			message.deletedFromSource = deletedAt.Valid
+			page = append(page, message)
 		}
-		index, ok := containerIndex[containerID]
-		if !ok {
-			return nil, fmt.Errorf("discord message %s references unknown container %s", id, containerID)
+		if err := messageRows.Err(); err != nil {
+			_ = messageRows.Close()
+			return nil, fmt.Errorf("iterate Discord export messages: %w", err)
 		}
-		var metadata discordExportMessageMetadata
-		if err := json.Unmarshal([]byte(rawMetadata), &metadata); err != nil {
-			return nil, fmt.Errorf("decode Discord message %s metadata: %w", id, err)
+		if err := messageRows.Close(); err != nil {
+			return nil, fmt.Errorf("close Discord export messages: %w", err)
 		}
-		containers[index].Messages = append(containers[index].Messages, DiscordExportMessage{
-			ID:           id,
-			AuthorHandle: metadata.AuthorDisplayName,
-			Content:      content,
-			SentAt:       sentAt.Time.UTC(),
-			Deleted:      deletedAt.Valid,
-			URLs:         discordExportURLs(content),
-		})
+
+		for _, message := range page {
+			index, ok := containerIndex[message.containerID]
+			if !ok {
+				return nil, fmt.Errorf(
+					"discord message %s references unknown container %s",
+					message.messageID, message.containerID,
+				)
+			}
+			var content sql.NullString
+			if err := s.db.QueryRowContext(
+				ctx,
+				s.dialect.Rebind(`SELECT body_text FROM message_bodies WHERE message_id = ?`),
+				message.id,
+			).Scan(&content); err != nil && !errors.Is(err, sql.ErrNoRows) {
+				return nil, fmt.Errorf("load Discord export message body: %w", err)
+			}
+			var metadata discordExportMessageMetadata
+			if err := json.Unmarshal([]byte(message.rawMetadata), &metadata); err != nil {
+				return nil, fmt.Errorf(
+					"decode Discord message %s metadata: %w", message.messageID, err,
+				)
+			}
+			containers[index].Messages = append(
+				containers[index].Messages,
+				DiscordExportMessage{
+					ID:           message.messageID,
+					AuthorHandle: metadata.AuthorDisplayName,
+					Content:      content.String,
+					SentAt:       message.sentAt.UTC(),
+					Deleted:      message.deletedFromSource,
+					URLs:         discordExportURLs(content.String),
+				},
+			)
+		}
+		if len(page) < messageExportPageSize {
+			return containers, nil
+		}
+		last := page[len(page)-1]
+		cursor = &last
 	}
-	if err := messageRows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate Discord export messages: %w", err)
-	}
-	return containers, nil
 }
 
 func discordExportURLs(content string) []string {

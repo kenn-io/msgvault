@@ -1,8 +1,13 @@
 package store_test
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
+	"encoding/json"
+	"fmt"
+	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -49,6 +54,62 @@ func TestDiscordExportReturnsBoundedStableHistory(t *testing.T) {
 	assert.Equal("thread", got[1].Kind)
 	assert.True(got[1].Archived)
 	assert.Equal("20", got[1].ParentID)
+}
+
+func TestDiscordExportPagesMetadataAndLoadsBodiesByPrimaryKey(t *testing.T) {
+	requirements := require.New(t)
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource("discord", "guild")
+	requirements.NoError(err)
+	conversationID := insertDiscordExportConversation(
+		t, st, source.ID, "100", "general", `{"discord_channel_type":0}`,
+	)
+	start := time.Date(2026, 7, 20, 0, 0, 0, 0, time.UTC)
+	const messageCount = 257
+	for i := range messageCount {
+		insertDiscordExportMessage(
+			t, st, source.ID, conversationID, fmt.Sprintf("message-%03d", i), start,
+			fmt.Sprintf("Full body %03d", i), "alice", false, false,
+		)
+	}
+
+	store.ConfigureSQLLogging(store.SQLLogOptions{FullTrace: true})
+	t.Cleanup(func() { store.ConfigureSQLLogging(store.SQLLogOptions{}) })
+	var logs bytes.Buffer
+	previousLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(
+		&logs, &slog.HandlerOptions{Level: slog.LevelDebug},
+	)))
+	t.Cleanup(func() { slog.SetDefault(previousLogger) })
+
+	got, err := st.DiscordExport(
+		context.Background(), source.ID, start, start.Add(time.Hour),
+	)
+	requirements.NoError(err)
+	requirements.Len(got, 1)
+	requirements.Len(got[0].Messages, messageCount)
+	requirements.Equal("Full body 000", got[0].Messages[0].Content)
+	requirements.Equal("Full body 256", got[0].Messages[messageCount-1].Content)
+
+	var messageSelectionStatements []string
+	var bodyLookupStatements []string
+	for line := range strings.SplitSeq(strings.TrimSpace(logs.String()), "\n") {
+		var record map[string]any
+		requirements.NoError(json.Unmarshal([]byte(line), &record))
+		statement, _ := record["stmt"].(string)
+		if strings.Contains(statement, "FROM messages m") {
+			messageSelectionStatements = append(messageSelectionStatements, statement)
+		}
+		if strings.Contains(statement, "FROM message_bodies") {
+			bodyLookupStatements = append(bodyLookupStatements, statement)
+		}
+	}
+	requirements.Len(messageSelectionStatements, 2)
+	for _, statement := range messageSelectionStatements {
+		requirements.NotContains(statement, "message_bodies")
+	}
+	requirements.Len(bodyLookupStatements, messageCount)
+	requirements.Contains(bodyLookupStatements[0], "WHERE message_id =")
 }
 
 func insertDiscordExportConversation(

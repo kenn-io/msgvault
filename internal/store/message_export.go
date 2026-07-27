@@ -106,6 +106,7 @@ type messageExportMessageRow struct {
 	occurredAt           time.Time
 	deletedFromSource    bool
 	senderID             sql.NullInt64
+	recipientDisplayName string
 	senderDisplayName    string
 	senderAddress        string
 }
@@ -300,25 +301,52 @@ func (s *Store) exportMessageRows(
 	counts *MessageExportCounts,
 ) error {
 	predicate, filterArgs := messageExportPredicate("m", filter, true)
-	for offset := 0; ; offset += messageExportPageSize {
-		args := append(append([]any{}, filterArgs...), messageExportPageSize, offset)
+	var cursor *messageExportMessageRow
+	for {
+		pagePredicate := predicate
+		args := append([]any{}, filterArgs...)
+		if cursor != nil {
+			pagePredicate += `
+				AND (
+					s.source_type, s.identifier, c.source_conversation_id,
+					COALESCE(m.sent_at, m.received_at, m.internal_date),
+					m.source_message_id, m.id
+				) > (?, ?, ?, ?, ?, ?)
+			`
+			args = append(args,
+				cursor.sourceType,
+				cursor.sourceIdentifier,
+				cursor.sourceConversationID,
+				cursor.occurredAt,
+				cursor.sourceMessageID,
+				cursor.id,
+			)
+		}
+		args = append(args, messageExportPageSize)
 		rows, err := s.db.QueryContext(ctx, s.dialect.Rebind(`
 			SELECT m.id, s.source_type, s.identifier, m.source_message_id,
 			       c.source_conversation_id, m.message_type,
 			       COALESCE(m.subject, ''), COALESCE(m.metadata, '{}'),
 			       COALESCE(m.sent_at, m.received_at, m.internal_date),
-			       m.deleted_from_source_at, p.id,
-			       COALESCE(p.display_name, ''),
-			       COALESCE(p.email_address, p.phone_number, '')
+			       m.deleted_from_source_at, p_sender.id,
+			       COALESCE(mr_from.display_name, ''),
+			       COALESCE(p_sender.display_name, ''),
+			       COALESCE(p_sender.email_address, p_sender.phone_number, '')
 			FROM messages m
 			JOIN conversations c ON c.id = m.conversation_id
 			JOIN sources s ON s.id = m.source_id
-			LEFT JOIN participants p ON p.id = m.sender_id
-			WHERE `+predicate+`
+			LEFT JOIN message_recipients mr_from ON mr_from.id = (
+				SELECT mr.id FROM message_recipients mr
+				WHERE mr.message_id = m.id AND mr.recipient_type = 'from'
+				ORDER BY mr.id LIMIT 1
+			)
+			LEFT JOIN participants p_sender
+			       ON p_sender.id = COALESCE(mr_from.participant_id, m.sender_id)
+			WHERE `+pagePredicate+`
 			ORDER BY s.source_type, s.identifier, c.source_conversation_id,
 			         COALESCE(m.sent_at, m.received_at, m.internal_date),
 			         m.source_message_id, m.id
-			LIMIT ? OFFSET ?
+			LIMIT ?
 		`), args...)
 		if err != nil {
 			return fmt.Errorf("query message export page: %w", err)
@@ -362,6 +390,8 @@ func (s *Store) exportMessageRows(
 		if len(page) < messageExportPageSize {
 			return nil
 		}
+		last := page[len(page)-1]
+		cursor = &last
 	}
 }
 
@@ -378,7 +408,7 @@ func scanMessageExportPage(rows *loggedRows) ([]messageExportMessageRow, error) 
 			&row.id, &row.sourceType, &row.sourceIdentifier, &sourceMessageID,
 			&sourceConversationID, &row.messageType, &row.subject, &row.metadata,
 			&occurredAt, &deletedFromSource, &row.senderID,
-			&row.senderDisplayName, &row.senderAddress,
+			&row.recipientDisplayName, &row.senderDisplayName, &row.senderAddress,
 		); err != nil {
 			_ = rows.Close()
 			return nil, fmt.Errorf("scan message export message: %w", err)
@@ -485,25 +515,24 @@ func normalizeMessageExportConversation(
 func normalizeMessageExportAuthor(
 	row messageExportMessageRow,
 ) (*MessageExportAuthor, error) {
-	if row.senderID.Valid {
-		return &MessageExportAuthor{
-			DisplayName: row.senderDisplayName,
-			Address:     row.senderAddress,
-		}, nil
+	displayName := strings.TrimSpace(row.recipientDisplayName)
+	if row.sourceType == "discord" && displayName == "" {
+		var metadata messageExportMessageMetadata
+		if err := json.Unmarshal([]byte(row.metadata), &metadata); err != nil {
+			return nil, fmt.Errorf("decode metadata: %w", err)
+		}
+		displayName = strings.TrimSpace(metadata.AuthorDisplayName)
 	}
-	if row.sourceType != "discord" {
+	if displayName == "" {
+		displayName = row.senderDisplayName
+	}
+	if !row.senderID.Valid && displayName == "" {
 		// A missing normalized sender is represented by a null author.
 		//nolint:nilnil
 		return nil, nil
 	}
-	var metadata messageExportMessageMetadata
-	if err := json.Unmarshal([]byte(row.metadata), &metadata); err != nil {
-		return nil, fmt.Errorf("decode metadata: %w", err)
-	}
-	if metadata.AuthorDisplayName == "" {
-		// Discord archives may lack both a sender relation and display metadata.
-		//nolint:nilnil
-		return nil, nil
-	}
-	return &MessageExportAuthor{DisplayName: metadata.AuthorDisplayName}, nil
+	return &MessageExportAuthor{
+		DisplayName: displayName,
+		Address:     row.senderAddress,
+	}, nil
 }
