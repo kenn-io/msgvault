@@ -34,6 +34,7 @@ reserved for trusted marked CLI requests.
 | `POST /cli/rebuild-fts` | FTS schema maintenance and batched rebuild | Fully context-aware store maintenance path plus production-adapter cancellation regression |
 | `GET /cli/search` | Scope resolution, quick FTS-index probe, and foreground search | Request context reaches the production quick probe and search SQL; a blocked-database marked-search regression proves cancellation returns from the quick probe, while the full first-search check/backfill remains deliberately detached maintenance |
 | `POST /cli/sync`, `POST /cli/sync-full`, `POST /cli/verify`, `POST /cli/repair-encoding`, `POST /cli/run` | Streaming runner, operation-gate wait, subprocess/network/database work | Existing runner interfaces take the request context and streaming cancellation tests cover their specialized paths |
+| `GET /messages/{id}` | Generated message-detail lookup used by daemon-backed query and MCP callers | The engine's per-call context reaches the generated HTTP request; cancellation is independent of the longer-lived daemon client root |
 
 The production `storeAPIAdapter` is statically asserted to implement the
 complete context-aware CLI store extension. A compatibility fallback remains
@@ -93,7 +94,7 @@ their whole production path has an end-to-end cancellation regression.
 | --- | --- | --- |
 | Cobra archive commands | `OpenHTTPStore(cmd.Context())` | Root command context |
 | TUI | `OpenHTTPStore(ctx)` | TUI command context |
-| MCP | `OpenHTTPStore(cmd.Context())` | MCP command context |
+| MCP | `OpenHTTPStore(cmd.Context())` | MCP command root plus per-tool method context |
 | Streaming maintenance | Same HTTP store plus NDJSON methods | Method/root context |
 | Raw SQL and aggregates | Same HTTP store plus generated/raw methods | Method/root context through DuckDB `QueryContext` |
 | Backup freeze begin/end | `newDaemonCLIClient(cmd.Context(), ...)` | Backup command context |
