@@ -898,6 +898,10 @@ func (a *storeAPIAdapter) NeedsFTSBackfillQuick() bool {
 	return a.store.NeedsFTSBackfillQuick()
 }
 
+func (a *storeAPIAdapter) NeedsFTSBackfillQuickContext(ctx context.Context) bool {
+	return a.store.NeedsFTSBackfillQuickContext(ctx)
+}
+
 func (a *storeAPIAdapter) BackfillFTS(progress func(done, total int64)) (int64, error) {
 	return a.store.BackfillFTS(progress)
 }

@@ -14,6 +14,7 @@ import (
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/apiprotocol"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
@@ -35,6 +36,18 @@ type scopedStatsProductionAdapter struct {
 
 	source   *store.Source
 	returned chan error
+}
+
+type quickFTSProductionAdapter struct {
+	*storeAPIAdapter
+
+	returned chan bool
+}
+
+func (a *quickFTSProductionAdapter) NeedsFTSBackfillQuickContext(ctx context.Context) bool {
+	needs := a.storeAPIAdapter.NeedsFTSBackfillQuickContext(ctx)
+	a.returned <- needs
+	return needs
 }
 
 func (a *scopedStatsProductionAdapter) GetSourcesByIdentifierOrDisplayName(
@@ -134,6 +147,68 @@ func TestMarkedCLIScopedStatsCancellationReachesProductionAdapter(t *testing.T) 
 	case <-requestDone:
 	case <-time.After(2 * time.Second):
 		require.FailNow(t, "marked scoped statistics handler did not return after cancellation")
+	}
+}
+
+// TestMarkedCLISearchCancellationReturnsFromProductionQuickFTSProbe guards the
+// foreground request -> context wrapper -> production adapter -> Store ->
+// dialect query chain. The held real database connection makes the quick probe
+// wait for a connection until the marked request is cancelled.
+func TestMarkedCLISearchCancellationReturnsFromProductionQuickFTSProbe(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	require.True(t, st.FTS5Available(), "tagged test store has FTS5")
+	engine := query.NewEngine(st.DB(), st.IsPostgreSQL())
+	t.Cleanup(func() { _ = engine.Close() })
+
+	st.DB().SetMaxOpenConns(1)
+	conn, err := st.DB().Conn(t.Context())
+	require.NoError(t, err, "hold the only database connection")
+	t.Cleanup(func() { _ = conn.Close() })
+
+	returned := make(chan bool, 1)
+	adapter := &quickFTSProductionAdapter{
+		storeAPIAdapter: &storeAPIAdapter{store: st},
+		returned:        returned,
+	}
+	srv := api.NewServerWithOptions(api.ServerOptions{
+		Config: &config.Config{Server: config.ServerConfig{
+			APIKey: "secret-key",
+		}},
+		Store:  adapter,
+		Engine: engine,
+		Logger: slog.New(slog.DiscardHandler),
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	req := httptest.NewRequest(
+		http.MethodGet,
+		"/api/v1/cli/search?q=hello",
+		nil,
+	).WithContext(ctx)
+	req.Header.Set("X-Api-Key", "secret-key")
+	req.Header.Set(apiprotocol.ClientClassHeader, apiprotocol.ClientClassCLI)
+
+	waitCount := st.DB().Stats().WaitCount
+	requestDone := make(chan struct{})
+	go func() {
+		srv.Router().ServeHTTP(httptest.NewRecorder(), req)
+		close(requestDone)
+	}()
+
+	require.Eventually(t, func() bool {
+		return st.DB().Stats().WaitCount > waitCount
+	}, 2*time.Second, 10*time.Millisecond, "quick FTS probe waits for the production database")
+	cancel()
+
+	select {
+	case <-returned:
+	case <-time.After(500 * time.Millisecond):
+		require.FailNow(t, "production quick FTS probe continued after marked request cancellation")
+	}
+	select {
+	case <-requestDone:
+	case <-time.After(500 * time.Millisecond):
+		require.FailNow(t, "marked CLI search did not return after cancellation")
 	}
 }
 

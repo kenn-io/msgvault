@@ -610,6 +610,16 @@ func serveWithoutRequestDeadlines(
 	next.ServeHTTP(w, r)
 }
 
+func serveWithoutWriteDeadline(
+	w http.ResponseWriter,
+	r *http.Request,
+	next http.Handler,
+) {
+	controller := http.NewResponseController(w)
+	_ = controller.SetWriteDeadline(time.Time{})
+	next.ServeHTTP(w, r)
+}
+
 func serveWithProtectiveRequestDeadline(
 	w http.ResponseWriter,
 	r *http.Request,
@@ -638,7 +648,7 @@ func (s *Server) timeoutMiddleware(next http.Handler) http.Handler {
 
 		timeout, bounded := s.requestTimeoutForPath(r.URL.Path)
 		if !bounded {
-			serveWithoutRequestDeadlines(w, r, next)
+			serveWithoutWriteDeadline(w, r, next)
 			return
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), timeout)

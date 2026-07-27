@@ -88,6 +88,7 @@ type ContextCLIStore interface {
 	RemoveAccountIdentityContext(ctx context.Context, sourceID int64, address string) (int64, error)
 	CountMessagesForSourceContext(ctx context.Context, sourceID int64) (int64, error)
 	CountSourceDeletedMessagesContext(ctx context.Context, sourceIDs ...int64) (int64, error)
+	NeedsFTSBackfillQuickContext(ctx context.Context) bool
 	RebuildFTSContext(ctx context.Context, progress func(done, total int64)) (int64, error)
 }
 
@@ -187,6 +188,10 @@ func (s *requestCLIStore) CountMessagesForSource(sourceID int64) (int64, error) 
 
 func (s *requestCLIStore) CountSourceDeletedMessages(sourceIDs ...int64) (int64, error) {
 	return s.contextStore.CountSourceDeletedMessagesContext(s.ctx, sourceIDs...)
+}
+
+func (s *requestCLIStore) NeedsFTSBackfillQuick() bool {
+	return s.contextStore.NeedsFTSBackfillQuickContext(s.ctx)
 }
 
 func (s *requestCLIStore) RebuildFTS(

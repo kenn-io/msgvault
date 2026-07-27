@@ -13,8 +13,11 @@ caller still owns cancellation: Cobra, TUI, and MCP clients all construct their
 HTTP store from their root context, and canceling that context cancels the
 request and its request-owned work.
 
-Unmarked requests retain the ordinary request timeout. Unmarked raw SQL also
-retains `QueryEndpointTimeout`. Legacy long-route behavior is unchanged.
+Unmarked bounded requests retain the ordinary request timeout. Unmarked raw SQL
+also retains `QueryEndpointTimeout`. Legacy long routes keep their historical
+unbounded handler context and clear only the server write deadline; they retain
+the ordinary connection read deadline. Clearing both connection deadlines is
+reserved for trusted marked CLI requests.
 
 ## Request-owned cancellation inventory
 
@@ -29,7 +32,7 @@ retains `QueryEndpointTimeout`. Legacy long-route behavior is unchanged.
 | `GET /cli/identities` | Scope resolution, source listing, and identity listing | Production-adapter blocked-database cancellation regression |
 | `POST /cli/delete-deduped/plan`, `POST /cli/delete-deduped` | Plan counts, optional SQLite backup, and destructive SQL | Context-aware count/backup/delete path plus production-adapter cancellation regressions; execute retains the protective ceiling below until backup cancellation is proven |
 | `POST /cli/rebuild-fts` | FTS schema maintenance and batched rebuild | Fully context-aware store maintenance path plus production-adapter cancellation regression |
-| `GET /cli/search` | Scope resolution and foreground search | Request context reaches production search SQL; the synchronous quick index probe remains a protective-ceiling exception and the full first-search check/backfill is deliberately detached maintenance |
+| `GET /cli/search` | Scope resolution, quick FTS-index probe, and foreground search | Request context reaches the production quick probe and search SQL; a blocked-database marked-search regression proves cancellation returns from the quick probe, while the full first-search check/backfill remains deliberately detached maintenance |
 | `POST /cli/sync`, `POST /cli/sync-full`, `POST /cli/verify`, `POST /cli/repair-encoding`, `POST /cli/run` | Streaming runner, operation-gate wait, subprocess/network/database work | Existing runner interfaces take the request context and streaming cancellation tests cover their specialized paths |
 
 The production `storeAPIAdapter` is statically asserted to implement the
@@ -63,7 +66,7 @@ because identity reads and mutations share a path but not the same risk.
 | `GET /cli/message` | Message materialization and MIME processing |
 | `GET /cli/message/raw` | Raw-message decompression and response streaming |
 | `GET /cli/attachment` | Packed/loose attachment filesystem reads and streaming |
-| `GET /cli/search` | Synchronous context-free quick FTS-index probe |
+| `GET /cli/search` | Query-engine planning and result materialization do not yet have complete end-to-end cancellation proof; the foreground quick FTS probe is context-aware |
 | `POST /cli/deduplicate/plan` | Deep duplicate scan and planner work |
 | `POST /cli/delete-deduped` | Optional SQLite backup; cleanup of a canceled partial target is not yet proven |
 | `POST /cli/identities` | Synchronous post-mutation identity-cache refresh |

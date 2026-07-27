@@ -1043,10 +1043,16 @@ func (s *Store) NeedsFTSBackfill() bool {
 // true means a backfill is certainly needed; false may miss interior index
 // holes (SQLite) that only the full probe finds.
 func (s *Store) NeedsFTSBackfillQuick() bool {
+	return s.NeedsFTSBackfillQuickContext(context.Background())
+}
+
+// NeedsFTSBackfillQuickContext is the request-aware form of
+// NeedsFTSBackfillQuick.
+func (s *Store) NeedsFTSBackfillQuickContext(ctx context.Context) bool {
 	if !s.fts5Available {
 		return false
 	}
-	return s.dialect.FTSNeedsBackfillQuick(s.db.DB)
+	return s.dialect.FTSNeedsBackfillQuick(ctx, s.db.DB)
 }
 
 // Stats holds database statistics.

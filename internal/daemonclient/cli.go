@@ -559,6 +559,9 @@ func (c *Client) openCLIStream(
 		if waiter.wait(ctx, err) {
 			continue
 		}
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, ctxErr
+		}
 		return nil, err
 	}
 }

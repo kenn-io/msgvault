@@ -382,7 +382,7 @@ func TestRunCLICommandStopsRetryingWhenContextCancelled(t *testing.T) {
 	require := require.New(t)
 
 	oldDelay := operationBusyRetryDelay
-	operationBusyRetryDelay = 50 * time.Millisecond
+	operationBusyRetryDelay = time.Second
 	t.Cleanup(func() { operationBusyRetryDelay = oldDelay })
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -396,10 +396,24 @@ func TestRunCLICommandStopsRetryingWhenContextCancelled(t *testing.T) {
 	require.NoError(err, "New")
 
 	ctx, cancel := context.WithCancel(context.Background())
+	waiting := make(chan struct{})
+	c.SetBusyNotifier(func(string) { close(waiting) })
+	done := make(chan error, 1)
 	go func() {
-		time.Sleep(10 * time.Millisecond)
-		cancel()
+		done <- c.RunCLICommand(ctx, CLIRunRequest{Args: []string{"sync"}}, nil)
 	}()
-	err = c.RunCLICommand(ctx, CLIRunRequest{Args: []string{"sync"}}, nil)
-	require.Error(err, "cancelled retry loop returns an error")
+
+	select {
+	case <-waiting:
+	case <-time.After(time.Second):
+		require.FailNow("streaming request did not enter busy retry wait")
+	}
+	cancel()
+
+	select {
+	case err = <-done:
+		require.ErrorIs(err, context.Canceled)
+	case <-time.After(time.Second):
+		require.FailNow("streaming busy retry did not return after context cancellation")
+	}
 }

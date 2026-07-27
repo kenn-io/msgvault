@@ -271,10 +271,18 @@ func (d *PostgreSQLDialect) FTSNeedsBackfill(db *sql.DB) bool {
 	return exists
 }
 
-// FTSNeedsBackfillQuick delegates to FTSNeedsBackfill: the versioned stale-row
-// index makes the exact EXISTS probe as cheap as any approximation would be.
-func (d *PostgreSQLDialect) FTSNeedsBackfillQuick(db *sql.DB) bool {
-	return d.FTSNeedsBackfill(db)
+// FTSNeedsBackfillQuick uses the same exact EXISTS probe as FTSNeedsBackfill:
+// the versioned stale-row index makes it as cheap as any approximation would
+// be, while QueryRowContext lets foreground callers cancel connection waits.
+func (d *PostgreSQLDialect) FTSNeedsBackfillQuick(ctx context.Context, db *sql.DB) bool {
+	var exists bool
+	if err := db.QueryRowContext(
+		ctx,
+		postgresFTSNeedsBackfillSQL(),
+	).Scan(&exists); err != nil {
+		return false
+	}
+	return exists
 }
 
 // FTSClearSQL returns the SQL to clear all tsvector data.

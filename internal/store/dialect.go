@@ -107,7 +107,7 @@ type Dialect interface {
 	// means the index is visibly behind (a backfill is certainly needed);
 	// false is not authoritative — on SQLite the MAX(rowid)-vs-MAX(id)
 	// comparison misses interior holes that only the full anti-join finds.
-	FTSNeedsBackfillQuick(db *sql.DB) bool
+	FTSNeedsBackfillQuick(ctx context.Context, db *sql.DB) bool
 
 	// FTSClearSQL returns the SQL to clear all FTS data before a full backfill.
 	FTSClearSQL() string

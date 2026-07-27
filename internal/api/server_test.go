@@ -1026,7 +1026,7 @@ func (w *deadlineClearingRecorder) SetWriteDeadline(deadline time.Time) error {
 	return nil
 }
 
-func TestTimeoutMiddlewareClearsReadAndWriteDeadlines(t *testing.T) {
+func TestTimeoutMiddlewareDeadlinePolicy(t *testing.T) {
 	srv := NewServerWithOptions(ServerOptions{
 		Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}},
 		Logger: testLogger(),
@@ -1043,27 +1043,31 @@ func TestTimeoutMiddlewareClearsReadAndWriteDeadlines(t *testing.T) {
 	bounded := httptest.NewRequest(http.MethodGet, "/api/v1/cli/stats", nil)
 
 	tests := []struct {
-		name      string
-		request   *http.Request
-		wantClear bool
+		name           string
+		request        *http.Request
+		wantReadClear  bool
+		wantWriteClear bool
 	}{
-		{name: "long path", request: longPath, wantClear: true},
-		{name: "marked request", request: marked, wantClear: true},
+		{name: "unmarked long path", request: longPath, wantWriteClear: true},
+		{name: "marked request", request: marked, wantReadClear: true, wantWriteClear: true},
 		{name: "bounded request", request: bounded},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			recorder := &deadlineClearingRecorder{ResponseRecorder: httptest.NewRecorder()}
 			handler.ServeHTTP(recorder, tt.request)
-			if tt.wantClear {
+			if tt.wantReadClear {
 				require.Len(t, recorder.readDeadlines, 1, "read deadline changes")
 				assert.True(t, recorder.readDeadlines[0].IsZero(), "read deadline cleared, not extended")
+			} else {
+				assert.Empty(t, recorder.readDeadlines, "request keeps the server read deadline")
+			}
+			if tt.wantWriteClear {
 				require.Len(t, recorder.writeDeadlines, 1, "write deadline changes")
 				assert.True(t, recorder.writeDeadlines[0].IsZero(), "write deadline cleared, not extended")
-				return
+			} else {
+				assert.Empty(t, recorder.writeDeadlines, "request keeps the server write deadline")
 			}
-			assert.Empty(t, recorder.readDeadlines, "bounded request keeps the server read deadline")
-			assert.Empty(t, recorder.writeDeadlines, "bounded request keeps the server write deadline")
 		})
 	}
 }
@@ -1288,7 +1292,7 @@ func TestMarkedCLIProtectiveCeilingInventory(t *testing.T) {
 }
 
 func TestMarkedCLIProtectiveRouteCanReadBodyPastOrdinaryServerTimeout(t *testing.T) {
-	const ordinaryReadTimeout = 25 * time.Millisecond
+	const ordinaryReadTimeout = 100 * time.Millisecond
 
 	srv := NewServerWithOptions(ServerOptions{
 		Config: &config.Config{Server: config.ServerConfig{
@@ -1298,7 +1302,9 @@ func TestMarkedCLIProtectiveRouteCanReadBodyPastOrdinaryServerTimeout(t *testing
 		Logger: testLogger(),
 	})
 	srv.readTimeout = ordinaryReadTimeout
+	handlerEntered := make(chan struct{}, 1)
 	srv.router = srv.timeoutMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		handlerEntered <- struct{}{}
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusRequestTimeout)
@@ -1350,9 +1356,21 @@ func TestMarkedCLIProtectiveRouteCanReadBodyPastOrdinaryServerTimeout(t *testing
 		)
 		require.NoError(t, err, "write headers and first body byte")
 
-		time.Sleep(4 * ordinaryReadTimeout)
-		_, err = conn.Write([]byte("b"))
-		require.NoError(t, err, "write delayed body byte")
+		select {
+		case <-handlerEntered:
+		case <-time.After(2 * time.Second):
+			require.FailNow(t, "inner handler did not start")
+		}
+		time.Sleep(2 * ordinaryReadTimeout)
+		if marked {
+			_, err = conn.Write([]byte("b"))
+			require.NoError(t, err, "write delayed body byte")
+		} else {
+			// The server may close the connection as soon as the ordinary
+			// read deadline expires, so a late control write can return
+			// EPIPE/closed socket before the 408 response is read.
+			_, _ = conn.Write([]byte("b"))
+		}
 
 		resp, err := http.ReadResponse(bufio.NewReader(conn), &http.Request{Method: http.MethodPost})
 		require.NoError(t, err, "read response")
