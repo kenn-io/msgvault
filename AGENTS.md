@@ -20,6 +20,9 @@ This file applies to all AI coding agents (Claude Code, Codex, Copilot CLI, etc.
   code, tests, fixtures, documentation, commit messages, pull requests, or
   issues. Describe the reusable requirement generically and run the private-data
   scrub before publishing.
+- Do not add `Validation`, `Test plan`, or equivalent command-run sections to
+  pull request bodies. CI check results carry routine validation evidence;
+  keep the PR description focused on rationale, behavior, and review boundaries.
 
 ## Testing — Use testify
 
