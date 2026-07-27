@@ -446,6 +446,29 @@ func TestOpenDaemonAnalyticsEngineAutoBuildsCacheAtStartup(t *testing.T) {
 		"the daemon must serve DuckDB over the fresh cache, not live-SQL fallback")
 }
 
+func TestOpenDaemonDuckDBEngineUsesOwnedSpillDirectory(t *testing.T) {
+	c, s := openTestDaemonAnalyticsStore(t)
+	_, err := buildCache(c.DatabaseDSN(), c.AnalyticsDir(), true)
+	require.NoError(t, err)
+
+	engine, err := openDaemonDuckDBEngine(c, s)
+	require.NoError(t, err)
+
+	result, err := engine.QuerySQL(context.Background(), "SELECT current_setting('temp_directory')")
+	require.NoError(t, err)
+	require.Len(t, result.Rows, 1)
+	require.Len(t, result.Rows[0], 1)
+
+	want := filepath.Join(c.HomeDir, "tmp", fmt.Sprintf("duckdb-query-%d", os.Getpid()))
+	got, ok := result.Rows[0][0].(string)
+	require.True(t, ok, "temp_directory setting must be a string")
+	assert.Equal(t, filepath.Clean(want), filepath.Clean(got))
+	assert.DirExists(t, want)
+
+	require.NoError(t, engine.Close())
+	assert.NoDirExists(t, want)
+}
+
 func TestOpenDaemonAnalyticsEngineAutoFallsBackWhenStartupBuildFails(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

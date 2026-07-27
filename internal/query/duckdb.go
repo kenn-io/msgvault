@@ -16,9 +16,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	_ "github.com/duckdb/duckdb-go/v2" // DuckDB driver (database/sql)
 	"golang.org/x/sync/semaphore"
 
+	"go.kenn.io/msgvault/internal/duckdbutil"
 	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/store"
 )
@@ -30,7 +30,7 @@ import (
 // pegged the daemon at ~1600% CPU. Waiters block on a context-aware weighted
 // semaphore, so a cancelled or timed-out request releases its place in line
 // instead of piling up.
-const duckDBQueryConcurrency = 2
+const duckDBQueryConcurrency = 1
 
 func duckDBDateParam(value time.Time) string {
 	return queryTimeUTC(value).Format(queryTimestampLayout)
@@ -57,6 +57,8 @@ type DuckDBEngine struct {
 	sqliteDB         *sql.DB       // Direct SQLite connection for FTS and body retrieval
 	sqliteEngine     *SQLiteEngine // Reusable engine for FTS cache, created once if sqliteDB is set
 	hasSQLiteScanner bool          // true if DuckDB's sqlite extension is loaded
+	tempDirectory    string
+	ownTempDirectory bool
 	tempTableSeq     atomic.Uint64 // Unique suffix for temp tables to avoid concurrent collisions
 
 	// querySem bounds concurrent heavy query execution (see
@@ -118,6 +120,11 @@ type DuckDBOptions struct {
 	// queries to route through sqliteEngine, matching the Windows code path.
 	// Useful for testing the non-scanner code path on Linux/macOS.
 	DisableSQLiteScanner bool
+	// TempDirectory is the absolute path DuckDB may use for bounded spill.
+	// When empty, the engine creates and owns a process-temp directory.
+	TempDirectory string
+	// OwnTempDirectory removes TempDirectory after DuckDB closes.
+	OwnTempDirectory bool
 }
 
 // NewDuckDBEngine creates a new DuckDB-backed query engine.
@@ -137,23 +144,23 @@ func NewDuckDBEngine(analyticsDir string, sqlitePath string, sqliteDB *sql.DB, o
 	if len(opts) > 0 {
 		opt = opts[0]
 	}
-	// Open in-memory DuckDB
-	db, err := sql.Open("duckdb", "")
-	if err != nil {
-		return nil, fmt.Errorf("open duckdb: %w", err)
+	tempDirectory := opt.TempDirectory
+	ownTempDirectory := opt.OwnTempDirectory
+	if tempDirectory == "" {
+		createdTempDirectory, createErr := os.MkdirTemp("", "msgvault-duckdb-query-")
+		if createErr != nil {
+			return nil, fmt.Errorf("create duckdb temp directory: %w", createErr)
+		}
+		tempDirectory = createdTempDirectory
+		ownTempDirectory = true
 	}
 
-	// Constrain to single connection to ensure session settings (SET threads, ATTACH)
-	// are applied consistently. DuckDB session settings don't propagate across
-	// pooled connections, so limiting to one connection avoids inconsistent behavior.
-	db.SetMaxOpenConns(1)
-
-	// Enable multithreading for better query performance.
-	// Use GOMAXPROCS(0) instead of NumCPU() to respect container CPU limits.
-	threads := runtime.GOMAXPROCS(0)
-	if _, err := db.Exec(fmt.Sprintf("SET threads = %d", threads)); err != nil {
-		_ = db.Close()
-		return nil, fmt.Errorf("set threads: %w", err)
+	db, err := duckdbutil.Open(context.Background(), duckdbutil.InteractivePolicy(tempDirectory))
+	if err != nil {
+		if ownTempDirectory {
+			_ = os.RemoveAll(tempDirectory)
+		}
+		return nil, err
 	}
 
 	// Install and load SQLite extension if we have a SQLite path.
@@ -191,13 +198,15 @@ func NewDuckDBEngine(analyticsDir string, sqlitePath string, sqliteDB *sql.DB, o
 		sqliteDB:         sqliteDB,
 		sqliteEngine:     sqliteEngine,
 		hasSQLiteScanner: hasSQLiteScanner,
+		tempDirectory:    tempDirectory,
+		ownTempDirectory: ownTempDirectory,
 		querySem:         semaphore.NewWeighted(duckDBQueryConcurrency),
 	}
 	var releaseInitialCacheRead func()
 	if analyticsDir != "" {
 		releaseInitialCacheRead, err = AcquireCacheReadLock(context.Background(), analyticsDir)
 		if err != nil {
-			_ = db.Close()
+			_ = engine.Close()
 			return nil, err
 		}
 		defer releaseInitialCacheRead()
@@ -205,7 +214,7 @@ func NewDuckDBEngine(analyticsDir string, sqlitePath string, sqliteDB *sql.DB, o
 		// queries validate against the marker + stat signature instead of
 		// re-walking every shard (see validateCommittedCache).
 		if err := engine.validateCommittedCache(engine.cacheFingerprint()); err != nil {
-			_ = db.Close()
+			_ = engine.Close()
 			return nil, err
 		}
 	}
@@ -247,7 +256,12 @@ func (e *DuckDBEngine) Close() error {
 	e.searchCacheMu.Lock()
 	e.dropSearchCache()
 	e.searchCacheMu.Unlock()
-	return e.db.Close()
+	closeErr := e.db.Close()
+	var cleanupErr error
+	if e.ownTempDirectory && e.tempDirectory != "" {
+		cleanupErr = os.RemoveAll(e.tempDirectory)
+	}
+	return errors.Join(closeErr, cleanupErr)
 }
 
 // QuerySQL executes an arbitrary SQL query against the DuckDB engine

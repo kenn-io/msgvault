@@ -717,6 +717,10 @@ func openDaemonDuckDBEngine(c *config.Config, s *store.Store) (*query.DuckDBEngi
 	if c == nil || s == nil {
 		return nil, errors.New("daemon DuckDB engine unavailable")
 	}
+	tempDirectory, err := query.PrepareDaemonSpillDir(c.HomeDir)
+	if err != nil {
+		return nil, err
+	}
 	// DisableSQLiteScanner keeps DuckDB's bundled SQLite library from
 	// ATTACHing the live database for the daemon's lifetime, which can
 	// interfere with the daemon's own go-sqlite3 WAL/lock state. Detail
@@ -726,7 +730,11 @@ func openDaemonDuckDBEngine(c *config.Config, s *store.Store) (*query.DuckDBEngi
 		c.AnalyticsDir(),
 		c.DatabaseDSN(),
 		s.DB(),
-		query.DuckDBOptions{DisableSQLiteScanner: true},
+		query.DuckDBOptions{
+			DisableSQLiteScanner: true,
+			TempDirectory:        tempDirectory,
+			OwnTempDirectory:     true,
+		},
 	)
 }
 

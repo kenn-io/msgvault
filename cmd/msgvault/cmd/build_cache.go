@@ -17,13 +17,13 @@ import (
 	"sync"
 	"time"
 
-	_ "github.com/duckdb/duckdb-go/v2" // DuckDB driver (database/sql)
 	"github.com/gofrs/flock"
 	_ "github.com/mattn/go-sqlite3" // SQLite driver (database/sql)
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/cacheops"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/duckdbutil"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/store"
 )
@@ -482,11 +482,19 @@ func buildCacheLocked(dbPath, analyticsDir string, fullRebuild, recheckStaleness
 	// indexes while the surrounding DuckDB transaction pins the same snapshot
 	// for the COPY statements. The CSV fallback reads through one SQLite
 	// transaction before exposing the static files to DuckDB.
-	db, err := sql.Open("duckdb", "")
+	staging, err := newCacheStaging(analyticsDir)
 	if err != nil {
-		return nil, fmt.Errorf("open duckdb: %w", err)
+		return nil, err
 	}
-	db.SetMaxOpenConns(1)
+	defer func() { _ = staging.cleanup() }()
+
+	db, err := duckdbutil.Open(
+		context.Background(),
+		duckdbutil.BuilderPolicy(filepath.Join(staging.root, "duckdb-tmp")),
+	)
+	if err != nil {
+		return nil, err
+	}
 	defer func() { _ = db.Close() }()
 	sourceSnapshot, err := openCacheSourceSnapshot(db, dbPath)
 	if err != nil {
@@ -578,11 +586,6 @@ func buildCacheLocked(dbPath, analyticsDir string, fullRebuild, recheckStaleness
 		return nil, err
 	}
 
-	staging, err := newCacheStaging(analyticsDir)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = staging.cleanup() }()
 	exportDB := sourceSnapshot.DuckDB()
 
 	// Every COPY targets a same-filesystem sibling staging directory. Live

@@ -1847,8 +1847,8 @@ func TestDuckDBEngine_ThreadCount(t *testing.T) {
 	err = engine.db.QueryRow("SELECT current_setting('threads')::INT").Scan(&threads)
 	require.NoError(err, "query threads setting")
 
-	expected := runtime.GOMAXPROCS(0)
-	assert.Equal(expected, threads, "expected threads to match GOMAXPROCS")
+	expected := min(runtime.GOMAXPROCS(0), 4)
+	assert.Equal(expected, threads, "expected interactive threads to be capped at four")
 
 	// Verify the setting persists across multiple queries (single connection pool)
 	for i := range 3 {
