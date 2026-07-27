@@ -578,8 +578,16 @@ func (s *Store) runMaintenance(ctx context.Context, fn func(ctx context.Context,
 	if err := fn(ctx, tx); err != nil {
 		return err
 	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 
 	if err := tx.Commit(); err != nil {
+		if errors.Is(err, sql.ErrTxDone) {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return ctxErr
+			}
+		}
 		return fmt.Errorf("commit maintenance tx: %w", err)
 	}
 	committed = true
