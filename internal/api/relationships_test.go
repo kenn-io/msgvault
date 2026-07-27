@@ -110,6 +110,7 @@ func newRelationshipsDuckDBFixtureWithDir(t *testing.T, now time.Time) (*query.D
 		require.NoError(t, err, "write %s", table.dir)
 	}
 
+	ensureIdentityCacheFixtureDatasets(t, db, analyticsDir)
 	fingerprint, err := query.CacheDatasetFingerprint(analyticsDir)
 	require.NoError(t, err)
 	state, err := json.Marshal(query.CacheSyncState{

@@ -112,6 +112,10 @@ type DuckDBEngine struct {
 	// single-pass legacy listing queries. Test hook only: the fast-path
 	// equivalence tests compare both shapes on the same engine.
 	exploreFastPathDisabled bool
+	// disableLegacyAnalyticalViews proves identity-index endpoints do not
+	// depend on the wide base or analytical_entries views. Production leaves
+	// this false because timelines, Explore, and files still use those views.
+	disableLegacyAnalyticalViews bool
 }
 
 // DuckDBOptions configures optional DuckDB engine behavior.
@@ -126,6 +130,10 @@ type DuckDBOptions struct {
 	TempDirectory string
 	// OwnTempDirectory removes TempDirectory after DuckDB closes.
 	OwnTempDirectory bool
+	// DisableLegacyAnalyticalViews skips registration of the legacy
+	// Parquet-backed SQL views. It is a test-only isolation option for the
+	// version-15 people/domain/relationship read paths.
+	DisableLegacyAnalyticalViews bool
 }
 
 // NewDuckDBEngine creates a new DuckDB-backed query engine.
@@ -193,15 +201,16 @@ func NewDuckDBEngine(analyticsDir string, sqlitePath string, sqliteDB *sql.DB, o
 	}
 
 	engine := &DuckDBEngine{
-		db:               db,
-		analyticsDir:     analyticsDir,
-		sqlitePath:       sqlitePath,
-		sqliteDB:         sqliteDB,
-		sqliteEngine:     sqliteEngine,
-		hasSQLiteScanner: hasSQLiteScanner,
-		tempDirectory:    tempDirectory,
-		ownTempDirectory: ownTempDirectory,
-		querySem:         semaphore.NewWeighted(duckDBQueryConcurrency),
+		db:                           db,
+		analyticsDir:                 analyticsDir,
+		sqlitePath:                   sqlitePath,
+		sqliteDB:                     sqliteDB,
+		sqliteEngine:                 sqliteEngine,
+		hasSQLiteScanner:             hasSQLiteScanner,
+		tempDirectory:                tempDirectory,
+		ownTempDirectory:             ownTempDirectory,
+		querySem:                     semaphore.NewWeighted(duckDBQueryConcurrency),
+		disableLegacyAnalyticalViews: opt.DisableLegacyAnalyticalViews,
 	}
 	var releaseInitialCacheRead func()
 	if analyticsDir != "" {
@@ -244,9 +253,11 @@ func NewDuckDBEngine(analyticsDir string, sqlitePath string, sqliteDB *sql.DB, o
 	}
 	// Register SQL views over Parquet files for raw SQL access.
 	// Pass the already-probed optionalCols to avoid a redundant schema probe.
-	if err := RegisterViewsWithColumns(db, analyticsDir, engine.optionalCols); err != nil {
-		log.Printf("[warn] failed to register SQL views: %v", err)
-		// Non-fatal: existing CTE-based queries still work.
+	if !engine.disableLegacyAnalyticalViews {
+		if err := RegisterViewsWithColumns(db, analyticsDir, engine.optionalCols); err != nil {
+			log.Printf("[warn] failed to register SQL views: %v", err)
+			// Non-fatal: existing CTE-based queries still work.
+		}
 	}
 
 	return engine, nil
@@ -550,8 +561,10 @@ func (e *DuckDBEngine) ensureFreshOptionalCols(fp string) {
 	})
 	e.optionalCols = newCols
 	e.cacheFP = fp
-	if err := RegisterViewsWithColumns(e.db, e.analyticsDir, newCols); err != nil {
-		log.Printf("[warn] re-register views after analytics cache change: %v", err)
+	if !e.disableLegacyAnalyticalViews {
+		if err := RegisterViewsWithColumns(e.db, e.analyticsDir, newCols); err != nil {
+			log.Printf("[warn] re-register views after analytics cache change: %v", err)
+		}
 	}
 	log.Printf("[info] analytics cache changed — re-probed Parquet optional columns")
 }

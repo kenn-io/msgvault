@@ -143,7 +143,7 @@ func (e *DuckDBEngine) GetPersonSummary(ctx context.Context, id int64, explore E
 	return e.searchPeople(ctx, PersonSearchRequest{Explore: explore, Page: PageSpec{Limit: 1}}, &id, clusterMemberIDs)
 }
 
-func (e *DuckDBEngine) searchPeople(
+func (e *DuckDBEngine) searchPeopleLegacy(
 	ctx context.Context, request PersonSearchRequest, exactID *int64, clusterMemberIDs []int64,
 ) (*PersonSearchResponse, error) {
 	if e.analyticsDir == "" {
@@ -439,7 +439,7 @@ func (e *DuckDBEngine) GetDomainSummary(ctx context.Context, domain string, expl
 	return e.searchDomains(ctx, DomainSearchRequest{Explore: explore, Page: PageSpec{Limit: 1}}, domain)
 }
 
-func (e *DuckDBEngine) searchDomains(ctx context.Context, request DomainSearchRequest, exactDomain string) (*DomainSearchResponse, error) {
+func (e *DuckDBEngine) searchDomainsLegacy(ctx context.Context, request DomainSearchRequest, exactDomain string) (*DomainSearchResponse, error) {
 	if e.analyticsDir == "" {
 		return nil, &CacheUnavailableError{Readiness: CacheAbsent}
 	}

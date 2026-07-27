@@ -410,6 +410,7 @@ func (b *TestDataBuilder) AddAttachmentWithMIME(id, messageID, size int64, filen
 	for i := range b.messages {
 		if b.messages[i].ID == messageID {
 			b.messages[i].HasAttachments = true
+			b.messages[i].AttachmentCount++
 			return
 		}
 	}

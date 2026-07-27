@@ -1300,6 +1300,7 @@ func newExploreSemanticChatDuckDBFixture(t *testing.T) *query.DuckDBEngine {
 		_, err := db.Exec(fmt.Sprintf("COPY (SELECT * FROM (VALUES %s) AS t(%s)%s) TO '%s' (FORMAT PARQUET)", table.values, table.columns, where, path))
 		require.NoError(t, err, "write %s", table.dir)
 	}
+	ensureIdentityCacheFixtureDatasets(t, db, analyticsDir)
 	fingerprint, err := query.CacheDatasetFingerprint(analyticsDir)
 	require.NoError(t, err)
 	state, err := json.Marshal(query.CacheSyncState{
