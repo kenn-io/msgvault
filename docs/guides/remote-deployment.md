@@ -96,6 +96,7 @@ rate_limit_qps = 5
 services:
   msgvault:
     image: ghcr.io/kenn-io/msgvault:latest
+    pull_policy: always
     container_name: msgvault
     user: root
     restart: unless-stopped
@@ -323,16 +324,24 @@ docker logs -f msgvault  # Follow
 docker exec msgvault msgvault stats
 docker exec -it msgvault msgvault tui  # Interactive TUI
 
-# Restart
+# Restart using the currently installed image
 docker-compose restart
 
-# Update to latest image
+# Reconcile the service; generated bundles check for a newer latest image
+docker-compose up -d
+
+# Explicitly update to the latest image
 docker-compose pull
 docker-compose up -d
 
 # Stop
 docker-compose down
 ```
+
+`restart` does not check the registry or replace the image. Generated bundles
+set `pull_policy: always`, so `up -d` reconciles against GHCR. The explicit
+`pull` followed by `up -d` sequence remains the clearest update procedure
+across NAS Compose implementations.
 
 ### Health Checks
 

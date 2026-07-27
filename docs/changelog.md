@@ -14,6 +14,9 @@ All notable changes to msgvault, grouped by release.
   deadlines on slow storage. Local daemon authentication uses the lightweight
   authenticated health endpoint, while connection setup, browser traffic, and
   ordinary API clients retain protective timeouts.
+- Newly generated NAS Compose bundles explicitly pull the GHCR `latest` image
+  when reconciling the service, and deployment guidance now distinguishes
+  restarting the installed container from updating it.
 
 ---
 

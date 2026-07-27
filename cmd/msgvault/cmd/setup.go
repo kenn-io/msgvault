@@ -280,6 +280,7 @@ rate_limit_qps = 5
 	dockerCompose := fmt.Sprintf(`services:
   msgvault:
     image: ghcr.io/kenn-io/msgvault:latest
+    pull_policy: always
     container_name: msgvault
     user: root  # Required for Synology NAS ACLs
     restart: unless-stopped
