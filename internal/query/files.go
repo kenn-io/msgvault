@@ -178,7 +178,7 @@ func (e *DuckDBEngine) GroupFiles(ctx context.Context, request FileGroupRequest)
 		return nil, err
 	}
 	spec, err := fileGroupExpressions(request.Dimension, e.identityActivityPath(),
-		e.parquetPath(identityindex.DatasetPeople))
+		e.parquetPath(identityindex.DatasetPeople), e.parquetPath(datasetParticipants))
 	if err != nil {
 		return nil, err
 	}
@@ -293,7 +293,16 @@ func buildFileConditions(filenameQuery string, mimeFamilies []FileMIMEFamily) (s
 // whose message lists several aliases of one person to a single
 // (file, canonical) row, so the file is never double-counted (attachment_id
 // carries per-file uniqueness).
-func fileGroupExpressions(dimension, activityGlob, peopleGlob string) (groupExpressions, error) {
+//
+// Participant labels resolve through hash joins rather than the correlated
+// relationship_people lookup entry grouping uses: file groups can key on
+// canonicals that dataset lacks — a person whose only activity is
+// conversation-roster membership on non-chat messages has no people-list
+// rows but still receives file attributions here — so a base-participants
+// lookup backstops the people-dataset label before the constant fallback.
+func fileGroupExpressions(
+	dimension, activityGlob, peopleGlob, participantsGlob string,
+) (groupExpressions, error) {
 	simple := func(key string) groupExpressions {
 		return groupExpressions{key: key, label: key, groupBy: key, source: "file_population"}
 	}
@@ -305,7 +314,7 @@ func fileGroupExpressions(dimension, activityGlob, peopleGlob string) (groupExpr
 		}, nil
 	case "participant":
 		return groupExpressions{
-			key: "CAST(person_id AS VARCHAR)", label: sqlIndexedPersonGroupLabelExpr(peopleGlob), groupBy: "person_id",
+			key: "CAST(person_id AS VARCHAR)", label: "any_value(person_label)", groupBy: "person_id",
 			cte: `
 , participant_files AS (
 	SELECT DISTINCT f.attachment_id, a.canonical_id AS person_id, f.occurred_at, f.size
@@ -314,8 +323,15 @@ func fileGroupExpressions(dimension, activityGlob, peopleGlob string) (groupExpr
 		hive_partitioning=true, union_by_name=true) a ON a.message_id = f.message_id
 	WHERE a.canonical_id IS NOT NULL
 	  AND (a.is_direct OR a.is_conversation_member)
+), participant_file_labels AS (
+	SELECT pf.*, COALESCE(dp.display_label,
+		NULLIF(` + sqlAnalyticalEntriesParticipantLabel("pb") + `, ''),
+		'Unknown person #' || CAST(pf.person_id AS VARCHAR)) AS person_label
+	FROM participant_files pf
+	LEFT JOIN read_parquet('` + peopleGlob + `') dp ON dp.canonical_id = pf.person_id
+	LEFT JOIN read_parquet('` + participantsGlob + `') pb ON pb.id = pf.person_id
 )`,
-			source: "participant_files",
+			source: "participant_file_labels",
 		}, nil
 	case "domain":
 		return groupExpressions{

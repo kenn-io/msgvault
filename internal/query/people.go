@@ -506,10 +506,17 @@ func (e *DuckDBEngine) searchDomainsLegacy(ctx context.Context, request DomainSe
 	// canonical IDs per domain matches the cluster-aware People and
 	// Relationships views — linked aliases on the same domain count once, and
 	// a cluster whose canonical member lives on another domain still counts.
+	// The dedup only counts direct edges for non-chat entries (chat entries
+	// keep conversation-roster edges), mirroring the relationship_domains
+	// person-domain pairing so opening a domain cannot change its person
+	// count; the domain activity rows themselves keep roster domains exactly
+	// as the index's domain entries do.
 	queryText := buildExploreLogicalSQLNoLists(conditions) + `
 ), domain_edges AS (` +
 		sqlActivityEntryEdges(e.identityActivityPath(),
 			"a.participant_domain AS domain, a.canonical_id AS person_id, "+
+				"a.is_direct AS is_direct, "+
+				"(le.entry_kind = 'conversation') AS is_chat_entry, "+
 				"le.occurred_at, le.attachment_count, le.source_type",
 			"a.participant_domain <> ''", "a.participant_domain <> ''") + `
 ), domain_entries AS (
@@ -527,7 +534,8 @@ func (e *DuckDBEngine) searchDomainsLegacy(ctx context.Context, request DomainSe
 )
 SELECT domain, activity_count,
 	(SELECT COUNT(DISTINCT de.person_id)::BIGINT
-		FROM domain_edges de WHERE de.domain = counted.domain) AS person_count,
+		FROM domain_edges de WHERE de.domain = counted.domain
+		  AND (de.is_chat_entry OR de.is_direct)) AS person_count,
 	file_count,
 	COALESCE(CAST((SELECT to_json(list(struct_pack(source_type := source_type, count := source_count)
 		ORDER BY source_type)) FROM (SELECT source_type, COUNT(*)::BIGINT AS source_count

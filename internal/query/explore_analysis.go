@@ -347,7 +347,7 @@ func exploreGroupOrder(sort SortSpec) (string, error) {
 	}
 	var column string
 	switch sort.Field {
-	case "key":
+	case sortFieldKey:
 		column = "group_key"
 	case sortFieldCount:
 		column = "group_count"

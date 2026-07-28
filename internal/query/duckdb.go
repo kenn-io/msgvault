@@ -1199,7 +1199,7 @@ func (e *DuckDBEngine) sortClause(opts AggregateOptions) string {
 	case SortByAttachmentSize:
 		field = "attachment_size"
 	case SortByName:
-		field = "key"
+		field = sortFieldKey
 	default:
 		// SortByCount (and any unset field) keeps the "count" default.
 	}
