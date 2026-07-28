@@ -39,14 +39,30 @@ the reviewed release gates.
   mid-full-move, later-incremental-move, and marker-preparation failures.
 - Integration tests prove a failed publication remains readable and a retry
   neither duplicates nor exposes uncommitted messages.
+- A versioned, fsynced sibling journal now survives SIGKILL independently of
+  transient build staging. Recovery rolls pre-marker crashes back and
+  marker-committed crashes forward before readiness, cleanup, or serve.
+- Thirteen real subprocess kill/restart cases cover journal, backup, data, and
+  marker phases across full, incremental, and derived publication.
+
+### Exact decay validation
+
+- Validation recomputes all three decayed relationship components from daily
+  rows with the production anchor/clamp/day formula and explicit absolute and
+  relative tolerances.
+- NULL, nonfinite, negative, and invalid-mask components fail closed; all
+  decomposition comparisons are NULL-safe.
+- Real Parquet mutations prove NULL and incorrect decay values, NaN, negative
+  units, NULL counts, and invalid masks are rejected.
 
 ### Machine-readable benchmark evidence
 
 - The cold benchmark covers landing relationships, unfiltered people and
   domains, broad source-only people, date-window relationships, and the
   existing selective people and relationships workloads.
-- Every operation records rows scanned, rows returned, and spill bytes in a
-  versioned JSON profile embedded in the shell harness's single JSON result.
+- Every operation records every statement's operator tree plus rows scanned,
+  rows returned, spill bytes, and per-dataset/operator totals in a versioned
+  JSON profile embedded in the shell harness's single JSON result.
 - The profiling artifact lives outside DuckDB's temp directory and a regression
   test proves profile bytes cannot be misreported as spill.
 - The 250 ms, 1 s, build-time, peak-builder-RSS, interactive-RSS, settled-RSS,
@@ -101,19 +117,21 @@ The final source state passed:
 
 The clean production-scale gate passed at 2,500,000 messages, 75,000
 participants, and 6,000,000 participant edges for implementation commit
-`ebf7725701dbb8b90f587b39450fd9e85a5c5421`:
+`93806fe0b05f5e580fdecb7523b5d46b81e0b2bb`:
 
-- full cache build: 15.14 s, 2,227,453,952-byte builder peak RSS;
-- cold relationships: 63.839 ms;
-- source-only people: 212.120 ms;
-- date-window relationships: 56.389 ms;
-- selective people/relationships: 101.698/94.062 ms;
-- peak/settled daemon RSS growth: 206,848/206,896 KiB;
+- full cache build: 14.12 s, 2,170,667,008-byte builder peak RSS;
+- cold relationships: 73.472 ms;
+- source-only people: 212.530 ms;
+- date-window relationships: 55.864 ms;
+- selective people/relationships: 101.006/91.793 ms;
+- peak/settled daemon RSS growth: 206,784/206,880 KiB;
 - peak DuckDB spill: 0 bytes.
 
-Machine-readable profiling reported 17,912,705 scanned rows for selective
-people and 17,762,705 for selective relationships, down from approximately
-42 million each before bounded candidate materialization.
+Machine-readable profiling reported two statements and 52,196,365 aggregate
+scanned rows for selective people, and two statements and 52,046,365 rows for
+selective relationships. Unlike the superseded evidence, these totals include
+candidate preselection. The exact 134,079-byte artifact retains every operator
+tree and per-dataset/operator total.
 
 ## Remaining concerns
 
