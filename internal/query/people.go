@@ -2,10 +2,15 @@ package query
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
+
+	"go.kenn.io/msgvault/internal/identityindex"
 )
 
 const maxPeopleSearchLimit = 500
@@ -122,11 +127,115 @@ func (e *DuckDBEngine) GetPerson(ctx context.Context, id int64, analyticalContex
 	if id < 1 {
 		return nil, fmt.Errorf("%w: person ID must be positive", ErrInvalidExploreRequest)
 	}
+	// The unfiltered detail lookup (every person click) reads the
+	// relationship_people rollup directly — the same precomputed row the
+	// people list serves — instead of assembling the whole-archive entry
+	// population. The dataset row must describe the SAME cluster the caller
+	// resolved from the live store: clusterMemberIDs can be newer than the
+	// committed cache (an identity linked or unlinked since the last
+	// build), and the legacy aggregation honors the caller's membership, so
+	// a membership mismatch — like a request by a non-canonical alias ID or
+	// a person with no activity — falls through to it. The lookup is not
+	// gated on a query slot: it is a point read over the compact rollup, so
+	// it can answer while the timeline occupies the slot.
+	if identityRequestIsUnfiltered(ExploreRequest{Context: analyticalContext}) {
+		row, found, err := e.indexedPersonSummary(ctx, id, clusterMemberIDs)
+		if err != nil {
+			return nil, err
+		}
+		if found {
+			return row, nil
+		}
+	}
 	result, err := e.searchPeopleLegacy(ctx, PersonSearchRequest{Explore: ExploreRequest{Context: analyticalContext}, Page: PageSpec{Limit: 1}}, &id, clusterMemberIDs)
 	if err != nil || len(result.Rows) == 0 {
 		return nil, err
 	}
 	return &result.Rows[0], nil
+}
+
+// indexedPersonSummary returns one canonical identity's precomputed summary
+// row from the relationship_people dataset. found is false when the dataset
+// has no row for id or its baked cluster membership differs from the
+// caller's (memberIDs nil/empty means the requested ID alone).
+func (e *DuckDBEngine) indexedPersonSummary(ctx context.Context, id int64, memberIDs []int64) (row *PersonSummary, found bool, err error) {
+	if e.analyticsDir == "" {
+		return nil, false, &CacheUnavailableError{Readiness: CacheAbsent}
+	}
+	state, err := ReadCacheSyncState(e.analyticsDir)
+	if err != nil {
+		return nil, false, fmt.Errorf("read committed cache state: %w", err)
+	}
+	directory := quoteIdentitySQLPath(e.parquetPath(identityindex.DatasetPeople))
+	matches, err := e.indexedPersonClusterMatches(ctx, directory, id, memberIDs)
+	if err != nil || !matches {
+		return nil, false, err
+	}
+	candidates := `
+		SELECT d.*, d.canonical_id AS person_id
+		FROM read_parquet('` + directory + `') d
+		WHERE d.canonical_id = ?
+	`
+	queryText := e.unfilteredPeopleSQL(candidates, "person_id ASC")
+	rows, err := e.db.QueryContext(ctx, queryText, id, 1, 0)
+	if err != nil {
+		return nil, false, fmt.Errorf("read indexed person summary: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	if !rows.Next() {
+		if err := rows.Err(); err != nil {
+			return nil, false, fmt.Errorf("iterate indexed person summary: %w", err)
+		}
+		return nil, false, nil
+	}
+	var summary PersonSummary
+	var identifiersJSON, sourceCountsJSON string
+	var totalCount int64
+	if err := rows.Scan(
+		&summary.ID, &summary.DisplayLabel, &summary.DisplayName, &summary.PartialLabel,
+		&identifiersJSON, &summary.ActivityCount, &summary.FileCount,
+		&sourceCountsJSON, &summary.FirstAt, &summary.LastAt, &totalCount,
+	); err != nil {
+		return nil, false, fmt.Errorf("scan indexed person summary: %w", err)
+	}
+	if err := json.Unmarshal([]byte(identifiersJSON), &summary.Identifiers); err != nil {
+		return nil, false, fmt.Errorf("decode indexed person identifiers: %w", err)
+	}
+	if err := json.Unmarshal([]byte(sourceCountsJSON), &summary.SourceCounts); err != nil {
+		return nil, false, fmt.Errorf("decode indexed person source counts: %w", err)
+	}
+	summary.CacheRevision = state.Revision()
+	return &summary, true, nil
+}
+
+// indexedPersonClusterMatches reports whether the relationship_people row for
+// id exists and bakes exactly the caller-resolved cluster membership.
+func (e *DuckDBEngine) indexedPersonClusterMatches(
+	ctx context.Context, directory string, id int64, memberIDs []int64,
+) (bool, error) {
+	var membersJSON string
+	err := e.db.QueryRowContext(ctx, `
+		SELECT CAST(to_json(member_ids) AS VARCHAR)
+		FROM read_parquet('`+directory+`')
+		WHERE canonical_id = ?
+	`, id).Scan(&membersJSON)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		return false, nil
+	case err != nil:
+		return false, fmt.Errorf("read indexed person members: %w", err)
+	}
+	var baked []int64
+	if err := json.Unmarshal([]byte(membersJSON), &baked); err != nil {
+		return false, fmt.Errorf("decode indexed person members: %w", err)
+	}
+	resolved := memberIDs
+	if len(resolved) == 0 {
+		resolved = []int64{id}
+	}
+	resolved = slices.Clone(resolved)
+	slices.Sort(resolved)
+	return slices.Equal(baked, slices.Compact(resolved)), nil
 }
 
 // GetPersonSummary returns contextual metrics for one durable identity. Unlike

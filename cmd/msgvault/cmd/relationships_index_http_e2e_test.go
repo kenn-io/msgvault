@@ -232,6 +232,26 @@ func TestRelationshipIndexUnfilteredRoutesNeedNoAnalyticalViews(t *testing.T) {
 	assertionsForTest.Equal("people.test", domains.Rows[0].Domain)
 	assertionsForTest.Equal(int64(2), domains.Rows[0].ActivityCount)
 	assertionsForTest.Equal(int64(1), domains.Rows[0].PersonCount)
+
+	personDetail := decodeRelationshipIndexHTTP[query.PersonSummary](
+		t,
+		relationshipIndexHTTPJSON(t, handler, http.MethodGet,
+			"/api/v1/people/"+strconv.FormatInt(fixture.personID, 10), nil),
+	)
+	assertionsForTest.Equal(fixture.personID, personDetail.ID)
+	assertionsForTest.Equal(int64(2), personDetail.ActivityCount)
+	assertionsForTest.Equal("Alex Example", personDetail.DisplayLabel)
+
+	timeline := decodeRelationshipIndexHTTP[api.RelationshipTimelineHTTPResponse](
+		t,
+		relationshipIndexHTTPJSON(t, handler, http.MethodPost,
+			"/api/v1/relationships/"+strconv.FormatInt(fixture.personID, 10)+"/timeline",
+			map[string]any{"limit": 10}),
+	)
+	requirementsForTest.Len(timeline.Rows, 2)
+	assertionsForTest.Equal(int64(2), timeline.TotalCount)
+	assertionsForTest.Equal("message:"+strconv.FormatInt(fixture.outgoingID, 10), timeline.Rows[1].Key)
+	assertionsForTest.Equal("Needle project", timeline.Rows[1].Title)
 }
 
 // TestRelationshipIndexFilteredRoutesServeThroughExploreEngine exercises the
@@ -323,13 +343,11 @@ func TestRelationshipIndexLeavesLegacyRoutesOutsideMigrationBoundary(t *testing.
 		{name: "filtered people search", method: http.MethodPost, path: "/api/v1/people/search", body: map[string]any{"predicate": filteredPredicate, "identity_query": "alex"}},
 		{name: "filtered domain search", method: http.MethodPost, path: "/api/v1/domains/search", body: map[string]any{"predicate": filteredPredicate, "identity_query": "people.test"}},
 		{name: "filtered relationships", method: http.MethodPost, path: "/api/v1/relationships", body: map[string]any{"filters": filteredPredicate["filters"], "show_all": true}},
-		{name: "person detail", method: http.MethodGet, path: "/api/v1/people/" + personID},
 		{name: "person summary", method: http.MethodPost, path: "/api/v1/people/" + personID + "/summary", body: map[string]any{}},
 		{name: "domain detail", method: http.MethodGet, path: "/api/v1/domains/people.test"},
 		{name: "domain summary", method: http.MethodPost, path: "/api/v1/domains/people.test/summary", body: map[string]any{}},
 		{name: "person timeline", method: http.MethodPost, path: "/api/v1/people/" + personID + "/timeline", body: map[string]any{}},
 		{name: "domain timeline", method: http.MethodPost, path: "/api/v1/domains/people.test/timeline", body: map[string]any{}},
-		{name: "relationship timeline", method: http.MethodPost, path: "/api/v1/relationships/" + personID + "/timeline", body: map[string]any{}},
 		{name: "person files", method: http.MethodPost, path: "/api/v1/people/" + personID + "/files/search", body: map[string]any{"predicate": map[string]any{}}},
 		{name: "domain files", method: http.MethodPost, path: "/api/v1/domains/people.test/files/search", body: map[string]any{"predicate": map[string]any{}}},
 		{name: "global files", method: http.MethodPost, path: "/api/v1/files/search", body: map[string]any{"predicate": map[string]any{}}},
