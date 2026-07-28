@@ -600,6 +600,18 @@ func buildExploreLogicalSQL(conditions string) string {
 	return buildExploreLogicalSQLWithCandidateRank(conditions, "NULL::BIGINT")
 }
 
+// buildExploreLogicalSQLNoLists renders logical_entries without the
+// participant list columns. Queries that resolve participants or domains
+// through relationship_activity edge joins (person/domain grouping, the
+// filtered people search) must use this variant: projecting the list columns
+// forces analytical_entries to aggregate per-message participant lists for
+// the whole archive before any filter applies, which exceeds the interactive
+// engine's memory budget on production archives.
+func buildExploreLogicalSQLNoLists(conditions string) string {
+	return buildExploreFilteredClassifiedCTE(conditions, "NULL::BIGINT") +
+		exploreLogicalEntriesCTE(false)
+}
+
 // sqlIsChatPredicate renders the shared chat-classification predicate for a
 // message row. messageType and conversationType are SQL expressions that
 // must never be NULL (analytical_entries and the base views COALESCE them).

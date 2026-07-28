@@ -407,9 +407,9 @@ func (e *rawExploreEngine) GetMessageRaw(_ context.Context, id int64) ([]byte, e
 
 // exploreFixtureDefaultMessages is the standard messages table for the
 // explore DuckDB fixture: two live messages in source 1 and one in source 2.
-const exploreFixtureDefaultMessages = `(1::BIGINT, 1::BIGINT, 'm1', 101::BIGINT, 'Older', 'alpha match', TIMESTAMP '2026-07-18 10:00:00', 100::BIGINT, true, 1::INTEGER, NULL::TIMESTAMP, NULL::BIGINT, 'email', 2026, 7),
-	(2::BIGINT, 1::BIGINT, 'm2', 102::BIGINT, 'Newest', 'alpha beta', TIMESTAMP '2026-07-18 11:00:00', 200::BIGINT, true, 1::INTEGER, NULL::TIMESTAMP, NULL::BIGINT, 'email', 2026, 7),
-	(3::BIGINT, 2::BIGINT, 'm3', 103::BIGINT, 'Other source', 'beta', TIMESTAMP '2026-07-18 09:00:00', 300::BIGINT, false, 0::INTEGER, NULL::TIMESTAMP, NULL::BIGINT, 'email', 2026, 7)`
+const exploreFixtureDefaultMessages = `(1::BIGINT, 1::BIGINT, 'm1', 101::BIGINT, 'Older', 'alpha match', TIMESTAMP '2026-07-18 10:00:00', 100::BIGINT, true, 1::INTEGER, NULL::TIMESTAMP, NULL::BIGINT, 'email', false, 2026, 7),
+	(2::BIGINT, 1::BIGINT, 'm2', 102::BIGINT, 'Newest', 'alpha beta', TIMESTAMP '2026-07-18 11:00:00', 200::BIGINT, true, 1::INTEGER, NULL::TIMESTAMP, NULL::BIGINT, 'email', false, 2026, 7),
+	(3::BIGINT, 2::BIGINT, 'm3', 103::BIGINT, 'Other source', 'beta', TIMESTAMP '2026-07-18 09:00:00', 300::BIGINT, false, 0::INTEGER, NULL::TIMESTAMP, NULL::BIGINT, 'email', false, 2026, 7)`
 
 func newExploreDuckDBFixtureWithDir(t *testing.T) (*query.DuckDBEngine, string) {
 	t.Helper()
@@ -435,7 +435,7 @@ func newExploreDuckDBFixtureWithMessages(
 	}{
 		{
 			dir: "messages/year=2026", file: "messages.parquet",
-			columns: "id, source_id, source_message_id, conversation_id, subject, snippet, sent_at, size_estimate, has_attachments, attachment_count, deleted_from_source_at, sender_id, message_type, year, month",
+			columns: "id, source_id, source_message_id, conversation_id, subject, snippet, sent_at, size_estimate, has_attachments, attachment_count, deleted_from_source_at, sender_id, message_type, is_from_me, year, month",
 			values:  messageValues,
 		},
 		{dir: "sources", file: "sources.parquet", columns: "id, account_email, source_type", values: `(1::BIGINT, 'archive-a@example.com', 'gmail'), (2::BIGINT, 'archive-b@example.com', 'imap')`},

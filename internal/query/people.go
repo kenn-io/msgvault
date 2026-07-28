@@ -178,7 +178,8 @@ func (e *DuckDBEngine) searchPeopleLegacy(
 		return nil, err
 	}
 	conditions, args := buildExploreConditions(request.Explore)
-	entriesCTE, entryArgs := personEntriesCTE(exactID, clusterMemberIDs, conditions, e.parquetPath(datasetParticipantClusters))
+	entriesCTE, entryArgs := personEntriesCTE(exactID, clusterMemberIDs, conditions,
+		e.parquetPath(datasetParticipantClusters), e.identityActivityPath())
 	args = append(args, entryArgs...)
 	// bestNameExpr is the shared cluster label policy (see person_label.go).
 	// Listing/search rows are canonical identities, so the label evaluates
@@ -251,7 +252,7 @@ func (e *DuckDBEngine) searchPeopleLegacy(
 		limit = defaultExploreLimit
 	}
 	args = append(args, limit, request.Page.Offset)
-	queryText := buildExploreLogicalSQL(conditions) + entriesCTE + `
+	queryText := buildExploreLogicalSQLNoLists(conditions) + entriesCTE + `
 ), person_population AS (
 	SELECT p.id AS person_id, COALESCE(p.display_name, '') AS display_name,
 		COALESCE(p.email_address, '') AS email_address, COALESCE(p.phone_number, '') AS phone_number,
@@ -311,8 +312,8 @@ FROM counted ORDER BY ` + order + ` LIMIT ? OFFSET ?`
 }
 
 // personEntriesCTE returns the person_entries CTE (appended directly after
-// buildExploreLogicalSQL, so it opens by closing the logical_entries CTE)
-// plus the parameter values it binds. person_entries always projects exactly
+// buildExploreLogicalSQLNoLists, so it opens by closing the logical_entries
+// CTE) plus the parameter values it binds. person_entries always projects exactly
 // the columns the aggregates in searchPeople consume: it is referenced more
 // than once, so DuckDB materializes it, and carrying logical_entries.* would
 // materialize every wide list/text column per row.
@@ -337,22 +338,22 @@ FROM counted ORDER BY ` + order + ` LIMIT ? OFFSET ?`
 //     messages plus the conversation's own participant rows. conversation_id
 //     is globally unique and NOT NULL, so matching it alone reproduces the
 //     (source_id, conversation_id) grouping exactly.
-//  2. Exact-ID lookup with conditions: logical entries containing any member
-//     in participant_ids, filtered inside the analytical context. The
-//     semi-join shape cannot be used because a conversation entry's
-//     participant list must only reflect messages inside the filtered
-//     context.
-//  3. Listing/search: the full fan-out across every participant, resolved to
-//     canonical identities through the committed participant_clusters
-//     dataset (clustersGlob) so a linked identity aggregates as ONE row
-//     keyed by its canonical ID — matching the ranked relationships list
-//     instead of splitting cluster members into partial rows. The DISTINCT
-//     mirrors the relationships ranking: an entry listing several raw
-//     members of one cluster (e.g. cc'ing a contact's work and personal
-//     addresses) collapses to a single (entry, canonical) row, so
-//     aggregation never double-counts the entry. entry_key is projected
-//     only to carry per-entry uniqueness through that DISTINCT.
-func personEntriesCTE(exactID *int64, memberIDs []int64, conditions, clustersGlob string) (string, []any) {
+//  2. Exact-ID lookup with conditions: logical entries whose
+//     relationship_activity edges carry the cluster's canonical ID, filtered
+//     inside the analytical context. The semi-join shape cannot be used
+//     because a conversation entry's membership must only reflect messages
+//     inside the filtered context — which the classified branch of
+//     sqlActivityEntryEdges preserves.
+//  3. Listing/search: direct relationship_activity edges per entry, each
+//     baking the alias-merged canonical ID, so a linked identity aggregates
+//     as ONE row keyed by its canonical ID — matching the ranked
+//     relationships list instead of splitting cluster members into partial
+//     rows. The UNION inside sqlActivityEntryEdges dedups to one
+//     (entry, canonical) row, so an entry listing several raw members of one
+//     cluster (e.g. cc'ing a contact's work and personal addresses) is never
+//     double-counted. The clusters/canon CTEs remain only for the caller's
+//     label, search-match, and identifier subqueries.
+func personEntriesCTE(exactID *int64, memberIDs []int64, conditions, clustersGlob, activityGlob string) (string, []any) {
 	if exactID == nil {
 		return fmt.Sprintf(`
 ), clusters AS (
@@ -360,28 +361,42 @@ func personEntriesCTE(exactID *int64, memberIDs []int64, conditions, clustersGlo
 ), canon AS (
 	SELECT p.id AS participant_id, COALESCE(c.canonical_id, p.id) AS canonical_id
 	FROM participants p LEFT JOIN clusters c ON c.participant_id = p.id
-), person_entries AS (
-	SELECT DISTINCT le.entry_key, cn.canonical_id AS person_id, le.occurred_at, le.attachment_count, le.source_type
-	FROM logical_entries le
-	CROSS JOIN UNNEST(le.participant_ids) AS grouped(person_id)
-	JOIN canon cn ON cn.participant_id = grouped.person_id`, clustersGlob), nil
+), person_entries AS (`, clustersGlob) +
+			sqlActivityEntryEdges(activityGlob,
+				"a.canonical_id AS person_id, le.occurred_at, le.attachment_count, le.source_type",
+				"a.is_direct", "(a.is_direct OR a.is_conversation_member)"), nil
 	}
 	if len(memberIDs) == 0 {
 		memberIDs = []int64{*exactID}
 	}
 	if conditions != "true" {
-		contains := make([]string, len(memberIDs))
-		args := make([]any, 0, len(memberIDs)+1)
+		// Membership resolves through relationship_activity's baked
+		// canonical_id rather than list_contains over aggregated member
+		// lists; the classified branch inside sqlActivityEntryEdges keeps a
+		// chat entry's membership scoped to the filtered context exactly as
+		// the aggregated lists did. The IN over memberIDs (never empty here)
+		// matches the cluster whichever alias the caller requested: every
+		// edge bakes the cluster's canonical ID, which is itself one of the
+		// resolved members. memberList binds twice — once per UNION branch.
+		memberList := "(" + strings.TrimSuffix(strings.Repeat("?,", len(memberIDs)), ",") + ")"
+		args := make([]any, 0, len(memberIDs)*2+1)
 		args = append(args, *exactID)
-		for i, memberID := range memberIDs {
-			contains[i] = "list_contains(participant_ids, ?)"
-			args = append(args, memberID)
+		for range 2 {
+			for _, memberID := range memberIDs {
+				args = append(args, memberID)
+			}
 		}
 		return `
 ), person_entries AS (
 	SELECT ?::BIGINT AS person_id, occurred_at, attachment_count, source_type
 	FROM logical_entries
-	WHERE (` + strings.Join(contains, " OR ") + `)`, args
+	WHERE entry_key IN (
+		SELECT edge.entry_key FROM (` +
+			sqlActivityEntryEdges(activityGlob, "a.canonical_id AS person_id",
+				"a.is_direct AND a.canonical_id IN "+memberList,
+				"(a.is_direct OR a.is_conversation_member) AND a.canonical_id IN "+memberList) + `
+		) AS edge
+	)`, args
 	}
 	memberList := "(" + strings.TrimSuffix(strings.Repeat("?,", len(memberIDs)), ",") + ")"
 	args := make([]any, 0, len(memberIDs)*3+1)
@@ -486,15 +501,20 @@ func (e *DuckDBEngine) searchDomainsLegacy(ctx context.Context, request DomainSe
 	}
 	args = append(args, limit, request.Page.Offset)
 	// person_count counts identities with at least one address on the domain:
-	// participants are filtered to the domain by their OWN address first, then
-	// resolved to canonical cluster IDs (canon, sqlClustersCanonCTE) so linked
-	// aliases on the same domain count once — matching the cluster-aware People
-	// and Relationships views. Canonicalizing after the domain filter keeps a
-	// cluster whose canonical member lives on another domain counted here.
-	queryText := buildExploreLogicalSQL(conditions) + `
-), ` + sqlClustersCanonCTE(e.parquetPath(datasetParticipantClusters)) + `, domain_entries AS (
-	SELECT lower(grouped.domain) AS domain, logical_entries.*
-	FROM logical_entries CROSS JOIN UNNEST(participant_domains) AS grouped(domain)
+	// each relationship_activity edge pairs the participant's OWN address
+	// domain with its baked cluster canonical_id, so counting distinct
+	// canonical IDs per domain matches the cluster-aware People and
+	// Relationships views — linked aliases on the same domain count once, and
+	// a cluster whose canonical member lives on another domain still counts.
+	queryText := buildExploreLogicalSQLNoLists(conditions) + `
+), domain_edges AS (` +
+		sqlActivityEntryEdges(e.identityActivityPath(),
+			"a.participant_domain AS domain, a.canonical_id AS person_id, "+
+				"le.occurred_at, le.attachment_count, le.source_type",
+			"a.participant_domain <> ''", "a.participant_domain <> ''") + `
+), domain_entries AS (
+	SELECT DISTINCT entry_key, domain, occurred_at, attachment_count, source_type
+	FROM domain_edges
 ), domain_population AS (
 	SELECT domain, COUNT(*)::BIGINT AS activity_count,
 		COALESCE(SUM(attachment_count), 0)::BIGINT AS file_count,
@@ -506,10 +526,8 @@ func (e *DuckDBEngine) searchDomainsLegacy(ctx context.Context, request DomainSe
 	SELECT *, COUNT(*) OVER () AS total_count FROM filtered_domains
 )
 SELECT domain, activity_count,
-	(SELECT COUNT(DISTINCT cn.canonical_id)::BIGINT FROM (
-		SELECT UNNEST(participant_ids) AS person_id FROM domain_entries de WHERE de.domain = counted.domain
-	) people JOIN participants p ON p.id = people.person_id AND lower(COALESCE(p.domain, '')) = counted.domain
-	JOIN canon cn ON cn.participant_id = people.person_id) AS person_count,
+	(SELECT COUNT(DISTINCT de.person_id)::BIGINT
+		FROM domain_edges de WHERE de.domain = counted.domain) AS person_count,
 	file_count,
 	COALESCE(CAST((SELECT to_json(list(struct_pack(source_type := source_type, count := source_count)
 		ORDER BY source_type)) FROM (SELECT source_type, COUNT(*)::BIGINT AS source_count

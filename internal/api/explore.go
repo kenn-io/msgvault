@@ -1619,7 +1619,7 @@ func (s *Server) writeExploreError(w http.ResponseWriter, err error) {
 		return
 	}
 	s.logger.Error("exploration failed", "error", err)
-	writeError(w, http.StatusInternalServerError, "explore_failed", "Analytical exploration failed")
+	writeError(w, http.StatusInternalServerError, "explore_failed", "Couldn't load results")
 }
 
 type ExploreCacheUnavailableResponse struct {
