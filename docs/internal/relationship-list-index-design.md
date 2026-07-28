@@ -61,6 +61,13 @@ direct-edge population. The largest single conversation contributes 627,675
 expanded rows, but total fan-out is well below the 2× cutoff that would justify
 retaining a normalized conversation-edge dataset.
 
+That ratio is evidence for this archive, not a universal bound. Every build
+logs direct rows, expanded conversation-member rows, final activity rows, and
+the final/direct ratio, and warns above 2×. The implementation does not switch
+schemas per archive. If real chat-heavy archives miss the build-time or storage
+gates because of fan-out, the follow-up design moves conversation membership
+back to a normalized edge dataset.
+
 ## Datasets
 
 The relationship index has four datasets.
@@ -95,6 +102,10 @@ Identity and edge columns:
 - `is_sender`
 - `is_author`
 - `is_owner`
+
+The dataset is partitioned by occurrence year. An empty archive still publishes
+a schema-correct `year=0/empty.parquet` shard so the production glob remains
+readable.
 
 Owner rows remain in this dataset. They are excluded from returned people but
 are required to decide whether a meeting includes the owner.
@@ -136,6 +147,13 @@ Date-filtered ranking does **not** use this dataset. Chat conversations are
 grouped after filters, so a date window can change a conversation's newest
 message, direction, and decay date. Every filtered relationship request,
 including a date-only request, reads `relationship_activity`.
+
+All three compact datasets are built over every base-cache row, equivalent to
+`DeletionAny`. The compact fast paths run only when the request also uses
+`DeletionAny`; explicit `active` and `deleted` requests route to
+`relationship_activity`. An equivalence fixture compares compact and activity
+results for `DeletionAny`, then checks the activity path against legacy results
+for `active` and `deleted`.
 
 ## Exact query semantics
 
@@ -179,7 +197,9 @@ Text search selects candidate domains there before a filtered activity scan.
 The filtered activity query first identifies qualifying message IDs, then
 forms chat/non-chat logical entries and applies the people or domain fan-out
 rules above. It does not join raw participant, identity-link, or
-conversation-participant datasets.
+conversation-participant datasets during aggregation. After limiting the page
+to at most 500 rows, response shaping may read participants and participant
+identifiers to return the existing identifier fields.
 
 If the relationship index is missing, stale, or invalid, these three endpoints
 return a cache-unavailable response. They never fall back to the query that
@@ -202,25 +222,34 @@ Ordinary new-message cache updates:
 
 The watermark, snapshot upper bound, and destination-collision checks remain.
 
-Identity links, owner-identity changes, and conversation-membership changes
-cannot patch baked historical rows. They trigger a full relationship-index
-build from committed base Parquet. The conversation-participant SHA
-fingerprint is retained so a membership change on an old conversation is
-detected even when no message was added.
+Participant link/unlink and conversation-membership changes cannot patch baked
+canonical or membership rows. They trigger a full relationship-index build
+from committed base Parquet. The conversation-participant SHA fingerprint is
+retained so a membership change on an old conversation is detected even when
+no message was added.
+
+Account-identity add/remove changes and participant merges are different:
+`is_from_me` is baked into base message Parquet during export, and a merge may
+also repoint `messages.sender_id`. Account-identity revision drift therefore
+keeps the existing full base-cache rebuild. The relationship index is rebuilt
+as part of that publication. Covered-message updates, source deletions,
+internal deletions, and other existing non-append staleness signals likewise
+force a full base rebuild carrying a new relationship index.
 
 Identity link/unlink requests keep the current synchronous cache-state
 contract: the SQLite mutation commits first, then the request waits for the
 child index build. Other clients continue reading the previous committed
 generation while the child runs. Refreshes are serialized; after acquiring
-the refresh lock, a waiter skips its build if the published identity,
-owner-identity, and conversation-participant revisions already cover its
-mutation. A failed child leaves the mutation committed and reports the cache
-as stale.
+the refresh lock, a waiter skips its build if the published participant-link
+and conversation-participant revisions already cover its mutation. A failed
+child leaves the mutation committed and reports the cache as stale.
 
 The existing version-15 benchmark built the more complicated full cache in
-13.54 seconds on the 2.5-million-message synthetic archive. The simplified
-index-only build must remain below the 25-second release gate, and its measured
-time must be recorded before this change is approved for merge.
+13.54 seconds on the 2.5-million-message synthetic archive. That run already
+used the same two-thread, `1536MB` builder policy specified below; it is a
+full-cache baseline, not an index-only measurement. The simplified index-only
+build must remain below the 25-second release gate, and its measured time must
+be recorded before this change is approved for merge.
 
 ## Publication and recovery
 
@@ -266,11 +295,14 @@ migrated endpoints. Fixtures cover:
 - participant/domain filter-group logic;
 - deletion filtering;
 - deterministic pagination;
-- incremental append and full rebuild triggers.
+- compact/activity equivalence for `DeletionAny`, `active`, and `deleted`;
+- incremental append and every index-only/full-base rebuild trigger.
 
 The scale harness uses 2.5 million messages, 75,000 participants, six million
-direct edges, and representative conversation-member fan-out. It measures
-fresh-engine requests rather than warmed process state.
+direct edges, and a group-chat-heavy profile with at least five million
+conversation-member expansions, including one 250,000-message conversation
+with 20 members. It measures fresh-engine requests rather than warmed process
+state and reports the same fan-out counters as the production builder.
 
 Release gates:
 
