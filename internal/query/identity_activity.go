@@ -248,8 +248,6 @@ func (e *DuckDBEngine) resolveIdentityPathPlaceholders(sql string) string {
 func (e *DuckDBEngine) searchPeople(
 	ctx context.Context,
 	request PersonSearchRequest,
-	exactID *int64,
-	clusterMemberIDs []int64,
 ) (*PersonSearchResponse, error) {
 	if e.analyticsDir == "" {
 		return nil, &CacheUnavailableError{Readiness: CacheAbsent}
@@ -279,23 +277,17 @@ func (e *DuckDBEngine) searchPeople(
 		return nil, err
 	}
 
-	candidates, candidateArgs := e.identityPeopleCandidatesSQL(
-		request.Query,
-		exactID,
-		clusterMemberIDs,
-	)
+	candidates, candidateArgs := e.identityPeopleCandidatesSQL(request.Query)
 	var queryText string
 	args := make([]any, 0, len(candidateArgs)+2)
-	widenAcrossMembers := len(clusterMemberIDs) > 1
 	if identityRequestIsUnfiltered(request.Explore) {
-		queryText = e.unfilteredPeopleSQL(candidates, order, widenAcrossMembers)
+		queryText = e.unfilteredPeopleSQL(candidates, order)
 		args = append(args, candidateArgs...)
 	} else if identityRequestIsSourceOnly(request.Explore) &&
 		!e.sourceRollupFastPathDisabled {
 		queryText = e.sourceFilteredPeopleSQL(
 			candidates,
 			order,
-			widenAcrossMembers,
 			len(request.Explore.Context.SourceIDs),
 		)
 		args = append(args, candidateArgs...)
@@ -311,7 +303,7 @@ func (e *DuckDBEngine) searchPeople(
 		if logicalErr != nil {
 			return nil, logicalErr
 		}
-		queryText = e.filteredPeopleSQL(logicalSQL, order, widenAcrossMembers)
+		queryText = e.filteredPeopleSQL(logicalSQL, order)
 		args = append(args, logicalArgs...)
 		args = append(args, candidateArgs...)
 	}
@@ -366,40 +358,12 @@ func (e *DuckDBEngine) searchPeople(
 
 func (e *DuckDBEngine) identityPeopleCandidatesSQL(
 	searchText string,
-	exactID *int64,
-	clusterMemberIDs []int64,
 ) (string, []any) {
 	directory := quoteIdentitySQLPath(
 		e.identityDatasetPath(identityindex.DatasetDirectory),
 	)
 	var predicates []string
 	var args []any
-	personID := "d.canonical_id"
-	directoryRelation := "read_parquet('" + directory + "') d"
-	if exactID != nil {
-		personID = fmt.Sprintf("%d::BIGINT", *exactID)
-		if len(clusterMemberIDs) > 1 {
-			memberIDs := make([]string, len(clusterMemberIDs))
-			for index, memberID := range clusterMemberIDs {
-				memberIDs[index] = fmt.Sprintf("%d::BIGINT", memberID)
-			}
-			memberList := "[" + strings.Join(memberIDs, ",") + "]"
-			directoryRelation = `(SELECT
-				` + personID + ` AS canonical_id,
-				arg_min(display_label,
-					struct_pack(partial := partial_label, canonical_id := canonical_id))
-					AS display_label,
-				bool_and(partial_label) AS partial_label,
-				list_sort(list_distinct(flatten(list(member_ids)))) AS member_ids,
-				list_sort(list_distinct(flatten(list(search_values)))) AS search_values,
-				bool_or(is_owner) AS is_owner
-			FROM read_parquet('` + directory + `')
-			WHERE list_has_any(member_ids, ` + memberList + `)) d`
-		} else {
-			predicates = append(predicates, "list_contains(d.member_ids, ?)")
-			args = append(args, *exactID)
-		}
-	}
 	if searchText = strings.TrimSpace(searchText); searchText != "" {
 		predicates = append(predicates, `EXISTS (
 			SELECT 1
@@ -412,25 +376,23 @@ func (e *DuckDBEngine) identityPeopleCandidatesSQL(
 	if len(predicates) > 0 {
 		where = strings.Join(predicates, " AND ")
 	}
-	return fmt.Sprintf(`
-		SELECT d.*, %s AS person_id
-		FROM %s
-		WHERE %s
-	`, personID, directoryRelation, where), args
+	return `
+		SELECT d.*, d.canonical_id AS person_id
+		FROM read_parquet('` + directory + `') d
+		WHERE ` + where + `
+	`, args
 }
 
 func (e *DuckDBEngine) unfilteredPeopleSQL(
 	candidates, order string,
-	widenAcrossMembers bool,
 ) string {
 	rollups := quoteIdentitySQLPath(
 		e.identityDatasetPath(identityindex.DatasetRollups),
 	)
-	if !widenAcrossMembers {
-		// Directory and rollup rows share the same canonical key. Keeping the
-		// ordinary list/search path one-to-one avoids grouping 75K rows that
-		// carry member and search-value lists merely to recover the same row.
-		return `WITH identity_candidates AS (` + candidates + `
+	// Directory and rollup rows share the same canonical key. Keeping the
+	// list/search path one-to-one avoids grouping rows that carry member and
+	// search-value lists merely to recover the same identity.
+	return `WITH identity_candidates AS (` + candidates + `
 ), population AS (
 	SELECT c.*,
 	       r.activity_count,
@@ -448,58 +410,11 @@ func (e *DuckDBEngine) unfilteredPeopleSQL(
 	FROM counted ORDER BY ` + order + ` LIMIT ? OFFSET ?
 )
 ` + e.peoplePageSelectSQL()
-	}
-	// Detail callers may explicitly widen an otherwise-unlinked person
-	// across several supplied members. That bounded one-row path must merge
-	// each member's independent rollup.
-	return `WITH identity_candidates AS (` + candidates + `
-), people_totals AS (
-	SELECT c.*,
-	       sum(r.activity_count)::BIGINT AS activity_count,
-	       sum(r.file_count)::BIGINT AS file_count,
-	       min(r.first_at)::TIMESTAMP AS first_at,
-	       max(r.last_at)::TIMESTAMP AS last_at
-	FROM identity_candidates c
-	JOIN read_parquet('` + rollups + `') r
-	  ON list_contains(c.member_ids, r.canonical_id)
-	GROUP BY ALL
-), people_source_counts AS (
-	SELECT c.canonical_id,
-	       item.source_type AS source_type,
-	       sum(item.count)::BIGINT AS source_count
-	FROM identity_candidates c
-	JOIN read_parquet('` + rollups + `') r
-	  ON list_contains(c.member_ids, r.canonical_id)
-	CROSS JOIN unnest(r.source_counts) AS source_item(item)
-	GROUP BY c.canonical_id, item.source_type
-), people_sources AS (
-	SELECT canonical_id,
-	       list(struct_pack(source_type := source_type, count := source_count)
-	            ORDER BY source_type) AS source_counts
-	FROM people_source_counts
-	GROUP BY canonical_id
-), population AS (
-	SELECT t.*, s.source_counts
-	FROM people_totals t
-	JOIN people_sources s USING (canonical_id)
-), counted AS (
-	SELECT *, count(*) OVER ()::BIGINT AS total_count
-	FROM population
-), paged AS (
-	SELECT *, row_number() OVER (ORDER BY ` + order + `) AS page_rank
-	FROM counted ORDER BY ` + order + ` LIMIT ? OFFSET ?
-)
-` + e.peoplePageSelectSQL()
 }
 
 func (e *DuckDBEngine) filteredPeopleSQL(
 	logicalSQL, order string,
-	widenAcrossMembers bool,
 ) string {
-	peopleJoin := "p.canonical_id = c.canonical_id"
-	if widenAcrossMembers {
-		peopleJoin = "list_contains(c.member_ids, p.canonical_id)"
-	}
 	return logicalSQL + `,
 person_totals AS (
 	SELECT c.canonical_id,
@@ -509,13 +424,13 @@ person_totals AS (
 	       max(p.occurred_at)::TIMESTAMP AS last_at
 	FROM logical_people p
 	JOIN identity_candidates c
-	  ON ` + peopleJoin + `
+	  ON p.canonical_id = c.canonical_id
 	GROUP BY c.canonical_id
 ), person_source_counts AS (
 	SELECT c.canonical_id, p.source_type, count(*)::BIGINT AS source_count
 	FROM logical_people p
 	JOIN identity_candidates c
-	  ON ` + peopleJoin + `
+	  ON p.canonical_id = c.canonical_id
 	GROUP BY c.canonical_id, p.source_type
 ), person_sources AS (
 	SELECT canonical_id,
@@ -541,16 +456,11 @@ person_totals AS (
 
 func (e *DuckDBEngine) sourceFilteredPeopleSQL(
 	candidates, order string,
-	widenAcrossMembers bool,
 	sourceCount int,
 ) string {
 	rollups := quoteIdentitySQLPath(
 		e.identityDatasetPath(identityindex.DatasetRollups),
 	)
-	peopleJoin := "r.canonical_id = c.canonical_id"
-	if widenAcrossMembers {
-		peopleJoin = "list_contains(c.member_ids, r.canonical_id)"
-	}
 	placeholders := strings.TrimSuffix(strings.Repeat("?,", sourceCount), ",")
 	return `WITH identity_candidates AS (` + candidates + `
 ), selected_source_rollups AS (
@@ -562,7 +472,7 @@ func (e *DuckDBEngine) sourceFilteredPeopleSQL(
 	       item.last_at
 	FROM identity_candidates c
 	JOIN read_parquet('` + rollups + `') r
-	  ON ` + peopleJoin + `
+	  ON r.canonical_id = c.canonical_id
 	CROSS JOIN unnest(r.source_rollups) AS source_rollup(item)
 	WHERE item.source_id IN (` + placeholders + `)
 ), person_totals AS (
@@ -641,7 +551,6 @@ ORDER BY p.page_rank`
 func (e *DuckDBEngine) searchDomains(
 	ctx context.Context,
 	request DomainSearchRequest,
-	exactDomain string,
 ) (*DomainSearchResponse, error) {
 	if e.analyticsDir == "" {
 		return nil, &CacheUnavailableError{Readiness: CacheAbsent}
@@ -671,7 +580,7 @@ func (e *DuckDBEngine) searchDomains(
 		return nil, err
 	}
 
-	domainWhere, domainArgs := identityDomainWhere(request.Query, exactDomain)
+	domainWhere, domainArgs := identityDomainWhere(request.Query)
 	var queryText string
 	var args []any
 	if identityRequestIsUnfiltered(request.Explore) {
@@ -733,13 +642,9 @@ func (e *DuckDBEngine) searchDomains(
 	return response, nil
 }
 
-func identityDomainWhere(searchText, exactDomain string) (string, []any) {
+func identityDomainWhere(searchText string) (string, []any) {
 	predicates := []string{"domain <> ''"}
 	var args []any
-	if exactDomain != "" {
-		predicates = append(predicates, "domain = ?")
-		args = append(args, exactDomain)
-	}
 	if searchText = strings.TrimSpace(searchText); searchText != "" {
 		predicates = append(predicates, "contains(lower(domain), lower(?))")
 		args = append(args, searchText)

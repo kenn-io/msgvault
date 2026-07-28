@@ -105,7 +105,7 @@ type DomainSearchResponse struct {
 }
 
 func (e *DuckDBEngine) SearchPeople(ctx context.Context, request PersonSearchRequest) (*PersonSearchResponse, error) {
-	return e.searchPeople(ctx, request, nil, nil)
+	return e.searchPeople(ctx, request)
 }
 
 // GetPerson returns one participant's analytical summary. clusterMemberIDs,
@@ -122,7 +122,7 @@ func (e *DuckDBEngine) GetPerson(ctx context.Context, id int64, analyticalContex
 	if id < 1 {
 		return nil, fmt.Errorf("%w: person ID must be positive", ErrInvalidExploreRequest)
 	}
-	result, err := e.searchPeople(ctx, PersonSearchRequest{Explore: ExploreRequest{Context: analyticalContext}, Page: PageSpec{Limit: 1}}, &id, clusterMemberIDs)
+	result, err := e.searchPeopleLegacy(ctx, PersonSearchRequest{Explore: ExploreRequest{Context: analyticalContext}, Page: PageSpec{Limit: 1}}, &id, clusterMemberIDs)
 	if err != nil || len(result.Rows) == 0 {
 		return nil, err
 	}
@@ -140,7 +140,7 @@ func (e *DuckDBEngine) GetPersonSummary(ctx context.Context, id int64, explore E
 	if id < 1 {
 		return nil, fmt.Errorf("%w: person ID must be positive", ErrInvalidExploreRequest)
 	}
-	return e.searchPeople(ctx, PersonSearchRequest{Explore: explore, Page: PageSpec{Limit: 1}}, &id, clusterMemberIDs)
+	return e.searchPeopleLegacy(ctx, PersonSearchRequest{Explore: explore, Page: PageSpec{Limit: 1}}, &id, clusterMemberIDs)
 }
 
 func (e *DuckDBEngine) searchPeopleLegacy(
@@ -415,7 +415,7 @@ func personEntriesCTE(exactID *int64, memberIDs []int64, conditions, clustersGlo
 }
 
 func (e *DuckDBEngine) SearchDomains(ctx context.Context, request DomainSearchRequest) (*DomainSearchResponse, error) {
-	return e.searchDomains(ctx, request, "")
+	return e.searchDomains(ctx, request)
 }
 
 func (e *DuckDBEngine) GetDomain(ctx context.Context, domain string, analyticalContext Context) (*DomainSummary, error) {
@@ -423,7 +423,7 @@ func (e *DuckDBEngine) GetDomain(ctx context.Context, domain string, analyticalC
 	if domain == "" {
 		return nil, fmt.Errorf("%w: domain is required", ErrInvalidExploreRequest)
 	}
-	result, err := e.searchDomains(ctx, DomainSearchRequest{Explore: ExploreRequest{Context: analyticalContext}, Page: PageSpec{Limit: 1}}, domain)
+	result, err := e.searchDomainsLegacy(ctx, DomainSearchRequest{Explore: ExploreRequest{Context: analyticalContext}, Page: PageSpec{Limit: 1}}, domain)
 	if err != nil || len(result.Rows) == 0 {
 		return nil, err
 	}
@@ -436,7 +436,7 @@ func (e *DuckDBEngine) GetDomainSummary(ctx context.Context, domain string, expl
 	if domain == "" {
 		return nil, fmt.Errorf("%w: domain is required", ErrInvalidExploreRequest)
 	}
-	return e.searchDomains(ctx, DomainSearchRequest{Explore: explore, Page: PageSpec{Limit: 1}}, domain)
+	return e.searchDomainsLegacy(ctx, DomainSearchRequest{Explore: explore, Page: PageSpec{Limit: 1}}, domain)
 }
 
 func (e *DuckDBEngine) searchDomainsLegacy(ctx context.Context, request DomainSearchRequest, exactDomain string) (*DomainSearchResponse, error) {

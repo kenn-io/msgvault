@@ -180,7 +180,6 @@ func TestRelationshipIndexMigratedHTTPRoutesNeedNoLegacyViews(t *testing.T) {
 	fixture := newRelationshipIndexHTTPFixture(t)
 	server, _ := fixture.newServer(t, true)
 	handler := server.Router()
-	personPath := "/api/v1/people/" + strconv.FormatInt(fixture.personID, 10)
 
 	relationships := decodeRelationshipIndexHTTP[api.RelationshipsHTTPResponse](
 		t,
@@ -215,14 +214,6 @@ func TestRelationshipIndexMigratedHTTPRoutesNeedNoLegacyViews(t *testing.T) {
 	assertionsForTest.Equal(fixture.firstAt, people.Rows[0].FirstAt)
 	assertionsForTest.Equal(fixture.lastAt, people.Rows[0].LastAt)
 
-	person := decodeRelationshipIndexHTTP[query.PersonSummary](
-		t,
-		relationshipIndexHTTPJSON(t, handler, http.MethodGet, personPath, nil),
-	)
-	assertionsForTest.Equal(fixture.personID, person.ID)
-	assertionsForTest.Equal(int64(2), person.ActivityCount)
-	assertionsForTest.NotEmpty(person.CacheRevision)
-
 	domains := decodeRelationshipIndexHTTP[api.DomainSearchHTTPResponse](
 		t,
 		relationshipIndexHTTPJSON(t, handler, http.MethodPost, "/api/v1/domains/search", map[string]any{
@@ -238,14 +229,6 @@ func TestRelationshipIndexMigratedHTTPRoutesNeedNoLegacyViews(t *testing.T) {
 	assertionsForTest.Equal("people.test", domains.Rows[0].Domain)
 	assertionsForTest.Equal(int64(2), domains.Rows[0].ActivityCount)
 	assertionsForTest.Equal(int64(1), domains.Rows[0].PersonCount)
-
-	domain := decodeRelationshipIndexHTTP[query.DomainSummary](
-		t,
-		relationshipIndexHTTPJSON(t, handler, http.MethodGet, "/api/v1/domains/people.test", nil),
-	)
-	assertionsForTest.Equal("people.test", domain.Domain)
-	assertionsForTest.Equal(int64(2), domain.ActivityCount)
-	assertionsForTest.NotEmpty(domain.CacheRevision)
 
 	filters := []map[string]any{
 		{"dimension": "source", "values": []string{strconv.FormatInt(fixture.sourceID, 10)}},
@@ -275,14 +258,6 @@ func TestRelationshipIndexMigratedHTTPRoutesNeedNoLegacyViews(t *testing.T) {
 	assertionsForTest.Equal(fixture.personID, filteredPeople.Rows[0].ID)
 	assertionsForTest.Equal(int64(1), filteredPeople.Rows[0].ActivityCount)
 
-	personSummary := decodeRelationshipIndexHTTP[api.PersonContextSummaryHTTPResponse](
-		t,
-		relationshipIndexHTTPJSON(t, handler, http.MethodPost, personPath+"/summary", filteredPredicate),
-	)
-	assertionsForTest.Equal(fixture.personID, personSummary.Summary.ID)
-	assertionsForTest.Equal(int64(1), personSummary.Summary.ActivityCount)
-	assertionsForTest.NotEmpty(personSummary.CacheRevision)
-
 	filteredDomains := decodeRelationshipIndexHTTP[api.DomainSearchHTTPResponse](
 		t,
 		relationshipIndexHTTPJSON(t, handler, http.MethodPost, "/api/v1/domains/search", map[string]any{
@@ -296,14 +271,6 @@ func TestRelationshipIndexMigratedHTTPRoutesNeedNoLegacyViews(t *testing.T) {
 	assertionsForTest.Equal(int64(1), filteredDomains.TotalCount)
 	assertionsForTest.Equal("people.test", filteredDomains.Rows[0].Domain)
 	assertionsForTest.Equal(int64(1), filteredDomains.Rows[0].ActivityCount)
-
-	domainSummary := decodeRelationshipIndexHTTP[api.DomainContextSummaryHTTPResponse](
-		t,
-		relationshipIndexHTTPJSON(t, handler, http.MethodPost, "/api/v1/domains/people.test/summary", filteredPredicate),
-	)
-	assertionsForTest.Equal("people.test", domainSummary.Summary.Domain)
-	assertionsForTest.Equal(int64(1), domainSummary.Summary.ActivityCount)
-	assertionsForTest.NotEmpty(domainSummary.CacheRevision)
 
 	filteredRelationships := decodeRelationshipIndexHTTP[api.RelationshipsHTTPResponse](
 		t,
@@ -327,26 +294,31 @@ func TestRelationshipIndexLeavesLegacyRoutesOutsideMigrationBoundary(t *testing.
 
 	personID := strconv.FormatInt(fixture.personID, 10)
 	routes := []struct {
-		name string
-		path string
-		body map[string]any
+		name   string
+		method string
+		path   string
+		body   map[string]any
 	}{
-		{name: "person timeline", path: "/api/v1/people/" + personID + "/timeline", body: map[string]any{}},
-		{name: "domain timeline", path: "/api/v1/domains/people.test/timeline", body: map[string]any{}},
-		{name: "relationship timeline", path: "/api/v1/relationships/" + personID + "/timeline", body: map[string]any{}},
-		{name: "person files", path: "/api/v1/people/" + personID + "/files/search", body: map[string]any{"predicate": map[string]any{}}},
-		{name: "domain files", path: "/api/v1/domains/people.test/files/search", body: map[string]any{"predicate": map[string]any{}}},
-		{name: "global files", path: "/api/v1/files/search", body: map[string]any{"predicate": map[string]any{}}},
+		{name: "person detail", method: http.MethodGet, path: "/api/v1/people/" + personID},
+		{name: "person summary", method: http.MethodPost, path: "/api/v1/people/" + personID + "/summary", body: map[string]any{}},
+		{name: "domain detail", method: http.MethodGet, path: "/api/v1/domains/people.test"},
+		{name: "domain summary", method: http.MethodPost, path: "/api/v1/domains/people.test/summary", body: map[string]any{}},
+		{name: "person timeline", method: http.MethodPost, path: "/api/v1/people/" + personID + "/timeline", body: map[string]any{}},
+		{name: "domain timeline", method: http.MethodPost, path: "/api/v1/domains/people.test/timeline", body: map[string]any{}},
+		{name: "relationship timeline", method: http.MethodPost, path: "/api/v1/relationships/" + personID + "/timeline", body: map[string]any{}},
+		{name: "person files", method: http.MethodPost, path: "/api/v1/people/" + personID + "/files/search", body: map[string]any{"predicate": map[string]any{}}},
+		{name: "domain files", method: http.MethodPost, path: "/api/v1/domains/people.test/files/search", body: map[string]any{"predicate": map[string]any{}}},
+		{name: "global files", method: http.MethodPost, path: "/api/v1/files/search", body: map[string]any{"predicate": map[string]any{}}},
 	}
 
 	for _, route := range routes {
 		t.Run(route.name, func(t *testing.T) {
 			requirements := require.New(t)
 			assertions := assert.New(t)
-			normal := relationshipIndexHTTPJSON(t, normalServer.Router(), http.MethodPost, route.path, route.body)
+			normal := relationshipIndexHTTPJSON(t, normalServer.Router(), route.method, route.path, route.body)
 			requirements.Equal(http.StatusOK, normal.Code, normal.Body.String())
 
-			guarded := relationshipIndexHTTPJSON(t, guardServer.Router(), http.MethodPost, route.path, route.body)
+			guarded := relationshipIndexHTTPJSON(t, guardServer.Router(), route.method, route.path, route.body)
 			assertions.Equal(http.StatusInternalServerError, guarded.Code, guarded.Body.String())
 			var response struct {
 				Error string `json:"error"`

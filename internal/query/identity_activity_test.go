@@ -416,35 +416,10 @@ func TestIdentityEndpointsDoNotRequireLegacyAnalyticalViews(t *testing.T) {
 	requirementsForTest.NoError(err)
 	requirementsForTest.Len(people.Rows, 1)
 
-	person, err := engine.GetPerson(context.Background(), personID, Context{}, nil)
-	requirementsForTest.NoError(err)
-	assert.Equal(t, personID, person.ID)
-
-	personSummary, err := engine.GetPersonSummary(
-		context.Background(),
-		personID,
-		ExploreRequest{Context: Context{SourceIDs: []int64{sourceID}}},
-		nil,
-	)
-	requirementsForTest.NoError(err)
-	requirementsForTest.Len(personSummary.Rows, 1)
-
 	domains, err := engine.SearchDomains(context.Background(), DomainSearchRequest{
 		Query: "example",
 		Page:  PageSpec{Limit: 25},
 	})
 	requirementsForTest.NoError(err)
 	requirementsForTest.Len(domains.Rows, 1)
-
-	domain, err := engine.GetDomain(context.Background(), "example.com", Context{})
-	requirementsForTest.NoError(err)
-	assert.Equal(t, "example.com", domain.Domain)
-
-	domainSummary, err := engine.GetDomainSummary(
-		context.Background(),
-		"example.com",
-		ExploreRequest{Context: Context{SourceIDs: []int64{sourceID}}},
-	)
-	requirementsForTest.NoError(err)
-	requirementsForTest.Len(domainSummary.Rows, 1)
 }
