@@ -229,6 +229,29 @@ func planCacheMoves(
 	return moves, nil
 }
 
+// syncStagedMoveContents flushes every regular file under a staged
+// publication source (a dataset directory for replace moves, a single
+// parquet file for append moves) so its contents are durable before the
+// rename that makes it visible.
+func syncStagedMoveContents(source string) error {
+	info, err := os.Stat(source)
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() {
+		return syncFile(source)
+	}
+	return filepath.WalkDir(source, func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		return syncFile(path)
+	})
+}
+
 func publishCache(
 	staging *cacheStaging,
 	analyticsDir string,
@@ -256,6 +279,14 @@ func publishCacheWithBeforeMarker(
 	}
 	if err := os.MkdirAll(analyticsDir, 0o755); err != nil {
 		return fmt.Errorf("create analytics cache root: %w", err)
+	}
+	// Rename publishes names, not contents: without flushing the staged
+	// files first, a crash after publication could commit a marker that
+	// references parquet files whose pages never reached disk.
+	for _, move := range moves {
+		if err := syncStagedMoveContents(move.source); err != nil {
+			return fmt.Errorf("sync staged cache dataset %s: %w", move.dataset, err)
+		}
 	}
 	for _, move := range moves {
 		if move.replace {
