@@ -59,7 +59,7 @@ func TestDerivedOnlyRefreshCarriesStatsAndRefreshesMembershipRollups(t *testing.
 	requirementsForTest.NoError(err)
 	before, err := query.ReadCacheSyncState(analyticsDir)
 	requirementsForTest.NoError(err)
-	factsBefore := snapshotDatasetBytes(t, analyticsDir, identityindex.DatasetEntryFacts)
+	messagesBefore := snapshotDatasetBytes(t, analyticsDir, tableMessages)
 
 	st, err := store.Open(dbPath)
 	requirementsForTest.NoError(err)
@@ -81,13 +81,12 @@ func TestDerivedOnlyRefreshCarriesStatsAndRefreshesMembershipRollups(t *testing.
 		before.ConversationParticipantsFingerprint,
 		after.ConversationParticipantsFingerprint,
 	)
-	assertionsForTest.Equal(time.Now().UTC().Format(time.DateOnly), after.RelationshipAnchorDate)
 	assertionsForTest.False(after.PublishedAt.Before(before.PublishedAt))
 	fingerprint, err := query.CacheDatasetFingerprint(analyticsDir)
 	requirementsForTest.NoError(err)
 	assertionsForTest.Equal(fingerprint, after.DatasetFingerprint)
-	assertionsForTest.Equal(factsBefore,
-		snapshotDatasetBytes(t, analyticsDir, identityindex.DatasetEntryFacts))
+	assertionsForTest.Equal(messagesBefore,
+		snapshotDatasetBytes(t, analyticsDir, tableMessages))
 
 	duckDB, err := duckdbutil.Open(
 		context.Background(),
@@ -95,20 +94,23 @@ func TestDerivedOnlyRefreshCarriesStatsAndRefreshesMembershipRollups(t *testing.
 	)
 	requirementsForTest.NoError(err)
 	defer func() { require.NoError(t, duckDB.Close()) }()
-	var edgeCount int64
+	var membershipRows int64
 	requirementsForTest.NoError(duckDB.QueryRow(`
-		SELECT count(*)
-		FROM read_parquet(?)
-		WHERE conversation_id = 102 AND participant_id = 3
+		SELECT count(DISTINCT message_id)
+		FROM read_parquet(?, hive_partitioning = true)
+		WHERE conversation_id = 102
+		  AND canonical_id = 3
+		  AND is_conversation_member
 	`, filepath.Join(
 		analyticsDir,
-		identityindex.DatasetConversationEdges,
+		identityindex.DatasetActivity,
+		"**",
 		"*.parquet",
-	)).Scan(&edgeCount))
-	assertionsForTest.Equal(int64(1), edgeCount)
+	)).Scan(&membershipRows))
+	assertionsForTest.Positive(membershipRows)
 }
 
-func TestDerivedOnlyFailureRestoresDatasetsAndMarker(t *testing.T) {
+func TestDerivedOnlyFailurePreservesMarkerAndLeavesDetectableDrift(t *testing.T) {
 	requirementsForTest := require.New(t)
 	tmp := setupTestSQLite(t)
 	dbPath := filepath.Join(tmp, "test.db")
@@ -122,14 +124,18 @@ func TestDerivedOnlyFailureRestoresDatasetsAndMarker(t *testing.T) {
 	requirementsForTest.NoError(err)
 	requirementsForTest.NoError(st.Close())
 
-	before := snapshotCacheBytes(t, analyticsDir)
+	beforeMarker, err := os.ReadFile(query.CacheStatePath(analyticsDir))
+	requirementsForTest.NoError(err)
 	sentinel := errors.New("derived publication sentinel")
 	derivedPublishBeforeMarkerHook = func() error { return sentinel }
 	t.Cleanup(func() { derivedPublishBeforeMarkerHook = nil })
 
 	_, err = buildCacheDerivedOnly(dbPath, analyticsDir)
 	requirementsForTest.ErrorIs(err, sentinel)
-	assert.Equal(t, before, snapshotCacheBytes(t, analyticsDir))
+	afterMarker, readErr := os.ReadFile(query.CacheStatePath(analyticsDir))
+	requirementsForTest.NoError(readErr)
+	assert.Equal(t, beforeMarker, afterMarker)
+	assert.Equal(t, query.CacheDrifted, mustInspectCacheReadiness(t, analyticsDir))
 }
 
 func TestStoreAPIIdentityRefreshLaunchesChildWithoutParentCacheLock(t *testing.T) {

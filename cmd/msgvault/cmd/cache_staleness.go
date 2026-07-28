@@ -20,13 +20,13 @@ type cacheStaleness struct {
 	// changed since the last build. Also set whenever
 	// HasAccountIdentityDrift is set (AddAccountIdentity/RemoveAccountIdentity
 	// bump both revisions together), so callers deciding whether the cheap
-	// identity-only refresh applies must check HasAccountIdentityDrift too —
+	// index-only refresh applies must check HasAccountIdentityDrift too —
 	// see derivedDriftOnly in build_cache.go.
 	HasIdentityDrift bool
 	// HasConversationParticipantDrift signals conversation membership changed
 	// for a conversation already represented by the committed message
-	// watermark. The derived refresh can rebuild the conversation edges and
-	// downstream rollups without rewriting message facts.
+	// watermark. The index-only refresh can rebuild relationship_activity and
+	// its compact datasets without rewriting message facts.
 	HasConversationParticipantDrift bool
 	// HasAccountIdentityDrift signals an identity mutation that invalidates
 	// baked message data since the last build: an account identity was
@@ -87,17 +87,11 @@ func cacheNeedsBuild(dbPath, analyticsDir string) cacheStaleness {
 	return cacheNeedsBuildLocked(dbPath, analyticsDir)
 }
 
-// cacheNeedsBuildLocked performs recovery and readiness inspection while the
-// caller holds the exclusive cache build lock. This prevents a startup or
-// serve probe from mistaking an active publisher's durable journal for an
-// abandoned transaction.
+// cacheNeedsBuildLocked performs readiness inspection while the caller holds
+// the exclusive cache build lock. Incomplete marker-last publication is
+// detected as drift and rebuilt; publication does not maintain a recovery
+// journal.
 func cacheNeedsBuildLocked(dbPath, analyticsDir string) cacheStaleness {
-	if err := recoverInterruptedCachePublication(analyticsDir); err != nil {
-		return cacheStaleness{
-			NeedsBuild: true, FullRebuild: true,
-			Reason: "cannot recover interrupted cache publication",
-		}
-	}
 	readiness, err := query.InspectCacheReadiness(analyticsDir)
 	if err != nil {
 		return cacheStaleness{

@@ -566,10 +566,10 @@ func insertSixthMessage(t *testing.T, dbPath string) {
 	require.NoError(t, err, "insert new message")
 }
 
-// TestBuildCacheFailedStateWritePreservesCommittedIncrementalCache pins that a
-// failed marker preparation restores every moved dataset and leaves the prior
-// incremental cache committed.
-func TestBuildCacheFailedStateWritePreservesCommittedIncrementalCache(t *testing.T) {
+// TestBuildCacheFailedStateWriteLeavesIncrementalDrift pins marker-last
+// publication: a failed marker write leaves the prior marker in place, and the
+// already-moved append is rejected as drift until the next rebuild.
+func TestBuildCacheFailedStateWriteLeavesIncrementalDrift(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	tmpDir := setupTestSQLite(t)
@@ -587,14 +587,15 @@ func TestBuildCacheFailedStateWritePreservesCommittedIncrementalCache(t *testing
 	}
 	_, err = buildCache(dbPath, analyticsDir, false)
 	buildCacheWriteStateFile = os.WriteFile
-	require.ErrorContains(err, "save cache sync state",
+	require.ErrorContains(err, "simulated state write failure",
 		"incremental build must fail when the sync state cannot be persisted")
 
 	stateAfter, err := os.ReadFile(query.CacheStatePath(analyticsDir))
 	require.NoError(err)
 	assert.Equal(stateBefore, stateAfter)
-	assert.Equal(0, countCachedMessages(t, analyticsDir, 6),
-		"failed incremental publication must not expose its append")
+	assert.Equal(1, countCachedMessages(t, analyticsDir, 6),
+		"dataset moves precede the marker commit")
+	assert.Equal(query.CacheDrifted, mustInspectCacheReadiness(t, analyticsDir))
 
 	_, err = buildCache(dbPath, analyticsDir, false)
 	require.NoError(err, "retry build")
@@ -602,10 +603,9 @@ func TestBuildCacheFailedStateWritePreservesCommittedIncrementalCache(t *testing
 		"retry after a failed state write must not duplicate message rows")
 }
 
-// TestBuildCacheFailedStateWriteFullRebuildRestoresCommittedCache pins that a
-// full replacement is rolled back when the replacement marker cannot be
-// prepared.
-func TestBuildCacheFailedStateWriteFullRebuildRestoresCommittedCache(t *testing.T) {
+// TestBuildCacheFailedStateWriteLeavesFullRebuildDrift pins that a full
+// replacement is also marker-last and recovered by rebuilding, not rollback.
+func TestBuildCacheFailedStateWriteLeavesFullRebuildDrift(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	tmpDir := setupTestSQLite(t)
@@ -623,14 +623,15 @@ func TestBuildCacheFailedStateWriteFullRebuildRestoresCommittedCache(t *testing.
 	}
 	_, err = buildCache(dbPath, analyticsDir, true)
 	buildCacheWriteStateFile = os.WriteFile
-	require.ErrorContains(err, "save cache sync state",
+	require.ErrorContains(err, "simulated state write failure",
 		"full rebuild must fail when the sync state cannot be persisted")
 
 	stateAfter, err := os.ReadFile(query.CacheStatePath(analyticsDir))
 	require.NoError(err)
 	assert.Equal(stateBefore, stateAfter)
-	assert.Equal(0, countCachedMessages(t, analyticsDir, 6),
-		"failed full publication must restore the prior message snapshot")
+	assert.Equal(1, countCachedMessages(t, analyticsDir, 6),
+		"dataset replacement precedes the marker commit")
+	assert.Equal(query.CacheDrifted, mustInspectCacheReadiness(t, analyticsDir))
 
 	_, err = buildCache(dbPath, analyticsDir, false)
 	require.NoError(err, "retry build")
@@ -852,23 +853,7 @@ func TestBuildCache_BasicExport(t *testing.T) {
 	assert.Equal(int64(5), result.ExportedCount, "exported messages")
 
 	// Verify all Parquet directories/files were created
-	expectedDirs := []string{
-		"messages",
-		"sources",
-		"participants",
-		"participant_identifiers",
-		"message_recipients",
-		"labels",
-		"message_labels",
-		"attachments",
-		"conversations",
-		identityindex.DatasetEntryFacts,
-		identityindex.DatasetDirectEdges,
-		identityindex.DatasetConversationEdges,
-		identityindex.DatasetDirectory,
-	}
-
-	for _, dir := range expectedDirs {
+	for _, dir := range query.RequiredParquetDirs {
 		path := filepath.Join(analyticsDir, dir)
 		_, err := os.Stat(path)
 		assert.False(os.IsNotExist(err), "expected directory %s to exist", dir)
@@ -887,7 +872,6 @@ func TestBuildCache_BasicExport(t *testing.T) {
 	assert.Equal(int64(5), state.Stats.TotalMessages)
 	assert.Equal(int64(1), state.Stats.Sources)
 	assert.NotEmpty(state.ConversationParticipantsFingerprint)
-	assert.Equal(state.LastSyncAt.UTC().Format(time.DateOnly), state.RelationshipAnchorDate)
 }
 
 func TestBuildCache_PublishesConversationParticipants(t *testing.T) {
@@ -1052,9 +1036,16 @@ func TestBuildCache_IncrementalExport(t *testing.T) {
 	// Attachments: 4 total (3 original + 1 new)
 	assert.Equal(int64(4), countRows(filepath.Join(analyticsDir, "attachments", "*.parquet")), "attachments")
 
-	// Identity facts append at the same message watermark.
-	assert.Equal(int64(7), countRows(filepath.Join(
-		analyticsDir, identityindex.DatasetEntryFacts, "**", "*.parquet")), "identity entry facts")
+	// Relationship activity appends at the same message watermark. Its
+	// participant grain has multiple rows per message, so verify coverage by
+	// distinct message ID.
+	activityPattern := filepath.ToSlash(filepath.Join(
+		analyticsDir, identityindex.DatasetActivity, "**", "*.parquet"))
+	var activityMessages int64
+	require.NoError(duckdb.QueryRow(
+		"SELECT COUNT(DISTINCT message_id) FROM read_parquet('" + activityPattern + "')",
+	).Scan(&activityMessages))
+	assert.Equal(int64(7), activityMessages, "relationship activity messages")
 
 	// Participants: 4 (overwritten each run, not appended)
 	assert.Equal(int64(4), countRows(filepath.Join(analyticsDir, "participants", "*.parquet")), "participants")

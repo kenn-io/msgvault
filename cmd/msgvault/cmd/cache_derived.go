@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"go.kenn.io/msgvault/internal/duckdbutil"
 	"go.kenn.io/msgvault/internal/identityindex"
@@ -28,10 +27,6 @@ func refreshDerivedDatasetsOnly(
 	ctx context.Context,
 	dbPath, analyticsDir string,
 ) (*buildResult, error) {
-	if err := recoverInterruptedCachePublication(analyticsDir); err != nil {
-		return nil, fmt.Errorf("%w: recover interrupted publication: %w",
-			ErrDerivedRefreshRequiresFullBuild, err)
-	}
 	readiness, err := query.InspectCacheReadiness(analyticsDir)
 	if err != nil {
 		return nil, fmt.Errorf("%w: inspect committed cache: %w",
@@ -142,13 +137,11 @@ func refreshDerivedDatasetsOnly(
 		}
 	}
 
-	anchor := time.Now().UTC().Truncate(time.Second)
 	derived, err := identityindex.Build(ctx, exportDB, identityindex.BuildOptions{
-		Mode:           identityindex.ModeDerivedOnly,
+		Mode:           identityindex.ModeIndexOnly,
 		CommittedRoot:  analyticsDir,
 		StagedBaseRoot: staging.root,
 		OutputRoot:     staging.root,
-		AnchorDate:     anchor,
 		Progress:       reportIdentityBuildProgress,
 	})
 	if err != nil {
@@ -162,7 +155,6 @@ func refreshDerivedDatasetsOnly(
 	}
 
 	state.IdentityRevision = identityRevision
-	state.RelationshipAnchorDate = anchor.Format(time.DateOnly)
 	state.ConversationParticipantsFingerprint = conversationFingerprint
 	// Stats describe the unchanged committed raw snapshot. Preserve them
 	// byte-for-byte instead of scanning Parquet again.
@@ -317,17 +309,15 @@ func derivedCachePublishPlan(includeConversationParticipants bool) cachePublishP
 	for _, dataset := range []string{
 		tableOwnerParticipants,
 		tableParticipantClusters,
-		identityindex.DatasetDirectory,
-		identityindex.DatasetRollups,
-		identityindex.DatasetDomainRollups,
-		identityindex.DatasetRelationships,
+		identityindex.DatasetActivity,
+		identityindex.DatasetPeople,
+		identityindex.DatasetDomains,
 		identityindex.DatasetRelationshipDaily,
 	} {
 		plan.Replace[dataset] = true
 	}
 	if includeConversationParticipants {
 		plan.Replace[tableConversationParticipants] = true
-		plan.Replace[identityindex.DatasetConversationEdges] = true
 	}
 	return plan
 }
@@ -338,46 +328,15 @@ func publishDerivedCache(
 	plan cachePublishPlan,
 	state query.CacheSyncState,
 ) error {
-	if err := recoverInterruptedCachePublication(analyticsDir); err != nil {
-		return err
-	}
-	moves, err := planCacheMoves(staging, analyticsDir, plan)
-	if err != nil {
-		return err
-	}
-	transaction, err := beginCachePublicationTransaction(staging, analyticsDir, moves)
-	if err != nil {
-		return err
-	}
-	fail := func(err error) error {
-		return errors.Join(err, transaction.rollback())
-	}
-
-	for _, move := range moves {
-		if !move.replace {
-			return fail(errors.New("derived cache publication cannot append datasets"))
-		}
-	}
-	if err := transaction.apply(); err != nil {
-		return fail(err)
-	}
-	if derivedPublishBeforeMarkerHook != nil {
-		if err := derivedPublishBeforeMarkerHook(); err != nil {
-			return fail(err)
-		}
-	}
-	fingerprint, err := query.CacheDatasetFingerprint(analyticsDir)
-	if err != nil {
-		return fail(fmt.Errorf("fingerprint derived cache publication: %w", err))
-	}
-	state.PublishedAt = time.Now().UTC()
-	state.DatasetFingerprint = fingerprint
 	data, err := json.Marshal(state)
 	if err != nil {
-		return fail(fmt.Errorf("encode derived cache marker: %w", err))
+		return fmt.Errorf("encode derived cache marker: %w", err)
 	}
-	if err := transaction.commitMarker(data); err != nil {
-		return fail(err)
-	}
-	return nil
+	return publishCacheWithBeforeMarker(
+		staging,
+		analyticsDir,
+		plan,
+		data,
+		derivedPublishBeforeMarkerHook,
+	)
 }

@@ -360,23 +360,25 @@ func TestRelationshipIndexDerivedRefreshHealsLateConversationMembership(t *testi
 		after.ConversationParticipantsFingerprint,
 	)
 	assertionsForTest.False(after.PublishedAt.Before(before.PublishedAt))
-	assertionsForTest.Equal(time.Now().UTC().Format(time.DateOnly), after.RelationshipAnchorDate)
 	assertionsForTest.NotEqual(beforeRevision, after.Revision())
 
 	inspectionDB, err := sql.Open("duckdb", "")
 	requirementsForTest.NoError(err)
 	t.Cleanup(func() { require.NoError(t, inspectionDB.Close()) })
-	var lateEdgeCount int64
+	var lateMembershipRows int64
 	requirementsForTest.NoError(inspectionDB.QueryRow(`
-		SELECT count(*)
-		FROM read_parquet(?)
-		WHERE conversation_id = ? AND participant_id = ?
+		SELECT count(DISTINCT message_id)
+		FROM read_parquet(?, hive_partitioning = true)
+		WHERE conversation_id = ?
+		  AND canonical_id = ?
+		  AND is_conversation_member
 	`, filepath.Join(
 		fixture.analyticsDir,
-		identityindex.DatasetConversationEdges,
+		identityindex.DatasetActivity,
+		"**",
 		"*.parquet",
-	), fixture.conversationID, fixture.lateID).Scan(&lateEdgeCount))
-	assertionsForTest.Equal(int64(1), lateEdgeCount)
+	), fixture.conversationID, fixture.lateID).Scan(&lateMembershipRows))
+	assertionsForTest.Equal(int64(2), lateMembershipRows)
 
 	_, engine := fixture.newServer(t, true)
 	people, err := engine.SearchPeople(t.Context(), query.PersonSearchRequest{

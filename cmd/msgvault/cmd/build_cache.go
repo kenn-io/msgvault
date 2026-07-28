@@ -435,10 +435,9 @@ func acquireCacheBuildLock(analyticsDir string) (*flock.Flock, error) {
 	return buildLock, nil
 }
 
-// derivedDriftOnly reports whether identity or conversation-membership drift
-// is the only staleness signal. The derived refresh can rebuild identity
-// dimensions, origin-aware conversation edges, and all downstream rollups
-// without rewriting immutable message facts.
+// derivedDriftOnly reports whether participant-link or conversation-membership
+// drift is the only staleness signal. The index-only refresh rebuilds the four
+// relationship datasets from committed base Parquet without re-exporting it.
 //
 // HasAccountIdentityDrift is excluded even though it also bumps
 // identity_revision (and therefore HasIdentityDrift): confirming or
@@ -462,9 +461,6 @@ func refreshIdentityDatasetsOnly(dbPath, analyticsDir string) (*buildResult, err
 // buildCacheLocked exports and publishes a cache while the caller holds the
 // exclusive cross-process cache lock.
 func buildCacheLocked(dbPath, analyticsDir string, fullRebuild, recheckStaleness bool) (*buildResult, error) {
-	if err := recoverInterruptedCachePublication(analyticsDir); err != nil {
-		return nil, fmt.Errorf("recover interrupted analytics cache publication: %w", err)
-	}
 	if err := cleanupStaleCacheStaging(analyticsDir); err != nil {
 		return nil, err
 	}
@@ -1148,7 +1144,6 @@ func buildCacheLocked(dbPath, analyticsDir string, fullRebuild, recheckStaleness
 		LastFailedSyncRunIDSum:              syncCounters.failedRunIDSum,
 		IdentityRevision:                    identityRevision,
 		AccountIdentityRevision:             accountIdentityRevision,
-		RelationshipAnchorDate:              cacheWatermark.Format(time.DateOnly),
 		ConversationParticipantsFingerprint: derived.ConversationParticipantsFingerprint,
 		Stats:                               derived.Stats,
 	}

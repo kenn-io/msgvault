@@ -130,7 +130,6 @@ func newRelationshipsDuckDBFixtureWithDir(t *testing.T, now time.Time) (*query.D
 	state, err := json.Marshal(query.CacheSyncState{
 		LastMessageID: nextID - 1, LastSyncAt: now, SchemaVersion: query.CacheSchemaVersion,
 		PublishedAt: now, DatasetFingerprint: fingerprint,
-		RelationshipAnchorDate:              anchor.Format(time.DateOnly),
 		ConversationParticipantsFingerprint: derived.ConversationParticipantsFingerprint,
 		Stats:                               derived.Stats,
 	})
@@ -171,7 +170,6 @@ func reanchorRelationshipsFixture(
 	requirementsForTest.NoError(err)
 	state, err := query.ReadCacheSyncState(analyticsDir)
 	requirementsForTest.NoError(err)
-	state.RelationshipAnchorDate = anchor.UTC().Format(time.DateOnly)
 	state.ConversationParticipantsFingerprint =
 		derived.ConversationParticipantsFingerprint
 	state.Stats = derived.Stats

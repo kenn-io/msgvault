@@ -23,14 +23,13 @@ func TestRelationshipIndexDatasetCatalog(t *testing.T) {
 	}, identityindex.RequiredDatasets)
 }
 
-func TestCacheRevisionIncludesRelationshipAnchor(t *testing.T) {
+func TestCacheRevisionIncludesPublicationTime(t *testing.T) {
 	state := CacheSyncState{
-		SchemaVersion:          15,
-		PublishedAt:            time.Date(2026, 7, 27, 12, 0, 0, 0, time.UTC),
-		RelationshipAnchorDate: "2026-07-27",
+		SchemaVersion: 15,
+		PublishedAt:   time.Date(2026, 7, 27, 12, 0, 0, 0, time.UTC),
 	}
 	changed := state
-	changed.RelationshipAnchorDate = "2026-07-28"
+	changed.PublishedAt = changed.PublishedAt.Add(time.Second)
 	assert.NotEqual(t, state.Revision(), changed.Revision())
 }
 
@@ -77,7 +76,6 @@ func TestDataBuilderPublishesProductionIdentityDatasets(t *testing.T) {
 	require.NoError(t, err)
 	assertionsForTest.Equal(int64(5), state.Stats.TotalMessages)
 	assertionsForTest.NotEmpty(state.ConversationParticipantsFingerprint)
-	assertionsForTest.Equal("2026-07-15", state.RelationshipAnchorDate)
 }
 
 func TestAcquireReadyCacheReadLockRejectsAbsentCache(t *testing.T) {

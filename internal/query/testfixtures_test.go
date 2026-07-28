@@ -766,7 +766,6 @@ func (b *parquetBuilder) build() (string, func()) {
 		PublishedAt:                         time.Date(2026, 7, 15, 12, 1, 0, 0, time.UTC),
 		SchemaVersion:                       CacheSchemaVersion,
 		DatasetFingerprint:                  fingerprint,
-		RelationshipAnchorDate:              anchor.Format(time.DateOnly),
 		ConversationParticipantsFingerprint: derived.ConversationParticipantsFingerprint,
 		Stats:                               derived.Stats,
 	})

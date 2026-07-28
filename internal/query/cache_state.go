@@ -15,8 +15,8 @@ import (
 )
 
 // CacheSchemaVersion is the sole schema compatibility version shared by the
-// cache publisher and analytical readers. Version 15 adds the complete
-// origin-aware identity fact, edge, directory, and rollup read model.
+// cache publisher and analytical readers. Version 15 adds the compact
+// relationship activity, people, domain, and daily read model.
 const CacheSchemaVersion = 15
 
 // CacheSyncState is the commit marker written after a complete analytics
@@ -44,7 +44,6 @@ type CacheSyncState struct {
 	PublishedAt             time.Time `json:"published_at"`
 	DatasetFingerprint      string    `json:"dataset_fingerprint"`
 
-	RelationshipAnchorDate              string                          `json:"relationship_anchor_date,omitempty"`
 	ConversationParticipantsFingerprint string                          `json:"conversation_participants_fingerprint,omitempty"`
 	Stats                               identityindex.CacheStatsSummary `json:"stats"`
 }
@@ -79,7 +78,7 @@ func (e *CacheUnavailableError) Unwrap() error { return ErrCacheUnavailable }
 // Revision identifies one committed cache publication. It intentionally uses
 // only commit-marker fields, never ambient filesystem state.
 func (s CacheSyncState) Revision() string {
-	payload := fmt.Sprintf("v=%d|message=%d|watermark=%s|run=%d|add=%d|update=%d|fail_count=%d|fail_sum=%d|identity=%d|account_identity=%d|relationship_anchor=%s|published=%s",
+	payload := fmt.Sprintf("v=%d|message=%d|watermark=%s|run=%d|add=%d|update=%d|fail_count=%d|fail_sum=%d|identity=%d|account_identity=%d|published=%s",
 		s.SchemaVersion,
 		s.LastMessageID,
 		s.LastSyncAt.UTC().Format(time.RFC3339Nano),
@@ -90,7 +89,6 @@ func (s CacheSyncState) Revision() string {
 		s.LastFailedSyncRunIDSum,
 		s.IdentityRevision,
 		s.AccountIdentityRevision,
-		s.RelationshipAnchorDate,
 		s.PublishedAt.UTC().Format(time.RFC3339Nano),
 	)
 	return fmt.Sprintf("cache-%x", sha256.Sum256([]byte(payload)))
