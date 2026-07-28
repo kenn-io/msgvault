@@ -100,18 +100,19 @@ The final source state passed:
 - `bash -n scripts/benchmark-relationships-index.sh`.
 
 The clean production-scale gate passed at 2,500,000 messages, 75,000
-participants, and 6,000,000 participant edges:
+participants, and 6,000,000 participant edges for implementation commit
+`ebf7725701dbb8b90f587b39450fd9e85a5c5421`:
 
-- full cache build: 13.76 s, 2,279,915,520-byte builder peak RSS;
-- cold relationships: 108.892 ms;
-- source-only people: 332.562 ms;
-- date-window relationships: 73.141 ms;
-- selective people/relationships: 150.101/158.084 ms;
-- peak/settled daemon RSS growth: 235,536/235,680 KiB;
+- full cache build: 15.14 s, 2,227,453,952-byte builder peak RSS;
+- cold relationships: 63.839 ms;
+- source-only people: 212.120 ms;
+- date-window relationships: 56.389 ms;
+- selective people/relationships: 101.698/94.062 ms;
+- peak/settled daemon RSS growth: 206,848/206,896 KiB;
 - peak DuckDB spill: 0 bytes.
 
-Machine-readable profiling reported 18,011,133 scanned rows for selective
-people and 17,861,133 for selective relationships, down from approximately
+Machine-readable profiling reported 17,912,705 scanned rows for selective
+people and 17,762,705 for selective relationships, down from approximately
 42 million each before bounded candidate materialization.
 
 ## Remaining concerns
