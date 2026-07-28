@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -21,6 +22,7 @@ const (
 	cachePublicationModeEnv   = "MSGVAULT_CACHE_PUBLICATION_MODE"
 	cachePublicationKillEnv   = "MSGVAULT_CACHE_PUBLICATION_KILL_PHASE"
 	cachePublicationReadyEnv  = "MSGVAULT_CACHE_PUBLICATION_READY"
+	cacheRecoveryHelperEnv    = "MSGVAULT_CACHE_RECOVERY_HELPER"
 )
 
 func TestCachePublicationRecoversAfterProcessKillAtEveryCommitPhase(t *testing.T) {
@@ -33,16 +35,16 @@ func TestCachePublicationRecoversAfterProcessKillAtEveryCommitPhase(t *testing.T
 		{"full journal prepared", "full", "journal-prepared", false},
 		{"full backup moved", "full", "backup-moved", false},
 		{"full data moved", "full", "data-moved", false},
-		{"full marker prepared", "full", "marker-prepared", false},
-		{"full marker committed", "full", "marker-committed", true},
+		{"full marker prepared", "full", cachePublicationPhaseMarkerPrepared, false},
+		{"full marker committed", "full", cachePublicationPhaseMarkerCommitted, true},
 		{"incremental backup moved", "incremental", "backup-moved", false},
 		{"incremental data moved", "incremental", "data-moved", false},
-		{"incremental marker prepared", "incremental", "marker-prepared", false},
-		{"incremental marker committed", "incremental", "marker-committed", true},
+		{"incremental marker prepared", "incremental", cachePublicationPhaseMarkerPrepared, false},
+		{"incremental marker committed", "incremental", cachePublicationPhaseMarkerCommitted, true},
 		{"derived backup moved", "derived", "backup-moved", false},
 		{"derived data moved", "derived", "data-moved", false},
-		{"derived marker prepared", "derived", "marker-prepared", false},
-		{"derived marker committed", "derived", "marker-committed", true},
+		{"derived marker prepared", "derived", cachePublicationPhaseMarkerPrepared, false},
+		{"derived marker committed", "derived", cachePublicationPhaseMarkerCommitted, true},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -112,11 +114,14 @@ func TestCachePublicationProcessKillHelper(t *testing.T) {
 		))
 		select {}
 	}
-	state, err := query.ReadCacheSyncState(analyticsDir)
-	require.NoError(t, err)
+	state := query.CacheSyncState{SchemaVersion: query.CacheSchemaVersion}
+	if os.Getenv(cachePublicationModeEnv) != "first" {
+		state, err = query.ReadCacheSyncState(analyticsDir)
+		require.NoError(t, err)
+	}
 	state.IdentityRevision = 2
 	switch os.Getenv(cachePublicationModeEnv) {
-	case "full":
+	case "full", "first":
 		data, marshalErr := json.Marshal(state)
 		require.NoError(t, marshalErr)
 		require.NoError(t, publishCache(
@@ -143,6 +148,170 @@ func TestCachePublicationProcessKillHelper(t *testing.T) {
 		))
 	default:
 		require.Fail(t, "unknown publication helper mode")
+	}
+}
+
+func TestCachePublicationFirstBuildRecoveryAbsenceIsRestartableAfterProcessKill(t *testing.T) {
+	parent := t.TempDir()
+	analyticsDir := filepath.Join(parent, "analytics")
+	readyPath := filepath.Join(parent, "publication-ready")
+
+	runCachePublicationHelperUntilKilled(
+		t,
+		"TestCachePublicationProcessKillHelper",
+		readyPath,
+		cachePublicationHelperEnv+"=1",
+		cachePublicationRootEnv+"="+analyticsDir,
+		cachePublicationModeEnv+"=first",
+		cachePublicationKillEnv+"="+cachePublicationPhaseMarkerPrepared,
+		cachePublicationReadyEnv+"="+readyPath,
+	)
+	runCachePublicationHelperUntilKilled(
+		t,
+		"TestCachePublicationRecoveryProcessKillHelper",
+		readyPath,
+		cacheRecoveryHelperEnv+"=1",
+		cachePublicationRootEnv+"="+analyticsDir,
+		cachePublicationKillEnv+"=recovery-rolled-back",
+		cachePublicationReadyEnv+"="+readyPath,
+	)
+
+	require.NoError(t, recoverInterruptedCachePublication(analyticsDir))
+	require.NoError(t, cleanupStaleCacheStaging(analyticsDir))
+	assert.NoFileExists(t, query.CacheStatePath(analyticsDir))
+	for _, dataset := range query.RequiredParquetDirs {
+		assert.NoDirExists(t, filepath.Join(analyticsDir, dataset))
+	}
+	assertNoCachePublicationResidue(t, analyticsDir)
+}
+
+func TestCachePublicationRecoveryIsRestartableAfterProcessKill(t *testing.T) {
+	tests := []struct {
+		name          string
+		publicationAt string
+		recoveryAt    string
+		wantNew       bool
+	}{
+		{"rollback after marker restore", cachePublicationPhaseMarkerPrepared, "recovery-marker-restored", false},
+		{"rollback after durable phase", cachePublicationPhaseMarkerPrepared, "recovery-rolled-back", false},
+		{"rollback after backup cleanup", cachePublicationPhaseMarkerPrepared, "finalize-backup-removed", false},
+		{"rollback after marker cleanup", cachePublicationPhaseMarkerPrepared, "finalize-old-marker-removed", false},
+		{"rollback after journal cleanup", cachePublicationPhaseMarkerPrepared, "finalize-journal-removed", false},
+		{"rollback after root cleanup", cachePublicationPhaseMarkerPrepared, "finalize-root-removed", false},
+		{"commit after backup cleanup", cachePublicationPhaseMarkerCommitted, "finalize-backup-removed", true},
+		{"commit after marker cleanup", cachePublicationPhaseMarkerCommitted, "finalize-old-marker-removed", true},
+		{"commit after journal cleanup", cachePublicationPhaseMarkerCommitted, "finalize-journal-removed", true},
+		{"commit after root cleanup", cachePublicationPhaseMarkerCommitted, "finalize-root-removed", true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			parent := t.TempDir()
+			analyticsDir := filepath.Join(parent, "analytics")
+			writePublicationTree(t, analyticsDir, "old.parquet")
+			writeCommittedPublicationFixtureState(t, analyticsDir, 1)
+			oldSnapshot := snapshotCacheBytes(t, analyticsDir)
+			readyPath := filepath.Join(parent, "publication-ready")
+
+			runCachePublicationHelperUntilKilled(
+				t,
+				"TestCachePublicationProcessKillHelper",
+				readyPath,
+				cachePublicationHelperEnv+"=1",
+				cachePublicationRootEnv+"="+analyticsDir,
+				cachePublicationModeEnv+"=full",
+				cachePublicationKillEnv+"="+test.publicationAt,
+				cachePublicationReadyEnv+"="+readyPath,
+			)
+			wantSnapshot := oldSnapshot
+			if test.wantNew {
+				wantSnapshot = snapshotCacheBytes(t, analyticsDir)
+			}
+
+			runCachePublicationHelperUntilKilled(
+				t,
+				"TestCachePublicationRecoveryProcessKillHelper",
+				readyPath,
+				cacheRecoveryHelperEnv+"=1",
+				cachePublicationRootEnv+"="+analyticsDir,
+				cachePublicationKillEnv+"="+test.recoveryAt,
+				cachePublicationReadyEnv+"="+readyPath,
+			)
+
+			require.NoError(t, recoverInterruptedCachePublication(analyticsDir))
+			require.NoError(t, cleanupStaleCacheStaging(analyticsDir))
+			readiness, err := query.InspectCacheReadiness(analyticsDir)
+			require.NoError(t, err)
+			assert.Equal(t, query.CacheReady, readiness)
+			state, err := query.ReadCacheSyncState(analyticsDir)
+			require.NoError(t, err)
+			if test.wantNew {
+				assert.Equal(t, int64(2), state.IdentityRevision)
+			} else {
+				assert.Equal(t, int64(1), state.IdentityRevision)
+			}
+			assert.Equal(t, wantSnapshot, snapshotCacheBytes(t, analyticsDir))
+			assertNoCachePublicationResidue(t, analyticsDir)
+		})
+	}
+}
+
+func TestCachePublicationRecoveryProcessKillHelper(t *testing.T) {
+	if os.Getenv(cacheRecoveryHelperEnv) == "" {
+		t.Skip("subprocess helper")
+	}
+	killPhase := os.Getenv(cachePublicationKillEnv)
+	cachePublicationCheckpointHook = func(phase string) {
+		if phase != killPhase {
+			return
+		}
+		require.NoError(t, os.WriteFile(
+			os.Getenv(cachePublicationReadyEnv),
+			[]byte(phase),
+			0o600,
+		))
+		select {}
+	}
+	require.NoError(t, recoverInterruptedCachePublication(
+		os.Getenv(cachePublicationRootEnv),
+	))
+}
+
+func runCachePublicationHelperUntilKilled(
+	t *testing.T,
+	helperName string,
+	readyPath string,
+	env ...string,
+) {
+	t.Helper()
+	require.NoError(t, os.RemoveAll(readyPath))
+	// #nosec G702 -- the test intentionally re-executes its own fixed binary.
+	command := exec.Command(
+		os.Args[0],
+		"-test.run=^"+helperName+"$",
+	)
+	command.Env = append(os.Environ(), env...)
+	require.NoError(t, command.Start())
+	require.Eventually(t, func() bool {
+		_, err := os.Stat(readyPath)
+		return err == nil
+	}, 5*time.Second, 10*time.Millisecond)
+	require.NoError(t, command.Process.Kill())
+	require.Error(t, command.Wait())
+}
+
+func assertNoCachePublicationResidue(t *testing.T, analyticsDir string) {
+	t.Helper()
+	assert.NoDirExists(t, cachePublicationTransactionRoot(analyticsDir))
+	parent := filepath.Dir(analyticsDir)
+	entries, err := os.ReadDir(parent)
+	require.NoError(t, err)
+	for _, entry := range entries {
+		assert.False(
+			t,
+			strings.HasPrefix(entry.Name(), cacheStagingPrefix(analyticsDir)),
+			"stale cache staging directory %s",
+			entry.Name(),
+		)
 	}
 }
 

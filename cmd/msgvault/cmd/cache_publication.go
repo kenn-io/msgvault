@@ -199,7 +199,12 @@ func planCacheMoves(
 	return moves, nil
 }
 
-const cachePublicationJournalVersion = 1
+const (
+	cachePublicationJournalVersion       = 1
+	cachePublicationPhaseMarkerPrepared  = "marker-prepared"
+	cachePublicationPhaseMarkerCommitted = "marker-committed"
+	cachePublicationPhaseRolledBack      = "rolled-back"
+)
 
 type durableCachePublishMove struct {
 	Source         string `json:"source"`
@@ -368,11 +373,11 @@ func (t *cachePublicationTransaction) commitMarker(data []byte) error {
 		return fmt.Errorf("sync staged cache marker directory: %w", err)
 	}
 	t.journal.NewMarkerDigest = cachePublicationDigest(data)
-	t.journal.Phase = "marker-prepared"
+	t.journal.Phase = cachePublicationPhaseMarkerPrepared
 	if err := t.writeJournal(); err != nil {
 		return err
 	}
-	cachePublicationCheckpoint("marker-prepared")
+	cachePublicationCheckpoint(cachePublicationPhaseMarkerPrepared)
 	statePath := query.CacheStatePath(t.journal.AnalyticsDir)
 	// #nosec G703 -- both paths are fixed marker names inside validated transaction/cache roots.
 	if err := os.Rename(newMarker, statePath); err != nil {
@@ -381,8 +386,8 @@ func (t *cachePublicationTransaction) commitMarker(data []byte) error {
 	if err := syncRenameDirectories(newMarker, statePath); err != nil {
 		return err
 	}
-	cachePublicationCheckpoint("marker-committed")
-	t.journal.Phase = "marker-committed"
+	cachePublicationCheckpoint(cachePublicationPhaseMarkerCommitted)
+	t.journal.Phase = cachePublicationPhaseMarkerCommitted
 	if err := t.writeJournal(); err != nil {
 		return err
 	}
@@ -411,8 +416,16 @@ func (t *cachePublicationTransaction) writeJournal() error {
 
 func (t *cachePublicationTransaction) finalize() error {
 	parent := filepath.Dir(t.root)
+	// #nosec G703 -- backup is a fixed child of the private transaction root.
+	if err := os.RemoveAll(filepath.Join(t.root, "backup")); err != nil {
+		return fmt.Errorf("remove completed cache publication backup: %w", err)
+	}
+	if err := syncDirectory(t.root); err != nil {
+		return fmt.Errorf("sync completed cache publication backup removal: %w", err)
+	}
+	cachePublicationCheckpoint("finalize-backup-removed")
+
 	for _, path := range []string{
-		filepath.Join(t.root, "backup"),
 		filepath.Join(t.root, "old-marker.json"),
 		filepath.Join(t.root, "new-marker.json"),
 		filepath.Join(t.root, "journal.tmp"),
@@ -425,6 +438,7 @@ func (t *cachePublicationTransaction) finalize() error {
 	if err := syncDirectory(t.root); err != nil {
 		return fmt.Errorf("sync completed cache publication transaction: %w", err)
 	}
+	cachePublicationCheckpoint("finalize-old-marker-removed")
 	// #nosec G703 -- journal.json is a fixed child of the private transaction root.
 	if err := os.Remove(filepath.Join(t.root, "journal.json")); err != nil &&
 		!os.IsNotExist(err) {
@@ -433,6 +447,7 @@ func (t *cachePublicationTransaction) finalize() error {
 	if err := syncDirectory(t.root); err != nil {
 		return fmt.Errorf("sync removed cache publication journal: %w", err)
 	}
+	cachePublicationCheckpoint("finalize-journal-removed")
 	// #nosec G703 -- t.root is the deterministic private transaction directory.
 	if err := os.Remove(t.root); err != nil {
 		return fmt.Errorf("remove completed cache publication transaction: %w", err)
@@ -440,6 +455,7 @@ func (t *cachePublicationTransaction) finalize() error {
 	if err := syncDirectory(parent); err != nil {
 		return fmt.Errorf("sync completed cache publication parent: %w", err)
 	}
+	cachePublicationCheckpoint("finalize-root-removed")
 	return nil
 }
 
@@ -531,6 +547,12 @@ func recoverInterruptedCachePublication(analyticsDir string) error {
 		}
 	}
 	transaction := &cachePublicationTransaction{root: root, journal: journal}
+	if journal.Phase == cachePublicationPhaseRolledBack {
+		if err := verifyRolledBackCachePublication(journal); err != nil {
+			return err
+		}
+		return transaction.finalize()
+	}
 	if journal.NewMarkerDigest != "" {
 		// #nosec G703 -- analyticsDir was checked against the durable journal identity above.
 		liveMarker, markerErr := os.ReadFile(query.CacheStatePath(analyticsDir))
@@ -572,6 +594,8 @@ func recoverInterruptedCachePublication(analyticsDir string) error {
 			case os.IsNotExist(backupErr):
 				if !move.HadDestination {
 					if err := os.RemoveAll(move.Destination); err != nil {
+						recoveryErrs = append(recoveryErrs, err)
+					} else if err := syncDirectory(filepath.Dir(move.Destination)); err != nil {
 						recoveryErrs = append(recoveryErrs, err)
 					}
 				}
@@ -625,8 +649,37 @@ func recoverInterruptedCachePublication(analyticsDir string) error {
 	} else if err := os.Remove(query.CacheStatePath(analyticsDir)); err != nil &&
 		!os.IsNotExist(err) {
 		return fmt.Errorf("remove uncommitted cache marker: %w", err)
+	} else if err := syncDirectory(analyticsDir); err != nil {
+		return fmt.Errorf("sync removed cache publication marker: %w", err)
 	}
+	cachePublicationCheckpoint("recovery-marker-restored")
+	transaction.journal.Phase = cachePublicationPhaseRolledBack
+	if err := transaction.writeJournal(); err != nil {
+		return err
+	}
+	cachePublicationCheckpoint("recovery-rolled-back")
 	return transaction.finalize()
+}
+
+func verifyRolledBackCachePublication(journal cachePublicationJournal) error {
+	// #nosec G703 -- the journal identity and analytics root were validated before this call.
+	liveMarker, err := os.ReadFile(query.CacheStatePath(journal.AnalyticsDir))
+	if journal.OldMarkerPresent {
+		if err != nil {
+			return fmt.Errorf("verify rolled-back cache publication marker: %w", err)
+		}
+		if cachePublicationDigest(liveMarker) != journal.OldMarkerDigest {
+			return errors.New("recover cache publication: rolled-back marker digest mismatch")
+		}
+		return nil
+	}
+	if err == nil {
+		return errors.New("recover cache publication: rolled-back marker unexpectedly exists")
+	}
+	if !os.IsNotExist(err) {
+		return fmt.Errorf("verify absent rolled-back cache publication marker: %w", err)
+	}
+	return nil
 }
 
 func cachePublicationCheckpoint(phase string) {
@@ -637,37 +690,6 @@ func cachePublicationCheckpoint(phase string) {
 
 func cachePublicationDigest(data []byte) string {
 	return fmt.Sprintf("%x", sha256.Sum256(data))
-}
-
-func writeDurableFile(path string, data []byte, mode os.FileMode) error {
-	// #nosec G703 -- callers construct path from fixed filenames below private transaction/cache roots.
-	if err := os.WriteFile(path, data, mode); err != nil {
-		return err
-	}
-	if err := syncFile(path); err != nil {
-		return err
-	}
-	return syncDirectory(filepath.Dir(path))
-}
-
-func syncFile(path string) error {
-	// #nosec G703 -- callers pass fixed files inside private transaction/cache roots.
-	file, err := os.OpenFile(path, os.O_RDONLY, 0)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = file.Close() }()
-	return file.Sync()
-}
-
-func syncDirectory(path string) error {
-	// #nosec G703 -- callers pass configured cache parents or validated transaction paths.
-	directory, err := os.Open(path)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = directory.Close() }()
-	return directory.Sync()
 }
 
 func syncRenameDirectories(oldPath, newPath string) error {
