@@ -2,8 +2,8 @@
 
 ## Scope
 
-This wave addresses the five verified final-review findings without changing
-the reviewed release gates.
+This wave addresses the five verified final-review findings and the two
+closure-review durability defects without changing the reviewed release gates.
 
 ### Shared logical-activity reduction
 
@@ -44,6 +44,19 @@ the reviewed release gates.
   marker-committed crashes forward before readiness, cleanup, or serve.
 - Thirteen real subprocess kill/restart cases cover journal, backup, data, and
   marker phases across full, incremental, and derived publication.
+- Recovery durably records a rollback-complete phase only after restoring and
+  syncing the expected old marker state. A restart verifies that live state and
+  resumes cleanup without depending on a preserved marker already eligible for
+  deletion.
+- Eleven additional real subprocess kill/restart cases cover recovery after
+  marker restoration or intended absence, durable rollback, and every
+  backup/marker/journal/root cleanup boundary for rollback and forward
+  finalization. Each committed-cache case verifies an exact old-or-new
+  snapshot, `CacheReady`, and zero transaction or staging residue.
+- Regular publication files are synced through writable handles. Non-Windows
+  systems retain real directory fsyncs; Windows uses a documented directory
+  namespace boundary because `FlushFileBuffers` rejects directory handles,
+  matching the existing config-publication contract.
 
 ### Exact decay validation
 
@@ -94,6 +107,8 @@ The new tests were observed failing before their production changes:
   were accepted by the old validator;
 - full and incremental snapshot tests showed partial publication after injected
   move/state failures;
+- the recovery subprocess exited without reaching a durable marker-restored
+  checkpoint, reproducing the missing rollback-complete transition;
 - benchmark spill accounting returned 300 bytes when only 200 bytes were
   genuine temp data.
 
@@ -114,24 +129,29 @@ The final source state passed:
 - `make docs-check`;
 - `shellcheck scripts/benchmark-relationships-index.sh`;
 - `bash -n scripts/benchmark-relationships-index.sh`.
+- Windows durability helper and test binaries cross-compiled for both amd64
+  and arm64. The full command test binary cannot be cross-linked on this host
+  because its existing DuckDB/sqlite-vec CGO chain requires target SQLite
+  headers and libraries.
 
 The clean production-scale gate passed at 2,500,000 messages, 75,000
 participants, and 6,000,000 participant edges for implementation commit
-`93806fe0b05f5e580fdecb7523b5d46b81e0b2bb`:
+`dad5514dde5b17c2c96abec144d37452889916f3`:
 
-- full cache build: 14.12 s, 2,170,667,008-byte builder peak RSS;
-- cold relationships: 73.472 ms;
-- source-only people: 212.530 ms;
-- date-window relationships: 55.864 ms;
-- selective people/relationships: 101.006/91.793 ms;
-- peak/settled daemon RSS growth: 206,784/206,880 KiB;
+- full cache build: 13.54 s, 2,201,174,016-byte builder peak RSS;
+- cold relationships: 80.053 ms;
+- source-only people: 209.114 ms;
+- date-window relationships: 55.521 ms;
+- selective people/relationships: 101.556/92.014 ms;
+- peak/settled daemon RSS growth: 206,960/206,960 KiB;
 - peak DuckDB spill: 0 bytes.
 
-Machine-readable profiling reported two statements and 52,196,365 aggregate
-scanned rows for selective people, and two statements and 52,046,365 rows for
+Machine-readable profiling reported two statements and 52,182,769 aggregate
+scanned rows for selective people, and two statements and 52,032,769 rows for
 selective relationships. Unlike the superseded evidence, these totals include
 candidate preselection. The exact 134,079-byte artifact retains every operator
-tree and per-dataset/operator total.
+tree and per-dataset/operator total. Its SHA-256 is
+`f5b81ae34d36e25fdc4afd96c2e359e7a457d1ef7a9f09c788359b6f025e28e4`.
 
 ## Remaining concerns
 
