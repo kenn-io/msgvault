@@ -128,7 +128,7 @@ func TestAggregateRelationshipBenchmarkProfilesIncludesEveryStatementAndDatasetO
 				Type:        "TABLE_SCAN",
 				RowsScanned: 12,
 				ExtraInfo: map[string]any{
-					"Filename(s)": "/cache/identity_entry_facts/year=2024/data.parquet",
+					"Filename(s)": "/cache/relationship_activity/year=2024/data.parquet",
 				},
 			}},
 		},
@@ -144,7 +144,7 @@ func TestAggregateRelationshipBenchmarkProfilesIncludesEveryStatementAndDatasetO
 					Type:        "TABLE_SCAN",
 					RowsScanned: 20,
 					ExtraInfo: map[string]any{
-						"Filename(s)": "/cache/identity_directory/data.parquet",
+						"Filename(s)": "/cache/relationship_people/data.parquet",
 					},
 				}},
 			}},
@@ -159,8 +159,8 @@ func TestAggregateRelationshipBenchmarkProfilesIncludesEveryStatementAndDatasetO
 	assert.Equal("candidate preselection", got.Statements[0].QueryName)
 	assert.Equal("final aggregation", got.Statements[1].QueryName)
 	assert.Equal([]relationshipBenchmarkDatasetScan{
-		{Dataset: identityindex.DatasetDirectory, Operator: "READ_PARQUET", RowsScanned: 20},
-		{Dataset: identityindex.DatasetEntryFacts, Operator: "READ_PARQUET", RowsScanned: 12},
+		{Dataset: identityindex.DatasetActivity, Operator: "READ_PARQUET", RowsScanned: 12},
+		{Dataset: identityindex.DatasetPeople, Operator: "READ_PARQUET", RowsScanned: 20},
 	}, got.DatasetOperatorScans)
 }
 

@@ -16,13 +16,9 @@ import (
 
 func TestRelationshipIndexDatasetCatalog(t *testing.T) {
 	assert.ElementsMatch(t, []string{
-		"identity_entry_facts",
-		"identity_direct_edges",
-		"identity_conversation_edges",
-		"identity_directory",
-		"identity_rollups",
-		"domain_rollups",
-		"relationship_rollups",
+		"relationship_activity",
+		"relationship_people",
+		"relationship_domains",
 		"relationship_daily",
 	}, identityindex.RequiredDatasets)
 }

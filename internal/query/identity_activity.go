@@ -49,12 +49,7 @@ func (e *DuckDBEngine) buildIdentityLogicalSQL(
 	}
 	conditions, args := buildIdentityFactConditions(request)
 	paths := identityindex.ActivityPaths{
-		Facts:             e.identityDatasetPath(identityindex.DatasetEntryFacts),
-		DirectEdges:       e.identityDatasetPath(identityindex.DatasetDirectEdges),
-		ConversationEdges: e.identityDatasetPath(identityindex.DatasetConversationEdges),
-		Directory:         e.identityDatasetPath(identityindex.DatasetDirectory),
-		Clusters:          e.identityDatasetPath(datasetParticipantClusters),
-		Owners:            e.identityDatasetPath(datasetOwnerParticipants),
+		Activity: e.identityDatasetPath(identityindex.DatasetActivity),
 	}
 	sql := identityindex.LogicalActivitySQL(paths, conditions)
 	if strings.TrimSpace(identityCandidateSQL) != "" {
@@ -79,11 +74,12 @@ func (e *DuckDBEngine) narrowIdentityFactCandidates(
 		return request, nil
 	}
 	conditions, args := buildIdentityFactConditions(request)
-	facts := quoteIdentitySQLPath(e.identityDatasetPath(identityindex.DatasetEntryFacts))
+	facts := quoteIdentitySQLPath(e.identityDatasetPath(identityindex.DatasetActivity))
 	queryText := `
 SELECT f.message_id
 FROM read_parquet('` + facts + `', hive_partitioning=true, union_by_name=true) f
 WHERE ` + conditions + `
+GROUP BY f.message_id
 LIMIT ?`
 	args = append(args, MaxExploreCandidateMessageIDs+1)
 	queryText = e.resolveIdentityPathPlaceholders(queryText)
@@ -131,25 +127,20 @@ func buildIdentityFactConditions(request ExploreRequest) (string, []any) {
 		conditions = append(conditions, "("+strings.Join(parts, " OR ")+")")
 	}
 	appendIntGroup(request.Context.SourceIDs, "f.source_id = ?")
+	activityPath := quoteIdentityPathPlaceholder(identityindex.DatasetActivity)
 	participantPredicate := `(EXISTS (
-		SELECT 1 FROM read_parquet('` +
-		quoteIdentityPathPlaceholder(identityindex.DatasetDirectEdges) + `',
-			hive_partitioning=true, union_by_name=true) d
-		WHERE d.message_id = f.message_id AND d.participant_id = ?
-	) OR EXISTS (
-		SELECT 1 FROM read_parquet('` +
-		quoteIdentityPathPlaceholder(identityindex.DatasetConversationEdges) + `') c
-		WHERE c.conversation_id = f.conversation_id AND c.participant_id = ?
+		SELECT 1
+		FROM read_parquet('` + activityPath + `',
+			hive_partitioning=true, union_by_name=true) edge
+		WHERE edge.message_id = f.message_id
+		  AND edge.canonical_id = ?
 	))`
 	domainPredicate := `(EXISTS (
-		SELECT 1 FROM read_parquet('` +
-		quoteIdentityPathPlaceholder(identityindex.DatasetDirectEdges) + `',
-			hive_partitioning=true, union_by_name=true) d
-		WHERE d.message_id = f.message_id AND lower(d.participant_domain) = ?
-	) OR EXISTS (
-		SELECT 1 FROM read_parquet('` +
-		quoteIdentityPathPlaceholder(identityindex.DatasetConversationEdges) + `') c
-		WHERE c.conversation_id = f.conversation_id AND lower(c.participant_domain) = ?
+		SELECT 1
+		FROM read_parquet('` + activityPath + `',
+			hive_partitioning=true, union_by_name=true) edge
+		WHERE edge.message_id = f.message_id
+		  AND lower(edge.participant_domain) = ?
 	))`
 	appendIdentityEdgeGroup := func(values []int64) {
 		if len(values) == 0 {
@@ -158,7 +149,7 @@ func buildIdentityFactConditions(request ExploreRequest) (string, []any) {
 		parts := make([]string, len(values))
 		for index, value := range values {
 			parts[index] = participantPredicate
-			args = append(args, value, value)
+			args = append(args, value)
 		}
 		conditions = append(conditions, "("+strings.Join(parts, " OR ")+")")
 	}
@@ -170,7 +161,7 @@ func buildIdentityFactConditions(request ExploreRequest) (string, []any) {
 		for index, value := range values {
 			parts[index] = domainPredicate
 			normalized := strings.ToLower(strings.TrimSpace(value))
-			args = append(args, normalized, normalized)
+			args = append(args, normalized)
 		}
 		conditions = append(conditions, "("+strings.Join(parts, " OR ")+")")
 	}
@@ -230,10 +221,9 @@ func quoteIdentityPathPlaceholder(dataset string) string {
 
 func (e *DuckDBEngine) resolveIdentityPathPlaceholders(sql string) string {
 	for _, dataset := range []string{
-		identityindex.DatasetDirectEdges,
-		identityindex.DatasetConversationEdges,
-		identityindex.DatasetDirectory,
-		identityindex.DatasetRelationships,
+		identityindex.DatasetActivity,
+		identityindex.DatasetPeople,
+		identityindex.DatasetDomains,
 		identityindex.DatasetRelationshipDaily,
 	} {
 		path := strings.ReplaceAll(e.identityDatasetPath(dataset), "'", "''")
@@ -360,7 +350,7 @@ func (e *DuckDBEngine) identityPeopleCandidatesSQL(
 	searchText string,
 ) (string, []any) {
 	directory := quoteIdentitySQLPath(
-		e.identityDatasetPath(identityindex.DatasetDirectory),
+		e.identityDatasetPath(identityindex.DatasetPeople),
 	)
 	var predicates []string
 	var args []any
@@ -386,22 +376,12 @@ func (e *DuckDBEngine) identityPeopleCandidatesSQL(
 func (e *DuckDBEngine) unfilteredPeopleSQL(
 	candidates, order string,
 ) string {
-	rollups := quoteIdentitySQLPath(
-		e.identityDatasetPath(identityindex.DatasetRollups),
-	)
-	// Directory and rollup rows share the same canonical key. Keeping the
-	// list/search path one-to-one avoids grouping rows that carry member and
-	// search-value lists merely to recover the same identity.
+	// relationship_people already contains both search metadata and compact
+	// totals, so the default path is a single narrow Parquet scan.
 	return `WITH identity_candidates AS (` + candidates + `
 ), population AS (
-	SELECT c.*,
-	       r.activity_count,
-	       r.file_count,
-	       r.first_at,
-	       r.last_at,
-	       r.source_counts
+	SELECT c.*
 	FROM identity_candidates c
-	JOIN read_parquet('` + rollups + `') r USING (canonical_id)
 ), counted AS (
 	SELECT *, count(*) OVER ()::BIGINT AS total_count
 	FROM population
@@ -439,7 +419,9 @@ person_totals AS (
 	FROM person_source_counts
 	GROUP BY canonical_id
 ), population AS (
-	SELECT c.*, t.activity_count, t.file_count, s.source_counts,
+	SELECT c.canonical_id, c.person_id, c.display_label, c.partial_label,
+	       c.member_ids, c.search_values, c.is_owner,
+	       t.activity_count, t.file_count, s.source_counts,
 	       t.first_at, t.last_at
 	FROM identity_candidates c
 	JOIN person_totals t USING (canonical_id)
@@ -458,9 +440,6 @@ func (e *DuckDBEngine) sourceFilteredPeopleSQL(
 	candidates, order string,
 	sourceCount int,
 ) string {
-	rollups := quoteIdentitySQLPath(
-		e.identityDatasetPath(identityindex.DatasetRollups),
-	)
 	placeholders := strings.TrimSuffix(strings.Repeat("?,", sourceCount), ",")
 	return `WITH identity_candidates AS (` + candidates + `
 ), selected_source_rollups AS (
@@ -471,9 +450,7 @@ func (e *DuckDBEngine) sourceFilteredPeopleSQL(
 	       item.first_at,
 	       item.last_at
 	FROM identity_candidates c
-	JOIN read_parquet('` + rollups + `') r
-	  ON r.canonical_id = c.canonical_id
-	CROSS JOIN unnest(r.source_rollups) AS source_rollup(item)
+	CROSS JOIN unnest(c.source_rollups) AS source_rollup(item)
 	WHERE item.source_id IN (` + placeholders + `)
 ), person_totals AS (
 	SELECT canonical_id,
@@ -495,7 +472,9 @@ func (e *DuckDBEngine) sourceFilteredPeopleSQL(
 	FROM person_source_counts
 	GROUP BY canonical_id
 ), population AS (
-	SELECT c.*, t.activity_count, t.file_count, s.source_counts,
+	SELECT c.canonical_id, c.person_id, c.display_label, c.partial_label,
+	       c.member_ids, c.search_values, c.is_owner,
+	       t.activity_count, t.file_count, s.source_counts,
 	       t.first_at, t.last_at
 	FROM identity_candidates c
 	JOIN person_totals t USING (canonical_id)
@@ -654,7 +633,7 @@ func identityDomainWhere(searchText string) (string, []any) {
 
 func (e *DuckDBEngine) unfilteredDomainsSQL(domainWhere, order string) string {
 	rollups := quoteIdentitySQLPath(
-		e.identityDatasetPath(identityindex.DatasetDomainRollups),
+		e.identityDatasetPath(identityindex.DatasetDomains),
 	)
 	return `
 WITH filtered_domains AS (

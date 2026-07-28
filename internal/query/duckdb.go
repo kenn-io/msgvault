@@ -113,8 +113,6 @@ type DuckDBEngine struct {
 	disableLegacyAnalyticalViews bool
 	// sourceRollupFastPathDisabled is a test-only equivalence hook.
 	sourceRollupFastPathDisabled bool
-	// relationshipDateRollupFastPathDisabled is a test-only equivalence hook.
-	relationshipDateRollupFastPathDisabled bool
 	// identityCandidateFastPathDisabled is a test-only equivalence hook.
 	identityCandidateFastPathDisabled bool
 }
@@ -478,8 +476,7 @@ func (e *DuckDBEngine) parquetGlob() string {
 
 // parquetPath returns the path pattern for a specific Parquet table.
 func (e *DuckDBEngine) parquetPath(table string) string {
-	if table == identityindex.DatasetEntryFacts ||
-		table == identityindex.DatasetDirectEdges {
+	if table == identityindex.DatasetActivity {
 		return filepath.Join(e.analyticsDir, table, "**", "*.parquet")
 	}
 	return filepath.Join(e.analyticsDir, table, "*.parquet")
@@ -527,8 +524,7 @@ func (e *DuckDBEngine) cacheFingerprintGlobs() []string {
 			continue
 		}
 		globs = append(globs, e.parquetPath(dir))
-		if dir == identityindex.DatasetEntryFacts ||
-			dir == identityindex.DatasetDirectEdges {
+		if dir == identityindex.DatasetActivity {
 			// Empty partitioned datasets carry one schema-only root shard.
 			// Go's filepath.Glob does not give ** DuckDB's zero-directory
 			// semantics, so include that root shape explicitly.
@@ -2552,13 +2548,9 @@ var RequiredParquetDirs = []string{
 	datasetConversationParticipants,
 	datasetOwnerParticipants,
 	datasetParticipantClusters,
-	identityindex.DatasetEntryFacts,
-	identityindex.DatasetDirectEdges,
-	identityindex.DatasetConversationEdges,
-	identityindex.DatasetDirectory,
-	identityindex.DatasetRollups,
-	identityindex.DatasetDomainRollups,
-	identityindex.DatasetRelationships,
+	identityindex.DatasetActivity,
+	identityindex.DatasetPeople,
+	identityindex.DatasetDomains,
 	identityindex.DatasetRelationshipDaily,
 }
 

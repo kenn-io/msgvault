@@ -245,7 +245,7 @@ func TestRelationshipsDoNotRequireLegacyAnalyticalViews(t *testing.T) {
 	}
 }
 
-func TestDateWindowRelationshipRollupFastPathMatchesLogicalReduction(t *testing.T) {
+func TestDateWindowRelationshipsUseExactActivityReduction(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	builder := NewTestDataBuilder(t)
@@ -276,34 +276,13 @@ func TestDateWindowRelationshipRollupFastPathMatchesLogicalReduction(t *testing.
 		Limit:   10,
 		Now:     time.Date(2026, 1, 10, 0, 0, 0, 0, time.UTC),
 	}
-	fast, err := engine.Relationships(context.Background(), request)
-	requirements.NoError(err)
-	engine.relationshipDateRollupFastPathDisabled = true
-	logical, err := engine.Relationships(context.Background(), request)
+	result, err := engine.Relationships(context.Background(), request)
 	requirements.NoError(err)
 
-	assertions.Equal(logical, fast)
-	requirements.Len(fast.Rows, 1)
-	assertions.Equal(personID, fast.Rows[0].CanonicalID)
-	assertions.Equal(int64(1), fast.Rows[0].Signals.SentCount)
-	assertions.Equal(inWindow, fast.Rows[0].LastAt)
-}
-
-func TestRelationshipDateRollupFastPathRequiresUTCMidnightBounds(t *testing.T) {
-	assertions := assert.New(t)
-	midnight := time.Date(2026, 1, 5, 0, 0, 0, 0, time.UTC)
-	nonMidnight := midnight.Add(time.Second)
-
-	assertions.True(identityRequestIsDateWindowOnly(ExploreRequest{
-		Context: Context{After: &midnight},
-	}))
-	assertions.False(identityRequestIsDateWindowOnly(ExploreRequest{
-		Context: Context{After: &nonMidnight},
-	}))
-	assertions.False(identityRequestIsDateWindowOnly(ExploreRequest{
-		Context: Context{After: &midnight, SourceIDs: []int64{1}},
-	}))
-	assertions.False(identityRequestIsDateWindowOnly(ExploreRequest{}))
+	requirements.Len(result.Rows, 1)
+	assertions.Equal(personID, result.Rows[0].CanonicalID)
+	assertions.Equal(int64(1), result.Rows[0].Signals.SentCount)
+	assertions.Equal(inWindow, result.Rows[0].LastAt)
 }
 
 // TestRelationshipsExcludesClusteredOwners verifies that when the owner's own
@@ -723,49 +702,6 @@ func TestRelationshipsClampsFutureEntryDecayAtOne(t *testing.T) {
 	require.Len(result.Rows, 1)
 	assert.InDelta(1.0, result.Rows[0].Signals.MeetingsTogether, 1e-9,
 		"a future meeting must weigh no more than one held today")
-}
-
-func TestRelationshipsClampsBackwardAnchorAdvancement(t *testing.T) {
-	requirementsForTest := require.New(t)
-	b := NewTestDataBuilder(t)
-	sourceID := b.AddSource("owner@example.com")
-	ownerID := b.AddParticipant("owner@example.com", "example.com", "Owner")
-	personID := b.AddParticipant("person@example.com", "example.com", "Person")
-	b.AddOwnerParticipant(sourceID, ownerID)
-	messageID := b.AddMessage(MessageOpt{
-		SourceID: sourceID,
-		IsFromMe: true,
-		SentAt:   time.Date(2026, 7, 14, 9, 0, 0, 0, time.UTC),
-	})
-	b.AddFrom(messageID, ownerID, "Owner")
-	b.AddTo(messageID, personID, "Person")
-	engine := b.BuildEngine()
-
-	atAnchor, err := engine.Relationships(
-		context.Background(),
-		RelationshipsRequest{
-			Now:   time.Date(2026, 7, 15, 0, 0, 0, 0, time.UTC),
-			Limit: 10,
-		},
-	)
-	requirementsForTest.NoError(err)
-	requirementsForTest.Len(atAnchor.Rows, 1)
-
-	beforeAnchor, err := engine.Relationships(
-		context.Background(),
-		RelationshipsRequest{
-			Now:   time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
-			Limit: 10,
-		},
-	)
-	requirementsForTest.NoError(err)
-	requirementsForTest.Len(beforeAnchor.Rows, 1)
-	assert.InDelta(t,
-		atAnchor.Rows[0].Signals.SentToThem,
-		beforeAnchor.Rows[0].Signals.SentToThem,
-		1e-12,
-		"a clock before the publication anchor must not back-multiply stored decay",
-	)
 }
 
 func TestRelationshipsFutureRowsPreserveGateModalitiesAndLastTimestamp(t *testing.T) {
