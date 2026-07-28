@@ -43,3 +43,32 @@ func FingerprintConversationParticipants(rows ConversationParticipantRows) (stri
 	}
 	return fmt.Sprintf("sha256:%x", hash.Sum(nil)), nil
 }
+
+// FingerprintConversationTypes hashes ordered (conversation_id, type) rows:
+// the ID's fixed-width big-endian bit pattern followed by the type's byte
+// length and bytes, so variable-length values can never alias across rows.
+func FingerprintConversationTypes(rows ConversationParticipantRows) (string, error) {
+	hash := sha256.New()
+	var encoded [16]byte
+	for rows.Next() {
+		var conversationID int64
+		var conversationType string
+		if err := rows.Scan(&conversationID, &conversationType); err != nil {
+			return "", fmt.Errorf("scan conversation type fingerprint: %w", err)
+		}
+		if conversationID < 0 {
+			return "", fmt.Errorf(
+				"fingerprint conversation types: negative ID %d",
+				conversationID,
+			)
+		}
+		binary.BigEndian.PutUint64(encoded[:8], uint64(conversationID))
+		binary.BigEndian.PutUint64(encoded[8:], uint64(len(conversationType)))
+		_, _ = hash.Write(encoded[:])
+		_, _ = hash.Write([]byte(conversationType))
+	}
+	if err := rows.Err(); err != nil {
+		return "", fmt.Errorf("iterate conversation type fingerprint: %w", err)
+	}
+	return fmt.Sprintf("sha256:%x", hash.Sum(nil)), nil
+}

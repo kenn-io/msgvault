@@ -2496,10 +2496,13 @@ func writeSyncStateAt(t *testing.T, analyticsDir string, lastMessageID int64, sy
 	t.Helper()
 	require.NoError(t, os.MkdirAll(analyticsDir, 0755), "MkdirAll analytics")
 	state := syncState{
-		LastMessageID:                       lastMessageID,
-		LastSyncAt:                          syncAt,
-		SchemaVersion:                       cacheSchemaVersion,
+		LastMessageID: lastMessageID,
+		LastSyncAt:    syncAt,
+		SchemaVersion: cacheSchemaVersion,
+		// Both fingerprints hash zero rows in these fixtures, so both are
+		// the empty-input sha256 digest.
 		ConversationParticipantsFingerprint: "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+		ConversationTypesFingerprint:        "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
 	}
 	data, err := json.Marshal(state)
 	require.NoError(t, err, "marshal sync state")
@@ -3068,6 +3071,7 @@ func TestCacheNeedsBuild_IgnoresAlreadyProcessedUpdatedSyncRun(t *testing.T) {
 		LastCacheUpdateCount:                2,
 		SchemaVersion:                       cacheSchemaVersion,
 		ConversationParticipantsFingerprint: "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+		ConversationTypesFingerprint:        "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
 	}
 	data, err := json.Marshal(state)
 	require.NoError(err, "marshal sync state")

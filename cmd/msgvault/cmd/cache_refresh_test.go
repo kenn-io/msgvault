@@ -59,7 +59,7 @@ func TestDerivedOnlyRefreshCarriesStatsAndRefreshesMembershipRollups(t *testing.
 	requirementsForTest.NoError(err)
 	before, err := query.ReadCacheSyncState(analyticsDir)
 	requirementsForTest.NoError(err)
-	messagesBefore := snapshotDatasetBytes(t, analyticsDir, tableMessages)
+	messagesBefore := snapshotMessagesDatasetBytes(t, analyticsDir)
 
 	st, err := store.Open(dbPath)
 	requirementsForTest.NoError(err)
@@ -86,7 +86,7 @@ func TestDerivedOnlyRefreshCarriesStatsAndRefreshesMembershipRollups(t *testing.
 	requirementsForTest.NoError(err)
 	assertionsForTest.Equal(fingerprint, after.DatasetFingerprint)
 	assertionsForTest.Equal(messagesBefore,
-		snapshotDatasetBytes(t, analyticsDir, tableMessages))
+		snapshotMessagesDatasetBytes(t, analyticsDir))
 
 	duckDB, err := duckdbutil.Open(
 		context.Background(),
@@ -269,9 +269,9 @@ func snapshotCacheBytes(t *testing.T, root string) map[string]string {
 	return out
 }
 
-func snapshotDatasetBytes(t *testing.T, root, dataset string) map[string]string {
+func snapshotMessagesDatasetBytes(t *testing.T, root string) map[string]string {
 	t.Helper()
-	return snapshotCacheBytes(t, filepath.Join(root, dataset))
+	return snapshotCacheBytes(t, filepath.Join(root, tableMessages))
 }
 
 func TestRebuildCacheAfterWriteReturnsError(t *testing.T) {
@@ -358,4 +358,104 @@ func TestScheduledCacheRefreshFailurePreservesCompletedSyncRun(t *testing.T) {
 	assert.Equal(int64(7), latest.MessagesProcessed)
 	assert.Equal(int64(5), latest.MessagesAdded)
 	assert.Equal(int64(2), latest.MessagesUpdated)
+}
+
+func TestConversationTypeDriftDetectedAndRepairedByDerivedRefresh(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	tmp := setupTestSQLite(t)
+	dbPath := filepath.Join(tmp, "test.db")
+	analyticsDir := filepath.Join(tmp, "analytics")
+	_, err := buildCache(dbPath, analyticsDir, true)
+	requirements.NoError(err)
+	before, err := query.ReadCacheSyncState(analyticsDir)
+	requirements.NoError(err)
+	requirements.NotEmpty(before.ConversationTypesFingerprint)
+	messagesBefore := snapshotMessagesDatasetBytes(t, analyticsDir)
+
+	clean := cacheNeedsBuild(dbPath, analyticsDir)
+	requirements.False(clean.NeedsBuild,
+		"fresh build must not report staleness (reason: %q)", clean.Reason)
+
+	st, err := store.Open(dbPath)
+	requirements.NoError(err)
+	_, err = st.DB().Exec(
+		`UPDATE conversations SET conversation_type = 'group_chat' WHERE id = 102`)
+	requirements.NoError(err)
+	requirements.NoError(st.Close())
+
+	staleness := cacheNeedsBuild(dbPath, analyticsDir)
+	requirements.True(staleness.NeedsBuild)
+	assertions.True(staleness.HasConversationTypeDrift)
+	assertions.False(staleness.FullRebuild,
+		"type drift without new messages must stay repairable by the derived refresh")
+	assertions.True(derivedDriftOnly(staleness))
+	assertions.Contains(staleness.Reason, "conversation types changed")
+
+	result, err := buildCacheDerivedOnly(dbPath, analyticsDir)
+	requirements.NoError(err)
+	assertions.True(result.IdentityOnly)
+	assertions.False(result.Skipped)
+
+	after, err := query.ReadCacheSyncState(analyticsDir)
+	requirements.NoError(err)
+	assertions.NotEqual(before.ConversationTypesFingerprint, after.ConversationTypesFingerprint)
+	assertions.Equal(messagesBefore,
+		snapshotMessagesDatasetBytes(t, analyticsDir),
+		"derived refresh must not rewrite message facts")
+
+	duckDB, err := duckdbutil.Open(
+		context.Background(),
+		duckdbutil.BuilderPolicy(filepath.Join(tmp, "types-duckdb-tmp")),
+	)
+	requirements.NoError(err)
+	defer func() { require.NoError(t, duckDB.Close()) }()
+	var conversationsType string
+	requirements.NoError(duckDB.QueryRow(`
+		SELECT conversation_type FROM read_parquet(?) WHERE id = 102
+	`, filepath.Join(analyticsDir, tableConversations, "*.parquet")).Scan(&conversationsType))
+	assertions.Equal("group_chat", conversationsType,
+		"republished conversations dataset must carry the new type")
+	var staleActivityRows int64
+	requirements.NoError(duckDB.QueryRow(`
+		SELECT count(*)
+		FROM read_parquet(?, hive_partitioning = true)
+		WHERE conversation_id = 102 AND conversation_type <> 'group_chat'
+	`, filepath.Join(
+		analyticsDir, identityindex.DatasetActivity, "**", "*.parquet",
+	)).Scan(&staleActivityRows))
+	assertions.Zero(staleActivityRows,
+		"rebuilt activity rows must embed the new conversation type")
+
+	repaired := cacheNeedsBuild(dbPath, analyticsDir)
+	assertions.False(repaired.NeedsBuild,
+		"repaired cache must be clean (reason: %q)", repaired.Reason)
+}
+
+func TestFullBuildForcedWhenTypeDriftCoincidesWithNewMessages(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	tmp := setupTestSQLite(t)
+	dbPath := filepath.Join(tmp, "test.db")
+	analyticsDir := filepath.Join(tmp, "analytics")
+	_, err := buildCache(dbPath, analyticsDir, true)
+	requirements.NoError(err)
+
+	st, err := store.Open(dbPath)
+	requirements.NoError(err)
+	_, err = st.DB().Exec(`
+		UPDATE conversations SET conversation_type = 'group_chat' WHERE id = 102;
+		INSERT INTO messages (id, conversation_id, source_id, source_message_id, sent_at, subject, snippet)
+			VALUES (99, 102, 1, 'msg99', '2026-07-21 10:00:00', 'Late', 'Preview');
+	`)
+	requirements.NoError(err)
+	requirements.NoError(st.Close())
+
+	staleness := cacheNeedsBuild(dbPath, analyticsDir)
+	requirements.True(staleness.NeedsBuild)
+	assertions.True(staleness.HasNew)
+	assertions.True(staleness.HasConversationTypeDrift)
+	assertions.True(staleness.FullRebuild,
+		"incremental append cannot rewrite committed activity rows under a changed type")
+	assertions.False(derivedDriftOnly(staleness))
 }

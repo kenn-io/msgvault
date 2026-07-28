@@ -28,6 +28,14 @@ type cacheStaleness struct {
 	// watermark. The index-only refresh can rebuild relationship_activity and
 	// its compact datasets without rewriting message facts.
 	HasConversationParticipantDrift bool
+	// HasConversationTypeDrift signals conversation_type changed for a
+	// conversation already represented by the committed message watermark.
+	// The type is baked into committed relationship_activity rows (and the
+	// replaceable conversations base dataset), so like membership drift it
+	// is repaired by the index-only refresh — unless new messages also
+	// arrived, in which case the incremental append cannot rewrite the
+	// already-committed rows and a full rebuild is forced below.
+	HasConversationTypeDrift bool
 	// HasAccountIdentityDrift signals an identity mutation that invalidates
 	// baked message data since the last build: an account identity was
 	// confirmed or removed, or two participants were merged (merges repoint
@@ -329,12 +337,29 @@ func cacheNeedsBuildLocked(dbPath, analyticsDir string) cacheStaleness {
 		reasons = append(reasons, "conversation participants changed")
 	}
 
+	typesFingerprint, err := sourceConversationTypesFingerprint(
+		db.DB(),
+		state.LastMessageID,
+	)
+	if err != nil {
+		return cacheStaleness{
+			NeedsBuild: true, FullRebuild: true,
+			Reason: "cannot verify conversation types",
+		}
+	}
+	if typesFingerprint != state.ConversationTypesFingerprint {
+		result.HasConversationTypeDrift = true
+		reasons = append(reasons, "conversation types changed")
+	}
+
 	// An incremental build can append only new activity rows. If canonical
-	// links or conversation membership also changed, existing rows need to be
-	// rewritten under the new relationship dimensions, so rebuild the base
-	// generation and relationship index together.
+	// links, conversation membership, or conversation types also changed,
+	// existing rows need to be rewritten under the new relationship
+	// dimensions, so rebuild the base generation and relationship index
+	// together.
 	if result.HasNew &&
-		(result.HasIdentityDrift || result.HasConversationParticipantDrift) {
+		(result.HasIdentityDrift || result.HasConversationParticipantDrift ||
+			result.HasConversationTypeDrift) {
 		result.FullRebuild = true
 	}
 
@@ -344,6 +369,39 @@ func cacheNeedsBuildLocked(dbPath, analyticsDir string) cacheStaleness {
 	}
 
 	return result
+}
+
+// sourceConversationTypesFingerprint hashes (id, conversation_type) for
+// conversations with exportable messages inside the committed watermark. The
+// NULL normalization must match the conversations Parquet export
+// (COALESCE(conversation_type, 'email_thread')) and
+// fingerprintConversationTypesFromSnapshot so an unchanged database always
+// reproduces the stamped fingerprint.
+func sourceConversationTypesFingerprint(
+	db *sql.DB,
+	lastMessageID int64,
+) (string, error) {
+	rows, err := db.Query(`
+		SELECT c.id, COALESCE(c.conversation_type, 'email_thread')
+		FROM conversations c
+		WHERE EXISTS (
+			SELECT 1
+			FROM messages m
+			WHERE m.conversation_id = c.id
+			  AND `+exportableMessageWhere("m")+`
+			  AND m.id <= ?
+		)
+		ORDER BY c.id
+	`, lastMessageID)
+	if err != nil {
+		return "", fmt.Errorf("query conversation types for fingerprint: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	fingerprint, err := identityindex.FingerprintConversationTypes(rows)
+	if rowsErr := rows.Err(); rowsErr != nil && err == nil {
+		return "", fmt.Errorf("iterate conversation types for fingerprint: %w", rowsErr)
+	}
+	return fingerprint, err
 }
 
 func sourceConversationParticipantsFingerprint(

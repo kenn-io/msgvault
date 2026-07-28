@@ -44,8 +44,15 @@ type CacheSyncState struct {
 	PublishedAt             time.Time `json:"published_at"`
 	DatasetFingerprint      string    `json:"dataset_fingerprint"`
 
-	ConversationParticipantsFingerprint string                          `json:"conversation_participants_fingerprint,omitempty"`
-	Stats                               identityindex.CacheStatsSummary `json:"stats"`
+	ConversationParticipantsFingerprint string `json:"conversation_participants_fingerprint,omitempty"`
+	// ConversationTypesFingerprint hashes (id, conversation_type) for every
+	// conversation inside the committed message watermark. conversation_type
+	// is mutable (EnsureConversationWithType upserts it) and is baked into
+	// committed relationship_activity rows, which incremental builds and
+	// index-only refreshes otherwise never revisit — this fingerprint is how
+	// that drift is detected.
+	ConversationTypesFingerprint string                          `json:"conversation_types_fingerprint,omitempty"`
+	Stats                        identityindex.CacheStatsSummary `json:"stats"`
 }
 
 type CacheReadiness string

@@ -437,9 +437,31 @@ func acquireCacheBuildLock(analyticsDir string) (*flock.Flock, error) {
 	return buildLock, nil
 }
 
-// derivedDriftOnly reports whether participant-link or conversation-membership
-// drift is the only staleness signal. The index-only refresh rebuilds the four
-// relationship datasets from committed base Parquet without re-exporting it.
+// conversationsExportSelectSQL renders the conversations dataset export
+// query: every conversation with an exportable message inside the watermark,
+// with NULL-normalized string columns. Shared by the full/incremental export
+// and the derived-refresh re-staging (exportDerivedConversations) so the two
+// can never bake different rows for the same watermark.
+func conversationsExportSelectSQL(lastMessageID int64) string {
+	return fmt.Sprintf(`SELECT
+			id,
+			COALESCE(TRY_CAST(source_conversation_id AS VARCHAR), '') as source_conversation_id,
+			COALESCE(TRY_CAST(title AS VARCHAR), '') as title,
+			COALESCE(TRY_CAST(conversation_type AS VARCHAR), 'email') as conversation_type
+		FROM sqlite_db.conversations c
+		WHERE EXISTS (
+			SELECT 1 FROM sqlite_db.messages m
+			WHERE m.conversation_id = c.id
+			  AND %s
+			  AND TRY_CAST(m.id AS BIGINT) <= %d
+		)`, exportableMessageWhere("m"), lastMessageID)
+}
+
+// derivedDriftOnly reports whether participant-link, conversation-membership,
+// or conversation-type drift is the only staleness signal. The index-only
+// refresh rebuilds the four relationship datasets from committed base Parquet
+// without re-exporting it (re-staging only the drifted replaceable base
+// dataset: conversation_participants or conversations).
 //
 // HasAccountIdentityDrift is excluded even though it also bumps
 // identity_revision (and therefore HasIdentityDrift): confirming or
@@ -448,7 +470,8 @@ func acquireCacheBuildLock(analyticsDir string) (*flock.Flock, error) {
 // not re-derive. Account-identity drift must always take the full-rebuild
 // path.
 func derivedDriftOnly(staleness cacheStaleness) bool {
-	return (staleness.HasIdentityDrift || staleness.HasConversationParticipantDrift) &&
+	return (staleness.HasIdentityDrift || staleness.HasConversationParticipantDrift ||
+		staleness.HasConversationTypeDrift) &&
 		!staleness.HasNew && !staleness.HasDeleted &&
 		!staleness.HasUpdated && !staleness.HasAccountIdentityDrift
 }
@@ -946,23 +969,12 @@ func buildCacheLocked(dbPath, analyticsDir string, fullRebuild, recheckStaleness
 	escapedConversationsDir := strings.ReplaceAll(conversationsDir, "'", "''")
 	if err := runExport(tableConversations, fmt.Sprintf(`
 	COPY (
-		SELECT
-			id,
-			COALESCE(TRY_CAST(source_conversation_id AS VARCHAR), '') as source_conversation_id,
-			COALESCE(TRY_CAST(title AS VARCHAR), '') as title,
-			COALESCE(TRY_CAST(conversation_type AS VARCHAR), 'email') as conversation_type
-		FROM sqlite_db.conversations c
-		WHERE EXISTS (
-			SELECT 1 FROM sqlite_db.messages m
-			WHERE m.conversation_id = c.id
-			  AND `+exportableMessageWhere("m")+`
-			  AND TRY_CAST(m.id AS BIGINT) <= %d
-		)
+		%s
 	) TO '%s/conversations.parquet' (
 		FORMAT PARQUET,
 		COMPRESSION 'zstd'
 	)
-	`, maxID, escapedConversationsDir)); err != nil {
+	`, conversationsExportSelectSQL(maxID), escapedConversationsDir)); err != nil {
 		return nil, fmt.Errorf("export conversations: %w", err)
 	}
 
@@ -1103,6 +1115,17 @@ func buildCacheLocked(dbPath, analyticsDir string, fullRebuild, recheckStaleness
 	if err := validateStagedReplacementDatasets(exportDB, staging.root, publicationPlan); err != nil {
 		return nil, err
 	}
+	// Stamped with the same snapshot and watermark the export used, so the
+	// committed marker describes exactly the types baked into the staged
+	// activity rows and conversations dataset.
+	typesFingerprint, err := fingerprintConversationTypesFromSnapshot(
+		context.Background(),
+		exportDB,
+		maxID,
+	)
+	if err != nil {
+		return nil, err
+	}
 	if err := sourceSnapshot.Close(); err != nil {
 		return nil, fmt.Errorf("close SQLite cache snapshot: %w", err)
 	}
@@ -1147,6 +1170,7 @@ func buildCacheLocked(dbPath, analyticsDir string, fullRebuild, recheckStaleness
 		IdentityRevision:                    identityRevision,
 		AccountIdentityRevision:             accountIdentityRevision,
 		ConversationParticipantsFingerprint: derived.ConversationParticipantsFingerprint,
+		ConversationTypesFingerprint:        typesFingerprint,
 		Stats:                               derived.Stats,
 	}
 	stateData, err := json.Marshal(state)

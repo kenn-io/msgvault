@@ -100,6 +100,7 @@ func refreshDerivedDatasetsOnly(
 	defer func() { _ = sourceSnapshot.Close() }()
 	if err := sourceSnapshot.PrepareDatasets(
 		tableMessages,
+		tableConversations,
 		tableConversationParticipants,
 		"account_identities",
 		tableParticipants,
@@ -117,9 +118,18 @@ func refreshDerivedDatasetsOnly(
 	if err != nil {
 		return nil, err
 	}
+	typesFingerprint, err := fingerprintConversationTypesFromSnapshot(
+		ctx,
+		exportDB,
+		state.LastMessageID,
+	)
+	if err != nil {
+		return nil, err
+	}
 
 	if identityRevision == state.IdentityRevision &&
-		conversationFingerprint == state.ConversationParticipantsFingerprint {
+		conversationFingerprint == state.ConversationParticipantsFingerprint &&
+		typesFingerprint == state.ConversationTypesFingerprint {
 		// Nothing the derived datasets read has changed (the account-identity
 		// revision was already verified equal above). Republishing would only
 		// advance PublishedAt, invalidating readers' cache revision — and with
@@ -137,6 +147,21 @@ func refreshDerivedDatasetsOnly(
 		conversationFingerprint != state.ConversationParticipantsFingerprint
 	if conversationChanged {
 		if err := exportDerivedConversationParticipants(
+			ctx,
+			exportDB,
+			state.LastMessageID,
+			staging.root,
+		); err != nil {
+			return nil, err
+		}
+	}
+	typesChanged := typesFingerprint != state.ConversationTypesFingerprint
+	if typesChanged {
+		// The index rebuild reads conversation_type from the conversations
+		// base dataset, and the analytical view joins it live — both must
+		// see the current types, so the dataset is re-staged and republished
+		// alongside the derived index.
+		if err := exportDerivedConversations(
 			ctx,
 			exportDB,
 			state.LastMessageID,
@@ -166,9 +191,10 @@ func refreshDerivedDatasetsOnly(
 
 	state.IdentityRevision = identityRevision
 	state.ConversationParticipantsFingerprint = conversationFingerprint
+	state.ConversationTypesFingerprint = typesFingerprint
 	// Stats describe the unchanged committed raw snapshot. Preserve them
 	// byte-for-byte instead of scanning Parquet again.
-	plan := derivedCachePublishPlan(conversationChanged)
+	plan := derivedCachePublishPlan(conversationChanged, typesChanged)
 	if err := publishDerivedCache(staging, analyticsDir, plan, state); err != nil {
 		return nil, err
 	}
@@ -201,6 +227,67 @@ func fingerprintConversationParticipantsFromSnapshot(
 		return "", fmt.Errorf("iterate source conversation participants: %w", rowsErr)
 	}
 	return fingerprint, err
+}
+
+// fingerprintConversationTypesFromSnapshot mirrors
+// sourceConversationTypesFingerprint over the export snapshot, so the stamp
+// written at publish time describes exactly the types the staged datasets
+// baked. The 'email_thread' normalization matches the staleness query (and
+// the CSV snapshot view, which pre-applies it), NOT the exported parquet
+// value — fingerprints only ever compare against each other.
+func fingerprintConversationTypesFromSnapshot(
+	ctx context.Context,
+	db sqlRunner,
+	lastMessageID int64,
+) (string, error) {
+	rows, err := db.QueryContext(ctx, fmt.Sprintf(`
+		SELECT c.id::BIGINT,
+		       COALESCE(TRY_CAST(c.conversation_type AS VARCHAR), 'email_thread')
+		FROM sqlite_db.conversations c
+		WHERE EXISTS (
+			SELECT 1
+			FROM sqlite_db.messages m
+			WHERE m.conversation_id = c.id
+			  AND %s
+			  AND TRY_CAST(m.id AS BIGINT) <= ?
+		)
+		ORDER BY c.id
+	`, exportableMessageWhere("m")), lastMessageID)
+	if err != nil {
+		return "", fmt.Errorf("query conversation types from source snapshot: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	fingerprint, err := identityindex.FingerprintConversationTypes(rows)
+	if rowsErr := rows.Err(); rowsErr != nil && err == nil {
+		return "", fmt.Errorf("iterate source conversation types: %w", rowsErr)
+	}
+	return fingerprint, err
+}
+
+// exportDerivedConversations re-stages the conversations base dataset with
+// the full export query so an index-only refresh triggered by type drift
+// rebuilds relationship_activity from current types and republishes the
+// dataset the analytical view joins.
+func exportDerivedConversations(
+	ctx context.Context,
+	db sqlRunner,
+	lastMessageID int64,
+	stagingRoot string,
+) error {
+	dir := filepath.Join(stagingRoot, tableConversations)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("create derived conversations directory: %w", err)
+	}
+	path := filepath.Join(dir, "conversations.parquet")
+	_, err := db.ExecContext(ctx, fmt.Sprintf(`
+		COPY (
+			%s
+		) TO '%s' (FORMAT PARQUET, COMPRESSION 'zstd')
+	`, conversationsExportSelectSQL(lastMessageID), quoteCacheSQL(path)))
+	if err != nil {
+		return fmt.Errorf("export derived conversations: %w", err)
+	}
+	return nil
 }
 
 func exportDerivedOwnerParticipants(
@@ -311,7 +398,9 @@ func quoteCacheSQL(value string) string {
 	return strings.ReplaceAll(value, "'", "''")
 }
 
-func derivedCachePublishPlan(includeConversationParticipants bool) cachePublishPlan {
+func derivedCachePublishPlan(
+	includeConversationParticipants, includeConversations bool,
+) cachePublishPlan {
 	plan := cachePublishPlan{
 		Append:  make(map[string]bool),
 		Replace: make(map[string]bool),
@@ -328,6 +417,9 @@ func derivedCachePublishPlan(includeConversationParticipants bool) cachePublishP
 	}
 	if includeConversationParticipants {
 		plan.Replace[tableConversationParticipants] = true
+	}
+	if includeConversations {
+		plan.Replace[tableConversations] = true
 	}
 	return plan
 }
