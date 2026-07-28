@@ -65,7 +65,7 @@ func ensureIdentityCacheFixtureDatasets(
 			       NULL::BIGINT AS meeting_count, NULL::UTINYINT AS modality_mask,
 			       NULL::TIMESTAMP AS last_at
 			WHERE false`,
-		identityindex.DatasetRelationshipFuture: `
+		identityindex.DatasetRelationshipDaily: `
 			SELECT NULL::BIGINT AS canonical_id, NULL::DATE AS event_date,
 			       NULL::BIGINT AS sent_units, NULL::BIGINT AS received_units,
 			       NULL::BIGINT AS meeting_units, NULL::BIGINT AS sent_count,

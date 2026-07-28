@@ -407,7 +407,7 @@ func TestBuildCacheStagingCleanupRemovesAbandonedBuild(t *testing.T) {
 	assert.Empty(cacheStagingPaths(t, analyticsDir))
 }
 
-func TestBuildCachePublishInterruptionRejectsReaders(t *testing.T) {
+func TestBuildCachePublishInterruptionKeepsCommittedCacheReadable(t *testing.T) {
 	require := require.New(t)
 	tmpDir := setupTestSQLite(t)
 	dbPath := filepath.Join(tmpDir, "test.db")
@@ -421,16 +421,16 @@ func TestBuildCachePublishInterruptionRejectsReaders(t *testing.T) {
 	insertSixthMessage(t, dbPath)
 
 	publishErr := errors.New("simulated publish interruption")
-	buildCacheAfterStateInvalidationHook = func() error { return publishErr }
-	t.Cleanup(func() { buildCacheAfterStateInvalidationHook = nil })
+	buildCacheBeforePublicationMovesHook = func() error { return publishErr }
+	t.Cleanup(func() { buildCacheBeforePublicationMovesHook = nil })
 	_, err = buildCache(dbPath, analyticsDir, false)
 	require.ErrorIs(err, publishErr)
 
 	readiness, inspectErr := query.InspectCacheReadiness(analyticsDir)
 	require.NoError(inspectErr)
-	assert.Equal(t, query.CacheInterrupted, readiness)
+	assert.Equal(t, query.CacheReady, readiness)
 	_, err = engine.Aggregate(context.Background(), query.ViewSenders, query.DefaultAggregateOptions())
-	require.ErrorIs(err, query.ErrCacheUnavailable)
+	require.NoError(err)
 }
 
 func TestBuildCacheEmptyStatelessReplacesStaleShards(t *testing.T) {
@@ -566,10 +566,10 @@ func insertSixthMessage(t *testing.T, dbPath string) {
 	require.NoError(t, err, "insert new message")
 }
 
-// TestBuildCacheFailedStateWriteForcesFullRebuild pins that a failed
-// _last_sync.json write fails inside the publication window and leaves the
-// cache stateless, forcing the next build to replace all live datasets.
-func TestBuildCacheFailedStateWriteForcesFullRebuild(t *testing.T) {
+// TestBuildCacheFailedStateWritePreservesCommittedIncrementalCache pins that a
+// failed marker preparation restores every moved dataset and leaves the prior
+// incremental cache committed.
+func TestBuildCacheFailedStateWritePreservesCommittedIncrementalCache(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	tmpDir := setupTestSQLite(t)
@@ -578,6 +578,8 @@ func TestBuildCacheFailedStateWriteForcesFullRebuild(t *testing.T) {
 
 	_, err := buildCache(dbPath, analyticsDir, false)
 	require.NoError(err, "initial build")
+	stateBefore, err := os.ReadFile(query.CacheStatePath(analyticsDir))
+	require.NoError(err)
 	insertSixthMessage(t, dbPath)
 
 	buildCacheWriteStateFile = func(string, []byte, os.FileMode) error {
@@ -588,9 +590,11 @@ func TestBuildCacheFailedStateWriteForcesFullRebuild(t *testing.T) {
 	require.ErrorContains(err, "save cache sync state",
 		"incremental build must fail when the sync state cannot be persisted")
 
-	_, err = os.Stat(filepath.Join(analyticsDir, "_last_sync.json"))
-	assert.True(os.IsNotExist(err),
-		"a build with unpersisted sync state must leave no stale state behind")
+	stateAfter, err := os.ReadFile(query.CacheStatePath(analyticsDir))
+	require.NoError(err)
+	assert.Equal(stateBefore, stateAfter)
+	assert.Equal(0, countCachedMessages(t, analyticsDir, 6),
+		"failed incremental publication must not expose its append")
 
 	_, err = buildCache(dbPath, analyticsDir, false)
 	require.NoError(err, "retry build")
@@ -598,10 +602,10 @@ func TestBuildCacheFailedStateWriteForcesFullRebuild(t *testing.T) {
 		"retry after a failed state write must not duplicate message rows")
 }
 
-// TestBuildCacheFailedStateWriteFullRebuildLeavesNoStaleState pins that a
-// full rebuild state write failure leaves no commit marker, so the published
-// replacement files cannot be mistaken for a committed cache.
-func TestBuildCacheFailedStateWriteFullRebuildLeavesNoStaleState(t *testing.T) {
+// TestBuildCacheFailedStateWriteFullRebuildRestoresCommittedCache pins that a
+// full replacement is rolled back when the replacement marker cannot be
+// prepared.
+func TestBuildCacheFailedStateWriteFullRebuildRestoresCommittedCache(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	tmpDir := setupTestSQLite(t)
@@ -610,6 +614,8 @@ func TestBuildCacheFailedStateWriteFullRebuildLeavesNoStaleState(t *testing.T) {
 
 	_, err := buildCache(dbPath, analyticsDir, false)
 	require.NoError(err, "initial build")
+	stateBefore, err := os.ReadFile(query.CacheStatePath(analyticsDir))
+	require.NoError(err)
 	insertSixthMessage(t, dbPath)
 
 	buildCacheWriteStateFile = func(string, []byte, os.FileMode) error {
@@ -620,9 +626,11 @@ func TestBuildCacheFailedStateWriteFullRebuildLeavesNoStaleState(t *testing.T) {
 	require.ErrorContains(err, "save cache sync state",
 		"full rebuild must fail when the sync state cannot be persisted")
 
-	_, err = os.Stat(filepath.Join(analyticsDir, "_last_sync.json"))
-	require.True(os.IsNotExist(err),
-		"a failed full rebuild must not leave the pre-rebuild sync state behind")
+	stateAfter, err := os.ReadFile(query.CacheStatePath(analyticsDir))
+	require.NoError(err)
+	assert.Equal(stateBefore, stateAfter)
+	assert.Equal(0, countCachedMessages(t, analyticsDir, 6),
+		"failed full publication must restore the prior message snapshot")
 
 	_, err = buildCache(dbPath, analyticsDir, false)
 	require.NoError(err, "retry build")

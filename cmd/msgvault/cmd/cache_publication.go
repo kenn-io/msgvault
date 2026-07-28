@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -14,7 +15,7 @@ import (
 	"go.kenn.io/msgvault/internal/query"
 )
 
-var buildCacheAfterStateInvalidationHook func() error
+var buildCacheBeforePublicationMovesHook func() error
 
 type cacheStaging struct {
 	root    string
@@ -117,7 +118,7 @@ func cachePublishPlanForMode(replaceAll bool) cachePublishPlan {
 		identityindex.DatasetRollups,
 		identityindex.DatasetDomainRollups,
 		identityindex.DatasetRelationships,
-		identityindex.DatasetRelationshipFuture,
+		identityindex.DatasetRelationshipDaily,
 	} {
 		plan.Replace[dataset] = true
 	}
@@ -194,6 +195,98 @@ func planCacheMoves(
 	return moves, nil
 }
 
+type appliedCacheMove struct {
+	move      cachePublishMove
+	backup    string
+	hadBackup bool
+}
+
+type cachePublicationTransaction struct {
+	backupRoot string
+	applied    []appliedCacheMove
+}
+
+func beginCachePublicationTransaction(staging *cacheStaging) (*cachePublicationTransaction, error) {
+	backupRoot := filepath.Join(staging.root, "publication-backup")
+	if err := os.MkdirAll(backupRoot, 0o755); err != nil {
+		return nil, fmt.Errorf("create cache publication backup: %w", err)
+	}
+	return &cachePublicationTransaction{backupRoot: backupRoot}, nil
+}
+
+func (t *cachePublicationTransaction) apply(moves []cachePublishMove) error {
+	for i, move := range moves {
+		applied := appliedCacheMove{move: move}
+		if move.replace {
+			applied.backup = filepath.Join(
+				t.backupRoot,
+				fmt.Sprintf("%04d-%s", i, filepath.Base(move.destination)),
+			)
+			if _, err := os.Lstat(move.destination); err == nil {
+				if err := os.Rename(move.destination, applied.backup); err != nil {
+					return fmt.Errorf(
+						"back up live cache dataset %s: %w",
+						filepath.Base(move.destination),
+						err,
+					)
+				}
+				applied.hadBackup = true
+			} else if !os.IsNotExist(err) {
+				return fmt.Errorf(
+					"inspect live cache dataset %s: %w",
+					filepath.Base(move.destination),
+					err,
+				)
+			}
+			t.applied = append(t.applied, applied)
+		}
+		if err := os.MkdirAll(filepath.Dir(move.destination), 0o755); err != nil {
+			return fmt.Errorf("create cache publication directory: %w", err)
+		}
+		if err := os.Rename(move.source, move.destination); err != nil {
+			return fmt.Errorf("publish cache path %s: %w", move.destination, err)
+		}
+		if !move.replace {
+			t.applied = append(t.applied, applied)
+		}
+	}
+	return nil
+}
+
+func (t *cachePublicationTransaction) rollback() error {
+	var rollbackErrs []error
+	for _, applied := range slices.Backward(t.applied) {
+		if applied.move.replace {
+			if err := os.RemoveAll(applied.move.destination); err != nil {
+				rollbackErrs = append(rollbackErrs, fmt.Errorf(
+					"remove uncommitted cache dataset %s: %w",
+					filepath.Base(applied.move.destination),
+					err,
+				))
+				continue
+			}
+			if applied.hadBackup {
+				if err := os.Rename(applied.backup, applied.move.destination); err != nil {
+					rollbackErrs = append(rollbackErrs, fmt.Errorf(
+						"restore cache dataset %s: %w",
+						filepath.Base(applied.move.destination),
+						err,
+					))
+				}
+			}
+			continue
+		}
+		if err := os.Remove(applied.move.destination); err != nil && !os.IsNotExist(err) {
+			rollbackErrs = append(rollbackErrs, fmt.Errorf(
+				"remove uncommitted cache append %s: %w",
+				applied.move.destination,
+				err,
+			))
+		}
+	}
+	return errors.Join(rollbackErrs...)
+}
+
 func publishCache(
 	staging *cacheStaging,
 	analyticsDir string,
@@ -204,44 +297,42 @@ func publishCache(
 	if err != nil {
 		return err
 	}
-	statePath := query.CacheStatePath(analyticsDir)
-	if err := invalidateSyncStateFile(statePath); err != nil {
+	transaction, err := beginCachePublicationTransaction(staging)
+	if err != nil {
 		return err
 	}
-	if buildCacheAfterStateInvalidationHook != nil {
-		if err := buildCacheAfterStateInvalidationHook(); err != nil {
+	fail := func(err error) error {
+		return errors.Join(err, transaction.rollback())
+	}
+	if buildCacheBeforePublicationMovesHook != nil {
+		if err := buildCacheBeforePublicationMovesHook(); err != nil {
 			return err
 		}
 	}
-	for _, move := range moves {
-		if move.replace {
-			if err := os.RemoveAll(move.destination); err != nil {
-				return fmt.Errorf("remove live cache dataset %s: %w", move.destination, err)
-			}
-		}
-		if err := os.MkdirAll(filepath.Dir(move.destination), 0o755); err != nil {
-			return fmt.Errorf("create cache publication directory: %w", err)
-		}
-		if err := os.Rename(move.source, move.destination); err != nil {
-			return fmt.Errorf("publish cache path %s: %w", move.destination, err)
-		}
+	if err := transaction.apply(moves); err != nil {
+		return fail(err)
 	}
 	fingerprint, err := query.CacheDatasetFingerprint(analyticsDir)
 	if err != nil {
-		return fmt.Errorf("fingerprint published analytics cache: %w", err)
+		return fail(fmt.Errorf("fingerprint published analytics cache: %w", err))
 	}
 	var state query.CacheSyncState
 	if err := json.Unmarshal(stateData, &state); err != nil {
-		return fmt.Errorf("decode cache sync state for publication: %w", err)
+		return fail(fmt.Errorf("decode cache sync state for publication: %w", err))
 	}
 	state.PublishedAt = time.Now().UTC()
 	state.DatasetFingerprint = fingerprint
 	stateData, err = json.Marshal(state)
 	if err != nil {
-		return fmt.Errorf("encode committed cache sync state: %w", err)
+		return fail(fmt.Errorf("encode committed cache sync state: %w", err))
 	}
-	if err := buildCacheWriteStateFile(statePath, stateData, 0o600); err != nil {
-		return fmt.Errorf("save cache sync state to %s: %w", statePath, err)
+	stagedStatePath := filepath.Join(staging.root, "_last_sync.json")
+	if err := buildCacheWriteStateFile(stagedStatePath, stateData, 0o600); err != nil {
+		return fail(fmt.Errorf("save cache sync state to staged marker: %w", err))
+	}
+	statePath := query.CacheStatePath(analyticsDir)
+	if err := os.Rename(stagedStatePath, statePath); err != nil {
+		return fail(fmt.Errorf("commit cache sync state to %s: %w", statePath, err))
 	}
 	return nil
 }

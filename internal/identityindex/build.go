@@ -44,7 +44,11 @@ type sqlExecutor interface {
 }
 
 // Build derives identity facts and indexes from schema-correct base Parquet.
-func Build(ctx context.Context, db sqlExecutor, opts BuildOptions) (BuildResult, error) {
+func Build(
+	ctx context.Context,
+	db sqlExecutor,
+	opts BuildOptions,
+) (result BuildResult, resultErr error) {
 	if db == nil {
 		return BuildResult{}, errors.New("build identity index: nil database")
 	}
@@ -56,6 +60,9 @@ func Build(ctx context.Context, db sqlExecutor, opts BuildOptions) (BuildResult,
 	}
 
 	b := builder{db: db, opts: opts}
+	defer func() {
+		resultErr = errors.Join(resultErr, b.dropLogicalActivity())
+	}()
 	if opts.Mode == ModeDerivedOnly {
 		for _, dataset := range baseIdentityDatasets {
 			if err := requireParquetDataset(opts.CommittedRoot, dataset); err != nil {
@@ -86,7 +93,7 @@ func Build(ctx context.Context, db sqlExecutor, opts BuildOptions) (BuildResult,
 		DatasetRollups,
 		DatasetDomainRollups,
 		DatasetRelationships,
-		DatasetRelationshipFuture,
+		DatasetRelationshipDaily,
 	}
 	if opts.Mode != ModeDerivedOnly {
 		outputs = append(outputs, DatasetEntryFacts, DatasetDirectEdges, DatasetConversationEdges)
@@ -120,30 +127,38 @@ func Build(ctx context.Context, db sqlExecutor, opts BuildOptions) (BuildResult,
 		return BuildResult{}, err
 	}
 	activityPaths := b.activityPaths()
-	if err := b.copyDataset(ctx, DatasetRollups, buildIdentityRollupsSQL(activityPaths)); err != nil {
+	if err := b.materializeLogicalActivity(ctx, activityPaths); err != nil {
 		return BuildResult{}, err
 	}
-	if err := b.copyDataset(ctx, DatasetDomainRollups, buildDomainRollupsSQL(activityPaths)); err != nil {
+	if err := b.copyDataset(ctx, DatasetRollups, buildIdentityRollupsSQL()); err != nil {
+		return BuildResult{}, err
+	}
+	if err := b.copyDataset(ctx, DatasetDomainRollups, buildDomainRollupsSQL()); err != nil {
+		return BuildResult{}, err
+	}
+	if err := b.copyDataset(
+		ctx,
+		DatasetRelationshipDaily,
+		buildRelationshipDailySQL(),
+	); err != nil {
 		return BuildResult{}, err
 	}
 	if err := b.copyDataset(
 		ctx,
 		DatasetRelationships,
-		buildRelationshipRollupsSQL(activityPaths, opts.AnchorDate),
+		buildRelationshipRollupsSQL(
+			opts.AnchorDate,
+			b.output(DatasetRelationshipDaily),
+		),
 	); err != nil {
 		return BuildResult{}, err
 	}
-	if err := b.copyDataset(
-		ctx,
-		DatasetRelationshipFuture,
-		buildRelationshipFutureSQL(activityPaths, opts.AnchorDate),
-	); err != nil {
-		return BuildResult{}, err
-	}
+	statsRelations := b.statsRelations()
 	if err := Validate(ctx, db, ValidationOptions{
 		OutputRoot:             opts.OutputRoot,
 		RequiredOutputDatasets: outputs,
 		Activity:               activityPaths,
+		Messages:               statsRelations.messages,
 		Participants:           b.base("participants"),
 		Conversations:          b.base("conversations"),
 		AnchorDate:             opts.AnchorDate,
@@ -157,7 +172,7 @@ func Build(ctx context.Context, db sqlExecutor, opts BuildOptions) (BuildResult,
 	}
 	var stats CacheStatsSummary
 	if opts.Mode != ModeDerivedOnly {
-		stats, err = collectCacheStats(ctx, db, b.statsRelations())
+		stats, err = collectCacheStats(ctx, db, statsRelations)
 		if err != nil {
 			return BuildResult{}, err
 		}
@@ -276,7 +291,15 @@ func (b builder) copyDataset(ctx context.Context, dataset, query string) error {
 	}
 	if (dataset == DatasetEntryFacts || dataset == DatasetDirectEdges) &&
 		!datasetContainsParquet(b.opts.OutputRoot, dataset) {
-		emptyOutput := filepath.Join(b.opts.OutputRoot, dataset, "empty.parquet")
+		emptyOutput := filepath.Join(
+			b.opts.OutputRoot,
+			dataset,
+			"occurred_year=0",
+			"empty.parquet",
+		)
+		if err := os.MkdirAll(filepath.Dir(emptyOutput), 0o755); err != nil {
+			return fmt.Errorf("create empty %s partition: %w", dataset, err)
+		}
 		emptyStatement := "COPY (SELECT * FROM (" + query + ") WHERE false) TO '" +
 			quoteSQLString(emptyOutput) + "' (FORMAT PARQUET, COMPRESSION 'zstd')"
 		if _, err := b.db.ExecContext(ctx, emptyStatement); err != nil {
@@ -285,6 +308,33 @@ func (b builder) copyDataset(ctx context.Context, dataset, query string) error {
 	}
 	if b.opts.Progress != nil {
 		b.opts.Progress(dataset, time.Since(start))
+	}
+	return nil
+}
+
+func (b builder) materializeLogicalActivity(
+	ctx context.Context,
+	paths ActivityPaths,
+) error {
+	start := time.Now()
+	statement := "CREATE TEMP TABLE " + logicalBuildRelation + " AS " +
+		buildLogicalActivityMaterializationSQL(paths)
+	if _, err := b.db.ExecContext(ctx, statement); err != nil {
+		return fmt.Errorf("materialize shared logical activity: %w", err)
+	}
+	if b.opts.Progress != nil {
+		b.opts.Progress("logical_activity", time.Since(start))
+	}
+	return nil
+}
+
+func (b builder) dropLogicalActivity() error {
+	_, err := b.db.ExecContext(
+		context.Background(),
+		"DROP TABLE IF EXISTS "+logicalBuildRelation,
+	)
+	if err != nil {
+		return fmt.Errorf("drop shared logical activity: %w", err)
 	}
 	return nil
 }

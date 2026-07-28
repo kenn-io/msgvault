@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"time"
 
@@ -318,7 +317,7 @@ func derivedCachePublishPlan(includeConversationParticipants bool) cachePublishP
 		identityindex.DatasetRollups,
 		identityindex.DatasetDomainRollups,
 		identityindex.DatasetRelationships,
-		identityindex.DatasetRelationshipFuture,
+		identityindex.DatasetRelationshipDaily,
 	} {
 		plan.Replace[dataset] = true
 	}
@@ -327,11 +326,6 @@ func derivedCachePublishPlan(includeConversationParticipants bool) cachePublishP
 		plan.Replace[identityindex.DatasetConversationEdges] = true
 	}
 	return plan
-}
-
-type derivedDatasetBackup struct {
-	live   string
-	backup string
 }
 
 func publishDerivedCache(
@@ -344,46 +338,21 @@ func publishDerivedCache(
 	if err != nil {
 		return err
 	}
-	backupRoot := filepath.Join(staging.root, "derived-backup")
-	if err := os.MkdirAll(backupRoot, 0o755); err != nil {
-		return fmt.Errorf("create derived cache backup: %w", err)
-	}
-
-	backups := make([]derivedDatasetBackup, 0, len(moves))
-	rollback := func() error {
-		var rollbackErrs []error
-		for _, v := range slices.Backward(backups) {
-			backup := v
-			if err := os.RemoveAll(backup.live); err != nil {
-				rollbackErrs = append(rollbackErrs, err)
-				continue
-			}
-			if err := os.Rename(backup.backup, backup.live); err != nil {
-				rollbackErrs = append(rollbackErrs, err)
-			}
-		}
-		return errors.Join(rollbackErrs...)
+	transaction, err := beginCachePublicationTransaction(staging)
+	if err != nil {
+		return err
 	}
 	fail := func(err error) error {
-		return errors.Join(err, rollback())
+		return errors.Join(err, transaction.rollback())
 	}
 
 	for _, move := range moves {
 		if !move.replace {
 			return fail(errors.New("derived cache publication cannot append datasets"))
 		}
-		backup := filepath.Join(backupRoot, filepath.Base(move.destination))
-		if err := os.Rename(move.destination, backup); err != nil {
-			return fail(fmt.Errorf("back up derived dataset %s: %w",
-				filepath.Base(move.destination), err))
-		}
-		backups = append(backups, derivedDatasetBackup{
-			live: move.destination, backup: backup,
-		})
-		if err := os.Rename(move.source, move.destination); err != nil {
-			return fail(fmt.Errorf("publish derived dataset %s: %w",
-				filepath.Base(move.destination), err))
-		}
+	}
+	if err := transaction.apply(moves); err != nil {
+		return fail(err)
 	}
 	if derivedPublishBeforeMarkerHook != nil {
 		if err := derivedPublishBeforeMarkerHook(); err != nil {

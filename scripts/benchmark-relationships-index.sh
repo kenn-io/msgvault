@@ -116,8 +116,10 @@ build_peak_rss_bytes="$(
   awk '/maximum resident set size/ { print $1; exit }' "$build_time_file"
 )"
 
+query_profile_file="$scratch_root/query-profile.json"
 if ! MSGVAULT_RELATIONSHIPS_SCALE_BENCH=1 \
   MSGVAULT_RELATIONSHIPS_BENCH_HOME="$benchmark_home" \
+  MSGVAULT_RELATIONSHIPS_BENCH_PROFILE="$query_profile_file" \
   go test -tags "fts5 sqlite_vec" ./internal/query \
     -run '^$' -bench '^BenchmarkRelationshipIndexCold$' -benchtime=1x \
     >"$scratch_root/query-benchmark.log" 2>&1; then
@@ -125,6 +127,19 @@ if ! MSGVAULT_RELATIONSHIPS_SCALE_BENCH=1 \
   result_emitted=1
   printf '%s\n' \
     '{"status":"error","error":"cold query benchmark failed"}'
+  exit 1
+fi
+if [[ ! -s "$query_profile_file" ]]; then
+  result_emitted=1
+  printf '%s\n' \
+    '{"status":"error","error":"cold query benchmark produced no profile evidence"}'
+  exit 1
+fi
+query_profile="$(tr -d '\r\n' <"$query_profile_file")"
+if [[ "$query_profile" != '{"version":1,"operations":['*'}' ]]; then
+  result_emitted=1
+  printf '%s\n' \
+    '{"status":"error","error":"cold query benchmark profile evidence is invalid"}'
   exit 1
 fi
 
@@ -228,6 +243,18 @@ domains_ms="$(
     '{"predicate":{},"sort":{"field":"activity_count","direction":"desc"},"limit":100}'
 )"
 domains_rss_kb="$(ps -p "$daemon_pid" -o rss= | awk '{ print $1 }')"
+readonly source_only_filters='[{"dimension":"source","values":["1"]}]'
+source_only_people_ms="$(
+  request_milliseconds source-only-people /api/v1/people/search \
+    "{\"predicate\":{\"filters\":$source_only_filters},\"sort\":{\"field\":\"activity_count\",\"direction\":\"desc\"},\"limit\":100}"
+)"
+source_only_people_rss_kb="$(ps -p "$daemon_pid" -o rss= | awk '{ print $1 }')"
+readonly date_window_filters='[{"dimension":"after","values":["2024-01-01T00:00:00Z"]},{"dimension":"before","values":["2025-01-01T00:00:00Z"]}]'
+date_window_relationships_ms="$(
+  request_milliseconds date-window-relationships /api/v1/relationships \
+    "{\"filters\":$date_window_filters,\"show_all\":true,\"limit\":100}"
+)"
+date_window_relationships_rss_kb="$(ps -p "$daemon_pid" -o rss= | awk '{ print $1 }')"
 readonly filtered_filters='[{"dimension":"source","values":["1"]},{"dimension":"participant","values":["101"]},{"dimension":"message_type","values":["email"]},{"dimension":"deletion","values":["active"]}]'
 filtered_people_ms="$(
   request_milliseconds filtered-people /api/v1/people/search \
@@ -241,6 +268,24 @@ filtered_relationships_ms="$(
 filtered_relationships_rss_kb="$(ps -p "$daemon_pid" -o rss= | awk '{ print $1 }')"
 
 sleep 5
+duckdb_memory_file="$scratch_root/duckdb-memory.json"
+if ! curl --fail --silent --show-error \
+  -H "Content-Type: application/json" \
+  --data '{"sql":"SELECT tag, memory_usage_bytes, temporary_storage_bytes FROM duckdb_memory() ORDER BY tag"}' \
+  --output "$duckdb_memory_file" \
+  "$base_url/api/v1/query"; then
+  result_emitted=1
+  printf '%s\n' \
+    '{"status":"error","error":"could not read settled DuckDB memory accounting"}'
+  exit 1
+fi
+duckdb_memory="$(tr -d '\r\n' <"$duckdb_memory_file")"
+if [[ "$duckdb_memory" != '{"columns":'* ]]; then
+  result_emitted=1
+  printf '%s\n' \
+    '{"status":"error","error":"settled DuckDB memory accounting is invalid"}'
+  exit 1
+fi
 settled_rss_kb="$(ps -p "$daemon_pid" -o rss= | awk '{ print $1 }')"
 if [[ ! "$settled_rss_kb" =~ ^[0-9]+$ ]]; then
   result_emitted=1
@@ -267,7 +312,11 @@ for latency in "$relationships_ms" "$people_ms" "$domains_ms"; do
     gate_failed=1
   fi
 done
-for latency in "$filtered_people_ms" "$filtered_relationships_ms"; do
+for latency in \
+  "$source_only_people_ms" \
+  "$date_window_relationships_ms" \
+  "$filtered_people_ms" \
+  "$filtered_relationships_ms"; do
   if float_exceeds "$latency" "$FILTERED_QUERY_MS_LIMIT"; then
     gate_failed=1
   fi
@@ -287,7 +336,7 @@ else
 fi
 result_emitted=1
 printf '%s\n' \
-  "{\"status\":\"$gate_status\",\"messages\":$SCALE_MESSAGES,\"participants\":$SCALE_PARTICIPANTS,\"participant_edges\":$SCALE_EDGES,\"build_seconds\":$build_seconds,\"build_peak_rss_bytes\":$build_peak_rss_bytes,\"relationships_ms\":$relationships_ms,\"relationships_rss_kb\":$relationships_rss_kb,\"people_ms\":$people_ms,\"people_rss_kb\":$people_rss_kb,\"domains_ms\":$domains_ms,\"domains_rss_kb\":$domains_rss_kb,\"filtered_people_ms\":$filtered_people_ms,\"filtered_people_rss_kb\":$filtered_people_rss_kb,\"filtered_relationships_ms\":$filtered_relationships_ms,\"filtered_relationships_rss_kb\":$filtered_relationships_rss_kb,\"baseline_rss_kb\":$baseline_rss_kb,\"peak_rss_kb\":$peak_rss_kb,\"peak_rss_delta_kb\":$peak_rss_delta_kb,\"settled_rss_kb\":$settled_rss_kb,\"settled_rss_delta_kb\":$settled_rss_delta_kb,\"peak_spill_bytes\":$peak_spill_bytes}"
+  "{\"status\":\"$gate_status\",\"messages\":$SCALE_MESSAGES,\"participants\":$SCALE_PARTICIPANTS,\"participant_edges\":$SCALE_EDGES,\"build_seconds\":$build_seconds,\"build_peak_rss_bytes\":$build_peak_rss_bytes,\"relationships_ms\":$relationships_ms,\"relationships_rss_kb\":$relationships_rss_kb,\"people_ms\":$people_ms,\"people_rss_kb\":$people_rss_kb,\"domains_ms\":$domains_ms,\"domains_rss_kb\":$domains_rss_kb,\"source_only_people_ms\":$source_only_people_ms,\"source_only_people_rss_kb\":$source_only_people_rss_kb,\"date_window_relationships_ms\":$date_window_relationships_ms,\"date_window_relationships_rss_kb\":$date_window_relationships_rss_kb,\"filtered_people_ms\":$filtered_people_ms,\"filtered_people_rss_kb\":$filtered_people_rss_kb,\"filtered_relationships_ms\":$filtered_relationships_ms,\"filtered_relationships_rss_kb\":$filtered_relationships_rss_kb,\"baseline_rss_kb\":$baseline_rss_kb,\"peak_rss_kb\":$peak_rss_kb,\"peak_rss_delta_kb\":$peak_rss_delta_kb,\"settled_rss_kb\":$settled_rss_kb,\"settled_rss_delta_kb\":$settled_rss_delta_kb,\"peak_spill_bytes\":$peak_spill_bytes,\"query_profile\":$query_profile,\"duckdb_memory\":$duckdb_memory}"
 
 if [[ "$gate_failed" -ne 0 ]]; then
   exit 1

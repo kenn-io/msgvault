@@ -245,6 +245,67 @@ func TestRelationshipsDoNotRequireLegacyAnalyticalViews(t *testing.T) {
 	}
 }
 
+func TestDateWindowRelationshipRollupFastPathMatchesLogicalReduction(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	builder := NewTestDataBuilder(t)
+	sourceID := builder.AddSource("owner@example.com")
+	ownerID := builder.AddParticipant("owner@example.com", "example.com", "Owner")
+	personID := builder.AddParticipant("person@example.com", "example.com", "Person")
+	builder.AddOwnerParticipant(sourceID, ownerID)
+	addSent := func(sentAt time.Time) {
+		messageID := builder.AddMessage(MessageOpt{
+			SourceID: sourceID,
+			IsFromMe: true,
+			SentAt:   sentAt,
+		})
+		builder.AddFrom(messageID, ownerID, "Owner")
+		builder.AddTo(messageID, personID, "Person")
+	}
+	addSent(time.Date(2026, 1, 4, 12, 0, 0, 0, time.UTC))
+	inWindow := time.Date(2026, 1, 6, 12, 34, 0, 0, time.UTC)
+	addSent(inWindow)
+	addSent(time.Date(2026, 1, 8, 0, 0, 0, 0, time.UTC))
+	engine := builder.BuildEngine()
+
+	after := time.Date(2026, 1, 5, 0, 0, 0, 0, time.UTC)
+	before := time.Date(2026, 1, 8, 0, 0, 0, 0, time.UTC)
+	request := RelationshipsRequest{
+		Context: Context{After: &after, Before: &before},
+		ShowAll: true,
+		Limit:   10,
+		Now:     time.Date(2026, 1, 10, 0, 0, 0, 0, time.UTC),
+	}
+	fast, err := engine.Relationships(context.Background(), request)
+	requirements.NoError(err)
+	engine.relationshipDateRollupFastPathDisabled = true
+	logical, err := engine.Relationships(context.Background(), request)
+	requirements.NoError(err)
+
+	assertions.Equal(logical, fast)
+	requirements.Len(fast.Rows, 1)
+	assertions.Equal(personID, fast.Rows[0].CanonicalID)
+	assertions.Equal(int64(1), fast.Rows[0].Signals.SentCount)
+	assertions.Equal(inWindow, fast.Rows[0].LastAt)
+}
+
+func TestRelationshipDateRollupFastPathRequiresUTCMidnightBounds(t *testing.T) {
+	assertions := assert.New(t)
+	midnight := time.Date(2026, 1, 5, 0, 0, 0, 0, time.UTC)
+	nonMidnight := midnight.Add(time.Second)
+
+	assertions.True(identityRequestIsDateWindowOnly(ExploreRequest{
+		Context: Context{After: &midnight},
+	}))
+	assertions.False(identityRequestIsDateWindowOnly(ExploreRequest{
+		Context: Context{After: &nonMidnight},
+	}))
+	assertions.False(identityRequestIsDateWindowOnly(ExploreRequest{
+		Context: Context{After: &midnight, SourceIDs: []int64{1}},
+	}))
+	assertions.False(identityRequestIsDateWindowOnly(ExploreRequest{}))
+}
+
 // TestRelationshipsExcludesClusteredOwners verifies that when the owner's own
 // participant identity is itself linked into a cluster with another
 // participant, the whole cluster is excluded from ranking (you never rank
@@ -820,6 +881,32 @@ func TestRelationshipsParticipantFilterExpandsClusters(t *testing.T) {
 	requirements.Len(byCanonical.Rows, 1)
 	assertions.Equal(int64(3), byCanonical.Rows[0].Signals.SentCount,
 		"a canonical-ID filter must count activity recorded under a linked alias")
+	engine.identityCandidateFastPathDisabled = true
+	logical, err := engine.Relationships(ctx, RelationshipsRequest{
+		Context: Context{ParticipantIDs: []int64{canonical}}, Now: now, Limit: 10,
+	})
+	requirements.NoError(err)
+	requirements.Len(logical.Rows, len(byCanonical.Rows))
+	assertions.Equal(logical.TotalCount, byCanonical.TotalCount)
+	assertions.Equal(logical.CacheRevision, byCanonical.CacheRevision)
+	assertions.Equal(logical.IdentityRevision, byCanonical.IdentityRevision)
+	for index := range logical.Rows {
+		want := logical.Rows[index]
+		got := byCanonical.Rows[index]
+		assertions.Equal(want.CanonicalID, got.CanonicalID)
+		assertions.Equal(want.DisplayLabel, got.DisplayLabel)
+		assertions.Equal(want.MemberIDs, got.MemberIDs)
+		assertions.Equal(want.Signals.SentCount, got.Signals.SentCount)
+		assertions.Equal(want.Signals.MeetingCount, got.Signals.MeetingCount)
+		assertions.Equal(want.Signals.Modalities, got.Signals.Modalities)
+		assertions.Equal(want.Signals.LastInteractionAt, got.Signals.LastInteractionAt)
+		assertions.Equal(want.LastAt, got.LastAt)
+		assertions.InDelta(want.Score, got.Score, 1e-12)
+		assertions.InDelta(want.Signals.SentToThem, got.Signals.SentToThem, 1e-12)
+		assertions.InDelta(want.Signals.ReceivedFromThem, got.Signals.ReceivedFromThem, 1e-12)
+		assertions.InDelta(want.Signals.MeetingsTogether, got.Signals.MeetingsTogether, 1e-12)
+	}
+	engine.identityCandidateFastPathDisabled = false
 
 	byAlias, err := engine.Relationships(ctx, RelationshipsRequest{
 		Context: Context{ParticipantIDs: []int64{alias}}, Now: now, Limit: 10,

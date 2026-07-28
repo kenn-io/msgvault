@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/identityindex"
 )
@@ -19,10 +20,87 @@ type relationshipBenchmarkProfile struct {
 	PeakSpillBytes        int64 `json:"system_peak_temp_dir_size"`
 }
 
+type relationshipBenchmarkOperationProfile struct {
+	Name         string `json:"name"`
+	RowsScanned  int64  `json:"rows_scanned"`
+	SpillBytes   int64  `json:"spill_bytes"`
+	RowsReturned int64  `json:"rows_returned"`
+}
+
+type relationshipBenchmarkEvidence struct {
+	Version    int                                     `json:"version"`
+	Operations []relationshipBenchmarkOperationProfile `json:"operations"`
+}
+
+const relationshipBenchmarkEvidencePathEnv = "MSGVAULT_RELATIONSHIPS_BENCH_PROFILE"
+
 type relationshipColdOperation func(
 	context.Context,
 	*DuckDBEngine,
 ) (int64, error)
+
+func TestWriteRelationshipBenchmarkEvidence(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	path := filepath.Join(t.TempDir(), "profile.json")
+	evidence := relationshipBenchmarkEvidence{
+		Version: 1,
+		Operations: []relationshipBenchmarkOperationProfile{
+			{
+				Name:         "source-only-people",
+				RowsScanned:  2_500_000,
+				SpillBytes:   4096,
+				RowsReturned: 100,
+			},
+			{
+				Name:         "date-window-relationships",
+				RowsScanned:  250_000,
+				SpillBytes:   0,
+				RowsReturned: 100,
+			},
+		},
+	}
+
+	requirements.NoError(writeRelationshipBenchmarkEvidence(path, evidence))
+	data, err := os.ReadFile(path)
+	requirements.NoError(err)
+	var decoded relationshipBenchmarkEvidence
+	requirements.NoError(json.Unmarshal(data, &decoded))
+	assertions.Equal(evidence, decoded)
+	assertions.NotContains(string(data), "\n",
+		"the harness embeds this artifact directly in its one-line JSON result")
+}
+
+func TestRelationshipBenchmarkDirectoryBytesExcludeProfileArtifact(t *testing.T) {
+	requirements := require.New(t)
+	root := t.TempDir()
+	requirements.NoError(os.WriteFile(
+		filepath.Join(root, "profile.json"),
+		make([]byte, 100),
+		0o600,
+	))
+	requirements.NoError(os.WriteFile(
+		filepath.Join(root, "duckdb-spill.tmp"),
+		make([]byte, 200),
+		0o600,
+	))
+
+	assert.Equal(t, int64(200), relationshipBenchmarkDirectoryBytes(t, root))
+}
+
+func writeRelationshipBenchmarkEvidence(
+	path string,
+	evidence relationshipBenchmarkEvidence,
+) error {
+	data, err := json.Marshal(evidence)
+	if err != nil {
+		return fmt.Errorf("encode relationship benchmark evidence: %w", err)
+	}
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		return fmt.Errorf("write relationship benchmark evidence: %w", err)
+	}
+	return nil
+}
 
 // BenchmarkRelationshipIndexCold measures the production cache created by
 // scripts/benchmark-relationships-index.sh. A fresh engine owns every timed
@@ -31,6 +109,7 @@ type relationshipColdOperation func(
 // is 2.5 million messages and six million direct participant edges.
 func BenchmarkRelationshipIndexCold(b *testing.B) {
 	requirementsForTest := require.New(b)
+	evidence := relationshipBenchmarkEvidence{Version: 1}
 	home := requireRelationshipScaleBenchmarkHome(b)
 	analyticsDir := filepath.Join(home, "analytics")
 	state, err := ReadCacheSyncState(analyticsDir)
@@ -54,7 +133,13 @@ func BenchmarkRelationshipIndexCold(b *testing.B) {
 	requirementsForTest.Equal(relationshipScaleParticipants, participants)
 	requirementsForTest.NoError(validationEngine.Close())
 
-	benchmarkRelationshipColdOperation(b, home, "relationships",
+	addOperation := func(name string, operation relationshipColdOperation) {
+		evidence.Operations = append(
+			evidence.Operations,
+			benchmarkRelationshipColdOperation(b, home, name, operation),
+		)
+	}
+	addOperation("relationships",
 		func(ctx context.Context, engine *DuckDBEngine) (int64, error) {
 			response, queryErr := engine.Relationships(ctx, RelationshipsRequest{
 				Now:   time.Date(2026, 7, 27, 0, 0, 0, 0, time.UTC),
@@ -65,7 +150,7 @@ func BenchmarkRelationshipIndexCold(b *testing.B) {
 			}
 			return int64(len(response.Rows)), nil
 		})
-	benchmarkRelationshipColdOperation(b, home, "people-search",
+	addOperation("people-search",
 		func(ctx context.Context, engine *DuckDBEngine) (int64, error) {
 			response, queryErr := engine.SearchPeople(ctx, PersonSearchRequest{
 				Sort: SortSpec{Field: "activity_count", Direction: "desc"},
@@ -76,7 +161,7 @@ func BenchmarkRelationshipIndexCold(b *testing.B) {
 			}
 			return int64(len(response.Rows)), nil
 		})
-	benchmarkRelationshipColdOperation(b, home, "domain-search",
+	addOperation("domain-search",
 		func(ctx context.Context, engine *DuckDBEngine) (int64, error) {
 			response, queryErr := engine.SearchDomains(ctx, DomainSearchRequest{
 				Sort: SortSpec{Field: "activity_count", Direction: "desc"},
@@ -87,7 +172,34 @@ func BenchmarkRelationshipIndexCold(b *testing.B) {
 			}
 			return int64(len(response.Rows)), nil
 		})
-	benchmarkRelationshipColdOperation(b, home, "filtered-people",
+	addOperation("source-only-people",
+		func(ctx context.Context, engine *DuckDBEngine) (int64, error) {
+			response, queryErr := engine.SearchPeople(ctx, PersonSearchRequest{
+				Explore: ExploreRequest{Context: Context{SourceIDs: []int64{1}}},
+				Sort:    SortSpec{Field: "activity_count", Direction: "desc"},
+				Page:    PageSpec{Limit: 100},
+			})
+			if queryErr != nil {
+				return 0, queryErr
+			}
+			return int64(len(response.Rows)), nil
+		})
+	after := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	before := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	addOperation("date-window-relationships",
+		func(ctx context.Context, engine *DuckDBEngine) (int64, error) {
+			response, queryErr := engine.Relationships(ctx, RelationshipsRequest{
+				Context: Context{After: &after, Before: &before},
+				Now:     time.Date(2026, 7, 27, 0, 0, 0, 0, time.UTC),
+				ShowAll: true,
+				Limit:   100,
+			})
+			if queryErr != nil {
+				return 0, queryErr
+			}
+			return int64(len(response.Rows)), nil
+		})
+	addOperation("filtered-people",
 		func(ctx context.Context, engine *DuckDBEngine) (int64, error) {
 			response, queryErr := engine.SearchPeople(ctx, PersonSearchRequest{
 				Explore: ExploreRequest{Context: Context{
@@ -104,7 +216,7 @@ func BenchmarkRelationshipIndexCold(b *testing.B) {
 			}
 			return int64(len(response.Rows)), nil
 		})
-	benchmarkRelationshipColdOperation(b, home, "filtered-relationships",
+	addOperation("filtered-relationships",
 		func(ctx context.Context, engine *DuckDBEngine) (int64, error) {
 			response, queryErr := engine.Relationships(ctx, RelationshipsRequest{
 				Context: Context{
@@ -122,14 +234,20 @@ func BenchmarkRelationshipIndexCold(b *testing.B) {
 			}
 			return int64(len(response.Rows)), nil
 		})
+	if evidencePath := os.Getenv(relationshipBenchmarkEvidencePathEnv); evidencePath != "" {
+		requirementsForTest.NoError(
+			writeRelationshipBenchmarkEvidence(evidencePath, evidence),
+		)
+	}
 }
 
 func benchmarkRelationshipColdOperation(
 	b *testing.B,
 	home, name string,
 	operation relationshipColdOperation,
-) {
+) relationshipBenchmarkOperationProfile {
 	b.Helper()
+	result := relationshipBenchmarkOperationProfile{Name: name}
 	b.Run(name, func(b *testing.B) {
 		requirementsForTest := require.New(b)
 		var rowsScanned, spillBytes, returnedRows int64
@@ -142,7 +260,7 @@ func benchmarkRelationshipColdOperation(
 				DuckDBOptions{DisableSQLiteScanner: true},
 			)
 			requirementsForTest.NoError(err)
-			profilePath := filepath.Join(engine.tempDirectory, "profile.json")
+			profilePath := filepath.Join(b.TempDir(), "profile.json")
 			quotedProfilePath := strings.ReplaceAll(profilePath, "'", "''")
 			_, err = engine.db.ExecContext(
 				context.Background(),
@@ -179,7 +297,11 @@ func benchmarkRelationshipColdOperation(
 		b.ReportMetric(float64(rowsScanned)/float64(b.N), "rows-scanned/op")
 		b.ReportMetric(float64(spillBytes)/float64(b.N), "spill-bytes/op")
 		b.ReportMetric(float64(returnedRows)/float64(b.N), "rows-returned/op")
+		result.RowsScanned = rowsScanned / int64(b.N)
+		result.SpillBytes = spillBytes / int64(b.N)
+		result.RowsReturned = returnedRows / int64(b.N)
 	})
+	return result
 }
 
 func relationshipBenchmarkDirectoryBytes(tb testing.TB, root string) int64 {
@@ -194,6 +316,9 @@ func relationshipBenchmarkDirectoryBytes(tb testing.TB, root string) int64 {
 			return fmt.Errorf("walk relationship benchmark directory: %w", err)
 		}
 		if entry.IsDir() {
+			return nil
+		}
+		if entry.Name() == "profile.json" {
 			return nil
 		}
 		info, err := entry.Info()

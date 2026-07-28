@@ -25,14 +25,28 @@ func identityRequestIsUnfiltered(request ExploreRequest) bool {
 		request.Search.CandidateMessageIDs == nil
 }
 
+func identityRequestIsSourceOnly(request ExploreRequest) bool {
+	if len(request.Context.SourceIDs) == 0 {
+		return false
+	}
+	request.Context.SourceIDs = nil
+	return identityRequestIsUnfiltered(request)
+}
+
 func (e *DuckDBEngine) identityDatasetPath(dataset string) string {
 	return e.parquetPath(dataset)
 }
 
 func (e *DuckDBEngine) buildIdentityLogicalSQL(
+	ctx context.Context,
 	request ExploreRequest,
 	identityCandidateSQL string,
-) (string, []any) {
+) (string, []any, error) {
+	var err error
+	request, err = e.narrowIdentityFactCandidates(ctx, request)
+	if err != nil {
+		return "", nil, err
+	}
 	conditions, args := buildIdentityFactConditions(request)
 	paths := identityindex.ActivityPaths{
 		Facts:             e.identityDatasetPath(identityindex.DatasetEntryFacts),
@@ -46,7 +60,60 @@ func (e *DuckDBEngine) buildIdentityLogicalSQL(
 	if strings.TrimSpace(identityCandidateSQL) != "" {
 		sql += ", identity_candidates AS (" + identityCandidateSQL + ")"
 	}
-	return e.resolveIdentityPathPlaceholders(sql), args
+	return e.resolveIdentityPathPlaceholders(sql), args, nil
+}
+
+func identityRequestHasEdgeFilters(request ExploreRequest) bool {
+	return len(request.Context.ParticipantIDs) > 0 ||
+		len(request.Context.Domains) > 0 ||
+		len(request.Context.AdditionalParticipantGroups) > 0 ||
+		len(request.Context.AdditionalDomainGroups) > 0
+}
+
+func (e *DuckDBEngine) narrowIdentityFactCandidates(
+	ctx context.Context,
+	request ExploreRequest,
+) (ExploreRequest, error) {
+	if e.identityCandidateFastPathDisabled ||
+		!identityRequestHasEdgeFilters(request) {
+		return request, nil
+	}
+	conditions, args := buildIdentityFactConditions(request)
+	facts := quoteIdentitySQLPath(e.identityDatasetPath(identityindex.DatasetEntryFacts))
+	queryText := `
+SELECT f.message_id
+FROM read_parquet('` + facts + `', hive_partitioning=true, union_by_name=true) f
+WHERE ` + conditions + `
+LIMIT ?`
+	args = append(args, MaxExploreCandidateMessageIDs+1)
+	queryText = e.resolveIdentityPathPlaceholders(queryText)
+
+	rows, err := e.db.QueryContext(ctx, queryText, args...)
+	if err != nil {
+		return request, fmt.Errorf("narrow identity fact candidates: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	messageIDs := make([]int64, 0)
+	for rows.Next() {
+		var messageID int64
+		if err := rows.Scan(&messageID); err != nil {
+			return request, fmt.Errorf("scan identity fact candidate: %w", err)
+		}
+		messageIDs = append(messageIDs, messageID)
+	}
+	if err := rows.Err(); err != nil {
+		return request, fmt.Errorf("iterate identity fact candidates: %w", err)
+	}
+	if len(messageIDs) > MaxExploreCandidateMessageIDs {
+		return request, nil
+	}
+
+	request.Context.ParticipantIDs = nil
+	request.Context.Domains = nil
+	request.Context.AdditionalParticipantGroups = nil
+	request.Context.AdditionalDomainGroups = nil
+	request.Search.CandidateMessageIDs = messageIDs
+	return request, nil
 }
 
 func buildIdentityFactConditions(request ExploreRequest) (string, []any) {
@@ -167,7 +234,7 @@ func (e *DuckDBEngine) resolveIdentityPathPlaceholders(sql string) string {
 		identityindex.DatasetConversationEdges,
 		identityindex.DatasetDirectory,
 		identityindex.DatasetRelationships,
-		identityindex.DatasetRelationshipFuture,
+		identityindex.DatasetRelationshipDaily,
 	} {
 		path := strings.ReplaceAll(e.identityDatasetPath(dataset), "'", "''")
 		sql = strings.ReplaceAll(sql, quoteIdentityPathPlaceholder(dataset), path)
@@ -223,8 +290,27 @@ func (e *DuckDBEngine) searchPeople(
 	if identityRequestIsUnfiltered(request.Explore) {
 		queryText = e.unfilteredPeopleSQL(candidates, order, widenAcrossMembers)
 		args = append(args, candidateArgs...)
+	} else if identityRequestIsSourceOnly(request.Explore) &&
+		!e.sourceRollupFastPathDisabled {
+		queryText = e.sourceFilteredPeopleSQL(
+			candidates,
+			order,
+			widenAcrossMembers,
+			len(request.Explore.Context.SourceIDs),
+		)
+		args = append(args, candidateArgs...)
+		for _, sourceID := range request.Explore.Context.SourceIDs {
+			args = append(args, sourceID)
+		}
 	} else {
-		logicalSQL, logicalArgs := e.buildIdentityLogicalSQL(request.Explore, candidates)
+		logicalSQL, logicalArgs, logicalErr := e.buildIdentityLogicalSQL(
+			ctx,
+			request.Explore,
+			candidates,
+		)
+		if logicalErr != nil {
+			return nil, logicalErr
+		}
 		queryText = e.filteredPeopleSQL(logicalSQL, order, widenAcrossMembers)
 		args = append(args, logicalArgs...)
 		args = append(args, candidateArgs...)
@@ -453,6 +539,67 @@ person_totals AS (
 ` + e.peoplePageSelectSQL()
 }
 
+func (e *DuckDBEngine) sourceFilteredPeopleSQL(
+	candidates, order string,
+	widenAcrossMembers bool,
+	sourceCount int,
+) string {
+	rollups := quoteIdentitySQLPath(
+		e.identityDatasetPath(identityindex.DatasetRollups),
+	)
+	peopleJoin := "r.canonical_id = c.canonical_id"
+	if widenAcrossMembers {
+		peopleJoin = "list_contains(c.member_ids, r.canonical_id)"
+	}
+	placeholders := strings.TrimSuffix(strings.Repeat("?,", sourceCount), ",")
+	return `WITH identity_candidates AS (` + candidates + `
+), selected_source_rollups AS (
+	SELECT c.canonical_id,
+	       item.source_type,
+	       item.activity_count,
+	       item.file_count,
+	       item.first_at,
+	       item.last_at
+	FROM identity_candidates c
+	JOIN read_parquet('` + rollups + `') r
+	  ON ` + peopleJoin + `
+	CROSS JOIN unnest(r.source_rollups) AS source_rollup(item)
+	WHERE item.source_id IN (` + placeholders + `)
+), person_totals AS (
+	SELECT canonical_id,
+	       sum(activity_count)::BIGINT AS activity_count,
+	       sum(file_count)::BIGINT AS file_count,
+	       min(first_at)::TIMESTAMP AS first_at,
+	       max(last_at)::TIMESTAMP AS last_at
+	FROM selected_source_rollups
+	GROUP BY canonical_id
+), person_source_counts AS (
+	SELECT canonical_id, source_type,
+	       sum(activity_count)::BIGINT AS source_count
+	FROM selected_source_rollups
+	GROUP BY canonical_id, source_type
+), person_sources AS (
+	SELECT canonical_id,
+	       list(struct_pack(source_type := source_type, count := source_count)
+	            ORDER BY source_type) AS source_counts
+	FROM person_source_counts
+	GROUP BY canonical_id
+), population AS (
+	SELECT c.*, t.activity_count, t.file_count, s.source_counts,
+	       t.first_at, t.last_at
+	FROM identity_candidates c
+	JOIN person_totals t USING (canonical_id)
+	JOIN person_sources s USING (canonical_id)
+), counted AS (
+	SELECT *, count(*) OVER ()::BIGINT AS total_count
+	FROM population
+), paged AS (
+	SELECT *, row_number() OVER (ORDER BY ` + order + `) AS page_rank
+	FROM counted ORDER BY ` + order + ` LIMIT ? OFFSET ?
+)
+` + e.peoplePageSelectSQL()
+}
+
 func (e *DuckDBEngine) peoplePageSelectSQL() string {
 	identifiers := quoteIdentitySQLPath(
 		e.identityDatasetPath(datasetParticipantIdentifiers),
@@ -531,7 +678,14 @@ func (e *DuckDBEngine) searchDomains(
 		queryText = e.unfilteredDomainsSQL(domainWhere, order)
 		args = append(args, domainArgs...)
 	} else {
-		logicalSQL, logicalArgs := e.buildIdentityLogicalSQL(request.Explore, "")
+		logicalSQL, logicalArgs, logicalErr := e.buildIdentityLogicalSQL(
+			ctx,
+			request.Explore,
+			"",
+		)
+		if logicalErr != nil {
+			return nil, logicalErr
+		}
 		queryText = filteredDomainsSQL(logicalSQL, domainWhere, order)
 		args = append(args, logicalArgs...)
 		args = append(args, domainArgs...)

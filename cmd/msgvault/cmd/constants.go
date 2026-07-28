@@ -37,7 +37,7 @@ const (
 	tableIdentityRollups           = identityindex.DatasetRollups
 	tableDomainRollups             = identityindex.DatasetDomainRollups
 	tableRelationshipRollups       = identityindex.DatasetRelationships
-	tableRelationshipFuture        = identityindex.DatasetRelationshipFuture
+	tableRelationshipFuture        = identityindex.DatasetRelationshipDaily
 )
 
 // flagJSON is the name of the boolean --json output flag. It is kept distinct

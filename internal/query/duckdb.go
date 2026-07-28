@@ -106,6 +106,12 @@ type DuckDBEngine struct {
 	// depend on the wide base or analytical_entries views. Production leaves
 	// this false because timelines, Explore, and files still use those views.
 	disableLegacyAnalyticalViews bool
+	// sourceRollupFastPathDisabled is a test-only equivalence hook.
+	sourceRollupFastPathDisabled bool
+	// relationshipDateRollupFastPathDisabled is a test-only equivalence hook.
+	relationshipDateRollupFastPathDisabled bool
+	// identityCandidateFastPathDisabled is a test-only equivalence hook.
+	identityCandidateFastPathDisabled bool
 }
 
 // DuckDBOptions configures optional DuckDB engine behavior.
@@ -2526,7 +2532,7 @@ var RequiredParquetDirs = []string{
 	identityindex.DatasetRollups,
 	identityindex.DatasetDomainRollups,
 	identityindex.DatasetRelationships,
-	identityindex.DatasetRelationshipFuture,
+	identityindex.DatasetRelationshipDaily,
 }
 
 // SearchFast searches message metadata in Parquet files (no body text).

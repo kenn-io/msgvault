@@ -9,6 +9,7 @@ import (
 	"math/bits"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"go.kenn.io/msgvault/internal/identityindex"
@@ -196,12 +197,21 @@ func (e *DuckDBEngine) queryRelationshipCandidates(
 ) ([]RelationshipRow, int64, error) {
 	var queryText string
 	var queryArgs []any
+	var err error
 	unfiltered := identityRequestIsUnfiltered(explore)
-	if unfiltered {
+	switch {
+	case unfiltered:
 		queryText, queryArgs = buildRelationshipRollupSQL(now)
 		queryText = e.resolveIdentityPathPlaceholders(queryText)
-	} else {
-		queryText, queryArgs = e.buildFilteredRelationshipsSQL(explore, now)
+	case identityRequestIsDateWindowOnly(explore) &&
+		!e.relationshipDateRollupFastPathDisabled:
+		queryText, queryArgs = buildDateWindowRelationshipRollupSQL(explore, now)
+		queryText = e.resolveIdentityPathPlaceholders(queryText)
+	default:
+		queryText, queryArgs, err = e.buildFilteredRelationshipsSQL(ctx, explore, now)
+		if err != nil {
+			return nil, 0, err
+		}
 	}
 
 	rows, err := e.db.QueryContext(ctx, queryText, queryArgs...)
@@ -333,25 +343,27 @@ func modalitiesFromMask(mask uint8) int {
 
 func buildRelationshipRollupSQL(now time.Time) (string, []any) {
 	rollups := quoteIdentityPathPlaceholder(identityindex.DatasetRelationships)
-	future := quoteIdentityPathPlaceholder(identityindex.DatasetRelationshipFuture)
+	daily := quoteIdentityPathPlaceholder(identityindex.DatasetRelationshipDaily)
 	directory := quoteIdentityPathPlaceholder(identityindex.DatasetDirectory)
 	queryText := `
 WITH request_clock AS (
 	SELECT ?::DOUBLE AS decay_rate, CAST(? AS DATE) AS request_date
-), future_signals AS (
-	SELECT f.canonical_id,
-	       sum(f.sent_units * exp(-c.decay_rate * greatest(
-	           0, date_diff('day', f.event_date, c.request_date))))::DOUBLE
+), post_anchor_signals AS (
+	SELECT d.canonical_id,
+	       sum(d.sent_units * exp(-c.decay_rate * greatest(
+	           0, date_diff('day', d.event_date, c.request_date))))::DOUBLE
 	           AS sent_decayed,
-	       sum(f.received_units * exp(-c.decay_rate * greatest(
-	           0, date_diff('day', f.event_date, c.request_date))))::DOUBLE
+	       sum(d.received_units * exp(-c.decay_rate * greatest(
+	           0, date_diff('day', d.event_date, c.request_date))))::DOUBLE
 	           AS received_decayed,
-	       sum(f.meeting_units * exp(-c.decay_rate * greatest(
-	           0, date_diff('day', f.event_date, c.request_date))))::DOUBLE
+	       sum(d.meeting_units * exp(-c.decay_rate * greatest(
+	           0, date_diff('day', d.event_date, c.request_date))))::DOUBLE
 	           AS meetings_decayed
-	FROM read_parquet('` + future + `') f
+	FROM read_parquet('` + daily + `') d
+	JOIN read_parquet('` + rollups + `') r USING (canonical_id)
 	CROSS JOIN request_clock c
-	GROUP BY f.canonical_id
+	WHERE d.event_date > r.anchor_date
+	GROUP BY d.canonical_id
 ), indexed_relationships AS (
 	SELECT r.canonical_id,
 	       r.anchor_date,
@@ -370,7 +382,7 @@ WITH request_clock AS (
 	       r.last_at
 	FROM read_parquet('` + rollups + `') r
 	CROSS JOIN request_clock c
-	LEFT JOIN future_signals f USING (canonical_id)
+	LEFT JOIN post_anchor_signals f USING (canonical_id)
 )
 SELECT r.canonical_id,
        d.display_label,
@@ -392,11 +404,97 @@ WHERE NOT d.is_owner`
 	}
 }
 
-func (e *DuckDBEngine) buildFilteredRelationshipsSQL(
+func identityRequestIsDateWindowOnly(request ExploreRequest) bool {
+	if request.Context.After == nil && request.Context.Before == nil {
+		return false
+	}
+	for _, bound := range []*time.Time{request.Context.After, request.Context.Before} {
+		if bound == nil {
+			continue
+		}
+		utc := bound.UTC()
+		if utc.Hour() != 0 || utc.Minute() != 0 || utc.Second() != 0 ||
+			utc.Nanosecond() != 0 {
+			return false
+		}
+	}
+	request.Context.After = nil
+	request.Context.Before = nil
+	return identityRequestIsUnfiltered(request)
+}
+
+func buildDateWindowRelationshipRollupSQL(
 	explore ExploreRequest,
 	now time.Time,
 ) (string, []any) {
-	logicalSQL, args := e.buildIdentityLogicalSQL(explore, "")
+	daily := quoteIdentityPathPlaceholder(identityindex.DatasetRelationshipDaily)
+	directory := quoteIdentityPathPlaceholder(identityindex.DatasetDirectory)
+	conditions := make([]string, 0, 2)
+	args := []any{
+		identityindex.RelationshipDecayRate,
+		duckDBDateParam(now),
+	}
+	if explore.Context.After != nil {
+		conditions = append(conditions, "d.event_date >= CAST(? AS DATE)")
+		args = append(args, duckDBDateParam(*explore.Context.After))
+	}
+	if explore.Context.Before != nil {
+		conditions = append(conditions, "d.event_date < CAST(? AS DATE)")
+		args = append(args, duckDBDateParam(*explore.Context.Before))
+	}
+	queryText := `
+WITH request_clock AS (
+	SELECT ?::DOUBLE AS decay_rate, CAST(? AS DATE) AS request_date
+), selected_daily AS (
+	SELECT d.*
+	FROM read_parquet('` + daily + `') d
+	WHERE ` + strings.Join(conditions, " AND ") + `
+), aggregated AS (
+	SELECT s.canonical_id,
+	       sum(s.sent_units * exp(-c.decay_rate * greatest(
+	           0, date_diff('day', s.event_date, c.request_date))))::DOUBLE
+	           AS sent_decayed,
+	       sum(s.sent_units)::BIGINT AS sent_count,
+	       sum(s.received_units * exp(-c.decay_rate * greatest(
+	           0, date_diff('day', s.event_date, c.request_date))))::DOUBLE
+	           AS received_decayed,
+	       sum(s.meeting_units * exp(-c.decay_rate * greatest(
+	           0, date_diff('day', s.event_date, c.request_date))))::DOUBLE
+	           AS meetings_decayed,
+	       sum(s.meeting_units)::BIGINT AS meeting_count,
+	       bit_or(s.modality_mask)::UTINYINT AS modality_mask,
+	       max(s.last_at)::TIMESTAMP AS last_at
+	FROM selected_daily s
+	CROSS JOIN request_clock c
+	GROUP BY s.canonical_id
+)
+SELECT a.canonical_id,
+       d.display_label,
+       CAST(to_json(d.member_ids) AS VARCHAR) AS member_ids,
+       c.request_date AS anchor_date,
+       a.sent_decayed,
+       a.sent_count,
+       a.received_decayed,
+       a.meetings_decayed,
+       a.meeting_count,
+       a.modality_mask,
+       a.last_at
+FROM aggregated a
+CROSS JOIN request_clock c
+JOIN read_parquet('` + directory + `') d USING (canonical_id)
+WHERE NOT d.is_owner`
+	return queryText, args
+}
+
+func (e *DuckDBEngine) buildFilteredRelationshipsSQL(
+	ctx context.Context,
+	explore ExploreRequest,
+	now time.Time,
+) (string, []any, error) {
+	logicalSQL, args, err := e.buildIdentityLogicalSQL(ctx, explore, "")
+	if err != nil {
+		return "", nil, err
+	}
 	directory := quoteIdentitySQLPath(
 		e.identityDatasetPath(identityindex.DatasetDirectory),
 	)
@@ -456,7 +554,7 @@ JOIN read_parquet('` + directory + `') d USING (canonical_id)`
 		duckDBDateParam(now),
 		duckDBDateParam(now),
 	)
-	return queryText, args
+	return queryText, args, nil
 }
 
 func validateRelationshipsRequest(request RelationshipsRequest) error {

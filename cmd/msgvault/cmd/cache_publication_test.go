@@ -104,7 +104,7 @@ func TestIncrementalPublicationReplacesDimensionsAndPrefixesAppends(t *testing.T
 		identityindex.DatasetRollups,
 		identityindex.DatasetDomainRollups,
 		identityindex.DatasetRelationships,
-		identityindex.DatasetRelationshipFuture,
+		identityindex.DatasetRelationshipDaily,
 	} {
 		assert.False(publicationFileExists(analyticsDir, dataset, "old.parquet"), dataset)
 		assert.True(publicationFileExists(analyticsDir, dataset, "data.parquet"), dataset)
@@ -147,9 +147,8 @@ func TestCachePublicationCollisionFailsBeforeInvalidation(t *testing.T) {
 	require.Equal(oldState, gotState)
 }
 
-func TestCachePublicationFailureAfterInvalidationLeavesInterruptedState(t *testing.T) {
+func TestCachePublicationFailureBeforeMovesPreservesCommittedCache(t *testing.T) {
 	require := require.New(t)
-	assert := assert.New(t)
 	parent := t.TempDir()
 	analyticsDir := filepath.Join(parent, "analytics")
 	writePublicationTree(t, analyticsDir, "old.parquet")
@@ -161,15 +160,92 @@ func TestCachePublicationFailureAfterInvalidationLeavesInterruptedState(t *testi
 	t.Cleanup(func() { _ = staging.cleanup() })
 	writePublicationTree(t, staging.root, "new.parquet")
 	publishErr := errors.New("publish interrupted")
-	buildCacheAfterStateInvalidationHook = func() error { return publishErr }
-	t.Cleanup(func() { buildCacheAfterStateInvalidationHook = nil })
+	buildCacheBeforePublicationMovesHook = func() error { return publishErr }
+	t.Cleanup(func() { buildCacheBeforePublicationMovesHook = nil })
+	before := snapshotCacheBytes(t, analyticsDir)
 	err = publishCache(staging, analyticsDir, cachePublishPlanForMode(true),
 		[]byte(`{"last_sync_at":"2026-07-15T11:00:00Z"}`))
 	require.ErrorIs(err, publishErr)
+	assert.Equal(t, before, snapshotCacheBytes(t, analyticsDir))
+}
 
-	_, err = os.Stat(query.CacheStatePath(analyticsDir))
-	require.ErrorIs(err, os.ErrNotExist)
-	assert.True(publicationFileExists(analyticsDir, "sources", "old.parquet"))
+func TestCachePublicationRollsBackFullReplacementAfterEarlierMoves(t *testing.T) {
+	requirements := require.New(t)
+	parent := t.TempDir()
+	analyticsDir := filepath.Join(parent, "analytics")
+	writePublicationTree(t, analyticsDir, "old.parquet")
+	requirements.NoError(os.WriteFile(query.CacheStatePath(analyticsDir),
+		[]byte(`{"last_sync_at":"2026-07-15T10:00:00Z"}`), 0o600))
+
+	staging, err := newCacheStaging(analyticsDir)
+	requirements.NoError(err)
+	t.Cleanup(func() { _ = staging.cleanup() })
+	writePublicationTree(t, staging.root, "new.parquet")
+	before := snapshotCacheBytes(t, analyticsDir)
+
+	buildCacheBeforePublicationMovesHook = func() error {
+		return os.RemoveAll(filepath.Join(
+			staging.root,
+			identityindex.DatasetRelationshipDaily,
+		))
+	}
+	t.Cleanup(func() { buildCacheBeforePublicationMovesHook = nil })
+	err = publishCache(staging, analyticsDir, cachePublishPlanForMode(true),
+		[]byte(`{"last_sync_at":"2026-07-15T11:00:00Z"}`))
+	requirements.ErrorContains(err, "publish cache path")
+	assert.Equal(t, before, snapshotCacheBytes(t, analyticsDir))
+}
+
+func TestCachePublicationRollsBackIncrementalAppendsAfterLaterMoveFailure(t *testing.T) {
+	requirements := require.New(t)
+	parent := t.TempDir()
+	analyticsDir := filepath.Join(parent, "analytics")
+	writePublicationTree(t, analyticsDir, "old.parquet")
+	requirements.NoError(os.WriteFile(query.CacheStatePath(analyticsDir),
+		[]byte(`{"last_sync_at":"2026-07-15T10:00:00Z"}`), 0o600))
+
+	staging, err := newCacheStaging(analyticsDir)
+	requirements.NoError(err)
+	t.Cleanup(func() { _ = staging.cleanup() })
+	writePublicationTree(t, staging.root, "new.parquet")
+	before := snapshotCacheBytes(t, analyticsDir)
+
+	buildCacheBeforePublicationMovesHook = func() error {
+		return os.RemoveAll(filepath.Join(
+			staging.root,
+			identityindex.DatasetRelationshipDaily,
+		))
+	}
+	t.Cleanup(func() { buildCacheBeforePublicationMovesHook = nil })
+	err = publishCache(staging, analyticsDir, cachePublishPlanForMode(false),
+		[]byte(`{"last_sync_at":"2026-07-15T11:00:00Z"}`))
+	requirements.ErrorContains(err, "publish cache path")
+	assert.Equal(t, before, snapshotCacheBytes(t, analyticsDir))
+}
+
+func TestCachePublicationRollsBackWhenMarkerPreparationFails(t *testing.T) {
+	requirements := require.New(t)
+	parent := t.TempDir()
+	analyticsDir := filepath.Join(parent, "analytics")
+	writePublicationTree(t, analyticsDir, "old.parquet")
+	requirements.NoError(os.WriteFile(query.CacheStatePath(analyticsDir),
+		[]byte(`{"last_sync_at":"2026-07-15T10:00:00Z"}`), 0o600))
+
+	staging, err := newCacheStaging(analyticsDir)
+	requirements.NoError(err)
+	t.Cleanup(func() { _ = staging.cleanup() })
+	writePublicationTree(t, staging.root, "new.parquet")
+	before := snapshotCacheBytes(t, analyticsDir)
+
+	stateErr := errors.New("prepare marker")
+	buildCacheWriteStateFile = func(string, []byte, os.FileMode) error {
+		return stateErr
+	}
+	t.Cleanup(func() { buildCacheWriteStateFile = os.WriteFile })
+	err = publishCache(staging, analyticsDir, cachePublishPlanForMode(false),
+		[]byte(`{"last_sync_at":"2026-07-15T11:00:00Z"}`))
+	requirements.ErrorIs(err, stateErr)
+	assert.Equal(t, before, snapshotCacheBytes(t, analyticsDir))
 }
 
 func TestCachePublicationCleansOnlyPrivateStagingDirectories(t *testing.T) {

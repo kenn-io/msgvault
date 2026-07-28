@@ -37,8 +37,12 @@ helpers.
   authored/co-recipient cluster receives exactly one received unit.
 - Interactive DuckDB uses `memory_limit='512MB'`, at most four threads, one
   query slot, a 2 GB spill limit, and a daemon-owned temp directory.
-- Full and derived cache builders use `memory_limit='2GB'`, at most eight
-  threads, and an 8 GB spill limit in staging.
+- Full and derived cache builders use the reviewed implementation amendment:
+  `memory_limit='1536MB'`, at most two threads, and an 8 GB spill limit in
+  staging. The production-scale gate found the initially proposed 2 GB policy
+  could exceed the 3 GiB process budget with three threads; do not restore
+  that outlier-prone configuration without new evidence and a reviewed design
+  amendment.
 - Production identity refreshes never open DuckDB inside the daemon.
 - New and modified Go tests use `testify`; every `go test` command includes
   `-tags "fts5 sqlite_vec"`.
@@ -59,7 +63,7 @@ helpers.
 - `internal/identityindex/build_sql.go`: set-wise SQL for facts, edges,
   directory, logical units, and rollups.
 - `internal/identityindex/validate.go`: schema, uniqueness, anchor,
-  referential, and future-rollup validation.
+  referential, and relationship-daily validation.
 - `internal/identityindex/build_test.go`: real Parquet derivation and semantic
   fixtures independent of HTTP shaping.
 - `internal/duckdbutil/connection.go`: apply a complete DuckDB resource policy
@@ -132,7 +136,7 @@ func TestRelationshipIndexDatasetCatalog(t *testing.T) {
 		"identity_entry_facts", "identity_direct_edges",
 		"identity_conversation_edges", "identity_directory",
 		"identity_rollups", "domain_rollups",
-		"relationship_rollups", "relationship_future_daily",
+		"relationship_rollups", "relationship_daily",
 	}, identityindex.RequiredDatasets)
 }
 
@@ -173,7 +177,7 @@ const (
 	DatasetRollups           = "identity_rollups"
 	DatasetDomainRollups     = "domain_rollups"
 	DatasetRelationships     = "relationship_rollups"
-	DatasetRelationshipFuture = "relationship_future_daily"
+	DatasetRelationshipDaily = "relationship_daily"
 
 	ModalityEmail   uint8 = 1
 	ModalityChat    uint8 = 2
@@ -197,7 +201,7 @@ var RequiredDatasets = []string{
 	DatasetRollups,
 	DatasetDomainRollups,
 	DatasetRelationships,
-	DatasetRelationshipFuture,
+	DatasetRelationshipDaily,
 }
 
 func IsChatSQL(messageType, conversationType string) string {
@@ -772,7 +776,7 @@ assert.Equal(t, int64(1), relationshipRowCount)
 Run:
 
 ```bash
-go test -tags "fts5 sqlite_vec" ./internal/identityindex -run 'TestLogical|TestRollup|TestFuture|TestAuthoredAlias'
+go test -tags "fts5 sqlite_vec" ./internal/identityindex -run 'TestLogical|TestRollup|TestDaily|TestAuthoredAlias'
 ```
 
 Expected: FAIL because aggregate datasets are still empty.
@@ -823,6 +827,13 @@ list(struct_pack(source_type := source_type, count := source_count)
      ORDER BY source_type) AS source_counts
 ```
 
+Also retain an exact `source_rollups` list grouped by
+`(canonical_id, source_id, source_type)` with activity count, file count,
+first-at, and last-at. A pure source-only people filter aggregates this narrow
+list instead of rebuilding the archive-wide logical reduction. Keep the
+generic logical path for every combined filter and validate that source
+rollups decompose the identity totals.
+
 For domain `person_count`, filter raw people to their own normalized domain
 before counting distinct canonical IDs. This preserves a cluster whose
 canonical member belongs to another domain.
@@ -847,29 +858,41 @@ meeting sums. For all dates, aggregate sent/meeting raw counts, bitwise-OR the
 mask, and preserve `max(occurred_at)` at timestamp precision. Emit a rollup
 only when at least one qualifying interaction exists.
 
-For `occurred_at::DATE > anchor_date`, write
-`relationship_future_daily(canonical_id,event_date,sent_units,received_units,
+For every qualifying date, write
+`relationship_daily(canonical_id,event_date,sent_units,received_units,
 meeting_units,sent_count,meeting_count,modality_mask,last_at)`.
+Build the compact anchored `relationship_rollups` from this flat daily dataset.
+The unfiltered request path reads daily rows strictly after the anchor; a pure
+UTC-midnight date window aggregates its exact daily slice directly.
 
 - [ ] **Step 6: Validate schemas and cross-dataset invariants**
 
 `Validate` runs real DuckDB queries and rejects:
 
+- any required dataset whose exact ordered column names or DuckDB types differ
+  from the version-15 schema;
+- a cached message without exactly one corresponding entry fact, or a fact
+  without a cached message;
 - duplicate fact IDs, direct `(message_id,participant_id)` pairs,
-  conversation `(conversation_id,participant_id)` pairs, or directory IDs;
+  conversation `(conversation_id,participant_id)` pairs, directory IDs, or
+  domain-rollup keys;
 - edges without a fact/participant/conversation;
 - rollup IDs absent from the directory;
 - owner IDs in either relationship dataset;
-- a future canonical ID without a relationship row;
+- a daily canonical ID without a relationship row;
 - a rollup `anchor_date` different from the operation anchor;
 - a non-empty relationship dataset with a null `last_at`;
+- daily rows whose raw sent/meeting count components differ from their units
+  or whose event date differs from `last_at`;
+- daily count/mask/timestamp components that do not exactly decompose the
+  corresponding total relationship rollup;
 - any missing schema-bearing shard.
 
 Return errors naming the dataset and invariant, for example:
 
 ```go
-return fmt.Errorf("validate %s: %d future identities have no relationship rollup",
-	DatasetRelationshipFuture, count)
+return fmt.Errorf("validate %s: %d daily identities have no relationship rollup",
+	DatasetRelationshipDaily, count)
 ```
 
 - [ ] **Step 7: Activate schema 15 after every required dataset is buildable**
@@ -887,7 +910,7 @@ mandatory full-rebuild path.
 Run:
 
 ```bash
-go test -tags "fts5 sqlite_vec" ./internal/identityindex ./cmd/msgvault/cmd -run 'Identity|Relationship|Future|BuildCache'
+go test -tags "fts5 sqlite_vec" ./internal/identityindex ./cmd/msgvault/cmd -run 'Identity|Relationship|Daily|BuildCache'
 ```
 
 Expected: PASS.
@@ -1182,6 +1205,13 @@ SELECT ... FROM counted ORDER BY <validated order> LIMIT ? OFFSET ?
 ```
 
 Filtered path aggregates `logical_people` only for directory candidates.
+When participant or domain edge filters are present, first resolve the
+complete predicate to at most 10,000 exact fact IDs and feed those IDs into
+the logical reduction. Preserve all scalar/search predicates and fall back to
+the original query shape when the bounded candidate set saturates.
+The source-only specialization aggregates selected
+`identity_rollups.source_rollups` rows; all combined predicates retain the
+generic path.
 Select the page before joining `participant_identifiers` for response shaping.
 Decode the stored member/source lists into existing Go response types.
 
@@ -1246,7 +1276,7 @@ Delete memo hit-count assertions. Add tests proving:
 - a canceled second request returns its own context error;
 - result ordering is identical across calls;
 - cache/identity/anchor revision drift still changes response revision;
-- future rows affect decay, raw gate counts, modality population count, and
+- post-anchor daily rows affect decay, raw gate counts, modality population count, and
   full timestamp `last_at`;
 - a backward request date clamps anchor advancement to zero;
 - ShowAll includes only identities with at least one qualifying interaction.
@@ -1277,7 +1307,7 @@ sent =
 
 Repeat for received and meeting units. Use raw sent/meeting counts,
 `modality_mask`, and full `last_at` directly from `relationship_rollups`
-because those totals already include future rows. Convert modalities with:
+because those totals already include every daily row. Convert modalities with:
 
 ```go
 func modalitiesFromMask(mask uint8) int {
@@ -1508,13 +1538,18 @@ func BenchmarkRelationshipIndexCold(b *testing.B) {
 	b.Run("relationships", ...)
 	b.Run("people-search", ...)
 	b.Run("domain-search", ...)
+	b.Run("source-only-people", ...)
+	b.Run("date-window-relationships", ...)
 	b.Run("filtered-people", ...)
 	b.Run("filtered-relationships", ...)
 }
 ```
 
 Record `testing.B.ReportMetric` values for scanned rows and spill bytes from
-DuckDB profiling in addition to `ns/op`.
+DuckDB profiling in addition to `ns/op`. Persist those parsed metrics as
+machine-readable JSON and include them in the shell gate's single JSON result;
+the human-formatted `go test -bench` stream is diagnostics, not the evidence
+artifact.
 
 - [ ] **Step 3: Add a real subprocess RSS harness**
 

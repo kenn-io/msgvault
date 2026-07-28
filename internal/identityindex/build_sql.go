@@ -19,6 +19,8 @@ type ActivityPaths struct {
 	Owners            string
 }
 
+const logicalBuildRelation = "identity_build_logical_activity"
+
 // LogicalActivitySQL returns CTEs named canonical_message_edges,
 // logical_units, logical_people, and logical_domains. filterSQL is trusted SQL
 // rendered by the query layer and may refer to the fact alias f.
@@ -235,8 +237,50 @@ WITH clusters AS (
 	)
 }
 
-func buildIdentityRollupsSQL(paths ActivityPaths) string {
-	return LogicalActivitySQL(paths, "true") + `,
+func buildLogicalActivityMaterializationSQL(paths ActivityPaths) string {
+	return LogicalActivitySQL(paths, "true") + `
+SELECT 1::UTINYINT AS relation_kind,
+       p.entry_key, p.anchor_message_id, p.conversation_id, p.source_id,
+       p.source_type, p.occurred_at, p.entry_kind, p.is_from_me,
+       p.attachment_count, p.canonical_id, p.is_author, p.is_owner,
+       p.with_owner, NULL::VARCHAR AS domain
+FROM logical_people p
+
+UNION ALL
+
+SELECT 2::UTINYINT AS relation_kind,
+       u.entry_key, u.anchor_message_id, u.conversation_id, u.source_id,
+       u.source_type, u.occurred_at, u.entry_kind, u.is_from_me,
+       u.attachment_count, NULL::BIGINT AS canonical_id,
+       NULL::BOOLEAN AS is_author, NULL::BOOLEAN AS is_owner,
+       NULL::BOOLEAN AS with_owner, k.domain
+FROM logical_domain_keys k
+JOIN logical_units u USING (entry_key)
+WHERE k.domain <> ''
+
+UNION ALL
+
+SELECT 3::UTINYINT AS relation_kind,
+       p.entry_key, NULL::BIGINT AS anchor_message_id,
+       NULL::BIGINT AS conversation_id, NULL::BIGINT AS source_id,
+       NULL::VARCHAR AS source_type, NULL::TIMESTAMP AS occurred_at,
+       NULL::VARCHAR AS entry_kind, NULL::BOOLEAN AS is_from_me,
+       NULL::BIGINT AS attachment_count, p.canonical_id,
+       NULL::BOOLEAN AS is_author, NULL::BOOLEAN AS is_owner,
+       NULL::BOOLEAN AS with_owner, p.domain
+FROM logical_person_domains p
+WHERE p.domain <> ''`
+}
+
+func buildIdentityRollupsSQL() string {
+	return `
+WITH logical_people AS (
+	SELECT entry_key, anchor_message_id, conversation_id, source_id,
+	       source_type, occurred_at, entry_kind, is_from_me,
+	       attachment_count, canonical_id, is_author, is_owner, with_owner
+	FROM ` + logicalBuildRelation + `
+	WHERE relation_kind = 1
+),
 people_totals AS (
 	SELECT canonical_id,
 	       count(*)::BIGINT AS activity_count,
@@ -245,9 +289,18 @@ people_totals AS (
 	       max(occurred_at)::TIMESTAMP AS last_at
 	FROM logical_people
 	GROUP BY canonical_id
-), people_source_counts AS (
-	SELECT canonical_id, source_type, count(*)::BIGINT AS source_count
+), people_source_rollup_rows AS (
+	SELECT canonical_id, source_id, source_type,
+	       count(*)::BIGINT AS activity_count,
+	       coalesce(sum(attachment_count), 0)::BIGINT AS file_count,
+	       min(occurred_at)::TIMESTAMP AS first_at,
+	       max(occurred_at)::TIMESTAMP AS last_at
 	FROM logical_people
+	GROUP BY canonical_id, source_id, source_type
+), people_source_counts AS (
+	SELECT canonical_id, source_type,
+	       sum(activity_count)::BIGINT AS source_count
+	FROM people_source_rollup_rows
 	GROUP BY canonical_id, source_type
 ), people_sources AS (
 	SELECT canonical_id,
@@ -255,22 +308,37 @@ people_totals AS (
 	            ORDER BY source_type) AS source_counts
 	FROM people_source_counts
 	GROUP BY canonical_id
+), people_source_rollups AS (
+	SELECT canonical_id,
+	       list(struct_pack(
+		       source_id := source_id,
+		       source_type := source_type,
+		       activity_count := activity_count,
+		       file_count := file_count,
+		       first_at := first_at,
+		       last_at := last_at
+	       ) ORDER BY source_id, source_type) AS source_rollups
+	FROM people_source_rollup_rows
+	GROUP BY canonical_id
 )
 SELECT t.canonical_id, t.activity_count, t.file_count, t.first_at, t.last_at,
-       s.source_counts
+       s.source_counts, r.source_rollups
 FROM people_totals t
 JOIN people_sources s USING (canonical_id)
+JOIN people_source_rollups r USING (canonical_id)
 ORDER BY t.canonical_id`
 }
 
-func buildDomainRollupsSQL(paths ActivityPaths) string {
-	return LogicalActivitySQL(paths, "true") + `,
-domain_entries AS (
-	SELECT u.entry_key, k.domain, u.source_type, u.attachment_count,
-	       u.occurred_at
-	FROM logical_domain_keys k
-	JOIN logical_units u USING (entry_key)
-	WHERE k.domain <> ''
+func buildDomainRollupsSQL() string {
+	return `
+WITH domain_entries AS (
+	SELECT entry_key, domain, source_type, attachment_count, occurred_at
+	FROM ` + logicalBuildRelation + `
+	WHERE relation_kind = 2
+), logical_person_domains AS (
+	SELECT entry_key, canonical_id, domain
+	FROM ` + logicalBuildRelation + `
+	WHERE relation_kind = 3
 ), domain_totals AS (
 	SELECT domain,
 	       count(*)::BIGINT AS activity_count,
@@ -303,57 +371,30 @@ LEFT JOIN domain_people p USING (domain)
 ORDER BY t.domain`
 }
 
-func buildRelationshipRollupsSQL(paths ActivityPaths, anchor time.Time) string {
+func buildRelationshipRollupsSQL(anchor time.Time, dailyPath string) string {
 	anchorDate := anchor.UTC().Format(time.DateOnly)
-	return LogicalActivitySQL(paths, "true") + fmt.Sprintf(`,
-relationship_interactions AS (
-	SELECT p.*,
-	       CASE WHEN p.is_from_me
-	                 AND p.entry_kind IN ('email','conversation','item')
-	            THEN 1::BIGINT ELSE 0::BIGINT END AS sent_units,
-	       CASE WHEN NOT p.is_from_me
-	                 AND (p.entry_kind = 'conversation'
-	                      OR (p.entry_kind IN ('email','item') AND p.is_author))
-	            THEN 1::BIGINT ELSE 0::BIGINT END AS received_units,
-	       CASE WHEN p.entry_kind IN ('event','meeting') AND p.with_owner
-	            THEN 1::BIGINT ELSE 0::BIGINT END AS meeting_units,
-	       CASE
-	           WHEN p.entry_kind IN ('event','meeting') AND p.with_owner THEN %d::UTINYINT
-	           WHEN p.entry_kind = 'conversation' THEN %d::UTINYINT
-	           WHEN p.entry_kind IN ('email','item') THEN %d::UTINYINT
-	           ELSE 0::UTINYINT
-	       END AS modality_mask
-	FROM logical_people p
-	WHERE NOT p.is_owner
-	  AND NOT (p.entry_kind IN ('event','meeting') AND NOT p.with_owner)
-)
+	return fmt.Sprintf(`
 SELECT canonical_id,
        DATE '%s' AS anchor_date,
-       sum(CASE WHEN occurred_at::DATE <= DATE '%s'
-	                THEN sent_units * exp(-%.17g * greatest(
-	                     0, date_diff('day', occurred_at,
-	                                  CAST(DATE '%s' AS TIMESTAMP))))
-	                ELSE 0 END)::DOUBLE AS sent_decayed,
-       sum(CASE WHEN occurred_at::DATE <= DATE '%s'
-	                THEN received_units * exp(-%.17g * greatest(
-	                     0, date_diff('day', occurred_at,
-	                                  CAST(DATE '%s' AS TIMESTAMP))))
-	                ELSE 0 END)::DOUBLE AS received_decayed,
-       sum(CASE WHEN occurred_at::DATE <= DATE '%s'
-	                THEN meeting_units * exp(-%.17g * greatest(
-	                     0, date_diff('day', occurred_at,
-	                                  CAST(DATE '%s' AS TIMESTAMP))))
-	                ELSE 0 END)::DOUBLE AS meetings_decayed,
+       sum(CASE WHEN event_date <= DATE '%s'
+                THEN sent_units * exp(-%.17g * greatest(
+                     0, date_diff('day', event_date, DATE '%s')))
+                ELSE 0 END)::DOUBLE AS sent_decayed,
+       sum(CASE WHEN event_date <= DATE '%s'
+                THEN received_units * exp(-%.17g * greatest(
+                     0, date_diff('day', event_date, DATE '%s')))
+                ELSE 0 END)::DOUBLE AS received_decayed,
+       sum(CASE WHEN event_date <= DATE '%s'
+                THEN meeting_units * exp(-%.17g * greatest(
+                     0, date_diff('day', event_date, DATE '%s')))
+                ELSE 0 END)::DOUBLE AS meetings_decayed,
        sum(sent_units)::BIGINT AS sent_count,
        sum(meeting_units)::BIGINT AS meeting_count,
        bit_or(modality_mask)::UTINYINT AS modality_mask,
-       max(occurred_at)::TIMESTAMP AS last_at
-FROM relationship_interactions
+       max(last_at)::TIMESTAMP AS last_at
+FROM %s
 GROUP BY canonical_id
 ORDER BY canonical_id`,
-		ModalityMeeting,
-		ModalityChat,
-		ModalityEmail,
 		anchorDate,
 		anchorDate,
 		RelationshipDecayRate,
@@ -364,12 +405,19 @@ ORDER BY canonical_id`,
 		anchorDate,
 		RelationshipDecayRate,
 		anchorDate,
+		activityRelation(dailyPath, false),
 	)
 }
 
-func buildRelationshipFutureSQL(paths ActivityPaths, anchor time.Time) string {
-	anchorDate := anchor.UTC().Format(time.DateOnly)
-	return LogicalActivitySQL(paths, "true") + fmt.Sprintf(`,
+func buildRelationshipDailySQL() string {
+	return fmt.Sprintf(`
+WITH logical_people AS (
+	SELECT entry_key, anchor_message_id, conversation_id, source_id,
+	       source_type, occurred_at, entry_kind, is_from_me,
+	       attachment_count, canonical_id, is_author, is_owner, with_owner
+	FROM `+logicalBuildRelation+`
+	WHERE relation_kind = 1
+),
 relationship_interactions AS (
 	SELECT p.*,
 	       CASE WHEN p.is_from_me
@@ -401,13 +449,11 @@ SELECT canonical_id,
        bit_or(modality_mask)::UTINYINT AS modality_mask,
        max(occurred_at)::TIMESTAMP AS last_at
 FROM relationship_interactions
-WHERE occurred_at::DATE > DATE '%s'
 GROUP BY canonical_id, event_date
 ORDER BY canonical_id, event_date`,
 		ModalityMeeting,
 		ModalityChat,
 		ModalityEmail,
-		anchorDate,
 	)
 }
 

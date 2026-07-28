@@ -30,16 +30,22 @@ func TestIdentityActivityPreservesNonChatConversationEdgeSemantics(t *testing.T)
 	builder.AddConversationParticipant(901, conversationOnly)
 	engine := builder.BuildEngine()
 
-	people, err := engine.SearchPeople(context.Background(), PersonSearchRequest{
+	request := PersonSearchRequest{
 		Explore: ExploreRequest{Context: Context{
 			ParticipantIDs: []int64{conversationOnly},
 		}},
 		Page: PageSpec{Limit: 25},
-	})
+	}
+	people, err := engine.SearchPeople(context.Background(), request)
 	requirementsForTest.NoError(err)
 	requirementsForTest.Len(people.Rows, 1)
 	assert.Equal(t, direct, people.Rows[0].ID,
 		"conversation membership qualifies the fact filter but not non-chat people fan-out")
+	engine.identityCandidateFastPathDisabled = true
+	logicalPeople, err := engine.SearchPeople(context.Background(), request)
+	requirementsForTest.NoError(err)
+	assert.Equal(t, logicalPeople, people)
+	engine.identityCandidateFastPathDisabled = false
 
 	domains, err := engine.SearchDomains(context.Background(), DomainSearchRequest{
 		Explore: ExploreRequest{Context: Context{
@@ -141,6 +147,65 @@ func TestIdentityActivityMergesAuthorshipAcrossLinkedAliases(t *testing.T) {
 		"authored and co-recipient aliases merge into one canonical entry")
 }
 
+func TestSourceOnlyPeopleRollupFastPathMatchesLogicalReduction(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	builder := NewTestDataBuilder(t)
+	selectedSource := builder.AddSourceWithType("selected@example.com", "gmail")
+	otherSource := builder.AddSourceWithType("other@example.com", "gmail")
+	selectedPerson := builder.AddParticipant(
+		"selected-person@example.com",
+		"example.com",
+		"Selected Person",
+	)
+	otherPerson := builder.AddParticipant(
+		"other-person@example.com",
+		"example.com",
+		"Other Person",
+	)
+	selectedMessage := builder.AddMessage(MessageOpt{
+		SourceID: selectedSource,
+		Subject:  "Selected",
+		SentAt:   time.Date(2026, 7, 20, 10, 0, 0, 0, time.UTC),
+	})
+	builder.AddFrom(selectedMessage, selectedPerson, "Selected Person")
+	builder.AddAttachmentWithMIME(
+		1,
+		selectedMessage,
+		100,
+		"selected.pdf",
+		"application/pdf",
+	)
+	otherMessage := builder.AddMessage(MessageOpt{
+		SourceID: otherSource,
+		Subject:  "Other",
+		SentAt:   time.Date(2026, 7, 21, 10, 0, 0, 0, time.UTC),
+	})
+	builder.AddFrom(otherMessage, otherPerson, "Other Person")
+	engine := builder.BuildEngine()
+
+	request := PersonSearchRequest{
+		Explore: ExploreRequest{Context: Context{
+			SourceIDs: []int64{selectedSource},
+		}},
+		Sort: SortSpec{Field: "display_label", Direction: "asc"},
+		Page: PageSpec{Limit: 25},
+	}
+	fast, err := engine.SearchPeople(context.Background(), request)
+	requirements.NoError(err)
+	engine.sourceRollupFastPathDisabled = true
+	logical, err := engine.SearchPeople(context.Background(), request)
+	requirements.NoError(err)
+
+	assertions.Equal(logical, fast)
+	requirements.Len(fast.Rows, 1)
+	assertions.Equal(selectedPerson, fast.Rows[0].ID)
+	assertions.Equal(int64(1), fast.Rows[0].ActivityCount)
+	assertions.Equal(int64(1), fast.Rows[0].FileCount)
+	assertions.Equal([]SourceCount{{SourceType: "gmail", Count: 1}},
+		fast.Rows[0].SourceCounts)
+}
+
 func TestIdentityActivityAppliesFactFilters(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)
@@ -229,6 +294,45 @@ func TestIdentityActivityDateFiltersBindUTCWallClock(t *testing.T) {
 	require.Len(t, args, 2)
 	assertionsForTest.Equal("2026-07-20 13:30:00", args[0])
 	assertionsForTest.Equal("2026-07-20 15:30:00", args[1])
+}
+
+func TestIdentityCandidateNarrowingRetainsScalarFilters(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	builder := NewTestDataBuilder(t)
+	selectedSource := builder.AddSourceWithType("selected@example.com", "gmail")
+	otherSource := builder.AddSourceWithType("other@example.com", "gmail")
+	personID := builder.AddParticipant("person@example.com", "example.com", "Person")
+	selectedMessage := builder.AddMessage(MessageOpt{
+		SourceID:    selectedSource,
+		MessageType: "email",
+		SentAt:      time.Date(2026, 7, 20, 10, 0, 0, 0, time.UTC),
+	})
+	builder.AddFrom(selectedMessage, personID, "Person")
+	otherMessage := builder.AddMessage(MessageOpt{
+		SourceID:    otherSource,
+		MessageType: "email",
+		SentAt:      time.Date(2026, 7, 20, 11, 0, 0, 0, time.UTC),
+	})
+	builder.AddFrom(otherMessage, personID, "Person")
+	engine := builder.BuildEngine()
+
+	request := ExploreRequest{Context: Context{
+		SourceIDs:      []int64{selectedSource},
+		ParticipantIDs: []int64{personID},
+		MessageTypes:   []string{"email"},
+		Deletion:       DeletionActive,
+	}}
+	narrowed, err := engine.narrowIdentityFactCandidates(
+		context.Background(),
+		request,
+	)
+	requirements.NoError(err)
+	assertions.Equal([]int64{selectedMessage}, narrowed.Search.CandidateMessageIDs)
+	assertions.Empty(narrowed.Context.ParticipantIDs)
+	assertions.Equal(request.Context.SourceIDs, narrowed.Context.SourceIDs)
+	assertions.Equal(request.Context.MessageTypes, narrowed.Context.MessageTypes)
+	assertions.Equal(request.Context.Deletion, narrowed.Context.Deletion)
 }
 
 func TestIdentityEndpointsDoNotRequireLegacyAnalyticalViews(t *testing.T) {

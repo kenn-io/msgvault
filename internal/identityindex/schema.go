@@ -9,14 +9,14 @@ import (
 )
 
 const (
-	DatasetEntryFacts         = "identity_entry_facts"
-	DatasetDirectEdges        = "identity_direct_edges"
-	DatasetConversationEdges  = "identity_conversation_edges"
-	DatasetDirectory          = "identity_directory"
-	DatasetRollups            = "identity_rollups"
-	DatasetDomainRollups      = "domain_rollups"
-	DatasetRelationships      = "relationship_rollups"
-	DatasetRelationshipFuture = "relationship_future_daily"
+	DatasetEntryFacts        = "identity_entry_facts"
+	DatasetDirectEdges       = "identity_direct_edges"
+	DatasetConversationEdges = "identity_conversation_edges"
+	DatasetDirectory         = "identity_directory"
+	DatasetRollups           = "identity_rollups"
+	DatasetDomainRollups     = "domain_rollups"
+	DatasetRelationships     = "relationship_rollups"
+	DatasetRelationshipDaily = "relationship_daily"
 
 	ModalityEmail   uint8 = 1
 	ModalityChat    uint8 = 2
@@ -42,7 +42,7 @@ var (
 		DatasetRollups,
 		DatasetDomainRollups,
 		DatasetRelationships,
-		DatasetRelationshipFuture,
+		DatasetRelationshipDaily,
 	}
 )
 

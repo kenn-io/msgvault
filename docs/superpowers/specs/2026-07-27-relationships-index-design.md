@@ -311,12 +311,21 @@ the result page is selected, so at most 500 identities are shaped.
 - activity count using the current logical-entry semantics;
 - file count;
 - first and last activity timestamps;
-- per-source-type counts.
+- per-source-type counts;
+- exact nested per-`(source_id, source_type)` activity count, file count,
+  first-at, and last-at rollups.
 
 Chat messages are grouped by `(source_id, conversation_id, canonical_id)` with
 the exact logical-entry reduction above. Non-chat activity remains one logical
 entry per message. An entry involving multiple aliases in the same identity
 cluster counts once.
+
+The nested source rollups are a reviewed implementation amendment prompted by
+the retained broad-source benchmark. A pure source-filter people request
+aggregates only the selected nested rows. Combined source/date/participant/
+message-type/deletion/search-candidate predicates continue through the generic
+logical reduction, so the optimization cannot change cross-filter semantics.
+Validation requires the nested rows to decompose the identity totals exactly.
 
 The same build pass produces unfiltered domain rollups keyed by normalized
 domain. Domain results retain exact canonical person counts.
@@ -358,9 +367,9 @@ Clamping `delta_days` to zero gives defined, conservative behavior if the wall
 clock moves backward; the engine does not back-multiply already-clamped
 contributions.
 
-Future-dated source rows are handled exactly in a companion
-`relationship_future_daily` dataset. It contains one row per canonical identity
-and UTC event date after the anchor:
+Exact per-day signals are retained in a companion `relationship_daily`
+dataset. It contains one row per canonical identity and UTC event date across
+the complete qualifying history:
 
 | Column | Type | Meaning |
 |---|---|---|
@@ -380,11 +389,14 @@ At request time its weighted signals contribute:
 units * exp(-lambda * max(0, date_diff('day', event_date, D)))
 ```
 
-The total raw gate counts, modality mask, and `last_at` are already present in
-`relationship_rollups`; the future rows retain their corresponding components
-so the builder can validate exact decomposition and a refresh can reconstruct
-the total without reading historical message data. Day bucketing affects only
-the decay exponent. It never truncates `last_at` or removes raw counts and
+The builder derives `relationship_rollups` from these flat daily rows. At
+request time, the unfiltered path reads only daily rows after the stored anchor
+as exceptions to anchored decay, while a pure UTC-midnight date-window request
+aggregates the requested daily rows directly. Combined or non-midnight filters
+retain the generic logical reduction. The total raw gate counts, modality mask,
+and `last_at` remain present in `relationship_rollups`, and validation requires
+the daily components to decompose those totals exactly. Day bucketing affects
+only the decay exponent. It never truncates `last_at` or removes raw counts and
 modalities.
 
 The modality mask uses stable values:
@@ -432,8 +444,9 @@ or change those endpoints' present availability.
    aggregates.
 6. Canonicalize direct edges per message with `bool_or(is_author)`, then apply
    the exact logical-entry reduction and edge-origin rules.
-7. Produce people, domain, relationship, and future-daily rollups in grouped
-   `COPY` operations over the narrow canonical activity stream.
+7. Produce people and domain rollups plus flat relationship-daily rows in
+   grouped `COPY` operations over the narrow canonical activity stream, then
+   derive compact anchored relationship rollups from the daily dataset.
 8. Validate row counts, uniqueness, referential membership, the relationship
    anchor, schema, and required empty-dataset shards.
 9. Compute and store a deterministic SHA-256 fingerprint over ordered
@@ -483,7 +496,8 @@ when the message watermark did not move. That refresh:
 
 - fully replaces `identity_conversation_edges`;
 - leaves message facts and direct edges untouched;
-- rebuilds all people, domain, relationship, and future-daily rollups;
+- rebuilds all people, domain, relationship-daily, and anchored relationship
+  rollups;
 - re-anchors relationship decay;
 - publishes atomically under a new cache revision.
 
@@ -511,7 +525,7 @@ conversation-edge refreshes run through a hidden cache-builder child mode:
    - `identity_rollups`;
    - domain rollups;
    - `relationship_rollups`;
-   - `relationship_future_daily`.
+   - `relationship_daily`.
 4. It reads committed scalar facts and raw edges, captures a fresh anchor,
    fingerprints the staged result, and publishes all affected datasets and
    marker state atomically. It carries the full builder's committed stats
@@ -541,7 +555,7 @@ untouched.
 
 1. Read `relationship_rollups`.
 2. Advance the three weighted sums from the anchor date.
-3. Add the normally empty future-daily contributions.
+3. Add `relationship_daily` contributions strictly after the anchor.
 4. Join `identity_directory` for labels and member IDs.
 5. Calculate scores in Go, apply the reciprocity gate, sort, and page.
 
@@ -556,11 +570,15 @@ owns its cancellation context and cold behavior is the behavior under test.
    where any value contains the normalized query.
 2. With no analytical context, join candidates directly to
    `identity_rollups`.
-3. With context filters, apply scalar predicates and origin-aware edge
-   semi-joins to `identity_entry_facts`, form exact logical units, canonicalize,
-   and aggregate only the matched candidate population.
-4. Sort and page.
-5. Shape identifiers and source counts for the selected page.
+3. With only source IDs, aggregate the selected per-source rows stored in
+   `identity_rollups`.
+4. With other or combined context filters, apply scalar predicates and
+   origin-aware edge semi-joins to `identity_entry_facts`. Edge-filtered
+   requests first materialize at most 10,000 exact fact IDs; larger candidate
+   sets fall back unchanged. Form exact logical units, canonicalize, and
+   aggregate only the matched population.
+5. Sort and page.
+6. Shape identifiers and source counts for the selected page.
 
 An empty query may match the whole directory, but it still avoids identity
 string work over activity facts.
@@ -649,18 +667,30 @@ The cache builder uses a separate policy, again substituting the computed
 integer before execution:
 
 ```sql
-SET memory_limit = '2GB';
-SET threads = <min(GOMAXPROCS, 8)>;
+SET memory_limit = '1536MB';
+SET threads = <min(GOMAXPROCS, 2)>;
 SET preserve_insertion_order = false;
 SET temp_directory = '<staging-sibling>/duckdb-tmp';
 SET max_temp_directory_size = '8GB';
 ```
 
 The full builder and every `--derived-only` refresh child use this same policy.
-The child removes its temporary directory after success or failure. A 2 GiB
-buffer-manager budget permits parallel scans while providing bounded space to
-spill large hash/sort operators. Eight threads are a ceiling, not a target;
-DuckDB uses fewer when the machine exposes fewer CPUs.
+The child removes its temporary directory after success or failure. The
+1,536 MB buffer-manager budget preserves enough aggregation memory for the
+non-spillable domain rollup while two threads limit concurrent native
+allocation pressure.
+
+This is a reviewed implementation amendment to the initially proposed 2 GiB,
+up-to-eight-thread builder policy. Production-scale trials showed that even a
+2 GiB, three-thread configuration could exceed the 3 GiB process-RSS release
+gate. Smaller memory pools could not complete the non-spillable domain
+aggregation. The 1,536 MB, two-thread policy completed the
+2.5-million-message, 6-million-edge reference build within both the 25-second
+and 3 GiB gates, and subsequent retained benchmark results confirmed the same
+safety margin. The outlier-prone 2 GiB, three-thread setting is therefore not
+a fallback or performance-tuning option; changing this policy requires new
+full-scale latency, RSS, and spill evidence plus another reviewed design
+amendment.
 
 `cacheops.CollectStats` is also an unconfigured in-daemon DuckDB open today.
 Version 15 removes DuckDB from that path: the builder records the stats
@@ -697,7 +727,7 @@ must fit its latency and memory budget when allowed to complete.
 - An interactive DuckDB out-of-memory error returns the existing analytical
   error response and is logged with the endpoint and cache revision.
 - Cache validation verifies that every canonical ID in a rollup exists in the
-  directory, every canonical ID in `relationship_future_daily` has a
+  directory, every canonical ID in `relationship_daily` has a
   `relationship_rollups` row, and owner IDs do not appear in either
   relationship dataset.
 - Empty archives publish schema-correct empty shards for every required
@@ -760,8 +790,15 @@ measurable. The test records:
 - full cache-build wall time and peak RSS;
 - cold relationships latency;
 - cold unfiltered and filtered identity-search latency;
+- cold broad source-only people-search latency;
+- cold date-window relationships latency;
 - peak and settled daemon RSS;
 - DuckDB operator profile and rows scanned per dataset.
+
+The harness preserves the parsed rows-scanned, rows-returned, and spill-byte
+metrics for every measured operation as machine-readable profile evidence
+inside the single JSON gate result. Human-formatted benchmark output remains
+diagnostic only.
 
 The 250 ms landing/unfiltered budgets and all memory/build budgets are release
 gates. The filtered 1-second number is an explicit provisional target: the
@@ -834,7 +871,7 @@ Adversarial review should concentrate on:
 - whether conversation-participant drift is detected without a new message;
 - whether identity and conversation-edge refreshes publish all canonical
   datasets and the new anchor atomically from a bounded child process;
-- whether anchored decay plus future-daily exceptions is algebraically
+- whether anchored decay plus post-anchor daily exceptions is algebraically
   equivalent to current scoring, including raw counts, modalities, and
   full-precision `last_at`;
 - whether chat `arg_max` direction and canonical `bool_or(is_author)` are
@@ -855,8 +892,8 @@ The first review's findings are resolved in the specification as follows:
 2. Pin post-filter chat `max`/`arg_max` semantics and tie-breaking.
 3. Canonicalize per message with `bool_or(is_author)` and credit an incoming
    authored/co-recipient cluster exactly once.
-4. Give future-daily rows raw counts, modality masks, and full timestamps;
-   define bit values and marker-owned anchor behavior.
+4. Give daily rows raw counts, modality masks, and full timestamps; define bit
+   values, exact total decomposition, and marker-owned anchor behavior.
 5. Move identity/derived refresh into a bounded subprocess and remove DuckDB
    from stats collection.
 6. Describe staged-Parquet derivation as new and state the unchanged

@@ -110,7 +110,7 @@ func TestBuildEmptySchemas(t *testing.T) {
 		},
 		DatasetRollups: {
 			"canonical_id", "activity_count", "file_count",
-			"first_at", "last_at", "source_counts",
+			"first_at", "last_at", "source_counts", "source_rollups",
 		},
 		DatasetDomainRollups: {
 			"domain", "activity_count", "person_count", "file_count",
@@ -121,7 +121,7 @@ func TestBuildEmptySchemas(t *testing.T) {
 			"meetings_decayed", "sent_count", "meeting_count",
 			"modality_mask", "last_at",
 		},
-		DatasetRelationshipFuture: {
+		DatasetRelationshipDaily: {
 			"canonical_id", "event_date", "sent_units", "received_units",
 			"meeting_units", "sent_count", "meeting_count",
 			"modality_mask", "last_at",
@@ -132,10 +132,11 @@ func TestBuildEmptySchemas(t *testing.T) {
 		DatasetDirectEdges,
 		DatasetConversationEdges,
 		DatasetDirectory,
+		"logical_activity",
 		DatasetRollups,
 		DatasetDomainRollups,
 		DatasetRelationships,
-		DatasetRelationshipFuture,
+		DatasetRelationshipDaily,
 	}, progressed)
 	for dataset, wantColumns := range expected {
 		assert.Equal(t, int64(0), parquetCount(t, db, root, dataset), dataset)
@@ -155,7 +156,211 @@ func TestBuildEmptySchemas(t *testing.T) {
 	}
 }
 
-func TestAuthoredAliasRollupReceivesOnceAndPreservesFutureSignals(t *testing.T) {
+func TestBuildReusesMaterializedLogicalActivityAndCleansItUp(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	root, db := writeIdentityBaseFixture(t, false)
+	moved := make(map[string]string)
+	materialized := false
+
+	restoreInputs := func() {
+		for original, backup := range moved {
+			if _, err := os.Stat(backup); err == nil {
+				requirements.NoError(os.Rename(backup, original))
+			}
+		}
+	}
+	t.Cleanup(restoreInputs)
+
+	_, err := Build(context.Background(), db, BuildOptions{
+		Mode:           ModeFull,
+		StagedBaseRoot: root,
+		OutputRoot:     root,
+		AnchorDate:     time.Date(2026, 7, 27, 0, 0, 0, 0, time.UTC),
+		Progress: func(dataset string, _ time.Duration) {
+			switch dataset {
+			case "logical_activity":
+				materialized = true
+				for _, name := range []string{
+					DatasetEntryFacts,
+					DatasetDirectEdges,
+					DatasetConversationEdges,
+					"participant_clusters",
+					"owner_participants",
+				} {
+					original := filepath.Join(root, name)
+					backup := original + ".unavailable"
+					requirements.NoError(os.Rename(original, backup))
+					moved[original] = backup
+				}
+			case DatasetRelationshipDaily:
+				restoreInputs()
+			}
+		},
+	})
+	requirements.NoError(err)
+	assertions.True(materialized)
+
+	var temporaryTables int64
+	requirements.NoError(db.QueryRow(`
+		SELECT count(*)
+		FROM duckdb_tables()
+		WHERE temporary AND table_name LIKE 'identity_build_%'
+	`).Scan(&temporaryTables))
+	assertions.Zero(temporaryTables)
+}
+
+func TestValidateRejectsIncompleteDatasetSchema(t *testing.T) {
+	requirements := require.New(t)
+	root, db := writeIdentityBaseFixture(t, false)
+	anchor := time.Date(2026, 7, 27, 0, 0, 0, 0, time.UTC)
+	_, err := Build(context.Background(), db, BuildOptions{
+		Mode:           ModeFull,
+		StagedBaseRoot: root,
+		OutputRoot:     root,
+		AnchorDate:     anchor,
+	})
+	requirements.NoError(err)
+
+	oldDirectory := moveIdentityDatasetAside(t, root, DatasetDirectory)
+	writeIdentityParquet(t, db, root, DatasetDirectory, `
+		SELECT canonical_id, display_label, partial_label, member_ids, search_values
+		FROM read_parquet('`+quoteSQLString(identityParquetGlob(oldDirectory, DatasetDirectory))+`')`)
+
+	err = Validate(context.Background(), db, validationOptionsForRoot(root, anchor))
+	requirements.ErrorContains(err, "validate identity_directory schema")
+
+	requirements.NoError(os.RemoveAll(filepath.Join(root, DatasetDirectory)))
+	writeIdentityParquet(t, db, root, DatasetDirectory, `
+		SELECT canonical_id::VARCHAR AS canonical_id, display_label, partial_label,
+		       member_ids, search_values, is_owner
+		FROM read_parquet('`+quoteSQLString(identityParquetGlob(oldDirectory, DatasetDirectory))+`')`)
+	err = Validate(context.Background(), db, validationOptionsForRoot(root, anchor))
+	requirements.ErrorContains(err,
+		"column 1 expected canonical_id BIGINT, got canonical_id VARCHAR")
+}
+
+func TestValidateRejectsCachedMessageWithoutFact(t *testing.T) {
+	root, db := writeIdentityBaseFixture(t, false)
+	anchor := time.Date(2026, 7, 27, 0, 0, 0, 0, time.UTC)
+	_, err := Build(context.Background(), db, BuildOptions{
+		Mode:           ModeFull,
+		StagedBaseRoot: root,
+		OutputRoot:     root,
+		AnchorDate:     anchor,
+	})
+	require.NoError(t, err)
+
+	for _, dataset := range []string{DatasetEntryFacts, DatasetDirectEdges} {
+		oldRoot := moveIdentityDatasetAside(t, root, dataset)
+		writeIdentityParquet(t, db, root, dataset, `
+			SELECT *
+			FROM read_parquet('`+quoteSQLString(identityParquetGlob(oldRoot, dataset))+`')
+			WHERE false`)
+	}
+
+	err = Validate(context.Background(), db, validationOptionsForRoot(root, anchor))
+	require.ErrorContains(t, err, "cached messages have no fact")
+}
+
+func TestValidateRejectsDuplicateDomainKeys(t *testing.T) {
+	root, db := writeIdentityBaseFixture(t, false)
+	anchor := time.Date(2026, 7, 27, 0, 0, 0, 0, time.UTC)
+	_, err := Build(context.Background(), db, BuildOptions{
+		Mode:           ModeFull,
+		StagedBaseRoot: root,
+		OutputRoot:     root,
+		AnchorDate:     anchor,
+	})
+	require.NoError(t, err)
+
+	oldDomains := moveIdentityDatasetAside(t, root, DatasetDomainRollups)
+	source := quoteSQLString(identityParquetGlob(oldDomains, DatasetDomainRollups))
+	writeIdentityParquet(t, db, root, DatasetDomainRollups, `
+		SELECT * FROM read_parquet('`+source+`')
+		UNION ALL
+		SELECT * FROM read_parquet('`+source+`')`)
+
+	err = Validate(context.Background(), db, validationOptionsForRoot(root, anchor))
+	require.ErrorContains(t, err, "duplicate domain keys")
+}
+
+func TestValidateRejectsSourceRollupDecompositionDrift(t *testing.T) {
+	root, db := writeIdentityBaseFixture(t, false)
+	anchor := time.Date(2026, 7, 27, 0, 0, 0, 0, time.UTC)
+	_, err := Build(context.Background(), db, BuildOptions{
+		Mode:           ModeFull,
+		StagedBaseRoot: root,
+		OutputRoot:     root,
+		AnchorDate:     anchor,
+	})
+	require.NoError(t, err)
+
+	oldRollups := moveIdentityDatasetAside(t, root, DatasetRollups)
+	writeIdentityParquet(t, db, root, DatasetRollups, `
+		SELECT canonical_id, activity_count, file_count, first_at, last_at,
+		       source_counts,
+		       list_transform(source_rollups, item -> struct_pack(
+			       source_id := item.source_id,
+			       source_type := item.source_type,
+			       activity_count := item.activity_count + 1,
+			       file_count := item.file_count,
+			       first_at := item.first_at,
+			       last_at := item.last_at
+		       )) AS source_rollups
+		FROM read_parquet('`+
+		quoteSQLString(identityParquetGlob(oldRollups, DatasetRollups))+`')`)
+
+	err = Validate(context.Background(), db, validationOptionsForRoot(root, anchor))
+	require.ErrorContains(t, err, "source rollups do not decompose identity totals")
+}
+
+func TestValidateRejectsRelationshipDailyDecompositionDrift(t *testing.T) {
+	root, db := writeIdentityBaseFixture(t, false)
+	anchor := time.Date(2026, 7, 27, 0, 0, 0, 0, time.UTC)
+	_, err := Build(context.Background(), db, BuildOptions{
+		Mode:           ModeFull,
+		StagedBaseRoot: root,
+		OutputRoot:     root,
+		AnchorDate:     anchor,
+	})
+	require.NoError(t, err)
+
+	oldDaily := moveIdentityDatasetAside(t, root, DatasetRelationshipDaily)
+	writeIdentityParquet(t, db, root, DatasetRelationshipDaily, `
+		SELECT canonical_id, event_date, sent_units + 1 AS sent_units,
+		       received_units, meeting_units, sent_count + 1 AS sent_count,
+		       meeting_count, modality_mask, last_at
+		FROM read_parquet('`+
+		quoteSQLString(identityParquetGlob(oldDaily, DatasetRelationshipDaily))+`')`)
+
+	err = Validate(context.Background(), db, validationOptionsForRoot(root, anchor))
+	require.ErrorContains(t, err, "daily signals do not decompose relationship totals")
+}
+
+func TestValidateRejectsDailyRawCountDecompositionDrift(t *testing.T) {
+	root, db := writeIdentityBaseFixture(t, false)
+	anchor := time.Date(2026, 7, 19, 0, 0, 0, 0, time.UTC)
+	_, err := Build(context.Background(), db, BuildOptions{
+		Mode:           ModeFull,
+		StagedBaseRoot: root,
+		OutputRoot:     root,
+		AnchorDate:     anchor,
+	})
+	require.NoError(t, err)
+
+	oldDaily := moveIdentityDatasetAside(t, root, DatasetRelationshipDaily)
+	writeIdentityParquet(t, db, root, DatasetRelationshipDaily, `
+		SELECT canonical_id, event_date, sent_units, received_units, meeting_units,
+		       sent_count + 1 AS sent_count, meeting_count, modality_mask, last_at
+		FROM read_parquet('`+
+		quoteSQLString(identityParquetGlob(oldDaily, DatasetRelationshipDaily))+`')`)
+
+	err = Validate(context.Background(), db, validationOptionsForRoot(root, anchor))
+	require.ErrorContains(t, err, "raw count decomposition")
+}
+
+func TestAuthoredAliasRollupReceivesOnceAndPreservesDailySignals(t *testing.T) {
 	requirementsForTest := require.New(t)
 	assertionsForTest := assert.New(t)
 	root, db := writeIdentityBaseFixture(t, false)
@@ -193,7 +398,7 @@ func TestAuthoredAliasRollupReceivesOnceAndPreservesFutureSignals(t *testing.T) 
 		FROM read_parquet(?) r
 		LEFT JOIN read_parquet(?) f USING (canonical_id)
 	`, identityParquetGlob(root, DatasetRelationships),
-		identityParquetGlob(root, DatasetRelationshipFuture)).
+		identityParquetGlob(root, DatasetRelationshipDaily)).
 		Scan(&relationshipCount, &receivedUnits))
 	assertionsForTest.Equal(int64(1), relationshipCount)
 	assertionsForTest.Equal(int64(1), receivedUnits)
@@ -293,7 +498,7 @@ func TestLogicalChatReductionUsesNewestFilteredMessage(t *testing.T) {
 	assertions.Equal(int64(1), chatMemberPeople)
 }
 
-func TestFutureRelationshipRollupKeepsRawGateMaskAndTimestamp(t *testing.T) {
+func TestDailyRelationshipRollupKeepsRawGateMaskAndTimestamp(t *testing.T) {
 	requirementsForTest := require.New(t)
 	assertionsForTest := assert.New(t)
 	root, db := writeIdentityBaseFixture(t, false)
@@ -356,7 +561,7 @@ func TestFutureRelationshipRollupKeepsRawGateMaskAndTimestamp(t *testing.T) {
 		SELECT count(*), sum(sent_units)::BIGINT, sum(meeting_units)::BIGINT,
 		       bit_or(modality_mask)::UTINYINT, max(last_at)
 		FROM read_parquet(?)
-	`, identityParquetGlob(root, DatasetRelationshipFuture)).
+	`, identityParquetGlob(root, DatasetRelationshipDaily)).
 		Scan(&futureRows, &futureSent, &futureMeetings, &futureMask, &futureLastAt))
 	assertionsForTest.Equal(int64(2), futureRows)
 	assertionsForTest.Equal(int64(1), futureSent)
@@ -365,7 +570,7 @@ func TestFutureRelationshipRollupKeepsRawGateMaskAndTimestamp(t *testing.T) {
 	assertionsForTest.Equal(lastAt, futureLastAt)
 }
 
-func TestValidateRejectsFutureIdentityWithoutRelationshipRollup(t *testing.T) {
+func TestValidateRejectsDailyIdentityWithoutRelationshipRollup(t *testing.T) {
 	root, db := writeIdentityBaseFixture(t, false)
 	anchor := time.Date(2026, 7, 19, 0, 0, 0, 0, time.UTC)
 	_, err := Build(context.Background(), db, BuildOptions{
@@ -402,7 +607,7 @@ func TestValidateRejectsFutureIdentityWithoutRelationshipRollup(t *testing.T) {
 		AnchorDate:    anchor,
 	})
 	require.ErrorContains(t, err,
-		"validate relationship_future_daily: 1 future identities have no relationship rollup")
+		"validate relationship_daily: 1 daily identities have no relationship rollup")
 }
 
 func TestBuildIncrementalEmitsDeltaAndComputesPostPublicationStats(t *testing.T) {
@@ -686,4 +891,32 @@ func identityParquetGlob(root, dataset string) string {
 		return filepath.Join(root, dataset, "**", "*.parquet")
 	}
 	return filepath.Join(root, dataset, "*.parquet")
+}
+
+func moveIdentityDatasetAside(t *testing.T, root, dataset string) string {
+	t.Helper()
+	oldRoot := t.TempDir()
+	require.NoError(t, os.Rename(
+		filepath.Join(root, dataset),
+		filepath.Join(oldRoot, dataset),
+	))
+	return oldRoot
+}
+
+func validationOptionsForRoot(root string, anchor time.Time) ValidationOptions {
+	return ValidationOptions{
+		OutputRoot:             root,
+		RequiredOutputDatasets: RequiredDatasets,
+		Activity: ActivityPaths{
+			Facts:             identityParquetGlob(root, DatasetEntryFacts),
+			DirectEdges:       identityParquetGlob(root, DatasetDirectEdges),
+			ConversationEdges: identityParquetGlob(root, DatasetConversationEdges),
+			Directory:         identityParquetGlob(root, DatasetDirectory),
+			Clusters:          identityParquetGlob(root, "participant_clusters"),
+			Owners:            identityParquetGlob(root, "owner_participants"),
+		},
+		Participants:  identityParquetGlob(root, "participants"),
+		Conversations: identityParquetGlob(root, "conversations"),
+		AnchorDate:    anchor,
+	}
 }

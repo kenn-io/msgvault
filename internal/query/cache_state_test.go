@@ -23,7 +23,7 @@ func TestRelationshipIndexDatasetCatalog(t *testing.T) {
 		"identity_rollups",
 		"domain_rollups",
 		"relationship_rollups",
-		"relationship_future_daily",
+		"relationship_daily",
 	}, identityindex.RequiredDatasets)
 }
 
