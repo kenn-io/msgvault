@@ -148,6 +148,10 @@ func (f relationshipIndexHTTPFixture) newServer(t *testing.T, disableLegacyViews
 	return server
 }
 
+func relationshipIndexFilter(dimension string, values ...string) map[string]any {
+	return map[string]any{"dimension": dimension, "values": values}
+}
+
 func relationshipIndexHTTPJSON(t *testing.T, handler http.Handler, method, path string, body any) *httptest.ResponseRecorder {
 	t.Helper()
 	var content io.Reader
@@ -173,7 +177,7 @@ func decodeRelationshipIndexHTTP[T any](t *testing.T, response *httptest.Respons
 	return result
 }
 
-func TestRelationshipIndexMigratedHTTPRoutesNeedNoLegacyViews(t *testing.T) {
+func TestRelationshipIndexUnfilteredRoutesNeedNoAnalyticalViews(t *testing.T) {
 	requirementsForTest := require.New(t)
 	assertionsForTest := assert.New(t)
 	fixture := newRelationshipIndexHTTPFixture(t)
@@ -228,15 +232,28 @@ func TestRelationshipIndexMigratedHTTPRoutesNeedNoLegacyViews(t *testing.T) {
 	assertionsForTest.Equal("people.test", domains.Rows[0].Domain)
 	assertionsForTest.Equal(int64(2), domains.Rows[0].ActivityCount)
 	assertionsForTest.Equal(int64(1), domains.Rows[0].PersonCount)
+}
+
+// TestRelationshipIndexFilteredRoutesServeThroughExploreEngine exercises the
+// same list routes under a filtered predicate, which routes through the
+// explore logical-entry machinery on a standard engine.
+// TestRelationshipIndexLeavesLegacyRoutesOutsideMigrationBoundary pins that
+// these filtered requests fail closed when the analytical views are absent.
+func TestRelationshipIndexFilteredRoutesServeThroughExploreEngine(t *testing.T) {
+	requirementsForTest := require.New(t)
+	assertionsForTest := assert.New(t)
+	fixture := newRelationshipIndexHTTPFixture(t)
+	server := fixture.newServer(t, false)
+	handler := server.Router()
 
 	filters := []map[string]any{
-		{"dimension": "source", "values": []string{strconv.FormatInt(fixture.sourceID, 10)}},
-		{"dimension": "participant", "values": []string{strconv.FormatInt(fixture.personID, 10)}},
-		{"dimension": "domain", "values": []string{"people.test"}},
-		{"dimension": "message_type", "values": []string{"email"}},
-		{"dimension": "after", "values": []string{"2026-07-20T09:00:00Z"}},
-		{"dimension": "before", "values": []string{"2026-07-20T11:00:00Z"}},
-		{"dimension": "deletion", "values": []string{"active"}},
+		relationshipIndexFilter("source", strconv.FormatInt(fixture.sourceID, 10)),
+		relationshipIndexFilter("participant", strconv.FormatInt(fixture.personID, 10)),
+		relationshipIndexFilter("domain", "people.test"),
+		relationshipIndexFilter("message_type", "email"),
+		relationshipIndexFilter("after", "2026-07-20T09:00:00Z"),
+		relationshipIndexFilter("before", "2026-07-20T11:00:00Z"),
+		relationshipIndexFilter("deletion", "active"),
 	}
 	filteredPredicate := map[string]any{
 		"filters":     filters,
@@ -292,12 +309,20 @@ func TestRelationshipIndexLeavesLegacyRoutesOutsideMigrationBoundary(t *testing.
 	guardServer := fixture.newServer(t, true)
 
 	personID := strconv.FormatInt(fixture.personID, 10)
+	filteredPredicate := map[string]any{
+		"filters": []map[string]any{
+			relationshipIndexFilter("message_type", "email"),
+		},
+	}
 	routes := []struct {
 		name   string
 		method string
 		path   string
 		body   map[string]any
 	}{
+		{name: "filtered people search", method: http.MethodPost, path: "/api/v1/people/search", body: map[string]any{"predicate": filteredPredicate, "identity_query": "alex"}},
+		{name: "filtered domain search", method: http.MethodPost, path: "/api/v1/domains/search", body: map[string]any{"predicate": filteredPredicate, "identity_query": "people.test"}},
+		{name: "filtered relationships", method: http.MethodPost, path: "/api/v1/relationships", body: map[string]any{"filters": filteredPredicate["filters"], "show_all": true}},
 		{name: "person detail", method: http.MethodGet, path: "/api/v1/people/" + personID},
 		{name: "person summary", method: http.MethodPost, path: "/api/v1/people/" + personID + "/summary", body: map[string]any{}},
 		{name: "domain detail", method: http.MethodGet, path: "/api/v1/domains/people.test"},

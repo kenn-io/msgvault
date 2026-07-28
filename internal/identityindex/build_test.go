@@ -137,7 +137,7 @@ func TestLogicalChatReductionKeepsParticipantlessNewestMessage(t *testing.T) {
 	var anchorMessageID int64
 	var isFromMe bool
 	var attachmentCount int64
-	query := LogicalActivitySQL(
+	query := logicalActivitySQL(
 		relationshipParquetGlob(root, DatasetActivity),
 		"true",
 	) + `

@@ -102,9 +102,11 @@ type DuckDBEngine struct {
 	// single-pass legacy listing queries. Test hook only: the fast-path
 	// equivalence tests compare both shapes on the same engine.
 	exploreFastPathDisabled bool
-	// disableLegacyAnalyticalViews proves identity-index endpoints do not
-	// depend on the wide base or analytical_entries views. Production leaves
-	// this false because timelines, Explore, and files still use those views.
+	// disableLegacyAnalyticalViews proves the unfiltered identity-index
+	// read paths serve entirely from the relationship rollup datasets.
+	// Production leaves this false: filtered identity searches route
+	// through the explore logical-entry machinery, which — like
+	// timelines, Explore, and files — reads the analytical views.
 	disableLegacyAnalyticalViews bool
 	// sourceRollupFastPathDisabled is a test-only equivalence hook.
 	sourceRollupFastPathDisabled bool
@@ -124,9 +126,11 @@ type DuckDBOptions struct {
 	TempDirectory string
 	// OwnTempDirectory removes TempDirectory after DuckDB closes.
 	OwnTempDirectory bool
-	// DisableLegacyAnalyticalViews skips registration of the legacy
-	// Parquet-backed SQL views. It is a test-only isolation option for the
-	// version-15 people/domain/relationship read paths.
+	// DisableLegacyAnalyticalViews skips registration of the Parquet-backed
+	// SQL views. It is a test-only isolation option proving the unfiltered
+	// people/domain/relationship read paths need only the relationship
+	// rollup datasets; filtered predicates route through the explore
+	// logical-entry machinery and require the views.
 	DisableLegacyAnalyticalViews bool
 }
 

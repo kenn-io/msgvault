@@ -39,6 +39,21 @@ func (e *DuckDBEngine) identityActivityPath() string {
 	return quoteIdentitySQLPath(e.parquetPath(identityindex.DatasetActivity))
 }
 
+// buildIdentityLogicalSQL renders the context-filtered logical-entry
+// population with per-(entry, canonical) relationship facts as a closed
+// logical_people CTE: entry facts come from analytical_entries (one row per
+// message, list columns never referenced) and membership from
+// relationship_activity edges. Its predecessor re-derived logical units from
+// the activity dataset at query time (the former identityindex logical-activity SQL),
+// whose per-message GROUP BY dedup over the whole edge set exceeds the
+// interactive memory budget on production archives under broad filters.
+//
+// logical_people carries one row per (entry, canonical) with the flags the
+// filtered relationships ranking consumes — is_author (anchor authorship for
+// chat entries, matching the index builder), is_owner, with_owner — plus the
+// entry facts the filtered people search aggregates. Conditions render
+// through buildExploreConditions, so every Explore dimension filters these
+// searches identically to Explore itself.
 func (e *DuckDBEngine) buildIdentityLogicalSQL(
 	ctx context.Context,
 	request ExploreRequest,
@@ -49,14 +64,137 @@ func (e *DuckDBEngine) buildIdentityLogicalSQL(
 	if err != nil {
 		return "", nil, err
 	}
-	conditions, args := buildIdentityFactConditions(request, e.identityActivityPath())
-	sql := identityindex.LogicalActivitySQL(
-		e.parquetPath(identityindex.DatasetActivity),
-		conditions,
-	)
+	conditions, args := buildExploreConditions(request)
+	activityScan := `read_parquet('` + e.identityActivityPath() + `',
+		hive_partitioning=true, union_by_name=true)`
+	// entry_num is a numeric logical-entry key: the anchor message ID for
+	// message entries, the (globally unique, NOT NULL) conversation ID
+	// negated for chat conversation entries so the two spaces cannot
+	// collide. The per-(entry, person) dedup hash below holds millions of
+	// groups under a broad filter; a 16-byte numeric pair keeps it inside
+	// the interactive memory budget where the VARCHAR entry_key did not.
+	// The dedup aggregates run over purely numeric (id, canonical) pairs
+	// with two boolean flags BEFORE the entry-payload join, so their hash
+	// tables never hold entry payload for millions of groups — the shape
+	// that previously sat on the interactive memory limit and failed
+	// intermittently. person_flags then attaches payload with one
+	// streaming join per branch.
+	sql := buildExploreLogicalSQLNoLists(conditions) + `
+), message_person AS (
+	SELECT a.message_id, a.canonical_id,
+	       bool_or(a.is_author) AS is_author,
+	       bool_or(a.is_owner) AS is_owner
+	FROM ` + activityScan + ` a
+	JOIN (
+		SELECT DISTINCT anchor_message_id FROM logical_entries
+		WHERE entry_kind <> 'conversation'
+	) m ON m.anchor_message_id = a.message_id
+	WHERE a.canonical_id IS NOT NULL
+	  AND a.is_direct
+	GROUP BY a.message_id, a.canonical_id
+), chat_person AS (
+	SELECT f.conversation_id, a.canonical_id,
+	       bool_or(a.is_author AND a.message_id = anchors.anchor_message_id) AS is_author,
+	       bool_or(a.is_owner) AS is_owner
+	FROM classified f
+	JOIN ` + activityScan + ` a ON a.message_id = f.message_id
+	JOIN (
+		SELECT conversation_id, anchor_message_id FROM logical_entries
+		WHERE entry_kind = 'conversation'
+	) anchors ON anchors.conversation_id = f.conversation_id
+	WHERE f.is_chat
+	  AND a.canonical_id IS NOT NULL
+	  AND (a.is_direct OR a.is_conversation_member)
+	GROUP BY f.conversation_id, a.canonical_id
+), person_flags AS (
+	SELECT le.anchor_message_id AS entry_num, mp.canonical_id,
+	       mp.is_author, mp.is_owner,
+	       le.occurred_at, le.is_from_me, le.entry_kind,
+	       le.attachment_count, le.source_type
+	FROM logical_entries le
+	JOIN message_person mp ON mp.message_id = le.anchor_message_id
+	WHERE le.entry_kind <> 'conversation'
+	UNION ALL
+	SELECT -le.conversation_id AS entry_num, cp.canonical_id,
+	       cp.is_author, cp.is_owner,
+	       le.occurred_at, le.is_from_me, le.entry_kind,
+	       le.attachment_count, le.source_type
+	FROM logical_entries le
+	JOIN chat_person cp ON cp.conversation_id = le.conversation_id
+	WHERE le.entry_kind = 'conversation'
+), owner_presence AS (
+	SELECT entry_num, bool_or(is_owner) AS with_owner
+	FROM person_flags
+	GROUP BY entry_num
+), logical_people AS (
+	SELECT pf.*, op.with_owner
+	FROM person_flags pf
+	JOIN owner_presence op USING (entry_num)
+)`
 	if strings.TrimSpace(identityCandidateSQL) != "" {
 		sql += ", identity_candidates AS (" + identityCandidateSQL + ")"
 	}
+	return sql, args, nil
+}
+
+// buildIdentityDomainLogicalSQL is the domain-search counterpart of
+// buildIdentityLogicalSQL: logical_domains carries one row per
+// (entry, domain) with the entry facts domain totals aggregate, and
+// logical_person_domains the (entry, domain, canonical) pairs person_count
+// dedups over — direct edges only for message entries, matching the
+// relationship_domains dataset's person-domain pairing, while the domain
+// rows themselves include conversation-roster domains exactly as the
+// aggregated participant_domains lists did.
+func (e *DuckDBEngine) buildIdentityDomainLogicalSQL(
+	ctx context.Context,
+	request ExploreRequest,
+) (string, []any, error) {
+	var err error
+	request, err = e.narrowIdentityFactCandidates(ctx, request)
+	if err != nil {
+		return "", nil, err
+	}
+	conditions, args := buildExploreConditions(request)
+	activityGlob := e.identityActivityPath()
+	activityScan := `read_parquet('` + activityGlob + `',
+		hive_partitioning=true, union_by_name=true)`
+	// entry_num mirrors buildIdentityLogicalSQL: the per-(entry, domain)
+	// dedup hash stays numeric-keyed so a broad filter fits the interactive
+	// memory budget.
+	sql := buildExploreLogicalSQLNoLists(conditions) + `
+), logical_domains AS (
+	SELECT le.anchor_message_id AS entry_num, a.participant_domain AS domain,
+	       le.occurred_at, le.attachment_count, le.source_type
+	FROM logical_entries le
+	JOIN ` + activityScan + ` a ON a.message_id = le.anchor_message_id
+	WHERE le.entry_kind <> 'conversation'
+	  AND a.canonical_id IS NOT NULL
+	  AND a.participant_domain <> ''
+	UNION
+	SELECT -le.conversation_id AS entry_num, a.participant_domain AS domain,
+	       le.occurred_at, le.attachment_count, le.source_type
+	FROM logical_entries le
+	JOIN classified f ON f.conversation_id = le.conversation_id AND f.is_chat
+	JOIN ` + activityScan + ` a ON a.message_id = f.message_id
+	WHERE le.entry_kind = 'conversation'
+	  AND a.canonical_id IS NOT NULL
+	  AND a.participant_domain <> ''
+), logical_person_domains AS (
+	SELECT DISTINCT a.participant_domain AS domain, a.canonical_id
+	FROM logical_entries le
+	JOIN ` + activityScan + ` a ON a.message_id = le.anchor_message_id
+	WHERE le.entry_kind <> 'conversation'
+	  AND a.canonical_id IS NOT NULL
+	  AND a.participant_domain <> '' AND a.is_direct
+	UNION
+	SELECT a.participant_domain AS domain, a.canonical_id
+	FROM logical_entries le
+	JOIN classified f ON f.conversation_id = le.conversation_id AND f.is_chat
+	JOIN ` + activityScan + ` a ON a.message_id = f.message_id
+	WHERE le.entry_kind = 'conversation'
+	  AND a.canonical_id IS NOT NULL
+	  AND a.participant_domain <> ''
+)`
 	return sql, args, nil
 }
 
@@ -372,28 +510,38 @@ func (e *DuckDBEngine) unfilteredPeopleSQL(
 func (e *DuckDBEngine) filteredPeopleSQL(
 	logicalSQL, order string,
 ) string {
+	// person_stats is the ONLY reference to the per-(entry, person) rows,
+	// and it reads person_flags rather than logical_people: a second
+	// reference would make DuckDB materialize the full row set — hundreds
+	// of MB on a production archive under a broad filter — and the
+	// owner_presence join inside logical_people serves only the filtered
+	// relationships ranking, so consuming person_flags lets the optimizer
+	// drop it entirely here. Totals and per-source counts both reduce from
+	// the compact (person, source_type) stats, and the candidate
+	// restriction happens in the population join below rather than inside
+	// the aggregate.
 	return logicalSQL + `,
-person_totals AS (
-	SELECT c.canonical_id,
-	       count(*)::BIGINT AS activity_count,
+person_stats AS (
+	SELECT p.canonical_id, p.source_type,
+	       count(*)::BIGINT AS source_count,
 	       coalesce(sum(p.attachment_count), 0)::BIGINT AS file_count,
 	       min(p.occurred_at)::TIMESTAMP AS first_at,
 	       max(p.occurred_at)::TIMESTAMP AS last_at
-	FROM logical_people p
-	JOIN identity_candidates c
-	  ON p.canonical_id = c.canonical_id
-	GROUP BY c.canonical_id
-), person_source_counts AS (
-	SELECT c.canonical_id, p.source_type, count(*)::BIGINT AS source_count
-	FROM logical_people p
-	JOIN identity_candidates c
-	  ON p.canonical_id = c.canonical_id
-	GROUP BY c.canonical_id, p.source_type
+	FROM person_flags p
+	GROUP BY p.canonical_id, p.source_type
+), person_totals AS (
+	SELECT canonical_id,
+	       sum(source_count)::BIGINT AS activity_count,
+	       sum(file_count)::BIGINT AS file_count,
+	       min(first_at)::TIMESTAMP AS first_at,
+	       max(last_at)::TIMESTAMP AS last_at
+	FROM person_stats
+	GROUP BY canonical_id
 ), person_sources AS (
 	SELECT canonical_id,
 	       list(struct_pack(source_type := source_type, count := source_count)
 	            ORDER BY source_type) AS source_counts
-	FROM person_source_counts
+	FROM person_stats
 	GROUP BY canonical_id
 ), population AS (
 	SELECT c.canonical_id, c.person_id, c.display_label, c.partial_label,
@@ -543,10 +691,9 @@ func (e *DuckDBEngine) searchDomains(
 		queryText = e.unfilteredDomainsSQL(domainWhere, order)
 		args = append(args, domainArgs...)
 	} else {
-		logicalSQL, logicalArgs, logicalErr := e.buildIdentityLogicalSQL(
+		logicalSQL, logicalArgs, logicalErr := e.buildIdentityDomainLogicalSQL(
 			ctx,
 			request.Explore,
-			"",
 		)
 		if logicalErr != nil {
 			return nil, logicalErr
@@ -629,31 +776,39 @@ ORDER BY ` + order + ` LIMIT ? OFFSET ?`
 }
 
 func filteredDomainsSQL(logicalSQL, domainWhere, order string) string {
+	// domain_stats is the ONLY reference to the per-(entry, domain) rows:
+	// a second reference would materialize them all (see filteredPeopleSQL).
+	// Totals and per-source counts reduce from the compact
+	// (domain, source_type) stats; person_count dedups the separate
+	// person-domain pair edges against the surviving domains.
 	return logicalSQL + `,
-filtered_logical_domains AS (
-	SELECT * FROM logical_domains WHERE ` + domainWhere + `
-), domain_totals AS (
-	SELECT domain,
-	       count(*)::BIGINT AS activity_count,
+domain_stats AS (
+	SELECT domain, source_type,
+	       count(*)::BIGINT AS source_count,
 	       coalesce(sum(attachment_count), 0)::BIGINT AS file_count,
 	       min(occurred_at)::TIMESTAMP AS first_at,
 	       max(occurred_at)::TIMESTAMP AS last_at
-	FROM filtered_logical_domains
-	GROUP BY domain
-), domain_source_counts AS (
-	SELECT domain, source_type, count(*)::BIGINT AS source_count
-	FROM filtered_logical_domains
+	FROM logical_domains
+	WHERE ` + domainWhere + `
 	GROUP BY domain, source_type
+), domain_totals AS (
+	SELECT domain,
+	       sum(source_count)::BIGINT AS activity_count,
+	       sum(file_count)::BIGINT AS file_count,
+	       min(first_at)::TIMESTAMP AS first_at,
+	       max(last_at)::TIMESTAMP AS last_at
+	FROM domain_stats
+	GROUP BY domain
 ), domain_sources AS (
 	SELECT domain,
 	       list(struct_pack(source_type := source_type, count := source_count)
 	            ORDER BY source_type) AS source_counts
-	FROM domain_source_counts
+	FROM domain_stats
 	GROUP BY domain
 ), domain_people AS (
 	SELECT domain, count(DISTINCT canonical_id)::BIGINT AS person_count
-	FROM filtered_logical_domains
-	CROSS JOIN unnest(canonical_ids) AS person(canonical_id)
+	FROM logical_person_domains
+	WHERE domain IN (SELECT DISTINCT domain FROM domain_stats)
 	GROUP BY domain
 ), population AS (
 	SELECT t.domain, t.activity_count,

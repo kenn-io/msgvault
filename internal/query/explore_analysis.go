@@ -166,27 +166,6 @@ func sqlActivityEntryEdges(activityGlob, selectExpr, messagePredicate, conversat
 `
 }
 
-// sqlClustersCanonCTE renders the shared clusters/canon CTE pair mapping
-// every participant to its identity-cluster canonical ID (itself when
-// unlinked), resolved through the committed participant_clusters dataset —
-// the same resolution buildExploreSQL, relationship analytics, and
-// personEntriesCTE use. Returned closed, without surrounding commas.
-func sqlClustersCanonCTE(clustersGlob string) string {
-	return fmt.Sprintf(`clusters AS (
-	SELECT participant_id, canonical_id FROM read_parquet('%s')
-), canon AS (
-	SELECT p.id AS participant_id, COALESCE(c.canonical_id, p.id) AS canonical_id
-	FROM participants p LEFT JOIN clusters c ON c.participant_id = p.id
-)`, clustersGlob)
-}
-
-// sqlCanonicalPersonGroupLabelExpr renders a canonical "People" group row's
-// label: the shared cluster label policy (see person_label.go) evaluated for
-// the canonical participant bound as person_id, with cluster members
-// resolved through the canon CTE the caller emits (sqlClustersCanonCTE) — so
-// a merged row is labeled by the cluster's best display name, never by
-// whichever alias happened to appear latest. person_id must be the GROUP BY
-// key of the surrounding aggregate.
 // sqlIndexedPersonGroupLabelExpr renders a canonical "People" group row's
 // label from the relationship_people dataset, which bakes the shared cluster
 // label policy (see person_label.go and the identity index builder) at build
@@ -202,12 +181,6 @@ func sqlIndexedPersonGroupLabelExpr(peopleGlob string) string {
 	return "COALESCE(" +
 		"(SELECT dp.display_label FROM read_parquet('" + peopleGlob + "') dp WHERE dp.canonical_id = person_id), " +
 		"'Unknown person #' || CAST(person_id AS VARCHAR))"
-}
-
-func sqlCanonicalPersonGroupLabelExpr() string {
-	return "(SELECT " + sqlPersonDisplayLabelExpr(sqlClusterBestNameExpr(
-		"pbn.id IN (SELECT cnl.participant_id FROM canon cnl WHERE cnl.canonical_id = p2.id)"), "p2") +
-		" FROM participants p2 WHERE p2.id = person_id)"
 }
 
 // sqlMessageTypeGroupExpr renders the message-type group key/label: NULL or

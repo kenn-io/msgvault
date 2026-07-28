@@ -5,11 +5,11 @@ import (
 	"strings"
 )
 
-// LogicalActivitySQL returns CTEs named logical_units, logical_people, and
+// logicalActivitySQL returns CTEs named logical_units, logical_people, and
 // logical_domains over the canonical activity dataset at activityPath.
 // filterSQL is trusted SQL rendered by the query layer and may refer to the
 // message-level alias f.
-func LogicalActivitySQL(activityPath, filterSQL string) string {
+func logicalActivitySQL(activityPath, filterSQL string) string {
 	if strings.TrimSpace(filterSQL) == "" {
 		filterSQL = "true"
 	}
@@ -255,7 +255,7 @@ GROUP BY m.message_id, m.conversation_id, m.source_id, m.source_type,
 }
 
 func buildLogicalActivityMaterializationSQL(path string) string {
-	return LogicalActivitySQL(path, "true") + `
+	return logicalActivitySQL(path, "true") + `
 SELECT 1::UTINYINT AS relation_kind,
        p.entry_key, p.anchor_message_id, p.conversation_id, p.source_id,
        p.source_type, p.occurred_at, p.entry_kind, p.is_from_me,
