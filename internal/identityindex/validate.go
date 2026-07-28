@@ -9,24 +9,19 @@ import (
 	"time"
 )
 
-const (
-	relationshipDecayAbsoluteTolerance = 1e-12
-	relationshipDecayRelativeTolerance = 1e-12
-)
-
-// ValidationOptions describes the complete post-publication population and
-// the staged datasets that must contain a schema-bearing shard.
+// ValidationOptions describes the staged datasets that must form a complete
+// relationship index generation.
 type ValidationOptions struct {
 	OutputRoot             string
 	RequiredOutputDatasets []string
 	Activity               ActivityPaths
-	Messages               string
-	Participants           string
-	Conversations          string
-	AnchorDate             time.Time
+	Messages               string    // Deprecated.
+	Participants           string    // Deprecated.
+	Conversations          string    // Deprecated.
+	AnchorDate             time.Time // Deprecated.
 }
 
-// Validate rejects malformed or internally inconsistent identity indexes
+// Validate rejects malformed or internally inconsistent relationship indexes
 // before the cache marker makes them visible to readers.
 func Validate(
 	ctx context.Context,
@@ -39,316 +34,135 @@ func Validate(
 		}
 	}
 
-	facts := activityRelation(opts.Activity.Facts, true)
-	directEdges := activityRelation(opts.Activity.DirectEdges, false)
-	conversationEdges := activityRelation(opts.Activity.ConversationEdges, false)
-	directory := activityRelation(opts.Activity.Directory, false)
-	clusters := activityRelation(opts.Activity.Clusters, false)
-	owners := activityRelation(opts.Activity.Owners, false)
-	participants := activityRelation(opts.Participants, false)
-	conversations := activityRelation(opts.Conversations, false)
-	rollups := activityRelation(
-		filepath.Join(opts.OutputRoot, DatasetRollups, "*.parquet"),
-		false,
-	)
-	relationships := activityRelation(
-		filepath.Join(opts.OutputRoot, DatasetRelationships, "*.parquet"),
-		false,
-	)
-	domainRollups := activityRelation(
-		filepath.Join(opts.OutputRoot, DatasetDomainRollups, "*.parquet"),
-		false,
-	)
-	daily := activityRelation(
-		filepath.Join(opts.OutputRoot, DatasetRelationshipDaily, "*.parquet"),
-		false,
-	)
-	messagesPath := opts.Messages
-	if strings.TrimSpace(messagesPath) == "" {
-		messagesPath = parquetDatasetGlob(opts.OutputRoot, "messages")
+	activityPath := opts.Activity.Activity
+	if strings.TrimSpace(activityPath) == "" {
+		activityPath = parquetDatasetGlob(opts.OutputRoot, DatasetActivity)
 	}
-	messages := activityRelation(messagesPath, true)
-
 	relations := map[string]string{
-		DatasetEntryFacts:        facts,
-		DatasetDirectEdges:       directEdges,
-		DatasetConversationEdges: conversationEdges,
-		DatasetDirectory:         directory,
-		DatasetRollups:           rollups,
-		DatasetDomainRollups:     domainRollups,
-		DatasetRelationships:     relationships,
-		DatasetRelationshipDaily: daily,
+		DatasetActivity: activityRelation(activityPath, true),
+		DatasetPeople: activityRelation(
+			filepath.Join(opts.OutputRoot, DatasetPeople, "*.parquet"),
+			false,
+		),
+		DatasetDomains: activityRelation(
+			filepath.Join(opts.OutputRoot, DatasetDomains, "*.parquet"),
+			false,
+		),
+		DatasetRelationshipDaily: activityRelation(
+			filepath.Join(opts.OutputRoot, DatasetRelationshipDaily, "*.parquet"),
+			false,
+		),
 	}
 	for _, dataset := range opts.RequiredOutputDatasets {
-		if err := validateDatasetSchema(ctx, db, dataset, relations[dataset]); err != nil {
+		relation, ok := relations[dataset]
+		if !ok {
+			return fmt.Errorf("validate %s schema: dataset is not part of the relationship index", dataset)
+		}
+		if err := validateDatasetSchema(ctx, db, dataset, relation); err != nil {
 			return err
 		}
 	}
 
+	activity := relations[DatasetActivity]
+	people := relations[DatasetPeople]
+	domains := relations[DatasetDomains]
+	daily := relations[DatasetRelationshipDaily]
 	checks := []struct {
 		dataset   string
 		invariant string
 		query     string
 	}{
 		{
-			DatasetEntryFacts,
-			"duplicate message IDs",
+			DatasetActivity,
+			"duplicate message/canonical/domain keys",
 			`SELECT count(*) FROM (
-				SELECT message_id FROM ` + facts + `
-				GROUP BY message_id HAVING count(*) > 1
+				SELECT message_id, canonical_id, participant_domain
+				FROM ` + activity + `
+				GROUP BY ALL HAVING count(*) > 1
 			)`,
 		},
 		{
-			DatasetEntryFacts,
-			"cached messages have no fact",
-			`SELECT count(*) FROM ` + messages + ` m
-			 LEFT JOIN ` + facts + ` f
-			   ON f.message_id = try_cast(m.id AS BIGINT)
-			 WHERE f.message_id IS NULL`,
+			DatasetActivity,
+			"rows have no edge origin",
+			`SELECT count(*) FROM ` + activity + `
+			 WHERE NOT is_direct AND NOT is_conversation_member`,
 		},
 		{
-			DatasetEntryFacts,
-			"facts have no cached message",
-			`SELECT count(*) FROM ` + facts + ` f
-			 LEFT JOIN ` + messages + ` m
-			   ON try_cast(m.id AS BIGINT) = f.message_id
-			 WHERE m.id IS NULL`,
-		},
-		{
-			DatasetDirectEdges,
-			"duplicate message/participant pairs",
-			`SELECT count(*) FROM (
-				SELECT message_id, participant_id FROM ` + directEdges + `
-				GROUP BY message_id, participant_id HAVING count(*) > 1
-			)`,
-		},
-		{
-			DatasetConversationEdges,
-			"duplicate conversation/participant pairs",
-			`SELECT count(*) FROM (
-				SELECT conversation_id, participant_id FROM ` + conversationEdges + `
-				GROUP BY conversation_id, participant_id HAVING count(*) > 1
-			)`,
-		},
-		{
-			DatasetDirectory,
+			DatasetPeople,
 			"duplicate canonical IDs",
 			`SELECT count(*) FROM (
-				SELECT canonical_id FROM ` + directory + `
+				SELECT canonical_id FROM ` + people + `
 				GROUP BY canonical_id HAVING count(*) > 1
 			)`,
 		},
 		{
-			DatasetRollups,
-			"duplicate canonical IDs",
-			`SELECT count(*) FROM (
-				SELECT canonical_id FROM ` + rollups + `
-				GROUP BY canonical_id HAVING count(*) > 1
-			)`,
-		},
-		{
-			DatasetRollups,
+			DatasetPeople,
 			"source rollups do not decompose identity totals",
 			`SELECT count(*)
-			 FROM ` + rollups + ` r
-			 WHERE len(r.source_rollups) = 0
+			 FROM ` + people + ` p
+			 WHERE len(p.source_rollups) = 0
 			    OR (SELECT sum(item.activity_count)::BIGINT
-			        FROM unnest(r.source_rollups) AS source(item))
-			       IS DISTINCT FROM r.activity_count
+			        FROM unnest(p.source_rollups) AS source(item))
+			       IS DISTINCT FROM p.activity_count
 			    OR (SELECT sum(item.file_count)::BIGINT
-			        FROM unnest(r.source_rollups) AS source(item))
-			       IS DISTINCT FROM r.file_count
+			        FROM unnest(p.source_rollups) AS source(item))
+			       IS DISTINCT FROM p.file_count
 			    OR (SELECT min(item.first_at)::TIMESTAMP
-			        FROM unnest(r.source_rollups) AS source(item))
-			       IS DISTINCT FROM r.first_at
+			        FROM unnest(p.source_rollups) AS source(item))
+			       IS DISTINCT FROM p.first_at
 			    OR (SELECT max(item.last_at)::TIMESTAMP
-			        FROM unnest(r.source_rollups) AS source(item))
-			       IS DISTINCT FROM r.last_at
+			        FROM unnest(p.source_rollups) AS source(item))
+			       IS DISTINCT FROM p.last_at
 			    OR (SELECT sum(item.count)::BIGINT
-			        FROM unnest(r.source_counts) AS source(item))
-			       IS DISTINCT FROM r.activity_count`,
+			        FROM unnest(p.source_counts) AS source(item))
+			       IS DISTINCT FROM p.activity_count`,
 		},
 		{
-			DatasetRelationships,
-			"duplicate canonical IDs",
+			DatasetDomains,
+			"duplicate domain keys",
 			`SELECT count(*) FROM (
-				SELECT canonical_id FROM ` + relationships + `
-				GROUP BY canonical_id HAVING count(*) > 1
+				SELECT domain FROM ` + domains + `
+				GROUP BY domain HAVING count(*) > 1
 			)`,
 		},
 		{
 			DatasetRelationshipDaily,
-			"duplicate canonical/date pairs",
+			"duplicate canonical/date keys",
 			`SELECT count(*) FROM (
 				SELECT canonical_id, event_date FROM ` + daily + `
 				GROUP BY canonical_id, event_date HAVING count(*) > 1
 			)`,
 		},
 		{
-			DatasetDomainRollups,
-			"duplicate domain keys",
-			`SELECT count(*) FROM (
-				SELECT domain FROM ` + domainRollups + `
-				GROUP BY domain HAVING count(*) > 1
-			)`,
-		},
-		{
-			DatasetDirectEdges,
-			"edges without a fact",
-			`SELECT count(*) FROM ` + directEdges + ` d
-			 LEFT JOIN ` + facts + ` f USING (message_id)
-			 WHERE f.message_id IS NULL`,
-		},
-		{
-			DatasetDirectEdges,
-			"edges without a participant",
-			`SELECT count(*) FROM ` + directEdges + ` d
-			 LEFT JOIN ` + participants + ` p ON p.id = d.participant_id
-			 WHERE p.id IS NULL`,
-		},
-		{
-			DatasetConversationEdges,
-			"edges without a conversation",
-			`SELECT count(*) FROM ` + conversationEdges + ` d
-			 LEFT JOIN ` + conversations + ` c ON c.id = d.conversation_id
-			 WHERE c.id IS NULL`,
-		},
-		{
-			DatasetConversationEdges,
-			"edges without a participant",
-			`SELECT count(*) FROM ` + conversationEdges + ` d
-			 LEFT JOIN ` + participants + ` p ON p.id = d.participant_id
-			 WHERE p.id IS NULL`,
-		},
-		{
-			DatasetRollups,
-			"canonical IDs absent from the directory",
-			`SELECT count(*) FROM ` + rollups + ` r
-			 LEFT JOIN ` + directory + ` d USING (canonical_id)
-			 WHERE d.canonical_id IS NULL`,
-		},
-		{
-			DatasetRelationships,
-			"canonical IDs absent from the directory",
-			`SELECT count(*) FROM ` + relationships + ` r
-			 LEFT JOIN ` + directory + ` d USING (canonical_id)
-			 WHERE d.canonical_id IS NULL`,
-		},
-		{
 			DatasetRelationshipDaily,
-			"canonical IDs absent from the directory",
-			`SELECT count(*) FROM ` + daily + ` r
-			 LEFT JOIN ` + directory + ` d USING (canonical_id)
-			 WHERE d.canonical_id IS NULL`,
-		},
-		{
-			DatasetRelationshipDaily,
-			"daily identities have no relationship rollup",
+			"canonical IDs absent from relationship_people",
 			`SELECT count(*) FROM (
-				SELECT DISTINCT f.canonical_id FROM ` + daily + ` f
-				LEFT JOIN ` + relationships + ` r USING (canonical_id)
-				WHERE r.canonical_id IS NULL
+				SELECT DISTINCT d.canonical_id
+				FROM ` + daily + ` d
+				LEFT JOIN ` + people + ` p USING (canonical_id)
+				WHERE p.canonical_id IS NULL
 			)`,
-		},
-		{
-			DatasetRelationships,
-			"owner canonical IDs are present",
-			ownerRelationshipCountSQL(relationships, clusters, owners),
 		},
 		{
 			DatasetRelationshipDaily,
 			"owner canonical IDs are present",
-			ownerRelationshipCountSQL(daily, clusters, owners),
-		},
-		{
-			DatasetRelationships,
-			"rows have a different anchor date",
-			`SELECT count(*) FROM ` + relationships +
-				` WHERE anchor_date IS DISTINCT FROM DATE '` +
-				quoteSQLString(opts.AnchorDate.UTC().Format(time.DateOnly)) + `'`,
-		},
-		{
-			DatasetRelationships,
-			"invalid decayed relationship components",
-			`SELECT count(*) FROM ` + relationships + `
-			 WHERE sent_decayed IS NULL OR NOT isfinite(sent_decayed) OR sent_decayed < 0
-			    OR received_decayed IS NULL OR NOT isfinite(received_decayed) OR received_decayed < 0
-			    OR meetings_decayed IS NULL OR NOT isfinite(meetings_decayed) OR meetings_decayed < 0`,
-		},
-		{
-			DatasetRelationships,
-			"invalid raw relationship components or modality mask",
-			`SELECT count(*) FROM ` + relationships + `
-			 WHERE sent_count IS NULL OR sent_count < 0
-			    OR meeting_count IS NULL OR meeting_count < 0
-			    OR modality_mask IS NULL
-			    OR (modality_mask & 7::UTINYINT) IS DISTINCT FROM modality_mask`,
-		},
-		{
-			DatasetRelationships,
-			"non-empty rows have null last_at",
-			`SELECT count(*) FROM ` + relationships + ` WHERE last_at IS NULL`,
+			`SELECT count(*) FROM ` + daily + ` d
+			 JOIN ` + people + ` p USING (canonical_id)
+			 WHERE p.is_owner`,
 		},
 		{
 			DatasetRelationshipDaily,
-			"invalid daily relationship components or modality mask",
+			"invalid components or modality mask",
 			`SELECT count(*) FROM ` + daily + `
 			 WHERE canonical_id IS NULL OR event_date IS NULL
 			    OR sent_units IS NULL OR sent_units < 0
 			    OR received_units IS NULL OR received_units < 0
 			    OR meeting_units IS NULL OR meeting_units < 0
-			    OR sent_count IS NULL OR sent_count < 0
-			    OR meeting_count IS NULL OR meeting_count < 0
+			    OR sent_count IS DISTINCT FROM sent_units
+			    OR meeting_count IS DISTINCT FROM meeting_units
 			    OR modality_mask IS NULL
-			    OR (modality_mask & 7::UTINYINT) IS DISTINCT FROM modality_mask`,
-		},
-		{
-			DatasetRelationshipDaily,
-			"non-empty rows have null last_at",
-			`SELECT count(*) FROM ` + daily + ` WHERE last_at IS NULL`,
-		},
-		{
-			DatasetRelationshipDaily,
-			"rows violate raw count decomposition",
-			`SELECT count(*) FROM ` + daily + `
-			 WHERE sent_count IS DISTINCT FROM sent_units
-			    OR meeting_count IS DISTINCT FROM meeting_units`,
-		},
-		{
-			DatasetRelationshipDaily,
-			"rows have an event-date/last-at mismatch",
-			`SELECT count(*) FROM ` + daily + `
-			 WHERE last_at::DATE IS DISTINCT FROM event_date`,
-		},
-		{
-			DatasetRelationships,
-			"daily signals do not decompose relationship totals",
-			`WITH daily_totals AS (
-				SELECT canonical_id,
-				       sum(sent_count)::BIGINT AS sent_count,
-				       sum(meeting_count)::BIGINT AS meeting_count,
-				       bit_or(modality_mask)::UTINYINT AS modality_mask,
-				       max(last_at)::TIMESTAMP AS last_at
-				FROM ` + daily + `
-				GROUP BY canonical_id
-			)
-			SELECT count(*)
-			FROM ` + relationships + ` r
-			LEFT JOIN daily_totals d USING (canonical_id)
-			WHERE d.canonical_id IS NULL
-			   OR d.sent_count IS DISTINCT FROM r.sent_count
-			   OR d.meeting_count IS DISTINCT FROM r.meeting_count
-			   OR d.modality_mask IS DISTINCT FROM r.modality_mask
-			   OR d.last_at IS DISTINCT FROM r.last_at`,
-		},
-		{
-			DatasetRelationships,
-			"decayed signals do not match daily components",
-			relationshipDecayValidationSQL(
-				relationships,
-				daily,
-				opts.AnchorDate,
-			),
+			    OR (modality_mask & 7::UTINYINT) IS DISTINCT FROM modality_mask
+			    OR last_at IS NULL OR last_at::DATE IS DISTINCT FROM event_date`,
 		},
 	}
 	for _, check := range checks {
@@ -363,63 +177,16 @@ func Validate(
 	return nil
 }
 
-func relationshipDecayValidationSQL(
-	relationships, daily string,
-	anchor time.Time,
-) string {
-	anchorDate := quoteSQLString(anchor.UTC().Format(time.DateOnly))
-	decayRate := fmt.Sprintf("%.17g", RelationshipDecayRate)
-	absoluteTolerance := fmt.Sprintf("%.17g", relationshipDecayAbsoluteTolerance)
-	relativeTolerance := fmt.Sprintf("%.17g", relationshipDecayRelativeTolerance)
-	return fmt.Sprintf(`
-		WITH expected AS (
-			SELECT canonical_id,
-			       sum(CASE WHEN event_date <= DATE '%[1]s'
-			                THEN sent_units * exp(-%[2]s * greatest(
-			                     0, date_diff('day', event_date, DATE '%[1]s')))
-			                ELSE 0 END)::DOUBLE AS sent_decayed,
-			       sum(CASE WHEN event_date <= DATE '%[1]s'
-			                THEN received_units * exp(-%[2]s * greatest(
-			                     0, date_diff('day', event_date, DATE '%[1]s')))
-			                ELSE 0 END)::DOUBLE AS received_decayed,
-			       sum(CASE WHEN event_date <= DATE '%[1]s'
-			                THEN meeting_units * exp(-%[2]s * greatest(
-			                     0, date_diff('day', event_date, DATE '%[1]s')))
-			                ELSE 0 END)::DOUBLE AS meetings_decayed
-			FROM %[3]s
-			GROUP BY canonical_id
-		)
-		SELECT count(*)
-		FROM %[4]s r
-		LEFT JOIN expected e USING (canonical_id)
-		WHERE e.canonical_id IS NULL
-		   OR abs(r.sent_decayed - e.sent_decayed) >
-		      greatest(%[5]s, %[6]s *
-		               greatest(abs(r.sent_decayed), abs(e.sent_decayed)))
-		   OR abs(r.received_decayed - e.received_decayed) >
-		      greatest(%[5]s, %[6]s *
-		               greatest(abs(r.received_decayed), abs(e.received_decayed)))
-		   OR abs(r.meetings_decayed - e.meetings_decayed) >
-		      greatest(%[5]s, %[6]s *
-		               greatest(abs(r.meetings_decayed), abs(e.meetings_decayed)))`,
-		anchorDate,
-		decayRate,
-		daily,
-		relationships,
-		absoluteTolerance,
-		relativeTolerance,
-	)
-}
-
 type schemaColumn struct {
 	name string
 	typ  string
 }
 
 const duckDBTypeBigInt = "BIGINT"
+const duckDBTypeBoolean = "BOOLEAN"
 
 var datasetSchemas = map[string][]schemaColumn{
-	DatasetEntryFacts: {
+	DatasetActivity: {
 		{"message_id", duckDBTypeBigInt},
 		{"conversation_id", duckDBTypeBigInt},
 		{"source_id", duckDBTypeBigInt},
@@ -428,36 +195,26 @@ var datasetSchemas = map[string][]schemaColumn{
 		{"message_type", "VARCHAR"},
 		{"conversation_type", "VARCHAR"},
 		{"entry_kind", "VARCHAR"},
-		{"is_chat", "BOOLEAN"},
-		{"is_from_me", "BOOLEAN"},
-		{"has_attachments", "BOOLEAN"},
+		{"is_chat", duckDBTypeBoolean},
+		{"is_from_me", duckDBTypeBoolean},
 		{"attachment_count", "INTEGER"},
-		{"deleted_from_source", "BOOLEAN"},
+		{"deleted_from_source", duckDBTypeBoolean},
+		{"canonical_id", duckDBTypeBigInt},
+		{"participant_domain", "VARCHAR"},
+		{"is_direct", duckDBTypeBoolean},
+		{"is_conversation_member", duckDBTypeBoolean},
+		{"is_sender", duckDBTypeBoolean},
+		{"is_author", duckDBTypeBoolean},
+		{"is_owner", duckDBTypeBoolean},
 		{"occurred_year", duckDBTypeBigInt},
 	},
-	DatasetDirectEdges: {
-		{"message_id", duckDBTypeBigInt},
-		{"occurred_year", duckDBTypeBigInt},
-		{"participant_id", duckDBTypeBigInt},
-		{"participant_domain", "VARCHAR"},
-		{"is_sender", "BOOLEAN"},
-		{"is_author", "BOOLEAN"},
-	},
-	DatasetConversationEdges: {
-		{"conversation_id", duckDBTypeBigInt},
-		{"participant_id", duckDBTypeBigInt},
-		{"participant_domain", "VARCHAR"},
-	},
-	DatasetDirectory: {
+	DatasetPeople: {
 		{"canonical_id", duckDBTypeBigInt},
 		{"display_label", "VARCHAR"},
-		{"partial_label", "BOOLEAN"},
+		{"partial_label", duckDBTypeBoolean},
 		{"member_ids", "BIGINT[]"},
 		{"search_values", "VARCHAR[]"},
-		{"is_owner", "BOOLEAN"},
-	},
-	DatasetRollups: {
-		{"canonical_id", duckDBTypeBigInt},
+		{"is_owner", duckDBTypeBoolean},
 		{"activity_count", duckDBTypeBigInt},
 		{"file_count", duckDBTypeBigInt},
 		{"first_at", "TIMESTAMP"},
@@ -468,7 +225,7 @@ var datasetSchemas = map[string][]schemaColumn{
 			"STRUCT(source_id BIGINT, source_type VARCHAR, activity_count BIGINT, file_count BIGINT, first_at TIMESTAMP, last_at TIMESTAMP)[]",
 		},
 	},
-	DatasetDomainRollups: {
+	DatasetDomains: {
 		{"domain", "VARCHAR"},
 		{"activity_count", duckDBTypeBigInt},
 		{"person_count", duckDBTypeBigInt},
@@ -476,17 +233,6 @@ var datasetSchemas = map[string][]schemaColumn{
 		{"first_at", "TIMESTAMP"},
 		{"last_at", "TIMESTAMP"},
 		{"source_counts", "STRUCT(source_type VARCHAR, count BIGINT)[]"},
-	},
-	DatasetRelationships: {
-		{"canonical_id", duckDBTypeBigInt},
-		{"anchor_date", "DATE"},
-		{"sent_decayed", "DOUBLE"},
-		{"received_decayed", "DOUBLE"},
-		{"meetings_decayed", "DOUBLE"},
-		{"sent_count", duckDBTypeBigInt},
-		{"meeting_count", duckDBTypeBigInt},
-		{"modality_mask", "UTINYINT"},
-		{"last_at", "TIMESTAMP"},
 	},
 	DatasetRelationshipDaily: {
 		{"canonical_id", duckDBTypeBigInt},
@@ -557,17 +303,4 @@ func validateDatasetSchema(
 		}
 	}
 	return nil
-}
-
-func ownerRelationshipCountSQL(relationship, clusters, owners string) string {
-	return strings.TrimSpace(`
-		WITH owner_canon AS (
-			SELECT DISTINCT coalesce(c.canonical_id, try_cast(o.participant_id AS BIGINT))
-			       AS canonical_id
-			FROM ` + owners + ` o
-			LEFT JOIN ` + clusters + ` c ON c.participant_id = o.participant_id
-		)
-		SELECT count(*) FROM ` + relationship + ` r
-		JOIN owner_canon o USING (canonical_id)
-	`)
 }

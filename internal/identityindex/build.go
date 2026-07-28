@@ -12,14 +12,18 @@ import (
 	"time"
 )
 
-// Mode selects which cache population a build reads and replaces.
+// Mode selects the base population used to build the relationship index.
 type Mode uint8
 
 const (
 	ModeFull Mode = iota
 	ModeIncremental
-	ModeDerivedOnly
+	ModeIndexOnly
 )
+
+// ModeDerivedOnly remains as a source-compatible name while callers move to
+// the clearer index-only lifecycle.
+const ModeDerivedOnly = ModeIndexOnly
 
 // BuildOptions identifies committed, staged, and output cache roots.
 type BuildOptions struct {
@@ -27,14 +31,23 @@ type BuildOptions struct {
 	CommittedRoot  string
 	StagedBaseRoot string
 	OutputRoot     string
-	AnchorDate     time.Time
+	AnchorDate     time.Time // Deprecated: daily scores are anchored at request time.
 	Progress       func(dataset string, elapsed time.Duration)
+}
+
+// ActivityStats records the fan-out chosen by the flat activity grain.
+type ActivityStats struct {
+	DirectRows               int64
+	ConversationExpandedRows int64
+	FinalRows                int64
+	ExpansionRatio           float64
 }
 
 // BuildResult contains marker data derived alongside the index.
 type BuildResult struct {
 	ConversationParticipantsFingerprint string
 	Stats                               CacheStatsSummary
+	Activity                            ActivityStats
 }
 
 type sqlExecutor interface {
@@ -43,136 +56,106 @@ type sqlExecutor interface {
 	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
 }
 
-// Build derives identity facts and indexes from schema-correct base Parquet.
+// Build derives the four relationship datasets from schema-correct base
+// Parquet. Incremental mode writes an activity delta and rebuilds the compact
+// datasets over the committed population plus that delta.
 func Build(
 	ctx context.Context,
 	db sqlExecutor,
 	opts BuildOptions,
 ) (result BuildResult, resultErr error) {
 	if db == nil {
-		return BuildResult{}, errors.New("build identity index: nil database")
+		return BuildResult{}, errors.New("build relationship index: nil database")
 	}
 	if err := validateBuildOptions(opts); err != nil {
 		return BuildResult{}, err
 	}
-	if opts.Mode > ModeDerivedOnly {
-		return BuildResult{}, fmt.Errorf("build identity index: unknown mode %d", opts.Mode)
+	if opts.Mode > ModeIndexOnly {
+		return BuildResult{}, fmt.Errorf("build relationship index: unknown mode %d", opts.Mode)
 	}
 
 	b := builder{db: db, opts: opts}
 	defer func() {
-		resultErr = errors.Join(resultErr, b.dropLogicalActivity())
+		resultErr = errors.Join(resultErr, b.dropBuildTables())
 	}()
-	if opts.Mode == ModeDerivedOnly {
-		for _, dataset := range baseIdentityDatasets {
-			if err := requireParquetDataset(opts.CommittedRoot, dataset); err != nil {
-				return BuildResult{}, fmt.Errorf("build identity index in derived-only mode: %w", err)
-			}
+
+	for _, dataset := range baseIdentityDatasets {
+		root := opts.StagedBaseRoot
+		if opts.Mode == ModeIndexOnly &&
+			!datasetContainsParquet(opts.StagedBaseRoot, dataset) {
+			root = opts.CommittedRoot
 		}
-		for _, dataset := range []string{DatasetEntryFacts, DatasetDirectEdges} {
-			if err := requireParquetDataset(opts.CommittedRoot, dataset); err != nil {
-				return BuildResult{}, fmt.Errorf("build identity index in derived-only mode: %w", err)
-			}
-		}
-	} else {
-		for _, dataset := range baseIdentityDatasets {
-			if err := requireParquetDataset(opts.StagedBaseRoot, dataset); err != nil {
-				return BuildResult{}, fmt.Errorf("build identity index in mode %d: %w", opts.Mode, err)
-			}
+		if err := requireParquetDataset(root, dataset); err != nil {
+			return BuildResult{}, fmt.Errorf("build relationship index in mode %d: %w", opts.Mode, err)
 		}
 	}
 	if opts.Mode == ModeIncremental {
-		for _, dataset := range baseIdentityDatasets {
-			if err := requireParquetDataset(opts.CommittedRoot, dataset); err != nil {
-				return BuildResult{}, fmt.Errorf("build identity index in incremental mode: %w", err)
-			}
+		if err := requireParquetDataset(opts.CommittedRoot, DatasetActivity); err != nil {
+			return BuildResult{}, fmt.Errorf("build incremental relationship index: %w", err)
 		}
 	}
-	outputs := []string{
-		DatasetDirectory,
-		DatasetRollups,
-		DatasetDomainRollups,
-		DatasetRelationships,
-		DatasetRelationshipDaily,
-	}
-	if opts.Mode != ModeDerivedOnly {
-		outputs = append(outputs, DatasetEntryFacts, DatasetDirectEdges, DatasetConversationEdges)
-	} else if datasetContainsParquet(opts.StagedBaseRoot, "conversation_participants") {
-		outputs = append(outputs, DatasetConversationEdges)
-	}
-	for _, dataset := range outputs {
+	for _, dataset := range RequiredDatasets {
 		if err := resetOutputDataset(opts.OutputRoot, dataset); err != nil {
 			return BuildResult{}, err
 		}
 	}
 
-	if opts.Mode != ModeDerivedOnly {
-		if err := b.copyDataset(ctx, DatasetEntryFacts, buildEntryFactsSQL(b.base)); err != nil {
-			return BuildResult{}, err
-		}
-		if err := b.copyDataset(ctx, DatasetDirectEdges, buildDirectEdgesSQL(
-			b.base,
-			b.output(DatasetEntryFacts),
-		)); err != nil {
-			return BuildResult{}, err
-		}
-	}
-	if opts.Mode != ModeDerivedOnly ||
-		datasetContainsParquet(opts.StagedBaseRoot, "conversation_participants") {
-		if err := b.copyDataset(ctx, DatasetConversationEdges, buildConversationEdgesSQL(b.base)); err != nil {
-			return BuildResult{}, err
-		}
-	}
-	if err := b.copyDataset(ctx, DatasetDirectory, buildDirectorySQL(b.base)); err != nil {
-		return BuildResult{}, err
-	}
-	activityPaths := b.activityPaths()
-	if err := b.materializeLogicalActivity(ctx, activityPaths); err != nil {
-		return BuildResult{}, err
-	}
-	if err := b.copyDataset(ctx, DatasetRollups, buildIdentityRollupsSQL()); err != nil {
-		return BuildResult{}, err
-	}
-	if err := b.copyDataset(ctx, DatasetDomainRollups, buildDomainRollupsSQL()); err != nil {
-		return BuildResult{}, err
-	}
 	if err := b.copyDataset(
 		ctx,
-		DatasetRelationshipDaily,
-		buildRelationshipDailySQL(),
+		DatasetActivity,
+		buildRelationshipActivitySQL(b.base),
 	); err != nil {
 		return BuildResult{}, err
 	}
-	if err := b.copyDataset(
+	activity := b.activityRelation()
+	if err := b.materializeBuildTable(
 		ctx,
-		DatasetRelationships,
-		buildRelationshipRollupsSQL(
-			opts.AnchorDate,
-			b.output(DatasetRelationshipDaily),
-		),
+		directoryBuildRelation,
+		buildDirectorySQL(b.base),
+		"relationship_directory",
 	); err != nil {
 		return BuildResult{}, err
 	}
-	statsRelations := b.statsRelations()
+	if err := b.materializeBuildTable(
+		ctx,
+		logicalBuildRelation,
+		buildLogicalActivityMaterializationSQL(activity),
+		"logical_activity",
+	); err != nil {
+		return BuildResult{}, err
+	}
+	if err := b.copyDataset(ctx, DatasetPeople, buildRelationshipPeopleSQL()); err != nil {
+		return BuildResult{}, err
+	}
+	if err := b.copyDataset(ctx, DatasetDomains, buildRelationshipDomainsSQL()); err != nil {
+		return BuildResult{}, err
+	}
+	if err := b.copyDataset(ctx, DatasetRelationshipDaily, buildRelationshipDailySQL()); err != nil {
+		return BuildResult{}, err
+	}
 	if err := Validate(ctx, db, ValidationOptions{
 		OutputRoot:             opts.OutputRoot,
-		RequiredOutputDatasets: outputs,
-		Activity:               activityPaths,
-		Messages:               statsRelations.messages,
-		Participants:           b.base("participants"),
-		Conversations:          b.base("conversations"),
-		AnchorDate:             opts.AnchorDate,
+		RequiredOutputDatasets: RequiredDatasets,
+		Activity:               ActivityPaths{Activity: activity},
 	}); err != nil {
 		return BuildResult{}, err
 	}
 
-	fingerprint, err := conversationParticipantsFingerprint(ctx, db, b.base("conversation_participants"))
+	fingerprint, err := conversationParticipantsFingerprint(
+		ctx,
+		db,
+		b.base("conversation_participants"),
+	)
+	if err != nil {
+		return BuildResult{}, err
+	}
+	activityStats, err := collectActivityStats(ctx, db, activity)
 	if err != nil {
 		return BuildResult{}, err
 	}
 	var stats CacheStatsSummary
-	if opts.Mode != ModeDerivedOnly {
-		stats, err = collectCacheStats(ctx, db, statsRelations)
+	if opts.Mode != ModeIndexOnly {
+		stats, err = collectCacheStats(ctx, db, b.statsRelations())
 		if err != nil {
 			return BuildResult{}, err
 		}
@@ -180,6 +163,7 @@ func Build(
 	return BuildResult{
 		ConversationParticipantsFingerprint: fingerprint,
 		Stats:                               stats,
+		Activity:                            activityStats,
 	}, nil
 }
 
@@ -202,46 +186,27 @@ type builder struct {
 }
 
 func (b builder) base(dataset string) string {
-	if b.opts.Mode == ModeDerivedOnly &&
+	if b.opts.Mode == ModeIndexOnly &&
 		!datasetContainsParquet(b.opts.StagedBaseRoot, dataset) {
 		return b.committed(dataset)
 	}
 	return parquetDatasetGlob(b.opts.StagedBaseRoot, dataset)
 }
 
-func (b builder) output(dataset string) string {
-	return parquetDatasetGlob(b.opts.OutputRoot, dataset)
-}
-
 func (b builder) committed(dataset string) string {
 	return parquetDatasetGlob(b.opts.CommittedRoot, dataset)
 }
 
-func (b builder) activityPaths() ActivityPaths {
-	facts := []string{b.output(DatasetEntryFacts)}
-	directEdges := []string{b.output(DatasetDirectEdges)}
-	switch b.opts.Mode {
-	case ModeFull:
-	case ModeIncremental:
-		facts = append([]string{b.committed(DatasetEntryFacts)}, facts...)
-		directEdges = append([]string{b.committed(DatasetDirectEdges)}, directEdges...)
-	case ModeDerivedOnly:
-		facts = []string{b.committed(DatasetEntryFacts)}
-		directEdges = []string{b.committed(DatasetDirectEdges)}
+func (b builder) output(dataset string) string {
+	return parquetDatasetGlob(b.opts.OutputRoot, dataset)
+}
+
+func (b builder) activityRelation() string {
+	paths := []string{b.output(DatasetActivity)}
+	if b.opts.Mode == ModeIncremental {
+		paths = append([]string{b.committed(DatasetActivity)}, paths...)
 	}
-	conversationEdges := b.output(DatasetConversationEdges)
-	if b.opts.Mode == ModeDerivedOnly &&
-		!datasetContainsParquet(b.opts.StagedBaseRoot, "conversation_participants") {
-		conversationEdges = b.committed(DatasetConversationEdges)
-	}
-	return ActivityPaths{
-		Facts:             readParquetRelation(facts, true),
-		DirectEdges:       readParquetRelation(directEdges, false),
-		ConversationEdges: conversationEdges,
-		Directory:         b.output(DatasetDirectory),
-		Clusters:          b.base("participant_clusters"),
-		Owners:            b.base("owner_participants"),
-	}
+	return readParquetRelation(paths, true)
 }
 
 func (b builder) statsRelations() cacheStatsRelations {
@@ -250,14 +215,6 @@ func (b builder) statsRelations() cacheStatsRelations {
 		recipients:   readParquetRelation([]string{b.base("message_recipients")}, false),
 		participants: readParquetRelation([]string{b.base("participants")}, false),
 		attachments:  readParquetRelation([]string{b.base("attachments")}, false),
-	}
-	if b.opts.Mode == ModeDerivedOnly {
-		return cacheStatsRelations{
-			messages:     readParquetRelation([]string{b.committed("messages")}, true),
-			recipients:   readParquetRelation([]string{b.committed("message_recipients")}, false),
-			participants: readParquetRelation([]string{b.committed("participants")}, false),
-			attachments:  readParquetRelation([]string{b.committed("attachments")}, false),
-		}
 	}
 	if b.opts.Mode == ModeIncremental {
 		inputs.messages = readParquetRelation(
@@ -279,17 +236,17 @@ func (b builder) statsRelations() cacheStatsRelations {
 func (b builder) copyDataset(ctx context.Context, dataset, query string) error {
 	start := time.Now()
 	output := filepath.Join(b.opts.OutputRoot, dataset, "data.parquet")
-	copyOptions := "FORMAT PARQUET, COMPRESSION 'zstd'"
-	if dataset == DatasetEntryFacts || dataset == DatasetDirectEdges {
+	options := "FORMAT PARQUET, COMPRESSION 'zstd'"
+	if dataset == DatasetActivity {
 		output = filepath.Join(b.opts.OutputRoot, dataset)
-		copyOptions += ", PARTITION_BY (occurred_year), WRITE_PARTITION_COLUMNS true, OVERWRITE_OR_IGNORE"
+		options += ", PARTITION_BY (occurred_year), WRITE_PARTITION_COLUMNS true, OVERWRITE_OR_IGNORE"
 	}
 	statement := "COPY (" + query + ") TO '" + quoteSQLString(output) +
-		"' (" + copyOptions + ")"
+		"' (" + options + ")"
 	if _, err := b.db.ExecContext(ctx, statement); err != nil {
 		return fmt.Errorf("build %s: %w", dataset, err)
 	}
-	if (dataset == DatasetEntryFacts || dataset == DatasetDirectEdges) &&
+	if dataset == DatasetActivity &&
 		!datasetContainsParquet(b.opts.OutputRoot, dataset) {
 		emptyOutput := filepath.Join(
 			b.opts.OutputRoot,
@@ -312,31 +269,31 @@ func (b builder) copyDataset(ctx context.Context, dataset, query string) error {
 	return nil
 }
 
-func (b builder) materializeLogicalActivity(
+func (b builder) materializeBuildTable(
 	ctx context.Context,
-	paths ActivityPaths,
+	name, query, progressName string,
 ) error {
 	start := time.Now()
-	statement := "CREATE TEMP TABLE " + logicalBuildRelation + " AS " +
-		buildLogicalActivityMaterializationSQL(paths)
-	if _, err := b.db.ExecContext(ctx, statement); err != nil {
-		return fmt.Errorf("materialize shared logical activity: %w", err)
+	if _, err := b.db.ExecContext(ctx, "CREATE TEMP TABLE "+name+" AS "+query); err != nil {
+		return fmt.Errorf("materialize %s: %w", progressName, err)
 	}
 	if b.opts.Progress != nil {
-		b.opts.Progress("logical_activity", time.Since(start))
+		b.opts.Progress(progressName, time.Since(start))
 	}
 	return nil
 }
 
-func (b builder) dropLogicalActivity() error {
-	_, err := b.db.ExecContext(
-		context.Background(),
-		"DROP TABLE IF EXISTS "+logicalBuildRelation,
-	)
-	if err != nil {
-		return fmt.Errorf("drop shared logical activity: %w", err)
+func (b builder) dropBuildTables() error {
+	var result error
+	for _, table := range []string{logicalBuildRelation, directoryBuildRelation} {
+		if _, err := b.db.ExecContext(
+			context.Background(),
+			"DROP TABLE IF EXISTS "+table,
+		); err != nil {
+			result = errors.Join(result, fmt.Errorf("drop %s: %w", table, err))
+		}
 	}
-	return nil
+	return result
 }
 
 func validateBuildOptions(opts BuildOptions) error {
@@ -345,18 +302,39 @@ func validateBuildOptions(opts BuildOptions) error {
 		"output":      opts.OutputRoot,
 	} {
 		if root == "" || !filepath.IsAbs(root) {
-			return fmt.Errorf("build identity index: %s root must be absolute", name)
+			return fmt.Errorf("build relationship index: %s root must be absolute", name)
 		}
 	}
 	if opts.Mode != ModeFull {
 		if opts.CommittedRoot == "" || !filepath.IsAbs(opts.CommittedRoot) {
-			return errors.New("build identity index: committed root must be absolute outside full mode")
+			return errors.New("build relationship index: committed root must be absolute outside full mode")
 		}
 	}
-	if opts.AnchorDate.IsZero() {
-		return errors.New("build identity index: relationship anchor date is required")
-	}
 	return nil
+}
+
+func collectActivityStats(
+	ctx context.Context,
+	db sqlExecutor,
+	activity string,
+) (ActivityStats, error) {
+	var result ActivityStats
+	err := db.QueryRowContext(ctx, `
+		SELECT count(*) FILTER (WHERE is_direct),
+		       count(*) FILTER (WHERE is_conversation_member),
+		       count(*)
+		FROM `+activity).Scan(
+		&result.DirectRows,
+		&result.ConversationExpandedRows,
+		&result.FinalRows,
+	)
+	if err != nil {
+		return ActivityStats{}, fmt.Errorf("collect relationship activity stats: %w", err)
+	}
+	if result.DirectRows > 0 {
+		result.ExpansionRatio = float64(result.FinalRows) / float64(result.DirectRows)
+	}
+	return result, nil
 }
 
 func requireParquetDataset(root, dataset string) error {
@@ -369,7 +347,7 @@ func requireParquetDataset(root, dataset string) error {
 func datasetContainsParquet(root, dataset string) bool {
 	datasetRoot := filepath.Join(root, dataset)
 	found := false
-	err := filepath.WalkDir(datasetRoot, func(path string, entry fs.DirEntry, walkErr error) error {
+	err := filepath.WalkDir(datasetRoot, func(_ string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
@@ -378,19 +356,16 @@ func datasetContainsParquet(root, dataset string) bool {
 		}
 		return nil
 	})
-	if err != nil {
-		return false
-	}
-	return found
+	return err == nil && found
 }
 
 func resetOutputDataset(root, dataset string) error {
 	path := filepath.Join(root, dataset)
 	if err := os.RemoveAll(path); err != nil {
-		return fmt.Errorf("reset identity index dataset %s: %w", dataset, err)
+		return fmt.Errorf("reset relationship index dataset %s: %w", dataset, err)
 	}
 	if err := os.MkdirAll(path, 0o755); err != nil {
-		return fmt.Errorf("create identity index dataset %s: %w", dataset, err)
+		return fmt.Errorf("create relationship index dataset %s: %w", dataset, err)
 	}
 	return nil
 }
@@ -423,27 +398,26 @@ func collectCacheStats(
 	inputs cacheStatsRelations,
 ) (CacheStatsSummary, error) {
 	query := fmt.Sprintf(`
-		WITH messages AS (
-			SELECT id::BIGINT AS id, source_id::BIGINT AS source_id,
-			       sent_at::TIMESTAMP AS sent_at,
-			       coalesce(try_cast(size_estimate AS BIGINT), 0) AS size_estimate
-			FROM %s
-		), senders AS (
-			SELECT DISTINCT p.email_address, p.domain
-			FROM %s mr
-			JOIN %s p ON p.id = try_cast(mr.participant_id AS BIGINT)
-			WHERE mr.recipient_type = 'from'
-		)
-		SELECT
-			(SELECT count(*) FROM messages),
-			(SELECT count(DISTINCT source_id) FROM messages),
-			(SELECT count(DISTINCT email_address) FROM senders),
-			(SELECT count(DISTINCT domain) FROM senders),
-			(SELECT min(year(sent_at)) FROM messages),
-			(SELECT max(year(sent_at)) FROM messages),
-			(SELECT coalesce(sum(size_estimate), 0) FROM messages),
-			(SELECT coalesce(sum(try_cast(size AS BIGINT)), 0) FROM %s)
-	`,
+WITH messages AS (
+	SELECT id::BIGINT AS id, source_id::BIGINT AS source_id,
+	       sent_at::TIMESTAMP AS sent_at,
+	       coalesce(try_cast(size_estimate AS BIGINT), 0) AS size_estimate
+	FROM %s
+), senders AS (
+	SELECT DISTINCT p.email_address, p.domain
+	FROM %s mr
+	JOIN %s p ON p.id = try_cast(mr.participant_id AS BIGINT)
+	WHERE mr.recipient_type = 'from'
+)
+SELECT
+	(SELECT count(*) FROM messages),
+	(SELECT count(DISTINCT source_id) FROM messages),
+	(SELECT count(DISTINCT email_address) FROM senders),
+	(SELECT count(DISTINCT domain) FROM senders),
+	(SELECT min(year(sent_at)) FROM messages),
+	(SELECT max(year(sent_at)) FROM messages),
+	(SELECT coalesce(sum(size_estimate), 0) FROM messages),
+	(SELECT coalesce(sum(try_cast(size AS BIGINT)), 0) FROM %s)`,
 		inputs.messages,
 		inputs.recipients,
 		inputs.participants,
@@ -462,7 +436,7 @@ func collectCacheStats(
 		&result.AttachmentSizeBytes,
 	)
 	if err != nil {
-		return CacheStatsSummary{}, fmt.Errorf("collect identity cache stats: %w", err)
+		return CacheStatsSummary{}, fmt.Errorf("collect relationship cache stats: %w", err)
 	}
 	if minYear.Valid {
 		result.MinYear = &minYear.Int64
@@ -493,9 +467,7 @@ func readParquetRelation(paths []string, hivePartitioning bool) string {
 }
 
 func parquetDatasetGlob(root, dataset string) string {
-	if dataset == "messages" ||
-		dataset == DatasetEntryFacts ||
-		dataset == DatasetDirectEdges {
+	if dataset == "messages" || dataset == DatasetActivity {
 		return filepath.Join(root, dataset, "**", "*.parquet")
 	}
 	return filepath.Join(root, dataset, "*.parquet")

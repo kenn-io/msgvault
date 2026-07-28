@@ -9,6 +9,13 @@ import (
 )
 
 const (
+	DatasetActivity          = "relationship_activity"
+	DatasetPeople            = "relationship_people"
+	DatasetDomains           = "relationship_domains"
+	DatasetRelationshipDaily = "relationship_daily"
+
+	// DatasetEntryFacts and the following legacy names remain temporarily for
+	// source compatibility while callers move to the four-dataset index.
 	DatasetEntryFacts        = "identity_entry_facts"
 	DatasetDirectEdges       = "identity_direct_edges"
 	DatasetConversationEdges = "identity_conversation_edges"
@@ -16,7 +23,6 @@ const (
 	DatasetRollups           = "identity_rollups"
 	DatasetDomainRollups     = "domain_rollups"
 	DatasetRelationships     = "relationship_rollups"
-	DatasetRelationshipDaily = "relationship_daily"
 
 	ModalityEmail   uint8 = 1
 	ModalityChat    uint8 = 2
@@ -35,13 +41,9 @@ var (
 	ChatConversationTypes    = []string{"direct_chat", "group_chat", "channel", "chat"}
 
 	RequiredDatasets = []string{
-		DatasetEntryFacts,
-		DatasetDirectEdges,
-		DatasetConversationEdges,
-		DatasetDirectory,
-		DatasetRollups,
-		DatasetDomainRollups,
-		DatasetRelationships,
+		DatasetActivity,
+		DatasetPeople,
+		DatasetDomains,
 		DatasetRelationshipDaily,
 	}
 )
