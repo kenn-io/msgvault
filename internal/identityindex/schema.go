@@ -14,16 +14,6 @@ const (
 	DatasetDomains           = "relationship_domains"
 	DatasetRelationshipDaily = "relationship_daily"
 
-	// DatasetEntryFacts and the following legacy names remain temporarily for
-	// source compatibility while callers move to the four-dataset index.
-	DatasetEntryFacts        = "identity_entry_facts"
-	DatasetDirectEdges       = "identity_direct_edges"
-	DatasetConversationEdges = "identity_conversation_edges"
-	DatasetDirectory         = "identity_directory"
-	DatasetRollups           = "identity_rollups"
-	DatasetDomainRollups     = "domain_rollups"
-	DatasetRelationships     = "relationship_rollups"
-
 	ModalityEmail   uint8 = 1
 	ModalityChat    uint8 = 2
 	ModalityMeeting uint8 = 4

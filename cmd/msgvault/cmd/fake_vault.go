@@ -20,6 +20,7 @@ type fakeVaultCommandOptions struct {
 	messages         int64
 	participants     int64
 	participantEdges int64
+	groupChatMembers int64
 	attachmentSize   string
 	seed             uint64
 	appendMode       bool
@@ -59,6 +60,8 @@ how msgvault (backup, search, sync machinery) behaves at scale.`,
 		"exact participant count (zero keeps the adaptive default)")
 	command.Flags().Int64Var(&opts.participantEdges, "participant-edges", 0,
 		"exact sender plus recipient edge count (zero keeps the default generator)")
+	command.Flags().Int64Var(&opts.groupChatMembers, "group-chat-members", 2,
+		"conversation members in set-wise group chats")
 	command.Flags().StringVar(&opts.attachmentSize, "attachment-bytes", "50MB",
 		"target total size of attachment content (e.g. 500MB, 5GB)")
 	command.Flags().Uint64Var(&opts.seed, "seed", 1,
@@ -90,6 +93,7 @@ func runFakeVault(cmd *cobra.Command, opts fakeVaultCommandOptions) error {
 		Messages:         opts.messages,
 		Participants:     opts.participants,
 		ParticipantEdges: opts.participantEdges,
+		GroupChatMembers: opts.groupChatMembers,
 		AttachmentBytes:  attachBytes,
 		Seed:             opts.seed,
 		Append:           opts.appendMode,

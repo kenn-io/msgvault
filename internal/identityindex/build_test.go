@@ -41,13 +41,13 @@ func TestBuildPublishesFourRelationshipDatasets(t *testing.T) {
 		"data_0.parquet",
 	))
 	for _, removed := range []string{
-		DatasetEntryFacts,
-		DatasetDirectEdges,
-		DatasetConversationEdges,
-		DatasetDirectory,
-		DatasetRollups,
-		DatasetDomainRollups,
-		DatasetRelationships,
+		"identity_entry_facts",
+		"identity_direct_edges",
+		"identity_conversation_edges",
+		"identity_directory",
+		"identity_rollups",
+		"domain_rollups",
+		"relationship_rollups",
 	} {
 		assert.NoDirExists(t, filepath.Join(root, removed), removed)
 	}

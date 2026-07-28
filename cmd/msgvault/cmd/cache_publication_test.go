@@ -122,12 +122,12 @@ func TestIncrementalPublicationPlanAppendsActivityAndReplacesCompactDatasets(t *
 		assert.False(t, plan.Append[dataset], dataset)
 	}
 	for _, dataset := range []string{
-		identityindex.DatasetEntryFacts,
-		identityindex.DatasetDirectEdges,
-		identityindex.DatasetConversationEdges,
-		identityindex.DatasetDirectory,
-		identityindex.DatasetRollups,
-		identityindex.DatasetRelationships,
+		"identity_entry_facts",
+		"identity_direct_edges",
+		"identity_conversation_edges",
+		"identity_directory",
+		"identity_rollups",
+		"relationship_rollups",
 	} {
 		assert.False(t, plan.Append[dataset], dataset)
 		assert.False(t, plan.Replace[dataset], dataset)

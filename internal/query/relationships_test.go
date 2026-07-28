@@ -708,7 +708,6 @@ func TestRelationshipsFutureRowsPreserveGateModalitiesAndLastTimestamp(t *testin
 	requirementsForTest := require.New(t)
 	assertionsForTest := assert.New(t)
 	b := NewTestDataBuilder(t)
-	b.SetRelationshipAnchor(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 	sourceID := b.AddSource("owner@example.com")
 	ownerID := b.AddParticipant("owner@example.com", "example.com", "Owner")
 	personID := b.AddParticipant("person@example.com", "example.com", "Person")

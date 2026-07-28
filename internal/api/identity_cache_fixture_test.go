@@ -15,9 +15,9 @@ import (
 )
 
 // ensureIdentityCacheFixtureDatasets keeps hand-built API fixtures compatible
-// with the version-15 cache contract. Tests that exercise identity endpoints
-// should build real populated datasets; legacy Explore/timeline fixtures only
-// need schema-correct empty files so readiness can validate the publication.
+// with the version-15 cache contract. Relationship endpoint tests build real
+// populated datasets; unrelated legacy endpoint fixtures only need readable,
+// schema-correct empty files.
 func ensureIdentityCacheFixtureDatasets(
 	t *testing.T,
 	db *sql.DB,
@@ -25,33 +25,27 @@ func ensureIdentityCacheFixtureDatasets(
 ) {
 	t.Helper()
 	queries := map[string]string{
-		identityindex.DatasetEntryFacts: `
+		identityindex.DatasetActivity: `
 			SELECT NULL::BIGINT AS message_id, NULL::BIGINT AS conversation_id,
 			       NULL::BIGINT AS source_id, NULL::VARCHAR AS source_type,
 			       NULL::TIMESTAMP AS occurred_at, NULL::VARCHAR AS message_type,
 			       NULL::VARCHAR AS conversation_type, NULL::VARCHAR AS entry_kind,
 			       NULL::BOOLEAN AS is_chat, NULL::BOOLEAN AS is_from_me,
-			       NULL::BOOLEAN AS has_attachments, NULL::INTEGER AS attachment_count,
-			       NULL::BOOLEAN AS deleted_from_source, NULL::SMALLINT AS occurred_year
+			       NULL::INTEGER AS attachment_count,
+			       NULL::BOOLEAN AS deleted_from_source,
+			       NULL::BIGINT AS canonical_id,
+			       NULL::VARCHAR AS participant_domain,
+			       NULL::BOOLEAN AS is_direct,
+			       NULL::BOOLEAN AS is_conversation_member,
+			       NULL::BOOLEAN AS is_sender, NULL::BOOLEAN AS is_author,
+			       NULL::BOOLEAN AS is_owner, NULL::BIGINT AS occurred_year
 			WHERE false`,
-		identityindex.DatasetDirectEdges: `
-			SELECT NULL::BIGINT AS message_id, NULL::SMALLINT AS occurred_year,
-			       NULL::BIGINT AS participant_id, NULL::VARCHAR AS participant_domain,
-			       NULL::BOOLEAN AS is_sender, NULL::BOOLEAN AS is_author
-			WHERE false`,
-		identityindex.DatasetConversationEdges: `
-			SELECT NULL::BIGINT AS conversation_id, NULL::BIGINT AS participant_id,
-			       NULL::VARCHAR AS participant_domain
-			WHERE false`,
-		identityindex.DatasetDirectory: `
+		identityindex.DatasetPeople: `
 			SELECT NULL::BIGINT AS canonical_id, NULL::VARCHAR AS display_label,
 			       NULL::BOOLEAN AS partial_label, []::BIGINT[] AS member_ids,
-			       []::VARCHAR[] AS search_values, NULL::BOOLEAN AS is_owner
-			WHERE false`,
-		identityindex.DatasetRollups: `
-			SELECT NULL::BIGINT AS canonical_id, NULL::BIGINT AS activity_count,
-			       NULL::BIGINT AS file_count, NULL::TIMESTAMP AS first_at,
-			       NULL::TIMESTAMP AS last_at,
+			       []::VARCHAR[] AS search_values, NULL::BOOLEAN AS is_owner,
+			       NULL::BIGINT AS activity_count, NULL::BIGINT AS file_count,
+			       NULL::TIMESTAMP AS first_at, NULL::TIMESTAMP AS last_at,
 			       []::STRUCT(source_type VARCHAR, count BIGINT)[] AS source_counts,
 			       []::STRUCT(
 				       source_id BIGINT, source_type VARCHAR,
@@ -59,18 +53,11 @@ func ensureIdentityCacheFixtureDatasets(
 				       first_at TIMESTAMP, last_at TIMESTAMP
 			       )[] AS source_rollups
 			WHERE false`,
-		identityindex.DatasetDomainRollups: `
+		identityindex.DatasetDomains: `
 			SELECT NULL::VARCHAR AS domain, NULL::BIGINT AS activity_count,
 			       NULL::BIGINT AS person_count, NULL::BIGINT AS file_count,
 			       NULL::TIMESTAMP AS first_at, NULL::TIMESTAMP AS last_at,
 			       []::STRUCT(source_type VARCHAR, count BIGINT)[] AS source_counts
-			WHERE false`,
-		identityindex.DatasetRelationships: `
-			SELECT NULL::BIGINT AS canonical_id, NULL::DATE AS anchor_date,
-			       NULL::DOUBLE AS sent_decayed, NULL::DOUBLE AS received_decayed,
-			       NULL::DOUBLE AS meetings_decayed, NULL::BIGINT AS sent_count,
-			       NULL::BIGINT AS meeting_count, NULL::UTINYINT AS modality_mask,
-			       NULL::TIMESTAMP AS last_at
 			WHERE false`,
 		identityindex.DatasetRelationshipDaily: `
 			SELECT NULL::BIGINT AS canonical_id, NULL::DATE AS event_date,
@@ -100,29 +87,26 @@ func ensureIdentityCacheFixtureDatasets(
 	}
 }
 
-func TestIdentityCacheFixtureUsesExactV15RollupSchema(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
+func TestIdentityCacheFixtureUsesExactV15PeopleSchema(t *testing.T) {
 	root := t.TempDir()
 	db, err := duckdbutil.Open(
 		t.Context(),
 		duckdbutil.BuilderPolicy(filepath.Join(root, "duckdb-tmp")),
 	)
-	require.NoError(err)
-	t.Cleanup(func() { require.NoError(db.Close()) })
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, db.Close()) })
 	ensureIdentityCacheFixtureDatasets(t, db, root)
 
 	rows, err := db.Query(`
 		DESCRIBE SELECT * FROM read_parquet(?)
-	`, filepath.Join(root, identityindex.DatasetRollups, "*.parquet"))
-	require.NoError(err)
-	defer func() { require.NoError(rows.Close()) }()
+	`, filepath.Join(root, identityindex.DatasetPeople, "*.parquet"))
+	require.NoError(t, err)
+	defer func() { require.NoError(t, rows.Close()) }()
 	var columns []string
-	var types []string
 	for rows.Next() {
 		var name, typ string
 		var nullable, key, defaultValue, extra sql.NullString
-		require.NoError(rows.Scan(
+		require.NoError(t, rows.Scan(
 			&name,
 			&typ,
 			&nullable,
@@ -131,12 +115,15 @@ func TestIdentityCacheFixtureUsesExactV15RollupSchema(t *testing.T) {
 			&extra,
 		))
 		columns = append(columns, name)
-		types = append(types, typ)
 	}
-	require.NoError(rows.Err())
-	require.Len(types, 7)
-	assert.Equal([]string{
+	require.NoError(t, rows.Err())
+	assert.Equal(t, []string{
 		"canonical_id",
+		"display_label",
+		"partial_label",
+		"member_ids",
+		"search_values",
+		"is_owner",
 		"activity_count",
 		"file_count",
 		"first_at",
@@ -144,8 +131,4 @@ func TestIdentityCacheFixtureUsesExactV15RollupSchema(t *testing.T) {
 		"source_counts",
 		"source_rollups",
 	}, columns)
-	assert.Equal(
-		"STRUCT(source_id BIGINT, source_type VARCHAR, activity_count BIGINT, file_count BIGINT, first_at TIMESTAMP, last_at TIMESTAMP)[]",
-		types[len(types)-1],
-	)
 }

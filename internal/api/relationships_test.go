@@ -113,7 +113,6 @@ func newRelationshipsDuckDBFixtureWithDir(t *testing.T, now time.Time) (*query.D
 		requirementsForTest.NoError(err, "write %s", table.dir)
 	}
 
-	anchor := now.UTC().Truncate(24 * time.Hour)
 	derived, err := identityindex.Build(
 		context.Background(),
 		db,
@@ -121,7 +120,6 @@ func newRelationshipsDuckDBFixtureWithDir(t *testing.T, now time.Time) (*query.D
 			Mode:           identityindex.ModeFull,
 			StagedBaseRoot: analyticsDir,
 			OutputRoot:     analyticsDir,
-			AnchorDate:     anchor,
 		},
 	)
 	requirementsForTest.NoError(err)
@@ -146,10 +144,9 @@ func sqlQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", "''") + "'"
 }
 
-func reanchorRelationshipsFixture(
+func republishRelationshipsFixture(
 	t *testing.T,
 	analyticsDir string,
-	anchor time.Time,
 ) {
 	t.Helper()
 	requirementsForTest := require.New(t)
@@ -164,7 +161,6 @@ func reanchorRelationshipsFixture(
 			Mode:           identityindex.ModeFull,
 			StagedBaseRoot: analyticsDir,
 			OutputRoot:     analyticsDir,
-			AnchorDate:     anchor,
 		},
 	)
 	requirementsForTest.NoError(err)
@@ -301,7 +297,7 @@ func TestRelationshipsCursorConflictsOnAnchorDrift(t *testing.T) {
 	requirements.NoError(json.Unmarshal(first.Body.Bytes(), &page))
 	requirements.NotEmpty(page.NextCursor)
 
-	reanchorRelationshipsFixture(t, analyticsDir, now.AddDate(0, 0, 1))
+	republishRelationshipsFixture(t, analyticsDir)
 
 	response := postExploreJSON(
 		t,

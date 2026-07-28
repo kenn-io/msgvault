@@ -21,17 +21,12 @@ const (
 	ModeIndexOnly
 )
 
-// ModeDerivedOnly remains as a source-compatible name while callers move to
-// the clearer index-only lifecycle.
-const ModeDerivedOnly = ModeIndexOnly
-
 // BuildOptions identifies committed, staged, and output cache roots.
 type BuildOptions struct {
 	Mode           Mode
 	CommittedRoot  string
 	StagedBaseRoot string
 	OutputRoot     string
-	AnchorDate     time.Time // Deprecated: daily scores are anchored at request time.
 	Progress       func(dataset string, elapsed time.Duration)
 }
 

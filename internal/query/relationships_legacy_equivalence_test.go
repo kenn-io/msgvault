@@ -99,7 +99,6 @@ func TestRelationshipRollupMatchesLegacyOracleForOneSentEntry(t *testing.T) {
 	assertionsForTest := assert.New(t)
 	b := NewTestDataBuilder(t)
 	now := time.Date(2026, 7, 15, 0, 0, 0, 0, time.UTC)
-	b.SetRelationshipAnchor(now)
 	sourceID := b.AddSource("owner@example.com")
 	ownerID := b.AddParticipant("owner@example.com", "example.com", "Owner")
 	personID := b.AddParticipant("person@example.com", "example.com", "Person")
@@ -274,7 +273,6 @@ func TestRelationshipIndexMatchesLegacyForAuthoredLinkedCoRecipient(t *testing.T
 	assertions := assert.New(t)
 	builder := NewTestDataBuilder(t)
 	now := time.Date(2026, 7, 15, 0, 0, 0, 0, time.UTC)
-	builder.SetRelationshipAnchor(now)
 	sourceID := builder.AddSource("owner@example.com")
 	ownerID := builder.AddParticipant("owner@example.com", "example.com", "Owner")
 	authorID := builder.AddParticipant("author@example.com", "example.com", "Author")
@@ -306,7 +304,6 @@ func TestRelationshipIndexMatchesLegacyAcrossAdversarialSemantics(t *testing.T) 
 	assertionsForTest := assert.New(t)
 	builder := NewTestDataBuilder(t)
 	now := time.Date(2026, 7, 15, 0, 0, 0, 0, time.UTC)
-	builder.SetRelationshipAnchor(now)
 	sourceID := builder.AddSource("owner@example.com")
 	ownerID := builder.AddParticipant("owner@example.com", "example.com", "Owner")
 	ownerAliasID := builder.AddParticipant("owner@alias.example", "alias.example", "Owner Alias")
@@ -436,11 +433,48 @@ func futureIDTime(builder *TestDataBuilder, messageID int64) time.Time {
 func TestRelationshipIndexMatchesLegacyForEmptyArchive(t *testing.T) {
 	builder := NewTestDataBuilder(t)
 	now := time.Date(2026, 7, 15, 0, 0, 0, 0, time.UTC)
-	builder.SetRelationshipAnchor(now)
 	engine := builder.BuildEngine()
 
 	rows := compareRelationshipIndexWithLegacy(t, engine, RelationshipsRequest{
 		Now: now, Limit: 25, ShowAll: true,
 	})
 	assert.Empty(t, rows)
+}
+
+func TestRelationshipIndexDeletionScopesMatchLegacy(t *testing.T) {
+	builder := NewTestDataBuilder(t)
+	sourceID := builder.AddSourceWithType("archive@example.com", "gmail")
+	ownerID := builder.AddParticipant("owner@example.com", "example.com", "Owner")
+	activeID := builder.AddParticipant("active@example.com", "example.com", "Active")
+	deletedID := builder.AddParticipant("deleted@example.com", "example.com", "Deleted")
+	builder.AddOwnerParticipant(sourceID, ownerID)
+	now := time.Date(2026, 7, 25, 0, 0, 0, 0, time.UTC)
+
+	activeMessage := builder.AddMessage(MessageOpt{
+		SourceID: sourceID,
+		IsFromMe: true,
+		SentAt:   now.Add(-24 * time.Hour),
+	})
+	builder.AddFrom(activeMessage, ownerID, "Owner")
+	builder.AddTo(activeMessage, activeID, "Active")
+	deletedAt := now.Add(-time.Hour)
+	deletedMessage := builder.AddMessage(MessageOpt{
+		SourceID:            sourceID,
+		IsFromMe:            true,
+		SentAt:              now.Add(-48 * time.Hour),
+		DeletedFromSourceAt: &deletedAt,
+	})
+	builder.AddFrom(deletedMessage, ownerID, "Owner")
+	builder.AddTo(deletedMessage, deletedID, "Deleted")
+	engine := builder.BuildEngine()
+
+	for _, deletion := range []DeletionFilter{DeletionActive, DeletionDeleted} {
+		rows := compareRelationshipIndexWithLegacy(t, engine, RelationshipsRequest{
+			Context: Context{Deletion: deletion},
+			Now:     now,
+			Limit:   25,
+			ShowAll: true,
+		})
+		require.Len(t, rows, 1)
+	}
 }

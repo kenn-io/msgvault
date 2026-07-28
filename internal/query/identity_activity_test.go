@@ -280,6 +280,70 @@ func TestIdentityActivityAppliesFactFilters(t *testing.T) {
 	)
 }
 
+func TestIdentityActivityDeletionScopesMatchLegacyPeopleAndDomains(t *testing.T) {
+	requirementsForTest := require.New(t)
+	builder := NewTestDataBuilder(t)
+	sourceID := builder.AddSourceWithType("archive@example.com", "gmail")
+	activePerson := builder.AddParticipant(
+		"active@example.com",
+		"active.example",
+		"Active",
+	)
+	deletedPerson := builder.AddParticipant(
+		"deleted@example.com",
+		"deleted.example",
+		"Deleted",
+	)
+	activeID := builder.AddMessage(MessageOpt{
+		SourceID: sourceID,
+		Subject:  "Active",
+		SentAt:   time.Date(2026, 7, 20, 10, 0, 0, 0, time.UTC),
+	})
+	builder.AddFrom(activeID, activePerson, "Active")
+	deletedAt := time.Date(2026, 7, 21, 12, 0, 0, 0, time.UTC)
+	deletedID := builder.AddMessage(MessageOpt{
+		SourceID:            sourceID,
+		Subject:             "Deleted",
+		SentAt:              time.Date(2026, 7, 21, 10, 0, 0, 0, time.UTC),
+		DeletedFromSourceAt: &deletedAt,
+	})
+	builder.AddFrom(deletedID, deletedPerson, "Deleted")
+	engine := builder.BuildEngine()
+
+	for _, deletion := range []DeletionFilter{DeletionActive, DeletionDeleted} {
+		peopleRequest := PersonSearchRequest{
+			Explore: ExploreRequest{Context: Context{Deletion: deletion}},
+			Sort:    SortSpec{Field: "display_label", Direction: "asc"},
+			Page:    PageSpec{Limit: 25},
+		}
+		gotPeople, err := engine.SearchPeople(t.Context(), peopleRequest)
+		requirementsForTest.NoError(err)
+		wantPeople, err := engine.searchPeopleLegacy(
+			t.Context(),
+			peopleRequest,
+			nil,
+			nil,
+		)
+		requirementsForTest.NoError(err)
+		assert.Equal(t, wantPeople, gotPeople, deletion)
+
+		domainRequest := DomainSearchRequest{
+			Explore: ExploreRequest{Context: Context{Deletion: deletion}},
+			Sort:    SortSpec{Field: "display_label", Direction: "asc"},
+			Page:    PageSpec{Limit: 25},
+		}
+		gotDomains, err := engine.SearchDomains(t.Context(), domainRequest)
+		requirementsForTest.NoError(err)
+		wantDomains, err := engine.searchDomainsLegacy(
+			t.Context(),
+			domainRequest,
+			"",
+		)
+		requirementsForTest.NoError(err)
+		assert.Equal(t, wantDomains, gotDomains, deletion)
+	}
+}
+
 func TestIdentityActivityDateFiltersBindUTCWallClock(t *testing.T) {
 	assertionsForTest := assert.New(t)
 	zone := time.FixedZone("fixture-offset", -4*60*60)

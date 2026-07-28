@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
-	"time"
 )
 
 // ValidationOptions describes the staged datasets that must form a complete
@@ -15,10 +14,6 @@ type ValidationOptions struct {
 	OutputRoot             string
 	RequiredOutputDatasets []string
 	Activity               ActivityPaths
-	Messages               string    // Deprecated.
-	Participants           string    // Deprecated.
-	Conversations          string    // Deprecated.
-	AnchorDate             time.Time // Deprecated.
 }
 
 // Validate rejects malformed or internally inconsistent relationship indexes

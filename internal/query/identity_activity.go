@@ -84,7 +84,7 @@ LIMIT ?`
 	args = append(args, MaxExploreCandidateMessageIDs+1)
 	queryText = e.resolveIdentityPathPlaceholders(queryText)
 
-	rows, err := e.profiledQueryContext(ctx, queryText, args...)
+	rows, err := e.db.QueryContext(ctx, queryText, args...)
 	if err != nil {
 		return request, fmt.Errorf("narrow identity fact candidates: %w", err)
 	}
@@ -303,7 +303,7 @@ func (e *DuckDBEngine) searchPeople(
 	}
 	args = append(args, limit, request.Page.Offset)
 
-	rows, err := e.profiledQueryContext(ctx, queryText, args...)
+	rows, err := e.db.QueryContext(ctx, queryText, args...)
 	if err != nil {
 		return nil, fmt.Errorf("search indexed people: %w", err)
 	}
@@ -584,7 +584,7 @@ func (e *DuckDBEngine) searchDomains(
 	}
 	args = append(args, limit, request.Page.Offset)
 
-	rows, err := e.profiledQueryContext(ctx, queryText, args...)
+	rows, err := e.db.QueryContext(ctx, queryText, args...)
 	if err != nil {
 		return nil, fmt.Errorf("search indexed domains: %w", err)
 	}

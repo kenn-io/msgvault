@@ -37,6 +37,9 @@ type Options struct {
 	// fixes the exact union cardinality of one sender edge per message plus
 	// message_recipients rows. Zero keeps the existing per-message generator.
 	ParticipantEdges int64
+	// GroupChatMembers controls conversation-membership fan-out in set-wise
+	// relationship fixtures. Zero uses two members.
+	GroupChatMembers int64
 	// AttachmentBytes is the target total size of attachment content files
 	// generated in this run. The realized total lands near it, not exactly
 	// on it: sizes are drawn from a distribution and generation stops
@@ -187,6 +190,9 @@ func validateRelationshipScaleOptions(opts Options) error {
 	if opts.ParticipantEdges < 0 {
 		return errors.New("fakevault: participant edge count must not be negative")
 	}
+	if opts.GroupChatMembers < 0 {
+		return errors.New("fakevault: group chat member count must not be negative")
+	}
 	if opts.ParticipantEdges == 0 {
 		return nil
 	}
@@ -195,6 +201,10 @@ func validateRelationshipScaleOptions(opts Options) error {
 	}
 	if opts.Participants < 1 {
 		return errors.New("fakevault: participant count must be positive when participant edges are set")
+	}
+	groupChatMembers := max(opts.GroupChatMembers, 2)
+	if groupChatMembers > opts.Participants {
+		return errors.New("fakevault: group chat member count exceeds participant count")
 	}
 	if opts.ParticipantEdges < opts.Messages {
 		return errors.New("fakevault: participant edge count must be at least the message count")
@@ -398,6 +408,7 @@ func (g *generator) generateMessages(ctx context.Context) error {
 }
 
 func (g *generator) generateRelationshipScaleSetWise(ctx context.Context) error {
+	groupChatMembers := max(g.opts.GroupChatMembers, 2)
 	if _, err := g.db.ExecContext(ctx, `
 		WITH RECURSIVE conversation_seq(i) AS (
 			SELECT 1
@@ -417,9 +428,9 @@ func (g *generator) generateRelationshipScaleSetWise(ctx context.Context) error 
 		       END,
 		       printf('Synthetic conversation %d', i),
 		       0,
-		       2
+		       CASE WHEN i % 3 = 0 THEN ? ELSE 2 END
 		FROM conversation_seq
-	`, g.convCount); err != nil {
+	`, g.convCount, groupChatMembers); err != nil {
 		return fmt.Errorf("fakevault: inserting set-wise conversations: %w", err)
 	}
 	if _, err := g.db.ExecContext(ctx, `
@@ -428,13 +439,16 @@ func (g *generator) generateRelationshipScaleSetWise(ctx context.Context) error 
 			UNION ALL
 			SELECT i + 1 FROM conversation_seq WHERE i + 1 <= ?
 		), member_slot(slot) AS (
-			VALUES (0), (1)
+			SELECT 0
+			UNION ALL
+			SELECT slot + 1 FROM member_slot WHERE slot + 1 < ?
 		)
 		INSERT INTO conversation_participants (conversation_id, participant_id)
 		SELECT i, 1 + ((i + slot) % ?)
 		FROM conversation_seq
 		CROSS JOIN member_slot
-	`, g.convCount, g.partCount); err != nil {
+		WHERE slot < CASE WHEN i % 3 = 0 THEN ? ELSE 2 END
+	`, g.convCount, groupChatMembers, g.partCount, groupChatMembers); err != nil {
 		return fmt.Errorf("fakevault: inserting set-wise conversation members: %w", err)
 	}
 	if _, err := g.db.ExecContext(ctx, `

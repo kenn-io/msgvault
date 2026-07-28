@@ -147,6 +147,7 @@ func refreshDerivedDatasetsOnly(
 	if err != nil {
 		return nil, fmt.Errorf("build derived identity index: %w", err)
 	}
+	reportRelationshipActivityStats(derived.Activity)
 	if derived.ConversationParticipantsFingerprint != conversationFingerprint {
 		return nil, errors.New("derived conversation participant fingerprint changed during build")
 	}

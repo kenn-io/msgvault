@@ -1080,12 +1080,12 @@ func buildCacheLocked(dbPath, analyticsDir string, fullRebuild, recheckStaleness
 		CommittedRoot:  analyticsDir,
 		StagedBaseRoot: staging.root,
 		OutputRoot:     staging.root,
-		AnchorDate:     cacheWatermark,
 		Progress:       reportIdentityBuildProgress,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("build identity index: %w", err)
 	}
+	reportRelationshipActivityStats(derived.Activity)
 	publicationPlan := cachePublishPlanForMode(replaceAll)
 
 	fmt.Printf("  %-25s %s\n", "Total:", time.Since(buildStart).Round(time.Millisecond))
@@ -1165,6 +1165,24 @@ func buildCacheLocked(dbPath, analyticsDir string, fullRebuild, recheckStaleness
 func reportIdentityBuildProgress(dataset string, elapsed time.Duration) {
 	fmt.Printf("  %-25s done (%s)\n",
 		dataset+"...", elapsed.Round(time.Millisecond))
+}
+
+func reportRelationshipActivityStats(stats identityindex.ActivityStats) {
+	fmt.Printf(
+		"  %-25s direct=%d conversation=%d final=%d expansion=%.2fx\n",
+		"Relationship fan-out:",
+		stats.DirectRows,
+		stats.ConversationExpandedRows,
+		stats.FinalRows,
+		stats.ExpansionRatio,
+	)
+	if stats.ExpansionRatio > 4 {
+		fmt.Printf(
+			"  Warning: relationship membership fan-out is %.2fx; "+
+				"consider a normalized conversation-member index if this archive keeps growing\n",
+			stats.ExpansionRatio,
+		)
+	}
 }
 
 func countStagedMessages(db sqlRowQuerier, messagesDir string, requireShard bool) (int64, error) {

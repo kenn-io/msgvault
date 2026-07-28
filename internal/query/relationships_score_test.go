@@ -148,7 +148,6 @@ func TestRelationshipsReceivedCreditsOnlyAuthors(t *testing.T) {
 	// date-diff for the same instant may be off by a day, so decayed sums
 	// are asserted with tolerance, and zero sums exactly).
 	now := time.Date(2026, 1, 10, 0, 0, 0, 0, time.UTC)
-	b.SetRelationshipAnchor(now)
 
 	// 100 incoming list messages: authored by rotating third parties, with
 	// the list address and the owner both in To.
@@ -194,7 +193,6 @@ func TestRelationshipsReceivedCountsAuthoredMessages(t *testing.T) {
 	authorID := b.AddParticipant("carol@example.com", "example.com", "Carol")
 
 	now := time.Date(2026, 1, 10, 0, 0, 0, 0, time.UTC)
-	b.SetRelationshipAnchor(now)
 	for range 20 {
 		msgID := b.AddMessage(MessageOpt{SourceID: srcID, SentAt: now})
 		b.AddFrom(msgID, authorID, "Carol")
@@ -231,7 +229,6 @@ func TestRelationshipsChatReceivedCreditUnchanged(t *testing.T) {
 	silentID := b.AddParticipant("erin@chat.example", "chat.example", "Erin")
 
 	now := time.Date(2026, 1, 10, 0, 0, 0, 0, time.UTC)
-	b.SetRelationshipAnchor(now)
 	chatID := b.AddMessage(MessageOpt{SourceID: srcID, MessageType: "imessage", SentAt: now})
 	b.AddFrom(chatID, speakerID, "Dave")
 	b.AddTo(chatID, ownerID, "Owner")
