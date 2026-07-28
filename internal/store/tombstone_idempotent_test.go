@@ -25,16 +25,16 @@ const deletedSentinel = "2000-01-01 00:00:00+00"
 // bypassing the writers under test, so tests can seed an "already tombstoned"
 // row with a value distinguishable from any real "now" the writers would
 // produce. It returns the value as the DATABASE renders it back, which is what
-// callers must compare against rather than the literal they passed in:
+// callers must compare against rather than deletedSentinel:
 // PostgreSQL renders a TIMESTAMPTZ through the session's TimeZone setting, so
 // a test asserting against the literal only holds under UTC. baselineLM in
 // last_modified_test.go reads its sentinel back for the same reason.
-func setDeletedFromSourceAt(t *testing.T, st *store.Store, sourceID int64, sourceMessageID, value string) string {
+func setDeletedFromSourceAt(t *testing.T, st *store.Store, sourceID int64, sourceMessageID string) string {
 	t.Helper()
 	_, err := st.DB().Exec(st.Rebind(`
 		UPDATE messages SET deleted_from_source_at = ?
 		WHERE source_id = ? AND source_message_id = ?
-	`), value, sourceID, sourceMessageID)
+	`), deletedSentinel, sourceID, sourceMessageID)
 	require.NoError(t, err, "set deleted_from_source_at sentinel")
 	seeded := readDeletedFromSourceAt(t, st, sourceID, sourceMessageID)
 	require.True(t, seeded.Valid, "sentinel must be readable after seeding")
@@ -63,18 +63,23 @@ type tombstoneWriter func(t *testing.T, st *store.Store, sourceID int64, id stri
 func tombstoneWriters() map[string]tombstoneWriter {
 	return map[string]tombstoneWriter{
 		"MarkMessageDeleted": func(t *testing.T, st *store.Store, sourceID int64, id string) error {
+			t.Helper()
 			return st.MarkMessageDeleted(sourceID, id)
 		},
 		"MarkMessagesDeletedBatch": func(t *testing.T, st *store.Store, sourceID int64, id string) error {
+			t.Helper()
 			return st.MarkMessagesDeletedBatch(sourceID, []string{id})
 		},
 		"MarkMessagesDeletedFromReader": func(t *testing.T, st *store.Store, sourceID int64, id string) error {
+			t.Helper()
 			return st.MarkMessagesDeletedFromReader(sourceID, strings.NewReader(id+"\n"), 10)
 		},
 		"MarkMessageDeletedByGmailID": func(t *testing.T, st *store.Store, sourceID int64, id string) error {
+			t.Helper()
 			return st.MarkMessageDeletedByGmailID(false, id)
 		},
 		"MarkMessagesDeletedByGmailIDBatch": func(t *testing.T, st *store.Store, sourceID int64, id string) error {
+			t.Helper()
 			return st.MarkMessagesDeletedByGmailIDBatch([]string{id})
 		},
 	}
@@ -94,9 +99,9 @@ func sortedWriterNames() []string {
 
 // seedTombstoneMessage creates a source, conversation, and one message with
 // the given source_message_id, returning the source ID.
-func seedTombstoneMessage(t *testing.T, st *store.Store, sourceType, account, sourceMessageID string) int64 {
+func seedTombstoneMessage(t *testing.T, st *store.Store, account, sourceMessageID string) int64 {
 	t.Helper()
-	source, err := st.GetOrCreateSource(sourceType, account)
+	source, err := st.GetOrCreateSource("gmail", account)
 	require.NoError(t, err, "GetOrCreateSource")
 	convID, err := st.EnsureConversationWithType(source.ID, "conv-"+sourceMessageID, "channel", "general")
 	require.NoError(t, err, "EnsureConversationWithType")
@@ -115,8 +120,8 @@ func TestTombstoneWriters_PreserveExistingStamp(t *testing.T) {
 		writer := writers[name]
 		t.Run(name, func(t *testing.T) {
 			st := testutil.NewTestStore(t)
-			sourceID := seedTombstoneMessage(t, st, "gmail", "preserve-"+name, "msg-"+name)
-			seeded := setDeletedFromSourceAt(t, st, sourceID, "msg-"+name, deletedSentinel)
+			sourceID := seedTombstoneMessage(t, st, "preserve-"+name, "msg-"+name)
+			seeded := setDeletedFromSourceAt(t, st, sourceID, "msg-"+name)
 
 			require.NoError(t, writer(t, st, sourceID, "msg-"+name))
 
@@ -136,7 +141,7 @@ func TestTombstoneWriters_StillSetFreshStamp(t *testing.T) {
 		writer := writers[name]
 		t.Run(name, func(t *testing.T) {
 			st := testutil.NewTestStore(t)
-			sourceID := seedTombstoneMessage(t, st, "gmail", "fresh-"+name, "msg-"+name)
+			sourceID := seedTombstoneMessage(t, st, "fresh-"+name, "msg-"+name)
 
 			before := readDeletedFromSourceAt(t, st, sourceID, "msg-"+name)
 			require.False(t, before.Valid, "precondition: message starts undeleted")
@@ -162,8 +167,8 @@ func TestTombstoneWriters_DoNotBumpLastModifiedForAlreadyTombstoned(t *testing.T
 		writer := writers[name]
 		t.Run(name, func(t *testing.T) {
 			st := testutil.NewTestStore(t)
-			sourceID := seedTombstoneMessage(t, st, "gmail", "lm-"+name, "msg-"+name)
-			setDeletedFromSourceAt(t, st, sourceID, "msg-"+name, deletedSentinel)
+			sourceID := seedTombstoneMessage(t, st, "lm-"+name, "msg-"+name)
+			setDeletedFromSourceAt(t, st, sourceID, "msg-"+name)
 
 			var id int64
 			require.NoError(t, st.DB().QueryRow(
@@ -188,12 +193,15 @@ type batchTombstoneWriter func(t *testing.T, st *store.Store, sourceID int64, id
 func batchTombstoneWriters() map[string]batchTombstoneWriter {
 	return map[string]batchTombstoneWriter{
 		"MarkMessagesDeletedBatch": func(t *testing.T, st *store.Store, sourceID int64, ids []string) error {
+			t.Helper()
 			return st.MarkMessagesDeletedBatch(sourceID, ids)
 		},
 		"MarkMessagesDeletedFromReader": func(t *testing.T, st *store.Store, sourceID int64, ids []string) error {
+			t.Helper()
 			return st.MarkMessagesDeletedFromReader(sourceID, strings.NewReader(strings.Join(ids, "\n")+"\n"), 10)
 		},
 		"MarkMessagesDeletedByGmailIDBatch": func(t *testing.T, st *store.Store, sourceID int64, ids []string) error {
+			t.Helper()
 			return st.MarkMessagesDeletedByGmailIDBatch(ids)
 		},
 	}
@@ -215,24 +223,26 @@ func TestTombstoneBatchWriters_MixedBatchOnlyTombstonesFreshRows(t *testing.T) {
 	for _, name := range names {
 		writer := writers[name]
 		t.Run(name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
 			st := testutil.NewTestStore(t)
-			sourceID := seedTombstoneMessage(t, st, "gmail", "mixed-"+name, "msg-already")
+			sourceID := seedTombstoneMessage(t, st, "mixed-"+name, "msg-already")
 			source, err := st.GetOrCreateSource("gmail", "mixed-"+name)
-			require.NoError(t, err)
+			require.NoError(err)
 			convID, err := st.EnsureConversationWithType(source.ID, "conv-mixed-"+name, "channel", "general")
-			require.NoError(t, err)
+			require.NoError(err)
 			insertStoreTestMessage(t, st, sourceID, convID, "msg-fresh")
 
-			seeded := setDeletedFromSourceAt(t, st, sourceID, "msg-already", deletedSentinel)
+			seeded := setDeletedFromSourceAt(t, st, sourceID, "msg-already")
 
-			require.NoError(t, writer(t, st, sourceID, []string{"msg-already", "msg-fresh"}))
+			require.NoError(writer(t, st, sourceID, []string{"msg-already", "msg-fresh"}))
 
 			already := readDeletedFromSourceAt(t, st, sourceID, "msg-already")
-			require.True(t, already.Valid)
-			assert.Equal(t, seeded, already.String, "already-tombstoned row's stamp must survive a mixed batch")
+			require.True(already.Valid)
+			assert.Equal(seeded, already.String, "already-tombstoned row's stamp must survive a mixed batch")
 
 			fresh := readDeletedFromSourceAt(t, st, sourceID, "msg-fresh")
-			assert.True(t, fresh.Valid, "fresh row in the same batch must still be tombstoned")
+			assert.True(fresh.Valid, "fresh row in the same batch must still be tombstoned")
 		})
 	}
 }
@@ -251,24 +261,25 @@ func TestMarkMessageDeleted_ClearThenReMarkSetsFreshStamp(t *testing.T) {
 	for _, name := range sortedWriterNames() {
 		writer := writers[name]
 		t.Run(name, func(t *testing.T) {
+			require := require.New(t)
 			st := testutil.NewTestStore(t)
-			sourceID := seedTombstoneMessage(t, st, "gmail", "cycle-"+name, "msg-"+name)
+			sourceID := seedTombstoneMessage(t, st, "cycle-"+name, "msg-"+name)
 
 			// First deletion, immediately overwritten with a sentinel so the
 			// later "fresh stamp" assertion doesn't depend on clock resolution.
-			require.NoError(t, writer(t, st, sourceID, "msg-"+name))
-			seeded := setDeletedFromSourceAt(t, st, sourceID, "msg-"+name, deletedSentinel)
+			require.NoError(writer(t, st, sourceID, "msg-"+name))
+			seeded := setDeletedFromSourceAt(t, st, sourceID, "msg-"+name)
 
 			// Reappears upstream.
-			require.NoError(t, st.ClearMessageDeletedFromSource(sourceID, "msg-"+name))
+			require.NoError(st.ClearMessageDeletedFromSource(sourceID, "msg-"+name))
 			cleared := readDeletedFromSourceAt(t, st, sourceID, "msg-"+name)
-			require.False(t, cleared.Valid, "Clear must NULL the tombstone")
+			require.False(cleared.Valid, "Clear must NULL the tombstone")
 
 			// Repair scan reports it deleted again.
-			require.NoError(t, writer(t, st, sourceID, "msg-"+name))
+			require.NoError(writer(t, st, sourceID, "msg-"+name))
 
 			got := readDeletedFromSourceAt(t, st, sourceID, "msg-"+name)
-			require.True(t, got.Valid, "re-mark after Clear must set a tombstone")
+			require.True(got.Valid, "re-mark after Clear must set a tombstone")
 			assert.NotEqual(t, seeded, got.String,
 				"re-mark after Clear must set a NEW stamp, not be blocked by the guard")
 		})
