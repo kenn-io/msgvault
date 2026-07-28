@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 	"time"
@@ -13,6 +14,161 @@ import (
 	"go.kenn.io/msgvault/internal/identityindex"
 	"go.kenn.io/msgvault/internal/query"
 )
+
+const (
+	cachePublicationHelperEnv = "MSGVAULT_CACHE_PUBLICATION_HELPER"
+	cachePublicationRootEnv   = "MSGVAULT_CACHE_PUBLICATION_ROOT"
+	cachePublicationModeEnv   = "MSGVAULT_CACHE_PUBLICATION_MODE"
+	cachePublicationKillEnv   = "MSGVAULT_CACHE_PUBLICATION_KILL_PHASE"
+	cachePublicationReadyEnv  = "MSGVAULT_CACHE_PUBLICATION_READY"
+)
+
+func TestCachePublicationRecoversAfterProcessKillAtEveryCommitPhase(t *testing.T) {
+	tests := []struct {
+		name      string
+		mode      string
+		killPhase string
+		wantNew   bool
+	}{
+		{"full journal prepared", "full", "journal-prepared", false},
+		{"full backup moved", "full", "backup-moved", false},
+		{"full data moved", "full", "data-moved", false},
+		{"full marker prepared", "full", "marker-prepared", false},
+		{"full marker committed", "full", "marker-committed", true},
+		{"incremental backup moved", "incremental", "backup-moved", false},
+		{"incremental data moved", "incremental", "data-moved", false},
+		{"incremental marker prepared", "incremental", "marker-prepared", false},
+		{"incremental marker committed", "incremental", "marker-committed", true},
+		{"derived backup moved", "derived", "backup-moved", false},
+		{"derived data moved", "derived", "data-moved", false},
+		{"derived marker prepared", "derived", "marker-prepared", false},
+		{"derived marker committed", "derived", "marker-committed", true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			parent := t.TempDir()
+			analyticsDir := filepath.Join(parent, "analytics")
+			writePublicationTree(t, analyticsDir, "old.parquet")
+			writeCommittedPublicationFixtureState(t, analyticsDir, 1)
+			before := snapshotCacheBytes(t, analyticsDir)
+			readyPath := filepath.Join(parent, "publication-ready")
+
+			// #nosec G702 -- the test intentionally re-executes its own fixed binary.
+			command := exec.Command(
+				os.Args[0],
+				"-test.run=^TestCachePublicationProcessKillHelper$",
+			)
+			command.Env = append(os.Environ(),
+				cachePublicationHelperEnv+"=1",
+				cachePublicationRootEnv+"="+analyticsDir,
+				cachePublicationModeEnv+"="+test.mode,
+				cachePublicationKillEnv+"="+test.killPhase,
+				cachePublicationReadyEnv+"="+readyPath,
+			)
+			require.NoError(t, command.Start())
+			require.Eventually(t, func() bool {
+				_, err := os.Stat(readyPath)
+				return err == nil
+			}, 10*time.Second, 10*time.Millisecond)
+			require.NoError(t, command.Process.Kill())
+			require.Error(t, command.Wait())
+
+			require.NoError(t, recoverInterruptedCachePublication(analyticsDir))
+			require.NoError(t, cleanupStaleCacheStaging(analyticsDir))
+			readiness, err := query.InspectCacheReadiness(analyticsDir)
+			require.NoError(t, err)
+			assert.Equal(t, query.CacheReady, readiness)
+			state, err := query.ReadCacheSyncState(analyticsDir)
+			require.NoError(t, err)
+			if test.wantNew {
+				assert.Equal(t, int64(2), state.IdentityRevision)
+				assert.NotEqual(t, before, snapshotCacheBytes(t, analyticsDir))
+			} else {
+				assert.Equal(t, int64(1), state.IdentityRevision)
+				assert.Equal(t, before, snapshotCacheBytes(t, analyticsDir))
+			}
+			assert.NoDirExists(t, cachePublicationTransactionRoot(analyticsDir))
+		})
+	}
+}
+
+func TestCachePublicationProcessKillHelper(t *testing.T) {
+	if os.Getenv(cachePublicationHelperEnv) == "" {
+		t.Skip("subprocess helper")
+	}
+	analyticsDir := os.Getenv(cachePublicationRootEnv)
+	staging, err := newCacheStaging(analyticsDir)
+	require.NoError(t, err)
+	writePublicationTree(t, staging.root, "new.parquet")
+	killPhase := os.Getenv(cachePublicationKillEnv)
+	cachePublicationCheckpointHook = func(phase string) {
+		if phase != killPhase {
+			return
+		}
+		require.NoError(t, os.WriteFile(
+			os.Getenv(cachePublicationReadyEnv),
+			[]byte(phase),
+			0o600,
+		))
+		select {}
+	}
+	state, err := query.ReadCacheSyncState(analyticsDir)
+	require.NoError(t, err)
+	state.IdentityRevision = 2
+	switch os.Getenv(cachePublicationModeEnv) {
+	case "full":
+		data, marshalErr := json.Marshal(state)
+		require.NoError(t, marshalErr)
+		require.NoError(t, publishCache(
+			staging,
+			analyticsDir,
+			cachePublishPlanForMode(true),
+			data,
+		))
+	case "incremental":
+		data, marshalErr := json.Marshal(state)
+		require.NoError(t, marshalErr)
+		require.NoError(t, publishCache(
+			staging,
+			analyticsDir,
+			cachePublishPlanForMode(false),
+			data,
+		))
+	case "derived":
+		require.NoError(t, publishDerivedCache(
+			staging,
+			analyticsDir,
+			derivedCachePublishPlan(false),
+			state,
+		))
+	default:
+		require.Fail(t, "unknown publication helper mode")
+	}
+}
+
+func writeCommittedPublicationFixtureState(
+	t *testing.T,
+	analyticsDir string,
+	identityRevision int64,
+) {
+	t.Helper()
+	fingerprint, err := query.CacheDatasetFingerprint(analyticsDir)
+	require.NoError(t, err)
+	state, err := json.Marshal(query.CacheSyncState{
+		LastMessageID:      1,
+		LastSyncAt:         time.Date(2026, 7, 27, 12, 0, 0, 0, time.UTC),
+		SchemaVersion:      query.CacheSchemaVersion,
+		IdentityRevision:   identityRevision,
+		PublishedAt:        time.Date(2026, 7, 27, 12, 1, 0, 0, time.UTC),
+		DatasetFingerprint: fingerprint,
+	})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(
+		query.CacheStatePath(analyticsDir),
+		state,
+		0o600,
+	))
+}
 
 func TestCachePublicationCommitsRevisionTimestampAndDatasetFingerprint(t *testing.T) {
 	require := require.New(t)
@@ -255,13 +411,16 @@ func TestCachePublicationCleansOnlyPrivateStagingDirectories(t *testing.T) {
 	analyticsDir := filepath.Join(parent, "analytics")
 	stale := filepath.Join(parent, ".analytics.build-stale")
 	unrelated := filepath.Join(parent, ".other.build-stale")
+	publication := cachePublicationTransactionRoot(analyticsDir)
 	require.NoError(os.MkdirAll(stale, 0o755))
 	require.NoError(os.MkdirAll(unrelated, 0o755))
+	require.NoError(os.MkdirAll(publication, 0o700))
 	require.NoError(os.WriteFile(query.CacheBuildLockPath(analyticsDir), []byte("lock"), 0o600))
 
 	require.NoError(cleanupStaleCacheStaging(analyticsDir))
 	assert.NoDirExists(stale)
 	assert.DirExists(unrelated)
+	assert.DirExists(publication)
 	assert.FileExists(query.CacheBuildLockPath(analyticsDir))
 }
 

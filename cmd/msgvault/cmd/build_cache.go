@@ -462,11 +462,14 @@ func refreshIdentityDatasetsOnly(dbPath, analyticsDir string) (*buildResult, err
 // buildCacheLocked exports and publishes a cache while the caller holds the
 // exclusive cross-process cache lock.
 func buildCacheLocked(dbPath, analyticsDir string, fullRebuild, recheckStaleness bool) (*buildResult, error) {
+	if err := recoverInterruptedCachePublication(analyticsDir); err != nil {
+		return nil, fmt.Errorf("recover interrupted analytics cache publication: %w", err)
+	}
 	if err := cleanupStaleCacheStaging(analyticsDir); err != nil {
 		return nil, err
 	}
 	if recheckStaleness {
-		staleness := cacheNeedsBuild(dbPath, analyticsDir)
+		staleness := cacheNeedsBuildLocked(dbPath, analyticsDir)
 		if !staleness.NeedsBuild {
 			return &buildResult{Skipped: true, OutputDir: analyticsDir}, nil
 		}

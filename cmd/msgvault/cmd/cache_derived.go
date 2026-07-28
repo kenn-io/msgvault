@@ -28,6 +28,10 @@ func refreshDerivedDatasetsOnly(
 	ctx context.Context,
 	dbPath, analyticsDir string,
 ) (*buildResult, error) {
+	if err := recoverInterruptedCachePublication(analyticsDir); err != nil {
+		return nil, fmt.Errorf("%w: recover interrupted publication: %w",
+			ErrDerivedRefreshRequiresFullBuild, err)
+	}
 	readiness, err := query.InspectCacheReadiness(analyticsDir)
 	if err != nil {
 		return nil, fmt.Errorf("%w: inspect committed cache: %w",
@@ -334,11 +338,14 @@ func publishDerivedCache(
 	plan cachePublishPlan,
 	state query.CacheSyncState,
 ) error {
+	if err := recoverInterruptedCachePublication(analyticsDir); err != nil {
+		return err
+	}
 	moves, err := planCacheMoves(staging, analyticsDir, plan)
 	if err != nil {
 		return err
 	}
-	transaction, err := beginCachePublicationTransaction(staging)
+	transaction, err := beginCachePublicationTransaction(staging, analyticsDir, moves)
 	if err != nil {
 		return err
 	}
@@ -351,7 +358,7 @@ func publishDerivedCache(
 			return fail(errors.New("derived cache publication cannot append datasets"))
 		}
 	}
-	if err := transaction.apply(moves); err != nil {
+	if err := transaction.apply(); err != nil {
 		return fail(err)
 	}
 	if derivedPublishBeforeMarkerHook != nil {
@@ -369,12 +376,8 @@ func publishDerivedCache(
 	if err != nil {
 		return fail(fmt.Errorf("encode derived cache marker: %w", err))
 	}
-	stagedMarker := filepath.Join(staging.root, "_last_sync.json")
-	if err := buildCacheWriteStateFile(stagedMarker, data, 0o600); err != nil {
-		return fail(fmt.Errorf("stage derived cache marker: %w", err))
-	}
-	if err := os.Rename(stagedMarker, query.CacheStatePath(analyticsDir)); err != nil {
-		return fail(fmt.Errorf("commit derived cache marker: %w", err))
+	if err := transaction.commitMarker(data); err != nil {
+		return fail(err)
 	}
 	return nil
 }

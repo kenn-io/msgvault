@@ -76,6 +76,28 @@ func cacheNeedsBuild(dbPath, analyticsDir string) cacheStaleness {
 	if store.IsPostgresURL(dbPath) {
 		return cacheStaleness{}
 	}
+	buildLock, err := acquireCacheBuildLock(analyticsDir)
+	if err != nil {
+		return cacheStaleness{
+			NeedsBuild: true, FullRebuild: true,
+			Reason: "cannot acquire cache recovery lock",
+		}
+	}
+	defer func() { _ = buildLock.Unlock() }()
+	return cacheNeedsBuildLocked(dbPath, analyticsDir)
+}
+
+// cacheNeedsBuildLocked performs recovery and readiness inspection while the
+// caller holds the exclusive cache build lock. This prevents a startup or
+// serve probe from mistaking an active publisher's durable journal for an
+// abandoned transaction.
+func cacheNeedsBuildLocked(dbPath, analyticsDir string) cacheStaleness {
+	if err := recoverInterruptedCachePublication(analyticsDir); err != nil {
+		return cacheStaleness{
+			NeedsBuild: true, FullRebuild: true,
+			Reason: "cannot recover interrupted cache publication",
+		}
+	}
 	readiness, err := query.InspectCacheReadiness(analyticsDir)
 	if err != nil {
 		return cacheStaleness{

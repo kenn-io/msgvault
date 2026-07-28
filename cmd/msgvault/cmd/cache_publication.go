@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -16,6 +17,7 @@ import (
 )
 
 var buildCacheBeforePublicationMovesHook func() error
+var cachePublicationCheckpointHook func(string)
 
 type cacheStaging struct {
 	root    string
@@ -38,6 +40,7 @@ func newCacheStaging(analyticsDir string) (*cacheStaging, error) {
 	}
 	buildID := strings.TrimPrefix(filepath.Base(root), prefix)
 	if buildID == "" {
+		// #nosec G703 -- root is the exact private directory returned by os.MkdirTemp above.
 		_ = os.RemoveAll(root)
 		return nil, errors.New("create analytics cache staging directory: empty build ID")
 	}
@@ -178,6 +181,7 @@ func planCacheMoves(
 			}
 			destination := filepath.Join(liveDataset, filepath.Dir(rel),
 				staging.buildID+"-"+filepath.Base(rel))
+			// #nosec G703 -- destination is rooted in analyticsDir and rel came from WalkDir under stagedDataset.
 			if _, err := os.Lstat(destination); err == nil {
 				return fmt.Errorf("analytics cache publication destination already exists: %s", destination)
 			} else if !os.IsNotExist(err) {
@@ -195,96 +199,248 @@ func planCacheMoves(
 	return moves, nil
 }
 
-type appliedCacheMove struct {
-	move      cachePublishMove
-	backup    string
-	hadBackup bool
+const cachePublicationJournalVersion = 1
+
+type durableCachePublishMove struct {
+	Source         string `json:"source"`
+	Destination    string `json:"destination"`
+	Backup         string `json:"backup,omitempty"`
+	Replace        bool   `json:"replace"`
+	HadDestination bool   `json:"had_destination"`
+}
+
+type cachePublicationJournal struct {
+	Version          int                       `json:"version"`
+	AnalyticsDir     string                    `json:"analytics_dir"`
+	StagingRoot      string                    `json:"staging_root"`
+	Phase            string                    `json:"phase"`
+	AppliedMoves     int                       `json:"applied_moves"`
+	Moves            []durableCachePublishMove `json:"moves"`
+	OldMarkerPresent bool                      `json:"old_marker_present"`
+	OldMarkerDigest  string                    `json:"old_marker_digest,omitempty"`
+	NewMarkerDigest  string                    `json:"new_marker_digest,omitempty"`
 }
 
 type cachePublicationTransaction struct {
-	backupRoot string
-	applied    []appliedCacheMove
+	root    string
+	journal cachePublicationJournal
 }
 
-func beginCachePublicationTransaction(staging *cacheStaging) (*cachePublicationTransaction, error) {
-	backupRoot := filepath.Join(staging.root, "publication-backup")
-	if err := os.MkdirAll(backupRoot, 0o755); err != nil {
+func cachePublicationTransactionRoot(analyticsDir string) string {
+	clean := filepath.Clean(analyticsDir)
+	return filepath.Join(
+		filepath.Dir(clean),
+		"."+filepath.Base(clean)+".publication",
+	)
+}
+
+func beginCachePublicationTransaction(
+	staging *cacheStaging,
+	analyticsDir string,
+	moves []cachePublishMove,
+) (*cachePublicationTransaction, error) {
+	root := cachePublicationTransactionRoot(analyticsDir)
+	if err := os.Mkdir(root, 0o700); err != nil {
 		return nil, fmt.Errorf("create cache publication backup: %w", err)
 	}
-	return &cachePublicationTransaction{backupRoot: backupRoot}, nil
-}
-
-func (t *cachePublicationTransaction) apply(moves []cachePublishMove) error {
-	for i, move := range moves {
-		applied := appliedCacheMove{move: move}
+	if err := syncDirectory(filepath.Dir(root)); err != nil {
+		return nil, fmt.Errorf("sync cache publication parent: %w", err)
+	}
+	backupRoot := filepath.Join(root, "backup")
+	if err := os.Mkdir(backupRoot, 0o700); err != nil {
+		return nil, fmt.Errorf("create cache publication backup: %w", err)
+	}
+	if err := syncDirectory(root); err != nil {
+		return nil, fmt.Errorf("sync cache publication transaction: %w", err)
+	}
+	transaction := &cachePublicationTransaction{
+		root: root,
+		journal: cachePublicationJournal{
+			Version:      cachePublicationJournalVersion,
+			AnalyticsDir: filepath.Clean(analyticsDir),
+			StagingRoot:  filepath.Clean(staging.root),
+			Phase:        "prepared",
+			Moves:        make([]durableCachePublishMove, 0, len(moves)),
+		},
+	}
+	for index, move := range moves {
+		durableMove := durableCachePublishMove{
+			Source:      filepath.Clean(move.source),
+			Destination: filepath.Clean(move.destination),
+			Replace:     move.replace,
+		}
 		if move.replace {
-			applied.backup = filepath.Join(
-				t.backupRoot,
-				fmt.Sprintf("%04d-%s", i, filepath.Base(move.destination)),
+			durableMove.Backup = filepath.Join(
+				backupRoot,
+				fmt.Sprintf("%04d-%s", index, filepath.Base(move.destination)),
 			)
 			if _, err := os.Lstat(move.destination); err == nil {
-				if err := os.Rename(move.destination, applied.backup); err != nil {
-					return fmt.Errorf(
-						"back up live cache dataset %s: %w",
-						filepath.Base(move.destination),
-						err,
-					)
-				}
-				applied.hadBackup = true
+				durableMove.HadDestination = true
 			} else if !os.IsNotExist(err) {
-				return fmt.Errorf(
+				return nil, fmt.Errorf(
 					"inspect live cache dataset %s: %w",
 					filepath.Base(move.destination),
 					err,
 				)
 			}
-			t.applied = append(t.applied, applied)
 		}
-		if err := os.MkdirAll(filepath.Dir(move.destination), 0o755); err != nil {
+		transaction.journal.Moves = append(transaction.journal.Moves, durableMove)
+	}
+	oldMarker := query.CacheStatePath(analyticsDir)
+	// #nosec G703 -- oldMarker is the fixed cache marker below the configured analytics directory.
+	if data, err := os.ReadFile(oldMarker); err == nil {
+		transaction.journal.OldMarkerPresent = true
+		transaction.journal.OldMarkerDigest = cachePublicationDigest(data)
+		if err := writeDurableFile(
+			filepath.Join(root, "old-marker.json"),
+			data,
+			0o600,
+		); err != nil {
+			return nil, fmt.Errorf("preserve old cache publication marker: %w", err)
+		}
+	} else if !os.IsNotExist(err) {
+		return nil, fmt.Errorf("read old cache publication marker: %w", err)
+	}
+	if err := transaction.writeJournal(); err != nil {
+		return nil, err
+	}
+	cachePublicationCheckpoint("journal-prepared")
+	return transaction, nil
+}
+
+func (t *cachePublicationTransaction) apply() error {
+	for index := range t.journal.Moves {
+		move := &t.journal.Moves[index]
+		if move.Replace {
+			if move.HadDestination {
+				// #nosec G703 -- beginCachePublicationTransaction constructed both paths inside configured roots.
+				if err := os.Rename(move.Destination, move.Backup); err != nil {
+					return fmt.Errorf(
+						"back up live cache dataset %s: %w",
+						filepath.Base(move.Destination),
+						err,
+					)
+				}
+				if err := syncRenameDirectories(move.Destination, move.Backup); err != nil {
+					return err
+				}
+				cachePublicationCheckpoint("backup-moved")
+			}
+		}
+		// #nosec G703 -- move.Destination was constructed below the configured analytics root.
+		if err := os.MkdirAll(filepath.Dir(move.Destination), 0o755); err != nil {
 			return fmt.Errorf("create cache publication directory: %w", err)
 		}
-		if err := os.Rename(move.source, move.destination); err != nil {
-			return fmt.Errorf("publish cache path %s: %w", move.destination, err)
+		// #nosec G703 -- beginCachePublicationTransaction constructed both paths inside configured roots.
+		if err := os.Rename(move.Source, move.Destination); err != nil {
+			return fmt.Errorf("publish cache path %s: %w", move.Destination, err)
 		}
-		if !move.replace {
-			t.applied = append(t.applied, applied)
+		if err := syncRenameDirectories(move.Source, move.Destination); err != nil {
+			return err
 		}
+		cachePublicationCheckpoint("data-moved")
+		t.journal.AppliedMoves = index + 1
+		t.journal.Phase = "moving"
+		if err := t.writeJournal(); err != nil {
+			return err
+		}
+	}
+	t.journal.Phase = "data-published"
+	if err := t.writeJournal(); err != nil {
+		return err
 	}
 	return nil
 }
 
 func (t *cachePublicationTransaction) rollback() error {
-	var rollbackErrs []error
-	for _, applied := range slices.Backward(t.applied) {
-		if applied.move.replace {
-			if err := os.RemoveAll(applied.move.destination); err != nil {
-				rollbackErrs = append(rollbackErrs, fmt.Errorf(
-					"remove uncommitted cache dataset %s: %w",
-					filepath.Base(applied.move.destination),
-					err,
-				))
-				continue
-			}
-			if applied.hadBackup {
-				if err := os.Rename(applied.backup, applied.move.destination); err != nil {
-					rollbackErrs = append(rollbackErrs, fmt.Errorf(
-						"restore cache dataset %s: %w",
-						filepath.Base(applied.move.destination),
-						err,
-					))
-				}
-			}
-			continue
-		}
-		if err := os.Remove(applied.move.destination); err != nil && !os.IsNotExist(err) {
-			rollbackErrs = append(rollbackErrs, fmt.Errorf(
-				"remove uncommitted cache append %s: %w",
-				applied.move.destination,
-				err,
-			))
+	return recoverInterruptedCachePublication(t.journal.AnalyticsDir)
+}
+
+func (t *cachePublicationTransaction) commitMarker(data []byte) error {
+	newMarker := filepath.Join(t.root, "new-marker.json")
+	if err := buildCacheWriteStateFile(newMarker, data, 0o600); err != nil {
+		return fmt.Errorf("save cache sync state to staged marker: %w", err)
+	}
+	if err := syncFile(newMarker); err != nil {
+		return fmt.Errorf("sync staged cache marker: %w", err)
+	}
+	if err := syncDirectory(t.root); err != nil {
+		return fmt.Errorf("sync staged cache marker directory: %w", err)
+	}
+	t.journal.NewMarkerDigest = cachePublicationDigest(data)
+	t.journal.Phase = "marker-prepared"
+	if err := t.writeJournal(); err != nil {
+		return err
+	}
+	cachePublicationCheckpoint("marker-prepared")
+	statePath := query.CacheStatePath(t.journal.AnalyticsDir)
+	// #nosec G703 -- both paths are fixed marker names inside validated transaction/cache roots.
+	if err := os.Rename(newMarker, statePath); err != nil {
+		return fmt.Errorf("commit cache sync state to %s: %w", statePath, err)
+	}
+	if err := syncRenameDirectories(newMarker, statePath); err != nil {
+		return err
+	}
+	cachePublicationCheckpoint("marker-committed")
+	t.journal.Phase = "marker-committed"
+	if err := t.writeJournal(); err != nil {
+		return err
+	}
+	return t.finalize()
+}
+
+func (t *cachePublicationTransaction) writeJournal() error {
+	data, err := json.Marshal(t.journal)
+	if err != nil {
+		return fmt.Errorf("encode cache publication journal: %w", err)
+	}
+	path := filepath.Join(t.root, "journal.json")
+	tempPath := filepath.Join(t.root, "journal.tmp")
+	if err := writeDurableFile(tempPath, data, 0o600); err != nil {
+		return fmt.Errorf("write cache publication journal: %w", err)
+	}
+	// #nosec G703 -- both paths are fixed journal names inside the private transaction root.
+	if err := os.Rename(tempPath, path); err != nil {
+		return fmt.Errorf("commit cache publication journal: %w", err)
+	}
+	if err := syncDirectory(t.root); err != nil {
+		return fmt.Errorf("sync cache publication journal: %w", err)
+	}
+	return nil
+}
+
+func (t *cachePublicationTransaction) finalize() error {
+	parent := filepath.Dir(t.root)
+	for _, path := range []string{
+		filepath.Join(t.root, "backup"),
+		filepath.Join(t.root, "old-marker.json"),
+		filepath.Join(t.root, "new-marker.json"),
+		filepath.Join(t.root, "journal.tmp"),
+	} {
+		// #nosec G703 -- every path is a fixed child of the private transaction root.
+		if err := os.RemoveAll(path); err != nil {
+			return fmt.Errorf("remove completed cache publication artifact: %w", err)
 		}
 	}
-	return errors.Join(rollbackErrs...)
+	if err := syncDirectory(t.root); err != nil {
+		return fmt.Errorf("sync completed cache publication transaction: %w", err)
+	}
+	// #nosec G703 -- journal.json is a fixed child of the private transaction root.
+	if err := os.Remove(filepath.Join(t.root, "journal.json")); err != nil &&
+		!os.IsNotExist(err) {
+		return fmt.Errorf("remove completed cache publication journal: %w", err)
+	}
+	if err := syncDirectory(t.root); err != nil {
+		return fmt.Errorf("sync removed cache publication journal: %w", err)
+	}
+	// #nosec G703 -- t.root is the deterministic private transaction directory.
+	if err := os.Remove(t.root); err != nil {
+		return fmt.Errorf("remove completed cache publication transaction: %w", err)
+	}
+	if err := syncDirectory(parent); err != nil {
+		return fmt.Errorf("sync completed cache publication parent: %w", err)
+	}
+	return nil
 }
 
 func publishCache(
@@ -293,11 +449,14 @@ func publishCache(
 	plan cachePublishPlan,
 	stateData []byte,
 ) error {
+	if err := recoverInterruptedCachePublication(analyticsDir); err != nil {
+		return err
+	}
 	moves, err := planCacheMoves(staging, analyticsDir, plan)
 	if err != nil {
 		return err
 	}
-	transaction, err := beginCachePublicationTransaction(staging)
+	transaction, err := beginCachePublicationTransaction(staging, analyticsDir, moves)
 	if err != nil {
 		return err
 	}
@@ -306,10 +465,10 @@ func publishCache(
 	}
 	if buildCacheBeforePublicationMovesHook != nil {
 		if err := buildCacheBeforePublicationMovesHook(); err != nil {
-			return err
+			return fail(err)
 		}
 	}
-	if err := transaction.apply(moves); err != nil {
+	if err := transaction.apply(); err != nil {
 		return fail(err)
 	}
 	fingerprint, err := query.CacheDatasetFingerprint(analyticsDir)
@@ -326,13 +485,209 @@ func publishCache(
 	if err != nil {
 		return fail(fmt.Errorf("encode committed cache sync state: %w", err))
 	}
-	stagedStatePath := filepath.Join(staging.root, "_last_sync.json")
-	if err := buildCacheWriteStateFile(stagedStatePath, stateData, 0o600); err != nil {
-		return fail(fmt.Errorf("save cache sync state to staged marker: %w", err))
-	}
-	statePath := query.CacheStatePath(analyticsDir)
-	if err := os.Rename(stagedStatePath, statePath); err != nil {
-		return fail(fmt.Errorf("commit cache sync state to %s: %w", statePath, err))
+	if err := transaction.commitMarker(stateData); err != nil {
+		return fail(err)
 	}
 	return nil
+}
+
+func recoverInterruptedCachePublication(analyticsDir string) error {
+	root := cachePublicationTransactionRoot(analyticsDir)
+	data, err := os.ReadFile(filepath.Join(root, "journal.json"))
+	if os.IsNotExist(err) {
+		if _, statErr := os.Stat(root); os.IsNotExist(statErr) {
+			return nil
+		} else if statErr != nil {
+			return fmt.Errorf("inspect cache publication transaction: %w", statErr)
+		}
+		backupEntries, readErr := os.ReadDir(filepath.Join(root, "backup"))
+		if readErr == nil && len(backupEntries) > 0 {
+			return errors.New("recover cache publication: backups exist without a durable journal")
+		}
+		if readErr != nil && !os.IsNotExist(readErr) {
+			return fmt.Errorf("inspect unjournaled cache publication backup: %w", readErr)
+		}
+		if removeErr := os.RemoveAll(root); removeErr != nil {
+			return fmt.Errorf("remove unjournaled cache publication transaction: %w", removeErr)
+		}
+		return syncDirectory(filepath.Dir(root))
+	}
+	if err != nil {
+		return fmt.Errorf("read cache publication journal: %w", err)
+	}
+	var journal cachePublicationJournal
+	if err := json.Unmarshal(data, &journal); err != nil {
+		return fmt.Errorf("decode cache publication journal: %w", err)
+	}
+	if journal.Version != cachePublicationJournalVersion ||
+		filepath.Clean(journal.AnalyticsDir) != filepath.Clean(analyticsDir) {
+		return errors.New("recover cache publication: invalid journal identity")
+	}
+	for _, move := range journal.Moves {
+		if !pathWithin(journal.StagingRoot, move.Source) ||
+			!pathWithin(analyticsDir, move.Destination) ||
+			(move.Replace && !pathWithin(filepath.Join(root, "backup"), move.Backup)) {
+			return errors.New("recover cache publication: journal move escapes transaction roots")
+		}
+	}
+	transaction := &cachePublicationTransaction{root: root, journal: journal}
+	if journal.NewMarkerDigest != "" {
+		// #nosec G703 -- analyticsDir was checked against the durable journal identity above.
+		liveMarker, markerErr := os.ReadFile(query.CacheStatePath(analyticsDir))
+		if markerErr == nil &&
+			cachePublicationDigest(liveMarker) == journal.NewMarkerDigest {
+			return transaction.finalize()
+		}
+		if markerErr != nil && !os.IsNotExist(markerErr) {
+			return fmt.Errorf("read live cache marker during recovery: %w", markerErr)
+		}
+	}
+
+	var recoveryErrs []error
+	for _, v := range slices.Backward(journal.Moves) {
+		move := v
+		if move.Replace {
+			_, backupErr := os.Lstat(move.Backup)
+			switch {
+			case backupErr == nil:
+				if err := os.RemoveAll(move.Destination); err != nil {
+					recoveryErrs = append(recoveryErrs, fmt.Errorf(
+						"remove uncommitted cache dataset %s: %w",
+						filepath.Base(move.Destination),
+						err,
+					))
+					continue
+				}
+				if err := os.Rename(move.Backup, move.Destination); err != nil {
+					recoveryErrs = append(recoveryErrs, fmt.Errorf(
+						"restore cache dataset %s: %w",
+						filepath.Base(move.Destination),
+						err,
+					))
+					continue
+				}
+				if err := syncRenameDirectories(move.Backup, move.Destination); err != nil {
+					recoveryErrs = append(recoveryErrs, err)
+				}
+			case os.IsNotExist(backupErr):
+				if !move.HadDestination {
+					if err := os.RemoveAll(move.Destination); err != nil {
+						recoveryErrs = append(recoveryErrs, err)
+					}
+				}
+			default:
+				recoveryErrs = append(recoveryErrs, backupErr)
+			}
+			continue
+		}
+		if err := os.Remove(move.Destination); err != nil && !os.IsNotExist(err) {
+			recoveryErrs = append(recoveryErrs, fmt.Errorf(
+				"remove uncommitted cache append %s: %w",
+				move.Destination,
+				err,
+			))
+		} else if err == nil {
+			if syncErr := syncDirectory(filepath.Dir(move.Destination)); syncErr != nil {
+				recoveryErrs = append(recoveryErrs, syncErr)
+			}
+		}
+	}
+	if err := errors.Join(recoveryErrs...); err != nil {
+		return err
+	}
+	if journal.OldMarkerPresent {
+		oldMarker, err := os.ReadFile(filepath.Join(root, "old-marker.json"))
+		if err != nil {
+			return fmt.Errorf("read preserved cache marker: %w", err)
+		}
+		if cachePublicationDigest(oldMarker) != journal.OldMarkerDigest {
+			return errors.New("recover cache publication: preserved marker digest mismatch")
+		}
+		if err := writeDurableFile(
+			filepath.Join(analyticsDir, ".last-sync-recovery.tmp"),
+			oldMarker,
+			0o600,
+		); err != nil {
+			return err
+		}
+		tempMarker := filepath.Join(analyticsDir, ".last-sync-recovery.tmp")
+		// #nosec G703 -- both paths are fixed marker names inside the validated analytics root.
+		if err := os.Rename(tempMarker, query.CacheStatePath(analyticsDir)); err != nil {
+			return fmt.Errorf("restore cache publication marker: %w", err)
+		}
+		if err := syncRenameDirectories(
+			tempMarker,
+			query.CacheStatePath(analyticsDir),
+		); err != nil {
+			return err
+		}
+		// #nosec G703 -- the marker is a fixed filename inside the validated analytics root.
+	} else if err := os.Remove(query.CacheStatePath(analyticsDir)); err != nil &&
+		!os.IsNotExist(err) {
+		return fmt.Errorf("remove uncommitted cache marker: %w", err)
+	}
+	return transaction.finalize()
+}
+
+func cachePublicationCheckpoint(phase string) {
+	if cachePublicationCheckpointHook != nil {
+		cachePublicationCheckpointHook(phase)
+	}
+}
+
+func cachePublicationDigest(data []byte) string {
+	return fmt.Sprintf("%x", sha256.Sum256(data))
+}
+
+func writeDurableFile(path string, data []byte, mode os.FileMode) error {
+	// #nosec G703 -- callers construct path from fixed filenames below private transaction/cache roots.
+	if err := os.WriteFile(path, data, mode); err != nil {
+		return err
+	}
+	if err := syncFile(path); err != nil {
+		return err
+	}
+	return syncDirectory(filepath.Dir(path))
+}
+
+func syncFile(path string) error {
+	// #nosec G703 -- callers pass fixed files inside private transaction/cache roots.
+	file, err := os.OpenFile(path, os.O_RDONLY, 0)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = file.Close() }()
+	return file.Sync()
+}
+
+func syncDirectory(path string) error {
+	// #nosec G703 -- callers pass configured cache parents or validated transaction paths.
+	directory, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = directory.Close() }()
+	return directory.Sync()
+}
+
+func syncRenameDirectories(oldPath, newPath string) error {
+	oldDir := filepath.Dir(oldPath)
+	newDir := filepath.Dir(newPath)
+	if err := syncDirectory(oldDir); err != nil {
+		return fmt.Errorf("sync cache publication source directory: %w", err)
+	}
+	if newDir != oldDir {
+		if err := syncDirectory(newDir); err != nil {
+			return fmt.Errorf("sync cache publication destination directory: %w", err)
+		}
+	}
+	return nil
+}
+
+func pathWithin(root, path string) bool {
+	relative, err := filepath.Rel(filepath.Clean(root), filepath.Clean(path))
+	return err == nil &&
+		relative != "." &&
+		relative != ".." &&
+		!strings.HasPrefix(relative, ".."+string(filepath.Separator))
 }
