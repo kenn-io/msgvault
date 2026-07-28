@@ -214,7 +214,7 @@ func (e *DuckDBEngine) queryRelationshipCandidates(
 		}
 	}
 
-	rows, err := e.db.QueryContext(ctx, queryText, queryArgs...)
+	rows, err := e.profiledQueryContext(ctx, queryText, queryArgs...)
 	if err != nil {
 		return nil, 0, fmt.Errorf("query indexed relationships: %w", err)
 	}

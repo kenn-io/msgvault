@@ -61,6 +61,11 @@ type DuckDBEngine struct {
 	tempDirectory    string
 	ownTempDirectory bool
 	tempTableSeq     atomic.Uint64 // Unique suffix for temp tables to avoid concurrent collisions
+	// relationshipBenchmarkProfileDir rotates DuckDB's single profiling
+	// output before each identity-index statement. It is set only by the
+	// opt-in scale benchmark.
+	relationshipBenchmarkProfileDir string
+	relationshipBenchmarkProfileSeq atomic.Uint64
 
 	// querySem bounds concurrent heavy query execution (see
 	// duckDBQueryConcurrency). Acquired at the top of each expensive public
@@ -112,6 +117,28 @@ type DuckDBEngine struct {
 	relationshipDateRollupFastPathDisabled bool
 	// identityCandidateFastPathDisabled is a test-only equivalence hook.
 	identityCandidateFastPathDisabled bool
+}
+
+func (e *DuckDBEngine) profiledQueryContext(
+	ctx context.Context,
+	query string,
+	args ...any,
+) (*sql.Rows, error) {
+	if e.relationshipBenchmarkProfileDir != "" {
+		index := e.relationshipBenchmarkProfileSeq.Add(1)
+		path := filepath.Join(
+			e.relationshipBenchmarkProfileDir,
+			fmt.Sprintf("statement-%04d.json", index),
+		)
+		quotedPath := strings.ReplaceAll(path, "'", "''")
+		if _, err := e.db.ExecContext(
+			ctx,
+			"SET profiling_output='"+quotedPath+"'",
+		); err != nil {
+			return nil, fmt.Errorf("rotate DuckDB profiling output: %w", err)
+		}
+	}
+	return e.db.QueryContext(ctx, query, args...)
 }
 
 // DuckDBOptions configures optional DuckDB engine behavior.

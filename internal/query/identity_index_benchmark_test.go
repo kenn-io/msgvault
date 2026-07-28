@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -16,15 +17,41 @@ import (
 )
 
 type relationshipBenchmarkProfile struct {
-	CumulativeRowsScanned int64 `json:"cumulative_rows_scanned"`
-	PeakSpillBytes        int64 `json:"system_peak_temp_dir_size"`
+	CumulativeRowsScanned int64                           `json:"cumulative_rows_scanned"`
+	PeakSpillBytes        int64                           `json:"system_peak_temp_dir_size"`
+	QueryName             string                          `json:"query_name"`
+	Children              []relationshipBenchmarkOperator `json:"children"`
+}
+
+type relationshipBenchmarkOperator struct {
+	Name        string                          `json:"operator_name"`
+	Type        string                          `json:"operator_type"`
+	RowsScanned int64                           `json:"operator_rows_scanned"`
+	ExtraInfo   map[string]any                  `json:"extra_info,omitempty"`
+	Children    []relationshipBenchmarkOperator `json:"children,omitempty"`
+}
+
+type relationshipBenchmarkDatasetScan struct {
+	Dataset     string `json:"dataset"`
+	Operator    string `json:"operator"`
+	RowsScanned int64  `json:"rows_scanned"`
+}
+
+type relationshipBenchmarkStatementProfile struct {
+	Index       int                             `json:"index"`
+	QueryName   string                          `json:"query_name"`
+	RowsScanned int64                           `json:"rows_scanned"`
+	SpillBytes  int64                           `json:"spill_bytes"`
+	Operators   []relationshipBenchmarkOperator `json:"operators"`
 }
 
 type relationshipBenchmarkOperationProfile struct {
-	Name         string `json:"name"`
-	RowsScanned  int64  `json:"rows_scanned"`
-	SpillBytes   int64  `json:"spill_bytes"`
-	RowsReturned int64  `json:"rows_returned"`
+	Name                 string                                  `json:"name"`
+	RowsScanned          int64                                   `json:"rows_scanned"`
+	SpillBytes           int64                                   `json:"spill_bytes"`
+	RowsReturned         int64                                   `json:"rows_returned"`
+	Statements           []relationshipBenchmarkStatementProfile `json:"statements"`
+	DatasetOperatorScans []relationshipBenchmarkDatasetScan      `json:"dataset_operator_scans"`
 }
 
 type relationshipBenchmarkEvidence struct {
@@ -71,7 +98,7 @@ func TestWriteRelationshipBenchmarkEvidence(t *testing.T) {
 		"the harness embeds this artifact directly in its one-line JSON result")
 }
 
-func TestRelationshipBenchmarkDirectoryBytesExcludeProfileArtifact(t *testing.T) {
+func TestRelationshipBenchmarkDirectoryBytesCountsEverySpillDirectoryFile(t *testing.T) {
 	requirements := require.New(t)
 	root := t.TempDir()
 	requirements.NoError(os.WriteFile(
@@ -85,7 +112,87 @@ func TestRelationshipBenchmarkDirectoryBytesExcludeProfileArtifact(t *testing.T)
 		0o600,
 	))
 
-	assert.Equal(t, int64(200), relationshipBenchmarkDirectoryBytes(t, root))
+	assert.Equal(t, int64(300), relationshipBenchmarkDirectoryBytes(t, root))
+}
+
+func TestAggregateRelationshipBenchmarkProfilesIncludesEveryStatementAndDatasetOperator(t *testing.T) {
+	profiles := []relationshipBenchmarkProfile{
+		{
+			QueryName:             "candidate preselection",
+			CumulativeRowsScanned: 12,
+			PeakSpillBytes:        3,
+			Children: []relationshipBenchmarkOperator{{
+				Name:        "READ_PARQUET",
+				Type:        "TABLE_SCAN",
+				RowsScanned: 12,
+				ExtraInfo: map[string]any{
+					"Filename(s)": "/cache/identity_entry_facts/year=2024/data.parquet",
+				},
+			}},
+		},
+		{
+			QueryName:             "final aggregation",
+			CumulativeRowsScanned: 20,
+			PeakSpillBytes:        5,
+			Children: []relationshipBenchmarkOperator{{
+				Name: "HASH_JOIN",
+				Type: "HASH_JOIN",
+				Children: []relationshipBenchmarkOperator{{
+					Name:        "READ_PARQUET",
+					Type:        "TABLE_SCAN",
+					RowsScanned: 20,
+					ExtraInfo: map[string]any{
+						"Filename(s)": "/cache/identity_directory/data.parquet",
+					},
+				}},
+			}},
+		},
+	}
+
+	got := aggregateRelationshipBenchmarkProfiles(profiles)
+
+	assert.Equal(t, int64(32), got.RowsScanned)
+	assert.Equal(t, int64(5), got.SpillBytes)
+	require.Len(t, got.Statements, 2)
+	assert.Equal(t, "candidate preselection", got.Statements[0].QueryName)
+	assert.Equal(t, "final aggregation", got.Statements[1].QueryName)
+	assert.Equal(t, []relationshipBenchmarkDatasetScan{
+		{Dataset: identityindex.DatasetDirectory, Operator: "READ_PARQUET", RowsScanned: 20},
+		{Dataset: identityindex.DatasetEntryFacts, Operator: "READ_PARQUET", RowsScanned: 12},
+	}, got.DatasetOperatorScans)
+}
+
+func TestDuckDBStatementProfilerRotatesOutputForEveryMeasuredQuery(t *testing.T) {
+	engine, err := NewDuckDBEngine("", "", nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, engine.Close()) })
+	profileDir := t.TempDir()
+	assert.NotEqual(t, filepath.Clean(engine.tempDirectory), filepath.Clean(profileDir))
+	engine.relationshipBenchmarkProfileDir = profileDir
+	_, err = engine.db.ExecContext(t.Context(), "PRAGMA enable_profiling='json'")
+	require.NoError(t, err)
+
+	for _, queryText := range []string{
+		"SELECT i FROM range(3) t(i)",
+		"SELECT i FROM range(5) t(i)",
+	} {
+		func() {
+			rows, queryErr := engine.profiledQueryContext(t.Context(), queryText)
+			require.NoError(t, queryErr)
+			defer func() { require.NoError(t, rows.Close()) }()
+			for rows.Next() {
+				var value int64
+				require.NoError(t, rows.Scan(&value))
+			}
+			require.NoError(t, rows.Err())
+		}()
+	}
+	_, err = engine.db.ExecContext(t.Context(), "PRAGMA disable_profiling")
+	require.NoError(t, err)
+
+	files, err := filepath.Glob(filepath.Join(profileDir, "statement-*.json"))
+	require.NoError(t, err)
+	require.Len(t, files, 2)
 }
 
 func writeRelationshipBenchmarkEvidence(
@@ -100,6 +207,79 @@ func writeRelationshipBenchmarkEvidence(
 		return fmt.Errorf("write relationship benchmark evidence: %w", err)
 	}
 	return nil
+}
+
+func aggregateRelationshipBenchmarkProfiles(
+	profiles []relationshipBenchmarkProfile,
+) relationshipBenchmarkOperationProfile {
+	result := relationshipBenchmarkOperationProfile{
+		Statements: make([]relationshipBenchmarkStatementProfile, 0, len(profiles)),
+	}
+	scans := make(map[string]int64)
+	for index, profile := range profiles {
+		result.RowsScanned += profile.CumulativeRowsScanned
+		result.SpillBytes = max(result.SpillBytes, profile.PeakSpillBytes)
+		result.Statements = append(result.Statements, relationshipBenchmarkStatementProfile{
+			Index:       index + 1,
+			QueryName:   profile.QueryName,
+			RowsScanned: profile.CumulativeRowsScanned,
+			SpillBytes:  profile.PeakSpillBytes,
+			Operators:   profile.Children,
+		})
+		collectRelationshipBenchmarkDatasetScans(profile.Children, scans)
+	}
+	for key, rowsScanned := range scans {
+		parts := strings.SplitN(key, "\x00", 2)
+		result.DatasetOperatorScans = append(
+			result.DatasetOperatorScans,
+			relationshipBenchmarkDatasetScan{
+				Dataset:     parts[0],
+				Operator:    parts[1],
+				RowsScanned: rowsScanned,
+			},
+		)
+	}
+	sort.Slice(result.DatasetOperatorScans, func(i, j int) bool {
+		left, right := result.DatasetOperatorScans[i], result.DatasetOperatorScans[j]
+		if left.Dataset != right.Dataset {
+			return left.Dataset < right.Dataset
+		}
+		return left.Operator < right.Operator
+	})
+	return result
+}
+
+func collectRelationshipBenchmarkDatasetScans(
+	operators []relationshipBenchmarkOperator,
+	scans map[string]int64,
+) {
+	for _, operator := range operators {
+		if operator.RowsScanned > 0 {
+			if dataset := relationshipBenchmarkOperatorDataset(operator); dataset != "" {
+				scans[dataset+"\x00"+operator.Name] += operator.RowsScanned
+			}
+		}
+		collectRelationshipBenchmarkDatasetScans(operator.Children, scans)
+	}
+}
+
+func relationshipBenchmarkOperatorDataset(
+	operator relationshipBenchmarkOperator,
+) string {
+	filename, ok := operator.ExtraInfo["Filename(s)"]
+	if !ok {
+		return ""
+	}
+	filenameText := fmt.Sprint(filename)
+	for _, dataset := range RequiredParquetDirs {
+		if strings.Contains(
+			filepath.ToSlash(filenameText),
+			"/"+dataset+"/",
+		) {
+			return dataset
+		}
+	}
+	return ""
 }
 
 // BenchmarkRelationshipIndexCold measures the production cache created by
@@ -260,16 +440,11 @@ func benchmarkRelationshipColdOperation(
 				DuckDBOptions{DisableSQLiteScanner: true},
 			)
 			requirementsForTest.NoError(err)
-			profilePath := filepath.Join(b.TempDir(), "profile.json")
-			quotedProfilePath := strings.ReplaceAll(profilePath, "'", "''")
+			profileDir := b.TempDir()
+			engine.relationshipBenchmarkProfileDir = profileDir
 			_, err = engine.db.ExecContext(
 				context.Background(),
 				"PRAGMA enable_profiling='json'",
-			)
-			requirementsForTest.NoError(err)
-			_, err = engine.db.ExecContext(
-				context.Background(),
-				"SET profiling_output='"+quotedProfilePath+"'",
 			)
 			requirementsForTest.NoError(err)
 
@@ -284,13 +459,25 @@ func benchmarkRelationshipColdOperation(
 				"PRAGMA disable_profiling",
 			)
 			requirementsForTest.NoError(err)
-			profileData, err := os.ReadFile(profilePath)
+			profilePaths, err := filepath.Glob(
+				filepath.Join(profileDir, "statement-*.json"),
+			)
 			requirementsForTest.NoError(err)
-			var profile relationshipBenchmarkProfile
-			requirementsForTest.NoError(json.Unmarshal(profileData, &profile))
-			rowsScanned += profile.CumulativeRowsScanned
-			spillBytes += max(profile.PeakSpillBytes,
+			requirementsForTest.NotEmpty(profilePaths)
+			profiles := make([]relationshipBenchmarkProfile, 0, len(profilePaths))
+			for _, profilePath := range profilePaths {
+				profileData, readErr := os.ReadFile(profilePath)
+				requirementsForTest.NoError(readErr)
+				var profile relationshipBenchmarkProfile
+				requirementsForTest.NoError(json.Unmarshal(profileData, &profile))
+				profiles = append(profiles, profile)
+			}
+			aggregated := aggregateRelationshipBenchmarkProfiles(profiles)
+			rowsScanned += aggregated.RowsScanned
+			spillBytes += max(aggregated.SpillBytes,
 				relationshipBenchmarkDirectoryBytes(b, engine.tempDirectory))
+			result.Statements = aggregated.Statements
+			result.DatasetOperatorScans = aggregated.DatasetOperatorScans
 			requirementsForTest.NoError(engine.Close())
 			b.StartTimer()
 		}
@@ -316,9 +503,6 @@ func relationshipBenchmarkDirectoryBytes(tb testing.TB, root string) int64 {
 			return fmt.Errorf("walk relationship benchmark directory: %w", err)
 		}
 		if entry.IsDir() {
-			return nil
-		}
-		if entry.Name() == "profile.json" {
 			return nil
 		}
 		info, err := entry.Info()
