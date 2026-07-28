@@ -1484,23 +1484,37 @@ func (s *cacheSourceSnapshot) tables() []cacheSnapshotTable {
 	if s.hasAttachmentMIME {
 		attachmentQuery = "SELECT id, message_id, size, filename, mime_type FROM attachments"
 	}
+	// Every column carries an explicit type so the schema DuckDB sees never
+	// depends on the data: read_csv_auto sniffs empty or all-NULL columns as
+	// VARCHAR, which breaks downstream SQL that binds these columns against
+	// typed Parquet (e.g. COALESCE(BIGINT, VARCHAR) is a binder error).
 	return []cacheSnapshotTable{
 		// deleted_at is exported so the main COPY query can apply the
 		// `deleted_at IS NULL` filter on this path the same way it does
 		// on the sqlite_scanner path; otherwise DuckDB binds against a
 		// CSV view that lacks the column and the export fails on Windows.
 		{tableMessages, "SELECT id, source_id, source_message_id, conversation_id, subject, snippet, sent_at, size_estimate, has_attachments, attachment_count, deleted_from_source_at, deleted_at, sender_id, message_type, is_from_me FROM messages WHERE sent_at IS NOT NULL",
-			"types={'sent_at': 'TIMESTAMP', 'deleted_from_source_at': 'TIMESTAMP', 'deleted_at': 'TIMESTAMP', 'is_from_me': 'BOOLEAN'}"},
-		{"message_recipients", "SELECT message_id, participant_id, recipient_type, display_name FROM message_recipients", ""},
-		{"message_labels", "SELECT message_id, label_id FROM message_labels", ""},
-		{tableAttachments, attachmentQuery, ""},
-		{tableParticipants, "SELECT id, email_address, domain, display_name, phone_number FROM participants", ""},
-		{"account_identities", "SELECT source_id, address FROM account_identities", ""},
-		{tableParticipantIdentifiers, "SELECT participant_id, identifier_type, identifier_value, display_value, is_primary FROM participant_identifiers", ""},
-		{tableLabels, "SELECT id, name FROM labels", ""},
-		{"sources", "SELECT id, identifier, source_type FROM sources", ""},
-		{tableConversations, "SELECT id, source_conversation_id, title, COALESCE(conversation_type, 'email_thread') AS conversation_type FROM conversations", ""},
-		{tableConversationParticipants, "SELECT conversation_id, participant_id FROM conversation_participants", ""},
+			"types={'id': 'BIGINT', 'source_id': 'BIGINT', 'source_message_id': 'VARCHAR', 'conversation_id': 'BIGINT', 'subject': 'VARCHAR', 'snippet': 'VARCHAR', 'sent_at': 'TIMESTAMP', 'size_estimate': 'BIGINT', 'has_attachments': 'BOOLEAN', 'attachment_count': 'INTEGER', 'deleted_from_source_at': 'TIMESTAMP', 'deleted_at': 'TIMESTAMP', 'sender_id': 'BIGINT', 'message_type': 'VARCHAR', 'is_from_me': 'BOOLEAN'}"},
+		{"message_recipients", "SELECT message_id, participant_id, recipient_type, display_name FROM message_recipients",
+			"types={'message_id': 'BIGINT', 'participant_id': 'BIGINT', 'recipient_type': 'VARCHAR', 'display_name': 'VARCHAR'}"},
+		{"message_labels", "SELECT message_id, label_id FROM message_labels",
+			"types={'message_id': 'BIGINT', 'label_id': 'BIGINT'}"},
+		{tableAttachments, attachmentQuery,
+			"types={'id': 'BIGINT', 'message_id': 'BIGINT', 'size': 'BIGINT', 'filename': 'VARCHAR', 'mime_type': 'VARCHAR'}"},
+		{tableParticipants, "SELECT id, email_address, domain, display_name, phone_number FROM participants",
+			"types={'id': 'BIGINT', 'email_address': 'VARCHAR', 'domain': 'VARCHAR', 'display_name': 'VARCHAR', 'phone_number': 'VARCHAR'}"},
+		{"account_identities", "SELECT source_id, address FROM account_identities",
+			"types={'source_id': 'BIGINT', 'address': 'VARCHAR'}"},
+		{tableParticipantIdentifiers, "SELECT participant_id, identifier_type, identifier_value, display_value, is_primary FROM participant_identifiers",
+			"types={'participant_id': 'BIGINT', 'identifier_type': 'VARCHAR', 'identifier_value': 'VARCHAR', 'display_value': 'VARCHAR', 'is_primary': 'BOOLEAN'}"},
+		{tableLabels, "SELECT id, name FROM labels",
+			"types={'id': 'BIGINT', 'name': 'VARCHAR'}"},
+		{"sources", "SELECT id, identifier, source_type FROM sources",
+			"types={'id': 'BIGINT', 'identifier': 'VARCHAR', 'source_type': 'VARCHAR'}"},
+		{tableConversations, "SELECT id, source_conversation_id, title, COALESCE(conversation_type, 'email_thread') AS conversation_type FROM conversations",
+			"types={'id': 'BIGINT', 'source_conversation_id': 'VARCHAR', 'title': 'VARCHAR', 'conversation_type': 'VARCHAR'}"},
+		{tableConversationParticipants, "SELECT conversation_id, participant_id FROM conversation_participants",
+			"types={'conversation_id': 'BIGINT', 'participant_id': 'BIGINT'}"},
 	}
 }
 
