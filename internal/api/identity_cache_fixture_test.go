@@ -101,26 +101,28 @@ func ensureIdentityCacheFixtureDatasets(
 }
 
 func TestIdentityCacheFixtureUsesExactV15RollupSchema(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
 	root := t.TempDir()
 	db, err := duckdbutil.Open(
 		t.Context(),
 		duckdbutil.BuilderPolicy(filepath.Join(root, "duckdb-tmp")),
 	)
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, db.Close()) })
+	require.NoError(err)
+	t.Cleanup(func() { require.NoError(db.Close()) })
 	ensureIdentityCacheFixtureDatasets(t, db, root)
 
 	rows, err := db.Query(`
 		DESCRIBE SELECT * FROM read_parquet(?)
 	`, filepath.Join(root, identityindex.DatasetRollups, "*.parquet"))
-	require.NoError(t, err)
-	defer func() { require.NoError(t, rows.Close()) }()
+	require.NoError(err)
+	defer func() { require.NoError(rows.Close()) }()
 	var columns []string
 	var types []string
 	for rows.Next() {
 		var name, typ string
 		var nullable, key, defaultValue, extra sql.NullString
-		require.NoError(t, rows.Scan(
+		require.NoError(rows.Scan(
 			&name,
 			&typ,
 			&nullable,
@@ -131,9 +133,9 @@ func TestIdentityCacheFixtureUsesExactV15RollupSchema(t *testing.T) {
 		columns = append(columns, name)
 		types = append(types, typ)
 	}
-	require.NoError(t, rows.Err())
-	require.Len(t, types, 7)
-	assert.Equal(t, []string{
+	require.NoError(rows.Err())
+	require.Len(types, 7)
+	assert.Equal([]string{
 		"canonical_id",
 		"activity_count",
 		"file_count",
@@ -142,7 +144,7 @@ func TestIdentityCacheFixtureUsesExactV15RollupSchema(t *testing.T) {
 		"source_counts",
 		"source_rollups",
 	}, columns)
-	assert.Equal(t,
+	assert.Equal(
 		"STRUCT(source_id BIGINT, source_type VARCHAR, activity_count BIGINT, file_count BIGINT, first_at TIMESTAMP, last_at TIMESTAMP)[]",
 		types[len(types)-1],
 	)

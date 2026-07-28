@@ -336,6 +336,8 @@ func TestIdentityCandidateNarrowingRetainsScalarFilters(t *testing.T) {
 }
 
 func TestIdentityCandidateNarrowingSaturationFallsBackExactly(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
 	builder := NewTestDataBuilder(t)
 	sourceID := builder.AddSourceWithType("archive@example.com", "gmail")
 	personID := builder.AddParticipant("person@example.com", "example.com", "Person")
@@ -361,16 +363,16 @@ func TestIdentityCandidateNarrowingSaturationFallsBackExactly(t *testing.T) {
 		context.Background(),
 		request.Explore,
 	)
-	require.NoError(t, err)
-	assert.Nil(t, narrowed.Search.CandidateMessageIDs)
-	assert.Equal(t, request.Explore.Context.ParticipantIDs, narrowed.Context.ParticipantIDs)
+	require.NoError(err)
+	assert.Nil(narrowed.Search.CandidateMessageIDs)
+	assert.Equal(request.Explore.Context.ParticipantIDs, narrowed.Context.ParticipantIDs)
 
 	saturatedFallback, err := engine.SearchPeople(context.Background(), request)
-	require.NoError(t, err)
+	require.NoError(err)
 	engine.identityCandidateFastPathDisabled = true
 	generic, err := engine.SearchPeople(context.Background(), request)
-	require.NoError(t, err)
-	assert.Equal(t, generic, saturatedFallback)
+	require.NoError(err)
+	assert.Equal(generic, saturatedFallback)
 }
 
 func TestIdentityEndpointsDoNotRequireLegacyAnalyticalViews(t *testing.T) {

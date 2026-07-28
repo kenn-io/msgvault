@@ -48,6 +48,8 @@ func TestCachePublicationRecoversAfterProcessKillAtEveryCommitPhase(t *testing.T
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
 			parent := t.TempDir()
 			analyticsDir := filepath.Join(parent, "analytics")
 			writePublicationTree(t, analyticsDir, "old.parquet")
@@ -67,29 +69,29 @@ func TestCachePublicationRecoversAfterProcessKillAtEveryCommitPhase(t *testing.T
 				cachePublicationKillEnv+"="+test.killPhase,
 				cachePublicationReadyEnv+"="+readyPath,
 			)
-			require.NoError(t, command.Start())
-			require.Eventually(t, func() bool {
+			require.NoError(command.Start())
+			require.Eventually(func() bool {
 				_, err := os.Stat(readyPath)
 				return err == nil
 			}, 10*time.Second, 10*time.Millisecond)
-			require.NoError(t, command.Process.Kill())
-			require.Error(t, command.Wait())
+			require.NoError(command.Process.Kill())
+			require.Error(command.Wait())
 
-			require.NoError(t, recoverInterruptedCachePublication(analyticsDir))
-			require.NoError(t, cleanupStaleCacheStaging(analyticsDir))
+			require.NoError(recoverInterruptedCachePublication(analyticsDir))
+			require.NoError(cleanupStaleCacheStaging(analyticsDir))
 			readiness, err := query.InspectCacheReadiness(analyticsDir)
-			require.NoError(t, err)
-			assert.Equal(t, query.CacheReady, readiness)
+			require.NoError(err)
+			assert.Equal(query.CacheReady, readiness)
 			state, err := query.ReadCacheSyncState(analyticsDir)
-			require.NoError(t, err)
+			require.NoError(err)
 			if test.wantNew {
-				assert.Equal(t, int64(2), state.IdentityRevision)
-				assert.NotEqual(t, before, snapshotCacheBytes(t, analyticsDir))
+				assert.Equal(int64(2), state.IdentityRevision)
+				assert.NotEqual(before, snapshotCacheBytes(t, analyticsDir))
 			} else {
-				assert.Equal(t, int64(1), state.IdentityRevision)
-				assert.Equal(t, before, snapshotCacheBytes(t, analyticsDir))
+				assert.Equal(int64(1), state.IdentityRevision)
+				assert.Equal(before, snapshotCacheBytes(t, analyticsDir))
 			}
-			assert.NoDirExists(t, cachePublicationTransactionRoot(analyticsDir))
+			assert.NoDirExists(cachePublicationTransactionRoot(analyticsDir))
 		})
 	}
 }
@@ -98,16 +100,17 @@ func TestCachePublicationProcessKillHelper(t *testing.T) {
 	if os.Getenv(cachePublicationHelperEnv) == "" {
 		t.Skip("subprocess helper")
 	}
+	require := require.New(t)
 	analyticsDir := os.Getenv(cachePublicationRootEnv)
 	staging, err := newCacheStaging(analyticsDir)
-	require.NoError(t, err)
+	require.NoError(err)
 	writePublicationTree(t, staging.root, "new.parquet")
 	killPhase := os.Getenv(cachePublicationKillEnv)
 	cachePublicationCheckpointHook = func(phase string) {
 		if phase != killPhase {
 			return
 		}
-		require.NoError(t, os.WriteFile(
+		require.NoError(os.WriteFile(
 			os.Getenv(cachePublicationReadyEnv),
 			[]byte(phase),
 			0o600,
@@ -117,14 +120,14 @@ func TestCachePublicationProcessKillHelper(t *testing.T) {
 	state := query.CacheSyncState{SchemaVersion: query.CacheSchemaVersion}
 	if os.Getenv(cachePublicationModeEnv) != "first" {
 		state, err = query.ReadCacheSyncState(analyticsDir)
-		require.NoError(t, err)
+		require.NoError(err)
 	}
 	state.IdentityRevision = 2
 	switch os.Getenv(cachePublicationModeEnv) {
 	case "full", "first":
 		data, marshalErr := json.Marshal(state)
-		require.NoError(t, marshalErr)
-		require.NoError(t, publishCache(
+		require.NoError(marshalErr)
+		require.NoError(publishCache(
 			staging,
 			analyticsDir,
 			cachePublishPlanForMode(true),
@@ -132,26 +135,28 @@ func TestCachePublicationProcessKillHelper(t *testing.T) {
 		))
 	case "incremental":
 		data, marshalErr := json.Marshal(state)
-		require.NoError(t, marshalErr)
-		require.NoError(t, publishCache(
+		require.NoError(marshalErr)
+		require.NoError(publishCache(
 			staging,
 			analyticsDir,
 			cachePublishPlanForMode(false),
 			data,
 		))
 	case "derived":
-		require.NoError(t, publishDerivedCache(
+		require.NoError(publishDerivedCache(
 			staging,
 			analyticsDir,
 			derivedCachePublishPlan(false),
 			state,
 		))
 	default:
-		require.Fail(t, "unknown publication helper mode")
+		require.Fail("unknown publication helper mode")
 	}
 }
 
 func TestCachePublicationFirstBuildRecoveryAbsenceIsRestartableAfterProcessKill(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
 	parent := t.TempDir()
 	analyticsDir := filepath.Join(parent, "analytics")
 	readyPath := filepath.Join(parent, "publication-ready")
@@ -176,11 +181,11 @@ func TestCachePublicationFirstBuildRecoveryAbsenceIsRestartableAfterProcessKill(
 		cachePublicationReadyEnv+"="+readyPath,
 	)
 
-	require.NoError(t, recoverInterruptedCachePublication(analyticsDir))
-	require.NoError(t, cleanupStaleCacheStaging(analyticsDir))
-	assert.NoFileExists(t, query.CacheStatePath(analyticsDir))
+	require.NoError(recoverInterruptedCachePublication(analyticsDir))
+	require.NoError(cleanupStaleCacheStaging(analyticsDir))
+	assert.NoFileExists(query.CacheStatePath(analyticsDir))
 	for _, dataset := range query.RequiredParquetDirs {
-		assert.NoDirExists(t, filepath.Join(analyticsDir, dataset))
+		assert.NoDirExists(filepath.Join(analyticsDir, dataset))
 	}
 	assertNoCachePublicationResidue(t, analyticsDir)
 }
@@ -205,6 +210,8 @@ func TestCachePublicationRecoveryIsRestartableAfterProcessKill(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
 			parent := t.TempDir()
 			analyticsDir := filepath.Join(parent, "analytics")
 			writePublicationTree(t, analyticsDir, "old.parquet")
@@ -237,19 +244,19 @@ func TestCachePublicationRecoveryIsRestartableAfterProcessKill(t *testing.T) {
 				cachePublicationReadyEnv+"="+readyPath,
 			)
 
-			require.NoError(t, recoverInterruptedCachePublication(analyticsDir))
-			require.NoError(t, cleanupStaleCacheStaging(analyticsDir))
+			require.NoError(recoverInterruptedCachePublication(analyticsDir))
+			require.NoError(cleanupStaleCacheStaging(analyticsDir))
 			readiness, err := query.InspectCacheReadiness(analyticsDir)
-			require.NoError(t, err)
-			assert.Equal(t, query.CacheReady, readiness)
+			require.NoError(err)
+			assert.Equal(query.CacheReady, readiness)
 			state, err := query.ReadCacheSyncState(analyticsDir)
-			require.NoError(t, err)
+			require.NoError(err)
 			if test.wantNew {
-				assert.Equal(t, int64(2), state.IdentityRevision)
+				assert.Equal(int64(2), state.IdentityRevision)
 			} else {
-				assert.Equal(t, int64(1), state.IdentityRevision)
+				assert.Equal(int64(1), state.IdentityRevision)
 			}
-			assert.Equal(t, wantSnapshot, snapshotCacheBytes(t, analyticsDir))
+			assert.Equal(wantSnapshot, snapshotCacheBytes(t, analyticsDir))
 			assertNoCachePublicationResidue(t, analyticsDir)
 		})
 	}

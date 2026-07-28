@@ -116,6 +116,8 @@ func TestRelationshipBenchmarkDirectoryBytesCountsEverySpillDirectoryFile(t *tes
 }
 
 func TestAggregateRelationshipBenchmarkProfilesIncludesEveryStatementAndDatasetOperator(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
 	profiles := []relationshipBenchmarkProfile{
 		{
 			QueryName:             "candidate preselection",
@@ -151,26 +153,27 @@ func TestAggregateRelationshipBenchmarkProfilesIncludesEveryStatementAndDatasetO
 
 	got := aggregateRelationshipBenchmarkProfiles(profiles)
 
-	assert.Equal(t, int64(32), got.RowsScanned)
-	assert.Equal(t, int64(5), got.SpillBytes)
-	require.Len(t, got.Statements, 2)
-	assert.Equal(t, "candidate preselection", got.Statements[0].QueryName)
-	assert.Equal(t, "final aggregation", got.Statements[1].QueryName)
-	assert.Equal(t, []relationshipBenchmarkDatasetScan{
+	assert.Equal(int64(32), got.RowsScanned)
+	assert.Equal(int64(5), got.SpillBytes)
+	require.Len(got.Statements, 2)
+	assert.Equal("candidate preselection", got.Statements[0].QueryName)
+	assert.Equal("final aggregation", got.Statements[1].QueryName)
+	assert.Equal([]relationshipBenchmarkDatasetScan{
 		{Dataset: identityindex.DatasetDirectory, Operator: "READ_PARQUET", RowsScanned: 20},
 		{Dataset: identityindex.DatasetEntryFacts, Operator: "READ_PARQUET", RowsScanned: 12},
 	}, got.DatasetOperatorScans)
 }
 
 func TestDuckDBStatementProfilerRotatesOutputForEveryMeasuredQuery(t *testing.T) {
+	require := require.New(t)
 	engine, err := NewDuckDBEngine("", "", nil)
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, engine.Close()) })
+	require.NoError(err)
+	t.Cleanup(func() { require.NoError(engine.Close()) })
 	profileDir := t.TempDir()
 	assert.NotEqual(t, filepath.Clean(engine.tempDirectory), filepath.Clean(profileDir))
 	engine.relationshipBenchmarkProfileDir = profileDir
 	_, err = engine.db.ExecContext(t.Context(), "PRAGMA enable_profiling='json'")
-	require.NoError(t, err)
+	require.NoError(err)
 
 	for _, queryText := range []string{
 		"SELECT i FROM range(3) t(i)",
@@ -178,21 +181,21 @@ func TestDuckDBStatementProfilerRotatesOutputForEveryMeasuredQuery(t *testing.T)
 	} {
 		func() {
 			rows, queryErr := engine.profiledQueryContext(t.Context(), queryText)
-			require.NoError(t, queryErr)
-			defer func() { require.NoError(t, rows.Close()) }()
+			require.NoError(queryErr)
+			defer func() { require.NoError(rows.Close()) }()
 			for rows.Next() {
 				var value int64
-				require.NoError(t, rows.Scan(&value))
+				require.NoError(rows.Scan(&value))
 			}
-			require.NoError(t, rows.Err())
+			require.NoError(rows.Err())
 		}()
 	}
 	_, err = engine.db.ExecContext(t.Context(), "PRAGMA disable_profiling")
-	require.NoError(t, err)
+	require.NoError(err)
 
 	files, err := filepath.Glob(filepath.Join(profileDir, "statement-*.json"))
-	require.NoError(t, err)
-	require.Len(t, files, 2)
+	require.NoError(err)
+	require.Len(files, 2)
 }
 
 func writeRelationshipBenchmarkEvidence(
