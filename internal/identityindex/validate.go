@@ -80,7 +80,17 @@ func Validate(
 			DatasetActivity,
 			"rows have no edge origin",
 			`SELECT count(*) FROM ` + activity + `
-			 WHERE NOT is_direct AND NOT is_conversation_member`,
+			 WHERE canonical_id IS NOT NULL
+			   AND NOT is_direct AND NOT is_conversation_member`,
+		},
+		{
+			DatasetActivity,
+			"invalid participantless message sentinels",
+			`SELECT count(*) FROM ` + activity + `
+			 WHERE canonical_id IS NULL
+			   AND (participant_domain IS NOT NULL
+			        OR is_direct OR is_conversation_member
+			        OR is_sender OR is_author OR is_owner)`,
 		},
 		{
 			DatasetPeople,

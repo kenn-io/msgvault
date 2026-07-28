@@ -47,6 +47,7 @@ WITH relationship_activity AS (
 	       bool_or(is_author) AS is_author,
 	       bool_or(is_owner) AS is_owner
 	FROM filtered_activity
+	WHERE canonical_id IS NOT NULL
 	GROUP BY message_id, canonical_id, participant_domain
 ), canonical_message_edges AS (
 	SELECT message_id, canonical_id,
@@ -232,15 +233,20 @@ SELECT m.message_id, m.conversation_id, m.source_id, m.source_type,
        m.occurred_at, m.message_type, m.conversation_type, m.entry_kind,
        m.is_chat, m.is_from_me, m.attachment_count, m.deleted_from_source,
        c.canonical_id, c.participant_domain,
-       bool_or(e.is_direct) AS is_direct,
-       bool_or(e.is_conversation_member) AS is_conversation_member,
-       bool_or(e.is_sender) AS is_sender,
-       bool_or(e.is_author) AS is_author,
+       coalesce(bool_or(e.is_direct)
+           FILTER (WHERE c.canonical_id IS NOT NULL), false) AS is_direct,
+       coalesce(bool_or(e.is_conversation_member)
+           FILTER (WHERE c.canonical_id IS NOT NULL), false)
+           AS is_conversation_member,
+       coalesce(bool_or(e.is_sender)
+           FILTER (WHERE c.canonical_id IS NOT NULL), false) AS is_sender,
+       coalesce(bool_or(e.is_author)
+           FILTER (WHERE c.canonical_id IS NOT NULL), false) AS is_author,
        (o.canonical_id IS NOT NULL) AS is_owner,
        m.occurred_year
-FROM raw_edges e
-JOIN message_facts m USING (message_id)
-JOIN canon c USING (participant_id)
+FROM message_facts m
+LEFT JOIN raw_edges e USING (message_id)
+LEFT JOIN canon c USING (participant_id)
 LEFT JOIN owner_canon o USING (canonical_id)
 GROUP BY m.message_id, m.conversation_id, m.source_id, m.source_type,
          m.occurred_at, m.message_type, m.conversation_type, m.entry_kind,

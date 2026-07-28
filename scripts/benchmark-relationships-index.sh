@@ -134,6 +134,7 @@ activity_expansion="$(sed -E 's/.*expansion=([0-9.]+)x.*/\1/' <<<"$fanout_line")
 daemon_pid=$!
 
 base_url=""
+ready=0
 for _ in $(seq 1 600); do
   if ! kill -0 "$daemon_pid" 2>/dev/null; then
     tail -100 "$scratch/serve.log" >&2
@@ -142,11 +143,12 @@ for _ in $(seq 1 600); do
   base_url="$(sed -n 's/^  API server: //p' "$scratch/serve.log" | tail -1)"
   if [[ -n "$base_url" ]] &&
     curl --fail --silent "$base_url/health" -o "$scratch/health.json" 2>/dev/null; then
+    ready=1
     break
   fi
   sleep 0.1
 done
-if [[ -z "$base_url" ]]; then
+if [[ "$ready" -ne 1 ]]; then
   printf '%s\n' "daemon readiness timed out" >&2
   exit 1
 fi
@@ -216,8 +218,12 @@ domains_ms="$(
 )"
 person_search_ms="$(
   request_milliseconds person-search /api/v1/people/search \
-    '{"identity_query":"user101","predicate":{},"sort":{"field":"activity_count","direction":"desc"},"limit":100}'
+    '{"identity_query":"person101","predicate":{},"sort":{"field":"activity_count","direction":"desc"},"limit":100}'
 )"
+if ! jq -e '.rows | length > 0' "$scratch/person-search.json" >/dev/null; then
+  printf '%s\n' "person search returned no fixture-backed rows" >&2
+  exit 1
+fi
 readonly filtered='[{"dimension":"source","values":["1"]},{"dimension":"participant","values":["101"]},{"dimension":"message_type","values":["email"]},{"dimension":"deletion","values":["active"]}]'
 filtered_people_ms="$(
   request_milliseconds filtered-people /api/v1/people/search \

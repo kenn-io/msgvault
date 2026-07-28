@@ -143,6 +143,73 @@ func TestCacheNeedsBuildConversationParticipantDriftUsesDerivedRefresh(t *testin
 	assertionsForTest.Contains(got.Reason, "conversation participants changed")
 }
 
+func TestCacheNeedsBuildMixedNewMessagesAndRelationshipDriftForcesFullRebuild(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*testing.T, *store.Store)
+		assert func(*testing.T, cacheStaleness)
+	}{
+		{
+			name: "participant links",
+			mutate: func(t *testing.T, st *store.Store) {
+				t.Helper()
+				_, err := st.LinkParticipants(3, 4)
+				require.NoError(t, err)
+			},
+			assert: func(t *testing.T, got cacheStaleness) {
+				t.Helper()
+				assert.True(t, got.HasIdentityDrift)
+			},
+		},
+		{
+			name: "conversation membership",
+			mutate: func(t *testing.T, st *store.Store) {
+				t.Helper()
+				_, err := st.DB().Exec(`
+					INSERT INTO conversation_participants
+						(conversation_id, participant_id)
+					VALUES (102, 4)
+				`)
+				require.NoError(t, err)
+			},
+			assert: func(t *testing.T, got cacheStaleness) {
+				t.Helper()
+				assert.True(t, got.HasConversationParticipantDrift)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmp := setupTestSQLite(t)
+			dbPath := filepath.Join(tmp, "test.db")
+			analyticsDir := filepath.Join(tmp, "analytics")
+			_, err := buildCache(dbPath, analyticsDir, true)
+			require.NoError(t, err)
+
+			st, err := store.Open(dbPath)
+			require.NoError(t, err)
+			_, err = st.DB().Exec(`
+				INSERT INTO messages
+					(id, source_id, source_message_id, conversation_id,
+					 subject, sent_at, message_type)
+				VALUES
+					(6, 1, 'msg6', 101, 'New message',
+					 '2024-03-02 10:00:00', 'email')
+			`)
+			require.NoError(t, err)
+			tt.mutate(t, st)
+			require.NoError(t, st.Close())
+
+			got := cacheNeedsBuild(dbPath, analyticsDir)
+			assert.True(t, got.HasNew)
+			tt.assert(t, got)
+			assert.True(t, got.FullRebuild,
+				"mixed new-message and relationship drift must not append stale index rows")
+		})
+	}
+}
+
 func explainQueryPlan(t *testing.T, s *store.Store, sql string, args ...any) string {
 	t.Helper()
 	rows, err := s.DB().Query("EXPLAIN QUERY PLAN "+sql, args...)

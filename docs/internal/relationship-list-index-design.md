@@ -74,9 +74,12 @@ The relationship index has four datasets.
 
 ### `relationship_activity`
 
-This is the only large dataset. Its grain is one row per
+This is the only large dataset. Its ordinary grain is one row per
 `(message_id, canonical_id, participant_domain)`. Duplicate aliases at that
-grain merge every Boolean flag with `bool_or`.
+grain merge every Boolean flag with `bool_or`. A message with no valid direct
+or conversation-member edge receives one nullable-identity sentinel row.
+That row retains the message facts needed for filter-before-chat-grouping and
+is excluded from identity and domain fan-out.
 
 Message columns:
 
@@ -110,11 +113,11 @@ readable.
 Owner rows remain in this dataset. They are excluded from returned people but
 are required to decide whether a meeting includes the owner.
 
-The query layer performs a second deduplication to
-`(message_id, canonical_id)` when computing people. It again uses `bool_or` for
-edge flags. If an authored alias and a co-recipient alias have been linked, the
-merged canonical identity is the author and receives exactly one incoming
-unit, not zero and not two.
+The query layer excludes nullable-identity sentinels, then performs a second
+deduplication to `(message_id, canonical_id)` when computing people. It again
+uses `bool_or` for edge flags. If an authored alias and a co-recipient alias
+have been linked, the merged canonical identity is the author and receives
+exactly one incoming unit, not zero and not two.
 
 ### `relationship_people`
 
@@ -148,7 +151,8 @@ grouped after filters, so a date window can change a conversation's newest
 message, direction, and decay date. Every filtered relationship request,
 including a date-only request, reads `relationship_activity`.
 
-All three compact datasets are built over every base-cache row, equivalent to
+All three compact datasets are derived from a logical reduction that sees
+every base-cache message, including participantless chat anchors, and uses
 `DeletionAny`. The compact fast paths run only when the request also uses
 `DeletionAny`; explicit `active` and `deleted` requests route to
 `relationship_activity`. An equivalence fixture compares compact and activity
@@ -160,6 +164,10 @@ for `active` and `deleted`.
 Filters select messages before logical entries are formed. Participant filters
 match direct participants and conversation members for chat and non-chat
 messages.
+
+Resolved lexical, semantic, and hybrid message-search candidates are applied
+at this same message-selection stage. Their provenance and candidate snapshot
+remain cursor-pinned by the existing request contract.
 
 After filtering:
 
@@ -196,10 +204,13 @@ Text search selects candidate domains there before a filtered activity scan.
 
 The filtered activity query first identifies qualifying message IDs, then
 forms chat/non-chat logical entries and applies the people or domain fan-out
-rules above. It does not join raw participant, identity-link, or
-conversation-participant datasets during aggregation. After limiting the page
-to at most 500 rows, response shaping may read participants and participant
-identifiers to return the existing identifier fields.
+rules above. Resolved message-search candidate IDs are part of that qualifying
+message predicate; identity text candidates are an additional, separate
+restriction on returned identities. The aggregation does not join raw
+participant, identity-link, or conversation-participant datasets during
+aggregation. After limiting the page to at most 500 rows, response shaping may
+read participants and participant identifiers to return the existing
+identifier fields.
 
 If the relationship index is missing, stale, or invalid, these three endpoints
 return a cache-unavailable response. They never fall back to the query that
@@ -219,6 +230,11 @@ Ordinary new-message cache updates:
 2. append `relationship_activity` rows for that same message-ID interval;
 3. rebuild the three compact datasets from committed plus staged activity;
 4. publish the base and relationship generations together.
+
+If new messages arrive in the same staleness window as participant-link or
+conversation-membership drift, the build does not append under mixed
+relationship dimensions. It performs a full base rebuild and rebuilds the
+relationship index with one coherent snapshot.
 
 The watermark, snapshot upper bound, and destination-collision checks remain.
 

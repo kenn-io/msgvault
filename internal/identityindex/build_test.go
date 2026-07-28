@@ -216,6 +216,68 @@ func TestLogicalChatReductionUsesNewestFilteredMessage(t *testing.T) {
 	assertUnit(t, "f.message_id = 100", 100, false)
 }
 
+func TestLogicalChatReductionKeepsParticipantlessNewestMessage(t *testing.T) {
+	root, db := writeRelationshipBaseFixture(t, false)
+	replaceRelationshipParquet(t, db, root, "conversations", `
+		SELECT * FROM (VALUES
+			(10::BIGINT, 'thread-10'::VARCHAR, 'Thread'::VARCHAR, 'group_chat'::VARCHAR)
+		) AS t(id, source_conversation_id, title, conversation_type)`)
+	replaceRelationshipParquet(t, db, root, "messages", `
+		SELECT * FROM (VALUES
+			(100::BIGINT, 1::BIGINT, 'm-100'::VARCHAR, 10::BIGINT,
+			 'Earlier'::VARCHAR, ''::VARCHAR, TIMESTAMP '2026-07-20 10:30:00',
+			 10::BIGINT, false, 1::INTEGER, NULL::TIMESTAMP,
+			 2::BIGINT, 'chat'::VARCHAR, false, 2026::INTEGER, 7::INTEGER),
+			(101::BIGINT, 1::BIGINT, 'm-101'::VARCHAR, 10::BIGINT,
+			 'Later without participants'::VARCHAR, ''::VARCHAR,
+			 TIMESTAMP '2026-07-21 10:30:00',
+			 10::BIGINT, false, 2::INTEGER, NULL::TIMESTAMP,
+			 NULL::BIGINT, 'chat'::VARCHAR, true, 2026::INTEGER, 7::INTEGER)
+		) AS t(id, source_id, source_message_id, conversation_id, subject,
+			snippet, sent_at, size_estimate, has_attachments, attachment_count,
+			deleted_from_source_at, sender_id, message_type, is_from_me, year, month)`)
+	replaceRelationshipParquet(t, db, root, "message_recipients", `
+		SELECT * FROM (VALUES
+			(100::BIGINT, 2::BIGINT, 'from'::VARCHAR, 'Bob'::VARCHAR),
+			(100::BIGINT, 1::BIGINT, 'to'::VARCHAR, 'Alice'::VARCHAR)
+		) AS t(message_id, participant_id, recipient_type, display_name)`)
+	replaceRelationshipParquet(t, db, root, "conversation_participants", `
+		SELECT * FROM (VALUES
+			(10::BIGINT, 1::BIGINT)
+		) AS t(conversation_id, participant_id)
+		WHERE false`)
+
+	_, err := Build(context.Background(), db, BuildOptions{
+		Mode:           ModeFull,
+		StagedBaseRoot: root,
+		OutputRoot:     root,
+	})
+	require.NoError(t, err)
+
+	var anchorMessageID int64
+	var isFromMe bool
+	var attachmentCount int64
+	query := LogicalActivitySQL(
+		ActivityPaths{Activity: relationshipParquetGlob(root, DatasetActivity)},
+		"true",
+	) + `
+		SELECT anchor_message_id, is_from_me, attachment_count
+		FROM logical_units`
+	require.NoError(t, db.QueryRow(query).
+		Scan(&anchorMessageID, &isFromMe, &attachmentCount))
+	assert.Equal(t, int64(101), anchorMessageID)
+	assert.True(t, isFromMe)
+	assert.Equal(t, int64(3), attachmentCount)
+
+	var sentinelRows int64
+	require.NoError(t, db.QueryRow(`
+		SELECT count(*)
+		FROM read_parquet(?, hive_partitioning=true, union_by_name=true)
+		WHERE message_id = 101 AND canonical_id IS NULL
+	`, relationshipParquetGlob(root, DatasetActivity)).Scan(&sentinelRows))
+	assert.Equal(t, int64(1), sentinelRows)
+}
+
 func TestBuildIncrementalWritesActivityDeltaAndRebuildsCompactPopulation(t *testing.T) {
 	committedRoot, db := writeRelationshipBaseFixture(t, false)
 	_, err := Build(context.Background(), db, BuildOptions{

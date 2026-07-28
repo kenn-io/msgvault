@@ -408,9 +408,10 @@ func TestIdentityCandidateNarrowingSaturationFallsBackExactly(t *testing.T) {
 	sentAt := time.Date(2026, 7, 20, 10, 0, 0, 0, time.UTC)
 	for index := range MaxExploreCandidateMessageIDs + 1 {
 		messageID := builder.AddMessage(MessageOpt{
-			SourceID:    sourceID,
-			MessageType: "email",
-			SentAt:      sentAt.Add(time.Duration(index) * time.Second),
+			SourceID:       sourceID,
+			ConversationID: 901,
+			MessageType:    "email",
+			SentAt:         sentAt.Add(time.Duration(index) * time.Second),
 		})
 		builder.AddFrom(messageID, personID, "Person")
 	}

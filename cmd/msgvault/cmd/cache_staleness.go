@@ -330,6 +330,15 @@ func cacheNeedsBuildLocked(dbPath, analyticsDir string) cacheStaleness {
 		reasons = append(reasons, "conversation participants changed")
 	}
 
+	// An incremental build can append only new activity rows. If canonical
+	// links or conversation membership also changed, existing rows need to be
+	// rewritten under the new relationship dimensions, so rebuild the base
+	// generation and relationship index together.
+	if result.HasNew &&
+		(result.HasIdentityDrift || result.HasConversationParticipantDrift) {
+		result.FullRebuild = true
+	}
+
 	if len(reasons) > 0 {
 		result.NeedsBuild = true
 		result.Reason = strings.Join(reasons, "; ")
