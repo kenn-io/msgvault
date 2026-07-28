@@ -20,8 +20,6 @@ helpers.
 
 ## Global Constraints
 
-- The authoritative design is
-  `docs/superpowers/specs/2026-07-27-relationships-index-design.md`.
 - The cache schema advances from 14 to 15; version-14 caches always require a
   full rebuild and `--derived-only` must refuse them independently.
 - PostgreSQL behavior is unchanged: it has no Parquet cache and does not gain
