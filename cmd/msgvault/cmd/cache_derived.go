@@ -118,6 +118,15 @@ func refreshDerivedDatasetsOnly(
 		return nil, err
 	}
 
+	if identityRevision == state.IdentityRevision &&
+		conversationFingerprint == state.ConversationParticipantsFingerprint {
+		// Nothing the derived datasets read has changed (the account-identity
+		// revision was already verified equal above). Republishing would only
+		// advance PublishedAt, invalidating readers' cache revision — and with
+		// it active pagination cursors — for no analytical difference.
+		return &buildResult{OutputDir: analyticsDir, IdentityOnly: true, Skipped: true}, nil
+	}
+
 	if err := exportDerivedOwnerParticipants(ctx, exportDB, staging.root); err != nil {
 		return nil, err
 	}

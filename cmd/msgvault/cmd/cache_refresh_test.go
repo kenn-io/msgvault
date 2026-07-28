@@ -110,6 +110,25 @@ func TestDerivedOnlyRefreshCarriesStatsAndRefreshesMembershipRollups(t *testing.
 	assertionsForTest.Positive(membershipRows)
 }
 
+func TestDerivedOnlyRefreshWithNoChangesIsANoOp(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	tmp := setupTestSQLite(t)
+	dbPath := filepath.Join(tmp, "test.db")
+	analyticsDir := filepath.Join(tmp, "analytics")
+	_, err := buildCache(dbPath, analyticsDir, true)
+	requirements.NoError(err)
+	before := snapshotCacheBytes(t, analyticsDir)
+
+	result, err := buildCacheDerivedOnly(dbPath, analyticsDir)
+	requirements.NoError(err)
+	assertions.True(result.IdentityOnly)
+	assertions.True(result.Skipped,
+		"unchanged identity state must not republish derived datasets")
+	assertions.Equal(before, snapshotCacheBytes(t, analyticsDir),
+		"a no-op refresh must leave every cache byte (including the marker) intact")
+}
+
 func TestDerivedOnlyFailurePreservesMarkerAndLeavesDetectableDrift(t *testing.T) {
 	requirementsForTest := require.New(t)
 	tmp := setupTestSQLite(t)
@@ -155,7 +174,7 @@ func TestStoreAPIIdentityRefreshLaunchesChildWithoutParentCacheLock(t *testing.T
 	requirementsForTest.NoError(os.WriteFile(query.CacheStatePath(analyticsDir), marker, 0o600))
 
 	old := runDerivedCacheSubprocess
-	runDerivedCacheSubprocess = func(context.Context) error {
+	runDerivedCacheSubprocess = func(context.Context, string) error {
 		lock := flock.New(query.CacheBuildLockPath(analyticsDir))
 		locked, lockErr := lock.TryLock()
 		require.NoError(t, lockErr)
@@ -172,6 +191,7 @@ func TestStoreAPIIdentityRefreshLaunchesChildWithoutParentCacheLock(t *testing.T
 }
 
 func TestDerivedChildEscalatesTypedPreconditionFailureToFullBuild(t *testing.T) {
+	requirements := require.New(t)
 	old := executeBuildCacheSubprocessMode
 	var modes []buildCacheMode
 	executeBuildCacheSubprocessMode = func(
@@ -186,11 +206,36 @@ func TestDerivedChildEscalatesTypedPreconditionFailureToFullBuild(t *testing.T) 
 	}
 	t.Cleanup(func() { executeBuildCacheSubprocessMode = old })
 
-	require.NoError(t, runDerivedCacheSubprocess(context.Background()))
+	// A bare state marker makes readiness CacheInterrupted (an existing
+	// cache needing repair), which permits escalation to a full build.
+	analyticsDir := t.TempDir()
+	marker, err := json.Marshal(query.CacheSyncState{IdentityRevision: 1})
+	requirements.NoError(err)
+	requirements.NoError(os.WriteFile(query.CacheStatePath(analyticsDir), marker, 0o600))
+	requirements.NoError(runDerivedCacheSubprocess(context.Background(), analyticsDir))
 	assert.Equal(t,
 		[]buildCacheMode{buildCacheModeDerived, buildCacheModeFull},
 		modes,
 	)
+}
+
+func TestDerivedChildDoesNotEscalateWhenCacheAbsent(t *testing.T) {
+	requirements := require.New(t)
+	old := executeBuildCacheSubprocessMode
+	var modes []buildCacheMode
+	executeBuildCacheSubprocessMode = func(
+		_ context.Context,
+		mode buildCacheMode,
+	) error {
+		modes = append(modes, mode)
+		return ErrDerivedRefreshRequiresFullBuild
+	}
+	t.Cleanup(func() { executeBuildCacheSubprocessMode = old })
+
+	err := runDerivedCacheSubprocess(context.Background(), t.TempDir())
+	requirements.ErrorIs(err, ErrDerivedRefreshRequiresFullBuild)
+	assert.Equal(t, []buildCacheMode{buildCacheModeDerived}, modes,
+		"a derived refresh must not create a cache that configuration left absent")
 }
 
 func TestBuildCacheInternalModesAreMutuallyExclusive(t *testing.T) {

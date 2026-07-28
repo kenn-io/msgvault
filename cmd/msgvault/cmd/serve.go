@@ -76,13 +76,21 @@ var buildCacheSubprocessForRun = func(ctx context.Context, fullRebuild bool) err
 
 var executeBuildCacheSubprocessMode = buildCacheSubprocessMode
 
-var runDerivedCacheSubprocess = func(ctx context.Context) error {
+var runDerivedCacheSubprocess = func(ctx context.Context, analyticsDir string) error {
 	err := executeBuildCacheSubprocessMode(ctx, buildCacheModeDerived)
 	if err == nil {
 		return nil
 	}
 	if errors.Is(err, ErrDerivedRefreshRequiresFullBuild) ||
 		strings.Contains(err.Error(), ErrDerivedRefreshRequiresFullBuild.Error()) {
+		// Escalate only to repair an existing cache. A derived refresh must
+		// never create a cache that configuration (engine="sql",
+		// auto_build_cache=false, PostgreSQL) deliberately leaves absent;
+		// the caller reports the cache stale instead.
+		readiness, inspectErr := query.InspectCacheReadiness(analyticsDir)
+		if inspectErr != nil || readiness == query.CacheAbsent {
+			return err
+		}
 		return executeBuildCacheSubprocessMode(ctx, buildCacheModeFull)
 	}
 	return err
@@ -729,9 +737,19 @@ func openDaemonDuckDBEngine(c *config.Config, s *store.Store) (*query.DuckDBEngi
 	if c == nil || s == nil {
 		return nil, errors.New("daemon DuckDB engine unavailable")
 	}
-	tempDirectory, err := query.PrepareDaemonSpillDir(c.HomeDir)
+	spillParent, err := query.PrepareDaemonSpillDir(c.HomeDir)
 	if err != nil {
 		return nil, err
+	}
+	// Each engine spills into its own subdirectory: the daemon opens both a
+	// long-lived engine and short-lived per-query engines (runDaemonSQLQuery),
+	// and OwnTempDirectory deletes the directory on Close — sharing one
+	// directory would let a temporary engine remove the live engine's spill
+	// files. The pid-owned parent is reaped by PrepareDaemonSpillDir once
+	// this process exits.
+	tempDirectory, err := os.MkdirTemp(spillParent, "engine-")
+	if err != nil {
+		return nil, fmt.Errorf("create engine spill directory: %w", err)
 	}
 	// DisableSQLiteScanner keeps DuckDB's bundled SQLite library from
 	// ATTACHing the live database for the daemon's lifetime, which can
@@ -1494,7 +1512,7 @@ func (a *storeAPIAdapter) ClusterEdges(id int64) ([]store.LinkEdge, error) {
 // resource-bounded child. The child owns the cache lock and its DuckDB
 // allocator exits with the process; the long-lived daemon does neither.
 func (a *storeAPIAdapter) RefreshIdentityDatasets(ctx context.Context) (int64, error) {
-	if err := runDerivedCacheSubprocess(ctx); err != nil {
+	if err := runDerivedCacheSubprocess(ctx, a.analyticsDir); err != nil {
 		return 0, err
 	}
 	state, err := query.ReadCacheSyncState(a.analyticsDir)

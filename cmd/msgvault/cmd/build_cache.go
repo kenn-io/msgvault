@@ -349,6 +349,8 @@ func runBuildCacheLocalMode(mode buildCacheMode) error {
 	}
 
 	switch {
+	case result.Skipped && result.IdentityOnly:
+		fmt.Println("Identity datasets already current; nothing republished.")
 	case result.Skipped:
 		fmt.Println("No new messages to export.")
 	case result.IdentityOnly:
