@@ -335,6 +335,44 @@ func TestIdentityCandidateNarrowingRetainsScalarFilters(t *testing.T) {
 	assertions.Equal(request.Context.Deletion, narrowed.Context.Deletion)
 }
 
+func TestIdentityCandidateNarrowingSaturationFallsBackExactly(t *testing.T) {
+	builder := NewTestDataBuilder(t)
+	sourceID := builder.AddSourceWithType("archive@example.com", "gmail")
+	personID := builder.AddParticipant("person@example.com", "example.com", "Person")
+	sentAt := time.Date(2026, 7, 20, 10, 0, 0, 0, time.UTC)
+	for index := range MaxExploreCandidateMessageIDs + 1 {
+		messageID := builder.AddMessage(MessageOpt{
+			SourceID:    sourceID,
+			MessageType: "email",
+			SentAt:      sentAt.Add(time.Duration(index) * time.Second),
+		})
+		builder.AddFrom(messageID, personID, "Person")
+	}
+	engine := builder.BuildEngine()
+	request := PersonSearchRequest{
+		Explore: ExploreRequest{Context: Context{
+			ParticipantIDs: []int64{personID},
+		}},
+		Sort: SortSpec{Field: "activity_count", Direction: "desc"},
+		Page: PageSpec{Limit: 25},
+	}
+
+	narrowed, err := engine.narrowIdentityFactCandidates(
+		context.Background(),
+		request.Explore,
+	)
+	require.NoError(t, err)
+	assert.Nil(t, narrowed.Search.CandidateMessageIDs)
+	assert.Equal(t, request.Explore.Context.ParticipantIDs, narrowed.Context.ParticipantIDs)
+
+	saturatedFallback, err := engine.SearchPeople(context.Background(), request)
+	require.NoError(t, err)
+	engine.identityCandidateFastPathDisabled = true
+	generic, err := engine.SearchPeople(context.Background(), request)
+	require.NoError(t, err)
+	assert.Equal(t, generic, saturatedFallback)
+}
+
 func TestIdentityEndpointsDoNotRequireLegacyAnalyticalViews(t *testing.T) {
 	requirementsForTest := require.New(t)
 	builder := NewTestDataBuilder(t)

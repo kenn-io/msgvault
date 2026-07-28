@@ -8,7 +8,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/duckdbutil"
 	"go.kenn.io/msgvault/internal/identityindex"
 )
 
@@ -50,7 +52,12 @@ func ensureIdentityCacheFixtureDatasets(
 			SELECT NULL::BIGINT AS canonical_id, NULL::BIGINT AS activity_count,
 			       NULL::BIGINT AS file_count, NULL::TIMESTAMP AS first_at,
 			       NULL::TIMESTAMP AS last_at,
-			       []::STRUCT(source_type VARCHAR, count BIGINT)[] AS source_counts
+			       []::STRUCT(source_type VARCHAR, count BIGINT)[] AS source_counts,
+			       []::STRUCT(
+				       source_id BIGINT, source_type VARCHAR,
+				       activity_count BIGINT, file_count BIGINT,
+				       first_at TIMESTAMP, last_at TIMESTAMP
+			       )[] AS source_rollups
 			WHERE false`,
 		identityindex.DatasetDomainRollups: `
 			SELECT NULL::VARCHAR AS domain, NULL::BIGINT AS activity_count,
@@ -91,4 +98,52 @@ func ensureIdentityCacheFixtureDatasets(
 		))
 		require.NoError(t, err, "write empty %s fixture", dataset)
 	}
+}
+
+func TestIdentityCacheFixtureUsesExactV15RollupSchema(t *testing.T) {
+	root := t.TempDir()
+	db, err := duckdbutil.Open(
+		t.Context(),
+		duckdbutil.BuilderPolicy(filepath.Join(root, "duckdb-tmp")),
+	)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, db.Close()) })
+	ensureIdentityCacheFixtureDatasets(t, db, root)
+
+	rows, err := db.Query(`
+		DESCRIBE SELECT * FROM read_parquet(?)
+	`, filepath.Join(root, identityindex.DatasetRollups, "*.parquet"))
+	require.NoError(t, err)
+	defer func() { require.NoError(t, rows.Close()) }()
+	var columns []string
+	var types []string
+	for rows.Next() {
+		var name, typ string
+		var nullable, key, defaultValue, extra sql.NullString
+		require.NoError(t, rows.Scan(
+			&name,
+			&typ,
+			&nullable,
+			&key,
+			&defaultValue,
+			&extra,
+		))
+		columns = append(columns, name)
+		types = append(types, typ)
+	}
+	require.NoError(t, rows.Err())
+	require.Len(t, types, 7)
+	assert.Equal(t, []string{
+		"canonical_id",
+		"activity_count",
+		"file_count",
+		"first_at",
+		"last_at",
+		"source_counts",
+		"source_rollups",
+	}, columns)
+	assert.Equal(t,
+		"STRUCT(source_id BIGINT, source_type VARCHAR, activity_count BIGINT, file_count BIGINT, first_at TIMESTAMP, last_at TIMESTAMP)[]",
+		types[len(types)-1],
+	)
 }
