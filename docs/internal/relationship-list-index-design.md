@@ -1,0 +1,297 @@
+# Relationship list index
+
+## Problem
+
+The Relationships workspace currently derives people, domains, and
+relationship scores from wide message rows and participant joins at request
+time. On an archive with roughly 2.5 million messages, the default page can
+take about a minute and a filtered person search can consume tens of gigabytes
+of memory.
+
+DuckDB is executing these requests, but the query shape is the problem. It
+repeatedly expands message and conversation participants, canonicalizes
+identities, groups chats, and computes labels and scores while serving an HTTP
+request. More data makes the intermediate joins grow much faster than the
+small result set.
+
+The fix is a narrow Parquet index for the three sidebar list endpoints:
+
+- `POST /api/v1/relationships`
+- `POST /api/v1/people/search`
+- `POST /api/v1/domains/search`
+
+Person and domain details, summaries, timelines, and file views keep their
+existing query paths. This change is not a general replacement for the Explore
+query engine.
+
+## Goals
+
+- Make the default Relationships page and people/domain searches feel
+  immediate on a 2.5-million-message archive.
+- Keep every list filter exact, including source, date, message type,
+  participant, domain, and deletion filters.
+- Preserve the current chat grouping, participant, domain, authorship, owner,
+  scoring, sorting, and pagination behavior.
+- Bound DuckDB memory, CPU, concurrency, and spill space in the daemon and
+  cache builder.
+- Append new-message activity incrementally.
+- Keep the implementation limited to code that directly supports these three
+  endpoints and their cache lifecycle.
+
+Approximate scores, stale-schema fallbacks to the expensive query, and a
+PostgreSQL Parquet cache are not goals.
+
+## Measured activity grain
+
+The activity index bakes conversation membership onto each message so filtered
+queries do not join a separate conversation-edge table. This was measured
+against the reference archive before choosing the grain:
+
+| Measure | Rows |
+| --- | ---: |
+| Messages | 2,514,676 |
+| Conversations | 834,079 |
+| Distinct direct message/participant edges | 5,916,177 |
+| Conversation-participant pairs | 662 |
+| Expanded conversation-member message rows | 819,722 |
+| Final `(message, canonical identity, domain)` rows | 6,703,190 |
+
+Conversation membership therefore adds 787,013 net rows, or 13.3% over the
+direct-edge population. The largest single conversation contributes 627,675
+expanded rows, but total fan-out is well below the 2× cutoff that would justify
+retaining a normalized conversation-edge dataset.
+
+## Datasets
+
+The relationship index has four datasets.
+
+### `relationship_activity`
+
+This is the only large dataset. Its grain is one row per
+`(message_id, canonical_id, participant_domain)`. Duplicate aliases at that
+grain merge every Boolean flag with `bool_or`.
+
+Message columns:
+
+- `message_id`
+- `conversation_id`
+- `source_id`
+- `source_type`
+- `occurred_at`
+- `message_type`
+- `conversation_type`
+- `entry_kind`
+- `is_chat`
+- `is_from_me`
+- `attachment_count`
+- deletion state
+
+Identity and edge columns:
+
+- `canonical_id`
+- `participant_domain`
+- `is_direct`
+- `is_conversation_member`
+- `is_sender`
+- `is_author`
+- `is_owner`
+
+Owner rows remain in this dataset. They are excluded from returned people but
+are required to decide whether a meeting includes the owner.
+
+The query layer performs a second deduplication to
+`(message_id, canonical_id)` when computing people. It again uses `bool_or` for
+edge flags. If an authored alias and a co-recipient alias have been linked, the
+merged canonical identity is the author and receives exactly one incoming
+unit, not zero and not two.
+
+### `relationship_people`
+
+One row per canonical identity with:
+
+- display label, member IDs, normalized search values, and owner state;
+- unfiltered activity/file totals and first/last timestamps;
+- compact per-source and per-source-type rollups.
+
+This dataset serves unfiltered text search, default people ordering, and
+source-only requests that can be answered exactly from the compact rollups.
+
+### `relationship_domains`
+
+One row per domain with searchable domain text, unfiltered activity/person/file
+totals, first/last timestamps, and compact source counts. It serves the
+unfiltered domain list and text candidate selection.
+
+### `relationship_daily`
+
+One row per `(canonical_id, UTC event date)`, derived from the exact unfiltered
+logical entries. It stores sent, received, and meeting units; raw sent and
+meeting counts; modality bits; and the full-precision last timestamp.
+
+This dataset has one consumer: the unfiltered default relationship ranking.
+At request time DuckDB applies exact day-difference decay, clamping negative
+day differences to zero, then aggregates and scores the identities.
+
+Date-filtered ranking does **not** use this dataset. Chat conversations are
+grouped after filters, so a date window can change a conversation's newest
+message, direction, and decay date. Every filtered relationship request,
+including a date-only request, reads `relationship_activity`.
+
+## Exact query semantics
+
+Filters select messages before logical entries are formed. Participant filters
+match direct participants and conversation members for chat and non-chat
+messages.
+
+After filtering:
+
+- A non-chat message is one logical entry.
+- A chat conversation is one logical entry.
+- A chat entry's timestamp is the newest filtered message timestamp.
+- Its direction comes from the newest filtered message, with `message_id` as
+  the deterministic tie-breaker.
+- Non-chat people fan-out uses direct participants only.
+- Chat people fan-out uses direct participants plus conversation members.
+- Domain fan-out uses direct and conversation-member domains for both chat and
+  non-chat entries.
+- Multiple aliases of one canonical identity receive one contribution.
+- A non-chat incoming email/item credits only the canonical author.
+- An incoming chat credits each qualifying non-owner canonical participant;
+  it does not consult `is_author`.
+- Meeting/event credit requires an owner among the logical entry's people.
+
+Multiple values inside one filter group use OR; different filter groups use
+AND. Sorting keeps the existing canonical-ID tie-breaker so cursor pagination
+has a total order.
+
+## Request paths
+
+`POST /relationships` uses `relationship_daily` only when no filter is active.
+Any filter routes to `relationship_activity`.
+
+`POST /people/search` uses `relationship_people` for unfiltered and exact
+source-rollup requests. Text search selects candidate canonical IDs from
+`relationship_people` before a filtered activity scan.
+
+`POST /domains/search` uses `relationship_domains` for unfiltered requests.
+Text search selects candidate domains there before a filtered activity scan.
+
+The filtered activity query first identifies qualifying message IDs, then
+forms chat/non-chat logical entries and applies the people or domain fan-out
+rules above. It does not join raw participant, identity-link, or
+conversation-participant datasets.
+
+If the relationship index is missing, stale, or invalid, these three endpoints
+return a cache-unavailable response. They never fall back to the query that
+caused the resource incident. Other endpoints retain their existing paths.
+
+## Build and refresh lifecycle
+
+A full relationship-index build reads committed base Parquet for messages,
+recipients, conversations, participants, and sources. It exports only the
+small identity/owner/conversation-membership inputs needed to reflect current
+SQLite state, then builds all four relationship datasets in a bounded child
+process. It does not re-export the base message cache.
+
+Ordinary new-message cache updates:
+
+1. append base message data up to a fixed source snapshot;
+2. append `relationship_activity` rows for that same message-ID interval;
+3. rebuild the three compact datasets from committed plus staged activity;
+4. publish the base and relationship generations together.
+
+The watermark, snapshot upper bound, and destination-collision checks remain.
+
+Identity links, owner-identity changes, and conversation-membership changes
+cannot patch baked historical rows. They trigger a full relationship-index
+build from committed base Parquet. The conversation-participant SHA
+fingerprint is retained so a membership change on an old conversation is
+detected even when no message was added.
+
+Identity link/unlink requests keep the current synchronous cache-state
+contract: the SQLite mutation commits first, then the request waits for the
+child index build. Other clients continue reading the previous committed
+generation while the child runs. Refreshes are serialized; after acquiring
+the refresh lock, a waiter skips its build if the published identity,
+owner-identity, and conversation-participant revisions already cover its
+mutation. A failed child leaves the mutation committed and reports the cache
+as stale.
+
+The existing version-15 benchmark built the more complicated full cache in
+13.54 seconds on the 2.5-million-message synthetic archive. The simplified
+index-only build must remain below the 25-second release gate, and its measured
+time must be recorded before this change is approved for merge.
+
+## Publication and recovery
+
+The four relationship datasets are staged and validated as one immutable
+generation. The cache marker is atomically replaced last and identifies the
+generation and its source/identity/conversation-participant revisions.
+
+There is no durable publication journal and no in-daemon repair workflow. An
+interruption before marker replacement leaves readers on the old generation.
+An incomplete or mismatched generation fails readiness checks and requires a
+new cache build. Stale staging cleanup may remove a build directory only after
+confirming that its recorded process is no longer alive.
+
+## Resource policy
+
+The long-lived daemon owns one configured DuckDB connection:
+
+- memory limit: `512MB`;
+- threads: at most 4;
+- one concurrent heavy analytical query;
+- a private temp directory under the msgvault home;
+- spill limit: `2GB`.
+
+Cache and relationship-index builds run in a child process:
+
+- memory limit: `1536MB`;
+- threads: at most 2;
+- private staging spill directory;
+- spill limit: `8GB`.
+
+All DuckDB work, including statistics collection, uses these configured
+connections. Native builder allocations disappear when the child exits.
+
+## Verification and release gates
+
+Focused equivalence tests compare the new and legacy results for the three
+migrated endpoints. Fixtures cover:
+
+- direct versus conversation-only edges for chat and non-chat entries;
+- filtering before chat grouping and newest-message direction;
+- linked author/co-recipient aliases;
+- owner presence and meeting credit;
+- participant/domain filter-group logic;
+- deletion filtering;
+- deterministic pagination;
+- incremental append and full rebuild triggers.
+
+The scale harness uses 2.5 million messages, 75,000 participants, six million
+direct edges, and representative conversation-member fan-out. It measures
+fresh-engine requests rather than warmed process state.
+
+Release gates:
+
+- cold unfiltered relationships: at most 250 ms;
+- cold unfiltered people search: at most 250 ms;
+- cold unfiltered domain search: at most 250 ms;
+- each essential filtered mode: provisionally at most 1 second;
+- settled daemon RSS growth: at most 256 MiB;
+- peak interactive RSS growth: at most 1.5 GiB;
+- relationship-index build: at most 25 seconds and 3 GiB peak RSS.
+
+The cold relationship measurement explicitly exercises request-time decay over
+`relationship_daily`. If that path misses 250 ms, the only additional dataset
+allowed without another design review is a compact unfiltered per-identity
+score rollup. It must be justified by the measured failure.
+
+The benchmark retains a compact machine-readable summary. Full DuckDB operator
+trees, benchmark dumps, generalized publication machinery, derived-only
+partial refreshes, and migrations of unrelated endpoints are outside this
+change.
+
+As a review budget, production additions should stay below roughly 3,000 lines
+and tests/harness code below roughly 2,500 lines. Any excess must map to a named
+endpoint, exact semantic rule, cache-safety requirement, or release gate above.
