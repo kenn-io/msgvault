@@ -1082,6 +1082,7 @@ func buildCacheLocked(dbPath, analyticsDir string, fullRebuild, recheckStaleness
 		StagedBaseRoot: staging.root,
 		OutputRoot:     staging.root,
 		AnchorDate:     cacheWatermark,
+		Progress:       reportIdentityBuildProgress,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("build identity index: %w", err)
@@ -1161,6 +1162,11 @@ func buildCacheLocked(dbPath, analyticsDir string, fullRebuild, recheckStaleness
 		MaxMessageID:  maxID,
 		OutputDir:     analyticsDir,
 	}, nil
+}
+
+func reportIdentityBuildProgress(dataset string, elapsed time.Duration) {
+	fmt.Printf("  %-25s done (%s)\n",
+		dataset+"...", elapsed.Round(time.Millisecond))
 }
 
 func countStagedMessages(db sqlRowQuerier, messagesDir string, requireShard bool) (int64, error) {

@@ -283,6 +283,7 @@ if [[ "$gate_failed" -eq 0 ]]; then
   gate_status="pass"
 else
   gate_status="fail"
+  tail -100 "$scratch_root/build-cache.log" >&2
 fi
 result_emitted=1
 printf '%s\n' \

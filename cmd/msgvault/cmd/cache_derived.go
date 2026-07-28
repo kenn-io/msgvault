@@ -146,6 +146,7 @@ func refreshDerivedDatasetsOnly(
 		StagedBaseRoot: staging.root,
 		OutputRoot:     staging.root,
 		AnchorDate:     anchor,
+		Progress:       reportIdentityBuildProgress,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("build derived identity index: %w", err)

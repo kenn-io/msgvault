@@ -75,13 +75,18 @@ func TestBuildFactsEdgesAndDirectory(t *testing.T) {
 }
 
 func TestBuildEmptySchemas(t *testing.T) {
+	assertions := assert.New(t)
 	root, db := writeIdentityBaseFixture(t, true)
+	var progressed []string
 
 	_, err := Build(context.Background(), db, BuildOptions{
 		Mode:           ModeFull,
 		StagedBaseRoot: root,
 		OutputRoot:     root,
 		AnchorDate:     time.Date(2026, 7, 27, 0, 0, 0, 0, time.UTC),
+		Progress: func(dataset string, _ time.Duration) {
+			progressed = append(progressed, dataset)
+		},
 	})
 	require.NoError(t, err)
 
@@ -122,6 +127,16 @@ func TestBuildEmptySchemas(t *testing.T) {
 			"modality_mask", "last_at",
 		},
 	}
+	assertions.ElementsMatch([]string{
+		DatasetEntryFacts,
+		DatasetDirectEdges,
+		DatasetConversationEdges,
+		DatasetDirectory,
+		DatasetRollups,
+		DatasetDomainRollups,
+		DatasetRelationships,
+		DatasetRelationshipFuture,
+	}, progressed)
 	for dataset, wantColumns := range expected {
 		assert.Equal(t, int64(0), parquetCount(t, db, root, dataset), dataset)
 		t.Run(dataset, func(t *testing.T) {

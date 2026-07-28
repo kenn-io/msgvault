@@ -28,6 +28,7 @@ type BuildOptions struct {
 	StagedBaseRoot string
 	OutputRoot     string
 	AnchorDate     time.Time
+	Progress       func(dataset string, elapsed time.Duration)
 }
 
 // BuildResult contains marker data derived alongside the index.
@@ -261,6 +262,7 @@ func (b builder) statsRelations() cacheStatsRelations {
 }
 
 func (b builder) copyDataset(ctx context.Context, dataset, query string) error {
+	start := time.Now()
 	output := filepath.Join(b.opts.OutputRoot, dataset, "data.parquet")
 	copyOptions := "FORMAT PARQUET, COMPRESSION 'zstd'"
 	if dataset == DatasetEntryFacts || dataset == DatasetDirectEdges {
@@ -280,6 +282,9 @@ func (b builder) copyDataset(ctx context.Context, dataset, query string) error {
 		if _, err := b.db.ExecContext(ctx, emptyStatement); err != nil {
 			return fmt.Errorf("build empty %s: %w", dataset, err)
 		}
+	}
+	if b.opts.Progress != nil {
+		b.opts.Progress(dataset, time.Since(start))
 	}
 	return nil
 }
