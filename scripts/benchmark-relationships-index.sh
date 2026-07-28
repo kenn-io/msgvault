@@ -110,6 +110,19 @@ build_peak_rss_bytes="$(
   awk '/maximum resident set size/ { print $1; exit }' "$build_time_file"
 )"
 
+# A derived-only refresh with no identity or membership change is a no-op by
+# design, so inject real conversation-participant drift first: the timed run
+# below must exercise the production drift-heal path, not process startup.
+sqlite3 "$benchmark_home/msgvault.db" "
+  INSERT INTO conversation_participants (conversation_id, participant_id)
+  SELECT (SELECT min(id) FROM conversations),
+         (SELECT min(p.id) FROM participants p
+          WHERE NOT EXISTS (
+            SELECT 1 FROM conversation_participants cp
+            WHERE cp.conversation_id = (SELECT min(id) FROM conversations)
+              AND cp.participant_id = p.id));
+"
+
 index_time_file="$scratch/build-index.time"
 # shellcheck disable=SC2016
 /usr/bin/time -l -o "$index_time_file" \
@@ -129,6 +142,15 @@ activity_direct="$(sed -E 's/.*direct=([0-9]+).*/\1/' <<<"$fanout_line")"
 activity_conversation="$(sed -E 's/.*conversation=([0-9]+).*/\1/' <<<"$fanout_line")"
 activity_final="$(sed -E 's/.*final=([0-9]+).*/\1/' <<<"$fanout_line")"
 activity_expansion="$(sed -E 's/.*expansion=([0-9.]+)x.*/\1/' <<<"$fanout_line")"
+for fanout_value in "$activity_direct" "$activity_conversation" \
+  "$activity_final" "$activity_expansion"; do
+  if [[ ! "$fanout_value" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
+    printf '%s\n' "derived-only run reported no relationship fan-out;" \
+      "the index rebuild did not happen:" >&2
+    tail -20 "$scratch/build-index.log" >&2
+    exit 1
+  fi
+done
 
 "$binary" --home "$benchmark_home" serve >"$scratch/serve.log" 2>&1 &
 daemon_pid=$!
