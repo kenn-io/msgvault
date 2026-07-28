@@ -247,14 +247,17 @@ func validateRelationshipTimelineRequest(request RelationshipTimelineRequest) er
 // member_owner CTE over relationship_activity, whose rows already carry the
 // alias-merged canonical_id and owner-cluster is_owner flag the relationship
 // index computed at build time, so owner participation under a clustered
-// alias resolves identically on both surfaces. Email and chat rows are
-// untouched: the timeline scopes by counterpart-cluster membership, not
-// owner involvement, so a counterpart's email to a third party still
+// alias resolves identically on both surfaces. with_owner counts only
+// direct owner edges: the ranking derives non-chat owner presence from
+// direct participants, so a silent owner on a conversation roster must
+// not make the timeline treat an event as attended. Email and chat rows
+// are untouched: the timeline scopes by counterpart-cluster membership,
+// not owner involvement, so a counterpart's email to a third party still
 // appears.
 func buildRelationshipTimelineSQL(conditions, activityGlob string) string {
 	return buildExploreFilteredClassifiedCTE(conditions, "NULL::BIGINT") + `
 , member_owner AS (
-    SELECT a.message_id, bool_or(a.is_owner) AS with_owner
+    SELECT a.message_id, bool_or(a.is_owner AND a.is_direct) AS with_owner
     FROM read_parquet('` + activityGlob + `',
         hive_partitioning=true, union_by_name=true) a
     WHERE a.message_id IN (

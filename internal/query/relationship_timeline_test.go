@@ -296,7 +296,9 @@ func TestRelationshipTimelineIntersectsParticipantFilterWithClusterMembership(t 
 // TestRelationshipsOwnerAbsentMeetingContributesNoModality for the ranking
 // side): an event or meeting the archive owner never attended — e.g. a
 // subscribed or shared-calendar entry — must not appear in a counterpart's
-// timeline, while an event the owner DID attend (here via an alias linked
+// timeline, and a silent owner on the conversation roster does not count as
+// attending (the ranking derives non-chat owner presence from direct
+// participants only). An event the owner DID attend (here via an alias linked
 // only through participant_clusters, proving owner-cluster expansion) and a
 // plain owner-absent email from the counterpart both remain — the timeline
 // scopes emails/chats by counterpart membership only, not owner involvement.
@@ -328,6 +330,14 @@ func TestRelationshipTimelineExcludesOwnerAbsentEvents(t *testing.T) {
 	b.AddFrom(unattendedMeetingID, xID, "X")
 	b.AddTo(unattendedMeetingID, yID, "Y")
 
+	rosterEventID := b.AddMessage(MessageOpt{
+		SourceID: srcID, MessageType: "calendar_event", ConversationID: 900,
+		SentAt: time.Date(2026, 1, 7, 12, 0, 0, 0, time.UTC),
+	})
+	b.AddFrom(rosterEventID, xID, "X")
+	b.AddTo(rosterEventID, yID, "Y")
+	b.AddConversationParticipant(900, ownerID)
+
 	attendedEventID := b.AddMessage(MessageOpt{
 		SourceID: srcID, MessageType: "calendar_event",
 		SentAt: time.Date(2026, 1, 6, 9, 0, 0, 0, time.UTC),
@@ -348,7 +358,7 @@ func TestRelationshipTimelineExcludesOwnerAbsentEvents(t *testing.T) {
 	})
 	require.NoError(err)
 	require.Len(result.Rows, 2,
-		"owner-absent event and meeting must be excluded; owner-attended event and owner-absent email remain")
+		"owner-absent and roster-only events and the meeting must be excluded; owner-attended event and owner-absent email remain")
 	assert.Equal(int64(2), result.TotalCount)
 
 	assert.Equal("message:"+strconv.FormatInt(attendedEventID, 10), result.Rows[0].Key,
