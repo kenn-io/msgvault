@@ -360,6 +360,129 @@ func TestValidateRejectsDailyRawCountDecompositionDrift(t *testing.T) {
 	require.ErrorContains(t, err, "raw count decomposition")
 }
 
+func TestValidateRejectsNullRelationshipDecayComponent(t *testing.T) {
+	root, db := writeIdentityBaseFixture(t, false)
+	anchor := time.Date(2026, 7, 19, 0, 0, 0, 0, time.UTC)
+	_, err := Build(context.Background(), db, BuildOptions{
+		Mode:           ModeFull,
+		StagedBaseRoot: root,
+		OutputRoot:     root,
+		AnchorDate:     anchor,
+	})
+	require.NoError(t, err)
+
+	oldRelationships := moveIdentityDatasetAside(t, root, DatasetRelationships)
+	writeIdentityParquet(t, db, root, DatasetRelationships, `
+		SELECT canonical_id, anchor_date, NULL::DOUBLE AS sent_decayed,
+		       received_decayed, meetings_decayed, sent_count, meeting_count,
+		       modality_mask, last_at
+		FROM read_parquet('`+
+		quoteSQLString(identityParquetGlob(oldRelationships, DatasetRelationships))+`')`)
+
+	err = Validate(context.Background(), db, validationOptionsForRoot(root, anchor))
+	require.ErrorContains(t, err, "invalid decayed relationship components")
+}
+
+func TestValidateRejectsIncorrectRelationshipDecayValue(t *testing.T) {
+	root, db := writeIdentityBaseFixture(t, false)
+	anchor := time.Date(2026, 7, 19, 0, 0, 0, 0, time.UTC)
+	_, err := Build(context.Background(), db, BuildOptions{
+		Mode:           ModeFull,
+		StagedBaseRoot: root,
+		OutputRoot:     root,
+		AnchorDate:     anchor,
+	})
+	require.NoError(t, err)
+
+	oldRelationships := moveIdentityDatasetAside(t, root, DatasetRelationships)
+	writeIdentityParquet(t, db, root, DatasetRelationships, `
+		SELECT canonical_id, anchor_date, sent_decayed + 0.25 AS sent_decayed,
+		       received_decayed, meetings_decayed, sent_count, meeting_count,
+		       modality_mask, last_at
+		FROM read_parquet('`+
+		quoteSQLString(identityParquetGlob(oldRelationships, DatasetRelationships))+`')`)
+
+	err = Validate(context.Background(), db, validationOptionsForRoot(root, anchor))
+	require.ErrorContains(t, err, "decayed signals do not match daily components")
+}
+
+func TestValidateRejectsInvalidRelationshipComponentsAndMasks(t *testing.T) {
+	tests := []struct {
+		name       string
+		dataset    string
+		projection string
+		wantError  string
+	}{
+		{
+			name:    "nonfinite decayed component",
+			dataset: DatasetRelationships,
+			projection: `
+				canonical_id, anchor_date, 'NaN'::DOUBLE AS sent_decayed,
+				received_decayed, meetings_decayed, sent_count, meeting_count,
+				modality_mask, last_at`,
+			wantError: "invalid decayed relationship components",
+		},
+		{
+			name:    "invalid relationship modality mask",
+			dataset: DatasetRelationships,
+			projection: `
+				canonical_id, anchor_date, sent_decayed, received_decayed,
+				meetings_decayed, sent_count, meeting_count,
+				8::UTINYINT AS modality_mask, last_at`,
+			wantError: "invalid raw relationship components or modality mask",
+		},
+		{
+			name:    "negative daily component",
+			dataset: DatasetRelationshipDaily,
+			projection: `
+				canonical_id, event_date, sent_units,
+				-1::BIGINT AS received_units, meeting_units, sent_count,
+				meeting_count, modality_mask, last_at`,
+			wantError: "invalid daily relationship components or modality mask",
+		},
+		{
+			name:    "null daily decomposition component",
+			dataset: DatasetRelationshipDaily,
+			projection: `
+				canonical_id, event_date, sent_units, received_units,
+				meeting_units, NULL::BIGINT AS sent_count, meeting_count,
+				modality_mask, last_at`,
+			wantError: "invalid daily relationship components or modality mask",
+		},
+		{
+			name:    "invalid daily modality mask",
+			dataset: DatasetRelationshipDaily,
+			projection: `
+				canonical_id, event_date, sent_units, received_units,
+				meeting_units, sent_count, meeting_count,
+				8::UTINYINT AS modality_mask, last_at`,
+			wantError: "invalid daily relationship components or modality mask",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			root, db := writeIdentityBaseFixture(t, false)
+			anchor := time.Date(2026, 7, 19, 0, 0, 0, 0, time.UTC)
+			_, err := Build(context.Background(), db, BuildOptions{
+				Mode:           ModeFull,
+				StagedBaseRoot: root,
+				OutputRoot:     root,
+				AnchorDate:     anchor,
+			})
+			require.NoError(t, err)
+
+			oldDataset := moveIdentityDatasetAside(t, root, test.dataset)
+			writeIdentityParquet(t, db, root, test.dataset, `
+				SELECT `+test.projection+`
+				FROM read_parquet('`+
+				quoteSQLString(identityParquetGlob(oldDataset, test.dataset))+`')`)
+
+			err = Validate(context.Background(), db, validationOptionsForRoot(root, anchor))
+			require.ErrorContains(t, err, test.wantError)
+		})
+	}
+}
+
 func TestAuthoredAliasRollupReceivesOnceAndPreservesDailySignals(t *testing.T) {
 	requirementsForTest := require.New(t)
 	assertionsForTest := assert.New(t)

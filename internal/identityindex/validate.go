@@ -9,6 +9,11 @@ import (
 	"time"
 )
 
+const (
+	relationshipDecayAbsoluteTolerance = 1e-12
+	relationshipDecayRelativeTolerance = 1e-12
+)
+
 // ValidationOptions describes the complete post-publication population and
 // the staged datasets that must contain a schema-bearing shard.
 type ValidationOptions struct {
@@ -149,19 +154,19 @@ func Validate(
 			 WHERE len(r.source_rollups) = 0
 			    OR (SELECT sum(item.activity_count)::BIGINT
 			        FROM unnest(r.source_rollups) AS source(item))
-			       <> r.activity_count
+			       IS DISTINCT FROM r.activity_count
 			    OR (SELECT sum(item.file_count)::BIGINT
 			        FROM unnest(r.source_rollups) AS source(item))
-			       <> r.file_count
+			       IS DISTINCT FROM r.file_count
 			    OR (SELECT min(item.first_at)::TIMESTAMP
 			        FROM unnest(r.source_rollups) AS source(item))
-			       <> r.first_at
+			       IS DISTINCT FROM r.first_at
 			    OR (SELECT max(item.last_at)::TIMESTAMP
 			        FROM unnest(r.source_rollups) AS source(item))
-			       <> r.last_at
+			       IS DISTINCT FROM r.last_at
 			    OR (SELECT sum(item.count)::BIGINT
 			        FROM unnest(r.source_counts) AS source(item))
-			       <> r.activity_count`,
+			       IS DISTINCT FROM r.activity_count`,
 		},
 		{
 			DatasetRelationships,
@@ -259,13 +264,43 @@ func Validate(
 			DatasetRelationships,
 			"rows have a different anchor date",
 			`SELECT count(*) FROM ` + relationships +
-				` WHERE anchor_date <> DATE '` +
+				` WHERE anchor_date IS DISTINCT FROM DATE '` +
 				quoteSQLString(opts.AnchorDate.UTC().Format(time.DateOnly)) + `'`,
+		},
+		{
+			DatasetRelationships,
+			"invalid decayed relationship components",
+			`SELECT count(*) FROM ` + relationships + `
+			 WHERE sent_decayed IS NULL OR NOT isfinite(sent_decayed) OR sent_decayed < 0
+			    OR received_decayed IS NULL OR NOT isfinite(received_decayed) OR received_decayed < 0
+			    OR meetings_decayed IS NULL OR NOT isfinite(meetings_decayed) OR meetings_decayed < 0`,
+		},
+		{
+			DatasetRelationships,
+			"invalid raw relationship components or modality mask",
+			`SELECT count(*) FROM ` + relationships + `
+			 WHERE sent_count IS NULL OR sent_count < 0
+			    OR meeting_count IS NULL OR meeting_count < 0
+			    OR modality_mask IS NULL
+			    OR (modality_mask & 7::UTINYINT) IS DISTINCT FROM modality_mask`,
 		},
 		{
 			DatasetRelationships,
 			"non-empty rows have null last_at",
 			`SELECT count(*) FROM ` + relationships + ` WHERE last_at IS NULL`,
+		},
+		{
+			DatasetRelationshipDaily,
+			"invalid daily relationship components or modality mask",
+			`SELECT count(*) FROM ` + daily + `
+			 WHERE canonical_id IS NULL OR event_date IS NULL
+			    OR sent_units IS NULL OR sent_units < 0
+			    OR received_units IS NULL OR received_units < 0
+			    OR meeting_units IS NULL OR meeting_units < 0
+			    OR sent_count IS NULL OR sent_count < 0
+			    OR meeting_count IS NULL OR meeting_count < 0
+			    OR modality_mask IS NULL
+			    OR (modality_mask & 7::UTINYINT) IS DISTINCT FROM modality_mask`,
 		},
 		{
 			DatasetRelationshipDaily,
@@ -276,14 +311,14 @@ func Validate(
 			DatasetRelationshipDaily,
 			"rows violate raw count decomposition",
 			`SELECT count(*) FROM ` + daily + `
-			 WHERE sent_count <> sent_units
-			    OR meeting_count <> meeting_units`,
+			 WHERE sent_count IS DISTINCT FROM sent_units
+			    OR meeting_count IS DISTINCT FROM meeting_units`,
 		},
 		{
 			DatasetRelationshipDaily,
 			"rows have an event-date/last-at mismatch",
 			`SELECT count(*) FROM ` + daily + `
-			 WHERE last_at::DATE <> event_date`,
+			 WHERE last_at::DATE IS DISTINCT FROM event_date`,
 		},
 		{
 			DatasetRelationships,
@@ -301,10 +336,19 @@ func Validate(
 			FROM ` + relationships + ` r
 			LEFT JOIN daily_totals d USING (canonical_id)
 			WHERE d.canonical_id IS NULL
-			   OR d.sent_count <> r.sent_count
-			   OR d.meeting_count <> r.meeting_count
-			   OR d.modality_mask <> r.modality_mask
-			   OR d.last_at <> r.last_at`,
+			   OR d.sent_count IS DISTINCT FROM r.sent_count
+			   OR d.meeting_count IS DISTINCT FROM r.meeting_count
+			   OR d.modality_mask IS DISTINCT FROM r.modality_mask
+			   OR d.last_at IS DISTINCT FROM r.last_at`,
+		},
+		{
+			DatasetRelationships,
+			"decayed signals do not match daily components",
+			relationshipDecayValidationSQL(
+				relationships,
+				daily,
+				opts.AnchorDate,
+			),
 		},
 	}
 	for _, check := range checks {
@@ -317,6 +361,54 @@ func Validate(
 		}
 	}
 	return nil
+}
+
+func relationshipDecayValidationSQL(
+	relationships, daily string,
+	anchor time.Time,
+) string {
+	anchorDate := quoteSQLString(anchor.UTC().Format(time.DateOnly))
+	decayRate := fmt.Sprintf("%.17g", RelationshipDecayRate)
+	absoluteTolerance := fmt.Sprintf("%.17g", relationshipDecayAbsoluteTolerance)
+	relativeTolerance := fmt.Sprintf("%.17g", relationshipDecayRelativeTolerance)
+	return fmt.Sprintf(`
+		WITH expected AS (
+			SELECT canonical_id,
+			       sum(CASE WHEN event_date <= DATE '%[1]s'
+			                THEN sent_units * exp(-%[2]s * greatest(
+			                     0, date_diff('day', event_date, DATE '%[1]s')))
+			                ELSE 0 END)::DOUBLE AS sent_decayed,
+			       sum(CASE WHEN event_date <= DATE '%[1]s'
+			                THEN received_units * exp(-%[2]s * greatest(
+			                     0, date_diff('day', event_date, DATE '%[1]s')))
+			                ELSE 0 END)::DOUBLE AS received_decayed,
+			       sum(CASE WHEN event_date <= DATE '%[1]s'
+			                THEN meeting_units * exp(-%[2]s * greatest(
+			                     0, date_diff('day', event_date, DATE '%[1]s')))
+			                ELSE 0 END)::DOUBLE AS meetings_decayed
+			FROM %[3]s
+			GROUP BY canonical_id
+		)
+		SELECT count(*)
+		FROM %[4]s r
+		LEFT JOIN expected e USING (canonical_id)
+		WHERE e.canonical_id IS NULL
+		   OR abs(r.sent_decayed - e.sent_decayed) >
+		      greatest(%[5]s, %[6]s *
+		               greatest(abs(r.sent_decayed), abs(e.sent_decayed)))
+		   OR abs(r.received_decayed - e.received_decayed) >
+		      greatest(%[5]s, %[6]s *
+		               greatest(abs(r.received_decayed), abs(e.received_decayed)))
+		   OR abs(r.meetings_decayed - e.meetings_decayed) >
+		      greatest(%[5]s, %[6]s *
+		               greatest(abs(r.meetings_decayed), abs(e.meetings_decayed)))`,
+		anchorDate,
+		decayRate,
+		daily,
+		relationships,
+		absoluteTolerance,
+		relativeTolerance,
+	)
 }
 
 type schemaColumn struct {
