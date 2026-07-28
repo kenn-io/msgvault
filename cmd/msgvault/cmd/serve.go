@@ -174,9 +174,15 @@ func runServe(cmd *cobra.Command, args []string) error {
 			logger.Warn("release daemon ownership failed", "error", err)
 		}
 	}()
+	setStartupPhase := func(phase string) {
+		if err := ownership.SetStartupPhase(phase); err != nil {
+			logger.Warn("update daemon startup phase failed", "error", err)
+		}
+	}
 
 	// Open database
 	dbPath := cfg.DatabaseDSN()
+	setStartupPhase("opening archive database")
 	logger.Info("daemon startup step", "step", "open_archive_database", "database", daemonStartupDatabaseLabel(dbPath))
 	s, err := store.Open(dbPath)
 	if err != nil {
@@ -185,6 +191,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	defer func() { _ = s.Close() }()
 	logger.Info("daemon startup step complete", "step", "open_archive_database")
 
+	setStartupPhase("migrating archive schema")
 	logger.Info("daemon startup step", "step", "init_archive_schema")
 	if err := s.InitSchema(); err != nil {
 		return fmt.Errorf("init schema: %w", err)
@@ -223,6 +230,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		logger.Info("daemon startup step", "step", "skip_vector_backend", "enabled", false)
 	}
 
+	setStartupPhase("building analytics cache")
 	logger.Info("daemon startup step", "step", "init_analytics_engine")
 	engine, analyticsMode, err := openDaemonAnalyticsEngine(cmd.Context(), cfg, s)
 	if err != nil {
@@ -434,6 +442,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 
 	// Start API server in goroutine
 	apiAddr := apiListener.Addr().String()
+	setStartupPhase("")
 	logger.Info("daemon startup step", "step", "start_api_server", "bind", apiAddr)
 	serverErr := make(chan error, 1)
 	listenerReserved = false

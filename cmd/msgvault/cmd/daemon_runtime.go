@@ -30,8 +30,15 @@ const (
 	runtimeAuthFingerprint  = "auth_fingerprint"
 	runtimeCreateTime       = "create_time"
 	runtimeShutdownToken    = "shutdown_token"
+	runtimeStartupPhase     = "startup_phase"
 	daemonProbeTick         = 250 * time.Millisecond
 )
+
+// daemonStartupPhaseInitial is published in the runtime record the moment the
+// daemon claims ownership. Startup steps overwrite it with more specific
+// phases, and the daemon clears it once the HTTP server starts answering
+// pings.
+const daemonStartupPhaseInitial = "starting up"
 
 var daemonAuthFingerprintSalt = []byte("msgvault-daemon-auth-fingerprint-v1")
 
@@ -55,10 +62,10 @@ func daemonRuntimeStore(dataDir string) daemon.RuntimeStore {
 	return daemon.RuntimeStore{Dir: dataDir}
 }
 
-func writeDaemonRuntime(dataDir string, host string, port int, version string, apiKey string) (string, string, error) {
+func writeDaemonRuntime(dataDir string, host string, port int, version string, apiKey string) (daemon.RuntimeRecord, string, error) {
 	shutdownToken, err := newDaemonShutdownToken()
 	if err != nil {
-		return "", "", fmt.Errorf("create shutdown token: %w", err)
+		return daemon.RuntimeRecord{}, "", fmt.Errorf("create shutdown token: %w", err)
 	}
 	ep := daemon.Endpoint{
 		Network: daemon.NetworkTCP,
@@ -72,15 +79,15 @@ func writeDaemonRuntime(dataDir string, host string, port int, version string, a
 		runtimeAPISchemaVersion: api.APISchemaVersion,
 		runtimeAuthFingerprint:  daemonAPIKeyFingerprint(apiKey),
 		runtimeShutdownToken:    shutdownToken,
+		runtimeStartupPhase:     daemonStartupPhaseInitial,
 	}
 	if createTime, ok := processCreateTimeMillis(os.Getpid()); ok {
 		rec.Metadata[runtimeCreateTime] = strconv.FormatInt(createTime, 10)
 	}
-	path, err := daemonRuntimeStore(dataDir).Write(rec)
-	if err != nil {
-		return "", "", fmt.Errorf("write daemon runtime record: %w", err)
+	if _, err := daemonRuntimeStore(dataDir).Write(rec); err != nil {
+		return daemon.RuntimeRecord{}, "", fmt.Errorf("write daemon runtime record: %w", err)
 	}
-	return path, shutdownToken, nil
+	return rec, shutdownToken, nil
 }
 
 func daemonAPIKeyFingerprint(apiKey string) string {

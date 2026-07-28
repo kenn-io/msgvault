@@ -304,6 +304,34 @@ func TestFetchDaemonOperationUsesAuthenticatedHealth(t *testing.T) {
 	assert.WithinDuration(time.Now().Add(-14*time.Minute), *op.StartedAt, time.Minute)
 }
 
+func TestRunServeStatusReportsStartupPhase(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	dataDir := t.TempDir()
+	_, err := daemonRuntimeStore(dataDir).Write(daemon.RuntimeRecord{
+		PID:     os.Getpid(),
+		Network: daemon.NetworkTCP,
+		Address: "127.0.0.1:1",
+		Service: daemonService,
+		Version: "v-test",
+		Metadata: map[string]string{
+			runtimeStartupPhase: "building analytics cache",
+		},
+	})
+	require.NoError(err, "write starting runtime record")
+
+	cmd, stdout, stderr := lifecycleTestCommand()
+	require.NoError(runServeStatus(cmd, dataDir), "runServeStatus")
+
+	assert.Contains(stdout.String(),
+		"msgvault daemon starting (pid "+strconv.Itoa(os.Getpid())+"): building analytics cache",
+		"starting line")
+	assert.Contains(stdout.String(), "elapsed:", "elapsed line")
+	assert.NotContains(stdout.String(), "not responding to daemon ping", "legacy unresponsive line")
+	assert.Empty(stderr.String())
+}
+
 func TestRunServeStatusNoDaemonWritesOnlyStdout(t *testing.T) {
 	cmd, stdout, stderr := lifecycleTestCommand()
 

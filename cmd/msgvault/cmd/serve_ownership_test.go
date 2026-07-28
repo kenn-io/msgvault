@@ -6,6 +6,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/kit/daemon"
 	"go.kenn.io/msgvault/internal/config"
 )
 
@@ -45,6 +46,37 @@ func TestClaimServeOwnershipLocksAndPublishesRuntime(t *testing.T) {
 
 	require.NoError(
 		reacquired.Close(), "close reacquired lock")
+}
+
+func TestServeOwnershipStartupPhaseUpdatesRuntimeRecord(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	dataDir := t.TempDir()
+	cfg := &config.Config{Data: config.DataConfig{DataDir: dataDir}}
+	owner, err := claimServeOwnership(context.Background(), cfg, "127.0.0.1", 8123, "v-test")
+	require.NoError(err, "claimServeOwnership")
+	t.Cleanup(func() { require.NoError(owner.Close(), "close ownership") })
+
+	readRecord := func() daemon.RuntimeRecord {
+		records, err := daemonRuntimeStore(dataDir).List()
+		require.NoError(err, "list runtime records")
+		require.Len(records, 1, "runtime records")
+		return records[0]
+	}
+
+	initial := readRecord()
+	assert.Equal(daemonStartupPhaseInitial, initial.Metadata[runtimeStartupPhase], "initial phase")
+
+	require.NoError(owner.SetStartupPhase("building analytics cache"), "set startup phase")
+	updated := readRecord()
+	assert.Equal("building analytics cache", updated.Metadata[runtimeStartupPhase], "updated phase")
+	assert.Equal(initial.Metadata[runtimeShutdownToken], updated.Metadata[runtimeShutdownToken], "shutdown token preserved")
+	assert.Equal(initial.StartedAt, updated.StartedAt, "started_at preserved")
+
+	require.NoError(owner.SetStartupPhase(""), "clear startup phase")
+	cleared := readRecord()
+	assert.NotContains(cleared.Metadata, runtimeStartupPhase, "phase cleared")
 }
 
 func TestClaimServeOwnershipRejectsSecondOwner(t *testing.T) {
