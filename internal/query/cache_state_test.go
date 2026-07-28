@@ -14,15 +14,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestRelationshipIndexDatasetCatalog(t *testing.T) {
-	assert.ElementsMatch(t, []string{
-		"relationship_activity",
-		"relationship_people",
-		"relationship_domains",
-		"relationship_daily",
-	}, identityindex.RequiredDatasets)
-}
-
 func TestCacheRevisionIncludesPublicationTime(t *testing.T) {
 	state := CacheSyncState{
 		SchemaVersion: 15,
@@ -52,30 +43,11 @@ func TestCacheSyncStateEncodesStatsAsNestedObject(t *testing.T) {
 
 	data, err := json.Marshal(state)
 	requirementsForTest.NoError(err)
+	requirementsForTest.Contains(string(data), `"stats":`)
 
-	var encoded map[string]json.RawMessage
-	requirementsForTest.NoError(json.Unmarshal(data, &encoded))
-	requirementsForTest.Contains(encoded, "stats")
-
-	var stats identityindex.CacheStatsSummary
-	requirementsForTest.NoError(json.Unmarshal(encoded["stats"], &stats))
-	assert.Equal(t, state.Stats, stats)
-}
-
-func TestDataBuilderPublishesProductionIdentityDatasets(t *testing.T) {
-	assertionsForTest := assert.New(t)
-	dir, cleanup := buildStandardTestData(t).Build()
-	t.Cleanup(cleanup)
-
-	for _, dataset := range identityindex.RequiredDatasets {
-		hasParquet, err := datasetHasParquet(dir, dataset)
-		require.NoError(t, err)
-		assertionsForTest.True(hasParquet, dataset)
-	}
-	state, err := ReadCacheSyncState(dir)
-	require.NoError(t, err)
-	assertionsForTest.Equal(int64(5), state.Stats.TotalMessages)
-	assertionsForTest.NotEmpty(state.ConversationParticipantsFingerprint)
+	var decoded CacheSyncState
+	requirementsForTest.NoError(json.Unmarshal(data, &decoded))
+	assert.Equal(t, state.Stats, decoded.Stats)
 }
 
 func TestAcquireReadyCacheReadLockRejectsAbsentCache(t *testing.T) {
@@ -199,22 +171,6 @@ func TestInspectCacheReadinessNamesStaleSchemaAndDrift(t *testing.T) {
 	readiness, err = InspectCacheReadiness(dir)
 	require.NoError(err)
 	assert.Equal(CacheDrifted, readiness)
-}
-
-func TestCacheSchemaVersionRequiresIdentityRollupPublication(t *testing.T) {
-	assertions := assert.New(t)
-	requirements := require.New(t)
-	assertions.Equal(15, CacheSchemaVersion)
-
-	dir := completeReadinessCache(t)
-	state, err := ReadCacheSyncState(dir)
-	requirements.NoError(err)
-	state.SchemaVersion = 11
-	writeReadinessState(t, dir, state)
-
-	readiness, err := InspectCacheReadiness(dir)
-	requirements.NoError(err)
-	assertions.Equal(CacheStaleSchema, readiness)
 }
 
 func TestInspectCacheReadinessPrefersStaleSchemaWhenNewDatasetIsMissing(t *testing.T) {

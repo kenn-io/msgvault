@@ -131,7 +131,7 @@ func Build(
 	if err := Validate(ctx, db, ValidationOptions{
 		OutputRoot:             opts.OutputRoot,
 		RequiredOutputDatasets: RequiredDatasets,
-		Activity:               ActivityPaths{Activity: activity},
+		ActivityPath:           activity,
 	}); err != nil {
 		return BuildResult{}, err
 	}

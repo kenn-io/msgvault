@@ -139,8 +139,9 @@ unfiltered domain list and text candidate selection.
 ### `relationship_daily`
 
 One row per `(canonical_id, UTC event date)`, derived from the exact unfiltered
-logical entries. It stores sent, received, and meeting units; raw sent and
-meeting counts; modality bits; and the full-precision last timestamp.
+logical entries. It stores sent, received, and meeting units; modality bits;
+and the full-precision last timestamp. The units are undecayed per-day counts,
+so the raw reciprocity-gate totals are their plain sums.
 
 This dataset has one consumer: the unfiltered default relationship ranking.
 At request time DuckDB applies exact day-difference decay, clamping negative

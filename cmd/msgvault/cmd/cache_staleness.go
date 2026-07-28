@@ -297,12 +297,11 @@ func cacheNeedsBuildLocked(dbPath, analyticsDir string) cacheStaleness {
 	}
 
 	// Identity drift (participant link/unlink/merge mutations, or
-	// confirming/removing an account identity) affects only the is_from_me
-	// derivation and the two identity datasets, not message content, so on
-	// its own it never forces a full rebuild: the lightweight refresh path
-	// (cacheops.RefreshIdentityDatasets) handles it, and a full rebuild
-	// triggered by any other signal (including HasAccountIdentityDrift
-	// above) refreshes it naturally.
+	// confirming/removing an account identity) affects only identity-derived
+	// datasets, not message content, so on its own it never forces a full
+	// rebuild: the index-only refresh (refreshDerivedDatasetsOnly) handles
+	// it, and a full rebuild triggered by any other signal (including
+	// HasAccountIdentityDrift above) refreshes it naturally.
 	identityRevision, err := db.IdentityRevision()
 	if err != nil {
 		return cacheStaleness{

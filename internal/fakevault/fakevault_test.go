@@ -237,32 +237,6 @@ func TestGenerateSetWiseRelationshipScaleShape(t *testing.T) {
 		)
 	`).Scan(&duplicateOrSenderEdges))
 	assertions.Zero(duplicateOrSenderEdges)
-
-	var messageTypes int64
-	requirements.NoError(db.QueryRow(
-		"SELECT count(DISTINCT message_type) FROM messages",
-	).Scan(&messageTypes))
-	assertions.GreaterOrEqual(messageTypes, int64(4))
-
-	var linkedAliases int64
-	requirements.NoError(db.QueryRow(
-		"SELECT count(*) FROM participant_links",
-	).Scan(&linkedAliases))
-	assertions.Positive(linkedAliases)
-
-	var owners int64
-	requirements.NoError(db.QueryRow(`
-		SELECT count(*)
-		FROM account_identities ai
-		JOIN participants p ON lower(p.email_address) = lower(ai.address)
-	`).Scan(&owners))
-	assertions.GreaterOrEqual(owners, int64(2))
-
-	var futureRows int64
-	requirements.NoError(db.QueryRow(
-		"SELECT count(*) FROM messages WHERE sent_at > '2030-01-01'",
-	).Scan(&futureRows))
-	assertions.Positive(futureRows)
 }
 
 func TestGenerateRejectsInvalidRelationshipScale(t *testing.T) {

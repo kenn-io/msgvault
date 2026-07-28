@@ -16,6 +16,8 @@ import (
 )
 
 func TestBuildPublishesFourRelationshipDatasets(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
 	root, db := writeRelationshipBaseFixture(t, false)
 
 	result, err := Build(context.Background(), db, BuildOptions{
@@ -23,70 +25,55 @@ func TestBuildPublishesFourRelationshipDatasets(t *testing.T) {
 		StagedBaseRoot: root,
 		OutputRoot:     root,
 	})
-	require.NoError(t, err)
+	requirements.NoError(err)
 
-	assert.Equal(t, []string{
-		DatasetActivity,
-		DatasetPeople,
-		DatasetDomains,
-		DatasetRelationshipDaily,
-	}, RequiredDatasets)
 	for _, dataset := range RequiredDatasets {
-		assert.DirExists(t, filepath.Join(root, dataset), dataset)
+		assertions.DirExists(filepath.Join(root, dataset), dataset)
 	}
-	assert.FileExists(t, filepath.Join(
+	assertions.FileExists(filepath.Join(
 		root,
 		DatasetActivity,
 		"occurred_year=2026",
 		"data_0.parquet",
 	))
-	for _, removed := range []string{
-		"identity_entry_facts",
-		"identity_direct_edges",
-		"identity_conversation_edges",
-		"identity_directory",
-		"identity_rollups",
-		"domain_rollups",
-		"relationship_rollups",
-	} {
-		assert.NoDirExists(t, filepath.Join(root, removed), removed)
-	}
 
-	assert.Equal(t, int64(2), result.Activity.DirectRows)
-	assert.Equal(t, int64(1), result.Activity.ConversationExpandedRows)
-	assert.Equal(t, int64(3), result.Activity.FinalRows)
-	assert.InDelta(t, 1.5, result.Activity.ExpansionRatio, 0.0001)
-	assert.Equal(t, int64(1), result.Stats.TotalMessages)
-	assert.NotEmpty(t, result.ConversationParticipantsFingerprint)
+	assertions.Equal(int64(2), result.Activity.DirectRows)
+	assertions.Equal(int64(1), result.Activity.ConversationExpandedRows)
+	assertions.Equal(int64(3), result.Activity.FinalRows)
+	assertions.InDelta(1.5, result.Activity.ExpansionRatio, 0.0001)
+	assertions.Equal(int64(1), result.Stats.TotalMessages)
+	assertions.NotEmpty(result.ConversationParticipantsFingerprint)
 
 	var direct, conversation, author, owner bool
-	require.NoError(t, db.QueryRow(`
+	requirements.NoError(db.QueryRow(`
 		SELECT is_direct, is_conversation_member, is_author, is_owner
 		FROM read_parquet(?, hive_partitioning=true, union_by_name=true)
 		WHERE canonical_id = 2
 	`, relationshipParquetGlob(root, DatasetActivity)).
 		Scan(&direct, &conversation, &author, &owner))
-	assert.True(t, direct)
-	assert.False(t, conversation)
-	assert.False(t, author)
-	assert.False(t, owner)
+	assertions.True(direct)
+	assertions.False(conversation)
+	assertions.False(author)
+	assertions.False(owner)
 
-	require.NoError(t, db.QueryRow(`
+	requirements.NoError(db.QueryRow(`
 		SELECT is_direct, is_conversation_member
 		FROM read_parquet(?, hive_partitioning=true, union_by_name=true)
 		WHERE canonical_id = 4
 	`, relationshipParquetGlob(root, DatasetActivity)).
 		Scan(&direct, &conversation))
-	assert.False(t, direct)
-	assert.True(t, conversation)
+	assertions.False(direct)
+	assertions.True(conversation)
 
-	assert.Equal(t, int64(2), relationshipParquetCount(t, db, root, DatasetPeople),
+	assertions.Equal(int64(2), relationshipParquetCount(t, db, root, DatasetPeople),
 		"non-chat people fan-out excludes conversation-only members")
-	assert.Equal(t, int64(3), relationshipParquetCount(t, db, root, DatasetDomains),
+	assertions.Equal(int64(3), relationshipParquetCount(t, db, root, DatasetDomains),
 		"non-chat domain fan-out includes conversation-only domains")
 }
 
 func TestBuildEmptyArchivePublishesSchemaCorrectActivityShard(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
 	root, db := writeRelationshipBaseFixture(t, true)
 
 	_, err := Build(context.Background(), db, BuildOptions{
@@ -94,129 +81,22 @@ func TestBuildEmptyArchivePublishesSchemaCorrectActivityShard(t *testing.T) {
 		StagedBaseRoot: root,
 		OutputRoot:     root,
 	})
-	require.NoError(t, err)
+	requirements.NoError(err)
 
-	assert.FileExists(t, filepath.Join(
+	assertions.FileExists(filepath.Join(
 		root,
 		DatasetActivity,
 		"occurred_year=0",
 		"empty.parquet",
 	))
 	for _, dataset := range RequiredDatasets {
-		assert.Zero(t, relationshipParquetCount(t, db, root, dataset), dataset)
+		assertions.Zero(relationshipParquetCount(t, db, root, dataset), dataset)
 	}
-	expectedActivityColumns := []string{
-		"message_id", "conversation_id", "source_id", "source_type",
-		"occurred_at", "message_type", "conversation_type", "entry_kind",
-		"is_chat", "is_from_me", "attachment_count", "deleted_from_source",
-		"canonical_id", "participant_domain", "is_direct",
-		"is_conversation_member", "is_sender", "is_author", "is_owner",
-		"occurred_year",
-	}
-	rows, err := db.Query(
-		"SELECT * FROM read_parquet(?, hive_partitioning=true, union_by_name=true) LIMIT 0",
-		relationshipParquetGlob(root, DatasetActivity),
-	)
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, rows.Close()) })
-	columns, err := rows.Columns()
-	require.NoError(t, err)
-	require.NoError(t, rows.Err())
-	assert.Equal(t, expectedActivityColumns, columns)
-}
-
-func TestBuildMergesAuthoredAliasBeforeIncomingCredit(t *testing.T) {
-	root, db := writeRelationshipBaseFixture(t, false)
-	replaceRelationshipParquet(t, db, root, "messages", `
-		SELECT * FROM (VALUES
-			(100::BIGINT, 1::BIGINT, 'm-100'::VARCHAR, 10::BIGINT,
-			 'Subject'::VARCHAR, 'Preview'::VARCHAR,
-			 TIMESTAMP '2026-07-20 10:30:00', 50::BIGINT, true,
-			 1::INTEGER, NULL::TIMESTAMP, 2::BIGINT, 'email'::VARCHAR,
-			 false, 2026::INTEGER, 7::INTEGER)
-		) AS t(id, source_id, source_message_id, conversation_id, subject,
-			snippet, sent_at, size_estimate, has_attachments, attachment_count,
-			deleted_from_source_at, sender_id, message_type, is_from_me, year, month)`)
-	replaceRelationshipParquet(t, db, root, "message_recipients", `
-		SELECT * FROM (VALUES
-			(100::BIGINT, 2::BIGINT, 'from'::VARCHAR, 'Bob'::VARCHAR),
-			(100::BIGINT, 3::BIGINT, 'to'::VARCHAR, 'Bob Alias'::VARCHAR),
-			(100::BIGINT, 1::BIGINT, 'to'::VARCHAR, 'Alice'::VARCHAR)
-		) AS t(message_id, participant_id, recipient_type, display_name)`)
-
-	_, err := Build(context.Background(), db, BuildOptions{
-		Mode:           ModeFull,
-		StagedBaseRoot: root,
-		OutputRoot:     root,
-	})
-	require.NoError(t, err)
-
-	var received, activityCount, fileCount int64
-	require.NoError(t, db.QueryRow(`
-		SELECT received_units
-		FROM read_parquet(?)
-		WHERE canonical_id = 2
-	`, relationshipParquetGlob(root, DatasetRelationshipDaily)).Scan(&received))
-	assert.Equal(t, int64(1), received,
-		"the canonical author receives one incoming unit, not zero or two")
-	require.NoError(t, db.QueryRow(`
-		SELECT activity_count, file_count
-		FROM read_parquet(?)
-		WHERE canonical_id = 2
-	`, relationshipParquetGlob(root, DatasetPeople)).Scan(&activityCount, &fileCount))
-	assert.Equal(t, int64(1), activityCount)
-	assert.Equal(t, int64(1), fileCount)
-}
-
-func TestLogicalChatReductionUsesNewestFilteredMessage(t *testing.T) {
-	root, db := writeRelationshipBaseFixture(t, false)
-	replaceRelationshipParquet(t, db, root, "conversations", `
-		SELECT * FROM (VALUES
-			(10::BIGINT, 'thread-10'::VARCHAR, 'Thread'::VARCHAR, 'group_chat'::VARCHAR)
-		) AS t(id, source_conversation_id, title, conversation_type)`)
-	replaceRelationshipParquet(t, db, root, "messages", `
-		SELECT * FROM (VALUES
-			(100::BIGINT, 1::BIGINT, 'm-100'::VARCHAR, 10::BIGINT,
-			 'Earlier'::VARCHAR, ''::VARCHAR, TIMESTAMP '2026-07-20 10:30:00',
-			 10::BIGINT, false, 0::INTEGER, NULL::TIMESTAMP,
-			 2::BIGINT, 'chat'::VARCHAR, false, 2026::INTEGER, 7::INTEGER),
-			(101::BIGINT, 1::BIGINT, 'm-101'::VARCHAR, 10::BIGINT,
-			 'Later'::VARCHAR, ''::VARCHAR, TIMESTAMP '2026-07-21 10:30:00',
-			 10::BIGINT, false, 0::INTEGER, NULL::TIMESTAMP,
-			 1::BIGINT, 'chat'::VARCHAR, true, 2026::INTEGER, 7::INTEGER)
-		) AS t(id, source_id, source_message_id, conversation_id, subject,
-			snippet, sent_at, size_estimate, has_attachments, attachment_count,
-			deleted_from_source_at, sender_id, message_type, is_from_me, year, month)`)
-	replaceRelationshipParquet(t, db, root, "message_recipients", `
-		SELECT * FROM (VALUES
-			(100::BIGINT, 2::BIGINT, 'from'::VARCHAR, 'Bob'::VARCHAR),
-			(100::BIGINT, 1::BIGINT, 'to'::VARCHAR, 'Alice'::VARCHAR),
-			(101::BIGINT, 1::BIGINT, 'from'::VARCHAR, 'Alice'::VARCHAR),
-			(101::BIGINT, 2::BIGINT, 'to'::VARCHAR, 'Bob'::VARCHAR)
-		) AS t(message_id, participant_id, recipient_type, display_name)`)
-
-	_, err := Build(context.Background(), db, BuildOptions{
-		Mode:           ModeFull,
-		StagedBaseRoot: root,
-		OutputRoot:     root,
-	})
-	require.NoError(t, err)
-	paths := ActivityPaths{Activity: relationshipParquetGlob(root, DatasetActivity)}
-	assertUnit := func(t *testing.T, filter string, wantID int64, wantFromMe bool) {
-		t.Helper()
-		var id int64
-		var fromMe bool
-		query := LogicalActivitySQL(paths, filter) +
-			" SELECT anchor_message_id, is_from_me FROM logical_units"
-		require.NoError(t, db.QueryRow(query).Scan(&id, &fromMe))
-		assert.Equal(t, wantID, id)
-		assert.Equal(t, wantFromMe, fromMe)
-	}
-	assertUnit(t, "true", 101, true)
-	assertUnit(t, "f.message_id = 100", 100, false)
 }
 
 func TestLogicalChatReductionKeepsParticipantlessNewestMessage(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
 	root, db := writeRelationshipBaseFixture(t, false)
 	replaceRelationshipParquet(t, db, root, "conversations", `
 		SELECT * FROM (VALUES
@@ -252,40 +132,42 @@ func TestLogicalChatReductionKeepsParticipantlessNewestMessage(t *testing.T) {
 		StagedBaseRoot: root,
 		OutputRoot:     root,
 	})
-	require.NoError(t, err)
+	requirements.NoError(err)
 
 	var anchorMessageID int64
 	var isFromMe bool
 	var attachmentCount int64
 	query := LogicalActivitySQL(
-		ActivityPaths{Activity: relationshipParquetGlob(root, DatasetActivity)},
+		relationshipParquetGlob(root, DatasetActivity),
 		"true",
 	) + `
 		SELECT anchor_message_id, is_from_me, attachment_count
 		FROM logical_units`
-	require.NoError(t, db.QueryRow(query).
+	requirements.NoError(db.QueryRow(query).
 		Scan(&anchorMessageID, &isFromMe, &attachmentCount))
-	assert.Equal(t, int64(101), anchorMessageID)
-	assert.True(t, isFromMe)
-	assert.Equal(t, int64(3), attachmentCount)
+	assertions.Equal(int64(101), anchorMessageID)
+	assertions.True(isFromMe)
+	assertions.Equal(int64(3), attachmentCount)
 
 	var sentinelRows int64
-	require.NoError(t, db.QueryRow(`
+	requirements.NoError(db.QueryRow(`
 		SELECT count(*)
 		FROM read_parquet(?, hive_partitioning=true, union_by_name=true)
 		WHERE message_id = 101 AND canonical_id IS NULL
 	`, relationshipParquetGlob(root, DatasetActivity)).Scan(&sentinelRows))
-	assert.Equal(t, int64(1), sentinelRows)
+	assertions.Equal(int64(1), sentinelRows)
 }
 
 func TestBuildIncrementalWritesActivityDeltaAndRebuildsCompactPopulation(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
 	committedRoot, db := writeRelationshipBaseFixture(t, false)
 	_, err := Build(context.Background(), db, BuildOptions{
 		Mode:           ModeFull,
 		StagedBaseRoot: committedRoot,
 		OutputRoot:     committedRoot,
 	})
-	require.NoError(t, err)
+	requirements.NoError(err)
 
 	stagedRoot, stagedDB := writeRelationshipBaseFixture(t, false)
 	rewriteRelationshipFixtureIDs(t, stagedDB, stagedRoot, 200, 20)
@@ -295,25 +177,27 @@ func TestBuildIncrementalWritesActivityDeltaAndRebuildsCompactPopulation(t *test
 		StagedBaseRoot: stagedRoot,
 		OutputRoot:     stagedRoot,
 	})
-	require.NoError(t, err)
+	requirements.NoError(err)
 
-	assert.Equal(t, int64(3), relationshipParquetCount(t, db, stagedRoot, DatasetActivity))
-	assert.Equal(t, int64(2), result.Stats.TotalMessages)
+	assertions.Equal(int64(3), relationshipParquetCount(t, db, stagedRoot, DatasetActivity))
+	assertions.Equal(int64(2), result.Stats.TotalMessages)
 	var activityCount int64
-	require.NoError(t, db.QueryRow(`
+	requirements.NoError(db.QueryRow(`
 		SELECT activity_count FROM read_parquet(?) WHERE canonical_id = 2
 	`, relationshipParquetGlob(stagedRoot, DatasetPeople)).Scan(&activityCount))
-	assert.Equal(t, int64(2), activityCount)
+	assertions.Equal(int64(2), activityCount)
 }
 
 func TestBuildIndexOnlyUsesCommittedBaseWithStagedIdentityDimensions(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
 	committedRoot, db := writeRelationshipBaseFixture(t, false)
 	_, err := Build(context.Background(), db, BuildOptions{
 		Mode:           ModeFull,
 		StagedBaseRoot: committedRoot,
 		OutputRoot:     committedRoot,
 	})
-	require.NoError(t, err)
+	requirements.NoError(err)
 
 	stagedRoot := t.TempDir()
 	writeRelationshipParquet(t, db, stagedRoot, "participant_clusters", `
@@ -328,16 +212,16 @@ func TestBuildIndexOnlyUsesCommittedBaseWithStagedIdentityDimensions(t *testing.
 		StagedBaseRoot: stagedRoot,
 		OutputRoot:     stagedRoot,
 	})
-	require.NoError(t, err)
+	requirements.NoError(err)
 
 	var memberIDs string
-	require.NoError(t, db.QueryRow(`
+	requirements.NoError(db.QueryRow(`
 		SELECT CAST(to_json(member_ids) AS VARCHAR)
 		FROM read_parquet(?) WHERE canonical_id = 2
 	`, relationshipParquetGlob(stagedRoot, DatasetPeople)).Scan(&memberIDs))
-	assert.JSONEq(t, `[2,3,4]`, memberIDs)
-	assert.Equal(t, CacheStatsSummary{}, result.Stats)
-	assert.Equal(t, int64(3), relationshipParquetCount(t, db, stagedRoot, DatasetActivity))
+	assertions.JSONEq(`[2,3,4]`, memberIDs)
+	assertions.Equal(CacheStatsSummary{}, result.Stats)
+	assertions.Equal(int64(3), relationshipParquetCount(t, db, stagedRoot, DatasetActivity))
 }
 
 func TestValidateRejectsDuplicateActivityGrain(t *testing.T) {

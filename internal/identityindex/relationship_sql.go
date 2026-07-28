@@ -5,26 +5,15 @@ import (
 	"strings"
 )
 
-// ActivityPaths identifies the canonical activity input used by the shared
-// logical-entry reduction.
-type ActivityPaths struct {
-	Activity          string
-	Facts             string // Deprecated.
-	DirectEdges       string // Deprecated.
-	ConversationEdges string // Deprecated.
-	Directory         string // Deprecated.
-	Clusters          string // Deprecated.
-	Owners            string // Deprecated.
-}
-
 // LogicalActivitySQL returns CTEs named logical_units, logical_people, and
-// logical_domains. filterSQL is trusted SQL rendered by the query layer and
-// may refer to the message-level alias f.
-func LogicalActivitySQL(paths ActivityPaths, filterSQL string) string {
+// logical_domains over the canonical activity dataset at activityPath.
+// filterSQL is trusted SQL rendered by the query layer and may refer to the
+// message-level alias f.
+func LogicalActivitySQL(activityPath, filterSQL string) string {
 	if strings.TrimSpace(filterSQL) == "" {
 		filterSQL = "true"
 	}
-	activity := activityRelation(paths.Activity, true)
+	activity := activityRelation(activityPath, true)
 	return fmt.Sprintf(`
 WITH relationship_activity AS (
 	SELECT * FROM %s
@@ -266,7 +255,7 @@ GROUP BY m.message_id, m.conversation_id, m.source_id, m.source_type,
 }
 
 func buildLogicalActivityMaterializationSQL(path string) string {
-	return LogicalActivitySQL(ActivityPaths{Activity: path}, "true") + `
+	return LogicalActivitySQL(path, "true") + `
 SELECT 1::UTINYINT AS relation_kind,
        p.entry_key, p.anchor_message_id, p.conversation_id, p.source_id,
        p.source_type, p.occurred_at, p.entry_kind, p.is_from_me,

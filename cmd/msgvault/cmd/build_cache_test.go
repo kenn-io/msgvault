@@ -19,7 +19,6 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/msgvault/internal/fakevault"
 	"go.kenn.io/msgvault/internal/identityindex"
 	"go.kenn.io/msgvault/internal/query"
 )
@@ -2290,41 +2289,6 @@ func BenchmarkBuildCache(b *testing.B) {
 			b.Fatalf("buildCache: %v", err)
 		}
 	}
-}
-
-func BenchmarkBuildCacheRelationshipIndexScale(b *testing.B) {
-	if os.Getenv("MSGVAULT_RELATIONSHIPS_SCALE_BENCH") != "1" {
-		b.Skip("set MSGVAULT_RELATIONSHIPS_SCALE_BENCH=1")
-	}
-	requirements := require.New(b)
-	for b.Loop() {
-		b.StopTimer()
-		root := b.TempDir()
-		vaultDir := filepath.Join(root, "vault")
-		_, err := fakevault.Generate(context.Background(), fakevault.Options{
-			Dir:              vaultDir,
-			Messages:         2_500_000,
-			Participants:     75_000,
-			ParticipantEdges: 6_000_000,
-			AttachmentBytes:  0,
-			Seed:             1,
-		})
-		requirements.NoError(err)
-
-		b.StartTimer()
-		result, buildErr := buildCache(
-			filepath.Join(vaultDir, "msgvault.db"),
-			filepath.Join(vaultDir, "analytics"),
-			true,
-		)
-		b.StopTimer()
-		requirements.NoError(buildErr)
-		requirements.Equal(int64(2_500_000), result.ExportedCount)
-		requirements.NoError(os.RemoveAll(root))
-		b.StartTimer()
-	}
-	b.ReportMetric(2_500_000, "messages/op")
-	b.ReportMetric(6_000_000, "participant-edges/op")
 }
 
 // setupTestSQLiteEmpty creates a test SQLite database with schema and metadata

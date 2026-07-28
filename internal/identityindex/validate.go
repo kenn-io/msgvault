@@ -9,11 +9,13 @@ import (
 )
 
 // ValidationOptions describes the staged datasets that must form a complete
-// relationship index generation.
+// relationship index generation. ActivityPath overrides the default staged
+// activity glob when validating an incremental build over live plus staged
+// shards.
 type ValidationOptions struct {
 	OutputRoot             string
 	RequiredOutputDatasets []string
-	Activity               ActivityPaths
+	ActivityPath           string
 }
 
 // Validate rejects malformed or internally inconsistent relationship indexes
@@ -29,7 +31,7 @@ func Validate(
 		}
 	}
 
-	activityPath := opts.Activity.Activity
+	activityPath := opts.ActivityPath
 	if strings.TrimSpace(activityPath) == "" {
 		activityPath = parquetDatasetGlob(opts.OutputRoot, DatasetActivity)
 	}
@@ -163,8 +165,6 @@ func Validate(
 			    OR sent_units IS NULL OR sent_units < 0
 			    OR received_units IS NULL OR received_units < 0
 			    OR meeting_units IS NULL OR meeting_units < 0
-			    OR sent_count IS DISTINCT FROM sent_units
-			    OR meeting_count IS DISTINCT FROM meeting_units
 			    OR modality_mask IS NULL
 			    OR (modality_mask & 7::UTINYINT) IS DISTINCT FROM modality_mask
 			    OR last_at IS NULL OR last_at::DATE IS DISTINCT FROM event_date`,
@@ -245,8 +245,6 @@ var datasetSchemas = map[string][]schemaColumn{
 		{"sent_units", duckDBTypeBigInt},
 		{"received_units", duckDBTypeBigInt},
 		{"meeting_units", duckDBTypeBigInt},
-		{"sent_count", duckDBTypeBigInt},
-		{"meeting_count", duckDBTypeBigInt},
 		{"modality_mask", "UTINYINT"},
 		{"last_at", "TIMESTAMP"},
 	},

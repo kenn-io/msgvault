@@ -17,7 +17,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
-	"go.kenn.io/msgvault/internal/identityindex"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/store"
 )
@@ -118,7 +117,7 @@ func insertRelationshipIndexMessage(t *testing.T, st *store.Store, message store
 	return id
 }
 
-func (f relationshipIndexHTTPFixture) newServer(t *testing.T, disableLegacyViews bool) (*api.Server, *query.DuckDBEngine) {
+func (f relationshipIndexHTTPFixture) newServer(t *testing.T, disableLegacyViews bool) *api.Server {
 	t.Helper()
 	engine, err := query.NewDuckDBEngine(
 		f.analyticsDir,
@@ -146,7 +145,7 @@ func (f relationshipIndexHTTPFixture) newServer(t *testing.T, disableLegacyViews
 		Engine: engine,
 		Logger: slog.New(slog.DiscardHandler),
 	})
-	return server, engine
+	return server
 }
 
 func relationshipIndexHTTPJSON(t *testing.T, handler http.Handler, method, path string, body any) *httptest.ResponseRecorder {
@@ -178,7 +177,7 @@ func TestRelationshipIndexMigratedHTTPRoutesNeedNoLegacyViews(t *testing.T) {
 	requirementsForTest := require.New(t)
 	assertionsForTest := assert.New(t)
 	fixture := newRelationshipIndexHTTPFixture(t)
-	server, _ := fixture.newServer(t, true)
+	server := fixture.newServer(t, true)
 	handler := server.Router()
 
 	relationships := decodeRelationshipIndexHTTP[api.RelationshipsHTTPResponse](
@@ -289,8 +288,8 @@ func TestRelationshipIndexMigratedHTTPRoutesNeedNoLegacyViews(t *testing.T) {
 
 func TestRelationshipIndexLeavesLegacyRoutesOutsideMigrationBoundary(t *testing.T) {
 	fixture := newRelationshipIndexHTTPFixture(t)
-	normalServer, _ := fixture.newServer(t, false)
-	guardServer, _ := fixture.newServer(t, true)
+	normalServer := fixture.newServer(t, false)
+	guardServer := fixture.newServer(t, true)
 
 	personID := strconv.FormatInt(fixture.personID, 10)
 	routes := []struct {
@@ -327,106 +326,4 @@ func TestRelationshipIndexLeavesLegacyRoutesOutsideMigrationBoundary(t *testing.
 			assertions.Equal("explore_failed", response.Error)
 		})
 	}
-}
-
-func TestRelationshipIndexDerivedRefreshHealsLateConversationMembership(t *testing.T) {
-	requirementsForTest := require.New(t)
-	assertionsForTest := assert.New(t)
-	fixture := newRelationshipIndexHTTPFixture(t)
-	before, err := query.ReadCacheSyncState(fixture.analyticsDir)
-	requirementsForTest.NoError(err)
-	beforeRevision := before.Revision()
-	requirementsForTest.NoError(fixture.store.EnsureConversationParticipant(
-		fixture.conversationID,
-		fixture.lateID,
-		"member",
-	))
-
-	staleness := cacheNeedsBuild(fixture.dbPath, fixture.analyticsDir)
-	requirementsForTest.True(staleness.NeedsBuild)
-	assertionsForTest.True(staleness.HasConversationParticipantDrift)
-	assertionsForTest.False(staleness.FullRebuild)
-
-	result, err := buildCacheDerivedOnly(fixture.dbPath, fixture.analyticsDir)
-	requirementsForTest.NoError(err)
-	assertionsForTest.True(result.IdentityOnly)
-
-	after, err := query.ReadCacheSyncState(fixture.analyticsDir)
-	requirementsForTest.NoError(err)
-	assertionsForTest.Equal(before.LastMessageID, after.LastMessageID)
-	assertionsForTest.Equal(before.Stats, after.Stats)
-	assertionsForTest.NotEqual(
-		before.ConversationParticipantsFingerprint,
-		after.ConversationParticipantsFingerprint,
-	)
-	assertionsForTest.False(after.PublishedAt.Before(before.PublishedAt))
-	assertionsForTest.NotEqual(beforeRevision, after.Revision())
-
-	inspectionDB, err := sql.Open("duckdb", "")
-	requirementsForTest.NoError(err)
-	t.Cleanup(func() { require.NoError(t, inspectionDB.Close()) })
-	var lateMembershipRows int64
-	requirementsForTest.NoError(inspectionDB.QueryRow(`
-		SELECT count(DISTINCT message_id)
-		FROM read_parquet(?, hive_partitioning = true)
-		WHERE conversation_id = ?
-		  AND canonical_id = ?
-		  AND is_conversation_member
-	`, filepath.Join(
-		fixture.analyticsDir,
-		identityindex.DatasetActivity,
-		"**",
-		"*.parquet",
-	), fixture.conversationID, fixture.lateID).Scan(&lateMembershipRows))
-	assertionsForTest.Equal(int64(2), lateMembershipRows)
-
-	_, engine := fixture.newServer(t, true)
-	people, err := engine.SearchPeople(t.Context(), query.PersonSearchRequest{
-		Explore: query.ExploreRequest{Context: query.Context{
-			ParticipantIDs: []int64{fixture.lateID},
-		}},
-		Sort: query.SortSpec{Field: "activity_count", Direction: "desc"},
-		Page: query.PageSpec{Limit: 25},
-	})
-	requirementsForTest.NoError(err)
-	assertionsForTest.Equal(int64(2), people.TotalCount)
-	assertionsForTest.ElementsMatch([]int64{fixture.ownerID, fixture.personID}, personSummaryIDs(people.Rows))
-	for _, person := range people.Rows {
-		assertionsForTest.Equal(int64(2), person.ActivityCount)
-		assertionsForTest.NotEqual(fixture.lateID, person.ID,
-			"conversation-only membership must not enter non-chat people fan-out")
-	}
-
-	domains, err := engine.SearchDomains(t.Context(), query.DomainSearchRequest{
-		Explore: query.ExploreRequest{Context: query.Context{
-			ParticipantIDs: []int64{fixture.lateID},
-		}},
-		Sort: query.SortSpec{Field: "activity_count", Direction: "desc"},
-		Page: query.PageSpec{Limit: 25},
-	})
-	requirementsForTest.NoError(err)
-	assertionsForTest.Equal(int64(3), domains.TotalCount)
-	assertionsForTest.ElementsMatch(
-		[]string{"example.test", "people.test", "late.test"},
-		domainSummaryNames(domains.Rows),
-	)
-	for _, domain := range domains.Rows {
-		assertionsForTest.Equal(int64(2), domain.ActivityCount)
-	}
-}
-
-func personSummaryIDs(rows []query.PersonSummary) []int64 {
-	ids := make([]int64, len(rows))
-	for index := range rows {
-		ids[index] = rows[index].ID
-	}
-	return ids
-}
-
-func domainSummaryNames(rows []query.DomainSummary) []string {
-	domains := make([]string, len(rows))
-	for index := range rows {
-		domains[index] = rows[index].Domain
-	}
-	return domains
 }

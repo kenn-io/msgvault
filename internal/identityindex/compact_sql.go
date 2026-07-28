@@ -142,8 +142,6 @@ SELECT canonical_id,
        sum(sent_units)::BIGINT AS sent_units,
        sum(received_units)::BIGINT AS received_units,
        sum(meeting_units)::BIGINT AS meeting_units,
-       sum(sent_units)::BIGINT AS sent_count,
-       sum(meeting_units)::BIGINT AS meeting_count,
        bit_or(modality_mask)::UTINYINT AS modality_mask,
        max(occurred_at)::TIMESTAMP AS last_at
 FROM interactions
@@ -192,13 +190,16 @@ WITH canon AS (
 	)
 	WHERE position = 1
 ), fallback_candidates AS (
+	-- The identifier fallback matches the legacy label policy: only the
+	-- canonical participant's own phone, email, and identifiers are
+	-- considered, while the best display name above spans the whole cluster.
 	SELECT canonical_id, participant_id, 1 AS priority,
 	       ''::VARCHAR AS identifier_type, phone_number AS value
-	FROM canon WHERE phone_number != ''
+	FROM canon WHERE participant_id = canonical_id AND phone_number != ''
 	UNION ALL
 	SELECT canonical_id, participant_id, 2,
 	       'email', email_address
-	FROM canon WHERE email_address != ''
+	FROM canon WHERE participant_id = canonical_id AND email_address != ''
 	UNION ALL
 	SELECT c.canonical_id, c.participant_id,
 	       CASE WHEN pi.is_primary THEN 3 ELSE 4 END,
@@ -207,7 +208,8 @@ WITH canon AS (
 	                trim(pi.identifier_value))
 	FROM canon c
 	JOIN read_parquet('%s') pi ON pi.participant_id = c.participant_id
-	WHERE coalesce(nullif(trim(pi.display_value), ''),
+	WHERE c.participant_id = c.canonical_id
+	  AND coalesce(nullif(trim(pi.display_value), ''),
 	               trim(pi.identifier_value)) != ''
 ), fallback AS (
 	SELECT canonical_id, value AS display_label

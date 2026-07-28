@@ -8,9 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/msgvault/internal/duckdbutil"
 	"go.kenn.io/msgvault/internal/identityindex"
 )
 
@@ -62,8 +60,7 @@ func ensureIdentityCacheFixtureDatasets(
 		identityindex.DatasetRelationshipDaily: `
 			SELECT NULL::BIGINT AS canonical_id, NULL::DATE AS event_date,
 			       NULL::BIGINT AS sent_units, NULL::BIGINT AS received_units,
-			       NULL::BIGINT AS meeting_units, NULL::BIGINT AS sent_count,
-			       NULL::BIGINT AS meeting_count, NULL::UTINYINT AS modality_mask,
+			       NULL::BIGINT AS meeting_units, NULL::UTINYINT AS modality_mask,
 			       NULL::TIMESTAMP AS last_at
 			WHERE false`,
 	}
@@ -85,50 +82,4 @@ func ensureIdentityCacheFixtureDatasets(
 		))
 		require.NoError(t, err, "write empty %s fixture", dataset)
 	}
-}
-
-func TestIdentityCacheFixtureUsesExactV15PeopleSchema(t *testing.T) {
-	root := t.TempDir()
-	db, err := duckdbutil.Open(
-		t.Context(),
-		duckdbutil.BuilderPolicy(filepath.Join(root, "duckdb-tmp")),
-	)
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, db.Close()) })
-	ensureIdentityCacheFixtureDatasets(t, db, root)
-
-	rows, err := db.Query(`
-		DESCRIBE SELECT * FROM read_parquet(?)
-	`, filepath.Join(root, identityindex.DatasetPeople, "*.parquet"))
-	require.NoError(t, err)
-	defer func() { require.NoError(t, rows.Close()) }()
-	var columns []string
-	for rows.Next() {
-		var name, typ string
-		var nullable, key, defaultValue, extra sql.NullString
-		require.NoError(t, rows.Scan(
-			&name,
-			&typ,
-			&nullable,
-			&key,
-			&defaultValue,
-			&extra,
-		))
-		columns = append(columns, name)
-	}
-	require.NoError(t, rows.Err())
-	assert.Equal(t, []string{
-		"canonical_id",
-		"display_label",
-		"partial_label",
-		"member_ids",
-		"search_values",
-		"is_owner",
-		"activity_count",
-		"file_count",
-		"first_at",
-		"last_at",
-		"source_counts",
-		"source_rollups",
-	}, columns)
 }

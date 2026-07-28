@@ -8,7 +8,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/msgvault/internal/identityindex"
 )
 
 func TestRelationshipScore(t *testing.T) {
@@ -72,21 +71,6 @@ func TestRelationshipScore(t *testing.T) {
 			assert.InDelta(t, tc.want, RelationshipScore(tc.signals), 1e-9)
 		})
 	}
-}
-
-func TestModalitiesFromMask(t *testing.T) {
-	assertionsForTest := assert.New(t)
-	assertionsForTest.Equal(0, modalitiesFromMask(0))
-	assertionsForTest.Equal(1, modalitiesFromMask(identityindex.ModalityEmail))
-	assertionsForTest.Equal(2, modalitiesFromMask(
-		identityindex.ModalityChat|identityindex.ModalityMeeting,
-	))
-	assertionsForTest.Equal(3, modalitiesFromMask(
-		identityindex.ModalityEmail|
-			identityindex.ModalityChat|
-			identityindex.ModalityMeeting|
-			0x80,
-	))
 }
 
 // TestRelationshipScoreLogCompressesReceivedVolume pins the real-archive

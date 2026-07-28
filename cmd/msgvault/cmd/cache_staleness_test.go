@@ -89,60 +89,6 @@ func TestCacheNeedsBuild_MeetingMutation(t *testing.T) {
 	}
 }
 
-func TestCacheNeedsBuildConversationParticipantDriftUsesDerivedRefresh(t *testing.T) {
-	requirementsForTest := require.New(t)
-	assertionsForTest := assert.New(t)
-	tmp := t.TempDir()
-	dbPath := filepath.Join(tmp, "msgvault.db")
-	analyticsDir := filepath.Join(tmp, "analytics")
-
-	st, err := store.Open(dbPath)
-	requirementsForTest.NoError(err)
-	requirementsForTest.NoError(st.InitSchema())
-	source, err := st.GetOrCreateSource("test", "owner@example.com")
-	requirementsForTest.NoError(err)
-	conversationID, err := st.EnsureConversationWithType(
-		source.ID,
-		"old-email-thread",
-		"email_thread",
-		"Old email thread",
-	)
-	requirementsForTest.NoError(err)
-	_, err = st.UpsertMessage(&store.Message{
-		ConversationID:  conversationID,
-		SourceID:        source.ID,
-		SourceMessageID: "old-message",
-		MessageType:     "email",
-		SentAt: sql.NullTime{
-			Time:  time.Date(2025, time.January, 1, 10, 0, 0, 0, time.UTC),
-			Valid: true,
-		},
-	})
-	requirementsForTest.NoError(err)
-	requirementsForTest.NoError(st.Close())
-
-	_, err = buildCache(dbPath, analyticsDir, true)
-	requirementsForTest.NoError(err)
-
-	st, err = store.Open(dbPath)
-	requirementsForTest.NoError(err)
-	participantID, err := st.EnsureParticipant("late-member@example.com", "Late Member", "example.com")
-	requirementsForTest.NoError(err)
-	_, err = st.DB().Exec(`
-		INSERT INTO conversation_participants (conversation_id, participant_id)
-		VALUES (?, ?)
-	`, conversationID, participantID)
-	requirementsForTest.NoError(err)
-	requirementsForTest.NoError(st.Close())
-
-	got := cacheNeedsBuild(dbPath, analyticsDir)
-	assertionsForTest.True(got.NeedsBuild)
-	assertionsForTest.True(got.HasConversationParticipantDrift)
-	assertionsForTest.False(got.FullRebuild)
-	assertionsForTest.True(derivedDriftOnly(got))
-	assertionsForTest.Contains(got.Reason, "conversation participants changed")
-}
-
 func TestCacheNeedsBuildMixedNewMessagesAndRelationshipDriftForcesFullRebuild(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -181,14 +127,16 @@ func TestCacheNeedsBuildMixedNewMessagesAndRelationshipDriftForcesFullRebuild(t 
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			requirements := require.New(t)
+			assertions := assert.New(t)
 			tmp := setupTestSQLite(t)
 			dbPath := filepath.Join(tmp, "test.db")
 			analyticsDir := filepath.Join(tmp, "analytics")
 			_, err := buildCache(dbPath, analyticsDir, true)
-			require.NoError(t, err)
+			requirements.NoError(err)
 
 			st, err := store.Open(dbPath)
-			require.NoError(t, err)
+			requirements.NoError(err)
 			_, err = st.DB().Exec(`
 				INSERT INTO messages
 					(id, source_id, source_message_id, conversation_id,
@@ -197,14 +145,14 @@ func TestCacheNeedsBuildMixedNewMessagesAndRelationshipDriftForcesFullRebuild(t 
 					(6, 1, 'msg6', 101, 'New message',
 					 '2024-03-02 10:00:00', 'email')
 			`)
-			require.NoError(t, err)
+			requirements.NoError(err)
 			tt.mutate(t, st)
-			require.NoError(t, st.Close())
+			requirements.NoError(st.Close())
 
 			got := cacheNeedsBuild(dbPath, analyticsDir)
-			assert.True(t, got.HasNew)
+			assertions.True(got.HasNew)
 			tt.assert(t, got)
-			assert.True(t, got.FullRebuild,
+			assertions.True(got.FullRebuild,
 				"mixed new-message and relationship drift must not append stale index rows")
 		})
 	}

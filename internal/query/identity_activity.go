@@ -33,8 +33,10 @@ func identityRequestIsSourceOnly(request ExploreRequest) bool {
 	return identityRequestIsUnfiltered(request)
 }
 
-func (e *DuckDBEngine) identityDatasetPath(dataset string) string {
-	return e.parquetPath(dataset)
+// identityActivityPath returns the relationship_activity glob escaped for
+// direct embedding in trusted SQL text.
+func (e *DuckDBEngine) identityActivityPath() string {
+	return quoteIdentitySQLPath(e.parquetPath(identityindex.DatasetActivity))
 }
 
 func (e *DuckDBEngine) buildIdentityLogicalSQL(
@@ -47,15 +49,15 @@ func (e *DuckDBEngine) buildIdentityLogicalSQL(
 	if err != nil {
 		return "", nil, err
 	}
-	conditions, args := buildIdentityFactConditions(request)
-	paths := identityindex.ActivityPaths{
-		Activity: e.identityDatasetPath(identityindex.DatasetActivity),
-	}
-	sql := identityindex.LogicalActivitySQL(paths, conditions)
+	conditions, args := buildIdentityFactConditions(request, e.identityActivityPath())
+	sql := identityindex.LogicalActivitySQL(
+		e.parquetPath(identityindex.DatasetActivity),
+		conditions,
+	)
 	if strings.TrimSpace(identityCandidateSQL) != "" {
 		sql += ", identity_candidates AS (" + identityCandidateSQL + ")"
 	}
-	return e.resolveIdentityPathPlaceholders(sql), args, nil
+	return sql, args, nil
 }
 
 func identityRequestHasEdgeFilters(request ExploreRequest) bool {
@@ -73,8 +75,8 @@ func (e *DuckDBEngine) narrowIdentityFactCandidates(
 		!identityRequestHasEdgeFilters(request) {
 		return request, nil
 	}
-	conditions, args := buildIdentityFactConditions(request)
-	facts := quoteIdentitySQLPath(e.identityDatasetPath(identityindex.DatasetActivity))
+	facts := e.identityActivityPath()
+	conditions, args := buildIdentityFactConditions(request, facts)
 	queryText := `
 SELECT f.message_id
 FROM read_parquet('` + facts + `', hive_partitioning=true, union_by_name=true) f
@@ -82,7 +84,6 @@ WHERE ` + conditions + `
 GROUP BY f.message_id
 LIMIT ?`
 	args = append(args, MaxExploreCandidateMessageIDs+1)
-	queryText = e.resolveIdentityPathPlaceholders(queryText)
 
 	rows, err := e.db.QueryContext(ctx, queryText, args...)
 	if err != nil {
@@ -112,7 +113,10 @@ LIMIT ?`
 	return request, nil
 }
 
-func buildIdentityFactConditions(request ExploreRequest) (string, []any) {
+// buildIdentityFactConditions renders the message-level filter for the alias
+// f over relationship_activity. activityPath is the SQL-escaped activity glob
+// used by the participant/domain edge semi-join predicates.
+func buildIdentityFactConditions(request ExploreRequest, activityPath string) (string, []any) {
 	var conditions []string
 	var args []any
 	appendIntGroup := func(values []int64, expression string) {
@@ -127,7 +131,6 @@ func buildIdentityFactConditions(request ExploreRequest) (string, []any) {
 		conditions = append(conditions, "("+strings.Join(parts, " OR ")+")")
 	}
 	appendIntGroup(request.Context.SourceIDs, "f.source_id = ?")
-	activityPath := quoteIdentityPathPlaceholder(identityindex.DatasetActivity)
 	participantPredicate := `(EXISTS (
 		SELECT 1
 		FROM read_parquet('` + activityPath + `',
@@ -210,29 +213,6 @@ func buildIdentityFactConditions(request ExploreRequest) (string, []any) {
 		return "true", args
 	}
 	return strings.Join(conditions, " AND "), args
-}
-
-// The filter builder is independent of an engine so tests can validate the
-// placeholder order. The engine replaces these trusted tokens with absolute
-// cache paths immediately before execution.
-func quoteIdentityPathPlaceholder(dataset string) string {
-	return "{{" + dataset + "}}"
-}
-
-func (e *DuckDBEngine) resolveIdentityPathPlaceholders(sql string) string {
-	for _, dataset := range []string{
-		identityindex.DatasetActivity,
-		identityindex.DatasetPeople,
-		identityindex.DatasetDomains,
-		identityindex.DatasetRelationshipDaily,
-	} {
-		path := strings.ReplaceAll(e.identityDatasetPath(dataset), "'", "''")
-		sql = strings.ReplaceAll(sql, quoteIdentityPathPlaceholder(dataset), path)
-	}
-	if strings.Contains(sql, "{{") {
-		panic("unresolved identity dataset path in SQL: " + sql)
-	}
-	return sql
 }
 
 func (e *DuckDBEngine) searchPeople(
@@ -350,7 +330,7 @@ func (e *DuckDBEngine) identityPeopleCandidatesSQL(
 	searchText string,
 ) (string, []any) {
 	directory := quoteIdentitySQLPath(
-		e.identityDatasetPath(identityindex.DatasetPeople),
+		e.parquetPath(identityindex.DatasetPeople),
 	)
 	var predicates []string
 	var args []any
@@ -379,12 +359,9 @@ func (e *DuckDBEngine) unfilteredPeopleSQL(
 	// relationship_people already contains both search metadata and compact
 	// totals, so the default path is a single narrow Parquet scan.
 	return `WITH identity_candidates AS (` + candidates + `
-), population AS (
-	SELECT c.*
-	FROM identity_candidates c
 ), counted AS (
 	SELECT *, count(*) OVER ()::BIGINT AS total_count
-	FROM population
+	FROM identity_candidates
 ), paged AS (
 	SELECT *, row_number() OVER (ORDER BY ` + order + `) AS page_rank
 	FROM counted ORDER BY ` + order + ` LIMIT ? OFFSET ?
@@ -491,10 +468,10 @@ func (e *DuckDBEngine) sourceFilteredPeopleSQL(
 
 func (e *DuckDBEngine) peoplePageSelectSQL() string {
 	identifiers := quoteIdentitySQLPath(
-		e.identityDatasetPath(datasetParticipantIdentifiers),
+		e.parquetPath(datasetParticipantIdentifiers),
 	)
 	participants := quoteIdentitySQLPath(
-		e.identityDatasetPath(datasetParticipants),
+		e.parquetPath(datasetParticipants),
 	)
 	return `
 SELECT p.person_id,
@@ -633,7 +610,7 @@ func identityDomainWhere(searchText string) (string, []any) {
 
 func (e *DuckDBEngine) unfilteredDomainsSQL(domainWhere, order string) string {
 	rollups := quoteIdentitySQLPath(
-		e.identityDatasetPath(identityindex.DatasetDomains),
+		e.parquetPath(identityindex.DatasetDomains),
 	)
 	return `
 WITH filtered_domains AS (

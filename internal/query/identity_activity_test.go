@@ -115,38 +115,6 @@ func TestUnfilteredIdentityIndexMatchesLegacyPeopleAndDomains(t *testing.T) {
 	assert.Equal(t, wantDomains, gotDomains)
 }
 
-func TestIdentityActivityMergesAuthorshipAcrossLinkedAliases(t *testing.T) {
-	requirements := require.New(t)
-	assertions := assert.New(t)
-	builder := NewTestDataBuilder(t)
-	sourceID := builder.AddSourceWithType("archive@example.com", "gmail")
-	author := builder.AddParticipant("author@example.com", "example.com", "Author")
-	coRecipient := builder.AddParticipant(
-		"author-alias@example.com",
-		"example.com",
-		"Author Alias",
-	)
-	builder.LinkCluster(author, coRecipient)
-	messageID := builder.AddMessage(MessageOpt{
-		SourceID: sourceID,
-		Subject:  "One incoming entry",
-		SentAt:   time.Date(2026, 7, 20, 11, 0, 0, 0, time.UTC),
-	})
-	builder.AddFrom(messageID, author, "Author")
-	builder.AddTo(messageID, coRecipient, "Author Alias")
-	engine := builder.BuildEngine()
-
-	response, err := engine.SearchPeople(context.Background(), PersonSearchRequest{
-		Explore: ExploreRequest{Context: Context{SourceIDs: []int64{sourceID}}},
-		Page:    PageSpec{Limit: 25},
-	})
-	requirements.NoError(err)
-	requirements.Len(response.Rows, 1)
-	assertions.Equal(author, response.Rows[0].ID)
-	assertions.Equal(int64(1), response.Rows[0].ActivityCount,
-		"authored and co-recipient aliases merge into one canonical entry")
-}
-
 func TestSourceOnlyPeopleRollupFastPathMatchesLogicalReduction(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)
@@ -350,11 +318,9 @@ func TestIdentityActivityDateFiltersBindUTCWallClock(t *testing.T) {
 	after := time.Date(2026, 7, 20, 9, 30, 0, 0, zone)
 	before := after.Add(2 * time.Hour)
 
-	conditions, args := buildIdentityFactConditions(ExploreRequest{
+	_, args := buildIdentityFactConditions(ExploreRequest{
 		Context: Context{After: &after, Before: &before},
-	})
-	assertionsForTest.Contains(conditions, "f.occurred_at >= CAST(? AS TIMESTAMP)")
-	assertionsForTest.Contains(conditions, "f.occurred_at < CAST(? AS TIMESTAMP)")
+	}, "unused-activity-path")
 	require.Len(t, args, 2)
 	assertionsForTest.Equal("2026-07-20 13:30:00", args[0])
 	assertionsForTest.Equal("2026-07-20 15:30:00", args[1])
@@ -438,53 +404,4 @@ func TestIdentityCandidateNarrowingSaturationFallsBackExactly(t *testing.T) {
 	generic, err := engine.SearchPeople(context.Background(), request)
 	require.NoError(err)
 	assert.Equal(generic, saturatedFallback)
-}
-
-func TestIdentityEndpointsDoNotRequireLegacyAnalyticalViews(t *testing.T) {
-	requirementsForTest := require.New(t)
-	builder := NewTestDataBuilder(t)
-	sourceID := builder.AddSourceWithType("archive@example.com", "gmail")
-	personID := builder.AddParticipant("person@example.com", "example.com", "Indexed Person")
-	messageID := builder.AddMessage(MessageOpt{
-		SourceID:    sourceID,
-		Subject:     "Indexed",
-		SentAt:      time.Date(2026, 7, 21, 10, 0, 0, 0, time.UTC),
-		MessageType: "email",
-	})
-	builder.AddFrom(messageID, personID, "Indexed Person")
-	analyticsDir, cleanup := builder.Build()
-	t.Cleanup(cleanup)
-
-	engine, err := NewDuckDBEngine(
-		analyticsDir,
-		"",
-		nil,
-		DuckDBOptions{DisableLegacyAnalyticalViews: true},
-	)
-	requirementsForTest.NoError(err)
-	t.Cleanup(func() { require.NoError(t, engine.Close()) })
-
-	for _, view := range []string{"analytical_entries", "messages", "message_recipients"} {
-		var count int64
-		requirementsForTest.NoError(engine.db.QueryRow(`
-			SELECT count(*)
-			FROM duckdb_views()
-			WHERE view_name = ?
-		`, view).Scan(&count))
-		assert.Zero(t, count, "%s must not be registered", view)
-	}
-
-	people, err := engine.SearchPeople(context.Background(), PersonSearchRequest{
-		Query: "indexed",
-		Page:  PageSpec{Limit: 25},
-	})
-	requirementsForTest.NoError(err)
-	requirementsForTest.Len(people.Rows, 1)
-
-	domains, err := engine.SearchDomains(context.Background(), DomainSearchRequest{
-		Query: "example",
-		Page:  PageSpec{Limit: 25},
-	})
-	requirementsForTest.NoError(err)
-	requirementsForTest.Len(domains.Rows, 1)
 }

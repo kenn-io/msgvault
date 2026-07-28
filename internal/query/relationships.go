@@ -1,7 +1,6 @@
 package query
 
 import (
-	"container/heap"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -179,9 +178,7 @@ func (e *DuckDBEngine) Relationships(ctx context.Context, request RelationshipsR
 
 // queryRelationshipCandidates runs either the compact rollup query or the
 // narrow filtered reduction, then applies the shared gate, score, and total
-// ordering in Go. It retains only the best offset+limit rows while streaming
-// the full population so the default page does not allocate one Go object
-// graph per identity.
+// ordering in Go.
 func (e *DuckDBEngine) queryRelationshipCandidates(
 	ctx context.Context,
 	explore ExploreRequest,
@@ -193,8 +190,7 @@ func (e *DuckDBEngine) queryRelationshipCandidates(
 	var queryArgs []any
 	var err error
 	if identityRequestIsUnfiltered(explore) {
-		queryText, queryArgs = buildRelationshipRollupSQL(now)
-		queryText = e.resolveIdentityPathPlaceholders(queryText)
+		queryText, queryArgs = e.buildRelationshipRollupSQL(now)
 	} else {
 		queryText, queryArgs, err = e.buildFilteredRelationshipsSQL(ctx, explore, now)
 		if err != nil {
@@ -208,17 +204,13 @@ func (e *DuckDBEngine) queryRelationshipCandidates(
 	}
 	defer func() { _ = rows.Close() }()
 
-	maxKeep := offset + limit
-	candidates := &relationshipWorstHeap{}
-	heap.Init(candidates)
-	var totalCount int64
+	candidates := make([]RelationshipRow, 0)
 	for rows.Next() {
 		var row RelationshipRow
 		var memberIDsJSON string
-		var rowAnchor time.Time
 		var modalityMask uint8
 		if err := rows.Scan(
-			&row.CanonicalID, &row.DisplayLabel, &memberIDsJSON, &rowAnchor,
+			&row.CanonicalID, &row.DisplayLabel, &memberIDsJSON,
 			&row.Signals.SentToThem, &row.Signals.SentCount,
 			&row.Signals.ReceivedFromThem, &row.Signals.MeetingsTogether, &row.Signals.MeetingCount,
 			&modalityMask, &row.LastAt,
@@ -234,29 +226,21 @@ func (e *DuckDBEngine) queryRelationshipCandidates(
 		if !showAll && row.Signals.SentCount < 1 && row.Signals.MeetingCount < 1 {
 			continue
 		}
-		totalCount++
-		switch {
-		case maxKeep == 0:
-		case candidates.Len() < maxKeep:
-			heap.Push(candidates, row)
-		case relationshipRowBefore(row, (*candidates)[0]):
-			heap.Pop(candidates)
-			heap.Push(candidates, row)
-		}
+		candidates = append(candidates, row)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, 0, fmt.Errorf("iterate indexed relationships: %w", err)
 	}
 
-	pageCandidates := []RelationshipRow(*candidates)
-	sort.Slice(pageCandidates, func(i, j int) bool {
-		return relationshipRowBefore(pageCandidates[i], pageCandidates[j])
+	sort.SliceStable(candidates, func(i, j int) bool {
+		return relationshipRowBefore(candidates[i], candidates[j])
 	})
-	if offset >= len(pageCandidates) {
+	totalCount := int64(len(candidates))
+	if offset >= len(candidates) {
 		return []RelationshipRow{}, totalCount, nil
 	}
-	end := min(offset+limit, len(pageCandidates))
-	page := append([]RelationshipRow(nil), pageCandidates[offset:end]...)
+	end := min(offset+limit, len(candidates))
+	page := append([]RelationshipRow(nil), candidates[offset:end]...)
 	return page, totalCount, nil
 }
 
@@ -276,42 +260,14 @@ func relationshipRowBefore(left, right RelationshipRow) bool {
 	return left.CanonicalID < right.CanonicalID
 }
 
-// relationshipWorstHeap keeps the worst retained row at index zero, allowing
-// the streaming ranker to discard it whenever a better row arrives.
-type relationshipWorstHeap []RelationshipRow
-
-func (h *relationshipWorstHeap) Len() int { return len(*h) }
-
-func (h *relationshipWorstHeap) Less(i, j int) bool {
-	return relationshipRowBefore((*h)[j], (*h)[i])
-}
-
-func (h *relationshipWorstHeap) Swap(i, j int) { (*h)[i], (*h)[j] = (*h)[j], (*h)[i] }
-
-func (h *relationshipWorstHeap) Push(value any) {
-	row, ok := value.(RelationshipRow)
-	if !ok {
-		panic("relationshipWorstHeap received a non-RelationshipRow value")
-	}
-	*h = append(*h, row)
-}
-
-func (h *relationshipWorstHeap) Pop() any {
-	old := *h
-	last := len(old) - 1
-	value := old[last]
-	*h = old[:last]
-	return value
-}
-
 func modalitiesFromMask(mask uint8) int {
 	return bits.OnesCount8(mask & (identityindex.ModalityEmail |
 		identityindex.ModalityChat | identityindex.ModalityMeeting))
 }
 
-func buildRelationshipRollupSQL(now time.Time) (string, []any) {
-	daily := quoteIdentityPathPlaceholder(identityindex.DatasetRelationshipDaily)
-	people := quoteIdentityPathPlaceholder(identityindex.DatasetPeople)
+func (e *DuckDBEngine) buildRelationshipRollupSQL(now time.Time) (string, []any) {
+	daily := quoteIdentitySQLPath(e.parquetPath(identityindex.DatasetRelationshipDaily))
+	people := quoteIdentitySQLPath(e.parquetPath(identityindex.DatasetPeople))
 	queryText := `
 WITH request_clock AS (
 	SELECT ?::DOUBLE AS decay_rate, CAST(? AS DATE) AS request_date
@@ -337,7 +293,6 @@ WITH request_clock AS (
 SELECT r.canonical_id,
        p.display_label,
        CAST(to_json(p.member_ids) AS VARCHAR) AS member_ids,
-       c.request_date AS anchor_date,
        r.sent_decayed,
        r.sent_count,
        r.received_decayed,
@@ -347,7 +302,6 @@ SELECT r.canonical_id,
        r.last_at
 FROM indexed_relationships r
 JOIN read_parquet('` + people + `') p USING (canonical_id)
-CROSS JOIN request_clock c
 WHERE NOT p.is_owner`
 	return queryText, []any{
 		identityindex.RelationshipDecayRate,
@@ -365,7 +319,7 @@ func (e *DuckDBEngine) buildFilteredRelationshipsSQL(
 		return "", nil, err
 	}
 	directory := quoteIdentitySQLPath(
-		e.identityDatasetPath(identityindex.DatasetPeople),
+		e.parquetPath(identityindex.DatasetPeople),
 	)
 	queryText := logicalSQL + `,
 relationship_interactions AS (
@@ -408,7 +362,6 @@ relationship_interactions AS (
 SELECT a.canonical_id,
        d.display_label,
        CAST(to_json(d.member_ids) AS VARCHAR) AS member_ids,
-       CAST(? AS DATE) AS anchor_date,
        a.sent_decayed,
        a.sent_count,
        a.received_decayed,
@@ -420,7 +373,6 @@ FROM aggregated a
 JOIN read_parquet('` + directory + `') d USING (canonical_id)`
 	args = append(args,
 		identityindex.RelationshipDecayRate,
-		duckDBDateParam(now),
 		duckDBDateParam(now),
 	)
 	return queryText, args, nil

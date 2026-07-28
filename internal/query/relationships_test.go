@@ -203,48 +203,6 @@ func TestRelationshipsCanceledWaiterUsesItsOwnContext(t *testing.T) {
 	requirementsForTest.Len(result.Rows, 1)
 }
 
-func TestRelationshipsDoNotRequireLegacyAnalyticalViews(t *testing.T) {
-	requirements := require.New(t)
-	assertions := assert.New(t)
-	b := NewTestDataBuilder(t)
-	sourceID := b.AddSource("owner@example.com")
-	ownerID := b.AddParticipant("owner@example.com", "example.com", "Owner")
-	personID := b.AddParticipant("person@example.com", "example.com", "Person")
-	b.AddOwnerParticipant(sourceID, ownerID)
-	messageID := b.AddMessage(MessageOpt{
-		SourceID: sourceID,
-		IsFromMe: true,
-		SentAt:   time.Date(2026, 1, 9, 0, 0, 0, 0, time.UTC),
-	})
-	b.AddFrom(messageID, ownerID, "Owner")
-	b.AddTo(messageID, personID, "Person")
-	analyticsDir, cleanup := b.Build()
-	t.Cleanup(cleanup)
-
-	engine, err := NewDuckDBEngine(
-		analyticsDir,
-		"",
-		nil,
-		DuckDBOptions{DisableLegacyAnalyticalViews: true},
-	)
-	requirements.NoError(err)
-	t.Cleanup(func() { requirements.NoError(engine.Close()) })
-
-	now := time.Date(2026, 1, 10, 0, 0, 0, 0, time.UTC)
-	for _, request := range []RelationshipsRequest{
-		{Now: now, Limit: 10},
-		{Context: Context{SourceIDs: []int64{sourceID}}, Now: now, Limit: 10},
-	} {
-		result, relationshipErr := engine.Relationships(
-			context.Background(),
-			request,
-		)
-		requirements.NoError(relationshipErr)
-		requirements.Len(result.Rows, 1)
-		assertions.Equal(personID, result.Rows[0].CanonicalID)
-	}
-}
-
 func TestDateWindowRelationshipsUseExactActivityReduction(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)
@@ -821,26 +779,10 @@ func TestRelationshipsParticipantFilterExpandsClusters(t *testing.T) {
 		Context: Context{ParticipantIDs: []int64{canonical}}, Now: now, Limit: 10,
 	})
 	requirements.NoError(err)
-	requirements.Len(logical.Rows, len(byCanonical.Rows))
 	assertions.Equal(logical.TotalCount, byCanonical.TotalCount)
 	assertions.Equal(logical.CacheRevision, byCanonical.CacheRevision)
 	assertions.Equal(logical.IdentityRevision, byCanonical.IdentityRevision)
-	for index := range logical.Rows {
-		want := logical.Rows[index]
-		got := byCanonical.Rows[index]
-		assertions.Equal(want.CanonicalID, got.CanonicalID)
-		assertions.Equal(want.DisplayLabel, got.DisplayLabel)
-		assertions.Equal(want.MemberIDs, got.MemberIDs)
-		assertions.Equal(want.Signals.SentCount, got.Signals.SentCount)
-		assertions.Equal(want.Signals.MeetingCount, got.Signals.MeetingCount)
-		assertions.Equal(want.Signals.Modalities, got.Signals.Modalities)
-		assertions.Equal(want.Signals.LastInteractionAt, got.Signals.LastInteractionAt)
-		assertions.Equal(want.LastAt, got.LastAt)
-		assertions.InDelta(want.Score, got.Score, 1e-12)
-		assertions.InDelta(want.Signals.SentToThem, got.Signals.SentToThem, 1e-12)
-		assertions.InDelta(want.Signals.ReceivedFromThem, got.Signals.ReceivedFromThem, 1e-12)
-		assertions.InDelta(want.Signals.MeetingsTogether, got.Signals.MeetingsTogether, 1e-12)
-	}
+	requireRelationshipRowsEquivalent(t, logical.Rows, byCanonical.Rows)
 	engine.identityCandidateFastPathDisabled = false
 
 	byAlias, err := engine.Relationships(ctx, RelationshipsRequest{

@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"strconv"
+
+	"go.kenn.io/kit/daemon"
 )
 
 var daemonSpillNamePattern = regexp.MustCompile(`^duckdb-query-([1-9][0-9]*)$`)
@@ -43,7 +45,7 @@ func prepareDaemonSpillDir(home string) (string, error) {
 			continue
 		}
 		pid, err := strconv.Atoi(match[1])
-		if err != nil || pid <= 0 || processAlive(pid) {
+		if err != nil || pid <= 0 || daemon.ProcessAlive(pid) {
 			continue
 		}
 		if err := os.RemoveAll(filepath.Join(tmpRoot, entry.Name())); err != nil {

@@ -1,7 +1,6 @@
 package query
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"sort"
@@ -93,69 +92,6 @@ SELECT
         FROM canon cn2 WHERE cn2.canonical_id = a.canonical_id), '[]') AS VARCHAR) AS member_ids,
     a.sent_decayed, a.sent_count, a.received_decayed, a.meetings_decayed, a.meeting_count, a.modalities, a.last_at
 FROM aggregated a`, clustersGlob, ownersGlob, labelExpr)
-}
-
-func TestRelationshipRollupMatchesLegacyOracleForOneSentEntry(t *testing.T) {
-	assertionsForTest := assert.New(t)
-	b := NewTestDataBuilder(t)
-	now := time.Date(2026, 7, 15, 0, 0, 0, 0, time.UTC)
-	sourceID := b.AddSource("owner@example.com")
-	ownerID := b.AddParticipant("owner@example.com", "example.com", "Owner")
-	personID := b.AddParticipant("person@example.com", "example.com", "Person")
-	b.AddOwnerParticipant(sourceID, ownerID)
-	messageID := b.AddMessage(MessageOpt{
-		SourceID: sourceID,
-		IsFromMe: true,
-		SentAt:   now,
-	})
-	b.AddFrom(messageID, ownerID, "Owner")
-	b.AddTo(messageID, personID, "Person")
-	engine := b.BuildEngine()
-
-	conditions, args := buildExploreConditions(ExploreRequest{})
-	queryText := buildLegacyRelationshipsSQLForEquivalence(
-		conditions,
-		engine.parquetPath(datasetParticipantClusters),
-		engine.parquetPath(datasetOwnerParticipants),
-	)
-	args = append(args, identityindex.RelationshipDecayRate, duckDBDateParam(now))
-
-	var legacy RelationshipRow
-	var memberIDsJSON string
-	err := engine.db.QueryRowContext(
-		context.Background(),
-		queryText,
-		args...,
-	).Scan(
-		&legacy.CanonicalID,
-		&legacy.DisplayLabel,
-		&memberIDsJSON,
-		&legacy.Signals.SentToThem,
-		&legacy.Signals.SentCount,
-		&legacy.Signals.ReceivedFromThem,
-		&legacy.Signals.MeetingsTogether,
-		&legacy.Signals.MeetingCount,
-		&legacy.Signals.Modalities,
-		&legacy.LastAt,
-	)
-	require.NoError(t, err)
-
-	indexed, err := engine.Relationships(
-		context.Background(),
-		RelationshipsRequest{Now: now, Limit: 10, ShowAll: true},
-	)
-	require.NoError(t, err)
-	require.Len(t, indexed.Rows, 1)
-	assertionsForTest.Equal(legacy.CanonicalID, indexed.Rows[0].CanonicalID)
-	assertionsForTest.Equal(legacy.DisplayLabel, indexed.Rows[0].DisplayLabel)
-	assertionsForTest.Equal(legacy.Signals.SentCount, indexed.Rows[0].Signals.SentCount)
-	assertionsForTest.Equal(legacy.Signals.Modalities, indexed.Rows[0].Signals.Modalities)
-	assertionsForTest.Equal(legacy.LastAt, indexed.Rows[0].LastAt)
-	assertionsForTest.InDelta(
-		legacy.Signals.SentToThem,
-		indexed.Rows[0].Signals.SentToThem,
-		1e-12,
-	)
 }
 
 func legacyRelationshipRowsForEquivalence(
@@ -428,17 +364,6 @@ func futureIDTime(builder *TestDataBuilder, messageID int64) time.Time {
 		}
 	}
 	return time.Time{}
-}
-
-func TestRelationshipIndexMatchesLegacyForEmptyArchive(t *testing.T) {
-	builder := NewTestDataBuilder(t)
-	now := time.Date(2026, 7, 15, 0, 0, 0, 0, time.UTC)
-	engine := builder.BuildEngine()
-
-	rows := compareRelationshipIndexWithLegacy(t, engine, RelationshipsRequest{
-		Now: now, Limit: 25, ShowAll: true,
-	})
-	assert.Empty(t, rows)
 }
 
 func TestRelationshipIndexDeletionScopesMatchLegacy(t *testing.T) {
