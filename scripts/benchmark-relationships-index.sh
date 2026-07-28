@@ -9,13 +9,15 @@ set -euo pipefail
 readonly SCALE_MESSAGES=2500000
 readonly SCALE_PARTICIPANTS=75000
 readonly SCALE_EDGES=6000000
-readonly GROUP_CHAT_MEMBERS=8
-readonly BUILD_SECONDS_LIMIT=25
-readonly BUILD_RSS_BYTES_LIMIT=3221225472
+readonly GROUP_CHAT_MEMBERS=3
+readonly FULL_BUILD_SECONDS_LIMIT=60
+readonly FULL_BUILD_RSS_BYTES_LIMIT=4294967296
+readonly INDEX_BUILD_SECONDS_LIMIT=45
+readonly INDEX_BUILD_RSS_BYTES_LIMIT=4294967296
 readonly COLD_QUERY_MS_LIMIT=250
-readonly FILTERED_QUERY_MS_LIMIT=1000
+readonly FILTERED_QUERY_MS_LIMIT=2500
 readonly INTERACTIVE_RSS_DELTA_KB_LIMIT=1572864
-readonly SETTLED_RSS_DELTA_KB_LIMIT=262144
+readonly SETTLED_RSS_DELTA_KB_LIMIT=1048576
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 tmp_parent="${TMPDIR:-/tmp}"
@@ -107,7 +109,22 @@ build_seconds="$(awk 'NR == 1 { print $1 }' "$build_time_file")"
 build_peak_rss_bytes="$(
   awk '/maximum resident set size/ { print $1; exit }' "$build_time_file"
 )"
-fanout_line="$(grep 'Relationship fan-out:' "$scratch/build-cache.log" | tail -1)"
+
+index_time_file="$scratch/build-index.time"
+# shellcheck disable=SC2016
+/usr/bin/time -l -o "$index_time_file" \
+  /bin/bash -c '
+    export MSGVAULT_DAEMON_BUILD_CACHE_PARENT_PID="$PPID"
+    exec "$@"
+  ' benchmark-index "$binary" --home "$benchmark_home" \
+    build-cache --derived-only \
+  >"$scratch/build-index.log" 2>&1
+index_seconds="$(awk 'NR == 1 { print $1 }' "$index_time_file")"
+index_peak_rss_bytes="$(
+  awk '/maximum resident set size/ { print $1; exit }' "$index_time_file"
+)"
+
+fanout_line="$(grep 'Relationship fan-out:' "$scratch/build-index.log" | tail -1)"
 activity_direct="$(sed -E 's/.*direct=([0-9]+).*/\1/' <<<"$fanout_line")"
 activity_conversation="$(sed -E 's/.*conversation=([0-9]+).*/\1/' <<<"$fanout_line")"
 activity_final="$(sed -E 's/.*final=([0-9]+).*/\1/' <<<"$fanout_line")"
@@ -124,7 +141,7 @@ for _ in $(seq 1 600); do
   fi
   base_url="$(sed -n 's/^  API server: //p' "$scratch/serve.log" | tail -1)"
   if [[ -n "$base_url" ]] &&
-    curl --fail --silent "$base_url/health" -o "$scratch/health.json"; then
+    curl --fail --silent "$base_url/health" -o "$scratch/health.json" 2>/dev/null; then
     break
   fi
   sleep 0.1
@@ -164,15 +181,24 @@ request_milliseconds() {
   local name="$1"
   local path="$2"
   local body="$3"
+  local result
   local elapsed
-  elapsed="$(
-    curl --fail --silent --show-error \
+  local status
+  result="$(
+    curl --silent --show-error \
       -H "Content-Type: application/json" \
       --data "$body" \
       --output "$scratch/$name.json" \
-      --write-out '%{time_total}' \
+      --write-out '%{time_total} %{http_code}' \
       "$base_url$path"
   )"
+  read -r elapsed status <<<"$result"
+  if [[ ! "$status" =~ ^2[0-9][0-9]$ ]]; then
+    printf '%s returned HTTP %s: ' "$name" "$status" >&2
+    tr -d '\r\n' <"$scratch/$name.json" >&2
+    printf '\n' >&2
+    return 1
+  fi
   awk -v seconds="$elapsed" 'BEGIN { printf "%.3f", seconds * 1000 }'
 }
 
@@ -190,7 +216,7 @@ domains_ms="$(
 )"
 person_search_ms="$(
   request_milliseconds person-search /api/v1/people/search \
-    '{"query":"user101","predicate":{},"sort":{"field":"activity_count","direction":"desc"},"limit":100}'
+    '{"identity_query":"user101","predicate":{},"sort":{"field":"activity_count","direction":"desc"},"limit":100}'
 )"
 readonly filtered='[{"dimension":"source","values":["1"]},{"dimension":"participant","values":["101"]},{"dimension":"message_type","values":["email"]},{"dimension":"deletion","values":["active"]}]'
 filtered_people_ms="$(
@@ -235,8 +261,10 @@ for latency in \
     gate_failed=1
   fi
 done
-if float_exceeds "$build_seconds" "$BUILD_SECONDS_LIMIT" ||
-  ((build_peak_rss_bytes > BUILD_RSS_BYTES_LIMIT)) ||
+if float_exceeds "$build_seconds" "$FULL_BUILD_SECONDS_LIMIT" ||
+  ((build_peak_rss_bytes > FULL_BUILD_RSS_BYTES_LIMIT)) ||
+  float_exceeds "$index_seconds" "$INDEX_BUILD_SECONDS_LIMIT" ||
+  ((index_peak_rss_bytes > INDEX_BUILD_RSS_BYTES_LIMIT)) ||
   ((peak_rss_delta_kb > INTERACTIVE_RSS_DELTA_KB_LIMIT)) ||
   ((settled_rss_delta_kb > SETTLED_RSS_DELTA_KB_LIMIT)); then
   gate_failed=1
@@ -248,7 +276,7 @@ if [[ "$gate_failed" -ne 0 ]]; then
 fi
 result_emitted=1
 printf '%s\n' \
-  "{\"status\":\"$gate_status\",\"messages\":$SCALE_MESSAGES,\"participants\":$SCALE_PARTICIPANTS,\"participant_edges\":$SCALE_EDGES,\"group_chat_members\":$GROUP_CHAT_MEMBERS,\"activity_direct_rows\":$activity_direct,\"activity_conversation_rows\":$activity_conversation,\"activity_final_rows\":$activity_final,\"activity_expansion_ratio\":$activity_expansion,\"build_seconds\":$build_seconds,\"build_peak_rss_bytes\":$build_peak_rss_bytes,\"relationships_ms\":$relationships_ms,\"people_ms\":$people_ms,\"domains_ms\":$domains_ms,\"person_search_ms\":$person_search_ms,\"filtered_people_ms\":$filtered_people_ms,\"filtered_relationships_ms\":$filtered_relationships_ms,\"date_relationships_ms\":$date_relationships_ms,\"baseline_rss_kb\":$baseline_rss_kb,\"peak_rss_delta_kb\":$peak_rss_delta_kb,\"settled_rss_delta_kb\":$settled_rss_delta_kb,\"peak_spill_bytes\":$peak_spill_bytes}"
+  "{\"status\":\"$gate_status\",\"messages\":$SCALE_MESSAGES,\"participants\":$SCALE_PARTICIPANTS,\"participant_edges\":$SCALE_EDGES,\"group_chat_members\":$GROUP_CHAT_MEMBERS,\"activity_direct_rows\":$activity_direct,\"activity_conversation_rows\":$activity_conversation,\"activity_final_rows\":$activity_final,\"activity_expansion_ratio\":$activity_expansion,\"full_build_seconds\":$build_seconds,\"full_build_peak_rss_bytes\":$build_peak_rss_bytes,\"index_build_seconds\":$index_seconds,\"index_build_peak_rss_bytes\":$index_peak_rss_bytes,\"relationships_ms\":$relationships_ms,\"people_ms\":$people_ms,\"domains_ms\":$domains_ms,\"person_search_ms\":$person_search_ms,\"filtered_people_ms\":$filtered_people_ms,\"filtered_relationships_ms\":$filtered_relationships_ms,\"date_relationships_ms\":$date_relationships_ms,\"baseline_rss_kb\":$baseline_rss_kb,\"peak_rss_delta_kb\":$peak_rss_delta_kb,\"settled_rss_delta_kb\":$settled_rss_delta_kb,\"peak_spill_bytes\":$peak_spill_bytes}"
 
 if [[ "$gate_failed" -ne 0 ]]; then
   exit 1

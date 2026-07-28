@@ -87,7 +87,7 @@ func TestPolicyConstructorsCapThreads(t *testing.T) {
 	assertionsForTest.Equal("512MB", interactive.MemoryLimit)
 	assertionsForTest.Equal("2GB", interactive.MaxTempDirectorySize)
 	assertionsForTest.Equal(min(runtime.GOMAXPROCS(0), 2), builder.Threads)
-	assertionsForTest.Equal("1536MB", builder.MemoryLimit)
+	assertionsForTest.Equal("2GB", builder.MemoryLimit)
 	assertionsForTest.Equal("8GB", builder.MaxTempDirectorySize)
 }
 
