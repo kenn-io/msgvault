@@ -1077,6 +1077,32 @@ func (g *GetPersonTimelineErrorResponseJSON503) UnmarshalJSON(data []byte) error
 	return nil
 }
 
+type ListPersonsResponse = PersonsResponse
+
+type ListPersonsErrorResponse = ErrorResponse
+
+type CreatePersonResponse = Person
+
+type CreatePersonErrorResponse = ErrorResponse
+
+type CreatePersonErrorResponseJSON = ErrorResponse
+
+type GetPersonProfileResponse = Person
+
+type GetPersonProfileErrorResponse = ErrorResponse
+
+type GetPersonProfileErrorResponseJSON = ErrorResponse
+
+type PatchPersonResponse = Person
+
+type PatchPersonErrorResponse = ErrorResponse
+
+type PatchPersonErrorResponseJSON = ErrorResponse
+
+type PatchPersonErrorResponseJSON428 = ErrorResponse
+
+type PatchPersonErrorResponseJSON503 = ErrorResponse
+
 type RunQueryResponse = QueryResult
 
 type RunQueryErrorResponse = ErrorResponse
@@ -2036,6 +2062,58 @@ type GetPersonTimelineResp struct {
 	JSON400      *GetPersonTimelineErrorResponse
 	JSON409      *GetPersonTimelineErrorResponseJSON
 	JSON503      *GetPersonTimelineErrorResponseJSON503
+}
+
+type ListPersonsResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *ListPersonsResponse
+	JSON503      *ListPersonsErrorResponse
+}
+
+type CreatePersonResp201Headers struct {
+	ETag string `header:"ETag"`
+}
+
+type CreatePersonResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON201      *CreatePersonResponse
+	Headers201   *CreatePersonResp201Headers
+	JSON409      *CreatePersonErrorResponse
+	JSON503      *CreatePersonErrorResponseJSON
+}
+
+type GetPersonProfileResp200Headers struct {
+	ETag string `header:"ETag"`
+}
+
+type GetPersonProfileResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *GetPersonProfileResponse
+	Headers200   *GetPersonProfileResp200Headers
+	JSON404      *GetPersonProfileErrorResponse
+	JSON503      *GetPersonProfileErrorResponseJSON
+}
+
+type PatchPersonResp200Headers struct {
+	ETag string `header:"ETag"`
+}
+
+type PatchPersonResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *PatchPersonResponse
+	Headers200   *PatchPersonResp200Headers
+	JSON404      *PatchPersonErrorResponse
+	JSON409      *PatchPersonErrorResponseJSON
+	JSON428      *PatchPersonErrorResponseJSON428
+	JSON503      *PatchPersonErrorResponseJSON503
 }
 
 type RunQueryResp struct {

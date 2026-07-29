@@ -322,6 +322,42 @@ func TestPhoneUpgradesEmailResolution(t *testing.T) {
 	assert.Equal(phonePID, pid)
 }
 
+func TestPhoneUpgradeSkipsMergeAcrossDurablePersons(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	r := newParticipantResolver(st)
+
+	emailPID, err := r.resolveUser(&User{
+		ID:       "@user:beeper.local",
+		Email:    "user@example.com",
+		FullName: "Alice",
+	})
+	require.NoError(err)
+	emailPerson, err := st.CreatePersonFromParticipant(emailPID)
+	require.NoError(err)
+
+	phonePID, err := st.EnsureParticipantByPhone("+15550100020", "Bob", "imessage")
+	require.NoError(err)
+	phonePerson, err := st.CreatePersonFromParticipant(phonePID)
+	require.NoError(err)
+
+	resolved, err := r.resolveUser(&User{
+		ID:          "@user:beeper.local",
+		PhoneNumber: "+15550100020",
+		FullName:    "Alice",
+	})
+	require.NoError(err)
+	assert.Equal(phonePID, resolved)
+
+	gotEmailPerson, err := st.GetPerson(emailPerson.ID)
+	require.NoError(err)
+	assert.Equal([]int64{emailPID}, gotEmailPerson.ParticipantIDs)
+	gotPhonePerson, err := st.GetPerson(phonePerson.ID)
+	require.NoError(err)
+	assert.Equal([]int64{phonePID}, gotPhonePerson.ParticipantIDs)
+}
+
 func TestResolveIDEmpty(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

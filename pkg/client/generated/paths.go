@@ -177,6 +177,16 @@ type GetPersonTimelinePath struct {
 	ID int64 `json:"id"`
 }
 
+type GetPersonProfilePath struct {
+	// ID Durable person ID
+	ID int64 `json:"id"`
+}
+
+type PatchPersonPath struct {
+	// ID Durable person ID
+	ID int64 `json:"id"`
+}
+
 type GetRelationshipTimelinePath struct {
 	// ID Any member participant ID of the counterpart's identity cluster
 	ID int64 `json:"id"`

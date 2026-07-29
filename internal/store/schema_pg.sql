@@ -55,6 +55,26 @@ CREATE TABLE IF NOT EXISTS participant_identifiers (
     UNIQUE(identifier_type, identifier_value)
 );
 
+-- Durable, user-curated people. A person's vCard UID is generated once and
+-- never depends on mutable participant identifiers or link-graph topology.
+CREATE TABLE IF NOT EXISTS persons (
+    id           BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    vcard_uid    TEXT NOT NULL UNIQUE,
+    display_name TEXT,
+    revision     BIGINT NOT NULL DEFAULT 1,
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at   TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Bindings are deliberately participant-local. Link/unlink changes the
+-- observed identity graph without rewriting curated person membership.
+CREATE TABLE IF NOT EXISTS person_participants (
+    person_id      BIGINT NOT NULL REFERENCES persons(id) ON DELETE CASCADE,
+    participant_id BIGINT NOT NULL REFERENCES participants(id) ON DELETE CASCADE,
+    PRIMARY KEY (person_id, participant_id),
+    UNIQUE(participant_id)
+);
+
 -- ============================================================================
 -- CONVERSATIONS & MESSAGES
 -- ============================================================================

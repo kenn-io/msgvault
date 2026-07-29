@@ -113,6 +113,10 @@ func (s *Server) handleIdentityLinkMutation(
 
 	revision, err := mutate(linker, req.ParticipantA, req.ParticipantB)
 	switch {
+	case errors.Is(err, store.ErrPersonBindingConflict):
+		writeError(w, http.StatusConflict, "person_binding_conflict",
+			"the identity clusters belong to different person profiles")
+		return
 	case errors.Is(err, store.ErrAlreadyLinked):
 		writeError(w, http.StatusConflict, "already_linked",
 			"these participants are already connected through other links")

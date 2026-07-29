@@ -544,6 +544,7 @@ var exclusiveLockTables = []string{
 	"sync_runs", "sources", "conversations", "conversation_participants",
 	"messages", "message_recipients", "message_labels", "message_bodies", "message_raw",
 	"attachments", "labels", "participants", "participant_identifiers", "reactions",
+	"person_participants",
 	"collections", "collection_sources", "account_identities", "applied_migrations",
 	"source_import_items", "sync_run_items", "sync_checkpoints",
 	"imap_folder_state",

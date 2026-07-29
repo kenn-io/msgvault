@@ -941,6 +941,10 @@ func (c ConversationResponse) Validate() error {
 	return errors
 }
 
+type CreatePersonRequest struct {
+	ParticipantID int64 `json:"participant_id"`
+}
+
 type CreateRequest struct {
 	Accounts []string `json:"accounts,omitempty" validate:"required"`
 	Name     string   `json:"name" validate:"required"`
@@ -2562,6 +2566,10 @@ type OperationHealth struct {
 	StartedAt *time.Time `json:"started_at,omitempty"`
 }
 
+type PatchPersonRequest struct {
+	DisplayName *string `json:"display_name,omitempty"`
+}
+
 type PatchSavedViewRequest struct {
 	CanonicalState *SavedViewStateEnvelope `json:"canonical_state,omitempty"`
 	Description    *string                 `json:"description,omitempty"`
@@ -2582,6 +2590,20 @@ func (p PatchSavedViewRequest) Validate() error {
 		return nil
 	}
 	return errors
+}
+
+type Person struct {
+	CreatedAt      time.Time `json:"created_at" validate:"required"`
+	DisplayName    *string   `json:"display_name,omitempty"`
+	ID             int64     `json:"id"`
+	ParticipantIds []int64   `json:"participant_ids,omitempty" validate:"required"`
+	Revision       int64     `json:"revision"`
+	UpdatedAt      time.Time `json:"updated_at" validate:"required"`
+	VcardUID       string    `json:"vcard_uid" validate:"required"`
+}
+
+func (p Person) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(p))
 }
 
 type PersonCluster struct {
@@ -2733,6 +2755,25 @@ func (p PersonSummary) Validate() error {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
 				errors = errors.Append(fmt.Sprintf("SourceCounts[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type PersonsResponse struct {
+	Persons []Person `json:"persons,omitempty" validate:"required"`
+}
+
+func (p PersonsResponse) Validate() error {
+	var errors runtime.ValidationErrors
+	for i, item := range p.Persons {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Persons[%d]", i), err)
 			}
 		}
 	}

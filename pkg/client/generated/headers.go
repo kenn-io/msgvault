@@ -15,6 +15,15 @@ func (c CreateOrLinkMessageTaskHeaders) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(c))
 }
 
+type PatchPersonHeaders struct {
+	// IfMatch Strong ETag returned by the latest person profile read
+	IfMatch string `json:"If-Match" validate:"required"`
+}
+
+func (p PatchPersonHeaders) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(p))
+}
+
 type DeleteSavedViewHeaders struct {
 	// IfMatch Strong ETag returned by the latest Saved View read
 	IfMatch string `json:"If-Match" validate:"required"`

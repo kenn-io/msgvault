@@ -232,6 +232,8 @@ func (s *Store) mergeParticipant(ctx context.Context, tx *loggedTx, winner, lose
 
 	// (6) Repoint (and, if needed, restructure) any link edges referencing
 	// loser before the delete below drops them via ON DELETE CASCADE.
+	// This one-shot legacy migration runs during schema setup before person
+	// profiles can be created, so there are no person bindings to re-point.
 	if err := s.rewriteLinksForMerge(tx, loser, winner); err != nil {
 		return fmt.Errorf("rewrite participant links (loser=%d, winner=%d): %w", loser, winner, err)
 	}

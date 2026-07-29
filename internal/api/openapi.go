@@ -147,7 +147,10 @@ import (
 // (any rank), and total_count reports the matched-row count (0 or 1). Clients
 // use it to hydrate a selected group without paging the ranked listing.
 // Additive (minor bump): omitting the field preserves the ranked listing.
-const APISchemaVersion = "1.31.0"
+// 1.32.0 adds durable person profiles: promote an observed participant
+// cluster, list/get stable profiles, and update the display-name override
+// with revision-tag optimistic concurrency.
+const APISchemaVersion = "1.32.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.

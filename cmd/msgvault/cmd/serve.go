@@ -795,6 +795,7 @@ var _ api.CLIEmbeddingsPlanner = (*storeAPIAdapter)(nil)
 var _ api.CLIDedupDeleteStore = (*storeAPIAdapter)(nil)
 var _ api.ContextCLIDedupDeleteStore = (*storeAPIAdapter)(nil)
 var _ api.IdentityLinkStore = (*storeAPIAdapter)(nil)
+var _ api.PersonProfileStore = (*storeAPIAdapter)(nil)
 var _ api.IdentityCacheRefresher = (*storeAPIAdapter)(nil)
 var _ api.ClusterLookupStore = (*storeAPIAdapter)(nil)
 var _ api.ConversationWindowStore = (*storeAPIAdapter)(nil)
@@ -1461,6 +1462,26 @@ func (a *storeAPIAdapter) LinkParticipants(participantA, participantB int64) (in
 
 func (a *storeAPIAdapter) UnlinkParticipants(participantA, participantB int64) (int64, error) {
 	return a.store.UnlinkParticipants(participantA, participantB)
+}
+
+func (a *storeAPIAdapter) CreatePersonFromParticipantContext(
+	ctx context.Context, participantID int64,
+) (*store.Person, error) {
+	return a.store.CreatePersonFromParticipantContext(ctx, participantID)
+}
+
+func (a *storeAPIAdapter) GetPersonContext(ctx context.Context, id int64) (*store.Person, error) {
+	return a.store.GetPersonContext(ctx, id)
+}
+
+func (a *storeAPIAdapter) ListPersonsContext(ctx context.Context) ([]store.Person, error) {
+	return a.store.ListPersonsContext(ctx)
+}
+
+func (a *storeAPIAdapter) UpdatePersonDisplayNameContext(
+	ctx context.Context, id, expectedRevision int64, displayName *string,
+) (*store.Person, error) {
+	return a.store.UpdatePersonDisplayNameContext(ctx, id, expectedRevision, displayName)
 }
 
 func (a *storeAPIAdapter) ClusterMembers(id int64) ([]int64, error) {

@@ -1,6 +1,8 @@
 package beeper
 
 import (
+	"errors"
+	"log/slog"
 	"strings"
 
 	"go.kenn.io/msgvault/internal/store"
@@ -64,7 +66,11 @@ func (r *participantResolver) resolveUser(u *User) (int64, error) {
 		// phone one (which dedupes with SMS/WhatsApp archives).
 		if e, ok := r.rich[u.ID]; ok && e.pid != pid {
 			if err := r.store.MergeParticipants(e.pid, pid); err != nil {
-				return 0, err
+				if !errors.Is(err, store.ErrPersonBindingConflict) {
+					return 0, err
+				}
+				slog.Warn("skipping Beeper participant merge across durable persons",
+					"loser_participant_id", e.pid, "winner_participant_id", pid, "error", err)
 			}
 		}
 		return pid, r.recordRich(u.ID, pid, true)
@@ -107,7 +113,11 @@ func (r *participantResolver) recordRich(userID string, pid int64, byPhone bool)
 	// differs is left un-merged (conservative: numbers can be recycled).
 	if prev != 0 && prev != pid && !hasPhone {
 		if err := r.store.MergeParticipants(prev, pid); err != nil {
-			return err
+			if !errors.Is(err, store.ErrPersonBindingConflict) {
+				return err
+			}
+			slog.Warn("skipping Beeper participant merge across durable persons",
+				"loser_participant_id", prev, "winner_participant_id", pid, "error", err)
 		}
 	}
 	if err := r.store.SetParticipantIdentifier(pid, participantIdentifierType, userID); err != nil {

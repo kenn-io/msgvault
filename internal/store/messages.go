@@ -2097,6 +2097,29 @@ func (s *Store) MergeParticipants(oldID, newID int64) error {
 		return nil
 	}
 	return s.withTx(func(tx *loggedTx) error {
+		// Serialize the curated binding check with promotion and link/unlink
+		// mutations before this transaction repoints any archive references.
+		if err := s.lockIdentityMutationTx(tx); err != nil {
+			return err
+		}
+		if err := s.verifyParticipantsExistTx(tx, oldID, newID); err != nil {
+			return err
+		}
+		edges, err := s.loadLinkEdgesTx(tx)
+		if err != nil {
+			return err
+		}
+		if err := s.ensureClustersHaveCompatiblePersonTx(
+			context.Background(), tx, oldID, newID, edges,
+		); err != nil {
+			return err
+		}
+		if err := s.rebindPersonParticipantForMerge(
+			context.Background(), tx, oldID, newID,
+		); err != nil {
+			return err
+		}
+
 		// The merge must not lose contact metadata: fill gaps on the survivor
 		// from the absorbed row, carrying the email's analytics domain with it.
 		// Email and phone are UNIQUE, so the absorbed row must release each
@@ -2175,7 +2198,7 @@ func (s *Store) MergeParticipants(oldID, newID int64) error {
 		if err := s.bumpAccountIdentityRevision(tx); err != nil {
 			return err
 		}
-		_, err := tx.Exec(`DELETE FROM participants WHERE id = ?`, oldID)
+		_, err = tx.Exec(`DELETE FROM participants WHERE id = ?`, oldID)
 		return err
 	})
 }

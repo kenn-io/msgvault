@@ -253,8 +253,10 @@ func (s *Store) verifyParticipantsExistTx(tx *loggedTx, lo, hi int64) error {
 // ErrInvalidParticipantID (wrapped) for a self-link or non-positive ID, and
 // ErrParticipantNotFound (wrapped) if either ID is not a participants row.
 // Idempotent for the exact existing edge; returns ErrAlreadyLinked for a new
-// redundant edge between participants already connected indirectly. Returns
-// the identity revision after the call.
+// redundant edge between participants already connected indirectly. Linking
+// clusters curated as different durable people returns
+// ErrPersonBindingConflict (wrapped) rather than merging those profiles.
+// Returns the identity revision after the call.
 func (s *Store) LinkParticipants(a, b int64) (int64, error) {
 	if a == b || a <= 0 || b <= 0 {
 		return 0, fmt.Errorf("link participants: ids must be distinct positive IDs (got %d, %d): %w",
@@ -272,6 +274,11 @@ func (s *Store) LinkParticipants(a, b int64) (int64, error) {
 		}
 		edges, err := s.loadLinkEdgesTx(tx)
 		if err != nil {
+			return err
+		}
+		if err := s.ensureClustersHaveCompatiblePersonTx(
+			context.Background(), tx, lo, hi, edges,
+		); err != nil {
 			return err
 		}
 		for _, e := range edges {
