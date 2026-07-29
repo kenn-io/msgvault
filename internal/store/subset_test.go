@@ -226,6 +226,40 @@ func TestCopySubset_PreservesPersonProfiles(t *testing.T) {
 	assert.Equal(person.ParticipantIDs, copied.ParticipantIDs)
 }
 
+// TestCopySubset_PreservesIdentityClusters covers a promoted linked cluster
+// whose second member has no messages in the subset: the cluster-mate row,
+// the link edge, and both person bindings must all survive the copy, so the
+// destination aggregates the cluster exactly like the source.
+func TestCopySubset_PreservesIdentityClusters(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	srcDB := createTestSourceDB(t, t.TempDir(), 5)
+	source, err := Open(srcDB)
+	require.NoError(err)
+	alias, err := source.EnsureParticipant("offline-alias@example.com", "Alias", "example.com")
+	require.NoError(err)
+	_, err = source.LinkParticipants(2, alias)
+	require.NoError(err)
+	person, _, err := source.CreatePersonFromParticipant(2)
+	require.NoError(err)
+	require.NoError(source.Close())
+
+	dstDir := filepath.Join(t.TempDir(), "dst")
+	_, err = CopySubset(srcDB, dstDir, 5)
+	require.NoError(err)
+	destination, err := Open(filepath.Join(dstDir, "msgvault.db"))
+	require.NoError(err)
+	t.Cleanup(func() { _ = destination.Close() })
+
+	members, err := destination.ClusterMembers(2)
+	require.NoError(err)
+	assert.Equal([]int64{2, alias}, members)
+
+	copied, err := destination.GetPerson(person.ID)
+	require.NoError(err)
+	assert.Equal(person.ParticipantIDs, copied.ParticipantIDs)
+}
+
 func TestCopySubset_FTSPopulated(t *testing.T) {
 	srcDir := t.TempDir()
 	dstDir := filepath.Join(t.TempDir(), "dst")

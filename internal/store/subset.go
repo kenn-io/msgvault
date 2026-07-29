@@ -312,6 +312,42 @@ func copyData(tx *sql.Tx, rowCount int) (*CopyResult, error) {
 		return nil, fmt.Errorf("participants rows affected: %w", err)
 	}
 
+	// Identity clusters must survive the subset: link components can pass
+	// through participants with no copied messages, so pull every
+	// cluster-mate of a copied participant in first, then copy the link
+	// edges inside those components. Without this, linked participants
+	// arrive as disconnected identities (and person bindings would be
+	// silently filtered to the message-bearing members).
+	res, err = tx.Exec(`
+		INSERT INTO participants SELECT * FROM src.participants
+		WHERE id IN (
+			WITH RECURSIVE cluster(id) AS (
+				SELECT id FROM participants
+				UNION
+				SELECT CASE WHEN pl.participant_a = cluster.id
+				            THEN pl.participant_b ELSE pl.participant_a END
+				FROM src.participant_links pl
+				JOIN cluster ON cluster.id IN (pl.participant_a, pl.participant_b)
+			)
+			SELECT id FROM cluster
+		)
+		  AND id NOT IN (SELECT id FROM participants)`)
+	if err != nil {
+		return nil, fmt.Errorf("copy cluster-mate participants: %w", err)
+	}
+	clusterMates, err := res.RowsAffected()
+	if err != nil {
+		return nil, fmt.Errorf("cluster-mate participants rows affected: %w", err)
+	}
+	result.Participants += clusterMates
+
+	if _, err := tx.Exec(`
+		INSERT INTO participant_links SELECT * FROM src.participant_links
+		WHERE participant_a IN (SELECT id FROM participants)
+		  AND participant_b IN (SELECT id FROM participants)`); err != nil {
+		return nil, fmt.Errorf("copy participant_links: %w", err)
+	}
+
 	if _, err := tx.Exec(`
 		INSERT INTO persons
 			(id, vcard_uid, display_name, revision, created_at, updated_at)
