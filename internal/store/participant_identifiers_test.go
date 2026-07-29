@@ -8,13 +8,15 @@ import (
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
-func readRevisions(t *testing.T, f *storetest.Fixture) (identity, account int64) {
+func readRevisions(t *testing.T, f *storetest.Fixture) (identity, account, identifier int64) {
 	t.Helper()
 	identity, err := f.Store.IdentityRevision()
 	require.NoError(t, err, "IdentityRevision")
 	account, err = f.Store.AccountIdentityRevision()
 	require.NoError(t, err, "AccountIdentityRevision")
-	return identity, account
+	identifier, err = f.Store.ParticipantIdentifierRevision()
+	require.NoError(t, err, "ParticipantIdentifierRevision")
+	return identity, account, identifier
 }
 
 // TestSetParticipantIdentifierOwnerEvidenceBumpsRevisions pins the cache
@@ -33,18 +35,20 @@ func TestSetParticipantIdentifierOwnerEvidenceBumpsRevisions(t *testing.T) {
 	require.NoError(st.AddAccountIdentity(f.Source.ID, "Me@Example.com", "manual"), "AddAccountIdentity")
 	alias := f.EnsureParticipant("alias@example.com", "Alias", "example.com")
 
-	identityBefore, accountBefore := readRevisions(t, f)
+	identityBefore, accountBefore, identifierBefore := readRevisions(t, f)
 	require.NoError(st.SetParticipantIdentifier(alias, "email", "me@example.com"),
 		"set owner-evidence identifier")
-	identityAfter, accountAfter := readRevisions(t, f)
+	identityAfter, accountAfter, identifierAfter := readRevisions(t, f)
 	assert.Greater(identityAfter, identityBefore, "identity revision after owner-evidence change")
 	assert.Greater(accountAfter, accountBefore, "account identity revision after owner-evidence change")
+	assert.Greater(identifierAfter, identifierBefore, "participant identifier revision after change")
 
 	require.NoError(st.SetParticipantIdentifier(alias, "email", "me@example.com"),
 		"idempotent re-set")
-	identityNoop, accountNoop := readRevisions(t, f)
+	identityNoop, accountNoop, identifierNoop := readRevisions(t, f)
 	assert.Equal(identityAfter, identityNoop, "identity revision after no-op re-set")
 	assert.Equal(accountAfter, accountNoop, "account identity revision after no-op re-set")
+	assert.Equal(identifierAfter, identifierNoop, "participant identifier revision after no-op re-set")
 }
 
 // TestSetParticipantIdentifierRepointOwnerEvidenceBumpsRevisions covers the
@@ -62,21 +66,25 @@ func TestSetParticipantIdentifierRepointOwnerEvidenceBumpsRevisions(t *testing.T
 	second := f.EnsureParticipant("second@example.com", "Second", "example.com")
 	require.NoError(st.SetParticipantIdentifier(first, "phone", "+15550100"), "seed owner evidence")
 
-	identityBefore, accountBefore := readRevisions(t, f)
+	identityBefore, accountBefore, identifierBefore := readRevisions(t, f)
 	require.NoError(st.SetParticipantIdentifier(second, "phone", "+15550100"), "repoint owner evidence")
-	identityAfter, accountAfter := readRevisions(t, f)
+	identityAfter, accountAfter, identifierAfter := readRevisions(t, f)
 	assert.Greater(identityAfter, identityBefore, "identity revision after owner-evidence repoint")
 	assert.Greater(accountAfter, accountBefore, "account identity revision after owner-evidence repoint")
+	assert.Greater(identifierAfter, identifierBefore, "participant identifier revision after repoint")
 
 	id, _, err := st.ParticipantByIdentifier("phone", "+15550100")
 	require.NoError(err, "ParticipantByIdentifier")
 	assert.Equal(second, id, "identifier must point at the new participant")
 }
 
-// TestSetParticipantIdentifierNonOwnerEvidenceDoesNotBump verifies plain
-// alternate identifiers (the common importer case) still write without
-// churning cache revisions.
-func TestSetParticipantIdentifierNonOwnerEvidenceDoesNotBump(t *testing.T) {
+// TestSetParticipantIdentifierNonOwnerEvidenceBumpsOnlyIdentifierRevision
+// verifies plain alternate identifiers (the common importer case) advance
+// only the participant-identifier revision — the identity directory bakes
+// identifier values, so the derived refresh must fire, but neither the
+// identity nor account-identity revision moves (no full rebuild, and no
+// escalation when new messages coincide).
+func TestSetParticipantIdentifierNonOwnerEvidenceBumpsOnlyIdentifierRevision(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -85,12 +93,13 @@ func TestSetParticipantIdentifierNonOwnerEvidenceDoesNotBump(t *testing.T) {
 	require.NoError(st.AddAccountIdentity(f.Source.ID, "me@example.com", "manual"), "AddAccountIdentity")
 	alias := f.EnsureParticipant("alias@example.com", "Alias", "example.com")
 
-	identityBefore, accountBefore := readRevisions(t, f)
+	identityBefore, accountBefore, identifierBefore := readRevisions(t, f)
 	require.NoError(st.SetParticipantIdentifier(alias, "email", "other@example.com"),
 		"set non-owner identifier")
-	identityAfter, accountAfter := readRevisions(t, f)
+	identityAfter, accountAfter, identifierAfter := readRevisions(t, f)
 	assert.Equal(identityBefore, identityAfter, "identity revision after non-owner identifier")
 	assert.Equal(accountBefore, accountAfter, "account identity revision after non-owner identifier")
+	assert.Greater(identifierAfter, identifierBefore, "participant identifier revision after non-owner identifier")
 
 	id, _, err := st.ParticipantByIdentifier("email", "other@example.com")
 	require.NoError(err, "ParticipantByIdentifier")

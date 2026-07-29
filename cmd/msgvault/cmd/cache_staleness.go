@@ -36,6 +36,15 @@ type cacheStaleness struct {
 	// arrived, in which case the incremental append cannot rewrite the
 	// already-committed rows and a full rebuild is forced below.
 	HasConversationTypeDrift bool
+	// HasParticipantIdentifierDrift signals identifier mappings changed
+	// (SetParticipantIdentifier created or repointed rows) since the last
+	// build. Identifiers bake into the identity directory datasets
+	// (participant_identifiers, relationship_people search values) but not
+	// into per-row activity facts, so this drift is repaired by the
+	// index-only refresh and — unlike link or conversation drift — never
+	// escalates to a full rebuild when new messages coincide: incremental
+	// builds re-stage participant_identifiers in full anyway.
+	HasParticipantIdentifierDrift bool
 	// HasAccountIdentityDrift signals an identity mutation that invalidates
 	// baked message data since the last build: an account identity was
 	// confirmed or removed, or two participants were merged (merges repoint
@@ -96,9 +105,10 @@ func cacheNeedsBuild(dbPath, analyticsDir string) cacheStaleness {
 }
 
 // cacheNeedsBuildLocked performs readiness inspection while the caller holds
-// the exclusive cache build lock. Incomplete marker-last publication is
-// detected as drift and rebuilt; publication does not maintain a recovery
-// journal.
+// the exclusive cache builder lock (publications also run under it, so the
+// committed marker cannot change mid-inspection). Incomplete marker-last
+// publication is detected as drift and rebuilt; publication does not
+// maintain a recovery journal.
 func cacheNeedsBuildLocked(dbPath, analyticsDir string) cacheStaleness {
 	readiness, err := query.InspectCacheReadiness(analyticsDir)
 	if err != nil {
@@ -320,6 +330,18 @@ func cacheNeedsBuildLocked(dbPath, analyticsDir string) cacheStaleness {
 	if identityRevision != state.IdentityRevision {
 		result.HasIdentityDrift = true
 		reasons = append(reasons, "identity revision changed")
+	}
+
+	participantIdentifierRevision, err := db.ParticipantIdentifierRevision()
+	if err != nil {
+		return cacheStaleness{
+			NeedsBuild: true, FullRebuild: true,
+			Reason: "cannot verify participant identifier revision",
+		}
+	}
+	if participantIdentifierRevision != state.ParticipantIdentifierRevision {
+		result.HasParticipantIdentifierDrift = true
+		reasons = append(reasons, "participant identifiers changed")
 	}
 
 	conversationFingerprint, err := sourceConversationParticipantsFingerprint(

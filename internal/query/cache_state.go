@@ -41,9 +41,16 @@ type CacheSyncState struct {
 	// flag, which the lightweight identity-only refresh does not re-derive,
 	// so this field must only advance on a full rebuild — see
 	// cacheops.RefreshIdentityDatasets.
-	AccountIdentityRevision int64     `json:"account_identity_revision,omitempty"`
-	PublishedAt             time.Time `json:"published_at"`
-	DatasetFingerprint      string    `json:"dataset_fingerprint"`
+	AccountIdentityRevision int64 `json:"account_identity_revision,omitempty"`
+	// ParticipantIdentifierRevision tracks identifier-mapping changes
+	// (SetParticipantIdentifier creating or repointing rows). Identifiers
+	// bake into the identity directory datasets (participant_identifiers,
+	// relationship_people search values) but not into per-row activity
+	// facts, so drift here alone is repaired by the derived-dataset
+	// refresh and never forces a full rebuild.
+	ParticipantIdentifierRevision int64     `json:"participant_identifier_revision,omitempty"`
+	PublishedAt                   time.Time `json:"published_at"`
+	DatasetFingerprint            string    `json:"dataset_fingerprint"`
 
 	ConversationParticipantsFingerprint string `json:"conversation_participants_fingerprint,omitempty"`
 	// ConversationTypesFingerprint hashes (id, conversation_type) for every
@@ -86,7 +93,7 @@ func (e *CacheUnavailableError) Unwrap() error { return ErrCacheUnavailable }
 // Revision identifies one committed cache publication. It intentionally uses
 // only commit-marker fields, never ambient filesystem state.
 func (s CacheSyncState) Revision() string {
-	payload := fmt.Sprintf("v=%d|message=%d|watermark=%s|run=%d|add=%d|update=%d|fail_count=%d|fail_sum=%d|identity=%d|account_identity=%d|published=%s",
+	payload := fmt.Sprintf("v=%d|message=%d|watermark=%s|run=%d|add=%d|update=%d|fail_count=%d|fail_sum=%d|identity=%d|account_identity=%d|participant_identifier=%d|published=%s",
 		s.SchemaVersion,
 		s.LastMessageID,
 		s.LastSyncAt.UTC().Format(time.RFC3339Nano),
@@ -97,6 +104,7 @@ func (s CacheSyncState) Revision() string {
 		s.LastFailedSyncRunIDSum,
 		s.IdentityRevision,
 		s.AccountIdentityRevision,
+		s.ParticipantIdentifierRevision,
 		s.PublishedAt.UTC().Format(time.RFC3339Nano),
 	)
 	return fmt.Sprintf("cache-%x", sha256.Sum256([]byte(payload)))

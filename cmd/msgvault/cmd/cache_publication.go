@@ -252,13 +252,29 @@ func syncStagedMoveContents(source string) error {
 	})
 }
 
+// cachePublishLocking selects how publication coordinates with readers on
+// the shared cache lock (query.CacheBuildLockPath). Builders run staging and
+// index construction under only the builder lock, so their publication must
+// acquire the reader-coordination lock exclusively for the brief
+// rename+marker step. Destructive maintenance (lockCacheAndInvalidateSyncState)
+// already holds that lock exclusively for its whole operation and must not
+// re-acquire it — a second acquisition in the same process uses a second
+// file descriptor and self-deadlocks.
+type cachePublishLocking uint8
+
+const (
+	acquirePublishLock cachePublishLocking = iota
+	publishLockHeld
+)
+
 func publishCache(
 	staging *cacheStaging,
 	analyticsDir string,
 	plan cachePublishPlan,
 	stateData []byte,
+	locking cachePublishLocking,
 ) error {
-	return publishCacheWithBeforeMarker(staging, analyticsDir, plan, stateData, nil)
+	return publishCacheWithBeforeMarker(staging, analyticsDir, plan, stateData, nil, locking)
 }
 
 func publishCacheWithBeforeMarker(
@@ -267,6 +283,7 @@ func publishCacheWithBeforeMarker(
 	plan cachePublishPlan,
 	stateData []byte,
 	beforeMarker func() error,
+	locking cachePublishLocking,
 ) error {
 	moves, err := planCacheMoves(staging, analyticsDir, plan)
 	if err != nil {
@@ -287,6 +304,18 @@ func publishCacheWithBeforeMarker(
 		if err := syncStagedMoveContents(move.source); err != nil {
 			return fmt.Errorf("sync staged cache dataset %s: %w", move.dataset, err)
 		}
+	}
+	// Readers are excluded only from here on: everything above touched
+	// staged files, not the committed generation.
+	if locking == acquirePublishLock {
+		readerLock, err := cacheBuildFileLock(analyticsDir)
+		if err != nil {
+			return fmt.Errorf("create cache publish lock: %w", err)
+		}
+		if err := readerLock.Lock(); err != nil {
+			return fmt.Errorf("acquire cache publish lock: %w", err)
+		}
+		defer func() { _ = readerLock.Unlock() }()
 	}
 	for _, move := range moves {
 		if move.replace {

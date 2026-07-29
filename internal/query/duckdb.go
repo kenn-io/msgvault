@@ -354,10 +354,12 @@ func (e *DuckDBEngine) acquireQuerySlot(ctx context.Context) (func(), error) {
 }
 
 // acquireCacheRead holds the shared cache lock for the duration of one query
-// so a concurrent cache build (which holds it exclusively) cannot delete or
-// replace Parquet files mid-read. Shared holders never conflict with each
-// other; a reader blocks only while a build runs (seconds). Engines opened
-// without an analytics directory have no cache to guard.
+// so a concurrent cache publication (which holds it exclusively) cannot
+// delete or replace Parquet files mid-read. Shared holders never conflict
+// with each other; a reader blocks only during the brief rename+marker
+// publication step or destructive maintenance — build staging runs under a
+// separate builder lock and leaves the committed generation readable.
+// Engines opened without an analytics directory have no cache to guard.
 //
 // After the lock is held, the cache is validated as a committed publication
 // (see validateCommittedCache — memoized, so an unchanged cache costs one

@@ -2200,15 +2200,17 @@ func (s *Store) ParticipantByIdentifier(identifierType, identifierValue string) 
 // it to persist alternate identifiers on an already-resolved participant so
 // later runs unify instead of forking a new participant.
 //
-// When the write actually changes the mapping AND the identifier matches a
-// confirmed account-identity address, it is owner evidence: the analytics
-// cache bakes it into owner_participants, the per-row is_owner flags of the
-// relationship activity index, and the export-derived is_from_me flag in
-// message shards. Those bakes carry no fingerprint of their own, so the
-// mutation bumps the identity and account-identity revisions the way
-// MergeParticipants does — the account-identity bump forces the full rebuild
-// that re-derives committed shards. No-op calls (the common importer re-run)
-// bump nothing.
+// Any write that actually changes the mapping bumps the participant-identifier
+// revision: identifiers bake into the identity directory (relationship_people
+// search values and the participant_identifiers Parquet export), and the
+// derived-dataset refresh repairs that drift cheaply. When the changed
+// identifier additionally matches a confirmed account-identity address, it is
+// owner evidence: the analytics cache bakes it into owner_participants, the
+// per-row is_owner flags of the relationship activity index, and the
+// export-derived is_from_me flag in message shards — so the mutation also
+// bumps the identity and account-identity revisions the way MergeParticipants
+// does, forcing the full rebuild that re-derives committed shards. No-op
+// calls (the common importer re-run) bump nothing.
 func (s *Store) SetParticipantIdentifier(participantID int64, identifierType, identifierValue string) error {
 	identifierType = strings.TrimSpace(identifierType)
 	identifierValue = strings.TrimSpace(identifierValue)
@@ -2233,6 +2235,9 @@ func (s *Store) SetParticipantIdentifier(participantID int64, identifierType, id
 			ON CONFLICT (identifier_type, identifier_value) DO UPDATE SET participant_id = excluded.participant_id
 		`, participantID, identifierType, identifierValue); err != nil {
 			return fmt.Errorf("set participant identifier: %w", err)
+		}
+		if err := s.bumpParticipantIdentifierRevision(tx); err != nil {
+			return err
 		}
 		var ownerEvidence bool
 		if err := tx.QueryRow(`

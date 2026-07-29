@@ -50,18 +50,36 @@ const (
 // files (_last_sync.json, parquet directories) can corrupt the cache.
 var buildCacheMu sync.Mutex
 
-// cacheBuildFileLock returns the inter-process lock that serializes cache
-// builds across processes. buildCacheMu only covers one process, but cache
-// writers span several: the daemon's own build subprocesses and daemon-owned
-// CLI children whose ingest commands rebuild the cache in-process via
-// rebuildCacheAfterWrite (e.g. the daemon's background startup build racing
-// the very sync that auto-started it). The lock file lives NEXT TO the
-// analytics directory, not inside it: stateless replacement and account
-// removal can replace live dataset directories, while this stable lock inode
-// must continue excluding other writers. The OS releases the lock if the
-// holder dies.
+// cacheBuildFileLock returns the reader-coordination lock (see
+// query.CacheBuildLockPath): DuckDB readers hold it shared per query, and
+// cache writers hold it exclusively only while they actually mutate live
+// cache paths — the brief rename+marker publication step, and destructive
+// maintenance (lockCacheAndInvalidateSyncState) for its whole operation.
+// Staging and index construction run under cacheBuilderFileLock instead, so
+// a multi-minute rebuild no longer blocks queries against the committed
+// generation. The lock file lives NEXT TO the analytics directory, not
+// inside it: stateless replacement and account removal can replace live
+// dataset directories, while this stable lock inode must continue excluding
+// other writers. The OS releases the lock if the holder dies.
 func cacheBuildFileLock(analyticsDir string) (*flock.Flock, error) {
 	lockPath := query.CacheBuildLockPath(analyticsDir)
+	if err := os.MkdirAll(filepath.Dir(lockPath), 0755); err != nil {
+		return nil, fmt.Errorf("create analytics parent dir: %w", err)
+	}
+	return flock.New(lockPath), nil
+}
+
+// cacheBuilderFileLock returns the inter-process lock that serializes cache
+// BUILDERS across processes without excluding readers. buildCacheMu only
+// covers one process, but cache writers span several: the daemon's own build
+// subprocesses and daemon-owned CLI children whose ingest commands rebuild
+// the cache in-process via rebuildCacheAfterWrite (e.g. the daemon's
+// background startup build racing the very sync that auto-started it).
+// Lock ordering: the builder lock is always acquired BEFORE the reader
+// coordination lock (cacheBuildFileLock); readers never take the builder
+// lock, so no cycle exists.
+func cacheBuilderFileLock(analyticsDir string) (*flock.Flock, error) {
+	lockPath := filepath.Clean(analyticsDir) + ".builder.lock"
 	if err := os.MkdirAll(filepath.Dir(lockPath), 0755); err != nil {
 		return nil, fmt.Errorf("create analytics parent dir: %w", err)
 	}
@@ -85,26 +103,45 @@ func invalidateSyncStateFile(stateFile string) error {
 	return nil
 }
 
-// lockCacheAndInvalidateSyncState returns an exclusive writer lock with the
-// cache commit marker already invalidated. Callers must keep the lock through
-// their database mutation and the lock-held cache rebuild. A destructive
-// mutation must not proceed when either protection step fails.
-func lockCacheAndInvalidateSyncState(analyticsDir string) (*flock.Flock, error) {
-	buildLock, err := cacheBuildFileLock(analyticsDir)
+// lockCacheAndInvalidateSyncState returns a release function with the cache
+// exclusively locked against builders AND readers and the commit marker
+// already invalidated. Callers must keep the locks through their database
+// mutation and the lock-held cache rebuild (buildCacheLocked with
+// publishLockHeld — the publication step must not re-acquire the
+// reader-coordination lock this function already holds, or it would
+// self-deadlock on a second file descriptor). A destructive mutation must
+// not proceed when any protection step fails.
+func lockCacheAndInvalidateSyncState(analyticsDir string) (func() error, error) {
+	builderLock, err := acquireCacheBuildLock(analyticsDir)
 	if err != nil {
-		return nil, fmt.Errorf("create analytics cache lock: %w", err)
+		return nil, fmt.Errorf("serialize against cache builders: %w", err)
 	}
-	if err := buildLock.Lock(); err != nil {
-		return nil, fmt.Errorf("lock analytics cache: %w", err)
-	}
-	if err := invalidateSyncStateFile(query.CacheStatePath(analyticsDir)); err != nil {
-		unlockErr := buildLock.Unlock()
+	readerLock, err := cacheBuildFileLock(analyticsDir)
+	if err != nil {
 		return nil, errors.Join(
-			fmt.Errorf("invalidate analytics cache before mutation: %w", err),
-			wrapError(unlockErr, "unlock analytics cache after invalidation failure"),
+			fmt.Errorf("create analytics cache lock: %w", err),
+			wrapError(builderLock.Unlock(), "unlock cache builder lock"),
 		)
 	}
-	return buildLock, nil
+	if err := readerLock.Lock(); err != nil {
+		return nil, errors.Join(
+			fmt.Errorf("lock analytics cache: %w", err),
+			wrapError(builderLock.Unlock(), "unlock cache builder lock"),
+		)
+	}
+	release := func() error {
+		return errors.Join(
+			wrapError(readerLock.Unlock(), "unlock analytics cache"),
+			wrapError(builderLock.Unlock(), "unlock cache builder lock"),
+		)
+	}
+	if err := invalidateSyncStateFile(query.CacheStatePath(analyticsDir)); err != nil {
+		return nil, errors.Join(
+			fmt.Errorf("invalidate analytics cache before mutation: %w", err),
+			wrapError(release(), "unlock analytics cache after invalidation failure"),
+		)
+	}
+	return release, nil
 }
 
 func wrapError(err error, message string) error {
@@ -371,7 +408,7 @@ func buildCacheDerivedOnly(dbPath, analyticsDir string) (*buildResult, error) {
 		return nil, err
 	}
 	defer func() { _ = buildLock.Unlock() }()
-	return refreshDerivedDatasetsOnly(context.Background(), dbPath, analyticsDir)
+	return refreshDerivedDatasetsOnly(context.Background(), dbPath, analyticsDir, acquirePublishLock)
 }
 
 func acquireBuildCacheWriteLock(cfg *config.Config) (func(), error) {
@@ -418,11 +455,15 @@ func buildCacheImpl(dbPath, analyticsDir string, fullRebuild, recheckStaleness b
 		return nil, err
 	}
 	defer func() { _ = buildLock.Unlock() }()
-	return buildCacheLocked(dbPath, analyticsDir, fullRebuild, recheckStaleness)
+	return buildCacheLocked(dbPath, analyticsDir, fullRebuild, recheckStaleness, acquirePublishLock)
 }
 
+// acquireCacheBuildLock takes the exclusive builder lock that serializes
+// staging and index construction across processes. Readers are NOT excluded
+// by this lock — they keep querying the committed generation until the
+// publication step briefly takes the reader-coordination lock.
 func acquireCacheBuildLock(analyticsDir string) (*flock.Flock, error) {
-	buildLock, err := cacheBuildFileLock(analyticsDir)
+	buildLock, err := cacheBuilderFileLock(analyticsDir)
 	if err != nil {
 		return nil, err
 	}
@@ -457,11 +498,25 @@ func conversationsExportSelectSQL(lastMessageID int64) string {
 		)`, exportableMessageWhere("m"), lastMessageID)
 }
 
+// participantIdentifiersExportSelectSQL renders the participant_identifiers
+// dataset export query. Shared by the full/incremental export and the
+// derived-refresh re-staging (exportDerivedParticipantIdentifiers) so the two
+// can never bake different rows.
+func participantIdentifiersExportSelectSQL() string {
+	return `SELECT participant_id,
+			COALESCE(TRY_CAST(identifier_type AS VARCHAR), '') AS identifier_type,
+			COALESCE(TRY_CAST(identifier_value AS VARCHAR), '') AS identifier_value,
+			COALESCE(TRY_CAST(display_value AS VARCHAR), '') AS display_value,
+			COALESCE(TRY_CAST(is_primary AS BOOLEAN), false) AS is_primary
+		FROM sqlite_db.participant_identifiers`
+}
+
 // derivedDriftOnly reports whether participant-link, conversation-membership,
-// or conversation-type drift is the only staleness signal. The index-only
-// refresh rebuilds the four relationship datasets from committed base Parquet
-// without re-exporting it (re-staging only the drifted replaceable base
-// dataset: conversation_participants or conversations).
+// conversation-type, or participant-identifier drift is the only staleness
+// signal. The index-only refresh rebuilds the four relationship datasets from
+// committed base Parquet without re-exporting it (re-staging only the drifted
+// replaceable base dataset: conversation_participants, conversations, or
+// participant_identifiers).
 //
 // HasAccountIdentityDrift is excluded even though it also bumps
 // identity_revision (and therefore HasIdentityDrift): confirming or
@@ -471,21 +526,29 @@ func conversationsExportSelectSQL(lastMessageID int64) string {
 // path.
 func derivedDriftOnly(staleness cacheStaleness) bool {
 	return (staleness.HasIdentityDrift || staleness.HasConversationParticipantDrift ||
-		staleness.HasConversationTypeDrift) &&
+		staleness.HasConversationTypeDrift || staleness.HasParticipantIdentifierDrift) &&
 		!staleness.HasNew && !staleness.HasDeleted &&
 		!staleness.HasUpdated && !staleness.HasAccountIdentityDrift
 }
 
 // refreshIdentityDatasetsOnly rebuilds every identity-derived dataset while
 // leaving immutable message facts untouched. The caller already holds the
-// exclusive cross-process cache build lock.
-func refreshIdentityDatasetsOnly(dbPath, analyticsDir string) (*buildResult, error) {
-	return refreshDerivedDatasetsOnly(context.Background(), dbPath, analyticsDir)
+// exclusive cross-process cache builder lock.
+func refreshIdentityDatasetsOnly(
+	dbPath, analyticsDir string,
+	locking cachePublishLocking,
+) (*buildResult, error) {
+	return refreshDerivedDatasetsOnly(context.Background(), dbPath, analyticsDir, locking)
 }
 
 // buildCacheLocked exports and publishes a cache while the caller holds the
-// exclusive cross-process cache lock.
-func buildCacheLocked(dbPath, analyticsDir string, fullRebuild, recheckStaleness bool) (*buildResult, error) {
+// exclusive cross-process cache builder lock. locking describes how the
+// publication step coordinates with readers — see cachePublishLocking.
+func buildCacheLocked(
+	dbPath, analyticsDir string,
+	fullRebuild, recheckStaleness bool,
+	locking cachePublishLocking,
+) (*buildResult, error) {
 	if err := cleanupStaleCacheStaging(analyticsDir); err != nil {
 		return nil, err
 	}
@@ -495,7 +558,7 @@ func buildCacheLocked(dbPath, analyticsDir string, fullRebuild, recheckStaleness
 			return &buildResult{Skipped: true, OutputDir: analyticsDir}, nil
 		}
 		if derivedDriftOnly(staleness) {
-			return refreshIdentityDatasetsOnly(dbPath, analyticsDir)
+			return refreshIdentityDatasetsOnly(dbPath, analyticsDir, locking)
 		}
 		fullRebuild = staleness.FullRebuild
 	}
@@ -552,6 +615,11 @@ func buildCacheLocked(dbPath, analyticsDir string, fullRebuild, recheckStaleness
 	if err != nil {
 		_ = identityStore.Close()
 		return nil, fmt.Errorf("read account identity revision: %w", err)
+	}
+	participantIdentifierRevision, err := identityStore.ParticipantIdentifierRevision()
+	if err != nil {
+		_ = identityStore.Close()
+		return nil, fmt.Errorf("read participant identifier revision: %w", err)
 	}
 	participantClusters, err := identityStore.ParticipantClusters()
 	if err != nil {
@@ -824,17 +892,12 @@ func buildCacheLocked(dbPath, analyticsDir string, fullRebuild, recheckStaleness
 	escapedParticipantIdentifiersDir := strings.ReplaceAll(participantIdentifiersDir, "'", "''")
 	if err := runExport(tableParticipantIdentifiers, fmt.Sprintf(`
 	COPY (
-		SELECT participant_id,
-			COALESCE(TRY_CAST(identifier_type AS VARCHAR), '') AS identifier_type,
-			COALESCE(TRY_CAST(identifier_value AS VARCHAR), '') AS identifier_value,
-			COALESCE(TRY_CAST(display_value AS VARCHAR), '') AS display_value,
-			COALESCE(TRY_CAST(is_primary AS BOOLEAN), false) AS is_primary
-		FROM sqlite_db.participant_identifiers
+		%s
 	) TO '%s/participant_identifiers.parquet' (
 		FORMAT PARQUET,
 		COMPRESSION 'zstd'
 	)
-	`, escapedParticipantIdentifiersDir)); err != nil {
+	`, participantIdentifiersExportSelectSQL(), escapedParticipantIdentifiersDir)); err != nil {
 		return nil, fmt.Errorf("export participant identifiers: %w", err)
 	}
 
@@ -1169,6 +1232,7 @@ func buildCacheLocked(dbPath, analyticsDir string, fullRebuild, recheckStaleness
 		LastFailedSyncRunIDSum:              syncCounters.failedRunIDSum,
 		IdentityRevision:                    identityRevision,
 		AccountIdentityRevision:             accountIdentityRevision,
+		ParticipantIdentifierRevision:       participantIdentifierRevision,
 		ConversationParticipantsFingerprint: derived.ConversationParticipantsFingerprint,
 		ConversationTypesFingerprint:        typesFingerprint,
 		Stats:                               derived.Stats,
@@ -1177,7 +1241,7 @@ func buildCacheLocked(dbPath, analyticsDir string, fullRebuild, recheckStaleness
 	if err != nil {
 		return nil, fmt.Errorf("marshal sync state: %w", err)
 	}
-	if err := publishCache(staging, analyticsDir, publicationPlan, stateData); err != nil {
+	if err := publishCache(staging, analyticsDir, publicationPlan, stateData, locking); err != nil {
 		return nil, err
 	}
 

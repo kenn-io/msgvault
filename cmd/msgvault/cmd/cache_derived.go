@@ -26,6 +26,7 @@ var derivedPublishBeforeMarkerHook func() error
 func refreshDerivedDatasetsOnly(
 	ctx context.Context,
 	dbPath, analyticsDir string,
+	locking cachePublishLocking,
 ) (*buildResult, error) {
 	readiness, err := query.InspectCacheReadiness(analyticsDir)
 	if err != nil {
@@ -76,6 +77,11 @@ func refreshDerivedDatasetsOnly(
 		_ = st.Close()
 		return nil, fmt.Errorf("%w: account identity revision changed",
 			ErrDerivedRefreshRequiresFullBuild)
+	}
+	participantIdentifierRevision, err := st.ParticipantIdentifierRevision()
+	if err != nil {
+		_ = st.Close()
+		return nil, fmt.Errorf("read participant identifier revision: %w", err)
 	}
 	clusters, err := st.ParticipantClusters()
 	if err != nil {
@@ -128,6 +134,7 @@ func refreshDerivedDatasetsOnly(
 	}
 
 	if identityRevision == state.IdentityRevision &&
+		participantIdentifierRevision == state.ParticipantIdentifierRevision &&
 		conversationFingerprint == state.ConversationParticipantsFingerprint &&
 		typesFingerprint == state.ConversationTypesFingerprint {
 		// Nothing the derived datasets read has changed (the account-identity
@@ -152,6 +159,17 @@ func refreshDerivedDatasetsOnly(
 			state.LastMessageID,
 			staging.root,
 		); err != nil {
+			return nil, err
+		}
+	}
+	identifiersChanged :=
+		participantIdentifierRevision != state.ParticipantIdentifierRevision
+	if identifiersChanged {
+		// The directory rebuild reads identifier values from the
+		// participant_identifiers base dataset (relationship_people search
+		// values and label fallbacks), so a changed mapping must be re-staged
+		// and republished alongside the derived index.
+		if err := exportDerivedParticipantIdentifiers(ctx, exportDB, staging.root); err != nil {
 			return nil, err
 		}
 	}
@@ -190,12 +208,13 @@ func refreshDerivedDatasetsOnly(
 	}
 
 	state.IdentityRevision = identityRevision
+	state.ParticipantIdentifierRevision = participantIdentifierRevision
 	state.ConversationParticipantsFingerprint = conversationFingerprint
 	state.ConversationTypesFingerprint = typesFingerprint
 	// Stats describe the unchanged committed raw snapshot. Preserve them
 	// byte-for-byte instead of scanning Parquet again.
-	plan := derivedCachePublishPlan(conversationChanged, typesChanged)
-	if err := publishDerivedCache(staging, analyticsDir, plan, state); err != nil {
+	plan := derivedCachePublishPlan(conversationChanged, typesChanged, identifiersChanged)
+	if err := publishDerivedCache(staging, analyticsDir, plan, state, locking); err != nil {
 		return nil, err
 	}
 	return &buildResult{OutputDir: analyticsDir, IdentityOnly: true}, nil
@@ -323,6 +342,31 @@ func exportDerivedOwnerParticipants(
 	return nil
 }
 
+// exportDerivedParticipantIdentifiers re-stages the participant_identifiers
+// base dataset with the full export query so an index-only refresh triggered
+// by identifier drift rebuilds the identity directory from current mappings
+// and republishes the dataset participant-label fallbacks join.
+func exportDerivedParticipantIdentifiers(
+	ctx context.Context,
+	db sqlRunner,
+	stagingRoot string,
+) error {
+	dir := filepath.Join(stagingRoot, tableParticipantIdentifiers)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("create derived participant identifiers directory: %w", err)
+	}
+	path := filepath.Join(dir, "participant_identifiers.parquet")
+	_, err := db.ExecContext(ctx, fmt.Sprintf(`
+		COPY (
+			%s
+		) TO '%s' (FORMAT PARQUET, COMPRESSION 'zstd')
+	`, participantIdentifiersExportSelectSQL(), quoteCacheSQL(path)))
+	if err != nil {
+		return fmt.Errorf("export derived participant identifiers: %w", err)
+	}
+	return nil
+}
+
 func exportDerivedParticipantClusters(
 	ctx context.Context,
 	db sqlRunner,
@@ -399,7 +443,7 @@ func quoteCacheSQL(value string) string {
 }
 
 func derivedCachePublishPlan(
-	includeConversationParticipants, includeConversations bool,
+	includeConversationParticipants, includeConversations, includeParticipantIdentifiers bool,
 ) cachePublishPlan {
 	plan := cachePublishPlan{
 		Append:  make(map[string]bool),
@@ -421,6 +465,9 @@ func derivedCachePublishPlan(
 	if includeConversations {
 		plan.Replace[tableConversations] = true
 	}
+	if includeParticipantIdentifiers {
+		plan.Replace[tableParticipantIdentifiers] = true
+	}
 	return plan
 }
 
@@ -429,6 +476,7 @@ func publishDerivedCache(
 	analyticsDir string,
 	plan cachePublishPlan,
 	state query.CacheSyncState,
+	locking cachePublishLocking,
 ) error {
 	data, err := json.Marshal(state)
 	if err != nil {
@@ -440,5 +488,6 @@ func publishDerivedCache(
 		plan,
 		data,
 		derivedPublishBeforeMarkerHook,
+		locking,
 	)
 }
