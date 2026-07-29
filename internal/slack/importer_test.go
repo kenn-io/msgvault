@@ -1231,6 +1231,41 @@ func TestMaintenanceRepairsReplyEdits(t *testing.T) {
 	assert.Equal("ancient reply (stealth edit)", readBody(), "--maintenance must repair reply edits, not only top-level messages")
 }
 
+func TestMaintenanceNoThreadsRepairsOnlyTopLevelMessages(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := testWorkspace(t)
+	imp, opts := testImporter(t, f)
+	st := imp.store
+
+	_, err := imp.Import(context.Background(), opts)
+	require.NoError(err)
+
+	f.mu.Lock()
+	f.conv("C01").Msgs[7].Text = "hello 7 (maintenance edit)"
+	f.conv("C01").Msgs[5].Replies[0].Text = "reply one (maintenance edit)"
+	f.mu.Unlock()
+
+	combined := opts
+	combined.Maintenance = true
+	combined.NoThreads = true
+	_, err = imp.Import(context.Background(), combined)
+	require.NoError(err)
+
+	readBody := func(sourceMessageID string) string {
+		var body string
+		require.NoError(st.DB().QueryRow(st.Rebind(`
+			SELECT mb.body_text FROM message_bodies mb
+			JOIN messages m ON m.id = mb.message_id
+			WHERE m.source_message_id = ?`), sourceMessageID).Scan(&body))
+		return body
+	}
+	assert.Equal("hello 7 (maintenance edit)", readBody("C01:"+ts(7)),
+		"--maintenance must still repair top-level messages")
+	assert.Equal("reply one", readBody("C01:"+ts(100)),
+		"--no-threads must suppress maintenance reply traversal")
+}
+
 func TestFirstReplyToUnthreadedMessageRecoveredByCatchUp(t *testing.T) {
 	require := require.New(t)
 	f := newFakeSlack(t)

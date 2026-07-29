@@ -842,10 +842,10 @@ func (imp *Importer) parentArchived(sourceID int64, channelID, ts string) (bool,
 }
 
 // rescanHead re-pages the bounded maintenance window, re-upserting messages
-// and their threads to repair edits and reaction changes. Its upper bound is
-// the cursor message INCLUSIVE: with the default exclusive bounds, edits to
-// the newest archived message would stay invisible until a newer message
-// moved the cursor past it.
+// and, unless NoThreads is set, their threads to repair edits and reaction
+// changes. Its upper bound is the cursor message INCLUSIVE: with the default
+// exclusive bounds, edits to the newest archived message would stay invisible
+// until a newer message moved the cursor past it.
 func (imp *Importer) rescanHead(ctx context.Context, cc *convScope, sum *ImportSummary) error {
 	oldest := fmt.Sprintf("%d.000000", imp.now().Add(-maintenanceRescanWindow).Unix())
 	if cc.cs.Cursor != "" && tsLess(cc.cs.Cursor, oldest) {
@@ -860,18 +860,20 @@ func (imp *Importer) rescanHead(ctx context.Context, cc *convScope, sum *ImportS
 	// reply inside the window, regardless of root age, then let the page
 	// scan below cover roots the archive has not linked yet (deduped).
 	rescanned := map[string]bool{}
-	rootIDs, err := imp.store.ListSlackRecentReplyThreadRoots(cc.sourceID, cc.convID, imp.now().Add(-maintenanceRescanWindow))
-	if err != nil {
-		return fmt.Errorf("list recent-reply thread roots: %w", err)
-	}
-	for _, id := range rootIDs {
-		_, rootTS, ok := strings.Cut(id, ":")
-		if !ok {
-			continue
+	if !cc.opts.NoThreads {
+		rootIDs, err := imp.store.ListSlackRecentReplyThreadRoots(cc.sourceID, cc.convID, imp.now().Add(-maintenanceRescanWindow))
+		if err != nil {
+			return fmt.Errorf("list recent-reply thread roots: %w", err)
 		}
-		rescanned[rootTS] = true
-		if err := imp.rescanThread(ctx, cc, rootTS, sum); err != nil {
-			return err
+		for _, id := range rootIDs {
+			_, rootTS, ok := strings.Cut(id, ":")
+			if !ok {
+				continue
+			}
+			rescanned[rootTS] = true
+			if err := imp.rescanThread(ctx, cc, rootTS, sum); err != nil {
+				return err
+			}
 		}
 	}
 
@@ -909,15 +911,18 @@ func (imp *Importer) rescanHead(ctx context.Context, cc *convScope, sum *ImportS
 		}
 		// Repair thread REPLIES too: history structurally excludes them,
 		// and the rescan's contract is edits/reactions on recent messages
-		// — replies included.
-		for i := range page.Messages {
-			m := &page.Messages[i]
-			if !m.IsThreadRoot() || rescanned[m.TS] {
-				continue
-			}
-			rescanned[m.TS] = true
-			if err := imp.rescanThread(ctx, cc, m.TS, sum); err != nil {
-				return err
+		// — replies included unless --no-threads explicitly suppresses
+		// every reply-fetching path for this run.
+		if !cc.opts.NoThreads {
+			for i := range page.Messages {
+				m := &page.Messages[i]
+				if !m.IsThreadRoot() || rescanned[m.TS] {
+					continue
+				}
+				rescanned[m.TS] = true
+				if err := imp.rescanThread(ctx, cc, m.TS, sum); err != nil {
+					return err
+				}
 			}
 		}
 		if page.NextCursor == "" {
