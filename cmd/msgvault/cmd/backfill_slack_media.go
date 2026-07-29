@@ -3,7 +3,6 @@ package cmd
 import (
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -46,19 +45,19 @@ Examples:
 			ctx, stop := withInterruptCancel(cmd, "\nInterrupted.")
 			defer stop()
 
-			var runErrors []string
+			var runErrors []error
 			for _, src := range sources {
 				if ctx.Err() != nil {
 					break
 				}
 				teamID, userID, ok := splitSlackIdentifier(src.Identifier)
 				if !ok {
-					runErrors = append(runErrors, src.Identifier+": malformed slack identifier")
+					runErrors = append(runErrors, fmt.Errorf("%s: malformed slack identifier", src.Identifier))
 					continue
 				}
 				token, terr := slack.LoadToken(cfg.TokensDir(), teamID, userID)
 				if terr != nil {
-					runErrors = append(runErrors, fmt.Sprintf("%s: %v", teamID, terr))
+					runErrors = append(runErrors, fmt.Errorf("%s: %w", teamID, terr))
 					continue
 				}
 				imp := slack.NewImporter(s, slack.NewClient("", token), teamID)
@@ -67,22 +66,33 @@ Examples:
 					break
 				}
 				if berr != nil {
-					runErrors = append(runErrors, fmt.Sprintf("%s: %v", teamID, berr))
+					runErrors = append(runErrors, fmt.Errorf("%s: %w", teamID, berr))
 					continue
 				}
 				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s done in %s: %d messages, %d downloaded, %d still pending\n",
 					teamID, sum.Duration.Round(time.Second), sum.MessagesProcessed, sum.AttachmentsDownloaded, sum.AttachmentsPending)
 			}
-			if len(runErrors) > 0 {
-				return fmt.Errorf("%d workspace(s) failed: %s", len(runErrors), strings.Join(runErrors, "; "))
-			}
-			if ctx.Err() != nil {
-				return errors.New("interrupted")
-			}
-			return nil
+			return slackMediaBackfillExit(
+				ctx.Err(),
+				runErrors,
+				rebuildCacheAfterWrite(cfg.DatabaseDSN()),
+			)
 		},
 	}
 	return cmd
+}
+
+func slackMediaBackfillExit(ctxErr error, runErrors []error, cacheErr error) error {
+	if ctxErr != nil {
+		return errors.Join(fmt.Errorf("interrupted: %w", ctxErr), cacheErr)
+	}
+	if len(runErrors) > 0 {
+		return errors.Join(
+			fmt.Errorf("%d workspace(s) failed: %w", len(runErrors), errors.Join(runErrors...)),
+			cacheErr,
+		)
+	}
+	return cacheErr
 }
 
 func init() {
