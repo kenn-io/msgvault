@@ -246,6 +246,30 @@ func (c *Client) StageDeletion(
 	return nil, fmt.Errorf("stage deletion: %w", err)
 }
 
+// CreatePerson accepts both documented success statuses. The generated
+// convenience method treats only 201 as success even though the daemon
+// returns 200 for an idempotent re-promotion of an already-promoted cluster.
+func (c *Client) CreatePerson(
+	ctx context.Context,
+	options *generated.CreatePersonRequestOptions,
+	reqEditors ...runtime.RequestEditorFn,
+) (*generated.CreatePersonResponseJSON, error) {
+	resp, err := c.CreatePersonWithResponse(ctx, options, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	if resp.JSON201 != nil {
+		return resp.JSON201, nil
+	}
+	if resp.JSON200 != nil {
+		return resp.JSON200, nil
+	}
+	err = runtime.NewClientAPIError(
+		fmt.Errorf("unexpected status code: %d", resp.StatusCode),
+		runtime.WithStatusCode(resp.StatusCode))
+	return nil, fmt.Errorf("create person: %w", err)
+}
+
 type httpClientDoer struct {
 	client *http.Client
 }

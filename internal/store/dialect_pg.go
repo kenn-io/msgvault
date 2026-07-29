@@ -569,19 +569,42 @@ var exclusiveLockTables = []string{
 // 30s statement_timeout on a large archive (finding S1). SET LOCAL
 // auto-resets at COMMIT/ROLLBACK, so it cannot leak to other pooled
 // connections.
+//
+// Before LOCK TABLE, the transaction takes the identity-mutation row lock
+// (the archive_metadata identity-revision row, mirroring
+// lockIdentityMutationTx). Identity mutations acquire that row first and
+// then write person tables BEFORE participants/messages (MergeParticipants
+// repoints person bindings before repointing archive references), the
+// opposite of this list's order — so without the shared row lock, a
+// serialized source removal racing an importer-driven merge could deadlock:
+// LOCK TABLE holds participants and waits on persons while the merge holds
+// persons and waits on participants. Taking the row lock first serializes
+// the two paths instead.
 func (d *PostgreSQLDialect) BeginExclusive(ctx context.Context, conn *sql.Conn) error {
 	if _, err := conn.ExecContext(ctx, "BEGIN"); err != nil {
 		return err
 	}
-	if _, err := conn.ExecContext(ctx, "SET LOCAL statement_timeout = 0"); err != nil {
+	rollback := func(err error) error {
 		_, _ = conn.ExecContext(ctx, "ROLLBACK")
 		return err
+	}
+	if _, err := conn.ExecContext(ctx, "SET LOCAL statement_timeout = 0"); err != nil {
+		return rollback(err)
+	}
+	if _, err := conn.ExecContext(ctx,
+		"INSERT INTO archive_metadata (key, value) VALUES ($1, '0') ON CONFLICT DO NOTHING",
+		identityRevisionKey); err != nil {
+		return rollback(err)
+	}
+	if _, err := conn.ExecContext(ctx,
+		"UPDATE archive_metadata SET value = value WHERE key = $1",
+		identityRevisionKey); err != nil {
+		return rollback(err)
 	}
 	if _, err := conn.ExecContext(ctx,
 		"LOCK TABLE "+strings.Join(exclusiveLockTables, ", ")+" IN EXCLUSIVE MODE",
 	); err != nil {
-		_, _ = conn.ExecContext(ctx, "ROLLBACK")
-		return err
+		return rollback(err)
 	}
 	return nil
 }

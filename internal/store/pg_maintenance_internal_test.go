@@ -9,6 +9,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -145,6 +146,49 @@ func TestExclusiveLockTablesCoverCascade(t *testing.T) {
 // TestMaintenanceTimeoutResetSQL pins the exact statement the PG dialect uses
 // to lift the per-statement timeout — the mechanism finding S1's hatch relies
 // on. SQLite returns "" so runMaintenance issues no reset.
+// TestRemoveSourceSerializedDoesNotDeadlockWithPersonMerge pins the lock
+// ordering documented on BeginExclusive: MergeParticipants writes person
+// tables BEFORE participants/messages, the opposite of exclusiveLockTables'
+// LOCK TABLE order, so without BeginExclusive first taking the
+// identity-mutation row lock a serialized source removal racing an
+// importer-driven merge could deadlock (LOCK TABLE holds participants and
+// waits on persons; the merge holds persons and waits on participants).
+// PostgreSQL surfaces such a deadlock as an error on one transaction after
+// deadlock_timeout, so the loop requires every racing pair to succeed.
+func TestRemoveSourceSerializedDoesNotDeadlockWithPersonMerge(t *testing.T) {
+	require := require.New(t)
+	dbURL := skipUnlessPostgresInternal(t)
+	st := newPGStoreInternal(t, dbURL)
+	ctx := context.Background()
+
+	for i := range 15 {
+		source, err := st.GetOrCreateSource("gmail", fmt.Sprintf("race%d@example.com", i))
+		require.NoError(err, "iteration %d: create source", i)
+		winner, err := st.EnsureParticipant(fmt.Sprintf("winner%d@example.com", i), "Winner", "example.com")
+		require.NoError(err, "iteration %d: winner", i)
+		loser, err := st.EnsureParticipant(fmt.Sprintf("loser%d@example.com", i), "Loser", "example.com")
+		require.NoError(err, "iteration %d: loser", i)
+		_, _, err = st.CreatePersonFromParticipant(loser)
+		require.NoError(err, "iteration %d: promote", i)
+
+		var wg sync.WaitGroup
+		var removeErr, mergeErr error
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			_, _, removeErr = st.RemoveSourceSerialized(ctx, source.ID)
+		}()
+		go func() {
+			defer wg.Done()
+			mergeErr = st.MergeParticipants(loser, winner)
+		}()
+		wg.Wait()
+
+		require.NoError(removeErr, "iteration %d: remove source", i)
+		require.NoError(mergeErr, "iteration %d: merge participants", i)
+	}
+}
+
 func TestMaintenanceTimeoutResetSQL(t *testing.T) {
 	assert.Equal(t, "SET LOCAL statement_timeout = 0", (&PostgreSQLDialect{}).MaintenanceTimeoutResetSQL())
 	assert.Empty(t, (&SQLiteDialect{}).MaintenanceTimeoutResetSQL())
