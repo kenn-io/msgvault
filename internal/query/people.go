@@ -157,11 +157,19 @@ func (e *DuckDBEngine) GetPerson(ctx context.Context, id int64, analyticalContex
 // indexedPersonSummary returns one canonical identity's precomputed summary
 // row from the relationship_people dataset. found is false when the dataset
 // has no row for id or its baked cluster membership differs from the
-// caller's (memberIDs nil/empty means the requested ID alone).
+// caller's (memberIDs nil/empty means the requested ID alone). The shared
+// cache-read lock is held across the marker read and both dataset queries so
+// a concurrent cache publication cannot swap files mid-lookup; the lock is
+// shared, so this stays a point read that never waits on the query slot.
 func (e *DuckDBEngine) indexedPersonSummary(ctx context.Context, id int64, memberIDs []int64) (row *PersonSummary, found bool, err error) {
 	if e.analyticsDir == "" {
 		return nil, false, &CacheUnavailableError{Readiness: CacheAbsent}
 	}
+	release, err := e.acquireCacheRead(ctx)
+	if err != nil {
+		return nil, false, err
+	}
+	defer release()
 	state, err := ReadCacheSyncState(e.analyticsDir)
 	if err != nil {
 		return nil, false, fmt.Errorf("read committed cache state: %w", err)
