@@ -108,3 +108,25 @@ func TestClientRejectsHasMoreWithoutNextCursor(t *testing.T) {
 	_, err = client.RepliesPage(context.Background(), "C01", "123.000100", "", "")
 	require.ErrorContains(t, err, "has_more without next_cursor")
 }
+
+func TestClientRejectsRepeatedNextCursor(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, err := w.Write([]byte(`{
+			"ok": true,
+			"messages": [],
+			"has_more": true,
+			"response_metadata": {"next_cursor": "same"}
+		}`))
+		require.NoError(t, err)
+	}))
+	t.Cleanup(srv.Close)
+	client := NewClient(srv.URL, "xoxp-test")
+	client.disableRateLimits()
+
+	_, err := client.HistoryPage(context.Background(), HistoryParams{ChannelID: "C01", Cursor: "same"})
+	require.ErrorContains(t, err, "repeated next_cursor")
+
+	_, err = client.RepliesPage(context.Background(), "C01", "123.000100", "same", "")
+	require.ErrorContains(t, err, "repeated next_cursor")
+}

@@ -552,7 +552,7 @@ func (imp *Importer) walkWindow(ctx context.Context, cc *convScope, state *SyncS
 				return err
 			}
 		}
-		if !page.HasMore || page.NextCursor == "" {
+		if page.NextCursor == "" {
 			cs.Done = true
 			cs.BackfillCursor = ""
 			// Guard against a stale-merge resurrected window whose pin is
@@ -684,7 +684,7 @@ func (imp *Importer) drainPendingThreads(ctx context.Context, cc *convScope, sum
 				pt.Forecast--
 			}
 		}
-		if !page.HasMore || page.NextCursor == "" {
+		if page.NextCursor == "" {
 			if reanchored {
 				// Re-fetch from the true root before settling — and roll the
 				// resume point back below the solo reply, so the root-
@@ -788,7 +788,7 @@ func (imp *Importer) threadCatchUp(ctx context.Context, cc *convScope, state *Sy
 		if err := imp.drainPendingThreads(ctx, cc, sum); err != nil {
 			return err
 		}
-		if !page.HasMore || page.NextCursor == "" {
+		if page.NextCursor == "" {
 			// The WALK is complete: every root it owed is now recorded as
 			// durable PendingThreads debt, which the drain-first step pays
 			// unconditionally on every threaded run — so the flag (which
@@ -906,7 +906,7 @@ func (imp *Importer) rescanHead(ctx context.Context, cc *convScope, sum *ImportS
 				return err
 			}
 		}
-		if !page.HasMore || page.NextCursor == "" {
+		if page.NextCursor == "" {
 			return nil
 		}
 		pageCursor = page.NextCursor
@@ -944,7 +944,7 @@ func (imp *Importer) rescanThread(ctx context.Context, cc *convScope, rootTS str
 				return err
 			}
 		}
-		if !page.HasMore || page.NextCursor == "" {
+		if page.NextCursor == "" {
 			return nil
 		}
 		pageCursor = page.NextCursor

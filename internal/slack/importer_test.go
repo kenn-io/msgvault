@@ -232,6 +232,18 @@ func TestImportEndToEnd(t *testing.T) {
 	assert.Equal(3, members)
 }
 
+func TestImportUsesNextCursorWhenHasMoreIsFalse(t *testing.T) {
+	require := require.New(t)
+	f := testWorkspace(t)
+	f.forceHasMoreFalse = true
+	imp, opts := testImporter(t, f)
+
+	sum, err := imp.Import(context.Background(), opts)
+	require.NoError(err)
+	assert.Equal(t, totalWorkspaceMessages, sum.MessagesAdded,
+		"a non-empty next_cursor must continue history and reply pagination regardless of has_more")
+}
+
 func TestFullRepairReportsUpdatesRatherThanAdds(t *testing.T) {
 	require := require.New(t)
 	f := testWorkspace(t)

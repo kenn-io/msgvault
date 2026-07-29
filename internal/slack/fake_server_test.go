@@ -168,6 +168,9 @@ type fakeSlack struct {
 	// failHistoryContinuations fails only history requests carrying a page
 	// cursor, emulating a walk that dies partway through a multi-page window.
 	failHistoryContinuations bool
+	// forceHasMoreFalse exercises cursor pagination where the legacy
+	// has_more flag disagrees with a valid next_cursor.
+	forceHasMoreFalse bool
 	// ghosts lists conversation IDs that stay enumerable but 404 on read
 	// (see handleGhost).
 	ghosts []string
@@ -396,7 +399,7 @@ func (f *fakeSlack) handleHistory(w http.ResponseWriter, r *http.Request) {
 	}
 	f.reply(w, map[string]any{
 		"messages":          msgs,
-		"has_more":          next != "",
+		"has_more":          next != "" && !f.forceHasMoreFalse,
 		"response_metadata": map[string]any{"next_cursor": next},
 	})
 }
@@ -450,7 +453,7 @@ func (f *fakeSlack) handleReplies(w http.ResponseWriter, r *http.Request) {
 	}
 	f.reply(w, map[string]any{
 		"messages":          msgs,
-		"has_more":          next != "",
+		"has_more":          next != "" && !f.forceHasMoreFalse,
 		"response_metadata": map[string]any{"next_cursor": next},
 	})
 }

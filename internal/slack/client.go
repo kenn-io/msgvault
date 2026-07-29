@@ -389,6 +389,9 @@ func (c *Client) historyPageWithLimit(ctx context.Context, p HistoryParams, limi
 	if out.HasMore && out.Metadata.NextCursor == "" {
 		return nil, errors.New("conversations.history returned has_more without next_cursor")
 	}
+	if p.Cursor != "" && out.Metadata.NextCursor == p.Cursor {
+		return nil, errors.New("conversations.history returned repeated next_cursor")
+	}
 	return &HistoryPage{Messages: out.Messages, HasMore: out.HasMore, NextCursor: out.Metadata.NextCursor}, nil
 }
 
@@ -534,6 +537,9 @@ func (c *Client) repliesPageWithLimit(ctx context.Context, channelID, rootTS, cu
 	}
 	if out.HasMore && out.Metadata.NextCursor == "" {
 		return nil, errors.New("conversations.replies returned has_more without next_cursor")
+	}
+	if cursor != "" && out.Metadata.NextCursor == cursor {
+		return nil, errors.New("conversations.replies returned repeated next_cursor")
 	}
 	return &HistoryPage{Messages: out.Messages, HasMore: out.HasMore, NextCursor: out.Metadata.NextCursor}, nil
 }
