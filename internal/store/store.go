@@ -603,12 +603,21 @@ func (s *Store) runMaintenance(ctx context.Context, fn func(ctx context.Context,
 // so streaming-query timing reflects scan-close, not just prepare.
 type chunkQuerier interface {
 	Query(query string, args ...any) (*loggedRows, error)
+	QueryContext(ctx context.Context, query string, args ...any) (*loggedRows, error)
 	Exec(query string, args ...any) (sql.Result, error)
 }
 
 func queryInChunks[T any](db chunkQuerier, ids []T, prefixArgs []any, queryTemplate string, fn func(*loggedRows) error) error {
+	return queryInChunksContext(context.Background(), db, ids, prefixArgs, queryTemplate, fn)
+}
+
+func queryInChunksContext[T any](ctx context.Context, db chunkQuerier, ids []T, prefixArgs []any, queryTemplate string, fn func(*loggedRows) error) error {
 	const chunkSize = 500
 	for i := 0; i < len(ids); i += chunkSize {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+
 		end := min(i+chunkSize, len(ids))
 		chunk := ids[i:end]
 
@@ -620,7 +629,7 @@ func queryInChunks[T any](db chunkQuerier, ids []T, prefixArgs []any, queryTempl
 		}
 
 		query := fmt.Sprintf(queryTemplate, strings.Join(placeholders, ","))
-		rows, err := db.Query(query, args...)
+		rows, err := db.QueryContext(ctx, query, args...)
 		if err != nil {
 			return err
 		}

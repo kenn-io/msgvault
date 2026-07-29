@@ -328,8 +328,8 @@ func (e *Engine) Scan(ctx context.Context) (*Report, error) {
 	for i, sg := range storeGroups {
 		rfc822IDs[i] = sg.RFC822MessageID
 	}
-	msgsByGroup, err := e.store.GetDuplicateGroupMessagesBatch(
-		rfc822IDs, e.config.AccountSourceIDs...,
+	msgsByGroup, err := e.store.GetDuplicateGroupMessagesBatchContext(
+		ctx, rfc822IDs, e.config.AccountSourceIDs...,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("get duplicate group messages: %w", err)

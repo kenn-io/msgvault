@@ -1,6 +1,7 @@
 package store_test
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"testing"
@@ -343,7 +344,7 @@ func TestStore_GetDuplicateGroupMessagesBatch_MatchesPerGroupQuery(t *testing.T)
 	// result map is reset per chunk instead of accumulated across chunks.
 	const numGroups = 600
 	rfc822IDs := make([]string, numGroups)
-	for i := 0; i < numGroups; i++ {
+	for i := range numGroups {
 		rfc822ID := fmt.Sprintf("rfc822-batch-%d", i)
 		rfc822IDs[i] = rfc822ID
 		newRFC822Message(t, f, fmt.Sprintf("src-%d-a", i), rfc822ID)
@@ -369,6 +370,21 @@ func TestStore_GetDuplicateGroupMessagesBatch_EmptyInput(t *testing.T) {
 	batched, err := f.Store.GetDuplicateGroupMessagesBatch(nil)
 	require.NoError(err, "GetDuplicateGroupMessagesBatch with nil input")
 	assert.Empty(batched, "no groups requested, no groups returned")
+}
+
+func TestStore_GetDuplicateGroupMessagesBatchContext_Canceled(t *testing.T) {
+	require := require.New(t)
+	f := storetest.New(t)
+	newRFC822Message(t, f, "src-a", "rfc822-canceled")
+	newRFC822Message(t, f, "src-b", "rfc822-canceled")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := f.Store.GetDuplicateGroupMessagesBatchContext(
+		ctx, []string{"rfc822-canceled"}, f.Source.ID,
+	)
+	require.ErrorIs(err, context.Canceled)
 }
 
 func TestStore_GetDuplicateGroupMessagesBatch_FiltersBySourceID(t *testing.T) {

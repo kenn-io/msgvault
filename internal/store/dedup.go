@@ -205,6 +205,16 @@ func (s *Store) GetDuplicateGroupMessages(
 func (s *Store) GetDuplicateGroupMessagesBatch(
 	rfc822IDs []string, sourceIDs ...int64,
 ) (map[string][]DuplicateMessageRow, error) {
+	return s.GetDuplicateGroupMessagesBatchContext(
+		context.Background(), rfc822IDs, sourceIDs...,
+	)
+}
+
+// GetDuplicateGroupMessagesBatchContext is the request-aware form of
+// GetDuplicateGroupMessagesBatch.
+func (s *Store) GetDuplicateGroupMessagesBatchContext(
+	ctx context.Context, rfc822IDs []string, sourceIDs ...int64,
+) (map[string][]DuplicateMessageRow, error) {
 	result := make(map[string][]DuplicateMessageRow)
 	if len(rfc822IDs) == 0 {
 		return result, nil
@@ -237,7 +247,7 @@ func (s *Store) GetDuplicateGroupMessagesBatch(
 		  AND ` + LiveMessagesWhere("m", true) + `
 		ORDER BY m.rfc822_message_id, m.id`
 
-	err := queryInChunks(s.db, rfc822IDs, prefixArgs, queryTemplate,
+	err := queryInChunksContext(ctx, s.db, rfc822IDs, prefixArgs, queryTemplate,
 		func(rows *loggedRows) error {
 			var dm DuplicateMessageRow
 			var rfc822ID string
