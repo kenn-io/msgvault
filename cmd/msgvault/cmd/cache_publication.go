@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -231,8 +232,12 @@ func planCacheMoves(
 
 // syncStagedMoveContents flushes every regular file under a staged
 // publication source (a dataset directory for replace moves, a single
-// parquet file for append moves) so its contents are durable before the
-// rename that makes it visible.
+// parquet file for append moves), then every directory deepest-first, so
+// both file contents AND directory entries (nested partition paths like
+// occurred_year=*) are durable before the rename that makes the tree
+// visible. File fsync alone is not enough: a crash after the marker commit
+// could otherwise lose a nested parquet's directory entry, leaving a
+// committed generation missing files the marker vouches for.
 func syncStagedMoveContents(source string) error {
 	info, err := os.Stat(source)
 	if err != nil {
@@ -241,15 +246,44 @@ func syncStagedMoveContents(source string) error {
 	if !info.IsDir() {
 		return syncFile(source)
 	}
-	return filepath.WalkDir(source, func(path string, entry fs.DirEntry, walkErr error) error {
+	var directories []string
+	err = filepath.WalkDir(source, func(path string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
 		if entry.IsDir() {
+			directories = append(directories, path)
 			return nil
 		}
 		return syncFile(path)
 	})
+	if err != nil {
+		return err
+	}
+	for _, directory := range slices.Backward(directories) {
+		if err := syncDirectory(directory); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// syncDestinationParents flushes the renamed destination's parent directory
+// and every ancestor up to (and including) the analytics root. Append
+// publications MkdirAll new partition paths (e.g. messages/year=2026), and
+// syncing only the immediate parent would leave the new directory's own
+// entry in ITS parent undurable — a crash could then drop the whole
+// partition while the committed marker survives.
+func syncDestinationParents(destination, analyticsDir string) error {
+	root := filepath.Clean(analyticsDir)
+	for dir := filepath.Dir(filepath.Clean(destination)); ; dir = filepath.Dir(dir) {
+		if err := syncDirectory(dir); err != nil {
+			return err
+		}
+		if dir == root || dir == filepath.Dir(dir) {
+			return nil
+		}
+	}
 }
 
 // cachePublishLocking selects how publication coordinates with readers on
@@ -328,7 +362,7 @@ func publishCacheWithBeforeMarker(
 		if err := os.Rename(move.source, move.destination); err != nil {
 			return fmt.Errorf("publish cache dataset %s: %w", move.dataset, err)
 		}
-		if err := syncDirectory(filepath.Dir(move.destination)); err != nil {
+		if err := syncDestinationParents(move.destination, analyticsDir); err != nil {
 			return fmt.Errorf("sync published cache dataset %s: %w", move.dataset, err)
 		}
 		if cachePublicationAfterMoveHook != nil {
