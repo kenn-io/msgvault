@@ -2377,6 +2377,78 @@ func TestTombstonePlaceholderKeepsOrphanedReplies(t *testing.T) {
 	assert.Equal(1, n)
 }
 
+func TestTombstonePlaceholderRetriesIncompletePersistence(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f, rootTS, _ := tombstoneWorkspace(t)
+	f.conv("C80").tombstone(rootTS)
+	imp, opts := testImporter(t, f)
+	st := imp.store
+
+	// Break the final auxiliary snapshot write. The message row and body have
+	// already been upserted, but the tombstone is not complete and must remain
+	// eligible for retry.
+	_, err := st.DB().Exec(`DROP TABLE reactions`)
+	require.NoError(err)
+	_, err = imp.Import(context.Background(), opts)
+	require.Error(err, "the auxiliary store failure must abort the run")
+
+	rootID := "C80:" + rootTS
+	var messageID int64
+	require.NoError(st.DB().QueryRow(st.Rebind(
+		`SELECT id FROM messages WHERE source_message_id = ?`), rootID).Scan(&messageID))
+	_, err = st.GetMessageRaw(messageID)
+	require.Error(err, "raw JSON is the completion marker and must be written only after fatal auxiliary snapshots")
+
+	// Once the store heals, the held cursor re-serves the tombstone. A row
+	// without the completion marker must be processed rather than mistaken
+	// for a previously archived original.
+	require.NoError(st.InitSchema())
+	sum, err := imp.Import(context.Background(), opts)
+	require.NoError(err)
+	assert.Positive(sum.MessagesProcessed)
+
+	raw, err := st.GetMessageRaw(messageID)
+	require.NoError(err)
+	assert.Contains(string(raw), `"subtype":"tombstone"`)
+}
+
+func TestParentArchivedRequiresRawCompletionMarker(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newFakeSlack(t)
+	imp, _ := testImporter(t, f)
+	st := imp.store
+
+	src, err := st.GetOrCreateSource("slack", "T01:UME")
+	require.NoError(err)
+	convID, err := st.EnsureConversationWithType(src.ID, "C80", "channel", "#keep")
+	require.NoError(err)
+	messageID, err := st.UpsertMessage(&store.Message{
+		ConversationID:  convID,
+		SourceID:        src.ID,
+		SourceMessageID: "C80:123.000100",
+		MessageType:     "slack",
+	})
+	require.NoError(err)
+
+	archived, err := imp.parentArchived(src.ID, "C80", "123.000100")
+	require.NoError(err)
+	assert.False(archived,
+		"a partial row must remain eligible when a replies response re-serves its parent")
+
+	require.NoError(st.UpsertMessageRawWithFormat(messageID, []byte(`{"type":"message"}`), "slack_json"))
+	archived, err = imp.parentArchived(src.ID, "C80", "123.000100")
+	require.NoError(err)
+	assert.True(archived,
+		"row plus raw archive is a complete parent snapshot")
+
+	_, err = st.DB().Exec(`DROP TABLE message_raw`)
+	require.NoError(err)
+	_, err = imp.parentArchived(src.ID, "C80", "123.000100")
+	require.Error(err, "a failed completion probe must hold thread debt instead of refreshing the parent")
+}
+
 func TestLateIndexedReplyMovesParkedDrainBackward(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

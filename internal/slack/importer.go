@@ -618,7 +618,11 @@ func (imp *Importer) drainPendingThreads(ctx context.Context, cc *convScope, sum
 				// which is --maintenance work, not the drain's. It is only
 				// processed when missing (this fetch is then the first to
 				// see the root, and SetReplyTo needs it in place).
-				if imp.parentArchived(cc.sourceID, cc.channelID, m.TS) {
+				archived, err := imp.parentArchived(cc.sourceID, cc.channelID, m.TS)
+				if err != nil {
+					return fmt.Errorf("check archived thread parent: %w", err)
+				}
+				if archived {
 					continue
 				}
 				if err := imp.processMessage(ctx, cc, m, sum); err != nil {
@@ -763,15 +767,17 @@ func (imp *Importer) threadCatchUp(ctx context.Context, cc *convScope, state *Sy
 	}
 }
 
-// parentArchived reports whether a thread parent is already in the archive.
-// Uncertainty (a store error) reads as "not archived" so the parent gets
-// processed — an idempotent upsert is the safe direction.
-func (imp *Importer) parentArchived(sourceID int64, channelID, ts string) bool {
-	ids, err := imp.store.MessageExistsBatch(sourceID, []string{sourceMessageID(channelID, ts)})
+// parentArchived reports whether a thread parent has a complete archived
+// snapshot. A message row without raw JSON may be left by an interrupted
+// persistence attempt and must be retried. Store errors are returned so the
+// caller holds its thread debt rather than refreshing an archived parent on
+// uncertainty.
+func (imp *Importer) parentArchived(sourceID int64, channelID, ts string) (bool, error) {
+	ids, err := imp.store.MessageExistsWithRawBatch(sourceID, []string{sourceMessageID(channelID, ts)})
 	if err != nil {
-		return false
+		return false, err
 	}
-	return len(ids) > 0
+	return len(ids) > 0, nil
 }
 
 // rescanHead re-pages the conversation's trailing thread-lookback window,
@@ -922,10 +928,13 @@ func (imp *Importer) processMessage(ctx context.Context, cc *convScope, m *Messa
 		// --full, or --maintenance (the empty tombstone would also wipe
 		// archived reactions via ReplaceReactions). It IS persisted when the
 		// message was never archived: the placeholder gives orphaned replies
-		// a row for SetReplyTo to resolve against. The existence probe
-		// cannot swallow its error toward "missing" — that direction
-		// overwrites — so store failure aborts like every other store op.
-		ids, err := imp.store.MessageExistsBatch(cc.sourceID, []string{sourceMessageID(cc.channelID, m.TS)})
+		// a row for SetReplyTo to resolve against. Raw JSON is written only
+		// after every fatal auxiliary snapshot, so row+raw is the durable
+		// completeness marker; a row alone may be a partial placeholder from
+		// an interrupted attempt and must be retried. The probe cannot swallow
+		// its error toward "missing" — that direction overwrites — so store
+		// failure aborts like every other store op.
+		ids, err := imp.store.MessageExistsWithRawBatch(cc.sourceID, []string{sourceMessageID(cc.channelID, m.TS)})
 		if err != nil {
 			return fmt.Errorf("tombstone existence check: %w", err)
 		}
@@ -935,6 +944,12 @@ func (imp *Importer) processMessage(ctx context.Context, cc *convScope, m *Messa
 	}
 
 	msg, text := mapMessage(m, cc.channelID, cc.convID, cc.sourceID, m.User == cc.opts.UserID, imp.res.displayName)
+	// Raw JSON is mandatory and doubles as the final completeness marker.
+	// Validate it before starting any persistence writes.
+	raw := []byte(m.Raw)
+	if len(raw) == 0 {
+		return fmt.Errorf("slack message %s has no raw JSON archive", msg.SourceMessageID)
+	}
 	var senderPID int64
 	var err error
 	if m.User != "" {
@@ -954,15 +969,6 @@ func (imp *Importer) processMessage(ctx context.Context, cc *convScope, m *Messa
 	}
 	if err := imp.store.UpsertMessageBody(messageID, sql.NullString{String: text, Valid: text != ""}, sql.NullString{}); err != nil {
 		return err
-	}
-	// Archive the exact original message JSON (captured at decode time) so
-	// no API field is lost to our partial struct modelling.
-	raw := []byte(m.Raw)
-	if len(raw) == 0 {
-		return fmt.Errorf("slack message %s has no raw JSON archive", msg.SourceMessageID)
-	}
-	if err := imp.store.UpsertMessageRawWithFormat(messageID, raw, "slack_json"); err != nil {
-		return fmt.Errorf("archive slack message raw: %w", err)
 	}
 	// FTS is the one warn-and-continue store write: the index is derived
 	// from the (fatally-checked) message row and body, holes are detected
@@ -996,6 +1002,13 @@ func (imp *Importer) processMessage(ctx context.Context, cc *convScope, m *Messa
 		if err := imp.store.SetReplyTo(cc.sourceID, sourceMessageID(cc.channelID, m.TS), sourceMessageID(cc.channelID, m.ThreadTS)); err != nil {
 			return fmt.Errorf("link thread reply: %w", err)
 		}
+	}
+
+	// Archive the exact original message JSON (captured at decode time) only
+	// after every fatal auxiliary write succeeds. Tombstone retries use its
+	// presence as the durable signal that this whole snapshot completed.
+	if err := imp.store.UpsertMessageRawWithFormat(messageID, raw, "slack_json"); err != nil {
+		return fmt.Errorf("archive slack message raw: %w", err)
 	}
 
 	sum.MessagesProcessed++
