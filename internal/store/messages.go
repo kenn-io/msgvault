@@ -2199,18 +2199,59 @@ func (s *Store) ParticipantByIdentifier(identifierType, identifierValue string) 
 // creating the row or re-pointing an existing one (idempotent). Importers use
 // it to persist alternate identifiers on an already-resolved participant so
 // later runs unify instead of forking a new participant.
+//
+// When the write actually changes the mapping AND the identifier matches a
+// confirmed account-identity address, it is owner evidence: the analytics
+// cache bakes it into owner_participants, the per-row is_owner flags of the
+// relationship activity index, and the export-derived is_from_me flag in
+// message shards. Those bakes carry no fingerprint of their own, so the
+// mutation bumps the identity and account-identity revisions the way
+// MergeParticipants does — the account-identity bump forces the full rebuild
+// that re-derives committed shards. No-op calls (the common importer re-run)
+// bump nothing.
 func (s *Store) SetParticipantIdentifier(participantID int64, identifierType, identifierValue string) error {
 	identifierType = strings.TrimSpace(identifierType)
 	identifierValue = strings.TrimSpace(identifierValue)
 	if identifierType == "" || identifierValue == "" {
 		return errors.New("identifier type and value are required")
 	}
-	_, err := s.db.Exec(`
-		INSERT INTO participant_identifiers (participant_id, identifier_type, identifier_value, is_primary)
-		VALUES (?, ?, ?, FALSE)
-		ON CONFLICT (identifier_type, identifier_value) DO UPDATE SET participant_id = excluded.participant_id
-	`, participantID, identifierType, identifierValue)
-	return err
+	return s.withTx(func(tx *loggedTx) error {
+		var existingID int64
+		err := tx.QueryRow(`
+			SELECT participant_id FROM participant_identifiers
+			WHERE identifier_type = ? AND identifier_value = ?
+		`, identifierType, identifierValue).Scan(&existingID)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("lookup participant identifier: %w", err)
+		}
+		if err == nil && existingID == participantID {
+			return nil
+		}
+		if _, err := tx.Exec(`
+			INSERT INTO participant_identifiers (participant_id, identifier_type, identifier_value, is_primary)
+			VALUES (?, ?, ?, FALSE)
+			ON CONFLICT (identifier_type, identifier_value) DO UPDATE SET participant_id = excluded.participant_id
+		`, participantID, identifierType, identifierValue); err != nil {
+			return fmt.Errorf("set participant identifier: %w", err)
+		}
+		var ownerEvidence bool
+		if err := tx.QueryRow(`
+			SELECT EXISTS (
+				SELECT 1 FROM account_identities ai
+				WHERE (? = 'email' AND lower(?) = lower(ai.address))
+				   OR (? != 'email' AND ? = ai.address)
+			)
+		`, identifierType, identifierValue, identifierType, identifierValue).Scan(&ownerEvidence); err != nil {
+			return fmt.Errorf("check identifier owner evidence: %w", err)
+		}
+		if !ownerEvidence {
+			return nil
+		}
+		if _, err := s.bumpIdentityRevision(tx); err != nil {
+			return err
+		}
+		return s.bumpAccountIdentityRevision(tx)
+	})
 }
 
 func (s *Store) EnsureParticipantByIdentifier(identifierType, identifierValue, displayName string) (int64, error) {

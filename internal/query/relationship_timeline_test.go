@@ -446,3 +446,50 @@ func TestRelationshipTimelineSecondaryParticipantFilterExpandsClusters(t *testin
 	assert.Equal(byCanonical.TotalCount, byAlias.TotalCount,
 		"filtering by the alias ID must agree with the canonical ID")
 }
+
+// TestRelationshipTimelineHasAttachmentsUsesMessageFlag pins the attachment
+// indicator to the per-message has_attachments flag rather than extracted
+// attachment rows: upgraded or partially extracted archives can carry the
+// flag with a zero attachment_count, and the indicator must still show.
+func TestRelationshipTimelineHasAttachmentsUsesMessageFlag(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	b := NewTestDataBuilder(t)
+	srcID := b.AddSource("owner@example.com")
+	xID := b.AddParticipant("x@example.com", "example.com", "X")
+	yID := b.AddParticipant("y@example.com", "example.com", "Y")
+
+	flaggedEmailID := b.AddMessage(MessageOpt{
+		SourceID: srcID, MessageType: "email", HasAttachments: true,
+		SentAt: time.Date(2026, 2, 3, 9, 0, 0, 0, time.UTC),
+	})
+	b.AddFrom(flaggedEmailID, xID, "X")
+	b.AddTo(flaggedEmailID, yID, "Y")
+
+	plainEmailID := b.AddMessage(MessageOpt{
+		SourceID: srcID, MessageType: "email",
+		SentAt: time.Date(2026, 2, 2, 9, 0, 0, 0, time.UTC),
+	})
+	b.AddFrom(plainEmailID, xID, "X")
+	b.AddTo(plainEmailID, yID, "Y")
+
+	flaggedChatID := b.AddMessage(MessageOpt{
+		SourceID: srcID, MessageType: "whatsapp", ConversationID: 700,
+		HasAttachments: true,
+		SentAt:         time.Date(2026, 2, 1, 9, 0, 0, 0, time.UTC),
+	})
+	b.AddFrom(flaggedChatID, xID, "X")
+
+	engine := b.BuildEngine()
+	result, err := engine.RelationshipTimeline(context.Background(), RelationshipTimelineRequest{
+		CanonicalID: xID, Limit: 10,
+	})
+	require.NoError(err)
+	require.Len(result.Rows, 3)
+	assert.True(result.Rows[0].HasAttachments,
+		"an email flagged has_attachments with zero extracted attachments must keep its indicator")
+	assert.False(result.Rows[1].HasAttachments, "an unflagged email must not gain an indicator")
+	assert.True(result.Rows[2].HasAttachments,
+		"a chat burst must inherit the flag from its messages")
+}

@@ -179,6 +179,7 @@ WITH message_facts AS (
 	       (%s) AS is_chat,
 	       m.is_from_me::BOOLEAN AS is_from_me,
 	       m.attachment_count::INTEGER AS attachment_count,
+	       coalesce(m.has_attachments::BOOLEAN, false) AS has_attachments,
 	       (m.deleted_from_source_at IS NOT NULL) AS deleted_from_source,
 	       year(m.sent_at)::SMALLINT AS occurred_year,
 	       m.sender_id::BIGINT AS sender_id
@@ -220,7 +221,8 @@ WITH message_facts AS (
 )
 SELECT m.message_id, m.conversation_id, m.source_id, m.source_type,
        m.occurred_at, m.message_type, m.conversation_type, m.entry_kind,
-       m.is_chat, m.is_from_me, m.attachment_count, m.deleted_from_source,
+       m.is_chat, m.is_from_me, m.attachment_count, m.has_attachments,
+       m.deleted_from_source,
        c.canonical_id, c.participant_domain,
        coalesce(bool_or(e.is_direct)
            FILTER (WHERE c.canonical_id IS NOT NULL), false) AS is_direct,
@@ -239,7 +241,8 @@ LEFT JOIN canon c USING (participant_id)
 LEFT JOIN owner_canon o USING (canonical_id)
 GROUP BY m.message_id, m.conversation_id, m.source_id, m.source_type,
          m.occurred_at, m.message_type, m.conversation_type, m.entry_kind,
-         m.is_chat, m.is_from_me, m.attachment_count, m.deleted_from_source,
+         m.is_chat, m.is_from_me, m.attachment_count, m.has_attachments,
+         m.deleted_from_source,
          c.canonical_id, c.participant_domain, o.canonical_id, m.occurred_year`,
 		EntryKindSQL("m.message_type"),
 		IsChatSQL("m.message_type", "coalesce(c.conversation_type, '')"),

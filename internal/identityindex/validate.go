@@ -203,6 +203,7 @@ var datasetSchemas = map[string][]schemaColumn{
 		{"is_chat", duckDBTypeBoolean},
 		{"is_from_me", duckDBTypeBoolean},
 		{"attachment_count", "INTEGER"},
+		{"has_attachments", duckDBTypeBoolean},
 		{"deleted_from_source", duckDBTypeBoolean},
 		{"canonical_id", duckDBTypeBigInt},
 		{"participant_domain", "VARCHAR"},

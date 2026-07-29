@@ -256,8 +256,10 @@ func validateRelationshipTimelineRequest(request RelationshipTimelineRequest) er
 // owner involvement, so a counterpart's email to a third party still
 // appears.
 //
-// has_attachments derives from the baked attachment_count (extracted
-// attachments), matching the relationship index's file semantics.
+// has_attachments comes from the baked per-message has_attachments flag
+// (MIME structure at sync time), not attachment_count: extraction can lag
+// or fail, leaving the flag true with a zero count, and the indicator must
+// match what the message list shows for the same message.
 func buildRelationshipTimelineSQL(conditions, activityGlob, messagesGlob, conversationsGlob string) string {
 	activityScan := `read_parquet('` + activityGlob + `',
         hive_partitioning=true, union_by_name=true)`
@@ -276,7 +278,7 @@ WITH subject_facts AS (
         any_value(a.occurred_at) AS occurred_at,
         any_value(a.entry_kind) AS entry_kind,
         any_value(a.is_chat) AS is_chat,
-        any_value(a.attachment_count) AS attachment_count,
+        any_value(a.has_attachments) AS has_attachments,
         bool_or(a.is_owner AND a.is_direct) AS with_owner
     FROM ` + activityScan + ` a
     WHERE a.message_id IN (
@@ -299,7 +301,7 @@ WITH subject_facts AS (
         occurred_at AS first_at,
         source_id,
         1::BIGINT AS message_count,
-        (attachment_count > 0) AS has_attachments
+        has_attachments
     FROM day_bucketed
     WHERE NOT is_chat
       AND NOT (entry_kind IN ('event','meeting') AND NOT with_owner)
@@ -315,7 +317,7 @@ WITH subject_facts AS (
         MIN(occurred_at) AS first_at,
         source_id,
         COUNT(*)::BIGINT AS message_count,
-        bool_or(attachment_count > 0) AS has_attachments
+        bool_or(has_attachments) AS has_attachments
     FROM day_bucketed
     WHERE is_chat
     GROUP BY source_id, conversation_id, local_day
