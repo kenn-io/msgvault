@@ -287,6 +287,37 @@ func TestBeeperHashlessLocalPathRemainsPending(t *testing.T) {
 	assert.Empty(message.Attachments[0].ContentHash)
 }
 
+func TestSlackAliasRowsServeHashesThroughMessageAPI(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource("slack", "T01:UME")
+	require.NoError(err)
+	conversationID, err := st.EnsureConversationWithType(source.ID, "C01", "channel", "general")
+	require.NoError(err)
+	messageID := insertStoreTestMessage(t, st, source.ID, conversationID, "C01:1.000100")
+
+	// Two Slack files sharing one CAS blob: normalization keeps the hash on
+	// the first row and writes the duplicate as a hashless alias.
+	contentHash := strings.Repeat("ab", 32)
+	casPath := contentHash[:2] + "/" + contentHash
+	require.NoError(st.ReplaceMessageSlackAttachments(messageID, []store.AttachmentRef{
+		{Filename: "a.png", StoragePath: casPath, ContentHash: contentHash, SourceAttachmentID: "slack:F1", MediaType: "image"},
+		{Filename: "copy.png", StoragePath: casPath, ContentHash: contentHash, SourceAttachmentID: "slack:F2", MediaType: "image"},
+	}))
+
+	// The message-detail API must serve BOTH attachments as accessible:
+	// the alias row's hash re-derives from its trusted CAS path.
+	message, err := st.GetMessage(messageID)
+	require.NoError(err)
+	require.Len(message.Attachments, 2)
+	for _, att := range message.Attachments {
+		assert.Equal(contentHash, att.ContentHash,
+			"a Slack duplicate-content alias must stay accessible through the API (%s)", att.Filename)
+		assert.Empty(att.URL)
+	}
+}
+
 func TestReplaceAndListMessageDiscordAttachments(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

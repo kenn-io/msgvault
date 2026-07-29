@@ -69,6 +69,7 @@ func (s *Store) listPendingAttachmentMessages(sourceID int64, providerPrefix str
 		    WHERE a.message_id = m.id
 		      AND a.source_attachment_id LIKE ?
 		      AND (a.content_hash IS NULL OR a.content_hash = '')
+		      AND COALESCE(a.media_type, '') <> 'link'
 		  )
 	`, sourceID, providerPrefix+"%")
 	if err != nil {
@@ -132,6 +133,15 @@ func normalizeDiscordAttachmentRefs(refs []AttachmentRef) []AttachmentRef {
 // URLs, provider sentinels, malformed paths, and hash/path mismatches are not
 // considered downloaded.
 func IsDiscordAttachmentDownloaded(ref AttachmentRef) bool {
+	return casAttachmentDownloaded(ref)
+}
+
+// casAttachmentDownloaded reports whether a provider attachment row
+// references a trusted local SHA-256 CAS path (shared by the Discord and
+// Slack media paths). A duplicate-content alias may omit its hash; URLs,
+// provider sentinels, malformed paths, and hash/path mismatches are not
+// considered downloaded.
+func casAttachmentDownloaded(ref AttachmentRef) bool {
 	pathHash, ok := casPathHash(ref.StoragePath)
 	if !ok {
 		return false

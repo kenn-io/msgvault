@@ -77,6 +77,11 @@ make lint                     # Run linter
 ./msgvault sync-teams you@tenant.com         # Sync Teams chats + channels
 ./msgvault sync-teams you@tenant.com --no-channels --limit 50
 
+# Slack (user token from your own internal app)
+./msgvault add-slack                         # Register a workspace (prompts for xoxp token)
+./msgvault sync-slack                        # Sync channels, group DMs, DMs
+./msgvault sync-slack --full                 # Repair: re-fetch + upsert in place
+
 # Daemon mode (NAS/server deployment)
 ./msgvault serve                                      # Start HTTP API + scheduled syncs
 

@@ -483,6 +483,7 @@ func TestAttachmentProducingCommandExactAllowlist(t *testing.T) {
 	allowlisted := []string{
 		"backfill-beeper-media",
 		"backfill-discord-media",
+		"backfill-slack-media",
 		"backfill-teams-media",
 		"import",
 		"import-emlx",
@@ -495,6 +496,7 @@ func TestAttachmentProducingCommandExactAllowlist(t *testing.T) {
 		"import-whatsapp",
 		"sync-beeper",
 		"sync-discord",
+		"sync-slack",
 		"sync-synctech-sms",
 		"sync-teams",
 	}
