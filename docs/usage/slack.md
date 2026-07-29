@@ -80,15 +80,19 @@ msgvault sync-slack --full
 | `--no-media` | Skip file downloads this run (files stay pending for `backfill-slack-media`) |
 
 Backfills are resumable: interrupt with Ctrl-C and the next run continues
-from the last checkpoint. Incremental runs fetch new messages, re-scan the
-sweep for thread replies created since the last run.
+from the last checkpoint. Incremental runs fetch new messages and sweep for
+thread replies created since the last run.
 
 Slack's history API never returns thread replies in the main channel stream
 (unless "also sent to channel"), and offers no change feed. The importer
 discovers replies with a search sweep (`threads:replies`, day-granular,
 resumable via a UTC watermark): a reply is found by its **creation time**,
-so the age of its thread is irrelevant — no lookback window, no blind spot.
-Discovered replies are archived canonically via `conversations.replies`.
+so the age of its thread is irrelevant. Because Slack publishes no maximum
+search-index delay, the importer also re-walks one oldest-due conversation's
+canonical history and threads per run. Continued scheduled runs rotate across
+the workspace, eventually covering even a reply that search never indexes.
+Discovered replies and audits are archived canonically via
+`conversations.replies`.
 A channel that was excluded (or unreadable) while sweeps advanced recovers
 automatically when it returns: the importer runs a channel-scoped catch-up
 sweep over the days it missed before rejoining the workspace-wide sweep.
@@ -100,11 +104,11 @@ search; per-channel query narrowing for this case is planned.
 Edits and reaction changes after capture are ignored by default; run
 `sync-slack --maintenance` to repair the recent window, or `--full` to
 repair everything.
-Deleted messages simply
-disappear from Slack — your archived copy is kept (archive semantics; nothing
-is ever deleted locally). This holds on every re-read path, `--full` and
-`--maintenance` included: a deleted thread root that Slack still serves as a
-tombstone row never overwrites the archived original.
+Deleted messages never erase their archived content locally. They are marked
+deleted-at-source so active-message queries match Teams and Discord semantics.
+This holds on every re-read path, `--full` and `--maintenance` included: a
+deleted thread root that Slack still serves as a tombstone row never overwrites
+the archived body, raw JSON, attachments, or reactions.
 
 ### Files
 
@@ -121,6 +125,9 @@ retries them (idempotent; already-downloaded files are never re-fetched).
 The command always downloads, even while `[slack].media = false` keeps the
 scheduled syncs deferring files — that setting's documented workflow (defer
 now, backfill later) depends on it.
+If Slack removes a file before it is downloaded, msgvault keeps the last
+captured filename, size, and permalink as terminal metadata rather than
+deleting the row or retrying an unreachable file forever.
 
 ## Daemon scheduling
 

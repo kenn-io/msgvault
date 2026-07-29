@@ -23,6 +23,11 @@ const (
 	// `in:`-batch narrowing is the specified (unbuilt) sweep-native escape
 	// hatch — see docs/internal/slack-reply-sweep-design.md.
 	sweepTruncationCeiling = searchPageLimit * maxSearchPages
+	// canonicalThreadAuditInterval keeps a recently completed canonical walk
+	// from being selected again immediately. Search remains the cheap
+	// discovery path; oldest-due canonical walks provide eventual
+	// completeness across continued scheduled runs.
+	canonicalThreadAuditInterval = 7 * 24 * time.Hour
 )
 
 // sweepTarget is a done conversation eligible for reply archiving.
@@ -67,13 +72,11 @@ func (imp *Importer) sweepReplies(ctx context.Context, syncID int64, targets map
 	offset := imp.res.tzOffset(imp.opts.UserID)
 	budget := &sweepBudget{limit: imp.opts.Limit}
 	now := imp.now().UTC()
-	// The sweep's boundary is its own PIN (this run's start instant): the
-	// stored watermark/stamps mean "replies at or before boundary − lag
-	// margin are certainly archived", and every floor overlaps back by the
-	// margin so replies the index had not yet served at boundary time are
-	// re-covered by the next sweep. One boundary per run, shared with the
-	// window walks; index lag is absorbed by the overlap, not by a lagged
-	// certification.
+	// The sweep's boundary is its own PIN (this run's start instant). Every
+	// floor overlaps back by the lag margin to absorb normal index delay;
+	// the periodic canonical audit covers the unbounded case where search
+	// never serves a reply. One boundary per run is shared with the window
+	// walks.
 	pin := tsFormat(now)
 
 	ids := make([]string, 0, len(targets))
@@ -153,7 +156,7 @@ func (imp *Importer) sweepReplies(ctx context.Context, syncID int64, targets map
 	// Hits above the pin (created after this sweep started) are acted on
 	// too when the index serves them early — harmless upserts; the next
 	// sweep's window re-covers them by construction.
-	return imp.sweepRange(ctx, syncID, "", floor, now, pin, targets, loc, budget, state, sum,
+	if err := imp.sweepRange(ctx, syncID, "", floor, now, pin, targets, loc, budget, state, sum,
 		func(certified string) {
 			state.SweepWatermark, state.SweepOffset = certified, offset
 			for _, cid := range ids {
@@ -166,14 +169,54 @@ func (imp *Importer) sweepReplies(ctx context.Context, syncID int64, targets map
 					cs.SweptThrough = certified
 				}
 			}
-		})
+		}); err != nil {
+		return err
+	}
+	imp.scheduleCanonicalThreadAudit(targets, state, now)
+	return nil
+}
+
+// scheduleCanonicalThreadAudit records one bounded unit of canonical
+// completeness work per run. Oldest-due first makes every active
+// conversation converge without turning each scheduled sync into a full
+// workspace history walk.
+func (imp *Importer) scheduleCanonicalThreadAudit(targets map[string]sweepTarget, state *SyncState, now time.Time) {
+	cutoff := tsFormat(now.Add(-canonicalThreadAuditInterval))
+	selected := ""
+	selectedStamp := ""
+	for cid := range targets {
+		cs := state.EnsureConv(cid)
+		if cs.ThreadsPending || cs.AuditPending || len(cs.PendingThreads) > 0 ||
+			cs.CatchUpCursor != "" || cs.CatchUpLatest != "" {
+			continue
+		}
+		if cs.AuditedThrough != "" && tsLess(cutoff, cs.AuditedThrough) {
+			continue
+		}
+		candidateOlder := cs.AuditedThrough == "" && selectedStamp != ""
+		sameMissingStamp := cs.AuditedThrough == "" && selectedStamp == ""
+		sameKnownStamp := cs.AuditedThrough != "" && cs.AuditedThrough == selectedStamp
+		if selected == "" || candidateOlder ||
+			(cs.AuditedThrough != "" && selectedStamp != "" && tsLess(cs.AuditedThrough, selectedStamp)) ||
+			((sameMissingStamp || sameKnownStamp) && cid < selected) {
+			selected = cid
+			selectedStamp = cs.AuditedThrough
+		}
+	}
+	if selected == "" {
+		return
+	}
+	cs := state.EnsureConv(selected)
+	cs.ThreadsPending = true
+	cs.AuditPending = true
+	cs.CatchUpCursor, cs.CatchUpLatest = "", ""
 }
 
 // sweepRange drains the threads:replies search for one scope ("" =
 // workspace-wide; a channel ID = in:<#ID>-scoped), day by day in the user's
 // current timezone. floor is the stored boundary (a pin); the query and hit
-// filter OVERLAP back by the lag margin so replies the search index had not
-// served by the previous sweep are re-covered (into idempotent upserts).
+// filter OVERLAP back by the lag margin so normally delayed search results
+// are re-covered (into idempotent upserts).
 // commit is invoked with each newly advanced boundary — end of a completed
 // day, capped at ceiling and never regressing below floor — so multi-day
 // catch-ups checkpoint per day. Discovery and fetch failures are recorded,
@@ -326,7 +369,8 @@ func (imp *Importer) sweepQuery(scope, day string, syncID int64) string {
 // debt — one entry per thread, seeded to resume just before the group's
 // earliest hit — then drains each affected conversation with the sweep
 // budget threaded through. Hits at or below queryFloor (the overlapped
-// floor: stored boundary − lag margin) are already archived and skipped.
+// floor: stored boundary − lag margin) were handled by an earlier search
+// interval and are skipped; canonical audits backstop search omissions.
 //
 // Recording is never budget-gated: the recorded entry IS the durable
 // progress that lets the day's boundary advance (the walks' "cursor past

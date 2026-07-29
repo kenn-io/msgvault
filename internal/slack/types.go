@@ -311,10 +311,12 @@ type ImportSummary struct {
 	ConversationsProcessed int
 	MessagesProcessed      int
 	MessagesAdded          int
+	MessagesUpdated        int
 	RepliesFetched         int
 	AttachmentsDownloaded  int
 	AttachmentsPending     int
 	FetchErrors            int
 	Errors                 int
 	Duration               time.Duration
+	processedMessageIDs    map[string]struct{}
 }

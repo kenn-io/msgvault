@@ -27,9 +27,9 @@ func newSyncSlackCmd() *cobra.Command {
 		Long: `Sync Slack conversations for registered workspaces.
 
 The first run backfills each conversation's full history; later runs are
-incremental, fetching only new messages and polling recent threads for late
-replies. Backfills are resumable: re-run after an interruption and the sync
-continues where it stopped.
+incremental, fetching new messages and discovering late thread replies with
+search plus periodic canonical audits. Backfills and audits are resumable:
+re-run after an interruption and the sync continues where it stopped.
 
 Requires a workspace added with 'add-slack'. Use --full to start a repair
 session: every message is re-fetched and upserted in place, so existing rows

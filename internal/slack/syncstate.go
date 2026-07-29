@@ -64,14 +64,21 @@ type ConvState struct {
 	// thread is gone).
 	PendingThreads []PendingThread `json:"pending_threads,omitempty"`
 	// SweptThrough is this conversation's reply-sweep boundary: the pin of
-	// the last sweep that covered it (replies created at or before
-	// SweptThrough − the lag margin are certainly archived; the margin is
-	// re-covered by the next sweep's overlapped floor, absorbing search
-	// index lag). It normally tracks the workspace SweepWatermark; it lags
+	// the last search sweep that covered it. The next sweep overlaps the
+	// boundary to absorb ordinary search-index lag; periodic canonical
+	// audits cover replies that search never indexes. It normally tracks
+	// the workspace SweepWatermark; it lags
 	// when the conversation missed sweeps (excluded, gone, or filtered
 	// while the watermark advanced), which the next sweep repairs with a
 	// channel-scoped gap sweep before stamping it forward.
 	SweptThrough string `json:"swept_through,omitempty"`
+	// AuditedThrough is the pin of the last canonical history/thread walk.
+	// Search has no published maximum indexing lag, so one conversation at
+	// a time is periodically re-walked as a completeness backstop.
+	AuditedThrough string `json:"audited_through,omitempty"`
+	// AuditPending distinguishes a periodic canonical audit from other
+	// ThreadsPending causes so completion can advance AuditedThrough.
+	AuditPending bool `json:"audit_pending,omitempty"`
 }
 
 // SyncState holds per-conversation cursors plus the reply-sweep watermark
@@ -86,9 +93,9 @@ type SyncState struct {
 	Conversations map[string]*ConvState `json:"conversations"` // key = channel ID
 	// SweepWatermark is the pin of the last completed workspace sweep for
 	// the current target set (each conversation's own boundary is its
-	// SweptThrough). Replies created at or before it minus the lag margin
-	// are certainly archived; the trailing margin is re-covered by the next
-	// sweep's overlapped floor. It advances only behind persisted work.
+	// SweptThrough). The trailing margin is re-covered by the next sweep,
+	// while canonical audits independently provide eventual completeness.
+	// It advances only behind persisted search-discovery work.
 	SweepWatermark string `json:"sweep_watermark,omitempty"`
 	// SweepOffset records the user tz_offset (seconds) in effect when the
 	// watermark was written. Audit trail only: sweep-day arithmetic always

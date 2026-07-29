@@ -1,10 +1,16 @@
 # Slack Reply Sweep — Design
 
 Date: 2026-07-20
-Status: Probed and decided; supersedes the thread-lookback polling design
+Status: Implemented; supersedes the thread-lookback polling design
 in `slack-ingestion-design.md` (its LB-3 mitigation section). Every
 load-bearing behavior below was verified live against a Slack Developer
 Program sandbox and, where noted, a production workspace.
+
+> **Completeness amendment (2026-07-29):** Slack publishes no upper bound on
+> search indexing delay. The overlap remains the fast path, while a resumable
+> oldest-due canonical conversation/thread audit is recorded once per run
+> and rotates across active conversations, so search is not a permanent
+> single point of omission under continued scheduled syncs.
 
 ## Goal
 
@@ -237,11 +243,13 @@ for incremental sync. Consequences:
   reply_count kept — probed), so every re-read path serves it: the
   window's clock-skew overlap, catch-up and gap re-walks, `--full`,
   and `--maintenance`. The archive's contract is that deleted messages
-  stay archived, so processMessage skips a tombstone whose message
-  already exists — body, raw, and reactions all stand (the tombstone's
+  stay archived, so processMessage skips a tombstone whose complete
+  row-plus-raw snapshot already exists — body, raw, and reactions all stand
+  (the tombstone's
   empty reaction set would otherwise wipe them) — and persists it only
   as a placeholder for a never-archived root, giving orphaned replies
-  a resolvable thread link. The existence probe's store error aborts
+  a resolvable thread link. Both cases mark the row deleted-at-source; a
+  later live reappearance clears that marker. The existence probe's store error aborts
   the run like any other store failure: uncertainty must not read as
   "missing" when that direction overwrites. This resolves the
   previously-open repair-semantics tension in favor of archive
@@ -477,7 +485,8 @@ emptiness-never-clears.
   a truncated day fails the run without certifying past it; an
   excluded-then-re-included channel recovers its gap via the scoped
   sweep; `--limit` bounds thread replies and leaves the page resumable;
-  tombstoned/omitted files keep their archived attachment rows;
+  tombstoned/omitted files keep their archived attachment rows (an omitted
+  pending file becomes terminal metadata rather than disappearing);
   tombstoned ROOTS never overwrite archived originals (overlap, --full,
   --maintenance) and persist as placeholders when never archived;
   a late-indexed reply below a parked entry's resume point merges the

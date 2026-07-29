@@ -251,21 +251,24 @@ func (imp *Importer) persistFiles(ctx context.Context, syncID, messageID int64, 
 		refs = append(refs, stored)
 		sum.AttachmentsDownloaded++
 	}
-	// Files tombstoned or omitted at the source keep their archived rows —
-	// downloaded media AND metadata-only link rows (all the record we will
-	// ever have for an external file): a Slack-side deletion, or an edit
-	// that drops a file, must never reach into the archive. Only stale
-	// pending markers clear: a gone file can never be fetched, and keeping
-	// its marker would wedge the pending queue forever.
+	// Files tombstoned or omitted at the source keep their archived rows.
+	// Downloaded media and existing metadata-only links survive unchanged;
+	// pending markers become terminal metadata-only links. The conversion
+	// preserves the last captured filename, URL, and size without wedging a
+	// retry queue that can no longer fetch the file.
 	var keep []string
-	for id, prev := range existing {
-		if (prev.ContentHash != "" || prev.MediaType == "link") && !seen[id] {
+	for id := range existing {
+		if !seen[id] {
 			keep = append(keep, id)
 		}
 	}
 	sort.Strings(keep)
 	for _, id := range keep {
-		refs = append(refs, existing[id])
+		ref := existing[id]
+		if ref.ContentHash == "" && ref.MediaType != "link" {
+			ref.MediaType = "link"
+		}
+		refs = append(refs, ref)
 	}
 	if err := imp.store.ReplaceMessageSlackAttachments(messageID, refs); err != nil {
 		return fmt.Errorf("replace attachment rows: %w", err)

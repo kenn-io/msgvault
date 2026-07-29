@@ -2,6 +2,8 @@ package slack
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -83,4 +85,26 @@ func TestClientPagination(t *testing.T) {
 		return nil
 	}))
 	assert.Equal(t, []string{"U1", "U2", "U3", "U4", "U5"}, ids)
+}
+
+func TestClientRejectsHasMoreWithoutNextCursor(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, err := w.Write([]byte(`{
+			"ok": true,
+			"messages": [],
+			"has_more": true,
+			"response_metadata": {"next_cursor": ""}
+		}`))
+		require.NoError(t, err)
+	}))
+	t.Cleanup(srv.Close)
+	client := NewClient(srv.URL, "xoxp-test")
+	client.disableRateLimits()
+
+	_, err := client.HistoryPage(context.Background(), HistoryParams{ChannelID: "C01"})
+	require.ErrorContains(t, err, "has_more without next_cursor")
+
+	_, err = client.RepliesPage(context.Background(), "C01", "123.000100", "", "")
+	require.ErrorContains(t, err, "has_more without next_cursor")
 }

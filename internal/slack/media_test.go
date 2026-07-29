@@ -223,11 +223,10 @@ func TestPersistFilesPreservesTombstonedAndOmittedDownloads(t *testing.T) {
 	require.NoError(err)
 
 	// The source deletes one downloaded file (tombstone) and an edit drops
-	// the others from the message entirely; the oversized pending marker
-	// and the external link's metadata row also stop being listed.
-	// Deletions at the source must never reach into the archive — the
-	// downloaded rows AND the metadata-only link row survive; only the
-	// stale pending marker has nothing to keep.
+	// the others from the message entirely. Deletions at the source must
+	// never reach into the archive: downloaded rows survive, and a pending
+	// row becomes terminal metadata so the file remains discoverable without
+	// wedging the retry queue forever.
 	f.mu.Lock()
 	f.conv("C01").Msgs[6].Files = []map[string]any{
 		{"id": "F_TOMB", "mode": "tombstone"},
@@ -256,8 +255,8 @@ func TestPersistFilesPreservesTombstonedAndOmittedDownloads(t *testing.T) {
 	assert.NotEmpty(got["slack:F_TOMB"][0], "a tombstoned file keeps its archived attachment row")
 	assert.NotEmpty(got["slack:F_GONE"][0], "a file dropped by an edit keeps its archived attachment row")
 	assert.Equal("link", got["slack:F_LINK"][1], "an omitted external file keeps its metadata-only link row")
-	_, pendKept := got["slack:F_PEND"]
-	assert.False(pendKept, "a stale pending marker clears once the source stops listing the file")
+	assert.Equal("link", got["slack:F_PEND"][1],
+		"a pending file omitted at the source must become terminal metadata rather than disappear")
 }
 
 func TestPersistFilesKeepsAliasRowsForDuplicateContent(t *testing.T) {

@@ -177,6 +177,22 @@ func TestImportEndToEnd(t *testing.T) {
 		WHERE m.message_type = 'slack' AND mr.recipient_type = 'from'`).Scan(&fromRows))
 	assert.Equal(totalWorkspaceMessages, fromRows,
 		"every Slack sender must use the shared from-recipient model as well as messages.sender_id")
+	var directRecipients int
+	require.NoError(st.DB().QueryRow(st.Rebind(`
+		SELECT COUNT(*)
+		FROM message_recipients mr
+		JOIN messages m ON m.id = mr.message_id
+		JOIN conversations c ON c.id = m.conversation_id
+		WHERE c.source_conversation_id = ? AND mr.recipient_type = 'to'`), "D01").Scan(&directRecipients))
+	assert.Equal(1, directRecipients, "a direct message must address the other member")
+	var groupRecipients int
+	require.NoError(st.DB().QueryRow(st.Rebind(`
+		SELECT COUNT(*)
+		FROM message_recipients mr
+		JOIN messages m ON m.id = mr.message_id
+		JOIN conversations c ON c.id = m.conversation_id
+		WHERE c.source_conversation_id = ? AND mr.recipient_type = 'to'`), "G01").Scan(&groupRecipients))
+	assert.Equal(2, groupRecipients, "a group DM must address every member except its sender")
 	var body string
 	require.NoError(st.DB().QueryRow(st.Rebind(`
 		SELECT mb.body_text FROM message_bodies mb
@@ -214,6 +230,23 @@ func TestImportEndToEnd(t *testing.T) {
 		JOIN conversations c ON c.id = cp.conversation_id
 		WHERE c.source_conversation_id = ?`), "C01").Scan(&members))
 	assert.Equal(3, members)
+}
+
+func TestFullRepairReportsUpdatesRatherThanAdds(t *testing.T) {
+	require := require.New(t)
+	f := testWorkspace(t)
+	imp, opts := testImporter(t, f)
+
+	first, err := imp.Import(context.Background(), opts)
+	require.NoError(err)
+	require.Equal(totalWorkspaceMessages, first.MessagesAdded)
+	require.Zero(first.MessagesUpdated)
+
+	opts.Full = true
+	second, err := imp.Import(context.Background(), opts)
+	require.NoError(err)
+	assert.Zero(t, second.MessagesAdded)
+	assert.Equal(t, totalWorkspaceMessages, second.MessagesUpdated)
 }
 
 func TestImportIncrementalCatchesNewMessagesAndLateReplies(t *testing.T) {
@@ -590,6 +623,42 @@ func TestSweepOverlapRecoversLateIndexedReplies(t *testing.T) {
 	require.Equal(1, n, "the overlapped floor must re-cover replies the index served late")
 }
 
+func TestCanonicalThreadAuditRecoversReplyNeverServedBySearch(t *testing.T) {
+	require := require.New(t)
+	f, rootTS := oldThreadWorkspace(t)
+	imp, opts := testImporter(t, f)
+	st := imp.store
+
+	_, err := imp.Import(context.Background(), opts)
+	require.NoError(err)
+
+	// The reply remains absent from search well beyond the overlap margin.
+	// Search is useful discovery, but it cannot be the only durable
+	// completeness mechanism because Slack publishes no indexing-lag bound.
+	lateReply := tsFresh(0)
+	f.mu.Lock()
+	root := f.conv("C09").findRoot(rootTS)
+	root.Replies = append(root.Replies, fakeMsg{TS: lateReply, ThreadTS: rootTS, User: "UME", Text: "never indexed"})
+	f.searchIndexedThrough = tsMinusMicro(lateReply)
+	f.mu.Unlock()
+
+	imp.now = func() time.Time { return time.Now().Add(8 * 24 * time.Hour) }
+	_, err = imp.Import(context.Background(), opts)
+	require.NoError(err)
+	var n int
+	require.NoError(st.DB().QueryRow(st.Rebind(
+		`SELECT COUNT(*) FROM messages WHERE source_message_id = ?`), "C09:"+lateReply).Scan(&n))
+	require.Zero(n, "test setup: search must still hide the reply when the periodic audit is scheduled")
+
+	imp.now = func() time.Time { return time.Now().Add(8*24*time.Hour + time.Minute) }
+	_, err = imp.Import(context.Background(), opts)
+	require.NoError(err)
+	require.NoError(st.DB().QueryRow(st.Rebind(
+		`SELECT COUNT(*) FROM messages WHERE source_message_id = ?`), "C09:"+lateReply).Scan(&n))
+	require.Equal(1, n,
+		"a canonical history/thread audit must eventually recover replies regardless of search indexing lag")
+}
+
 func TestWindowOverlapAbsorbsClockSkew(t *testing.T) {
 	require := require.New(t)
 	f := testWorkspace(t)
@@ -735,6 +804,34 @@ func TestBackfillMediaReportsInvalidRaw(t *testing.T) {
 	pending, err := st.ListSlackPendingAttachmentMessages(src.ID)
 	require.NoError(err)
 	require.Len(pending, 1)
+}
+
+func TestBackfillMediaReportsMissingRaw(t *testing.T) {
+	require := require.New(t)
+	f := testWorkspace(t)
+	f.conv("C01").Msgs[6].Files = []map[string]any{
+		{"id": "F_RAWMISSING", "name": "missing.png", "mimetype": "image/png", "size": 5,
+			"url_private": "https://files.slack.com/files-pri/T01-F_RAWMISSING/missing.png",
+			"permalink":   "https://testers.slack.com/files/F_RAWMISSING"},
+	}
+	imp, opts := testImporter(t, f)
+	st := imp.store
+	opts.NoMedia = true
+	opts.AttachmentsDir = t.TempDir()
+
+	_, err := imp.Import(context.Background(), opts)
+	require.NoError(err)
+
+	var messageID int64
+	require.NoError(st.DB().QueryRow(st.Rebind(
+		`SELECT id FROM messages WHERE source_message_id = ?`), "C01:"+ts(6)).Scan(&messageID))
+	_, err = st.DB().Exec(st.Rebind(`DELETE FROM message_raw WHERE message_id = ?`), messageID)
+	require.NoError(err)
+
+	sum, err := imp.BackfillMedia(context.Background(), opts)
+	require.Error(err, "missing archived raw must report a partial media backfill")
+	require.Positive(sum.AttachmentsPending,
+		"missing raw is a per-item repair condition and must retain/count its pending marker")
 }
 
 func TestSweepDebtSurvivesDeletedAnchorReply(t *testing.T) {

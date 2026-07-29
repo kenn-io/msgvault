@@ -13,6 +13,7 @@
 //     clampdown: conversations.history serves 999-message pages at Tier 3
 //     rates.
 //   - Thread replies never appear in oldest-filtered conversations.history
-//     (unless broadcast), so incremental sync tracks per-root reply cursors
-//     and re-polls conversations.replies for roots within a lookback window.
+//     (unless broadcast), so incremental sync discovers them through
+//     search.messages and periodically re-walks canonical thread history as
+//     a completeness backstop for unbounded search-index lag.
 package slack
