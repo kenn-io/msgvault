@@ -84,10 +84,11 @@ func (s *Store) CreatePersonFromParticipantContext(
 		if err != nil {
 			return err
 		}
+		existingPerson := len(personIDs) == 1
 		if len(personIDs) > 1 {
 			return newPersonBindingConflict(personIDs)
 		}
-		if len(personIDs) == 1 {
+		if existingPerson {
 			personID = personIDs[0]
 		} else {
 			uid, err := newVCardUID()
@@ -103,9 +104,21 @@ func (s *Store) CreatePersonFromParticipantContext(
 		insert := s.dialect.InsertOrIgnore(
 			`INSERT OR IGNORE INTO person_participants (person_id, participant_id) VALUES (?, ?)`,
 		)
+		bindingsChanged := false
 		for _, memberID := range members {
-			if _, err := tx.ExecContext(ctx, insert, personID, memberID); err != nil {
+			result, err := tx.ExecContext(ctx, insert, personID, memberID)
+			if err != nil {
 				return fmt.Errorf("bind person %d to participant %d: %w", personID, memberID, err)
+			}
+			changed, err := result.RowsAffected()
+			if err != nil {
+				return fmt.Errorf("check person %d binding for participant %d: %w", personID, memberID, err)
+			}
+			bindingsChanged = bindingsChanged || changed > 0
+		}
+		if existingPerson && bindingsChanged {
+			if err := s.bumpPersonRevisionsTx(ctx, tx, personID); err != nil {
+				return err
 			}
 		}
 		return nil
@@ -324,19 +337,50 @@ func (s *Store) rebindPersonParticipantForMerge(
 	}
 	switch {
 	case loserPerson.Valid && winnerPerson.Valid:
-		_, err := tx.ExecContext(ctx,
+		result, err := tx.ExecContext(ctx,
 			`DELETE FROM person_participants WHERE participant_id = ?`, loser)
 		if err != nil {
 			return fmt.Errorf("dedupe merged person binding: %w", err)
 		}
+		if changed, err := result.RowsAffected(); err != nil {
+			return fmt.Errorf("check deduped person binding: %w", err)
+		} else if changed > 0 {
+			return s.bumpPersonRevisionsTx(ctx, tx, loserPerson.Int64)
+		}
 	case loserPerson.Valid:
-		_, err := tx.ExecContext(ctx, `
+		result, err := tx.ExecContext(ctx, `
 			UPDATE person_participants SET participant_id = ?
 			WHERE participant_id = ?
 		`, winner, loser)
 		if err != nil {
 			return fmt.Errorf("repoint merged person binding: %w", err)
 		}
+		if changed, err := result.RowsAffected(); err != nil {
+			return fmt.Errorf("check repointed person binding: %w", err)
+		} else if changed > 0 {
+			return s.bumpPersonRevisionsTx(ctx, tx, loserPerson.Int64)
+		}
+	}
+	return nil
+}
+
+func (s *Store) bumpPersonRevisionsTx(ctx context.Context, tx *loggedTx, personIDs ...int64) error {
+	slices.Sort(personIDs)
+	personIDs = slices.Compact(personIDs)
+	if len(personIDs) == 0 {
+		return nil
+	}
+	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(personIDs)), ",")
+	args := make([]any, len(personIDs))
+	for i, id := range personIDs {
+		args[i] = id
+	}
+	if _, err := tx.ExecContext(ctx, fmt.Sprintf(`
+		UPDATE persons
+		SET revision = revision + 1, updated_at = %s
+		WHERE id IN (%s)
+	`, s.dialect.Now(), placeholders), args...); err != nil {
+		return fmt.Errorf("bump person revisions: %w", err)
 	}
 	return nil
 }

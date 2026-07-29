@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"strconv"
 	"strings"
 	"text/tabwriter"
@@ -36,7 +37,7 @@ var personPromoteCmd = &cobra.Command{
 		}
 		defer func() { _ = client.Close() }()
 		body := generated.CreatePersonBody{ParticipantID: participantID}
-		resp, err := daemonclient.APIResponse(client,
+		resp, err := daemonclient.APIResponseWithStatus(client, http.StatusCreated,
 			func(api *apiclient.Client) (*generated.CreatePersonResp, error) {
 				return api.CreatePersonWithResponse(cmd.Context(),
 					&generated.CreatePersonRequestOptions{Body: &body})

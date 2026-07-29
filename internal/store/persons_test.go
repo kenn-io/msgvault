@@ -91,6 +91,7 @@ func TestMergeParticipantsPreservesOrRejectsPersonBinding(t *testing.T) {
 		require.NoError(err)
 		assert.Equal(person.VCardUID, got.VCardUID)
 		assert.Equal([]int64{winner}, got.ParticipantIDs)
+		assert.Equal(person.Revision+1, got.Revision)
 	})
 
 	t.Run("rejects different persons before merge", func(t *testing.T) {
@@ -108,6 +109,29 @@ func TestMergeParticipantsPreservesOrRejectsPersonBinding(t *testing.T) {
 		require.ErrorIs(err, store.ErrPersonBindingConflict)
 		assert.Equal(int64(1), participantCount(t, f.Store, bob))
 	})
+}
+
+func TestPromoteIntoExistingPersonBumpsRevision(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := storetest.New(t)
+	alice := f.EnsureParticipant("alice@example.com", "alice", "example.com")
+	alias := f.EnsureParticipant("alice+alias@example.com", "alice", "example.com")
+	person, err := f.Store.CreatePersonFromParticipant(alice)
+	require.NoError(err)
+	assert.Equal(int64(1), person.Revision)
+
+	_, err = f.Store.LinkParticipants(alice, alias)
+	require.NoError(err)
+	expanded, err := f.Store.CreatePersonFromParticipant(alias)
+	require.NoError(err)
+	assert.Equal(person.ID, expanded.ID)
+	assert.Equal(person.Revision+1, expanded.Revision)
+	assert.Equal([]int64{alice, alias}, expanded.ParticipantIDs)
+
+	displayName := "alice"
+	_, err = f.Store.UpdatePersonDisplayName(person.ID, person.Revision, &displayName)
+	assert.ErrorIs(err, store.ErrPersonRevisionConflict)
 }
 
 func TestPersonIdentitySurvivesLinkUnlinkChurn(t *testing.T) {

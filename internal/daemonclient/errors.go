@@ -95,12 +95,12 @@ func apiErrorMessage(body []byte) (string, bool) {
 
 // APIResponseError maps generated non-CLI responses to daemonclient errors.
 func APIResponseError(resp any, err error) error {
-	return responseError(resp, err, handleErrorBody)
+	return responseError(resp, err, http.StatusOK, handleErrorBody)
 }
 
 // CLIResponseError maps generated CLI responses to user-facing errors.
 func CLIResponseError(resp any, err error) error {
-	return responseError(resp, err, handleCLIErrorBody)
+	return responseError(resp, err, http.StatusOK, handleCLIErrorBody)
 }
 
 // APIResponse executes a generated request and validates its response.
@@ -109,6 +109,18 @@ func APIResponse[R any](
 	request func(*apiclient.Client) (R, error),
 ) (R, error) {
 	return generatedResponse(c, request, APIResponseError)
+}
+
+// APIResponseWithStatus executes a generated request and validates it against
+// an explicit success status instead of the default 200 OK.
+func APIResponseWithStatus[R any](
+	c *Client,
+	expectedStatus int,
+	request func(*apiclient.Client) (R, error),
+) (R, error) {
+	return generatedResponse(c, request, func(resp any, err error) error {
+		return responseError(resp, err, expectedStatus, handleErrorBody)
+	})
 }
 
 // APIResponseWithNotFound executes a generated request and allows callers to
@@ -173,6 +185,7 @@ func generatedResponse[R any](
 func responseError(
 	resp any,
 	err error,
+	expectedStatus int,
 	decodeErrorBody func(status int, body []byte) error,
 ) error {
 	if resp == nil {
@@ -191,16 +204,16 @@ func responseError(
 	if responseDecodeError(err) {
 		return fmt.Errorf("decode generated response: %w", err)
 	}
-	if meta.Status != http.StatusOK {
+	if meta.Status != expectedStatus {
 		return decodeErrorBody(meta.Status, meta.Body)
 	}
 	if err != nil {
 		return fmt.Errorf("decode generated response: %w", err)
 	}
-	if meta.HasJSON200 && len(bytes.TrimSpace(meta.Body)) == 0 {
+	if expectedStatus == http.StatusOK && meta.HasJSON200 && len(bytes.TrimSpace(meta.Body)) == 0 {
 		return errors.New("decode generated response: empty 200 JSON response body")
 	}
-	if meta.MissingJSON200 {
+	if expectedStatus == http.StatusOK && meta.MissingJSON200 {
 		return errors.New("decode generated response: missing 200 JSON response body")
 	}
 	return nil
