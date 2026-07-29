@@ -203,7 +203,7 @@ func TestCopySubset_PreservesPersonProfiles(t *testing.T) {
 	srcDB := createTestSourceDB(t, t.TempDir(), 5)
 	source, err := Open(srcDB)
 	require.NoError(err)
-	person, err := source.CreatePersonFromParticipant(2)
+	person, _, err := source.CreatePersonFromParticipant(2)
 	require.NoError(err)
 	displayName := "alice"
 	person, err = source.UpdatePersonDisplayName(person.ID, person.Revision, &displayName)

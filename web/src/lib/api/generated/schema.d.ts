@@ -1297,11 +1297,14 @@ export interface paths {
         };
         /**
          * List durable person profiles
-         * @description Durable persons are curated profiles; /api/v1/people exposes derived analytics groupings.
+         * @description Durable persons are curated profiles; /api/v1/people exposes derived analytics groupings. The listing is deliberately unpaginated: persons exist only through explicit promotion, so the set stays small.
          */
         get: operations["listPersons"];
         put?: never;
-        /** Promote a participant cluster to a durable person */
+        /**
+         * Promote a participant cluster to a durable person
+         * @description Returns 201 when a new person is created, or 200 when the cluster is already represented by a person (idempotent re-promotion, which also binds any unbound cluster members).
+         */
         post: operations["createPerson"];
         delete?: never;
         options?: never;
@@ -1320,7 +1323,11 @@ export interface paths {
         get: operations["getPersonProfile"];
         put?: never;
         post?: never;
-        delete?: never;
+        /**
+         * Delete a durable person profile
+         * @description Deletion is permanent: the person's participant bindings are removed and its vCard UID is retired forever. Re-promoting the same cluster afterwards creates a new person with a new UID.
+         */
+        delete: operations["deletePerson"];
         options?: never;
         head?: never;
         /** Update a durable person's display name */
@@ -3012,6 +3019,15 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        PersonProfile: {
+            display_name?: string;
+            /** Format: int64 */
+            id: number;
+            /** Format: int64 */
+            revision: number;
+        } & {
+            [key: string]: unknown;
+        };
         PersonSearchHTTPResponse: {
             cache_revision: string;
             candidate_snapshot_id?: string;
@@ -3040,6 +3056,7 @@ export interface components {
             /** Format: date-time */
             last_at: string;
             partial_label: boolean;
+            profile?: components["schemas"]["PersonProfile"];
             source_counts: components["schemas"]["SourceCount"][] | null;
         } & {
             [key: string]: unknown;
@@ -7709,6 +7726,17 @@ export interface operations {
             };
         };
         responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    /** @description Strong person profile revision tag for optimistic concurrency */
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Person"];
+                };
+            };
             /** @description Created */
             201: {
                 headers: {
@@ -7801,11 +7829,107 @@ export interface operations {
             };
         };
     };
+    deletePerson: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Strong ETag returned by the latest person profile read. Must be the exact single tag from that read; the RFC 7232 forms `*` and comma-separated tag lists are not supported. */
+                "If-Match": string;
+            };
+            path: {
+                /** @description Durable person ID */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            428: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     patchPerson: {
         parameters: {
             query?: never;
             header: {
-                /** @description Strong ETag returned by the latest person profile read */
+                /** @description Strong ETag returned by the latest person profile read. Must be the exact single tag from that read; the RFC 7232 forms `*` and comma-separated tag lists are not supported. */
                 "If-Match": string;
             };
             path: {

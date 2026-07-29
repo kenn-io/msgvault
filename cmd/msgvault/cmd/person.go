@@ -40,7 +40,8 @@ var personPromoteCmd = &cobra.Command{
 		}
 		defer func() { _ = client.Close() }()
 		body := generated.CreatePersonBody{ParticipantID: participantID}
-		resp, err := daemonclient.APIResponseWithStatus(client, http.StatusCreated,
+		resp, err := daemonclient.APIResponseWithStatuses(client,
+			[]int{http.StatusOK, http.StatusCreated},
 			func(api *apiclient.Client) (*generated.CreatePersonResp, error) {
 				return api.CreatePersonWithResponse(cmd.Context(),
 					&generated.CreatePersonRequestOptions{Body: &body})
@@ -48,7 +49,12 @@ var personPromoteCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		return writeCLIPerson(cmd, resp.JSON201)
+		// 201 carries a newly created person; 200 an idempotent re-promotion.
+		person := resp.JSON201
+		if person == nil {
+			person = resp.JSON200
+		}
+		return writeCLIPerson(cmd, person)
 	},
 }
 
@@ -159,6 +165,46 @@ var personSetDisplayNameCmd = &cobra.Command{
 	},
 }
 
+var personDeleteCmd = &cobra.Command{
+	Use:   "delete <person-id>",
+	Short: "Permanently delete a durable person profile",
+	Long: "Permanently delete a durable person profile. The person's participant\n" +
+		"bindings are removed and its vCard UID is retired forever; re-promoting\n" +
+		"the same cluster afterwards creates a new person with a new UID.",
+	Args: cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		id, err := positivePersonCLIArg(cmd, args[0], "person")
+		if err != nil {
+			return err
+		}
+		client, _, err := OpenHTTPStore(cmd.Context())
+		if err != nil {
+			return err
+		}
+		defer func() { _ = client.Close() }()
+		current, err := getCLIPerson(cmd, client, id)
+		if err != nil {
+			return err
+		}
+		if current.JSON200 == nil {
+			return errors.New("person response was empty")
+		}
+		etag := fmt.Sprintf(`"person-%d-r%d"`, id, current.JSON200.Revision)
+		if _, err := daemonclient.APIResponseWithStatuses(client,
+			[]int{http.StatusNoContent},
+			func(api *apiclient.Client) (*generated.DeletePersonResp, error) {
+				return api.DeletePersonWithResponse(cmd.Context(), &generated.DeletePersonRequestOptions{
+					PathParams: &generated.DeletePersonPath{ID: id},
+					Header:     &generated.DeletePersonHeaders{IfMatch: etag},
+				})
+			}); err != nil {
+			return err
+		}
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Deleted person %d\n", id)
+		return nil
+	},
+}
+
 func getCLIPerson(
 	cmd *cobra.Command, client *daemonclient.Client, id int64,
 ) (*generated.GetPersonProfileResp, error) {
@@ -202,7 +248,8 @@ func positivePersonCLIArg(cmd *cobra.Command, raw, kind string) (int64, error) {
 
 func init() {
 	rootCmd.AddCommand(personCmd)
-	personCmd.AddCommand(personPromoteCmd, personGetCmd, personListCmd, personSetDisplayNameCmd)
+	personCmd.AddCommand(personPromoteCmd, personGetCmd, personListCmd,
+		personSetDisplayNameCmd, personDeleteCmd)
 	for _, command := range []*cobra.Command{personPromoteCmd, personGetCmd, personListCmd, personSetDisplayNameCmd} {
 		command.Flags().BoolVar(&personJSON, flagJSON, false, "Output as JSON")
 	}

@@ -1083,9 +1083,25 @@ type ListPersonsErrorResponse = ErrorResponse
 
 type CreatePersonResponse = Person
 
+type CreatePersonResponseJSON = Person
+
 type CreatePersonErrorResponse = ErrorResponse
 
 type CreatePersonErrorResponseJSON = ErrorResponse
+
+type DeletePersonErrorResponse = ErrorResponse
+
+type DeletePersonErrorResponseJSON = ErrorResponse
+
+type DeletePersonErrorResponseJSON404 = ErrorResponse
+
+type DeletePersonErrorResponseJSON409 = ErrorResponse
+
+type DeletePersonErrorResponseJSON428 = ErrorResponse
+
+type DeletePersonErrorResponseJSON500 = ErrorResponse
+
+type DeletePersonErrorResponseJSON503 = ErrorResponse
 
 type GetPersonProfileResponse = Person
 
@@ -2072,6 +2088,10 @@ type ListPersonsResp struct {
 	JSON503      *ListPersonsErrorResponse
 }
 
+type CreatePersonResp200Headers struct {
+	ETag string `header:"ETag"`
+}
+
 type CreatePersonResp201Headers struct {
 	ETag string `header:"ETag"`
 }
@@ -2080,10 +2100,25 @@ type CreatePersonResp struct {
 	HTTPResponse *http.Response
 	Body         []byte
 	StatusCode   int
-	JSON201      *CreatePersonResponse
+	JSON200      *CreatePersonResponse
+	Headers200   *CreatePersonResp200Headers
+	JSON201      *CreatePersonResponseJSON
 	Headers201   *CreatePersonResp201Headers
 	JSON409      *CreatePersonErrorResponse
 	JSON503      *CreatePersonErrorResponseJSON
+}
+
+type DeletePersonResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON400      *DeletePersonErrorResponse
+	JSON401      *DeletePersonErrorResponseJSON
+	JSON404      *DeletePersonErrorResponseJSON404
+	JSON409      *DeletePersonErrorResponseJSON409
+	JSON428      *DeletePersonErrorResponseJSON428
+	JSON500      *DeletePersonErrorResponseJSON500
+	JSON503      *DeletePersonErrorResponseJSON503
 }
 
 type GetPersonProfileResp200Headers struct {

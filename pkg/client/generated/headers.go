@@ -15,8 +15,17 @@ func (c CreateOrLinkMessageTaskHeaders) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(c))
 }
 
+type DeletePersonHeaders struct {
+	// IfMatch Strong ETag returned by the latest person profile read. Must be the exact single tag from that read; the RFC 7232 forms `*` and comma-separated tag lists are not supported.
+	IfMatch string `json:"If-Match" validate:"required"`
+}
+
+func (d DeletePersonHeaders) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(d))
+}
+
 type PatchPersonHeaders struct {
-	// IfMatch Strong ETag returned by the latest person profile read
+	// IfMatch Strong ETag returned by the latest person profile read. Must be the exact single tag from that read; the RFC 7232 forms `*` and comma-separated tag lists are not supported.
 	IfMatch string `json:"If-Match" validate:"required"`
 }
 

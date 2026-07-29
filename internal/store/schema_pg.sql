@@ -57,6 +57,13 @@ CREATE TABLE IF NOT EXISTS participant_identifiers (
 
 -- Durable, user-curated people. A person's vCard UID is generated once and
 -- never depends on mutable participant identifiers or link-graph topology.
+-- UID lifecycle contract: UIDs are random and never reused. Deleting a
+-- person retires its UID forever (no tombstones; a later re-promotion of
+-- the same cluster creates a new person with a new UID), and a future
+-- person-merge must keep the surviving person's UID and retire the other.
+-- GENERATED ALWAYS AS IDENTITY (AUTOINCREMENT on SQLite) matters here:
+-- person IDs are durable external handles, so a deleted person's ID must
+-- never be recycled for a later person.
 CREATE TABLE IF NOT EXISTS persons (
     id           BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     vcard_uid    TEXT NOT NULL UNIQUE,
@@ -66,8 +73,13 @@ CREATE TABLE IF NOT EXISTS persons (
     updated_at   TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
--- Bindings are deliberately participant-local. Link/unlink changes the
--- observed identity graph without rewriting curated person membership.
+-- Bindings are deliberately participant-local and are the source of truth
+-- for person membership: a person covers exactly its bound participants,
+-- never "whatever cluster a binding sits in". Link/unlink changes the
+-- observed identity graph without rewriting curated person membership;
+-- within one cluster, link/merge/promotion keep bindings all-or-none to at
+-- most one person, while unlink may leave one person spanning the split
+-- clusters until the user re-links or deletes the profile.
 CREATE TABLE IF NOT EXISTS person_participants (
     person_id      BIGINT NOT NULL REFERENCES persons(id) ON DELETE CASCADE,
     participant_id BIGINT NOT NULL REFERENCES participants(id) ON DELETE CASCADE,

@@ -349,6 +349,49 @@ func TestGetPersonOmitsClusterBlockForUnlinkedParticipant(t *testing.T) {
 	var body query.PersonSummary
 	requirements.NoError(json.NewDecoder(response.Body).Decode(&body))
 	assertions.Nil(body.Cluster)
+	assertions.Nil(body.Profile, "an unpromoted participant's detail must not carry a profile block")
+}
+
+// TestGetPersonAttachesDurableProfileFromStore covers the handler-level
+// composition documented in attachPersonProfile: when the requested
+// participant's cluster has been promoted to a durable person, the detail
+// must carry that person's ID, display-name override, and revision so
+// clients can PATCH or DELETE the profile straight from the detail view.
+func TestGetPersonAttachesDurableProfileFromStore(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	st := testutil.NewTestStore(t)
+	primary, err := st.EnsureParticipant("primary@example.com", "Primary", "example.com")
+	requirements.NoError(err)
+	secondary, err := st.EnsureParticipant("secondary@example.com", "Secondary", "example.com")
+	requirements.NoError(err)
+	_, err = st.LinkParticipants(primary, secondary)
+	requirements.NoError(err)
+	person, _, err := st.CreatePersonFromParticipant(primary)
+	requirements.NoError(err)
+	displayName := "Prime"
+	person, err = st.UpdatePersonDisplayName(person.ID, person.Revision, &displayName)
+	requirements.NoError(err)
+
+	engine := &peopleAPIEngine{MockEngine: &querytest.MockEngine{}, person: &query.PersonSummary{
+		ID: primary, DisplayLabel: "Primary",
+	}}
+	srv := NewServerWithOptions(ServerOptions{
+		Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}},
+		Store:  st, Engine: engine, Logger: testLogger(),
+	})
+
+	response := httptest.NewRecorder()
+	srv.Router().ServeHTTP(response, httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/v1/people/%d", secondary), nil))
+	requirements.Equal(http.StatusOK, response.Code, response.Body.String())
+
+	var body query.PersonSummary
+	requirements.NoError(json.NewDecoder(response.Body).Decode(&body))
+	requirements.NotNil(body.Profile, "a promoted cluster's detail must carry the durable profile")
+	assertions.Equal(person.ID, body.Profile.ID)
+	requirements.NotNil(body.Profile.DisplayName)
+	assertions.Equal("Prime", *body.Profile.DisplayName)
+	assertions.Equal(person.Revision, body.Profile.Revision)
 }
 
 // TestPersonTimelineWidensScopeToIdentityCluster covers identity consistency

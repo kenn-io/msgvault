@@ -2680,6 +2680,12 @@ func (p PersonIdentifier) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(p))
 }
 
+type PersonProfile struct {
+	DisplayName *string `json:"display_name,omitempty"`
+	ID          int64   `json:"id"`
+	Revision    int64   `json:"revision"`
+}
+
 type PersonSearchHTTPResponse struct {
 	CacheRevision       string           `json:"cache_revision" validate:"required"`
 	CandidateSnapshotID *string          `json:"candidate_snapshot_id,omitempty"`
@@ -2724,6 +2730,7 @@ type PersonSummary struct {
 	Identifiers   []PersonIdentifier `json:"identifiers,omitempty" validate:"required"`
 	LastAt        time.Time          `json:"last_at" validate:"required"`
 	PartialLabel  bool               `json:"partial_label"`
+	Profile       *PersonProfile     `json:"profile,omitempty"`
 	SourceCounts  []SourceCount      `json:"source_counts,omitempty" validate:"required"`
 }
 
@@ -2754,6 +2761,13 @@ func (p PersonSummary) Validate() error {
 	}
 	if err := typesValidator.Var(p.LastAt, "required"); err != nil {
 		errors = errors.Append("LastAt", err)
+	}
+	if p.Profile != nil {
+		if v, ok := any(p.Profile).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Profile", err)
+			}
+		}
 	}
 	for i, item := range p.SourceCounts {
 		if v, ok := any(item).(runtime.Validator); ok {

@@ -2109,15 +2109,24 @@ func (s *Store) MergeParticipants(oldID, newID int64) error {
 		if err != nil {
 			return err
 		}
-		if err := s.ensureClustersHaveCompatiblePersonTx(
+		personID, unionMembers, err := s.personForClusterUnionTx(
 			context.Background(), tx, oldID, newID, edges,
-		); err != nil {
+		)
+		if err != nil {
 			return err
 		}
-		if err := s.rebindPersonParticipantForMerge(
-			context.Background(), tx, oldID, newID,
-		); err != nil {
-			return err
+		if personID != 0 {
+			changed, err := s.mergePersonBindingsTx(
+				context.Background(), tx, personID, oldID, unionMembers)
+			if err != nil {
+				return err
+			}
+			if changed {
+				if err := s.bumpPersonRevisionsTx(
+					context.Background(), tx, personID); err != nil {
+					return err
+				}
+			}
 		}
 
 		// The merge must not lose contact metadata: fill gaps on the survivor

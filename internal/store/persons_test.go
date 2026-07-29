@@ -21,16 +21,18 @@ func TestPersonPromoteGetListUpdateAndRevisionConflict(t *testing.T) {
 	_, err := f.Store.LinkParticipants(alice, alias)
 	require.NoError(err)
 
-	created, err := f.Store.CreatePersonFromParticipant(alias)
+	created, wasCreated, err := f.Store.CreatePersonFromParticipant(alias)
 	require.NoError(err)
+	assert.True(wasCreated)
 	assert.Positive(created.ID)
 	assert.Regexp(`^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$`, created.VCardUID)
 	assert.Nil(created.DisplayName)
 	assert.Equal(int64(1), created.Revision)
 	assert.Equal([]int64{alice, alias}, created.ParticipantIDs)
 
-	promotedAgain, err := f.Store.CreatePersonFromParticipant(alice)
+	promotedAgain, wasCreated, err := f.Store.CreatePersonFromParticipant(alice)
 	require.NoError(err)
+	assert.False(wasCreated)
 	assert.Equal(created.ID, promotedAgain.ID)
 	assert.Equal(created.VCardUID, promotedAgain.VCardUID)
 
@@ -62,9 +64,9 @@ func TestLinkParticipantsRejectsDifferentCuratedPersons(t *testing.T) {
 	f := storetest.New(t)
 	alice := f.EnsureParticipant("alice@example.com", "alice", "example.com")
 	bob := f.EnsureParticipant("bob@example.com", "bob", "example.com")
-	alicePerson, err := f.Store.CreatePersonFromParticipant(alice)
+	alicePerson, _, err := f.Store.CreatePersonFromParticipant(alice)
 	require.NoError(err)
-	bobPerson, err := f.Store.CreatePersonFromParticipant(bob)
+	bobPerson, _, err := f.Store.CreatePersonFromParticipant(bob)
 	require.NoError(err)
 
 	_, err = f.Store.LinkParticipants(alice, bob)
@@ -84,7 +86,7 @@ func TestMergeParticipantsPreservesOrRejectsPersonBinding(t *testing.T) {
 		f := storetest.New(t)
 		winner := f.EnsureParticipant("alice@example.com", "alice", "example.com")
 		loser := f.EnsureParticipant("alice+alias@example.com", "alice", "example.com")
-		person, err := f.Store.CreatePersonFromParticipant(loser)
+		person, _, err := f.Store.CreatePersonFromParticipant(loser)
 		require.NoError(err)
 
 		require.NoError(f.Store.MergeParticipants(loser, winner))
@@ -101,9 +103,9 @@ func TestMergeParticipantsPreservesOrRejectsPersonBinding(t *testing.T) {
 		f := storetest.New(t)
 		alice := f.EnsureParticipant("alice@example.com", "alice", "example.com")
 		bob := f.EnsureParticipant("bob@example.com", "bob", "example.com")
-		_, err := f.Store.CreatePersonFromParticipant(alice)
+		_, _, err := f.Store.CreatePersonFromParticipant(alice)
 		require.NoError(err)
-		_, err = f.Store.CreatePersonFromParticipant(bob)
+		_, _, err = f.Store.CreatePersonFromParticipant(bob)
 		require.NoError(err)
 
 		err = f.Store.MergeParticipants(bob, alice)
@@ -112,27 +114,51 @@ func TestMergeParticipantsPreservesOrRejectsPersonBinding(t *testing.T) {
 	})
 }
 
-func TestPromoteIntoExistingPersonBumpsRevision(t *testing.T) {
+func TestLinkAutoBindsNewClusterMembers(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
 	alice := f.EnsureParticipant("alice@example.com", "alice", "example.com")
 	alias := f.EnsureParticipant("alice+alias@example.com", "alice", "example.com")
-	person, err := f.Store.CreatePersonFromParticipant(alice)
+	person, _, err := f.Store.CreatePersonFromParticipant(alice)
 	require.NoError(err)
 	assert.Equal(int64(1), person.Revision)
 
+	// Linking an unbound participant into the promoted cluster extends the
+	// person immediately; no re-promotion is needed.
 	_, err = f.Store.LinkParticipants(alice, alias)
 	require.NoError(err)
-	expanded, err := f.Store.CreatePersonFromParticipant(alias)
+	expanded, err := f.Store.GetPerson(person.ID)
 	require.NoError(err)
-	assert.Equal(person.ID, expanded.ID)
 	assert.Equal(person.Revision+1, expanded.Revision)
 	assert.Equal([]int64{alice, alias}, expanded.ParticipantIDs)
+
+	promoted, wasCreated, err := f.Store.CreatePersonFromParticipant(alias)
+	require.NoError(err)
+	assert.False(wasCreated)
+	assert.Equal(person.ID, promoted.ID)
+	assert.Equal(expanded.Revision, promoted.Revision)
 
 	displayName := "alice"
 	_, err = f.Store.UpdatePersonDisplayName(person.ID, person.Revision, &displayName)
 	assert.ErrorIs(err, store.ErrPersonRevisionConflict)
+}
+
+func TestLinkWithoutPersonsBindsNothing(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := storetest.New(t)
+	alice := f.EnsureParticipant("alice@example.com", "alice", "example.com")
+	alias := f.EnsureParticipant("alice+alias@example.com", "alice", "example.com")
+	_, err := f.Store.LinkParticipants(alice, alias)
+	require.NoError(err)
+
+	person, err := f.Store.PersonForParticipants([]int64{alice, alias})
+	require.NoError(err)
+	assert.Nil(person)
+	persons, err := f.Store.ListPersons()
+	require.NoError(err)
+	assert.Empty(persons)
 }
 
 func TestPersonIdentitySurvivesLinkUnlinkChurn(t *testing.T) {
@@ -144,7 +170,7 @@ func TestPersonIdentitySurvivesLinkUnlinkChurn(t *testing.T) {
 	bob := f.EnsureParticipant("bob@example.com", "bob", "example.com")
 	_, err := f.Store.LinkParticipants(alice, alias)
 	require.NoError(err)
-	person, err := f.Store.CreatePersonFromParticipant(alice)
+	person, _, err := f.Store.CreatePersonFromParticipant(alice)
 	require.NoError(err)
 
 	_, err = f.Store.UnlinkParticipants(alice, alias)
@@ -156,11 +182,15 @@ func TestPersonIdentitySurvivesLinkUnlinkChurn(t *testing.T) {
 	_, err = f.Store.LinkParticipants(alice, alias)
 	require.NoError(err)
 
+	// The person ID and vCard UID survive the churn. Linking bob auto-bound
+	// him into the person, and unlink deliberately never unbinds, so bob
+	// stays a member after the link is retracted (delete + re-promote is the
+	// remedy for an over-wide person).
 	got, err := f.Store.GetPerson(person.ID)
 	require.NoError(err)
 	assert.Equal(person.ID, got.ID)
 	assert.Equal(person.VCardUID, got.VCardUID)
-	assert.Equal([]int64{alice, alias}, got.ParticipantIDs)
+	assert.Equal([]int64{alice, alias, bob}, got.ParticipantIDs)
 }
 
 func TestConcurrentLinkAndMergeKeepPersonBinding(t *testing.T) {
@@ -172,7 +202,7 @@ func TestConcurrentLinkAndMergeKeepPersonBinding(t *testing.T) {
 	for i := range groups {
 		winner := f.EnsureParticipant(fmt.Sprintf("alice+%d@example.com", i), "alice", "example.com")
 		loser := f.EnsureParticipant(fmt.Sprintf("alice+alias%d@example.com", i), "alice", "example.com")
-		person, err := f.Store.CreatePersonFromParticipant(winner)
+		person, _, err := f.Store.CreatePersonFromParticipant(winner)
 		require.NoError(err)
 
 		start := make(chan struct{})
@@ -201,6 +231,88 @@ func TestConcurrentLinkAndMergeKeepPersonBinding(t *testing.T) {
 		require.NoError(err)
 		assert.Equal([]int64{winner}, got.ParticipantIDs)
 	}
+}
+
+func TestDeletePersonRetiresProfileAndUnblocksLinking(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := storetest.New(t)
+	alice := f.EnsureParticipant("alice@example.com", "alice", "example.com")
+	bob := f.EnsureParticipant("bob@example.com", "bob", "example.com")
+	alicePerson, _, err := f.Store.CreatePersonFromParticipant(alice)
+	require.NoError(err)
+	bobPerson, _, err := f.Store.CreatePersonFromParticipant(bob)
+	require.NoError(err)
+
+	err = f.Store.DeletePerson(bobPerson.ID, bobPerson.Revision+1)
+	require.ErrorIs(err, store.ErrPersonRevisionConflict)
+	err = f.Store.DeletePerson(bobPerson.ID+1000, 1)
+	require.ErrorIs(err, store.ErrPersonNotFound)
+
+	require.NoError(f.Store.DeletePerson(bobPerson.ID, bobPerson.Revision))
+	_, err = f.Store.GetPerson(bobPerson.ID)
+	require.ErrorIs(err, store.ErrPersonNotFound)
+
+	// Deleting bob's profile resolves the binding conflict: the clusters can
+	// now be linked, and bob is auto-bound into alice's person.
+	_, err = f.Store.LinkParticipants(alice, bob)
+	require.NoError(err)
+	got, err := f.Store.GetPerson(alicePerson.ID)
+	require.NoError(err)
+	assert.Equal([]int64{alice, bob}, got.ParticipantIDs)
+
+	// The deleted person's UID is retired: re-promotion mints a new identity.
+	require.NoError(f.Store.DeletePerson(alicePerson.ID, got.Revision))
+	reborn, wasCreated, err := f.Store.CreatePersonFromParticipant(bob)
+	require.NoError(err)
+	assert.True(wasCreated)
+	assert.NotEqual(alicePerson.ID, reborn.ID)
+	assert.NotEqual(alicePerson.VCardUID, reborn.VCardUID)
+	assert.Equal([]int64{alice, bob}, reborn.ParticipantIDs)
+}
+
+func TestMergeFillsPersonAcrossCombinedCluster(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := storetest.New(t)
+	absorbed := f.EnsureParticipant("alice@example.com", "alice", "example.com")
+	winner := f.EnsureParticipant("alice+alias@example.com", "alice", "example.com")
+	sibling := f.EnsureParticipant("alice+work@example.com", "alice", "example.com")
+	_, err := f.Store.LinkParticipants(winner, sibling)
+	require.NoError(err)
+	person, _, err := f.Store.CreatePersonFromParticipant(absorbed)
+	require.NoError(err)
+
+	require.NoError(f.Store.MergeParticipants(absorbed, winner))
+	got, err := f.Store.GetPerson(person.ID)
+	require.NoError(err)
+	assert.Equal(person.VCardUID, got.VCardUID)
+	assert.Equal([]int64{winner, sibling}, got.ParticipantIDs)
+	assert.Greater(got.Revision, person.Revision)
+}
+
+func TestPersonForParticipants(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := storetest.New(t)
+	alice := f.EnsureParticipant("alice@example.com", "alice", "example.com")
+	bob := f.EnsureParticipant("bob@example.com", "bob", "example.com")
+
+	person, err := f.Store.PersonForParticipants([]int64{alice, bob})
+	require.NoError(err)
+	assert.Nil(person)
+
+	alicePerson, _, err := f.Store.CreatePersonFromParticipant(alice)
+	require.NoError(err)
+	person, err = f.Store.PersonForParticipants([]int64{alice})
+	require.NoError(err)
+	require.NotNil(person)
+	assert.Equal(alicePerson.ID, person.ID)
+
+	_, _, err = f.Store.CreatePersonFromParticipant(bob)
+	require.NoError(err)
+	_, err = f.Store.PersonForParticipants([]int64{alice, bob})
+	assert.ErrorIs(err, store.ErrPersonBindingConflict)
 }
 
 func mustClusterMembers(t *testing.T, st *store.Store, id int64) []int64 {

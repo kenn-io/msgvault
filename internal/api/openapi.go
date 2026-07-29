@@ -148,8 +148,10 @@ import (
 // use it to hydrate a selected group without paging the ranked listing.
 // Additive (minor bump): omitting the field preserves the ranked listing.
 // 1.32.0 adds durable person profiles: promote an observed participant
-// cluster, list/get stable profiles, and update the display-name override
-// with revision-tag optimistic concurrency.
+// cluster (201 on creation, 200 on idempotent re-promotion), list/get stable
+// profiles, update the display-name override and delete a profile with
+// revision-tag optimistic concurrency, and surface the covering profile on
+// the /people/{id} analytical detail.
 const APISchemaVersion = "1.32.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration

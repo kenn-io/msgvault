@@ -256,6 +256,9 @@ func (s *Store) verifyParticipantsExistTx(tx *loggedTx, lo, hi int64) error {
 // redundant edge between participants already connected indirectly. Linking
 // clusters curated as different durable people returns
 // ErrPersonBindingConflict (wrapped) rather than merging those profiles.
+// When exactly one durable person covers the two clusters, the new link
+// binds the combined cluster's unbound members to that person (bumping its
+// revision), so person membership never drifts behind cluster membership.
 // Returns the identity revision after the call.
 func (s *Store) LinkParticipants(a, b int64) (int64, error) {
 	if a == b || a <= 0 || b <= 0 {
@@ -276,9 +279,10 @@ func (s *Store) LinkParticipants(a, b int64) (int64, error) {
 		if err != nil {
 			return err
 		}
-		if err := s.ensureClustersHaveCompatiblePersonTx(
+		personID, unionMembers, err := s.personForClusterUnionTx(
 			context.Background(), tx, lo, hi, edges,
-		); err != nil {
+		)
+		if err != nil {
 			return err
 		}
 		for _, e := range edges {
@@ -294,6 +298,19 @@ func (s *Store) LinkParticipants(a, b int64) (int64, error) {
 			`INSERT INTO participant_links (participant_a, participant_b) VALUES (?, ?)`,
 			lo, hi); err != nil {
 			return fmt.Errorf("insert participant link: %w", err)
+		}
+		if personID != 0 {
+			changed, err := s.bindPersonParticipantsTx(
+				context.Background(), tx, personID, unionMembers)
+			if err != nil {
+				return err
+			}
+			if changed {
+				if err := s.bumpPersonRevisionsTx(
+					context.Background(), tx, personID); err != nil {
+					return err
+				}
+			}
 		}
 		revision, err = s.bumpIdentityRevision(tx)
 		return err

@@ -31,6 +31,13 @@ func TestPersonProfileHTTPPromoteListGetUpdateAndConflictingLink(t *testing.T) {
 	etag := createdResponse.Header().Get("ETag")
 	assert.NotEmpty(etag)
 
+	repromotedResponse := personRequest(t, srv, http.MethodPost, personsPath,
+		fmt.Appendf(nil, `{"participant_id":%d}`, alice), "")
+	require.Equal(http.StatusOK, repromotedResponse.Code)
+	var repromoted store.Person
+	require.NoError(json.Unmarshal(repromotedResponse.Body.Bytes(), &repromoted))
+	assert.Equal(created.ID, repromoted.ID)
+
 	listResponse := personRequest(t, srv, http.MethodGet, personsPath, nil, "")
 	require.Equal(http.StatusOK, listResponse.Code)
 	var listed PersonsResponse
@@ -65,11 +72,38 @@ func TestPersonProfileHTTPPromoteListGetUpdateAndConflictingLink(t *testing.T) {
 		[]byte(`{"display_name":"alice stale"}`), etag)
 	assert.Equal(http.StatusConflict, staleResponse.Code)
 
-	_, err := st.CreatePersonFromParticipant(bob)
+	_, _, err := st.CreatePersonFromParticipant(bob)
 	require.NoError(err)
 	linkResponse := postIdentityLink(t, srv, "/api/v1/identity/links",
 		IdentityLinkRequest{ParticipantA: alice, ParticipantB: bob})
 	assert.Equal(http.StatusConflict, linkResponse.Code)
+}
+
+func TestPersonProfileHTTPDelete(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	srv, st := newIdentityLinkTestServer(t)
+	alice := st.mustParticipant(t, "alice@example.com", "alice", "example.com")
+	person, _, err := st.CreatePersonFromParticipant(alice)
+	require.NoError(err)
+	path := fmt.Sprintf("%s/%d", personsPath, person.ID)
+	etag := fmt.Sprintf(`"person-%d-r%d"`, person.ID, person.Revision)
+
+	missingIfMatch := personRequest(t, srv, http.MethodDelete, path, nil, "")
+	assert.Equal(http.StatusPreconditionRequired, missingIfMatch.Code)
+
+	stale := personRequest(t, srv, http.MethodDelete, path, nil,
+		fmt.Sprintf(`"person-%d-r%d"`, person.ID, person.Revision+7))
+	assert.Equal(http.StatusConflict, stale.Code)
+
+	deleted := personRequest(t, srv, http.MethodDelete, path, nil, etag)
+	require.Equal(http.StatusNoContent, deleted.Code)
+	assert.Empty(deleted.Body.Bytes())
+
+	gone := personRequest(t, srv, http.MethodGet, path, nil, "")
+	assert.Equal(http.StatusNotFound, gone.Code)
+	deletedAgain := personRequest(t, srv, http.MethodDelete, path, nil, etag)
+	assert.Equal(http.StatusNotFound, deletedAgain.Code)
 }
 
 func TestPersonPatchSchemaRequiresNullableDisplayName(t *testing.T) {

@@ -45,6 +45,18 @@ type PersonCluster struct {
 	Edges       []PersonClusterEdge `json:"edges"`
 }
 
+// PersonProfile references the durable curated person (see /api/v1/persons)
+// covering this detail's identity cluster, when one has been promoted.
+// Revision is the person's optimistic-concurrency counter, so clients can
+// PATCH or DELETE the profile straight from a detail view. Populated at the
+// HTTP layer from the store, like PersonSummary.Cluster; the query layer
+// itself never reads curated person data.
+type PersonProfile struct {
+	ID          int64   `json:"id"`
+	DisplayName *string `json:"display_name,omitempty"`
+	Revision    int64   `json:"revision"`
+}
+
 type SourceCount struct {
 	SourceType string `json:"source_type"`
 	Count      int64  `json:"count"`
@@ -70,6 +82,7 @@ type PersonSummary struct {
 	LastAt        time.Time          `json:"last_at"`
 	CacheRevision string             `json:"cache_revision"`
 	Cluster       *PersonCluster     `json:"cluster,omitempty"`
+	Profile       *PersonProfile     `json:"profile,omitempty"`
 }
 
 type PersonSearchResponse struct {

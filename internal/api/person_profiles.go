@@ -20,12 +20,14 @@ const personsPath = "/api/v1/persons"
 // PersonProfileStore is the feature-local capability for durable curated
 // people. The daemon adapter passes these calls directly to *store.Store.
 type PersonProfileStore interface {
-	CreatePersonFromParticipantContext(ctx context.Context, participantID int64) (*store.Person, error)
+	CreatePersonFromParticipantContext(ctx context.Context, participantID int64) (*store.Person, bool, error)
 	GetPersonContext(ctx context.Context, id int64) (*store.Person, error)
 	ListPersonsContext(ctx context.Context) ([]store.Person, error)
 	UpdatePersonDisplayNameContext(
 		ctx context.Context, id, expectedRevision int64, displayName *string,
 	) (*store.Person, error)
+	DeletePersonContext(ctx context.Context, id, expectedRevision int64) error
+	PersonForParticipantsContext(ctx context.Context, participantIDs []int64) (*store.Person, error)
 }
 
 type CreatePersonRequest struct {
@@ -42,14 +44,18 @@ type PersonsResponse struct {
 
 func (s *Server) registerPersonProfileRoutes(api huma.API) {
 	list := rawAPIV1Operation("listPersons", http.MethodGet, "/persons", "List durable person profiles")
-	list.Description = "Durable persons are curated profiles; /api/v1/people exposes derived analytics groupings."
+	list.Description = "Durable persons are curated profiles; /api/v1/people exposes derived analytics groupings. " +
+		"The listing is deliberately unpaginated: persons exist only through explicit promotion, so the set stays small."
 	list.Responses = jsonResponsesFor[PersonsResponse](api)
 	addErrorResponses(api, list.Responses, http.StatusServiceUnavailable)
 	registerRawHumaRoute(api, list, s.handleListPersons)
 
 	create := rawAPIV1Operation("createPerson", http.MethodPost, "/persons", "Promote a participant cluster to a durable person")
+	create.Description = "Returns 201 when a new person is created, or 200 when the cluster is already " +
+		"represented by a person (idempotent re-promotion, which also binds any unbound cluster members)."
 	create.RequestBody = jsonRequestBodyFor[CreatePersonRequest](api)
-	create.Responses = jsonResponsesFor[store.Person](api, http.StatusCreated)
+	create.Responses = jsonResponsesFor[store.Person](api, http.StatusOK, http.StatusCreated)
+	addPersonETagHeader(create.Responses[httpStatusKey(http.StatusOK)])
 	addPersonETagHeader(create.Responses[httpStatusKey(http.StatusCreated)])
 	addErrorResponses(api, create.Responses, http.StatusConflict, http.StatusServiceUnavailable)
 	registerRawHumaRoute(api, create, s.handleCreatePerson)
@@ -70,6 +76,18 @@ func (s *Server) registerPersonProfileRoutes(api huma.API) {
 	addErrorResponses(api, patch.Responses, http.StatusConflict, http.StatusNotFound,
 		http.StatusPreconditionRequired, http.StatusServiceUnavailable)
 	registerRawHumaRoute(api, patch, s.handlePatchPerson)
+
+	remove := rawAPIV1Operation("deletePerson", http.MethodDelete, "/persons/{id}", "Delete a durable person profile")
+	remove.Description = "Deletion is permanent: the person's participant bindings are removed and its vCard UID " +
+		"is retired forever. Re-promoting the same cluster afterwards creates a new person with a new UID."
+	addPersonIDParameter(&remove)
+	addPersonIfMatchParameter(&remove)
+	remove.Responses = rawHumaResponses(http.StatusNoContent)
+	remove.Responses["default"] = errorResponseFor(api)
+	addErrorResponses(api, remove.Responses, http.StatusBadRequest, http.StatusUnauthorized,
+		http.StatusConflict, http.StatusNotFound, http.StatusPreconditionRequired,
+		http.StatusInternalServerError, http.StatusServiceUnavailable)
+	registerRawHumaRoute(api, remove, s.handleDeletePerson)
 }
 
 func (s *Server) handleCreatePerson(w http.ResponseWriter, r *http.Request) {
@@ -85,12 +103,36 @@ func (s *Server) handleCreatePerson(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_participant_id", "participant_id must be a positive integer")
 		return
 	}
-	person, err := profiles.CreatePersonFromParticipantContext(r.Context(), request.ParticipantID)
+	person, created, err := profiles.CreatePersonFromParticipantContext(r.Context(), request.ParticipantID)
 	if err != nil {
 		s.writePersonError(w, err)
 		return
 	}
-	writePerson(w, http.StatusCreated, person)
+	status := http.StatusOK
+	if created {
+		status = http.StatusCreated
+	}
+	writePerson(w, status, person)
+}
+
+func (s *Server) handleDeletePerson(w http.ResponseWriter, r *http.Request) {
+	profiles, ok := s.personProfileStore(w)
+	if !ok {
+		return
+	}
+	id, ok := personProfileID(w, r)
+	if !ok {
+		return
+	}
+	revision, ok := personIfMatch(w, r, id)
+	if !ok {
+		return
+	}
+	if err := profiles.DeletePersonContext(r.Context(), id, revision); err != nil {
+		s.writePersonError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) handleGetPersonProfile(w http.ResponseWriter, r *http.Request) {
@@ -205,8 +247,10 @@ func addPersonIDParameter(operation *huma.Operation) {
 func addPersonIfMatchParameter(operation *huma.Operation) {
 	operation.Parameters = append(operation.Parameters, &huma.Param{
 		Name: "If-Match", In: "header", Required: true,
-		Description: "Strong ETag returned by the latest person profile read",
-		Schema:      &huma.Schema{Type: huma.TypeString},
+		Description: "Strong ETag returned by the latest person profile read. " +
+			"Must be the exact single tag from that read; the RFC 7232 forms `*` " +
+			"and comma-separated tag lists are not supported.",
+		Schema: &huma.Schema{Type: huma.TypeString},
 	})
 }
 

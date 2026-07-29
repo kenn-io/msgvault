@@ -372,8 +372,12 @@ type ClientInterface interface {
 	ListPersonsWithResponse(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*ListPersonsResp, error)
 
 	// CreatePerson Promote a participant cluster to a durable person
-	CreatePerson(ctx context.Context, options *CreatePersonRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CreatePersonResponse, error)
+	CreatePerson(ctx context.Context, options *CreatePersonRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CreatePersonResponseJSON, error)
 	CreatePersonWithResponse(ctx context.Context, options *CreatePersonRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CreatePersonResp, error)
+
+	// DeletePerson Delete a durable person profile
+	DeletePerson(ctx context.Context, options *DeletePersonRequestOptions, reqEditors ...runtime.RequestEditorFn) (*struct{}, error)
+	DeletePersonWithResponse(ctx context.Context, options *DeletePersonRequestOptions, reqEditors ...runtime.RequestEditorFn) (*DeletePersonResp, error)
 
 	// GetPersonProfile Get a durable person profile
 	GetPersonProfile(ctx context.Context, options *GetPersonProfileRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetPersonProfileResponse, error)
@@ -5713,7 +5717,7 @@ func (c *Client) ListPersons(ctx context.Context, reqEditors ...runtime.RequestE
 }
 
 // CreatePerson Promote a participant cluster to a durable person
-func (c *Client) CreatePerson(ctx context.Context, options *CreatePersonRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CreatePersonResponse, error) {
+func (c *Client) CreatePerson(ctx context.Context, options *CreatePersonRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CreatePersonResponseJSON, error) {
 	var err error
 	reqParams := runtime.RequestOptionsParameters{
 		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/persons",
@@ -5727,7 +5731,7 @@ func (c *Client) CreatePerson(ctx context.Context, options *CreatePersonRequestO
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*CreatePersonResponse, error) {
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*CreatePersonResponseJSON, error) {
 		bodyBytes := resp.Content
 		if resp.StatusCode != 201 {
 			target := new(CreatePersonErrorResponse)
@@ -5751,7 +5755,7 @@ func (c *Client) CreatePerson(ctx context.Context, options *CreatePersonRequestO
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(CreatePersonResponse)
+		target := new(CreatePersonResponseJSON)
 		// Handle empty response body gracefully
 		if len(bodyBytes) == 0 {
 			return target, nil
@@ -5761,7 +5765,7 @@ func (c *Client) CreatePerson(ctx context.Context, options *CreatePersonRequestO
 				StatusCode:    resp.StatusCode,
 				ContentType:   resp.Headers.Get("Content-Type"),
 				ContentLength: len(bodyBytes),
-				TargetType:    "CreatePersonResponse",
+				TargetType:    "CreatePersonResponseJSON",
 				Body:          bodyBytes,
 				Err:           err,
 			}
@@ -5770,6 +5774,54 @@ func (c *Client) CreatePerson(ctx context.Context, options *CreatePersonRequestO
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/persons")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// DeletePerson Delete a durable person profile
+func (c *Client) DeletePerson(ctx context.Context, options *DeletePersonRequestOptions, reqEditors ...runtime.RequestEditorFn) (*struct{}, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/persons/{id}",
+		Method:     "DELETE",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*struct{}, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 204 {
+			target := new(DeletePersonErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "DeletePersonErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		return nil, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/persons/{id}")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}

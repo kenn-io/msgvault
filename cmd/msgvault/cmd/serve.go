@@ -1466,7 +1466,7 @@ func (a *storeAPIAdapter) UnlinkParticipants(participantA, participantB int64) (
 
 func (a *storeAPIAdapter) CreatePersonFromParticipantContext(
 	ctx context.Context, participantID int64,
-) (*store.Person, error) {
+) (*store.Person, bool, error) {
 	return a.store.CreatePersonFromParticipantContext(ctx, participantID)
 }
 
@@ -1482,6 +1482,16 @@ func (a *storeAPIAdapter) UpdatePersonDisplayNameContext(
 	ctx context.Context, id, expectedRevision int64, displayName *string,
 ) (*store.Person, error) {
 	return a.store.UpdatePersonDisplayNameContext(ctx, id, expectedRevision, displayName)
+}
+
+func (a *storeAPIAdapter) DeletePersonContext(ctx context.Context, id, expectedRevision int64) error {
+	return a.store.DeletePersonContext(ctx, id, expectedRevision)
+}
+
+func (a *storeAPIAdapter) PersonForParticipantsContext(
+	ctx context.Context, participantIDs []int64,
+) (*store.Person, error) {
+	return a.store.PersonForParticipantsContext(ctx, participantIDs)
 }
 
 func (a *storeAPIAdapter) ClusterMembers(id int64) ([]int64, error) {

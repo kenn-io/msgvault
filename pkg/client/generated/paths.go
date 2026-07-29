@@ -177,6 +177,11 @@ type GetPersonTimelinePath struct {
 	ID int64 `json:"id"`
 }
 
+type DeletePersonPath struct {
+	// ID Durable person ID
+	ID int64 `json:"id"`
+}
+
 type GetPersonProfilePath struct {
 	// ID Durable person ID
 	ID int64 `json:"id"`

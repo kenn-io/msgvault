@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"regexp"
@@ -247,7 +248,35 @@ func (s *Server) handleGetPerson(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.attachPersonCluster(person, id, members)
+	s.attachPersonProfile(r.Context(), person, id, members)
 	writeJSON(w, http.StatusOK, person)
+}
+
+// attachPersonProfile sets person.Profile to the durable curated person
+// covering id's identity cluster, when one has been promoted. Like
+// clusterMemberIDs, a missing capability or a lookup failure degrades to no
+// profile rather than failing the detail request.
+func (s *Server) attachPersonProfile(
+	ctx context.Context, person *query.PersonSummary, id int64, members []int64,
+) {
+	profiles, ok := s.store.(PersonProfileStore)
+	if !ok {
+		return
+	}
+	if len(members) == 0 {
+		members = []int64{id}
+	}
+	profile, err := profiles.PersonForParticipantsContext(ctx, members)
+	if err != nil {
+		s.logger.Error("person profile lookup failed", "error", err, "participant_id", id)
+		return
+	}
+	if profile == nil {
+		return
+	}
+	person.Profile = &query.PersonProfile{
+		ID: profile.ID, DisplayName: profile.DisplayName, Revision: profile.Revision,
+	}
 }
 
 // clusterMemberIDs returns id's sorted cluster member IDs, or nil if the

@@ -334,12 +334,12 @@ func TestPhoneUpgradeSkipsMergeAcrossDurablePersons(t *testing.T) {
 		FullName: "Alice",
 	})
 	require.NoError(err)
-	emailPerson, err := st.CreatePersonFromParticipant(emailPID)
+	emailPerson, _, err := st.CreatePersonFromParticipant(emailPID)
 	require.NoError(err)
 
 	phonePID, err := st.EnsureParticipantByPhone("+15550100020", "Bob", "imessage")
 	require.NoError(err)
-	phonePerson, err := st.CreatePersonFromParticipant(phonePID)
+	phonePerson, _, err := st.CreatePersonFromParticipant(phonePID)
 	require.NoError(err)
 
 	resolved, err := r.resolveUser(&User{

@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"reflect"
+	"slices"
 
 	"github.com/doordash-oss/oapi-codegen-dd/v3/pkg/runtime"
 	apiclient "go.kenn.io/msgvault/pkg/client"
@@ -95,12 +96,12 @@ func apiErrorMessage(body []byte) (string, bool) {
 
 // APIResponseError maps generated non-CLI responses to daemonclient errors.
 func APIResponseError(resp any, err error) error {
-	return responseError(resp, err, http.StatusOK, handleErrorBody)
+	return responseError(resp, err, []int{http.StatusOK}, handleErrorBody)
 }
 
 // CLIResponseError maps generated CLI responses to user-facing errors.
 func CLIResponseError(resp any, err error) error {
-	return responseError(resp, err, http.StatusOK, handleCLIErrorBody)
+	return responseError(resp, err, []int{http.StatusOK}, handleCLIErrorBody)
 }
 
 // APIResponse executes a generated request and validates its response.
@@ -111,15 +112,15 @@ func APIResponse[R any](
 	return generatedResponse(c, request, APIResponseError)
 }
 
-// APIResponseWithStatus executes a generated request and validates it against
-// an explicit success status instead of the default 200 OK.
-func APIResponseWithStatus[R any](
+// APIResponseWithStatuses executes a generated request and validates it
+// against an explicit set of success statuses instead of the default 200 OK.
+func APIResponseWithStatuses[R any](
 	c *Client,
-	expectedStatus int,
+	expectedStatuses []int,
 	request func(*apiclient.Client) (R, error),
 ) (R, error) {
 	return generatedResponse(c, request, func(resp any, err error) error {
-		return responseError(resp, err, expectedStatus, handleErrorBody)
+		return responseError(resp, err, expectedStatuses, handleErrorBody)
 	})
 }
 
@@ -185,7 +186,7 @@ func generatedResponse[R any](
 func responseError(
 	resp any,
 	err error,
-	expectedStatus int,
+	expectedStatuses []int,
 	decodeErrorBody func(status int, body []byte) error,
 ) error {
 	if resp == nil {
@@ -204,16 +205,16 @@ func responseError(
 	if responseDecodeError(err) {
 		return fmt.Errorf("decode generated response: %w", err)
 	}
-	if meta.Status != expectedStatus {
+	if !slices.Contains(expectedStatuses, meta.Status) {
 		return decodeErrorBody(meta.Status, meta.Body)
 	}
 	if err != nil {
 		return fmt.Errorf("decode generated response: %w", err)
 	}
-	if expectedStatus == http.StatusOK && meta.HasJSON200 && len(bytes.TrimSpace(meta.Body)) == 0 {
+	if meta.Status == http.StatusOK && meta.HasJSON200 && len(bytes.TrimSpace(meta.Body)) == 0 {
 		return errors.New("decode generated response: empty 200 JSON response body")
 	}
-	if expectedStatus == http.StatusOK && meta.MissingJSON200 {
+	if meta.Status == http.StatusOK && meta.MissingJSON200 {
 		return errors.New("decode generated response: missing 200 JSON response body")
 	}
 	return nil
