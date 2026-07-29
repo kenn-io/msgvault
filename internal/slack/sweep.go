@@ -236,6 +236,23 @@ func (imp *Importer) sweepRange(ctx context.Context, syncID int64, scope, floor 
 	day = time.Date(day.Year(), day.Month(), day.Day(), 0, 0, 0, 0, loc)
 	end := searchEnd.In(loc)
 	for !day.After(end) {
+		nextDay := nextDayStart(day, loc)
+		nextBoundary := tsFormat(nextDay.UTC())
+		if truncatedSweepCovered(targets, state, nextBoundary) {
+			// This exact scope/day already failed closed by converting its
+			// unreachable tail into a canonical catch-up walk. The overlap
+			// is normally re-searched for late indexing, but re-running a
+			// known truncation cannot discover its tail; under --limit 1 it
+			// would instead consume every run's budget and reset the walk
+			// before it could advance. Certification is safe because the
+			// persisted catch-up debt covers every in-scope thread.
+			advance(nextBoundary)
+			if err := imp.checkpoint(syncID, state, sum); err != nil {
+				return err
+			}
+			day = nextDay
+			continue
+		}
 		if budget.exhausted() {
 			return nil // certification stays at the last committed boundary
 		}
@@ -276,24 +293,33 @@ func (imp *Importer) sweepRange(ctx context.Context, syncID int64, scope, floor 
 			for cid := range targets {
 				cs := state.EnsureConv(cid)
 				cs.ThreadsPending = true
-				// An in-flight catch-up walk was pinned before this day's
-				// replies existed; roots created after its pin would never
-				// be anchored. Re-pin it (idempotent re-walk).
-				cs.CatchUpCursor, cs.CatchUpLatest = "", ""
+				// Preserve an in-flight catch-up: its cursor is valid only
+				// against its persisted pin. The through marker queues a
+				// follow-up walk when that pin predates this day boundary.
+				cs.recordTruncatedSweep(nextBoundary)
 			}
 			imp.recordItem(syncID, item, "sweep", store.SyncRunItemStatusError, "slack_sweep_truncated",
 				fmt.Errorf("day %s exceeds the %d reachable results per query; the unreachable tail is recorded as thread catch-up debt and recovers on subsequent runs (see the sweep design doc)", dayStr, sweepTruncationCeiling))
 			sum.FetchErrors++
 			sum.Errors++
 		}
-		nextDay := nextDayStart(day, loc)
-		advance(tsFormat(nextDay.UTC()))
+		advance(nextBoundary)
 		if err := imp.checkpoint(syncID, state, sum); err != nil {
 			return err
 		}
 		day = nextDay
 	}
 	return nil
+}
+
+func truncatedSweepCovered(targets map[string]sweepTarget, state *SyncState, boundary string) bool {
+	for cid := range targets {
+		through := state.EnsureConv(cid).TruncatedSweepThrough
+		if through == "" || tsLess(through, boundary) {
+			return false
+		}
+	}
+	return len(targets) > 0
 }
 
 // sweepDay runs the paged threads:replies query for one user-tz day,

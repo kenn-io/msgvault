@@ -48,15 +48,22 @@ type ConvState struct {
 	// ThreadsPending marks conversation-level thread debt: any initial
 	// walk under --no-threads (unconditionally — a message can become a
 	// thread root after the walk), or a non-channel conversation
-	// recovering a sweep gap. The thread catch-up walk pays it
-	// and clears the flag when the walk finishes; CatchUpCursor/
-	// CatchUpLatest checkpoint a partially-walked catch-up (the page cursor
-	// to resume from and the pin the walk was started under — page cursors
-	// are only valid against the bound they were minted with), so limited
-	// runs drain the walk across runs instead of restarting it.
+	// recovering a sweep gap, or an unreachable truncated search interval.
+	// The thread catch-up walk pays it and clears the flag when the required
+	// coverage is reached; CatchUpCursor/CatchUpLatest checkpoint a
+	// partially-walked catch-up (the page cursor to resume from and the pin
+	// the walk was started under — page cursors are only valid against the
+	// bound they were minted with), so limited runs drain the walk across
+	// runs instead of restarting it.
 	ThreadsPending bool   `json:"threads_pending,omitempty"`
 	CatchUpCursor  string `json:"catch_up_cursor,omitempty"`
 	CatchUpLatest  string `json:"catch_up_latest,omitempty"`
+	// TruncatedSweepThrough is the exclusive day boundary through which a
+	// truncated search interval has been converted into this conversation's
+	// canonical catch-up debt. It remains as the durable scope/day marker
+	// after payment; ThreadsPending stays set until a completed catch-up walk
+	// was pinned at or beyond this boundary.
+	TruncatedSweepThrough string `json:"truncated_sweep_through,omitempty"`
 	// PendingThreads is the window walks' outstanding thread-drain debt,
 	// bounded by one history page's roots: a walk never fetches a new
 	// page while any entry is outstanding. Drained head-first; an entry
@@ -217,6 +224,12 @@ func (s *SyncState) EnsureConv(channelID string) *ConvState {
 		s.Conversations[channelID] = cs
 	}
 	return cs
+}
+
+func (cs *ConvState) recordTruncatedSweep(boundary string) {
+	if cs.TruncatedSweepThrough == "" || tsLess(cs.TruncatedSweepThrough, boundary) {
+		cs.TruncatedSweepThrough = boundary
+	}
 }
 
 // RepairComplete reports whether an in-flight repair session has finished:

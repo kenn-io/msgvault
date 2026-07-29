@@ -803,12 +803,15 @@ func (imp *Importer) threadCatchUp(ctx context.Context, cc *convScope, state *Sy
 			// The WALK is complete: every root it owed is now recorded as
 			// durable PendingThreads debt, which the drain-first step pays
 			// unconditionally on every threaded run — so the flag (which
-			// only schedules walks) and the cursor clear even when drain
-			// debt remains. Keeping the flag here would re-visit this final
-			// page forever, re-recording its already-drained threads.
+			// only schedules walks) normally clears even when drain debt
+			// remains. A truncated search interval can require a later pin:
+			// finish this cursor-valid walk, then leave the flag set so the
+			// next run starts the queued follow-up instead of restarting the
+			// same walk on every overlap.
 			auditPin := cs.CatchUpLatest
-			cs.ThreadsPending = false
 			cs.CatchUpCursor, cs.CatchUpLatest = "", ""
+			cs.ThreadsPending = cs.TruncatedSweepThrough != "" &&
+				tsLess(auditPin, cs.TruncatedSweepThrough)
 			if auditPin != "" {
 				cs.AuditedThrough = auditPin
 			}

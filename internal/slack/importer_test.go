@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -1859,12 +1860,13 @@ func TestSweepTruncatedDayFailsOnceAndConvergesViaCatchUp(t *testing.T) {
 	require.True(requireResumeState(t, imp, src.ID).EnsureConv("C09").ThreadsPending,
 		"the unreachable tail must be recorded as thread catch-up debt")
 
-	// Once the day is over, the boundary passes it (debt recorded — the
-	// day is never re-queried) and the catch-up walk recovers the reply
-	// search could never serve. The tool converges with NO manual --full.
+	// Once the day is over, the persisted debt marker lets the overlap
+	// certify it without re-querying, and the catch-up walk recovers the
+	// reply search could never serve. The tool converges with NO manual
+	// --full.
 	imp.now = func() time.Time { return time.Now().Add(25 * time.Hour) }
 	_, err = imp.Import(context.Background(), opts)
-	require.Error(err, "the still-open truncated day re-fails until it is behind the boundary")
+	require.NoError(err, "the converted day must not fail again on its overlap retry")
 	imp.now = func() time.Time { return time.Now().Add(26 * time.Hour) }
 	_, err = imp.Import(context.Background(), opts)
 	require.NoError(err, "past the truncated day the sweep must converge without --full")
@@ -1875,6 +1877,82 @@ func TestSweepTruncatedDayFailsOnceAndConvergesViaCatchUp(t *testing.T) {
 	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages WHERE message_type='slack'`).Scan(&total))
 	require.NoError(st.DB().QueryRow(`SELECT COUNT(DISTINCT source_message_id) FROM messages WHERE message_type='slack'`).Scan(&distinct))
 	assert.Equal(distinct, total)
+}
+
+func TestSweepLimitOneConvergesPastTruncatedDayOverlap(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f, rootTS := oldThreadWorkspace(t)
+	imp, opts := testImporter(t, f)
+	st := imp.store
+
+	_, err := imp.Import(context.Background(), opts)
+	require.NoError(err)
+
+	unreachable := tsFresh(5)
+	f.mu.Lock()
+	f.conv("C09").findRoot(rootTS).Replies = append(f.conv("C09").findRoot(rootTS).Replies,
+		fakeMsg{TS: unreachable, ThreadTS: rootTS, User: "UME", Text: "beyond the ceiling"})
+	f.searchHidden[unreachable] = true
+	truncatedDay := tsTime(unreachable).UTC().Format("2006-01-02")
+	f.searchTruncateDays[truncatedDay] = true
+	truncatedDayQueries := 0
+	f.onSearch = func(query string, page int) {
+		if page == 1 && strings.Contains(query, "on:"+truncatedDay) {
+			truncatedDayQueries++
+		}
+	}
+	f.mu.Unlock()
+
+	limited := opts
+	limited.Limit = 1
+	imp.now = func() time.Time { return time.Now().Add(5 * time.Minute) }
+	_, err = imp.Import(context.Background(), limited)
+	require.Error(err, "the first truncated search must remain caller-visible")
+
+	dayStart := time.Date(
+		tsTime(unreachable).UTC().Year(),
+		tsTime(unreachable).UTC().Month(),
+		tsTime(unreachable).UTC().Day(),
+		0, 0, 0, 0, time.UTC,
+	)
+	nextDay := dayStart.AddDate(0, 0, 1)
+	firstRetryNow := nextDay.Add(time.Hour)
+	imp.now = func() time.Time { return firstRetryNow }
+	_, err = imp.Import(context.Background(), limited)
+	require.NoError(err, "overlap retries must not re-report a truncation already converted to catch-up debt")
+
+	src, err := st.GetOrCreateSource("slack", "T01:UME")
+	require.NoError(err)
+	state := requireResumeState(t, imp, src.ID)
+	cs := state.EnsureConv("C09")
+	assert.NotEmpty(cs.CatchUpCursor, "the limited canonical walk must retain its page progress")
+	assert.NotEmpty(cs.CatchUpLatest, "the limited canonical walk must retain its original pin")
+	assert.True(tsLess(tsFormat(nextDay), state.SweepWatermark),
+		"certification must advance beyond the truncated day's next boundary")
+
+	converged := false
+	for run := 2; run <= 10; run++ {
+		runNow := nextDay.Add(time.Duration(run) * time.Hour)
+		imp.now = func() time.Time { return runNow }
+		_, err = imp.Import(context.Background(), limited)
+		require.NoError(err, "overlap retries must not re-report a truncation already converted to catch-up debt")
+
+		var archived int
+		require.NoError(st.DB().QueryRow(st.Rebind(
+			`SELECT COUNT(*) FROM messages WHERE source_message_id = ?`), "C09:"+unreachable).Scan(&archived))
+		if archived == 1 {
+			converged = true
+			break
+		}
+	}
+	assert.True(converged, "a standing Limit: 1 schedule must finish the persisted catch-up walk")
+	assert.Equal(1, truncatedDayQueries, "the overlap must not spend each run re-querying the converted day")
+
+	state = requireResumeState(t, imp, src.ID)
+	assert.False(state.EnsureConv("C09").ThreadsPending)
+	assert.Empty(state.EnsureConv("C09").CatchUpCursor)
+	assert.Empty(state.EnsureConv("C09").CatchUpLatest)
 }
 
 func TestTruncatedSweepDuringRepairUnwedgesSession(t *testing.T) {
