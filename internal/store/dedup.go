@@ -107,11 +107,14 @@ func (s *Store) FindDuplicatesByRFC822ID(sourceIDs ...int64) ([]DuplicateGroupKe
 	return groups, rows.Err()
 }
 
-func (s *Store) GetDuplicateGroupMessages(
-	rfc822ID string, sourceIDs ...int64,
-) ([]DuplicateMessageRow, error) {
-	query := `
-		SELECT m.id, m.source_id, s.source_type, s.identifier,
+// duplicateGroupMessageColumns is the SELECT column list shared by
+// GetDuplicateGroupMessages and GetDuplicateGroupMessagesBatch: the message
+// metadata, the two correlated subqueries (label count, from address), and
+// the EXISTS clause used to detect the Gmail SENT label. Both methods build
+// their SELECT clause from this constant so the two queries can't drift
+// apart; GetDuplicateGroupMessagesBatch prepends m.rfc822_message_id (needed
+// to key its result map) since it has no per-call rfc822ID to bind.
+const duplicateGroupMessageColumns = `m.id, m.source_id, s.source_type, s.identifier,
 		       m.source_message_id,
 		       COALESCE(m.subject, ''), m.sent_at, m.archived_at,
 		       (CASE WHEN mr.message_id IS NOT NULL THEN 1 ELSE 0 END) AS has_raw,
@@ -132,7 +135,19 @@ func (s *Store) GetDuplicateGroupMessages(
 		           WHERE mr_from.message_id = m.id
 		             AND mr_from.recipient_type = 'from'
 		           LIMIT 1
-		       ), '') AS from_email
+		       ), '') AS from_email`
+
+// GetDuplicateGroupMessages fetches every message row for a single RFC822
+// duplicate group in one query. It is retained as the reference
+// implementation that the equivalence test in dedup_test.go checks
+// GetDuplicateGroupMessagesBatch against, and it is still exercised by its
+// own pre-existing direct tests, even though Engine.Scan now calls
+// GetDuplicateGroupMessagesBatch instead.
+func (s *Store) GetDuplicateGroupMessages(
+	rfc822ID string, sourceIDs ...int64,
+) ([]DuplicateMessageRow, error) {
+	query := `
+		SELECT ` + duplicateGroupMessageColumns + `
 		FROM messages m
 		JOIN sources s ON s.id = m.source_id
 		LEFT JOIN message_raw mr ON mr.message_id = m.id
@@ -179,6 +194,79 @@ func (s *Store) GetDuplicateGroupMessages(
 		msgs = append(msgs, dm)
 	}
 	return msgs, rows.Err()
+}
+
+// GetDuplicateGroupMessagesBatch is the batched form of
+// GetDuplicateGroupMessages: it fetches every message row for many RFC822
+// duplicate groups in a handful of chunked queries instead of one query per
+// group (see kenn-io/msgvault#510 — 22,025 groups meant 22,025 unindexed
+// queries). Returns a map keyed by RFC822 message ID; each value preserves
+// the same per-group id-ascending order as GetDuplicateGroupMessages.
+func (s *Store) GetDuplicateGroupMessagesBatch(
+	rfc822IDs []string, sourceIDs ...int64,
+) (map[string][]DuplicateMessageRow, error) {
+	result := make(map[string][]DuplicateMessageRow)
+	if len(rfc822IDs) == 0 {
+		return result, nil
+	}
+
+	const selectCols = "\n\t\tm.rfc822_message_id, " + duplicateGroupMessageColumns
+
+	// queryInChunks binds prefixArgs BEFORE the chunked %s placeholder, so
+	// the source_id filter (prefixArgs) must appear textually before the
+	// rfc822_message_id IN (%s) clause below — the reverse of
+	// GetDuplicateGroupMessages's clause order, which binds rfc822ID first
+	// via a plain "=" and has no ordering constraint to satisfy.
+	var prefixArgs []any
+	sourceFilter := ""
+	if len(sourceIDs) > 0 {
+		placeholders := make([]string, len(sourceIDs))
+		for i, id := range sourceIDs {
+			placeholders[i] = "?"
+			prefixArgs = append(prefixArgs, id)
+		}
+		sourceFilter = "m.source_id IN (" + strings.Join(placeholders, ",") + ") AND "
+	}
+
+	queryTemplate := `
+		SELECT` + selectCols + `
+		FROM messages m
+		JOIN sources s ON s.id = m.source_id
+		LEFT JOIN message_raw mr ON mr.message_id = m.id
+		WHERE ` + sourceFilter + `m.rfc822_message_id IN (%s)
+		  AND ` + LiveMessagesWhere("m", true) + `
+		ORDER BY m.rfc822_message_id, m.id`
+
+	err := queryInChunks(s.db, rfc822IDs, prefixArgs, queryTemplate,
+		func(rows *loggedRows) error {
+			var dm DuplicateMessageRow
+			var rfc822ID string
+			var sentAt, archivedAt sql.NullTime
+			var hasRaw, isFromMe, hasSent int
+			if err := rows.Scan(
+				&rfc822ID, &dm.ID, &dm.SourceID, &dm.SourceType, &dm.SourceIdentifier,
+				&dm.SourceMessageID, &dm.Subject, &sentAt, &archivedAt,
+				&hasRaw, &dm.LabelCount, &isFromMe, &hasSent,
+				&dm.FromEmail,
+			); err != nil {
+				return err
+			}
+			if sentAt.Valid {
+				dm.SentAt = sentAt.Time
+			}
+			if archivedAt.Valid {
+				dm.ArchivedAt = archivedAt.Time
+			}
+			dm.HasRawMIME = hasRaw == 1
+			dm.IsFromMe = isFromMe == 1
+			dm.HasSentLabel = hasSent == 1
+			result[rfc822ID] = append(result[rfc822ID], dm)
+			return nil
+		})
+	if err != nil {
+		return nil, fmt.Errorf("get duplicate group messages batch: %w", err)
+	}
+	return result, nil
 }
 
 func (s *Store) MergeDuplicates(

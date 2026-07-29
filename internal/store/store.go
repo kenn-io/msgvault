@@ -940,6 +940,30 @@ func (s *Store) InitSchema() error {
 		}
 	}
 
+	// Index over rfc822_message_id serves dedup's per-group message lookup
+	// (GetDuplicateGroupMessages / GetDuplicateGroupMessagesBatch). Without
+	// it, each lookup was a full scan of the messages table — measured at
+	// ~190ms/lookup, with one lookup per duplicate group, so a scan with
+	// 22k groups burned the entire 30-minute CLI plan-request timeout
+	// before content-hash comparison even started (kenn-io/msgvault#510).
+	// Plain (non-partial) index: a partial WHERE rfc822_message_id IS NOT
+	// NULL AND != '' form is not usable by the planner for this table's
+	// bound `= ?` / `IN (...)` lookups — SQLite can't prove col = ? implies
+	// col != '' since ? could bind to '' — so it would silently fall back
+	// to SCAN (verified via EXPLAIN QUERY PLAN before writing this).
+	// Identical DDL on both backends; runMaintenance already handles the
+	// PostgreSQL statement_timeout exemption internally (finding S1). IF
+	// NOT EXISTS is idempotent per start.
+	if err := s.runMaintenance(context.Background(), func(ctx context.Context, tx *loggedTx) error {
+		_, err := tx.ExecContext(ctx, `
+			CREATE INDEX IF NOT EXISTS idx_messages_rfc822_message_id
+			    ON messages(rfc822_message_id)
+		`)
+		return err
+	}); err != nil {
+		return fmt.Errorf("create rfc822 message id index: %w", err)
+	}
+
 	// Backfill last_modified for rows that predate the column. SQLite cannot
 	// ADD COLUMN with a non-constant default, so the legacy ADD COLUMN above
 	// leaves existing rows NULL; this one-shot UPDATE sets them to
