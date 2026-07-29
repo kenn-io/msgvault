@@ -33,7 +33,7 @@ type CreatePersonRequest struct {
 }
 
 type PatchPersonRequest struct {
-	DisplayName *string `json:"display_name,omitempty"`
+	DisplayName *string `json:"display_name" nullable:"true"`
 }
 
 type PersonsResponse struct {

@@ -197,6 +197,35 @@ func TestCopySubset_AllRows(t *testing.T) {
 	assert.Equal(t, int64(5), result.Messages, "Messages (all available)")
 }
 
+func TestCopySubset_PreservesPersonProfiles(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	srcDB := createTestSourceDB(t, t.TempDir(), 5)
+	source, err := Open(srcDB)
+	require.NoError(err)
+	person, err := source.CreatePersonFromParticipant(2)
+	require.NoError(err)
+	displayName := "alice"
+	person, err = source.UpdatePersonDisplayName(person.ID, person.Revision, &displayName)
+	require.NoError(err)
+	require.NoError(source.Close())
+
+	dstDir := filepath.Join(t.TempDir(), "dst")
+	_, err = CopySubset(srcDB, dstDir, 1)
+	require.NoError(err)
+	destination, err := Open(filepath.Join(dstDir, "msgvault.db"))
+	require.NoError(err)
+	t.Cleanup(func() { _ = destination.Close() })
+
+	copied, err := destination.GetPerson(person.ID)
+	require.NoError(err)
+	assert.Equal(person.ID, copied.ID)
+	assert.Equal(person.VCardUID, copied.VCardUID)
+	assert.Equal(person.DisplayName, copied.DisplayName)
+	assert.Equal(person.Revision, copied.Revision)
+	assert.Equal(person.ParticipantIDs, copied.ParticipantIDs)
+}
+
 func TestCopySubset_FTSPopulated(t *testing.T) {
 	srcDir := t.TempDir()
 	dstDir := filepath.Join(t.TempDir(), "dst")

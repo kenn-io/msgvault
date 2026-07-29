@@ -50,6 +50,7 @@ func TestPersonPromoteGetListUpdateAndRevisionConflict(t *testing.T) {
 	require.NotNil(updated.DisplayName)
 	assert.Equal("alice", *updated.DisplayName)
 	assert.Equal(created.Revision+1, updated.Revision)
+	assert.Equal(created.ParticipantIDs, updated.ParticipantIDs)
 
 	_, err = f.Store.UpdatePersonDisplayName(created.ID, created.Revision, &displayName)
 	assert.ErrorIs(err, store.ErrPersonRevisionConflict)

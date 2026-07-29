@@ -36,6 +36,14 @@ func TestGeneratedSavedViewStateRoundTripsCanonicalDefinition(t *testing.T) {
 	assert.JSONEq(t, want, string(got))
 }
 
+func TestGeneratedPatchPersonCanClearDisplayName(t *testing.T) {
+	body := generated.PatchPersonBody{DisplayName: nil}
+	require.NoError(t, body.Validate())
+	encoded, err := json.Marshal(body)
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"display_name":null}`, string(encoded))
+}
+
 func TestGeneratedEnumNamesPreserveSavedViewCompatibilityAndQualifyExploration(t *testing.T) {
 	assertions := assert.New(t)
 	assertions.Equal(generated.Asc, generated.SavedViewSortDirection("asc"))

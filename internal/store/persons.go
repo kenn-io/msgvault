@@ -61,6 +61,7 @@ func (s *Store) CreatePersonFromParticipantContext(
 	}
 
 	var personID int64
+	var person *Person
 	err := s.withTxContext(ctx, func(tx *loggedTx) error {
 		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
 			return err
@@ -121,12 +122,13 @@ func (s *Store) CreatePersonFromParticipantContext(
 				return err
 			}
 		}
-		return nil
+		person, err = s.getPersonTx(ctx, tx, personID)
+		return err
 	})
 	if err != nil {
 		return nil, err
 	}
-	return s.GetPersonContext(ctx, personID)
+	return person, nil
 }
 
 func (s *Store) GetPerson(id int64) (*Person, error) {
@@ -134,21 +136,15 @@ func (s *Store) GetPerson(id int64) (*Person, error) {
 }
 
 func (s *Store) GetPersonContext(ctx context.Context, id int64) (*Person, error) {
-	person, err := scanPerson(s.db.QueryRowContext(ctx, `
-		SELECT id, vcard_uid, display_name, revision, created_at, updated_at
-		FROM persons WHERE id = ?
-	`, id))
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, ErrPersonNotFound
-	}
-	if err != nil {
-		return nil, fmt.Errorf("get person %d: %w", id, err)
-	}
-	ids, err := s.personParticipantIDsContext(ctx, id)
+	var person *Person
+	err := s.withTxContext(ctx, func(tx *loggedTx) error {
+		var err error
+		person, err = s.getPersonTx(ctx, tx, id)
+		return err
+	})
 	if err != nil {
 		return nil, err
 	}
-	person.ParticipantIDs = ids
 	return person, nil
 }
 
@@ -157,51 +153,14 @@ func (s *Store) ListPersons() ([]Person, error) {
 }
 
 func (s *Store) ListPersonsContext(ctx context.Context) ([]Person, error) {
-	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, vcard_uid, display_name, revision, created_at, updated_at
-		FROM persons
-		ORDER BY CASE WHEN display_name IS NULL THEN 1 ELSE 0 END, LOWER(display_name), id
-	`)
+	var persons []Person
+	err := s.withTxContext(ctx, func(tx *loggedTx) error {
+		var err error
+		persons, err = s.listPersonsTx(ctx, tx)
+		return err
+	})
 	if err != nil {
-		return nil, fmt.Errorf("list persons: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-
-	persons := make([]Person, 0)
-	index := make(map[int64]int)
-	for rows.Next() {
-		person, scanErr := scanPerson(rows)
-		if scanErr != nil {
-			return nil, fmt.Errorf("scan person: %w", scanErr)
-		}
-		person.ParticipantIDs = []int64{}
-		index[person.ID] = len(persons)
-		persons = append(persons, *person)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate persons: %w", err)
-	}
-
-	bindings, err := s.db.QueryContext(ctx, `
-		SELECT person_id, participant_id
-		FROM person_participants
-		ORDER BY person_id, participant_id
-	`)
-	if err != nil {
-		return nil, fmt.Errorf("list person participants: %w", err)
-	}
-	defer func() { _ = bindings.Close() }()
-	for bindings.Next() {
-		var personID, participantID int64
-		if err := bindings.Scan(&personID, &participantID); err != nil {
-			return nil, fmt.Errorf("scan person participant: %w", err)
-		}
-		if i, ok := index[personID]; ok {
-			persons[i].ParticipantIDs = append(persons[i].ParticipantIDs, participantID)
-		}
-	}
-	if err := bindings.Err(); err != nil {
-		return nil, fmt.Errorf("iterate person participants: %w", err)
+		return nil, err
 	}
 	return persons, nil
 }
@@ -216,25 +175,36 @@ func (s *Store) UpdatePersonDisplayNameContext(
 	ctx context.Context, id, expectedRevision int64, displayName *string,
 ) (*Person, error) {
 	displayName = normalizePersonDisplayName(displayName)
-	person, err := scanPerson(s.db.QueryRowContext(ctx, fmt.Sprintf(`
-		UPDATE persons
-		SET display_name = ?, revision = revision + 1, updated_at = %s
-		WHERE id = ? AND revision = ?
-		RETURNING id, vcard_uid, display_name, revision, created_at, updated_at
-	`, s.dialect.Now()), displayName, id, expectedRevision))
-	if err == nil {
-		person.ParticipantIDs, err = s.personParticipantIDsContext(ctx, id)
-		return person, err
+	var person *Person
+	err := s.withTxContext(ctx, func(tx *loggedTx) error {
+		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
+			return err
+		}
+		var updatedID int64
+		err := tx.QueryRowContext(ctx, fmt.Sprintf(`
+			UPDATE persons
+			SET display_name = ?, revision = revision + 1, updated_at = %s
+			WHERE id = ? AND revision = ?
+			RETURNING id
+		`, s.dialect.Now()), displayName, id, expectedRevision).Scan(&updatedID)
+		if errors.Is(err, sql.ErrNoRows) {
+			return s.personCASMissTx(ctx, tx, id)
+		}
+		if err != nil {
+			return fmt.Errorf("update person %d: %w", id, err)
+		}
+		person, err = s.getPersonTx(ctx, tx, updatedID)
+		return err
+	})
+	if err != nil {
+		return nil, err
 	}
-	if !errors.Is(err, sql.ErrNoRows) {
-		return nil, fmt.Errorf("update person %d: %w", id, err)
-	}
-	return nil, s.personCASMissContext(ctx, id)
+	return person, nil
 }
 
-func (s *Store) personCASMissContext(ctx context.Context, id int64) error {
+func (s *Store) personCASMissTx(ctx context.Context, tx *loggedTx, id int64) error {
 	var revision int64
-	err := s.db.QueryRowContext(ctx, `SELECT revision FROM persons WHERE id = ?`, id).Scan(&revision)
+	err := tx.QueryRowContext(ctx, `SELECT revision FROM persons WHERE id = ?`, id).Scan(&revision)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ErrPersonNotFound
 	}
@@ -244,27 +214,76 @@ func (s *Store) personCASMissContext(ctx context.Context, id int64) error {
 	return ErrPersonRevisionConflict
 }
 
-func (s *Store) personParticipantIDsContext(ctx context.Context, personID int64) ([]int64, error) {
-	rows, err := s.db.QueryContext(ctx, `
-		SELECT participant_id FROM person_participants
-		WHERE person_id = ? ORDER BY participant_id
-	`, personID)
+func (s *Store) getPersonTx(ctx context.Context, tx *loggedTx, id int64) (*Person, error) {
+	rows, err := tx.QueryContext(ctx, `
+		SELECT p.id, p.vcard_uid, p.display_name, p.revision, p.created_at, p.updated_at,
+		       pp.participant_id
+		FROM persons p
+		LEFT JOIN person_participants pp ON pp.person_id = p.id
+		WHERE p.id = ?
+		ORDER BY pp.participant_id
+	`, id)
 	if err != nil {
-		return nil, fmt.Errorf("get person %d participants: %w", personID, err)
+		return nil, fmt.Errorf("get person %d: %w", id, err)
 	}
 	defer func() { _ = rows.Close() }()
-	ids := make([]int64, 0)
+
+	var person *Person
 	for rows.Next() {
-		var id int64
-		if err := rows.Scan(&id); err != nil {
-			return nil, fmt.Errorf("scan person participant: %w", err)
+		rowPerson, participantID, err := scanPersonBinding(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan person %d: %w", id, err)
 		}
-		ids = append(ids, id)
+		if person == nil {
+			person = rowPerson
+			person.ParticipantIDs = []int64{}
+		}
+		if participantID.Valid {
+			person.ParticipantIDs = append(person.ParticipantIDs, participantID.Int64)
+		}
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate person participants: %w", err)
+		return nil, fmt.Errorf("iterate person %d: %w", id, err)
 	}
-	return ids, nil
+	if person == nil {
+		return nil, ErrPersonNotFound
+	}
+	return person, nil
+}
+
+func (s *Store) listPersonsTx(ctx context.Context, tx *loggedTx) ([]Person, error) {
+	rows, err := tx.QueryContext(ctx, `
+		SELECT p.id, p.vcard_uid, p.display_name, p.revision, p.created_at, p.updated_at,
+		       pp.participant_id
+		FROM persons p
+		LEFT JOIN person_participants pp ON pp.person_id = p.id
+		ORDER BY CASE WHEN p.display_name IS NULL THEN 1 ELSE 0 END,
+		         LOWER(p.display_name), p.id, pp.participant_id
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("list persons: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	persons := make([]Person, 0)
+	for rows.Next() {
+		person, participantID, err := scanPersonBinding(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan person: %w", err)
+		}
+		if len(persons) == 0 || persons[len(persons)-1].ID != person.ID {
+			person.ParticipantIDs = []int64{}
+			persons = append(persons, *person)
+		}
+		if participantID.Valid {
+			last := len(persons) - 1
+			persons[last].ParticipantIDs = append(persons[last].ParticipantIDs, participantID.Int64)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate persons: %w", err)
+	}
+	return persons, nil
 }
 
 func personIDsForParticipantsTx(ctx context.Context, tx *loggedTx, participantIDs []int64) ([]int64, error) {
@@ -424,17 +443,18 @@ func newVCardUID() (string, error) {
 		value[0:4], value[4:6], value[6:8], value[8:10], value[10:16]), nil
 }
 
-func scanPerson(row scanner) (*Person, error) {
+func scanPersonBinding(row scanner) (*Person, sql.NullInt64, error) {
 	var person Person
 	var displayName sql.NullString
+	var participantID sql.NullInt64
 	if err := row.Scan(
 		&person.ID, &person.VCardUID, &displayName, &person.Revision,
-		&person.CreatedAt, &person.UpdatedAt,
+		&person.CreatedAt, &person.UpdatedAt, &participantID,
 	); err != nil {
-		return nil, err
+		return nil, sql.NullInt64{}, err
 	}
 	if displayName.Valid {
 		person.DisplayName = &displayName.String
 	}
-	return &person, nil
+	return &person, participantID, nil
 }

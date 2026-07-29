@@ -2953,7 +2953,7 @@ export interface components {
             [key: string]: unknown;
         };
         PatchPersonRequest: {
-            display_name?: string;
+            display_name: string | null;
         };
         PatchSavedViewRequest: {
             canonical_state?: components["schemas"]["SavedViewStateEnvelope"];

@@ -2836,7 +2836,11 @@ components:
       additionalProperties: false
       properties:
         display_name:
-          type: string
+          type:
+            - string
+            - "null"
+      required:
+        - display_name
       type: object
     PatchSavedViewRequest:
       additionalProperties: false

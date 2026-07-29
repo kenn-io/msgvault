@@ -2738,7 +2738,13 @@ components:
       additionalProperties: false
       properties:
         display_name:
+          nullable: true
           type: string
+          x-oapi-codegen-extra-tags:
+            validate: omitempty
+          x-omitempty: false
+      required:
+        - display_name
       type: object
     PatchSavedViewRequest:
       additionalProperties: false

@@ -441,6 +441,17 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 			}
 		}
 	}
+	if patch := schemas["PatchPersonRequest"]; patch != nil {
+		if displayName := patch.Properties["display_name"]; displayName != nil {
+			if displayName.Extensions == nil {
+				displayName.Extensions = map[string]any{}
+			}
+			displayName.Extensions["x-omitempty"] = false
+			displayName.Extensions["x-oapi-codegen-extra-tags"] = map[string]any{
+				"validate": "omitempty",
+			}
+		}
+	}
 	for _, schemaName := range []string{"ExploreGroupsHTTPRequest", "FileGroupsHTTPRequest"} {
 		if groups := schemas[schemaName]; groups != nil && groups.Properties["grouping"] != nil {
 			grouping := groups.Properties["grouping"]

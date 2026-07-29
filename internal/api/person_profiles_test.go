@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/danielgtaylor/huma/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/store"
@@ -51,6 +52,14 @@ func TestPersonProfileHTTPPromoteListGetUpdateAndConflictingLink(t *testing.T) {
 	require.NotNil(updated.DisplayName)
 	assert.Equal("alice", *updated.DisplayName)
 
+	clearedResponse := personRequest(t, srv, http.MethodPatch,
+		fmt.Sprintf("%s/%d", personsPath, created.ID),
+		[]byte(`{"display_name":null}`), updatedResponse.Header().Get("ETag"))
+	require.Equal(http.StatusOK, clearedResponse.Code)
+	var cleared store.Person
+	require.NoError(json.Unmarshal(clearedResponse.Body.Bytes(), &cleared))
+	assert.Nil(cleared.DisplayName)
+
 	staleResponse := personRequest(t, srv, http.MethodPatch,
 		fmt.Sprintf("%s/%d", personsPath, created.ID),
 		[]byte(`{"display_name":"alice stale"}`), etag)
@@ -61,6 +70,18 @@ func TestPersonProfileHTTPPromoteListGetUpdateAndConflictingLink(t *testing.T) {
 	linkResponse := postIdentityLink(t, srv, "/api/v1/identity/links",
 		IdentityLinkRequest{ParticipantA: alice, ParticipantB: bob})
 	assert.Equal(http.StatusConflict, linkResponse.Code)
+}
+
+func TestPersonPatchSchemaRequiresNullableDisplayName(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	for _, document := range []*huma.OpenAPI{OpenAPIDocument(), openAPIClientDocument()} {
+		schema := document.Components.Schemas.Map()["PatchPersonRequest"]
+		require.NotNil(schema)
+		assert.Contains(schema.Required, "display_name")
+		require.Contains(schema.Properties, "display_name")
+		assert.True(schema.Properties["display_name"].Nullable)
+	}
 }
 
 func personRequest(

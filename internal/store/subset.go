@@ -313,6 +313,28 @@ func copyData(tx *sql.Tx, rowCount int) (*CopyResult, error) {
 	}
 
 	if _, err := tx.Exec(`
+		INSERT INTO persons
+			(id, vcard_uid, display_name, revision, created_at, updated_at)
+		SELECT p.id, p.vcard_uid, p.display_name, p.revision, p.created_at, p.updated_at
+		FROM src.persons p
+		WHERE EXISTS (
+			SELECT 1 FROM src.person_participants pp
+			WHERE pp.person_id = p.id
+			  AND pp.participant_id IN (SELECT id FROM participants)
+		)`); err != nil {
+		return nil, fmt.Errorf("copy persons: %w", err)
+	}
+
+	if _, err := tx.Exec(`
+		INSERT INTO person_participants (person_id, participant_id)
+		SELECT person_id, participant_id
+		FROM src.person_participants
+		WHERE person_id IN (SELECT id FROM persons)
+		  AND participant_id IN (SELECT id FROM participants)`); err != nil {
+		return nil, fmt.Errorf("copy person_participants: %w", err)
+	}
+
+	if _, err := tx.Exec(`
 		INSERT INTO participant_identifiers
 		SELECT * FROM src.participant_identifiers
 		WHERE participant_id IN (SELECT id FROM participants)`); err != nil {

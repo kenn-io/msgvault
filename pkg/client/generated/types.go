@@ -2567,7 +2567,11 @@ type OperationHealth struct {
 }
 
 type PatchPersonRequest struct {
-	DisplayName *string `json:"display_name,omitempty"`
+	DisplayName *string `json:"display_name" validate:"omitempty"`
+}
+
+func (p PatchPersonRequest) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(p))
 }
 
 type PatchSavedViewRequest struct {
