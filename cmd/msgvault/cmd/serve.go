@@ -350,7 +350,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	}
 	if cfg.Slack.Enabled && cfg.Slack.Schedule != "" {
 		if err := sched.AddJob(scheduler.Job{
-			Name:     "slack",
+			Name:     api.SlackJobName,
 			Schedule: cfg.Slack.Schedule,
 			Run: func(ctx context.Context) error {
 				return runScheduledSource(ctx, attachmentMaint, true, func(ctx context.Context) error {

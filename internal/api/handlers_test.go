@@ -3633,6 +3633,7 @@ func TestSchedulerJobNameForSource(t *testing.T) {
 		{"granola", granola.SourceType, "acct-1", "granola:acct-1", true},
 		{"circleback", circleback.SourceType, "acct-2", "circleback:acct-2", true},
 		{"beeper", "beeper", "beeper-account-1", "beeper", true},
+		{"slack", "slack", "T01:U01", "slack", true},
 		{"account scheduler type", "gmail", "alice@example.com", "", false},
 	}
 	for _, tc := range cases {

@@ -12,12 +12,19 @@ import (
 // sourceTypeBeeper mirrors the unexported sourceTypeBeeper constant in
 // internal/beeper (and cmd/msgvault/cmd/constants.go); it can't be imported
 // because it isn't exported, so the literal is duplicated here.
-const sourceTypeBeeper = "beeper"
+const (
+	sourceTypeBeeper = "beeper"
+	sourceTypeSlack  = "slack"
+)
 
 // BeeperJobName is the single generic-job name that drives every beeper
 // store source. cmd/msgvault/cmd/attachment_maintenance.go registers the
 // beeper sync job under this exact name.
 const BeeperJobName = sourceTypeBeeper
+
+// SlackJobName is the single generic-job name that drives the configured
+// Slack workspace source.
+const SlackJobName = sourceTypeSlack
 
 // SchedulerJobNameForSource returns the scheduler generic-job name that
 // drives syncing for a store source of the given type and identifier, and
@@ -57,6 +64,10 @@ func SchedulerJobNameForSource(sourceType, identifier string) (string, bool) {
 		// internal/beeper/importer.go GetOrCreateSource, one store source
 		// per beeper AccountID, all driven by the singleton "beeper" job).
 		return BeeperJobName, true
+	case sourceTypeSlack:
+		// One configured Slack workspace maps to one store source and one
+		// singleton daemon job.
+		return SlackJobName, true
 	default:
 		return "", false
 	}

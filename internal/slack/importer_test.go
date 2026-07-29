@@ -2,6 +2,7 @@ package slack
 
 import (
 	"context"
+	"database/sql"
 	"strconv"
 	"testing"
 	"time"
@@ -168,6 +169,14 @@ func TestImportEndToEnd(t *testing.T) {
 		JOIN messages m ON m.id = mr.message_id
 		WHERE m.source_message_id = ? AND mr.recipient_type = 'mention'`), "C01:"+ts(1)).Scan(&mentions))
 	assert.Equal(1, mentions)
+	var fromRows int
+	require.NoError(st.DB().QueryRow(`
+		SELECT COUNT(DISTINCT m.id)
+		FROM messages m
+		JOIN message_recipients mr ON mr.message_id = m.id
+		WHERE m.message_type = 'slack' AND mr.recipient_type = 'from'`).Scan(&fromRows))
+	assert.Equal(totalWorkspaceMessages, fromRows,
+		"every Slack sender must use the shared from-recipient model as well as messages.sender_id")
 	var body string
 	require.NoError(st.DB().QueryRow(st.Rebind(`
 		SELECT mb.body_text FROM message_bodies mb
@@ -565,7 +574,7 @@ func TestSweepOverlapRecoversLateIndexedReplies(t *testing.T) {
 	require.NoError(st.DB().QueryRow(st.Rebind(
 		`SELECT COUNT(*) FROM messages WHERE source_message_id = ?`), "C09:"+lateReply).Scan(&n))
 	require.Zero(n, "test setup: the reply must be invisible to search on this run")
-	state := imp.loadResumeState(sum.SourceID)
+	state := requireResumeState(t, imp, sum.SourceID)
 	require.True(tsLess(lateReply, state.SweepWatermark),
 		"test setup: the watermark must have advanced past the unindexed reply")
 
@@ -646,11 +655,29 @@ func TestLoadResumeStateNewestBlobWins(t *testing.T) {
 	// Resume must take the newest blob WHOLESALE. Blending would let run
 	// A's stale page cursor and pin survive B's clears — an advanced
 	// Cursor paired with a foreign page cursor and an inverted window.
-	state := imp.loadResumeState(src.ID)
+	state := requireResumeState(t, imp, src.ID)
 	got := state.EnsureConv("C01")
 	assert.Equal("150.000001", got.Cursor)
 	assert.Empty(got.BackfillCursor, "a completed window's cleared page cursor must not be resurrected")
 	assert.Empty(got.BackfillLatest, "a completed window's cleared pin must not be resurrected")
+}
+
+func TestImportRejectsMalformedNewestResumeState(t *testing.T) {
+	require := require.New(t)
+	f := testWorkspace(t)
+	imp, opts := testImporter(t, f)
+	st := imp.store
+
+	src, err := st.GetOrCreateSource("slack", opts.TeamID+":"+opts.UserID)
+	require.NoError(err)
+	runID, err := st.StartSync(src.ID, "slack")
+	require.NoError(err)
+	require.NoError(st.UpdateSyncCheckpoint(runID, &store.Checkpoint{PageToken: `{"version":`}))
+	require.NoError(st.FailSync(runID, "interrupted"))
+
+	_, err = imp.Import(context.Background(), opts)
+	require.Error(err)
+	assert.Contains(t, err.Error(), "load Slack resume state")
 }
 
 func mustMarshal(t *testing.T, s *SyncState) string {
@@ -658,6 +685,13 @@ func mustMarshal(t *testing.T, s *SyncState) string {
 	blob, err := s.Marshal()
 	require.NoError(t, err)
 	return blob
+}
+
+func requireResumeState(t *testing.T, imp *Importer, sourceID int64) *SyncState {
+	t.Helper()
+	state, err := imp.loadResumeState(sourceID)
+	require.NoError(t, err)
+	return state
 }
 
 func TestBackfillMediaReportsInvalidRaw(t *testing.T) {
@@ -920,7 +954,7 @@ func TestCatchUpDebtNotStarvedBySaturatedWindows(t *testing.T) {
 	}
 	src, err := st.GetOrCreateSource("slack", "T01:UME")
 	require.NoError(err)
-	require.False(imp.loadResumeState(src.ID).EnsureConv("C70").ThreadsPending,
+	require.False(requireResumeState(t, imp, src.ID).EnsureConv("C70").ThreadsPending,
 		"the finite catch-up debt must clear; it is senior to new window work")
 }
 
@@ -945,7 +979,7 @@ func TestCrashBeforeSweepStampsCoverage(t *testing.T) {
 	f.mu.Unlock()
 	sum, err := imp.Import(context.Background(), opts)
 	require.Error(err, "the store failure at the last conversation is fatal")
-	state := imp.loadResumeState(sum.SourceID)
+	state := requireResumeState(t, imp, sum.SourceID)
 	require.True(state.EnsureConv("C01").Done, "the first conversation's walk completed")
 	require.NotEmpty(state.EnsureConv("C01").SweptThrough,
 		"a completing threaded initial walk must stamp its own reply coverage")
@@ -1104,7 +1138,7 @@ func TestFailedRunPersistsFinalState(t *testing.T) {
 
 	sum, err := imp.Import(context.Background(), opts)
 	require.NoError(err)
-	before := imp.loadResumeState(sum.SourceID)
+	before := requireResumeState(t, imp, sum.SourceID)
 
 	// Fresh work lands in TWO conversations; the store breaks between them
 	// (the fake drops the reactions table just before serving the LAST
@@ -1129,7 +1163,7 @@ func TestFailedRunPersistsFinalState(t *testing.T) {
 	_, err = imp.Import(context.Background(), opts)
 	require.Error(err, "the reactions write failure is fatal")
 
-	after := imp.loadResumeState(sum.SourceID)
+	after := requireResumeState(t, imp, sum.SourceID)
 	assert.True(tsLess(before.EnsureConv("C01").Cursor, after.EnsureConv("C01").Cursor),
 		"the failure-path checkpoint must persist the completed first conversation's progress")
 
@@ -1366,7 +1400,7 @@ func TestRepairCompletesDespiteDepartedConversations(t *testing.T) {
 
 	src, err := st.GetOrCreateSource("slack", "T01:UME")
 	require.NoError(err)
-	state := imp.loadResumeState(src.ID)
+	state := requireResumeState(t, imp, src.ID)
 	assert.False(state.RepairPending,
 		"a conversation that left the eligible set must not hold the repair session open")
 }
@@ -1455,7 +1489,7 @@ func TestFullRepairSurvivesInterruption(t *testing.T) {
 
 	src, err := st.GetOrCreateSource("slack", "T01:UME")
 	require.NoError(err)
-	state := imp.loadResumeState(src.ID)
+	state := requireResumeState(t, imp, src.ID)
 	assert.False(state.RepairPending, "the repair session clears once everything is walked and paid")
 }
 
@@ -1491,7 +1525,7 @@ func TestScopedFullRepairConverges(t *testing.T) {
 
 	src, err := st.GetOrCreateSource("slack", "T01:UME")
 	require.NoError(err)
-	state := imp.loadResumeState(src.ID)
+	state := requireResumeState(t, imp, src.ID)
 	assert.False(state.RepairPending)
 }
 
@@ -1637,7 +1671,7 @@ func TestSweepTruncatedDayFailsOnceAndConvergesViaCatchUp(t *testing.T) {
 	assert.Equal(1, n)
 	src, err := st.GetOrCreateSource("slack", "T01:UME")
 	require.NoError(err)
-	require.True(imp.loadResumeState(src.ID).EnsureConv("C09").ThreadsPending,
+	require.True(requireResumeState(t, imp, src.ID).EnsureConv("C09").ThreadsPending,
 		"the unreachable tail must be recorded as thread catch-up debt")
 
 	// Once the day is over, the boundary passes it (debt recorded — the
@@ -1690,7 +1724,7 @@ func TestTruncatedSweepDuringRepairUnwedgesSession(t *testing.T) {
 	require.Error(err, "the truncated day fails the repair run loudly")
 	src, err := st.GetOrCreateSource("slack", "T01:UME")
 	require.NoError(err)
-	require.True(imp.loadResumeState(src.ID).RepairPending, "the failed pass must not close the session")
+	require.True(requireResumeState(t, imp, src.ID).RepairPending, "the failed pass must not close the session")
 
 	// Plain runs continue the session. Once the truncated day is behind
 	// the boundary, a clean pass pays the catch-up debt and closes it.
@@ -1699,7 +1733,7 @@ func TestTruncatedSweepDuringRepairUnwedgesSession(t *testing.T) {
 	imp.now = func() time.Time { return time.Now().Add(26 * time.Hour) }
 	_, err = imp.Import(context.Background(), opts)
 	require.NoError(err, "the session must converge; a permanently re-truncating sweep wedges RepairPending forever")
-	state := imp.loadResumeState(src.ID)
+	state := requireResumeState(t, imp, src.ID)
 	assert.False(state.RepairPending, "the clean pass closes the repair session")
 	assert.False(state.EnsureConv("C09").ThreadsPending)
 	var n int
@@ -1738,7 +1772,7 @@ func TestSweepRecoversGapForReIncludedChannel(t *testing.T) {
 	_, err = imp.Import(context.Background(), excluded)
 	require.NoError(err)
 
-	state := imp.loadResumeState(sum.SourceID)
+	state := requireResumeState(t, imp, sum.SourceID)
 	require.True(tsLess(gapReply, state.SweepWatermark),
 		"test setup: the watermark must have certified past the excluded channel's reply")
 	var n int
@@ -1874,7 +1908,7 @@ func TestGapCatchUpCoversPostBackfillRoots(t *testing.T) {
 	_, err = imp.Import(context.Background(), excluded)
 	require.NoError(err)
 
-	state := imp.loadResumeState(sum.SourceID)
+	state := requireResumeState(t, imp, sum.SourceID)
 	require.True(tsLess(gapReply, state.SweepWatermark),
 		"test setup: the watermark must have certified past the excluded channel's reply")
 
@@ -1969,7 +2003,7 @@ func TestStandingLimitPaysCatchUpDebt(t *testing.T) {
 
 	src, err := st.GetOrCreateSource("slack", "T01:UME")
 	require.NoError(err)
-	state := imp.loadResumeState(src.ID)
+	state := requireResumeState(t, imp, src.ID)
 	assert.False(state.EnsureConv("C40").ThreadsPending, "the debt flag clears once the walk finishes clean")
 }
 
@@ -1996,7 +2030,7 @@ func TestCatchUpClearsDebtForGoneConversation(t *testing.T) {
 	require.NoError(err, "a gone conversation with catch-up debt must not fail the run")
 	assert.Zero(sum.FetchErrors)
 
-	state := imp.loadResumeState(sum.SourceID)
+	state := requireResumeState(t, imp, sum.SourceID)
 	assert.False(state.EnsureConv("C01").ThreadsPending, "debt for a gone conversation clears — there is nothing left to fetch")
 }
 
@@ -2305,11 +2339,13 @@ func TestTombstoneNeverOverwritesArchivedOriginal(t *testing.T) {
 		t.Helper()
 		var body string
 		var msgID int64
+		var deletedAt sql.NullTime
 		require.NoError(st.DB().QueryRow(st.Rebind(`
-			SELECT m.id, mb.body_text FROM messages m
+			SELECT m.id, mb.body_text, m.deleted_from_source_at FROM messages m
 			JOIN message_bodies mb ON mb.message_id = m.id
-			WHERE m.source_message_id = ?`), rootID).Scan(&msgID, &body))
+			WHERE m.source_message_id = ?`), rootID).Scan(&msgID, &body, &deletedAt))
 		assert.Equal("the original words", body, "%s must not overwrite the archived body with the tombstone", path)
+		assert.True(deletedAt.Valid, "%s must mark the archived message deleted at Slack", path)
 		var reactions int
 		require.NoError(st.DB().QueryRow(st.Rebind(`
 			SELECT COUNT(*) FROM reactions WHERE message_id = ?`), msgID).Scan(&reactions))
@@ -2356,11 +2392,13 @@ func TestTombstonePlaceholderKeepsOrphanedReplies(t *testing.T) {
 	require.NoError(err)
 
 	var body string
+	var deletedAt sql.NullTime
 	require.NoError(st.DB().QueryRow(st.Rebind(`
-		SELECT mb.body_text FROM messages m
+		SELECT mb.body_text, m.deleted_from_source_at FROM messages m
 		JOIN message_bodies mb ON mb.message_id = m.id
-		WHERE m.source_message_id = ?`), "C80:"+rootTS).Scan(&body))
+		WHERE m.source_message_id = ?`), "C80:"+rootTS).Scan(&body, &deletedAt))
 	assert.Equal("This message was deleted.", body)
+	assert.True(deletedAt.Valid, "a tombstone placeholder must be excluded from active-message queries")
 	var linked int
 	require.NoError(st.DB().QueryRow(st.Rebind(`
 		SELECT COUNT(*) FROM messages
@@ -2411,6 +2449,31 @@ func TestTombstonePlaceholderRetriesIncompletePersistence(t *testing.T) {
 	raw, err := st.GetMessageRaw(messageID)
 	require.NoError(err)
 	assert.Contains(string(raw), `"subtype":"tombstone"`)
+	var deletedAt sql.NullTime
+	require.NoError(st.DB().QueryRow(
+		`SELECT deleted_from_source_at FROM messages WHERE id = ?`, messageID).Scan(&deletedAt))
+	assert.True(deletedAt.Valid)
+}
+
+func TestMessageReappearanceClearsSlackTombstone(t *testing.T) {
+	require := require.New(t)
+	f, rootTS, _ := tombstoneWorkspace(t)
+	imp, opts := testImporter(t, f)
+	st := imp.store
+
+	sum, err := imp.Import(context.Background(), opts)
+	require.NoError(err)
+	rootID := "C80:" + rootTS
+	require.NoError(st.MarkMessageDeleted(sum.SourceID, rootID))
+
+	imp.now = func() time.Time { return time.Now().Add(time.Minute) }
+	_, err = imp.Import(context.Background(), opts)
+	require.NoError(err)
+
+	var deletedAt sql.NullTime
+	require.NoError(st.DB().QueryRow(st.Rebind(
+		`SELECT deleted_from_source_at FROM messages WHERE source_message_id = ?`), rootID).Scan(&deletedAt))
+	assert.False(t, deletedAt.Valid, "a live message re-served by Slack must clear its stale tombstone")
 }
 
 func TestParentArchivedRequiresRawCompletionMarker(t *testing.T) {
@@ -2568,7 +2631,7 @@ func TestCatchUpFullDrainOverridesParkedTailSeed(t *testing.T) {
 	}
 	src, err := st.GetOrCreateSource("slack", "T01:UME")
 	require.NoError(err)
-	cs := imp.loadResumeState(src.ID).EnsureConv("C90")
+	cs := requireResumeState(t, imp, src.ID).EnsureConv("C90")
 	assert.False(cs.ThreadsPending, "catch-up debt is paid")
 	assert.Empty(cs.PendingThreads, "drain debt is paid")
 }
@@ -2606,7 +2669,7 @@ func TestSweepSmallPagesBeyondWalkBoundRecordedAsDebt(t *testing.T) {
 	require.Error(err, "a day the pager cannot fully consume must fail loudly, not certify past unserved hits")
 	src, err := st.GetOrCreateSource("slack", "T01:UME")
 	require.NoError(err)
-	require.True(imp.loadResumeState(src.ID).EnsureConv("C09").ThreadsPending,
+	require.True(requireResumeState(t, imp, src.ID).EnsureConv("C09").ThreadsPending,
 		"the unserved tail must be recorded as thread catch-up debt")
 
 	// The catch-up walk recovers the reply the pager could never serve;

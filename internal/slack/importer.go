@@ -122,18 +122,37 @@ func NewImporter(s *store.Store, c *Client, teamID string) *Importer {
 // Under CONCURRENT runs on one source (unsupported: daemon plus manual CLI
 // simultaneously) newest-wins can drop the older run's tail progress — the
 // safe direction: lower boundaries only re-fetch into idempotent upserts.
-func (imp *Importer) loadResumeState(sourceID int64) *SyncState {
-	if cp, err := imp.store.GetLatestCheckpointedSync(sourceID); err == nil && cp != nil && cp.CursorBefore.Valid {
-		if s, lerr := LoadSyncState(cp.CursorBefore.String); lerr == nil {
-			return s
+func (imp *Importer) loadResumeState(sourceID int64) (*SyncState, error) {
+	cp, err := imp.store.GetLatestCheckpointedSync(sourceID)
+	if err == nil {
+		if cp == nil || !cp.CursorBefore.Valid {
+			return nil, errors.New("latest Slack checkpoint has no resume state")
 		}
-	}
-	if prev, err := imp.store.GetLastSuccessfulSync(sourceID); err == nil && prev != nil && prev.CursorAfter.Valid {
-		if s, lerr := LoadSyncState(prev.CursorAfter.String); lerr == nil {
-			return s
+		state, loadErr := LoadSyncState(cp.CursorBefore.String)
+		if loadErr != nil {
+			return nil, fmt.Errorf("decode latest Slack checkpoint: %w", loadErr)
 		}
+		return state, nil
 	}
-	return NewSyncState()
+	if !errors.Is(err, store.ErrSyncRunNotFound) {
+		return nil, fmt.Errorf("read latest Slack checkpoint: %w", err)
+	}
+
+	prev, err := imp.store.GetLastSuccessfulSync(sourceID)
+	if err == nil {
+		if prev == nil || !prev.CursorAfter.Valid {
+			return nil, errors.New("last successful Slack sync has no resume state")
+		}
+		state, loadErr := LoadSyncState(prev.CursorAfter.String)
+		if loadErr != nil {
+			return nil, fmt.Errorf("decode last successful Slack resume state: %w", loadErr)
+		}
+		return state, nil
+	}
+	if !errors.Is(err, store.ErrSyncRunNotFound) {
+		return nil, fmt.Errorf("read last successful Slack sync: %w", err)
+	}
+	return NewSyncState(), nil
 }
 
 // Import runs a backfill-then-incremental sync of the workspace user's
@@ -152,7 +171,10 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (*ImportSum
 	imp.opts, imp.sourceID = opts, src.ID
 	sum := &ImportSummary{SourceID: src.ID}
 
-	state := imp.loadResumeState(src.ID)
+	state, err := imp.loadResumeState(src.ID)
+	if err != nil {
+		return nil, fmt.Errorf("load Slack resume state: %w", err)
+	}
 	if opts.Full {
 		// --full starts a repair SESSION, not a one-shot: the reset is
 		// checkpointed as this run's first act, making it the newest state
@@ -939,6 +961,9 @@ func (imp *Importer) processMessage(ctx context.Context, cc *convScope, m *Messa
 			return fmt.Errorf("tombstone existence check: %w", err)
 		}
 		if len(ids) > 0 {
+			if err := imp.store.MarkMessageDeleted(cc.sourceID, sourceMessageID(cc.channelID, m.TS)); err != nil {
+				return fmt.Errorf("mark Slack message deleted: %w", err)
+			}
 			return nil
 		}
 	}
@@ -987,7 +1012,7 @@ func (imp *Importer) processMessage(ctx context.Context, cc *convScope, m *Messa
 		return err
 	}
 
-	if err := imp.persistMentions(messageID, m); err != nil {
+	if err := imp.persistRecipients(messageID, m, senderPID); err != nil {
 		return err
 	}
 	if err := imp.persistReactions(messageID, m); err != nil {
@@ -1004,6 +1029,18 @@ func (imp *Importer) processMessage(ctx context.Context, cc *convScope, m *Messa
 		}
 	}
 
+	// Keep the shared source-deletion lifecycle in sync without sacrificing
+	// archived Slack content. Tombstones preserve the prior snapshot above,
+	// but still mark it inactive; a live message reappearing later clears a
+	// stale marker, matching the Teams and Discord importers.
+	if m.Subtype == "tombstone" {
+		if err := imp.store.MarkMessageDeleted(cc.sourceID, msg.SourceMessageID); err != nil {
+			return fmt.Errorf("mark Slack message deleted: %w", err)
+		}
+	} else if err := imp.store.ClearMessageDeletedFromSource(cc.sourceID, msg.SourceMessageID); err != nil {
+		return fmt.Errorf("clear Slack message tombstone: %w", err)
+	}
+
 	// Archive the exact original message JSON (captured at decode time) only
 	// after every fatal auxiliary write succeeds. Tombstone retries use its
 	// presence as the durable signal that this whole snapshot completed.
@@ -1016,10 +1053,24 @@ func (imp *Importer) processMessage(ctx context.Context, cc *convScope, m *Messa
 	return nil
 }
 
-// persistMentions writes "mention" recipient rows. No from/to rows are
-// written: sender attribution lives in messages.sender_id and membership in
-// conversation_participants (WhatsApp/Beeper precedent).
-func (imp *Importer) persistMentions(messageID int64, m *Message) error {
+// persistRecipients writes the shared sender and mention recipient sets.
+// Conversation membership remains in conversation_participants rather than
+// being fanned out into a "to" row on every channel message.
+func (imp *Importer) persistRecipients(messageID int64, m *Message, senderPID int64) error {
+	var fromIDs []int64
+	var fromNames []string
+	if senderPID != 0 {
+		senderName := imp.res.displayName(m.User)
+		if senderName == "" {
+			senderName = m.Username
+		}
+		fromIDs = append(fromIDs, senderPID)
+		fromNames = append(fromNames, senderName)
+	}
+	if err := imp.store.ReplaceMessageRecipients(messageID, "from", fromIDs, fromNames); err != nil {
+		return err
+	}
+
 	var ids []int64
 	var names []string
 	for _, uid := range m.MentionedUserIDs() {
@@ -1152,7 +1203,10 @@ func (imp *Importer) BackfillMedia(ctx context.Context, opts ImportOptions) (*Im
 	// This run's sync_runs row becomes the source's newest completed run and
 	// Import loads its cursor_after as the resume baseline — carry the
 	// existing sync state forward verbatim or the next sync would restart.
-	state := imp.loadResumeState(src.ID)
+	state, err := imp.loadResumeState(src.ID)
+	if err != nil {
+		return nil, fmt.Errorf("load Slack resume state: %w", err)
+	}
 	stateBlob, err := state.Marshal()
 	if err != nil {
 		return nil, err
