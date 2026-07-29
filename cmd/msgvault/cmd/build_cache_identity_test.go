@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"database/sql"
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
@@ -13,6 +14,61 @@ import (
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/store"
 )
+
+func TestBuildCache_SlackDefaultIdentityResolvesOwnerParticipant(t *testing.T) {
+	require := require.New(t)
+	tmp := t.TempDir()
+	dbPath := filepath.Join(tmp, "msgvault.db")
+	analyticsDir := filepath.Join(tmp, "analytics")
+
+	st, err := store.Open(dbPath)
+	require.NoError(err)
+	require.NoError(st.InitSchema())
+
+	src, err := st.GetOrCreateSource("slack", "T01:UME")
+	require.NoError(err)
+	confirmDefaultSlackIdentity(io.Discard, st, src.ID, "T01", "UME")
+	ownerID, err := st.EnsureParticipantByIdentifier("slack", "T01:UME", "Me")
+	require.NoError(err)
+	convID, err := st.EnsureConversationWithType(src.ID, "D01", "direct_chat", "Alice")
+	require.NoError(err)
+	messageID, err := st.UpsertMessage(&store.Message{
+		ConversationID:  convID,
+		SourceID:        src.ID,
+		SourceMessageID: "D01:123.000100",
+		MessageType:     "slack",
+		SenderID:        sql.NullInt64{Int64: ownerID, Valid: true},
+		SentAt:          sql.NullTime{Time: time.Date(2026, 7, 29, 12, 0, 0, 0, time.UTC), Valid: true},
+		ReceivedAt:      sql.NullTime{Time: time.Date(2026, 7, 29, 12, 0, 0, 0, time.UTC), Valid: true},
+	})
+	require.NoError(err)
+	require.NoError(st.ReplaceMessageRecipients(messageID, "from", []int64{ownerID}, []string{"Me"}))
+	require.NoError(st.Close())
+
+	result, err := buildCache(dbPath, analyticsDir, false)
+	require.NoError(err)
+	require.False(result.Skipped)
+
+	duckdb, err := sql.Open("duckdb", "")
+	require.NoError(err)
+	defer func() { _ = duckdb.Close() }()
+
+	ownerPattern := filepath.Join(analyticsDir, "owner_participants", "*.parquet")
+	var ownerRows int
+	require.NoError(duckdb.QueryRow(
+		`SELECT COUNT(*) FROM read_parquet(?) WHERE source_id = ? AND participant_id = ?`,
+		ownerPattern, src.ID, ownerID,
+	).Scan(&ownerRows))
+	assert.Equal(t, 1, ownerRows, "the default Slack identity must resolve to its namespaced participant")
+
+	messagePattern := filepath.Join(analyticsDir, "messages", "**", "*.parquet")
+	var isFromMe bool
+	require.NoError(duckdb.QueryRow(
+		`SELECT is_from_me FROM read_parquet(?, hive_partitioning=true) WHERE id = ?`,
+		messagePattern, messageID,
+	).Scan(&isFromMe))
+	assert.True(t, isFromMe, "owner resolution must feed Slack relationship analytics")
+}
 
 // TestBuildCache_DerivesIsFromMeAndIdentityDatasets verifies that:
 //   - messages Parquet gains a derived is_from_me column: true when the

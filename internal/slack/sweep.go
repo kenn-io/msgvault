@@ -32,7 +32,8 @@ const (
 
 // sweepTarget is a done conversation eligible for reply archiving.
 type sweepTarget struct {
-	convID int64
+	convID       int64
+	toRecipients []messageRecipient
 }
 
 // sweepBudget bounds a limited run's sweep work (limit 0 = unlimited). Days
@@ -433,7 +434,12 @@ func (imp *Importer) recordSweepDebt(ctx context.Context, syncID int64, hits []S
 		// The drain gates on actuals; seeding from the sweep budget makes
 		// the workspace budget bound this phase's fetch work, and reading
 		// it back carries the spend across conversations and days.
-		cc := &convScope{channelID: cid, convID: targets[cid].convID, sourceID: imp.sourceID, syncID: syncID, opts: imp.opts, cs: state.Conversations[cid], budgetUsed: budget.used}
+		target := targets[cid]
+		cc := &convScope{
+			channelID: cid, convID: target.convID, sourceID: imp.sourceID,
+			syncID: syncID, opts: imp.opts, cs: state.Conversations[cid],
+			toRecipients: target.toRecipients, budgetUsed: budget.used,
+		}
 		if err := imp.drainPendingThreads(ctx, cc, sum); err != nil {
 			return err
 		}

@@ -3,6 +3,7 @@ package cmd
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 
@@ -10,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/clirun"
 	"go.kenn.io/msgvault/internal/slack"
+	"go.kenn.io/msgvault/internal/store"
 )
 
 var (
@@ -94,8 +96,7 @@ Examples:
 				return fmt.Errorf("set display name for %s: %w", identifier, err)
 			}
 			if !noDefaultIdentityAddSlack {
-				confirmDefaultIdentity(cmd.OutOrStdout(), s, source.ID,
-					identifier, auth.UserID, "account-identifier")
+				confirmDefaultSlackIdentity(cmd.OutOrStdout(), s, source.ID, auth.TeamID, auth.UserID)
 			}
 			if err := runPostSourceCreateMigrations(s); err != nil {
 				return fmt.Errorf("post-source-create migrations: %w", err)
@@ -110,6 +111,11 @@ Examples:
 	cmd.Flags().StringVar(&addSlackTokenFile, "token-file", "", "read the Slack user token from this file")
 	cmd.Flags().BoolVar(&noDefaultIdentityAddSlack, "no-default-identity", false, noDefaultIdentityHelp)
 	return cmd
+}
+
+func confirmDefaultSlackIdentity(out io.Writer, s *store.Store, sourceID int64, teamID, userID string) {
+	account := teamID + ":" + userID
+	confirmDefaultIdentity(out, s, sourceID, account, account, "account-identifier")
 }
 
 // readAddSlackToken resolves the user token: env var, then --token-file,

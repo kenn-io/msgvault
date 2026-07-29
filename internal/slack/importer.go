@@ -32,14 +32,15 @@ const (
 
 // convScope carries per-conversation state through the persist call chain.
 type convScope struct {
-	channelID    string
-	convID       int64
-	sourceID     int64
-	syncID       int64
-	opts         ImportOptions
-	cs           *ConvState
-	toRecipients []messageRecipient
-	budgetUsed   int
+	channelID       string
+	convID          int64
+	sourceID        int64
+	syncID          int64
+	opts            ImportOptions
+	cs              *ConvState
+	toRecipients    []messageRecipient
+	membershipReady bool
+	budgetUsed      int
 }
 
 type messageRecipient struct {
@@ -246,12 +247,12 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (*ImportSum
 			return sum, err
 		}
 		before := sum.MessagesProcessed
-		var convID int64
-		if convID, err = imp.syncConversation(ctx, syncID, src.ID, c, opts, state, sum); err != nil {
+		var cc *convScope
+		if cc, err = imp.syncConversation(ctx, syncID, src.ID, c, opts, state, sum); err != nil {
 			return sum, err
 		}
-		if state.EnsureConv(c.ID).Done {
-			targets[c.ID] = sweepTarget{convID: convID}
+		if cc.membershipReady && state.EnsureConv(c.ID).Done {
+			targets[c.ID] = sweepTarget{convID: cc.convID, toRecipients: cc.toRecipients}
 		}
 		sum.ConversationsProcessed++
 		if opts.Progress != nil {
@@ -334,20 +335,27 @@ func includeConversation(c *Conversation, opts *ImportOptions) bool {
 // incremental fetch are the same walk). Thread replies are owed by the
 // walks as recorded drain debt (paid before anything else each run) and
 // discovered by the reply sweep thereafter.
-func (imp *Importer) syncConversation(ctx context.Context, syncID, sourceID int64, c *Conversation, opts ImportOptions, state *SyncState, sum *ImportSummary) (int64, error) {
+func (imp *Importer) syncConversation(ctx context.Context, syncID, sourceID int64, c *Conversation, opts ImportOptions, state *SyncState, sum *ImportSummary) (*convScope, error) {
 	convID, err := imp.store.EnsureConversationWithType(sourceID, c.ID, conversationType(c), conversationTitle(c, imp.res.displayName))
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 	toRecipients, err := imp.ensureMembership(ctx, syncID, convID, c, opts, sum)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 
 	cs := state.EnsureConv(c.ID)
 	cc := &convScope{
 		channelID: c.ID, convID: convID, sourceID: sourceID, syncID: syncID,
 		opts: opts, cs: cs, toRecipients: toRecipients,
+		membershipReady: !c.IsMpim || toRecipients != nil,
+	}
+	// MPIM membership defines every message's "to" snapshot. A failed
+	// members call must hold both history and reply debt so the retry can
+	// persist messages only after their recipients are known.
+	if !cc.membershipReady {
+		return cc, nil
 	}
 
 	// DEBT IS SENIOR TO NEW WORK — both debt channels, uniformly. The
@@ -358,12 +366,12 @@ func (imp *Importer) syncConversation(ctx context.Context, syncID, sourceID int6
 	// saturates --limit starve the debt forever while the windows keep up.
 	if len(cs.PendingThreads) > 0 && !opts.NoThreads {
 		if err := imp.drainPendingThreads(ctx, cc, sum); err != nil {
-			return 0, err
+			return nil, err
 		}
 	}
 	if cs.Done && cs.ThreadsPending && !opts.NoThreads {
 		if err := imp.threadCatchUp(ctx, cc, state, sum); err != nil {
-			return 0, err
+			return nil, err
 		}
 	}
 
@@ -373,7 +381,7 @@ func (imp *Importer) syncConversation(ctx context.Context, syncID, sourceID int6
 	// (they record conversation-level debt, never list entries).
 	if len(cs.PendingThreads) == 0 || opts.NoThreads {
 		if err := imp.walkWindow(ctx, cc, state, sum); err != nil {
-			return 0, err
+			return nil, err
 		}
 	}
 	// Second chance for catch-up debt: the run that COMPLETES the initial
@@ -382,7 +390,7 @@ func (imp *Importer) syncConversation(ctx context.Context, syncID, sourceID int6
 	// starvation risk: already-Done conversations get the senior slot.
 	if cs.Done && cs.ThreadsPending && !opts.NoThreads {
 		if err := imp.threadCatchUp(ctx, cc, state, sum); err != nil {
-			return 0, err
+			return nil, err
 		}
 	}
 	// The maintenance rescan (edits and reaction repair) runs only when
@@ -391,15 +399,15 @@ func (imp *Importer) syncConversation(ctx context.Context, syncID, sourceID int6
 	// scoped runs regardless.
 	if cs.Done && opts.Maintenance && opts.Limit == 0 {
 		if err := imp.rescanHead(ctx, cc, sum); err != nil {
-			return 0, err
+			return nil, err
 		}
 	}
-	return convID, nil
+	return cc, nil
 }
 
-// ensureMembership records the conversation's member list. Membership fetch
-// failures are counted but not fatal: message archiving must not be blocked
-// by a members listing outage.
+// ensureMembership records the conversation's member list. Channel failures
+// are isolated from message archiving, while MPIM callers hold progress
+// because membership defines their per-message recipient snapshot.
 func (imp *Importer) ensureMembership(ctx context.Context, syncID, convID int64, c *Conversation, opts ImportOptions, sum *ImportSummary) ([]messageRecipient, error) {
 	var members []store.ConversationParticipantRef
 	directRecipients := make([]messageRecipient, 0)
@@ -430,7 +438,10 @@ func (imp *Importer) ensureMembership(ctx context.Context, syncID, convID int64,
 			}
 			if errors.Is(err, ErrNotFound) {
 				imp.recordItem(syncID, c.ID, "membership", store.SyncRunItemStatusSkipped, "slack_channel_gone", err)
-				return nil, nil
+				// Known-gone is distinct from a transient outage. Let the
+				// history path confirm/record the gone conversation rather
+				// than parking it forever as missing membership.
+				return []messageRecipient{}, nil
 			}
 			// Isolated (message archiving proceeds) but honest: a members
 			// listing outage is a fetch failure and the run must report

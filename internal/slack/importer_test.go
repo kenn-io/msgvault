@@ -296,6 +296,47 @@ func TestImportIncrementalCatchesNewMessagesAndLateReplies(t *testing.T) {
 	}
 }
 
+func TestReplySweepPersistsDirectChatRecipients(t *testing.T) {
+	require := require.New(t)
+	f := testWorkspace(t)
+	imp, opts := testImporter(t, f)
+	st := imp.store
+
+	_, err := imp.Import(context.Background(), opts)
+	require.NoError(err)
+
+	dmReply := tsFresh(0)
+	mpimReply := tsFresh(1)
+	f.mu.Lock()
+	dmRoot := f.conv("D01").findRoot(ts(20))
+	dmRoot.Replies = append(dmRoot.Replies,
+		fakeMsg{TS: dmReply, ThreadTS: dmRoot.TS, User: "UME", Text: "late DM reply"})
+	mpimRoot := f.conv("G01").findRoot(ts(10))
+	mpimRoot.Replies = append(mpimRoot.Replies,
+		fakeMsg{TS: mpimReply, ThreadTS: mpimRoot.TS, User: "UALICE", Text: "late group reply"})
+	f.mu.Unlock()
+
+	imp.now = func() time.Time { return time.Now().Add(time.Minute) }
+	_, err = imp.Import(context.Background(), opts)
+	require.NoError(err)
+
+	var dmRecipients int
+	require.NoError(st.DB().QueryRow(st.Rebind(`
+		SELECT COUNT(*) FROM message_recipients mr
+		JOIN messages m ON m.id = mr.message_id
+		WHERE m.source_message_id = ? AND mr.recipient_type = 'to'`),
+		"D01:"+dmReply).Scan(&dmRecipients))
+	assert.Equal(t, 1, dmRecipients, "late DM reply addresses the other member")
+
+	var mpimRecipients int
+	require.NoError(st.DB().QueryRow(st.Rebind(`
+		SELECT COUNT(*) FROM message_recipients mr
+		JOIN messages m ON m.id = mr.message_id
+		WHERE m.source_message_id = ? AND mr.recipient_type = 'to'`),
+		"G01:"+mpimReply).Scan(&mpimRecipients))
+	assert.Equal(t, 2, mpimRecipients, "late MPIM reply addresses every member except its sender")
+}
+
 func TestImportIncrementalMidWindowFailureDoesNotAdvanceCursor(t *testing.T) {
 	require := require.New(t)
 	f := testWorkspace(t)
@@ -1426,6 +1467,41 @@ func TestMembershipFetchFailureMarksRunPartial(t *testing.T) {
 	require.NoError(st.DB().QueryRow(st.Rebind(
 		`SELECT COUNT(*) FROM messages WHERE source_message_id = ?`), "C01:"+ts(0)).Scan(&n))
 	require.Equal(1, n, "isolation: the channel's messages still archive despite the membership failure")
+}
+
+func TestMPIMMembershipFailureHoldsHistoryUntilRecipientsAvailable(t *testing.T) {
+	require := require.New(t)
+	f := testWorkspace(t)
+	f.failMembers["G01"] = true
+	imp, opts := testImporter(t, f)
+	st := imp.store
+
+	sum, err := imp.Import(context.Background(), opts)
+	require.Error(err, "an MPIM membership outage must leave the run partial")
+	require.Positive(sum.FetchErrors)
+
+	var messages int
+	require.NoError(st.DB().QueryRow(st.Rebind(`
+		SELECT COUNT(*) FROM messages m
+		JOIN conversations c ON c.id = m.conversation_id
+		WHERE c.source_conversation_id = ?`), "G01").Scan(&messages))
+	assert.Zero(t, messages, "MPIM history must not advance without the recipient snapshot")
+
+	state := requireResumeState(t, imp, sum.SourceID).EnsureConv("G01")
+	assert.False(t, state.Done)
+	assert.Empty(t, state.Cursor)
+
+	f.failMembers["G01"] = false
+	_, err = imp.Import(context.Background(), opts)
+	require.NoError(err)
+
+	var recipients int
+	require.NoError(st.DB().QueryRow(st.Rebind(`
+		SELECT COUNT(*) FROM message_recipients mr
+		JOIN messages m ON m.id = mr.message_id
+		WHERE m.source_message_id = ? AND mr.recipient_type = 'to'`),
+		"G01:"+ts(10)).Scan(&recipients))
+	assert.Equal(t, 2, recipients, "the retry archives MPIM history with complete recipients")
 }
 
 func TestLimitedSweepDrainsBigTailAcrossRuns(t *testing.T) {
