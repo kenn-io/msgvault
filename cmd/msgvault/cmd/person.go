@@ -15,7 +15,10 @@ import (
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
 
-var personJSON bool
+var (
+	personJSON             bool
+	personClearDisplayName bool
+)
 
 var personCmd = &cobra.Command{
 	Use:   "person",
@@ -103,17 +106,29 @@ var personListCmd = &cobra.Command{
 }
 
 var personSetDisplayNameCmd = &cobra.Command{
-	Use:   "set-display-name <person-id> <display-name>",
+	Use:   "set-display-name <person-id> [display-name]",
 	Short: "Set a durable person's display-name override",
-	Args:  cobra.ExactArgs(2),
+	Args: func(cmd *cobra.Command, args []string) error {
+		switch {
+		case personClearDisplayName && len(args) != 1:
+			return usageErr(cmd, errors.New("--clear cannot be used with a display name"))
+		case !personClearDisplayName && len(args) != 2:
+			return usageErr(cmd, errors.New("display name is required unless --clear is used"))
+		}
+		return nil
+	},
 	RunE: func(cmd *cobra.Command, args []string) error {
 		id, err := positivePersonCLIArg(cmd, args[0], "person")
 		if err != nil {
 			return err
 		}
-		displayName := strings.TrimSpace(args[1])
-		if displayName == "" {
-			return usageErr(cmd, errors.New("display name must not be empty"))
+		var displayName *string
+		if !personClearDisplayName {
+			value := strings.TrimSpace(args[1])
+			if value == "" {
+				return usageErr(cmd, errors.New("display name must not be empty"))
+			}
+			displayName = &value
 		}
 		client, _, err := OpenHTTPStore(cmd.Context())
 		if err != nil {
@@ -128,7 +143,7 @@ var personSetDisplayNameCmd = &cobra.Command{
 			return errors.New("person response was empty")
 		}
 		etag := fmt.Sprintf(`"person-%d-r%d"`, id, current.JSON200.Revision)
-		body := generated.PatchPersonBody{DisplayName: &displayName}
+		body := generated.PatchPersonBody{DisplayName: displayName}
 		resp, err := daemonclient.APIResponse(client,
 			func(api *apiclient.Client) (*generated.PatchPersonResp, error) {
 				return api.PatchPersonWithResponse(cmd.Context(), &generated.PatchPersonRequestOptions{
@@ -191,4 +206,7 @@ func init() {
 	for _, command := range []*cobra.Command{personPromoteCmd, personGetCmd, personListCmd, personSetDisplayNameCmd} {
 		command.Flags().BoolVar(&personJSON, flagJSON, false, "Output as JSON")
 	}
+	personSetDisplayNameCmd.Flags().BoolVar(
+		&personClearDisplayName, "clear", false, "Clear the display-name override",
+	)
 }
