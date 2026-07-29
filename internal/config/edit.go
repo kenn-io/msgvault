@@ -655,6 +655,7 @@ func validateEditableCandidate(cfg *Config) error {
 	schedules := map[string]string{
 		"vector.embed.schedule.cron": cfg.Vector.Embed.Schedule.Cron,
 		"beeper.schedule":            cfg.Beeper.Schedule,
+		"slack.schedule":             cfg.Slack.Schedule,
 	}
 	for index, account := range cfg.Accounts {
 		schedules[fmt.Sprintf("accounts[%d].schedule", index)] = account.Schedule
