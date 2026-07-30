@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"go.kenn.io/msgvault/internal/identityindex"
 )
 
 const maxFileSearchLimit = 500
@@ -175,7 +177,8 @@ func (e *DuckDBEngine) GroupFiles(ctx context.Context, request FileGroupRequest)
 	if err := validateFileMIMEFamilies(request.MIMEFamilies); err != nil {
 		return nil, err
 	}
-	spec, err := fileGroupExpressions(request.Dimension, e.parquetPath(datasetParticipantClusters))
+	spec, err := fileGroupExpressions(request.Dimension, e.identityActivityPath(),
+		e.parquetPath(identityindex.DatasetPeople), e.parquetPath(datasetParticipants))
 	if err != nil {
 		return nil, err
 	}
@@ -278,13 +281,28 @@ func buildFileConditions(filenameQuery string, mimeFamilies []FileMIMEFamily) (s
 }
 
 // fileGroupExpressions maps a grouping dimension onto the grouped aggregate
-// GroupFiles builds over file_population. The "participant" dimension groups
-// by canonical identity-cluster IDs exactly as exploreGroupExpressions does
-// for entries: raw file_participant_ids members resolve through canon before
-// grouping, and the DISTINCT collapses a file whose message lists several
-// aliases of one person to a single (file, canonical) row, so the file is
-// never double-counted (attachment_id carries per-file uniqueness).
-func fileGroupExpressions(dimension, clustersGlob string) (groupExpressions, error) {
+// GroupFiles builds over file_population. The "participant" and "domain"
+// dimensions resolve through relationship_activity edges exactly as
+// exploreGroupExpressions does for entries — the aggregated
+// file_participant_ids/file_participant_domains lists they used to unnest
+// force analytical_entries to assemble per-message participant lists for the
+// whole filtered population, which exceeds the interactive memory budget on
+// production archives. A file's message carries direct and conversation
+// roster edges (matching the old list_concat of both list families), each
+// baking the alias-merged canonical ID, and the DISTINCT collapses a file
+// whose message lists several aliases of one person to a single
+// (file, canonical) row, so the file is never double-counted (attachment_id
+// carries per-file uniqueness).
+//
+// Participant labels resolve through hash joins rather than the correlated
+// relationship_people lookup entry grouping uses: file groups can key on
+// canonicals that dataset lacks — a person whose only activity is
+// conversation-roster membership on non-chat messages has no people-list
+// rows but still receives file attributions here — so a base-participants
+// lookup backstops the people-dataset label before the constant fallback.
+func fileGroupExpressions(
+	dimension, activityGlob, peopleGlob, participantsGlob string,
+) (groupExpressions, error) {
 	simple := func(key string) groupExpressions {
 		return groupExpressions{key: key, label: key, groupBy: key, source: "file_population"}
 	}
@@ -296,21 +314,38 @@ func fileGroupExpressions(dimension, clustersGlob string) (groupExpressions, err
 		}, nil
 	case "participant":
 		return groupExpressions{
-			key: "CAST(person_id AS VARCHAR)", label: sqlCanonicalPersonGroupLabelExpr(), groupBy: "person_id",
+			key: "CAST(person_id AS VARCHAR)", label: "any_value(person_label)", groupBy: "person_id",
 			cte: `
-, ` + sqlClustersCanonCTE(clustersGlob) + `, participant_files AS (
-	SELECT DISTINCT f.attachment_id, cn.canonical_id AS person_id, f.occurred_at, f.size
+, participant_files AS (
+	SELECT DISTINCT f.attachment_id, a.canonical_id AS person_id, f.occurred_at, f.size
 	FROM file_population f
-	CROSS JOIN UNNEST(f.file_participant_ids) AS unnested(participant_id)
-	JOIN canon cn ON cn.participant_id = unnested.participant_id
+	JOIN read_parquet('` + activityGlob + `',
+		hive_partitioning=true, union_by_name=true) a ON a.message_id = f.message_id
+	WHERE a.canonical_id IS NOT NULL
+	  AND (a.is_direct OR a.is_conversation_member)
+), participant_file_labels AS (
+	SELECT pf.*, COALESCE(dp.display_label,
+		NULLIF(` + sqlAnalyticalEntriesParticipantLabel("pb") + `, ''),
+		'Unknown person #' || CAST(pf.person_id AS VARCHAR)) AS person_label
+	FROM participant_files pf
+	LEFT JOIN read_parquet('` + peopleGlob + `') dp ON dp.canonical_id = pf.person_id
+	LEFT JOIN read_parquet('` + participantsGlob + `') pb ON pb.id = pf.person_id
 )`,
-			source: "participant_files",
+			source: "participant_file_labels",
 		}, nil
 	case "domain":
-		spec := simple("group_value")
-		spec.fromSuffix = ", UNNEST(file_participant_domains) AS grouped(group_value)"
-		spec.whereSuffix = " WHERE group_value <> ''"
-		return spec, nil
+		return groupExpressions{
+			key: "group_value", label: "group_value", groupBy: "group_value",
+			cte: `
+, domain_files AS (
+	SELECT DISTINCT f.attachment_id, a.participant_domain AS group_value, f.occurred_at, f.size
+	FROM file_population f
+	JOIN read_parquet('` + activityGlob + `',
+		hive_partitioning=true, union_by_name=true) a ON a.message_id = f.message_id
+	WHERE a.participant_domain <> ''
+)`,
+			source: "domain_files",
+		}, nil
 	case messageTypeDimension:
 		return simple(sqlMessageTypeGroupExpr()), nil
 	case "kind":

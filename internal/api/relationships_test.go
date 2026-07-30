@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -14,6 +15,7 @@ import (
 	_ "github.com/duckdb/duckdb-go/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/identityindex"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/query/querytest"
 )
@@ -42,9 +44,10 @@ func newRelationshipsDuckDBFixture(t *testing.T, now time.Time) *query.DuckDBEng
 // state file directly (e.g. simulating a real identity-revision bump).
 func newRelationshipsDuckDBFixtureWithDir(t *testing.T, now time.Time) (*query.DuckDBEngine, string) {
 	t.Helper()
+	requirementsForTest := require.New(t)
 	analyticsDir := t.TempDir()
 	db, err := sql.Open("duckdb", "")
-	require.NoError(t, err)
+	requirementsForTest.NoError(err)
 	t.Cleanup(func() { require.NoError(t, db.Close()) })
 
 	var messageRows, recipientRows []string
@@ -100,33 +103,78 @@ func newRelationshipsDuckDBFixtureWithDir(t *testing.T, now time.Time) (*query.D
 	}
 	for _, table := range tables {
 		dir := filepath.Join(analyticsDir, table.dir)
-		require.NoError(t, os.MkdirAll(dir, 0o755))
+		requirementsForTest.NoError(os.MkdirAll(dir, 0o755))
 		where := ""
 		if table.empty {
 			where = " WHERE false"
 		}
 		path := filepath.ToSlash(filepath.Join(dir, table.file))
 		_, err := db.Exec(fmt.Sprintf("COPY (SELECT * FROM (VALUES %s) AS t(%s)%s) TO '%s' (FORMAT PARQUET)", table.values, table.columns, where, path))
-		require.NoError(t, err, "write %s", table.dir)
+		requirementsForTest.NoError(err, "write %s", table.dir)
 	}
 
+	derived, err := identityindex.Build(
+		context.Background(),
+		db,
+		identityindex.BuildOptions{
+			Mode:           identityindex.ModeFull,
+			StagedBaseRoot: analyticsDir,
+			OutputRoot:     analyticsDir,
+		},
+	)
+	requirementsForTest.NoError(err)
 	fingerprint, err := query.CacheDatasetFingerprint(analyticsDir)
-	require.NoError(t, err)
+	requirementsForTest.NoError(err)
 	state, err := json.Marshal(query.CacheSyncState{
 		LastMessageID: nextID - 1, LastSyncAt: now, SchemaVersion: query.CacheSchemaVersion,
 		PublishedAt: now, DatasetFingerprint: fingerprint,
+		ConversationParticipantsFingerprint: derived.ConversationParticipantsFingerprint,
+		Stats:                               derived.Stats,
 	})
-	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(query.CacheStatePath(analyticsDir), state, 0o600))
+	requirementsForTest.NoError(err)
+	requirementsForTest.NoError(os.WriteFile(query.CacheStatePath(analyticsDir), state, 0o600))
 
 	engine, err := query.NewDuckDBEngine(analyticsDir, "", nil)
-	require.NoError(t, err)
+	requirementsForTest.NoError(err)
 	t.Cleanup(func() { require.NoError(t, engine.Close()) })
 	return engine, analyticsDir
 }
 
 func sqlQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", "''") + "'"
+}
+
+func republishRelationshipsFixture(
+	t *testing.T,
+	analyticsDir string,
+) {
+	t.Helper()
+	requirementsForTest := require.New(t)
+	db, err := sql.Open("duckdb", "")
+	requirementsForTest.NoError(err)
+	defer func() { require.NoError(t, db.Close()) }()
+
+	derived, err := identityindex.Build(
+		context.Background(),
+		db,
+		identityindex.BuildOptions{
+			Mode:           identityindex.ModeFull,
+			StagedBaseRoot: analyticsDir,
+			OutputRoot:     analyticsDir,
+		},
+	)
+	requirementsForTest.NoError(err)
+	state, err := query.ReadCacheSyncState(analyticsDir)
+	requirementsForTest.NoError(err)
+	state.ConversationParticipantsFingerprint =
+		derived.ConversationParticipantsFingerprint
+	state.Stats = derived.Stats
+	state.PublishedAt = state.PublishedAt.Add(time.Second)
+	state.DatasetFingerprint, err = query.CacheDatasetFingerprint(analyticsDir)
+	requirementsForTest.NoError(err)
+	data, err := json.Marshal(state)
+	requirementsForTest.NoError(err)
+	requirementsForTest.NoError(os.WriteFile(query.CacheStatePath(analyticsDir), data, 0o600))
 }
 
 func TestRelationshipsRanksAndGatesOverHTTP(t *testing.T) {
@@ -229,6 +277,36 @@ func TestRelationshipsCursorReportsIdentityDriftDistinctlyFromArchiveDrift(t *te
 	assert.Equal(http.StatusConflict, resp.Code, resp.Body.String())
 	assert.Contains(resp.Body.String(), "identity_revision_changed")
 	assert.NotContains(resp.Body.String(), "archive_revision_changed")
+}
+
+func TestRelationshipsCursorConflictsOnAnchorDrift(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	now := time.Date(2026, 1, 10, 0, 0, 0, 0, time.UTC)
+	engine, analyticsDir := newRelationshipsDuckDBFixtureWithDir(t, now)
+	srv := newTestServerWithEngine(t, engine)
+
+	first := postExploreJSON(
+		t,
+		srv,
+		"/api/v1/relationships",
+		`{"show_all":true,"limit":1}`,
+	)
+	requirements.Equal(http.StatusOK, first.Code, first.Body.String())
+	var page RelationshipsHTTPResponse
+	requirements.NoError(json.Unmarshal(first.Body.Bytes(), &page))
+	requirements.NotEmpty(page.NextCursor)
+
+	republishRelationshipsFixture(t, analyticsDir)
+
+	response := postExploreJSON(
+		t,
+		srv,
+		"/api/v1/relationships",
+		`{"show_all":true,"limit":1,"cursor":"`+page.NextCursor+`"}`,
+	)
+	assertions.Equal(http.StatusConflict, response.Code, response.Body.String())
+	assertions.Contains(response.Body.String(), "archive_revision_changed")
 }
 
 // relationshipsPage POSTs /api/v1/relationships with the given body and

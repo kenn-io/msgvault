@@ -35,6 +35,7 @@ const (
 	sortDirectionAsc                = "asc"
 	sortDirectionDesc               = "desc"
 	sortFieldCount                  = "count"
+	sortFieldKey                    = "key"
 	sortFieldOccurredAt             = "occurred_at"
 )
 

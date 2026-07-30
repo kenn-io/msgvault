@@ -10,15 +10,15 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"go.kenn.io/msgvault/internal/identityindex"
 )
 
 // CacheSchemaVersion is the sole schema compatibility version shared by the
-// cache publisher and analytical readers. Bumped to 14 because ffe9904a
-// widened owner_participants/is_from_me matching from email-only to
-// identifier-type-aware (phone, chat handle, etc.): caches built under v13
-// before that change baked the narrower email-only derivation, and without
-// this bump they would never be flagged stale by schema-version comparison.
-const CacheSchemaVersion = 14
+// cache publisher and analytical readers. Version 15 adds the compact
+// relationship activity, people, domain, and daily read model; version 16
+// adds has_attachments to the relationship activity dataset.
+const CacheSchemaVersion = 16
 
 // CacheSyncState is the commit marker written after a complete analytics
 // cache publication. SQLite remains authoritative; these watermarks only
@@ -41,9 +41,26 @@ type CacheSyncState struct {
 	// flag, which the lightweight identity-only refresh does not re-derive,
 	// so this field must only advance on a full rebuild — see
 	// cacheops.RefreshIdentityDatasets.
-	AccountIdentityRevision int64     `json:"account_identity_revision,omitempty"`
-	PublishedAt             time.Time `json:"published_at"`
-	DatasetFingerprint      string    `json:"dataset_fingerprint"`
+	AccountIdentityRevision int64 `json:"account_identity_revision,omitempty"`
+	// ParticipantIdentifierRevision tracks identifier-mapping changes
+	// (SetParticipantIdentifier creating or repointing rows). Identifiers
+	// bake into the identity directory datasets (participant_identifiers,
+	// relationship_people search values) but not into per-row activity
+	// facts, so drift here alone is repaired by the derived-dataset
+	// refresh and never forces a full rebuild.
+	ParticipantIdentifierRevision int64     `json:"participant_identifier_revision,omitempty"`
+	PublishedAt                   time.Time `json:"published_at"`
+	DatasetFingerprint            string    `json:"dataset_fingerprint"`
+
+	ConversationParticipantsFingerprint string `json:"conversation_participants_fingerprint,omitempty"`
+	// ConversationTypesFingerprint hashes (id, conversation_type) for every
+	// conversation inside the committed message watermark. conversation_type
+	// is mutable (EnsureConversationWithType upserts it) and is baked into
+	// committed relationship_activity rows, which incremental builds and
+	// index-only refreshes otherwise never revisit — this fingerprint is how
+	// that drift is detected.
+	ConversationTypesFingerprint string                          `json:"conversation_types_fingerprint,omitempty"`
+	Stats                        identityindex.CacheStatsSummary `json:"stats"`
 }
 
 type CacheReadiness string
@@ -76,7 +93,7 @@ func (e *CacheUnavailableError) Unwrap() error { return ErrCacheUnavailable }
 // Revision identifies one committed cache publication. It intentionally uses
 // only commit-marker fields, never ambient filesystem state.
 func (s CacheSyncState) Revision() string {
-	payload := fmt.Sprintf("v=%d|message=%d|watermark=%s|run=%d|add=%d|update=%d|fail_count=%d|fail_sum=%d|identity=%d|account_identity=%d|published=%s",
+	payload := fmt.Sprintf("v=%d|message=%d|watermark=%s|run=%d|add=%d|update=%d|fail_count=%d|fail_sum=%d|identity=%d|account_identity=%d|participant_identifier=%d|published=%s",
 		s.SchemaVersion,
 		s.LastMessageID,
 		s.LastSyncAt.UTC().Format(time.RFC3339Nano),
@@ -87,6 +104,7 @@ func (s CacheSyncState) Revision() string {
 		s.LastFailedSyncRunIDSum,
 		s.IdentityRevision,
 		s.AccountIdentityRevision,
+		s.ParticipantIdentifierRevision,
 		s.PublishedAt.UTC().Format(time.RFC3339Nano),
 	)
 	return fmt.Sprintf("cache-%x", sha256.Sum256([]byte(payload)))
@@ -213,29 +231,19 @@ func CacheDatasetFingerprint(analyticsDir string) (string, error) {
 
 func datasetHasParquet(analyticsDir, dataset string) (bool, error) {
 	datasetDir := filepath.Join(analyticsDir, dataset)
-	entries, err := os.ReadDir(datasetDir)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return false, nil
+	found := false
+	err := filepath.WalkDir(datasetDir, func(_ string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
 		}
-		return false, err
-	}
-	for _, entry := range entries {
 		if !entry.IsDir() && strings.EqualFold(filepath.Ext(entry.Name()), ".parquet") {
-			return true, nil
+			found = true
+			return filepath.SkipAll
 		}
-		if dataset != datasetMessages || !entry.IsDir() {
-			continue
-		}
-		partitionEntries, err := os.ReadDir(filepath.Join(datasetDir, entry.Name()))
-		if err != nil {
-			return false, err
-		}
-		for _, partitionEntry := range partitionEntries {
-			if !partitionEntry.IsDir() && strings.EqualFold(filepath.Ext(partitionEntry.Name()), ".parquet") {
-				return true, nil
-			}
-		}
+		return nil
+	})
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
 	}
-	return false, nil
+	return found, err
 }

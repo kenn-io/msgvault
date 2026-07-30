@@ -16,9 +16,10 @@ import (
 	"sync/atomic"
 	"time"
 
-	_ "github.com/duckdb/duckdb-go/v2" // DuckDB driver (database/sql)
 	"golang.org/x/sync/semaphore"
 
+	"go.kenn.io/msgvault/internal/duckdbutil"
+	"go.kenn.io/msgvault/internal/identityindex"
 	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/store"
 )
@@ -30,7 +31,7 @@ import (
 // pegged the daemon at ~1600% CPU. Waiters block on a context-aware weighted
 // semaphore, so a cancelled or timed-out request releases its place in line
 // instead of piling up.
-const duckDBQueryConcurrency = 2
+const duckDBQueryConcurrency = 1
 
 func duckDBDateParam(value time.Time) string {
 	return queryTimeUTC(value).Format(queryTimestampLayout)
@@ -57,6 +58,8 @@ type DuckDBEngine struct {
 	sqliteDB         *sql.DB       // Direct SQLite connection for FTS and body retrieval
 	sqliteEngine     *SQLiteEngine // Reusable engine for FTS cache, created once if sqliteDB is set
 	hasSQLiteScanner bool          // true if DuckDB's sqlite extension is loaded
+	tempDirectory    string
+	ownTempDirectory bool
 	tempTableSeq     atomic.Uint64 // Unique suffix for temp tables to avoid concurrent collisions
 
 	// querySem bounds concurrent heavy query execution (see
@@ -95,20 +98,20 @@ type DuckDBEngine struct {
 	searchCacheCount int64       // cached COUNT(*) from materialization
 	searchCacheStats *TotalStats // cached stats from Phase 4
 
-	// relMemo caches ranked relationship candidate lists keyed by committed
-	// cache revision plus request facets; see relationshipsMemo. The zero
-	// value is ready to use.
-	relMemo relationshipsMemo
-
-	// relationshipsQueryRuns counts full relationship-ranking query
-	// executions (not memo hits). Test hook only: memo tests assert cache
-	// hits and misses through it.
-	relationshipsQueryRuns atomic.Uint64
-
 	// exploreFastPathDisabled forces Explore and SearchFiles onto the
 	// single-pass legacy listing queries. Test hook only: the fast-path
 	// equivalence tests compare both shapes on the same engine.
 	exploreFastPathDisabled bool
+	// disableLegacyAnalyticalViews proves the unfiltered identity-index
+	// read paths serve entirely from the relationship rollup datasets.
+	// Production leaves this false: filtered identity searches route
+	// through the explore logical-entry machinery, which — like
+	// timelines, Explore, and files — reads the analytical views.
+	disableLegacyAnalyticalViews bool
+	// sourceRollupFastPathDisabled is a test-only equivalence hook.
+	sourceRollupFastPathDisabled bool
+	// identityCandidateFastPathDisabled is a test-only equivalence hook.
+	identityCandidateFastPathDisabled bool
 }
 
 // DuckDBOptions configures optional DuckDB engine behavior.
@@ -118,6 +121,17 @@ type DuckDBOptions struct {
 	// queries to route through sqliteEngine, matching the Windows code path.
 	// Useful for testing the non-scanner code path on Linux/macOS.
 	DisableSQLiteScanner bool
+	// TempDirectory is the absolute path DuckDB may use for bounded spill.
+	// When empty, the engine creates and owns a process-temp directory.
+	TempDirectory string
+	// OwnTempDirectory removes TempDirectory after DuckDB closes.
+	OwnTempDirectory bool
+	// DisableLegacyAnalyticalViews skips registration of the Parquet-backed
+	// SQL views. It is a test-only isolation option proving the unfiltered
+	// people/domain/relationship read paths need only the relationship
+	// rollup datasets; filtered predicates route through the explore
+	// logical-entry machinery and require the views.
+	DisableLegacyAnalyticalViews bool
 }
 
 // NewDuckDBEngine creates a new DuckDB-backed query engine.
@@ -137,23 +151,23 @@ func NewDuckDBEngine(analyticsDir string, sqlitePath string, sqliteDB *sql.DB, o
 	if len(opts) > 0 {
 		opt = opts[0]
 	}
-	// Open in-memory DuckDB
-	db, err := sql.Open("duckdb", "")
-	if err != nil {
-		return nil, fmt.Errorf("open duckdb: %w", err)
+	tempDirectory := opt.TempDirectory
+	ownTempDirectory := opt.OwnTempDirectory
+	if tempDirectory == "" {
+		createdTempDirectory, createErr := os.MkdirTemp("", "msgvault-duckdb-query-")
+		if createErr != nil {
+			return nil, fmt.Errorf("create duckdb temp directory: %w", createErr)
+		}
+		tempDirectory = createdTempDirectory
+		ownTempDirectory = true
 	}
 
-	// Constrain to single connection to ensure session settings (SET threads, ATTACH)
-	// are applied consistently. DuckDB session settings don't propagate across
-	// pooled connections, so limiting to one connection avoids inconsistent behavior.
-	db.SetMaxOpenConns(1)
-
-	// Enable multithreading for better query performance.
-	// Use GOMAXPROCS(0) instead of NumCPU() to respect container CPU limits.
-	threads := runtime.GOMAXPROCS(0)
-	if _, err := db.Exec(fmt.Sprintf("SET threads = %d", threads)); err != nil {
-		_ = db.Close()
-		return nil, fmt.Errorf("set threads: %w", err)
+	db, err := duckdbutil.Open(context.Background(), duckdbutil.InteractivePolicy(tempDirectory))
+	if err != nil {
+		if ownTempDirectory {
+			_ = os.RemoveAll(tempDirectory)
+		}
+		return nil, err
 	}
 
 	// Install and load SQLite extension if we have a SQLite path.
@@ -185,19 +199,22 @@ func NewDuckDBEngine(analyticsDir string, sqlitePath string, sqliteDB *sql.DB, o
 	}
 
 	engine := &DuckDBEngine{
-		db:               db,
-		analyticsDir:     analyticsDir,
-		sqlitePath:       sqlitePath,
-		sqliteDB:         sqliteDB,
-		sqliteEngine:     sqliteEngine,
-		hasSQLiteScanner: hasSQLiteScanner,
-		querySem:         semaphore.NewWeighted(duckDBQueryConcurrency),
+		db:                           db,
+		analyticsDir:                 analyticsDir,
+		sqlitePath:                   sqlitePath,
+		sqliteDB:                     sqliteDB,
+		sqliteEngine:                 sqliteEngine,
+		hasSQLiteScanner:             hasSQLiteScanner,
+		tempDirectory:                tempDirectory,
+		ownTempDirectory:             ownTempDirectory,
+		querySem:                     semaphore.NewWeighted(duckDBQueryConcurrency),
+		disableLegacyAnalyticalViews: opt.DisableLegacyAnalyticalViews,
 	}
 	var releaseInitialCacheRead func()
 	if analyticsDir != "" {
 		releaseInitialCacheRead, err = AcquireCacheReadLock(context.Background(), analyticsDir)
 		if err != nil {
-			_ = db.Close()
+			_ = engine.Close()
 			return nil, err
 		}
 		defer releaseInitialCacheRead()
@@ -205,7 +222,7 @@ func NewDuckDBEngine(analyticsDir string, sqlitePath string, sqliteDB *sql.DB, o
 		// queries validate against the marker + stat signature instead of
 		// re-walking every shard (see validateCommittedCache).
 		if err := engine.validateCommittedCache(engine.cacheFingerprint()); err != nil {
-			_ = db.Close()
+			_ = engine.Close()
 			return nil, err
 		}
 	}
@@ -234,9 +251,11 @@ func NewDuckDBEngine(analyticsDir string, sqlitePath string, sqliteDB *sql.DB, o
 	}
 	// Register SQL views over Parquet files for raw SQL access.
 	// Pass the already-probed optionalCols to avoid a redundant schema probe.
-	if err := RegisterViewsWithColumns(db, analyticsDir, engine.optionalCols); err != nil {
-		log.Printf("[warn] failed to register SQL views: %v", err)
-		// Non-fatal: existing CTE-based queries still work.
+	if !engine.disableLegacyAnalyticalViews {
+		if err := RegisterViewsWithColumns(db, analyticsDir, engine.optionalCols); err != nil {
+			log.Printf("[warn] failed to register SQL views: %v", err)
+			// Non-fatal: existing CTE-based queries still work.
+		}
 	}
 
 	return engine, nil
@@ -247,7 +266,12 @@ func (e *DuckDBEngine) Close() error {
 	e.searchCacheMu.Lock()
 	e.dropSearchCache()
 	e.searchCacheMu.Unlock()
-	return e.db.Close()
+	closeErr := e.db.Close()
+	var cleanupErr error
+	if e.ownTempDirectory && e.tempDirectory != "" {
+		cleanupErr = os.RemoveAll(e.tempDirectory)
+	}
+	return errors.Join(closeErr, cleanupErr)
 }
 
 // QuerySQL executes an arbitrary SQL query against the DuckDB engine
@@ -330,10 +354,12 @@ func (e *DuckDBEngine) acquireQuerySlot(ctx context.Context) (func(), error) {
 }
 
 // acquireCacheRead holds the shared cache lock for the duration of one query
-// so a concurrent cache build (which holds it exclusively) cannot delete or
-// replace Parquet files mid-read. Shared holders never conflict with each
-// other; a reader blocks only while a build runs (seconds). Engines opened
-// without an analytics directory have no cache to guard.
+// so a concurrent cache publication (which holds it exclusively) cannot
+// delete or replace Parquet files mid-read. Shared holders never conflict
+// with each other; a reader blocks only during the brief rename+marker
+// publication step or destructive maintenance — build staging runs under a
+// separate builder lock and leaves the committed generation readable.
+// Engines opened without an analytics directory have no cache to guard.
 //
 // After the lock is held, the cache is validated as a committed publication
 // (see validateCommittedCache — memoized, so an unchanged cache costs one
@@ -341,9 +367,9 @@ func (e *DuckDBEngine) acquireQuerySlot(ctx context.Context) (func(), error) {
 // probed optional-column set and registered SQL views are refreshed if the
 // cache was republished since the last query (see ensureFreshOptionalCols).
 // Because the lock is held until release, the schema cannot change again for
-// the query's duration, so every reader — view-based endpoints (Explore,
-// People, Relationships, timelines) and parquetCTEs-based ones alike — sees
-// views that match the current Parquet.
+// the query's duration, so every reader — legacy view-based endpoints
+// (Explore and timelines) and direct-Parquet identity endpoints alike — sees
+// one coherent committed cache.
 func (e *DuckDBEngine) acquireCacheRead(ctx context.Context) (func(), error) {
 	if e.analyticsDir == "" {
 		return func() {}, nil
@@ -429,6 +455,9 @@ func (e *DuckDBEngine) parquetGlob() string {
 
 // parquetPath returns the path pattern for a specific Parquet table.
 func (e *DuckDBEngine) parquetPath(table string) string {
+	if table == identityindex.DatasetActivity {
+		return filepath.Join(e.analyticsDir, table, "**", "*.parquet")
+	}
 	return filepath.Join(e.analyticsDir, table, "*.parquet")
 }
 
@@ -467,13 +496,19 @@ func (e *DuckDBEngine) cacheFingerprint() string {
 }
 
 func (e *DuckDBEngine) cacheFingerprintGlobs() []string {
-	globs := make([]string, 0, len(RequiredParquetDirs))
+	globs := make([]string, 0, len(RequiredParquetDirs)+2)
 	for _, dir := range RequiredParquetDirs {
 		if dir == datasetMessages {
 			globs = append(globs, filepath.Join(e.analyticsDir, dir, "*", "*.parquet"))
 			continue
 		}
 		globs = append(globs, e.parquetPath(dir))
+		if dir == identityindex.DatasetActivity {
+			// Empty partitioned datasets carry one schema-only root shard.
+			// Go's filepath.Glob does not give ** DuckDB's zero-directory
+			// semantics, so include that root shape explicitly.
+			globs = append(globs, filepath.Join(e.analyticsDir, dir, "*.parquet"))
+		}
 	}
 	return globs
 }
@@ -524,8 +559,10 @@ func (e *DuckDBEngine) ensureFreshOptionalCols(fp string) {
 	})
 	e.optionalCols = newCols
 	e.cacheFP = fp
-	if err := RegisterViewsWithColumns(e.db, e.analyticsDir, newCols); err != nil {
-		log.Printf("[warn] re-register views after analytics cache change: %v", err)
+	if !e.disableLegacyAnalyticalViews {
+		if err := RegisterViewsWithColumns(e.db, e.analyticsDir, newCols); err != nil {
+			log.Printf("[warn] re-register views after analytics cache change: %v", err)
+		}
 	}
 	log.Printf("[info] analytics cache changed — re-probed Parquet optional columns")
 }
@@ -1164,7 +1201,7 @@ func (e *DuckDBEngine) sortClause(opts AggregateOptions) string {
 	case SortByAttachmentSize:
 		field = "attachment_size"
 	case SortByName:
-		field = "key"
+		field = sortFieldKey
 	default:
 		// SortByCount (and any unset field) keeps the "count" default.
 	}
@@ -2490,6 +2527,10 @@ var RequiredParquetDirs = []string{
 	datasetConversationParticipants,
 	datasetOwnerParticipants,
 	datasetParticipantClusters,
+	identityindex.DatasetActivity,
+	identityindex.DatasetPeople,
+	identityindex.DatasetDomains,
+	identityindex.DatasetRelationshipDaily,
 }
 
 // SearchFast searches message metadata in Parquet files (no body text).

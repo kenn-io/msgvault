@@ -1,6 +1,7 @@
 package query
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -14,6 +15,7 @@ import (
 	_ "github.com/duckdb/duckdb-go/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/identityindex"
 )
 
 // ---------------------------------------------------------------------------
@@ -408,6 +410,7 @@ func (b *TestDataBuilder) AddAttachmentWithMIME(id, messageID, size int64, filen
 	for i := range b.messages {
 		if b.messages[i].ID == messageID {
 			b.messages[i].HasAttachments = true
+			b.messages[i].AttachmentCount++
 			return
 		}
 	}
@@ -735,13 +738,21 @@ func (b *parquetBuilder) build() (string, func()) {
 	defer func() { _ = db.Close() }()
 
 	b.writeParquetFiles(db, tmpDir)
+	derived, err := identityindex.Build(context.Background(), db, identityindex.BuildOptions{
+		Mode:           identityindex.ModeFull,
+		StagedBaseRoot: tmpDir,
+		OutputRoot:     tmpDir,
+	})
+	require.NoError(b.t, err, "derive identity fixture datasets")
 	fingerprint, err := CacheDatasetFingerprint(tmpDir)
 	require.NoError(b.t, err, "fingerprint cache fixture")
 	stateData, err := json.Marshal(CacheSyncState{
-		LastSyncAt:         time.Date(2026, 7, 15, 12, 0, 0, 0, time.UTC),
-		PublishedAt:        time.Date(2026, 7, 15, 12, 1, 0, 0, time.UTC),
-		SchemaVersion:      CacheSchemaVersion,
-		DatasetFingerprint: fingerprint,
+		LastSyncAt:                          time.Date(2026, 7, 15, 12, 0, 0, 0, time.UTC),
+		PublishedAt:                         time.Date(2026, 7, 15, 12, 1, 0, 0, time.UTC),
+		SchemaVersion:                       CacheSchemaVersion,
+		DatasetFingerprint:                  fingerprint,
+		ConversationParticipantsFingerprint: derived.ConversationParticipantsFingerprint,
+		Stats:                               derived.Stats,
 	})
 	require.NoError(b.t, err, "marshal cache state")
 	require.NoError(b.t, os.WriteFile(CacheStatePath(tmpDir), stateData, 0o600),

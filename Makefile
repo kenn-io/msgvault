@@ -69,13 +69,15 @@ clean:
 	rm -f msgvault msgvault.exe mimeshootout
 	rm -rf bin/
 
-# Run tests
+# Run tests. The 20m timeout matches CI's sharded jobs: heavy DuckDB
+# packages (cmd, api, query) run concurrently on 2-core CI runners, and the
+# per-package wall clock can exceed go test's 10m default under contention.
 test:
-	go test -tags "$(BUILD_TAGS)" ./...
+	go test -timeout 20m -tags "$(BUILD_TAGS)" ./...
 
 # Run tests with verbose output
 test-v:
-	go test -tags "$(BUILD_TAGS)" -v ./...
+	go test -timeout 20m -tags "$(BUILD_TAGS)" -v ./...
 
 # Run tests against PostgreSQL (set MSGVAULT_TEST_DB first).
 # Example: MSGVAULT_TEST_DB=postgres://user:pass@localhost:5432/db make test-pg

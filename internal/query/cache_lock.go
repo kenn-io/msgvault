@@ -25,12 +25,16 @@ func CacheBuildLockPath(analyticsDir string) string {
 const cacheReadLockRetryInterval = 50 * time.Millisecond
 
 // AcquireCacheReadLock takes the shared cache lock for the duration of one
-// read, blocking while a cache build holds it exclusively (builds take
-// seconds). Shared holders do not conflict with each other, so concurrent
-// queries and nested engine calls proceed freely. The returned release
-// function must be deferred by the caller. Every direct Parquet reader —
-// the DuckDB engine and cacheops alike — must hold this lock so builds
-// cannot remove files mid-read.
+// read, blocking only while a writer holds it exclusively: the brief
+// rename+marker publication step of a cache build, or destructive
+// maintenance (account removal, date repair) for its whole operation.
+// Build staging and index construction run under a separate builder lock,
+// so readers keep querying the committed generation during a rebuild.
+// Shared holders do not conflict with each other, so concurrent queries and
+// nested engine calls proceed freely. The returned release function must be
+// deferred by the caller. Every direct Parquet reader — the DuckDB engine
+// and cacheops alike — must hold this lock so publications cannot remove
+// files mid-read.
 func AcquireCacheReadLock(ctx context.Context, analyticsDir string) (func(), error) {
 	lock := flock.New(CacheBuildLockPath(analyticsDir))
 	locked, err := lock.TryRLockContext(ctx, cacheReadLockRetryInterval)

@@ -1,6 +1,7 @@
 package store_test
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"testing"
@@ -331,4 +332,73 @@ func TestStore_GetAllRawMIMECandidates_PreservesFromCase(t *testing.T) {
 	}
 	require.NotNil(got, "test message %d not in candidates: %+v", id, cands)
 	assert.Equal(t, mxid, got.FromEmail, "FromEmail (case must be preserved)")
+}
+
+func TestStore_GetDuplicateGroupMessagesBatch_MatchesPerGroupQuery(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := storetest.New(t)
+
+	// 600 groups exceeds queryInChunks's chunk size of 500, so this
+	// exercises at least two chunk rounds and would catch a bug where the
+	// result map is reset per chunk instead of accumulated across chunks.
+	const numGroups = 600
+	rfc822IDs := make([]string, numGroups)
+	for i := range numGroups {
+		rfc822ID := fmt.Sprintf("rfc822-batch-%d", i)
+		rfc822IDs[i] = rfc822ID
+		newRFC822Message(t, f, fmt.Sprintf("src-%d-a", i), rfc822ID)
+		newRFC822Message(t, f, fmt.Sprintf("src-%d-b", i), rfc822ID)
+	}
+
+	batched, err := f.Store.GetDuplicateGroupMessagesBatch(rfc822IDs, f.Source.ID)
+	require.NoError(err, "GetDuplicateGroupMessagesBatch")
+	require.Len(batched, numGroups, "batched group count")
+
+	for _, rfc822ID := range rfc822IDs {
+		want, err := f.Store.GetDuplicateGroupMessages(rfc822ID, f.Source.ID)
+		require.NoError(err, "GetDuplicateGroupMessages reference for %s", rfc822ID)
+		assert.Equal(want, batched[rfc822ID], "mismatch for group %s", rfc822ID)
+	}
+}
+
+func TestStore_GetDuplicateGroupMessagesBatch_EmptyInput(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := storetest.New(t)
+
+	batched, err := f.Store.GetDuplicateGroupMessagesBatch(nil)
+	require.NoError(err, "GetDuplicateGroupMessagesBatch with nil input")
+	assert.Empty(batched, "no groups requested, no groups returned")
+}
+
+func TestStore_GetDuplicateGroupMessagesBatchContext_Canceled(t *testing.T) {
+	require := require.New(t)
+	f := storetest.New(t)
+	newRFC822Message(t, f, "src-a", "rfc822-canceled")
+	newRFC822Message(t, f, "src-b", "rfc822-canceled")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := f.Store.GetDuplicateGroupMessagesBatchContext(
+		ctx, []string{"rfc822-canceled"}, f.Source.ID,
+	)
+	require.ErrorIs(err, context.Canceled)
+}
+
+func TestStore_GetDuplicateGroupMessagesBatch_FiltersBySourceID(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := storetest.New(t)
+	idA := newRFC822Message(t, f, "src-a", "rfc822-scoped")
+	idB := newRFC822Message(t, f, "src-b", "rfc822-scoped")
+
+	scoped, err := f.Store.GetDuplicateGroupMessagesBatch(
+		[]string{"rfc822-scoped"}, f.Source.ID,
+	)
+	require.NoError(err, "GetDuplicateGroupMessagesBatch scoped to source")
+	require.Len(scoped["rfc822-scoped"], 2)
+	assert.Equal(idA, scoped["rfc822-scoped"][0].ID)
+	assert.Equal(idB, scoped["rfc822-scoped"][1].ID)
 }

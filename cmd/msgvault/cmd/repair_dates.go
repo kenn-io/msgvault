@@ -117,7 +117,7 @@ func runRepairDatesLocal(
 	usesAnalyticsCache := dateRepairUsesAnalyticsCache(cfg.DatabaseDSN())
 	unlockCache := func() error { return nil }
 	if usesAnalyticsCache {
-		cacheLock, err := lockCacheAndInvalidateSyncState(cfg.AnalyticsDir())
+		releaseCacheLocks, err := lockCacheAndInvalidateSyncState(cfg.AnalyticsDir())
 		if err != nil {
 			return fmt.Errorf("protect analytics cache for date repair: %w", err)
 		}
@@ -127,7 +127,7 @@ func runRepairDatesLocal(
 				return nil
 			}
 			released = true
-			return wrapError(cacheLock.Unlock(), "release analytics cache lock")
+			return wrapError(releaseCacheLocks(), "release analytics cache lock")
 		}
 		defer func() {
 			runErr = errors.Join(runErr, unlockCache())
@@ -163,6 +163,7 @@ func runRepairDatesLocal(
 			cfg.AnalyticsDir(),
 			true,
 			false,
+			publishLockHeld,
 		); err != nil {
 			ledger.Status = "applied-cache-failed"
 			ledger.Error = err.Error()

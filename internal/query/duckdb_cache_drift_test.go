@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -299,14 +300,13 @@ func TestDuckDBEngine_AnalyticalEndpointsFollowCommittedCacheSchemaSwap(t *testi
 	assert.False(engine.hasCol(datasetMessages, "message_type"),
 		"optional-column probe must reflect the swapped-in schema")
 
-	queryRunsBefore := engine.relationshipsQueryRuns.Load()
 	relAfter, err := engine.Relationships(ctx, RelationshipsRequest{Now: now, Limit: 10, ShowAll: true})
 	require.NoError(err, "Relationships after committed schema swap")
 	require.Len(relAfter.Rows, 1)
 	assert.Equal("Bob", relAfter.Rows[0].DisplayLabel)
 	assert.Equal(exploreAfter.CacheRevision, relAfter.CacheRevision)
-	assert.Equal(queryRunsBefore+1, engine.relationshipsQueryRuns.Load(),
-		"new cache revision must miss the relationships memo and recompute")
+	assert.NotEqual(relBefore.CacheRevision, relAfter.CacheRevision,
+		"relationship reads must report the newly committed revision")
 }
 
 // TestDuckDBEngine_QueryPathMemoizesFullFingerprintWalks is the performance
@@ -394,16 +394,20 @@ func rewriteParquetForTest(t *testing.T, path, columns, values string) {
 
 func firstRequiredParquetForTest(t *testing.T, analyticsDir, dir string) string {
 	t.Helper()
-	patterns := []string{filepath.Join(analyticsDir, dir, "*.parquet")}
-	if dir == datasetMessages {
-		patterns = append([]string{filepath.Join(analyticsDir, dir, "*", "*.parquet")}, patterns...)
-	}
-	for _, pattern := range patterns {
-		matches, err := filepath.Glob(pattern)
-		require.NoError(t, err, "glob parquet files")
-		if len(matches) > 0 {
-			return matches[0]
-		}
+	var match string
+	err := filepath.WalkDir(filepath.Join(analyticsDir, dir),
+		func(path string, entry os.DirEntry, walkErr error) error {
+			require.NoError(t, walkErr)
+			if !entry.IsDir() && strings.EqualFold(filepath.Ext(entry.Name()), ".parquet") {
+				match = path
+				return filepath.SkipAll
+			}
+			return nil
+		},
+	)
+	require.NoError(t, err, "walk parquet files")
+	if match != "" {
+		return match
 	}
 	require.FailNow(t, "required parquet file not found", "dir %s", dir)
 	return ""

@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 )
 
@@ -39,8 +38,8 @@ type TimelineRow struct {
 
 // RelationshipTimelineRequest scopes and pages one counterpart's timeline.
 // CanonicalID must already be resolved (see ResolveCanonicalParticipant);
-// the query then expands it back out to every member of that cluster so no
-// member's alias messages are missed.
+// the query matches it against relationship_activity's alias-merged
+// canonical_id, so no cluster member's alias messages are missed.
 type RelationshipTimelineRequest struct {
 	CanonicalID int64
 	Timezone    string // validated IANA name; "" = UTC
@@ -67,7 +66,7 @@ type RelationshipTimelineResponse struct {
 //
 // Event and meeting rows appear only when one of the archive owner's
 // identities participated, matching the relationship ranking's
-// owner-participation rule (buildRelationshipsSQL) — a shared-calendar
+// owner-participation rule in the relationship index — a shared-calendar
 // event the owner never attended is not an interaction and would otherwise
 // surface here despite contributing no ranking signal.
 //
@@ -94,39 +93,32 @@ func (e *DuckDBEngine) RelationshipTimeline(ctx context.Context, request Relatio
 		return nil, fmt.Errorf("read committed cache state: %w", err)
 	}
 
-	members, err := e.clusterMembers(ctx, request.CanonicalID)
-	if err != nil {
-		return nil, err
-	}
 	// Cluster membership scopes the timeline, but any caller-supplied
 	// participant filter (request.Context.ParticipantIDs and any
 	// conjunctive AdditionalParticipantGroups, set via repeated "participant"
 	// filter dimensions) must further restrict it rather than be silently
 	// overwritten — the filter is part of the cursor hash and the caller has
 	// no way to tell it was dropped. The subject cluster-membership
-	// condition is its own OR-group with different semantics (any message
-	// touching the subject's cluster) than a caller participant filter, so
-	// it is built separately here and AND'd onto whatever
-	// buildExploreConditions produced for the caller's own Context
-	// (including any participant filter(s) already in it). That caller
-	// filter is first widened across its identity cluster (like Explore/Files)
-	// so a secondary participant filter by canonical ID also matches alias
-	// activity; the subject cluster-membership condition below is already
-	// cluster-correct and stays as-is.
+	// condition is its own AND'd predicate with different semantics (any
+	// message touching the subject's cluster) than a caller participant
+	// filter. That caller filter is first widened across its identity
+	// cluster (like Explore/Files) so a secondary participant filter by
+	// canonical ID also matches alias activity; the subject
+	// cluster-membership predicate is already cluster-correct because
+	// relationship_activity rows bake the alias-merged canonical_id for
+	// every direct edge and conversation membership.
 	explore, err := e.expandParticipantFilterClusters(ctx, ExploreRequest{Context: request.Context})
 	if err != nil {
 		return nil, err
 	}
-	conditions, args := buildExploreConditions(explore)
-	membershipCondition, membershipArgs := participantMembershipCondition(members)
-	if membershipCondition != "" {
-		if conditions == "true" {
-			conditions = membershipCondition
-		} else {
-			conditions += " AND " + membershipCondition
-		}
-		args = append(args, membershipArgs...)
-	}
+	// Caller filters render natively over relationship_activity facts
+	// (buildIdentityFactConditions), so participant/domain filters become
+	// edge semi-joins — the aggregated participant list columns of the
+	// legacy view are never touched.
+	conditions, factArgs := buildIdentityFactConditions(explore, e.identityActivityPath())
+	args := make([]any, 0, len(factArgs)+4)
+	args = append(args, request.CanonicalID)
+	args = append(args, factArgs...)
 
 	timezone := request.Timezone
 	if timezone == "" {
@@ -139,8 +131,12 @@ func (e *DuckDBEngine) RelationshipTimeline(ctx context.Context, request Relatio
 	}
 	args = append(args, limit, request.Offset)
 
-	queryText := buildRelationshipTimelineSQL(conditions,
-		e.parquetPath(datasetParticipantClusters), e.parquetPath(datasetOwnerParticipants))
+	queryText := buildRelationshipTimelineSQL(
+		conditions,
+		e.identityActivityPath(),
+		quoteIdentitySQLPath(e.parquetGlob()),
+		quoteIdentitySQLPath(e.parquetPath(datasetConversations)),
+	)
 	rows, err := e.db.QueryContext(ctx, queryText, args...)
 	if err != nil {
 		return nil, fmt.Errorf("query relationship timeline: %w", err)
@@ -209,56 +205,6 @@ func (e *DuckDBEngine) ResolveCanonicalParticipant(ctx context.Context, particip
 	}
 }
 
-// clusterMembers returns every participant ID whose canonical identity is
-// canonicalID, via the committed participant_clusters dataset. LinkCluster
-// (and Store.ParticipantClusters, which it mirrors) writes a self-row for
-// the canonical participant too, so a genuine cluster's members are found
-// with no participants-table join. A canonicalID with no rows at all is a
-// single-member cluster of itself (never linked).
-func (e *DuckDBEngine) clusterMembers(ctx context.Context, canonicalID int64) ([]int64, error) {
-	queryText := fmt.Sprintf("SELECT participant_id FROM read_parquet('%s') WHERE canonical_id = ?", e.parquetPath(datasetParticipantClusters))
-	rows, err := e.db.QueryContext(ctx, queryText, canonicalID)
-	if err != nil {
-		return nil, fmt.Errorf("resolve cluster members: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-	var members []int64
-	for rows.Next() {
-		var id int64
-		if err := rows.Scan(&id); err != nil {
-			return nil, fmt.Errorf("scan cluster member: %w", err)
-		}
-		members = append(members, id)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate cluster members: %w", err)
-	}
-	if len(members) == 0 {
-		members = []int64{canonicalID}
-	}
-	return members, nil
-}
-
-// participantMembershipCondition builds the OR-of-any-member SQL fragment
-// matching buildExploreConditions' ParticipantIDs shape (sender, entry
-// participant, or conversation participant), for the cluster-membership
-// scope RelationshipTimeline AND's onto — rather than substitutes for — any
-// caller-supplied Context.ParticipantIDs filter. Returns ("", nil) for an
-// empty member list (never happens in practice: clusterMembers always
-// returns at least the canonical ID itself).
-func participantMembershipCondition(members []int64) (string, []any) {
-	if len(members) == 0 {
-		return "", nil
-	}
-	parts := make([]string, len(members))
-	args := make([]any, 0, len(members)*3)
-	for i, id := range members {
-		parts[i] = "(sender_id = ? OR list_contains(participant_ids, ?) OR list_contains(conversation_participant_ids, ?))"
-		args = append(args, id, id, id)
-	}
-	return "(" + strings.Join(parts, " OR ") + ")", args
-}
-
 func validateRelationshipTimelineRequest(request RelationshipTimelineRequest) error {
 	if request.Offset < 0 || request.Limit < 0 || request.Limit > maxRelationshipTimelineLimit {
 		return fmt.Errorf("%w: timeline page is outside the supported range", ErrInvalidExploreRequest)
@@ -274,47 +220,77 @@ func validateRelationshipTimelineRequest(request RelationshipTimelineRequest) er
 	return nil
 }
 
-// buildRelationshipTimelineSQL builds the full timeline query. It shares
-// the "filtered"/"classified" CTEs with buildExploreLogicalSQLWithCandidateRank
-// (see buildExploreFilteredClassifiedCTE) but defines its own final CTE:
-// unlike Explore's per-conversation-lifetime chat grouping, chat messages
-// here are grouped per local calendar day so a years-long conversation
-// doesn't collapse into a single burst. The trailing "?" binds the IANA
-// timezone name once, in the "day_bucketed" CTE; both branches read the
-// precomputed local_day column rather than re-evaluating timezone() per row.
+// buildRelationshipTimelineSQL builds the full timeline query. The
+// population is index-native: subject_facts reads one counterpart's
+// message facts straight from relationship_activity (which bakes
+// occurred_at, entry_kind, chat classification, attachment counts, and
+// deletion state per message), so the whole-archive analytical_entries
+// assembly — which dominated person-click latency on production archives —
+// never runs. Titles and previews resolve for the ≤limit page rows only,
+// from the base messages/conversations Parquet directly (the same
+// expressions the analytical_entries view uses); the view itself is never
+// touched, because a join against it cannot push the page's ID filter
+// through the view's aggregate subqueries and materializes them for the
+// whole archive.
+// Unlike Explore's per-conversation-lifetime chat grouping, chat messages
+// are grouped per local calendar day so a years-long conversation doesn't
+// collapse into a single burst. The "?" after the fact conditions binds
+// the IANA timezone name once, in the "day_bucketed" CTE; both branches
+// read the precomputed local_day column rather than re-evaluating
+// timezone() per row.
 //
 // Event/meeting rows require owner participation, mirroring the
-// relationship ranking exactly (see the le_with_owner CTE and the
-// "interactions" exclusion in buildRelationshipsSQL, including its
-// person-level global-owners rationale): a subscribed or shared-calendar
-// event the owner never attended is not an interaction with the
-// counterpart, and the ranking already contributes no signal for it — the
-// timeline must not display what the ranking ignores. The
-// clusters/owners/canon/owner_canon/owner_participant_ids CTE chain is
-// copied verbatim from buildRelationshipsSQL so owner-cluster expansion
-// (owner participation under a clustered alias) resolves identically on
-// both surfaces. Email and chat rows are untouched: the timeline scopes by
-// counterpart-cluster membership, not owner involvement, so a counterpart's
-// email to a third party still appears.
-func buildRelationshipTimelineSQL(conditions, clustersGlob, ownersGlob string) string {
-	return buildExploreFilteredClassifiedCTE(conditions, "NULL::BIGINT") + fmt.Sprintf(`
-, clusters AS (
-    SELECT participant_id, canonical_id FROM read_parquet('%s')
-), owners AS (
-    SELECT DISTINCT participant_id FROM read_parquet('%s')
-), canon AS (
-    SELECT p.id AS participant_id, COALESCE(c.canonical_id, p.id) AS canonical_id
-    FROM participants p LEFT JOIN clusters c ON c.participant_id = p.id
-), owner_canon AS (
-    SELECT DISTINCT cn.canonical_id FROM owners o JOIN canon cn ON cn.participant_id = o.participant_id
-), owner_participant_ids AS (
-    SELECT DISTINCT cn.participant_id FROM canon cn
-    WHERE cn.canonical_id IN (SELECT canonical_id FROM owner_canon)
+// relationship ranking exactly, including its person-level global-owner
+// semantics: a subscribed or shared-calendar event the owner never attended
+// is not an interaction with the counterpart, and the ranking already
+// contributes no signal for it — the timeline must not display what the
+// ranking ignores. with_owner comes from the member_owner CTE over the
+// subject's messages, whose rows already carry the alias-merged
+// canonical_id and owner-cluster is_owner flag the relationship index
+// computed at build time, so owner participation under a clustered alias
+// resolves identically on both surfaces. with_owner counts only direct
+// owner edges: the ranking derives non-chat owner presence from direct
+// participants, so a silent owner on a conversation roster must not make
+// the timeline treat an event as attended. Email and chat rows are
+// untouched: the timeline scopes by counterpart-cluster membership, not
+// owner involvement, so a counterpart's email to a third party still
+// appears.
+//
+// has_attachments comes from the baked per-message has_attachments flag
+// (MIME structure at sync time), not attachment_count: extraction can lag
+// or fail, leaving the flag true with a zero count, and the indicator must
+// match what the message list shows for the same message.
+func buildRelationshipTimelineSQL(conditions, activityGlob, messagesGlob, conversationsGlob string) string {
+	activityScan := `read_parquet('` + activityGlob + `',
+        hive_partitioning=true, union_by_name=true)`
+	// The membership IN-subquery is a semi-join whose build side is the
+	// subject's bare message IDs (compact even for archive-scale clusters);
+	// the outer scan then folds per-message facts and owner presence into
+	// ONE grouped hash over the subject's messages only. An explicit JOIN
+	// against a DISTINCT-ids CTE reads the same, but the planner has built
+	// the hash on the full edge scan side under that shape — which pins the
+	// whole interactive memory budget regardless of subject size.
+	return `
+WITH subject_facts AS (
+    SELECT a.message_id,
+        any_value(a.conversation_id) AS conversation_id,
+        any_value(a.source_id) AS source_id,
+        any_value(a.occurred_at) AS occurred_at,
+        any_value(a.entry_kind) AS entry_kind,
+        any_value(a.is_chat) AS is_chat,
+        any_value(a.has_attachments) AS has_attachments,
+        bool_or(a.is_owner AND a.is_direct) AS with_owner
+    FROM ` + activityScan + ` a
+    WHERE a.message_id IN (
+        SELECT f.message_id
+        FROM ` + activityScan + ` f
+        WHERE f.canonical_id = ? AND (` + conditions + `)
+    )
+    GROUP BY a.message_id
 ), day_bucketed AS (
-    SELECT *,
-        strftime(timezone(?, timezone('UTC', occurred_at)), '%%Y-%%m-%%d') AS local_day,
-        list_has_any(participant_ids, (SELECT list(participant_id) FROM owner_participant_ids)) AS with_owner
-    FROM classified
+    SELECT s.*,
+        strftime(timezone(?, timezone('UTC', s.occurred_at)), '%Y-%m-%d') AS local_day
+    FROM subject_facts s
 ), timeline_entries AS (
     SELECT
         'message:' || CAST(message_id AS VARCHAR) AS entry_key,
@@ -324,8 +300,6 @@ func buildRelationshipTimelineSQL(conditions, clustersGlob, ownersGlob string) s
         occurred_at,
         occurred_at AS first_at,
         source_id,
-        COALESCE(NULLIF(subject, ''), NULLIF(conversation_title, ''), snippet, '') AS title,
-        snippet AS preview,
         1::BIGINT AS message_count,
         has_attachments
     FROM day_bucketed
@@ -342,8 +316,6 @@ func buildRelationshipTimelineSQL(conditions, clustersGlob, ownersGlob string) s
         MAX(occurred_at) AS occurred_at,
         MIN(occurred_at) AS first_at,
         source_id,
-        COALESCE(NULLIF(MAX(conversation_title), ''), 'Conversation') AS title,
-        arg_max(snippet, struct_pack(occurred_at := occurred_at, message_id := message_id)) AS preview,
         COUNT(*)::BIGINT AS message_count,
         bool_or(has_attachments) AS has_attachments
     FROM day_bucketed
@@ -351,11 +323,24 @@ func buildRelationshipTimelineSQL(conditions, clustersGlob, ownersGlob string) s
     GROUP BY source_id, conversation_id, local_day
 ), counted AS (
     SELECT *, COUNT(*) OVER () AS total_count FROM timeline_entries
+), page AS (
+    SELECT * FROM counted
+    ORDER BY occurred_at DESC, entry_key ASC
+    LIMIT ? OFFSET ?
 )
 SELECT
-    entry_key, entry_kind, anchor_message_id, conversation_id, occurred_at, first_at,
-    source_id, title, preview, message_count, has_attachments, total_count
-FROM counted
-ORDER BY occurred_at DESC, entry_key ASC
-LIMIT ? OFFSET ?`, clustersGlob, ownersGlob)
+    p.entry_key, p.entry_kind, p.anchor_message_id, p.conversation_id, p.occurred_at, p.first_at,
+    p.source_id,
+    CASE WHEN p.entry_kind = 'chat_burst'
+        THEN COALESCE(NULLIF(CAST(c.title AS VARCHAR), ''), 'Conversation')
+        ELSE COALESCE(NULLIF(CAST(m.subject AS VARCHAR), ''),
+            NULLIF(CAST(c.title AS VARCHAR), ''), CAST(m.snippet AS VARCHAR), '')
+    END AS title,
+    COALESCE(CAST(m.snippet AS VARCHAR), '') AS preview,
+    p.message_count, p.has_attachments, p.total_count
+FROM page p
+LEFT JOIN read_parquet('` + messagesGlob + `',
+    hive_partitioning=true, union_by_name=true) m ON m.id = p.anchor_message_id
+LEFT JOIN read_parquet('` + conversationsGlob + `') c ON c.id = p.conversation_id
+ORDER BY p.occurred_at DESC, p.entry_key ASC`
 }

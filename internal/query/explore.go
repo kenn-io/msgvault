@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+
+	"go.kenn.io/msgvault/internal/identityindex"
 )
 
 var ErrInvalidExploreRequest = errors.New("invalid exploration request")
@@ -364,7 +366,7 @@ func buildExploreConditions(request ExploreRequest) (string, []any) {
 	// DuckDB driver binds time.Time as TIMESTAMP WITH TIME ZONE; left uncast,
 	// the comparison would coerce the naive-UTC occurred_at column to
 	// TIMESTAMPTZ on every row — a per-row ICU session-timezone conversion
-	// (see buildRelationshipsSQL for the measured cost of the same hazard).
+	// (the relationship index avoids the same measured conversion hazard).
 	if request.Context.After != nil {
 		conditions = append(conditions, "occurred_at >= CAST(? AS TIMESTAMP)")
 		args = append(args, request.Context.After.UTC())
@@ -399,11 +401,10 @@ func buildExploreConditions(request ExploreRequest) (string, []any) {
 }
 
 // buildExploreSQL builds the entry-row page query. counterpart_participant_id
-// reuses the exact owner-cluster resolution buildRelationshipsSQL uses (see
-// its doc comment): owners are unioned across sources (an address confirmed
+// reuses the exact person-level owner-cluster resolution used by relationship
+// analytics: owners are unioned across sources (an address confirmed
 // as "me" on any account is never "the other side" of an entry, even in a
-// different source's archive — see buildRelationshipsSQL on why owner
-// identities are person-level) and expanded through participant_clusters so
+// different source's archive) and expanded through participant_clusters so
 // an owner's clustered alias is still recognized as the owner, and the
 // smallest non-owner participant ID on the entry is returned. If the
 // owner_participants dataset has no rows at all, the owner is unknown and
@@ -599,6 +600,18 @@ func buildExploreLogicalSQL(conditions string) string {
 	return buildExploreLogicalSQLWithCandidateRank(conditions, "NULL::BIGINT")
 }
 
+// buildExploreLogicalSQLNoLists renders logical_entries without the
+// participant list columns. Queries that resolve participants or domains
+// through relationship_activity edge joins (person/domain grouping, the
+// filtered people search) must use this variant: projecting the list columns
+// forces analytical_entries to aggregate per-message participant lists for
+// the whole archive before any filter applies, which exceeds the interactive
+// engine's memory budget on production archives.
+func buildExploreLogicalSQLNoLists(conditions string) string {
+	return buildExploreFilteredClassifiedCTE(conditions, "NULL::BIGINT") +
+		exploreLogicalEntriesCTE(false)
+}
+
 // sqlIsChatPredicate renders the shared chat-classification predicate for a
 // message row. messageType and conversationType are SQL expressions that
 // must never be NULL (analytical_entries and the base views COALESCE them).
@@ -606,11 +619,7 @@ func buildExploreLogicalSQL(conditions string) string {
 // (e.g. the exact-person fast path in people.go) must use this so
 // classifications cannot drift.
 func sqlIsChatPredicate(messageType, conversationType string) string {
-	return "lower(" + messageType + ") IN (" + TextMessageTypeSQLList + `)
-            OR (
-                lower(` + messageType + `) IN (` + sqlQuotedList(chatFallbackMessageTypes) + `)
-                AND lower(` + conversationType + `) IN (` + sqlQuotedList(chatConversationTypes) + `)
-            )`
+	return identityindex.IsChatSQL(messageType, conversationType)
 }
 
 // buildExploreFilteredClassifiedCTE builds the "filtered" and "classified"
@@ -630,12 +639,7 @@ WITH filtered AS (
     SELECT *,
 		` + candidateRankExpression + ` AS candidate_rank,
         ` + sqlIsChatPredicate("message_type", "conversation_type") + ` AS is_chat,
-        CASE
-            WHEN lower(message_type) = 'email' OR message_type = '' THEN 'email'
-            WHEN lower(message_type) = '` + messageTypeCalendar + `' THEN 'event'
-            WHEN lower(message_type) IN ('meeting_transcript', 'meeting_note', 'meeting_minutes') THEN 'meeting'
-            ELSE 'item'
-        END AS entry_kind
+        ` + identityindex.EntryKindSQL("message_type") + ` AS entry_kind
     FROM filtered
 )`
 }

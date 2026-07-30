@@ -592,6 +592,44 @@ func TestGetPersonSummarySecondaryParticipantFilterExpandsClusters(t *testing.T)
 		"filtering by the alias ID must agree with the canonical ID")
 }
 
+// TestGetDomainSummaryMatchesDomainListPersonCount pins the domain-detail
+// person_count to the relationship_domains pairing rule: non-chat entries
+// pair people with a domain through direct edges only, so a participant whose
+// only tie to the domain is conversation-roster membership on an email must
+// not appear in the count — opening a domain from the list must never change
+// its displayed person count.
+func TestGetDomainSummaryMatchesDomainListPersonCount(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	b := NewTestDataBuilder(t)
+	source := b.AddSource("archive@example.com")
+	alice := b.AddParticipant("alice@example.com", "example.com", "Alice")
+	dave := b.AddParticipant("dave@roster.example", "roster.example", "Dave")
+	when := time.Date(2026, 7, 12, 9, 0, 0, 0, time.UTC)
+	mail := b.AddMessage(MessageOpt{SourceID: source, ConversationID: 971, Subject: "Mail", SentAt: when})
+	b.AddFrom(mail, alice, "Alice")
+	b.AddConversationParticipant(971, alice)
+	b.AddConversationParticipant(971, dave)
+
+	engine := b.BuildEngine()
+	ctx := context.Background()
+
+	list, err := engine.SearchDomains(ctx, DomainSearchRequest{
+		Query: "roster.example", Sort: SortSpec{Field: "activity_count", Direction: "desc"}, Page: PageSpec{Limit: 25},
+	})
+	requirements.NoError(err)
+	requirements.Len(list.Rows, 1, "roster domains still produce domain activity rows")
+	assertions.Equal(int64(0), list.Rows[0].PersonCount,
+		"the index pairs people with non-chat domains through direct edges only")
+
+	detail, err := engine.GetDomainSummary(ctx, "roster.example", ExploreRequest{})
+	requirements.NoError(err)
+	requirements.Len(detail.Rows, 1)
+	assertions.Equal(list.Rows[0].PersonCount, detail.Rows[0].PersonCount,
+		"domain detail must report the same person count as the list")
+	assertions.Equal(list.Rows[0].ActivityCount, detail.Rows[0].ActivityCount)
+}
+
 // TestGetDomainSummaryParticipantFilterExpandsClusters guards the
 // domain-detail path's participant Context filter: a domain summary scoped to
 // a linked counterpart cluster must count activity recorded under any cluster

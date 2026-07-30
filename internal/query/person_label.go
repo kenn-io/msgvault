@@ -1,7 +1,7 @@
 package query
 
 // Display-label policy for identity clusters, shared by the ranked
-// relationships list (buildRelationshipsSQL) and person search/detail
+// relationships list and person search/detail
 // (searchPeople). The canonical cluster ID stays the join/dedup key
 // everywhere; only the label evaluates all cluster members: the non-empty
 // display_name of the smallest-ID member wins, so linking an older unnamed

@@ -5,8 +5,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"math/bits"
 	"sort"
+	"strconv"
 	"time"
+
+	"go.kenn.io/msgvault/internal/identityindex"
 )
 
 const (
@@ -14,7 +18,6 @@ const (
 	relationshipWeightMeetings = 3.0
 	relationshipWeightReceived = 1.0
 	relationshipBreadthStep    = 0.25
-	relationshipHalfLifeDays   = 365.0
 )
 
 const (
@@ -116,10 +119,10 @@ type RelationshipAnalyzer interface {
 // counterparts with at least one sent message or one shared meeting are
 // returned (the reciprocity gate), filtering out inbound-only newsletters.
 //
-// Ranked candidate lists are memoized per (cache revision, filters,
-// show_all, decay date) so repeat hub loads and cursor pages within one
-// committed cache snapshot skip the full-archive scan entirely; see
-// relationshipsMemo for the coherence argument.
+// Unfiltered requests decay compact daily signals at request time. Filtered
+// requests retain exact logical-entry semantics by reducing the narrow
+// canonical activity dataset; neither path reconstructs the legacy wide
+// analytical entry graph.
 func (e *DuckDBEngine) Relationships(ctx context.Context, request RelationshipsRequest) (*RelationshipsResponse, error) {
 	if e.analyticsDir == "" {
 		return nil, &CacheUnavailableError{Readiness: CacheAbsent}
@@ -143,51 +146,61 @@ func (e *DuckDBEngine) Relationships(ctx context.Context, request RelationshipsR
 	}
 	// Widen any participant filter across its whole identity cluster before
 	// rendering conditions, so ranking a canonical person credits activity
-	// recorded under a linked alias — matching Explore/Files. Expansion runs
-	// before relationshipsMemoKey so the memo keys on the expanded filter.
+	// recorded under a linked alias — matching Explore/Files.
 	explore, err := e.expandParticipantFilterClusters(ctx, ExploreRequest{Context: request.Context})
 	if err != nil {
 		return nil, err
 	}
-	conditions, args := buildExploreConditions(explore)
-	key := relationshipsMemoKey(state.Revision(), conditions, args, request.ShowAll, now)
-	candidates, err := e.relMemo.rows(key, func() ([]RelationshipRow, error) {
-		return e.queryRelationshipCandidates(ctx, conditions, args, request.ShowAll, now)
-	})
-	if err != nil {
-		return nil, err
-	}
-
 	limit := request.Limit
 	if limit == 0 {
 		limit = defaultRelationshipsLimit
 	}
+	page, totalCount, err := e.queryRelationshipCandidates(
+		ctx,
+		explore,
+		request.ShowAll,
+		now.UTC(),
+		request.Offset,
+		limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+
 	response := &RelationshipsResponse{
-		Rows:             make([]RelationshipRow, 0),
-		TotalCount:       int64(len(candidates)),
+		Rows:             page,
+		TotalCount:       totalCount,
 		CacheRevision:    state.Revision(),
 		IdentityRevision: state.IdentityRevision,
-	}
-	if request.Offset < len(candidates) {
-		end := min(request.Offset+limit, len(candidates))
-		response.Rows = candidates[request.Offset:end]
 	}
 	return response, nil
 }
 
-// queryRelationshipCandidates runs the full ranking query and returns the
-// gated, scored, sorted candidate list. The result is stored in the memo and
-// shared across paginated responses, so callers must treat it as immutable.
+// queryRelationshipCandidates runs either the compact rollup query or the
+// narrow filtered reduction, then applies the shared gate, score, and total
+// ordering in Go.
 func (e *DuckDBEngine) queryRelationshipCandidates(
-	ctx context.Context, conditions string, args []any, showAll bool, now time.Time,
-) ([]RelationshipRow, error) {
-	e.relationshipsQueryRuns.Add(1)
-	queryText := buildRelationshipsSQL(conditions, e.parquetPath(datasetParticipantClusters), e.parquetPath(datasetOwnerParticipants))
-	queryArgs := append(append([]any{}, args...), math.Ln2/relationshipHalfLifeDays, now.UTC())
+	ctx context.Context,
+	explore ExploreRequest,
+	showAll bool,
+	now time.Time,
+	offset, limit int,
+) ([]RelationshipRow, int64, error) {
+	var queryText string
+	var queryArgs []any
+	var err error
+	if identityRequestIsUnfiltered(explore) {
+		queryText, queryArgs = e.buildRelationshipRollupSQL(now)
+	} else {
+		queryText, queryArgs, err = e.buildFilteredRelationshipsSQL(ctx, explore, now)
+		if err != nil {
+			return nil, 0, err
+		}
+	}
 
 	rows, err := e.db.QueryContext(ctx, queryText, queryArgs...)
 	if err != nil {
-		return nil, fmt.Errorf("query analytical relationships: %w", err)
+		return nil, 0, fmt.Errorf("query indexed relationships: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
 
@@ -195,17 +208,19 @@ func (e *DuckDBEngine) queryRelationshipCandidates(
 	for rows.Next() {
 		var row RelationshipRow
 		var memberIDsJSON string
+		var modalityMask uint8
 		if err := rows.Scan(
 			&row.CanonicalID, &row.DisplayLabel, &memberIDsJSON,
 			&row.Signals.SentToThem, &row.Signals.SentCount,
 			&row.Signals.ReceivedFromThem, &row.Signals.MeetingsTogether, &row.Signals.MeetingCount,
-			&row.Signals.Modalities, &row.LastAt,
+			&modalityMask, &row.LastAt,
 		); err != nil {
-			return nil, fmt.Errorf("scan analytical relationship: %w", err)
+			return nil, 0, fmt.Errorf("scan indexed relationship: %w", err)
 		}
 		if err := json.Unmarshal([]byte(memberIDsJSON), &row.MemberIDs); err != nil {
-			return nil, fmt.Errorf("decode relationship member IDs: %w", err)
+			return nil, 0, fmt.Errorf("decode relationship member IDs: %w", err)
 		}
+		row.Signals.Modalities = modalitiesFromMask(modalityMask)
 		row.Signals.LastInteractionAt = row.LastAt
 		row.Score = RelationshipScore(row.Signals)
 		if !showAll && row.Signals.SentCount < 1 && row.Signals.MeetingCount < 1 {
@@ -214,26 +229,153 @@ func (e *DuckDBEngine) queryRelationshipCandidates(
 		candidates = append(candidates, row)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate analytical relationships: %w", err)
+		return nil, 0, fmt.Errorf("iterate indexed relationships: %w", err)
 	}
 
 	sort.SliceStable(candidates, func(i, j int) bool {
-		if candidates[i].Score != candidates[j].Score {
-			return candidates[i].Score > candidates[j].Score
-		}
-		if !candidates[i].LastAt.Equal(candidates[j].LastAt) {
-			return candidates[i].LastAt.After(candidates[j].LastAt)
-		}
-		if candidates[i].DisplayLabel != candidates[j].DisplayLabel {
-			return candidates[i].DisplayLabel < candidates[j].DisplayLabel
-		}
-		// CanonicalID is the unique final tie-breaker: without it, rows with
-		// identical score, timestamp, and label keep whatever order the
-		// database returned them in, which can differ across memo evictions
-		// or restarts and duplicate/omit rows across offset-based pages.
-		return candidates[i].CanonicalID < candidates[j].CanonicalID
+		return relationshipRowBefore(candidates[i], candidates[j])
 	})
-	return candidates, nil
+	totalCount := int64(len(candidates))
+	if offset >= len(candidates) {
+		return []RelationshipRow{}, totalCount, nil
+	}
+	end := min(offset+limit, len(candidates))
+	page := append([]RelationshipRow(nil), candidates[offset:end]...)
+	return page, totalCount, nil
+}
+
+func relationshipRowBefore(left, right RelationshipRow) bool {
+	if left.Score != right.Score {
+		return left.Score > right.Score
+	}
+	if !left.LastAt.Equal(right.LastAt) {
+		return left.LastAt.After(right.LastAt)
+	}
+	if left.DisplayLabel != right.DisplayLabel {
+		return left.DisplayLabel < right.DisplayLabel
+	}
+	// CanonicalID is the unique final tie-breaker: without it, rows with
+	// identical score, timestamp, and label can duplicate or disappear across
+	// offset-based pages when the database changes its physical scan order.
+	return left.CanonicalID < right.CanonicalID
+}
+
+func modalitiesFromMask(mask uint8) int {
+	return bits.OnesCount8(mask & (identityindex.ModalityEmail |
+		identityindex.ModalityChat | identityindex.ModalityMeeting))
+}
+
+func (e *DuckDBEngine) buildRelationshipRollupSQL(now time.Time) (string, []any) {
+	daily := quoteIdentitySQLPath(e.parquetPath(identityindex.DatasetRelationshipDaily))
+	people := quoteIdentitySQLPath(e.parquetPath(identityindex.DatasetPeople))
+	queryText := `
+WITH request_clock AS (
+	SELECT ?::DOUBLE AS decay_rate, CAST(? AS DATE) AS request_date
+), indexed_relationships AS (
+	SELECT d.canonical_id,
+	       sum(d.sent_units * exp(-c.decay_rate * greatest(
+	           0, date_diff('day', d.event_date, c.request_date))))::DOUBLE
+	           AS sent_decayed,
+	       sum(d.sent_units)::BIGINT AS sent_count,
+	       sum(d.received_units * exp(-c.decay_rate * greatest(
+	           0, date_diff('day', d.event_date, c.request_date))))::DOUBLE
+	           AS received_decayed,
+	       sum(d.meeting_units * exp(-c.decay_rate * greatest(
+	           0, date_diff('day', d.event_date, c.request_date))))::DOUBLE
+	           AS meetings_decayed,
+	       sum(d.meeting_units)::BIGINT AS meeting_count,
+	       bit_or(d.modality_mask)::UTINYINT AS modality_mask,
+	       max(d.last_at)::TIMESTAMP AS last_at
+	FROM read_parquet('` + daily + `') d
+	CROSS JOIN request_clock c
+	GROUP BY d.canonical_id
+)
+SELECT r.canonical_id,
+       p.display_label,
+       CAST(to_json(p.member_ids) AS VARCHAR) AS member_ids,
+       r.sent_decayed,
+       r.sent_count,
+       r.received_decayed,
+       r.meetings_decayed,
+       r.meeting_count,
+       r.modality_mask,
+       r.last_at
+FROM indexed_relationships r
+JOIN read_parquet('` + people + `') p USING (canonical_id)
+WHERE NOT p.is_owner`
+	return queryText, []any{
+		identityindex.RelationshipDecayRate,
+		duckDBDateParam(now),
+	}
+}
+
+func (e *DuckDBEngine) buildFilteredRelationshipsSQL(
+	ctx context.Context,
+	explore ExploreRequest,
+	now time.Time,
+) (string, []any, error) {
+	logicalSQL, args, err := e.buildIdentityLogicalSQL(ctx, explore, "")
+	if err != nil {
+		return "", nil, err
+	}
+	directory := quoteIdentitySQLPath(
+		e.parquetPath(identityindex.DatasetPeople),
+	)
+	queryText := logicalSQL + `,
+relationship_interactions AS (
+	SELECT p.*,
+	       CASE WHEN p.is_from_me
+	                 AND p.entry_kind IN ('email','conversation','item')
+	            THEN 1::BIGINT ELSE 0::BIGINT END AS sent_units,
+	       CASE WHEN NOT p.is_from_me
+	                 AND (p.entry_kind = 'conversation'
+	                      OR (p.entry_kind IN ('email','item') AND p.is_author))
+	            THEN 1::BIGINT ELSE 0::BIGINT END AS received_units,
+	       CASE WHEN p.entry_kind IN ('event','meeting') AND p.with_owner
+	            THEN 1::BIGINT ELSE 0::BIGINT END AS meeting_units,
+	       CASE
+	           WHEN p.entry_kind IN ('event','meeting') AND p.with_owner
+	               THEN ` + strconv.FormatUint(uint64(identityindex.ModalityMeeting), 10) + `::UTINYINT
+	           WHEN p.entry_kind = 'conversation'
+	               THEN ` + strconv.FormatUint(uint64(identityindex.ModalityChat), 10) + `::UTINYINT
+	           WHEN p.entry_kind IN ('email','item')
+	               THEN ` + strconv.FormatUint(uint64(identityindex.ModalityEmail), 10) + `::UTINYINT
+	           ELSE 0::UTINYINT
+	       END AS modality_mask,
+	       exp(-? * greatest(
+	           0, date_diff('day', p.occurred_at, CAST(? AS TIMESTAMP)))) AS decay
+	FROM logical_people p
+	WHERE NOT p.is_owner
+	  AND NOT (p.entry_kind IN ('event','meeting') AND NOT p.with_owner)
+), aggregated AS (
+	SELECT canonical_id,
+	       sum(sent_units * decay)::DOUBLE AS sent_decayed,
+	       sum(sent_units)::BIGINT AS sent_count,
+	       sum(received_units * decay)::DOUBLE AS received_decayed,
+	       sum(meeting_units * decay)::DOUBLE AS meetings_decayed,
+	       sum(meeting_units)::BIGINT AS meeting_count,
+	       bit_or(modality_mask)::UTINYINT AS modality_mask,
+	       max(occurred_at)::TIMESTAMP AS last_at
+	FROM relationship_interactions
+	GROUP BY canonical_id
+)
+SELECT a.canonical_id,
+       d.display_label,
+       CAST(to_json(d.member_ids) AS VARCHAR) AS member_ids,
+       a.sent_decayed,
+       a.sent_count,
+       a.received_decayed,
+       a.meetings_decayed,
+       a.meeting_count,
+       a.modality_mask,
+       a.last_at
+FROM aggregated a
+JOIN read_parquet('` + directory + `') d USING (canonical_id)`
+	args = append(args,
+		identityindex.RelationshipDecayRate,
+		duckDBDateParam(now),
+	)
+	return queryText, args, nil
 }
 
 func validateRelationshipsRequest(request RelationshipsRequest) error {
@@ -244,142 +386,4 @@ func validateRelationshipsRequest(request RelationshipsRequest) error {
 		return fmt.Errorf("%w: unknown deletion filter %q", ErrInvalidExploreRequest, request.Context.Deletion)
 	}
 	return nil
-}
-
-// buildRelationshipsSQL builds the full relationship-ranking query. Decay is
-// computed in SQL from two trailing bound parameters (decay rate, now); the
-// gate, score, and sort order are applied in Go so RelationshipScore stays
-// the single source of truth for the weights.
-//
-// The now parameter is wrapped in CAST(? AS TIMESTAMP) because the Go DuckDB
-// driver binds time.Time as TIMESTAMP WITH TIME ZONE. Left uncast, date_diff
-// would coerce the naive-UTC occurred_at column to TIMESTAMPTZ on every
-// fanned-out row — a per-row ICU session-timezone conversion that tripled
-// whole-query time on a 2.5M-message archive — and would count day
-// boundaries in the server's session timezone, making decay depend on the
-// machine's locale. The cast pins the parameter to its UTC wall clock, so
-// decay counts UTC day boundaries deterministically and depends only on the
-// UTC date of now (which relationshipsMemoKey relies on).
-//
-// The "owners" set is deliberately person-level, not source-level: the
-// owner_participants dataset carries (source_id, participant_id), and this
-// query unions participants across sources on purpose. Every source in an
-// archive belongs to the same person, so an address confirmed as "me" on any
-// account is the owner everywhere: cross-account self-mail (forwarding
-// personal mail into a work archive, calendar copies, self-CC) must not rank
-// the owner's other address as a top "relationship" or credit it as an
-// author of received mail. Scoping owners to each entry's source would do
-// exactly that whenever the owner's identities are not yet clustered.
-// Per-message direction is source-scoped where it matters: is_from_me is
-// baked at cache build against the message's own source's account
-// identities, so sent credit never leaks between accounts.
-//
-// Owners may themselves be clustered, so "owner_canon" resolves every owner
-// participant to its cluster canonical ID and interactions exclude any
-// canonical identity that appears there — you never rank yourself.
-// "owner_participant_ids" expands owner_canon back out to every raw
-// participant ID sharing an owner's canonical cluster (not just the raw
-// owner_participants rows), so a meeting attended under an alias linked only
-// via participant_clusters still counts as "together" (with_owner, computed
-// once per entry before the UNNEST that fans an entry out per participant).
-//
-// A single logical entry can list several raw participant IDs that resolve
-// to the same canonical cluster (e.g. cc'ing a contact's work and personal
-// addresses); the DISTINCT in "interactions" collapses those back to one row
-// per (entry, canonical_id) so aggregation doesn't double-count the entry.
-//
-// A meeting/event the owner did not attend contributes no signal for any
-// attendee (no sent/received count, no modality — see "aggregated" below),
-// so "interactions" excludes such rows entirely rather than merely zeroing
-// their contribution: left in, they would still feed MAX(occurred_at) and
-// inflate LastAt/LastInteractionAt with a meeting the owner never attended.
-//
-// received_from_them credits only the AUTHOR of an incoming entry
-// ("author_links": the recipient_type='from' participant, or messages.
-// sender_id for sources that record senders directly), never co-recipients.
-// Without that restriction a mailing-list address accumulates one received
-// unit for every subscription message it merely appears on as a recipient,
-// which ranked lists and bots above real people. Chat conversations
-// ('conversation' entries) are exempt: a grouped chat has no single author,
-// so its per-conversation credit for every non-owner member is unchanged.
-// Non-author co-recipient rows stay in "interactions" so LastAt keeps
-// matching the timeline's "all shared messages" scope.
-//
-// display_label applies the shared cluster label policy (see person_label.go):
-// the best non-empty display_name across the whole cluster (members resolved
-// through canon, so an unlinked counterpart is just itself), falling back to
-// the canonical participant's identifiers only when no member is named.
-func buildRelationshipsSQL(conditions, clustersGlob, ownersGlob string) string {
-	labelExpr := sqlPersonDisplayLabelExpr(sqlClusterBestNameExpr(
-		"pbn.id IN (SELECT cnl.participant_id FROM canon cnl WHERE cnl.canonical_id = p2.id)"), "p2")
-	return buildExploreLogicalSQL(conditions) + fmt.Sprintf(`
-), clusters AS (
-    SELECT participant_id, canonical_id FROM read_parquet('%s')
-), owners AS (
-    SELECT DISTINCT participant_id FROM read_parquet('%s')
-), canon AS (
-    SELECT p.id AS participant_id, COALESCE(c.canonical_id, p.id) AS canonical_id
-    FROM participants p LEFT JOIN clusters c ON c.participant_id = p.id
-), owner_canon AS (
-    SELECT DISTINCT cn.canonical_id FROM owners o JOIN canon cn ON cn.participant_id = o.participant_id
-), owner_participant_ids AS (
-    SELECT DISTINCT cn.participant_id FROM canon cn
-    WHERE cn.canonical_id IN (SELECT canonical_id FROM owner_canon)
-), le_with_owner AS (
-    SELECT le.*, list_has_any(le.participant_ids, (SELECT list(participant_id) FROM owner_participant_ids)) AS with_owner
-    FROM logical_entries le
-), author_links AS (
-    SELECT mr.message_id, cn.canonical_id
-    FROM message_recipients mr
-    JOIN canon cn ON cn.participant_id = mr.participant_id
-    WHERE mr.recipient_type = 'from'
-    UNION
-    SELECT m.id AS message_id, cn.canonical_id
-    FROM messages m
-    JOIN canon cn ON cn.participant_id = m.sender_id
-    WHERE m.sender_id IS NOT NULL
-), interactions AS (
-    SELECT DISTINCT
-        le.entry_key,
-        cn.canonical_id,
-        le.entry_kind,
-        le.occurred_at,
-        le.is_from_me,
-        le.with_owner,
-        EXISTS (SELECT 1 FROM author_links al
-                WHERE al.message_id = le.anchor_message_id
-                  AND al.canonical_id = cn.canonical_id) AS is_author,
-        exp(-? * GREATEST(0, date_diff('day', le.occurred_at, CAST(? AS TIMESTAMP)))) AS decay
-    FROM le_with_owner le
-    CROSS JOIN UNNEST(le.participant_ids) AS pid(participant_id)
-    JOIN canon cn ON cn.participant_id = pid.participant_id
-    WHERE cn.canonical_id NOT IN (SELECT canonical_id FROM owner_canon)
-      AND NOT (le.entry_kind IN ('event','meeting') AND NOT le.with_owner)
-), aggregated AS (
-    SELECT
-        canonical_id,
-        SUM(CASE WHEN is_from_me AND entry_kind IN ('email','conversation','item') THEN decay ELSE 0 END) AS sent_decayed,
-        COUNT(CASE WHEN is_from_me AND entry_kind IN ('email','conversation','item') THEN 1 END) AS sent_count,
-        SUM(CASE WHEN NOT is_from_me
-                  AND (entry_kind = 'conversation' OR (entry_kind IN ('email','item') AND is_author))
-                 THEN decay ELSE 0 END) AS received_decayed,
-        SUM(CASE WHEN entry_kind IN ('event','meeting') AND with_owner THEN decay ELSE 0 END) AS meetings_decayed,
-        COUNT(CASE WHEN entry_kind IN ('event','meeting') AND with_owner THEN 1 END) AS meeting_count,
-        COUNT(DISTINCT CASE
-            WHEN entry_kind IN ('event','meeting') AND with_owner THEN 'meeting'
-            WHEN entry_kind IN ('event','meeting') THEN NULL
-            WHEN entry_kind = 'conversation' THEN 'chat'
-            ELSE 'email' END) AS modalities,
-        MAX(occurred_at) AS last_at
-    FROM interactions
-    GROUP BY canonical_id
-)
-SELECT
-    a.canonical_id,
-    (SELECT %s
-     FROM participants p2 WHERE p2.id = a.canonical_id) AS display_label,
-    CAST(COALESCE((SELECT to_json(list(cn2.participant_id ORDER BY cn2.participant_id))
-        FROM canon cn2 WHERE cn2.canonical_id = a.canonical_id), '[]') AS VARCHAR) AS member_ids,
-    a.sent_decayed, a.sent_count, a.received_decayed, a.meetings_decayed, a.meeting_count, a.modalities, a.last_at
-FROM aggregated a`, clustersGlob, ownersGlob, labelExpr)
 }

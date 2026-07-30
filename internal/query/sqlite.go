@@ -281,7 +281,7 @@ func sortClause(opts AggregateOptions) (string, error) {
 	case SortByAttachmentSize:
 		field = "attachment_size"
 	case SortByName:
-		field = "key"
+		field = sortFieldKey
 	default:
 		return "", fmt.Errorf("unsupported sort field: %d", opts.SortField)
 	}
@@ -292,7 +292,7 @@ func sortClause(opts AggregateOptions) (string, error) {
 	}
 
 	// Secondary sort by key ensures deterministic ordering for ties
-	if field == "key" {
+	if field == sortFieldKey {
 		return fmt.Sprintf("ORDER BY %s %s", field, dir), nil
 	}
 	return fmt.Sprintf("ORDER BY %s %s, key ASC", field, dir), nil

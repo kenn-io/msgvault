@@ -118,13 +118,7 @@ func TestRelationshipsRanksByReciprocityAndGatesNewsletters(t *testing.T) {
 	})
 }
 
-// TestRelationshipsMemoizesRankedListPerRevision verifies the engine-level
-// memoization contract: within one committed cache revision, repeated calls
-// (including later same-UTC-day Now values and offset pagination) reuse one
-// ranking query; ShowAll keys separately; and any revision change — here an
-// identity-revision bump rewritten into the commit marker — forces a
-// recompute, so a stale list can never be served after identities change.
-func TestRelationshipsMemoizesRankedListPerRevision(t *testing.T) {
+func TestRelationshipsRepeatedRequestsAreIndependentAndRevisioned(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -151,26 +145,17 @@ func TestRelationshipsMemoizesRankedListPerRevision(t *testing.T) {
 	first, err := engine.Relationships(ctx, RelationshipsRequest{Now: now, Limit: 10})
 	require.NoError(err)
 	require.Len(first.Rows, 2)
-	require.Equal(uint64(1), engine.relationshipsQueryRuns.Load())
 
 	second, err := engine.Relationships(ctx, RelationshipsRequest{Now: now.Add(6 * time.Hour), Limit: 10})
 	require.NoError(err)
-	assert.Equal(uint64(1), engine.relationshipsQueryRuns.Load(),
-		"a same-revision, same-UTC-day repeat must not re-run the ranking query")
-	require.Len(second.Rows, 2)
-	assert.Equal(first.Rows[0].CanonicalID, second.Rows[0].CanonicalID)
+	assert.Equal(first, second,
+		"identical UTC-date requests must produce the same result without shared memo state")
 
 	page, err := engine.Relationships(ctx, RelationshipsRequest{Now: now, Limit: 1, Offset: 1})
 	require.NoError(err)
-	assert.Equal(uint64(1), engine.relationshipsQueryRuns.Load(),
-		"offset pages must slice the cached list, not re-query")
 	require.Len(page.Rows, 1)
 	assert.Equal(first.Rows[1].CanonicalID, page.Rows[0].CanonicalID)
 	assert.Equal(first.TotalCount, page.TotalCount)
-
-	_, err = engine.Relationships(ctx, RelationshipsRequest{Now: now, Limit: 10, ShowAll: true})
-	require.NoError(err)
-	assert.Equal(uint64(2), engine.relationshipsQueryRuns.Load(), "show_all must key separately")
 
 	state, err := ReadCacheSyncState(engine.analyticsDir)
 	require.NoError(err)
@@ -181,9 +166,81 @@ func TestRelationshipsMemoizesRankedListPerRevision(t *testing.T) {
 
 	third, err := engine.Relationships(ctx, RelationshipsRequest{Now: now, Limit: 10})
 	require.NoError(err)
-	assert.Equal(uint64(3), engine.relationshipsQueryRuns.Load(),
-		"a revision bump must miss the memo and recompute")
 	assert.Equal(state.IdentityRevision, third.IdentityRevision)
+	assert.NotEqual(first.CacheRevision, third.CacheRevision)
+}
+
+func TestRelationshipsCanceledWaiterUsesItsOwnContext(t *testing.T) {
+	requirementsForTest := require.New(t)
+	b := NewTestDataBuilder(t)
+	sourceID := b.AddSource("owner@example.com")
+	ownerID := b.AddParticipant("owner@example.com", "example.com", "Owner")
+	personID := b.AddParticipant("person@example.com", "example.com", "Person")
+	b.AddOwnerParticipant(sourceID, ownerID)
+	messageID := b.AddMessage(MessageOpt{
+		SourceID: sourceID,
+		IsFromMe: true,
+		SentAt:   time.Date(2026, 1, 9, 0, 0, 0, 0, time.UTC),
+	})
+	b.AddFrom(messageID, ownerID, "Owner")
+	b.AddTo(messageID, personID, "Person")
+	engine := b.BuildEngine()
+	requirementsForTest.NoError(engine.querySem.Acquire(context.Background(), 1))
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err := engine.Relationships(ctx, RelationshipsRequest{
+		Now:   time.Date(2026, 1, 10, 0, 0, 0, 0, time.UTC),
+		Limit: 10,
+	})
+	requirementsForTest.ErrorIs(err, context.Canceled)
+	engine.querySem.Release(1)
+
+	result, err := engine.Relationships(context.Background(), RelationshipsRequest{
+		Now:   time.Date(2026, 1, 10, 0, 0, 0, 0, time.UTC),
+		Limit: 10,
+	})
+	requirementsForTest.NoError(err)
+	requirementsForTest.Len(result.Rows, 1)
+}
+
+func TestDateWindowRelationshipsUseExactActivityReduction(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	builder := NewTestDataBuilder(t)
+	sourceID := builder.AddSource("owner@example.com")
+	ownerID := builder.AddParticipant("owner@example.com", "example.com", "Owner")
+	personID := builder.AddParticipant("person@example.com", "example.com", "Person")
+	builder.AddOwnerParticipant(sourceID, ownerID)
+	addSent := func(sentAt time.Time) {
+		messageID := builder.AddMessage(MessageOpt{
+			SourceID: sourceID,
+			IsFromMe: true,
+			SentAt:   sentAt,
+		})
+		builder.AddFrom(messageID, ownerID, "Owner")
+		builder.AddTo(messageID, personID, "Person")
+	}
+	addSent(time.Date(2026, 1, 4, 12, 0, 0, 0, time.UTC))
+	inWindow := time.Date(2026, 1, 6, 12, 34, 0, 0, time.UTC)
+	addSent(inWindow)
+	addSent(time.Date(2026, 1, 8, 0, 0, 0, 0, time.UTC))
+	engine := builder.BuildEngine()
+
+	after := time.Date(2026, 1, 5, 0, 0, 0, 0, time.UTC)
+	before := time.Date(2026, 1, 8, 0, 0, 0, 0, time.UTC)
+	request := RelationshipsRequest{
+		Context: Context{After: &after, Before: &before},
+		ShowAll: true,
+		Limit:   10,
+		Now:     time.Date(2026, 1, 10, 0, 0, 0, 0, time.UTC),
+	}
+	result, err := engine.Relationships(context.Background(), request)
+	requirements.NoError(err)
+
+	requirements.Len(result.Rows, 1)
+	assertions.Equal(personID, result.Rows[0].CanonicalID)
+	assertions.Equal(int64(1), result.Rows[0].Signals.SentCount)
+	assertions.Equal(inWindow, result.Rows[0].LastAt)
 }
 
 // TestRelationshipsExcludesClusteredOwners verifies that when the owner's own
@@ -303,8 +360,7 @@ func TestRelationshipsWithOwnerResolvesAlias(t *testing.T) {
 }
 
 // TestRelationshipsOwnerIdentitiesAreGlobalAcrossSources pins the deliberate
-// person-level owner semantics in a multi-source archive (see the
-// buildRelationshipsSQL doc comment): an address confirmed as an owner
+// person-level owner semantics in a multi-source archive: an address confirmed as an owner
 // identity on source A is the owner everywhere, so cross-account self-mail it
 // authors into source B must not rank it as a counterpart or credit it as an
 // author of received mail — while genuine counterparts on each source rank
@@ -463,21 +519,10 @@ func TestRelationshipsClusterLabelPrefersNamedMember(t *testing.T) {
 		"with several named members, the smallest participant ID's name wins deterministically")
 }
 
-// purgeRelationshipsMemo drops every memoized ranked candidate list so the
-// next Relationships call re-runs the ranking query, simulating memo eviction
-// or a daemon restart between offset pages.
-func purgeRelationshipsMemo(engine *DuckDBEngine) {
-	engine.relMemo.mu.Lock()
-	defer engine.relMemo.mu.Unlock()
-	engine.relMemo.entries = nil
-	engine.relMemo.order = nil
-}
-
 // TestRelationshipsPaginationStableAcrossFullyTiedRows pins the unique final
 // sort key: counterparts with identical score, LastAt, and display label must
-// still order deterministically (by CanonicalID) so offset pages computed
-// from independent ranking-query runs — after memo eviction or a daemon
-// restart — never duplicate or drop a row. The fixture makes twelve unlinked
+// still order deterministically (by CanonicalID) so independently computed
+// offset pages never duplicate or drop a row. The fixture makes twelve unlinked
 // counterparts fully tied: each receives exactly one owner-sent message at
 // the same instant and shares one display name, so score, timestamp, and
 // label all collide and only CanonicalID can break the tie.
@@ -510,9 +555,6 @@ func TestRelationshipsPaginationStableAcrossFullyTiedRows(t *testing.T) {
 		t.Helper()
 		var rows []RelationshipRow
 		for offset := 0; offset < tiedCount; offset += pageSize {
-			// Each page must survive a fresh ranking-query run, not just
-			// slice one memoized list.
-			purgeRelationshipsMemo(engine)
 			page, err := engine.Relationships(ctx, RelationshipsRequest{Now: now, Limit: pageSize, Offset: offset})
 			require.NoError(err)
 			require.Equal(int64(tiedCount), page.TotalCount)
@@ -620,6 +662,80 @@ func TestRelationshipsClampsFutureEntryDecayAtOne(t *testing.T) {
 		"a future meeting must weigh no more than one held today")
 }
 
+func TestRelationshipsFutureRowsPreserveGateModalitiesAndLastTimestamp(t *testing.T) {
+	requirementsForTest := require.New(t)
+	assertionsForTest := assert.New(t)
+	b := NewTestDataBuilder(t)
+	sourceID := b.AddSource("owner@example.com")
+	ownerID := b.AddParticipant("owner@example.com", "example.com", "Owner")
+	personID := b.AddParticipant("person@example.com", "example.com", "Person")
+	b.AddParticipant("idle@example.com", "example.com", "Idle")
+	b.AddOwnerParticipant(sourceID, ownerID)
+
+	// This owner-only entry fixes the cache anchor before the counterpart's
+	// future interactions without producing a relationship row.
+	anchorAt := time.Date(2026, 1, 1, 8, 0, 0, 0, time.UTC)
+	self := b.AddMessage(MessageOpt{
+		SourceID: sourceID,
+		IsFromMe: true,
+		SentAt:   anchorAt,
+	})
+	b.AddFrom(self, ownerID, "Owner")
+	b.AddTo(self, ownerID, "Owner")
+
+	sentAt := time.Date(2026, 1, 3, 9, 30, 0, 0, time.UTC)
+	sent := b.AddMessage(MessageOpt{
+		SourceID: sourceID,
+		IsFromMe: true,
+		SentAt:   sentAt,
+	})
+	b.AddFrom(sent, ownerID, "Owner")
+	b.AddTo(sent, personID, "Person")
+
+	meetingAt := time.Date(2026, 1, 4, 16, 45, 12, 0, time.UTC)
+	meeting := b.AddMessage(MessageOpt{
+		SourceID:    sourceID,
+		MessageType: "calendar_event",
+		SentAt:      meetingAt,
+	})
+	b.AddFrom(meeting, ownerID, "Owner")
+	b.AddTo(meeting, personID, "Person")
+
+	engine := b.BuildEngine()
+	result, err := engine.Relationships(
+		context.Background(),
+		RelationshipsRequest{
+			Now:   time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC),
+			Limit: 10,
+		},
+	)
+	requirementsForTest.NoError(err)
+	requirementsForTest.Len(result.Rows, 1,
+		"future raw sent/meeting counts must pass the default reciprocity gate")
+	row := result.Rows[0]
+	assertionsForTest.Equal(personID, row.CanonicalID)
+	assertionsForTest.InDelta(1.0, row.Signals.SentToThem, 1e-9)
+	assertionsForTest.InDelta(1.0, row.Signals.MeetingsTogether, 1e-9)
+	assertionsForTest.Equal(int64(1), row.Signals.SentCount)
+	assertionsForTest.Equal(int64(1), row.Signals.MeetingCount)
+	assertionsForTest.Equal(2, row.Signals.Modalities)
+	assertionsForTest.Equal(meetingAt, row.LastAt,
+		"future rollups must preserve the full timestamp, not day granularity")
+
+	showAll, err := engine.Relationships(
+		context.Background(),
+		RelationshipsRequest{
+			Now:     time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC),
+			Limit:   10,
+			ShowAll: true,
+		},
+	)
+	requirementsForTest.NoError(err)
+	requirementsForTest.Len(showAll.Rows, 1,
+		"ShowAll must not synthesize a row for an identity with no qualifying interaction")
+	assertionsForTest.Equal(personID, showAll.Rows[0].CanonicalID)
+}
+
 // TestRelationshipsParticipantFilterExpandsClusters guards that a secondary
 // participant Context filter widens across the whole identity cluster before
 // scoping the ranking population. Owner mail to a canonical address and to a
@@ -658,6 +774,16 @@ func TestRelationshipsParticipantFilterExpandsClusters(t *testing.T) {
 	requirements.Len(byCanonical.Rows, 1)
 	assertions.Equal(int64(3), byCanonical.Rows[0].Signals.SentCount,
 		"a canonical-ID filter must count activity recorded under a linked alias")
+	engine.identityCandidateFastPathDisabled = true
+	logical, err := engine.Relationships(ctx, RelationshipsRequest{
+		Context: Context{ParticipantIDs: []int64{canonical}}, Now: now, Limit: 10,
+	})
+	requirements.NoError(err)
+	assertions.Equal(logical.TotalCount, byCanonical.TotalCount)
+	assertions.Equal(logical.CacheRevision, byCanonical.CacheRevision)
+	assertions.Equal(logical.IdentityRevision, byCanonical.IdentityRevision)
+	requireRelationshipRowsEquivalent(t, logical.Rows, byCanonical.Rows)
+	engine.identityCandidateFastPathDisabled = false
 
 	byAlias, err := engine.Relationships(ctx, RelationshipsRequest{
 		Context: Context{ParticipantIDs: []int64{alias}}, Now: now, Limit: 10,

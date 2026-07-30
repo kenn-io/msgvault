@@ -603,12 +603,21 @@ func (s *Store) runMaintenance(ctx context.Context, fn func(ctx context.Context,
 // so streaming-query timing reflects scan-close, not just prepare.
 type chunkQuerier interface {
 	Query(query string, args ...any) (*loggedRows, error)
+	QueryContext(ctx context.Context, query string, args ...any) (*loggedRows, error)
 	Exec(query string, args ...any) (sql.Result, error)
 }
 
 func queryInChunks[T any](db chunkQuerier, ids []T, prefixArgs []any, queryTemplate string, fn func(*loggedRows) error) error {
+	return queryInChunksContext(context.Background(), db, ids, prefixArgs, queryTemplate, fn)
+}
+
+func queryInChunksContext[T any](ctx context.Context, db chunkQuerier, ids []T, prefixArgs []any, queryTemplate string, fn func(*loggedRows) error) error {
 	const chunkSize = 500
 	for i := 0; i < len(ids); i += chunkSize {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+
 		end := min(i+chunkSize, len(ids))
 		chunk := ids[i:end]
 
@@ -620,7 +629,7 @@ func queryInChunks[T any](db chunkQuerier, ids []T, prefixArgs []any, queryTempl
 		}
 
 		query := fmt.Sprintf(queryTemplate, strings.Join(placeholders, ","))
-		rows, err := db.Query(query, args...)
+		rows, err := db.QueryContext(ctx, query, args...)
 		if err != nil {
 			return err
 		}
@@ -938,6 +947,30 @@ func (s *Store) InitSchema() error {
 		}); err != nil {
 			return fmt.Errorf("create attachment lookup indexes: %w", err)
 		}
+	}
+
+	// Index over rfc822_message_id serves dedup's per-group message lookup
+	// (GetDuplicateGroupMessages / GetDuplicateGroupMessagesBatch). Without
+	// it, each lookup was a full scan of the messages table — measured at
+	// ~190ms/lookup, with one lookup per duplicate group, so a scan with
+	// 22k groups burned the entire 30-minute CLI plan-request timeout
+	// before content-hash comparison even started (kenn-io/msgvault#510).
+	// Plain (non-partial) index: a partial WHERE rfc822_message_id IS NOT
+	// NULL AND != '' form is not usable by the planner for this table's
+	// bound `= ?` / `IN (...)` lookups — SQLite can't prove col = ? implies
+	// col != '' since ? could bind to '' — so it would silently fall back
+	// to SCAN (verified via EXPLAIN QUERY PLAN before writing this).
+	// Identical DDL on both backends; runMaintenance already handles the
+	// PostgreSQL statement_timeout exemption internally (finding S1). IF
+	// NOT EXISTS is idempotent per start.
+	if err := s.runMaintenance(context.Background(), func(ctx context.Context, tx *loggedTx) error {
+		_, err := tx.ExecContext(ctx, `
+			CREATE INDEX IF NOT EXISTS idx_messages_rfc822_message_id
+			    ON messages(rfc822_message_id)
+		`)
+		return err
+	}); err != nil {
+		return fmt.Errorf("create rfc822 message id index: %w", err)
 	}
 
 	// Backfill last_modified for rows that predate the column. SQLite cannot

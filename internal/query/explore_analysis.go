@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"strings"
+
+	"go.kenn.io/msgvault/internal/identityindex"
 )
 
 const maxExploreFilesLimit = 100
@@ -19,7 +21,8 @@ func (e *DuckDBEngine) ExploreGroups(ctx context.Context, request ExploreGroupRe
 	if err != nil {
 		return nil, err
 	}
-	spec, err := exploreGroupExpressions(request.Dimension, e.parquetPath(datasetParticipantClusters))
+	spec, err := exploreGroupExpressions(request.Dimension, e.identityActivityPath(),
+		e.parquetPath(identityindex.DatasetPeople))
 	if err != nil {
 		return nil, err
 	}
@@ -51,7 +54,11 @@ func (e *DuckDBEngine) ExploreGroups(ctx context.Context, request ExploreGroupRe
 	if request.GroupKey != "" {
 		keyFilter = " WHERE group_key = ?"
 	}
-	queryText := buildExploreLogicalSQL(conditions) + spec.cte + `
+	logicalSQL := buildExploreLogicalSQL
+	if spec.noLists {
+		logicalSQL = buildExploreLogicalSQLNoLists
+	}
+	queryText := logicalSQL(conditions) + spec.cte + `
 ), grouped AS (
 	SELECT ` + spec.key + ` AS group_key, ` + spec.label + ` AS group_label,
 		COUNT(*)::BIGINT AS group_count,
@@ -112,33 +119,68 @@ type groupExpressions struct {
 	source      string
 	fromSuffix  string
 	whereSuffix string
+	// noLists selects the logical_entries variant without participant list
+	// columns; dimensions that resolve participants/domains through
+	// relationship_activity edge joins must set it so analytical_entries
+	// never aggregates whole-archive participant lists.
+	noLists bool
 }
 
-// sqlClustersCanonCTE renders the shared clusters/canon CTE pair mapping
-// every participant to its identity-cluster canonical ID (itself when
-// unlinked), resolved through the committed participant_clusters dataset —
-// the same resolution buildExploreSQL, buildRelationshipsSQL, and
-// personEntriesCTE inline. Returned closed, without surrounding commas.
-func sqlClustersCanonCTE(clustersGlob string) string {
-	return fmt.Sprintf(`clusters AS (
-	SELECT participant_id, canonical_id FROM read_parquet('%s')
-), canon AS (
-	SELECT p.id AS participant_id, COALESCE(c.canonical_id, p.id) AS canonical_id
-	FROM participants p LEFT JOIN clusters c ON c.participant_id = p.id
-)`, clustersGlob)
+// sqlActivityEntryEdges renders the UNION pair joining logical entries to
+// relationship_activity edges: message entries via their anchor message,
+// chat conversation entries via every classified (context-filtered) message
+// in the conversation. This preserves the membership the aggregated list
+// columns used to encode — in-context speakers through direct edges plus
+// silent roster members through is_conversation_member edges on those same
+// messages — while the alias-merged canonical_id baked into each edge
+// replaces the clusters/canon resolution step. selectExpr projects the edge
+// value (aliased for the caller). The two predicates restrict each branch
+// separately because the aggregated columns had asymmetric membership: a
+// message entry's participant_ids held direct participants only, while a
+// chat conversation entry's also folded in the conversation roster — so
+// participant callers pass "a.is_direct" for messages but must widen the
+// conversation branch with is_conversation_member. Either predicate may be
+// empty.
+func sqlActivityEntryEdges(activityGlob, selectExpr, messagePredicate, conversationPredicate string) string {
+	if messagePredicate != "" {
+		messagePredicate = " AND " + messagePredicate
+	}
+	if conversationPredicate != "" {
+		conversationPredicate = " AND " + conversationPredicate
+	}
+	activityScan := `read_parquet('` + activityGlob + `',
+		hive_partitioning=true, union_by_name=true)`
+	return `
+	SELECT le.entry_key, ` + selectExpr + `
+	FROM logical_entries le
+	JOIN ` + activityScan + ` a ON a.message_id = le.anchor_message_id
+	WHERE le.entry_kind <> 'conversation'
+	  AND a.canonical_id IS NOT NULL` + messagePredicate + `
+	UNION
+	SELECT le.entry_key, ` + selectExpr + `
+	FROM logical_entries le
+	JOIN classified f ON f.conversation_id = le.conversation_id AND f.is_chat
+	JOIN ` + activityScan + ` a ON a.message_id = f.message_id
+	WHERE le.entry_kind = 'conversation'
+	  AND a.canonical_id IS NOT NULL` + conversationPredicate + `
+`
 }
 
-// sqlCanonicalPersonGroupLabelExpr renders a canonical "People" group row's
-// label: the shared cluster label policy (see person_label.go) evaluated for
-// the canonical participant bound as person_id, with cluster members
-// resolved through the canon CTE the caller emits (sqlClustersCanonCTE) — so
-// a merged row is labeled by the cluster's best display name, never by
-// whichever alias happened to appear latest. person_id must be the GROUP BY
-// key of the surrounding aggregate.
-func sqlCanonicalPersonGroupLabelExpr() string {
-	return "(SELECT " + sqlPersonDisplayLabelExpr(sqlClusterBestNameExpr(
-		"pbn.id IN (SELECT cnl.participant_id FROM canon cnl WHERE cnl.canonical_id = p2.id)"), "p2") +
-		" FROM participants p2 WHERE p2.id = person_id)"
+// sqlIndexedPersonGroupLabelExpr renders a canonical "People" group row's
+// label from the relationship_people dataset, which bakes the shared cluster
+// label policy (see person_label.go and the identity index builder) at build
+// time. Evaluating the policy's correlated best-name scan per group row
+// exceeds the interactive memory budget on production archives — as does ANY
+// second correlated participants subquery here — so grouping reads the
+// precomputed label with only a constant fallback. That fallback is
+// unreachable in practice: group keys come from the same activity edge
+// population (direct edges for message entries, direct-or-roster for chat
+// entries) the dataset's people_totals aggregates, so every key has a
+// directory row.
+func sqlIndexedPersonGroupLabelExpr(peopleGlob string) string {
+	return "COALESCE(" +
+		"(SELECT dp.display_label FROM read_parquet('" + peopleGlob + "') dp WHERE dp.canonical_id = person_id), " +
+		"'Unknown person #' || CAST(person_id AS VARCHAR))"
 }
 
 // sqlMessageTypeGroupExpr renders the message-type group key/label: NULL or
@@ -157,11 +199,11 @@ func sqlMessageTypeGroupExpr() string {
 // aggregate ExploreGroups builds over logical_entries. The "participant"
 // dimension groups by canonical identity-cluster IDs: raw participant_ids
 // members are resolved through canon before grouping, and the DISTINCT
-// mirrors personEntriesCTE/buildRelationshipsSQL — an entry listing several
+// mirrors personEntriesCTE and the relationship index — an entry listing several
 // aliases of one person collapses to a single (entry, canonical) row, so the
 // entry is never double-counted (entry_key is projected only to carry
 // per-entry uniqueness through that DISTINCT).
-func exploreGroupExpressions(dimension, clustersGlob string) (groupExpressions, error) {
+func exploreGroupExpressions(dimension, activityGlob, peopleGlob string) (groupExpressions, error) {
 	simple := func(key string) groupExpressions {
 		return groupExpressions{key: key, label: key, groupBy: key, source: "logical_entries"}
 	}
@@ -172,21 +214,34 @@ func exploreGroupExpressions(dimension, clustersGlob string) (groupExpressions, 
 			groupBy: "CAST(source_id AS VARCHAR)", source: "logical_entries",
 		}, nil
 	case "participant":
+		// Direct edges only for message entries, matching the aggregated
+		// participant_ids column this replaces (message-level participants;
+		// conversation rosters applied to chat entries via the classified
+		// branch inside sqlActivityEntryEdges).
 		return groupExpressions{
-			key: "CAST(person_id AS VARCHAR)", label: sqlCanonicalPersonGroupLabelExpr(), groupBy: "person_id",
+			key: "CAST(person_id AS VARCHAR)", label: sqlIndexedPersonGroupLabelExpr(peopleGlob), groupBy: "person_id",
+			noLists: true,
 			cte: `
-), ` + sqlClustersCanonCTE(clustersGlob) + `, participant_entries AS (
-	SELECT DISTINCT le.entry_key, cn.canonical_id AS person_id, le.occurred_at, le.estimated_bytes
-	FROM logical_entries le
-	CROSS JOIN UNNEST(le.participant_ids) AS unnested(participant_id)
-	JOIN canon cn ON cn.participant_id = unnested.participant_id`,
+), participant_entries AS (` +
+				sqlActivityEntryEdges(activityGlob,
+					"a.canonical_id AS person_id, le.occurred_at, le.estimated_bytes",
+					"a.is_direct", "(a.is_direct OR a.is_conversation_member)"),
 			source: "participant_entries",
 		}, nil
 	case "domain":
-		spec := simple("group_value")
-		spec.fromSuffix = ", UNNEST(participant_domains) AS grouped(group_value)"
-		spec.whereSuffix = " WHERE group_value <> ''"
-		return spec, nil
+		// All edges for message entries: the aggregated participant_domains
+		// column this replaces merged conversation roster domains into
+		// message entries too.
+		return groupExpressions{
+			key: "group_value", label: "group_value", groupBy: "group_value",
+			noLists: true,
+			cte: `
+), domain_entries AS (` +
+				sqlActivityEntryEdges(activityGlob,
+					"a.participant_domain AS group_value, le.occurred_at, le.estimated_bytes",
+					"a.participant_domain <> ''", "a.participant_domain <> ''"),
+			source: "domain_entries",
+		}, nil
 	case messageTypeDimension:
 		return simple(sqlMessageTypeGroupExpr()), nil
 	case "kind":
@@ -292,7 +347,7 @@ func exploreGroupOrder(sort SortSpec) (string, error) {
 	}
 	var column string
 	switch sort.Field {
-	case "key":
+	case sortFieldKey:
 		column = "group_key"
 	case sortFieldCount:
 		column = "group_count"

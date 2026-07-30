@@ -263,6 +263,36 @@ func TestGroupFilesDeduplicatesParticipantAndDomainMembershipPerFile(t *testing.
 	assertions.Equal(int64(125), domains.Rows[0].EstimatedBytes)
 }
 
+// TestGroupFilesLabelsRosterOnlyParticipants pins label completeness for a
+// participant whose only archive activity is conversation-roster membership
+// on a non-chat message: files still attribute to them (matching the legacy
+// direct-plus-roster membership), but the relationship_people dataset has no
+// row for them — the label must come from the base participant record, not
+// the "Unknown person #" fallback.
+func TestGroupFilesLabelsRosterOnlyParticipants(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	b := NewTestDataBuilder(t)
+	source := b.AddSource("archive@example.com")
+	alice := b.AddParticipant("alice@example.com", "example.com", "Alice Example")
+	carol := b.AddParticipant("carol@example.com", "example.com", "Carol Example")
+	message := b.AddMessage(MessageOpt{SourceID: source, ConversationID: 88, SenderID: &alice, Subject: "Roster"})
+	b.AddFrom(message, alice, "Alice Example")
+	b.AddConversationParticipant(88, alice)
+	b.AddConversationParticipant(88, carol)
+	b.AddAttachmentWithMIME(401, message, 55, "roster.pdf", "application/pdf")
+
+	result, err := b.BuildEngine().GroupFiles(context.Background(), FileGroupRequest{
+		Dimension: "participant", Sort: SortSpec{Field: "key", Direction: "asc"}, Page: PageSpec{Limit: 10},
+	})
+	requirements.NoError(err)
+	requirements.Len(result.Rows, 2)
+	assertions.Equal("Alice Example", result.Rows[0].Label)
+	assertions.Equal("Carol Example", result.Rows[1].Label,
+		"a roster-only participant must keep their real name")
+	assertions.Equal(int64(1), result.Rows[1].Count)
+}
+
 // linkedParticipantFilesFixture builds an attachment archive where alice and
 // her work alias are one linked identity cluster (canonical = alice, the
 // smallest member ID): one file's message lists BOTH aliases, one file's

@@ -30,6 +30,16 @@ type Options struct {
 	Dir string
 	// Messages is the number of messages to generate in this run.
 	Messages int64
+	// Participants overrides the adaptive participant-pool size. Zero keeps
+	// the existing generator default.
+	Participants int64
+	// ParticipantEdges selects the set-wise relationship-scale generator and
+	// fixes the exact union cardinality of one sender edge per message plus
+	// message_recipients rows. Zero keeps the existing per-message generator.
+	ParticipantEdges int64
+	// GroupChatMembers controls conversation-membership fan-out in set-wise
+	// relationship fixtures. Zero uses two members.
+	GroupChatMembers int64
 	// AttachmentBytes is the target total size of attachment content files
 	// generated in this run. The realized total lands near it, not exactly
 	// on it: sizes are drawn from a distribution and generation stops
@@ -124,6 +134,9 @@ func Generate(ctx context.Context, opts Options) (*Summary, error) {
 	if opts.AttachmentBytes < 0 {
 		return nil, errors.New("fakevault: attachment byte budget must not be negative")
 	}
+	if err := validateRelationshipScaleOptions(opts); err != nil {
+		return nil, err
+	}
 	dbPath := filepath.Join(opts.Dir, dbFileName)
 	if err := checkTargetState(dbPath, opts.Append); err != nil {
 		return nil, err
@@ -150,7 +163,11 @@ func Generate(ctx context.Context, opts Options) (*Summary, error) {
 	}
 	g.total = g.start + opts.Messages
 	g.convCount = max(g.total/40, 1)
-	g.partCount = min(max(g.total/500, 50), 5000)
+	if opts.Participants > 0 {
+		g.partCount = opts.Participants
+	} else {
+		g.partCount = min(max(g.total/500, 50), 5000)
+	}
 	g.attRate = float64(opts.AttachmentBytes) /
 		(meanAttachmentBytes * float64(opts.Messages))
 
@@ -164,6 +181,43 @@ func Generate(ctx context.Context, opts Options) (*Summary, error) {
 		return nil, err
 	}
 	return g.summarize(ctx)
+}
+
+func validateRelationshipScaleOptions(opts Options) error {
+	if opts.Participants < 0 {
+		return errors.New("fakevault: participant count must not be negative")
+	}
+	if opts.ParticipantEdges < 0 {
+		return errors.New("fakevault: participant edge count must not be negative")
+	}
+	if opts.GroupChatMembers < 0 {
+		return errors.New("fakevault: group chat member count must not be negative")
+	}
+	if opts.ParticipantEdges == 0 {
+		return nil
+	}
+	if opts.Append {
+		return errors.New("fakevault: set-wise relationship scale mode does not support append")
+	}
+	if opts.Participants < 1 {
+		return errors.New("fakevault: participant count must be positive when participant edges are set")
+	}
+	groupChatMembers := max(opts.GroupChatMembers, 2)
+	if groupChatMembers > opts.Participants {
+		return errors.New("fakevault: group chat member count exceeds participant count")
+	}
+	if opts.ParticipantEdges < opts.Messages {
+		return errors.New("fakevault: participant edge count must be at least the message count")
+	}
+	recipientEdges := opts.ParticipantEdges - opts.Messages
+	if recipientEdges > 0 && opts.Participants < 2 {
+		return errors.New("fakevault: at least two participants are required for recipient edges")
+	}
+	if opts.Messages > 0 &&
+		recipientEdges > opts.Messages*(opts.Participants-1) {
+		return errors.New("fakevault: participant edge count exceeds duplicate-free capacity")
+	}
+	return nil
 }
 
 // checkTargetState enforces the create-vs-append contract before anything
@@ -248,6 +302,9 @@ func (g *generator) seedDimensions(ctx context.Context) error {
 }
 
 func (g *generator) seedParticipants(ctx context.Context, tx *sql.Tx) error {
+	if g.opts.ParticipantEdges > 0 {
+		return g.seedParticipantsSetWise(ctx, tx)
+	}
 	insPart, err := tx.PrepareContext(ctx,
 		`INSERT OR IGNORE INTO participants (id, email_address, display_name, domain)
 		 VALUES (?, ?, ?, ?)`)
@@ -276,8 +333,64 @@ func (g *generator) seedParticipants(ctx context.Context, tx *sql.Tx) error {
 	return nil
 }
 
+func (g *generator) seedParticipantsSetWise(ctx context.Context, tx *sql.Tx) error {
+	if _, err := tx.ExecContext(ctx, `
+		WITH RECURSIVE participant_seq(i) AS (
+			SELECT 0
+			UNION ALL
+			SELECT i + 1 FROM participant_seq WHERE i + 1 < ?
+		)
+		INSERT INTO participants (id, email_address, display_name, domain)
+		SELECT i + 1,
+		       printf('person%d@domain%d.example', i, i % 100),
+		       printf('Synthetic Person %d', i),
+		       printf('domain%d.example', i % 100)
+		FROM participant_seq
+	`, g.partCount); err != nil {
+		return fmt.Errorf("fakevault: inserting set-wise participants: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO participant_identifiers (
+			participant_id, identifier_type, identifier_value, display_value, is_primary
+		)
+		SELECT id, 'email', email_address, email_address, TRUE
+		FROM participants
+	`); err != nil {
+		return fmt.Errorf("fakevault: inserting set-wise participant identifiers: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `
+		INSERT OR IGNORE INTO account_identities (source_id, address)
+		SELECT 1, email_address FROM participants WHERE id = 1
+		UNION ALL
+		SELECT 2, email_address FROM participants WHERE id = 2
+	`); err != nil {
+		return fmt.Errorf("fakevault: inserting set-wise owner identities: %w", err)
+	}
+	if g.partCount >= 4 {
+		if _, err := tx.ExecContext(ctx, `
+			WITH RECURSIVE link_seq(i) AS (
+				SELECT 0
+				UNION ALL
+				SELECT i + 1
+				FROM link_seq
+				WHERE 3 + ((i + 1) * 1000) + 1 <= ?
+			)
+			INSERT INTO participant_links (participant_a, participant_b)
+			SELECT 3 + (i * 1000), 4 + (i * 1000)
+			FROM link_seq
+			WHERE 4 + (i * 1000) <= ?
+		`, g.partCount, g.partCount); err != nil {
+			return fmt.Errorf("fakevault: inserting set-wise participant links: %w", err)
+		}
+	}
+	return nil
+}
+
 // generateMessages runs the batched message loop for this run's index range.
 func (g *generator) generateMessages(ctx context.Context) error {
+	if g.opts.ParticipantEdges > 0 {
+		return g.generateRelationshipScaleSetWise(ctx)
+	}
 	for done := int64(0); done < g.opts.Messages; {
 		n := min(int64(batchSize), g.opts.Messages-done)
 		if err := ctx.Err(); err != nil {
@@ -290,6 +403,133 @@ func (g *generator) generateMessages(ctx context.Context) error {
 		if g.opts.Progress != nil {
 			g.opts.Progress(done, g.opts.Messages)
 		}
+	}
+	return nil
+}
+
+func (g *generator) generateRelationshipScaleSetWise(ctx context.Context) error {
+	groupChatMembers := max(g.opts.GroupChatMembers, 2)
+	if _, err := g.db.ExecContext(ctx, `
+		WITH RECURSIVE conversation_seq(i) AS (
+			SELECT 1
+			UNION ALL
+			SELECT i + 1 FROM conversation_seq WHERE i + 1 <= ?
+		)
+		INSERT INTO conversations (
+			id, source_id, source_conversation_id, conversation_type, title,
+			message_count, participant_count
+		)
+		SELECT i,
+		       1 + (i % 3),
+		       printf('scale-conversation-%d', i),
+		       CASE
+		           WHEN i % 3 = 0 THEN 'group_chat'
+		           ELSE 'email_thread'
+		       END,
+		       printf('Synthetic conversation %d', i),
+		       0,
+		       CASE WHEN i % 3 = 0 THEN ? ELSE 2 END
+		FROM conversation_seq
+	`, g.convCount, groupChatMembers); err != nil {
+		return fmt.Errorf("fakevault: inserting set-wise conversations: %w", err)
+	}
+	if _, err := g.db.ExecContext(ctx, `
+		WITH RECURSIVE conversation_seq(i) AS (
+			SELECT 1
+			UNION ALL
+			SELECT i + 1 FROM conversation_seq WHERE i + 1 <= ?
+		), member_slot(slot) AS (
+			SELECT 0
+			UNION ALL
+			SELECT slot + 1 FROM member_slot WHERE slot + 1 < ?
+		)
+		INSERT INTO conversation_participants (conversation_id, participant_id)
+		SELECT i, 1 + ((i + slot) % ?)
+		FROM conversation_seq
+		CROSS JOIN member_slot
+		WHERE slot < CASE WHEN i % 3 = 0 THEN ? ELSE 2 END
+	`, g.convCount, groupChatMembers, g.partCount, groupChatMembers); err != nil {
+		return fmt.Errorf("fakevault: inserting set-wise conversation members: %w", err)
+	}
+	if _, err := g.db.ExecContext(ctx, `
+		WITH RECURSIVE message_seq(i) AS (
+			SELECT 0
+			UNION ALL
+			SELECT i + 1 FROM message_seq WHERE i + 1 < ?
+		), shaped AS (
+			SELECT i,
+			       i + 1 AS message_id,
+			       1 + (i % ?) AS conversation_id,
+			       1 + ((1 + (i % ?)) % 3) AS source_id,
+			       1 + (i % ?) AS sender_id,
+			       CASE
+			           WHEN i % 100 = 0 THEN 'calendar_event'
+			           WHEN i % 100 = 1 THEN 'meeting_note'
+			           WHEN i % 3 = 2 THEN 'whatsapp'
+			           ELSE 'email'
+			       END AS message_type,
+			       CASE
+			           WHEN i % 10000 = 0
+			               THEN datetime('2035-01-01', printf('+%d seconds', i))
+			           ELSE datetime('2020-01-01', printf('+%d seconds', i * 120))
+			       END AS occurred_at
+			FROM message_seq
+		)
+		INSERT INTO messages (
+			id, conversation_id, source_id, source_message_id,
+			rfc822_message_id, message_type, sent_at, received_at,
+			sender_id, is_from_me, subject, snippet, size_estimate,
+			has_attachments, attachment_count, archived_at
+		)
+		SELECT message_id,
+		       conversation_id,
+		       source_id,
+		       printf('scale-message-%d', i),
+		       printf('<scale-message-%d@fake.local>', i),
+		       message_type,
+		       occurred_at,
+		       occurred_at,
+		       sender_id,
+		       (i % 7 = 0),
+		       CASE WHEN message_type = 'email'
+		            THEN printf('Synthetic subject %d', i) END,
+		       printf('Synthetic relationship benchmark message %d', i),
+		       512 + (i % 4096),
+		       FALSE,
+		       0,
+		       occurred_at
+		FROM shaped
+	`, g.opts.Messages, g.convCount, g.convCount, g.partCount); err != nil {
+		return fmt.Errorf("fakevault: inserting set-wise messages: %w", err)
+	}
+
+	recipientEdges := g.opts.ParticipantEdges - g.opts.Messages
+	if recipientEdges > 0 {
+		if _, err := g.db.ExecContext(ctx, `
+			WITH RECURSIVE edge_seq(i) AS (
+				SELECT 0
+				UNION ALL
+				SELECT i + 1 FROM edge_seq WHERE i + 1 < ?
+			), shaped AS (
+				SELECT i,
+				       1 + (i % ?) AS message_id,
+				       i / ? AS recipient_slot
+				FROM edge_seq
+			)
+			INSERT INTO message_recipients (
+				message_id, participant_id, recipient_type
+			)
+			SELECT message_id,
+			       1 + (((message_id - 1) % ? + recipient_slot + 1) % ?),
+			       CASE WHEN recipient_slot = 0 THEN 'to' ELSE 'cc' END
+			FROM shaped
+		`, recipientEdges, g.opts.Messages, g.opts.Messages,
+			g.partCount, g.partCount); err != nil {
+			return fmt.Errorf("fakevault: inserting set-wise recipient edges: %w", err)
+		}
+	}
+	if g.opts.Progress != nil {
+		g.opts.Progress(g.opts.Messages, g.opts.Messages)
 	}
 	return nil
 }
@@ -499,6 +739,12 @@ func (g *generator) convMember(convID int64, j int) int64 {
 // finalize backfills the denormalized conversation stats and checkpoints
 // the WAL so the finished vault is a compact, self-contained database file.
 func (g *generator) finalize(ctx context.Context) error {
+	if g.opts.ParticipantEdges > 0 {
+		if _, err := g.db.ExecContext(ctx, "PRAGMA wal_checkpoint(TRUNCATE)"); err != nil {
+			return fmt.Errorf("fakevault: checkpointing WAL: %w", err)
+		}
+		return nil
+	}
 	if _, err := g.db.ExecContext(ctx, `UPDATE conversations SET
 		message_count = (SELECT COUNT(*) FROM messages m WHERE m.conversation_id = conversations.id),
 		last_message_at = (SELECT MAX(m.sent_at) FROM messages m WHERE m.conversation_id = conversations.id),

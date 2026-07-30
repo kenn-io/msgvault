@@ -2,10 +2,15 @@ package query
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
+
+	"go.kenn.io/msgvault/internal/identityindex"
 )
 
 const maxPeopleSearchLimit = 500
@@ -118,7 +123,7 @@ type DomainSearchResponse struct {
 }
 
 func (e *DuckDBEngine) SearchPeople(ctx context.Context, request PersonSearchRequest) (*PersonSearchResponse, error) {
-	return e.searchPeople(ctx, request, nil, nil)
+	return e.searchPeople(ctx, request)
 }
 
 // GetPerson returns one participant's analytical summary. clusterMemberIDs,
@@ -135,11 +140,123 @@ func (e *DuckDBEngine) GetPerson(ctx context.Context, id int64, analyticalContex
 	if id < 1 {
 		return nil, fmt.Errorf("%w: person ID must be positive", ErrInvalidExploreRequest)
 	}
-	result, err := e.searchPeople(ctx, PersonSearchRequest{Explore: ExploreRequest{Context: analyticalContext}, Page: PageSpec{Limit: 1}}, &id, clusterMemberIDs)
+	// The unfiltered detail lookup (every person click) reads the
+	// relationship_people rollup directly — the same precomputed row the
+	// people list serves — instead of assembling the whole-archive entry
+	// population. The dataset row must describe the SAME cluster the caller
+	// resolved from the live store: clusterMemberIDs can be newer than the
+	// committed cache (an identity linked or unlinked since the last
+	// build), and the legacy aggregation honors the caller's membership, so
+	// a membership mismatch — like a request by a non-canonical alias ID or
+	// a person with no activity — falls through to it. The lookup is not
+	// gated on a query slot: it is a point read over the compact rollup, so
+	// it can answer while the timeline occupies the slot.
+	if identityRequestIsUnfiltered(ExploreRequest{Context: analyticalContext}) {
+		row, found, err := e.indexedPersonSummary(ctx, id, clusterMemberIDs)
+		if err != nil {
+			return nil, err
+		}
+		if found {
+			return row, nil
+		}
+	}
+	result, err := e.searchPeopleLegacy(ctx, PersonSearchRequest{Explore: ExploreRequest{Context: analyticalContext}, Page: PageSpec{Limit: 1}}, &id, clusterMemberIDs)
 	if err != nil || len(result.Rows) == 0 {
 		return nil, err
 	}
 	return &result.Rows[0], nil
+}
+
+// indexedPersonSummary returns one canonical identity's precomputed summary
+// row from the relationship_people dataset. found is false when the dataset
+// has no row for id or its baked cluster membership differs from the
+// caller's (memberIDs nil/empty means the requested ID alone). The shared
+// cache-read lock is held across the marker read and both dataset queries so
+// a concurrent cache publication cannot swap files mid-lookup; the lock is
+// shared, so this stays a point read that never waits on the query slot.
+func (e *DuckDBEngine) indexedPersonSummary(ctx context.Context, id int64, memberIDs []int64) (row *PersonSummary, found bool, err error) {
+	if e.analyticsDir == "" {
+		return nil, false, &CacheUnavailableError{Readiness: CacheAbsent}
+	}
+	release, err := e.acquireCacheRead(ctx)
+	if err != nil {
+		return nil, false, err
+	}
+	defer release()
+	state, err := ReadCacheSyncState(e.analyticsDir)
+	if err != nil {
+		return nil, false, fmt.Errorf("read committed cache state: %w", err)
+	}
+	directory := quoteIdentitySQLPath(e.parquetPath(identityindex.DatasetPeople))
+	matches, err := e.indexedPersonClusterMatches(ctx, directory, id, memberIDs)
+	if err != nil || !matches {
+		return nil, false, err
+	}
+	candidates := `
+		SELECT d.*, d.canonical_id AS person_id
+		FROM read_parquet('` + directory + `') d
+		WHERE d.canonical_id = ?
+	`
+	queryText := e.unfilteredPeopleSQL(candidates, "person_id ASC")
+	rows, err := e.db.QueryContext(ctx, queryText, id, 1, 0)
+	if err != nil {
+		return nil, false, fmt.Errorf("read indexed person summary: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	if !rows.Next() {
+		if err := rows.Err(); err != nil {
+			return nil, false, fmt.Errorf("iterate indexed person summary: %w", err)
+		}
+		return nil, false, nil
+	}
+	var summary PersonSummary
+	var identifiersJSON, sourceCountsJSON string
+	var totalCount int64
+	if err := rows.Scan(
+		&summary.ID, &summary.DisplayLabel, &summary.DisplayName, &summary.PartialLabel,
+		&identifiersJSON, &summary.ActivityCount, &summary.FileCount,
+		&sourceCountsJSON, &summary.FirstAt, &summary.LastAt, &totalCount,
+	); err != nil {
+		return nil, false, fmt.Errorf("scan indexed person summary: %w", err)
+	}
+	if err := json.Unmarshal([]byte(identifiersJSON), &summary.Identifiers); err != nil {
+		return nil, false, fmt.Errorf("decode indexed person identifiers: %w", err)
+	}
+	if err := json.Unmarshal([]byte(sourceCountsJSON), &summary.SourceCounts); err != nil {
+		return nil, false, fmt.Errorf("decode indexed person source counts: %w", err)
+	}
+	summary.CacheRevision = state.Revision()
+	return &summary, true, nil
+}
+
+// indexedPersonClusterMatches reports whether the relationship_people row for
+// id exists and bakes exactly the caller-resolved cluster membership.
+func (e *DuckDBEngine) indexedPersonClusterMatches(
+	ctx context.Context, directory string, id int64, memberIDs []int64,
+) (bool, error) {
+	var membersJSON string
+	err := e.db.QueryRowContext(ctx, `
+		SELECT CAST(to_json(member_ids) AS VARCHAR)
+		FROM read_parquet('`+directory+`')
+		WHERE canonical_id = ?
+	`, id).Scan(&membersJSON)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		return false, nil
+	case err != nil:
+		return false, fmt.Errorf("read indexed person members: %w", err)
+	}
+	var baked []int64
+	if err := json.Unmarshal([]byte(membersJSON), &baked); err != nil {
+		return false, fmt.Errorf("decode indexed person members: %w", err)
+	}
+	resolved := memberIDs
+	if len(resolved) == 0 {
+		resolved = []int64{id}
+	}
+	resolved = slices.Clone(resolved)
+	slices.Sort(resolved)
+	return slices.Equal(baked, slices.Compact(resolved)), nil
 }
 
 // GetPersonSummary returns contextual metrics for one durable identity. Unlike
@@ -153,10 +270,10 @@ func (e *DuckDBEngine) GetPersonSummary(ctx context.Context, id int64, explore E
 	if id < 1 {
 		return nil, fmt.Errorf("%w: person ID must be positive", ErrInvalidExploreRequest)
 	}
-	return e.searchPeople(ctx, PersonSearchRequest{Explore: explore, Page: PageSpec{Limit: 1}}, &id, clusterMemberIDs)
+	return e.searchPeopleLegacy(ctx, PersonSearchRequest{Explore: explore, Page: PageSpec{Limit: 1}}, &id, clusterMemberIDs)
 }
 
-func (e *DuckDBEngine) searchPeople(
+func (e *DuckDBEngine) searchPeopleLegacy(
 	ctx context.Context, request PersonSearchRequest, exactID *int64, clusterMemberIDs []int64,
 ) (*PersonSearchResponse, error) {
 	if e.analyticsDir == "" {
@@ -191,7 +308,8 @@ func (e *DuckDBEngine) searchPeople(
 		return nil, err
 	}
 	conditions, args := buildExploreConditions(request.Explore)
-	entriesCTE, entryArgs := personEntriesCTE(exactID, clusterMemberIDs, conditions, e.parquetPath(datasetParticipantClusters))
+	entriesCTE, entryArgs := personEntriesCTE(exactID, clusterMemberIDs, conditions,
+		e.parquetPath(datasetParticipantClusters), e.identityActivityPath())
 	args = append(args, entryArgs...)
 	// bestNameExpr is the shared cluster label policy (see person_label.go).
 	// Listing/search rows are canonical identities, so the label evaluates
@@ -264,7 +382,7 @@ func (e *DuckDBEngine) searchPeople(
 		limit = defaultExploreLimit
 	}
 	args = append(args, limit, request.Page.Offset)
-	queryText := buildExploreLogicalSQL(conditions) + entriesCTE + `
+	queryText := buildExploreLogicalSQLNoLists(conditions) + entriesCTE + `
 ), person_population AS (
 	SELECT p.id AS person_id, COALESCE(p.display_name, '') AS display_name,
 		COALESCE(p.email_address, '') AS email_address, COALESCE(p.phone_number, '') AS phone_number,
@@ -324,8 +442,8 @@ FROM counted ORDER BY ` + order + ` LIMIT ? OFFSET ?`
 }
 
 // personEntriesCTE returns the person_entries CTE (appended directly after
-// buildExploreLogicalSQL, so it opens by closing the logical_entries CTE)
-// plus the parameter values it binds. person_entries always projects exactly
+// buildExploreLogicalSQLNoLists, so it opens by closing the logical_entries
+// CTE) plus the parameter values it binds. person_entries always projects exactly
 // the columns the aggregates in searchPeople consume: it is referenced more
 // than once, so DuckDB materializes it, and carrying logical_entries.* would
 // materialize every wide list/text column per row.
@@ -350,22 +468,22 @@ FROM counted ORDER BY ` + order + ` LIMIT ? OFFSET ?`
 //     messages plus the conversation's own participant rows. conversation_id
 //     is globally unique and NOT NULL, so matching it alone reproduces the
 //     (source_id, conversation_id) grouping exactly.
-//  2. Exact-ID lookup with conditions: logical entries containing any member
-//     in participant_ids, filtered inside the analytical context. The
-//     semi-join shape cannot be used because a conversation entry's
-//     participant list must only reflect messages inside the filtered
-//     context.
-//  3. Listing/search: the full fan-out across every participant, resolved to
-//     canonical identities through the committed participant_clusters
-//     dataset (clustersGlob) so a linked identity aggregates as ONE row
-//     keyed by its canonical ID — matching the ranked relationships list
-//     instead of splitting cluster members into partial rows. The DISTINCT
-//     mirrors the relationships ranking: an entry listing several raw
-//     members of one cluster (e.g. cc'ing a contact's work and personal
-//     addresses) collapses to a single (entry, canonical) row, so
-//     aggregation never double-counts the entry. entry_key is projected
-//     only to carry per-entry uniqueness through that DISTINCT.
-func personEntriesCTE(exactID *int64, memberIDs []int64, conditions, clustersGlob string) (string, []any) {
+//  2. Exact-ID lookup with conditions: logical entries whose
+//     relationship_activity edges carry the cluster's canonical ID, filtered
+//     inside the analytical context. The semi-join shape cannot be used
+//     because a conversation entry's membership must only reflect messages
+//     inside the filtered context — which the classified branch of
+//     sqlActivityEntryEdges preserves.
+//  3. Listing/search: direct relationship_activity edges per entry, each
+//     baking the alias-merged canonical ID, so a linked identity aggregates
+//     as ONE row keyed by its canonical ID — matching the ranked
+//     relationships list instead of splitting cluster members into partial
+//     rows. The UNION inside sqlActivityEntryEdges dedups to one
+//     (entry, canonical) row, so an entry listing several raw members of one
+//     cluster (e.g. cc'ing a contact's work and personal addresses) is never
+//     double-counted. The clusters/canon CTEs remain only for the caller's
+//     label, search-match, and identifier subqueries.
+func personEntriesCTE(exactID *int64, memberIDs []int64, conditions, clustersGlob, activityGlob string) (string, []any) {
 	if exactID == nil {
 		return fmt.Sprintf(`
 ), clusters AS (
@@ -373,28 +491,42 @@ func personEntriesCTE(exactID *int64, memberIDs []int64, conditions, clustersGlo
 ), canon AS (
 	SELECT p.id AS participant_id, COALESCE(c.canonical_id, p.id) AS canonical_id
 	FROM participants p LEFT JOIN clusters c ON c.participant_id = p.id
-), person_entries AS (
-	SELECT DISTINCT le.entry_key, cn.canonical_id AS person_id, le.occurred_at, le.attachment_count, le.source_type
-	FROM logical_entries le
-	CROSS JOIN UNNEST(le.participant_ids) AS grouped(person_id)
-	JOIN canon cn ON cn.participant_id = grouped.person_id`, clustersGlob), nil
+), person_entries AS (`, clustersGlob) +
+			sqlActivityEntryEdges(activityGlob,
+				"a.canonical_id AS person_id, le.occurred_at, le.attachment_count, le.source_type",
+				"a.is_direct", "(a.is_direct OR a.is_conversation_member)"), nil
 	}
 	if len(memberIDs) == 0 {
 		memberIDs = []int64{*exactID}
 	}
 	if conditions != "true" {
-		contains := make([]string, len(memberIDs))
-		args := make([]any, 0, len(memberIDs)+1)
+		// Membership resolves through relationship_activity's baked
+		// canonical_id rather than list_contains over aggregated member
+		// lists; the classified branch inside sqlActivityEntryEdges keeps a
+		// chat entry's membership scoped to the filtered context exactly as
+		// the aggregated lists did. The IN over memberIDs (never empty here)
+		// matches the cluster whichever alias the caller requested: every
+		// edge bakes the cluster's canonical ID, which is itself one of the
+		// resolved members. memberList binds twice — once per UNION branch.
+		memberList := "(" + strings.TrimSuffix(strings.Repeat("?,", len(memberIDs)), ",") + ")"
+		args := make([]any, 0, len(memberIDs)*2+1)
 		args = append(args, *exactID)
-		for i, memberID := range memberIDs {
-			contains[i] = "list_contains(participant_ids, ?)"
-			args = append(args, memberID)
+		for range 2 {
+			for _, memberID := range memberIDs {
+				args = append(args, memberID)
+			}
 		}
 		return `
 ), person_entries AS (
 	SELECT ?::BIGINT AS person_id, occurred_at, attachment_count, source_type
 	FROM logical_entries
-	WHERE (` + strings.Join(contains, " OR ") + `)`, args
+	WHERE entry_key IN (
+		SELECT edge.entry_key FROM (` +
+			sqlActivityEntryEdges(activityGlob, "a.canonical_id AS person_id",
+				"a.is_direct AND a.canonical_id IN "+memberList,
+				"(a.is_direct OR a.is_conversation_member) AND a.canonical_id IN "+memberList) + `
+		) AS edge
+	)`, args
 	}
 	memberList := "(" + strings.TrimSuffix(strings.Repeat("?,", len(memberIDs)), ",") + ")"
 	args := make([]any, 0, len(memberIDs)*3+1)
@@ -428,7 +560,7 @@ func personEntriesCTE(exactID *int64, memberIDs []int64, conditions, clustersGlo
 }
 
 func (e *DuckDBEngine) SearchDomains(ctx context.Context, request DomainSearchRequest) (*DomainSearchResponse, error) {
-	return e.searchDomains(ctx, request, "")
+	return e.searchDomains(ctx, request)
 }
 
 func (e *DuckDBEngine) GetDomain(ctx context.Context, domain string, analyticalContext Context) (*DomainSummary, error) {
@@ -436,7 +568,7 @@ func (e *DuckDBEngine) GetDomain(ctx context.Context, domain string, analyticalC
 	if domain == "" {
 		return nil, fmt.Errorf("%w: domain is required", ErrInvalidExploreRequest)
 	}
-	result, err := e.searchDomains(ctx, DomainSearchRequest{Explore: ExploreRequest{Context: analyticalContext}, Page: PageSpec{Limit: 1}}, domain)
+	result, err := e.searchDomainsLegacy(ctx, DomainSearchRequest{Explore: ExploreRequest{Context: analyticalContext}, Page: PageSpec{Limit: 1}}, domain)
 	if err != nil || len(result.Rows) == 0 {
 		return nil, err
 	}
@@ -449,10 +581,10 @@ func (e *DuckDBEngine) GetDomainSummary(ctx context.Context, domain string, expl
 	if domain == "" {
 		return nil, fmt.Errorf("%w: domain is required", ErrInvalidExploreRequest)
 	}
-	return e.searchDomains(ctx, DomainSearchRequest{Explore: explore, Page: PageSpec{Limit: 1}}, domain)
+	return e.searchDomainsLegacy(ctx, DomainSearchRequest{Explore: explore, Page: PageSpec{Limit: 1}}, domain)
 }
 
-func (e *DuckDBEngine) searchDomains(ctx context.Context, request DomainSearchRequest, exactDomain string) (*DomainSearchResponse, error) {
+func (e *DuckDBEngine) searchDomainsLegacy(ctx context.Context, request DomainSearchRequest, exactDomain string) (*DomainSearchResponse, error) {
 	if e.analyticsDir == "" {
 		return nil, &CacheUnavailableError{Readiness: CacheAbsent}
 	}
@@ -499,15 +631,27 @@ func (e *DuckDBEngine) searchDomains(ctx context.Context, request DomainSearchRe
 	}
 	args = append(args, limit, request.Page.Offset)
 	// person_count counts identities with at least one address on the domain:
-	// participants are filtered to the domain by their OWN address first, then
-	// resolved to canonical cluster IDs (canon, sqlClustersCanonCTE) so linked
-	// aliases on the same domain count once — matching the cluster-aware People
-	// and Relationships views. Canonicalizing after the domain filter keeps a
-	// cluster whose canonical member lives on another domain counted here.
-	queryText := buildExploreLogicalSQL(conditions) + `
-), ` + sqlClustersCanonCTE(e.parquetPath(datasetParticipantClusters)) + `, domain_entries AS (
-	SELECT lower(grouped.domain) AS domain, logical_entries.*
-	FROM logical_entries CROSS JOIN UNNEST(participant_domains) AS grouped(domain)
+	// each relationship_activity edge pairs the participant's OWN address
+	// domain with its baked cluster canonical_id, so counting distinct
+	// canonical IDs per domain matches the cluster-aware People and
+	// Relationships views — linked aliases on the same domain count once, and
+	// a cluster whose canonical member lives on another domain still counts.
+	// The dedup only counts direct edges for non-chat entries (chat entries
+	// keep conversation-roster edges), mirroring the relationship_domains
+	// person-domain pairing so opening a domain cannot change its person
+	// count; the domain activity rows themselves keep roster domains exactly
+	// as the index's domain entries do.
+	queryText := buildExploreLogicalSQLNoLists(conditions) + `
+), domain_edges AS (` +
+		sqlActivityEntryEdges(e.identityActivityPath(),
+			"a.participant_domain AS domain, a.canonical_id AS person_id, "+
+				"a.is_direct AS is_direct, "+
+				"(le.entry_kind = 'conversation') AS is_chat_entry, "+
+				"le.occurred_at, le.attachment_count, le.source_type",
+			"a.participant_domain <> ''", "a.participant_domain <> ''") + `
+), domain_entries AS (
+	SELECT DISTINCT entry_key, domain, occurred_at, attachment_count, source_type
+	FROM domain_edges
 ), domain_population AS (
 	SELECT domain, COUNT(*)::BIGINT AS activity_count,
 		COALESCE(SUM(attachment_count), 0)::BIGINT AS file_count,
@@ -519,10 +663,9 @@ func (e *DuckDBEngine) searchDomains(ctx context.Context, request DomainSearchRe
 	SELECT *, COUNT(*) OVER () AS total_count FROM filtered_domains
 )
 SELECT domain, activity_count,
-	(SELECT COUNT(DISTINCT cn.canonical_id)::BIGINT FROM (
-		SELECT UNNEST(participant_ids) AS person_id FROM domain_entries de WHERE de.domain = counted.domain
-	) people JOIN participants p ON p.id = people.person_id AND lower(COALESCE(p.domain, '')) = counted.domain
-	JOIN canon cn ON cn.participant_id = people.person_id) AS person_count,
+	(SELECT COUNT(DISTINCT de.person_id)::BIGINT
+		FROM domain_edges de WHERE de.domain = counted.domain
+		  AND (de.is_chat_entry OR de.is_direct)) AS person_count,
 	file_count,
 	COALESCE(CAST((SELECT to_json(list(struct_pack(source_type := source_type, count := source_count)
 		ORDER BY source_type)) FROM (SELECT source_type, COUNT(*)::BIGINT AS source_count

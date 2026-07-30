@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 
 	"github.com/gofrs/flock"
+	"go.kenn.io/kit/daemon"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/store"
 )
@@ -17,6 +19,7 @@ const daemonOwnerLockFile = "daemon.lock"
 type serveOwnership struct {
 	dataDir       string
 	shutdownToken string
+	record        daemon.RuntimeRecord
 	daemonLock    *daemonOwnerLock
 	lock          *writeOwnerLock
 }
@@ -43,7 +46,7 @@ func claimServeOwnership(
 			return nil, err
 		}
 	}
-	_, shutdownToken, err := writeDaemonRuntime(cfg.Data.DataDir, host, port, version, cfg.Server.APIKey)
+	record, shutdownToken, err := writeDaemonRuntime(cfg.Data.DataDir, host, port, version, cfg.Server.APIKey)
 	if err != nil {
 		_ = lock.Close()
 		_ = daemonLock.Close()
@@ -52,9 +55,36 @@ func claimServeOwnership(
 	return &serveOwnership{
 		dataDir:       cfg.Data.DataDir,
 		shutdownToken: shutdownToken,
+		record:        record,
 		daemonLock:    daemonLock,
 		lock:          lock,
 	}, nil
+}
+
+// SetStartupPhase publishes what the starting daemon is currently doing in
+// its runtime record so `msgvault daemon status` can report progress while
+// the HTTP server is not answering pings yet (for example during a long
+// analytics cache rebuild). An empty phase marks startup as finished.
+func (o *serveOwnership) SetStartupPhase(phase string) error {
+	if o == nil {
+		return nil
+	}
+	rec := o.record
+	metadata := maps.Clone(rec.Metadata)
+	if metadata == nil {
+		metadata = map[string]string{}
+	}
+	if phase == "" {
+		delete(metadata, runtimeStartupPhase)
+	} else {
+		metadata[runtimeStartupPhase] = phase
+	}
+	rec.Metadata = metadata
+	if _, err := daemonRuntimeStore(o.dataDir).Write(rec); err != nil {
+		return fmt.Errorf("update daemon startup phase: %w", err)
+	}
+	o.record = rec
+	return nil
 }
 
 func (o *serveOwnership) Close() error {

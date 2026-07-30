@@ -16,10 +16,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/gofrs/flock"
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/api"
-	"go.kenn.io/msgvault/internal/cacheops"
 	"go.kenn.io/msgvault/internal/circleback"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/deletion"
@@ -74,6 +72,28 @@ const daemonIdleTimeoutEnv = "MSGVAULT_DAEMON_IDLE_TIMEOUT"
 // not redo (or erase) its work.
 var buildCacheSubprocessForRun = func(ctx context.Context, fullRebuild bool) error {
 	return buildCacheSubprocess(ctx, fullRebuild, true)
+}
+
+var executeBuildCacheSubprocessMode = buildCacheSubprocessMode
+
+var runDerivedCacheSubprocess = func(ctx context.Context, analyticsDir string) error {
+	err := executeBuildCacheSubprocessMode(ctx, buildCacheModeDerived)
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, ErrDerivedRefreshRequiresFullBuild) ||
+		strings.Contains(err.Error(), ErrDerivedRefreshRequiresFullBuild.Error()) {
+		// Escalate only to repair an existing cache. A derived refresh must
+		// never create a cache that configuration (engine="sql",
+		// auto_build_cache=false, PostgreSQL) deliberately leaves absent;
+		// the caller reports the cache stale instead.
+		readiness, inspectErr := query.InspectCacheReadiness(analyticsDir)
+		if inspectErr != nil || readiness == query.CacheAbsent {
+			return err
+		}
+		return executeBuildCacheSubprocessMode(ctx, buildCacheModeFull)
+	}
+	return err
 }
 
 var (
@@ -154,9 +174,15 @@ func runServe(cmd *cobra.Command, args []string) error {
 			logger.Warn("release daemon ownership failed", "error", err)
 		}
 	}()
+	setStartupPhase := func(phase string) {
+		if err := ownership.SetStartupPhase(phase); err != nil {
+			logger.Warn("update daemon startup phase failed", "error", err)
+		}
+	}
 
 	// Open database
 	dbPath := cfg.DatabaseDSN()
+	setStartupPhase("opening archive database")
 	logger.Info("daemon startup step", "step", "open_archive_database", "database", daemonStartupDatabaseLabel(dbPath))
 	s, err := store.Open(dbPath)
 	if err != nil {
@@ -165,6 +191,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	defer func() { _ = s.Close() }()
 	logger.Info("daemon startup step complete", "step", "open_archive_database")
 
+	setStartupPhase("migrating archive schema")
 	logger.Info("daemon startup step", "step", "init_archive_schema")
 	if err := s.InitSchema(); err != nil {
 		return fmt.Errorf("init schema: %w", err)
@@ -203,6 +230,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		logger.Info("daemon startup step", "step", "skip_vector_backend", "enabled", false)
 	}
 
+	setStartupPhase("building analytics cache")
 	logger.Info("daemon startup step", "step", "init_analytics_engine")
 	engine, analyticsMode, err := openDaemonAnalyticsEngine(cmd.Context(), cfg, s)
 	if err != nil {
@@ -414,6 +442,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 
 	// Start API server in goroutine
 	apiAddr := apiListener.Addr().String()
+	setStartupPhase("")
 	logger.Info("daemon startup step", "step", "start_api_server", "bind", apiAddr)
 	serverErr := make(chan error, 1)
 	listenerReserved = false
@@ -717,6 +746,20 @@ func openDaemonDuckDBEngine(c *config.Config, s *store.Store) (*query.DuckDBEngi
 	if c == nil || s == nil {
 		return nil, errors.New("daemon DuckDB engine unavailable")
 	}
+	spillParent, err := query.PrepareDaemonSpillDir(c.HomeDir)
+	if err != nil {
+		return nil, err
+	}
+	// Each engine spills into its own subdirectory: the daemon opens both a
+	// long-lived engine and short-lived per-query engines (runDaemonSQLQuery),
+	// and OwnTempDirectory deletes the directory on Close — sharing one
+	// directory would let a temporary engine remove the live engine's spill
+	// files. The pid-owned parent is reaped by PrepareDaemonSpillDir once
+	// this process exits.
+	tempDirectory, err := os.MkdirTemp(spillParent, "engine-")
+	if err != nil {
+		return nil, fmt.Errorf("create engine spill directory: %w", err)
+	}
 	// DisableSQLiteScanner keeps DuckDB's bundled SQLite library from
 	// ATTACHing the live database for the daemon's lifetime, which can
 	// interfere with the daemon's own go-sqlite3 WAL/lock state. Detail
@@ -726,7 +769,11 @@ func openDaemonDuckDBEngine(c *config.Config, s *store.Store) (*query.DuckDBEngi
 		c.AnalyticsDir(),
 		c.DatabaseDSN(),
 		s.DB(),
-		query.DuckDBOptions{DisableSQLiteScanner: true},
+		query.DuckDBOptions{
+			DisableSQLiteScanner: true,
+			TempDirectory:        tempDirectory,
+			OwnTempDirectory:     true,
+		},
 	)
 }
 
@@ -769,8 +816,7 @@ type storeAPIAdapter struct {
 	store                 *store.Store
 	attachmentMaintenance *attachmentMaintenance
 	// analyticsDir is the daemon's Parquet analytics cache directory, used
-	// by RefreshIdentityDatasets to locate both the cache build lock and
-	// the identity dataset files it re-exports.
+	// to read the revision committed by the derived-refresh child.
 	analyticsDir string
 }
 
@@ -1502,26 +1548,18 @@ func (a *storeAPIAdapter) ClusterEdges(id int64) ([]store.LinkEdge, error) {
 	return a.store.ClusterEdges(id)
 }
 
-// RefreshIdentityDatasets re-exports the owner_participants and
-// participant_clusters Parquet datasets after an identity mutation (a
-// participant link/unlink or an account identity add/remove) commits.
-// cacheops.RefreshIdentityDatasets requires its caller to hold the
-// cross-process analytics cache build lock exclusively; this acquires it
-// non-blocking, so a build already in progress makes the refresh fail fast
-// rather than stalling the HTTP request. The API layer treats any error,
-// including lock contention, as cache_state "stale" — the identity mutation
-// itself already committed and is not affected.
+// RefreshIdentityDatasets rebuilds identity-derived Parquet in a short-lived,
+// resource-bounded child. The child owns the cache lock and its DuckDB
+// allocator exits with the process; the long-lived daemon does neither.
 func (a *storeAPIAdapter) RefreshIdentityDatasets(ctx context.Context) (int64, error) {
-	lock := flock.New(query.CacheBuildLockPath(a.analyticsDir))
-	locked, err := lock.TryLock()
+	if err := runDerivedCacheSubprocess(ctx, a.analyticsDir); err != nil {
+		return 0, err
+	}
+	state, err := query.ReadCacheSyncState(a.analyticsDir)
 	if err != nil {
-		return 0, fmt.Errorf("acquire analytics cache build lock for identity refresh: %w", err)
+		return 0, fmt.Errorf("read refreshed cache revision: %w", err)
 	}
-	if !locked {
-		return 0, errors.New("analytics cache build lock is held by another process")
-	}
-	defer func() { _ = lock.Unlock() }()
-	return cacheops.RefreshIdentityDatasets(ctx, a.store, a.analyticsDir)
+	return state.IdentityRevision, nil
 }
 
 func (a *storeAPIAdapter) GetActiveSync(sourceID int64) (*store.SyncRun, error) {

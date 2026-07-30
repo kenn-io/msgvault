@@ -12,6 +12,7 @@ import (
 
 	_ "github.com/duckdb/duckdb-go/v2"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/identityindex"
 	"go.kenn.io/msgvault/internal/search"
 )
 
@@ -136,6 +137,7 @@ func buildBenchData(tb testing.TB) *DuckDBEngine {
 				WHEN i %% 4 = 2 THEN 'meeting_note'
 				ELSE 'file_item'
 			END AS message_type,
+			false AS is_from_me,
 			EXTRACT(YEAR FROM TIMESTAMP '2020-01-01' + INTERVAL (i * 30) MINUTE)::INTEGER AS year,
 			EXTRACT(MONTH FROM TIMESTAMP '2020-01-01' + INTERVAL (i * 30) MINUTE)::INTEGER AS month
 		FROM generate_series(1, %d) t(i);
@@ -259,20 +261,28 @@ func buildBenchData(tb testing.TB) *DuckDBEngine {
 			SELECT id, source_id, source_message_id, conversation_id,
 				   subject, snippet, sent_at, size_estimate, has_attachments,
 				   deleted_from_source_at, attachment_count, sender_id,
-				   message_type, year, month
+				   message_type, is_from_me, year, month
 			FROM bench_messages
 		) TO '%s' (FORMAT PARQUET, PARTITION_BY (year), OVERWRITE_OR_IGNORE)
 	`, msgPath)
 	_, err = db.Exec(msgCopy)
 	requirements.NoError(err, "write messages parquet")
+	derived, err := identityindex.Build(context.Background(), db, identityindex.BuildOptions{
+		Mode:           identityindex.ModeFull,
+		StagedBaseRoot: tmpDir,
+		OutputRoot:     tmpDir,
+	})
+	requirements.NoError(err, "derive benchmark identity datasets")
 	fingerprint, err := CacheDatasetFingerprint(tmpDir)
 	requirements.NoError(err, "fingerprint benchmark cache")
 	state, err := json.Marshal(CacheSyncState{
-		LastMessageID:      benchMessageCount,
-		LastSyncAt:         time.Date(2026, 1, 3, 12, 0, 0, 0, time.UTC),
-		PublishedAt:        time.Date(2026, 1, 3, 12, 1, 0, 0, time.UTC),
-		SchemaVersion:      CacheSchemaVersion,
-		DatasetFingerprint: fingerprint,
+		LastMessageID:                       benchMessageCount,
+		LastSyncAt:                          time.Date(2026, 1, 3, 12, 0, 0, 0, time.UTC),
+		PublishedAt:                         time.Date(2026, 1, 3, 12, 1, 0, 0, time.UTC),
+		SchemaVersion:                       CacheSchemaVersion,
+		DatasetFingerprint:                  fingerprint,
+		ConversationParticipantsFingerprint: derived.ConversationParticipantsFingerprint,
+		Stats:                               derived.Stats,
 	})
 	requirements.NoError(err, "marshal benchmark cache state")
 	requirements.NoError(os.WriteFile(CacheStatePath(tmpDir), state, 0o600), "write benchmark cache state")

@@ -8,9 +8,47 @@ import (
 	"testing"
 	"time"
 
+	"go.kenn.io/msgvault/internal/identityindex"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestCacheRevisionIncludesPublicationTime(t *testing.T) {
+	state := CacheSyncState{
+		SchemaVersion: 15,
+		PublishedAt:   time.Date(2026, 7, 27, 12, 0, 0, 0, time.UTC),
+	}
+	changed := state
+	changed.PublishedAt = changed.PublishedAt.Add(time.Second)
+	assert.NotEqual(t, state.Revision(), changed.Revision())
+}
+
+func TestCacheSyncStateEncodesStatsAsNestedObject(t *testing.T) {
+	requirementsForTest := require.New(t)
+	minYear := int64(2004)
+	maxYear := int64(2026)
+	state := CacheSyncState{
+		Stats: identityindex.CacheStatsSummary{
+			TotalMessages:       23,
+			Sources:             4,
+			UniqueSenders:       11,
+			UniqueDomains:       7,
+			MinYear:             &minYear,
+			MaxYear:             &maxYear,
+			TotalSizeBytes:      1024,
+			AttachmentSizeBytes: 256,
+		},
+	}
+
+	data, err := json.Marshal(state)
+	requirementsForTest.NoError(err)
+	requirementsForTest.Contains(string(data), `"stats":`)
+
+	var decoded CacheSyncState
+	requirementsForTest.NoError(json.Unmarshal(data, &decoded))
+	assert.Equal(t, state.Stats, decoded.Stats)
+}
 
 func TestAcquireReadyCacheReadLockRejectsAbsentCache(t *testing.T) {
 	_, err := AcquireReadyCacheReadLock(context.Background(), t.TempDir())
@@ -133,22 +171,6 @@ func TestInspectCacheReadinessNamesStaleSchemaAndDrift(t *testing.T) {
 	readiness, err = InspectCacheReadiness(dir)
 	require.NoError(err)
 	assert.Equal(CacheDrifted, readiness)
-}
-
-func TestCacheSchemaVersionRequiresParticipantIdentifierPublication(t *testing.T) {
-	assertions := assert.New(t)
-	requirements := require.New(t)
-	assertions.Equal(14, CacheSchemaVersion)
-
-	dir := completeReadinessCache(t)
-	state, err := ReadCacheSyncState(dir)
-	requirements.NoError(err)
-	state.SchemaVersion = 11
-	writeReadinessState(t, dir, state)
-
-	readiness, err := InspectCacheReadiness(dir)
-	requirements.NoError(err)
-	assertions.Equal(CacheStaleSchema, readiness)
 }
 
 func TestInspectCacheReadinessPrefersStaleSchemaWhenNewDatasetIsMissing(t *testing.T) {

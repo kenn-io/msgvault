@@ -307,7 +307,7 @@ func TestBuildCache_AccountIdentityDriftForcesFullRebuildAndRederivesIsFromMe(t 
 	assert.True(staleness.NeedsBuild, "account identity confirmation should request a build")
 	assert.True(staleness.HasAccountIdentityDrift, "account identity drift signal should be set")
 	assert.True(staleness.FullRebuild, "account identity drift must force a full rebuild")
-	assert.False(identityDriftOnly(staleness),
+	assert.False(derivedDriftOnly(staleness),
 		"account identity drift must not take the identity-only refresh path")
 
 	result, err = buildCacheAuto(dbPath, analyticsDir)

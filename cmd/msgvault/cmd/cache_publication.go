@@ -7,13 +7,18 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
+	"strconv"
 	"strings"
 	"time"
 
+	"go.kenn.io/kit/daemon"
+	"go.kenn.io/msgvault/internal/identityindex"
 	"go.kenn.io/msgvault/internal/query"
 )
 
-var buildCacheAfterStateInvalidationHook func() error
+var buildCacheBeforePublicationMovesHook func() error
+var cachePublicationAfterMoveHook func(string) error
 
 type cacheStaging struct {
 	root    string
@@ -39,6 +44,14 @@ func newCacheStaging(analyticsDir string) (*cacheStaging, error) {
 		_ = os.RemoveAll(root)
 		return nil, errors.New("create analytics cache staging directory: empty build ID")
 	}
+	if err := os.WriteFile(
+		filepath.Join(root, ".builder-pid"),
+		[]byte(strconv.Itoa(os.Getpid())),
+		0o600,
+	); err != nil {
+		_ = os.RemoveAll(root)
+		return nil, fmt.Errorf("record analytics cache builder process: %w", err)
+	}
 	return &cacheStaging{root: root, buildID: buildID}, nil
 }
 
@@ -56,8 +69,20 @@ func cleanupStaleCacheStaging(analyticsDir string) error {
 		if !entry.IsDir() || !strings.HasPrefix(entry.Name(), prefix) {
 			continue
 		}
-		if err := os.RemoveAll(filepath.Join(parent, entry.Name())); err != nil {
-			return fmt.Errorf("remove abandoned analytics cache staging directory %s: %w", entry.Name(), err)
+		root := filepath.Join(parent, entry.Name())
+		pidData, readErr := os.ReadFile(filepath.Join(root, ".builder-pid"))
+		if readErr == nil {
+			pid, parseErr := strconv.Atoi(strings.TrimSpace(string(pidData)))
+			if parseErr == nil && daemon.ProcessAlive(pid) {
+				continue
+			}
+		}
+		if err := os.RemoveAll(root); err != nil {
+			return fmt.Errorf(
+				"remove abandoned analytics cache staging directory %s: %w",
+				entry.Name(),
+				err,
+			)
 		}
 	}
 	return nil
@@ -73,46 +98,92 @@ func (s *cacheStaging) cleanup() error {
 type cachePublishMove struct {
 	source      string
 	destination string
+	dataset     string
 	replace     bool
 }
 
-func replacesCacheDataset(dataset string, replaceAll bool) bool {
+type cachePublishPlan struct {
+	Append  map[string]bool
+	Replace map[string]bool
+}
+
+func cachePublishPlanForMode(replaceAll bool) cachePublishPlan {
+	plan := cachePublishPlan{
+		Append:  make(map[string]bool),
+		Replace: make(map[string]bool),
+	}
 	if replaceAll {
-		return true
+		for _, dataset := range query.RequiredParquetDirs {
+			plan.Replace[dataset] = true
+		}
+		return plan
 	}
-	switch dataset {
-	case "participants", "participant_identifiers", "labels", "sources", "conversations", "conversation_participants",
-		tableOwnerParticipants, tableParticipantClusters:
-		return true
-	default:
-		return false
+	for _, dataset := range []string{
+		tableMessages,
+		"message_recipients",
+		"message_labels",
+		tableAttachments,
+		identityindex.DatasetActivity,
+	} {
+		plan.Append[dataset] = true
 	}
+	for _, dataset := range []string{
+		tableParticipants,
+		tableParticipantIdentifiers,
+		tableLabels,
+		"sources",
+		tableConversations,
+		tableConversationParticipants,
+		tableOwnerParticipants,
+		tableParticipantClusters,
+		identityindex.DatasetPeople,
+		identityindex.DatasetDomains,
+		identityindex.DatasetRelationshipDaily,
+	} {
+		plan.Replace[dataset] = true
+	}
+	return plan
+}
+
+func (p cachePublishPlan) datasets() []string {
+	datasets := make([]string, 0, len(p.Append)+len(p.Replace))
+	for _, dataset := range query.RequiredParquetDirs {
+		if p.Append[dataset] || p.Replace[dataset] {
+			datasets = append(datasets, dataset)
+		}
+	}
+	return datasets
 }
 
 func planCacheMoves(
 	staging *cacheStaging,
 	analyticsDir string,
-	replaceAll bool,
+	plan cachePublishPlan,
 ) ([]cachePublishMove, error) {
 	if staging == nil || staging.root == "" || staging.buildID == "" {
 		return nil, errors.New("plan analytics cache publication: invalid staging directory")
 	}
 	var moves []cachePublishMove
-	for _, dataset := range query.RequiredParquetDirs {
+	for _, dataset := range plan.datasets() {
 		stagedDataset := filepath.Join(staging.root, dataset)
 		liveDataset := filepath.Join(analyticsDir, dataset)
-		if replacesCacheDataset(dataset, replaceAll) {
-			if info, err := os.Stat(stagedDataset); err != nil {
+		if plan.Replace[dataset] {
+			info, err := os.Stat(stagedDataset)
+			if err != nil {
 				return nil, fmt.Errorf("plan analytics cache publication for %s: %w", dataset, err)
-			} else if !info.IsDir() {
-				return nil, fmt.Errorf("plan analytics cache publication for %s: staging path is not a directory", dataset)
+			}
+			if !info.IsDir() {
+				return nil, fmt.Errorf(
+					"plan analytics cache publication for %s: staging path is not a directory",
+					dataset,
+				)
 			}
 			moves = append(moves, cachePublishMove{
-				source: stagedDataset, destination: liveDataset, replace: true,
+				source: stagedDataset, destination: liveDataset,
+				dataset: dataset, replace: true,
 			})
 			continue
 		}
-
 		if _, err := os.Stat(stagedDataset); err != nil {
 			if os.IsNotExist(err) {
 				continue
@@ -130,15 +201,25 @@ func planCacheMoves(
 			if err != nil {
 				return err
 			}
-			destination := filepath.Join(liveDataset, filepath.Dir(rel),
-				staging.buildID+"-"+filepath.Base(rel))
+			destination := filepath.Join(
+				liveDataset,
+				filepath.Dir(rel),
+				staging.buildID+"-"+filepath.Base(rel),
+			)
 			if _, err := os.Lstat(destination); err == nil {
-				return fmt.Errorf("analytics cache publication destination already exists: %s", destination)
+				return fmt.Errorf(
+					"analytics cache publication destination already exists: %s",
+					destination,
+				)
 			} else if !os.IsNotExist(err) {
-				return fmt.Errorf("inspect analytics cache publication destination %s: %w", destination, err)
+				return fmt.Errorf(
+					"inspect analytics cache publication destination %s: %w",
+					destination,
+					err,
+				)
 			}
 			moves = append(moves, cachePublishMove{
-				source: path, destination: destination,
+				source: path, destination: destination, dataset: dataset,
 			})
 			return nil
 		})
@@ -149,31 +230,150 @@ func planCacheMoves(
 	return moves, nil
 }
 
-func publishCache(staging *cacheStaging, analyticsDir string, replaceAll bool, stateData []byte) error {
-	moves, err := planCacheMoves(staging, analyticsDir, replaceAll)
+// syncStagedMoveContents flushes every regular file under a staged
+// publication source (a dataset directory for replace moves, a single
+// parquet file for append moves), then every directory deepest-first, so
+// both file contents AND directory entries (nested partition paths like
+// occurred_year=*) are durable before the rename that makes the tree
+// visible. File fsync alone is not enough: a crash after the marker commit
+// could otherwise lose a nested parquet's directory entry, leaving a
+// committed generation missing files the marker vouches for.
+func syncStagedMoveContents(source string) error {
+	info, err := os.Stat(source)
 	if err != nil {
 		return err
 	}
-	statePath := query.CacheStatePath(analyticsDir)
-	if err := invalidateSyncStateFile(statePath); err != nil {
+	if !info.IsDir() {
+		return syncFile(source)
+	}
+	var directories []string
+	err = filepath.WalkDir(source, func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() {
+			directories = append(directories, path)
+			return nil
+		}
+		return syncFile(path)
+	})
+	if err != nil {
 		return err
 	}
-	if buildCacheAfterStateInvalidationHook != nil {
-		if err := buildCacheAfterStateInvalidationHook(); err != nil {
+	for _, directory := range slices.Backward(directories) {
+		if err := syncDirectory(directory); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+// syncDestinationParents flushes the renamed destination's parent directory
+// and every ancestor up to (and including) the analytics root. Append
+// publications MkdirAll new partition paths (e.g. messages/year=2026), and
+// syncing only the immediate parent would leave the new directory's own
+// entry in ITS parent undurable — a crash could then drop the whole
+// partition while the committed marker survives.
+func syncDestinationParents(destination, analyticsDir string) error {
+	root := filepath.Clean(analyticsDir)
+	for dir := filepath.Dir(filepath.Clean(destination)); ; dir = filepath.Dir(dir) {
+		if err := syncDirectory(dir); err != nil {
+			return err
+		}
+		if dir == root || dir == filepath.Dir(dir) {
+			return nil
+		}
+	}
+}
+
+// cachePublishLocking selects how publication coordinates with readers on
+// the shared cache lock (query.CacheBuildLockPath). Builders run staging and
+// index construction under only the builder lock, so their publication must
+// acquire the reader-coordination lock exclusively for the brief
+// rename+marker step. Destructive maintenance (lockCacheAndInvalidateSyncState)
+// already holds that lock exclusively for its whole operation and must not
+// re-acquire it — a second acquisition in the same process uses a second
+// file descriptor and self-deadlocks.
+type cachePublishLocking uint8
+
+const (
+	acquirePublishLock cachePublishLocking = iota
+	publishLockHeld
+)
+
+func publishCache(
+	staging *cacheStaging,
+	analyticsDir string,
+	plan cachePublishPlan,
+	stateData []byte,
+	locking cachePublishLocking,
+) error {
+	return publishCacheWithBeforeMarker(staging, analyticsDir, plan, stateData, nil, locking)
+}
+
+func publishCacheWithBeforeMarker(
+	staging *cacheStaging,
+	analyticsDir string,
+	plan cachePublishPlan,
+	stateData []byte,
+	beforeMarker func() error,
+	locking cachePublishLocking,
+) error {
+	moves, err := planCacheMoves(staging, analyticsDir, plan)
+	if err != nil {
+		return err
+	}
+	if buildCacheBeforePublicationMovesHook != nil {
+		if err := buildCacheBeforePublicationMovesHook(); err != nil {
+			return err
+		}
+	}
+	if err := os.MkdirAll(analyticsDir, 0o755); err != nil {
+		return fmt.Errorf("create analytics cache root: %w", err)
+	}
+	// Rename publishes names, not contents: without flushing the staged
+	// files first, a crash after publication could commit a marker that
+	// references parquet files whose pages never reached disk.
+	for _, move := range moves {
+		if err := syncStagedMoveContents(move.source); err != nil {
+			return fmt.Errorf("sync staged cache dataset %s: %w", move.dataset, err)
+		}
+	}
+	// Readers are excluded only from here on: everything above touched
+	// staged files, not the committed generation.
+	if locking == acquirePublishLock {
+		readerLock, err := cacheBuildFileLock(analyticsDir)
+		if err != nil {
+			return fmt.Errorf("create cache publish lock: %w", err)
+		}
+		if err := readerLock.Lock(); err != nil {
+			return fmt.Errorf("acquire cache publish lock: %w", err)
+		}
+		defer func() { _ = readerLock.Unlock() }()
 	}
 	for _, move := range moves {
 		if move.replace {
 			if err := os.RemoveAll(move.destination); err != nil {
-				return fmt.Errorf("remove live cache dataset %s: %w", move.destination, err)
+				return fmt.Errorf("replace cache dataset %s: %w", move.dataset, err)
 			}
-		}
-		if err := os.MkdirAll(filepath.Dir(move.destination), 0o755); err != nil {
-			return fmt.Errorf("create cache publication directory: %w", err)
+		} else if err := os.MkdirAll(filepath.Dir(move.destination), 0o755); err != nil {
+			return fmt.Errorf("create cache append directory for %s: %w", move.dataset, err)
 		}
 		if err := os.Rename(move.source, move.destination); err != nil {
-			return fmt.Errorf("publish cache path %s: %w", move.destination, err)
+			return fmt.Errorf("publish cache dataset %s: %w", move.dataset, err)
+		}
+		if err := syncDestinationParents(move.destination, analyticsDir); err != nil {
+			return fmt.Errorf("sync published cache dataset %s: %w", move.dataset, err)
+		}
+		if cachePublicationAfterMoveHook != nil {
+			if err := cachePublicationAfterMoveHook(move.dataset); err != nil {
+				return err
+			}
+		}
+	}
+	if beforeMarker != nil {
+		if err := beforeMarker(); err != nil {
+			return err
 		}
 	}
 	fingerprint, err := query.CacheDatasetFingerprint(analyticsDir)
@@ -190,8 +390,24 @@ func publishCache(staging *cacheStaging, analyticsDir string, replaceAll bool, s
 	if err != nil {
 		return fmt.Errorf("encode committed cache sync state: %w", err)
 	}
-	if err := buildCacheWriteStateFile(statePath, stateData, 0o600); err != nil {
-		return fmt.Errorf("save cache sync state to %s: %w", statePath, err)
+	return commitCacheMarker(analyticsDir, staging.buildID, stateData)
+}
+
+func commitCacheMarker(analyticsDir, buildID string, stateData []byte) error {
+	statePath := query.CacheStatePath(analyticsDir)
+	tempPath := filepath.Join(analyticsDir, ".last-sync-"+buildID+".tmp")
+	if err := buildCacheWriteStateFile(tempPath, stateData, 0o600); err != nil {
+		return fmt.Errorf("write staged cache marker: %w", err)
+	}
+	defer func() { _ = os.Remove(tempPath) }()
+	if err := syncFile(tempPath); err != nil {
+		return fmt.Errorf("sync staged cache marker: %w", err)
+	}
+	if err := os.Rename(tempPath, statePath); err != nil {
+		return fmt.Errorf("commit cache marker: %w", err)
+	}
+	if err := syncDirectory(analyticsDir); err != nil {
+		return fmt.Errorf("sync committed cache marker: %w", err)
 	}
 	return nil
 }

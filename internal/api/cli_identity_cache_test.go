@@ -109,7 +109,9 @@ func TestAddCLIIdentity_NewIdentifierSchedulesCacheRebuild(t *testing.T) {
 	assert.Equal(identityops.AddOutcomeAdded, out.Outcome, "outcome")
 	assert.Equal(identityCacheStateStale, out.CacheState,
 		"message shards stay stale until the scheduled full rebuild lands")
-	assert.Equal(1, wrapped.refreshCalls, "identity-only refresh still runs for owner_participants")
+	assert.Zero(wrapped.refreshCalls,
+		"no synchronous refresh: the revision bump would force it into a full rebuild "+
+			"inside the request, duplicating the scheduled background build")
 	assert.False(requireCacheBuild(t, wrapped),
 		"the build's own staleness recheck upgrades to a full rebuild via account-identity drift")
 }
@@ -133,6 +135,8 @@ func TestAddCLIIdentity_AlreadyConfirmedSkipsCacheRebuild(t *testing.T) {
 	assert.Equal(identityops.AddOutcomeAlreadyConfirmed, out.Outcome, "outcome")
 	assert.Equal(identityCacheStateReady, out.CacheState,
 		"a no-op confirmation leaves message shards valid; only the cheap refresh runs")
+	assert.Equal(1, wrapped.refreshCalls,
+		"non-mutating outcomes keep the synchronous derived refresh")
 	assertNoPendingCacheBuild(t, wrapped)
 
 	// A later real mutation still schedules exactly one build, proving the
@@ -164,6 +168,8 @@ func TestRemoveCLIIdentity_SchedulesCacheRebuild(t *testing.T) {
 	assert.Equal(int64(1), out.Removed, "removed count")
 	assert.Equal(identityCacheStateStale, out.CacheState,
 		"message shards stay stale until the scheduled full rebuild lands")
+	assert.Zero(wrapped.refreshCalls,
+		"a deletion skips the synchronous refresh; the background build repairs everything")
 	assert.False(requireCacheBuild(t, wrapped),
 		"the build's own staleness recheck upgrades to a full rebuild via account-identity drift")
 }

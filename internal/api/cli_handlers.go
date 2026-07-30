@@ -2178,20 +2178,21 @@ func (s *Server) addCLIIdentity(ctx context.Context, req identityops.AddRequest)
 			"Failed to add identity",
 		)
 	}
-	// AddAccountIdentity bumps the identity revision when it confirms a
-	// brand new (source_id, address) pair, changing owner_participants; the
-	// refresh is attempted unconditionally since it is an idempotent
-	// full re-export and the mutation already committed either way.
-	result.CacheState = s.refreshIdentityCacheState(ctx)
-	// Confirming a brand new pair also changes the is_from_me flag baked
-	// into the message Parquet shards, which the identity-only refresh
-	// above never re-derives — only a full cache rebuild does. Merging a
-	// signal into an already-confirmed address does not change ownership,
-	// so only the "added" outcome schedules one and reports the cache as
-	// stale until it lands.
+	// Confirming a brand new (source_id, address) pair bumps the store's
+	// account-identity revision and invalidates the is_from_me flag baked
+	// into the message Parquet shards, which only a full cache rebuild
+	// re-derives. A synchronous derived refresh would be wasted work here:
+	// the revision bump makes the derived-only child refuse its
+	// precondition and escalate to a full rebuild inside this request,
+	// duplicating the background build scheduled below. Skip it, report
+	// the cache stale, and let that single background build repair
+	// everything. Non-mutating outcomes leave the revision untouched, so
+	// the cheap synchronous derived refresh succeeds and is sufficient.
 	if result.Outcome == identityops.AddOutcomeAdded {
 		s.scheduleAccountIdentityCacheRebuild(ctx)
 		result.CacheState = identityCacheStateStale
+	} else {
+		result.CacheState = s.refreshIdentityCacheState(ctx)
 	}
 	return result, nil
 }
@@ -2211,18 +2212,16 @@ func (s *Server) removeCLIIdentity(ctx context.Context, req identityops.RemoveRe
 			"Failed to remove identity",
 		)
 	}
-	// RemoveAccountIdentity only bumps the identity revision on an actual
-	// deletion, but the refresh is attempted unconditionally for the same
-	// reason as addCLIIdentity: it is an idempotent full re-export and the
-	// mutation already committed either way.
-	result.CacheState = s.refreshIdentityCacheState(ctx)
 	// An actual deletion (Removed > 0 — the only way Remove succeeds)
-	// also invalidates the message-baked is_from_me flag, so it needs the
-	// same full-rebuild scheduling as addCLIIdentity and the same stale
-	// cache report until that rebuild lands.
+	// bumps the account-identity revision and invalidates the
+	// message-baked is_from_me flag, so it takes the same
+	// skip-synchronous-refresh path as addCLIIdentity: one scheduled
+	// background full rebuild and a stale cache report until it lands.
 	if result.Removed > 0 {
 		s.scheduleAccountIdentityCacheRebuild(ctx)
 		result.CacheState = identityCacheStateStale
+	} else {
+		result.CacheState = s.refreshIdentityCacheState(ctx)
 	}
 	return result, nil
 }

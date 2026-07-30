@@ -122,9 +122,18 @@ func runServeStatusWithAPIKey(cmd *cobra.Command, dataDir string, apiKey string)
 		return err
 	}
 	if len(recs) > 0 {
+		rec := recs[0]
+		if phase := rec.Metadata[runtimeStartupPhase]; phase != "" {
+			_, _ = fmt.Fprintf(out, "msgvault daemon starting (pid %d): %s\n", rec.PID, phase)
+			if !rec.StartedAt.IsZero() {
+				_, _ = fmt.Fprintf(out, "  elapsed: %s\n", time.Since(rec.StartedAt).Round(time.Second))
+			}
+			_, _ = fmt.Fprintln(out, "Run `msgvault daemon status` again shortly.")
+			return nil
+		}
 		_, _ = fmt.Fprintf(out,
 			"msgvault process running (pid %d) but not responding to daemon ping.\n",
-			recs[0].PID,
+			rec.PID,
 		)
 		return nil
 	}

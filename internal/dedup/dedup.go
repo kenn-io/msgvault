@@ -324,6 +324,17 @@ func (e *Engine) Scan(ctx context.Context) (*Report, error) {
 		return nil, fmt.Errorf("find duplicates: %w", err)
 	}
 
+	rfc822IDs := make([]string, len(storeGroups))
+	for i, sg := range storeGroups {
+		rfc822IDs[i] = sg.RFC822MessageID
+	}
+	msgsByGroup, err := e.store.GetDuplicateGroupMessagesBatchContext(
+		ctx, rfc822IDs, e.config.AccountSourceIDs...,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("get duplicate group messages: %w", err)
+	}
+
 	report := &Report{
 		TotalMessages:   totalMessages,
 		BySourcePair:    make(map[string]int),
@@ -334,15 +345,7 @@ func (e *Engine) Scan(ctx context.Context) (*Report, error) {
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
-		msgs, err := e.store.GetDuplicateGroupMessages(
-			sg.RFC822MessageID, e.config.AccountSourceIDs...,
-		)
-		if err != nil {
-			return nil, fmt.Errorf(
-				"get group messages for %s: %w",
-				sg.RFC822MessageID, err,
-			)
-		}
+		msgs := msgsByGroup[sg.RFC822MessageID]
 		if len(msgs) < 2 {
 			continue
 		}
@@ -380,6 +383,11 @@ func (e *Engine) Scan(ctx context.Context) (*Report, error) {
 		report.Groups = append(report.Groups, group)
 		report.BySourcePair[sourcePairKey(group.Messages)]++
 	}
+	// Release the batch result map now that every group has been copied
+	// into report.Groups: on a large archive it can hold tens of
+	// thousands of rows, and the content-hash pass below can run long.
+	//nolint:ineffassign,wastedassign // deliberately drops the reference so the GC can reclaim it before the content-hash pass, not a leftover assignment
+	msgsByGroup = nil
 
 	if e.config.ContentHashFallback {
 		// Exclude only losers (messages already selected for pruning) from
