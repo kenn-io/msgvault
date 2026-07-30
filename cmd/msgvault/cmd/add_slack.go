@@ -12,6 +12,7 @@ import (
 	"go.kenn.io/msgvault/internal/clirun"
 	"go.kenn.io/msgvault/internal/slack"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/textutil"
 )
 
 var (
@@ -102,7 +103,7 @@ Examples:
 				return fmt.Errorf("post-source-create migrations: %w", err)
 			}
 
-			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Added Slack workspace %s (%s) as %s\n", auth.Team, auth.TeamID, identifier)
+			writeAddedSlackWorkspace(cmd.OutOrStdout(), auth.Team, auth.TeamID, identifier)
 			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "\nYou can now run:")
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  msgvault sync-slack %s\n", auth.TeamID)
 			return nil
@@ -111,6 +112,11 @@ Examples:
 	cmd.Flags().StringVar(&addSlackTokenFile, "token-file", "", "read the Slack user token from this file")
 	cmd.Flags().BoolVar(&noDefaultIdentityAddSlack, "no-default-identity", false, noDefaultIdentityHelp)
 	return cmd
+}
+
+func writeAddedSlackWorkspace(out io.Writer, team, teamID, identifier string) {
+	_, _ = fmt.Fprintf(out, "Added Slack workspace %s (%s) as %s\n",
+		textutil.SanitizeTerminal(team), teamID, identifier)
 }
 
 func confirmDefaultSlackIdentity(out io.Writer, s *store.Store, sourceID int64, teamID, userID string) {

@@ -4,12 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/slack"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/textutil"
 )
 
 var (
@@ -86,7 +88,7 @@ Examples:
 				opts.NoThreads = syncSlackNoThreads
 				opts.Maintenance = syncSlackMaintenance
 				opts.NoMedia = opts.NoMedia || syncSlackNoMedia
-				opts.Progress = func(line string) { _, _ = fmt.Fprintln(cmd.OutOrStdout(), "  "+line) }
+				opts.Progress = func(line string) { writeSlackProgress(cmd.OutOrStdout(), line) }
 				sum, serr := imp.Import(ctx, opts)
 				if ctx.Err() != nil {
 					break
@@ -120,6 +122,10 @@ Examples:
 	cmd.Flags().BoolVar(&syncSlackMaintenance, "maintenance", false, "run the maintenance rescan: repair edits and reaction changes on recent messages (archives ignore post-capture mutations by default)")
 	cmd.Flags().BoolVar(&syncSlackNoMedia, "no-media", false, "skip file downloads for this run (files are recorded as pending; backfill-slack-media fetches them later)")
 	return cmd
+}
+
+func writeSlackProgress(out io.Writer, line string) {
+	_, _ = fmt.Fprintln(out, "  "+textutil.SanitizeTerminal(line))
 }
 
 func printSlackSummary(cmd *cobra.Command, teamID string, sum *slack.ImportSummary) {

@@ -111,6 +111,24 @@ func TestSlackImportOptionsDeriveFromConfig(t *testing.T) {
 	assert.Equal([]string{"noise"}, opts.ExcludeChannels)
 }
 
+func TestWriteSlackProgressSanitizesProviderNames(t *testing.T) {
+	var out bytes.Buffer
+	writeSlackProgress(&out,
+		"conversation 1/1 (Testers\x1b]52;c;Y2xpcA==\x07\x1b[31mRed\x1b[0m\nNext): 3 messages")
+
+	assert.Equal(t, "  conversation 1/1 (TestersRed Next): 3 messages\n", out.String())
+	assert.NotContains(t, out.String(), "\x1b")
+}
+
+func TestWriteAddedSlackWorkspaceSanitizesTeamName(t *testing.T) {
+	var out bytes.Buffer
+	writeAddedSlackWorkspace(&out,
+		"Testers\x1b]52;c;Y2xpcA==\x07\x1b[31mRed\x1b[0m\nNext", "T01", "T01:UME")
+
+	assert.Equal(t, "Added Slack workspace TestersRed Next (T01) as T01:UME\n", out.String())
+	assert.NotContains(t, out.String(), "\x1b")
+}
+
 func resetSyncSlackRoutingGlobals(t *testing.T) {
 	t.Helper()
 	oldLimit := syncSlackLimit
