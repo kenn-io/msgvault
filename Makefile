@@ -36,7 +36,7 @@ DEFAULT_GOLANGCI_LINT_CACHE := $(shell git rev-parse --path-format=absolute --gi
 GOLANGCI_LINT_CACHE ?= $(DEFAULT_GOLANGCI_LINT_CACHE)
 export GOLANGCI_LINT_CACHE
 
-.PHONY: build build-release install clean test test-v test-pg fmt lint lint-ci testify-helper-check tidy openapi api-generate openapi-check api-check web-install web-generate web-check web-test web-test-browser web-e2e web-build web-embed web-assets-check smoke-web-release shootout run-shootout install-hooks bench docs-install docs-build docs-serve docs-check docs-screenshots docs-assets-branch docs-generated-assets-branch docs-deploy-staging docs-deploy help
+.PHONY: build build-release install clean test test-v test-pg fmt lint lint-ci testify-helper-check tidy openapi api-generate openapi-check api-check web-install web-generate web-check web-test web-test-browser web-e2e web-build web-embed web-assets-check smoke-web-release shootout run-shootout install-hooks bench vcard-registry-check vcard-registry-update docs-install docs-build docs-serve docs-check docs-screenshots docs-assets-branch docs-generated-assets-branch docs-deploy-staging docs-deploy help
 
 # Build the binary (debug)
 build: web-embed
@@ -90,6 +90,13 @@ test-pg:
 		exit 1; \
 	fi
 	go test -tags "$(PG_TEST_TAGS)" ./...
+
+# Check or update the vendored IANA vCard Elements registry.
+vcard-registry-check:
+	go run ./internal/vcard/cmd/update-registry
+
+vcard-registry-update:
+	go run ./internal/vcard/cmd/update-registry --write
 
 # Regenerate the committed OpenAPI schemas and generated Go client.
 # api/openapi.yaml is the published OpenAPI 3.1 schema; pkg/client/openapi.yaml
@@ -277,6 +284,8 @@ help:
 	@echo "  lint-ci        - Run linter (CI, no auto-fix; also runs testify-helper-check)"
 	@echo "  testify-helper-check - Enforce testify helper usage in assertion-heavy tests"
 	@echo "  tidy           - Tidy go.mod"
+	@echo "  vcard-registry-check - Check the vendored IANA vCard registry for drift"
+	@echo "  vcard-registry-update - Update the vendored IANA vCard registry"
 	@echo "  openapi        - Regenerate OpenAPI specs and generated Go client"
 	@echo "  openapi-check  - Check committed OpenAPI specs and generated Go client are up to date"
 	@echo "  api-check      - Alias for openapi-check"

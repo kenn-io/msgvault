@@ -1,0 +1,52 @@
+BEGIN:VCARD
+VERSION:4.0
+SOURCE:https://example.com/contact.vcf
+KIND:individual
+XML:data:application/xml,%3Ccontact%2F%3E
+FN:Alice Example
+N:Example;Alice;;;
+NICKNAME:Al
+PHOTO:data:image/png;base64,AA==
+BDAY:1985-04-12
+ANNIVERSARY:2010-06-15
+GENDER:F
+ADR:;;123 Example St.;Exampleville;CA;90000;US
+TEL;VALUE=uri:tel:+12025550123
+EMAIL:alice@example.com
+IMPP:xmpp:alice@example.com
+LANG:en
+TZ:UTC
+GEO:geo:37.386013,-122.082932
+TITLE:Engineer
+ROLE:Contributor
+LOGO:data:image/png;base64,AA==
+ORG:Example Org
+MEMBER:urn:uuid:00000000-0000-4000-8000-000000000002
+RELATED;TYPE=friend:urn:uuid:00000000-0000-4000-8000-000000000003
+CATEGORIES:testing,example
+NOTE:Synthetic registry smoke contact
+PRODID:-//Example//Synthetic vCard//EN
+REV:2026-07-30T00:00:00Z
+SOUND:data:audio/basic;base64,AA==
+UID:urn:uuid:00000000-0000-4000-8000-000000000001
+CLIENTPIDMAP:1;urn:uuid:00000000-0000-4000-8000-000000000004
+URL:https://example.com/alice
+KEY:data:application/pgp-keys;base64,AA==
+FBURL:https://example.com/freebusy/alice
+CALADRURI:mailto:alice@example.com
+CALURI:https://example.com/calendar/alice
+BIRTHPLACE:Exampleville
+DEATHPLACE:Futureville
+DEATHDATE:2099-01-01
+EXPERTISE:Testing
+HOBBY:Reading
+INTEREST:Interoperability
+ORG-DIRECTORY:https://example.com/directory
+CONTACT-URI:https://example.com/contact/alice
+CREATED:2026-07-30T00:00:00Z
+GRAMGENDER:animate
+LANGUAGE:en
+PRONOUNS;LANGUAGE=en:she/her
+SOCIALPROFILE;SERVICE-TYPE=example;USERNAME=alice:https://social.example/alice
+JSPROP;JSPTR=/example;JSCOMPS=example:{"example":true}
+END:VCARD

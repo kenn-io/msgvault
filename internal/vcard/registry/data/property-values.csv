@@ -1,0 +1,17 @@
+Property,Value,Reference
+BEGIN,VCARD,"[RFC6350, Section 6.1.1]"
+END,VCARD,"[RFC6350, Section 6.1.2]"
+KIND,individual,"[RFC6350, Section 6.1.4]"
+KIND,group,"[RFC6350, Section 6.1.4]"
+KIND,org,"[RFC6350, Section 6.1.4]"
+KIND,location,"[RFC6350, Section 6.1.4]"
+KIND,application,"[RFC6473, Section 3]"
+KIND,device,"[RFC6869, Section 3]"
+VERSION,4.0,"[RFC6350, Section 6.7.9]
+		[RFC Errata 3000]"
+GRAMGENDER,animate,"[RFC9554, Section 3.2]"
+GRAMGENDER,common,"[RFC9554, Section 3.2]"
+GRAMGENDER,feminine,"[RFC9554, Section 3.2]"
+GRAMGENDER,inanimate,"[RFC9554, Section 3.2]"
+GRAMGENDER,masculine,"[RFC9554, Section 3.2]"
+GRAMGENDER,neuter,"[RFC9554, Section 3.2]"

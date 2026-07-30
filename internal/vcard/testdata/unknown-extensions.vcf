@@ -1,0 +1,6 @@
+BEGIN:VCARD
+VERSION:4.0
+FN:Alice Example
+X-FUTURE;X-PARAM="one,two";X-CARET=A^^B^'C:opaque\,value
+item9.X-LABEL:Custom
+END:VCARD

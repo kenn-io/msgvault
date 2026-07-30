@@ -1,0 +1,9 @@
+BEGIN:VCARD
+VERSION:3.0
+FN:Alice Example
+item1.EMAIL;type=INTERNET;type=HOME:alice@example.com
+item1.X-ABLabel:_$!<Home>!$_
+item2.TEL;type=CELL:+12025550123
+item2.X-ABLabel:iPhone
+X-ABUID:synthetic-apple-uid
+END:VCARD

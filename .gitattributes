@@ -7,3 +7,7 @@ internal/web/dist/**/*.js text eol=lf
 internal/web/dist/**/*.json text eol=lf
 internal/web/dist/**/*.mjs text eol=lf
 internal/web/dist/**/*.svg text eol=lf
+
+# vCard conformance fixtures intentionally retain wire-format CRLF bytes.
+internal/vcard/testdata/*.vcf -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
+internal/vcard/registry/data/*.csv -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
