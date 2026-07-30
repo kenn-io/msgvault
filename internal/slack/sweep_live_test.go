@@ -43,6 +43,8 @@ func TestLiveThreadsRepliesModifierPin(t *testing.T) {
 	require.NoError(err)
 	require.NotEmpty(mod.Matches, "fixture channel must contain thread replies")
 	for _, m := range mod.Matches {
+		assert.Equal(channel, m.ChannelID,
+			"threads:replies returned a match without the scoped channel ID (ts %s)", m.TS)
 		assert.NotEmpty(m.RootTS,
 			"threads:replies returned a non-reply hit (ts %s) — the modifier's replies-only contract is broken", m.TS)
 	}
@@ -55,6 +57,8 @@ func TestLiveThreadsRepliesModifierPin(t *testing.T) {
 	require.NoError(err)
 	control := false
 	for _, m := range ctl.Matches {
+		assert.Equal(channel, m.ChannelID,
+			"control query returned a match without the scoped channel ID (ts %s)", m.TS)
 		if m.RootTS == "" {
 			control = true
 			break

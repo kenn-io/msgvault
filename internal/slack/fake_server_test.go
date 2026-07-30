@@ -581,9 +581,9 @@ func (f *fakeSlack) handleSearch(w http.ResponseWriter, r *http.Request) {
 			permalink += "?thread_ts=" + h.rootTS + "&cid=" + h.channelID
 		}
 		matches = append(matches, map[string]any{
-			"ts":        h.ts,
-			"channel":   map[string]any{"id": h.channelID},
-			"permalink": permalink,
+			"ts":         h.ts,
+			"channel_id": h.channelID,
+			"permalink":  permalink,
 		})
 	}
 	f.reply(w, map[string]any{

@@ -72,6 +72,40 @@ func TestValidateSearchScope(t *testing.T) {
 	assert.ErrorContains(t, err, "search:read")
 }
 
+func TestSearchMessagesPageDecodesChannelIDs(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, err := w.Write([]byte(`{
+			"ok": true,
+			"messages": {
+				"total": 2,
+				"paging": {"page": 1, "pages": 1},
+				"matches": [{
+					"channel_id": "C_REAL",
+					"channel": {"id": "C_STALE"},
+					"ts": "1700000001.000100",
+					"permalink": "https://example.slack.com/archives/C_REAL/p1700000001000100?thread_ts=1700000000.000100"
+				}, {
+					"channel": {"id": "C_LEGACY"},
+					"ts": "1700000011.000100",
+					"permalink": "https://example.slack.com/archives/C_LEGACY/p1700000011000100?thread_ts=1700000010.000100"
+				}]
+			}
+		}`))
+		require.NoError(t, err)
+	}))
+	t.Cleanup(srv.Close)
+	client := NewClient(srv.URL, "xoxp-test")
+	client.disableRateLimits()
+
+	page, err := client.SearchMessagesPage(context.Background(), "threads:replies", 1)
+	require.NoError(t, err)
+	require.Len(t, page.Matches, 2)
+	assert.Equal(t, "C_REAL", page.Matches[0].ChannelID)
+	assert.Equal(t, "1700000000.000100", page.Matches[0].RootTS)
+	assert.Equal(t, "C_LEGACY", page.Matches[1].ChannelID)
+}
+
 func TestClientPagination(t *testing.T) {
 	f := newFakeSlack(t)
 	f.users = []map[string]any{

@@ -460,8 +460,9 @@ func (c *Client) SearchMessagesPage(ctx context.Context, query string, page int)
 				Pages int `json:"pages"`
 			} `json:"paging"`
 			Matches []struct {
-				TS      string `json:"ts"`
-				Channel struct {
+				TS        string `json:"ts"`
+				ChannelID string `json:"channel_id"`
+				Channel   struct {
 					ID string `json:"id"`
 				} `json:"channel"`
 				Permalink string `json:"permalink"`
@@ -477,8 +478,12 @@ func (c *Client) SearchMessagesPage(ctx context.Context, query string, page int)
 		Total: out.Messages.Total,
 	}
 	for _, m := range out.Messages.Matches {
+		channelID := m.ChannelID
+		if channelID == "" {
+			channelID = m.Channel.ID
+		}
 		sp.Matches = append(sp.Matches, SearchMatch{
-			ChannelID: m.Channel.ID,
+			ChannelID: channelID,
 			TS:        m.TS,
 			RootTS:    permalinkThreadTS(m.Permalink),
 		})
