@@ -111,26 +111,29 @@ func (s *Store) MigrateLegacyIdentityConfigContext(
 	}
 
 	if err := s.withTxContext(ctx, func(tx *loggedTx) error {
+		// Fast path first, read-only: this migration runs on every store
+		// open, and the marker check must not take any write lock — an
+		// unconditional identity-row write here would add a WAL commit and
+		// a serialization point on one archive_metadata row to every open.
+		alreadyApplied, err := s.legacyIdentityMigrationAppliedTx(ctx, tx)
+		if err != nil || alreadyApplied {
+			return err
+		}
+
 		// Take the identity-mutation row lock before any account_identities
 		// write, mirroring AddAccountIdentity/RemoveAccountIdentity. Every
 		// identity-revision writer must acquire this row FIRST:
 		// BeginExclusive takes it before LOCK TABLE (which covers
-		// account_identities), so a late acquisition here — after the
-		// inserts below — would invert the order and deadlock against a
-		// concurrent serialized source removal.
+		// account_identities), so a late acquisition — after the inserts
+		// below — would invert the order and deadlock against a concurrent
+		// serialized source removal. Re-check the marker under the lock: a
+		// concurrent open may have applied the migration while we waited.
 		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
 			return err
 		}
-		var appliedMarker string
-		err := tx.QueryRowContext(ctx,
-			`SELECT name FROM applied_migrations WHERE name = ?`,
-			migrationLegacyIdentity,
-		).Scan(&appliedMarker)
-		switch {
-		case err == nil:
-			return nil
-		case !errors.Is(err, sql.ErrNoRows):
-			return fmt.Errorf("check migration %q in tx: %w", migrationLegacyIdentity, err)
+		alreadyApplied, err = s.legacyIdentityMigrationAppliedTx(ctx, tx)
+		if err != nil || alreadyApplied {
+			return err
 		}
 
 		insertedAny := false
@@ -300,6 +303,24 @@ func (s *Store) RunStartupMigrationsContext(
 // circleback) are deliberately excluded: they confirm their own
 // identifier at add time, and the legacy [identity] block only ever
 // described email-archive accounts.
+// legacyIdentityMigrationAppliedTx reports whether the legacy identity
+// migration marker is present, without taking any lock.
+func (s *Store) legacyIdentityMigrationAppliedTx(ctx context.Context, tx *loggedTx) (bool, error) {
+	var appliedMarker string
+	err := tx.QueryRowContext(ctx,
+		`SELECT name FROM applied_migrations WHERE name = ?`,
+		migrationLegacyIdentity,
+	).Scan(&appliedMarker)
+	switch {
+	case err == nil:
+		return true, nil
+	case errors.Is(err, sql.ErrNoRows):
+		return false, nil
+	default:
+		return false, fmt.Errorf("check migration %q in tx: %w", migrationLegacyIdentity, err)
+	}
+}
+
 func SourceTypeUsesEmailIdentity(sourceType string) bool {
 	switch sourceType {
 	case "gmail", "imap", "o365", "mbox", "hey", "apple-mail", "pst":
