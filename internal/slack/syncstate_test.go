@@ -40,3 +40,14 @@ func TestSyncStateLegacyThreadsBlobLoads(t *testing.T) {
 	assert.True(loaded.EnsureConv("C01").Done)
 	assert.Empty(loaded.SweepWatermark, "legacy blobs start the sweep from the first-sweep floor")
 }
+
+func TestLoadSyncStateRejectsNullConversation(t *testing.T) {
+	var state *SyncState
+	var err error
+	require.NotPanics(t, func() {
+		state, err = LoadSyncState(`{"conversations":{"C01":null}}`)
+	})
+	require.Error(t, err)
+	assert.ErrorContains(t, err, `conversation "C01" is null`)
+	assert.Nil(t, state)
+}

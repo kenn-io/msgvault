@@ -2,6 +2,7 @@ package slack
 
 import (
 	"encoding/json"
+	"fmt"
 )
 
 // PendingThread is one thread whose replies a window walk still owes: the
@@ -131,6 +132,11 @@ func LoadSyncState(blob string) (*SyncState, error) {
 	}
 	if s.Conversations == nil {
 		s.Conversations = map[string]*ConvState{}
+	}
+	for channelID, cs := range s.Conversations {
+		if cs == nil {
+			return nil, fmt.Errorf("Slack sync state conversation %q is null", channelID)
+		}
 	}
 	// Legacy drain entries predate the Floor field. An in-flight entry
 	// with progress but no floor is normalized to Floor = DrainedTo — the

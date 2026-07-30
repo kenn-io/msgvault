@@ -804,25 +804,36 @@ func TestImportRejectsMalformedNewestResumeState(t *testing.T) {
 }
 
 func TestFullImportRepairsMalformedNewestResumeState(t *testing.T) {
-	f := testWorkspace(t)
-	imp, opts := testImporter(t, f)
-	st := imp.store
+	tests := []struct {
+		name string
+		blob string
+	}{
+		{name: "invalid JSON", blob: `{"version":`},
+		{name: "null conversation", blob: `{"conversations":{"C01":null}}`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := testWorkspace(t)
+			imp, opts := testImporter(t, f)
+			st := imp.store
 
-	src, err := st.GetOrCreateSource("slack", opts.TeamID+":"+opts.UserID)
-	require.NoError(t, err)
-	runID, err := st.StartSync(src.ID, "slack")
-	require.NoError(t, err)
-	require.NoError(t, st.UpdateSyncCheckpoint(runID, &store.Checkpoint{PageToken: `{"version":`}))
-	require.NoError(t, st.FailSync(runID, "interrupted"))
+			src, err := st.GetOrCreateSource("slack", opts.TeamID+":"+opts.UserID)
+			require.NoError(t, err)
+			runID, err := st.StartSync(src.ID, "slack")
+			require.NoError(t, err)
+			require.NoError(t, st.UpdateSyncCheckpoint(runID, &store.Checkpoint{PageToken: tt.blob}))
+			require.NoError(t, st.FailSync(runID, "interrupted"))
 
-	opts.Full = true
-	_, err = imp.Import(context.Background(), opts)
-	require.NoError(t, err, "--full must replace malformed durable state with a fresh repair session")
+			opts.Full = true
+			_, err = imp.Import(context.Background(), opts)
+			require.NoError(t, err, "--full must replace malformed durable state with a fresh repair session")
 
-	var messages int
-	require.NoError(t, st.DB().QueryRow(st.Rebind(
-		`SELECT COUNT(*) FROM messages WHERE source_id = ?`), src.ID).Scan(&messages))
-	assert.Positive(t, messages, "the repair must traverse and archive the workspace")
+			var messages int
+			require.NoError(t, st.DB().QueryRow(st.Rebind(
+				`SELECT COUNT(*) FROM messages WHERE source_id = ?`), src.ID).Scan(&messages))
+			assert.Positive(t, messages, "the repair must traverse and archive the workspace")
+		})
+	}
 }
 
 func TestLoadResumeStateSurfacesDatabaseReadFailure(t *testing.T) {
