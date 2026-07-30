@@ -55,6 +55,11 @@ var ErrAssetTooLarge = errors.New("file exceeds size cap")
 // re-run-add-slack guidance instead of retrying.
 var ErrAuth = errors.New("slack auth error")
 
+// ErrInvalidCursor reports an opaque Slack pagination cursor that can no
+// longer be used. Callers with a persisted cursor may restart its pinned
+// window from the first page.
+var ErrInvalidCursor = errors.New("invalid Slack pagination cursor")
+
 // notFoundAPIErrors are Slack method errors that mean "the thing is gone",
 // not "the request failed".
 var notFoundAPIErrors = map[string]bool{
@@ -199,6 +204,8 @@ func apiError(method string, envelope *apiResponse) error {
 	switch {
 	case notFoundAPIErrors[envelope.Error]:
 		return fmt.Errorf("slack %s: %s: %w", method, envelope.Error, ErrNotFound)
+	case envelope.Error == "invalid_cursor":
+		return fmt.Errorf("slack %s: %s: %w", method, envelope.Error, ErrInvalidCursor)
 	case authAPIErrors[envelope.Error]:
 		detail := ""
 		if envelope.Error == "missing_scope" {

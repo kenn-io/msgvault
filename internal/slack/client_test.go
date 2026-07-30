@@ -38,6 +38,7 @@ func TestClientErrorMapping(t *testing.T) {
 		{"not found", "channel_not_found", ErrNotFound},
 		{"auth", "invalid_auth", ErrAuth},
 		{"missing scope", "missing_scope", ErrAuth},
+		{"invalid cursor", "invalid_cursor", ErrInvalidCursor},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -48,6 +49,7 @@ func TestClientErrorMapping(t *testing.T) {
 	err := apiError("conversations.history", &apiResponse{Error: "fatal_error"})
 	require.NotErrorIs(t, err, ErrNotFound)
 	require.NotErrorIs(t, err, ErrAuth)
+	require.NotErrorIs(t, err, ErrInvalidCursor)
 }
 
 func TestClientRejectsUnallowlistedMethods(t *testing.T) {

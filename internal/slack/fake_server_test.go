@@ -168,6 +168,9 @@ type fakeSlack struct {
 	// failHistoryContinuations fails only history requests carrying a page
 	// cursor, emulating a walk that dies partway through a multi-page window.
 	failHistoryContinuations bool
+	// invalidHistoryCursors makes conversations.history reject the named
+	// cursor strings as expired/invalid Slack pagination state.
+	invalidHistoryCursors map[string]bool
 	// forceHasMoreFalse exercises cursor pagination where the legacy
 	// has_more flag disagrees with a valid next_cursor.
 	forceHasMoreFalse bool
@@ -199,8 +202,9 @@ func newFakeSlack(t *testing.T) *fakeSlack {
 		t: t, pageSize: 3,
 		failHistory: map[string]bool{}, failReplies: map[string]bool{},
 		failMembers: map[string]bool{}, searchHidden: map[string]bool{},
-		searchTruncateDays: map[string]bool{},
-		searchSnapshots:    map[string][]searchHit{},
+		searchTruncateDays:    map[string]bool{},
+		searchSnapshots:       map[string][]searchHit{},
+		invalidHistoryCursors: map[string]bool{},
 	}
 }
 
@@ -389,6 +393,10 @@ func (f *fakeSlack) handleHistory(w http.ResponseWriter, r *http.Request) {
 	}
 	if f.failHistoryContinuations && r.FormValue("cursor") != "" {
 		f.replyErr(w, "internal_error")
+		return
+	}
+	if f.invalidHistoryCursors[r.FormValue("cursor")] {
+		f.replyErr(w, "invalid_cursor")
 		return
 	}
 	visible := visibleHistory(c, r.FormValue("oldest"), r.FormValue("latest"), r.FormValue("inclusive") == "true")

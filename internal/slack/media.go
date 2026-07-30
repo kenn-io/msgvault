@@ -31,6 +31,16 @@ const mediaHost = "files.slack.com"
 // errOffHost reports a file URL that is not on files.slack.com.
 var errOffHost = errors.New("file URL not on files.slack.com")
 
+// fileHTTPError preserves the response status so callers can distinguish
+// terminal source deletion from a retryable download failure.
+type fileHTTPError struct {
+	statusCode int
+}
+
+func (e *fileHTTPError) Error() string {
+	return fmt.Sprintf("slack file GET: status %d", e.statusCode)
+}
+
 // slackAttachmentID namespaces Slack-managed attachment rows in
 // attachments.source_attachment_id.
 func slackAttachmentID(fileID string) string {
@@ -107,7 +117,7 @@ func (c *Client) DownloadFile(ctx context.Context, rawURL string, maxBytes int64
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("slack file GET: status %d", resp.StatusCode)
+		return nil, &fileHTTPError{statusCode: resp.StatusCode}
 	}
 	if maxBytes <= 0 {
 		maxBytes = defaultMaxMediaBytes
@@ -221,6 +231,17 @@ func (imp *Importer) persistFiles(ctx context.Context, syncID, messageID int64, 
 		data, derr := imp.client.DownloadFile(ctx, fetchRef, maxBytes)
 		if errors.Is(derr, ErrAssetTooLarge) {
 			pend(store.SyncRunItemStatusSkipped, "slack_media_too_large", derr)
+			continue
+		}
+		var httpErr *fileHTTPError
+		if errors.As(derr, &httpErr) &&
+			(httpErr.statusCode == http.StatusNotFound || httpErr.statusCode == http.StatusGone) {
+			// Slack can keep file metadata after the backing bytes have been
+			// deleted. Preserve the permalink and file provenance as a
+			// metadata-only link, but terminate retry debt that can never pay.
+			imp.recordItem(syncID, sourceMessageID("", m.TS), "attachment",
+				store.SyncRunItemStatusSkipped, "slack_media_gone", derr)
+			refs = append(refs, linkRow)
 			continue
 		}
 		if derr != nil {

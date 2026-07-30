@@ -504,6 +504,10 @@ func (imp *Importer) walkWindow(ctx context.Context, cc *convScope, state *SyncS
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
+			if errors.Is(err, ErrInvalidCursor) && cs.BackfillCursor != "" {
+				cs.BackfillCursor = ""
+				continue
+			}
 			if errors.Is(err, ErrNotFound) {
 				// Enumerated but unreadable (observed live: a sandbox
 				// provisioning-bot DM) or since deleted. There is nothing to
@@ -763,6 +767,10 @@ func (imp *Importer) threadCatchUp(ctx context.Context, cc *convScope, state *Sy
 		if err != nil {
 			if ctx.Err() != nil {
 				return ctx.Err()
+			}
+			if errors.Is(err, ErrInvalidCursor) && cs.CatchUpCursor != "" {
+				cs.CatchUpCursor = ""
+				continue
 			}
 			if errors.Is(err, ErrNotFound) {
 				// The conversation is gone: there is nothing left to fetch,

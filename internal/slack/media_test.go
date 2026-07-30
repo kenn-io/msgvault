@@ -10,6 +10,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
@@ -182,6 +183,68 @@ func TestPersistFilesLinkRowsAndPendingMarkers(t *testing.T) {
 	pending, err = st.ListSlackPendingAttachmentMessages(src.ID)
 	require.NoError(err)
 	assert.Empty(pending)
+}
+
+func TestPersistFilesTreatsGoneDownloadsAsTerminalLinks(t *testing.T) {
+	for _, status := range []int{http.StatusNotFound, http.StatusGone} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			f := testWorkspace(t)
+			f.conv("C01").Msgs[6].Files = []map[string]any{
+				{"id": "F_GONE", "name": "deleted.png", "mimetype": "image/png", "size": 123,
+					"url_private": "https://files.slack.com/files-pri/T01-F_GONE/deleted.png",
+					"permalink":   "https://testers.slack.com/files/F_GONE"},
+			}
+
+			prevInterval := checkpointMinInterval
+			checkpointMinInterval = 0
+			t.Cleanup(func() { checkpointMinInterval = prevInterval })
+			srv := f.serve()
+			client := NewClient(srv.URL, "xoxp-test")
+			client.disableRateLimits()
+			client.mediaTransport = &recordingTransport{status: status}
+			st := testutil.NewTestStore(t)
+			imp := NewImporter(st, client, "T01")
+
+			opts := ImportOptions{
+				TeamID: "T01", UserID: "UME",
+				NoMedia: true, AttachmentsDir: t.TempDir(), MaxMediaBytes: 1 << 20,
+			}
+			sum, err := imp.Import(context.Background(), opts)
+			require.NoError(t, err)
+			require.Equal(t, 1, sum.AttachmentsPending)
+
+			src, err := st.GetOrCreateSource("slack", "T01:UME")
+			require.NoError(t, err)
+			pending, err := st.ListSlackPendingAttachmentMessages(src.ID)
+			require.NoError(t, err)
+			require.Len(t, pending, 1, "media-disabled import must create genuine pending debt")
+
+			opts.NoMedia = false
+			sum, err = imp.BackfillMedia(context.Background(), opts)
+			require.NoError(t, err)
+			assert.Zero(t, sum.AttachmentsPending)
+			assert.Zero(t, sum.Errors)
+
+			pending, err = st.ListSlackPendingAttachmentMessages(src.ID)
+			require.NoError(t, err)
+			assert.Empty(t, pending, "a deleted Slack file must not remain pending")
+
+			var messageID int64
+			require.NoError(t, st.DB().QueryRow(st.Rebind(
+				`SELECT id FROM messages WHERE source_message_id = ?`), "C01:"+ts(6)).Scan(&messageID))
+			refs, err := st.MessageSlackAttachments(messageID)
+			require.NoError(t, err)
+			require.Contains(t, refs, "slack:F_GONE")
+			assert.Equal(t, store.AttachmentRef{
+				Filename:           "deleted.png",
+				MimeType:           "image/png",
+				StoragePath:        "https://testers.slack.com/files/F_GONE",
+				Size:               123,
+				SourceAttachmentID: "slack:F_GONE",
+				MediaType:          "link",
+			}, refs["slack:F_GONE"])
+		})
+	}
 }
 
 func TestPersistFilesPreservesTombstonedAndOmittedDownloads(t *testing.T) {

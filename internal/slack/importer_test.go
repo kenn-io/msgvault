@@ -803,6 +803,122 @@ func TestImportRejectsMalformedNewestResumeState(t *testing.T) {
 	assert.Contains(t, err.Error(), "load Slack resume state")
 }
 
+func TestImportRestartsExpiredPersistedWindowCursorAtPinnedBound(t *testing.T) {
+	f := newFakeSlack(t)
+	f.users = []map[string]any{{
+		"id": "UME", "name": "me", "real_name": "Test User",
+		"profile": map[string]any{"email": "me@example.com"},
+	}}
+	f.convs = []*fakeConv{{
+		ID: "C01", Name: "general", Kind: "public", Members: []string{"UME"},
+		Msgs: []fakeMsg{
+			{TS: ts(0), User: "UME", Text: "inside pinned window"},
+			{TS: ts(2), User: "UME", Text: "above pinned window"},
+		},
+	}}
+	f.invalidHistoryCursors["expired-window"] = true
+	imp, opts := testImporter(t, f)
+	opts.NoThreads = true
+
+	pin := ts(1)
+	state := NewSyncState()
+	cs := state.EnsureConv("C01")
+	cs.Done = true
+	cs.Cursor = ts(-1)
+	cs.BackfillCursor = "expired-window"
+	cs.BackfillLatest = pin
+	src, err := imp.store.GetOrCreateSource("slack", opts.TeamID+":"+opts.UserID)
+	require.NoError(t, err)
+	runID, err := imp.store.StartSync(src.ID, "slack")
+	require.NoError(t, err)
+	require.NoError(t, imp.store.CompleteSync(runID, mustMarshal(t, state)))
+
+	sum, err := imp.Import(context.Background(), opts)
+	require.NoError(t, err)
+	assert.Zero(t, sum.FetchErrors)
+
+	got := requireResumeState(t, imp, src.ID).EnsureConv("C01")
+	assert.Equal(t, pin, got.Cursor, "restarted pagination must retain the original window pin")
+	assert.Empty(t, got.BackfillCursor)
+	assert.Empty(t, got.BackfillLatest)
+
+	var inside, above int
+	require.NoError(t, imp.store.DB().QueryRow(imp.store.Rebind(
+		`SELECT COUNT(*) FROM messages WHERE source_message_id = ?`), "C01:"+ts(0)).Scan(&inside))
+	require.NoError(t, imp.store.DB().QueryRow(imp.store.Rebind(
+		`SELECT COUNT(*) FROM messages WHERE source_message_id = ?`), "C01:"+ts(2)).Scan(&above))
+	assert.Equal(t, 1, inside)
+	assert.Zero(t, above, "restarting an expired page cursor must not widen the pinned window")
+}
+
+func TestImportRestartsExpiredPersistedCatchUpCursorAtPinnedBound(t *testing.T) {
+	f := newFakeSlack(t)
+	f.users = []map[string]any{{
+		"id": "UME", "name": "me", "real_name": "Test User",
+		"profile": map[string]any{"email": "me@example.com"},
+	}}
+	rootTS := ts(-100)
+	replyTS := ts(-50)
+	f.convs = []*fakeConv{{
+		ID: "C01", Name: "general", Kind: "public", Members: []string{"UME"},
+		Msgs: []fakeMsg{{
+			TS: rootTS, User: "UME", Text: "old root",
+			Replies: []fakeMsg{{TS: replyTS, ThreadTS: rootTS, User: "UME", Text: "owed reply"}},
+		}},
+	}}
+	f.invalidHistoryCursors["expired-catch-up"] = true
+	imp, opts := testImporter(t, f)
+
+	pin := ts(0)
+	state := NewSyncState()
+	cs := state.EnsureConv("C01")
+	cs.Done = true
+	cs.Cursor = pin
+	cs.ThreadsPending = true
+	cs.CatchUpCursor = "expired-catch-up"
+	cs.CatchUpLatest = pin
+	cs.SweptThrough = tsFormat(imp.now())
+	src, err := imp.store.GetOrCreateSource("slack", opts.TeamID+":"+opts.UserID)
+	require.NoError(t, err)
+	runID, err := imp.store.StartSync(src.ID, "slack")
+	require.NoError(t, err)
+	require.NoError(t, imp.store.CompleteSync(runID, mustMarshal(t, state)))
+
+	sum, err := imp.Import(context.Background(), opts)
+	require.NoError(t, err)
+	assert.Zero(t, sum.FetchErrors)
+
+	got := requireResumeState(t, imp, src.ID).EnsureConv("C01")
+	assert.Equal(t, pin, got.AuditedThrough, "restarted pagination must retain the original catch-up pin")
+	assert.False(t, got.ThreadsPending)
+	assert.Empty(t, got.CatchUpCursor)
+	assert.Empty(t, got.CatchUpLatest)
+
+	var replies int
+	require.NoError(t, imp.store.DB().QueryRow(imp.store.Rebind(
+		`SELECT COUNT(*) FROM messages WHERE source_message_id = ?`), "C01:"+replyTS).Scan(&replies))
+	assert.Equal(t, 1, replies)
+}
+
+func TestImportSurfacesInvalidCursorWithoutPersistedPageCursor(t *testing.T) {
+	f := newFakeSlack(t)
+	f.users = []map[string]any{{
+		"id": "UME", "name": "me", "real_name": "Test User",
+		"profile": map[string]any{"email": "me@example.com"},
+	}}
+	f.convs = []*fakeConv{{
+		ID: "C01", Name: "general", Kind: "public", Members: []string{"UME"},
+	}}
+	f.invalidHistoryCursors[""] = true
+	imp, opts := testImporter(t, f)
+	opts.NoThreads = true
+
+	sum, err := imp.Import(context.Background(), opts)
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "partial Slack sync")
+	assert.Positive(t, sum.FetchErrors, "cursorless invalid_cursor must remain a visible fetch failure")
+}
+
 func mustMarshal(t *testing.T, s *SyncState) string {
 	t.Helper()
 	blob, err := s.Marshal()
