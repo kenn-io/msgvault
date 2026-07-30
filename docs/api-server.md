@@ -579,6 +579,53 @@ with a run-level error.
 
 ---
 
+### Import a meeting {#post-apiv1importmeeting}
+
+**Endpoint:** `POST /api/v1/import/meeting`
+
+Import one provider-neutral meeting without configuring a provider account.
+The authenticated, on-demand endpoint accepts at most 16 MiB of JSON and is
+idempotent on `source.identifier` plus `meeting.external_id`: the first import
+returns `201` / `created`, and retries return `200` / `updated`.
+
+```bash
+curl http://localhost:8080/api/v1/import/meeting \
+  -H "Authorization: Bearer your-secret-key" \
+  -H "Content-Type: application/json" \
+  --data '{
+    "source": {
+      "identifier": "local-meetings",
+      "display_name": "Local Meetings",
+      "account_email": "you@example.com"
+    },
+    "meeting": {
+      "external_id": "planning-2026-07-29",
+      "title": "Planning",
+      "started_at": "2026-07-29T09:00:00-04:00",
+      "summary_text": "Reviewed the launch plan.",
+      "organizer": {"name": "You", "email": "you@example.com"},
+      "attendees": [{"name": "Teammate", "email": "teammate@example.com"}]
+    }
+  }'
+```
+
+```json
+{
+  "status": "created",
+  "source_id": 12,
+  "message_id": 901,
+  "source_message_id": "meeting:planning-2026-07-29"
+}
+```
+
+Timestamps must be RFC 3339 values with explicit offsets. A meeting must
+contain at least one non-empty `summary_markdown`, `summary_text`, `transcript`,
+or `transcript_segments` value; plain and segmented transcripts are mutually
+exclusive. Segment offsets must be finite, non-negative, and non-decreasing.
+Unknown fields are rejected except within `meeting.metadata`.
+
+---
+
 ### OAuth token exchange {#post-apiv1authtokenemail}
 
 **Endpoint:** `POST /api/v1/auth/token/{email}`
@@ -749,7 +796,7 @@ explore contract is in the generated OpenAPI document (`/openapi.json`).
     { "action": "open_in_source", "reason": "trusted_source_link_unavailable" }
   ],
   "action_targets": [],
-  "operation_token": "3q2fF0kaVYlIuXQ8yYb-KzGH5mo2vNc1",
+  "operation_token": "<operation_token>",
   "expires_at": "2026-07-06T15:35:00Z"
 }
 ```

@@ -46,6 +46,10 @@ func (s *Syncer) Incremental(ctx context.Context) (Result, error) {
 		if err := ctx.Err(); err != nil {
 			return result, err
 		}
+		if err := s.confirmCalendarSourceIdentity(ctx, src); err != nil {
+			recordErr(fmt.Errorf("confirm account identity for source %d: %w", src.ID, err))
+			continue
+		}
 		cfg := parseSourceConfig(src.SyncConfig)
 		if cfg.CalendarID == "" {
 			continue

@@ -333,6 +333,23 @@ func (i IdentitySearchSortField) Validate() error {
 	}
 }
 
+type MeetingImportResponseStatus string
+
+const (
+	MeetingImportResponseStatusCreated MeetingImportResponseStatus = "created"
+	MeetingImportResponseStatusUpdated MeetingImportResponseStatus = "updated"
+)
+
+// Validate checks if the MeetingImportResponseStatus value is valid
+func (m MeetingImportResponseStatus) Validate() error {
+	switch m {
+	case MeetingImportResponseStatusCreated, MeetingImportResponseStatusUpdated:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid MeetingImportResponseStatus value, got: %v", m))
+	}
+}
+
 type RemoveResultCacheState string
 
 const (

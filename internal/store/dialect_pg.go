@@ -338,6 +338,8 @@ func (d *PostgreSQLDialect) LegacyColumnMigrations() []ColumnMigration {
 		{`ALTER TABLE participants ADD COLUMN IF NOT EXISTS phone_number TEXT`, "phone_number"},
 		{`ALTER TABLE participants ADD COLUMN IF NOT EXISTS canonical_id TEXT`, "canonical_id"},
 		{`ALTER TABLE messages ADD COLUMN IF NOT EXISTS sender_id BIGINT REFERENCES participants(id)`, "sender_id"},
+		{`ALTER TABLE messages ADD COLUMN IF NOT EXISTS source_is_from_me BOOLEAN`, "source_is_from_me"},
+		{`ALTER TABLE messages ADD COLUMN IF NOT EXISTS identity_is_from_me BOOLEAN NOT NULL DEFAULT FALSE`, "identity_is_from_me"},
 		{`ALTER TABLE messages ADD COLUMN IF NOT EXISTS message_type TEXT NOT NULL DEFAULT 'email'`, "message_type"},
 		{`ALTER TABLE messages ADD COLUMN IF NOT EXISTS attachment_count INTEGER DEFAULT 0`, "attachment_count"},
 		{`ALTER TABLE messages ADD COLUMN IF NOT EXISTS deleted_from_source_at TIMESTAMPTZ`, "deleted_from_source_at"},

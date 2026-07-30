@@ -328,15 +328,16 @@ func (imp *Importer) ingestNote(sourceID int64, identifier string, accountIdenti
 	sentAt := noteStartTime(n).UTC()
 
 	message := &store.Message{
-		SourceID:        sourceID,
-		SourceMessageID: n.ID,
-		MessageType:     MessageType,
-		SentAt:          sql.NullTime{Time: sentAt, Valid: !sentAt.IsZero()},
-		SenderID:        sql.NullInt64{Int64: senderID, Valid: senderID != 0},
-		IsFromMe:        fromMe,
-		Subject:         sql.NullString{String: title, Valid: title != ""},
-		Snippet:         sql.NullString{String: snippet(body), Valid: body != ""},
-		SizeEstimate:    int64(len(body)),
+		SourceID:                sourceID,
+		SourceMessageID:         n.ID,
+		MessageType:             MessageType,
+		SentAt:                  sql.NullTime{Time: sentAt, Valid: !sentAt.IsZero()},
+		SenderID:                sql.NullInt64{Int64: senderID, Valid: senderID != 0},
+		IsFromMe:                fromMe,
+		IdentityDerivedIsFromMe: fromMe,
+		Subject:                 sql.NullString{String: title, Valid: title != ""},
+		Snippet:                 sql.NullString{String: snippet(body), Valid: body != ""},
+		SizeEstimate:            int64(len(body)),
 	}
 
 	metaJSON, err := json.Marshal(buildMetadata(n, identifier, organizerEmail))

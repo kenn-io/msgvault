@@ -274,6 +274,8 @@ func (d *SQLiteDialect) LegacyColumnMigrations() []ColumnMigration {
 		{`ALTER TABLE participants ADD COLUMN phone_number TEXT`, "phone_number"},
 		{`ALTER TABLE participants ADD COLUMN canonical_id TEXT`, "canonical_id"},
 		{`ALTER TABLE messages ADD COLUMN sender_id INTEGER REFERENCES participants(id)`, "sender_id"},
+		{`ALTER TABLE messages ADD COLUMN source_is_from_me BOOLEAN`, "source_is_from_me"},
+		{`ALTER TABLE messages ADD COLUMN identity_is_from_me BOOLEAN NOT NULL DEFAULT FALSE`, "identity_is_from_me"},
 		{`ALTER TABLE messages ADD COLUMN message_type TEXT NOT NULL DEFAULT 'email'`, "message_type"},
 		{`ALTER TABLE messages ADD COLUMN attachment_count INTEGER DEFAULT 0`, "attachment_count"},
 		{`ALTER TABLE messages ADD COLUMN deleted_from_source_at DATETIME`, "deleted_from_source_at"},

@@ -82,6 +82,17 @@ func TestEnsureParticipantsPhoneUniqueIndex_LegacyNonUnique(t *testing.T) {
 
 	// Make sure the legacy schema actually permitted the duplicate.
 	require.NotEqual(winner, loser, "seeded participants must have distinct ids")
+	require.NoError(
+		st.AddAccountIdentity(source.ID, "+15555551234", "manual"),
+		"confirm duplicated phone as source identity",
+	)
+	_, err = st.db.Exec(`
+		INSERT INTO participant_identifiers (
+			participant_id, identifier_type, identifier_value, is_primary
+		)
+		VALUES (?, 'phone', '+15555551234', TRUE)
+	`, winner)
+	require.NoError(err, "seed winner owner identifier")
 
 	// Attach FK references to BOTH participants so we can prove the
 	// repoint+dedupe logic runs end-to-end:
@@ -183,6 +194,9 @@ func TestEnsureParticipantsPhoneUniqueIndex_LegacyNonUnique(t *testing.T) {
 		"read msg-C sender")
 	assert.True(msgCSender.Valid, "msg-C sender = %+v, want winner %d", msgCSender, winner)
 	assert.Equal(winner, msgCSender.Int64, "msg-C sender")
+	msgCIsFromMe, err := st.GetMessageIsFromMe(msgC)
+	require.NoError(err, "read msg-C attribution")
+	assert.True(msgCIsFromMe, "sender repoint must refresh identity-derived attribution")
 
 	// 6) The index is now UNIQUE. Verify via sqlite_master.
 	var sqlDef string

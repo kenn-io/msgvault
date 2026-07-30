@@ -146,6 +146,7 @@ func (s *Store) MigrateLegacyIdentityConfigContext(
 			if !SourceTypeUsesEmailIdentity(src.SourceType) {
 				continue
 			}
+			insertedForSource := false
 			for _, addr := range normalized {
 				// Comparison rule (email-shaped → case-insensitive;
 				// everything else → case-sensitive) is shared with
@@ -173,6 +174,7 @@ func (s *Store) MigrateLegacyIdentityConfigContext(
 					// this source, exactly like AddAccountIdentity's insert
 					// branch — see the matching comment there.
 					insertedAny = true
+					insertedForSource = true
 				case qerr != nil:
 					return fmt.Errorf("read existing identity (source=%d, addr=%s): %w", src.ID, addr, qerr)
 				default:
@@ -188,6 +190,11 @@ func (s *Store) MigrateLegacyIdentityConfigContext(
 							return fmt.Errorf("update identity (source=%d, addr=%s): %w", src.ID, addr, uerr)
 						}
 					}
+				}
+			}
+			if insertedForSource {
+				if err := refreshSourceMessageAttributionContext(ctx, tx, src.ID, ""); err != nil {
+					return fmt.Errorf("refresh migrated identity attribution (source=%d): %w", src.ID, err)
 				}
 			}
 		}

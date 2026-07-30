@@ -37,13 +37,51 @@ source. Add other confirmed aliases with the identity command:
 msgvault identity add work you+meetings@example.com
 ```
 
-When the primary email or aliases change, run a full provider sync to repair
-`is_from_me` on meetings already in the archive:
+Adding a new confirmed identity immediately repairs `is_from_me` on matching
+messages already stored for that source. No provider resync is required.
+
+## Import from any meeting source
+
+The provider-neutral import API archives one meeting at a time and requires no
+`[[granola]]`, `[[circleback]]`, or other provider configuration. Configure an
+API key, start `msgvault serve`, then send authenticated JSON to
+`POST /api/v1/import/meeting`:
 
 ```bash
-msgvault sync-granola work --full
-msgvault sync-circleback work --full
+curl http://localhost:8080/api/v1/import/meeting \
+  -H "Authorization: Bearer your-secret-key" \
+  -H "Content-Type: application/json" \
+  --data '{
+    "source": {
+      "identifier": "local-meetings",
+      "display_name": "Local Meetings",
+      "account_email": "you@example.com"
+    },
+    "meeting": {
+      "external_id": "weekly-planning-42",
+      "title": "Weekly planning",
+      "started_at": "2026-07-29T09:00:00-04:00",
+      "summary_markdown": "## Decisions\n\nShip the new importer.",
+      "transcript_segments": [
+        {"speaker": "Alex", "text": "Let's ship it.", "offset_seconds": 4}
+      ]
+    }
+  }'
 ```
+
+Choose a stable `source.identifier` for the upstream dataset and preserve the
+upstream meeting ID as `meeting.external_id`. That pair is the idempotency key:
+the first import returns `201` with status `created`; unchanged retries and
+replacements return `200` with status `updated` without creating duplicates.
+`source.account_email` identifies you for sender attribution and becomes a
+confirmed identity for the whole source.
+
+Each meeting needs at least one summary, a plain transcript, or segmented
+transcript. Plain and segmented transcripts are mutually exclusive. Timestamps
+use RFC 3339 with an explicit offset, request bodies are limited to 16 MiB, and
+provider-specific fields belong under `meeting.metadata`. These sources are
+on-demand: import through the API again to add or update meetings rather than
+using **Sync now** or a scheduler.
 
 ## Granola
 

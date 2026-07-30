@@ -366,7 +366,7 @@ type scoreBreakdown struct {
 
 // writeJSON writes a JSON response.
 func writeJSON(w http.ResponseWriter, status int, data any) {
-	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Content-Type", applicationJSONMediaType)
 	w.WriteHeader(status)
 	// Headers already sent; if Encode fails mid-stream (broken pipe,
 	// non-serializable value) there's no meaningful recovery beyond
@@ -1364,17 +1364,13 @@ func (s *Server) sourceStatus(statusStore SourceStatusStore, source *store.Sourc
 	if err := s.hydrateSyncRunStatus(statusStore, status.ActiveSync); err != nil {
 		return SourceStatus{}, err
 	}
+	scheduling := classifySourceScheduling(source.SourceType, source.Identifier)
 	schedulerRunning := false
 	if s.scheduler != nil {
-		// Dispatch by source type first: generic-job source types
-		// (synctech-sms, gcal, granola, circleback, beeper) are never
-		// governed by the account scheduler, even if their identifier
-		// happens to collide with a scheduled account email. Only fall
-		// back to the account-scheduler path for source types that don't
-		// map to a generic job, so gmail/imap behavior stays byte-identical.
-		if _, ok := SchedulerJobNameForSource(source.SourceType, source.Identifier); ok {
-			schedulerRunning = s.applyGenericJobStatus(&status, source)
-		} else {
+		switch scheduling.kind {
+		case sourceScheduleGeneric:
+			schedulerRunning = s.applyGenericJobStatus(&status, scheduling.jobName)
+		case sourceScheduleAccount:
 			status.Scheduled = s.scheduler.IsScheduled(source.Identifier)
 			for _, scheduled := range s.scheduler.Status() {
 				if scheduled.Email != source.Identifier {
@@ -1388,9 +1384,12 @@ func (s *Server) sourceStatus(statusStore SourceStatusStore, source *store.Sourc
 				}
 				break
 			}
+		case sourceScheduleNonSchedulable:
 		}
 	}
 	switch {
+	case scheduling.kind == sourceScheduleNonSchedulable:
+		status.SyncUnavailableReason = "source_not_schedulable"
 	case status.ActiveSync != nil || schedulerRunning:
 		status.SyncUnavailableReason = "sync_already_running"
 	case s.scheduler == nil:
@@ -1427,11 +1426,7 @@ func (s *Server) sourceStatus(statusStore SourceStatusStore, source *store.Sourc
 // SchedulerJobNameForSource) when source's type is driven by one of those
 // jobs rather than the account scheduler. It reports whether that job is
 // currently running (false if no matching job exists).
-func (s *Server) applyGenericJobStatus(status *SourceStatus, source *store.Source) bool {
-	jobName, ok := SchedulerJobNameForSource(source.SourceType, source.Identifier)
-	if !ok {
-		return false
-	}
+func (s *Server) applyGenericJobStatus(status *SourceStatus, jobName string) bool {
 	for _, job := range s.scheduler.JobStatus() {
 		if job.Name != jobName {
 			continue
@@ -1527,45 +1522,44 @@ func (s *Server) handleTriggerSync(w http.ResponseWriter, r *http.Request) {
 	}
 	sourceType := r.URL.Query().Get("source_type")
 
-	// Generic (non-account) sources — synctech-sms, gcal, granola, circleback,
-	// beeper — are driven by named generic scheduler jobs. The caller passes
-	// the source type explicitly so this dispatches authoritatively, without
-	// scanning the store for a matching identifier (which could otherwise
-	// collide with a scheduled account email and trigger the wrong sync).
-	if jobName, ok := SchedulerJobNameForSource(sourceType, account); ok {
-		if !s.scheduler.IsJobScheduled(jobName) {
+	scheduling := classifySourceScheduling(sourceType, account)
+	switch scheduling.kind {
+	case sourceScheduleNonSchedulable:
+		writeError(w, http.StatusBadRequest, "source_not_schedulable", "Source type cannot be scheduled: "+sourceType)
+		return
+	case sourceScheduleGeneric:
+		if !s.scheduler.IsJobScheduled(scheduling.jobName) {
 			writeError(w, http.StatusNotFound, "not_found", "Account is not scheduled: "+account)
 			return
 		}
-		if err := s.scheduler.StartJob(jobName); err != nil {
+		if err := s.scheduler.StartJob(scheduling.jobName); err != nil {
 			s.logger.Error("failed to trigger generic sync job",
-				"job", jobName, "identifier", account, "error", err)
+				"job", scheduling.jobName, "identifier", account, "error", err)
 			writeError(w, http.StatusConflict, "sync_error", err.Error())
 			return
 		}
-		s.logger.Info("generic sync triggered via API", "job", jobName, "identifier", account)
+		s.logger.Info("generic sync triggered via API", "job", scheduling.jobName, "identifier", account)
 		writeJSON(w, http.StatusAccepted, StatusMessageResponse{
 			Status:  "accepted",
 			Message: "Sync started for " + account,
 		})
 		return
+	case sourceScheduleAccount:
+		if !s.scheduler.IsScheduled(account) {
+			writeError(w, http.StatusNotFound, "not_found", "Account is not scheduled: "+account)
+			return
+		}
+		if err := s.scheduler.TriggerSync(account); err != nil {
+			s.logger.Error("failed to trigger sync", "account", account, "error", err)
+			writeError(w, http.StatusConflict, "sync_error", err.Error())
+			return
+		}
+		s.logger.Info("sync triggered via API", "account", account)
+		writeJSON(w, http.StatusAccepted, StatusMessageResponse{
+			Status:  "accepted",
+			Message: "Sync started for " + account,
+		})
 	}
-
-	// Account-scheduler sources (gmail, imap, ...) are keyed by email.
-	if !s.scheduler.IsScheduled(account) {
-		writeError(w, http.StatusNotFound, "not_found", "Account is not scheduled: "+account)
-		return
-	}
-	if err := s.scheduler.TriggerSync(account); err != nil {
-		s.logger.Error("failed to trigger sync", "account", account, "error", err)
-		writeError(w, http.StatusConflict, "sync_error", err.Error())
-		return
-	}
-	s.logger.Info("sync triggered via API", "account", account)
-	writeJSON(w, http.StatusAccepted, StatusMessageResponse{
-		Status:  "accepted",
-		Message: "Sync started for " + account,
-	})
 }
 
 // handleSchedulerStatus returns the scheduler status.

@@ -60,6 +60,14 @@ func (m Model) meetingSourceLabel(sourceID int64) string {
 			return "Granola"
 		case meetingSourceCircleback:
 			return "Circleback"
+		case meetingSourceImported:
+			if account.DisplayName != "" {
+				return textutil.SanitizeTerminal(account.DisplayName)
+			}
+			if account.Identifier != "" {
+				return textutil.SanitizeTerminal(account.Identifier)
+			}
+			return "Imported"
 		}
 		if account.DisplayName != "" {
 			return textutil.SanitizeTerminal(account.DisplayName)
@@ -84,9 +92,9 @@ func meetingColumnWidths(width int) (date, title, organizer, source int) {
 func (m Model) meetingListView() string {
 	if len(m.meetingState.messages) == 0 && !m.loading && m.err == nil &&
 		!m.meetingState.searchActive && m.meetingState.searchQuery == "" {
-		message := "No meetings found. Sync Granola or Circleback to import meetings."
+		message := "No meetings found. Sync a provider or import meetings."
 		if len(m.meetingAccounts()) == 0 {
-			message = "No meeting sources configured. Add Granola or Circleback to begin."
+			message = "No meeting sources configured. Add a provider or import meetings to begin."
 		}
 		content := m.fillScreen(m.styles.normalRow.Render(padRight(message, m.width)))
 		if m.modal != modalNone {

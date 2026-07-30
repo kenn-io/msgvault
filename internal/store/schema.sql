@@ -162,6 +162,8 @@ CREATE TABLE IF NOT EXISTS messages (
     -- Sender
     sender_id INTEGER REFERENCES participants(id),
     is_from_me BOOLEAN DEFAULT FALSE,
+    source_is_from_me BOOLEAN,
+    identity_is_from_me BOOLEAN NOT NULL DEFAULT FALSE,
 
     -- Content
     subject TEXT,               -- email subject, NULL for chat

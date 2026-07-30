@@ -1,6 +1,7 @@
 package store_test
 
 import (
+	"database/sql"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -153,6 +154,33 @@ func TestMigrateLegacyIdentityConfig_BumpsRevisionsOnlyWhenItInserts(t *testing.
 	require.NoError(err, "AccountIdentityRevision after second call")
 	assert.Equal(acctRevAfter, acctRevSecond,
 		"a no-op re-run must not bump the account identity revision")
+}
+
+func TestMigrateLegacyIdentityConfigRefreshesExistingMessages(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := storetest.New(t)
+	st := f.Store
+
+	senderID := f.EnsureParticipant("owner@example.com", "Owner", "example.com")
+	message := f.NewMessage().WithSourceMessageID("legacy-config-owner").Build()
+	message.SenderID = sql.NullInt64{Int64: senderID, Valid: true}
+	messageID, err := st.UpsertMessage(message)
+	require.NoError(err, "persist message before identity migration")
+
+	applied, _, _, _, err := st.MigrateLegacyIdentityConfig([]string{"owner@example.com"}) //nolint:dogsled // 5-return migration; test needs only applied+err
+	require.NoError(err, "MigrateLegacyIdentityConfig")
+	require.True(applied, "migration should insert the configured identity")
+
+	var sourceDerived, identityDerived, isFromMe bool
+	require.NoError(st.DB().QueryRow(st.Rebind(`
+		SELECT source_is_from_me, identity_is_from_me, is_from_me
+		FROM messages
+		WHERE id = ?
+	`), messageID).Scan(&sourceDerived, &identityDerived, &isFromMe))
+	assert.False(sourceDerived, "incoming Gmail message was not source-native")
+	assert.True(identityDerived, "migration must immediately repair identity provenance")
+	assert.True(isFromMe, "migration must immediately repair effective attribution")
 }
 
 func TestMigrateLegacyIdentityConfig_MergesExistingSignal(t *testing.T) {

@@ -143,6 +143,8 @@ CREATE TABLE IF NOT EXISTS messages (
 
     sender_id BIGINT REFERENCES participants(id),
     is_from_me BOOLEAN DEFAULT FALSE,
+    source_is_from_me BOOLEAN,
+    identity_is_from_me BOOLEAN NOT NULL DEFAULT FALSE,
 
     subject TEXT,
     snippet TEXT,

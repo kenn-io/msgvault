@@ -1,6 +1,7 @@
 package store_test
 
 import (
+	"database/sql"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -76,6 +77,51 @@ func TestSetParticipantIdentifierRepointOwnerEvidenceBumpsRevisions(t *testing.T
 	id, _, err := st.ParticipantByIdentifier("phone", "+15550100")
 	require.NoError(err, "ParticipantByIdentifier")
 	assert.Equal(second, id, "identifier must point at the new participant")
+}
+
+func TestSetParticipantIdentifierRepointRefreshesSenderAttribution(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := storetest.New(t)
+	st := f.Store
+
+	require.NoError(st.AddAccountIdentity(f.Source.ID, "+15550100", "manual"), "confirm owner identity")
+	first := f.EnsureParticipant("first@example.com", "First", "example.com")
+	second := f.EnsureParticipant("second@example.com", "Second", "example.com")
+	require.NoError(st.SetParticipantIdentifier(first, "phone", "+15550100"), "seed owner evidence")
+
+	persistMessage := func(sourceMessageID string, senderID int64) int64 {
+		message := f.NewMessage().WithSourceMessageID(sourceMessageID).Build()
+		message.SenderID = sql.NullInt64{Int64: senderID, Valid: true}
+		messageID, err := st.UpsertMessage(message)
+		require.NoError(err, "persist %s", sourceMessageID)
+		return messageID
+	}
+	firstMessageID := persistMessage("identifier-first", first)
+	secondMessageID := persistMessage("identifier-second", second)
+
+	require.NoError(st.SetParticipantIdentifier(second, "phone", "+15550100"), "repoint owner evidence")
+
+	firstIsFromMe, err := st.GetMessageIsFromMe(firstMessageID)
+	require.NoError(err, "read former owner attribution")
+	assert.False(firstIsFromMe, "reassignment must clear attribution from the former identifier owner")
+	secondIsFromMe, err := st.GetMessageIsFromMe(secondMessageID)
+	require.NoError(err, "read new owner attribution")
+	assert.True(secondIsFromMe, "reassignment must attribute messages from the new identifier owner")
+
+	var firstIdentityDerived, secondIdentityDerived bool
+	require.NoError(st.DB().QueryRow(st.Rebind(`
+		SELECT identity_is_from_me
+		FROM messages
+		WHERE id = ?
+	`), firstMessageID).Scan(&firstIdentityDerived))
+	require.NoError(st.DB().QueryRow(st.Rebind(`
+		SELECT identity_is_from_me
+		FROM messages
+		WHERE id = ?
+	`), secondMessageID).Scan(&secondIdentityDerived))
+	assert.False(firstIdentityDerived, "former identifier owner provenance")
+	assert.True(secondIdentityDerived, "new identifier owner provenance")
 }
 
 // TestSetParticipantIdentifierNonOwnerEvidenceBumpsOnlyIdentifierRevision

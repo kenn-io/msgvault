@@ -116,13 +116,13 @@ func looksLikeEmail(addr string) bool {
 // column accommodates email, phone E.164, and synthetic identifiers like
 // chat handles where case can be significant).
 //
-// Confirming a brand new (source_id, address) pair changes which
-// participants are owners for the source, so it bumps both the identity
-// revision (the owner_participants cache dataset depends on it) and the
-// account-identity revision (the message-baked is_from_me flag depends on
-// it and can only be repaired by a full cache rebuild). Merging a new
-// signal into an already-confirmed address does not change that mapping,
-// so it leaves both revisions untouched.
+// Confirming a brand new (source_id, address) pair changes which participants
+// are owners for the source. The same transaction repairs is_from_me in the
+// primary store and bumps both the identity revision (the owner_participants
+// cache dataset depends on it) and the account-identity revision (Parquet
+// shards bake the flag and need a full cache rebuild). Merging a new signal
+// into an already-confirmed address does not change that mapping, so it leaves
+// attribution and both revisions untouched.
 //
 // Concurrency: the read-modify-write runs inside a transaction that first
 // takes lockIdentityMutationTx's write lock, mirroring LinkParticipants so
@@ -142,6 +142,48 @@ func (s *Store) AddAccountIdentityContext(
 	sourceID int64,
 	address, signal string,
 ) error {
+	return s.addAccountIdentityContext(
+		ctx,
+		sourceID,
+		address,
+		signal,
+		func(ctx context.Context, tx *loggedTx) error {
+			return refreshSourceMessageAttributionContext(ctx, tx, sourceID, "")
+		},
+	)
+}
+
+// AddAccountIdentityAndRefreshMessageAttributionContext confirms an identity
+// and, only when the identity is brand new, marks matching earlier messages in
+// the source as sent by the account. Identity creation and attribution repair
+// run in the same transaction. excludeSourceMessageID keeps the meeting
+// currently being retried on its normal persistence path.
+func (s *Store) AddAccountIdentityAndRefreshMessageAttributionContext(
+	ctx context.Context,
+	sourceID int64,
+	address, signal, excludeSourceMessageID string,
+) error {
+	return s.addAccountIdentityContext(
+		ctx,
+		sourceID,
+		address,
+		signal,
+		func(ctx context.Context, tx *loggedTx) error {
+			return refreshSourceMessageAttributionContext(
+				ctx, tx, sourceID, excludeSourceMessageID,
+			)
+		},
+	)
+}
+
+type accountIdentityInsertHook func(context.Context, *loggedTx) error
+
+func (s *Store) addAccountIdentityContext(
+	ctx context.Context,
+	sourceID int64,
+	address, signal string,
+	onInsert accountIdentityInsertHook,
+) error {
 	addr := strings.TrimSpace(address)
 	if addr == "" {
 		return nil
@@ -156,7 +198,7 @@ func (s *Store) AddAccountIdentityContext(
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		err := s.addAccountIdentityOnce(ctx, sourceID, addr, signal, match)
+		err := s.addAccountIdentityOnce(ctx, sourceID, addr, signal, match, onInsert)
 		if err == nil {
 			return nil
 		}
@@ -171,7 +213,11 @@ func (s *Store) AddAccountIdentityContext(
 // transaction. The caller's retry loop handles unique-violation
 // (concurrent INSERT race) and busy/snapshot errors (SQLite).
 func (s *Store) addAccountIdentityOnce(
-	ctx context.Context, sourceID int64, addr, signal string, match identifierMatch,
+	ctx context.Context,
+	sourceID int64,
+	addr, signal string,
+	match identifierMatch,
+	onInsert accountIdentityInsertHook,
 ) error {
 	return s.withTxContext(ctx, func(tx *loggedTx) error {
 		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
@@ -200,6 +246,11 @@ func (s *Store) addAccountIdentityOnce(
 			}
 			if err := s.bumpAccountIdentityRevisionContext(ctx, tx); err != nil {
 				return err
+			}
+			if onInsert != nil {
+				if err := onInsert(ctx, tx); err != nil {
+					return err
+				}
 			}
 		case err != nil:
 			return fmt.Errorf("read existing source_signal: %w", err)
@@ -334,7 +385,10 @@ func (s *Store) RemoveAccountIdentityContext(
 		if _, err := s.bumpIdentityRevisionContext(ctx, tx); err != nil {
 			return err
 		}
-		return s.bumpAccountIdentityRevisionContext(ctx, tx)
+		if err := s.bumpAccountIdentityRevisionContext(ctx, tx); err != nil {
+			return err
+		}
+		return refreshSourceMessageAttributionContext(ctx, tx, sourceID, "")
 	})
 	if err != nil {
 		return 0, err

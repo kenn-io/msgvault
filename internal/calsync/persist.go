@@ -108,19 +108,23 @@ func (s *Syncer) ingestEvent(sourceID int64, cal gcal.Calendar, ev gcal.Event) (
 
 	body := serializeBody(ev)
 	subject := ev.Summary
-	fromMe := ev.Organizer.Self || (ev.Organizer.Email != "" && strings.EqualFold(ev.Organizer.Email, s.opts.AccountEmail))
+	identityFromMe := !ev.Organizer.Self &&
+		ev.Organizer.Email != "" &&
+		strings.EqualFold(ev.Organizer.Email, s.opts.AccountEmail)
+	fromMe := ev.Organizer.Self || identityFromMe
 
 	msgID, err := s.store.UpsertMessage(&store.Message{
-		ConversationID:  convID,
-		SourceID:        sourceID,
-		SourceMessageID: smid,
-		MessageType:     gcal.MessageTypeCalendarEvent,
-		SentAt:          eventSentAt(ev),
-		SenderID:        sql.NullInt64{Int64: senderID, Valid: senderID != 0},
-		IsFromMe:        fromMe,
-		Subject:         sql.NullString{String: subject, Valid: subject != ""},
-		Snippet:         sql.NullString{String: snippet(body), Valid: body != ""},
-		SizeEstimate:    int64(len(body)),
+		ConversationID:          convID,
+		SourceID:                sourceID,
+		SourceMessageID:         smid,
+		MessageType:             gcal.MessageTypeCalendarEvent,
+		SentAt:                  eventSentAt(ev),
+		SenderID:                sql.NullInt64{Int64: senderID, Valid: senderID != 0},
+		IsFromMe:                fromMe,
+		IdentityDerivedIsFromMe: identityFromMe,
+		Subject:                 sql.NullString{String: subject, Valid: subject != ""},
+		Snippet:                 sql.NullString{String: snippet(body), Valid: body != ""},
+		SizeEstimate:            int64(len(body)),
 	})
 	if err != nil {
 		return 0, fmt.Errorf("upsert message: %w", err)

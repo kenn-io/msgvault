@@ -2626,6 +2626,134 @@ components:
         strongest_excerpt:
           type: string
       type: object
+    Meeting:
+      additionalProperties: false
+      allOf:
+        - anyOf:
+            - properties:
+                summary_markdown:
+                  minLength: 1
+                  type: string
+              required:
+                - summary_markdown
+              type: object
+            - properties:
+                summary_text:
+                  minLength: 1
+                  type: string
+              required:
+                - summary_text
+              type: object
+            - properties:
+                transcript:
+                  minLength: 1
+                  type: string
+              required:
+                - transcript
+              type: object
+            - properties:
+                transcript_segments:
+                  minItems: 1
+                  type: array
+              required:
+                - transcript_segments
+              type: object
+        - not:
+            properties:
+              transcript:
+                minLength: 1
+                type: string
+              transcript_segments:
+                minItems: 1
+                type: array
+            required:
+              - transcript
+              - transcript_segments
+            type: object
+      properties:
+        attendees:
+          items:
+            $ref: "#/components/schemas/MeetingPerson"
+          type:
+            - array
+            - "null"
+        ended_at:
+          format: date-time
+          type: string
+        external_id:
+          maxLength: 256
+          type: string
+        metadata:
+          additionalProperties: {}
+          type: object
+        organizer:
+          $ref: "#/components/schemas/MeetingPerson"
+        started_at:
+          format: date-time
+          type: string
+        summary_markdown:
+          type: string
+        summary_text:
+          type: string
+        title:
+          maxLength: 4096
+          type: string
+        transcript:
+          type: string
+        transcript_segments:
+          items:
+            $ref: "#/components/schemas/TranscriptSegment"
+          type:
+            - array
+            - "null"
+      required:
+        - external_id
+        - started_at
+      type: object
+    MeetingImportRequest:
+      additionalProperties: false
+      properties:
+        meeting:
+          $ref: "#/components/schemas/Meeting"
+        source:
+          $ref: "#/components/schemas/Source"
+      required:
+        - source
+        - meeting
+      type: object
+    MeetingImportResponse:
+      additionalProperties: true
+      properties:
+        message_id:
+          format: int64
+          type: integer
+        source_id:
+          format: int64
+          type: integer
+        source_message_id:
+          type: string
+        status:
+          enum:
+            - created
+            - updated
+          type: string
+      required:
+        - status
+        - source_id
+        - message_id
+        - source_message_id
+      type: object
+    MeetingPerson:
+      additionalProperties: false
+      properties:
+        email:
+          format: email
+          type: string
+        name:
+          type: string
+      required:
+        - email
+      type: object
     MessageDetail:
       additionalProperties: true
       properties:
@@ -3798,6 +3926,22 @@ components:
         - generation
         - messages
       type: object
+    Source:
+      additionalProperties: false
+      properties:
+        account_email:
+          format: email
+          type: string
+        display_name:
+          maxLength: 256
+          type: string
+        identifier:
+          maxLength: 128
+          type: string
+      required:
+        - identifier
+        - account_email
+      type: object
     SourceCount:
       additionalProperties: true
       properties:
@@ -4506,6 +4650,21 @@ components:
         - label_count
         - account_count
       type: object
+    TranscriptSegment:
+      additionalProperties: false
+      properties:
+        offset_seconds:
+          format: double
+          minimum: 0
+          type: number
+        speaker:
+          type: string
+        text:
+          type: string
+      required:
+        - speaker
+        - text
+      type: object
     UpdateRequest:
       additionalProperties: false
       properties:
@@ -4545,7 +4704,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 1.32.0
+  version: 1.33.0
 openapi: 3.1.0
 paths:
   /api/ping:
@@ -7261,6 +7420,39 @@ paths:
       security:
         - apiKey: []
       summary: Remove a link edge between two participants
+      tags:
+        - API
+  /api/v1/import/meeting:
+    post:
+      operationId: importMeeting
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MeetingImportRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MeetingImportResponse"
+          description: OK
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MeetingImportResponse"
+          description: Created
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Import one meeting
       tags:
         - API
   /api/v1/integrations/tasks/search:

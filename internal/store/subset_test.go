@@ -185,6 +185,72 @@ func TestCopySubset_Basic(t *testing.T) {
 	assert.False(hasViolation, "foreign key violations found in destination database")
 }
 
+func TestCopySubset_UpgradedMessageColumnOrder(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	srcDir := t.TempDir()
+	dstDir := filepath.Join(t.TempDir(), "dst")
+	srcDB := createTestSourceDB(t, srcDir, 1)
+
+	st, err := Open(srcDB)
+	require.NoError(err, "open source for upgrade")
+	_, err = st.DB().Exec(`
+		ALTER TABLE messages DROP COLUMN identity_is_from_me;
+		ALTER TABLE messages DROP COLUMN source_is_from_me;
+		DELETE FROM applied_migrations
+		WHERE name = 'message_attribution_provenance_v2';
+	`)
+	require.NoError(err, "simulate pre-attribution schema")
+	require.NoError(st.InitSchema(), "upgrade source schema")
+	_, err = st.DB().Exec(`
+		UPDATE messages
+		SET is_from_me = TRUE,
+		    source_is_from_me = FALSE,
+		    identity_is_from_me = TRUE,
+		    metadata = '{"schema":"upgraded"}',
+		    embed_gen = 7
+		WHERE id = 1
+	`)
+	require.NoError(err, "seed upgraded message columns")
+	require.NoError(st.Close(), "close upgraded source")
+
+	result, err := CopySubset(srcDB, dstDir, 1, false)
+	require.NoError(err, "CopySubset from upgraded schema")
+	assert.Equal(int64(1), result.Messages)
+
+	db, err := sql.Open("sqlite3", filepath.Join(dstDir, "msgvault.db"))
+	require.NoError(err, "open copied database")
+	defer func() { _ = db.Close() }()
+
+	var sourceMessageID, messageType, subject, metadata string
+	var isFromMe, sourceIsFromMe, identityIsFromMe bool
+	var embedGen int64
+	require.NoError(db.QueryRow(`
+		SELECT source_message_id, message_type, subject,
+		       is_from_me, source_is_from_me, identity_is_from_me,
+		       metadata, embed_gen
+		FROM messages
+		WHERE id = 1
+	`).Scan(
+		&sourceMessageID,
+		&messageType,
+		&subject,
+		&isFromMe,
+		&sourceIsFromMe,
+		&identityIsFromMe,
+		&metadata,
+		&embedGen,
+	))
+	assert.Equal("msg_1", sourceMessageID)
+	assert.Equal("email", messageType)
+	assert.Equal("Subject B", subject)
+	assert.True(isFromMe)
+	assert.False(sourceIsFromMe)
+	assert.True(identityIsFromMe)
+	assert.JSONEq(`{"schema":"upgraded"}`, metadata)
+	assert.Equal(int64(7), embedGen)
+}
+
 func TestCopySubset_AllRows(t *testing.T) {
 	srcDir := t.TempDir()
 	dstDir := filepath.Join(t.TempDir(), "dst")

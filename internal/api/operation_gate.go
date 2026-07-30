@@ -293,20 +293,21 @@ func writeOperationGateBusy(w http.ResponseWriter, gate OperationGate) {
 	writeError(w, http.StatusServiceUnavailable, "operation_in_progress", message)
 }
 
-// operationGateExemptPaths are non-GET endpoints that do not mutate the
-// archive: they must not queue behind long archive operations. Most only read;
+// operationGateExemptPaths bypass the generic mutation gate. Most only read;
 // the session endpoints mutate process-local authentication state. Verify is
 // NOT exempt: its subprocess opens the store read-write and runs schema
 // init/migrations.
 //
-// The backup freeze endpoints are exempt for a different reason: begin
-// acquires the operation gate itself (see beginLabeledOperationGateWork in
-// handleBackupFreezeBegin), so routing them through the generic middleware
-// gate as well would deadlock begin against its own acquisition.
+// Backup freeze begin and meeting import coordinate the gate in their handlers.
+// Meeting import first reads and validates its bounded request body so a slow
+// authenticated upload cannot hold the gate. Backup freeze end bypasses the
+// gate so it can release the freeze held by begin. Routing these through the
+// generic middleware would deadlock their coordination.
 var operationGateExemptPaths = map[string]bool{
 	queryEndpointPath:                true,
 	sessionPath:                      true,
 	sessionLoginPath:                 true,
+	meetingImportEndpointPath:        true,
 	"/api/v1/cli/add-calendar/plan":  true,
 	"/api/v1/cli/delete-staged/plan": true,
 	"/api/v1/cli/embeddings/plan":    true,

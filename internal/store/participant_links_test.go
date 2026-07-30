@@ -1,6 +1,7 @@
 package store_test
 
 import (
+	"database/sql"
 	"errors"
 	"fmt"
 	"sync"
@@ -398,6 +399,34 @@ func TestMergeParticipantsWithoutLinksStillBumpsRevisionButRewritesNoLinks(t *te
 	var edgeCount int
 	require.NoError(f.Store.DB().QueryRow(`SELECT COUNT(*) FROM participant_links`).Scan(&edgeCount))
 	assert.Equal(0, edgeCount, "merge without pre-existing links must not create any link edge")
+}
+
+func TestMergeParticipantsRefreshesSenderAttribution(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := storetest.New(t)
+	st := f.Store
+
+	require.NoError(
+		st.AddAccountIdentity(f.Source.ID, "owner@example.com", "manual"),
+		"confirm owner identity",
+	)
+	owner := f.EnsureParticipant("owner@example.com", "Owner", "example.com")
+	survivor := f.EnsureParticipant("other@example.com", "Other", "example.com")
+	message := f.NewMessage().WithSourceMessageID("merge-attribution").Build()
+	message.SenderID = sql.NullInt64{Int64: owner, Valid: true}
+	messageID, err := st.UpsertMessage(message)
+	require.NoError(err, "persist owner-attributed message")
+
+	isFromMe, err := st.GetMessageIsFromMe(messageID)
+	require.NoError(err, "read attribution before merge")
+	require.True(isFromMe, "confirmed owner sender must begin attributed")
+
+	require.NoError(st.MergeParticipants(owner, survivor), "merge owner into unmatched survivor")
+
+	isFromMe, err = st.GetMessageIsFromMe(messageID)
+	require.NoError(err, "read attribution after merge")
+	assert.False(isFromMe, "merge must clear attribution after sender no longer matches")
 }
 
 // TestLinkParticipants_ConcurrentDisjointClusters covers the race that

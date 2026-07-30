@@ -162,7 +162,7 @@ func (s *Server) humaAuthMiddleware(ctx huma.Context, next func(huma.Context)) {
 }
 
 func writeHumaError(ctx huma.Context, status int, code string, message string) {
-	ctx.SetHeader("Content-Type", "application/json")
+	ctx.SetHeader("Content-Type", applicationJSONMediaType)
 	ctx.SetStatus(status)
 	_ = json.NewEncoder(ctx.BodyWriter()).Encode(ErrorResponse{ //nolint:errchkjson // best-effort error response write
 		Error:   code,
@@ -273,6 +273,7 @@ func (s *Server) registerHumaRoutes(api huma.API, apiV1 huma.API) {
 
 	registerAPIV1RawHumaJSONRoute[MessageListResponse](apiV1, "listMessages", http.MethodGet, "/messages", "List messages", s.handleListMessages)
 	registerAPIV1RawHumaJSONRoute[MessageDetail](apiV1, "getMessage", http.MethodGet, "/messages/{id}", "Get one message", s.handleGetMessage)
+	s.registerMeetingImportRoute(apiV1)
 	registerAPIV1RawHumaJSONRoute[ConversationResponse](apiV1, "getConversation", http.MethodGet, "/conversations/{id}", "Get a bounded containing conversation", s.handleGetConversation)
 	registerAPIV1RawHumaJSONRoute[AttachmentInfo](apiV1, "getAttachment", http.MethodGet, "/attachments/{id}", "Get attachment metadata", s.handleGetAttachment)
 	registerAPIV1RawHumaBinaryRoute(
@@ -838,7 +839,7 @@ func jsonRequestBodyFor[T any](api huma.API) *huma.RequestBody {
 	return &huma.RequestBody{
 		Required: true,
 		Content: map[string]*huma.MediaType{
-			"application/json": {Schema: schemaFor[T](api)},
+			applicationJSONMediaType: {Schema: schemaFor[T](api)},
 		},
 	}
 }
@@ -852,7 +853,7 @@ func jsonResponsesFor[T any](api huma.API, successStatuses ...int) map[string]*h
 		responses[httpStatusKey(status)] = &huma.Response{
 			Description: http.StatusText(status),
 			Content: map[string]*huma.MediaType{
-				"application/json": {Schema: schemaFor[T](api)},
+				applicationJSONMediaType: {Schema: schemaFor[T](api)},
 			},
 		}
 	}
@@ -869,7 +870,7 @@ func oneOfJSONResponses(api huma.API, responseTypes ...reflect.Type) map[string]
 		httpStatusKey(http.StatusOK): {
 			Description: http.StatusText(http.StatusOK),
 			Content: map[string]*huma.MediaType{
-				"application/json": {Schema: &huma.Schema{OneOf: oneOf}},
+				applicationJSONMediaType: {Schema: &huma.Schema{OneOf: oneOf}},
 			},
 		},
 		"default": errorResponseFor(api),
@@ -908,7 +909,7 @@ func errorResponseFor(api huma.API) *huma.Response {
 	return &huma.Response{
 		Description: "Error",
 		Content: map[string]*huma.MediaType{
-			"application/json": {Schema: schemaFor[ErrorResponse](api)},
+			applicationJSONMediaType: {Schema: schemaFor[ErrorResponse](api)},
 		},
 	}
 }

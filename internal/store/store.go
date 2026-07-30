@@ -515,10 +515,19 @@ func (s *Store) withTxContext(ctx context.Context, fn func(tx *loggedTx) error) 
 		}
 		return err
 	}
+	if err := ctx.Err(); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
 	if err := tx.Commit(); err != nil {
 		slog.Warn("sql tx commit failed",
 			"error", err.Error(),
 			"duration_ms", time.Since(start).Milliseconds())
+		if errors.Is(err, sql.ErrTxDone) {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return ctxErr
+			}
+		}
 		return err
 	}
 	// A tx crossing the slow threshold is a diagnostic, not a problem —
@@ -664,7 +673,9 @@ type chunkInsert struct {
 // parameter limit (999). valueBuilder generates the VALUES placeholders and
 // args for each chunk of row indices. Rebinding to the dialect's placeholder
 // form happens inside tx.Exec (loggedTx wraps the dialect's Rebind).
-func insertInChunks(tx *loggedTx, c chunkInsert, valueBuilder func(start, end int) ([]string, []any)) error {
+func insertInChunks(tx interface {
+	Exec(query string, args ...any) (sql.Result, error)
+}, c chunkInsert, valueBuilder func(start, end int) ([]string, []any)) error {
 	// SQLite default SQLITE_MAX_VARIABLE_NUMBER is 999
 	// Leave some margin for safety
 	const maxParams = 900
@@ -829,6 +840,53 @@ func (s *Store) InitSchema() error {
 			}
 		} else if m.Desc == "last_modified" && !s.IsPostgreSQL() {
 			lastModifiedColumnAdded = true
+		}
+	}
+
+	// Initialize explicit attribution provenance for every legacy message once
+	// under the maintenance timeout escape hatch. Granola and Circleback
+	// historically derived is_from_me from confirmed organizer identities.
+	// Google Calendar combined that signal with Organizer.Self, so its archived
+	// event payload separates source-native ownership from identity-derived
+	// ownership. Other providers' existing values are source-native. Runtime
+	// identity mutations can then update only rows whose derived attribution
+	// actually changes instead of rewriting an entire source to initialize NULL
+	// provenance.
+	attributionMigrated, err := s.IsMigrationApplied(migrationMessageAttributionProvenance)
+	if err != nil {
+		return err
+	}
+	if !attributionMigrated {
+		if err := s.runMaintenance(
+			context.Background(),
+			func(ctx context.Context, tx *loggedTx) error {
+				if err := backfillLegacyMessageAttributionProvenance(ctx, tx); err != nil {
+					return err
+				}
+
+				// Published message shards used to trust the effective
+				// is_from_me value. The provenance migration changes cache
+				// inputs even when no identity is added or removed, so advance
+				// the account-identity revision in the same transaction as the
+				// repaired rows. Empty archives have no stale shards to
+				// invalidate.
+				var hasMessages bool
+				if err := tx.QueryRowContext(
+					ctx,
+					`SELECT EXISTS (SELECT 1 FROM messages)`,
+				).Scan(&hasMessages); err != nil {
+					return fmt.Errorf("check attribution migration cache impact: %w", err)
+				}
+				if !hasMessages {
+					return nil
+				}
+				return s.bumpAccountIdentityRevisionContext(ctx, tx)
+			},
+		); err != nil {
+			return err
+		}
+		if err := s.MarkMigrationApplied(migrationMessageAttributionProvenance); err != nil {
+			return err
 		}
 	}
 

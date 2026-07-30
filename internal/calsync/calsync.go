@@ -159,7 +159,7 @@ func (s *Syncer) RegisterCalendars(ctx context.Context) ([]gcal.Calendar, error)
 		if !s.includeCalendar(cal) {
 			continue
 		}
-		src, err := s.getOrCreateCalendarSource(cal)
+		src, err := s.getOrCreateCalendarSource(ctx, cal)
 		if err != nil {
 			return nil, fmt.Errorf("get/create source for %s: %w", cal.ID, err)
 		}
@@ -199,7 +199,7 @@ func (s *Syncer) listCalendars(ctx context.Context) ([]gcal.Calendar, error) {
 // replaying that token under a later unbounded request can skip or corrupt the
 // traversal.
 func (s *Syncer) syncCalendarFull(ctx context.Context, cal gcal.Calendar, result *Result) error {
-	src, err := s.getOrCreateCalendarSource(cal)
+	src, err := s.getOrCreateCalendarSource(ctx, cal)
 	if err != nil {
 		return fmt.Errorf("get/create source: %w", err)
 	}
@@ -475,7 +475,10 @@ func (s *Syncer) sourceIdentifier(cal gcal.Calendar) string {
 	return s.opts.AccountEmail + "/" + cal.ID
 }
 
-func (s *Syncer) getOrCreateCalendarSource(cal gcal.Calendar) (*store.Source, error) {
+func (s *Syncer) getOrCreateCalendarSource(
+	ctx context.Context,
+	cal gcal.Calendar,
+) (*store.Source, error) {
 	identifier := s.sourceIdentifier(cal)
 
 	sources, err := s.store.GetSourcesByTypeAndAccount(gcal.SourceType, s.opts.AccountEmail)
@@ -483,6 +486,7 @@ func (s *Syncer) getOrCreateCalendarSource(cal gcal.Calendar) (*store.Source, er
 		return nil, fmt.Errorf("find existing calendar sources: %w", err)
 	}
 
+	var source *store.Source
 	var migrate *store.Source
 	for _, src := range sources {
 		cfg := parseSourceConfig(src.SyncConfig)
@@ -490,21 +494,42 @@ func (s *Syncer) getOrCreateCalendarSource(cal gcal.Calendar) (*store.Source, er
 			continue
 		}
 		if src.Identifier == identifier {
-			return src, nil
+			source = src
+			break
 		}
 		if migrate == nil {
 			migrate = src
 		}
 	}
-	if migrate != nil {
+	if source == nil && migrate != nil {
 		if err := s.store.UpdateSourceIdentifier(migrate.ID, identifier); err != nil {
 			return nil, fmt.Errorf("migrate calendar source identifier: %w", err)
 		}
 		migrate.Identifier = identifier
-		return migrate, nil
+		source = migrate
 	}
+	if source == nil {
+		source, err = s.store.GetOrCreateSource(gcal.SourceType, identifier)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if err := s.confirmCalendarSourceIdentity(ctx, source); err != nil {
+		return nil, err
+	}
+	return source, nil
+}
 
-	return s.store.GetOrCreateSource(gcal.SourceType, identifier)
+func (s *Syncer) confirmCalendarSourceIdentity(ctx context.Context, source *store.Source) error {
+	if err := s.store.AddAccountIdentityContext(
+		ctx,
+		source.ID,
+		s.opts.AccountEmail,
+		"account-email",
+	); err != nil {
+		return fmt.Errorf("confirm calendar account identity: %w", err)
+	}
+	return nil
 }
 
 func (s *Syncer) updateCalendarSourceOAuthApp(sourceID int64, calendarID string) error {

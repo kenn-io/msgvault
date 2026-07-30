@@ -1,11 +1,13 @@
 package store_test
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"testing"
 	"time"
 
+	"github.com/mattn/go-sqlite3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/mime"
@@ -1588,6 +1590,73 @@ func TestStore_PersistMessage_Atomicity(t *testing.T) {
 	existing, err := f.Store.MessageExistsBatch(f.Source.ID, []string{"persist-atomic"})
 	require.NoError(t, err, "MessageExistsBatch")
 	assert.Empty(t, existing, "message should not exist after failed PersistMessage")
+}
+
+func TestStore_PersistMessageContext_CancellationRollsBack(t *testing.T) {
+	testutil.SkipIfPostgres(t, "uses a SQLite trigger and registered function to pause persistence")
+	require := require.New(t)
+	assert := assert.New(t)
+	f := storetest.New(t)
+	f.Store.DB().SetMaxOpenConns(1)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	persistStarted := make(chan struct{})
+	conn, err := f.Store.DB().Conn(context.Background())
+	require.NoError(err, "get SQLite connection")
+	err = conn.Raw(func(driverConn any) error {
+		sqliteConn, ok := driverConn.(*sqlite3.SQLiteConn)
+		require.True(ok, "driver connection is SQLite")
+		return sqliteConn.RegisterFunc("wait_for_persist_cancel", func() int {
+			close(persistStarted)
+			<-ctx.Done()
+			return 0
+		}, true)
+	})
+	require.NoError(err, "register cancellation function")
+	require.NoError(conn.Close(), "return SQLite connection to pool")
+	_, err = f.Store.DB().Exec(`
+		CREATE TRIGGER wait_before_meeting_raw_insert
+		BEFORE INSERT ON message_raw
+		WHEN NEW.raw_format = 'meeting_json'
+		BEGIN
+			SELECT wait_for_persist_cancel();
+		END
+	`)
+	require.NoError(err, "create cancellation trigger")
+
+	msg := storetest.NewMessage(f.Source.ID, f.ConvID).
+		WithSourceMessageID("persist-cancel").
+		WithSubject("Canceled persistence").
+		Build()
+	done := make(chan error, 1)
+	go func() {
+		_, persistErr := f.Store.PersistMessageContext(ctx, &store.MessagePersistData{
+			Message:   msg,
+			BodyText:  sql.NullString{String: "must roll back", Valid: true},
+			RawMIME:   []byte(`{"meeting":"cancel"}`),
+			RawFormat: "meeting_json",
+		})
+		done <- persistErr
+	}()
+
+	select {
+	case <-persistStarted:
+	case <-time.After(time.Second):
+		require.FailNow("message persistence did not reach cancellation trigger")
+	}
+	cancel()
+
+	select {
+	case err = <-done:
+	case <-time.After(time.Second):
+		require.FailNow("message persistence did not stop after cancellation")
+	}
+	require.ErrorIs(err, context.Canceled)
+
+	existing, err := f.Store.MessageExistsBatch(f.Source.ID, []string{"persist-cancel"})
+	require.NoError(err, "lookup canceled message")
+	assert.Empty(existing, "canceled message transaction must roll back")
 }
 
 func TestStore_OAuthAppColumn(t *testing.T) {

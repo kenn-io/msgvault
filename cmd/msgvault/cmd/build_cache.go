@@ -735,6 +735,17 @@ func buildCacheLocked(
 		return nil, fmt.Errorf("inspect attachment MIME schema: %w", err)
 	}
 	sourceSnapshot.hasAttachmentMIME = attachmentMIMEColumnCount > 0
+	var messageSourceAttributionColumnCount int
+	if err := sourceSnapshot.QueryRow(`
+		SELECT COUNT(*) FROM pragma_table_info('messages')
+		WHERE name = 'source_is_from_me'
+	`).Scan(&messageSourceAttributionColumnCount); err != nil {
+		return nil, fmt.Errorf("inspect message attribution schema: %w", err)
+	}
+	messageSourceAttribution := "COALESCE(m.is_from_me, FALSE)"
+	if messageSourceAttributionColumnCount > 0 {
+		messageSourceAttribution = "COALESCE(m.source_is_from_me, FALSE)"
+	}
 	if err := sourceSnapshot.Prepare(); err != nil {
 		return nil, err
 	}
@@ -1067,7 +1078,7 @@ func buildCacheLocked(
 			m.deleted_from_source_at,
 			m.sender_id,
 			COALESCE(TRY_CAST(m.message_type AS VARCHAR), '') as message_type,
-			(COALESCE(m.is_from_me, FALSE) OR EXISTS (
+			(%s OR EXISTS (
 				SELECT 1 FROM sqlite_db.account_identities ai
 				JOIN sqlite_db.participants sp ON sp.id = m.sender_id
 				WHERE ai.source_id = m.source_id
@@ -1090,7 +1101,7 @@ func buildCacheLocked(
 		OVERWRITE_OR_IGNORE,
 		COMPRESSION 'zstd'
 	)
-	`, idFilter, escapedMessagesDir)); err != nil {
+	`, messageSourceAttribution, idFilter, escapedMessagesDir)); err != nil {
 		return nil, fmt.Errorf("export messages: %w", err)
 	}
 
@@ -1126,7 +1137,7 @@ func buildCacheLocked(
 				m.deleted_from_source_at,
 				m.sender_id,
 				COALESCE(TRY_CAST(m.message_type AS VARCHAR), '') as message_type,
-				(COALESCE(m.is_from_me, FALSE) OR EXISTS (
+				(%s OR EXISTS (
 					SELECT 1 FROM sqlite_db.account_identities ai
 					JOIN sqlite_db.participants sp ON sp.id = m.sender_id
 					WHERE ai.source_id = m.source_id
@@ -1143,7 +1154,7 @@ func buildCacheLocked(
 			FROM sqlite_db.messages m
 			WHERE 1 = 0
 		) TO '%s' (FORMAT PARQUET, COMPRESSION 'zstd')
-		`, escapedEmptyShard)); err != nil {
+		`, messageSourceAttribution, escapedEmptyShard)); err != nil {
 			return nil, fmt.Errorf("export empty messages shard: %w", err)
 		}
 	}

@@ -43,6 +43,24 @@ describe('SourcesWorkspace', () => {
     expect(screen.getAllByText(/Updated 2026-07-19T10:00:00Z/)).toHaveLength(2);
   });
 
+  it('presents generic meeting imports as on-demand API sources', async () => {
+    const fetchFn = vi.fn<typeof fetch>(async () => Response.json({ sources: [source({
+      source_type: 'meeting_import',
+      identifier: 'local-meetings',
+      display_name: 'Local Meetings',
+      can_sync: false,
+      scheduled: false,
+      sync_unavailable_reason: 'source_not_schedulable'
+    })] }));
+    render(SourcesWorkspace, { client: createAPIClient(fetchFn) });
+
+    expect(await screen.findByText('On demand · imported through the API')).toBeDefined();
+    expect(screen.getByText('On-demand API source')).toBeDefined();
+    expect(screen.queryByText('Not scheduled')).toBeNull();
+    expect(screen.queryByText('source_not_schedulable')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Sync now Local Meetings' })).toBeNull();
+  });
+
   it('shows authoritative schedule, fresh result, and bounded item error details', async () => {
     const latest = run('completed', 10, {
       completed_at: '2026-07-19T11:30:00Z', errors_count: 1,

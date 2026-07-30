@@ -129,6 +129,14 @@ func TestBuildCache_DerivesIsFromMeAndIdentityDatasets(t *testing.T) {
 	})
 	require.NoError(err)
 	require.NoError(st.ReplaceMessageRecipients(controlMsgID, "from", []int64{otherParticipantID}, []string{""}))
+	_, err = st.DB().Exec(st.Rebind(`
+		UPDATE messages
+		SET is_from_me = TRUE,
+		    source_is_from_me = FALSE,
+		    identity_is_from_me = TRUE
+		WHERE id = ?
+	`), controlMsgID)
+	require.NoError(err, "simulate stale persisted effective attribution")
 
 	require.NoError(st.Close())
 

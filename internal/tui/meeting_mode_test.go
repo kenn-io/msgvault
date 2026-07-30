@@ -84,15 +84,29 @@ func TestMeetingAccountsExcludeUnrelatedSources(t *testing.T) {
 		query.AccountInfo{ID: 2, SourceType: meetingSourceGranola, Identifier: "work-notes"},
 		query.AccountInfo{ID: 3, SourceType: meetingSourceCircleback, Identifier: "team-meetings"},
 		query.AccountInfo{ID: 4, SourceType: "teams", Identifier: "team-chat"},
+		query.AccountInfo{ID: 5, SourceType: meetingSourceImported, Identifier: "local-meetings"},
 	).Build()
 
 	accounts := model.meetingAccounts()
 
-	require.Len(t, accounts, 2)
-	assert.Equal(t, []string{"work-notes", "team-meetings"}, []string{
+	require.Len(t, accounts, 3)
+	assert.Equal(t, []string{"work-notes", "team-meetings", "local-meetings"}, []string{
 		accounts[0].Identifier,
 		accounts[1].Identifier,
+		accounts[2].Identifier,
 	})
+}
+
+func TestMeetingImportedSourceLabelUsesDisplayNameAndFallbacks(t *testing.T) {
+	model := NewBuilder().WithAccounts(
+		query.AccountInfo{ID: 5, SourceType: meetingSourceImported, Identifier: "local-meetings", DisplayName: "Imported Interviews"},
+		query.AccountInfo{ID: 6, SourceType: meetingSourceImported, Identifier: "second-stream"},
+		query.AccountInfo{ID: 7, SourceType: meetingSourceImported},
+	).Build()
+
+	assert.Equal(t, "Imported Interviews", model.meetingSourceLabel(5))
+	assert.Equal(t, "second-stream", model.meetingSourceLabel(6))
+	assert.Equal(t, "Imported", model.meetingSourceLabel(7))
 }
 
 func TestMeetingAccountSelectorUsesMeetingSources(t *testing.T) {

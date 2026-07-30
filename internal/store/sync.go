@@ -16,6 +16,8 @@ const (
 
 	SyncRunItemStatusError   = "error"
 	SyncRunItemStatusSkipped = "skipped"
+
+	manualTransactionCleanupTimeout = 5 * time.Second
 )
 
 // ErrSyncRunNotFound is returned by the sync-run getters (GetActiveSync,
@@ -186,7 +188,11 @@ type SourceImportItem struct {
 // source via SELECT ... FOR UPDATE before doing the read-modify-write
 // on sync_runs.
 func (s *Store) StartSync(sourceID int64, syncType string) (int64, error) {
-	ctx := context.Background()
+	return s.StartSyncContext(context.Background(), sourceID, syncType)
+}
+
+// StartSyncContext is the request-aware form of StartSync.
+func (s *Store) StartSyncContext(ctx context.Context, sourceID int64, syncType string) (int64, error) {
 	const maxAttempts = 5
 	for range maxAttempts {
 		id, err := s.startSyncOnce(ctx, sourceID)
@@ -213,7 +219,12 @@ func (s *Store) startSyncOnce(ctx context.Context, sourceID int64) (retID int64,
 	committed := false
 	defer func() {
 		if !committed {
-			_, _ = conn.ExecContext(ctx, "ROLLBACK")
+			rollbackCtx, rollbackCancel := context.WithTimeout(
+				context.WithoutCancel(ctx),
+				manualTransactionCleanupTimeout,
+			)
+			defer rollbackCancel()
+			_, _ = conn.ExecContext(rollbackCtx, "ROLLBACK")
 		}
 	}()
 
@@ -267,7 +278,13 @@ func (s *Store) startSyncOnce(ctx context.Context, sourceID int64) (retID int64,
 
 // UpdateSyncCheckpoint saves progress for resumption.
 func (s *Store) UpdateSyncCheckpoint(syncID int64, cp *Checkpoint) error {
-	_, err := s.db.Exec(`
+	return s.UpdateSyncCheckpointContext(context.Background(), syncID, cp)
+}
+
+// UpdateSyncCheckpointContext is the request-aware form of
+// UpdateSyncCheckpoint.
+func (s *Store) UpdateSyncCheckpointContext(ctx context.Context, syncID int64, cp *Checkpoint) error {
+	_, err := s.db.ExecContext(ctx, `
 		UPDATE sync_runs
 		SET cursor_before = ?,
 		    messages_processed = ?,
@@ -364,7 +381,12 @@ func (s *Store) ListSyncRunItems(syncRunID int64, status string, limit int) ([]S
 
 // CompleteSync marks a sync as successfully completed.
 func (s *Store) CompleteSync(syncID int64, finalHistoryID string) error {
-	_, err := s.db.Exec(fmt.Sprintf(`
+	return s.CompleteSyncContext(context.Background(), syncID, finalHistoryID)
+}
+
+// CompleteSyncContext is the request-aware form of CompleteSync.
+func (s *Store) CompleteSyncContext(ctx context.Context, syncID int64, finalHistoryID string) error {
+	_, err := s.db.ExecContext(ctx, fmt.Sprintf(`
 		UPDATE sync_runs
 		SET status = 'completed',
 		    completed_at = %s,

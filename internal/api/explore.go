@@ -237,7 +237,7 @@ func registerExploreRoute[Req any, Resp any](api huma.API, operationID, path, su
 	op.Responses[httpStatusKey(http.StatusServiceUnavailable)] = &huma.Response{
 		Description: http.StatusText(http.StatusServiceUnavailable),
 		Content: map[string]*huma.MediaType{
-			"application/json": {Schema: &huma.Schema{AnyOf: []*huma.Schema{
+			applicationJSONMediaType: {Schema: &huma.Schema{AnyOf: []*huma.Schema{
 				schemaFor[ExploreCacheUnavailableResponse](api),
 				schemaFor[ErrorResponse](api),
 			}}},

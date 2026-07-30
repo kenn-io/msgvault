@@ -841,6 +841,12 @@ type UnlinkIdentityParticipantsResponse = IdentityLinkResponse
 
 type UnlinkIdentityParticipantsErrorResponse = ErrorResponse
 
+type ImportMeetingResponse = MeetingImportResponse
+
+type ImportMeetingResponseJSON = MeetingImportResponse
+
+type ImportMeetingErrorResponse = ErrorResponse
+
 type SearchIntegrationTasksResponse = TaskSearchResponse
 
 type SearchIntegrationTasksErrorResponse = ErrorResponse
@@ -1948,6 +1954,14 @@ type UnlinkIdentityParticipantsResp struct {
 	Body         []byte
 	StatusCode   int
 	JSON200      *UnlinkIdentityParticipantsResponse
+}
+
+type ImportMeetingResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *ImportMeetingResponse
+	JSON201      *ImportMeetingResponseJSON
 }
 
 type SearchIntegrationTasksResp struct {

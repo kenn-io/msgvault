@@ -1027,8 +1027,12 @@ func (w *deadlineClearingRecorder) SetWriteDeadline(deadline time.Time) error {
 }
 
 func TestTimeoutMiddlewareDeadlinePolicy(t *testing.T) {
+	const apiKey = "deadline-policy-test-key"
 	srv := NewServerWithOptions(ServerOptions{
-		Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}},
+		Config: &config.Config{Server: config.ServerConfig{
+			APIPort: 8080,
+			APIKey:  apiKey,
+		}},
 		Logger: testLogger(),
 	})
 
@@ -1040,6 +1044,7 @@ func TestTimeoutMiddlewareDeadlinePolicy(t *testing.T) {
 	marked := httptest.NewRequest(http.MethodGet, "/api/v1/cli/stats", nil)
 	marked.RemoteAddr = "127.0.0.1:4242"
 	marked.Header.Set(apiprotocol.ClientClassHeader, apiprotocol.ClientClassCLI)
+	marked.Header.Set("X-Api-Key", apiKey)
 	markedDeleteDeduped := httptest.NewRequest(
 		http.MethodPost,
 		"/api/v1/cli/delete-deduped",
@@ -1047,13 +1052,19 @@ func TestTimeoutMiddlewareDeadlinePolicy(t *testing.T) {
 	)
 	markedDeleteDeduped.RemoteAddr = "127.0.0.1:4242"
 	markedDeleteDeduped.Header.Set(apiprotocol.ClientClassHeader, apiprotocol.ClientClassCLI)
+	markedDeleteDeduped.Header.Set("X-Api-Key", apiKey)
+	meetingImport := httptest.NewRequest(http.MethodPost, "/api/v1/import/meeting", nil)
+	meetingImport.Header.Set("X-Api-Key", apiKey)
+	unauthorizedMeetingImport := httptest.NewRequest(http.MethodPost, "/api/v1/import/meeting", nil)
+	unauthorizedMeetingImport.Header.Set("X-Api-Key", "invalid")
 	bounded := httptest.NewRequest(http.MethodGet, "/api/v1/cli/stats", nil)
 
 	tests := []struct {
-		name           string
-		request        *http.Request
-		wantReadClear  bool
-		wantWriteClear bool
+		name             string
+		request          *http.Request
+		wantReadClear    bool
+		wantReadDeadline bool
+		wantWriteClear   bool
 	}{
 		{name: "unmarked long path", request: longPath, wantWriteClear: true},
 		{name: "marked request", request: marked, wantReadClear: true, wantWriteClear: true},
@@ -1061,6 +1072,17 @@ func TestTimeoutMiddlewareDeadlinePolicy(t *testing.T) {
 			name:           "marked atomic dedup deletion",
 			request:        markedDeleteDeduped,
 			wantReadClear:  true,
+			wantWriteClear: true,
+		},
+		{
+			name:             "meeting import",
+			request:          meetingImport,
+			wantReadDeadline: true,
+			wantWriteClear:   true,
+		},
+		{
+			name:           "unauthorized meeting import",
+			request:        unauthorizedMeetingImport,
 			wantWriteClear: true,
 		},
 		{name: "bounded request", request: bounded},
@@ -1074,6 +1096,11 @@ func TestTimeoutMiddlewareDeadlinePolicy(t *testing.T) {
 			if tt.wantReadClear {
 				require.Len(recorder.readDeadlines, 1, "read deadline changes")
 				assert.True(recorder.readDeadlines[0].IsZero(), "read deadline cleared, not extended")
+			} else if tt.wantReadDeadline {
+				require.Len(recorder.readDeadlines, 1, "read deadline changes")
+				remaining := time.Until(recorder.readDeadlines[0])
+				assert.Greater(remaining, DaemonLongRequestTimeout-time.Second)
+				assert.LessOrEqual(remaining, DaemonLongRequestTimeout)
 			} else {
 				assert.Empty(recorder.readDeadlines, "request keeps the server read deadline")
 			}

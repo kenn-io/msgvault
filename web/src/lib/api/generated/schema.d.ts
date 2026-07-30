@@ -1032,6 +1032,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/import/meeting": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Import one meeting */
+        post: operations["importMeeting"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/integrations/tasks/search": {
         parameters: {
             query?: never;
@@ -2875,6 +2892,51 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        Meeting: {
+            attendees?: components["schemas"]["MeetingPerson"][] | null;
+            /** Format: date-time */
+            ended_at?: string;
+            external_id: string;
+            metadata?: {
+                [key: string]: unknown;
+            };
+            organizer?: components["schemas"]["MeetingPerson"];
+            /** Format: date-time */
+            started_at: string;
+            summary_markdown?: string;
+            summary_text?: string;
+            title?: string;
+            transcript?: string;
+            transcript_segments?: components["schemas"]["TranscriptSegment"][] | null;
+        } & (({
+            summary_markdown: string;
+        } | {
+            summary_text: string;
+        } | {
+            transcript: string;
+        } | {
+            transcript_segments: unknown[];
+        }) & unknown);
+        MeetingImportRequest: {
+            meeting: components["schemas"]["Meeting"];
+            source: components["schemas"]["Source"];
+        };
+        MeetingImportResponse: {
+            /** Format: int64 */
+            message_id: number;
+            /** Format: int64 */
+            source_id: number;
+            source_message_id: string;
+            /** @enum {string} */
+            status: "created" | "updated";
+        } & {
+            [key: string]: unknown;
+        };
+        MeetingPerson: {
+            /** Format: email */
+            email: string;
+            name?: string;
+        };
         MessageDetail: {
             attachments: components["schemas"]["AttachmentInfo"][] | null;
             bcc?: string[] | null;
@@ -3371,6 +3433,12 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        Source: {
+            /** Format: email */
+            account_email: string;
+            display_name?: string;
+            identifier: string;
+        };
         SourceCount: {
             /** Format: int64 */
             count: number;
@@ -3684,6 +3752,12 @@ export interface components {
             total_size: number;
         } & {
             [key: string]: unknown;
+        };
+        TranscriptSegment: {
+            /** Format: double */
+            offset_seconds?: number;
+            speaker: string;
+            text: string;
         };
         UpdateRequest: {
             display_name: string;
@@ -6882,6 +6956,48 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["IdentityLinkResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    importMeeting: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MeetingImportRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MeetingImportResponse"];
+                };
+            };
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MeetingImportResponse"];
                 };
             };
             /** @description Error */

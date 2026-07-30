@@ -181,6 +181,109 @@ func TestOpenAPIFastSearchDocumentsSourceIDs(t *testing.T) {
 	assert.Fail("source_ids query parameter is not documented for fastSearch")
 }
 
+func TestOpenAPIMeetingImportContract(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	assert.Equal("1.33.0", APISchemaVersion, "meeting import is an additive schema release")
+
+	doc := OpenAPIDocument()
+	path := doc.Paths["/api/v1/import/meeting"]
+	require.NotNil(path, "meeting import path")
+	op := path.Post
+	require.NotNil(op, "meeting import operation")
+	assert.Equal("importMeeting", op.OperationID)
+	require.Len(op.Security, 1, "API-key security requirement")
+	_, secured := op.Security[0]["apiKey"]
+	assert.True(secured, "apiKey security requirement")
+
+	require.NotNil(op.RequestBody, "request body")
+	assert.True(op.RequestBody.Required, "request body is required")
+	requestMedia := op.RequestBody.Content["application/json"]
+	require.NotNil(requestMedia, "JSON request media type")
+	require.NotNil(requestMedia.Schema, "request schema")
+	assert.Equal("#/components/schemas/MeetingImportRequest", requestMedia.Schema.Ref)
+
+	schemas := doc.Components.Schemas.Map()
+	requestSchema := schemas["MeetingImportRequest"]
+	require.NotNil(requestSchema, "request component")
+	requestAdditionalProperties, ok := requestSchema.AdditionalProperties.(bool)
+	require.True(ok, "request additionalProperties is boolean")
+	assert.False(requestAdditionalProperties, "request rejects unknown fields")
+	assert.ElementsMatch([]string{"source", "meeting"}, requestSchema.Required)
+
+	for _, name := range []string{"Source", "Meeting", "MeetingPerson", "TranscriptSegment"} {
+		schema := schemas[name]
+		require.NotNil(schema, "%s component", name)
+		additionalProperties, ok := schema.AdditionalProperties.(bool)
+		require.True(ok, "%s additionalProperties is boolean", name)
+		assert.False(additionalProperties, "%s rejects unknown fields", name)
+	}
+	assert.ElementsMatch(
+		[]string{"external_id", "started_at"},
+		schemas["Meeting"].Required,
+	)
+	source := schemas["Source"]
+	require.NotNil(source.Properties["identifier"].MaxLength)
+	assert.Equal(128, *source.Properties["identifier"].MaxLength)
+	require.NotNil(source.Properties["display_name"].MaxLength)
+	assert.Equal(256, *source.Properties["display_name"].MaxLength)
+	assert.Equal("email", source.Properties["account_email"].Format)
+
+	meeting := schemas["Meeting"]
+	require.NotNil(meeting.Properties["external_id"].MaxLength)
+	assert.Equal(256, *meeting.Properties["external_id"].MaxLength)
+	require.NotNil(meeting.Properties["title"].MaxLength)
+	assert.Equal(4096, *meeting.Properties["title"].MaxLength)
+	assert.Equal("date-time", meeting.Properties["started_at"].Format)
+	assert.Equal("date-time", meeting.Properties["ended_at"].Format)
+	require.Len(meeting.AllOf, 2, "meeting cross-field constraints")
+	require.Len(meeting.AllOf[0].AnyOf, 4, "meeting requires a non-empty summary or transcript")
+	assert.ElementsMatch(
+		[]string{"summary_markdown", "summary_text", "transcript", "transcript_segments"},
+		[]string{
+			meeting.AllOf[0].AnyOf[0].Required[0],
+			meeting.AllOf[0].AnyOf[1].Required[0],
+			meeting.AllOf[0].AnyOf[2].Required[0],
+			meeting.AllOf[0].AnyOf[3].Required[0],
+		},
+	)
+	for idx, property := range []string{"summary_markdown", "summary_text", "transcript"} {
+		require.NotNil(meeting.AllOf[0].AnyOf[idx].Properties[property].MinLength)
+		assert.Equal(1, *meeting.AllOf[0].AnyOf[idx].Properties[property].MinLength)
+	}
+	require.NotNil(meeting.AllOf[0].AnyOf[3].Properties["transcript_segments"].MinItems)
+	assert.Equal(1, *meeting.AllOf[0].AnyOf[3].Properties["transcript_segments"].MinItems)
+	require.NotNil(meeting.AllOf[1].Not, "plain and segmented transcripts are mutually exclusive")
+	assert.ElementsMatch(
+		[]string{"transcript", "transcript_segments"},
+		meeting.AllOf[1].Not.Required,
+	)
+
+	assert.Equal("email", schemas["MeetingPerson"].Properties["email"].Format)
+	offset := schemas["TranscriptSegment"].Properties["offset_seconds"]
+	require.NotNil(offset.Minimum)
+	assert.Zero(*offset.Minimum)
+
+	metadata := schemas["Meeting"].Properties["metadata"]
+	require.NotNil(metadata, "metadata schema")
+	_, extensible := metadata.AdditionalProperties.(*huma.Schema)
+	assert.True(extensible, "metadata accepts provider-specific values")
+
+	responseSchema := schemas["MeetingImportResponse"]
+	require.NotNil(responseSchema, "meeting import response component")
+	assert.Equal([]any{"created", "updated"}, responseSchema.Properties["status"].Enum)
+
+	for _, status := range []string{"200", "201"} {
+		response := op.Responses[status]
+		require.NotNil(response, "response %s", status)
+		media := response.Content["application/json"]
+		require.NotNil(media, "response %s JSON media type", status)
+		require.NotNil(media.Schema, "response %s schema", status)
+		assert.Equal("#/components/schemas/MeetingImportResponse", media.Schema.Ref)
+	}
+}
+
 func TestOpenAPIBinaryRoutesDocumentJSONErrors(t *testing.T) {
 	doc := OpenAPIDocument()
 	routes := map[string]struct {
@@ -457,6 +560,31 @@ func TestOpenAPIClientArtifactUpToDate(t *testing.T) {
 			normalizeGeneratedArtifact(got),
 			"%s is stale; run `make api-generate`", filepath.Join(openAPIClientGeneratedDir, name))
 	}
+}
+
+func TestOpenAPIGeneratedMeetingImportClient(t *testing.T) {
+	assertGeneratedFileContains(t, "client.go",
+		"ImportMeeting(ctx context.Context, options *ImportMeetingRequestOptions")
+	assertGeneratedFileContains(t, "client_options.go",
+		"type ImportMeetingRequestOptions struct")
+	assertGeneratedFileContains(t, "payloads.go",
+		"type ImportMeetingBody = MeetingImportRequest")
+	assertGeneratedFileContains(t, "responses.go",
+		"type ImportMeetingResp struct")
+	assertGeneratedFileContains(t, "types.go",
+		"type MeetingImportResponse struct")
+	assertGeneratedFileContains(t, "types.go",
+		"Metadata           map[string]any")
+	assertGeneratedFileContains(t, "enums.go",
+		`MeetingImportResponseStatusUpdated MeetingImportResponseStatus = "updated"`)
+}
+
+func assertGeneratedFileContains(t *testing.T, name, expected string) {
+	t.Helper()
+	content, err := os.ReadFile(filepath.Join(openAPIClientGeneratedDir, name))
+	require.NoError(t, err, "read generated client file %s", name)
+	assert.Contains(t, string(content), expected,
+		"%s is missing the meeting import contract; run `make api-generate`", name)
 }
 
 func normalizeGeneratedArtifact(src []byte) string {

@@ -1,13 +1,175 @@
 package store_test
 
 import (
+	"database/sql"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
+
+func TestRemoveAccountIdentityRecomputesOnlyIdentityDerivedAttribution(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := storetest.New(t)
+	st := f.Store
+
+	senderID := f.EnsureParticipant("owner@example.com", "Owner", "example.com")
+	identityDerived := f.NewMessage().WithSourceMessageID("identity-derived").Build()
+	identityDerived.SenderID = sql.NullInt64{Int64: senderID, Valid: true}
+	identityDerivedID, err := st.UpsertMessage(identityDerived)
+	require.NoError(err, "persist identity-derived candidate")
+
+	sourceNative := f.NewMessage().
+		WithSourceMessageID("source-native").
+		WithIsFromMe(true).
+		Build()
+	sourceNative.SenderID = sql.NullInt64{Int64: senderID, Valid: true}
+	sourceNativeID, err := st.UpsertMessage(sourceNative)
+	require.NoError(err, "persist source-native message")
+	_, err = st.DB().Exec(
+		st.Rebind(`UPDATE messages SET source_is_from_me = NULL WHERE id = ?`),
+		sourceNativeID,
+	)
+	require.NoError(err, "simulate legacy message without attribution provenance")
+	_, err = st.DB().Exec(
+		st.Rebind(`DELETE FROM applied_migrations WHERE name = ?`),
+		"message_attribution_provenance_v2",
+	)
+	require.NoError(err, "reset attribution migration sentinel")
+	require.NoError(st.InitSchema(), "initialize legacy attribution provenance")
+
+	require.NoError(st.AddAccountIdentity(f.Source.ID, "owner@example.com", "manual"))
+	afterAdd, err := st.GetMessageIsFromMe(identityDerivedID)
+	require.NoError(err, "read identity-derived attribution after add")
+	assert.True(afterAdd)
+
+	removed, err := st.RemoveAccountIdentity(f.Source.ID, "owner@example.com")
+	require.NoError(err, "RemoveAccountIdentity")
+	require.Equal(int64(1), removed)
+
+	afterRemove, err := st.GetMessageIsFromMe(identityDerivedID)
+	require.NoError(err, "read identity-derived attribution after remove")
+	assert.False(afterRemove, "removing the last matching identity must clear derived attribution")
+	nativeAfterRemove, err := st.GetMessageIsFromMe(sourceNativeID)
+	require.NoError(err, "read source-native attribution after remove")
+	assert.True(nativeAfterRemove, "identity removal must preserve source-native attribution")
+}
+
+func TestAddAccountIdentityUpdatesOnlyChangedMessageAttribution(t *testing.T) {
+	testutil.SkipIfPostgres(t, "SQLite audit trigger measures updated message rows")
+	require := require.New(t)
+	assert := assert.New(t)
+	f := storetest.New(t)
+	st := f.Store
+
+	ownerID := f.EnsureParticipant("owner@example.com", "Owner", "example.com")
+	otherID := f.EnsureParticipant("other@example.com", "Other", "example.com")
+
+	ownerMessage := f.NewMessage().WithSourceMessageID("owner-message").Build()
+	ownerMessage.SenderID = sql.NullInt64{Int64: ownerID, Valid: true}
+	ownerMessageID, err := st.UpsertMessage(ownerMessage)
+	require.NoError(err, "persist matching message")
+
+	otherMessage := f.NewMessage().WithSourceMessageID("other-message").Build()
+	otherMessage.SenderID = sql.NullInt64{Int64: otherID, Valid: true}
+	otherMessageID, err := st.UpsertMessage(otherMessage)
+	require.NoError(err, "persist unrelated message")
+
+	_, err = st.DB().Exec(`
+		DROP TRIGGER IF EXISTS trg_messages_last_modified;
+		CREATE TABLE message_update_audit (message_id INTEGER NOT NULL);
+		CREATE TRIGGER audit_message_update
+		AFTER UPDATE ON messages
+		BEGIN
+			INSERT INTO message_update_audit (message_id) VALUES (NEW.id);
+		END;
+	`)
+	require.NoError(err, "install message update audit")
+
+	require.NoError(
+		st.AddAccountIdentity(f.Source.ID, "owner@example.com", "manual"),
+		"add matching identity",
+	)
+
+	var ownerUpdates, otherUpdates int
+	require.NoError(st.DB().QueryRow(
+		`SELECT COUNT(*) FROM message_update_audit WHERE message_id = ?`,
+		ownerMessageID,
+	).Scan(&ownerUpdates))
+	require.NoError(st.DB().QueryRow(
+		`SELECT COUNT(*) FROM message_update_audit WHERE message_id = ?`,
+		otherMessageID,
+	).Scan(&otherUpdates))
+	assert.Equal(1, ownerUpdates, "matching attribution must be updated")
+	assert.Zero(otherUpdates, "unchanged attribution must not rewrite the message")
+}
+
+func TestUpsertMessageDerivesAttributionFromConfirmedIdentity(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := storetest.New(t)
+	st := f.Store
+
+	senderID := f.EnsureParticipant("owner@example.com", "Owner", "example.com")
+	require.NoError(
+		st.AddAccountIdentity(f.Source.ID, "owner@example.com", "manual"),
+		"confirm identity before ingestion",
+	)
+
+	message := f.NewMessage().WithSourceMessageID("import-after-confirmation").Build()
+	message.SenderID = sql.NullInt64{Int64: senderID, Valid: true}
+	messageID, err := st.UpsertMessage(message)
+	require.NoError(err, "persist message")
+
+	var isFromMe, sourceIsFromMe, identityIsFromMe bool
+	require.NoError(st.DB().QueryRow(st.Rebind(`
+		SELECT is_from_me, source_is_from_me, identity_is_from_me
+		FROM messages
+		WHERE id = ?
+	`), messageID).Scan(&isFromMe, &sourceIsFromMe, &identityIsFromMe))
+	assert.True(isFromMe, "confirmed sender must be attributed during initial persistence")
+	assert.False(sourceIsFromMe, "incoming message did not carry source-native attribution")
+	assert.True(identityIsFromMe, "confirmed sender attribution must retain identity provenance")
+}
+
+func TestUpsertMessagePreservesRepairedIdentityAttribution(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := storetest.New(t)
+	st := f.Store
+
+	senderID := f.EnsureParticipant("owner@example.com", "Owner", "example.com")
+	message := f.NewMessage().WithSourceMessageID("resynced-message").Build()
+	message.SenderID = sql.NullInt64{Int64: senderID, Valid: true}
+	messageID, err := st.UpsertMessage(message)
+	require.NoError(err, "persist unattributed message")
+
+	require.NoError(
+		st.AddAccountIdentity(f.Source.ID, "owner@example.com", "manual"),
+		"confirm identity and repair existing message",
+	)
+	isFromMe, err := st.GetMessageIsFromMe(messageID)
+	require.NoError(err, "read repaired attribution")
+	require.True(isFromMe, "identity confirmation must repair the existing message")
+
+	message.Subject = sql.NullString{String: "resynced subject", Valid: true}
+	_, err = st.UpsertMessage(message)
+	require.NoError(err, "re-upsert message without caller-derived attribution")
+
+	var sourceIsFromMe, identityIsFromMe bool
+	require.NoError(st.DB().QueryRow(st.Rebind(`
+		SELECT is_from_me, source_is_from_me, identity_is_from_me
+		FROM messages
+		WHERE id = ?
+	`), messageID).Scan(&isFromMe, &sourceIsFromMe, &identityIsFromMe))
+	assert.True(isFromMe, "re-sync must preserve attribution from the confirmed sender")
+	assert.False(sourceIsFromMe, "re-sync did not introduce source-native attribution")
+	assert.True(identityIsFromMe, "re-sync must preserve identity-derived provenance")
+}
 
 func TestAddAndListAccountIdentities(t *testing.T) {
 	require := require.New(t)

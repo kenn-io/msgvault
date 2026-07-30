@@ -9,13 +9,13 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestInitSchema_OneShotMigrationsGatedOnLedger verifies the two data
+// TestInitSchema_OneShotMigrationsGatedOnLedger verifies the data
 // migrations InitSchema used to re-verify on every start (the attachments
-// dedupe and the messages.last_modified backfill — a full messages-table
-// scan, the dominant daemon-startup cost on a large archive) are gated on
-// the applied_migrations ledger:
+// dedupe, attribution provenance reconciliation, and the
+// messages.last_modified backfill — full messages-table scans on a large
+// archive) are gated on the applied_migrations ledger:
 //
-//  1. a fresh InitSchema runs them once and records both sentinels,
+//  1. a fresh InitSchema runs them once and records all sentinels,
 //  2. a later InitSchema with the sentinel present skips the work,
 //  3. clearing the sentinel makes the next InitSchema run it again.
 //
@@ -32,6 +32,7 @@ func TestInitSchema_OneShotMigrationsGatedOnLedger(t *testing.T) {
 
 	for _, name := range []string{
 		migrationAttachmentsContentHashUnique,
+		migrationMessageAttributionProvenance,
 		migrationMessagesLastModifiedBackfill,
 	} {
 		applied, err := st.IsMigrationApplied(name)

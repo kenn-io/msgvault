@@ -261,6 +261,48 @@ func TestFull_PersistsEventsAsMessages(t *testing.T) {
 	}
 }
 
+func TestFull_ConfiguredAccountAttributionSurvivesIdentityMutation(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	m := gcal.NewMockAPI()
+	m.Calendars = []gcal.Calendar{{
+		ID:         "primary",
+		AccessRole: "owner",
+	}}
+	ev := timedEvent("configured-organizer", "Configured organizer")
+	ev.Organizer.Self = false
+	m.FullEvents["primary"] = [][]gcal.Event{{ev}}
+	m.FullSyncToken["primary"] = "TOKEN1"
+
+	s, st := newSyncer(t, m, Options{})
+	_, err := s.Full(context.Background())
+	require.NoError(err)
+
+	src := primarySource(t, st)
+	row, ok := getMsg(t, st, src.ID, ev.ID)
+	require.True(ok)
+	assert.True(row.isFromMe, "configured account organizer should be attributed to the account")
+
+	identities, err := st.ListAccountIdentities(src.ID)
+	require.NoError(err)
+	require.Len(identities, 1)
+	assert.Equal(testAccount, identities[0].Address)
+	assert.Contains(identities[0].SourceSignal, "account-email")
+
+	require.NoError(st.AddAccountIdentity(src.ID, "other@example.com", "manual"))
+	row, ok = getMsg(t, st, src.ID, ev.ID)
+	require.True(ok)
+	assert.True(row.isFromMe, "adding another identity must preserve configured-account attribution")
+
+	removed, err := st.RemoveAccountIdentity(src.ID, "other@example.com")
+	require.NoError(err)
+	assert.Equal(int64(1), removed)
+	row, ok = getMsg(t, st, src.ID, ev.ID)
+	require.True(ok)
+	assert.True(row.isFromMe, "removing another identity must preserve configured-account attribution")
+}
+
 func TestFull_ClearsBodyWhenEventBodyBecomesEmpty(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)

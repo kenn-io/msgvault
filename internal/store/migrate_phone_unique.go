@@ -250,10 +250,9 @@ func (s *Store) mergeParticipant(ctx context.Context, tx *loggedTx, winner, lose
 	if _, err := s.bumpIdentityRevision(tx); err != nil {
 		return fmt.Errorf("bump identity revision (loser=%d, winner=%d): %w", loser, winner, err)
 	}
-	// Also bump the account-identity revision: the merge repoints
-	// messages.sender_id, so a merge involving the sender of any message
-	// with a baked is_from_me leaves that flag stale in the message
-	// Parquet shards, which only a full rebuild re-derives.
+	// Also bump the account-identity revision: the primary rows are repaired
+	// after the survivor metadata is finalized below, but existing message
+	// Parquet shards still require a full rebuild.
 	if err := s.bumpAccountIdentityRevision(tx); err != nil {
 		return fmt.Errorf("bump account identity revision (loser=%d, winner=%d): %w", loser, winner, err)
 	}
@@ -290,6 +289,17 @@ func (s *Store) mergeParticipant(ctx context.Context, tx *loggedTx, winner, lose
 		WHERE id = ?`, loserEmail, loserDomain, loserName, winner,
 	); err != nil {
 		return fmt.Errorf("coalesce metadata onto winner (winner=%d, loser=%d): %w", winner, loser, err)
+	}
+	// The sender repoint plus the survivor's final email/identifiers can add or
+	// remove identity evidence. Repair primary-store provenance atomically with
+	// the legacy merge.
+	if err := refreshParticipantMessageAttributionContext(ctx, tx, winner); err != nil {
+		return fmt.Errorf(
+			"refresh message attribution (winner=%d, loser=%d): %w",
+			winner,
+			loser,
+			err,
+		)
 	}
 
 	// (8) Finally drop the loser. participant_identifiers cascades; the

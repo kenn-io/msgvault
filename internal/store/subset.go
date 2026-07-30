@@ -22,6 +22,18 @@ type CopyResult struct {
 	Elapsed       time.Duration
 }
 
+const messageCopyColumns = `
+	id, conversation_id, source_id, source_message_id,
+	rfc822_message_id, message_type,
+	sent_at, received_at, read_at, delivered_at, internal_date,
+	sender_id, is_from_me, source_is_from_me, identity_is_from_me,
+	subject, snippet, reply_to_message_id, thread_position,
+	is_read, is_delivered, is_sent, is_edited, is_forwarded,
+	size_estimate, has_attachments, attachment_count,
+	deleted_at, deleted_from_source_at, delete_batch_id,
+	archived_at, indexing_version, last_modified, metadata, embed_gen
+`
+
 // CopySubset copies rowCount most recent messages (and all referenced
 // data) from srcDBPath into a new database in dstDir. The destination
 // schema is initialized using the embedded store schema.
@@ -417,7 +429,9 @@ func copyData(tx *sql.Tx, rowCount int, includeIdentity bool) (*CopyResult, erro
 	}
 
 	if _, err := tx.Exec(`
-		INSERT INTO messages SELECT * FROM src.messages
+		INSERT INTO messages (` + messageCopyColumns + `)
+		SELECT ` + messageCopyColumns + `
+		FROM src.messages
 		WHERE id IN (SELECT id FROM selected_messages)`); err != nil {
 		return nil, fmt.Errorf("copy messages: %w", err)
 	}

@@ -62,8 +62,32 @@ func TestMeetingEmptyStateGuidesSourceSetup(t *testing.T) {
 	view := stripANSI(model.renderView())
 
 	assert.Contains(t, view, "No meeting sources configured")
-	assert.Contains(t, view, "Granola")
-	assert.Contains(t, view, "Circleback")
+	assert.Contains(t, view, "provider")
+	assert.Contains(t, view, "import")
+}
+
+func TestMeetingListViewShowsImportedSourceDisplayName(t *testing.T) {
+	model := NewBuilder().WithAccounts(
+		query.AccountInfo{
+			ID:          5,
+			SourceType:  meetingSourceImported,
+			Identifier:  "local-meetings",
+			DisplayName: "Imported Interviews",
+		},
+	).WithSize(120, 24).Build()
+	model.mode = modeMeetings
+	model.loading = false
+	model.meetingState.messages = []query.MessageSummary{{
+		ID:          10,
+		SourceID:    5,
+		Subject:     "Synthetic interview",
+		SentAt:      time.Date(2026, 7, 23, 18, 0, 0, 0, time.UTC),
+		MessageType: meetingMessageType,
+	}}
+
+	view := stripANSI(model.renderView())
+
+	assert.Contains(t, view, "Imported ...")
 }
 
 func TestMeetingListViewShowsSearchInput(t *testing.T) {

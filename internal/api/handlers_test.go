@@ -38,6 +38,7 @@ import (
 	"go.kenn.io/msgvault/internal/deletion"
 	"go.kenn.io/msgvault/internal/gcal"
 	"go.kenn.io/msgvault/internal/granola"
+	"go.kenn.io/msgvault/internal/meetingimport"
 	"go.kenn.io/msgvault/internal/opserr"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/query/querytest"
@@ -3612,6 +3613,119 @@ func TestHandleSourceStatusGenericIdentifierCollidesWithScheduledAccount(t *test
 	got := resp.Sources[0]
 	assert.Equal("*/15 * * * *", got.Schedule, "must report the generic job's schedule")
 	assert.True(got.CanSync, "generic job is scheduled and not running")
+}
+
+func TestMeetingImportIdentifierCollisionDoesNotEnableAccountSync(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	const collidingIdentifier = "shared@example.com"
+
+	st := testutil.NewTestStore(t)
+	sched := newMockScheduler()
+	sched.scheduled[collidingIdentifier] = true
+	sched.statuses = []AccountStatus{{
+		Email:    collidingIdentifier,
+		Schedule: "0 3 * * *",
+	}}
+	_, err := st.GetOrCreateSource(meetingimport.SourceType, collidingIdentifier)
+	require.NoError(err, "GetOrCreateSource meeting import")
+	srv := NewServer(
+		&config.Config{Server: config.ServerConfig{APIPort: 8080}},
+		st,
+		sched,
+		testLogger(),
+	)
+
+	statusReq := httptest.NewRequest(
+		http.MethodGet,
+		"/api/v1/sources/status?source_type="+meetingimport.SourceType,
+		nil,
+	)
+	statusResp := httptest.NewRecorder()
+	srv.Router().ServeHTTP(statusResp, statusReq)
+
+	require.Equal(http.StatusOK, statusResp.Code, statusResp.Body.String())
+	var status SourceStatusResponse
+	require.NoError(json.NewDecoder(statusResp.Body).Decode(&status), "decode response")
+	require.Len(status.Sources, 1, "sources")
+	assert.False(status.Sources[0].Scheduled, "meeting imports are not scheduler jobs")
+	assert.False(status.Sources[0].CanSync, "meeting imports cannot be synced")
+	assert.Equal("source_not_schedulable", status.Sources[0].SyncUnavailableReason)
+
+	triggerResp := servePOSTTestRequest(
+		srv,
+		"/api/v1/sync/"+collidingIdentifier+"?source_type="+meetingimport.SourceType,
+	)
+
+	assert.Equal(http.StatusBadRequest, triggerResp.Code, triggerResp.Body.String())
+	assert.Empty(sched.startedJobs, "must not start a generic job")
+	assert.Empty(sched.triggeredJobs, "must not trigger the colliding account")
+}
+
+func TestAccountScheduledSourceTypesSupportStatusAndTrigger(t *testing.T) {
+	cases := []struct {
+		name       string
+		sourceType string
+		identifier string
+	}{
+		{"teams", "teams", "alice@example.com"},
+		{"discord", "discord", "113456789012345678"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			st := testutil.NewTestStore(t)
+			sched := newMockScheduler()
+			sched.scheduled[tc.identifier] = true
+			sched.statuses = []AccountStatus{{
+				Email:    tc.identifier,
+				Schedule: "0 */6 * * *",
+			}}
+			var triggeredIdentifier string
+			sched.triggerFn = func(identifier string) error {
+				triggeredIdentifier = identifier
+				return nil
+			}
+
+			source, err := st.GetOrCreateSource(tc.sourceType, tc.identifier)
+			require.NoError(err, "GetOrCreateSource")
+			srv := NewServer(
+				&config.Config{Server: config.ServerConfig{APIPort: 8080}},
+				st,
+				sched,
+				testLogger(),
+			)
+
+			statusReq := httptest.NewRequest(
+				http.MethodGet,
+				"/api/v1/sources/status?source_type="+tc.sourceType,
+				nil,
+			)
+			statusResp := httptest.NewRecorder()
+			srv.Router().ServeHTTP(statusResp, statusReq)
+
+			require.Equal(http.StatusOK, statusResp.Code, statusResp.Body.String())
+			var status SourceStatusResponse
+			require.NoError(json.NewDecoder(statusResp.Body).Decode(&status), "decode response")
+			require.Len(status.Sources, 1, "sources")
+			assert.Equal(source.ID, status.Sources[0].ID, "source ID")
+			assert.True(status.Sources[0].Scheduled, "Scheduled")
+			assert.Equal("0 */6 * * *", status.Sources[0].Schedule, "Schedule")
+			assert.True(status.Sources[0].CanSync, "CanSync")
+			assert.Empty(status.Sources[0].SyncUnavailableReason, "SyncUnavailableReason")
+
+			triggerResp := servePOSTTestRequest(
+				srv,
+				"/api/v1/sync/"+tc.identifier+"?source_type="+tc.sourceType,
+			)
+
+			require.Equal(http.StatusAccepted, triggerResp.Code, triggerResp.Body.String())
+			assert.Equal(tc.identifier, triggeredIdentifier, "triggered account identifier")
+			assert.Empty(sched.startedJobs, "must not start a generic scheduler job")
+		})
+	}
 }
 
 // TestSchedulerJobNameForSource covers every generic-job source type plus an

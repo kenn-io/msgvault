@@ -74,6 +74,10 @@
     return source.sync_unavailable_reason === 'sync_already_running';
   }
 
+  function isOnDemandSource(source: Source): boolean {
+    return source.source_type === 'meeting_import';
+  }
+
   // allowIdle bypasses the active-sync gate below for error-path retries:
   // a status-load failure must be able to reschedule itself even when no
   // source is actively syncing and no accepted run is being awaited, or an
@@ -243,6 +247,8 @@
             {#if source.scheduled}
               <span>Scheduled · {source.schedule ?? 'schedule unavailable'}</span>
               {#if source.next_sync_at}<span>Next {source.next_sync_at}</span>{/if}
+            {:else if isOnDemandSource(source)}
+              <span>On demand · imported through the API</span>
             {:else}<span>Not scheduled</span>{/if}
             {#if source.scheduler_last_error}<span class="error-copy">Scheduler: {source.scheduler_last_error}</span>{/if}
           </div>
@@ -275,6 +281,8 @@
           <div class="action">
             {#if source.can_sync}
               <Button size="sm" tone="info" surface="soft" label={`Sync now ${label(source)}`} disabled={Boolean(triggering) || awaitingSourceID === source.id} onclick={() => void syncNow(source)} />
+            {:else if isOnDemandSource(source)}
+              <span>On-demand API source</span>
             {:else}
               <span class="reason">{source.sync_unavailable_reason ?? 'sync_unavailable'}</span>
             {/if}

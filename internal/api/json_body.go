@@ -10,6 +10,8 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 )
 
+const applicationJSONMediaType = "application/json"
+
 // operationDeclaresJSONRequestBody reports whether a raw-route operation
 // documents an application/json request body, which is how every JSON
 // mutation route in this package registers (jsonRequestBodyFor). It keys the
@@ -19,7 +21,7 @@ func operationDeclaresJSONRequestBody(op *huma.Operation) bool {
 	if op.RequestBody == nil {
 		return false
 	}
-	_, ok := op.RequestBody.Content["application/json"]
+	_, ok := op.RequestBody.Content[applicationJSONMediaType]
 	return ok
 }
 
@@ -43,7 +45,7 @@ func enforceJSONRequestMediaType(next http.HandlerFunc) http.HandlerFunc {
 
 func hasJSONContentType(r *http.Request) bool {
 	mediaType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
-	return err == nil && mediaType == "application/json"
+	return err == nil && mediaType == applicationJSONMediaType
 }
 
 // requireSingleJSONValue verifies no second JSON value follows the one dec

@@ -6,8 +6,22 @@ import (
 	"go.kenn.io/msgvault/internal/circleback"
 	"go.kenn.io/msgvault/internal/gcal"
 	"go.kenn.io/msgvault/internal/granola"
+	"go.kenn.io/msgvault/internal/meetingimport"
 	"go.kenn.io/msgvault/internal/synctechsms"
 )
+
+type sourceScheduleKind uint8
+
+const (
+	sourceScheduleNonSchedulable sourceScheduleKind = iota
+	sourceScheduleAccount
+	sourceScheduleGeneric
+)
+
+type sourceScheduleClassification struct {
+	kind    sourceScheduleKind
+	jobName string
+}
 
 // sourceTypeBeeper mirrors the unexported sourceTypeBeeper constant in
 // internal/beeper (and cmd/msgvault/cmd/constants.go); it can't be imported
@@ -25,6 +39,27 @@ const BeeperJobName = sourceTypeBeeper
 // SlackJobName is the single generic-job name that drives the configured
 // Slack workspace source.
 const SlackJobName = sourceTypeSlack
+
+// classifySourceScheduling determines which scheduler, if any, may operate a
+// store source. Account scheduling is opt-in so imported or unknown source
+// types cannot borrow a scheduled account merely by sharing its identifier.
+func classifySourceScheduling(sourceType, identifier string) sourceScheduleClassification {
+	switch sourceType {
+	case "", "gmail", "imap", "teams", "discord":
+		return sourceScheduleClassification{kind: sourceScheduleAccount}
+	case meetingimport.SourceType:
+		return sourceScheduleClassification{kind: sourceScheduleNonSchedulable}
+	default:
+		jobName, ok := SchedulerJobNameForSource(sourceType, identifier)
+		if !ok {
+			return sourceScheduleClassification{kind: sourceScheduleNonSchedulable}
+		}
+		return sourceScheduleClassification{
+			kind:    sourceScheduleGeneric,
+			jobName: jobName,
+		}
+	}
+}
 
 // SchedulerJobNameForSource returns the scheduler generic-job name that
 // drives syncing for a store source of the given type and identifier, and

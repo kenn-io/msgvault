@@ -977,15 +977,16 @@ func (imp *Importer) ingestMeeting(
 	sentAt := m.StartedAt().UTC()
 
 	message := &store.Message{
-		SourceID:        sourceID,
-		SourceMessageID: smid,
-		MessageType:     MessageType,
-		SentAt:          sql.NullTime{Time: sentAt, Valid: !sentAt.IsZero()},
-		SenderID:        sql.NullInt64{Int64: senderID, Valid: senderID != 0},
-		IsFromMe:        fromMe,
-		Subject:         sql.NullString{String: title, Valid: title != ""},
-		Snippet:         sql.NullString{String: snippet(body), Valid: body != ""},
-		SizeEstimate:    int64(len(body)),
+		SourceID:                sourceID,
+		SourceMessageID:         smid,
+		MessageType:             MessageType,
+		SentAt:                  sql.NullTime{Time: sentAt, Valid: !sentAt.IsZero()},
+		SenderID:                sql.NullInt64{Int64: senderID, Valid: senderID != 0},
+		IsFromMe:                fromMe,
+		IdentityDerivedIsFromMe: fromMe,
+		Subject:                 sql.NullString{String: title, Valid: title != ""},
+		Snippet:                 sql.NullString{String: snippet(body), Valid: body != ""},
+		SizeEstimate:            int64(len(body)),
 	}
 
 	metaJSON, err := json.Marshal(imp.buildMetadata(
