@@ -211,6 +211,15 @@ func (s *Store) bumpIdentityRevisionContext(
 // serialized against other writers. On PostgreSQL the UPDATE takes a row
 // lock on the identity-revision row, so concurrent link/unlink
 // transactions queue on it.
+//
+// ORDERING CONTRACT (PostgreSQL): any transaction that both writes a table
+// in exclusiveLockTables and touches the identity-revision row (this lock
+// or bumpIdentityRevision) must acquire the row BEFORE its first table
+// write. BeginExclusive takes the row and then LOCK TABLE over that list,
+// so the reverse order deadlocks against a serialized source removal.
+// Transactions with a cheap no-op fast path should check it read-only
+// first and take this lock only when they will actually write (see
+// SetParticipantIdentifier and the legacy identity migration).
 func (s *Store) lockIdentityMutationTx(tx *loggedTx) error {
 	return s.lockIdentityMutationTxContext(context.Background(), tx)
 }
