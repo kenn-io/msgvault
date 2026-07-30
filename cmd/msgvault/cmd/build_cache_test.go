@@ -2491,6 +2491,42 @@ func TestBuildCacheCSVSnapshotFallback(t *testing.T) {
 		assert.Positive(t, result.ExportedCount)
 	})
 
+	t.Run("message attribution provenance", func(t *testing.T) {
+		require := require.New(t)
+		assert := assert.New(t)
+		tmpDir := setupTestSQLite(t)
+		dbPath := filepath.Join(tmpDir, "test.db")
+		analyticsDir := filepath.Join(tmpDir, "analytics")
+
+		db, err := sql.Open("sqlite3", dbPath)
+		require.NoError(err)
+		_, err = db.Exec(`
+			ALTER TABLE messages ADD COLUMN source_is_from_me BOOLEAN DEFAULT FALSE;
+			UPDATE messages
+			SET is_from_me = FALSE, source_is_from_me = TRUE
+			WHERE id = 1;
+		`)
+		require.NoError(err)
+		require.NoError(db.Close())
+
+		result, err := buildCache(dbPath, analyticsDir, true)
+		require.NoError(err)
+		assert.Positive(result.ExportedCount)
+
+		duckDB, err := sql.Open("duckdb", "")
+		require.NoError(err)
+		defer func() { require.NoError(duckDB.Close()) }()
+
+		var isFromMe bool
+		require.NoError(duckDB.QueryRow(
+			`SELECT is_from_me
+			 FROM read_parquet(?, hive_partitioning=true)
+			 WHERE id = 1`,
+			filepath.Join(analyticsDir, "messages", "**", "*.parquet"),
+		).Scan(&isFromMe))
+		assert.True(isFromMe, "CSV fallback must export source-native attribution")
+	})
+
 	t.Run("empty", func(t *testing.T) {
 		tmpDir := setupTestSQLiteEmpty(t)
 		result, err := buildCache(filepath.Join(tmpDir, "test.db"), filepath.Join(tmpDir, "analytics"), true)
