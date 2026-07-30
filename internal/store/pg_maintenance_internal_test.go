@@ -189,6 +189,51 @@ func TestRemoveSourceSerializedDoesNotDeadlockWithPersonMerge(t *testing.T) {
 	}
 }
 
+// TestRemoveSourceSerializedDoesNotDeadlockWithLegacyIdentityMigration pins
+// the other half of the BeginExclusive ordering contract: the legacy
+// identity-config migration writes account_identities and only then bumps
+// the identity revision, so without taking the identity-mutation row lock
+// at the start of its transaction it could deadlock against BeginExclusive
+// (row lock held, waiting on LOCK TABLE account_identities). The
+// applied_migrations marker is cleared each iteration so the migration
+// re-runs with a fresh address and actually reaches the revision bump. The
+// removed sources are non-email (imessage) so the migration never writes
+// identities for a source that is concurrently deleted.
+func TestRemoveSourceSerializedDoesNotDeadlockWithLegacyIdentityMigration(t *testing.T) {
+	require := require.New(t)
+	dbURL := skipUnlessPostgresInternal(t)
+	st := newPGStoreInternal(t, dbURL)
+	ctx := context.Background()
+
+	_, err := st.GetOrCreateSource("gmail", "stable@example.com")
+	require.NoError(err, "create eligible source")
+
+	for i := range 15 {
+		source, err := st.GetOrCreateSource("imessage", fmt.Sprintf("+1555010%04d", i))
+		require.NoError(err, "iteration %d: create removable source", i)
+		_, err = st.DB().Exec(st.Rebind(
+			`DELETE FROM applied_migrations WHERE name = ?`), migrationLegacyIdentity)
+		require.NoError(err, "iteration %d: clear migration marker", i)
+		address := fmt.Sprintf("me%d@example.com", i)
+
+		var wg sync.WaitGroup
+		var removeErr, migrateErr error
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			_, _, removeErr = st.RemoveSourceSerialized(ctx, source.ID)
+		}()
+		go func() {
+			defer wg.Done()
+			_, _, _, _, migrateErr = st.MigrateLegacyIdentityConfig([]string{address})
+		}()
+		wg.Wait()
+
+		require.NoError(removeErr, "iteration %d: remove source", i)
+		require.NoError(migrateErr, "iteration %d: migrate identity config", i)
+	}
+}
+
 func TestMaintenanceTimeoutResetSQL(t *testing.T) {
 	assert.Equal(t, "SET LOCAL statement_timeout = 0", (&PostgreSQLDialect{}).MaintenanceTimeoutResetSQL())
 	assert.Empty(t, (&SQLiteDialect{}).MaintenanceTimeoutResetSQL())

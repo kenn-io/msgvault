@@ -111,6 +111,16 @@ func (s *Store) MigrateLegacyIdentityConfigContext(
 	}
 
 	if err := s.withTxContext(ctx, func(tx *loggedTx) error {
+		// Take the identity-mutation row lock before any account_identities
+		// write, mirroring AddAccountIdentity/RemoveAccountIdentity. Every
+		// identity-revision writer must acquire this row FIRST:
+		// BeginExclusive takes it before LOCK TABLE (which covers
+		// account_identities), so a late acquisition here — after the
+		// inserts below — would invert the order and deadlock against a
+		// concurrent serialized source removal.
+		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
+			return err
+		}
 		var appliedMarker string
 		err := tx.QueryRowContext(ctx,
 			`SELECT name FROM applied_migrations WHERE name = ?`,

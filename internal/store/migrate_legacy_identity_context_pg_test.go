@@ -18,9 +18,13 @@ func TestMigrateLegacyIdentityConfigContextCancelsBlockedRevisionUpdate(t *testi
 		queryMatches string
 	}{
 		{
+			// The migration takes the identity-mutation row lock up front
+			// (BeginExclusive ordering contract), so a held identity-revision
+			// row now blocks it in that lock's no-op UPDATE rather than in
+			// the late revision bump.
 			name:         "identity revision",
 			revisionKey:  identityRevisionKey,
-			queryMatches: "%RETURNING CAST(value AS INTEGER)%",
+			queryMatches: "%SET value = value WHERE key = $1%",
 		},
 		{
 			name:         "account identity revision",

@@ -26,8 +26,9 @@ and can be used directly:
 }
 
 var (
-	subsetOutput string
-	subsetRows   int
+	subsetOutput          string
+	subsetRows            int
+	subsetIncludeIdentity bool
 )
 
 func init() {
@@ -38,6 +39,12 @@ func init() {
 	createSubsetCmd.Flags().IntVar(
 		&subsetRows, "rows", 0,
 		"number of most recent messages to copy",
+	)
+	createSubsetCmd.Flags().BoolVar(
+		&subsetIncludeIdentity, "include-identity", false,
+		"copy full identity clusters and person profiles for included "+
+			"participants; exposes identifiers (emails, phone numbers) of "+
+			"linked identities that have no messages in the subset",
 	)
 	_ = createSubsetCmd.MarkFlagRequired("output")
 	_ = createSubsetCmd.MarkFlagRequired("rows")
@@ -83,7 +90,7 @@ func runCreateSubset(cmd *cobra.Command, args []string) error {
 		"Copying %d messages from %s...\n", subsetRows, srcDBPath,
 	)
 
-	result, err := store.CopySubset(srcDBPath, dstDir, subsetRows)
+	result, err := store.CopySubset(srcDBPath, dstDir, subsetRows, subsetIncludeIdentity)
 	if err != nil {
 		return fmt.Errorf("create subset: %w", err)
 	}
