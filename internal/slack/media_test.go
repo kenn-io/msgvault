@@ -188,6 +188,8 @@ func TestPersistFilesLinkRowsAndPendingMarkers(t *testing.T) {
 func TestPersistFilesTreatsGoneDownloadsAsTerminalLinks(t *testing.T) {
 	for _, status := range []int{http.StatusNotFound, http.StatusGone} {
 		t.Run(http.StatusText(status), func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
 			f := testWorkspace(t)
 			f.conv("C01").Msgs[6].Files = []map[string]any{
 				{"id": "F_GONE", "name": "deleted.png", "mimetype": "image/png", "size": 123,
@@ -210,32 +212,32 @@ func TestPersistFilesTreatsGoneDownloadsAsTerminalLinks(t *testing.T) {
 				NoMedia: true, AttachmentsDir: t.TempDir(), MaxMediaBytes: 1 << 20,
 			}
 			sum, err := imp.Import(context.Background(), opts)
-			require.NoError(t, err)
-			require.Equal(t, 1, sum.AttachmentsPending)
+			require.NoError(err)
+			require.Equal(1, sum.AttachmentsPending)
 
 			src, err := st.GetOrCreateSource("slack", "T01:UME")
-			require.NoError(t, err)
+			require.NoError(err)
 			pending, err := st.ListSlackPendingAttachmentMessages(src.ID)
-			require.NoError(t, err)
-			require.Len(t, pending, 1, "media-disabled import must create genuine pending debt")
+			require.NoError(err)
+			require.Len(pending, 1, "media-disabled import must create genuine pending debt")
 
 			opts.NoMedia = false
 			sum, err = imp.BackfillMedia(context.Background(), opts)
-			require.NoError(t, err)
-			assert.Zero(t, sum.AttachmentsPending)
-			assert.Zero(t, sum.Errors)
+			require.NoError(err)
+			assert.Zero(sum.AttachmentsPending)
+			assert.Zero(sum.Errors)
 
 			pending, err = st.ListSlackPendingAttachmentMessages(src.ID)
-			require.NoError(t, err)
-			assert.Empty(t, pending, "a deleted Slack file must not remain pending")
+			require.NoError(err)
+			assert.Empty(pending, "a deleted Slack file must not remain pending")
 
 			var messageID int64
-			require.NoError(t, st.DB().QueryRow(st.Rebind(
+			require.NoError(st.DB().QueryRow(st.Rebind(
 				`SELECT id FROM messages WHERE source_message_id = ?`), "C01:"+ts(6)).Scan(&messageID))
 			refs, err := st.MessageSlackAttachments(messageID)
-			require.NoError(t, err)
-			require.Contains(t, refs, "slack:F_GONE")
-			assert.Equal(t, store.AttachmentRef{
+			require.NoError(err)
+			require.Contains(refs, "slack:F_GONE")
+			assert.Equal(store.AttachmentRef{
 				Filename:           "deleted.png",
 				MimeType:           "image/png",
 				StoragePath:        "https://testers.slack.com/files/F_GONE",

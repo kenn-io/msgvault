@@ -75,6 +75,8 @@ func TestValidateSearchScope(t *testing.T) {
 }
 
 func TestSearchMessagesPageDecodesChannelIDs(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, err := w.Write([]byte(`{
@@ -94,18 +96,18 @@ func TestSearchMessagesPageDecodesChannelIDs(t *testing.T) {
 				}]
 			}
 		}`))
-		require.NoError(t, err)
+		assert.NoError(err)
 	}))
 	t.Cleanup(srv.Close)
 	client := NewClient(srv.URL, "xoxp-test")
 	client.disableRateLimits()
 
 	page, err := client.SearchMessagesPage(context.Background(), "threads:replies", 1)
-	require.NoError(t, err)
-	require.Len(t, page.Matches, 2)
-	assert.Equal(t, "C_REAL", page.Matches[0].ChannelID)
-	assert.Equal(t, "1700000000.000100", page.Matches[0].RootTS)
-	assert.Equal(t, "C_LEGACY", page.Matches[1].ChannelID)
+	require.NoError(err)
+	require.Len(page.Matches, 2)
+	assert.Equal("C_REAL", page.Matches[0].ChannelID)
+	assert.Equal("1700000000.000100", page.Matches[0].RootTS)
+	assert.Equal("C_LEGACY", page.Matches[1].ChannelID)
 }
 
 func TestClientPagination(t *testing.T) {
@@ -132,7 +134,7 @@ func TestClientRejectsHasMoreWithoutNextCursor(t *testing.T) {
 			"has_more": true,
 			"response_metadata": {"next_cursor": ""}
 		}`))
-		require.NoError(t, err)
+		assert.NoError(t, err)
 	}))
 	t.Cleanup(srv.Close)
 	client := NewClient(srv.URL, "xoxp-test")
@@ -154,7 +156,7 @@ func TestClientRejectsRepeatedNextCursor(t *testing.T) {
 			"has_more": true,
 			"response_metadata": {"next_cursor": "same"}
 		}`))
-		require.NoError(t, err)
+		assert.NoError(t, err)
 	}))
 	t.Cleanup(srv.Close)
 	client := NewClient(srv.URL, "xoxp-test")

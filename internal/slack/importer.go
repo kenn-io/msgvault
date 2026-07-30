@@ -142,7 +142,7 @@ func (imp *Importer) loadResumeState(sourceID int64) (*SyncState, error) {
 		}
 		state, loadErr := LoadSyncState(cp.CursorBefore.String)
 		if loadErr != nil {
-			return nil, fmt.Errorf("decode latest Slack checkpoint: %v: %w", loadErr, errInvalidResumeState)
+			return nil, fmt.Errorf("decode latest Slack checkpoint: %w: %w", loadErr, errInvalidResumeState)
 		}
 		return state, nil
 	}
@@ -157,7 +157,7 @@ func (imp *Importer) loadResumeState(sourceID int64) (*SyncState, error) {
 		}
 		state, loadErr := LoadSyncState(prev.CursorAfter.String)
 		if loadErr != nil {
-			return nil, fmt.Errorf("decode last successful Slack resume state: %v: %w", loadErr, errInvalidResumeState)
+			return nil, fmt.Errorf("decode last successful Slack resume state: %w: %w", loadErr, errInvalidResumeState)
 		}
 		return state, nil
 	}

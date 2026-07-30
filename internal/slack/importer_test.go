@@ -813,44 +813,50 @@ func TestFullImportRepairsMalformedNewestResumeState(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
 			f := testWorkspace(t)
 			imp, opts := testImporter(t, f)
 			st := imp.store
 
 			src, err := st.GetOrCreateSource("slack", opts.TeamID+":"+opts.UserID)
-			require.NoError(t, err)
+			require.NoError(err)
 			runID, err := st.StartSync(src.ID, "slack")
-			require.NoError(t, err)
-			require.NoError(t, st.UpdateSyncCheckpoint(runID, &store.Checkpoint{PageToken: tt.blob}))
-			require.NoError(t, st.FailSync(runID, "interrupted"))
+			require.NoError(err)
+			require.NoError(st.UpdateSyncCheckpoint(runID, &store.Checkpoint{PageToken: tt.blob}))
+			require.NoError(st.FailSync(runID, "interrupted"))
 
 			opts.Full = true
 			_, err = imp.Import(context.Background(), opts)
-			require.NoError(t, err, "--full must replace malformed durable state with a fresh repair session")
+			require.NoError(err, "--full must replace malformed durable state with a fresh repair session")
 
 			var messages int
-			require.NoError(t, st.DB().QueryRow(st.Rebind(
+			require.NoError(st.DB().QueryRow(st.Rebind(
 				`SELECT COUNT(*) FROM messages WHERE source_id = ?`), src.ID).Scan(&messages))
-			assert.Positive(t, messages, "the repair must traverse and archive the workspace")
+			assert.Positive(messages, "the repair must traverse and archive the workspace")
 		})
 	}
 }
 
 func TestLoadResumeStateSurfacesDatabaseReadFailure(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
 	f := testWorkspace(t)
 	imp, opts := testImporter(t, f)
 	st := imp.store
 
 	src, err := st.GetOrCreateSource("slack", opts.TeamID+":"+opts.UserID)
-	require.NoError(t, err)
-	require.NoError(t, st.DB().Close())
+	require.NoError(err)
+	require.NoError(st.DB().Close())
 
 	_, err = imp.loadResumeState(src.ID)
-	require.Error(t, err)
-	assert.ErrorContains(t, err, "read latest Slack checkpoint")
+	require.Error(err)
+	assert.ErrorContains(err, "read latest Slack checkpoint")
 }
 
 func TestImportRestartsExpiredPersistedWindowCursorAtPinnedBound(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
 	f := newFakeSlack(t)
 	f.users = []map[string]any{{
 		"id": "UME", "name": "me", "real_name": "Test User",
@@ -875,30 +881,32 @@ func TestImportRestartsExpiredPersistedWindowCursorAtPinnedBound(t *testing.T) {
 	cs.BackfillCursor = "expired-window"
 	cs.BackfillLatest = pin
 	src, err := imp.store.GetOrCreateSource("slack", opts.TeamID+":"+opts.UserID)
-	require.NoError(t, err)
+	require.NoError(err)
 	runID, err := imp.store.StartSync(src.ID, "slack")
-	require.NoError(t, err)
-	require.NoError(t, imp.store.CompleteSync(runID, mustMarshal(t, state)))
+	require.NoError(err)
+	require.NoError(imp.store.CompleteSync(runID, mustMarshal(t, state)))
 
 	sum, err := imp.Import(context.Background(), opts)
-	require.NoError(t, err)
-	assert.Zero(t, sum.FetchErrors)
+	require.NoError(err)
+	assert.Zero(sum.FetchErrors)
 
 	got := requireResumeState(t, imp, src.ID).EnsureConv("C01")
-	assert.Equal(t, pin, got.Cursor, "restarted pagination must retain the original window pin")
-	assert.Empty(t, got.BackfillCursor)
-	assert.Empty(t, got.BackfillLatest)
+	assert.Equal(pin, got.Cursor, "restarted pagination must retain the original window pin")
+	assert.Empty(got.BackfillCursor)
+	assert.Empty(got.BackfillLatest)
 
 	var inside, above int
-	require.NoError(t, imp.store.DB().QueryRow(imp.store.Rebind(
+	require.NoError(imp.store.DB().QueryRow(imp.store.Rebind(
 		`SELECT COUNT(*) FROM messages WHERE source_message_id = ?`), "C01:"+ts(0)).Scan(&inside))
-	require.NoError(t, imp.store.DB().QueryRow(imp.store.Rebind(
+	require.NoError(imp.store.DB().QueryRow(imp.store.Rebind(
 		`SELECT COUNT(*) FROM messages WHERE source_message_id = ?`), "C01:"+ts(2)).Scan(&above))
-	assert.Equal(t, 1, inside)
-	assert.Zero(t, above, "restarting an expired page cursor must not widen the pinned window")
+	assert.Equal(1, inside)
+	assert.Zero(above, "restarting an expired page cursor must not widen the pinned window")
 }
 
 func TestImportRestartsExpiredPersistedCatchUpCursorAtPinnedBound(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
 	f := newFakeSlack(t)
 	f.users = []map[string]any{{
 		"id": "UME", "name": "me", "real_name": "Test User",
@@ -926,25 +934,25 @@ func TestImportRestartsExpiredPersistedCatchUpCursorAtPinnedBound(t *testing.T) 
 	cs.CatchUpLatest = pin
 	cs.SweptThrough = tsFormat(imp.now())
 	src, err := imp.store.GetOrCreateSource("slack", opts.TeamID+":"+opts.UserID)
-	require.NoError(t, err)
+	require.NoError(err)
 	runID, err := imp.store.StartSync(src.ID, "slack")
-	require.NoError(t, err)
-	require.NoError(t, imp.store.CompleteSync(runID, mustMarshal(t, state)))
+	require.NoError(err)
+	require.NoError(imp.store.CompleteSync(runID, mustMarshal(t, state)))
 
 	sum, err := imp.Import(context.Background(), opts)
-	require.NoError(t, err)
-	assert.Zero(t, sum.FetchErrors)
+	require.NoError(err)
+	assert.Zero(sum.FetchErrors)
 
 	got := requireResumeState(t, imp, src.ID).EnsureConv("C01")
-	assert.Equal(t, pin, got.AuditedThrough, "restarted pagination must retain the original catch-up pin")
-	assert.False(t, got.ThreadsPending)
-	assert.Empty(t, got.CatchUpCursor)
-	assert.Empty(t, got.CatchUpLatest)
+	assert.Equal(pin, got.AuditedThrough, "restarted pagination must retain the original catch-up pin")
+	assert.False(got.ThreadsPending)
+	assert.Empty(got.CatchUpCursor)
+	assert.Empty(got.CatchUpLatest)
 
 	var replies int
-	require.NoError(t, imp.store.DB().QueryRow(imp.store.Rebind(
+	require.NoError(imp.store.DB().QueryRow(imp.store.Rebind(
 		`SELECT COUNT(*) FROM messages WHERE source_message_id = ?`), "C01:"+replyTS).Scan(&replies))
-	assert.Equal(t, 1, replies)
+	assert.Equal(1, replies)
 }
 
 func TestImportSurfacesInvalidCursorWithoutPersistedPageCursor(t *testing.T) {
@@ -962,7 +970,7 @@ func TestImportSurfacesInvalidCursorWithoutPersistedPageCursor(t *testing.T) {
 
 	sum, err := imp.Import(context.Background(), opts)
 	require.Error(t, err)
-	assert.ErrorContains(t, err, "partial Slack sync")
+	require.ErrorContains(t, err, "partial Slack sync")
 	assert.Positive(t, sum.FetchErrors, "cursorless invalid_cursor must remain a visible fetch failure")
 }
 
@@ -1670,6 +1678,7 @@ func TestMembershipFetchFailureMarksRunPartial(t *testing.T) {
 
 func TestMPIMMembershipFailureHoldsHistoryUntilRecipientsAvailable(t *testing.T) {
 	require := require.New(t)
+	assert := assert.New(t)
 	f := testWorkspace(t)
 	f.failMembers["G01"] = true
 	imp, opts := testImporter(t, f)
@@ -1684,11 +1693,11 @@ func TestMPIMMembershipFailureHoldsHistoryUntilRecipientsAvailable(t *testing.T)
 		SELECT COUNT(*) FROM messages m
 		JOIN conversations c ON c.id = m.conversation_id
 		WHERE c.source_conversation_id = ?`), "G01").Scan(&messages))
-	assert.Zero(t, messages, "MPIM history must not advance without the recipient snapshot")
+	assert.Zero(messages, "MPIM history must not advance without the recipient snapshot")
 
 	state := requireResumeState(t, imp, sum.SourceID).EnsureConv("G01")
-	assert.False(t, state.Done)
-	assert.Empty(t, state.Cursor)
+	assert.False(state.Done)
+	assert.Empty(state.Cursor)
 
 	f.failMembers["G01"] = false
 	_, err = imp.Import(context.Background(), opts)
@@ -1700,7 +1709,7 @@ func TestMPIMMembershipFailureHoldsHistoryUntilRecipientsAvailable(t *testing.T)
 		JOIN messages m ON m.id = mr.message_id
 		WHERE m.source_message_id = ? AND mr.recipient_type = 'to'`),
 		"G01:"+ts(10)).Scan(&recipients))
-	assert.Equal(t, 2, recipients, "the retry archives MPIM history with complete recipients")
+	assert.Equal(2, recipients, "the retry archives MPIM history with complete recipients")
 }
 
 func TestLimitedSweepDrainsBigTailAcrossRuns(t *testing.T) {
@@ -2911,8 +2920,8 @@ func TestTombstonePlaceholderRetriesIncompletePersistence(t *testing.T) {
 	require.NoError(err)
 	assert.Contains(string(raw), `"subtype":"tombstone"`)
 	var deletedAt sql.NullTime
-	require.NoError(st.DB().QueryRow(
-		`SELECT deleted_from_source_at FROM messages WHERE id = ?`, messageID).Scan(&deletedAt))
+	require.NoError(st.DB().QueryRow(st.Rebind(
+		`SELECT deleted_from_source_at FROM messages WHERE id = ?`), messageID).Scan(&deletedAt))
 	assert.True(deletedAt.Valid)
 }
 

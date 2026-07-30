@@ -135,7 +135,7 @@ func LoadSyncState(blob string) (*SyncState, error) {
 	}
 	for channelID, cs := range s.Conversations {
 		if cs == nil {
-			return nil, fmt.Errorf("Slack sync state conversation %q is null", channelID)
+			return nil, fmt.Errorf("slack sync state conversation %q is null", channelID)
 		}
 	}
 	// Legacy drain entries predate the Floor field. An in-flight entry

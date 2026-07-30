@@ -42,12 +42,14 @@ func TestSyncStateLegacyThreadsBlobLoads(t *testing.T) {
 }
 
 func TestLoadSyncStateRejectsNullConversation(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
 	var state *SyncState
 	var err error
-	require.NotPanics(t, func() {
+	require.NotPanics(func() {
 		state, err = LoadSyncState(`{"conversations":{"C01":null}}`)
 	})
-	require.Error(t, err)
-	assert.ErrorContains(t, err, `conversation "C01" is null`)
-	assert.Nil(t, state)
+	require.Error(err)
+	require.ErrorContains(err, `conversation "C01" is null`)
+	assert.Nil(state)
 }
