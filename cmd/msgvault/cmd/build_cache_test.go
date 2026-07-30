@@ -146,6 +146,22 @@ func setupTestSQLite(t *testing.T) string {
 			PRIMARY KEY (participant_a, participant_b),
 			CHECK (participant_a < participant_b)
 		);
+
+		CREATE TABLE persons (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			vcard_uid TEXT NOT NULL UNIQUE,
+			display_name TEXT,
+			revision INTEGER NOT NULL DEFAULT 1,
+			created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+		);
+
+		CREATE TABLE person_participants (
+			person_id INTEGER NOT NULL REFERENCES persons(id) ON DELETE CASCADE,
+			participant_id INTEGER NOT NULL REFERENCES participants(id) ON DELETE CASCADE,
+			PRIMARY KEY (person_id, participant_id),
+			UNIQUE(participant_id)
+		);
 	`
 
 	if _, err := db.Exec(schema); err != nil {
@@ -2400,6 +2416,22 @@ func setupTestSQLiteEmpty(t *testing.T) string {
 			created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			PRIMARY KEY (participant_a, participant_b),
 			CHECK (participant_a < participant_b)
+		);
+
+		CREATE TABLE persons (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			vcard_uid TEXT NOT NULL UNIQUE,
+			display_name TEXT,
+			revision INTEGER NOT NULL DEFAULT 1,
+			created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+		);
+
+		CREATE TABLE person_participants (
+			person_id INTEGER NOT NULL REFERENCES persons(id) ON DELETE CASCADE,
+			participant_id INTEGER NOT NULL REFERENCES participants(id) ON DELETE CASCADE,
+			PRIMARY KEY (person_id, participant_id),
+			UNIQUE(participant_id)
 		);
 	`
 	_, err = db.Exec(schema)
