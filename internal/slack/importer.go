@@ -117,6 +117,11 @@ func NewImporter(s *store.Store, c *Client, teamID string) *Importer {
 	return &Importer{store: s, client: c, res: newParticipantResolver(s, teamID), now: time.Now}
 }
 
+// errInvalidResumeState distinguishes an unreadable durable state blob from a
+// failure to read the store itself. A full repair may discard the former, but
+// must continue to fail closed on the latter.
+var errInvalidResumeState = errors.New("invalid Slack resume state")
+
 // loadResumeState rebuilds the sync state for a source: NEWEST BLOB WINS,
 // wholesale. Every run's first act is to checkpoint its merged resume
 // state, so a checkpoint blob is by construction a superset of the success
@@ -133,11 +138,11 @@ func (imp *Importer) loadResumeState(sourceID int64) (*SyncState, error) {
 	cp, err := imp.store.GetLatestCheckpointedSync(sourceID)
 	if err == nil {
 		if cp == nil || !cp.CursorBefore.Valid {
-			return nil, errors.New("latest Slack checkpoint has no resume state")
+			return nil, fmt.Errorf("latest Slack checkpoint has no resume state: %w", errInvalidResumeState)
 		}
 		state, loadErr := LoadSyncState(cp.CursorBefore.String)
 		if loadErr != nil {
-			return nil, fmt.Errorf("decode latest Slack checkpoint: %w", loadErr)
+			return nil, fmt.Errorf("decode latest Slack checkpoint: %v: %w", loadErr, errInvalidResumeState)
 		}
 		return state, nil
 	}
@@ -148,11 +153,11 @@ func (imp *Importer) loadResumeState(sourceID int64) (*SyncState, error) {
 	prev, err := imp.store.GetLastSuccessfulSync(sourceID)
 	if err == nil {
 		if prev == nil || !prev.CursorAfter.Valid {
-			return nil, errors.New("last successful Slack sync has no resume state")
+			return nil, fmt.Errorf("last successful Slack sync has no resume state: %w", errInvalidResumeState)
 		}
 		state, loadErr := LoadSyncState(prev.CursorAfter.String)
 		if loadErr != nil {
-			return nil, fmt.Errorf("decode last successful Slack resume state: %w", loadErr)
+			return nil, fmt.Errorf("decode last successful Slack resume state: %v: %w", loadErr, errInvalidResumeState)
 		}
 		return state, nil
 	}
@@ -181,7 +186,10 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (*ImportSum
 
 	state, err := imp.loadResumeState(src.ID)
 	if err != nil {
-		return nil, fmt.Errorf("load Slack resume state: %w", err)
+		if !opts.Full || !errors.Is(err, errInvalidResumeState) {
+			return nil, fmt.Errorf("load Slack resume state: %w", err)
+		}
+		state = NewSyncState()
 	}
 	if opts.Full {
 		// --full starts a repair SESSION, not a one-shot: the reset is
