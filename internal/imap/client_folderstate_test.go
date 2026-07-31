@@ -2,6 +2,7 @@ package imap
 
 import (
 	"context"
+	"maps"
 	"net"
 	"strconv"
 	"strings"
@@ -590,6 +591,8 @@ func TestSourceMessageExistsPreservesListedMailboxSelectionError(t *testing.T) {
 }
 
 func TestSourceMessageMatchesDefersExcludedMailbox(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
 	addr, _ := testutil.StartIMAPMemServerWithSelectError(
 		t,
 		map[string]int{
@@ -602,13 +605,13 @@ func TestSourceMessageMatchesDefersExcludedMailbox(t *testing.T) {
 	client := newTestClient(
 		t, addr, WithFolderFilter([]string{"INBOX"}, nil))
 
-	require.Equal(t, []string{"INBOX|1"}, listAllMessages(t, client))
+	require.Equal([]string{"INBOX|1"}, listAllMessages(t, client))
 
 	matches, conclusive, err := client.SourceMessageMatches(
 		context.Background(), "Archive|1", "excluded@example.com")
-	require.NoError(t, err)
-	assert.False(t, matches)
-	assert.False(t, conclusive)
+	require.NoError(err)
+	assert.False(matches)
+	assert.False(conclusive)
 }
 
 func TestSourceMessageMatchesRFC822Identity(t *testing.T) {
@@ -675,9 +678,7 @@ func TestFetchedSourceMessageMatchesIdentityMatrix(t *testing.T) {
 	require.NoError(t, user.Delete("Removed"))
 
 	changedEpoch := make(map[string]FolderState, len(saved))
-	for mailbox, state := range saved {
-		changedEpoch[mailbox] = state
-	}
+	maps.Copy(changedEpoch, saved)
 	state := changedEpoch["INBOX"]
 	state.UIDValidity++
 	changedEpoch["INBOX"] = state
@@ -768,6 +769,8 @@ func TestFetchedSourceMessageMatchesIdentityMatrix(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
 			client := newTestClient(t, addr, tt.opts...)
 			listAllMessages(t, client)
 
@@ -777,12 +780,12 @@ func TestFetchedSourceMessageMatchesIdentityMatrix(t *testing.T) {
 				tt.actualID,
 			)
 			if tt.wantErr {
-				require.Error(t, err)
+				require.Error(err)
 				return
 			}
-			require.NoError(t, err)
-			assert.Equal(t, tt.wantMatch, matches)
-			assert.Equal(t, tt.conclusive, conclusive)
+			require.NoError(err)
+			assert.Equal(tt.wantMatch, matches)
+			assert.Equal(tt.conclusive, conclusive)
 		})
 	}
 }

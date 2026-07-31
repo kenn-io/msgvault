@@ -2210,6 +2210,7 @@ func TestIMAPUIDValidityReusePreservesOldAndArchivesNewMessage(t *testing.T) {
 		`SELECT id, source_message_id, rfc822_message_id FROM messages`,
 	)
 	require.NoError(err)
+	defer func() { require.NoError(rows.Close()) }()
 	for rows.Next() {
 		var id int64
 		var sourceMessageID string
@@ -2223,7 +2224,6 @@ func TestIMAPUIDValidityReusePreservesOldAndArchivesNewMessage(t *testing.T) {
 			}
 	}
 	require.NoError(rows.Err())
-	require.NoError(rows.Close())
 	require.Len(identities, 2)
 
 	oldIdentity := identities[oldRFC822ID]
@@ -2309,6 +2309,7 @@ func TestIMAPNoResumeUIDValidityReuseArchivesReplacement(t *testing.T) {
 		`SELECT id, source_message_id, rfc822_message_id FROM messages`,
 	)
 	require.NoError(err)
+	defer func() { require.NoError(rows.Close()) }()
 	for rows.Next() {
 		var id int64
 		var sourceMessageID string
@@ -2322,7 +2323,6 @@ func TestIMAPNoResumeUIDValidityReuseArchivesReplacement(t *testing.T) {
 			}
 	}
 	require.NoError(rows.Err())
-	require.NoError(rows.Close())
 	require.Len(identities, 2)
 
 	oldIdentity := identities[oldRFC822ID]
@@ -2530,6 +2530,7 @@ func assertMissingIDArchiveState(
 	var archived []archivedMessage
 	rows, err := st.DB().Query(`SELECT id, source_message_id FROM messages`)
 	require.NoError(err)
+	defer func() { require.NoError(rows.Close()) }()
 	for rows.Next() {
 		var msg archivedMessage
 		require.NoError(rows.Scan(&msg.id, &msg.sourceMessageID))
@@ -2539,7 +2540,6 @@ func assertMissingIDArchiveState(
 		archived = append(archived, msg)
 	}
 	require.NoError(rows.Err())
-	require.NoError(rows.Close())
 	require.Len(archived, 2)
 
 	var oldMessage, newMessage *archivedMessage
@@ -2800,6 +2800,7 @@ func TestIMAPCompleteCrossPageOverlapPreservesValidID(t *testing.T) {
 
 type sourceValidationAPI struct {
 	*gmail.MockAPI
+
 	sourceMatches bool
 }
 
