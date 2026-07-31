@@ -104,6 +104,15 @@ type RawMessageBatchResult struct {
 	Err     error
 }
 
+// MessageLabelsBatchResult is one per-message result from a batch label fetch.
+// LabelIDs is nil when the fetch failed; Err preserves the per-message cause.
+type MessageLabelsBatchResult struct {
+	ID              string
+	LabelIDs        []string
+	RFC822MessageID string
+	Err             error
+}
+
 // HistoryResponse contains changes since a history ID.
 type HistoryResponse struct {
 	History       []HistoryRecord

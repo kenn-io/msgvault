@@ -129,20 +129,32 @@ func TestIMAPFolderStateOptions_RoundTripSkipsUnchangedFolders(t *testing.T) {
 		"a resync against an unchanged server must list no messages")
 }
 
-func TestIMAPFolderStateOptions_ForceRescanBypassesSavedStates(t *testing.T) {
+func TestIMAPFolderStateOptions_ForceRescanRetainsStatesAndEnumerates(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
+	addr, _ := testutil.StartIMAPMemServer(
+		t, map[string]int{"INBOX": 1})
 	st := testutil.NewTestStore(t)
-	src, err := st.GetOrCreateSource("imap", "imap://alice@example.com")
+	src, err := st.GetOrCreateSource(
+		"imap", "imap://alice@example.com")
 	require.NoError(err)
 
-	require.NoError(st.UpsertIMAPFolderStates(src.ID, []store.IMAPFolderState{
-		{Mailbox: "INBOX", UIDValidity: 42, UIDNext: 100},
-	}))
+	first := listedIMAPClient(t, addr)
+	saveIMAPFolderStates(st, src, first, &gmail.SyncSummary{}, 0)
+	require.NoError(first.Close())
 
-	assert.Empty(imapFolderStateOptions(st, src, true),
-		"--noresume must ignore saved folder states so every mailbox is re-enumerated")
-	assert.NotEmpty(imapFolderStateOptions(st, src, false))
+	opts := imapFolderStateOptions(st, src, true)
+	require.Len(opts, 2,
+		"--noresume needs saved identity state and forced enumeration")
+
+	second := listedIMAPClient(t, addr, opts...)
+	ctx, cancel := context.WithTimeout(
+		context.Background(), 30*time.Second)
+	defer cancel()
+	resp, err := second.ListMessages(ctx, "", "")
+	require.NoError(err)
+	assert.Len(resp.Messages, 1,
+		"forced enumeration must not skip an unchanged mailbox")
 }
 
 func TestIMAPFolderStateSaveOption_PersistsCompletedFolders(t *testing.T) {

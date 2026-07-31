@@ -774,3 +774,49 @@ func readDisplayName(t *testing.T, st *store.Store, pid int64) string {
 	).Scan(&name), "scan display_name")
 	return name.String
 }
+
+func TestCountMessagesPerMailbox(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+
+	source, err := st.GetOrCreateSource("imap", "user@example.com")
+	require.NoError(err, "GetOrCreateSource")
+
+	convID, err := st.EnsureConversation(source.ID, "conv-1", "Test Chat")
+	require.NoError(err, "EnsureConversation")
+
+	// Create labels for each folder/mbox
+	labelMap, err := st.EnsureLabelsBatch(source.ID, map[string]store.LabelInfo{
+		"INBOX":  {Name: "INBOX", Type: "system"},
+		"Sent":   {Name: "Sent", Type: "system"},
+		"Drafts": {Name: "Drafts", Type: "system"},
+	})
+	require.NoError(err, "EnsureLabelsBatch")
+
+	// Insert messages
+	msgs := []*store.Message{
+		{SourceID: source.ID, SourceMessageID: "INBOX|100", ConversationID: convID, MessageType: "email"},
+		{SourceID: source.ID, SourceMessageID: "INBOX|200", ConversationID: convID, MessageType: "email"},
+		{SourceID: source.ID, SourceMessageID: "Sent|300", ConversationID: convID, MessageType: "email"},
+		{SourceID: source.ID, SourceMessageID: "Drafts|400", ConversationID: convID, MessageType: "email"},
+	}
+
+	msgIDs := make([]int64, len(msgs))
+	for i, msg := range msgs {
+		msgIDs[i], err = st.UpsertMessage(msg)
+		require.NoError(err, "UpsertMessage")
+	}
+
+	// Associate messages with labels (mimicking folder membership)
+	require.NoError(st.LinkMessageLabel(msgIDs[0], labelMap["INBOX"]))
+	require.NoError(st.LinkMessageLabel(msgIDs[1], labelMap["INBOX"]))
+	require.NoError(st.LinkMessageLabel(msgIDs[2], labelMap["Sent"]))
+	require.NoError(st.LinkMessageLabel(msgIDs[3], labelMap["Drafts"]))
+
+	counts, err := st.CountMessagesPerMailbox(source.ID)
+	require.NoError(err, "CountMessagesPerMailbox")
+	assert.Equal(int64(2), counts["INBOX"], "INBOX count")
+	assert.Equal(int64(1), counts["Sent"], "Sent count")
+	assert.Equal(int64(1), counts["Drafts"], "Drafts count")
+}

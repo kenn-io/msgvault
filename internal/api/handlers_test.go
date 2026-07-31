@@ -922,6 +922,29 @@ func TestHandleCLISyncFullStreamsOutput(t *testing.T) {
 	assert.Equal(CLISyncEvent{Type: cliStreamEventTypeComplete}, events[2], "complete event")
 }
 
+func TestHandleCLISyncAcceptsFolderFilters(t *testing.T) {
+	var gotReq CLISyncRequest
+	st := &mockStore{
+		syncFunc: func(_ context.Context, req CLISyncRequest, _ func(CLISyncEvent) error) error {
+			gotReq = req
+			return nil
+		},
+	}
+	srv := newCLIHandlerTestServer(st)
+
+	resp := servePOSTTestRequest(
+		srv,
+		"/api/v1/cli/sync?email=alice@example.com&folder=INBOX&folder=Archive&skip-folder=Trash",
+	)
+
+	requireNDJSONResponse(t, resp)
+	assert.Equal(t, CLISyncRequest{
+		Email:       "alice@example.com",
+		Folders:     []string{"INBOX", "Archive"},
+		SkipFolders: []string{"Trash"},
+	}, gotReq)
+}
+
 func TestHandleCLIVerifyStreamsOutput(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

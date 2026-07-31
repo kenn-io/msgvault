@@ -3,12 +3,15 @@ package sync
 import (
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -16,8 +19,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/gmail"
+	imapclient "go.kenn.io/msgvault/internal/imap"
 	"go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil"
 	testemail "go.kenn.io/msgvault/internal/testutil/email"
 )
 
@@ -618,9 +623,9 @@ func TestIncrementalSyncWithLabelRemoved(t *testing.T) {
 func TestIncrementalSyncLabelAddedToNewMessage(t *testing.T) {
 	env := newTestEnv(t)
 	source := env.CreateSourceWithHistory(t, "12340")
-	_, err := env.Store.EnsureLabel(source.ID, "INBOX", "Inbox", "system")
+	_, err := env.Store.EnsureLabel(source.ID, "INBOX", "Inbox", labelTypeSystem)
 	require.NoError(t, err, "EnsureLabel INBOX")
-	_, err = env.Store.EnsureLabel(source.ID, "STARRED", "Starred", "system")
+	_, err = env.Store.EnsureLabel(source.ID, "STARRED", "Starred", labelTypeSystem)
 	require.NoError(t, err, "EnsureLabel STARRED")
 
 	env.Mock.Profile.MessagesTotal = 1
@@ -1250,7 +1255,7 @@ func TestProcessBatch_AllNew(t *testing.T) {
 	env := newTestEnv(t)
 	source := env.CreateSource(t)
 	labelMap, _ := env.Store.EnsureLabelsBatch(source.ID, map[string]store.LabelInfo{
-		"INBOX": {Name: "Inbox", Type: "system"},
+		"INBOX": {Name: "Inbox", Type: labelTypeSystem},
 	})
 	checkpoint := &store.Checkpoint{}
 	summary := &gmail.SyncSummary{}
@@ -1284,7 +1289,7 @@ func TestProcessBatch_AllExisting(t *testing.T) {
 
 	source, _ := env.Store.GetOrCreateSource("gmail", testEmail)
 	labelMap, _ := env.Store.EnsureLabelsBatch(source.ID, map[string]store.LabelInfo{
-		"INBOX": {Name: "Inbox", Type: "system"},
+		"INBOX": {Name: "Inbox", Type: labelTypeSystem},
 	})
 	checkpoint := &store.Checkpoint{}
 	summary := &gmail.SyncSummary{}
@@ -1315,7 +1320,7 @@ func TestProcessBatch_MixedNewAndExisting(t *testing.T) {
 
 	source, _ := env.Store.GetOrCreateSource("gmail", testEmail)
 	labelMap, _ := env.Store.EnsureLabelsBatch(source.ID, map[string]store.LabelInfo{
-		"INBOX": {Name: "Inbox", Type: "system"},
+		"INBOX": {Name: "Inbox", Type: labelTypeSystem},
 	})
 	checkpoint := &store.Checkpoint{}
 	summary := &gmail.SyncSummary{}
@@ -1344,7 +1349,7 @@ func TestProcessBatch_OldestDatePropagation(t *testing.T) {
 	env := newTestEnv(t)
 	source := env.CreateSource(t)
 	labelMap, _ := env.Store.EnsureLabelsBatch(source.ID, map[string]store.LabelInfo{
-		"INBOX": {Name: "Inbox", Type: "system"},
+		"INBOX": {Name: "Inbox", Type: labelTypeSystem},
 	})
 	checkpoint := &store.Checkpoint{}
 	summary := &gmail.SyncSummary{}
@@ -1391,7 +1396,7 @@ func TestProcessBatch_ErrorsCount(t *testing.T) {
 	env := newTestEnv(t)
 	source := env.CreateSource(t)
 	labelMap, _ := env.Store.EnsureLabelsBatch(source.ID, map[string]store.LabelInfo{
-		"INBOX": {Name: "Inbox", Type: "system"},
+		"INBOX": {Name: "Inbox", Type: labelTypeSystem},
 	})
 	checkpoint := &store.Checkpoint{}
 	summary := &gmail.SyncSummary{}
@@ -1427,7 +1432,7 @@ func TestProcessBatch_GmailNotFoundIsSkipped(t *testing.T) {
 	env := newTestEnv(t)
 	source := env.CreateSource(t)
 	labelMap, _ := env.Store.EnsureLabelsBatch(source.ID, map[string]store.LabelInfo{
-		"INBOX": {Name: "Inbox", Type: "system"},
+		"INBOX": {Name: "Inbox", Type: labelTypeSystem},
 	})
 	checkpoint := &store.Checkpoint{}
 	summary := &gmail.SyncSummary{}
@@ -1869,7 +1874,7 @@ func TestDeriveThreadKey(t *testing.T) {
 func TestIMAPThreading(t *testing.T) {
 	env := newTestEnv(t)
 	env.SetOptions(t, func(o *Options) {
-		o.SourceType = "imap"
+		o.SourceType = sourceTypeIMAP
 	})
 
 	// Build three messages in a thread:
@@ -1938,7 +1943,7 @@ func TestIMAPCrossSyncDedup(t *testing.T) {
 	assert := assert.New(t)
 	env := newTestEnv(t)
 	env.SetOptions(t, func(o *Options) {
-		o.SourceType = "imap"
+		o.SourceType = sourceTypeIMAP
 	})
 
 	msg := testemail.NewMessage().
@@ -1958,9 +1963,14 @@ func TestIMAPCrossSyncDedup(t *testing.T) {
 	// Second sync: message moved to Trash (different composite ID)
 	delete(env.Mock.Messages, "INBOX|42")
 	env.Mock.AddMessage("TRASH|99", msg, []string{"TRASH"})
+	validationAPI := &sourceValidationAPI{MockAPI: env.Mock}
+	env.Syncer = New(validationAPI, env.Store, env.Syncer.opts)
 	summary = runFullSync(t, env)
 	// Should be skipped via RFC822 Message-ID dedup, not re-imported
-	assertSummary(t, summary, WantSummary{Added: new(int64(0))})
+	assertSummary(t, summary, WantSummary{
+		Added:   new(int64(0)),
+		Updated: new(int64(1)),
+	})
 
 	// Only one message should exist in the database
 	var count int
@@ -1981,6 +1991,1131 @@ func TestIMAPCrossSyncDedup(t *testing.T) {
 	// Labels should reflect the new mailbox.
 	assertMessageHasLabel(t, env.Store, "TRASH|99", "TRASH")
 	assertMessageNotHasLabel(t, env.Store, "TRASH|99", "INBOX")
+}
+
+func TestIMAPFullRescanWithoutAllReconcilesMovedMessage(t *testing.T) {
+	require := require.New(t)
+	env := newTestEnv(t)
+	opts := DefaultOptions()
+	opts.SourceType = sourceTypeIMAP
+
+	const messageID = "moved-between-folders@example.com"
+	addr, user := testutil.StartIMAPMemServer(t, map[string]int{
+		"INBOX": 0,
+		"Trash": 0,
+	})
+	testutil.AppendIMAPMessageWithMessageID(t, user, "INBOX", messageID)
+	firstClient := newSyncTestIMAPClient(t, addr)
+	env.Syncer = New(firstClient, env.Store, opts)
+
+	summary := runFullSync(t, env)
+	assertSummary(t, summary, WantSummary{Added: new(int64(1))})
+	assertMessageHasLabel(t, env.Store, "INBOX|1", "INBOX")
+	require.NoError(firstClient.TrashMessage(env.Context, "INBOX|1"))
+	require.NoError(firstClient.Close())
+
+	secondClient := newSyncTestIMAPClient(t, addr)
+	env.Syncer = New(secondClient, env.Store, opts)
+
+	summary = runFullSync(t, env)
+	assertSummary(t, summary, WantSummary{Added: new(int64(0))})
+
+	var sourceMessageID string
+	err := env.Store.DB().QueryRow(
+		`SELECT source_message_id FROM messages LIMIT 1`,
+	).Scan(&sourceMessageID)
+	require.NoError(err)
+	assert.Equal(t, "Trash|1", sourceMessageID)
+	assertMessageHasLabel(t, env.Store, sourceMessageID, "Trash")
+	assertMessageNotHasLabel(t, env.Store, sourceMessageID, "INBOX")
+}
+
+func TestIMAPFullRescanWithoutAllPreservesExistingIDForOverlappingFolders(t *testing.T) {
+	require := require.New(t)
+	env := newTestEnv(t)
+	opts := DefaultOptions()
+	opts.SourceType = sourceTypeIMAP
+
+	addr, user := testutil.StartIMAPMemServer(t, map[string]int{
+		"Archive": 0,
+		"INBOX":   0,
+	})
+	const messageID = "overlapping-folders@example.com"
+	testutil.AppendIMAPMessageWithMessageID(t, user, "Archive", messageID)
+	testutil.AppendIMAPMessageWithMessageID(t, user, "INBOX", messageID)
+
+	firstClient := newSyncTestIMAPClient(t, addr)
+	env.Syncer = New(firstClient, env.Store, opts)
+	summary := runFullSync(t, env)
+	assertSummary(t, summary, WantSummary{Added: new(int64(1))})
+	require.NoError(firstClient.Close())
+
+	var originalSourceMessageID string
+	err := env.Store.DB().QueryRow(
+		`SELECT source_message_id FROM messages LIMIT 1`,
+	).Scan(&originalSourceMessageID)
+	require.NoError(err)
+	assertMessageHasLabel(t, env.Store, originalSourceMessageID, "Archive")
+	assertMessageHasLabel(t, env.Store, originalSourceMessageID, "INBOX")
+
+	secondClient := newSyncTestIMAPClient(t, addr)
+	env.Syncer = New(secondClient, env.Store, opts)
+	summary = runFullSync(t, env)
+	assertSummary(t, summary, WantSummary{Added: new(int64(0))})
+
+	var rescannedSourceMessageID string
+	err = env.Store.DB().QueryRow(
+		`SELECT source_message_id FROM messages LIMIT 1`,
+	).Scan(&rescannedSourceMessageID)
+	require.NoError(err)
+	assert.Equal(t, originalSourceMessageID, rescannedSourceMessageID)
+	assertMessageHasLabel(t, env.Store, rescannedSourceMessageID, "Archive")
+	assertMessageHasLabel(t, env.Store, rescannedSourceMessageID, "INBOX")
+}
+
+func TestIMAPHighWaterMoveReplacesMissingIDAndMergesLabels(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	env := newTestEnv(t)
+	opts := DefaultOptions()
+	opts.SourceType = sourceTypeIMAP
+
+	addr, user := testutil.StartIMAPMemServer(t, map[string]int{
+		"INBOX": 0,
+		"Trash": 0,
+	})
+	const messageID = "high-water-move@example.com"
+	testutil.AppendIMAPMessageWithMessageID(t, user, "INBOX", messageID)
+
+	firstClient := newSyncTestIMAPClient(t, addr)
+	env.Syncer = New(firstClient, env.Store, opts)
+	summary := runFullSync(t, env)
+	assertSummary(t, summary, WantSummary{Added: new(int64(1))})
+	saved := firstClient.ObservedFolderStates()
+	require.NotEmpty(saved)
+	require.NoError(firstClient.TrashMessage(env.Context, "INBOX|1"))
+	require.NoError(firstClient.Close())
+
+	secondClient := newSyncTestIMAPClient(
+		t, addr, imapclient.WithFolderStates(saved))
+	env.Syncer = New(secondClient, env.Store, opts)
+	summary = runFullSync(t, env)
+	assertSummary(t, summary, WantSummary{
+		Added:   new(int64(0)),
+		Updated: new(int64(1)),
+	})
+
+	var sourceMessageID string
+	err := env.Store.DB().QueryRow(
+		`SELECT source_message_id FROM messages LIMIT 1`,
+	).Scan(&sourceMessageID)
+	require.NoError(err)
+	assert.Equal("Trash|1", sourceMessageID)
+	assertMessageHasLabel(t, env.Store, sourceMessageID, "INBOX")
+	assertMessageHasLabel(t, env.Store, sourceMessageID, "Trash")
+}
+
+func TestIMAPUIDValidityReusePreservesOldAndArchivesNewMessage(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	env := newTestEnv(t)
+	opts := DefaultOptions()
+	opts.SourceType = sourceTypeIMAP
+
+	addr, user := testutil.StartIMAPMemServer(t, map[string]int{
+		"Archive": 0,
+		"INBOX":   0,
+	})
+	const oldRFC822ID = "uid-reuse-old@example.com"
+	const newRFC822ID = "uid-reuse-new@example.com"
+	testutil.AppendIMAPMessageWithMessageID(
+		t, user, "Archive", oldRFC822ID)
+
+	firstClient := newSyncTestIMAPClient(t, addr)
+	env.Syncer = New(firstClient, env.Store, opts)
+	summary := runFullSync(t, env)
+	assertSummary(t, summary, WantSummary{Added: new(int64(1))})
+	saved := firstClient.ObservedFolderStates()
+	require.NotEmpty(saved)
+	require.NoError(firstClient.Close())
+
+	require.NoError(user.Delete("Archive"))
+	require.NoError(user.Create("Archive", nil))
+	testutil.AppendIMAPMessageWithMessageID(
+		t, user, "Archive", newRFC822ID)
+
+	secondClient := newSyncTestIMAPClient(
+		t, addr, imapclient.WithFolderStates(saved))
+	env.Syncer = New(secondClient, env.Store, opts)
+	summary = runFullSync(t, env)
+	assertSummary(t, summary, WantSummary{
+		Added:   new(int64(1)),
+		Updated: new(int64(0)),
+		Skipped: new(int64(0)),
+	})
+	saved = secondClient.ObservedFolderStates()
+	require.NotEmpty(saved)
+	require.NoError(secondClient.Close())
+
+	type archivedIdentity struct {
+		id              int64
+		sourceMessageID string
+	}
+	identities := make(map[string]archivedIdentity)
+	rows, err := env.Store.DB().Query(
+		`SELECT id, source_message_id, rfc822_message_id FROM messages`,
+	)
+	require.NoError(err)
+	for rows.Next() {
+		var id int64
+		var sourceMessageID string
+		var rfc822MessageID sql.NullString
+		require.NoError(rows.Scan(
+			&id, &sourceMessageID, &rfc822MessageID))
+		identities[strings.Trim(rfc822MessageID.String, "<>")] =
+			archivedIdentity{
+				id:              id,
+				sourceMessageID: sourceMessageID,
+			}
+	}
+	require.NoError(rows.Err())
+	require.NoError(rows.Close())
+	require.Len(identities, 2)
+
+	oldIdentity := identities[oldRFC822ID]
+	newIdentity := identities[newRFC822ID]
+	assert.True(strings.HasPrefix(
+		oldIdentity.sourceMessageID,
+		"msgvault-invalidated:",
+	))
+	assert.Equal("Archive|1", newIdentity.sourceMessageID)
+
+	oldRaw, err := env.Store.GetMessageRaw(oldIdentity.id)
+	require.NoError(err)
+	assert.Contains(string(oldRaw), "Message-ID: <"+oldRFC822ID+">")
+	newRaw, err := env.Store.GetMessageRaw(newIdentity.id)
+	require.NoError(err)
+	assert.Contains(string(newRaw), "Message-ID: <"+newRFC822ID+">")
+
+	thirdClient := newSyncTestIMAPClient(
+		t, addr, imapclient.WithFolderStates(saved))
+	env.Syncer = New(thirdClient, env.Store, opts)
+	summary = runFullSync(t, env)
+	assertSummary(t, summary, WantSummary{
+		Added:   new(int64(0)),
+		Updated: new(int64(0)),
+	})
+
+	var currentSourceMessageID string
+	err = env.Store.DB().QueryRow(
+		`SELECT source_message_id FROM messages
+		 WHERE rfc822_message_id = ?`,
+		"<"+newRFC822ID+">",
+	).Scan(&currentSourceMessageID)
+	require.NoError(err)
+	assert.Equal("Archive|1", currentSourceMessageID)
+}
+
+func TestIMAPNoResumeUIDValidityReuseArchivesReplacement(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	env := newTestEnv(t)
+	opts := DefaultOptions()
+	opts.SourceType = sourceTypeIMAP
+	opts.NoResume = true
+
+	addr, user := testutil.StartIMAPMemServer(t, map[string]int{
+		"Archive": 0,
+		"INBOX":   0,
+	})
+	const oldRFC822ID = "noresume-uid-reuse-old@example.com"
+	const newRFC822ID = "noresume-uid-reuse-new@example.com"
+	testutil.AppendIMAPMessageWithMessageID(
+		t, user, "Archive", oldRFC822ID)
+
+	firstClient := newSyncTestIMAPClient(t, addr)
+	env.Syncer = New(firstClient, env.Store, opts)
+	summary := runFullSync(t, env)
+	assertSummary(t, summary, WantSummary{Added: new(int64(1))})
+	require.NoError(firstClient.Close())
+
+	require.NoError(user.Delete("Archive"))
+	require.NoError(user.Create("Archive", nil))
+	testutil.AppendIMAPMessageWithMessageID(
+		t, user, "Archive", newRFC822ID)
+
+	secondClient := newSyncTestIMAPClient(t, addr)
+	env.Syncer = New(secondClient, env.Store, opts)
+	summary = runFullSync(t, env)
+	assertSummary(t, summary, WantSummary{
+		Added:   new(int64(1)),
+		Updated: new(int64(0)),
+		Skipped: new(int64(0)),
+	})
+	saved := secondClient.ObservedFolderStates()
+	require.NotEmpty(saved)
+	require.NoError(secondClient.Close())
+
+	type archivedIdentity struct {
+		id              int64
+		sourceMessageID string
+	}
+	identities := make(map[string]archivedIdentity)
+	rows, err := env.Store.DB().Query(
+		`SELECT id, source_message_id, rfc822_message_id FROM messages`,
+	)
+	require.NoError(err)
+	for rows.Next() {
+		var id int64
+		var sourceMessageID string
+		var rfc822MessageID sql.NullString
+		require.NoError(rows.Scan(
+			&id, &sourceMessageID, &rfc822MessageID))
+		identities[strings.Trim(rfc822MessageID.String, "<>")] =
+			archivedIdentity{
+				id:              id,
+				sourceMessageID: sourceMessageID,
+			}
+	}
+	require.NoError(rows.Err())
+	require.NoError(rows.Close())
+	require.Len(identities, 2)
+
+	oldIdentity := identities[oldRFC822ID]
+	newIdentity := identities[newRFC822ID]
+	assert.True(strings.HasPrefix(
+		oldIdentity.sourceMessageID,
+		invalidatedIMAPSourceIDPrefix,
+	))
+	assert.Equal("Archive|1", newIdentity.sourceMessageID)
+
+	oldRaw, err := env.Store.GetMessageRaw(oldIdentity.id)
+	require.NoError(err)
+	assert.Contains(string(oldRaw), "Message-ID: <"+oldRFC822ID+">")
+	newRaw, err := env.Store.GetMessageRaw(newIdentity.id)
+	require.NoError(err)
+	assert.Contains(string(newRaw), "Message-ID: <"+newRFC822ID+">")
+
+	opts.NoResume = false
+	thirdClient := newSyncTestIMAPClient(
+		t, addr, imapclient.WithFolderStates(saved))
+	env.Syncer = New(thirdClient, env.Store, opts)
+	summary = runFullSync(t, env)
+	assertSummary(t, summary, WantSummary{
+		Added:   new(int64(0)),
+		Updated: new(int64(0)),
+		Skipped: new(int64(0)),
+	})
+}
+
+func TestIMAPForcedUIDReuseWithoutMessageIDArchivesReplacement(t *testing.T) {
+	require := require.New(t)
+	env := newTestEnv(t)
+	opts := DefaultOptions()
+	opts.SourceType = sourceTypeIMAP
+	opts.NoResume = true
+
+	addr, user := testutil.StartIMAPMemServer(t, map[string]int{
+		"Archive": 0,
+		"INBOX":   0,
+	})
+	testutil.AppendIMAPMessageWithoutMessageID(
+		t, user, "Archive", "old missing-ID body")
+
+	firstClient := newSyncTestIMAPClient(t, addr)
+	env.Syncer = New(firstClient, env.Store, opts)
+	summary := runFullSync(t, env)
+	assertSummary(t, summary, WantSummary{Added: new(int64(1))})
+	saved := firstClient.ObservedFolderStates()
+	require.NotEmpty(saved)
+	require.NoError(firstClient.Close())
+
+	require.NoError(user.Delete("Archive"))
+	require.NoError(user.Create("Archive", nil))
+	testutil.AppendIMAPMessageWithoutMessageID(
+		t, user, "Archive", "replacement missing-ID body")
+
+	secondClient := newSyncTestIMAPClient(
+		t,
+		addr,
+		imapclient.WithFolderStates(saved),
+		imapclient.WithForceFullEnumeration(),
+	)
+	env.Syncer = New(secondClient, env.Store, opts)
+	summary = runFullSync(t, env)
+	assertSummary(t, summary, WantSummary{
+		Added:   new(int64(1)),
+		Updated: new(int64(0)),
+		Skipped: new(int64(0)),
+	})
+	assertMissingIDArchiveState(
+		t,
+		env.Store,
+		"old missing-ID body",
+		"replacement missing-ID body",
+	)
+}
+
+func TestIMAPMissingIdentityRawComparisonKeepsEqualMessage(t *testing.T) {
+	require := require.New(t)
+	env := newTestEnv(t)
+	opts := DefaultOptions()
+	opts.SourceType = sourceTypeIMAP
+
+	addr, user := testutil.StartIMAPMemServer(t, map[string]int{
+		"Archive": 0,
+		"INBOX":   0,
+	})
+	testutil.AppendIMAPMessageWithoutMessageID(
+		t, user, "Archive", "unchanged missing-ID body")
+
+	firstClient := newSyncTestIMAPClient(t, addr)
+	env.Syncer = New(firstClient, env.Store, opts)
+	summary := runFullSync(t, env)
+	assertSummary(t, summary, WantSummary{Added: new(int64(1))})
+	require.NoError(firstClient.Close())
+
+	secondClient := newSyncTestIMAPClient(t, addr)
+	env.Syncer = New(secondClient, env.Store, opts)
+	summary = runFullSync(t, env)
+	assertSummary(t, summary, WantSummary{
+		Added:   new(int64(0)),
+		Updated: new(int64(0)),
+		Skipped: new(int64(1)),
+	})
+	assert.Positive(t, summary.BytesDownloaded,
+		"inconclusive identity should fetch raw MIME for comparison")
+	assertMessageCount(t, env.Store, 1)
+}
+
+func TestIMAPAsymmetricMessageIDUsesRawComparison(t *testing.T) {
+	require := require.New(t)
+	env := newTestEnv(t)
+	opts := DefaultOptions()
+	opts.SourceType = sourceTypeIMAP
+
+	addr, user := testutil.StartIMAPMemServer(t, map[string]int{
+		"Archive": 0,
+		"INBOX":   0,
+	})
+	const messageID = "asymmetric-identity@example.com"
+	testutil.AppendIMAPMessageWithMessageID(
+		t, user, "Archive", messageID)
+
+	firstClient := newSyncTestIMAPClient(t, addr)
+	env.Syncer = New(firstClient, env.Store, opts)
+	summary := runFullSync(t, env)
+	assertSummary(t, summary, WantSummary{Added: new(int64(1))})
+	require.NoError(firstClient.Close())
+
+	_, err := env.Store.DB().Exec(
+		`UPDATE messages SET rfc822_message_id = NULL`,
+	)
+	require.NoError(err)
+
+	for range 2 {
+		client := newSyncTestIMAPClient(t, addr)
+		env.Syncer = New(client, env.Store, opts)
+		summary = runFullSync(t, env)
+		assertSummary(t, summary, WantSummary{
+			Added:   new(int64(0)),
+			Updated: new(int64(0)),
+			Skipped: new(int64(1)),
+		})
+		assert.Positive(t, summary.BytesDownloaded,
+			"inconclusive identity should fetch raw MIME for comparison")
+		require.NoError(client.Close())
+		assertMessageCount(t, env.Store, 1)
+	}
+}
+
+func TestIMAPMissingIdentityRawComparisonArchivesDifferentMessage(t *testing.T) {
+	require := require.New(t)
+	env := newTestEnv(t)
+	opts := DefaultOptions()
+	opts.SourceType = sourceTypeIMAP
+
+	addr, user := testutil.StartIMAPMemServer(t, map[string]int{
+		"Archive": 0,
+		"INBOX":   0,
+	})
+	testutil.AppendIMAPMessageWithoutMessageID(
+		t, user, "Archive", "old unknown-epoch body")
+
+	firstClient := newSyncTestIMAPClient(t, addr)
+	env.Syncer = New(firstClient, env.Store, opts)
+	summary := runFullSync(t, env)
+	assertSummary(t, summary, WantSummary{Added: new(int64(1))})
+	require.NoError(firstClient.Close())
+
+	require.NoError(user.Delete("Archive"))
+	require.NoError(user.Create("Archive", nil))
+	testutil.AppendIMAPMessageWithoutMessageID(
+		t, user, "Archive", "replacement unknown-epoch body")
+
+	secondClient := newSyncTestIMAPClient(t, addr)
+	env.Syncer = New(secondClient, env.Store, opts)
+	summary = runFullSync(t, env)
+	assertSummary(t, summary, WantSummary{
+		Added:   new(int64(1)),
+		Updated: new(int64(0)),
+		Skipped: new(int64(0)),
+	})
+	assertMissingIDArchiveState(
+		t,
+		env.Store,
+		"old unknown-epoch body",
+		"replacement unknown-epoch body",
+	)
+}
+
+func assertMissingIDArchiveState(
+	t *testing.T,
+	st *store.Store,
+	oldBody string,
+	newBody string,
+) {
+	t.Helper()
+	require := require.New(t)
+
+	type archivedMessage struct {
+		id              int64
+		sourceMessageID string
+		raw             string
+	}
+	var archived []archivedMessage
+	rows, err := st.DB().Query(`SELECT id, source_message_id FROM messages`)
+	require.NoError(err)
+	for rows.Next() {
+		var msg archivedMessage
+		require.NoError(rows.Scan(&msg.id, &msg.sourceMessageID))
+		raw, err := st.GetMessageRaw(msg.id)
+		require.NoError(err)
+		msg.raw = string(raw)
+		archived = append(archived, msg)
+	}
+	require.NoError(rows.Err())
+	require.NoError(rows.Close())
+	require.Len(archived, 2)
+
+	var oldMessage, newMessage *archivedMessage
+	for i := range archived {
+		switch {
+		case strings.Contains(archived[i].raw, oldBody):
+			oldMessage = &archived[i]
+		case strings.Contains(archived[i].raw, newBody):
+			newMessage = &archived[i]
+		}
+	}
+	require.NotNil(oldMessage)
+	require.NotNil(newMessage)
+	assert.True(t, strings.HasPrefix(
+		oldMessage.sourceMessageID,
+		invalidatedIMAPSourceIDPrefix,
+	))
+	assert.Equal(t, "Archive|1", newMessage.sourceMessageID)
+}
+
+func TestIMAPFilteredMoveReconcilesBeforeAdvancingFolderState(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	env := newTestEnv(t)
+	opts := DefaultOptions()
+	opts.SourceType = sourceTypeIMAP
+
+	addr, user := testutil.StartIMAPMemServer(t, map[string]int{
+		"INBOX": 0,
+		"Trash": 0,
+	})
+	const messageID = "filtered-high-water-move@example.com"
+	testutil.AppendIMAPMessageWithMessageID(t, user, "INBOX", messageID)
+
+	firstClient := newSyncTestIMAPClient(t, addr)
+	env.Syncer = New(firstClient, env.Store, opts)
+	summary := runFullSync(t, env)
+	assertSummary(t, summary, WantSummary{Added: new(int64(1))})
+	saved := firstClient.ObservedFolderStates()
+	require.NotEmpty(saved)
+	trashBefore := saved["Trash"]
+	require.NoError(firstClient.TrashMessage(env.Context, "INBOX|1"))
+	require.NoError(firstClient.Close())
+
+	secondClient := newSyncTestIMAPClient(
+		t,
+		addr,
+		imapclient.WithFolderStates(saved),
+		imapclient.WithFolderFilter([]string{"Trash"}, nil),
+		imapclient.WithFolderStateSave(
+			func(mailbox string, state imapclient.FolderState) {
+				saved[mailbox] = state
+			},
+		),
+	)
+	env.Syncer = New(secondClient, env.Store, opts)
+	summary = runFullSync(t, env)
+	assertSummary(t, summary, WantSummary{
+		Added:   new(int64(0)),
+		Updated: new(int64(1)),
+	})
+	require.NoError(secondClient.Close())
+
+	var sourceMessageID string
+	err := env.Store.DB().QueryRow(
+		`SELECT source_message_id FROM messages LIMIT 1`,
+	).Scan(&sourceMessageID)
+	require.NoError(err)
+	assert.Equal("INBOX|1", sourceMessageID)
+	assertMessageHasLabel(t, env.Store, sourceMessageID, "INBOX")
+	assertMessageHasLabel(t, env.Store, sourceMessageID, "Trash")
+	assert.Equal(trashBefore, saved["Trash"])
+
+	thirdClient := newSyncTestIMAPClient(
+		t, addr, imapclient.WithFolderStates(saved))
+	env.Syncer = New(thirdClient, env.Store, opts)
+	summary = runFullSync(t, env)
+	assertSummary(t, summary, WantSummary{
+		Added:   new(int64(0)),
+		Updated: new(int64(1)),
+	})
+
+	err = env.Store.DB().QueryRow(
+		`SELECT source_message_id FROM messages LIMIT 1`,
+	).Scan(&sourceMessageID)
+	require.NoError(err)
+	assert.Equal("Trash|1", sourceMessageID)
+}
+
+func TestIMAPHighWaterRenameReplacesMissingMailboxID(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	env := newTestEnv(t)
+	opts := DefaultOptions()
+	opts.SourceType = sourceTypeIMAP
+
+	addr, user := testutil.StartIMAPMemServer(t, map[string]int{
+		"Archive": 0,
+		"INBOX":   0,
+	})
+	const messageID = "high-water-mailbox-rename@example.com"
+	testutil.AppendIMAPMessageWithMessageID(t, user, "Archive", messageID)
+
+	firstClient := newSyncTestIMAPClient(t, addr)
+	env.Syncer = New(firstClient, env.Store, opts)
+	summary := runFullSync(t, env)
+	assertSummary(t, summary, WantSummary{Added: new(int64(1))})
+	saved := firstClient.ObservedFolderStates()
+	require.NotEmpty(saved)
+	require.NoError(firstClient.Close())
+	require.NoError(user.Rename("Archive", "Projects", nil))
+
+	acknowledged := make(map[string]imapclient.FolderState)
+	secondClient := newSyncTestIMAPClient(
+		t,
+		addr,
+		imapclient.WithFolderStates(saved),
+		imapclient.WithFolderStateSave(
+			func(mailbox string, state imapclient.FolderState) {
+				acknowledged[mailbox] = state
+			},
+		),
+	)
+	env.Syncer = New(secondClient, env.Store, opts)
+	summary = runFullSync(t, env)
+	assertSummary(t, summary, WantSummary{
+		Added:   new(int64(0)),
+		Updated: new(int64(1)),
+		Errors:  new(int64(0)),
+	})
+
+	var sourceMessageID string
+	err := env.Store.DB().QueryRow(
+		`SELECT source_message_id FROM messages LIMIT 1`,
+	).Scan(&sourceMessageID)
+	require.NoError(err)
+	assert.Equal("Projects|1", sourceMessageID)
+	assertMessageHasLabel(t, env.Store, sourceMessageID, "Archive")
+	assertMessageHasLabel(t, env.Store, sourceMessageID, "Projects")
+	assert.Contains(acknowledged, "Projects")
+}
+
+func TestIMAPHighWaterOverlapPreservesValidID(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	env := newTestEnv(t)
+	opts := DefaultOptions()
+	opts.SourceType = sourceTypeIMAP
+
+	addr, user := testutil.StartIMAPMemServer(t, map[string]int{
+		"Archive":  0,
+		"INBOX":    0,
+		"Projects": 0,
+	})
+	const messageID = "high-water-overlap@example.com"
+	testutil.AppendIMAPMessageWithMessageID(t, user, "Archive", messageID)
+	testutil.AppendIMAPMessageWithMessageID(t, user, "INBOX", messageID)
+
+	firstClient := newSyncTestIMAPClient(t, addr)
+	env.Syncer = New(firstClient, env.Store, opts)
+	summary := runFullSync(t, env)
+	assertSummary(t, summary, WantSummary{Added: new(int64(1))})
+	saved := firstClient.ObservedFolderStates()
+	require.NotEmpty(saved)
+
+	var originalSourceMessageID string
+	err := env.Store.DB().QueryRow(
+		`SELECT source_message_id FROM messages LIMIT 1`,
+	).Scan(&originalSourceMessageID)
+	require.NoError(err)
+	require.NoError(firstClient.Close())
+
+	testutil.AppendIMAPMessageWithMessageID(t, user, "Projects", messageID)
+	secondClient := newSyncTestIMAPClient(
+		t, addr, imapclient.WithFolderStates(saved))
+	env.Syncer = New(secondClient, env.Store, opts)
+	summary = runFullSync(t, env)
+	assertSummary(t, summary, WantSummary{
+		Added:   new(int64(0)),
+		Updated: new(int64(1)),
+	})
+
+	var rescannedSourceMessageID string
+	err = env.Store.DB().QueryRow(
+		`SELECT source_message_id FROM messages LIMIT 1`,
+	).Scan(&rescannedSourceMessageID)
+	require.NoError(err)
+	assert.Equal(originalSourceMessageID, rescannedSourceMessageID)
+	assertMessageHasLabel(t, env.Store, rescannedSourceMessageID, "Archive")
+	assertMessageHasLabel(t, env.Store, rescannedSourceMessageID, "INBOX")
+	assertMessageHasLabel(t, env.Store, rescannedSourceMessageID, "Projects")
+}
+
+func TestIMAPCompleteCrossPageOverlapPreservesValidID(t *testing.T) {
+	require := require.New(t)
+	env := newTestEnv(t)
+	opts := DefaultOptions()
+	opts.SourceType = sourceTypeIMAP
+
+	addr, user := testutil.StartIMAPMemServer(t, map[string]int{
+		"Archive":  0,
+		"INBOX":    0,
+		"Projects": 0,
+	})
+	const messageID = "complete-cross-page-overlap@example.com"
+	testutil.AppendIMAPMessageWithMessageID(
+		t, user, "Projects", messageID)
+
+	firstClient := newSyncTestIMAPClient(t, addr)
+	env.Syncer = New(firstClient, env.Store, opts)
+	summary := runFullSync(t, env)
+	assertSummary(t, summary, WantSummary{Added: new(int64(1))})
+	require.NoError(firstClient.Close())
+
+	var originalSourceMessageID string
+	err := env.Store.DB().QueryRow(
+		`SELECT source_message_id FROM messages
+		 WHERE rfc822_message_id = ?`,
+		"<"+messageID+">",
+	).Scan(&originalSourceMessageID)
+	require.NoError(err)
+	require.Equal("Projects|1", originalSourceMessageID)
+
+	testutil.AppendIMAPMessageWithMessageID(
+		t, user, "Archive", messageID)
+	for i := range 99 {
+		testutil.AppendIMAPMessageWithMessageID(
+			t,
+			user,
+			"Archive",
+			fmt.Sprintf(
+				"complete-page-filler-%03d@example.com", i),
+		)
+	}
+
+	secondClient := newSyncTestIMAPClient(t, addr)
+	env.Syncer = New(secondClient, env.Store, opts)
+	summary = runFullSync(t, env)
+	assertSummary(t, summary, WantSummary{
+		Added:   new(int64(99)),
+		Updated: new(int64(1)),
+		Skipped: new(int64(1)),
+	})
+
+	var rescannedSourceMessageID string
+	err = env.Store.DB().QueryRow(
+		`SELECT source_message_id FROM messages
+		 WHERE rfc822_message_id = ?`,
+		"<"+messageID+">",
+	).Scan(&rescannedSourceMessageID)
+	require.NoError(err)
+	assert.Equal(t, originalSourceMessageID, rescannedSourceMessageID)
+	assertMessageHasLabel(
+		t, env.Store, rescannedSourceMessageID, "Archive")
+	assertMessageHasLabel(
+		t, env.Store, rescannedSourceMessageID, "Projects")
+}
+
+type sourceValidationAPI struct {
+	*gmail.MockAPI
+	sourceMatches bool
+}
+
+func (a *sourceValidationAPI) SourceMessageMatches(
+	context.Context, string, string,
+) (bool, bool, error) {
+	return a.sourceMatches, true, nil
+}
+
+type highWaterValidationAPI struct {
+	*gmail.MockAPI
+
+	validationErr error
+	acknowledged  []string
+}
+
+func (*highWaterValidationAPI) LabelsSnapshotComplete() bool {
+	return false
+}
+
+func (*highWaterValidationAPI) LabelsSnapshotFiltered() bool {
+	return false
+}
+
+func (a *highWaterValidationAPI) SourceMessageMatches(
+	context.Context, string, string,
+) (bool, bool, error) {
+	return false, true, a.validationErr
+}
+
+func (a *highWaterValidationAPI) AcknowledgeMessages(
+	_ context.Context, messageIDs []string,
+) {
+	a.acknowledged = append(a.acknowledged, messageIDs...)
+}
+
+func TestIMAPHighWaterValidationFailureRemainsRetryable(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	env := newTestEnv(t)
+	opts := DefaultOptions()
+	opts.SourceType = sourceTypeIMAP
+	env.Syncer = New(env.Mock, env.Store, opts)
+
+	msg := testemail.NewMessage().
+		Subject("High-water validation failure").
+		Header("Message-ID", "<high-water-validation@example.com>").
+		Body("The old source ID cannot be validated yet.").
+		Bytes()
+	env.Mock.Profile.MessagesTotal = 1
+	env.Mock.AddMessage("INBOX|42", msg, []string{"INBOX"})
+	summary := runFullSync(t, env)
+	assertSummary(t, summary, WantSummary{Added: new(int64(1))})
+
+	delete(env.Mock.Messages, "INBOX|42")
+	env.Mock.AddMessage("TRASH|99", msg, []string{"TRASH"})
+	validationErr := errors.New("synthetic validation timeout")
+	highWaterAPI := &highWaterValidationAPI{
+		MockAPI:       env.Mock,
+		validationErr: validationErr,
+	}
+	env.Syncer = New(highWaterAPI, env.Store, opts)
+	summary = runFullSync(t, env)
+	assertSummary(t, summary, WantSummary{
+		Added:   new(int64(0)),
+		Updated: new(int64(0)),
+		Errors:  new(int64(1)),
+	})
+
+	var sourceMessageID string
+	err := env.Store.DB().QueryRow(
+		`SELECT source_message_id FROM messages LIMIT 1`,
+	).Scan(&sourceMessageID)
+	require.NoError(err)
+	assert.Equal("INBOX|42", sourceMessageID)
+	assertMessageHasLabel(t, env.Store, sourceMessageID, "INBOX")
+	assertMessageNotHasLabel(t, env.Store, sourceMessageID, "TRASH")
+	assert.NotContains(highWaterAPI.acknowledged, "TRASH|99")
+}
+
+func newSyncTestIMAPClient(
+	t *testing.T, addr string, clientOpts ...imapclient.Option,
+) *imapclient.Client {
+	t.Helper()
+	host, portString, err := net.SplitHostPort(addr)
+	require.NoError(t, err)
+	port, err := strconv.Atoi(portString)
+	require.NoError(t, err)
+
+	client := imapclient.NewClient(&imapclient.Config{
+		Host:     host,
+		Port:     port,
+		Username: testutil.IMAPTestUsername,
+	}, testutil.IMAPTestPassword, clientOpts...)
+	t.Cleanup(func() { _ = client.Close() })
+	return client
+}
+
+type incompleteLabelSnapshotAPI struct {
+	*gmail.MockAPI
+
+	sourceMatches bool
+}
+
+func (*incompleteLabelSnapshotAPI) LabelsSnapshotComplete() bool {
+	return false
+}
+
+func (*incompleteLabelSnapshotAPI) LabelsSnapshotFiltered() bool {
+	return true
+}
+
+func (a *incompleteLabelSnapshotAPI) SourceMessageMatches(
+	context.Context, string, string,
+) (bool, bool, error) {
+	return a.sourceMatches, true, nil
+}
+
+type labelMetadataSnapshotAPI struct {
+	*gmail.MockAPI
+
+	complete    bool
+	filtered    bool
+	labelCalls  [][]string
+	labelErrors map[string]error
+	seedCalls   [][2]string
+}
+
+func (a *labelMetadataSnapshotAPI) LabelsSnapshotComplete() bool {
+	return a.complete
+}
+
+func (a *labelMetadataSnapshotAPI) LabelsSnapshotFiltered() bool {
+	return a.filtered
+}
+
+func (*labelMetadataSnapshotAPI) FetchedSourceMessageMatches(
+	string, string, string,
+) (bool, bool, error) {
+	return true, true, nil
+}
+
+func (a *labelMetadataSnapshotAPI) SeedValidatedMessageDedup(
+	messageID, rfc822MessageID string,
+) error {
+	a.seedCalls = append(
+		a.seedCalls,
+		[2]string{messageID, rfc822MessageID},
+	)
+	return nil
+}
+
+func (a *labelMetadataSnapshotAPI) GetMessageLabelsBatch(_ context.Context, messageIDs []string) ([]gmail.MessageLabelsBatchResult, error) {
+	a.labelCalls = append(a.labelCalls, append([]string(nil), messageIDs...))
+
+	results := make([]gmail.MessageLabelsBatchResult, len(messageIDs))
+	for i, id := range messageIDs {
+		results[i].ID = id
+		if err := a.labelErrors[id]; err != nil {
+			results[i].Err = err
+			continue
+		}
+		msg, ok := a.Messages[id]
+		if !ok {
+			results[i].Err = &gmail.NotFoundError{Path: "/messages/" + id}
+			continue
+		}
+		results[i].LabelIDs = append([]string(nil), msg.LabelIDs...)
+	}
+	return results, nil
+}
+
+func TestIMAPFilteredRescanPreservesCanonicalIDAndMergesLabels(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	env := newTestEnv(t)
+	opts := DefaultOptions()
+	opts.SourceType = sourceTypeIMAP
+	env.Syncer = New(env.Mock, env.Store, opts)
+	env.Mock.Labels = []*gmail.Label{
+		{ID: "[Gmail]/All Mail", Name: "All Mail", Type: labelTypeSystem},
+		{ID: "Archive", Name: "Archive", Type: "user"},
+		{ID: "INBOX", Name: "INBOX", Type: labelTypeSystem},
+	}
+
+	msg := testemail.NewMessage().
+		Subject("Filtered rescan").
+		Header("Message-ID", "<filtered-rescan@example.com>").
+		Body("Same message through a partial mailbox view.").
+		Bytes()
+
+	env.Mock.Profile.MessagesTotal = 1
+	env.Mock.AddMessage("[Gmail]/All Mail|42", msg, []string{"[Gmail]/All Mail", "Archive"})
+	summary := runFullSync(t, env)
+	assertSummary(t, summary, WantSummary{Added: new(int64(1))})
+
+	delete(env.Mock.Messages, "[Gmail]/All Mail|42")
+	env.Mock.AddMessage("INBOX|7", msg, []string{"INBOX"})
+	env.Syncer = New(&incompleteLabelSnapshotAPI{
+		MockAPI:       env.Mock,
+		sourceMatches: true,
+	}, env.Store, opts)
+
+	summary = runFullSync(t, env)
+	assertSummary(t, summary, WantSummary{Added: new(int64(0))})
+
+	var sourceMessageID string
+	err := env.Store.DB().QueryRow(
+		`SELECT source_message_id FROM messages LIMIT 1`,
+	).Scan(&sourceMessageID)
+	require.NoError(err)
+	assert.Equal("[Gmail]/All Mail|42", sourceMessageID,
+		"a filtered rescan must preserve the canonical source_message_id")
+	assertMessageHasLabel(t, env.Store, sourceMessageID, "[Gmail]/All Mail")
+	assertMessageHasLabel(t, env.Store, sourceMessageID, "Archive")
+	assertMessageHasLabel(t, env.Store, sourceMessageID, "INBOX")
+}
+
+func TestIMAPFilteredRescanExactIDMergesNewLabels(t *testing.T) {
+	env := newTestEnv(t)
+	opts := DefaultOptions()
+	opts.SourceType = sourceTypeIMAP
+	env.Syncer = New(env.Mock, env.Store, opts)
+	env.Mock.Labels = []*gmail.Label{
+		{ID: "[Gmail]/All Mail", Name: "All Mail", Type: labelTypeSystem},
+		{ID: "Archive", Name: "Archive", Type: "user"},
+	}
+
+	const sourceMessageID = "[Gmail]/All Mail|42"
+	msg := testemail.NewMessage().
+		Subject("Exact-ID filtered rescan").
+		Header("Message-ID", "<exact-id-filtered-rescan@example.com>").
+		Body("Same composite ID through a partial mailbox view.").
+		Bytes()
+
+	env.Mock.Profile.MessagesTotal = 1
+	env.Mock.AddMessage(sourceMessageID, msg, []string{"[Gmail]/All Mail"})
+	summary := runFullSync(t, env)
+	assertSummary(t, summary, WantSummary{Added: new(int64(1))})
+	assertMessageNotHasLabel(t, env.Store, sourceMessageID, "Archive")
+
+	env.Mock.Messages[sourceMessageID].LabelIDs = []string{"[Gmail]/All Mail", "Archive"}
+	callsBeforeRescan := len(env.Mock.GetMessageCalls)
+	filteredAPI := &labelMetadataSnapshotAPI{
+		MockAPI:  env.Mock,
+		filtered: true,
+	}
+	env.Syncer = New(filteredAPI, env.Store, opts)
+
+	summary = runFullSync(t, env)
+	assertSummary(t, summary, WantSummary{Added: new(int64(0))})
+	assert.Len(t, env.Mock.GetMessageCalls, callsBeforeRescan,
+		"existing messages should not download raw MIME to refresh labels")
+	assert.Equal(t, [][]string{{sourceMessageID}}, filteredAPI.labelCalls)
+	assert.Equal(t, [][2]string{{sourceMessageID, ""}}, filteredAPI.seedCalls)
+	assertMessageHasLabel(t, env.Store, sourceMessageID, "[Gmail]/All Mail")
+	assertMessageHasLabel(t, env.Store, sourceMessageID, "Archive")
+}
+
+func TestIMAPCompleteRescanReplacesExactIDLabels(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	env := newTestEnv(t)
+	opts := DefaultOptions()
+	opts.SourceType = sourceTypeIMAP
+	env.Syncer = New(env.Mock, env.Store, opts)
+	env.Mock.Labels = []*gmail.Label{
+		{ID: "[Gmail]/All Mail", Name: "All Mail", Type: labelTypeSystem},
+		{ID: "Archive", Name: "Archive", Type: "user"},
+	}
+
+	const sourceMessageID = "[Gmail]/All Mail|42"
+	msg := testemail.NewMessage().
+		Subject("Complete exact-ID rescan").
+		Header("Message-ID", "<complete-exact-id-rescan@example.com>").
+		Body("Labels become authoritative again after an unfiltered rescan.").
+		Bytes()
+
+	env.Mock.Profile.MessagesTotal = 1
+	env.Mock.AddMessage(sourceMessageID, msg, []string{"[Gmail]/All Mail"})
+	summary := runFullSync(t, env)
+	assertSummary(t, summary, WantSummary{Added: new(int64(1))})
+
+	env.Mock.Messages[sourceMessageID].LabelIDs = []string{"[Gmail]/All Mail", "Archive"}
+	filteredAPI := &labelMetadataSnapshotAPI{
+		MockAPI:  env.Mock,
+		filtered: true,
+	}
+	env.Syncer = New(filteredAPI, env.Store, opts)
+	summary = runFullSync(t, env)
+	assertSummary(t, summary, WantSummary{
+		Added:   new(int64(0)),
+		Updated: new(int64(1)),
+	})
+	assertMessageHasLabel(t, env.Store, sourceMessageID, "Archive")
+
+	env.Mock.Messages[sourceMessageID].LabelIDs = []string{"[Gmail]/All Mail"}
+	completeAPI := &labelMetadataSnapshotAPI{MockAPI: env.Mock, complete: true}
+	env.Syncer = New(completeAPI, env.Store, opts)
+	summary = runFullSync(t, env)
+	assertSummary(t, summary, WantSummary{
+		Added:   new(int64(0)),
+		Updated: new(int64(1)),
+	})
+	assert.Equal([][]string{{sourceMessageID}}, completeAPI.labelCalls)
+	assertMessageHasLabel(t, env.Store, sourceMessageID, "[Gmail]/All Mail")
+	assertMessageNotHasLabel(t, env.Store, sourceMessageID, "Archive")
+
+	source, err := env.Store.GetSourceByIdentifier(testEmail)
+	require.NoError(err)
+	run, err := env.Store.GetLatestSync(source.ID)
+	require.NoError(err)
+	assert.Equal(int64(1), run.MessagesUpdated)
+
+	completeAPI.labelCalls = nil
+	summary = runFullSync(t, env)
+	assertSummary(t, summary, WantSummary{
+		Added:   new(int64(0)),
+		Updated: new(int64(0)),
+	})
+	assert.Equal([][]string{{sourceMessageID}}, completeAPI.labelCalls)
+}
+
+func TestIMAPLabelMetadataFailureDoesNotAbortBatch(t *testing.T) {
+	env := newTestEnv(t)
+	opts := DefaultOptions()
+	opts.SourceType = sourceTypeIMAP
+	env.Syncer = New(env.Mock, env.Store, opts)
+	env.Mock.Labels = []*gmail.Label{
+		{ID: "[Gmail]/All Mail", Name: "All Mail", Type: labelTypeSystem},
+		{ID: "Archive", Name: "Archive", Type: "user"},
+	}
+
+	const firstID = "[Gmail]/All Mail|41"
+	const vanishedID = "[Gmail]/All Mail|42"
+	env.Mock.Profile.MessagesTotal = 2
+	env.Mock.AddMessage(firstID, testMIME(), []string{"[Gmail]/All Mail"})
+	env.Mock.AddMessage(vanishedID, testMIME(), []string{"[Gmail]/All Mail"})
+	summary := runFullSync(t, env)
+	assertSummary(t, summary, WantSummary{Added: new(int64(2))})
+
+	env.Mock.Messages[firstID].LabelIDs = []string{"[Gmail]/All Mail", "Archive"}
+	filteredAPI := &labelMetadataSnapshotAPI{
+		MockAPI:  env.Mock,
+		filtered: true,
+		labelErrors: map[string]error{
+			vanishedID: errors.New("UID vanished before metadata fetch"),
+		},
+	}
+	env.Syncer = New(filteredAPI, env.Store, opts)
+
+	summary = runFullSync(t, env)
+	assertSummary(t, summary, WantSummary{
+		Added:  new(int64(0)),
+		Errors: new(int64(1)),
+	})
+	assertMessageHasLabel(t, env.Store, firstID, "Archive")
+	assertMessageNotHasLabel(t, env.Store, vanishedID, "Archive")
+	assert.Equal(t, [][2]string{{firstID, ""}}, filteredAPI.seedCalls,
+		"failed label metadata must not seed dedup state")
 }
 
 // TestIncrementalSyncLabelRemovedWithMissingRaw verifies that removing a label

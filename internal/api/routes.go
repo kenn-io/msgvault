@@ -518,7 +518,11 @@ func rawRouteParameters(operationID string) []*huma.Param {
 	case "buildCLICache":
 		return []*huma.Param{queryBooleanParam("full_rebuild", "Rebuild all cache files from scratch")}
 	case "syncCLI":
-		return []*huma.Param{queryStringParam("email", "Account email or display name to sync", false)}
+		return []*huma.Param{
+			queryStringParam("email", "Account email or display name to sync", false),
+			queryRefArrayParam("folder", "IMAP folder names to include (repeatable)"),
+			queryRefArrayParam("skip-folder", "IMAP folder names to exclude (repeatable)"),
+		}
 	case "syncFullCLI":
 		return []*huma.Param{
 			queryStringParam("email", "Account email or display name to sync", false),
@@ -527,6 +531,8 @@ func rawRouteParameters(operationID string) []*huma.Param {
 			queryStringParam("before", "Only messages before this YYYY-MM-DD date", false),
 			queryIntegerParam("limit", "Maximum messages to sync"),
 			queryBooleanParam("noresume", "Ignore checkpoints and start fresh"),
+			queryRefArrayParam("folder", "IMAP folder names to include (repeatable)"),
+			queryRefArrayParam("skip-folder", "IMAP folder names to exclude (repeatable)"),
 		}
 	case "verifyCLI":
 		return []*huma.Param{
@@ -808,6 +814,12 @@ func queryIntegerParam(name, doc string) *huma.Param {
 func queryIntegerArrayParam(name, doc string) *huma.Param {
 	p := param(name, "query", huma.TypeArray, doc, false)
 	p.Schema.Items = &huma.Schema{Type: huma.TypeInteger, Format: "int64"}
+	return p
+}
+
+func queryRefArrayParam(name, doc string) *huma.Param {
+	p := param(name, "query", huma.TypeArray, doc, false)
+	p.Schema.Items = &huma.Schema{Type: huma.TypeString}
 	return p
 }
 

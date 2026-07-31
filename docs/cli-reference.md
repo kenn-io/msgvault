@@ -101,6 +101,22 @@ After adding an account, sync it with `msgvault sync-full`. IMAP accounts use th
 
 ---
 
+## list-folders
+
+List the selectable folders in one or all configured IMAP accounts, including
+an approximate message count for each folder.
+
+```bash
+msgvault list-folders [account]
+```
+
+Use the folder names in repeated `--folders` or `--skip-folders` flags on
+`sync-full` and `sync`. When the account argument is omitted, the command lists
+folders for every configured IMAP account. See
+[IMAP Folder Sync](/usage/imap/) for examples and matching rules.
+
+---
+
 ## add-o365
 
 Add a Microsoft 365 or Outlook.com account via OAuth2 with XOAUTH2 IMAP authentication.
@@ -190,6 +206,8 @@ msgvault sync-full [email] [flags]
 | `--before YYYY-MM-DD` | Only messages before this date |
 | `--query` | Gmail search query filter |
 | `--noresume` | Ignore checkpoints, start fresh |
+| `--folders NAME` | Scan this IMAP folder (repeatable) |
+| `--skip-folders NAME` | Skip this IMAP folder (repeatable) |
 | `--verbose` | Detailed progress output |
 
 The CLI sends the sync request to the configured remote server or local daemon
@@ -204,12 +222,20 @@ SQLite writer beside `msgvault serve`.
 Sync new and changed messages. Gmail accounts use the Gmail History API; IMAP accounts perform a mailbox scan and skip messages already in the database. When called without an email argument, syncs all accounts that have completed an initial full sync.
 
 ```bash
-msgvault sync [email]
+msgvault sync [email] [flags]
 ```
+
+| Flag | Description |
+|---|---|
+| `--folders NAME` | Scan this IMAP folder (repeatable) |
+| `--skip-folders NAME` | Skip this IMAP folder (repeatable) |
 
 The CLI sends the incremental sync request to the configured remote server or
 local daemon and streams the daemon's stdout/stderr back to the terminal. The
 daemon serializes this work with other archive mutations.
+
+Folder filters are applied only to IMAP accounts. See
+[IMAP Folder Sync](/usage/imap/) for examples and matching rules.
 
 ---
 

@@ -386,13 +386,15 @@ type CLICacheBuildEvent struct {
 }
 
 type CLISyncRequest struct {
-	Full     bool
-	Email    string
-	Query    string
-	NoResume bool
-	Before   string
-	After    string
-	Limit    int
+	Full        bool
+	Email       string
+	Query       string
+	NoResume    bool
+	Before      string
+	After       string
+	Limit       int
+	Folders     []string
+	SkipFolders []string
 }
 
 type CLISyncEvent struct {
@@ -982,6 +984,16 @@ func parseCLISyncRequest(r *http.Request, full bool) (CLISyncRequest, *apiHTTPEr
 		Before: values.Get("before"),
 		After:  values.Get("after"),
 	}
+	for _, v := range values["folder"] {
+		if v != "" {
+			req.Folders = append(req.Folders, v)
+		}
+	}
+	for _, v := range values["skip-folder"] {
+		if v != "" {
+			req.SkipFolders = append(req.SkipFolders, v)
+		}
+	}
 	if rawNoResume := values.Get("noresume"); rawNoResume != "" {
 		noResume, err := strconv.ParseBool(rawNoResume)
 		if err != nil {
@@ -1318,6 +1330,7 @@ func cliRunCommandAllowed(args []string) bool {
 		"import-synctech-sms",
 		"import-whatsapp",
 		"list-deletions",
+		"list-folders",
 		"logs",
 		"pack-attachments",
 		"repair-dates",

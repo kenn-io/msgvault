@@ -23,11 +23,13 @@ import (
 )
 
 var (
-	syncQuery    string
-	syncNoResume bool
-	syncBefore   string
-	syncAfter    string
-	syncLimit    int
+	syncQuery       string
+	syncNoResume    bool
+	syncBefore      string
+	syncAfter       string
+	syncLimit       int
+	syncFolders     []string // folder names to include (from --folders flag)
+	syncSkipFolders []string // folder names to exclude (from --skip-folders flag)
 )
 
 var syncFullCmd = &cobra.Command{
@@ -349,24 +351,28 @@ func loadIMAPFolderStates(s *store.Store, sourceID int64) (map[string]imaplib.Fo
 	return states, nil
 }
 
-// imapFolderStateOptions loads saved per-mailbox states for an IMAP
-// source so its client can skip unchanged mailboxes during listing.
-// forceRescan (--noresume) bypasses the saved states so every mailbox
-// is freshly enumerated. Load failures only cost the optimization, so
-// they are logged and swallowed.
-func imapFolderStateOptions(s *store.Store, src *store.Source, forceRescan bool) []imaplib.Option {
-	if forceRescan || src.SourceType != sourceTypeIMAP {
+// imapFolderStateOptions retains saved UIDVALIDITY metadata for identity
+// validation. forceRescan disables listing shortcuts without discarding it.
+func imapFolderStateOptions(
+	s *store.Store,
+	src *store.Source,
+	forceRescan bool,
+) []imaplib.Option {
+	if src.SourceType != sourceTypeIMAP {
 		return nil
 	}
+
+	var opts []imaplib.Option
 	states, err := loadIMAPFolderStates(s, src.ID)
 	if err != nil {
 		logger.Warn("failed to load IMAP folder states", "source", src.Identifier, "error", err)
-		return nil
+	} else if len(states) > 0 {
+		opts = append(opts, imaplib.WithFolderStates(states))
 	}
-	if len(states) == 0 {
-		return nil
+	if forceRescan {
+		opts = append(opts, imaplib.WithForceFullEnumeration())
 	}
-	return []imaplib.Option{imaplib.WithFolderStates(states)}
+	return opts
 }
 
 func saveIMAPFolderState(s *store.Store, src *store.Source, mailbox string, st imaplib.FolderState) {
@@ -420,6 +426,20 @@ func runFullSync(ctx context.Context, s *store.Store, getOAuthMgr func(string) (
 	// saved folder high water marks and re-enumerate every mailbox. A clean
 	// completed run still saves fresh high water marks afterwards.
 	imapOpts := imapFolderStateOptions(s, src, syncNoResume)
+
+	// Pass CLI folder filter strings to the IMAP client. The IMAP
+	// client selects the effective include list (CLI --folders when
+	// set, otherwise config Folders) and applies CLI --skip-folders
+	// as an exclusion on top. Both CLI filters are applied in a
+	// single call to filterMailboxes so --folders can fully
+	// override configuration and --skip-folders works together with
+	// --folders.
+	imapOpts = append(imapOpts,
+		imaplib.WithFolderFilter(
+			parseFolderFilter(syncFolders),
+			parseFolderFilter(syncSkipFolders),
+		))
+
 	if src.SourceType == sourceTypeIMAP {
 		imapOpts = append(imapOpts,
 			imaplib.WithListProgress(progress.OnIMAPListProgress),
@@ -528,7 +548,21 @@ func runFullSync(ctx context.Context, s *store.Store, getOAuthMgr func(string) (
 	return nil
 }
 
-// buildSyncQuery constructs a Gmail search query from flags.
+// trimFolderFilter trims whitespace from folder names and removes empty
+// entries. Returns nil when the input slice is empty.
+func parseFolderFilter(folders []string) []string {
+	if len(folders) == 0 {
+		return nil
+	}
+	kept := make([]string, 0, len(folders))
+	for _, f := range folders {
+		f = strings.TrimSpace(f)
+		if f != "" {
+			kept = append(kept, f)
+		}
+	}
+	return kept
+}
 func buildSyncQuery() string {
 	parts := []string{}
 
@@ -795,5 +829,7 @@ func init() {
 	syncFullCmd.Flags().StringVar(&syncBefore, "before", "", "Only messages before this date (YYYY-MM-DD)")
 	syncFullCmd.Flags().StringVar(&syncAfter, "after", "", "Only messages after this date (YYYY-MM-DD)")
 	syncFullCmd.Flags().IntVar(&syncLimit, "limit", 0, "Limit number of messages (for testing)")
+	syncFullCmd.Flags().StringArrayVar(&syncFolders, "folders", []string{}, "Folder names to include (repeatable)")
+	syncFullCmd.Flags().StringArrayVar(&syncSkipFolders, "skip-folders", []string{}, "Folder names to exclude (repeatable)")
 	rootCmd.AddCommand(syncFullCmd)
 }

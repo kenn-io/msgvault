@@ -26,6 +26,8 @@ func TestSyncUsesConfiguredRemoteHTTPAndPreservesOutput(t *testing.T) {
 		assert.Equal(http.MethodPost, r.Method, "method")
 		assert.Equal("/api/v1/cli/sync", r.URL.Path, "path")
 		assert.Equal("alice@example.com", r.URL.Query().Get("email"), "email query")
+		assert.ElementsMatch([]string{"INBOX", "Archive"}, r.URL.Query()["folder"], "folder query")
+		assert.Equal([]string{"Trash"}, r.URL.Query()["skip-folder"], "skip-folder query")
 		requests.Add(1)
 
 		w.Header().Set("Content-Type", "application/x-ndjson")
@@ -36,11 +38,19 @@ func TestSyncUsesConfiguredRemoteHTTPAndPreservesOutput(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	configureRemoteSyncTest(t, server.URL)
+	resetSyncFullFlagsForTest(t)
 
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 	cmd := &cobra.Command{Use: syncIncrementalCmd.Use, Args: syncIncrementalCmd.Args, RunE: syncIncrementalCmd.RunE}
-	cmd.SetArgs([]string{"alice@example.com"})
+	cmd.Flags().StringArrayVar(&syncFolders, "folders", []string{}, "IMAP folders to include")
+	cmd.Flags().StringArrayVar(&syncSkipFolders, "skip-folders", []string{}, "IMAP folders to exclude")
+	cmd.SetArgs([]string{
+		"alice@example.com",
+		"--folders", "INBOX",
+		"--folders", "Archive",
+		"--skip-folders", "Trash",
+	})
 	cmd.SetOut(&stdout)
 	cmd.SetErr(&stderr)
 
@@ -320,16 +330,22 @@ func resetSyncFullFlagsForTest(t *testing.T) {
 	oldBefore := syncBefore
 	oldAfter := syncAfter
 	oldLimit := syncLimit
+	oldFolders := syncFolders
+	oldSkipFolders := syncSkipFolders
 	syncQuery = ""
 	syncNoResume = false
 	syncBefore = ""
 	syncAfter = ""
 	syncLimit = 0
+	syncFolders = []string{}
+	syncSkipFolders = []string{}
 	t.Cleanup(func() {
 		syncQuery = oldQuery
 		syncNoResume = oldNoResume
 		syncBefore = oldBefore
 		syncAfter = oldAfter
 		syncLimit = oldLimit
+		syncFolders = oldFolders
+		syncSkipFolders = oldSkipFolders
 	})
 }

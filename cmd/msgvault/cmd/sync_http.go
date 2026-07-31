@@ -14,7 +14,10 @@ import (
 )
 
 func runSyncIncrementalHTTP(cmd *cobra.Command, args []string) error {
-	req := daemonclient.CLISyncRequest{}
+	req := daemonclient.CLISyncRequest{
+		Folders:     parseFolderFilter(syncFolders),
+		SkipFolders: parseFolderFilter(syncSkipFolders),
+	}
 	if len(args) == 1 {
 		req.Email = args[0]
 	}
@@ -23,12 +26,14 @@ func runSyncIncrementalHTTP(cmd *cobra.Command, args []string) error {
 
 func runSyncFullHTTP(cmd *cobra.Command, args []string) error {
 	req := daemonclient.CLISyncRequest{
-		Full:     true,
-		Query:    syncQuery,
-		NoResume: syncNoResume,
-		Before:   syncBefore,
-		After:    syncAfter,
-		Limit:    syncLimit,
+		Full:        true,
+		Query:       syncQuery,
+		NoResume:    syncNoResume,
+		Before:      syncBefore,
+		After:       syncAfter,
+		Limit:       syncLimit,
+		Folders:     parseFolderFilter(syncFolders),
+		SkipFolders: parseFolderFilter(syncSkipFolders),
 	}
 	if len(args) == 1 {
 		req.Email = args[0]

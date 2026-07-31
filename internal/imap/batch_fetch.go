@@ -5,7 +5,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
+	"strings"
 
 	imap "github.com/emersion/go-imap/v2"
 	"github.com/emersion/go-imap/v2/imapclient"
@@ -67,6 +69,28 @@ func rawMIMEMessageID(rawMIME []byte) string {
 	return msgID
 }
 
+func normalizeRFC822MessageID(value string) string {
+	value = strings.TrimSpace(value)
+	if strings.HasPrefix(value, "<") && strings.HasSuffix(value, ">") {
+		return value[1 : len(value)-1]
+	}
+	return value
+}
+
+func (c *Client) labelsForMessage(mailbox, rfc822MessageID string) []string {
+	labels := []string{mailbox}
+	if c.msgIDToLabels == nil || rfc822MessageID == "" {
+		return labels
+	}
+
+	for _, label := range c.msgIDToLabels[rfc822MessageID] {
+		if label != mailbox {
+			labels = append(labels, label)
+		}
+	}
+	return labels
+}
+
 func (c *Client) applyFetchResults(
 	results []gmailapi.RawMessageBatchResult,
 	uidToIdx map[imap.UID]int,
@@ -92,10 +116,9 @@ func (c *Client) applyFetchResults(
 			continue
 		}
 
-		// Dedup by RFC822 Message-ID when listing All Mail alongside
-		// Trash/Spam. On Gmail these are disjoint, but non-Gmail servers may
-		// overlap. Return a non-nil stub with empty Raw so the caller treats
-		// this as a skip, not a fetch error.
+		// Dedup by RFC822 Message-ID when fully enumerated mailboxes overlap.
+		// Return a non-nil stub with empty Raw so the caller treats this as a
+		// skip, not a fetch error.
 		msgID := compositeID(mailbox, msgBuf.UID)
 		var rfc822MessageID string
 		if c.seenRFC822IDs != nil || c.msgIDToLabels != nil {
@@ -111,22 +134,11 @@ func (c *Client) applyFetchResults(
 			c.seenRFC822IDs[rfc822MessageID] = true
 		}
 
-		labels := []string{mailbox}
-
 		// Merge labels from other mailboxes via the label map built during
 		// listing. The map keys on RFC822 Message-ID and maps to the other
 		// mailbox names the message appears in. Skip the current mailbox to
 		// avoid duplicates that would violate the message_labels primary key.
-		if c.msgIDToLabels != nil &&
-			rfc822MessageID != "" {
-			if extra, ok := c.msgIDToLabels[rfc822MessageID]; ok {
-				for _, lbl := range extra {
-					if lbl != mailbox {
-						labels = append(labels, lbl)
-					}
-				}
-			}
-		}
+		labels := c.labelsForMessage(mailbox, rfc822MessageID)
 
 		results[idx].Message = &gmailapi.RawMessage{
 			ID:           msgID,
@@ -325,4 +337,304 @@ func (c *Client) GetMessagesRawBatchWithErrors(ctx context.Context, messageIDs [
 		}
 	}
 	return results, nil
+}
+
+func newLabelBatchResults(messageIDs []string) []gmailapi.MessageLabelsBatchResult {
+	results := make([]gmailapi.MessageLabelsBatchResult, len(messageIDs))
+	for i, id := range messageIDs {
+		results[i].ID = id
+	}
+	return results
+}
+
+func markLabelBatchError(results []gmailapi.MessageLabelsBatchResult, items []batchFetchItem, err error) {
+	for _, item := range items {
+		results[item.idx].Err = err
+	}
+}
+
+func (c *Client) applyLabelFetchResults(
+	results []gmailapi.MessageLabelsBatchResult,
+	uidToIdx map[imap.UID]int,
+	mailbox string,
+	chunk []batchFetchItem,
+	msgs []*imapclient.FetchMessageBuffer,
+) {
+	seenUIDs := make(map[imap.UID]bool, len(msgs))
+	for _, msgBuf := range msgs {
+		idx, ok := uidToIdx[msgBuf.UID]
+		if !ok {
+			continue
+		}
+		seenUIDs[msgBuf.UID] = true
+		if len(msgBuf.BodySection) == 0 {
+			results[idx].Err = errIMAPFetchResultMissing
+			continue
+		}
+		rfc822MessageID := rawMIMEMessageID(msgBuf.BodySection[0].Bytes)
+		results[idx].LabelIDs = c.labelsForMessage(mailbox, rfc822MessageID)
+		results[idx].RFC822MessageID = rfc822MessageID
+		results[idx].Err = nil
+	}
+
+	for _, item := range chunk {
+		if !seenUIDs[item.uid] && results[item.idx].Err == nil {
+			results[item.idx].Err = errIMAPFetchResultMissing
+		}
+	}
+}
+
+func (c *Client) selectLabelBatchMailbox(
+	ctx context.Context,
+	mailbox string,
+	items []batchFetchItem,
+	results []gmailapi.MessageLabelsBatchResult,
+) (bool, error) {
+	err := c.selectMailbox(mailbox)
+	if err == nil {
+		return true, nil
+	}
+	if isNetworkError(err) {
+		c.logger.Warn("network error selecting mailbox for label fetch, reconnecting",
+			"mailbox", mailbox, "error", err)
+		if reconErr := c.reconnect(ctx); reconErr != nil {
+			return false, fmt.Errorf("reconnect failed fetching labels from mailbox %q: %w", mailbox, reconErr)
+		}
+		err = c.selectMailbox(mailbox)
+		if err == nil {
+			return true, nil
+		}
+		c.logger.Warn("skipping mailbox label batch after reconnect",
+			"mailbox", mailbox, "error", err)
+	} else {
+		c.logger.Warn("skipping mailbox label batch", "mailbox", mailbox, "error", err)
+	}
+	markLabelBatchError(results, items, err)
+	return false, nil
+}
+
+func (c *Client) fetchMailboxLabelBatch(
+	ctx context.Context,
+	mailbox string,
+	items []batchFetchItem,
+	fetchOpts *imap.FetchOptions,
+	results []gmailapi.MessageLabelsBatchResult,
+) error {
+	uidToIdx := make(map[imap.UID]int, len(items))
+	for _, item := range items {
+		uidToIdx[item.uid] = item.idx
+	}
+
+	for chunkStart := 0; chunkStart < len(items); chunkStart += fetchChunkSize {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+
+		end := min(chunkStart+fetchChunkSize, len(items))
+		chunk := items[chunkStart:end]
+		var uidSet imap.UIDSet
+		for _, item := range chunk {
+			uidSet.AddNum(item.uid)
+		}
+
+		msgs, fatal, err := c.fetchChunk(ctx, mailbox, uidSet, fetchOpts)
+		if fatal {
+			return err
+		}
+		if err != nil {
+			markLabelBatchError(results, chunk, err)
+			markLabelBatchError(results, items[end:], errIMAPSkippedAfterChunkFailed)
+			return nil
+		}
+		c.applyLabelFetchResults(results, uidToIdx, mailbox, chunk, msgs)
+	}
+	return nil
+}
+
+// GetMessageLabelsBatch fetches only the Message-ID header needed to recover
+// mailbox memberships for existing messages. It deliberately avoids BODY[]
+// so rescans can refresh labels without downloading message bodies or
+// attachments again. Per-message failures do not abort the rest of the batch.
+func (c *Client) GetMessageLabelsBatch(ctx context.Context, messageIDs []string) ([]gmailapi.MessageLabelsBatchResult, error) {
+	results := newLabelBatchResults(messageIDs)
+	byMailbox := make(map[string][]batchFetchItem, 4)
+	for i, id := range messageIDs {
+		mailbox, uid, err := parseCompositeID(id)
+		if err != nil {
+			results[i].Err = err
+			continue
+		}
+		byMailbox[mailbox] = append(byMailbox[mailbox], batchFetchItem{idx: i, uid: uid})
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if err := c.connect(ctx); err != nil {
+		return nil, err
+	}
+
+	fetchOpts := messageIDHeaderFetchOptions()
+	for _, mailbox := range batchMailboxOrder(byMailbox, c.allMailFolder) {
+		if ctx.Err() != nil {
+			return results, ctx.Err()
+		}
+
+		items := byMailbox[mailbox]
+		ok, err := c.selectLabelBatchMailbox(ctx, mailbox, items, results)
+		if err != nil {
+			return results, err
+		}
+		if !ok {
+			continue
+		}
+
+		if err := c.fetchMailboxLabelBatch(ctx, mailbox, items, fetchOpts, results); err != nil {
+			return results, err
+		}
+	}
+
+	return results, nil
+}
+
+func (c *Client) sourceMessageMetadata(
+	ctx context.Context, messageID string,
+) (string, bool, error) {
+	invalidated, err := c.sourceMessageIDInvalidated(messageID)
+	if err != nil {
+		return "", false, err
+	}
+	if invalidated {
+		return "", false, nil
+	}
+
+	results, err := c.GetMessageLabelsBatch(ctx, []string{messageID})
+	if err != nil {
+		return "", false, err
+	}
+	if len(results) != 1 {
+		return "", false, fmt.Errorf(
+			"source message validation returned %d results", len(results))
+	}
+	if results[0].Err != nil {
+		if errors.Is(results[0].Err, errIMAPFetchResultMissing) {
+			return "", false, nil
+		}
+		return "", false, results[0].Err
+	}
+	return results[0].RFC822MessageID, true, nil
+}
+
+func (c *Client) sourceMessageIDInvalidated(
+	messageID string,
+) (bool, error) {
+	matches, known, err := c.sourceMessageIDEpochMatches(messageID)
+	return known && !matches, err
+}
+
+func (c *Client) sourceMessageIDEpochMatches(
+	messageID string,
+) (matches bool, known bool, err error) {
+	mailbox, _, err := parseCompositeID(messageID)
+	if err != nil {
+		return false, false, err
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.mailboxCache != nil &&
+		!slices.Contains(c.mailboxCache, mailbox) {
+		return false, true, nil
+	}
+	prior, hasPrior := c.priorFolderStates[mailbox]
+	observed, hasObserved := c.observedFolderStates[mailbox]
+	if !hasPrior || !hasObserved {
+		return false, false, nil
+	}
+	return prior.UIDValidity == observed.UIDValidity, true, nil
+}
+
+// SeedValidatedMessageDedup records a fetched RFC822 identity only after sync
+// has validated the exact source ID and reconciled its labels.
+func (c *Client) SeedValidatedMessageDedup(
+	messageID, rfc822MessageID string,
+) error {
+	mailbox, _, err := parseCompositeID(messageID)
+	if err != nil {
+		return err
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	seedDedup := mailbox == c.allMailFolder ||
+		(c.allMailFolder == "" && c.labelMapComplete)
+	if seedDedup &&
+		c.seenRFC822IDs != nil &&
+		rfc822MessageID != "" {
+		c.seenRFC822IDs[rfc822MessageID] = true
+	}
+	return nil
+}
+
+// SourceMessageExists reports whether an exact mailbox|uid identifier still
+// exists. A missing FETCH result is definitive absence; all other failures are
+// returned so callers can retry without replacing a canonical identifier.
+func (c *Client) SourceMessageExists(
+	ctx context.Context, messageID string,
+) (bool, error) {
+	_, exists, err := c.sourceMessageMetadata(ctx, messageID)
+	return exists, err
+}
+
+// FetchedSourceMessageMatches validates identity metadata already fetched for
+// an exact source ID, including the mailbox's UIDVALIDITY epoch.
+func (c *Client) FetchedSourceMessageMatches(
+	messageID, expectedRFC822MessageID, actualRFC822MessageID string,
+) (matches bool, conclusive bool, err error) {
+	epochMatches, epochKnown, err := c.sourceMessageIDEpochMatches(messageID)
+	if err != nil {
+		return false, false, err
+	}
+	if epochKnown && !epochMatches {
+		return false, true, nil
+	}
+
+	expected := normalizeRFC822MessageID(expectedRFC822MessageID)
+	actual := normalizeRFC822MessageID(actualRFC822MessageID)
+	if expected != "" && actual != "" {
+		return expected == actual, true, nil
+	}
+	if epochKnown {
+		return true, true, nil
+	}
+	return false, false, nil
+}
+
+// SourceMessageMatches reports whether an exact mailbox|uid identifier still
+// resolves to the expected RFC822 Message-ID. A UIDVALIDITY change invalidates
+// the identifier even when the same numeric UID has since been reused.
+func (c *Client) SourceMessageMatches(
+	ctx context.Context,
+	messageID, expectedRFC822MessageID string,
+) (matches bool, conclusive bool, err error) {
+	mailbox, _, err := parseCompositeID(messageID)
+	if err != nil {
+		return false, false, err
+	}
+	c.mu.Lock()
+	included := c.mailboxIncludedLocked(mailbox)
+	c.mu.Unlock()
+	if !included {
+		return false, false, nil
+	}
+
+	actualRFC822MessageID, exists, err := c.sourceMessageMetadata(ctx, messageID)
+	if err != nil {
+		return false, false, err
+	}
+	if !exists {
+		return false, true, nil
+	}
+	return normalizeRFC822MessageID(actualRFC822MessageID) ==
+		normalizeRFC822MessageID(expectedRFC822MessageID), true, nil
 }

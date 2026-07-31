@@ -200,6 +200,12 @@ type GetCLIStatsQuery struct {
 type SyncCLIQuery struct {
 	// Email Account email or display name to sync
 	Email *string `json:"email,omitempty"`
+
+	// Folder IMAP folder names to include (repeatable)
+	Folder []string `json:"folder,omitempty"`
+
+	// SkipFolder IMAP folder names to exclude (repeatable)
+	SkipFolder []string `json:"skip-folder,omitempty"`
 }
 
 type SyncFullCLIQuery struct {
@@ -220,6 +226,12 @@ type SyncFullCLIQuery struct {
 
 	// Noresume Ignore checkpoints and start fresh
 	Noresume *bool `json:"noresume,omitempty"`
+
+	// Folder IMAP folder names to include (repeatable)
+	Folder []string `json:"folder,omitempty"`
+
+	// SkipFolder IMAP folder names to exclude (repeatable)
+	SkipFolder []string `json:"skip-folder,omitempty"`
 }
 
 type VerifyCLIQuery struct {

@@ -22,6 +22,7 @@ nav = [
   {"Web UI & API Server" = "api-server.md"},
   {"Changelog" = "changelog.md"},
   {"CLI Usage" = [
+    {"IMAP Folder Sync" = "usage/imap.md"},
     {"Searching" = "usage/searching.md"},
     {"Vector Search" = "usage/vector-search.md"},
     {"Importing Local Email" = "usage/importing.md"},

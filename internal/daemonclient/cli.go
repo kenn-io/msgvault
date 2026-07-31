@@ -34,13 +34,15 @@ type CLIStats struct {
 type CLICacheStats = cacheops.CacheStats
 
 type CLISyncRequest struct {
-	Full     bool
-	Email    string
-	Query    string
-	NoResume bool
-	Before   string
-	After    string
-	Limit    int
+	Full        bool
+	Email       string
+	Query       string
+	NoResume    bool
+	Before      string
+	After       string
+	Limit       int
+	Folders     []string
+	SkipFolders []string
 }
 
 type CLIVerifyRequest struct {
@@ -386,18 +388,22 @@ func (c *Client) RunCLISync(
 		path = "/api/v1/cli/sync-full"
 		return c.runCLIStream(ctx, path, "sync", &generated.SyncFullCLIRequestOptions{
 			Query: &generated.SyncFullCLIQuery{
-				Email:    optionalString(req.Email),
-				Query:    optionalString(req.Query),
-				Noresume: optionalBool(req.NoResume),
-				Before:   optionalString(req.Before),
-				After:    optionalString(req.After),
-				Limit:    optionalPositiveInt64(req.Limit),
+				Email:      optionalString(req.Email),
+				Query:      optionalString(req.Query),
+				Noresume:   optionalBool(req.NoResume),
+				Before:     optionalString(req.Before),
+				After:      optionalString(req.After),
+				Limit:      optionalPositiveInt64(req.Limit),
+				Folder:     req.Folders,
+				SkipFolder: req.SkipFolders,
 			},
 		}, output)
 	}
 	return c.runCLIStream(ctx, path, "sync", &generated.SyncCLIRequestOptions{
 		Query: &generated.SyncCLIQuery{
-			Email: optionalString(req.Email),
+			Email:      optionalString(req.Email),
+			Folder:     req.Folders,
+			SkipFolder: req.SkipFolders,
 		},
 	}, output)
 }

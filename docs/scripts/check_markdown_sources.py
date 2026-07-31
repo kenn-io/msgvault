@@ -46,6 +46,7 @@ PUBLIC_MARKDOWN = {
     "usage/deletion.md",
     "usage/discord.md",
     "usage/exporting.md",
+    "usage/imap.md",
     "usage/importing.md",
     "usage/multi-account.md",
     "usage/querying.md",

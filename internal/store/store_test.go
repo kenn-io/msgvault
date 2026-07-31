@@ -1431,6 +1431,153 @@ func TestStore_AddMessageLabels(t *testing.T) {
 	f.AssertLabelCount(msgID, 4)
 }
 
+func TestStore_ReconcileMessageLabelsReportsChanges(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := storetest.New(t)
+	messageID := f.CreateMessage("msg-reconcile-labels")
+	labels := f.EnsureLabels(map[string]string{
+		"INBOX":   "Inbox",
+		"STARRED": "Starred",
+		"SENT":    "Sent",
+	}, "system")
+	require.NoError(f.Store.ReplaceMessageLabels(
+		messageID, []int64{labels["INBOX"]}))
+
+	changed, err := f.Store.ReconcileMessageLabels(
+		messageID, []int64{labels["INBOX"]}, false)
+	require.NoError(err)
+	assert.False(changed)
+
+	changed, err = f.Store.ReconcileMessageLabels(
+		messageID, []int64{labels["STARRED"]}, false)
+	require.NoError(err)
+	assert.True(changed)
+
+	changed, err = f.Store.ReconcileMessageLabels(
+		messageID, []int64{labels["INBOX"], labels["STARRED"]}, true)
+	require.NoError(err)
+	assert.False(changed)
+
+	changed, err = f.Store.ReconcileMessageLabels(
+		messageID, []int64{labels["SENT"]}, true)
+	require.NoError(err)
+	assert.True(changed)
+	f.AssertLabelCount(messageID, 1)
+	f.AssertMessageHasLabel(messageID, labels["SENT"])
+}
+
+func TestStore_DedupReconciliationReportsChanges(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := storetest.New(t)
+	messageID := f.CreateMessage("INBOX|1")
+	labels := f.EnsureLabels(map[string]string{
+		"INBOX":   "Inbox",
+		"Archive": "Archive",
+		"Trash":   "Trash",
+	}, "system")
+	require.NoError(f.Store.ReplaceMessageLabels(
+		messageID, []int64{labels["INBOX"]}))
+
+	changed, err := f.Store.UpdateMessageOnDedup(
+		messageID, "Archive|2", []int64{labels["Archive"]})
+	require.NoError(err)
+	assert.True(changed)
+	sourceMessageID, err := f.Store.GetMessageSourceID(messageID)
+	require.NoError(err)
+	assert.Equal("Archive|2", sourceMessageID)
+	f.AssertLabelCount(messageID, 1)
+	f.AssertMessageHasLabel(messageID, labels["Archive"])
+
+	changed, err = f.Store.UpdateMessageOnDedup(
+		messageID, "Archive|2", []int64{labels["Archive"]})
+	require.NoError(err)
+	assert.False(changed)
+
+	changed, err = f.Store.UpdateMessageOnPartialDedup(
+		messageID, "Trash|3", []int64{labels["Trash"]})
+	require.NoError(err)
+	assert.True(changed)
+	sourceMessageID, err = f.Store.GetMessageSourceID(messageID)
+	require.NoError(err)
+	assert.Equal("Trash|3", sourceMessageID)
+	f.AssertLabelCount(messageID, 2)
+	f.AssertMessageHasLabel(messageID, labels["Archive"])
+	f.AssertMessageHasLabel(messageID, labels["Trash"])
+
+	changed, err = f.Store.UpdateMessageOnPartialDedup(
+		messageID, "Trash|3", []int64{labels["Trash"]})
+	require.NoError(err)
+	assert.False(changed)
+}
+
+func TestStore_MessageMetadataWithRawBatch(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := storetest.New(t)
+
+	withRaw := storetest.NewMessage(f.Source.ID, f.ConvID).
+		WithSourceMessageID("INBOX|1").
+		Build()
+	withRaw.RFC822MessageID = sql.NullString{
+		String: "<old@example.com>",
+		Valid:  true,
+	}
+	withRawID, err := f.Store.PersistMessage(&store.MessagePersistData{
+		Message: withRaw,
+		RawMIME: sampleRawMessage,
+	})
+	require.NoError(err)
+
+	withoutRaw := storetest.NewMessage(f.Source.ID, f.ConvID).
+		WithSourceMessageID("INBOX|2").
+		Build()
+	_, err = f.Store.UpsertMessage(withoutRaw)
+	require.NoError(err)
+
+	got, err := f.Store.MessageMetadataWithRawBatch(
+		f.Source.ID,
+		[]string{"INBOX|1", "INBOX|2", "INBOX|3"},
+	)
+	require.NoError(err)
+	require.Len(got, 1)
+	assert.Equal(withRawID, got["INBOX|1"].ID)
+	assert.Equal(
+		sql.NullString{String: "<old@example.com>", Valid: true},
+		got["INBOX|1"].RFC822MessageID,
+	)
+}
+
+func TestStore_RekeyMessageSourceIDRequiresExpectedID(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := storetest.New(t)
+	messageID := f.CreateMessage("INBOX|1")
+
+	changed, err := f.Store.RekeyMessageSourceID(
+		messageID,
+		"wrong|1",
+		"msgvault-invalidated:1",
+	)
+	require.NoError(err)
+	assert.False(changed)
+	sourceMessageID, err := f.Store.GetMessageSourceID(messageID)
+	require.NoError(err)
+	assert.Equal("INBOX|1", sourceMessageID)
+
+	changed, err = f.Store.RekeyMessageSourceID(
+		messageID,
+		"INBOX|1",
+		"msgvault-invalidated:1",
+	)
+	require.NoError(err)
+	assert.True(changed)
+	sourceMessageID, err = f.Store.GetMessageSourceID(messageID)
+	require.NoError(err)
+	assert.Equal("msgvault-invalidated:1", sourceMessageID)
+}
+
 func TestStore_RemoveMessageLabels(t *testing.T) {
 	require := require.New(t)
 	f := storetest.New(t)

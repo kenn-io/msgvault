@@ -1,6 +1,7 @@
 package imap
 
 import (
+	"context"
 	"errors"
 	"testing"
 
@@ -9,6 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	gmailapi "go.kenn.io/msgvault/internal/gmail"
+	"go.kenn.io/msgvault/internal/testutil"
 )
 
 func TestNewRawBatchResultsKeepsInputIDs(t *testing.T) {
@@ -75,6 +77,258 @@ func TestBatchMailboxOrderPutsAllMailFirst(t *testing.T) {
 		batchMailboxOrder(byMailbox, ""))
 }
 
+func TestMessageIDHeaderFetchOptionsAvoidsRawMessageBody(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	opts := messageIDHeaderFetchOptions()
+
+	assert.True(opts.UID)
+	assert.False(opts.InternalDate)
+	assert.False(opts.RFC822Size)
+	require.Len(opts.BodySection, 1)
+	assert.True(opts.BodySection[0].Peek)
+	assert.Equal(imapapi.PartSpecifierHeader, opts.BodySection[0].Specifier)
+	assert.Equal([]string{"Message-ID"}, opts.BodySection[0].HeaderFields)
+}
+
+func TestGetMessageLabelsBatchPreservesPerMessageMissingUID(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	addr, _ := testutil.StartIMAPMemServer(t, map[string]int{"INBOX": 1})
+	client := newTestClient(t, addr)
+
+	results, err := client.GetMessageLabelsBatch(
+		context.Background(),
+		[]string{"INBOX|1", "INBOX|99"},
+	)
+
+	require.NoError(err)
+	require.Len(results, 2)
+	assert.Equal("INBOX|1", results[0].ID)
+	assert.Equal([]string{"INBOX"}, results[0].LabelIDs)
+	require.NoError(results[0].Err)
+	assert.Equal("INBOX|99", results[1].ID)
+	assert.Nil(results[1].LabelIDs)
+	require.ErrorIs(results[1].Err, errIMAPFetchResultMissing)
+}
+
+func TestLabelOnlyRescanDefersAllMailDedupUntilValidated(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	addr, user := testutil.StartIMAPMemServerWithSpecialUse(
+		t,
+		map[string]int{
+			"All Mail": 0,
+			"Archive":  0,
+		},
+		map[string][]imapapi.MailboxAttr{
+			"All Mail": {imapapi.MailboxAttrAll},
+		},
+	)
+	const messageID = "overlapping-rescan@example.com"
+	testutil.AppendIMAPMessageWithMessageID(t, user, "All Mail", messageID)
+	testutil.AppendIMAPMessageWithMessageID(t, user, "Archive", messageID)
+	client := newTestClient(t, addr)
+
+	require.ElementsMatch(
+		[]string{"All Mail|1", "Archive|1"},
+		listAllMessages(t, client),
+	)
+
+	labelResults, err := client.GetMessageLabelsBatch(
+		context.Background(),
+		[]string{"All Mail|1"},
+	)
+	require.NoError(err)
+	require.Len(labelResults, 1)
+	require.NoError(labelResults[0].Err)
+	assert.ElementsMatch(
+		[]string{"All Mail", "Archive"},
+		labelResults[0].LabelIDs,
+	)
+	assert.Equal(messageID, labelResults[0].RFC822MessageID)
+	assert.NotContains(client.seenRFC822IDs, messageID,
+		"label metadata must not become dedup authority before validation")
+
+	require.NoError(client.SeedValidatedMessageDedup(
+		"All Mail|1",
+		labelResults[0].RFC822MessageID,
+	))
+	assert.Contains(client.seenRFC822IDs, messageID)
+
+	rawResults, err := client.GetMessagesRawBatchWithErrors(
+		context.Background(),
+		[]string{"Archive|1"},
+	)
+	require.NoError(err)
+	require.Len(rawResults, 1)
+	require.NoError(rawResults[0].Err)
+	require.NotNil(rawResults[0].Message)
+	assert.Nil(rawResults[0].Message.Raw,
+		"the overlapping mailbox copy must remain a dedup stub")
+}
+
+func TestSeedValidatedMessageDedupEligibility(t *testing.T) {
+	tests := []struct {
+		name             string
+		messageID        string
+		rfc822MessageID  string
+		allMailFolder    string
+		labelMapComplete bool
+		wantSeen         map[string]bool
+		wantErr          bool
+	}{
+		{
+			name:            "canonical all mail",
+			messageID:       "All Mail|1",
+			rfc822MessageID: "canonical@example.com",
+			allMailFolder:   "All Mail",
+			wantSeen: map[string]bool{
+				"existing@example.com":  true,
+				"canonical@example.com": true,
+			},
+		},
+		{
+			name:             "complete server without all mail",
+			messageID:        "Archive|1",
+			rfc822MessageID:  "complete@example.com",
+			labelMapComplete: true,
+			wantSeen: map[string]bool{
+				"existing@example.com": true,
+				"complete@example.com": true,
+			},
+		},
+		{
+			name:            "noncanonical mailbox on all mail server",
+			messageID:       "Archive|1",
+			rfc822MessageID: "alternate@example.com",
+			allMailFolder:   "All Mail",
+			wantSeen: map[string]bool{
+				"existing@example.com": true,
+			},
+		},
+		{
+			name:            "incomplete server without all mail",
+			messageID:       "Archive|1",
+			rfc822MessageID: "incomplete@example.com",
+			wantSeen: map[string]bool{
+				"existing@example.com": true,
+			},
+		},
+		{
+			name:             "empty rfc822 identity",
+			messageID:        "Archive|1",
+			labelMapComplete: true,
+			wantSeen: map[string]bool{
+				"existing@example.com": true,
+			},
+		},
+		{
+			name:            "malformed composite id",
+			messageID:       "not-a-composite-id",
+			rfc822MessageID: "malformed@example.com",
+			wantSeen: map[string]bool{
+				"existing@example.com": true,
+			},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := &Client{
+				allMailFolder:    tt.allMailFolder,
+				labelMapComplete: tt.labelMapComplete,
+				seenRFC822IDs: map[string]bool{
+					"existing@example.com": true,
+				},
+			}
+
+			err := c.SeedValidatedMessageDedup(
+				tt.messageID,
+				tt.rfc822MessageID,
+			)
+
+			if tt.wantErr {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+			}
+			assert.Equal(t, tt.wantSeen, c.seenRFC822IDs)
+		})
+	}
+}
+
+func TestIncompleteLabelMapDisablesCrossMailboxDedup(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	addr, user := testutil.StartIMAPMemServerWithOneShotSelectError(
+		t,
+		map[string]int{
+			"All Mail": 0,
+			"Archive":  0,
+		},
+		map[string][]imapapi.MailboxAttr{
+			"All Mail": {imapapi.MailboxAttrAll},
+		},
+		"Archive",
+	)
+	const messageID = "incomplete-membership@example.com"
+	testutil.AppendIMAPMessageWithMessageID(t, user, "All Mail", messageID)
+	testutil.AppendIMAPMessageWithMessageID(t, user, "Archive", messageID)
+	client := newTestClient(t, addr)
+
+	ids := listAllMessages(t, client)
+	require.ElementsMatch(
+		[]string{"All Mail|1", "Archive|1"},
+		ids,
+	)
+	assert.False(client.LabelsSnapshotComplete())
+
+	results, err := client.GetMessagesRawBatchWithErrors(
+		context.Background(), ids)
+	require.NoError(err)
+	require.Len(results, 2)
+	for _, result := range results {
+		require.NoError(result.Err)
+		require.NotNil(result.Message)
+		require.NotEmpty(result.Message.Raw,
+			"an incomplete membership map must not produce dedup stubs")
+		mailbox, _, err := parseCompositeID(result.ID)
+		require.NoError(err)
+		assert.Contains(result.Message.LabelIDs, mailbox)
+	}
+}
+
+func TestApplyLabelFetchResultsMarksOnlyMissingUID(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	results := newLabelBatchResults([]string{"Archive|10", "Archive|11"})
+	uidToIdx := map[imapapi.UID]int{
+		imapapi.UID(10): 0,
+		imapapi.UID(11): 1,
+	}
+	chunk := []batchFetchItem{
+		{idx: 0, uid: imapapi.UID(10)},
+		{idx: 1, uid: imapapi.UID(11)},
+	}
+	msgs := []*imapclient.FetchMessageBuffer{
+		fetchMessageBuffer(
+			"message-10",
+			[]byte("Message-ID: <message-10@example.com>\r\n\r\n"),
+		),
+	}
+
+	var c Client
+	c.applyLabelFetchResults(results, uidToIdx, "Archive", chunk, msgs)
+
+	assert.Equal([]string{"Archive"}, results[0].LabelIDs)
+	require.NoError(results[0].Err)
+	assert.Nil(results[1].LabelIDs)
+	require.ErrorIs(results[1].Err, errIMAPFetchResultMissing)
+}
+
 func TestApplyFetchResultsMarksMissingUIDs(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -88,7 +342,7 @@ func TestApplyFetchResultsMarksMissingUIDs(t *testing.T) {
 		{idx: 1, uid: imapapi.UID(11)},
 	}
 	msgs := []*imapclient.FetchMessageBuffer{
-		fetchMessageBuffer(imapapi.UID(10), "message-10", []byte("raw-10")),
+		fetchMessageBuffer("message-10", []byte("raw-10")),
 	}
 
 	var c Client
@@ -116,7 +370,7 @@ func TestApplyFetchResultsMarksMissingRawBody(t *testing.T) {
 		},
 		{
 			name: "empty body",
-			msg:  fetchMessageBuffer(imapapi.UID(10), "message-10", nil),
+			msg:  fetchMessageBuffer("message-10", nil),
 		},
 	}
 
@@ -143,7 +397,6 @@ func TestApplyFetchResultsPreservesDedupStub(t *testing.T) {
 	chunk := []batchFetchItem{{idx: 0, uid: imapapi.UID(10)}}
 	msgs := []*imapclient.FetchMessageBuffer{
 		fetchMessageBuffer(
-			imapapi.UID(10),
 			"duplicate@example.com",
 			[]byte("Message-ID: <duplicate@example.com>\r\n\r\nbody"),
 		),
@@ -277,9 +530,9 @@ func TestApplyFetchResultsImportsWhenRawMessageIDMissingOrInvalid(t *testing.T) 
 	}
 }
 
-func fetchMessageBuffer(uid imapapi.UID, messageID string, raw []byte) *imapclient.FetchMessageBuffer {
+func fetchMessageBuffer(messageID string, raw []byte) *imapclient.FetchMessageBuffer {
 	return &imapclient.FetchMessageBuffer{
-		UID:        uid,
+		UID:        imapapi.UID(10),
 		Envelope:   &imapapi.Envelope{MessageID: messageID},
 		RFC822Size: int64(len(raw)),
 		BodySection: []imapclient.FetchBodySectionBuffer{

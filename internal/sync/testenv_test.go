@@ -124,6 +124,7 @@ func startSyncRun(t *testing.T, env *TestEnv, sourceID int64) int64 {
 // WantSummary specifies expected SyncSummary values. Nil fields are not checked.
 type WantSummary struct {
 	Added   *int64
+	Updated *int64
 	Errors  *int64
 	Skipped *int64
 	Found   *int64
@@ -135,6 +136,9 @@ func assertSummary(t *testing.T, s *gmail.SyncSummary, want WantSummary) {
 	t.Helper()
 	if want.Added != nil {
 		assert.Equal(t, *want.Added, s.MessagesAdded, "messages added")
+	}
+	if want.Updated != nil {
+		assert.Equal(t, *want.Updated, s.MessagesUpdated, "messages updated")
 	}
 	if want.Errors != nil {
 		assert.Equal(t, *want.Errors, s.Errors, "errors")

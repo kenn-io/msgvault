@@ -2,6 +2,7 @@
 package sync
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"errors"
@@ -21,6 +22,12 @@ import (
 
 // ErrHistoryExpired indicates that the Gmail history ID is too old and a full sync is required.
 var ErrHistoryExpired = errors.New("history expired - run full sync")
+
+const (
+	labelTypeSystem               = "system"
+	sourceTypeIMAP                = "imap"
+	invalidatedIMAPSourceIDPrefix = "msgvault-invalidated:"
+)
 
 // Options configures sync behavior.
 type Options struct {
@@ -68,6 +75,33 @@ type messageAcknowledger interface {
 	AcknowledgeMessages(ctx context.Context, messageIDs []string)
 }
 
+type labelSnapshotCompleteness interface {
+	LabelsSnapshotComplete() bool
+}
+
+type sourceMessageMatcher interface {
+	SourceMessageMatches(
+		ctx context.Context,
+		messageID, expectedRFC822MessageID string,
+	) (matches bool, conclusive bool, err error)
+}
+
+type fetchedSourceMessageMatcher interface {
+	FetchedSourceMessageMatches(
+		messageID, expectedRFC822MessageID, actualRFC822MessageID string,
+	) (matches bool, conclusive bool, err error)
+}
+
+type validatedMessageDedupSeeder interface {
+	SeedValidatedMessageDedup(
+		messageID, rfc822MessageID string,
+	) error
+}
+
+type messageLabelBatchReader interface {
+	GetMessageLabelsBatch(ctx context.Context, messageIDs []string) ([]gmail.MessageLabelsBatchResult, error)
+}
+
 // New creates a new Syncer.
 func New(client gmail.API, store *store.Store, opts *Options) *Syncer {
 	if opts == nil {
@@ -93,6 +127,11 @@ func (s *Syncer) WithLogger(logger *slog.Logger) *Syncer {
 func (s *Syncer) WithProgress(p gmail.SyncProgress) *Syncer {
 	s.progress = p
 	return s
+}
+
+func (s *Syncer) labelsSnapshotComplete() bool {
+	completeness, ok := s.client.(labelSnapshotCompleteness)
+	return !ok || completeness.LabelsSnapshotComplete()
 }
 
 // syncState holds the state for a sync operation.
@@ -157,9 +196,16 @@ func (s *Syncer) initSyncState(sourceID int64) (*syncState, error) {
 type batchResult struct {
 	processed    int64
 	added        int64
+	updated      int64
 	skipped      int64
 	oldestDate   time.Time
 	acknowledged []string
+}
+
+type inconclusiveLabelRefresh struct {
+	labelIDs         []int64
+	rfc822MessageID  string
+	snapshotComplete bool
 }
 
 // processBatch processes a single batch of messages from a list response.
@@ -179,48 +225,213 @@ func (s *Syncer) processBatch(ctx context.Context, syncID, sourceID int64, listR
 	}
 
 	// Check which messages already exist
-	existingMap, err := s.store.MessageExistsWithRawBatch(sourceID, messageIDs)
+	existingMap, err := s.store.MessageMetadataWithRawBatch(
+		sourceID, messageIDs)
 	if err != nil {
 		return nil, fmt.Errorf("check existing: %w", err)
 	}
 
-	// Filter to new messages
-	var newIDs []string
+	// Existing exact IDs only need current label metadata. Clients with a
+	// lightweight metadata path use it for both complete snapshots (replace
+	// labels) and incomplete snapshots (merge labels). Keep the old fallback
+	// for clients that cannot fetch labels separately.
+	snapshotComplete := s.labelsSnapshotComplete()
+	labelReader, canReadLabels := s.client.(messageLabelBatchReader)
+	var fetchIDs []string
+	var labelRefreshIDs []string
+	var existingCount int
+	inconclusiveRefreshes := make(map[string]inconclusiveLabelRefresh)
 	for _, id := range messageIDs {
 		if _, exists := existingMap[id]; !exists {
-			newIDs = append(newIDs, id)
+			fetchIDs = append(fetchIDs, id)
 			continue
 		}
-		result.acknowledged = append(result.acknowledged, id)
+		existingCount++
+		if canReadLabels {
+			labelRefreshIDs = append(labelRefreshIDs, id)
+			continue
+		}
+		if snapshotComplete {
+			result.acknowledged = append(result.acknowledged, id)
+			continue
+		}
+		fetchIDs = append(fetchIDs, id)
 	}
 
 	result.processed = int64(len(messageIDs))
-	result.skipped = int64(len(messageIDs) - len(newIDs))
+	result.skipped = int64(existingCount)
 
-	// Fetch and ingest new messages
-	if len(newIDs) > 0 {
-		rawMessages, err := s.getMessagesRawBatchWithDiagnostics(ctx, newIDs)
+	if len(labelRefreshIDs) > 0 {
+		labelResults, err := labelReader.GetMessageLabelsBatch(ctx, labelRefreshIDs)
 		if err != nil {
-			for _, id := range newIDs {
+			for _, id := range labelRefreshIDs {
 				s.recordSyncItem(syncID, id, syncItemPhaseFetch, store.SyncRunItemStatusError, syncItemKindBatchFetchError, err)
 			}
-			checkpoint.ErrorsCount += int64(len(newIDs))
+			checkpoint.ErrorsCount += int64(len(labelRefreshIDs))
+			return nil, fmt.Errorf("fetch message labels: %w", err)
+		}
+
+		for i, sourceMessageID := range labelRefreshIDs {
+			if i >= len(labelResults) {
+				err := errors.New("label metadata missing from batch response")
+				s.logger.Warn("failed to fetch message labels",
+					"id", sourceMessageID, "error", err)
+				s.recordSyncItem(syncID, sourceMessageID, syncItemPhaseFetch, store.SyncRunItemStatusError, syncItemKindFetchError, err)
+				checkpoint.ErrorsCount++
+				continue
+			}
+			labelResult := labelResults[i]
+			if labelResult.Err != nil {
+				s.logger.Warn("failed to fetch message labels",
+					"id", sourceMessageID, "error", labelResult.Err)
+				s.recordSyncItem(syncID, sourceMessageID, syncItemPhaseFetch, store.SyncRunItemStatusError, syncItemKindFetchError, labelResult.Err)
+				checkpoint.ErrorsCount++
+				continue
+			}
+
+			existing := existingMap[sourceMessageID]
+			labelIDs := labelIDsFor(labelResult.LabelIDs, labelMap)
+			if s.opts.SourceType == sourceTypeIMAP {
+				matcher, ok := s.client.(fetchedSourceMessageMatcher)
+				if !ok {
+					err := errors.New(
+						"fetched source validation unavailable for IMAP exact-ID refresh")
+					s.logger.Warn("failed to validate existing message identity",
+						"id", sourceMessageID, "error", err)
+					s.recordSyncItem(
+						syncID,
+						sourceMessageID,
+						syncItemPhaseIngest,
+						store.SyncRunItemStatusError,
+						syncItemKindIngestError,
+						err,
+					)
+					checkpoint.ErrorsCount++
+					continue
+				}
+
+				matches, conclusive, err := matcher.FetchedSourceMessageMatches(
+					sourceMessageID,
+					existing.RFC822MessageID.String,
+					labelResult.RFC822MessageID,
+				)
+				if err != nil {
+					s.logger.Warn("failed to validate existing message identity",
+						"id", sourceMessageID, "error", err)
+					s.recordSyncItem(
+						syncID,
+						sourceMessageID,
+						syncItemPhaseIngest,
+						store.SyncRunItemStatusError,
+						syncItemKindIngestError,
+						err,
+					)
+					checkpoint.ErrorsCount++
+					continue
+				}
+				if !conclusive {
+					inconclusiveRefreshes[sourceMessageID] =
+						inconclusiveLabelRefresh{
+							labelIDs:         labelIDs,
+							rfc822MessageID:  labelResult.RFC822MessageID,
+							snapshotComplete: snapshotComplete,
+						}
+					fetchIDs = append(fetchIDs, sourceMessageID)
+					continue
+				}
+				if !matches {
+					err := s.preserveReusedIMAPSource(
+						existing.ID, sourceMessageID)
+					if err != nil {
+						s.logger.Warn("failed to preserve reused IMAP source ID",
+							"id", sourceMessageID, "error", err)
+						s.recordSyncItem(
+							syncID,
+							sourceMessageID,
+							syncItemPhaseIngest,
+							store.SyncRunItemStatusError,
+							syncItemKindIngestError,
+							err,
+						)
+						checkpoint.ErrorsCount++
+						continue
+					}
+					delete(existingMap, sourceMessageID)
+					fetchIDs = append(fetchIDs, sourceMessageID)
+					result.skipped--
+					continue
+				}
+			}
+
+			changed, err := s.reconcileValidatedMessageLabels(
+				existing.ID,
+				sourceMessageID,
+				labelResult.RFC822MessageID,
+				labelIDs,
+				snapshotComplete,
+			)
+			if err != nil {
+				s.logger.Warn("failed to refresh existing message labels",
+					"id", sourceMessageID, "error", err)
+				s.recordSyncItem(syncID, sourceMessageID, syncItemPhaseIngest, store.SyncRunItemStatusError, syncItemKindIngestError, err)
+				checkpoint.ErrorsCount++
+				continue
+			}
+			if changed {
+				result.updated++
+				result.skipped--
+			}
+			result.acknowledged = append(result.acknowledged, sourceMessageID)
+		}
+	}
+
+	// Raw MIME is needed for new messages and as a compatibility fallback for
+	// incomplete snapshots whose client cannot fetch labels separately.
+	if len(fetchIDs) > 0 {
+		rawMessages, err := s.getMessagesRawBatchWithDiagnostics(ctx, fetchIDs)
+		if err != nil {
+			for _, id := range fetchIDs {
+				s.recordSyncItem(syncID, id, syncItemPhaseFetch, store.SyncRunItemStatusError, syncItemKindBatchFetchError, err)
+			}
+			checkpoint.ErrorsCount += int64(len(fetchIDs))
 			return nil, fmt.Errorf("fetch messages: %w", err)
 		}
 
 		for i, fetch := range rawMessages {
+			sourceMessageID := fetchIDs[i]
+			existing, alreadyExists := existingMap[sourceMessageID]
+			pendingRefresh, needsRawComparison :=
+				inconclusiveRefreshes[sourceMessageID]
 			raw := fetch.Message
 			if raw == nil {
 				if isGmailNotFound(fetch.Err) {
-					s.logger.Debug("skipping message deleted before fetch", "id", newIDs[i])
-					s.recordSyncItem(syncID, newIDs[i], syncItemPhaseFetch, store.SyncRunItemStatusSkipped, syncItemKindGmailNotFound, fetch.Err)
-					result.skipped++
-					result.acknowledged = append(result.acknowledged, newIDs[i])
+					s.logger.Debug("skipping message deleted before fetch", "id", sourceMessageID)
+					s.recordSyncItem(syncID, sourceMessageID, syncItemPhaseFetch, store.SyncRunItemStatusSkipped, syncItemKindGmailNotFound, fetch.Err)
+					if !alreadyExists {
+						result.skipped++
+					}
+					result.acknowledged = append(result.acknowledged, sourceMessageID)
 					continue
 				}
 				errMsg := syncItemErrorMessage(fetch.Err, errRawBatchMissing.Error())
-				s.logger.Warn("failed to fetch message", "id", newIDs[i], "error", errMsg)
-				s.recordSyncItem(syncID, newIDs[i], syncItemPhaseFetch, store.SyncRunItemStatusError, syncItemKindFetchError, fetch.Err)
+				s.logger.Warn("failed to fetch message", "id", sourceMessageID, "error", errMsg)
+				s.recordSyncItem(syncID, sourceMessageID, syncItemPhaseFetch, store.SyncRunItemStatusError, syncItemKindFetchError, fetch.Err)
+				checkpoint.ErrorsCount++
+				continue
+			}
+			if needsRawComparison && raw.Raw == nil {
+				err := errors.New(
+					"inconclusive IMAP identity returned a dedup stub")
+				s.logger.Warn("failed to compare existing message identity",
+					"id", sourceMessageID, "error", err)
+				s.recordSyncItem(
+					syncID,
+					sourceMessageID,
+					syncItemPhaseIngest,
+					store.SyncRunItemStatusError,
+					syncItemKindIngestError,
+					err,
+				)
 				checkpoint.ErrorsCount++
 				continue
 			}
@@ -228,8 +439,100 @@ func (s *Syncer) processBatch(ctx context.Context, syncID, sourceID int64, listR
 			// dedup skip (e.g. same message in All Mail and Trash).
 			// Distinct from []byte{} which is a genuine empty body.
 			if raw.Raw == nil {
-				result.skipped++
-				result.acknowledged = append(result.acknowledged, newIDs[i])
+				if !alreadyExists {
+					result.skipped++
+				}
+				result.acknowledged = append(result.acknowledged, sourceMessageID)
+				continue
+			}
+
+			if needsRawComparison {
+				archivedRaw, err := s.store.GetMessageRaw(existing.ID)
+				if err != nil {
+					s.logger.Warn("failed to load archived message for identity comparison",
+						"id", sourceMessageID, "error", err)
+					s.recordSyncItem(
+						syncID,
+						sourceMessageID,
+						syncItemPhaseIngest,
+						store.SyncRunItemStatusError,
+						syncItemKindIngestError,
+						err,
+					)
+					checkpoint.ErrorsCount++
+					continue
+				}
+				if bytes.Equal(archivedRaw, raw.Raw) {
+					changed, err := s.reconcileValidatedMessageLabels(
+						existing.ID,
+						sourceMessageID,
+						pendingRefresh.rfc822MessageID,
+						pendingRefresh.labelIDs,
+						pendingRefresh.snapshotComplete,
+					)
+					if err != nil {
+						s.logger.Warn("failed to refresh raw-validated message labels",
+							"id", sourceMessageID, "error", err)
+						s.recordSyncItem(
+							syncID,
+							sourceMessageID,
+							syncItemPhaseIngest,
+							store.SyncRunItemStatusError,
+							syncItemKindIngestError,
+							err,
+						)
+						checkpoint.ErrorsCount++
+						continue
+					}
+					if changed {
+						result.updated++
+						result.skipped--
+					}
+					result.acknowledged = append(
+						result.acknowledged, sourceMessageID)
+					summary.BytesDownloaded += int64(len(raw.Raw))
+					continue
+				}
+
+				if err := s.preserveReusedIMAPSource(
+					existing.ID, sourceMessageID); err != nil {
+					s.logger.Warn("failed to preserve reused IMAP source ID",
+						"id", sourceMessageID, "error", err)
+					s.recordSyncItem(
+						syncID,
+						sourceMessageID,
+						syncItemPhaseIngest,
+						store.SyncRunItemStatusError,
+						syncItemKindIngestError,
+						err,
+					)
+					checkpoint.ErrorsCount++
+					continue
+				}
+				delete(existingMap, sourceMessageID)
+				alreadyExists = false
+				result.skipped--
+			}
+
+			if alreadyExists {
+				changed, err := s.store.ReconcileMessageLabels(
+					existing.ID,
+					labelIDsFor(raw.LabelIDs, labelMap),
+					false,
+				)
+				if err != nil {
+					s.logger.Warn("failed to merge existing message labels",
+						"id", sourceMessageID, "error", err)
+					s.recordSyncItem(syncID, sourceMessageID, syncItemPhaseIngest, store.SyncRunItemStatusError, syncItemKindIngestError, err)
+					checkpoint.ErrorsCount++
+					continue
+				}
+				if changed {
+					result.updated++
+					result.skipped--
+				}
+				result.acknowledged = append(result.acknowledged, sourceMessageID)
+				summary.BytesDownloaded += int64(len(raw.Raw))
 				continue
 			}
 
@@ -246,22 +549,35 @@ func (s *Syncer) processBatch(ctx context.Context, syncID, sourceID int64, listR
 				}
 			}
 
-			threadID := threadIDs[newIDs[i]]
-			err := s.ingestMessage(sourceID, raw, threadID, labelMap)
+			threadID := threadIDs[sourceMessageID]
+			updated, err := s.ingestMessage(
+				ctx, sourceID, raw, threadID, labelMap)
 			if err != nil {
+				if errors.Is(err, errDeferredIMAPIdentity) {
+					if updated {
+						result.updated++
+					} else {
+						result.skipped++
+					}
+					continue
+				}
 				if errors.Is(err, errDuplicateRFC822) {
-					result.skipped++
-					result.acknowledged = append(result.acknowledged, newIDs[i])
+					if updated {
+						result.updated++
+					} else {
+						result.skipped++
+					}
+					result.acknowledged = append(result.acknowledged, sourceMessageID)
 					continue
 				}
 				s.logger.Warn("failed to ingest message", "id", raw.ID, "error", err)
-				s.recordSyncItem(syncID, newIDs[i], syncItemPhaseIngest, store.SyncRunItemStatusError, syncItemKindIngestError, err)
+				s.recordSyncItem(syncID, sourceMessageID, syncItemPhaseIngest, store.SyncRunItemStatusError, syncItemKindIngestError, err)
 				checkpoint.ErrorsCount++
 				continue
 			}
 
 			result.added++
-			result.acknowledged = append(result.acknowledged, newIDs[i])
+			result.acknowledged = append(result.acknowledged, sourceMessageID)
 			summary.BytesDownloaded += int64(len(raw.Raw))
 		}
 
@@ -371,6 +687,7 @@ func (s *Syncer) Full(ctx context.Context, email string) (summary *gmail.SyncSum
 
 		state.checkpoint.MessagesProcessed += result.processed
 		state.checkpoint.MessagesAdded += result.added
+		state.checkpoint.MessagesUpdated += result.updated
 		if ack, ok := s.client.(messageAcknowledger); ok && len(result.acknowledged) > 0 {
 			ack.AcknowledgeMessages(ctx, result.acknowledged)
 		}
@@ -455,7 +772,7 @@ func (s *Syncer) syncLabels(ctx context.Context, sourceID int64) (map[string]int
 		if labelType == "" {
 			labelType = "user"
 			if store.IsSystemLabel(l.ID) {
-				labelType = "system"
+				labelType = labelTypeSystem
 			}
 		}
 		labelInfos[l.ID] = store.LabelInfo{Name: l.Name, Type: labelType}
@@ -517,7 +834,7 @@ func (s *Syncer) parseToModel(sourceID int64, raw *gmail.RawMessage, threadID st
 	// ThreadID is just the composite message ID. Derive a thread
 	// key from MIME threading headers to group related messages
 	// into conversations.
-	if s.opts.SourceType == "imap" {
+	if s.opts.SourceType == sourceTypeIMAP {
 		if derived := deriveThreadKey(parsed); derived != "" {
 			threadID = derived
 		}
@@ -723,48 +1040,187 @@ func (s *Syncer) persistMessage(data *messageData, labelMap map[string]int64) (i
 // composite IDs change when messages move between mailboxes.
 var errDuplicateRFC822 = errors.New("duplicate RFC822 Message-ID")
 
-// ingestMessage parses and stores a single message. Returns
-// errDuplicateRFC822 for IMAP deduplication skips.
-func (s *Syncer) ingestMessage(sourceID int64, raw *gmail.RawMessage, threadID string, labelMap map[string]int64) error {
+// errDeferredIMAPIdentity signals that deduplication found an archived
+// canonical ID whose mailbox is outside the current folder selection. The
+// alternate ID remains unacknowledged so a later inclusive scan retries it.
+var errDeferredIMAPIdentity = errors.New(
+	"deferred IMAP source identity validation")
+
+func labelIDsFor(sourceLabelIDs []string, labelMap map[string]int64) []int64 {
+	labelIDs := make([]int64, 0, len(sourceLabelIDs))
+	for _, label := range sourceLabelIDs {
+		if id, ok := labelMap[label]; ok {
+			labelIDs = append(labelIDs, id)
+		}
+	}
+	return labelIDs
+}
+
+// ingestMessage parses and stores a single message. The boolean reports
+// whether RFC822 dedup reconciliation changed an existing message. It returns
+// errDuplicateRFC822 or errDeferredIMAPIdentity for IMAP deduplication skips.
+func (s *Syncer) ingestMessage(
+	ctx context.Context,
+	sourceID int64,
+	raw *gmail.RawMessage,
+	threadID string,
+	labelMap map[string]int64,
+) (bool, error) {
 	data, err := s.parseToModel(sourceID, raw, threadID)
 	if err != nil {
-		return err
+		return false, err
 	}
 
 	// For IMAP sources, check if a message with the same RFC822
 	// Message-ID already exists under a different composite ID.
 	// This handles messages that moved between mailboxes across
 	// syncs (e.g. All Mail → Trash changes the mailbox|uid key).
-	// When matched, update the existing row's composite ID and
-	// labels so future syncs skip it at the ID-filtering stage
-	// instead of re-downloading the MIME body each time.
-	if s.opts.SourceType == "imap" &&
+	// Validate the archived composite ID before replacing it regardless of
+	// snapshot completeness. Completeness controls only whether reconciled
+	// labels replace the stored memberships or merge with them.
+	if s.opts.SourceType == sourceTypeIMAP &&
 		data.message.RFC822MessageID.Valid {
 		existingID, err := s.store.GetMessageIDByRFC822ID(
 			sourceID, data.message.RFC822MessageID.String)
 		if err != nil {
-			return fmt.Errorf("check rfc822 dedup: %w", err)
+			return false, fmt.Errorf("check rfc822 dedup: %w", err)
 		}
 		if existingID > 0 {
-			var labelIDs []int64
-			for _, lbl := range data.gmailLabelIDs {
-				if id, ok := labelMap[lbl]; ok {
-					labelIDs = append(labelIDs, id)
+			labelIDs := labelIDsFor(data.gmailLabelIDs, labelMap)
+			matcher, ok := s.client.(sourceMessageMatcher)
+			if !ok {
+				return false, errors.New(
+					"exact source validation unavailable for IMAP dedup")
+			}
+
+			oldSourceMessageID, err := s.store.GetMessageSourceID(existingID)
+			if err != nil {
+				return false, fmt.Errorf("get dedup source ID: %w", err)
+			}
+			matches := false
+			conclusive := true
+			if !isInvalidatedIMAPSourceID(oldSourceMessageID) {
+				matches, conclusive, err = matcher.SourceMessageMatches(
+					ctx,
+					oldSourceMessageID,
+					data.message.RFC822MessageID.String,
+				)
+				if err != nil {
+					return false, fmt.Errorf(
+						"validate dedup source ID %q: %w",
+						oldSourceMessageID, err)
 				}
 			}
-			if err := s.store.UpdateMessageOnDedup(
+			if !conclusive {
+				changed, err := s.store.ReconcileMessageLabels(
+					existingID, labelIDs, false)
+				return dedupMutationResultWithSentinel(
+					changed,
+					"merge deferred dedup labels",
+					err,
+					errDeferredIMAPIdentity,
+				)
+			}
+			complete := s.labelsSnapshotComplete()
+			if matches {
+				changed, err := s.store.ReconcileMessageLabels(
+					existingID, labelIDs, complete)
+				return dedupMutationResult(
+					changed, "reconcile validated dedup labels", err)
+			}
+			if complete {
+				changed, err := s.store.UpdateMessageOnDedup(
+					existingID,
+					data.message.SourceMessageID,
+					labelIDs,
+				)
+				return dedupMutationResult(
+					changed, "update dedup message", err)
+			}
+			changed, err := s.store.UpdateMessageOnPartialDedup(
 				existingID,
 				data.message.SourceMessageID,
 				labelIDs,
-			); err != nil {
-				return fmt.Errorf("update dedup message: %w", err)
-			}
-			return errDuplicateRFC822
+			)
+			return dedupMutationResult(
+				changed, "update moved dedup message", err)
 		}
 	}
 
 	_, err = s.persistMessage(data, labelMap)
-	return err
+	return false, err
+}
+
+func invalidatedIMAPSourceID(messageID int64) string {
+	return invalidatedIMAPSourceIDPrefix +
+		strconv.FormatInt(messageID, 10)
+}
+
+func (s *Syncer) preserveReusedIMAPSource(
+	existingID int64,
+	sourceMessageID string,
+) error {
+	rekeyed, err := s.store.RekeyMessageSourceID(
+		existingID,
+		sourceMessageID,
+		invalidatedIMAPSourceID(existingID),
+	)
+	if err != nil {
+		return err
+	}
+	if !rekeyed {
+		return fmt.Errorf(
+			"source message ID %q changed before invalidation",
+			sourceMessageID,
+		)
+	}
+	return nil
+}
+
+func (s *Syncer) reconcileValidatedMessageLabels(
+	existingID int64,
+	sourceMessageID string,
+	rfc822MessageID string,
+	labelIDs []int64,
+	snapshotComplete bool,
+) (bool, error) {
+	changed, err := s.store.ReconcileMessageLabels(
+		existingID, labelIDs, snapshotComplete)
+	if err != nil {
+		return false, err
+	}
+	if seeder, ok := s.client.(validatedMessageDedupSeeder); ok {
+		if err := seeder.SeedValidatedMessageDedup(
+			sourceMessageID, rfc822MessageID); err != nil {
+			return false, fmt.Errorf("seed validated message dedup: %w", err)
+		}
+	}
+	return changed, nil
+}
+
+func isInvalidatedIMAPSourceID(sourceMessageID string) bool {
+	return strings.HasPrefix(
+		sourceMessageID, invalidatedIMAPSourceIDPrefix)
+}
+
+func dedupMutationResult(
+	changed bool,
+	action string,
+	err error,
+) (bool, error) {
+	return dedupMutationResultWithSentinel(
+		changed, action, err, errDuplicateRFC822)
+}
+
+func dedupMutationResultWithSentinel(
+	changed bool,
+	action string,
+	err, sentinel error,
+) (bool, error) {
+	if err != nil {
+		return false, fmt.Errorf("%s: %w", action, err)
+	}
+	return changed, sentinel
 }
 
 // ensureAddressUTF8 validates and converts address names to valid UTF-8 in place.

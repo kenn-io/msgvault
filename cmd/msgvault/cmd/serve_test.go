@@ -641,6 +641,32 @@ func TestStoreAPIAdapterRunCLISyncPacksOnlyAfterSubprocessSuccess(t *testing.T) 
 	}
 }
 
+func TestCLISyncSubprocessArgsIncrementalIncludesFolderFilters(t *testing.T) {
+	assert.Equal(t,
+		[]string{"sync", "--folders", "INBOX", "--folders", "Archive", "--skip-folders", "Trash", "alice@example.com"},
+		cliSyncSubprocessArgs(api.CLISyncRequest{
+			Email:       "alice@example.com",
+			Folders:     []string{"INBOX", "Archive"},
+			SkipFolders: []string{"Trash"},
+		}),
+	)
+	assert.Equal(t,
+		[]string{"sync", "--folders", "Folder,With,Comma", "alice@example.com"},
+		cliSyncSubprocessArgs(api.CLISyncRequest{
+			Email:   "alice@example.com",
+			Folders: []string{"Folder,With,Comma"},
+		}),
+	)
+	assert.Equal(t,
+		[]string{"sync", "--folders", "Path\\To\\File", "--skip-folders", "Fold,er", "alice@example.com"},
+		cliSyncSubprocessArgs(api.CLISyncRequest{
+			Email:       "alice@example.com",
+			Folders:     []string{"Path\\To\\File"},
+			SkipFolders: []string{"Fold,er"},
+		}),
+	)
+}
+
 func TestStoreAPIAdapterRunCLICommandPacksOnlyAllowlistedSuccess(t *testing.T) {
 	tests := []struct {
 		name           string

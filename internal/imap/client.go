@@ -46,17 +46,32 @@ func WithListProgress(fn func(done, total int, mailbox string, found, unchanged 
 	return func(c *Client) { c.listProgress = fn }
 }
 
+// WithFolderFilter sets folder include/exclude lists for a single sync run.
+// --folders/--skip-folders replaces or filters the config's folder list.
+func WithFolderFilter(include, exclude []string) Option {
+	return func(c *Client) {
+		c.folderFilterInclude = include
+		c.folderFilterExclude = exclude
+	}
+}
+
 // fetchChunkSize is the maximum number of UIDs per UID FETCH command.
 // Large FETCH sets cause server-side timeouts on big mailboxes; chunking
 // keeps each round-trip short.
-const fetchChunkSize = 50
-
+//
 // listPageSize is the number of message IDs returned per ListMessages
 // call. Each page ends with a checkpoint write and a progress update,
 // and IMAP fetches are slow enough (single connection, chunked FETCH)
 // that Gmail-sized 500-message pages left half-minute gaps between
 // progress updates.
-const listPageSize = 100
+const (
+	fetchChunkSize = 50
+	listPageSize   = 100
+)
+
+// Trash is the canonical fallback name for the trash mailbox on servers
+// that do not advertise \Trash via special-use attributes.
+const Trash = "Trash"
 
 // Client implements gmail.API for IMAP servers.
 type Client struct {
@@ -75,10 +90,16 @@ type Client struct {
 	junkMailbox         string               // cached junk/spam mailbox name
 	allMailFolder       string               // mailbox with \All attribute (empty if not detected)
 	msgIDToLabels       map[string][]string  // RFC822 Message-ID → mailbox memberships
-	seenRFC822IDs       map[string]bool      // dedup across All Mail + Trash/Spam
+	seenRFC822IDs       map[string]bool      // dedup overlapping mailbox copies
+	labelMapComplete    bool                 // latest listing collected every mailbox membership
 	since               time.Time            // IMAP SINCE date filter (zero = no filter)
 	before              time.Time            // IMAP BEFORE date filter (zero = no filter)
 
+	// folderFilter overrides which mailboxes are included in the sync.
+	// Zero-valued (empty include and exclude) means "all mailboxes".
+	folderFilterInclude, folderFilterExclude []string
+
+	forceFullEnumeration bool
 	priorFolderStates    map[string]FolderState // saved states from the last completed sync
 	observedFolderStates map[string]FolderState // states captured during this session's listing
 	folderStateSave      func(string, FolderState)
@@ -99,14 +120,43 @@ type Client struct {
 // NewClient creates a new IMAP client.
 func NewClient(cfg *Config, password string, opts ...Option) *Client {
 	c := &Client{
-		config:   cfg,
-		password: password,
-		logger:   slog.Default(),
+		config:           cfg,
+		password:         password,
+		logger:           slog.Default(),
+		labelMapComplete: true,
 	}
 	for _, opt := range opts {
 		opt(c)
 	}
 	return c
+}
+
+// LabelsSnapshotComplete reports whether a sync sees every mailbox label.
+// Folder- and date-filtered syncs only have a partial label view and must not
+// replace labels or canonical message IDs discovered by an earlier full sync.
+func (c *Client) LabelsSnapshotComplete() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.labelMapComplete &&
+		c.config != nil &&
+		!c.labelsSnapshotFilteredLocked()
+}
+
+// LabelsSnapshotFiltered reports whether folder or date filters explicitly
+// constrain the mailbox membership view.
+func (c *Client) LabelsSnapshotFiltered() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.labelsSnapshotFilteredLocked()
+}
+
+func (c *Client) labelsSnapshotFilteredLocked() bool {
+	return c.config != nil &&
+		(!c.since.IsZero() ||
+			!c.before.IsZero() ||
+			len(c.config.Folders) > 0 ||
+			len(c.folderFilterInclude) > 0 ||
+			len(c.folderFilterExclude) > 0)
 }
 
 // connect establishes and authenticates the IMAP connection. Caller must hold mu.
@@ -269,7 +319,7 @@ func (c *Client) listMailboxesLocked() ([]string, error) {
 
 	// Fallback: look for common trash folder names
 	if c.trashMailbox == "" {
-		for _, candidate := range []string{"Trash", "[Gmail]/Trash", "Deleted Items", "Deleted Messages"} {
+		for _, candidate := range []string{Trash, "[Gmail]/Trash", "Deleted Items", "Deleted Messages"} {
 			for _, mb := range names {
 				if strings.EqualFold(mb, candidate) {
 					c.trashMailbox = mb
@@ -441,8 +491,10 @@ func (c *Client) fetchMailboxMessageIDs(
 	return result, nil
 }
 
-// buildLabelMap enumerates non-All-Mail mailboxes and fetches
-// Message-ID headers to build a Message-ID → mailbox membership map.
+// buildLabelMap enumerates every mailbox except \All (whose memberships come
+// from the other mailboxes) and fetches Message-ID headers to build a
+// Message-ID → mailbox membership map. When \All is absent, every mailbox is
+// included.
 // Caller must hold mu.
 func (c *Client) buildLabelMap(
 	ctx context.Context, allMailboxes []string,
@@ -496,6 +548,12 @@ func (c *Client) buildLabelMap(
 // mailboxes so labels are preserved.
 // Caller must hold mu and have an active connection.
 func (c *Client) buildMessageListCache(ctx context.Context) error {
+	// Stay conservative until both membership collection and message
+	// enumeration finish. Any recoverable mailbox failure makes labels from
+	// this listing additive rather than authoritative.
+	c.labelMapComplete = false
+	c.seenRFC822IDs = nil
+
 	allMailboxes, err := c.listMailboxesLocked()
 	if err != nil {
 		if isNetworkError(err) {
@@ -509,21 +567,31 @@ func (c *Client) buildMessageListCache(ctx context.Context) error {
 		}
 	}
 
+	// Apply folder selection once against the full LIST result so CLI
+	// includes can override configuration, and CLI exclusions apply
+	// regardless of whether --folders was provided.
+	allMailboxes = filterMailboxes(
+		allMailboxes,
+		c.effectiveFolderIncludeLocked(),
+		c.folderFilterExclude,
+	)
+
 	// Determine which mailboxes to list for canonical message IDs.
 	listMailboxes := allMailboxes
 	isGmailAllMail := false
 	if c.allMailFolder != "" {
 		isGmailAllMail = strings.HasPrefix(c.allMailFolder, "[Gmail]/")
-		if isGmailAllMail {
+		if isGmailAllMail && slices.Contains(allMailboxes, c.allMailFolder) {
 			// Gmail's All Mail contains every message except Trash
 			// and Spam. Enumerate those alongside All Mail to catch
-			// messages only in those folders.
+			// messages only in those folders, but only when each
+			// canonical mailbox remains in the effective folder filter.
 			listMailboxes = []string{c.allMailFolder}
-			if c.trashMailbox != "" {
+			if slices.Contains(allMailboxes, c.trashMailbox) {
 				listMailboxes = append(
 					listMailboxes, c.trashMailbox)
 			}
-			if c.junkMailbox != "" {
+			if slices.Contains(allMailboxes, c.junkMailbox) {
 				listMailboxes = append(
 					listMailboxes, c.junkMailbox)
 			}
@@ -542,7 +610,8 @@ func (c *Client) buildMessageListCache(ctx context.Context) error {
 	if trackFolders {
 		c.observedFolderStates = make(map[string]FolderState, len(allMailboxes))
 		folderStatuses, unchangedStatuses = c.observeFolderStates(ctx, allMailboxes)
-		if c.allMailFolder != "" &&
+		if !c.forceFullEnumeration &&
+			c.allMailFolder != "" &&
 			len(folderStatuses) == len(allMailboxes) &&
 			unchangedStatuses == len(allMailboxes) {
 			maps.Copy(c.observedFolderStates, folderStatuses)
@@ -553,29 +622,46 @@ func (c *Client) buildMessageListCache(ctx context.Context) error {
 			c.logger.Info("skipped unchanged mailboxes",
 				"unchanged", unchangedStatuses, "total", len(allMailboxes))
 			c.messageListCache = []gmailapi.MessageID{}
+			c.labelMapComplete = true
 			return nil
 		}
 	} else {
 		c.clearFolderAcknowledgements()
 	}
 
-	labelMapComplete := true
+	// A scan without saved folder states enumerates every UID, so it can build
+	// an authoritative membership map even when the server has no \All
+	// mailbox. Saved-state scans may skip unchanged mailboxes or enumerate only
+	// UIDs above UIDNEXT; keep those partial views additive.
+	fullScanWithoutAll := c.allMailFolder == "" &&
+		trackFolders &&
+		(c.forceFullEnumeration || len(c.priorFolderStates) == 0) &&
+		c.config != nil &&
+		len(c.config.Folders) == 0 &&
+		len(c.folderFilterInclude) == 0 &&
+		len(c.folderFilterExclude) == 0
+	buildMembershipMap := c.allMailFolder != "" || fullScanWithoutAll
+	labelMapComplete := false
 	if c.allMailFolder != "" {
 		// On non-Gmail servers with \All, enumerate all selectable
 		// mailboxes — \All may not be a superset of every folder.
-		// Enable dedup to handle overlaps regardless of server.
-		c.seenRFC822IDs = make(map[string]bool)
 		c.logger.Info("detected All Mail folder via \\All attribute",
 			"folder", c.allMailFolder,
 			"gmail", isGmailAllMail,
 			"trash", c.trashMailbox,
 			"junk", c.junkMailbox,
 			"total_mailboxes", len(allMailboxes))
-
-		var err error
-		labelMapComplete, err = c.buildLabelMap(ctx, allMailboxes)
-		if err != nil {
-			return err
+	}
+	if buildMembershipMap {
+		var mapErr error
+		labelMapComplete, mapErr = c.buildLabelMap(ctx, allMailboxes)
+		if mapErr != nil {
+			return mapErr
+		}
+		if labelMapComplete {
+			// A complete membership map lets the first raw result carry every
+			// mailbox label before overlapping copies become dedup stubs.
+			c.seenRFC822IDs = make(map[string]bool)
 		}
 	}
 
@@ -592,18 +678,20 @@ func (c *Client) buildMessageListCache(ctx context.Context) error {
 				observed = &status
 				trackState = status
 				canTrackFolder = true
-				if prior, ok := c.priorFolderStates[mailbox]; ok &&
-					prior.UIDValidity == status.UIDValidity &&
-					prior.UIDNext <= status.UIDNext {
-					if prior.UIDNext == status.UIDNext {
-						// Unchanged since the last completed sync:
-						// no new messages possible, skip enumeration.
-						c.observedFolderStates[mailbox] = status
-						unchangedFolders++
-						return true
+				if !c.forceFullEnumeration {
+					if prior, ok := c.priorFolderStates[mailbox]; ok &&
+						prior.UIDValidity == status.UIDValidity &&
+						prior.UIDNext <= status.UIDNext {
+						if prior.UIDNext == status.UIDNext {
+							// Unchanged since the last completed sync:
+							// no new messages possible, skip enumeration.
+							c.observedFolderStates[mailbox] = status
+							unchangedFolders++
+							return true
+						}
+						// Only new messages need listing.
+						minUID = imap.UID(prior.UIDNext)
 					}
-					// Only new messages need listing.
-					minUID = imap.UID(prior.UIDNext)
 				}
 			}
 		} else if trackFolders && c.allMailFolder != "" {
@@ -663,6 +751,7 @@ func (c *Client) buildMessageListCache(ctx context.Context) error {
 	}
 
 	c.messageListCache = messages
+	c.labelMapComplete = labelMapComplete && enumerationComplete
 	return nil
 }
 
@@ -680,9 +769,87 @@ func isNetworkError(err error) bool {
 		strings.Contains(msg, "EOF")
 }
 
+// mailboxIncludedLocked reports whether mailbox is in the effective folder
+// selection. Caller must hold mu.
+func (c *Client) mailboxIncludedLocked(mailbox string) bool {
+	return len(filterMailboxes(
+		[]string{mailbox},
+		c.effectiveFolderIncludeLocked(),
+		c.folderFilterExclude,
+	)) == 1
+}
+
+// effectiveFolderIncludeLocked returns the active folder allow list. Caller
+// must hold mu.
+func (c *Client) effectiveFolderIncludeLocked() []string {
+	// CLI --folders replaces config folders when set; otherwise use
+	// config.Folders.
+	if len(c.folderFilterInclude) > 0 {
+		return c.folderFilterInclude
+	}
+	return c.config.Folders
+}
+
+// filterMailboxes applies an include list (allow-list) and/or an
+// exclude list (deny-list) to the mailbox names returned by LIST.
+// Include and exclude are case-insensitive. Empty lists are no-ops.
+// If both are non-empty, include is applied first, then exclude.
+// When include is empty but exclude is set, the result is all
+// mailboxes minus the excluded names (case-insensitive). When
+// include is set but exclude is empty, only the names in include
+// are kept (case-insensitively).
+func filterMailboxes(all []string, include, exclude []string) []string {
+	if len(include) == 0 && len(exclude) == 0 {
+		return all
+	}
+	lcInclude := make(map[string]bool, len(include))
+	for _, f := range include {
+		lcInclude[strings.ToLower(f)] = true
+	}
+	lcExclude := make(map[string]bool, len(exclude))
+	for _, f := range exclude {
+		lcExclude[strings.ToLower(f)] = true
+	}
+	var out = make([]string, 0, len(all))
+	for _, m := range all {
+		lc := strings.ToLower(m)
+		if len(lcInclude) > 0 && !lcInclude[lc] {
+			continue
+		}
+		if len(lcExclude) > 0 && lcExclude[lc] {
+			continue
+		}
+		out = append(out, m)
+	}
+	return out
+}
+
 // hasAttr checks whether attr is in the attrs list.
 func hasAttr(attrs []imap.MailboxAttr, attr imap.MailboxAttr) bool {
 	return slices.Contains(attrs, attr)
+}
+
+// MailboxInfo is the result of listing a mailbox with its count.
+type MailboxInfo struct {
+	Mailbox     string
+	NumMessages int64 // -1 = count unavailable
+}
+
+// listMailboxesLockedFromConn returns all selectable mailbox names
+// for an already-connected IMAP client. It skips NoSelect mailboxes.
+func listMailboxesLockedFromConn(conn *imapclient.Client) ([]string, error) {
+	items, err := conn.List("", "*", nil).Collect()
+	if err != nil {
+		return nil, fmt.Errorf("LIST: %w", err)
+	}
+	var names []string
+	for _, item := range items {
+		if hasAttr(item.Attrs, imap.MailboxAttrNoSelect) {
+			continue
+		}
+		names = append(names, item.Mailbox)
+	}
+	return names, nil
 }
 
 // compositeID builds a message identifier as "mailbox|uid".
@@ -751,6 +918,42 @@ func (c *Client) ListLabels(ctx context.Context) ([]*gmailapi.Label, error) {
 		return nil, err
 	}
 	return labels, nil
+}
+
+// ListMailboxes returns all selectable mailbox names for this
+// account. It connects, authenticates, and runs LIST "" "*. The
+// result includes the approximate message count for each folder.
+func (c *Client) ListMailboxes(ctx context.Context) ([]MailboxInfo, error) {
+	var info []MailboxInfo
+	err := c.withConn(ctx, func(conn *imapclient.Client) error {
+		names, err := listMailboxesLockedFromConn(conn)
+		if err != nil {
+			return err
+		}
+		for _, mb := range names {
+			// STATUS round-trip per mailbox — the go-imap/v2 library
+			// at v2.0.0-beta.8 does not expose a multi-mailbox batch
+			// STATUS call, so we issue one STATUS per folder.  This
+			// can be replaced with a single batch STATUS once the
+			// library adds a multi-mailbox API or a newer version is
+			// adopted. See: github.com/emersion/go-imap/issues
+			status, err := conn.Status(mb, &imap.StatusOptions{NumMessages: true}).Wait()
+			if err != nil {
+				info = append(info, MailboxInfo{Mailbox: mb, NumMessages: -1})
+				continue
+			}
+			count := int64(0)
+			if status.NumMessages != nil {
+				count = int64(*status.NumMessages)
+			}
+			info = append(info, MailboxInfo{Mailbox: mb, NumMessages: count})
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return info, nil
 }
 
 // ListMessages returns a page of message IDs from all IMAP mailboxes.
@@ -849,7 +1052,7 @@ func (c *Client) TrashMessage(ctx context.Context, messageID string) error {
 		}
 		trashMailbox := c.trashMailbox
 		if trashMailbox == "" {
-			trashMailbox = "Trash"
+			trashMailbox = Trash
 		}
 		var uidSet imap.UIDSet
 		uidSet.AddNum(uid)

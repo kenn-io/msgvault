@@ -5707,6 +5707,10 @@ export interface operations {
             query?: {
                 /** @description Account email or display name to sync */
                 email?: string;
+                /** @description IMAP folder names to include (repeatable) */
+                folder?: string[];
+                /** @description IMAP folder names to exclude (repeatable) */
+                "skip-folder"?: string[];
             };
             header?: never;
             path?: never;
@@ -5749,6 +5753,10 @@ export interface operations {
                 limit?: number;
                 /** @description Ignore checkpoints and start fresh */
                 noresume?: boolean;
+                /** @description IMAP folder names to include (repeatable) */
+                folder?: string[];
+                /** @description IMAP folder names to exclude (repeatable) */
+                "skip-folder"?: string[];
             };
             header?: never;
             path?: never;

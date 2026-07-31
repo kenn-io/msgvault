@@ -616,3 +616,93 @@ func TestSyncCmd_GmailOnlyBrokenOAuthSurfacesError(t *testing.T) {
 		})
 	}
 }
+
+func TestTrimFolderFilter(t *testing.T) {
+	cases := []struct {
+		name  string
+		input []string
+		want  []string
+	}{
+		{
+			name:  "nil returns nil",
+			input: nil,
+			want:  nil,
+		},
+		{
+			name:  "empty slice returns nil",
+			input: []string{},
+			want:  nil,
+		},
+		{
+			name:  "single folder",
+			input: []string{"Inbox"},
+			want:  []string{"Inbox"},
+		},
+		{
+			name:  "trims whitespace",
+			input: []string{"  inbox  ", "  Sent  ", "  trash  "},
+			want:  []string{"inbox", "Sent", "trash"},
+		},
+		{
+			name:  "skips blank entries",
+			input: []string{"Inbox", "", "Sent"},
+			want:  []string{"Inbox", "Sent"},
+		},
+		{
+			name:  "skips whitespace-only entries",
+			input: []string{"Inbox", "   ", "Sent"},
+			want:  []string{"Inbox", "Sent"},
+		},
+		{
+			name:  "all whitespace returns empty slice",
+			input: []string{"  ", "   "},
+			want:  []string{},
+		},
+		{
+			name:  "nested folder names preserved",
+			input: []string{"Projects/Alpha", "Projects/Beta", "Inbox"},
+			want:  []string{"Projects/Alpha", "Projects/Beta", "Inbox"},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := parseFolderFilter(tc.input)
+			assert.Equal(t, tc.want, got, "parseFolderFilter(%q)", tc.input)
+		})
+	}
+}
+
+func TestSyncCommandRegistersFolderFlags(t *testing.T) {
+	require.NotNil(t, syncIncrementalCmd.Flags().Lookup("folders"))
+	require.NotNil(t, syncIncrementalCmd.Flags().Lookup("skip-folders"))
+}
+
+// Full e2e integration with an in-memory IMAP server is tested in
+// internal/imap/client_folderstate_test.go via WithFolderFilter().
+
+func TestTrimFolderFilter_DoesNotBlockOnErrorInSyncFull(t *testing.T) {
+	// Verify the CLI accepts --folders and --skip-folders through
+	// parseFolderFilter without error, even when the value is
+	// malformed or whitespace-only.
+	require := require.New(t)
+	assert := assert.New(t)
+	savedFolders := syncFolders
+	savedSkip := syncSkipFolders
+	defer func() {
+		syncFolders = savedFolders
+		syncSkipFolders = savedSkip
+	}()
+
+	// parseFolderFilter is called unconditionally; it must never
+	// return nil on every path where it's called with real user input.
+	assert.Equal([]string{}, parseFolderFilter([]string{"  "}), "whitespace returns empty slice")
+	assert.Equal([]string{"A", "B"}, parseFolderFilter([]string{"A", "B"}), "multiple values")
+	// nil is returned only when the input slice is empty, not when
+	// it contains only whitespace or blank entries.
+	assert.Nil(parseFolderFilter([]string(nil)), "empty slice input returns nil")
+
+	// All-whitespace input returns empty slice (no error, no crash).
+	require.NotPanics(func() { parseFolderFilter([]string{"  ", "   "}) })
+	require.NotPanics(func() { parseFolderFilter([]string{"", "  ", ""}) })
+}

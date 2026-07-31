@@ -150,3 +150,60 @@ func TestConfigAuthMethod_XOAuth2(t *testing.T) {
 	assert.Equal(t, AuthXOAuth2, cfg.AuthMethod, "AuthMethod")
 	assert.Equal(t, AuthXOAuth2, cfg.EffectiveAuthMethod(), "EffectiveAuthMethod()")
 }
+
+func TestTrimFolders(t *testing.T) {
+	tests := []struct {
+		name  string
+		input []string
+		want  []string
+	}{
+		{
+			name:  "no whitespace",
+			input: []string{"Inbox", "Sent"},
+			want:  []string{"Inbox", "Sent"},
+		},
+		{
+			name:  "trailing spaces",
+			input: []string{"Inbox ", " Sent Items"},
+			want:  []string{"Inbox", "Sent Items"},
+		},
+		{
+			name:  "leading and trailing spaces",
+			input: []string{"  Inbox  ", "  Sent  "},
+			want:  []string{"Inbox", "Sent"},
+		},
+		{
+			name:  "empty after trim is removed",
+			input: []string{"Inbox", "  ", "", "Sent"},
+			want:  []string{"Inbox", "Sent"},
+		},
+		{
+			name:  "all whitespace is empty slice",
+			input: []string{"  ", ""},
+			want:  []string{},
+		},
+		{
+			name:  "nil input returns empty slice",
+			input: nil,
+			want:  []string{},
+		},
+		{
+			name:  "empty input",
+			input: []string{},
+			want:  []string{},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := trimFolders(tc.input)
+			assert.Equal(t, tc.want, got)
+		})
+	}
+}
+
+func TestConfigFromJSON_FoldersTrimmed(t *testing.T) {
+	cfg, err := ConfigFromJSON(`{"host":"imap.example.com","port":993,"username":"user","folders":["  Inbox  "," Sent Items ","  "]}`)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"Inbox", "Sent Items"}, cfg.Folders)
+}

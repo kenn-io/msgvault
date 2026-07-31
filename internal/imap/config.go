@@ -28,6 +28,13 @@ type Config struct {
 	STARTTLS   bool       `json:"starttls"` // STARTTLS upgrade (port 143)
 	Username   string     `json:"username"`
 	AuthMethod AuthMethod `json:"auth_method,omitempty"`
+
+	// Folders is a case-insensitive allow list. When non-empty,
+	// only these mailboxes are synced. An empty list means "all
+	// mailboxes". CLI --folders/--skip-folders override this config:
+	// they are applied after config folders in
+	// buildMessageListCache, so CLI values always take precedence.
+	Folders []string `json:"folders,omitempty"`
 }
 
 // EffectiveAuthMethod returns the auth method, defaulting to password
@@ -99,7 +106,21 @@ func ConfigFromJSON(s string) (*Config, error) {
 	if err := json.Unmarshal([]byte(s), &c); err != nil {
 		return nil, fmt.Errorf("parse IMAP config: %w", err)
 	}
+	c.Folders = trimFolders(c.Folders)
 	return &c, nil
+}
+
+// trimFolders trims leading and trailing whitespace from each folder name
+// in the list. It returns an empty slice if the result is empty after trimming.
+func trimFolders(folders []string) []string {
+	trimmed := make([]string, 0, len(folders))
+	for _, f := range folders {
+		t := strings.TrimSpace(f)
+		if t != "" {
+			trimmed = append(trimmed, t)
+		}
+	}
+	return trimmed
 }
 
 // ParseIdentifier parses a config from an identifier URL like "imaps://user@host:port".

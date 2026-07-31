@@ -121,6 +121,13 @@ type MessageMetadataRecord struct {
 	Metadata sql.NullString
 }
 
+// MessageWithRawMetadata identifies an archived message and the RFC822
+// identity stored with its raw MIME.
+type MessageWithRawMetadata struct {
+	ID              int64
+	RFC822MessageID sql.NullString
+}
+
 // UnresolvedMessageReply is a message whose provider metadata may contain a
 // durable source reply reference but whose generic reply link is still NULL.
 // Importers decode their own metadata shape and call SetReplyTo once the
@@ -473,6 +480,39 @@ func (s *Store) GetMessageIDByRFC822ID(
 	return id, err
 }
 
+// GetMessageSourceID returns the provider-specific identifier for a message.
+func (s *Store) GetMessageSourceID(messageID int64) (string, error) {
+	var sourceMessageID string
+	err := s.db.QueryRow(
+		`SELECT source_message_id FROM messages WHERE id = ?`,
+		messageID,
+	).Scan(&sourceMessageID)
+	return sourceMessageID, err
+}
+
+// RekeyMessageSourceID changes a provider-specific identifier only while it
+// still has the value observed by the caller.
+func (s *Store) RekeyMessageSourceID(
+	messageID int64,
+	expectedSourceMessageID, newSourceMessageID string,
+) (bool, error) {
+	result, err := s.db.Exec(
+		`UPDATE messages SET source_message_id = ?
+		 WHERE id = ? AND source_message_id = ?`,
+		newSourceMessageID,
+		messageID,
+		expectedSourceMessageID,
+	)
+	if err != nil {
+		return false, fmt.Errorf("rekey message source ID: %w", err)
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("read rekeyed row count: %w", err)
+	}
+	return affected == 1, nil
+}
+
 // UpdateMessageOnDedup updates an existing message's composite ID
 // and labels when a cross-mailbox RFC822 dedup match is found.
 // This ensures future syncs recognize the message under its new
@@ -480,17 +520,59 @@ func (s *Store) GetMessageIDByRFC822ID(
 func (s *Store) UpdateMessageOnDedup(
 	messageID int64, newSourceMessageID string,
 	labelIDs []int64,
-) error {
-	return s.withTx(func(tx *loggedTx) error {
-		if _, err := tx.Exec(
-			`UPDATE messages SET source_message_id = ?
-			 WHERE id = ?`,
-			newSourceMessageID, messageID,
-		); err != nil {
-			return fmt.Errorf("update source_message_id: %w", err)
+) (bool, error) {
+	return s.updateMessageOnDedup(
+		messageID, newSourceMessageID, labelIDs, true)
+}
+
+// UpdateMessageOnPartialDedup updates an existing message's composite ID and
+// merges newly observed labels. It is used when the new ID is authoritative
+// but the scan did not observe every mailbox membership.
+func (s *Store) UpdateMessageOnPartialDedup(
+	messageID int64, newSourceMessageID string,
+	labelIDs []int64,
+) (bool, error) {
+	return s.updateMessageOnDedup(
+		messageID, newSourceMessageID, labelIDs, false)
+}
+
+func (s *Store) updateMessageOnDedup(
+	messageID int64, newSourceMessageID string,
+	labelIDs []int64, replaceLabels bool,
+) (bool, error) {
+	var changed bool
+	err := s.withTx(func(tx *loggedTx) error {
+		var currentSourceMessageID string
+		if err := tx.QueryRow(
+			`SELECT source_message_id FROM messages WHERE id = ?`,
+			messageID,
+		).Scan(&currentSourceMessageID); err != nil {
+			return fmt.Errorf("get source_message_id: %w", err)
 		}
-		return replaceMessageLabelsTx(tx, messageID, labelIDs)
+
+		sourceIDChanged := currentSourceMessageID != newSourceMessageID
+		if sourceIDChanged {
+			if _, err := tx.Exec(
+				`UPDATE messages SET source_message_id = ?
+				 WHERE id = ?`,
+				newSourceMessageID, messageID,
+			); err != nil {
+				return fmt.Errorf("update source_message_id: %w", err)
+			}
+		}
+
+		labelsChanged, err := s.reconcileMessageLabelsTx(
+			tx, messageID, labelIDs, replaceLabels)
+		if err != nil {
+			return err
+		}
+		changed = sourceIDChanged || labelsChanged
+		return nil
 	})
+	if err != nil {
+		return false, err
+	}
+	return changed, nil
 }
 
 // MigrateSourceMessageID rewrites a legacy source_message_id to a new value
@@ -583,6 +665,45 @@ func (s *Store) MessageExistsWithRawBatch(sourceID int64, sourceMessageIDs []str
 			result[srcID] = id
 			return nil
 		})
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+// MessageMetadataWithRawBatch returns identity metadata for messages that
+// already have raw MIME stored.
+func (s *Store) MessageMetadataWithRawBatch(
+	sourceID int64,
+	sourceMessageIDs []string,
+) (map[string]MessageWithRawMetadata, error) {
+	result := make(map[string]MessageWithRawMetadata)
+	if len(sourceMessageIDs) == 0 {
+		return result, nil
+	}
+
+	err := queryInChunks(
+		s.db,
+		sourceMessageIDs,
+		[]any{sourceID},
+		`SELECT m.source_message_id, m.id, m.rfc822_message_id
+		 FROM messages m
+		 JOIN message_raw mr ON mr.message_id = m.id
+		 WHERE m.source_id = ? AND m.source_message_id IN (%s)`,
+		func(rows *loggedRows) error {
+			var sourceMessageID string
+			var metadata MessageWithRawMetadata
+			if err := rows.Scan(
+				&sourceMessageID,
+				&metadata.ID,
+				&metadata.RFC822MessageID,
+			); err != nil {
+				return err
+			}
+			result[sourceMessageID] = metadata
+			return nil
+		},
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -1508,6 +1629,90 @@ func (s *Store) ReplaceMessageLabels(messageID int64, labelIDs []int64) error {
 	})
 }
 
+// ReconcileMessageLabels replaces or merges labels and reports whether the
+// persisted label set changed.
+func (s *Store) ReconcileMessageLabels(
+	messageID int64, labelIDs []int64, replace bool,
+) (bool, error) {
+	var changed bool
+	err := s.withTx(func(tx *loggedTx) error {
+		var err error
+		changed, err = s.reconcileMessageLabelsTx(
+			tx, messageID, labelIDs, replace)
+		return err
+	})
+	if err != nil {
+		return false, err
+	}
+	return changed, nil
+}
+
+func (s *Store) reconcileMessageLabelsTx(
+	tx *loggedTx, messageID int64, labelIDs []int64, replace bool,
+) (bool, error) {
+	rows, err := tx.Query(`
+		SELECT label_id FROM message_labels WHERE message_id = ?
+	`, messageID)
+	if err != nil {
+		return false, err
+	}
+
+	existing := make(map[int64]struct{})
+	for rows.Next() {
+		var labelID int64
+		if err := rows.Scan(&labelID); err != nil {
+			_ = rows.Close()
+			return false, err
+		}
+		existing[labelID] = struct{}{}
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return false, err
+	}
+	if err := rows.Close(); err != nil {
+		return false, err
+	}
+
+	desired := make(map[int64]struct{}, len(labelIDs))
+	for _, labelID := range labelIDs {
+		desired[labelID] = struct{}{}
+	}
+
+	if replace {
+		changed := len(existing) != len(desired)
+		if !changed {
+			for labelID := range desired {
+				if _, ok := existing[labelID]; !ok {
+					changed = true
+					break
+				}
+			}
+		}
+		if !changed {
+			return false, nil
+		}
+		if err := replaceMessageLabelsTx(tx, messageID, labelIDs); err != nil {
+			return false, err
+		}
+		return true, nil
+	}
+
+	missing := make([]int64, 0, len(desired))
+	for labelID := range desired {
+		if _, ok := existing[labelID]; !ok {
+			missing = append(missing, labelID)
+		}
+	}
+	if len(missing) == 0 {
+		return false, nil
+	}
+	if err := s.addMessageLabelsTx(tx, messageID, missing); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 func replaceMessageLabelsTx(tx querier, messageID int64, labelIDs []int64) error {
 	_, err := tx.Exec(`
 		DELETE FROM message_labels WHERE message_id = ?
@@ -1542,20 +1747,26 @@ func (s *Store) AddMessageLabels(messageID int64, labelIDs []int64) error {
 		return nil
 	}
 	return s.withTx(func(tx *loggedTx) error {
-		return insertInChunks(tx, chunkInsert{
-			totalRows:    len(labelIDs),
-			valuesPerRow: 2,
-			prefix:       s.dialect.InsertOrIgnorePrefix("INSERT OR IGNORE INTO message_labels (message_id, label_id) VALUES "),
-			suffix:       s.dialect.InsertOrIgnoreSuffix(),
-		}, func(start, end int) ([]string, []any) {
-			values := make([]string, end-start)
-			args := make([]any, 0, (end-start)*2)
-			for i := start; i < end; i++ {
-				values[i-start] = "(?, ?)"
-				args = append(args, messageID, labelIDs[i])
-			}
-			return values, args
-		})
+		return s.addMessageLabelsTx(tx, messageID, labelIDs)
+	})
+}
+
+func (s *Store) addMessageLabelsTx(
+	tx *loggedTx, messageID int64, labelIDs []int64,
+) error {
+	return insertInChunks(tx, chunkInsert{
+		totalRows:    len(labelIDs),
+		valuesPerRow: 2,
+		prefix:       s.dialect.InsertOrIgnorePrefix("INSERT OR IGNORE INTO message_labels (message_id, label_id) VALUES "),
+		suffix:       s.dialect.InsertOrIgnoreSuffix(),
+	}, func(start, end int) ([]string, []any) {
+		values := make([]string, end-start)
+		args := make([]any, 0, (end-start)*2)
+		for i := start; i < end; i++ {
+			values[i-start] = "(?, ?)"
+			args = append(args, messageID, labelIDs[i])
+		}
+		return values, args
 	})
 }
 
@@ -1781,6 +1992,38 @@ func (s *Store) CountMessagesWithRaw(sourceID int64) (int64, error) {
 		WHERE m.source_id = ? AND %s
 	`, LiveMessagesWhere("m", true)), sourceID).Scan(&count)
 	return count, err
+}
+
+// CountMessagesPerMailbox returns a map of mailbox name to message count
+// for a given source. It counts live messages grouped by their label name
+// using the message_labels/labels join. Only messages with labels appear
+// in the result (messages without any folder/label mapping are excluded).
+func (s *Store) CountMessagesPerMailbox(sourceID int64) (map[string]int64, error) {
+	result := make(map[string]int64)
+	rows, err := s.db.Query(fmt.Sprintf(`
+		SELECT l.name, COUNT(DISTINCT m.id)
+		  FROM messages m
+		  JOIN message_labels ml ON ml.message_id = m.id
+		  JOIN labels l ON l.id = ml.label_id
+		 WHERE m.source_id = ? AND l.source_id = ? AND %s
+		 GROUP BY l.name
+	`, LiveMessagesWhere("", true)), sourceID, sourceID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var name string
+		var count int64
+		if err := rows.Scan(&name, &count); err != nil {
+			return nil, err
+		}
+		result[name] = count
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return result, nil
 }
 
 // GetRandomMessageIDs returns a random sample of message IDs for a source.

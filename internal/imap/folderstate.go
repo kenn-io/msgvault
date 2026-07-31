@@ -29,6 +29,12 @@ func WithFolderStates(states map[string]FolderState) Option {
 	return func(c *Client) { c.priorFolderStates = states }
 }
 
+// WithForceFullEnumeration keeps saved folder identity metadata but disables
+// UIDNEXT and unchanged-mailbox shortcuts for this client session.
+func WithForceFullEnumeration() Option {
+	return func(c *Client) { c.forceFullEnumeration = true }
+}
+
 // WithFolderStateSave sets a callback that is invoked after all listed
 // messages for a mailbox have been safely handled by the syncer.
 func WithFolderStateSave(fn func(string, FolderState)) Option {

@@ -165,14 +165,17 @@ For STARTTLS connections (port 143), add `--starttls`:
 msgvault add-imap --host mail.example.com --username you@example.com --starttls
 ```
 
-After adding the account, sync it the same way as a Gmail account:
+After adding the account, list its folders and start a sync:
 
 ```bash
-msgvault sync-full
+msgvault list-folders you@fastmail.com
+msgvault sync-full you@fastmail.com
 ```
 
 IMAP accounts are stored in the same database as Gmail accounts. All tools
 (Web UI, TUI, search, MCP, and REST API) work with IMAP messages the same way.
+To start with only part of a large account, see
+[IMAP Folder Sync](/usage/imap/) for `--folders` and `--skip-folders` examples.
 
 !!! tip "Microsoft 365 / Outlook.com"
     For Outlook, Hotmail, Live.com, and Microsoft 365 accounts, `add-o365` provides OAuth-based access without app passwords. It auto-detects the correct IMAP host and configures XOAUTH2 authentication. See the [OAuth Setup guide](/guides/oauth-setup/#microsoft-365-outlook-hotmail) for details.

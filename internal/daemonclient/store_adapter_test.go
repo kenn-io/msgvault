@@ -182,6 +182,32 @@ func TestLegacyAdapterUsesClientRootContext(t *testing.T) {
 	require.Error(<-done, "canceled compatibility request")
 }
 
+func TestRunCLISyncSendsIncrementalFolderFilters(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(http.MethodPost, r.Method, "method")
+		assert.Equal("/api/v1/cli/sync", r.URL.Path, "path")
+		assert.ElementsMatch([]string{"INBOX", "Archive"}, r.URL.Query()["folder"], "folder query")
+		assert.Equal([]string{"Trash"}, r.URL.Query()["skip-folder"], "skip-folder query")
+		w.Header().Set("Content-Type", "application/x-ndjson")
+		_, _ = w.Write([]byte(`{"type":"complete"}` + "\n"))
+	}))
+	t.Cleanup(srv.Close)
+
+	st, err := New(Config{URL: srv.URL, AllowInsecure: true, HTTPClient: srv.Client()})
+	require.NoError(err, "New")
+
+	err = st.RunCLISync(context.Background(), CLISyncRequest{
+		Folders:     []string{"INBOX", "Archive"},
+		SkipFolders: []string{"Trash"},
+	}, func(string, string) error {
+		return nil
+	})
+	require.NoError(err)
+}
+
 func TestRunCLICommandStreamsOutput(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)

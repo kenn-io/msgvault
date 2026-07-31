@@ -6120,6 +6120,20 @@ paths:
           name: email
           schema:
             type: string
+        - description: IMAP folder names to include (repeatable)
+          in: query
+          name: folder
+          schema:
+            items:
+              type: string
+            type: array
+        - description: IMAP folder names to exclude (repeatable)
+          in: query
+          name: skip-folder
+          schema:
+            items:
+              type: string
+            type: array
       responses:
         "200":
           content:
@@ -6173,6 +6187,20 @@ paths:
           name: noresume
           schema:
             type: boolean
+        - description: IMAP folder names to include (repeatable)
+          in: query
+          name: folder
+          schema:
+            items:
+              type: string
+            type: array
+        - description: IMAP folder names to exclude (repeatable)
+          in: query
+          name: skip-folder
+          schema:
+            items:
+              type: string
+            type: array
       responses:
         "200":
           content:
