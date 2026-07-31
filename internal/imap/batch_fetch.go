@@ -638,3 +638,17 @@ func (c *Client) SourceMessageMatches(
 	return normalizeRFC822MessageID(actualRFC822MessageID) ==
 		normalizeRFC822MessageID(expectedRFC822MessageID), true, nil
 }
+
+// IsPreferredSourceMessageID reports whether messageID belongs to the
+// mailbox advertised with the \All special-use attribute. A complete scan
+// may use that mailbox's identifier as the stable canonical source ID.
+func (c *Client) IsPreferredSourceMessageID(messageID string) bool {
+	mailbox, _, err := parseCompositeID(messageID)
+	if err != nil {
+		return false
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.allMailFolder != "" && mailbox == c.allMailFolder
+}

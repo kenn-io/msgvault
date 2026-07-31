@@ -3,7 +3,6 @@ package imap
 import (
 	"context"
 	"fmt"
-	"maps"
 
 	imap "github.com/emersion/go-imap/v2"
 )
@@ -43,9 +42,10 @@ func WithFolderStateSave(fn func(string, FolderState)) Option {
 
 // ObservedFolderStates returns the per-mailbox states captured during
 // the last message-list enumeration, for persistence after a completed
-// sync. Mailboxes whose STATUS or enumeration failed are absent, so
-// saved state for them is left untouched. Returns nil when folder
-// tracking was disabled (date filter or no listing yet).
+// sync. Mailboxes whose STATUS or enumeration failed are absent, and
+// mailboxes with unacknowledged messages are omitted, so saved state for
+// them is left untouched. Returns nil when folder tracking was disabled
+// (date filter or no listing yet).
 func (c *Client) ObservedFolderStates() map[string]FolderState {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -53,7 +53,12 @@ func (c *Client) ObservedFolderStates() map[string]FolderState {
 		return nil
 	}
 	states := make(map[string]FolderState, len(c.observedFolderStates))
-	maps.Copy(states, c.observedFolderStates)
+	for mailbox, state := range c.observedFolderStates {
+		if c.pendingFolderCounts[mailbox] > 0 {
+			continue
+		}
+		states[mailbox] = state
+	}
 	return states
 }
 

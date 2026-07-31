@@ -77,6 +77,26 @@ func TestSaveIMAPFolderStates_ErrorsBlockPersistence(t *testing.T) {
 	assert.Empty(t, loaded, "a run with fetch errors must not advance folder high water marks")
 }
 
+func TestSaveIMAPFolderStates_LeavesDeferredFoldersUnpersisted(t *testing.T) {
+	require := require.New(t)
+	addr, _ := testutil.StartIMAPMemServer(t, map[string]int{
+		"INBOX":   1,
+		"Archive": 0,
+	})
+	st := testutil.NewTestStore(t)
+	src, err := st.GetOrCreateSource("imap", "imap://alice@example.com")
+	require.NoError(err)
+
+	client := listedIMAPClient(t, addr, imapFolderStateSaveOption(st, src))
+	saveIMAPFolderStates(st, src, client, &gmail.SyncSummary{}, 0)
+
+	loaded, err := loadIMAPFolderStates(st, src.ID)
+	require.NoError(err)
+	assert.Contains(t, loaded, "Archive")
+	assert.NotContains(t, loaded, "INBOX",
+		"a folder with an unacknowledged message must remain retryable")
+}
+
 func TestSaveIMAPFolderStates_LimitTruncationBlocksPersistence(t *testing.T) {
 	require := require.New(t)
 	addr, _ := testutil.StartIMAPMemServer(t, map[string]int{"INBOX": 5})

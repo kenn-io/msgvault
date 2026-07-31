@@ -86,6 +86,10 @@ type sourceMessageMatcher interface {
 	) (matches bool, conclusive bool, err error)
 }
 
+type preferredIMAPSourceID interface {
+	IsPreferredSourceMessageID(messageID string) bool
+}
+
 type fetchedSourceMessageMatcher interface {
 	FetchedSourceMessageMatches(
 		messageID, expectedRFC822MessageID, actualRFC822MessageID string,
@@ -1125,8 +1129,29 @@ func (s *Syncer) ingestMessage(
 			if matches {
 				changed, err := s.store.ReconcileMessageLabels(
 					existingID, labelIDs, complete)
+				if err != nil {
+					return false, fmt.Errorf(
+						"reconcile validated dedup labels: %w", err)
+				}
+				if complete && oldSourceMessageID != data.message.SourceMessageID {
+					if preferred, ok := s.client.(preferredIMAPSourceID); ok &&
+						preferred.IsPreferredSourceMessageID(data.message.SourceMessageID) {
+						rekeyed, err := s.store.RekeyMessageSourceID(
+							existingID, oldSourceMessageID, data.message.SourceMessageID)
+						if err != nil {
+							return false, fmt.Errorf(
+								"adopt preferred IMAP source ID: %w", err)
+						}
+						if !rekeyed {
+							return false, fmt.Errorf(
+								"preferred IMAP source ID %q changed before adoption",
+								data.message.SourceMessageID)
+						}
+						changed = true
+					}
+				}
 				return dedupMutationResult(
-					changed, "reconcile validated dedup labels", err)
+					changed, "reconcile validated dedup labels", nil)
 			}
 			if complete {
 				changed, err := s.store.UpdateMessageOnDedup(

@@ -16,6 +16,7 @@ import (
 	"testing"
 	"unicode/utf8"
 
+	imapv2 "github.com/emersion/go-imap/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/gmail"
@@ -2071,6 +2072,49 @@ func TestIMAPFullRescanWithoutAllPreservesExistingIDForOverlappingFolders(t *tes
 	assert.Equal(t, originalSourceMessageID, rescannedSourceMessageID)
 	assertMessageHasLabel(t, env.Store, rescannedSourceMessageID, "Archive")
 	assertMessageHasLabel(t, env.Store, rescannedSourceMessageID, "INBOX")
+}
+
+func TestIMAPCompleteSnapshotAdoptsAllMailCanonicalID(t *testing.T) {
+	require := require.New(t)
+	env := newTestEnv(t)
+	opts := DefaultOptions()
+	opts.SourceType = sourceTypeIMAP
+
+	addr, user := testutil.StartIMAPMemServerWithSpecialUse(
+		t,
+		map[string]int{"All Mail": 0, "INBOX": 0},
+		map[string][]imapv2.MailboxAttr{
+			"All Mail": {imapv2.MailboxAttrAll},
+		},
+	)
+	const messageID = "canonical-all-mail@example.com"
+	testutil.AppendIMAPMessageWithMessageID(t, user, "All Mail", messageID)
+	testutil.AppendIMAPMessageWithMessageID(t, user, "INBOX", messageID)
+
+	firstClient := newSyncTestIMAPClient(
+		t, addr, imapclient.WithFolderFilter([]string{"INBOX"}, nil))
+	env.Syncer = New(firstClient, env.Store, opts)
+	summary := runFullSync(t, env)
+	assertSummary(t, summary, WantSummary{Added: new(int64(1))})
+
+	var sourceMessageID string
+	err := env.Store.DB().QueryRow(
+		`SELECT source_message_id FROM messages LIMIT 1`,
+	).Scan(&sourceMessageID)
+	require.NoError(err)
+	require.Equal("INBOX|1", sourceMessageID)
+	require.NoError(firstClient.Close())
+
+	secondClient := newSyncTestIMAPClient(t, addr)
+	env.Syncer = New(secondClient, env.Store, opts)
+	summary = runFullSync(t, env)
+	assertSummary(t, summary, WantSummary{Updated: new(int64(1))})
+
+	err = env.Store.DB().QueryRow(
+		`SELECT source_message_id FROM messages LIMIT 1`,
+	).Scan(&sourceMessageID)
+	require.NoError(err)
+	assert.Equal(t, "All Mail|1", sourceMessageID)
 }
 
 func TestIMAPHighWaterMoveReplacesMissingIDAndMergesLabels(t *testing.T) {
