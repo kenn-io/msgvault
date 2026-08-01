@@ -188,7 +188,7 @@ func ServeWithOptions(ctx context.Context, opts ServeOptions) error {
 // can complete. Mirrors how ServeWithOptions threads the context through
 // the stdio Listen call.
 func ServeHTTPWithOptions(ctx context.Context, opts ServeOptions, addr, apiKey string) error {
-	_, stdlibServer := newMCPHTTPServer(opts, addr, apiKey)
+	stdlibServer := newMCPHTTPServer(opts, addr, apiKey)
 	fmt.Fprintf(os.Stderr, "Starting MCP server on %s\n", addr)
 
 	errCh := make(chan error, 1)
@@ -213,7 +213,7 @@ func ServeHTTPWithOptions(ctx context.Context, opts ServeOptions, addr, apiKey s
 	}
 }
 
-func newMCPHTTPServer(opts ServeOptions, addr, apiKey string) (*server.StreamableHTTPServer, *http.Server) {
+func newMCPHTTPServer(opts ServeOptions, addr, apiKey string) *http.Server {
 	stdlibServer := &http.Server{
 		Addr:              addr,
 		ReadHeaderTimeout: 10 * time.Second,
@@ -225,7 +225,7 @@ func newMCPHTTPServer(opts ServeOptions, addr, apiKey string) (*server.Streamabl
 	mux := http.NewServeMux()
 	mux.Handle("/mcp", bearerAuthHandler(apiKey, httpServer))
 	stdlibServer.Handler = mux
-	return httpServer, stdlibServer
+	return stdlibServer
 }
 
 func bearerAuthHandler(apiKey string, next http.Handler) http.Handler {

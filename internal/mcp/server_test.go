@@ -3671,10 +3671,13 @@ func TestServeHTTPWithOptions_ContextCancellation(t *testing.T) {
 }
 
 func TestServeHTTPWithOptionsLiveListenerRequiresBearerAuth(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
 	probe, err := net.Listen("tcp", "127.0.0.1:0")
-	require.NoError(t, err)
+	require.NoError(err)
 	addr := probe.Addr().String()
-	require.NoError(t, probe.Close())
+	require.NoError(probe.Close())
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
@@ -3694,31 +3697,38 @@ func TestServeHTTPWithOptionsLiveListenerRequiresBearerAuth(t *testing.T) {
 		select {
 		case <-stopped:
 		case <-time.After(15 * time.Second):
-			assert.Fail(t, "ServeHTTPWithOptions did not stop during test cleanup")
+			assert.Fail("ServeHTTPWithOptions did not stop during test cleanup")
 		}
 	})
 
 	client := &http.Client{Timeout: time.Second}
-	var resp *http.Response
-	require.Eventually(t, func() bool {
+	var responseStatus int
+	var responseChallenge string
+	var responseCloseErr error
+	require.Eventually(func() bool {
 		req, requestErr := http.NewRequest(http.MethodPatch, "http://"+addr+"/mcp", nil)
 		if requestErr != nil {
 			return false
 		}
-		resp, requestErr = client.Do(req)
-		return requestErr == nil
+		resp, requestErr := client.Do(req)
+		if requestErr != nil {
+			return false
+		}
+		responseStatus = resp.StatusCode
+		responseChallenge = resp.Header.Get("WWW-Authenticate")
+		responseCloseErr = resp.Body.Close()
+		return true
 	}, 5*time.Second, 10*time.Millisecond)
-	require.NotNil(t, resp)
-	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
-	assert.Equal(t, "Bearer", resp.Header.Get("WWW-Authenticate"))
-	require.NoError(t, resp.Body.Close())
+	require.NoError(responseCloseErr)
+	assert.Equal(http.StatusUnauthorized, responseStatus)
+	assert.Equal("Bearer", responseChallenge)
 
 	cancel()
 	select {
 	case serveErr := <-done:
-		require.ErrorIs(t, serveErr, context.Canceled)
+		require.ErrorIs(serveErr, context.Canceled)
 	case <-time.After(15 * time.Second):
-		require.Fail(t, "ServeHTTPWithOptions did not return after context cancellation")
+		require.Fail("ServeHTTPWithOptions did not return after context cancellation")
 	}
 }
 
@@ -3853,7 +3863,7 @@ func TestBearerAuthHandlerCompatibilityAndSchemeCase(t *testing.T) {
 }
 
 func TestMCPHTTPServerMountsProtectedEndpoint(t *testing.T) {
-	_, stdlibServer := newMCPHTTPServer(ServeOptions{
+	stdlibServer := newMCPHTTPServer(ServeOptions{
 		Engine:         &querytest.MockEngine{},
 		AttachmentsDir: t.TempDir(),
 		DataDir:        t.TempDir(),
