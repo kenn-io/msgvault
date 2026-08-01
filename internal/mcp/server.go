@@ -2,10 +2,13 @@ package mcp
 
 import (
 	"context"
+	"crypto/sha256"
+	"crypto/subtle"
 	"errors"
 	"fmt"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -184,9 +187,8 @@ func ServeWithOptions(ctx context.Context, opts ServeOptions) error {
 // is shut down gracefully via httpServer.Shutdown so in-flight requests
 // can complete. Mirrors how ServeWithOptions threads the context through
 // the stdio Listen call.
-func ServeHTTPWithOptions(ctx context.Context, opts ServeOptions, addr string) error {
-	s := newMCPServer(opts)
-	httpServer := server.NewStreamableHTTPServer(s)
+func ServeHTTPWithOptions(ctx context.Context, opts ServeOptions, addr, apiKey string) error {
+	httpServer, _ := newMCPHTTPServer(opts, addr, apiKey)
 	fmt.Fprintf(os.Stderr, "Starting MCP server on %s\n", addr)
 
 	errCh := make(chan error, 1)
@@ -209,6 +211,47 @@ func ServeHTTPWithOptions(ctx context.Context, opts ServeOptions, addr string) e
 		_ = httpServer.Shutdown(shutdownCtx)
 		return ctx.Err()
 	}
+}
+
+func newMCPHTTPServer(opts ServeOptions, addr, apiKey string) (*server.StreamableHTTPServer, *http.Server) {
+	stdlibServer := &http.Server{
+		Addr:              addr,
+		ReadHeaderTimeout: 10 * time.Second,
+	}
+	httpServer := server.NewStreamableHTTPServer(
+		newMCPServer(opts),
+		server.WithStreamableHTTPServer(stdlibServer),
+	)
+	mux := http.NewServeMux()
+	mux.Handle("/mcp", bearerAuthHandler(apiKey, httpServer))
+	stdlibServer.Handler = mux
+	return httpServer, stdlibServer
+}
+
+func bearerAuthHandler(apiKey string, next http.Handler) http.Handler {
+	if apiKey == "" {
+		return next
+	}
+
+	expected := sha256.Sum256([]byte(apiKey))
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		values := r.Header.Values("Authorization")
+		authorized := false
+		if len(values) == 1 {
+			scheme, credential, found := strings.Cut(values[0], " ")
+			if found && credential != "" && strings.EqualFold(scheme, "Bearer") {
+				supplied := sha256.Sum256([]byte(credential))
+				authorized = subtle.ConstantTimeCompare(expected[:], supplied[:]) == 1
+			}
+		}
+
+		if !authorized {
+			w.Header().Set("WWW-Authenticate", "Bearer")
+			http.Error(w, http.StatusText(http.StatusUnauthorized), http.StatusUnauthorized)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // Shared search_metadata schema text. The parser implements a subset of Gmail

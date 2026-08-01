@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -13,6 +14,7 @@ import (
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/deletion"
+	mcpserver "go.kenn.io/msgvault/internal/mcp"
 )
 
 func TestMCPCommandUsesDaemonInsteadOfOpeningLocalDatabase(t *testing.T) {
@@ -48,6 +50,59 @@ func TestMCPCommandUsesDaemonInsteadOfOpeningLocalDatabase(t *testing.T) {
 	require.Error(err, "canceled MCP serve should return")
 	require.ErrorIs(err, context.Canceled, "error should preserve context cancellation: %v", err)
 	assert.NotContains(err.Error(), "open database", "MCP command must not open SQLite directly")
+}
+
+func TestMCPCommandForwardsServerAPIKeyToHTTPTransport(t *testing.T) {
+	daemon := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/api/v1/stats", r.URL.Path)
+		assert.Equal(t, "daemon-key", r.Header.Get("X-Api-Key"))
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"total_messages": 0,
+			"total_threads": 0,
+			"total_accounts": 0,
+			"total_labels": 0,
+			"total_attachments": 0,
+			"database_size_bytes": 0
+		}`))
+	}))
+	t.Cleanup(daemon.Close)
+
+	withStoreResolverConfig(t, &config.Config{
+		Data:   config.DataConfig{DataDir: t.TempDir()},
+		Server: config.ServerConfig{APIKey: "mcp-http-key"},
+		Remote: config.RemoteConfig{
+			URL:           daemon.URL,
+			APIKey:        "daemon-key",
+			AllowInsecure: true,
+		},
+	})
+
+	savedHTTPAddr := mcpHTTPAddr
+	savedAllowInsecure := mcpHTTPAllowInsecure
+	savedServeHTTP := serveMCPHTTPWithOptions
+	mcpHTTPAddr = "0.0.0.0:8081"
+	mcpHTTPAllowInsecure = true
+	t.Cleanup(func() {
+		mcpHTTPAddr = savedHTTPAddr
+		mcpHTTPAllowInsecure = savedAllowInsecure
+		serveMCPHTTPWithOptions = savedServeHTTP
+	})
+
+	wantErr := errors.New("stop after capture")
+	var gotAddr, gotAPIKey string
+	serveMCPHTTPWithOptions = func(_ context.Context, _ mcpserver.ServeOptions, addr, apiKey string) error {
+		gotAddr = addr
+		gotAPIKey = apiKey
+		return wantErr
+	}
+
+	mcpCmd.SetContext(context.Background())
+	err := mcpCmd.RunE(mcpCmd, nil)
+
+	require.ErrorIs(t, err, wantErr)
+	assert.Equal(t, "0.0.0.0:8081", gotAddr)
+	assert.Equal(t, "mcp-http-key", gotAPIKey)
 }
 
 func TestDaemonMCPServeOptionsDisablesVectorToolsWhenDaemonVectorUnavailable(t *testing.T) {
@@ -177,13 +232,13 @@ func newMCPDaemonClient(t *testing.T, handler http.HandlerFunc) *daemonclient.Cl
 
 func TestNormalizeMCPHTTPAddr(t *testing.T) {
 	t.Run("bare_port_defaults_to_loopback", func(t *testing.T) {
-		got, err := normalizeMCPHTTPAddr("8080", false)
+		got, err := normalizeMCPHTTPAddr("8080", false, false)
 		require.NoError(t, err)
 		require.Equal(t, "127.0.0.1:8080", got)
 	})
 
 	t.Run("colon_port_defaults_to_loopback", func(t *testing.T) {
-		got, err := normalizeMCPHTTPAddr(":8080", false)
+		got, err := normalizeMCPHTTPAddr(":8080", false, false)
 		require.NoError(t, err)
 		require.Equal(t, "127.0.0.1:8080", got)
 	})
@@ -191,7 +246,7 @@ func TestNormalizeMCPHTTPAddr(t *testing.T) {
 	t.Run("explicit_loopback_passes", func(t *testing.T) {
 		cases := []string{"127.0.0.1:8080", "localhost:8080", "[::1]:8080"}
 		for _, c := range cases {
-			got, err := normalizeMCPHTTPAddr(c, false)
+			got, err := normalizeMCPHTTPAddr(c, false, false)
 			require.NoError(t, err, "%s", c)
 			assert.Equal(t, c, got, "%s: should be unchanged", c)
 		}
@@ -208,25 +263,31 @@ func TestNormalizeMCPHTTPAddr(t *testing.T) {
 			"[]:8080",
 		}
 		for _, c := range cases {
-			_, err := normalizeMCPHTTPAddr(c, false)
+			_, err := normalizeMCPHTTPAddr(c, false, false)
 			require.Error(t, err, "%s: expected refusal", c)
 			assert.ErrorContains(t, err, "--http-allow-insecure", "%s: expected hint", c)
 		}
 	})
 
 	t.Run("non_loopback_allowed_with_optin", func(t *testing.T) {
-		got, err := normalizeMCPHTTPAddr("0.0.0.0:8080", true)
+		got, err := normalizeMCPHTTPAddr("0.0.0.0:8080", true, false)
+		require.NoError(t, err)
+		require.Equal(t, "0.0.0.0:8080", got)
+	})
+
+	t.Run("non_loopback_allowed_with_api_key", func(t *testing.T) {
+		got, err := normalizeMCPHTTPAddr("0.0.0.0:8080", false, true)
 		require.NoError(t, err)
 		require.Equal(t, "0.0.0.0:8080", got)
 	})
 
 	t.Run("empty_rejected", func(t *testing.T) {
-		_, err := normalizeMCPHTTPAddr("", false)
+		_, err := normalizeMCPHTTPAddr("", false, false)
 		require.Error(t, err, "expected error for empty addr")
 	})
 
 	t.Run("garbage_rejected", func(t *testing.T) {
-		_, err := normalizeMCPHTTPAddr("not-a-port", false)
+		_, err := normalizeMCPHTTPAddr("not-a-port", false, false)
 		require.Error(t, err, "expected error for non-port, non-host:port")
 	})
 }

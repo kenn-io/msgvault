@@ -18,6 +18,7 @@ var mcpForceSQL bool
 var mcpNoSQLiteScanner bool
 var mcpHTTPAddr string
 var mcpHTTPAllowInsecure bool
+var serveMCPHTTPWithOptions = mcpserver.ServeHTTPWithOptions
 
 var mcpCmd = &cobra.Command{
 	Use:   "mcp",
@@ -57,11 +58,15 @@ Add to Claude Desktop config:
 		}
 
 		if mcpHTTPAddr != "" {
-			normalized, err := normalizeMCPHTTPAddr(mcpHTTPAddr, mcpHTTPAllowInsecure)
+			normalized, err := normalizeMCPHTTPAddr(
+				mcpHTTPAddr,
+				mcpHTTPAllowInsecure,
+				cfg.Server.APIKey != "",
+			)
 			if err != nil {
 				return usageErr(cmd, err)
 			}
-			return mcpserver.ServeHTTPWithOptions(ctx, opts, normalized)
+			return serveMCPHTTPWithOptions(ctx, opts, normalized, cfg.Server.APIKey)
 		}
 		return mcpserver.ServeWithOptions(ctx, opts)
 	},
@@ -200,12 +205,13 @@ func init() {
 	mcpCmd.Flags().StringVar(&mcpHTTPAddr, "http", "",
 		"Serve over StreamableHTTP on this address (e.g. 127.0.0.1:8080) "+
 			"instead of stdio. Bare port forms (':8080', '8080') bind to "+
-			"loopback only; non-loopback hosts require --http-allow-insecure.")
+			"loopback only; non-loopback hosts require [server].api_key or "+
+			"--http-allow-insecure.")
 	mcpCmd.Flags().BoolVar(&mcpHTTPAllowInsecure, "http-allow-insecure", false,
-		"Allow --http to bind a non-loopback address. The MCP server has no "+
-			"built-in authentication, so any reachable client can read your "+
-			"archive. Only set this on trusted networks (Tailscale, "+
-			"VPN-only) or behind an authenticating reverse proxy.")
+		"Allow --http to bind a non-loopback address without [server].api_key. "+
+			"Any configured key still requires bearer authentication. Without a "+
+			"key, any reachable client can read your archive; only set this behind "+
+			"a trusted network boundary or authenticating reverse proxy.")
 	_ = mcpCmd.Flags().MarkDeprecated("force-sql", "deprecated in 0.17.0; set [analytics].engine = \"sql\" in config.toml")
 	_ = mcpCmd.Flags().MarkDeprecated("no-sqlite-scanner", "deprecated in 0.17.0; cache engine selection is daemon-managed; use [analytics].engine = \"sql\" for live SQL")
 	_ = mcpCmd.Flags().MarkHidden("force-sql")
@@ -213,8 +219,8 @@ func init() {
 }
 
 // normalizeMCPHTTPAddr canonicalises a --http argument and rejects values
-// that would expose the unauthenticated MCP server on a non-loopback
-// interface unless the user has explicitly opted in.
+// that would expose an unauthenticated MCP server on a non-loopback interface
+// unless the user has configured authentication or explicitly opted in.
 //
 // Forms accepted:
 //   - "8080"            → "127.0.0.1:8080" (loopback)
@@ -223,8 +229,8 @@ func init() {
 //   - "127.0.0.1:8080"  → unchanged (loopback, allowed)
 //   - "[::1]:8080"      → unchanged (loopback, allowed)
 //   - "192.168.1.5:8080", "0.0.0.0:8080", "vault.local:8080" → rejected
-//     unless --http-allow-insecure is set
-func normalizeMCPHTTPAddr(addr string, allowInsecure bool) (string, error) {
+//     unless [server].api_key or --http-allow-insecure is set
+func normalizeMCPHTTPAddr(addr string, allowInsecure, authenticated bool) (string, error) {
 	trimmed := strings.TrimSpace(addr)
 	if trimmed == "" {
 		return "", errors.New("--http requires an address")
@@ -250,12 +256,12 @@ func normalizeMCPHTTPAddr(addr string, allowInsecure bool) (string, error) {
 	if isLoopbackHost(host) {
 		return trimmed, nil
 	}
-	if !allowInsecure {
+	if !authenticated && !allowInsecure {
 		return "", fmt.Errorf(
 			"--http %q: refusing to bind a non-loopback address without "+
-				"--http-allow-insecure (the MCP server has no built-in "+
-				"authentication; only opt in on trusted networks or "+
-				"behind an authenticating reverse proxy)", trimmed)
+				"[server].api_key or --http-allow-insecure (configure an API key "+
+				"for bearer authentication, or only opt into unauthenticated "+
+				"access behind a trusted network boundary)", trimmed)
 	}
 	return trimmed, nil
 }
