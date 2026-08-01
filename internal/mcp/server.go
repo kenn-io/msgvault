@@ -188,12 +188,12 @@ func ServeWithOptions(ctx context.Context, opts ServeOptions) error {
 // can complete. Mirrors how ServeWithOptions threads the context through
 // the stdio Listen call.
 func ServeHTTPWithOptions(ctx context.Context, opts ServeOptions, addr, apiKey string) error {
-	httpServer, _ := newMCPHTTPServer(opts, addr, apiKey)
+	_, stdlibServer := newMCPHTTPServer(opts, addr, apiKey)
 	fmt.Fprintf(os.Stderr, "Starting MCP server on %s\n", addr)
 
 	errCh := make(chan error, 1)
 	go func() {
-		if err := httpServer.Start(addr); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		if err := stdlibServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errCh <- err
 			return
 		}
@@ -208,7 +208,7 @@ func ServeHTTPWithOptions(ctx context.Context, opts ServeOptions, addr, apiKey s
 		// usually finish in milliseconds, so 10s is plenty.
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		_ = httpServer.Shutdown(shutdownCtx)
+		_ = stdlibServer.Shutdown(shutdownCtx)
 		return ctx.Err()
 	}
 }
