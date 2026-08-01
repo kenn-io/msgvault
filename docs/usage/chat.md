@@ -39,7 +39,51 @@ msgvault mcp --http 8080
 
 Bare ports and `:port` forms bind to loopback only, so the command above listens on `127.0.0.1:8080`. Explicit loopback addresses such as `127.0.0.1:8080` and `[::1]:8080` are also allowed.
 
-The MCP HTTP server has no built-in authentication. Non-loopback hosts are rejected unless you pass `--http-allow-insecure`; only use that behind a trusted network boundary or an authenticated reverse proxy.
+The endpoint is `http://127.0.0.1:8080/mcp`. To require authentication, set
+the API key in the configuration used by the `msgvault mcp` process:
+
+```toml
+[server]
+api_key = "replace-with-a-long-random-key"
+```
+
+When `[server].api_key` is configured, every HTTP request to `/mcp` must send
+the key as a bearer token, including session `GET` and `DELETE` requests:
+
+```http
+Authorization: Bearer replace-with-a-long-random-key
+```
+
+Missing or incorrect credentials return `401 Unauthorized`. Configure your
+MCP client to send the header on every request. For clients that accept the
+common JSON server configuration shape, that looks like:
+
+```json
+{
+  "mcpServers": {
+    "msgvault": {
+      "url": "http://127.0.0.1:8080/mcp",
+      "headers": {
+        "Authorization": "Bearer replace-with-a-long-random-key"
+      }
+    }
+  }
+}
+```
+
+The key protects loopback and non-loopback listeners alike. A configured key
+also permits a non-loopback `--http` address without
+`--http-allow-insecure`. Without a key, non-loopback addresses remain rejected
+unless you pass `--http-allow-insecure`; use that override only behind an
+authenticating reverse proxy or another trusted network boundary. The built-in
+listener serves plain HTTP, so put non-loopback connections behind TLS or an
+encrypted private network to prevent the bearer token and archive data from
+being exposed in transit.
+
+`[server].api_key` authenticates clients connecting to this MCP HTTP listener.
+It is separate from `[remote].api_key`, which authenticates `msgvault mcp` to a
+selected remote msgvault daemon. Stdio transport does not use bearer
+authentication.
 
 ## Available Tools
 
@@ -178,8 +222,8 @@ msgvault mcp --http 8080
 |---|---|---|
 | `--force-sql` | `false` | Deprecated in 0.17.0; use `[analytics].engine = "sql"` in `config.toml` instead. See [Configuration: analytics](/configuration/#analytics). |
 | `--no-sqlite-scanner` | `false` | Deprecated in 0.17.0; cache engine selection is daemon-managed. Use `[analytics].engine = "sql"` for live SQL. |
-| `--http` | — | Serve over MCP StreamableHTTP instead of stdio. Bare ports bind to `127.0.0.1`. |
-| `--http-allow-insecure` | `false` | Allow non-loopback HTTP binding. Use only behind your own network/auth layer. |
+| `--http` | — | Serve over MCP StreamableHTTP instead of stdio. Bare ports bind to `127.0.0.1`; non-loopback addresses require `[server].api_key` or `--http-allow-insecure`. |
+| `--http-allow-insecure` | `false` | Allow non-loopback HTTP binding without `[server].api_key`. A configured key is still enforced. Without a key, use only behind your own network or authentication layer. |
 
 Deprecated in 0.17.0: MCP analytics behavior moved from per-command flags to daemon configuration. Use `[analytics].engine` and `[analytics].auto_build_cache` in `config.toml` so local and remote daemon behavior stays consistent.
 

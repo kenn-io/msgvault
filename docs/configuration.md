@@ -248,13 +248,13 @@ Use `msgvault logs` to view and tail log files from the selected local or remote
 
 ### `[server]`
 
-Settings for the Web UI and API server started by `msgvault serve`. The same HTTP server is used by remote CLI access and by the local background daemon for archive-access CLI commands. See [Web UI & API Server](/api-server/) for endpoint documentation, or fetch `/openapi.json` from a running server for the generated OpenAPI contract.
+Settings for the Web UI and API server started by `msgvault serve`. The same HTTP server is used by remote CLI access and by the local background daemon for archive-access CLI commands. The `api_key` setting is also reused for inbound bearer authentication when `msgvault mcp --http` starts a separate Streamable HTTP listener; that listener's address comes from the `--http` flag. See [Web UI & API Server](/api-server/) for API endpoint documentation and [MCP Server](/usage/chat/#streamablehttp-transport) for MCP client setup, or fetch `/openapi.json` from a running server for the generated OpenAPI contract.
 
 | Key | Default | Description |
 |---|---|---|
 | `api_port` | `0` (auto-select) | Port the server listens on; `0` picks an open port at startup and clients discover it automatically. Set a fixed port for remote/NAS deployments. |
 | `bind_addr` | `127.0.0.1` | Bind address |
-| `api_key` | — | API key for authentication |
+| `api_key` | — | API key for daemon/API authentication and bearer authentication on `msgvault mcp --http` |
 | `allow_insecure` | `false` | Allow non-loopback binding without `api_key` |
 | `cors_origins` | `[]` | Allowed CORS origins |
 | `cors_credentials` | `false` | Allow credentials in CORS requests |
@@ -272,6 +272,11 @@ programmatic clients continue to send the configured key. For remote browser
 access, terminate TLS at a reverse proxy and list that proxy—not arbitrary
 clients—in `trusted_proxies`. See [Web UI](/web-ui/) for the complete security
 model and the plain-HTTP warning.
+
+For MCP Streamable HTTP, send `[server].api_key` as `Authorization: Bearer
+<key>` on every `/mcp` request. This inbound credential is independent of
+`[remote].api_key`, which authenticates `msgvault mcp` when it connects to a
+remote daemon.
 
 ### `[web]`
 

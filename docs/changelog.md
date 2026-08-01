@@ -7,6 +7,13 @@ All notable changes to msgvault, grouped by release.
 
 ## Unreleased
 
+**New features**
+
+- MCP Streamable HTTP can reuse `[server].api_key` for bearer authentication.
+  Authenticated listeners may bind beyond loopback without the insecure
+  override, while keyless non-loopback listeners still require an explicit
+  `--http-allow-insecure` opt-in.
+
 **Bug fixes**
 
 - Daemon-backed CLI, TUI, MCP, statistics, and backup operations now wait for
