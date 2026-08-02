@@ -1,11 +1,21 @@
-# msgvault
+<p align="center">
+  <img src=".github/assets/msgvault-mark.svg" width="160" height="160" alt="msgvault logo">
+</p>
 
-[![Go 1.26+](https://img.shields.io/badge/Go-1.26+-00ADD8?logo=go)](https://go.dev)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Docs](https://img.shields.io/badge/Docs-msgvault.io-blue)](https://msgvault.io)
-[![Discord](https://img.shields.io/badge/Discord-Join-5865F2?logo=discord&logoColor=white)](https://discord.gg/fDnmxB8Wkq)
+<h1 align="center">msgvault</h1>
 
-[Documentation](https://msgvault.io) · [Setup Guide](https://msgvault.io/guides/oauth-setup/) · [Interactive TUI](https://msgvault.io/usage/tui/)
+<p align="center">
+  <a href="https://go.dev"><img src="https://img.shields.io/badge/Go-1.26+-00ADD8?logo=go" alt="Go 1.26+"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT"></a>
+  <a href="https://msgvault.io"><img src="https://img.shields.io/badge/Docs-msgvault.io-blue" alt="Docs"></a>
+  <a href="https://discord.gg/fDnmxB8Wkq"><img src="https://img.shields.io/badge/Discord-Join-5865F2?logo=discord&amp;logoColor=white" alt="Discord"></a>
+</p>
+
+<p align="center">
+  <a href="https://msgvault.io">Documentation</a> ·
+  <a href="https://msgvault.io/guides/oauth-setup/">Setup Guide</a> ·
+  <a href="https://msgvault.io/usage/tui/">Interactive TUI</a>
+</p>
 
 > **Alpha software.** APIs, storage format, and CLI flags may change without notice. Back up your data.
 
