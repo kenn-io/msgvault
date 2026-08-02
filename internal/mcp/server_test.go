@@ -100,16 +100,17 @@ type searchMessageRow struct {
 }
 
 type getMessageResp struct {
-	ID             int64  `json:"id"`
-	Subject        string `json:"subject"`
-	BodyText       string `json:"body_text"`
-	BodyHTML       string `json:"body_html"`
-	BodyFormat     string `json:"body_format"`
-	BodyLength     int    `json:"body_length"`
-	BodyReturned   int    `json:"body_returned"`
-	Offset         int    `json:"offset"`
-	HasMore        bool   `json:"has_more"`
-	ConversationID int64  `json:"conversation_id"`
+	ID             int64           `json:"id"`
+	Subject        string          `json:"subject"`
+	From           []query.Address `json:"from"`
+	BodyText       string          `json:"body_text"`
+	BodyHTML       string          `json:"body_html"`
+	BodyFormat     string          `json:"body_format"`
+	BodyLength     int             `json:"body_length"`
+	BodyReturned   int             `json:"body_returned"`
+	Offset         int             `json:"offset"`
+	HasMore        bool            `json:"has_more"`
+	ConversationID int64           `json:"conversation_id"`
 }
 
 type paginatedInMessageMatches struct {
@@ -1669,6 +1670,23 @@ func TestGetMessage(t *testing.T) {
 		assert.Equal(11, msg.BodyLength, "body_length")
 		assert.Equal(11, msg.BodyReturned, "body_returned")
 		assert.False(msg.HasMore, "has_more")
+	})
+
+	t.Run("sender-id-only message", func(t *testing.T) {
+		f := storetest.New(t)
+		senderID := f.EnsureParticipant("sender@example.com", "Test Sender", "example.com")
+		messageID := f.NewMessage().
+			WithSourceMessageID("beeper-sender-only").
+			WithSubject("Synthetic Beeper message").
+			Create(t, f.Store)
+		_, err := f.Store.DB().Exec(f.Store.Rebind(
+			`UPDATE messages SET message_type = 'beeper', sender_id = ? WHERE id = ?`,
+		), senderID, messageID)
+		require.NoError(t, err, "set direct sender")
+
+		realHandlers := newTestHandlers(query.NewEngine(f.Store.DB(), f.Store.IsPostgreSQL()))
+		msg := runTool[getMessageResp](t, "get_message", realHandlers.getMessage, map[string]any{"id": float64(messageID)})
+		assert.Equal(t, []query.Address{{Email: "sender@example.com", Name: "Test Sender"}}, msg.From)
 	})
 
 	t.Run("html-only body returns html slice", func(t *testing.T) {

@@ -266,11 +266,30 @@ func fetchMessageLabelsDetail(ctx context.Context, db *sql.DB, rebind rebindFunc
 // rebind rewrites the ? placeholders for the driver in use.
 func fetchParticipantsShared(ctx context.Context, db *sql.DB, rebind rebindFunc, tablePrefix string, msg *MessageDetail) error {
 	rows, err := db.QueryContext(ctx, rebind(fmt.Sprintf(`
-		SELECT mr.recipient_type, COALESCE(NULLIF(p.email_address, ''), NULLIF(p.phone_number, ''), ''), %s
+		SELECT mr.recipient_type,
+		       COALESCE(NULLIF(p.email_address, ''), NULLIF(p.phone_number, ''), ''),
+		       %s
 		FROM %smessage_recipients mr
 		JOIN %sparticipants p ON p.id = mr.participant_id
 		WHERE mr.message_id = ?
-	`, recipientNameExpr("mr", "p"), tablePrefix, tablePrefix)), msg.ID)
+		  AND mr.recipient_type IN ('from', 'to', 'cc', 'bcc')
+		UNION ALL
+		SELECT 'from',
+		       COALESCE(NULLIF(p.email_address, ''), NULLIF(p.phone_number, ''), ''),
+		       COALESCE(%s, '')
+		FROM %smessages m
+		JOIN %sparticipants p ON p.id = m.sender_id
+		WHERE m.id = ?
+		  AND NOT EXISTS (
+			SELECT 1
+			FROM %smessage_recipients mr_explicit
+			WHERE mr_explicit.message_id = m.id
+			  AND mr_explicit.recipient_type = 'from'
+		  )
+	`,
+		recipientNameExpr("mr", "p"), tablePrefix, tablePrefix,
+		participantNameExpr("p"), tablePrefix, tablePrefix, tablePrefix,
+	)), msg.ID, msg.ID)
 	if err != nil {
 		return err
 	}
