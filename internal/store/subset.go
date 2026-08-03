@@ -2,6 +2,7 @@ package store
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -21,18 +22,6 @@ type CopyResult struct {
 	DBSize        int64
 	Elapsed       time.Duration
 }
-
-const messageCopyColumns = `
-	id, conversation_id, source_id, source_message_id,
-	rfc822_message_id, message_type,
-	sent_at, received_at, read_at, delivered_at, internal_date,
-	sender_id, is_from_me, source_is_from_me, identity_is_from_me,
-	subject, snippet, reply_to_message_id, thread_position,
-	is_read, is_delivered, is_sent, is_edited, is_forwarded,
-	size_estimate, has_attachments, attachment_count,
-	deleted_at, deleted_from_source_at, delete_batch_id,
-	archived_at, indexing_version, last_modified, metadata, embed_gen
-`
 
 // CopySubset copies rowCount most recent messages (and all referenced
 // data) from srcDBPath into a new database in dstDir. The destination
@@ -428,12 +417,8 @@ func copyData(tx *sql.Tx, rowCount int, includeIdentity bool) (*CopyResult, erro
 		return nil, fmt.Errorf("copy conversation_participants: %w", err)
 	}
 
-	if _, err := tx.Exec(`
-		INSERT INTO messages (` + messageCopyColumns + `)
-		SELECT ` + messageCopyColumns + `
-		FROM src.messages
-		WHERE id IN (SELECT id FROM selected_messages)`); err != nil {
-		return nil, fmt.Errorf("copy messages: %w", err)
+	if err := copyMessages(tx); err != nil {
+		return nil, err
 	}
 
 	// Null out reply_to_message_id when the parent message wasn't
@@ -506,6 +491,116 @@ func copyData(tx *sql.Tx, rowCount int, includeIdentity bool) (*CopyResult, erro
 	}
 
 	return result, nil
+}
+
+// errNoCommonMessageColumns reports that the source and destination messages
+// tables have no column name in common, so there is nothing to copy.
+var errNoCommonMessageColumns = errors.New(
+	"source and destination share no messages columns")
+
+// copyMessages copies the selected messages, naming the columns the source and
+// destination have in common, read from the two schemas at copy time.
+//
+// A column the source lacks is left out of the INSERT, so the destination's own
+// DEFAULT, where it has one, supplies it. Columns the source has and the
+// destination does not are dropped.
+func copyMessages(tx *sql.Tx) error {
+	cols, err := commonColumns(tx, "messages")
+	if err != nil {
+		return fmt.Errorf("copy messages: %w", err)
+	}
+	if len(cols) == 0 {
+		return fmt.Errorf("copy messages: %w", errNoCommonMessageColumns)
+	}
+	list := strings.Join(cols, ", ")
+	if _, err := tx.Exec(fmt.Sprintf(`
+		INSERT INTO messages (%s) SELECT %s FROM src.messages
+		WHERE id IN (SELECT id FROM selected_messages)`, list, list)); err != nil {
+		return fmt.Errorf("copy messages: %w", err)
+	}
+	return nil
+}
+
+// commonColumns returns the quoted names of the columns `table` has in both the
+// destination (main) and the attached source, in destination declaration order.
+// Names are matched the way SQLite matches identifiers — case-insensitively
+// over ASCII only, see foldIdentifier — and the destination's spelling is
+// emitted for both sides of the copy.
+//
+// A returned name is interpolated into the copy's SQL, so one containing a
+// double quote is rejected rather than quoted. Names outside the intersection
+// are not interpolated and so are not checked.
+func commonColumns(tx *sql.Tx, table string) ([]string, error) {
+	dst, err := schemaColumns(tx, "main", table)
+	if err != nil {
+		return nil, err
+	}
+	src, err := schemaColumns(tx, "src", table)
+	if err != nil {
+		return nil, err
+	}
+	inSrc := make(map[string]struct{}, len(src))
+	for _, name := range src {
+		inSrc[foldIdentifier(name)] = struct{}{}
+	}
+	common := make([]string, 0, len(dst))
+	for _, name := range dst {
+		if _, ok := inSrc[foldIdentifier(name)]; !ok {
+			continue
+		}
+		if strings.Contains(name, `"`) {
+			return nil, fmt.Errorf(
+				"%s column name contains a double quote: %q", table, name)
+		}
+		common = append(common, `"`+name+`"`)
+	}
+	return common, nil
+}
+
+// foldIdentifier folds an unquoted-identifier name to the form SQLite compares
+// on: A-Z map to a-z and every other byte is left alone.
+//
+// Do not "simplify" this to strings.ToLower. That applies Unicode case
+// conversion, which is strictly broader than SQLite's, whose built-in collating
+// sequences fold only ASCII (see sqlite3_stricmp). Go lowers, for example,
+// "İdentity_is_from_me" (U+0130, capital I with dot above) to
+// "identity_is_from_me", which SQLite treats as a different identifier. A
+// source-only column so named would then be misclassified as common to both
+// schemas, and the copy would name a column src.messages does not have. With
+// SQLite's default double-quoted-string misfeature the quoted name degrades to
+// a string literal and the copy silently stores that text in the destination
+// column instead of its DEFAULT; with SQLITE_DQS=0 the copy fails outright.
+func foldIdentifier(name string) string {
+	folded := []byte(name)
+	for i, c := range folded {
+		if c >= 'A' && c <= 'Z' {
+			folded[i] = c + ('a' - 'A')
+		}
+	}
+	return string(folded)
+}
+
+// schemaColumns lists a table's column names in declaration order.
+func schemaColumns(tx *sql.Tx, schema, table string) ([]string, error) {
+	rows, err := tx.Query(
+		`SELECT name FROM pragma_table_info(?, ?) ORDER BY cid`, table, schema)
+	if err != nil {
+		return nil, fmt.Errorf("list %s.%s columns: %w", schema, table, err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var names []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, fmt.Errorf("scan %s.%s column: %w", schema, table, err)
+		}
+		names = append(names, name)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate %s.%s columns: %w", schema, table, err)
+	}
+	return names, nil
 }
 
 // updateConversationCounts updates the denormalized counts on

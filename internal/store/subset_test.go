@@ -1161,3 +1161,244 @@ func TestCopySubset_ControlCharInPath(t *testing.T) {
 		assert.Error(t, err, "CopySubset(%q) should reject control chars", p)
 	}
 }
+
+// TestCopySubset_LegacySourceMissingAttributionColumns covers a source archive
+// whose messages table lacks a column the destination schema has.
+//
+// source_is_from_me and identity_is_from_me are both added to older archives
+// by SQLiteDialect.LegacyColumnMigrations(), so an archive written before
+// those migrations legitimately lacks them. The copy intersects the source and
+// destination messages columns at run time, so such an archive copies the
+// columns the two schemas share and leaves the absent ones at the
+// destination's own default.
+//
+// TestCopySubset_LegacySourceWithoutOAuthApp rebuilds its table via CREATE
+// TABLE ... AS SELECT to avoid ALTER TABLE ... DROP COLUMN, which SQLite only
+// added in 3.35; this test does use DROP COLUMN and so needs SQLite 3.35 or
+// newer. The messages table cannot be rebuilt the other way: the triggers
+// trg_message_bodies_last_modified_upd and trg_message_bodies_last_modified_ins
+// update messages, which resolves to main.messages, so the rename back — ALTER
+// TABLE ... RENAME TO messages — fails its schema reparse with "error in
+// trigger trg_message_bodies_last_modified_upd: no such table: main.messages".
+// Neither attribution column is indexed or named by any trigger or view, so
+// ALTER TABLE ... DROP COLUMN works directly.
+func TestCopySubset_LegacySourceMissingAttributionColumns(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	srcDir := t.TempDir()
+	dstDir := filepath.Join(t.TempDir(), "dst")
+
+	srcDB := createTestSourceDB(t, srcDir, 3)
+
+	db, err := sql.Open("sqlite3", srcDB+"?_foreign_keys=OFF")
+	require.NoError(err, "open source db")
+
+	for _, col := range []string{"source_is_from_me", "identity_is_from_me"} {
+		_, err = db.Exec(
+			`ALTER TABLE messages DROP COLUMN ` + col,
+		)
+		require.NoError(err, "drop messages.%s", col)
+	}
+
+	var srcCount int
+	require.NoError(db.QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&srcCount),
+		"count source messages")
+	require.Equal(3, srcCount, "source messages")
+	require.NoError(db.Close(), "close source db")
+
+	result, err := CopySubset(srcDB, dstDir, 100, false)
+	require.NoError(err, "CopySubset from a source missing attribution columns")
+	assert.Equal(int64(srcCount), result.Messages, "Messages")
+
+	dstDB, err := sql.Open("sqlite3", filepath.Join(dstDir, "msgvault.db"))
+	require.NoError(err, "open destination db")
+	defer func() { _ = dstDB.Close() }()
+
+	var dstCount int
+	require.NoError(
+		dstDB.QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&dstCount),
+		"count destination messages")
+	assert.Equal(srcCount, dstCount, "destination message count")
+
+	// The absent columns take the destination schema's defaults:
+	// source_is_from_me has none (NULL), identity_is_from_me defaults to FALSE.
+	var sourceDefaults int
+	require.NoError(dstDB.QueryRow(
+		`SELECT COUNT(*) FROM messages WHERE source_is_from_me IS NULL`,
+	).Scan(&sourceDefaults), "count source_is_from_me defaults")
+	assert.Equal(dstCount, sourceDefaults,
+		"source_is_from_me should hold its schema default (NULL)")
+
+	var identityDefaults int
+	require.NoError(dstDB.QueryRow(
+		`SELECT COUNT(*) FROM messages WHERE identity_is_from_me = 0`,
+	).Scan(&identityDefaults), "count identity_is_from_me defaults")
+	assert.Equal(dstCount, identityDefaults,
+		"identity_is_from_me should hold its schema default (FALSE)")
+}
+
+// TestCopySubset_SourceOnlyColumnWithQuoteInName covers a source archive whose
+// messages table carries a column the destination schema does not have, and
+// whose name contains a double quote. The column falls outside the two
+// schemas' intersection, so it is never interpolated into the copy's SQL and
+// the copy proceeds without it.
+func TestCopySubset_SourceOnlyColumnWithQuoteInName(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	srcDir := t.TempDir()
+	dstDir := filepath.Join(t.TempDir(), "dst")
+
+	srcDB := createTestSourceDB(t, srcDir, 3)
+
+	db, err := sql.Open("sqlite3", srcDB+"?_foreign_keys=OFF")
+	require.NoError(err, "open source db")
+	_, err = db.Exec(`ALTER TABLE messages ADD COLUMN "we""ird" TEXT`)
+	require.NoError(err, `add messages."we""ird"`)
+	require.NoError(db.Close(), "close source db")
+
+	result, err := CopySubset(srcDB, dstDir, 100, false)
+	require.NoError(err, "CopySubset from a source with a quoted column name")
+	assert.Equal(int64(3), result.Messages, "Messages")
+
+	dstDB, err := sql.Open("sqlite3", filepath.Join(dstDir, "msgvault.db"))
+	require.NoError(err, "open destination db")
+	defer func() { _ = dstDB.Close() }()
+
+	var dstCount int
+	require.NoError(
+		dstDB.QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&dstCount),
+		"count destination messages")
+	assert.Equal(3, dstCount, "destination message count")
+}
+
+// TestCopySubset_CommonColumnWithQuoteRejected covers a column present in both
+// schemas whose name contains a double quote. That name would be interpolated
+// into the copy's SQL, so commonColumns refuses it instead of quoting it.
+func TestCopySubset_CommonColumnWithQuoteRejected(t *testing.T) {
+	require := require.New(t)
+	dir := t.TempDir()
+	srcPath := filepath.Join(dir, "src.db")
+	dstPath := filepath.Join(dir, "dst.db")
+
+	for _, path := range []string{srcPath, dstPath} {
+		db, err := sql.Open("sqlite3", path)
+		require.NoError(err, "open %s", path)
+		_, err = db.Exec(`CREATE TABLE t (id INTEGER, "we""ird" TEXT)`)
+		require.NoError(err, "create t in %s", path)
+		require.NoError(db.Close(), "close %s", path)
+	}
+
+	db, err := sql.Open("sqlite3", dstPath)
+	require.NoError(err, "open destination db")
+	defer func() { _ = db.Close() }()
+	_, err = db.Exec(fmt.Sprintf("ATTACH DATABASE '%s' AS src", srcPath))
+	require.NoError(err, "attach source db")
+
+	tx, err := db.Begin()
+	require.NoError(err, "begin transaction")
+	defer func() { _ = tx.Rollback() }()
+
+	cols, err := commonColumns(tx, "t")
+	require.Error(err, "commonColumns should reject a quoted column name")
+	require.Nil(cols, "columns")
+	require.Contains(err.Error(), "double quote", "error message")
+}
+
+// TestCopySubset_SourceColumnCaseDiffers covers a source archive that declares
+// a messages column in a different case than the destination schema. SQLite
+// compares identifiers case-insensitively, so the two are the same column and
+// its values must be copied rather than left at the destination's default.
+func TestCopySubset_SourceColumnCaseDiffers(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	srcDir := t.TempDir()
+	dstDir := filepath.Join(t.TempDir(), "dst")
+
+	srcDB := createTestSourceDB(t, srcDir, 3)
+
+	db, err := sql.Open("sqlite3", srcDB+"?_foreign_keys=OFF")
+	require.NoError(err, "open source db")
+	_, err = db.Exec(`ALTER TABLE messages DROP COLUMN identity_is_from_me`)
+	require.NoError(err, "drop messages.identity_is_from_me")
+	_, err = db.Exec(`ALTER TABLE messages ADD COLUMN Identity_Is_From_Me BOOLEAN`)
+	require.NoError(err, "add messages.Identity_Is_From_Me")
+	_, err = db.Exec(`UPDATE messages SET Identity_Is_From_Me = TRUE`)
+	require.NoError(err, "set messages.Identity_Is_From_Me")
+	require.NoError(db.Close(), "close source db")
+
+	result, err := CopySubset(srcDB, dstDir, 100, false)
+	require.NoError(err, "CopySubset from a source whose column case differs")
+	assert.Equal(int64(3), result.Messages, "Messages")
+
+	dstDB, err := sql.Open("sqlite3", filepath.Join(dstDir, "msgvault.db"))
+	require.NoError(err, "open destination db")
+	defer func() { _ = dstDB.Close() }()
+
+	var copied int
+	require.NoError(dstDB.QueryRow(
+		`SELECT COUNT(*) FROM messages WHERE identity_is_from_me = 1`,
+	).Scan(&copied), "count copied identity_is_from_me")
+	assert.Equal(3, copied,
+		"identity_is_from_me should carry the source's values, not the default")
+}
+
+// TestCopySubset_SourceOnlyColumnUnicodeLookalike covers a source archive whose
+// messages table carries a source-only column whose name differs from a
+// destination column's only under Unicode case conversion: "İ" (U+0130, capital
+// I with dot above) where the destination has ASCII "i".
+//
+// SQLite folds identifiers over ASCII only, so İdentity_is_from_me and
+// identity_is_from_me are two different columns and the source simply lacks the
+// destination's. Go's strings.ToLower folds them together, which would put
+// identity_is_from_me in the copy's column list and make the copy select a
+// column src.messages does not have; SQLite's double-quoted-string misfeature
+// would then read that name as a string literal and store the text
+// "identity_is_from_me" in every destination row. The destination's own default
+// (FALSE) must win instead.
+//
+// This is the non-ASCII counterpart to
+// TestCopySubset_SourceColumnCaseDiffers, which covers the ordinary ASCII case
+// where the two spellings are the same column.
+func TestCopySubset_SourceOnlyColumnUnicodeLookalike(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	srcDir := t.TempDir()
+	dstDir := filepath.Join(t.TempDir(), "dst")
+
+	srcDB := createTestSourceDB(t, srcDir, 3)
+
+	db, err := sql.Open("sqlite3", srcDB+"?_foreign_keys=OFF")
+	require.NoError(err, "open source db")
+	_, err = db.Exec(`ALTER TABLE messages DROP COLUMN identity_is_from_me`)
+	require.NoError(err, "drop messages.identity_is_from_me")
+	_, err = db.Exec(`ALTER TABLE messages ADD COLUMN "İdentity_is_from_me" TEXT`)
+	require.NoError(err, "add messages.İdentity_is_from_me")
+	_, err = db.Exec(`UPDATE messages SET "İdentity_is_from_me" = 'source value'`)
+	require.NoError(err, "set messages.İdentity_is_from_me")
+	require.NoError(db.Close(), "close source db")
+
+	result, err := CopySubset(srcDB, dstDir, 100, false)
+	require.NoError(err, "CopySubset from a source with a Unicode-lookalike column")
+	assert.Equal(int64(3), result.Messages, "Messages")
+
+	dstDB, err := sql.Open("sqlite3", filepath.Join(dstDir, "msgvault.db"))
+	require.NoError(err, "open destination db")
+	defer func() { _ = dstDB.Close() }()
+
+	var defaulted int
+	require.NoError(dstDB.QueryRow(
+		`SELECT COUNT(*) FROM messages WHERE identity_is_from_me = 0`,
+	).Scan(&defaulted), "count identity_is_from_me defaults")
+	assert.Equal(3, defaulted,
+		"identity_is_from_me should hold the destination default (FALSE), "+
+			"the source not having that column")
+
+	// Name the failure the Unicode fold produces: the quoted column name
+	// degrading to a string literal writes its own text into every row.
+	var literals int
+	require.NoError(dstDB.QueryRow(
+		`SELECT COUNT(*) FROM messages WHERE identity_is_from_me = 'identity_is_from_me'`,
+	).Scan(&literals), "count identity_is_from_me string literals")
+	assert.Equal(0, literals,
+		"identity_is_from_me must not hold its own name as a string")
+}
