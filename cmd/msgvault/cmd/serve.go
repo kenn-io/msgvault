@@ -1060,8 +1060,9 @@ func (a *storeAPIAdapter) runCLISyncWithRunner(
 	}, emitWarning)
 }
 
-// emitFolderArgs appends a --folders/<--skip-folders> flag for each
-// element in values, e.g. "--folders Inbox --folders Archive".
+// emitFolderArgs appends a --folder/--skip-folder flag for each
+// element in values, e.g. "--folder Inbox --folder Archive".
+
 func emitFolderArgs(args []string, flag string, values []string) []string {
 	for _, v := range values {
 		args = append(args, flag, v)
@@ -1087,16 +1088,16 @@ func cliSyncSubprocessArgs(req api.CLISyncRequest) []string {
 		if req.Limit > 0 {
 			args = append(args, "--limit", strconv.Itoa(req.Limit))
 		}
-		args = emitFolderArgs(args, "--folders", req.Folders)
-		args = emitFolderArgs(args, "--skip-folders", req.SkipFolders)
+		args = emitFolderArgs(args, "--folder", req.Folders)
+		args = emitFolderArgs(args, "--skip-folder", req.SkipFolders)
 		if req.Email != "" {
 			args = append(args, req.Email)
 		}
 		return args
 	}
 	args := []string{syncIncrementalCmd.Name()}
-	args = emitFolderArgs(args, "--folders", req.Folders)
-	args = emitFolderArgs(args, "--skip-folders", req.SkipFolders)
+	args = emitFolderArgs(args, "--folder", req.Folders)
+	args = emitFolderArgs(args, "--skip-folder", req.SkipFolders)
 	if req.Email != "" {
 		args = append(args, req.Email)
 	}

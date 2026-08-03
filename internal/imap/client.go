@@ -47,7 +47,7 @@ func WithListProgress(fn func(done, total int, mailbox string, found, unchanged 
 }
 
 // WithFolderFilter sets folder include/exclude lists for a single sync run.
-// --folders/--skip-folders replaces or filters the config's folder list.
+// --folder/--skip-folder replaces or filters the config's folder list.
 func WithFolderFilter(include, exclude []string) Option {
 	return func(c *Client) {
 		c.folderFilterInclude = include
@@ -569,7 +569,7 @@ func (c *Client) buildMessageListCache(ctx context.Context) error {
 
 	// Apply folder selection once against the full LIST result so CLI
 	// includes can override configuration, and CLI exclusions apply
-	// regardless of whether --folders was provided.
+	// regardless of whether --folder was provided.
 	allMailboxes = filterMailboxes(
 		allMailboxes,
 		c.effectiveFolderIncludeLocked(),
@@ -782,7 +782,7 @@ func (c *Client) mailboxIncludedLocked(mailbox string) bool {
 // effectiveFolderIncludeLocked returns the active folder allow list. Caller
 // must hold mu.
 func (c *Client) effectiveFolderIncludeLocked() []string {
-	// CLI --folders replaces config folders when set; otherwise use
+	// CLI --folder replaces config folders when set; otherwise use
 	// config.Folders.
 	if len(c.folderFilterInclude) > 0 {
 		return c.folderFilterInclude

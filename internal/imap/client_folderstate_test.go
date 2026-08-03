@@ -347,7 +347,7 @@ func TestWithFolderFilter_ConfigFoldersRespectsIncludeList(t *testing.T) {
 	assert.NotContains(states, "Drafts")
 }
 
-// TestWithFolderFilter_CLIReplacingConfig verifies that a CLI --folders
+// TestWithFolderFilter_CLIReplacingConfig verifies that a CLI --folder
 // include filter fully replaces the config's include list when set.
 // CLI exclusions apply on top of the effective include regardless.
 func TestWithFolderFilter_CLIReplacingConfig(t *testing.T) {
@@ -355,7 +355,7 @@ func TestWithFolderFilter_CLIReplacingConfig(t *testing.T) {
 	assert := assert.New(t)
 
 	// Case 1: CLI include replaces config include — config says
-	// Archive, --folders says INBOX, expect only INBOX.
+	// Archive, --folder says INBOX, expect only INBOX.
 	t.Run("CLI include replaces config include", func(t *testing.T) {
 		addr, _ := testutil.StartIMAPMemServer(t, map[string]int{"INBOX": 2, "Archive": 3, "Trash": 1})
 
@@ -383,8 +383,8 @@ func TestWithFolderFilter_CLIReplacingConfig(t *testing.T) {
 	})
 
 	// Case 2: CLI include + CLI exclude applied together — config
-	// includes nothing, --folders=["Inbox,Archive"],
-	// --skip-folders=["Inbox"]. Expect only Archive.
+	// includes nothing, --folder=["Inbox,Archive"],
+	// --skip-folder=["Inbox"]. Expect only Archive.
 	t.Run("CLI include and CLI exclude combine", func(t *testing.T) {
 		addr, _ := testutil.StartIMAPMemServer(t, map[string]int{"INBOX": 2, "Archive": 3, "Trash": 1})
 
@@ -412,8 +412,8 @@ func TestWithFolderFilter_CLIReplacingConfig(t *testing.T) {
 }
 
 // TestWithFolderFilter_CLIExcludeWithConfigIncludes verifies that when
-// only --skip-folders is set (CLI exclude), it excludes from the config's
-// include list. With no config Folders set, --skip-folders excludes from
+// only --skip-folder is set (CLI exclude), it excludes from the config's
+// include list. With no config Folders set, --skip-folder excludes from
 // all mailboxes.
 func TestWithFolderFilter_CLIExcludeConfigIncludes(t *testing.T) {
 	require := require.New(t)

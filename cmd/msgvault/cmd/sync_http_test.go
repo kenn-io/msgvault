@@ -43,13 +43,13 @@ func TestSyncUsesConfiguredRemoteHTTPAndPreservesOutput(t *testing.T) {
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 	cmd := &cobra.Command{Use: syncIncrementalCmd.Use, Args: syncIncrementalCmd.Args, RunE: syncIncrementalCmd.RunE}
-	cmd.Flags().StringArrayVar(&syncFolders, "folders", []string{}, "IMAP folders to include")
-	cmd.Flags().StringArrayVar(&syncSkipFolders, "skip-folders", []string{}, "IMAP folders to exclude")
+	cmd.Flags().StringArrayVar(&syncFolders, "folder", []string{}, "IMAP folders to include")
+	cmd.Flags().StringArrayVar(&syncSkipFolders, "skip-folder", []string{}, "IMAP folders to exclude")
 	cmd.SetArgs([]string{
 		"alice@example.com",
-		"--folders", "INBOX",
-		"--folders", "Archive",
-		"--skip-folders", "Trash",
+		"--folder", "INBOX",
+		"--folder", "Archive",
+		"--skip-folder", "Trash",
 	})
 	cmd.SetOut(&stdout)
 	cmd.SetErr(&stderr)

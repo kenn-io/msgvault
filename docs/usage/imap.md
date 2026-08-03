@@ -45,20 +45,20 @@ msgvault shows `??`, but you can still use the folder name in a filter.
 
 ## Sync Only Selected Folders
 
-Repeat `--folders` once for each folder you want to include:
+Repeat `--folder` once for each folder you want to include:
 
 ```bash
 msgvault sync-full you@example.com \
-  --folders INBOX \
-  --folders Archive
+  --folder INBOX \
+  --folder Archive
 ```
 
 To scan the same folders during a later sync:
 
 ```bash
 msgvault sync you@example.com \
-  --folders INBOX \
-  --folders Archive
+  --folder INBOX \
+  --folder Archive
 ```
 
 Each flag takes one complete folder name. Repeat the flag instead of joining
@@ -66,7 +66,7 @@ names with commas. This also means a folder whose name contains a comma works
 without special handling:
 
 ```bash
-msgvault sync-full you@example.com --folders "Receipts, 2025"
+msgvault sync-full you@example.com --folder "Receipts, 2025"
 ```
 
 ## Skip Selected Folders

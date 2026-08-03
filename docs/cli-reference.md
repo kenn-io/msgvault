@@ -110,7 +110,7 @@ an approximate message count for each folder.
 msgvault list-folders [account]
 ```
 
-Use the folder names in repeated `--folders` or `--skip-folders` flags on
+Use the folder names in repeated `--folder` or `--skip-folder` flags on
 `sync-full` and `sync`. When the account argument is omitted, the command lists
 folders for every configured IMAP account. See
 [IMAP Folder Sync](/usage/imap/) for examples and matching rules.
@@ -206,8 +206,8 @@ msgvault sync-full [email] [flags]
 | `--before YYYY-MM-DD` | Only messages before this date |
 | `--query` | Gmail search query filter |
 | `--noresume` | Ignore checkpoints, start fresh |
-| `--folders NAME` | Scan this IMAP folder (repeatable) |
-| `--skip-folders NAME` | Skip this IMAP folder (repeatable) |
+| `--folder NAME` | Scan this IMAP folder (repeatable) |
+| `--skip-folder NAME` | Skip this IMAP folder (repeatable) |
 | `--verbose` | Detailed progress output |
 
 The CLI sends the sync request to the configured remote server or local daemon
@@ -227,8 +227,8 @@ msgvault sync [email] [flags]
 
 | Flag | Description |
 |---|---|
-| `--folders NAME` | Scan this IMAP folder (repeatable) |
-| `--skip-folders NAME` | Skip this IMAP folder (repeatable) |
+| `--folder NAME` | Scan this IMAP folder (repeatable) |
+| `--skip-folder NAME` | Skip this IMAP folder (repeatable) |
 
 The CLI sends the incremental sync request to the configured remote server or
 local daemon and streams the daemon's stdout/stderr back to the terminal. The

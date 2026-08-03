@@ -674,15 +674,15 @@ func TestTrimFolderFilter(t *testing.T) {
 }
 
 func TestSyncCommandRegistersFolderFlags(t *testing.T) {
-	require.NotNil(t, syncIncrementalCmd.Flags().Lookup("folders"))
-	require.NotNil(t, syncIncrementalCmd.Flags().Lookup("skip-folders"))
+	require.NotNil(t, syncIncrementalCmd.Flags().Lookup("folder"))
+	require.NotNil(t, syncIncrementalCmd.Flags().Lookup("skip-folder"))
 }
 
 // Full e2e integration with an in-memory IMAP server is tested in
 // internal/imap/client_folderstate_test.go via WithFolderFilter().
 
 func TestTrimFolderFilter_DoesNotBlockOnErrorInSyncFull(t *testing.T) {
-	// Verify the CLI accepts --folders and --skip-folders through
+	// Verify the CLI accepts --folder and --skip-folder through
 	// parseFolderFilter without error, even when the value is
 	// malformed or whitespace-only.
 	require := require.New(t)

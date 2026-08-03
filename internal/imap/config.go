@@ -31,7 +31,7 @@ type Config struct {
 
 	// Folders is a case-insensitive allow list. When non-empty,
 	// only these mailboxes are synced. An empty list means "all
-	// mailboxes". CLI --folders/--skip-folders override this config:
+	// mailboxes". CLI --folder/--skip-folder override this config:
 	// they are applied after config folders in
 	// buildMessageListCache, so CLI values always take precedence.
 	Folders []string `json:"folders,omitempty"`

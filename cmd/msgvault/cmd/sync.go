@@ -305,7 +305,7 @@ func runIncrementalSync(ctx context.Context, s *store.Store, getOAuthMgr func(st
 }
 
 func init() {
-	syncIncrementalCmd.Flags().StringArrayVar(&syncFolders, "folders", []string{}, "Folder names to include (repeatable)")
-	syncIncrementalCmd.Flags().StringArrayVar(&syncSkipFolders, "skip-folders", []string{}, "Folder names to exclude (repeatable)")
+	syncIncrementalCmd.Flags().StringArrayVar(&syncFolders, "folder", []string{}, "IMAP folder to scan (repeatable)")
+	syncIncrementalCmd.Flags().StringArrayVar(&syncSkipFolders, "skip-folder", []string{}, "IMAP folder to skip (repeatable)")
 	rootCmd.AddCommand(syncIncrementalCmd)
 }

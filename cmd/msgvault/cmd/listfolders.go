@@ -19,8 +19,8 @@ func newListFoldersCmd() *cobra.Command {
 		Short: "List IMAP folders (mailboxes) available for an account",
 		Long: `List all IMAP folders (mailboxes) available for one or all
 IMAP accounts, along with message count. This helps you
-choose which folders to include or exclude via --folders or
---skip-folders on the sync command.`,
+	choose which folders to include or exclude via --folder or
+	--skip-folder on the sync command.`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if !isDaemonCLISubprocess() {

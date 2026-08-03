@@ -28,8 +28,8 @@ var (
 	syncBefore      string
 	syncAfter       string
 	syncLimit       int
-	syncFolders     []string // folder names to include (from --folders flag)
-	syncSkipFolders []string // folder names to exclude (from --skip-folders flag)
+	syncFolders     []string // folder names to include (from --folder flag)
+	syncSkipFolders []string // folder names to exclude (from --skip-folder flag)
 )
 
 var syncFullCmd = &cobra.Command{
@@ -428,12 +428,12 @@ func runFullSync(ctx context.Context, s *store.Store, getOAuthMgr func(string) (
 	imapOpts := imapFolderStateOptions(s, src, syncNoResume)
 
 	// Pass CLI folder filter strings to the IMAP client. The IMAP
-	// client selects the effective include list (CLI --folders when
-	// set, otherwise config Folders) and applies CLI --skip-folders
+	// client selects the effective include list (CLI --folder when
+	// set, otherwise config Folders) and applies CLI --skip-folder
 	// as an exclusion on top. Both CLI filters are applied in a
-	// single call to filterMailboxes so --folders can fully
-	// override configuration and --skip-folders works together with
-	// --folders.
+	// single call to filterMailboxes so --folder can fully
+	// override configuration and --skip-folder works together with
+	// --folder.
 	imapOpts = append(imapOpts,
 		imaplib.WithFolderFilter(
 			parseFolderFilter(syncFolders),
@@ -829,7 +829,7 @@ func init() {
 	syncFullCmd.Flags().StringVar(&syncBefore, "before", "", "Only messages before this date (YYYY-MM-DD)")
 	syncFullCmd.Flags().StringVar(&syncAfter, "after", "", "Only messages after this date (YYYY-MM-DD)")
 	syncFullCmd.Flags().IntVar(&syncLimit, "limit", 0, "Limit number of messages (for testing)")
-	syncFullCmd.Flags().StringArrayVar(&syncFolders, "folders", []string{}, "Folder names to include (repeatable)")
-	syncFullCmd.Flags().StringArrayVar(&syncSkipFolders, "skip-folders", []string{}, "Folder names to exclude (repeatable)")
+	syncFullCmd.Flags().StringArrayVar(&syncFolders, "folder", []string{}, "IMAP folder to scan (repeatable)")
+	syncFullCmd.Flags().StringArrayVar(&syncSkipFolders, "skip-folder", []string{}, "IMAP folder to skip (repeatable)")
 	rootCmd.AddCommand(syncFullCmd)
 }
