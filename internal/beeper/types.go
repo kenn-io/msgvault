@@ -12,6 +12,10 @@ type Account struct {
 	AccountID string `json:"accountID"`
 	Network   string `json:"network"` // human-friendly name; may be empty
 	User      User   `json:"user"`
+	// Discovered marks an account assembled from chat data because the
+	// accounts endpoint did not report it (see DiscoverAccounts). It is never
+	// decoded from the API.
+	Discovered bool `json:"-"`
 }
 
 // User identifies a person on a network. Only fields the importer consumes

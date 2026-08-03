@@ -64,10 +64,25 @@ type fakeChat struct {
 type fakeBeeper struct {
 	t        *testing.T
 	pageSize int
+	// chatPageSize paginates GET /v1/chats/search (0 = one page with
+	// everything, which is what most tests want). When set, chats are served
+	// newest-activity-first like the live API.
+	chatPageSize int
 
-	mu     sync.Mutex
-	chats  []*fakeChat
-	assets map[string][]byte // asset URL (mxc://...) -> bytes served by /v1/assets/serve
+	mu sync.Mutex
+	// accounts is what GET /v1/accounts reports. Beeper omits its native
+	// platform-sdk accounts here even though their chats are served normally,
+	// so tests can register a chat without registering its account.
+	accounts []map[string]any
+	// failAccounts makes GET /v1/accounts answer 401, the way a stale token
+	// is rejected.
+	failAccounts bool
+	// failChatSearch makes GET /v1/chats/search answer 400.
+	failChatSearch bool
+	// failChatGets makes GET /v1/chats/{id} answer 400 for the listed chats.
+	failChatGets map[string]bool
+	chats        []*fakeChat
+	assets       map[string][]byte // asset URL (mxc://...) -> bytes served by /v1/assets/serve
 	// failMessageGets makes GET /v1/chats/{id}/messages/{mid} answer 400
 	// (a non-retryable transient error) for the listed message IDs.
 	failMessageGets map[string]bool
@@ -84,7 +99,8 @@ type fakeBeeper struct {
 
 func newFakeBeeper(t *testing.T) *fakeBeeper {
 	t.Helper()
-	return &fakeBeeper{t: t, pageSize: 20, assets: map[string][]byte{}, failMessageGets: map[string]bool{}, failMessageLists: map[string]bool{}}
+	return &fakeBeeper{t: t, pageSize: 20, assets: map[string][]byte{}, failMessageGets: map[string]bool{},
+		failMessageLists: map[string]bool{}, failChatGets: map[string]bool{}}
 }
 
 // setMessageListFailure toggles a 400 response for message-list fetches of a chat.
@@ -106,6 +122,34 @@ func (f *fakeBeeper) setAsset(url string, data []byte) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.assets[url] = data
+}
+
+// addAccount makes an account visible to GET /v1/accounts.
+func (f *fakeBeeper) addAccount(acct map[string]any) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.accounts = append(f.accounts, acct)
+}
+
+// setAccountsFailure toggles a 401 response for the accounts endpoint.
+func (f *fakeBeeper) setAccountsFailure(fail bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.failAccounts = fail
+}
+
+// setChatSearchFailure toggles a 400 response for chat searches.
+func (f *fakeBeeper) setChatSearchFailure(fail bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.failChatSearch = fail
+}
+
+// setChatGetFailure toggles a 400 response for chat-detail fetches of a chat.
+func (f *fakeBeeper) setChatGetFailure(chatID string, fail bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.failChatGets[chatID] = fail
 }
 
 func (f *fakeBeeper) addChat(ch *fakeChat) {
@@ -167,6 +211,8 @@ func (f *fakeBeeper) server() *httptest.Server {
 		w.Header().Set("Content-Type", "application/json")
 		path := r.URL.Path
 		switch {
+		case path == "/v1/accounts":
+			f.writeAccounts(w)
 		case path == "/v1/assets/serve":
 			f.writeAsset(w, r)
 		case path == "/v1/chats/search":
@@ -201,9 +247,27 @@ func (f *fakeBeeper) writeAsset(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(data)
 }
 
+func (f *fakeBeeper) writeAccounts(w http.ResponseWriter) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.failAccounts {
+		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+		return
+	}
+	accounts := f.accounts
+	if accounts == nil {
+		accounts = []map[string]any{}
+	}
+	writeJSON(f.t, w, accounts)
+}
+
 func (f *fakeBeeper) writeChatSearch(w http.ResponseWriter, r *http.Request) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.failChatSearch {
+		http.Error(w, `{"error":"transient"}`, http.StatusBadRequest)
+		return
+	}
 	q := r.URL.Query()
 	accountID := q.Get("accountIDs")
 	var after time.Time
@@ -215,7 +279,7 @@ func (f *fakeBeeper) writeChatSearch(w http.ResponseWriter, r *http.Request) {
 		}
 		after = t
 	}
-	items := []map[string]any{}
+	var matched []*fakeChat
 	for _, ch := range f.chats {
 		if accountID != "" && ch.AccountID != accountID {
 			continue
@@ -223,16 +287,42 @@ func (f *fakeBeeper) writeChatSearch(w http.ResponseWriter, r *http.Request) {
 		if !after.IsZero() && !ch.LastActivity.After(after) {
 			continue
 		}
+		matched = append(matched, ch)
+	}
+
+	// Unpaginated by default: one page with everything, as most tests expect.
+	// With chatPageSize set, mirror the live API's newest-activity-first order
+	// and hand out an opaque cursor (here: the offset of the next page).
+	window, oldestCursor, hasMore := matched, any(nil), false
+	if f.chatPageSize > 0 {
+		sort.SliceStable(matched, func(i, j int) bool {
+			return matched[i].LastActivity.After(matched[j].LastActivity)
+		})
+		start, _ := strconv.Atoi(q.Get("cursor"))
+		start = min(max(start, 0), len(matched))
+		end := min(start+f.chatPageSize, len(matched))
+		window = matched[start:end]
+		if end < len(matched) {
+			oldestCursor, hasMore = strconv.Itoa(end), true
+		}
+	}
+
+	items := []map[string]any{}
+	for _, ch := range window {
 		items = append(items, f.chatJSON(ch, true))
 	}
 	writeJSON(f.t, w, map[string]any{
-		"items": items, "hasMore": false, "oldestCursor": nil, "newestCursor": nil,
+		"items": items, "hasMore": hasMore, "oldestCursor": oldestCursor, "newestCursor": nil,
 	})
 }
 
 func (f *fakeBeeper) writeChat(w http.ResponseWriter, chatID string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.failChatGets[chatID] {
+		http.Error(w, `{"error":"transient"}`, http.StatusBadRequest)
+		return
+	}
 	for _, ch := range f.chats {
 		if ch.ID == chatID {
 			writeJSON(f.t, w, f.chatJSON(ch, false))

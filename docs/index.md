@@ -87,7 +87,7 @@ it lives in an archive on disk that you own and control.
   </section>
   <section>
     <h3>Meetings &amp; Beeper</h3>
-    <p>Sync Granola and Circleback notes and transcripts, and archive chats and media from networks bridged through Beeper Desktop. Explore each source in the Web UI or its dedicated TUI mode.</p>
+    <p>Sync Granola and Circleback notes and transcripts, and archive chats and media from networks connected to Beeper Desktop. Explore each source in the Web UI or its dedicated TUI mode.</p>
   </section>
   <section>
     <h3>Backup Snapshots</h3>

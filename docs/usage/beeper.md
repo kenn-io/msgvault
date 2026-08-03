@@ -1,14 +1,14 @@
 ---
 title: Beeper
-description: Archive every chat network bridged through Beeper Desktop via its local API.
+description: Archive every chat network connected to Beeper Desktop via its local API.
 ---
 
 [Beeper Desktop](https://www.beeper.com) bridges many chat networks — WhatsApp,
-Signal, Telegram, Instagram, LinkedIn, X, Facebook Messenger, and more — into
-one app. msgvault can archive all of them at once through Beeper Desktop's
-local API. Each connected network account becomes its own msgvault source, so
-a Signal thread and a Telegram thread stay separately filterable, while all
-Beeper-archived messages share `message_type = beeper` for search.
+Signal, Telegram, Instagram, LinkedIn, X, Facebook Messenger, iMessage, and
+more — into one app. msgvault can archive all of them at once through Beeper
+Desktop's local API. Each connected network account becomes its own msgvault
+source, so a Signal thread and a Telegram thread stay separately filterable,
+while all Beeper-archived messages share `message_type = beeper` for search.
 
 Beeper sync is strictly read-only: msgvault only calls read endpoints of the
 local API and never sends, edits, archives, or marks anything in Beeper.
@@ -28,7 +28,16 @@ msgvault add-beeper
 
 The command validates the token against the running Beeper Desktop, stores it
 at `tokens/beeper.json` (0600), and registers one `beeper` source per
-connected network account (e.g. `signal`, `telegram`, `whatsapp`).
+connected network account (e.g. `signal`, `telegram`, `whatsapp`,
+`imessage_…`).
+
+Beeper's accounts API omits some networks it serves natively rather than
+bridging — currently iMessage — so those are found from chat data instead.
+They are printed as *found via chats* and behave like any other `beeper`
+source afterwards.
+
+`add-beeper` is safe to re-run and does not disturb existing sources, so run it
+again after connecting a new network in Beeper Desktop to register it.
 
 Provide the token via the interactive prompt, `--token-file <path>`, or the
 `MSGVAULT_BEEPER_TOKEN` environment variable:
@@ -139,3 +148,10 @@ resolving to the same person).
   with an error; remove and re-add the Beeper sources in that case.
 - **Remote daemons**: the Beeper API is loopback-only, so the msgvault daemon
   must run on the same machine as Beeper Desktop.
+- **iMessage**: Beeper only carries iMessage on macOS, so archiving it this way
+  needs a Mac running Beeper Desktop beside the msgvault daemon. Networks found
+  from chat data are looked for in a bounded scan of your most recently active
+  conversations, so one with no chats — or none recent enough to fall inside
+  that window — stays invisible until it sees activity; send or receive a
+  message, then re-run `add-beeper`. The scan logs a warning when it stops at
+  its bound.

@@ -455,7 +455,7 @@ the source message has since been deleted. See
 
 ## add-beeper
 
-Register the chat accounts bridged through a locally running
+Register the chat accounts connected to a locally running
 [Beeper Desktop](/usage/beeper/) as `beeper` sources, one per network.
 
 ```bash
@@ -469,6 +469,10 @@ minted in Beeper Desktop (Settings → Developer). The token is stored at
 `tokens/beeper.json`. Accounts filtered out by `[beeper].accounts` /
 `exclude_accounts` in `config.toml` are skipped.
 
+Networks Beeper serves natively instead of bridging — iMessage — are absent
+from its accounts API, so they are found from chat data and reported as *found
+via chats*. Re-run the command after connecting a network in Beeper Desktop.
+
 | Flag | Default | Description |
 |---|---|---|
 | `--token-file` | | Read the access token from a file instead of prompting |
@@ -481,7 +485,7 @@ After adding, sync with `msgvault sync-beeper`.
 ## sync-beeper
 
 Sync chats from Beeper Desktop for every registered Beeper account (all
-bridged networks). The first run backfills full locally-available history and
+connected networks). The first run backfills full locally-available history and
 is resumable; later runs are incremental. Per-account failures do not stop the
 run: remaining accounts still sync, the analytics cache is rebuilt for the
 successful ones, and the command exits non-zero listing the failures. Without

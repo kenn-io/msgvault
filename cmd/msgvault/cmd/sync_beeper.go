@@ -25,7 +25,7 @@ var (
 func newSyncBeeperCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "sync-beeper",
-		Short: "Sync chats from Beeper Desktop (all bridged networks)",
+		Short: "Sync chats from Beeper Desktop (all connected networks)",
 		Long: `Sync chats from Beeper Desktop for every registered Beeper account.
 
 The first run backfills each chat's full locally-available history; later

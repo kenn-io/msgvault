@@ -37,7 +37,7 @@ export formats.
 - **Microsoft Teams sync**: archive delegated Graph chats, channels, replies, and inline media with `message_type = teams`
 - **Discord sync**: archive guild channels, threads, forum posts, and attachments through a read-only bot with `message_type = discord`
 - **Meeting notes**: sync Granola and Circleback notes and transcripts, then browse them in the TUI
-- **Beeper Desktop sync**: archive chats and media from every network bridged through Beeper's local API
+- **Beeper Desktop sync**: archive chats and media from every network connected to Beeper, including iMessage, through its local API
 - **IMAP sync**: archive mail from any standard IMAP server
 - **Incremental backup snapshots**: verifiable `msgvault backup` repositories for the SQLite archive and attachments
 - **MBOX / Apple Mail / PST import**: import email from local export formats

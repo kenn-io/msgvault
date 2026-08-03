@@ -16,6 +16,11 @@ All notable changes to msgvault, grouped by release.
 
 **Bug fixes**
 
+- `add-beeper` now registers networks Beeper Desktop serves natively rather
+  than through a bridge, such as iMessage. Beeper omits those accounts from its
+  accounts API, so they are found from chat data instead and then sync, resume,
+  and filter like any other Beeper source. Re-run `add-beeper` on an existing
+  install to pick them up.
 - Daemon-backed CLI, TUI, MCP, statistics, and backup operations now wait for
   completion or caller cancellation instead of failing at fixed HTTP or server
   deadlines on slow storage. Local daemon authentication uses the lightweight

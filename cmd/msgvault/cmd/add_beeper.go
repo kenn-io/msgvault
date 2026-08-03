@@ -29,6 +29,10 @@ Instagram, LinkedIn, X, Facebook, ...) into one local app with a read-only
 API on localhost. Each connected network account becomes its own msgvault
 source, so networks stay separately filterable and searchable.
 
+Accounts Beeper serves natively rather than through a bridge (iMessage) are
+missing from its accounts API, so they are found from chat data instead. Re-run
+this command after connecting a network in Beeper to register it.
+
 Requires Beeper Desktop to be running on this machine. Mint an access token
 in Beeper Desktop (Settings > Developer) and provide it via --token-file,
 the MSGVAULT_BEEPER_TOKEN environment variable, or the interactive prompt.
@@ -55,6 +59,9 @@ Examples:
 				if IsRemoteMode() {
 					_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Remote daemon configured: it must run beside its own Beeper Desktop, which will validate the token.")
 				} else {
+					// A token check, not discovery: the daemon subprocess below
+					// does the real enumeration, so this stays the single
+					// cheapest authenticated request.
 					accounts, err := beeperClient(token).ListAccounts(cmd.Context())
 					if err != nil {
 						return err
@@ -70,7 +77,7 @@ Examples:
 			if token == "" {
 				return errors.New("missing Beeper token in daemon subprocess (set MSGVAULT_BEEPER_TOKEN)")
 			}
-			accounts, err := beeperClient(token).ListAccounts(cmd.Context())
+			accounts, err := beeperClient(token).DiscoverAccounts(cmd.Context())
 			if err != nil {
 				return err
 			}
@@ -101,7 +108,8 @@ Examples:
 					confirmDefaultIdentity(cmd.OutOrStdout(), s, source.ID,
 						acct.AccountID, beeperSelfIdentity(acct), "account-identifier")
 				}
-				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Added %s (%s)\n", acct.AccountID, beeperSourceDisplayName(acct))
+				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Added %s (%s)%s\n",
+					acct.AccountID, beeperSourceDisplayName(acct), beeperAccountOrigin(acct))
 				added++
 			}
 			if err := runPostSourceCreateMigrations(s); err != nil {
@@ -135,6 +143,15 @@ func beeperSourceDisplayName(acct beeper.Account) string {
 		return "Beeper " + acct.Network
 	}
 	return "Beeper " + acct.AccountID
+}
+
+// beeperAccountOrigin annotates accounts that only chat data revealed, so it
+// is obvious why a source exists that Beeper's own account list never named.
+func beeperAccountOrigin(acct beeper.Account) string {
+	if acct.Discovered {
+		return " [found via chats; not listed by Beeper's accounts API]"
+	}
+	return ""
 }
 
 // beeperSelfIdentity picks the best own-identity value for a Beeper account:
