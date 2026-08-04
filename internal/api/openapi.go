@@ -154,8 +154,22 @@ import (
 // the /people/{id} analytical detail.
 // 1.33.0 adds provider-neutral single-meeting ingestion with strict request
 // schemas and idempotent create/update responses.
-// Additive (minor bump): the major-version compatibility gate stays at 1.
-const APISchemaVersion = "1.33.0"
+// 1.34.0 adds GET /api/v1/messages/changes: a keyset feed over the
+// content_changed_at watermark that lets a consumer re-read the messages whose
+// content changed since its last poll, including hidden and source-deleted
+// rows. Position is carried by an opaque cursor a client stores and sends back;
+// timestamps in the page are serialised with full sub-second precision. An
+// empty page echoes the requested cursor so an idle consumer holds its place,
+// except that a cursor above the server clock is clamped down to the commit
+// bound, or echoed unchanged if the server has not yet established one. The
+// cursor is bound to the archive that issued it: an unreadable token, one from a
+// cursor format this build does not speak, and one issued against a different
+// archive are each rejected with 400 invalid_cursor rather than read as the
+// beginning of the archive. It is not signed, so a well-formed cursor naming
+// this archive is accepted whoever built it. Stores that cannot answer the
+// watermark query, or cannot identify their archive, report 503
+// feature_unavailable. Additive (minor bump): a new path only.
+const APISchemaVersion = "1.34.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.

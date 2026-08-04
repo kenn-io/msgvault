@@ -1117,6 +1117,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/messages/changes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List messages whose content changed since a cursor */
+        get: operations["listChangedMessages"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/messages/filter": {
         parameters: {
             query?: never;
@@ -2071,6 +2088,50 @@ export interface components {
         CancelDeletionResponse: {
             id: string;
             status: string;
+        } & {
+            [key: string]: unknown;
+        };
+        ChangedMessageJSON: {
+            /** Format: int64 */
+            attachment_count: number;
+            content_changed_at: string;
+            /** Format: int64 */
+            conversation_id: number;
+            /** Format: date-time */
+            deleted_at?: string;
+            /** Format: date-time */
+            deleted_from_source_at?: string;
+            has_attachments: boolean;
+            /** Format: int64 */
+            id: number;
+            /** Format: date-time */
+            internal_date?: string;
+            message_type?: string;
+            /** Format: date-time */
+            received_at?: string;
+            /** Format: date-time */
+            sent_at?: string;
+            /** Format: int64 */
+            size_estimate: number;
+            snippet?: string;
+            /** Format: int64 */
+            source_id: number;
+            source_message_id?: string;
+            subject?: string;
+        } & {
+            [key: string]: unknown;
+        };
+        ChangesResponse: {
+            /** @description Instant the feed is complete through: every change committed strictly below it is reachable from this page's cursor. Always present. The sentinel 0001-01-01T00:00:00Z means no commit bound has been established yet, a transient state in which the feed returns no rows; it is a state rather than an instant, so do not subtract it from server_time */
+            complete_through: string;
+            /** Format: int64 */
+            count: number;
+            has_more: boolean;
+            messages: components["schemas"]["ChangedMessageJSON"][];
+            /** @description Opaque cursor for the next request. Always present and never empty. Store it and send it back as the cursor parameter; do not parse, construct, compare, or order it — its contents may change without notice */
+            next_cursor: string;
+            /** Format: date-time */
+            server_time: string;
         } & {
             [key: string]: unknown;
         };
@@ -7130,6 +7191,85 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["MessageListResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    listChangedMessages: {
+        parameters: {
+            query?: {
+                /** @description Opaque cursor from the next_cursor of the previous response, sent back verbatim. Do not parse, construct, compare, or order it; its contents may change without notice. Omit, or send it empty, to start from the beginning of the archive. The token is not authenticated: the server does not sign it and cannot tell one it issued from a well-formed one you built, so a fabricated cursor naming this archive is accepted and simply moves your own position. Rejected with 400 invalid_cursor, rather than read as the beginning: a token the server cannot read, one carrying a cursor format this build does not speak, and one issued against a different archive */
+                cursor?: string;
+                /** @description Maximum number of rows to return (default 100, max 500; values below 1 fall back to the default) */
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChangesResponse"];
+                };
+            };
+            /** @description Error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
             /** @description Error */

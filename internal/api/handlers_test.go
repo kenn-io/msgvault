@@ -736,6 +736,7 @@ func TestOpenAPIExportsServerRouteTable(t *testing.T) {
 		"/api/v1/aggregates":                     {"get"},
 		"/api/v1/aggregates/sub":                 {"get"},
 		"/api/v1/messages/filter":                {"get"},
+		"/api/v1/messages/changes":               {"get"},
 		"/api/v1/messages/gmail-ids":             {"get"},
 		"/api/v1/stats/total":                    {"get"},
 		"/api/v1/search/fast":                    {"get"},

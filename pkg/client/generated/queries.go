@@ -291,6 +291,14 @@ type ListMessagesQuery struct {
 	PageSize *int64 `json:"page_size,omitempty"`
 }
 
+type ListChangedMessagesQuery struct {
+	// Cursor Opaque cursor from the next_cursor of the previous response, sent back verbatim. Do not parse, construct, compare, or order it; its contents may change without notice. Omit, or send it empty, to start from the beginning of the archive. The token is not authenticated: the server does not sign it and cannot tell one it issued from a well-formed one you built, so a fabricated cursor naming this archive is accepted and simply moves your own position. Rejected with 400 invalid_cursor, rather than read as the beginning: a token the server cannot read, one carrying a cursor format this build does not speak, and one issued against a different archive
+	Cursor *string `json:"cursor,omitempty"`
+
+	// Limit Maximum number of rows to return (default 100, max 500; values below 1 fall back to the default)
+	Limit *int64 `json:"limit,omitempty"`
+}
+
 type FilterMessagesQuery struct {
 	// Sender Sender email/address filter
 	Sender *string `json:"sender,omitempty"`

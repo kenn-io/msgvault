@@ -185,7 +185,10 @@ func TestOpenAPIMeetingImportContract(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 
-	assert.Equal("1.33.0", APISchemaVersion, "meeting import is an additive schema release")
+	// Pinned so that anyone bumping the schema version has to come here and
+	// confirm the meeting-import contract below still holds. Meeting import
+	// shipped in 1.33.0; the feed added in 1.34.0 did not touch it.
+	assert.Equal("1.34.0", APISchemaVersion, "meeting import is an additive schema release")
 
 	doc := OpenAPIDocument()
 	path := doc.Paths["/api/v1/import/meeting"]

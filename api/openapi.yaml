@@ -660,6 +660,89 @@ components:
         - id
         - status
       type: object
+    ChangedMessageJSON:
+      additionalProperties: true
+      properties:
+        attachment_count:
+          format: int64
+          type: integer
+        content_changed_at:
+          type: string
+        conversation_id:
+          format: int64
+          type: integer
+        deleted_at:
+          format: date-time
+          type: string
+        deleted_from_source_at:
+          format: date-time
+          type: string
+        has_attachments:
+          type: boolean
+        id:
+          format: int64
+          type: integer
+        internal_date:
+          format: date-time
+          type: string
+        message_type:
+          type: string
+        received_at:
+          format: date-time
+          type: string
+        sent_at:
+          format: date-time
+          type: string
+        size_estimate:
+          format: int64
+          type: integer
+        snippet:
+          type: string
+        source_id:
+          format: int64
+          type: integer
+        source_message_id:
+          type: string
+        subject:
+          type: string
+      required:
+        - id
+        - source_id
+        - conversation_id
+        - size_estimate
+        - has_attachments
+        - attachment_count
+        - content_changed_at
+      type: object
+    ChangesResponse:
+      additionalProperties: true
+      properties:
+        complete_through:
+          description: "Instant the feed is complete through: every change committed strictly below it is reachable from this page's cursor. Always present. The sentinel 0001-01-01T00:00:00Z means no commit bound has been established yet, a transient state in which the feed returns no rows; it is a state rather than an instant, so do not subtract it from server_time"
+          type: string
+        count:
+          format: int64
+          type: integer
+        has_more:
+          type: boolean
+        messages:
+          items:
+            $ref: "#/components/schemas/ChangedMessageJSON"
+          type: array
+        next_cursor:
+          description: Opaque cursor for the next request. Always present and never empty. Store it and send it back as the cursor parameter; do not parse, construct, compare, or order it — its contents may change without notice
+          type: string
+        server_time:
+          format: date-time
+          type: string
+      required:
+        - messages
+        - count
+        - has_more
+        - next_cursor
+        - server_time
+        - complete_through
+      type: object
     CliAccountResponse:
       additionalProperties: true
       properties:
@@ -4704,7 +4787,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 1.33.0
+  version: 1.34.0
 openapi: 3.1.0
 paths:
   /api/ping:
@@ -7585,6 +7668,69 @@ paths:
       security:
         - apiKey: []
       summary: List messages
+      tags:
+        - API
+  /api/v1/messages/changes:
+    get:
+      operationId: listChangedMessages
+      parameters:
+        - description: "Opaque cursor from the next_cursor of the previous response, sent back verbatim. Do not parse, construct, compare, or order it; its contents may change without notice. Omit, or send it empty, to start from the beginning of the archive. The token is not authenticated: the server does not sign it and cannot tell one it issued from a well-formed one you built, so a fabricated cursor naming this archive is accepted and simply moves your own position. Rejected with 400 invalid_cursor, rather than read as the beginning: a token the server cannot read, one carrying a cursor format this build does not speak, and one issued against a different archive"
+          in: query
+          name: cursor
+          schema:
+            type: string
+        - description: Maximum number of rows to return (default 100, max 500; values below 1 fall back to the default)
+          in: query
+          name: limit
+          schema:
+            format: int64
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChangesResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "429":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: List messages whose content changed since a cursor
       tags:
         - API
   /api/v1/messages/filter:

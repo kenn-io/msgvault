@@ -194,7 +194,15 @@ func runServe(cmd *cobra.Command, args []string) error {
 
 	setStartupPhase("migrating archive schema")
 	logger.Info("daemon startup step", "step", "init_archive_schema")
-	if err := s.InitSchema(); err != nil {
+	// Under the signal-cancelled root context, not a background one: on an
+	// existing archive this step runs a one-time full-table backfill that can
+	// take hours, and it runs before the port is bound. With a background
+	// context SIGINT and SIGTERM reach the process and nothing happens — the
+	// backfill and its open transaction carry on, and the operator's only
+	// remaining move is SIGKILL on a writing process. Cancelling here stops it
+	// at the next batch boundary, keeps every batch already committed, and
+	// leaves the migration unmarked so the next start resumes.
+	if err := s.InitSchemaContext(cmd.Context()); err != nil {
 		return fmt.Errorf("init schema: %w", err)
 	}
 	logger.Info("daemon startup step complete", "step", "init_archive_schema")
@@ -879,6 +887,8 @@ var _ api.PersonProfileStore = (*storeAPIAdapter)(nil)
 var _ api.IdentityCacheRefresher = (*storeAPIAdapter)(nil)
 var _ api.ClusterLookupStore = (*storeAPIAdapter)(nil)
 var _ api.ConversationWindowStore = (*storeAPIAdapter)(nil)
+var _ api.ChangedMessageLister = (*storeAPIAdapter)(nil)
+var _ api.ArchiveIdentifier = (*storeAPIAdapter)(nil)
 
 func (a *storeAPIAdapter) ConversationExistsContext(ctx context.Context, conversationID int64) (bool, error) {
 	return a.store.ConversationExistsContext(ctx, conversationID)
@@ -891,6 +901,25 @@ func (a *storeAPIAdapter) GetConversationWindowContext(
 	start, end *time.Time,
 ) (*store.ConversationWindow, error) {
 	return a.store.GetConversationWindowContext(ctx, conversationID, anchorID, before, after, start, end)
+}
+
+// ListChangedMessages exposes the content-change feed to the API server. The
+// daemon passes this adapter -- not *store.Store -- as ServerOptions.Store, so
+// without this method the route's optional-interface check fails and the
+// endpoint reports itself unavailable on every production request.
+func (a *storeAPIAdapter) ListChangedMessages(
+	ctx context.Context, since store.ChangedMessagesCursor, limit int,
+) (store.ChangedMessagePage, error) {
+	return a.store.ListChangedMessages(ctx, since, limit)
+}
+
+// ArchiveUID exposes the archive's durable identity to the API server, which
+// binds every change-feed cursor to it so a cursor cannot be resumed against a
+// different archive. Same reason as ListChangedMessages above: the daemon
+// passes this adapter, not *store.Store, so without this method the route
+// reports itself unavailable on every production request.
+func (a *storeAPIAdapter) ArchiveUID() (string, error) {
+	return a.store.ArchiveUID()
 }
 
 func (a *storeAPIAdapter) GetStats() (*api.StoreStats, error) {

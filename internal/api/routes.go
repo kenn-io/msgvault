@@ -342,6 +342,26 @@ func (s *Server) registerHumaRoutes(api huma.API, apiV1 huma.API) {
 	registerAPIV1RawHumaJSONRoute[AggregateResponse](apiV1, "getAggregates", http.MethodGet, "/aggregates", "Get aggregate rows", s.handleAggregates)
 	registerAPIV1RawHumaJSONRoute[AggregateResponse](apiV1, "getSubAggregates", http.MethodGet, "/aggregates/sub", "Get nested aggregate rows", s.handleSubAggregates)
 	registerAPIV1RawHumaJSONRoute[FilteredMessagesResponse](apiV1, "filterMessages", http.MethodGet, "/messages/filter", "List filtered messages", s.handleFilteredMessages)
+	// The change feed's error statuses are contract, not incident: a 400 means
+	// a cursor the consumer must abandon, while 401, 429, 500 and 503 are
+	// conditions to retry from the same cursor. Declaring them keeps that
+	// distinction in the generated client rather than in every consumer's
+	// hand-written decode.
+	//
+	// 429 is on the list because it is not the handler's to raise and is
+	// reached anyway: every remote request passes the rate limiter, and this
+	// endpoint's whole usage pattern is polling. Undeclared, the generated
+	// client reports it as an unexpected status and drops the body a consumer
+	// needs to tell "slow down" from "give up on this cursor".
+	registerAPIV1RawHumaJSONRouteWithErrors[ChangesResponse](
+		apiV1, "listChangedMessages", http.MethodGet, "/messages/changes",
+		"List messages whose content changed since a cursor", s.handleMessageChanges,
+		http.StatusBadRequest,
+		http.StatusUnauthorized,
+		http.StatusTooManyRequests,
+		http.StatusInternalServerError,
+		http.StatusServiceUnavailable,
+	)
 	registerAPIV1RawHumaJSONRoute[GmailIDsResponse](apiV1, "getGmailIDsByFilter", http.MethodGet, "/messages/gmail-ids", "List Gmail message IDs matching a filter", s.handleGmailIDsByFilter)
 	registerAPIV1RawHumaJSONRoute[TotalStatsResponse](apiV1, "getTotalStats", http.MethodGet, "/stats/total", "Get aggregate totals", s.handleTotalStats)
 	registerAPIV1RawHumaJSONRoute[FilteredMessagesResponse](apiV1, "searchMessagesByDomains", http.MethodGet, "/search/domains", "Search messages by participant domains", s.handleSearchByDomains)
@@ -390,6 +410,29 @@ func registerAPIV1RawHumaJSONRoute[T any](
 ) {
 	op := rawAPIV1Operation(operationID, method, path, summary)
 	op.Responses = jsonResponsesFor[T](api, successStatuses...)
+	registerRawHumaRoute(api, op, handler)
+}
+
+// registerAPIV1RawHumaJSONRouteWithErrors is registerAPIV1RawHumaJSONRoute for
+// an endpoint whose error statuses are part of its published contract rather
+// than incidental. Declaring them makes the generated client model each one, so
+// a consumer can branch on the `error` code in the body instead of decoding it
+// by hand off an opaque status; the catch-all `default` response stays, so a
+// status not listed here still decodes as an error.
+func registerAPIV1RawHumaJSONRouteWithErrors[T any](
+	api huma.API,
+	operationID string,
+	method string,
+	path string,
+	summary string,
+	handler http.HandlerFunc,
+	errorStatuses ...int,
+) {
+	op := rawAPIV1Operation(operationID, method, path, summary)
+	op.Responses = jsonResponsesFor[T](api)
+	for _, status := range errorStatuses {
+		op.Responses[httpStatusKey(status)] = errorResponseFor(api)
+	}
 	registerRawHumaRoute(api, op, handler)
 }
 
@@ -619,6 +662,8 @@ func rawRouteParameters(operationID string) []*huma.Param {
 		}, mergeParams(aggregateOptionParams(), messageFilterParams())...)
 	case "filterMessages":
 		return messageFilterParams()
+	case "listChangedMessages":
+		return changesParams()
 	case "getGmailIDsByFilter":
 		return messageFilterParams()
 	case "searchMessagesByDomains":
@@ -754,6 +799,31 @@ func messageFilterParams() []*huma.Param {
 		queryIntegerParam("limit", "Maximum number of rows to return (default and max 500; larger values are clamped)"),
 		queryStringParam("sort", "Sort field: date, size, or subject", false),
 		queryStringParam("direction", "Sort direction: asc or desc", false),
+	}
+}
+
+// changesParams documents the content-change feed's cursor. It is opaque so
+// that what the feed tracks can change without breaking consumers: nothing
+// outside this server is allowed to depend on its contents.
+func changesParams() []*huma.Param {
+	return []*huma.Param{
+		queryStringParam("cursor",
+			"Opaque cursor from the next_cursor of the previous response, sent back "+
+				"verbatim. Do not parse, construct, compare, or order it; its contents may "+
+				"change without notice. Omit, or send it empty, to start from the beginning "+
+				"of the archive. The token is not authenticated: the server does not sign "+
+				"it and cannot tell one it issued from a well-formed one you built, so a "+
+				"fabricated cursor naming this archive is accepted and simply moves your "+
+				"own position. Rejected with 400 invalid_cursor, rather than read as the "+
+				"beginning: a token the server cannot read, one carrying a cursor format "+
+				"this build does not speak, and one issued against a different archive", false),
+		// No published minimum/maximum: the handler clamps rather than rejects,
+		// so a range in the schema would make a generated client refuse
+		// requests the server answers with 200 and would contradict this
+		// description. Every other clamping limit in this API is unbounded in
+		// the schema for the same reason.
+		queryIntegerParam("limit",
+			"Maximum number of rows to return (default 100, max 500; values below 1 fall back to the default)"),
 	}
 }
 

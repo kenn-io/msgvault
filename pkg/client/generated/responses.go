@@ -863,6 +863,18 @@ type ListMessagesResponse = MessageListResponse
 
 type ListMessagesErrorResponse = ErrorResponse
 
+type ListChangedMessagesResponse = ChangesResponse
+
+type ListChangedMessagesErrorResponse = ErrorResponse
+
+type ListChangedMessagesErrorResponseJSON = ErrorResponse
+
+type ListChangedMessagesErrorResponseJSON429 = ErrorResponse
+
+type ListChangedMessagesErrorResponseJSON500 = ErrorResponse
+
+type ListChangedMessagesErrorResponseJSON503 = ErrorResponse
+
 type FilterMessagesResponse = FilteredMessagesResponse
 
 type FilterMessagesErrorResponse = ErrorResponse
@@ -1990,6 +2002,18 @@ type ListMessagesResp struct {
 	Body         []byte
 	StatusCode   int
 	JSON200      *ListMessagesResponse
+}
+
+type ListChangedMessagesResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *ListChangedMessagesResponse
+	JSON400      *ListChangedMessagesErrorResponse
+	JSON401      *ListChangedMessagesErrorResponseJSON
+	JSON429      *ListChangedMessagesErrorResponseJSON429
+	JSON500      *ListChangedMessagesErrorResponseJSON500
+	JSON503      *ListChangedMessagesErrorResponseJSON503
 }
 
 type FilterMessagesResp struct {

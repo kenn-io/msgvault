@@ -509,6 +509,65 @@ func (c CancelDeletionResponse) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(c))
 }
 
+type ChangedMessageJSON struct {
+	AttachmentCount     int64      `json:"attachment_count"`
+	ContentChangedAt    string     `json:"content_changed_at" validate:"required"`
+	ConversationID      int64      `json:"conversation_id"`
+	DeletedAt           *time.Time `json:"deleted_at,omitempty"`
+	DeletedFromSourceAt *time.Time `json:"deleted_from_source_at,omitempty"`
+	HasAttachments      bool       `json:"has_attachments"`
+	ID                  int64      `json:"id"`
+	InternalDate        *time.Time `json:"internal_date,omitempty"`
+	MessageType         *string    `json:"message_type,omitempty"`
+	ReceivedAt          *time.Time `json:"received_at,omitempty"`
+	SentAt              *time.Time `json:"sent_at,omitempty"`
+	SizeEstimate        int64      `json:"size_estimate"`
+	Snippet             *string    `json:"snippet,omitempty"`
+	SourceID            int64      `json:"source_id"`
+	SourceMessageID     *string    `json:"source_message_id,omitempty"`
+	Subject             *string    `json:"subject,omitempty"`
+}
+
+func (c ChangedMessageJSON) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(c))
+}
+
+type ChangesResponse struct {
+	// CompleteThrough Instant the feed is complete through: every change committed strictly below it is reachable from this page's cursor. Always present. The sentinel 0001-01-01T00:00:00Z means no commit bound has been established yet, a transient state in which the feed returns no rows; it is a state rather than an instant, so do not subtract it from server_time
+	CompleteThrough string               `json:"complete_through" validate:"required"`
+	Count           int64                `json:"count"`
+	HasMore         bool                 `json:"has_more"`
+	Messages        []ChangedMessageJSON `json:"messages" validate:"required"`
+
+	// NextCursor Opaque cursor for the next request. Always present and never empty. Store it and send it back as the cursor parameter; do not parse, construct, compare, or order it — its contents may change without notice
+	NextCursor string    `json:"next_cursor" validate:"required"`
+	ServerTime time.Time `json:"server_time" validate:"required"`
+}
+
+func (c ChangesResponse) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(c.CompleteThrough, "required"); err != nil {
+		errors = errors.Append("CompleteThrough", err)
+	}
+	for i, item := range c.Messages {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Messages[%d]", i), err)
+			}
+		}
+	}
+	if err := typesValidator.Var(c.NextCursor, "required"); err != nil {
+		errors = errors.Append("NextCursor", err)
+	}
+	if err := typesValidator.Var(c.ServerTime, "required"); err != nil {
+		errors = errors.Append("ServerTime", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
 type CliAccountResponse struct {
 	DisplayName        string     `json:"display_name" validate:"required"`
 	Email              string     `json:"email" validate:"required"`
