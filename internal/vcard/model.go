@@ -64,6 +64,7 @@ type DecodeOptions struct {
 	MaxPhysicalLineBytes int
 	MaxLogicalLineBytes  int
 	MaxCards             int
+	MaxPropertiesPerCard int
 	DisallowV21          bool
 }
 

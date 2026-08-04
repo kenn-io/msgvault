@@ -14,6 +14,7 @@ const (
 	DefaultMaxPhysicalLineBytes = 16 << 20
 	DefaultMaxLogicalLineBytes  = 16 << 20
 	DefaultMaxCards             = 100_000
+	DefaultMaxPropertiesPerCard = 10_000
 )
 
 type sourceLine struct {
@@ -60,6 +61,9 @@ func normalizeDecodeOptions(opts DecodeOptions) (DecodeOptions, error) {
 	if opts.MaxCards == 0 {
 		opts.MaxCards = DefaultMaxCards
 	}
+	if opts.MaxPropertiesPerCard == 0 {
+		opts.MaxPropertiesPerCard = DefaultMaxPropertiesPerCard
+	}
 	if opts.MaxPhysicalLineBytes < 1 {
 		return DecodeOptions{}, errors.New("maximum physical line bytes must be positive")
 	}
@@ -68,6 +72,9 @@ func normalizeDecodeOptions(opts DecodeOptions) (DecodeOptions, error) {
 	}
 	if opts.MaxCards < 1 {
 		return DecodeOptions{}, errors.New("maximum cards must be positive")
+	}
+	if opts.MaxPropertiesPerCard < 1 {
+		return DecodeOptions{}, errors.New("maximum properties per card must be positive")
 	}
 	return opts, nil
 }
@@ -344,6 +351,13 @@ func (d *documentDecoder) consumeLogicalLine(line sourceLine) error {
 				line.number,
 				len(d.document.Cards)+1,
 				errors.New("vCard 2.1 is disabled"),
+			)
+		}
+		if len(d.current.Properties) >= d.opts.MaxPropertiesPerCard {
+			return parseError(
+				line.number,
+				len(d.document.Cards)+1,
+				fmt.Errorf("property count exceeds %d", d.opts.MaxPropertiesPerCard),
 			)
 		}
 		d.current.Properties = append(d.current.Properties, property)

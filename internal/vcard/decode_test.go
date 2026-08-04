@@ -147,6 +147,71 @@ func TestDecodeEnforcesPhysicalLineAndCardLimits(t *testing.T) {
 	require.ErrorContains(err, "card count exceeds 1")
 }
 
+func TestDecodeEnforcesPropertyLimitBoundary(t *testing.T) {
+	tests := []struct {
+		name    string
+		body    string
+		wantErr string
+	}{
+		{
+			name: "maximum accepted",
+			body: "VERSION:4.0\r\nFN:Alice\r\n",
+		},
+		{
+			name:    "one over maximum rejected",
+			body:    "VERSION:4.0\r\nFN:Alice\r\nEMAIL:alice@example.com\r\n",
+			wantErr: "property count exceeds 2",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := DecodeWithOptions(strings.NewReader(
+				"BEGIN:VCARD\r\n"+test.body+"END:VCARD\r\n",
+			), DecodeOptions{MaxPropertiesPerCard: 2})
+			if test.wantErr == "" {
+				require.NoError(t, err)
+				return
+			}
+			require.Error(t, err)
+			assert.ErrorContains(t, err, test.wantErr)
+		})
+	}
+}
+
+func TestDecodeEnforcesDefaultPropertyLimit(t *testing.T) {
+	var input strings.Builder
+	input.WriteString("BEGIN:VCARD\r\n")
+	for range 10_001 {
+		input.WriteString("X:\r\n")
+	}
+	input.WriteString("END:VCARD\r\n")
+
+	_, err := Decode(strings.NewReader(input.String()))
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "property count exceeds 10000")
+}
+
+func TestDecodeEnforcesPropertyLimitBeforeReadingTrailingInput(t *testing.T) {
+	trailingErr := errors.New("unexpected trailing read")
+	input := io.MultiReader(
+		strings.NewReader(
+			"BEGIN:VCARD\r\nVERSION:4.0\r\nFN:Alice\r\nNOTE:must-not-be-parsed\r\n",
+		),
+		errorReader{err: trailingErr},
+	)
+
+	_, err := DecodeWithOptions(input, DecodeOptions{MaxPropertiesPerCard: 1})
+	require.Error(t, err)
+	require.ErrorContains(t, err, "property count exceeds 1")
+	assert.NotErrorIs(t, err, trailingErr)
+}
+
+func TestDecodeRejectsInvalidPropertyLimit(t *testing.T) {
+	_, err := DecodeWithOptions(strings.NewReader(""), DecodeOptions{MaxPropertiesPerCard: -1})
+	require.ErrorContains(t, err, "maximum properties per card must be positive")
+}
+
 func TestDecodeEnforcesCardLimitBeforeReadingTrailingInput(t *testing.T) {
 	trailingErr := errors.New("unexpected trailing read")
 	input := io.MultiReader(
