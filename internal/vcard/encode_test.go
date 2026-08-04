@@ -270,7 +270,7 @@ func TestEncodeRejectsInconsistentBareParameters(t *testing.T) {
 				Bare:   true,
 				Values: []ParameterValue{{Decoded: "HOME"}},
 			},
-			wantErr: "bare parameter must contain one preserved raw value",
+			wantErr: "bare parameter must contain preserved raw values",
 		},
 		{
 			name: "empty value",
@@ -279,16 +279,7 @@ func TestEncodeRejectsInconsistentBareParameters(t *testing.T) {
 				Bare:   true,
 				Values: []ParameterValue{{RawValid: true}},
 			},
-			wantErr: "bare parameter value must be a non-empty unquoted token without '='",
-		},
-		{
-			name: "quoted value",
-			parameter: Parameter{
-				Name:   "TYPE",
-				Bare:   true,
-				Values: []ParameterValue{{Raw: "HOME", Quoted: true, RawValid: true}},
-			},
-			wantErr: "bare parameter value must be a non-empty unquoted token without '='",
+			wantErr: "bare parameter value must not be empty unless quoted",
 		},
 		{
 			name: "equals delimiter",
@@ -297,7 +288,7 @@ func TestEncodeRejectsInconsistentBareParameters(t *testing.T) {
 				Bare:   true,
 				Values: []ParameterValue{{Raw: "HOME=WORK", RawValid: true}},
 			},
-			wantErr: "bare parameter value must be a non-empty unquoted token without '='",
+			wantErr: "bare unquoted parameter value contains '='",
 		},
 	}
 

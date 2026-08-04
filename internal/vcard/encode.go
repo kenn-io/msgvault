@@ -113,14 +113,30 @@ func renderParameter(parameter Parameter, rfc6868 bool) (string, error) {
 		if parameter.OriginalName != "" || !strings.EqualFold(parameter.Name, "TYPE") {
 			return "", errors.New("bare parameter must use TYPE without an original name")
 		}
-		if len(parameter.Values) != 1 || !parameter.Values[0].RawValid {
-			return "", errors.New("bare parameter must contain one preserved raw value")
+		if len(parameter.Values) == 0 {
+			return "", errors.New("bare parameter must contain preserved raw values")
 		}
-		value := parameter.Values[0]
-		if value.Raw == "" || value.Quoted || strings.ContainsRune(value.Raw, '=') {
-			return "", errors.New("bare parameter value must be a non-empty unquoted token without '='")
+		var rendered strings.Builder
+		for i, value := range parameter.Values {
+			if !value.RawValid {
+				return "", errors.New("bare parameter must contain preserved raw values")
+			}
+			if len(parameter.Values) == 1 && value.Raw == "" && !value.Quoted {
+				return "", errors.New("bare parameter value must not be empty unless quoted")
+			}
+			if !value.Quoted && strings.ContainsRune(value.Raw, '=') {
+				return "", errors.New("bare unquoted parameter value contains '='")
+			}
+			if i > 0 {
+				rendered.WriteByte(',')
+			}
+			encoded, err := renderParameterValue(value, rfc6868)
+			if err != nil {
+				return "", err
+			}
+			rendered.WriteString(encoded)
 		}
-		return renderParameterValue(value, rfc6868)
+		return rendered.String(), nil
 	}
 
 	name := parameter.OriginalName

@@ -36,6 +36,69 @@ func TestConformanceCorpusRoundTripsWithoutSemanticLoss(t *testing.T) {
 	}
 }
 
+func TestLegacyBareParametersRoundTrip(t *testing.T) {
+	tests := []struct {
+		name       string
+		parameter  string
+		wantValues []ParameterValue
+	}{
+		{
+			name:      "quoted value",
+			parameter: `"HOME"`,
+			wantValues: []ParameterValue{{
+				Raw:      "HOME",
+				Decoded:  "HOME",
+				Quoted:   true,
+				RawValid: true,
+			}},
+		},
+		{
+			name:      "comma-separated values",
+			parameter: "HOME,VOICE",
+			wantValues: []ParameterValue{
+				{Raw: "HOME", Decoded: "HOME", RawValid: true},
+				{Raw: "VOICE", Decoded: "VOICE", RawValid: true},
+			},
+		},
+		{
+			name:      "quoted delimiter",
+			parameter: `"HOME,VOICE"`,
+			wantValues: []ParameterValue{{
+				Raw:      "HOME,VOICE",
+				Decoded:  "HOME,VOICE",
+				Quoted:   true,
+				RawValid: true,
+			}},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			input := []byte("BEGIN:VCARD\r\nVERSION:2.1\r\nTEL;" +
+				test.parameter + ":+12025550123\r\nEND:VCARD\r\n")
+
+			first, err := Decode(bytes.NewReader(input))
+			require.NoError(err)
+			require.Len(first.Cards, 1)
+			require.Len(first.Cards[0].Properties, 2)
+			require.Len(first.Cards[0].Properties[1].Parameters, 1)
+			parameter := first.Cards[0].Properties[1].Parameters[0]
+			assert.True(parameter.Bare)
+			assert.Equal(test.wantValues, parameter.Values)
+
+			rendered, err := Marshal(first)
+			require.NoError(err)
+			assert.Equal(input, rendered)
+
+			second, err := Decode(bytes.NewReader(rendered))
+			require.NoError(err)
+			assert.Equal(first, second)
+		})
+	}
+}
+
 func TestConformanceRegistrySmokeCoversEveryContentPropertyOnce(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

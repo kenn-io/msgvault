@@ -73,18 +73,14 @@ func parseParameter(raw string) (Parameter, error) {
 		if raw == "" {
 			return Parameter{}, errors.New("empty parameter")
 		}
-		if containsInjection(raw) {
-			return Parameter{}, errors.New("parameter value contains CR, LF, or NUL")
+		values, err := parseParameterValues(raw)
+		if err != nil {
+			return Parameter{}, err
 		}
-		decoded := decodeRFC6868(raw)
 		return Parameter{
-			Name: "TYPE",
-			Bare: true,
-			Values: []ParameterValue{{
-				Raw:      raw,
-				Decoded:  decoded,
-				RawValid: true,
-			}},
+			Name:   "TYPE",
+			Bare:   true,
+			Values: values,
 		}, nil
 	}
 
@@ -95,33 +91,38 @@ func parseParameter(raw string) (Parameter, error) {
 		}
 		return Parameter{}, fmt.Errorf("invalid parameter name %q", originalName)
 	}
-	rawValues, err := splitOutsideQuotesCapped(
-		raw[equals+1:],
-		',',
-		maxValuesPerParameter,
-	)
+	values, err := parseParameterValues(raw[equals+1:])
 	if err != nil {
-		if errors.Is(err, errSplitPartLimit) {
-			return Parameter{}, fmt.Errorf(
-				"parameter value count exceeds %d",
-				maxValuesPerParameter,
-			)
-		}
 		return Parameter{}, err
 	}
 	parameter := Parameter{
 		Name:         strings.ToUpper(originalName),
 		OriginalName: originalName,
-		Values:       make([]ParameterValue, 0, len(rawValues)),
+		Values:       values,
 	}
+	return parameter, nil
+}
+
+func parseParameterValues(raw string) ([]ParameterValue, error) {
+	rawValues, err := splitOutsideQuotesCapped(raw, ',', maxValuesPerParameter)
+	if err != nil {
+		if errors.Is(err, errSplitPartLimit) {
+			return nil, fmt.Errorf(
+				"parameter value count exceeds %d",
+				maxValuesPerParameter,
+			)
+		}
+		return nil, err
+	}
+	values := make([]ParameterValue, 0, len(rawValues))
 	for _, rawValue := range rawValues {
 		value, err := parseParameterValue(rawValue)
 		if err != nil {
-			return Parameter{}, err
+			return nil, err
 		}
-		parameter.Values = append(parameter.Values, value)
+		values = append(values, value)
 	}
-	return parameter, nil
+	return values, nil
 }
 
 func parseParameterValue(raw string) (ParameterValue, error) {
