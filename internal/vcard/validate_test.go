@@ -34,6 +34,19 @@ func TestValidateRejectsDuplicateVersion(t *testing.T) {
 	assert.ErrorContains(t, err, "card 1: requires exactly one VERSION")
 }
 
+func TestValidateRequiresVersionFirstInV4(t *testing.T) {
+	doc := mustDecode(t,
+		"BEGIN:VCARD\r\nFN:Alice\r\nVERSION:4.0\r\nEND:VCARD\r\n",
+	)
+	err := Validate(doc)
+	require.ErrorContains(t, err, "card 1: vCard 4.0 requires VERSION as the first property")
+
+	legacy := mustDecode(t,
+		"BEGIN:VCARD\r\nFN:Alice\r\nVERSION:3.0\r\nEND:VCARD\r\n",
+	)
+	require.NoError(t, Validate(legacy))
+}
+
 func TestValidateAcceptsSupportedVersions(t *testing.T) {
 	for _, version := range []Version{Version21, Version30, Version40} {
 		t.Run(string(version), func(t *testing.T) {

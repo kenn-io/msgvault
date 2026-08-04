@@ -16,7 +16,7 @@ import (
 	"go.kenn.io/msgvault/internal/vcard/registry"
 )
 
-func TestRunWritesValidatedSnapshotAtomically(t *testing.T) {
+func TestRunWritesValidatedSnapshot(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	server := newIANATestServer(t, "2026-01-13")
@@ -38,12 +38,31 @@ func TestRunWritesValidatedSnapshotAtomically(t *testing.T) {
 	assert.Equal("SOURCE", snapshot.Properties[0].Name)
 }
 
+func TestRunRecordsConfiguredRegistrySource(t *testing.T) {
+	require := require.New(t)
+	server := newIANATestServer(t, "2026-01-13")
+	defer server.Close()
+
+	dest := t.TempDir()
+	require.NoError(run(context.Background(), server.Client(), io.Discard, options{
+		baseURL: server.URL,
+		destDir: dest,
+		write:   true,
+	}))
+
+	data, err := os.ReadFile(filepath.Join(dest, "metadata.json"))
+	require.NoError(err)
+	var metadata registryMetadata
+	require.NoError(json.Unmarshal(data, &metadata))
+	assert.Equal(t, server.URL+"/vcard-elements.xhtml", metadata.Source)
+}
+
 func TestRunCheckReportsDriftWithoutWriting(t *testing.T) {
 	assert := assert.New(t)
 	server := newIANATestServer(t, "2026-01-14")
 	defer server.Close()
 
-	dest := writeExistingSnapshot(t, "2026-01-13")
+	dest := writeExistingSnapshot(t, "2026-01-13", server.URL+"/vcard-elements.xhtml")
 	var stdout bytes.Buffer
 	err := run(context.Background(), server.Client(), &stdout, options{
 		baseURL: server.URL,
@@ -60,7 +79,7 @@ func TestRunIdenticalSnapshotIsNoOp(t *testing.T) {
 	server := newIANATestServer(t, "2026-01-13")
 	defer server.Close()
 
-	dest := writeExistingSnapshot(t, "2026-01-13")
+	dest := writeExistingSnapshot(t, "2026-01-13", server.URL+"/vcard-elements.xhtml")
 	before := readSnapshotBytes(t, dest)
 
 	require.NoError(t, run(context.Background(), server.Client(), io.Discard, options{
@@ -77,12 +96,12 @@ func TestRunIdenticalSnapshotIsNoOp(t *testing.T) {
 }
 
 func TestRunRejectsMalformedRemoteBeforeChangingDestination(t *testing.T) {
-	files := testRegistryFiles("2026-01-14")
+	files := testRegistryFiles("2026-01-14", defaultBaseURL+"/vcard-elements.xhtml")
 	files.Properties = []byte("Namespace,Property,Reference\n,SOURCE\n")
 	server := newIANATestServerWithFiles(t, "2026-01-14", files)
 	defer server.Close()
 
-	dest := writeExistingSnapshot(t, "2026-01-13")
+	dest := writeExistingSnapshot(t, "2026-01-13", server.URL+"/vcard-elements.xhtml")
 	before := readSnapshotBytes(t, dest)
 	err := run(context.Background(), server.Client(), io.Discard, options{
 		baseURL: server.URL,
@@ -110,7 +129,7 @@ func TestRunRejectsNonSuccessResponse(t *testing.T) {
 }
 
 func TestRunRejectsResponseLargerThanLimit(t *testing.T) {
-	files := testRegistryFiles("2026-01-13")
+	files := testRegistryFiles("2026-01-13", defaultBaseURL+"/vcard-elements.xhtml")
 	server := newIANATestServerWithFiles(t, "2026-01-13", files)
 	server.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/properties.csv" {
@@ -132,7 +151,7 @@ func TestRunRejectsResponseLargerThanLimit(t *testing.T) {
 }
 
 func TestRunRejectsMalformedRegistryUpdateDate(t *testing.T) {
-	files := testRegistryFiles("2026-01-13")
+	files := testRegistryFiles("2026-01-13", defaultBaseURL+"/vcard-elements.xhtml")
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/vcard-elements.xml" {
 			_, _ = io.WriteString(w, `<registry><updated>not-a-date</updated></registry>`)
@@ -153,7 +172,11 @@ func TestRunRejectsMalformedRegistryUpdateDate(t *testing.T) {
 
 func newIANATestServer(t *testing.T, updated string) *httptest.Server {
 	t.Helper()
-	return newIANATestServerWithFiles(t, updated, testRegistryFiles(updated))
+	return newIANATestServerWithFiles(
+		t,
+		updated,
+		testRegistryFiles(updated, defaultBaseURL+"/vcard-elements.xhtml"),
+	)
 }
 
 func newIANATestServerWithFiles(t *testing.T, updated string, files registry.Files) *httptest.Server {
@@ -227,10 +250,10 @@ func loadFiles(dir string) (registry.Files, error) {
 	}, nil
 }
 
-func writeExistingSnapshot(t *testing.T, updated string) string {
+func writeExistingSnapshot(t *testing.T, updated, source string) string {
 	t.Helper()
 	dir := t.TempDir()
-	files := testRegistryFiles(updated)
+	files := testRegistryFiles(updated, source)
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "metadata.json"), files.Metadata, 0o600))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "properties.csv"), files.Properties, 0o600))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "parameters.csv"), files.Parameters, 0o600))
@@ -262,12 +285,12 @@ func readSnapshotBytes(t *testing.T, dir string) map[string]string {
 	return got
 }
 
-func testRegistryFiles(updated string) registry.Files {
+func testRegistryFiles(updated, source string) registry.Files {
 	metadata, err := json.Marshal(struct {
 		Source  string `json:"source"`
 		Updated string `json:"updated"`
 	}{
-		Source:  "https://www.iana.org/assignments/vcard-elements/vcard-elements.xhtml",
+		Source:  source,
 		Updated: updated,
 	})
 	if err != nil {

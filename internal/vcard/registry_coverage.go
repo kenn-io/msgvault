@@ -25,7 +25,6 @@ const (
 // Handling is the declared treatment of one registered vCard element.
 type Handling struct {
 	Strategy HandlingStrategy
-	Notes    string
 }
 
 var propertyHandling = map[string]Handling{

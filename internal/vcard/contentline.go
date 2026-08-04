@@ -79,6 +79,7 @@ func parseParameter(raw string) (Parameter, error) {
 		decoded := decodeRFC6868(raw)
 		return Parameter{
 			Name: "TYPE",
+			Bare: true,
 			Values: []ParameterValue{{
 				Raw:      raw,
 				Decoded:  decoded,

@@ -202,6 +202,117 @@ func TestEncodeRejectsSyntaxTokenAndParameterInjection(t *testing.T) {
 	}
 }
 
+func TestEncodeRejectsUnquotedRawParameterDelimiters(t *testing.T) {
+	for _, delimiter := range []string{":", ";", ","} {
+		t.Run(delimiter, func(t *testing.T) {
+			property := mustProperty(t, "TEL", "+12025550123")
+			property.Parameters = []Parameter{{
+				Name:         "X-LABEL",
+				OriginalName: "X-LABEL",
+				Values: []ParameterValue{{
+					Raw:      "a" + delimiter + "b",
+					RawValid: true,
+				}},
+			}}
+
+			_, err := Marshal(Document{Cards: []Card{{Properties: []Property{property}}}})
+			require.Error(t, err)
+			assert.ErrorContains(t, err, "unquoted parameter value contains a delimiter")
+		})
+	}
+}
+
+func TestEncodeDoesNotInferBareParameterFromEmptyOriginalName(t *testing.T) {
+	property := mustProperty(t, "TEL", "+12025550123")
+	property.Parameters = []Parameter{{
+		Name: "TYPE",
+		Values: []ParameterValue{{
+			Raw:      "HOME",
+			Decoded:  "HOME",
+			RawValid: true,
+		}},
+	}}
+
+	got, err := Marshal(Document{Cards: []Card{{Properties: []Property{property}}}})
+	require.NoError(t, err)
+	assert.Contains(t, string(got), "TEL;TYPE=HOME:+12025550123\r\n")
+}
+
+func TestEncodeRejectsInconsistentBareParameters(t *testing.T) {
+	tests := []struct {
+		name      string
+		parameter Parameter
+		wantErr   string
+	}{
+		{
+			name: "original name",
+			parameter: Parameter{
+				Name:         "TYPE",
+				OriginalName: "TYPE",
+				Bare:         true,
+				Values:       []ParameterValue{{Raw: "HOME", RawValid: true}},
+			},
+			wantErr: "bare parameter must use TYPE without an original name",
+		},
+		{
+			name: "normalized name",
+			parameter: Parameter{
+				Name:   "X-LABEL",
+				Bare:   true,
+				Values: []ParameterValue{{Raw: "HOME", RawValid: true}},
+			},
+			wantErr: "bare parameter must use TYPE without an original name",
+		},
+		{
+			name: "constructed value",
+			parameter: Parameter{
+				Name:   "TYPE",
+				Bare:   true,
+				Values: []ParameterValue{{Decoded: "HOME"}},
+			},
+			wantErr: "bare parameter must contain one preserved raw value",
+		},
+		{
+			name: "empty value",
+			parameter: Parameter{
+				Name:   "TYPE",
+				Bare:   true,
+				Values: []ParameterValue{{RawValid: true}},
+			},
+			wantErr: "bare parameter value must be a non-empty unquoted token without '='",
+		},
+		{
+			name: "quoted value",
+			parameter: Parameter{
+				Name:   "TYPE",
+				Bare:   true,
+				Values: []ParameterValue{{Raw: "HOME", Quoted: true, RawValid: true}},
+			},
+			wantErr: "bare parameter value must be a non-empty unquoted token without '='",
+		},
+		{
+			name: "equals delimiter",
+			parameter: Parameter{
+				Name:   "TYPE",
+				Bare:   true,
+				Values: []ParameterValue{{Raw: "HOME=WORK", RawValid: true}},
+			},
+			wantErr: "bare parameter value must be a non-empty unquoted token without '='",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			property := mustProperty(t, "TEL", "+12025550123")
+			property.Parameters = []Parameter{test.parameter}
+
+			_, err := Marshal(Document{Cards: []Card{{Properties: []Property{property}}}})
+			require.Error(t, err)
+			assert.ErrorContains(t, err, test.wantErr)
+		})
+	}
+}
+
 func TestEncodeHandlesEmptyValuesCardsAndDocuments(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

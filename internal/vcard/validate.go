@@ -35,6 +35,9 @@ func Validate(doc Document) error {
 		version, versionErr := card.Version()
 		if versionErr != nil {
 			diagnostics = append(diagnostics, prefix+versionErr.Error())
+		} else if version == Version40 && !strings.EqualFold(card.Properties[0].Name, "VERSION") {
+			diagnostics = append(diagnostics,
+				prefix+"vCard 4.0 requires VERSION as the first property")
 		}
 
 		hasFullName := false

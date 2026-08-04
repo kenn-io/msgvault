@@ -109,11 +109,18 @@ func renderProperty(property Property, rfc6868 bool) (string, error) {
 }
 
 func renderParameter(parameter Parameter, rfc6868 bool) (string, error) {
-	if parameter.OriginalName == "" &&
-		strings.EqualFold(parameter.Name, "TYPE") &&
-		len(parameter.Values) == 1 &&
-		parameter.Values[0].RawValid {
-		return renderParameterValue(parameter.Values[0], rfc6868)
+	if parameter.Bare {
+		if parameter.OriginalName != "" || !strings.EqualFold(parameter.Name, "TYPE") {
+			return "", errors.New("bare parameter must use TYPE without an original name")
+		}
+		if len(parameter.Values) != 1 || !parameter.Values[0].RawValid {
+			return "", errors.New("bare parameter must contain one preserved raw value")
+		}
+		value := parameter.Values[0]
+		if value.Raw == "" || value.Quoted || strings.ContainsRune(value.Raw, '=') {
+			return "", errors.New("bare parameter value must be a non-empty unquoted token without '='")
+		}
+		return renderParameterValue(value, rfc6868)
 	}
 
 	name := parameter.OriginalName
@@ -148,6 +155,9 @@ func renderParameterValue(value ParameterValue, rfc6868 bool) (string, error) {
 		}
 		if strings.ContainsRune(raw, '"') {
 			return "", errors.New("parameter value contains an unencoded quote")
+		}
+		if !quoted && strings.ContainsAny(raw, ":;,") {
+			return "", errors.New("unquoted parameter value contains a delimiter")
 		}
 	} else {
 		if strings.ContainsAny(value.Decoded, "\r\x00") || (!rfc6868 && strings.ContainsRune(value.Decoded, '\n')) {

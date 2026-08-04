@@ -29,12 +29,7 @@ func ParseFile(path string) ([]Contact, error) {
 	}
 	defer func() { _ = file.Close() }()
 
-	document, err := DecodeWithOptions(file, DecodeOptions{
-		MaxPhysicalLineBytes: DefaultMaxPhysicalLineBytes,
-		MaxLogicalLineBytes:  DefaultMaxLogicalLineBytes,
-		MaxCards:             DefaultMaxCards,
-		AllowV21:             true,
-	})
+	document, err := Decode(file)
 	if err != nil {
 		return nil, fmt.Errorf("decode vCard %q: %w", path, err)
 	}
@@ -125,7 +120,7 @@ func propertyIsQuotedPrintable(property Property) bool {
 				continue
 			}
 			if strings.EqualFold(parameter.Name, "ENCODING") ||
-				(parameter.Name == "TYPE" && parameter.OriginalName == "") {
+				parameter.Bare {
 				return true
 			}
 		}

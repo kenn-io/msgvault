@@ -25,7 +25,9 @@ type Card struct {
 	Properties []Property
 }
 
-// Property is one losslessly decoded vCard content line.
+// Property is one decoded vCard content line. The codec preserves property
+// order, source spelling, parameters, and RawValue, but it does not retain
+// blank logical lines, original line endings, or physical folding.
 type Property struct {
 	Group        string
 	Name         string
@@ -34,14 +36,21 @@ type Property struct {
 	RawValue     string
 }
 
-// Parameter is one ordered property parameter.
+// Parameter is one ordered property parameter. Bare records the legacy vCard
+// 2.1 spelling that omits the parameter name and equals sign.
 type Parameter struct {
 	Name         string
 	OriginalName string
+	Bare         bool
 	Values       []ParameterValue
 }
 
-// ParameterValue retains source syntax and a decoded lookup value.
+// ParameterValue retains source syntax and a decoded lookup value. When
+// RawValid is true, encoding preserves Raw and Quoted exactly after validating
+// that they cannot alter content-line structure. Otherwise, encoding derives
+// the wire value from Decoded and quotes delimiters as needed. Decoded applies
+// RFC 6868 unescaping only when the card has exactly one supported VERSION
+// property with value 4.0; all other cards expose Raw unchanged as Decoded.
 type ParameterValue struct {
 	Raw      string
 	Decoded  string
@@ -49,12 +58,13 @@ type ParameterValue struct {
 	RawValid bool
 }
 
-// DecodeOptions bounds decoder resource use and compatibility behavior.
+// DecodeOptions bounds decoder resource use and compatibility behavior. Its
+// zero value uses the default bounds and accepts vCard 2.1, 3.0, and 4.0.
 type DecodeOptions struct {
 	MaxPhysicalLineBytes int
 	MaxLogicalLineBytes  int
 	MaxCards             int
-	AllowV21             bool
+	DisallowV21          bool
 }
 
 // ParseError locates a malformed vCard input.

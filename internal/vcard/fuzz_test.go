@@ -28,7 +28,6 @@ func FuzzDecodeMarshalDecode(f *testing.F) {
 			MaxPhysicalLineBytes: 1 << 20,
 			MaxLogicalLineBytes:  1 << 20,
 			MaxCards:             100,
-			AllowV21:             true,
 		})
 		if err != nil {
 			return

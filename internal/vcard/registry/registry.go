@@ -104,7 +104,8 @@ func Parse(files Files) (Snapshot, error) {
 	}, nil
 }
 
-// Load loads the embedded registry snapshot.
+// Load parses the embedded registry snapshot. Callers that perform repeated
+// lookups should retain the returned snapshot.
 func Load() (Snapshot, error) {
 	read := func(name string) ([]byte, error) {
 		data, err := embeddedData.ReadFile("data/" + name)

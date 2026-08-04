@@ -91,7 +91,8 @@ test-pg:
 	fi
 	go test -tags "$(PG_TEST_TAGS)" ./...
 
-# Check or update the vendored IANA vCard Elements registry.
+# Network-check or update the vendored IANA vCard Elements registry. These are
+# manual targets; CI validates handling coverage against the vendored snapshot.
 vcard-registry-check:
 	go run ./internal/vcard/cmd/update-registry
 
@@ -284,7 +285,7 @@ help:
 	@echo "  lint-ci        - Run linter (CI, no auto-fix; also runs testify-helper-check)"
 	@echo "  testify-helper-check - Enforce testify helper usage in assertion-heavy tests"
 	@echo "  tidy           - Tidy go.mod"
-	@echo "  vcard-registry-check - Check the vendored IANA vCard registry for drift"
+	@echo "  vcard-registry-check - Network-check IANA registry drift (manual; not CI)"
 	@echo "  vcard-registry-update - Update the vendored IANA vCard registry"
 	@echo "  openapi        - Regenerate OpenAPI specs and generated Go client"
 	@echo "  openapi-check  - Check committed OpenAPI specs and generated Go client are up to date"

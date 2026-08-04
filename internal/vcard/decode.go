@@ -23,12 +23,7 @@ type sourceLine struct {
 
 // Decode parses vCard 2.1, 3.0, and 4.0 syntax with default bounds.
 func Decode(r io.Reader) (Document, error) {
-	return DecodeWithOptions(r, DecodeOptions{
-		MaxPhysicalLineBytes: DefaultMaxPhysicalLineBytes,
-		MaxLogicalLineBytes:  DefaultMaxLogicalLineBytes,
-		MaxCards:             DefaultMaxCards,
-		AllowV21:             true,
-	})
+	return DecodeWithOptions(r, DecodeOptions{})
 }
 
 // DecodeWithOptions parses ordered vCard syntax with explicit bounds.
@@ -344,7 +339,7 @@ func (d *documentDecoder) consumeLogicalLine(line sourceLine) error {
 		}
 		if property.Name == "VERSION" &&
 			strings.TrimSpace(property.RawValue) == string(Version21) &&
-			!d.opts.AllowV21 {
+			d.opts.DisallowV21 {
 			return parseError(
 				line.number,
 				len(d.document.Cards)+1,

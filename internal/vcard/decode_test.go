@@ -76,14 +76,16 @@ func TestDecodeJoinsOnlyQuotedPrintableSoftLines(t *testing.T) {
 func TestDecodeRejectsV21WhenDisabled(t *testing.T) {
 	_, err := DecodeWithOptions(strings.NewReader(
 		"BEGIN:VCARD\r\nVERSION:2.1\r\nFN:Alice\r\nEND:VCARD\r\n",
-	), DecodeOptions{
-		MaxPhysicalLineBytes: DefaultMaxPhysicalLineBytes,
-		MaxLogicalLineBytes:  DefaultMaxLogicalLineBytes,
-		MaxCards:             DefaultMaxCards,
-		AllowV21:             false,
-	})
+	), DecodeOptions{DisallowV21: true})
 	require.Error(t, err)
 	assert.ErrorContains(t, err, "vCard 2.1 is disabled")
+}
+
+func TestDecodeWithPartialOptionsAllowsV21(t *testing.T) {
+	_, err := DecodeWithOptions(strings.NewReader(
+		"BEGIN:VCARD\r\nVERSION:2.1\r\nFN:Alice\r\nEND:VCARD\r\n",
+	), DecodeOptions{MaxCards: 1})
+	require.NoError(t, err)
 }
 
 func TestDecodeRejectsNestedCardWithLocation(t *testing.T) {
@@ -103,7 +105,6 @@ func TestDecodeEnforcesLogicalLineLimit(t *testing.T) {
 		MaxPhysicalLineBytes: 100,
 		MaxLogicalLineBytes:  100,
 		MaxCards:             10,
-		AllowV21:             true,
 	})
 	require.Error(t, err)
 	assert.ErrorContains(t, err, "logical content line exceeds 100 bytes")
@@ -116,7 +117,6 @@ func TestDecodeEnforcesLogicalLimitOnFirstPhysicalLine(t *testing.T) {
 		MaxPhysicalLineBytes: 100,
 		MaxLogicalLineBytes:  5,
 		MaxCards:             10,
-		AllowV21:             true,
 	})
 	require.Error(t, err)
 	require.ErrorContains(t, err, "physical line 1")
@@ -131,7 +131,6 @@ func TestDecodeEnforcesPhysicalLineAndCardLimits(t *testing.T) {
 		MaxPhysicalLineBytes: 20,
 		MaxLogicalLineBytes:  100,
 		MaxCards:             10,
-		AllowV21:             true,
 	})
 	require.Error(err)
 	require.ErrorContains(err, "physical line 3 exceeds 20 bytes")
@@ -143,7 +142,6 @@ func TestDecodeEnforcesPhysicalLineAndCardLimits(t *testing.T) {
 		MaxPhysicalLineBytes: 100,
 		MaxLogicalLineBytes:  100,
 		MaxCards:             1,
-		AllowV21:             true,
 	})
 	require.Error(err)
 	require.ErrorContains(err, "card count exceeds 1")
@@ -163,7 +161,6 @@ func TestDecodeEnforcesCardLimitBeforeReadingTrailingInput(t *testing.T) {
 		MaxPhysicalLineBytes: 100,
 		MaxLogicalLineBytes:  100,
 		MaxCards:             1,
-		AllowV21:             true,
 	})
 	require.Error(t, err)
 	require.ErrorContains(t, err, "card count exceeds 1")
@@ -183,7 +180,6 @@ func TestDecodeEnforcesLogicalLimitBeforeReadingTrailingInput(t *testing.T) {
 		MaxPhysicalLineBytes: 100,
 		MaxLogicalLineBytes:  10,
 		MaxCards:             1,
-		AllowV21:             true,
 	})
 	require.Error(t, err)
 	require.ErrorContains(t, err, "logical content line exceeds 10 bytes")
@@ -198,7 +194,6 @@ func TestDecodeFoldedLineAllocationsAreBounded(t *testing.T) {
 		MaxPhysicalLineBytes: 100,
 		MaxLogicalLineBytes:  1 << 20,
 		MaxCards:             1,
-		AllowV21:             true,
 	}
 
 	var decodeErr error

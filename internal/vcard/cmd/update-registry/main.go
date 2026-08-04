@@ -104,7 +104,7 @@ func run(
 		remote[name] = data
 	}
 	metadataBytes, err := json.Marshal(registryMetadata{
-		Source:  defaultBaseURL + "/vcard-elements.xhtml",
+		Source:  opts.baseURL + "/vcard-elements.xhtml",
 		Updated: updated,
 	})
 	if err != nil {
