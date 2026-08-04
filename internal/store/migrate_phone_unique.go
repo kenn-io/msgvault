@@ -26,8 +26,13 @@ const migrationPhoneUniqueIndex = "participants_phone_unique_index"
 //
 // Works identically on SQLite and PostgreSQL (DROP INDEX IF EXISTS
 // and partial UNIQUE indexes are supported on both).
-func (s *Store) ensureParticipantsPhoneUniqueIndex() error {
-	applied, err := s.IsMigrationApplied(migrationPhoneUniqueIndex)
+// Bound to ctx throughout: this is a one-shot upgrade step run from
+// InitSchemaContext, its index build runs with the pool-wide statement_timeout
+// disabled, and on PostgreSQL the DROP/CREATE INDEX queues behind any
+// conflicting lock on participants -- so on context.Background() it would
+// ignore SIGINT and SIGTERM for as long as that lock is held.
+func (s *Store) ensureParticipantsPhoneUniqueIndex(ctx context.Context) error {
+	applied, err := s.IsMigrationAppliedContext(ctx, migrationPhoneUniqueIndex)
 	if err != nil {
 		return err
 	}
@@ -43,7 +48,7 @@ func (s *Store) ensureParticipantsPhoneUniqueIndex() error {
 	// count and can exceed 30s on a large archive (finding S1). Running them in
 	// one tx also guarantees the index is built against the just-deduped table.
 	// No-op timeout reset on SQLite.
-	if err := s.runMaintenance(context.Background(), func(ctx context.Context, tx *loggedTx) error {
+	if err := s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
 		if err := s.dedupeParticipantsByPhone(ctx, tx); err != nil {
 			return fmt.Errorf("dedupe participants by phone: %w", err)
 		}
@@ -63,7 +68,7 @@ func (s *Store) ensureParticipantsPhoneUniqueIndex() error {
 		return err
 	}
 
-	return s.MarkMigrationApplied(migrationPhoneUniqueIndex)
+	return s.MarkMigrationAppliedContext(ctx, migrationPhoneUniqueIndex)
 }
 
 // dedupeParticipantsByPhone merges rows that share a non-null
@@ -242,18 +247,18 @@ func (s *Store) mergeParticipant(ctx context.Context, tx *loggedTx, winner, lose
 	// loser before the delete below drops them via ON DELETE CASCADE.
 	// This one-shot legacy migration runs during schema setup before person
 	// profiles can be created, so there are no person bindings to re-point.
-	if err := s.rewriteLinksForMerge(tx, loser, winner); err != nil {
+	if err := s.rewriteLinksForMergeContext(ctx, tx, loser, winner); err != nil {
 		return fmt.Errorf("rewrite participant links (loser=%d, winner=%d): %w", loser, winner, err)
 	}
 	// Bump unconditionally, even when the merge touched no link edges: see
 	// the matching comment in MergeParticipants (messages.go).
-	if _, err := s.bumpIdentityRevision(tx); err != nil {
+	if _, err := s.bumpIdentityRevisionContext(ctx, tx); err != nil {
 		return fmt.Errorf("bump identity revision (loser=%d, winner=%d): %w", loser, winner, err)
 	}
 	// Also bump the account-identity revision: the primary rows are repaired
 	// after the survivor metadata is finalized below, but existing message
 	// Parquet shards still require a full rebuild.
-	if err := s.bumpAccountIdentityRevision(tx); err != nil {
+	if err := s.bumpAccountIdentityRevisionContext(ctx, tx); err != nil {
 		return fmt.Errorf("bump account identity revision (loser=%d, winner=%d): %w", loser, winner, err)
 	}
 

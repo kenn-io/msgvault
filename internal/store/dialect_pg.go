@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5/pgconn"
@@ -16,7 +18,18 @@ import (
 )
 
 // PostgreSQLDialect implements Dialect for PostgreSQL.
-type PostgreSQLDialect struct{}
+//
+// The zero value is ready to use, and every method except ReadWatermarkBounds
+// is stateless — callers outside Store that only want Rebind can go on
+// constructing one per call. ReadWatermarkBounds remembers the last bound it
+// computed while every backend in the database was visible to it, which is the
+// floor it falls back to when pg_stat_activity starts redacting other roles'
+// backends; the Store's single long-lived instance carries that across pages.
+type PostgreSQLDialect struct {
+	visibilityMu      sync.Mutex
+	fullyVisibleAt    time.Time
+	fullyVisibleBound time.Time
+}
 
 func (d *PostgreSQLDialect) DriverName() string { return "pgx" }
 
@@ -29,6 +42,241 @@ func (d *PostgreSQLDialect) Rebind(query string) string {
 
 // Now returns the PostgreSQL expression for the current timestamp.
 func (d *PostgreSQLDialect) Now() string { return "NOW()" }
+
+// ContentChangedNow returns the PostgreSQL expression that stamps
+// content_changed_at. clock_timestamp() reads the wall clock at the moment of
+// the call, so — unlike NOW(), which is fixed for the duration of a transaction
+// — rows written by one transaction get microsecond-resolution stamps that can
+// be told apart, rather than one shared instant.
+//
+// It is a clock, not a sequence: PostgreSQL guarantees neither that successive
+// readings differ nor that they only move forward. Ties the
+// (content_changed_at, id) cursor breaks by id. Backward movement it cannot
+// repair — a cursor only advances — and what that costs a consumer is written
+// up with the feed's other exceptions in docs/api-server.md, rather than
+// restated here.
+func (d *PostgreSQLDialect) ContentChangedNow() string { return "clock_timestamp()" }
+
+// TimestampParam returns t unchanged (as UTC): PostgreSQL's TIMESTAMPTZ
+// compares natively and needs no textual reformatting.
+func (d *PostgreSQLDialect) TimestampParam(t time.Time) any { return t.UTC() }
+
+// pgWatermarkBoundsQuery reads the change feed's clock and commit bound in one
+// round trip.
+//
+// The bound is the oldest transaction start among the backends that hold a
+// write lock on THIS database's `messages`, floored by this statement's own
+// transaction start. Correctness rests on three facts about PostgreSQL:
+//
+//   - A statement that modifies rows takes ROW EXCLUSIVE on its target
+//     relation, and holds it to end of transaction. It takes it before it
+//     touches a row, so before the trigger evaluates clock_timestamp(). Any
+//     transaction that has stamped a watermark is therefore in pg_locks here,
+//     including one that reached `messages` only through the message_bodies
+//     trigger — that trigger's UPDATE locks `messages` too.
+//
+//   - A backend publishes xact_start into shared memory when its transaction
+//     begins, before any statement of that transaction can run. So a row
+//     stamped by transaction X at instant S has X's xact_start visible here at
+//     every instant after S, and xact_start <= S. Anything that could still
+//     commit therefore sits at or above MIN(xact_start), and a page bounded
+//     strictly below it cannot skip over it. Autocommit statements are covered:
+//     PostgreSQL wraps each in an implicit transaction with its own xact_start.
+//
+//   - transaction_timestamp() closes the race in the other direction. A
+//     transaction that takes the lock AFTER this read cannot appear in it, but
+//     it also cannot stamp anything at or below this statement's own start.
+//     clock_timestamp() would not do: it advances past the read and would leave
+//     a sliver of time uncovered.
+//
+// The lock scope is what keeps the bound from being a database-wide stall
+// signal. Filtering only on "is in a transaction" would let a connection that
+// has nothing to do with `messages` — an idle-in-transaction reporting session,
+// a batch writing some other table — freeze the feed for everyone. Read locks
+// are excluded by mode for the same reason: a long-running SELECT on `messages`
+// holds ACCESS SHARE and cannot produce a watermark. So is autovacuum, which
+// takes SHARE UPDATE EXCLUSIVE and never rewrites the column. What remains are
+// the modes a row write or a table rewrite actually holds.
+//
+// to_regclass rather than a cast so a database without the table yields NULL
+// instead of an error; the COALESCE then degrades to this transaction's start
+// rather than to NULL, which the keyset predicate would silently read as "no
+// rows". The lock's relation OID is resolved through the session's search_path,
+// so the bound is scoped to the schema this connection actually writes.
+//
+// THE QUERY MUST NOT FAIL OPEN. Every filter above narrows the set of
+// transactions that hold the bound back, so a filter that stops matching does
+// not raise an error — it silently returns the clock, which is the broken
+// bound this whole mechanism exists to replace. Two ways that can happen are
+// checked in Go rather than left to the SQL:
+//
+//   - to_regclass returns NULL if `messages` cannot be resolved on the
+//     session's search_path. The query then joins against NULL, matches
+//     nothing, and every uncommitted write becomes invisible to the bound. The
+//     last two output columns exist so ReadWatermarkBounds can refuse instead.
+//
+//   - pg_stat_activity REDACTS xact_start, state and backend_type (they read
+//     as NULL) for backends belonging to other roles, unless the reading role
+//     is a superuser or a member of pg_read_all_stats — verified against
+//     PostgreSQL 17. A redacted backend cannot hold the bound back, so a write
+//     made by a different role could be lost exactly as it was before this
+//     bound existed. The count of redacted backends THAT COULD BE HOLDING A
+//     STAMP is returned so the bound can be capped at the last instant every
+//     such backend was visible; see visibilityFloor. msgvault connects with one
+//     role, so in an ordinary deployment the count is zero and nothing is
+//     capped.
+//
+// The redaction count carries the same lock scope as the bound itself, and for
+// the same reason. The two are halves of one partition: every backend in this
+// database holding a write lock on `messages` is either visible, in which case
+// the bound already accounts for it through its xact_start, or redacted, in
+// which case it is counted here. A backend that is in neither set — a pooled
+// connection sitting idle, a long SELECT holding ACCESS SHARE, autovacuum doing
+// its routine SHARE UPDATE EXCLUSIVE work, a session writing some other table —
+// cannot have stamped a watermark on `messages`, so it belongs in neither.
+// Counting it anyway (which an unscoped count does) freezes the feed for
+// everyone until that backend TERMINATES, which behind a connection pool is
+// never; docs/api-server.md promises exactly the opposite.
+//
+// Each predicate in the count fails in a known direction:
+//
+//   - a.backend_type IS NULL is the redaction test. If a backend stops looking
+//     redacted while its xact_start is still hidden it drops out of both halves
+//     and the count fails OPEN. It cannot: the same privilege check nulls all
+//     three columns together, so backend_type is visible exactly when
+//     xact_start is.
+//   - a.datname = current_database() and the l.relation / l.mode scope narrow
+//     the count, so each of them fails OPEN if it stops matching. That is why
+//     they are the SAME predicates the bound uses rather than a second,
+//     independently-drifting spelling: a scope that narrowed here but not there
+//     would leave a writer in neither half, which is silent row loss. pg_locks
+//     is not redacted for other roles' backends (verified on PostgreSQL 17), so
+//     the lock half of the join sees a foreign writer in full.
+//   - No l.granted filter. An ungranted lock request cannot have stamped
+//     anything yet, so filtering on it would be sound, but omitting it can only
+//     over-count, and over-counting fails CLOSED — a visible stall rather than
+//     a silent loss.
+//
+// One residual is known and not covered: a PREPARED transaction holds its locks
+// with pg_locks.pid NULL, so the join drops it from both halves. It needs
+// max_prepared_transactions > 0, which is off by default and which msgvault
+// never uses. What that costs a consumer is written up with the feed's other
+// exceptions in docs/api-server.md, rather than restated here.
+const pgWriteLockModes = `('RowExclusiveLock', 'ShareRowExclusiveLock', ` +
+	`'ExclusiveLock', 'AccessExclusiveLock')`
+
+const pgWatermarkBoundsQuery = `
+	SELECT clock_timestamp(),
+	       transaction_timestamp(),
+	       LEAST(transaction_timestamp(),
+	             COALESCE((SELECT MIN(a.xact_start)
+	                       FROM pg_stat_activity a
+	                       JOIN pg_locks l ON l.pid = a.pid
+	                       WHERE a.datname = current_database()
+	                         AND a.xact_start IS NOT NULL
+	                         AND l.relation = to_regclass('messages')
+	                         AND l.mode IN ` + pgWriteLockModes + `),
+	                      transaction_timestamp())),
+	       to_regclass('messages') IS NOT NULL,
+	       (SELECT count(*)
+	          FROM pg_stat_activity a
+	          JOIN pg_locks l ON l.pid = a.pid
+	          WHERE a.datname = current_database()
+	            AND a.backend_type IS NULL
+	            AND l.relation = to_regclass('messages')
+	            AND l.mode IN ` + pgWriteLockModes + `)`
+
+// ReadWatermarkBounds implements Dialect. See pgWatermarkBoundsQuery for why
+// the bound is what it is.
+func (d *PostgreSQLDialect) ReadWatermarkBounds(
+	ctx context.Context, db *sql.DB,
+) (WatermarkBounds, error) {
+	var now, statementStart, bound time.Time
+	var messagesResolved bool
+	var redacted int
+	if err := db.QueryRowContext(ctx, pgWatermarkBoundsQuery).Scan(
+		&now, &statementStart, &bound, &messagesResolved, &redacted,
+	); err != nil {
+		return WatermarkBounds{}, fmt.Errorf("read change-feed watermark bounds: %w", err)
+	}
+	if !messagesResolved {
+		return WatermarkBounds{}, errors.New(
+			"read change-feed watermark bounds: `messages` does not resolve on this " +
+				"connection's search_path, so the bound cannot see which transactions " +
+				"are still writing to it")
+	}
+	floored, err := d.visibilityFloor(bound.UTC(), statementStart.UTC(), redacted)
+	if err != nil {
+		return WatermarkBounds{}, err
+	}
+	return WatermarkBounds{Now: now.UTC(), CommitBound: floored}, nil
+}
+
+// visibilityFloor caps the bound at the last one computed while every backend
+// in the database was visible.
+//
+// A bound that was safe once is safe forever — it asserts that everything
+// stamped below it had already committed, and committed does not un-commit. So
+// when pg_stat_activity starts redacting backends, falling back to the last
+// bound taken with full visibility is sound: a backend this role cannot see
+// belongs to another role, so it connected on a connection that did not exist
+// when full visibility last held, and every stamp it makes is above that
+// instant.
+//
+// The cost is the same one the whole design trades in: the feed stops
+// advancing, visibly, instead of quietly resuming the old data loss. In an
+// ordinary msgvault deployment redacted is zero on every call and this returns
+// its argument unchanged.
+//
+// When there is no floor to fall back to — a process that has never once read
+// the bound while every writer of `messages` was visible, which is what a
+// server restarted during a foreign role's open write transaction looks like —
+// there is no safe answer at all, and this REFUSES. Returning the unfloored
+// bound instead would step the consumer's cursor over the invisible writer's
+// stamped-but-uncommitted change and never come back to it: permanent row loss,
+// reached by a filter matching nothing rather than by a decision. It is the
+// same call ReadWatermarkBounds already makes when `messages` cannot be
+// resolved, and it heals by itself the moment the foreign transaction ends.
+func (d *PostgreSQLDialect) visibilityFloor(
+	bound, statementStart time.Time, redacted int,
+) (time.Time, error) {
+	d.visibilityMu.Lock()
+	defer d.visibilityMu.Unlock()
+	if redacted == 0 {
+		// Recorded only if this reading is NEWER than the one already held.
+		// Concurrent pages read the bound at once and finish in whatever order
+		// the pool gives them, so without the comparison a reading that started
+		// first and finished last would overwrite a newer one and move the floor
+		// backwards — and the next redacted reading would publish a
+		// complete_through the feed had already passed. Each reading carries the
+		// instant its own transaction started, which is when it was taken, so
+		// that is what they are ordered by. A lower floor is never unsafe (a
+		// bound safe once is safe forever, see below); it is just stale, and
+		// making the published bound regress for no reason is not something to
+		// leave to timing.
+		if statementStart.After(d.fullyVisibleAt) {
+			d.fullyVisibleBound = bound
+			d.fullyVisibleAt = statementStart
+		}
+		return bound, nil
+	}
+	if bound.Before(d.fullyVisibleBound) {
+		// The live bound is already the tighter of the two: a writer this role
+		// CAN see is holding it below the floor, so there is nothing to cap.
+		return bound, nil
+	}
+	if d.fullyVisibleAt.IsZero() {
+		return time.Time{}, fmt.Errorf(
+			"read change-feed watermark bounds: %d connection(s) belonging to another "+
+				"PostgreSQL role are writing to `messages`, this role cannot see when "+
+				"their transactions began, and no earlier reading was taken while every "+
+				"writer was visible — so this page has no bound it can trust and serving "+
+				"it would skip their changes. It clears on its own when those "+
+				"transactions end; to stop it recurring, grant the role msgvault "+
+				"connects as membership of pg_read_all_stats", redacted)
+	}
+	return d.fullyVisibleBound, nil
+}
 
 // BoolTrueExpr returns the bare column name. PostgreSQL has a real BOOLEAN
 // type and rejects integer comparisons (`col = 1`) against boolean columns.
@@ -238,10 +486,13 @@ func (d *PostgreSQLDialect) FTSBackfillBatchSQL() string {
 
 // FTSAvailable reports whether tsvector search is available.
 // PostgreSQL always supports tsvector — check that the column exists.
-func (d *PostgreSQLDialect) FTSAvailable(db *sql.DB) bool {
+func (d *PostgreSQLDialect) FTSAvailable(ctx context.Context, db *sql.DB) (bool, error) {
 	var count int
-	err := db.QueryRow(postgresColumnExistsSQL("messages", "search_fts")).Scan(&count)
-	return err == nil && count > 0
+	err := db.QueryRowContext(ctx, postgresColumnExistsSQL("messages", "search_fts")).Scan(&count)
+	if err != nil && ctx.Err() != nil {
+		return false, ctx.Err()
+	}
+	return err == nil && count > 0, nil
 }
 
 func postgresFTSNeedsBackfillSQL() string {
@@ -363,6 +614,13 @@ func (d *PostgreSQLDialect) LegacyColumnMigrations() []ColumnMigration {
 		// (CURRENT_TIMESTAMP at the time the column is added); the triggers
 		// created by EnsureTriggers keep it current thereafter.
 		{`ALTER TABLE messages ADD COLUMN IF NOT EXISTS last_modified TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP`, "last_modified"},
+		// content_changed_at: content-scoped change watermark. No default here
+		// and none in schema_pg.sql, so on PostgreSQL the INSERT trigger is the
+		// single writer for new rows, and the backfill seeds pre-existing rows
+		// from last_modified. SQLite is not the same: a database created from
+		// schema.sql stamps inserts from a column DEFAULT and gets no INSERT
+		// trigger at all (SQLiteDialect.EnsureTriggers).
+		{`ALTER TABLE messages ADD COLUMN IF NOT EXISTS content_changed_at TIMESTAMPTZ`, "content_changed_at"},
 	}
 }
 
@@ -389,8 +647,14 @@ func (d *PostgreSQLDialect) EnsureFTSIndex(q querier) error {
 	return nil
 }
 
-// EnsureTriggers creates the last_modified maintenance triggers idempotently.
-// Two triggers feed messages.last_modified:
+// EnsureTriggers creates the maintenance triggers for BOTH message watermarks
+// idempotently. The two answer different questions and are deliberately scoped
+// differently.
+//
+// messages.last_modified is a TRUE row-level watermark: blanket by design, it
+// moves on ANY change to a message row or its body, because the embed worker
+// uses it as an optimistic-CAS token and must not miss a content edit that
+// lands between its read and its stamp. Two triggers feed it:
 //
 //   - trg_messages_last_modified (BEFORE UPDATE on messages): sets
 //     NEW.last_modified in-row. BEFORE → no secondary write → no recursion.
@@ -401,11 +665,53 @@ func (d *PostgreSQLDialect) EnsureFTSIndex(q querier) error {
 //     message_bodies): bumps the parent message's last_modified so body
 //     edits move the worker's CAS token too.
 //
+// messages.content_changed_at is the opposite: both COLUMN-scoped and
+// VALUE-scoped, so an external consumer maintaining an incremental copy of the
+// archive is woken only when the message's own content, routing, or lifecycle
+// actually changed — never by bookkeeping such as embed_gen or
+// indexing_version. Four triggers feed it here, built from
+// MessagesContentColumns so the SQLite and PostgreSQL definitions cannot drift
+// (a fresh SQLite database runs three of them — see the first entry):
+//
+//   - trg_messages_content_changed_ins (BEFORE INSERT on messages): stamps new
+//     rows. PostgreSQL's column carries no DEFAULT — neither in schema_pg.sql
+//     nor on the ALTER TABLE upgrade path — so on this backend the trigger is
+//     the single writer for new rows. SQLite is where that stops being true: a
+//     database created from schema.sql gives the column a DEFAULT
+//     byte-identical to SQLiteDialect.ContentChangedNow, and EnsureTriggers
+//     there detects it (contentChangedAtDefaultStamps) and creates no INSERT
+//     trigger at all, because a SQLite trigger cannot assign to NEW and merely
+//     having a row trigger on messages costs every INSERT a statement journal.
+//     So the single writer for new rows is this trigger on PostgreSQL, the
+//     column DEFAULT on a fresh SQLite database, and SQLite's AFTER INSERT
+//     trigger of the same name on a SQLite database upgraded by ALTER TABLE ADD
+//     COLUMN, which cannot carry a non-constant DEFAULT. The WHEN guard yields
+//     to an explicit write in the INSERT in every version.
+//   - trg_messages_content_changed_at (BEFORE UPDATE OF <content columns> on
+//     messages): UPDATE OF scopes it to the columns a statement NAMES, which
+//     is not enough on its own — UpsertMessage's ON CONFLICT DO UPDATE
+//     re-assigns ten content columns on every re-sync of a known message — so
+//     contentChangedValueGuard additionally requires one of them to have
+//     actually changed value. IS DISTINCT FROM makes that comparison null-safe
+//     in both directions.
+//   - trg_message_bodies_content_changed_ins / _upd (AFTER INSERT / AFTER
+//     UPDATE on message_bodies): a body edit must reach the parent's
+//     watermark. They stay two triggers rather than one AFTER INSERT OR
+//     UPDATE because only the UPDATE half can carry a value guard (a WHEN
+//     clause on an INSERT trigger cannot reference OLD), and the guard is
+//     required: upsertMessageBody always executes its ON CONFLICT DO UPDATE,
+//     even when messageBodyChanges reports nothing changed.
+//
 // CREATE TRIGGER is not idempotent before PG14, so each trigger is dropped
 // (IF EXISTS) and recreated; the functions use CREATE OR REPLACE. Re-running
-// InitSchema is therefore safe. Runs on the querier so InitSchema can route
-// it through the maintenance transaction (consistent with EnsureFTSIndex).
+// InitSchema is therefore safe, and DROP + CREATE also lets a later change to
+// the content-column list actually reach an already-deployed archive. Runs on
+// the querier so InitSchema can route it through the maintenance transaction
+// (consistent with EnsureFTSIndex).
 func (d *PostgreSQLDialect) EnsureTriggers(q querier) error {
+	cols := contentChangedTriggerColumnList()
+	guard := contentChangedValueGuard("IS DISTINCT FROM")
+	now := d.ContentChangedNow()
 	stmts := []string{
 		`CREATE OR REPLACE FUNCTION set_messages_last_modified() RETURNS trigger AS $$
 		 BEGIN
@@ -428,10 +734,47 @@ func (d *PostgreSQLDialect) EnsureTriggers(q querier) error {
 		`CREATE TRIGGER trg_message_bodies_last_modified
 		     AFTER INSERT OR UPDATE ON message_bodies FOR EACH ROW
 		     EXECUTE FUNCTION bump_message_last_modified()`,
+		// content_changed_at, from here down. BEFORE on messages so the stamp
+		// lands in-row with no secondary write and therefore no recursion —
+		// the same shape the last_modified message trigger uses, and the
+		// reason the PostgreSQL definitions differ from their AFTER-trigger
+		// SQLite counterparts.
+		fmt.Sprintf(`CREATE OR REPLACE FUNCTION set_messages_content_changed_at() RETURNS trigger AS $$
+		 BEGIN
+		     NEW.content_changed_at := %s;
+		     RETURN NEW;
+		 END;
+		 $$ LANGUAGE plpgsql`, now),
+		`DROP TRIGGER IF EXISTS trg_messages_content_changed_ins ON messages`,
+		`CREATE TRIGGER trg_messages_content_changed_ins
+		     BEFORE INSERT ON messages FOR EACH ROW
+		     WHEN (NEW.content_changed_at IS NULL)
+		     EXECUTE FUNCTION set_messages_content_changed_at()`,
+		`DROP TRIGGER IF EXISTS trg_messages_content_changed_at ON messages`,
+		fmt.Sprintf(`CREATE TRIGGER trg_messages_content_changed_at
+		     BEFORE UPDATE OF %s ON messages FOR EACH ROW
+		     WHEN (OLD.content_changed_at IS NOT DISTINCT FROM NEW.content_changed_at AND %s)
+		     EXECUTE FUNCTION set_messages_content_changed_at()`, cols, guard),
+		fmt.Sprintf(`CREATE OR REPLACE FUNCTION bump_message_content_changed_at() RETURNS trigger AS $$
+		 BEGIN
+		     UPDATE messages SET content_changed_at = %s WHERE id = NEW.message_id;
+		     RETURN NEW;
+		 END;
+		 $$ LANGUAGE plpgsql`, now),
+		`DROP TRIGGER IF EXISTS trg_message_bodies_content_changed_ins ON message_bodies`,
+		`CREATE TRIGGER trg_message_bodies_content_changed_ins
+		     AFTER INSERT ON message_bodies FOR EACH ROW
+		     EXECUTE FUNCTION bump_message_content_changed_at()`,
+		`DROP TRIGGER IF EXISTS trg_message_bodies_content_changed_upd ON message_bodies`,
+		`CREATE TRIGGER trg_message_bodies_content_changed_upd
+		     AFTER UPDATE ON message_bodies FOR EACH ROW
+		     WHEN (OLD.body_text IS DISTINCT FROM NEW.body_text
+		           OR OLD.body_html IS DISTINCT FROM NEW.body_html)
+		     EXECUTE FUNCTION bump_message_content_changed_at()`,
 	}
 	for _, stmt := range stmts {
 		if _, err := q.Exec(stmt); err != nil {
-			return fmt.Errorf("ensure last_modified triggers: %w", err)
+			return fmt.Errorf("ensure message watermark triggers: %w", err)
 		}
 	}
 	return nil

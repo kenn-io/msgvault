@@ -72,7 +72,15 @@ func (s *Store) loadLinkEdges() ([]linkEdge, error) {
 // Link/UnlinkParticipants so the redundant-edge check sees a consistent
 // snapshot with the write that follows it.
 func (s *Store) loadLinkEdgesTx(tx *loggedTx) ([]linkEdge, error) {
-	rows, err := tx.Query(`SELECT participant_a, participant_b FROM participant_links`)
+	return s.loadLinkEdgesTxContext(context.Background(), tx)
+}
+
+// loadLinkEdgesTxContext is the context-aware form of loadLinkEdgesTx.
+func (s *Store) loadLinkEdgesTxContext(
+	ctx context.Context, tx *loggedTx,
+) ([]linkEdge, error) {
+	rows, err := tx.QueryContext(ctx,
+		`SELECT participant_a, participant_b FROM participant_links`)
 	if err != nil {
 		return nil, fmt.Errorf("query participant links: %w", err)
 	}
@@ -382,10 +390,21 @@ func (s *Store) UnlinkParticipants(a, b int64) (int64, error) {
 // touches no link edge, so there is no return value for them to condition
 // on.
 func (s *Store) rewriteLinksForMerge(tx *loggedTx, loser, winner int64) error {
-	if err := s.lockIdentityMutationTx(tx); err != nil {
+	return s.rewriteLinksForMergeContext(context.Background(), tx, loser, winner)
+}
+
+// rewriteLinksForMergeContext is the context-aware form of
+// rewriteLinksForMerge. The legacy phone-unique migration uses it: its merge
+// runs inside a maintenance transaction with the pool-wide statement_timeout
+// disabled, so on PostgreSQL nothing but ctx can cut short a statement here
+// that is waiting on a conflicting lock.
+func (s *Store) rewriteLinksForMergeContext(
+	ctx context.Context, tx *loggedTx, loser, winner int64,
+) error {
+	if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
 		return err
 	}
-	edges, err := s.loadLinkEdgesTx(tx)
+	edges, err := s.loadLinkEdgesTxContext(ctx, tx)
 	if err != nil {
 		return err
 	}
@@ -398,9 +417,9 @@ func (s *Store) rewriteLinksForMerge(tx *loggedTx, loser, winner int64) error {
 		// loser and winner were only ever linked to each other: now that
 		// they are literally the same row, the edge is redundant and
 		// simply disappears rather than being replaced by a self-loop.
-		return deleteMergeEdge(tx, loser, winner)
+		return deleteMergeEdge(ctx, tx, loser, winner)
 	}
-	return rebuildClusterAsStar(tx, members)
+	return rebuildClusterAsStar(ctx, tx, members)
 }
 
 // linksReference reports whether any edge in edges has loser or winner as
@@ -430,8 +449,8 @@ func mergedClusterMembers(loser, winner int64, edges []linkEdge) map[int64]struc
 // deleteMergeEdge removes the edge between loser and winner. Used when they
 // were only ever linked to each other, so the merge leaves no cluster to
 // rebuild.
-func deleteMergeEdge(tx *loggedTx, loser, winner int64) error {
-	if _, err := tx.Exec(
+func deleteMergeEdge(ctx context.Context, tx *loggedTx, loser, winner int64) error {
+	if _, err := tx.ExecContext(ctx,
 		`DELETE FROM participant_links WHERE participant_a IN (?, ?) OR participant_b IN (?, ?)`,
 		loser, winner, loser, winner,
 	); err != nil {
@@ -443,21 +462,23 @@ func deleteMergeEdge(tx *loggedTx, loser, winner int64) error {
 // rebuildClusterAsStar deletes every link edge touching a member of the
 // cluster, then reinserts a canonical star rooted at the smallest member
 // ID — the one shape vertex contraction can never turn into a cycle.
-func rebuildClusterAsStar(tx *loggedTx, members map[int64]struct{}) error {
+func rebuildClusterAsStar(
+	ctx context.Context, tx *loggedTx, members map[int64]struct{},
+) error {
 	ids := make([]int64, 0, len(members))
 	for m := range members {
 		ids = append(ids, m)
 	}
 	slices.Sort(ids)
 
-	if err := deleteClusterEdges(tx, ids); err != nil {
+	if err := deleteClusterEdges(ctx, tx, ids); err != nil {
 		return err
 	}
 
 	canonical := ids[0]
 	for _, other := range ids[1:] {
 		lo, hi := normalizeEdge(canonical, other)
-		if _, err := tx.Exec(
+		if _, err := tx.ExecContext(ctx,
 			`INSERT INTO participant_links (participant_a, participant_b) VALUES (?, ?)`,
 			lo, hi,
 		); err != nil {
@@ -471,7 +492,7 @@ func rebuildClusterAsStar(tx *loggedTx, members map[int64]struct{}) error {
 // edge touching a merge's loser has its other endpoint in ids (that
 // endpoint is in componentOf(loser) by construction), so this also removes
 // the loser's edges without the loser needing to appear in ids.
-func deleteClusterEdges(tx *loggedTx, ids []int64) error {
+func deleteClusterEdges(ctx context.Context, tx *loggedTx, ids []int64) error {
 	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(ids)), ",")
 	args := make([]any, 0, 2*len(ids))
 	for range 2 {
@@ -479,7 +500,7 @@ func deleteClusterEdges(tx *loggedTx, ids []int64) error {
 			args = append(args, id)
 		}
 	}
-	if _, err := tx.Exec(fmt.Sprintf(
+	if _, err := tx.ExecContext(ctx, fmt.Sprintf(
 		`DELETE FROM participant_links WHERE participant_a IN (%s) OR participant_b IN (%s)`,
 		placeholders, placeholders,
 	), args...); err != nil {

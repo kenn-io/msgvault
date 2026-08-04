@@ -60,7 +60,16 @@ var ErrCollectionImmutable = errors.New(
 // Earlier this used SELECT-then-INSERT, which raced when a CLI command
 // and `serve` both initialised the schema simultaneously.
 func (s *Store) EnsureDefaultCollection() error {
-	if _, err := s.db.Exec(
+	return s.EnsureDefaultCollectionContext(context.Background())
+}
+
+// EnsureDefaultCollectionContext is the context-aware form of
+// EnsureDefaultCollection. InitSchemaContext uses it so its last step is
+// interruptible like the rest: on PostgreSQL these statements queue behind any
+// conflicting lock on collections or collection_sources.
+func (s *Store) EnsureDefaultCollectionContext(ctx context.Context) error {
+	if _, err := s.db.ExecContext(
+		ctx,
 		s.dialect.InsertOrIgnore(
 			`INSERT OR IGNORE INTO collections (name, description)
 			 VALUES (?, 'All accounts')`,
@@ -71,14 +80,16 @@ func (s *Store) EnsureDefaultCollection() error {
 	}
 
 	var id int64
-	if err := s.db.QueryRow(
+	if err := s.db.QueryRowContext(
+		ctx,
 		`SELECT id FROM collections WHERE name = ?`, DefaultCollectionName,
 	).Scan(&id); err != nil {
 		return fmt.Errorf("look up default collection id: %w", err)
 	}
 
 	// Add all sources not already in it.
-	if _, err := s.db.Exec(
+	if _, err := s.db.ExecContext(
+		ctx,
 		s.dialect.InsertOrIgnore(
 			`INSERT OR IGNORE INTO collection_sources (collection_id, source_id)
 			 SELECT ?, id FROM sources`,

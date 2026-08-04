@@ -185,6 +185,11 @@ CREATE TABLE IF NOT EXISTS messages (
     -- (new rows default to NULL). See schema.sql for the full contract.
     embed_gen BIGINT,
 
+    -- Content-change watermark; see content_columns.go and schema.sql for the
+    -- rationale. Stamped by the triggers EnsureTriggers creates, never by
+    -- application writes.
+    content_changed_at TIMESTAMPTZ,
+
     UNIQUE(source_id, source_message_id)
 );
 

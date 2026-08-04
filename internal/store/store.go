@@ -241,7 +241,15 @@ func OpenReadOnly(dbPath string) (*Store, error) {
 		readOnly: true,
 	}
 
-	s.fts5Available = dialect.FTSAvailable(db)
+	// OpenReadOnly takes no context, so the probe cannot be cancelled and its
+	// error is only ever ctx's; it is still checked rather than dropped, so a
+	// context-carrying form of this constructor cannot inherit a swallowed one.
+	available, err := dialect.FTSAvailable(context.Background(), db)
+	if err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("probe FTS availability: %w", err)
+	}
+	s.fts5Available = available
 
 	return s, nil
 }
@@ -285,7 +293,15 @@ func openPostgresReadOnly(dbURL string) (*Store, error) {
 		closeCleanup: cleanup,
 	}
 
-	s.fts5Available = dialect.FTSAvailable(db)
+	// As in OpenReadOnly: no context to honour here, but the error is checked
+	// rather than dropped.
+	available, err := dialect.FTSAvailable(context.Background(), db)
+	if err != nil {
+		_ = db.Close()
+		cleanup()
+		return nil, fmt.Errorf("probe FTS availability: %w", err)
+	}
+	s.fts5Available = available
 
 	return s, nil
 }
@@ -614,6 +630,7 @@ type chunkQuerier interface {
 	Query(query string, args ...any) (*loggedRows, error)
 	QueryContext(ctx context.Context, query string, args ...any) (*loggedRows, error)
 	Exec(query string, args ...any) (sql.Result, error)
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
 }
 
 func queryInChunks[T any](db chunkQuerier, ids []T, prefixArgs []any, queryTemplate string, fn func(*loggedRows) error) error {
@@ -698,8 +715,24 @@ func insertInChunks(tx interface {
 // placeholder for the comma-separated "?" list. The prefix args are prepended before
 // each chunk's args (e.g., a message_id filter).
 func execInChunks[T any](db chunkQuerier, ids []T, prefixArgs []any, queryTemplate string) error {
+	return execInChunksContext(context.Background(), db, ids, prefixArgs, queryTemplate)
+}
+
+// execInChunksContext is the context-aware form of execInChunks: every chunk's
+// statement carries ctx, and the walk stops at the next chunk boundary once it
+// is cancelled. Callers whose write scales with archive size — the legacy
+// calendar-attribution backfill in particular — must use this form, because a
+// chunked whole-table walk on a background context is unreachable by SIGINT and
+// SIGTERM for as long as any one chunk waits on a lock.
+func execInChunksContext[T any](
+	ctx context.Context, db chunkQuerier, ids []T, prefixArgs []any, queryTemplate string,
+) error {
 	const chunkSize = 500
 	for i := 0; i < len(ids); i += chunkSize {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+
 		end := min(i+chunkSize, len(ids))
 		chunk := ids[i:end]
 
@@ -711,7 +744,7 @@ func execInChunks[T any](db chunkQuerier, ids []T, prefixArgs []any, queryTempla
 		}
 
 		query := fmt.Sprintf(queryTemplate, strings.Join(placeholders, ","))
-		if _, err := db.Exec(query, args...); err != nil {
+		if _, err := db.ExecContext(ctx, query, args...); err != nil {
 			return err
 		}
 	}
@@ -755,16 +788,74 @@ func (s *Store) SchemaStale() (bool, string, error) {
 	return false, "", nil
 }
 
-// InitSchema initializes the database schema.
-// This creates all tables if they don't exist.
+// initSchemaWindowHook is a test-only seam. It fires at the point in InitSchema
+// where a message inserted by another connection is at its most exposed: the
+// one-time content_changed_at backfill has already run AND recorded itself in
+// the migration ledger, so it will never look for NULL watermarks again, while
+// the remaining whole-table index builds still have minutes of work to do on a
+// large archive. A row that lands here has to be stamped by the INSERT trigger
+// or it never appears in the change feed at all, which is why the watermark
+// triggers are created before the backfill rather than after the indexes. Nil
+// in production.
+var initSchemaWindowHook func()
+
+// InitSchema initializes the database schema, uninterruptibly.
+//
+// Kept for callers that have no context to offer — short-lived tooling and test
+// fixtures. Anything with a cancellable context, and in particular anything that
+// opens an archive on behalf of a signal-handling process, must use
+// InitSchemaContext: on an existing archive this runs a one-time full-table
+// backfill that can take hours, and a background context makes SIGINT and
+// SIGTERM unable to reach it.
 func (s *Store) InitSchema() error {
+	return s.InitSchemaContext(context.Background())
+}
+
+// InitSchemaContext initializes the database schema, honouring ctx.
+// This creates all tables if they don't exist.
+//
+// EVERY statement this method issues carries ctx — with no exceptions, which is
+// the property to preserve rather than a summary of the current call list.
+// Directly or through the transaction it runs in, that covers the schema
+// scripts, the legacy ADD COLUMN migrations, every migration-ledger read and
+// write (runOnceMigration owns them), the maintenance transactions and the
+// dialect DDL they carry, the legacy phone-unique migration including the
+// participant merge and its link-graph rewrite, the attribution backfill
+// including its chunked calendar UPDATE, the FTS schema, the FTS index build,
+// the FTS availability probe, the archive-UID transaction, and the default
+// collection. That matters most on PostgreSQL, where each of them can queue
+// behind a conflicting lock on a table an import is already writing — a
+// statement issued on context.Background() ignores SIGINT and SIGTERM for as
+// long as that lock is held, leaving SIGKILL mid-write as the operator's only
+// move.
+//
+// The closure is mechanically checkable and was established that way rather
+// than by reading: walk every call this method makes, transitively, and look
+// for one that reaches loggedDB/loggedTx Exec, Query, QueryRow or Begin, each
+// of which substitutes context.Background(). Anything a helper hands to a
+// dialect must be a boundQuerier, not the raw transaction. Three earlier rounds
+// each bound part of this method and each left this comment claiming the whole
+// of it; if you add a step, run that walk again before you touch this
+// paragraph.
+//
+// Cancelling ctx stops the one-time content_changed_at backfill at the batch
+// boundary it reaches. Every batch already committed is kept, the migration
+// ledger is NOT marked, and the next open resumes where this one stopped — so an
+// interrupted upgrade costs the batch in flight and nothing else. The same holds
+// for the other ledger-gated migrations: a cancelled one is not marked applied,
+// so the next open runs it again.
+func (s *Store) InitSchemaContext(ctx context.Context) error {
 	// Load and execute schema files provided by the dialect.
 	for _, filename := range s.dialect.SchemaFiles() {
 		schema, err := schemaFS.ReadFile(filename)
 		if err != nil {
 			return fmt.Errorf("read %s: %w", filename, err)
 		}
-		if _, err := s.db.Exec(string(schema)); err != nil {
+		// ExecContext, not Exec: Exec substitutes context.Background(), and on
+		// PostgreSQL these statements queue behind any conflicting lock on the
+		// tables they touch, so a background context makes SIGINT and SIGTERM
+		// unable to reach an upgrade that has not started moving yet.
+		if _, err := s.db.ExecContext(ctx, string(schema)); err != nil {
 			return fmt.Errorf("execute %s: %w", filename, err)
 		}
 	}
@@ -781,29 +872,25 @@ func (s *Store) InitSchema() error {
 	// hatch disables it for this transaction (finding S1). They share one tx
 	// so the index is built against the just-deduped table. No-op timeout
 	// reset on SQLite.
-	attachmentsMigrated, err := s.IsMigrationApplied(migrationAttachmentsContentHashUnique)
-	if err != nil {
+	if err := s.runOnceMigration(
+		ctx, migrationAttachmentsContentHashUnique, false,
+		func(ctx context.Context) error {
+			return s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
+				if err := s.dedupeAttachmentsBeforeUniqueIndex(ctx, tx); err != nil {
+					return fmt.Errorf("dedupe attachments: %w", err)
+				}
+				if _, err := tx.ExecContext(ctx, `
+					CREATE UNIQUE INDEX IF NOT EXISTS idx_attachments_msg_content_hash
+					    ON attachments(message_id, content_hash)
+					    WHERE content_hash IS NOT NULL AND content_hash != ''
+				`); err != nil {
+					return fmt.Errorf("create idx_attachments_msg_content_hash: %w", err)
+				}
+				return nil
+			})
+		},
+	); err != nil {
 		return err
-	}
-	if !attachmentsMigrated {
-		if err := s.runMaintenance(context.Background(), func(ctx context.Context, tx *loggedTx) error {
-			if err := s.dedupeAttachmentsBeforeUniqueIndex(ctx, tx); err != nil {
-				return fmt.Errorf("dedupe attachments: %w", err)
-			}
-			if _, err := tx.ExecContext(ctx, `
-				CREATE UNIQUE INDEX IF NOT EXISTS idx_attachments_msg_content_hash
-				    ON attachments(message_id, content_hash)
-				    WHERE content_hash IS NOT NULL AND content_hash != ''
-			`); err != nil {
-				return fmt.Errorf("create idx_attachments_msg_content_hash: %w", err)
-			}
-			return nil
-		}); err != nil {
-			return err
-		}
-		if err := s.MarkMigrationApplied(migrationAttachmentsContentHashUnique); err != nil {
-			return err
-		}
 	}
 
 	// Legacy databases may have idx_participants_phone as a non-unique
@@ -814,7 +901,7 @@ func (s *Store) InitSchema() error {
 	// matching unique constraint on upgraded DBs. Run a one-shot
 	// migration that dedupes phone rows, drops the index, and
 	// recreates it as UNIQUE.
-	if err := s.ensureParticipantsPhoneUniqueIndex(); err != nil {
+	if err := s.ensureParticipantsPhoneUniqueIndex(ctx); err != nil {
 		return fmt.Errorf("ensure idx_participants_phone unique: %w", err)
 	}
 
@@ -832,15 +919,67 @@ func (s *Store) InitSchema() error {
 	// IF NOT EXISTS form always succeeds; PG never needs the forced path
 	// because its ADD COLUMN carries DEFAULT CURRENT_TIMESTAMP, which
 	// backfills existing rows in the same statement.
+	//
+	// Bound to ctx for the same reason as the schema scripts above: ALTER TABLE
+	// takes an exclusive lock and waits for one, and this loop is where
+	// content_changed_at itself arrives on an upgraded archive.
 	lastModifiedColumnAdded := false
 	for _, m := range s.dialect.LegacyColumnMigrations() {
-		if _, err := s.db.Exec(m.SQL); err != nil {
+		if _, err := s.db.ExecContext(ctx, m.SQL); err != nil {
 			if !s.dialect.IsDuplicateColumnError(err) {
 				return fmt.Errorf("migrate schema (%s): %w", m.Desc, err)
 			}
 		} else if m.Desc == "last_modified" && !s.IsPostgreSQL() {
 			lastModifiedColumnAdded = true
 		}
+	}
+
+	// Create the message watermark maintenance triggers. Must run after the
+	// migration loop above, which adds last_modified and content_changed_at on
+	// legacy DBs — the triggers reference both columns.
+	//
+	// It runs HERE, immediately after the columns exist, rather than at the end
+	// of the upgrade: everything below is index builds and whole-table backfills
+	// that take minutes on a large archive, and until the INSERT trigger exists
+	// a message written by another connection lands with content_changed_at
+	// NULL. That is terminal — the feed's range predicate excludes NULL and the
+	// backfill's ledger sentinel means it never runs again — so the row would
+	// never appear in the change feed. Ordering the triggers first makes the
+	// INSERT trigger the writer for those rows and leaves the backfill's
+	// `WHERE content_changed_at IS NULL` correctly finding nothing to do for
+	// them.
+	//
+	// Safe with respect to the backfills below. Neither is re-stamped by the
+	// content_changed_at triggers: those are scoped to INSERT or to
+	// `UPDATE OF <content columns>`, and content_changed_at is not one of those
+	// columns, so a statement naming only the watermark never matches. The
+	// last_modified backfill writes a value that differs from the old NULL,
+	// which is what both dialects' last_modified triggers yield to. The reverse
+	// interaction — the content_changed_at backfill tripping the last_modified
+	// trigger — is now backend-specific and documented at that backfill: on
+	// PostgreSQL the trigger is blanket and still fires; on SQLite its UPDATE OF
+	// scope excludes content_changed_at, so a statement naming only the
+	// watermark no longer bumps last_modified.
+	//
+	// On SQLite this covers the content_changed_at triggers plus the messages
+	// last_modified trigger, which needs an UPDATE OF scope built from the live
+	// column list (see lastModifiedUpdateOfColumns) and so cannot be static SQL;
+	// only the message_bodies last_modified pair still rides schema.sql. On
+	// PostgreSQL it covers both sets.
+	// Both dialects drop and recreate, so a later change to the content-column
+	// list reaches an existing archive. Run under runMaintenance for consistency
+	// with EnsureFTSIndex (no statement_timeout cap on the DDL).
+	//
+	// The dialect gets the transaction BOUND to ctx, not the raw one: runMaintenance
+	// has just disabled the pool-wide statement_timeout, and on PostgreSQL a DROP or
+	// CREATE TRIGGER queues behind any conflicting lock on `messages` with nothing
+	// left to cut it off. Handed the raw transaction, whose Exec and QueryRow bottom
+	// out in context.Background(), that wait ignores SIGINT and SIGTERM for as long
+	// as the lock is held.
+	if err := s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
+		return s.dialect.EnsureTriggers(boundQuerier{ctx: ctx, q: tx})
+	}); err != nil {
+		return fmt.Errorf("ensure message watermark triggers: %w", err)
 	}
 
 	// Initialize explicit attribution provenance for every legacy message once
@@ -852,42 +991,38 @@ func (s *Store) InitSchema() error {
 	// identity mutations can then update only rows whose derived attribution
 	// actually changes instead of rewriting an entire source to initialize NULL
 	// provenance.
-	attributionMigrated, err := s.IsMigrationApplied(migrationMessageAttributionProvenance)
-	if err != nil {
-		return err
-	}
-	if !attributionMigrated {
-		if err := s.runMaintenance(
-			context.Background(),
-			func(ctx context.Context, tx *loggedTx) error {
-				if err := backfillLegacyMessageAttributionProvenance(ctx, tx); err != nil {
-					return err
-				}
+	if err := s.runOnceMigration(
+		ctx, migrationMessageAttributionProvenance, false,
+		func(ctx context.Context) error {
+			return s.runMaintenance(
+				ctx,
+				func(ctx context.Context, tx *loggedTx) error {
+					if err := backfillLegacyMessageAttributionProvenance(ctx, tx); err != nil {
+						return err
+					}
 
-				// Published message shards used to trust the effective
-				// is_from_me value. The provenance migration changes cache
-				// inputs even when no identity is added or removed, so advance
-				// the account-identity revision in the same transaction as the
-				// repaired rows. Empty archives have no stale shards to
-				// invalidate.
-				var hasMessages bool
-				if err := tx.QueryRowContext(
-					ctx,
-					`SELECT EXISTS (SELECT 1 FROM messages)`,
-				).Scan(&hasMessages); err != nil {
-					return fmt.Errorf("check attribution migration cache impact: %w", err)
-				}
-				if !hasMessages {
-					return nil
-				}
-				return s.bumpAccountIdentityRevisionContext(ctx, tx)
-			},
-		); err != nil {
-			return err
-		}
-		if err := s.MarkMigrationApplied(migrationMessageAttributionProvenance); err != nil {
-			return err
-		}
+					// Published message shards used to trust the effective
+					// is_from_me value. The provenance migration changes cache
+					// inputs even when no identity is added or removed, so advance
+					// the account-identity revision in the same transaction as the
+					// repaired rows. Empty archives have no stale shards to
+					// invalidate.
+					var hasMessages bool
+					if err := tx.QueryRowContext(
+						ctx,
+						`SELECT EXISTS (SELECT 1 FROM messages)`,
+					).Scan(&hasMessages); err != nil {
+						return fmt.Errorf("check attribution migration cache impact: %w", err)
+					}
+					if !hasMessages {
+						return nil
+					}
+					return s.bumpAccountIdentityRevisionContext(ctx, tx)
+				},
+			)
+		},
+	); err != nil {
+		return err
 	}
 
 	// Partial expression indexes for live-message listing and date filtering.
@@ -914,7 +1049,7 @@ func (s *Store) InitSchema() error {
 	// one-time index build over a large table is not cut off by the pool-wide
 	// 30s statement_timeout (finding S1). IF NOT EXISTS is idempotent per start.
 	if !s.IsPostgreSQL() {
-		if err := s.runMaintenance(context.Background(), func(ctx context.Context, tx *loggedTx) error {
+		if err := s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
 			if _, err := tx.ExecContext(ctx, `
 				CREATE INDEX IF NOT EXISTS idx_messages_live_sent_at
 				    ON messages(COALESCE(sent_at, received_at, internal_date) DESC, id DESC)
@@ -948,7 +1083,7 @@ func (s *Store) InitSchema() error {
 		// latency of `msgvault search`. The partial form keeps the indexes
 		// proportional to the deleted rows only, so live-message insert and
 		// update paths pay no maintenance for them.
-		if err := s.runMaintenance(context.Background(), func(ctx context.Context, tx *loggedTx) error {
+		if err := s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
 			if _, err := tx.ExecContext(ctx, `
 				CREATE INDEX IF NOT EXISTS idx_messages_deleted_from_source_at
 				    ON messages(deleted_from_source_at)
@@ -978,7 +1113,7 @@ func (s *Store) InitSchema() error {
 	// the other one-time index builds above. SQLite keeps both in schema.sql —
 	// it has no statement_timeout. IF NOT EXISTS is idempotent per start.
 	if s.IsPostgreSQL() {
-		if err := s.runMaintenance(context.Background(), func(ctx context.Context, tx *loggedTx) error {
+		if err := s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
 			if _, err := tx.ExecContext(ctx, `
 				CREATE INDEX IF NOT EXISTS idx_attachments_thumbnail_hash
 				    ON attachments(thumbnail_hash)
@@ -1021,7 +1156,7 @@ func (s *Store) InitSchema() error {
 	// Identical DDL on both backends; runMaintenance already handles the
 	// PostgreSQL statement_timeout exemption internally (finding S1). IF
 	// NOT EXISTS is idempotent per start.
-	if err := s.runMaintenance(context.Background(), func(ctx context.Context, tx *loggedTx) error {
+	if err := s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
 		_, err := tx.ExecContext(ctx, `
 			CREATE INDEX IF NOT EXISTS idx_messages_rfc822_message_id
 			    ON messages(rfc822_message_id)
@@ -1045,22 +1180,58 @@ func (s *Store) InitSchema() error {
 	// finds work after the first run. Run under runMaintenance so the
 	// full-table UPDATE on a large archive is not cut off by the pool-wide
 	// statement_timeout (no-op reset on SQLite).
-	lastModifiedMigrated, err := s.IsMigrationApplied(migrationMessagesLastModifiedBackfill)
-	if err != nil {
+	if err := s.runOnceMigration(
+		ctx, migrationMessagesLastModifiedBackfill, lastModifiedColumnAdded,
+		func(ctx context.Context) error {
+			if err := s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
+				_, err := tx.ExecContext(ctx,
+					`UPDATE messages SET last_modified = `+s.dialect.Now()+
+						` WHERE last_modified IS NULL`)
+				return err
+			}); err != nil {
+				return fmt.Errorf("backfill last_modified: %w", err)
+			}
+			return nil
+		},
+	); err != nil {
 		return err
 	}
-	if !lastModifiedMigrated || lastModifiedColumnAdded {
-		if err := s.runMaintenance(context.Background(), func(ctx context.Context, tx *loggedTx) error {
-			_, err := tx.ExecContext(ctx,
-				`UPDATE messages SET last_modified = `+s.dialect.Now()+
-					` WHERE last_modified IS NULL`)
-			return err
-		}); err != nil {
-			return fmt.Errorf("backfill last_modified: %w", err)
-		}
-		if err := s.MarkMigrationApplied(migrationMessagesLastModifiedBackfill); err != nil {
-			return err
-		}
+
+	// Backfill content_changed_at for rows that predate the column, in
+	// committed batches (backfillContentChangedAt). Gated on the ledger
+	// because the scan never finds work after the first completed run; no
+	// forced-rerun path is needed (unlike last_modified's) because the column
+	// and its sentinel ship in the same release. The ledger is marked only
+	// after every batch has committed, so an interrupted upgrade re-enters the
+	// loop on the next open rather than declaring itself done.
+	if err := s.runOnceMigration(
+		ctx, migrationMessagesContentChangedAtBackfill, false,
+		func(ctx context.Context) error {
+			if err := s.backfillContentChangedAt(ctx); err != nil {
+				return fmt.Errorf("backfill content_changed_at: %w", err)
+			}
+			return nil
+		},
+	); err != nil {
+		return err
+	}
+
+	if initSchemaWindowHook != nil {
+		initSchemaWindowHook()
+	}
+
+	// Keyset index for the content-change feed, on both backends. Composite
+	// (content_changed_at, id) because the feed's cursor is exactly that pair.
+	// Created here rather than in the schema files because those run before the
+	// ADD COLUMN migration above (cr2-10). Under runMaintenance: the one-time
+	// build over a large archive can exceed the pool-wide statement_timeout.
+	if err := s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
+		_, err := tx.ExecContext(ctx,
+			`CREATE INDEX IF NOT EXISTS idx_messages_content_changed_at
+			     ON messages(content_changed_at, id)`)
+		return err
+	}); err != nil {
+		return fmt.Errorf("create content_changed_at index: %w", err)
 	}
 
 	// Create FTS indexes that depend on columns just added by the legacy
@@ -1071,21 +1242,18 @@ func (s *Store) InitSchema() error {
 	// table can exceed the pool-wide 30s statement_timeout on a large
 	// archive, so the maintenance hatch disables it for this tx (finding
 	// S1). No-op timeout reset on SQLite.
-	if err := s.runMaintenance(context.Background(), func(ctx context.Context, tx *loggedTx) error {
-		return s.dialect.EnsureFTSIndex(tx)
+	//
+	// The dialect gets the transaction BOUND to ctx, not the raw one, for the
+	// same reason the trigger DDL above does: runMaintenance has just disabled
+	// the pool-wide statement_timeout, and a GIN or partial index build queued
+	// behind a conflicting lock on `messages` has nothing else left to cut it
+	// off. Handed the raw transaction, whose Exec bottoms out in
+	// context.Background(), that wait ignores SIGINT and SIGTERM for as long as
+	// the lock is held.
+	if err := s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
+		return s.dialect.EnsureFTSIndex(boundQuerier{ctx: ctx, q: tx})
 	}); err != nil {
 		return fmt.Errorf("ensure FTS index: %w", err)
-	}
-
-	// Create the last_modified maintenance triggers. Must run after the
-	// migration loop above adds the last_modified column on legacy DBs.
-	// SQLite is a no-op here (its triggers ride schema.sql); PostgreSQL
-	// creates them idempotently. Run under runMaintenance for consistency
-	// with EnsureFTSIndex (no statement_timeout cap on the DDL).
-	if err := s.runMaintenance(context.Background(), func(ctx context.Context, tx *loggedTx) error {
-		return s.dialect.EnsureTriggers(tx)
-	}); err != nil {
-		return fmt.Errorf("ensure last_modified triggers: %w", err)
 	}
 
 	// Drop the obsolete partial index over messages needing embedding. It was
@@ -1097,7 +1265,7 @@ func (s *Store) InitSchema() error {
 	// stamp). DROP IF EXISTS is idempotent and portable across SQLite/PG; it
 	// cleans up any dev DB that already created the index. Run under
 	// runMaintenance to match the original CREATE's transaction context.
-	if err := s.runMaintenance(context.Background(), func(ctx context.Context, tx *loggedTx) error {
+	if err := s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
 		_, err := tx.ExecContext(ctx,
 			`DROP INDEX IF EXISTS idx_messages_embed_gen`)
 		return err
@@ -1112,7 +1280,10 @@ func (s *Store) InitSchema() error {
 		if err != nil {
 			return fmt.Errorf("read %s: %w", ftsFile, err)
 		}
-		if _, err := s.db.Exec(string(ftsSchema)); err != nil {
+		// Bound to ctx like the rest of the DDL above. A cancellation here is
+		// not a missing module: IsNoSuchModuleError does not match it, so it is
+		// reported rather than swallowed by the fall-through below.
+		if _, err := s.db.ExecContext(ctx, string(ftsSchema)); err != nil {
 			if !s.dialect.IsNoSuchModuleError(err) {
 				return fmt.Errorf("init FTS schema: %w", err)
 			}
@@ -1120,20 +1291,305 @@ func (s *Store) InitSchema() error {
 			// through so the rest of schema init still runs.
 		}
 	}
-	if err := s.ensureArchiveUID(); err != nil {
+	if err := s.ensureArchiveUIDContext(ctx); err != nil {
 		return err
 	}
 
 	// Probe availability through the dialect so it works uniformly for
-	// backends that carry FTS inside their main schema.
-	s.fts5Available = s.dialect.FTSAvailable(s.db.DB)
+	// backends that carry FTS inside their main schema. The probe is a query
+	// like any other and carries ctx: it returns a bool, so a cancellation that
+	// was not reported as an error would be recorded as "search is unavailable"
+	// on a store the daemon is about to hand to callers.
+	available, err := s.dialect.FTSAvailable(ctx, s.db.DB)
+	if err != nil {
+		return fmt.Errorf("probe FTS availability: %w", err)
+	}
+	s.fts5Available = available
 
 	// Ensure the default "All" collection exists and contains every source.
-	if err := s.EnsureDefaultCollection(); err != nil {
+	if err := s.EnsureDefaultCollectionContext(ctx); err != nil {
 		return fmt.Errorf("ensure default collection: %w", err)
 	}
 
 	return nil
+}
+
+// runOnceMigration runs fn at most once per archive, gated on the
+// applied_migrations ledger: fn runs when the ledger has no entry for name (or
+// when force overrides that), and the entry is written only after fn returns
+// successfully, so a migration that failed or was cancelled runs again on the
+// next open.
+//
+// It is the single owner of the ledger statements for every one-time step in
+// InitSchemaContext, and both of them carry ctx. That is not incidental. The
+// read is a gate: answered on a cancelled context it lets the whole migration
+// below it run to completion after the operator asked the daemon to stop. The
+// write is worse: reached on a cancelled context it stamps "done" on a
+// migration that was cut off, and every later open skips it. Keeping both in
+// one place is what stops the next migration added to InitSchemaContext from
+// reintroducing a contextless pair.
+func (s *Store) runOnceMigration(
+	ctx context.Context, name string, force bool, fn func(ctx context.Context) error,
+) error {
+	applied, err := s.IsMigrationAppliedContext(ctx, name)
+	if err != nil {
+		return err
+	}
+	if applied && !force {
+		return nil
+	}
+	if err := fn(ctx); err != nil {
+		return err
+	}
+	return s.MarkMigrationAppliedContext(ctx, name)
+}
+
+// contentChangedBackfillBatchSize is how many ROWS one backfill batch stamps —
+// rows needing the stamp, not ids walked past. Same 5000 the FTS backfill uses
+// (backfillFTSRangeContext): large enough that the per-transaction overhead
+// disappears against the row work, small enough that one batch's transaction is
+// short and its PostgreSQL dead tuples are reclaimable by autovacuum while the
+// next batches run. A var, not a const, only so a test can shrink it; nothing in
+// production writes it.
+var contentChangedBackfillBatchSize int64 = 5000
+
+// contentChangedBackfillBatchHook is a test-only seam: when non-nil it is
+// consulted before each batch with the batch's first and last id (inclusive),
+// and a non-nil return aborts the backfill at that batch boundary. It lets a
+// test interrupt an upgrade exactly between two committed batches — the case
+// that decides whether the backfill is resumable — without racing a real crash,
+// and it lets a test count the transactions an archive's shape costs. Nil (and
+// thus a no-op) in production; only export_test.go ever sets it.
+var contentChangedBackfillBatchHook func(fromID, toID int64) error
+
+// backfillContentChangedAt seeds content_changed_at on rows that predate the
+// column, walking the rows that still need it in committed batches.
+//
+// Seeded from last_modified rather than "now": an existing archive's
+// last_modified is a reasonable estimate of when the row last moved, so each
+// backfilled row reports a change time close to its real one. It does NOT
+// shorten the first walk — an empty cursor selects every non-NULL watermark, so
+// a first-run consumer still receives the whole archive, oldest change first,
+// which is what an empty cursor means. What "now" would cost instead is the
+// meaning: every pre-existing row would report the upgrade instant as its
+// change time, one undifferentiated block, and a consumer resuming mid-walk
+// would be paging by id through a single instant rather than through history.
+// SQLite runs the seed through strftime so a legacy last_modified in any other
+// textual form lands in the one format the triggers write -- its cursor
+// comparison is lexical, and a single stray "2024-03-04T05:06:07Z" would sort
+// into the wrong place and be skipped or repeated forever. PostgreSQL compares
+// TIMESTAMPTZ natively and needs no normalisation.
+//
+// Batched rather than one whole-table UPDATE, on both backends, for two
+// reasons that matter on a large archive at daemon startup:
+//
+//   - Resumability. Each batch is its own committed transaction, so a restart
+//     mid-upgrade keeps every row already stamped and the next run does the
+//     remainder. A single transaction over the whole table would roll all of it
+//     back, so an archive big enough to take longer than the operator's
+//     patience could never finish -- and on PostgreSQL each abandoned attempt
+//     would leave a full table's worth of dead tuples behind.
+//   - Bounded cost per transaction. PostgreSQL's MVCC rewrites every row it
+//     updates, so one whole-table statement holds a transaction open for the
+//     entire rewrite, doubles the table's on-disk size until VACUUM catches up
+//     (autovacuum cannot reclaim anything while the transaction is open), and
+//     writes WAL proportional to the whole table before a single byte is
+//     reclaimable. SQLite has no MVCC bloat, but a whole-table UPDATE there
+//     holds the single write lock for its full duration, blocking every writer
+//     in the process, and grows the WAL by the size of the change before the
+//     commit lets a checkpoint truncate it.
+//
+// Each batch runs under runMaintenance so PostgreSQL's pool-wide 30s
+// statement_timeout does not cut a batch off (no-op reset on SQLite).
+//
+// The walk is a KEYSET walk over the rows that still need work — the next batch
+// is "the first N rows with `content_changed_at IS NULL` above the last id
+// stamped", ordered by id — rather than a march through the numeric span from
+// MIN(id) to MAX(id). It carries the last id seen, so it never adds anything to
+// an id and cannot overflow int64 at the top of the id space (where a computed
+// batch end wraps negative, matches nothing, and wraps the cursor instead of
+// terminating), it makes no assumption about which ids are legal (0 and negative
+// ones both are: SQLite's INTEGER PRIMARY KEY is the rowid and the schema
+// constrains it no further), and it costs one transaction per batch of ROWS
+// rather than one per batch of ids — so a sparse archive, which is what a
+// long-lived one looks like after deletions and subset copies, does not pay
+// millions of empty transactions at daemon startup before the port is bound.
+//
+// Re-entry is correct because the predicate is `content_changed_at IS NULL`:
+// an already-stamped row is selected by no batch, so a resumed run rewrites
+// nothing it already did, and a row stamped by the INSERT trigger or column
+// DEFAULT while the backfill is running is left alone. It is not free: the walk
+// keeps its cursor in memory only, so a resumed run reads once past the stamped
+// prefix before it reaches the remaining work (see the batch loop).
+//
+// On PostgreSQL each batch bumps last_modified on every row it touches, once,
+// at upgrade: that trigger fires on any UPDATE leaving last_modified alone, and
+// this statement names only content_changed_at. It cannot be suppressed from
+// here — the trigger yields only to a statement writing a DIFFERENT
+// last_modified, so preserving the old value is not expressible, and dropping
+// the trigger around the backfill would leave the embed worker's CAS token
+// unmaintained if the upgrade were interrupted. The consequence is bounded —
+// embedding candidate selection keys off embed_gen, not last_modified, and the
+// bump happens once per archive — so it is documented rather than worked
+// around.
+//
+// SQLite does not bump: its last_modified trigger is scoped
+// `UPDATE OF <every column except content_changed_at>`, which it must be so the
+// content_changed_at stamp cannot clobber an explicit last_modified write (see
+// lastModifiedUpdateOfColumns). This statement names only the watermark, so it
+// no longer matches.
+func (s *Store) backfillContentChangedAt(ctx context.Context) error {
+	// The batch is chosen by reading ids first, then stamping exactly the range
+	// they span. Selecting the ids is what makes the walk a keyset walk; the
+	// UPDATE can then use a plain BETWEEN because the selected ids are, by
+	// construction, every unstamped row in [first,last] -- they are a
+	// contiguous run of the unstamped set in id order -- so a bounded range
+	// beats an N-element IN list and matches nothing extra.
+	//
+	// The first batch has no lower bound at all rather than starting from some
+	// smallest-imaginable id: an id of 0, or a negative one, is legal, and
+	// there is no sentinel below math.MinInt64 to start a `>` comparison from.
+	firstBatchSQL := s.dialect.Rebind(
+		`SELECT id FROM messages WHERE content_changed_at IS NULL ORDER BY id LIMIT ?`)
+	nextBatchSQL := s.dialect.Rebind(
+		`SELECT id FROM messages WHERE content_changed_at IS NULL AND id > ? ORDER BY id LIMIT ?`)
+
+	// The outer COALESCE is load-bearing, not belt-and-braces. strftime
+	// returns NULL -- not an error -- for any input its parser rejects: a unix
+	// epoch integer, an empty string, free text. last_modified is an untyped
+	// SQLite DATETIME column, so such a value is storable, and the resulting
+	// NULL watermark is terminal: the feed's range predicate excludes NULL and
+	// the caller's ledger gate means this scan never runs again. Falling back
+	// to "now" keeps the row in the feed at the cost of one over-fresh
+	// watermark.
+	stampSQL := `UPDATE messages
+	             SET content_changed_at = COALESCE(
+	                     strftime('%Y-%m-%d %H:%M:%f', last_modified),
+	                     strftime('%Y-%m-%d %H:%M:%f', 'now'))
+	             WHERE content_changed_at IS NULL AND id >= ? AND id <= ?`
+	if s.IsPostgreSQL() {
+		stampSQL = `UPDATE messages
+		            SET content_changed_at = COALESCE(last_modified, clock_timestamp())
+		            WHERE content_changed_at IS NULL AND id >= ? AND id <= ?`
+	}
+	stampSQL = s.dialect.Rebind(stampSQL)
+
+	batchSize := contentChangedBackfillBatchSize
+	started := time.Now()
+	lastLog := started
+	var stamped int64
+	var cursor int64
+	for batch := 0; ; batch++ {
+		// Selecting the batch inside the batch's own transaction, not before
+		// it, so it runs under the same maintenance hatch as the stamp. The
+		// select is not always cheap: a RESUMED run starts its walk at the
+		// bottom of the table again -- there is nowhere durable to have kept
+		// the cursor -- so its first statement reads past every row the
+		// previous run already stamped, which on a large archive can exceed
+		// PostgreSQL's pool-wide 30s statement_timeout and cancel the upgrade
+		// (SQLSTATE 57014). There is no index to lean on either: the one on
+		// content_changed_at is built later in InitSchema, after this walk.
+		var firstID, lastID, count, affected int64
+		if err := s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
+			var err error
+			firstID, lastID, count, err = nextContentChangedBackfillBatch(
+				ctx, tx, firstBatchSQL, nextBatchSQL, batch == 0, cursor, batchSize)
+			if err != nil {
+				return err
+			}
+			if count == 0 {
+				return nil
+			}
+			if contentChangedBackfillBatchHook != nil {
+				// Before the stamp, so a test that aborts here aborts a batch
+				// that has written nothing -- the transaction rolls back and
+				// the committed batches before it are what an interrupted
+				// upgrade leaves behind.
+				if err := contentChangedBackfillBatchHook(firstID, lastID); err != nil {
+					return err
+				}
+			}
+			result, err := tx.ExecContext(ctx, stampSQL, firstID, lastID)
+			if err != nil {
+				return err
+			}
+			affected, err = result.RowsAffected()
+			return err
+		}); err != nil {
+			return fmt.Errorf("batch above id %d: %w", cursor, err)
+		}
+		if count == 0 {
+			break
+		}
+		stamped += affected
+		cursor = lastID
+
+		// Progress on the terms an operator watching a stalled startup needs:
+		// how much has been stamped, and where the walk has reached. Time-
+		// throttled rather than per-batch so a small archive logs nothing.
+		if time.Since(lastLog) >= 30*time.Second {
+			slog.Info("backfilling content_changed_at",
+				slog.Int64("stamped", stamped),
+				slog.Int64("stamped_to_id", lastID),
+				slog.Duration("elapsed", time.Since(started)))
+			lastLog = time.Now()
+		}
+
+		// A short batch is the last one: the SELECT found fewer unstamped rows
+		// above the cursor than it asked for, so there are none beyond this
+		// batch. Stopping here rather than on an empty batch saves the archive
+		// one query per upgrade; rows inserted after this point are stamped by
+		// the INSERT trigger, not by this walk.
+		if count < batchSize {
+			break
+		}
+	}
+	if stamped > 0 {
+		slog.Info("backfilled content_changed_at",
+			slog.Int64("stamped", stamped),
+			slog.Duration("elapsed", time.Since(started)))
+	}
+	return nil
+}
+
+// nextContentChangedBackfillBatch reads the next batch of ids needing the
+// content_changed_at stamp: up to limit rows with a NULL watermark, in id
+// order, above afterID (or from the start of the table when first is set).
+// It returns the batch's first and last id and how many rows it spans; a count
+// of zero means there is no work left above the cursor.
+func nextContentChangedBackfillBatch(
+	ctx context.Context,
+	tx *loggedTx,
+	firstBatchSQL, nextBatchSQL string,
+	first bool,
+	afterID, limit int64,
+) (firstID, lastID, count int64, err error) {
+	var rows *loggedRows
+	if first {
+		rows, err = tx.QueryContext(ctx, firstBatchSQL, limit)
+	} else {
+		rows, err = tx.QueryContext(ctx, nextBatchSQL, afterID, limit)
+	}
+	if err != nil {
+		return 0, 0, 0, fmt.Errorf("select rows needing content_changed_at above id %d: %w", afterID, err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return 0, 0, 0, fmt.Errorf("scan message id needing content_changed_at: %w", err)
+		}
+		if count == 0 {
+			firstID = id
+		}
+		lastID = id
+		count++
+	}
+	if err := rows.Err(); err != nil {
+		return 0, 0, 0, fmt.Errorf("read rows needing content_changed_at above id %d: %w", afterID, err)
+	}
+	return firstID, lastID, count, nil
 }
 
 // dedupeAttachmentsBeforeUniqueIndex removes duplicate

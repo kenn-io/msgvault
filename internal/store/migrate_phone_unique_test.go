@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"path/filepath"
 	"strings"
@@ -149,7 +150,8 @@ func TestEnsureParticipantsPhoneUniqueIndex_LegacyNonUnique(t *testing.T) {
 	exec(`UPDATE messages SET sender_id = ? WHERE id = ?`, loser, msgC)
 
 	// Run the migration we are testing.
-	require.NoError(st.ensureParticipantsPhoneUniqueIndex(), "ensureParticipantsPhoneUniqueIndex")
+	require.NoError(st.ensureParticipantsPhoneUniqueIndex(context.Background()),
+		"ensureParticipantsPhoneUniqueIndex")
 
 	// 1) Loser row must be gone.
 	var loserCount int
@@ -210,7 +212,7 @@ func TestEnsureParticipantsPhoneUniqueIndex_LegacyNonUnique(t *testing.T) {
 	applied, err := st.IsMigrationApplied(migrationPhoneUniqueIndex)
 	require.NoError(err, "IsMigrationApplied")
 	assert.True(applied, "migration sentinel not set after successful run")
-	require.NoError(st.ensureParticipantsPhoneUniqueIndex(),
+	require.NoError(st.ensureParticipantsPhoneUniqueIndex(context.Background()),
 		"re-run of ensureParticipantsPhoneUniqueIndex must be a no-op")
 
 	// 8) Public API: EnsureParticipantByPhone with the duplicated
@@ -274,7 +276,8 @@ func TestEnsureParticipantsPhoneUniqueIndex_RewritesLinkEdges(t *testing.T) {
 	acctRevBeforeMerge, err := st.AccountIdentityRevision()
 	require.NoError(err, "AccountIdentityRevision before merge")
 
-	require.NoError(st.ensureParticipantsPhoneUniqueIndex(), "ensureParticipantsPhoneUniqueIndex")
+	require.NoError(st.ensureParticipantsPhoneUniqueIndex(context.Background()),
+		"ensureParticipantsPhoneUniqueIndex")
 
 	revAfter, err := st.IdentityRevision()
 	require.NoError(err, "IdentityRevision after merge")
@@ -358,7 +361,8 @@ func TestEnsureParticipantsPhoneUniqueIndex_PreservesMetadata(t *testing.T) {
 	multiLoser1 := insertParticipant("+15555550003", "dan@example.com", "", "Dan")
 	multiLoser2 := insertParticipant("+15555550003", "dana@example.org", "example.org", "Dana")
 
-	require.NoError(st.ensureParticipantsPhoneUniqueIndex(), "ensureParticipantsPhoneUniqueIndex")
+	require.NoError(st.ensureParticipantsPhoneUniqueIndex(context.Background()),
+		"ensureParticipantsPhoneUniqueIndex")
 
 	for _, loser := range []int64{richLoser, ignoredLoser, multiLoser1, multiLoser2} {
 		var count int

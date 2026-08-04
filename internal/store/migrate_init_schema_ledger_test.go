@@ -12,8 +12,9 @@ import (
 // TestInitSchema_OneShotMigrationsGatedOnLedger verifies the data
 // migrations InitSchema used to re-verify on every start (the attachments
 // dedupe, attribution provenance reconciliation, and the
-// messages.last_modified backfill — full messages-table scans on a large
-// archive) are gated on the applied_migrations ledger:
+// messages.last_modified and messages.content_changed_at backfills — full
+// messages-table scans on a large archive) are gated on the applied_migrations
+// ledger:
 //
 //  1. a fresh InitSchema runs them once and records all sentinels,
 //  2. a later InitSchema with the sentinel present skips the work,
@@ -34,6 +35,7 @@ func TestInitSchema_OneShotMigrationsGatedOnLedger(t *testing.T) {
 		migrationAttachmentsContentHashUnique,
 		migrationMessageAttributionProvenance,
 		migrationMessagesLastModifiedBackfill,
+		migrationMessagesContentChangedAtBackfill,
 	} {
 		applied, err := st.IsMigrationApplied(name)
 		require.NoError(err, "IsMigrationApplied %s", name)
@@ -57,18 +59,32 @@ func TestInitSchema_OneShotMigrationsGatedOnLedger(t *testing.T) {
 		`UPDATE messages SET last_modified = NULL WHERE id = ?`, msgID)
 	require.NoError(err, "null out last_modified")
 
-	lastModifiedIsNull := func() bool {
+	// Same for content_changed_at, whose backfill is the most expensive of the
+	// set: it walks the whole messages table in committed batches, minutes to
+	// hours on a large archive. The statement names only content_changed_at, and
+	// no UPDATE OF list matches that column, so no trigger re-stamps the row.
+	_, err = st.db.Exec(
+		`UPDATE messages SET content_changed_at = NULL WHERE id = ?`, msgID)
+	require.NoError(err, "null out content_changed_at")
+
+	columnIsNull := func(column string) bool {
 		var isNull bool
 		require.NoError(st.db.QueryRow(
-			`SELECT last_modified IS NULL FROM messages WHERE id = ?`, msgID,
-		).Scan(&isNull), "read last_modified")
+			`SELECT `+column+` IS NULL FROM messages WHERE id = ?`, msgID,
+		).Scan(&isNull), "read "+column)
 		return isNull
 	}
+	lastModifiedIsNull := func() bool { return columnIsNull("last_modified") }
+	contentChangedIsNull := func() bool { return columnIsNull("content_changed_at") }
 
 	// Sentinel present: re-running InitSchema must skip the backfill scan.
 	require.NoError(st.InitSchema(), "second InitSchema")
 	assert.True(lastModifiedIsNull(),
 		"backfill must not run while its sentinel is recorded")
+	assert.True(contentChangedIsNull(),
+		"the content_changed_at backfill must not rescan while its sentinel is "+
+			"recorded: re-running it is the minutes-to-hours cost this ledger exists "+
+			"to spend exactly once")
 
 	// Sentinel cleared: the next InitSchema must backfill and re-record.
 	_, err = st.db.Exec(
@@ -81,4 +97,19 @@ func TestInitSchema_OneShotMigrationsGatedOnLedger(t *testing.T) {
 	applied, err := st.IsMigrationApplied(migrationMessagesLastModifiedBackfill)
 	require.NoError(err, "IsMigrationApplied after re-run")
 	assert.True(applied, "re-run must re-record the sentinel")
+	assert.True(contentChangedIsNull(),
+		"clearing the last_modified sentinel must not drag the content_changed_at "+
+			"backfill along with it: the two are gated independently")
+
+	// And the same for content_changed_at's own sentinel.
+	_, err = st.db.Exec(
+		`DELETE FROM applied_migrations WHERE name = ?`,
+		migrationMessagesContentChangedAtBackfill)
+	require.NoError(err, "clear content_changed_at backfill sentinel")
+	require.NoError(st.InitSchema(), "fourth InitSchema")
+	assert.False(contentChangedIsNull(),
+		"the content_changed_at backfill must run once its sentinel is cleared")
+	applied, err = st.IsMigrationApplied(migrationMessagesContentChangedAtBackfill)
+	require.NoError(err, "IsMigrationApplied after content_changed_at re-run")
+	assert.True(applied, "re-run must re-record the content_changed_at sentinel")
 }

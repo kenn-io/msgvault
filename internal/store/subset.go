@@ -421,6 +421,52 @@ func copyData(tx *sql.Tx, rowCount int, includeIdentity bool) (*CopyResult, erro
 		return nil, err
 	}
 
+	// The copy names content_changed_at whenever the source has it, which
+	// supplies the value explicitly and so bypasses the column's DEFAULT, and on
+	// a database created from schema.sql there is no AFTER INSERT trigger behind
+	// that default (the default is the whole INSERT-time writer there — see
+	// EnsureTriggers). So a NULL watermark in the source lands in the subset as
+	// a NULL watermark and nothing ever stamps it: the change feed's range
+	// predicate excludes NULL, and InitSchema's `WHERE content_changed_at IS
+	// NULL` backfill already ran on this database while it was empty and is
+	// recorded as applied, so it will not run again. The row would be invisible
+	// to the feed for the life of the archive.
+	//
+	// Normally this updates nothing — every write path stamps the column, and
+	// the source's own migration filled it. It is the copy that has to be
+	// closed, not the writers: this statement is the only thing standing
+	// between a single NULL anywhere upstream and a permanently unreportable
+	// message.
+	//
+	// It names only content_changed_at, so no trigger on `messages` fires here:
+	// the content-change trigger is UPDATE OF the content columns, and the
+	// last_modified trigger is UPDATE OF every column except this one (see
+	// lastModifiedUpdateOfColumns).
+	//
+	// It is not, however, what decides the watermarks of a message that has a
+	// body. The `INSERT INTO message_bodies` further down fires two triggers
+	// that write the parent row directly rather than reacting to an UPDATE of
+	// it: trg_message_bodies_content_changed_ins, and schema.sql's pre-existing
+	// trg_message_bodies_last_modified_ins. So a copied message WITH a body
+	// leaves this function with both content_changed_at and last_modified set
+	// to the time of the copy; only a bodyless one keeps the source's values.
+	// (Measured: a source row stamped 2001-02-03 04:05:06 arrives copy-stamped
+	// when it has a body and unchanged when it does not.)
+	//
+	// That is left alone rather than worked around. last_modified has behaved
+	// this way for as long as those body triggers have existed, and
+	// content_changed_at now simply matches it. Neither column promises to
+	// survive a copy: a subset is a new archive, its feed consumers start from
+	// an empty cursor, and all they require of the watermark is that it is
+	// non-NULL and in the single textual shape the lexical cursor can order —
+	// which a copy-time stamp and a copied source value both satisfy.
+	// TestCopySubset_BodyTriggersRestampWatermarks pins the behaviour.
+	if _, err := tx.Exec(fmt.Sprintf(
+		`UPDATE messages SET content_changed_at = %s WHERE content_changed_at IS NULL`,
+		(&SQLiteDialect{}).ContentChangedNow())); err != nil {
+		return nil, fmt.Errorf("stamp missing content_changed_at watermarks: %w", err)
+	}
+
 	// Null out reply_to_message_id when the parent message wasn't
 	// selected, to avoid FK violations from dangling references.
 	if _, err := tx.Exec(`
@@ -527,9 +573,9 @@ func copyMessages(tx *sql.Tx) error {
 // over ASCII only, see foldIdentifier — and the destination's spelling is
 // emitted for both sides of the copy.
 //
-// A returned name is interpolated into the copy's SQL, so one containing a
-// double quote is rejected rather than quoted. Names outside the intersection
-// are not interpolated and so are not checked.
+// A returned name is interpolated into the copy's SQL, so it goes through
+// quoteIdentifier — which quotes it and doubles any quote inside it. Names
+// outside the intersection are not interpolated and so are not rendered.
 func commonColumns(tx *sql.Tx, table string) ([]string, error) {
 	dst, err := schemaColumns(tx, "main", table)
 	if err != nil {
@@ -548,11 +594,7 @@ func commonColumns(tx *sql.Tx, table string) ([]string, error) {
 		if _, ok := inSrc[foldIdentifier(name)]; !ok {
 			continue
 		}
-		if strings.Contains(name, `"`) {
-			return nil, fmt.Errorf(
-				"%s column name contains a double quote: %q", table, name)
-		}
-		common = append(common, `"`+name+`"`)
+		common = append(common, quoteIdentifier(name))
 	}
 	return common, nil
 }

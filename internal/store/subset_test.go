@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/stretchr/testify/assert"
@@ -1271,22 +1273,37 @@ func TestCopySubset_SourceOnlyColumnWithQuoteInName(t *testing.T) {
 	assert.Equal(3, dstCount, "destination message count")
 }
 
-// TestCopySubset_CommonColumnWithQuoteRejected covers a column present in both
-// schemas whose name contains a double quote. That name would be interpolated
-// into the copy's SQL, so commonColumns refuses it instead of quoting it.
-func TestCopySubset_CommonColumnWithQuoteRejected(t *testing.T) {
+// TestCopySubset_CommonColumnWithQuoteIsEscapedAndCopied covers a column
+// present in both schemas whose name contains a double quote. That name is
+// interpolated into the copy's SQL, so commonColumns escapes it — doubling the
+// quote, the way SQL escapes one inside a quoted identifier — rather than
+// refusing the copy. The name also carries an injection payload, which the
+// escaping renders inert.
+func TestCopySubset_CommonColumnWithQuoteIsEscapedAndCopied(t *testing.T) {
 	require := require.New(t)
+	assert := assert.New(t)
 	dir := t.TempDir()
 	srcPath := filepath.Join(dir, "src.db")
 	dstPath := filepath.Join(dir, "dst.db")
 
+	// Closes the identifier, ends the statement, drops the table, and comments
+	// out whatever the interpolator appends after it.
+	const hostile = `we"ird" ); DROP TABLE t; --`
+	quoted := `"` + strings.ReplaceAll(hostile, `"`, `""`) + `"`
+
 	for _, path := range []string{srcPath, dstPath} {
 		db, err := sql.Open("sqlite3", path)
 		require.NoError(err, "open %s", path)
-		_, err = db.Exec(`CREATE TABLE t (id INTEGER, "we""ird" TEXT)`)
+		_, err = db.Exec(`CREATE TABLE t (id INTEGER, ` + quoted + ` TEXT)`)
 		require.NoError(err, "create t in %s", path)
 		require.NoError(db.Close(), "close %s", path)
 	}
+
+	srcDB, err := sql.Open("sqlite3", srcPath)
+	require.NoError(err, "open source db")
+	_, err = srcDB.Exec(`INSERT INTO t (id, ` + quoted + `) VALUES (1, 'carried')`)
+	require.NoError(err, "seed source row")
+	require.NoError(srcDB.Close(), "close source db")
 
 	db, err := sql.Open("sqlite3", dstPath)
 	require.NoError(err, "open destination db")
@@ -1299,9 +1316,26 @@ func TestCopySubset_CommonColumnWithQuoteRejected(t *testing.T) {
 	defer func() { _ = tx.Rollback() }()
 
 	cols, err := commonColumns(tx, "t")
-	require.Error(err, "commonColumns should reject a quoted column name")
-	require.Nil(cols, "columns")
-	require.Contains(err.Error(), "double quote", "error message")
+	require.NoError(err, "commonColumns must render a quoted column name, not refuse it")
+	assert.Equal([]string{`"id"`, quoted}, cols,
+		"the embedded quote must be doubled, not dropped and not rejected")
+
+	// The rendered list is what the copy interpolates, so run the copy it feeds.
+	list := strings.Join(cols, ", ")
+	_, err = tx.Exec(fmt.Sprintf(
+		`INSERT INTO t (%s) SELECT %s FROM src.t`, list, list))
+	require.NoError(err, "copy through the escaped column list")
+
+	var carried string
+	require.NoError(tx.QueryRow(`SELECT `+quoted+` FROM t WHERE id = 1`).Scan(&carried),
+		"read the copied value")
+	assert.Equal("carried", carried, "the copy must carry the oddly named column's value")
+
+	var tables int
+	require.NoError(tx.QueryRow(
+		`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 't'`).Scan(&tables),
+		"read sqlite_master")
+	assert.Equal(1, tables, "the payload riding in the column name must not have executed")
 }
 
 // TestCopySubset_SourceColumnCaseDiffers covers a source archive that declares
@@ -1401,4 +1435,275 @@ func TestCopySubset_SourceOnlyColumnUnicodeLookalike(t *testing.T) {
 	).Scan(&literals), "count identity_is_from_me string literals")
 	assert.Equal(0, literals,
 		"identity_is_from_me must not hold its own name as a string")
+}
+
+// TestCopySubset_NullWatermarkIsRestamped covers what the positional copy can
+// carry through that no other write path can.
+//
+// The copy names content_changed_at whenever the source has it, which supplies
+// the value explicitly and so bypasses the column's DEFAULT, and a database
+// created from schema.sql has no AFTER INSERT trigger behind that default. So a NULL
+// watermark in the source arrives as a NULL watermark in the subset — and stays
+// one: the change feed's range predicate excludes NULL, and the migration that
+// would fill it in already ran on this database while it was empty and is
+// recorded as applied. The message would never appear in the feed again.
+//
+// The source's NULL is written the way one can now exist at all: an INSERT that
+// names content_changed_at and gives it NULL. That is the hole the DEFAULT
+// leaves open on a fresh database, so it is the shape worth copying badly.
+func TestCopySubset_NullWatermarkIsRestamped(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	srcDir := t.TempDir()
+	dstDir := filepath.Join(t.TempDir(), "dst")
+
+	srcPath := createTestSourceDB(t, srcDir, 4)
+	srcDB, err := sql.Open("sqlite3", srcPath+"?_foreign_keys=OFF")
+	require.NoError(err, "open source")
+	_, err = srcDB.Exec(`
+		INSERT INTO messages
+			(id, conversation_id, source_id, source_message_id, message_type,
+			 subject, content_changed_at)
+		VALUES (99, 1, 1, 'msg_unwatermarked', 'email', 'No watermark', NULL)`)
+	require.NoError(err, "insert a message with no watermark")
+	var srcWatermark sql.NullString
+	require.NoError(srcDB.QueryRow(
+		"SELECT content_changed_at FROM messages WHERE id = 99").Scan(&srcWatermark),
+		"read the source watermark")
+	require.False(srcWatermark.Valid,
+		"the source fixture is only meaningful if the NULL survived the insert: a "+
+			"DEFAULT does not apply to a column the statement names")
+	require.NoError(srcDB.Close(), "close source")
+
+	_, err = CopySubset(srcPath, dstDir, 100, false)
+	require.NoError(err, "CopySubset")
+
+	dstDB, err := sql.Open("sqlite3", filepath.Join(dstDir, "msgvault.db"))
+	require.NoError(err, "open destination")
+	defer func() { _ = dstDB.Close() }()
+
+	var missing int64
+	require.NoError(dstDB.QueryRow(
+		"SELECT COUNT(*) FROM messages WHERE content_changed_at IS NULL").Scan(&missing),
+		"count unwatermarked messages")
+	assert.Zero(missing,
+		"the subset carried a NULL content_changed_at through. Nothing in the "+
+			"destination will ever stamp it — the INSERT trigger is absent on a "+
+			"fresh database and the backfill has already been recorded as applied — "+
+			"so the change feed can never report that message again")
+
+	// Read the stored text rather than the scanned value: go-sqlite3 converts a
+	// DATETIME column to time.Time on the way out, which would hide the width
+	// the feed actually compares. The feed's cursor comparison is lexical, so a
+	// substitute in any other shape sorts into the wrong place.
+	var copied string
+	require.NoError(dstDB.QueryRow(
+		"SELECT CAST(content_changed_at AS TEXT) FROM messages WHERE id = 99").Scan(&copied),
+		"read the copied watermark")
+	_, parseErr := time.Parse(SQLiteTimestampLayout, copied)
+	assert.NoErrorf(parseErr,
+		"the substituted watermark %q must be in the format SQLiteDialect."+
+			"ContentChangedNow writes", copied)
+
+	var oddlyShaped int64
+	require.NoError(dstDB.QueryRow(`
+		SELECT COUNT(*) FROM messages
+		WHERE CAST(content_changed_at AS TEXT) NOT GLOB
+			'[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9] [0-9][0-9]:[0-9][0-9]:[0-9][0-9].[0-9][0-9][0-9]'`,
+	).Scan(&oddlyShaped), "count oddly shaped watermarks")
+	assert.Zero(oddlyShaped,
+		"every watermark in the subset must share one textual shape: the feed "+
+			"orders them lexically, so a stamp of a different width sorts wrong")
+}
+
+// TestCopySubset_LegacySourceWithoutContentChangedAt covers a source database
+// created before content_changed_at existed at all — not one where the column
+// exists and holds NULL (TestCopySubset_NullWatermarkIsRestamped covers that).
+//
+// The destination is always built from the current schema, so the positional
+// `INSERT INTO messages SELECT * FROM src.messages` this copy used to run
+// supplied one value fewer than the destination has columns and SQLite rejected
+// the whole statement ("table messages has 34 columns but 33 values were
+// supplied"). TestCopySubset_LegacySourceWithoutOAuthApp establishes that older
+// source schemas are supported; a copy that only works when the source is
+// already current is a regression in that, and the NULL restamp that follows
+// the INSERT never got to run because the INSERT failed first.
+func TestCopySubset_LegacySourceWithoutContentChangedAt(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	srcDir := t.TempDir()
+	dstDir := filepath.Join(t.TempDir(), "dst")
+
+	srcPath := createTestSourceDB(t, srcDir, 3)
+	srcDB, err := sql.Open("sqlite3", srcPath+"?_foreign_keys=OFF")
+	require.NoError(err, "open source")
+
+	// Remove every schema object that references the column, then the column
+	// itself, to leave a messages table shaped the way a pre-feature archive's
+	// is.
+	for _, stmt := range []string{
+		`DROP TRIGGER IF EXISTS trg_messages_content_changed_ins`,
+		`DROP TRIGGER IF EXISTS trg_messages_content_changed_at`,
+		`DROP TRIGGER IF EXISTS trg_message_bodies_content_changed_ins`,
+		`DROP TRIGGER IF EXISTS trg_message_bodies_content_changed_upd`,
+		`DROP INDEX IF EXISTS idx_messages_content_changed_at`,
+		`ALTER TABLE messages DROP COLUMN content_changed_at`,
+	} {
+		_, err = srcDB.Exec(stmt)
+		require.NoErrorf(err, "prepare pre-feature source: %s", stmt)
+	}
+
+	var present int
+	require.NoError(srcDB.QueryRow(
+		`SELECT COUNT(*) FROM pragma_table_info('messages')
+		 WHERE name = 'content_changed_at'`).Scan(&present),
+		"inspect the source's messages columns")
+	require.Zero(present,
+		"the fixture is only meaningful if the source genuinely lacks the column")
+	require.NoError(srcDB.Close(), "close source")
+
+	result, err := CopySubset(srcPath, dstDir, 100, false)
+	require.NoError(err, "CopySubset from a source without content_changed_at")
+	assert.Equal(int64(3), result.Messages, "Messages")
+
+	dstDB, err := sql.Open("sqlite3", filepath.Join(dstDir, "msgvault.db"))
+	require.NoError(err, "open destination")
+	defer func() { _ = dstDB.Close() }()
+
+	var copied, missing int64
+	require.NoError(dstDB.QueryRow(
+		"SELECT COUNT(*) FROM messages").Scan(&copied), "count copied messages")
+	assert.Equal(int64(3), copied, "copied messages")
+	require.NoError(dstDB.QueryRow(
+		"SELECT COUNT(*) FROM messages WHERE content_changed_at IS NULL").Scan(&missing),
+		"count unwatermarked messages")
+	assert.Zero(missing,
+		"a message copied from a pre-feature source must be stamped on arrival: "+
+			"nothing in the destination will ever stamp it later, so the change "+
+			"feed could never report it")
+
+	var oddlyShaped int64
+	require.NoError(dstDB.QueryRow(`
+		SELECT COUNT(*) FROM messages
+		WHERE CAST(content_changed_at AS TEXT) NOT GLOB
+			'[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9] [0-9][0-9]:[0-9][0-9]:[0-9][0-9].[0-9][0-9][0-9]'`,
+	).Scan(&oddlyShaped), "count oddly shaped watermarks")
+	assert.Zero(oddlyShaped,
+		"every watermark in the subset must share one textual shape: the feed "+
+			"orders them lexically, so a stamp of a different width sorts wrong")
+
+	// The rest of the row must survive intact — a fallback that shifts columns
+	// would still copy three rows.
+	var subject string
+	var sourceMessageID string
+	require.NoError(dstDB.QueryRow(
+		"SELECT source_message_id, subject FROM messages WHERE id = 1").
+		Scan(&sourceMessageID, &subject), "read a copied row")
+	assert.Equal("msg_1", sourceMessageID, "source_message_id")
+	assert.Equal("Subject B", subject, "subject")
+}
+
+// TestCopySubset_BodyTriggersRestampWatermarks pins what the copy actually does
+// to the two watermarks, which is not what the restamp statement alone suggests.
+//
+// The restamp names only content_changed_at, so it fires no trigger on
+// `messages`. But the `INSERT INTO message_bodies` that follows it fires
+// trg_message_bodies_content_changed_ins and schema.sql's pre-existing
+// trg_message_bodies_last_modified_ins, and both of those write the parent row
+// directly. The result is a split: a copied message that HAS a body carries
+// copy-time values for both columns, and a bodyless one carries the source's.
+//
+// That split is accepted, not repaired — a subset is a new archive whose feed
+// consumers start from an empty cursor, and last_modified has behaved this way
+// since long before content_changed_at existed. It is pinned here because it is
+// invisible from the copy statement and a reader would otherwise conclude, as
+// the code comment once did, that a subset preserves the source's watermarks.
+func TestCopySubset_BodyTriggersRestampWatermarks(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	srcDir := t.TempDir()
+	dstDir := filepath.Join(t.TempDir(), "dst")
+
+	const (
+		srcLastModified      = "2001-02-03 04:05:06"
+		srcContentChangedAt  = "2001-02-03 04:05:06.000"
+		bodylessMessageID    = 99
+		messageWithBodyID    = 1
+		messagesWithBodyLast = 2
+	)
+
+	srcPath := createTestSourceDB(t, srcDir, messagesWithBodyLast)
+	srcDB, err := sql.Open("sqlite3", srcPath+"?_foreign_keys=OFF")
+	require.NoError(err, "open source")
+
+	// createTestSourceDB gives every message a body. Add one without, because
+	// the presence of a body is the whole variable here.
+	_, err = srcDB.Exec(`
+		INSERT INTO messages
+			(id, conversation_id, source_id, source_message_id, message_type, subject)
+		VALUES (?, 1, 1, 'msg_bodyless', 'email', 'No body')`, bodylessMessageID)
+	require.NoError(err, "insert a message with no body")
+
+	// Force both watermarks to a known instant far in the past, so a copy-time
+	// stamp is unmistakable.
+	_, err = srcDB.Exec(
+		`UPDATE messages SET last_modified = ?, content_changed_at = ?`,
+		srcLastModified, srcContentChangedAt)
+	require.NoError(err, "age the source watermarks")
+	require.NoError(srcDB.Close(), "close source")
+
+	_, err = CopySubset(srcPath, dstDir, 100, false)
+	require.NoError(err, "CopySubset")
+
+	dstDB, err := sql.Open("sqlite3", filepath.Join(dstDir, "msgvault.db"))
+	require.NoError(err, "open destination")
+	defer func() { _ = dstDB.Close() }()
+
+	// Read the stored text, not the scanned value: go-sqlite3 converts a
+	// DATETIME column to time.Time on the way out, which would hide the exact
+	// stored form the feed compares lexically.
+	read := func(id int64) (lastModified, contentChangedAt string) {
+		t.Helper()
+		require.NoError(dstDB.QueryRow(`
+			SELECT CAST(last_modified AS TEXT), CAST(content_changed_at AS TEXT)
+			FROM messages WHERE id = ?`, id).Scan(&lastModified, &contentChangedAt),
+			"read the copied watermarks for message %d", id)
+		return lastModified, contentChangedAt
+	}
+
+	bodylessLM, bodylessCC := read(bodylessMessageID)
+	assert.Equal(srcLastModified, bodylessLM,
+		"a message with no body has nothing to fire the message_bodies triggers, "+
+			"so its last_modified is the source's")
+	assert.Equal(srcContentChangedAt, bodylessCC,
+		"and so is its content_changed_at: the restamp only fills NULLs, and this "+
+			"one was not NULL")
+
+	for id := int64(messageWithBodyID); id <= messagesWithBodyLast; id++ {
+		withBodyLM, withBodyCC := read(id)
+		assert.NotEqualf(srcLastModified, withBodyLM,
+			"message %d has a body, so trg_message_bodies_last_modified_ins rewrote "+
+				"last_modified when the body was copied; a subset does not preserve it", id)
+		assert.NotEqualf(srcContentChangedAt, withBodyCC,
+			"message %d has a body, so trg_message_bodies_content_changed_ins rewrote "+
+				"content_changed_at when the body was copied", id)
+
+		_, parseErr := time.Parse(SQLiteTimestampLayout, withBodyCC)
+		require.NoErrorf(parseErr,
+			"the rewritten watermark %q on message %d must still be in the format "+
+				"SQLiteDialect.ContentChangedNow writes, or the feed's lexical cursor "+
+				"orders it wrong", withBodyCC, id)
+		assert.Greaterf(withBodyCC, srcContentChangedAt,
+			"a copy-time stamp must sort ABOVE the source value it replaced (%q vs %q) "+
+				"on message %d", withBodyCC, srcContentChangedAt, id)
+	}
+
+	// Whatever the split, no row may leave the copy unwatermarked: the feed's
+	// range predicate excludes NULL and nothing in the destination would ever
+	// stamp it later.
+	var missing int64
+	require.NoError(dstDB.QueryRow(
+		"SELECT COUNT(*) FROM messages WHERE content_changed_at IS NULL").Scan(&missing),
+		"count unwatermarked messages")
+	assert.Zero(missing, "every copied message must carry a watermark")
 }

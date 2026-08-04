@@ -214,6 +214,42 @@ CREATE TABLE IF NOT EXISTS messages (
     -- stamps this column after a successful upsert (or skip).
     embed_gen INTEGER,
 
+    -- Content-change watermark, maintained ENTIRELY by the database (triggers
+    -- created by EnsureTriggers), never by application write paths. Unlike
+    -- last_modified above, which bumps on ANY change to the row, this moves
+    -- only when the message's own content, routing, or lifecycle actually
+    -- changes value -- see MessagesContentColumns in content_columns.go for
+    -- the list and the reason each column is in or out. It exists so a
+    -- consumer maintaining an incremental copy of the archive can page "what
+    -- changed since X?" without being woken by internal bookkeeping such as
+    -- embedding watermarks or index versions.
+    --
+    -- The DEFAULT is the INSERT-time writer on a fresh database, and it must
+    -- stay byte-compatible with SQLiteDialect.ContentChangedNow (the trigger
+    -- that stamps everything else) -- the feed's cursor comparison is lexical,
+    -- so a stamp of a different width sorts into the wrong place. It is here
+    -- rather than only in the trigger because SQLite triggers cannot assign to
+    -- NEW: an AFTER INSERT trigger has to re-UPDATE the row it just saw, which
+    -- also re-fires the blanket last_modified trigger, turning one row write
+    -- into three (measured ~6x slower and a 17% larger file over a 100k-row
+    -- bulk insert). A database upgraded by ALTER TABLE ADD COLUMN cannot carry
+    -- this DEFAULT -- SQLite rejects a non-constant default there -- so an
+    -- INSERT trigger guarded by WHEN NEW.content_changed_at IS NULL stamps
+    -- those rows instead. EnsureTriggers creates that trigger ONLY on an
+    -- archive whose column carries no default: on a fresh database this DEFAULT
+    -- is the writer and the trigger is dropped and not recreated, because
+    -- merely having a row trigger on messages costs every INSERT a compiled
+    -- trigger subprogram whether or not its body runs.
+    --
+    -- This column MUST stay last so that a fresh database and one upgraded by
+    -- the ALTER TABLE ADD COLUMN migration declare their columns in the same
+    -- order (ALTER TABLE always appends). subset.go no longer depends on that
+    -- -- it copies messages by the column list the source and destination share
+    -- -- but the two layouts do meet, and a divergence silently breaks anything
+    -- that reads a message row by position.
+    -- TestContentChangedAt_ColumnOrderMatchesAfterUpgrade pins it.
+    content_changed_at DATETIME DEFAULT (strftime('%Y-%m-%d %H:%M:%f','now')),
+
     UNIQUE(source_id, source_message_id)
 );
 
@@ -336,18 +372,24 @@ CREATE TABLE IF NOT EXISTS message_bodies (
 -- owns it via these triggers. InitSchema re-execs schema.sql idempotently, so
 -- `IF NOT EXISTS` makes these safe on both fresh and existing databases.
 
--- On messages: re-stamp last_modified after any UPDATE. The WHEN guard
+-- On messages: re-stamp last_modified after an UPDATE. The WHEN guard
 -- (OLD.last_modified = NEW.last_modified) prevents infinite recursion: the
 -- trigger's own UPDATE changes last_modified, so on the re-fire
 -- OLD.last_modified <> NEW.last_modified and WHEN evaluates false, regardless
 -- of the recursive_triggers pragma. It also yields to an explicit
 -- last_modified write in the original UPDATE rather than clobbering it.
-CREATE TRIGGER IF NOT EXISTS trg_messages_last_modified
-AFTER UPDATE ON messages FOR EACH ROW
-WHEN OLD.last_modified = NEW.last_modified
-BEGIN
-    UPDATE messages SET last_modified = CURRENT_TIMESTAMP WHERE id = NEW.id;
-END;
+--
+-- This trigger is NOT created here. It needs an `UPDATE OF <every column except
+-- content_changed_at>` scope -- without it, the content_changed_at stamp (a
+-- second UPDATE on SQLite) re-enters this trigger and destroys the explicit
+-- write the guard above promises to yield to. That column list has to be read
+-- from the live table, which SQL alone cannot do, so SQLiteDialect.EnsureTriggers
+-- builds it -- see lastModifiedUpdateOfColumns. InitSchema always runs
+-- EnsureTriggers, and it DROPs before CREATEing, so an archive still carrying an
+-- older blanket definition is corrected on open.
+--
+-- The message_bodies triggers below stay here: they write messages.last_modified
+-- directly instead of reacting to a messages UPDATE, so nothing can re-enter them.
 
 -- On message_bodies: a body change must bump the parent message's
 -- last_modified so the worker's CAS token covers body edits too.
