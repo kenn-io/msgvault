@@ -8,7 +8,9 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"testing"
+	"time"
 
 	"github.com/doordash-oss/oapi-codegen-dd/v3/pkg/runtime"
 	"github.com/stretchr/testify/assert"
@@ -123,6 +125,364 @@ func TestGeneratedFileMetadataRequiresPresenceButAcceptsEmptyLegacyStrings(t *te
 		missingMIME.MimeType = nil
 		requirements.Error(missingMIME.Validate(), "missing required MIME type")
 	})
+}
+
+// TestGeneratedChangesResponseAcceptsTheFeedsOrdinaryPages holds the
+// content-change feed to the same "required means present, not non-empty"
+// distinction the file-metadata models above are held to.
+//
+// A row of that feed omits every column it has nothing to say about: a live
+// message carries no deletion timestamps, and a chat message carries no subject,
+// snippet, or platform id. Declaring any of those required in the OpenAPI
+// document makes this validator reject them — required here means non-nil AND
+// non-empty — so the published client would refuse the server's ordinary
+// successful responses. next_cursor is the other side of that rule: the server
+// publishes one on every page, empty ones included, so it can be required.
+func TestGeneratedChangesResponseAcceptsTheFeedsOrdinaryPages(t *testing.T) {
+	const liveEmail = `{
+		"messages":[{
+			"id":918,
+			"source_id":1,
+			"source_message_id":"18f2c9d0a1b3",
+			"conversation_id":44,
+			"message_type":"email",
+			"subject":"Q4 planning",
+			"snippet":"Here's the draft for Q4...",
+			"sent_at":"2026-03-01T10:00:00Z",
+			"size_estimate":8412,
+			"has_attachments":false,
+			"attachment_count":0,
+			"content_changed_at":"2026-07-26T10:00:00.731123Z"
+		}],
+		"count":1,
+		"has_more":false,
+		"next_cursor":"1.eyJ0IjoiMjAyNi0wNy0yNlQxMDowMDowMC43MzExMjNaIiwiaSI6OTE4fQ",
+		"server_time":"2026-07-26T10:00:03.114500Z",
+		"complete_through":"2026-07-26T10:00:03.114488Z"
+	}`
+
+	t.Run("live message omits every unset timestamp", func(t *testing.T) {
+		assertions := assert.New(t)
+		requirements := require.New(t)
+		var page generated.ChangesResponse
+		requirements.NoError(json.Unmarshal([]byte(liveEmail), &page))
+		requirements.NoError(page.Validate(),
+			"a message that was never deleted and has no platform timestamps is the "+
+				"common case, not an error")
+		requirements.Len(page.Messages, 1)
+		row := page.Messages[0]
+		assertions.Nil(row.ReceivedAt, "received_at")
+		assertions.Nil(row.InternalDate, "internal_date")
+		assertions.Nil(row.DeletedAt, "deleted_at")
+		assertions.Nil(row.DeletedFromSourceAt, "deleted_from_source_at")
+	})
+
+	t.Run("chat message omits subject, snippet, and platform id", func(t *testing.T) {
+		assertions := assert.New(t)
+		requirements := require.New(t)
+		var page generated.ChangesResponse
+		requirements.NoError(json.Unmarshal([]byte(`{
+			"messages":[{
+				"id":7,
+				"source_id":2,
+				"conversation_id":9,
+				"message_type":"imessage",
+				"size_estimate":0,
+				"has_attachments":false,
+				"attachment_count":0,
+				"content_changed_at":"2026-07-26T10:00:00.731123Z"
+			}],
+			"count":1,
+			"has_more":false,
+			"next_cursor":"1.eyJ0IjoiMjAyNi0wNy0yNlQxMDowMDowMC43MzExMjNaIiwiaSI6N30",
+			"server_time":"2026-07-26T10:00:03.114500Z",
+			"complete_through":"2026-07-26T10:00:03.114488Z"
+		}`), &page))
+		requirements.NoError(page.Validate(),
+			"chat platforms carry no subject and the store COALESCEs a missing "+
+				"platform id to the empty string")
+		requirements.Len(page.Messages, 1)
+		row := page.Messages[0]
+		assertions.Nil(row.Subject, "subject")
+		assertions.Nil(row.Snippet, "snippet")
+		assertions.Nil(row.SourceMessageID, "source_message_id")
+	})
+
+	t.Run("empty archive page still carries a cursor", func(t *testing.T) {
+		assertions := assert.New(t)
+		requirements := require.New(t)
+		const emptyArchive = `{
+			"messages":[],
+			"count":0,
+			"has_more":false,
+			"next_cursor":"1.eyJ0IjoiMDAwMS0wMS0wMVQwMDowMDowMFoiLCJpIjowfQ",
+			"server_time":"2026-07-26T10:00:03.114500Z",
+			"complete_through":"2026-07-26T10:00:03.114488Z"
+		}`
+		var page generated.ChangesResponse
+		requirements.NoError(json.Unmarshal([]byte(emptyArchive), &page))
+		requirements.NoError(page.Validate(),
+			"a first poll of an empty archive has no last row, but it still hands "+
+				"back the position the caller is standing at")
+		assertions.Empty(page.Messages, "messages")
+		assertions.NotEmpty(page.NextCursor, "next_cursor")
+
+		page.NextCursor = ""
+		requirements.Error(page.Validate(),
+			"next_cursor is what a consumer sends back; a page without one leaves it "+
+				"nothing to hold its place with, so required must mean non-empty here")
+	})
+
+	t.Run("a missing watermark is still rejected", func(t *testing.T) {
+		requirements := require.New(t)
+		var page generated.ChangesResponse
+		requirements.NoError(json.Unmarshal([]byte(liveEmail), &page))
+		requirements.Len(page.Messages, 1)
+		page.Messages[0].ContentChangedAt = ""
+		requirements.Error(page.Validate(),
+			"content_changed_at is the row's watermark: it is what the feed orders "+
+				"by, so loosening the other fields must not loosen this one")
+		page.Messages[0].ContentChangedAt = "2026-07-26T10:00:00.731123Z"
+		page.ServerTime = time.Time{}
+		requirements.Error(page.Validate(),
+			"server_time is always a database clock reading")
+		page.ServerTime = time.Date(2026, 7, 26, 10, 0, 3, 114500000, time.UTC)
+		page.CompleteThrough = ""
+		requirements.Error(page.Validate(),
+			"complete_through tells a consumer how far the feed is caught up; without "+
+				"it a feed held back by an open write transaction is indistinguishable "+
+				"from a caught-up one")
+	})
+
+	// The two timestamps of this feed that are NOT typed as date-time in the
+	// OpenAPI document, and why. Both are required, and both can legitimately
+	// carry the zero instant, which a date-time field decodes into Go's zero
+	// time.Time — a value this validator rejects for a required field. Typing
+	// them would therefore turn two documented, reachable pages into client-side
+	// validation failures. This is the test that fails if someone "finishes the
+	// job" by adding the format to them.
+	t.Run("the zero instant is a value, not a missing field", func(t *testing.T) {
+		requirements := require.New(t)
+		assertions := assert.New(t)
+
+		var noBoundYet generated.ChangesResponse
+		requirements.NoError(json.Unmarshal([]byte(`{
+			"messages":[],
+			"count":0,
+			"has_more":false,
+			"next_cursor":"1.eyJ0IjoiMDAwMS0wMS0wMVQwMDowMDowMFoiLCJpIjowfQ",
+			"server_time":"2026-07-26T10:00:03.114500Z",
+			"complete_through":"0001-01-01T00:00:00Z"
+		}`), &noBoundYet))
+		requirements.NoError(noBoundYet.Validate(),
+			"a server that has not established a commit bound yet publishes "+
+				"complete_through as 0001-01-01T00:00:00Z, and the consumer is told to "+
+				"keep polling through it; the client must decode that page, not reject it")
+		assertions.Equal("0001-01-01T00:00:00Z", noBoundYet.CompleteThrough,
+			"and it must arrive intact, so a consumer can recognise the state")
+
+		var unreadableWatermark generated.ChangesResponse
+		requirements.NoError(json.Unmarshal([]byte(`{
+			"messages":[{
+				"id":918,
+				"source_id":1,
+				"conversation_id":44,
+				"size_estimate":0,
+				"has_attachments":false,
+				"attachment_count":0,
+				"content_changed_at":"0001-01-01T00:00:00Z"
+			}],
+			"count":1,
+			"has_more":false,
+			"next_cursor":"1.eyJ0IjoiMDAwMS0wMS0wMVQwMDowMDowMFoiLCJpIjo5MTh9",
+			"server_time":"2026-07-26T10:00:03.114500Z",
+			"complete_through":"2026-07-26T10:00:03.114488Z"
+		}`), &unreadableWatermark))
+		requirements.NoError(unreadableWatermark.Validate(),
+			"a row whose stored watermark the server could not read is reported at the "+
+				"page's floor, which from an empty cursor is the zero instant; that page "+
+				"is the one a consumer most needs to see")
+	})
+}
+
+// TestListChangedMessagesRoundTripsTheCursorVerbatim covers the half of the
+// change feed's client contract the response-model test above cannot reach: that
+// the generated client builds the request the server accepts, and that the
+// cursor survives the trip out through the generated query parameters byte for
+// byte.
+//
+// The cursor is opaque, so the client has no way to repair one it damaged: a
+// token altered on the way out is not a cursor this server issued and comes back
+// 400, and one silently dropped restarts the consumer at the beginning of the
+// archive. Neither shows up in the response model — only in the query string. So
+// this walks the loop a consumer walks, taking next_cursor from one page and
+// sending it as the next request, and asserts on what the client actually put on
+// the wire.
+func TestListChangedMessagesRoundTripsTheCursorVerbatim(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	const watermark = "2026-07-26T10:00:00.731123Z"
+	// An opaque token shaped like the ones the server issues, carrying the
+	// sub-second watermark above and the id below. It is NOT one this server
+	// would accept — it names no archive, and today's server rejects a cursor
+	// that does not — which costs this test nothing: what it exercises is the
+	// generated client's query-parameter round trip, and what matters is that
+	// this exact string comes back off the wire.
+	const cursor = "1.eyJ0IjoiMjAyNi0wNy0yNlQxMDowMDowMC43MzExMjNaIiwiaSI6OTE4fQ"
+
+	var gotMethod, gotPath string
+	var gotQuery url.Values
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod, gotPath, gotQuery = r.Method, r.URL.Path, r.URL.Query()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprintf(w, `{
+			"messages":[{
+				"id":918,
+				"source_id":1,
+				"conversation_id":44,
+				"message_type":"email",
+				"subject":"Q4 planning",
+				"size_estimate":8412,
+				"has_attachments":false,
+				"attachment_count":0,
+				"content_changed_at":%q
+			}],
+			"count":1,
+			"has_more":false,
+			"next_cursor":%q,
+			"server_time":"2026-07-26T10:00:03.114500Z",
+			"complete_through":"2026-07-26T10:00:03.114488Z"
+		}`, watermark, cursor)
+	}))
+	t.Cleanup(server.Close)
+
+	c, err := New(server.URL)
+	require.NoError(err, "New")
+
+	// First poll: a consumer with no cursor yet. Sending cursor= would be a
+	// different request than omitting it, so the client must omit.
+	limit := int64(100)
+	first, err := c.ListChangedMessages(context.Background(), &generated.ListChangedMessagesRequestOptions{
+		Query: &generated.ListChangedMessagesQuery{Limit: &limit},
+	})
+	require.NoError(err, "ListChangedMessages first poll")
+	assert.Equal(http.MethodGet, gotMethod, "method")
+	assert.Equal("/api/v1/messages/changes", gotPath, "path")
+	assert.Equal("100", gotQuery.Get("limit"), "limit query")
+	assert.NotContains(gotQuery, "cursor", "an absent cursor must not be sent as an empty one")
+
+	require.NotNil(first, "first page")
+	assert.Equal(cursor, first.NextCursor, "the cursor must decode exactly as published")
+	require.Len(first.Messages, 1, "messages")
+	assert.Equal(watermark, first.Messages[0].ContentChangedAt, "the row's watermark")
+
+	// Second poll: the response fed straight back, exactly as the docs tell a
+	// consumer to do it.
+	second, err := c.ListChangedMessages(context.Background(), &generated.ListChangedMessagesRequestOptions{
+		Query: &generated.ListChangedMessagesQuery{
+			Cursor: &first.NextCursor,
+			Limit:  &limit,
+		},
+	})
+	require.NoError(err, "ListChangedMessages second poll")
+	assert.Equal(cursor, gotQuery.Get("cursor"),
+		"the cursor reached the wire altered: a token this server did not issue is "+
+			"rejected, so a consumer that sends it back can no longer resume at all")
+	assert.Equal("100", gotQuery.Get("limit"), "limit query")
+	require.NotNil(second, "second page")
+}
+
+// TestListChangedMessagesDecodesTheDocumentedErrors covers the half of the
+// contract the success paths cannot: the responses a consumer has to act on
+// differently from one another.
+//
+// The feed answers 400 for a cursor it cannot use, 401 without a usable key,
+// 429 when the caller has outrun the rate limiter, 500 when the watermark query
+// fails, and 503 where the configured store cannot serve the feed at all. Only
+// the first is recoverable, and only by restarting the sync from the beginning
+// of the archive, so a consumer has to tell it apart from the ones it should
+// retry — which means reading the `error` code out of the body. A generated
+// client that models only 200 and 500 hands back an opaque status and leaves
+// every consumer to decode the body by hand, so the codes are pinned here
+// against the client the repository actually ships.
+//
+// 429 matters most to this endpoint of all of them: a consumer of an
+// invalidation feed polls, and polling is what the limiter exists to catch.
+func TestListChangedMessagesDecodesTheDocumentedErrors(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		status  int
+		code    string
+		message string
+		body    func(*generated.ListChangedMessagesResp) *generated.ErrorResponse
+	}{
+		{
+			name:    "an unusable cursor",
+			status:  http.StatusBadRequest,
+			code:    "invalid_cursor",
+			message: "cursor was issued for a different archive",
+			body:    func(r *generated.ListChangedMessagesResp) *generated.ErrorResponse { return r.JSON400 },
+		},
+		{
+			name:    "a missing or rejected key",
+			status:  http.StatusUnauthorized,
+			code:    "unauthorized",
+			message: "API key required",
+			body:    func(r *generated.ListChangedMessagesResp) *generated.ErrorResponse { return r.JSON401 },
+		},
+		{
+			name:    "a caller that has outrun the rate limiter",
+			status:  http.StatusTooManyRequests,
+			code:    "rate_limit_exceeded",
+			message: "Too many requests. Please slow down.",
+			body:    func(r *generated.ListChangedMessagesResp) *generated.ErrorResponse { return r.JSON429 },
+		},
+		{
+			name:    "a watermark query that failed",
+			status:  http.StatusInternalServerError,
+			code:    "internal_error",
+			message: "Message change query failed",
+			body:    func(r *generated.ListChangedMessagesResp) *generated.ErrorResponse { return r.JSON500 },
+		},
+		{
+			name:    "a store that cannot serve the feed",
+			status:  http.StatusServiceUnavailable,
+			code:    "feature_unavailable",
+			message: "The configured store cannot serve the message change feed",
+			body:    func(r *generated.ListChangedMessagesResp) *generated.ErrorResponse { return r.JSON503 },
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(tc.status)
+				_, _ = fmt.Fprintf(w, `{"error":%q,"message":%q}`, tc.code, tc.message)
+			}))
+			t.Cleanup(server.Close)
+
+			c, err := New(server.URL)
+			require.NoError(err, "New")
+
+			resp, err := c.ListChangedMessagesWithResponse(
+				context.Background(), &generated.ListChangedMessagesRequestOptions{})
+			require.Error(err, "an error status must be reported as an error")
+			require.NotNil(resp, "the response is what carries the decoded body")
+			assert.Equal(tc.status, resp.StatusCode, "status code")
+
+			decoded := tc.body(resp)
+			require.NotNilf(decoded, "the client must decode the %d body: without it a "+
+				"consumer cannot tell a cursor it must abandon from a condition it should "+
+				"retry", tc.status)
+			assert.Equal(tc.code, decoded.ErrorData,
+				"the error code is what a consumer branches on")
+			require.NotNil(decoded.Message, "message")
+			assert.Equal(tc.message, *decoded.Message, "message")
+		})
+	}
 }
 
 func TestGeneratedGetAttachmentContentReturnsBinaryBytes(t *testing.T) {
