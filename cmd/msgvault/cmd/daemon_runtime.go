@@ -312,6 +312,15 @@ func probeDaemonRuntimeRecord(ctx context.Context, rec daemon.RuntimeRecord) (da
 	})
 }
 
+// runtimeRecordIdentityMismatched reports whether rec.PID demonstrably
+// belongs to a different process than the daemon that wrote the record
+// (PID reuse). The create-time comparison alone is unreliable — container
+// boot-time reads jitter by whole seconds and gopsutil can fail
+// transiently — so an indeterminate comparison keeps the record, and a
+// beyond-tolerance mismatch is only trusted after the daemon also fails
+// an HTTP probe of its recorded address. This function never deletes the
+// record file: genuinely dead PIDs are reaped by CleanupDead, and
+// anything else is left in place for inspection.
 func runtimeRecordIdentityMismatched(ctx context.Context, rec daemon.RuntimeRecord) bool {
 	if rec.Metadata == nil {
 		return false
