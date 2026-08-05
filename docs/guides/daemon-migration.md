@@ -139,7 +139,7 @@ You will see a few new files under `~/.msgvault/`:
 - `daemon.lock`, `db.write.lock`, `serve.background.lock` — ownership and
   launch locks
 - a daemon runtime record with the daemon's port, version, and API schema,
-  which is how CLI processes discover the auto-selected port
+  which is how CLI processes discover the auto-selected port. The daemon re-checks this record every 30 seconds and republishes it if it has gone missing, so a record removed out from under a running daemon heals itself without a restart.
 
 By default the daemon binds `127.0.0.1` on an auto-selected port. Set
 `[server].api_port` for a stable port (required for remote/NAS deployments),
