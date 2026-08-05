@@ -302,3 +302,84 @@ func TestIncompatibleDaemonMessageUsesCallerGuidance(t *testing.T) {
 	assert.Contains(t, err.Error(), "incompatible daemon is already running")
 	assert.Contains(t, err.Error(), "run `msgvault daemon stop` or retry with --local")
 }
+
+func stubProcessCreateTimeMillis(t *testing.T, fn func(int) (int64, bool)) {
+	t.Helper()
+	prev := processCreateTimeMillisForRun
+	processCreateTimeMillisForRun = fn
+	t.Cleanup(func() { processCreateTimeMillisForRun = prev })
+}
+
+func assertRuntimeRecordFileExists(t *testing.T, dataDir string) {
+	t.Helper()
+	path, err := daemonRuntimeStore(dataDir).Path(os.Getpid())
+	require.NoError(t, err, "runtime record path")
+	_, statErr := os.Stat(path)
+	assert.NoError(t, statErr, "runtime record file must not be deleted")
+}
+
+func TestListLiveDaemonRuntimeRecordsKeepsRecordWithSkewedCreateTime(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	dataDir := t.TempDir()
+
+	live, ok := processCreateTimeMillis(os.Getpid())
+	require.True(ok, "read live create time")
+
+	// One second of skew is what whole-second boot-time jitter produces in
+	// containerized deployments; it must not disqualify a live daemon.
+	_, err := daemonRuntimeStore(dataDir).Write(daemon.RuntimeRecord{
+		PID:     os.Getpid(),
+		Network: daemon.NetworkTCP,
+		Address: "127.0.0.1:1",
+		Service: daemonService,
+		Metadata: map[string]string{
+			runtimeCreateTime: strconv.FormatInt(live+1000, 10),
+		},
+	})
+	require.NoError(err, "write runtime record")
+
+	records, err := listLiveDaemonRuntimeRecords(dataDir)
+
+	require.NoError(err, "list live records")
+	require.Len(records, 1, "skewed-but-live record stays discoverable")
+	assert.Equal(os.Getpid(), records[0].PID, "pid")
+	assertRuntimeRecordFileExists(t, dataDir)
+}
+
+func TestCompareProcessCreateTime(t *testing.T) {
+	const base = int64(1_000_000_000_000)
+
+	tests := []struct {
+		name     string
+		recorded string
+		live     int64
+		liveOK   bool
+		want     createTimeComparison
+	}{
+		{name: "exact match", recorded: "1000000000000", live: base, liveOK: true, want: createTimeMatch},
+		{name: "skew below tolerance", recorded: "999999999000", live: base, liveOK: true, want: createTimeMatch},
+		{name: "skew at tolerance boundary", recorded: "1000000002000", live: base, liveOK: true, want: createTimeMatch},
+		{name: "skew beyond tolerance", recorded: "999999997999", live: base, liveOK: true, want: createTimeMismatch},
+		{name: "unparseable recorded value", recorded: "not-a-number", live: base, liveOK: true, want: createTimeUnknown},
+		{name: "gopsutil failure", recorded: "1000000000000", live: 0, liveOK: false, want: createTimeUnknown},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			stubProcessCreateTimeMillis(t, func(int) (int64, bool) { return tt.live, tt.liveOK })
+
+			got := compareProcessCreateTime(os.Getpid(), tt.recorded)
+
+			assert.Equal(t, tt.want, got, "comparison outcome")
+		})
+	}
+}
+
+func TestProcessCreateTimeMatchesRequiresAffirmativeMatch(t *testing.T) {
+	assert := assert.New(t)
+	stubProcessCreateTimeMillis(t, func(int) (int64, bool) { return 5_000, true })
+
+	assert.True(processCreateTimeMatches(os.Getpid(), "6000"), "within tolerance matches")
+	assert.False(processCreateTimeMatches(os.Getpid(), "10000"), "beyond tolerance does not match")
+	assert.False(processCreateTimeMatches(os.Getpid(), "bogus"), "indeterminate comparison does not match")
+}

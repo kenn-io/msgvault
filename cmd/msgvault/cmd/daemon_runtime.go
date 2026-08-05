@@ -81,7 +81,7 @@ func writeDaemonRuntime(dataDir string, host string, port int, version string, a
 		runtimeShutdownToken:    shutdownToken,
 		runtimeStartupPhase:     daemonStartupPhaseInitial,
 	}
-	if createTime, ok := processCreateTimeMillis(os.Getpid()); ok {
+	if createTime, ok := processCreateTimeMillisForRun(os.Getpid()); ok {
 		rec.Metadata[runtimeCreateTime] = strconv.FormatInt(createTime, 10)
 	}
 	if _, err := daemonRuntimeStore(dataDir).Write(rec); err != nil {
@@ -329,6 +329,10 @@ func runtimeRecordHasMismatchedCreateTime(
 	return true
 }
 
+// processCreateTimeMillisForRun is swappable in tests to simulate gopsutil
+// failures and skewed create-time reads.
+var processCreateTimeMillisForRun = processCreateTimeMillis
+
 func processCreateTimeMillis(pid int) (int64, bool) {
 	const maxInt32 = 1<<31 - 1
 	if pid <= 0 || pid > maxInt32 {
@@ -345,13 +349,53 @@ func processCreateTimeMillis(pid int) (int64, bool) {
 	return created, true
 }
 
-func processCreateTimeMatches(pid int, recordedMillis string) bool {
+// createTimeComparison is the three-state outcome of comparing a recorded
+// process create time against a live re-read. "Unknown" is deliberately
+// distinct from "mismatch": gopsutil can fail transiently (permission
+// denied on /proc, hidepid, namespace quirks), and treating those failures
+// as a mismatch is what allowed live daemons' runtime records to be pruned.
+type createTimeComparison int
+
+const (
+	createTimeMatch createTimeComparison = iota
+	createTimeMismatch
+	createTimeUnknown
+)
+
+// createTimeToleranceMillis absorbs whole-second jitter in create-time
+// reads. gopsutil derives a process's create time from the boot time, and
+// on Linux the boot-time read is recomputed per call with one-second
+// granularity (in container guests it is now-minus-uptime, truncated), so
+// two reads of the same live process legitimately differ by up to a whole
+// second in either direction.
+const createTimeToleranceMillis int64 = 2000
+
+func compareProcessCreateTime(pid int, recordedMillis string) createTimeComparison {
 	recorded, err := strconv.ParseInt(recordedMillis, 10, 64)
 	if err != nil {
-		return false
+		return createTimeUnknown
 	}
-	live, ok := processCreateTimeMillis(pid)
-	return ok && live == recorded
+	live, ok := processCreateTimeMillisForRun(pid)
+	if !ok {
+		return createTimeUnknown
+	}
+	delta := live - recorded
+	if delta < 0 {
+		delta = -delta
+	}
+	if delta <= createTimeToleranceMillis {
+		return createTimeMatch
+	}
+	return createTimeMismatch
+}
+
+// processCreateTimeMatches reports whether the recorded create time
+// affirmatively matches the live process. Indeterminate reads report
+// false: callers use a positive match as permission to act on the PID
+// (for example to signal it during daemon stop), so "unknown" must stay
+// conservative.
+func processCreateTimeMatches(pid int, recordedMillis string) bool {
+	return compareProcessCreateTime(pid, recordedMillis) == createTimeMatch
 }
 
 func probeHostForDial(host string) string {
