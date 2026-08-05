@@ -383,3 +383,117 @@ func TestProcessCreateTimeMatchesRequiresAffirmativeMatch(t *testing.T) {
 	assert.False(processCreateTimeMatches(os.Getpid(), "10000"), "beyond tolerance does not match")
 	assert.False(processCreateTimeMatches(os.Getpid(), "bogus"), "indeterminate comparison does not match")
 }
+
+func TestListLiveDaemonRuntimeRecordsKeepsRecordWhenCreateTimeUnknown(t *testing.T) {
+	writeRecord := func(t *testing.T, dataDir, createTime string) {
+		t.Helper()
+		_, err := daemonRuntimeStore(dataDir).Write(daemon.RuntimeRecord{
+			PID:     os.Getpid(),
+			Network: daemon.NetworkTCP,
+			Address: "127.0.0.1:1",
+			Service: daemonService,
+			Metadata: map[string]string{
+				runtimeCreateTime: createTime,
+			},
+		})
+		require.NoError(t, err, "write runtime record")
+	}
+
+	t.Run("gopsutil failure", func(t *testing.T) {
+		require := require.New(t)
+		assert := assert.New(t)
+		dataDir := t.TempDir()
+		stubProcessCreateTimeMillis(t, func(int) (int64, bool) { return 0, false })
+		writeRecord(t, dataDir, "1234567890123")
+
+		records, err := listLiveDaemonRuntimeRecords(dataDir)
+
+		require.NoError(err, "list live records")
+		require.Len(records, 1, "indeterminate create time keeps the record live")
+		assert.Equal(os.Getpid(), records[0].PID, "pid")
+		assertRuntimeRecordFileExists(t, dataDir)
+	})
+
+	t.Run("unparseable create_time", func(t *testing.T) {
+		require := require.New(t)
+		assert := assert.New(t)
+		dataDir := t.TempDir()
+		writeRecord(t, dataDir, "not-a-number")
+
+		records, err := listLiveDaemonRuntimeRecords(dataDir)
+
+		require.NoError(err, "list live records")
+		require.Len(records, 1, "unparseable create time keeps the record live")
+		assert.Equal(os.Getpid(), records[0].PID, "pid")
+		assertRuntimeRecordFileExists(t, dataDir)
+	})
+}
+
+func TestListLiveDaemonRuntimeRecordsTrustsRespondingDaemonOverCreateTime(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	dataDir := t.TempDir()
+	server := httptest.NewServer(daemon.NewPingHandler(daemon.PingHandlerOptions{
+		Service: daemonService,
+		Version: "v-test",
+	}))
+	t.Cleanup(server.Close)
+	host, portText, err := net.SplitHostPort(server.Listener.Addr().String())
+	require.NoError(err, "split listener address")
+
+	live, ok := processCreateTimeMillis(os.Getpid())
+	require.True(ok, "read live create time")
+
+	// Ten minutes of skew is a genuine mismatch, but the daemon answering
+	// on its recorded address with the recorded PID is the authoritative
+	// liveness signal and must win.
+	_, err = daemonRuntimeStore(dataDir).Write(daemon.RuntimeRecord{
+		PID:     os.Getpid(),
+		Network: daemon.NetworkTCP,
+		Address: net.JoinHostPort(host, portText),
+		Service: daemonService,
+		Version: "v-test",
+		Metadata: map[string]string{
+			runtimeHost:       host,
+			runtimePort:       portText,
+			runtimeCreateTime: strconv.FormatInt(live+10*60*1000, 10),
+		},
+	})
+	require.NoError(err, "write runtime record")
+
+	records, err := listLiveDaemonRuntimeRecords(dataDir)
+
+	require.NoError(err, "list live records")
+	require.Len(records, 1, "responding daemon outweighs create-time mismatch")
+	assert.Equal(os.Getpid(), records[0].PID, "pid")
+	assertRuntimeRecordFileExists(t, dataDir)
+}
+
+func TestListLiveDaemonRuntimeRecordsSkipsUnverifiableMismatchWithoutDeleting(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	dataDir := t.TempDir()
+
+	live, ok := processCreateTimeMillis(os.Getpid())
+	require.True(ok, "read live create time")
+
+	// Beyond-tolerance mismatch and nothing answering on the recorded
+	// address: the record must not count as live, but the file stays on
+	// disk for inspection (kit's CleanupDead reaps it once the PID dies).
+	_, err := daemonRuntimeStore(dataDir).Write(daemon.RuntimeRecord{
+		PID:     os.Getpid(),
+		Network: daemon.NetworkTCP,
+		Address: "127.0.0.1:1",
+		Service: daemonService,
+		Metadata: map[string]string{
+			runtimeCreateTime: strconv.FormatInt(live+10*60*1000, 10),
+		},
+	})
+	require.NoError(err, "write runtime record")
+
+	records, err := listLiveDaemonRuntimeRecords(dataDir)
+
+	require.NoError(err, "list live records")
+	assert.Empty(records, "unverifiable identity mismatch must not count as live")
+	assertRuntimeRecordFileExists(t, dataDir)
+}

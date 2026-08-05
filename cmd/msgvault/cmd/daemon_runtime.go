@@ -210,7 +210,7 @@ func listLiveDaemonRuntimeRecords(dataDir string) ([]daemon.RuntimeRecord, error
 		if !daemon.ProcessAlive(rec.PID) {
 			continue
 		}
-		if runtimeRecordHasMismatchedCreateTime(store, rec) {
+		if runtimeRecordIdentityMismatched(context.Background(), rec) {
 			continue
 		}
 		alive = append(alive, rec)
@@ -312,21 +312,25 @@ func probeDaemonRuntimeRecord(ctx context.Context, rec daemon.RuntimeRecord) (da
 	})
 }
 
-func runtimeRecordHasMismatchedCreateTime(
-	store daemon.RuntimeStore,
-	rec daemon.RuntimeRecord,
-) bool {
+func runtimeRecordIdentityMismatched(ctx context.Context, rec daemon.RuntimeRecord) bool {
 	if rec.Metadata == nil {
 		return false
 	}
 	recorded := rec.Metadata[runtimeCreateTime]
-	if recorded == "" || processCreateTimeMatches(rec.PID, recorded) {
+	if recorded == "" {
 		return false
 	}
-	if path, err := store.Path(rec.PID); err == nil {
-		_ = os.Remove(path)
+	if compareProcessCreateTime(rec.PID, recorded) != createTimeMismatch {
+		return false
 	}
-	return true
+	// Genuine mismatch: give the daemon the chance to prove itself over
+	// HTTP — the authoritative liveness signal — before distrusting the
+	// record. The probe costs at most 500ms and only runs on mismatch.
+	info, err := probeDaemonRuntimeRecord(ctx, rec)
+	if err != nil {
+		return true
+	}
+	return info.PID != rec.PID
 }
 
 // processCreateTimeMillisForRun is swappable in tests to simulate gopsutil
