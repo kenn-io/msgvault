@@ -40,7 +40,18 @@ func newChangesServer(t *testing.T) (*Server, *store.Store) {
 		Store:  st,
 		Logger: testLogger(),
 	})
+	relaxChangeFeedRateLimit(t, srv)
 	return srv, st
+}
+
+func relaxChangeFeedRateLimit(t *testing.T, srv *Server) {
+	t.Helper()
+	srv.changesRateLimiter.Close()
+	srv.changesRateLimiter = NewRateLimiter(1_000_000, 1_000_000)
+	t.Cleanup(func() {
+		srv.rateLimiter.Close()
+		srv.changesRateLimiter.Close()
+	})
 }
 
 // seedChangedMessages inserts count messages through the same UpsertMessage
@@ -1032,12 +1043,14 @@ type stubChangedMessageLister struct {
 	*mockStore
 	stubArchiveIdentity
 
-	page store.ChangedMessagePage
+	page  store.ChangedMessagePage
+	calls int
 }
 
 func (s *stubChangedMessageLister) ListChangedMessages(
 	_ context.Context, _ store.ChangedMessagesCursor, _ int,
 ) (store.ChangedMessagePage, error) {
+	s.calls++
 	return s.page, nil
 }
 
@@ -1565,6 +1578,7 @@ func TestChangesEndpoint_StalledFeedIsLogged(t *testing.T) {
 		},
 		Logger: slog.New(slog.NewJSONHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug})),
 	})
+	relaxChangeFeedRateLimit(t, srv)
 
 	resp := getChangesPage(t, srv, changesTarget("", 10))
 	require.Empty(resp.Messages, "the stub serves an empty page")

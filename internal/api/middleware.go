@@ -295,14 +295,18 @@ func RateLimitMiddleware(
 
 			ip := clientIP(r)
 			if !limiter.Allow(ip) {
-				w.Header().Set("Content-Type", applicationJSONMediaType)
-				w.Header().Set("Retry-After", "1")
-				w.WriteHeader(http.StatusTooManyRequests)
-				_, _ = w.Write([]byte(`{"error":"rate_limit_exceeded","message":"Too many requests. Please slow down."}`))
+				writeRateLimitExceeded(w)
 				return
 			}
 
 			next.ServeHTTP(w, r)
 		})
 	}
+}
+
+func writeRateLimitExceeded(w http.ResponseWriter) {
+	w.Header().Set("Content-Type", applicationJSONMediaType)
+	w.Header().Set("Retry-After", "1")
+	w.WriteHeader(http.StatusTooManyRequests)
+	_, _ = w.Write([]byte(`{"error":"rate_limit_exceeded","message":"Too many requests. Please slow down."}`))
 }

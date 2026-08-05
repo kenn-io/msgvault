@@ -234,6 +234,7 @@ type Server struct {
 	router              http.Handler
 	server              *http.Server
 	rateLimiter         *RateLimiter
+	changesRateLimiter  *RateLimiter
 	idleTracker         *IdleTracker
 	operationGate       OperationGate
 	// ftsIndexComplete memoizes that the FTS index is fully populated so
@@ -487,6 +488,13 @@ func NewServerWithOptions(opts ServerOptions) *Server {
 
 // setupRouter configures the Huma API router and standard HTTP middleware.
 func (s *Server) setupRouter() http.Handler {
+	// Most trusted local traffic bypasses the general limiter, but the change
+	// feed takes SQLite's writer lock and therefore has its own non-bypassable
+	// budget.
+	s.rateLimiter = NewRateLimiter(10, 20)
+	s.changesRateLimiter = NewRateLimiter(
+		changeFeedRequestsPerSecond, changeFeedRequestBurst)
+
 	mux := http.NewServeMux()
 	api := s.setupHumaAPI(mux)
 	apiV1 := s.setupAPIV1Group(api)
@@ -517,9 +525,6 @@ func (s *Server) setupRouter() http.Handler {
 		s.logger.Warn("cors_origins contains \"*\": wildcard matches never receive " +
 			"Access-Control-Allow-Credentials; list exact origins in cors_origins to allow credentialed CORS")
 	}
-
-	// Rate limiting (10 req/sec with burst of 20)
-	s.rateLimiter = NewRateLimiter(10, 20)
 
 	// Request security classification and CSRF checks sit inside rate limiting
 	// but outside the operation gate, so rejected browser mutations never wait
@@ -626,6 +631,9 @@ func (s *Server) StartOnListener(ln net.Listener) error {
 func (s *Server) Shutdown(ctx context.Context) error {
 	if s.rateLimiter != nil {
 		s.rateLimiter.Close()
+	}
+	if s.changesRateLimiter != nil {
+		s.changesRateLimiter.Close()
 	}
 	if s.sessions != nil {
 		s.sessions.Close()

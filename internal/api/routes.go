@@ -349,13 +349,14 @@ func (s *Server) registerHumaRoutes(api huma.API, apiV1 huma.API) {
 	// hand-written decode.
 	//
 	// 429 is on the list because it is not the handler's to raise and is
-	// reached anyway: every remote request passes the rate limiter, and this
-	// endpoint's whole usage pattern is polling. Undeclared, the generated
+	// reached anyway: every request passes this endpoint's dedicated limiter,
+	// including trusted loopback traffic, because its whole usage pattern is
+	// polling. Undeclared, the generated
 	// client reports it as an unexpected status and drops the body a consumer
 	// needs to tell "slow down" from "give up on this cursor".
 	registerAPIV1RawHumaJSONRouteWithErrors[ChangesResponse](
 		apiV1, "listChangedMessages", http.MethodGet, "/messages/changes",
-		"List messages whose content changed since a cursor", s.handleMessageChanges,
+		"List messages whose content changed since a cursor", s.changeFeedGuard(s.handleMessageChanges),
 		http.StatusBadRequest,
 		http.StatusUnauthorized,
 		http.StatusTooManyRequests,

@@ -345,9 +345,11 @@ Refresh those on your own schedule.
 > in-progress import. Measured on one machine against three concurrent writers:
 > eight clients paging the feed in a tight loop cut writer throughput to **15%**
 > of the unloaded rate, where eight clients running an equivalent plain `SELECT`
-> left **49%**. One consumer polling once a second is free. Poll on an interval,
-> and drain a backlog with `has_more` or a larger `limit` rather than a tighter
-> poll. PostgreSQL establishes the same bound without taking a lock.
+> left **49%**. One consumer polling once a second is free. The endpoint limits
+> each client IP to two requests per second with a burst of four; honor a `429`
+> response's `Retry-After` header. Poll on an interval, and drain a backlog with
+> `has_more` or a larger `limit` rather than a tighter poll. PostgreSQL
+> establishes the same bound without taking a lock.
 
 **The cursor is opaque.** Store the `next_cursor` a response hands you and send
 it back unchanged; do not parse it, construct one, compare two of them, or order
