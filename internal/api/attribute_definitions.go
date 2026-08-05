@@ -66,6 +66,25 @@ type CreateAttributeDefinitionRequest struct {
 	VCardProperty *string                 `json:"vcard_property,omitempty"`
 }
 
+// StoreInput maps the request onto the store's input shape, fixing the
+// capability flags the API grants to user-created definitions. The CLI
+// dry-run path reuses it so local validation matches the create path.
+func (r CreateAttributeDefinitionRequest) StoreInput(
+	universalID string,
+) store.AttributeDefinitionInput {
+	return store.AttributeDefinitionInput{
+		UniversalID: universalID, ObjectType: store.AttributeObjectType(r.ObjectType),
+		Slug: r.Slug, Label: r.Label, Description: r.Description,
+		ValueType:    store.AttributeValueType(r.ValueType),
+		FieldType:    store.AttributeFieldType(r.FieldType),
+		RecordTarget: r.RecordTarget, Cardinality: store.AttributeCardinality(r.Cardinality),
+		DisplayOrder: r.DisplayOrder, IsRequired: r.IsRequired,
+		Ownership: store.AttributeOwnershipUser, UICreatable: true, UIEditable: true,
+		APIMutable: true, IsSearchable: r.IsSearchable, IsAudited: r.IsAudited,
+		IsDeletable: true, Options: r.Options, VCardProperty: r.VCardProperty,
+	}
+}
+
 // PatchAttributeDefinitionRequest carries mutable definition fields.
 type PatchAttributeDefinitionRequest struct {
 	Label        *string `json:"label,omitempty"`
@@ -167,18 +186,8 @@ func (s *Server) handleCreateAttributeDefinition(w http.ResponseWriter, r *http.
 		s.writeAttributeError(w, err)
 		return
 	}
-	input := store.AttributeDefinitionInput{
-		UniversalID: universalID, ObjectType: store.AttributeObjectType(request.ObjectType),
-		Slug: request.Slug, Label: request.Label, Description: request.Description,
-		ValueType:    store.AttributeValueType(request.ValueType),
-		FieldType:    store.AttributeFieldType(request.FieldType),
-		RecordTarget: request.RecordTarget, Cardinality: store.AttributeCardinality(request.Cardinality),
-		DisplayOrder: request.DisplayOrder, IsRequired: request.IsRequired,
-		Ownership: store.AttributeOwnershipUser, UICreatable: true, UIEditable: true,
-		APIMutable: true, IsSearchable: request.IsSearchable, IsAudited: request.IsAudited,
-		IsDeletable: true, Options: request.Options, VCardProperty: request.VCardProperty,
-	}
-	created, err := definitions.CreateAttributeDefinitionContext(r.Context(), input)
+	created, err := definitions.CreateAttributeDefinitionContext(
+		r.Context(), request.StoreInput(universalID))
 	if err != nil {
 		s.writeAttributeError(w, err)
 		return

@@ -107,6 +107,42 @@ func TestAttributeDefinitionCreateDryRunValidatesLocally(t *testing.T) {
 	assert.Contains(output, "scratch_note")
 }
 
+func TestAttributeDefinitionCreateDryRunAppliesServerValidationLocally(t *testing.T) {
+	tests := []struct {
+		name     string
+		document string
+		wantErr  string
+	}{
+		{
+			name: "invalid slug",
+			document: `{"object_type":"person","slug":"Bad Slug","label":"Bad",
+				"value_type":"text","field_type":"text"}`,
+			wantErr: "slug",
+		},
+		{
+			name: "select without choices",
+			document: `{"object_type":"person","slug":"favorite_tea","label":"Favorite tea",
+				"value_type":"text","field_type":"select"}`,
+			wantErr: "choices",
+		},
+		{
+			name: "multiselect on single cardinality",
+			document: `{"object_type":"person","slug":"tags","label":"Tags",
+				"value_type":"text","field_type":"multiselect","cardinality":"single",
+				"options":{"choices":[{"value":"a","label":"A"}]}}`,
+			wantErr: "multi",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := runAttributeCommand(t, attributeDefinitionCreateCmd,
+				"--definition", test.document, "--dry-run")
+			require.Error(t, err, "dry run must reject what the server would reject")
+			assert.Contains(t, err.Error(), test.wantErr)
+		})
+	}
+}
+
 func TestAttributeDefinitionCreateRejectsUnsupportedUniqueness(t *testing.T) {
 	_, err := runAttributeCommand(t, attributeDefinitionCreateCmd,
 		"--definition", `{"object_type":"person","slug":"employee_number",

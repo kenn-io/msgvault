@@ -221,6 +221,16 @@ func ValidateAttributeSlug(slug string) error {
 	return nil
 }
 
+// ValidateAttributeDefinitionInput runs the full definition validation
+// without touching a database, so local dry-run previews reject exactly what
+// the server-side create path rejects — except conflicts with existing
+// definitions, which require the database.
+func ValidateAttributeDefinitionInput(
+	input AttributeDefinitionInput,
+) (AttributeDefinitionInput, error) {
+	return validateAttributeDefinitionInput(input)
+}
+
 func validateAttributeDefinitionInput(
 	input AttributeDefinitionInput,
 ) (AttributeDefinitionInput, error) {

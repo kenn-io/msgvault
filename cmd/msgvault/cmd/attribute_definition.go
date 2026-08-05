@@ -11,7 +11,9 @@ import (
 	"text/tabwriter"
 
 	"github.com/spf13/cobra"
+	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/daemonclient"
+	"go.kenn.io/msgvault/internal/store"
 	apiclient "go.kenn.io/msgvault/pkg/client"
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
@@ -125,14 +127,18 @@ var attributeDefinitionCreateCmd = &cobra.Command{
 	Short: "Create a user attribute definition from a JSON document",
 	Long: "Create a user attribute definition from a JSON document. Pass the\n" +
 		"document inline, as @path to read a file, or - to read standard input.\n" +
-		"--dry-run validates the document locally and prints what would be sent.",
+		"--dry-run applies the server's definition validation locally (except\n" +
+		"conflicts with existing definitions) and prints what would be sent.",
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
-		body, err := decodeCLIAttributeDefinitionDocument(cmd, attributeDefinitionDocument)
+		body, raw, err := decodeCLIAttributeDefinitionDocument(cmd, attributeDefinitionDocument)
 		if err != nil {
 			return err
 		}
 		if attributeDefinitionDryRun {
+			if err := validateCLIAttributeDefinition(cmd, raw); err != nil {
+				return err
+			}
 			encoded, marshalErr := json.MarshalIndent(body, "", "  ")
 			if marshalErr != nil {
 				return marshalErr
@@ -294,19 +300,19 @@ func readCLIDocument(cmd *cobra.Command, value string) ([]byte, error) {
 
 func decodeCLIAttributeDefinitionDocument(
 	cmd *cobra.Command, value string,
-) (*generated.CreateAttributeDefinitionBody, error) {
+) (*generated.CreateAttributeDefinitionBody, []byte, error) {
 	data, err := readCLIDocument(cmd, value)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal(data, &fields); err != nil || fields == nil {
-		return nil, usageErr(cmd, errors.New(
+		return nil, nil, usageErr(cmd, errors.New(
 			"attribute definition document must be a JSON object"))
 	}
 	for _, reserved := range []string{"is_unique", "unique"} {
 		if _, present := fields[reserved]; present {
-			return nil, usageErr(cmd, errors.New(
+			return nil, nil, usageErr(cmd, errors.New(
 				"attribute definition uniqueness is not supported: a uniqueness claim "+
 					"must be backed by a portable database index"))
 		}
@@ -315,12 +321,31 @@ func decodeCLIAttributeDefinitionDocument(
 	decoder.DisallowUnknownFields()
 	var body generated.CreateAttributeDefinitionBody
 	if err := decoder.Decode(&body); err != nil {
-		return nil, usageErr(cmd, fmt.Errorf("invalid attribute definition document: %w", err))
+		return nil, nil, usageErr(cmd, fmt.Errorf("invalid attribute definition document: %w", err))
 	}
 	if err := body.Validate(); err != nil {
-		return nil, usageErr(cmd, fmt.Errorf("invalid attribute definition document: %w", err))
+		return nil, nil, usageErr(cmd, fmt.Errorf("invalid attribute definition document: %w", err))
 	}
-	return &body, nil
+	return &body, data, nil
+}
+
+// validateCLIAttributeDefinition applies the store's full definition
+// validation locally so a dry run rejects what the server would reject
+// (conflicts with existing definitions excepted, which need the database).
+func validateCLIAttributeDefinition(cmd *cobra.Command, data []byte) error {
+	var request api.CreateAttributeDefinitionRequest
+	if err := json.Unmarshal(data, &request); err != nil {
+		return usageErr(cmd, fmt.Errorf("invalid attribute definition document: %w", err))
+	}
+	universalID, err := store.NewAttributeUniversalID()
+	if err != nil {
+		return err
+	}
+	if _, err := store.ValidateAttributeDefinitionInput(
+		request.StoreInput(universalID)); err != nil {
+		return usageErr(cmd, err)
+	}
+	return nil
 }
 
 func getCLIAttributeDefinition(
