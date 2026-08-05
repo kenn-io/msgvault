@@ -2,7 +2,9 @@ package cmd
 
 import (
 	"context"
+	"os"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -10,6 +12,76 @@ import (
 	"go.kenn.io/msgvault/internal/config"
 )
 
+func TestServeOwnershipEnsureRuntimeRecordRepublishesMissingRecord(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	dataDir := t.TempDir()
+	cfg := &config.Config{Data: config.DataConfig{DataDir: dataDir}}
+	owner, err := claimServeOwnership(context.Background(), cfg, "127.0.0.1", 8123, "v-test")
+	require.NoError(err, "claimServeOwnership")
+	t.Cleanup(func() { require.NoError(owner.Close(), "close ownership") })
+
+	readRecord := func() daemon.RuntimeRecord {
+		records, err := daemonRuntimeStore(dataDir).List()
+		require.NoError(err, "list runtime records")
+		require.Len(records, 1, "runtime records")
+		return records[0]
+	}
+	initial := readRecord()
+
+	// No-op while the record is present.
+	require.NoError(owner.EnsureRuntimeRecord(), "ensure with record present")
+	assert.Equal(initial.Metadata, readRecord().Metadata, "record untouched while present")
+
+	// Simulate a wrongful prune by another process.
+	path, err := daemonRuntimeStore(dataDir).Path(initial.PID)
+	require.NoError(err, "runtime record path")
+	require.NoError(os.Remove(path), "remove runtime record")
+
+	require.NoError(owner.EnsureRuntimeRecord(), "ensure after prune")
+	restored := readRecord()
+	assert.Equal(initial.PID, restored.PID, "pid restored")
+	assert.Equal(initial.Address, restored.Address, "address restored")
+	assert.Equal(initial.Metadata[runtimeShutdownToken], restored.Metadata[runtimeShutdownToken], "shutdown token preserved")
+	// Compare time.Time with Equal — the JSON round-trip drops the
+	// monotonic reading, so assert.Equal's ==/DeepEqual is unreliable.
+	assert.True(initial.StartedAt.Equal(restored.StartedAt), "started_at preserved")
+}
+
+func TestRuntimeRecordHeartbeatRepublishesUntilCancelled(t *testing.T) {
+	require := require.New(t)
+
+	dataDir := t.TempDir()
+	cfg := &config.Config{Data: config.DataConfig{DataDir: dataDir}}
+	owner, err := claimServeOwnership(context.Background(), cfg, "127.0.0.1", 8123, "v-test")
+	require.NoError(err, "claimServeOwnership")
+	t.Cleanup(func() { require.NoError(owner.Close(), "close ownership") })
+
+	path, err := daemonRuntimeStore(dataDir).Path(owner.record.PID)
+	require.NoError(err, "runtime record path")
+	require.NoError(os.Remove(path), "remove runtime record")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		runtimeRecordHeartbeat(ctx, owner, 10*time.Millisecond)
+	}()
+
+	require.Eventually(func() bool {
+		_, statErr := os.Stat(path)
+		return statErr == nil
+	}, 5*time.Second, 10*time.Millisecond, "heartbeat republishes the pruned record")
+
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		require.FailNow("heartbeat did not stop after context cancellation")
+	}
+}
 func TestClaimServeOwnershipLocksAndPublishesRuntime(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)

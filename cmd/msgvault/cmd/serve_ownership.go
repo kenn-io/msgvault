@@ -7,6 +7,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/gofrs/flock"
 	"go.kenn.io/kit/daemon"
@@ -93,6 +94,57 @@ func (o *serveOwnership) Close() error {
 	}
 	removeDaemonRuntime(o.dataDir)
 	return errors.Join(o.lock.Close(), o.daemonLock.Close())
+}
+
+// daemonRuntimeHeartbeatInterval is how often serve re-checks that its
+// runtime record is still on disk, republishing it when missing.
+const daemonRuntimeHeartbeatInterval = 30 * time.Second
+
+// EnsureRuntimeRecord republishes the daemon's runtime record if the file
+// has gone missing from disk. A CLI process with a skewed view of process
+// identity (a different PID namespace, or jittery boot-time reads in
+// older binaries) can wrongly prune the record; republishing lets the
+// daemon self-heal instead of staying undiscoverable until it restarts.
+func (o *serveOwnership) EnsureRuntimeRecord() error {
+	if o == nil {
+		return nil
+	}
+	store := daemonRuntimeStore(o.dataDir)
+	path, err := store.Path(o.record.PID)
+	if err != nil {
+		return err
+	}
+	if _, err := os.Stat(path); err == nil {
+		return nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("inspect daemon runtime record: %w", err)
+	}
+	if _, err := store.Write(o.record); err != nil {
+		return fmt.Errorf("republish daemon runtime record: %w", err)
+	}
+	return nil
+}
+
+// runtimeRecordHeartbeat republishes the runtime record until ctx is
+// cancelled. Failures are retried on the next tick rather than surfaced:
+// the daemon keeps serving even when the record cannot be rewritten. A
+// final tick racing shutdown can at worst leave a record naming a dead
+// PID, which CleanupDead reaps conservatively on the next CLI run. If
+// that PID is recycled before then, the file lingers (ProcessAlive sees
+// it alive) but is never trusted: it still carries the old daemon's
+// create_time, so the identity check filters it, and a new daemon is
+// unaffected (ownership is gated by the daemon.lock flock).
+func runtimeRecordHeartbeat(ctx context.Context, ownership *serveOwnership, interval time.Duration) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			_ = ownership.EnsureRuntimeRecord()
+		}
+	}
 }
 
 type daemonOwnerLock struct {

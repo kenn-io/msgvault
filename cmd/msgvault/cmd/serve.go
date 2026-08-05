@@ -497,6 +497,11 @@ func runServe(cmd *cobra.Command, args []string) error {
 		logger.Info("background daemon idle shutdown enabled", "timeout", cfg.Server.DaemonIdleTimeout)
 	}
 
+	// Self-heal the runtime record: an external process with a skewed view
+	// of process identity can wrongly prune it, leaving a healthy daemon
+	// undiscoverable until restart. The check is a stat per tick.
+	go runtimeRecordHeartbeat(ctx, ownership, daemonRuntimeHeartbeatInterval)
+
 	vectorInit := startVectorInit(
 		ctx, s, dbPath,
 		combineWorkTrackers(idleTracker, labelWorkTracker(operationGate, "background embedding work")),
