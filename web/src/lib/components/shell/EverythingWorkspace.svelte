@@ -524,6 +524,7 @@
   {/if}
 
   <ContextBar
+    {client}
     query={exploreState.current.query}
     searchMode={exploreState.current.searchMode}
     filters={exploreState.current.filters}
@@ -540,6 +541,9 @@
       scrollAnchor: null
     })}
     onClearFilters={() => commitNavigation({ filters: [], activeRow: null, scrollAnchor: null })}
+    onFiltersChange={(filters) => commitNavigation({
+      filters, activeRow: null, selectedRow: null, scrollAnchor: null
+    })}
     onSort={fixedSortNotice}
   />
   <span class="kit-sr-only" role="status" aria-label="Sort status" aria-live="polite">{sortNotice}</span>

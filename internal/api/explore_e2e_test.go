@@ -18,6 +18,8 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/query"
+	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/vector"
 	"go.kenn.io/msgvault/internal/vector/hybrid"
 )
@@ -376,6 +378,416 @@ func TestExploreSemanticPreflightRequiresAndReusesCandidateSnapshot(t *testing.T
 	assertions.Equal(int64(7), *body.SearchProvenance.VectorGeneration)
 }
 
+func TestExploreIdentityFilterDirectionsAndHydrationAcrossSearchModes(t *testing.T) {
+	fixture := newExploreIdentityAPIFixture(t)
+	tests := []struct {
+		name string
+		body string
+	}{
+		{
+			name: "base",
+			body: exploreIdentityRequest("any", "", "", 10),
+		},
+		{
+			name: "full text",
+			body: exploreIdentityRequest("any", "alpha", exploreSearchModeFullText, 10),
+		},
+		{
+			name: "semantic",
+			body: exploreIdentityRequest("any", "alpha", exploreSearchModeSemantic, 10),
+		},
+		{
+			name: "hybrid",
+			body: exploreIdentityRequest("any", "alpha", exploreSearchModeHybrid, 10),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			callsBefore := fixture.store.matchCalls
+			response := postExploreJSON(t, fixture.server, "/api/v1/explore", tt.body)
+			require.Equal(http.StatusOK, response.Code, response.Body.String())
+			var body ExploreHTTPResponse
+			require.NoError(json.Unmarshal(response.Body.Bytes(), &body))
+			require.Len(body.Rows, 2)
+			assert.Equal(callsBefore+1, fixture.store.matchCalls)
+			assert.ElementsMatch([]int64{1, 2}, fixture.store.matchIDs[len(fixture.store.matchIDs)-1])
+
+			rowsByMessage := make(map[int64]query.EntryRow, len(body.Rows))
+			for _, row := range body.Rows {
+				require.NotNil(row.AnchorMessageID)
+				rowsByMessage[*row.AnchorMessageID] = row
+				assert.NotNil(row.MatchedSenderIdentities)
+				assert.NotNil(row.MatchedRecipientIdentities)
+			}
+			assert.Equal([]string{"Bob@Members.Example"}, rowsByMessage[1].MatchedSenderIdentities)
+			assert.Empty(rowsByMessage[1].MatchedRecipientIdentities)
+			assert.Empty(rowsByMessage[2].MatchedSenderIdentities)
+			assert.Equal([]string{"Bob@Members.Example"}, rowsByMessage[2].MatchedRecipientIdentities)
+			assert.Equal("Older", rowsByMessage[1].Title)
+			assert.Equal([]string{"Bob"}, rowsByMessage[1].ParticipantLabels)
+			assert.Equal("Newest", rowsByMessage[2].Title)
+			assert.Equal([]string{"Alice", "Bob"}, rowsByMessage[2].ParticipantLabels)
+			assert.NotContains(rowsByMessage, int64(3), "the shared participant address must not leak across sources")
+		})
+	}
+
+	directions := []struct {
+		direction string
+		wantIDs   []int64
+	}{
+		{direction: "sender", wantIDs: []int64{1}},
+		{direction: "recipient", wantIDs: []int64{2}},
+		{direction: "any", wantIDs: []int64{1, 2}},
+	}
+	for _, tt := range directions {
+		t.Run(tt.direction, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			response := postExploreJSON(t, fixture.server, "/api/v1/explore", exploreIdentityRequest(tt.direction, "", "", 10))
+			require.Equal(http.StatusOK, response.Code, response.Body.String())
+			var body ExploreHTTPResponse
+			require.NoError(json.Unmarshal(response.Body.Bytes(), &body))
+			gotIDs := make([]int64, 0, len(body.Rows))
+			for _, row := range body.Rows {
+				require.NotNil(row.AnchorMessageID)
+				gotIDs = append(gotIDs, *row.AnchorMessageID)
+			}
+			assert.ElementsMatch(tt.wantIDs, gotIDs)
+		})
+	}
+}
+
+func TestExploreIdentityFilterCursorCanonicalizesEmptyDirectionAsAny(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	fixture := newExploreIdentityAPIFixture(t)
+	emptyDirection := postExploreJSON(t, fixture.server, "/api/v1/explore", exploreIdentityRequest("", "", "", 1))
+	require.Equal(http.StatusOK, emptyDirection.Code, emptyDirection.Body.String())
+	var emptyPage ExploreHTTPResponse
+	require.NoError(json.Unmarshal(emptyDirection.Body.Bytes(), &emptyPage))
+	require.NotEmpty(emptyPage.NextCursor)
+
+	explicitAny := postExploreJSON(t, fixture.server, "/api/v1/explore", exploreIdentityRequest("any", "", "", 1))
+	require.Equal(http.StatusOK, explicitAny.Code, explicitAny.Body.String())
+	var anyPage ExploreHTTPResponse
+	require.NoError(json.Unmarshal(explicitAny.Body.Bytes(), &anyPage))
+	assert.Equal(emptyPage.NextCursor, anyPage.NextCursor)
+
+	secondRequest := fmt.Sprintf(`{
+		"filters":[
+			{"dimension":"source","values":["1"]},
+			{"dimension":"identity","values":["1","BOB@MEMBERS.EXAMPLE","any"]}
+		],
+		"limit":1,
+		"cursor":%q
+	}`, emptyPage.NextCursor)
+	second := postExploreJSON(t, fixture.server, "/api/v1/explore", secondRequest)
+	require.Equal(http.StatusOK, second.Code, second.Body.String())
+	var secondPage ExploreHTTPResponse
+	require.NoError(json.Unmarshal(second.Body.Bytes(), &secondPage))
+	require.Len(secondPage.Rows, 1)
+	assert.NotNil(secondPage.Rows[0].MatchedSenderIdentities)
+	assert.NotNil(secondPage.Rows[0].MatchedRecipientIdentities)
+}
+
+func TestExploreFilesIdentityCursorCanonicalizesEmptyDirectionAsAny(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	fixture := newExploreIdentityAPIFixture(t)
+
+	requestBody := func(direction string) string {
+		return fmt.Sprintf(`{
+			"predicate":{"filters":[
+				{"dimension":"source","values":["1"]},
+				{"dimension":"identity","values":["1","BOB@MEMBERS.EXAMPLE",%q]}
+			]},
+			"limit":1
+		}`, direction)
+	}
+	emptyDirection := postExploreJSON(t, fixture.server, "/api/v1/explore/files", requestBody(""))
+	requirements.Equal(http.StatusOK, emptyDirection.Code, emptyDirection.Body.String())
+	var emptyPage ExploreFilesHTTPResponse
+	requirements.NoError(json.Unmarshal(emptyDirection.Body.Bytes(), &emptyPage))
+	requirements.NotEmpty(emptyPage.NextCursor)
+
+	explicitAny := postExploreJSON(t, fixture.server, "/api/v1/explore/files", requestBody("any"))
+	requirements.Equal(http.StatusOK, explicitAny.Code, explicitAny.Body.String())
+	var anyPage ExploreFilesHTTPResponse
+	requirements.NoError(json.Unmarshal(explicitAny.Body.Bytes(), &anyPage))
+	assertions.Equal(emptyPage.NextCursor, anyPage.NextCursor)
+
+	secondRequest := fmt.Sprintf(`{
+		"predicate":{"filters":[
+			{"dimension":"source","values":["1"]},
+			{"dimension":"identity","values":["1","BOB@MEMBERS.EXAMPLE","any"]}
+		]},
+		"limit":1,
+		"cursor":%q
+	}`, emptyPage.NextCursor)
+	second := postExploreJSON(t, fixture.server, "/api/v1/explore/files", secondRequest)
+	requirements.Equal(http.StatusOK, second.Code, second.Body.String())
+	var secondPage ExploreFilesHTTPResponse
+	requirements.NoError(json.Unmarshal(second.Body.Bytes(), &secondPage))
+	requirements.Len(secondPage.Files, 1)
+	assertions.Equal("older.txt", secondPage.Files[0].Filename)
+}
+
+func TestExploreIdentityFilterResolvesForGroupsFilesPreflightAndMatchCounts(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	fixture := newExploreIdentityAPIFixture(t)
+	identityFilters := `[
+		{"dimension":"source","values":["1"]},
+		{"dimension":"identity","values":["1","BOB@MEMBERS.EXAMPLE","any"]}
+	]`
+
+	groups := postExploreJSON(t, fixture.server, "/api/v1/explore/groups", fmt.Sprintf(`{
+		"grouping":["source"],"filters":%s
+	}`, identityFilters))
+	require.Equal(http.StatusOK, groups.Code, groups.Body.String())
+	var groupsBody ExploreGroupsHTTPResponse
+	require.NoError(json.Unmarshal(groups.Body.Bytes(), &groupsBody))
+	require.Len(groupsBody.Rows, 1)
+	assert.Equal("1", groupsBody.Rows[0].Key)
+	assert.Equal(int64(2), groupsBody.Rows[0].Count)
+
+	files := postExploreJSON(t, fixture.server, "/api/v1/explore/files", fmt.Sprintf(`{
+		"predicate":{"filters":%s},"limit":10
+	}`, identityFilters))
+	require.Equal(http.StatusOK, files.Code, files.Body.String())
+	var filesBody ExploreFilesHTTPResponse
+	require.NoError(json.Unmarshal(files.Body.Bytes(), &filesBody))
+	assert.Equal(int64(2), filesBody.TotalCount)
+	assert.Len(filesBody.Files, 2)
+
+	explore := postExploreJSON(t, fixture.server, "/api/v1/explore", fmt.Sprintf(`{
+		"filters":%s,"limit":10
+	}`, identityFilters))
+	require.Equal(http.StatusOK, explore.Code, explore.Body.String())
+	var exploreBody ExploreHTTPResponse
+	require.NoError(json.Unmarshal(explore.Body.Bytes(), &exploreBody))
+
+	preflight := postExploreJSON(t, fixture.server, "/api/v1/explore/preflight", fmt.Sprintf(`{
+		"selection":{
+			"mode":"all_matching",
+			"predicate":{"filters":%s},
+			"cache_revision":%q
+		}
+	}`, identityFilters, exploreBody.CacheRevision))
+	require.Equal(http.StatusOK, preflight.Code, preflight.Body.String())
+	var preflightBody ExplorePreflightResponse
+	require.NoError(json.Unmarshal(preflight.Body.Bytes(), &preflightBody))
+	assert.Equal(int64(2), preflightBody.Count)
+
+	matchCounts := postExploreJSON(t, fixture.server, "/api/v1/explore/match-counts", fmt.Sprintf(`{
+		"predicate":{"query":"alpha","search_mode":"full_text","filters":%s},
+		"row_keys":["source:1:message:m1","source:1:message:m2"]
+	}`, identityFilters))
+	require.Equal(http.StatusOK, matchCounts.Code, matchCounts.Body.String())
+	var matchCountsBody ExploreMatchCountsResponse
+	require.NoError(json.Unmarshal(matchCounts.Body.Bytes(), &matchCountsBody))
+	assert.Equal([]ExploreRowMatchCount{
+		{RowKey: "source:1:message:m1", Count: 1},
+		{RowKey: "source:1:message:m2", Count: 1},
+	}, matchCountsBody.Counts)
+}
+
+func TestExploreGroupsIdentityFilterPreservesTupleOrderAndNormalizesEmptyDirection(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	fixture := newExploreIdentityAPIFixture(t)
+	response := postExploreJSON(t, fixture.server, "/api/v1/explore/groups", `{
+		"grouping":["source"],
+		"filters":[
+			{"dimension":"source","values":["1"]},
+			{"dimension":"identity","values":["1","bob@members.example",""]}
+		]
+	}`)
+
+	require.Equal(http.StatusOK, response.Code, response.Body.String())
+	var body ExploreGroupsHTTPResponse
+	require.NoError(json.Unmarshal(response.Body.Bytes(), &body))
+	require.Len(body.Rows, 1)
+	assert.Equal("1", body.Rows[0].Key)
+	assert.Equal(int64(2), body.Rows[0].Count)
+}
+
+func TestExploreHydrationUsesEmptyArraysForRowsWithoutAnchors(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	base := newExploreDuckDBFixture(t)
+	engine := &anchorlessExploreEngine{DuckDBEngine: base}
+	srv := newTestServerWithEngine(t, engine)
+
+	response := postExploreJSON(t, srv, "/api/v1/explore", `{"limit":1}`)
+
+	require.Equal(http.StatusOK, response.Code, response.Body.String())
+	var body ExploreHTTPResponse
+	require.NoError(json.Unmarshal(response.Body.Bytes(), &body))
+	require.Len(body.Rows, 1)
+	assert.Nil(body.Rows[0].AnchorMessageID)
+	assert.NotNil(body.Rows[0].MatchedSenderIdentities)
+	assert.Empty(body.Rows[0].MatchedSenderIdentities)
+	assert.NotNil(body.Rows[0].MatchedRecipientIdentities)
+	assert.Empty(body.Rows[0].MatchedRecipientIdentities)
+}
+
+type anchorlessExploreEngine struct {
+	*query.DuckDBEngine
+}
+
+func (e *anchorlessExploreEngine) Explore(ctx context.Context, request query.ExploreRequest) (*query.ExploreResponse, error) {
+	result, err := e.DuckDBEngine.Explore(ctx, request)
+	if err == nil && len(result.Rows) > 0 {
+		result.Rows[0].AnchorMessageID = nil
+	}
+	return result, err
+}
+
+type recordingMessageIdentityStore struct {
+	*store.Store
+
+	resolveCalls int
+	matchCalls   int
+	matchIDs     [][]int64
+}
+
+func (s *recordingMessageIdentityStore) ResolveAccountIdentityContext(
+	ctx context.Context,
+	sourceID int64,
+	identifier string,
+) (store.ResolvedAccountIdentity, error) {
+	s.resolveCalls++
+	return s.Store.ResolveAccountIdentityContext(ctx, sourceID, identifier)
+}
+
+func (s *recordingMessageIdentityStore) MatchMessageIdentitiesContext(
+	ctx context.Context,
+	messageIDs []int64,
+) (map[int64]store.MessageIdentityMatch, error) {
+	s.matchCalls++
+	s.matchIDs = append(s.matchIDs, append([]int64(nil), messageIDs...))
+	return s.Store.MatchMessageIdentitiesContext(ctx, messageIDs)
+}
+
+type exploreIdentityAPIFixture struct {
+	server *Server
+	store  *recordingMessageIdentityStore
+}
+
+func newExploreIdentityAPIFixture(t *testing.T) exploreIdentityAPIFixture {
+	t.Helper()
+	requirements := require.New(t)
+	st := testutil.NewSQLiteTestStore(t)
+	sourceA, err := st.GetOrCreateSource("gmail", "archive-a@example.com")
+	requirements.NoError(err)
+	sourceB, err := st.GetOrCreateSource("imap", "archive-b@example.com")
+	requirements.NoError(err)
+	requirements.Equal(int64(1), sourceA.ID)
+	requirements.Equal(int64(2), sourceB.ID)
+	conversationA, err := st.EnsureConversation(sourceA.ID, "thread-a", "Thread A")
+	requirements.NoError(err)
+	conversationB, err := st.EnsureConversation(sourceB.ID, "thread-b", "Thread B")
+	requirements.NoError(err)
+	aliceID, err := st.EnsureParticipant("alice@example.com", "Alice", "example.com")
+	requirements.NoError(err)
+	bobID, err := st.EnsureParticipant("BOB@MEMBERS.EXAMPLE", "Bob", "members.example")
+	requirements.NoError(err)
+	requirements.Equal(int64(1), aliceID)
+	requirements.Equal(int64(2), bobID)
+
+	messages := []struct {
+		sourceID       int64
+		conversationID int64
+		sourceMessage  string
+		senderID       int64
+		sentAt         time.Time
+	}{
+		{sourceA.ID, conversationA, "m1", bobID, time.Date(2026, 7, 18, 10, 0, 0, 0, time.UTC)},
+		{sourceA.ID, conversationA, "m2", aliceID, time.Date(2026, 7, 18, 11, 0, 0, 0, time.UTC)},
+		{sourceB.ID, conversationB, "m3", aliceID, time.Date(2026, 7, 18, 9, 0, 0, 0, time.UTC)},
+	}
+	for i, message := range messages {
+		messageID, err := st.UpsertMessage(&store.Message{
+			ConversationID: message.conversationID, SourceID: message.sourceID,
+			SourceMessageID: message.sourceMessage, MessageType: "email",
+			SentAt:   sql.NullTime{Time: message.sentAt, Valid: true},
+			SenderID: sql.NullInt64{Int64: message.senderID, Valid: true},
+			Subject:  sql.NullString{String: "alpha", Valid: true}, SizeEstimate: 100,
+		})
+		requirements.NoError(err)
+		requirements.Equal(int64(i+1), messageID)
+		requirements.NoError(st.UpsertMessageBody(messageID, sql.NullString{String: "alpha", Valid: true}, sql.NullString{}))
+	}
+	for i := range 10 {
+		requirements.NoError(st.UpsertAttachment(
+			3,
+			fmt.Sprintf("fixture-padding-%d.bin", i),
+			"application/octet-stream",
+			"",
+			fmt.Sprintf("fixture-padding-%d", i),
+			1,
+		))
+	}
+	requirements.NoError(st.UpsertAttachment(1, "older.txt", "text/plain", "", "", 10))
+	requirements.NoError(st.UpsertAttachment(2, "newest.pdf", "application/pdf", "", "", 20))
+	requirements.NoError(st.ReplaceMessageRecipients(1, "from", []int64{bobID}, []string{"Bob"}))
+	requirements.NoError(st.ReplaceMessageRecipients(2, "from", []int64{aliceID}, []string{"Alice"}))
+	requirements.NoError(st.ReplaceMessageRecipients(2, "to", []int64{bobID}, []string{"Bob"}))
+	requirements.NoError(st.ReplaceMessageRecipients(3, "from", []int64{aliceID}, []string{"Alice"}))
+	requirements.NoError(st.ReplaceMessageRecipients(3, "to", []int64{bobID}, []string{"Bob"}))
+	requirements.NoError(st.AddAccountIdentity(sourceA.ID, "Bob@Members.Example", "manual"))
+	requirements.NoError(st.AddAccountIdentity(sourceB.ID, "source-two@example.test", "manual"))
+	_, err = st.BackfillFTS(nil)
+	requirements.NoError(err)
+
+	recipients := `(1::BIGINT, 2::BIGINT, 'from', 'Bob'),
+		(2::BIGINT, 1::BIGINT, 'from', 'Alice'),
+		(2::BIGINT, 2::BIGINT, 'to', 'Bob'),
+		(3::BIGINT, 1::BIGINT, 'from', 'Alice'),
+		(3::BIGINT, 2::BIGINT, 'to', 'Bob')`
+	engine := newExploreDuckDBFixtureWithRecipients(t, recipients)
+	backend := &fakeFusingBackend{
+		fakeVectorBackend: &fakeVectorBackend{
+			active: &vector.Generation{ID: 7, Model: "test", Dimension: 2, Fingerprint: "test:2", State: vector.GenerationActive},
+		},
+		fusedHits: []vector.FusedHit{
+			{MessageID: 1, RRFScore: .9, VectorScore: .9},
+			{MessageID: 2, RRFScore: .8, VectorScore: .8},
+			{MessageID: 3, RRFScore: .7, VectorScore: .7},
+		},
+	}
+	backend.searchHits = []vector.Hit{
+		{MessageID: 1, Score: .9, Rank: 1},
+		{MessageID: 2, Score: .8, Rank: 2},
+		{MessageID: 3, Score: .7, Rank: 3},
+	}
+	hybridEngine := hybrid.NewEngine(backend, nil, realEmbedder{dim: 2}, hybrid.Config{ExpectedFingerprint: "test:2"})
+	recordingStore := &recordingMessageIdentityStore{Store: st}
+	srv := NewServerWithOptions(ServerOptions{
+		Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}},
+		Store:  recordingStore, Engine: engine, HybridEngine: hybridEngine, Backend: backend, Logger: testLogger(),
+	})
+	return exploreIdentityAPIFixture{server: srv, store: recordingStore}
+}
+
+func exploreIdentityRequest(direction, queryText, searchMode string, limit int) string {
+	search := ""
+	if queryText != "" || searchMode != "" {
+		search = fmt.Sprintf(`,"query":%q,"search_mode":%q`, queryText, searchMode)
+	}
+	return fmt.Sprintf(`{
+		"filters":[
+			{"dimension":"source","values":["1"]},
+			{"dimension":"identity","values":["1","BOB@MEMBERS.EXAMPLE",%q]}
+		],
+		"limit":%d%s
+	}`, direction, limit, search)
+}
+
 func postExploreJSON(t *testing.T, srv *Server, path, body string) *httptest.ResponseRecorder {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodPost, path, bytes.NewBufferString(body))
@@ -411,6 +823,8 @@ const exploreFixtureDefaultMessages = `(1::BIGINT, 1::BIGINT, 'm1', 101::BIGINT,
 	(2::BIGINT, 1::BIGINT, 'm2', 102::BIGINT, 'Newest', 'alpha beta', TIMESTAMP '2026-07-18 11:00:00', 200::BIGINT, true, 1::INTEGER, NULL::TIMESTAMP, NULL::BIGINT, 'email', false, 2026, 7),
 	(3::BIGINT, 2::BIGINT, 'm3', 103::BIGINT, 'Other source', 'beta', TIMESTAMP '2026-07-18 09:00:00', 300::BIGINT, false, 0::INTEGER, NULL::TIMESTAMP, NULL::BIGINT, 'email', false, 2026, 7)`
 
+const exploreFixtureDefaultRecipients = `(1::BIGINT, 1::BIGINT, 'from', 'Alice'), (2::BIGINT, 1::BIGINT, 'from', 'Alice'), (3::BIGINT, 1::BIGINT, 'from', 'Alice'), (3::BIGINT, 2::BIGINT, 'to', 'Bob')`
+
 func newExploreDuckDBFixtureWithDir(t *testing.T) (*query.DuckDBEngine, string) {
 	t.Helper()
 	return newExploreDuckDBFixtureWithMessages(t, exploreFixtureDefaultMessages, 3)
@@ -422,6 +836,23 @@ func newExploreDuckDBFixtureWithDir(t *testing.T) (*query.DuckDBEngine, string) 
 // while sharing the surrounding sources/participants/attachments tables.
 func newExploreDuckDBFixtureWithMessages(
 	t *testing.T, messageValues string, lastMessageID int64,
+) (*query.DuckDBEngine, string) {
+	t.Helper()
+	return newExploreDuckDBFixtureWithMessagesAndRecipients(
+		t, messageValues, exploreFixtureDefaultRecipients, lastMessageID,
+	)
+}
+
+func newExploreDuckDBFixtureWithRecipients(t *testing.T, recipientValues string) *query.DuckDBEngine {
+	t.Helper()
+	engine, _ := newExploreDuckDBFixtureWithMessagesAndRecipients(
+		t, exploreFixtureDefaultMessages, recipientValues, 3,
+	)
+	return engine
+}
+
+func newExploreDuckDBFixtureWithMessagesAndRecipients(
+	t *testing.T, messageValues, recipientValues string, lastMessageID int64,
 ) (*query.DuckDBEngine, string) {
 	t.Helper()
 	analyticsDir := t.TempDir()
@@ -441,7 +872,7 @@ func newExploreDuckDBFixtureWithMessages(
 		{dir: "sources", file: "sources.parquet", columns: "id, account_email, source_type", values: `(1::BIGINT, 'archive-a@example.com', 'gmail'), (2::BIGINT, 'archive-b@example.com', 'imap')`},
 		{dir: "participants", file: "participants.parquet", columns: "id, email_address, domain, display_name, phone_number", values: `(1::BIGINT, 'alice@example.com', 'example.com', 'Alice', ''), (2::BIGINT, 'bob@members.example', 'members.example', 'Bob', '')`},
 		{dir: "participant_identifiers", file: "participant_identifiers.parquet", columns: "participant_id, identifier_type, identifier_value, display_value, is_primary", values: `(1::BIGINT, 'email', 'alice@example.com', 'alice@example.com', true), (2::BIGINT, 'email', 'bob@members.example', 'bob@members.example', true)`},
-		{dir: "message_recipients", file: "message_recipients.parquet", columns: "message_id, participant_id, recipient_type, display_name", values: `(1::BIGINT, 1::BIGINT, 'from', 'Alice'), (2::BIGINT, 1::BIGINT, 'from', 'Alice'), (3::BIGINT, 1::BIGINT, 'from', 'Alice'), (3::BIGINT, 2::BIGINT, 'to', 'Bob')`},
+		{dir: "message_recipients", file: "message_recipients.parquet", columns: "message_id, participant_id, recipient_type, display_name", values: recipientValues},
 		{dir: "labels", file: "labels.parquet", columns: "id, name", values: `(0::BIGINT, '')`, empty: true},
 		{dir: "message_labels", file: "message_labels.parquet", columns: "message_id, label_id", values: `(0::BIGINT, 0::BIGINT)`, empty: true},
 		{dir: "attachments", file: "attachments.parquet", columns: "attachment_id, message_id, size, filename", values: `(11::BIGINT, 1::BIGINT, 10::BIGINT, 'older.txt'), (12::BIGINT, 2::BIGINT, 20::BIGINT, 'newest.pdf')`},

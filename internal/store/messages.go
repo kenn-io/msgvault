@@ -47,12 +47,16 @@ type contextQuerier interface {
 	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
 }
 
-// RecipientSet groups participant IDs and display names for one
-// recipient type (from, to, cc, bcc).
+// RecipientSet groups participant IDs, display names, and envelope
+// addresses for one recipient type (from, to, cc, bcc). EmailAddresses
+// carries the address as it appeared in the message envelope; unlike the
+// participant row it resolves to, it never changes under participant
+// merges. Writers without envelope addresses may leave it empty.
 type RecipientSet struct {
 	Type           string
 	ParticipantIDs []int64
 	DisplayNames   []string
+	EmailAddresses []string
 }
 
 // ParticipantPersistData describes one email participant to resolve inside a
@@ -1367,6 +1371,7 @@ func replaceMessageRecipientsTx(tx querier, messageID int64, rs RecipientSet) er
 	seen := make(map[int64]struct{}, len(rs.ParticipantIDs))
 	ids := make([]int64, 0, len(rs.ParticipantIDs))
 	names := make([]string, 0, len(rs.ParticipantIDs))
+	emails := make([]string, 0, len(rs.ParticipantIDs))
 	for i, pid := range rs.ParticipantIDs {
 		if _, dup := seen[pid]; dup {
 			continue
@@ -1378,18 +1383,23 @@ func replaceMessageRecipientsTx(tx querier, messageID int64, rs RecipientSet) er
 			name = rs.DisplayNames[i]
 		}
 		names = append(names, name)
+		email := ""
+		if i < len(rs.EmailAddresses) {
+			email = rs.EmailAddresses[i]
+		}
+		emails = append(emails, email)
 	}
 
 	return insertInChunks(tx, chunkInsert{
 		totalRows:    len(ids),
-		valuesPerRow: 4,
-		prefix:       "INSERT INTO message_recipients (message_id, participant_id, recipient_type, display_name) VALUES ",
+		valuesPerRow: 5,
+		prefix:       "INSERT INTO message_recipients (message_id, participant_id, recipient_type, display_name, email_address) VALUES ",
 	}, func(start, end int) ([]string, []any) {
 		values := make([]string, end-start)
-		args := make([]any, 0, (end-start)*4)
+		args := make([]any, 0, (end-start)*5)
 		for i := start; i < end; i++ {
-			values[i-start] = "(?, ?, ?, ?)"
-			args = append(args, messageID, ids[i], rs.Type, names[i])
+			values[i-start] = "(?, ?, ?, ?, ?)"
+			args = append(args, messageID, ids[i], rs.Type, names[i], nullIfEmpty(emails[i]))
 		}
 		return values, args
 	})
@@ -1402,7 +1412,12 @@ type Label struct {
 	SourceLabelID sql.NullString
 	Name          string
 	LabelType     sql.NullString
+	SystemRole    sql.NullString
 }
+
+// LabelSystemRoleSent identifies a label whose provider metadata confirms it
+// represents sent mail. It is deliberately independent of the display name.
+const LabelSystemRoleSent = "sent"
 
 // EnsureLabel gets or creates a label, handling renames and ID changes.
 // For batch operations prefer EnsureLabelsBatch which runs in a single
@@ -1415,7 +1430,7 @@ func (s *Store) EnsureLabel(
 	err := s.withTx(func(tx *loggedTx) error {
 		var txErr error
 		id, txErr = ensureLabelWith(
-			tx, sourceID, sourceLabelID, name, labelType,
+			tx, sourceID, sourceLabelID, name, labelType, nil,
 		)
 		return txErr
 	})
@@ -1436,19 +1451,31 @@ func ensureLabelWith(
 	q querier,
 	sourceID int64,
 	sourceLabelID, name, labelType string,
+	systemRole *string,
 ) (int64, error) {
 	// Look up by canonical identifier (Gmail label ID).
 	var id int64
 	var existingName string
 	var existingType sql.NullString
+	var existingRole sql.NullString
 	err := q.QueryRow(`
-		SELECT id, name, label_type FROM labels
+		SELECT id, name, label_type, system_role FROM labels
 		WHERE source_id = ? AND source_label_id = ?
-	`, sourceID, sourceLabelID).Scan(&id, &existingName, &existingType)
+	`, sourceID, sourceLabelID).Scan(&id, &existingName, &existingType, &existingRole)
 
 	if err == nil {
 		if existingName == name {
-			if !existingType.Valid || existingType.String != labelType {
+			if !existingType.Valid || existingType.String != labelType ||
+				(systemRole != nil && !labelSystemRoleMatches(existingRole, *systemRole)) {
+				if systemRole != nil {
+					if _, err = q.Exec(`
+						UPDATE labels SET label_type = ?, system_role = ?
+						WHERE id = ?
+					`, labelType, labelSystemRoleValue(*systemRole), id); err != nil {
+						return 0, fmt.Errorf("update label type and role: %w", err)
+					}
+					return id, nil
+				}
 				if _, err = q.Exec(`
 					UPDATE labels SET label_type = ?
 					WHERE id = ?
@@ -1464,7 +1491,14 @@ func ensureLabelWith(
 		if err = mergeLabelByName(q, sourceID, name, id); err != nil {
 			return 0, err
 		}
-		if _, err = q.Exec(`
+		if systemRole != nil {
+			if _, err = q.Exec(`
+				UPDATE labels SET name = ?, label_type = ?, system_role = ?
+				WHERE id = ?
+			`, name, labelType, labelSystemRoleValue(*systemRole), id); err != nil {
+				return 0, fmt.Errorf("update label name and role: %w", err)
+			}
+		} else if _, err = q.Exec(`
 			UPDATE labels SET name = ?, label_type = ?
 			WHERE id = ?
 		`, name, labelType, id); err != nil {
@@ -1479,7 +1513,18 @@ func ensureLabelWith(
 	// Not found by source_label_id — upsert by name. Handles the case
 	// where a label with this name exists from a previous import or
 	// with a stale/NULL source_label_id.
-	if _, err = q.Exec(`
+	if systemRole != nil {
+		if _, err = q.Exec(`
+			INSERT INTO labels (source_id, source_label_id, name, label_type, system_role)
+			VALUES (?, ?, ?, ?, ?)
+			ON CONFLICT(source_id, name) DO UPDATE SET
+				source_label_id = excluded.source_label_id,
+				label_type = excluded.label_type,
+				system_role = excluded.system_role
+		`, sourceID, sourceLabelID, name, labelType, labelSystemRoleValue(*systemRole)); err != nil {
+			return 0, err
+		}
+	} else if _, err = q.Exec(`
 		INSERT INTO labels (source_id, source_label_id, name, label_type)
 		VALUES (?, ?, ?, ?)
 		ON CONFLICT(source_id, name) DO UPDATE SET
@@ -1496,6 +1541,20 @@ func ensureLabelWith(
 		return 0, err
 	}
 	return id, nil
+}
+
+func labelSystemRoleValue(systemRole string) any {
+	if systemRole == "" {
+		return nil
+	}
+	return systemRole
+}
+
+func labelSystemRoleMatches(existing sql.NullString, systemRole string) bool {
+	if systemRole == "" {
+		return !existing.Valid
+	}
+	return existing.Valid && existing.String == systemRole
 }
 
 // mergeLabelByName finds a label with the given name (excluding keepID)
@@ -1544,8 +1603,9 @@ func mergeLabelByName(
 
 // LabelInfo holds the name and type for a label to be ensured.
 type LabelInfo struct {
-	Name string
-	Type string // "system" or "user"
+	Name       string
+	Type       string // "system" or "user"
+	SystemRole string // trusted canonical role; empty clears any stale value
 }
 
 // IsSystemLabel returns true if the given Gmail label ID represents a system label.
@@ -1607,7 +1667,7 @@ func (s *Store) EnsureLabelsBatch(
 		// is safe to merge (dead/imported label).
 		for sourceLabelID, info := range labels {
 			id, err := ensureLabelWith(
-				tx, sourceID, sourceLabelID, info.Name, info.Type,
+				tx, sourceID, sourceLabelID, info.Name, info.Type, &info.SystemRole,
 			)
 			if err != nil {
 				return err

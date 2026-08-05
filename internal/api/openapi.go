@@ -169,7 +169,12 @@ import (
 // this archive is accepted whoever built it. Stores that cannot answer the
 // watermark query, or cannot identify their archive, report 503
 // feature_unavailable. Additive (minor bump): a new path only.
-const APISchemaVersion = "1.34.0"
+// Additive (minor bump): the major-version compatibility gate stays at 1.
+// 1.35.0 resolves source-scoped identity filters on relationship ranking and
+// timeline routes, and adds a typed terminal error variant to CLI identity
+// discovery NDJSON streams. Additive (minor bump): existing progress/result
+// events and relationship requests without identity filters are unchanged.
+const APISchemaVersion = "1.35.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.
@@ -292,6 +297,7 @@ func hardenExploreSchemas(doc *huma.OpenAPI) {
 		}
 	}
 	for schemaName, properties := range map[string][]string{
+		"EntryRow":                   {"matched_sender_identities", "matched_recipient_identities"},
 		"ExploreFilter":              {"values"},
 		"ExploreHTTPResponse":        {"rows"},
 		"ExploreGroupsHTTPRequest":   {"grouping"},
@@ -536,7 +542,7 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 			"readiness": {"ExploreCacheUnavailableResponseReadinessAbsent", "ExploreCacheUnavailableResponseReadinessInterrupted", "ExploreCacheUnavailableResponseReadinessStaleSchema", "ExploreCacheUnavailableResponseReadinessDrifted"},
 		},
 		"ExploreFilter": {
-			"dimension": {"ExploreFilterDimensionSource", "ExploreFilterDimensionParticipant", "ExploreFilterDimensionDomain", "ExploreFilterDimensionMessageType", "ExploreFilterDimensionAfter", "ExploreFilterDimensionBefore", "ExploreFilterDimensionDeletion"},
+			"dimension": {"ExploreFilterDimensionSource", "ExploreFilterDimensionParticipant", "ExploreFilterDimensionDomain", "ExploreFilterDimensionMessageType", "ExploreFilterDimensionAfter", "ExploreFilterDimensionBefore", "ExploreFilterDimensionDeletion", "ExploreFilterDimensionIdentity"},
 		},
 		"ExploreGroupSort": {
 			"direction": {"ExploreGroupSortDirectionAsc", "ExploreGroupSortDirectionDesc"},

@@ -19,12 +19,6 @@
 
   export type ReadingPaneStatus = 'ready' | 'loading' | 'missing' | 'error' | 'unavailable';
 
-  /** Rows archived before message types existed carry a blank message_type
-   * and count as email, matching the server's task-link gate
-   * (store.IsEmailMessageType). */
-  function isEmailMessageType(messageType: string): boolean {
-    return messageType === '' || messageType === 'email';
-  }
 </script>
 
 <script lang="ts">
@@ -35,7 +29,9 @@
   import { createExploreAPI } from '../../explore/api';
   import { filtersForGroup } from '../../explore/group-context';
   import type { ExploreCacheUnavailable, ExploreFileFact, ExploreFilter } from '../../explore/models';
+  import { isEmailMessageType } from '../../explore/models';
   import EmptyState from '../common/EmptyState.svelte';
+  import IdentityBadge from '../explore/IdentityBadge.svelte';
   import TaskLinks from '../tasks/TaskLinks.svelte';
   import AttachmentRail from './AttachmentRail.svelte';
   import ConversationView from './ConversationView.svelte';
@@ -217,6 +213,12 @@
     <div class="pane-heading">
       <strong class="pane-title">{title}</strong>
       {#if metaStrip}<span class="pane-meta" data-mono>{metaStrip}</span>{/if}
+      {#if selection?.kind === 'entry' && isEmailMessageType(selection.row.message_type)}
+        <IdentityBadge
+          senderIdentities={selection.row.matched_sender_identities}
+          recipientIdentities={selection.row.matched_recipient_identities}
+        />
+      {/if}
     </div>
     <div class="pane-actions">
       {#if showTasks}

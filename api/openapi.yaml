@@ -81,8 +81,10 @@ components:
           type: string
         signal:
           type: string
+        source_id:
+          format: int64
+          type: integer
       required:
-        - account
         - identifier
         - signal
       type: object
@@ -659,6 +661,55 @@ components:
       required:
         - id
         - status
+      type: object
+    Candidate:
+      additionalProperties: true
+      properties:
+        already_confirmed:
+          type: boolean
+        classification:
+          enum:
+            - confirmed
+            - strong
+            - weak
+          type: string
+        first_seen_at:
+          format: date-time
+          type: string
+        identifier:
+          type: string
+        last_seen_at:
+          format: date-time
+          type: string
+        normalized_identifier:
+          type: string
+        provider_states:
+          items:
+            type: string
+          type: array
+        received_message_count:
+          format: int64
+          type: integer
+        sent_message_count:
+          format: int64
+          type: integer
+        signals:
+          items:
+            type: string
+          type:
+            - array
+            - "null"
+      required:
+        - identifier
+        - normalized_identifier
+        - classification
+        - already_confirmed
+        - signals
+        - provider_states
+        - sent_message_count
+        - received_message_count
+        - first_seen_at
+        - last_seen_at
       type: object
     ChangedMessageJSON:
       additionalProperties: true
@@ -1358,6 +1409,114 @@ components:
         - description
         - message_count
       type: object
+    DiscoverError:
+      additionalProperties: true
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+      required:
+        - code
+        - message
+      type: object
+    DiscoverEvent:
+      additionalProperties: true
+      properties:
+        error:
+          $ref: "#/components/schemas/DiscoverError"
+        progress:
+          $ref: "#/components/schemas/DiscoverProgress"
+        result:
+          $ref: "#/components/schemas/DiscoverResult"
+        type:
+          enum:
+            - progress
+            - result
+            - error
+          type: string
+      required:
+        - type
+      type: object
+    DiscoverProgress:
+      additionalProperties: true
+      properties:
+        candidates:
+          format: int64
+          type: integer
+        done:
+          format: int64
+          type: integer
+        total:
+          format: int64
+          type: integer
+      required:
+        - done
+        - total
+        - candidates
+      type: object
+    DiscoverRequest:
+      additionalProperties: false
+      properties:
+        account:
+          type: string
+        apply:
+          type: boolean
+        confirm:
+          items:
+            type: string
+          type:
+            - array
+            - "null"
+        page_size:
+          format: int64
+          type: integer
+        provider:
+          type: boolean
+        source_id:
+          format: int64
+          type: integer
+      type: object
+    DiscoverResult:
+      additionalProperties: true
+      properties:
+        account:
+          type: string
+        applied:
+          items:
+            $ref: "#/components/schemas/IdentityConfirmationOutcome"
+          type:
+            - array
+            - "null"
+        candidates:
+          items:
+            $ref: "#/components/schemas/Candidate"
+          type:
+            - array
+            - "null"
+        rejected:
+          items:
+            $ref: "#/components/schemas/RejectedCandidate"
+          type:
+            - array
+            - "null"
+        scanned_messages:
+          format: int64
+          type: integer
+        source_id:
+          format: int64
+          type: integer
+        source_type:
+          type: string
+      required:
+        - account
+        - source_id
+        - source_type
+        - scanned_messages
+        - candidates
+        - rejected
+        - applied
+      type: object
     DomainContextSummaryHTTPResponse:
       additionalProperties: true
       properties:
@@ -1468,6 +1627,14 @@ components:
           type: string
         match:
           $ref: "#/components/schemas/MatchSummary"
+        matched_recipient_identities:
+          items:
+            type: string
+          type: array
+        matched_sender_identities:
+          items:
+            type: string
+          type: array
         message_count:
           format: int64
           type: integer
@@ -1512,6 +1679,8 @@ components:
         - conversation_type
         - title
         - preview
+        - matched_sender_identities
+        - matched_recipient_identities
         - message_count
         - has_attachments
         - attachment_count
@@ -1696,6 +1865,7 @@ components:
             - after
             - before
             - deletion
+            - identity
           type: string
         values:
           items:
@@ -2583,6 +2753,24 @@ components:
         - took_ms
         - results
       type: object
+    IdentityConfirmationOutcome:
+      additionalProperties: true
+      properties:
+        added:
+          type: boolean
+        identifier:
+          type: string
+        signals:
+          items:
+            type: string
+          type:
+            - array
+            - "null"
+      required:
+        - identifier
+        - added
+        - signals
+      type: object
     IdentityLinkRequest:
       additionalProperties: false
       properties:
@@ -2648,6 +2836,60 @@ components:
       required:
         - field
         - direction
+      type: object
+    ImportEntry:
+      additionalProperties: false
+      properties:
+        identifier:
+          type: string
+        state:
+          type: string
+      required:
+        - identifier
+      type: object
+    ImportRequest:
+      additionalProperties: false
+      properties:
+        account:
+          type: string
+        apply:
+          type: boolean
+        entries:
+          items:
+            $ref: "#/components/schemas/ImportEntry"
+          type: array
+        signal:
+          type: string
+        source_id:
+          format: int64
+          type: integer
+      required:
+        - entries
+      type: object
+    ImportResult:
+      additionalProperties: true
+      properties:
+        account:
+          type: string
+        applied:
+          items:
+            $ref: "#/components/schemas/IdentityConfirmationOutcome"
+          type: array
+        candidates:
+          items:
+            $ref: "#/components/schemas/Candidate"
+          type: array
+        signal:
+          type: string
+        source_id:
+          format: int64
+          type: integer
+      required:
+        - account
+        - source_id
+        - signal
+        - candidates
+        - applied
       type: object
     ListDeletionsResponse:
       additionalProperties: true
@@ -3349,6 +3591,17 @@ components:
         - rows
         - row_count
       type: object
+    RejectedCandidate:
+      additionalProperties: true
+      properties:
+        identifier:
+          type: string
+        reason:
+          type: string
+      required:
+        - identifier
+        - reason
+      type: object
     RelationshipRow:
       additionalProperties: true
       properties:
@@ -3521,8 +3774,10 @@ components:
           type: string
         identifier:
           type: string
+        source_id:
+          format: int64
+          type: integer
       required:
-        - account
         - identifier
       type: object
     RemoveResult:
@@ -4040,6 +4295,40 @@ components:
       required:
         - source_type
         - count
+      type: object
+    SourceIdentitiesResponse:
+      additionalProperties: true
+      properties:
+        account:
+          type: string
+        identities:
+          items:
+            $ref: "#/components/schemas/SourceIdentityResponse"
+          type: array
+        source_id:
+          format: int64
+          type: integer
+      required:
+        - source_id
+        - account
+        - identities
+      type: object
+    SourceIdentityResponse:
+      additionalProperties: true
+      properties:
+        confirmed_at:
+          format: date-time
+          type: string
+        identifier:
+          type: string
+        signals:
+          items:
+            type: string
+          type: array
+      required:
+        - identifier
+        - signals
+        - confirmed_at
       type: object
     SourceStatus:
       additionalProperties: true
@@ -4791,7 +5080,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 1.34.0
+  version: 1.35.0
 openapi: 3.1.0
 paths:
   /api/ping:
@@ -6077,6 +6366,14 @@ paths:
           schema:
             description: Restrict to all member accounts of one collection
             type: string
+        - description: Restrict to one source by numeric ID
+          explode: false
+          in: query
+          name: source_id
+          schema:
+            description: Restrict to one source by numeric ID
+            format: int64
+            type: integer
         - description: For account scope, return only the primary source instead of related sources
           explode: false
           in: query
@@ -6162,6 +6459,78 @@ paths:
       security:
         - apiKey: []
       summary: Add a confirmed identifier to an account identity
+      tags:
+        - CLI
+  /api/v1/cli/identities/discover:
+    post:
+      operationId: discoverCLIIdentities
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DiscoverRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/x-ndjson:
+              schema:
+                $ref: "#/components/schemas/DiscoverEvent"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Discover source-scoped account identities
+      tags:
+        - API
+  /api/v1/cli/identities/import:
+    post:
+      operationId: importCLIIdentities
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ImportRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ImportResult"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiHTTPError"
+          description: Bad Request
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiHTTPError"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiHTTPError"
+          description: Internal Server Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiHTTPError"
+          description: Service Unavailable
+      security:
+        - apiKey: []
+      summary: Preview or apply parsed source-scoped identities
       tags:
         - CLI
   /api/v1/cli/init-db:
@@ -9759,6 +10128,35 @@ paths:
       security:
         - apiKey: []
       summary: List source sync status
+      tags:
+        - API
+  /api/v1/sources/{source_id}/identities:
+    get:
+      operationId: listSourceIdentities
+      parameters:
+        - description: Source ID
+          in: path
+          name: source_id
+          required: true
+          schema:
+            format: int64
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SourceIdentitiesResponse"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: List confirmed identities for one source
       tags:
         - API
   /api/v1/stats:

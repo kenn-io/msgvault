@@ -47,7 +47,7 @@ func newExportDiscordCmd(deps discordCommandDeps) *cobra.Command {
 }
 
 func newExportDiscordLocalCmd(deps discordCommandDeps) *cobra.Command {
-	opts := exportDiscordOptions{Format: "json"}
+	opts := exportDiscordOptions{Format: flagJSON}
 	cmd := &cobra.Command{
 		Use:   "export-discord <guild-id-or-name>",
 		Short: "Export bounded Discord history from the local archive",
@@ -58,7 +58,7 @@ func newExportDiscordLocalCmd(deps discordCommandDeps) *cobra.Command {
 	}
 	cmd.Flags().StringVar(&opts.Start, "start", "", "inclusive RFC3339 lower bound")
 	cmd.Flags().StringVar(&opts.End, "end", "", "exclusive RFC3339 upper bound")
-	cmd.Flags().StringVar(&opts.Format, "format", "json", "output format (json)")
+	cmd.Flags().StringVar(&opts.Format, "format", flagJSON, "output format (json)")
 	return cmd
 }
 
@@ -72,7 +72,7 @@ func runExportDiscord(
 	if err != nil {
 		return usageErr(cmd, err)
 	}
-	if opts.Format != "json" {
+	if opts.Format != flagJSON {
 		return usageErr(cmd, fmt.Errorf("unsupported --format %q (expected json)", opts.Format))
 	}
 

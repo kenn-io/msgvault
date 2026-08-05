@@ -907,6 +907,7 @@
   {:else if exploreState.current.workspace === 'files'}
     <div class="files-shell">
       <ContextBar
+        {client}
         query={exploreState.current.query}
         searchMode={exploreState.current.searchMode}
         filters={exploreState.current.filters}
@@ -927,6 +928,9 @@
           scrollAnchor: null
         })}
         onClearFilters={() => commitNavigation({ filters: [], activeRow: null, scrollAnchor: null })}
+        onFiltersChange={(filters) => commitNavigation({
+          filters, activeRow: null, selectedRow: null, scrollAnchor: null
+        })}
       />
       <span class="kit-sr-only" role="status" aria-label="Sort status" aria-live="polite">{sortNotice}</span>
       {#if exploreState.current.groupingChain.length > 0}

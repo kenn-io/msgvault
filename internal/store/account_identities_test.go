@@ -7,6 +7,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
@@ -619,4 +620,66 @@ func TestRemoveAccountIdentity_NonEmailIsCaseSensitive(t *testing.T) {
 	removed, err := st.RemoveAccountIdentity(f.Source.ID, "alicehandle")
 	require.NoError(t, err, "RemoveAccountIdentity")
 	require.Equal(t, int64(0), removed, "removed on case-mismatch for non-email identifier")
+}
+
+// TestMergeConfirmedAccountIdentitySignalsSkipsUnconfirmedAddresses pins the
+// merge-only write boundary: refresh paths pass candidates they believe are
+// confirmed, and the store must refuse to create ownership for any address
+// whose row is absent.
+func TestMergeConfirmedAccountIdentitySignalsSkipsUnconfirmedAddresses(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := storetest.New(t)
+	st := f.Store
+	require.NoError(st.AddAccountIdentity(f.Source.ID, "Owner@Example.test", "manual"), "confirm identity")
+	beforeIdentityRevision, err := st.IdentityRevision()
+	require.NoError(err)
+	beforeAccountRevision, err := st.AccountIdentityRevision()
+	require.NoError(err)
+
+	outcomes, err := st.MergeConfirmedAccountIdentitySignalsContext(
+		t.Context(), f.Source.ID, []store.IdentityConfirmation{
+			{Identifier: "owner@example.test", Signals: []string{"sent-label"}},
+			{Identifier: "stranger@example.test", Signals: []string{"is_from_me", "sent-label"}},
+		})
+	require.NoError(err)
+	assert.Equal([]store.IdentityConfirmationOutcome{{
+		Identifier: "owner@example.test", Added: false, Signals: []string{"sent-label"},
+	}}, outcomes, "only the already-confirmed identity may merge")
+
+	identities, err := st.ListAccountIdentities(f.Source.ID)
+	require.NoError(err)
+	require.Len(identities, 1, "a merge must never create an ownership row")
+	assert.Equal("Owner@Example.test", identities[0].Address, "existing spelling wins case folding")
+	assert.Equal("manual,sent-label", identities[0].SourceSignal, "confirmed identity still merges signals")
+
+	afterIdentityRevision, err := st.IdentityRevision()
+	require.NoError(err)
+	afterAccountRevision, err := st.AccountIdentityRevision()
+	require.NoError(err)
+	assert.Equal(beforeIdentityRevision, afterIdentityRevision, "signal-only merge must not bump")
+	assert.Equal(beforeAccountRevision, afterAccountRevision, "signal-only merge must not bump")
+}
+
+// TestMergeConfirmedAccountIdentitySignalsDoesNotResurrectRemovedIdentity
+// covers the race the merge-only boundary exists for: a refresh reads the
+// confirmed set, the identity is removed, and the stale write arrives after.
+func TestMergeConfirmedAccountIdentitySignalsDoesNotResurrectRemovedIdentity(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := storetest.New(t)
+	st := f.Store
+	require.NoError(st.AddAccountIdentity(f.Source.ID, "retired@example.test", "manual"), "confirm identity")
+	stale := []store.IdentityConfirmation{{Identifier: "retired@example.test", Signals: []string{"sent-label"}}}
+	removed, err := st.RemoveAccountIdentity(f.Source.ID, "retired@example.test")
+	require.NoError(err, "remove identity after the refresh read its candidate set")
+	require.Equal(int64(1), removed)
+
+	outcomes, err := st.MergeConfirmedAccountIdentitySignalsContext(t.Context(), f.Source.ID, stale)
+	require.NoError(err)
+	assert.Empty(outcomes)
+
+	identities, err := st.ListAccountIdentities(f.Source.ID)
+	require.NoError(err)
+	assert.Empty(identities, "a stale refresh write must not resurrect a removed identity")
 }

@@ -288,6 +288,11 @@ func TestExploreParticipantContextKeepsLegacyPath(t *testing.T) {
 	assert.False(exploreConditionsTouchParticipantLists(ExploreRequest{
 		Context: Context{SourceIDs: []int64{1}, MessageTypes: []string{"email"}},
 	}))
+	assert.False(exploreConditionsTouchParticipantLists(ExploreRequest{
+		Context: Context{Identity: &IdentityPredicate{
+			SourceID: 1, ParticipantIDs: []int64{7}, Direction: IdentityDirectionAny,
+		}},
+	}), "identity predicates use bounded header-row existence checks, not participant lists")
 	assert.True(exploreConditionsTouchParticipantLists(ExploreRequest{
 		Context: Context{ParticipantIDs: []int64{7}},
 	}))

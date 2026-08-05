@@ -21,6 +21,7 @@ import (
 	"go.kenn.io/msgvault/internal/explorecatalog"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/search"
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
 	"go.kenn.io/msgvault/internal/vector/hybrid"
 )
@@ -36,7 +37,7 @@ const (
 )
 
 type ExploreFilter struct {
-	Dimension string   `json:"dimension" enum:"source,participant,domain,message_type,after,before,deletion"`
+	Dimension string   `json:"dimension" enum:"source,participant,domain,message_type,after,before,deletion,identity"`
 	Values    []string `json:"values" minItems:"1"`
 }
 
@@ -49,7 +50,19 @@ const (
 	exploreFilterAfter       = "after"
 	exploreFilterBefore      = "before"
 	exploreFilterDeletion    = "deletion"
+	exploreFilterIdentity    = "identity"
 )
+
+var (
+	errInvalidExploreIdentityFilter     = errors.New("invalid identity filter")
+	errExploreIdentityFilterUnavailable = errors.New("identity filter unavailable")
+)
+
+type exploreIdentityFilter struct {
+	sourceID   int64
+	identifier string
+	direction  query.IdentityDirection
+}
 
 type ExploreSort struct {
 	Field     string `json:"field" enum:"occurred_at"`
@@ -311,6 +324,13 @@ func (s *Server) handleExploreWithScope(w http.ResponseWriter, r *http.Request, 
 			return
 		}
 	}
+	if err := s.hydrateExploreIdentityMatches(r.Context(), result.Rows); err != nil {
+		if s.writeIfContextError(w, err) {
+			return
+		}
+		writeError(w, http.StatusServiceUnavailable, "identity_matches_unavailable", "Message identity matches could not be resolved")
+		return
+	}
 	response := ExploreHTTPResponse{
 		Rows: result.Rows, CacheRevision: result.CacheRevision,
 		SearchProvenance: result.SearchProvenance, CandidateSnapshotID: snapshotID,
@@ -338,20 +358,53 @@ func (s *Server) handleExploreWithScope(w http.ResponseWriter, r *http.Request, 
 	writeJSON(w, http.StatusOK, response)
 }
 
+func (s *Server) hydrateExploreIdentityMatches(ctx context.Context, rows []query.EntryRow) error {
+	messageIDs := make([]int64, 0, len(rows))
+	seen := make(map[int64]struct{}, len(rows))
+	for i := range rows {
+		rows[i].MatchedSenderIdentities = make([]string, 0)
+		rows[i].MatchedRecipientIdentities = make([]string, 0)
+		if rows[i].AnchorMessageID == nil || *rows[i].AnchorMessageID < 1 {
+			continue
+		}
+		messageID := *rows[i].AnchorMessageID
+		if _, exists := seen[messageID]; exists {
+			continue
+		}
+		seen[messageID] = struct{}{}
+		messageIDs = append(messageIDs, messageID)
+	}
+	if len(messageIDs) == 0 {
+		return nil
+	}
+	matcher, ok := s.store.(MessageIdentityStore)
+	if !ok {
+		return nil
+	}
+	matches, err := matcher.MatchMessageIdentitiesContext(ctx, messageIDs)
+	if err != nil {
+		return err
+	}
+	for i := range rows {
+		if rows[i].AnchorMessageID == nil {
+			continue
+		}
+		match, found := matches[*rows[i].AnchorMessageID]
+		if !found {
+			continue
+		}
+		rows[i].MatchedSenderIdentities = append(rows[i].MatchedSenderIdentities, match.Sender...)
+		rows[i].MatchedRecipientIdentities = append(rows[i].MatchedRecipientIdentities, match.Recipients...)
+	}
+	return nil
+}
+
 func (s *Server) handleExploreGroups(w http.ResponseWriter, r *http.Request) {
 	var request ExploreGroupsHTTPRequest
 	if !decodeExploreJSON(w, r, &request) {
 		return
 	}
-	for i := range request.Filters {
-		request.Filters[i].Dimension = strings.ToLower(strings.TrimSpace(request.Filters[i].Dimension))
-		for j := range request.Filters[i].Values {
-			request.Filters[i].Values[j] = strings.TrimSpace(request.Filters[i].Values[j])
-		}
-		slices.Sort(request.Filters[i].Values)
-		request.Filters[i].Values = slices.Compact(request.Filters[i].Values)
-	}
-	slices.SortFunc(request.Filters, func(a, b ExploreFilter) int { return strings.Compare(a.Dimension, b.Dimension) })
+	canonicalizeExploreFilters(request.Filters)
 	request.Query = strings.TrimSpace(request.Query)
 	request.SearchMode = strings.ToLower(strings.TrimSpace(request.SearchMode))
 	request.Presentation = strings.ToLower(strings.TrimSpace(request.Presentation))
@@ -378,7 +431,11 @@ func (s *Server) handleExploreGroups(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, err := exploreContext(request.Filters)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_filter", err.Error())
+		s.writeExploreFilterError(w, err, "invalid_filter")
+		return
+	}
+	if err := s.resolveExploreIdentityContext(r.Context(), request.Filters, &ctx); err != nil {
+		s.writeExploreFilterError(w, err, "invalid_filter")
 		return
 	}
 	searchDeletionScope := applySemanticDeletionScope(request.SearchMode, &ctx)
@@ -470,9 +527,9 @@ func (s *Server) handleExplorePreflight(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, "invalid_selection", "selection mode must be explicit or all_matching")
 		return
 	}
-	predicate, err := prepareExplorePredicate(selection.Predicate)
+	predicate, err := s.prepareResolvedExplorePredicate(r.Context(), selection.Predicate)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_selection_predicate", err.Error())
+		s.writeExploreFilterError(w, err, "invalid_selection_predicate")
 		return
 	}
 	if selection.CacheRevision == "" {
@@ -597,9 +654,9 @@ func (s *Server) handleExploreMatchCounts(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusBadRequest, "invalid_row_keys", fmt.Sprintf("row_keys must contain between 1 and %d entries", exploreMaxLimit))
 		return
 	}
-	predicate, err := prepareExplorePredicate(request.Predicate)
+	predicate, err := s.prepareResolvedExplorePredicate(r.Context(), request.Predicate)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_match_predicate", err.Error())
+		s.writeExploreFilterError(w, err, "invalid_match_predicate")
 		return
 	}
 	searchSpec, _, ok := s.resolveExploreSearch(r.Context(), w, predicate.request)
@@ -708,7 +765,11 @@ func (s *Server) prepareExploreRequest(w http.ResponseWriter, r *http.Request, s
 	}
 	ctx, err := exploreContext(request.Filters)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_filter", err.Error())
+		s.writeExploreFilterError(w, err, "invalid_filter")
+		return explorePrepared{}, false
+	}
+	if err := s.resolveExploreIdentityContext(r.Context(), request.Filters, &ctx); err != nil {
+		s.writeExploreFilterError(w, err, "identity_filter_unavailable")
 		return explorePrepared{}, false
 	}
 	searchDeletionScope := applySemanticDeletionScope(request.SearchMode, &ctx)
@@ -731,6 +792,70 @@ func (s *Server) prepareExploreRequest(w http.ResponseWriter, r *http.Request, s
 			Page: query.PageSpec{Limit: request.Limit, Offset: offset},
 		},
 	}, true
+}
+
+func (s *Server) resolveExploreIdentityContext(
+	ctx context.Context,
+	filters []ExploreFilter,
+	result *query.Context,
+) error {
+	if result.Identity == nil {
+		return nil
+	}
+	identity, err := parseExploreIdentityFilter(filters)
+	if err != nil {
+		return err
+	}
+	resolver, ok := s.store.(MessageIdentityStore)
+	if !ok {
+		return errExploreIdentityFilterUnavailable
+	}
+	resolved, err := resolver.ResolveAccountIdentityContext(ctx, identity.sourceID, identity.identifier)
+	if errors.Is(err, store.ErrAccountIdentityNotFound) {
+		return fmt.Errorf("%w: identity is not confirmed for the selected source", errInvalidExploreIdentityFilter)
+	}
+	if err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return err
+		}
+		return errExploreIdentityFilterUnavailable
+	}
+	if resolved.SourceID != identity.sourceID {
+		return fmt.Errorf("%w: identity does not match the selected source", errInvalidExploreIdentityFilter)
+	}
+	// An email-shaped identity carries its stored address into the predicate
+	// for envelope-first matching, and stays matchable even with zero
+	// resolved participants: the address may survive only in
+	// message_recipients.email_address snapshots after a participant merge.
+	// Identifier types without an envelope surface keep the match-none
+	// short-circuit when no participant carries them.
+	emailIdentifier := ""
+	if resolved.IdentifierIsEmail {
+		emailIdentifier = resolved.Identifier
+	}
+	result.Identity = &query.IdentityPredicate{
+		SourceID:        resolved.SourceID,
+		ParticipantIDs:  slices.Clone(resolved.ParticipantIDs),
+		EmailIdentifier: emailIdentifier,
+		MatchNone:       len(resolved.ParticipantIDs) == 0 && !resolved.IdentifierIsEmail,
+		Direction:       identity.direction,
+	}
+	return nil
+}
+
+func (s *Server) writeExploreFilterError(w http.ResponseWriter, err error, fallbackCode string) {
+	if errors.Is(err, errInvalidExploreIdentityFilter) {
+		writeError(w, http.StatusBadRequest, "invalid_identity_filter", "identity filter is malformed, unconfirmed, or does not match the selected source")
+		return
+	}
+	if errors.Is(err, errExploreIdentityFilterUnavailable) {
+		writeError(w, http.StatusServiceUnavailable, "identity_filter_unavailable", "The identity filter could not be resolved")
+		return
+	}
+	if s.writeIfContextError(w, err) {
+		return
+	}
+	writeError(w, http.StatusBadRequest, fallbackCode, err.Error())
 }
 
 func canonicalScopedExploreHash(request ExploreHTTPRequest, scope *ExploreFilter) string {
@@ -841,6 +966,10 @@ func sameDomainSet(a, b []string) bool {
 // dimension is single-valued per request and rejects a repeat.
 func exploreContext(filters []ExploreFilter) (query.Context, error) {
 	var result query.Context
+	identity, err := parseExploreIdentityFilter(filters)
+	if err != nil {
+		return result, err
+	}
 	seen := map[string]struct{}{}
 	for _, filter := range filters {
 		conjunctive := filter.Dimension == exploreFilterParticipant || filter.Dimension == exploreFilterDomain
@@ -908,11 +1037,72 @@ func exploreContext(filters []ExploreFilter) (query.Context, error) {
 			if result.Deletion != query.DeletionActive && result.Deletion != query.DeletionDeleted && result.Deletion != query.DeletionAny {
 				return result, fmt.Errorf("filter dimension %q accepts active or deleted", exploreFilterDeletion)
 			}
+		case exploreFilterIdentity:
+			result.Identity = &query.IdentityPredicate{
+				SourceID:  identity.sourceID,
+				Direction: identity.direction,
+			}
 		default:
 			return result, fmt.Errorf("unknown filter dimension %q", filter.Dimension)
 		}
 	}
 	return result, nil
+}
+
+func parseExploreIdentityFilter(filters []ExploreFilter) (exploreIdentityFilter, error) {
+	var (
+		identityFilters []ExploreFilter
+		sourceFilters   []ExploreFilter
+	)
+	for _, filter := range filters {
+		switch filter.Dimension {
+		case exploreFilterIdentity:
+			identityFilters = append(identityFilters, filter)
+		case exploreFilterSource:
+			sourceFilters = append(sourceFilters, filter)
+		}
+	}
+	if len(identityFilters) == 0 {
+		return exploreIdentityFilter{}, nil
+	}
+	invalid := func(message string) (exploreIdentityFilter, error) {
+		return exploreIdentityFilter{}, fmt.Errorf("%w: %s", errInvalidExploreIdentityFilter, message)
+	}
+	if len(identityFilters) != 1 {
+		return invalid("exactly one identity filter is required")
+	}
+	if len(sourceFilters) != 1 || len(sourceFilters[0].Values) != 1 {
+		return invalid("identity filter requires exactly one matching source filter")
+	}
+	identityValues := identityFilters[0].Values
+	if len(identityValues) != 3 {
+		return invalid("identity filter requires source ID, identifier, and direction")
+	}
+	identitySourceID, err := strconv.ParseInt(identityValues[0], 10, 64)
+	if err != nil || identitySourceID < 1 {
+		return invalid("identity filter requires a positive source ID")
+	}
+	selectedSourceID, err := strconv.ParseInt(sourceFilters[0].Values[0], 10, 64)
+	if err != nil || selectedSourceID < 1 || selectedSourceID != identitySourceID {
+		return invalid("identity filter requires exactly one matching source filter")
+	}
+	if identityValues[1] == "" {
+		return invalid("identity filter requires a non-empty identifier")
+	}
+	direction := query.IdentityDirection(identityValues[2])
+	if direction == "" {
+		direction = query.IdentityDirectionAny
+	}
+	if direction != query.IdentityDirectionAny &&
+		direction != query.IdentityDirectionSender &&
+		direction != query.IdentityDirectionRecipient {
+		return invalid("identity filter direction must be any, sender, or recipient")
+	}
+	return exploreIdentityFilter{
+		sourceID:   identitySourceID,
+		identifier: identityValues[1],
+		direction:  direction,
+	}, nil
 }
 
 func validateExploreSearchPair(queryText, mode string) error {
@@ -926,15 +1116,7 @@ func validateExploreSearchPair(queryText, mode string) error {
 }
 
 func canonicalizeExploreRequest(request *ExploreHTTPRequest) {
-	for i := range request.Filters {
-		request.Filters[i].Dimension = strings.ToLower(strings.TrimSpace(request.Filters[i].Dimension))
-		for j := range request.Filters[i].Values {
-			request.Filters[i].Values[j] = strings.TrimSpace(request.Filters[i].Values[j])
-		}
-		slices.Sort(request.Filters[i].Values)
-		request.Filters[i].Values = slices.Compact(request.Filters[i].Values)
-	}
-	slices.SortFunc(request.Filters, func(a, b ExploreFilter) int { return strings.Compare(a.Dimension, b.Dimension) })
+	canonicalizeExploreFilters(request.Filters)
 	request.Query = strings.TrimSpace(request.Query)
 	request.SearchMode = strings.ToLower(strings.TrimSpace(request.SearchMode))
 	request.Presentation = strings.ToLower(strings.TrimSpace(request.Presentation))
@@ -945,6 +1127,28 @@ func canonicalizeExploreRequest(request *ExploreHTTPRequest) {
 		request.Sort[i].Field = strings.ToLower(strings.TrimSpace(request.Sort[i].Field))
 		request.Sort[i].Direction = strings.ToLower(strings.TrimSpace(request.Sort[i].Direction))
 	}
+}
+
+func canonicalizeExploreFilters(filters []ExploreFilter) {
+	for i := range filters {
+		filters[i].Dimension = strings.ToLower(strings.TrimSpace(filters[i].Dimension))
+		for j := range filters[i].Values {
+			filters[i].Values[j] = strings.TrimSpace(filters[i].Values[j])
+		}
+		if filters[i].Dimension == exploreFilterIdentity {
+			if len(filters[i].Values) == 3 {
+				direction := strings.ToLower(filters[i].Values[2])
+				if direction == "" {
+					direction = string(query.IdentityDirectionAny)
+				}
+				filters[i].Values[2] = direction
+			}
+			continue
+		}
+		slices.Sort(filters[i].Values)
+		filters[i].Values = slices.Compact(filters[i].Values)
+	}
+	slices.SortFunc(filters, func(a, b ExploreFilter) int { return strings.Compare(a.Dimension, b.Dimension) })
 }
 
 func canonicalExploreHash(request ExploreHTTPRequest) string {
@@ -997,6 +1201,12 @@ func (s *Server) parseExploreCursor(w http.ResponseWriter, encoded, requestHash 
 }
 
 func prepareExplorePredicate(request ExploreHTTPRequest) (explorePrepared, error) {
+	request.Filters = slices.Clone(request.Filters)
+	for i := range request.Filters {
+		request.Filters[i].Values = slices.Clone(request.Filters[i].Values)
+	}
+	request.Grouping = slices.Clone(request.Grouping)
+	request.Sort = slices.Clone(request.Sort)
 	canonicalizeExploreRequest(&request)
 	if err := validateExploreSearchPair(request.Query, request.SearchMode); err != nil {
 		return explorePrepared{}, err
@@ -1031,6 +1241,20 @@ func prepareExplorePredicate(request ExploreHTTPRequest) (explorePrepared, error
 		searchDeletionScope: searchDeletionScope,
 		query:               query.ExploreRequest{Context: ctx},
 	}, nil
+}
+
+func (s *Server) prepareResolvedExplorePredicate(
+	ctx context.Context,
+	request ExploreHTTPRequest,
+) (explorePrepared, error) {
+	prepared, err := prepareExplorePredicate(request)
+	if err != nil {
+		return explorePrepared{}, err
+	}
+	if err := s.resolveExploreIdentityContext(ctx, prepared.request.Filters, &prepared.query.Context); err != nil {
+		return explorePrepared{}, err
+	}
+	return prepared, nil
 }
 
 func (s *Server) resolveExploreSearch(ctx context.Context, w http.ResponseWriter, request ExploreHTTPRequest) (query.SearchSpec, string, bool) {

@@ -86,7 +86,8 @@ func setupTestSQLite(t *testing.T) string {
 			message_id INTEGER NOT NULL REFERENCES messages(id),
 			participant_id INTEGER NOT NULL REFERENCES participants(id),
 			recipient_type TEXT NOT NULL,
-			display_name TEXT
+			display_name TEXT,
+			email_address TEXT
 		);
 
 		CREATE TABLE labels (
@@ -201,11 +202,11 @@ func setupTestSQLite(t *testing.T) string {
 			(5, 1, 'msg5', 104, 'Final', 'Preview 5', '2024-03-01 16:00:00', 500, 0);
 
 		-- Message recipients
-		-- msg1: from alice, to bob+carol
-		INSERT INTO message_recipients (message_id, participant_id, recipient_type, display_name) VALUES
-			(1, 1, 'from', 'Alice Smith'),
-			(1, 2, 'to', 'Bob Jones'),
-			(1, 3, 'to', 'Carol White');
+		-- msg1: from alice (with envelope snapshot), to bob+carol
+		INSERT INTO message_recipients (message_id, participant_id, recipient_type, display_name, email_address) VALUES
+			(1, 1, 'from', 'Alice Smith', 'alice-envelope@example.com'),
+			(1, 2, 'to', 'Bob Jones', NULL),
+			(1, 3, 'to', 'Carol White', NULL);
 		-- msg2: from alice, to bob, cc dan
 		INSERT INTO message_recipients (message_id, participant_id, recipient_type, display_name) VALUES
 			(2, 1, 'from', 'Alice Smith'),
@@ -908,6 +909,43 @@ func TestBuildCache_PublishesConversationParticipants(t *testing.T) {
 	).Scan(&count)
 	require.NoError(err)
 	assert.Equal(t, int64(9), count)
+}
+
+// TestBuildCache_ExportsRecipientEnvelopeAddress verifies the envelope
+// address snapshot reaches the message_recipients Parquet dataset (cache
+// schema v17): identity filters compare against it, so an export that drops
+// the column would silently degrade every filter to participant matching.
+func TestBuildCache_ExportsRecipientEnvelopeAddress(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	tmpDir := setupTestSQLite(t)
+	dbPath := filepath.Join(tmpDir, "test.db")
+	analyticsDir := filepath.Join(tmpDir, "analytics")
+
+	_, err := buildCache(dbPath, analyticsDir, false)
+	require.NoError(err)
+
+	duckdb, err := sql.Open("duckdb", "")
+	require.NoError(err)
+	defer func() { _ = duckdb.Close() }()
+	glob := filepath.Join(analyticsDir, "message_recipients", "*.parquet")
+
+	var envelope string
+	err = duckdb.QueryRow(
+		`SELECT email_address FROM read_parquet(?)
+		 WHERE message_id = 1 AND recipient_type = 'from'`, glob,
+	).Scan(&envelope)
+	require.NoError(err, "exported message_recipients must carry email_address")
+	assert.Equal("alice-envelope@example.com", envelope)
+
+	var withoutSnapshot int64
+	err = duckdb.QueryRow(
+		`SELECT COUNT(*) FROM read_parquet(?)
+		 WHERE COALESCE(email_address, '') = ''`, glob,
+	).Scan(&withoutSnapshot)
+	require.NoError(err)
+	assert.Equal(int64(11), withoutSnapshot,
+		"rows without a snapshot export as empty, keeping the participant fallback")
 }
 
 // TestBuildCache_DataIntegrity verifies the exported Parquet data matches SQLite.
@@ -2362,7 +2400,8 @@ func setupTestSQLiteEmpty(t *testing.T) string {
 			message_id INTEGER NOT NULL REFERENCES messages(id),
 			participant_id INTEGER NOT NULL REFERENCES participants(id),
 			recipient_type TEXT NOT NULL,
-			display_name TEXT
+			display_name TEXT,
+			email_address TEXT
 		);
 		CREATE TABLE labels (
 			id INTEGER PRIMARY KEY,
@@ -3189,7 +3228,7 @@ func TestCacheNeedsBuild_IgnoresAlreadyProcessedUpdatedSyncRun(t *testing.T) {
 // schema version other than the current one now forces a full rebuild.
 func TestCacheNeedsBuild_SchemaVersionMismatch(t *testing.T) {
 	require := require.New(t)
-	require.Equal(16, cacheSchemaVersion, "relationship activity has_attachments requires cache v16")
+	require.Equal(17, cacheSchemaVersion, "message_recipients envelope address requires cache v17")
 	tmpDir := setupTestSQLiteEmpty(t)
 
 	dbPath := filepath.Join(tmpDir, "test.db")
@@ -3224,7 +3263,7 @@ func TestCacheNeedsBuild_SchemaVersionMismatch(t *testing.T) {
 	require.False(result.Skipped, "schema mismatch must execute a full rebuild")
 	upgraded, err := query.ReadCacheSyncState(analyticsDir)
 	require.NoError(err, "read upgraded cache state")
-	require.Equal(16, upgraded.SchemaVersion)
+	require.Equal(17, upgraded.SchemaVersion)
 	require.NoFileExists(filepath.Join(analyticsDir, tableParticipantIdentifiers, "data.parquet"),
 		"full rebuild must replace rather than extend the v11 identifier dataset")
 	identifierParquet := filepath.Join(analyticsDir, tableParticipantIdentifiers, "participant_identifiers.parquet")

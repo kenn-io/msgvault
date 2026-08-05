@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"runtime/debug"
+	"sort"
 	"strconv"
 	"time"
 
@@ -64,10 +65,22 @@ func (s *Syncer) Incremental(ctx context.Context, source *store.Source) (summary
 
 	s.logger.Info("incremental sync", "email", source.Identifier, "start_history", startHistoryID, "current_history", profile.HistoryID)
 
-	// If history IDs match, nothing to do
+	// Settle any discovery debt a previous run parked, before the up-to-date
+	// check can return. A wound-down archive syncs to a no-op indefinitely, so a
+	// drain behind that return would never run again for the account that needs
+	// it most. Unlike the post-completion hook below, this re-derives evidence
+	// from local messages and costs one key lookup when there is no debt.
+	s.drainIdentityDiscoveryBacklog(ctx, source.ID)
+
+	// If history IDs match, nothing to do locally — but provider inventory can
+	// change while a mailbox is idle, so the post-completion hook still runs,
+	// flagged as a no-op so it only reaches for the provider when a refresh is
+	// owed (never succeeded, previously failed, or stale).
 	if startHistoryID >= profile.HistoryID {
 		s.logger.Info("already up to date")
-		_ = s.store.CompleteSync(syncID, strconv.FormatUint(profile.HistoryID, 10))
+		if s.completeSyncWithoutHook(syncID, strconv.FormatUint(profile.HistoryID, 10)) {
+			s.runSuccessfulSyncHook(ctx, source, false)
+		}
 		summary.EndTime = time.Now()
 		summary.Duration = summary.EndTime.Sub(summary.StartTime)
 		summary.FinalHistoryID = profile.HistoryID
@@ -84,6 +97,7 @@ func (s *Syncer) Incremental(ctx context.Context, source *store.Source) (summary
 	// Process history
 	checkpoint := &store.Checkpoint{}
 	pageToken := ""
+	var discoveryHealth pageDiscoveryHealth
 
 	for {
 		historyResp, err := s.client.ListHistory(ctx, startHistoryID, pageToken)
@@ -127,11 +141,14 @@ func (s *Syncer) Incremental(ctx context.Context, source *store.Source) (summary
 		newMsgThreads := make(map[string]string) // deduplicates by ID
 		deletedSet := make(map[string]bool)
 		updatedExisting := make(map[string]struct{})
+		identityDiscoverySet := make(map[string]struct{})
 
 		for _, record := range historyResp.History {
 			for _, msg := range record.MessagesAdded {
 				if _, exists := existingMap[msg.Message.ID]; !exists {
 					newMsgThreads[msg.Message.ID] = msg.Message.ThreadID
+				} else {
+					identityDiscoverySet[msg.Message.ID] = struct{}{}
 				}
 			}
 			for _, msg := range record.MessagesDeleted {
@@ -139,7 +156,7 @@ func (s *Syncer) Incremental(ctx context.Context, source *store.Source) (summary
 			}
 		}
 		for _, record := range historyResp.History {
-			s.processLabelChanges(ctx, syncID, source.ID, record, labelMap, existingMap, newMsgThreads, updatedExisting, checkpoint, summary)
+			s.processLabelChanges(ctx, syncID, source.ID, record, labelMap, existingMap, newMsgThreads, updatedExisting, identityDiscoverySet, checkpoint, summary)
 		}
 		checkpoint.MessagesUpdated += int64(len(updatedExisting))
 		checkpoint.MessagesProcessed += int64(len(newMsgThreads) + len(deletedSet) + len(updatedExisting))
@@ -187,6 +204,7 @@ func (s *Syncer) Incremental(ctx context.Context, source *store.Source) (summary
 					}
 					checkpoint.MessagesAdded++
 					summary.BytesDownloaded += int64(len(raw.Raw))
+					identityDiscoverySet[newMsgIDs[i]] = struct{}{}
 				}
 
 				// Newly-persisted messages get embed_gen = NULL by column
@@ -206,6 +224,18 @@ func (s *Syncer) Incremental(ctx context.Context, source *store.Source) (summary
 			}
 		}
 
+		identityDiscoveryIDs := make([]string, 0, len(identityDiscoverySet))
+		for id := range identityDiscoverySet {
+			identityDiscoveryIDs = append(identityDiscoveryIDs, id)
+		}
+		sort.Strings(identityDiscoveryIDs)
+		discoveryHealth.observe(s.runPageIdentityDiscovery(ctx, source.ID, identityDiscoveryIDs))
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			err := fmt.Errorf("sync canceled during identity discovery: %w", ctxErr)
+			s.failSyncUnlessCanceled(syncID, err)
+			return nil, err
+		}
+
 		// Report progress
 		s.progress.OnProgress(checkpoint.MessagesProcessed, checkpoint.MessagesAdded, 0)
 
@@ -222,6 +252,12 @@ func (s *Syncer) Incremental(ctx context.Context, source *store.Source) (summary
 		}
 	}
 
+	// Debt parked by an earlier page of this run is settled now, provided the
+	// run showed discovery recovering.
+	if discoveryHealth.shouldDrainAtCompletion() {
+		s.drainIdentityDiscoveryBacklog(ctx, source.ID)
+	}
+
 	// Always advance the cursor so a single permanently-failing
 	// message doesn't block all future incremental syncs.
 	// Failed messages can be recovered via full sync.
@@ -235,10 +271,8 @@ func (s *Syncer) Incremental(ctx context.Context, source *store.Source) (summary
 		s.logger.Warn("failed to update sync cursor", "error", err)
 	}
 
-	// Mark sync complete
-	if err := s.store.CompleteSync(syncID, historyIDStr); err != nil {
-		s.logger.Warn("failed to complete sync", "error", err)
-	}
+	// Mark sync complete before running best-effort provider maintenance.
+	s.completeSyncAndRunHook(ctx, syncID, historyIDStr, source)
 
 	// Build summary
 	summary.EndTime = time.Now()
@@ -255,27 +289,33 @@ func (s *Syncer) Incremental(ctx context.Context, source *store.Source) (summary
 
 // processLabelChanges handles label additions and removals for messages.
 // existingMap maps source_message_id -> internal message_id for known messages.
-func (s *Syncer) processLabelChanges(ctx context.Context, syncID, sourceID int64, record gmail.HistoryRecord, labelMap map[string]int64, existingMap map[string]int64, newMsgThreads map[string]string, updatedExisting map[string]struct{}, checkpoint *store.Checkpoint, summary *gmail.SyncSummary) {
+func (s *Syncer) processLabelChanges(ctx context.Context, syncID, sourceID int64, record gmail.HistoryRecord, labelMap map[string]int64, existingMap map[string]int64, newMsgThreads map[string]string, updatedExisting, identityDiscoverySet map[string]struct{}, checkpoint *store.Checkpoint, summary *gmail.SyncSummary) {
 	for _, item := range record.LabelsAdded {
 		if _, exists := existingMap[item.Message.ID]; !exists {
 			if _, pending := newMsgThreads[item.Message.ID]; pending {
 				continue
 			}
 		}
-		updated, err := s.handleLabelChange(ctx, syncID, sourceID, item.Message.ID, item.Message.ThreadID, item.LabelIDs, labelMap, true, existingMap, checkpoint, summary)
+		updated, discoverable, err := s.handleLabelChange(ctx, syncID, sourceID, item.Message.ID, item.Message.ThreadID, item.LabelIDs, labelMap, true, existingMap, checkpoint, summary)
 		if err != nil {
 			s.logLabelChangeError("add", item.Message.ID, err)
 			continue
+		}
+		if discoverable {
+			identityDiscoverySet[item.Message.ID] = struct{}{}
 		}
 		if updated {
 			updatedExisting[item.Message.ID] = struct{}{}
 		}
 	}
 	for _, item := range record.LabelsRemoved {
-		updated, err := s.handleLabelChange(ctx, syncID, sourceID, item.Message.ID, item.Message.ThreadID, item.LabelIDs, labelMap, false, existingMap, checkpoint, summary)
+		updated, discoverable, err := s.handleLabelChange(ctx, syncID, sourceID, item.Message.ID, item.Message.ThreadID, item.LabelIDs, labelMap, false, existingMap, checkpoint, summary)
 		if err != nil {
 			s.logLabelChangeError("remove", item.Message.ID, err)
 			continue
+		}
+		if discoverable {
+			identityDiscoverySet[item.Message.ID] = struct{}{}
 		}
 		if updated {
 			updatedExisting[item.Message.ID] = struct{}{}
@@ -286,7 +326,7 @@ func (s *Syncer) processLabelChanges(ctx context.Context, syncID, sourceID int64
 // handleLabelChange processes a label addition or removal.
 // For existing messages, applies the label diff directly without any API calls.
 // For unknown messages with labels being added, fetches and ingests the message.
-func (s *Syncer) handleLabelChange(ctx context.Context, syncID, sourceID int64, messageID, threadID string, gmailLabelIDs []string, labelMap map[string]int64, isAdd bool, existingMap map[string]int64, checkpoint *store.Checkpoint, summary *gmail.SyncSummary) (bool, error) {
+func (s *Syncer) handleLabelChange(ctx context.Context, syncID, sourceID int64, messageID, threadID string, gmailLabelIDs []string, labelMap map[string]int64, isAdd bool, existingMap map[string]int64, checkpoint *store.Checkpoint, summary *gmail.SyncSummary) (bool, bool, error) {
 	internalID, exists := existingMap[messageID]
 
 	if !exists {
@@ -297,18 +337,18 @@ func (s *Syncer) handleLabelChange(ctx context.Context, syncID, sourceID int64, 
 			if err != nil {
 				if isGmailNotFound(err) {
 					s.recordSyncItem(syncID, messageID, syncItemPhaseFetch, store.SyncRunItemStatusSkipped, syncItemKindGmailNotFound, err)
-					return false, err
+					return false, false, err
 				}
 				s.recordSyncItem(syncID, messageID, syncItemPhaseFetch, store.SyncRunItemStatusError, syncItemKindFetchError, err)
 				checkpoint.ErrorsCount++
-				return false, err
+				return false, false, err
 			}
 			if _, err := s.ingestMessage(
 				ctx, sourceID, raw, threadID, labelMap,
 			); err != nil {
 				s.recordSyncItem(syncID, messageID, syncItemPhaseIngest, store.SyncRunItemStatusError, syncItemKindIngestError, err)
 				checkpoint.ErrorsCount++
-				return false, err
+				return false, false, err
 			}
 			// The new message gets embed_gen = NULL by column default, so
 			// the scan-and-fill embed worker picks it up automatically — no
@@ -317,10 +357,10 @@ func (s *Syncer) handleLabelChange(ctx context.Context, syncID, sourceID int64, 
 			if raw != nil {
 				summary.BytesDownloaded += int64(len(raw.Raw))
 			}
-			return false, nil
+			return false, true, nil
 		}
 		// Removing labels from non-existent message is a no-op
-		return false, nil
+		return false, false, nil
 	}
 
 	// Convert Gmail label IDs to internal label IDs
@@ -333,9 +373,15 @@ func (s *Syncer) handleLabelChange(ctx context.Context, syncID, sourceID int64, 
 
 	// Apply label diff directly — no API call needed
 	if isAdd {
-		return true, s.store.AddMessageLabels(internalID, labelIDs)
+		if err := s.store.AddMessageLabels(internalID, labelIDs); err != nil {
+			return false, false, err
+		}
+		return true, true, nil
 	}
-	return true, s.store.RemoveMessageLabels(internalID, labelIDs)
+	if err := s.store.RemoveMessageLabels(internalID, labelIDs); err != nil {
+		return false, false, err
+	}
+	return true, true, nil
 }
 
 // logLabelChangeError logs label change errors, downgrading "not found"

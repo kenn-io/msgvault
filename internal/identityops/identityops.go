@@ -1,6 +1,7 @@
 package identityops
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
@@ -20,15 +21,38 @@ const (
 
 type Store interface {
 	collectionops.AccountResolverStore
+	GetSourceByID(id int64) (*store.Source, error)
 	ListAccountIdentities(sourceID int64) ([]store.AccountIdentity, error)
 	AddAccountIdentity(sourceID int64, address, signal string) error
 	RemoveAccountIdentity(sourceID int64, address string) (int64, error)
 }
 
+type SourceSelector struct {
+	Account     string `json:"account,omitempty"`
+	SourceID    int64  `json:"source_id,omitempty"`
+	sourceIDSet bool
+}
+
 type AddRequest struct {
-	Account    string `json:"account"`
+	SourceSelector
+
 	Identifier string `json:"identifier"`
 	Signal     string `json:"signal"`
+}
+
+func (r *AddRequest) UnmarshalJSON(data []byte) error {
+	type addRequest AddRequest
+	var decoded addRequest
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	set, err := jsonFieldPresent(data, "source_id")
+	if err != nil {
+		return err
+	}
+	decoded.sourceIDSet = set
+	*r = AddRequest(decoded)
+	return nil
 }
 
 type AddResult struct {
@@ -45,8 +69,33 @@ type AddResult struct {
 }
 
 type RemoveRequest struct {
-	Account    string `json:"account"`
+	SourceSelector
+
 	Identifier string `json:"identifier"`
+}
+
+func (r *RemoveRequest) UnmarshalJSON(data []byte) error {
+	type removeRequest RemoveRequest
+	var decoded removeRequest
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	set, err := jsonFieldPresent(data, "source_id")
+	if err != nil {
+		return err
+	}
+	decoded.sourceIDSet = set
+	*r = RemoveRequest(decoded)
+	return nil
+}
+
+func jsonFieldPresent(data []byte, field string) (bool, error) {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return false, err
+	}
+	_, ok := fields[field]
+	return ok, nil
 }
 
 type RemoveResult struct {
@@ -71,7 +120,7 @@ func Add(st Store, req AddRequest) (AddResult, error) {
 		return AddResult{}, opserr.Invalid(fmt.Errorf("signal names cannot contain commas: %q", req.Signal))
 	}
 
-	src, err := resolveAccountSource(st, req.Account)
+	src, err := ResolveSource(st, req.SourceSelector)
 	if err != nil {
 		return AddResult{}, err
 	}
@@ -114,7 +163,7 @@ func Remove(st Store, req RemoveRequest) (RemoveResult, error) {
 		return RemoveResult{}, opserr.Invalid(errors.New("identifier must not be empty"))
 	}
 
-	src, err := resolveAccountSource(st, req.Account)
+	src, err := ResolveSource(st, req.SourceSelector)
 	if err != nil {
 		return RemoveResult{}, err
 	}
@@ -156,11 +205,30 @@ func Remove(st Store, req RemoveRequest) (RemoveResult, error) {
 	return result, nil
 }
 
-func resolveAccountSource(st Store, input string) (*store.Source, error) {
-	if input == "" {
-		return nil, opserr.Invalid(errors.New("account is required"))
+func ResolveSource(st Store, selector SourceSelector) (*store.Source, error) {
+	account := strings.TrimSpace(selector.Account)
+	switch {
+	case selector.SourceID < 0 || (selector.sourceIDSet && selector.SourceID == 0):
+		return nil, opserr.Invalid(errors.New("source ID must be positive"))
+	case selector.SourceID > 0 && account != "":
+		return nil, opserr.Invalid(errors.New("account and source ID are mutually exclusive"))
+	case selector.SourceID > 0:
+		src, err := st.GetSourceByID(selector.SourceID)
+		if errors.Is(err, store.ErrSourceNotFound) {
+			return nil, opserr.NotFound(err)
+		}
+		if err != nil {
+			return nil, opserr.Internal(err)
+		}
+		return src, nil
+	case account == "":
+		return nil, opserr.Invalid(errors.New("account or source ID is required"))
+	default:
+		return resolveAccountSource(st, account)
 	}
+}
 
+func resolveAccountSource(st Store, input string) (*store.Source, error) {
 	scope, err := collectionops.ResolveAccount(st, input)
 	if err != nil {
 		return nil, err

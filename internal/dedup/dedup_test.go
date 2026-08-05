@@ -662,3 +662,63 @@ func TestEngine_PerSourceIdentity(t *testing.T) {
 		"survivor (%s), want source A, matched identity",
 		survivor.SourceIdentifier)
 }
+
+func TestEngine_AliasOnlyAfterDiscoveryConfirmation(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := storetest.New(t)
+	st := f.Store
+	source := f.Source
+
+	const alias = "masked-shop@example.test"
+	const rfc822ID = "rfc-alias-confirmation"
+	aliasMessageID := addMessageWithFrom(
+		t,
+		st,
+		source,
+		"alias-copy",
+		rfc822ID,
+		alias,
+	)
+	_ = addMessageWithFrom(
+		t,
+		st,
+		source,
+		"other-copy",
+		rfc822ID,
+		"other-sender@example.test",
+	)
+
+	plan := func(identityAddresses map[int64]map[string]struct{}) dedup.DuplicateMessage {
+		t.Helper()
+		engine := dedup.NewEngine(st, dedup.Config{
+			AccountSourceIDs:          []int64{source.ID},
+			Account:                   source.Identifier,
+			IdentityAddressesBySource: identityAddresses,
+		}, nil)
+		report, err := engine.Scan(context.Background())
+		require.NoError(err, "Scan")
+		require.Len(report.Groups, 1, "duplicate groups")
+		for _, message := range report.Groups[0].Messages {
+			if message.ID == aliasMessageID {
+				return message
+			}
+		}
+		require.Fail("alias message missing from duplicate plan")
+		return dedup.DuplicateMessage{}
+	}
+
+	before := plan(nil)
+	assert.False(before.MatchedIdentity, "unconfirmed alias must not count as sender identity")
+	require.NoError(st.AddAccountIdentity(source.ID, "MASKED-SHOP@EXAMPLE.TEST", "sent-folder"),
+		"confirm discovered alias")
+	confirmed, err := st.ListAccountIdentities(source.ID)
+	require.NoError(err, "ListAccountIdentities")
+	identityAddresses := map[int64]map[string]struct{}{source.ID: {}}
+	for _, identity := range confirmed {
+		identityAddresses[source.ID][store.NormalizeIdentifierForCompare(identity.Address)] = struct{}{}
+	}
+
+	after := plan(identityAddresses)
+	assert.True(after.MatchedIdentity, "confirmed alias counts as sender identity")
+}

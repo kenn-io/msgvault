@@ -223,24 +223,11 @@ func (s *Store) addAccountIdentityOnce(
 		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
 			return err
 		}
-
-		whereAddr := match.WhereClause("address")
-		var existing string
-		selectSQL := `SELECT source_signal FROM account_identities
-			WHERE source_id = ? AND ` + whereAddr + s.dialect.SelectForUpdate()
-		err := tx.QueryRowContext(ctx, selectSQL, sourceID, match.BindValue()).Scan(&existing)
-		switch {
-		case errors.Is(err, sql.ErrNoRows):
-			if _, err := tx.ExecContext(ctx,
-				`INSERT INTO account_identities (source_id, address, source_signal)
-					VALUES (?, ?, ?)`,
-				sourceID, addr, signal,
-			); err != nil {
-				return fmt.Errorf("insert account identity: %w", err)
-			}
-			// A brand new (source_id, address) pair changes owner_participants;
-			// merging a signal into an existing row (the default case below)
-			// does not, so only this branch bumps the revisions.
+		added, err := s.mergeAccountIdentitySignalsTx(ctx, tx, sourceID, addr, []string{signal}, match)
+		if err != nil {
+			return err
+		}
+		if added {
 			if _, err := s.bumpIdentityRevisionContext(ctx, tx); err != nil {
 				return err
 			}
@@ -252,22 +239,174 @@ func (s *Store) addAccountIdentityOnce(
 					return err
 				}
 			}
-		case err != nil:
-			return fmt.Errorf("read existing source_signal: %w", err)
-		default:
-			merged := mergeSignalSet(existing, signal)
-			if merged != existing {
-				if _, err := tx.ExecContext(ctx,
-					`UPDATE account_identities SET source_signal = ?
-						WHERE source_id = ? AND `+whereAddr,
-					merged, sourceID, match.BindValue(),
-				); err != nil {
-					return fmt.Errorf("update source_signal: %w", err)
-				}
-			}
 		}
 		return nil
 	})
+}
+
+// mergeAccountIdentitySignalsTx applies the row-level insert/signal-merge
+// semantics shared by the single and batched confirmation paths. The caller
+// must already hold lockIdentityMutationTxContext's writer lock. It reports
+// whether a new ownership row was inserted; revision policy stays with the
+// transaction owner so a batch can bump once per chunk.
+func (s *Store) mergeAccountIdentitySignalsTx(
+	ctx context.Context,
+	tx *loggedTx,
+	sourceID int64,
+	addr string,
+	signals []string,
+	match identifierMatch,
+) (bool, error) {
+	inserted, _, err := s.mergeAccountIdentitySignalsTxWith(ctx, tx, sourceID, addr, signals, match, true)
+	return inserted, err
+}
+
+// mergeAccountIdentitySignalsTxWith is the row-level merge. When allowInsert is
+// false an absent row is left alone rather than created, which is what makes
+// the refresh paths incapable of confirming ownership: the check happens inside
+// the same writer-locked transaction as the write, so a removal that lands
+// after the caller read the confirmed set cannot be undone. It reports whether
+// a row was inserted and whether one was present to merge into.
+func (s *Store) mergeAccountIdentitySignalsTxWith(
+	ctx context.Context,
+	tx *loggedTx,
+	sourceID int64,
+	addr string,
+	signals []string,
+	match identifierMatch,
+	allowInsert bool,
+) (inserted, present bool, err error) {
+	whereAddr := match.WhereClause("address")
+	var existing string
+	selectSQL := `SELECT source_signal FROM account_identities
+		WHERE source_id = ? AND ` + whereAddr + s.dialect.SelectForUpdate()
+	err = tx.QueryRowContext(ctx, selectSQL, sourceID, match.BindValue()).Scan(&existing)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		if !allowInsert {
+			return false, false, nil
+		}
+		merged := ""
+		for _, signal := range signals {
+			merged = mergeSignalSet(merged, signal)
+		}
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO account_identities (source_id, address, source_signal)
+				VALUES (?, ?, ?)`,
+			sourceID, addr, merged,
+		); err != nil {
+			return false, false, fmt.Errorf("insert account identity: %w", err)
+		}
+		return true, true, nil
+	case err != nil:
+		return false, false, fmt.Errorf("read existing source_signal: %w", err)
+	default:
+		merged := existing
+		for _, signal := range signals {
+			merged = mergeSignalSet(merged, signal)
+		}
+		if merged != existing {
+			if _, err := tx.ExecContext(ctx,
+				`UPDATE account_identities SET source_signal = ?
+					WHERE source_id = ? AND `+whereAddr,
+				merged, sourceID, match.BindValue(),
+			); err != nil {
+				return false, true, fmt.Errorf("update source_signal: %w", err)
+			}
+		}
+		return false, true, nil
+	}
+}
+
+// MergeConfirmedAccountIdentitySignalsContext merges evidence into identities
+// the source has already confirmed and never creates one. Candidates whose
+// ownership row is absent are skipped, so a refresh that scanned the archive
+// against a stale confirmed set cannot resurrect an identity removed while it
+// ran. Signal-only merges preserve revisions and confirmed_at, so no revision
+// is bumped and message attribution is left untouched.
+func (s *Store) MergeConfirmedAccountIdentitySignalsContext(
+	ctx context.Context,
+	sourceID int64,
+	candidates []IdentityConfirmation,
+) ([]IdentityConfirmationOutcome, error) {
+	normalized, err := normalizeIdentityConfirmations(candidates)
+	if err != nil {
+		return nil, err
+	}
+	outcomes := make([]IdentityConfirmationOutcome, 0, len(normalized))
+	for start := 0; start < len(normalized); start += identityConfirmationChunkSize {
+		if err := ctx.Err(); err != nil {
+			return outcomes, err
+		}
+		end := min(start+identityConfirmationChunkSize, len(normalized))
+		chunkOutcomes, err := s.mergeConfirmedAccountIdentityChunk(ctx, sourceID, normalized[start:end])
+		if err != nil {
+			return outcomes, err
+		}
+		outcomes = append(outcomes, chunkOutcomes...)
+	}
+	return outcomes, nil
+}
+
+func (s *Store) mergeConfirmedAccountIdentityChunk(
+	ctx context.Context,
+	sourceID int64,
+	confirmations []normalizedIdentityConfirmation,
+) ([]IdentityConfirmationOutcome, error) {
+	const maxAttempts = 5
+	for range maxAttempts {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		outcomes, err := s.mergeConfirmedAccountIdentityChunkOnce(ctx, sourceID, confirmations)
+		if err == nil {
+			return outcomes, nil
+		}
+		if !s.dialect.IsConflictError(err) && !s.dialect.IsBusyError(err) {
+			return nil, err
+		}
+	}
+	return nil, fmt.Errorf("merge confirmed account identity signals: gave up after %d retries", maxAttempts)
+}
+
+func (s *Store) mergeConfirmedAccountIdentityChunkOnce(
+	ctx context.Context,
+	sourceID int64,
+	confirmations []normalizedIdentityConfirmation,
+) ([]IdentityConfirmationOutcome, error) {
+	outcomes := make([]IdentityConfirmationOutcome, 0, len(confirmations))
+	err := s.withTxContext(ctx, func(tx *loggedTx) error {
+		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
+			return err
+		}
+		for _, confirmation := range confirmations {
+			_, present, err := s.mergeAccountIdentitySignalsTxWith(
+				ctx,
+				tx,
+				sourceID,
+				confirmation.identifier,
+				confirmation.signals,
+				newIdentifierMatch(confirmation.identifier),
+				false,
+			)
+			if err != nil {
+				return err
+			}
+			if !present {
+				continue
+			}
+			outcomes = append(outcomes, IdentityConfirmationOutcome{
+				Identifier: confirmation.identifier,
+				Added:      false,
+				Signals:    confirmation.signals,
+			})
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return outcomes, nil
 }
 
 // mergeSignalSet returns the comma-joined sorted union of the existing

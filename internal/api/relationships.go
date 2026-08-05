@@ -3,9 +3,7 @@ package api
 import (
 	"fmt"
 	"net/http"
-	"slices"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/danielgtaylor/huma/v2"
@@ -51,7 +49,11 @@ func (s *Server) handleRelationships(w http.ResponseWriter, r *http.Request) {
 	canonicalizeRelationshipFilters(request.Filters)
 	analyticalContext, err := exploreContext(request.Filters)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_filter", err.Error())
+		s.writeExploreFilterError(w, err, "invalid_filter")
+		return
+	}
+	if err := s.resolveExploreIdentityContext(r.Context(), request.Filters, &analyticalContext); err != nil {
+		s.writeExploreFilterError(w, err, "invalid_filter")
 		return
 	}
 	if request.Limit == 0 {
@@ -180,7 +182,11 @@ func (s *Server) handleRelationshipTimeline(w http.ResponseWriter, r *http.Reque
 	canonicalizeRelationshipFilters(request.Filters)
 	analyticalContext, err := exploreContext(request.Filters)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_filter", err.Error())
+		s.writeExploreFilterError(w, err, "invalid_filter")
+		return
+	}
+	if err := s.resolveExploreIdentityContext(r.Context(), request.Filters, &analyticalContext); err != nil {
+		s.writeExploreFilterError(w, err, "invalid_filter")
 		return
 	}
 	if request.Limit == 0 {
@@ -246,13 +252,5 @@ func (s *Server) handleRelationshipTimeline(w http.ResponseWriter, r *http.Reque
 }
 
 func canonicalizeRelationshipFilters(filters []ExploreFilter) {
-	for i := range filters {
-		filters[i].Dimension = strings.ToLower(strings.TrimSpace(filters[i].Dimension))
-		for j := range filters[i].Values {
-			filters[i].Values[j] = strings.TrimSpace(filters[i].Values[j])
-		}
-		slices.Sort(filters[i].Values)
-		filters[i].Values = slices.Compact(filters[i].Values)
-	}
-	slices.SortFunc(filters, func(a, b ExploreFilter) int { return strings.Compare(a.Dimension, b.Dimension) })
+	canonicalizeExploreFilters(filters)
 }

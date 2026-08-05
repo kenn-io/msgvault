@@ -36,6 +36,17 @@ type deletionMockStore struct {
 	saveRelease chan struct{} // if non-nil, save blocks until this channel is closed
 }
 
+type deletionIdentityStore struct {
+	*recordingMessageIdentityStore
+
+	saved []*deletion.Manifest
+}
+
+func (s *deletionIdentityStore) SaveCLIDeletionManifest(_ context.Context, manifest *deletion.Manifest) error {
+	s.saved = append(s.saved, manifest)
+	return nil
+}
+
 func (s *deletionMockStore) SaveCLIDeletionManifest(_ context.Context, m *deletion.Manifest) error {
 	if s.saveStarted != nil {
 		s.saveStarted <- struct{}{}
@@ -269,6 +280,47 @@ func TestStageDeletionSelectionRequiresAndConsumesExactPreflightAuthority(t *tes
 	assertions.Equal(http.StatusConflict, reused.Code, reused.Body.String())
 	assertions.Contains(reused.Body.String(), "operation_token_invalid")
 	assertions.Len(st.saved, 1, "one-shot authority must not create another manifest")
+}
+
+func TestStageDeletionReplaysResolvedIdentityFilterOnceAfterPreflight(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	fixture := newExploreIdentityAPIFixture(t)
+	st := &deletionIdentityStore{recordingMessageIdentityStore: fixture.store}
+	srv := newDeletionTestServer(t, st, fixture.server.engine)
+	filters := `[
+		{"dimension":"source","values":["1"]},
+		{"dimension":"identity","values":["1","BOB@MEMBERS.EXAMPLE","recipient"]}
+	]`
+
+	explore := postExploreJSON(t, srv, "/api/v1/explore", `{"filters":`+filters+`}`)
+	requirements.Equal(http.StatusOK, explore.Code, explore.Body.String())
+	var explored ExploreHTTPResponse
+	requirements.NoError(json.Unmarshal(explore.Body.Bytes(), &explored))
+	selection := fmt.Sprintf(
+		`{"mode":"all_matching","predicate":{"filters":%s},"cache_revision":%q}`,
+		filters,
+		explored.CacheRevision,
+	)
+
+	preflight := postExploreJSON(t, srv, "/api/v1/explore/preflight", `{"selection":`+selection+`}`)
+	requirements.Equal(http.StatusOK, preflight.Code, preflight.Body.String())
+	var reviewed ExplorePreflightResponse
+	requirements.NoError(json.Unmarshal(preflight.Body.Bytes(), &reviewed))
+	requirements.NotEmpty(reviewed.OperationToken)
+	assertions.Equal(int64(1), reviewed.Count)
+
+	fixture.store.resolveCalls = 0
+	stage := postDeletions(t, srv, fmt.Sprintf(
+		`{"selection":%s,"operation_token":%q,"description":"identity-filtered batch"}`,
+		selection,
+		reviewed.OperationToken,
+	))
+
+	requirements.Equal(http.StatusCreated, stage.Code, stage.Body.String())
+	requirements.Len(st.saved, 1)
+	assertions.Equal([]string{"m2"}, st.saved[0].GmailIDs)
+	assertions.Equal(1, fixture.store.resolveCalls)
 }
 
 // preflightDeletionSelection runs explore + preflight against the

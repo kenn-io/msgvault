@@ -268,6 +268,7 @@ func (s *Server) registerHumaRoutes(api huma.API, apiV1 huma.API) {
 	s.registerCLIAccountHumaRoutes(apiV1)
 	s.registerCLICollectionHumaRoutes(apiV1)
 	s.registerCLIIdentityHumaRoutes(apiV1)
+	s.registerCLIIdentityDiscoveryRoute(apiV1)
 	s.registerCLIDedupHumaRoutes(apiV1)
 	registerAPIV1RawHumaNDJSONRoute[cliRebuildFTSEvent](apiV1, "rebuildCLIFTS", http.MethodPost, "/cli/rebuild-fts", "Rebuild the CLI full-text search index", s.handleCLIRebuildFTS)
 
@@ -378,6 +379,7 @@ func (s *Server) registerHumaRoutes(api huma.API, apiV1 huma.API) {
 	registerAPIV1RawHumaJSONRoute[AccountListResponse](apiV1, "listAccounts", http.MethodGet, "/accounts", "List scheduler-configured accounts (with sync schedules); use /cli/accounts for all archived sources", s.handleListAccounts)
 	registerAPIV1RawHumaJSONRouteWithRequest[AddAccountRequest, StatusMessageResponse](apiV1, "addAccount", http.MethodPost, "/accounts", "Add an account", s.handleAddAccount, http.StatusOK, http.StatusCreated)
 	registerAPIV1RawHumaJSONRoute[SourceStatusResponse](apiV1, "listSourceStatus", http.MethodGet, "/sources/status", "List source sync status", s.handleSourceStatus)
+	registerAPIV1RawHumaJSONRoute[SourceIdentitiesResponse](apiV1, "listSourceIdentities", http.MethodGet, "/sources/{source_id}/identities", "List confirmed identities for one source", s.handleSourceIdentities)
 	registerAPIV1RawHumaJSONRoute[StatusMessageResponse](apiV1, "triggerSync", http.MethodPost, "/sync/{account}", "Trigger account sync", s.handleTriggerSync, http.StatusAccepted)
 	registerAPIV1RawHumaJSONRoute[SchedulerStatusResponse](apiV1, "getSchedulerStatus", http.MethodGet, "/scheduler/status", "Get scheduler status", s.handleSchedulerStatus)
 	registerAPIV1RawHumaJSONRouteWithRequest[TokenUploadRequest, StatusMessageResponse](apiV1, "uploadToken", http.MethodPost, "/auth/token/{email}", "Upload an OAuth token", s.handleUploadToken, http.StatusCreated)
@@ -737,6 +739,8 @@ func rawRouteParameters(operationID string) []*huma.Param {
 		}
 	case "listSourceStatus":
 		return []*huma.Param{queryStringParam("source_type", "Restrict to one source type", false)}
+	case "listSourceIdentities":
+		return []*huma.Param{pathNamedIntegerParam("source_id", "Source ID")}
 	case "triggerSync":
 		return []*huma.Param{
 			pathStringParam("account", "Account email or configured source identifier"),
@@ -867,7 +871,11 @@ func pathStringParam(name, doc string) *huma.Param {
 }
 
 func pathIntegerParam(doc string) *huma.Param {
-	p := param("id", "path", huma.TypeInteger, doc, true)
+	return pathNamedIntegerParam("id", doc)
+}
+
+func pathNamedIntegerParam(name, doc string) *huma.Param {
+	p := param(name, "path", huma.TypeInteger, doc, true)
 	p.Schema.Format = "int64"
 	return p
 }

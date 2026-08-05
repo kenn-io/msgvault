@@ -54,6 +54,69 @@ func TestSearchFilesAppliesCanonicalContextAndFileFilters(t *testing.T) {
 	assertions.NotEmpty(result.CacheRevision)
 }
 
+func TestFilesIdentityPredicateSeparatesDirectionsAndSources(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	b := NewTestDataBuilder(t)
+	sourceA := b.AddSource("archive-a@example.com")
+	sourceB := b.AddSource("archive-b@example.com")
+	identityID := b.AddParticipant("identity@example.com", "example.com", "Identity")
+	otherID := b.AddParticipant("other@example.net", "example.net", "Other")
+	base := time.Date(2026, 8, 3, 12, 0, 0, 0, time.UTC)
+
+	sent := b.AddMessage(MessageOpt{SourceID: sourceA, Subject: "sent", SentAt: base})
+	b.AddFrom(sent, identityID, "Identity")
+	b.AddTo(sent, otherID, "Other")
+	b.AddAttachmentWithMIME(801, sent, 10, "sent.pdf", "application/pdf")
+	received := b.AddMessage(MessageOpt{SourceID: sourceA, Subject: "received", SentAt: base.Add(-time.Hour)})
+	b.AddFrom(received, otherID, "Other")
+	b.AddRecipient(received, identityID, "bcc", "Identity")
+	b.AddAttachmentWithMIME(802, received, 20, "received.pdf", "application/pdf")
+	otherSource := b.AddMessage(MessageOpt{SourceID: sourceB, Subject: "other source", SentAt: base.Add(time.Hour)})
+	b.AddFrom(otherSource, identityID, "Identity")
+	b.AddAttachmentWithMIME(803, otherSource, 30, "other-source.pdf", "application/pdf")
+
+	engine := b.BuildEngine()
+	search := func(direction IdentityDirection) *FileSearchResponse {
+		result, err := engine.SearchFiles(context.Background(), FileSearchRequest{
+			Explore: ExploreRequest{Context: Context{Identity: &IdentityPredicate{
+				SourceID: sourceA, ParticipantIDs: []int64{identityID}, Direction: direction,
+			}}},
+			Sort: SortSpec{Field: sortFieldOccurredAt, Direction: "desc"}, Page: PageSpec{Limit: 10},
+		})
+		requirements.NoError(err)
+		return result
+	}
+
+	sender := search(IdentityDirectionSender)
+	requirements.Len(sender.Files, 1)
+	assertions.Equal("sent.pdf", sender.Files[0].Filename)
+	assertions.Equal(sourceA, sender.Files[0].SourceID)
+	assertions.Equal(int64(1), sender.TotalCount)
+
+	recipient := search(IdentityDirectionRecipient)
+	requirements.Len(recipient.Files, 1)
+	assertions.Equal("received.pdf", recipient.Files[0].Filename)
+	assertions.Equal(sourceA, recipient.Files[0].SourceID)
+	assertions.Equal(int64(1), recipient.TotalCount)
+
+	anyDirection := search(IdentityDirectionAny)
+	requirements.Len(anyDirection.Files, 2)
+	assertions.Equal([]string{"sent.pdf", "received.pdf"}, []string{anyDirection.Files[0].Filename, anyDirection.Files[1].Filename})
+	assertions.Equal(int64(2), anyDirection.TotalCount)
+
+	grouped, err := engine.GroupFiles(context.Background(), FileGroupRequest{
+		Explore: ExploreRequest{Context: Context{Identity: &IdentityPredicate{
+			SourceID: sourceA, ParticipantIDs: []int64{identityID}, Direction: IdentityDirectionAny,
+		}}},
+		Dimension: "source", Sort: SortSpec{Field: "count", Direction: "desc"}, Page: PageSpec{Limit: 10},
+	})
+	requirements.NoError(err)
+	requirements.Len(grouped.Rows, 1)
+	assertions.Equal("1", grouped.Rows[0].Key)
+	assertions.Equal(int64(2), grouped.Rows[0].Count)
+}
+
 func TestSearchFilesFlattensSnippetMarkupInContainingTitle(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)

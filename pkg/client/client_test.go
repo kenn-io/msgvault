@@ -46,6 +46,28 @@ func TestGeneratedPatchPersonCanClearDisplayName(t *testing.T) {
 	assert.JSONEq(t, `{"display_name":null}`, string(encoded))
 }
 
+func TestGeneratedSourceIdentitiesPreserveRequiredEmptyArrays(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	emptyCatalog := generated.SourceIdentitiesResponse{
+		SourceID: 7, Account: "account@example.test", Identities: []generated.SourceIdentityResponse{},
+	}
+	encoded, err := json.Marshal(emptyCatalog)
+	requirements.NoError(err)
+	assertions.JSONEq(`{"source_id":7,"account":"account@example.test","identities":[]}`, string(encoded))
+
+	identity := generated.SourceIdentityResponse{
+		Identifier: "Alias@Example.test", Signals: []string{},
+		ConfirmedAt: time.Date(2026, 8, 3, 7, 0, 0, 0, time.UTC),
+	}
+	encoded, err = json.Marshal(identity)
+	requirements.NoError(err)
+	assertions.JSONEq(
+		`{"identifier":"Alias@Example.test","signals":[],"confirmed_at":"2026-08-03T07:00:00Z"}`,
+		string(encoded),
+	)
+}
+
 func TestGeneratedEnumNamesPreserveSavedViewCompatibilityAndQualifyExploration(t *testing.T) {
 	assertions := assert.New(t)
 	assertions.Equal(generated.Asc, generated.SavedViewSortDirection("asc"))
@@ -56,6 +78,7 @@ func TestGeneratedEnumNamesPreserveSavedViewCompatibilityAndQualifyExploration(t
 	assertions.Equal(generated.Table, generated.SavedViewStateEnvelopePresentation("table"))
 	assertions.Equal(generated.Timeline, generated.SavedViewStateEnvelopePresentation("timeline"))
 	assertions.Equal(generated.ExploreFilterDimensionAfter, generated.ExploreFilterDimension("after"))
+	assertions.Equal(generated.ExploreFilterDimensionIdentity, generated.ExploreFilterDimension("identity"))
 	assertions.Equal(generated.ExploreGroupSortDirectionAsc, generated.ExploreGroupSortDirection("asc"))
 	assertions.Equal(generated.ExploreGroupDimensionSource, generated.ExploreGroupDimension("source"))
 	assertions.Equal(generated.ExploreGroupsHTTPRequestSearchModeFullText, generated.ExploreGroupsHTTPRequestSearchMode("full_text"))

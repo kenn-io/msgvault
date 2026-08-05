@@ -20,6 +20,7 @@ import (
 
 	"go.kenn.io/msgvault/internal/apiprotocol"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/provideridentity"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/scheduler"
 	"go.kenn.io/msgvault/internal/search"
@@ -39,6 +40,14 @@ type MessageStore interface {
 	GetMessagesSummariesByIDs(ids []int64) ([]APIMessage, error)
 	SearchMessages(query string, offset, limit int) ([]APIMessage, int64, error)
 	SearchMessagesQuery(q *search.Query, offset, limit int) ([]APIMessage, int64, error)
+}
+
+// MessageIdentityStore is the optional source-identity extension used by
+// analytical filters and response hydration. Production stores implement it;
+// keeping it separate preserves lightweight MessageStore test doubles.
+type MessageIdentityStore interface {
+	ResolveAccountIdentityContext(ctx context.Context, sourceID int64, identifier string) (store.ResolvedAccountIdentity, error)
+	MatchMessageIdentitiesContext(ctx context.Context, messageIDs []int64) (map[int64]store.MessageIdentityMatch, error)
 }
 
 type TaskLinkOperations interface {
@@ -202,6 +211,8 @@ type AttachmentBlobStore interface {
 	OpenStream(ctx context.Context, hash string) (io.ReadCloser, int64, error)
 }
 
+type fastmailIdentityInventory = provideridentity.Inventory
+
 // Server represents the HTTP API server.
 type Server struct {
 	cfg            *config.Config
@@ -316,9 +327,10 @@ type Server struct {
 	clock func() time.Time
 	// taskIntegrationProbe performs server-side discovery and capability
 	// validation. It is never exposed to the browser with its credentials.
-	taskIntegrationProbe TaskIntegrationProbe
-	taskLinkOperations   TaskLinkOperations
-	taskIdentityResolver TaskIdentityResolver
+	taskIntegrationProbe     TaskIntegrationProbe
+	taskLinkOperations       TaskLinkOperations
+	taskIdentityResolver     TaskIdentityResolver
+	fastmailInventoryFactory provideridentity.Factory
 	// listenerBound is set true once StartOnListener binds a real listener
 	// (the sole production serve path). It stays false for direct-handler unit
 	// tests that drive s.Router() without starting a listener, leaving the
@@ -411,6 +423,9 @@ type ServerOptions struct {
 	TaskIntegrationProbe TaskIntegrationProbe
 	TaskLinkOperations   TaskLinkOperations
 	TaskIdentityResolver TaskIdentityResolver
+	// FastmailInventoryFactory is the provider-read seam used by identity
+	// discovery. Nil constructs the production JMAP client.
+	FastmailInventoryFactory provideridentity.Factory
 }
 
 // NewServer creates a new API server.
@@ -433,40 +448,45 @@ func NewServerWithOptions(opts ServerOptions) *Server {
 	if taskProbe == nil {
 		taskProbe = taskclient.Evaluate
 	}
+	fastmailInventoryFactory := opts.FastmailInventoryFactory
+	if fastmailInventoryFactory == nil {
+		fastmailInventoryFactory = provideridentity.NewFastmailInventory
+	}
 	s := &Server{
-		cfg:                  opts.Config,
-		store:                opts.Store,
-		savedViewStore:       opts.SavedViewStore,
-		engine:               opts.Engine,
-		sqlQueryRunner:       opts.SQLQueryRunner,
-		shutdownToken:        opts.ShutdownToken,
-		shutdownFunc:         opts.ShutdownFunc,
-		hybridEngine:         opts.HybridEngine,
-		vectorCfg:            opts.VectorCfg,
-		backend:              opts.Backend,
-		scheduler:            opts.Scheduler,
-		logger:               opts.Logger,
-		requestTimeout:       timeout,
-		readTimeout:          daemonReadTimeout,
-		queryTimeout:         QueryEndpointTimeout,
-		inProgressThreshold:  inProgressLogThreshold,
-		inProgressInterval:   inProgressLogInterval,
-		daemonVersion:        opts.DaemonVersion,
-		analyticsMode:        opts.AnalyticsMode,
-		idleTracker:          opts.IdleTracker,
-		operationGate:        opts.OperationGate,
-		blobStore:            opts.BlobStore,
-		remoteImages:         newRemoteImageFetcher(),
-		inlineCache:          newInlineParseCache(inlineCacheMaxEntries, inlineCacheMaxBytes),
-		spaHandler:           opts.SPAHandler,
-		sessions:             newSessionStore(defaultSessionTTL),
-		exploreState:         newExploreServerState(time.Now),
-		exploreCursorKey:     newExploreCursorKey(),
-		trustedProxies:       trustedProxyPrefixes(opts.Config.Server.TrustedProxies),
-		settingsConfigEditor: config.EditConfigFile,
-		taskIntegrationProbe: taskProbe,
-		taskLinkOperations:   opts.TaskLinkOperations,
-		taskIdentityResolver: opts.TaskIdentityResolver,
+		cfg:                      opts.Config,
+		store:                    opts.Store,
+		savedViewStore:           opts.SavedViewStore,
+		engine:                   opts.Engine,
+		sqlQueryRunner:           opts.SQLQueryRunner,
+		shutdownToken:            opts.ShutdownToken,
+		shutdownFunc:             opts.ShutdownFunc,
+		hybridEngine:             opts.HybridEngine,
+		vectorCfg:                opts.VectorCfg,
+		backend:                  opts.Backend,
+		scheduler:                opts.Scheduler,
+		logger:                   opts.Logger,
+		requestTimeout:           timeout,
+		readTimeout:              daemonReadTimeout,
+		queryTimeout:             QueryEndpointTimeout,
+		inProgressThreshold:      inProgressLogThreshold,
+		inProgressInterval:       inProgressLogInterval,
+		daemonVersion:            opts.DaemonVersion,
+		analyticsMode:            opts.AnalyticsMode,
+		idleTracker:              opts.IdleTracker,
+		operationGate:            opts.OperationGate,
+		blobStore:                opts.BlobStore,
+		remoteImages:             newRemoteImageFetcher(),
+		inlineCache:              newInlineParseCache(inlineCacheMaxEntries, inlineCacheMaxBytes),
+		spaHandler:               opts.SPAHandler,
+		sessions:                 newSessionStore(defaultSessionTTL),
+		exploreState:             newExploreServerState(time.Now),
+		exploreCursorKey:         newExploreCursorKey(),
+		trustedProxies:           trustedProxyPrefixes(opts.Config.Server.TrustedProxies),
+		settingsConfigEditor:     config.EditConfigFile,
+		taskIntegrationProbe:     taskProbe,
+		taskLinkOperations:       opts.TaskLinkOperations,
+		taskIdentityResolver:     opts.TaskIdentityResolver,
+		fastmailInventoryFactory: fastmailInventoryFactory,
 	}
 	if s.taskIdentityResolver == nil {
 		s.taskIdentityResolver = s.resolveTaskMessageIdentity
@@ -750,7 +770,8 @@ func cliRequestNeedsProtectiveCeiling(r *http.Request) bool {
 		"GET /api/v1/cli/search",
 		"POST /api/v1/cli/deduplicate/plan",
 		"POST /api/v1/cli/identities",
-		"DELETE /api/v1/cli/identities":
+		"DELETE /api/v1/cli/identities",
+		"POST /api/v1/cli/identities/import":
 		return true
 	default:
 		return false
@@ -777,6 +798,7 @@ func isLongDaemonRequest(path string) bool {
 	case "/api/v1/cli/build-cache",
 		"/api/v1/cli/deduplicate/plan",
 		meetingImportEndpointPath,
+		"/api/v1/cli/identities/discover",
 		"/api/v1/cli/rebuild-fts",
 		"/api/v1/cli/repair-encoding",
 		"/api/v1/cli/run",

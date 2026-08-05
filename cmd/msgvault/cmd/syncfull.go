@@ -482,7 +482,7 @@ func runFullSync(ctx context.Context, s *store.Store, getOAuthMgr func(string) (
 	}
 
 	// Create syncer with progress reporter
-	syncer := sync.New(apiClient, s, opts).
+	syncer := newMessageSyncer(apiClient, s, opts).
 		WithLogger(logger).
 		WithProgress(progress)
 

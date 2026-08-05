@@ -167,6 +167,14 @@ type ClientInterface interface {
 	AddCLIIdentity(ctx context.Context, options *AddCLIIdentityRequestOptions, reqEditors ...runtime.RequestEditorFn) (*AddCLIIdentityResponse, error)
 	AddCLIIdentityWithResponse(ctx context.Context, options *AddCLIIdentityRequestOptions, reqEditors ...runtime.RequestEditorFn) (*AddCLIIdentityResp, error)
 
+	// DiscoverCLIIdentities Discover source-scoped account identities
+	DiscoverCLIIdentities(ctx context.Context, options *DiscoverCLIIdentitiesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*DiscoverCLIIdentitiesResponse, error)
+	DiscoverCLIIdentitiesWithResponse(ctx context.Context, options *DiscoverCLIIdentitiesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*DiscoverCLIIdentitiesResp, error)
+
+	// ImportCLIIdentities Preview or apply parsed source-scoped identities
+	ImportCLIIdentities(ctx context.Context, options *ImportCLIIdentitiesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ImportCLIIdentitiesResponse, error)
+	ImportCLIIdentitiesWithResponse(ctx context.Context, options *ImportCLIIdentitiesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ImportCLIIdentitiesResp, error)
+
 	// InitCLIArchive Initialize the archive for CLI use
 	InitCLIArchive(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*InitCLIArchiveResponse, error)
 	InitCLIArchiveWithResponse(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*InitCLIArchiveResp, error)
@@ -466,6 +474,10 @@ type ClientInterface interface {
 	// ListSourceStatus List source sync status
 	ListSourceStatus(ctx context.Context, options *ListSourceStatusRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListSourceStatusResponse, error)
 	ListSourceStatusWithResponse(ctx context.Context, options *ListSourceStatusRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListSourceStatusResp, error)
+
+	// ListSourceIdentities List confirmed identities for one source
+	ListSourceIdentities(ctx context.Context, options *ListSourceIdentitiesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListSourceIdentitiesResponse, error)
+	ListSourceIdentitiesWithResponse(ctx context.Context, options *ListSourceIdentitiesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListSourceIdentitiesResp, error)
 
 	// GetStats Get archive statistics
 	GetStats(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*GetStatsResponse, error)
@@ -2497,6 +2509,7 @@ func (c *Client) ListCLIIdentities(ctx context.Context, options *ListCLIIdentiti
 		"account":      {Style: "form", Explode: &[]bool{false}[0]},
 		"collection":   {Style: "form", Explode: &[]bool{false}[0]},
 		"primary_only": {Style: "form", Explode: &[]bool{false}[0]},
+		"source_id":    {Style: "form", Explode: &[]bool{false}[0]},
 	}
 	reqParams := runtime.RequestOptionsParameters{
 		RequestURL:    c.apiClient.GetBaseURL() + "/api/v1/cli/identities",
@@ -2617,6 +2630,120 @@ func (c *Client) AddCLIIdentity(ctx context.Context, options *AddCLIIdentityRequ
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/cli/identities")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// DiscoverCLIIdentities Discover source-scoped account identities
+func (c *Client) DiscoverCLIIdentities(ctx context.Context, options *DiscoverCLIIdentitiesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*DiscoverCLIIdentitiesResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/cli/identities/discover",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*DiscoverCLIIdentitiesResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(DiscoverCLIIdentitiesErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "DiscoverCLIIdentitiesErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		result := DiscoverCLIIdentitiesResponse(bodyBytes)
+		return &result, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/cli/identities/discover")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// ImportCLIIdentities Preview or apply parsed source-scoped identities
+func (c *Client) ImportCLIIdentities(ctx context.Context, options *ImportCLIIdentitiesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ImportCLIIdentitiesResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/cli/identities/import",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*ImportCLIIdentitiesResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(ImportCLIIdentitiesErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "ImportCLIIdentitiesErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(ImportCLIIdentitiesResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "ImportCLIIdentitiesResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/cli/identities/import")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
@@ -7207,6 +7334,69 @@ func (c *Client) ListSourceStatus(ctx context.Context, options *ListSourceStatus
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/sources/status")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// ListSourceIdentities List confirmed identities for one source
+func (c *Client) ListSourceIdentities(ctx context.Context, options *ListSourceIdentitiesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListSourceIdentitiesResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/sources/{source_id}/identities",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*ListSourceIdentitiesResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(ListSourceIdentitiesErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "ListSourceIdentitiesErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(ListSourceIdentitiesResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "ListSourceIdentitiesResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/sources/{source_id}/identities")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}

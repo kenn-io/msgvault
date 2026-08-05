@@ -127,6 +127,7 @@ func probeAllOptionalColumns(db *sql.DB, analyticsDir string) map[string]map[str
 		datasetConversations: probeColumns(db, tablePath(datasetConversations), false),
 		"attachments":        probeColumns(db, tablePath("attachments"), false),
 		"sources":            probeColumns(db, tablePath("sources"), false),
+		"message_recipients": probeColumns(db, tablePath("message_recipients"), false),
 	}
 }
 
@@ -244,7 +245,18 @@ func createBaseViews(db *sql.DB, analyticsDir string, optCols map[string]map[str
 					"CAST(recipient_type AS VARCHAR) AS recipient_type",
 					"CAST(display_name AS VARCHAR) AS display_name",
 				},
+				optionalCols: []optionalCol{{
+					// Envelope address snapshot (cache schema v17). The ''
+					// default keeps pre-v17 caches readable: an empty
+					// envelope makes identity filters fall back to
+					// participant matching (see
+					// buildIdentityPredicateCondition).
+					name:        "email_address",
+					replaceExpr: "COALESCE(CAST(email_address AS VARCHAR), '') AS email_address",
+					defaultExpr: "'' AS email_address",
+				}},
 			},
+			probe: colsFor("message_recipients"),
 		},
 		{
 			def: viewDef{

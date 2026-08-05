@@ -255,7 +255,7 @@ func runIncrementalSync(ctx context.Context, s *store.Store, getOAuthMgr func(st
 	opts.AttachmentsDir = cfg.AttachmentsDir()
 
 	// Create syncer with progress reporter
-	syncer := sync.New(client, s, opts).
+	syncer := newMessageSyncer(client, s, opts).
 		WithLogger(logger).
 		WithProgress(&CLIProgress{})
 

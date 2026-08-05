@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strconv"
 	"strings"
@@ -16,6 +17,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/explorecatalog"
+	"go.kenn.io/msgvault/pkg/client/generated"
 )
 
 const (
@@ -130,6 +132,84 @@ func TestOpenAPIYAMLDeterministic(t *testing.T) {
 	assert.Equal(t, string(first), string(second), "OpenAPI YAML should be deterministic")
 }
 
+func TestOpenAPIIdentityDiscoveryApplyIsOptional(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	for _, document := range []*huma.OpenAPI{OpenAPIDocument(), openAPIClientDocument()} {
+		schema := document.Components.Schemas.Map()["DiscoverRequest"]
+		requirements.NotNil(schema)
+		assertions.NotContains(schema.Required, "apply", "omitting apply previews discovery")
+		requirements.NotNil(schema.Properties["apply"])
+		assertions.Equal("boolean", schema.Properties["apply"].Type)
+	}
+}
+
+func TestOpenAPIIdentityCandidateRequiresProviderStates(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	for _, document := range []*huma.OpenAPI{OpenAPIDocument(), openAPIClientDocument()} {
+		schema := document.Components.Schemas.Map()["Candidate"]
+		requirements.NotNil(schema)
+		assertions.Contains(schema.Required, "provider_states")
+		property := schema.Properties["provider_states"]
+		requirements.NotNil(property)
+		assertions.Equal("array", property.Type)
+		assertions.False(property.Nullable, "provider_states must always be an array, never null")
+		requirements.NotNil(property.Items)
+		assertions.Equal("string", property.Items.Type)
+	}
+	field, ok := reflect.TypeFor[generated.Candidate]().FieldByName("ProviderStates")
+	requirements.True(ok)
+	assertions.Equal(reflect.Slice, field.Type.Kind())
+	assertions.Equal("provider_states", field.Tag.Get("json"),
+		"generated clients must always serialize provider_states without omitempty")
+}
+
+func TestOpenAPIIdentityImportUsesParsedEntryContract(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	for _, document := range []*huma.OpenAPI{OpenAPIDocument(), openAPIClientDocument()} {
+		path := document.Paths["/api/v1/cli/identities/import"]
+		requirements.NotNil(path)
+		operation := path.Post
+		requirements.NotNil(operation)
+		request := document.Components.Schemas.Map()["ImportRequest"]
+		requirements.NotNil(request)
+		assertions.Contains(request.Required, "entries")
+		assertions.NotContains(request.Properties, "file")
+		assertions.NotContains(request.Properties, "data")
+		entries := request.Properties["entries"]
+		requirements.NotNil(entries)
+		assertions.Equal("array", entries.Type)
+		assertions.False(entries.Nullable, "import entries must never be null")
+
+		result := document.Components.Schemas.Map()["ImportResult"]
+		requirements.NotNil(result)
+		for _, propertyName := range []string{"candidates", "applied"} {
+			assertions.Contains(result.Required, propertyName)
+			property := result.Properties[propertyName]
+			requirements.NotNil(property)
+			assertions.Equal("array", property.Type)
+			assertions.False(property.Nullable, "import result %s must never be null", propertyName)
+		}
+	}
+	for _, test := range []struct {
+		typ       reflect.Type
+		fieldName string
+		jsonTag   string
+	}{
+		{typ: reflect.TypeFor[generated.ImportRequest](), fieldName: "Entries", jsonTag: "entries"},
+		{typ: reflect.TypeFor[generated.ImportResult](), fieldName: "Candidates", jsonTag: "candidates"},
+		{typ: reflect.TypeFor[generated.ImportResult](), fieldName: "Applied", jsonTag: "applied"},
+	} {
+		field, ok := test.typ.FieldByName(test.fieldName)
+		requirements.True(ok)
+		assertions.Equal(reflect.Slice, field.Type.Kind())
+		assertions.Equal(test.jsonTag, field.Tag.Get("json"),
+			"generated import arrays must serialize without omitempty")
+	}
+}
+
 func TestOpenAPITotalStatsDocumentsSearchScope(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -187,8 +267,9 @@ func TestOpenAPIMeetingImportContract(t *testing.T) {
 
 	// Pinned so that anyone bumping the schema version has to come here and
 	// confirm the meeting-import contract below still holds. Meeting import
-	// shipped in 1.33.0; the feed added in 1.34.0 did not touch it.
-	assert.Equal("1.34.0", APISchemaVersion, "meeting import is an additive schema release")
+	// shipped in 1.33.0; the feed added in 1.34.0 and source-scoped identities
+	// added in 1.35.0 did not touch it.
+	assert.Equal("1.35.0", APISchemaVersion, "meeting import is an additive schema release")
 
 	doc := OpenAPIDocument()
 	path := doc.Paths["/api/v1/import/meeting"]
@@ -390,12 +471,21 @@ func TestOpenAPIDocumentsAllExplorationOperations(t *testing.T) {
 	requirements.NotNil(filter)
 	requirements.NotNil(filter.Properties["dimension"])
 	assertions.ElementsMatch(
-		[]any{"source", "participant", "domain", "message_type", "after", "before", "deletion"},
+		[]any{"source", "participant", "domain", "message_type", "after", "before", "deletion", "identity"},
 		filter.Properties["dimension"].Enum,
 	)
+	clientFilter := openAPIClientDocument().Components.Schemas.Map()["ExploreFilter"]
+	requirements.NotNil(clientFilter)
+	requirements.NotNil(clientFilter.Properties["dimension"])
+	assertions.Equal([]any{
+		"ExploreFilterDimensionSource", "ExploreFilterDimensionParticipant", "ExploreFilterDimensionDomain",
+		"ExploreFilterDimensionMessageType", "ExploreFilterDimensionAfter", "ExploreFilterDimensionBefore",
+		"ExploreFilterDimensionDeletion", "ExploreFilterDimensionIdentity",
+	}, clientFilter.Properties["dimension"].Extensions["x-enum-names"])
 	for schemaName, properties := range map[string][]string{
 		"ExploreFilter":              {"values"},
 		"ExploreHTTPResponse":        {"rows"},
+		"EntryRow":                   {"matched_sender_identities", "matched_recipient_identities"},
 		"ExploreGroupsHTTPResponse":  {"rows"},
 		"ExploreFilesHTTPResponse":   {"files"},
 		"ExploreMatchCountsResponse": {"counts"},

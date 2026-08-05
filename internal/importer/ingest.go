@@ -277,7 +277,10 @@ func buildRecipientSet(recipientType string, addresses []mime.Address, participa
 		return rs
 	}
 
+	// The envelope email is pinned at first occurrence, matching
+	// display-name dedup.
 	idToName := make(map[int64]string)
+	idToEmail := make(map[int64]string)
 	var orderedIDs []int64
 
 	for _, addr := range addresses {
@@ -292,6 +295,7 @@ func buildRecipientSet(recipientType string, addresses []mime.Address, participa
 		if _, seen := idToName[id]; !seen {
 			orderedIDs = append(orderedIDs, id)
 			idToName[id] = name
+			idToEmail[id] = addr.Email
 			continue
 		}
 		if idToName[id] == "" && name != "" {
@@ -301,8 +305,10 @@ func buildRecipientSet(recipientType string, addresses []mime.Address, participa
 
 	rs.ParticipantIDs = orderedIDs
 	rs.DisplayNames = make([]string, len(orderedIDs))
+	rs.EmailAddresses = make([]string, len(orderedIDs))
 	for i, id := range orderedIDs {
 		rs.DisplayNames[i] = idToName[id]
+		rs.EmailAddresses[i] = idToEmail[id]
 	}
 	return rs
 }

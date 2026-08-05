@@ -31,7 +31,42 @@ func TestStoreAPIAdapterImplementsCtxMessageStore(t *testing.T) {
 }
 
 var _ api.CtxMessageStore = (*storeAPIAdapter)(nil)
+var _ api.MessageIdentityStore = (*storeAPIAdapter)(nil)
 var _ api.MeetingImporter = (*storeAPIAdapter)(nil)
+
+func TestStoreAPIAdapterPassesThroughMessageIdentityOperations(t *testing.T) {
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource("imap", "primary@example.test")
+	require.NoError(err)
+	conversationID, err := st.EnsureConversation(source.ID, "thread-identity", "Identity")
+	require.NoError(err)
+	messageID, err := st.UpsertMessage(&store.Message{
+		ConversationID:  conversationID,
+		SourceID:        source.ID,
+		SourceMessageID: "message-identity",
+		MessageType:     "email",
+	})
+	require.NoError(err)
+	participantID, err := st.EnsureParticipant("masked-shop@example.test", "Masked", "example.test")
+	require.NoError(err)
+	require.NoError(st.ReplaceMessageRecipients(
+		messageID, "to", []int64{participantID}, []string{"Masked"},
+	))
+	require.NoError(st.AddAccountIdentity(source.ID, "Masked-Shop@Example.test", "manual"))
+
+	adapter := &storeAPIAdapter{store: st}
+	resolved, err := adapter.ResolveAccountIdentityContext(
+		t.Context(), source.ID, "masked-shop@example.test",
+	)
+	require.NoError(err)
+	require.Equal("Masked-Shop@Example.test", resolved.Identifier)
+	require.Equal([]int64{participantID}, resolved.ParticipantIDs)
+
+	matches, err := adapter.MatchMessageIdentitiesContext(t.Context(), []int64{messageID})
+	require.NoError(err)
+	require.Equal([]string{"Masked-Shop@Example.test"}, matches[messageID].Recipients)
+}
 
 type scopedStatsProductionAdapter struct {
 	*storeAPIAdapter

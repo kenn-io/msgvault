@@ -175,6 +175,66 @@ func TestRelationshipTimelineOverHTTP(t *testing.T) {
 	assert.Equal("event", page.Rows[2].Kind)
 }
 
+func TestRelationshipTimelineResolvesSourceScopedIdentityBeforeAnalyzerWork(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	now := time.Date(2026, 7, 20, 0, 0, 0, 0, time.UTC)
+	duckDB, _ := newRelationshipTimelineDuckDBFixture(t, now)
+	srv, identityStore, engine := newRelationshipIdentityAPIServer(
+		t,
+		duckDB,
+		[]string{
+			relationshipIdentityIdentifier,
+			"pat@example.test",
+			"pat-work@example.test",
+			"bystander@example.test",
+		},
+	)
+	path := fmt.Sprintf("/api/v1/relationships/%d/timeline", rtPatID)
+
+	baseline := postExploreJSON(t, srv, path, `{"timezone":"UTC"}`)
+	requirements.Equal(http.StatusOK, baseline.Code, baseline.Body.String())
+	var baselinePage RelationshipTimelineHTTPResponse
+	requirements.NoError(json.Unmarshal(baseline.Body.Bytes(), &baselinePage))
+	requirements.Len(baselinePage.Rows, 4)
+	assertions.Equal(1, engine.resolveCanonicalCalls)
+	assertions.Equal(1, engine.timelineCalls)
+	assertions.Zero(identityStore.resolveCalls)
+
+	filtered := postExploreJSON(t, srv, path, `{
+		"timezone":"UTC",
+		"filters":[
+			{"dimension":"source","values":["1"]},
+			{"dimension":"identity","values":["1","z-owner@example.test","sender"]}
+		]
+	}`)
+	requirements.Equal(http.StatusOK, filtered.Code, filtered.Body.String())
+	var filteredPage RelationshipTimelineHTTPResponse
+	requirements.NoError(json.Unmarshal(filtered.Body.Bytes(), &filteredPage))
+	requirements.Len(filteredPage.Rows, 1, "the resolved sender identity must retain only the owner-authored meeting")
+	assertions.Equal("event", filteredPage.Rows[0].Kind)
+	assertions.Equal(1, identityStore.resolveCalls, "the shared identity resolver runs once per request")
+	assertions.Equal(2, engine.resolveCanonicalCalls)
+	assertions.Equal(2, engine.timelineCalls)
+
+	invalid := postExploreJSON(t, srv, path, `{
+		"timezone":"UTC",
+		"filters":[
+			{"dimension":"source","values":["1"]},
+			{"dimension":"identity","values":["1","private-provider-token@example.test","sender"]}
+		]
+	}`)
+	requirements.Equal(http.StatusBadRequest, invalid.Code, invalid.Body.String())
+	var apiErr ErrorResponse
+	requirements.NoError(json.Unmarshal(invalid.Body.Bytes(), &apiErr))
+	assertions.Equal("invalid_identity_filter", apiErr.Error)
+	assertions.Equal("identity filter is malformed, unconfirmed, or does not match the selected source", apiErr.Message)
+	assertions.NotContains(invalid.Body.String(), "private-provider-token")
+	assertions.Equal(2, identityStore.resolveCalls)
+	assertions.Equal(2, engine.resolveCanonicalCalls, "invalid identity input must stop before canonical resolution")
+	assertions.Equal(2, engine.timelineCalls, "invalid identity input must stop before timeline analysis")
+}
+
 func TestRelationshipTimelineResolvesAnyMemberIDOverHTTP(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

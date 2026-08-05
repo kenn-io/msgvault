@@ -267,6 +267,9 @@ func exploreGroupExpressions(dimension, activityGlob, peopleGlob string) (groupE
 // unknown) IDs pass through unchanged, so archives without identity links
 // keep their exact pre-cluster filter semantics.
 func (e *DuckDBEngine) expandParticipantFilterClusters(ctx context.Context, explore ExploreRequest) (ExploreRequest, error) {
+	if err := validateIdentityPredicate(explore.Context); err != nil {
+		return explore, err
+	}
 	expanded, err := e.expandParticipantClusterMembers(ctx, explore.Context.ParticipantIDs)
 	if err != nil {
 		return explore, err
@@ -285,6 +288,43 @@ func (e *DuckDBEngine) expandParticipantFilterClusters(ctx context.Context, expl
 		explore.Context.AdditionalParticipantGroups[i] = expandedGroup
 	}
 	return explore, nil
+}
+
+func validateIdentityPredicate(analyticalContext Context) error {
+	identity := analyticalContext.Identity
+	if identity == nil {
+		return nil
+	}
+	if identity.SourceID <= 0 {
+		return fmt.Errorf("%w: identity source ID must be positive", ErrInvalidExploreRequest)
+	}
+	if identity.MatchNone && len(identity.ParticipantIDs) > 0 {
+		return fmt.Errorf("%w: identity match-none predicate cannot include participant IDs", ErrInvalidExploreRequest)
+	}
+	if identity.MatchNone && identity.EmailIdentifier != "" {
+		return fmt.Errorf("%w: identity match-none predicate cannot carry an email identifier", ErrInvalidExploreRequest)
+	}
+	// An email identity is matchable through the envelope snapshot alone,
+	// so it does not require resolved participant IDs (see
+	// IdentityPredicate.EmailIdentifier).
+	if !identity.MatchNone && len(identity.ParticipantIDs) == 0 && identity.EmailIdentifier == "" {
+		return fmt.Errorf("%w: identity participant IDs are required", ErrInvalidExploreRequest)
+	}
+	for _, participantID := range identity.ParticipantIDs {
+		if participantID <= 0 {
+			return fmt.Errorf("%w: identity participant ID must be positive", ErrInvalidExploreRequest)
+		}
+	}
+	switch identity.Direction {
+	case IdentityDirectionAny, IdentityDirectionSender, IdentityDirectionRecipient:
+	default:
+		return fmt.Errorf("%w: unknown identity direction %q", ErrInvalidExploreRequest, identity.Direction)
+	}
+	if len(analyticalContext.SourceIDs) > 0 &&
+		(len(analyticalContext.SourceIDs) != 1 || analyticalContext.SourceIDs[0] != identity.SourceID) {
+		return fmt.Errorf("%w: identity source ID must agree with context source IDs", ErrInvalidExploreRequest)
+	}
+	return nil
 }
 
 // expandParticipantClusterMembers widens a set of participant IDs to every

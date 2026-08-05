@@ -16,7 +16,7 @@ import type {
   ExploreWorkspace,
   RelationshipFacet
 } from './models';
-import { DEFAULT_EXPLORE_COLUMNS } from './models';
+import { DEFAULT_EXPLORE_COLUMNS, isValidSourceID } from './models';
 import { isGroupingDimension, validateGroupingChain } from '../grouping/catalog';
 import { hasValidSearchAuthority, predicateFingerprint } from './selection';
 import { parseAttachmentSelection } from './attachment-authority';
@@ -31,6 +31,7 @@ import {
 const STATE_PARAMETER = 'explore';
 const FILTER_DIMENSIONS = new Set([
   'source',
+  'identity',
   'participant',
   'domain',
   'message_type',
@@ -134,9 +135,22 @@ function isFilter(value: unknown): value is ExploreFilter {
 }
 
 function filters(value: unknown): ExploreFilter[] {
-  return Array.isArray(value) && value.every(isFilter)
-    ? value.map((filter) => ({ ...filter, values: [...filter.values] }))
-    : [];
+  if (!Array.isArray(value) || !value.every(isFilter)) return [];
+  const copied = value.map((filter) => ({ ...filter, values: [...filter.values] }));
+  const sourceFilters = copied.filter((filter) => filter.dimension === 'source');
+  const sourceValue = sourceFilters.length === 1 && sourceFilters[0]?.values.length === 1
+    ? sourceFilters[0].values[0]
+    : undefined;
+  const sourceID = isValidSourceID(sourceValue) ? sourceValue : undefined;
+  const identityFilters = copied.filter((filter) => filter.dimension === 'identity');
+  const identity = identityFilters.length === 1 ? identityFilters[0] : undefined;
+  const validIdentity = identity !== undefined &&
+    sourceID !== undefined &&
+    identity.values.length === 3 &&
+    identity.values[0] === sourceID &&
+    identity.values[1] !== '' &&
+    (identity.values[2] === 'any' || identity.values[2] === 'sender' || identity.values[2] === 'recipient');
+  return copied.filter((filter) => filter.dimension !== 'identity' || validIdentity);
 }
 
 function groups(value: unknown): ExploreGroupDimension[] {

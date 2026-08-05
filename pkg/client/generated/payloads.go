@@ -36,6 +36,10 @@ type RemoveCLIIdentityBody = RemoveRequest
 
 type AddCLIIdentityBody = AddRequest
 
+type DiscoverCLIIdentitiesBody = DiscoverRequest
+
+type ImportCLIIdentitiesBody = ImportRequest
+
 type RunCLIBody = CLIRunRequest
 
 type GetRemoteImageBody = RemoteImageRequest

@@ -140,6 +140,88 @@ func TestFilesSearchUsesAnalyticalQueryAndOneCatalogBatch(t *testing.T) {
 	assertions.Equal(query.SortSpec{Field: "size", Direction: "asc"}, engine.request.Sort)
 }
 
+func TestFileAdaptersResolveIdentityFilterOncePerRequest(t *testing.T) {
+	t.Run("search", func(t *testing.T) {
+		requirements := require.New(t)
+		assertions := assert.New(t)
+		fixture := newExploreIdentityAPIFixture(t)
+
+		response := postExploreJSON(t, fixture.server, "/api/v1/files/search", `{
+			"predicate":{"filters":[
+				{"dimension":"source","values":["1"]},
+				{"dimension":"identity","values":["1","BOB@MEMBERS.EXAMPLE","recipient"]}
+			]}
+		}`)
+
+		requirements.Equal(http.StatusOK, response.Code, response.Body.String())
+		var body FileSearchHTTPResponse
+		requirements.NoError(json.Unmarshal(response.Body.Bytes(), &body))
+		requirements.Len(body.Files, 1)
+		assertions.Equal(int64(2), body.Files[0].MessageID)
+		assertions.Equal(1, fixture.store.resolveCalls)
+	})
+
+	t.Run("groups", func(t *testing.T) {
+		requirements := require.New(t)
+		assertions := assert.New(t)
+		fixture := newExploreIdentityAPIFixture(t)
+
+		response := postExploreJSON(t, fixture.server, "/api/v1/files/groups", `{
+			"predicate":{"filters":[
+				{"dimension":"source","values":["1"]},
+				{"dimension":"identity","values":["1","BOB@MEMBERS.EXAMPLE","recipient"]}
+			]},
+			"grouping":["message_type"]
+		}`)
+
+		requirements.Equal(http.StatusOK, response.Code, response.Body.String())
+		var body FileGroupsHTTPResponse
+		requirements.NoError(json.Unmarshal(response.Body.Bytes(), &body))
+		requirements.Len(body.Rows, 1)
+		assertions.Equal("email", body.Rows[0].Key)
+		assertions.Equal(int64(1), body.Rows[0].Count)
+		assertions.Equal(1, fixture.store.resolveCalls)
+	})
+}
+
+func TestFileSearchRejectsUnconfirmedOrSourceMismatchedIdentity(t *testing.T) {
+	tests := []struct {
+		name       string
+		identifier string
+		filters    string
+	}{
+		{
+			name:       "unconfirmed",
+			identifier: "unconfirmed-private@example.test",
+			filters: `[
+				{"dimension":"source","values":["1"]},
+				{"dimension":"identity","values":["1","unconfirmed-private@example.test","any"]}
+			]`,
+		},
+		{
+			name:       "source mismatch",
+			identifier: "source-two@example.test",
+			filters: `[
+				{"dimension":"source","values":["1"]},
+				{"dimension":"identity","values":["2","source-two@example.test","any"]}
+			]`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fixture := newExploreIdentityAPIFixture(t)
+			response := postExploreJSON(t, fixture.server, "/api/v1/files/search", `{
+				"predicate":{"filters":`+tt.filters+`}
+			}`)
+
+			assert.Equal(t, http.StatusBadRequest, response.Code, response.Body.String())
+			assert.Contains(t, response.Body.String(), "invalid_identity_filter")
+			assert.NotContains(t, response.Body.String(), tt.identifier)
+		})
+	}
+}
+
 // TestPersonFilesSearchWidensScopeToIdentityCluster covers the identity
 // consistency between the Relationships hub panes: the person-scoped files
 // search must see the same cluster the person detail header and relationship

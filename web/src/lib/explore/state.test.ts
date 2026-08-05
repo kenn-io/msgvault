@@ -64,6 +64,75 @@ describe('Explore URL state', () => {
     expect(parseExploreURLState(serializeExploreURLState(state))).toEqual(state);
   });
 
+  it('restores an identity facet tuple from the URL', () => {
+    const state: ExploreURLState = {
+      ...defaultExploreURLState,
+      workspace: 'everything',
+      filters: [
+        { dimension: 'source', values: ['42'] },
+        { dimension: 'identity', values: ['42', 'archive@example.com', 'sender'] }
+      ]
+    };
+
+    expect(parseExploreURLState(serializeExploreURLState(state)).filters).toEqual(state.filters);
+  });
+
+  it('drops identity when its single parent source changes or is removed', () => {
+    const withChangedSource = parseExploreURLState(serializeExploreURLState({
+      ...defaultExploreURLState,
+      filters: [
+        { dimension: 'source', values: ['15'] },
+        { dimension: 'identity', values: ['14', 'archive@example.com', 'sender'] }
+      ]
+    }));
+    const withoutSource = parseExploreURLState(serializeExploreURLState({
+      ...defaultExploreURLState,
+      filters: [{ dimension: 'identity', values: ['14', 'archive@example.com', 'recipient'] }]
+    }));
+
+    expect(withChangedSource.filters).toEqual([{ dimension: 'source', values: ['15'] }]);
+    expect(withoutSource.filters).toEqual([]);
+  });
+
+  it.each([
+    [
+      'a nonnumeric parent source',
+      [
+        { dimension: 'source', values: ['abc'] },
+        { dimension: 'identity', values: ['abc', 'archive@example.com', 'sender'] }
+      ]
+    ],
+    [
+      'an empty identifier',
+      [
+        { dimension: 'source', values: ['14'] },
+        { dimension: 'identity', values: ['14', '', 'recipient'] }
+      ]
+    ],
+    [
+      'an invalid direction',
+      [
+        { dimension: 'source', values: ['14'] },
+        { dimension: 'identity', values: ['14', 'archive@example.com', 'sideways'] }
+      ]
+    ],
+    [
+      'duplicate identity filters',
+      [
+        { dimension: 'source', values: ['14'] },
+        { dimension: 'identity', values: ['14', 'first@example.com', 'any'] },
+        { dimension: 'identity', values: ['14', 'second@example.com', 'sender'] }
+      ]
+    ]
+  ])('drops identity URL state with %s', (_description, malformedFilters) => {
+    const restored = parseExploreURLState(serializeExploreURLState({
+      ...defaultExploreURLState,
+      filters: malformedFilters
+    } as ExploreURLState));
+
+    expect(restored.filters.some((filter) => filter.dimension === 'identity')).toBe(false);
+  });
+
   it('normalizes legacy unpinned inspector states to pinned', () => {
     const parsed = parseExploreURLState(serializeExploreURLState({
       ...defaultExploreURLState,

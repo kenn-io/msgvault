@@ -257,7 +257,6 @@ func (s *Store) GetMessageContext(ctx context.Context, id int64) (*APIMessage, e
 	if err != nil {
 		return nil, err
 	}
-
 	// Get body (single PK lookup — only place we touch message_bodies)
 	var bodyText, bodyHTML sql.NullString
 	err = s.db.QueryRowContext(ctx, "SELECT body_text, body_html FROM message_bodies WHERE message_id = ?", id).Scan(&bodyText, &bodyHTML)
@@ -319,7 +318,7 @@ func (s *Store) GetMessageContext(ctx context.Context, id int64) (*APIMessage, e
 // have already filtered for live messages, and a missing row in the
 // summary set is just "ignore this hit". Recipients and labels are
 // batch-loaded with the same shape as SearchMessages, so the worst
-// case is 5 SQL round-trips regardless of len(ids). This is the
+// case remains bounded regardless of len(ids). This is the
 // designated hydration path for vector/hybrid search hits, where
 // callers loop over many MessageIDs and never need body or
 // attachments — calling GetMessage in that loop costs ~7 queries per

@@ -251,6 +251,32 @@ func TestSearchCoverageIntersectsCanonicalContextWithEmbeddingScope(t *testing.T
 	assert.Equal(SearchCoverageReady, body.Status)
 }
 
+func TestSearchCoverageResolvesIdentityFilterOnce(t *testing.T) {
+	assertions := assert.New(t)
+	fixture := newExploreIdentityAPIFixture(t)
+	backend := &filteredCoverageBackend{
+		active: vector.Generation{
+			ID: 7, Fingerprint: "model:2", State: vector.GenerationActive,
+		},
+		embeddedIDs: map[int64]struct{}{2: {}},
+	}
+	srv := NewServerWithOptions(ServerOptions{
+		Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}},
+		Store:  fixture.store, Engine: fixture.server.engine, Backend: backend,
+		VectorStatus: VectorStatusReady, Logger: testLogger(),
+	})
+
+	body := getSearchCoverage(t, srv, `{"filters":[
+		{"dimension":"source","values":["1"]},
+		{"dimension":"identity","values":["1","BOB@MEMBERS.EXAMPLE","recipient"]}
+	]}`)
+
+	assertions.Equal(SearchCoverageReady, body.Status)
+	assertions.Equal(int64(1), body.EligibleCount)
+	assertions.Equal(int64(1), body.EmbeddedCount)
+	assertions.Equal(1, fixture.store.resolveCalls)
+}
+
 func TestSearchCoverageOpenAPIContract(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
@@ -395,6 +421,61 @@ func TestSearchCoverageCachesPerFilterContext(t *testing.T) {
 
 	assert.Equal(int64(3), unfiltered.EligibleCount)
 	assert.Equal(int64(2), filtered.EligibleCount, "a different filter context must not reuse cached counts")
+}
+
+func TestSearchCoverageCacheSeparatesResolvedIdentitiesAndDirections(t *testing.T) {
+	require := require.New(t)
+	fixture := newExploreIdentityAPIFixture(t)
+	require.NoError(fixture.store.AddAccountIdentity(1, "alice@example.com", "manual"))
+	engine := &coverageScanEngine{revision: "cache:identity", total: 3}
+	backend := &filteredCoverageBackend{
+		active:   vector.Generation{ID: 7, Fingerprint: "model:2", State: vector.GenerationActive},
+		countAll: true,
+	}
+	srv := NewServerWithOptions(ServerOptions{
+		Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}},
+		Store:  fixture.store, Engine: engine, Backend: backend,
+		VectorStatus: VectorStatusReady, Logger: testLogger(),
+	})
+	request := func(identifier, direction string) string {
+		return `{"filters":[` +
+			`{"dimension":"source","values":["1"]},` +
+			`{"dimension":"identity","values":["1","` + identifier + `","` + direction + `"]}` +
+			`]}`
+	}
+
+	getSearchCoverage(t, srv, request("BOB@MEMBERS.EXAMPLE", "sender"))
+	require.Equal(1, engine.scanCalls)
+	getSearchCoverage(t, srv, request("BOB@MEMBERS.EXAMPLE", "sender"))
+	require.Equal(1, engine.scanCalls, "an identical resolved identity should hit the cache")
+
+	getSearchCoverage(t, srv, request("BOB@MEMBERS.EXAMPLE", "recipient"))
+	require.Equal(2, engine.scanCalls, "direction must participate in the coverage cache key")
+	getSearchCoverage(t, srv, request("alice@example.com", "sender"))
+	require.Equal(3, engine.scanCalls, "resolved identity must participate in the coverage cache key")
+}
+
+// TestSearchCoverageContextHashSeparatesEmailIdentifier guards the coverage
+// cache key against alias collisions: two confirmed aliases can resolve to
+// the same participant set after a merge, yet envelope-first filtering makes
+// their predicates select different populations.
+func TestSearchCoverageContextHashSeparatesEmailIdentifier(t *testing.T) {
+	assert := assert.New(t)
+	identity := func(emailIdentifier string) query.Context {
+		return query.Context{Identity: &query.IdentityPredicate{
+			SourceID:        1,
+			ParticipantIDs:  []int64{7},
+			EmailIdentifier: emailIdentifier,
+			Direction:       query.IdentityDirectionSender,
+		}}
+	}
+
+	aliasA := searchCoverageContextHash(identity("alias-a@example.test"))
+	aliasARepeat := searchCoverageContextHash(identity("alias-a@example.test"))
+	aliasB := searchCoverageContextHash(identity("alias-b@example.test"))
+	assert.Equal(aliasA, aliasARepeat, "identical contexts must share a cache key")
+	assert.NotEqual(aliasA, aliasB,
+		"aliases resolving to the same participants must not share a cache key")
 }
 
 func TestSearchCoverageRejectsGenerationActivationDuringScan(t *testing.T) {

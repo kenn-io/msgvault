@@ -70,6 +70,10 @@ func (s *Server) handleSearchCoverage(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_filter", err.Error())
 		return
 	}
+	if err := s.resolveExploreIdentityContext(r.Context(), canonical.Filters, &ctx); err != nil {
+		s.writeExploreFilterError(w, err, "invalid_filter")
+		return
+	}
 	_, backend, cfg := s.vectorComponents()
 	ctx = semanticCoverageContext(ctx, cfg.Embed.Scope.BuildScope())
 	explorer, ok := s.engine.(query.Explorer)
@@ -108,7 +112,7 @@ func (s *Server) handleSearchCoverage(w http.ResponseWriter, r *http.Request) {
 		s.writeExploreError(w, err)
 		return
 	}
-	contextHash := hashCanonicalValue(ctx, false)
+	contextHash := searchCoverageContextHash(ctx)
 	if entry, found := state.getCoverage(searchCoverageCacheKey(contextHash, probe.CacheRevision, *generation)); found {
 		response.EligibleCount, response.EmbeddedCount = entry.EligibleCount, entry.EmbeddedCount
 		response.CacheRevision = probe.CacheRevision
@@ -218,6 +222,35 @@ func searchCoverageCacheKey(contextHash, cacheRevision string, generation vector
 	return fmt.Sprintf("%s|%s|%d|%s|%s|%d",
 		contextHash, cacheRevision,
 		generation.ID, generation.State, generation.Fingerprint, generation.MessageCount)
+}
+
+func searchCoverageContextHash(ctx query.Context) string {
+	type identityKey struct {
+		SourceID       int64   `json:"source_id"`
+		ParticipantIDs []int64 `json:"participant_ids"`
+		// EmailIdentifier participates in the key because envelope-first
+		// filtering makes two aliases with identical resolved participant
+		// sets select different populations.
+		EmailIdentifier string                  `json:"email_identifier,omitempty"`
+		MatchNone       bool                    `json:"match_none"`
+		Direction       query.IdentityDirection `json:"direction"`
+	}
+	var identity *identityKey
+	if ctx.Identity != nil {
+		participantIDs := slices.Clone(ctx.Identity.ParticipantIDs)
+		slices.Sort(participantIDs)
+		identity = &identityKey{
+			SourceID:        ctx.Identity.SourceID,
+			ParticipantIDs:  participantIDs,
+			EmailIdentifier: ctx.Identity.EmailIdentifier,
+			MatchNone:       ctx.Identity.MatchNone,
+			Direction:       ctx.Identity.Direction,
+		}
+	}
+	return hashCanonicalValue(struct {
+		Context  query.Context `json:"context"`
+		Identity *identityKey  `json:"identity,omitempty"`
+	}{Context: ctx, Identity: identity}, false)
 }
 
 func resolveSearchCoverageGeneration(

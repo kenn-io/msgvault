@@ -7,6 +7,7 @@ import (
 
 	"go.kenn.io/msgvault/internal/cacheops"
 	"go.kenn.io/msgvault/internal/deletion"
+	"go.kenn.io/msgvault/internal/identityops"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/pkg/client/generated"
@@ -513,6 +514,148 @@ func cliIdentityRemoveResultFromGenerated(resp *generated.RemoveResult) *CLIIden
 		Identifier: resp.Identifier,
 		Removed:    resp.Removed,
 		NoIdentity: boolValue(resp.NoIdentity),
+	}
+}
+
+func cliIdentityDiscoverBodyFromRequest(
+	req identityops.DiscoverRequest,
+) *generated.DiscoverCLIIdentitiesBody {
+	body := &generated.DiscoverCLIIdentitiesBody{
+		Account:  optionalString(req.Account),
+		Apply:    optionalBool(req.Apply),
+		Confirm:  append([]string(nil), req.Confirm...),
+		Provider: optionalBool(req.Provider),
+		SourceID: optionalCLIIdentitySourceID(req.SourceID, req.SourceID != 0),
+	}
+	if req.PageSize != 0 {
+		pageSize := int64(req.PageSize)
+		body.PageSize = &pageSize
+	}
+	return body
+}
+
+func cliIdentityDiscoverEventFromGenerated(event generated.DiscoverEvent) identityops.DiscoverEvent {
+	out := identityops.DiscoverEvent{Type: string(event.Type)}
+	if event.ErrorData != nil {
+		out.Error = &identityops.DiscoverError{
+			Code:    event.ErrorData.Code,
+			Message: event.ErrorData.Message,
+		}
+	}
+	if event.Progress != nil {
+		out.Progress = &identityops.DiscoverProgress{
+			Done:       event.Progress.Done,
+			Total:      event.Progress.Total,
+			Candidates: int(event.Progress.Candidates),
+		}
+	}
+	if event.Result != nil {
+		out.Result = cliIdentityDiscoverResultFromGenerated(event.Result)
+	}
+	return out
+}
+
+func cliIdentityDiscoverResultFromGenerated(result *generated.DiscoverResult) *identityops.DiscoverResult {
+	if result == nil {
+		return nil
+	}
+	candidates := make([]identityops.Candidate, len(result.Candidates))
+	for i, candidate := range result.Candidates {
+		candidates[i] = identityops.Candidate{
+			Identifier:           candidate.Identifier,
+			NormalizedIdentifier: candidate.NormalizedIdentifier,
+			Classification:       string(candidate.Classification),
+			AlreadyConfirmed:     candidate.AlreadyConfirmed,
+			Signals:              append([]string{}, candidate.Signals...),
+			ProviderStates:       append([]string{}, candidate.ProviderStates...),
+			SentMessageCount:     candidate.SentMessageCount,
+			ReceivedMessageCount: candidate.ReceivedMessageCount,
+			FirstSeenAt:          candidate.FirstSeenAt,
+			LastSeenAt:           candidate.LastSeenAt,
+		}
+	}
+	rejected := make([]identityops.RejectedCandidate, len(result.Rejected))
+	for i, candidate := range result.Rejected {
+		rejected[i] = identityops.RejectedCandidate{
+			Identifier: candidate.Identifier,
+			Reason:     candidate.Reason,
+		}
+	}
+	applied := make([]store.IdentityConfirmationOutcome, len(result.Applied))
+	for i, outcome := range result.Applied {
+		applied[i] = store.IdentityConfirmationOutcome{
+			Identifier: outcome.Identifier,
+			Added:      outcome.Added,
+			Signals:    append([]string{}, outcome.Signals...),
+		}
+	}
+	return &identityops.DiscoverResult{
+		Account:         result.Account,
+		SourceID:        result.SourceID,
+		SourceType:      result.SourceType,
+		ScannedMessages: result.ScannedMessages,
+		Candidates:      candidates,
+		Rejected:        rejected,
+		Applied:         applied,
+	}
+}
+
+func cliIdentityImportBodyFromRequest(
+	req identityops.ImportRequest,
+) *generated.ImportCLIIdentitiesBody {
+	entries := make([]generated.ImportEntry, len(req.Entries))
+	for i, entry := range req.Entries {
+		entries[i] = generated.ImportEntry{
+			Identifier: entry.Identifier,
+			State:      optionalString(entry.State),
+		}
+	}
+	return &generated.ImportCLIIdentitiesBody{
+		Account:  optionalString(req.Account),
+		Apply:    optionalBool(req.Apply),
+		Entries:  entries,
+		Signal:   optionalString(req.Signal),
+		SourceID: optionalCLIIdentitySourceID(req.SourceID, req.SourceID != 0),
+	}
+}
+
+func cliIdentityImportResultFromGenerated(result *generated.ImportResult) *identityops.ImportResult {
+	if result == nil {
+		return &identityops.ImportResult{}
+	}
+	candidates := make([]identityops.Candidate, len(result.Candidates))
+	for i, candidate := range result.Candidates {
+		candidates[i] = cliIdentityCandidateFromGenerated(candidate)
+	}
+	applied := make([]store.IdentityConfirmationOutcome, len(result.Applied))
+	for i, outcome := range result.Applied {
+		applied[i] = store.IdentityConfirmationOutcome{
+			Identifier: outcome.Identifier,
+			Added:      outcome.Added,
+			Signals:    append([]string{}, outcome.Signals...),
+		}
+	}
+	return &identityops.ImportResult{
+		Account:    result.Account,
+		SourceID:   result.SourceID,
+		Signal:     result.Signal,
+		Candidates: candidates,
+		Applied:    applied,
+	}
+}
+
+func cliIdentityCandidateFromGenerated(candidate generated.Candidate) identityops.Candidate {
+	return identityops.Candidate{
+		Identifier:           candidate.Identifier,
+		NormalizedIdentifier: candidate.NormalizedIdentifier,
+		Classification:       string(candidate.Classification),
+		AlreadyConfirmed:     candidate.AlreadyConfirmed,
+		Signals:              append([]string{}, candidate.Signals...),
+		ProviderStates:       append([]string{}, candidate.ProviderStates...),
+		SentMessageCount:     candidate.SentMessageCount,
+		ReceivedMessageCount: candidate.ReceivedMessageCount,
+		FirstSeenAt:          candidate.FirstSeenAt,
+		LastSeenAt:           candidate.LastSeenAt,
 	}
 }
 

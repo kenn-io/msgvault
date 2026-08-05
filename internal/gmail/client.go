@@ -341,6 +341,7 @@ func (c *Client) ListLabels(ctx context.Context) ([]*Label, error) {
 			ID:                    l.ID,
 			Name:                  l.Name,
 			Type:                  l.Type,
+			SystemRole:            SystemRoleForLabelID(l.ID),
 			MessagesTotal:         l.MessagesTotal,
 			MessagesUnread:        l.MessagesUnread,
 			MessageListVisibility: l.MessageListVisibility,

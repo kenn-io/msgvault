@@ -863,6 +863,7 @@ type storeAPIAdapter struct {
 
 var _ api.MessageStore = (*storeAPIAdapter)(nil)
 var _ api.CtxMessageStore = (*storeAPIAdapter)(nil)
+var _ api.MessageIdentityStore = (*storeAPIAdapter)(nil)
 var _ api.MeetingImporter = (*storeAPIAdapter)(nil)
 var _ api.SourceStatusStore = (*storeAPIAdapter)(nil)
 var _ api.CLIStore = (*storeAPIAdapter)(nil)
@@ -1565,6 +1566,21 @@ func (a *storeAPIAdapter) ListAccountIdentitiesContext(
 	return a.store.ListAccountIdentitiesContext(ctx, sourceID)
 }
 
+func (a *storeAPIAdapter) ResolveAccountIdentityContext(
+	ctx context.Context,
+	sourceID int64,
+	identifier string,
+) (store.ResolvedAccountIdentity, error) {
+	return a.store.ResolveAccountIdentityContext(ctx, sourceID, identifier)
+}
+
+func (a *storeAPIAdapter) MatchMessageIdentitiesContext(
+	ctx context.Context,
+	messageIDs []int64,
+) (map[int64]store.MessageIdentityMatch, error) {
+	return a.store.MatchMessageIdentitiesContext(ctx, messageIDs)
+}
+
 func (a *storeAPIAdapter) AddAccountIdentity(sourceID int64, address, signal string) error {
 	return a.store.AddAccountIdentity(sourceID, address, signal)
 }
@@ -1587,6 +1603,45 @@ func (a *storeAPIAdapter) RemoveAccountIdentityContext(
 	address string,
 ) (int64, error) {
 	return a.store.RemoveAccountIdentityContext(ctx, sourceID, address)
+}
+
+func (a *storeAPIAdapter) CountIdentityDiscoveryMessagesContext(
+	ctx context.Context,
+	sourceID int64,
+) (int64, error) {
+	return a.store.CountIdentityDiscoveryMessagesContext(ctx, sourceID)
+}
+
+func (a *storeAPIAdapter) ScanIdentityDiscoveryPageContext(
+	ctx context.Context,
+	sourceID, afterID int64,
+	limit int,
+) (store.IdentityDiscoveryPage, error) {
+	return a.store.ScanIdentityDiscoveryPageContext(ctx, sourceID, afterID, limit)
+}
+
+func (a *storeAPIAdapter) ScanIdentityObservationsForSourceMessageIDsContext(
+	ctx context.Context,
+	sourceID int64,
+	sourceMessageIDs []string,
+) ([]store.IdentityObservation, error) {
+	return a.store.ScanIdentityObservationsForSourceMessageIDsContext(ctx, sourceID, sourceMessageIDs)
+}
+
+func (a *storeAPIAdapter) AddAccountIdentitiesBatchContext(
+	ctx context.Context,
+	sourceID int64,
+	candidates []store.IdentityConfirmation,
+) ([]store.IdentityConfirmationOutcome, error) {
+	return a.store.AddAccountIdentitiesBatchContext(ctx, sourceID, candidates)
+}
+
+func (a *storeAPIAdapter) MergeConfirmedAccountIdentitySignalsContext(
+	ctx context.Context,
+	sourceID int64,
+	candidates []store.IdentityConfirmation,
+) ([]store.IdentityConfirmationOutcome, error) {
+	return a.store.MergeConfirmedAccountIdentitySignalsContext(ctx, sourceID, candidates)
 }
 
 func (a *storeAPIAdapter) LinkParticipants(participantA, participantB int64) (int64, error) {
@@ -1934,7 +1989,7 @@ func runScheduledGmailSync(ctx context.Context, email string, src *store.Source,
 	opts := sync.DefaultOptions()
 	opts.AttachmentsDir = cfg.AttachmentsDir()
 
-	syncer := sync.New(client, s, opts).WithLogger(logger)
+	syncer := newMessageSyncer(client, s, opts).WithLogger(logger)
 
 	source, err := s.GetOrCreateSource(sourceTypeGmail, email)
 	if err != nil {
@@ -1988,7 +2043,7 @@ func runScheduledIMAPSync(ctx context.Context, src *store.Source, s *store.Store
 	opts.AttachmentsDir = cfg.AttachmentsDir()
 	opts.NoResume = true
 
-	syncer := sync.New(apiClient, s, opts).WithLogger(logger)
+	syncer := newMessageSyncer(apiClient, s, opts).WithLogger(logger)
 
 	// runPostSourceCreateMigrations is keyed off Gmail-only legacy
 	// state, so it's a no-op for fresh IMAP installs; we still call it

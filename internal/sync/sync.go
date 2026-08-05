@@ -15,6 +15,7 @@ import (
 
 	"go.kenn.io/msgvault/internal/export"
 	"go.kenn.io/msgvault/internal/gmail"
+	"go.kenn.io/msgvault/internal/identityops"
 	"go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/textutil"
@@ -64,12 +65,21 @@ func DefaultOptions() *Options {
 
 // Syncer performs Gmail synchronization.
 type Syncer struct {
-	client   gmail.API
-	store    *store.Store
-	logger   *slog.Logger
-	progress gmail.SyncProgress
-	opts     *Options
+	client             gmail.API
+	store              *store.Store
+	logger             *slog.Logger
+	progress           gmail.SyncProgress
+	opts               *Options
+	successfulHookName string
+	successfulHook     SuccessfulSyncHook
 }
+
+// SuccessfulSyncHook runs after the durable sync run is marked complete.
+// mailboxChanged reports whether the run observed provider-side change; a
+// no-op incremental run passes false so the hook can skip provider-facing
+// work it has performed recently.
+// Its failure is warning-only and never replaces the successful sync result.
+type SuccessfulSyncHook func(ctx context.Context, source *store.Source, mailboxChanged bool) error
 
 type messageAcknowledger interface {
 	AcknowledgeMessages(ctx context.Context, messageIDs []string)
@@ -138,6 +148,156 @@ func (s *Syncer) labelsSnapshotComplete() bool {
 	return !ok || completeness.LabelsSnapshotComplete()
 }
 
+// WithSuccessfulSyncHook installs one best-effort post-completion hook.
+func (s *Syncer) WithSuccessfulSyncHook(name string, hook SuccessfulSyncHook) *Syncer {
+	s.successfulHookName = strings.TrimSpace(name)
+	s.successfulHook = hook
+	return s
+}
+
+func (s *Syncer) runSuccessfulSyncHook(ctx context.Context, source *store.Source, mailboxChanged bool) {
+	if s.successfulHook == nil {
+		return
+	}
+	if err := s.successfulHook(ctx, source, mailboxChanged); err != nil {
+		s.logger.Warn(
+			"successful sync hook failed",
+			"hook", s.successfulHookName,
+			"source_id", source.ID,
+			"error", err,
+		)
+	}
+}
+
+// completeSyncWithoutHook marks the run complete and reports whether that
+// durable write succeeded.
+func (s *Syncer) completeSyncWithoutHook(syncID int64, historyID string) bool {
+	if err := s.store.CompleteSync(syncID, historyID); err != nil {
+		s.logger.Warn("failed to complete sync", "error", err)
+		return false
+	}
+	return true
+}
+
+func (s *Syncer) completeSyncAndRunHook(
+	ctx context.Context,
+	syncID int64,
+	historyID string,
+	source *store.Source,
+) {
+	if !s.completeSyncWithoutHook(syncID, historyID) {
+		return
+	}
+	s.runSuccessfulSyncHook(ctx, source, true)
+}
+
+// identityDiscoveryRetryBackoff is the delay before the second per-page
+// identity discovery attempt; each further attempt doubles it. It is a variable
+// so tests can run the retry loop without real backoff.
+var identityDiscoveryRetryBackoff = time.Second
+
+const (
+	identityDiscoveryAttempts          = 3
+	identityDiscoveryRetryLogMessage   = "identity discovery failed for sync page; retrying"
+	identityDiscoveryBacklogLogMessage = "identity discovery failed for sync page; recorded backlog"
+	identityDiscoveryDrainLogMessage   = "draining identity discovery backlog"
+)
+
+// runPageIdentityDiscovery merges one page's identity evidence into the
+// source's confirmed identities, retrying a bounded number of times.
+//
+// It deliberately returns no error. The page's messages are already durably
+// archived by the time it runs, and the evidence it derives is recomputable
+// from them, so failing the run here would discard real archived work over a
+// debt that RefreshConfirmedForSource can settle later. Persistent failure is
+// logged and parked in a durable per-source backlog marker instead. Callers
+// must still check ctx after it returns: a cancelled sync is an interruption,
+// not a discovery failure, and has to stay resumable.
+//
+// It reports whether the page ended up parking a backlog marker, which is the
+// signal callers use to decide whether an immediate drain is worth attempting.
+func (s *Syncer) runPageIdentityDiscovery(
+	ctx context.Context,
+	sourceID int64,
+	sourceMessageIDs []string,
+) (parkedBacklog bool) {
+	backoff := identityDiscoveryRetryBackoff
+	var err error
+	for attempt := range identityDiscoveryAttempts {
+		if _, err = identityops.DiscoverStrongForSourceMessageIDs(
+			ctx, s.store, sourceID, sourceMessageIDs,
+		); err == nil {
+			return false
+		}
+		if ctx.Err() != nil || attempt == identityDiscoveryAttempts-1 {
+			break
+		}
+		s.logger.Warn(identityDiscoveryRetryLogMessage,
+			"source_id", sourceID, "attempt", attempt+1, "error", err)
+		select {
+		case <-time.After(backoff):
+		case <-ctx.Done():
+			return false
+		}
+		backoff *= 2
+	}
+	if ctx.Err() != nil {
+		return false
+	}
+	err = fmt.Errorf("discover identities for sync page: %w", err)
+	s.logger.Warn(identityDiscoveryBacklogLogMessage, "source_id", sourceID, "error", err)
+	if setErr := s.store.SetIdentityDiscoveryBacklogContext(ctx, sourceID, err); setErr != nil {
+		s.logger.Warn("record identity discovery backlog", "source_id", sourceID, "error", setErr)
+	}
+	return true
+}
+
+// pageDiscoveryHealth tracks whether the most recent page's identity discovery
+// worked, so a run only spends an end-of-run whole-archive refresh when there
+// is reason to believe it can succeed.
+type pageDiscoveryHealth struct {
+	ran    bool
+	parked bool
+}
+
+func (h *pageDiscoveryHealth) observe(parkedBacklog bool) {
+	h.ran = true
+	h.parked = parkedBacklog
+}
+
+// shouldDrainAtCompletion reports whether a run that just finished its pages
+// should try to settle debt it parked itself. Retrying right after discovery
+// failed every attempt on the last page costs a full archive scan to learn
+// nothing; debt parked by an earlier page of a run that recovered is worth
+// settling now rather than making the archive wait for the next sync.
+func (h *pageDiscoveryHealth) shouldDrainAtCompletion() bool {
+	return h.ran && !h.parked
+}
+
+// drainIdentityDiscoveryBacklog settles a parked discovery debt by re-deriving
+// the source's confirmed identities from the whole archive. A refresh that
+// fails leaves the marker in place for the next attempt; it never fails the
+// sync that happens to be carrying it.
+func (s *Syncer) drainIdentityDiscoveryBacklog(ctx context.Context, sourceID int64) {
+	found, lastError, err := s.store.IdentityDiscoveryBacklogContext(ctx, sourceID)
+	if err != nil {
+		s.logger.Warn("read identity discovery backlog", "source_id", sourceID, "error", err)
+		return
+	}
+	if !found {
+		return
+	}
+	s.logger.Info(identityDiscoveryDrainLogMessage,
+		"source_id", sourceID, "last_error", lastError)
+	if err := identityops.RefreshConfirmedForSource(ctx, s.store, sourceID); err != nil {
+		s.logger.Warn("drain identity discovery backlog", "source_id", sourceID, "error", err)
+		return
+	}
+	if err := s.store.ClearIdentityDiscoveryBacklogContext(ctx, sourceID); err != nil {
+		s.logger.Warn("clear identity discovery backlog", "source_id", sourceID, "error", err)
+	}
+}
+
 // syncState holds the state for a sync operation.
 type syncState struct {
 	syncID     int64
@@ -198,12 +358,13 @@ func (s *Syncer) initSyncState(sourceID int64) (*syncState, error) {
 
 // batchResult holds the result of processing a batch.
 type batchResult struct {
-	processed    int64
-	added        int64
-	updated      int64
-	skipped      int64
-	oldestDate   time.Time
-	acknowledged []string
+	processed        int64
+	added            int64
+	updated          int64
+	skipped          int64
+	oldestDate       time.Time
+	acknowledged     []string
+	sourceMessageIDs []string
 }
 
 type inconclusiveLabelRefresh struct {
@@ -227,6 +388,7 @@ func (s *Syncer) processBatch(ctx context.Context, syncID, sourceID int64, listR
 		messageIDs[i] = m.ID
 		threadIDs[m.ID] = m.ThreadID
 	}
+	result.sourceMessageIDs = messageIDs
 
 	// Check which messages already exist
 	existingMap, err := s.store.MessageMetadataWithRawBatch(
@@ -645,8 +807,12 @@ func (s *Syncer) Full(ctx context.Context, email string) (summary *gmail.SyncSum
 		return nil, fmt.Errorf("sync labels: %w", err)
 	}
 
+	// Settle any discovery debt a previous run parked before this run adds to it.
+	s.drainIdentityDiscoveryBacklog(ctx, source.ID)
+
 	// List and sync messages
 	var totalEstimate int64
+	var discoveryHealth pageDiscoveryHealth
 	firstPage := true
 	pageToken := state.pageToken
 
@@ -689,12 +855,19 @@ func (s *Syncer) Full(ctx context.Context, email string) (summary *gmail.SyncSum
 			return nil, err
 		}
 
-		state.checkpoint.MessagesProcessed += result.processed
-		state.checkpoint.MessagesAdded += result.added
-		state.checkpoint.MessagesUpdated += result.updated
+		discoveryHealth.observe(s.runPageIdentityDiscovery(ctx, source.ID, result.sourceMessageIDs))
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			err := fmt.Errorf("sync canceled during identity discovery: %w", ctxErr)
+			s.failSyncUnlessCanceled(state.syncID, err)
+			return nil, err
+		}
 		if ack, ok := s.client.(messageAcknowledger); ok && len(result.acknowledged) > 0 {
 			ack.AcknowledgeMessages(ctx, result.acknowledged)
 		}
+
+		state.checkpoint.MessagesProcessed += result.processed
+		state.checkpoint.MessagesAdded += result.added
+		state.checkpoint.MessagesUpdated += result.updated
 
 		// Report current position date before progress (so UI shows consistent state)
 		if !result.oldestDate.IsZero() {
@@ -724,6 +897,12 @@ func (s *Syncer) Full(ctx context.Context, email string) (summary *gmail.SyncSum
 		}
 	}
 
+	// Debt parked by an earlier page of this run is settled now, provided the
+	// run showed discovery recovering.
+	if discoveryHealth.shouldDrainAtCompletion() {
+		s.drainIdentityDiscoveryBacklog(ctx, source.ID)
+	}
+
 	// Update source with final history ID.
 	// Full sync always advances the cursor (it records the starting point
 	// for future incremental syncs), but warn when errors occurred.
@@ -737,10 +916,8 @@ func (s *Syncer) Full(ctx context.Context, email string) (summary *gmail.SyncSum
 		s.logger.Warn("failed to update sync cursor", "error", err)
 	}
 
-	// Mark sync complete
-	if err := s.store.CompleteSync(state.syncID, historyIDStr); err != nil {
-		s.logger.Warn("failed to complete sync", "error", err)
-	}
+	// Mark sync complete before running best-effort provider maintenance.
+	s.completeSyncAndRunHook(ctx, state.syncID, historyIDStr, source)
 
 	// Checkpoint WAL after sync to fold it back into the main database.
 	// This prevents WAL accumulation across long sync sessions and ensures
@@ -779,7 +956,11 @@ func (s *Syncer) syncLabels(ctx context.Context, sourceID int64) (map[string]int
 				labelType = labelTypeSystem
 			}
 		}
-		labelInfos[l.ID] = store.LabelInfo{Name: l.Name, Type: labelType}
+		labelInfos[l.ID] = store.LabelInfo{
+			Name:       l.Name,
+			Type:       labelType,
+			SystemRole: l.SystemRole,
+		}
 	}
 
 	return s.store.EnsureLabelsBatch(sourceID, labelInfos)
@@ -1265,8 +1446,10 @@ func buildRecipientSet(recipientType string, addresses []mime.Address, participa
 
 	// Track participant ID -> display name, preferring non-empty names.
 	// Handles duplicates where the first occurrence might have an empty
-	// name but a later occurrence has a better display name.
+	// name but a later occurrence has a better display name. The envelope
+	// email is pinned at first occurrence, matching display-name dedup.
 	idToName := make(map[int64]string)
+	idToEmail := make(map[int64]string)
 	var orderedIDs []int64
 
 	for _, addr := range addresses {
@@ -1275,6 +1458,7 @@ func buildRecipientSet(recipientType string, addresses []mime.Address, participa
 			if _, seen := idToName[id]; !seen {
 				orderedIDs = append(orderedIDs, id)
 				idToName[id] = name
+				idToEmail[id] = addr.Email
 			} else if idToName[id] == "" && name != "" {
 				idToName[id] = name
 			}
@@ -1283,8 +1467,10 @@ func buildRecipientSet(recipientType string, addresses []mime.Address, participa
 
 	rs.ParticipantIDs = orderedIDs
 	rs.DisplayNames = make([]string, len(orderedIDs))
+	rs.EmailAddresses = make([]string, len(orderedIDs))
 	for i, id := range orderedIDs {
 		rs.DisplayNames[i] = idToName[id]
+		rs.EmailAddresses[i] = idToEmail[id]
 	}
 	return rs
 }

@@ -3,20 +3,395 @@ package cmd
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/kit/daemon"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/daemonclient"
+	"go.kenn.io/msgvault/internal/identityops"
 	"go.kenn.io/msgvault/internal/store"
 )
+
+type identityDiscoverFailingWriter struct {
+	err error
+}
+
+func (w identityDiscoverFailingWriter) Write([]byte) (int, error) {
+	return 0, w.err
+}
+
+func stableIdentityDiscoverResult() identityops.DiscoverResult {
+	return identityops.DiscoverResult{
+		Account:         "primary@example.test",
+		SourceID:        14,
+		SourceType:      "imap",
+		ScannedMessages: 5,
+		Candidates: []identityops.Candidate{
+			{
+				Identifier:           "known@example.test",
+				NormalizedIdentifier: "known@example.test",
+				Classification:       "confirmed",
+				AlreadyConfirmed:     true,
+				Signals:              []string{"is_from_me", "manual"},
+				ProviderStates:       []string{"deleted", "enabled"},
+				SentMessageCount:     2,
+				ReceivedMessageCount: 1,
+				FirstSeenAt:          time.Date(2026, 7, 1, 1, 2, 3, 0, time.UTC),
+				LastSeenAt:           time.Date(2026, 7, 2, 4, 5, 6, 0, time.UTC),
+			},
+			{
+				Identifier:           "strong@example.test",
+				NormalizedIdentifier: "strong@example.test",
+				Classification:       "strong",
+				Signals:              []string{"sent-folder"},
+				ProviderStates:       []string{"enabled"},
+				SentMessageCount:     1,
+				FirstSeenAt:          time.Date(2026, 7, 3, 1, 2, 3, 0, time.UTC),
+				LastSeenAt:           time.Date(2026, 7, 3, 1, 2, 3, 0, time.UTC),
+			},
+			{
+				Identifier:           "weak@example.test",
+				NormalizedIdentifier: "weak@example.test",
+				Classification:       "weak",
+				Signals:              []string{},
+				ProviderStates:       []string{"pending"},
+				ReceivedMessageCount: 2,
+				FirstSeenAt:          time.Date(2026, 7, 4, 1, 2, 3, 0, time.UTC),
+				LastSeenAt:           time.Date(2026, 7, 5, 1, 2, 3, 0, time.UTC),
+			},
+		},
+		Rejected: []identityops.RejectedCandidate{{Identifier: "*@example.test", Reason: "wildcard address"}},
+		Applied: []store.IdentityConfirmationOutcome{{
+			Identifier: "strong@example.test", Added: true, Signals: []string{"sent-folder"},
+		}},
+	}
+}
+
+func TestRenderIdentityDiscoverJSONIsStableDocument(t *testing.T) {
+	const expected = `{
+		"account":"primary@example.test",
+		"source_id":14,
+		"source_type":"imap",
+		"scanned_messages":5,
+		"candidates":[
+			{"identifier":"known@example.test","normalized_identifier":"known@example.test","classification":"confirmed","already_confirmed":true,"signals":["is_from_me","manual"],"provider_states":["deleted","enabled"],"sent_message_count":2,"received_message_count":1,"first_seen_at":"2026-07-01T01:02:03Z","last_seen_at":"2026-07-02T04:05:06Z"},
+			{"identifier":"strong@example.test","normalized_identifier":"strong@example.test","classification":"strong","already_confirmed":false,"signals":["sent-folder"],"provider_states":["enabled"],"sent_message_count":1,"received_message_count":0,"first_seen_at":"2026-07-03T01:02:03Z","last_seen_at":"2026-07-03T01:02:03Z"},
+			{"identifier":"weak@example.test","normalized_identifier":"weak@example.test","classification":"weak","already_confirmed":false,"signals":[],"provider_states":["pending"],"sent_message_count":0,"received_message_count":2,"first_seen_at":"2026-07-04T01:02:03Z","last_seen_at":"2026-07-05T01:02:03Z"}
+		],
+		"rejected":[{"identifier":"*@example.test","reason":"wildcard address"}],
+		"applied":[{"identifier":"strong@example.test","added":true,"signals":["sent-folder"]}]
+	}`
+	var out bytes.Buffer
+
+	require.NoError(t, renderIdentityDiscover(&out, stableIdentityDiscoverResult(), true))
+
+	assert.JSONEq(t, expected, out.String())
+	assert.Equal(t, 1, strings.Count(strings.TrimSpace(out.String()), "\n{")+1, "one JSON document")
+}
+
+func TestRenderIdentityDiscoverHumanGroupsCandidatesAndRejected(t *testing.T) {
+	var out bytes.Buffer
+
+	require.NoError(t, renderIdentityDiscover(&out, stableIdentityDiscoverResult(), false))
+
+	text := out.String()
+	for _, want := range []string{
+		"CONFIRMED", "STRONG", "WEAK", "REJECTED",
+		"known@example.test", "signals: is_from_me,manual", "sent: 2", "received: 1",
+		"*@example.test", "wildcard address", "Applied 1 identity confirmation(s).",
+	} {
+		assert.Contains(t, text, want)
+	}
+}
+
+func TestRenderIdentityDiscoverHumanShowsProviderStates(t *testing.T) {
+	var result identityops.DiscoverResult
+	require.NoError(t, json.Unmarshal([]byte(`{
+		"account":"primary@example.test",
+		"source_id":14,
+		"source_type":"imap",
+		"candidates":[{
+			"identifier":"alias@example.test",
+			"normalized_identifier":"alias@example.test",
+			"classification":"strong",
+			"signals":["provider-alias"],
+			"provider_states":["disabled","enabled"]
+		}],
+		"rejected":[],
+		"applied":[]
+	}`), &result))
+
+	var out bytes.Buffer
+	require.NoError(t, renderIdentityDiscover(&out, result, false))
+	assert.Contains(t, out.String(), "provider states: disabled,enabled")
+}
+
+func TestRenderIdentityDiscoverProgressWritesHumanProgress(t *testing.T) {
+	var out bytes.Buffer
+
+	require.NoError(t, renderIdentityDiscoverProgress(&out, identityops.DiscoverProgress{
+		Done: 2, Total: 5, Candidates: 3,
+	}))
+	assert.Equal(t, "Scanning identity evidence: 2/5 messages, 3 candidate(s)\n", out.String())
+}
+
+func TestRenderIdentityDiscoverProgressWrapsWriterError(t *testing.T) {
+	writeErr := errors.New("write progress")
+
+	err := renderIdentityDiscoverProgress(identityDiscoverFailingWriter{err: writeErr}, identityops.DiscoverProgress{})
+
+	require.ErrorIs(t, err, writeErr)
+	assert.ErrorContains(t, err, "render identity discovery progress")
+}
+
+func TestIdentityDiscoverProviderSourceIDApplyConfirmJSONUsesHTTPAndSuppressesProgress(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	dataDir := t.TempDir()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/ping" {
+			daemon.NewPingHandler(daemon.PingHandlerOptions{Service: daemonService, Version: Version}).ServeHTTP(w, r)
+			return
+		}
+		assertions.Equal("/api/v1/cli/identities/discover", r.URL.Path)
+		var req identityops.DiscoverRequest
+		if !assertions.NoError(json.NewDecoder(r.Body).Decode(&req), "decode discovery request") {
+			http.Error(w, "bad discovery request", http.StatusBadRequest)
+			return
+		}
+		assertions.Equal(identityops.SourceSelector{SourceID: 14}, req.SourceSelector)
+		assertions.True(req.Apply)
+		assertions.True(req.Provider)
+		assertions.Equal([]string{"weak@example.test"}, req.Confirm)
+		w.Header().Set("Content-Type", "application/x-ndjson")
+		assertions.NoError(json.NewEncoder(w).Encode(identityops.DiscoverEvent{
+			Type: "progress", Progress: &identityops.DiscoverProgress{Done: 2, Total: 2, Candidates: 1},
+		}))
+		result := stableIdentityDiscoverResult()
+		assertions.NoError(json.NewEncoder(w).Encode(identityops.DiscoverEvent{Type: "result", Result: &result}))
+	}))
+	t.Cleanup(srv.Close)
+	writeStatsHTTPDaemonRuntime(t, dataDir, srv)
+
+	savedCfg := cfg
+	savedUseLocal := useLocal
+	savedSourceID := identityDiscoverSourceID
+	savedApply := identityDiscoverApply
+	savedProvider := identityDiscoverProvider
+	savedConfirm := append([]string(nil), identityDiscoverConfirm...)
+	savedJSON := identityDiscoverJSON
+	t.Cleanup(func() {
+		cfg = savedCfg
+		useLocal = savedUseLocal
+		identityDiscoverSourceID = savedSourceID
+		identityDiscoverApply = savedApply
+		identityDiscoverProvider = savedProvider
+		identityDiscoverConfirm = savedConfirm
+		identityDiscoverJSON = savedJSON
+		for _, name := range []string{"source-id", "apply", "provider", "confirm", "json"} {
+			identityDiscoverCmd.Flags().Lookup(name).Changed = false
+		}
+	})
+	cfg = &config.Config{
+		HomeDir: dataDir,
+		Data:    config.DataConfig{DataDir: dataDir},
+		Remote:  config.RemoteConfig{URL: "http://configured-daemonclient.invalid"},
+	}
+	useLocal = true
+
+	var stdout, stderr bytes.Buffer
+	root := newTestRootCmd()
+	root.SetOut(&stdout)
+	root.SetErr(&stderr)
+	root.AddCommand(identityCmd)
+	root.SetArgs([]string{
+		"identity", "discover", "--source-id", "14", "--apply", "--provider",
+		"--confirm", "weak@example.test", "--json",
+	})
+
+	requirements.NoError(root.Execute())
+	assertions.Empty(stderr.String(), "JSON mode suppresses progress")
+	var got identityops.DiscoverResult
+	requirements.NoError(json.Unmarshal(stdout.Bytes(), &got))
+	assertions.Equal(stableIdentityDiscoverResult(), got)
+}
+
+func TestIdentityDiscoverRejectsExplicitZeroSourceID(t *testing.T) {
+	savedSourceID := identityDiscoverSourceID
+	t.Cleanup(func() { identityDiscoverSourceID = savedSourceID })
+	cmd := &cobra.Command{Use: "discover [account]", Args: identityDiscoverArgs}
+	cmd.Flags().Int64Var(&identityDiscoverSourceID, "source-id", 0, "")
+	require.NoError(t, cmd.Flags().Set("source-id", "0"))
+
+	err := identityDiscoverArgs(cmd, nil)
+	if err == nil {
+		_, err = identitySourceSelector(cmd, "", identityDiscoverSourceID)
+	}
+
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "source ID must be positive")
+}
+
+func TestIdentityDiscoverRejectsAccountWithSourceID(t *testing.T) {
+	cmd := &cobra.Command{Use: "discover [account]", Args: identityDiscoverArgs}
+	var sourceID int64
+	cmd.Flags().Int64Var(&sourceID, "source-id", 0, "")
+	require.NoError(t, cmd.Flags().Set("source-id", "14"))
+
+	err := identityDiscoverArgs(cmd, []string{"primary@example.test"})
+
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "mutually exclusive")
+}
+
+func TestIdentityDiscoverPositionalAccountCompatibility(t *testing.T) {
+	cmd := &cobra.Command{Use: "discover [account]", Args: identityDiscoverArgs}
+	var sourceID int64
+	cmd.Flags().Int64Var(&sourceID, "source-id", 0, "")
+
+	require.NoError(t, identityDiscoverArgs(cmd, []string{"primary@example.test"}))
+	selector, err := identitySourceSelector(cmd, "primary@example.test", sourceID)
+	require.NoError(t, err)
+	assert.Equal(t, daemonclient.CLIIdentitySourceSelector{Account: "primary@example.test"}, selector)
+}
+
+func TestIdentityImportRequiresExactlyOneInputSource(t *testing.T) {
+	tests := []struct {
+		name      string
+		file      string
+		stdin     bool
+		wantError string
+	}{
+		{name: "neither", wantError: "exactly one of --file or --stdin"},
+		{name: "both", file: "aliases.txt", stdin: true, wantError: "exactly one of --file or --stdin"},
+		{name: "dash file", file: "-", wantError: `--file "-" is not supported`},
+		{name: "file", file: "aliases.txt"},
+		{name: "stdin", stdin: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			assertions := assert.New(t)
+			requirements := require.New(t)
+			savedFile, savedStdin := identityImportFile, identityImportStdin
+			t.Cleanup(func() {
+				identityImportFile, identityImportStdin = savedFile, savedStdin
+			})
+			identityImportFile, identityImportStdin = test.file, test.stdin
+			cmd := &cobra.Command{Use: "import [account]"}
+			cmd.Flags().String("file", "", "")
+			cmd.Flags().Bool("stdin", false, "")
+			if test.file != "" {
+				requirements.NoError(cmd.Flags().Set("file", test.file))
+			}
+			if test.stdin {
+				requirements.NoError(cmd.Flags().Set("stdin", "true"))
+			}
+
+			err := identityImportArgs(cmd, []string{"primary@example.test"})
+			if test.wantError == "" {
+				requirements.NoError(err)
+				return
+			}
+			requirements.Error(err)
+			assertions.ErrorContains(err, test.wantError)
+		})
+	}
+}
+
+func TestIdentityImportStdinPreviewShowsHumanStates(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	st, root, stdout, stderr := newIdentityCLITest(t)
+	_, err := st.GetOrCreateSource("imap", "primary@example.test")
+	requirements.NoError(err)
+	root.SetIn(strings.NewReader(`{
+		"identities":[
+			{"identifier":"old@example.test","state":"disabled"},
+			{"identifier":"waiting@example.test","state":"pending"}
+		]
+	}`))
+	root.SetArgs([]string{"identity", "import", "primary@example.test", "--stdin"})
+
+	requirements.NoError(root.Execute())
+	assertions.Empty(stderr.String())
+	text := stdout.String()
+	assertions.Contains(text, "Identity import for primary@example.test")
+	assertions.Contains(text, "old@example.test")
+	assertions.Contains(text, "states: disabled")
+	assertions.Contains(text, "waiting@example.test")
+	assertions.Contains(text, "states: pending")
+	assertions.Contains(text, "Applied 0 identity confirmation(s).")
+}
+
+func TestIdentityImportRejectsExplicitZeroSourceID(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	savedSourceID, savedFile, savedStdin := identityImportSourceID, identityImportFile, identityImportStdin
+	t.Cleanup(func() {
+		identityImportSourceID, identityImportFile, identityImportStdin = savedSourceID, savedFile, savedStdin
+	})
+	identityImportStdin = false
+	cmd := &cobra.Command{Use: "import [account]", Args: identityImportArgs}
+	cmd.Flags().Int64Var(&identityImportSourceID, "source-id", 0, "")
+	cmd.Flags().StringVar(&identityImportFile, "file", "", "")
+	cmd.Flags().Bool("stdin", false, "")
+	requirements.NoError(cmd.Flags().Set("source-id", "0"))
+	requirements.NoError(cmd.Flags().Set("file", "aliases.txt"))
+
+	err := identityImportArgs(cmd, nil)
+	if err == nil {
+		_, err = identitySourceSelector(cmd, "", identityImportSourceID)
+	}
+
+	requirements.Error(err)
+	assertions.ErrorContains(err, "source ID must be positive")
+}
+
+func TestIdentityImportJSONFileApplyUsesSourceIDAndStableOutput(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	st, root, stdout, stderr := newIdentityCLITest(t)
+	source, err := st.GetOrCreateSource("imap", "primary@example.test")
+	requirements.NoError(err)
+	inputFile := filepath.Join(t.TempDir(), "aliases")
+	requirements.NoError(os.WriteFile(inputFile, []byte(`[
+		{"identifier":"Waiting@Example.test","state":"pending"},
+		{"identifier":"active@example.test","state":"enabled"}
+	]`), 0o600))
+	root.SetArgs([]string{
+		"identity", "import", "--source-id", strconv.FormatInt(source.ID, 10),
+		"--file", inputFile, "--signal", "bulk-import", "--apply", "--json",
+	})
+
+	requirements.NoError(root.Execute())
+	assertions.Empty(stderr.String())
+	var result identityops.ImportResult
+	requirements.NoError(json.Unmarshal(stdout.Bytes(), &result))
+	assertions.Equal("bulk-import", result.Signal)
+	assertions.Equal([]string{"active@example.test", "Waiting@Example.test"}, []string{
+		result.Candidates[0].Identifier,
+		result.Candidates[1].Identifier,
+	})
+	assertions.Equal([]store.IdentityConfirmationOutcome{
+		{Identifier: "active@example.test", Added: true, Signals: []string{"bulk-import"}},
+		{Identifier: "Waiting@Example.test", Added: true, Signals: []string{"bulk-import"}},
+	}, result.Applied)
+	assertions.Equal(1, strings.Count(strings.TrimSpace(stdout.String()), "\n{")+1,
+		"JSON mode emits one stable document")
+}
 
 // newIdentityCLITest creates an isolated store and test root command for
 // identity subcommand tests.  Returns (store, root, stdout buffer, stderr buffer).
@@ -38,6 +413,21 @@ func newIdentityCLITest(t *testing.T) (*store.Store, *cobra.Command, *bytes.Buff
 	savedListJSON := identityListJSON
 	savedShowJSON := identityShowJSON
 	savedAddSignal := identityAddSignal
+	savedListSourceID := identityListSourceID
+	savedShowSourceID := identityShowSourceID
+	savedAddSourceID := identityAddSourceID
+	savedRemoveSourceID := identityRemoveSourceID
+	savedDiscoverSourceID := identityDiscoverSourceID
+	savedDiscoverApply := identityDiscoverApply
+	savedDiscoverProvider := identityDiscoverProvider
+	savedDiscoverConfirm := append([]string(nil), identityDiscoverConfirm...)
+	savedDiscoverJSON := identityDiscoverJSON
+	savedImportSourceID := identityImportSourceID
+	savedImportFile := identityImportFile
+	savedImportStdin := identityImportStdin
+	savedImportSignal := identityImportSignal
+	savedImportApply := identityImportApply
+	savedImportJSON := identityImportJSON
 	savedUseLocal := useLocal
 	t.Cleanup(func() {
 		cfg = savedCfg
@@ -47,19 +437,45 @@ func newIdentityCLITest(t *testing.T) (*store.Store, *cobra.Command, *bytes.Buff
 		identityListJSON = savedListJSON
 		identityShowJSON = savedShowJSON
 		identityAddSignal = savedAddSignal
+		identityListSourceID = savedListSourceID
+		identityShowSourceID = savedShowSourceID
+		identityAddSourceID = savedAddSourceID
+		identityRemoveSourceID = savedRemoveSourceID
+		identityDiscoverSourceID = savedDiscoverSourceID
+		identityDiscoverApply = savedDiscoverApply
+		identityDiscoverProvider = savedDiscoverProvider
+		identityDiscoverConfirm = savedDiscoverConfirm
+		identityDiscoverJSON = savedDiscoverJSON
+		identityImportSourceID = savedImportSourceID
+		identityImportFile = savedImportFile
+		identityImportStdin = savedImportStdin
+		identityImportSignal = savedImportSignal
+		identityImportApply = savedImportApply
+		identityImportJSON = savedImportJSON
 		useLocal = savedUseLocal
 		// Reset cobra's "Changed" state so mutually-exclusive flag groups
 		// don't carry over between tests that share the package-level command.
-		for _, name := range []string{"account", "collection", "json"} {
+		for _, name := range []string{"account", "collection", "source-id", "json"} {
 			if f := identityListCmd.Flags().Lookup(name); f != nil {
 				f.Changed = false
 			}
 		}
-		if f := identityShowCmd.Flags().Lookup("json"); f != nil {
-			f.Changed = false
+		for _, cmd := range []*cobra.Command{identityShowCmd, identityAddCmd, identityRemoveCmd} {
+			for _, name := range []string{"source-id", "json", "signal"} {
+				if f := cmd.Flags().Lookup(name); f != nil {
+					f.Changed = false
+				}
+			}
 		}
-		if f := identityAddCmd.Flags().Lookup("signal"); f != nil {
-			f.Changed = false
+		for _, name := range []string{"source-id", "apply", "provider", "confirm", "json"} {
+			if f := identityDiscoverCmd.Flags().Lookup(name); f != nil {
+				f.Changed = false
+			}
+		}
+		for _, name := range []string{"source-id", "file", "stdin", "signal", "apply", "json"} {
+			if f := identityImportCmd.Flags().Lookup(name); f != nil {
+				f.Changed = false
+			}
 		}
 	})
 
@@ -377,6 +793,18 @@ func TestIdentityList_AccountFilter(t *testing.T) {
 	assert.NotContains(t, text, "bob@example.com", "bob leaked into account-filtered output")
 }
 
+func TestIdentityList_RejectsExplicitZeroSourceID(t *testing.T) {
+	s, root, _, _ := newIdentityCLITest(t)
+	_, err := s.GetOrCreateSource("gmail", "alice@example.com")
+	require.NoError(t, err)
+
+	root.SetArgs([]string{"identity", "list", "--source-id", "0"})
+	err = root.Execute()
+
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "source ID must be positive")
+}
+
 func TestIdentityList_AccountWithNoneRow(t *testing.T) {
 	s, root, out, _ := newIdentityCLITest(t)
 	_, _ = s.GetOrCreateSource("mbox", "old-mbox-2018")
@@ -443,6 +871,24 @@ func TestIdentityShow_Empty(t *testing.T) {
 	assert.Contains(t, text, "identity add", "missing hint")
 }
 
+func TestIdentityShow_SourceIDDisambiguatesDuplicateAccounts(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	s, root, out, _ := newIdentityCLITest(t)
+	gmail, err := s.GetOrCreateSource("gmail", "shared@example.test")
+	require.NoError(err)
+	imap, err := s.GetOrCreateSource("imap", "shared@example.test")
+	require.NoError(err)
+	require.NoError(s.AddAccountIdentity(gmail.ID, "gmail-alias@example.test", "manual"))
+	require.NoError(s.AddAccountIdentity(imap.ID, "imap-alias@example.test", "manual"))
+
+	root.SetArgs([]string{"identity", "show", "--source-id", strconv.FormatInt(gmail.ID, 10)})
+	require.NoError(root.Execute())
+
+	assert.Contains(out.String(), "gmail-alias@example.test")
+	assert.NotContains(out.String(), "imap-alias@example.test")
+}
+
 func TestIdentityShow_UnknownAccount(t *testing.T) {
 	_, root, _, _ := newIdentityCLITest(t) //nolint:dogsled // helper returns 4 values; test needs only root
 	root.SetArgs([]string{"identity", "show", "ghost@example.com"})
@@ -488,6 +934,43 @@ func TestIdentityAdd_FirstTime(t *testing.T) {
 	root.SetArgs([]string{"identity", "add", "alice@example.com", "extra@example.com"})
 	require.NoError(t, root.Execute())
 	assert.Contains(t, out.String(), "Added extra@example.com", "missing add confirmation")
+}
+
+func TestIdentityAdd_SourceIDDisambiguatesDuplicateAccounts(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	s, root, _, _ := newIdentityCLITest(t)
+	gmail, err := s.GetOrCreateSource("gmail", "shared@example.test")
+	require.NoError(err)
+	imap, err := s.GetOrCreateSource("imap", "shared@example.test")
+	require.NoError(err)
+
+	root.SetArgs([]string{
+		"identity", "add", "--source-id", strconv.FormatInt(gmail.ID, 10), "alias@example.test",
+	})
+	require.NoError(root.Execute())
+
+	gmailIdentities, err := s.ListAccountIdentities(gmail.ID)
+	require.NoError(err)
+	assert.Len(gmailIdentities, 1)
+	assert.Equal("alias@example.test", gmailIdentities[0].Address)
+	imapIdentities, err := s.ListAccountIdentities(imap.ID)
+	require.NoError(err)
+	assert.Empty(imapIdentities)
+}
+
+func TestIdentityAdd_RejectsAccountWithSourceID(t *testing.T) {
+	s, root, _, _ := newIdentityCLITest(t)
+	source, err := s.GetOrCreateSource("gmail", "shared@example.test")
+	require.NoError(t, err)
+
+	root.SetArgs([]string{
+		"identity", "add", "--source-id", strconv.FormatInt(source.ID, 10),
+		"shared@example.test", "alias@example.test",
+	})
+	err = root.Execute()
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "mutually exclusive")
 }
 
 func TestIdentityAdd_IdempotentSameSignal(t *testing.T) {
@@ -550,6 +1033,31 @@ func TestIdentityRemove_Hit(t *testing.T) {
 	root.SetArgs([]string{"identity", "remove", "alice@example.com", "extra@example.com"})
 	require.NoError(t, root.Execute())
 	assert.Contains(t, out.String(), "Removed extra@example.com", "missing remove confirmation")
+}
+
+func TestIdentityRemove_SourceIDDisambiguatesDuplicateAccounts(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	s, root, _, _ := newIdentityCLITest(t)
+	gmail, err := s.GetOrCreateSource("gmail", "shared@example.test")
+	require.NoError(err)
+	imap, err := s.GetOrCreateSource("imap", "shared@example.test")
+	require.NoError(err)
+	require.NoError(s.AddAccountIdentity(gmail.ID, "shared-alias@example.test", "manual"))
+	require.NoError(s.AddAccountIdentity(imap.ID, "shared-alias@example.test", "manual"))
+
+	root.SetArgs([]string{
+		"identity", "remove", "--source-id", strconv.FormatInt(gmail.ID, 10), "shared-alias@example.test",
+	})
+	require.NoError(root.Execute())
+
+	gmailIdentities, err := s.ListAccountIdentities(gmail.ID)
+	require.NoError(err)
+	assert.Empty(gmailIdentities)
+	imapIdentities, err := s.ListAccountIdentities(imap.ID)
+	require.NoError(err)
+	require.Len(imapIdentities, 1)
+	assert.Equal("shared-alias@example.test", imapIdentities[0].Address)
 }
 
 func TestIdentityRemove_Miss(t *testing.T) {

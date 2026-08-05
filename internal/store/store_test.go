@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -549,6 +550,103 @@ func TestStore_EnsureLabelsBatch_CrossRename(t *testing.T) {
 	f.AssertMessageHasLabel(msg1, l1ID)
 	f.AssertLabelCount(msg2, 1)
 	f.AssertMessageHasLabel(msg2, l2ID)
+}
+
+func TestStore_EnsureLabelsBatch_PersistsClearsAndCrossRenamesSystemRole(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := storetest.New(t)
+
+	initial := map[string]store.LabelInfo{
+		"L1": {Name: "Envoyes", Type: "system", SystemRole: store.LabelSystemRoleSent},
+		"L2": {Name: "Archive", Type: "system"},
+	}
+	ids, err := f.Store.EnsureLabelsBatch(f.Source.ID, initial)
+	require.NoError(err, "initial label refresh")
+
+	var role string
+	require.NoError(f.Store.DB().QueryRow(
+		f.Store.Rebind("SELECT system_role FROM labels WHERE id = ?"), ids["L1"],
+	).Scan(&role), "read persisted role")
+	assert.Equal(store.LabelSystemRoleSent, role, "L1 role")
+
+	// The roles must follow canonical label IDs through a cross-rename, not names.
+	swapped := map[string]store.LabelInfo{
+		"L1": {Name: "Archive", Type: "system"},
+		"L2": {Name: "Envoyes", Type: "system", SystemRole: store.LabelSystemRoleSent},
+	}
+	_, err = f.Store.EnsureLabelsBatch(f.Source.ID, swapped)
+	require.NoError(err, "cross-rename label refresh")
+
+	var l1Role, l2Role sql.NullString
+	require.NoError(f.Store.DB().QueryRow(
+		f.Store.Rebind("SELECT system_role FROM labels WHERE id = ?"), ids["L1"],
+	).Scan(&l1Role), "read cleared role")
+	require.NoError(f.Store.DB().QueryRow(
+		f.Store.Rebind("SELECT system_role FROM labels WHERE id = ?"), ids["L2"],
+	).Scan(&l2Role), "read moved role")
+	assert.False(l1Role.Valid, "L1 role must clear when canonical metadata no longer marks it sent")
+	assert.Equal(store.LabelSystemRoleSent, l2Role.String, "L2 role")
+
+	_, err = f.Store.EnsureLabelsBatch(f.Source.ID, map[string]store.LabelInfo{
+		"L2": {Name: "Envoyes", Type: "system"},
+	})
+	require.NoError(err, "repeated refresh clears stale role")
+	require.NoError(f.Store.DB().QueryRow(
+		f.Store.Rebind("SELECT system_role FROM labels WHERE id = ?"), ids["L2"],
+	).Scan(&l2Role), "read repeatedly cleared role")
+	assert.False(l2Role.Valid, "repeated refresh must clear stale role")
+}
+
+func TestStore_InitSchemaAddsLabelRoleWithoutRewritingLegacyRows(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	dbPath := filepath.Join(t.TempDir(), "legacy-labels.db")
+	st, err := store.Open(dbPath)
+	require.NoError(err, "open store")
+	t.Cleanup(func() { _ = st.Close() })
+
+	_, err = st.DB().Exec(`
+		CREATE TABLE labels (
+			id INTEGER PRIMARY KEY,
+			source_id INTEGER,
+			source_label_id TEXT,
+			name TEXT NOT NULL,
+			label_type TEXT,
+			color TEXT,
+			UNIQUE(source_id, name)
+		)
+	`)
+	require.NoError(err, "create legacy labels")
+	_, err = st.DB().Exec(`
+		INSERT INTO labels (source_id, source_label_id, name, label_type)
+		VALUES (1, 'SENT', 'Envoyes', 'system')
+	`)
+	require.NoError(err, "insert legacy label")
+
+	require.NoError(st.InitSchema(), "migrate legacy labels")
+
+	var role sql.NullString
+	require.NoError(st.DB().QueryRow(
+		"SELECT system_role FROM labels WHERE source_label_id = 'SENT'",
+	).Scan(&role), "read migrated legacy label")
+	assert.False(role.Valid, "migration must not classify or rewrite existing labels")
+
+	indexCount := func(name string) int {
+		var count int
+		require.NoError(st.DB().QueryRow(
+			"SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = ?", name,
+		).Scan(&count), "read index: "+name)
+		return count
+	}
+	assert.Equal(0, indexCount("idx_labels_source_system_role"),
+		"unreachable index must not be created: labels is only ever queried via its PK join")
+	assert.Equal(0, indexCount("idx_messages_source_id"),
+		"SQLite-redundant composite index must not be created: id is the rowid alias")
+	assert.Equal(1, indexCount("idx_participants_email_lower"),
+		"participant email lower expression index")
+	assert.Equal(1, indexCount("idx_participant_identifiers_value_lower"),
+		"participant identifier value lower expression index")
 }
 
 func TestStore_MessageLabels(t *testing.T) {

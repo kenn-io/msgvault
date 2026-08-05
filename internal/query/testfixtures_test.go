@@ -89,6 +89,10 @@ type RecipientFixture struct {
 	ParticipantID int64
 	Type          string // "from", "to", "cc", "bcc"
 	DisplayName   string
+	// EmailAddress is the envelope address snapshot written at email
+	// ingest. Empty models rows without a snapshot (legacy ingests,
+	// non-email writers).
+	EmailAddress string
 }
 
 // LabelFixture defines a label row for Parquet test data.
@@ -169,6 +173,9 @@ type TestDataBuilder struct {
 	participantClusters      []ParticipantClusterFixture
 
 	emptyAttachments bool // if true, write empty attachments file
+	// legacyRecipientSchema writes message_recipients without the
+	// email_address envelope column, modeling a pre-v17 cache.
+	legacyRecipientSchema bool
 }
 
 // NewTestDataBuilder creates a new typed test data builder.
@@ -321,11 +328,17 @@ func (b *TestDataBuilder) AddMessage(opt MessageOpt) int64 {
 	return id
 }
 
-// AddRecipient adds a message_recipients row.
+// AddRecipient adds a message_recipients row without an envelope snapshot.
 func (b *TestDataBuilder) AddRecipient(messageID, participantID int64, recipientType, displayName string) {
+	b.AddRecipientWithEnvelope(messageID, participantID, recipientType, displayName, "")
+}
+
+// AddRecipientWithEnvelope adds a message_recipients row carrying the
+// envelope address as it appeared in the message.
+func (b *TestDataBuilder) AddRecipientWithEnvelope(messageID, participantID int64, recipientType, displayName, emailAddress string) {
 	b.recipients = append(b.recipients, RecipientFixture{
 		MessageID: messageID, ParticipantID: participantID,
-		Type: recipientType, DisplayName: displayName,
+		Type: recipientType, DisplayName: displayName, EmailAddress: emailAddress,
 	})
 }
 
@@ -423,6 +436,12 @@ func (b *TestDataBuilder) SetEmptyAttachments() {
 	b.emptyAttachments = true
 }
 
+// SetLegacyRecipientSchema writes message_recipients without the
+// email_address envelope column, modeling a pre-v17 cache.
+func (b *TestDataBuilder) SetLegacyRecipientSchema() {
+	b.legacyRecipientSchema = true
+}
+
 // ---------------------------------------------------------------------------
 // SQL generation
 // ---------------------------------------------------------------------------
@@ -511,9 +530,15 @@ func (b *TestDataBuilder) participantIdentifiersSQL() string {
 }
 
 func (b *TestDataBuilder) recipientsSQL() string {
+	if b.legacyRecipientSchema {
+		return joinRows(b.recipients, func(r RecipientFixture) string {
+			return fmt.Sprintf("(%d::BIGINT, %d::BIGINT, %s, %s)",
+				r.MessageID, r.ParticipantID, sqlStr(r.Type), sqlStr(r.DisplayName))
+		})
+	}
 	return joinRows(b.recipients, func(r RecipientFixture) string {
-		return fmt.Sprintf("(%d::BIGINT, %d::BIGINT, %s, %s)",
-			r.MessageID, r.ParticipantID, sqlStr(r.Type), sqlStr(r.DisplayName))
+		return fmt.Sprintf("(%d::BIGINT, %d::BIGINT, %s, %s, %s)",
+			r.MessageID, r.ParticipantID, sqlStr(r.Type), sqlStr(r.DisplayName), sqlStr(r.EmailAddress))
 	})
 }
 
@@ -567,19 +592,23 @@ func (b *TestDataBuilder) participantClustersSQL() string {
 
 // column definitions (coupled to SQL generation methods above).
 const (
-	messagesCols                 = "id, source_id, source_message_id, conversation_id, subject, snippet, sent_at, size_estimate, has_attachments, attachment_count, deleted_from_source_at, sender_id, message_type, is_from_me, year, month"
-	messagesColsWithDeletedAt    = "id, source_id, source_message_id, conversation_id, subject, snippet, sent_at, size_estimate, has_attachments, attachment_count, deleted_at, deleted_from_source_at, sender_id, message_type, is_from_me, year, month"
-	sourcesCols                  = "id, account_email, source_type"
-	participantsCols             = "id, email_address, domain, display_name, phone_number"
-	participantIdentifiersCols   = "participant_id, identifier_type, identifier_value, display_value, is_primary"
-	messageRecipientsCols        = "message_id, participant_id, recipient_type, display_name"
-	labelsCols                   = "id, name"
-	messageLabelsCols            = "message_id, label_id"
-	attachmentsCols              = "attachment_id, message_id, size, filename, mime_type"
-	conversationsCols            = "id, source_conversation_id, title, conversation_type"
-	conversationParticipantsCols = "conversation_id, participant_id"
-	ownerParticipantsCols        = "source_id, participant_id"
-	participantClustersCols      = "participant_id, canonical_id"
+	messagesCols               = "id, source_id, source_message_id, conversation_id, subject, snippet, sent_at, size_estimate, has_attachments, attachment_count, deleted_from_source_at, sender_id, message_type, is_from_me, year, month"
+	messagesColsWithDeletedAt  = "id, source_id, source_message_id, conversation_id, subject, snippet, sent_at, size_estimate, has_attachments, attachment_count, deleted_at, deleted_from_source_at, sender_id, message_type, is_from_me, year, month"
+	sourcesCols                = "id, account_email, source_type"
+	participantsCols           = "id, email_address, domain, display_name, phone_number"
+	participantIdentifiersCols = "participant_id, identifier_type, identifier_value, display_value, is_primary"
+	messageRecipientsCols      = "message_id, participant_id, recipient_type, display_name"
+	// messageRecipientsColsWithEnvelope adds the envelope address snapshot
+	// (cache schema v17). messageRecipientsCols stays for fixtures that
+	// model pre-v17 caches without the column.
+	messageRecipientsColsWithEnvelope = "message_id, participant_id, recipient_type, display_name, email_address"
+	labelsCols                        = "id, name"
+	messageLabelsCols                 = "message_id, label_id"
+	attachmentsCols                   = "attachment_id, message_id, size, filename, mime_type"
+	conversationsCols                 = "id, source_conversation_id, title, conversation_type"
+	conversationParticipantsCols      = "conversation_id, participant_id"
+	ownerParticipantsCols             = "source_id, participant_id"
+	participantClustersCols           = "participant_id, canonical_id"
 )
 
 // Build generates Parquet files from the accumulated data and returns the
@@ -620,6 +649,23 @@ func (b *TestDataBuilder) addMessageTables(pb *parquetBuilder) {
 	}
 }
 
+// recipientCols returns the message_recipients column list for this
+// builder's schema mode.
+func (b *TestDataBuilder) recipientCols() string {
+	if b.legacyRecipientSchema {
+		return messageRecipientsCols
+	}
+	return messageRecipientsColsWithEnvelope
+}
+
+// recipientDummyRow returns the schema-only dummy row matching recipientCols.
+func (b *TestDataBuilder) recipientDummyRow() string {
+	if b.legacyRecipientSchema {
+		return "(0::BIGINT, 0::BIGINT, '', '')"
+	}
+	return "(0::BIGINT, 0::BIGINT, '', '', '')"
+}
+
 // addAuxiliaryTables adds sources, participants, recipients, labels, message_labels, and conversations.
 func (b *TestDataBuilder) addAuxiliaryTables(pb *parquetBuilder) {
 	auxTables := []struct {
@@ -629,7 +675,7 @@ func (b *TestDataBuilder) addAuxiliaryTables(pb *parquetBuilder) {
 		{"sources", "sources", "sources.parquet", sourcesCols, "(0::BIGINT, '', 'gmail')", b.sourcesSQL(), len(b.sources) == 0},
 		{"participants", "participants", "participants.parquet", participantsCols, "(0::BIGINT, '', '', '', '')", b.participantsSQL(), len(b.participants) == 0},
 		{"participant_identifiers", "participant_identifiers", "participant_identifiers.parquet", participantIdentifiersCols, "(0::BIGINT, '', '', '', false)", b.participantIdentifiersSQL(), len(b.participantIdentifiers) == 0},
-		{"message_recipients", "message_recipients", "message_recipients.parquet", messageRecipientsCols, "(0::BIGINT, 0::BIGINT, '', '')", b.recipientsSQL(), len(b.recipients) == 0},
+		{"message_recipients", "message_recipients", "message_recipients.parquet", b.recipientCols(), b.recipientDummyRow(), b.recipientsSQL(), len(b.recipients) == 0},
 		{"labels", "labels", "labels.parquet", labelsCols, "(0::BIGINT, '')", b.labelsSQL(), len(b.labels) == 0},
 		{"message_labels", "message_labels", "message_labels.parquet", messageLabelsCols, "(0::BIGINT, 0::BIGINT)", b.messageLabelsSQL(), len(b.msgLabels) == 0},
 		{"conversations", "conversations", "conversations.parquet", conversationsCols, "(0::BIGINT, '', '', 'email')", b.conversationsSQL(), len(b.conversations) == 0},

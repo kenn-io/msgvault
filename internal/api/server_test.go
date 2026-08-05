@@ -1301,6 +1301,7 @@ func TestMarkedCLIProtectiveCeilingInventory(t *testing.T) {
 		{method: http.MethodPost, path: "/api/v1/cli/deduplicate/plan"},
 		{method: http.MethodPost, path: "/api/v1/cli/identities"},
 		{method: http.MethodDelete, path: "/api/v1/cli/identities"},
+		{method: http.MethodPost, path: "/api/v1/cli/identities/import"},
 	}
 
 	for _, route := range protectiveRoutes {

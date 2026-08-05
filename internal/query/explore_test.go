@@ -362,6 +362,488 @@ func TestExploreAppliesContextBeforeChatAggregation(t *testing.T) {
 	assert.Equal(int64(2), response.Rows[0].MessageCount, "chat facts must be computed after context filtering")
 }
 
+func TestExploreIdentityDirectionSeparatesSenderAndRecipientWithinSource(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	b := NewTestDataBuilder(t)
+	sourceA := b.AddSource("archive-a@example.com")
+	sourceB := b.AddSource("archive-b@example.com")
+	identityID := b.AddParticipant("identity@example.com", "example.com", "Identity")
+	otherID := b.AddParticipant("other@example.net", "example.net", "Other")
+	base := time.Date(2026, 8, 3, 12, 0, 0, 0, time.UTC)
+
+	sent := b.AddMessage(MessageOpt{SourceID: sourceA, Subject: "sent", SentAt: base})
+	b.AddFrom(sent, otherID, "Other")
+	b.AddFrom(sent, identityID, "Identity")
+	b.AddTo(sent, otherID, "Other")
+	received := b.AddMessage(MessageOpt{SourceID: sourceA, Subject: "received", SentAt: base.Add(-time.Hour)})
+	b.AddFrom(received, otherID, "Other")
+	b.AddTo(received, identityID, "Identity")
+	otherSource := b.AddMessage(MessageOpt{SourceID: sourceB, Subject: "other source", SentAt: base.Add(time.Hour)})
+	b.AddFrom(otherSource, identityID, "Identity")
+
+	engine := b.BuildEngine()
+	explore := func(direction IdentityDirection) *ExploreResponse {
+		result, err := engine.Explore(context.Background(), ExploreRequest{
+			Context: Context{Identity: &IdentityPredicate{
+				SourceID: sourceA, ParticipantIDs: []int64{identityID}, Direction: direction,
+			}},
+			Page: PageSpec{Limit: 10},
+		})
+		requirements.NoError(err)
+		return result
+	}
+
+	sender := explore(IdentityDirectionSender)
+	requirements.Len(sender.Rows, 1)
+	assertions.Equal("sent", sender.Rows[0].Title)
+	assertions.Equal(sourceA, sender.Rows[0].SourceID)
+	assertions.Equal(int64(1), sender.TotalCount)
+
+	recipient := explore(IdentityDirectionRecipient)
+	requirements.Len(recipient.Rows, 1)
+	assertions.Equal("received", recipient.Rows[0].Title)
+	assertions.Equal(sourceA, recipient.Rows[0].SourceID)
+	assertions.Equal(int64(1), recipient.TotalCount)
+
+	anyDirection := explore(IdentityDirectionAny)
+	requirements.Len(anyDirection.Rows, 2)
+	assertions.Equal([]string{"sent", "received"}, []string{anyDirection.Rows[0].Title, anyDirection.Rows[1].Title})
+	for _, row := range anyDirection.Rows {
+		assertions.Equal(sourceA, row.SourceID, "identity predicate must not leak to another source")
+	}
+}
+
+func TestExploreIdentitySenderUsesDirectSenderOnlyWithoutFromRows(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	b := NewTestDataBuilder(t)
+	source := b.AddSource("archive@example.com")
+	identityID := b.AddParticipant("identity@example.com", "example.com", "Identity")
+	explicitFromID := b.AddParticipant("explicit@example.net", "example.net", "Explicit")
+	base := time.Date(2026, 8, 3, 12, 0, 0, 0, time.UTC)
+
+	multiFrom := b.AddMessage(MessageOpt{SourceID: source, Subject: "multi from", SenderID: &explicitFromID, SentAt: base})
+	b.AddFrom(multiFrom, explicitFromID, "Explicit")
+	b.AddFrom(multiFrom, identityID, "Identity")
+	directConflict := b.AddMessage(MessageOpt{SourceID: source, Subject: "direct conflict", SenderID: &identityID, SentAt: base.Add(-time.Hour)})
+	b.AddFrom(directConflict, explicitFromID, "Explicit")
+	b.AddMessage(MessageOpt{SourceID: source, Subject: "direct fallback", SenderID: &identityID, SentAt: base.Add(-2 * time.Hour)})
+
+	result, err := b.BuildEngine().Explore(context.Background(), ExploreRequest{
+		Context: Context{Identity: &IdentityPredicate{
+			SourceID: source, ParticipantIDs: []int64{identityID}, Direction: IdentityDirectionSender,
+		}},
+		Page: PageSpec{Limit: 10},
+	})
+	requirements.NoError(err)
+	requirements.Len(result.Rows, 2)
+	assertions.Equal([]string{"multi from", "direct fallback"}, []string{result.Rows[0].Title, result.Rows[1].Title})
+	assertions.Equal(int64(2), result.TotalCount)
+}
+
+func TestExploreIdentityPredicateAppliesBeforeChatAggregation(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	b := NewTestDataBuilder(t)
+	source := b.AddSourceWithType("+15550000000", messageTypeIMessage)
+	identityID := b.AddParticipant("identity@example.com", "example.com", "Identity")
+	otherID := b.AddParticipant("other@example.net", "example.net", "Other")
+	const conversationID = int64(812)
+
+	sent := b.AddMessage(MessageOpt{SourceID: source, ConversationID: conversationID, MessageType: messageTypeIMessage, ConversationType: "direct_chat", SenderID: &identityID})
+	b.AddFrom(sent, identityID, "Identity")
+	b.AddTo(sent, otherID, "Other")
+	received := b.AddMessage(MessageOpt{SourceID: source, ConversationID: conversationID, MessageType: messageTypeIMessage, ConversationType: "direct_chat", SenderID: &otherID})
+	b.AddFrom(received, otherID, "Other")
+	b.AddCc(received, identityID, "Identity")
+
+	engine := b.BuildEngine()
+	for _, test := range []struct {
+		direction IdentityDirection
+		wantCount int64
+	}{
+		{direction: IdentityDirectionSender, wantCount: 1},
+		{direction: IdentityDirectionRecipient, wantCount: 1},
+		{direction: IdentityDirectionAny, wantCount: 2},
+	} {
+		result, err := engine.Explore(context.Background(), ExploreRequest{
+			Context: Context{Identity: &IdentityPredicate{
+				SourceID: source, ParticipantIDs: []int64{identityID}, Direction: test.direction,
+			}},
+			Page: PageSpec{Limit: 10},
+		})
+		requirements.NoError(err, test.direction)
+		requirements.Len(result.Rows, 1, test.direction)
+		assertions.Equal(EntryConversation, result.Rows[0].Kind, test.direction)
+		assertions.Equal(test.wantCount, result.Rows[0].MessageCount, test.direction)
+	}
+}
+
+func TestExploreIdentityPredicateValidatesSourceIDsParticipantsAndDirection(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	b := NewTestDataBuilder(t)
+	source := b.AddSource("archive@example.com")
+	identityID := b.AddParticipant("identity@example.com", "example.com", "Identity")
+	messageID := b.AddMessage(MessageOpt{SourceID: source})
+	b.AddFrom(messageID, identityID, "Identity")
+	engine := b.BuildEngine()
+
+	tests := []struct {
+		name      string
+		context   Context
+		wantError string
+	}{
+		{name: "missing source", context: Context{Identity: &IdentityPredicate{ParticipantIDs: []int64{identityID}, Direction: IdentityDirectionAny}}, wantError: "source ID"},
+		{name: "missing participant IDs", context: Context{Identity: &IdentityPredicate{SourceID: source, Direction: IdentityDirectionAny}}, wantError: "participant IDs"},
+		{name: "match none with participant IDs", context: Context{Identity: &IdentityPredicate{SourceID: source, ParticipantIDs: []int64{identityID}, MatchNone: true, Direction: IdentityDirectionAny}}, wantError: "match-none"},
+		{name: "zero participant ID", context: Context{Identity: &IdentityPredicate{SourceID: source, ParticipantIDs: []int64{0}, Direction: IdentityDirectionAny}}, wantError: "participant ID"},
+		{name: "invalid direction", context: Context{Identity: &IdentityPredicate{SourceID: source, ParticipantIDs: []int64{identityID}, Direction: "sideways"}}, wantError: "identity direction"},
+		{name: "mismatched source", context: Context{SourceIDs: []int64{source + 1}, Identity: &IdentityPredicate{SourceID: source, ParticipantIDs: []int64{identityID}, Direction: IdentityDirectionAny}}, wantError: "source IDs"},
+		{name: "multiple sources", context: Context{SourceIDs: []int64{source, source + 1}, Identity: &IdentityPredicate{SourceID: source, ParticipantIDs: []int64{identityID}, Direction: IdentityDirectionAny}}, wantError: "source IDs"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			requirements := require.New(t)
+			assertions := assert.New(t)
+			_, err := engine.Explore(context.Background(), ExploreRequest{Context: test.context})
+			requirements.Error(err)
+			requirements.ErrorContains(err, test.wantError)
+			assertions.ErrorIs(err, ErrInvalidExploreRequest)
+		})
+	}
+
+	valid, err := engine.Explore(context.Background(), ExploreRequest{Context: Context{
+		Identity: &IdentityPredicate{SourceID: source, ParticipantIDs: []int64{identityID}, Direction: IdentityDirectionAny},
+	}})
+	requirements.NoError(err, "the source-pinned predicate is valid without a redundant SourceIDs field")
+	assertions.Equal(int64(1), valid.TotalCount)
+
+	matchingSource, err := engine.Explore(context.Background(), ExploreRequest{Context: Context{
+		SourceIDs: []int64{source},
+		Identity:  &IdentityPredicate{SourceID: source, ParticipantIDs: []int64{identityID}, Direction: IdentityDirectionAny},
+	}})
+	requirements.NoError(err)
+	assertions.Equal(int64(1), matchingSource.TotalCount)
+
+	matchNone, err := engine.Explore(context.Background(), ExploreRequest{Context: Context{
+		Identity: &IdentityPredicate{SourceID: source, MatchNone: true, Direction: IdentityDirectionAny},
+	}})
+	requirements.NoError(err, "a confirmed identity without observed participants is a valid empty filter")
+	assertions.Zero(matchNone.TotalCount)
+	assertions.Empty(matchNone.Rows)
+}
+
+// TestExploreIdentityFilterPrefersEnvelopeAddressOverMergedParticipant models
+// the post-merge archive: one surviving participant row backs mail sent
+// through two different envelope addresses. Filtering on one alias must
+// select only that alias's envelope rows, not everything the survivor
+// participant touches.
+func TestExploreIdentityFilterPrefersEnvelopeAddressOverMergedParticipant(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	b := NewTestDataBuilder(t)
+	source := b.AddSource("archive@example.com")
+	survivorID := b.AddParticipant("alias-b@example.com", "example.com", "Survivor")
+	otherID := b.AddParticipant("other@example.net", "example.net", "Other")
+	base := time.Date(2026, 8, 3, 12, 0, 0, 0, time.UTC)
+
+	sentViaA := b.AddMessage(MessageOpt{SourceID: source, Subject: "sent via a", SentAt: base})
+	b.AddRecipientWithEnvelope(sentViaA, survivorID, "from", "Survivor", "alias-a@example.com")
+	b.AddTo(sentViaA, otherID, "Other")
+	sentViaB := b.AddMessage(MessageOpt{SourceID: source, Subject: "sent via b", SentAt: base.Add(-time.Hour)})
+	b.AddRecipientWithEnvelope(sentViaB, survivorID, "from", "Survivor", "alias-b@example.com")
+	receivedAtA := b.AddMessage(MessageOpt{SourceID: source, Subject: "received at a", SentAt: base.Add(-2 * time.Hour)})
+	b.AddFrom(receivedAtA, otherID, "Other")
+	b.AddRecipientWithEnvelope(receivedAtA, survivorID, "to", "Survivor", "alias-a@example.com")
+	receivedAtB := b.AddMessage(MessageOpt{SourceID: source, Subject: "received at b", SentAt: base.Add(-3 * time.Hour)})
+	b.AddFrom(receivedAtB, otherID, "Other")
+	b.AddRecipientWithEnvelope(receivedAtB, survivorID, "cc", "Survivor", "alias-b@example.com")
+
+	engine := b.BuildEngine()
+	explore := func(direction IdentityDirection, emailIdentifier string) *ExploreResponse {
+		result, err := engine.Explore(context.Background(), ExploreRequest{
+			Context: Context{Identity: &IdentityPredicate{
+				SourceID:        source,
+				ParticipantIDs:  []int64{survivorID},
+				EmailIdentifier: emailIdentifier,
+				Direction:       direction,
+			}},
+			Page: PageSpec{Limit: 10},
+		})
+		requirements.NoError(err)
+		return result
+	}
+
+	sender := explore(IdentityDirectionSender, "alias-a@example.com")
+	requirements.Len(sender.Rows, 1, "alias A sender filter must not match alias B's envelope")
+	assertions.Equal("sent via a", sender.Rows[0].Title)
+
+	recipient := explore(IdentityDirectionRecipient, "alias-a@example.com")
+	requirements.Len(recipient.Rows, 1, "alias A recipient filter must not match alias B's envelope")
+	assertions.Equal("received at a", recipient.Rows[0].Title)
+
+	anyDirection := explore(IdentityDirectionAny, "ALIAS-A@EXAMPLE.COM")
+	requirements.Len(anyDirection.Rows, 2, "envelope comparison stays case-insensitive for emails")
+	assertions.Equal(int64(2), anyDirection.TotalCount)
+
+	participantOnly := explore(IdentityDirectionAny, "")
+	assertions.Equal(int64(4), participantOnly.TotalCount,
+		"without an email identifier the participant rules stay in force")
+}
+
+// TestExploreIdentityFilterFallsBackToParticipantForRowsWithoutEnvelope locks
+// in the legacy contract on the analytical path: recipient rows whose
+// envelope snapshot is empty keep matching through the resolved participant
+// IDs even when the filter carries an email identifier.
+func TestExploreIdentityFilterFallsBackToParticipantForRowsWithoutEnvelope(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	b := NewTestDataBuilder(t)
+	source := b.AddSource("archive@example.com")
+	identityID := b.AddParticipant("identity@example.com", "example.com", "Identity")
+	otherID := b.AddParticipant("other@example.net", "example.net", "Other")
+	base := time.Date(2026, 8, 3, 12, 0, 0, 0, time.UTC)
+
+	legacySent := b.AddMessage(MessageOpt{SourceID: source, Subject: "legacy sent", SentAt: base})
+	b.AddFrom(legacySent, identityID, "Identity")
+	unrelated := b.AddMessage(MessageOpt{SourceID: source, Subject: "unrelated", SentAt: base.Add(-time.Hour)})
+	b.AddFrom(unrelated, otherID, "Other")
+	directChat := b.AddMessage(MessageOpt{SourceID: source, Subject: "direct chat", SenderID: &identityID, SentAt: base.Add(-2 * time.Hour)})
+	_ = directChat
+
+	result, err := b.BuildEngine().Explore(context.Background(), ExploreRequest{
+		Context: Context{Identity: &IdentityPredicate{
+			SourceID:        source,
+			ParticipantIDs:  []int64{identityID},
+			EmailIdentifier: "identity@example.com",
+			Direction:       IdentityDirectionSender,
+		}},
+		Page: PageSpec{Limit: 10},
+	})
+	requirements.NoError(err)
+	requirements.Len(result.Rows, 2)
+	assertions.Equal([]string{"legacy sent", "direct chat"},
+		[]string{result.Rows[0].Title, result.Rows[1].Title},
+		"empty-envelope rows and direct senders keep the participant fallback")
+}
+
+// TestExploreIdentityFilterMatchesEnvelopeWithoutParticipantEvidence covers
+// the merge edge where no participant row carries the alias any more (the
+// absorbed email vanished from every participant surface): the envelope
+// snapshot alone must still select the alias's mail.
+func TestExploreIdentityFilterMatchesEnvelopeWithoutParticipantEvidence(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	b := NewTestDataBuilder(t)
+	source := b.AddSource("archive@example.com")
+	survivorID := b.AddParticipant("alias-b@example.com", "example.com", "Survivor")
+	base := time.Date(2026, 8, 3, 12, 0, 0, 0, time.UTC)
+
+	sentViaA := b.AddMessage(MessageOpt{SourceID: source, Subject: "sent via a", SentAt: base})
+	b.AddRecipientWithEnvelope(sentViaA, survivorID, "from", "Survivor", "alias-a@example.com")
+	sentViaB := b.AddMessage(MessageOpt{SourceID: source, Subject: "sent via b", SentAt: base.Add(-time.Hour)})
+	b.AddRecipientWithEnvelope(sentViaB, survivorID, "from", "Survivor", "alias-b@example.com")
+	directOnly := b.AddMessage(MessageOpt{SourceID: source, Subject: "direct only", SenderID: &survivorID, SentAt: base.Add(-2 * time.Hour)})
+	_ = directOnly
+
+	result, err := b.BuildEngine().Explore(context.Background(), ExploreRequest{
+		Context: Context{Identity: &IdentityPredicate{
+			SourceID:        source,
+			EmailIdentifier: "alias-a@example.com",
+			Direction:       IdentityDirectionAny,
+		}},
+		Page: PageSpec{Limit: 10},
+	})
+	requirements.NoError(err, "an envelope-only email identity is a valid predicate without participant IDs")
+	requirements.Len(result.Rows, 1)
+	assertions.Equal("sent via a", result.Rows[0].Title,
+		"only the alias's own envelope rows match; no participant fallback exists to widen the result")
+}
+
+// TestExploreIdentityFilterLegacyCacheWithoutEnvelopeColumnFallsBack proves a
+// committed cache written before the envelope column existed keeps serving
+// identity filters with the participant semantics instead of erroring.
+func TestExploreIdentityFilterLegacyCacheWithoutEnvelopeColumnFallsBack(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	b := NewTestDataBuilder(t)
+	b.SetLegacyRecipientSchema()
+	source := b.AddSource("archive@example.com")
+	identityID := b.AddParticipant("identity@example.com", "example.com", "Identity")
+	otherID := b.AddParticipant("other@example.net", "example.net", "Other")
+	base := time.Date(2026, 8, 3, 12, 0, 0, 0, time.UTC)
+
+	sent := b.AddMessage(MessageOpt{SourceID: source, Subject: "legacy cache sent", SentAt: base})
+	b.AddFrom(sent, identityID, "Identity")
+	unrelated := b.AddMessage(MessageOpt{SourceID: source, Subject: "unrelated", SentAt: base.Add(-time.Hour)})
+	b.AddFrom(unrelated, otherID, "Other")
+
+	result, err := b.BuildEngine().Explore(context.Background(), ExploreRequest{
+		Context: Context{Identity: &IdentityPredicate{
+			SourceID:        source,
+			ParticipantIDs:  []int64{identityID},
+			EmailIdentifier: "identity@example.com",
+			Direction:       IdentityDirectionSender,
+		}},
+		Page: PageSpec{Limit: 10},
+	})
+	requirements.NoError(err, "a pre-v17 cache without the envelope column must not error")
+	requirements.Len(result.Rows, 1)
+	assertions.Equal("legacy cache sent", result.Rows[0].Title)
+}
+
+func TestExploreIdentityPredicateScopesCountsGroupsSelectionAndSearchCandidates(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	b := NewTestDataBuilder(t)
+	source := b.AddSource("archive@example.com")
+	identityID := b.AddParticipant("identity@example.com", "example.com", "Identity")
+	otherID := b.AddParticipant("other@example.net", "example.net", "Other")
+	base := time.Date(2026, 8, 3, 12, 0, 0, 0, time.UTC)
+	matchingFirst := b.AddMessage(MessageOpt{SourceID: source, Subject: "matching first", SentAt: base})
+	b.AddFrom(matchingFirst, identityID, "Identity")
+	b.AddAttachment(matchingFirst, 10, "first.txt")
+	matchingSecond := b.AddMessage(MessageOpt{SourceID: source, Subject: "matching second", SentAt: base.Add(-time.Hour)})
+	b.AddFrom(matchingSecond, identityID, "Identity")
+	nonmatching := b.AddMessage(MessageOpt{SourceID: source, Subject: "nonmatching", SentAt: base.Add(-2 * time.Hour)})
+	b.AddFrom(nonmatching, otherID, "Other")
+	b.AddAttachment(nonmatching, 20, "other.txt")
+	engine := b.BuildEngine()
+	identityContext := Context{Identity: &IdentityPredicate{
+		SourceID: source, ParticipantIDs: []int64{identityID}, Direction: IdentityDirectionSender,
+	}}
+
+	page, err := engine.Explore(context.Background(), ExploreRequest{Context: identityContext, Page: PageSpec{Limit: 1}})
+	requirements.NoError(err)
+	requirements.Len(page.Rows, 1)
+	assertions.Equal("matching first", page.Rows[0].Title)
+	assertions.Equal(int64(2), page.TotalCount)
+
+	offset, err := engine.Explore(context.Background(), ExploreRequest{Context: identityContext, Page: PageSpec{Limit: 1, Offset: 1}})
+	requirements.NoError(err)
+	requirements.Len(offset.Rows, 1)
+	assertions.Equal("matching second", offset.Rows[0].Title)
+	assertions.Equal(int64(2), offset.TotalCount)
+
+	grouped, err := engine.ExploreGroups(context.Background(), ExploreGroupRequest{
+		Explore: ExploreRequest{Context: identityContext}, Dimension: "year",
+		Sort: SortSpec{Field: "count", Direction: "desc"}, Page: PageSpec{Limit: 10},
+	})
+	requirements.NoError(err)
+	requirements.Len(grouped.Rows, 1)
+	assertions.Equal(int64(2), grouped.Rows[0].Count)
+
+	selection, err := engine.ExploreSelectionStats(context.Background(), ExploreSelectionRequest{
+		Explore: ExploreRequest{Context: identityContext},
+	})
+	requirements.NoError(err)
+	assertions.Equal(int64(2), selection.Count)
+	assertions.Equal(int64(1), selection.FileCount)
+
+	exploreFiles, err := engine.ExploreFiles(context.Background(), ExploreFilesRequest{
+		Explore: ExploreRequest{Context: identityContext}, Page: PageSpec{Limit: 10},
+	})
+	requirements.NoError(err)
+	requirements.Len(exploreFiles.Files, 1)
+	assertions.Equal("first.txt", exploreFiles.Files[0].Filename)
+	assertions.Equal(int64(1), exploreFiles.TotalCount)
+
+	generation := int64(7)
+	for _, test := range []struct {
+		name   string
+		search SearchSpec
+	}{
+		{name: "full text", search: SearchSpec{Mode: SearchFullText, Query: "match", CandidateMessageIDs: []int64{matchingFirst, nonmatching}, LexicalIndexRevision: "fts5:test"}},
+		{name: "semantic", search: SearchSpec{Mode: SearchSemantic, Query: "match", CandidateMessageIDs: []int64{matchingFirst, nonmatching}, VectorGeneration: &generation}},
+		{name: "hybrid", search: SearchSpec{Mode: SearchHybrid, Query: "match", CandidateMessageIDs: []int64{matchingFirst, nonmatching}, LexicalIndexRevision: "fts5:test", VectorGeneration: &generation}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			result, searchErr := engine.Explore(context.Background(), ExploreRequest{
+				Context: identityContext, Search: test.search, Page: PageSpec{Limit: 10},
+			})
+			require.NoError(t, searchErr)
+			require.Len(t, result.Rows, 1)
+			assert.Equal(t, matchingFirst, *result.Rows[0].AnchorMessageID)
+		})
+	}
+
+	matchCounts, err := engine.ExploreMatchCounts(context.Background(), ExploreMatchCountsRequest{
+		Explore: ExploreRequest{Context: identityContext, Search: SearchSpec{
+			Mode: SearchFullText, Query: "match", CandidateMessageIDs: []int64{matchingFirst, nonmatching}, LexicalIndexRevision: "fts5:test",
+		}},
+		RowKeys: []string{"source:1:message:msg1", "source:1:message:msg3"},
+	})
+	requirements.NoError(err)
+	assertions.Equal(map[string]int64{"source:1:message:msg1": 1, "source:1:message:msg3": 0}, matchCounts.Counts)
+	assertions.NotEqual(matchingSecond, nonmatching)
+}
+
+func TestExploreIdentityPredicateScopesRelationshipTimeline(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	b := NewTestDataBuilder(t)
+	sourceA := b.AddSource("archive-a@example.com")
+	sourceB := b.AddSource("archive-b@example.com")
+	identityID := b.AddParticipant("identity@example.com", "example.com", "Identity")
+	otherID := b.AddParticipant("other@example.net", "example.net", "Other")
+	counterpartID := b.AddParticipant("counterpart@example.org", "example.org", "Counterpart")
+	base := time.Date(2026, 8, 3, 12, 0, 0, 0, time.UTC)
+
+	matching := b.AddMessage(MessageOpt{SourceID: sourceA, Subject: "matching", SentAt: base})
+	b.AddFrom(matching, identityID, "Identity")
+	b.AddTo(matching, counterpartID, "Counterpart")
+	nonmatching := b.AddMessage(MessageOpt{SourceID: sourceA, Subject: "nonmatching", SentAt: base.Add(-time.Hour)})
+	b.AddFrom(nonmatching, otherID, "Other")
+	b.AddTo(nonmatching, counterpartID, "Counterpart")
+	otherSource := b.AddMessage(MessageOpt{SourceID: sourceB, Subject: "other source", SentAt: base.Add(time.Hour)})
+	b.AddFrom(otherSource, identityID, "Identity")
+	b.AddTo(otherSource, counterpartID, "Counterpart")
+
+	result, err := b.BuildEngine().RelationshipTimeline(context.Background(), RelationshipTimelineRequest{
+		CanonicalID: counterpartID,
+		Context: Context{SourceIDs: []int64{sourceA}, Identity: &IdentityPredicate{
+			SourceID: sourceA, ParticipantIDs: []int64{identityID}, Direction: IdentityDirectionSender,
+		}},
+		Limit: 10,
+	})
+	requirements.NoError(err)
+	requirements.Len(result.Rows, 1)
+	assertions.Equal("matching", result.Rows[0].Title)
+	assertions.Equal(sourceA, result.Rows[0].SourceID)
+	assertions.Equal(int64(1), result.TotalCount)
+}
+
+func TestExploreIdentityPredicateScopesPeopleGrouping(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	b := NewTestDataBuilder(t)
+	source := b.AddSource("archive@example.com")
+	identityID := b.AddParticipant("identity@example.com", "example.com", "Identity")
+	otherID := b.AddParticipant("other@example.net", "example.net", "Other")
+	counterpartID := b.AddParticipant("counterpart@example.org", "example.org", "Counterpart")
+
+	matching := b.AddMessage(MessageOpt{SourceID: source, Subject: "matching"})
+	b.AddFrom(matching, identityID, "Identity")
+	b.AddTo(matching, counterpartID, "Counterpart")
+	nonmatching := b.AddMessage(MessageOpt{SourceID: source, Subject: "nonmatching"})
+	b.AddFrom(nonmatching, otherID, "Other")
+	b.AddTo(nonmatching, counterpartID, "Counterpart")
+
+	result, err := b.BuildEngine().SearchPeople(context.Background(), PersonSearchRequest{
+		Explore: ExploreRequest{Context: Context{Identity: &IdentityPredicate{
+			SourceID: source, ParticipantIDs: []int64{identityID}, Direction: IdentityDirectionSender,
+		}}},
+		Sort: SortSpec{Field: "activity_count", Direction: "desc"}, Page: PageSpec{Limit: 10},
+	})
+	requirements.NoError(err)
+	requirements.Len(result.Rows, 2)
+	assertions.ElementsMatch([]int64{identityID, counterpartID}, []int64{result.Rows[0].ID, result.Rows[1].ID})
+	assertions.NotContains([]int64{result.Rows[0].ID, result.Rows[1].ID}, otherID)
+	assertions.Equal(int64(2), result.TotalCount)
+}
+
 func TestExploreKeepsDurableCallsAsIndividualItemsInsideChatConversations(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
