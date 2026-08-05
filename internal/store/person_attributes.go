@@ -122,39 +122,22 @@ func (s *Store) ListPersonAttributeValuesContext(
 	return values, nil
 }
 
-// SetPersonAttributeValueContext supersedes the current value and inserts a replacement.
+// SetPersonAttributeValueContext supersedes the current value and inserts a
+// replacement. Definition-dependent validation runs inside each write
+// attempt's transaction so a concurrent definition change cannot slip
+// between check and insert.
 func (s *Store) SetPersonAttributeValueContext(
 	ctx context.Context, input PersonAttributeValueInput,
 ) (*PersonAttributeWrite, error) {
-	definition, err := s.GetAttributeDefinitionBySlugContext(
-		ctx, AttributeObjectPerson, input.DefinitionSlug)
-	if err != nil {
-		return nil, err
-	}
-	if err := writableAttributeDefinition(*definition); err != nil {
-		return nil, err
-	}
-	value, err := normalizeAttributeValue(*definition, input.Value)
-	if err != nil {
-		return nil, err
-	}
-	input.Value = value
 	if err := validateProvenance(input.Source, input.Confidence); err != nil {
 		return nil, err
-	}
-	if definition.Cardinality == AttributeCardinalitySingle &&
-		input.Ordinal != nil && *input.Ordinal != 0 {
-		return nil, fmt.Errorf(
-			"%w: ordinal %d is not allowed on %s, which declares cardinality single",
-			ErrAttributeValueInvalid, *input.Ordinal, definition.Slug)
 	}
 	if input.Ordinal != nil && *input.Ordinal < 0 {
 		return nil, fmt.Errorf("%w: ordinal must not be negative", ErrAttributeValueInvalid)
 	}
-
 	return s.retryAttributeWrite("set person attribute value",
 		func() (*PersonAttributeWrite, error) {
-			return s.setPersonAttributeValueOnce(ctx, *definition, input)
+			return s.setPersonAttributeValueOnce(ctx, input)
 		})
 }
 
@@ -179,7 +162,7 @@ func (s *Store) retryAttributeWrite(
 }
 
 func (s *Store) setPersonAttributeValueOnce(
-	ctx context.Context, definition AttributeDefinition, input PersonAttributeValueInput,
+	ctx context.Context, input PersonAttributeValueInput,
 ) (*PersonAttributeWrite, error) {
 	activeFrom := time.Now().UTC()
 	if input.ActiveFrom != nil {
@@ -192,6 +175,26 @@ func (s *Store) setPersonAttributeValueOnce(
 
 	write := &PersonAttributeWrite{DryRun: input.DryRun}
 	err := s.withTxContext(ctx, func(tx *loggedTx) error {
+		loaded, err := s.getAttributeDefinitionBySlugTx(
+			ctx, tx, AttributeObjectPerson, input.DefinitionSlug)
+		if err != nil {
+			return err
+		}
+		definition := *loaded
+		if err := writableAttributeDefinition(definition); err != nil {
+			return err
+		}
+		value, err := normalizeAttributeValue(definition, input.Value)
+		if err != nil {
+			return err
+		}
+		input.Value = value
+		if definition.Cardinality == AttributeCardinalitySingle &&
+			input.Ordinal != nil && *input.Ordinal != 0 {
+			return fmt.Errorf(
+				"%w: ordinal %d is not allowed on %s, which declares cardinality single",
+				ErrAttributeValueInvalid, *input.Ordinal, definition.Slug)
+		}
 		if input.Value.Type == AttributeValueRecordReference {
 			if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
 				return err
@@ -400,29 +403,13 @@ func (s *Store) insertPersonAttributeValueTx(
 
 // SupersedePersonAttributeValueContext closes a current value without
 // replacement. Unlike Set it also works on inactive definitions: retracting a
-// stale value from a retired definition must stay possible.
+// stale value from a retired definition must stay possible. As in Set, the
+// definition is loaded and checked inside each attempt's transaction.
 func (s *Store) SupersedePersonAttributeValueContext(
 	ctx context.Context, input PersonAttributeSupersedeInput,
 ) (*PersonAttributeWrite, error) {
-	definition, err := s.GetAttributeDefinitionBySlugContext(
-		ctx, AttributeObjectPerson, input.DefinitionSlug)
-	if err != nil {
-		return nil, err
-	}
-	if err := retractableAttributeDefinition(*definition); err != nil {
-		return nil, err
-	}
-	ordinal := int64(0)
-	if input.Ordinal != nil {
-		if *input.Ordinal < 0 {
-			return nil, fmt.Errorf("%w: ordinal must not be negative", ErrAttributeValueInvalid)
-		}
-		if definition.Cardinality == AttributeCardinalitySingle && *input.Ordinal != 0 {
-			return nil, fmt.Errorf(
-				"%w: ordinal %d is not allowed on %s, which declares cardinality single",
-				ErrAttributeValueInvalid, *input.Ordinal, definition.Slug)
-		}
-		ordinal = *input.Ordinal
+	if input.Ordinal != nil && *input.Ordinal < 0 {
+		return nil, fmt.Errorf("%w: ordinal must not be negative", ErrAttributeValueInvalid)
 	}
 	at := time.Now().UTC()
 	if input.At != nil {
@@ -430,18 +417,34 @@ func (s *Store) SupersedePersonAttributeValueContext(
 	}
 	return s.retryAttributeWrite("supersede person attribute value",
 		func() (*PersonAttributeWrite, error) {
-			return s.supersedePersonAttributeValueOnce(ctx, definition.ID, ordinal, at, input)
+			return s.supersedePersonAttributeValueOnce(ctx, at, input)
 		})
 }
 
 func (s *Store) supersedePersonAttributeValueOnce(
-	ctx context.Context, definitionID, ordinal int64, at time.Time,
-	input PersonAttributeSupersedeInput,
+	ctx context.Context, at time.Time, input PersonAttributeSupersedeInput,
 ) (*PersonAttributeWrite, error) {
 	write := &PersonAttributeWrite{DryRun: input.DryRun}
 	err := s.withTxContext(ctx, func(tx *loggedTx) error {
+		definition, err := s.getAttributeDefinitionBySlugTx(
+			ctx, tx, AttributeObjectPerson, input.DefinitionSlug)
+		if err != nil {
+			return err
+		}
+		if err := retractableAttributeDefinition(*definition); err != nil {
+			return err
+		}
+		ordinal := int64(0)
+		if input.Ordinal != nil {
+			if definition.Cardinality == AttributeCardinalitySingle && *input.Ordinal != 0 {
+				return fmt.Errorf(
+					"%w: ordinal %d is not allowed on %s, which declares cardinality single",
+					ErrAttributeValueInvalid, *input.Ordinal, definition.Slug)
+			}
+			ordinal = *input.Ordinal
+		}
 		current, hasCurrent, err := s.currentPersonAttributeValueTx(
-			ctx, tx, input.PersonID, definitionID, ordinal)
+			ctx, tx, input.PersonID, definition.ID, ordinal)
 		if err != nil {
 			return err
 		}

@@ -604,6 +604,25 @@ func (s *Store) GetAttributeDefinitionBySlugContext(
 	return definition, nil
 }
 
+// getAttributeDefinitionBySlugTx loads a definition inside tx, locking its
+// row on backends with row locks so writability and option checks stay valid
+// until the transaction commits.
+func (s *Store) getAttributeDefinitionBySlugTx(
+	ctx context.Context, tx *loggedTx, objectType AttributeObjectType, slug string,
+) (*AttributeDefinition, error) {
+	definition, err := scanAttributeDefinition(tx.QueryRowContext(ctx, fmt.Sprintf(`
+		SELECT %s FROM attribute_definitions WHERE object_type = ? AND slug = ?%s
+	`, attributeDefinitionColumns, s.dialect.SelectForUpdate()),
+		string(objectType), slug))
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrAttributeDefinitionNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get attribute definition %s/%s: %w", objectType, slug, err)
+	}
+	return definition, nil
+}
+
 // ListAttributeDefinitionsContext lists definitions in display order.
 func (s *Store) ListAttributeDefinitionsContext(
 	ctx context.Context, filter AttributeDefinitionFilter,

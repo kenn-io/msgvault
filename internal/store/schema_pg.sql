@@ -447,7 +447,7 @@ CREATE TABLE IF NOT EXISTS attribute_definitions (
     field_type     TEXT NOT NULL,
     record_target  TEXT,
     cardinality    TEXT NOT NULL DEFAULT 'single',
-    display_order  INTEGER NOT NULL DEFAULT 0,
+    display_order  BIGINT NOT NULL DEFAULT 0,
     is_required    BOOLEAN NOT NULL DEFAULT FALSE,
     ownership      TEXT NOT NULL DEFAULT 'user',
     ui_creatable   BOOLEAN NOT NULL DEFAULT TRUE,
