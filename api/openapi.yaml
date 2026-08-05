@@ -667,6 +667,7 @@ components:
           format: int64
           type: integer
         content_changed_at:
+          format: date-time
           type: string
         conversation_id:
           format: int64
@@ -718,8 +719,11 @@ components:
       additionalProperties: true
       properties:
         complete_through:
-          description: "Instant the feed is complete through: every change committed strictly below it is reachable from this page's cursor. Always present. The sentinel 0001-01-01T00:00:00Z means no commit bound has been established yet, a transient state in which the feed returns no rows; it is a state rather than an instant, so do not subtract it from server_time"
-          type: string
+          description: "Instant the feed is complete through: every change committed strictly below it is reachable from this page's cursor. Null means no commit bound has been established yet; keep polling"
+          format: date-time
+          type:
+            - string
+            - "null"
         count:
           format: int64
           type: integer

@@ -241,6 +241,10 @@ INSERT INTO message_bodies (message_id, body_text) VALUES (1, 'body one'), (2, '
 	}
 	_, err = seed.DB().Exec(`ALTER TABLE messages DROP COLUMN last_modified`)
 	require.NoError(err, "drop last_modified to simulate pre-upgrade schema")
+	_, err = seed.DB().Exec(
+		seed.Rebind(`DELETE FROM applied_migrations WHERE name = ?`),
+		messageWatermarkTriggersMigration)
+	require.NoError(err, "restore the pre-trigger-migration ledger state")
 
 	var preCols int
 	require.NoError(seed.DB().QueryRow(
@@ -346,6 +350,10 @@ VALUES (1, 1, 1, 'm1', 'email', 'original one'),
 		_, err = seed.DB().Exec(stmt)
 		require.NoErrorf(err, "wind the archive back: %s", stmt)
 	}
+	_, err = seed.DB().Exec(
+		seed.Rebind(`DELETE FROM applied_migrations WHERE name = ?`),
+		messageWatermarkTriggersMigration)
+	require.NoError(err, "restore the pre-trigger-migration ledger state")
 
 	var preSQL string
 	require.NoError(seed.DB().QueryRow(
@@ -425,11 +433,8 @@ func quoteSQLiteIdentifier(name string) string {
 // point (InitSchema, which is what runs EnsureTriggers). It returns the reopened
 // store and InitSchema's error so the caller can assert on either.
 //
-// The column is added to a database that has ALREADY been initialised, which is
-// exactly how a hostile name reaches this code in the wild: the column list the
-// last_modified trigger is scoped to is read from the live table, so any column
-// the archive carries — whoever put it there — is interpolated into DDL on the
-// next open.
+// The column is added to a database that has already been initialised, then the
+// trigger migration marker is removed to exercise the next trigger version.
 func openArchiveWithMessagesColumn(t *testing.T, name string) (*store.Store, error) {
 	t.Helper()
 	dbPath := filepath.Join(t.TempDir(), "hostile.db")
@@ -440,12 +445,39 @@ func openArchiveWithMessagesColumn(t *testing.T, name string) (*store.Store, err
 	_, err = seed.DB().Exec(
 		`ALTER TABLE messages ADD COLUMN ` + quoteSQLiteIdentifier(name) + ` TEXT`)
 	require.NoErrorf(t, err, "add column %q — SQLite accepts any name inside quotes", name)
+	_, err = seed.DB().Exec(
+		seed.Rebind(`DELETE FROM applied_migrations WHERE name = ?`),
+		messageWatermarkTriggersMigration)
+	require.NoError(t, err, "queue the trigger migration")
 	require.NoError(t, seed.Close(), "close seed store")
 
 	st, err := store.OpenForTest(dbPath)
 	require.NoError(t, err, "reopen archive")
 	t.Cleanup(func() { _ = st.Close() })
 	return st, st.InitSchema()
+}
+
+func TestLastModified_TriggerMigrationDoesNotRunOnEveryOpen(t *testing.T) {
+	testutil.SkipIfPostgres(t, "the test inspects SQLite trigger DDL")
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewSQLiteTestStore(t)
+
+	_, err := st.DB().Exec(`
+		DROP TRIGGER trg_messages_last_modified;
+		CREATE TRIGGER trg_messages_last_modified
+		AFTER UPDATE ON messages BEGIN SELECT 1; END;
+	`)
+	require.NoError(err, "install a recognizable post-migration trigger")
+
+	require.NoError(st.InitSchema(), "second InitSchema")
+
+	var ddl string
+	require.NoError(st.DB().QueryRow(
+		`SELECT sql FROM sqlite_master WHERE type = 'trigger' AND name = 'trg_messages_last_modified'`,
+	).Scan(&ddl))
+	assert.Contains(ddl, "SELECT 1",
+		"an applied trigger migration must not drop and recreate triggers on every open")
 }
 
 // messagesTableExists reports whether the messages table is still there. It is

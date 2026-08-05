@@ -379,6 +379,24 @@ func TestListChangedMessages_SurfacesBackfilledOldMessage(t *testing.T) {
 		"the feed reports the message's real sent_at, not its change time")
 }
 
+func TestListChangedMessages_NullHasAttachmentsDefaultsFalse(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+
+	id := seedFeedMessage(t, st, 1, time.Time{})
+	_, err := st.DB().Exec(
+		st.Rebind(`UPDATE messages SET has_attachments = NULL WHERE id = ?`), id)
+	require.NoError(err, "store legacy NULL attachment metadata")
+	settleFeedClock(t, st)
+
+	page, err := st.ListChangedMessages(
+		context.Background(), store.ChangedMessagesCursor{}, 10)
+	require.NoError(err, "legacy nullable metadata must not block the feed")
+	require.Len(page.Messages, 1)
+	assert.False(page.Messages[0].HasAttachments)
+}
+
 // TestListChangedMessages_OrdersByWatermarkThenID pins the ordering the cursor
 // depends on: watermark first, id only as the tiebreak. Ids are assigned in
 // insert order here and the watermarks deliberately are not, so an
@@ -496,17 +514,13 @@ func TestListChangedMessages_ZeroCursorReturnsEverything(t *testing.T) {
 			"below it, so the newest watermark returned must precede it")
 }
 
-// TestListChangedMessages_UnreadableWatermarkDoesNotRewindTheCursor pins the
-// floor on the reported watermark. nullableTimestamp maps a value it cannot
-// parse to the zero time, and a consumer handed 0001-01-01 as its next cursor
-// re-reads the entire archive on every poll, forever. No write path here
-// produces such a value — direct SQL against the column can — so the defence is
-// that a page can never report a watermark below the cursor it was read from.
+// TestListChangedMessages_UnreadableWatermarkReturnsAnError ensures corrupt
+// cursor state blocks the feed loudly instead of producing a synthetic cursor.
 //
 // SQLite always, whatever backend the run targets: PostgreSQL's
 // content_changed_at is a typed TIMESTAMPTZ and cannot hold a value its driver
 // refuses to parse, so there is nothing to pin there.
-func TestListChangedMessages_UnreadableWatermarkDoesNotRewindTheCursor(t *testing.T) {
+func TestListChangedMessages_UnreadableWatermarkReturnsAnError(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewSQLiteTestStore(t)
@@ -519,22 +533,30 @@ func TestListChangedMessages_UnreadableWatermarkDoesNotRewindTheCursor(t *testin
 	setWatermark(t, st, "1999-13-45 99:99:99.999", id)
 
 	since := time.Date(1995, 6, 7, 8, 9, 10, 0, time.UTC)
-	page, err := st.ListChangedMessages(context.Background(), store.ChangedMessagesFrom(since), 10)
-	require.NoError(err)
-	require.Len(page.Messages, 1,
-		"the row is still reported: dropping it would hide a real change")
+	_, err := st.ListChangedMessages(context.Background(), store.ChangedMessagesFrom(since), 10)
+	require.Error(err)
+	assert.Contains(err.Error(), "content_changed_at")
+}
 
-	assert.Equal(since, page.Messages[0].ContentChangedAt,
-		"a watermark the scanner cannot read must be floored at the cursor the "+
-			"page was read from; reporting the zero time sends the consumer back to "+
-			"year 1 and it replays the archive on every poll")
+func TestListChangedMessages_NullWatermarkReturnsAnError(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+
+	id := seedFeedMessage(t, st, 1, time.Time{})
+	setWatermark(t, st, nil, id)
+
+	_, err := st.ListChangedMessages(
+		context.Background(), store.ChangedMessagesCursor{}, 10)
+	require.Error(err)
+	assert.Contains(err.Error(), "content_changed_at")
 }
 
 // TestListChangedMessages_ReportsTheStoredWatermarkNotTheRequestCursor keeps
 // content_changed_at a property of the row.
 //
-// The floor that protects the cursor from an unreadable watermark must not
-// rewrite a watermark the scanner READ perfectly well. A readable watermark can
+// Strict handling for unreadable watermarks must not rewrite one the scanner
+// reads perfectly well. A readable watermark can
 // legitimately sort below the cursor on SQLite: SQLiteDialect.TimestampParam
 // truncates the cursor to the millisecond the column stores, so a cursor
 // carrying finer resolution — one derived from a client's own clock, or replayed

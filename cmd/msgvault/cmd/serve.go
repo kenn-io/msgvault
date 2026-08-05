@@ -913,13 +913,13 @@ func (a *storeAPIAdapter) ListChangedMessages(
 	return a.store.ListChangedMessages(ctx, since, limit)
 }
 
-// ArchiveUID exposes the archive's durable identity to the API server, which
+// ArchiveUIDContext exposes the archive's durable identity to the API server, which
 // binds every change-feed cursor to it so a cursor cannot be resumed against a
 // different archive. Same reason as ListChangedMessages above: the daemon
 // passes this adapter, not *store.Store, so without this method the route
 // reports itself unavailable on every production request.
-func (a *storeAPIAdapter) ArchiveUID() (string, error) {
-	return a.store.ArchiveUID()
+func (a *storeAPIAdapter) ArchiveUIDContext(ctx context.Context) (string, error) {
+	return a.store.ArchiveUIDContext(ctx)
 }
 
 func (a *storeAPIAdapter) GetStats() (*api.StoreStats, error) {

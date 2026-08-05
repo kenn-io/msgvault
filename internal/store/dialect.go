@@ -241,6 +241,11 @@ type Dialect interface {
 	// otherwise ignore SIGINT and SIGTERM indefinitely.
 	EnsureFTSIndex(q querier) error
 
+	// ValidateMessageWatermarks checks cheap, backend-specific invariants that
+	// must hold on every open even when the versioned trigger migration is
+	// already applied.
+	ValidateMessageWatermarks(q querier) error
+
 	// EnsureTriggers idempotently creates the database-maintained triggers on
 	// both message watermarks: last_modified, which bumps on any change to a
 	// message or its body row, and content_changed_at, the change feed's

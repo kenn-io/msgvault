@@ -533,6 +533,11 @@ func (d *SQLiteDialect) FTSRebuildSchema(ctx context.Context, q contextQuerier) 
 // not a post-migration step (cr2-10).
 func (d *SQLiteDialect) EnsureFTSIndex(querier) error { return nil }
 
+func (d *SQLiteDialect) ValidateMessageWatermarks(q querier) error {
+	_, err := d.contentChangedAtDefaultStamps(q)
+	return err
+}
+
 // EnsureTriggers creates the content_changed_at maintenance triggers and
 // re-scopes the messages last_modified trigger (see lastModifiedUpdateOfColumns
 // for why the latter cannot stay a blanket AFTER UPDATE in schema.sql).

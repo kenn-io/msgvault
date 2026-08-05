@@ -311,11 +311,10 @@ Refresh those on your own schedule.
 > build inside that stops writes.** Support for this feed adds a
 > `content_changed_at`
 > column to `messages`, runs a one-time full-table backfill of it, builds an
-> index on it, and drops and recreates the `trg_messages_last_modified` trigger.
-> The trigger is dropped and recreated on every open, so that a later change to
-> the tracked-column list reaches an existing archive; the backfill and the index
-> run once. On PostgreSQL the backfill bumps `last_modified` on every row once,
-> at upgrade.
+> index on it, and installs the watermark triggers. Trigger installation is a
+> versioned migration, so it runs once for each trigger definition instead of
+> taking trigger locks on every open. On PostgreSQL the backfill bumps
+> `last_modified` on every row once, at upgrade.
 >
 > The backfill commits in batches and the watermark triggers are installed before
 > it starts, so a concurrent write is safe throughout and, on PostgreSQL,
@@ -431,11 +430,10 @@ it by microseconds; see [Delivery contract](#delivery-contract) for when it stop
 tracking and what that means. A page never reaches it — rows stamped in that same
 instant are held back — so the very newest changes arrive on the following poll.
 
-On a server that has only just started, `complete_through` can be
-`0001-01-01T00:00:00Z`. That is a state, not an instant: no bound has been
-established yet, so the feed is complete through nothing and you cannot subtract
-it from `server_time`. It happens when every attempt to read the bound so far has
-been beaten by a writer, and it resolves by itself on the first quiet moment.
+On a server that has only just started, `complete_through` can be `null`. No
+bound has been established yet, so the feed is complete through nothing. It
+happens when every attempt to read the bound so far has been beaten by a writer,
+and it resolves by itself on the first quiet moment.
 Such a page carries no rows and echoes your cursor back unchanged, so it is safe
 to keep polling; the whole archive from your cursor onward is delivered once the
 bound is established.
@@ -610,9 +608,8 @@ not a fault.
 
 There is one case with no gap to measure and no minute to wait for: a server
 that has never established a bound at all, because a write transaction was open
-on every attempt since it started. `complete_through` is the zero sentinel
-(`0001-01-01T00:00:00Z`) then, so there is no lag to report, and the same
-warning is logged on the very first request that finds the feed in that state,
+on every attempt since it started. `complete_through` is `null` then, so there
+is no lag to report, and the same warning is logged on the very first request,
 under the same once-a-minute throttle — carrying `lag: "unknown"`,
 `complete_through: "none"`, and its own cause. Read it as "this server has never
 seen the message table quiescent", which on a freshly started daemon usually
@@ -737,56 +734,22 @@ promptly, and there are surfaces it cannot see at all:
   same statement made goes unreported with it. The next ordinary change to one of
   the row's tracked columns stamps a fresh watermark and the row rejoins the feed
   carrying its current content. If no such change ever comes, it stays invisible.
-* **SQLite only:** a `content_changed_at` value the server cannot parse — which no
-  write path produces, but direct SQL against the archive can, and which the
-  triggers deliberately yield to when a statement sets the column itself — is not
-  repaired by polling. (On PostgreSQL the column is `timestamptz`, so the database
-  itself refuses a value that is not a timestamp.) How it fails is decided by
-  where the raw stored value orders against the page's two bounds. Text is
-  compared lexically; the column is a non-`STRICT` `DATETIME`, so direct SQL can
-  also leave a number or a blob there, and SQLite orders those by storage class —
-  every number sorts *below* every text value, every blob *above*. That gives
-  three distinct failures:
-
-  1. **Text ordering at or above your cursor and below the bound.** The row is
-     returned, but its reported `content_changed_at` is the highest readable
-     watermark the page had reached — the cursor you sent, or a readable row
-     earlier on the page — not the stored value. A readable row after it on the
-     same page carries the cursor past it for good. If it lands last on its page
-     the cursor stops there and the same row comes back on every poll, until the
-     next change to a tracked column anywhere in the archive frees the walk. So
-     the stall lasts as long as the rest of the archive stays quiet — except at
-     `limit=1`, which has no room for a readable row ahead of the malformed one
-     and stays stuck however busy the archive is.
-  2. **Text or a blob ordering at or above the bound.** Not returned at all, for as
-     long as the bound stays below it — see the bullet on a stamp at or above the
-     bound. A blob sorts above every text value, and text that is not date-shaped
-     can sort above every timestamp the server will ever stamp, so for those the
-     bound never reaches it and "for as long as" means forever.
-  3. **A number (`INTEGER` or `REAL`).** It sorts below every text value, so it
-     fails the feed's **lower** bound from every cursor — the empty one included,
-     which compares against the empty string — and is never returned at all.
-
-  In every case the archive and a mirror diverge on that row's tracked fields, and
-  **re-reading the feed from an empty cursor repairs none of the three.** Only
-  case 1 is visible from outside: a page that keeps returning the same rows on
-  every poll, with the walk never advancing past them. That signal lasts only as
-  long as the stall does,
-  so a busy archive can clear it before anyone looks, leaving the wrong watermark
-  in place silently. Cases 2 and 3 are silent from the start: no request reaches
-  the row, so finding them means reading the database directly. Comparing message
-  ids is not enough — the same statement that writes an unparseable watermark can
-  also change a tracked field, so the two sides can hold identical id sets while
-  the contents differ. The repair is to correct the stored watermark.
+* **SQLite only:** direct SQL can store a `NULL` or malformed
+  `content_changed_at`; normal write paths do not. The feed returns an error for
+  a `NULL` watermark or a malformed value selected by the page instead of
+  inventing a timestamp and moving the cursor. SQLite orders non-date values by
+  their raw type and text, so a corrupt value outside the requested range can
+  still be unreachable. Repair the stored watermark directly before resuming.
 * A consumer that must not diverge from the archive should still reconcile
   periodically — for example, a scheduled full re-read from an empty cursor. It
   re-delivers every row the feed can select, so it restores the tracked fields of a
-  case-1 row and of a row stranded by a backward clock step. What it does not do:
-  it cannot reach cases 2 and 3 above, or a `NULL` watermark — no cursor can — and
-  it recovers nothing outside the tracked columns. Nor does it identify a hard
+  malformed row that remains selectable and a row stranded by a backward clock
+  step. What it does not do: it cannot reach a malformed watermark that sorts
+  outside the feed range, and it recovers nothing outside the tracked columns.
+  Nor does it identify a hard
   deletion: a row your mirror has and the walk never returns is simply a row no
-  cursor can reach, which is what a hard deletion, cases 2 and 3, and a `NULL`
-  watermark all look like from outside. Separating them takes the same direct read
+  cursor can reach, which is what a hard deletion and an out-of-range corrupt
+  watermark both look like from outside. Separating them takes the same direct read
   — a row absent from a direct `SELECT` over `messages` was hard-deleted, and one
   still there has a watermark the feed cannot reach.
 

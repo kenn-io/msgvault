@@ -888,6 +888,25 @@ func (n *nullableTimestamp) Scan(src any) error {
 	}
 }
 
+// requiredTimestamp rejects missing or malformed values. Feed watermarks are
+// cursor state, so silently treating corruption as a zero timestamp would make
+// consumers replay or skip data.
+type requiredTimestamp struct {
+	Time time.Time
+}
+
+func (r *requiredTimestamp) Scan(src any) error {
+	var timestamp nullableTimestamp
+	if err := timestamp.Scan(src); err != nil {
+		return fmt.Errorf("content_changed_at: %w", err)
+	}
+	if !timestamp.Valid {
+		return errors.New("content_changed_at is NULL or is not a valid timestamp")
+	}
+	r.Time = timestamp.Time
+	return nil
+}
+
 // scanMessageRows scans the standard message row set
 // (id, source_id, source_message_id, conversation_id, source_conversation_id, subject,
 // message_type, from_display, from_email, from_name, from_phone, sent_at,
@@ -1256,7 +1275,7 @@ const changedMessagesSelect = `
 	SELECT id, source_id, COALESCE(source_message_id,''), COALESCE(conversation_id,0),
 	       COALESCE(message_type,''), COALESCE(subject,''), COALESCE(snippet,''),
 	       sent_at, received_at, internal_date, COALESCE(size_estimate,0),
-	       has_attachments, COALESCE(attachment_count,0),
+	       COALESCE(has_attachments,FALSE), COALESCE(attachment_count,0),
 	       deleted_at, deleted_from_source_at, content_changed_at
 	FROM messages
 	WHERE content_changed_at >= ?`
@@ -1333,6 +1352,21 @@ func (s *Store) ListChangedMessages(
 		return ChangedMessagePage{}, nil
 	}
 
+	// NULL watermarks are excluded by the range predicate and would otherwise
+	// remain invisible forever. Detect legacy or manually-corrupted rows before
+	// returning any page so consumers stop at a visible, repairable error.
+	var nullWatermarkID int64
+	err := s.db.QueryRowContext(ctx,
+		`SELECT id FROM messages WHERE content_changed_at IS NULL LIMIT 1`,
+	).Scan(&nullWatermarkID)
+	if err == nil {
+		return ChangedMessagePage{}, fmt.Errorf(
+			"message %d has NULL content_changed_at", nullWatermarkID)
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return ChangedMessagePage{}, fmt.Errorf("check message watermarks: %w", err)
+	}
+
 	// Read the bounds BEFORE the page query, in their own statement (constant
 	// columns on the page query itself would vanish along with the rows on an
 	// empty page). Before, not after: a change committed while the page query
@@ -1358,79 +1392,14 @@ func (s *Store) ListChangedMessages(
 	defer func() { _ = rows.Close() }()
 
 	page := ChangedMessagePage{ServerTime: bounds.Now, CompleteThrough: bounds.CommitBound}
-	// A row whose stored watermark this scan cannot read is reported with
-	// watermarkFloor as its watermark: the newest value the raw column is known
-	// to be at least — the cursor the page was read from, or the last readable
-	// watermark before it, whichever is later. Such a row does not advance that
-	// floor. So if it is also the LAST on its page the walk reaches a fixpoint:
-	// the handler publishes that floor as the next cursor and this row's id as
-	// the tiebreak, so the SECOND request onward repeats byte for byte and
-	// returns the row again, and again. (The first request differs from it in
-	// the tiebreak alone, unless the caller already sent this row's id.) A
-	// readable row after it on the same page advances the cursor past it
-	// instead.
-	//
-	// The fixpoint is NOT permanent, and the difference matters to anyone
-	// reading a report of one. Every stamp written after this page's reading
-	// sorts above the unreadable value: the value had to sort below this page's
-	// bound to be selected at all, and the bound is never above the clock the
-	// next stamp is read from (ReadWatermarkBounds caps CommitBound at Now). So
-	// the next change to a tracked column anywhere in the archive joins the
-	// repeating page as a readable last row and moves the cursor past the
-	// unreadable one for good. It lasts as long as the archive is otherwise
-	// quiet. Measured on SQLite: from a frozen cursor, one insert turned the
-	// page from [malformed] into [malformed, new], the cursor advanced to the
-	// new row, and the malformed row never came back.
-	//
-	// What that argument deliberately does NOT rest on is the bound moving only
-	// forward. It does not, on SQLite — the only backend where an unreadable
-	// watermark can exist. SQLiteDialect.ReadWatermarkBounds keeps the most
-	// recent quiescent probe rather than the greatest (the greatest would stand
-	// above stamps taken after a backwards clock step), and caps the published
-	// bound at the current clock, so a clock that steps backwards steps the
-	// bound down with it. That cannot keep this row trapped either: a bound
-	// that has dropped below the unreadable value stops selecting the row at
-	// all, which is the second unparseable-watermark case in
-	// docs/api-server.md's delivery contract — a change hidden outright rather
-	// than a page that repeats. While the row is still returned, the bound is
-	// still above its stored value and the argument above holds.
-	//
-	// The exception is a page already full when it reaches the unreadable row,
-	// which has no room for the newer one. Above a limit of 1 that condition
-	// clears itself as soon as the page carries one readable row ahead of the
-	// unreadable one: the cursor moves up to that row's watermark, so the
-	// unreadable row returns at the head of the next page with room behind it.
-	// A limit of 1 has no room for a readable row ahead of it, is full at the
-	// unreadable row on every poll, and stays frozen (measured).
-	//
-	// Whether such a row is selected at all is decided by where its RAW stored
-	// value orders against this page's two bounds, not by whether Go can parse
-	// it: content_changed_at is a non-STRICT DATETIME column, so direct SQL can
-	// leave TEXT, INTEGER, REAL or a BLOB there, and SQLite compares TEXT
-	// lexically and everything else by storage class. The ways that can fail,
-	// and what each one costs a consumer, are enumerated in exactly one place —
-	// docs/api-server.md's delivery contract — and deliberately not restated
-	// here, because a list kept in two places drifts.
-	//
-	// There is no fix here that keeps the row reported, advances the walk, and
-	// leaves the meaning of the published cursor alone — publishing anything
-	// above the row's own stamp silently drops readable changes between the two.
-	//
-	// The floor applies ONLY to the unreadable case. A watermark that scanned
-	// fine is published exactly as stored even when it sorts below the cursor,
-	// which is routine on SQLite: TimestampParam truncates the cursor to the
-	// millisecond the column stores, so a finer cursor selects rows below itself
-	// by design. content_changed_at is a property of the row; flooring it here
-	// would make the same row report different change times to different
-	// callers.
-	watermarkFloor := since.At()
 	for rows.Next() {
 		var m ChangedMessage
 		// Every timestamp goes through nullableTimestamp: SQLite hands back
 		// TEXT for values the driver cannot coerce, and sql.NullTime rejects
 		// strings.
 		var sentAt, receivedAt, internalDate nullableTimestamp
-		var deletedAt, deletedFromSourceAt, contentChangedAt nullableTimestamp
+		var deletedAt, deletedFromSourceAt nullableTimestamp
+		var contentChangedAt requiredTimestamp
 		if err := rows.Scan(
 			&m.ID,
 			&m.SourceID,
@@ -1457,11 +1426,6 @@ func (s *Store) ListChangedMessages(
 		m.DeletedAt = optionalTimestamp(deletedAt)
 		m.DeletedFromSourceAt = optionalTimestamp(deletedFromSourceAt)
 		m.ContentChangedAt = contentChangedAt.Time
-		if !contentChangedAt.Valid {
-			m.ContentChangedAt = watermarkFloor
-		} else if m.ContentChangedAt.After(watermarkFloor) {
-			watermarkFloor = m.ContentChangedAt
-		}
 		page.Messages = append(page.Messages, m)
 	}
 	if err := rows.Err(); err != nil {

@@ -2714,17 +2714,8 @@ const changesTimeLayout = time.RFC3339Nano
 // without it is `required` in the schema, and the generated client rejects an
 // empty one.
 //
-// The platform timestamps carry `format:"date-time"` so the schema says what
-// the handler already promises (RFC3339Nano) and the generated client hands a
-// consumer a parsed instant rather than a string to re-parse. ContentChangedAt
-// deliberately does NOT, even though it is the same layout: it is `required`,
-// and the one value it can legitimately carry that the others cannot is the
-// zero instant — a row whose stored watermark this backend could not read is
-// reported at the page's floor, which from an empty cursor IS the zero instant
-// (see store.ListChangedMessages). A `date-time` field decodes that into Go's
-// zero time.Time, which the generated client's `required` validator then
-// rejects, so a documented, reachable page would fail validation in the client
-// this repository ships. The bare string keeps it decodable.
+// Every timestamp carries `format:"date-time"` so generated clients expose
+// typed instants rather than strings.
 type ChangedMessageJSON struct {
 	ID                  int64   `json:"id"`
 	SourceID            int64   `json:"source_id"`
@@ -2741,7 +2732,7 @@ type ChangedMessageJSON struct {
 	AttachmentCount     int     `json:"attachment_count"`
 	DeletedAt           *string `json:"deleted_at,omitempty" format:"date-time"`
 	DeletedFromSourceAt *string `json:"deleted_from_source_at,omitempty" format:"date-time"`
-	ContentChangedAt    string  `json:"content_changed_at"`
+	ContentChangedAt    string  `json:"content_changed_at" format:"date-time"`
 }
 
 // ChangesResponse is one page of the content-change feed. NextCursor is the
@@ -2754,20 +2745,15 @@ type ChangedMessageJSON struct {
 // HasMore is true it stands above rows this page did not carry, so a consumer
 // that resumes from it instead of NextCursor skips them.
 //
-// ServerTime carries `format:"date-time"`; CompleteThrough, the same layout,
-// deliberately does not. Its documented "no bound established yet" state is
-// published as 0001-01-01T00:00:00Z, which a `date-time` field decodes into
-// Go's zero time.Time — and the generated client's `required` validator rejects
-// that, so the transient state a consumer is told to keep polling through would
-// arrive as a validation failure. ServerTime has no such state: it is an
-// unconditional clock reading.
+// CompleteThrough is nullable because "no commit bound has been established"
+// is a state, not a timestamp.
 type ChangesResponse struct {
 	Messages        []ChangedMessageJSON `json:"messages" nullable:"false"`
 	Count           int                  `json:"count"`
 	HasMore         bool                 `json:"has_more"`
 	NextCursor      string               `json:"next_cursor" doc:"Opaque cursor for the next request. Always present and never empty. Store it and send it back as the cursor parameter; do not parse, construct, compare, or order it — its contents may change without notice"`
 	ServerTime      string               `json:"server_time" format:"date-time"`
-	CompleteThrough string               `json:"complete_through" doc:"Instant the feed is complete through: every change committed strictly below it is reachable from this page's cursor. Always present. The sentinel 0001-01-01T00:00:00Z means no commit bound has been established yet, a transient state in which the feed returns no rows; it is a state rather than an instant, so do not subtract it from server_time"`
+	CompleteThrough *string              `json:"complete_through" format:"date-time" nullable:"true" doc:"Instant the feed is complete through: every change committed strictly below it is reachable from this page's cursor. Null means no commit bound has been established yet; keep polling"`
 }
 
 // handleMessageChanges returns messages whose content changed strictly after
@@ -2807,11 +2793,7 @@ func (s *Server) handleMessageChanges(w http.ResponseWriter, r *http.Request) {
 				"feed cannot issue a resumable cursor")
 		return
 	}
-	// Resolved through the server's cache, which runs the store's contextless
-	// lookup off this goroutine and answers later requests from memory: the UID
-	// is immutable, and a lookup waiting on a saturated pool would otherwise
-	// outlive both this request's cancellation and its timeout.
-	archiveUID, err := s.archiveUID.resolve(r.Context(), identifier)
+	archiveUID, err := identifier.ArchiveUIDContext(r.Context())
 	if err != nil {
 		if s.writeIfContextError(w, err) {
 			return
@@ -2859,15 +2841,8 @@ func (s *Server) handleMessageChanges(w http.ResponseWriter, r *http.Request) {
 	next := since
 	switch {
 	case len(rows) > 0:
-		// Floored at the cursor the caller sent: a row reported with a zero watermark
-		// would otherwise resume the consumer from year 1 on every poll. The store
-		// floors it too — the published contract does not rely on that.
 		last := rows[len(rows)-1]
-		at := last.ContentChangedAt
-		if at.Before(since.At()) {
-			at = since.At()
-		}
-		next = store.ChangedMessagesAfter(at, last.ID)
+		next = store.ChangedMessagesAfter(last.ContentChangedAt, last.ID)
 	case since.At().After(page.ServerTime) && !page.CompleteThrough.IsZero():
 		// A cursor above the database clock is unsatisfiable — the page query stops
 		// strictly below the clock — so echoing it back would wedge the consumer on
@@ -2892,6 +2867,11 @@ func (s *Server) handleMessageChanges(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.logIfChangeFeedStalled(page.ServerTime, page.CompleteThrough)
+	var completeThrough *string
+	if !page.CompleteThrough.IsZero() {
+		formatted := page.CompleteThrough.UTC().Format(changesTimeLayout)
+		completeThrough = &formatted
+	}
 
 	writeJSON(w, http.StatusOK, ChangesResponse{
 		Messages:        messages,
@@ -2899,7 +2879,7 @@ func (s *Server) handleMessageChanges(w http.ResponseWriter, r *http.Request) {
 		HasMore:         hasMore,
 		NextCursor:      encodeChangesCursor(archiveUID, next),
 		ServerTime:      page.ServerTime.UTC().Format(changesTimeLayout),
-		CompleteThrough: page.CompleteThrough.UTC().Format(changesTimeLayout),
+		CompleteThrough: completeThrough,
 	})
 }
 

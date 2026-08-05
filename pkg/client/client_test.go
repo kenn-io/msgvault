@@ -238,30 +238,22 @@ func TestGeneratedChangesResponseAcceptsTheFeedsOrdinaryPages(t *testing.T) {
 		var page generated.ChangesResponse
 		requirements.NoError(json.Unmarshal([]byte(liveEmail), &page))
 		requirements.Len(page.Messages, 1)
-		page.Messages[0].ContentChangedAt = ""
+		page.Messages[0].ContentChangedAt = time.Time{}
 		requirements.Error(page.Validate(),
 			"content_changed_at is the row's watermark: it is what the feed orders "+
 				"by, so loosening the other fields must not loosen this one")
-		page.Messages[0].ContentChangedAt = "2026-07-26T10:00:00.731123Z"
+		page.Messages[0].ContentChangedAt = time.Date(
+			2026, 7, 26, 10, 0, 0, 731123000, time.UTC)
 		page.ServerTime = time.Time{}
 		requirements.Error(page.Validate(),
 			"server_time is always a database clock reading")
 		page.ServerTime = time.Date(2026, 7, 26, 10, 0, 3, 114500000, time.UTC)
-		page.CompleteThrough = ""
-		requirements.Error(page.Validate(),
-			"complete_through tells a consumer how far the feed is caught up; without "+
-				"it a feed held back by an open write transaction is indistinguishable "+
-				"from a caught-up one")
+		page.CompleteThrough = nil
+		requirements.NoError(page.Validate(),
+			"a nil complete_through represents the valid no-bound state")
 	})
 
-	// The two timestamps of this feed that are NOT typed as date-time in the
-	// OpenAPI document, and why. Both are required, and both can legitimately
-	// carry the zero instant, which a date-time field decodes into Go's zero
-	// time.Time — a value this validator rejects for a required field. Typing
-	// them would therefore turn two documented, reachable pages into client-side
-	// validation failures. This is the test that fails if someone "finishes the
-	// job" by adding the format to them.
-	t.Run("the zero instant is a value, not a missing field", func(t *testing.T) {
+	t.Run("timestamps are typed and no bound is nullable", func(t *testing.T) {
 		requirements := require.New(t)
 		assertions := assert.New(t)
 
@@ -272,36 +264,11 @@ func TestGeneratedChangesResponseAcceptsTheFeedsOrdinaryPages(t *testing.T) {
 			"has_more":false,
 			"next_cursor":"1.eyJ0IjoiMDAwMS0wMS0wMVQwMDowMDowMFoiLCJpIjowfQ",
 			"server_time":"2026-07-26T10:00:03.114500Z",
-			"complete_through":"0001-01-01T00:00:00Z"
+			"complete_through":null
 		}`), &noBoundYet))
 		requirements.NoError(noBoundYet.Validate(),
-			"a server that has not established a commit bound yet publishes "+
-				"complete_through as 0001-01-01T00:00:00Z, and the consumer is told to "+
-				"keep polling through it; the client must decode that page, not reject it")
-		assertions.Equal("0001-01-01T00:00:00Z", noBoundYet.CompleteThrough,
-			"and it must arrive intact, so a consumer can recognise the state")
-
-		var unreadableWatermark generated.ChangesResponse
-		requirements.NoError(json.Unmarshal([]byte(`{
-			"messages":[{
-				"id":918,
-				"source_id":1,
-				"conversation_id":44,
-				"size_estimate":0,
-				"has_attachments":false,
-				"attachment_count":0,
-				"content_changed_at":"0001-01-01T00:00:00Z"
-			}],
-			"count":1,
-			"has_more":false,
-			"next_cursor":"1.eyJ0IjoiMDAwMS0wMS0wMVQwMDowMDowMFoiLCJpIjo5MTh9",
-			"server_time":"2026-07-26T10:00:03.114500Z",
-			"complete_through":"2026-07-26T10:00:03.114488Z"
-		}`), &unreadableWatermark))
-		requirements.NoError(unreadableWatermark.Validate(),
-			"a row whose stored watermark the server could not read is reported at the "+
-				"page's floor, which from an empty cursor is the zero instant; that page "+
-				"is the one a consumer most needs to see")
+			"a server with no commit bound must still decode and validate")
+		assertions.Nil(noBoundYet.CompleteThrough)
 	})
 }
 
@@ -375,7 +342,9 @@ func TestListChangedMessagesRoundTripsTheCursorVerbatim(t *testing.T) {
 	require.NotNil(first, "first page")
 	assert.Equal(cursor, first.NextCursor, "the cursor must decode exactly as published")
 	require.Len(first.Messages, 1, "messages")
-	assert.Equal(watermark, first.Messages[0].ContentChangedAt, "the row's watermark")
+	wantWatermark, err := time.Parse(time.RFC3339Nano, watermark)
+	require.NoError(err)
+	assert.Equal(wantWatermark, first.Messages[0].ContentChangedAt, "the row's watermark")
 
 	// Second poll: the response fed straight back, exactly as the docs tell a
 	// consumer to do it.

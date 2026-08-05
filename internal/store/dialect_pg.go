@@ -647,6 +647,8 @@ func (d *PostgreSQLDialect) EnsureFTSIndex(q querier) error {
 	return nil
 }
 
+func (d *PostgreSQLDialect) ValidateMessageWatermarks(querier) error { return nil }
+
 // EnsureTriggers creates the maintenance triggers for BOTH message watermarks
 // idempotently. The two answer different questions and are deliberately scoped
 // differently.

@@ -474,15 +474,21 @@ func dropContentChangedAtColumn(t *testing.T, st *store.Store) {
 // contentChangedBackfillMigration is the ledger name InitSchema records once the
 // content_changed_at backfill has run.
 const contentChangedBackfillMigration = "messages_content_changed_at_backfill"
+const messageWatermarkTriggersMigration = "message_watermark_triggers_v1"
 
 // clearContentChangedBackfillLedger deletes that row from applied_migrations so
 // InitSchema treats the migration as never having run -- the ledger state of
 // an archive from before the migration shipped.
 func clearContentChangedBackfillLedger(t *testing.T, st *store.Store) {
 	t.Helper()
-	_, err := st.DB().Exec(
-		st.Rebind(`DELETE FROM applied_migrations WHERE name = ?`), contentChangedBackfillMigration)
-	require.NoErrorf(t, err, "clear migration ledger entry %s", contentChangedBackfillMigration)
+	for _, name := range []string{
+		contentChangedBackfillMigration,
+		messageWatermarkTriggersMigration,
+	} {
+		_, err := st.DB().Exec(
+			st.Rebind(`DELETE FROM applied_migrations WHERE name = ?`), name)
+		require.NoErrorf(t, err, "clear migration ledger entry %s", name)
+	}
 }
 
 // TestContentChangedAt_UpgradeFromDatabaseWithoutColumn proves the migration an
@@ -1250,9 +1256,8 @@ func readContentChangedAtDefault(t *testing.T, st *store.Store) string {
 // The INSERT trigger cannot rescue such an archive, which is what makes it a
 // data-loss case rather than a slow one. The trigger fires only WHEN
 // NEW.content_changed_at IS NULL, and SQLite applies a non-NULL column DEFAULT
-// BEFORE the trigger runs — so a drifted default such as CURRENT_TIMESTAMP stays
-// authoritative and keeps writing a timestamp of a different SHAPE
-// ("2026-08-03 22:10:04" against "2026-08-03 22:10:04.731"). The feed compares
+// BEFORE the trigger runs — so any drifted non-NULL default stays authoritative
+// and keeps writing a value with the wrong meaning or shape. The feed compares
 // SQLite timestamps lexically, so once both shapes are in the table a cursor
 // sorts rows into the wrong place and silently skips or repeats changes, with
 // nothing anywhere reporting it.
@@ -1268,12 +1273,13 @@ func TestContentChangedAt_NoncanonicalDefaultIsRejected(t *testing.T) {
 	seed, err := store.OpenForTest(dbPath)
 	require.NoError(err, "open seed store")
 	require.NoError(seed.InitSchema(), "seed InitSchema")
-	rewriteMessagesContentChangedAtDefault(t, seed, "CURRENT_TIMESTAMP")
+	const driftedDefault = `'2000-01-01 00:00:00'`
+	rewriteMessagesContentChangedAtDefault(t, seed, driftedDefault)
 	require.NoError(seed.Close(), "close seed store")
 
 	drifted, err := store.OpenForTest(dbPath)
 	require.NoError(err, "reopen the drifted archive")
-	require.Equal("CURRENT_TIMESTAMP", readContentChangedAtDefault(t, drifted),
+	require.Equal(driftedDefault, readContentChangedAtDefault(t, drifted),
 		"precondition: the archive must really carry a drifted default")
 
 	err = drifted.InitSchema()
@@ -1282,7 +1288,7 @@ func TestContentChangedAt_NoncanonicalDefaultIsRejected(t *testing.T) {
 			"must be refused, not opened with a trigger that cannot override the default")
 	assert.Contains(err.Error(), "content_changed_at",
 		"the error must name the column an operator has to repair")
-	assert.Contains(err.Error(), "CURRENT_TIMESTAMP",
+	assert.Contains(err.Error(), driftedDefault,
 		"and the default it found")
 	assert.Contains(err.Error(), "strftime",
 		"and the default it expects, so the repair does not need this source file")

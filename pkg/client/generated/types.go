@@ -511,7 +511,7 @@ func (c CancelDeletionResponse) Validate() error {
 
 type ChangedMessageJSON struct {
 	AttachmentCount     int64      `json:"attachment_count"`
-	ContentChangedAt    string     `json:"content_changed_at" validate:"required"`
+	ContentChangedAt    time.Time  `json:"content_changed_at" validate:"required"`
 	ConversationID      int64      `json:"conversation_id"`
 	DeletedAt           *time.Time `json:"deleted_at,omitempty"`
 	DeletedFromSourceAt *time.Time `json:"deleted_from_source_at,omitempty"`
@@ -533,8 +533,8 @@ func (c ChangedMessageJSON) Validate() error {
 }
 
 type ChangesResponse struct {
-	// CompleteThrough Instant the feed is complete through: every change committed strictly below it is reachable from this page's cursor. Always present. The sentinel 0001-01-01T00:00:00Z means no commit bound has been established yet, a transient state in which the feed returns no rows; it is a state rather than an instant, so do not subtract it from server_time
-	CompleteThrough string               `json:"complete_through" validate:"required"`
+	// CompleteThrough Instant the feed is complete through: every change committed strictly below it is reachable from this page's cursor. Null means no commit bound has been established yet; keep polling
+	CompleteThrough *time.Time           `json:"complete_through,omitempty" validate:"required"`
 	Count           int64                `json:"count"`
 	HasMore         bool                 `json:"has_more"`
 	Messages        []ChangedMessageJSON `json:"messages" validate:"required"`
@@ -546,8 +546,10 @@ type ChangesResponse struct {
 
 func (c ChangesResponse) Validate() error {
 	var errors runtime.ValidationErrors
-	if err := typesValidator.Var(c.CompleteThrough, "required"); err != nil {
-		errors = errors.Append("CompleteThrough", err)
+	if c.CompleteThrough != nil {
+		if err := typesValidator.Var(c.CompleteThrough, "required"); err != nil {
+			errors = errors.Append("CompleteThrough", err)
+		}
 	}
 	for i, item := range c.Messages {
 		if v, ok := any(item).(runtime.Validator); ok {

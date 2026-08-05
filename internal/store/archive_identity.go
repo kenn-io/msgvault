@@ -21,8 +21,16 @@ var ErrArchiveIdentityCorrupt = errors.New("archive identity is corrupt")
 
 // ArchiveUID returns the durable identity of this archive.
 func (s *Store) ArchiveUID() (string, error) {
+	return s.ArchiveUIDContext(context.Background())
+}
+
+// ArchiveUIDContext returns the durable identity of this archive and allows a
+// caller waiting for a database connection or lock to cancel the lookup.
+func (s *Store) ArchiveUIDContext(ctx context.Context) (string, error) {
 	var uid string
-	if err := s.db.QueryRow(`SELECT value FROM archive_metadata WHERE key = ?`, archiveUIDKey).Scan(&uid); err != nil {
+	if err := s.db.QueryRowContext(
+		ctx, `SELECT value FROM archive_metadata WHERE key = ?`, archiveUIDKey,
+	).Scan(&uid); err != nil {
 		return "", fmt.Errorf("read archive UID: %w", err)
 	}
 	return uid, nil

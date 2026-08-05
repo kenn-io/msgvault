@@ -2094,6 +2094,7 @@ export interface components {
         ChangedMessageJSON: {
             /** Format: int64 */
             attachment_count: number;
+            /** Format: date-time */
             content_changed_at: string;
             /** Format: int64 */
             conversation_id: number;
@@ -2122,8 +2123,11 @@ export interface components {
             [key: string]: unknown;
         };
         ChangesResponse: {
-            /** @description Instant the feed is complete through: every change committed strictly below it is reachable from this page's cursor. Always present. The sentinel 0001-01-01T00:00:00Z means no commit bound has been established yet, a transient state in which the feed returns no rows; it is a state rather than an instant, so do not subtract it from server_time */
-            complete_through: string;
+            /**
+             * Format: date-time
+             * @description Instant the feed is complete through: every change committed strictly below it is reachable from this page's cursor. Null means no commit bound has been established yet; keep polling
+             */
+            complete_through: string | null;
             /** Format: int64 */
             count: number;
             has_more: boolean;

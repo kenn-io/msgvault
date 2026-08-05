@@ -966,9 +966,11 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 	// column list (see lastModifiedUpdateOfColumns) and so cannot be static SQL;
 	// only the message_bodies last_modified pair still rides schema.sql. On
 	// PostgreSQL it covers both sets.
-	// Both dialects drop and recreate, so a later change to the content-column
-	// list reaches an existing archive. Run under runMaintenance for consistency
-	// with EnsureFTSIndex (no statement_timeout cap on the DDL).
+	// Both dialects drop and recreate. The versioned migration makes that repair
+	// once per trigger definition instead of taking trigger locks on every open;
+	// bump the migration name whenever the definition or tracked column list
+	// changes. Run under runMaintenance for consistency with EnsureFTSIndex (no
+	// statement_timeout cap on the DDL).
 	//
 	// The dialect gets the transaction BOUND to ctx, not the raw one: runMaintenance
 	// has just disabled the pool-wide statement_timeout, and on PostgreSQL a DROP or
@@ -976,9 +978,17 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 	// left to cut it off. Handed the raw transaction, whose Exec and QueryRow bottom
 	// out in context.Background(), that wait ignores SIGINT and SIGTERM for as long
 	// as the lock is held.
-	if err := s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
-		return s.dialect.EnsureTriggers(boundQuerier{ctx: ctx, q: tx})
-	}); err != nil {
+	if err := s.dialect.ValidateMessageWatermarks(boundQuerier{ctx: ctx, q: s.db}); err != nil {
+		return fmt.Errorf("validate message watermarks: %w", err)
+	}
+	if err := s.runOnceMigration(
+		ctx, migrationMessageWatermarkTriggers, false,
+		func(ctx context.Context) error {
+			return s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
+				return s.dialect.EnsureTriggers(boundQuerier{ctx: ctx, q: tx})
+			})
+		},
+	); err != nil {
 		return fmt.Errorf("ensure message watermark triggers: %w", err)
 	}
 

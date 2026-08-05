@@ -60,7 +60,7 @@ func settleChangesFeed(t *testing.T, baseURL string) api.ChangesResponse {
 	deadline := time.Now().Add(30 * time.Second)
 	for {
 		page := changesPage(t, baseURL)
-		if changesFeedTime(t, page.CompleteThrough).After(start) {
+		if page.CompleteThrough != nil && changesFeedTime(t, *page.CompleteThrough).After(start) {
 			return page
 		}
 		if time.Now().After(deadline) {

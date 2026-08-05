@@ -144,82 +144,13 @@ var _ ChangedMessageLister = (*store.Store)(nil)
 // say which archive it is cannot issue a cursor anyone can safely resume from,
 // and an unbound cursor is the failure the binding exists to prevent.
 type ArchiveIdentifier interface {
-	ArchiveUID() (string, error)
+	ArchiveUIDContext(ctx context.Context) (string, error)
 }
 
 // The store implementation must satisfy the optional interface. As with
 // ChangedMessageLister, the assertion that protects the production route is the
 // one beside cmd.storeAPIAdapter in cmd/msgvault/cmd/serve.go.
 var _ ArchiveIdentifier = (*store.Store)(nil)
-
-// archiveUIDCache memoizes the archive identity the change feed binds its
-// cursors to, and keeps the lookup from escaping the request that needs it.
-//
-// ArchiveUID takes no context — it bottoms out in context.Background() — so on
-// a saturated connection pool its wait for a connection can outlive both the
-// client hanging up and the server's own request timeout, leaving the handler
-// with a step no cancellation can reach. Running it off the request goroutine
-// and selecting on the request's context puts a bound back on it.
-//
-// The UID is immutable for the life of an archive, so the first successful
-// answer is the last one anybody needs: it is memoized, and a request that
-// arrives after it costs nothing at all. At most one lookup is ever in flight —
-// concurrent callers wait on the same one — and a lookup a cancelled request
-// walked away from still finishes and still populates the cache, which is why
-// the goroutine outliving the request is the point rather than a leak. A
-// failure is not memoized: it is a broken archive rather than a decided answer,
-// and it is reported to every request until it stops happening.
-type archiveUIDCache struct {
-	mu       sync.Mutex
-	uid      string
-	err      error
-	inflight chan struct{}
-}
-
-func (c *archiveUIDCache) resolve(
-	ctx context.Context, identifier ArchiveIdentifier,
-) (string, error) {
-	c.mu.Lock()
-	if c.uid != "" {
-		uid := c.uid
-		c.mu.Unlock()
-		return uid, nil
-	}
-	done := c.inflight
-	if done == nil {
-		done = make(chan struct{})
-		c.inflight = done
-		go func() {
-			uid, err := identifier.ArchiveUID()
-			c.mu.Lock()
-			defer c.mu.Unlock()
-			// Publishing the result and releasing the waiters happen under ONE
-			// lock, and the order within it does not matter — what matters is
-			// that no caller can take the lock between them. Clearing inflight
-			// first and closing afterwards left a window in which the cache
-			// reported no lookup in flight while this one was still live: a
-			// caller arriving there finds no memoized answer either (a failure
-			// is not memoized, by design) and starts a second lookup on top of
-			// this one, which is exactly what the type promises cannot happen.
-			c.uid, c.err, c.inflight = uid, err, nil
-			close(done)
-		}()
-	}
-	c.mu.Unlock()
-
-	select {
-	case <-done:
-	case <-ctx.Done():
-		return "", ctx.Err()
-	}
-
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.uid != "" {
-		return c.uid, nil
-	}
-	return "", c.err
-}
 
 // SourceStatusStore defines the source/sync read operations used by the
 // source status endpoint.
@@ -321,10 +252,6 @@ type Server struct {
 	// can report it. See ensureCLISearchIndexAsync.
 	ftsEnsureRunning atomic.Bool
 	ftsIndexState    atomic.Value
-	// archiveUID memoizes the durable archive identity the change feed binds
-	// every cursor to, and bounds the lookup by the request context. See
-	// archiveUIDCache.
-	archiveUID archiveUIDCache
 	// changesStallLoggedAt throttles the WARN handleMessageChanges emits when
 	// the content-change feed is held back by a long-lived write transaction.
 	// Unix nanoseconds of the last such line, so a consumer polling once a

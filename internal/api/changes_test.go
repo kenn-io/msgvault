@@ -16,8 +16,6 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -216,8 +214,8 @@ func changesArchiveUID(t *testing.T, srv *Server) string {
 	t.Helper()
 	identifier, ok := srv.store.(ArchiveIdentifier)
 	require.True(t, ok, "the change feed's store must be able to identify its archive")
-	uid, err := identifier.ArchiveUID()
-	require.NoError(t, err, "ArchiveUID")
+	uid, err := identifier.ArchiveUIDContext(context.Background())
+	require.NoError(t, err, "ArchiveUIDContext")
 	return uid
 }
 
@@ -256,11 +254,18 @@ func changesServerTime(t *testing.T, srv *Server) time.Time {
 
 // changesCompleteThrough reads how far the feed is complete — its page bound,
 // which is what decides whether a row is publishable yet.
+func changesCompleteThroughString(t *testing.T, resp ChangesResponse) string {
+	t.Helper()
+	require.NotNil(t, resp.CompleteThrough, "complete_through must be present once a bound exists")
+	return *resp.CompleteThrough
+}
+
 func changesCompleteThrough(t *testing.T, srv *Server) time.Time {
 	t.Helper()
 	resp := getChangesPage(t, srv, changesTarget(changesFarFuture(t, srv), 1))
-	at, err := time.Parse(time.RFC3339Nano, resp.CompleteThrough)
-	require.NoErrorf(t, err, "complete_through %q must parse as RFC3339", resp.CompleteThrough)
+	value := changesCompleteThroughString(t, resp)
+	at, err := time.Parse(time.RFC3339Nano, value)
+	require.NoErrorf(t, err, "complete_through %q must parse as RFC3339", value)
 	return at
 }
 
@@ -504,8 +509,9 @@ func TestChangesEndpoint_CursorAboveTheDatabaseClockRecovers(t *testing.T) {
 	poisoned := getChangesPage(t, srv, changesTarget(future, 100))
 	require.Zero(poisoned.Count, "a cursor an hour ahead of the clock matches nothing")
 
-	bound, err := time.Parse(time.RFC3339Nano, poisoned.CompleteThrough)
-	require.NoErrorf(err, "complete_through %q must parse as RFC3339", poisoned.CompleteThrough)
+	boundValue := changesCompleteThroughString(t, poisoned)
+	bound, err := time.Parse(time.RFC3339Nano, boundValue)
+	require.NoErrorf(err, "complete_through %q must parse as RFC3339", boundValue)
 	assert.Equal(changesInstantCursor(t, srv, bound), poisoned.NextCursor,
 		"the cursor must come back moved down to the START of this page's own commit "+
 			"bound, which is never above server_time; echoing it would make the very "+
@@ -551,9 +557,10 @@ func TestChangesEndpoint_ClampedCursorReachesEveryIDAtTheBound(t *testing.T) {
 
 			poisoned := getChangesPage(t, srv, changesTarget(changesFarFuture(t, srv), 100))
 			require.Zero(poisoned.Count, "a cursor in the year 2999 matches nothing")
-			bound, err := time.Parse(time.RFC3339Nano, poisoned.CompleteThrough)
+			boundValue := changesCompleteThroughString(t, poisoned)
+			bound, err := time.Parse(time.RFC3339Nano, boundValue)
 			require.NoErrorf(err, "complete_through %q must parse as RFC3339",
-				poisoned.CompleteThrough)
+				boundValue)
 
 			// Stamped exactly at the instant the clamp landed on — the one
 			// instant a clamped cursor has to remain able to reach.
@@ -565,7 +572,7 @@ func TestChangesEndpoint_ClampedCursorReachesEveryIDAtTheBound(t *testing.T) {
 				"message %d is stamped exactly at the bound the clamp moved the cursor "+
 					"to (%s) and the bound has since moved past it, so the clamped cursor "+
 					"must still deliver it; a clamped position that sorts above it drops "+
-					"the row for good", id, poisoned.CompleteThrough)
+					"the row for good", id, boundValue)
 		})
 	}
 }
@@ -603,11 +610,12 @@ func TestChangesEndpoint_BackwardClockStepLosesChangesBelowTheCursor(t *testing.
 		poisoned := getChangesPage(t, srv, changesTarget(preStep, 100))
 		require.Zero(poisoned.Count, "a cursor above the stepped-back clock matches nothing")
 		require.NotEqual(preStep, poisoned.NextCursor, "the future cursor must be clamped")
+		boundValue := changesCompleteThroughString(t, poisoned)
 
 		recovered := getChangesPage(t, srv, changesTarget(poisoned.NextCursor, 100))
 		assert.NotContainsf(changedIDs(recovered), afterStep,
 			"message %d was stamped below the clamp target (this page's commit bound, "+
-				"%s), so the clamp cannot return it", afterStep, poisoned.CompleteThrough)
+				"%s), so the clamp cannot return it", afterStep, boundValue)
 
 		// And it never comes back: the clamped cursor only rises from here.
 		again := getChangesPage(t, srv, changesTarget(recovered.NextCursor, 100))
@@ -1014,7 +1022,9 @@ const stubArchiveUID = "9a8b7c6d5e4f30211203f4e5d6c7b8a9"
 // TestChangesEndpoint_UnavailableWhenTheStoreCannotIdentifyItsArchive needs.
 type stubArchiveIdentity struct{}
 
-func (stubArchiveIdentity) ArchiveUID() (string, error) { return stubArchiveUID, nil }
+func (stubArchiveIdentity) ArchiveUIDContext(context.Context) (string, error) {
+	return stubArchiveUID, nil
+}
 
 // stubChangedMessageLister answers the feed with a fixed page, so a handler test
 // can present a row no real store produces.
@@ -1075,6 +1085,27 @@ func TestChangesEndpoint_StoreFailureIsA500WithTheDetailOnlyInTheLog(t *testing.
 	assert.Contains(logs.String(), detail,
 		"the operator has to be able to act on the failure, so the detail the "+
 			"response withholds must survive in the log")
+}
+
+func TestChangesEndpoint_MalformedWatermarkIsA500WithoutACursor(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewSQLiteTestStore(t)
+	id := seedChangedMessages(t, st, 1)[0]
+	setChangesWatermark(t, st, "1999-13-45 99:99:99.999", id)
+	srv := NewServerWithOptions(ServerOptions{
+		Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}},
+		Store:  st,
+		Logger: testLogger(),
+	})
+
+	w := doGet(srv, changesTarget("", 10))
+
+	require.Equalf(http.StatusInternalServerError, w.Code, "body: %s", w.Body.String())
+	env := decodeErrorEnvelope(t, w)
+	assert.Equal("internal_error", env.Error)
+	assert.NotContains(w.Body.String(), `"next_cursor"`,
+		"corrupt cursor state must stop the feed instead of publishing a synthetic position")
 }
 
 // TestChangesEndpoint_CanceledRequestIsNotReportedAsAServerFault covers the
@@ -1154,7 +1185,9 @@ type erroringArchiveIdentity struct {
 	err error
 }
 
-func (s *erroringArchiveIdentity) ArchiveUID() (string, error) { return "", s.err }
+func (s *erroringArchiveIdentity) ArchiveUIDContext(context.Context) (string, error) {
+	return "", s.err
+}
 
 func (s *erroringArchiveIdentity) ListChangedMessages(
 	_ context.Context, _ store.ChangedMessagesCursor, _ int,
@@ -1202,15 +1235,16 @@ type blockingArchiveIdentity struct {
 
 	entered chan struct{}
 	release chan struct{}
-	calls   atomic.Int64
 }
 
-func (s *blockingArchiveIdentity) ArchiveUID() (string, error) {
-	if s.calls.Add(1) == 1 {
-		close(s.entered)
+func (s *blockingArchiveIdentity) ArchiveUIDContext(ctx context.Context) (string, error) {
+	close(s.entered)
+	select {
+	case <-s.release:
+		return stubArchiveUID, nil
+	case <-ctx.Done():
+		return "", ctx.Err()
 	}
-	<-s.release
-	return stubArchiveUID, nil
 }
 
 func (s *blockingArchiveIdentity) ListChangedMessages(
@@ -1223,11 +1257,8 @@ func (s *blockingArchiveIdentity) ListChangedMessages(
 // step before the feed's context-aware query: resolving which archive the
 // cursor belongs to.
 //
-// The store's ArchiveUID takes no context — it bottoms out in
-// context.Background() — so on a saturated pool its wait for a connection can
-// outlive both the client hanging up and the server's own request timeout. The
-// handler has a request context; the resolution has to honour it, or the
-// endpoint has a step that no cancellation can reach.
+// The lookup receives the request context directly, so a saturated pool cannot
+// outlive both the client hanging up and the server's request timeout.
 func TestChangesEndpoint_CanceledRequestDoesNotBlockInArchiveIdentity(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -1279,42 +1310,9 @@ func TestChangesEndpoint_CanceledRequestDoesNotBlockInArchiveIdentity(t *testing
 			"refusal as one cancelled inside the feed query")
 }
 
-// TestChangesEndpoint_ArchiveIdentityIsResolvedOnce pins the other half of the
-// same fix: the archive UID is immutable, so the feed resolves it once and
-// every later request reuses it instead of paying for the lookup — and instead
-// of exposing every request to the wait that lookup can become.
-func TestChangesEndpoint_ArchiveIdentityIsResolvedOnce(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-
-	identity := &blockingArchiveIdentity{
-		mockStore: &mockStore{},
-		entered:   make(chan struct{}),
-		release:   make(chan struct{}),
-	}
-	close(identity.release) // never blocks; this test only counts the lookups
-	srv := NewServerWithOptions(ServerOptions{
-		Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}},
-		Store:  identity,
-		Logger: testLogger(),
-	})
-
-	for i := range 3 {
-		w := doGet(srv, changesTarget("", 10))
-		require.Equalf(http.StatusOK, w.Code, "request %d body: %s", i+1, w.Body.String())
-	}
-
-	assert.Equal(int64(1), identity.calls.Load(),
-		"the archive UID cannot change while the daemon is running, so three "+
-			"requests must cost one lookup")
-}
-
-// TestChangesEndpoint_NoBoundPublishesTheZeroTimeSentinel pins the wire value of
-// the state complete_through has no instant for. The field is required and
-// always sent, so "no bound established yet" can only be spelled as the zero
-// time; consumers parse it, and api/openapi.yaml documents it, so it is part of
-// the published contract rather than an accident of formatting.
-func TestChangesEndpoint_NoBoundPublishesTheZeroTimeSentinel(t *testing.T) {
+// TestChangesEndpoint_NoBoundPublishesNull pins the wire value of the state
+// complete_through has no instant for.
+func TestChangesEndpoint_NoBoundPublishesNull(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	srv := NewServerWithOptions(ServerOptions{
@@ -1336,40 +1334,8 @@ func TestChangesEndpoint_NoBoundPublishesTheZeroTimeSentinel(t *testing.T) {
 	require.NoError(json.Unmarshal(w.Body.Bytes(), &raw), "decode response object")
 	require.Contains(raw, "complete_through",
 		"complete_through is required, so the no-bound state must still carry it")
-	assert.JSONEq(`"0001-01-01T00:00:00Z"`, string(raw["complete_through"]),
-		"the sentinel a consumer has to recognise; changing it silently breaks "+
-			"every client that special-cases the no-bound state")
-}
-
-// TestChangesEndpoint_UnreadableWatermarkDoesNotRewindTheCursor is the handler's
-// half of the same defence the store makes: whatever a store reports for a row's
-// watermark, the cursor the response publishes can never sit below the cursor
-// the request carried. A zero watermark reaching next_cursor tells the consumer
-// to resume from year 1, and it re-reads the whole archive on every poll from
-// then on.
-func TestChangesEndpoint_UnreadableWatermarkDoesNotRewindTheCursor(t *testing.T) {
-	assert := assert.New(t)
-	since := time.Date(2026, 3, 4, 5, 6, 7, 891011000, time.UTC)
-	srv := NewServerWithOptions(ServerOptions{
-		Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}},
-		Store: &stubChangedMessageLister{
-			mockStore: &mockStore{},
-			page: store.ChangedMessagePage{
-				// ContentChangedAt left zero: the shape a row whose stored value
-				// could not be parsed arrives in.
-				Messages:   []store.ChangedMessage{{ID: 42}},
-				ServerTime: since.Add(time.Second),
-			},
-		},
-		Logger: testLogger(),
-	})
-
-	resp := getChangesPage(t, srv, changesTarget(changesCursor(t, srv, since, 7), 10))
-
-	assert.Equal(changesCursor(t, srv, since, 42), resp.NextCursor,
-		"the published cursor must be floored at the watermark the request carried — "+
-			"never rewound to the zero time — while its tiebreak still comes from the "+
-			"last row, so flooring does not also hand back the requested tiebreak of 7")
+	assert.JSONEq(`null`, string(raw["complete_through"]),
+		"no bound is a state, not the year-one instant")
 }
 
 // seedSparseChangedMessages inserts the two shapes whose JSON is mostly holes:
@@ -1525,14 +1491,15 @@ func TestChangesEndpoint_PublishesHowFarItIsComplete(t *testing.T) {
 
 	caughtUp := getChangesPage(t, srv, changesTarget("", 10))
 	require.Len(caughtUp.Messages, 2, "the seeded messages must be delivered first")
-	completeThrough, err := time.Parse(time.RFC3339Nano, caughtUp.CompleteThrough)
-	require.NoErrorf(err, "complete_through %q must parse as RFC3339", caughtUp.CompleteThrough)
+	caughtUpValue := changesCompleteThroughString(t, caughtUp)
+	completeThrough, err := time.Parse(time.RFC3339Nano, caughtUpValue)
+	require.NoErrorf(err, "complete_through %q must parse as RFC3339", caughtUpValue)
 	serverTime, err := time.Parse(time.RFC3339Nano, caughtUp.ServerTime)
 	require.NoErrorf(err, "server_time %q must parse as RFC3339", caughtUp.ServerTime)
 	assert.Falsef(completeThrough.After(serverTime),
 		"complete_through %s is after server_time %s: the feed cannot be complete "+
 			"through an instant the database clock has not reached",
-		caughtUp.CompleteThrough, caughtUp.ServerTime)
+		caughtUpValue, caughtUp.ServerTime)
 
 	// A writer stamps a change and holds its transaction open.
 	tx, err := st.DB().BeginTx(context.Background(), nil)
@@ -1545,15 +1512,16 @@ func TestChangesEndpoint_PublishesHowFarItIsComplete(t *testing.T) {
 	held := getChangesPage(t, srv,
 		changesTarget(caughtUp.NextCursor, 10))
 	assert.Empty(held.Messages, "an uncommitted change must not be reported")
-	heldThrough, err := time.Parse(time.RFC3339Nano, held.CompleteThrough)
-	require.NoErrorf(err, "complete_through %q must parse as RFC3339", held.CompleteThrough)
+	heldValue := changesCompleteThroughString(t, held)
+	heldThrough, err := time.Parse(time.RFC3339Nano, heldValue)
+	require.NoErrorf(err, "complete_through %q must parse as RFC3339", heldValue)
 	heldServerTime, err := time.Parse(time.RFC3339Nano, held.ServerTime)
 	require.NoErrorf(err, "server_time %q must parse as RFC3339", held.ServerTime)
 	assert.Truef(heldServerTime.After(heldThrough),
 		"the clock reads %s and the feed claims to be complete through %s, with a "+
 			"write still pending: a held-back feed that publishes complete_through "+
 			"== server_time is telling a consumer it is caught up when it is not",
-		held.ServerTime, held.CompleteThrough)
+		held.ServerTime, heldValue)
 
 	require.NoError(tx.Commit(), "commit the pending change")
 	deadline := time.Now().Add(20 * time.Second)
@@ -1568,11 +1536,12 @@ func TestChangesEndpoint_PublishesHowFarItIsComplete(t *testing.T) {
 	}
 	require.Len(resumed.Messages, 1, "the committed change must arrive")
 	assert.Equal(ids[0], resumed.Messages[0].ID, "the changed message")
-	resumedThrough, err := time.Parse(time.RFC3339Nano, resumed.CompleteThrough)
-	require.NoErrorf(err, "complete_through %q must parse as RFC3339", resumed.CompleteThrough)
+	resumedValue := changesCompleteThroughString(t, resumed)
+	resumedThrough, err := time.Parse(time.RFC3339Nano, resumedValue)
+	require.NoErrorf(err, "complete_through %q must parse as RFC3339", resumedValue)
 	assert.Truef(resumedThrough.After(heldThrough),
 		"complete_through stayed at %s once the write finished: a bound that never "+
-			"recovers is a stalled feed, not a cautious one", resumed.CompleteThrough)
+			"recovers is a stalled feed, not a cautious one", resumedValue)
 }
 
 // TestChangesEndpoint_StalledFeedIsLogged is the operator's half of the same
@@ -1680,15 +1649,16 @@ func TestChangesEndpoint_CompleteThroughIsAReachabilityBoundNotACursor(t *testin
 
 	first := getChangesPage(t, srv, changesTarget("", 3))
 	require.True(first.HasMore, "a page of 3 out of 12 must report more to come")
-	bound, err := time.Parse(time.RFC3339Nano, first.CompleteThrough)
-	require.NoErrorf(err, "complete_through %q must parse as RFC3339", first.CompleteThrough)
+	boundValue := changesCompleteThroughString(t, first)
+	bound, err := time.Parse(time.RFC3339Nano, boundValue)
+	require.NoErrorf(err, "complete_through %q must parse as RFC3339", boundValue)
 
 	below := countMessagesStampedBelow(t, st, bound)
 	assert.Greaterf(below, first.Count,
 		"complete_through %s stands above %d committed changes but the page carried "+
 			"%d: a consumer that resumed from the bound would skip the difference, "+
 			"which is why it must never be used as a cursor",
-		first.CompleteThrough, below, first.Count)
+		boundValue, below, first.Count)
 
 	// Following next_cursor instead is what the guarantee is actually about.
 	delivered := map[int64]bool{}
@@ -1707,7 +1677,7 @@ func TestChangesEndpoint_CompleteThroughIsAReachabilityBoundNotACursor(t *testin
 		assert.Truef(delivered[id],
 			"message %d was committed below the first page's complete_through (%s) and "+
 				"following next_cursor never produced it: the bound would then promise "+
-				"something the cursor does not deliver", id, first.CompleteThrough)
+				"something the cursor does not deliver", id, boundValue)
 	}
 }
 
@@ -1813,180 +1783,4 @@ func TestChangesEndpoint_FutureCursorIsEchoedWhenNoBoundIsEstablished(t *testing
 	assert.Equal(sent, resp.NextCursor,
 		"with no bound established the cursor must be echoed unchanged, tiebreak "+
 			"included: not clamped to the clock and not reset to the zero time")
-}
-
-// failingArchiveIdentity reports an archive whose identity cannot be read. It
-// holds the lookup open until the test releases it, so a test can line other
-// callers up behind a lookup that is still running.
-//
-// Failure is the interesting case: a successful lookup is memoized, so every
-// later caller returns from the cache without consulting `inflight` at all. A
-// failure is deliberately not memoized, so the next caller reads `inflight`
-// and, finding none, starts a lookup of its own.
-type failingArchiveIdentity struct {
-	*mockStore
-
-	entered chan struct{}
-	release chan struct{}
-	once    sync.Once
-	calls   atomic.Int64
-	err     error
-	uid     string
-}
-
-func (s *failingArchiveIdentity) ArchiveUID() (string, error) {
-	s.calls.Add(1)
-	s.once.Do(func() { close(s.entered) })
-	<-s.release
-	return s.uid, s.err
-}
-
-func (s *failingArchiveIdentity) ListChangedMessages(
-	_ context.Context, _ store.ChangedMessagesCursor, _ int,
-) (store.ChangedMessagePage, error) {
-	return store.ChangedMessagePage{}, nil
-}
-
-// TestArchiveUIDCache_CompletionPublishesBeforeItReleasesTheLookup pins the
-// invariant the type's comment states: at most one lookup is ever in flight,
-// and concurrent callers wait on the same one.
-//
-// The completion goroutine cleared `inflight` and released the lock BEFORE
-// closing the channel its waiters are parked on. In that window the cache tells
-// any caller that takes the lock that no lookup is in flight while the previous
-// one is still live — and after a failed lookup there is no memoized answer to
-// return instead, so that caller starts a second lookup on top of the first.
-//
-// The window is two instructions wide, which is why this is a volume test
-// rather than a single arranged interleaving: whether a caller lands in it is a
-// scheduling accident, while the promise the type makes its callers is
-// unconditional. At this round count the unfixed window is observed several
-// times over; with the publish and the release under one lock there is no
-// interleaving that can observe it at all, so a single sighting is a
-// regression.
-func TestArchiveUIDCache_CompletionPublishesBeforeItReleasesTheLookup(t *testing.T) {
-	require := require.New(t)
-
-	// Chosen against a measured rate on the unfixed code of a dozen or two
-	// sightings at this count, so missing every one of them is not a realistic
-	// outcome. Costs about a second.
-	const rounds = 250000
-	windows := 0
-
-	for range rounds {
-		c := &archiveUIDCache{}
-		identity := &failingArchiveIdentity{
-			mockStore: &mockStore{},
-			entered:   make(chan struct{}),
-			release:   make(chan struct{}),
-			err:       errors.New("archive identity is corrupt"),
-		}
-
-		resolved := make(chan struct{})
-		go func() {
-			defer close(resolved)
-			_, _ = c.resolve(context.Background(), identity)
-		}()
-		<-identity.entered
-
-		c.mu.Lock()
-		waiters := c.inflight
-		c.mu.Unlock()
-		require.NotNil(waiters, "the first caller must publish a channel to wait on")
-
-		// A caller arriving fresh, contending for the lock the completion
-		// goroutine is about to take and release. What it sees under that lock
-		// is what decides whether it starts a lookup of its own.
-		observed := make(chan bool, 1)
-		go func() {
-			for {
-				c.mu.Lock()
-				idle := c.inflight == nil
-				c.mu.Unlock()
-				if !idle {
-					continue
-				}
-				select {
-				case <-waiters:
-					observed <- true
-				default:
-					observed <- false
-				}
-				return
-			}
-		}()
-
-		close(identity.release)
-		<-resolved
-		if !<-observed {
-			windows++
-		}
-	}
-
-	require.Zerof(windows,
-		"in %d of %d rounds the cache reported itself idle while the lookup's waiters "+
-			"were still parked. A caller arriving there finds no lookup in flight and no "+
-			"memoized answer, and starts a second lookup on top of a live one — which is "+
-			"exactly what this type promises its callers cannot happen",
-		windows, rounds)
-}
-
-// TestArchiveUIDCache_ConcurrentCallersShareOneFailedLookupAndThenRecover
-// covers the concurrent failure path. The existing coverage is sequential and
-// successful, which is the path that never reads `inflight`: the first answer
-// is memoized and every later caller returns from the cache.
-//
-// A failure is not memoized — it is a broken archive rather than a decided
-// answer — so this is the path where callers actually queue on a lookup, and
-// the path a recovering archive takes on its way back to a memoized answer.
-func TestArchiveUIDCache_ConcurrentCallersShareOneFailedLookupAndThenRecover(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-
-	const callers = 8
-	const detail = "archive identity is corrupt"
-	c := &archiveUIDCache{}
-	failing := &failingArchiveIdentity{
-		mockStore: &mockStore{},
-		entered:   make(chan struct{}),
-		release:   make(chan struct{}),
-		err:       errors.New(detail),
-	}
-
-	results := make(chan error, callers)
-	for range callers {
-		go func() {
-			_, err := c.resolve(context.Background(), failing)
-			results <- err
-		}()
-	}
-	// Every caller is either waiting on the one lookup or about to; releasing
-	// it resolves all of them.
-	<-failing.entered
-	close(failing.release)
-
-	for range callers {
-		err := <-results
-		require.Error(err, "a lookup that failed must be reported to every caller waiting on it")
-		assert.Contains(err.Error(), detail, "and reported as the failure it was")
-	}
-	assert.LessOrEqual(failing.calls.Load(), int64(callers),
-		"callers must queue on the lookup in flight rather than each starting one")
-
-	// The archive recovers. The failure was not memoized, so the next caller
-	// retries — and this answer, unlike the last, is the one everybody keeps.
-	healthy := &failingArchiveIdentity{
-		mockStore: &mockStore{},
-		entered:   make(chan struct{}),
-		release:   make(chan struct{}),
-		uid:       stubArchiveUID,
-	}
-	close(healthy.release)
-	for range 3 {
-		uid, err := c.resolve(context.Background(), healthy)
-		require.NoError(err, "a recovered archive must resolve")
-		assert.Equal(stubArchiveUID, uid, "and resolve to its own identity")
-	}
-	assert.Equal(int64(1), healthy.calls.Load(),
-		"the first successful answer is the last one anybody needs")
 }
