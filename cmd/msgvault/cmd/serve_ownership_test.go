@@ -82,6 +82,75 @@ func TestRuntimeRecordHeartbeatRepublishesUntilCancelled(t *testing.T) {
 		require.FailNow("heartbeat did not stop after context cancellation")
 	}
 }
+
+func TestRuntimeRecordHeartbeatDoesNotRepublishAfterOwnershipClose(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	dataDir := t.TempDir()
+	cfg := &config.Config{Data: config.DataConfig{DataDir: dataDir}}
+	owner, err := claimServeOwnership(context.Background(), cfg, "127.0.0.1", 8123, "v-test")
+	require.NoError(err, "claimServeOwnership")
+
+	path, err := daemonRuntimeStore(dataDir).Path(owner.record.PID)
+	require.NoError(err, "runtime record path")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		runtimeRecordHeartbeat(ctx, owner, time.Millisecond)
+	}()
+	t.Cleanup(func() {
+		cancel()
+		<-done
+	})
+
+	require.NoError(owner.Close(), "close ownership")
+	require.NoError(owner.SetStartupPhase("still starting"), "startup phase update after close")
+	assert.Never(func() bool {
+		_, statErr := os.Stat(path)
+		return statErr == nil
+	}, 100*time.Millisecond, time.Millisecond, "closed ownership must stay unpublished")
+}
+
+func TestRuntimeRecordHeartbeatSerializesStartupPhaseUpdates(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	dataDir := t.TempDir()
+	cfg := &config.Config{Data: config.DataConfig{DataDir: dataDir}}
+	owner, err := claimServeOwnership(context.Background(), cfg, "127.0.0.1", 8123, "v-test")
+	require.NoError(err, "claimServeOwnership")
+	t.Cleanup(func() { require.NoError(owner.Close(), "close ownership") })
+
+	path, err := daemonRuntimeStore(dataDir).Path(owner.record.PID)
+	require.NoError(err, "runtime record path")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		runtimeRecordHeartbeat(ctx, owner, time.Microsecond)
+	}()
+
+	for range 100 {
+		_ = os.Remove(path)
+		require.NoError(owner.SetStartupPhase("building analytics cache"), "set startup phase")
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		require.FailNow("heartbeat did not stop after context cancellation")
+	}
+
+	records, err := daemonRuntimeStore(dataDir).List()
+	require.NoError(err, "list runtime records")
+	require.Len(records, 1, "runtime records")
+	assert.Equal("building analytics cache", records[0].Metadata[runtimeStartupPhase], "latest startup phase")
+}
+
 func TestClaimServeOwnershipLocksAndPublishesRuntime(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)

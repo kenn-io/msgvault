@@ -170,7 +170,15 @@ func runServe(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("claim daemon ownership: %w", err)
 	}
+	heartbeatCtx, stopHeartbeat := context.WithCancel(cmd.Context())
+	heartbeatDone := make(chan struct{})
+	go func() {
+		defer close(heartbeatDone)
+		runtimeRecordHeartbeat(heartbeatCtx, ownership, daemonRuntimeHeartbeatInterval)
+	}()
 	defer func() {
+		stopHeartbeat()
+		<-heartbeatDone
 		if err := ownership.Close(); err != nil {
 			logger.Warn("release daemon ownership failed", "error", err)
 		}
@@ -496,11 +504,6 @@ func runServe(cmd *cobra.Command, args []string) error {
 		go idleTracker.Run(ctx)
 		logger.Info("background daemon idle shutdown enabled", "timeout", cfg.Server.DaemonIdleTimeout)
 	}
-
-	// Self-heal the runtime record: an external process with a skewed view
-	// of process identity can wrongly prune it, leaving a healthy daemon
-	// undiscoverable until restart. The check is a stat per tick.
-	go runtimeRecordHeartbeat(ctx, ownership, daemonRuntimeHeartbeatInterval)
 
 	vectorInit := startVectorInit(
 		ctx, s, dbPath,
