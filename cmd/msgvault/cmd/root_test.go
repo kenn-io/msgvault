@@ -94,7 +94,7 @@ func TestWrapOAuthError_NestedNotExist(t *testing.T) {
 func newTestRootCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "msgvault",
-		Short: "Offline email archive tool",
+		Short: "Offline email, chat, and meeting archive tool",
 	}
 }
 

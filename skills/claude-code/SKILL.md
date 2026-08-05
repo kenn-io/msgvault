@@ -1,18 +1,21 @@
 ---
 name: msgvault-query
-description: "Query msgvault email archive analytics via SQL views. Use when: querying email history, analyzing senders/domains/labels, thread analysis, attachment stats, messages per month, sender graphs, domain breakdowns, email analytics. Triggers on: msgvault, email archive, email search, email analytics, sender analysis, domain analysis."
+description: "Query msgvault archive analytics via SQL views. Use when: querying email, chat, or meeting history, analyzing senders/domains/labels, thread analysis, attachment stats, messages per month, sender graphs, domain breakdowns, message analytics. Triggers on: msgvault, message archive, email archive, chat archive, message search, email search, message analytics, sender analysis, domain analysis."
 triggers:
   - msgvault
+  - message archive
   - email archive
+  - chat archive
+  - message search
   - email search
-  - email analytics
+  - message analytics
   - sender analysis
   - domain analysis
 ---
 
 # msgvault-query
 
-Run SQL against the msgvault email archive via `msgvault query`. The analytics cache is DuckDB over Parquet — queries run in milliseconds. No DuckDB binary or Parquet path knowledge required.
+Run SQL against the msgvault archive via `msgvault query`. The analytics cache is DuckDB over Parquet — queries run in milliseconds. No DuckDB binary or Parquet path knowledge required.
 
 The analytics cache is built automatically when stale or missing.
 

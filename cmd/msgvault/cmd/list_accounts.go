@@ -16,13 +16,14 @@ var listAccountsJSON bool
 
 var listAccountsCmd = &cobra.Command{
 	Use:   "list-accounts",
-	Short: "List synced email accounts",
-	Long: `List all email accounts that have been added to msgvault.
+	Short: "List synced accounts",
+	Long: `List all accounts that have been added to msgvault, across email,
+chat, and meeting sources.
 
 Uses configured remote server or the local daemon by default.
 Use --local to use the local daemon even when a remote is configured.
 
-Shows account email, message count, and last sync time.
+Shows the account identifier, source type, message count, and last sync time.
 
 Examples:
 	msgvault list-accounts

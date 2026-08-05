@@ -16,7 +16,7 @@ var (
 var statsCmd = &cobra.Command{
 	Use:   "stats",
 	Short: "Show database statistics",
-	Long: `Show statistics about the email archive.
+	Long: `Show statistics about the archive.
 
 Uses configured remote server or the local daemon by default.
 Use --local to use the local daemon even when a remote is configured.`,

@@ -151,7 +151,7 @@ func newMCPServer(opts ServeOptions) *server.MCPServer {
 	return s
 }
 
-// Serve creates an MCP server with email archive tools and serves over stdio.
+// Serve creates an MCP server with archive tools and serves over stdio.
 // It blocks until stdin is closed or the context is cancelled.
 // dataDir is the base data directory (e.g., ~/.msgvault) used for deletions.
 //
@@ -571,7 +571,7 @@ func aggregateTool() mcp.Tool {
 
 func searchByDomainsTool() mcp.Tool {
 	return mcp.NewTool(ToolSearchByDomains,
-		mcp.WithDescription("Find emails where any participant (from, to, or cc) belongs to one of the given domains. Useful for finding all communication with a company regardless of direction."),
+		mcp.WithDescription("Find messages where any participant (from, to, or cc) belongs to one of the given domains. Useful for finding all communication with a company regardless of direction."),
 		mcp.WithReadOnlyHintAnnotation(true),
 		mcp.WithString("domains",
 			mcp.Required(),

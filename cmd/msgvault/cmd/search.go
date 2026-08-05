@@ -28,7 +28,8 @@ var (
 var searchCmd = &cobra.Command{
 	Use:   "search <query>",
 	Short: "Search messages using Gmail-like query syntax",
-	Long: `Search your email archive using Gmail-like query syntax.
+	Long: `Search your archive using Gmail-like query syntax. Email, chat, and
+meeting records are all searchable; use message_type: to narrow to one of them.
 
 Uses the configured remote server when [remote].url is set; otherwise uses
 the local daemon for FTS search. Use --local to use the local daemon even

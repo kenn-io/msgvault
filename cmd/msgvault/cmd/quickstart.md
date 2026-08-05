@@ -1,9 +1,9 @@
 # msgvault Agent Quickstart
 
-You have access to `msgvault`, an offline Gmail archive tool. The user's email
-archive is stored locally in a SQLite database with Parquet-based analytics.
-Use the commands below to help the user set up, sync, explore, search, and
-manage their email archive.
+You have access to `msgvault`, an offline email, chat, and meeting archive
+tool. The user's archive is stored locally in a SQLite database with
+Parquet-based analytics. Use the commands below to help the user set up, sync,
+explore, search, and manage their archive.
 
 All data is stored in `~/.msgvault/` by default (override with `MSGVAULT_HOME`).
 

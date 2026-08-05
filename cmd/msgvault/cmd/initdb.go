@@ -13,7 +13,7 @@ var initDBCmd = &cobra.Command{
 	Short: "Initialize the database schema",
 	Long: `Initialize the msgvault database with the required schema.
 
-This command creates all necessary tables for storing emails, attachments,
+This command creates all necessary tables for storing messages, attachments,
 labels, and sync state. It is safe to run multiple times - tables are only
 created if they don't already exist.`,
 	RunE: func(cmd *cobra.Command, args []string) error {

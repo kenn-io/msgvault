@@ -43,9 +43,9 @@ var (
 
 var rootCmd = &cobra.Command{
 	Use:   "msgvault",
-	Short: "Offline email archive tool",
-	Long: `msgvault is an offline email archive tool that exports and stores
-email data locally with full-text search capabilities.
+	Short: "Offline email, chat, and meeting archive tool",
+	Long: `msgvault is an offline archive tool that exports and stores email,
+chat, and meeting data locally with full-text search capabilities.
 
 This is the Go implementation providing sync, search, and TUI functionality
 in a single binary.`,
