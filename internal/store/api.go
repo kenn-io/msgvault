@@ -1352,11 +1352,26 @@ func (s *Store) ListChangedMessages(
 		return ChangedMessagePage{}, nil
 	}
 
+	// Read the bounds BEFORE the page query, in their own statement (constant
+	// columns on the page query itself would vanish along with the rows on an
+	// empty page). Before, not after: a change committed while the page query
+	// runs may be invisible to that query's snapshot yet carry an earlier
+	// stamp, and a consumer resuming from a reading taken afterwards would skip
+	// it. A reading taken first is never later than the data it accompanies.
+	//
+	// PostgreSQL's bound read also verifies that `messages` resolves through the
+	// connection's search_path. Keep it ahead of the NULL preflight so a missing
+	// table produces that actionable diagnostic instead of a bare query error.
+	bounds, err := s.dialect.ReadWatermarkBounds(ctx, s.db.DB)
+	if err != nil {
+		return ChangedMessagePage{}, err
+	}
+
 	// NULL watermarks are excluded by the range predicate and would otherwise
 	// remain invisible forever. Detect legacy or manually-corrupted rows before
 	// returning any page so consumers stop at a visible, repairable error.
 	var nullWatermarkID int64
-	err := s.db.QueryRowContext(ctx,
+	err = s.db.QueryRowContext(ctx,
 		`SELECT id FROM messages WHERE content_changed_at IS NULL LIMIT 1`,
 	).Scan(&nullWatermarkID)
 	if err == nil {
@@ -1365,17 +1380,6 @@ func (s *Store) ListChangedMessages(
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
 		return ChangedMessagePage{}, fmt.Errorf("check message watermarks: %w", err)
-	}
-
-	// Read the bounds BEFORE the page query, in their own statement (constant
-	// columns on the page query itself would vanish along with the rows on an
-	// empty page). Before, not after: a change committed while the page query
-	// runs may be invisible to that query's snapshot yet carry an earlier
-	// stamp, and a consumer resuming from a reading taken afterwards would skip
-	// it. A reading taken first is never later than the data it accompanies.
-	bounds, err := s.dialect.ReadWatermarkBounds(ctx, s.db.DB)
-	if err != nil {
-		return ChangedMessagePage{}, err
 	}
 
 	cursor := s.dialect.TimestampParam(since.At())

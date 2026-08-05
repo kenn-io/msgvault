@@ -1220,10 +1220,10 @@ func rewriteMessagesContentChangedAtDefault(t *testing.T, st *store.Store, want 
 	// Line-anchored, because the default expression itself contains a comma:
 	// strftime('%Y-%m-%d %H:%M:%f','now'). The final comma is required and
 	// captured separately so the rewrite cannot remove the column delimiter.
-	declaration := regexp.MustCompile(`(?m)^(\s*content_changed_at DATETIME DEFAULT ).*(,)$`)
+	declaration := regexp.MustCompile(`(?m)^(\s*content_changed_at DATETIME DEFAULT ).*(,)(\r?)$`)
 	rewritten := declaration.ReplaceAllStringFunc(schema, func(line string) string {
 		parts := declaration.FindStringSubmatch(line)
-		return parts[1] + want + parts[2]
+		return parts[1] + want + parts[2] + parts[3]
 	})
 	require.NotEqual(t, schema, rewritten,
 		"the messages schema must declare a content_changed_at default to rewrite")
