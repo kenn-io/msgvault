@@ -1316,7 +1316,7 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 	}
 	s.fts5Available = available
 
-	if err := s.EnsureSeededAttributeDefinitions(); err != nil {
+	if err := s.EnsureSeededAttributeDefinitionsContext(ctx); err != nil {
 		return fmt.Errorf("ensure seeded attribute definitions: %w", err)
 	}
 
