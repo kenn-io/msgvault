@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/http/pprof"
 	"net/netip"
+	"os"
 	"slices"
 	"strconv"
 	"sync"
@@ -20,6 +21,7 @@ import (
 
 	"go.kenn.io/msgvault/internal/apiprotocol"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/daemonauth"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/scheduler"
 	"go.kenn.io/msgvault/internal/search"
@@ -348,6 +350,7 @@ const (
 	// analytics while still bounding a pathological query.
 	QueryEndpointTimeout = 120 * time.Second
 	queryEndpointPath    = "/api/v1/query"
+	DaemonIdentityPath   = "/api/daemon/identity"
 	DaemonShutdownPath   = "/api/daemon/shutdown"
 	defaultBindAddr      = "127.0.0.1"
 	// inProgressLogThreshold is how long a request may run before the logger
@@ -358,7 +361,9 @@ const (
 	inProgressLogInterval  = 30 * time.Second
 	// DaemonShutdownTokenHeader is an HTTP header name, not a credential.
 	// #nosec G101
-	DaemonShutdownTokenHeader = "X-Msgvault-Daemon-Token"
+	DaemonShutdownTokenHeader     = "X-Msgvault-Daemon-Token"
+	DaemonIdentityChallengeHeader = "X-Msgvault-Daemon-Challenge"
+	DaemonIdentityProofHeader     = "X-Msgvault-Daemon-Proof"
 )
 
 // ServerOptions configures the API server.
@@ -993,6 +998,24 @@ func (s *Server) handleDaemonShutdown(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusAccepted)
 	_, _ = w.Write([]byte(`{"status":"shutting_down"}`))
 	go s.shutdownFunc()
+}
+
+func (s *Server) handleDaemonIdentity(w http.ResponseWriter, r *http.Request) {
+	if s.shutdownToken == "" {
+		writeError(w, http.StatusNotFound, "identity_unavailable", "Daemon identity proof is not available")
+		return
+	}
+	proof, err := daemonauth.Proof(
+		s.shutdownToken,
+		r.Header.Get(DaemonIdentityChallengeHeader),
+		os.Getpid(),
+	)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_challenge", "Invalid daemon identity challenge")
+		return
+	}
+	w.Header().Set(DaemonIdentityProofHeader, proof)
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // handleHealth returns a simple health check response.

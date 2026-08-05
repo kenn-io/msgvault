@@ -47,6 +47,8 @@ var (
 	requestDaemonShutdownForRun       = requestDaemonShutdown
 )
 
+var errDaemonIdentityUnconfirmed = errors.New("daemon identity is unconfirmed")
+
 func newLifecycleCommand(name string, hidden bool) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:    name,
@@ -188,7 +190,7 @@ func fetchDaemonHealthEndpoint(ctx context.Context, url string, apiKey string) *
 	if apiKey != "" {
 		req.Header.Set("X-Api-Key", apiKey)
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := localDaemonHTTPClient.Do(req)
 	if err != nil {
 		return nil
 	}
@@ -374,15 +376,15 @@ func stopLiveDaemonsWithAPIKey(cmd *cobra.Command, dataDir string, apiKey string
 	stopped := 0
 	skipped := 0
 	for _, rec := range records {
-		if !stopTargetConfirmed(rec) {
+		if err := stopDaemonRuntimeRecord(cmd.OutOrStdout(), dataDir, rec, apiKey, serveStopGraceTimeout); err != nil {
+			if !errors.Is(err, errDaemonIdentityUnconfirmed) {
+				return fmt.Errorf("stop pid %d: %w", rec.PID, err)
+			}
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(),
 				"Skipping pid %d: cannot confirm it is the recorded msgvault daemon.\n",
 				rec.PID)
 			skipped++
 			continue
-		}
-		if err := stopDaemonProcess(cmd.OutOrStdout(), rec, apiKey, serveStopGraceTimeout); err != nil {
-			return fmt.Errorf("stop pid %d: %w", rec.PID, err)
 		}
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Stopped msgvault (pid %d).\n", rec.PID)
 		stopped++
@@ -398,13 +400,38 @@ func stopDaemonRuntimeForUpgradeImpl(c config.Config, rt *DaemonRuntime) error {
 	if rt == nil {
 		return nil
 	}
-	if !stopTargetConfirmed(rt.Record) {
-		return fmt.Errorf("cannot confirm pid %d is the recorded msgvault daemon", rt.Record.PID)
-	}
-	if err := stopDaemonProcess(os.Stdout, rt.Record, c.Server.APIKey, serveStopGraceTimeout); err != nil {
+	if err := stopDaemonRuntimeRecord(os.Stdout, c.Data.DataDir, rt.Record,
+		c.Server.APIKey, serveStopGraceTimeout); err != nil {
 		return fmt.Errorf("stop pid %d: %w", rt.Record.PID, err)
 	}
 	return nil
+}
+
+func stopDaemonRuntimeRecord(
+	out io.Writer,
+	dataDir string,
+	rec daemon.RuntimeRecord,
+	apiKey string,
+	grace time.Duration,
+) error {
+	switch runtimeRecordIdentity(rec) {
+	case createTimeMatch:
+		return stopDaemonProcess(out, rec, apiKey, grace)
+	case createTimeMismatch:
+		return fmt.Errorf("%w: pid %d belongs to a different process", errDaemonIdentityUnconfirmed, rec.PID)
+	case createTimeUnknown:
+		proved, err := proveDaemonRuntimeIdentity(context.Background(), rec)
+		if err != nil {
+			return fmt.Errorf("%w: prove pid %d endpoint: %w", errDaemonIdentityUnconfirmed, rec.PID, err)
+		}
+		if !proved {
+			return fmt.Errorf("%w: endpoint for pid %d did not prove the runtime secret",
+				errDaemonIdentityUnconfirmed, rec.PID)
+		}
+		return stopDaemonByAuthenticatedEndpoint(out, dataDir, rec, apiKey, grace)
+	default:
+		return fmt.Errorf("%w: unknown identity state for pid %d", errDaemonIdentityUnconfirmed, rec.PID)
+	}
 }
 
 func stopTargetConfirmed(rec daemon.RuntimeRecord) bool {
@@ -458,6 +485,41 @@ func stopDaemonProcess(out io.Writer, rec daemon.RuntimeRecord, apiKey string, g
 		return nil
 	}
 	return errors.New("process still alive")
+}
+
+// stopDaemonByAuthenticatedEndpoint is the only stop path permitted when OS
+// process identity is indeterminate. The caller has already verified endpoint
+// possession of the private runtime secret. This function deliberately never
+// opens or signals rec.PID; completion is established by release of the
+// daemon's ownership lock instead.
+func stopDaemonByAuthenticatedEndpoint(
+	out io.Writer,
+	dataDir string,
+	rec daemon.RuntimeRecord,
+	apiKey string,
+	grace time.Duration,
+) error {
+	op := fetchDaemonOperation(rec, apiKey)
+	shutdownRequested, err := requestDaemonShutdownForRun(rec)
+	if err != nil {
+		if !daemonOwnerLockHeld(dataDir) {
+			removeRuntimeRecord(rec)
+			return nil
+		}
+		return fmt.Errorf("request authenticated daemon shutdown: %w", err)
+	}
+	if !shutdownRequested {
+		if !daemonOwnerLockHeld(dataDir) {
+			removeRuntimeRecord(rec)
+			return nil
+		}
+		return errors.New("authenticated daemon shutdown endpoint is unavailable")
+	}
+	if waitForDaemonExitWithProgress(out, rec, op, grace, daemonProbeTick,
+		func(daemon.RuntimeRecord) bool { return daemonOwnerLockHeld(dataDir) }) {
+		return nil
+	}
+	return fmt.Errorf("daemon ownership lock still held after %s", grace.Round(time.Second))
 }
 
 // fetchDaemonOperation asks a running daemon what archive operation it is
@@ -571,7 +633,7 @@ func requestDaemonShutdown(rec daemon.RuntimeRecord) (bool, error) {
 	}
 	req.Header.Set(api.DaemonShutdownTokenHeader, rec.Metadata[runtimeShutdownToken])
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := localDaemonHTTPClient.Do(req)
 	if err != nil {
 		return false, fmt.Errorf("send shutdown request: %w", err)
 	}

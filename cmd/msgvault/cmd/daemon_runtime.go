@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -15,6 +16,7 @@ import (
 	"go.kenn.io/kit/daemon"
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/daemonauth"
 	"go.kenn.io/msgvault/internal/update"
 	"golang.org/x/crypto/argon2"
 )
@@ -41,6 +43,12 @@ const (
 const daemonStartupPhaseInitial = "starting up"
 
 var daemonAuthFingerprintSalt = []byte("msgvault-daemon-auth-fingerprint-v1")
+
+var localDaemonHTTPClient = &http.Client{
+	CheckRedirect: func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	},
+}
 
 type DaemonRuntime struct {
 	Record           daemon.RuntimeRecord
@@ -176,8 +184,21 @@ func findRespondingDaemonRuntime(
 		return nil, false, err
 	}
 	for _, rec := range records {
-		if runtimeRecordIdentityMismatched(rec) {
+		switch runtimeRecordIdentity(rec) {
+		case createTimeMatch:
+		case createTimeMismatch:
 			continue
+		case createTimeUnknown:
+			proved, proofErr := proveDaemonRuntimeIdentity(ctx, rec)
+			if proofErr != nil {
+				if ctxErr := ctx.Err(); ctxErr != nil {
+					return nil, false, ctxErr
+				}
+				continue
+			}
+			if !proved {
+				continue
+			}
 		}
 		info, err := probeDaemonRuntimeRecord(ctx, rec)
 		if err != nil {
@@ -317,6 +338,48 @@ func probeDaemonRuntimeRecord(ctx context.Context, rec daemon.RuntimeRecord) (da
 	})
 }
 
+// proveDaemonRuntimeIdentity verifies possession of the private runtime secret
+// without transmitting that secret or the configured API key. It is the safe
+// fallback when the OS cannot provide an affirmative process create-time
+// match for the recorded PID.
+func proveDaemonRuntimeIdentity(ctx context.Context, rec daemon.RuntimeRecord) (bool, error) {
+	if rec.Metadata == nil || rec.Metadata[runtimeShutdownToken] == "" {
+		return false, nil
+	}
+	url := urlFromDaemonRuntime(daemonRuntimeFromRecord(rec))
+	if url == "" {
+		return false, nil
+	}
+	challenge, err := daemonauth.NewChallenge()
+	if err != nil {
+		return false, err
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	proofCtx, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
+	defer cancel()
+	req, err := http.NewRequestWithContext(proofCtx, http.MethodGet, url+api.DaemonIdentityPath, nil)
+	if err != nil {
+		return false, fmt.Errorf("create daemon identity request: %w", err)
+	}
+	req.Header.Set(api.DaemonIdentityChallengeHeader, challenge)
+	resp, err := localDaemonHTTPClient.Do(req)
+	if err != nil {
+		return false, fmt.Errorf("send daemon identity request: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusNoContent {
+		return false, nil
+	}
+	return daemonauth.VerifyProof(
+		rec.Metadata[runtimeShutdownToken],
+		challenge,
+		rec.PID,
+		resp.Header.Get(api.DaemonIdentityProofHeader),
+	), nil
+}
+
 // runtimeRecordIdentityMismatched reports whether rec.PID demonstrably
 // belongs to a different process than the daemon that wrote the record
 // (PID reuse). An indeterminate comparison keeps the record, but an
@@ -325,14 +388,14 @@ func probeDaemonRuntimeRecord(ctx context.Context, rec daemon.RuntimeRecord) (da
 // file: genuinely dead PIDs are reaped by CleanupDead, and anything else
 // is left in place for inspection.
 func runtimeRecordIdentityMismatched(rec daemon.RuntimeRecord) bool {
-	if rec.Metadata == nil {
-		return false
+	return runtimeRecordIdentity(rec) == createTimeMismatch
+}
+
+func runtimeRecordIdentity(rec daemon.RuntimeRecord) createTimeComparison {
+	if rec.Metadata == nil || rec.Metadata[runtimeCreateTime] == "" {
+		return createTimeUnknown
 	}
-	recorded := rec.Metadata[runtimeCreateTime]
-	if recorded == "" {
-		return false
-	}
-	return compareProcessCreateTime(rec.PID, recorded) == createTimeMismatch
+	return compareProcessCreateTime(rec.PID, rec.Metadata[runtimeCreateTime])
 }
 
 // processCreateTimeMillisForRun is swappable in tests to simulate gopsutil

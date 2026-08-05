@@ -23,6 +23,7 @@ import (
 	"go.kenn.io/kit/daemon"
 	"go.kenn.io/msgvault/internal/apiprotocol"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/daemonauth"
 	"go.kenn.io/msgvault/internal/deletion"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/search"
@@ -731,6 +732,37 @@ func TestDaemonShutdownEndpointRequiresRuntimeToken(t *testing.T) {
 			return false
 		}
 	}, time.Second, 10*time.Millisecond, "shutdown callback")
+}
+
+func TestDaemonIdentityEndpointProvesRuntimeSecretWithoutReceivingIt(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	challenge, err := daemonauth.NewChallenge()
+	require.NoError(err, "create challenge")
+
+	srv := NewServerWithOptions(ServerOptions{
+		Config:        &config.Config{Server: config.ServerConfig{APIPort: 8080}},
+		Scheduler:     newMockScheduler(),
+		Logger:        testLogger(),
+		ShutdownToken: "runtime-secret",
+	})
+	req := httptest.NewRequest(http.MethodGet, DaemonIdentityPath, nil)
+	req.Header.Set(DaemonIdentityChallengeHeader, challenge)
+	w := httptest.NewRecorder()
+
+	srv.Router().ServeHTTP(w, req)
+
+	assert.Equal(http.StatusNoContent, w.Code, "identity proof status")
+	proof := w.Header().Get(DaemonIdentityProofHeader)
+	assert.True(daemonauth.VerifyProof("runtime-secret", challenge, os.Getpid(), proof),
+		"proof authenticates this daemon PID")
+	assert.NotContains(proof, "runtime-secret", "response does not disclose the runtime secret")
+
+	invalid := httptest.NewRequest(http.MethodGet, DaemonIdentityPath, nil)
+	invalid.Header.Set(DaemonIdentityChallengeHeader, "invalid")
+	invalidResp := httptest.NewRecorder()
+	srv.Router().ServeHTTP(invalidResp, invalid)
+	assert.Equal(http.StatusBadRequest, invalidResp.Code, "malformed challenge status")
 }
 
 func TestAuthMiddleware(t *testing.T) {

@@ -311,6 +311,7 @@ func TestRefuseRestoreIntoLiveDaemonHomeBlocksIncompatibleDaemon(t *testing.T) {
 			runtimeHost:       host,
 			runtimePort:       portText,
 			runtimeAPIVersion: strconv.Itoa(daemonAPIVersion + 1),
+			runtimeCreateTime: matchingProcessCreateTime(t),
 		},
 	})
 	require.NoError(err, "write runtime record")

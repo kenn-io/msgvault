@@ -85,6 +85,7 @@ func TestOpenTUIEngineLocalFlagUsesLocalDaemonHTTP(t *testing.T) {
 			runtimePort:            strconv.Itoa(port),
 			runtimeAPIVersion:      strconv.Itoa(daemonAPIVersion),
 			runtimeAuthFingerprint: daemonAPIKeyFingerprint(localCfg.Server.APIKey),
+			runtimeCreateTime:      matchingProcessCreateTime(t),
 		},
 	})
 	require.NoError(

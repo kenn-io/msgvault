@@ -277,6 +277,7 @@ func writeStatsHTTPDaemonRuntime(t *testing.T, dataDir string, server *httptest.
 			runtimePort:            portText,
 			runtimeAPIVersion:      strconv.Itoa(daemonAPIVersion),
 			runtimeAuthFingerprint: daemonAPIKeyFingerprint(""),
+			runtimeCreateTime:      matchingProcessCreateTime(t),
 		},
 	})
 	require.NoError(t, err, "write daemon runtime")

@@ -56,6 +56,7 @@ func TestRefuseUnpackWithLiveDaemon(t *testing.T) {
 			// An API version this client considers incompatible: the daemon
 			// still holds pack files open, so it must be refused all the same.
 			runtimeAPIVersion: strconv.Itoa(daemonAPIVersion + 1),
+			runtimeCreateTime: matchingProcessCreateTime(t),
 		},
 	})
 	require.NoError(err, "write runtime record")
@@ -123,7 +124,11 @@ func TestRunUnpackAttachmentsLocalHoldsDaemonLeaseBeforePostgresStoreOpen(t *tes
 	_, err = daemonRuntimeStore(dataDir).Write(daemon.RuntimeRecord{
 		PID: os.Getpid(), Network: daemon.NetworkTCP,
 		Address: net.JoinHostPort(host, portText), Service: daemonService, Version: "v-test",
-		Metadata: map[string]string{runtimeHost: host, runtimePort: portText},
+		Metadata: map[string]string{
+			runtimeHost:       host,
+			runtimePort:       portText,
+			runtimeCreateTime: matchingProcessCreateTime(t),
+		},
 	})
 	require.NoError(err)
 

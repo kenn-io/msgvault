@@ -590,18 +590,32 @@ func probeLocalDaemonAuth(ctx context.Context, rt *DaemonRuntime, c *config.Conf
 	if c == nil {
 		return errors.New("nil config")
 	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	url := urlFromDaemonRuntime(rt)
 	if url == "" {
 		return errors.New("daemon runtime has no usable endpoint")
+	}
+	switch runtimeRecordIdentity(rt.Record) {
+	case createTimeMatch:
+	case createTimeMismatch:
+		return fmt.Errorf("cannot authenticate local daemon at %s: recorded pid %d belongs to a different process",
+			url, rt.Record.PID)
+	case createTimeUnknown:
+		proved, err := proveDaemonRuntimeIdentity(ctx, rt.Record)
+		if err != nil {
+			return fmt.Errorf("prove local daemon identity at %s: %w", url, err)
+		}
+		if !proved {
+			return fmt.Errorf("cannot authenticate local daemon at %s: endpoint did not prove the private runtime secret", url)
+		}
 	}
 	if err := localDaemonAuthIdentityError(url, rt, c); err != nil {
 		return err
 	}
 	if c.Server.APIKey == "" && daemonRuntimeAuthFingerprint(rt) == daemonAPIKeyFingerprint("") {
 		return nil
-	}
-	if ctx == nil {
-		ctx = context.Background()
 	}
 	probeCtx, cancel := context.WithTimeout(ctx, localDaemonAuthProbeTimeout)
 	defer cancel()
@@ -616,7 +630,7 @@ func probeLocalDaemonAuth(ctx context.Context, rt *DaemonRuntime, c *config.Conf
 		req.Header.Set("X-Api-Key", c.Server.APIKey)
 	}
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := localDaemonHTTPClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("probe local daemon authentication at %s: %w", url, err)
 	}

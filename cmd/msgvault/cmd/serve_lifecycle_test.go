@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -22,6 +23,7 @@ import (
 	"go.kenn.io/kit/daemon"
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/daemonauth"
 )
 
 func TestDaemonAndServeLifecycleCommandSurfaces(t *testing.T) {
@@ -174,6 +176,7 @@ func TestRunServeStatusIncludesVectorHealth(t *testing.T) {
 			runtimePort:             strconv.Itoa(port),
 			runtimeAPIVersion:       strconv.Itoa(daemonAPIVersion),
 			runtimeAPISchemaVersion: api.APISchemaVersion,
+			runtimeCreateTime:       matchingProcessCreateTime(t),
 		},
 	})
 	require.NoError(err, "write runtime record")
@@ -235,6 +238,7 @@ func TestServeStatusCommandUsesAuthenticatedHealthForOperationDetails(t *testing
 			runtimeAPIVersion:       strconv.Itoa(daemonAPIVersion),
 			runtimeAPISchemaVersion: api.APISchemaVersion,
 			runtimeAuthFingerprint:  daemonAPIKeyFingerprint("secret-key"),
+			runtimeCreateTime:       matchingProcessCreateTime(t),
 		},
 	})
 	require.NoError(err, "write runtime record")
@@ -391,6 +395,105 @@ func TestStopTargetRequiresProcessIdentityDespiteRespondingPing(t *testing.T) {
 		"unauthenticated ping must not authorize signaling a reused PID")
 }
 
+func TestStopDaemonRuntimeRecordRejectsConfirmedProcessIdentityMismatch(t *testing.T) {
+	require := require.New(t)
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	t.Cleanup(server.Close)
+	host, portText, err := net.SplitHostPort(server.Listener.Addr().String())
+	require.NoError(err, "split listener address")
+	stubProcessCreateTimeMillis(t, func(int) (int64, bool) { return 1_000, true })
+
+	rec := daemon.RuntimeRecord{
+		PID:     os.Getpid(),
+		Network: daemon.NetworkTCP,
+		Address: net.JoinHostPort(host, portText),
+		Service: daemonService,
+		Metadata: map[string]string{
+			runtimeHost:          host,
+			runtimePort:          portText,
+			runtimeCreateTime:    "10000",
+			runtimeShutdownToken: "private-runtime-secret",
+		},
+	}
+
+	err = stopDaemonRuntimeRecord(io.Discard, t.TempDir(), rec, "configured-api-key", time.Second)
+
+	require.ErrorIs(err, errDaemonIdentityUnconfirmed, "mismatched process must be rejected")
+	require.ErrorContains(err, "belongs to a different process")
+	assert.Zero(t, requests.Load(), "mismatched records must not reach HTTP shutdown or auth endpoints")
+}
+
+func TestStopLiveDaemonsUsesAuthenticatedHTTPWhenCreateTimeUnknown(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	dataDir := t.TempDir()
+	const runtimeSecret = "private-runtime-secret"
+
+	owner, err := tryAcquireDaemonOwnerLock(dataDir)
+	require.NoError(err, "acquire daemon ownership")
+	var releaseOwner sync.Once
+	t.Cleanup(func() { releaseOwner.Do(func() { _ = owner.Close() }) })
+
+	shutdownTokens := make(chan string, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case api.DaemonIdentityPath:
+			proof, proofErr := daemonauth.Proof(runtimeSecret,
+				r.Header.Get(api.DaemonIdentityChallengeHeader), os.Getpid())
+			if proofErr != nil {
+				http.Error(w, "invalid challenge", http.StatusBadRequest)
+				return
+			}
+			w.Header().Set(api.DaemonIdentityProofHeader, proof)
+			w.WriteHeader(http.StatusNoContent)
+		case api.DaemonShutdownPath:
+			shutdownTokens <- r.Header.Get(api.DaemonShutdownTokenHeader)
+			w.WriteHeader(http.StatusAccepted)
+			go func() {
+				time.Sleep(25 * time.Millisecond)
+				releaseOwner.Do(func() { _ = owner.Close() })
+			}()
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+	host, portText, err := net.SplitHostPort(server.Listener.Addr().String())
+	require.NoError(err, "split listener address")
+
+	_, err = daemonRuntimeStore(dataDir).Write(daemon.RuntimeRecord{
+		PID:     os.Getpid(),
+		Network: daemon.NetworkTCP,
+		Address: net.JoinHostPort(host, portText),
+		Service: daemonService,
+		Version: Version,
+		Metadata: map[string]string{
+			runtimeHost:          host,
+			runtimePort:          portText,
+			runtimeAPIVersion:    strconv.Itoa(daemonAPIVersion),
+			runtimeShutdownToken: runtimeSecret,
+		},
+	})
+	require.NoError(err, "write runtime record")
+	cmd, stdout, _ := lifecycleTestCommand()
+
+	require.NoError(stopLiveDaemonsWithAPIKey(cmd, dataDir, "configured-api-key", false),
+		"stop daemon with indeterminate process identity")
+
+	select {
+	case got := <-shutdownTokens:
+		assert.Equal(runtimeSecret, got, "authenticated shutdown token")
+	default:
+		assert.Fail("shutdown endpoint was not called")
+	}
+	assert.False(daemonOwnerLockHeld(dataDir), "stop waits for daemon ownership release")
+	assert.Contains(stdout.String(), "Stopped msgvault", "stop confirmation")
+}
+
 func TestRunServeRestartDoesNotLaunchOverInitializingIdentityMismatch(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
@@ -521,6 +624,7 @@ func TestWaitForDaemonRuntimeCancelsDuringProbe(t *testing.T) {
 			runtimePort:             strconv.Itoa(port),
 			runtimeAPIVersion:       strconv.Itoa(daemonAPIVersion),
 			runtimeAPISchemaVersion: api.APISchemaVersion,
+			runtimeCreateTime:       matchingProcessCreateTime(t),
 		},
 	})
 	require.NoError(
@@ -579,6 +683,7 @@ func TestRunServeStartAlreadyRunningWritesOnlyStdout(t *testing.T) {
 			runtimeHost:       server.Host,
 			runtimePort:       portText,
 			runtimeAPIVersion: strconv.Itoa(daemonAPIVersion),
+			runtimeCreateTime: matchingProcessCreateTime(t),
 		},
 	})
 	require.NoError(
@@ -612,6 +717,7 @@ func TestRunServeStartDoesNotDowngradeNewerDaemon(t *testing.T) {
 			runtimeHost:       server.Host,
 			runtimePort:       portText,
 			runtimeAPIVersion: strconv.Itoa(daemonAPIVersion),
+			runtimeCreateTime: matchingProcessCreateTime(t),
 		},
 	})
 	require.NoError(
@@ -653,6 +759,7 @@ func TestRunServeStartUpgradesOlderDaemon(t *testing.T) {
 			runtimeHost:       server.Host,
 			runtimePort:       portText,
 			runtimeAPIVersion: strconv.Itoa(daemonAPIVersion),
+			runtimeCreateTime: matchingProcessCreateTime(t),
 		},
 	})
 	require.NoError(
@@ -712,6 +819,7 @@ func TestRunServeStartHonorsNeverAutoRestartPolicy(t *testing.T) {
 			runtimeHost:       server.Host,
 			runtimePort:       portText,
 			runtimeAPIVersion: strconv.Itoa(daemonAPIVersion),
+			runtimeCreateTime: matchingProcessCreateTime(t),
 		},
 	})
 	require.NoError(
@@ -755,6 +863,7 @@ func TestRunServeStartUpgradesOlderIncompatibleDaemon(t *testing.T) {
 			runtimeHost:       server.Host,
 			runtimePort:       portText,
 			runtimeAPIVersion: strconv.Itoa(daemonAPIVersion - 1),
+			runtimeCreateTime: matchingProcessCreateTime(t),
 		},
 	})
 	require.NoError(
@@ -814,6 +923,7 @@ func TestRunServeStartRefusesNewerIncompatibleDaemon(t *testing.T) {
 			runtimeHost:       server.Host,
 			runtimePort:       portText,
 			runtimeAPIVersion: strconv.Itoa(daemonAPIVersion + 1),
+			runtimeCreateTime: matchingProcessCreateTime(t),
 		},
 	})
 	require.NoError(

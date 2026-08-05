@@ -198,6 +198,15 @@ func (s *Server) registerHumaRoutes(api huma.API, apiV1 huma.API) {
 		Version: s.daemonVersion,
 	}).ServeHTTP)
 	registerRawHumaRoute(api, huma.Operation{
+		OperationID: "daemonIdentity",
+		Method:      http.MethodGet,
+		Path:        DaemonIdentityPath,
+		Tags:        []string{"Daemon"},
+		Summary:     "Prove local daemon identity",
+		Hidden:      true,
+		Responses:   rawHumaResponses(http.StatusNoContent),
+	}, s.handleDaemonIdentity)
+	registerRawHumaRoute(api, huma.Operation{
 		OperationID: "daemonShutdown",
 		Method:      http.MethodPost,
 		Path:        DaemonShutdownPath,

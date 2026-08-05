@@ -353,6 +353,7 @@ func TestOpenHTTPStoreUsesServerAPIKeyForLocalDaemon(t *testing.T) {
 			runtimePort:            strconv.Itoa(port),
 			runtimeAPIVersion:      strconv.Itoa(daemonAPIVersion),
 			runtimeAuthFingerprint: daemonAPIKeyFingerprint(localCfg.Server.APIKey),
+			runtimeCreateTime:      matchingProcessCreateTime(t),
 		},
 	})
 	require.NoError(
@@ -413,6 +414,7 @@ func TestOpenHTTPStoreRejectsLocalDaemonWithStaleServerAPIKey(t *testing.T) {
 			runtimePort:            strconv.Itoa(port),
 			runtimeAPIVersion:      strconv.Itoa(daemonAPIVersion),
 			runtimeAuthFingerprint: daemonAPIKeyFingerprint(localCfg.Server.APIKey),
+			runtimeCreateTime:      matchingProcessCreateTime(t),
 		},
 	})
 	require.NoError(err, "write runtime")
@@ -466,6 +468,7 @@ func TestOpenHTTPStoreRejectsLocalDaemonWithChangedServerAPIKeyFingerprint(t *te
 			runtimePort:            strconv.Itoa(port),
 			runtimeAPIVersion:      strconv.Itoa(daemonAPIVersion),
 			runtimeAuthFingerprint: daemonAPIKeyFingerprint("old-local-daemon-secret"),
+			runtimeCreateTime:      matchingProcessCreateTime(t),
 		},
 	})
 	require.NoError(err, "write runtime")
@@ -519,6 +522,7 @@ func TestOpenHTTPStoreRejectsLegacyLocalDaemonAfterServerAPIKeyRemoved(t *testin
 			runtimeHost:       host,
 			runtimePort:       strconv.Itoa(port),
 			runtimeAPIVersion: strconv.Itoa(daemonAPIVersion),
+			runtimeCreateTime: matchingProcessCreateTime(t),
 		},
 	})
 	require.NoError(err, "write runtime")
@@ -558,6 +562,29 @@ func TestProbeLocalDaemonAuthDoesNotWaitForStats(t *testing.T) {
 	require.NoError(t, probeLocalDaemonAuth(context.Background(), rt, c))
 	assert.Less(t, time.Since(start), localDaemonAuthProbeTimeout)
 	assert.False(t, statsCalled.Load(), "auth probe never performs archive statistics")
+}
+
+func TestProbeLocalDaemonAuthDoesNotSendAPIKeyToUnprovenEndpoint(t *testing.T) {
+	var gotAPIKey atomic.Value
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/health", func(w http.ResponseWriter, r *http.Request) {
+		gotAPIKey.Store(r.Header.Get("X-Api-Key"))
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"status":"ok"}`))
+	})
+	server := httptest.NewServer(mux)
+	t.Cleanup(server.Close)
+
+	rt := daemonRuntimeForHTTPServer(t, server, daemonAPIKeyFingerprint("configured-api-key"))
+	rt.Record.Metadata[runtimeCreateTime] = "unreadable"
+	rt.Record.Metadata[runtimeShutdownToken] = "private-runtime-secret"
+	c := lifecycleTestConfig(t.TempDir())
+	c.Server.APIKey = "configured-api-key"
+
+	err := probeLocalDaemonAuth(context.Background(), rt, c)
+
+	require.Error(t, err, "indeterminate process identity requires endpoint proof")
+	assert.Nil(t, gotAPIKey.Load(), "API key must not be transmitted before endpoint possession is proved")
 }
 
 func TestProbeLocalDaemonAuthRespectsParentDeadline(t *testing.T) {
@@ -602,6 +629,7 @@ func daemonRuntimeForHTTPServer(t *testing.T, server *httptest.Server, authFinge
 				runtimePort:            portText,
 				runtimeAPIVersion:      strconv.Itoa(daemonAPIVersion),
 				runtimeAuthFingerprint: authFingerprint,
+				runtimeCreateTime:      matchingProcessCreateTime(t),
 			},
 		},
 		Host: host,
@@ -654,6 +682,7 @@ func TestOpenHTTPStoreHonorsNeverAutoRestartPolicy(t *testing.T) {
 			runtimeHost:       host,
 			runtimePort:       strconv.Itoa(port),
 			runtimeAPIVersion: strconv.Itoa(daemonAPIVersion),
+			runtimeCreateTime: matchingProcessCreateTime(t),
 		},
 	})
 	require.NoError(
@@ -822,6 +851,7 @@ func TestWaitForUsableBackgroundRuntimeTakesOverUpgradeEligibleDaemon(t *testing
 			runtimeHost:       ping.Host,
 			runtimePort:       strconv.Itoa(ping.Port),
 			runtimeAPIVersion: strconv.Itoa(daemonAPIVersion),
+			runtimeCreateTime: matchingProcessCreateTime(t),
 		},
 	})
 	require.NoError(err, "write runtime record")

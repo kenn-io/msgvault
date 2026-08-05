@@ -192,6 +192,7 @@ func TestStopLocalDaemonsForUpdateStopsLiveRuntimeRecords(t *testing.T) {
 			runtimeHost:       server.Host,
 			runtimePort:       portText,
 			runtimeAPIVersion: strconv.Itoa(daemonAPIVersion),
+			runtimeCreateTime: matchingProcessCreateTime(t),
 		},
 	})
 	require.NoError(err, "write runtime")
