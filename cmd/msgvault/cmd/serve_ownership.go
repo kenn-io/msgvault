@@ -112,7 +112,7 @@ func (o *serveOwnership) EnsureRuntimeRecord() error {
 	store := daemonRuntimeStore(o.dataDir)
 	path, err := store.Path(o.record.PID)
 	if err != nil {
-		return err
+		return fmt.Errorf("daemon runtime record path: %w", err)
 	}
 	if _, err := os.Stat(path); err == nil {
 		return nil
