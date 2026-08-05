@@ -176,6 +176,9 @@ func findRespondingDaemonRuntime(
 		return nil, false, err
 	}
 	for _, rec := range records {
+		if runtimeRecordIdentityMismatched(rec) {
+			continue
+		}
 		info, err := probeDaemonRuntimeRecord(ctx, rec)
 		if err != nil {
 			if ctxErr := ctx.Err(); ctxErr != nil {
@@ -202,6 +205,7 @@ func listLiveDaemonRuntimeRecords(dataDir string) ([]daemon.RuntimeRecord, error
 	if err != nil {
 		return nil, fmt.Errorf("list daemon runtimes: %w", err)
 	}
+	ownershipHeld := daemonOwnerLockHeld(dataDir)
 	alive := make([]daemon.RuntimeRecord, 0, len(records))
 	for _, rec := range records {
 		if rec.Service != "" && rec.Service != daemonService {
@@ -210,7 +214,8 @@ func listLiveDaemonRuntimeRecords(dataDir string) ([]daemon.RuntimeRecord, error
 		if !daemon.ProcessAlive(rec.PID) {
 			continue
 		}
-		if runtimeRecordIdentityMismatched(context.Background(), rec) {
+		if runtimeRecordIdentityMismatched(rec) &&
+			(!ownershipHeld || rec.Metadata[runtimeStartupPhase] == "") {
 			continue
 		}
 		alive = append(alive, rec)
@@ -314,14 +319,12 @@ func probeDaemonRuntimeRecord(ctx context.Context, rec daemon.RuntimeRecord) (da
 
 // runtimeRecordIdentityMismatched reports whether rec.PID demonstrably
 // belongs to a different process than the daemon that wrote the record
-// (PID reuse). The create-time comparison alone is unreliable — container
-// boot-time reads jitter by whole seconds and gopsutil can fail
-// transiently — so an indeterminate comparison keeps the record, and a
-// beyond-tolerance mismatch is only trusted after the daemon also fails
-// an HTTP probe of its recorded address. This function never deletes the
-// record file: genuinely dead PIDs are reaped by CleanupDead, and
-// anything else is left in place for inspection.
-func runtimeRecordIdentityMismatched(ctx context.Context, rec daemon.RuntimeRecord) bool {
+// (PID reuse). An indeterminate comparison keeps the record, but an
+// affirmative mismatch is never overridden by the unauthenticated HTTP
+// ping at the recorded address. This function never deletes the record
+// file: genuinely dead PIDs are reaped by CleanupDead, and anything else
+// is left in place for inspection.
+func runtimeRecordIdentityMismatched(rec daemon.RuntimeRecord) bool {
 	if rec.Metadata == nil {
 		return false
 	}
@@ -329,17 +332,7 @@ func runtimeRecordIdentityMismatched(ctx context.Context, rec daemon.RuntimeReco
 	if recorded == "" {
 		return false
 	}
-	if compareProcessCreateTime(rec.PID, recorded) != createTimeMismatch {
-		return false
-	}
-	// Genuine mismatch: give the daemon the chance to prove itself over
-	// HTTP — the authoritative liveness signal — before distrusting the
-	// record. The probe costs at most 500ms and only runs on mismatch.
-	info, err := probeDaemonRuntimeRecord(ctx, rec)
-	if err != nil {
-		return true
-	}
-	return info.PID != rec.PID
+	return compareProcessCreateTime(rec.PID, recorded) == createTimeMismatch
 }
 
 // processCreateTimeMillisForRun is swappable in tests to simulate gopsutil

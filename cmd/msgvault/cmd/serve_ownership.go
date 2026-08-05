@@ -171,6 +171,19 @@ func daemonOwnerLockPath(dataDir string) string {
 	return filepath.Join(dataDir, daemonOwnerLockFile)
 }
 
+// daemonOwnerLockHeld reports whether another process currently owns the
+// archive's daemon lease. The lease can establish that daemon startup is in
+// progress even when process create-time reads are temporarily inconsistent;
+// it does not authenticate a runtime record's PID or HTTP endpoint.
+func daemonOwnerLockHeld(dataDir string) bool {
+	lock, err := tryAcquireDaemonOwnerLock(dataDir)
+	if err == nil {
+		_ = lock.Close()
+		return false
+	}
+	return errors.As(err, &daemonOwnerLockHeldError{})
+}
+
 func tryAcquireDaemonOwnerLock(dataDir string) (*daemonOwnerLock, error) {
 	if err := os.MkdirAll(dataDir, 0o700); err != nil {
 		return nil, fmt.Errorf("create data dir for daemon lock: %w", err)

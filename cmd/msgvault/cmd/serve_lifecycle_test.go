@@ -332,6 +332,102 @@ func TestRunServeStatusReportsStartupPhase(t *testing.T) {
 	assert.Empty(stderr.String())
 }
 
+func TestRunServeStatusKeepsInitializingRecordWhenOwnershipHeldDespiteCreateTimeMismatch(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	dataDir := t.TempDir()
+	owner, err := tryAcquireDaemonOwnerLock(dataDir)
+	require.NoError(err, "acquire daemon ownership")
+	t.Cleanup(func() { require.NoError(owner.Close(), "release daemon ownership") })
+	stubProcessCreateTimeMillis(t, func(int) (int64, bool) { return 1_000, true })
+
+	_, err = daemonRuntimeStore(dataDir).Write(daemon.RuntimeRecord{
+		PID:     os.Getpid(),
+		Network: daemon.NetworkTCP,
+		Address: "127.0.0.1:1",
+		Service: daemonService,
+		Version: "v-test",
+		Metadata: map[string]string{
+			runtimeCreateTime:   "10000",
+			runtimeStartupPhase: "migrating archive schema",
+		},
+	})
+	require.NoError(err, "write starting runtime record")
+
+	cmd, stdout, stderr := lifecycleTestCommand()
+	require.NoError(runServeStatus(cmd, dataDir), "runServeStatus")
+
+	assert.Contains(stdout.String(),
+		"msgvault daemon starting (pid "+strconv.Itoa(os.Getpid())+"): migrating archive schema",
+		"held ownership keeps the initializing record visible")
+	assert.Empty(stderr.String())
+}
+
+func TestStopTargetRequiresProcessIdentityDespiteRespondingPing(t *testing.T) {
+	require := require.New(t)
+
+	server := httptest.NewServer(daemon.NewPingHandler(daemon.PingHandlerOptions{
+		Service: daemonService,
+		Version: Version,
+	}))
+	t.Cleanup(server.Close)
+	stubProcessCreateTimeMillis(t, func(int) (int64, bool) { return 1_000, true })
+
+	rec := daemon.RuntimeRecord{
+		PID:     os.Getpid(),
+		Network: daemon.NetworkTCP,
+		Address: server.Listener.Addr().String(),
+		Service: daemonService,
+		Metadata: map[string]string{
+			runtimeCreateTime: "10000",
+		},
+	}
+
+	info, err := probeDaemonRuntimeRecord(context.Background(), rec)
+	require.NoError(err, "precondition: recorded endpoint responds to daemon ping")
+	require.Equal(rec.PID, info.PID, "precondition: ping claims the recorded pid")
+	require.False(stopTargetConfirmed(rec),
+		"unauthenticated ping must not authorize signaling a reused PID")
+}
+
+func TestRunServeRestartDoesNotLaunchOverInitializingIdentityMismatch(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	dataDir := t.TempDir()
+	owner, err := tryAcquireDaemonOwnerLock(dataDir)
+	require.NoError(err, "acquire daemon ownership")
+	t.Cleanup(func() { require.NoError(owner.Close(), "release daemon ownership") })
+	stubProcessCreateTimeMillis(t, func(int) (int64, bool) { return 1_000, true })
+
+	_, err = daemonRuntimeStore(dataDir).Write(daemon.RuntimeRecord{
+		PID:     os.Getpid(),
+		Network: daemon.NetworkTCP,
+		Address: "127.0.0.1:1",
+		Service: daemonService,
+		Version: Version,
+		Metadata: map[string]string{
+			runtimeCreateTime:   "10000",
+			runtimeStartupPhase: "migrating archive schema",
+		},
+	})
+	require.NoError(err, "write starting runtime record")
+
+	started := false
+	stubStartServeBackgroundProcess(t, func(*config.Config, backgroundServeStartOptions) (*backgroundServeProcess, error) {
+		started = true
+		return nil, errors.New("unexpected background launch")
+	})
+	cmd, _, _ := lifecycleTestCommand()
+
+	err = runServeRestart(cmd, lifecycleTestConfig(dataDir))
+
+	require.Error(err, "restart must stop when daemon ownership is already held")
+	require.ErrorContains(err, "daemon lock", "error explains the ownership conflict")
+	assert.False(started, "restart must not launch a duplicate daemon")
+}
+
 func TestRunServeStatusNoDaemonWritesOnlyStdout(t *testing.T) {
 	cmd, stdout, stderr := lifecycleTestCommand()
 

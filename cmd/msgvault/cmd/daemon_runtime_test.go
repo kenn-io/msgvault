@@ -429,7 +429,7 @@ func TestListLiveDaemonRuntimeRecordsKeepsRecordWhenCreateTimeUnknown(t *testing
 	})
 }
 
-func TestListLiveDaemonRuntimeRecordsTrustsRespondingDaemonOverCreateTime(t *testing.T) {
+func TestFindDaemonRuntimeRejectsRespondingEndpointWithMismatchedCreateTime(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	dataDir := t.TempDir()
@@ -444,9 +444,9 @@ func TestListLiveDaemonRuntimeRecordsTrustsRespondingDaemonOverCreateTime(t *tes
 	live, ok := processCreateTimeMillis(os.Getpid())
 	require.True(ok, "read live create time")
 
-	// Ten minutes of skew is a genuine mismatch, but the daemon answering
-	// on its recorded address with the recorded PID is the authoritative
-	// liveness signal and must win.
+	// A responding endpoint is not process-identity proof. Once the local
+	// create time confirms PID reuse, an unauthenticated ping must not make
+	// the stale record discoverable.
 	_, err = daemonRuntimeStore(dataDir).Write(daemon.RuntimeRecord{
 		PID:     os.Getpid(),
 		Network: daemon.NetworkTCP,
@@ -454,18 +454,18 @@ func TestListLiveDaemonRuntimeRecordsTrustsRespondingDaemonOverCreateTime(t *tes
 		Service: daemonService,
 		Version: "v-test",
 		Metadata: map[string]string{
-			runtimeHost:       host,
-			runtimePort:       portText,
-			runtimeCreateTime: strconv.FormatInt(live+10*60*1000, 10),
+			runtimeHost:             host,
+			runtimePort:             portText,
+			runtimeAPIVersion:       strconv.Itoa(daemonAPIVersion),
+			runtimeAPISchemaVersion: api.APISchemaVersion,
+			runtimeCreateTime:       strconv.FormatInt(live+10*60*1000, 10),
 		},
 	})
 	require.NoError(err, "write runtime record")
 
-	records, err := listLiveDaemonRuntimeRecords(dataDir)
+	rt := findDaemonRuntime(dataDir)
 
-	require.NoError(err, "list live records")
-	require.Len(records, 1, "responding daemon outweighs create-time mismatch")
-	assert.Equal(os.Getpid(), records[0].PID, "pid")
+	assert.Nil(rt, "mismatched process identity must outweigh an unauthenticated ping")
 	assertRuntimeRecordFileExists(t, dataDir)
 }
 

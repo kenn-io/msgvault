@@ -341,6 +341,34 @@ func TestRefuseRestoreIntoLiveDaemonHomeBlocksIncompatibleDaemon(t *testing.T) {
 		"an aliased path to the archive home must be refused")
 }
 
+func TestRefuseRestoreIntoLiveDaemonHomeBlocksUnverifiableDaemonOwner(t *testing.T) {
+	require := require.New(t)
+	dataDir := t.TempDir()
+	owner, err := tryAcquireDaemonOwnerLock(dataDir)
+	require.NoError(err, "acquire daemon ownership")
+	t.Cleanup(func() { require.NoError(owner.Close(), "release daemon ownership") })
+	stubProcessCreateTimeMillis(t, func(int) (int64, bool) { return 1_000, true })
+
+	_, err = daemonRuntimeStore(dataDir).Write(daemon.RuntimeRecord{
+		PID:     os.Getpid(),
+		Network: daemon.NetworkTCP,
+		Address: "127.0.0.1:1",
+		Service: daemonService,
+		Metadata: map[string]string{
+			runtimeCreateTime: "10000",
+		},
+	})
+	require.NoError(err, "write mismatched runtime record")
+
+	savedCfg := cfg
+	t.Cleanup(func() { cfg = savedCfg })
+	cfg = &config.Config{Data: config.DataConfig{DataDir: dataDir}}
+
+	err = refuseRestoreIntoLiveDaemonHome(dataDir)
+	require.ErrorContains(err, "running daemon",
+		"held daemon ownership must block restore even when endpoint identity is unverifiable")
+}
+
 func TestResolveBackupRepoNilConfig(t *testing.T) {
 	savedCfg := cfg
 	defer func() { cfg = savedCfg }()

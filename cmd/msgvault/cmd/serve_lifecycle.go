@@ -264,6 +264,11 @@ func prepareBackgroundDaemonStart(
 			return backgroundDaemonStartPreparation{}, fmt.Errorf("stop older daemon before restart: %w", err)
 		}
 	}
+	if daemonOwnerLockHeld(c.Data.DataDir) {
+		return backgroundDaemonStartPreparation{}, daemonOwnerLockHeldError{
+			path: daemonOwnerLockPath(c.Data.DataDir),
+		}
+	}
 	return backgroundDaemonStartPreparation{}, nil
 }
 
@@ -403,12 +408,7 @@ func stopDaemonRuntimeForUpgradeImpl(c config.Config, rt *DaemonRuntime) error {
 }
 
 func stopTargetConfirmed(rec daemon.RuntimeRecord) bool {
-	return daemonRecordPingConfirmed(rec) || processIdentityConfirmed(rec)
-}
-
-func daemonRecordPingConfirmed(rec daemon.RuntimeRecord) bool {
-	info, err := probeDaemonRuntimeRecord(context.Background(), rec)
-	return err == nil && info.PID == rec.PID
+	return processIdentityConfirmed(rec)
 }
 
 func processIdentityConfirmed(rec daemon.RuntimeRecord) bool {
@@ -419,6 +419,9 @@ func processIdentityConfirmed(rec daemon.RuntimeRecord) bool {
 }
 
 func stopDaemonProcess(out io.Writer, rec daemon.RuntimeRecord, apiKey string, grace time.Duration) error {
+	if !processIdentityConfirmed(rec) {
+		return fmt.Errorf("cannot confirm pid %d is the recorded msgvault daemon", rec.PID)
+	}
 	process, err := os.FindProcess(rec.PID)
 	if err != nil {
 		return fmt.Errorf("find process: %w", err)
@@ -433,6 +436,9 @@ func stopDaemonProcess(out io.Writer, rec daemon.RuntimeRecord, apiKey string, g
 			"pid", rec.PID, "error", shutdownErr)
 	}
 	if !shutdownRequested {
+		if !processIdentityConfirmed(rec) {
+			return fmt.Errorf("cannot confirm pid %d is still the recorded msgvault daemon", rec.PID)
+		}
 		if err := signalDaemonProcess(process); err != nil {
 			return fmt.Errorf("signal process: %w", err)
 		}
@@ -442,6 +448,9 @@ func stopDaemonProcess(out io.Writer, rec daemon.RuntimeRecord, apiKey string, g
 	}
 	_, _ = fmt.Fprintf(out, "msgvault (pid %d) did not exit within %s; force-killing it.\n",
 		rec.PID, grace.Round(time.Second))
+	if !processIdentityConfirmed(rec) {
+		return fmt.Errorf("cannot confirm pid %d is still the recorded msgvault daemon", rec.PID)
+	}
 	if err := killDaemonProcess(process); err != nil {
 		return fmt.Errorf("kill process: %w", err)
 	}
