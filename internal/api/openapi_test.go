@@ -181,14 +181,40 @@ func TestOpenAPIFastSearchDocumentsSourceIDs(t *testing.T) {
 	assert.Fail("source_ids query parameter is not documented for fastSearch")
 }
 
+func TestOpenAPIPersonAttributeContract(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	assert.Equal("1.35.0", APISchemaVersion,
+		"attribute registry and person attributes are an additive schema release")
+
+	doc := OpenAPIDocument()
+	definitions := doc.Paths["/api/v1/attribute-definitions"]
+	require.NotNil(definitions, "attribute definitions path")
+	assert.NotNil(definitions.Get, "attribute definitions list operation")
+	assert.NotNil(definitions.Post, "attribute definitions create operation")
+	definition := doc.Paths["/api/v1/attribute-definitions/{id}"]
+	require.NotNil(definition, "attribute definition path")
+	assert.NotNil(definition.Patch, "attribute definition patch operation")
+	assert.NotNil(definition.Delete, "attribute definition delete operation")
+	values := doc.Paths["/api/v1/persons/{id}/attributes"]
+	require.NotNil(values, "person attributes path")
+	assert.NotNil(values.Get, "person attributes list operation")
+	value := doc.Paths["/api/v1/persons/{id}/attributes/{slug}"]
+	require.NotNil(value, "person attribute value path")
+	assert.NotNil(value.Put, "person attribute set operation")
+	assert.NotNil(value.Delete, "person attribute clear operation")
+}
+
 func TestOpenAPIMeetingImportContract(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 
 	// Pinned so that anyone bumping the schema version has to come here and
 	// confirm the meeting-import contract below still holds. Meeting import
-	// shipped in 1.33.0; the feed added in 1.34.0 did not touch it.
-	assert.Equal("1.34.0", APISchemaVersion, "meeting import is an additive schema release")
+	// shipped in 1.33.0; the feed added in 1.34.0 and the attributes added
+	// in 1.35.0 did not touch it.
+	assert.Equal("1.35.0", APISchemaVersion, "meeting import is an additive schema release")
 
 	doc := OpenAPIDocument()
 	path := doc.Paths["/api/v1/import/meeting"]

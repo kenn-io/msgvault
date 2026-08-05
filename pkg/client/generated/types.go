@@ -183,6 +183,147 @@ func (a AttachmentInfo) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(a))
 }
 
+type AttributeChoice struct {
+	Label string `json:"label" validate:"required"`
+	Value string `json:"value" validate:"required"`
+}
+
+func (a AttributeChoice) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(a))
+}
+
+type AttributeDefinition struct {
+	APIMutable    bool              `json:"api_mutable"`
+	Cardinality   string            `json:"cardinality" validate:"required"`
+	CreatedAt     time.Time         `json:"created_at" validate:"required"`
+	DerivedSource *string           `json:"derived_source,omitempty"`
+	Description   *string           `json:"description,omitempty"`
+	DisplayOrder  int64             `json:"display_order"`
+	FieldType     string            `json:"field_type" validate:"required"`
+	HistoryExempt bool              `json:"history_exempt"`
+	ID            int64             `json:"id"`
+	IsActive      bool              `json:"is_active"`
+	IsAudited     bool              `json:"is_audited"`
+	IsDeletable   bool              `json:"is_deletable"`
+	IsRequired    bool              `json:"is_required"`
+	IsSearchable  bool              `json:"is_searchable"`
+	Label         string            `json:"label" validate:"required"`
+	ObjectType    string            `json:"object_type" validate:"required"`
+	Options       *AttributeOptions `json:"options,omitempty"`
+	Ownership     string            `json:"ownership" validate:"required"`
+	RecordTarget  *string           `json:"record_target,omitempty"`
+	Revision      int64             `json:"revision"`
+	Slug          string            `json:"slug" validate:"required"`
+	UICreatable   bool              `json:"ui_creatable"`
+	UIEditable    bool              `json:"ui_editable"`
+	UniversalID   string            `json:"universal_id" validate:"required"`
+	UpdatedAt     time.Time         `json:"updated_at" validate:"required"`
+	ValueType     string            `json:"value_type" validate:"required"`
+	VcardProperty *string           `json:"vcard_property,omitempty"`
+}
+
+func (a AttributeDefinition) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(a.Cardinality, "required"); err != nil {
+		errors = errors.Append("Cardinality", err)
+	}
+	if err := typesValidator.Var(a.CreatedAt, "required"); err != nil {
+		errors = errors.Append("CreatedAt", err)
+	}
+	if err := typesValidator.Var(a.FieldType, "required"); err != nil {
+		errors = errors.Append("FieldType", err)
+	}
+	if err := typesValidator.Var(a.Label, "required"); err != nil {
+		errors = errors.Append("Label", err)
+	}
+	if err := typesValidator.Var(a.ObjectType, "required"); err != nil {
+		errors = errors.Append("ObjectType", err)
+	}
+	if a.Options != nil {
+		if v, ok := any(a.Options).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Options", err)
+			}
+		}
+	}
+	if err := typesValidator.Var(a.Ownership, "required"); err != nil {
+		errors = errors.Append("Ownership", err)
+	}
+	if err := typesValidator.Var(a.Slug, "required"); err != nil {
+		errors = errors.Append("Slug", err)
+	}
+	if err := typesValidator.Var(a.UniversalID, "required"); err != nil {
+		errors = errors.Append("UniversalID", err)
+	}
+	if err := typesValidator.Var(a.UpdatedAt, "required"); err != nil {
+		errors = errors.Append("UpdatedAt", err)
+	}
+	if err := typesValidator.Var(a.ValueType, "required"); err != nil {
+		errors = errors.Append("ValueType", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type AttributeDefinitionsResponse struct {
+	Definitions []AttributeDefinition `json:"definitions,omitempty" validate:"required"`
+}
+
+func (a AttributeDefinitionsResponse) Validate() error {
+	var errors runtime.ValidationErrors
+	for i, item := range a.Definitions {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Definitions[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type AttributeOptions struct {
+	Choices   []AttributeChoice `json:"choices,omitempty"`
+	MaxLength *int64            `json:"max_length,omitempty"`
+	Unit      *string           `json:"unit,omitempty"`
+}
+
+func (a AttributeOptions) Validate() error {
+	var errors runtime.ValidationErrors
+	for i, item := range a.Choices {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Choices[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type AttributeValue struct {
+	Boolean    *bool           `json:"boolean,omitempty"`
+	Date       *string         `json:"date,omitempty"`
+	Integer    *int64          `json:"integer,omitempty"`
+	JSON       json.RawMessage `json:"json,omitempty"`
+	Real       *float64        `json:"real,omitempty"`
+	RecordID   *int64          `json:"record_id,omitempty"`
+	RecordType *string         `json:"record_type,omitempty"`
+	Text       *string         `json:"text,omitempty"`
+	Timestamp  *time.Time      `json:"timestamp,omitempty"`
+	Type       string          `json:"type" validate:"required"`
+}
+
+func (a AttributeValue) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(a))
+}
+
 type BackupFreezeBeginResponse struct {
 	Token string `json:"token" validate:"required"`
 }
@@ -995,6 +1136,62 @@ func (c ConversationResponse) Validate() error {
 				errors = errors.Append(fmt.Sprintf("Messages[%d]", i), err)
 			}
 		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type CreateAttributeDefinitionRequest struct {
+	Cardinality   *CreateAttributeDefinitionRequestCardinality `json:"cardinality,omitempty"`
+	Description   *string                                      `json:"description,omitempty"`
+	DisplayOrder  *int64                                       `json:"display_order,omitempty"`
+	FieldType     string                                       `json:"field_type" validate:"required"`
+	IsAudited     *bool                                        `json:"is_audited,omitempty"`
+	IsRequired    *bool                                        `json:"is_required,omitempty"`
+	IsSearchable  *bool                                        `json:"is_searchable,omitempty"`
+	Label         string                                       `json:"label" validate:"required"`
+	ObjectType    CreateAttributeDefinitionRequestObjectType   `json:"object_type" validate:"required"`
+	Options       *AttributeOptions                            `json:"options,omitempty"`
+	RecordTarget  *string                                      `json:"record_target,omitempty"`
+	Slug          string                                       `json:"slug" validate:"required"`
+	ValueType     string                                       `json:"value_type" validate:"required"`
+	VcardProperty *string                                      `json:"vcard_property,omitempty"`
+}
+
+func (c CreateAttributeDefinitionRequest) Validate() error {
+	var errors runtime.ValidationErrors
+	if c.Cardinality != nil {
+		if v, ok := any(c.Cardinality).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Cardinality", err)
+			}
+		}
+	}
+	if err := typesValidator.Var(c.FieldType, "required"); err != nil {
+		errors = errors.Append("FieldType", err)
+	}
+	if err := typesValidator.Var(c.Label, "required"); err != nil {
+		errors = errors.Append("Label", err)
+	}
+	if v, ok := any(c.ObjectType).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("ObjectType", err)
+		}
+	}
+	if c.Options != nil {
+		if v, ok := any(c.Options).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Options", err)
+			}
+		}
+	}
+	if err := typesValidator.Var(c.Slug, "required"); err != nil {
+		errors = errors.Append("Slug", err)
+	}
+	if err := typesValidator.Var(c.ValueType, "required"); err != nil {
+		errors = errors.Append("ValueType", err)
 	}
 	if len(errors) == 0 {
 		return nil
@@ -2736,6 +2933,13 @@ type OperationHealth struct {
 	StartedAt *time.Time `json:"started_at,omitempty"`
 }
 
+type PatchAttributeDefinitionRequest struct {
+	Description  *string `json:"description,omitempty"`
+	DisplayOrder *int64  `json:"display_order,omitempty"`
+	IsActive     *bool   `json:"is_active,omitempty"`
+	Label        *string `json:"label,omitempty"`
+}
+
 type PatchPersonRequest struct {
 	DisplayName *string `json:"display_name" validate:"omitempty"`
 }
@@ -2778,6 +2982,129 @@ type Person struct {
 
 func (p Person) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(p))
+}
+
+type PersonAttributeGroup struct {
+	Current    []PersonAttributeValue `json:"current,omitempty" validate:"required"`
+	Definition AttributeDefinition    `json:"definition"`
+	History    []PersonAttributeValue `json:"history,omitempty"`
+}
+
+func (p PersonAttributeGroup) Validate() error {
+	var errors runtime.ValidationErrors
+	for i, item := range p.Current {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Current[%d]", i), err)
+			}
+		}
+	}
+	if v, ok := any(p.Definition).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Definition", err)
+		}
+	}
+	for i, item := range p.History {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("History[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type PersonAttributeValue struct {
+	ActiveFrom     time.Time      `json:"active_from" validate:"required"`
+	ActiveUntil    *time.Time     `json:"active_until,omitempty"`
+	Actor          *string        `json:"actor,omitempty"`
+	Confidence     *float64       `json:"confidence,omitempty"`
+	CreatedAt      time.Time      `json:"created_at" validate:"required"`
+	DefinitionID   int64          `json:"definition_id"`
+	DefinitionSlug string         `json:"definition_slug" validate:"required"`
+	ID             int64          `json:"id"`
+	Ordinal        int64          `json:"ordinal"`
+	PersonID       int64          `json:"person_id"`
+	Source         string         `json:"source" validate:"required"`
+	SourceRef      *string        `json:"source_ref,omitempty"`
+	SupersededAt   *time.Time     `json:"superseded_at,omitempty"`
+	Value          AttributeValue `json:"value"`
+}
+
+func (p PersonAttributeValue) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(p.ActiveFrom, "required"); err != nil {
+		errors = errors.Append("ActiveFrom", err)
+	}
+	if err := typesValidator.Var(p.CreatedAt, "required"); err != nil {
+		errors = errors.Append("CreatedAt", err)
+	}
+	if err := typesValidator.Var(p.DefinitionSlug, "required"); err != nil {
+		errors = errors.Append("DefinitionSlug", err)
+	}
+	if err := typesValidator.Var(p.Source, "required"); err != nil {
+		errors = errors.Append("Source", err)
+	}
+	if v, ok := any(p.Value).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Value", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type PersonAttributeWrite struct {
+	DryRun     bool                  `json:"dry_run"`
+	Superseded *PersonAttributeValue `json:"superseded,omitempty"`
+	Value      *PersonAttributeValue `json:"value,omitempty"`
+}
+
+func (p PersonAttributeWrite) Validate() error {
+	var errors runtime.ValidationErrors
+	if p.Superseded != nil {
+		if v, ok := any(p.Superseded).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Superseded", err)
+			}
+		}
+	}
+	if p.Value != nil {
+		if v, ok := any(p.Value).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Value", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type PersonAttributesResponse struct {
+	Attributes []PersonAttributeGroup `json:"attributes,omitempty" validate:"required"`
+	PersonID   int64                  `json:"person_id"`
+}
+
+func (p PersonAttributesResponse) Validate() error {
+	var errors runtime.ValidationErrors
+	for i, item := range p.Attributes {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Attributes[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
 }
 
 type PersonCluster struct {
@@ -3521,6 +3848,38 @@ func (s SessionStatus) Validate() error {
 	if v, ok := any(s.AuthMode).(runtime.Validator); ok {
 		if err := v.Validate(); err != nil {
 			errors = errors.Append("AuthMode", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type SetPersonAttributeRequest struct {
+	ActiveFrom      *time.Time                       `json:"active_from,omitempty"`
+	ActiveUntil     *time.Time                       `json:"active_until,omitempty"`
+	Actor           *string                          `json:"actor,omitempty"`
+	Confidence      *float64                         `json:"confidence,omitempty"`
+	ExpectedValueID *int64                           `json:"expected_value_id,omitempty"`
+	Ordinal         *int64                           `json:"ordinal,omitempty"`
+	Source          *SetPersonAttributeRequestSource `json:"source,omitempty"`
+	SourceRef       *string                          `json:"source_ref,omitempty"`
+	Value           AttributeValue                   `json:"value"`
+}
+
+func (s SetPersonAttributeRequest) Validate() error {
+	var errors runtime.ValidationErrors
+	if s.Source != nil {
+		if v, ok := any(s.Source).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Source", err)
+			}
+		}
+	}
+	if v, ok := any(s.Value).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Value", err)
 		}
 	}
 	if len(errors) == 0 {

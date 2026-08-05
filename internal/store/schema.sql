@@ -634,6 +634,125 @@ CREATE INDEX IF NOT EXISTS idx_participant_links_b
     ON participant_links(participant_b);
 
 -- ============================================================================
+-- PORTABLE FIELD METADATA AND TYPED ATTRIBUTES
+-- ============================================================================
+
+-- Definitions are metadata rows: adding one never issues DDL. universal_id is
+-- the stable external identity, slug is the immutable machine name, and label
+-- is mutable human-facing text. There is deliberately no is_unique column:
+-- only constraints backed by portable database indexes are advertised.
+CREATE TABLE IF NOT EXISTS attribute_definitions (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    universal_id   TEXT NOT NULL UNIQUE,
+    object_type    TEXT NOT NULL,
+    slug           TEXT NOT NULL,
+    label          TEXT NOT NULL,
+    description    TEXT,
+    value_type     TEXT NOT NULL,
+    field_type     TEXT NOT NULL,
+    record_target  TEXT,
+    cardinality    TEXT NOT NULL DEFAULT 'single',
+    display_order  INTEGER NOT NULL DEFAULT 0,
+    is_required    BOOLEAN NOT NULL DEFAULT FALSE,
+    ownership      TEXT NOT NULL DEFAULT 'user',
+    ui_creatable   BOOLEAN NOT NULL DEFAULT TRUE,
+    ui_editable    BOOLEAN NOT NULL DEFAULT TRUE,
+    api_mutable    BOOLEAN NOT NULL DEFAULT TRUE,
+    is_searchable  BOOLEAN NOT NULL DEFAULT FALSE,
+    is_audited     BOOLEAN NOT NULL DEFAULT TRUE,
+    is_deletable   BOOLEAN NOT NULL DEFAULT TRUE,
+    history_exempt BOOLEAN NOT NULL DEFAULT FALSE,
+    derived_source TEXT,
+    options        JSON,
+    vcard_property TEXT,
+    is_active      BOOLEAN NOT NULL DEFAULT TRUE,
+    revision       INTEGER NOT NULL DEFAULT 1,
+    created_at     DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at     DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CHECK (LENGTH(universal_id) > 0),
+    CHECK (LENGTH(slug) > 0),
+    CHECK (LENGTH(label) > 0),
+    CHECK (display_order >= 0)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_attribute_definitions_object_slug
+    ON attribute_definitions(object_type, slug);
+
+CREATE INDEX IF NOT EXISTS idx_attribute_definitions_active
+    ON attribute_definitions(object_type, display_order, id)
+    WHERE is_active = TRUE;
+
+-- One row is one typed value over one world-time interval. active_from and
+-- active_until describe when the fact was true; created_at and superseded_at
+-- describe when Msgvault knew it. Current means both closing timestamps are
+-- NULL, including future retractions that close only transaction time.
+CREATE TABLE IF NOT EXISTS person_attribute_values (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    person_id         INTEGER NOT NULL REFERENCES persons(id) ON DELETE CASCADE,
+    definition_id     INTEGER NOT NULL
+                          REFERENCES attribute_definitions(id) ON DELETE RESTRICT,
+    ordinal           INTEGER NOT NULL DEFAULT 0,
+    value_text        TEXT,
+    value_integer     BIGINT,
+    value_real        REAL,
+    value_boolean     BOOLEAN,
+    -- A complete YYYY-MM-DD date. Go validates digits and calendar validity;
+    -- the portable CHECK below only pins separator positions and length.
+    value_date        TEXT,
+    value_timestamp   DATETIME,
+    value_json        JSON,
+    value_record_type TEXT,
+    value_record_id   INTEGER,
+    active_from       DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    active_until      DATETIME,
+    created_at        DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    superseded_at     DATETIME,
+    source            TEXT NOT NULL,
+    source_ref        TEXT,
+    confidence        REAL,
+    actor             TEXT,
+    CHECK (ordinal >= 0),
+    CHECK (source IN ('user', 'carddav_import', 'vcard_import',
+                      'archive_observation', 'extraction', 'enrichment',
+                      'system')),
+    CHECK (active_until IS NULL OR active_until >= active_from),
+    CHECK (confidence IS NULL OR (confidence >= 0.0 AND confidence <= 1.0)),
+    CHECK (value_date IS NULL OR value_date LIKE '____-__-__'),
+    CHECK (
+        (CASE WHEN value_text      IS NOT NULL THEN 1 ELSE 0 END) +
+        (CASE WHEN value_integer   IS NOT NULL THEN 1 ELSE 0 END) +
+        (CASE WHEN value_real      IS NOT NULL THEN 1 ELSE 0 END) +
+        (CASE WHEN value_boolean   IS NOT NULL THEN 1 ELSE 0 END) +
+        (CASE WHEN value_date      IS NOT NULL THEN 1 ELSE 0 END) +
+        (CASE WHEN value_timestamp IS NOT NULL THEN 1 ELSE 0 END) +
+        (CASE WHEN value_json      IS NOT NULL THEN 1 ELSE 0 END) +
+        (CASE WHEN value_record_id IS NOT NULL THEN 1 ELSE 0 END) = 1
+    ),
+    CHECK ((value_record_id IS NULL) = (value_record_type IS NULL))
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_person_attribute_values_current
+    ON person_attribute_values(person_id, definition_id, ordinal)
+    WHERE active_until IS NULL AND superseded_at IS NULL;
+
+CREATE INDEX IF NOT EXISTS idx_person_attribute_values_history
+    ON person_attribute_values(person_id, definition_id, active_from DESC, id DESC);
+
+CREATE INDEX IF NOT EXISTS idx_person_attribute_values_definition
+    ON person_attribute_values(definition_id, active_until);
+
+CREATE INDEX IF NOT EXISTS idx_person_attribute_values_current_text
+    ON person_attribute_values(definition_id, value_text)
+    WHERE value_text IS NOT NULL
+      AND active_until IS NULL AND superseded_at IS NULL;
+
+-- Person deletion checks for inbound record references; without this the
+-- check scans the whole value table.
+CREATE INDEX IF NOT EXISTS idx_person_attribute_values_record_ref
+    ON person_attribute_values(value_record_type, value_record_id)
+    WHERE value_record_id IS NOT NULL;
+
+-- ============================================================================
 -- APPLIED MIGRATIONS
 -- ============================================================================
 

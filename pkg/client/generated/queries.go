@@ -113,6 +113,14 @@ func (g GetSubAggregatesQuery) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(g))
 }
 
+type ListAttributeDefinitionsQuery struct {
+	// ObjectType Filter by object type
+	ObjectType *string `json:"object_type,omitempty"`
+
+	// IncludeHidden Include deactivated definitions
+	IncludeHidden *bool `json:"include_hidden,omitempty"`
+}
+
 type GetCLIAttachmentQuery struct {
 	// ContentHash Attachment SHA-256 content hash
 	ContentHash string `json:"content_hash" validate:"required"`
@@ -430,6 +438,30 @@ type GetMessageInlinePartQuery struct {
 
 func (g GetMessageInlinePartQuery) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(g))
+}
+
+type ListPersonAttributesQuery struct {
+	// History Include superseded values
+	History *bool `json:"history,omitempty"`
+
+	// Slug Restrict the response to one definition slug
+	Slug *string `json:"slug,omitempty"`
+}
+
+type ClearPersonAttributeQuery struct {
+	// Ordinal Ordinal for a multi-valued definition
+	Ordinal *int64 `json:"ordinal,omitempty"`
+
+	// ExpectedValueID Compare-and-swap: the current value ID expected to be superseded
+	ExpectedValueID *int64 `json:"expected_value_id,omitempty"`
+
+	// DryRun Validate and preview without writing
+	DryRun *bool `json:"dry_run,omitempty"`
+}
+
+type SetPersonAttributeQuery struct {
+	// DryRun Validate and preview without writing
+	DryRun *bool `json:"dry_run,omitempty"`
 }
 
 type SearchMessagesQuery struct {

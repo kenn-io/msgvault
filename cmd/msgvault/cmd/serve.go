@@ -884,6 +884,8 @@ var _ api.CLIDedupDeleteStore = (*storeAPIAdapter)(nil)
 var _ api.ContextCLIDedupDeleteStore = (*storeAPIAdapter)(nil)
 var _ api.IdentityLinkStore = (*storeAPIAdapter)(nil)
 var _ api.PersonProfileStore = (*storeAPIAdapter)(nil)
+var _ api.AttributeDefinitionStore = (*storeAPIAdapter)(nil)
+var _ api.PersonAttributeStore = (*storeAPIAdapter)(nil)
 var _ api.IdentityCacheRefresher = (*storeAPIAdapter)(nil)
 var _ api.ClusterLookupStore = (*storeAPIAdapter)(nil)
 var _ api.ConversationWindowStore = (*storeAPIAdapter)(nil)
@@ -1625,6 +1627,60 @@ func (a *storeAPIAdapter) PersonForParticipantsContext(
 	ctx context.Context, participantIDs []int64,
 ) (*store.Person, error) {
 	return a.store.PersonForParticipantsContext(ctx, participantIDs)
+}
+
+func (a *storeAPIAdapter) ListAttributeDefinitionsContext(
+	ctx context.Context, filter store.AttributeDefinitionFilter,
+) ([]store.AttributeDefinition, error) {
+	return a.store.ListAttributeDefinitionsContext(ctx, filter)
+}
+
+func (a *storeAPIAdapter) GetAttributeDefinitionContext(
+	ctx context.Context, id int64,
+) (*store.AttributeDefinition, error) {
+	return a.store.GetAttributeDefinitionContext(ctx, id)
+}
+
+func (a *storeAPIAdapter) GetAttributeDefinitionBySlugContext(
+	ctx context.Context, objectType store.AttributeObjectType, slug string,
+) (*store.AttributeDefinition, error) {
+	return a.store.GetAttributeDefinitionBySlugContext(ctx, objectType, slug)
+}
+
+func (a *storeAPIAdapter) CreateAttributeDefinitionContext(
+	ctx context.Context, input store.AttributeDefinitionInput,
+) (*store.AttributeDefinition, error) {
+	return a.store.CreateAttributeDefinitionContext(ctx, input)
+}
+
+func (a *storeAPIAdapter) UpdateAttributeDefinitionContext(
+	ctx context.Context, id, expectedRevision int64, update store.AttributeDefinitionUpdate,
+) (*store.AttributeDefinition, error) {
+	return a.store.UpdateAttributeDefinitionContext(ctx, id, expectedRevision, update)
+}
+
+func (a *storeAPIAdapter) DeleteAttributeDefinitionContext(
+	ctx context.Context, id, expectedRevision int64,
+) error {
+	return a.store.DeleteAttributeDefinitionContext(ctx, id, expectedRevision)
+}
+
+func (a *storeAPIAdapter) ListPersonAttributeValuesContext(
+	ctx context.Context, personID int64, query store.PersonAttributeQuery,
+) ([]store.PersonAttributeValue, error) {
+	return a.store.ListPersonAttributeValuesContext(ctx, personID, query)
+}
+
+func (a *storeAPIAdapter) SetPersonAttributeValueContext(
+	ctx context.Context, input store.PersonAttributeValueInput,
+) (*store.PersonAttributeWrite, error) {
+	return a.store.SetPersonAttributeValueContext(ctx, input)
+}
+
+func (a *storeAPIAdapter) SupersedePersonAttributeValueContext(
+	ctx context.Context, input store.PersonAttributeSupersedeInput,
+) (*store.PersonAttributeWrite, error) {
+	return a.store.SupersedePersonAttributeValueContext(ctx, input)
 }
 
 func (a *storeAPIAdapter) ClusterMembers(id int64) ([]int64, error) {

@@ -15,6 +15,7 @@ var (
 	ErrPersonNotFound         = errors.New("person not found")
 	ErrPersonRevisionConflict = errors.New("person revision conflict")
 	ErrPersonBindingConflict  = errors.New("participant clusters belong to different persons")
+	ErrPersonReferenced       = errors.New("person is referenced by another profile")
 )
 
 // PersonBindingConflictError reports the curated people that would be
@@ -162,8 +163,34 @@ func (s *Store) DeletePersonContext(ctx context.Context, id, expectedRevision in
 		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
 			return err
 		}
-		var deletedID int64
+		var revision int64
 		err := tx.QueryRowContext(ctx,
+			`SELECT revision FROM persons WHERE id = ?`+s.dialect.SelectForUpdate(),
+			id).Scan(&revision)
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrPersonNotFound
+		}
+		if err != nil {
+			return fmt.Errorf("verify person %d before delete: %w", id, err)
+		}
+		if revision != expectedRevision {
+			return ErrPersonRevisionConflict
+		}
+		var references int
+		if err := tx.QueryRowContext(ctx, `
+			SELECT COUNT(*)
+			FROM person_attribute_values
+			WHERE value_record_type = 'person' AND value_record_id = ?
+			  AND person_id <> ?
+			  AND active_until IS NULL AND superseded_at IS NULL
+		`, id, id).Scan(&references); err != nil {
+			return fmt.Errorf("check references to person %d: %w", id, err)
+		}
+		if references > 0 {
+			return fmt.Errorf("delete person %d: %w", id, ErrPersonReferenced)
+		}
+		var deletedID int64
+		err = tx.QueryRowContext(ctx,
 			`DELETE FROM persons WHERE id = ? AND revision = ? RETURNING id`,
 			id, expectedRevision).Scan(&deletedID)
 		if errors.Is(err, sql.ErrNoRows) {

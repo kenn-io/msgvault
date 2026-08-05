@@ -195,6 +195,159 @@ components:
         - mime_type
         - size_bytes
       type: object
+    AttributeChoice:
+      additionalProperties: false
+      properties:
+        label:
+          type: string
+        value:
+          type: string
+      required:
+        - value
+        - label
+      type: object
+    AttributeDefinition:
+      additionalProperties: true
+      properties:
+        api_mutable:
+          type: boolean
+        cardinality:
+          type: string
+        created_at:
+          format: date-time
+          type: string
+        derived_source:
+          type: string
+        description:
+          type: string
+        display_order:
+          format: int64
+          type: integer
+        field_type:
+          type: string
+        history_exempt:
+          type: boolean
+        id:
+          format: int64
+          type: integer
+        is_active:
+          type: boolean
+        is_audited:
+          type: boolean
+        is_deletable:
+          type: boolean
+        is_required:
+          type: boolean
+        is_searchable:
+          type: boolean
+        label:
+          type: string
+        object_type:
+          type: string
+        options:
+          $ref: "#/components/schemas/AttributeOptions"
+        ownership:
+          type: string
+        record_target:
+          type: string
+        revision:
+          format: int64
+          type: integer
+        slug:
+          type: string
+        ui_creatable:
+          type: boolean
+        ui_editable:
+          type: boolean
+        universal_id:
+          type: string
+        updated_at:
+          format: date-time
+          type: string
+        value_type:
+          type: string
+        vcard_property:
+          type: string
+      required:
+        - id
+        - universal_id
+        - object_type
+        - slug
+        - label
+        - value_type
+        - field_type
+        - cardinality
+        - display_order
+        - is_required
+        - ownership
+        - ui_creatable
+        - ui_editable
+        - api_mutable
+        - is_searchable
+        - is_audited
+        - is_deletable
+        - history_exempt
+        - is_active
+        - revision
+        - created_at
+        - updated_at
+      type: object
+    AttributeDefinitionsResponse:
+      additionalProperties: true
+      properties:
+        definitions:
+          items:
+            $ref: "#/components/schemas/AttributeDefinition"
+          type:
+            - array
+            - "null"
+      required:
+        - definitions
+      type: object
+    AttributeOptions:
+      additionalProperties: false
+      properties:
+        choices:
+          items:
+            $ref: "#/components/schemas/AttributeChoice"
+          type:
+            - array
+            - "null"
+        max_length:
+          format: int64
+          type: integer
+        unit:
+          type: string
+      type: object
+    AttributeValue:
+      additionalProperties: false
+      properties:
+        boolean:
+          type: boolean
+        date:
+          type: string
+        integer:
+          format: int64
+          type: integer
+        json: {}
+        real:
+          format: double
+          type: number
+        record_id:
+          format: int64
+          type: integer
+        record_type:
+          type: string
+        text:
+          type: string
+        timestamp:
+          format: date-time
+          type: string
+        type:
+          type: string
+      required:
+        - type
+      type: object
     BackupFreezeBeginResponse:
       additionalProperties: true
       properties:
@@ -1222,6 +1375,51 @@ components:
         - has_before
         - has_after
         - total
+      type: object
+    CreateAttributeDefinitionRequest:
+      additionalProperties: false
+      properties:
+        cardinality:
+          enum:
+            - single
+            - multi
+          type: string
+        description:
+          type: string
+        display_order:
+          format: int64
+          type: integer
+        field_type:
+          type: string
+        is_audited:
+          type: boolean
+        is_required:
+          type: boolean
+        is_searchable:
+          type: boolean
+        label:
+          type: string
+        object_type:
+          enum:
+            - person
+            - organization
+          type: string
+        options:
+          $ref: "#/components/schemas/AttributeOptions"
+        record_target:
+          type: string
+        slug:
+          type: string
+        value_type:
+          type: string
+        vcard_property:
+          type: string
+      required:
+        - object_type
+        - slug
+        - label
+        - value_type
+        - field_type
       type: object
     CreatePersonRequest:
       additionalProperties: false
@@ -3047,6 +3245,21 @@ components:
       required:
         - busy
       type: object
+    PatchAttributeDefinitionRequest:
+      additionalProperties: false
+      properties:
+        description:
+          type:
+            - string
+            - "null"
+        display_order:
+          format: int64
+          type: integer
+        is_active:
+          type: boolean
+        label:
+          type: string
+      type: object
     PatchPersonRequest:
       additionalProperties: false
       properties:
@@ -3103,6 +3316,106 @@ components:
         - participant_ids
         - created_at
         - updated_at
+      type: object
+    PersonAttributeGroup:
+      additionalProperties: true
+      properties:
+        current:
+          items:
+            $ref: "#/components/schemas/PersonAttributeValue"
+          type:
+            - array
+            - "null"
+        definition:
+          $ref: "#/components/schemas/AttributeDefinition"
+        history:
+          items:
+            $ref: "#/components/schemas/PersonAttributeValue"
+          type:
+            - array
+            - "null"
+      required:
+        - definition
+        - current
+      type: object
+    PersonAttributeValue:
+      additionalProperties: true
+      properties:
+        active_from:
+          format: date-time
+          type: string
+        active_until:
+          format: date-time
+          type: string
+        actor:
+          type: string
+        confidence:
+          format: double
+          type: number
+        created_at:
+          format: date-time
+          type: string
+        definition_id:
+          format: int64
+          type: integer
+        definition_slug:
+          type: string
+        id:
+          format: int64
+          type: integer
+        ordinal:
+          format: int64
+          type: integer
+        person_id:
+          format: int64
+          type: integer
+        source:
+          type: string
+        source_ref:
+          type: string
+        superseded_at:
+          format: date-time
+          type: string
+        value:
+          $ref: "#/components/schemas/AttributeValue"
+      required:
+        - id
+        - person_id
+        - definition_id
+        - definition_slug
+        - ordinal
+        - value
+        - active_from
+        - created_at
+        - source
+      type: object
+    PersonAttributeWrite:
+      additionalProperties: true
+      properties:
+        dry_run:
+          type: boolean
+        superseded:
+          $ref: "#/components/schemas/PersonAttributeValue"
+        value:
+          $ref: "#/components/schemas/PersonAttributeValue"
+      required:
+        - dry_run
+      type: object
+    PersonAttributesResponse:
+      additionalProperties: true
+      properties:
+        attributes:
+          items:
+            $ref: "#/components/schemas/PersonAttributeGroup"
+          type:
+            - array
+            - "null"
+        person_id:
+          format: int64
+          type: integer
+      required:
+        - person_id
+        - attributes
       type: object
     PersonCluster:
       additionalProperties: true
@@ -3865,6 +4178,43 @@ components:
         - auth_mode
         - https
         - plain_http_warning
+      type: object
+    SetPersonAttributeRequest:
+      additionalProperties: false
+      properties:
+        active_from:
+          format: date-time
+          type: string
+        active_until:
+          format: date-time
+          type: string
+        actor:
+          type: string
+        confidence:
+          format: double
+          type: number
+        expected_value_id:
+          format: int64
+          type: integer
+        ordinal:
+          format: int64
+          type: integer
+        source:
+          enum:
+            - user
+            - carddav_import
+            - vcard_import
+            - archive_observation
+            - extraction
+            - enrichment
+            - system
+          type: string
+        source_ref:
+          type: string
+        value:
+          $ref: "#/components/schemas/AttributeValue"
+      required:
+        - value
       type: object
     Setting:
       additionalProperties: true
@@ -4791,7 +5141,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 1.34.0
+  version: 1.35.0
 openapi: 3.1.0
 paths:
   /api/ping:
@@ -5233,6 +5583,274 @@ paths:
       security:
         - apiKey: []
       summary: Get attachment metadata
+      tags:
+        - API
+  /api/v1/attribute-definitions:
+    get:
+      operationId: listAttributeDefinitions
+      parameters:
+        - description: Filter by object type
+          in: query
+          name: object_type
+          schema:
+            type: string
+        - description: Include deactivated definitions
+          in: query
+          name: include_hidden
+          schema:
+            type: boolean
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AttributeDefinitionsResponse"
+          description: OK
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: List portable attribute definitions
+      tags:
+        - API
+    post:
+      operationId: createAttributeDefinition
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateAttributeDefinitionRequest"
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AttributeDefinition"
+          description: Created
+          headers:
+            ETag:
+              description: Strong attribute definition revision tag
+              schema:
+                type: string
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Create a user attribute definition
+      tags:
+        - API
+  /api/v1/attribute-definitions/{id}:
+    delete:
+      operationId: deleteAttributeDefinition
+      parameters:
+        - description: Attribute definition ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+        - description: Strong ETag returned by the latest definition read
+          in: header
+          name: If-Match
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: No Content
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "428":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Delete a user attribute definition
+      tags:
+        - API
+    get:
+      operationId: getAttributeDefinition
+      parameters:
+        - description: Attribute definition ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AttributeDefinition"
+          description: OK
+          headers:
+            ETag:
+              description: Strong attribute definition revision tag
+              schema:
+                type: string
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Get one attribute definition
+      tags:
+        - API
+    patch:
+      operationId: patchAttributeDefinition
+      parameters:
+        - description: Attribute definition ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+        - description: Strong ETag returned by the latest definition read
+          in: header
+          name: If-Match
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PatchAttributeDefinitionRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AttributeDefinition"
+          description: OK
+          headers:
+            ETag:
+              description: Strong attribute definition revision tag
+              schema:
+                type: string
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "428":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Update mutable attribute definition fields
       tags:
         - API
   /api/v1/auth/token/{email}:
@@ -8711,6 +9329,202 @@ paths:
       security:
         - apiKey: []
       summary: Update a durable person's display name
+      tags:
+        - API
+  /api/v1/persons/{id}/attributes:
+    get:
+      operationId: listPersonAttributes
+      parameters:
+        - description: Durable person ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+        - description: Include superseded values
+          in: query
+          name: history
+          schema:
+            type: boolean
+        - description: Restrict the response to one definition slug
+          in: query
+          name: slug
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PersonAttributesResponse"
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: List a person's typed attributes
+      tags:
+        - API
+  /api/v1/persons/{id}/attributes/{slug}:
+    delete:
+      operationId: clearPersonAttribute
+      parameters:
+        - description: Durable person ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+        - description: Immutable attribute definition slug
+          in: path
+          name: slug
+          required: true
+          schema:
+            type: string
+        - description: Ordinal for a multi-valued definition
+          in: query
+          name: ordinal
+          schema:
+            format: int64
+            type: integer
+        - description: "Compare-and-swap: the current value ID expected to be superseded"
+          in: query
+          name: expected_value_id
+          schema:
+            format: int64
+            type: integer
+        - description: Validate and preview without writing
+          in: query
+          name: dry_run
+          schema:
+            type: boolean
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PersonAttributeWrite"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Supersede a person's attribute value
+      tags:
+        - API
+    put:
+      operationId: setPersonAttribute
+      parameters:
+        - description: Durable person ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+        - description: Immutable attribute definition slug
+          in: path
+          name: slug
+          required: true
+          schema:
+            type: string
+        - description: Validate and preview without writing
+          in: query
+          name: dry_run
+          schema:
+            type: boolean
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SetPersonAttributeRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PersonAttributeWrite"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Set a person's attribute value
       tags:
         - API
   /api/v1/query:

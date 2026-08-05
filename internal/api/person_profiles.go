@@ -220,6 +220,9 @@ func (s *Server) writePersonError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusConflict, "person_revision_conflict", "Person profile changed; reload and retry")
 	case errors.Is(err, store.ErrPersonBindingConflict):
 		writeError(w, http.StatusConflict, "person_binding_conflict", "The identity clusters belong to different person profiles")
+	case errors.Is(err, store.ErrPersonReferenced):
+		writeError(w, http.StatusConflict, "person_referenced",
+			"Another profile still references this person")
 	case errors.Is(err, store.ErrParticipantNotFound), errors.Is(err, store.ErrInvalidParticipantID):
 		writeError(w, http.StatusBadRequest, "invalid_participant_id", err.Error())
 	default:

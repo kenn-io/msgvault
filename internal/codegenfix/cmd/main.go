@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"go/format"
 	"os"
 
 	"go.kenn.io/msgvault/internal/codegenfix"
@@ -17,6 +18,9 @@ func main() {
 	source, err := os.ReadFile(path)
 	if err == nil {
 		source, err = codegenfix.RewriteGeneratedValidators(source)
+	}
+	if err == nil {
+		source, err = format.Source(source)
 	}
 	if err == nil {
 		// #nosec G703 -- path is the same explicit generated-file argument read above.

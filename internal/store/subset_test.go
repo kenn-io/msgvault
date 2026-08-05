@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"os"
@@ -13,6 +14,24 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func subsetPersonDefinition(slug string) AttributeDefinitionInput {
+	return AttributeDefinitionInput{
+		UniversalID: "test-" + slug,
+		ObjectType:  AttributeObjectPerson,
+		Slug:        slug,
+		Label:       "Test " + slug,
+		ValueType:   AttributeValueText,
+		FieldType:   AttributeFieldText,
+		Cardinality: AttributeCardinalitySingle,
+		Ownership:   AttributeOwnershipUser,
+		UICreatable: true,
+		UIEditable:  true,
+		APIMutable:  true,
+		IsAudited:   true,
+		IsDeletable: true,
+	}
+}
 
 // createTestSourceDB creates a source database with schema and test
 // data. Returns the path to the database.
@@ -292,6 +311,186 @@ func TestCopySubset_PreservesPersonProfiles(t *testing.T) {
 	assert.Equal(person.DisplayName, copied.DisplayName)
 	assert.Equal(person.Revision, copied.Revision)
 	assert.Equal(person.ParticipantIDs, copied.ParticipantIDs)
+}
+
+func TestCopySubset_AttributesRequireExplicitOptIn(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	ctx := context.Background()
+	srcDB := createTestSourceDB(t, t.TempDir(), 5)
+	source, err := Open(srcDB)
+	require.NoError(err)
+	person, _, err := source.CreatePersonFromParticipant(2)
+	require.NoError(err)
+
+	input := subsetPersonDefinition("synthetic_preference")
+	input.UniversalID = "test-synthetic-preference"
+	input.FieldType = AttributeFieldSelect
+	input.Options = &AttributeOptions{Choices: []AttributeChoice{
+		{Value: "alpha", Label: "Alpha"},
+		{Value: "beta", Label: "Beta"},
+	}}
+	definition, err := source.CreateAttributeDefinitionContext(ctx, input)
+	require.NoError(err)
+	_, err = source.db.Exec(
+		`UPDATE attribute_definitions SET id = 42 WHERE id = ?`, definition.ID)
+	require.NoError(err)
+
+	firstAt := time.Date(2026, 7, 29, 8, 0, 0, 0, time.UTC)
+	sourceRef := "fixture:synthetic-preference"
+	actor := "synthetic-agent"
+	confidence := 0.75
+	first, err := source.SetPersonAttributeValueContext(ctx, PersonAttributeValueInput{
+		PersonID: person.ID, DefinitionSlug: input.Slug,
+		Value:      AttributeValue{Type: AttributeValueText, Text: new("alpha")},
+		ActiveFrom: &firstAt, Source: ProvenanceExtraction,
+		SourceRef: &sourceRef, Confidence: &confidence, Actor: &actor,
+	})
+	require.NoError(err)
+	secondAt := firstAt.Add(24 * time.Hour)
+	_, err = source.SetPersonAttributeValueContext(ctx, PersonAttributeValueInput{
+		PersonID: person.ID, DefinitionSlug: input.Slug,
+		Value:      AttributeValue{Type: AttributeValueText, Text: new("beta")},
+		ActiveFrom: &secondAt, Source: ProvenanceUser,
+		ExpectedValueID: &first.Value.ID,
+	})
+	require.NoError(err)
+	require.NoError(source.Close())
+
+	dstDir := filepath.Join(t.TempDir(), "dst")
+	_, err = CopySubset(srcDB, dstDir, 5, false)
+	require.NoError(err)
+	destination, err := Open(filepath.Join(dstDir, "msgvault.db"))
+	require.NoError(err)
+	t.Cleanup(func() { _ = destination.Close() })
+
+	_, err = destination.GetAttributeDefinitionBySlugContext(
+		ctx, AttributeObjectPerson, input.Slug)
+	require.ErrorIs(err, ErrAttributeDefinitionNotFound,
+		"shared subsets must not copy person attribute definitions by default")
+
+	history, err := destination.ListPersonAttributeValuesContext(
+		ctx, person.ID, PersonAttributeQuery{
+			DefinitionSlug: input.Slug,
+			IncludeHistory: true,
+		})
+	require.NoError(err)
+	assert.Empty(history,
+		"shared subsets must not copy current or historical person attribute values by default")
+
+	attributesDir := filepath.Join(t.TempDir(), "attributes")
+	_, err = CopySubsetWithOptions(srcDB, attributesDir, 5, CopySubsetOptions{
+		IncludeAttributes: true,
+	})
+	require.NoError(err)
+	withAttributes, err := Open(filepath.Join(attributesDir, "msgvault.db"))
+	require.NoError(err)
+	t.Cleanup(func() { _ = withAttributes.Close() })
+
+	copiedDefinition, err := withAttributes.GetAttributeDefinitionBySlugContext(
+		ctx, AttributeObjectPerson, input.Slug)
+	require.NoError(err)
+	assert.Equal(input.UniversalID, copiedDefinition.UniversalID)
+	assert.NotEqual(int64(42), copiedDefinition.ID,
+		"destination definition ID must be local rather than copied from the source")
+	assert.Equal(input.Slug, copiedDefinition.Slug)
+	require.NotNil(copiedDefinition.Options)
+	assert.Equal(input.Options.Choices, copiedDefinition.Options.Choices)
+
+	history, err = withAttributes.ListPersonAttributeValuesContext(
+		ctx, person.ID, PersonAttributeQuery{
+			DefinitionSlug: input.Slug,
+			IncludeHistory: true,
+		})
+	require.NoError(err)
+	require.Len(history, 2)
+	assert.Equal(copiedDefinition.ID, history[0].DefinitionID)
+	assert.Equal("beta", *history[0].Value.Text)
+	assert.Equal(copiedDefinition.ID, history[1].DefinitionID)
+	assert.Equal("alpha", *history[1].Value.Text)
+	assert.Equal(ProvenanceExtraction, history[1].Source)
+	assert.Equal(sourceRef, *history[1].SourceRef)
+	assert.InDelta(confidence, *history[1].Confidence, 0)
+	assert.Equal(actor, *history[1].Actor)
+	require.NotNil(history[1].ActiveUntil)
+	require.NotNil(history[1].SupersededAt)
+}
+
+func TestCopySubset_RecordReferencesFollowIdentityPolicy(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	ctx := context.Background()
+	srcDB := createTestSourceDB(t, t.TempDir(), 5)
+	source, err := Open(srcDB)
+	require.NoError(err)
+	owner, _, err := source.CreatePersonFromParticipant(2)
+	require.NoError(err)
+	targetParticipant, err := source.EnsureParticipant(
+		"attribute-target@example.com", "attribute target", "example.com")
+	require.NoError(err)
+	target, _, err := source.CreatePersonFromParticipant(targetParticipant)
+	require.NoError(err)
+
+	input := subsetPersonDefinition("synthetic_person_reference")
+	input.UniversalID = "test-synthetic-person-reference"
+	input.ValueType = AttributeValueRecordReference
+	input.FieldType = AttributeFieldPerson
+	input.RecordTarget = new("person")
+	_, err = source.CreateAttributeDefinitionContext(ctx, input)
+	require.NoError(err)
+	write, err := source.SetPersonAttributeValueContext(ctx, PersonAttributeValueInput{
+		PersonID: owner.ID, DefinitionSlug: input.Slug,
+		Value: AttributeValue{
+			Type:       AttributeValueRecordReference,
+			RecordType: new("person"),
+			RecordID:   &target.ID,
+		},
+		Source: ProvenanceUser,
+	})
+	require.NoError(err)
+	require.NoError(source.Close())
+
+	defaultDir := filepath.Join(t.TempDir(), "default")
+	_, err = CopySubset(srcDB, defaultDir, 5, false)
+	require.NoError(err)
+	defaultSubset, err := Open(filepath.Join(defaultDir, "msgvault.db"))
+	require.NoError(err)
+	defer func() { _ = defaultSubset.Close() }()
+	_, err = defaultSubset.GetPerson(owner.ID)
+	require.NoError(err, "message-derived owner remains included")
+	_, err = defaultSubset.GetPerson(target.ID)
+	require.ErrorIs(err, ErrPersonNotFound,
+		"off-message record target stays outside the default identity boundary")
+	defaultValues, err := defaultSubset.ListPersonAttributeValuesContext(
+		ctx, owner.ID, PersonAttributeQuery{
+			DefinitionSlug: input.Slug,
+			IncludeHistory: true,
+		})
+	require.NoError(err)
+	assert.Empty(defaultValues,
+		"record references to excluded identities must not dangle in the subset")
+
+	identityDir := filepath.Join(t.TempDir(), "identity")
+	_, err = CopySubsetWithOptions(srcDB, identityDir, 5, CopySubsetOptions{
+		IncludeIdentity:   true,
+		IncludeAttributes: true,
+	})
+	require.NoError(err)
+	identitySubset, err := Open(filepath.Join(identityDir, "msgvault.db"))
+	require.NoError(err)
+	defer func() { _ = identitySubset.Close() }()
+	copiedTarget, err := identitySubset.GetPerson(target.ID)
+	require.NoError(err)
+	assert.Equal(target.ParticipantIDs, copiedTarget.ParticipantIDs)
+	identityValues, err := identitySubset.ListPersonAttributeValuesContext(
+		ctx, owner.ID, PersonAttributeQuery{
+			DefinitionSlug: input.Slug,
+			IncludeHistory: true,
+		})
+	require.NoError(err)
+	require.Len(identityValues, 1)
+	assert.Equal(write.Value.ID, identityValues[0].ID)
+	assert.Equal(target.ID, *identityValues[0].Value.RecordID)
 }
 
 // TestCopySubset_IncludeIdentityPreservesClusters covers a promoted linked

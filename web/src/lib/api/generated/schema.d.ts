@@ -142,6 +142,43 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/attribute-definitions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List portable attribute definitions */
+        get: operations["listAttributeDefinitions"];
+        put?: never;
+        /** Create a user attribute definition */
+        post: operations["createAttributeDefinition"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/attribute-definitions/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get one attribute definition */
+        get: operations["getAttributeDefinition"];
+        put?: never;
+        post?: never;
+        /** Delete a user attribute definition */
+        delete: operations["deleteAttributeDefinition"];
+        options?: never;
+        head?: never;
+        /** Update mutable attribute definition fields */
+        patch: operations["patchAttributeDefinition"];
+        trace?: never;
+    };
     "/api/v1/auth/token/{email}": {
         parameters: {
             query?: never;
@@ -1368,6 +1405,41 @@ export interface paths {
         patch: operations["patchPerson"];
         trace?: never;
     };
+    "/api/v1/persons/{id}/attributes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List a person's typed attributes */
+        get: operations["listPersonAttributes"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/persons/{id}/attributes/{slug}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Set a person's attribute value */
+        put: operations["setPersonAttribute"];
+        post?: never;
+        /** Supersede a person's attribute value */
+        delete: operations["clearPersonAttribute"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/query": {
         parameters: {
             query?: never;
@@ -1862,6 +1934,73 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        AttributeChoice: {
+            label: string;
+            value: string;
+        };
+        AttributeDefinition: {
+            api_mutable: boolean;
+            cardinality: string;
+            /** Format: date-time */
+            created_at: string;
+            derived_source?: string;
+            description?: string;
+            /** Format: int64 */
+            display_order: number;
+            field_type: string;
+            history_exempt: boolean;
+            /** Format: int64 */
+            id: number;
+            is_active: boolean;
+            is_audited: boolean;
+            is_deletable: boolean;
+            is_required: boolean;
+            is_searchable: boolean;
+            label: string;
+            object_type: string;
+            options?: components["schemas"]["AttributeOptions"];
+            ownership: string;
+            record_target?: string;
+            /** Format: int64 */
+            revision: number;
+            slug: string;
+            ui_creatable: boolean;
+            ui_editable: boolean;
+            universal_id: string;
+            /** Format: date-time */
+            updated_at: string;
+            value_type: string;
+            vcard_property?: string;
+        } & {
+            [key: string]: unknown;
+        };
+        AttributeDefinitionsResponse: {
+            definitions: components["schemas"]["AttributeDefinition"][] | null;
+        } & {
+            [key: string]: unknown;
+        };
+        AttributeOptions: {
+            choices?: components["schemas"]["AttributeChoice"][] | null;
+            /** Format: int64 */
+            max_length?: number;
+            unit?: string;
+        };
+        AttributeValue: {
+            boolean?: boolean;
+            date?: string;
+            /** Format: int64 */
+            integer?: number;
+            json?: unknown;
+            /** Format: double */
+            real?: number;
+            /** Format: int64 */
+            record_id?: number;
+            record_type?: string;
+            text?: string;
+            /** Format: date-time */
+            timestamp?: string;
+            type: string;
+        };
         BackupFreezeBeginResponse: {
             token: string;
         } & {
@@ -2347,6 +2486,25 @@ export interface components {
             total: number;
         } & {
             [key: string]: unknown;
+        };
+        CreateAttributeDefinitionRequest: {
+            /** @enum {string} */
+            cardinality?: "single" | "multi";
+            description?: string;
+            /** Format: int64 */
+            display_order?: number;
+            field_type: string;
+            is_audited?: boolean;
+            is_required?: boolean;
+            is_searchable?: boolean;
+            label: string;
+            /** @enum {string} */
+            object_type: "person" | "organization";
+            options?: components["schemas"]["AttributeOptions"];
+            record_target?: string;
+            slug: string;
+            value_type: string;
+            vcard_property?: string;
         };
         CreatePersonRequest: {
             /** Format: int64 */
@@ -3086,6 +3244,13 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        PatchAttributeDefinitionRequest: {
+            description?: string | null;
+            /** Format: int64 */
+            display_order?: number;
+            is_active?: boolean;
+            label?: string;
+        };
         PatchPersonRequest: {
             display_name: string | null;
         };
@@ -3108,6 +3273,54 @@ export interface components {
             /** Format: date-time */
             updated_at: string;
             vcard_uid: string;
+        } & {
+            [key: string]: unknown;
+        };
+        PersonAttributeGroup: {
+            current: components["schemas"]["PersonAttributeValue"][] | null;
+            definition: components["schemas"]["AttributeDefinition"];
+            history?: components["schemas"]["PersonAttributeValue"][] | null;
+        } & {
+            [key: string]: unknown;
+        };
+        PersonAttributeValue: {
+            /** Format: date-time */
+            active_from: string;
+            /** Format: date-time */
+            active_until?: string;
+            actor?: string;
+            /** Format: double */
+            confidence?: number;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: int64 */
+            definition_id: number;
+            definition_slug: string;
+            /** Format: int64 */
+            id: number;
+            /** Format: int64 */
+            ordinal: number;
+            /** Format: int64 */
+            person_id: number;
+            source: string;
+            source_ref?: string;
+            /** Format: date-time */
+            superseded_at?: string;
+            value: components["schemas"]["AttributeValue"];
+        } & {
+            [key: string]: unknown;
+        };
+        PersonAttributeWrite: {
+            dry_run: boolean;
+            superseded?: components["schemas"]["PersonAttributeValue"];
+            value?: components["schemas"]["PersonAttributeValue"];
+        } & {
+            [key: string]: unknown;
+        };
+        PersonAttributesResponse: {
+            attributes: components["schemas"]["PersonAttributeGroup"][] | null;
+            /** Format: int64 */
+            person_id: number;
         } & {
             [key: string]: unknown;
         };
@@ -3444,6 +3657,23 @@ export interface components {
             plain_http_warning: boolean;
         } & {
             [key: string]: unknown;
+        };
+        SetPersonAttributeRequest: {
+            /** Format: date-time */
+            active_from?: string;
+            /** Format: date-time */
+            active_until?: string;
+            actor?: string;
+            /** Format: double */
+            confidence?: number;
+            /** Format: int64 */
+            expected_value_id?: number;
+            /** Format: int64 */
+            ordinal?: number;
+            /** @enum {string} */
+            source?: "user" | "carddav_import" | "vcard_import" | "archive_observation" | "extraction" | "enrichment" | "system";
+            source_ref?: string;
+            value: components["schemas"]["AttributeValue"];
         };
         Setting: {
             /** @enum {string} */
@@ -4269,6 +4499,327 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AttachmentInfo"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    listAttributeDefinitions: {
+        parameters: {
+            query?: {
+                /** @description Filter by object type */
+                object_type?: string;
+                /** @description Include deactivated definitions */
+                include_hidden?: boolean;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AttributeDefinitionsResponse"];
+                };
+            };
+            /** @description Error */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    createAttributeDefinition: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateAttributeDefinitionRequest"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    /** @description Strong attribute definition revision tag */
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AttributeDefinition"];
+                };
+            };
+            /** @description Error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    getAttributeDefinition: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Attribute definition ID */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    /** @description Strong attribute definition revision tag */
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AttributeDefinition"];
+                };
+            };
+            /** @description Error */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    deleteAttributeDefinition: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Strong ETag returned by the latest definition read */
+                "If-Match": string;
+            };
+            path: {
+                /** @description Attribute definition ID */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            428: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    patchAttributeDefinition: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Strong ETag returned by the latest definition read */
+                "If-Match": string;
+            };
+            path: {
+                /** @description Attribute definition ID */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PatchAttributeDefinitionRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    /** @description Strong attribute definition revision tag */
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AttributeDefinition"];
+                };
+            };
+            /** @description Error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            428: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
             /** @description Error */
@@ -8243,6 +8794,215 @@ export interface operations {
             };
             /** @description Error */
             428: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    listPersonAttributes: {
+        parameters: {
+            query?: {
+                /** @description Include superseded values */
+                history?: boolean;
+                /** @description Restrict the response to one definition slug */
+                slug?: string;
+            };
+            header?: never;
+            path: {
+                /** @description Durable person ID */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PersonAttributesResponse"];
+                };
+            };
+            /** @description Error */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    setPersonAttribute: {
+        parameters: {
+            query?: {
+                /** @description Validate and preview without writing */
+                dry_run?: boolean;
+            };
+            header?: never;
+            path: {
+                /** @description Durable person ID */
+                id: number;
+                /** @description Immutable attribute definition slug */
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SetPersonAttributeRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PersonAttributeWrite"];
+                };
+            };
+            /** @description Error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    clearPersonAttribute: {
+        parameters: {
+            query?: {
+                /** @description Ordinal for a multi-valued definition */
+                ordinal?: number;
+                /** @description Compare-and-swap: the current value ID expected to be superseded */
+                expected_value_id?: number;
+                /** @description Validate and preview without writing */
+                dry_run?: boolean;
+            };
+            header?: never;
+            path: {
+                /** @description Durable person ID */
+                id: number;
+                /** @description Immutable attribute definition slug */
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PersonAttributeWrite"];
+                };
+            };
+            /** @description Error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

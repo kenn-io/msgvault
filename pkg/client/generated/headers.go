@@ -6,6 +6,24 @@ import (
 	"github.com/doordash-oss/oapi-codegen-dd/v3/pkg/runtime"
 )
 
+type DeleteAttributeDefinitionHeaders struct {
+	// IfMatch Strong ETag returned by the latest definition read
+	IfMatch string `json:"If-Match" validate:"required"`
+}
+
+func (d DeleteAttributeDefinitionHeaders) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(d))
+}
+
+type PatchAttributeDefinitionHeaders struct {
+	// IfMatch Strong ETag returned by the latest definition read
+	IfMatch string `json:"If-Match" validate:"required"`
+}
+
+func (p PatchAttributeDefinitionHeaders) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(p))
+}
+
 type CreateOrLinkMessageTaskHeaders struct {
 	// XRequestID Browser-generated retry-stable request ID
 	XRequestID string `json:"X-Request-Id" validate:"required"`

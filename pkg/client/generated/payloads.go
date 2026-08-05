@@ -6,6 +6,10 @@ type LoginSessionBody = SessionLoginRequest
 
 type AddAccountBody = AddAccountRequest
 
+type CreateAttributeDefinitionBody = CreateAttributeDefinitionRequest
+
+type PatchAttributeDefinitionBody = PatchAttributeDefinitionRequest
+
 type UploadTokenBody = TokenUploadRequest
 
 type EndBackupFreezeBody = BackupFreezeEndRequest
@@ -83,6 +87,8 @@ type GetPersonTimelineBody = ExploreHTTPRequest
 type CreatePersonBody = CreatePersonRequest
 
 type PatchPersonBody = PatchPersonRequest
+
+type SetPersonAttributeBody = SetPersonAttributeRequest
 
 type RunQueryBody = QueryRequest
 

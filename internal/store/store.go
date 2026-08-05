@@ -1316,6 +1316,10 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 	}
 	s.fts5Available = available
 
+	if err := s.EnsureSeededAttributeDefinitions(); err != nil {
+		return fmt.Errorf("ensure seeded attribute definitions: %w", err)
+	}
+
 	// Ensure the default "All" collection exists and contains every source.
 	if err := s.EnsureDefaultCollectionContext(ctx); err != nil {
 		return fmt.Errorf("ensure default collection: %w", err)

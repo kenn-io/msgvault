@@ -169,7 +169,12 @@ import (
 // this archive is accepted whoever built it. Stores that cannot answer the
 // watermark query, or cannot identify their archive, report 503
 // feature_unavailable. Additive (minor bump): a new path only.
-const APISchemaVersion = "1.34.0"
+// 1.35.0 adds the portable attribute registry and typed person attributes:
+// attribute-definition list/get/create/patch/delete with ETag/If-Match
+// optimistic concurrency, and person attribute list/set/clear with
+// value-level provenance, retained history, and dry-run previews.
+// Additive (minor bump): the major-version compatibility gate stays at 1.
+const APISchemaVersion = "1.35.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.

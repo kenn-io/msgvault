@@ -20,6 +20,21 @@ type GetAttachmentPath struct {
 	ID int64 `json:"id"`
 }
 
+type DeleteAttributeDefinitionPath struct {
+	// ID Attribute definition ID
+	ID int64 `json:"id"`
+}
+
+type GetAttributeDefinitionPath struct {
+	// ID Attribute definition ID
+	ID int64 `json:"id"`
+}
+
+type PatchAttributeDefinitionPath struct {
+	// ID Attribute definition ID
+	ID int64 `json:"id"`
+}
+
 type UploadTokenPath struct {
 	// Email Account email address
 	Email string `json:"email" validate:"required"`
@@ -190,6 +205,35 @@ type GetPersonProfilePath struct {
 type PatchPersonPath struct {
 	// ID Durable person ID
 	ID int64 `json:"id"`
+}
+
+type ListPersonAttributesPath struct {
+	// ID Durable person ID
+	ID int64 `json:"id"`
+}
+
+type ClearPersonAttributePath struct {
+	// ID Durable person ID
+	ID int64 `json:"id"`
+
+	// Slug Immutable attribute definition slug
+	Slug string `json:"slug" validate:"required"`
+}
+
+func (c ClearPersonAttributePath) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(c))
+}
+
+type SetPersonAttributePath struct {
+	// ID Durable person ID
+	ID int64 `json:"id"`
+
+	// Slug Immutable attribute definition slug
+	Slug string `json:"slug" validate:"required"`
+}
+
+func (s SetPersonAttributePath) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(s))
 }
 
 type GetRelationshipTimelinePath struct {

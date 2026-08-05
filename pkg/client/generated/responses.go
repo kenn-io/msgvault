@@ -59,6 +59,46 @@ type GetAttachmentResponse = AttachmentInfo
 
 type GetAttachmentErrorResponse = ErrorResponse
 
+type ListAttributeDefinitionsResponse = AttributeDefinitionsResponse
+
+type ListAttributeDefinitionsErrorResponse = ErrorResponse
+
+type CreateAttributeDefinitionResponse = AttributeDefinition
+
+type CreateAttributeDefinitionErrorResponse = ErrorResponse
+
+type CreateAttributeDefinitionErrorResponseJSON = ErrorResponse
+
+type CreateAttributeDefinitionErrorResponseJSON503 = ErrorResponse
+
+type DeleteAttributeDefinitionErrorResponse = ErrorResponse
+
+type DeleteAttributeDefinitionErrorResponseJSON = ErrorResponse
+
+type DeleteAttributeDefinitionErrorResponseJSON409 = ErrorResponse
+
+type DeleteAttributeDefinitionErrorResponseJSON428 = ErrorResponse
+
+type DeleteAttributeDefinitionErrorResponseJSON503 = ErrorResponse
+
+type GetAttributeDefinitionResponse = AttributeDefinition
+
+type GetAttributeDefinitionErrorResponse = ErrorResponse
+
+type GetAttributeDefinitionErrorResponseJSON = ErrorResponse
+
+type PatchAttributeDefinitionResponse = AttributeDefinition
+
+type PatchAttributeDefinitionErrorResponse = ErrorResponse
+
+type PatchAttributeDefinitionErrorResponseJSON = ErrorResponse
+
+type PatchAttributeDefinitionErrorResponseJSON409 = ErrorResponse
+
+type PatchAttributeDefinitionErrorResponseJSON428 = ErrorResponse
+
+type PatchAttributeDefinitionErrorResponseJSON503 = ErrorResponse
+
 type UploadTokenResponse = StatusMessageResponse
 
 type UploadTokenErrorResponse = ErrorResponse
@@ -1137,6 +1177,32 @@ type PatchPersonErrorResponseJSON428 = ErrorResponse
 
 type PatchPersonErrorResponseJSON503 = ErrorResponse
 
+type ListPersonAttributesResponse = PersonAttributesResponse
+
+type ListPersonAttributesErrorResponse = ErrorResponse
+
+type ListPersonAttributesErrorResponseJSON = ErrorResponse
+
+type ClearPersonAttributeResponse = PersonAttributeWrite
+
+type ClearPersonAttributeErrorResponse = ErrorResponse
+
+type ClearPersonAttributeErrorResponseJSON = ErrorResponse
+
+type ClearPersonAttributeErrorResponseJSON409 = ErrorResponse
+
+type ClearPersonAttributeErrorResponseJSON503 = ErrorResponse
+
+type SetPersonAttributeResponse = PersonAttributeWrite
+
+type SetPersonAttributeErrorResponse = ErrorResponse
+
+type SetPersonAttributeErrorResponseJSON = ErrorResponse
+
+type SetPersonAttributeErrorResponseJSON409 = ErrorResponse
+
+type SetPersonAttributeErrorResponseJSON503 = ErrorResponse
+
 type RunQueryResponse = QueryResult
 
 type RunQueryErrorResponse = ErrorResponse
@@ -1468,6 +1534,71 @@ type GetAttachmentResp struct {
 	Body         []byte
 	StatusCode   int
 	JSON200      *GetAttachmentResponse
+}
+
+type ListAttributeDefinitionsResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *ListAttributeDefinitionsResponse
+	JSON503      *ListAttributeDefinitionsErrorResponse
+}
+
+type CreateAttributeDefinitionResp201Headers struct {
+	ETag string `header:"ETag"`
+}
+
+type CreateAttributeDefinitionResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON201      *CreateAttributeDefinitionResponse
+	Headers201   *CreateAttributeDefinitionResp201Headers
+	JSON400      *CreateAttributeDefinitionErrorResponse
+	JSON409      *CreateAttributeDefinitionErrorResponseJSON
+	JSON503      *CreateAttributeDefinitionErrorResponseJSON503
+}
+
+type DeleteAttributeDefinitionResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON400      *DeleteAttributeDefinitionErrorResponse
+	JSON404      *DeleteAttributeDefinitionErrorResponseJSON
+	JSON409      *DeleteAttributeDefinitionErrorResponseJSON409
+	JSON428      *DeleteAttributeDefinitionErrorResponseJSON428
+	JSON503      *DeleteAttributeDefinitionErrorResponseJSON503
+}
+
+type GetAttributeDefinitionResp200Headers struct {
+	ETag string `header:"ETag"`
+}
+
+type GetAttributeDefinitionResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *GetAttributeDefinitionResponse
+	Headers200   *GetAttributeDefinitionResp200Headers
+	JSON404      *GetAttributeDefinitionErrorResponse
+	JSON503      *GetAttributeDefinitionErrorResponseJSON
+}
+
+type PatchAttributeDefinitionResp200Headers struct {
+	ETag string `header:"ETag"`
+}
+
+type PatchAttributeDefinitionResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *PatchAttributeDefinitionResponse
+	Headers200   *PatchAttributeDefinitionResp200Headers
+	JSON400      *PatchAttributeDefinitionErrorResponse
+	JSON404      *PatchAttributeDefinitionErrorResponseJSON
+	JSON409      *PatchAttributeDefinitionErrorResponseJSON409
+	JSON428      *PatchAttributeDefinitionErrorResponseJSON428
+	JSON503      *PatchAttributeDefinitionErrorResponseJSON503
 }
 
 type UploadTokenResp struct {
@@ -2187,6 +2318,37 @@ type PatchPersonResp struct {
 	JSON409      *PatchPersonErrorResponseJSON
 	JSON428      *PatchPersonErrorResponseJSON428
 	JSON503      *PatchPersonErrorResponseJSON503
+}
+
+type ListPersonAttributesResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *ListPersonAttributesResponse
+	JSON404      *ListPersonAttributesErrorResponse
+	JSON503      *ListPersonAttributesErrorResponseJSON
+}
+
+type ClearPersonAttributeResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *ClearPersonAttributeResponse
+	JSON400      *ClearPersonAttributeErrorResponse
+	JSON404      *ClearPersonAttributeErrorResponseJSON
+	JSON409      *ClearPersonAttributeErrorResponseJSON409
+	JSON503      *ClearPersonAttributeErrorResponseJSON503
+}
+
+type SetPersonAttributeResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *SetPersonAttributeResponse
+	JSON400      *SetPersonAttributeErrorResponse
+	JSON404      *SetPersonAttributeErrorResponseJSON
+	JSON409      *SetPersonAttributeErrorResponseJSON409
+	JSON503      *SetPersonAttributeErrorResponseJSON503
 }
 
 type RunQueryResp struct {

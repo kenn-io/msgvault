@@ -25,6 +25,40 @@ func (a AddResultCacheState) Validate() error {
 	}
 }
 
+type CreateAttributeDefinitionRequestCardinality string
+
+const (
+	Multi  CreateAttributeDefinitionRequestCardinality = "multi"
+	Single CreateAttributeDefinitionRequestCardinality = "single"
+)
+
+// Validate checks if the CreateAttributeDefinitionRequestCardinality value is valid
+func (c CreateAttributeDefinitionRequestCardinality) Validate() error {
+	switch c {
+	case Multi, Single:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid CreateAttributeDefinitionRequestCardinality value, got: %v", c))
+	}
+}
+
+type CreateAttributeDefinitionRequestObjectType string
+
+const (
+	CreateAttributeDefinitionRequestObjectTypePerson CreateAttributeDefinitionRequestObjectType = "person"
+	Organization                                     CreateAttributeDefinitionRequestObjectType = "organization"
+)
+
+// Validate checks if the CreateAttributeDefinitionRequestObjectType value is valid
+func (c CreateAttributeDefinitionRequestObjectType) Validate() error {
+	switch c {
+	case CreateAttributeDefinitionRequestObjectTypePerson, Organization:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid CreateAttributeDefinitionRequestObjectType value, got: %v", c))
+	}
+}
+
 type ExploreCacheUnavailableResponseReadiness string
 
 const (
@@ -473,6 +507,28 @@ func (s SessionStatusAuthMode) Validate() error {
 		return nil
 	default:
 		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid SessionStatusAuthMode value, got: %v", s))
+	}
+}
+
+type SetPersonAttributeRequestSource string
+
+const (
+	ArchiveObservation SetPersonAttributeRequestSource = "archive_observation"
+	CarddavImport      SetPersonAttributeRequestSource = "carddav_import"
+	Enrichment         SetPersonAttributeRequestSource = "enrichment"
+	Extraction         SetPersonAttributeRequestSource = "extraction"
+	System             SetPersonAttributeRequestSource = "system"
+	User               SetPersonAttributeRequestSource = "user"
+	VcardImport        SetPersonAttributeRequestSource = "vcard_import"
+)
+
+// Validate checks if the SetPersonAttributeRequestSource value is valid
+func (s SetPersonAttributeRequestSource) Validate() error {
+	switch s {
+	case ArchiveObservation, CarddavImport, Enrichment, Extraction, System, User, VcardImport:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid SetPersonAttributeRequestSource value, got: %v", s))
 	}
 }
 

@@ -15,6 +15,7 @@ func TestRewriteGeneratedValidatorsMakesRequiredPointersUnconditional(t *testing
 	assertions.NotContains(string(got), "if f.MimeType != nil")
 	assertions.Contains(string(got), `typesValidator.Var(e.Grouping, "required,min=1,max=1")`)
 	assertions.Contains(string(got), `typesValidator.Var(f.Grouping, "required,min=1,max=1")`)
+	assertions.Contains(string(got), "JSON json.RawMessage")
 }
 
 func TestRewriteGeneratedValidatorsRejectsMissingGroupingValidator(t *testing.T) {
@@ -24,7 +25,10 @@ func TestRewriteGeneratedValidatorsRejectsMissingGroupingValidator(t *testing.T)
 }
 
 func generatedValidatorFixture() string {
-	return `func (e ExploreGroupsHTTPRequest) Validate() error {
+	return `type AttributeValue struct {
+	JSON *struct{}  ` + "`json:\"json,omitempty\"`" + `
+}
+func (e ExploreGroupsHTTPRequest) Validate() error {
 	var errors runtime.ValidationErrors
 }
 func (f FileGroupsHTTPRequest) Validate() error {

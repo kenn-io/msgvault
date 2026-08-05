@@ -2,6 +2,7 @@ package codegenfix
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 )
 
@@ -57,5 +58,11 @@ func RewriteGeneratedValidators(source []byte) ([]byte, error) {
 			return nil, fmt.Errorf("generated %s.%s validator shape changed", typeName, field)
 		}
 	}
+	attributeJSON := []byte("*struct{}  `json:\"json,omitempty\"`")
+	if !bytes.Contains(result, attributeJSON) {
+		return nil, errors.New("generated AttributeValue.JSON shape changed")
+	}
+	result = bytes.Replace(result, attributeJSON,
+		[]byte("json.RawMessage `json:\"json,omitempty\"`"), 1)
 	return result, nil
 }

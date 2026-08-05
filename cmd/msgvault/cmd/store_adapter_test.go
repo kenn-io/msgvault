@@ -30,6 +30,21 @@ func TestStoreAPIAdapterImplementsCtxMessageStore(t *testing.T) {
 	require.True(t, ok, "storeAPIAdapter must implement api.CtxMessageStore")
 }
 
+func TestStoreAPIAdapterServesAttributeDefinitions(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	srv := api.NewServerWithOptions(api.ServerOptions{
+		Config: &config.Config{},
+		Store:  &storeAPIAdapter{store: st},
+		Logger: slog.New(slog.DiscardHandler),
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/attribute-definitions", nil)
+	response := httptest.NewRecorder()
+	srv.Router().ServeHTTP(response, req)
+
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+}
+
 var _ api.CtxMessageStore = (*storeAPIAdapter)(nil)
 var _ api.MeetingImporter = (*storeAPIAdapter)(nil)
 
