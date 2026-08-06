@@ -43,6 +43,87 @@ func TestBackupRestorePackedTargetSelection(t *testing.T) {
 	assert.Equal("false", integrityFlag.DefValue)
 }
 
+func TestBackupRestoreTargetCoordinatorMatchesConfiguredDatabasePath(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	lockDir := t.TempDir()
+	target := t.TempDir()
+
+	savedCfg := cfg
+	t.Cleanup(func() { cfg = savedCfg })
+	cfg = &config.Config{Data: config.DataConfig{
+		DataDir:     lockDir,
+		DatabaseURL: "file:" + filepath.Join(target, "msgvault.db"),
+	}}
+	coordinator, coordinated, err := backupRestoreTargetCoordinator(target, true)
+	require.NoError(err, "select restore coordination by configured database path")
+	require.True(coordinated, "restoring the configured database requires ownership coordination")
+	require.NotNil(coordinator, "configured database target receives a coordinator")
+
+	root, err := os.OpenRoot(target)
+	require.NoError(err, "pin restore target")
+	t.Cleanup(func() { require.NoError(root.Close(), "close restore target root") })
+	lease, err := coordinator.AcquireRestoreTarget(context.Background(), root)
+	require.NoError(err, "acquire configured database restore coordination")
+	t.Cleanup(func() { require.NoError(lease.Release(), "release restore coordination") })
+
+	writer, writeErr := tryAcquireWriteOwnerLock(lockDir)
+	if writer != nil {
+		require.NoError(writer.Close(), "release unexpected configured archive writer")
+	}
+	assert.Nil(writer, "configured archive writer must remain excluded")
+	var heldErr writeOwnerLockHeldError
+	require.ErrorAs(writeErr, &heldErr, "configured data-directory write lock is held")
+	assert.NoFileExists(daemonOwnerLockPath(target),
+		"separate database target must not receive the data-directory lock artifacts")
+	assert.NoFileExists(writeOwnerLockPath(target),
+		"separate database target must not receive the write lock artifact")
+}
+
+func TestBackupRestoreTargetCoordinatorDefersMissingCaseVariantMatch(t *testing.T) {
+	require := require.New(t)
+	parent := t.TempDir()
+	probe := filepath.Join(parent, "CaseProbe")
+	require.NoError(os.Mkdir(probe, 0o700), "create filesystem case-sensitivity probe")
+	probeInfo, err := os.Stat(probe)
+	require.NoError(err, "stat filesystem case-sensitivity probe")
+	foldedProbeInfo, err := os.Stat(filepath.Join(parent, "caseprobe"))
+	if err != nil || !os.SameFile(probeInfo, foldedProbeInfo) {
+		t.Skip("filesystem is case-sensitive")
+	}
+
+	configuredDataDir := filepath.Join(parent, "FreshArchive")
+	target := filepath.Join(parent, "fresharchive")
+	require.NoDirExists(configuredDataDir, "configured archive starts absent")
+	require.NoDirExists(target, "restore target starts absent")
+	savedCfg := cfg
+	t.Cleanup(func() { cfg = savedCfg })
+	cfg = &config.Config{Data: config.DataConfig{DataDir: configuredDataDir}}
+
+	coordinator, coordinated, err := backupRestoreTargetCoordinator(target, false)
+	require.NoError(err, "select conditional restore coordination")
+	require.True(coordinated,
+		"missing case variants require comparison after Kit pins the target")
+	require.NotNil(coordinator, "case-variant target receives a conditional coordinator")
+	require.NoDirExists(target, "coordinator selection remains non-mutating")
+
+	require.NoError(os.Mkdir(target, 0o700), "create restore target through folded spelling")
+	root, err := os.OpenRoot(target)
+	require.NoError(err, "pin folded restore target")
+	t.Cleanup(func() { require.NoError(root.Close(), "close folded restore target root") })
+	lease, err := coordinator.AcquireRestoreTarget(context.Background(), root)
+	require.NoError(err, "acquire folded restore target coordination")
+	t.Cleanup(func() { require.NoError(lease.Release(), "release folded restore coordination") })
+
+	writer, writeErr := tryAcquireWriteOwnerLock(configuredDataDir)
+	if writer != nil {
+		require.NoError(writer.Close(), "release unexpected case-variant writer")
+	}
+	assert.Nil(t, writer, "case-variant writer must remain excluded")
+	var heldErr writeOwnerLockHeldError
+	require.ErrorAs(writeErr, &heldErr, "case-variant data-directory write lock is held")
+}
+
 func TestRunBackupRestorePackedDefaultAndExplicitLooseCleanup(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

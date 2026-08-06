@@ -281,24 +281,62 @@ func backupRestoreTargetCoordinator(
 	target string,
 	overwrite bool,
 ) (*daemonRestoreTargetCoordinator, bool, error) {
-	configuredHome, err := restoreTargetsConfiguredDataDir(target)
-	if err != nil {
-		return nil, false, err
-	}
-	if !configuredHome {
+	if cfg == nil || target == "" || cfg.Data.DataDir == "" {
 		return nil, false, nil
 	}
-	return newDaemonRestoreTargetCoordinator(cfg.Data.DataDir, overwrite), true, nil
+	databasePath := ""
+	if !store.IsPostgresURL(cfg.DatabaseDSN()) {
+		var err error
+		databasePath, err = cfg.DatabasePath()
+		if err != nil {
+			return nil, false, fmt.Errorf("backup restore: resolving configured database: %w", err)
+		}
+	}
+	mayNeedCoordination, err := restorePathsMayBeEquivalent(target, cfg.Data.DataDir)
+	if err != nil {
+		return nil, false, fmt.Errorf("backup restore: compare target with configured data directory: %w", err)
+	}
+	if !mayNeedCoordination && databasePath != "" {
+		restoredDatabasePath := filepath.Join(target, backupapp.New(Version).DBFileName())
+		mayNeedCoordination, err = restorePathsMayBeEquivalent(restoredDatabasePath, databasePath)
+		if err != nil {
+			return nil, false, fmt.Errorf("backup restore: compare target database with configured database: %w", err)
+		}
+	}
+	if !mayNeedCoordination {
+		return nil, false, nil
+	}
+	return &daemonRestoreTargetCoordinator{
+		dataDir:      cfg.Data.DataDir,
+		databasePath: databasePath,
+		target:       target,
+		overwrite:    overwrite,
+	}, true, nil
 }
 
 type daemonRestoreTargetCoordinator struct {
-	dataDir   string
-	overwrite bool
+	dataDir      string
+	databasePath string
+	target       string
+	overwrite    bool
 }
 
 func newDaemonRestoreTargetCoordinator(dataDir string, overwrite bool) *daemonRestoreTargetCoordinator {
-	return &daemonRestoreTargetCoordinator{dataDir: dataDir, overwrite: overwrite}
+	return &daemonRestoreTargetCoordinator{
+		dataDir:      dataDir,
+		databasePath: filepath.Join(dataDir, backupapp.New(Version).DBFileName()),
+		target:       dataDir,
+		overwrite:    overwrite,
+	}
 }
+
+type pinnedRestoreTargetKind uint8
+
+const (
+	pinnedRestoreTargetUnrelated pinnedRestoreTargetKind = iota
+	pinnedRestoreTargetDataDir
+	pinnedRestoreTargetDatabaseDir
+)
 
 func (c *daemonRestoreTargetCoordinator) AcquireRestoreTarget(
 	ctx context.Context,
@@ -307,17 +345,44 @@ func (c *daemonRestoreTargetCoordinator) AcquireRestoreTarget(
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	for _, name := range []string{daemonOwnerLockFile, writeOwnerLockFile} {
-		lockFile, err := root.OpenFile(name, os.O_CREATE|os.O_RDWR, 0o600)
+	targetKind, err := c.classifyPinnedRestoreTarget(root)
+	if err != nil {
+		return nil, err
+	}
+	if targetKind == pinnedRestoreTargetUnrelated {
+		if err := c.validateRestoreTargetContents(root, false); err != nil {
+			return nil, err
+		}
+		return &daemonRestoreTargetLease{}, nil
+	}
+
+	lockRoot := root
+	closeLockRoot := false
+	if targetKind != pinnedRestoreTargetDataDir {
+		if err := os.MkdirAll(c.dataDir, 0o700); err != nil {
+			return nil, fmt.Errorf("create configured data directory for restore exclusion: %w", err)
+		}
+		lockRoot, err = os.OpenRoot(c.dataDir)
 		if err != nil {
-			return nil, fmt.Errorf("create restore exclusion lock %s in target: %w", name, err)
+			return nil, fmt.Errorf("pin configured data directory for restore exclusion: %w", err)
+		}
+		closeLockRoot = true
+		defer func() {
+			if closeLockRoot {
+				_ = lockRoot.Close()
+			}
+		}()
+	}
+	for _, name := range []string{daemonOwnerLockFile, writeOwnerLockFile} {
+		lockFile, err := lockRoot.OpenFile(name, os.O_CREATE|os.O_RDWR, 0o600)
+		if err != nil {
+			return nil, fmt.Errorf("create restore exclusion lock %s: %w", name, err)
 		}
 		if err := lockFile.Close(); err != nil {
 			return nil, fmt.Errorf("close restore exclusion lock file %s: %w", name, err)
 		}
 	}
 	lease := &daemonRestoreTargetLease{}
-	var err error
 	// Match daemon startup's global lock order so restore cannot deadlock
 	// against another process that needs both ownership protocols.
 	lease.daemonOwner, err = tryAcquireDaemonOwnerLock(c.dataDir)
@@ -342,7 +407,7 @@ func (c *daemonRestoreTargetCoordinator) AcquireRestoreTarget(
 		{name: writeOwnerLockFile, path: writeOwnerLockPath(c.dataDir)},
 	}
 	for _, lock := range locks {
-		rootLockInfo, statErr := root.Stat(lock.name)
+		rootLockInfo, statErr := lockRoot.Stat(lock.name)
 		if statErr != nil {
 			return nil, fmt.Errorf("inspect pinned restore exclusion lock %s: %w", lock.name, statErr)
 		}
@@ -357,22 +422,86 @@ func (c *daemonRestoreTargetCoordinator) AcquireRestoreTarget(
 			)
 		}
 	}
-	if !c.overwrite {
-		entries, err := fs.ReadDir(root.FS(), ".")
-		if err != nil {
-			return nil, fmt.Errorf("inspect coordinated restore target: %w", err)
+	if closeLockRoot {
+		if err := lockRoot.Close(); err != nil {
+			return nil, fmt.Errorf("close configured data-directory root after lock verification: %w", err)
 		}
-		for _, entry := range entries {
-			if entry.Name() != daemonOwnerLockFile && entry.Name() != writeOwnerLockFile {
-				return nil, fmt.Errorf(
-					"restore target %s is not empty (use --overwrite to restore into it anyway)",
-					c.dataDir,
-				)
-			}
-		}
+		closeLockRoot = false
+	}
+	if err := c.validateRestoreTargetContents(root, targetKind == pinnedRestoreTargetDataDir); err != nil {
+		return nil, err
 	}
 	success = true
 	return lease, nil
+}
+
+func (c *daemonRestoreTargetCoordinator) classifyPinnedRestoreTarget(
+	root *os.Root,
+) (pinnedRestoreTargetKind, error) {
+	rootInfo, err := root.Stat(".")
+	if err != nil {
+		return pinnedRestoreTargetUnrelated, fmt.Errorf("inspect pinned restore target: %w", err)
+	}
+	dataDirInfo, err := os.Stat(c.dataDir)
+	if err == nil {
+		if os.SameFile(rootInfo, dataDirInfo) {
+			return pinnedRestoreTargetDataDir, nil
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return pinnedRestoreTargetUnrelated, fmt.Errorf("inspect configured data directory: %w", err)
+	}
+	if c.databasePath == "" {
+		return pinnedRestoreTargetUnrelated, nil
+	}
+
+	dbFileName := backupapp.New(Version).DBFileName()
+	rootDBInfo, rootDBErr := root.Stat(dbFileName)
+	configuredDBInfo, configuredDBErr := os.Stat(c.databasePath)
+	if rootDBErr == nil && configuredDBErr == nil && os.SameFile(rootDBInfo, configuredDBInfo) {
+		return pinnedRestoreTargetDatabaseDir, nil
+	}
+	if rootDBErr != nil && !errors.Is(rootDBErr, os.ErrNotExist) {
+		return pinnedRestoreTargetUnrelated, fmt.Errorf("inspect database in pinned restore target: %w", rootDBErr)
+	}
+	if configuredDBErr != nil && !errors.Is(configuredDBErr, os.ErrNotExist) {
+		return pinnedRestoreTargetUnrelated, fmt.Errorf("inspect configured database: %w", configuredDBErr)
+	}
+
+	databaseParentInfo, err := os.Stat(filepath.Dir(c.databasePath))
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return pinnedRestoreTargetUnrelated, nil
+		}
+		return pinnedRestoreTargetUnrelated, fmt.Errorf("inspect configured database directory: %w", err)
+	}
+	if os.SameFile(rootInfo, databaseParentInfo) &&
+		strings.EqualFold(dbFileName, filepath.Base(c.databasePath)) {
+		return pinnedRestoreTargetDatabaseDir, nil
+	}
+	return pinnedRestoreTargetUnrelated, nil
+}
+
+func (c *daemonRestoreTargetCoordinator) validateRestoreTargetContents(
+	root *os.Root,
+	allowLockFiles bool,
+) error {
+	if c.overwrite {
+		return nil
+	}
+	entries, err := fs.ReadDir(root.FS(), ".")
+	if err != nil {
+		return fmt.Errorf("inspect coordinated restore target: %w", err)
+	}
+	for _, entry := range entries {
+		if allowLockFiles && (entry.Name() == daemonOwnerLockFile || entry.Name() == writeOwnerLockFile) {
+			continue
+		}
+		return fmt.Errorf(
+			"restore target %s is not empty (use --overwrite to restore into it anyway)",
+			c.target,
+		)
+	}
+	return nil
 }
 
 type daemonRestoreTargetLease struct {
@@ -457,7 +586,7 @@ func printBackupRestoreSummary(w io.Writer, target string, res *backup.RestoreRe
 // objects, not path strings, so a case-variant or symlinked spelling of the
 // home is refused too.
 func refuseRestoreIntoLiveDaemonHome(target string) error {
-	configuredHome, err := restoreTargetsConfiguredDataDir(target)
+	configuredHome, err := restoreTargetsConfiguredArchive(target)
 	if err != nil {
 		return err
 	}
@@ -481,19 +610,57 @@ func refuseRestoreIntoLiveDaemonHome(target string) error {
 	return nil
 }
 
-func restoreTargetsConfiguredDataDir(target string) (bool, error) {
+func restoreTargetsConfiguredArchive(target string) (bool, error) {
 	if cfg == nil || target == "" || cfg.Data.DataDir == "" {
 		return false, nil
 	}
-	targetCanonical, err := canonicalPathThroughExistingAncestor(target)
+	dataDirMatch, err := restorePathsEquivalent(target, cfg.Data.DataDir)
 	if err != nil {
-		return false, fmt.Errorf("backup restore: resolving target %q: %w", target, err)
+		return false, fmt.Errorf("backup restore: compare target with configured data directory: %w", err)
 	}
-	homeCanonical, err := canonicalPathThroughExistingAncestor(cfg.Data.DataDir)
+	if dataDirMatch || store.IsPostgresURL(cfg.DatabaseDSN()) {
+		return dataDirMatch, nil
+	}
+	databasePath, err := cfg.DatabasePath()
 	if err != nil {
-		return false, fmt.Errorf("backup restore: resolving data dir %q: %w", cfg.Data.DataDir, err)
+		return false, fmt.Errorf("backup restore: resolving configured database: %w", err)
 	}
-	return targetCanonical == homeCanonical || sameExistingPath(targetCanonical, homeCanonical), nil
+	restoredDatabasePath := filepath.Join(target, backupapp.New(Version).DBFileName())
+	databaseMatch, err := restorePathsEquivalent(restoredDatabasePath, databasePath)
+	if err != nil {
+		return false, fmt.Errorf("backup restore: compare target database with configured database: %w", err)
+	}
+	return databaseMatch, nil
+}
+
+func restorePathsEquivalent(a, b string) (bool, error) {
+	aCanonical, bCanonical, err := canonicalRestorePaths(a, b)
+	if err != nil {
+		return false, err
+	}
+	return aCanonical == bCanonical || sameExistingPath(aCanonical, bCanonical), nil
+}
+
+func restorePathsMayBeEquivalent(a, b string) (bool, error) {
+	aCanonical, bCanonical, err := canonicalRestorePaths(a, b)
+	if err != nil {
+		return false, err
+	}
+	return aCanonical == bCanonical ||
+		sameExistingPath(aCanonical, bCanonical) ||
+		strings.EqualFold(aCanonical, bCanonical), nil
+}
+
+func canonicalRestorePaths(a, b string) (string, string, error) {
+	aCanonical, err := canonicalPathThroughExistingAncestor(a)
+	if err != nil {
+		return "", "", fmt.Errorf("resolving %q: %w", a, err)
+	}
+	bCanonical, err := canonicalPathThroughExistingAncestor(b)
+	if err != nil {
+		return "", "", fmt.Errorf("resolving %q: %w", b, err)
+	}
+	return aCanonical, bCanonical, nil
 }
 
 // canonicalPathThroughExistingAncestor resolves symlinks in the deepest
