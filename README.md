@@ -19,7 +19,7 @@
 
 > **Alpha software.** APIs, storage format, and CLI flags may change without notice. Back up your data.
 
-Archive a lifetime of email. Analytics and search in milliseconds, entirely offline.
+Archive a lifetime of email, messages, meetings. Analytics and search in milliseconds, entirely offline.
 
 ## Why msgvault?
 
@@ -276,6 +276,24 @@ msgvault search "incident review" --message-type discord
 See the [Discord guide](https://msgvault.io/usage/discord/) for bot permissions,
 credential bindings, channel filters, scheduling, consistency limits, and
 media backfill.
+
+### Beeper
+
+Archive every chat network bridged through Beeper Desktop (WhatsApp, Signal,
+Telegram, iMessage, Facebook Messenger, Instagram, Android SMS, Google
+Messages, Google Chat, Google Voice, GroupMe, IRC, LINE, LinkedIn, Matrix,
+Reddit, Tumblr, Twilio, X, Slack, and Discord) via its local read-only
+API — each connected network account becomes its own msgvault source:
+
+```bash
+msgvault add-beeper
+msgvault sync-beeper                # first run backfills, later runs are incremental
+msgvault backfill-beeper-media      # retry pending attachment downloads
+msgvault search "incident review" --message-type beeper
+```
+
+See the [Beeper guide](https://msgvault.io/usage/beeper/) for token setup,
+per-network sources, what gets archived, scheduling, and media backfill.
 
 ### Backup Snapshots
 
