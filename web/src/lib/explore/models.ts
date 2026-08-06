@@ -39,6 +39,9 @@ export type ExploreResponse = components['schemas']['ExploreHTTPResponse'];
 export type ExploreSearchMode = NonNullable<ExplorePredicate['search_mode']>;
 export type ExploreSort = components['schemas']['ExploreSort'];
 export type SearchProvenance = components['schemas']['SearchProvenance'];
+export type SourceIdentitiesResponse = components['schemas']['SourceIdentitiesResponse'];
+export type SourceIdentityResponse = components['schemas']['SourceIdentityResponse'];
+export type IdentityDirection = 'any' | 'sender' | 'recipient';
 export type PersonSummary = components['schemas']['PersonSummary'];
 export type PersonIdentifier = components['schemas']['PersonIdentifier'];
 export type PersonCluster = components['schemas']['PersonCluster'];
@@ -131,6 +134,17 @@ export interface AllMatchingExploreSelection {
 }
 
 export type ExploreSelection = ExplicitExploreSelection | AllMatchingExploreSelection;
+
+/** Rows archived before typed message kinds existed are email records. */
+export function isEmailMessageType(messageType: string): boolean {
+  return messageType === '' || messageType === 'email';
+}
+
+export function isValidSourceID(value: string | undefined): value is string {
+  if (value === undefined || !/^\d+$/.test(value)) return false;
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed > 0;
+}
 
 export interface ExploreResult {
   rows: EntryRow[];

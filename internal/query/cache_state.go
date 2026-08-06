@@ -17,8 +17,11 @@ import (
 // CacheSchemaVersion is the sole schema compatibility version shared by the
 // cache publisher and analytical readers. Version 15 adds the compact
 // relationship activity, people, domain, and daily read model; version 16
-// adds has_attachments to the relationship activity dataset.
-const CacheSchemaVersion = 16
+// adds has_attachments to the relationship activity dataset; version 17 adds
+// the envelope address snapshot (email_address) to message_recipients. The
+// bump forces a full rebuild so committed caches never mix recipient shards
+// with and without the column.
+const CacheSchemaVersion = 17
 
 // CacheSyncState is the commit marker written after a complete analytics
 // cache publication. SQLite remains authoritative; these watermarks only

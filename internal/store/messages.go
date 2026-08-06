@@ -47,12 +47,16 @@ type contextQuerier interface {
 	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
 }
 
-// RecipientSet groups participant IDs and display names for one
-// recipient type (from, to, cc, bcc).
+// RecipientSet groups participant IDs, display names, and envelope
+// addresses for one recipient type (from, to, cc, bcc). EmailAddresses
+// carries the address as it appeared in the message envelope; unlike the
+// participant row it resolves to, it never changes under participant
+// merges. Writers without envelope addresses may leave it empty.
 type RecipientSet struct {
 	Type           string
 	ParticipantIDs []int64
 	DisplayNames   []string
+	EmailAddresses []string
 }
 
 // ParticipantPersistData describes one email participant to resolve inside a
@@ -981,6 +985,15 @@ func (s *Store) GetMessageIsFromMe(messageID int64) (bool, error) {
 	return isFromMe, err
 }
 
+// messageIdentityAttributionMatch derives identity_is_from_me for one
+// messages row. The first two clauses match the sender participant's current
+// email and identifier rows. The third matches the message's own 'from'
+// envelope snapshot (message_recipients.email_address): after a participant
+// merge a confirmed alias may survive ONLY there — the survivor's email is
+// the primary address and no identifier row carries the alias — so without
+// it, confirming that alias would leave the alias's sent messages
+// unattributed. Envelope snapshots exist only for email addresses, so a
+// non-email identity (phone, matrix) can never match the clause.
 const messageIdentityAttributionMatch = `(
 	EXISTS (
 	  SELECT 1
@@ -999,6 +1012,15 @@ const messageIdentityAttributionMatch = `(
 	      (pi.identifier_type = 'email' AND LOWER(pi.identifier_value) = LOWER(ai.address))
 	      OR (pi.identifier_type <> 'email' AND pi.identifier_value = ai.address)
 	    )
+	)
+	OR EXISTS (
+	  SELECT 1
+	  FROM account_identities ai
+	  JOIN message_recipients mr ON mr.message_id = messages.id
+	  WHERE ai.source_id = messages.source_id
+	    AND mr.recipient_type = 'from'
+	    AND mr.email_address IS NOT NULL
+	    AND LOWER(mr.email_address) = LOWER(ai.address)
 	)
 )`
 
@@ -1066,6 +1088,33 @@ func refreshParticipantMessageAttributionContext(
 	`, messageSourceAttribution, messageIdentityAttributionMatch), args...)
 	if err != nil {
 		return fmt.Errorf("refresh participant message attribution: %w", err)
+	}
+	return nil
+}
+
+// refreshMessageAttributionWith recomputes one message's identity attribution
+// against its final recipient rows. persistMessageWith calls it after
+// replacing recipients because the attribution CTE inside the message upsert
+// runs before this transaction writes the 'from' envelope snapshot: a
+// confirmed identity represented only there — the shape a participant merge
+// leaves behind — would otherwise persist as unattributed, and re-persisting
+// an already-repaired message would clear the flag its envelope had earned.
+// The change guard keeps the common agreeing case write-free, so it fires no
+// last_modified triggers.
+func refreshMessageAttributionWith(q querier, messageID int64) error {
+	_, err := q.Exec(fmt.Sprintf(`
+		UPDATE messages
+		SET identity_is_from_me = %[2]s,
+		    is_from_me = (%[1]s OR %[2]s)
+		WHERE id = ?
+		  AND (
+		    identity_is_from_me <> %[2]s
+		    OR is_from_me IS NULL
+		    OR is_from_me <> (%[1]s OR %[2]s)
+		  )
+	`, messageSourceAttribution, messageIdentityAttributionMatch), messageID)
+	if err != nil {
+		return fmt.Errorf("refresh message attribution: %w", err)
 	}
 	return nil
 }
@@ -1206,6 +1255,14 @@ func (s *Store) persistMessageWith(
 		if err := replaceMessageRecipientsTx(q, messageID, rs); err != nil {
 			return 0, fmt.Errorf("store %s recipients: %w", rs.Type, err)
 		}
+	}
+
+	// Unconditional, not gated on data.Recipients carrying a 'from' set: even
+	// a persist that touches no recipients re-ran the upsert's attribution
+	// CTE, which cannot see the envelope rows already in the table, so the
+	// recompute must settle attribution against them either way.
+	if err := refreshMessageAttributionWith(q, messageID); err != nil {
+		return 0, err
 	}
 
 	if !data.PreserveLabels {
@@ -1358,38 +1415,50 @@ func replaceMessageRecipientsTx(tx querier, messageID int64, rs RecipientSet) er
 		return nil
 	}
 
-	// Collapse duplicate participants within this set. The table holds at most
-	// one row per (message_id, participant_id, recipient_type), so a participant
-	// repeated in one call — a calendar event listing the same attendee twice, or
-	// two address forms that resolve to the same participant — is redundant and
-	// would otherwise trip the UNIQUE constraint and abort the entire write. The
-	// first occurrence's display name wins.
-	seen := make(map[int64]struct{}, len(rs.ParticipantIDs))
+	// Collapse duplicates within this set. The table holds at most one row
+	// per (message_id, participant_id, recipient_type, normalized envelope
+	// address) — idx_message_recipients_envelope — so an exact repeat in one
+	// call (a calendar event listing the same attendee twice) is redundant
+	// and would otherwise trip the unique index and abort the entire write,
+	// while the same participant under two envelope aliases keeps one row
+	// per alias. The first occurrence's display name wins per row.
+	type recipientRowKey struct {
+		participantID int64
+		email         string
+	}
+	seen := make(map[recipientRowKey]struct{}, len(rs.ParticipantIDs))
 	ids := make([]int64, 0, len(rs.ParticipantIDs))
 	names := make([]string, 0, len(rs.ParticipantIDs))
+	emails := make([]string, 0, len(rs.ParticipantIDs))
 	for i, pid := range rs.ParticipantIDs {
-		if _, dup := seen[pid]; dup {
+		email := ""
+		if i < len(rs.EmailAddresses) {
+			email = rs.EmailAddresses[i]
+		}
+		key := recipientRowKey{participantID: pid, email: strings.ToLower(email)}
+		if _, dup := seen[key]; dup {
 			continue
 		}
-		seen[pid] = struct{}{}
+		seen[key] = struct{}{}
 		ids = append(ids, pid)
 		name := ""
 		if i < len(rs.DisplayNames) {
 			name = rs.DisplayNames[i]
 		}
 		names = append(names, name)
+		emails = append(emails, email)
 	}
 
 	return insertInChunks(tx, chunkInsert{
 		totalRows:    len(ids),
-		valuesPerRow: 4,
-		prefix:       "INSERT INTO message_recipients (message_id, participant_id, recipient_type, display_name) VALUES ",
+		valuesPerRow: 5,
+		prefix:       "INSERT INTO message_recipients (message_id, participant_id, recipient_type, display_name, email_address) VALUES ",
 	}, func(start, end int) ([]string, []any) {
 		values := make([]string, end-start)
-		args := make([]any, 0, (end-start)*4)
+		args := make([]any, 0, (end-start)*5)
 		for i := start; i < end; i++ {
-			values[i-start] = "(?, ?, ?, ?)"
-			args = append(args, messageID, ids[i], rs.Type, names[i])
+			values[i-start] = "(?, ?, ?, ?, ?)"
+			args = append(args, messageID, ids[i], rs.Type, names[i], nullIfEmpty(emails[i]))
 		}
 		return values, args
 	})
@@ -1402,7 +1471,12 @@ type Label struct {
 	SourceLabelID sql.NullString
 	Name          string
 	LabelType     sql.NullString
+	SystemRole    sql.NullString
 }
+
+// LabelSystemRoleSent identifies a label whose provider metadata confirms it
+// represents sent mail. It is deliberately independent of the display name.
+const LabelSystemRoleSent = "sent"
 
 // EnsureLabel gets or creates a label, handling renames and ID changes.
 // For batch operations prefer EnsureLabelsBatch which runs in a single
@@ -1415,7 +1489,7 @@ func (s *Store) EnsureLabel(
 	err := s.withTx(func(tx *loggedTx) error {
 		var txErr error
 		id, txErr = ensureLabelWith(
-			tx, sourceID, sourceLabelID, name, labelType,
+			tx, sourceID, sourceLabelID, name, labelType, nil,
 		)
 		return txErr
 	})
@@ -1436,19 +1510,31 @@ func ensureLabelWith(
 	q querier,
 	sourceID int64,
 	sourceLabelID, name, labelType string,
+	systemRole *string,
 ) (int64, error) {
 	// Look up by canonical identifier (Gmail label ID).
 	var id int64
 	var existingName string
 	var existingType sql.NullString
+	var existingRole sql.NullString
 	err := q.QueryRow(`
-		SELECT id, name, label_type FROM labels
+		SELECT id, name, label_type, system_role FROM labels
 		WHERE source_id = ? AND source_label_id = ?
-	`, sourceID, sourceLabelID).Scan(&id, &existingName, &existingType)
+	`, sourceID, sourceLabelID).Scan(&id, &existingName, &existingType, &existingRole)
 
 	if err == nil {
 		if existingName == name {
-			if !existingType.Valid || existingType.String != labelType {
+			if !existingType.Valid || existingType.String != labelType ||
+				(systemRole != nil && !labelSystemRoleMatches(existingRole, *systemRole)) {
+				if systemRole != nil {
+					if _, err = q.Exec(`
+						UPDATE labels SET label_type = ?, system_role = ?
+						WHERE id = ?
+					`, labelType, labelSystemRoleValue(*systemRole), id); err != nil {
+						return 0, fmt.Errorf("update label type and role: %w", err)
+					}
+					return id, nil
+				}
 				if _, err = q.Exec(`
 					UPDATE labels SET label_type = ?
 					WHERE id = ?
@@ -1464,7 +1550,14 @@ func ensureLabelWith(
 		if err = mergeLabelByName(q, sourceID, name, id); err != nil {
 			return 0, err
 		}
-		if _, err = q.Exec(`
+		if systemRole != nil {
+			if _, err = q.Exec(`
+				UPDATE labels SET name = ?, label_type = ?, system_role = ?
+				WHERE id = ?
+			`, name, labelType, labelSystemRoleValue(*systemRole), id); err != nil {
+				return 0, fmt.Errorf("update label name and role: %w", err)
+			}
+		} else if _, err = q.Exec(`
 			UPDATE labels SET name = ?, label_type = ?
 			WHERE id = ?
 		`, name, labelType, id); err != nil {
@@ -1479,7 +1572,18 @@ func ensureLabelWith(
 	// Not found by source_label_id — upsert by name. Handles the case
 	// where a label with this name exists from a previous import or
 	// with a stale/NULL source_label_id.
-	if _, err = q.Exec(`
+	if systemRole != nil {
+		if _, err = q.Exec(`
+			INSERT INTO labels (source_id, source_label_id, name, label_type, system_role)
+			VALUES (?, ?, ?, ?, ?)
+			ON CONFLICT(source_id, name) DO UPDATE SET
+				source_label_id = excluded.source_label_id,
+				label_type = excluded.label_type,
+				system_role = excluded.system_role
+		`, sourceID, sourceLabelID, name, labelType, labelSystemRoleValue(*systemRole)); err != nil {
+			return 0, err
+		}
+	} else if _, err = q.Exec(`
 		INSERT INTO labels (source_id, source_label_id, name, label_type)
 		VALUES (?, ?, ?, ?)
 		ON CONFLICT(source_id, name) DO UPDATE SET
@@ -1496,6 +1600,20 @@ func ensureLabelWith(
 		return 0, err
 	}
 	return id, nil
+}
+
+func labelSystemRoleValue(systemRole string) any {
+	if systemRole == "" {
+		return nil
+	}
+	return systemRole
+}
+
+func labelSystemRoleMatches(existing sql.NullString, systemRole string) bool {
+	if systemRole == "" {
+		return !existing.Valid
+	}
+	return existing.Valid && existing.String == systemRole
 }
 
 // mergeLabelByName finds a label with the given name (excluding keepID)
@@ -1544,8 +1662,9 @@ func mergeLabelByName(
 
 // LabelInfo holds the name and type for a label to be ensured.
 type LabelInfo struct {
-	Name string
-	Type string // "system" or "user"
+	Name       string
+	Type       string // "system" or "user"
+	SystemRole string // trusted canonical role; empty clears any stale value
 }
 
 // IsSystemLabel returns true if the given Gmail label ID represents a system label.
@@ -1607,7 +1726,7 @@ func (s *Store) EnsureLabelsBatch(
 		// is safe to merge (dead/imported label).
 		for sourceLabelID, info := range labels {
 			id, err := ensureLabelWith(
-				tx, sourceID, sourceLabelID, info.Name, info.Type,
+				tx, sourceID, sourceLabelID, info.Name, info.Type, &info.SystemRole,
 			)
 			if err != nil {
 				return err
@@ -2699,10 +2818,17 @@ func (s *Store) MergeParticipants(oldID, newID int64) error {
 		if _, err := tx.Exec(`UPDATE reactions SET participant_id = ? WHERE participant_id = ?`, newID, oldID); err != nil {
 			return err
 		}
+		// Collide on the full unique key including the normalized envelope
+		// address (idx_message_recipients_envelope), not just (message_id,
+		// recipient_type): a row of the absorbed participant whose envelope
+		// snapshot differs from every surviving row's must survive the
+		// repoint, or the merge would destroy the immutable alias evidence
+		// identity discovery classifies from.
 		if _, err := tx.Exec(`
 			DELETE FROM message_recipients WHERE participant_id = ? AND EXISTS (
 				SELECT 1 FROM message_recipients m2 WHERE m2.message_id = message_recipients.message_id
-				  AND m2.participant_id = ? AND m2.recipient_type = message_recipients.recipient_type)`, oldID, newID); err != nil {
+				  AND m2.participant_id = ? AND m2.recipient_type = message_recipients.recipient_type
+				  AND LOWER(COALESCE(m2.email_address, '')) = LOWER(COALESCE(message_recipients.email_address, '')))`, oldID, newID); err != nil {
 			return err
 		}
 		if _, err := tx.Exec(`UPDATE message_recipients SET participant_id = ? WHERE participant_id = ?`, newID, oldID); err != nil {

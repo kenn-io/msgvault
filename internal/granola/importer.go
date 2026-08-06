@@ -77,6 +77,14 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (*ImportSum
 		return nil, err
 	}
 	sum := &ImportSummary{SourceID: src.ID}
+	if err := imp.store.AddAccountIdentityContext(
+		ctx,
+		src.ID,
+		opts.AccountEmail,
+		"account-email",
+	); err != nil {
+		return nil, fmt.Errorf("confirm Granola account identity: %w", err)
+	}
 	accountIdentities, err := meetingidentity.ForSource(imp.store, src.ID, opts.AccountEmail)
 	if err != nil {
 		return nil, err

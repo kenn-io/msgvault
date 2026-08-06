@@ -1906,3 +1906,148 @@ func TestCopySubset_BodyTriggersRestampWatermarks(t *testing.T) {
 		"count unwatermarked messages")
 	assert.Zero(missing, "every copied message must carry a watermark")
 }
+
+// TestCopySubset_UpgradedAuxiliaryColumnOrder covers copying from a source
+// archive whose labels, participants, and conversations tables carry the
+// upgraded column order: the legacy ALTER TABLE ADD COLUMN migrations append
+// system_role, phone_number/canonical_id, and title/conversation_type at the
+// end of their tables, while a fresh schema.sql database declares them
+// mid-table. A positional SELECT * copy from such a source into a fresh
+// subset lands values in the wrong columns — labels.system_role and
+// labels.color swap, which loses the 'sent' role that sent-folder identity
+// discovery depends on. The copy names its columns, so every value must land
+// in its own column.
+func TestCopySubset_UpgradedAuxiliaryColumnOrder(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	srcDir := t.TempDir()
+	dstDir := filepath.Join(t.TempDir(), "dst")
+	srcDB := createTestSourceDB(t, srcDir, 2)
+
+	db, err := sql.Open("sqlite3", srcDB+"?_foreign_keys=OFF")
+	require.NoError(err, "open source db")
+
+	// Rebuild each table into the shape the legacy ADD COLUMN migrations
+	// produce: the late-added columns re-appended at the end, in migration
+	// order. Indexes on the dropped columns go first — SQLite refuses to
+	// drop an indexed column.
+	for _, stmt := range []string{
+		`ALTER TABLE labels DROP COLUMN system_role`,
+		`ALTER TABLE labels ADD COLUMN system_role TEXT`,
+
+		`DROP INDEX IF EXISTS idx_participants_phone`,
+		`DROP INDEX IF EXISTS idx_participants_canonical`,
+		`ALTER TABLE participants DROP COLUMN phone_number`,
+		`ALTER TABLE participants DROP COLUMN canonical_id`,
+		`ALTER TABLE participants ADD COLUMN phone_number TEXT`,
+		`ALTER TABLE participants ADD COLUMN canonical_id TEXT`,
+
+		`DROP INDEX IF EXISTS idx_conversations_type`,
+		`ALTER TABLE conversations DROP COLUMN conversation_type`,
+		`ALTER TABLE conversations DROP COLUMN title`,
+		`ALTER TABLE conversations ADD COLUMN title TEXT`,
+		`ALTER TABLE conversations ADD COLUMN conversation_type TEXT NOT NULL DEFAULT 'email_thread'`,
+	} {
+		_, err = db.Exec(stmt)
+		require.NoError(err, "rebuild upgraded order: %s", stmt)
+	}
+
+	_, err = db.Exec(`UPDATE labels
+		SET system_role = 'sent', color = '#16a765' WHERE id = 2`)
+	require.NoError(err, "seed upgraded label columns")
+	_, err = db.Exec(`UPDATE participants
+		SET phone_number = '+15550100', canonical_id = 'alice@example.com'
+		WHERE id = 1`)
+	require.NoError(err, "seed upgraded participant columns")
+	_, err = db.Exec(`UPDATE conversations
+		SET title = 'Thread 1', conversation_type = 'email_thread'`)
+	require.NoError(err, "seed upgraded conversation columns")
+	require.NoError(db.Close(), "close source db")
+
+	_, err = CopySubset(srcDB, dstDir, 100, false)
+	require.NoError(err, "CopySubset from upgraded column order")
+
+	dstDB, err := sql.Open("sqlite3", filepath.Join(dstDir, "msgvault.db"))
+	require.NoError(err, "open destination db")
+	defer func() { _ = dstDB.Close() }()
+
+	var systemRole, color sql.NullString
+	require.NoError(dstDB.QueryRow(
+		`SELECT system_role, color FROM labels WHERE id = 2`,
+	).Scan(&systemRole, &color), "read copied label")
+	assert.Equal("sent", systemRole.String, "labels.system_role")
+	assert.Equal("#16a765", color.String, "labels.color")
+
+	var phone, canonical, displayName, domain sql.NullString
+	require.NoError(dstDB.QueryRow(
+		`SELECT phone_number, canonical_id, display_name, domain
+		 FROM participants WHERE id = 1`,
+	).Scan(&phone, &canonical, &displayName, &domain),
+		"read copied participant")
+	assert.Equal("+15550100", phone.String, "participants.phone_number")
+	assert.Equal("alice@example.com", canonical.String,
+		"participants.canonical_id")
+	assert.Equal("Alice", displayName.String, "participants.display_name")
+	assert.Equal("example.com", domain.String, "participants.domain")
+
+	var title, convType string
+	require.NoError(dstDB.QueryRow(
+		`SELECT title, conversation_type FROM conversations WHERE id = 1`,
+	).Scan(&title, &convType), "read copied conversation")
+	assert.Equal("Thread 1", title, "conversations.title")
+	assert.Equal("email_thread", convType, "conversations.conversation_type")
+}
+
+// TestCopySubset_LegacyMessageRecipientsWithoutEnvelopeAddress covers a
+// source archive from before message_recipients.email_address was added. The
+// destination has the new column, so the copy must match columns by name and
+// let the destination default the missing envelope snapshot to NULL.
+func TestCopySubset_LegacyMessageRecipientsWithoutEnvelopeAddress(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	srcDB := createTestSourceDB(t, t.TempDir(), 2)
+	dstDir := filepath.Join(t.TempDir(), "dst")
+
+	db, err := sql.Open("sqlite3", srcDB+"?_foreign_keys=OFF")
+	require.NoError(err, "open source db")
+	for _, stmt := range []string{
+		`DROP INDEX IF EXISTS idx_message_recipients_envelope`,
+		`DROP INDEX IF EXISTS idx_message_recipients_message`,
+		`DROP INDEX IF EXISTS idx_message_recipients_participant`,
+		`CREATE TABLE message_recipients_legacy (
+			id INTEGER PRIMARY KEY,
+			message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+			participant_id INTEGER NOT NULL REFERENCES participants(id) ON DELETE CASCADE,
+			recipient_type TEXT NOT NULL,
+			display_name TEXT,
+			UNIQUE(message_id, participant_id, recipient_type)
+		)`,
+		`INSERT INTO message_recipients_legacy
+			(id, message_id, participant_id, recipient_type, display_name)
+		 SELECT id, message_id, participant_id, recipient_type, display_name
+		 FROM message_recipients`,
+		`DROP TABLE message_recipients`,
+		`ALTER TABLE message_recipients_legacy RENAME TO message_recipients`,
+		`CREATE INDEX idx_message_recipients_message
+			ON message_recipients(message_id)`,
+		`CREATE INDEX idx_message_recipients_participant
+			ON message_recipients(participant_id, recipient_type)`,
+	} {
+		_, err = db.Exec(stmt)
+		require.NoError(err, "rebuild legacy message_recipients: %s", stmt)
+	}
+	require.NoError(db.Close(), "close source db")
+
+	_, err = CopySubset(srcDB, dstDir, 100, false)
+	require.NoError(err, "CopySubset from source without email_address")
+
+	dstDB, err := sql.Open("sqlite3", filepath.Join(dstDir, "msgvault.db"))
+	require.NoError(err, "open destination db")
+	defer func() { _ = dstDB.Close() }()
+
+	var count int64
+	require.NoError(dstDB.QueryRow(
+		`SELECT COUNT(*) FROM message_recipients WHERE email_address IS NULL`,
+	).Scan(&count), "count legacy recipients without envelope snapshots")
+	assert.Equal(int64(4), count)
+}

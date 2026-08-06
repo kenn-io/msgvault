@@ -3081,6 +3081,154 @@ func (c *Client) AddCLIIdentityWithResponse(ctx context.Context, options *AddCLI
 	}
 }
 
+// DiscoverCLIIdentities Discover source-scoped account identities
+func (c *Client) DiscoverCLIIdentitiesWithResponse(ctx context.Context, options *DiscoverCLIIdentitiesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*DiscoverCLIIdentitiesResp, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/cli/identities/discover",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/cli/identities/discover")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+
+	out := &DiscoverCLIIdentitiesResp{
+		HTTPResponse: resp.Raw,
+		Body:         resp.Content,
+		StatusCode:   resp.StatusCode,
+	}
+
+	switch resp.StatusCode {
+	case 200:
+		return out, nil
+	case 500:
+		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
+	default:
+		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
+	}
+}
+
+// ImportCLIIdentities Preview or apply parsed source-scoped identities
+func (c *Client) ImportCLIIdentitiesWithResponse(ctx context.Context, options *ImportCLIIdentitiesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ImportCLIIdentitiesResp, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/cli/identities/import",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/cli/identities/import")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+
+	out := &ImportCLIIdentitiesResp{
+		HTTPResponse: resp.Raw,
+		Body:         resp.Content,
+		StatusCode:   resp.StatusCode,
+	}
+
+	switch resp.StatusCode {
+	case 200:
+		out.JSON200 = new(ImportCLIIdentitiesResponse)
+		bodyBytes := resp.Content
+		if len(bodyBytes) > 0 {
+			if err := json.Unmarshal(bodyBytes, out.JSON200); err != nil {
+				return out, &runtime.ResponseDecodeError{
+					StatusCode:    resp.StatusCode,
+					ContentType:   resp.Headers.Get("Content-Type"),
+					ContentLength: len(bodyBytes),
+					TargetType:    "ImportCLIIdentitiesResponse",
+					Body:          bodyBytes,
+					Err:           err,
+				}
+			}
+		}
+		return out, nil
+	case 400:
+		out.JSON400 = new(ImportCLIIdentitiesErrorResponse)
+		bodyBytes := resp.Content
+		if len(bodyBytes) > 0 {
+			if err := json.Unmarshal(bodyBytes, out.JSON400); err != nil {
+				return out, &runtime.ResponseDecodeError{
+					StatusCode:    resp.StatusCode,
+					ContentType:   resp.Headers.Get("Content-Type"),
+					ContentLength: len(bodyBytes),
+					TargetType:    "ImportCLIIdentitiesErrorResponse",
+					Body:          bodyBytes,
+					Err:           err,
+				}
+			}
+		}
+		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
+	case 422:
+		out.JSON422 = new(ImportCLIIdentitiesErrorResponseJSON)
+		bodyBytes := resp.Content
+		if len(bodyBytes) > 0 {
+			if err := json.Unmarshal(bodyBytes, out.JSON422); err != nil {
+				return out, &runtime.ResponseDecodeError{
+					StatusCode:    resp.StatusCode,
+					ContentType:   resp.Headers.Get("Content-Type"),
+					ContentLength: len(bodyBytes),
+					TargetType:    "ImportCLIIdentitiesErrorResponseJSON",
+					Body:          bodyBytes,
+					Err:           err,
+				}
+			}
+		}
+		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
+	case 500:
+		out.JSON500 = new(ImportCLIIdentitiesErrorResponseJSON500)
+		bodyBytes := resp.Content
+		if len(bodyBytes) > 0 {
+			if err := json.Unmarshal(bodyBytes, out.JSON500); err != nil {
+				return out, &runtime.ResponseDecodeError{
+					StatusCode:    resp.StatusCode,
+					ContentType:   resp.Headers.Get("Content-Type"),
+					ContentLength: len(bodyBytes),
+					TargetType:    "ImportCLIIdentitiesErrorResponseJSON500",
+					Body:          bodyBytes,
+					Err:           err,
+				}
+			}
+		}
+		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
+	case 503:
+		out.JSON503 = new(ImportCLIIdentitiesErrorResponseJSON503)
+		bodyBytes := resp.Content
+		if len(bodyBytes) > 0 {
+			if err := json.Unmarshal(bodyBytes, out.JSON503); err != nil {
+				return out, &runtime.ResponseDecodeError{
+					StatusCode:    resp.StatusCode,
+					ContentType:   resp.Headers.Get("Content-Type"),
+					ContentLength: len(bodyBytes),
+					TargetType:    "ImportCLIIdentitiesErrorResponseJSON503",
+					Body:          bodyBytes,
+					Err:           err,
+				}
+			}
+		}
+		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
+	default:
+		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
+	}
+}
+
 // InitCLIArchive Initialize the archive for CLI use
 func (c *Client) InitCLIArchiveWithResponse(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*InitCLIArchiveResp, error) {
 	var err error
@@ -8779,6 +8927,55 @@ func (c *Client) ListSourceStatusWithResponse(ctx context.Context, options *List
 					ContentType:   resp.Headers.Get("Content-Type"),
 					ContentLength: len(bodyBytes),
 					TargetType:    "ListSourceStatusResponse",
+					Body:          bodyBytes,
+					Err:           err,
+				}
+			}
+		}
+		return out, nil
+	case 500:
+		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
+	default:
+		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
+	}
+}
+
+// ListSourceIdentities List confirmed identities for one source
+func (c *Client) ListSourceIdentitiesWithResponse(ctx context.Context, options *ListSourceIdentitiesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListSourceIdentitiesResp, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/sources/{source_id}/identities",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/sources/{source_id}/identities")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+
+	out := &ListSourceIdentitiesResp{
+		HTTPResponse: resp.Raw,
+		Body:         resp.Content,
+		StatusCode:   resp.StatusCode,
+	}
+
+	switch resp.StatusCode {
+	case 200:
+		out.JSON200 = new(ListSourceIdentitiesResponse)
+		bodyBytes := resp.Content
+		if len(bodyBytes) > 0 {
+			if err := json.Unmarshal(bodyBytes, out.JSON200); err != nil {
+				return out, &runtime.ResponseDecodeError{
+					StatusCode:    resp.StatusCode,
+					ContentType:   resp.Headers.Get("Content-Type"),
+					ContentLength: len(bodyBytes),
+					TargetType:    "ListSourceIdentitiesResponse",
 					Body:          bodyBytes,
 					Err:           err,
 				}

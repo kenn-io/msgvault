@@ -256,6 +256,11 @@ type PatchSavedViewPath struct {
 	ID int64 `json:"id"`
 }
 
+type ListSourceIdentitiesPath struct {
+	// SourceID Source ID
+	SourceID int64 `json:"source_id"`
+}
+
 type TriggerSyncPath struct {
 	// Account Account email or configured source identifier
 	Account string `json:"account" validate:"required"`

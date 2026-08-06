@@ -598,6 +598,7 @@ func (d *PostgreSQLDialect) LegacyColumnMigrations() []ColumnMigration {
 		{`ALTER TABLE messages ADD COLUMN IF NOT EXISTS delete_batch_id TEXT`, "delete_batch_id"},
 		{`ALTER TABLE conversations ADD COLUMN IF NOT EXISTS title TEXT`, "title"},
 		{`ALTER TABLE conversations ADD COLUMN IF NOT EXISTS conversation_type TEXT NOT NULL DEFAULT 'email_thread'`, "conversation_type"},
+		{`ALTER TABLE labels ADD COLUMN IF NOT EXISTS system_role TEXT`, "labels.system_role"},
 		// FTS tsvector column for legacy PG databases created before FTS
 		// support. Inline in schema_pg.sql's CREATE TABLE (a no-op on a
 		// pre-existing table), so without this an upgraded DB never gets the
@@ -621,6 +622,10 @@ func (d *PostgreSQLDialect) LegacyColumnMigrations() []ColumnMigration {
 		// schema.sql stamps inserts from a column DEFAULT and gets no INSERT
 		// trigger at all (SQLiteDialect.EnsureTriggers).
 		{`ALTER TABLE messages ADD COLUMN IF NOT EXISTS content_changed_at TIMESTAMPTZ`, "content_changed_at"},
+		// email_address: immutable envelope address for identity discovery.
+		// Legacy rows stay NULL (unfillable without re-parsing raw MIME) and
+		// discovery falls back to the participant's email for them.
+		{`ALTER TABLE message_recipients ADD COLUMN IF NOT EXISTS email_address TEXT`, "message_recipients.email_address"},
 	}
 }
 

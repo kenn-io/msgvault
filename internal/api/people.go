@@ -172,9 +172,9 @@ func (s *Server) prepareIdentitySearch(w http.ResponseWriter, r *http.Request, r
 		return identitySearchPrepared{}, false
 	}
 	request.Predicate.Cursor = ""
-	prepared, err := prepareExplorePredicate(request.Predicate)
+	prepared, err := s.prepareResolvedExplorePredicate(r.Context(), request.Predicate)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_identity_predicate", err.Error())
+		s.writeExploreFilterError(w, err, "invalid_identity_predicate")
 		return identitySearchPrepared{}, false
 	}
 	if request.Limit == 0 {
@@ -412,9 +412,9 @@ func (s *Server) prepareIdentitySummary(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, "invalid_identity_predicate", "identity summary does not accept grouping")
 		return query.ExploreRequest{}, "", false
 	}
-	prepared, err := prepareExplorePredicate(request)
+	prepared, err := s.prepareResolvedExplorePredicate(r.Context(), request)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_identity_predicate", err.Error())
+		s.writeExploreFilterError(w, err, "invalid_identity_predicate")
 		return query.ExploreRequest{}, "", false
 	}
 	searchSpec, snapshotID, ok := s.resolveExploreSearch(r.Context(), w, prepared.request)

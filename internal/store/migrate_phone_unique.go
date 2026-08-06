@@ -149,7 +149,12 @@ func (s *Store) mergeParticipant(ctx context.Context, tx *loggedTx, winner, lose
 	if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
 		return err
 	}
-	// (1) message_recipients UNIQUE(message_id, participant_id, recipient_type)
+	// (1) message_recipients UNIQUE(message_id, participant_id, recipient_type).
+	// Deliberately NOT the envelope-aware collision rule MergeParticipants
+	// uses: this one-shot migration runs before the legacy ADD COLUMN loop in
+	// InitSchemaContext, so whenever it actually merges rows the
+	// email_address column does not exist yet — there is no envelope
+	// evidence to preserve, and referencing the column here would fail.
 	if _, err := tx.ExecContext(ctx, `
 		DELETE FROM message_recipients
 		 WHERE participant_id = ?

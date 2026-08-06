@@ -291,13 +291,25 @@ type CLIIdentityRow struct {
 type CLIIdentitiesRequest struct {
 	Account     string
 	Collection  string
+	SourceID    int64
+	SourceIDSet bool
 	PrimaryOnly bool
 }
 
+type CLIIdentitySourceSelector = identityops.SourceSelector
 type CLIIdentityAddRequest = identityops.AddRequest
 type CLIIdentityAddResult = identityops.AddResult
 type CLIIdentityRemoveRequest = identityops.RemoveRequest
 type CLIIdentityRemoveResult = identityops.RemoveResult
+type CLIIdentityImportRequest = identityops.ImportRequest
+type CLIIdentityImportResult = identityops.ImportResult
+
+func optionalCLIIdentitySourceID(sourceID int64, isSet bool) *int64 {
+	if sourceID == 0 && !isSet {
+		return nil
+	}
+	return &sourceID
+}
 
 type CLIDeleteDedupedRequest struct {
 	BatchIDs           []string
@@ -438,6 +450,69 @@ func (c *Client) RunCLICommand(
 ) error {
 	body := generated.RunCLIBody{Args: req.Args, Env: req.Env, Cwd: optionalString(req.Cwd)}
 	return c.runCLIStream(ctx, "/api/v1/cli/run", "run", &generated.RunCLIRequestOptions{Body: &body}, output)
+}
+
+func (c *Client) DiscoverCLIIdentities(
+	ctx context.Context,
+	req identityops.DiscoverRequest,
+	onEvent func(identityops.DiscoverEvent) error,
+) error {
+	resp, err := c.openCLIStream(
+		ctx,
+		"/api/v1/cli/identities/discover",
+		&generated.DiscoverCLIIdentitiesRequestOptions{Body: cliIdentityDiscoverBodyFromRequest(req)},
+	)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	seenResult := false
+	decoder := json.NewDecoder(resp.Body)
+	for {
+		var generatedEvent generated.DiscoverEvent
+		err := decoder.Decode(&generatedEvent)
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return fmt.Errorf("decode CLI identity discovery stream: %w", err)
+		}
+		event := cliIdentityDiscoverEventFromGenerated(generatedEvent)
+		switch event.Type {
+		case "progress":
+			if seenResult {
+				return errors.New("identity discovery progress arrived after result")
+			}
+		case "result":
+			if seenResult {
+				return errors.New("identity discovery stream returned multiple results")
+			}
+			if event.Result == nil {
+				return errors.New("identity discovery result event has no result")
+			}
+			seenResult = true
+		case "error":
+			if seenResult {
+				return errors.New("identity discovery error arrived after result")
+			}
+			if event.Error == nil || event.Error.Code == "" || event.Error.Message == "" {
+				return errors.New("identity discovery error event is malformed")
+			}
+			return event.Error
+		default:
+			return fmt.Errorf("unknown identity discovery event type %q", event.Type)
+		}
+		if onEvent != nil {
+			if err := onEvent(event); err != nil {
+				return err
+			}
+		}
+	}
+	if !seenResult {
+		return errors.New("identity discovery stream ended without result")
+	}
+	return nil
 }
 
 func (c *Client) PlanCLIAddCalendar(
@@ -852,6 +927,7 @@ func (c *Client) GetCLIIdentities(
 			Query: &generated.ListCLIIdentitiesQuery{
 				Account:     optionalString(req.Account),
 				Collection:  optionalString(req.Collection),
+				SourceID:    optionalCLIIdentitySourceID(req.SourceID, req.SourceIDSet),
 				PrimaryOnly: optionalBool(req.PrimaryOnly),
 			},
 		})
@@ -869,7 +945,8 @@ func (c *Client) AddCLIIdentity(
 	resp, err := CLIResponse(c, func(client *apiclient.Client) (*generated.AddCLIIdentityResp, error) {
 		return client.AddCLIIdentityWithResponse(ctx, &generated.AddCLIIdentityRequestOptions{
 			Body: &generated.AddCLIIdentityBody{
-				Account:    req.Account,
+				Account:    optionalString(req.Account),
+				SourceID:   optionalCLIIdentitySourceID(req.SourceID, req.SourceID != 0),
 				Identifier: req.Identifier,
 				Signal:     req.Signal,
 			},
@@ -881,6 +958,21 @@ func (c *Client) AddCLIIdentity(
 	return cliIdentityAddResultFromGenerated(resp.JSON200), nil
 }
 
+func (c *Client) ImportCLIIdentities(
+	ctx context.Context,
+	req CLIIdentityImportRequest,
+) (*CLIIdentityImportResult, error) {
+	resp, err := CLIResponse(c, func(client *apiclient.Client) (*generated.ImportCLIIdentitiesResp, error) {
+		return client.ImportCLIIdentitiesWithResponse(ctx, &generated.ImportCLIIdentitiesRequestOptions{
+			Body: cliIdentityImportBodyFromRequest(req),
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+	return cliIdentityImportResultFromGenerated(resp.JSON200), nil
+}
+
 func (c *Client) RemoveCLIIdentity(
 	ctx context.Context,
 	req CLIIdentityRemoveRequest,
@@ -888,7 +980,8 @@ func (c *Client) RemoveCLIIdentity(
 	resp, err := CLIResponse(c, func(client *apiclient.Client) (*generated.RemoveCLIIdentityResp, error) {
 		return client.RemoveCLIIdentityWithResponse(ctx, &generated.RemoveCLIIdentityRequestOptions{
 			Body: &generated.RemoveCLIIdentityBody{
-				Account:    req.Account,
+				Account:    optionalString(req.Account),
+				SourceID:   optionalCLIIdentitySourceID(req.SourceID, req.SourceID != 0),
 				Identifier: req.Identifier,
 			},
 		})

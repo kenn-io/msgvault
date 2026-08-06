@@ -17,6 +17,8 @@ import (
 
 	"github.com/BurntSushi/toml"
 	"go.kenn.io/msgvault/internal/fileutil"
+	"go.kenn.io/msgvault/internal/identityops"
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/taskclient"
 	"go.kenn.io/msgvault/internal/vector"
 )
@@ -258,6 +260,35 @@ type IdentityConfig struct {
 	Addresses []string `toml:"addresses"`
 }
 
+// FastmailSource configures the optional Fastmail identity inventory for one
+// message source. A source may be selected by its stable source ID or account
+// identifier, but not both.
+type FastmailSource struct {
+	Account               string `toml:"account"`
+	SourceID              int64  `toml:"source_id,omitzero"`
+	APIToken              string `toml:"api_token"`
+	AutoConfirmIdentities bool   `toml:"auto_confirm_identities"`
+
+	sourceIDConfigured bool
+}
+
+// Selector returns the source selector represented by this configuration.
+func (s FastmailSource) Selector() (identityops.SourceSelector, error) {
+	account := strings.TrimSpace(s.Account)
+	switch {
+	case s.SourceID < 0:
+		return identityops.SourceSelector{}, errors.New("source_id must be positive")
+	case s.SourceID > 0 && account != "":
+		return identityops.SourceSelector{}, errors.New("account and source_id are mutually exclusive")
+	case s.SourceID > 0:
+		return identityops.SourceSelector{SourceID: s.SourceID}, nil
+	case account == "":
+		return identityops.SourceSelector{}, errors.New("account or source_id is required")
+	default:
+		return identityops.SourceSelector{Account: account}, nil
+	}
+}
+
 // BackupConfig holds default settings for `msgvault backup` (spec Section
 // 10). Repo lets `--repo` be omitted on every invocation; ZstdLevel tunes
 // the pack compression level (0 keeps kit/pack's own default).
@@ -324,6 +355,7 @@ type Config struct {
 	Remote       RemoteConfig       `toml:"remote"`
 	Vector       vector.Config      `toml:"vector"`
 	Identity     IdentityConfig     `toml:"identity"`
+	Fastmail     []FastmailSource   `toml:"fastmail"`
 	Accounts     []AccountSchedule  `toml:"accounts"`
 	SynctechSMS  SynctechSMSConfig  `toml:"synctech_sms"`
 	GCal         []GCalSource       `toml:"gcal"`
@@ -611,6 +643,9 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 		}
 		return nil, fmt.Errorf("decode config: %w", err)
 	}
+	if err := cfg.validateFastmailSources(fastmailSourceIDConfigured(content)); err != nil {
+		return nil, err
+	}
 
 	// Expand ~ in paths
 	cfg.Data.DataDir = expandPath(cfg.Data.DataDir)
@@ -674,6 +709,134 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 	}
 
 	return cfg, nil
+}
+
+func fastmailSourceIDConfigured(content []byte) []bool {
+	var raw struct {
+		Fastmail []struct {
+			SourceID *int64 `toml:"source_id"`
+		} `toml:"fastmail"`
+	}
+	_, _ = toml.Decode(string(content), &raw)
+	configured := make([]bool, len(raw.Fastmail))
+	for i := range raw.Fastmail {
+		configured[i] = raw.Fastmail[i].SourceID != nil
+	}
+	return configured
+}
+
+func (c *Config) validateFastmailSources(sourceIDConfigured []bool) error {
+	seenAccounts := []string{}
+	seenSourceIDs := map[int64]bool{}
+	for i := range c.Fastmail {
+		source := &c.Fastmail[i]
+		source.Account = strings.TrimSpace(source.Account)
+		source.sourceIDConfigured = i < len(sourceIDConfigured) && sourceIDConfigured[i]
+		if source.sourceIDConfigured && source.SourceID <= 0 {
+			return fmt.Errorf("[[fastmail]] entry %d: source_id must be positive", i+1)
+		}
+		if _, err := source.Selector(); err != nil {
+			return fmt.Errorf("[[fastmail]] entry %d: %w", i+1, err)
+		}
+		if source.APIToken == "" {
+			return fmt.Errorf("[[fastmail]] entry %d: api_token is required", i+1)
+		}
+		if source.SourceID > 0 {
+			if seenSourceIDs[source.SourceID] {
+				return fmt.Errorf("[[fastmail]] entry %d: duplicate source_id selector %d", i+1, source.SourceID)
+			}
+			seenSourceIDs[source.SourceID] = true
+			continue
+		}
+		if slices.ContainsFunc(seenAccounts, func(account string) bool {
+			return strings.EqualFold(account, source.Account)
+		}) {
+			return fmt.Errorf("[[fastmail]] entry %d: duplicate account selector %q", i+1, source.Account)
+		}
+		seenAccounts = append(seenAccounts, source.Account)
+	}
+	return nil
+}
+
+// FastmailSourceStore is the complete source-listing surface required to
+// resolve an account selector without losing duplicate-source ambiguity.
+type FastmailSourceStore interface {
+	ListSources(sourceType string) ([]*store.Source, error)
+}
+
+// ErrFastmailSourceLookup marks infrastructure failures while resolving
+// [[fastmail]] configuration, as opposed to configuration errors.
+var ErrFastmailSourceLookup = errors.New("fastmail source lookup failed")
+
+// FastmailSourceFor returns a copy of the optional Fastmail configuration for
+// sourceID. Account selectors are resolved against every archive source so a
+// duplicate identifier or display name cannot silently attach one provider
+// inventory to multiple ingestion sources. Explicit source ID entries take
+// precedence over account matches.
+func (c *Config) FastmailSourceFor(st FastmailSourceStore, sourceID int64) (*FastmailSource, error) {
+	if st == nil {
+		return nil, errors.New("fastmail source lookup requires a source store")
+	}
+	if sourceID <= 0 {
+		return nil, errors.New("fastmail source lookup requires a positive source ID")
+	}
+	sources, err := st.ListSources("")
+	if err != nil {
+		return nil, fmt.Errorf("%w: list sources for Fastmail configuration: %w", ErrFastmailSourceLookup, err)
+	}
+	var source *store.Source
+	for _, candidate := range sources {
+		if candidate != nil && candidate.ID == sourceID {
+			source = candidate
+			break
+		}
+	}
+	if source == nil {
+		return nil, fmt.Errorf("fastmail source lookup: source %d not found", sourceID)
+	}
+	for i := range c.Fastmail {
+		configured := c.Fastmail[i]
+		if configured.SourceID > 0 && configured.SourceID == sourceID {
+			return &configured, nil
+		}
+	}
+
+	var matched *FastmailSource
+	for i := range c.Fastmail {
+		configured := c.Fastmail[i]
+		if configured.SourceID > 0 {
+			continue
+		}
+		account := strings.TrimSpace(configured.Account)
+		if account == "" {
+			continue
+		}
+		if !fastmailAccountMatchesSource(account, source) {
+			continue
+		}
+		matchingSources := 0
+		for _, candidate := range sources {
+			if candidate != nil && fastmailAccountMatchesSource(account, candidate) {
+				matchingSources++
+			}
+		}
+		if matchingSources > 1 {
+			return nil, fmt.Errorf(
+				"fastmail account selector %q matches multiple sources; configure source_id",
+				account,
+			)
+		}
+		if matched != nil {
+			return nil, fmt.Errorf("ambiguous Fastmail configuration for source %d", sourceID)
+		}
+		matched = &configured
+	}
+	return matched, nil
+}
+
+func fastmailAccountMatchesSource(account string, source *store.Source) bool {
+	return strings.EqualFold(account, source.Identifier) ||
+		(source.DisplayName.Valid && strings.EqualFold(account, source.DisplayName.String))
 }
 
 func (c *Config) applySynctechSMSDefaults() {

@@ -619,6 +619,124 @@ func (s *Store) runMaintenance(ctx context.Context, fn func(ctx context.Context,
 	return nil
 }
 
+// buildLargeIndexesConcurrently creates big-table indexes without blocking
+// writers. CREATE INDEX CONCURRENTLY cannot run inside a transaction (unlike
+// the runMaintenance escape hatch, which only disables the pool-wide
+// statement_timeout for one transaction), so this runs on a dedicated
+// autocommit connection acquired directly from the pool.
+//
+// PostgreSQL's IF NOT EXISTS matches by name only: it treats an INVALID
+// leftover (from a process killed mid-build) as "already exists" and
+// returns success with a NOTICE instead of rebuilding. So a bad index from
+// an earlier crashed run would otherwise persist forever — degrading writes
+// on every subsequent start — because a name-matched no-op never reaches the
+// error path. This checks pg_index.indisvalid for a leftover BEFORE the
+// first attempt, and keeps the on-error check too for a build that goes
+// INVALID during this run.
+//
+// Both an initial failure and a failed retry are logged and swallowed: a
+// future InitSchema call (the next process start) retries the same
+// idempotent build. SQLite has no CONCURRENTLY equivalent and does not need
+// one — its index build over a working-set-sized archive is fast enough to
+// run inline in schema.sql — so this is a no-op there.
+func (s *Store) buildLargeIndexesConcurrently(ctx context.Context) {
+	if !s.IsPostgreSQL() {
+		return
+	}
+
+	conn, err := s.db.Conn(ctx)
+	if err != nil {
+		slog.Warn("acquire connection for concurrent index build failed", "error", err.Error())
+		return
+	}
+	defer func() { _ = conn.Close() }()
+
+	if _, err := conn.ExecContext(ctx, "SET statement_timeout = 0"); err != nil {
+		slog.Warn("disable statement timeout for concurrent index build failed", "error", err.Error())
+		return
+	}
+	// The conn returned by s.db.Conn goes back to the pool on Close, not to
+	// the OS: pgx's stdlib driver does not run DISCARD ALL on release, so a
+	// session-level SET here would otherwise leak the disabled timeout onto
+	// whichever pooled connection this physical one becomes for its
+	// lifetime. RESET restores the role/database startup value. Deferred
+	// before any fallible step below so it always runs, and on a bounded
+	// context detached from ctx's cancellation so a caller-cancelled ctx
+	// cannot skip it — but, unlike context.Background(), also cannot hang
+	// the shutdown path indefinitely on an unresponsive server.
+	defer func() {
+		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+		defer cancel()
+		if _, err := conn.ExecContext(cleanupCtx, "RESET statement_timeout"); err != nil {
+			slog.Warn("reset statement timeout after concurrent index build failed", "error", err.Error())
+		}
+	}()
+
+	// Every index on a table that can already be large in an existing archive
+	// belongs here rather than inline in schema_pg.sql, where it would build
+	// under the pool-wide statement_timeout and could fail InitSchema outright.
+	concurrentIndexes := []struct{ name, definition string }{
+		{"idx_messages_source_id", "ON messages(source_id, id)"},
+		{"idx_participants_email_lower", "ON participants(LOWER(email_address))"},
+		{"idx_participant_identifiers_value_lower", "ON participant_identifiers(LOWER(identifier_value))"},
+	}
+	for _, index := range concurrentIndexes {
+		if dropErr := dropInvalidIndexConcurrently(ctx, conn, index.name); dropErr != nil {
+			slog.Warn("drop invalid leftover index failed", "index", index.name, "error", dropErr.Error())
+		}
+
+		build := func() error {
+			_, err := conn.ExecContext(ctx,
+				`CREATE INDEX CONCURRENTLY IF NOT EXISTS `+index.name+` `+index.definition)
+			return err
+		}
+
+		if err := build(); err != nil {
+			slog.Warn("concurrent index build failed, checking for an invalid leftover to retry",
+				"index", index.name, "error", err.Error())
+			if dropErr := dropInvalidIndexConcurrently(ctx, conn, index.name); dropErr != nil {
+				slog.Warn("drop invalid leftover index failed", "index", index.name, "error", dropErr.Error())
+			}
+			if err := build(); err != nil {
+				slog.Warn("concurrent index build failed after retry; will retry on next start",
+					"index", index.name, "error", err.Error())
+			}
+		}
+	}
+}
+
+// dropInvalidIndexConcurrently drops indexName only if PostgreSQL left it in
+// the INVALID state (a CREATE INDEX CONCURRENTLY that failed or was
+// cancelled partway through). A valid index that failed to build for some
+// other transient reason (e.g. a concurrent CREATE already in flight) is
+// left alone rather than dropped. The namespace check keeps this from
+// matching an INVALID index of the same name in a different schema — the
+// unqualified build/drop below both resolve the bare name via search_path,
+// so this must resolve against that same current_schema() to stay
+// consistent with what they will actually touch.
+func dropInvalidIndexConcurrently(ctx context.Context, conn *sql.Conn, indexName string) error {
+	var invalid bool
+	if err := conn.QueryRowContext(ctx, `
+		SELECT EXISTS (
+			SELECT 1
+			FROM pg_class c
+			JOIN pg_index i ON i.indexrelid = c.oid
+			WHERE c.relname = $1
+			  AND c.relnamespace = current_schema()::regnamespace
+			  AND i.indisvalid = false
+		)
+	`, indexName).Scan(&invalid); err != nil {
+		return fmt.Errorf("check invalid index: %w", err)
+	}
+	if !invalid {
+		return nil
+	}
+	if _, err := conn.ExecContext(ctx, `DROP INDEX CONCURRENTLY IF EXISTS `+indexName); err != nil {
+		return fmt.Errorf("drop invalid index: %w", err)
+	}
+	return nil
+}
+
 // queryInChunks executes a parameterized IN-query in chunks to stay within
 // SQLite's parameter limit. queryTemplate must contain a single %s placeholder
 // for the comma-separated "?" list. The prefix args are prepended before each
@@ -1034,6 +1152,28 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 	); err != nil {
 		return err
 	}
+
+	// Relax message_recipients uniqueness to include the normalized envelope
+	// address, so alias snapshots of one participant can coexist per message.
+	// Must run after the legacy ADD COLUMN loop above (the unique index
+	// expression reads email_address) and before any participant merge under
+	// the new email-aware collision rules can run.
+	if err := s.ensureRecipientEnvelopeUniqueIndex(ctx); err != nil {
+		return fmt.Errorf("ensure idx_message_recipients_envelope unique: %w", err)
+	}
+
+	// Identity discovery scans one source in message-ID order. On SQLite the
+	// plain idx_messages_source index already orders ties by rowid, so no
+	// separate composite index is needed there (see schema.sql). PostgreSQL
+	// still needs the explicit composite index, built via CREATE INDEX
+	// CONCURRENTLY on a dedicated connection so a one-time build over an
+	// existing archive never blocks writers or needs the pool-wide
+	// statement_timeout escape hatch (CONCURRENTLY cannot run inside a
+	// transaction at all, so runMaintenance does not apply here). Carries
+	// ctx like every other statement in this method: a cancelled build
+	// leaves at worst an INVALID leftover, which the next start drops and
+	// rebuilds.
+	s.buildLargeIndexesConcurrently(ctx)
 
 	// Partial expression indexes for live-message listing and date filtering.
 	// The first is a covering index for the ListMessages page

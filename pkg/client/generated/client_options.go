@@ -1424,6 +1424,94 @@ func (o *AddCLIIdentityRequestOptions) GetHeader() (map[string]string, error) {
 	return nil, nil
 }
 
+// DiscoverCLIIdentitiesRequestOptions is the options needed to make a request to DiscoverCLIIdentities.
+type DiscoverCLIIdentitiesRequestOptions struct {
+	Body *DiscoverCLIIdentitiesBody
+}
+
+// Validate validates all the fields in the options.
+// Use it if fields validation was not run.
+func (o *DiscoverCLIIdentitiesRequestOptions) Validate() error {
+	var errors runtime.ValidationErrors
+
+	if o.Body != nil {
+		if v, ok := any(o.Body).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Body", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+
+	return errors
+}
+
+// GetPathParams returns the path params as a map.
+func (o *DiscoverCLIIdentitiesRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *DiscoverCLIIdentitiesRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *DiscoverCLIIdentitiesRequestOptions) GetBody() any {
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *DiscoverCLIIdentitiesRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// ImportCLIIdentitiesRequestOptions is the options needed to make a request to ImportCLIIdentities.
+type ImportCLIIdentitiesRequestOptions struct {
+	Body *ImportCLIIdentitiesBody
+}
+
+// Validate validates all the fields in the options.
+// Use it if fields validation was not run.
+func (o *ImportCLIIdentitiesRequestOptions) Validate() error {
+	var errors runtime.ValidationErrors
+
+	if o.Body != nil {
+		if v, ok := any(o.Body).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Body", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+
+	return errors
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ImportCLIIdentitiesRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *ImportCLIIdentitiesRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ImportCLIIdentitiesRequestOptions) GetBody() any {
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *ImportCLIIdentitiesRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // GetCLIMessageRequestOptions is the options needed to make a request to GetCLIMessage.
 type GetCLIMessageRequestOptions struct {
 	Query *GetCLIMessageQuery
@@ -4611,6 +4699,50 @@ func (o *ListSourceStatusRequestOptions) GetBody() any {
 
 // GetHeader returns the headers as a map.
 func (o *ListSourceStatusRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// ListSourceIdentitiesRequestOptions is the options needed to make a request to ListSourceIdentities.
+type ListSourceIdentitiesRequestOptions struct {
+	PathParams *ListSourceIdentitiesPath
+}
+
+// Validate validates all the fields in the options.
+// Use it if fields validation was not run.
+func (o *ListSourceIdentitiesRequestOptions) Validate() error {
+	var errors runtime.ValidationErrors
+
+	if o.PathParams != nil {
+		if v, ok := any(o.PathParams).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("PathParams", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+
+	return errors
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ListSourceIdentitiesRequestOptions) GetPathParams() (map[string]any, error) {
+	return runtime.AsMap[any](o.PathParams)
+}
+
+// GetQuery returns the query params as a map.
+func (o *ListSourceIdentitiesRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ListSourceIdentitiesRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *ListSourceIdentitiesRequestOptions) GetHeader() (map[string]string, error) {
 	return nil, nil
 }
 

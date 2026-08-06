@@ -25,6 +25,24 @@ func (a AddResultCacheState) Validate() error {
 	}
 }
 
+type CandidateClassification string
+
+const (
+	Confirmed CandidateClassification = "confirmed"
+	Strong    CandidateClassification = "strong"
+	Weak      CandidateClassification = "weak"
+)
+
+// Validate checks if the CandidateClassification value is valid
+func (c CandidateClassification) Validate() error {
+	switch c {
+	case Confirmed, Strong, Weak:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid CandidateClassification value, got: %v", c))
+	}
+}
+
 type CreateAttributeDefinitionRequestCardinality string
 
 const (
@@ -59,6 +77,24 @@ func (c CreateAttributeDefinitionRequestObjectType) Validate() error {
 	}
 }
 
+type DiscoverEventType string
+
+const (
+	DiscoverEventTypeProgress DiscoverEventType = "progress"
+	Error                     DiscoverEventType = "error"
+	Result                    DiscoverEventType = "result"
+)
+
+// Validate checks if the DiscoverEventType value is valid
+func (d DiscoverEventType) Validate() error {
+	switch d {
+	case DiscoverEventTypeProgress, Error, Result:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid DiscoverEventType value, got: %v", d))
+	}
+}
+
 type ExploreCacheUnavailableResponseReadiness string
 
 const (
@@ -85,6 +121,7 @@ const (
 	ExploreFilterDimensionBefore      ExploreFilterDimension = "before"
 	ExploreFilterDimensionDeletion    ExploreFilterDimension = "deletion"
 	ExploreFilterDimensionDomain      ExploreFilterDimension = "domain"
+	ExploreFilterDimensionIdentity    ExploreFilterDimension = "identity"
 	ExploreFilterDimensionMessageType ExploreFilterDimension = "message_type"
 	ExploreFilterDimensionParticipant ExploreFilterDimension = "participant"
 	ExploreFilterDimensionSource      ExploreFilterDimension = "source"
@@ -93,7 +130,7 @@ const (
 // Validate checks if the ExploreFilterDimension value is valid
 func (e ExploreFilterDimension) Validate() error {
 	switch e {
-	case ExploreFilterDimensionAfter, ExploreFilterDimensionBefore, ExploreFilterDimensionDeletion, ExploreFilterDimensionDomain, ExploreFilterDimensionMessageType, ExploreFilterDimensionParticipant, ExploreFilterDimensionSource:
+	case ExploreFilterDimensionAfter, ExploreFilterDimensionBefore, ExploreFilterDimensionDeletion, ExploreFilterDimensionDomain, ExploreFilterDimensionIdentity, ExploreFilterDimensionMessageType, ExploreFilterDimensionParticipant, ExploreFilterDimensionSource:
 		return nil
 	default:
 		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid ExploreFilterDimension value, got: %v", e))

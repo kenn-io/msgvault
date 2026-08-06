@@ -15,9 +15,11 @@ import (
 	_ "github.com/duckdb/duckdb-go/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/identityindex"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/query/querytest"
+	"go.kenn.io/msgvault/internal/testutil"
 )
 
 const (
@@ -26,6 +28,69 @@ const (
 	relAlice2ID     = int64(3)
 	relNewsletterID = int64(4)
 )
+
+const relationshipIdentityIdentifier = "z-owner@example.test"
+
+type recordingRelationshipEngine struct {
+	*query.DuckDBEngine
+
+	relationshipsCalls    int
+	timelineCalls         int
+	resolveCanonicalCalls int
+}
+
+func (e *recordingRelationshipEngine) Relationships(
+	ctx context.Context,
+	request query.RelationshipsRequest,
+) (*query.RelationshipsResponse, error) {
+	e.relationshipsCalls++
+	return e.DuckDBEngine.Relationships(ctx, request)
+}
+
+func (e *recordingRelationshipEngine) RelationshipTimeline(
+	ctx context.Context,
+	request query.RelationshipTimelineRequest,
+) (*query.RelationshipTimelineResponse, error) {
+	e.timelineCalls++
+	return e.DuckDBEngine.RelationshipTimeline(ctx, request)
+}
+
+func (e *recordingRelationshipEngine) ResolveCanonicalParticipant(
+	ctx context.Context,
+	participantID int64,
+) (int64, error) {
+	e.resolveCanonicalCalls++
+	return e.DuckDBEngine.ResolveCanonicalParticipant(ctx, participantID)
+}
+
+func newRelationshipIdentityAPIServer(
+	t *testing.T,
+	duckDB *query.DuckDBEngine,
+	participantAddresses []string,
+) (*Server, *recordingMessageIdentityStore, *recordingRelationshipEngine) {
+	t.Helper()
+	requirements := require.New(t)
+	st := testutil.NewSQLiteTestStore(t)
+	source, err := st.GetOrCreateSource("gmail", "archive@example.test")
+	requirements.NoError(err)
+	requirements.Equal(int64(1), source.ID)
+	for i, address := range participantAddresses {
+		participantID, err := st.EnsureParticipant(address, fmt.Sprintf("Participant %d", i+1), "example.test")
+		requirements.NoError(err)
+		requirements.Equal(int64(i+1), participantID)
+	}
+	requirements.NoError(st.AddAccountIdentity(source.ID, relationshipIdentityIdentifier, "manual"))
+
+	identityStore := &recordingMessageIdentityStore{Store: st}
+	engine := &recordingRelationshipEngine{DuckDBEngine: duckDB}
+	srv := NewServerWithOptions(ServerOptions{
+		Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}},
+		Store:  identityStore,
+		Engine: engine,
+		Logger: testLogger(),
+	})
+	return srv, identityStore, engine
+}
 
 // newRelationshipsDuckDBFixture builds a real DuckDB/Parquet engine seeded
 // with: an owner (relOwnerID), a reciprocal counterpart (relAliceID) linked
@@ -203,6 +268,61 @@ func TestRelationshipsRanksAndGatesOverHTTP(t *testing.T) {
 	assert.Len(allPage.Rows, 2, "show_all must include the gated newsletter")
 	ids := []int64{allPage.Rows[0].CanonicalID, allPage.Rows[1].CanonicalID}
 	assert.ElementsMatch([]int64{relAliceID, relNewsletterID}, ids)
+}
+
+func TestRelationshipsResolvesSourceScopedIdentityBeforeRanking(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	now := time.Date(2026, 1, 10, 0, 0, 0, 0, time.UTC)
+	srv, identityStore, engine := newRelationshipIdentityAPIServer(
+		t,
+		newRelationshipsDuckDBFixture(t, now),
+		[]string{
+			relationshipIdentityIdentifier,
+			"alice@example.test",
+			"alice-chat@example.test",
+			"newsletter@example.test",
+		},
+	)
+
+	baseline := postExploreJSON(t, srv, "/api/v1/relationships", `{"show_all":true}`)
+	requirements.Equal(http.StatusOK, baseline.Code, baseline.Body.String())
+	var baselinePage RelationshipsHTTPResponse
+	requirements.NoError(json.Unmarshal(baseline.Body.Bytes(), &baselinePage))
+	requirements.Len(baselinePage.Rows, 2)
+	assertions.Equal(1, engine.relationshipsCalls)
+	assertions.Zero(identityStore.resolveCalls)
+
+	filtered := postExploreJSON(t, srv, "/api/v1/relationships", `{
+		"show_all":true,
+		"filters":[
+			{"dimension":"source","values":["1"]},
+			{"dimension":"identity","values":["1","z-owner@example.test","sender"]}
+		]
+	}`)
+	requirements.Equal(http.StatusOK, filtered.Code, filtered.Body.String())
+	var filteredPage RelationshipsHTTPResponse
+	requirements.NoError(json.Unmarshal(filtered.Body.Bytes(), &filteredPage))
+	requirements.Len(filteredPage.Rows, 1, "the resolved sender identity must remove the inbound-only newsletter")
+	assertions.Equal(relAliceID, filteredPage.Rows[0].CanonicalID)
+	assertions.Equal(1, identityStore.resolveCalls, "the shared identity resolver runs once per request")
+	assertions.Equal(2, engine.relationshipsCalls)
+
+	invalid := postExploreJSON(t, srv, "/api/v1/relationships", `{
+		"show_all":true,
+		"filters":[
+			{"dimension":"source","values":["1"]},
+			{"dimension":"identity","values":["1","private-provider-token@example.test","sender"]}
+		]
+	}`)
+	requirements.Equal(http.StatusBadRequest, invalid.Code, invalid.Body.String())
+	var apiErr ErrorResponse
+	requirements.NoError(json.Unmarshal(invalid.Body.Bytes(), &apiErr))
+	assertions.Equal("invalid_identity_filter", apiErr.Error)
+	assertions.Equal("identity filter is malformed, unconfirmed, or does not match the selected source", apiErr.Message)
+	assertions.NotContains(invalid.Body.String(), "private-provider-token")
+	assertions.Equal(2, identityStore.resolveCalls)
+	assertions.Equal(2, engine.relationshipsCalls, "invalid identity input must stop before ranking")
 }
 
 func TestRelationshipsCursorConflictsOnRevisionDrift(t *testing.T) {

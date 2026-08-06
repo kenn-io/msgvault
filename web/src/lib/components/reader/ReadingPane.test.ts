@@ -22,6 +22,8 @@ function entryRow(overrides: Partial<EntryRow> = {}): EntryRow {
     attachment_size: 0,
     has_attachments: false,
     deleted_from_source: false,
+    matched_sender_identities: [],
+    matched_recipient_identities: [],
     match: {},
     anchor_message_id: 42,
     ...overrides
@@ -57,6 +59,40 @@ describe('ReadingPane task gating', () => {
   it('hides Tasks when the entry has no anchor message', () => {
     renderPane(entryRow({ anchor_message_id: undefined }));
     expect(screen.queryByLabelText('Tasks for this message')).toBeNull();
+  });
+});
+
+describe('ReadingPane identity matches', () => {
+  it('shows via badges for email entries without replacing existing message metadata', () => {
+    renderPane(entryRow({
+      source_identifier: 'Original account header@example.test',
+      matched_sender_identities: ['send-as@example.test'],
+      matched_recipient_identities: ['masked@example.test']
+    }));
+
+    expect(screen.getByText(/Original account header@example\.test/)).toBeDefined();
+    expect(screen.getByText('Sent via: send-as@example.test')).toBeDefined();
+    expect(screen.getByText('Via: masked@example.test')).toBeDefined();
+  });
+
+  it('does not show via badges for non-email entries', () => {
+    renderPane(entryRow({
+      message_type: 'imessage',
+      matched_sender_identities: ['hidden-non-email@example.test'],
+      matched_recipient_identities: []
+    }));
+
+    expect(screen.queryByText('Sent via: hidden-non-email@example.test')).toBeNull();
+  });
+
+  it('shows via badges for legacy email entries with a blank message type', () => {
+    renderPane(entryRow({
+      message_type: '',
+      matched_sender_identities: ['legacy-email@example.test'],
+      matched_recipient_identities: []
+    }));
+
+    expect(screen.getByText('Sent via: legacy-email@example.test')).toBeDefined();
   });
 });
 

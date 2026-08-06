@@ -747,6 +747,14 @@ func buildCacheLocked(
 		messageSourceAttribution = "COALESCE(m.source_is_from_me, FALSE)"
 	}
 	sourceSnapshot.hasMessageSourceAttribution = messageSourceAttributionColumnCount > 0
+	var recipientEnvelopeColumnCount int
+	if err := sourceSnapshot.QueryRow(`
+		SELECT COUNT(*) FROM pragma_table_info('message_recipients')
+		WHERE name = 'email_address'
+	`).Scan(&recipientEnvelopeColumnCount); err != nil {
+		return nil, fmt.Errorf("inspect recipient envelope schema: %w", err)
+	}
+	sourceSnapshot.hasRecipientEnvelope = recipientEnvelopeColumnCount > 0
 	if err := sourceSnapshot.Prepare(); err != nil {
 		return nil, err
 	}
@@ -813,19 +821,27 @@ func buildCacheLocked(
 		recipientsFilter = fmt.Sprintf(" WHERE message_id > %d", lastMessageID)
 	}
 	recipientsFilter = junctionFilter(recipientsFilter)
+	// Databases from before the envelope snapshot column export '' so the
+	// dataset always carries email_address and identity filters degrade to
+	// participant matching for every legacy row.
+	recipientEnvelopeExpression := "'' as email_address"
+	if sourceSnapshot.hasRecipientEnvelope {
+		recipientEnvelopeExpression = "COALESCE(TRY_CAST(email_address AS VARCHAR), '') as email_address"
+	}
 	if err := runExport("message_recipients", fmt.Sprintf(`
 	COPY (
 		SELECT
 			message_id,
 			participant_id,
 			recipient_type,
-			COALESCE(TRY_CAST(display_name AS VARCHAR), '') as display_name
+			COALESCE(TRY_CAST(display_name AS VARCHAR), '') as display_name,
+			%s
 		FROM sqlite_db.message_recipients%s
 	) TO '%s/%s' (
 		FORMAT PARQUET,
 		COMPRESSION 'zstd'
 	)
-	`, recipientsFilter, escapedRecipientsDir, junctionFile)); err != nil {
+	`, recipientEnvelopeExpression, recipientsFilter, escapedRecipientsDir, junctionFile)); err != nil {
 		return nil, fmt.Errorf("export message_recipients: %w", err)
 	}
 
@@ -1063,6 +1079,26 @@ func buildCacheLocked(
 	messagesDir := filepath.Join(staging.root, tableMessages)
 	escapedMessagesDir := strings.ReplaceAll(messagesDir, "'", "''")
 
+	// Mirrors messageIdentityAttributionMatch (internal/store/messages.go):
+	// after a participant merge a confirmed alias may survive only in the
+	// message's own 'from' envelope snapshot, so deriving attribution from
+	// the sender participant's current fields alone would bake the wrong
+	// message direction into the cache. Guarded because a snapshot from
+	// before the envelope column simply has no alias evidence to read (the
+	// CSV fallback view materializes '' for those rows, excluded here too).
+	identityEnvelopeAttribution := ""
+	if sourceSnapshot.hasRecipientEnvelope {
+		identityEnvelopeAttribution = ` OR EXISTS (
+				SELECT 1 FROM sqlite_db.account_identities ai
+				JOIN sqlite_db.message_recipients smr ON smr.message_id = m.id
+				WHERE ai.source_id = m.source_id
+				  AND smr.recipient_type = 'from'
+				  AND smr.email_address IS NOT NULL
+				  AND smr.email_address != ''
+				  AND lower(smr.email_address) = lower(ai.address)
+			)`
+	}
+
 	if err := runExport(tableMessages, fmt.Sprintf(`
 	COPY (
 		SELECT
@@ -1091,7 +1127,7 @@ func buildCacheLocked(
 				WHERE ai.source_id = m.source_id
 				  AND ((spi.identifier_type = 'email' AND lower(spi.identifier_value) = lower(ai.address))
 				       OR (spi.identifier_type != 'email' AND spi.identifier_value = ai.address))
-			)) AS is_from_me,
+			)%s) AS is_from_me,
 			CAST(EXTRACT(YEAR FROM m.sent_at) AS INTEGER) as year,
 			CAST(EXTRACT(MONTH FROM m.sent_at) AS INTEGER) as month
 		FROM sqlite_db.messages m
@@ -1102,7 +1138,7 @@ func buildCacheLocked(
 		OVERWRITE_OR_IGNORE,
 		COMPRESSION 'zstd'
 	)
-	`, messageSourceAttribution, idFilter, escapedMessagesDir)); err != nil {
+	`, messageSourceAttribution, identityEnvelopeAttribution, idFilter, escapedMessagesDir)); err != nil {
 		return nil, fmt.Errorf("export messages: %w", err)
 	}
 
@@ -1150,12 +1186,12 @@ func buildCacheLocked(
 					WHERE ai.source_id = m.source_id
 					  AND ((spi.identifier_type = 'email' AND lower(spi.identifier_value) = lower(ai.address))
 					       OR (spi.identifier_type != 'email' AND spi.identifier_value = ai.address))
-				)) AS is_from_me,
+				)%s) AS is_from_me,
 				CAST(EXTRACT(MONTH FROM m.sent_at) AS INTEGER) as month
 			FROM sqlite_db.messages m
 			WHERE 1 = 0
 		) TO '%s' (FORMAT PARQUET, COMPRESSION 'zstd')
-		`, messageSourceAttribution, escapedEmptyShard)); err != nil {
+		`, messageSourceAttribution, identityEnvelopeAttribution, escapedEmptyShard)); err != nil {
 			return nil, fmt.Errorf("export empty messages shard: %w", err)
 		}
 	}
@@ -1467,6 +1503,7 @@ type cacheSourceSnapshot struct {
 	tmpDir                      string
 	hasAttachmentMIME           bool
 	hasMessageSourceAttribution bool
+	hasRecipientEnvelope        bool
 }
 
 type cacheSnapshotTable struct {
@@ -1587,6 +1624,10 @@ func (s *cacheSourceSnapshot) tables() []cacheSnapshotTable {
 	if s.hasAttachmentMIME {
 		attachmentQuery = "SELECT id, message_id, size, filename, mime_type FROM attachments"
 	}
+	recipientEnvelopeColumn := "'' AS email_address"
+	if s.hasRecipientEnvelope {
+		recipientEnvelopeColumn = "email_address"
+	}
 	messageColumns := "id, source_id, source_message_id, conversation_id, subject, snippet, sent_at, size_estimate, has_attachments, attachment_count, deleted_from_source_at, deleted_at, sender_id, message_type, is_from_me"
 	messageTypes := "types={'id': 'BIGINT', 'source_id': 'BIGINT', 'source_message_id': 'VARCHAR', 'conversation_id': 'BIGINT', 'subject': 'VARCHAR', 'snippet': 'VARCHAR', 'sent_at': 'TIMESTAMP', 'size_estimate': 'BIGINT', 'has_attachments': 'BOOLEAN', 'attachment_count': 'INTEGER', 'deleted_from_source_at': 'TIMESTAMP', 'deleted_at': 'TIMESTAMP', 'sender_id': 'BIGINT', 'message_type': 'VARCHAR', 'is_from_me': 'BOOLEAN'"
 	if s.hasMessageSourceAttribution {
@@ -1605,8 +1646,8 @@ func (s *cacheSourceSnapshot) tables() []cacheSnapshotTable {
 		// on the sqlite_scanner path; otherwise DuckDB binds against a
 		// CSV view that lacks the column and the export fails on Windows.
 		{tableMessages, "SELECT " + messageColumns + " FROM messages WHERE sent_at IS NOT NULL", messageTypes},
-		{"message_recipients", "SELECT message_id, participant_id, recipient_type, display_name FROM message_recipients",
-			"types={'message_id': 'BIGINT', 'participant_id': 'BIGINT', 'recipient_type': 'VARCHAR', 'display_name': 'VARCHAR'}"},
+		{"message_recipients", "SELECT message_id, participant_id, recipient_type, display_name, " + recipientEnvelopeColumn + " FROM message_recipients",
+			"types={'message_id': 'BIGINT', 'participant_id': 'BIGINT', 'recipient_type': 'VARCHAR', 'display_name': 'VARCHAR', 'email_address': 'VARCHAR'}"},
 		{"message_labels", "SELECT message_id, label_id FROM message_labels",
 			"types={'message_id': 'BIGINT', 'label_id': 'BIGINT'}"},
 		{tableAttachments, attachmentQuery,

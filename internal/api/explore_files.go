@@ -36,9 +36,9 @@ func (s *Server) handleExploreFiles(w http.ResponseWriter, r *http.Request) {
 	if !decodeExploreJSON(w, r, &request) {
 		return
 	}
-	predicate, err := prepareExplorePredicate(request.Predicate)
+	predicate, err := s.prepareResolvedExplorePredicate(r.Context(), request.Predicate)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_files_predicate", err.Error())
+		s.writeExploreFilterError(w, err, "invalid_files_predicate")
 		return
 	}
 	if request.Limit == 0 {
@@ -49,6 +49,7 @@ func (s *Server) handleExploreFiles(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	canonical := request
+	canonical.Predicate = predicate.request
 	canonical.Cursor = ""
 	requestHash := hashCanonicalValue(canonical, false)
 	offset, ok := s.parseExploreCursor(w, request.Cursor, requestHash)

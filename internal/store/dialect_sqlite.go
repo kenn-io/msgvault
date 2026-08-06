@@ -774,6 +774,7 @@ func (d *SQLiteDialect) LegacyColumnMigrations() []ColumnMigration {
 		{`ALTER TABLE messages ADD COLUMN delete_batch_id TEXT`, "delete_batch_id"},
 		{`ALTER TABLE conversations ADD COLUMN title TEXT`, "title"},
 		{`ALTER TABLE conversations ADD COLUMN conversation_type TEXT NOT NULL DEFAULT 'email_thread'`, "conversation_type"},
+		{`ALTER TABLE labels ADD COLUMN system_role TEXT`, "labels.system_role"},
 		// embed_gen: per-message vector-embedding watermark. NULL default
 		// means every legacy row reads as "needs embedding", which is
 		// correct — the scan-and-fill worker (and backstop) will embed and
@@ -797,6 +798,10 @@ func (d *SQLiteDialect) LegacyColumnMigrations() []ColumnMigration {
 		// "now", which would make an existing archive look like every message
 		// changed at upgrade time.
 		{`ALTER TABLE messages ADD COLUMN content_changed_at DATETIME`, "content_changed_at"},
+		// email_address: immutable envelope address for identity discovery.
+		// Legacy rows stay NULL (unfillable without re-parsing raw MIME) and
+		// discovery falls back to the participant's email for them.
+		{`ALTER TABLE message_recipients ADD COLUMN email_address TEXT`, "message_recipients.email_address"},
 	}
 }
 

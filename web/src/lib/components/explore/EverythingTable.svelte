@@ -8,10 +8,11 @@
     ExploreColumn,
     ExploreScrollAnchor
   } from '../../explore/models';
-  import { DEFAULT_EXPLORE_COLUMNS } from '../../explore/models';
+  import { DEFAULT_EXPLORE_COLUMNS, isEmailMessageType } from '../../explore/models';
   import type { ExploreSelectionState } from '../../explore/state.svelte';
   import { rebaseVirtualScroll, RowGeometry, tableViewportHeight } from '../../theme/preferences.svelte';
   import EmptyState from '../common/EmptyState.svelte';
+  import IdentityBadge from './IdentityBadge.svelte';
   import RowKind from './RowKind.svelte';
 
   interface Props {
@@ -545,6 +546,12 @@
                       <RowKind kind={row.kind} messageType={row.message_type} />
                     {:else if column === 'people'}
                       {people(row)}
+                      {#if isEmailMessageType(row.message_type)}
+                        <IdentityBadge
+                          senderIdentities={row.matched_sender_identities}
+                          recipientIdentities={row.matched_recipient_identities}
+                        />
+                      {/if}
                     {:else if column === 'title'}
                       <strong>{row.title || '(untitled)'}</strong>
                     {:else if column === 'excerpt'}

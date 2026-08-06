@@ -1832,7 +1832,7 @@ func TestHandleCLIIdentityAddPreservesErrorEnvelope(t *testing.T) {
 	var out ErrorResponse
 	require.NoError(json.NewDecoder(resp.Body).Decode(&out), "decode error response")
 	assert.Equal("invalid_identity", out.Error, "error code")
-	assert.Equal("account is required", out.Message, "error message")
+	assert.Equal("account or source ID is required", out.Message, "error message")
 }
 
 func TestHandleCLIIdentityAddMissingAccountUsesNotFoundCode(t *testing.T) {

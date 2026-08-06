@@ -129,6 +129,47 @@ func TestPeopleSearchResolvesCanonicalFullTextCandidatesAndReturnsAuthority(t *t
 	assertions.Equal(query.SearchProvenance{LexicalIndexRevision: "resolved"}, body.SearchProvenance)
 }
 
+func TestPeopleAdaptersResolveIdentityFilterOncePerRequest(t *testing.T) {
+	t.Run("search", func(t *testing.T) {
+		requirements := require.New(t)
+		assertions := assert.New(t)
+		fixture := newExploreIdentityAPIFixture(t)
+
+		response := postExploreJSON(t, fixture.server, "/api/v1/people/search", `{
+			"predicate":{"filters":[
+				{"dimension":"source","values":["1"]},
+				{"dimension":"identity","values":["1","BOB@MEMBERS.EXAMPLE","recipient"]}
+			]},
+			"limit":25
+		}`)
+
+		requirements.Equal(http.StatusOK, response.Code, response.Body.String())
+		var body PersonSearchHTTPResponse
+		requirements.NoError(json.Unmarshal(response.Body.Bytes(), &body))
+		assertions.Equal(int64(2), body.TotalCount)
+		assertions.Equal(1, fixture.store.resolveCalls)
+	})
+
+	t.Run("summary", func(t *testing.T) {
+		requirements := require.New(t)
+		assertions := assert.New(t)
+		fixture := newExploreIdentityAPIFixture(t)
+
+		response := postExploreJSON(t, fixture.server, "/api/v1/people/1/summary", `{
+			"filters":[
+				{"dimension":"source","values":["1"]},
+				{"dimension":"identity","values":["1","BOB@MEMBERS.EXAMPLE","recipient"]}
+			]
+		}`)
+
+		requirements.Equal(http.StatusOK, response.Code, response.Body.String())
+		var body PersonContextSummaryHTTPResponse
+		requirements.NoError(json.Unmarshal(response.Body.Bytes(), &body))
+		assertions.Equal(int64(1), body.Summary.ActivityCount)
+		assertions.Equal(1, fixture.store.resolveCalls)
+	})
+}
+
 func TestPeopleSearchNamesUnavailableSemanticAuthorityWithoutFallback(t *testing.T) {
 	assertions := assert.New(t)
 	engine := &peopleAPIEngine{MockEngine: &querytest.MockEngine{}, peopleResult: &query.PersonSearchResponse{

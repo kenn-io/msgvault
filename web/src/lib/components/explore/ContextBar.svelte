@@ -1,14 +1,17 @@
 <script lang="ts">
   import { Button, SelectDropdown } from '@kenn-io/kit-ui';
 
+  import type { APIClient } from '../../api/client';
   import type { ExploreFilter, ExploreGroupDimension, ExploreSearchMode, ExploreURLState } from '../../explore/models';
   import {
     groupingDimensionLabel,
     groupingOptions,
     isGroupingDimension
   } from '../../grouping/catalog';
+  import IdentityFilter from './IdentityFilter.svelte';
 
   let {
+    client,
     query,
     searchMode,
     filters,
@@ -18,9 +21,11 @@
     onAddGroup,
     onRemoveGroup,
     onClearFilters,
+    onFiltersChange,
     onSort = undefined,
     onPresentationChange = undefined
   }: {
+    client: APIClient;
     query: string;
     searchMode: ExploreSearchMode;
     filters: ExploreFilter[];
@@ -30,6 +35,7 @@
     onAddGroup: (dimension: ExploreGroupDimension) => void;
     onRemoveGroup: (index: number) => void;
     onClearFilters: () => void;
+    onFiltersChange: (filters: ExploreFilter[]) => void;
     onSort?: () => void;
     onPresentationChange?: (presentation: ExploreURLState['presentation']) => void;
   } = $props();
@@ -107,12 +113,15 @@
 
   {#if filtersOpen}
     <div class="filter-panel">
-      {#if filters.length === 0}
-        <span>No active filters. Filtering controls will expand with additional canonical dimensions.</span>
-      {:else}
-        <span>{filters.length} active {filters.length === 1 ? 'filter' : 'filters'}</span>
-        <Button size="sm" surface="outline" label="Clear filters" onclick={onClearFilters} />
-      {/if}
+      <div class="filter-summary">
+        {#if filters.length === 0}
+          <span>No active filters. Filtering controls will expand with additional canonical dimensions.</span>
+        {:else}
+          <span>{filters.length} active {filters.length === 1 ? 'filter' : 'filters'}</span>
+          <Button size="sm" surface="outline" label="Clear filters" onclick={onClearFilters} />
+        {/if}
+      </div>
+      <IdentityFilter {client} {filters} onChange={onFiltersChange} />
     </div>
   {/if}
 </section>
@@ -210,13 +219,20 @@
     left: 0;
     display: flex;
     min-width: 320px;
-    align-items: center;
-    justify-content: space-between;
+    align-items: stretch;
+    flex-direction: column;
     gap: var(--space-4);
     padding: var(--space-4);
     border: 1px solid var(--border-default);
     border-radius: var(--radius-md);
     background: var(--bg-surface);
     box-shadow: var(--shadow-md);
+  }
+
+  .filter-summary {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-4);
   }
 </style>

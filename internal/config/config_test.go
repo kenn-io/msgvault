@@ -1098,21 +1098,25 @@ func TestSaveAndLoad_RoundTrip(t *testing.T) {
 	assert.Equal("user@gmail.com", loaded.Accounts[0].Email)
 }
 
-func TestSave_CreatesFileWithSecurePermissions(t *testing.T) {
+func TestConfigFileModeOnSave(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	cfg := NewDefaultConfig()
 	cfg.HomeDir = tmpDir
+	cfg.Fastmail = []FastmailSource{{
+		SourceID: 14,
+		APIToken: "fm_test_file_mode",
+	}}
 
 	require.NoError(t, cfg.Save(), "Save()")
 
 	info, err := os.Stat(cfg.ConfigFilePath())
 	require.NoError(t, err, "Stat config")
 
-	// Should have no group/other permissions (0600 or stricter)
+	// The config may contain provider API tokens, so its Unix mode must be exact.
 	// Windows doesn't support Unix file permissions.
 	if runtime.GOOS != "windows" {
-		assert.Zero(t, info.Mode().Perm()&0077, "config perm = %04o, want no group/other access", info.Mode().Perm())
+		assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
 	}
 }
 

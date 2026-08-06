@@ -1,9 +1,11 @@
 package imap
 
 import (
+	"slices"
 	"strings"
 
 	imap "github.com/emersion/go-imap/v2"
+	"go.kenn.io/msgvault/internal/store"
 )
 
 // systemAttrs maps RFC 6154 special-use attributes to system labels.
@@ -39,6 +41,16 @@ var systemNames = map[string]bool{
 
 // labelTypeSystem is the label_type value for standard IMAP folders.
 const labelTypeSystem = "system"
+
+// systemRoleForMailbox returns roles only when RFC 6154 special-use metadata
+// confirms them. Mailbox display names are deliberately not classification
+// input because they are localized and user-editable.
+func systemRoleForMailbox(attrs []imap.MailboxAttr) string {
+	if slices.Contains(attrs, imap.MailboxAttrSent) {
+		return store.LabelSystemRoleSent
+	}
+	return ""
+}
 
 // classifyLabelType returns "system" for standard IMAP folders
 // (detected via RFC 6154 attributes or well-known folder names)

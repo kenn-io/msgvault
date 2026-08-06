@@ -91,7 +91,7 @@ func (m *MockAPI) ListLabels(ctx context.Context) ([]*Label, error) {
 	if m.Labels == nil {
 		return []*Label{
 			{ID: "INBOX", Name: "INBOX", Type: "system"},
-			{ID: "SENT", Name: "SENT", Type: "system"},
+			{ID: "SENT", Name: "SENT", Type: "system", SystemRole: SystemRoleForLabelID("SENT")},
 			{ID: "STARRED", Name: "STARRED", Type: "system"},
 			{ID: "TRASH", Name: "TRASH", Type: "system"},
 			{ID: "UNREAD", Name: "UNREAD", Type: "system"},
@@ -100,7 +100,13 @@ func (m *MockAPI) ListLabels(ctx context.Context) ([]*Label, error) {
 			{ID: "DRAFT", Name: "DRAFT", Type: "system"},
 		}, nil
 	}
-	return m.Labels, nil
+	labels := make([]*Label, len(m.Labels))
+	for i, source := range m.Labels {
+		label := *source
+		label.SystemRole = SystemRoleForLabelID(label.ID)
+		labels[i] = &label
+	}
+	return labels, nil
 }
 
 // ListMessages returns mock message IDs with pagination.

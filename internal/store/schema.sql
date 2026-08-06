@@ -261,8 +261,22 @@ CREATE TABLE IF NOT EXISTS message_recipients (
 
     recipient_type TEXT NOT NULL,  -- 'to', 'cc', 'bcc', 'mention'
     display_name TEXT,             -- as it appeared in the message
+    -- Envelope address as it appeared in the message. Immutable under
+    -- participant merges, unlike the participant row's email_address;
+    -- identity discovery reads it so merges cannot rewrite evidence.
+    -- NULL on rows from writers without envelope addresses (non-email
+    -- importers, legacy rows).
+    email_address TEXT
 
-    UNIQUE(message_id, participant_id, recipient_type)
+    -- Uniqueness spans the normalized envelope address so one participant
+    -- can carry several alias snapshots on the same message (two aliases of
+    -- an already-merged participant in one To: header, or rows preserved by
+    -- a later participant merge). Enforced by idx_message_recipients_envelope,
+    -- created in Go by Store.ensureRecipientEnvelopeUniqueIndex rather than
+    -- here: on upgraded DBs email_address is a late ADD COLUMN that does not
+    -- exist yet when this file runs, and legacy DBs additionally need their
+    -- old table-level UNIQUE(message_id, participant_id, recipient_type)
+    -- rebuilt away first.
 );
 
 -- ============================================================================
@@ -337,6 +351,7 @@ CREATE TABLE IF NOT EXISTS labels (
     source_label_id TEXT,           -- Gmail label ID
     name TEXT NOT NULL,
     label_type TEXT,                -- 'system', 'user', 'auto'
+    system_role TEXT,               -- trusted canonical role (for example, 'sent')
     color TEXT,
 
     UNIQUE(source_id, name)
@@ -514,10 +529,16 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_participants_email ON participants(email_a
 -- end up with a UNIQUE partial index.
 CREATE INDEX IF NOT EXISTS idx_participants_canonical ON participants(canonical_id)
     WHERE canonical_id IS NOT NULL;
+-- Serves case-insensitive address lookups (e.g. identity confirmation's
+-- participant resolution) without a full table scan.
+CREATE INDEX IF NOT EXISTS idx_participants_email_lower ON participants(LOWER(email_address));
 
 -- Participant identifiers
 CREATE INDEX IF NOT EXISTS idx_participant_identifiers_value ON participant_identifiers(identifier_value);
 CREATE INDEX IF NOT EXISTS idx_participant_identifiers_participant ON participant_identifiers(participant_id);
+-- Serves case-insensitive identifier lookups (e.g. identity confirmation's
+-- participant resolution) without a full table scan.
+CREATE INDEX IF NOT EXISTS idx_participant_identifiers_value_lower ON participant_identifiers(LOWER(identifier_value));
 
 -- Conversations
 CREATE INDEX IF NOT EXISTS idx_conversations_source ON conversations(source_id);
@@ -526,6 +547,9 @@ CREATE INDEX IF NOT EXISTS idx_conversations_type ON conversations(conversation_
 
 -- Messages
 CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id, sent_at DESC);
+-- idx_messages_source_id (source_id, id) was removed: id is the rowid alias,
+-- and idx_messages_source below already orders ties by rowid, so the
+-- composite added no coverage beyond the single-column index.
 CREATE INDEX IF NOT EXISTS idx_messages_source ON messages(source_id);
 CREATE INDEX IF NOT EXISTS idx_messages_sender ON messages(sender_id);
 CREATE INDEX IF NOT EXISTS idx_messages_sent_at ON messages(sent_at DESC);

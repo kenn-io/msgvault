@@ -1,11 +1,13 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -33,6 +35,353 @@ func TestExploreRelativeDateRevisionIgnoresParseClock(t *testing.T) {
 	second := (&search.Parser{Now: func() time.Time { return secondNow }}).Parse("alpha newer_than:1d")
 
 	assert.Equal(t, canonicalParsedExploreQuery(first), canonicalParsedExploreQuery(second))
+}
+
+func TestExploreIdentityFilterRequiresMatchingSingleSource(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	tests := []struct {
+		name    string
+		filters []ExploreFilter
+	}{
+		{
+			name: "missing source",
+			filters: []ExploreFilter{
+				{Dimension: "identity", Values: []string{"14", "masked-shop@example.test", "recipient"}},
+			},
+		},
+		{
+			name: "multiple selected sources",
+			filters: []ExploreFilter{
+				{Dimension: "source", Values: []string{"14", "15"}},
+				{Dimension: "identity", Values: []string{"14", "masked-shop@example.test", "recipient"}},
+			},
+		},
+		{
+			name: "other selected source",
+			filters: []ExploreFilter{
+				{Dimension: "source", Values: []string{"15"}},
+				{Dimension: "identity", Values: []string{"14", "masked-shop@example.test", "recipient"}},
+			},
+		},
+		{
+			name: "duplicate source filter",
+			filters: []ExploreFilter{
+				{Dimension: "source", Values: []string{"14"}},
+				{Dimension: "source", Values: []string{"14"}},
+				{Dimension: "identity", Values: []string{"14", "masked-shop@example.test", "recipient"}},
+			},
+		},
+		{
+			name: "duplicate identity filter",
+			filters: []ExploreFilter{
+				{Dimension: "source", Values: []string{"14"}},
+				{Dimension: "identity", Values: []string{"14", "masked-shop@example.test", "recipient"}},
+				{Dimension: "identity", Values: []string{"14", "masked-shop@example.test", "recipient"}},
+			},
+		},
+		{
+			name: "malformed identity tuple",
+			filters: []ExploreFilter{
+				{Dimension: "source", Values: []string{"14"}},
+				{Dimension: "identity", Values: []string{"14", "masked-shop@example.test"}},
+			},
+		},
+		{
+			name: "empty identifier",
+			filters: []ExploreFilter{
+				{Dimension: "source", Values: []string{"14"}},
+				{Dimension: "identity", Values: []string{"14", "", "recipient"}},
+			},
+		},
+		{
+			name: "invalid direction",
+			filters: []ExploreFilter{
+				{Dimension: "source", Values: []string{"14"}},
+				{Dimension: "identity", Values: []string{"14", "masked-shop@example.test", "sideways"}},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertions := assert.New(t)
+			_, err := exploreContext(tt.filters)
+			assertions.Error(err)
+		})
+	}
+
+	ctx, err := exploreContext([]ExploreFilter{
+		{Dimension: "source", Values: []string{"14"}},
+		{Dimension: "identity", Values: []string{"14", "masked-shop@example.test", "recipient"}},
+	})
+	requirements.NoError(err)
+	requirements.NotNil(ctx.Identity)
+	assertions.Equal(int64(14), ctx.Identity.SourceID)
+	assertions.Equal(query.IdentityDirectionRecipient, ctx.Identity.Direction)
+	assertions.Empty(ctx.Identity.ParticipantIDs)
+}
+
+func TestExploreIdentityFilterEmptyDirectionNormalizesToAny(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	request := ExploreHTTPRequest{Filters: []ExploreFilter{
+		{Dimension: "source", Values: []string{"14"}},
+		{Dimension: "identity", Values: []string{"14", "masked-shop@example.test", ""}},
+	}}
+	canonicalizeExploreRequest(&request)
+
+	require.Len(request.Filters, 2)
+	assert.Equal(ExploreFilter{
+		Dimension: "identity",
+		Values:    []string{"14", "masked-shop@example.test", "any"},
+	}, request.Filters[0])
+	ctx, err := exploreContext(request.Filters)
+	require.NoError(err)
+	require.NotNil(ctx.Identity)
+	assert.Equal(query.IdentityDirectionAny, ctx.Identity.Direction)
+}
+
+func TestExploreIdentityFilterResolvesConfirmedEmailCaseInsensitively(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	st := testutil.NewSQLiteTestStore(t)
+	source, err := st.GetOrCreateSource("gmail", "archive-a@example.com")
+	requirements.NoError(err)
+	_, err = st.GetOrCreateSource("imap", "archive-b@example.com")
+	requirements.NoError(err)
+	participantID, err := st.EnsureParticipant("alice@example.com", "Alice", "example.com")
+	requirements.NoError(err)
+	requirements.NoError(st.AddAccountIdentity(source.ID, "Alice@Example.com", "manual"))
+	base := newExploreDuckDBFixture(t)
+	engine := &recordingExploreEngine{Engine: base, Explorer: base}
+	srv := NewServerWithOptions(ServerOptions{
+		Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}},
+		Store:  st, Engine: engine, Logger: testLogger(),
+	})
+
+	response := postExploreJSON(t, srv, "/api/v1/explore", `{
+		"filters":[
+			{"dimension":"source","values":["1"]},
+			{"dimension":"identity","values":["1","ALICE@EXAMPLE.COM","sender"]}
+		]
+	}`)
+
+	requirements.Equal(http.StatusOK, response.Code, response.Body.String())
+	requirements.NotNil(engine.request.Context.Identity)
+	assertions.Equal(source.ID, engine.request.Context.Identity.SourceID)
+	assertions.Equal([]int64{participantID}, engine.request.Context.Identity.ParticipantIDs)
+	assertions.Equal("Alice@Example.com", engine.request.Context.Identity.EmailIdentifier,
+		"the stored email identifier must reach the predicate for envelope matching")
+	assertions.Equal(query.IdentityDirectionSender, engine.request.Context.Identity.Direction)
+}
+
+// TestExploreIdentityFilterConfirmedUnseenEmailIdentityKeepsEnvelopePredicate
+// covers the merge edge where a confirmed email address no longer resolves to
+// any participant: the filter must still carry the envelope predicate (the
+// address may survive in message_recipients.email_address snapshots) instead
+// of short-circuiting to match-none.
+func TestExploreIdentityFilterConfirmedUnseenEmailIdentityKeepsEnvelopePredicate(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewSQLiteTestStore(t)
+	source, err := st.GetOrCreateSource("imap", "primary@example.test")
+	require.NoError(err)
+	require.NoError(st.AddAccountIdentity(source.ID, "unused-mask@example.test", "provider-alias"))
+	base := newExploreDuckDBFixture(t)
+	engine := &recordingExploreEngine{Engine: base, Explorer: base}
+	srv := NewServerWithOptions(ServerOptions{
+		Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}},
+		Store:  st, Engine: engine, Logger: testLogger(),
+	})
+
+	response := postExploreJSON(t, srv, "/api/v1/explore", `{
+		"filters":[
+			{"dimension":"source","values":["1"]},
+			{"dimension":"identity","values":["1","unused-mask@example.test","recipient"]}
+		]
+	}`)
+
+	require.Equal(http.StatusOK, response.Code, response.Body.String())
+	require.NotNil(engine.request.Context.Identity)
+	assert.Equal(source.ID, engine.request.Context.Identity.SourceID)
+	assert.False(engine.request.Context.Identity.MatchNone,
+		"an email identity stays matchable through envelope snapshots")
+	assert.Equal("unused-mask@example.test", engine.request.Context.Identity.EmailIdentifier)
+	assert.Empty(engine.request.Context.Identity.ParticipantIDs)
+	var body ExploreHTTPResponse
+	require.NoError(json.Unmarshal(response.Body.Bytes(), &body))
+	require.NotNil(body.TotalCount)
+	assert.Zero(*body.TotalCount)
+}
+
+// TestExploreIdentityFilterAcceptsConfirmedUnseenPhoneIdentityAsMatchNone
+// keeps the match-none short-circuit for identifier types without an envelope
+// surface: a confirmed phone identity with no participant evidence has
+// nothing left to match.
+func TestExploreIdentityFilterAcceptsConfirmedUnseenPhoneIdentityAsMatchNone(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewSQLiteTestStore(t)
+	source, err := st.GetOrCreateSource("imap", "primary@example.test")
+	require.NoError(err)
+	require.NoError(st.AddAccountIdentity(source.ID, "+15550100003", "manual"))
+	base := newExploreDuckDBFixture(t)
+	engine := &recordingExploreEngine{Engine: base, Explorer: base}
+	srv := NewServerWithOptions(ServerOptions{
+		Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}},
+		Store:  st, Engine: engine, Logger: testLogger(),
+	})
+
+	response := postExploreJSON(t, srv, "/api/v1/explore", `{
+		"filters":[
+			{"dimension":"source","values":["1"]},
+			{"dimension":"identity","values":["1","+15550100003","recipient"]}
+		]
+	}`)
+
+	require.Equal(http.StatusOK, response.Code, response.Body.String())
+	require.NotNil(engine.request.Context.Identity)
+	assert.True(engine.request.Context.Identity.MatchNone)
+	assert.Empty(engine.request.Context.Identity.EmailIdentifier)
+	assert.Empty(engine.request.Context.Identity.ParticipantIDs)
+	var body ExploreHTTPResponse
+	require.NoError(json.Unmarshal(response.Body.Bytes(), &body))
+	require.NotNil(body.TotalCount)
+	assert.Zero(*body.TotalCount)
+}
+
+func TestExploreIdentityFilterRejectsInvalidAndUnconfirmedIdentitiesWithoutLoggingAddress(t *testing.T) {
+	requirements := require.New(t)
+	st := testutil.NewSQLiteTestStore(t)
+	sourceA, err := st.GetOrCreateSource("gmail", "archive-a@example.com")
+	requirements.NoError(err)
+	sourceB, err := st.GetOrCreateSource("imap", "archive-b@example.com")
+	requirements.NoError(err)
+	_, err = st.EnsureParticipant("unconfirmed-private@example.test", "Preview", "example.test")
+	requirements.NoError(err)
+	requirements.NoError(st.AddAccountIdentity(sourceB.ID, "other-source-private@example.test", "manual"))
+
+	tests := []struct {
+		name    string
+		address string
+		body    string
+	}{
+		{
+			name:    "unconfirmed",
+			address: "unconfirmed-private@example.test",
+			body: `{"filters":[
+				{"dimension":"source","values":["1"]},
+				{"dimension":"identity","values":["1","unconfirmed-private@example.test","any"]}
+			]}`,
+		},
+		{
+			name:    "confirmed only for another source",
+			address: "other-source-private@example.test",
+			body: `{"filters":[
+				{"dimension":"source","values":["1"]},
+				{"dimension":"identity","values":["1","other-source-private@example.test","any"]}
+			]}`,
+		},
+		{
+			name:    "source mismatch",
+			address: "other-source-private@example.test",
+			body: `{"filters":[
+				{"dimension":"source","values":["2"]},
+				{"dimension":"identity","values":["1","other-source-private@example.test","any"]}
+			]}`,
+		},
+		{
+			name: "all sources",
+			body: `{"filters":[
+				{"dimension":"source","values":["1","2"]},
+				{"dimension":"identity","values":["1","unconfirmed-private@example.test","any"]}
+			]}`,
+		},
+		{
+			name: "duplicate source",
+			body: `{"filters":[
+				{"dimension":"source","values":["1"]},
+				{"dimension":"source","values":["1"]},
+				{"dimension":"identity","values":["1","unconfirmed-private@example.test","any"]}
+			]}`,
+		},
+		{
+			name: "malformed tuple",
+			body: `{"filters":[
+				{"dimension":"source","values":["1"]},
+				{"dimension":"identity","values":["1","unconfirmed-private@example.test"]}
+			]}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			var logs bytes.Buffer
+			logger := slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
+			srv := NewServerWithOptions(ServerOptions{
+				Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}},
+				Store:  st, Engine: newExploreDuckDBFixture(t), Logger: logger,
+			})
+
+			response := postExploreJSON(t, srv, "/api/v1/explore", tt.body)
+
+			assert.Equal(http.StatusBadRequest, response.Code, response.Body.String())
+			var apiErr ErrorResponse
+			require.NoError(json.Unmarshal(response.Body.Bytes(), &apiErr))
+			assert.Equal("invalid_identity_filter", apiErr.Error)
+			if tt.address != "" {
+				assert.NotContains(apiErr.Message, tt.address)
+				assert.NotContains(logs.String(), tt.address)
+			}
+		})
+	}
+
+	assert.New(t).Equal(int64(1), sourceA.ID)
+}
+
+func TestExploreIdentityFilterPreservesResolverContextErrors(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewSQLiteTestStore(t)
+	source, err := st.GetOrCreateSource("gmail", "archive-a@example.com")
+	require.NoError(err)
+	assert.Equal(int64(1), source.ID)
+
+	const identifier = "private-timeout@example.test"
+	srv := NewServerWithOptions(ServerOptions{
+		Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}},
+		Store:  &identityResolveErrorStore{Store: st, err: context.DeadlineExceeded},
+		Engine: newExploreDuckDBFixture(t), Logger: testLogger(),
+	})
+	response := postExploreJSON(t, srv, "/api/v1/explore", `{
+		"filters":[
+			{"dimension":"source","values":["1"]},
+			{"dimension":"identity","values":["1","private-timeout@example.test","any"]}
+		]
+	}`)
+
+	assert.Equal(http.StatusServiceUnavailable, response.Code, response.Body.String())
+	var apiErr ErrorResponse
+	require.NoError(json.Unmarshal(response.Body.Bytes(), &apiErr))
+	assert.Equal("query_timeout", apiErr.Error)
+	assert.NotContains(apiErr.Message, identifier)
+}
+
+type identityResolveErrorStore struct {
+	*store.Store
+
+	err error
+}
+
+func (s *identityResolveErrorStore) ResolveAccountIdentityContext(
+	context.Context,
+	int64,
+	string,
+) (store.ResolvedAccountIdentity, error) {
+	return store.ResolvedAccountIdentity{}, s.err
 }
 
 func TestExploreFullTextResolverBoundsCandidateTransfer(t *testing.T) {

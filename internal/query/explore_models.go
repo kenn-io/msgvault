@@ -13,11 +13,47 @@ type ExploreRequest struct {
 	Page         PageSpec     `json:"page"`
 }
 
+// IdentityDirection selects which exact address-header side an identity must match.
+type IdentityDirection string
+
+const (
+	IdentityDirectionAny       IdentityDirection = "any"
+	IdentityDirectionSender    IdentityDirection = "sender"
+	IdentityDirectionRecipient IdentityDirection = "recipient"
+)
+
+// IdentityPredicate is a source-pinned, internal analytical filter resolved
+// from confirmed account identities by the API layer.
+type IdentityPredicate struct {
+	SourceID       int64
+	ParticipantIDs []int64
+	// EmailIdentifier carries the confirmed address when it is email-shaped.
+	// Non-empty, it switches recipient-row matching to the immutable
+	// envelope snapshot (message_recipients.email_address, compared
+	// case-insensitively like every email rule): participant merges repoint
+	// recipient rows onto a survivor that may carry several aliases, so a
+	// participant-only match would let one alias's filter select another
+	// alias's mail. ParticipantIDs stay as the fallback for rows without a
+	// snapshot (legacy ingests, direct chat senders). Empty means the
+	// confirmed identifier has no envelope surface (phone, matrix, handle)
+	// and matching uses ParticipantIDs alone, mirroring baked is_from_me
+	// attribution.
+	EmailIdentifier string
+	// MatchNone represents a confirmed non-email identity that has not
+	// appeared in message metadata yet. It is valid but must return an
+	// empty result. Email identities never short-circuit this way: their
+	// envelope snapshot can match even when no participant carries the
+	// address any more.
+	MatchNone bool
+	Direction IdentityDirection
+}
+
 // Context narrows the archive before logical chat rows are aggregated.
 type Context struct {
-	SourceIDs      []int64  `json:"source_ids,omitempty"`
-	ParticipantIDs []int64  `json:"participant_ids,omitempty"`
-	Domains        []string `json:"domains,omitempty"`
+	SourceIDs      []int64            `json:"source_ids,omitempty"`
+	ParticipantIDs []int64            `json:"participant_ids,omitempty"`
+	Domains        []string           `json:"domains,omitempty"`
+	Identity       *IdentityPredicate `json:"-"`
 	// AdditionalParticipantGroups holds extra participant filters beyond the
 	// primary ParticipantIDs group. Each inner slice is OR'd internally (any
 	// member matches) but the groups themselves are AND'd together, and
@@ -122,21 +158,23 @@ type SearchProvenance struct {
 // EntryRow is one logical archive row. Chat/text rows aggregate messages only
 // after Context has been applied; other modalities retain durable item units.
 type EntryRow struct {
-	Key               string       `json:"key"`
-	Kind              EntryKind    `json:"kind"`
-	AnchorMessageID   *int64       `json:"anchor_message_id,omitempty"`
-	ConversationID    *int64       `json:"conversation_id,omitempty"`
-	OccurredAt        time.Time    `json:"occurred_at"`
-	Match             MatchSummary `json:"match"`
-	SourceID          int64        `json:"source_id"`
-	SourceType        string       `json:"source_type"`
-	SourceIdentifier  string       `json:"source_identifier"`
-	MessageType       string       `json:"message_type"`
-	ConversationType  string       `json:"conversation_type"`
-	Title             string       `json:"title"`
-	Preview           string       `json:"preview"`
-	ParticipantIDs    []int64      `json:"participant_ids,omitempty"`
-	ParticipantLabels []string     `json:"participant_labels,omitempty"`
+	Key                        string       `json:"key"`
+	Kind                       EntryKind    `json:"kind"`
+	AnchorMessageID            *int64       `json:"anchor_message_id,omitempty"`
+	ConversationID             *int64       `json:"conversation_id,omitempty"`
+	OccurredAt                 time.Time    `json:"occurred_at"`
+	Match                      MatchSummary `json:"match"`
+	SourceID                   int64        `json:"source_id"`
+	SourceType                 string       `json:"source_type"`
+	SourceIdentifier           string       `json:"source_identifier"`
+	MessageType                string       `json:"message_type"`
+	ConversationType           string       `json:"conversation_type"`
+	Title                      string       `json:"title"`
+	Preview                    string       `json:"preview"`
+	ParticipantIDs             []int64      `json:"participant_ids,omitempty"`
+	ParticipantLabels          []string     `json:"participant_labels,omitempty"`
+	MatchedSenderIdentities    []string     `json:"matched_sender_identities" nullable:"false"`
+	MatchedRecipientIdentities []string     `json:"matched_recipient_identities" nullable:"false"`
 	// StrongestMatchedMessageID is bounded internal semantic-ranking state.
 	// It is never serialized and is nil for no-search and full-text rows.
 	StrongestMatchedMessageID *int64 `json:"-"`

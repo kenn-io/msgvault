@@ -76,7 +76,9 @@ describe('timelineRowToSelection', () => {
       source_id: 4,
       source_identifier: '4',
       attachment_count: 0,
-      has_attachments: false
+      has_attachments: false,
+      matched_sender_identities: [],
+      matched_recipient_identities: []
     });
   });
 

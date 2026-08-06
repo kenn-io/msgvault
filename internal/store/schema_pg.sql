@@ -200,8 +200,22 @@ CREATE TABLE IF NOT EXISTS message_recipients (
 
     recipient_type TEXT NOT NULL,
     display_name TEXT,
+    -- Envelope address as it appeared in the message. Immutable under
+    -- participant merges, unlike the participant row's email_address;
+    -- identity discovery reads it so merges cannot rewrite evidence.
+    -- NULL on rows from writers without envelope addresses (non-email
+    -- importers, legacy rows).
+    email_address TEXT
 
-    UNIQUE(message_id, participant_id, recipient_type)
+    -- Uniqueness spans the normalized envelope address so one participant
+    -- can carry several alias snapshots on the same message (two aliases of
+    -- an already-merged participant in one To: header, or rows preserved by
+    -- a later participant merge). Enforced by idx_message_recipients_envelope,
+    -- created in Go by Store.ensureRecipientEnvelopeUniqueIndex rather than
+    -- here: on upgraded DBs email_address is a late ADD COLUMN that does not
+    -- exist yet when this file runs, and legacy DBs additionally need their
+    -- old table-level UNIQUE(message_id, participant_id, recipient_type)
+    -- constraint dropped first.
 );
 
 -- ============================================================================
@@ -264,6 +278,7 @@ CREATE TABLE IF NOT EXISTS labels (
     source_label_id TEXT,
     name TEXT NOT NULL,
     label_type TEXT,
+    system_role TEXT,
     color TEXT,
 
     UNIQUE(source_id, name)
@@ -591,9 +606,13 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_participants_email ON participants(email_a
 -- end up with a UNIQUE partial index.
 CREATE INDEX IF NOT EXISTS idx_participants_canonical ON participants(canonical_id)
     WHERE canonical_id IS NOT NULL;
-
+-- idx_participants_email_lower is built by Store.buildLargeIndexesConcurrently:
+-- participants can be large on an existing archive, and an inline build here
+-- would run under the pool-wide statement_timeout.
 CREATE INDEX IF NOT EXISTS idx_participant_identifiers_value ON participant_identifiers(identifier_value);
 CREATE INDEX IF NOT EXISTS idx_participant_identifiers_participant ON participant_identifiers(participant_id);
+-- idx_participant_identifiers_value_lower is likewise built by
+-- Store.buildLargeIndexesConcurrently.
 
 CREATE INDEX IF NOT EXISTS idx_conversations_source ON conversations(source_id);
 CREATE INDEX IF NOT EXISTS idx_conversations_last_message ON conversations(last_message_at DESC);
@@ -601,6 +620,12 @@ CREATE INDEX IF NOT EXISTS idx_conversations_type ON conversations(conversation_
 
 CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id, sent_at DESC);
 CREATE INDEX IF NOT EXISTS idx_messages_source ON messages(source_id);
+-- idx_messages_source_id is built by Store.buildLargeIndexesConcurrently via
+-- CREATE INDEX CONCURRENTLY on a dedicated autocommit connection, outside any
+-- transaction; building it over an existing archive can take a long time,
+-- and CONCURRENTLY cannot run inside a transaction (or the pool-wide
+-- statement_timeout escape hatch, which only disables the timeout for one
+-- transaction).
 CREATE INDEX IF NOT EXISTS idx_messages_sender ON messages(sender_id);
 CREATE INDEX IF NOT EXISTS idx_messages_sent_at ON messages(sent_at DESC);
 CREATE INDEX IF NOT EXISTS idx_messages_type ON messages(message_type);

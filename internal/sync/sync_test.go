@@ -1,12 +1,14 @@
 package sync
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"os"
 	"path/filepath"
@@ -14,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf8"
 
 	imapv2 "github.com/emersion/go-imap/v2"
@@ -57,6 +60,85 @@ type acknowledgingAPI struct {
 
 func (a *acknowledgingAPI) AcknowledgeMessages(_ context.Context, messageIDs []string) {
 	a.acknowledged = append(a.acknowledged, messageIDs...)
+}
+
+// syncLogCapture records everything a Syncer logs and, optionally, reacts to
+// each record inline on the syncing goroutine. Reacting to a real log event is
+// how the retry tests hit an exact point in the retry loop without sleeping.
+// Attrs and groups are dropped: the sync code logs flat records only.
+type syncLogCapture struct {
+	inner    slog.Handler
+	buf      *bytes.Buffer
+	onRecord func(slog.Record)
+}
+
+func newSyncLogCapture(onRecord func(slog.Record)) *syncLogCapture {
+	buf := &bytes.Buffer{}
+	return &syncLogCapture{
+		inner:    slog.NewTextHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug}),
+		buf:      buf,
+		onRecord: onRecord,
+	}
+}
+
+func (c *syncLogCapture) Enabled(context.Context, slog.Level) bool { return true }
+
+func (c *syncLogCapture) Handle(ctx context.Context, record slog.Record) error {
+	err := c.inner.Handle(ctx, record)
+	if c.onRecord != nil {
+		c.onRecord(record)
+	}
+	if err != nil {
+		return fmt.Errorf("capture sync log record: %w", err)
+	}
+	return nil
+}
+
+func (c *syncLogCapture) WithAttrs([]slog.Attr) slog.Handler { return c }
+
+func (c *syncLogCapture) WithGroup(string) slog.Handler { return c }
+
+func (c *syncLogCapture) String() string { return c.buf.String() }
+
+func (c *syncLogCapture) logger() *slog.Logger { return slog.New(c) }
+
+// shortenIdentityDiscoveryRetry keeps the bounded discovery retry from adding
+// seconds of real backoff to a test run.
+func shortenIdentityDiscoveryRetry(t *testing.T, backoff time.Duration) {
+	t.Helper()
+	previous := identityDiscoveryRetryBackoff
+	identityDiscoveryRetryBackoff = backoff
+	t.Cleanup(func() { identityDiscoveryRetryBackoff = previous })
+}
+
+const forcedDiscoveryFailure = "forced identity discovery failure"
+
+// installFailingIdentityDiscovery aborts every account_identities write.
+// Sync-time discovery only merges signals into already-confirmed identities,
+// so the failure seam has to intercept that update rather than an insert.
+func installFailingIdentityDiscovery(t *testing.T, env *TestEnv, trigger string) {
+	t.Helper()
+	_, err := env.Store.DB().Exec(`
+		CREATE TRIGGER ` + trigger + `
+		BEFORE UPDATE ON account_identities
+		BEGIN
+			SELECT RAISE(ABORT, '` + forcedDiscoveryFailure + `');
+		END
+	`)
+	require.NoError(t, err, "install identity discovery failure seam")
+	t.Cleanup(func() {
+		_, _ = env.Store.DB().Exec("DROP TRIGGER IF EXISTS " + trigger)
+	})
+}
+
+type staticLabelsAPI struct {
+	*gmail.MockAPI
+
+	labels []*gmail.Label
+}
+
+func (a *staticLabelsAPI) ListLabels(_ context.Context) ([]*gmail.Label, error) {
+	return a.labels, nil
 }
 
 func TestFullSync_PanicReturnsError(t *testing.T) {
@@ -136,6 +218,318 @@ func TestFullSync(t *testing.T) {
 
 	assertMockCalls(t, env, 1, 1, 3)
 	assertMessageCount(t, env.Store, 3)
+}
+
+func TestFullSyncProviderHookFailureWarnsOnceAfterSuccessfulCompletion(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	env := newTestEnv(t)
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&logs, nil))
+	const hookFailure = "provider inventory unavailable"
+	hookCalls := 0
+	env.Syncer = env.Syncer.WithLogger(logger).WithSuccessfulSyncHook(
+		"provider identity refresh",
+		func(_ context.Context, source *store.Source, _ bool) error {
+			hookCalls++
+			assertions.Positive(source.ID)
+			return errors.New(hookFailure)
+		},
+	)
+
+	summary, err := env.Syncer.Full(env.Context, testEmail)
+
+	requirements.NoError(err)
+	requirements.NotNil(summary)
+	assertions.Equal(1, hookCalls)
+	assertions.Equal(1, strings.Count(logs.String(), "successful sync hook failed"))
+	assertions.Contains(logs.String(), "provider identity refresh")
+	assertions.Contains(logs.String(), hookFailure,
+		"a warning without the cause leaves the operator nothing to act on")
+	source, err := env.Store.GetSourceByIdentifier(testEmail)
+	requirements.NoError(err)
+	run, err := env.Store.GetLatestSync(source.ID)
+	requirements.NoError(err)
+	assertions.Equal(store.SyncStatusCompleted, run.Status)
+}
+
+func TestFullSyncProviderHookDoesNotRunAfterFailedSync(t *testing.T) {
+	env := newTestEnv(t)
+	seedMessages(env, 1, 12345, "msg1")
+	hookCalls := 0
+	env.Syncer = New(&batchErrorAPI{MockAPI: env.Mock}, env.Store, nil).WithSuccessfulSyncHook(
+		"provider identity refresh",
+		func(context.Context, *store.Source, bool) error {
+			hookCalls++
+			return nil
+		},
+	)
+
+	_, err := env.Syncer.Full(env.Context, testEmail)
+
+	require.Error(t, err)
+	assert.Zero(t, hookCalls)
+}
+
+// TestIncrementalSyncProviderHookRunsAfterSuccessfulCompletion also pins the
+// no-op flag: an unchanged mailbox still runs the hook — provider inventory
+// can change while a mailbox is idle — but flagged as unchanged so the
+// installer can skip provider round trips it has made recently.
+func TestIncrementalSyncProviderHookRunsAfterSuccessfulCompletion(t *testing.T) {
+	tests := []struct {
+		name               string
+		profileHistoryID   uint64
+		wantMailboxChanged bool
+	}{
+		{name: "already up to date", profileHistoryID: 1000, wantMailboxChanged: false},
+		{name: "history advanced", profileHistoryID: 1001, wantMailboxChanged: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertions := assert.New(t)
+			requirements := require.New(t)
+			env := newTestEnv(t)
+			source := env.CreateSourceWithHistory(t, "1000")
+			env.Mock.Profile.HistoryID = tt.profileHistoryID
+			env.Mock.HistoryID = tt.profileHistoryID
+			var hookChangedFlags []bool
+			env.Syncer = env.Syncer.WithSuccessfulSyncHook(
+				"provider identity refresh",
+				func(_ context.Context, completedSource *store.Source, mailboxChanged bool) error {
+					hookChangedFlags = append(hookChangedFlags, mailboxChanged)
+					assertions.Equal(source.ID, completedSource.ID)
+					return nil
+				},
+			)
+
+			summary, err := env.Syncer.Incremental(env.Context, source)
+
+			requirements.NoError(err)
+			requirements.NotNil(summary)
+			assertions.Equal([]bool{tt.wantMailboxChanged}, hookChangedFlags)
+
+			run, err := env.Store.GetLatestSync(source.ID)
+			requirements.NoError(err)
+			assertions.Equal(store.SyncStatusCompleted, run.Status,
+				"running the hook must not run before completing the run")
+		})
+	}
+}
+
+func TestSyncLabelsPersistsRoleFromCanonicalGmailIDNotName(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	env := newTestEnv(t)
+	source := env.CreateSource(t)
+	env.Mock.Labels = []*gmail.Label{
+		{ID: "SENT", Name: "Envoyes", Type: "system"},
+		{ID: "Label_1", Name: "Sent", Type: "user"},
+	}
+
+	_, err := env.Syncer.syncLabels(env.Context, source.ID)
+	require.NoError(err, "sync labels")
+
+	roles := make(map[string]sql.NullString)
+	rows, err := env.Store.DB().Query(
+		"SELECT name, system_role FROM labels WHERE source_id = ?", source.ID,
+	)
+	require.NoError(err, "query label roles")
+	defer func() { require.NoError(rows.Close(), "close label roles") }()
+	for rows.Next() {
+		var name string
+		var role sql.NullString
+		require.NoError(rows.Scan(&name, &role), "scan label role")
+		roles[name] = role
+	}
+	require.NoError(rows.Err(), "iterate label roles")
+
+	assert.Equal(store.LabelSystemRoleSent, roles["Envoyes"].String)
+	assert.False(roles["Sent"].Valid, "display names are not trusted as canonical roles")
+}
+
+// TestSyncPageRefreshesOnlyUnambiguousSentAliasesOnce pins which addresses a
+// sync page may contribute Sent evidence to. Every address here is confirmed up
+// front because sync-time discovery is refresh-only: it merges signals into
+// identities the source already owns and never confirms a new one.
+func TestSyncPageRefreshesOnlyUnambiguousSentAliasesOnce(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	env := newTestEnv(t)
+	source, err := env.Store.GetOrCreateSource("imap", testEmail)
+	require.NoError(err, "GetOrCreateSource")
+	for _, address := range []string{
+		"masked-one@example.test",
+		"masked-two@example.test",
+		"recipient-only@example.test",
+	} {
+		require.NoError(env.Store.AddAccountIdentity(source.ID, address, "manual"), "seed confirmed identity")
+	}
+
+	labelMap, err := env.Store.EnsureLabelsBatch(source.ID, map[string]store.LabelInfo{
+		"Envoyes": {
+			Name:       "Envoyes",
+			Type:       "system",
+			SystemRole: store.LabelSystemRoleSent,
+		},
+	})
+	require.NoError(err, "persist localized IMAP \\Sent role")
+
+	env.Mock.AddMessage("m-existing", testemail.NewMessage().
+		From("Masked-One@Example.test").
+		To("recipient-only@example.test").
+		Header("Message-ID", "<existing@example.test>").
+		Bytes(), []string{"Envoyes"})
+	env.Mock.AddMessage("m-new", testemail.NewMessage().
+		From("masked-two@example.test, delegate@example.test").
+		To("another-recipient@example.test").
+		Header("Message-ID", "<new@example.test>").
+		Bytes(), []string{"Envoyes"})
+	_, err = env.Syncer.ingestMessage(
+		t.Context(),
+		source.ID,
+		env.Mock.Messages["m-existing"],
+		"thread-existing",
+		labelMap,
+	)
+	require.NoError(err, "pre-persist existing page row")
+	env.Mock.Profile.MessagesTotal = 2
+	env.Mock.MessagePages = [][]string{{"m-existing", "m-new"}}
+	env.Syncer = New(&staticLabelsAPI{
+		MockAPI: env.Mock,
+		labels: []*gmail.Label{{
+			ID: "Envoyes", Name: "Envoyes", Type: "system", SystemRole: store.LabelSystemRoleSent,
+		}},
+	}, env.Store, &Options{SourceType: "imap"})
+
+	beforeRevision, err := env.Store.AccountIdentityRevision()
+	require.NoError(err, "AccountIdentityRevision before page")
+	store.ConfigureSQLLogging(store.SQLLogOptions{FullTrace: true, MaxStmtChars: 10_000})
+	t.Cleanup(func() { store.ConfigureSQLLogging(store.SQLLogOptions{}) })
+	var sqlTrace bytes.Buffer
+	previousLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&sqlTrace, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(previousLogger) })
+
+	summary, err := env.Syncer.Full(env.Context, testEmail)
+	require.NoError(err, "full sync")
+	assert.Equal(int64(1), summary.MessagesAdded, "new rows added")
+	assert.Equal(int64(1), summary.MessagesSkipped, "existing rows skipped")
+
+	identities, err := env.Store.ListAccountIdentities(source.ID)
+	require.NoError(err, "ListAccountIdentities")
+	require.Len(identities, 3, "a sync page must not confirm a first-time identity")
+	byAddress := make(map[string]store.AccountIdentity, len(identities))
+	for _, identity := range identities {
+		byAddress[store.NormalizeIdentifierForCompare(identity.Address)] = identity
+	}
+	assert.Equal("masked-one@example.test", byAddress["masked-one@example.test"].Address)
+	assert.Equal("manual,sent-folder", byAddress["masked-one@example.test"].SourceSignal,
+		"the unambiguous From address gains the page's Sent evidence")
+	assert.Equal("manual", byAddress["masked-two@example.test"].SourceSignal, "multiple From authors remain weak")
+	assert.Equal("manual", byAddress["recipient-only@example.test"].SourceSignal,
+		"recipient-only evidence must stay weak")
+	assert.NotContains(byAddress, "delegate@example.test", "multiple From authors remain weak")
+	assert.NotContains(byAddress, "another-recipient@example.test", "recipient-only evidence must stay weak")
+
+	afterRevision, err := env.Store.AccountIdentityRevision()
+	require.NoError(err, "AccountIdentityRevision after page")
+	assert.Equal(beforeRevision, afterRevision, "a signal-only refresh must not bump ownership revision")
+	assert.Equal(1, strings.Count(strings.ToLower(sqlTrace.String()), "coalesce(m.source_is_from_me, false)"),
+		"one store observation query per sync page")
+}
+
+func TestSyncPageDoesNotTrustNameOnlySentMailbox(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	env := newTestEnv(t)
+	env.Mock.AddMessage("m-name-only", testemail.NewMessage().
+		From("untrusted-alias@example.test").
+		To("recipient-only@example.test").
+		Bytes(), []string{"Sent"})
+	env.Mock.Profile.MessagesTotal = 1
+	env.Mock.MessagePages = [][]string{{"m-name-only"}}
+	env.Syncer = New(&staticLabelsAPI{
+		MockAPI: env.Mock,
+		labels:  []*gmail.Label{{ID: "Sent", Name: "Sent", Type: "system"}},
+	}, env.Store, &Options{SourceType: "imap"})
+
+	_, err := env.Syncer.Full(env.Context, testEmail)
+	require.NoError(err, "full sync")
+	source, err := env.Store.GetSourceByIdentifier(testEmail)
+	require.NoError(err, "GetSourceByIdentifier")
+	identities, err := env.Store.ListAccountIdentities(source.ID)
+	require.NoError(err, "ListAccountIdentities")
+	assert.Empty(identities, "a mailbox display name is not trusted sent evidence")
+}
+
+func TestSyncPageRetryAfterCheckpointFailureIsCaseFoldedAndIdempotent(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	env := newTestEnv(t)
+	source := env.CreateSource(t)
+	require.NoError(env.Store.AddAccountIdentity(
+		source.ID,
+		"retry-alias@example.test",
+		"manual",
+	), "seed lower-case identity")
+
+	env.Mock.Profile.MessagesTotal = 2
+	env.Mock.Profile.HistoryID = 12345
+	env.Mock.MessagePages = [][]string{{"m-retry"}, {"m-next"}}
+	env.Mock.AddMessage("m-retry", testemail.NewMessage().
+		From("Retry-Alias@Example.test").
+		To("recipient-only@example.test").
+		Bytes(), []string{"SENT"})
+	env.Mock.AddMessage("m-next", testemail.NewMessage().
+		From("other-sender@example.test").
+		Bytes(), []string{"INBOX"})
+
+	_, err := env.Store.DB().Exec(`
+		CREATE TRIGGER fail_sync_checkpoint
+		BEFORE UPDATE ON sync_runs
+		BEGIN
+			SELECT RAISE(ABORT, 'checkpoint unavailable');
+		END
+	`)
+	require.NoError(err, "install checkpoint failure seam")
+	t.Cleanup(func() {
+		_, _ = env.Store.DB().Exec("DROP TRIGGER IF EXISTS fail_sync_checkpoint")
+	})
+
+	env.Syncer = New(&cancelOnSecondListAPI{MockAPI: env.Mock}, env.Store, nil)
+	_, err = env.Syncer.Full(env.Context, testEmail)
+	require.ErrorIs(err, context.Canceled, "interrupt after first persisted page")
+	assertMessageCount(t, env.Store, 1)
+	run, err := env.Store.GetLatestSync(source.ID)
+	require.NoError(err, "GetLatestSync")
+	assert.Equal(store.SyncStatusRunning, run.Status, "cancelled run remains resumable")
+	assert.Equal(int64(0), run.MessagesProcessed, "failed checkpoint does not advance the page")
+
+	identities, err := env.Store.ListAccountIdentities(source.ID)
+	require.NoError(err, "ListAccountIdentities after interrupted page")
+	require.Len(identities, 1, "case variants merge into the existing row")
+	assert.Equal("retry-alias@example.test", identities[0].Address, "first-confirmed spelling")
+	assert.Equal("manual,sent-folder,sent-label", identities[0].SourceSignal,
+		"sorted provider-native evidence; the identity's own derived attribution is not evidence for itself")
+	revisionAfterFirstPage, err := env.Store.AccountIdentityRevision()
+	require.NoError(err, "AccountIdentityRevision after first page")
+
+	_, err = env.Store.DB().Exec("DROP TRIGGER fail_sync_checkpoint")
+	require.NoError(err, "restore checkpoint updates")
+	env.Syncer = New(env.Mock, env.Store, nil)
+	summary, err := env.Syncer.Full(env.Context, testEmail)
+	require.NoError(err, "resume sync")
+	assert.True(summary.WasResumed, "retry resumes the uncheckpointed run")
+
+	identities, err = env.Store.ListAccountIdentities(source.ID)
+	require.NoError(err, "ListAccountIdentities after retry")
+	require.Len(identities, 1, "retry must not create a case variant")
+	assert.Equal("retry-alias@example.test", identities[0].Address, "first-confirmed spelling after retry")
+	assert.Equal("manual,sent-folder,sent-label", identities[0].SourceSignal, "signals after retry")
+	revisionAfterRetry, err := env.Store.AccountIdentityRevision()
+	require.NoError(err, "AccountIdentityRevision after retry")
+	assert.Equal(revisionAfterFirstPage, revisionAfterRetry, "idempotent retry does not bump ownership revision")
 }
 
 func TestFullSyncResume(t *testing.T) {
@@ -226,6 +620,337 @@ func TestFullSyncAcknowledgesOnlySafelyHandledMessages(t *testing.T) {
 
 	assert.Equal(int64(1), summary.Errors, "errors")
 	assert.Equal([]string{"msg-ok"}, ackClient.acknowledged)
+}
+
+// seedConfirmedSentIdentity archives nothing but sets up the common shape of
+// the discovery tests: one Sent message whose From address the source has
+// already confirmed, so a sync page has real signals to merge.
+func seedConfirmedSentIdentity(t *testing.T, env *TestEnv) *store.Source {
+	t.Helper()
+	env.Mock.Profile.MessagesTotal = 1
+	env.Mock.Profile.HistoryID = 12345
+	env.Mock.MessagePages = [][]string{{"msg-sent"}}
+	env.Mock.AddMessage("msg-sent", testemail.NewMessage().
+		From("sent-alias@example.test").
+		Bytes(), []string{"SENT"})
+	source := env.CreateSource(t)
+	require.NoError(t, env.Store.AddAccountIdentity(source.ID, "sent-alias@example.test", "manual"),
+		"seed the confirmed identity whose signals the sync page refreshes")
+	return source
+}
+
+// TestFullSyncCompletesAndSetsBacklogWhenDiscoveryFails pins the durability
+// trade-off behind the non-fatal discovery path. Identity evidence is
+// recomputable from the archived messages, so a page whose discovery keeps
+// failing parks a durable backlog marker rather than unwinding a run whose
+// messages are already safely stored.
+func TestFullSyncCompletesAndSetsBacklogWhenDiscoveryFails(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	env := newTestEnv(t)
+	shortenIdentityDiscoveryRetry(t, time.Millisecond)
+	logs := newSyncLogCapture(nil)
+	ackClient := &acknowledgingAPI{MockAPI: env.Mock}
+	env.Syncer = New(ackClient, env.Store, DefaultOptions()).WithLogger(logs.logger())
+	seedConfirmedSentIdentity(t, env)
+	installFailingIdentityDiscovery(t, env, "fail_identity_discovery")
+
+	summary, err := env.Syncer.Full(env.Context, testEmail)
+	require.NoError(err, "persistent discovery failure must not fail the sync run")
+	require.NotNil(summary)
+	assert.Equal(int64(1), summary.MessagesAdded, "the page is archived despite discovery failing")
+	assertMessageCount(t, env.Store, 1)
+	assert.Equal([]string{"msg-sent"}, ackClient.acknowledged,
+		"a durably archived message is acknowledged once its discovery debt is recorded")
+
+	source, err := env.Store.GetSourceByIdentifier(testEmail)
+	require.NoError(err, "GetSourceByIdentifier")
+	run, err := env.Store.GetLatestSync(source.ID)
+	require.NoError(err, "GetLatestSync")
+	assert.Equal(store.SyncStatusCompleted, run.Status, "the run completes")
+	assert.Equal(int64(1), run.MessagesProcessed, "the page checkpoint advanced")
+	require.True(source.SyncCursor.Valid, "the source cursor advanced")
+	assert.Equal("12345", source.SyncCursor.String, "SyncCursor")
+
+	found, lastError, err := env.Store.IdentityDiscoveryBacklogContext(env.Context, source.ID)
+	require.NoError(err, "IdentityDiscoveryBacklogContext")
+	assert.True(found, "the failed page records a durable backlog marker")
+	assert.Contains(lastError, forcedDiscoveryFailure, "the marker keeps the underlying cause")
+	assert.Contains(logs.String(), forcedDiscoveryFailure,
+		"the operator sees the discovery error in the log")
+
+	assert.NotContains(logs.String(), identityDiscoveryDrainLogMessage,
+		"a whole-archive refresh right after three failed attempts costs a full scan to learn nothing")
+
+	identities, err := env.Store.ListAccountIdentities(source.ID)
+	require.NoError(err, "ListAccountIdentities after discovery failure")
+	require.Len(identities, 1)
+	assert.Equal("manual", identities[0].SourceSignal, "failed discovery writes no partial evidence")
+}
+
+// TestFullSyncSettlesBacklogItParkedOnceDiscoveryRecovers covers the other side
+// of that gate: a long run whose later pages show discovery working again pays
+// the refresh immediately instead of leaving the archive inconsistent until
+// whenever the next sync happens to run.
+func TestFullSyncSettlesBacklogItParkedOnceDiscoveryRecovers(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	env := newTestEnv(t)
+	shortenIdentityDiscoveryRetry(t, time.Millisecond)
+
+	recovered := false
+	logs := newSyncLogCapture(func(record slog.Record) {
+		// Let the first page exhaust its attempts and park the debt, then let
+		// discovery work again for the second page.
+		if record.Message != identityDiscoveryBacklogLogMessage {
+			return
+		}
+		recovered = true
+		_, err := env.Store.DB().Exec("DROP TRIGGER IF EXISTS fail_identity_discovery")
+		require.NoError(err, "let discovery recover for the next page")
+	})
+	env.Syncer = New(env.Mock, env.Store, DefaultOptions()).WithLogger(logs.logger())
+
+	env.Mock.Profile.MessagesTotal = 2
+	env.Mock.Profile.HistoryID = 12345
+	env.Mock.MessagePages = [][]string{{"msg-sent"}, {"msg-inbox"}}
+	env.Mock.AddMessage("msg-sent", testemail.NewMessage().
+		From("sent-alias@example.test").
+		Bytes(), []string{"SENT"})
+	env.Mock.AddMessage("msg-inbox", testemail.NewMessage().
+		From("stranger@example.test").
+		Bytes(), []string{"INBOX"})
+	source := env.CreateSource(t)
+	require.NoError(env.Store.AddAccountIdentity(source.ID, "sent-alias@example.test", "manual"),
+		"seed the confirmed identity whose signals the failed page never merged")
+	installFailingIdentityDiscovery(t, env, "fail_identity_discovery")
+
+	_, err := env.Syncer.Full(env.Context, testEmail)
+	require.NoError(err, "full sync")
+	require.True(recovered, "the first page parked a backlog marker")
+	assertMessageCount(t, env.Store, 2)
+
+	found, _, err := env.Store.IdentityDiscoveryBacklogContext(env.Context, source.ID)
+	require.NoError(err, "IdentityDiscoveryBacklogContext")
+	assert.False(found, "the recovered run settles the debt it parked")
+
+	identities, err := env.Store.ListAccountIdentities(source.ID)
+	require.NoError(err, "ListAccountIdentities")
+	require.Len(identities, 1)
+	assert.Equal("manual,sent-folder,sent-label", identities[0].SourceSignal,
+		"the completion drain re-derives what the failed page never wrote")
+}
+
+// TestFullSyncDiscoveryRetriesTransientFailureWithoutBacklog clears the failure
+// seam from the retry log record itself, so the retry happens at an exact point
+// in the loop rather than after a sleep the test hopes is long enough.
+func TestFullSyncDiscoveryRetriesTransientFailureWithoutBacklog(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	env := newTestEnv(t)
+	shortenIdentityDiscoveryRetry(t, time.Millisecond)
+
+	retries := 0
+	logs := newSyncLogCapture(func(record slog.Record) {
+		if record.Message != identityDiscoveryRetryLogMessage {
+			return
+		}
+		retries++
+		_, err := env.Store.DB().Exec("DROP TRIGGER IF EXISTS fail_identity_discovery")
+		require.NoError(err, "clear the transient discovery failure")
+	})
+	env.Syncer = New(env.Mock, env.Store, DefaultOptions()).WithLogger(logs.logger())
+	seedConfirmedSentIdentity(t, env)
+	installFailingIdentityDiscovery(t, env, "fail_identity_discovery")
+
+	_, err := env.Syncer.Full(env.Context, testEmail)
+	require.NoError(err, "full sync")
+	assert.Equal(1, retries, "one failed attempt is retried")
+
+	source, err := env.Store.GetSourceByIdentifier(testEmail)
+	require.NoError(err, "GetSourceByIdentifier")
+	found, _, err := env.Store.IdentityDiscoveryBacklogContext(env.Context, source.ID)
+	require.NoError(err, "IdentityDiscoveryBacklogContext")
+	assert.False(found, "a retry that succeeds leaves no backlog behind")
+
+	identities, err := env.Store.ListAccountIdentities(source.ID)
+	require.NoError(err, "ListAccountIdentities")
+	require.Len(identities, 1)
+	assert.Equal("manual,sent-folder,sent-label", identities[0].SourceSignal,
+		"the retried attempt merges the page's Sent evidence")
+}
+
+// TestSyncCancellationDuringDiscoveryStaysResumable separates "discovery is
+// broken" from "the operator stopped the sync". Only the former is a debt worth
+// recording; cancellation must leave the run exactly as resumable as any other
+// interruption.
+func TestSyncCancellationDuringDiscoveryStaysResumable(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	env := newTestEnv(t)
+	shortenIdentityDiscoveryRetry(t, time.Minute)
+	ctx, cancel := context.WithCancel(env.Context)
+	t.Cleanup(cancel)
+	env.Context = ctx
+
+	logs := newSyncLogCapture(func(record slog.Record) {
+		if record.Message == identityDiscoveryRetryLogMessage {
+			cancel()
+		}
+	})
+	env.Syncer = New(env.Mock, env.Store, DefaultOptions()).WithLogger(logs.logger())
+	source := seedConfirmedSentIdentity(t, env)
+	installFailingIdentityDiscovery(t, env, "fail_identity_discovery")
+
+	_, err := env.Syncer.Full(ctx, testEmail)
+	require.ErrorIs(err, context.Canceled, "cancellation surfaces as cancellation")
+	assertMessageCount(t, env.Store, 1)
+
+	run, err := env.Store.GetLatestSync(source.ID)
+	require.NoError(err, "GetLatestSync")
+	assert.Equal(store.SyncStatusRunning, run.Status, "a cancelled run stays resumable")
+
+	found, _, err := env.Store.IdentityDiscoveryBacklogContext(context.Background(), source.ID)
+	require.NoError(err, "IdentityDiscoveryBacklogContext")
+	assert.False(found, "cancellation is not a discovery failure")
+
+	_, err = env.Store.DB().Exec("DROP TRIGGER fail_identity_discovery")
+	require.NoError(err, "restore identity discovery")
+	env.Syncer = New(env.Mock, env.Store, DefaultOptions())
+	_, err = env.Syncer.Full(context.Background(), testEmail)
+	require.NoError(err, "resumed sync")
+
+	run, err = env.Store.GetLatestSync(source.ID)
+	require.NoError(err, "GetLatestSync after resume")
+	assert.Equal(store.SyncStatusCompleted, run.Status, "the resumed run completes")
+	identities, err := env.Store.ListAccountIdentities(source.ID)
+	require.NoError(err, "ListAccountIdentities after resume")
+	require.Len(identities, 1)
+	assert.Equal("manual,sent-folder,sent-label", identities[0].SourceSignal,
+		"the resumed run applies the discovery the cancellation interrupted")
+}
+
+// TestNextSyncDrainsIdentityDiscoveryBacklog proves the backlog is a real
+// repair path, not just a breadcrumb: the next sync re-derives the owed
+// evidence from the whole archive, which is why the page that fails can be
+// allowed to complete. The second sync lists only an unrelated message, so
+// merging the Sent evidence can come from nowhere but the drain.
+func TestNextSyncDrainsIdentityDiscoveryBacklog(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	env := newTestEnv(t)
+	source := seedConfirmedSentIdentity(t, env)
+	installFailingIdentityDiscovery(t, env, "fail_identity_discovery")
+	shortenIdentityDiscoveryRetry(t, time.Millisecond)
+	env.Syncer = New(env.Mock, env.Store, DefaultOptions()).WithLogger(newSyncLogCapture(nil).logger())
+
+	_, err := env.Syncer.Full(env.Context, testEmail)
+	require.NoError(err, "first full sync")
+	found, _, err := env.Store.IdentityDiscoveryBacklogContext(env.Context, source.ID)
+	require.NoError(err, "IdentityDiscoveryBacklogContext")
+	require.True(found, "the first sync parks the discovery debt")
+
+	_, err = env.Store.DB().Exec("DROP TRIGGER fail_identity_discovery")
+	require.NoError(err, "restore identity discovery")
+	env.Mock.Profile.HistoryID = 12346
+	env.Mock.MessagePages = [][]string{{"msg-inbox"}}
+	env.Mock.AddMessage("msg-inbox", testemail.NewMessage().
+		From("stranger@example.test").
+		Bytes(), []string{"INBOX"})
+
+	_, err = env.Syncer.Full(env.Context, testEmail)
+	require.NoError(err, "second full sync")
+
+	found, _, err = env.Store.IdentityDiscoveryBacklogContext(env.Context, source.ID)
+	require.NoError(err, "IdentityDiscoveryBacklogContext after drain")
+	assert.False(found, "a successful refresh clears the backlog marker")
+
+	identities, err := env.Store.ListAccountIdentities(source.ID)
+	require.NoError(err, "ListAccountIdentities after drain")
+	require.Len(identities, 1, "the drain must not confirm a first-time identity")
+	assert.Equal("manual,sent-folder,sent-label", identities[0].SourceSignal,
+		"the drain re-derives the evidence the failed page never wrote")
+}
+
+// TestNoOpIncrementalSyncDrainsIdentityDiscoveryBacklog covers the account
+// shape msgvault is built for: an archive that has been wound down and whose
+// scheduled incremental syncs are all no-ops. If the drain sat behind the
+// up-to-date early return, debt parked by the last page that ever ran would
+// never be settled, because no later sync would reach the drain.
+func TestNoOpIncrementalSyncDrainsIdentityDiscoveryBacklog(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	env := newTestEnv(t)
+	env.Mock.Profile.MessagesTotal = 1
+	env.Mock.Profile.HistoryID = 12345
+	env.Mock.MessagePages = [][]string{{"msg-sent"}}
+	env.Mock.AddMessage("msg-sent", testemail.NewMessage().
+		From("sent-alias@example.test").
+		Bytes(), []string{"SENT"})
+	runFullSync(t, env)
+
+	source, err := env.Store.GetSourceByIdentifier(testEmail)
+	require.NoError(err, "GetSourceByIdentifier")
+	require.NoError(env.Store.AddAccountIdentity(source.ID, "sent-alias@example.test", "manual"),
+		"confirm the identity after the archive already holds its Sent evidence")
+	require.NoError(
+		env.Store.SetIdentityDiscoveryBacklogContext(env.Context, source.ID, errors.New("earlier page failed")),
+		"park discovery debt")
+
+	// The mailbox is now idle: the cursor already equals the current history.
+	env.Mock.HistoryID = 12345
+	var hookChangedFlags []bool
+	env.Syncer = New(env.Mock, env.Store, DefaultOptions()).WithSuccessfulSyncHook(
+		"provider identity refresh",
+		func(_ context.Context, _ *store.Source, mailboxChanged bool) error {
+			hookChangedFlags = append(hookChangedFlags, mailboxChanged)
+			return nil
+		},
+	)
+	source, err = env.Store.GetSourceByID(source.ID)
+	require.NoError(err, "GetSourceByID")
+	require.True(source.SyncCursor.Valid, "the full sync left a cursor")
+
+	summary, err := env.Syncer.Incremental(env.Context, source)
+	require.NoError(err, "no-op incremental sync")
+	require.NotNil(summary)
+
+	assert.Equal([]bool{false}, hookChangedFlags,
+		"a no-op run flags the hook as unchanged so the installer can avoid a provider call")
+	found, _, err := env.Store.IdentityDiscoveryBacklogContext(env.Context, source.ID)
+	require.NoError(err, "IdentityDiscoveryBacklogContext")
+	assert.False(found, "an idle mailbox must not strand discovery debt forever")
+
+	identities, err := env.Store.ListAccountIdentities(source.ID)
+	require.NoError(err, "ListAccountIdentities")
+	require.Len(identities, 1)
+	assert.Equal("manual,sent-folder,sent-label", identities[0].SourceSignal,
+		"the drain re-derives evidence from the archive even with nothing new to sync")
+}
+
+// TestFullSyncDoesNotConfirmFirstTimeIdentity pins the refresh-only contract at
+// the sync boundary: a Sent-placed message from an unknown address is archived,
+// but never claims that address as one of the account's identities.
+func TestFullSyncDoesNotConfirmFirstTimeIdentity(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	env := newTestEnv(t)
+	env.Mock.Profile.MessagesTotal = 1
+	env.Mock.Profile.HistoryID = 12345
+	env.Mock.MessagePages = [][]string{{"msg-sent"}}
+	env.Mock.AddMessage("msg-sent", testemail.NewMessage().
+		From("stranger@example.test").
+		Bytes(), []string{"SENT"})
+
+	_, err := env.Syncer.Full(env.Context, testEmail)
+	require.NoError(err, "full sync")
+	assertMessageCount(t, env.Store, 1)
+
+	source, err := env.Store.GetSourceByIdentifier(testEmail)
+	require.NoError(err, "GetSourceByIdentifier")
+	identities, err := env.Store.ListAccountIdentities(source.ID)
+	require.NoError(err, "ListAccountIdentities")
+	assert.Empty(identities, "one Sent-placed message must not confirm a brand-new identity")
 }
 
 func TestFullSyncWithErrors(t *testing.T) {
@@ -521,6 +1246,115 @@ func TestIncrementalSyncWithChanges(t *testing.T) {
 
 	summary := runIncrementalSync(t, env)
 	assertSummary(t, summary, WantSummary{Added: new(int64(2))})
+}
+
+func TestIncrementalSyncDiscoversOnlySuccessfulChangesBeforeAdvancingCursor(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	env := newTestEnv(t)
+	env.Mock.Profile.MessagesTotal = 1
+	env.Mock.Profile.HistoryID = 12340
+	env.Mock.AddMessage("existing-message", testemail.NewMessage().
+		From("existing-alias@example.test").
+		To("recipient-only@example.test").
+		Bytes(), []string{"INBOX"})
+	runFullSync(t, env)
+
+	env.Mock.AddMessage("new-success", testemail.NewMessage().
+		From("new-alias@example.test").
+		To("recipient-only@example.test").
+		Bytes(), []string{"SENT"})
+	env.Mock.AddMessage("new-failed", testemail.NewMessage().
+		From("failed-alias@example.test").
+		Bytes(), []string{"SENT"})
+	env.Mock.GetMessageError["new-failed"] = errors.New("temporary fetch failure")
+	env.SetHistory(12350,
+		historyLabelAdded("existing-message", "SENT"),
+		historyAdded("new-success"),
+		historyAdded("new-failed"),
+	)
+
+	source, err := env.Store.GetSourceByIdentifier(testEmail)
+	require.NoError(err, "GetSourceByIdentifier before incremental sync")
+	// Confirming all three addresses keeps the failed fetch observable: if its
+	// page reached discovery, failed-alias would gain Sent evidence too.
+	for _, address := range []string{
+		"existing-alias@example.test",
+		"new-alias@example.test",
+		"failed-alias@example.test",
+	} {
+		require.NoError(env.Store.AddAccountIdentity(source.ID, address, "manual"), "seed confirmed identity")
+	}
+
+	_, err = env.Syncer.Incremental(env.Context, source)
+	require.NoError(err, "incremental sync")
+
+	source, err = env.Store.GetSourceByID(source.ID)
+	require.NoError(err, "GetSourceByID after incremental sync")
+	require.True(source.SyncCursor.Valid, "source cursor remains valid")
+	assert.Equal("12350", source.SyncCursor.String, "a completed sync advances the history cursor")
+	identities, err := env.Store.ListAccountIdentities(source.ID)
+	require.NoError(err, "ListAccountIdentities")
+	require.Len(identities, 3, "incremental sync must not confirm a first-time identity")
+	signalsByAddress := make(map[string]string, len(identities))
+	for _, identity := range identities {
+		signalsByAddress[identity.Address] = identity.SourceSignal
+	}
+	assert.Equal("manual,sent-folder,sent-label", signalsByAddress["existing-alias@example.test"],
+		"a label update provides strong evidence")
+	assert.Equal("manual,sent-folder,sent-label", signalsByAddress["new-alias@example.test"],
+		"a successful addition provides strong evidence")
+	assert.Equal("manual", signalsByAddress["failed-alias@example.test"],
+		"failed additions are not discovered")
+}
+
+// TestIncrementalSyncCompletesAndSetsBacklogWhenDiscoveryFails is the
+// incremental analog of TestFullSyncCompletesAndSetsBacklogWhenDiscoveryFails:
+// the history cursor advances, because holding it back would replay the same
+// already-archived changes forever over a debt the backlog can settle.
+func TestIncrementalSyncCompletesAndSetsBacklogWhenDiscoveryFails(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	env := newTestEnv(t)
+	shortenIdentityDiscoveryRetry(t, time.Millisecond)
+	env.Mock.Profile.MessagesTotal = 1
+	env.Mock.Profile.HistoryID = 12340
+	env.Mock.AddMessage("existing-message", testemail.NewMessage().
+		From("existing-alias@example.test").
+		Bytes(), []string{"INBOX"})
+	runFullSync(t, env)
+
+	source, err := env.Store.GetSourceByIdentifier(testEmail)
+	require.NoError(err, "GetSourceByIdentifier before incremental sync")
+	require.NoError(env.Store.AddAccountIdentity(source.ID, "existing-alias@example.test", "manual"),
+		"seed confirmed identity")
+	env.SetHistory(12350, historyLabelAdded("existing-message", "SENT"))
+	logs := newSyncLogCapture(nil)
+	env.Syncer = New(env.Mock, env.Store, DefaultOptions()).WithLogger(logs.logger())
+	installFailingIdentityDiscovery(t, env, "fail_incremental_identity_discovery")
+
+	summary, err := env.Syncer.Incremental(env.Context, source)
+	require.NoError(err, "persistent discovery failure must not fail the incremental run")
+	require.NotNil(summary)
+
+	run, err := env.Store.GetLatestSync(source.ID)
+	require.NoError(err, "GetLatestSync")
+	assert.Equal(store.SyncStatusCompleted, run.Status, "the run completes")
+	source, err = env.Store.GetSourceByID(source.ID)
+	require.NoError(err, "GetSourceByID after discovery failure")
+	require.True(source.SyncCursor.Valid, "source cursor remains valid")
+	assert.Equal("12350", source.SyncCursor.String, "the history cursor advances")
+
+	found, lastError, err := env.Store.IdentityDiscoveryBacklogContext(env.Context, source.ID)
+	require.NoError(err, "IdentityDiscoveryBacklogContext")
+	assert.True(found, "the failed page records a durable backlog marker")
+	assert.Contains(lastError, forcedDiscoveryFailure, "the marker keeps the underlying cause")
+	assert.Contains(logs.String(), forcedDiscoveryFailure, "the operator sees the discovery error")
+
+	identities, err := env.Store.ListAccountIdentities(source.ID)
+	require.NoError(err, "ListAccountIdentities after discovery failure")
+	require.Len(identities, 1)
+	assert.Equal("manual", identities[0].SourceSignal, "failed discovery writes no partial evidence")
 }
 
 func TestIncrementalSyncWithDeletions(t *testing.T) {

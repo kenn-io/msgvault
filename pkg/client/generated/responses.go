@@ -281,6 +281,20 @@ type AddCLIIdentityErrorResponseJSON500 = APIHTTPError
 
 type AddCLIIdentityErrorResponseJSON503 = APIHTTPError
 
+type DiscoverCLIIdentitiesResponse = []byte
+
+type DiscoverCLIIdentitiesErrorResponse = ErrorResponse
+
+type ImportCLIIdentitiesResponse = ImportResult
+
+type ImportCLIIdentitiesErrorResponse = APIHTTPError
+
+type ImportCLIIdentitiesErrorResponseJSON = APIHTTPError
+
+type ImportCLIIdentitiesErrorResponseJSON500 = APIHTTPError
+
+type ImportCLIIdentitiesErrorResponseJSON503 = APIHTTPError
+
 type InitCLIArchiveResponse = CliInitDBResponse
 
 type InitCLIArchiveErrorResponse = ErrorResponse
@@ -1425,6 +1439,10 @@ type ListSourceStatusResponse = SourceStatusResponse
 
 type ListSourceStatusErrorResponse = ErrorResponse
 
+type ListSourceIdentitiesResponse = SourceIdentitiesResponse
+
+type ListSourceIdentitiesErrorResponse = ErrorResponse
+
 type GetStatsResponse = StatsResponse
 
 type GetStatsErrorResponse = ErrorResponse
@@ -1820,6 +1838,23 @@ type AddCLIIdentityResp struct {
 	JSON422      *AddCLIIdentityErrorResponseJSON
 	JSON500      *AddCLIIdentityErrorResponseJSON500
 	JSON503      *AddCLIIdentityErrorResponseJSON503
+}
+
+type DiscoverCLIIdentitiesResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+}
+
+type ImportCLIIdentitiesResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *ImportCLIIdentitiesResponse
+	JSON400      *ImportCLIIdentitiesErrorResponse
+	JSON422      *ImportCLIIdentitiesErrorResponseJSON
+	JSON500      *ImportCLIIdentitiesErrorResponseJSON500
+	JSON503      *ImportCLIIdentitiesErrorResponseJSON503
 }
 
 type InitCLIArchiveResp struct {
@@ -2529,6 +2564,13 @@ type ListSourceStatusResp struct {
 	Body         []byte
 	StatusCode   int
 	JSON200      *ListSourceStatusResponse
+}
+
+type ListSourceIdentitiesResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *ListSourceIdentitiesResponse
 }
 
 type GetStatsResp struct {

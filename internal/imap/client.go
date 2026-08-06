@@ -269,6 +269,16 @@ func (c *Client) selectMailbox(mailbox string) error {
 	return nil
 }
 
+// listOptionsLocked requests RFC 6154 special-use attributes only when the
+// server advertises support. Sending extended LIST options to legacy servers
+// can make otherwise valid mailbox enumeration fail.
+func (c *Client) listOptionsLocked() *imap.ListOptions {
+	if !c.conn.Caps().Has(imap.CapSpecialUse) {
+		return nil
+	}
+	return &imap.ListOptions{ReturnSpecialUse: true}
+}
+
 // listMailboxesLocked returns all selectable mailboxes, caching the result.
 // Also detects special-use attributes (\Trash, \All) for later use.
 // Caller must hold mu.
@@ -277,7 +287,7 @@ func (c *Client) listMailboxesLocked() ([]string, error) {
 		return c.mailboxCache, nil
 	}
 
-	items, err := c.conn.List("", "*", nil).Collect()
+	items, err := c.conn.List("", "*", c.listOptionsLocked()).Collect()
 	if err != nil {
 		return nil, fmt.Errorf("LIST: %w", err)
 	}
@@ -900,16 +910,17 @@ func (c *Client) GetProfile(ctx context.Context) (*gmailapi.Profile, error) {
 func (c *Client) ListLabels(ctx context.Context) ([]*gmailapi.Label, error) {
 	var labels []*gmailapi.Label
 	err := c.withConn(ctx, func(conn *imapclient.Client) error {
-		items, err := conn.List("", "*", nil).Collect()
+		items, err := conn.List("", "*", c.listOptionsLocked()).Collect()
 		if err != nil {
 			return fmt.Errorf("LIST: %w", err)
 		}
 		for _, item := range items {
 			labelType := classifyLabelType(item.Mailbox, item.Attrs)
 			labels = append(labels, &gmailapi.Label{
-				ID:   item.Mailbox,
-				Name: item.Mailbox,
-				Type: labelType,
+				ID:         item.Mailbox,
+				Name:       item.Mailbox,
+				Type:       labelType,
+				SystemRole: systemRoleForMailbox(item.Attrs),
 			})
 		}
 		return nil

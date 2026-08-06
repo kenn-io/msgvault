@@ -2,7 +2,6 @@ package store
 
 import (
 	"database/sql"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -315,9 +314,7 @@ func copyData(tx *sql.Tx, rowCount int, options CopySubsetOptions) (*CopyResult,
 		return nil, fmt.Errorf("count selected messages: %w", err)
 	}
 
-	res, err = tx.Exec(`
-		INSERT INTO conversations SELECT * FROM src.conversations
-		WHERE id IN (
+	res, err = copyByName(tx, "conversations", `id IN (
 			SELECT DISTINCT conversation_id FROM src.messages
 			WHERE id IN (SELECT id FROM selected_messages)
 		)`)
@@ -328,9 +325,7 @@ func copyData(tx *sql.Tx, rowCount int, options CopySubsetOptions) (*CopyResult,
 		return nil, fmt.Errorf("conversations rows affected: %w", err)
 	}
 
-	res, err = tx.Exec(`
-		INSERT INTO participants SELECT * FROM src.participants
-		WHERE id IN (
+	res, err = copyByName(tx, "participants", `id IN (
 			SELECT sender_id FROM src.messages
 			WHERE id IN (SELECT id FROM selected_messages)
 			UNION
@@ -353,9 +348,7 @@ func copyData(tx *sql.Tx, rowCount int, options CopySubsetOptions) (*CopyResult,
 	// every included identity cluster and person profile is complete —
 	// components can pass through participants with no copied messages.
 	if options.IncludeIdentity {
-		res, err = tx.Exec(`
-			INSERT INTO participants SELECT * FROM src.participants
-			WHERE id IN (
+		res, err = copyByName(tx, "participants", `id IN (
 				WITH RECURSIVE symmetric_edge(a, b) AS (
 					SELECT participant_a, participant_b FROM src.participant_links
 					UNION ALL
@@ -614,10 +607,8 @@ func copyData(tx *sql.Tx, rowCount int, options CopySubsetOptions) (*CopyResult,
 		return nil, fmt.Errorf("copy message_raw: %w", err)
 	}
 
-	if _, err := tx.Exec(`
-		INSERT INTO message_recipients
-		SELECT * FROM src.message_recipients
-		WHERE message_id IN (SELECT id FROM selected_messages)`); err != nil {
+	if _, err := copyByName(tx, "message_recipients",
+		`message_id IN (SELECT id FROM selected_messages)`); err != nil {
 		return nil, fmt.Errorf("copy message_recipients: %w", err)
 	}
 
@@ -633,9 +624,7 @@ func copyData(tx *sql.Tx, rowCount int, options CopySubsetOptions) (*CopyResult,
 		return nil, fmt.Errorf("copy attachments: %w", err)
 	}
 
-	res, err = tx.Exec(`
-		INSERT INTO labels SELECT * FROM src.labels
-		WHERE source_id IN (SELECT id FROM sources)
+	res, err = copyByName(tx, "labels", `source_id IN (SELECT id FROM sources)
 		   OR id IN (
 			SELECT label_id FROM src.message_labels
 			WHERE message_id IN (SELECT id FROM selected_messages)
@@ -663,32 +652,46 @@ func copyData(tx *sql.Tx, rowCount int, options CopySubsetOptions) (*CopyResult,
 	return result, nil
 }
 
-// errNoCommonMessageColumns reports that the source and destination messages
-// tables have no column name in common, so there is nothing to copy.
-var errNoCommonMessageColumns = errors.New(
-	"source and destination share no messages columns")
-
 // copyMessages copies the selected messages, naming the columns the source and
 // destination have in common, read from the two schemas at copy time.
-//
-// A column the source lacks is left out of the INSERT, so the destination's own
-// DEFAULT, where it has one, supplies it. Columns the source has and the
-// destination does not are dropped.
 func copyMessages(tx *sql.Tx) error {
-	cols, err := commonColumns(tx, "messages")
-	if err != nil {
-		return fmt.Errorf("copy messages: %w", err)
-	}
-	if len(cols) == 0 {
-		return fmt.Errorf("copy messages: %w", errNoCommonMessageColumns)
-	}
-	list := strings.Join(cols, ", ")
-	if _, err := tx.Exec(fmt.Sprintf(`
-		INSERT INTO messages (%s) SELECT %s FROM src.messages
-		WHERE id IN (SELECT id FROM selected_messages)`, list, list)); err != nil {
+	if _, err := copyByName(tx, "messages",
+		`id IN (SELECT id FROM selected_messages)`); err != nil {
 		return fmt.Errorf("copy messages: %w", err)
 	}
 	return nil
+}
+
+// copyByName copies the rows of src.<table> satisfying the where clause into
+// the destination table, naming the columns the source and destination have in
+// common, read from the two schemas at copy time (see commonColumns).
+//
+// Naming the columns keeps the copy independent of declaration order: on a
+// database upgraded by the legacy ALTER TABLE ADD COLUMN migrations a
+// late-added column (labels.system_role, participants.phone_number,
+// conversations.title, ...) sits at the end of the table, while a fresh
+// schema.sql database declares it mid-table, so a positional SELECT * copy
+// from one into the other lands values in the wrong columns. A column the
+// source lacks is left out of the INSERT, so the destination's own DEFAULT,
+// where it has one, supplies it. Columns the source has and the destination
+// does not are dropped.
+func copyByName(tx *sql.Tx, table, where string, args ...any) (sql.Result, error) {
+	cols, err := commonColumns(tx, table)
+	if err != nil {
+		return nil, err
+	}
+	if len(cols) == 0 {
+		return nil, fmt.Errorf(
+			"source and destination share no %s columns", table)
+	}
+	list := strings.Join(cols, ", ")
+	res, err := tx.Exec(fmt.Sprintf(`
+		INSERT INTO %s (%s) SELECT %s FROM src.%s
+		WHERE %s`, table, list, list, table, where), args...)
+	if err != nil {
+		return nil, err
+	}
+	return res, nil
 }
 
 // commonColumns returns the quoted names of the columns `table` has in both the

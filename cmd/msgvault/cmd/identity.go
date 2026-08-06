@@ -5,20 +5,38 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"text/tabwriter"
 	"time"
 
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/daemonclient"
+	"go.kenn.io/msgvault/internal/identityops"
 )
 
 var (
-	identityListAccount    string
-	identityListCollection string
-	identityListJSON       bool
-	identityShowJSON       bool
-	identityAddSignal      string
+	identityListAccount      string
+	identityListCollection   string
+	identityListSourceID     int64
+	identityListJSON         bool
+	identityShowSourceID     int64
+	identityShowJSON         bool
+	identityAddSourceID      int64
+	identityAddSignal        string
+	identityRemoveSourceID   int64
+	identityDiscoverSourceID int64
+	identityDiscoverApply    bool
+	identityDiscoverProvider bool
+	identityDiscoverConfirm  []string
+	identityDiscoverJSON     bool
+	identityImportSourceID   int64
+	identityImportFile       string
+	identityImportStdin      bool
+	identityImportSignal     string
+	identityImportApply      bool
+	identityImportJSON       bool
 )
 
 // identityCmdUse is the usage/name of the identity command.
@@ -48,8 +66,10 @@ func runIdentityList(cmd *cobra.Command, _ []string) error {
 	rows, err := fetchHTTPIdentityRows(
 		cmd,
 		daemonclient.CLIIdentitiesRequest{
-			Account:    identityListAccount,
-			Collection: identityListCollection,
+			Account:     identityListAccount,
+			Collection:  identityListCollection,
+			SourceID:    identityListSourceID,
+			SourceIDSet: cmd.Flags().Changed("source-id"),
 		},
 	)
 	if err != nil {
@@ -142,21 +162,31 @@ func writeIdentityJSON(w io.Writer, rows []identityRow) error {
 }
 
 var identityShowCmd = &cobra.Command{
-	Use:   "show <account>",
+	Use:   "show [account]",
 	Short: "Show one account's identity in detail",
-	Args:  cobra.ExactArgs(1),
+	Args:  identityShowArgs,
 	RunE:  runIdentityShow,
 }
 
 func runIdentityShow(cmd *cobra.Command, args []string) error {
+	account := ""
+	if len(args) == 1 {
+		account = args[0]
+	}
+	selector, err := identitySourceSelector(cmd, account, identityShowSourceID)
+	if err != nil {
+		return err
+	}
 	rows, err := fetchHTTPIdentityRows(cmd, daemonclient.CLIIdentitiesRequest{
-		Account:     args[0],
-		PrimaryOnly: true,
+		Account:     selector.Account,
+		SourceID:    selector.SourceID,
+		SourceIDSet: cmd.Flags().Changed("source-id"),
+		PrimaryOnly: selector.SourceID == 0,
 	})
 	if err != nil {
 		return err
 	}
-	return renderIdentityShow(cmd.OutOrStdout(), rows, args[0])
+	return renderIdentityShow(cmd.OutOrStdout(), rows, account)
 }
 
 func fetchHTTPIdentityRows(
@@ -214,14 +244,14 @@ func renderIdentityShow(w io.Writer, rows []identityRow, hintAccount string) err
 }
 
 var identityAddCmd = &cobra.Command{
-	Use:   "add <account> <identifier>",
+	Use:   "add [account] <identifier>",
 	Short: "Add a confirmed identifier to an account's identity",
-	Args:  cobra.ExactArgs(2),
+	Args:  identityAddArgs,
 	RunE:  runIdentityAdd,
 }
 
 func runIdentityAdd(cmd *cobra.Command, args []string) error {
-	accountArg, identifierArg := args[0], args[1]
+	accountArg, identifierArg := identityMutationArguments(cmd, args)
 	identifier := strings.TrimSpace(identifierArg)
 	if identifier == "" {
 		return usageErr(cmd, errors.New("identifier cannot be empty"))
@@ -229,10 +259,14 @@ func runIdentityAdd(cmd *cobra.Command, args []string) error {
 	if strings.Contains(identityAddSignal, ",") {
 		return usageErr(cmd, fmt.Errorf("signal names cannot contain commas: %q", identityAddSignal))
 	}
-	return runHTTPIdentityAdd(cmd, accountArg, identifier)
+	selector, err := identitySourceSelector(cmd, accountArg, identityAddSourceID)
+	if err != nil {
+		return err
+	}
+	return runHTTPIdentityAdd(cmd, selector, identifier)
 }
 
-func runHTTPIdentityAdd(cmd *cobra.Command, account string, identifier string) error {
+func runHTTPIdentityAdd(cmd *cobra.Command, selector daemonclient.CLIIdentitySourceSelector, identifier string) error {
 	s, _, err := OpenHTTPStore(cmd.Context())
 	if err != nil {
 		return fmt.Errorf("open store: %w", err)
@@ -240,9 +274,9 @@ func runHTTPIdentityAdd(cmd *cobra.Command, account string, identifier string) e
 	defer func() { _ = s.Close() }()
 
 	result, err := s.AddCLIIdentity(cmd.Context(), daemonclient.CLIIdentityAddRequest{
-		Account:    account,
-		Identifier: identifier,
-		Signal:     identityAddSignal,
+		SourceSelector: selector,
+		Identifier:     identifier,
+		Signal:         identityAddSignal,
 	})
 	if err != nil {
 		return err
@@ -266,21 +300,270 @@ func renderIdentityAddResult(w io.Writer, result daemonclient.CLIIdentityAddResu
 }
 
 var identityRemoveCmd = &cobra.Command{
-	Use:   "remove <account> <identifier>",
+	Use:   "remove [account] <identifier>",
 	Short: "Remove a confirmed identifier from an account's identity",
-	Args:  cobra.ExactArgs(2),
+	Args:  identityRemoveArgs,
 	RunE:  runIdentityRemove,
 }
 
+var identityDiscoverCmd = &cobra.Command{
+	Use:   "discover [account]",
+	Short: "Preview or apply source-scoped identity evidence",
+	Long: `Scan one ingestion source's archived message metadata for identity
+evidence. The command is read-only unless --apply is present. Strong sent
+evidence is applied automatically with --apply; weak candidates require a
+repeatable --confirm address flag.`,
+	Args: identityDiscoverArgs,
+	RunE: runIdentityDiscover,
+}
+
+var identityImportCmd = &cobra.Command{
+	Use:   "import [account]",
+	Short: "Preview or apply source-scoped identities from text or JSON",
+	Args:  identityImportArgs,
+	RunE:  runIdentityImport,
+}
+
+func runIdentityImport(cmd *cobra.Command, args []string) error {
+	account := ""
+	if len(args) == 1 {
+		account = args[0]
+	}
+	selector, err := identitySourceSelector(cmd, account, identityImportSourceID)
+	if err != nil {
+		return err
+	}
+	if err := cmd.Context().Err(); err != nil {
+		return err
+	}
+
+	var input io.Reader
+	format := ""
+	var file *os.File
+	if identityImportStdin {
+		input = cmd.InOrStdin()
+	} else {
+		file, err = os.Open(identityImportFile)
+		if err != nil {
+			return fmt.Errorf("open identity import file: %w", err)
+		}
+		defer func() { _ = file.Close() }()
+		input = file
+		format = filepath.Ext(identityImportFile)
+	}
+	entries, err := identityops.ParseImport(input, format)
+	if err != nil {
+		return fmt.Errorf("parse identity import: %w", err)
+	}
+
+	client, _, err := OpenHTTPStore(cmd.Context())
+	if err != nil {
+		return fmt.Errorf("open store: %w", err)
+	}
+	defer func() { _ = client.Close() }()
+	result, err := client.ImportCLIIdentities(cmd.Context(), identityops.ImportRequest{
+		SourceSelector: selector,
+		Entries:        entries,
+		Signal:         identityImportSignal,
+		Apply:          identityImportApply,
+	})
+	if err != nil {
+		return fmt.Errorf("import identities: %w", err)
+	}
+	if result == nil {
+		return errors.New("identity import ended without a result")
+	}
+	return renderIdentityImport(cmd.OutOrStdout(), *result, identityImportJSON)
+}
+
+func renderIdentityImport(w io.Writer, result identityops.ImportResult, jsonOutput bool) error {
+	if jsonOutput {
+		encoder := json.NewEncoder(w)
+		encoder.SetIndent("", "  ")
+		return encoder.Encode(result)
+	}
+	if _, err := fmt.Fprintf(
+		w,
+		"Identity import for %s (source %d)\nSignal: %s\n\nCANDIDATES (%d)\n",
+		result.Account,
+		result.SourceID,
+		result.Signal,
+		len(result.Candidates),
+	); err != nil {
+		return fmt.Errorf("render identity import heading: %w", err)
+	}
+	for _, candidate := range result.Candidates {
+		states := strings.Join(candidate.ProviderStates, ",")
+		if states == "" {
+			states = "-"
+		}
+		if _, err := fmt.Fprintf(
+			w,
+			"  %s\n    classification: %s | states: %s\n",
+			candidate.Identifier,
+			candidate.Classification,
+			states,
+		); err != nil {
+			return fmt.Errorf("render imported identity candidate: %w", err)
+		}
+	}
+	if _, err := fmt.Fprintf(w, "\nApplied %d identity confirmation(s).\n", len(result.Applied)); err != nil {
+		return fmt.Errorf("render imported identity outcomes: %w", err)
+	}
+	return nil
+}
+
+func runIdentityDiscover(cmd *cobra.Command, args []string) error {
+	account := ""
+	if len(args) == 1 {
+		account = args[0]
+	}
+	selector, err := identitySourceSelector(cmd, account, identityDiscoverSourceID)
+	if err != nil {
+		return err
+	}
+	client, _, err := OpenHTTPStore(cmd.Context())
+	if err != nil {
+		return fmt.Errorf("open store: %w", err)
+	}
+	defer func() { _ = client.Close() }()
+
+	var result *identityops.DiscoverResult
+	err = client.DiscoverCLIIdentities(cmd.Context(), identityops.DiscoverRequest{
+		SourceSelector: selector,
+		Apply:          identityDiscoverApply,
+		Provider:       identityDiscoverProvider,
+		Confirm:        append([]string(nil), identityDiscoverConfirm...),
+	}, func(event identityops.DiscoverEvent) error {
+		switch event.Type {
+		case "progress":
+			if !identityDiscoverJSON && event.Progress != nil {
+				return renderIdentityDiscoverProgress(cmd.ErrOrStderr(), *event.Progress)
+			}
+		case "result":
+			if event.Result != nil {
+				copyResult := *event.Result
+				result = &copyResult
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("discover identities: %w", err)
+	}
+	if result == nil {
+		return errors.New("identity discovery ended without a result")
+	}
+	return renderIdentityDiscover(cmd.OutOrStdout(), *result, identityDiscoverJSON)
+}
+
+func renderIdentityDiscoverProgress(w io.Writer, progress identityops.DiscoverProgress) error {
+	_, err := fmt.Fprintf(
+		w,
+		"Scanning identity evidence: %d/%d messages, %d candidate(s)\n",
+		progress.Done,
+		progress.Total,
+		progress.Candidates,
+	)
+	if err != nil {
+		return fmt.Errorf("render identity discovery progress: %w", err)
+	}
+	return nil
+}
+
+func renderIdentityDiscover(w io.Writer, result identityops.DiscoverResult, jsonOutput bool) error {
+	if jsonOutput {
+		encoder := json.NewEncoder(w)
+		encoder.SetIndent("", "  ")
+		return encoder.Encode(result)
+	}
+
+	if _, err := fmt.Fprintf(
+		w,
+		"Identity discovery for %s (source %d, %s)\nScanned %d message(s).\n",
+		result.Account,
+		result.SourceID,
+		result.SourceType,
+		result.ScannedMessages,
+	); err != nil {
+		return fmt.Errorf("render identity discovery heading: %w", err)
+	}
+	for _, classification := range []string{"confirmed", "strong", "weak"} {
+		if err := renderIdentityDiscoverCandidateGroup(w, classification, result.Candidates); err != nil {
+			return fmt.Errorf("render identity discovery candidates: %w", err)
+		}
+	}
+	if _, err := fmt.Fprintf(w, "\nREJECTED (%d)\n", len(result.Rejected)); err != nil {
+		return fmt.Errorf("render rejected identity candidates: %w", err)
+	}
+	for _, candidate := range result.Rejected {
+		if _, err := fmt.Fprintf(w, "  %s\n    reason: %s\n", candidate.Identifier, candidate.Reason); err != nil {
+			return fmt.Errorf("render rejected identity candidate: %w", err)
+		}
+	}
+	if result.Applied != nil {
+		if _, err := fmt.Fprintf(w, "\nApplied %d identity confirmation(s).\n", len(result.Applied)); err != nil {
+			return fmt.Errorf("render applied identity confirmations: %w", err)
+		}
+	}
+	return nil
+}
+
+func renderIdentityDiscoverCandidateGroup(
+	w io.Writer,
+	classification string,
+	candidates []identityops.Candidate,
+) error {
+	count := 0
+	for _, candidate := range candidates {
+		if candidate.Classification == classification {
+			count++
+		}
+	}
+	if _, err := fmt.Fprintf(w, "\n%s (%d)\n", strings.ToUpper(classification), count); err != nil {
+		return fmt.Errorf("render identity candidate group: %w", err)
+	}
+	for _, candidate := range candidates {
+		if candidate.Classification != classification {
+			continue
+		}
+		signals := strings.Join(candidate.Signals, ",")
+		if signals == "" {
+			signals = "-"
+		}
+		providerStates := strings.Join(candidate.ProviderStates, ",")
+		if providerStates == "" {
+			providerStates = "-"
+		}
+		if _, err := fmt.Fprintf(
+			w,
+			"  %s\n    signals: %s | provider states: %s | sent: %d | received: %d\n",
+			candidate.Identifier,
+			signals,
+			providerStates,
+			candidate.SentMessageCount,
+			candidate.ReceivedMessageCount,
+		); err != nil {
+			return fmt.Errorf("render identity candidate: %w", err)
+		}
+	}
+	return nil
+}
+
 func runIdentityRemove(cmd *cobra.Command, args []string) error {
-	identifier := strings.TrimSpace(args[1])
+	accountArg, identifierArg := identityMutationArguments(cmd, args)
+	identifier := strings.TrimSpace(identifierArg)
 	if identifier == "" {
 		return usageErr(cmd, errors.New("identifier must not be empty"))
 	}
-	return runHTTPIdentityRemove(cmd, args[0], identifier)
+	selector, err := identitySourceSelector(cmd, accountArg, identityRemoveSourceID)
+	if err != nil {
+		return err
+	}
+	return runHTTPIdentityRemove(cmd, selector, identifier)
 }
 
-func runHTTPIdentityRemove(cmd *cobra.Command, account string, identifier string) error {
+func runHTTPIdentityRemove(cmd *cobra.Command, selector daemonclient.CLIIdentitySourceSelector, identifier string) error {
 	s, _, err := OpenHTTPStore(cmd.Context())
 	if err != nil {
 		return fmt.Errorf("open store: %w", err)
@@ -288,8 +571,8 @@ func runHTTPIdentityRemove(cmd *cobra.Command, account string, identifier string
 	defer func() { _ = s.Close() }()
 
 	result, err := s.RemoveCLIIdentity(cmd.Context(), daemonclient.CLIIdentityRemoveRequest{
-		Account:    account,
-		Identifier: identifier,
+		SourceSelector: selector,
+		Identifier:     identifier,
 	})
 	if err != nil {
 		return err
@@ -317,24 +600,123 @@ func renderIdentityNoIdentityWarning(w io.Writer, account string) {
 		"and SENT label signals only.\n", account)
 }
 
+func identityShowArgs(cmd *cobra.Command, args []string) error {
+	return identitySelectorArgs(cmd, args, 0, 1)
+}
+
+func identityAddArgs(cmd *cobra.Command, args []string) error {
+	return identitySelectorArgs(cmd, args, 1, 2)
+}
+
+func identityRemoveArgs(cmd *cobra.Command, args []string) error {
+	return identitySelectorArgs(cmd, args, 1, 2)
+}
+
+func identityDiscoverArgs(cmd *cobra.Command, args []string) error {
+	return identitySelectorArgs(cmd, args, 0, 1)
+}
+
+func identityImportArgs(cmd *cobra.Command, args []string) error {
+	if err := identitySelectorArgs(cmd, args, 0, 1); err != nil {
+		return err
+	}
+	fileSet := cmd.Flags().Changed("file")
+	if fileSet == identityImportStdin {
+		return errors.New("exactly one of --file or --stdin is required")
+	}
+	if fileSet && strings.TrimSpace(identityImportFile) == "" {
+		return errors.New("identity import file path must not be empty")
+	}
+	if fileSet && identityImportFile == "-" {
+		return errors.New(`--file "-" is not supported; use --stdin to read standard input`)
+	}
+	return nil
+}
+
+func identitySelectorArgs(cmd *cobra.Command, args []string, sourceIDCount, accountCount int) error {
+	if cmd.Flags().Changed("source-id") {
+		if len(args) == sourceIDCount {
+			return nil
+		}
+		if len(args) == accountCount {
+			return errors.New("account and source ID are mutually exclusive")
+		}
+		return cobra.ExactArgs(sourceIDCount)(cmd, args)
+	}
+	return cobra.ExactArgs(accountCount)(cmd, args)
+}
+
+func identityMutationArguments(cmd *cobra.Command, args []string) (account, identifier string) {
+	if cmd.Flags().Changed("source-id") {
+		return "", args[0]
+	}
+	return args[0], args[1]
+}
+
+func identitySourceSelector(
+	cmd *cobra.Command,
+	account string,
+	sourceID int64,
+) (daemonclient.CLIIdentitySourceSelector, error) {
+	if cmd.Flags().Changed("source-id") {
+		if sourceID <= 0 {
+			return daemonclient.CLIIdentitySourceSelector{}, errors.New("source ID must be positive")
+		}
+		return daemonclient.CLIIdentitySourceSelector{SourceID: sourceID}, nil
+	}
+	return daemonclient.CLIIdentitySourceSelector{Account: account}, nil
+}
+
 func init() {
 	rootCmd.AddCommand(identityCmd)
 	identityCmd.AddCommand(identityListCmd)
 	identityCmd.AddCommand(identityShowCmd)
 	identityCmd.AddCommand(identityAddCmd)
 	identityCmd.AddCommand(identityRemoveCmd)
+	identityCmd.AddCommand(identityDiscoverCmd)
+	identityCmd.AddCommand(identityImportCmd)
 
 	identityListCmd.Flags().StringVar(&identityListAccount,
 		"account", "", "Restrict to a single account")
 	identityListCmd.Flags().StringVar(&identityListCollection,
 		"collection", "", "Restrict to all member accounts of one collection")
-	identityListCmd.MarkFlagsMutuallyExclusive("account", "collection")
+	identityListCmd.Flags().Int64Var(&identityListSourceID,
+		"source-id", 0, "Restrict to one source by numeric ID")
+	identityListCmd.MarkFlagsMutuallyExclusive("account", "collection", "source-id")
 	identityListCmd.Flags().BoolVar(&identityListJSON,
 		flagJSON, false, "Output as JSON")
 	identityShowCmd.Flags().BoolVar(&identityShowJSON,
 		flagJSON, false, "Output as JSON")
+	identityShowCmd.Flags().Int64Var(&identityShowSourceID,
+		"source-id", 0, "Select one source by numeric ID")
+	identityAddCmd.Flags().Int64Var(&identityAddSourceID,
+		"source-id", 0, "Select one source by numeric ID")
 	identityAddCmd.Flags().StringVar(&identityAddSignal,
 		"signal", "manual",
 		"Evidence signal name (e.g. manual, account-identifier, phone-e164). "+
 			"Cannot contain commas.")
+	identityRemoveCmd.Flags().Int64Var(&identityRemoveSourceID,
+		"source-id", 0, "Select one source by numeric ID")
+	identityDiscoverCmd.Flags().Int64Var(&identityDiscoverSourceID,
+		"source-id", 0, "Select one source by numeric ID")
+	identityDiscoverCmd.Flags().BoolVar(&identityDiscoverApply,
+		"apply", false, "Confirm strong identity evidence after the preview scan completes")
+	identityDiscoverCmd.Flags().BoolVar(&identityDiscoverProvider,
+		"provider", false, "Include configured provider alias inventory")
+	identityDiscoverCmd.Flags().StringArrayVar(&identityDiscoverConfirm,
+		"confirm", nil, "Explicitly confirm a weak candidate (repeatable; requires --apply)")
+	identityDiscoverCmd.Flags().BoolVar(&identityDiscoverJSON,
+		flagJSON, false, "Output the final result as JSON and suppress progress")
+	identityImportCmd.Flags().Int64Var(&identityImportSourceID,
+		"source-id", 0, "Select one source by numeric ID")
+	identityImportCmd.Flags().StringVar(&identityImportFile,
+		"file", "", "Read identities from a text or JSON file")
+	identityImportCmd.Flags().BoolVar(&identityImportStdin,
+		"stdin", false, "Read identities from standard input")
+	identityImportCmd.Flags().StringVar(&identityImportSignal,
+		"signal", "manual", "Evidence signal name (cannot contain commas)")
+	identityImportCmd.Flags().BoolVar(&identityImportApply,
+		"apply", false, "Confirm all validated imported identities")
+	identityImportCmd.Flags().BoolVar(&identityImportJSON,
+		flagJSON, false, "Output the result as JSON")
 }

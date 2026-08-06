@@ -12,6 +12,7 @@ import (
 func identityRequestIsUnfiltered(request ExploreRequest) bool {
 	context := request.Context
 	return len(context.SourceIDs) == 0 &&
+		context.Identity == nil &&
 		len(context.ParticipantIDs) == 0 &&
 		len(context.Domains) == 0 &&
 		len(context.AdditionalParticipantGroups) == 0 &&
@@ -269,6 +270,14 @@ func buildIdentityFactConditions(request ExploreRequest, activityPath string) (s
 		conditions = append(conditions, "("+strings.Join(parts, " OR ")+")")
 	}
 	appendIntGroup(request.Context.SourceIDs, "f.source_id = ?")
+	if identityCondition, identityArgs := buildIdentityPredicateCondition(request.Context.Identity, "identity_entry."); identityCondition != "" {
+		conditions = append(conditions, `(EXISTS (
+			SELECT 1 FROM analytical_entries identity_entry
+			WHERE identity_entry.message_id = f.message_id
+			  AND `+identityCondition+`
+		))`)
+		args = append(args, identityArgs...)
+	}
 	participantPredicate := `(EXISTS (
 		SELECT 1
 		FROM read_parquet('` + activityPath + `',

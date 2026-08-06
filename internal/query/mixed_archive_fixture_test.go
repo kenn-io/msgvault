@@ -26,6 +26,8 @@ func TestWriteMixedArchiveBrowserFixture(t *testing.T) {
 
 	kinds := make(map[EntryKind]int)
 	for _, row := range fixture.LogicalRows {
+		require.NotNil(row.MatchedSenderIdentities)
+		require.NotNil(row.MatchedRecipientIdentities)
 		kinds[row.Kind]++
 	}
 	require.Equal(100, kinds[EntryConversation])

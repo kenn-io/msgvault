@@ -19,10 +19,12 @@ import (
 	"go.kenn.io/msgvault/internal/cacheops"
 	"go.kenn.io/msgvault/internal/clirun"
 	"go.kenn.io/msgvault/internal/collectionops"
+	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/deletion"
 	msgexport "go.kenn.io/msgvault/internal/export"
 	"go.kenn.io/msgvault/internal/identityops"
 	"go.kenn.io/msgvault/internal/opserr"
+	"go.kenn.io/msgvault/internal/provideridentity"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/store"
@@ -86,6 +88,27 @@ type ContextCLIStore interface {
 	ListAccountIdentitiesContext(ctx context.Context, sourceID int64) ([]store.AccountIdentity, error)
 	AddAccountIdentityContext(ctx context.Context, sourceID int64, address, signal string) error
 	RemoveAccountIdentityContext(ctx context.Context, sourceID int64, address string) (int64, error)
+	CountIdentityDiscoveryMessagesContext(ctx context.Context, sourceID int64) (int64, error)
+	ScanIdentityDiscoveryPageContext(
+		ctx context.Context,
+		sourceID, afterID int64,
+		limit int,
+	) (store.IdentityDiscoveryPage, error)
+	ScanIdentityObservationsForSourceMessageIDsContext(
+		ctx context.Context,
+		sourceID int64,
+		sourceMessageIDs []string,
+	) ([]store.IdentityObservation, error)
+	AddAccountIdentitiesBatchContext(
+		ctx context.Context,
+		sourceID int64,
+		candidates []store.IdentityConfirmation,
+	) ([]store.IdentityConfirmationOutcome, error)
+	MergeConfirmedAccountIdentitySignalsContext(
+		ctx context.Context,
+		sourceID int64,
+		candidates []store.IdentityConfirmation,
+	) ([]store.IdentityConfirmationOutcome, error)
 	CountMessagesForSourceContext(ctx context.Context, sourceID int64) (int64, error)
 	CountSourceDeletedMessagesContext(ctx context.Context, sourceIDs ...int64) (int64, error)
 	NeedsFTSBackfillQuickContext(ctx context.Context) bool
@@ -180,6 +203,49 @@ func (s *requestCLIStore) AddAccountIdentity(sourceID int64, address, signal str
 
 func (s *requestCLIStore) RemoveAccountIdentity(sourceID int64, address string) (int64, error) {
 	return s.contextStore.RemoveAccountIdentityContext(s.ctx, sourceID, address)
+}
+
+func (s *requestCLIStore) CountIdentityDiscoveryMessagesContext(
+	_ context.Context,
+	sourceID int64,
+) (int64, error) {
+	return s.contextStore.CountIdentityDiscoveryMessagesContext(s.ctx, sourceID)
+}
+
+func (s *requestCLIStore) ScanIdentityDiscoveryPageContext(
+	_ context.Context,
+	sourceID, afterID int64,
+	limit int,
+) (store.IdentityDiscoveryPage, error) {
+	return s.contextStore.ScanIdentityDiscoveryPageContext(s.ctx, sourceID, afterID, limit)
+}
+
+func (s *requestCLIStore) ScanIdentityObservationsForSourceMessageIDsContext(
+	_ context.Context,
+	sourceID int64,
+	sourceMessageIDs []string,
+) ([]store.IdentityObservation, error) {
+	return s.contextStore.ScanIdentityObservationsForSourceMessageIDsContext(
+		s.ctx,
+		sourceID,
+		sourceMessageIDs,
+	)
+}
+
+func (s *requestCLIStore) AddAccountIdentitiesBatchContext(
+	_ context.Context,
+	sourceID int64,
+	candidates []store.IdentityConfirmation,
+) ([]store.IdentityConfirmationOutcome, error) {
+	return s.contextStore.AddAccountIdentitiesBatchContext(s.ctx, sourceID, candidates)
+}
+
+func (s *requestCLIStore) MergeConfirmedAccountIdentitySignalsContext(
+	_ context.Context,
+	sourceID int64,
+	candidates []store.IdentityConfirmation,
+) ([]store.IdentityConfirmationOutcome, error) {
+	return s.contextStore.MergeConfirmedAccountIdentitySignalsContext(s.ctx, sourceID, candidates)
 }
 
 func (s *requestCLIStore) CountMessagesForSource(sourceID int64) (int64, error) {
@@ -2098,6 +2164,8 @@ func (s *Server) getCLIIdentities(
 	ctx context.Context,
 	account string,
 	collection string,
+	sourceID int64,
+	sourceIDSet bool,
 	primaryOnly bool,
 ) (cliIdentitiesResponse, error) {
 	if s.store == nil {
@@ -2113,16 +2181,30 @@ func (s *Server) getCLIIdentities(
 	}
 	cliStore = bindCLIStoreContext(ctx, cliStore)
 
-	if account != "" && collection != "" {
+	if sourceIDSet && sourceID <= 0 {
 		return cliIdentitiesResponse{}, newAPIHTTPError(
 			http.StatusBadRequest,
 			"invalid_scope",
-			errMutuallyExclusiveScope.Error(),
+			"source ID must be positive",
+		)
+	}
+	if (account != "" && collection != "") ||
+		(sourceIDSet && (account != "" || collection != "")) {
+		return cliIdentitiesResponse{}, newAPIHTTPError(
+			http.StatusBadRequest,
+			"invalid_scope",
+			"account, collection, and source ID selectors are mutually exclusive",
 		)
 	}
 
 	var sourceIDs []int64
 	switch {
+	case sourceIDSet:
+		src, err := identityops.ResolveSource(cliStore, identityops.SourceSelector{SourceID: sourceID})
+		if err != nil {
+			return cliIdentitiesResponse{}, s.cliScopeError(err)
+		}
+		sourceIDs = []int64{src.ID}
 	case primaryOnly:
 		if account == "" || collection != "" {
 			return cliIdentitiesResponse{}, newAPIHTTPError(
@@ -2211,6 +2293,197 @@ func (s *Server) addCLIIdentity(ctx context.Context, req identityops.AddRequest)
 		result.CacheState = s.refreshIdentityCacheState(ctx)
 	}
 	return result, nil
+}
+
+func (s *Server) importCLIIdentities(
+	ctx context.Context,
+	req identityops.ImportRequest,
+) (identityops.ImportResult, error) {
+	cliStore, apiErr := s.cliStore()
+	if apiErr != nil {
+		return identityops.ImportResult{}, apiErr
+	}
+	discoveryStore, ok := bindCLIStoreContext(ctx, cliStore).(identityops.DiscoveryStore)
+	if !ok {
+		return identityops.ImportResult{}, cliStoreUnavailableError()
+	}
+
+	result, err := identityops.Import(ctx, discoveryStore, req)
+	if discoveryAddedIdentity(result.Applied) {
+		s.scheduleAccountIdentityCacheRebuild(ctx)
+	}
+	if err != nil {
+		return result, s.operationError(
+			err,
+			identityOperationErrorPolicy,
+			"Failed to import identities",
+		)
+	}
+	return result, nil
+}
+
+func (s *Server) handleCLIIdentityDiscover(w http.ResponseWriter, r *http.Request) {
+	decoder := json.NewDecoder(r.Body)
+	var rawBody json.RawMessage
+	if err := decoder.Decode(&rawBody); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON request body")
+		return
+	}
+	if !requireSingleJSONValue(w, decoder, "invalid_request") {
+		return
+	}
+	var req identityops.DiscoverRequest
+	if err := json.Unmarshal(rawBody, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON request body")
+		return
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(rawBody, &fields); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON request body")
+		return
+	}
+	if _, sourceIDSet := fields["source_id"]; sourceIDSet && req.SourceID <= 0 {
+		writeAPIHTTPError(w, s.operationError(
+			opserr.Invalid(errors.New("source ID must be positive")),
+			identityOperationErrorPolicy,
+			"Failed to discover identities",
+		))
+		return
+	}
+
+	cliStore, apiErr := s.cliStore()
+	if apiErr != nil {
+		writeAPIHTTPError(w, apiErr)
+		return
+	}
+	discoveryStore, ok := bindCLIStoreContext(r.Context(), cliStore).(identityops.DiscoveryStore)
+	if !ok {
+		writeAPIHTTPError(w, cliStoreUnavailableError())
+		return
+	}
+
+	var externalEvidence []identityops.ExternalEvidence
+	if req.Provider {
+		source, resolveErr := identityops.ResolveSource(discoveryStore, req.SourceSelector)
+		if resolveErr != nil {
+			writeAPIHTTPError(w, s.operationError(
+				resolveErr,
+				identityOperationErrorPolicy,
+				"Failed to discover identities",
+			))
+			return
+		}
+		configured, configErr := s.cfg.FastmailSourceFor(cliStore, source.ID)
+		if configErr != nil {
+			wrappedConfigErr := fmt.Errorf("resolve [[fastmail]] configuration for source %d: %w", source.ID, configErr)
+			classifiedConfigErr := opserr.Invalid(wrappedConfigErr)
+			if errors.Is(configErr, config.ErrFastmailSourceLookup) {
+				classifiedConfigErr = opserr.Internal(wrappedConfigErr)
+			}
+			writeAPIHTTPError(w, s.operationError(
+				classifiedConfigErr,
+				identityOperationErrorPolicy,
+				"Failed to discover identities",
+			))
+			return
+		}
+		if configured == nil {
+			account := source.Identifier
+			if source.DisplayName.Valid && strings.TrimSpace(source.DisplayName.String) != "" {
+				account = strings.TrimSpace(source.DisplayName.String)
+			}
+			writeAPIHTTPError(w, s.operationError(
+				opserr.Invalid(fmt.Errorf(
+					"source %d (%s) has no matching [[fastmail]] configuration",
+					source.ID,
+					account,
+				)),
+				identityOperationErrorPolicy,
+				"Failed to discover identities",
+			))
+			return
+		}
+		inventory := s.fastmailInventoryFactory(configured.APIToken)
+		records, inventoryErr := inventory.ListIdentityRecords(r.Context())
+		if inventoryErr != nil {
+			writeAPIHTTPError(w, s.operationError(
+				opserr.Internal(fmt.Errorf("fastmail identity inventory request failed: %w", inventoryErr)),
+				identityOperationErrorPolicy,
+				"Failed to discover identities",
+			))
+			return
+		}
+		externalEvidence = provideridentity.Evidence(records)
+		req.SourceSelector = identityops.SourceSelector{SourceID: source.ID}
+	}
+
+	streamStarted := false
+	writeEvent := newCLINDJSONEventWriter[identityops.DiscoverEvent](w)
+	result, err := identityops.DiscoverWithExternalEvidence(r.Context(), discoveryStore, req, externalEvidence, func(progress identityops.DiscoverProgress) error {
+		streamStarted = true
+		return writeEvent(identityops.DiscoverEvent{Type: "progress", Progress: &progress})
+	})
+	if discoveryAddedIdentity(result.Applied) {
+		s.scheduleAccountIdentityCacheRebuild(r.Context())
+	}
+	if err != nil {
+		if !streamStarted {
+			if s.writeIfContextError(w, err) {
+				return
+			}
+			writeAPIHTTPError(w, s.operationError(
+				err,
+				identityOperationErrorPolicy,
+				"Failed to discover identities",
+			))
+			return
+		}
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || r.Context().Err() != nil {
+			return
+		}
+		terminalError := identityDiscoveryTerminalError(err)
+		s.logger.Info("CLI identity discovery stopped before completion", "error_code", terminalError.Code)
+		if writeErr := writeEvent(identityops.DiscoverEvent{Type: "error", Error: &terminalError}); writeErr != nil {
+			s.logger.Error("failed to stream CLI identity discovery error event", "error", writeErr)
+		}
+		return
+	}
+	if err := r.Context().Err(); err != nil {
+		s.logger.Info("CLI identity discovery canceled before result", "error", err)
+		return
+	}
+	if err := writeEvent(identityops.DiscoverEvent{Type: "result", Result: &result}); err != nil {
+		s.logger.Error("failed to stream CLI identity discovery result", "error", err)
+	}
+}
+
+func identityDiscoveryTerminalError(err error) identityops.DiscoverError {
+	switch opserr.KindOf(err) {
+	case opserr.KindInvalid:
+		return identityops.DiscoverError{
+			Code:    identityOperationErrorPolicy.InvalidCode,
+			Message: "Invalid identity discovery request",
+		}
+	case opserr.KindNotFound:
+		return identityops.DiscoverError{
+			Code:    identityOperationErrorPolicy.NotFoundCode,
+			Message: "Identity discovery target was not found",
+		}
+	default:
+		return identityops.DiscoverError{
+			Code:    "internal_error",
+			Message: "Failed to discover identities",
+		}
+	}
+}
+
+func discoveryAddedIdentity(outcomes []store.IdentityConfirmationOutcome) bool {
+	for _, outcome := range outcomes {
+		if outcome.Added {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Server) removeCLIIdentity(ctx context.Context, req identityops.RemoveRequest) (identityops.RemoveResult, error) {

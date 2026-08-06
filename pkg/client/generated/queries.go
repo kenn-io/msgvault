@@ -151,6 +151,9 @@ type ListCLIIdentitiesQuery struct {
 	// Collection Restrict to all member accounts of one collection
 	Collection *string `json:"collection,omitempty"`
 
+	// SourceID Restrict to one source by numeric ID
+	SourceID *int64 `json:"source_id,omitempty"`
+
 	// PrimaryOnly For account scope, return only the primary source instead of related sources
 	PrimaryOnly *bool `json:"primary_only,omitempty"`
 }

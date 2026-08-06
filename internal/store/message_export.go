@@ -504,7 +504,7 @@ func normalizeMessageExportConversation(
 		return conversationType, parentID, nil
 	}
 	switch rawType {
-	case "email", "email_thread":
+	case string(AttributeFieldEmail), "email_thread":
 		return MessageExportConversationEmailThread, nil, nil
 	case "channel":
 		return MessageExportConversationChannel, nil, nil

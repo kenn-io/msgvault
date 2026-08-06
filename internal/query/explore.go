@@ -128,6 +128,8 @@ func (e *DuckDBEngine) Explore(ctx context.Context, request ExploreRequest) (*Ex
 		if err := json.Unmarshal([]byte(participantLabelsJSON), &row.ParticipantLabels); err != nil {
 			return nil, fmt.Errorf("decode analytical participant labels: %w", err)
 		}
+		row.MatchedSenderIdentities = make([]string, 0)
+		row.MatchedRecipientIdentities = make([]string, 0)
 		response.Rows = append(response.Rows, row)
 	}
 	if err := rows.Err(); err != nil {
@@ -306,6 +308,10 @@ func buildExploreConditions(request ExploreRequest) (string, []any) {
 		conditions = append(conditions, "("+strings.Join(parts, " OR ")+")")
 	}
 	appendIntAnyOf(request.Context.SourceIDs, "source_id = ?")
+	if identityCondition, identityArgs := buildIdentityPredicateCondition(request.Context.Identity, ""); identityCondition != "" {
+		conditions = append(conditions, identityCondition)
+		args = append(args, identityArgs...)
+	}
 	if len(request.Context.ParticipantIDs) > 0 {
 		parts := make([]string, len(request.Context.ParticipantIDs))
 		for i := range parts {
@@ -398,6 +404,98 @@ func buildExploreConditions(request ExploreRequest) (string, []any) {
 		return "true", args
 	}
 	return strings.Join(conditions, " AND "), args
+}
+
+func buildIdentityPredicateCondition(identity *IdentityPredicate, prefix string) (string, []any) {
+	if identity == nil {
+		return "", nil
+	}
+	if identity.MatchNone {
+		return "false", nil
+	}
+	outerPrefix := prefix
+	if outerPrefix == "" {
+		// Correlated subqueries below also read message_recipients.message_id.
+		// Qualify the outer reference so SQL name resolution cannot bind both
+		// sides of the correlation to the inner table and turn it into a
+		// tautology.
+		outerPrefix = "analytical_entries."
+	}
+	args := []any{identity.SourceID}
+	participantMatch := func(column string) string {
+		// An email identity may legitimately resolve zero participants (a
+		// merge absorbed the alias's participant row and dropped the
+		// address); the envelope comparison still applies, so this branch
+		// renders as unmatchable instead of invalid SQL.
+		if len(identity.ParticipantIDs) == 0 {
+			return "false"
+		}
+		parts := make([]string, len(identity.ParticipantIDs))
+		for i, participantID := range identity.ParticipantIDs {
+			parts[i] = column + " = ?"
+			args = append(args, participantID)
+		}
+		return "(" + strings.Join(parts, " OR ") + ")"
+	}
+	// recipientRowMatch renders the identity comparison for one
+	// message_recipients row. For an email-shaped identity the envelope
+	// snapshot (message_recipients.email_address, written at email ingest)
+	// is authoritative: it is immutable under participant merges, so
+	// comparing it keeps one alias's filter from selecting mail sent
+	// through another alias that the merge survivor now also carries.
+	// Rows without a snapshot (legacy ingests, non-email writers) fall
+	// back to the resolved participant IDs, and non-email identifier
+	// types (phone, matrix, handles) have no envelope column at all, so
+	// they keep the participant rules that mirror baked is_from_me
+	// attribution (see ResolveAccountIdentityContext). Email comparison
+	// stays case-insensitive, matching attribution's email rule.
+	recipientRowMatch := func(alias string) string {
+		if identity.EmailIdentifier == "" {
+			return participantMatch(alias + ".participant_id")
+		}
+		args = append(args, identity.EmailIdentifier)
+		envelope := "(COALESCE(" + alias + ".email_address, '') <> '' AND LOWER(" + alias + ".email_address) = LOWER(?))"
+		if len(identity.ParticipantIDs) == 0 {
+			return envelope
+		}
+		return "(" + envelope + " OR (COALESCE(" + alias + ".email_address, '') = '' AND " +
+			participantMatch(alias+".participant_id") + "))"
+	}
+	senderCondition := func() string {
+		explicitFrom := `EXISTS (
+			SELECT 1 FROM message_recipients identity_mr_sender
+			WHERE identity_mr_sender.message_id = ` + outerPrefix + `message_id
+			  AND identity_mr_sender.recipient_type = 'from'
+			  AND ` + recipientRowMatch("identity_mr_sender") + `
+		)`
+		directFallback := `(
+			NOT EXISTS (
+				SELECT 1 FROM message_recipients identity_mr_from
+				WHERE identity_mr_from.message_id = ` + outerPrefix + `message_id
+				  AND identity_mr_from.recipient_type = 'from'
+			)
+			AND ` + participantMatch(outerPrefix+"sender_id") + `
+		)`
+		return "(" + explicitFrom + " OR " + directFallback + ")"
+	}
+	recipientCondition := func() string {
+		return `EXISTS (
+			SELECT 1 FROM message_recipients identity_mr_recipient
+			WHERE identity_mr_recipient.message_id = ` + outerPrefix + `message_id
+			  AND identity_mr_recipient.recipient_type IN ('to', 'cc', 'bcc')
+			  AND ` + recipientRowMatch("identity_mr_recipient") + `
+		)`
+	}
+	var directionCondition string
+	switch identity.Direction {
+	case IdentityDirectionAny:
+		directionCondition = "(" + senderCondition() + " OR " + recipientCondition() + ")"
+	case IdentityDirectionSender:
+		directionCondition = senderCondition()
+	case IdentityDirectionRecipient:
+		directionCondition = recipientCondition()
+	}
+	return "(" + outerPrefix + "source_id = ? AND " + directionCondition + ")", args
 }
 
 // buildExploreSQL builds the entry-row page query. counterpart_participant_id

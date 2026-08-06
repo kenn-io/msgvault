@@ -523,6 +523,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/cli/identities/discover": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Discover source-scoped account identities */
+        post: operations["discoverCLIIdentities"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/cli/identities/import": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Preview or apply parsed source-scoped identities */
+        post: operations["importCLIIdentities"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/cli/init-db": {
         parameters: {
             query?: never;
@@ -1682,6 +1716,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/sources/{source_id}/identities": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List confirmed identities for one source */
+        get: operations["listSourceIdentities"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/stats": {
         parameters: {
             query?: never;
@@ -1875,9 +1926,11 @@ export interface components {
             schedule: string;
         };
         AddRequest: {
-            account: string;
+            account?: string;
             identifier: string;
             signal: string;
+            /** Format: int64 */
+            source_id?: number;
         };
         AddResult: {
             account: string;
@@ -2230,6 +2283,25 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        Candidate: {
+            already_confirmed: boolean;
+            /** @enum {string} */
+            classification: "confirmed" | "strong" | "weak";
+            /** Format: date-time */
+            first_seen_at: string;
+            identifier: string;
+            /** Format: date-time */
+            last_seen_at: string;
+            normalized_identifier: string;
+            provider_states: string[];
+            /** Format: int64 */
+            received_message_count: number;
+            /** Format: int64 */
+            sent_message_count: number;
+            signals: string[] | null;
+        } & {
+            [key: string]: unknown;
+        };
         ChangedMessageJSON: {
             /** Format: int64 */
             attachment_count: number;
@@ -2563,6 +2635,54 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        DiscoverError: {
+            code: string;
+            message: string;
+        } & {
+            [key: string]: unknown;
+        };
+        DiscoverEvent: {
+            error?: components["schemas"]["DiscoverError"];
+            progress?: components["schemas"]["DiscoverProgress"];
+            result?: components["schemas"]["DiscoverResult"];
+            /** @enum {string} */
+            type: "progress" | "result" | "error";
+        } & {
+            [key: string]: unknown;
+        };
+        DiscoverProgress: {
+            /** Format: int64 */
+            candidates: number;
+            /** Format: int64 */
+            done: number;
+            /** Format: int64 */
+            total: number;
+        } & {
+            [key: string]: unknown;
+        };
+        DiscoverRequest: {
+            account?: string;
+            apply?: boolean;
+            confirm?: string[] | null;
+            /** Format: int64 */
+            page_size?: number;
+            provider?: boolean;
+            /** Format: int64 */
+            source_id?: number;
+        };
+        DiscoverResult: {
+            account: string;
+            applied: components["schemas"]["IdentityConfirmationOutcome"][] | null;
+            candidates: components["schemas"]["Candidate"][] | null;
+            rejected: components["schemas"]["RejectedCandidate"][] | null;
+            /** Format: int64 */
+            scanned_messages: number;
+            /** Format: int64 */
+            source_id: number;
+            source_type: string;
+        } & {
+            [key: string]: unknown;
+        };
         DomainContextSummaryHTTPResponse: {
             cache_revision: string;
             candidate_snapshot_id?: string;
@@ -2616,6 +2736,8 @@ export interface components {
             key: string;
             kind: string;
             match: components["schemas"]["MatchSummary"];
+            matched_recipient_identities: string[];
+            matched_sender_identities: string[];
             /** Format: int64 */
             message_count: number;
             message_type: string;
@@ -2710,7 +2832,7 @@ export interface components {
         };
         ExploreFilter: {
             /** @enum {string} */
-            dimension: "source" | "participant" | "domain" | "message_type" | "after" | "before" | "deletion";
+            dimension: "source" | "participant" | "domain" | "message_type" | "after" | "before" | "deletion" | "identity";
             values: string[];
         };
         /** @enum {string} */
@@ -3058,6 +3180,13 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        IdentityConfirmationOutcome: {
+            added: boolean;
+            identifier: string;
+            signals: string[] | null;
+        } & {
+            [key: string]: unknown;
+        };
         IdentityLinkRequest: {
             /** Format: int64 */
             participant_a: number;
@@ -3085,6 +3214,28 @@ export interface components {
             direction: "asc" | "desc";
             /** @enum {string} */
             field: "activity_count" | "latest_at" | "display_label";
+        };
+        ImportEntry: {
+            identifier: string;
+            state?: string;
+        };
+        ImportRequest: {
+            account?: string;
+            apply?: boolean;
+            entries: components["schemas"]["ImportEntry"][];
+            signal?: string;
+            /** Format: int64 */
+            source_id?: number;
+        };
+        ImportResult: {
+            account: string;
+            applied: components["schemas"]["IdentityConfirmationOutcome"][];
+            candidates: components["schemas"]["Candidate"][];
+            signal: string;
+            /** Format: int64 */
+            source_id: number;
+        } & {
+            [key: string]: unknown;
         };
         ListDeletionsResponse: {
             manifests: components["schemas"]["DeletionManifestSummary"][] | null;
@@ -3434,6 +3585,12 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        RejectedCandidate: {
+            identifier: string;
+            reason: string;
+        } & {
+            [key: string]: unknown;
+        };
         RelationshipRow: {
             /** Format: int64 */
             canonical_id: number;
@@ -3508,8 +3665,10 @@ export interface components {
             url: string;
         };
         RemoveRequest: {
-            account: string;
+            account?: string;
             identifier: string;
+            /** Format: int64 */
+            source_id?: number;
         };
         RemoveResult: {
             account: string;
@@ -3738,6 +3897,22 @@ export interface components {
             /** Format: int64 */
             count: number;
             source_type: string;
+        } & {
+            [key: string]: unknown;
+        };
+        SourceIdentitiesResponse: {
+            account: string;
+            identities: components["schemas"]["SourceIdentityResponse"][];
+            /** Format: int64 */
+            source_id: number;
+        } & {
+            [key: string]: unknown;
+        };
+        SourceIdentityResponse: {
+            /** Format: date-time */
+            confirmed_at: string;
+            identifier: string;
+            signals: string[];
         } & {
             [key: string]: unknown;
         };
@@ -5837,6 +6012,8 @@ export interface operations {
                 account?: string;
                 /** @description Restrict to all member accounts of one collection */
                 collection?: string;
+                /** @description Restrict to one source by numeric ID */
+                source_id?: number;
                 /** @description For account scope, return only the primary source instead of related sources */
                 primary_only?: boolean;
             };
@@ -5973,6 +6150,99 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RemoveResult"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiHTTPError"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiHTTPError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiHTTPError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiHTTPError"];
+                };
+            };
+        };
+    };
+    discoverCLIIdentities: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DiscoverRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/x-ndjson": components["schemas"]["DiscoverEvent"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    importCLIIdentities: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ImportRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImportResult"];
                 };
             };
             /** @description Bad Request */
@@ -10010,6 +10280,38 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SourceStatusResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    listSourceIdentities: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Source ID */
+                source_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SourceIdentitiesResponse"];
                 };
             };
             /** @description Error */

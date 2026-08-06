@@ -37,7 +37,7 @@ func renderOpenAPI(version, format string) ([]byte, error) {
 	switch format {
 	case "yaml", "yml":
 		return api.OpenAPIYAMLVersion(version)
-	case "json":
+	case flagJSON:
 		return api.OpenAPIJSONVersion(version)
 	default:
 		return nil, fmt.Errorf("unsupported openapi format %q", format)

@@ -45,6 +45,8 @@ export function timelineRowToSelection(row: RelationshipTimelineRow): ReadingPan
       attachment_size: 0,
       has_attachments: row.has_attachments,
       deleted_from_source: false,
+      matched_sender_identities: [],
+      matched_recipient_identities: [],
       match: {}
     }
   };
