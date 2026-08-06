@@ -176,12 +176,14 @@ func daemonOwnerLockPath(dataDir string) string {
 // progress even when process create-time reads are temporarily inconsistent;
 // it does not authenticate a runtime record's PID or HTTP endpoint.
 func daemonOwnerLockHeld(dataDir string) bool {
-	lock, err := tryAcquireDaemonOwnerLock(dataDir)
-	if err == nil {
-		_ = lock.Close()
+	path := daemonOwnerLockPath(dataDir)
+	lock := flock.New(path, flock.SetFlag(os.O_RDWR))
+	locked, err := lock.TryLock()
+	if err != nil {
 		return false
 	}
-	return errors.As(err, &daemonOwnerLockHeldError{})
+	_ = lock.Close()
+	return !locked
 }
 
 func tryAcquireDaemonOwnerLock(dataDir string) (*daemonOwnerLock, error) {

@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -11,6 +12,21 @@ import (
 	"go.kenn.io/kit/daemon"
 	"go.kenn.io/msgvault/internal/config"
 )
+
+func TestDaemonOwnerLockHeldDoesNotCreateMissingDataDir(t *testing.T) {
+	dataDir := filepath.Join(t.TempDir(), "missing")
+
+	assert.False(t, daemonOwnerLockHeld(dataDir), "missing lock cannot be held")
+	assert.NoDirExists(t, dataDir, "held-state probe must not create the data directory")
+}
+
+func TestDaemonOwnerLockHeldDoesNotCreateMissingLockFile(t *testing.T) {
+	dataDir := t.TempDir()
+	lockPath := daemonOwnerLockPath(dataDir)
+
+	assert.False(t, daemonOwnerLockHeld(dataDir), "missing lock cannot be held")
+	assert.NoFileExists(t, lockPath, "held-state probe must not create the lock file")
+}
 
 func TestServeOwnershipEnsureRuntimeRecordRepublishesMissingRecord(t *testing.T) {
 	assert := assert.New(t)

@@ -138,6 +138,64 @@ func TestRunBackupRestorePackedDefaultAndExplicitLooseCleanup(t *testing.T) {
 	assertRestoredCLIBlob(t, backupRestoreTarget, hash, content, false)
 }
 
+func TestRunBackupRestoreIntoNonexistentConfiguredDataDir(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	ctx := context.Background()
+	sourceDir := t.TempDir()
+	dbPath := filepath.Join(sourceDir, "msgvault.db")
+	st, err := store.OpenForTest(dbPath)
+	require.NoError(err, "open source store")
+	require.NoError(st.InitSchema(), "initialize source schema")
+	require.NoError(st.Close(), "close source store")
+	attachmentsDir := filepath.Join(sourceDir, "attachments")
+	require.NoError(os.MkdirAll(attachmentsDir, 0o700), "create source attachments")
+
+	repoPath := filepath.Join(t.TempDir(), "repo")
+	repo, err := backup.Init(repoPath)
+	require.NoError(err, "initialize backup repository")
+	_, err = backup.Create(ctx, repo, backupapp.New("test"), backup.CreateOptions{
+		DBPath: dbPath, ContentDir: attachmentsDir, DataDir: sourceDir,
+	})
+	require.NoError(err, "create source snapshot")
+
+	savedCfg := cfg
+	savedRepo := backupRestoreRepo
+	savedTarget := backupRestoreTarget
+	savedOverwrite := backupRestoreOverwrite
+	savedForceUnlock := backupRestoreForceUnlock
+	savedJobs := backupRestoreJobs
+	savedLoose := backupRestoreLooseAttachments
+	savedIntegrityCheck := backupRestoreIntegrityCheck
+	t.Cleanup(func() {
+		cfg = savedCfg
+		backupRestoreRepo = savedRepo
+		backupRestoreTarget = savedTarget
+		backupRestoreOverwrite = savedOverwrite
+		backupRestoreForceUnlock = savedForceUnlock
+		backupRestoreJobs = savedJobs
+		backupRestoreLooseAttachments = savedLoose
+		backupRestoreIntegrityCheck = savedIntegrityCheck
+	})
+	target := filepath.Join(t.TempDir(), "fresh-archive")
+	cfg = &config.Config{Data: config.DataConfig{DataDir: target}}
+	backupRestoreRepo = repoPath
+	backupRestoreTarget = target
+	backupRestoreOverwrite = false
+	backupRestoreForceUnlock = false
+	backupRestoreJobs = 1
+	backupRestoreLooseAttachments = false
+	backupRestoreIntegrityCheck = false
+	assert.NoDirExists(target, "restore target starts absent")
+
+	cmd := &cobra.Command{Use: "restore"}
+	cmd.SetContext(ctx)
+	cmd.SetOut(io.Discard)
+	require.NoError(runBackupRestore(cmd, nil), "restore into fresh configured archive home")
+	assert.FileExists(filepath.Join(target, "msgvault.db"), "restored database")
+	assert.NoFileExists(daemonOwnerLockPath(target), "lock probe must not leave a daemon lock")
+}
+
 func assertRestoredCLIBlob(t *testing.T, target, hash string, want []byte, packed bool) {
 	t.Helper()
 	require := require.New(t)
