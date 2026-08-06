@@ -172,18 +172,25 @@ func daemonOwnerLockPath(dataDir string) string {
 }
 
 // daemonOwnerLockHeld reports whether another process currently owns the
-// archive's daemon lease. The lease can establish that daemon startup is in
-// progress even when process create-time reads are temporarily inconsistent;
-// it does not authenticate a runtime record's PID or HTTP endpoint.
-func daemonOwnerLockHeld(dataDir string) bool {
+// archive's daemon lease. A missing lock is cleanly unheld; other filesystem
+// errors are returned so safety-critical callers can fail closed. The lease
+// can establish that daemon startup is in progress even when process
+// create-time reads are temporarily inconsistent; it does not authenticate a
+// runtime record's PID or HTTP endpoint.
+func daemonOwnerLockHeld(dataDir string) (bool, error) {
 	path := daemonOwnerLockPath(dataDir)
 	lock := flock.New(path, flock.SetFlag(os.O_RDWR))
 	locked, err := lock.TryLock()
 	if err != nil {
-		return false
+		if errors.Is(err, os.ErrNotExist) {
+			return false, nil
+		}
+		return false, fmt.Errorf("probe daemon lock %s: %w", path, err)
 	}
-	_ = lock.Close()
-	return !locked
+	if err := lock.Close(); err != nil {
+		return false, fmt.Errorf("close daemon lock probe %s: %w", path, err)
+	}
+	return !locked, nil
 }
 
 func tryAcquireDaemonOwnerLock(dataDir string) (*daemonOwnerLock, error) {

@@ -16,7 +16,9 @@ import (
 func TestDaemonOwnerLockHeldDoesNotCreateMissingDataDir(t *testing.T) {
 	dataDir := filepath.Join(t.TempDir(), "missing")
 
-	assert.False(t, daemonOwnerLockHeld(dataDir), "missing lock cannot be held")
+	held, err := daemonOwnerLockHeld(dataDir)
+	require.NoError(t, err, "probe missing lock")
+	assert.False(t, held, "missing lock cannot be held")
 	assert.NoDirExists(t, dataDir, "held-state probe must not create the data directory")
 }
 
@@ -24,7 +26,9 @@ func TestDaemonOwnerLockHeldDoesNotCreateMissingLockFile(t *testing.T) {
 	dataDir := t.TempDir()
 	lockPath := daemonOwnerLockPath(dataDir)
 
-	assert.False(t, daemonOwnerLockHeld(dataDir), "missing lock cannot be held")
+	held, err := daemonOwnerLockHeld(dataDir)
+	require.NoError(t, err, "probe missing lock")
+	assert.False(t, held, "missing lock cannot be held")
 	assert.NoFileExists(t, lockPath, "held-state probe must not create the lock file")
 }
 

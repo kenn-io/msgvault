@@ -532,7 +532,9 @@ func testStopLiveDaemonsUsesAuthenticatedHTTP(
 	default:
 		assert.Fail("shutdown endpoint was not called")
 	}
-	assert.False(daemonOwnerLockHeld(dataDir), "stop waits for daemon ownership release")
+	ownershipHeld, ownershipErr := daemonOwnerLockHeld(dataDir)
+	require.NoError(ownershipErr, "probe daemon ownership after stop")
+	assert.False(ownershipHeld, "stop waits for daemon ownership release")
 	assert.Contains(stdout.String(), "Stopped msgvault", "stop confirmation")
 	if !identityEndpointSupported {
 		assert.False(apiKeySent.Load(), "legacy shutdown must not transmit the API key")

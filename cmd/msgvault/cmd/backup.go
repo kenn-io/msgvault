@@ -361,7 +361,16 @@ func refuseRestoreIntoLiveDaemonHome(target string) error {
 	if targetAbs != homeAbs && !sameExistingPath(targetAbs, homeAbs) {
 		return nil
 	}
-	if rt := findAnyDaemonRuntime(cfg.Data.DataDir); rt != nil || daemonOwnerLockHeld(cfg.Data.DataDir) {
+	if rt := findAnyDaemonRuntime(cfg.Data.DataDir); rt != nil {
+		return fmt.Errorf(
+			"backup restore: target %s is the live archive home of a running daemon; stop the daemon first (msgvault daemon stop) or restore elsewhere",
+			target)
+	}
+	ownershipHeld, err := daemonOwnerLockHeld(cfg.Data.DataDir)
+	if err != nil {
+		return fmt.Errorf("backup restore: inspect daemon ownership: %w", err)
+	}
+	if ownershipHeld {
 		return fmt.Errorf(
 			"backup restore: target %s is the live archive home of a running daemon; stop the daemon first (msgvault daemon stop) or restore elsewhere",
 			target)

@@ -266,7 +266,11 @@ func prepareBackgroundDaemonStart(
 			return backgroundDaemonStartPreparation{}, fmt.Errorf("stop older daemon before restart: %w", err)
 		}
 	}
-	if daemonOwnerLockHeld(c.Data.DataDir) {
+	ownershipHeld, err := daemonOwnerLockHeld(c.Data.DataDir)
+	if err != nil {
+		return backgroundDaemonStartPreparation{}, fmt.Errorf("inspect daemon ownership: %w", err)
+	}
+	if ownershipHeld {
 		legacy, foundLegacy, legacyCompatErr := findLegacyDaemonRuntimeForLifecycle(c.Data.DataDir)
 		if legacyCompatErr != nil && !foundLegacy {
 			return backgroundDaemonStartPreparation{}, fmt.Errorf("inspect legacy daemon runtime: %w", legacyCompatErr)
@@ -288,7 +292,11 @@ func prepareBackgroundDaemonStart(
 			}
 		}
 	}
-	if daemonOwnerLockHeld(c.Data.DataDir) {
+	ownershipHeld, err = daemonOwnerLockHeld(c.Data.DataDir)
+	if err != nil {
+		return backgroundDaemonStartPreparation{}, fmt.Errorf("recheck daemon ownership: %w", err)
+	}
+	if ownershipHeld {
 		return backgroundDaemonStartPreparation{}, daemonOwnerLockHeldError{
 			path: daemonOwnerLockPath(c.Data.DataDir),
 		}
@@ -450,7 +458,12 @@ func stopDaemonRuntimeRecord(
 		case daemonIdentityVerified:
 			return stopDaemonByAuthenticatedEndpoint(out, dataDir, rec, apiKey, grace)
 		case daemonIdentityUnsupported:
-			if !daemonOwnerLockHeld(dataDir) {
+			ownershipHeld, ownershipErr := daemonOwnerLockHeld(dataDir)
+			if ownershipErr != nil {
+				return fmt.Errorf("%w: inspect daemon ownership: %w",
+					errDaemonIdentityUnconfirmed, ownershipErr)
+			}
+			if !ownershipHeld {
 				return fmt.Errorf("%w: daemon ownership lock is not held", errDaemonIdentityUnconfirmed)
 			}
 			info, probeErr := probeDaemonRuntimeRecord(context.Background(), rec)
@@ -557,23 +570,42 @@ func stopDaemonByShutdownEndpoint(
 	op *api.OperationHealth,
 	grace time.Duration,
 ) error {
+	ownershipHeld, ownershipErr := daemonOwnerLockHeld(dataDir)
+	if ownershipErr != nil {
+		return fmt.Errorf("inspect daemon ownership before shutdown: %w", ownershipErr)
+	}
+	if !ownershipHeld {
+		removeRuntimeRecord(rec)
+		return nil
+	}
 	shutdownRequested, err := requestDaemonShutdownForRun(rec)
 	if err != nil {
-		if !daemonOwnerLockHeld(dataDir) {
+		ownershipHeld, ownershipErr := daemonOwnerLockHeld(dataDir)
+		if ownershipErr != nil {
+			return fmt.Errorf("inspect daemon ownership after shutdown request: %w", ownershipErr)
+		}
+		if !ownershipHeld {
 			removeRuntimeRecord(rec)
 			return nil
 		}
 		return fmt.Errorf("request daemon shutdown: %w", err)
 	}
 	if !shutdownRequested {
-		if !daemonOwnerLockHeld(dataDir) {
+		ownershipHeld, ownershipErr := daemonOwnerLockHeld(dataDir)
+		if ownershipErr != nil {
+			return fmt.Errorf("inspect daemon ownership after unavailable shutdown: %w", ownershipErr)
+		}
+		if !ownershipHeld {
 			removeRuntimeRecord(rec)
 			return nil
 		}
 		return errors.New("daemon shutdown endpoint is unavailable")
 	}
 	if waitForDaemonExitWithProgress(out, rec, op, grace, daemonProbeTick,
-		func(daemon.RuntimeRecord) bool { return daemonOwnerLockHeld(dataDir) }) {
+		func(daemon.RuntimeRecord) bool {
+			ownershipHeld, ownershipErr := daemonOwnerLockHeld(dataDir)
+			return ownershipErr != nil || ownershipHeld
+		}) {
 		return nil
 	}
 	return fmt.Errorf("daemon ownership lock still held after %s", grace.Round(time.Second))

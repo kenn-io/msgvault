@@ -174,7 +174,11 @@ func findIncompatibleDaemonRuntime(dataDir string) (*DaemonRuntime, bool, error)
 // that a daemon still owns the data directory, but do not authorize sending an
 // API key or signaling its PID.
 func findLegacyDaemonRuntimeForLifecycle(dataDir string) (*DaemonRuntime, bool, error) {
-	if !daemonOwnerLockHeld(dataDir) {
+	ownershipHeld, err := daemonOwnerLockHeld(dataDir)
+	if err != nil {
+		return nil, false, fmt.Errorf("inspect daemon ownership: %w", err)
+	}
+	if !ownershipHeld {
 		return nil, false, nil
 	}
 	records, err := listLiveDaemonRuntimeRecords(dataDir)
@@ -192,7 +196,14 @@ func findLegacyDaemonRuntimeForLifecycle(dataDir string) (*DaemonRuntime, bool, 
 			continue
 		}
 		info, probeErr := probeDaemonRuntimeRecord(ctx, rec)
-		if probeErr != nil || info.PID != rec.PID || !daemonOwnerLockHeld(dataDir) {
+		if probeErr != nil || info.PID != rec.PID {
+			continue
+		}
+		ownershipHeld, ownershipErr := daemonOwnerLockHeld(dataDir)
+		if ownershipErr != nil {
+			return nil, false, fmt.Errorf("recheck daemon ownership: %w", ownershipErr)
+		}
+		if !ownershipHeld {
 			continue
 		}
 		rt := daemonRuntimeFromRecord(rec)
@@ -259,7 +270,10 @@ func listLiveDaemonRuntimeRecords(dataDir string) ([]daemon.RuntimeRecord, error
 	if err != nil {
 		return nil, fmt.Errorf("list daemon runtimes: %w", err)
 	}
-	ownershipHeld := daemonOwnerLockHeld(dataDir)
+	ownershipHeld, err := daemonOwnerLockHeld(dataDir)
+	if err != nil {
+		return nil, fmt.Errorf("inspect daemon ownership: %w", err)
+	}
 	alive := make([]daemon.RuntimeRecord, 0, len(records))
 	for _, rec := range records {
 		if rec.Service != "" && rec.Service != daemonService {

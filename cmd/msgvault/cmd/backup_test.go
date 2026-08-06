@@ -428,6 +428,21 @@ func TestRefuseRestoreIntoLiveDaemonHomeBlocksUnverifiableDaemonOwner(t *testing
 		"held daemon ownership must block restore even when endpoint identity is unverifiable")
 }
 
+func TestRefuseRestoreIntoLiveDaemonHomeFailsClosedWhenLockCannotBeProbed(t *testing.T) {
+	require := require.New(t)
+	dataDir := t.TempDir()
+	require.NoError(os.Mkdir(daemonOwnerLockPath(dataDir), 0o700),
+		"make daemon lock path unopenable as a file")
+
+	savedCfg := cfg
+	t.Cleanup(func() { cfg = savedCfg })
+	cfg = &config.Config{Data: config.DataConfig{DataDir: dataDir}}
+
+	err := refuseRestoreIntoLiveDaemonHome(dataDir)
+	require.ErrorContains(err, "inspect daemon ownership",
+		"restore must fail closed when daemon ownership cannot be determined")
+}
+
 func TestResolveBackupRepoNilConfig(t *testing.T) {
 	savedCfg := cfg
 	defer func() { cfg = savedCfg }()
