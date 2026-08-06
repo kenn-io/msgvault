@@ -307,34 +307,55 @@ func (c *daemonRestoreTargetCoordinator) AcquireRestoreTarget(
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	lockFile, err := root.OpenFile(daemonOwnerLockFile, os.O_CREATE|os.O_RDWR, 0o600)
-	if err != nil {
-		return nil, fmt.Errorf("create daemon exclusion lock in restore target: %w", err)
+	for _, name := range []string{daemonOwnerLockFile, writeOwnerLockFile} {
+		lockFile, err := root.OpenFile(name, os.O_CREATE|os.O_RDWR, 0o600)
+		if err != nil {
+			return nil, fmt.Errorf("create restore exclusion lock %s in target: %w", name, err)
+		}
+		if err := lockFile.Close(); err != nil {
+			return nil, fmt.Errorf("close restore exclusion lock file %s: %w", name, err)
+		}
 	}
-	if err := lockFile.Close(); err != nil {
-		return nil, fmt.Errorf("close daemon exclusion lock file: %w", err)
-	}
-	owner, err := tryAcquireDaemonOwnerLock(c.dataDir)
+	lease := &daemonRestoreTargetLease{}
+	var err error
+	// Match daemon startup's global lock order so restore cannot deadlock
+	// against another process that needs both ownership protocols.
+	lease.daemonOwner, err = tryAcquireDaemonOwnerLock(c.dataDir)
 	if err != nil {
 		return nil, fmt.Errorf("acquire daemon exclusion for restore: %w", err)
 	}
 	success := false
 	defer func() {
 		if !success {
-			_ = owner.Close()
+			_ = lease.Release()
 		}
 	}()
-
-	rootLockInfo, err := root.Stat(daemonOwnerLockFile)
+	lease.writeOwner, err = tryAcquireWriteOwnerLock(c.dataDir)
 	if err != nil {
-		return nil, fmt.Errorf("inspect pinned restore exclusion lock: %w", err)
+		return nil, fmt.Errorf("acquire direct-writer exclusion for restore: %w", err)
 	}
-	pathLockInfo, err := os.Stat(daemonOwnerLockPath(c.dataDir))
-	if err != nil {
-		return nil, fmt.Errorf("inspect configured restore exclusion lock: %w", err)
+	locks := []struct {
+		name string
+		path string
+	}{
+		{name: daemonOwnerLockFile, path: daemonOwnerLockPath(c.dataDir)},
+		{name: writeOwnerLockFile, path: writeOwnerLockPath(c.dataDir)},
 	}
-	if !os.SameFile(rootLockInfo, pathLockInfo) {
-		return nil, errors.New("configured archive home changed while acquiring restore exclusion")
+	for _, lock := range locks {
+		rootLockInfo, statErr := root.Stat(lock.name)
+		if statErr != nil {
+			return nil, fmt.Errorf("inspect pinned restore exclusion lock %s: %w", lock.name, statErr)
+		}
+		pathLockInfo, statErr := os.Stat(lock.path)
+		if statErr != nil {
+			return nil, fmt.Errorf("inspect configured restore exclusion lock %s: %w", lock.path, statErr)
+		}
+		if !os.SameFile(rootLockInfo, pathLockInfo) {
+			return nil, fmt.Errorf(
+				"configured archive home changed while acquiring restore exclusion lock %s",
+				lock.name,
+			)
+		}
 	}
 	if !c.overwrite {
 		entries, err := fs.ReadDir(root.FS(), ".")
@@ -342,7 +363,7 @@ func (c *daemonRestoreTargetCoordinator) AcquireRestoreTarget(
 			return nil, fmt.Errorf("inspect coordinated restore target: %w", err)
 		}
 		for _, entry := range entries {
-			if entry.Name() != daemonOwnerLockFile {
+			if entry.Name() != daemonOwnerLockFile && entry.Name() != writeOwnerLockFile {
 				return nil, fmt.Errorf(
 					"restore target %s is not empty (use --overwrite to restore into it anyway)",
 					c.dataDir,
@@ -351,20 +372,25 @@ func (c *daemonRestoreTargetCoordinator) AcquireRestoreTarget(
 		}
 	}
 	success = true
-	return &daemonRestoreTargetLease{owner: owner}, nil
+	return lease, nil
 }
 
 type daemonRestoreTargetLease struct {
-	owner *daemonOwnerLock
+	daemonOwner *daemonOwnerLock
+	writeOwner  *writeOwnerLock
 }
 
 func (l *daemonRestoreTargetLease) Release() error {
-	if l == nil || l.owner == nil {
+	if l == nil {
 		return nil
 	}
-	owner := l.owner
-	l.owner = nil
-	return owner.Close()
+	writeOwner := l.writeOwner
+	daemonOwner := l.daemonOwner
+	l.writeOwner = nil
+	l.daemonOwner = nil
+	writeErr := writeOwner.Close()
+	daemonErr := daemonOwner.Close()
+	return errors.Join(writeErr, daemonErr)
 }
 
 func printBackupRestoreSummary(w io.Writer, target string, res *backup.RestoreResult, explicitLoose bool) error {

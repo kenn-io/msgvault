@@ -277,7 +277,7 @@ func TestRunBackupRestoreRejectsDaemonClaimAfterPreflight(t *testing.T) {
 	assert.Equal(liveDatabase, got, "rejected restore preserves the live target database")
 }
 
-func TestDaemonRestoreTargetCoordinatorHoldsLeaseThroughoutRestore(t *testing.T) {
+func TestDaemonRestoreTargetCoordinatorHoldsDaemonAndWriteLeasesThroughoutRestore(t *testing.T) {
 	require := require.New(t)
 	ctx := context.Background()
 	sourceDir := t.TempDir()
@@ -315,6 +315,13 @@ func TestDaemonRestoreTargetCoordinatorHoldsLeaseThroughoutRestore(t *testing.T)
 			var heldErr daemonOwnerLockHeldError
 			require.ErrorAs(acquireErr, &heldErr,
 				"daemon ownership must remain excluded during restore")
+			writer, writeErr := tryAcquireWriteOwnerLock(target)
+			if writer != nil {
+				require.NoError(writer.Close(), "release unexpected direct-writer ownership")
+			}
+			var writeHeldErr writeOwnerLockHeldError
+			require.ErrorAs(writeErr, &writeHeldErr,
+				"direct SQLite writers must remain excluded during restore")
 		},
 	})
 	require.NoError(err, "restore with daemon target coordination")
@@ -322,6 +329,9 @@ func TestDaemonRestoreTargetCoordinatorHoldsLeaseThroughoutRestore(t *testing.T)
 	owner, err := tryAcquireDaemonOwnerLock(target)
 	require.NoError(err, "target coordination releases after restore")
 	require.NoError(owner.Close(), "release post-restore ownership")
+	writer, err := tryAcquireWriteOwnerLock(target)
+	require.NoError(err, "target coordination releases direct-writer exclusion after restore")
+	require.NoError(writer.Close(), "release post-restore direct-writer ownership")
 }
 
 func TestDaemonRestoreTargetCoordinatorCanonicalizesMissingSymlinkedParent(t *testing.T) {
