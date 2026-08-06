@@ -31,7 +31,10 @@ func TestBackupRestorePackedTargetSelection(t *testing.T) {
 	assert := assert.New(t)
 	assert.NotNil(backupRestorePackedContentTarget(false), "packed restore is the default")
 	assert.Equal(packstore.DefaultLimits(), backupRestorePackedContentTarget(false).Limits())
-	assert.Nil(backupRestorePackedContentTarget(true), "explicit loose restore must use Kit's legacy path")
+	looseTarget := backupRestorePackedContentTarget(true)
+	require.NotNil(t, looseTarget, "explicit loose restore uses the catalog-aware fallback path")
+	looseLimits := looseTarget.Limits()
+	assert.Equal(int64(1), looseLimits.PackBytes, "explicit loose restore rejects every pack container")
 	flag := backupRestoreCmd.Flags().Lookup("loose-attachments")
 	require.NotNil(t, flag)
 	assert.Equal("false", flag.DefValue)
@@ -193,7 +196,132 @@ func TestRunBackupRestoreIntoNonexistentConfiguredDataDir(t *testing.T) {
 	cmd.SetOut(io.Discard)
 	require.NoError(runBackupRestore(cmd, nil), "restore into fresh configured archive home")
 	assert.FileExists(filepath.Join(target, "msgvault.db"), "restored database")
-	assert.NoFileExists(daemonOwnerLockPath(target), "lock probe must not leave a daemon lock")
+	assert.FileExists(daemonOwnerLockPath(target), "restore exclusion lock artifact is preserved")
+	held, probeErr := daemonOwnerLockHeld(target)
+	require.NoError(probeErr, "probe released restore exclusion")
+	assert.False(held, "restore releases daemon exclusion after all cleanup")
+}
+
+func TestRunBackupRestoreRejectsDaemonClaimAfterPreflight(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	ctx := context.Background()
+	sourceDir := t.TempDir()
+	dbPath := filepath.Join(sourceDir, "msgvault.db")
+	st, err := store.OpenForTest(dbPath)
+	require.NoError(err, "open source store")
+	require.NoError(st.InitSchema(), "initialize source schema")
+	require.NoError(st.Close(), "close source store")
+	attachmentsDir := filepath.Join(sourceDir, "attachments")
+	require.NoError(os.MkdirAll(attachmentsDir, 0o700), "create source attachments")
+
+	repoPath := filepath.Join(t.TempDir(), "repo")
+	repo, err := backup.Init(repoPath)
+	require.NoError(err, "initialize backup repository")
+	_, err = backup.Create(ctx, repo, backupapp.New("test"), backup.CreateOptions{
+		DBPath: dbPath, ContentDir: attachmentsDir, DataDir: sourceDir,
+	})
+	require.NoError(err, "create source snapshot")
+
+	savedCfg := cfg
+	savedRepo := backupRestoreRepo
+	savedTarget := backupRestoreTarget
+	savedOverwrite := backupRestoreOverwrite
+	savedForceUnlock := backupRestoreForceUnlock
+	savedJobs := backupRestoreJobs
+	savedLoose := backupRestoreLooseAttachments
+	savedIntegrityCheck := backupRestoreIntegrityCheck
+	savedAfterPreflight := backupRestoreAfterDaemonPreflight
+	t.Cleanup(func() {
+		cfg = savedCfg
+		backupRestoreRepo = savedRepo
+		backupRestoreTarget = savedTarget
+		backupRestoreOverwrite = savedOverwrite
+		backupRestoreForceUnlock = savedForceUnlock
+		backupRestoreJobs = savedJobs
+		backupRestoreLooseAttachments = savedLoose
+		backupRestoreIntegrityCheck = savedIntegrityCheck
+		backupRestoreAfterDaemonPreflight = savedAfterPreflight
+	})
+	target := t.TempDir()
+	liveDatabase := []byte("live database must remain untouched")
+	require.NoError(os.WriteFile(filepath.Join(target, "msgvault.db"), liveDatabase, 0o600),
+		"seed live target database")
+	cfg = &config.Config{Data: config.DataConfig{DataDir: target}}
+	backupRestoreRepo = repoPath
+	backupRestoreTarget = target
+	backupRestoreOverwrite = true
+	backupRestoreForceUnlock = false
+	backupRestoreJobs = 1
+	backupRestoreLooseAttachments = false
+	backupRestoreIntegrityCheck = false
+	var owner *daemonOwnerLock
+	backupRestoreAfterDaemonPreflight = func() {
+		owner, err = tryAcquireDaemonOwnerLock(target)
+		require.NoError(err, "claim daemon ownership after restore preflight")
+	}
+	t.Cleanup(func() {
+		if owner != nil {
+			require.NoError(owner.Close(), "release raced daemon ownership")
+		}
+	})
+
+	cmd := &cobra.Command{Use: "restore"}
+	cmd.SetContext(ctx)
+	cmd.SetOut(io.Discard)
+	err = runBackupRestore(cmd, nil)
+	require.ErrorContains(err, "daemon is already running",
+		"restore must reject ownership acquired after its early probe")
+	got, readErr := os.ReadFile(filepath.Join(target, "msgvault.db"))
+	require.NoError(readErr, "read target database after rejected restore")
+	assert.Equal(liveDatabase, got, "rejected restore preserves the live target database")
+}
+
+func TestDaemonRestoreTargetCoordinatorHoldsLeaseThroughoutRestore(t *testing.T) {
+	require := require.New(t)
+	ctx := context.Background()
+	sourceDir := t.TempDir()
+	dbPath := filepath.Join(sourceDir, "msgvault.db")
+	st, err := store.OpenForTest(dbPath)
+	require.NoError(err, "open source store")
+	require.NoError(st.InitSchema(), "initialize source schema")
+	require.NoError(st.Close(), "close source store")
+	attachmentsDir := filepath.Join(sourceDir, "attachments")
+	require.NoError(os.MkdirAll(attachmentsDir, 0o700), "create source attachments")
+
+	repo, err := backup.Init(filepath.Join(t.TempDir(), "repo"))
+	require.NoError(err, "initialize backup repository")
+	_, err = backup.Create(ctx, repo, backupapp.New("test"), backup.CreateOptions{
+		DBPath: dbPath, ContentDir: attachmentsDir, DataDir: sourceDir,
+	})
+	require.NoError(err, "create source snapshot")
+
+	target := t.TempDir()
+	coordinator := newDaemonRestoreTargetCoordinator(target, true)
+	checkedDuringRestore := false
+	_, err = backup.Restore(ctx, repo, backupapp.New("test"), backup.RestoreOptions{
+		TargetDir:         target,
+		Overwrite:         true,
+		TargetCoordinator: coordinator,
+		Progress: func(event backup.ProgressEvent) {
+			if checkedDuringRestore || event.Stage != backup.ProgressStageAttachments {
+				return
+			}
+			checkedDuringRestore = true
+			contender, acquireErr := tryAcquireDaemonOwnerLock(target)
+			if contender != nil {
+				require.NoError(contender.Close(), "release unexpected contender ownership")
+			}
+			var heldErr daemonOwnerLockHeldError
+			require.ErrorAs(acquireErr, &heldErr,
+				"daemon ownership must remain excluded during restore")
+		},
+	})
+	require.NoError(err, "restore with daemon target coordination")
+	require.True(checkedDuringRestore, "ownership was checked during restore")
+	owner, err := tryAcquireDaemonOwnerLock(target)
+	require.NoError(err, "target coordination releases after restore")
+	require.NoError(owner.Close(), "release post-restore ownership")
 }
 
 func assertRestoredCLIBlob(t *testing.T, target, hash string, want []byte, packed bool) {
@@ -452,35 +580,4 @@ func TestResolveBackupRepoNilConfig(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Equal(t, "/flag/repo", repo)
-}
-
-func TestClearRestoredPackMetadataDoesNotMigrateLegacyDatabase(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	dbPath := filepath.Join(t.TempDir(), "legacy.db")
-
-	legacy, err := store.Open(dbPath)
-	require.NoError(err)
-	_, err = legacy.DB().Exec(`CREATE TABLE legacy_marker (id INTEGER PRIMARY KEY)`)
-	require.NoError(err)
-	require.NoError(legacy.Close())
-
-	require.NoError(clearRestoredPackMetadata(dbPath))
-
-	got, err := store.Open(dbPath)
-	require.NoError(err)
-	defer func() { require.NoError(got.Close()) }()
-	var packTables int
-	err = got.DB().QueryRow(`
-		SELECT COUNT(*) FROM sqlite_master
-		WHERE type = 'table'
-		  AND name IN ('attachment_pack_index', 'attachment_packs')`).Scan(&packTables)
-	require.NoError(err)
-	assert.Zero(packTables, "restore cleanup must not initialize unrelated current schema")
-	var markerTables int
-	err = got.DB().QueryRow(`
-		SELECT COUNT(*) FROM sqlite_master
-		WHERE type = 'table' AND name = 'legacy_marker'`).Scan(&markerTables)
-	require.NoError(err)
-	assert.Equal(1, markerTables, "legacy database remains otherwise intact")
 }
