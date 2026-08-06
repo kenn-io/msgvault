@@ -267,6 +267,28 @@ func prepareBackgroundDaemonStart(
 		}
 	}
 	if daemonOwnerLockHeld(c.Data.DataDir) {
+		legacy, foundLegacy, legacyCompatErr := findLegacyDaemonRuntimeForLifecycle(c.Data.DataDir)
+		if legacyCompatErr != nil && !foundLegacy {
+			return backgroundDaemonStartPreparation{}, fmt.Errorf("inspect legacy daemon runtime: %w", legacyCompatErr)
+		}
+		if foundLegacy {
+			if legacyCompatErr == nil {
+				if !shouldUpgradeDaemonRuntimeWithPolicy(legacy, Version, c.Server.DaemonAutoRestart) {
+					return backgroundDaemonStartPreparation{Reusable: legacy}, nil
+				}
+			} else if !shouldUpgradeIncompatibleDaemonRuntimeWithPolicy(
+				legacy, Version, c.Server.DaemonAutoRestart,
+			) {
+				return backgroundDaemonStartPreparation{}, incompatibleDaemonError(
+					legacyCompatErr, incompatibleGuidance,
+				)
+			}
+			if err := stopDaemonRuntimeForUpgrade(*c, legacy); err != nil {
+				return backgroundDaemonStartPreparation{}, fmt.Errorf("stop older daemon before restart: %w", err)
+			}
+		}
+	}
+	if daemonOwnerLockHeld(c.Data.DataDir) {
 		return backgroundDaemonStartPreparation{}, daemonOwnerLockHeldError{
 			path: daemonOwnerLockPath(c.Data.DataDir),
 		}
@@ -420,15 +442,27 @@ func stopDaemonRuntimeRecord(
 	case createTimeMismatch:
 		return fmt.Errorf("%w: pid %d belongs to a different process", errDaemonIdentityUnconfirmed, rec.PID)
 	case createTimeSkew, createTimeUnknown:
-		proved, err := proveDaemonRuntimeIdentity(context.Background(), rec)
+		proof, err := probeDaemonRuntimeIdentity(context.Background(), rec)
 		if err != nil {
 			return fmt.Errorf("%w: prove pid %d endpoint: %w", errDaemonIdentityUnconfirmed, rec.PID, err)
 		}
-		if !proved {
+		switch proof {
+		case daemonIdentityVerified:
+			return stopDaemonByAuthenticatedEndpoint(out, dataDir, rec, apiKey, grace)
+		case daemonIdentityUnsupported:
+			if !daemonOwnerLockHeld(dataDir) {
+				return fmt.Errorf("%w: daemon ownership lock is not held", errDaemonIdentityUnconfirmed)
+			}
+			info, probeErr := probeDaemonRuntimeRecord(context.Background(), rec)
+			if probeErr != nil || info.PID != rec.PID {
+				return fmt.Errorf("%w: legacy endpoint for pid %d did not answer a matching ping",
+					errDaemonIdentityUnconfirmed, rec.PID)
+			}
+			return stopDaemonByLegacyEndpoint(out, dataDir, rec, grace)
+		default:
 			return fmt.Errorf("%w: endpoint for pid %d did not prove the runtime secret",
 				errDaemonIdentityUnconfirmed, rec.PID)
 		}
-		return stopDaemonByAuthenticatedEndpoint(out, dataDir, rec, apiKey, grace)
 	default:
 		return fmt.Errorf("%w: unknown identity state for pid %d", errDaemonIdentityUnconfirmed, rec.PID)
 	}
@@ -500,20 +534,43 @@ func stopDaemonByAuthenticatedEndpoint(
 	grace time.Duration,
 ) error {
 	op := fetchDaemonOperation(rec, apiKey)
+	return stopDaemonByShutdownEndpoint(out, dataDir, rec, op, grace)
+}
+
+// stopDaemonByLegacyEndpoint supports daemons that predate identity proofs.
+// It uses only the private shutdown capability from the runtime record and
+// waits for ownership release; it never transmits the configured API key and
+// never signals the recorded PID.
+func stopDaemonByLegacyEndpoint(
+	out io.Writer,
+	dataDir string,
+	rec daemon.RuntimeRecord,
+	grace time.Duration,
+) error {
+	return stopDaemonByShutdownEndpoint(out, dataDir, rec, nil, grace)
+}
+
+func stopDaemonByShutdownEndpoint(
+	out io.Writer,
+	dataDir string,
+	rec daemon.RuntimeRecord,
+	op *api.OperationHealth,
+	grace time.Duration,
+) error {
 	shutdownRequested, err := requestDaemonShutdownForRun(rec)
 	if err != nil {
 		if !daemonOwnerLockHeld(dataDir) {
 			removeRuntimeRecord(rec)
 			return nil
 		}
-		return fmt.Errorf("request authenticated daemon shutdown: %w", err)
+		return fmt.Errorf("request daemon shutdown: %w", err)
 	}
 	if !shutdownRequested {
 		if !daemonOwnerLockHeld(dataDir) {
 			removeRuntimeRecord(rec)
 			return nil
 		}
-		return errors.New("authenticated daemon shutdown endpoint is unavailable")
+		return errors.New("daemon shutdown endpoint is unavailable")
 	}
 	if waitForDaemonExitWithProgress(out, rec, op, grace, daemonProbeTick,
 		func(daemon.RuntimeRecord) bool { return daemonOwnerLockHeld(dataDir) }) {

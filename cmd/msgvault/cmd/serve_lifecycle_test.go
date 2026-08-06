@@ -428,11 +428,19 @@ func TestStopDaemonRuntimeRecordRejectsConfirmedProcessIdentityMismatch(t *testi
 }
 
 func TestStopLiveDaemonsUsesAuthenticatedHTTPWhenCreateTimeUnknown(t *testing.T) {
-	testStopLiveDaemonsUsesAuthenticatedHTTP(t, "", 0, false)
+	testStopLiveDaemonsUsesAuthenticatedHTTP(t, "", 0, false, true)
 }
 
 func TestStopLiveDaemonsUsesAuthenticatedHTTPWhenCreateTimeSkewed(t *testing.T) {
-	testStopLiveDaemonsUsesAuthenticatedHTTP(t, "6000", 5_000, true)
+	testStopLiveDaemonsUsesAuthenticatedHTTP(t, "6000", 5_000, true, true)
+}
+
+func TestStopLiveDaemonsUsesLegacyShutdownWhenCreateTimeUnknown(t *testing.T) {
+	testStopLiveDaemonsUsesAuthenticatedHTTP(t, "", 0, false, false)
+}
+
+func TestStopLiveDaemonsUsesLegacyShutdownWhenCreateTimeSkewed(t *testing.T) {
+	testStopLiveDaemonsUsesAuthenticatedHTTP(t, "6000", 5_000, true, false)
 }
 
 func testStopLiveDaemonsUsesAuthenticatedHTTP(
@@ -440,6 +448,7 @@ func testStopLiveDaemonsUsesAuthenticatedHTTP(
 	recordedCreateTime string,
 	liveCreateTime int64,
 	liveCreateTimeOK bool,
+	identityEndpointSupported bool,
 ) {
 	t.Helper()
 	require := require.New(t)
@@ -454,9 +463,23 @@ func testStopLiveDaemonsUsesAuthenticatedHTTP(
 	t.Cleanup(func() { releaseOwner.Do(func() { _ = owner.Close() }) })
 
 	shutdownTokens := make(chan string, 1)
+	var apiKeySent atomic.Bool
+	ping := daemon.NewPingHandler(daemon.PingHandlerOptions{
+		Service: daemonService,
+		Version: Version,
+	})
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("X-Api-Key") != "" {
+			apiKeySent.Store(true)
+		}
 		switch r.URL.Path {
+		case daemon.DefaultPingPath:
+			ping.ServeHTTP(w, r)
 		case api.DaemonIdentityPath:
+			if !identityEndpointSupported {
+				http.NotFound(w, r)
+				return
+			}
 			proof, proofErr := daemonauth.Proof(runtimeSecret,
 				r.Header.Get(api.DaemonIdentityChallengeHeader), os.Getpid())
 			if proofErr != nil {
@@ -511,6 +534,9 @@ func testStopLiveDaemonsUsesAuthenticatedHTTP(
 	}
 	assert.False(daemonOwnerLockHeld(dataDir), "stop waits for daemon ownership release")
 	assert.Contains(stdout.String(), "Stopped msgvault", "stop confirmation")
+	if !identityEndpointSupported {
+		assert.False(apiKeySent.Load(), "legacy shutdown must not transmit the API key")
+	}
 }
 
 func TestRunServeRestartDoesNotLaunchOverInitializingIdentityMismatch(t *testing.T) {
@@ -728,6 +754,78 @@ func TestRunServeStartAlreadyRunningWritesOnlyStdout(t *testing.T) {
 			" (pid "+strconv.Itoa(os.Getpid())+")\n",
 		stdout.String())
 	assert.Empty(stderr.String())
+}
+
+func TestRunServeStartRecognizesLegacyDaemonWithIndeterminateCreateTime(t *testing.T) {
+	tests := []struct {
+		name               string
+		recordedCreateTime string
+		liveCreateTime     int64
+		liveCreateTimeOK   bool
+	}{
+		{name: "unknown", liveCreateTimeOK: false},
+		{name: "skewed", recordedCreateTime: "6000", liveCreateTime: 5_000, liveCreateTimeOK: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			dataDir := t.TempDir()
+			stubProcessCreateTimeMillis(t, func(int) (int64, bool) {
+				return tt.liveCreateTime, tt.liveCreateTimeOK
+			})
+
+			owner, err := tryAcquireDaemonOwnerLock(dataDir)
+			require.NoError(err, "acquire daemon ownership")
+			t.Cleanup(func() { _ = owner.Close() })
+
+			var apiKeySent atomic.Bool
+			ping := daemon.NewPingHandler(daemon.PingHandlerOptions{
+				Service: daemonService,
+				Version: Version,
+			})
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Header.Get("X-Api-Key") != "" {
+					apiKeySent.Store(true)
+				}
+				if r.URL.Path == daemon.DefaultPingPath {
+					ping.ServeHTTP(w, r)
+					return
+				}
+				http.NotFound(w, r)
+			}))
+			t.Cleanup(server.Close)
+			host, portText, err := net.SplitHostPort(server.Listener.Addr().String())
+			require.NoError(err, "split listener address")
+			metadata := map[string]string{
+				runtimeHost:          host,
+				runtimePort:          portText,
+				runtimeAPIVersion:    strconv.Itoa(daemonAPIVersion),
+				runtimeShutdownToken: "private-runtime-secret",
+			}
+			if tt.recordedCreateTime != "" {
+				metadata[runtimeCreateTime] = tt.recordedCreateTime
+			}
+			_, err = daemonRuntimeStore(dataDir).Write(daemon.RuntimeRecord{
+				PID:      os.Getpid(),
+				Network:  daemon.NetworkTCP,
+				Address:  net.JoinHostPort(host, portText),
+				Service:  daemonService,
+				Version:  Version,
+				Metadata: metadata,
+			})
+			require.NoError(err, "write runtime record")
+			stubStartServeBackgroundProcess(t, func(*config.Config, backgroundServeStartOptions) (*backgroundServeProcess, error) {
+				require.FailNow("start must reuse the legacy daemon")
+				return nil, errors.New("unreachable")
+			})
+
+			cmd, stdout, _ := lifecycleTestCommand()
+			require.NoError(runServeStart(cmd, lifecycleTestConfig(dataDir)))
+			assert.Contains(stdout.String(), "msgvault already running")
+			assert.False(apiKeySent.Load(), "legacy discovery must not transmit the API key")
+		})
+	}
 }
 
 func TestRunServeStartDoesNotDowngradeNewerDaemon(t *testing.T) {

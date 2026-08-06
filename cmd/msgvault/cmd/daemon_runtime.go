@@ -168,6 +168,39 @@ func findIncompatibleDaemonRuntime(dataDir string) (*DaemonRuntime, bool, error)
 	return nil, false, nil
 }
 
+// findLegacyDaemonRuntimeForLifecycle recognizes daemons from the transition
+// period before /api/daemon/identity existed. It is intentionally restricted
+// to lifecycle decisions: the ownership lock and a matching public ping show
+// that a daemon still owns the data directory, but do not authorize sending an
+// API key or signaling its PID.
+func findLegacyDaemonRuntimeForLifecycle(dataDir string) (*DaemonRuntime, bool, error) {
+	if !daemonOwnerLockHeld(dataDir) {
+		return nil, false, nil
+	}
+	records, err := listLiveDaemonRuntimeRecords(dataDir)
+	if err != nil {
+		return nil, false, err
+	}
+	ctx := context.Background()
+	for _, rec := range records {
+		identity := runtimeRecordIdentity(rec)
+		if identity != createTimeSkew && identity != createTimeUnknown {
+			continue
+		}
+		proof, proofErr := probeDaemonRuntimeIdentity(ctx, rec)
+		if proofErr != nil || proof != daemonIdentityUnsupported {
+			continue
+		}
+		info, probeErr := probeDaemonRuntimeRecord(ctx, rec)
+		if probeErr != nil || info.PID != rec.PID || !daemonOwnerLockHeld(dataDir) {
+			continue
+		}
+		rt := daemonRuntimeFromRecord(rec)
+		return rt, true, daemonRuntimeCompatibilityError(rt)
+	}
+	return nil, false, nil
+}
+
 func findRespondingDaemonRuntime(
 	ctx context.Context,
 	dataDir string,
@@ -338,21 +371,29 @@ func probeDaemonRuntimeRecord(ctx context.Context, rec daemon.RuntimeRecord) (da
 	})
 }
 
-// proveDaemonRuntimeIdentity verifies possession of the private runtime secret
-// without transmitting that secret or the configured API key. It is the safe
-// fallback when the OS cannot provide an affirmative process create-time
-// match for the recorded PID.
-func proveDaemonRuntimeIdentity(ctx context.Context, rec daemon.RuntimeRecord) (bool, error) {
+type daemonIdentityProofResult int
+
+const (
+	daemonIdentityUnverified daemonIdentityProofResult = iota
+	daemonIdentityVerified
+	daemonIdentityUnsupported
+)
+
+// probeDaemonRuntimeIdentity verifies possession of the private runtime secret
+// without transmitting that secret or the configured API key. Unsupported is
+// reserved for a definite 404/405 from a reachable endpoint so callers can
+// distinguish an older daemon from a failed or rejected proof.
+func probeDaemonRuntimeIdentity(ctx context.Context, rec daemon.RuntimeRecord) (daemonIdentityProofResult, error) {
 	if rec.Metadata == nil || rec.Metadata[runtimeShutdownToken] == "" {
-		return false, nil
+		return daemonIdentityUnverified, nil
 	}
 	url := urlFromDaemonRuntime(daemonRuntimeFromRecord(rec))
 	if url == "" {
-		return false, nil
+		return daemonIdentityUnverified, nil
 	}
 	challenge, err := daemonauth.NewChallenge()
 	if err != nil {
-		return false, err
+		return daemonIdentityUnverified, err
 	}
 	if ctx == nil {
 		ctx = context.Background()
@@ -361,23 +402,37 @@ func proveDaemonRuntimeIdentity(ctx context.Context, rec daemon.RuntimeRecord) (
 	defer cancel()
 	req, err := http.NewRequestWithContext(proofCtx, http.MethodGet, url+api.DaemonIdentityPath, nil)
 	if err != nil {
-		return false, fmt.Errorf("create daemon identity request: %w", err)
+		return daemonIdentityUnverified, fmt.Errorf("create daemon identity request: %w", err)
 	}
 	req.Header.Set(api.DaemonIdentityChallengeHeader, challenge)
 	resp, err := localDaemonHTTPClient.Do(req)
 	if err != nil {
-		return false, fmt.Errorf("send daemon identity request: %w", err)
+		return daemonIdentityUnverified, fmt.Errorf("send daemon identity request: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode != http.StatusNoContent {
-		return false, nil
+	if resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusMethodNotAllowed {
+		return daemonIdentityUnsupported, nil
 	}
-	return daemonauth.VerifyProof(
+	if resp.StatusCode != http.StatusNoContent {
+		return daemonIdentityUnverified, nil
+	}
+	if !daemonauth.VerifyProof(
 		rec.Metadata[runtimeShutdownToken],
 		challenge,
 		rec.PID,
 		resp.Header.Get(api.DaemonIdentityProofHeader),
-	), nil
+	) {
+		return daemonIdentityUnverified, nil
+	}
+	return daemonIdentityVerified, nil
+}
+
+// proveDaemonRuntimeIdentity is the strict identity gate used before any
+// authenticated API request. Legacy capability detection is intentionally not
+// accepted here because it does not prove endpoint possession.
+func proveDaemonRuntimeIdentity(ctx context.Context, rec daemon.RuntimeRecord) (bool, error) {
+	result, err := probeDaemonRuntimeIdentity(ctx, rec)
+	return result == daemonIdentityVerified, err
 }
 
 // runtimeRecordIdentityMismatched reports whether rec.PID demonstrably
