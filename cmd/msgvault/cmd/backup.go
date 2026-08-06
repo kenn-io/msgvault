@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"text/tabwriter"
@@ -458,15 +459,49 @@ func restoreTargetsConfiguredDataDir(target string) (bool, error) {
 	if cfg == nil || target == "" || cfg.Data.DataDir == "" {
 		return false, nil
 	}
-	targetAbs, err := filepath.Abs(target)
+	targetCanonical, err := canonicalPathThroughExistingAncestor(target)
 	if err != nil {
 		return false, fmt.Errorf("backup restore: resolving target %q: %w", target, err)
 	}
-	homeAbs, err := filepath.Abs(cfg.Data.DataDir)
+	homeCanonical, err := canonicalPathThroughExistingAncestor(cfg.Data.DataDir)
 	if err != nil {
 		return false, fmt.Errorf("backup restore: resolving data dir %q: %w", cfg.Data.DataDir, err)
 	}
-	return targetAbs == homeAbs || sameExistingPath(targetAbs, homeAbs), nil
+	return targetCanonical == homeCanonical || sameExistingPath(targetCanonical, homeCanonical), nil
+}
+
+// canonicalPathThroughExistingAncestor resolves symlinks in the deepest
+// existing ancestor of path, then appends the still-missing suffix. Unlike
+// filepath.EvalSymlinks on the complete path, this identifies equivalent
+// future archive locations before restore creates their leaf directories.
+func canonicalPathThroughExistingAncestor(path string) (string, error) {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	existing := abs
+	var missing []string
+	for {
+		if _, err := os.Stat(existing); err == nil {
+			break
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return "", err
+		}
+		parent := filepath.Dir(existing)
+		if parent == existing {
+			return "", fmt.Errorf("no existing ancestor for %q", path)
+		}
+		missing = append(missing, filepath.Base(existing))
+		existing = parent
+	}
+	canonical, err := filepath.EvalSymlinks(existing)
+	if err != nil {
+		return "", err
+	}
+	for _, component := range slices.Backward(missing) {
+		canonical = filepath.Join(canonical, component)
+	}
+	return canonical, nil
 }
 
 // sameExistingPath reports whether a and b name the same existing filesystem

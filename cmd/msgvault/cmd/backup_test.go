@@ -324,6 +324,73 @@ func TestDaemonRestoreTargetCoordinatorHoldsLeaseThroughoutRestore(t *testing.T)
 	require.NoError(owner.Close(), "release post-restore ownership")
 }
 
+func TestDaemonRestoreTargetCoordinatorCanonicalizesMissingSymlinkedParent(t *testing.T) {
+	require := require.New(t)
+	ctx := context.Background()
+	sourceDir := t.TempDir()
+	dbPath := filepath.Join(sourceDir, "msgvault.db")
+	st, err := store.OpenForTest(dbPath)
+	require.NoError(err, "open source store")
+	require.NoError(st.InitSchema(), "initialize source schema")
+	require.NoError(st.Close(), "close source store")
+	attachmentsDir := filepath.Join(sourceDir, "attachments")
+	require.NoError(os.MkdirAll(attachmentsDir, 0o700), "create source attachments")
+
+	repo, err := backup.Init(filepath.Join(t.TempDir(), "repo"))
+	require.NoError(err, "initialize backup repository")
+	_, err = backup.Create(ctx, repo, backupapp.New("test"), backup.CreateOptions{
+		DBPath: dbPath, ContentDir: attachmentsDir, DataDir: sourceDir,
+	})
+	require.NoError(err, "create source snapshot")
+
+	parent := t.TempDir()
+	realParent := filepath.Join(parent, "real")
+	linkedParent := filepath.Join(parent, "linked")
+	require.NoError(os.Mkdir(realParent, 0o700), "create real archive parent")
+	if err := os.Symlink(realParent, linkedParent); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	configuredDataDir := filepath.Join(linkedParent, "fresh", "archive")
+	target := filepath.Join(realParent, "fresh", "archive")
+	require.NoDirExists(configuredDataDir, "configured archive starts absent")
+	require.NoDirExists(target, "restore target starts absent")
+
+	savedCfg := cfg
+	t.Cleanup(func() { cfg = savedCfg })
+	cfg = &config.Config{Data: config.DataConfig{DataDir: configuredDataDir}}
+	coordinator, coordinated, err := backupRestoreTargetCoordinator(target, false)
+	require.NoError(err, "select restore target coordination")
+	require.True(coordinated,
+		"resolved target must match an absent configured archive beneath a symlinked parent")
+	require.NotNil(coordinator, "matching configured archive receives daemon exclusion")
+	require.NoDirExists(target, "coordinator selection must not create the archive")
+
+	checkedDuringRestore := false
+	_, err = backup.Restore(ctx, repo, backupapp.New("test"), backup.RestoreOptions{
+		TargetDir:         target,
+		Overwrite:         true,
+		TargetCoordinator: coordinator,
+		Progress: func(event backup.ProgressEvent) {
+			if checkedDuringRestore || event.Stage != backup.ProgressStageAttachments {
+				return
+			}
+			checkedDuringRestore = true
+			contender, acquireErr := tryAcquireDaemonOwnerLock(configuredDataDir)
+			if contender != nil {
+				require.NoError(contender.Close(), "release unexpected contender ownership")
+			}
+			var heldErr daemonOwnerLockHeldError
+			require.ErrorAs(acquireErr, &heldErr,
+				"daemon ownership through the symlinked spelling must remain excluded")
+		},
+	})
+	require.NoError(err, "restore through canonicalized daemon target coordination")
+	require.True(checkedDuringRestore, "daemon ownership was checked during restore")
+	owner, err := tryAcquireDaemonOwnerLock(configuredDataDir)
+	require.NoError(err, "restore releases canonicalized daemon exclusion")
+	require.NoError(owner.Close(), "release post-restore daemon ownership")
+}
+
 func assertRestoredCLIBlob(t *testing.T, target, hash string, want []byte, packed bool) {
 	t.Helper()
 	require := require.New(t)
