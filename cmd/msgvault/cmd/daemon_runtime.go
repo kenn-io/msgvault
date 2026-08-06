@@ -188,7 +188,7 @@ func findRespondingDaemonRuntime(
 		case createTimeMatch:
 		case createTimeMismatch:
 			continue
-		case createTimeUnknown:
+		case createTimeSkew, createTimeUnknown:
 			proved, proofErr := proveDaemonRuntimeIdentity(ctx, rec)
 			if proofErr != nil {
 				if ctxErr := ctx.Err(); ctxErr != nil {
@@ -382,11 +382,11 @@ func proveDaemonRuntimeIdentity(ctx context.Context, rec daemon.RuntimeRecord) (
 
 // runtimeRecordIdentityMismatched reports whether rec.PID demonstrably
 // belongs to a different process than the daemon that wrote the record
-// (PID reuse). An indeterminate comparison keeps the record, but an
-// affirmative mismatch is never overridden by the unauthenticated HTTP
-// ping at the recorded address. This function never deletes the record
-// file: genuinely dead PIDs are reaped by CleanupDead, and anything else
-// is left in place for inspection.
+// (PID reuse). An indeterminate or tolerance-skewed comparison keeps the
+// record, but an affirmative mismatch is never overridden by the
+// unauthenticated HTTP ping at the recorded address. This function never
+// deletes the record file: genuinely dead PIDs are reaped by CleanupDead,
+// and anything else is left in place for inspection.
 func runtimeRecordIdentityMismatched(rec daemon.RuntimeRecord) bool {
 	return runtimeRecordIdentity(rec) == createTimeMismatch
 }
@@ -418,25 +418,27 @@ func processCreateTimeMillis(pid int) (int64, bool) {
 	return created, true
 }
 
-// createTimeComparison is the three-state outcome of comparing a recorded
-// process create time against a live re-read. "Unknown" is deliberately
-// distinct from "mismatch": gopsutil can fail transiently (permission
-// denied on /proc, hidepid, namespace quirks), and treating those failures
-// as a mismatch is what allowed live daemons' runtime records to be pruned.
+// createTimeComparison distinguishes exact process identity from tolerated
+// create-time jitter. Skew is sufficient to keep a record live, but only an
+// exact match may authorize an OS signal. "Unknown" remains distinct from
+// "mismatch": gopsutil can fail transiently (permission denied on /proc,
+// hidepid, namespace quirks), and treating those failures as a mismatch is
+// what allowed live daemons' runtime records to be pruned.
 type createTimeComparison int
 
 const (
 	createTimeMatch createTimeComparison = iota
+	createTimeSkew
 	createTimeMismatch
 	createTimeUnknown
 )
 
-// createTimeToleranceMillis absorbs whole-second jitter in create-time
-// reads. gopsutil derives a process's create time from the boot time, and
-// on Linux the boot-time read is recomputed per call with one-second
-// granularity (in container guests it is now-minus-uptime, truncated), so
-// two reads of the same live process legitimately differ by up to a whole
-// second in either direction.
+// createTimeToleranceMillis classifies whole-second jitter separately from a
+// process-identity mismatch. gopsutil derives a process's create time from the
+// boot time, and on Linux the boot-time read is recomputed per call with
+// one-second granularity (in container guests it is now-minus-uptime,
+// truncated), so two reads of the same live process legitimately differ by up
+// to a whole second in either direction.
 const createTimeToleranceMillis int64 = 2000
 
 func compareProcessCreateTime(pid int, recordedMillis string) createTimeComparison {
@@ -452,17 +454,20 @@ func compareProcessCreateTime(pid int, recordedMillis string) createTimeComparis
 	if delta < 0 {
 		delta = -delta
 	}
-	if delta <= createTimeToleranceMillis {
+	if delta == 0 {
 		return createTimeMatch
+	}
+	if delta <= createTimeToleranceMillis {
+		return createTimeSkew
 	}
 	return createTimeMismatch
 }
 
 // processCreateTimeMatches reports whether the recorded create time
-// affirmatively matches the live process. Indeterminate reads report
-// false: callers use a positive match as permission to act on the PID
-// (for example to signal it during daemon stop), so "unknown" must stay
-// conservative.
+// exactly matches the live process. Tolerance-only skew and indeterminate
+// reads report false: callers use a positive match as permission to act on
+// the PID (for example to signal it during daemon stop), so every non-exact
+// state must stay conservative.
 func processCreateTimeMatches(pid int, recordedMillis string) bool {
 	return compareProcessCreateTime(pid, recordedMillis) == createTimeMatch
 }

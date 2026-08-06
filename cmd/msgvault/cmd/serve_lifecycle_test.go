@@ -428,9 +428,24 @@ func TestStopDaemonRuntimeRecordRejectsConfirmedProcessIdentityMismatch(t *testi
 }
 
 func TestStopLiveDaemonsUsesAuthenticatedHTTPWhenCreateTimeUnknown(t *testing.T) {
+	testStopLiveDaemonsUsesAuthenticatedHTTP(t, "", 0, false)
+}
+
+func TestStopLiveDaemonsUsesAuthenticatedHTTPWhenCreateTimeSkewed(t *testing.T) {
+	testStopLiveDaemonsUsesAuthenticatedHTTP(t, "6000", 5_000, true)
+}
+
+func testStopLiveDaemonsUsesAuthenticatedHTTP(
+	t *testing.T,
+	recordedCreateTime string,
+	liveCreateTime int64,
+	liveCreateTimeOK bool,
+) {
+	t.Helper()
 	require := require.New(t)
 	assert := assert.New(t)
 	dataDir := t.TempDir()
+	stubProcessCreateTimeMillis(t, func(int) (int64, bool) { return liveCreateTime, liveCreateTimeOK })
 	const runtimeSecret = "private-runtime-secret"
 
 	owner, err := tryAcquireDaemonOwnerLock(dataDir)
@@ -464,19 +479,23 @@ func TestStopLiveDaemonsUsesAuthenticatedHTTPWhenCreateTimeUnknown(t *testing.T)
 	t.Cleanup(server.Close)
 	host, portText, err := net.SplitHostPort(server.Listener.Addr().String())
 	require.NoError(err, "split listener address")
+	metadata := map[string]string{
+		runtimeHost:          host,
+		runtimePort:          portText,
+		runtimeAPIVersion:    strconv.Itoa(daemonAPIVersion),
+		runtimeShutdownToken: runtimeSecret,
+	}
+	if recordedCreateTime != "" {
+		metadata[runtimeCreateTime] = recordedCreateTime
+	}
 
 	_, err = daemonRuntimeStore(dataDir).Write(daemon.RuntimeRecord{
-		PID:     os.Getpid(),
-		Network: daemon.NetworkTCP,
-		Address: net.JoinHostPort(host, portText),
-		Service: daemonService,
-		Version: Version,
-		Metadata: map[string]string{
-			runtimeHost:          host,
-			runtimePort:          portText,
-			runtimeAPIVersion:    strconv.Itoa(daemonAPIVersion),
-			runtimeShutdownToken: runtimeSecret,
-		},
+		PID:      os.Getpid(),
+		Network:  daemon.NetworkTCP,
+		Address:  net.JoinHostPort(host, portText),
+		Service:  daemonService,
+		Version:  Version,
+		Metadata: metadata,
 	})
 	require.NoError(err, "write runtime record")
 	cmd, stdout, _ := lifecycleTestCommand()
@@ -663,6 +682,19 @@ func TestWaitForRecordedDaemonExitRemovesRecordWhenGone(t *testing.T) {
 	require.True(exited, "wait should observe daemon exit")
 	assert.Equal(3, calls, "poll count")
 	assert.NoFileExists(recordPath, "runtime record")
+}
+
+func TestRecordedDaemonStillPresentTreatsToleranceSkewAsLive(t *testing.T) {
+	stubProcessCreateTimeMillis(t, func(int) (int64, bool) { return 5_000, true })
+	rec := daemon.RuntimeRecord{
+		PID: os.Getpid(),
+		Metadata: map[string]string{
+			runtimeCreateTime: "6000",
+		},
+	}
+
+	assert.True(t, recordedDaemonStillPresent(rec),
+		"timestamp jitter must not make a signaled daemon look exited")
 }
 
 func TestRunServeStartAlreadyRunningWritesOnlyStdout(t *testing.T) {

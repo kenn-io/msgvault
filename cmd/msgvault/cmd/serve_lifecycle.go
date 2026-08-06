@@ -419,7 +419,7 @@ func stopDaemonRuntimeRecord(
 		return stopDaemonProcess(out, rec, apiKey, grace)
 	case createTimeMismatch:
 		return fmt.Errorf("%w: pid %d belongs to a different process", errDaemonIdentityUnconfirmed, rec.PID)
-	case createTimeUnknown:
+	case createTimeSkew, createTimeUnknown:
 		proved, err := proveDaemonRuntimeIdentity(context.Background(), rec)
 		if err != nil {
 			return fmt.Errorf("%w: prove pid %d endpoint: %w", errDaemonIdentityUnconfirmed, rec.PID, err)
@@ -656,7 +656,10 @@ func recordedDaemonStillPresent(rec daemon.RuntimeRecord) bool {
 	if rec.Metadata == nil || rec.Metadata[runtimeCreateTime] == "" {
 		return true
 	}
-	return processCreateTimeMatches(rec.PID, rec.Metadata[runtimeCreateTime])
+	// A signal was authorized by an exact match before this wait began. A
+	// later skewed or unreadable timestamp is not evidence that the daemon has
+	// exited; only a dead PID or an affirmative mismatch is.
+	return compareProcessCreateTime(rec.PID, rec.Metadata[runtimeCreateTime]) != createTimeMismatch
 }
 
 func removeRuntimeRecord(rec daemon.RuntimeRecord) {

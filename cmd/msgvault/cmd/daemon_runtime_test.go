@@ -135,49 +135,62 @@ func TestFindDaemonRuntimeRejectsWrongServicePing(t *testing.T) {
 	assert.Nil(findDaemonRuntime(dataDir), "wrong service ping must not match")
 }
 
-func TestFindDaemonRuntimeRejectsUnauthenticatedPingWhenCreateTimeUnknown(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	dataDir := t.TempDir()
-	stubProcessCreateTimeMillis(t, func(int) (int64, bool) { return 0, false })
+func TestFindDaemonRuntimeRejectsUnauthenticatedPingWithoutExactCreateTime(t *testing.T) {
+	tests := []struct {
+		name     string
+		live     int64
+		liveOK   bool
+		recorded string
+	}{
+		{name: "unknown create time", liveOK: false, recorded: "1234567890123"},
+		{name: "tolerance-only skew", live: 5_000, liveOK: true, recorded: "6000"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			dataDir := t.TempDir()
+			stubProcessCreateTimeMillis(t, func(int) (int64, bool) { return tt.live, tt.liveOK })
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == daemon.DefaultPingPath {
-			daemon.NewPingHandler(daemon.PingHandlerOptions{
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == daemon.DefaultPingPath {
+					daemon.NewPingHandler(daemon.PingHandlerOptions{
+						Service: daemonService,
+						Version: "v-test",
+					}).ServeHTTP(w, r)
+					return
+				}
+				http.NotFound(w, r)
+			}))
+			t.Cleanup(server.Close)
+			host, portText, err := net.SplitHostPort(server.Listener.Addr().String())
+			require.NoError(err, "split listener address")
+
+			_, err = daemonRuntimeStore(dataDir).Write(daemon.RuntimeRecord{
+				PID:     os.Getpid(),
+				Network: daemon.NetworkTCP,
+				Address: net.JoinHostPort(host, portText),
 				Service: daemonService,
 				Version: "v-test",
-			}).ServeHTTP(w, r)
-			return
-		}
-		http.NotFound(w, r)
-	}))
-	t.Cleanup(server.Close)
-	host, portText, err := net.SplitHostPort(server.Listener.Addr().String())
-	require.NoError(err, "split listener address")
+				Metadata: map[string]string{
+					runtimeHost:             host,
+					runtimePort:             portText,
+					runtimeAPIVersion:       strconv.Itoa(daemonAPIVersion),
+					runtimeAPISchemaVersion: api.APISchemaVersion,
+					runtimeCreateTime:       tt.recorded,
+					runtimeShutdownToken:    "private-runtime-secret",
+				},
+			})
+			require.NoError(err, "write runtime record")
 
-	_, err = daemonRuntimeStore(dataDir).Write(daemon.RuntimeRecord{
-		PID:     os.Getpid(),
-		Network: daemon.NetworkTCP,
-		Address: net.JoinHostPort(host, portText),
-		Service: daemonService,
-		Version: "v-test",
-		Metadata: map[string]string{
-			runtimeHost:             host,
-			runtimePort:             portText,
-			runtimeAPIVersion:       strconv.Itoa(daemonAPIVersion),
-			runtimeAPISchemaVersion: api.APISchemaVersion,
-			runtimeCreateTime:       "1234567890123",
-			runtimeShutdownToken:    "private-runtime-secret",
-		},
-	})
-	require.NoError(err, "write runtime record")
+			rt, found, err := findRespondingDaemonRuntime(context.Background(), dataDir,
+				func(*DaemonRuntime, error) bool { return true })
 
-	rt, found, err := findRespondingDaemonRuntime(context.Background(), dataDir,
-		func(*DaemonRuntime, error) bool { return true })
-
-	require.NoError(err, "find responding runtime")
-	assert.False(found, "an unauthenticated ping cannot prove an indeterminate process identity")
-	assert.Nil(rt, "unproven endpoint must not become discoverable")
+			require.NoError(err, "find responding runtime")
+			assert.False(found, "an unauthenticated ping cannot prove process identity")
+			assert.Nil(rt, "unproven endpoint must not become discoverable")
+		})
+	}
 }
 
 func TestFindDaemonRuntimeAcceptsRuntimeSecretProofWhenCreateTimeUnknown(t *testing.T) {
@@ -468,8 +481,8 @@ func TestCompareProcessCreateTime(t *testing.T) {
 		want     createTimeComparison
 	}{
 		{name: "exact match", recorded: "1000000000000", live: base, liveOK: true, want: createTimeMatch},
-		{name: "skew below tolerance", recorded: "999999999000", live: base, liveOK: true, want: createTimeMatch},
-		{name: "skew at tolerance boundary", recorded: "1000000002000", live: base, liveOK: true, want: createTimeMatch},
+		{name: "skew below tolerance", recorded: "999999999000", live: base, liveOK: true, want: createTimeSkew},
+		{name: "skew at tolerance boundary", recorded: "1000000002000", live: base, liveOK: true, want: createTimeSkew},
 		{name: "skew beyond tolerance", recorded: "999999997999", live: base, liveOK: true, want: createTimeMismatch},
 		{name: "unparseable recorded value", recorded: "not-a-number", live: base, liveOK: true, want: createTimeUnknown},
 		{name: "gopsutil failure", recorded: "1000000000000", live: 0, liveOK: false, want: createTimeUnknown},
@@ -489,7 +502,8 @@ func TestProcessCreateTimeMatchesRequiresAffirmativeMatch(t *testing.T) {
 	assert := assert.New(t)
 	stubProcessCreateTimeMillis(t, func(int) (int64, bool) { return 5_000, true })
 
-	assert.True(processCreateTimeMatches(os.Getpid(), "6000"), "within tolerance matches")
+	assert.True(processCreateTimeMatches(os.Getpid(), "5000"), "exact create time matches")
+	assert.False(processCreateTimeMatches(os.Getpid(), "6000"), "tolerance-only skew is not authoritative")
 	assert.False(processCreateTimeMatches(os.Getpid(), "10000"), "beyond tolerance does not match")
 	assert.False(processCreateTimeMatches(os.Getpid(), "bogus"), "indeterminate comparison does not match")
 }

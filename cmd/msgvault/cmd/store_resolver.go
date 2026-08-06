@@ -602,7 +602,7 @@ func probeLocalDaemonAuth(ctx context.Context, rt *DaemonRuntime, c *config.Conf
 	case createTimeMismatch:
 		return fmt.Errorf("cannot authenticate local daemon at %s: recorded pid %d belongs to a different process",
 			url, rt.Record.PID)
-	case createTimeUnknown:
+	case createTimeSkew, createTimeUnknown:
 		proved, err := proveDaemonRuntimeIdentity(ctx, rt.Record)
 		if err != nil {
 			return fmt.Errorf("prove local daemon identity at %s: %w", url, err)
