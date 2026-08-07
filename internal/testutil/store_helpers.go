@@ -2,15 +2,12 @@ package testutil
 
 import (
 	"crypto/rand"
-	"database/sql"
 	"encoding/hex"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
-	_ "github.com/jackc/pgx/v5/stdlib" // Register pgx driver for test setup
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/store"
 )
@@ -74,21 +71,19 @@ func SkipIfPostgres(t *testing.T, reason string) {
 
 // newPostgresTestStore creates a test-isolated PostgreSQL store using a random schema name.
 // The schema is dropped on test cleanup.
+//
+// The schema is taken from the warm pool when one is ready — already created
+// and already migrated, so the test pays only for opening its own connection.
+// Otherwise the test creates and migrates one itself, exactly as it always did.
+// Either way the schema is private to this test, never previously used, and
+// dropped on cleanup.
 func newPostgresTestStore(t *testing.T, dbURL string) *store.Store {
 	t.Helper()
 
-	// Generate a random schema name for test isolation
-	buf := make([]byte, 8)
-	_, err := rand.Read(buf)
-	require.NoError(t, err, "random schema name")
-	schemaName := "msgvault_test_" + hex.EncodeToString(buf)
-
-	// Create the schema using a separate connection
-	setupDB, err := sql.Open("pgx", dbURL)
-	require.NoError(t, err, "open setup connection")
-	_, schemaErr := setupDB.Exec("CREATE SCHEMA " + schemaName)
-	_ = setupDB.Close()
-	require.NoErrorf(t, schemaErr, "create schema %s", schemaName)
+	schemaName, warmed := claimWarmSchema(dbURL)
+	if !warmed {
+		schemaName = createTestSchema(t, dbURL)
+	}
 
 	// Register schema cleanup immediately so that any failure below this
 	// point (store.Open, InitSchema) doesn't leak the schema.
@@ -97,25 +92,38 @@ func newPostgresTestStore(t *testing.T, dbURL string) *store.Store {
 		if st != nil {
 			_ = st.Close()
 		}
-		cleanupDB, err := sql.Open("pgx", dbURL)
+		cleanupDB, err := pgAdminDB(dbURL)
 		if err != nil {
 			return
 		}
-		defer func() { _ = cleanupDB.Close() }()
-		_, _ = cleanupDB.Exec(fmt.Sprintf("DROP SCHEMA %s CASCADE", schemaName))
+		dropOwnedSchema(cleanupDB, schemaName)
 	})
 
-	// Build a URL that uses the test schema via search_path
-	testURL := dbURL
-	sep := "?"
-	if strings.Contains(dbURL, "?") {
-		sep = "&"
-	}
-	testURL += sep + "search_path=" + schemaName
-
-	st, err = store.Open(testURL)
+	st, err := store.Open(schemaURL(dbURL, schemaName))
 	require.NoError(t, err, "open store")
-	require.NoError(t, st.InitSchema(), "init schema")
+	if !warmed {
+		require.NoError(t, st.InitSchema(), "init schema")
+	}
 
 	return st
+}
+
+// createTestSchema creates an empty, unmigrated schema for one test. This is
+// the path a fixture takes when the warm pool has nothing ready or is
+// unavailable, so its failures must read exactly as they did before the pool
+// existed.
+func createTestSchema(t *testing.T, dbURL string) string {
+	t.Helper()
+
+	buf := make([]byte, 8)
+	_, err := rand.Read(buf)
+	require.NoError(t, err, "random schema name")
+	schemaName := "msgvault_test_" + hex.EncodeToString(buf)
+
+	setupDB, err := pgAdminDB(dbURL)
+	require.NoError(t, err, "open setup connection")
+	_, schemaErr := setupDB.Exec("CREATE SCHEMA " + schemaName)
+	require.NoErrorf(t, schemaErr, "create schema %s", schemaName)
+
+	return schemaName
 }
