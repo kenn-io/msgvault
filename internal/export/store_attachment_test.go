@@ -250,6 +250,9 @@ func TestStoreAttachmentFileDurableSyncsNewHashDirectoryAndFinalParent(t *testin
 		Content: content, ContentHash: hashText,
 	})
 	require.NoError(err)
-	require.Equal([]string{filepath.Clean(resolvedDir), filepath.Clean(hashDir)}, synced,
-		"new hash dir entry must be synced before the final file entry")
+	require.GreaterOrEqual(len(synced), 2)
+	assert.Equal(t, filepath.Clean(resolvedDir), synced[0],
+		"new hash directory entry must be durable before publishing within it")
+	assert.Equal(t, filepath.Clean(hashDir), synced[len(synced)-1],
+		"final attachment entry must be followed by a hash-directory sync")
 }

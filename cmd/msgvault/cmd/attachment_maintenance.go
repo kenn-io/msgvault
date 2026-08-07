@@ -46,7 +46,7 @@ func newAttachmentMaintenance(
 		return nil, fmt.Errorf("create attachment maintenance layout: %w", err)
 	}
 	coordinator := packstore.NewCoordinator()
-	maintainer, err := packstore.NewMaintainer(store.NewPackCatalog(s), layout, packstore.MaintainerOptions{
+	maintainer, err := packstore.NewMaintainer(store.NewMaintenancePackCatalog(s, layout.Root()), layout, packstore.MaintainerOptions{
 		Coordinator: coordinator,
 	})
 	if err != nil {

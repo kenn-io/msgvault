@@ -308,6 +308,8 @@ func TestRemoveAccountCmd_DeletesUniquePackedMappings(t *testing.T) {
 	require.NoError(s.InitSchema())
 	seedMessageWithAttachment(t, s,
 		"alice@example.com", "thread-a", "msg-a", storagePath, hash)
+	_, err = s.DB().Exec(s.Rebind(`UPDATE attachments SET size = ? WHERE content_hash = ?`), len(content), hash)
+	require.NoError(err)
 	_, err = s.DB().Exec(s.Rebind(`
 		UPDATE attachments SET thumbnail_hash = ?, thumbnail_path = ?
 		WHERE content_hash = ?`), thumbnailHash, thumbnailPath, hash)
