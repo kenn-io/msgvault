@@ -155,11 +155,28 @@ func openSQLite(dbPath, params string) (*Store, error) {
 		return nil, fmt.Errorf("init connection: %w", err)
 	}
 
-	return &Store{
+	s := &Store{
 		db:      newLoggedDB(db, dialect.Rebind),
 		dbPath:  dbPath,
 		dialect: dialect,
-	}, nil
+	}
+
+	// Probe like the read-only opens do: a Store must know whether full-text
+	// search is available in the database it just opened. InitSchema re-probes
+	// after creating the FTS objects, so a caller that initializes a fresh
+	// database still gets the right answer; a caller that opens an already
+	// initialized one no longer has to run InitSchema to learn it.
+	//
+	// As in OpenReadOnly, this constructor takes no context, so the probe
+	// cannot be cancelled; its error is still checked rather than dropped.
+	available, err := dialect.FTSAvailable(context.Background(), db)
+	if err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("probe FTS availability: %w", err)
+	}
+	s.fts5Available = available
+
+	return s, nil
 }
 
 // openPostgres opens a PostgreSQL database using the given connection URL.
@@ -187,12 +204,24 @@ func openPostgres(dbURL string) (*Store, error) {
 		return nil, fmt.Errorf("init PostgreSQL connection: %w", err)
 	}
 
-	return &Store{
+	s := &Store{
 		db:           newLoggedDB(db, dialect.Rebind),
 		dbPath:       dbURL,
 		dialect:      dialect,
 		closeCleanup: cleanup,
-	}, nil
+	}
+
+	// See openSQLite: availability is a property of the database, not of
+	// whether this caller happened to run InitSchema.
+	available, err := dialect.FTSAvailable(context.Background(), db)
+	if err != nil {
+		_ = db.Close()
+		cleanup()
+		return nil, fmt.Errorf("probe FTS availability: %w", err)
+	}
+	s.fts5Available = available
+
+	return s, nil
 }
 
 // OpenReadOnly opens an existing database in read-only mode. Suitable for
