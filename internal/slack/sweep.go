@@ -283,8 +283,25 @@ func (imp *Importer) sweepRange(ctx context.Context, syncID int64, scope, floor 
 			sum.Errors++
 			return nil
 		}
-		if err := imp.recordSweepDebt(ctx, syncID, hits, queryFloor, targets, budget, state, sum); err != nil {
-			return err // store/context failure: fatal for the run
+		// Reserve one unit from a free overlap day for the first uncertified
+		// day's charge. At --limit 1 this suppresses the immediate drain, so an
+		// overlap hit cannot park the floor. Larger limits can still defer the
+		// day once if a drain pays its bounded missing-parent overshoot, but the
+		// recorded debt remains finite and later limited runs converge.
+		debtBudget := budget
+		reservedDayCharge := !chargeDay && budget.limit > 0 && !budget.exhausted()
+		var overlapBudget sweepBudget
+		if reservedDayCharge {
+			overlapBudget = *budget
+			overlapBudget.used++
+			debtBudget = &overlapBudget
+		}
+		debtErr := imp.recordSweepDebt(ctx, syncID, hits, queryFloor, targets, debtBudget, state, sum)
+		if reservedDayCharge {
+			budget.used = debtBudget.used - 1
+		}
+		if debtErr != nil {
+			return debtErr // store/context failure: fatal for the run
 		}
 		if truncated {
 			// The rest of the day is unreachable to search, so it is

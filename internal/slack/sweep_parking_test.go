@@ -129,3 +129,50 @@ func TestSweepLimitOneConvergesFromDayBehindBacklog(t *testing.T) {
 	}
 	requireParkedSweepReply(t, imp, replyID)
 }
+
+func TestSweepLimitOneOverlapHitDoesNotStarveUncertifiedDay(t *testing.T) {
+	require := require.New(t)
+	midnight := time.Date(2026, 8, 7, 0, 0, 0, 0, time.UTC)
+	base := midnight.Add(3 * time.Minute)
+	f, rootTS := parkedSweepWorkspace(t, base)
+	imp, opts := testImporter(t, f)
+
+	pinParkedSweepClock(imp, base)
+	_, err := imp.Import(context.Background(), opts)
+	require.NoError(err)
+	pinParkedSweepClock(imp, base.Add(time.Minute))
+	sum, err := imp.Import(context.Background(), opts)
+	require.NoError(err)
+	state := requireResumeState(t, imp, sum.SourceID)
+	initialWatermark := state.SweepWatermark
+	require.NotEmpty(initialWatermark, "test setup: warm-up sweep must establish the workspace watermark")
+	floorTime := tsTime(initialWatermark)
+
+	// The reply appears after the initial run with a source timestamp inside
+	// its certified overlap. Search must turn it into debt without letting its
+	// fetch consume the only unit needed to reach the first uncertified day.
+	overlapReply := tsFormat(floorTime.Add(-5 * time.Minute))
+	require.True(tsLess(overlapFloor(initialWatermark), overlapReply), "test setup: reply must be above queryFloor")
+	require.True(tsLess(overlapReply, initialWatermark), "test setup: reply must be below the persisted floor")
+	replyID := addParkedSweepReply(f, rootTS, overlapReply)
+
+	limited := opts
+	limited.Limit = 1
+	pinParkedSweepClock(imp, base.Add(2*time.Minute))
+	_, err = imp.Import(context.Background(), limited)
+	require.NoError(err)
+	state = requireResumeState(t, imp, sum.SourceID)
+	require.True(tsLess(initialWatermark, state.SweepWatermark),
+		"the first limited run must reserve enough budget to reach uncertified coverage")
+
+	for minute := 3; minute <= 13; minute++ {
+		pinParkedSweepClock(imp, base.Add(time.Duration(minute)*time.Minute))
+		_, err = imp.Import(context.Background(), limited)
+		require.NoError(err)
+	}
+
+	state = requireResumeState(t, imp, sum.SourceID)
+	require.True(tsLess(tsFormat(floorTime.Add(10*time.Minute)), state.SweepWatermark),
+		"the watermark must advance far enough for the hit to leave the overlap")
+	requireParkedSweepReply(t, imp, replyID)
+}
