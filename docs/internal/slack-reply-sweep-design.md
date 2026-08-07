@@ -289,14 +289,15 @@ for incremental sync. Consequences:
   anchor. Roots newer than the fresh pin need no walk (their replies
   postdate the watermark by creation time), and the pin keeps the
   newest-first pagination window stable during the walk.
-- **Limited runs sweep too**, with a work budget: searched days and
-  canonically fetched messages charge it, and exhaustion parks the
-  boundary at the last safe point without failing the run. Per-day
-  commits are durable, so a standing `--limit` schedule converges on
-  reply discovery like every other path — a permanently-capped sync
-  must never mean "no replies, ever". (A standing limit below the
-  workspace's message rate falls progressively behind — a throughput
-  ceiling, never a completeness loss.)
+- **Limited runs sweep too**, with a work budget: searched days whose next
+  boundary is above the persisted floor and canonically fetched messages
+  charge it. Already-certified overlap days stay searchable for late indexing
+  without consuming the unit needed to reach new coverage. Exhaustion parks
+  the boundary at the last safe point without failing the run. Per-day commits
+  are durable, so a standing `--limit` schedule converges on reply discovery
+  like every other path — a permanently-capped sync must never mean "no
+  replies, ever". (A standing limit below the workspace's message rate falls
+  progressively behind — a throughput ceiling, never a completeness loss.)
 - **`--full` is a repair SESSION, not a one-shot.** It resets the state
   under a bumped generation and sets a repair-pending flag; every
   subsequent run — full, plain, or limited — continues the repair
@@ -368,8 +369,9 @@ sweepRange(scope=none, floor, searchEnd=now, ceiling=pin)
 
 sweepRange(scope, floor, searchEnd, ceiling):
     queryFloor = floor − lagMargin                 # the OVERLAP
-    budget: one charge per day, plus drained messages; recording debt is
-            never gated (guaranteed first unit holds structurally)
+    budget: one charge per day whose next boundary is above floor, plus
+            drained messages; certified overlap days are free; recording
+            debt is never gated (guaranteed first unit holds structurally)
     for day D = day(queryFloor, zone) … day(searchEnd, zone):  // ascending
         for page = 1 … min(pages, 100):
             q = `[in:<#scope>] threads:replies on:D -"<nonce>"`

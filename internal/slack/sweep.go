@@ -36,12 +36,14 @@ type sweepTarget struct {
 	toRecipients []messageRecipient
 }
 
-// sweepBudget bounds a limited run's sweep work (limit 0 = unlimited). Days
-// searched and canonically fetched messages both charge it: fetches are the
-// message work, and the per-day charge keeps a long catch-up from paging
-// through months of queries on a run that promised to be small. Exhaustion
-// parks certification at the last safe boundary WITHOUT failing the run —
-// per-day commits are durable, so repeated limited runs converge.
+// sweepBudget bounds a limited run's sweep work (limit 0 = unlimited).
+// Uncertified days searched and canonically fetched messages both charge it:
+// fetches are the message work, and the per-day charge keeps a long catch-up
+// from paging through months of queries on a run that promised to be small.
+// Already-certified overlap days remain free so the next uncertified day can
+// make progress. Exhaustion parks certification at the last safe boundary
+// WITHOUT failing the run — per-day commits are durable, so repeated limited
+// runs converge.
 type sweepBudget struct{ limit, used int }
 
 func (b *sweepBudget) exhausted() bool { return b.limit > 0 && b.used >= b.limit }
@@ -253,10 +255,17 @@ func (imp *Importer) sweepRange(ctx context.Context, syncID int64, scope, floor 
 			day = nextDay
 			continue
 		}
-		if budget.exhausted() {
+		// Re-search a fully certified overlap day for late indexing without
+		// charging it as forward work. Otherwise a --limit 1 run whose floor
+		// is at or shortly after midnight spends every run on that same day
+		// and can never reach uncertified coverage.
+		chargeDay := tsLess(floor, nextBoundary)
+		if chargeDay && budget.exhausted() {
 			return nil // certification stays at the last committed boundary
 		}
-		budget.used++
+		if chargeDay {
+			budget.used++
+		}
 		dayStr := day.Format("2006-01-02")
 		item := dayStr
 		if scope != "" {
