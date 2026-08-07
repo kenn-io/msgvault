@@ -526,10 +526,14 @@ jobs:
       # This lane uses a stock postgres:16 image (no pgvector extension), so it
       # must NOT build the pgvector tag — those tests CREATE EXTENSION "vector"
       # and fail here. pgvector is covered by the dedicated test-pgvector job
-      # against a pgvector/pgvector image. (Run go test directly rather than
-      # `make test-pg`, whose PG_TEST_TAGS include pgvector.)
+      # against a pgvector/pgvector image. That is why this runs test-pg-shipped
+      # (BUILD_TAGS) and not test-pg (PG_TEST_TAGS, which include pgvector).
+      #
+      # The target carries -timeout 20m for the same reason `make test` does:
+      # the heavy DuckDB packages can exceed go test's 10m per-package default
+      # on a contended runner, and this lane is the slowest one there is.
       - name: Test (PostgreSQL)
-        run: go test -tags "fts5 sqlite_vec" ./...
+        run: make test-pg-shipped
 
       - name: Concurrency tests (-count=5)
         run: |

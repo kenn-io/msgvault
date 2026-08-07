@@ -26,6 +26,17 @@ BUILD_TAGS := fts5 sqlite_vec
 # Omitting sqlite_vec compiles those out and the target gives false confidence.
 PG_TEST_TAGS := fts5 sqlite_vec pgvector
 
+# The only packages that build a different test binary under BUILD_TAGS than
+# under PG_TEST_TAGS. That is not just the packages carrying pgvector-gated
+# files: a package whose own sources are identical still links different code
+# when something in its dependency closure changed, so this is the reverse
+# dependency closure of the tag-sensitive packages, not the tag-sensitive
+# packages themselves. Every package outside this set compiles byte-identically
+# in both configurations, so test-pg-both runs just these in the shipped-build
+# configuration. Verified by `make pg-shipped-only-check`, which re-derives the
+# closure from `go list`.
+PG_SHIPPED_ONLY_PKGS := ./cmd/msgvault ./cmd/msgvault/cmd ./internal/api ./internal/mcp ./internal/scheduler ./internal/vector/chunkmatch ./internal/vector/embed ./internal/vector/hybrid ./internal/vector/pgvector
+
 OPENAPI_ARTIFACTS := api/openapi.yaml pkg/client/openapi.yaml pkg/client/generated
 WEB_INSTALL_STAMP := web/node_modules/.msgvault-install-stamp
 
@@ -36,7 +47,7 @@ DEFAULT_GOLANGCI_LINT_CACHE := $(shell git rev-parse --path-format=absolute --gi
 GOLANGCI_LINT_CACHE ?= $(DEFAULT_GOLANGCI_LINT_CACHE)
 export GOLANGCI_LINT_CACHE
 
-.PHONY: build build-release install clean test test-v test-pg fmt lint lint-ci testify-helper-check tidy openapi api-generate openapi-check api-check web-install web-generate web-check web-test web-test-browser web-e2e web-build web-embed web-assets-check smoke-web-release shootout run-shootout install-hooks bench vcard-registry-check vcard-registry-update docs-install docs-build docs-serve docs-check docs-screenshots docs-assets-branch docs-generated-assets-branch docs-deploy-staging docs-deploy help
+.PHONY: build build-release install clean test test-v test-pg test-pg-shipped test-pg-both pg-shipped-only-check require-test-db fmt lint lint-ci testify-helper-check tidy openapi api-generate openapi-check api-check web-install web-generate web-check web-test web-test-browser web-e2e web-build web-embed web-assets-check smoke-web-release shootout run-shootout install-hooks bench vcard-registry-check vcard-registry-update docs-install docs-build docs-serve docs-check docs-screenshots docs-assets-branch docs-generated-assets-branch docs-deploy-staging docs-deploy help
 
 # Build the binary (debug)
 build: web-embed
@@ -79,17 +90,90 @@ test:
 test-v:
 	go test -timeout 20m -tags "$(BUILD_TAGS)" -v ./...
 
-# Run tests against PostgreSQL (set MSGVAULT_TEST_DB first).
+# Run tests against PostgreSQL with the pgvector tag (set MSGVAULT_TEST_DB
+# first). Needs a server with the vector extension available.
 # Example: MSGVAULT_TEST_DB=postgres://user:pass@localhost:5432/db make test-pg
 #
-# CI runs the same target under .github/workflows/ci.yml's test-postgres job.
+# CI does not run this target as-is: .github/workflows/ci.yml splits the same
+# ground into test-pgvector (pgvector image, pgvector-tagged packages) and
+# test-postgres (stock image, test-pg-shipped below).
 # See docs/internal/PG_STATUS.md for the supported feature surface.
-test-pg:
+test-pg: require-test-db
+	go test -timeout 20m -tags "$(PG_TEST_TAGS)" ./...
+
+# Run the SHIPPED build's tests against PostgreSQL (set MSGVAULT_TEST_DB first).
+# The released binary is built with BUILD_TAGS and no pgvector, so that build
+# has to be exercised against a PostgreSQL archive too. This is the lane
+# .github/workflows/ci.yml's test-postgres job runs.
+#
+# It is a named target rather than an inline `go test` so its flags match the
+# `test` target exactly. Go's test cache keys on the flags, so any package that
+# never reads MSGVAULT_TEST_DB — the SQLite-only ones — is served from `make
+# test`'s cache instead of being re-run here.
+test-pg-shipped: require-test-db
+	go test -timeout 20m -tags "$(BUILD_TAGS)" ./...
+
+# Both PostgreSQL lanes' coverage in one pass.
+#
+# test-pg and test-pg-shipped differ only in the pgvector build tag, and that
+# tag changes the test binary of just the packages in PG_SHIPPED_ONLY_PKGS. For
+# every other package the two lanes compile a byte-identical test binary and run
+# it against the same server with the same environment, so running both in full
+# repeats roughly 1000s of work per round. This target runs test-pg in full and
+# then only the packages the tag actually changes.
+#
+# Use this instead of running the two lanes back to back. Do NOT run
+# test-pg-shipped's narrow half on its own and call PostgreSQL covered — the
+# equivalence argument depends on the full pgvector lane having run on the same
+# tree. pg-shipped-only-check re-derives the package set and fails if it drifts.
+test-pg-both: require-test-db pg-shipped-only-check
+	go test -timeout 20m -tags "$(PG_TEST_TAGS)" ./...
+	go test -timeout 20m -tags "$(BUILD_TAGS)" $(PG_SHIPPED_ONLY_PKGS)
+
+# Fail if the set of packages whose test binary changes when the pgvector tag is
+# dropped no longer matches PG_SHIPPED_ONLY_PKGS. This is the assumption
+# test-pg-both rests on, so it is checked rather than trusted: a new
+# pgvector-gated file, or a new import of a package that has one, would
+# otherwise silently stop being covered in the shipped-build configuration.
+#
+# Two steps, because a package's own source list is not enough. The first finds
+# the packages the tag changes directly. The second walks the test dependency
+# graph and adds every package that links one of them, since its test binary
+# differs even though its own files do not.
+pg-shipped-only-check:
+	@set -e; \
+	module="$$(go list -m)"; \
+	tmp="$$(mktemp -d)"; \
+	trap 'rm -rf "$$tmp"' EXIT; \
+	fmt='{{.ImportPath}}|{{.GoFiles}}|{{.TestGoFiles}}|{{.XTestGoFiles}}|{{.CgoFiles}}'; \
+	go list -deps -test -tags "$(BUILD_TAGS)" -f "$$fmt" ./... | sort > "$$tmp/shipped"; \
+	go list -deps -test -tags "$(PG_TEST_TAGS)" -f "$$fmt" ./... | sort > "$$tmp/pgvector"; \
+	diff "$$tmp/shipped" "$$tmp/pgvector" \
+		| sed -n 's/^[<>] \([^|]*\)|.*/\1/p' \
+		| sed 's/ \[.*//; s/\.test$$//' \
+		| sort -u > "$$tmp/sensitive"; \
+	go list -test -tags "$(BUILD_TAGS)" -f '{{.ImportPath}}|{{join .Deps " "}}' ./... > "$$tmp/deps"; \
+	awk -v mod="$$module" -F'|' 'NR==FNR { sensitive[$$0]=1; next } { \
+		name = $$1; \
+		sub(/ \[.*/, "", name); sub(/\.test$$/, "", name); sub(/_test$$/, "", name); \
+		if (index(name, mod) != 1) next; \
+		hit = (name in sensitive); \
+		if (!hit) { n = split($$2, d, " "); for (i = 1; i <= n && !hit; i++) if (d[i] in sensitive) hit = 1 } \
+		if (hit) print name \
+	}' "$$tmp/sensitive" "$$tmp/deps" \
+		| sed "s|^$$module/|./|; s|^$$module$$|.|" \
+		| sort -u > "$$tmp/actual"; \
+	printf '%s\n' $(PG_SHIPPED_ONLY_PKGS) | sort -u > "$$tmp/expected"; \
+	if ! diff -u "$$tmp/expected" "$$tmp/actual"; then \
+		echo "PG_SHIPPED_ONLY_PKGS is stale ('-' expected, '+' actual). Update it in the Makefile; test-pg-both's coverage argument depends on it." >&2; \
+		exit 1; \
+	fi
+
+require-test-db:
 	@if [ -z "$$MSGVAULT_TEST_DB" ]; then \
 		echo "MSGVAULT_TEST_DB must be set, e.g., postgres://user:pass@localhost:5432/db" >&2; \
 		exit 1; \
 	fi
-	go test -tags "$(PG_TEST_TAGS)" ./...
 
 # Network-check or update the vendored IANA vCard Elements registry. These are
 # manual targets; CI validates handling coverage against the vendored snapshot.
