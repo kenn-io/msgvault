@@ -97,9 +97,17 @@ func (c *PackCatalog) ListUnpacked(ctx context.Context) ([]packstore.Candidate, 
 		}
 		size := blob.Size
 		if size < 0 && c.attachmentsDir != "" {
-			path := filepath.Join(c.attachmentsDir, hash.String()[:2], hash.String())
-			if info, statErr := os.Lstat(path); statErr == nil && info.Mode().IsRegular() {
-				size = info.Size()
+			paths := append([]string(nil), blob.Paths...)
+			paths = append(paths, filepath.Join(hash.String()[:2], hash.String()))
+			for _, candidatePath := range paths {
+				path := filepath.FromSlash(candidatePath)
+				if !filepath.IsAbs(path) {
+					path = filepath.Join(c.attachmentsDir, path)
+				}
+				if info, statErr := os.Lstat(filepath.Clean(path)); statErr == nil && info.Mode().IsRegular() {
+					size = info.Size()
+					break
+				}
 			}
 		}
 		result = append(result, packstore.Candidate{Hash: hash,
