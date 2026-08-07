@@ -1,0 +1,8 @@
+{
+  "branch": "docs-fixtures",
+  "commit": "e46ca1789ce1fb6e0dd31b8cdae34190f6806291",
+  "manifest_sha256": "1ce8e96c4b1ca56e6a939eff53fad25e9d5391a9cb91bd7a8bf524e67f3eacb0",
+  "path": "enron-web-fixture.mbox.gz",
+  "sha256": "1e4596c3bfd9b1750d207338fa9482f10ed76fade10be8481d7d57ba2519846d",
+  "source_release": "2015-05-07"
+}

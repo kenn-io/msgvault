@@ -68,4 +68,5 @@ docs/.zensical-build.*
 docs/assets/static/
 docs/assets/generated/
 docs/screenshots/demo-data/
+.docs-fixture-staging/
 .kata.local.toml

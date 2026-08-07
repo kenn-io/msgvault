@@ -17,6 +17,16 @@ expected_assets=(
   "oauth-multi-account.svg"
   "og-image.png"
   "og-image.svg"
+  "analytical-dark-comfortable-darwin.png"
+  "analytical-dark-comfortable-linux.png"
+  "analytical-dark-compact-darwin.png"
+  "analytical-dark-compact-linux.png"
+  "analytical-light-comfortable-darwin.png"
+  "analytical-light-comfortable-linux.png"
+  "analytical-light-compact-darwin.png"
+  "analytical-light-compact-linux.png"
+  "relationships-dark-comfortable-darwin.png"
+  "relationships-light-compact-darwin.png"
 )
 
 usage() {

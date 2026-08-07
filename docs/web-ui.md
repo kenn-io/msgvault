@@ -10,6 +10,38 @@ Msgvault's first-party web UI is embedded in every release binary and served by
 directory at runtime. The transactional archive remains authoritative while the
 Parquet/DuckDB analytical cache supplies the interactive tables.
 
+These reference captures are hydrated from the orphan `docs-assets` branch when
+the documentation is built. The analytical captures use a compact,
+provenance-documented Enron-derived fixture imported through the real daemon;
+the ordinary browser checks continue to use small synthetic API fixtures.
+
+<figure class="screenshot" data-lightbox>
+  <img src="/assets/static/relationships-dark-comfortable-darwin.png" alt="Experimental Relationships workspace in dark theme with ranked people and activity timeline" loading="lazy">
+  <figcaption>Relationships ranked view and selected activity timeline.</figcaption>
+</figure>
+
+<figure class="screenshot" data-lightbox>
+  <img src="/assets/static/relationships-light-compact-darwin.png" alt="Experimental Relationships workspace in light theme with compact density" loading="lazy">
+  <figcaption>Relationships workspace in light theme with compact density.</figcaption>
+</figure>
+
+<figure class="screenshot" data-lightbox>
+  <img src="/assets/static/analytical-dark-comfortable-darwin.png" alt="Experimental analytical web UI in dark theme with comfortable density" loading="lazy">
+  <figcaption>Dark theme with comfortable density.</figcaption>
+</figure>
+
+<figure class="screenshot" data-lightbox>
+  <img src="/assets/static/analytical-light-compact-darwin.png" alt="Experimental analytical web UI in light theme with compact density" loading="lazy">
+  <figcaption>Light theme with compact density.</figcaption>
+</figure>
+
+The authentic names and message text in these two relationship captures are
+intentional public research data from the controlled `docs-fixtures` branch.
+The branch README and manifest record the CMU/CALO source, attribution,
+selection exclusions, and message-by-message sensitive-content review.
+The relationship captures are Darwin-only; the analytical matrix includes
+Darwin and Linux variants to exercise host-specific rasterization.
+
 ## Start and discover the URL
 
 ```bash

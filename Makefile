@@ -47,7 +47,7 @@ DEFAULT_GOLANGCI_LINT_CACHE := $(shell git rev-parse --path-format=absolute --gi
 GOLANGCI_LINT_CACHE ?= $(DEFAULT_GOLANGCI_LINT_CACHE)
 export GOLANGCI_LINT_CACHE
 
-.PHONY: build build-release install clean test test-v test-pg test-pg-shipped test-pg-both pg-shipped-only-check require-test-db fmt lint lint-ci testify-helper-check tidy openapi api-generate openapi-check api-check web-install web-generate web-check web-test web-test-browser web-e2e web-build web-embed web-assets-check smoke-web-release shootout run-shootout install-hooks bench vcard-registry-check vcard-registry-update docs-install docs-build docs-serve docs-check docs-screenshots docs-assets-branch docs-generated-assets-branch docs-deploy-staging docs-deploy help
+.PHONY: build build-release install clean test test-v test-pg test-pg-shipped test-pg-both pg-shipped-only-check require-test-db fmt lint lint-ci testify-helper-check tidy openapi api-generate openapi-check api-check web-install web-generate web-check web-test web-test-browser web-e2e web-build web-embed web-assets-check smoke-web-release shootout run-shootout install-hooks bench vcard-registry-check vcard-registry-update docs-install docs-build docs-serve docs-check docs-fixture-test docs-fixture-check docs-fixture-smoke docs-web-screenshots docs-screenshots docs-assets-branch docs-generated-assets-branch docs-deploy-staging docs-deploy help
 
 # Build the binary (debug)
 build: web-embed
@@ -325,6 +325,29 @@ docs-serve:
 # Check docs sources and build output
 docs-check:
 	bash scripts/check-docs.sh
+
+# Run the deterministic fixture selector and review-report unit tests.
+docs-fixture-test:
+	python3 -m unittest docs/fixtures/test_select_enron_fixture.py
+
+# Validate the pinned, manually reviewed docs-fixtures branch in a disposable
+# directory. The explicit offline mode is a local opt-in and prints SKIP.
+docs-fixture-check:
+	@fixture_tmp="$$(mktemp -d /tmp/msgvault-docs-fixture-check.XXXXXX)"; \
+	trap 'rm -rf "$$fixture_tmp"' EXIT; \
+	bash docs/fixtures/hydrate-fixture.sh --output-dir "$$fixture_tmp"
+
+# Exercise the real importer, cache, daemon, and relationship API against the
+# hydrated fixture. This is deliberately outside make test.
+docs-fixture-smoke:
+	@fixture_tmp="$$(mktemp -d /tmp/msgvault-docs-fixture-smoke.XXXXXX)"; \
+	trap 'rm -rf "$$fixture_tmp"' EXIT; \
+	bash docs/fixtures/hydrate-fixture.sh --output-dir "$$fixture_tmp/fixture"; \
+	bash docs/fixtures/run-smoke.sh "$$fixture_tmp/fixture"
+
+# Generate docs screenshots from the isolated real-daemon fixture pipeline.
+docs-web-screenshots:
+	bash docs/screenshots/generate-web-fixture-screenshots.sh
 
 # Regenerate docs screenshots
 docs-screenshots:

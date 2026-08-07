@@ -353,6 +353,45 @@ func TestParse_MinimalMessage(t *testing.T) {
 	assert.Equal(t, "Body text", msg.BodyText)
 }
 
+func TestParse_AddressListKeepsValidAndMalformedTokens(t *testing.T) {
+	raw := []byte("From: sender@example.com\r\n" +
+		"To: valid-a@example.com, v..porter@enron.com,\r\n" +
+		"\tvalid-b@example.com, valid-c@example.com\r\n" +
+		"Subject: Recipients\r\n\r\nBody")
+
+	msg := mustParse(t, raw)
+	got := make([]string, len(msg.To))
+	for i, address := range msg.To {
+		got[i] = address.Email
+	}
+
+	assert.ElementsMatch(t, []string{
+		"valid-a@example.com",
+		"v..porter@enron.com",
+		"valid-b@example.com",
+		"valid-c@example.com",
+	}, got)
+}
+
+func TestParse_AddressListFallbackIgnoresQuotedNamesAndComments(t *testing.T) {
+	raw := []byte("From: sender@example.com\r\n" +
+		"To: \"display email-like@example.com\" <valid-a@example.com>,\r\n" +
+		"\tv..porter@enron.com (comment@example.com), valid-b@example.com\r\n" +
+		"Subject: Recipients\r\n\r\nBody")
+
+	msg := mustParse(t, raw)
+	got := make([]string, len(msg.To))
+	for i, address := range msg.To {
+		got[i] = address.Email
+	}
+
+	assert.ElementsMatch(t, []string{
+		"valid-a@example.com",
+		"v..porter@enron.com",
+		"valid-b@example.com",
+	}, got)
+}
+
 // TestParse_MalformedContinuationLineAfterDate reproduces an mbox-derived
 // message where a stray, unindented "." line follows the Date header.
 // enmime folds it onto the Date value as a continuation instead of erroring,

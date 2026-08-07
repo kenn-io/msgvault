@@ -110,7 +110,7 @@ func Parse(raw []byte) (*Message, error) {
 func parseAddressList(env *enmime.Envelope, header string) []Address {
 	list, err := env.AddressList(header)
 	if err != nil || list == nil {
-		return nil
+		return fallbackAddressList(env.GetHeader(header))
 	}
 
 	addresses := make([]Address, 0, len(list))
@@ -125,6 +125,132 @@ func parseAddressList(env *enmime.Envelope, header string) []Address {
 		})
 	}
 	return addresses
+}
+
+// fallbackAddressList keeps address tokens when one malformed token causes
+// enmime to reject an otherwise useful address list. A malformed recipient
+// must not hide the valid recipients that share its header.
+func fallbackAddressList(value string) []Address {
+	var addresses []Address
+	for _, token := range splitAddressTokens(value) {
+		for _, email := range emailAddressTokenRe.FindAllString(stripAddressDecorations(token), -1) {
+			email = strings.ToLower(email)
+			addresses = append(addresses, Address{
+				Email:  email,
+				Domain: extractDomain(email),
+			})
+		}
+	}
+	return addresses
+}
+
+// splitAddressTokens splits an address header at commas that are outside
+// quoted strings, comments, and angle-bracket addresses.
+func splitAddressTokens(value string) []string {
+	var tokens []string
+	start := 0
+	quoted := false
+	escaped := false
+	commentDepth := 0
+	angleDepth := 0
+
+	for i, r := range value {
+		if escaped {
+			escaped = false
+			continue
+		}
+		if quoted {
+			switch r {
+			case '\\':
+				escaped = true
+			case '"':
+				quoted = false
+			}
+			continue
+		}
+		if commentDepth > 0 {
+			switch r {
+			case '\\':
+				escaped = true
+			case '(':
+				commentDepth++
+			case ')':
+				commentDepth--
+			}
+			continue
+		}
+
+		switch r {
+		case '"':
+			quoted = true
+		case '(':
+			commentDepth = 1
+		case '<':
+			angleDepth++
+		case '>':
+			if angleDepth > 0 {
+				angleDepth--
+			}
+		case ',':
+			if angleDepth == 0 {
+				tokens = append(tokens, value[start:i])
+				start = i + 1
+			}
+		}
+	}
+
+	return append(tokens, value[start:])
+}
+
+// stripAddressDecorations removes quoted display names and comments before
+// salvage scans a single address token. Email-like text in either region is
+// descriptive text, not a recipient address.
+func stripAddressDecorations(value string) string {
+	var stripped strings.Builder
+	stripped.Grow(len(value))
+	quoted := false
+	escaped := false
+	commentDepth := 0
+
+	for _, r := range value {
+		if escaped {
+			escaped = false
+			continue
+		}
+		if quoted {
+			switch r {
+			case '\\':
+				escaped = true
+			case '"':
+				quoted = false
+			}
+			continue
+		}
+		if commentDepth > 0 {
+			switch r {
+			case '\\':
+				escaped = true
+			case '(':
+				commentDepth++
+			case ')':
+				commentDepth--
+			}
+			continue
+		}
+
+		switch r {
+		case '"':
+			quoted = true
+			stripped.WriteByte(' ')
+		case '(':
+			commentDepth = 1
+			stripped.WriteByte(' ')
+		default:
+			stripped.WriteRune(r)
+		}
+	}
+
+	return stripped.String()
 }
 
 // extractDomain extracts the domain from an email address.
@@ -232,6 +358,8 @@ var dateFormats = []string{
 
 // numericOffsetRe matches numeric timezone offsets like +0000, -0700, +00:00, -07:00.
 var numericOffsetRe = regexp.MustCompile(`[+-]\d{2}:?\d{2}`)
+
+var emailAddressTokenRe = regexp.MustCompile("[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9.-]+")
 
 // hasNumericOffset returns true if the string contains a numeric timezone offset or Z (UTC).
 // Named timezones like "MST" have platform-dependent behavior in Go's time.Parse,

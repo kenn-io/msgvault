@@ -233,6 +233,15 @@ Sync is **read-only** - no modifications to Gmail.
 
 Never use real people's names, email addresses, or identifiers in test fixtures. Use obviously synthetic names: `alice`, `bob`, `Test User`, `user@example.com`. Before committing test data, verify no real PII is present.
 
+Exception: the provenance-documented Enron web UI fixture stored on the
+`docs-fixtures` orphan branch and its derived documentation screenshots may
+retain authentic names, addresses, and message text. This is a narrowly scoped
+public-research-data exception for the real-importer documentation smoke path;
+it does not permit copying those identities into ordinary tests or fixtures.
+The fixture manifest and README must record source provenance, attribution,
+the completed message-by-message sensitive-content review, and the reviewed
+artifact digest before publication.
+
 ## Go Development
 
 After making any Go code changes, always run `go fmt ./...` and `go vet ./...` before committing. Stage ALL resulting changes, including formatting-only files.

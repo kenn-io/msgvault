@@ -195,7 +195,7 @@ for (const theme of ['light', 'dark'] as const) {
 
 for (const theme of ['light', 'dark'] as const) {
   for (const density of ['compact', 'comfortable'] as const) {
-    test(`${theme} ${density} analytical shell snapshot and geometry`, async ({ page }) => {
+    test(`${theme} ${density} analytical shell geometry`, async ({ page }) => {
       await page.getByLabel('Temporary theme').selectOption(theme);
       await page.getByLabel('Temporary density').selectOption(density);
       await expect(page.locator('html')).toHaveAttribute('data-theme', theme);
@@ -203,11 +203,6 @@ for (const theme of ['light', 'dark'] as const) {
       await expect(page.locator('[data-row-key="message:1"]')).toHaveCSS(
         'height', density === 'compact' ? '36px' : '46px'
       );
-      await page.evaluate(() => document.fonts.ready);
-      await expect(page).toHaveScreenshot(`analytical-${theme}-${density}.png`, {
-        animations: 'disabled',
-        fullPage: true
-      });
     });
   }
 }
