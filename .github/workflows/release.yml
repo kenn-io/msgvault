@@ -453,7 +453,14 @@ jobs:
             SMOKE_HOME="$RUNNER_TEMP/msgvault-duckdb-smoke"
             dist/msgvault.exe --home "$SMOKE_HOME" init-db
             dist/msgvault.exe --home "$SMOKE_HOME" build-cache --full-rebuild
-            dist/msgvault.exe --home "$SMOKE_HOME" serve stop || true
+            if ! timeout 2m dist/msgvault.exe --home "$SMOKE_HOME" daemon stop; then
+              echo "FATAL: Windows ARM64 daemon did not stop within two minutes"
+              if [[ -f "$SMOKE_HOME/serve.log" ]]; then
+                echo "--- daemon log ---"
+                tail -n 400 "$SMOKE_HOME/serve.log"
+              fi
+              exit 1
+            fi
           fi
 
           node scripts/check-web-assets.mjs --binary dist/msgvault.exe \
@@ -464,6 +471,14 @@ jobs:
           cd dist
           powershell -Command "Compress-Archive -Path msgvault.exe -DestinationPath '$ARCHIVE'"
           rm msgvault.exe
+
+      - name: Upload Windows ARM64 smoke diagnostics
+        if: failure() && matrix.goarch == 'arm64'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: windows-arm64-smoke-diagnostics
+          path: ${{ runner.temp }}/msgvault-duckdb-smoke
+          if-no-files-found: warn
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
