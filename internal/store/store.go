@@ -49,6 +49,22 @@ type Store struct {
 	readOnly      bool // Opened via OpenReadOnly; skips WAL checkpoint on close
 	fts5Available bool // Whether FTS5 is available for full-text search
 	closeCleanup  func()
+
+	// Test-only seams into the migration and backfill paths, nil in
+	// production and settable only from export_test.go. They belong to the
+	// Store rather than the package because more than one Store can be
+	// migrating at once inside a single test binary — test fixtures build
+	// their schemas concurrently — and a hook installed by one test must
+	// never fire on another Store's migration. As package-level variables
+	// they were also a data race between a test that installs one and any
+	// concurrent migration that reads it.
+	initSchemaWindowHook            func()
+	contentChangedBackfillBatchHook func(fromID, toID int64) error
+	backfillFTSBatchErrHook         func(fromID, toID int64) error
+
+	// Zero means "use the production batch size"; see
+	// contentChangedBackfillBatch. Per-Store for the same reason.
+	contentChangedBackfillBatchSizeOverride int64
 }
 
 // synchronous=FULL + fullfsync=true protects WAL writes against OS/power crashes
@@ -943,8 +959,7 @@ func (s *Store) SchemaStale() (bool, string, error) {
 // large archive. A row that lands here has to be stamped by the INSERT trigger
 // or it never appears in the change feed at all, which is why the watermark
 // triggers are created before the backfill rather than after the indexes. Nil
-// in production.
-var initSchemaWindowHook func()
+// in production, and per-Store: see the field's declaration.
 
 // InitSchema initializes the database schema, uninterruptibly.
 //
@@ -1395,8 +1410,8 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 		return err
 	}
 
-	if initSchemaWindowHook != nil {
-		initSchemaWindowHook()
+	if s.initSchemaWindowHook != nil {
+		s.initSchemaWindowHook()
 	}
 
 	// Keyset index for the content-change feed, on both backends. Composite
@@ -1532,9 +1547,18 @@ func (s *Store) runOnceMigration(
 // (backfillFTSRangeContext): large enough that the per-transaction overhead
 // disappears against the row work, small enough that one batch's transaction is
 // short and its PostgreSQL dead tuples are reclaimable by autovacuum while the
-// next batches run. A var, not a const, only so a test can shrink it; nothing in
-// production writes it.
-var contentChangedBackfillBatchSize int64 = 5000
+// next batches run. Nothing overrides it in production; a test shrinks it for
+// one Store at a time through the per-Store override, never by writing here.
+const contentChangedBackfillBatchSize int64 = 5000
+
+// contentChangedBackfillBatch is the batch size this Store's backfill uses:
+// the production default unless a test has overridden it for this Store.
+func (s *Store) contentChangedBackfillBatch() int64 {
+	if s.contentChangedBackfillBatchSizeOverride > 0 {
+		return s.contentChangedBackfillBatchSizeOverride
+	}
+	return contentChangedBackfillBatchSize
+}
 
 // contentChangedBackfillBatchHook is a test-only seam: when non-nil it is
 // consulted before each batch with the batch's first and last id (inclusive),
@@ -1542,8 +1566,8 @@ var contentChangedBackfillBatchSize int64 = 5000
 // test interrupt an upgrade exactly between two committed batches — the case
 // that decides whether the backfill is resumable — without racing a real crash,
 // and it lets a test count the transactions an archive's shape costs. Nil (and
-// thus a no-op) in production; only export_test.go ever sets it.
-var contentChangedBackfillBatchHook func(fromID, toID int64) error
+// thus a no-op) in production; only export_test.go ever sets it, and it is
+// per-Store: see the field's declaration.
 
 // backfillContentChangedAt seeds content_changed_at on rows that predate the
 // column, walking the rows that still need it in committed batches.
@@ -1657,7 +1681,7 @@ func (s *Store) backfillContentChangedAt(ctx context.Context) error {
 	}
 	stampSQL = s.dialect.Rebind(stampSQL)
 
-	batchSize := contentChangedBackfillBatchSize
+	batchSize := s.contentChangedBackfillBatch()
 	started := time.Now()
 	lastLog := started
 	var stamped int64
@@ -1683,12 +1707,12 @@ func (s *Store) backfillContentChangedAt(ctx context.Context) error {
 			if count == 0 {
 				return nil
 			}
-			if contentChangedBackfillBatchHook != nil {
+			if s.contentChangedBackfillBatchHook != nil {
 				// Before the stamp, so a test that aborts here aborts a batch
 				// that has written nothing -- the transaction rolls back and
 				// the committed batches before it are what an interrupted
 				// upgrade leaves behind.
-				if err := contentChangedBackfillBatchHook(firstID, lastID); err != nil {
+				if err := s.contentChangedBackfillBatchHook(firstID, lastID); err != nil {
 					return err
 				}
 			}

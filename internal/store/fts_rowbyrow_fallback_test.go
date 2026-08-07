@@ -91,7 +91,7 @@ func TestPG_BackfillFTS_RowByRowFallbackSkipsBadRow(t *testing.T) {
 	// range [id, id+1), so only the [badID, badID+1) call errors and is skipped —
 	// every other row (including the ones after badID) indexes normally.
 	buf := captureWarnings(t)
-	restore := store.SetBackfillFTSBatchErrHookForTest(func(fromID, toID int64) error {
+	restore := f.Store.SetBackfillFTSBatchErrHookForTest(func(fromID, toID int64) error {
 		if fromID <= badID && badID < toID {
 			return &pgconn.PgError{
 				Code:    "54000",
@@ -189,7 +189,7 @@ func TestPG_BackfillFTS_NonSizeErrorAborts(t *testing.T) {
 	// Case 1: a plain (non-pg) error must abort.
 	t.Run("plain_error", func(t *testing.T) {
 		sentinel := errors.New("simulated dead connection")
-		restore := store.SetBackfillFTSBatchErrHookForTest(func(fromID, toID int64) error {
+		restore := f.Store.SetBackfillFTSBatchErrHookForTest(func(fromID, toID int64) error {
 			return sentinel
 		})
 		defer restore()
@@ -201,7 +201,7 @@ func TestPG_BackfillFTS_NonSizeErrorAborts(t *testing.T) {
 
 	// Case 2: a different (non-54000) SQLSTATE must also abort.
 	t.Run("other_sqlstate", func(t *testing.T) {
-		restore := store.SetBackfillFTSBatchErrHookForTest(func(fromID, toID int64) error {
+		restore := f.Store.SetBackfillFTSBatchErrHookForTest(func(fromID, toID int64) error {
 			return &pgconn.PgError{Code: "08006", Message: "connection failure (injected)"}
 		})
 		defer restore()

@@ -2441,8 +2441,8 @@ func (s *Store) backfillFTSRowByRowContext(
 // fail for the given id range. It lets tests exercise backfillFTSRowByRow's
 // skip-and-continue fallback deterministically without depending on a body that
 // happens to overflow PostgreSQL's tsvector limit after the LEFT cap. Nil (and
-// thus a no-op) in production; only export_test.go ever sets it.
-var backfillFTSBatchErrHook func(fromID, toID int64) error
+// thus a no-op) in production; only export_test.go ever sets it, and it is
+// per-Store: see the field's declaration on Store.
 
 // backfillFTSBatch inserts FTS rows for messages with id in [fromID, toID).
 //
@@ -2455,8 +2455,8 @@ func (s *Store) backfillFTSBatchContext(
 	ctx context.Context,
 	fromID, toID int64,
 ) (int64, error) {
-	if backfillFTSBatchErrHook != nil {
-		if err := backfillFTSBatchErrHook(fromID, toID); err != nil {
+	if s.backfillFTSBatchErrHook != nil {
+		if err := s.backfillFTSBatchErrHook(fromID, toID); err != nil {
 			return 0, err
 		}
 	}

@@ -575,12 +575,12 @@ func TestContentChangedAt_InterruptedBackfillResumesWhereItStopped(t *testing.T)
 	// the backfill, and shrink the batch so six rows span several batches.
 	dropContentChangedAtColumn(t, st)
 	clearContentChangedBackfillLedger(t, st)
-	defer store.SetContentChangedBackfillBatchSizeForTest(2)()
+	defer st.SetContentChangedBackfillBatchSizeForTest(2)()
 
 	// Interrupt at the second batch boundary: the first batch has committed and
 	// nothing else has run.
 	batches := 0
-	restoreHook := store.SetContentChangedBackfillBatchHookForTest(func(fromID, toID int64) error {
+	restoreHook := st.SetContentChangedBackfillBatchHookForTest(func(fromID, toID int64) error {
 		batches++
 		if batches == 2 {
 			return errors.New("simulated interruption mid-upgrade")
@@ -668,14 +668,14 @@ func TestContentChangedAt_BackfillStopsWhenTheContextIsCancelled(t *testing.T) {
 
 	dropContentChangedAtColumn(t, st)
 	clearContentChangedBackfillLedger(t, st)
-	defer store.SetContentChangedBackfillBatchSizeForTest(2)()
+	defer st.SetContentChangedBackfillBatchSizeForTest(2)()
 
 	// Cancel at the second batch boundary: one batch has committed and the rest
 	// of the table is still ahead, which is where an operator's Ctrl-C lands.
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	batches := 0
-	restoreHook := store.SetContentChangedBackfillBatchHookForTest(func(fromID, toID int64) error {
+	restoreHook := st.SetContentChangedBackfillBatchHookForTest(func(fromID, toID int64) error {
 		batches++
 		if batches == 2 {
 			cancel()
@@ -765,10 +765,10 @@ func seedMessageAtID(t *testing.T, st *store.Store, n int, id int64) int64 {
 // asserted on the count would hang the whole suite instead of failing. The hook
 // aborts the run once the batch count passes what any correct walk could need,
 // turning that into a fast, readable failure.
-func countBackfillBatches(t *testing.T, maxBatches int) *int {
+func countBackfillBatches(t *testing.T, st *store.Store, maxBatches int) *int {
 	t.Helper()
 	batches := 0
-	restore := store.SetContentChangedBackfillBatchHookForTest(func(fromID, toID int64) error {
+	restore := st.SetContentChangedBackfillBatchHookForTest(func(fromID, toID int64) error {
 		batches++
 		if batches > maxBatches {
 			return fmt.Errorf(
@@ -837,7 +837,7 @@ func TestContentChangedAt_BackfillFinishesAtTheEdgesOfTheIDSpace(t *testing.T) {
 	clearContentChangedBackfillLedger(t, st)
 	// Both rows fit in one batch, so anything past a handful of batches is the
 	// walk crawling the id span.
-	batches := countBackfillBatches(t, 4)
+	batches := countBackfillBatches(t, st, 4)
 
 	require.NoError(st.InitSchema(),
 		"the upgrade must finish on an archive holding ids at the edges of the id space")
@@ -871,7 +871,7 @@ func TestContentChangedAt_BackfillSkipsIDRangesWithNoWork(t *testing.T) {
 
 	dropContentChangedAtColumn(t, st)
 	clearContentChangedBackfillLedger(t, st)
-	batches := countBackfillBatches(t, 8)
+	batches := countBackfillBatches(t, st, 8)
 
 	require.NoError(st.InitSchema())
 	assert.Contains(readContentChangedAt(t, st, first), "2020-01-02", "the first row")
@@ -968,7 +968,7 @@ func TestContentChangedAt_MessageInsertedDuringUpgradeIsStamped(t *testing.T) {
 	clearContentChangedBackfillLedger(t, st)
 
 	var concurrent int64
-	restore := store.SetInitSchemaWindowHookForTest(func() {
+	restore := st.SetInitSchemaWindowHookForTest(func() {
 		concurrent = seedMessage(t, st, 2)
 	})
 	defer restore()
