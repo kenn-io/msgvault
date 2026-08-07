@@ -165,8 +165,20 @@ See `docs/internal/PG_STATUS.md` for the current implementation state and
 follow-up work.
 
 **Test env**: `MSGVAULT_TEST_DB=postgres://...` runs PostgreSQL-backed
-tests (`make test-pg`). pgvector tests require a PostgreSQL instance
-with the `vector` extension and the `pgvector` build tag.
+tests. pgvector tests require a PostgreSQL instance with the `vector`
+extension and the `pgvector` build tag.
+
+There are two PostgreSQL configurations to cover: the pgvector build
+(`make test-pg`) and the shipped build, which has no pgvector tag
+(`make test-pg-shipped`). Run `make test-pg-both` rather than both of those —
+the tag changes the test binary of only nine packages, so the second full
+run would reprove the first. Fixtures build their schemas in concurrent
+batches (`internal/testutil/pg_warm_pool.go`) rather than one at a time: a
+fixture that finds the buffer empty builds several and the next few claim
+theirs for free. All of that happens inside the claiming fixture's own setup —
+the pool runs no background work, so it can never issue a statement while a
+test body is running. Each schema is still private to its test, still built by
+the same `InitSchema()` path, and still dropped on cleanup.
 
 ## Parquet Analytics
 
@@ -284,7 +296,9 @@ automatically:
 ```bash
 make install-hooks             # Install pre-commit hook via prek
 make test                      # Run tests (SQLite default)
-make test-pg                   # Run PostgreSQL-backed tests with MSGVAULT_TEST_DB set
+make test-pg-both              # Both PostgreSQL configurations, needs MSGVAULT_TEST_DB
+make test-pg                   # PostgreSQL, pgvector build only
+make test-pg-shipped           # PostgreSQL, shipped build only
 make fmt                       # Format code (go fmt)
 make lint                      # Run linter (auto-fix)
 make lint-ci                   # Run linter (CI, no auto-fix)

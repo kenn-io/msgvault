@@ -108,9 +108,22 @@ this repo's `docs/` directory unless they are explicitly codebase-internal.
 
 ```bash
 make test
-MSGVAULT_TEST_DB=postgres://user:pass@localhost:5432/msgvault_test make test-pg
+MSGVAULT_TEST_DB=postgres://user:pass@localhost:5432/msgvault_test make test-pg-both
 go test -tags "fts5 sqlite_vec pgvector" -count=1 ./internal/vector/... ./internal/scheduler/... ./cmd/msgvault/cmd/...
 ```
 
-`make test-pg` requires a live PostgreSQL database. pgvector-tagged tests require
-a PostgreSQL instance with the `vector` extension installed.
+All the `test-pg*` targets require a live PostgreSQL database, and the
+pgvector-tagged ones require the `vector` extension installed.
+
+`test-pg-both` is the one to run. The shipped binary carries no `pgvector` tag,
+so that build has to be exercised against PostgreSQL as well as the pgvector
+build does — but the tag changes the test binary of only nine packages out of
+the full transitive test closure, so running both lanes in full reproves
+roughly a thousand seconds of identical work. `test-pg-both` runs the pgvector
+lane in full and then only the packages that differ, and its
+`pg-shipped-only-check` prerequisite fails if that set ever drifts. That set is
+the reverse dependency closure of the tag-sensitive packages, not just the
+packages carrying pgvector-gated files: a package linking one of those builds a
+different test binary even though its own sources are identical. The
+single-lane targets `test-pg` and `test-pg-shipped` remain for narrowing down a
+failure; neither covers PostgreSQL on its own.
