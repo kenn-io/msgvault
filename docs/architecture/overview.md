@@ -4,7 +4,7 @@ description: Package structure and data flow.
 ---
 
 msgvault syncs Gmail, Google Calendar, IMAP, Microsoft 365 mail, Microsoft
-Teams, Discord, Beeper Desktop, Granola, and Circleback into a local SQLite database by
+Teams, Discord, Slack, Beeper Desktop, Granola, and Circleback into a local SQLite database by
 default and can import local PST/MBOX archives, Apple Mail exports, and common
 chat/text formats. PostgreSQL is available as an opt-in backend for new
 archives. Keyword search, analytics, the Web UI, the TUI, and the MCP server run against

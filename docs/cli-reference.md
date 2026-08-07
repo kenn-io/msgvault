@@ -1194,10 +1194,12 @@ Manage the confirmed "me" identifiers for each account.
 The identity subcommands use the configured remote server or local daemon by default. `--local` uses the local daemon even when a remote is configured.
 
 ```bash
-msgvault identity list [flags]
-msgvault identity show <account> [flags]
-msgvault identity add <account> <identifier> [flags]
-msgvault identity remove <account> <identifier>
+msgvault identity list [--account <account> | --collection <name> | --source-id <id>]
+msgvault identity show [<account>] [--source-id <id>]
+msgvault identity add [<account>] <identifier> [--source-id <id>]
+msgvault identity remove [<account>] <identifier> [--source-id <id>]
+msgvault identity discover [<account>] [--source-id <id>] [--apply]
+msgvault identity import [<account>] [--source-id <id>] (--file <path> | --stdin)
 ```
 
 | Command | Description |
@@ -1206,13 +1208,92 @@ msgvault identity remove <account> <identifier>
 | `identity show <account>` | Show one account's identity in detail |
 | `identity add <account> <identifier>` | Add a confirmed identifier |
 | `identity remove <account> <identifier>` | Remove a confirmed identifier |
+| `identity discover <account>` | Preview archived source evidence; `--apply` confirms strong candidates |
+| `identity import <account>` | Preview or apply source-scoped identifiers from text or JSON |
 
 | Flag | Applies to | Description |
 |---|---|---|
 | `--account` | `list` | Restrict to a single account |
 | `--collection` | `list` | Restrict to all member accounts of a collection |
-| `--json` | `list`, `show` | Output as JSON |
+| `--source-id` | all subcommands | Select one source unambiguously by numeric ID; mutually exclusive with an account argument or `list` scope |
+| `--json` | `list`, `show`, `discover`, `import` | Output structured JSON; discovery also suppresses progress |
 | `--signal` | `add` | Evidence signal name (default `manual`) |
+| `--apply` | `discover` | After the complete preview scan, confirm strong evidence |
+| `--provider` | `discover` | Include the source's configured `[[fastmail]]` alias inventory |
+| `--confirm <address>` | `discover` | Explicitly confirm one weak candidate; repeatable and requires `--apply` |
+| `--file <path>` / `--stdin` | `import` | Read a text or JSON identity list from exactly one input |
+| `--signal` | `import` | Evidence signal recorded for imported identities (default `manual`) |
+| `--apply` | `import` | Confirm every validated imported identity; without it the command only previews |
+
+Email sync automatically confirms strong sender evidence from trusted Sent
+metadata. Recipient-only evidence stays review-only. See [People, Profiles,
+and Source Identities](/usage/people/) for classifications, Fastmail inventory,
+and import formats.
+
+---
+
+## person
+
+Manage durable person profiles and their typed, historized attributes. A
+profile is created only by explicit promotion of an observed participant's
+identity cluster.
+
+```bash
+msgvault person promote <participant-id>
+msgvault person list [--json]
+msgvault person get <person-id> [--json]
+msgvault person set-display-name <person-id> <display-name> [--json]
+msgvault person set-display-name <person-id> --clear [--json]
+msgvault person delete <person-id>
+
+msgvault person attributes list <person-id> [--slug <slug>] [--history] [--json]
+msgvault person attributes set <person-id> <slug> (--value <scalar> | --value-json <json|@path|->) [flags]
+msgvault person attributes clear <person-id> <slug> [flags]
+```
+
+`promote` is idempotent. `set-display-name` preserves the profile's stable ID
+and vCard UID. `delete` permanently retires that UID and removes the profile's
+participant bindings.
+
+| Attribute flag | Applies to | Description |
+|---|---|---|
+| `--slug <slug>` | `list` | Restrict output to one definition |
+| `--history` | `list` | Include superseded values instead of current values only |
+| `--value <scalar>` | `set` | Coerce text, integer, real, boolean, date, or timestamp input to the definition's type |
+| `--value-json <json\|@path\|->` | `set` | Supply a structured typed-value envelope |
+| `--ordinal <n>` | `set`, `clear` | Address one slot of a multi-valued definition |
+| `--source <name>` | `set` | Provenance: `user`, `carddav_import`, `vcard_import`, `archive_observation`, `extraction`, `enrichment`, or `system` |
+| `--source-ref <value>` | `set` | Resource or message reference that produced the value |
+| `--confidence <0..1>` | `set` | Confidence for a derived or suggested value |
+| `--actor <value>` | `set` | Actor recorded with the value |
+| `--expected-value-id <id>` | `set`, `clear` | Compare-and-swap guard for the current value |
+| `--dry-run` | `set`, `clear` | Validate and preview without writing |
+| `--json` | `list`, `set`, `clear` | Output structured JSON |
+
+Setting or clearing a value closes the current history row rather than deleting
+it. See [People, Profiles, and Source Identities](/usage/people/) for the
+shipped definitions and complete workflow.
+
+---
+
+## attribute-definition
+
+Manage portable field metadata. Definitions add no runtime database columns;
+their universal IDs and slugs remain stable while labels and descriptions may
+change.
+
+```bash
+msgvault attribute-definition list [--object-type person|organization] [--include-hidden] [--json]
+msgvault attribute-definition get <definition-id> [--json]
+msgvault attribute-definition create --definition <json|@path|-> [--dry-run] [--json]
+msgvault attribute-definition rename <definition-id> [--label <text>] [--description <text> | --clear-description] [--json]
+msgvault attribute-definition delete <definition-id>
+```
+
+`create --dry-run` performs local structural validation but cannot detect a
+conflict with definitions already stored by the daemon. `rename` does not
+change the immutable slug or universal ID. Deletion is limited to user-created,
+deletable definitions that have no stored values.
 
 ---
 

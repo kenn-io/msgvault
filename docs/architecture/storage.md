@@ -156,7 +156,27 @@ this on the default SQLite backend with denormalized Parquet files queried by
 an embedded DuckDB engine, delivering aggregate queries hundreds of times
 faster than SQLite.
 
-The Parquet cache is disposable and can be rebuilt at any time. Aggregate views never trigger a build mid-session: with `auto_build_cache = true` (the default) the daemon builds a stale or missing cache synchronously at startup — incremental builds take seconds — and then serves DuckDB over it, refreshing the cache after scheduled syncs and ingest commands. Cache builds hold an exclusive cross-process lock and queries hold it shared, so a rebuild never removes Parquet files out from under a running query. `msgvault build-cache` builds the cache on demand. PostgreSQL archives currently use live SQL for aggregate views rather than this Parquet acceleration layer.
+The Parquet cache is disposable and can be rebuilt at any time. Aggregate views
+never trigger a build mid-session: with `auto_build_cache = true` (the default)
+the daemon builds a stale or missing cache synchronously at startup, then serves
+DuckDB over it and refreshes after scheduled syncs and ingest commands.
+
+Each build writes and verifies a same-filesystem staging tree before publishing
+under the exclusive cache lock. `_last_sync.json` is the commit marker: it is
+invalidated before any live dataset changes and replaced last. A failure before
+publication leaves the previous committed cache usable; interruption during
+publication leaves the cache explicitly unavailable for repair, never marked
+ready with mixed old and new datasets. Queries hold the lock shared, so a build
+cannot replace Parquet files underneath an active reader. `msgvault
+build-cache` builds or repairs the cache on demand. PostgreSQL archives use live
+SQL for aggregate views rather than this Parquet acceleration layer.
+
+Version 0.19.0 adds `relationship_activity`, `relationship_people`,
+`relationship_domains`, and `relationship_daily` datasets. These compact edges
+and rollups avoid expanding every message's participant list during people,
+domain, relationship, timeline, and file-group queries. Existing SQLite caches
+need one full rebuild after upgrading; automatic cache building performs it at
+daemon startup, or run `msgvault build-cache --full-rebuild` explicitly.
 
 ```bash
 # Manual build
@@ -181,6 +201,10 @@ analytics/
 ├── sources/
 ├── conversations/
 ├── message_labels/
+├── relationship_activity/
+├── relationship_people/
+├── relationship_domains/
+├── relationship_daily/
 └── _last_sync.json
 ```
 
@@ -218,6 +242,12 @@ downgrading. The last command is local-only and requires the daemon to be
 stopped because it removes production pack files. See the [CLI
 reference](/cli-reference/#pack-attachments) and [Backup](/usage/backup/) guide
 for maintenance and restore behavior.
+
+Set `[data].loose_attachments = true` when file-oriented backup or storage
+software requires stable individual attachment files. It prevents new packs,
+rejects pack and repack commands, and restores backup content loose, but does
+not convert existing packs automatically. Stop the daemon and run
+`unpack-attachments` once if the existing archive must become fully loose.
 
 ## Token Storage
 

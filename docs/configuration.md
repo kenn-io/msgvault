@@ -22,6 +22,9 @@ data_dir = "/path/to/msgvault/data"
 # Database URL (default: {data_dir}/msgvault.db; PostgreSQL DSN supported)
 database_url = "/path/to/msgvault.db"
 
+# Keep attachment content as individual files instead of creating packs.
+# loose_attachments = true
+
 [oauth]
 # Path to Google OAuth client secrets JSON for browser OAuth
 client_secrets = "/path/to/client_secret.json"
@@ -39,6 +42,12 @@ client_secrets = "/path/to/acme_workspace_secret.json"
 client_id = "your-azure-app-client-id"
 # redirect_uri = "http://localhost:8089/callback/microsoft"  # default
 # tenant_id = "your-tenant-id"   # optional, default "common"
+
+# Optional source-scoped Fastmail alias inventory.
+[[fastmail]]
+source_id = 14
+api_token = "replace-with-a-Fastmail-API-token"
+auto_confirm_identities = false
 
 [discord]
 # Per-attachment download cap (default: 50 MiB)
@@ -201,6 +210,25 @@ sync. Required only if you use `add-o365`, `add-teams`, or `sync-teams`.
 | `tenant_id` | `common` | Azure AD tenant ID; `common` allows both personal and org accounts |
 
 See [OAuth Setup: Microsoft 365](/guides/oauth-setup/#microsoft-365-outlook-hotmail) for app registration steps. Teams uses the same `client_id` but requests Microsoft Graph scopes and stores tokens under `tokens/teams_<email>.json`; Outlook/Hotmail IMAP OAuth uses `tokens/microsoft_<email>.json`.
+
+### `[[fastmail]]`
+
+Optional source-scoped Fastmail JMAP identity inventory. This does not replace
+IMAP ingestion credentials: add and sync the mailbox normally, then use the API
+token only to discover masked and send-as addresses that belong to that source.
+
+| Key | Default | Description |
+|---|---|---|
+| `source_id` | — | Positive numeric archive source ID; mutually exclusive with `account` |
+| `account` | — | Unambiguous source identifier or display name; mutually exclusive with `source_id` |
+| `api_token` | (required) | Fastmail API token used for the JMAP identity inventory |
+| `auto_confirm_identities` | `false` | Refresh and apply strong provider identity evidence after successful mailbox syncs |
+
+Exactly one source selector is required. Prefer `source_id` when two sources
+share an identifier or display name. With automatic confirmation disabled,
+`msgvault identity discover --source-id <id> --provider` fetches the inventory
+for an explicit preview; add `--apply` only after reviewing it. See [People,
+Profiles, and Source Identities](/usage/people/#fastmail-alias-inventory).
 
 ### `[discord]`
 

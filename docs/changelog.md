@@ -7,12 +7,94 @@ All notable changes to msgvault, grouped by release.
 
 ## Unreleased
 
+---
+
+## 0.19.0
+<small>2026-08-07</small>
+
 **New features**
 
+- A new relationships-focused Web UI explores a mixed archive as messages,
+  conversations, files, people, and domains. It adds explicit full-text,
+  semantic, and hybrid search states; Saved Views; source status; safe deletion
+  staging; settings; keyboard navigation; and authenticated remote sessions.
+- Slack workspace archiving imports the channels a user belongs to, group DMs,
+  direct messages, threads, reactions, mentions, and files through a read-only
+  user token. Incremental sync discovers late replies to threads of any age,
+  and `backfill-slack-media` retries deferred downloads.
+- Discord guild archiving imports bot-visible channels, threads, forum posts,
+  edits, deletion state, reaction summaries, and attachments with resumable
+  per-container checkpoints. `sync-discord`, bounded compatibility and generic
+  exports, scheduled sync, and `backfill-discord-media` cover ongoing archive
+  maintenance; personal DMs and user-token automation are intentionally out of
+  scope.
+- `POST /api/v1/import/meeting` accepts one provider-neutral meeting at a time,
+  stores it as a searchable meeting transcript, and updates repeated deliveries
+  in place by source identifier and external meeting ID.
+- `list-folders` shows selectable IMAP folders and approximate counts.
+  Repeatable `--folder` and `--skip-folder` flags on `sync-full` and `sync`
+  safely restrict a scan without removing messages or labels learned earlier.
+- `export-messages` streams required, bounded time windows as deterministic,
+  provider-neutral `msgvault-message-export/1` JSON Lines. A completion trailer
+  lets consumers reject interrupted output, and exact source and message-type
+  filters keep large mixed archives bounded.
+- `GET /api/v1/messages/changes` provides current message snapshots ordered by
+  a content-change watermark, with opaque archive-bound cursors and a safe
+  completion bound. It is an invalidation feed, not an audit log: multiple
+  edits may collapse into one row, and related-table-only changes are outside
+  its contract.
+- Email sync now confirms strong source-scoped identity evidence from trusted
+  Sent metadata. `identity discover` previews archived and optional Fastmail
+  alias evidence, while `identity import` previews or applies text and JSON
+  lists with unambiguous numeric source selection.
+- Durable person profiles provide stable IDs, vCard UIDs, explicit participant
+  bindings, display-name overrides, and optimistic concurrency. Typed,
+  historized person attributes and portable metadata-defined fields are
+  available through the CLI, HTTP API, and generated clients. Together with
+  the meeting, change-feed, and source-identity additions, these changes
+  advance the OpenAPI schema to 1.36.0.
 - MCP Streamable HTTP can reuse `[server].api_key` for bearer authentication.
   Authenticated listeners may bind beyond loopback without the insecure
   override, while keyless non-loopback listeners still require an explicit
   `--http-allow-insecure` opt-in.
+- The vCard codec now parses, validates, and deterministically renders vCard
+  2.1, 3.0, and 4.0 while preserving ordered properties, groups, parameters,
+  unknown extensions, legacy encodings, and source spelling. Its IANA registry
+  snapshot and coverage declarations are vendored and checkable.
+- `[data].loose_attachments = true` keeps newly stored attachments as individual
+  files, disables automatic and explicit pack/repack creation, and makes backup
+  restore materialize loose files. Existing packs remain readable until the
+  operator stops the daemon and runs `unpack-attachments` once.
+
+**Improvements**
+
+- Relationship activity, people, domains, and daily signals now use compact
+  Parquet indexes. The Relationships workspace and person/domain/file grouping
+  stay within the daemon's interactive memory budget on multi-million-message
+  archives; upgrading an existing SQLite cache triggers one full rebuild.
+- Email ingestion rejects missing, malformed, and implausible canonical dates
+  outside 1990 through 30 days in the future, then falls back through the oldest
+  plausible `Received` timestamp and source metadata. `repair-dates` previews
+  the same rules and `--apply` records an audit ledger before refreshing the
+  analytics cache.
+- The official Docker image now includes the SQLite vector extension, so
+  SQLite-backed semantic and hybrid search can be enabled without rebuilding
+  the container.
+- `[microsoft].redirect_uri` can override the Microsoft 365 and Teams OAuth
+  callback when the application registration requires a custom URI.
+- The repeatable IMAP sync flags are now singular: `--folder` and
+  `--skip-folder`.
+- Background lifecycle management is standardized under `msgvault daemon`
+  with `start`, `status`, `stop`, and `restart`; `msgvault serve` is the
+  foreground Web UI/API and scheduler. The old `serve` lifecycle forms remain
+  hidden compatibility aliases.
+- Analytics cache builds stage and verify every dataset before publishing it
+  under one lock, with `_last_sync.json` written last as the commit marker.
+  Failed exports retain the previous committed cache, while interrupted
+  publication is rejected and repaired instead of exposing mixed Parquet data.
+- Newly generated NAS Compose bundles use `pull_policy: always` for the moving
+  GHCR `latest` tag. A restart still reuses the installed image; reconcile with
+  `docker compose up -d` or explicitly pull before restarting older bundles.
 
 **Bug fixes**
 
@@ -26,9 +108,58 @@ All notable changes to msgvault, grouped by release.
   deadlines on slow storage. Local daemon authentication uses the lightweight
   authenticated health endpoint, while connection setup, browser traffic, and
   ordinary API clients retain protective timeouts.
-- Newly generated NAS Compose bundles explicitly pull the GHCR `latest` image
-  when reconciling the service, and deployment guidance now distinguishes
-  restarting the installed container from updating it.
+- Daemon runtime-record cleanup now requires a probe-confirmed identity
+  mismatch before deletion, tolerates small creation-time clock skew, and lets
+  a live daemon republish a missing record. This prevents false local-writer
+  conflicts during later operations such as backup.
+- Full message detail, including MCP `get_message`, restores chat senders from
+  `messages.sender_id` when a direct message has no explicit `from` recipient
+  row. Explicit email sender rows remain authoritative.
+- MBOX imports recover dates whose header value gained a trailing continuation
+  artifact and accept weekday plus US month-day ordering.
+- `deduplicate --content-hash` batches RFC822 duplicate-group reads and uses a
+  supporting index instead of issuing one unindexed query per group, avoiding
+  planning timeouts on large archives.
+- Generic and Discord compatibility exports use stable keyset reads, the same
+  sender precedence as message APIs, and outer source constraints when scanning
+  conversations, avoiding rescans, skipped rows, and unrelated archive work.
+- Repeated source-deletion observations preserve the original tombstone time
+  and no longer bump a message's content-change watermark until its state
+  actually changes.
+- Canceled maintenance transactions preserve the caller's cancellation error
+  when `database/sql` has already rolled the transaction back, without masking
+  substantive commit failures.
+- Granola accepts exact date-only values for note, calendar, and transcript
+  timestamps and normalizes them to midnight UTC instead of dropping the note.
+
+**Acknowledgements**
+
+- Thanks to [Wes McKinney](https://github.com/wesm) for the Web UI, bounded
+  message export, transactional analytics cache, daemon lifecycle and slow-I/O
+  work, Docker deployment freshness, and release documentation infrastructure.
+- Thanks to [Rusty Shackleford](https://github.com/salmonumbrella) for source
+  identity discovery, durable person profiles and typed attributes, generic
+  meeting ingestion, MCP bearer authentication, the vCard codec, Beeper account
+  discovery, and direct-message sender hydration.
+- Thanks to [Matt Richmond](https://github.com/m-j-r) for Slack workspace
+  archiving, reply discovery, media handling, and Granola test portability.
+- Thanks to [Matthew Farrellee](https://github.com/mattf) for IMAP folder
+  discovery and filtering, the singular sync flags, configurable Microsoft
+  OAuth redirects, and error-handling cleanup.
+- Thanks to [Jesse Robbins](https://github.com/jesserobbins) for date recovery
+  and repair, scalable duplicate planning, and the relationship-query fan-out
+  work incorporated into the memory-bounded index.
+- Thanks to [danshapiro](https://github.com/danshapiro) for the message change
+  feed, idempotent source-deletion tombstones, daemon runtime-record safety,
+  schema-copy robustness, and faster PostgreSQL tests.
+- Thanks to [Nicholas Wang](https://github.com/nicwn) for enabling SQLite vector
+  search in the Docker image.
+- Thanks to [Martin Schürrer](https://github.com/MSch) for the loose-files-only
+  attachment storage mode.
+- Thanks to [Marius van Niekerk](https://github.com/mariusvniekerk) for accepting
+  date-only Granola timestamps.
+- Thanks to [Matthew Jacobs](https://github.com/mjacobs) for keeping PostgreSQL
+  CI coverage on reliable hosted runners.
 
 ---
 

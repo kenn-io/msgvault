@@ -30,13 +30,13 @@ By default, everything stays on your local machine. msgvault stores messages in 
 <p class="faq-question">Can I use msgvault with non-Gmail accounts?</p>
 
 Yes. You can sync any standard IMAP server, Microsoft 365 mail and Teams,
-Discord guilds, Beeper Desktop chats, Google Calendar, and supported meeting
+Discord guilds, Slack workspaces, Beeper Desktop chats, Google Calendar, and supported meeting
 note services. You can also import email from PST, MBOX, or Apple Mail and
 chats/texts from WhatsApp, iMessage, Google Voice, Facebook Messenger, and SMS
 Backup & Restore. All messages use the same Web UI, search, TUI, MCP, REST API,
 and export surfaces. See [Setup Guide](/setup/#add-an-imap-account),
 [Importing Local Email](/usage/importing/), [Text Messages](/usage/text-messages/),
-and [Discord](/usage/discord/).
+and [Discord](/usage/discord/) or [Slack](/usage/slack/).
 
 <p class="faq-question">Can msgvault archive Discord direct messages?</p>
 

@@ -71,23 +71,23 @@ msgvault sync-full you@example.com --folder "Receipts, 2025"
 
 ## Skip Selected Folders
 
-Use `--skip-folders` to scan every folder except the ones you name:
+Use `--skip-folder` to scan every folder except the ones you name:
 
 ```bash
 msgvault sync-full you@example.com \
-  --skip-folders Trash \
-  --skip-folders Spam
+  --skip-folder Trash \
+  --skip-folder Spam
 ```
 
 You can combine include and exclude filters. msgvault first keeps the folders
-named by `--folders`, then removes any named by `--skip-folders`:
+named by `--folder`, then removes any named by `--skip-folder`:
 
 ```bash
 msgvault sync-full you@example.com \
-  --folders INBOX \
-  --folders Archive \
-  --folders "Archive/Newsletters" \
-  --skip-folders "Archive/Newsletters"
+  --folder INBOX \
+  --folder Archive \
+  --folder "Archive/Newsletters" \
+  --skip-folder "Archive/Newsletters"
 ```
 
 That example scans `INBOX` and `Archive`.

@@ -1,6 +1,6 @@
 ---
 title: msgvault
-description: Offline email, chat, calendar, and meeting archive with a daemon-served analytical Web UI, full-text and semantic search, a keyboard-driven TUI, and sync for Gmail, IMAP, Teams, Discord, Beeper, Granola, and Circleback.
+description: Offline email, chat, calendar, and meeting archive with a daemon-served analytical Web UI, full-text and semantic search, a keyboard-driven TUI, and sync for Gmail, IMAP, Teams, Discord, Slack, Beeper, Granola, and Circleback.
 ---
 
 # msgvault
@@ -18,7 +18,7 @@ search, and local AI workflows.
   <img src="/assets/generated/tui-senders.svg" alt="msgvault TUI showing the Senders view" loading="eager">
 </figure>
 
-Supports Gmail, Google Calendar, Microsoft Teams, Discord, Granola, Circleback, Beeper
+Supports Gmail, Google Calendar, Microsoft Teams, Discord, Slack, Granola, Circleback, Beeper
 Desktop, IMAP, and Microsoft 365 mail sync; verifiable backup snapshots; PST,
 MBOX, and Apple Mail import; and chat/text import from WhatsApp, iMessage,
 Google Voice, Facebook Messenger, and SMS Backup & Restore.
@@ -41,19 +41,19 @@ powershell -ExecutionPolicy ByPass -c "irm https://msgvault.io/install.ps1 | iex
 Then [set up OAuth credentials](/guides/oauth-setup/) and [start
 syncing](/setup/). You can also [build from source](/setup/#build-from-source).
 
-!!! note "New in 0.18.0"
-    Archive Beeper Desktop chats and Granola or Circleback meeting notes;
-    browse meetings in the TUI; install bundled agent skills; retrieve
-    attachments by hash through the HTTP API; and use native Windows ARM64
-    releases. See the [Changelog](/changelog/) for the full release notes.
+!!! note "New in 0.19.0"
+    Explore relationships in the new Web UI; archive Slack workspaces and
+    Discord guilds; ingest meetings through the API; export bounded message
+    windows; discover source identities; and manage durable person profiles.
+    See the [Changelog](/changelog/) for the full release notes.
 
 ## Why msgvault?
 
 Your email and message data is yours. msgvault downloads a complete local copy
 of your email (from Gmail, IMAP, or local archives) and imports chats and texts
 from WhatsApp, iMessage, Google Voice, Facebook Messenger, and SMS Backup &
-Restore, and can sync Teams conversations, Discord guilds, Beeper chats, plus
-Granola and Circleback meeting notes.
+Restore, and can sync Teams conversations, Discord guilds, Slack workspaces,
+Beeper chats, plus Granola and Circleback meeting notes.
 Keyword search, analytics, the Web UI, the TUI, and the MCP server query your archive.
 **Source services are contacted only by authorization/registration, sync,
 media-backfill, and deletion workflows that you run or schedule explicitly.**
@@ -86,8 +86,8 @@ it lives in an archive on disk that you own and control.
     <p>Archive guild channels, threads, forum posts, and attachments through a dedicated read-only bot. Resumable per-container checkpoints and bounded repair preserve history safely under <code>message_type = discord</code>.</p>
   </section>
   <section>
-    <h3>Meetings &amp; Beeper</h3>
-    <p>Sync Granola and Circleback notes and transcripts, and archive chats and media from networks connected to Beeper Desktop. Explore each source in the Web UI or its dedicated TUI mode.</p>
+    <h3>Slack, Meetings &amp; Beeper</h3>
+    <p>Archive Slack workspaces, sync Granola and Circleback notes and transcripts, and archive chats and media from networks connected to Beeper Desktop. Explore each source in the Web UI or its dedicated TUI mode.</p>
   </section>
   <section>
     <h3>Backup Snapshots</h3>

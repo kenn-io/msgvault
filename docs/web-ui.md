@@ -145,6 +145,11 @@ person to inspect contextual activity across email, chat, calendar events, and
 meeting notes, plus the files associated with that person. The active search
 and filters continue to scope both the timeline and file table.
 
+People in this workspace are observed identity clusters. Source identities
+that mean “me,” explicit durable profile promotion, display-name overrides, and
+typed profile attributes are separate curated operations; see [People,
+Profiles, and Source Identities](/usage/people/).
+
 Domains provides the same activity-and-files analysis for an exact domain
 fact. A domain is not treated as an inferred organization identity. Selecting
 a grouped person or domain in Everything opens its inspector in the current

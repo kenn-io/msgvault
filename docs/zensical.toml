@@ -1,7 +1,7 @@
 [project]
 site_name = "msgvault"
 site_url = "https://msgvault.io"
-site_description = "Offline email, chat, calendar, and meeting archive with a daemon-served analytical Web UI, full-text and semantic search, and sync for Gmail, IMAP, Teams, Discord, Beeper, Granola, and Circleback."
+site_description = "Offline email, chat, calendar, and meeting archive with a daemon-served analytical Web UI, full-text and semantic search, and sync for Gmail, IMAP, Teams, Discord, Slack, Beeper, Granola, and Circleback."
 site_author = "Kenn Software LLC"
 copyright = 'Copyright &copy; 2026 <a href="https://kenn.io">Kenn Software LLC</a>. MIT License.'
 docs_dir = "docs"
@@ -37,6 +37,7 @@ nav = [
     {"Analytics & Stats" = "usage/analytics.md"},
     {"SQL Queries" = "usage/querying.md"},
     {"Deleting Email" = "usage/deletion.md"},
+    {"People, Profiles & Identities" = "usage/people.md"},
     {"Accounts & Collections" = "usage/multi-account.md"},
     {"Deduplication" = "usage/deduplication.md"},
     {"Backup" = "usage/backup.md"},

@@ -24,8 +24,9 @@ This means:
   over the years.
 
 I started with Gmail but I want all my life's messages in this system,
-including Google Calendar, Microsoft Teams, Discord guilds, Beeper Desktop chats, Granola and
-Circleback meeting notes, WhatsApp, iMessage, Google Voice, Facebook Messenger,
+including Google Calendar, Microsoft Teams, Discord guilds, Slack workspaces,
+Beeper Desktop chats, Granola and Circleback meeting notes, WhatsApp, iMessage,
+Google Voice, Facebook Messenger,
 SMS Backup & Restore archives, and old local email
 archives.
 

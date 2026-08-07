@@ -85,6 +85,11 @@ If a token expires during sync, msgvault prints the re-authorization URL with th
 
 Each account has a confirmed "me" identity: the email addresses, phone numbers, chat handles, or synthetic identifiers that mean you inside that source. Deduplication uses this set for sent-copy detection, so for "sent" versus "received" to mean anything in older imports, msgvault needs to know which identifiers are you in each account.
 
+Source identities are different from the observed people and durable profiles
+used by relationship exploration. See [People, Profiles, and Source
+Identities](/usage/people/) for evidence discovery, bulk import, optional
+Fastmail alias inventory, person promotion, and typed attributes.
+
 New Gmail, IMAP, Microsoft 365, MBOX, EMLX, WhatsApp, and Google Voice sources auto-confirm the source identifier by default. Use `--no-default-identity` on supported add/import commands when that is not correct. (iMessage imports are exempt, because iMessage contacts are not self-identifying.)
 
 ```bash

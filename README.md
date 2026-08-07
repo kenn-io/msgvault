@@ -25,8 +25,8 @@ Archive a lifetime of email, messages, meetings. Analytics and search in millise
 
 Your messages are yours. Decades of correspondence, attachments, and history shouldn't be locked behind a web interface or an API. By default, msgvault downloads a complete local copy and then everything runs offline. Search, analytics, and the MCP server all work against your msgvault archive with no mailbox network access required. If you configure a remote deployment, the archive lives on your own server rather than a hosted msgvault service.
 
-Currently supports Gmail, Google Calendar, Microsoft Teams, Discord, Granola,
-Circleback, Beeper Desktop, and IMAP sync, plus offline imports from MBOX
+Currently supports Gmail, Google Calendar, Microsoft Teams, Discord, Slack,
+Granola, Circleback, Beeper Desktop, and IMAP sync, plus offline imports from MBOX
 exports, Apple Mail (`.emlx`) directories, PST archives, and common chat/text
 export formats.
 
@@ -36,6 +36,7 @@ export formats.
 - **Google Calendar sync**: archive events, organizers, and attendees; searchable alongside email
 - **Microsoft Teams sync**: archive delegated Graph chats, channels, replies, and inline media with `message_type = teams`
 - **Discord sync**: archive guild channels, threads, forum posts, and attachments through a read-only bot with `message_type = discord`
+- **Slack sync**: archive joined channels, group DMs, direct messages, threads, reactions, and files with `message_type = slack`
 - **Meeting notes**: sync Granola and Circleback notes and transcripts, then browse them in the TUI
 - **Beeper Desktop sync**: archive chats and media from every network connected to Beeper, including iMessage, through its local API
 - **IMAP sync**: archive mail from any standard IMAP server
@@ -121,6 +122,7 @@ available with `msgvault tui`.
 | `add-teams EMAIL` | Authorize delegated Microsoft Graph access for Teams |
 | `sync-teams EMAIL` | Sync Microsoft Teams chats and channels |
 | `add-discord` / `sync-discord` | Register a read-only bot and sync Discord guild channels and threads |
+| `add-slack` / `sync-slack` | Register and archive a Slack workspace, including threads and media |
 | `export-messages` | Stream a bounded, provider-neutral archive window as versioned JSONL |
 | `export-discord` | Temporary compatibility export for bounded Discord history |
 | `backfill-discord-media` | Retry incomplete Discord attachment downloads |
@@ -136,7 +138,11 @@ available with `msgvault tui`.
 | `show-message ID` | View full message details (`--json` for machine output) |
 | `mcp` | Start the MCP server for AI assistant integration |
 | `skills install` | Install bundled agent skills for search, attachments, and analytics |
-| `serve` | Run the API/scheduler or manage the background daemon (`start`, `status`, `stop`, `restart`) |
+| `identity` | Manage and discover source-scoped identifiers that mean “me” |
+| `person` | Manage durable person profiles and typed attributes |
+| `attribute-definition` | Manage portable metadata-defined profile fields |
+| `daemon` | Manage the local background daemon (`start`, `status`, `stop`, `restart`) |
+| `serve` | Run the Web UI, API, and scheduler in the foreground |
 | `stats` | Show archive statistics |
 | `list-accounts` | List synced email accounts |
 | `verify EMAIL` | Verify archive integrity against Gmail |
@@ -150,7 +156,9 @@ available with `msgvault tui`.
 | `repair-dates` | Report or repair missing and implausible email sent dates |
 | `list-senders` / `list-domains` / `list-labels` | Explore metadata |
 
-See the [CLI Reference](https://msgvault.io/cli-reference/) for full details.
+See the [CLI Reference](https://msgvault.io/cli-reference/) for full details
+and [People, Profiles, and Source Identities](https://msgvault.io/usage/people/)
+for the identity and profile model.
 
 ## Vector Search
 

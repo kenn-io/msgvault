@@ -52,8 +52,10 @@ on your own machine or network.
    target already passes `-tags "fts5 sqlite_vec"`. If you see errors
    mentioning "binary was built without -tags sqlite_vec", rebuild
    via `make build` (or `go build -tags "fts5 sqlite_vec"` if you are
-   invoking `go build` directly). PostgreSQL vector search additionally
-   requires the `pgvector` build tag, for example
+   invoking `go build` directly). The official Docker image also includes
+   `sqlite_vec`, so SQLite-backed container deployments do not need a custom
+   image for vector search. PostgreSQL vector search additionally requires the
+   `pgvector` build tag, for example
    `go build -tags "fts5 sqlite_vec pgvector" ./cmd/msgvault`.
 
 !!! tip "Fastest path to using embeddings on Mac"
@@ -286,7 +288,7 @@ trigger).
 | Manual `sync-calendar` / `sync-teams` / `sync-discord` | No. Run `msgvault embeddings build` afterward |
 | Manual `sync-beeper` / `sync-granola` / `sync-circleback` | No. Run `msgvault embeddings build` afterward |
 | Scheduled account syncs in `msgvault serve` (Gmail, IMAP, Teams, Discord) | Yes, when `[vector.embed.schedule].run_after_sync = true` |
-| Scheduled calendar, Beeper, Granola, and Circleback syncs in `msgvault serve` | No immediate post-sync run. Picked up by the embed worker's `[vector.embed.schedule].cron` schedule |
+| Scheduled calendar, Slack, Beeper, Granola, and Circleback syncs in `msgvault serve` | No immediate post-sync run. Picked up by the embed worker's `[vector.embed.schedule].cron` schedule |
 | `import-pst`, `import-emlx`, `import-mbox` | No. Re-run `--full-rebuild` after large imports |
 | Chat/text imports (iMessage, WhatsApp, Google Voice, Messenger, SyncTech SMS) | No. Run a full rebuild after importing if you want chats included |
 
