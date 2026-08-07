@@ -1,0 +1,94 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 480" font-family="system-ui, -apple-system, sans-serif">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 7" refX="9" refY="3.5" markerWidth="8" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 3.5 L 0 7 z" fill="#6b7280"/>
+    </marker>
+    <linearGradient id="gcp" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#e8f0fe"/>
+      <stop offset="100%" stop-color="#d2e3fc"/>
+    </linearGradient>
+    <linearGradient id="gcp2" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#fce7f3"/>
+      <stop offset="100%" stop-color="#fbcfe8"/>
+    </linearGradient>
+    <linearGradient id="token" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#fef3c7"/>
+      <stop offset="100%" stop-color="#fde68a"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Background -->
+  <rect width="720" height="480" rx="12" fill="#fafafa" stroke="#e5e7eb"/>
+
+  <!-- Title -->
+  <text x="360" y="36" text-anchor="middle" font-size="16" font-weight="600" fill="#111827">Default and Named OAuth Apps</text>
+
+  <!-- Default OAuth app box -->
+  <rect x="30" y="58" width="210" height="110" rx="10" fill="url(#gcp)" stroke="#93c5fd" stroke-width="1.5"/>
+  <text x="135" y="80" text-anchor="middle" font-size="12" font-weight="600" fill="#1e40af">Default OAuth App</text>
+  <rect x="46" y="90" width="178" height="56" rx="6" fill="white" stroke="#93c5fd"/>
+  <text x="135" y="110" text-anchor="middle" font-size="10" font-weight="500" fill="#374151">[oauth]</text>
+  <text x="135" y="126" text-anchor="middle" font-size="9" font-family="monospace" fill="#6b7280">client_secrets = "...json"</text>
+  <text x="135" y="140" text-anchor="middle" font-size="9" fill="#9ca3af">Personal Gmail accounts</text>
+
+  <!-- Named OAuth app box -->
+  <rect x="30" y="188" width="210" height="110" rx="10" fill="url(#gcp2)" stroke="#f9a8d4" stroke-width="1.5"/>
+  <text x="135" y="210" text-anchor="middle" font-size="12" font-weight="600" fill="#9d174d">Named OAuth App</text>
+  <rect x="46" y="220" width="178" height="56" rx="6" fill="white" stroke="#f9a8d4"/>
+  <text x="135" y="240" text-anchor="middle" font-size="10" font-weight="500" fill="#374151">[oauth.apps.acme]</text>
+  <text x="135" y="256" text-anchor="middle" font-size="9" font-family="monospace" fill="#6b7280">client_secrets = "...json"</text>
+  <text x="135" y="270" text-anchor="middle" font-size="9" fill="#9ca3af">Workspace org accounts</text>
+
+  <!-- add-account commands -->
+  <rect x="290" y="68" width="270" height="36" rx="8" fill="#ecfdf5" stroke="#6ee7b7" stroke-width="1.5"/>
+  <text x="425" y="91" text-anchor="middle" font-size="10" font-family="monospace" fill="#065f46">add-account personal@gmail.com</text>
+
+  <rect x="290" y="118" width="270" height="36" rx="8" fill="#ecfdf5" stroke="#6ee7b7" stroke-width="1.5"/>
+  <text x="425" y="141" text-anchor="middle" font-size="10" font-family="monospace" fill="#065f46">add-account other@gmail.com</text>
+
+  <rect x="290" y="198" width="270" height="36" rx="8" fill="#fdf2f8" stroke="#f9a8d4" stroke-width="1.5"/>
+  <text x="425" y="221" text-anchor="middle" font-size="10" font-family="monospace" fill="#831843">add-account you@acme.com</text>
+
+  <rect x="290" y="248" width="270" height="36" rx="8" fill="#fdf2f8" stroke="#f9a8d4" stroke-width="1.5"/>
+  <text x="425" y="271" text-anchor="middle" font-size="10" font-family="monospace" fill="#831843">  --oauth-app acme</text>
+
+  <!-- Arrows from default app to personal commands -->
+  <line x1="240" y1="100" x2="290" y2="88" stroke="#6b7280" stroke-width="1.2" marker-end="url(#arrow)"/>
+  <line x1="240" y1="120" x2="290" y2="134" stroke="#6b7280" stroke-width="1.2" marker-end="url(#arrow)"/>
+
+  <!-- Arrow from named app to workspace command -->
+  <line x1="240" y1="245" x2="290" y2="225" stroke="#6b7280" stroke-width="1.2" marker-end="url(#arrow)"/>
+
+  <!-- "uses" labels -->
+  <text x="262" y="84" text-anchor="middle" font-size="9" fill="#9ca3af">uses</text>
+  <text x="262" y="232" text-anchor="middle" font-size="9" fill="#9ca3af">uses</text>
+
+  <!-- Token files -->
+  <rect x="290" y="330" width="400" height="130" rx="10" fill="#fffbeb" stroke="#fbbf24" stroke-width="1.5" stroke-dasharray="6,3"/>
+  <text x="490" y="354" text-anchor="middle" font-size="12" font-weight="600" fill="#92400e">~/.msgvault/tokens/</text>
+
+  <rect x="310" y="370" width="170" height="32" rx="5" fill="url(#token)" stroke="#f59e0b"/>
+  <text x="395" y="390" text-anchor="middle" font-size="10" font-family="monospace" fill="#78350f">personal@gmail.com.json</text>
+
+  <rect x="510" y="370" width="170" height="32" rx="5" fill="url(#token)" stroke="#f59e0b"/>
+  <text x="595" y="390" text-anchor="middle" font-size="10" font-family="monospace" fill="#78350f">other@gmail.com.json</text>
+
+  <rect x="310" y="414" width="170" height="32" rx="5" fill="url(#token)" stroke="#f59e0b"/>
+  <text x="395" y="434" text-anchor="middle" font-size="10" font-family="monospace" fill="#78350f">you@acme.com.json</text>
+
+  <!-- Arrows from commands to tokens -->
+  <line x1="370" y1="104" x2="370" y2="330" stroke="#6b7280" stroke-width="1.2" stroke-dasharray="4,3" marker-end="url(#arrow)"/>
+  <line x1="480" y1="154" x2="580" y2="330" stroke="#6b7280" stroke-width="1.2" stroke-dasharray="4,3" marker-end="url(#arrow)"/>
+  <line x1="370" y1="284" x2="370" y2="330" stroke="#6b7280" stroke-width="1.2" stroke-dasharray="4,3" marker-end="url(#arrow)"/>
+
+  <!-- "creates" labels -->
+  <text x="350" y="316" text-anchor="middle" font-size="9" fill="#9ca3af">creates</text>
+  <text x="530" y="316" text-anchor="middle" font-size="9" fill="#9ca3af">creates</text>
+
+  <!-- Bottom note -->
+  <text x="135" y="360" text-anchor="middle" font-size="11" fill="#374151" font-weight="500">Each account gets its</text>
+  <text x="135" y="378" text-anchor="middle" font-size="11" fill="#374151" font-weight="500">own token file.</text>
+  <text x="135" y="404" text-anchor="middle" font-size="11" fill="#6b7280">sync, verify, and serve</text>
+  <text x="135" y="422" text-anchor="middle" font-size="11" fill="#6b7280">resolve credentials</text>
+  <text x="135" y="440" text-anchor="middle" font-size="11" fill="#6b7280">automatically.</text>
+</svg>
