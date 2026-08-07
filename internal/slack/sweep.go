@@ -227,6 +227,7 @@ func (imp *Importer) scheduleCanonicalThreadAudit(targets map[string]sweepTarget
 // store/context failures return an error.
 func (imp *Importer) sweepRange(ctx context.Context, syncID int64, scope, floor string, searchEnd time.Time, ceiling string, targets map[string]sweepTarget, loc *time.Location, budget *sweepBudget, state *SyncState, sum *ImportSummary, commit func(certified string)) error {
 	queryFloor := overlapFloor(floor)
+	startedWithCapacity := !budget.exhausted()
 	// The boundary only ever advances: overlap-region parks and yesterday's
 	// day-end sit below the stored floor and must not regress it.
 	advance := func(v string) {
@@ -254,6 +255,13 @@ func (imp *Importer) sweepRange(ctx context.Context, syncID int64, scope, floor 
 			}
 			day = nextDay
 			continue
+		}
+		// The budget is shared by every gap range and the workspace range. A
+		// range that starts exhausted may skip already-converted truncations
+		// above, but must not turn its nominally free overlap into unbounded
+		// search work for each remaining channel.
+		if !startedWithCapacity {
+			return nil
 		}
 		// Re-search a fully certified overlap day for late indexing without
 		// charging it as forward work. Otherwise a --limit 1 run whose floor
