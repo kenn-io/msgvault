@@ -966,6 +966,9 @@ rerun as new loose content arrives. Bounded packing also runs after successful
 attachment-producing operations and during scheduled maintenance; this command
 processes the complete eligible backlog immediately.
 
+With `[data].loose_attachments = true`, automatic packing is disabled and this
+command refuses to run.
+
 ---
 
 ## repack-attachments
@@ -979,6 +982,8 @@ msgvault repack-attachments
 Repack always runs through the selected daemon so it can atomically replace
 live blob mappings, retire shared readers, and remove old pack files. It is
 safe to retry after interruption or a Windows file-sharing error.
+It refuses to run when `[data].loose_attachments = true` because repacking
+creates replacement pack files.
 
 ---
 

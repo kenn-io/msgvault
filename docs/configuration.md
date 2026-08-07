@@ -153,8 +153,14 @@ client_secrets = 'C:\Users\you\Downloads\client_secret.json'
 |---|---|---|
 | `data_dir` | `~/.msgvault` | Base directory for all data |
 | `database_url` | `{data_dir}/msgvault.db` | SQLite database path or PostgreSQL DSN |
+| `loose_attachments` | `false` | Keep attachments as loose files and reject pack/repack commands instead of creating immutable packs |
 
 Attachments and OAuth tokens are stored in subdirectories of `data_dir` (`attachments/` and `tokens/` respectively). These paths are not independently configurable.
+
+Setting `loose_attachments = true` prevents new pack files but does not
+convert existing packs. Stop the daemon and run `msgvault unpack-attachments`
+once to materialize their contents as loose files. Backup restore also restores
+attachments loose while this setting is enabled.
 
 ### `[oauth]`
 

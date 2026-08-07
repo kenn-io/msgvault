@@ -768,6 +768,24 @@ func TestStoreAPIAdapterInterceptsExplicitRepackInDaemonParent(t *testing.T) {
 	assert.Contains(events[0].Data, "removed 1 old pack(s)")
 }
 
+func TestStoreAPIAdapterRejectsExplicitRepackInLooseAttachmentMode(t *testing.T) {
+	f := newAttachmentMaintenanceFixture(t)
+	f.maintenance.packCreationEnabled = false
+	adapter := &storeAPIAdapter{store: f.store, attachmentMaintenance: f.maintenance}
+
+	err := adapter.runCLICommandWithRunner(
+		context.Background(), api.CLIRunRequest{Args: []string{"repack-attachments"}},
+		nil,
+		func(context.Context, []string, map[string]string, string, func(string, string) error) error {
+			require.FailNow(t, "disabled repack must never spawn a child process")
+			return nil
+		},
+	)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "[data].loose_attachments")
+}
+
 func TestStoreAPIAdapterExplicitRepackAcceptsLoggingPassthroughFlags(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

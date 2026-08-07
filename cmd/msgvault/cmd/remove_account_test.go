@@ -314,7 +314,7 @@ func TestRemoveAccountCmd_DeletesUniquePackedMappings(t *testing.T) {
 	require.NoError(err)
 	seedAttachmentFile(t, attachmentsDir, storagePath, string(content))
 	seedAttachmentFile(t, attachmentsDir, thumbnailPath, string(thumbnail))
-	maintenance, err := newAttachmentMaintenance(s, attachmentsDir, nil)
+	maintenance, err := newAttachmentMaintenance(s, attachmentsDir, nil, true)
 	require.NoError(err)
 	packed, err := maintenance.pack(context.Background(), 0)
 	require.NoError(err)

@@ -229,7 +229,9 @@ func runServe(cmd *cobra.Command, args []string) error {
 	operationGate := api.NewSerialOperationGate()
 	// Closed on shutdown so cached pack readers don't hold attachment pack
 	// files open past the daemon's lifetime (blocks deletion on Windows).
-	attachmentMaint, err := newAttachmentMaintenance(s, cfg.AttachmentsDir(), logger)
+	attachmentMaint, err := newAttachmentMaintenance(
+		s, cfg.AttachmentsDir(), logger, !cfg.Data.LooseAttachments,
+	)
 	if err != nil {
 		return fmt.Errorf("open attachment maintenance: %w", err)
 	}

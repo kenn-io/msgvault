@@ -42,7 +42,7 @@ func newAttachmentMaintenanceBenchmark(b *testing.B) *attachmentMaintenanceBench
 	})
 	require.NoError(b, err)
 	dir := filepath.Join(root, "attachments")
-	maintenance, err := newAttachmentMaintenance(s, dir, nil)
+	maintenance, err := newAttachmentMaintenance(s, dir, nil, true)
 	require.NoError(b, err)
 	b.Cleanup(func() {
 		require.NoError(b, maintenance.close())

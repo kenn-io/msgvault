@@ -544,8 +544,8 @@ func TestPrintBackupRestoreSummaryReportsPackedMixedAndLooseLayouts(t *testing.T
 			looseFlag: true,
 			result: backup.RestoreResult{SnapshotID: "snap", DBPath: "/target/msgvault.db",
 				AttachmentBlobs: 3, AttachmentBytes: 30, LooseAttachmentBlobs: 3},
-			contains: []string{"0 packed in 0 pack(s), 3 loose", "restored as loose files by request",
-				"msgvault pack-attachments"},
+			contains:    []string{"0 packed in 0 pack(s), 3 loose", "restored as loose files"},
+			notContains: []string{"msgvault pack-attachments"},
 		},
 		{
 			name: "whole pack fallback",

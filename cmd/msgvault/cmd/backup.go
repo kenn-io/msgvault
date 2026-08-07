@@ -249,6 +249,7 @@ func runBackupRestore(cmd *cobra.Command, args []string) error {
 	}
 	renderer := newBackupProgressRenderer(cmd.OutOrStdout(), progressModeAuto)
 	defer renderer.finish()
+	looseAttachments := backupRestoreLooseAttachments || cfg.Data.LooseAttachments
 	res, err := backup.Restore(cmd.Context(), r, backupapp.New(Version), backup.RestoreOptions{
 		SnapshotID:         snapshotID,
 		TargetDir:          backupRestoreTarget,
@@ -257,13 +258,13 @@ func runBackupRestore(cmd *cobra.Command, args []string) error {
 		ForceUnlock:        backupRestoreForceUnlock,
 		SkipIntegrityCheck: !backupRestoreIntegrityCheck,
 		Progress:           renderer.handle,
-		PackedContent:      backupRestorePackedContentTarget(backupRestoreLooseAttachments),
+		PackedContent:      backupRestorePackedContentTarget(looseAttachments),
 		TargetCoordinator:  targetCoordinatorOption,
 	})
 	if err != nil {
 		return fmt.Errorf("restoring snapshot: %w", err)
 	}
-	return printBackupRestoreSummary(cmd.OutOrStdout(), backupRestoreTarget, res, backupRestoreLooseAttachments)
+	return printBackupRestoreSummary(cmd.OutOrStdout(), backupRestoreTarget, res, looseAttachments)
 }
 
 func backupRestorePackedContentTarget(loose bool) backup.PackedContentTarget {
@@ -522,7 +523,7 @@ func (l *daemonRestoreTargetLease) Release() error {
 	return errors.Join(writeErr, daemonErr)
 }
 
-func printBackupRestoreSummary(w io.Writer, target string, res *backup.RestoreResult, explicitLoose bool) error {
+func printBackupRestoreSummary(w io.Writer, target string, res *backup.RestoreResult, looseOnly bool) error {
 	if res == nil {
 		return errors.New("backup restore result is nil")
 	}
@@ -550,9 +551,9 @@ func printBackupRestoreSummary(w io.Writer, target string, res *backup.RestoreRe
 		lines = append(lines, "Pack fallbacks: "+strings.Join(parts, ", ")+"\n")
 	}
 	if res.LooseAttachmentBlobs > 0 {
-		if explicitLoose {
+		if looseOnly {
 			lines = append(lines,
-				"Pack metadata cleared: attachments were restored as loose files by request; 'msgvault pack-attachments' will pack eligible blobs\n")
+				"Pack metadata cleared: attachments were restored as loose files\n")
 		} else {
 			lines = append(lines, fmt.Sprintf(
 				"%d attachment blob(s) remain loose; 'msgvault pack-attachments' can pack eligible blobs later\n",

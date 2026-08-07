@@ -375,8 +375,9 @@ type LogConfig struct {
 
 // DataConfig holds data storage configuration.
 type DataConfig struct {
-	DataDir     string `toml:"data_dir"`
-	DatabaseURL string `toml:"database_url"`
+	DataDir          string `toml:"data_dir"`
+	DatabaseURL      string `toml:"database_url"`
+	LooseAttachments bool   `toml:"loose_attachments"`
 }
 
 // OAuthApp holds configuration for a named OAuth application.

@@ -77,7 +77,7 @@ func runUnpackAttachmentsLocal(cmd *cobra.Command) (runErr error) {
 	}
 	defer cleanup()
 
-	maintenance, err := newAttachmentMaintenance(s, cfg.AttachmentsDir(), nil)
+	maintenance, err := newAttachmentMaintenance(s, cfg.AttachmentsDir(), nil, false)
 	if err != nil {
 		return err
 	}

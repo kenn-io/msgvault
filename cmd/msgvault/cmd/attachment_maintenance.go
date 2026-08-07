@@ -25,17 +25,19 @@ const (
 // callers already hold the daemon operation gate; these methods must not try
 // to acquire it again.
 type attachmentMaintenance struct {
-	store       *store.Store
-	maintainer  *packstore.Maintainer
-	coordinator *packstore.Coordinator
-	blob        *attachmentstore.Store
-	logger      *slog.Logger
+	store               *store.Store
+	maintainer          *packstore.Maintainer
+	coordinator         *packstore.Coordinator
+	blob                *attachmentstore.Store
+	logger              *slog.Logger
+	packCreationEnabled bool
 }
 
 func newAttachmentMaintenance(
 	s *store.Store,
 	attachmentsDir string,
 	logger *slog.Logger,
+	packCreationEnabled bool,
 ) (*attachmentMaintenance, error) {
 	layout, err := packstore.NewLayout(attachmentsDir, packstore.LayoutOptions{
 		Staging: packstore.StagingSameDirectory,
@@ -51,11 +53,12 @@ func newAttachmentMaintenance(
 		return nil, fmt.Errorf("create attachment maintainer: %w", err)
 	}
 	return &attachmentMaintenance{
-		store:       s,
-		maintainer:  maintainer,
-		coordinator: coordinator,
-		blob:        attachmentstore.Wrap(maintainer.Store()),
-		logger:      logger,
+		store:               s,
+		maintainer:          maintainer,
+		coordinator:         coordinator,
+		blob:                attachmentstore.Wrap(maintainer.Store()),
+		logger:              logger,
+		packCreationEnabled: packCreationEnabled,
 	}, nil
 }
 
@@ -71,6 +74,11 @@ func (m *attachmentMaintenance) close() error {
 
 // pack performs one packer pass with the requested soft raw-byte budget.
 func (m *attachmentMaintenance) pack(ctx context.Context, maxBytes int64) (packstore.PackStats, error) {
+	if !m.packCreationEnabled {
+		return packstore.PackStats{}, errors.New(
+			"attachment pack creation is disabled by [data].loose_attachments",
+		)
+	}
 	stats, err := m.maintainer.Pack(ctx, packstore.PackOptions{MaxBytes: maxBytes})
 	if err != nil {
 		return stats, fmt.Errorf("pack attachments: %w", err)
@@ -81,6 +89,11 @@ func (m *attachmentMaintenance) pack(ctx context.Context, maxBytes int64) (packs
 // repack performs one physical-GC pass through the daemon's shared blob-store
 // cache with the requested soft live-raw-byte budget.
 func (m *attachmentMaintenance) repack(ctx context.Context, maxBytes int64) (packstore.RepackStats, error) {
+	if !m.packCreationEnabled {
+		return packstore.RepackStats{}, errors.New(
+			"attachment pack creation is disabled by [data].loose_attachments",
+		)
+	}
 	stats, err := m.maintainer.Repack(ctx, packstore.RepackOptions{MaxBytes: maxBytes})
 	if err != nil {
 		return stats, fmt.Errorf("repack attachments: %w", err)
@@ -100,6 +113,10 @@ func (m *attachmentMaintenance) unpack(ctx context.Context) (packstore.UnpackSta
 // visible to schedulers, while callers following a successful ingest can log
 // or stream the warning and deliberately preserve the ingest result.
 func (m *attachmentMaintenance) runAutomaticPack(ctx context.Context, emitWarning func(string) error) error {
+	if !m.packCreationEnabled {
+		m.log().Debug("automatic attachment packing disabled")
+		return nil
+	}
 	stats, err := m.pack(ctx, automaticAttachmentBytes)
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
@@ -148,6 +165,10 @@ func (m *attachmentMaintenance) logAutomaticPackSummary(message string, stats pa
 }
 
 func (m *attachmentMaintenance) runAutomaticRepack(ctx context.Context, emitWarning func(string) error) error {
+	if !m.packCreationEnabled {
+		m.log().Debug("automatic attachment repacking disabled")
+		return nil
+	}
 	stats, err := m.repack(ctx, automaticAttachmentBytes)
 	if err != nil {
 		if errors.Is(err, context.Canceled) {

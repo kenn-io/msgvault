@@ -39,7 +39,9 @@ func runPackAttachmentsLocal(cmd *cobra.Command) error {
 	}
 	defer cleanup()
 
-	maintenance, err := newAttachmentMaintenance(s, cfg.AttachmentsDir(), nil)
+	maintenance, err := newAttachmentMaintenance(
+		s, cfg.AttachmentsDir(), nil, !cfg.Data.LooseAttachments,
+	)
 	if err != nil {
 		return err
 	}
