@@ -21,7 +21,7 @@ jobs:
         run: |
           rm -f /etc/apt/sources.list.d/nodesource.list
           apt-get update -o Acquire::Retries=3 -o Acquire::http::Timeout=30
-          apt-get install -y --no-install-recommends gcc g++ libsqlite3-dev make curl tar gzip file ripgrep
+          apt-get install -y --no-install-recommends gcc g++ libsqlite3-dev make curl tar gzip file ripgrep unzip
 
       - name: Trust the checkout in the container
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
