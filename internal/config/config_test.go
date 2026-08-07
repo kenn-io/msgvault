@@ -1051,16 +1051,17 @@ mcp_enabled = true
 }
 
 func TestNewDefaultConfig(t *testing.T) {
+	assert := assert.New(t)
 	// Use a temp directory as MSGVAULT_HOME
 	tmpDir := t.TempDir()
 	t.Setenv("MSGVAULT_HOME", tmpDir)
 
 	cfg := NewDefaultConfig()
 
-	assert.Equal(t, tmpDir, cfg.HomeDir)
-	assert.Equal(t, tmpDir, cfg.Data.DataDir)
-	assert.False(t, cfg.Data.LooseAttachments)
-	assert.Equal(t, 5, cfg.Sync.RateLimitQPS)
+	assert.Equal(tmpDir, cfg.HomeDir)
+	assert.Equal(tmpDir, cfg.Data.DataDir)
+	assert.False(cfg.Data.LooseAttachments)
+	assert.Equal(5, cfg.Sync.RateLimitQPS)
 }
 
 func TestDataLooseAttachmentsConfig(t *testing.T) {

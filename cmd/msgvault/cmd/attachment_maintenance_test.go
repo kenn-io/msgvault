@@ -194,22 +194,24 @@ func TestAutomaticAttachmentMaintenancePacksBoundedAndLogsCompleteStats(t *testi
 }
 
 func TestLooseAttachmentModeSkipsAutomaticPackingAndRejectsPackCreation(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
 	f := newAttachmentMaintenanceFixture(t)
 	f.maintenance.packCreationEnabled = false
 	hash := f.addLoose([]byte("remain loose when attachment packing is disabled"))
 
 	err := f.maintenance.runAutomaticPack(context.Background(), nil)
-	require.NoError(t, err)
-	assert.Nil(t, f.packedEntry(hash))
-	assert.Contains(t, f.logs.String(), "automatic attachment packing disabled")
+	require.NoError(err)
+	assert.Nil(f.packedEntry(hash))
+	assert.Contains(f.logs.String(), "automatic attachment packing disabled")
 
 	_, err = f.maintenance.pack(context.Background(), 0)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "[data].loose_attachments")
+	require.Error(err)
+	assert.Contains(err.Error(), "[data].loose_attachments")
 
 	_, err = f.maintenance.repack(context.Background(), 0)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "[data].loose_attachments")
+	require.Error(err)
+	assert.Contains(err.Error(), "[data].loose_attachments")
 }
 
 func TestAutomaticAttachmentMaintenanceCancellationIsInformational(t *testing.T) {
