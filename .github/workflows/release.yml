@@ -4,15 +4,40 @@ on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing v* tag to rebuild and publish
+        required: true
+        type: string
 
 permissions:
   contents: write
+
+env:
+  RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
 
 jobs:
   build-web:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+          fetch-depth: 0
+
+      - name: Validate release tag
+        run: |
+          case "$RELEASE_TAG" in
+            v*) ;;
+            *) echo "FATAL: release tag must start with v: $RELEASE_TAG" >&2; exit 1 ;;
+          esac
+          TAG_COMMIT=$(git rev-parse "$RELEASE_TAG^{commit}")
+          HEAD_COMMIT=$(git rev-parse HEAD)
+          test "$TAG_COMMIT" = "$HEAD_COMMIT" || {
+            echo "FATAL: $RELEASE_TAG resolves to $TAG_COMMIT, but checkout is $HEAD_COMMIT" >&2
+            exit 1
+          }
 
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
@@ -55,9 +80,14 @@ jobs:
           # binding includes unconditionally with -DSQLITE_CORE. mattn's
           # sqlite3 driver still links its own bundled amalgamation at
           # runtime; the header is only needed at compile time.
-          apt-get install -y gcc g++ make git curl tar gzip file binutils libsqlite3-dev
+          apt-get install -y gcc g++ make git curl tar gzip unzip file binutils libsqlite3-dev
 
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+
+      - name: Trust checkout in container
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
       - name: Install Go
         run: |
@@ -87,7 +117,7 @@ jobs:
           mkdir -p internal/web/dist
           find internal/web/dist -mindepth 1 -maxdepth 1 ! -name stub.html -exec rm -rf {} +
           cp -R web/dist/. internal/web/dist/
-          node scripts/check-web-assets.mjs
+          bun scripts/check-web-assets.mjs
 
       - name: Build
         env:
@@ -96,10 +126,10 @@ jobs:
           CGO_ENABLED: '1'
         run: |
           export PATH="/usr/local/go/bin:$HOME/go/bin:$PATH"
-          VERSION=${GITHUB_REF#refs/tags/v}
+          VERSION=${RELEASE_TAG#v}
 
           mkdir -p dist
-          LDFLAGS="-s -w -X go.kenn.io/msgvault/cmd/msgvault/cmd.Version=v${VERSION} -X go.kenn.io/msgvault/cmd/msgvault/cmd.Commit=$(printf '%s' "$GITHUB_SHA" | cut -c1-8) -X go.kenn.io/msgvault/cmd/msgvault/cmd.BuildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ) -extldflags '-lstdc++ -lm'"
+          LDFLAGS="-s -w -X go.kenn.io/msgvault/cmd/msgvault/cmd.Version=v${VERSION} -X go.kenn.io/msgvault/cmd/msgvault/cmd.Commit=$(git rev-parse --short=8 HEAD) -X go.kenn.io/msgvault/cmd/msgvault/cmd.BuildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ) -extldflags '-lstdc++ -lm'"
           go build -tags "fts5 sqlite_vec" -trimpath -buildvcs=false -ldflags="$LDFLAGS" -o dist/msgvault ./cmd/msgvault
 
           echo "--- Binary info ---"
@@ -118,7 +148,7 @@ jobs:
           echo "$SMOKE_OUT"
           echo "$SMOKE_OUT" | grep -q "v${VERSION}" || { echo "FATAL: version output doesn't match tag"; exit 1; }
 
-          node scripts/check-web-assets.mjs --binary dist/msgvault \
+          bun scripts/check-web-assets.mjs --binary dist/msgvault \
             --json "dist/web-assets-linux-${{ matrix.goarch }}.json"
 
           cd dist
@@ -146,6 +176,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ env.RELEASE_TAG }}
 
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
@@ -176,10 +208,10 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: 1
         run: |
-          VERSION=${GITHUB_REF#refs/tags/v}
+          VERSION=${RELEASE_TAG#v}
 
           mkdir -p dist
-          LDFLAGS="-s -w -X go.kenn.io/msgvault/cmd/msgvault/cmd.Version=v${VERSION} -X go.kenn.io/msgvault/cmd/msgvault/cmd.Commit=$(printf '%s' "$GITHUB_SHA" | cut -c1-8) -X go.kenn.io/msgvault/cmd/msgvault/cmd.BuildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          LDFLAGS="-s -w -X go.kenn.io/msgvault/cmd/msgvault/cmd.Version=v${VERSION} -X go.kenn.io/msgvault/cmd/msgvault/cmd.Commit=$(git rev-parse --short=8 HEAD) -X go.kenn.io/msgvault/cmd/msgvault/cmd.BuildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           go build -tags "fts5 sqlite_vec" -trimpath -ldflags="$LDFLAGS" -o dist/msgvault ./cmd/msgvault
 
           echo "--- Binary info ---"
@@ -235,6 +267,8 @@ jobs:
         shell: bash
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ env.RELEASE_TAG }}
 
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
@@ -395,10 +429,10 @@ jobs:
           CGO_LDFLAGS: "${{ matrix.goarch == 'arm64' && format('-L{0}/duckdb-1.5.4/build/arm64-static -lduckdb_bundle -lws2_32 -lwsock32 -lrstrtmgr -lstdc++ -lm --static -Wl,--allow-multiple-definition', runner.temp) || '-Wl,--allow-multiple-definition' }}"
           GO_TAGS: "${{ matrix.goarch == 'arm64' && 'fts5 sqlite_vec duckdb_use_static_lib' || 'fts5 sqlite_vec' }}"
         run: |
-          VERSION="${GITHUB_REF#refs/tags/v}"
+          VERSION="${RELEASE_TAG#v}"
 
           mkdir -p dist
-          LDFLAGS="-s -w -X go.kenn.io/msgvault/cmd/msgvault/cmd.Version=v${VERSION} -X go.kenn.io/msgvault/cmd/msgvault/cmd.Commit=$(printf '%s' "$GITHUB_SHA" | cut -c1-8) -X go.kenn.io/msgvault/cmd/msgvault/cmd.BuildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          LDFLAGS="-s -w -X go.kenn.io/msgvault/cmd/msgvault/cmd.Version=v${VERSION} -X go.kenn.io/msgvault/cmd/msgvault/cmd.Commit=$(git rev-parse --short=8 HEAD) -X go.kenn.io/msgvault/cmd/msgvault/cmd.BuildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           go build -tags "$GO_TAGS" -trimpath -ldflags="$LDFLAGS" -o dist/msgvault.exe ./cmd/msgvault
 
           # Smoke test
@@ -437,6 +471,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+          fetch-depth: 0
 
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
@@ -475,7 +512,7 @@ jobs:
             if echo "$archive" | grep -q "linux_amd64"; then
               "$tmpdir/msgvault" version > /tmp/smoke_out.txt 2>&1
               cat /tmp/smoke_out.txt
-              VERSION="${GITHUB_REF#refs/tags/v}"
+              VERSION="${RELEASE_TAG#v}"
               grep -q "v${VERSION}" /tmp/smoke_out.txt || { echo "FATAL: extracted linux_amd64 binary version mismatch"; exit 1; }
 
               smoke_home=$(mktemp -d)
@@ -537,7 +574,7 @@ jobs:
       - name: Get tag message
         id: tag_message
         run: |
-          TAG_NAME="${GITHUB_REF#refs/tags/}"
+          TAG_NAME="$RELEASE_TAG"
 
           TAG_TYPE=$(git cat-file -t "$TAG_NAME")
           if [ "$TAG_TYPE" != "tag" ]; then
@@ -563,6 +600,7 @@ jobs:
       - name: Create Release
         uses: softprops/action-gh-release@718ea10b132b3b2eba29c1007bb80653f286566b # v3.0.1
         with:
+          tag_name: ${{ env.RELEASE_TAG }}
           files: |
             artifacts/*.tar.gz
             artifacts/*.zip
