@@ -10,6 +10,11 @@ on:
         description: Existing v* tag to rebuild and publish
         required: true
         type: string
+      publish:
+        description: Publish the GitHub Release after all validation succeeds
+        required: true
+        default: false
+        type: boolean
 
 permissions:
   contents: write
@@ -598,6 +603,7 @@ jobs:
           fi
 
       - name: Create Release
+        if: github.event_name == 'push' || inputs.publish
         uses: softprops/action-gh-release@718ea10b132b3b2eba29c1007bb80653f286566b # v3.0.1
         with:
           tag_name: ${{ env.RELEASE_TAG }}
