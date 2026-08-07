@@ -41,6 +41,7 @@ REPO_RESOLVED="$(cd "$REPO" 2>/dev/null && pwd)" || {
 }
 REPO="$REPO_RESOLVED"
 export MSGVAULT_REPO="$REPO"
+SCREENSHOT_VERSION="${MSGVAULT_DOCS_SCREENSHOT_VERSION:-$(git -C "$REPO" describe --tags --abbrev=0 2>/dev/null || printf 'dev')}"
 
 # --- Step 1: Generate demo data ---
 if [[ "$SKIP_DATA" == false ]]; then
@@ -52,7 +53,9 @@ fi
 # --- Step 2: Build Docker image ---
 if [[ "$SKIP_BUILD" == false ]]; then
     echo "==> Building Docker image: $IMAGE_NAME"
-    DOCKER_BUILDKIT=1 docker build -t "$IMAGE_NAME" -f "$SCRIPT_DIR/Dockerfile" "$REPO"
+    DOCKER_BUILDKIT=1 docker build \
+        --build-arg "MSGVAULT_VERSION=$SCREENSHOT_VERSION" \
+        -t "$IMAGE_NAME" -f "$SCRIPT_DIR/Dockerfile" "$REPO"
     echo ""
 fi
 
@@ -61,9 +64,9 @@ echo "==> Building analytics cache..."
 docker run --rm \
     -v "$DEMO_DATA_DIR:/data" \
     -e "MSGVAULT_HOME=/data" \
-    --entrypoint msgvault \
+    --entrypoint bash \
     "$IMAGE_NAME" \
-    build-cache --full-rebuild
+    -c 'MSGVAULT_DAEMON_BUILD_CACHE_PARENT_PID=$$ msgvault --local build-cache --full-rebuild; status=$?; exit "$status"'
 echo ""
 
 # --- Step 4: Generate screenshots ---

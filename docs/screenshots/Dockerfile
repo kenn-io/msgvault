@@ -2,13 +2,17 @@
 # Stage 1: Build msgvault binary
 FROM golang:1.26-bookworm AS builder
 
+ARG MSGVAULT_VERSION=dev
+
 RUN apt-get update && apt-get install -y --no-install-recommends git make gcc g++ libsqlite3-dev && rm -rf /var/lib/apt/lists/*
 
 COPY . /src
 WORKDIR /src
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
-    make build
+    CGO_ENABLED=1 go build -buildvcs=false -tags "fts5 sqlite_vec" \
+      -ldflags="-X go.kenn.io/msgvault/cmd/msgvault/cmd.Version=${MSGVAULT_VERSION}" \
+      -o msgvault ./cmd/msgvault
 
 # Stage 2: Screenshot runtime with freeze + tmux
 FROM debian:bookworm-slim

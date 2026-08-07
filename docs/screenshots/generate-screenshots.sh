@@ -6,6 +6,7 @@ OUTPUT_DIR="${1:-/output}"
 FREEZE_CFG="/tapes/freeze.json"
 SESSION="mv"
 SVG_FONT_FAMILY="Liberation Mono, Menlo, Monaco, Consolas, Courier New, monospace"
+DARK_BACKGROUND_RESPONSE=$'\033]11;rgb:1a1a/1b1b/2626\033\\'
 
 mkdir -p "$OUTPUT_DIR"
 
@@ -53,6 +54,11 @@ echo "==> TUI screenshots"
 
 send "MSGVAULT_HOME=/data msgvault tui" Enter
 wait_until "Sender"
+# The detached tmux session has no terminal emulator to answer Bubble Tea's
+# OSC 11 background-color query. Supply the dark canvas color used by freeze so
+# adaptive TUI styles select their dark palette before any capture.
+send -l "$DARK_BACKGROUND_RESPONSE"
+wait_until "alex.chen@gmail.com"
 
 # 1. Senders view (default)
 sleep 0.5
