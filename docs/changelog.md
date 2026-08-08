@@ -9,6 +9,17 @@ All notable changes to msgvault, grouped by release.
 
 ---
 
+## 0.19.1
+<small>2026-08-07</small>
+
+**Bug fixes**
+
+- Advance Slack `--limit 1` sweeps beyond the certified overlap window.
+- Stop Windows daemons cleanly during releases.
+- Recover interrupted releases from existing tags.
+
+---
+
 ## 0.19.0
 <small>2026-08-07</small>
 
