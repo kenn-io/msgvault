@@ -196,13 +196,24 @@ func TestOpenHTTPStoreReportsFulfilledStartupCacheBuild(t *testing.T) {
 		<-chan error,
 		time.Duration,
 	) (*DaemonRuntime, bool, error) {
-		return &DaemonRuntime{
-			Record: daemon.RuntimeRecord{PID: 4242, Metadata: map[string]string{
+		_, err := daemonRuntimeStore(dataDir).Write(daemon.RuntimeRecord{
+			PID:     4242,
+			Network: daemon.NetworkTCP,
+			Address: "127.0.0.1:9911",
+			Service: daemonService,
+			Version: Version,
+			Metadata: map[string]string{
 				runtimeStartupCacheBuildOutcome: string(startupCacheBuildOutcomeFulfilled),
-			}},
-			Host: "127.0.0.1",
-			Port: 9911,
-			API:  daemonAPIVersion,
+			},
+		})
+		require.NoError(t, err, "write fresh startup outcome")
+		return &DaemonRuntime{
+			// Readiness may have loaded this record before the daemon wrote
+			// the outcome, then blocked on the reserved listener until ready.
+			Record: daemon.RuntimeRecord{PID: 4242},
+			Host:   "127.0.0.1",
+			Port:   9911,
+			API:    daemonAPIVersion,
 		}, true, nil
 	})
 

@@ -305,6 +305,9 @@ func ensureLocalDaemonRuntimeWithStartupCacheIntent(
 			localDaemonAutoStartReadyTimeout, proc.PID, proc.LogPath,
 		)
 	}
+	if intent != startupCacheBuildIntentNone {
+		rt = refreshDaemonRuntimeRecord(c.Data.DataDir, rt)
+	}
 	stopProgress()
 	stopProgress = func() {}
 	if intent != startupCacheBuildIntentNone {
@@ -316,6 +319,28 @@ func ensureLocalDaemonRuntimeWithStartupCacheIntent(
 		LogPath: proc.LogPath,
 		Outcome: startupCacheBuildOutcomeFromRuntime(rt),
 	}, nil
+}
+
+// refreshDaemonRuntimeRecord reloads the exact process record after readiness.
+// A readiness probe can read the record before startup metadata is published,
+// then block on the reserved listener until the API server starts. In that
+// race, the endpoint is ready but the probe's record snapshot is stale.
+func refreshDaemonRuntimeRecord(dataDir string, rt *DaemonRuntime) *DaemonRuntime {
+	if rt == nil {
+		return nil
+	}
+	records, err := daemonRuntimeStore(dataDir).List()
+	if err != nil {
+		return rt
+	}
+	for _, rec := range records {
+		if rec.PID == rt.Record.PID {
+			fresh := *rt
+			fresh.Record = rec
+			return &fresh
+		}
+	}
+	return rt
 }
 
 func backgroundServeStartupError(err error, proc *backgroundServeProcess) error {

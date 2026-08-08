@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/csv"
@@ -1947,10 +1948,23 @@ func buildCacheSubprocessMode(ctx context.Context, mode buildCacheMode) error {
 	if err != nil {
 		return err
 	}
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("build-cache subprocess: %w; output: %s",
-			err, strings.TrimSpace(string(out)))
+	return runBuildCacheSubprocessCommand(cmd, os.Stderr)
+}
+
+func runBuildCacheSubprocessCommand(cmd *exec.Cmd, stderrWriter io.Writer) error {
+	if stderrWriter == nil {
+		stderrWriter = io.Discard
+	}
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = io.MultiWriter(stderrWriter, &stderr)
+	if err := cmd.Run(); err != nil {
+		output := strings.TrimSpace(strings.Join([]string{stdout.String(), stderr.String()}, "\n"))
+		if output != "" {
+			return fmt.Errorf("build-cache subprocess: %w; output: %s", err, output)
+		}
+		return fmt.Errorf("build-cache subprocess: %w", err)
 	}
 	return nil
 }

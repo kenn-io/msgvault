@@ -811,21 +811,24 @@ func openDaemonAnalyticsEngine(
 			}
 			logger.Warn("analytics cache build failed; using live SQL engine",
 				"error", buildErr)
+			if intent != startupCacheBuildIntentNone {
+				return query.NewEngine(s.DB(), false), api.AnalyticsModeSQLFallback, outcome, nil
+			}
 		} else {
 			logger.Info("daemon startup step complete",
 				"step", "build_analytics_cache",
 				"reason", reason,
 				"full_rebuild", fullBuild)
-			if intent != startupCacheBuildIntentNone {
-				outcome = startupCacheBuildOutcomeFulfilled
-			}
 		}
 		staleness = cacheNeedsBuild(dbPath, analyticsDir)
 	}
 
 	if !staleness.NeedsBuild {
-		duckEngine, err := openDaemonDuckDBEngine(c, s)
+		duckEngine, err := openDaemonDuckDBEngineForRun(c, s)
 		if err != nil {
+			if intent != startupCacheBuildIntentNone {
+				outcome = startupCacheBuildOutcomeFailed
+			}
 			if engineMode == config.AnalyticsEngineDuckDB {
 				return nil, "", outcome, err
 			}
@@ -833,9 +836,15 @@ func openDaemonAnalyticsEngine(
 				"error", err)
 			return query.NewEngine(s.DB(), false), api.AnalyticsModeSQLFallback, outcome, nil
 		}
+		if intent != startupCacheBuildIntentNone {
+			outcome = startupCacheBuildOutcomeFulfilled
+		}
 		return duckEngine, api.AnalyticsModeDuckDB, outcome, nil
 	}
 
+	if intent != startupCacheBuildIntentNone {
+		outcome = startupCacheBuildOutcomeFailed
+	}
 	if engineMode == config.AnalyticsEngineDuckDB {
 		reason := staleness.Reason
 		if reason == "" {
@@ -854,6 +863,8 @@ func openDaemonAnalyticsEngine(
 	}
 	return query.NewEngine(s.DB(), false), api.AnalyticsModeSQLFallback, outcome, nil
 }
+
+var openDaemonDuckDBEngineForRun = openDaemonDuckDBEngine
 
 func openDaemonDuckDBEngine(c *config.Config, s *store.Store) (*query.DuckDBEngine, error) {
 	if c == nil || s == nil {

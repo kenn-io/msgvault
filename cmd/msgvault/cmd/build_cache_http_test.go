@@ -3,6 +3,7 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"errors"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -15,6 +16,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/kit/daemon"
 	"go.kenn.io/msgvault/internal/config"
 )
 
@@ -154,6 +156,47 @@ func TestBuildCacheUsesConfiguredRemoteHTTPAndPreservesOutput(t *testing.T) {
 	assert.Equal(int32(1), requests.Load(), "HTTP requests")
 	assert.Equal("Building cache...\nExported 42 messages to /tmp/msgvault-analytics\n", stdout.String())
 	assert.Equal("Warning: using CSV fallback\n", stderr.String())
+}
+
+func TestBuildCacheRunningLocalDaemonUsesSingleHTTPRequest(t *testing.T) {
+	var requests atomic.Int32
+	mux := http.NewServeMux()
+	mux.Handle("/api/ping", daemon.NewPingHandler(daemon.PingHandlerOptions{
+		Service: daemonService,
+		Version: Version,
+	}))
+	mux.HandleFunc("/api/v1/health", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"status":"ok"}`))
+	})
+	mux.HandleFunc("/api/v1/cli/build-cache", func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		w.Header().Set("Content-Type", "application/x-ndjson")
+		_, _ = w.Write([]byte(`{"type":"stdout","data":"Built through running daemon.\n"}` + "\n"))
+		_, _ = w.Write([]byte(`{"type":"complete"}` + "\n"))
+	})
+	server := httptest.NewServer(mux)
+	t.Cleanup(server.Close)
+
+	dataDir := t.TempDir()
+	withStoreResolverConfig(t, lifecycleTestConfig(dataDir))
+	rt := daemonRuntimeForHTTPServer(t, server, daemonAPIKeyFingerprint(""))
+	_, err := daemonRuntimeStore(dataDir).Write(rt.Record)
+	require.NoError(t, err, "write running daemon record")
+	stubStartServeBackgroundProcess(t, func(
+		*config.Config,
+		backgroundServeStartOptions,
+	) (*backgroundServeProcess, error) {
+		require.FailNow(t, "a running local daemon must not be restarted with cache intent")
+		return nil, errors.New("unreachable daemon restart")
+	})
+
+	cmd, stdout := buildCacheHTTPTestCommand()
+	err = runBuildCacheHTTP(cmd, false)
+
+	require.NoError(t, err)
+	assert.Equal(t, int32(1), requests.Load())
+	assert.Equal(t, "Built through running daemon.\n", stdout.String())
 }
 
 func buildCacheHTTPTestCommand() (*cobra.Command, *bytes.Buffer) {

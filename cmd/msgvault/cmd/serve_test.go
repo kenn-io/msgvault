@@ -592,6 +592,72 @@ func TestOpenDaemonAnalyticsEngineExplicitFailureKeepsAutoFallback(t *testing.T)
 	assert.Equal(t, startupCacheBuildOutcomeFailed, outcome)
 }
 
+func TestOpenDaemonAnalyticsEngineExplicitSuccessWithoutUsableCacheIsFailed(t *testing.T) {
+	c, s := openTestDaemonAnalyticsStore(t)
+	c.Analytics.Engine = config.AnalyticsEngineAuto
+	stubStartupCacheBuild(t, func(context.Context, startupCacheBuildIntent) error {
+		return nil
+	})
+
+	engine, mode, outcome, err := openDaemonAnalyticsEngine(
+		context.Background(), c, s, startupCacheBuildIntentDefault,
+	)
+	require.NoError(t, err)
+	defer func() { _ = engine.Close() }()
+
+	assert.IsType(t, &query.SQLiteEngine{}, engine)
+	assert.Equal(t, api.AnalyticsModeSQLFallback, mode)
+	assert.Equal(t, startupCacheBuildOutcomeFailed, outcome,
+		"a successful child exit does not fulfill intent without a usable cache")
+}
+
+func TestOpenDaemonAnalyticsEngineExplicitFullFailureDoesNotReuseOldCache(t *testing.T) {
+	c, s := openTestDaemonAnalyticsStore(t)
+	c.Analytics.Engine = config.AnalyticsEngineAuto
+	_, err := buildCache(c.DatabaseDSN(), c.AnalyticsDir(), true)
+	require.NoError(t, err)
+	stubStartupCacheBuild(t, func(context.Context, startupCacheBuildIntent) error {
+		return errors.New("simulated full rebuild failure")
+	})
+
+	engine, mode, outcome, err := openDaemonAnalyticsEngine(
+		context.Background(), c, s, startupCacheBuildIntentFull,
+	)
+	require.NoError(t, err)
+	defer func() { _ = engine.Close() }()
+
+	assert.IsType(t, &query.SQLiteEngine{}, engine)
+	assert.Equal(t, api.AnalyticsModeSQLFallback, mode,
+		"explicit auto-mode failure must preserve the documented live-SQL fallback")
+	assert.Equal(t, startupCacheBuildOutcomeFailed, outcome)
+}
+
+func TestOpenDaemonAnalyticsEngineExplicitDuckDBOpenFailureMarksIntentFailed(t *testing.T) {
+	c, s := openTestDaemonAnalyticsStore(t)
+	c.Analytics.Engine = config.AnalyticsEngineAuto
+	stubStartupCacheBuild(t, func(context.Context, startupCacheBuildIntent) error {
+		_, err := buildCache(c.DatabaseDSN(), c.AnalyticsDir(), true)
+		return err
+	})
+	sentinel := errors.New("simulated DuckDB open failure")
+	oldOpen := openDaemonDuckDBEngineForRun
+	openDaemonDuckDBEngineForRun = func(*config.Config, *store.Store) (*query.DuckDBEngine, error) {
+		return nil, sentinel
+	}
+	t.Cleanup(func() { openDaemonDuckDBEngineForRun = oldOpen })
+
+	engine, mode, outcome, err := openDaemonAnalyticsEngine(
+		context.Background(), c, s, startupCacheBuildIntentDefault,
+	)
+	require.NoError(t, err, "auto mode must preserve live-SQL fallback")
+	defer func() { _ = engine.Close() }()
+
+	assert.IsType(t, &query.SQLiteEngine{}, engine)
+	assert.Equal(t, api.AnalyticsModeSQLFallback, mode)
+	assert.Equal(t, startupCacheBuildOutcomeFailed, outcome,
+		"the CLI must not claim the daemon is using a cache it could not open")
+}
+
 func TestOpenDaemonAnalyticsEngineSQLLeavesExplicitIntentUnconsumed(t *testing.T) {
 	c, s := openTestDaemonAnalyticsStore(t)
 	c.Analytics.Engine = config.AnalyticsEngineSQL

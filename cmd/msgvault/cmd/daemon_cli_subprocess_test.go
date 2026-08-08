@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"runtime"
@@ -23,6 +24,10 @@ func TestHelperProcess(t *testing.T) {
 	switch os.Getenv("GO_HELPER_MODE") {
 	case "exit3":
 		os.Exit(3)
+	case "stdout-stderr-ok":
+		_, _ = fmt.Fprintln(os.Stdout, "cache build detail")
+		_, _ = fmt.Fprintln(os.Stderr, "cache build warning")
+		os.Exit(0)
 	case "block":
 		select {}
 	default:
