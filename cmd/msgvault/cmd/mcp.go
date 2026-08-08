@@ -18,6 +18,7 @@ var mcpForceSQL bool
 var mcpNoSQLiteScanner bool
 var mcpHTTPAddr string
 var mcpHTTPAllowInsecure bool
+var mcpHTTPAllowWrites bool
 var serveMCPHTTPWithOptions = mcpserver.ServeHTTPWithOptions
 
 var mcpCmd = &cobra.Command{
@@ -66,7 +67,11 @@ Add to Claude Desktop config:
 			if err != nil {
 				return usageErr(cmd, err)
 			}
-			return serveMCPHTTPWithOptions(ctx, opts, normalized, cfg.Server.APIKey)
+			return serveMCPHTTPWithOptions(ctx, opts, mcpserver.HTTPOptions{
+				Addr:        normalized,
+				APIKey:      cfg.Server.APIKey,
+				AllowWrites: mcpHTTPAllowWrites,
+			})
 		}
 		return mcpserver.ServeWithOptions(ctx, opts)
 	},
@@ -212,6 +217,10 @@ func init() {
 			"Any configured key still requires bearer authentication. Without a "+
 			"key, any reachable client can read your archive; only set this behind "+
 			"a trusted network boundary or authenticating reverse proxy.")
+	mcpCmd.Flags().BoolVar(&mcpHTTPAllowWrites, "http-allow-writes", false,
+		"Expose write-class MCP tools over HTTP. This permits clients to create "+
+			"attachment exports and deletion manifests; enable it only for trusted, "+
+			"authenticated clients.")
 	_ = mcpCmd.Flags().MarkDeprecated("force-sql", "deprecated in 0.17.0; set [analytics].engine = \"sql\" in config.toml")
 	_ = mcpCmd.Flags().MarkDeprecated("no-sqlite-scanner", "deprecated in 0.17.0; cache engine selection is daemon-managed; use [analytics].engine = \"sql\" for live SQL")
 	_ = mcpCmd.Flags().MarkHidden("force-sql")

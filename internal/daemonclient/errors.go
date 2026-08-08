@@ -11,12 +11,49 @@ import (
 	"slices"
 
 	"github.com/doordash-oss/oapi-codegen-dd/v3/pkg/runtime"
+	"go.kenn.io/msgvault/internal/vector"
 	apiclient "go.kenn.io/msgvault/pkg/client"
 )
 
-type apiError struct {
+type apiErrorBody struct {
 	Error   string `json:"error"`
 	Message string `json:"message"`
+}
+
+// APIError preserves the daemon's non-CLI HTTP status, stable machine code,
+// and sanitized message. Error retains the historical client-facing text.
+type APIError struct {
+	Status  int
+	Code    string
+	Message string
+}
+
+func (e *APIError) Error() string {
+	return fmt.Sprintf("API error (%d): %s", e.Status, e.Message)
+}
+
+// APIErrorCode returns the daemon's stable machine-readable error code.
+func (e *APIError) APIErrorCode() string {
+	return e.Code
+}
+
+// Unwrap maps only the daemon's documented vector-state codes to their domain
+// sentinels. Unknown daemon codes remain ordinary private API failures.
+func (e *APIError) Unwrap() error {
+	switch e.Code {
+	case "vector_not_enabled":
+		return vector.ErrNotEnabled
+	case "index_stale":
+		return vector.ErrIndexStale
+	case "index_building":
+		return vector.ErrIndexBuilding
+	case "embedding_timeout":
+		return vector.ErrEmbeddingTimeout
+	case "index_scope_mismatch":
+		return vector.ErrIndexScopeMismatch
+	default:
+		return nil
+	}
 }
 
 // operationInProgressCode is the daemon's error code for "the operation gate
@@ -34,7 +71,7 @@ func (e *OperationInProgressError) Error() string {
 }
 
 func operationInProgressFromBody(body []byte) error {
-	var apiErr apiError
+	var apiErr apiErrorBody
 	if json.Unmarshal(body, &apiErr) == nil &&
 		apiErr.Error == operationInProgressCode && apiErr.Message != "" {
 		return &OperationInProgressError{Message: apiErr.Message}
@@ -69,15 +106,15 @@ func handleErrorBody(status int, body []byte) error {
 	if err := operationInProgressFromBody(body); err != nil {
 		return err
 	}
-	message, _ := apiErrorMessage(body)
-	return fmt.Errorf("API error (%d): %s", status, message)
+	message, code, _ := apiErrorMessage(body)
+	return &APIError{Status: status, Code: code, Message: message}
 }
 
 func handleCLIErrorBody(status int, body []byte) error {
 	if err := operationInProgressFromBody(body); err != nil {
 		return err
 	}
-	message, decoded := apiErrorMessage(body)
+	message, _, decoded := apiErrorMessage(body)
 	if decoded {
 		return errors.New(message)
 	}
@@ -85,13 +122,13 @@ func handleCLIErrorBody(status int, body []byte) error {
 	return fmt.Errorf("API error (%d): %s", status, message)
 }
 
-func apiErrorMessage(body []byte) (string, bool) {
-	var apiErr apiError
+func apiErrorMessage(body []byte) (message, code string, decoded bool) {
+	var apiErr apiErrorBody
 	if err := json.Unmarshal(body, &apiErr); err == nil && apiErr.Message != "" {
-		return apiErr.Message, true
+		return apiErr.Message, apiErr.Error, true
 	}
 
-	return string(body), false
+	return string(body), "", false
 }
 
 // APIResponseError maps generated non-CLI responses to daemonclient errors.

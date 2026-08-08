@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/http"
 	"net/url"
 	"time"
@@ -1123,11 +1124,17 @@ func handleCLIMessageRawNotFound(resp *generated.GetCLIMessageRawResp, id string
 }
 
 func (c *Client) GetCLIAttachment(ctx context.Context, contentHash string) ([]byte, error) {
-	resp, err := APIResponse(c, func(client *apiclient.Client) (*generated.GetCLIAttachmentResp, error) {
-		return client.GetCLIAttachmentWithResponse(ctx, &generated.GetCLIAttachmentRequestOptions{
-			Query: &generated.GetCLIAttachmentQuery{ContentHash: contentHash},
-		})
-	})
+	resp, err := APIResponseWithNotFound(
+		c,
+		func(client *apiclient.Client) (*generated.GetCLIAttachmentResp, error) {
+			return client.GetCLIAttachmentWithResponse(ctx, &generated.GetCLIAttachmentRequestOptions{
+				Query: &generated.GetCLIAttachmentQuery{ContentHash: contentHash},
+			})
+		},
+		func(*generated.GetCLIAttachmentResp) error {
+			return fmt.Errorf("attachment %s: %w", contentHash, fs.ErrNotExist)
+		},
+	)
 	if err != nil {
 		return nil, err
 	}

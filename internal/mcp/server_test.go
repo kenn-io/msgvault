@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"math"
 	"net"
 	"net/http"
@@ -17,7 +18,9 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/google/jsonschema-go/jsonschema"
+	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
+	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/deletion"
@@ -59,7 +62,7 @@ func (f similarSearcherFunc) FindSimilar(ctx context.Context, req SimilarSearchR
 }
 
 // toolHandler is the function signature for MCP tool handler methods.
-type toolHandler func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error)
+type toolHandler func(context.Context, toolRequest) (*toolResult, error)
 
 // Response types for runTool generic calls.
 type statsResponse struct {
@@ -146,40 +149,116 @@ func (e *listAccountsTrackingEngine) ListAccounts(ctx context.Context) ([]query.
 }
 
 // callToolDirect invokes a handler directly with the given arguments and returns the raw result.
-func callToolDirect(t *testing.T, name string, fn toolHandler, args map[string]any) *mcp.CallToolResult {
+func callToolDirect(t *testing.T, name string, fn toolHandler, args map[string]any) *toolResult {
 	t.Helper()
-	req := mcp.CallToolRequest{}
-	req.Params.Name = name
-	req.Params.Arguments = args
+	req := toolRequest{arguments: args}
 	result, err := fn(context.Background(), req)
-	require.NoError(t, err, "handler returned error")
+	require.NoError(t, err, "%s handler returned error", name)
 	return result
 }
 
-func resultText(t *testing.T, r *mcp.CallToolResult) string {
+func resultText(t *testing.T, r *toolResult) string {
 	t.Helper()
-	require.NotEmpty(t, r.Content, "empty content")
-	tc, ok := r.Content[0].(mcp.TextContent)
-	require.True(t, ok, "expected TextContent, got %T", r.Content[0])
-	return tc.Text
+	require.NotEmpty(t, r.text, "empty content")
+	return r.text
 }
 
 // runTool invokes a handler, asserts no error, and unmarshals the JSON result into T.
 func runTool[T any](t *testing.T, name string, fn toolHandler, args map[string]any) T {
 	t.Helper()
 	r := callToolDirect(t, name, fn, args)
-	require.False(t, r.IsError, "unexpected error: %s", resultText(t, r))
+	require.False(t, r.isError, "unexpected error: %s", resultText(t, r))
 	var out T
 	require.NoError(t, json.Unmarshal([]byte(resultText(t, r)), &out), "unmarshal failed")
 	return out
 }
 
 // runToolExpectError invokes a handler and asserts it returns an error result.
-func runToolExpectError(t *testing.T, name string, fn toolHandler, args map[string]any) *mcp.CallToolResult {
+func runToolExpectError(t *testing.T, name string, fn toolHandler, args map[string]any) *toolResult {
 	t.Helper()
 	r := callToolDirect(t, name, fn, args)
-	require.True(t, r.IsError, "expected error result")
+	require.True(t, r.isError, "expected error result")
 	return r
+}
+
+func TestJSONResultIsStructured(t *testing.T) {
+	must := require.New(t)
+	localResult, err := jsonResult(map[string]any{
+		"count": float64(2),
+		"items": []any{"alpha", "beta"},
+	})
+	must.NoError(err)
+	wireResult, output, err := officialToolHandler(func(context.Context, toolRequest) (*toolResult, error) {
+		return localResult, nil
+	})(context.Background(), &sdkmcp.CallToolRequest{}, map[string]any{})
+	must.NoError(err)
+	must.NotNil(wireResult)
+
+	var textPayload any
+	must.NoError(json.Unmarshal([]byte(resultText(t, localResult)), &textPayload))
+	var outputPayload any
+	outputJSON, err := json.Marshal(output)
+	must.NoError(err)
+	must.NoError(json.Unmarshal(outputJSON, &outputPayload))
+	assert.Equal(t, textPayload, outputPayload)
+}
+
+func TestToolErrorHasNoStructuredOutput(t *testing.T) {
+	checks := assert.New(t)
+	must := require.New(t)
+	localResult := toolErrorResult("test failure")
+	wireResult, output, err := officialToolHandler(func(context.Context, toolRequest) (*toolResult, error) {
+		return localResult, nil
+	})(context.Background(), &sdkmcp.CallToolRequest{}, map[string]any{})
+	must.NoError(err)
+	checks.Nil(output)
+	wireJSON, err := json.Marshal(wireResult)
+	must.NoError(err)
+
+	var wire map[string]any
+	must.NoError(json.Unmarshal(wireJSON, &wire))
+	checks.NotContains(wire, "structuredContent")
+}
+
+func TestOfficialToolHandlerSanitizesInternalErrors(t *testing.T) {
+	checks := assert.New(t)
+	wireResult, output, err := officialToolHandler(func(context.Context, toolRequest) (*toolResult, error) {
+		return nil, &internalError{operation: "load private archive", cause: errors.New("secret filesystem path")}
+	})(context.Background(), &sdkmcp.CallToolRequest{}, map[string]any{})
+
+	checks.Nil(wireResult)
+	checks.Nil(output)
+	var protocolErr *jsonrpc.Error
+	require.ErrorAs(t, err, &protocolErr)
+	checks.Equal(int64(jsonrpc.CodeInternalError), protocolErr.Code)
+	checks.Equal("internal server error", protocolErr.Message)
+	checks.NotContains(err.Error(), "secret filesystem path")
+}
+
+func TestErrorIsolationMiddlewarePreservesWrappedJSONRPCErrors(t *testing.T) {
+	checks := assert.New(t)
+	must := require.New(t)
+	protocolErr := &jsonrpc.Error{
+		Code:    jsonrpc.CodeInvalidParams,
+		Message: "expected invalid parameters",
+		Data:    json.RawMessage(`{"field":"query"}`),
+	}
+	wrappedErr := fmt.Errorf("handling tool call: %w", protocolErr)
+	handler := errorIsolationMiddleware(func(
+		context.Context,
+		string,
+		sdkmcp.Request,
+	) (sdkmcp.Result, error) {
+		return nil, wrappedErr
+	})
+
+	result, err := handler(context.Background(), "tools/call", nil)
+
+	checks.Nil(result)
+	must.Same(wrappedErr, err)
+	var gotProtocolErr *jsonrpc.Error
+	must.ErrorAs(err, &gotProtocolErr)
+	checks.Same(protocolErr, gotProtocolErr)
 }
 
 func TestSearchMetadata(t *testing.T) {
@@ -940,6 +1019,8 @@ func TestSearchMessageBodies_WidePhrasePreservesMatchedEndpoint(t *testing.T) {
 }
 
 func TestSearchMessageBodies_HonorsBackendCancellation(t *testing.T) {
+	checks := assert.New(t)
+	must := require.New(t)
 	engine := &querytest.MockEngine{
 		SearchMessageBodiesFunc: func(ctx context.Context, _ *search.Query, _, _ int) ([]query.MessageSummary, error) {
 			return nil, ctx.Err()
@@ -948,14 +1029,15 @@ func TestSearchMessageBodies_HonorsBackendCancellation(t *testing.T) {
 	h := newTestHandlers(engine)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	req := mcp.CallToolRequest{}
-	req.Params.Name = "search_message_bodies"
-	req.Params.Arguments = map[string]any{"query": "needle"}
+	req := toolRequest{arguments: map[string]any{"query": "needle"}}
 
 	result, err := h.searchMessageBodies(ctx, req)
-	require.NoError(t, err, "handler returned error")
-	require.True(t, result.IsError, "canceled backend search must return a tool error")
-	assert.Contains(t, resultText(t, result), context.Canceled.Error())
+	must.Error(err, "canceled backend search must remain private")
+	checks.Nil(result)
+	must.ErrorIs(err, context.Canceled)
+	var privateErr *internalError
+	must.ErrorAs(err, &privateErr)
+	checks.Equal("search message bodies", privateErr.operation)
 }
 
 func TestSearchMessageBodies_LongBodyOutsideContextBudgetIsExplicitlyTruncated(t *testing.T) {
@@ -1189,7 +1271,7 @@ func TestAttachVectorChunkMatches_HTMLOnlyUsesEmbeddingCorpus(t *testing.T) {
 	}
 	items := []searchMessageItem{{MessageSummary: query.MessageSummary{ID: messageID}}}
 
-	h.attachVectorChunkMatches(context.Background(), 1, []float32{1}, items, 0)
+	require.NoError(t, h.attachVectorChunkMatches(context.Background(), 1, []float32{1}, items, 0))
 
 	require.Len(t, items[0].Matches, 1)
 	assert.Equal(t, "semantic needle", items[0].Matches[0].Snippet)
@@ -1360,7 +1442,7 @@ func TestSearchMessageBodies_HybridPoolSaturatedAlwaysEmitted(t *testing.T) {
 		"query": "hello world",
 		"mode":  searchModeVector,
 	})
-	require.False(r.IsError, "unexpected error: %s", resultText(t, r))
+	require.False(r.isError, "unexpected error: %s", resultText(t, r))
 	var raw map[string]json.RawMessage
 	require.NoError(json.Unmarshal([]byte(resultText(t, r)), &raw), "unmarshal")
 	val, exists := raw["pool_saturated"]
@@ -1919,9 +2001,9 @@ func TestGetMessage(t *testing.T) {
 }
 
 func TestGetMessageToolDescriptionDoesNotReferenceFutureTools(t *testing.T) {
-	tool := getMessageTool()
+	tool := getMessageDefinition(&handlers{}).tool()
 	assert.NotContains(t, tool.Description, "search_in_message")
-	centerAt := tool.InputSchema.Properties["center_at"]
+	centerAt := toolInputSchema(t, tool).Properties["center_at"]
 	raw, err := json.Marshal(centerAt)
 	require.NoError(t, err, "marshal center_at schema")
 	assert.NotContains(t, string(raw), "search_in_message")
@@ -2000,22 +2082,61 @@ func TestGetStats_VectorEnabled(t *testing.T) {
 	assert.Nil(resp.VectorSearch.BuildingGeneration, "building_generation")
 }
 
+func TestGetStats_VectorStatsFailureReturnsPartialResponse(t *testing.T) {
+	const sentinel = "private vector stats failure"
+	checks := assert.New(t)
+	must := require.New(t)
+	logs := task6CaptureLogs(t)
+	eng := &querytest.MockEngine{
+		Stats: &query.TotalStats{
+			MessageCount: 17,
+			AccountCount: 1,
+		},
+		Accounts: []query.AccountInfo{
+			{ID: 1, Identifier: "alice@example.com"},
+		},
+	}
+	h := &handlers{
+		engine: eng,
+		backend: &fakeBackend{
+			active:   vector.Generation{ID: 5, State: vector.GenerationActive},
+			statsErr: errors.New(sentinel),
+		},
+	}
+
+	resp := runTool[statsResponse](t, "get_stats", h.getStats, map[string]any{})
+
+	checks.Equal(int64(17), resp.Stats.MessageCount)
+	checks.Len(resp.Accounts, 1)
+	must.NotNil(resp.VectorSearch)
+	checks.True(resp.VectorSearch.Enabled)
+	checks.Nil(resp.VectorSearch.ActiveGeneration)
+	checks.Contains(logs.String(), sentinel)
+}
+
 // toolPropertyDescription returns the description string for a tool input property.
-func toolPropertyDescription(t mcp.Tool, name string) string {
-	prop, ok := t.InputSchema.Properties[name].(map[string]any)
-	if !ok {
+func toolInputSchema(t *testing.T, tool *sdkmcp.Tool) *jsonschema.Schema {
+	t.Helper()
+	schema, ok := tool.InputSchema.(*jsonschema.Schema)
+	require.True(t, ok, "input schema type: %T", tool.InputSchema)
+	return schema
+}
+
+func toolPropertyDescription(t *testing.T, tool *sdkmcp.Tool, name string) string {
+	t.Helper()
+	property := toolInputSchema(t, tool).Properties[name]
+	if property == nil {
 		return ""
 	}
-	desc, _ := prop["description"].(string)
-	return desc
+	return property.Description
 }
 
 // TestAggregateTool_DocumentsTimeGranularity guards the group_by=time contract:
 // MCP always buckets by calendar year (the handler does not set TimeGranularity).
 func TestAggregateTool_DocumentsTimeGranularity(t *testing.T) {
-	tool := aggregateTool()
+	tool := aggregateDefinition(&handlers{}).tool()
 	desc := tool.Description
-	groupByDesc := toolPropertyDescription(tool, "group_by")
+	groupByDesc := toolPropertyDescription(t, tool, "group_by")
 
 	assert := assert.New(t)
 	assert.Contains(desc, "calendar year", "tool description should document yearly time buckets")
@@ -2151,27 +2272,18 @@ func TestGetAttachment(t *testing.T) {
 		require := require.New(t)
 		assert := assert.New(t)
 		r := callToolDirect(t, "get_attachment", h.getAttachment, map[string]any{"attachment_id": float64(10)})
-		require.False(r.IsError, "unexpected error: %s", resultText(t, r))
+		require.False(r.isError, "unexpected error: %s", resultText(t, r))
 
-		// Should have 2 content blocks: text metadata + embedded resource.
-		require.Len(r.Content, 2, "content blocks")
-
-		// First block: text with metadata JSON.
-		tc, ok := r.Content[0].(mcp.TextContent)
-		require.True(ok, "expected TextContent, got %T", r.Content[0])
 		var meta attachmentMeta
-		require.NoError(json.Unmarshal([]byte(tc.Text), &meta), "unmarshal metadata")
+		require.NoError(json.Unmarshal([]byte(resultText(t, r)), &meta), "unmarshal metadata")
 		assert.Equal("report.pdf", meta.Filename, "filename")
 		assert.Equal("application/pdf", meta.MimeType, "mime_type")
 		assert.Equal(int64(len(content)), meta.Size, "size")
 
-		// Second block: embedded resource with blob.
-		er, ok := r.Content[1].(mcp.EmbeddedResource)
-		require.True(ok, "expected EmbeddedResource, got %T", r.Content[1])
-		blob, ok := er.Resource.(mcp.BlobResourceContents)
-		require.True(ok, "expected BlobResourceContents, got %T", er.Resource)
-		assert.Equal("application/pdf", blob.MIMEType, "blob MIME type")
-		decoded, err := base64.StdEncoding.DecodeString(blob.Blob)
+		resource := r.embeddedResource
+		require.NotNil(resource, "embedded resource")
+		assert.Equal("application/pdf", resource.mimeType, "blob MIME type")
+		decoded, err := base64.StdEncoding.DecodeString(resource.blob)
 		require.NoError(err, "base64 decode")
 		assert.Equal(string(content), string(decoded), "content")
 	})
@@ -2192,19 +2304,14 @@ func TestGetAttachment(t *testing.T) {
 			attachmentsDir: tmpDir,
 		}
 		r := callToolDirect(t, "get_attachment", h2.getAttachment, map[string]any{"attachment_id": float64(50)})
-		require.False(r.IsError, "unexpected error: %s", resultText(t, r))
+		require.False(r.isError, "unexpected error: %s", resultText(t, r))
 
 		var meta attachmentMeta
-		tc, ok := r.Content[0].(mcp.TextContent)
-		require.True(ok, "Content[0] is TextContent, got %T", r.Content[0])
-		require.NoError(json.Unmarshal([]byte(tc.Text), &meta), "unmarshal metadata")
+		require.NoError(json.Unmarshal([]byte(resultText(t, r)), &meta), "unmarshal metadata")
 		assert.Equal("application/octet-stream", meta.MimeType, "default mime_type")
 
-		er, ok := r.Content[1].(mcp.EmbeddedResource)
-		require.True(ok, "Content[1] is EmbeddedResource, got %T", r.Content[1])
-		blob, ok := er.Resource.(mcp.BlobResourceContents)
-		require.True(ok, "Resource is BlobResourceContents, got %T", er.Resource)
-		assert.Equal("application/octet-stream", blob.MIMEType, "default blob MIME type")
+		require.NotNil(r.embeddedResource, "embedded resource")
+		assert.Equal("application/octet-stream", r.embeddedResource.mimeType, "default blob MIME type")
 	})
 
 	t.Run("attachment reader supplies bytes without local directory", func(t *testing.T) {
@@ -2223,14 +2330,11 @@ func TestGetAttachment(t *testing.T) {
 			}),
 		}
 		r := callToolDirect(t, "get_attachment", h2.getAttachment, map[string]any{"attachment_id": float64(52)})
-		require.False(r.IsError, "unexpected error: %s", resultText(t, r))
+		require.False(r.isError, "unexpected error: %s", resultText(t, r))
 
 		assert.Equal(hash, gotHash, "content hash")
-		er, ok := r.Content[1].(mcp.EmbeddedResource)
-		require.True(ok, "Content[1] is EmbeddedResource, got %T", r.Content[1])
-		blob, ok := er.Resource.(mcp.BlobResourceContents)
-		require.True(ok, "Resource is BlobResourceContents, got %T", er.Resource)
-		decoded, err := base64.StdEncoding.DecodeString(blob.Blob)
+		require.NotNil(r.embeddedResource, "embedded resource")
+		decoded, err := base64.StdEncoding.DecodeString(r.embeddedResource.blob)
 		require.NoError(err, "base64 decode")
 		assert.Equal("remote bytes", string(decoded), "content")
 	})
@@ -2251,22 +2355,18 @@ func TestGetAttachment(t *testing.T) {
 			attachmentsDir: tmpDir,
 		}
 		r := callToolDirect(t, "get_attachment", h2.getAttachment, map[string]any{"attachment_id": float64(51)})
-		require.False(r.IsError, "unexpected error: %s", resultText(t, r))
+		require.False(r.isError, "unexpected error: %s", resultText(t, r))
 
 		// Metadata JSON must be valid and preserve the filename exactly.
 		var meta attachmentMeta
-		tc, ok := r.Content[0].(mcp.TextContent)
-		require.True(ok, "Content[0] is TextContent, got %T", r.Content[0])
-		require.NoError(json.Unmarshal([]byte(tc.Text), &meta), "metadata is not valid JSON")
+		require.NoError(json.Unmarshal([]byte(resultText(t, r)), &meta), "metadata is not valid JSON")
 		assert.Equal("report 2024✓.pdf", meta.Filename, "filename")
 
-		// URI must percent-encode spaces and non-ASCII characters.
-		er, ok := r.Content[1].(mcp.EmbeddedResource)
-		require.True(ok, "Content[1] is EmbeddedResource, got %T", r.Content[1])
-		blob, ok := er.Resource.(mcp.BlobResourceContents)
-		require.True(ok, "Resource is BlobResourceContents, got %T", er.Resource)
-		const wantURI = "attachment:///51/report%202024%E2%9C%93.pdf"
-		assert.Equal(wantURI, blob.URI, "URI")
+		// The resource URI is opaque and must not disclose the filename.
+		require.NotNil(r.embeddedResource, "embedded resource")
+		const wantURI = "msgvault://attachment/51"
+		assert.Equal(wantURI, r.embeddedResource.uri, "URI")
+		assert.NotContains(r.embeddedResource.uri, meta.Filename)
 	})
 
 	// Error cases using the shared engine/handler.
@@ -2351,12 +2451,6 @@ func TestGetAttachment(t *testing.T) {
 	})
 }
 
-type exportResponse struct {
-	Path     string `json:"path"`
-	Filename string `json:"filename"`
-	Size     int64  `json:"size"`
-}
-
 func TestExportAttachment(t *testing.T) {
 	srcDir := t.TempDir()
 	hash := "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890"
@@ -2373,7 +2467,7 @@ func TestExportAttachment(t *testing.T) {
 	t.Run("export to custom destination", func(t *testing.T) {
 		assert := assert.New(t)
 		destDir := t.TempDir()
-		resp := runTool[exportResponse](t, "export_attachment", h.exportAttachment, map[string]any{
+		resp := runTool[exportAttachmentResponse](t, "export_attachment", h.exportAttachment, map[string]any{
 			"attachment_id": float64(10),
 			"destination":   destDir,
 		})
@@ -2390,7 +2484,7 @@ func TestExportAttachment(t *testing.T) {
 		destDir := t.TempDir()
 		// Create existing file to force collision.
 		require.NoError(t, os.WriteFile(filepath.Join(destDir, "report.pdf"), []byte("old"), 0644), "WriteFile")
-		resp := runTool[exportResponse](t, "export_attachment", h.exportAttachment, map[string]any{
+		resp := runTool[exportAttachmentResponse](t, "export_attachment", h.exportAttachment, map[string]any{
 			"attachment_id": float64(10),
 			"destination":   destDir,
 		})
@@ -2404,7 +2498,7 @@ func TestExportAttachment(t *testing.T) {
 		destDir := t.TempDir()
 		// Create a directory with the same name as the attachment.
 		require.NoError(t, os.Mkdir(filepath.Join(destDir, "report.pdf"), 0755), "Mkdir")
-		resp := runTool[exportResponse](t, "export_attachment", h.exportAttachment, map[string]any{
+		resp := runTool[exportAttachmentResponse](t, "export_attachment", h.exportAttachment, map[string]any{
 			"attachment_id": float64(10),
 			"destination":   destDir,
 		})
@@ -2418,7 +2512,7 @@ func TestExportAttachment(t *testing.T) {
 		downloads := filepath.Join(home, "Downloads")
 		require.NoError(t, os.Mkdir(downloads, 0755), "Mkdir Downloads")
 
-		resp := runTool[exportResponse](t, "export_attachment", h.exportAttachment, map[string]any{
+		resp := runTool[exportAttachmentResponse](t, "export_attachment", h.exportAttachment, map[string]any{
 			"attachment_id": float64(10),
 		})
 		assert.True(t, strings.HasPrefix(resp.Path, downloads), "expected path under ~/Downloads, got %s", resp.Path)
@@ -2492,7 +2586,7 @@ func TestExportAttachment_EdgeFilenames(t *testing.T) {
 				},
 				attachmentsDir: srcDir,
 			}
-			resp := runTool[exportResponse](t, "export_attachment", h.exportAttachment, map[string]any{
+			resp := runTool[exportAttachmentResponse](t, "export_attachment", h.exportAttachment, map[string]any{
 				"attachment_id": float64(1),
 				"destination":   destDir,
 			})
@@ -2826,20 +2920,14 @@ func TestListMessagesConversationID(t *testing.T) {
 	assert.Equal(t, int64(42), *captured.ConversationID, "conversation_id value")
 }
 
-// stageDeletionResponse matches the JSON response from stageDeletion.
-type stageDeletionResponse struct {
-	BatchID      string `json:"batch_id"`
-	MessageCount int    `json:"message_count"`
-	Status       string `json:"status"`
-	NextStep     string `json:"next_step"`
-}
-
 type captureDeletionManifestSaver struct {
-	manifest *deletion.Manifest
+	manifest  *deletion.Manifest
+	manifests []*deletion.Manifest
 }
 
 func (s *captureDeletionManifestSaver) SaveManifest(_ context.Context, manifest *deletion.Manifest) error {
 	s.manifest = manifest
+	s.manifests = append(s.manifests, manifest)
 	return nil
 }
 
@@ -3255,25 +3343,27 @@ func TestFindSimilarMessages_UsesDaemonSearcher(t *testing.T) {
 // semantic_search_messages instead.
 func TestSearchMessageBodiesTool_KeywordOnly(t *testing.T) {
 	assert := assert.New(t)
-	tool := searchMessageBodiesTool()
-	assert.NotContains(tool.InputSchema.Properties, "mode", "keyword tool must not advertise 'mode'")
-	assert.NotContains(tool.InputSchema.Properties, "explain", "keyword tool must not advertise 'explain'")
-	assert.NotContains(tool.InputSchema.Properties, "min_score", "keyword tool must not advertise 'min_score'")
+	tool := searchMessageBodiesDefinition(&handlers{}).tool()
+	properties := toolInputSchema(t, tool).Properties
+	assert.NotContains(properties, "mode", "keyword tool must not advertise 'mode'")
+	assert.NotContains(properties, "explain", "keyword tool must not advertise 'explain'")
+	assert.NotContains(properties, "min_score", "keyword tool must not advertise 'min_score'")
 	assert.False(strings.Contains(tool.Description, "mode=vector") || strings.Contains(tool.Description, "mode=hybrid"),
 		"keyword tool description mentions vector modes: %q", tool.Description)
 }
 
 func TestSearchMessagesTool_DeprecatedCompatibilitySchema(t *testing.T) {
 	assert := assert.New(t)
-	tool := searchMessagesTool(true)
+	tool := searchMessagesDefinition(&handlers{}, true).tool()
+	properties := toolInputSchema(t, tool).Properties
 
 	assert.Equal(ToolSearchMessages, tool.Name)
 	assert.Contains(tool.Description, "Deprecated")
 	assert.Contains(tool.Description, "search_metadata")
 	assert.Contains(tool.Description, "semantic_search_messages")
-	assert.Contains(tool.InputSchema.Properties, "mode")
-	assert.Contains(tool.InputSchema.Properties, "explain")
-	assert.Contains(tool.InputSchema.Properties, "min_score")
+	assert.Contains(properties, "mode")
+	assert.Contains(properties, "explain")
+	assert.Contains(properties, "min_score")
 }
 
 // TestSemanticSearchMessagesTool_AdvertisesVectorParams guards the companion
@@ -3282,15 +3372,17 @@ func TestSearchMessagesTool_DeprecatedCompatibilitySchema(t *testing.T) {
 func TestSemanticSearchMessagesTool_AdvertisesVectorParams(t *testing.T) {
 	assert := assert.New(t)
 
-	disabled := semanticSearchMessagesTool(false)
-	assert.NotContains(disabled.InputSchema.Properties, "mode", "vectorAvailable=false: semantic tool advertises 'mode' but vector modes are unsupported")
-	assert.NotContains(disabled.InputSchema.Properties, "explain", "vectorAvailable=false: semantic tool advertises 'explain' but vector modes are unsupported")
-	assert.NotContains(disabled.InputSchema.Properties, "min_score", "vectorAvailable=false: semantic tool advertises 'min_score' but vector modes are unsupported")
+	disabled := semanticSearchMessagesDefinition(&handlers{}, false).tool()
+	disabledProperties := toolInputSchema(t, disabled).Properties
+	assert.NotContains(disabledProperties, "mode", "vectorAvailable=false: semantic tool advertises 'mode' but vector modes are unsupported")
+	assert.NotContains(disabledProperties, "explain", "vectorAvailable=false: semantic tool advertises 'explain' but vector modes are unsupported")
+	assert.NotContains(disabledProperties, "min_score", "vectorAvailable=false: semantic tool advertises 'min_score' but vector modes are unsupported")
 
-	enabled := semanticSearchMessagesTool(true)
-	assert.Contains(enabled.InputSchema.Properties, "mode", "vectorAvailable=true: semantic tool is missing 'mode' parameter")
-	assert.Contains(enabled.InputSchema.Properties, "explain", "vectorAvailable=true: semantic tool is missing 'explain' parameter")
-	assert.Contains(enabled.InputSchema.Properties, "min_score", "vectorAvailable=true: semantic tool is missing 'min_score' parameter")
+	enabled := semanticSearchMessagesDefinition(&handlers{}, true).tool()
+	enabledProperties := toolInputSchema(t, enabled).Properties
+	assert.Contains(enabledProperties, "mode", "vectorAvailable=true: semantic tool is missing 'mode' parameter")
+	assert.Contains(enabledProperties, "explain", "vectorAvailable=true: semantic tool is missing 'explain' parameter")
+	assert.Contains(enabledProperties, "min_score", "vectorAvailable=true: semantic tool is missing 'min_score' parameter")
 	assert.Contains(enabled.Description, "free-text", "vectorAvailable=true: semantic tool description should call out the free-text requirement, got: %q", enabled.Description)
 	assert.Contains(enabled.Description, "subject and body", "semantic scope should match the embedding corpus")
 	assert.Contains(enabled.Description, "chunk excerpts only", "min_score should not claim to filter ranked messages")
@@ -3306,29 +3398,31 @@ func TestSemanticSearchMessagesTool_AdvertisesVectorParams(t *testing.T) {
 func TestSearchInMessageTool_AdvertisesVectorModeWhenConfigured(t *testing.T) {
 	assert := assert.New(t)
 
-	disabled := searchInMessageTool(false)
-	assert.NotContains(disabled.InputSchema.Properties, "mode", "vector-in-message unavailable: tool advertises 'mode' but vector mode is unsupported")
-	assert.NotContains(disabled.InputSchema.Properties, "min_score", "vector-in-message unavailable: tool advertises 'min_score' but vector mode is unsupported")
+	disabled := searchInMessageDefinition(&handlers{}, false).tool()
+	disabledProperties := toolInputSchema(t, disabled).Properties
+	assert.NotContains(disabledProperties, "mode", "vector-in-message unavailable: tool advertises 'mode' but vector mode is unsupported")
+	assert.NotContains(disabledProperties, "min_score", "vector-in-message unavailable: tool advertises 'min_score' but vector mode is unsupported")
 	assert.NotContains(disabled.Description, "mode=vector",
 		"vector-in-message unavailable: tool description mentions vector mode: %q", disabled.Description)
 
-	enabled := searchInMessageTool(true)
-	assert.Contains(enabled.InputSchema.Properties, "mode", "vector-in-message available: tool is missing 'mode' parameter")
-	assert.Contains(enabled.InputSchema.Properties, "min_score", "vector-in-message available: tool is missing 'min_score' parameter")
+	enabled := searchInMessageDefinition(&handlers{}, true).tool()
+	enabledProperties := toolInputSchema(t, enabled).Properties
+	assert.Contains(enabledProperties, "mode", "vector-in-message available: tool is missing 'mode' parameter")
+	assert.Contains(enabledProperties, "min_score", "vector-in-message available: tool is missing 'min_score' parameter")
 	assert.Contains(enabled.Description, "mode=vector", "vector-in-message available: tool description should mention vector mode, got: %q", enabled.Description)
 }
 
 func TestFindSimilarMessagesTool_AdvertisesMessageTypeFilter(t *testing.T) {
 	assert := assert.New(t)
-	tool := findSimilarMessagesTool()
-	assert.Contains(tool.InputSchema.Properties, "message_type")
+	tool := findSimilarMessagesDefinition(&handlers{}).tool()
+	assert.Contains(toolInputSchema(t, tool).Properties, "message_type")
 }
 
 // TestSearchMetadataTool_DocumentsQuerySyntax guards the operator-support
 // contract so clients do not assume full Gmail compatibility.
 func TestSearchMetadataTool_DocumentsQuerySyntax(t *testing.T) {
 	assert := assert.New(t)
-	tool := searchMetadataTool()
+	tool := searchMetadataDefinition(&handlers{}).tool()
 	desc := tool.Description
 	for _, want := range []string{
 		"cc:",
@@ -3342,7 +3436,7 @@ func TestSearchMetadataTool_DocumentsQuerySyntax(t *testing.T) {
 	assert.NotContains(desc, "Gmail-like", "description should not over-promise Gmail compatibility")
 	assert.Contains(desc, "semantic_search_messages", "metadata guidance should name the semantic tool")
 
-	queryDesc := toolPropertyDescription(tool, "query")
+	queryDesc := toolPropertyDescription(t, tool, "query")
 	assert.Contains(queryDesc, "supported operators", "query param should reference operator docs")
 }
 
@@ -3350,13 +3444,13 @@ func TestSearchMetadataTool_DocumentsQuerySyntax(t *testing.T) {
 // contract so MCP clients know how body FTS interprets free-text terms.
 func TestSearchMessageBodiesTool_DocumentsQuerySyntax(t *testing.T) {
 	assert := assert.New(t)
-	tool := searchMessageBodiesTool()
+	tool := searchMessageBodiesDefinition(&handlers{}).tool()
 
 	assert.Contains(tool.Description, "ANDed", "tool description should document implicit AND, got: %q", tool.Description)
 	assert.Contains(tool.Description, "double-quoted phrase", "tool description should document phrase matching, got: %q", tool.Description)
 	assert.Contains(tool.Description, "OR and NOT are not supported", "tool description should document missing boolean ops, got: %q", tool.Description)
 
-	queryDesc := toolPropertyDescription(tool, "query")
+	queryDesc := toolPropertyDescription(t, tool, "query")
 	assert.Contains(queryDesc, "ANDed", "query param should document implicit AND, got: %q", queryDesc)
 	assert.Contains(queryDesc, "double quotes", "query param should document phrase matching, got: %q", queryDesc)
 	assert.Contains(queryDesc, "OR/NOT unsupported", "query param should document missing boolean ops, got: %q", queryDesc)
@@ -3367,12 +3461,12 @@ func TestSearchMessageBodiesTool_DocumentsQuerySyntax(t *testing.T) {
 // tokens are literal body text.
 func TestSearchMessageBodiesTool_DocumentsFilterVsFreeText(t *testing.T) {
 	assert := assert.New(t)
-	tool := searchMessageBodiesTool()
+	tool := searchMessageBodiesDefinition(&handlers{}).tool()
 
 	assert.Contains(tool.Description, "metadata filters", "tool description should distinguish filters from free text, got: %q", tool.Description)
 	assert.Contains(tool.Description, "Unrecognized word:value", "tool description should document literal colon tokens, got: %q", tool.Description)
 
-	queryDesc := toolPropertyDescription(tool, "query")
+	queryDesc := toolPropertyDescription(t, tool, "query")
 	assert.Contains(queryDesc, "metadata filters", "query param should distinguish filters from free text, got: %q", queryDesc)
 	assert.Contains(queryDesc, "subject:test alone is rejected", "query param should warn subject: is not free text, got: %q", queryDesc)
 	assert.Contains(queryDesc, "Unrecognized word:value", "query param should document literal colon tokens, got: %q", queryDesc)
@@ -3382,7 +3476,7 @@ func TestSearchMessageBodiesTool_DocumentsFilterVsFreeText(t *testing.T) {
 // contract for when excerpt lists are capped.
 func TestSearchMessageBodiesTool_DocumentsMatchesTruncated(t *testing.T) {
 	assert := assert.New(t)
-	tool := searchMessageBodiesTool()
+	tool := searchMessageBodiesDefinition(&handlers{}).tool()
 
 	assert.Contains(tool.Description, "matches_truncated",
 		"tool description should document matches_truncated, got: %q", tool.Description)
@@ -3673,7 +3767,10 @@ func TestServeHTTPWithOptions_ContextCancellation(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		done <- ServeHTTPWithOptions(ctx, opts, "127.0.0.1:0", "test-api-key")
+		done <- ServeHTTPWithOptions(ctx, opts, HTTPOptions{
+			Addr:   "127.0.0.1:0",
+			APIKey: "test-api-key",
+		})
 	}()
 
 	// Give the goroutine a moment to start the listener.
@@ -3708,7 +3805,7 @@ func TestServeHTTPWithOptionsLiveListenerRequiresBearerAuth(t *testing.T) {
 			Engine:         &querytest.MockEngine{},
 			AttachmentsDir: attachmentsDir,
 			DataDir:        dataDir,
-		}, addr, "test-api-key")
+		}, HTTPOptions{Addr: addr, APIKey: "test-api-key"})
 	}()
 	t.Cleanup(func() {
 		cancel()
@@ -3881,22 +3978,25 @@ func TestBearerAuthHandlerCompatibilityAndSchemeCase(t *testing.T) {
 }
 
 func TestMCPHTTPServerMountsProtectedEndpoint(t *testing.T) {
+	checks := assert.New(t)
 	stdlibServer := newMCPHTTPServer(ServeOptions{
 		Engine:         &querytest.MockEngine{},
 		AttachmentsDir: t.TempDir(),
 		DataDir:        t.TempDir(),
-	}, "127.0.0.1:0", "test-api-key")
-	assert.Equal(t, 10*time.Second, stdlibServer.ReadHeaderTimeout)
+	}, HTTPOptions{Addr: "127.0.0.1:0", APIKey: "test-api-key"})
+	checks.Equal(10*time.Second, stdlibServer.ReadHeaderTimeout)
+	checks.Equal(120*time.Second, stdlibServer.IdleTimeout)
 
 	missing := httptest.NewRecorder()
 	missingRequest := httptest.NewRequest(http.MethodPatch, "/mcp", nil)
 	missingRequest.Header.Set("Mcp-Session-Id", "test-session")
 	stdlibServer.Handler.ServeHTTP(missing, missingRequest)
-	assert.Equal(t, http.StatusUnauthorized, missing.Code)
+	checks.Equal(http.StatusUnauthorized, missing.Code)
 
 	authorized := httptest.NewRecorder()
 	authorizedRequest := httptest.NewRequest(http.MethodPatch, "/mcp", nil)
 	authorizedRequest.Header.Set("Authorization", "Bearer test-api-key")
 	stdlibServer.Handler.ServeHTTP(authorized, authorizedRequest)
-	assert.Equal(t, http.StatusNotFound, authorized.Code)
+	checks.Equal(http.StatusMethodNotAllowed, authorized.Code)
+	checks.Equal(http.MethodPost, authorized.Header().Get("Allow"))
 }

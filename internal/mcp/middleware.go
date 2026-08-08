@@ -1,0 +1,187 @@
+package mcp
+
+import (
+	"context"
+	"errors"
+	"log/slog"
+
+	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
+	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/propagation"
+	"go.opentelemetry.io/otel/trace"
+	"golang.org/x/time/rate"
+)
+
+const (
+	httpToolCallsPerSecond      = 20
+	httpToolCallBurst           = 40
+	httpConcurrentToolCalls     = 8
+	stdioToolCallsPerSecond     = 100
+	stdioToolCallBurst          = 100
+	stdioConcurrentToolCalls    = 16
+	discoveryCacheTTLMillis     = 3_600_000
+	listCacheTTLMillis          = 300_000
+	attachmentCacheTTLMillis    = 60_000
+	invocationLimitErrorMessage = "server is busy; retry this tool call later"
+	resourceLimitErrorCode      = -32000
+	resourceLimitErrorMessage   = "server is busy; retry this resource read later"
+)
+
+var w3cPropagator = propagation.NewCompositeTextMapPropagator(
+	propagation.TraceContext{},
+	propagation.Baggage{},
+)
+
+type invocationPolicy struct {
+	limiter   *rate.Limiter
+	semaphore chan struct{}
+}
+
+func newInvocationPolicy(callsPerSecond rate.Limit, burst, concurrent int) *invocationPolicy {
+	return &invocationPolicy{
+		limiter:   rate.NewLimiter(callsPerSecond, burst),
+		semaphore: make(chan struct{}, concurrent),
+	}
+}
+
+func newHTTPInvocationPolicy() *invocationPolicy {
+	return newInvocationPolicy(httpToolCallsPerSecond, httpToolCallBurst, httpConcurrentToolCalls)
+}
+
+func newStdioInvocationPolicy() *invocationPolicy {
+	return newInvocationPolicy(stdioToolCallsPerSecond, stdioToolCallBurst, stdioConcurrentToolCalls)
+}
+
+func errorIsolationMiddleware(next sdkmcp.MethodHandler) sdkmcp.MethodHandler {
+	return func(ctx context.Context, method string, req sdkmcp.Request) (sdkmcp.Result, error) {
+		result, err := next(ctx, method, req)
+		if err == nil {
+			return result, nil
+		}
+		var protocolErr *jsonrpc.Error
+		if errors.As(err, &protocolErr) {
+			return result, err
+		}
+		slog.Error("MCP method failed with unexpected error", "method", method, "error", err)
+		return nil, &jsonrpc.Error{
+			Code:    jsonrpc.CodeInternalError,
+			Message: "internal server error",
+		}
+	}
+}
+
+func (p *invocationPolicy) acquire() bool {
+	if p == nil {
+		return true
+	}
+	if !p.limiter.Allow() {
+		return false
+	}
+	select {
+	case p.semaphore <- struct{}{}:
+		return true
+	default:
+		return false
+	}
+}
+
+func (p *invocationPolicy) release() {
+	if p != nil {
+		<-p.semaphore
+	}
+}
+
+func invocationPolicyMiddleware(policy *invocationPolicy) sdkmcp.Middleware {
+	return func(next sdkmcp.MethodHandler) sdkmcp.MethodHandler {
+		return func(ctx context.Context, method string, req sdkmcp.Request) (sdkmcp.Result, error) {
+			if method != "tools/call" && method != "resources/read" {
+				return next(ctx, method, req)
+			}
+			if !policy.acquire() {
+				if method == "resources/read" {
+					return nil, &jsonrpc.Error{
+						Code:    resourceLimitErrorCode,
+						Message: resourceLimitErrorMessage,
+					}
+				}
+				return invocationLimitResult(), nil
+			}
+			defer policy.release()
+			return next(ctx, method, req)
+		}
+	}
+}
+
+func invocationLimitResult() *sdkmcp.CallToolResult {
+	return &sdkmcp.CallToolResult{
+		Content: []sdkmcp.Content{
+			&sdkmcp.TextContent{Text: invocationLimitErrorMessage},
+		},
+		IsError: true,
+	}
+}
+
+func cachePolicyMiddleware(next sdkmcp.MethodHandler) sdkmcp.MethodHandler {
+	return func(ctx context.Context, method string, req sdkmcp.Request) (sdkmcp.Result, error) {
+		result, err := next(ctx, method, req)
+		if err != nil {
+			return result, err
+		}
+		switch typed := result.(type) {
+		case *sdkmcp.DiscoverResult:
+			if method != "server/discover" {
+				break
+			}
+			typed.TTLMs = discoveryCacheTTLMillis
+			typed.CacheScope = "public"
+		case *sdkmcp.ListToolsResult:
+			if method != "tools/list" {
+				break
+			}
+			typed.TTLMs = listCacheTTLMillis
+			typed.CacheScope = "public"
+		case *sdkmcp.ListResourcesResult:
+			if method != "resources/list" {
+				break
+			}
+			typed.TTLMs = listCacheTTLMillis
+			typed.CacheScope = "public"
+		case *sdkmcp.ListResourceTemplatesResult:
+			if method != "resources/templates/list" {
+				break
+			}
+			typed.TTLMs = listCacheTTLMillis
+			typed.CacheScope = "public"
+		case *sdkmcp.ReadResourceResult:
+			if method != "resources/read" {
+				break
+			}
+			typed.TTLMs = attachmentCacheTTLMillis
+			typed.CacheScope = "private"
+		}
+		return result, nil
+	}
+}
+
+func traceMiddleware(next sdkmcp.MethodHandler) sdkmcp.MethodHandler {
+	return func(ctx context.Context, method string, req sdkmcp.Request) (sdkmcp.Result, error) {
+		carrier := propagation.MapCarrier{}
+		if params := req.GetParams(); params != nil {
+			meta := params.GetMeta()
+			for _, key := range []string{"traceparent", "tracestate", "baggage"} {
+				if value, ok := meta[key].(string); ok {
+					carrier[key] = value
+				}
+			}
+		}
+		ctx = w3cPropagator.Extract(ctx, carrier)
+		ctx, span := otel.Tracer("go.kenn.io/msgvault/internal/mcp").Start(
+			ctx,
+			method,
+			trace.WithSpanKind(trace.SpanKindServer),
+		)
+		defer span.End()
+		return next(ctx, method, req)
+	}
+}
