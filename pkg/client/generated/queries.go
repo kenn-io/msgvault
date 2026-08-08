@@ -263,6 +263,11 @@ func (v VerifyCLIQuery) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(v))
 }
 
+type ListCommunicationServicesQuery struct {
+	// IncludeInactive Include inactive catalog entries
+	IncludeInactive *bool `json:"include_inactive,omitempty"`
+}
+
 type GetConversationQuery struct {
 	// Anchor Selected message ID anchoring the chronological window
 	Anchor int64 `json:"anchor"`

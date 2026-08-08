@@ -599,6 +599,9 @@ func (d *PostgreSQLDialect) LegacyColumnMigrations() []ColumnMigration {
 		{`ALTER TABLE conversations ADD COLUMN IF NOT EXISTS title TEXT`, "title"},
 		{`ALTER TABLE conversations ADD COLUMN IF NOT EXISTS conversation_type TEXT NOT NULL DEFAULT 'email_thread'`, "conversation_type"},
 		{`ALTER TABLE labels ADD COLUMN IF NOT EXISTS system_role TEXT`, "labels.system_role"},
+		{`ALTER TABLE participant_identifiers ADD COLUMN IF NOT EXISTS service_id BIGINT REFERENCES communication_services(id) ON DELETE SET NULL`, "pi_service_id"},
+		{`ALTER TABLE participant_identifiers ADD COLUMN IF NOT EXISTS scope_kind TEXT`, "pi_scope_kind"},
+		{`ALTER TABLE participant_identifiers ADD COLUMN IF NOT EXISTS scope_value TEXT`, "pi_scope_value"},
 		// FTS tsvector column for legacy PG databases created before FTS
 		// support. Inline in schema_pg.sql's CREATE TABLE (a no-op on a
 		// pre-existing table), so without this an upgraded DB never gets the
@@ -896,6 +899,7 @@ var exclusiveLockTables = []string{
 	"sync_runs", "sources", "conversations", "conversation_participants",
 	"messages", "message_recipients", "message_labels", "message_bodies", "message_raw",
 	"attachments", "labels", "participants", "participant_identifiers", "reactions",
+	"participant_contact_observations",
 	// persons and person_participants: MergeParticipants (reached from the
 	// Beeper import path) repoints bindings and bumps person revisions, so
 	// both belong to the sync/import write set this lock mirrors.

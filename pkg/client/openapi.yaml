@@ -1312,6 +1312,66 @@ components:
       required:
         - stats
       type: object
+    CommunicationService:
+      properties:
+        aliases:
+          items:
+            type: string
+          nullable: true
+          type: array
+        created_at:
+          format: date-time
+          type: string
+        default_scope_kind:
+          type: string
+        display_label:
+          type: string
+        id:
+          format: int64
+          type: integer
+        is_active:
+          type: boolean
+        is_system:
+          type: boolean
+        normalization:
+          type: string
+        normalization_version:
+          format: int64
+          type: integer
+        profile_url_template:
+          type: string
+        scope_policy:
+          type: string
+        slug:
+          type: string
+        updated_at:
+          format: date-time
+          type: string
+        uri_scheme:
+          type: string
+      required:
+        - id
+        - slug
+        - display_label
+        - aliases
+        - scope_policy
+        - normalization
+        - normalization_version
+        - is_system
+        - is_active
+        - created_at
+        - updated_at
+      type: object
+    CommunicationServicesResponse:
+      properties:
+        services:
+          items:
+            $ref: "#/components/schemas/CommunicationService"
+          nullable: true
+          type: array
+      required:
+        - services
+      type: object
     ConversationResponse:
       properties:
         anchor_id:
@@ -1384,6 +1444,59 @@ components:
         - label
         - value_type
         - field_type
+      type: object
+    CreateCommunicationServiceRequest:
+      additionalProperties: false
+      properties:
+        aliases:
+          items:
+            type: string
+          nullable: true
+          type: array
+        default_scope_kind:
+          type: string
+        display_label:
+          type: string
+        normalization:
+          enum:
+            - none
+            - lower
+            - email
+            - phone_e164
+            - strip_at_lower
+            - by_address_kind
+          type: string
+          x-enum-names:
+            - CreateCommunicationServiceRequestNormalizationNone
+            - CreateCommunicationServiceRequestNormalizationLower
+            - CreateCommunicationServiceRequestNormalizationEmail
+            - CreateCommunicationServiceRequestNormalizationPhoneE164
+            - CreateCommunicationServiceRequestNormalizationStripAtLower
+            - CreateCommunicationServiceRequestNormalizationByAddressKind
+        normalization_version:
+          format: int64
+          type: integer
+        profile_url_template:
+          type: string
+        scope_policy:
+          enum:
+            - none
+            - optional
+            - required
+          type: string
+          x-enum-names:
+            - CreateCommunicationServiceRequestScopePolicyNone
+            - CreateCommunicationServiceRequestScopePolicyOptional
+            - CreateCommunicationServiceRequestScopePolicyRequired
+        slug:
+          type: string
+        uri_scheme:
+          type: string
+      required:
+        - slug
+        - display_label
+        - scope_policy
+        - normalization
       type: object
     CreatePersonRequest:
       additionalProperties: false
@@ -3332,6 +3445,60 @@ components:
       required:
         - busy
       type: object
+    PartialDate:
+      additionalProperties: false
+      properties:
+        day:
+          format: int64
+          type: integer
+        month:
+          format: int64
+          type: integer
+        year:
+          format: int64
+          type: integer
+      type: object
+    ParticipantContactObservation:
+      properties:
+        address_kind:
+          type: string
+        envelope:
+          $ref: "#/components/schemas/ValueEnvelope"
+        normalization:
+          type: string
+        normalization_version:
+          format: int64
+          type: integer
+        normalized_value:
+          type: string
+        observed_at:
+          format: date-time
+          type: string
+        original_value:
+          type: string
+        participant_id:
+          format: int64
+          type: integer
+        provider_user_id:
+          type: string
+        scope_kind:
+          type: string
+        scope_value:
+          type: string
+        service_slug:
+          type: string
+        source_id:
+          format: int64
+          type: integer
+      required:
+        - envelope
+        - participant_id
+        - address_kind
+        - original_value
+        - normalized_value
+        - normalization
+        - normalization_version
+      type: object
     PatchAttributeDefinitionRequest:
       additionalProperties: false
       properties:
@@ -3402,6 +3569,108 @@ components:
         - participant_ids
         - created_at
         - updated_at
+      type: object
+    PersonAddress:
+      properties:
+        address_kind:
+          type: string
+        country_code:
+          type: string
+        country_name:
+          type: string
+        envelope:
+          $ref: "#/components/schemas/ValueEnvelope"
+        extended_address:
+          type: string
+        extended_components:
+          type: string
+        free_text:
+          type: string
+        geo_uri:
+          type: string
+        label:
+          type: string
+        locality:
+          type: string
+        original_value:
+          type: string
+        person_id:
+          format: int64
+          type: integer
+        place_uri:
+          type: string
+        post_office_box:
+          type: string
+        postal_code:
+          type: string
+        region:
+          type: string
+        street_address:
+          type: string
+        timezone:
+          type: string
+      required:
+        - envelope
+        - person_id
+        - address_kind
+        - original_value
+      type: object
+    PersonAddressInput:
+      additionalProperties: false
+      properties:
+        address_kind:
+          type: string
+        country_code:
+          type: string
+        country_name:
+          type: string
+        envelope:
+          $ref: "#/components/schemas/ValueEnvelope"
+        extended_address:
+          type: string
+        extended_components:
+          type: string
+        free_text:
+          type: string
+        geo_uri:
+          type: string
+        label:
+          type: string
+        locality:
+          type: string
+        original_value:
+          type: string
+        place_uri:
+          type: string
+        post_office_box:
+          type: string
+        postal_code:
+          type: string
+        region:
+          type: string
+        street_address:
+          type: string
+        timezone:
+          type: string
+      required:
+        - address_kind
+        - original_value
+        - envelope
+      type: object
+    PersonAddressPatch:
+      additionalProperties: false
+      properties:
+        add:
+          items:
+            $ref: "#/components/schemas/PersonAddressInput"
+          nullable: true
+          type: array
+        supersede:
+          items:
+            format: int64
+            type: integer
+          nullable: true
+          type: array
       type: object
     PersonAttributeGroup:
       properties:
@@ -3496,6 +3765,49 @@ components:
         - person_id
         - attributes
       type: object
+    PersonCategory:
+      properties:
+        envelope:
+          $ref: "#/components/schemas/ValueEnvelope"
+        normalized_value:
+          type: string
+        original_value:
+          type: string
+        person_id:
+          format: int64
+          type: integer
+      required:
+        - envelope
+        - person_id
+        - original_value
+        - normalized_value
+      type: object
+    PersonCategoryInput:
+      additionalProperties: false
+      properties:
+        envelope:
+          $ref: "#/components/schemas/ValueEnvelope"
+        original_value:
+          type: string
+      required:
+        - original_value
+        - envelope
+      type: object
+    PersonCategoryPatch:
+      additionalProperties: false
+      properties:
+        add:
+          items:
+            $ref: "#/components/schemas/PersonCategoryInput"
+          nullable: true
+          type: array
+        supersede:
+          items:
+            format: int64
+            type: integer
+          nullable: true
+          type: array
+      type: object
     PersonCluster:
       properties:
         canonical_id:
@@ -3529,6 +3841,78 @@ components:
         - participant_a
         - participant_b
       type: object
+    PersonContactPoint:
+      properties:
+        address_kind:
+          type: string
+        envelope:
+          $ref: "#/components/schemas/ValueEnvelope"
+        normalization:
+          type: string
+        normalization_version:
+          format: int64
+          type: integer
+        normalized_value:
+          type: string
+        original_value:
+          type: string
+        person_id:
+          format: int64
+          type: integer
+        scope_kind:
+          type: string
+        scope_value:
+          type: string
+        service_slug:
+          type: string
+        uri:
+          type: string
+      required:
+        - envelope
+        - person_id
+        - address_kind
+        - original_value
+        - normalized_value
+        - normalization
+        - normalization_version
+      type: object
+    PersonContactPointInput:
+      additionalProperties: false
+      properties:
+        address_kind:
+          type: string
+        envelope:
+          $ref: "#/components/schemas/ValueEnvelope"
+        original_value:
+          type: string
+        scope_kind:
+          type: string
+        scope_value:
+          type: string
+        service_slug:
+          type: string
+        uri:
+          type: string
+      required:
+        - address_kind
+        - original_value
+        - envelope
+      type: object
+    PersonContactPointPatch:
+      additionalProperties: false
+      properties:
+        add:
+          items:
+            $ref: "#/components/schemas/PersonContactPointInput"
+          nullable: true
+          type: array
+        supersede:
+          items:
+            format: int64
+            type: integer
+          nullable: true
+          type: array
+      type: object
     PersonContextSummaryHTTPResponse:
       properties:
         cache_revision:
@@ -3543,6 +3927,70 @@ components:
         - summary
         - cache_revision
         - search_provenance
+      type: object
+    PersonDate:
+      properties:
+        calendar_scale:
+          type: string
+        date:
+          $ref: "#/components/schemas/PartialDate"
+        date_kind:
+          type: string
+        date_text:
+          type: string
+        envelope:
+          $ref: "#/components/schemas/ValueEnvelope"
+        label:
+          type: string
+        original_value:
+          type: string
+        person_id:
+          format: int64
+          type: integer
+      required:
+        - envelope
+        - person_id
+        - date_kind
+        - date
+        - original_value
+      type: object
+    PersonDateInput:
+      additionalProperties: false
+      properties:
+        calendar_scale:
+          type: string
+        date:
+          $ref: "#/components/schemas/PartialDate"
+        date_kind:
+          type: string
+        date_text:
+          type: string
+        envelope:
+          $ref: "#/components/schemas/ValueEnvelope"
+        label:
+          type: string
+        original_value:
+          type: string
+      required:
+        - date_kind
+        - date
+        - original_value
+        - envelope
+      type: object
+    PersonDatePatch:
+      additionalProperties: false
+      properties:
+        add:
+          items:
+            $ref: "#/components/schemas/PersonDateInput"
+          nullable: true
+          type: array
+        supersede:
+          items:
+            format: int64
+            type: integer
+          nullable: true
+          type: array
       type: object
     PersonIdentifier:
       properties:
@@ -3566,6 +4014,174 @@ components:
         - provenance
         - participant_id
       type: object
+    PersonMedia:
+      properties:
+        byte_size:
+          format: int64
+          type: integer
+        content_hash:
+          type: string
+        envelope:
+          $ref: "#/components/schemas/ValueEnvelope"
+        has_data:
+          type: boolean
+        media_kind:
+          type: string
+        media_type:
+          type: string
+        original_value:
+          type: string
+        person_id:
+          format: int64
+          type: integer
+        uri:
+          type: string
+      required:
+        - envelope
+        - person_id
+        - media_kind
+        - has_data
+        - original_value
+      type: object
+    PersonMediaInput:
+      additionalProperties: false
+      properties:
+        data:
+          format: base64
+          type: string
+        envelope:
+          $ref: "#/components/schemas/ValueEnvelope"
+        media_kind:
+          type: string
+        media_type:
+          type: string
+        original_value:
+          type: string
+        uri:
+          type: string
+      required:
+        - media_kind
+        - original_value
+        - envelope
+      type: object
+    PersonMediaPatch:
+      additionalProperties: false
+      properties:
+        add:
+          items:
+            $ref: "#/components/schemas/PersonMediaInput"
+          nullable: true
+          type: array
+        supersede:
+          items:
+            format: int64
+            type: integer
+          nullable: true
+          type: array
+      type: object
+    PersonName:
+      properties:
+        additional_names:
+          type: string
+        envelope:
+          $ref: "#/components/schemas/ValueEnvelope"
+        family_name:
+          type: string
+        formatted:
+          type: string
+        generation:
+          type: string
+        given_name:
+          type: string
+        honorific_prefixes:
+          type: string
+        honorific_suffixes:
+          type: string
+        is_derived:
+          type: boolean
+        language:
+          type: string
+        name_kind:
+          type: string
+        original_value:
+          type: string
+        person_id:
+          format: int64
+          type: integer
+        phonetic_script:
+          type: string
+        phonetic_system:
+          type: string
+        script:
+          type: string
+        secondary_surname:
+          type: string
+        sort_as:
+          type: string
+      required:
+        - envelope
+        - person_id
+        - name_kind
+        - is_derived
+        - original_value
+      type: object
+    PersonNameInput:
+      additionalProperties: false
+      properties:
+        additional_names:
+          type: string
+        envelope:
+          $ref: "#/components/schemas/ValueEnvelope"
+        family_name:
+          type: string
+        formatted:
+          type: string
+        generation:
+          type: string
+        given_name:
+          type: string
+        honorific_prefixes:
+          type: string
+        honorific_suffixes:
+          type: string
+        is_derived:
+          type: boolean
+        language:
+          type: string
+        name_kind:
+          type: string
+        original_value:
+          type: string
+        phonetic_script:
+          type: string
+        phonetic_system:
+          type: string
+        script:
+          type: string
+        secondary_surname:
+          type: string
+        sort_as:
+          type: string
+      required:
+        - name_kind
+        - original_value
+        - envelope
+      type: object
+    PersonNamePatch:
+      additionalProperties: false
+      properties:
+        add:
+          items:
+            $ref: "#/components/schemas/PersonNameInput"
+          nullable: true
+          type: array
+        supersede:
+          items:
+            format: int64
+            type: integer
+          nullable: true
+          type: array
+      type: object
     PersonProfile:
       properties:
         display_name:
@@ -3579,6 +4195,71 @@ components:
       required:
         - id
         - revision
+      type: object
+    PersonProfileHistory:
+      properties:
+        addresses:
+          items:
+            $ref: "#/components/schemas/PersonAddress"
+          nullable: true
+          type: array
+        categories:
+          items:
+            $ref: "#/components/schemas/PersonCategory"
+          nullable: true
+          type: array
+        contact_points:
+          items:
+            $ref: "#/components/schemas/PersonContactPoint"
+          nullable: true
+          type: array
+        dates:
+          items:
+            $ref: "#/components/schemas/PersonDate"
+          nullable: true
+          type: array
+        media:
+          items:
+            $ref: "#/components/schemas/PersonMedia"
+          nullable: true
+          type: array
+        names:
+          items:
+            $ref: "#/components/schemas/PersonName"
+          nullable: true
+          type: array
+        observations:
+          items:
+            $ref: "#/components/schemas/ParticipantContactObservation"
+          nullable: true
+          type: array
+        person:
+          $ref: "#/components/schemas/Person"
+      required:
+        - person
+        - names
+        - contact_points
+        - addresses
+        - dates
+        - categories
+        - media
+        - observations
+      type: object
+    PersonProfilePatch:
+      additionalProperties: false
+      properties:
+        addresses:
+          $ref: "#/components/schemas/PersonAddressPatch"
+        categories:
+          $ref: "#/components/schemas/PersonCategoryPatch"
+        contact_points:
+          $ref: "#/components/schemas/PersonContactPointPatch"
+        dates:
+          $ref: "#/components/schemas/PersonDatePatch"
+        media:
+          $ref: "#/components/schemas/PersonMediaPatch"
+        names:
+          $ref: "#/components/schemas/PersonNamePatch"
       type: object
     PersonSearchHTTPResponse:
       properties:
@@ -4670,6 +5351,49 @@ components:
         - status
         - message
       type: object
+    StructuredPersonProfile:
+      properties:
+        addresses:
+          items:
+            $ref: "#/components/schemas/PersonAddress"
+          nullable: true
+          type: array
+        categories:
+          items:
+            $ref: "#/components/schemas/PersonCategory"
+          nullable: true
+          type: array
+        contact_points:
+          items:
+            $ref: "#/components/schemas/PersonContactPoint"
+          nullable: true
+          type: array
+        dates:
+          items:
+            $ref: "#/components/schemas/PersonDate"
+          nullable: true
+          type: array
+        media:
+          items:
+            $ref: "#/components/schemas/PersonMedia"
+          nullable: true
+          type: array
+        names:
+          items:
+            $ref: "#/components/schemas/PersonName"
+          nullable: true
+          type: array
+        person:
+          $ref: "#/components/schemas/Person"
+      required:
+        - person
+        - names
+        - contact_points
+        - addresses
+        - dates
+        - categories
+        - media
+      type: object
     Summary:
       additionalProperties: false
       properties:
@@ -5153,6 +5877,74 @@ components:
         - email
         - display_name
       type: object
+    VCardIdentity:
+      additionalProperties: false
+      properties:
+        altid:
+          type: string
+        group:
+          type: string
+        pid:
+          items:
+            type: string
+          nullable: true
+          type: array
+        prop_id:
+          type: string
+        property:
+          type: string
+      type: object
+    ValueEnvelope:
+      additionalProperties: false
+      properties:
+        active_from:
+          format: date-time
+          type: string
+        active_until:
+          format: date-time
+          type: string
+        confidence:
+          format: double
+          type: number
+        created_at:
+          format: date-time
+          type: string
+        id:
+          format: int64
+          type: integer
+        ordinal:
+          format: int64
+          type: integer
+        pref:
+          format: int64
+          type: integer
+        source:
+          type: string
+        source_ref:
+          type: string
+        superseded_at:
+          format: date-time
+          type: string
+        type_label:
+          type: string
+        type_tokens:
+          items:
+            type: string
+          nullable: true
+          type: array
+        updated_at:
+          format: date-time
+          type: string
+        vcard:
+          $ref: "#/components/schemas/VCardIdentity"
+      required:
+        - id
+        - ordinal
+        - vcard
+        - source
+        - created_at
+        - updated_at
+      type: object
     VectorHealth:
       properties:
         error:
@@ -5169,7 +5961,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 1.36.0
+  version: 1.37.0
 openapi: 3.0.3
 paths:
   /api/ping:
@@ -7305,6 +8097,104 @@ paths:
       security:
         - apiKey: []
       summary: Verify the CLI archive against Gmail
+      tags:
+        - API
+  /api/v1/communication-services:
+    get:
+      description: Lists the small open service catalog without pagination, including aliases and normalization policy.
+      operationId: listCommunicationServices
+      parameters:
+        - description: Include inactive catalog entries
+          in: query
+          name: include_inactive
+          schema:
+            default: false
+            type: boolean
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CommunicationServicesResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: List communication services
+      tags:
+        - API
+    post:
+      description: Registers an unknown or custom service without a schema migration. Re-registering a slug is idempotent.
+      operationId: createCommunicationService
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateCommunicationServiceRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CommunicationService"
+          description: OK
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CommunicationService"
+          description: Created
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Register a communication service
       tags:
         - API
   /api/v1/content/remote-image:
@@ -9633,6 +10523,189 @@ paths:
       security:
         - apiKey: []
       summary: Set a person's attribute value
+      tags:
+        - API
+  /api/v1/persons/{id}/profile:
+    get:
+      description: Returns only current structured values at one person revision. Superseded values and archive observations are available from the separate history endpoint.
+      operationId: getPersonStructuredProfile
+      parameters:
+        - description: Durable person ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StructuredPersonProfile"
+          description: OK
+          headers:
+            ETag:
+              description: Strong person profile revision tag for optimistic concurrency
+              schema:
+                type: string
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Get a person's current structured profile
+      tags:
+        - API
+    patch:
+      description: Applies up to 200 explicit adds and supersedes atomically under If-Match. One patch advances the person revision once. Superseding closes world and transaction time without deletion.
+      operationId: patchPersonStructuredProfile
+      parameters:
+        - description: Durable person ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+        - description: Strong ETag returned by the latest person profile read. Must be the exact single tag from that read; the RFC 7232 forms `*` and comma-separated tag lists are not supported.
+          in: header
+          name: If-Match
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PersonProfilePatch"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StructuredPersonProfile"
+          description: OK
+          headers:
+            ETag:
+              description: Strong person profile revision tag for optimistic concurrency
+              schema:
+                type: string
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "413":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "428":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Atomically patch a person's structured profile
+      tags:
+        - API
+  /api/v1/persons/{id}/profile/history:
+    get:
+      description: Returns current and superseded structured values plus source-linked observations for every participant bound to the person.
+      operationId: getPersonProfileHistory
+      parameters:
+        - description: Durable person ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PersonProfileHistory"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Get a person's structured profile history
       tags:
         - API
   /api/v1/query:
