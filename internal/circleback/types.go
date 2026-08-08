@@ -3,6 +3,7 @@ package circleback
 import (
 	"bytes"
 	"encoding/json"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -178,7 +179,7 @@ type Meeting struct {
 	Summary string `json:"summary,omitempty"`
 
 	ActionItems []ActionItem `json:"actionItems,omitempty"`
-	Insights    []Insight    `json:"insights,omitempty"`
+	Insights    InsightList  `json:"insights,omitempty"`
 	Tags        []string     `json:"tags,omitempty"`
 
 	URL          string `json:"url,omitempty"`
@@ -187,6 +188,91 @@ type Meeting struct {
 
 	// Raw preserves this meeting's verbatim tool-result JSON.
 	Raw json.RawMessage `json:"-"`
+}
+
+// InsightList is a meeting's insight collection. Circleback returns it as a
+// JSON array in some payloads and as a label-keyed object in others — every
+// meeting observed in production carries the object form, empty (`{}`), which
+// is what a workspace with no insights configured returns. Decoding accepts
+// both so one shape does not reject the whole meeting; a rejected meeting
+// fails its entire sync run, which is how the array-only decoder blocked
+// ingestion outright.
+//
+// The keyed form maps an insight label to its value. Values are stored as
+// strings when scalar and as verbatim JSON otherwise, so an unanticipated
+// value shape degrades to raw text instead of failing the sync. No populated
+// object has been observed, so that mapping is a best-effort guess; the
+// verbatim payload is archived in message_raw either way.
+type InsightList []Insight
+
+// UnmarshalJSON implements tolerant insight-collection decoding.
+func (l *InsightList) UnmarshalJSON(b []byte) error {
+	b = bytes.TrimSpace(b)
+	*l = nil
+	if len(b) == 0 || bytes.Equal(b, []byte("null")) {
+		return nil
+	}
+	if b[0] == '[' {
+		type insightArray []Insight // avoids recursing back into this method
+		var array insightArray
+		if err := json.Unmarshal(b, &array); err != nil {
+			return err
+		}
+		*l = InsightList(array)
+		return nil
+	}
+	var object map[string]json.RawMessage
+	if err := json.Unmarshal(b, &object); err != nil {
+		return err
+	}
+	// Sort the labels: Go randomizes map iteration, and an unstable order
+	// would rewrite the composed body on every sync, making identical
+	// snapshots look edited and needlessly invalidating the search cache.
+	labels := make([]string, 0, len(object))
+	for label := range object {
+		labels = append(labels, label)
+	}
+	slices.Sort(labels)
+	for _, label := range labels {
+		*l = append(*l, insightFromEntry(label, object[label]))
+	}
+	return nil
+}
+
+// insightFromEntry builds one Insight from a keyed-object entry, falling back
+// to the label when the value carries no title of its own.
+func insightFromEntry(label string, value json.RawMessage) Insight {
+	value = bytes.TrimSpace(value)
+	insight := Insight{Name: label}
+	switch {
+	case len(value) == 0 || bytes.Equal(value, []byte("null")):
+		return insight
+	case value[0] == '{':
+		type insightObject Insight // avoids recursing if Insight gains a decoder
+		var nested insightObject
+		if err := json.Unmarshal(value, &nested); err != nil {
+			// Unknown object shape: keep the label and the verbatim JSON
+			// rather than failing the meeting.
+			insight.Content = string(value)
+			return insight
+		}
+		insight = Insight(nested)
+		if insight.Title == "" && insight.Name == "" {
+			insight.Name = label
+		}
+		return insight
+	case value[0] == '"':
+		var text string
+		if err := json.Unmarshal(value, &text); err != nil {
+			insight.Content = string(value)
+			return insight
+		}
+		insight.Content = text
+		return insight
+	default:
+		insight.Content = string(value)
+		return insight
+	}
 }
 
 // Insight is a custom workspace insight attached to a meeting. Shape is

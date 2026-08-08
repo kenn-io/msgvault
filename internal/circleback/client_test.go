@@ -211,6 +211,93 @@ func TestBuildBodyIncludesSearchableMeetingMetadata(t *testing.T) {
 	assert.Contains(t, body, "Tags: forecast, customer-health")
 }
 
+// Circleback returns "insights" as a label-keyed object, not the array the
+// decoder originally required. Every meeting in a workspace carries the same
+// shape, so an array-only decoder rejects all of them and fails the entire
+// sync run — no meetings reach the archive at all.
+func TestReadMeetings_KeyedInsightsObjectDoesNotRejectMeeting(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	var calls []contractToolCall
+	s := newContractMCPSession(t, map[string]string{
+		toolReadMeetings: `{"meetings":[{
+			"id":"meeting-9",
+			"name":"Planning",
+			"notes":"Agreed on scope.",
+			"insights":{},
+			"actionItems":[{"title":"Send recap","status":"open"}],
+			"tags":["planning"]
+		}]}`,
+	}, &calls)
+
+	meetings, err := s.ReadMeetings(context.Background(), []string{"meeting-9"})
+	require.NoError(err)
+	require.Len(meetings, 1)
+	assert.Equal("Planning", meetings[0].DisplayName())
+	assert.Empty(meetings[0].Insights)
+
+	// An empty insight set must not emit an empty "Insights:" heading.
+	body := buildBody(&meetings[0], nil)
+	assert.Contains(body, "- Send recap")
+	assert.NotContains(body, "Insights:")
+}
+
+func TestInsightListTolerantShapes(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  []Insight
+	}{
+		{name: "null", input: `null`},
+		{name: "empty array", input: `[]`},
+		{name: "empty object (production shape)", input: `{}`},
+		{
+			name:  "array of objects preserved",
+			input: `[{"title":"Risk","content":"Timeline is tight"}]`,
+			want:  []Insight{{Title: "Risk", Content: "Timeline is tight"}},
+		},
+		{
+			// Labels are sorted so a Go map's random iteration order cannot
+			// churn the composed body between otherwise identical syncs.
+			name:  "keyed strings sort by label",
+			input: `{"Zeta":"last","Alpha":"first"}`,
+			want: []Insight{
+				{Name: "Alpha", Content: "first"},
+				{Name: "Zeta", Content: "last"},
+			},
+		},
+		{
+			name:  "keyed object borrows its label when untitled",
+			input: `{"Risk":{"content":"Timeline is tight"}}`,
+			want:  []Insight{{Name: "Risk", Content: "Timeline is tight"}},
+		},
+		{
+			name:  "keyed object keeps its own title",
+			input: `{"Risk":{"title":"Schedule risk","content":"Tight"}}`,
+			want:  []Insight{{Title: "Schedule risk", Content: "Tight"}},
+		},
+		{
+			name:  "scalar value degrades to verbatim JSON",
+			input: `{"Score":7}`,
+			want:  []Insight{{Name: "Score", Content: "7"}},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var got InsightList
+			require.NoError(t, json.Unmarshal([]byte(tt.input), &got))
+			if tt.want == nil {
+				// Empty is the contract; nil vs. empty slice is not, since
+				// json.Unmarshal yields a non-nil empty slice for "[]".
+				assert.Empty(t, got)
+				return
+			}
+			assert.Equal(t, InsightList(tt.want), got)
+		})
+	}
+}
+
 func TestGetTranscripts_OfficialArgumentsAndSchemas(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
