@@ -1225,10 +1225,12 @@ msgvault identity import [<account>] [--source-id <id>] (--file <path> | --stdin
 | `--signal` | `import` | Evidence signal recorded for imported identities (default `manual`) |
 | `--apply` | `import` | Confirm every validated imported identity; without it the command only previews |
 
-Email sync automatically confirms strong sender evidence from trusted Sent
-metadata. Recipient-only evidence stays review-only. See [People, Profiles,
-and Source Identities](/usage/people/) for classifications, Fastmail inventory,
-and import formats.
+Email sync enriches identities already confirmed for the source with strong
+sender evidence from trusted Sent metadata; it does not confirm first-time
+aliases. Review candidates with `msgvault identity discover` and apply strong
+candidates with `msgvault identity discover --apply`. Recipient-only evidence
+stays review-only. See [People, Profiles, and Source Identities](/usage/people/)
+for classifications, Fastmail inventory, and import formats.
 
 ---
 

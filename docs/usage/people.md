@@ -20,9 +20,12 @@ profile data through the selected local or remote daemon.
 
 ## Discover source identities
 
-Full and incremental email sync automatically confirm strong sender evidence
-from trusted Sent metadata. Recipient-only evidence remains a review candidate:
-receiving mail at an address does not by itself prove that the address is you.
+Full and incremental email sync enrich identities already confirmed for the
+source with strong sender evidence from trusted Sent metadata. Sync does not
+confirm first-time aliases; review them with `msgvault identity discover` and
+apply strong candidates with `msgvault identity discover --apply`.
+Recipient-only evidence remains a review candidate: receiving mail at an
+address does not by itself prove that the address is you.
 
 Preview all evidence for one source without changing the archive:
 

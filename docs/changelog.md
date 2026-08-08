@@ -54,10 +54,11 @@ All notable changes to msgvault, grouped by release.
   completion bound. It is an invalidation feed, not an audit log: multiple
   edits may collapse into one row, and related-table-only changes are outside
   its contract.
-- Email sync now confirms strong source-scoped identity evidence from trusted
-  Sent metadata. `identity discover` previews archived and optional Fastmail
-  alias evidence, while `identity import` previews or applies text and JSON
-  lists with unambiguous numeric source selection.
+- Email sync now enriches already-confirmed source-scoped identities with
+  strong evidence from trusted Sent metadata; first-time aliases require
+  `identity discover --apply`. `identity discover` previews archived and
+  optional Fastmail alias evidence, while `identity import` previews or applies
+  text and JSON lists with unambiguous numeric source selection.
 - Durable person profiles provide stable IDs, vCard UIDs, explicit participant
   bindings, display-name overrides, and optimistic concurrency. Typed,
   historized person attributes and portable metadata-defined fields are
