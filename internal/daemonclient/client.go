@@ -14,6 +14,12 @@ import (
 	"go.kenn.io/msgvault/internal/apiprotocol"
 	apiclient "go.kenn.io/msgvault/pkg/client"
 	"go.kenn.io/msgvault/pkg/client/generated"
+	"go.opentelemetry.io/otel/propagation"
+)
+
+var daemonW3CPropagator = propagation.NewCompositeTextMapPropagator(
+	propagation.TraceContext{},
+	propagation.Baggage{},
 )
 
 type RequestMode uint8
@@ -327,7 +333,7 @@ func (b *cancelOnCloseBody) Close() error {
 }
 
 func requestEditor(apiKey string, mode RequestMode) apiclient.RequestEditorFn {
-	return func(_ context.Context, req *http.Request) error {
+	return func(ctx context.Context, req *http.Request) error {
 		if apiKey != "" {
 			req.Header.Set("X-Api-Key", apiKey)
 		}
@@ -335,6 +341,7 @@ func requestEditor(apiKey string, mode RequestMode) apiclient.RequestEditorFn {
 			req.Header.Set(apiprotocol.ClientClassHeader, apiprotocol.ClientClassCLI)
 		}
 		req.Header.Set("Accept", "application/json")
+		daemonW3CPropagator.Inject(ctx, propagation.HeaderCarrier(req.Header))
 		return nil
 	}
 }

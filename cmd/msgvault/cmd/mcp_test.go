@@ -52,10 +52,13 @@ func TestMCPCommandUsesDaemonInsteadOfOpeningLocalDatabase(t *testing.T) {
 	assert.NotContains(err.Error(), "open database", "MCP command must not open SQLite directly")
 }
 
-func TestMCPCommandForwardsServerAPIKeyToHTTPTransport(t *testing.T) {
+func TestMCPCommandForwardsHTTPPolicy(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
 	daemon := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "/api/v1/stats", r.URL.Path)
-		assert.Equal(t, "daemon-key", r.Header.Get("X-Api-Key"))
+		assert.Equal("/api/v1/stats", r.URL.Path)
+		assert.Equal("daemon-key", r.Header.Get("X-Api-Key"))
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{
 			"total_messages": 0,
@@ -81,28 +84,34 @@ func TestMCPCommandForwardsServerAPIKeyToHTTPTransport(t *testing.T) {
 	savedHTTPAddr := mcpHTTPAddr
 	savedAllowInsecure := mcpHTTPAllowInsecure
 	savedServeHTTP := serveMCPHTTPWithOptions
+	allowWritesFlag := mcpCmd.Flags().Lookup("http-allow-writes")
+	require.NotNil(allowWritesFlag, "mcp command must define --http-allow-writes")
+	require.NoError(allowWritesFlag.Value.Set("true"))
 	mcpHTTPAddr = "0.0.0.0:8081"
 	mcpHTTPAllowInsecure = true
 	t.Cleanup(func() {
+		assert.NoError(allowWritesFlag.Value.Set("false"))
 		mcpHTTPAddr = savedHTTPAddr
 		mcpHTTPAllowInsecure = savedAllowInsecure
 		serveMCPHTTPWithOptions = savedServeHTTP
 	})
 
 	wantErr := errors.New("stop after capture")
-	var gotAddr, gotAPIKey string
-	serveMCPHTTPWithOptions = func(_ context.Context, _ mcpserver.ServeOptions, addr, apiKey string) error {
-		gotAddr = addr
-		gotAPIKey = apiKey
+	var gotHTTPOpts mcpserver.HTTPOptions
+	serveMCPHTTPWithOptions = func(_ context.Context, _ mcpserver.ServeOptions, httpOpts mcpserver.HTTPOptions) error {
+		gotHTTPOpts = httpOpts
 		return wantErr
 	}
 
 	mcpCmd.SetContext(context.Background())
 	err := mcpCmd.RunE(mcpCmd, nil)
 
-	require.ErrorIs(t, err, wantErr)
-	assert.Equal(t, "0.0.0.0:8081", gotAddr)
-	assert.Equal(t, "mcp-http-key", gotAPIKey)
+	require.ErrorIs(err, wantErr)
+	assert.Equal(mcpserver.HTTPOptions{
+		Addr:        "0.0.0.0:8081",
+		APIKey:      "mcp-http-key",
+		AllowWrites: true,
+	}, gotHTTPOpts)
 }
 
 func TestDaemonMCPServeOptionsDisablesVectorToolsWhenDaemonVectorUnavailable(t *testing.T) {

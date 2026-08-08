@@ -3,19 +3,15 @@ package mcp
 import (
 	"context"
 	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"math"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 	"unicode/utf8"
 
-	"github.com/mark3labs/mcp-go/mcp"
 	"go.kenn.io/msgvault/internal/deletion"
 	"go.kenn.io/msgvault/internal/export"
 	"go.kenn.io/msgvault/internal/query"
@@ -194,36 +190,73 @@ type SimilarSearchResult struct {
 	Messages      []query.MessageSummary
 }
 
+type expectedHandlerError struct {
+	message string
+}
+
+func (e *expectedHandlerError) Error() string { return e.message }
+
+func dependencyError(operation string, err error) (*toolResult, error) {
+	var expected *expectedHandlerError
+	if errors.As(err, &expected) {
+		return toolErrorResult(expected.message), nil
+	}
+	if result := translateVectorErr(err); result != nil {
+		return result, nil
+	}
+	return nil, newInternalError(operation, err)
+}
+
+func messageLookupError(operation string, err error) (*toolResult, error) {
+	if errors.Is(err, os.ErrNotExist) || err.Error() == "not found" {
+		return toolErrorResult("message not found"), nil
+	}
+	return dependencyError(operation, err)
+}
+
+func bodySearchError(err error) (*toolResult, error) {
+	switch {
+	case errors.Is(err, query.ErrMessageBodySearchUnavailable):
+		return toolErrorResult("search failed: exact message body search is unavailable"), nil
+	case errors.Is(err, query.ErrMessageBodySearchIndexStale):
+		return toolErrorResult("search failed: message body search index layout is stale"), nil
+	case errors.Is(err, query.ErrMessageBodySearchInvalidQuery):
+		return toolErrorResult("search failed: invalid message body search query"), nil
+	default:
+		return nil, newInternalError("search message bodies", err)
+	}
+}
+
 // translateVectorErr maps well-known vector sentinel errors to MCP tool
 // error results. Returns nil if the error is not a known sentinel
 // (callers should wrap it themselves).
-func translateVectorErr(err error) *mcp.CallToolResult {
+func translateVectorErr(err error) *toolResult {
 	switch {
 	case errors.Is(err, vector.ErrNotEnabled):
-		return mcp.NewToolResultError(
+		return toolErrorResult(
 			"vector_not_enabled: vector search is not configured",
 		)
 	case errors.Is(err, vector.ErrIndexStale):
-		return mcp.NewToolResultError(
+		return toolErrorResult(
 			"index_stale: the vector index does not match the configured model; " +
 				"run `msgvault embeddings build --full-rebuild`",
 		)
 	case errors.Is(err, vector.ErrIndexBuilding):
-		return mcp.NewToolResultError(
+		return toolErrorResult(
 			"index_building: the initial vector index is still being built",
 		)
 	case errors.Is(err, vector.ErrIndexScopeMismatch):
-		return mcp.NewToolResultError(
+		return toolErrorResult(
 			"index_scope_mismatch: the vector index scope does not cover this query; " +
 				"add a matching message_type filter or rebuild embeddings for the requested scope",
 		)
 	case errors.Is(err, vector.ErrNoActiveGeneration):
-		return mcp.NewToolResultError(
+		return toolErrorResult(
 			"no_active_generation: vector search has no active index yet; " +
 				"run `msgvault embeddings build` to build one",
 		)
 	case errors.Is(err, vector.ErrEmbeddingTimeout):
-		return mcp.NewToolResultError(
+		return toolErrorResult(
 			"embedding_timeout: the embedding endpoint did not respond in time; " +
 				"retry, or raise [vector.embeddings].timeout in config",
 		)
@@ -239,14 +272,14 @@ func (h *handlers) getAccountID(ctx context.Context, account string) (*int64, er
 	}
 	accounts, err := h.engine.ListAccounts(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("failed to list accounts: %w", err)
+		return nil, newInternalError("list accounts", err)
 	}
 	for _, acc := range accounts {
 		if acc.Identifier == account {
 			return &acc.ID, nil
 		}
 	}
-	return nil, fmt.Errorf("account not found: %s", account)
+	return nil, &expectedHandlerError{message: "account not found: " + account}
 }
 
 // getIDArg extracts a required positive integer ID from the arguments map.
@@ -274,60 +307,6 @@ func getDateArg(args map[string]any, key string) (*time.Time, error) {
 	return &t, nil
 }
 
-func (h *handlers) readAttachment(ctx context.Context, contentHash string) ([]byte, error) {
-	if h.attachmentReader != nil {
-		return h.readAttachmentFromReader(ctx, contentHash)
-	}
-	return h.readAttachmentFile(contentHash)
-}
-
-func (h *handlers) readAttachmentFromReader(ctx context.Context, contentHash string) ([]byte, error) {
-	if err := export.ValidateContentHash(contentHash); err != nil {
-		return nil, errors.New("attachment has invalid content hash")
-	}
-	data, err := h.attachmentReader.ReadAttachment(ctx, contentHash)
-	if err != nil {
-		return nil, fmt.Errorf("attachment file not available: %w", err)
-	}
-	if int64(len(data)) > maxAttachmentSize {
-		return nil, fmt.Errorf("attachment too large: %d bytes (max %d)", len(data), maxAttachmentSize)
-	}
-	return data, nil
-}
-
-// readAttachmentFile reads the content-addressed attachment file after
-// validating the hash and checking size limits.
-func (h *handlers) readAttachmentFile(contentHash string) ([]byte, error) {
-	filePath, err := export.StoragePath(h.attachmentsDir, contentHash)
-	if err != nil {
-		return nil, errors.New("attachment has invalid content hash")
-	}
-
-	f, err := os.Open(filePath)
-	if err != nil {
-		return nil, fmt.Errorf("attachment file not available: %w", err)
-	}
-	defer func() { _ = f.Close() }()
-
-	info, err := f.Stat()
-	if err != nil {
-		return nil, fmt.Errorf("attachment file not available: %w", err)
-	}
-	if info.Size() > maxAttachmentSize {
-		return nil, fmt.Errorf("attachment too large: %d bytes (max %d)", info.Size(), maxAttachmentSize)
-	}
-
-	data, err := io.ReadAll(io.LimitReader(f, maxAttachmentSize+1))
-	if err != nil {
-		return nil, fmt.Errorf("attachment file not available: %w", err)
-	}
-	if int64(len(data)) > maxAttachmentSize {
-		return nil, fmt.Errorf("attachment too large: %d bytes (max %d)", len(data), maxAttachmentSize)
-	}
-
-	return data, nil
-}
-
 // searchMessageItem carries a message summary plus body match excerpts.
 // Used by search_message_bodies for keyword, vector, and hybrid results.
 // Score is present only when mode=vector/hybrid and explain=true.
@@ -344,7 +323,7 @@ type searchMessageItem struct {
 // searchMessages preserves the legacy combined search tool while clients
 // migrate to the split tools. An omitted mode retains metadata-search
 // semantics; vector and hybrid modes delegate to semantic_search_messages.
-func (h *handlers) searchMessages(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (h *handlers) searchMessages(ctx context.Context, req toolRequest) (*toolResult, error) {
 	mode, _ := req.GetArguments()["mode"].(string)
 	switch mode {
 	case "":
@@ -352,7 +331,7 @@ func (h *handlers) searchMessages(ctx context.Context, req mcp.CallToolRequest) 
 	case searchModeVector, searchModeHybrid:
 		return h.semanticSearchMessages(ctx, req)
 	default:
-		return mcp.NewToolResultError(
+		return toolErrorResult(
 			fmt.Sprintf("invalid mode %q: must be %s or %s (or omit for metadata search)", mode, searchModeVector, searchModeHybrid),
 		), nil
 	}
@@ -361,20 +340,20 @@ func (h *handlers) searchMessages(ctx context.Context, req mcp.CallToolRequest) 
 // searchMetadata searches message metadata only (subject, sender, recipients,
 // labels, dates). Use search_message_bodies for full-body keyword, vector, or
 // hybrid search.
-func (h *handlers) searchMetadata(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (h *handlers) searchMetadata(ctx context.Context, req toolRequest) (*toolResult, error) {
 	args := req.GetArguments()
 
 	queryStr, _ := args["query"].(string)
 	if queryStr == "" {
-		return mcp.NewToolResultError("query parameter is required"), nil
+		return toolErrorResult("query parameter is required"), nil
 	}
 
 	q := search.Parse(queryStr)
 	if err := q.Err(); err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return toolErrorResult(err.Error()), nil
 	}
 	if msg := unsupportedSearchOperatorMessage(q); msg != "" {
-		return mcp.NewToolResultError(msg), nil
+		return toolErrorResult(msg), nil
 	}
 
 	limit := searchLimitArg(args)
@@ -383,7 +362,7 @@ func (h *handlers) searchMetadata(ctx context.Context, req mcp.CallToolRequest) 
 	account, _ := args["account"].(string)
 	sourceID, err := h.getAccountID(ctx, account)
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return dependencyError("resolve metadata-search account", err)
 	}
 
 	if sourceID != nil {
@@ -394,15 +373,15 @@ func (h *handlers) searchMetadata(ctx context.Context, req mcp.CallToolRequest) 
 
 	results, err := h.engine.SearchFast(ctx, q, filter, limit, offset)
 	if err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("search failed: %v", err)), nil
+		return nil, newInternalError("search metadata", err)
 	}
 
 	totalMatched, err := h.engine.SearchFastCount(ctx, q, filter)
 	if err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("search count failed: %v", err)), nil
+		return nil, newInternalError("count metadata search", err)
 	}
 
-	return jsonResult(newPaginatedResponse(results, totalMatched, offset))
+	return jsonResult(searchMetadataResponse(newPaginatedResponse(results, totalMatched, offset)))
 }
 
 func unsupportedSearchOperatorMessage(q *search.Query) string {
@@ -431,12 +410,12 @@ func unsupportedSearchOperatorMessage(q *search.Query) string {
 // It returns messages whose body matches the query, plus matches — short
 // excerpts centered on each matched term. Requires at least one free-text term
 // for keyword mode; use search_metadata for filter-only queries.
-func (h *handlers) searchMessageBodies(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (h *handlers) searchMessageBodies(ctx context.Context, req toolRequest) (*toolResult, error) {
 	args := req.GetArguments()
 
 	queryStr, _ := args["query"].(string)
 	if queryStr == "" {
-		return mcp.NewToolResultError("query parameter is required"), nil
+		return toolErrorResult("query parameter is required"), nil
 	}
 
 	mode, _ := args["mode"].(string)
@@ -447,21 +426,21 @@ func (h *handlers) searchMessageBodies(ctx context.Context, req mcp.CallToolRequ
 	switch mode {
 	case searchModeKeyword:
 	case searchModeVector, searchModeHybrid:
-		return mcp.NewToolResultError(
+		return toolErrorResult(
 			fmt.Sprintf("invalid mode %q: search_message_bodies is keyword-only; use semantic_search_messages for vector or hybrid search", mode),
 		), nil
 	default:
-		return mcp.NewToolResultError(
+		return toolErrorResult(
 			fmt.Sprintf("invalid mode %q: search_message_bodies only supports keyword search; use semantic_search_messages for vector or hybrid search", mode),
 		), nil
 	}
 
 	q := search.Parse(queryStr)
 	if err := q.Err(); err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return toolErrorResult(err.Error()), nil
 	}
 	if msg := unsupportedSearchOperatorMessage(q); msg != "" {
-		return mcp.NewToolResultError(msg), nil
+		return toolErrorResult(msg), nil
 	}
 
 	limit := searchLimitArg(args)
@@ -470,7 +449,7 @@ func (h *handlers) searchMessageBodies(ctx context.Context, req mcp.CallToolRequ
 	account, _ := args["account"].(string)
 	sourceID, err := h.getAccountID(ctx, account)
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return dependencyError("resolve body-search account", err)
 	}
 
 	if sourceID != nil {
@@ -478,7 +457,7 @@ func (h *handlers) searchMessageBodies(ctx context.Context, req mcp.CallToolRequ
 	}
 
 	if len(q.TextTerms) == 0 {
-		return mcp.NewToolResultError(
+		return toolErrorResult(
 			"search_message_bodies requires at least one free-text term (bare word or quoted phrase); " +
 				"Gmail operators such as from: or subject: are metadata filters and do not count — " +
 				"use search_metadata for filter-only queries",
@@ -487,11 +466,11 @@ func (h *handlers) searchMessageBodies(ctx context.Context, req mcp.CallToolRequ
 
 	bodySearcher, ok := h.engine.(query.MessageBodySearcher)
 	if !ok {
-		return mcp.NewToolResultError("search_message_bodies is unavailable: the query engine does not support exact body-only search"), nil
+		return toolErrorResult("search_message_bodies is unavailable: the query engine does not support exact body-only search"), nil
 	}
 	results, err := bodySearcher.SearchMessageBodies(ctx, q, limit+1, offset)
 	if err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("search failed: %v", err)), nil
+		return bodySearchError(err)
 	}
 
 	hasMore := len(results) > limit
@@ -509,7 +488,7 @@ func (h *handlers) searchMessageBodies(ctx context.Context, req mcp.CallToolRequ
 			item.Matches = nil
 			item.MatchesTruncated = true
 		default:
-			return mcp.NewToolResultError(fmt.Sprintf(
+			return toolErrorResult(fmt.Sprintf(
 				"body context unavailable for message %d: search backend returned no context", r.ID,
 			)), nil
 		}
@@ -527,12 +506,12 @@ func (h *handlers) searchMessageBodies(ctx context.Context, req mcp.CallToolRequ
 // rejected. Vector availability, the free-text requirement, and index
 // staleness are all enforced by the shared searchMessageBodiesHybrid path,
 // which returns vector_not_enabled when vector search is not configured.
-func (h *handlers) semanticSearchMessages(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (h *handlers) semanticSearchMessages(ctx context.Context, req toolRequest) (*toolResult, error) {
 	args := req.GetArguments()
 
 	queryStr, _ := args["query"].(string)
 	if queryStr == "" {
-		return mcp.NewToolResultError("query parameter is required"), nil
+		return toolErrorResult("query parameter is required"), nil
 	}
 
 	mode, _ := args["mode"].(string)
@@ -542,7 +521,7 @@ func (h *handlers) semanticSearchMessages(ctx context.Context, req mcp.CallToolR
 	switch mode {
 	case searchModeVector, searchModeHybrid:
 	default:
-		return mcp.NewToolResultError(
+		return toolErrorResult(
 			fmt.Sprintf("invalid mode %q: must be %s or %s (default %s); use search_message_bodies for keyword search",
 				mode, searchModeVector, searchModeHybrid, searchModeHybrid),
 		), nil
@@ -551,10 +530,10 @@ func (h *handlers) semanticSearchMessages(ctx context.Context, req mcp.CallToolR
 
 	q := search.Parse(queryStr)
 	if err := q.Err(); err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return toolErrorResult(err.Error()), nil
 	}
 	if msg := unsupportedSearchOperatorMessage(q); msg != "" {
-		return mcp.NewToolResultError(msg), nil
+		return toolErrorResult(msg), nil
 	}
 
 	return h.searchMessageBodiesHybrid(ctx, args, queryStr, q, mode, explain)
@@ -603,12 +582,12 @@ type searchMessageBodiesResponse struct {
 func (h *handlers) searchMessageBodiesHybrid(
 	ctx context.Context, args map[string]any,
 	queryStr string, parsed *search.Query, mode string, explain bool,
-) (*mcp.CallToolResult, error) {
+) (*toolResult, error) {
 	if h.hybridSearcher != nil {
 		return h.searchMessageBodiesHybridViaSearcher(ctx, args, queryStr, parsed, mode, explain)
 	}
 	if h.hybridEngine == nil {
-		return mcp.NewToolResultError(
+		return toolErrorResult(
 			"vector_not_enabled: vector search is not configured on this server",
 		), nil
 	}
@@ -617,7 +596,7 @@ func (h *handlers) searchMessageBodiesHybrid(
 	account, _ := args["account"].(string)
 	sourceID, err := h.getAccountID(ctx, account)
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return dependencyError("resolve semantic-search account", err)
 	}
 
 	limit := searchLimitArg(args)
@@ -629,7 +608,7 @@ func (h *handlers) searchMessageBodiesHybrid(
 	// queries have no query vector to rank by. Callers that want pure
 	// structured filtering should omit mode (metadata search).
 	if freeText == "" {
-		return mcp.NewToolResultError(
+		return toolErrorResult(
 			"missing_free_text: mode=" + mode +
 				" requires at least one free-text term; use search_metadata for filter-only queries",
 		), nil
@@ -642,7 +621,7 @@ func (h *handlers) searchMessageBodiesHybrid(
 
 	filter, err := h.hybridEngine.BuildFilter(ctx, parsed)
 	if err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("filter resolution failed: %v", err)), nil
+		return nil, newInternalError("build semantic-search filter", err)
 	}
 	if sourceID != nil {
 		filter.SourceIDs = []int64{*sourceID}
@@ -655,7 +634,7 @@ func (h *handlers) searchMessageBodiesHybrid(
 	hitMaxPageCap := false
 	if maxPage > 0 {
 		if offset >= maxPage {
-			return mcp.NewToolResultError(fmt.Sprintf(
+			return toolErrorResult(fmt.Sprintf(
 				"pagination_limit: offset %d exceeds hybrid ranking window (max %d); "+
 					"use search_metadata or search_message_bodies for deeper pagination",
 				offset, maxPage,
@@ -678,10 +657,7 @@ func (h *handlers) searchMessageBodiesHybrid(
 
 	hits, meta, err := h.hybridEngine.Search(ctx, req)
 	if err != nil {
-		if r := translateVectorErr(err); r != nil {
-			return r, nil
-		}
-		return mcp.NewToolResultError(fmt.Sprintf("search failed: %v", err)), nil
+		return dependencyError("search semantic index", err)
 	}
 
 	// Bulk-hydrate hits in one round-trip instead of looping
@@ -694,10 +670,7 @@ func (h *handlers) searchMessageBodiesHybrid(
 	}
 	summaries, err := h.engine.GetMessageSummariesByIDs(ctx, hitIDs)
 	if err != nil {
-		fmt.Fprintf(os.Stderr,
-			"mcp: hydrate hybrid hits failed: ids=%d error=%v\n",
-			len(hitIDs), err)
-		summaries = nil
+		return nil, newInternalError("hydrate semantic-search results", err)
 	}
 	byID := make(map[int64]query.MessageSummary, len(summaries))
 	for _, s := range summaries {
@@ -736,7 +709,9 @@ func (h *handlers) searchMessageBodiesHybrid(
 	}
 
 	minScore := floatArg(args, "min_score", 0)
-	h.attachVectorChunkMatches(ctx, meta.Generation.ID, meta.QueryVector, page, minScore)
+	if err := h.attachVectorChunkMatches(ctx, meta.Generation.ID, meta.QueryVector, page, minScore); err != nil {
+		return nil, err
+	}
 
 	nextPageServable := maxPage == 0 || requestedEnd < maxPage
 	hasMore := false
@@ -765,13 +740,13 @@ func (h *handlers) searchMessageBodiesHybrid(
 func (h *handlers) searchMessageBodiesHybridViaSearcher(
 	ctx context.Context, args map[string]any,
 	queryStr string, parsed *search.Query, mode string, explain bool,
-) (*mcp.CallToolResult, error) {
+) (*toolResult, error) {
 	limit := searchLimitArg(args)
 	offset := limitArg(args, "offset", 0)
 
 	freeText := strings.Join(parsed.TextTerms, " ")
 	if freeText == "" {
-		return mcp.NewToolResultError(
+		return toolErrorResult(
 			"missing_free_text: mode=" + mode +
 				" requires at least one free-text term; use search_metadata for filter-only queries",
 		), nil
@@ -788,7 +763,7 @@ func (h *handlers) searchMessageBodiesHybridViaSearcher(
 		MinScore:       floatArg(args, "min_score", 0),
 	})
 	if err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("search failed: %v", err)), nil
+		return dependencyError("search daemon semantic index", err)
 	}
 	if result == nil {
 		result = &HybridSearchResult{}
@@ -804,10 +779,7 @@ func (h *handlers) searchMessageBodiesHybridViaSearcher(
 	}
 	summaries, err := h.engine.GetMessageSummariesByIDs(ctx, hitIDs)
 	if err != nil {
-		fmt.Fprintf(os.Stderr,
-			"mcp: hydrate daemon hybrid hits failed: ids=%d error=%v\n",
-			len(hitIDs), err)
-		summaries = nil
+		return nil, newInternalError("hydrate daemon semantic-search results", err)
 	}
 	byID := make(map[int64]query.MessageSummary, len(summaries))
 	for _, s := range summaries {
@@ -866,12 +838,12 @@ type similarMessagesResponse struct {
 // message using the active vector index. The seed is excluded from
 // results. Structured filters (account, after, before, has_attachment)
 // are applied at the backend level.
-func (h *handlers) findSimilarMessages(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (h *handlers) findSimilarMessages(ctx context.Context, req toolRequest) (*toolResult, error) {
 	if h.similarSearcher != nil {
 		return h.findSimilarMessagesViaSearcher(ctx, req)
 	}
 	if h.backend == nil {
-		return mcp.NewToolResultError(
+		return toolErrorResult(
 			"vector_not_enabled: vector search is not configured on this server",
 		), nil
 	}
@@ -879,48 +851,36 @@ func (h *handlers) findSimilarMessages(ctx context.Context, req mcp.CallToolRequ
 
 	seedID, err := getIDArg(args, "message_id")
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return toolErrorResult(err.Error()), nil
 	}
 
-	limit := limitArg(args, "limit", 20)
+	limit := similarLimitArg(args)
 	if maxPage := h.vectorCfg.Search.MaxPageSizeHybridClamp(); maxPage > 0 && limit > maxPage {
 		limit = maxPage
 	}
 
 	filter, err := h.filterFromFindSimilarArgs(ctx, args)
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return dependencyError("build similar-message filter", err)
 	}
 
 	active, err := vector.ResolveActiveForFingerprint(ctx, h.backend, h.vectorCfg.GenerationFingerprint())
 	if err != nil {
-		if r := translateVectorErr(err); r != nil {
-			return r, nil
-		}
-		return mcp.NewToolResultError(fmt.Sprintf("active generation: %v", err)), nil
+		return dependencyError("resolve active vector generation", err)
 	}
 	if err := hybrid.ValidateBuildScope(h.vectorCfg.Embed.Scope.BuildScope(), filter); err != nil {
-		if r := translateVectorErr(err); r != nil {
-			return r, nil
-		}
-		return mcp.NewToolResultError(err.Error()), nil
+		return dependencyError("validate vector index scope", err)
 	}
 
 	seed, err := h.backend.LoadVector(ctx, seedID)
 	if err != nil {
-		if r := translateVectorErr(err); r != nil {
-			return r, nil
-		}
-		return mcp.NewToolResultError(fmt.Sprintf("load seed vector: %v", err)), nil
+		return dependencyError("load seed vector", err)
 	}
 
 	// +1 so we can drop the seed itself from results without coming up short.
 	hits, err := h.backend.Search(ctx, active.ID, seed, limit+1, filter)
 	if err != nil {
-		if r := translateVectorErr(err); r != nil {
-			return r, nil
-		}
-		return mcp.NewToolResultError(fmt.Sprintf("search failed: %v", err)), nil
+		return dependencyError("search similar-message vectors", err)
 	}
 
 	// Bulk-hydrate keeping rank order. Drop the seed first so the +1
@@ -938,10 +898,7 @@ func (h *handlers) findSimilarMessages(ctx context.Context, req mcp.CallToolRequ
 	}
 	summaries, err := h.engine.GetMessageSummariesByIDs(ctx, wantIDs)
 	if err != nil {
-		fmt.Fprintf(os.Stderr,
-			"mcp: hydrate similar hits failed: ids=%d error=%v\n",
-			len(wantIDs), err)
-		summaries = nil
+		return nil, newInternalError("hydrate similar-message results", err)
 	}
 	byID := make(map[int64]query.MessageSummary, len(summaries))
 	for _, s := range summaries {
@@ -968,27 +925,27 @@ func (h *handlers) findSimilarMessages(ctx context.Context, req mcp.CallToolRequ
 	})
 }
 
-func (h *handlers) findSimilarMessagesViaSearcher(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (h *handlers) findSimilarMessagesViaSearcher(ctx context.Context, req toolRequest) (*toolResult, error) {
 	args := req.GetArguments()
 
 	seedID, err := getIDArg(args, "message_id")
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return toolErrorResult(err.Error()), nil
 	}
 
-	limit := limitArg(args, "limit", 20)
-	if limit < 1 {
-		limit = 20
+	limit := similarLimitArg(args)
+	if maxPage := h.vectorCfg.Search.MaxPageSizeHybridClamp(); maxPage > 0 && limit > maxPage {
+		limit = maxPage
 	}
 	account, _ := args["account"].(string)
 	messageType, _ := args["message_type"].(string)
 	after, err := getDateArg(args, "after")
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return toolErrorResult(err.Error()), nil
 	}
 	before, err := getDateArg(args, "before")
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return toolErrorResult(err.Error()), nil
 	}
 	var hasAttachment *bool
 	if v, ok := args["has_attachment"].(bool); ok {
@@ -1005,7 +962,7 @@ func (h *handlers) findSimilarMessagesViaSearcher(ctx context.Context, req mcp.C
 		HasAttachment: hasAttachment,
 	})
 	if err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("find similar failed: %v", err)), nil
+		return dependencyError("search daemon similar messages", err)
 	}
 	if result == nil {
 		result = &SimilarSearchResult{SeedMessageID: seedID}
@@ -1049,14 +1006,14 @@ func (h *handlers) filterFromFindSimilarArgs(ctx context.Context, args map[strin
 	}
 	after, err := getDateArg(args, "after")
 	if err != nil {
-		return f, err
+		return f, &expectedHandlerError{message: err.Error()}
 	}
 	if after != nil {
 		f.After = after
 	}
 	before, err := getDateArg(args, "before")
 	if err != nil {
-		return f, err
+		return f, &expectedHandlerError{message: err.Error()}
 	}
 	if before != nil {
 		f.Before = before
@@ -1177,20 +1134,20 @@ type getMessageResponse struct {
 	Attachments          []query.AttachmentInfo `json:"attachments"`
 }
 
-func (h *handlers) getMessage(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (h *handlers) getMessage(ctx context.Context, req toolRequest) (*toolResult, error) {
 	args := req.GetArguments()
 
 	id, err := getIDArg(args, "id")
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return toolErrorResult(err.Error()), nil
 	}
 
 	msg, err := h.engine.GetMessage(ctx, id)
 	if err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("message not found: %v", err)), nil
+		return messageLookupError("load message", err)
 	}
 	if msg == nil {
-		return mcp.NewToolResultError("message not found"), nil
+		return toolErrorResult("message not found"), nil
 	}
 
 	maxChars := intArg(args, "max_chars", defaultBodyChars)
@@ -1218,7 +1175,7 @@ func (h *handlers) getMessage(ctx context.Context, req mcp.CallToolRequest) (*mc
 		fullBody = msg.BodyHTML
 		bodyFormat = bodyFormatHTML
 	default:
-		return mcp.NewToolResultError("body_format must be one of auto, text, html"), nil
+		return toolErrorResult("body_format must be one of auto, text, html"), nil
 	}
 	bodyLen := len(fullBody)
 
@@ -1278,19 +1235,22 @@ func (h *handlers) attachVectorChunkMatches(
 	queryVec []float32,
 	items []searchMessageItem,
 	minScore float64,
-) {
+) error {
 	scorer, ok := h.backend.(vector.ChunkScoringBackend)
 	if !ok || len(queryVec) == 0 || len(items) == 0 {
-		return
+		return nil
 	}
 	for i := range items {
 		msg, err := h.engine.GetMessage(ctx, items[i].ID)
-		if err != nil || msg == nil {
+		if err != nil {
+			return newInternalError("load message for semantic match context", err)
+		}
+		if msg == nil {
 			continue
 		}
 		chunkHits, err := scorer.ScoreMessageChunks(ctx, genID, msg.ID, queryVec)
 		if err != nil {
-			continue
+			return newInternalError("score semantic match chunks", err)
 		}
 		matches, truncated := chunkmatch.Build(
 			msg.Subject, embed.BodyTextForEmbedding(msg.BodyText, msg.BodyHTML), h.vectorCfg, chunkHits,
@@ -1299,6 +1259,7 @@ func (h *handlers) attachVectorChunkMatches(
 		items[i].Matches = messageMatchesFromChunks(matches)
 		items[i].MatchesTruncated = truncated
 	}
+	return nil
 }
 
 func (h *handlers) vectorMatchesInMessage(
@@ -1307,46 +1268,40 @@ func (h *handlers) vectorMatchesInMessage(
 	queryStr string,
 	minScore float64,
 	limit, offset int,
-) (*mcp.CallToolResult, error) {
+) (*toolResult, error) {
 	if h.hybridEngine == nil || h.backend == nil {
-		return mcp.NewToolResultError(
+		return toolErrorResult(
 			"vector_not_enabled: vector search is not configured on this server",
 		), nil
 	}
 	scorer, ok := h.backend.(vector.ChunkScoringBackend)
 	if !ok {
-		return mcp.NewToolResultError(
+		return toolErrorResult(
 			"vector_not_enabled: chunk scoring is not available on this backend",
 		), nil
 	}
 
 	active, err := vector.ResolveActiveForFingerprint(ctx, h.backend, h.vectorCfg.GenerationFingerprint())
 	if err != nil {
-		if r := translateVectorErr(err); r != nil {
-			return r, nil
-		}
-		return mcp.NewToolResultError(fmt.Sprintf("vector index: %v", err)), nil
+		return dependencyError("resolve vector index for message search", err)
 	}
 
 	queryVec, err := h.hybridEngine.EmbedQuery(ctx, queryStr)
 	if err != nil {
-		if r := translateVectorErr(err); r != nil {
-			return r, nil
-		}
-		return mcp.NewToolResultError(fmt.Sprintf("embed query: %v", err)), nil
+		return dependencyError("embed message-search query", err)
 	}
 
 	msg, err := h.engine.GetMessage(ctx, messageID)
 	if err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("message not found: %v", err)), nil
+		return messageLookupError("load message for vector search", err)
 	}
 	if msg == nil {
-		return mcp.NewToolResultError("message not found"), nil
+		return toolErrorResult("message not found"), nil
 	}
 
 	chunkHits, err := scorer.ScoreMessageChunks(ctx, active.ID, messageID, queryVec)
 	if err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("score chunks: %v", err)), nil
+		return dependencyError("score message chunks", err)
 	}
 
 	chunkMatches, _ := chunkmatch.Build(
@@ -1357,7 +1312,7 @@ func (h *handlers) vectorMatchesInMessage(
 
 	total := int64(len(allMatches))
 	if offset >= len(allMatches) {
-		return jsonResult(newPaginatedResponse([]messageMatch{}, total, offset))
+		return jsonResult(searchInMessageResponse(newPaginatedResponse([]messageMatch{}, total, offset)))
 	}
 	end := min(offset+limit, len(allMatches))
 	page := allMatches[offset:end]
@@ -1365,21 +1320,21 @@ func (h *handlers) vectorMatchesInMessage(
 	if len(page) > limit {
 		page = page[:limit]
 	}
-	return jsonResult(newPaginatedResponse(page, total, offset))
+	return jsonResult(searchInMessageResponse(newPaginatedResponse(page, total, offset)))
 }
 
-func (h *handlers) searchInMessage(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (h *handlers) searchInMessage(ctx context.Context, req toolRequest) (*toolResult, error) {
 	args := req.GetArguments()
 
 	id, err := getIDArg(args, "id")
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return toolErrorResult(err.Error()), nil
 	}
 
 	queryStr, _ := args["query"].(string)
 	queryStr = strings.TrimSpace(queryStr)
 	if queryStr == "" {
-		return mcp.NewToolResultError("query parameter is required"), nil
+		return toolErrorResult("query parameter is required"), nil
 	}
 
 	mode, _ := args["mode"].(string)
@@ -1392,26 +1347,26 @@ func (h *handlers) searchInMessage(ctx context.Context, req mcp.CallToolRequest)
 	case searchModeVector:
 		return h.vectorMatchesInMessage(ctx, id, queryStr, floatArg(args, "min_score", 0), limit, offset)
 	default:
-		return mcp.NewToolResultError(
+		return toolErrorResult(
 			fmt.Sprintf("invalid mode %q: must be keyword (default) or %s", mode, searchModeVector),
 		), nil
 	}
 
 	msg, err := h.engine.GetMessage(ctx, id)
 	if err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("message not found: %v", err)), nil
+		return messageLookupError("load message for keyword search", err)
 	}
 	if msg == nil {
-		return mcp.NewToolResultError("message not found"), nil
+		return toolErrorResult("message not found"), nil
 	}
 
 	allMatches := findTermMatches(msg.BodyText, queryStr)
 	total := int64(len(allMatches))
 	if offset >= len(allMatches) {
-		return jsonResult(newPaginatedResponse([]messageMatch{}, total, offset))
+		return jsonResult(searchInMessageResponse(newPaginatedResponse([]messageMatch{}, total, offset)))
 	}
 	end := min(offset+limit, len(allMatches))
-	return jsonResult(newPaginatedResponse(allMatches[offset:end], total, offset))
+	return jsonResult(searchInMessageResponse(newPaginatedResponse(allMatches[offset:end], total, offset)))
 }
 
 func findTermMatches(body, term string) []messageMatch {
@@ -1444,114 +1399,88 @@ func findTermMatches(body, term string) []messageMatch {
 
 const maxAttachmentSize = 50 * 1024 * 1024 // 50MB
 
-func (h *handlers) getAttachment(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	args := req.GetArguments()
-
-	id, err := getIDArg(args, "attachment_id")
-	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
-	}
-
-	att, err := h.engine.GetAttachment(ctx, id)
-	if err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("get attachment failed: %v", err)), nil
-	}
-	if att == nil {
-		return mcp.NewToolResultError("attachment not found"), nil
-	}
-
-	if h.attachmentReader == nil && h.attachmentsDir == "" {
-		return mcp.NewToolResultError("attachments directory not configured"), nil
-	}
-
-	if att.Size > maxAttachmentSize {
-		return mcp.NewToolResultError(fmt.Sprintf("attachment too large: %d bytes (max %d)", att.Size, maxAttachmentSize)), nil
-	}
-
-	data, err := h.readAttachment(ctx, att.ContentHash)
-	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
-	}
-
-	mimeType := att.MimeType
-	if mimeType == "" {
-		mimeType = "application/octet-stream"
-	}
-
-	metaObj := struct {
-		Filename string `json:"filename"`
-		MimeType string `json:"mime_type"`
-		Size     int64  `json:"size"`
-	}{
-		Filename: att.Filename,
-		MimeType: mimeType,
-		Size:     att.Size,
-	}
-	metaJSON, err := json.Marshal(metaObj)
-	if err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("marshal metadata: %v", err)), nil
-	}
-
-	return &mcp.CallToolResult{
-		Content: []mcp.Content{
-			mcp.TextContent{
-				Type: "text",
-				Text: string(metaJSON),
-			},
-			mcp.EmbeddedResource{
-				Type: "resource",
-				Resource: mcp.BlobResourceContents{
-					URI:      fmt.Sprintf("attachment:///%d/%s", att.ID, url.PathEscape(att.Filename)),
-					MIMEType: mimeType,
-					Blob:     base64.StdEncoding.EncodeToString(data),
-				},
-			},
-		},
-	}, nil
+type attachmentExportFile interface {
+	Write(data []byte) (int, error)
+	Close() error
 }
 
-func (h *handlers) exportAttachment(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+var createAttachmentExportFile = func(path string, mode os.FileMode) (attachmentExportFile, string, error) {
+	return export.CreateExclusiveFile(path, mode)
+}
+
+func (h *handlers) getAttachment(ctx context.Context, req toolRequest) (*toolResult, error) {
 	args := req.GetArguments()
 
 	id, err := getIDArg(args, "attachment_id")
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return toolErrorResult(err.Error()), nil
 	}
 
-	att, err := h.engine.GetAttachment(ctx, id)
+	payload, err := h.attachmentService().load(ctx, id)
 	if err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("get attachment failed: %v", err)), nil
+		var unavailable *attachmentUnavailableError
+		if errors.As(err, &unavailable) {
+			return toolErrorResult(unavailable.message), nil
+		}
+		return nil, err
 	}
-	if att == nil {
-		return mcp.NewToolResultError("attachment not found"), nil
-	}
+	att := payload.metadata
 
-	if h.attachmentReader == nil && h.attachmentsDir == "" {
-		return mcp.NewToolResultError("attachments directory not configured"), nil
+	metaObj := getAttachmentResponse{
+		Filename: att.Filename,
+		MIMEType: payload.mimeType,
+		Size:     att.Size,
 	}
-
-	if att.Size > maxAttachmentSize {
-		return mcp.NewToolResultError(fmt.Sprintf("attachment too large: %d bytes (max %d)", att.Size, maxAttachmentSize)), nil
-	}
-
-	data, err := h.readAttachment(ctx, att.ContentHash)
+	result, err := jsonResult(metaObj)
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return nil, err
 	}
+	result.embeddedResource = &embeddedResource{
+		uri:      attachmentResourceURI(att.ID),
+		mimeType: payload.mimeType,
+		blob:     base64.StdEncoding.EncodeToString(payload.data),
+	}
+	return result, nil
+}
+
+func (h *handlers) exportAttachment(ctx context.Context, req toolRequest) (*toolResult, error) {
+	args := req.GetArguments()
+
+	id, err := getIDArg(args, "attachment_id")
+	if err != nil {
+		return toolErrorResult(err.Error()), nil
+	}
+
+	payload, err := h.attachmentService().load(ctx, id)
+	if err != nil {
+		var unavailable *attachmentUnavailableError
+		if errors.As(err, &unavailable) {
+			return toolErrorResult(unavailable.message), nil
+		}
+		return nil, err
+	}
+	att := payload.metadata
+	data := payload.data
 
 	// Determine destination directory.
 	destDir, _ := args["destination"].(string)
 	if destDir == "" {
 		home, err := os.UserHomeDir()
 		if err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("cannot determine home directory: %v", err)), nil
+			return nil, newInternalError("resolve export home directory", err)
 		}
 		destDir = filepath.Join(home, "Downloads")
 	}
 
 	info, err := os.Stat(destDir)
-	if err != nil || !info.IsDir() {
-		return mcp.NewToolResultError("destination directory does not exist: " + destDir), nil //nolint:nilerr // MCP convention: tool errors flow via ToolResultError, not Go error
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return toolErrorResult("destination directory does not exist: " + destDir), nil
+		}
+		return nil, newInternalError("inspect attachment export destination", err)
+	}
+	if !info.IsDir() {
+		return toolErrorResult("destination directory does not exist: " + destDir), nil
 	}
 
 	// Sanitize and deduplicate filename.
@@ -1559,26 +1488,22 @@ func (h *handlers) exportAttachment(ctx context.Context, req mcp.CallToolRequest
 	if filename == "" || filename == "." {
 		filename = att.ContentHash
 	}
-	f, outPath, err := export.CreateExclusiveFile(filepath.Join(destDir, filename), 0600)
+	f, outPath, err := createAttachmentExportFile(filepath.Join(destDir, filename), 0600)
 	if err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("write failed: %v", err)), nil
+		return nil, newInternalError("create attachment export", err)
 	}
 	_, writeErr := f.Write(data)
 	closeErr := f.Close()
 	if writeErr != nil {
 		_ = os.Remove(outPath)
-		return mcp.NewToolResultError(fmt.Sprintf("write failed: %v", writeErr)), nil
+		return nil, newInternalError("write attachment export", writeErr)
 	}
 	if closeErr != nil {
 		_ = os.Remove(outPath)
-		return mcp.NewToolResultError(fmt.Sprintf("write failed: %v", closeErr)), nil
+		return nil, newInternalError("close attachment export", closeErr)
 	}
 
-	resp := struct {
-		Path     string `json:"path"`
-		Filename string `json:"filename"`
-		Size     int64  `json:"size"`
-	}{
+	resp := exportAttachmentResponse{
 		Path:     outPath,
 		Filename: filepath.Base(outPath),
 		Size:     int64(len(data)),
@@ -1586,14 +1511,14 @@ func (h *handlers) exportAttachment(ctx context.Context, req mcp.CallToolRequest
 	return jsonResult(resp)
 }
 
-func (h *handlers) listMessages(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (h *handlers) listMessages(ctx context.Context, req toolRequest) (*toolResult, error) {
 	args := req.GetArguments()
 
 	// Look up account filter
 	account, _ := args["account"].(string)
 	sourceID, err := h.getAccountID(ctx, account)
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return dependencyError("resolve message-list account", err)
 	}
 
 	filter := query.MessageFilter{
@@ -1622,10 +1547,10 @@ func (h *handlers) listMessages(ctx context.Context, req mcp.CallToolRequest) (*
 		filter.WithAttachmentsOnly = true
 	}
 	if filter.After, err = getDateArg(args, "after"); err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return toolErrorResult(err.Error()), nil
 	}
 	if filter.Before, err = getDateArg(args, "before"); err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return toolErrorResult(err.Error()), nil
 	}
 	if v, ok := args["conversation_id"].(float64); ok && v != 0 {
 		v2 := int64(v)
@@ -1634,7 +1559,7 @@ func (h *handlers) listMessages(ctx context.Context, req mcp.CallToolRequest) (*
 
 	results, err := h.engine.ListMessages(ctx, filter)
 	if err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("list failed: %v", err)), nil
+		return nil, newInternalError("list messages", err)
 	}
 
 	pageLimit := listLimitArg(args)
@@ -1644,7 +1569,7 @@ func (h *handlers) listMessages(ctx context.Context, req mcp.CallToolRequest) (*
 		results = results[:pageLimit]
 	}
 
-	return jsonResult(newPaginatedResponseNoTotal(results, offset, hasMore))
+	return jsonResult(listMessagesResponse(newPaginatedResponseNoTotal(results, offset, hasMore)))
 }
 
 // getStatsResponse is the JSON body returned by the get_stats MCP tool.
@@ -1656,22 +1581,20 @@ type getStatsResponse struct {
 	VectorSearch *vector.StatsView   `json:"vector_search,omitempty"`
 }
 
-func (h *handlers) getStats(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (h *handlers) getStats(ctx context.Context, _ toolRequest) (*toolResult, error) {
 	stats, err := h.engine.GetTotalStats(ctx, query.StatsOptions{})
 	if err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("stats failed: %v", err)), nil
+		return nil, newInternalError("load archive statistics", err)
 	}
 
 	accounts, err := h.engine.ListAccounts(ctx)
 	if err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("accounts failed: %v", err)), nil
+		return nil, newInternalError("list archive accounts", err)
 	}
 
-	// Vector stats are best-effort: partial failures are logged here but
-	// still attached to the response so callers see whatever succeeded.
 	vs, vsErr := vector.CollectStats(ctx, h.backend)
 	if vsErr != nil {
-		fmt.Fprintf(os.Stderr, "mcp: vector stats failed: %v\n", vsErr)
+		return nil, newInternalError("load vector statistics", vsErr)
 	}
 
 	return jsonResult(getStatsResponse{
@@ -1681,19 +1604,19 @@ func (h *handlers) getStats(ctx context.Context, _ mcp.CallToolRequest) (*mcp.Ca
 	})
 }
 
-func (h *handlers) aggregate(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (h *handlers) aggregate(ctx context.Context, req toolRequest) (*toolResult, error) {
 	args := req.GetArguments()
 
 	groupBy, _ := args["group_by"].(string)
 	if groupBy == "" {
-		return mcp.NewToolResultError("group_by parameter is required"), nil
+		return toolErrorResult("group_by parameter is required"), nil
 	}
 
 	// Look up account filter
 	account, _ := args["account"].(string)
 	sourceID, err := h.getAccountID(ctx, account)
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return dependencyError("resolve aggregate account", err)
 	}
 
 	opts := query.AggregateOptions{
@@ -1702,14 +1625,14 @@ func (h *handlers) aggregate(ctx context.Context, req mcp.CallToolRequest) (*mcp
 	}
 
 	if opts.After, err = getDateArg(args, "after"); err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return toolErrorResult(err.Error()), nil
 	}
 	if opts.Before, err = getDateArg(args, "before"); err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return toolErrorResult(err.Error()), nil
 	}
 
 	viewTypeMap := map[string]query.ViewType{
-		"sender":    query.ViewSenders,
+		"sender":    query.ViewSenders, //nolint:goconst // Stable public enum value shared with the MCP schema.
 		"recipient": query.ViewRecipients,
 		"domain":    query.ViewDomains,
 		"label":     query.ViewLabels,
@@ -1718,15 +1641,15 @@ func (h *handlers) aggregate(ctx context.Context, req mcp.CallToolRequest) (*mcp
 
 	viewType, ok := viewTypeMap[groupBy]
 	if !ok {
-		return mcp.NewToolResultError("invalid group_by: " + groupBy), nil
+		return toolErrorResult("invalid group_by: " + groupBy), nil
 	}
 
 	rows, err := h.engine.Aggregate(ctx, viewType, opts)
 	if err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("aggregate failed: %v", err)), nil
+		return nil, newInternalError("aggregate messages", err)
 	}
 
-	return jsonResult(rows)
+	return jsonResult(aggregateResponse(rows))
 }
 
 // limitArg extracts a non-negative integer limit from a map, with a default.
@@ -1759,25 +1682,25 @@ func limitArg(args map[string]any, key string, def int) int {
 	return int(v)
 }
 
-func jsonResult(v any) (*mcp.CallToolResult, error) {
-	data, err := json.Marshal(v)
-	if err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("marshal error: %v", err)), nil
+func similarLimitArg(args map[string]any) int {
+	limit := limitArg(args, "limit", defaultSearchLimit)
+	if limit <= 0 {
+		return defaultSearchLimit
 	}
-	return mcp.NewToolResultText(string(data)), nil
+	return limit
 }
 
 // maxStageDeletionResults limits how many messages can be staged in one call.
 const maxStageDeletionResults = 100000
 
-func (h *handlers) stageDeletion(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (h *handlers) stageDeletion(ctx context.Context, req toolRequest) (*toolResult, error) {
 	args := req.GetArguments()
 
 	// Look up account filter
 	account, _ := args["account"].(string)
 	sourceID, err := h.getAccountID(ctx, account)
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return dependencyError("resolve deletion account", err)
 	}
 
 	// Check for query vs structured filters
@@ -1792,11 +1715,11 @@ func (h *handlers) stageDeletion(ctx context.Context, req mcp.CallToolRequest) (
 	hasAttachment, _ := args["has_attachment"].(bool)
 	afterDate, err := getDateArg(args, "after")
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return toolErrorResult(err.Error()), nil
 	}
 	beforeDate, err := getDateArg(args, "before")
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return toolErrorResult(err.Error()), nil
 	}
 
 	hasStructuredFilter := fromStr != "" || domainStr != "" || labelStr != "" ||
@@ -1804,10 +1727,10 @@ func (h *handlers) stageDeletion(ctx context.Context, req mcp.CallToolRequest) (
 
 	// Validate: must have either query or structured filters, but not both
 	if hasQuery && hasStructuredFilter {
-		return mcp.NewToolResultError("use either 'query' or structured filters (from, domain, label, etc.), not both"), nil
+		return toolErrorResult("use either 'query' or structured filters (from, domain, label, etc.), not both"), nil
 	}
 	if !hasQuery && !hasStructuredFilter {
-		return mcp.NewToolResultError("must provide either 'query' or at least one filter (from, domain, label, after, before, has_attachment)"), nil
+		return toolErrorResult("must provide either 'query' or at least one filter (from, domain, label, after, before, has_attachment)"), nil
 	}
 
 	var gmailIDs []string
@@ -1817,7 +1740,7 @@ func (h *handlers) stageDeletion(ctx context.Context, req mcp.CallToolRequest) (
 		// Query-based search
 		q := search.Parse(queryStr)
 		if msg := unsupportedSearchOperatorMessage(q); msg != "" {
-			return mcp.NewToolResultError(msg), nil
+			return toolErrorResult(msg), nil
 		}
 		if sourceID != nil {
 			q.AccountIDs = []int64{*sourceID}
@@ -1827,14 +1750,14 @@ func (h *handlers) stageDeletion(ctx context.Context, req mcp.CallToolRequest) (
 		filter := query.MessageFilter{SourceID: sourceID}
 		results, err := h.engine.SearchFast(ctx, q, filter, maxStageDeletionResults, 0)
 		if err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("search failed: %v", err)), nil
+			return nil, newInternalError("search messages for deletion", err)
 		}
 
 		// Fall back to FTS if no results and query has text terms
 		if len(results) == 0 && len(q.TextTerms) > 0 {
 			results, err = h.engine.Search(ctx, q, maxStageDeletionResults, 0)
 			if err != nil {
-				return mcp.NewToolResultError(fmt.Sprintf("search failed: %v", err)), nil
+				return nil, newInternalError("fallback search messages for deletion", err)
 			}
 		}
 
@@ -1863,7 +1786,7 @@ func (h *handlers) stageDeletion(ctx context.Context, req mcp.CallToolRequest) (
 		var err error
 		gmailIDs, err = h.engine.GetGmailIDsByFilter(ctx, filter)
 		if err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("filter failed: %v", err)), nil
+			return nil, newInternalError("filter messages for deletion", err)
 		}
 
 		// Build description from filters
@@ -1893,7 +1816,7 @@ func (h *handlers) stageDeletion(ctx context.Context, req mcp.CallToolRequest) (
 	}
 
 	if len(gmailIDs) == 0 {
-		return mcp.NewToolResultError("no messages match the specified criteria"), nil
+		return toolErrorResult("no messages match the specified criteria"), nil
 	}
 
 	manifest := deletion.NewManifest(description, gmailIDs)
@@ -1918,15 +1841,10 @@ func (h *handlers) stageDeletion(ctx context.Context, req mcp.CallToolRequest) (
 	}
 
 	if err := h.saveDeletionManifest(ctx, manifest); err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("save manifest: %v", err)), nil
+		return nil, newInternalError("save deletion manifest", err)
 	}
 
-	resp := struct {
-		BatchID      string `json:"batch_id"`
-		MessageCount int    `json:"message_count"`
-		Status       string `json:"status"`
-		NextStep     string `json:"next_step"`
-	}{
+	resp := stageDeletionResponse{
 		BatchID:      manifest.ID,
 		MessageCount: len(gmailIDs),
 		Status:       string(manifest.Status),
@@ -1948,13 +1866,13 @@ func (h *handlers) saveDeletionManifest(ctx context.Context, manifest *deletion.
 	return manager.SaveManifest(manifest)
 }
 
-func (h *handlers) searchByDomains(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (h *handlers) searchByDomains(ctx context.Context, req toolRequest) (*toolResult, error) {
 	args := req.GetArguments()
 
 	domainsStr, _ := args["domains"].(string)
 	domainsStr = strings.TrimSpace(domainsStr)
 	if domainsStr == "" {
-		return mcp.NewToolResultError("domains is required"), nil
+		return toolErrorResult("domains is required"), nil
 	}
 
 	// Split and clean domain list
@@ -1966,7 +1884,7 @@ func (h *handlers) searchByDomains(ctx context.Context, req mcp.CallToolRequest)
 		}
 	}
 	if len(domains) == 0 {
-		return mcp.NewToolResultError("at least one domain is required"), nil
+		return toolErrorResult("at least one domain is required"), nil
 	}
 
 	limit := limitArg(args, "limit", 100)
@@ -1974,17 +1892,17 @@ func (h *handlers) searchByDomains(ctx context.Context, req mcp.CallToolRequest)
 
 	afterDate, err := getDateArg(args, "after")
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return toolErrorResult(err.Error()), nil
 	}
 	beforeDate, err := getDateArg(args, "before")
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return toolErrorResult(err.Error()), nil
 	}
 
 	results, err := h.engine.SearchByDomains(ctx, domains, afterDate, beforeDate, limit, offset)
 	if err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("search by domains failed: %v", err)), nil
+		return nil, newInternalError("search messages by domain", err)
 	}
 
-	return jsonResult(results)
+	return jsonResult(searchByDomainsResponse(results))
 }
