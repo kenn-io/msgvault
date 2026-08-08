@@ -247,16 +247,20 @@ func resolveAPIURL(sessionURL *url.URL, rawAPIURL string) (*url.URL, error) {
 	if _, err := parseEndpoint(endpoint.String()); err != nil {
 		return nil, fmt.Errorf("invalid JMAP API endpoint from %s", sessionURL.Host)
 	}
-	if !sameOrigin(sessionURL, endpoint) {
+	if !sameOriginOrSubdomain(sessionURL, endpoint) {
 		return nil, fmt.Errorf("cross-origin JMAP API endpoint rejected for %s", sessionURL.Host)
 	}
 	return endpoint, nil
 }
 
-func sameOrigin(left, right *url.URL) bool {
-	return strings.EqualFold(left.Scheme, right.Scheme) &&
-		strings.EqualFold(left.Hostname(), right.Hostname()) &&
-		effectivePort(left) == effectivePort(right)
+func sameOriginOrSubdomain(parent, candidate *url.URL) bool {
+	if !strings.EqualFold(parent.Scheme, candidate.Scheme) ||
+		effectivePort(parent) != effectivePort(candidate) {
+		return false
+	}
+	parentHost := strings.ToLower(parent.Hostname())
+	candidateHost := strings.ToLower(candidate.Hostname())
+	return candidateHost == parentHost || strings.HasSuffix(candidateHost, "."+parentHost)
 }
 
 func effectivePort(endpoint *url.URL) string {

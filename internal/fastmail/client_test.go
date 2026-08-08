@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -274,6 +275,45 @@ func TestListIdentityRecordsRejectsAmbiguousCapabilityAccount(t *testing.T) {
 	require.ErrorContains(t, err, "ambiguous")
 	assert.NotContains(t, err.Error(), testToken)
 	assert.Equal(t, int32(0), methodRequests.Load())
+}
+
+func TestResolveAPIURLAllowsSessionHostSubdomainsOnly(t *testing.T) {
+	tests := []struct {
+		name       string
+		sessionURL string
+		apiURL     string
+		wantURL    string
+		wantError  string
+	}{
+		{name: "same origin", sessionURL: "https://api.example.test/jmap/session", apiURL: "https://api.example.test/jmap/api/", wantURL: "https://api.example.test/jmap/api/"},
+		{name: "pod child", sessionURL: "https://api.example.test/jmap/session", apiURL: "https://pod.api.example.test/jmap/api/", wantURL: "https://pod.api.example.test/jmap/api/"},
+		{name: "case insensitive pod child", sessionURL: "https://API.EXAMPLE.TEST/jmap/session", apiURL: "https://Pod.Api.Example.Test/jmap/api/", wantURL: "https://Pod.Api.Example.Test/jmap/api/"},
+		{name: "parent", sessionURL: "https://pod.api.example.test/jmap/session", apiURL: "https://api.example.test/jmap/api/", wantError: "cross-origin"},
+		{name: "sibling", sessionURL: "https://api.example.test/jmap/session", apiURL: "https://mail.example.test/jmap/api/", wantError: "cross-origin"},
+		{name: "label lookalike", sessionURL: "https://api.example.test/jmap/session", apiURL: "https://evilapi.example.test/jmap/api/", wantError: "cross-origin"},
+		{name: "suffix lookalike", sessionURL: "https://api.example.test/jmap/session", apiURL: "https://api.example.test.evil.test/jmap/api/", wantError: "cross-origin"},
+		{name: "different scheme", sessionURL: "https://api.example.test/jmap/session", apiURL: "http://pod.api.example.test/jmap/api/", wantError: "cross-origin"},
+		{name: "different port", sessionURL: "https://api.example.test/jmap/session", apiURL: "https://pod.api.example.test:8443/jmap/api/", wantError: "cross-origin"},
+		{name: "userinfo", sessionURL: "https://api.example.test/jmap/session", apiURL: "https://token@pod.api.example.test/jmap/api/", wantError: "invalid JMAP API endpoint"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			sessionURL, err := url.Parse(tt.sessionURL)
+			require.NoError(err)
+
+			got, err := resolveAPIURL(sessionURL, tt.apiURL)
+			if tt.wantError != "" {
+				require.ErrorContains(err, tt.wantError)
+				assert.Nil(got)
+				return
+			}
+			require.NoError(err)
+			assert.Equal(tt.wantURL, got.String())
+		})
+	}
 }
 
 func TestListIdentityRecordsRejectsCrossOriginAPIURLBeforeSendingToken(t *testing.T) {
