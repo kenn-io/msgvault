@@ -75,6 +75,17 @@ var buildCacheSubprocessForRun = func(ctx context.Context, fullRebuild bool) err
 	return buildCacheSubprocess(ctx, fullRebuild, true)
 }
 
+var buildStartupCacheSubprocessForRun = func(
+	ctx context.Context,
+	intent startupCacheBuildIntent,
+) error {
+	mode := buildCacheModeAuto
+	if intent == startupCacheBuildIntentFull {
+		mode = buildCacheModeFull
+	}
+	return buildCacheSubprocessMode(ctx, mode)
+}
+
 var executeBuildCacheSubprocessMode = buildCacheSubprocessMode
 
 var runDerivedCacheSubprocess = func(ctx context.Context, analyticsDir string) error {
@@ -251,9 +262,23 @@ func runServe(cmd *cobra.Command, args []string) error {
 
 	setStartupPhase("building analytics cache")
 	logger.Info("daemon startup step", "step", "init_analytics_engine")
-	engine, analyticsMode, err := openDaemonAnalyticsEngine(cmd.Context(), cfg, s)
+	startupCacheIntent, err := startupCacheBuildIntentFromEnv()
 	if err != nil {
 		return err
+	}
+	engine, analyticsMode, cacheOutcome, engineErr := openDaemonAnalyticsEngine(
+		cmd.Context(), cfg, s, startupCacheIntent,
+	)
+	if startupCacheIntent != startupCacheBuildIntentNone {
+		if outcomeErr := ownership.SetStartupCacheBuildOutcome(cacheOutcome); outcomeErr != nil {
+			if engine != nil {
+				_ = engine.Close()
+			}
+			return outcomeErr
+		}
+	}
+	if engineErr != nil {
+		return engineErr
 	}
 	defer func() { _ = engine.Close() }()
 	logger.Info("daemon startup step complete", "step", "init_analytics_engine")
@@ -720,12 +745,18 @@ func openDaemonAnalyticsEngine(
 	ctx context.Context,
 	c *config.Config,
 	s *store.Store,
-) (query.Engine, string, error) {
+	intent startupCacheBuildIntent,
+) (query.Engine, string, startupCacheBuildOutcome, error) {
 	if c == nil || s == nil {
-		return nil, "", errors.New("daemon analytics engine unavailable")
+		return nil, "", startupCacheBuildOutcomeNone,
+			errors.New("daemon analytics engine unavailable")
 	}
 	if s.IsPostgreSQL() {
-		return query.NewEngine(s.DB(), true), api.AnalyticsModePostgres, nil
+		outcome := startupCacheBuildOutcomeNone
+		if intent != startupCacheBuildIntentNone {
+			outcome = startupCacheBuildOutcomeUnconsumed
+		}
+		return query.NewEngine(s.DB(), true), api.AnalyticsModePostgres, outcome, nil
 	}
 
 	engineMode := c.Analytics.Engine
@@ -735,28 +766,59 @@ func openDaemonAnalyticsEngine(
 	if engineMode == config.AnalyticsEngineSQL {
 		logger.Info("using live SQL analytics engine",
 			"engine", engineMode)
-		return query.NewEngine(s.DB(), false), api.AnalyticsModeSQL, nil
+		outcome := startupCacheBuildOutcomeNone
+		if intent != startupCacheBuildIntentNone {
+			outcome = startupCacheBuildOutcomeUnconsumed
+		}
+		return query.NewEngine(s.DB(), false), api.AnalyticsModeSQL, outcome, nil
 	}
 
 	dbPath := c.DatabaseDSN()
 	analyticsDir := c.AnalyticsDir()
 	staleness := cacheNeedsBuild(dbPath, analyticsDir)
-	if staleness.NeedsBuild && c.Analytics.AutoBuildCache {
+	outcome := startupCacheBuildOutcomeNone
+	shouldBuild := intent != startupCacheBuildIntentNone ||
+		(staleness.NeedsBuild && c.Analytics.AutoBuildCache)
+	if shouldBuild {
 		// Build the cache before serving rather than starting on live-SQL
 		// fallback: incremental rebuilds take seconds, and startup progress
 		// already streams to the CLI that auto-started the daemon. A failed
 		// build is fatal for engine="duckdb" (documented to never fall back)
 		// and falls back to live SQL for engine="auto".
-		if err := buildCacheSubprocessForRun(ctx, staleness.FullRebuild); err != nil {
+		fullBuild := staleness.FullRebuild
+		reason := staleness.Reason
+		if intent == startupCacheBuildIntentFull {
+			fullBuild = true
+			reason = "explicit full rebuild requested"
+		}
+		logger.Info("daemon startup step",
+			"step", "build_analytics_cache",
+			"reason", reason,
+			"full_rebuild", fullBuild)
+
+		var buildErr error
+		if intent != startupCacheBuildIntentNone {
+			buildErr = buildStartupCacheSubprocessForRun(ctx, intent)
+		} else {
+			buildErr = buildCacheSubprocessForRun(ctx, staleness.FullRebuild)
+		}
+		if buildErr != nil {
+			if intent != startupCacheBuildIntentNone {
+				outcome = startupCacheBuildOutcomeFailed
+			}
 			if engineMode == config.AnalyticsEngineDuckDB {
-				return nil, "", fmt.Errorf("build analytics cache: %w", err)
+				return nil, "", outcome, fmt.Errorf("build analytics cache: %w", buildErr)
 			}
 			logger.Warn("analytics cache build failed; using live SQL engine",
-				"error", err)
+				"error", buildErr)
 		} else {
-			logger.Info("rebuilt analytics cache",
-				"reason", staleness.Reason,
-				"full_rebuild", staleness.FullRebuild)
+			logger.Info("daemon startup step complete",
+				"step", "build_analytics_cache",
+				"reason", reason,
+				"full_rebuild", fullBuild)
+			if intent != startupCacheBuildIntentNone {
+				outcome = startupCacheBuildOutcomeFulfilled
+			}
 		}
 		staleness = cacheNeedsBuild(dbPath, analyticsDir)
 	}
@@ -765,13 +827,13 @@ func openDaemonAnalyticsEngine(
 		duckEngine, err := openDaemonDuckDBEngine(c, s)
 		if err != nil {
 			if engineMode == config.AnalyticsEngineDuckDB {
-				return nil, "", err
+				return nil, "", outcome, err
 			}
 			logger.Warn("DuckDB engine failed, falling back to live SQL",
 				"error", err)
-			return query.NewEngine(s.DB(), false), api.AnalyticsModeSQLFallback, nil
+			return query.NewEngine(s.DB(), false), api.AnalyticsModeSQLFallback, outcome, nil
 		}
-		return duckEngine, api.AnalyticsModeDuckDB, nil
+		return duckEngine, api.AnalyticsModeDuckDB, outcome, nil
 	}
 
 	if engineMode == config.AnalyticsEngineDuckDB {
@@ -779,7 +841,8 @@ func openDaemonAnalyticsEngine(
 		if reason == "" {
 			reason = "analytics cache is missing or incomplete"
 		}
-		return nil, "", fmt.Errorf("analytics engine=duckdb requires a usable cache: %s", reason)
+		return nil, "", outcome,
+			fmt.Errorf("analytics engine=duckdb requires a usable cache: %s", reason)
 	}
 	if staleness.Reason != "" {
 		logger.Info("analytics cache not usable, using live SQL engine",
@@ -789,7 +852,7 @@ func openDaemonAnalyticsEngine(
 		logger.Info("analytics cache not built - using live SQL engine (run 'msgvault build-cache' for faster aggregates)",
 			"auto_build_cache", c.Analytics.AutoBuildCache)
 	}
-	return query.NewEngine(s.DB(), false), api.AnalyticsModeSQLFallback, nil
+	return query.NewEngine(s.DB(), false), api.AnalyticsModeSQLFallback, outcome, nil
 }
 
 func openDaemonDuckDBEngine(c *config.Config, s *store.Store) (*query.DuckDBEngine, error) {

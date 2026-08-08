@@ -41,12 +41,18 @@ func startupCacheBuildIntentFromEnv() (startupCacheBuildIntent, error) {
 func withStartupCacheBuildIntent(base []string, intent startupCacheBuildIntent) []string {
 	prefix := daemonStartupCacheBuildEnv + "="
 	out := make([]string, 0, len(base)+1)
+	replaced := false
 	for _, entry := range base {
-		if !strings.HasPrefix(entry, prefix) {
-			out = append(out, entry)
+		if strings.HasPrefix(entry, prefix) {
+			if !replaced && intent != startupCacheBuildIntentNone {
+				out = append(out, prefix+string(intent))
+				replaced = true
+			}
+			continue
 		}
+		out = append(out, entry)
 	}
-	if intent != startupCacheBuildIntentNone {
+	if !replaced && intent != startupCacheBuildIntentNone {
 		out = append(out, prefix+string(intent))
 	}
 	return out

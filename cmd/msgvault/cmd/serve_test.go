@@ -388,12 +388,15 @@ func TestOpenDaemonAnalyticsEngineForceSQLSkipsCacheBuild(t *testing.T) {
 		return nil
 	})
 
-	engine, mode, err := openDaemonAnalyticsEngine(context.Background(), c, s)
+	engine, mode, outcome, err := openDaemonAnalyticsEngine(
+		context.Background(), c, s, startupCacheBuildIntentNone,
+	)
 	require.NoError(err, "openDaemonAnalyticsEngine")
 	defer func() { _ = engine.Close() }()
 
 	assert.IsType(&query.SQLiteEngine{}, engine)
 	assert.Equal(api.AnalyticsModeSQL, mode, "engine=sql is a deliberate live-SQL choice")
+	assert.Equal(startupCacheBuildOutcomeNone, outcome, "no explicit intent has no outcome")
 }
 
 func TestOpenDaemonAnalyticsEngineSkipsCacheBuildWhenDisabled(t *testing.T) {
@@ -407,12 +410,15 @@ func TestOpenDaemonAnalyticsEngineSkipsCacheBuildWhenDisabled(t *testing.T) {
 		return nil
 	})
 
-	engine, mode, err := openDaemonAnalyticsEngine(context.Background(), c, s)
+	engine, mode, outcome, err := openDaemonAnalyticsEngine(
+		context.Background(), c, s, startupCacheBuildIntentNone,
+	)
 	require.NoError(err, "openDaemonAnalyticsEngine")
 	defer func() { _ = engine.Close() }()
 
 	assert.IsType(&query.SQLiteEngine{}, engine)
 	assert.Equal(api.AnalyticsModeSQLFallback, mode, "auto mode without a cache is a fallback")
+	assert.Equal(startupCacheBuildOutcomeNone, outcome, "no explicit intent has no outcome")
 }
 
 func TestOpenDaemonAnalyticsEngineAutoBuildsCacheAtStartup(t *testing.T) {
@@ -437,13 +443,16 @@ func TestOpenDaemonAnalyticsEngineAutoBuildsCacheAtStartup(t *testing.T) {
 		return err
 	})
 
-	engine, mode, err := openDaemonAnalyticsEngine(context.Background(), c, s)
+	engine, mode, outcome, err := openDaemonAnalyticsEngine(
+		context.Background(), c, s, startupCacheBuildIntentNone,
+	)
 	require.NoError(err, "openDaemonAnalyticsEngine")
 	defer func() { _ = engine.Close() }()
 
 	assert.Equal(1, builds, "a stale cache must be built synchronously at startup")
 	assert.Equal(api.AnalyticsModeDuckDB, mode,
 		"the daemon must serve DuckDB over the fresh cache, not live-SQL fallback")
+	assert.Equal(startupCacheBuildOutcomeNone, outcome, "automatic builds have no explicit outcome")
 }
 
 func TestDaemonDuckDBEnginesUseIsolatedSpillDirectories(t *testing.T) {
@@ -485,13 +494,16 @@ func TestOpenDaemonAnalyticsEngineAutoFallsBackWhenStartupBuildFails(t *testing.
 		return errors.New("simulated build failure")
 	})
 
-	engine, mode, err := openDaemonAnalyticsEngine(context.Background(), c, s)
+	engine, mode, outcome, err := openDaemonAnalyticsEngine(
+		context.Background(), c, s, startupCacheBuildIntentNone,
+	)
 	require.NoError(err, "a failed auto-mode build must not fail daemon startup")
 	defer func() { _ = engine.Close() }()
 
 	assert.IsType(&query.SQLiteEngine{}, engine)
 	assert.Equal(api.AnalyticsModeSQLFallback, mode,
 		"a failed build falls back to live SQL for engine=auto")
+	assert.Equal(startupCacheBuildOutcomeNone, outcome, "automatic failures have no explicit outcome")
 }
 
 func TestOpenDaemonAnalyticsEngineDuckDBRequiresCacheBuild(t *testing.T) {
@@ -504,13 +516,117 @@ func TestOpenDaemonAnalyticsEngineDuckDBRequiresCacheBuild(t *testing.T) {
 		return sentinel
 	})
 
-	engine, _, err := openDaemonAnalyticsEngine(context.Background(), c, s)
+	engine, _, outcome, err := openDaemonAnalyticsEngine(
+		context.Background(), c, s, startupCacheBuildIntentNone,
+	)
 	if engine != nil {
 		_ = engine.Close()
 	}
 
 	require.Error(err, "duckdb mode should fail when the required cache build fails")
 	require.ErrorIs(err, sentinel, "error")
+	require.Equal(startupCacheBuildOutcomeNone, outcome, "automatic failure has no explicit outcome")
+}
+
+func TestOpenDaemonAnalyticsEngineExplicitIntentOverridesDisabledAutoBuild(t *testing.T) {
+	c, s := openTestDaemonAnalyticsStore(t)
+	c.Analytics.Engine = config.AnalyticsEngineAuto
+	c.Analytics.AutoBuildCache = false
+	builds := 0
+	stubStartupCacheBuild(t, func(_ context.Context, intent startupCacheBuildIntent) error {
+		builds++
+		assert.Equal(t, startupCacheBuildIntentDefault, intent)
+		_, err := buildCacheAuto(c.DatabaseDSN(), c.AnalyticsDir())
+		return err
+	})
+
+	engine, mode, outcome, err := openDaemonAnalyticsEngine(
+		context.Background(), c, s, startupCacheBuildIntentDefault,
+	)
+	require.NoError(t, err)
+	defer func() { _ = engine.Close() }()
+
+	assert.Equal(t, 1, builds)
+	assert.Equal(t, api.AnalyticsModeDuckDB, mode)
+	assert.Equal(t, startupCacheBuildOutcomeFulfilled, outcome)
+}
+
+func TestOpenDaemonAnalyticsEngineExplicitFullBuildRunsWhenCacheIsFresh(t *testing.T) {
+	c, s := openTestDaemonAnalyticsStore(t)
+	_, err := buildCache(c.DatabaseDSN(), c.AnalyticsDir(), true)
+	require.NoError(t, err)
+	builds := 0
+	stubStartupCacheBuild(t, func(_ context.Context, intent startupCacheBuildIntent) error {
+		builds++
+		assert.Equal(t, startupCacheBuildIntentFull, intent)
+		_, buildErr := buildCache(c.DatabaseDSN(), c.AnalyticsDir(), true)
+		return buildErr
+	})
+
+	engine, mode, outcome, err := openDaemonAnalyticsEngine(
+		context.Background(), c, s, startupCacheBuildIntentFull,
+	)
+	require.NoError(t, err)
+	defer func() { _ = engine.Close() }()
+
+	assert.Equal(t, 1, builds)
+	assert.Equal(t, api.AnalyticsModeDuckDB, mode)
+	assert.Equal(t, startupCacheBuildOutcomeFulfilled, outcome)
+}
+
+func TestOpenDaemonAnalyticsEngineExplicitFailureKeepsAutoFallback(t *testing.T) {
+	c, s := openTestDaemonAnalyticsStore(t)
+	c.Analytics.Engine = config.AnalyticsEngineAuto
+	stubStartupCacheBuild(t, func(context.Context, startupCacheBuildIntent) error {
+		return errors.New("simulated explicit build failure")
+	})
+
+	engine, mode, outcome, err := openDaemonAnalyticsEngine(
+		context.Background(), c, s, startupCacheBuildIntentDefault,
+	)
+	require.NoError(t, err)
+	defer func() { _ = engine.Close() }()
+
+	assert.IsType(t, &query.SQLiteEngine{}, engine)
+	assert.Equal(t, api.AnalyticsModeSQLFallback, mode)
+	assert.Equal(t, startupCacheBuildOutcomeFailed, outcome)
+}
+
+func TestOpenDaemonAnalyticsEngineSQLLeavesExplicitIntentUnconsumed(t *testing.T) {
+	c, s := openTestDaemonAnalyticsStore(t)
+	c.Analytics.Engine = config.AnalyticsEngineSQL
+	stubStartupCacheBuild(t, func(context.Context, startupCacheBuildIntent) error {
+		require.FailNow(t, "SQL engine must leave cache intent for the HTTP path")
+		return nil
+	})
+
+	engine, mode, outcome, err := openDaemonAnalyticsEngine(
+		context.Background(), c, s, startupCacheBuildIntentDefault,
+	)
+	require.NoError(t, err)
+	defer func() { _ = engine.Close() }()
+
+	assert.Equal(t, api.AnalyticsModeSQL, mode)
+	assert.Equal(t, startupCacheBuildOutcomeUnconsumed, outcome)
+}
+
+func TestOpenDaemonAnalyticsEngineExplicitDuckDBFailureIsFatal(t *testing.T) {
+	c, s := openTestDaemonAnalyticsStore(t)
+	c.Analytics.Engine = config.AnalyticsEngineDuckDB
+	sentinel := errors.New("explicit build failed")
+	stubStartupCacheBuild(t, func(context.Context, startupCacheBuildIntent) error {
+		return sentinel
+	})
+
+	engine, _, outcome, err := openDaemonAnalyticsEngine(
+		context.Background(), c, s, startupCacheBuildIntentDefault,
+	)
+	if engine != nil {
+		_ = engine.Close()
+	}
+
+	require.ErrorIs(t, err, sentinel)
+	assert.Equal(t, startupCacheBuildOutcomeFailed, outcome)
 }
 
 func openTestDaemonAnalyticsStore(t *testing.T) (*config.Config, *store.Store) {
@@ -531,6 +647,16 @@ func stubBuildCacheSubprocess(
 	old := buildCacheSubprocessForRun
 	buildCacheSubprocessForRun = fn
 	t.Cleanup(func() { buildCacheSubprocessForRun = old })
+}
+
+func stubStartupCacheBuild(
+	t *testing.T,
+	fn func(context.Context, startupCacheBuildIntent) error,
+) {
+	t.Helper()
+	old := buildStartupCacheSubprocessForRun
+	buildStartupCacheSubprocessForRun = fn
+	t.Cleanup(func() { buildStartupCacheSubprocessForRun = old })
 }
 
 func TestStoreAPIAdapterServesSourceStatus(t *testing.T) {
