@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/auth"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -17,6 +18,11 @@ import (
 type Session struct {
 	cs      *mcp.ClientSession
 	limiter *rate.Limiter
+
+	// rateLimitDelay is the first backoff pause after a provider rate-limit
+	// rejection; each further attempt doubles it. Zero disables waiting so
+	// tests exercise the retry loop without sleeping.
+	rateLimitDelay time.Duration
 }
 
 // ToolInfo is the MCP tool metadata printed by sync-circleback --probe.
@@ -29,6 +35,27 @@ type ToolInfo struct {
 // ErrContract identifies a Circleback result that cannot be interpreted
 // without risking silent data loss.
 var ErrContract = errors.New("circleback MCP contract error")
+
+// errRateLimited marks a provider rate-limit rejection. It is the only
+// tool-result error worth retrying: unlike a contract or missing-result
+// failure it is transient and clears on its own, and without a retry it
+// fails the whole sync run. A first backfill issues one detail call per
+// five meetings, so a large history reliably trips the provider's limit.
+var errRateLimited = errors.New("circleback rate limited")
+
+const (
+	// rateLimitAttempts bounds total tries (one initial + retries) so a
+	// sustained limit still surfaces instead of hanging the run. Meetings
+	// written before the failure persist, and the next run resumes from
+	// them, so giving up is recoverable.
+	rateLimitAttempts = 5
+	// rateLimitBaseDelay is the first pause; it doubles per attempt, so the
+	// default budget is roughly 2+4+8+16 = 30s of waiting.
+	rateLimitBaseDelay = 2 * time.Second
+	// rateLimitMaxDelay caps a single pause so the doubling cannot stall a
+	// run for minutes.
+	rateLimitMaxDelay = 30 * time.Second
+)
 
 const archiveIntent = "Archiving Circleback meetings in msgvault."
 
@@ -49,7 +76,7 @@ func Connect(ctx context.Context, endpoint string, handler auth.OAuthHandler) (*
 	if err != nil {
 		return nil, fmt.Errorf("connect to circleback MCP at %s: %w", endpoint, err)
 	}
-	return &Session{cs: cs, limiter: rate.NewLimiter(2, 4)}, nil
+	return &Session{cs: cs, limiter: rate.NewLimiter(2, 4), rateLimitDelay: rateLimitBaseDelay}, nil
 }
 
 // NewSessionForTesting wraps an already-connected mcp.ClientSession (e.g.
@@ -100,7 +127,34 @@ func (s *Session) ToolInventory(ctx context.Context) ([]ToolInfo, error) {
 // CallToolJSON calls an MCP tool and returns its result payload as raw JSON:
 // StructuredContent when the server provides it, otherwise the concatenated
 // text content (which Circleback uses to carry JSON).
+// A provider rate-limit rejection is retried with exponential backoff; every
+// other error returns immediately.
 func (s *Session) CallToolJSON(ctx context.Context, name string, args map[string]any) (json.RawMessage, error) {
+	delay := s.rateLimitDelay
+	var lastErr error
+	for attempt := 1; attempt <= rateLimitAttempts; attempt++ {
+		payload, err := s.callToolOnce(ctx, name, args)
+		if err == nil {
+			return payload, nil
+		}
+		if !errors.Is(err, errRateLimited) {
+			return nil, err
+		}
+		lastErr = err
+		if attempt == rateLimitAttempts {
+			break
+		}
+		if err := sleepContext(ctx, delay); err != nil {
+			return nil, fmt.Errorf("circleback tool %s: %w", name, err)
+		}
+		delay = min(delay*2, rateLimitMaxDelay)
+	}
+	// lastErr already names the tool, so this does not repeat it.
+	return nil, fmt.Errorf("still rate limited after %d attempts: %w", rateLimitAttempts, lastErr)
+}
+
+// callToolOnce performs one paced tool call.
+func (s *Session) callToolOnce(ctx context.Context, name string, args map[string]any) (json.RawMessage, error) {
 	if err := s.limiter.Wait(ctx); err != nil {
 		return nil, fmt.Errorf("wait for circleback rate limit: %w", err)
 	}
@@ -110,9 +164,42 @@ func (s *Session) CallToolJSON(ctx context.Context, name string, args map[string
 	}
 	payload, err := toolResultJSON(res)
 	if err != nil {
+		// %w keeps errRateLimited reachable through errors.Is so the
+		// retry loop in CallToolJSON can still recognize it.
 		return nil, fmt.Errorf("circleback tool %s: %w", name, err)
 	}
 	return payload, nil
+}
+
+// sleepContext waits for d, returning early if ctx is cancelled. A
+// non-positive duration returns immediately.
+func sleepContext(ctx context.Context, d time.Duration) error {
+	if d <= 0 {
+		return ctx.Err()
+	}
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+// isRateLimitMessage reports whether a tool-result error text is a provider
+// rate-limit rejection. Circleback reports these in band as a plain message
+// ("Rate limit exceeded. Please try again later.") with no status code or
+// machine-readable field, so matching on the text is the only signal
+// available; the extra variants cover equivalent phrasings.
+func isRateLimitMessage(message string) bool {
+	message = strings.ToLower(message)
+	for _, marker := range []string{"rate limit", "rate-limit", "too many requests", "429"} {
+		if strings.Contains(message, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 // toolResultJSON extracts the JSON payload from a tool result.
@@ -124,7 +211,11 @@ func toolResultJSON(res *mcp.CallToolResult) (json.RawMessage, error) {
 		}
 	}
 	if res.IsError {
-		return nil, fmt.Errorf("server returned an error: %s", strings.TrimSpace(text.String()))
+		message := strings.TrimSpace(text.String())
+		if isRateLimitMessage(message) {
+			return nil, fmt.Errorf("%w: %s", errRateLimited, message)
+		}
+		return nil, fmt.Errorf("server returned an error: %s", message)
 	}
 	if res.StructuredContent != nil {
 		b, err := json.Marshal(res.StructuredContent)

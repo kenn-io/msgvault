@@ -242,6 +242,114 @@ func TestReadMeetings_KeyedInsightsObjectDoesNotRejectMeeting(t *testing.T) {
 	assert.NotContains(body, "Insights:")
 }
 
+// scriptedResponse is one canned tool result. The last entry repeats once the
+// script is exhausted, so an "always fails" case needs a single entry.
+type scriptedResponse struct {
+	isError bool
+	text    string
+}
+
+// newScriptedMCPSession serves responses in order for one tool and counts
+// calls, so retry behaviour can be observed. The returned Session has a zero
+// backoff delay (see NewSessionForTesting), so the retry loop runs without
+// real sleeping.
+func newScriptedMCPSession(t *testing.T, tool string, responses []scriptedResponse, calls *int) *Session {
+	t.Helper()
+	server := mcp.NewServer(&mcp.Implementation{Name: "fake-circleback", Version: "0.2.2"}, nil)
+	mcp.AddTool[map[string]any, any](server, &mcp.Tool{
+		Name:        tool,
+		Description: "scripted rate-limit fixture",
+		InputSchema: officialCirclebackInputSchemas[tool],
+	}, func(_ context.Context, _ *mcp.CallToolRequest, _ map[string]any) (*mcp.CallToolResult, any, error) {
+		response := responses[min(*calls, len(responses)-1)]
+		*calls++
+		return &mcp.CallToolResult{
+			IsError: response.isError,
+			Content: []mcp.Content{&mcp.TextContent{Text: response.text}},
+		}, nil, nil
+	})
+
+	ct, st := mcp.NewInMemoryTransports()
+	ss, err := server.Connect(context.Background(), st, nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = ss.Wait() })
+
+	client := mcp.NewClient(&mcp.Implementation{Name: "msgvault-test", Version: "0"}, nil)
+	cs, err := client.Connect(context.Background(), ct, nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = cs.Close() })
+	return NewSessionForTesting(cs)
+}
+
+const rateLimitText = "Rate limit exceeded. Please try again later."
+
+// A first backfill reliably trips Circleback's limit. Without a retry the
+// rejection fails the whole sync run, so a transient limit reads as a hard
+// sync failure.
+func TestCallToolJSON_RetriesProviderRateLimit(t *testing.T) {
+	require := require.New(t)
+	calls := 0
+	s := newScriptedMCPSession(t, toolReadMeetings, []scriptedResponse{
+		{isError: true, text: rateLimitText},
+		{isError: true, text: rateLimitText},
+		{text: `{"meetings":[{"id":"meeting-1","name":"Planning"}]}`},
+	}, &calls)
+
+	meetings, err := s.ReadMeetings(context.Background(), []string{"meeting-1"})
+	require.NoError(err)
+	require.Len(meetings, 1)
+	require.Equal(3, calls, "should retry until the provider recovers")
+}
+
+func TestCallToolJSON_RateLimitGivesUpAfterBoundedAttempts(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	calls := 0
+	s := newScriptedMCPSession(t, toolReadMeetings, []scriptedResponse{
+		{isError: true, text: rateLimitText},
+	}, &calls)
+
+	_, err := s.ReadMeetings(context.Background(), []string{"meeting-1"})
+	require.Error(err)
+	assert.Equal(rateLimitAttempts, calls, "retries must be bounded, not infinite")
+	assert.Contains(err.Error(), "still rate limited")
+	// The provider's own wording survives so the cause stays diagnosable.
+	assert.Contains(err.Error(), "Rate limit exceeded")
+}
+
+// Only rate limits are transient. Retrying a contract or missing-result
+// failure would repeat a call that cannot succeed.
+func TestCallToolJSON_DoesNotRetryOtherServerErrors(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	calls := 0
+	s := newScriptedMCPSession(t, toolReadMeetings, []scriptedResponse{
+		{isError: true, text: "meeting not found"},
+	}, &calls)
+
+	_, err := s.ReadMeetings(context.Background(), []string{"meeting-1"})
+	require.Error(err)
+	assert.Equal(1, calls)
+	assert.Contains(err.Error(), "meeting not found")
+	assert.NotContains(err.Error(), "still rate limited")
+}
+
+func TestIsRateLimitMessage(t *testing.T) {
+	for _, tt := range []struct {
+		message string
+		want    bool
+	}{
+		{"Rate limit exceeded. Please try again later.", true},
+		{"rate-limit hit", true},
+		{"Too Many Requests", true},
+		{"HTTP 429", true},
+		{"meeting not found", false},
+		{"", false},
+	} {
+		assert.Equal(t, tt.want, isRateLimitMessage(tt.message), tt.message)
+	}
+}
+
 func TestInsightListTolerantShapes(t *testing.T) {
 	tests := []struct {
 		name  string
