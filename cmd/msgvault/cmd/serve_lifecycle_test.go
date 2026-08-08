@@ -1408,7 +1408,6 @@ func TestDescribeDaemonStopWaitWithGenericBusyOperation(t *testing.T) {
 func TestWaitForDaemonExitWithProgressExplainsLongStops(t *testing.T) {
 	restoreStopWaitPacing(t, 10*time.Millisecond, 20*time.Millisecond)
 	out := &bytes.Buffer{}
-	exitAt := time.Now().Add(75 * time.Millisecond)
 	startedAt := time.Now().Add(-time.Minute)
 	op := &api.OperationHealth{
 		Busy:      true,
@@ -1417,8 +1416,10 @@ func TestWaitForDaemonExitWithProgressExplainsLongStops(t *testing.T) {
 	}
 
 	exited := waitForDaemonExitWithProgress(out, daemon.RuntimeRecord{PID: 4242}, op,
-		time.Second, time.Millisecond,
-		func(daemon.RuntimeRecord) bool { return time.Now().Before(exitAt) })
+		5*time.Second, time.Millisecond,
+		func(daemon.RuntimeRecord) bool {
+			return !strings.Contains(out.String(), "Still waiting")
+		})
 
 	require.True(t, exited, "wait must observe daemon exit")
 	assert.Contains(t, out.String(), "background embedding work")

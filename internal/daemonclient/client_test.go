@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -15,12 +17,115 @@ import (
 	"github.com/doordash-oss/oapi-codegen-dd/v3/pkg/runtime"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/otel/propagation"
 
 	"go.kenn.io/msgvault/internal/apiprotocol"
 	"go.kenn.io/msgvault/internal/identityops"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/vector"
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
+
+func TestMCPDaemonAPIErrorPreservesMachineCodeAndVectorSemantics(t *testing.T) {
+	tests := []struct {
+		code     string
+		status   int
+		sentinel error
+	}{
+		{code: "vector_not_enabled", status: http.StatusServiceUnavailable, sentinel: vector.ErrNotEnabled},
+		{code: "index_stale", status: http.StatusServiceUnavailable, sentinel: vector.ErrIndexStale},
+		{code: "index_building", status: http.StatusServiceUnavailable, sentinel: vector.ErrIndexBuilding},
+		{code: "embedding_timeout", status: http.StatusServiceUnavailable, sentinel: vector.ErrEmbeddingTimeout},
+		{code: "index_scope_mismatch", status: http.StatusBadRequest, sentinel: vector.ErrIndexScopeMismatch},
+	}
+
+	for _, test := range tests {
+		t.Run(test.code, func(t *testing.T) {
+			checks := assert.New(t)
+			must := require.New(t)
+			message := "daemon message for " + test.code
+			body, err := json.Marshal(map[string]string{"error": test.code, "message": message})
+			must.NoError(err)
+			response := &http.Response{StatusCode: test.status, Body: io.NopCloser(strings.NewReader(string(body)))}
+
+			err = HandleErrorResponse(response)
+			must.EqualError(err, fmt.Sprintf("API error (%d): %s", test.status, message))
+			var coded interface{ APIErrorCode() string }
+			must.ErrorAs(err, &coded)
+			checks.Equal(test.code, coded.APIErrorCode())
+			checks.ErrorIs(err, test.sentinel)
+		})
+	}
+
+	t.Run("unknown code stays typed but is not a vector sentinel", func(t *testing.T) {
+		checks := assert.New(t)
+		must := require.New(t)
+		response := &http.Response{
+			StatusCode: http.StatusInternalServerError,
+			Body: io.NopCloser(strings.NewReader(
+				`{"error":"private_backend_failure","message":"sanitized daemon message"}`,
+			)),
+		}
+
+		err := HandleErrorResponse(response)
+		must.EqualError(err, "API error (500): sanitized daemon message")
+		var coded interface{ APIErrorCode() string }
+		must.ErrorAs(err, &coded)
+		checks.Equal("private_backend_failure", coded.APIErrorCode())
+		must.NotErrorIs(err, vector.ErrNotEnabled)
+		must.NotErrorIs(err, vector.ErrIndexStale)
+		must.NotErrorIs(err, vector.ErrIndexBuilding)
+		must.NotErrorIs(err, vector.ErrEmbeddingTimeout)
+		must.NotErrorIs(err, vector.ErrIndexScopeMismatch)
+	})
+}
+
+func TestMCPTracePropagationDaemonClientInjectsW3CHeaders(t *testing.T) {
+	checks := assert.New(t)
+	must := require.New(t)
+	const (
+		traceParent = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
+		traceState  = "vendor=value"
+		baggage     = "tenant=test"
+	)
+
+	headers := make(chan http.Header, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		headers <- r.Header.Clone()
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	t.Cleanup(server.Close)
+	client, err := New(Config{
+		URL:           server.URL,
+		AllowInsecure: true,
+		HTTPClient:    server.Client(),
+	})
+	must.NoError(err)
+
+	carrier := propagation.HeaderCarrier(http.Header{
+		"Traceparent": []string{traceParent},
+		"Tracestate":  []string{traceState},
+		"Baggage":     []string{baggage},
+	})
+	ctx := propagation.NewCompositeTextMapPropagator(
+		propagation.TraceContext{},
+		propagation.Baggage{},
+	).Extract(context.Background(), carrier)
+	response, err := client.DoGeneratedRequestWithContext(
+		ctx,
+		http.MethodGet,
+		"/trace",
+		&generated.RunCLIRequestOptions{},
+	)
+	must.NoError(err)
+	must.NotNil(response)
+	must.NoError(response.Body.Close())
+
+	got := <-headers
+	checks.Equal(traceParent, got.Get("Traceparent"))
+	checks.Equal(traceState, got.Get("Tracestate"))
+	checks.Equal(baggage, got.Get("Baggage"))
+}
 
 func TestCLIIdentityDiscoverProviderStreamsConvertedEventsAndRequest(t *testing.T) {
 	assertions := assert.New(t)
