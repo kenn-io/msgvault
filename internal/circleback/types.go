@@ -260,6 +260,15 @@ func insightFromEntry(label string, value json.RawMessage) Insight {
 		if insight.Title == "" && insight.Name == "" {
 			insight.Name = label
 		}
+		if insight.DisplayContent() == "" {
+			// Decoding cannot fail on a well-formed object whose value sits
+			// under a key this struct does not declare — json.Unmarshal just
+			// ignores it — so an error check alone would drop the value while
+			// still reporting success. Since no populated object shape has
+			// been observed, an unrecognized key is the likely case rather
+			// than an edge case, so keep the verbatim JSON as the content.
+			insight.Content = string(value)
+		}
 		return insight
 	case value[0] == '"':
 		var text string

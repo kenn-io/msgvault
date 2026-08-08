@@ -385,6 +385,21 @@ func TestInsightListTolerantShapes(t *testing.T) {
 			want:  []Insight{{Title: "Schedule risk", Content: "Tight"}},
 		},
 		{
+			// json.Unmarshal succeeds here while ignoring "text", so an
+			// error check alone would drop the value and report success.
+			name:  "keyed object with only unknown fields keeps verbatim JSON",
+			input: `{"Risk":{"text":"Timeline is tight"}}`,
+			want:  []Insight{{Name: "Risk", Content: `{"text":"Timeline is tight"}`}},
+		},
+		{
+			name:  "recognized title with unknown value key keeps verbatim JSON",
+			input: `{"Risk":{"title":"Schedule risk","body":"Tight"}}`,
+			want: []Insight{{
+				Title:   "Schedule risk",
+				Content: `{"title":"Schedule risk","body":"Tight"}`,
+			}},
+		},
+		{
 			name:  "scalar value degrades to verbatim JSON",
 			input: `{"Score":7}`,
 			want:  []Insight{{Name: "Score", Content: "7"}},
