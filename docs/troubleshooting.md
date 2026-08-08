@@ -45,6 +45,51 @@ Wrong application type. Ensure you selected **Desktop app** when creating OAuth 
 
 You created a "TVs and Limited Input devices" OAuth client, which doesn't work with Gmail. Google's device code flow does not support Gmail scopes. Create a new OAuth client with **Desktop app** type instead.
 
+### Read-only Gmail access
+
+By default `add-account` requests `gmail.readonly` and `gmail.modify`. Pass `--readonly` to request read access only:
+
+```bash
+msgvault add-account you@gmail.com --readonly
+```
+
+Sync, search, and the TUI all work on a read-only grant. Deletion does not — see below.
+
+Restricting scopes on the **Data Access** page in the Google Cloud Console will not do this for you. That page declares which scopes your app may ask for during verification review; it does not limit what the authorization server grants at request time. Nor can you decline a scope on the consent screen: msgvault rejects a token that comes back with fewer scopes than it asked for. Changing what the client requests is the only thing that works, which is what `--readonly` does.
+
+#### "already has Gmail write access"
+
+```
+you@gmail.com already has Gmail write access (https://www.googleapis.com/auth/gmail.modify)
+```
+
+`--readonly` cannot take away access an account already has. Re-authorization deliberately carries forward previously granted scopes — that is what keeps Calendar and Drive from being silently dropped — so a narrower request over an existing grant would not narrow anything. Delete the token and authorize again:
+
+```bash
+msgvault add-account you@gmail.com --readonly --force
+```
+
+Non-Gmail grants such as Calendar are preserved across this. Verify the result at [myaccount.google.com/permissions](https://myaccount.google.com/permissions).
+
+The same refusal applies to an account holding the broad `https://mail.google.com/` scope, which msgvault grants when you escalate for permanent deletion.
+
+#### "currently has read-only Gmail access"
+
+A plain `add-account` run against a read-only account warns before requesting write access again. Re-run with `--readonly` to keep the narrower grant. Running `add-account --readonly` against an account that is already read-only does nothing and reuses the existing token.
+
+#### Narrowing on a headless server
+
+`--force` requires the browser flow, so an existing grant cannot be narrowed directly on a headless host. Narrow it on a machine with a browser and copy the token file across, as described under [Headless Server Issues](#headless-server-issues).
+
+#### Deletion on a read-only account
+
+Staged deletions need write access that a read-only account does not have, so `delete-staged` offers to re-authorize:
+
+- **Trash** (the default) needs `gmail.modify`, or the broader `https://mail.google.com/` if the account already holds it.
+- **Permanent** (`--permanent`) needs `https://mail.google.com/`; `gmail.modify` does not cover batch deletion.
+
+Declining the prompt leaves both the token and the staged batch untouched. Accepting it widens the grant, so an account you want to keep read-only should decline.
+
 ### General OAuth Issues
 
 1. Remove old tokens: `rm ~/.msgvault/tokens/you@gmail.com.json`

@@ -26,16 +26,105 @@ import (
 	"golang.org/x/oauth2/google"
 )
 
+// Gmail scope identifiers. Declared once so the scope *sets* below and every
+// "does this account have write access" check derive from the same strings.
+const (
+	// ScopeGmailReadonly grants read access to mail and settings.
+	ScopeGmailReadonly = "https://www.googleapis.com/auth/gmail.readonly"
+	// ScopeGmailModify grants read plus trash/untrash/label changes.
+	ScopeGmailModify = "https://www.googleapis.com/auth/gmail.modify"
+	// ScopeGmailFull is Gmail's broad full-access scope. It is required for
+	// batchDelete and, being a superset of modify, also permits trashing.
+	ScopeGmailFull = "https://mail.google.com/"
+)
+
 // Scopes for normal msgvault operations (sync, search, read).
 var Scopes = []string{
-	"https://www.googleapis.com/auth/gmail.readonly",
-	"https://www.googleapis.com/auth/gmail.modify",
+	ScopeGmailReadonly,
+	ScopeGmailModify,
 }
 
 // ScopesDeletion includes full access required for batchDelete API.
 // gmail.modify supports trash/untrash but NOT batchDelete.
 var ScopesDeletion = []string{
-	"https://mail.google.com/",
+	ScopeGmailFull,
+}
+
+// ScopesGmailReadonly is the Gmail scope set requested by
+// `add-account --readonly`: read access and nothing else.
+var ScopesGmailReadonly = []string{
+	ScopeGmailReadonly,
+}
+
+// ScopesGmailWrite is every Gmail scope that confers write access. There is
+// more than one: gmail.modify for trash/untrash/label, and the broader
+// full-access scope used for permanent deletion, which is a superset.
+//
+// Any decision of the form "does this account currently have Gmail write
+// access" or "which scopes should be dropped when narrowing to read-only"
+// MUST consider this whole set. Checking gmail.modify alone silently
+// mishandles accounts that hold only the full-access scope.
+var ScopesGmailWrite = []string{
+	ScopeGmailModify,
+	ScopeGmailFull,
+}
+
+// HasGmailWriteScope reports whether scopes contain any Gmail scope that
+// grants write access. See ScopesGmailWrite for why this is a set.
+func HasGmailWriteScope(scopes []string) bool {
+	return len(GrantedGmailWriteScopes(scopes)) > 0
+}
+
+// GrantedGmailWriteScopes returns the Gmail write scopes present in scopes,
+// so callers can name exactly what an account holds in operator-facing
+// messages rather than guessing.
+func GrantedGmailWriteScopes(scopes []string) []string {
+	var granted []string
+	for _, scope := range ScopesGmailWrite {
+		if slices.Contains(scopes, scope) {
+			granted = append(granted, scope)
+		}
+	}
+	return granted
+}
+
+// WithoutGmailWriteScopes returns scopes with every Gmail write scope removed
+// and everything else — Calendar, Drive, gmail.readonly — left in place and in
+// order. This is how narrowing preserves unrelated grants.
+func WithoutGmailWriteScopes(scopes []string) []string {
+	kept := make([]string, 0, len(scopes))
+	for _, scope := range scopes {
+		if slices.Contains(ScopesGmailWrite, scope) {
+			continue
+		}
+		kept = append(kept, scope)
+	}
+	return kept
+}
+
+// HasAnyGmailScope reports whether scopes contain any Gmail scope at all.
+// It distinguishes "this account holds a narrower Gmail grant" from "this
+// account has no Gmail grant yet", which read differently: the first is a
+// deliberate narrowing worth preserving, the second is a first-time
+// authorization where warning about widening would be noise.
+func HasAnyGmailScope(scopes []string) bool {
+	for _, scope := range append([]string{ScopeGmailReadonly}, ScopesGmailWrite...) {
+		if slices.Contains(scopes, scope) {
+			return true
+		}
+	}
+	return false
+}
+
+// IsNarrowedGmailGrant reports whether scopes describe a Gmail grant that has
+// deliberately been narrowed: Gmail access is present, but no write scope is.
+// Re-authorization paths use this to avoid silently restoring write access to
+// an account the operator narrowed on purpose.
+//
+// A grant with no Gmail scopes at all is not "narrowed" — it has simply never
+// had Gmail — so this returns false and such accounts widen as before.
+func IsNarrowedGmailGrant(scopes []string) bool {
+	return HasAnyGmailScope(scopes) && !HasGmailWriteScope(scopes)
 }
 
 // ScopeCalendarReadonly is the read-only Calendar scope: it covers both
@@ -169,7 +258,10 @@ func (m *Manager) ForceRefresh(ctx context.Context, email string) error {
 // Google's device flow does not support Gmail scopes, so users must authorize
 // on a machine with a browser and copy the token file.
 // tokensDir should be the configured tokens directory (e.g., cfg.TokensDir()).
-func PrintHeadlessInstructions(email, tokensDir, oauthApp string) {
+// readonly echoes --readonly back into the printed commands so the operator
+// authorizes on the browser machine with the same narrowed grant they asked
+// for here.
+func PrintHeadlessInstructions(email, tokensDir, oauthApp string, readonly bool) {
 	// Use same sanitization as tokenPath for consistency
 	tokenFile := sanitizeEmail(email) + ".json"
 	tokenPath := filepath.Join(tokensDir, tokenFile)
@@ -177,6 +269,9 @@ func PrintHeadlessInstructions(email, tokensDir, oauthApp string) {
 	addCmd := "    msgvault add-account " + email
 	if oauthApp != "" {
 		addCmd += " --oauth-app " + oauthApp
+	}
+	if readonly {
+		addCmd += " --readonly"
 	}
 
 	fmt.Println()
@@ -319,7 +414,22 @@ func (m *Manager) withScopes(scopes []string) *Manager {
 	return &scoped
 }
 
+// scopesWithPreservedGrants unions the scopes a caller requires with the ones
+// the account already holds, because Google's forced re-consent REPLACES the
+// granted set rather than adding to it.
+//
+// The union is asymmetric in one direction: if the existing grant is a
+// deliberately narrowed Gmail grant (read access, no write scope), the Gmail
+// write scopes are dropped from the required set rather than being restored.
+// Callers here reach this path on incidental re-authorization — a token
+// expired, or Calendar is being added — where quietly handing back write
+// access the operator removed would defeat `add-account --readonly`. Paths
+// that mean to escalate build their scope list explicitly and call Authorize
+// directly, so they are unaffected.
 func scopesWithPreservedGrants(required, granted []string) []string {
+	if IsNarrowedGmailGrant(granted) {
+		required = WithoutGmailWriteScopes(required)
+	}
 	scopes := append([]string(nil), required...)
 	for _, scope := range granted {
 		if !slices.Contains(scopes, scope) {
@@ -499,7 +609,7 @@ func tokenProfileEndpointForScopes(scopes []string) tokenProfileEndpoint {
 }
 
 func hasGmailProfileScope(scopes []string) bool {
-	if slices.Contains(scopes, "https://mail.google.com/") {
+	if slices.Contains(scopes, ScopeGmailFull) {
 		return true
 	}
 	for _, scope := range Scopes {

@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"io"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/oauth"
@@ -17,6 +19,7 @@ var (
 	forceReauth                 bool
 	oauthAppName                string
 	noDefaultIdentityAddAccount bool
+	readonlyGrant               bool
 )
 
 // addAccountUse is the usage string for the add-account command.
@@ -39,6 +42,11 @@ for authorizing on headless servers (Google does not support Gmail in device flo
 If a token already exists, the command skips authorization. Use --force to delete
 the existing token and start a fresh OAuth flow.
 
+By default msgvault requests Gmail read and modify access. Use --readonly to
+request read access only. An account that already holds write access cannot be
+narrowed in place; combine --readonly with --force to re-authorize it. Non-Gmail
+grants such as Calendar are preserved either way.
+
 For Google Workspace orgs that require their own OAuth app, use --oauth-app to
 specify a named app from config.toml.
 
@@ -46,6 +54,8 @@ Examples:
   msgvault add-account you@gmail.com
   msgvault add-account you@gmail.com --headless
  msgvault add-account you@gmail.com --force
+  msgvault add-account you@gmail.com --readonly
+  msgvault add-account you@gmail.com --readonly --force
   msgvault add-account you@acme.com --oauth-app acme
   msgvault add-account you@gmail.com --display-name "Work Account"`,
 	Args: cobra.ExactArgs(1),
@@ -103,6 +113,11 @@ func resolveAddAccountBinding(flagApp string, flagExplicit bool, storedApp sql.N
 // newAddAccountOAuthManager builds the Gmail OAuth manager for email,
 // preserving any already-granted scopes so Google's replacement consent
 // does not drop Calendar/Drive scopes from the shared token file.
+//
+// Callers MUST build the manager before --force deletes the token. The scope
+// list is derived from the grant on disk, so probing after deletion would find
+// nothing to preserve and quietly discard the account's Calendar/Drive access
+// along with the Gmail scopes --force meant to reset.
 func newAddAccountOAuthManager(clientSecretsPath, email string) (*oauth.Manager, error) {
 	scopeProbe, err := oauth.NewManager(clientSecretsPath, cfg.TokensDir(), logger)
 	if err != nil {
@@ -111,6 +126,7 @@ func newAddAccountOAuthManager(clientSecretsPath, email string) (*oauth.Manager,
 	oauthScopes := addAccountOAuthScopesForToken(
 		scopeProbe.HasScopeMetadata(email),
 		scopeProbe.GrantedScopes(email),
+		readonlyGrant,
 	)
 	mgr, err := oauth.NewManagerWithScopes(clientSecretsPath, cfg.TokensDir(), logger, oauthScopes)
 	if err != nil {
@@ -129,7 +145,7 @@ func addAccountTokenReusable(mgr *oauth.Manager, email string, binding addAccoun
 		binding.resolvedApp != ""
 	return mgr.HasToken(email) &&
 		(!needsClientCheck || mgr.TokenMatchesClient(email)) &&
-		addAccountTokenHasGmailScopes(mgr, email)
+		addAccountTokenHasGmailScopes(mgr, email, readonlyGrant)
 }
 
 // addAccountAuthorizeError decorates an authorization failure with the
@@ -181,6 +197,9 @@ func preflightAddAccountAuthorize(cmd *cobra.Command, email string) error {
 	}
 	mgr, err := newAddAccountOAuthManager(clientSecretsPath, email)
 	if err != nil {
+		return err
+	}
+	if err := applyAddAccountGrantDecision(cmd.OutOrStdout(), mgr, email); err != nil {
 		return err
 	}
 	if forceReauth {
@@ -271,7 +290,7 @@ func runAddAccountLocal(cmd *cobra.Command, args []string) error {
 		if saKeyPath != "" {
 			return usageErr(cmd, errors.New("service accounts do not use --headless; run add-account without --headless"))
 		}
-		oauth.PrintHeadlessInstructions(email, cfg.TokensDir(), resolvedApp)
+		oauth.PrintHeadlessInstructions(email, cfg.TokensDir(), resolvedApp, readonlyGrant)
 		return nil
 	}
 
@@ -279,6 +298,9 @@ func runAddAccountLocal(cmd *cobra.Command, args []string) error {
 	if saKeyPath != "" {
 		if forceReauth {
 			return usageErr(cmd, errors.New("service accounts do not use --force; tokens are minted on demand from the configured service account key"))
+		}
+		if readonlyGrant {
+			return usageErr(cmd, errors.New("service accounts do not use --readonly; scopes come from the domain-wide delegation grant configured in the Workspace admin console"))
 		}
 		saMgr, saErr := oauth.NewServiceAccountManager(saKeyPath, oauth.Scopes)
 		if saErr != nil {
@@ -353,6 +375,12 @@ func runAddAccountLocal(cmd *cobra.Command, args []string) error {
 	// otherwise drop Calendar/Drive scopes from the shared token file.
 	oauthMgr, err := newAddAccountOAuthManager(clientSecretsPath, email)
 	if err != nil {
+		return err
+	}
+
+	// Refuse or warn about the grant change while the existing token is still
+	// on disk — --force below removes the evidence this decision needs.
+	if err := applyAddAccountGrantDecision(cmd.OutOrStdout(), oauthMgr, email); err != nil {
 		return err
 	}
 
@@ -460,20 +488,41 @@ func runAddAccountLocal(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func addAccountOAuthScopesForToken(hasScopeMetadata bool, existingScopes []string) []string {
+// addAccountOAuthScopesForToken builds the scope list to request. Existing
+// grants are carried forward because Google's replacement consent would
+// otherwise drop Calendar/Drive from the shared token file.
+//
+// Under readonly the Gmail write scopes are subtracted from those carried-over
+// grants and only gmail.readonly is required, which is what makes narrowing
+// actually narrow. Everything non-Gmail passes through untouched.
+func addAccountOAuthScopesForToken(hasScopeMetadata bool, existingScopes []string, readonly bool) []string {
+	required := oauth.Scopes
+	if readonly {
+		required = oauth.ScopesGmailReadonly
+	}
 	if !hasScopeMetadata {
-		return append([]string(nil), oauth.Scopes...)
+		return append([]string(nil), required...)
 	}
 	scopes := append([]string(nil), existingScopes...)
-	for _, scope := range oauth.Scopes {
+	if readonly {
+		scopes = oauth.WithoutGmailWriteScopes(scopes)
+	}
+	for _, scope := range required {
 		scopes = appendScopeIfMissing(scopes, scope)
 	}
 	return scopes
 }
 
-func addAccountTokenHasGmailScopes(mgr *oauth.Manager, email string) bool {
+// addAccountTokenHasGmailScopes reports whether the stored token already
+// covers what this run needs, so the token can be reused without a fresh
+// consent. Under readonly, gmail.readonly on its own is enough — re-authorizing
+// an account that is already narrowed would be a pointless browser round trip.
+func addAccountTokenHasGmailScopes(mgr *oauth.Manager, email string, readonly bool) bool {
 	if !mgr.HasScopeMetadata(email) {
 		return true
+	}
+	if readonly {
+		return mgr.HasScope(email, oauth.ScopeGmailReadonly)
 	}
 	for _, scope := range oauth.ScopesDeletion {
 		if mgr.HasScope(email, scope) {
@@ -486,6 +535,105 @@ func addAccountTokenHasGmailScopes(mgr *oauth.Manager, email string) bool {
 		}
 	}
 	return true
+}
+
+// addAccountGrantDecision is the verdict on an account's current grant versus
+// what this run is about to request.
+type addAccountGrantDecision struct {
+	// Err refuses the run outright.
+	Err error
+	// Warning is printed before authorization proceeds.
+	Warning string
+}
+
+// decideAddAccountGrant compares the account's current grant against the
+// requested one. It is pure so both the local command and the daemon preflight
+// reach the same verdict from the same inputs.
+//
+// Refusal (readonly over an existing write grant) is required rather than
+// merely helpful: without --force the stored token is reused and no narrower
+// request is ever sent, so proceeding would report success while changing
+// nothing. --force deletes the token, which makes the narrower request real.
+//
+// The widening warning fires only when there is an existing narrower Gmail
+// grant to widen. A brand-new account is the common case and a warning there
+// would be noise; an account holding only Calendar/Drive is likewise getting
+// its first Gmail grant, not losing a narrowed one.
+func decideAddAccountGrant(
+	email string,
+	hasToken bool,
+	hasScopeMetadata bool,
+	grantedScopes []string,
+	readonly bool,
+	force bool,
+) addAccountGrantDecision {
+	if !hasToken || !hasScopeMetadata {
+		return addAccountGrantDecision{}
+	}
+	if readonly {
+		if force {
+			return addAccountGrantDecision{}
+		}
+		if granted := oauth.GrantedGmailWriteScopes(grantedScopes); len(granted) > 0 {
+			return addAccountGrantDecision{Err: fmt.Errorf(
+				"%s already has Gmail write access (%s)\n"+
+					"Re-authorizing preserves scopes the account already holds, so --readonly "+
+					"alone cannot take write access away.\n"+
+					"Non-Gmail grants such as Calendar are preserved either way.\n"+
+					"To narrow it, delete the token and authorize again:\n"+
+					"  msgvault add-account %s --readonly --force",
+				email, strings.Join(granted, ", "), email,
+			)}
+		}
+		return addAccountGrantDecision{}
+	}
+	if oauth.IsNarrowedGmailGrant(grantedScopes) {
+		return addAccountGrantDecision{Warning: fmt.Sprintf(
+			"Warning: %s currently has read-only Gmail access (%s).\n"+
+				"Continuing will request write access (%s).\n"+
+				"Re-run with --readonly to keep the narrower grant.",
+			email,
+			strings.Join(gmailScopesIn(grantedScopes), ", "),
+			strings.Join(oauth.Scopes, ", "),
+		)}
+	}
+	return addAccountGrantDecision{}
+}
+
+// gmailScopesIn returns the Gmail scopes present in scopes, so the widening
+// warning can name the current grant precisely instead of describing it.
+func gmailScopesIn(scopes []string) []string {
+	var gmail []string
+	for _, scope := range scopes {
+		if oauth.HasAnyGmailScope([]string{scope}) {
+			gmail = append(gmail, scope)
+		}
+	}
+	return gmail
+}
+
+// applyAddAccountGrantDecision reports the verdict, returning an error when
+// the run must stop. It must run before any authorization and, critically,
+// before --force deletes the token: once the token is gone there is no grant
+// left to compare against.
+func applyAddAccountGrantDecision(out io.Writer, mgr *oauth.Manager, email string) error {
+	decision := decideAddAccountGrant(
+		email,
+		mgr.HasToken(email),
+		mgr.HasScopeMetadata(email),
+		mgr.GrantedScopes(email),
+		readonlyGrant,
+		forceReauth,
+	)
+	if decision.Err != nil {
+		return decision.Err
+	}
+	if decision.Warning != "" {
+		if _, err := fmt.Fprintln(out, decision.Warning); err != nil {
+			return fmt.Errorf("write grant warning: %w", err)
+		}
+	}
+	return nil
 }
 
 func findGmailSource(
@@ -509,6 +657,7 @@ func registerAddAccountFlags(cmd *cobra.Command) {
 	cmd.Flags().StringVar(&accountDisplayName, "display-name", "", "Display name for the account (e.g., \"Work\", \"Personal\")")
 	cmd.Flags().StringVar(&oauthAppName, "oauth-app", "", "Named OAuth app from config (for Google Workspace orgs)")
 	cmd.Flags().BoolVar(&noDefaultIdentityAddAccount, "no-default-identity", false, noDefaultIdentityHelp)
+	cmd.Flags().BoolVar(&readonlyGrant, "readonly", false, "Request Gmail read-only access instead of read+write (combine with --force to narrow an existing grant)")
 }
 
 func init() {
