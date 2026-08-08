@@ -312,6 +312,82 @@ func TestOpenHTTPStoreIncludesLastDaemonLogWhenStartupExits(t *testing.T) {
 	assert.Contains(err.Error(), "Logs: "+logPath)
 }
 
+func TestCommandAwareDaemonAutostartCancellationStopsStartedDaemon(t *testing.T) {
+	dataDir := t.TempDir()
+	withStoreResolverConfig(t, lifecycleTestConfig(dataDir))
+	waitCh := make(chan error)
+	proc := &backgroundServeProcess{
+		PID:     4242,
+		LogPath: filepath.Join(dataDir, "serve.log"),
+		Wait:    waitCh,
+	}
+	stubStartServeBackgroundProcess(t, func(*config.Config, backgroundServeStartOptions) (*backgroundServeProcess, error) {
+		return proc, nil
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	stubWaitForBackgroundServeReady(t, func(
+		context.Context,
+		string,
+		<-chan error,
+		time.Duration,
+	) (*DaemonRuntime, bool, error) {
+		cancel()
+		return nil, false, context.Canceled
+	})
+	stopped := false
+	oldStop := stopBackgroundServeStartupForRun
+	stopBackgroundServeStartupForRun = func(got *backgroundServeProcess) error {
+		stopped = true
+		assert.Same(t, proc, got)
+		return nil
+	}
+	t.Cleanup(func() { stopBackgroundServeStartupForRun = oldStop })
+
+	st, _, err := openHTTPStoreWithStartupCacheIntent(ctx, startupCacheBuildIntentDefault)
+	if st != nil {
+		t.Cleanup(func() { _ = st.Close() })
+	}
+
+	require.ErrorIs(t, err, context.Canceled)
+	assert.True(t, stopped, "canceling command-aware startup must stop the daemon it launched")
+}
+
+func TestOrdinaryDaemonAutostartCancellationLeavesDetachedDaemonRunning(t *testing.T) {
+	dataDir := t.TempDir()
+	withStoreResolverConfig(t, lifecycleTestConfig(dataDir))
+	waitCh := make(chan error)
+	stubStartServeBackgroundProcess(t, func(*config.Config, backgroundServeStartOptions) (*backgroundServeProcess, error) {
+		return &backgroundServeProcess{
+			PID:     4242,
+			LogPath: filepath.Join(dataDir, "serve.log"),
+			Wait:    waitCh,
+		}, nil
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	stubWaitForBackgroundServeReady(t, func(
+		context.Context,
+		string,
+		<-chan error,
+		time.Duration,
+	) (*DaemonRuntime, bool, error) {
+		cancel()
+		return nil, false, context.Canceled
+	})
+	oldStop := stopBackgroundServeStartupForRun
+	stopBackgroundServeStartupForRun = func(*backgroundServeProcess) error {
+		require.FailNow(t, "ordinary autostart must retain detached-daemon cancellation semantics")
+		return errors.New("unreachable startup stop")
+	}
+	t.Cleanup(func() { stopBackgroundServeStartupForRun = oldStop })
+
+	st, _, err := OpenHTTPStore(ctx)
+	if st != nil {
+		t.Cleanup(func() { _ = st.Close() })
+	}
+
+	require.ErrorIs(t, err, context.Canceled)
+}
+
 func TestOpenHTTPStoreTakesOverWhenConcurrentDaemonStartExits(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)

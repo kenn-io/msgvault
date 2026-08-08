@@ -120,6 +120,19 @@ func TestDaemonStartupProgressStateRepeatsActiveCacheBuild(t *testing.T) {
 	assert.Equal(t, "still waiting", state.Next(completeLine))
 }
 
+func TestDaemonStartupProgressStateClearsFailedCacheBuild(t *testing.T) {
+	state := daemonStartupProgressState{}
+	buildLine := `time=2026-07-01T12:00:00Z level=INFO msg="daemon startup step" step=build_analytics_cache reason="analytics cache schema is stale" full_rebuild=true`
+	assert.Equal(t,
+		"building the analytics cache (full rebuild: analytics cache schema is stale)",
+		state.Next(buildLine),
+	)
+
+	failedLine := `time=2026-07-01T12:00:10Z level=WARN msg="daemon startup step failed" step=build_analytics_cache error="simulated build failure"`
+	assert.Equal(t, "building the analytics cache (failed) : simulated build failure", state.Next(failedLine))
+	assert.Equal(t, "still waiting", state.Next(failedLine))
+}
+
 // TestHumanizeDaemonLogLineTruncatesLongRawFallback locks in the length cap:
 // a record with unknown keys falls back to the raw line, which can embed
 // arbitrarily large values, and the terminal echo must stay bounded.

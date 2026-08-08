@@ -806,11 +806,14 @@ func openDaemonAnalyticsEngine(
 			if intent != startupCacheBuildIntentNone {
 				outcome = startupCacheBuildOutcomeFailed
 			}
+			logger.Warn("daemon startup step failed",
+				"step", "build_analytics_cache",
+				"reason", reason,
+				"full_rebuild", fullBuild,
+				"error", buildErr)
 			if engineMode == config.AnalyticsEngineDuckDB {
 				return nil, "", outcome, fmt.Errorf("build analytics cache: %w", buildErr)
 			}
-			logger.Warn("analytics cache build failed; using live SQL engine",
-				"error", buildErr)
 			if intent != startupCacheBuildIntentNone {
 				return query.NewEngine(s.DB(), false), api.AnalyticsModeSQLFallback, outcome, nil
 			}

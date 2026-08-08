@@ -297,7 +297,15 @@ func ensureLocalDaemonRuntimeWithStartupCacheIntent(
 		ctx, c.Data.DataDir, proc.Wait, localDaemonAutoStartReadyTimeout,
 	)
 	if err != nil {
-		return nil, localDaemonStartupInfo{}, backgroundServeStartupError(err, proc)
+		startupErr := backgroundServeStartupError(err, proc)
+		if intent != startupCacheBuildIntentNone && ctx.Err() != nil {
+			stopErr := stopBackgroundServeStartupForRun(proc)
+			if stopErr != nil {
+				startupErr = errors.Join(startupErr,
+					fmt.Errorf("stop canceled daemon startup: %w", stopErr))
+			}
+		}
+		return nil, localDaemonStartupInfo{}, startupErr
 	}
 	if !ready {
 		return nil, localDaemonStartupInfo{}, fmt.Errorf(
@@ -464,7 +472,7 @@ func (s *daemonStartupProgressState) Next(line string) string {
 		switch fields["msg"] {
 		case "daemon startup step":
 			s.activeStep = daemonStartupStepLabel(fields["step"])
-		case "daemon startup step complete":
+		case "daemon startup step complete", "daemon startup step failed":
 			s.activeStep = ""
 		}
 	}
@@ -542,6 +550,9 @@ func summarizeDaemonLogLine(line string) string {
 	case msg == "daemon startup step complete" && step != "":
 		sb.WriteString(daemonStartupStepLabel(step))
 		sb.WriteString(" (done)")
+	case msg == "daemon startup step failed" && step != "":
+		sb.WriteString(daemonStartupStepLabel(step))
+		sb.WriteString(" (failed)")
 	// SQL logger records carry the full statement in stmt — schema
 	// migrations dump multiple kilobytes of SQL into a single line.
 	// Summarize to the duration; the statement stays in serve.log.

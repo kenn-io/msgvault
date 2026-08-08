@@ -490,6 +490,10 @@ func TestOpenDaemonAnalyticsEngineAutoFallsBackWhenStartupBuildFails(t *testing.
 	c, s := openTestDaemonAnalyticsStore(t)
 	c.Analytics.Engine = config.AnalyticsEngineAuto
 	c.Analytics.AutoBuildCache = true
+	var logs bytes.Buffer
+	oldLogger := logger
+	logger = slog.New(slog.NewTextHandler(&logs, nil))
+	t.Cleanup(func() { logger = oldLogger })
 	stubBuildCacheSubprocess(t, func(context.Context, bool) error {
 		return errors.New("simulated build failure")
 	})
@@ -504,6 +508,8 @@ func TestOpenDaemonAnalyticsEngineAutoFallsBackWhenStartupBuildFails(t *testing.
 	assert.Equal(api.AnalyticsModeSQLFallback, mode,
 		"a failed build falls back to live SQL for engine=auto")
 	assert.Equal(startupCacheBuildOutcomeNone, outcome, "automatic failures have no explicit outcome")
+	assert.Contains(logs.String(), `msg="daemon startup step failed"`)
+	assert.Contains(logs.String(), "step=build_analytics_cache")
 }
 
 func TestOpenDaemonAnalyticsEngineDuckDBRequiresCacheBuild(t *testing.T) {

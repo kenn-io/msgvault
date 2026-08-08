@@ -781,8 +781,15 @@ func reportBackgroundLaunchInProgress(cmd *cobra.Command, dataDir string) {
 
 type backgroundServeProcess struct {
 	PID     int
+	Process *os.Process
 	LogPath string
 	Wait    <-chan error
+}
+
+const backgroundServeStartupCancelGrace = 5 * time.Second
+
+var stopBackgroundServeStartupForRun = func(proc *backgroundServeProcess) error {
+	return stopBackgroundServeStartup(proc, backgroundServeStartupCancelGrace)
 }
 
 func startServeBackgroundProcess(c *config.Config, opts backgroundServeStartOptions) (*backgroundServeProcess, error) {
@@ -840,9 +847,50 @@ func startServeBackgroundProcess(c *config.Config, opts backgroundServeStartOpti
 	}()
 	return &backgroundServeProcess{
 		PID:     child.Process.Pid,
+		Process: child.Process,
 		LogPath: logPath,
 		Wait:    waitCh,
 	}, nil
+}
+
+func stopBackgroundServeStartup(proc *backgroundServeProcess, grace time.Duration) error {
+	if proc == nil {
+		return nil
+	}
+	process := proc.Process
+	if process == nil {
+		var err error
+		process, err = os.FindProcess(proc.PID)
+		if err != nil {
+			return fmt.Errorf("find background daemon process: %w", err)
+		}
+	}
+	if err := signalDaemonProcess(process); err != nil {
+		if errors.Is(err, os.ErrProcessDone) {
+			return nil
+		}
+		return fmt.Errorf("signal canceled background daemon startup: %w", err)
+	}
+	if grace <= 0 {
+		grace = backgroundServeStartupCancelGrace
+	}
+	timer := time.NewTimer(grace)
+	defer timer.Stop()
+	select {
+	case <-proc.Wait:
+		return nil
+	case <-timer.C:
+	}
+	if err := killDaemonProcess(process); err != nil && !errors.Is(err, os.ErrProcessDone) {
+		return fmt.Errorf("kill canceled background daemon startup: %w", err)
+	}
+	timer.Reset(grace)
+	select {
+	case <-proc.Wait:
+		return nil
+	case <-timer.C:
+		return fmt.Errorf("background daemon pid %d did not exit after cancellation", proc.PID)
+	}
 }
 
 func serveBackgroundChildArgs() []string {

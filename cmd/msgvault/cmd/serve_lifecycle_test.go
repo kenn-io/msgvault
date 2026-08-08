@@ -1185,6 +1185,23 @@ func TestRunServeStartNotReadyPointsAtStatusForAutoPort(t *testing.T) {
 	assert.Empty(t, stderr.String())
 }
 
+func TestStopBackgroundServeStartupTerminatesProcess(t *testing.T) {
+	cmd := helperProcessCommand(context.Background(), "block")
+	require.NoError(t, cmd.Start(), "start blocking helper")
+	waitCh := make(chan error, 1)
+	go func() { waitCh <- cmd.Wait() }()
+	proc := &backgroundServeProcess{
+		PID:     cmd.Process.Pid,
+		Process: cmd.Process,
+		Wait:    waitCh,
+	}
+	t.Cleanup(func() { _ = cmd.Process.Kill() })
+
+	err := stopBackgroundServeStartup(proc, 2*time.Second)
+
+	require.NoError(t, err)
+}
+
 func TestServeStopGraceTimeoutCoversDaemonShutdownBudget(t *testing.T) {
 	assert.GreaterOrEqual(t,
 		serveStopGraceTimeout,
