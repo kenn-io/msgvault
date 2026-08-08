@@ -56,7 +56,8 @@ Restore, and can sync Teams conversations, Discord guilds, Slack workspaces,
 Beeper chats, plus Granola and Circleback meeting notes.
 Keyword search, analytics, the Web UI, the TUI, and the MCP server query your archive.
 **Source services are contacted only by authorization/registration, sync,
-media-backfill, and deletion workflows that you run or schedule explicitly.**
+media-backfill, provider-backed identity discovery, and deletion workflows that
+you run or schedule explicitly.**
 Optional vector search calls only the embedding endpoint you configure; use a
 local or self-hosted endpoint if message text must never leave your machine or
 network.
