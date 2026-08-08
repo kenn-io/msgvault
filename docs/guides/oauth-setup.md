@@ -199,7 +199,10 @@ Workspace admins can avoid per-user browser OAuth by using a Google service acco
    - `https://mail.google.com/` if you will run `delete-staged --permanent`
 4. Store the key with owner-only permissions, for example `chmod 600 /path/to/workspace-service-account.json`.
 
-Authorize only the scopes this deployment needs. For a read-only archive, `gmail.readonly` alone is sufficient. 
+Both `gmail.readonly` and `gmail.modify` are required. The Gmail service-account paths request that pair when minting a delegated token, so a delegation grant limited to `gmail.readonly` fails the token exchange and `add-account`, `sync`, `serve`, and `verify` all stop working for that account.
+
+!!! note
+    `--readonly` does not apply to service accounts, and is rejected with an error if passed. Scope is set by the delegation grant in the Admin Console rather than by msgvault flags. Narrowing what the Gmail service-account paths request, so that a read-only delegation grant becomes usable, is a possible future change.
 
 Configure the key as the default Google credential:
 

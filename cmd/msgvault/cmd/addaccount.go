@@ -519,7 +519,12 @@ func addAccountOAuthScopesForToken(hasScopeMetadata bool, existingScopes []strin
 // an account that is already narrowed would be a pointless browser round trip.
 func addAccountTokenHasGmailScopes(mgr *oauth.Manager, email string, readonly bool) bool {
 	if !mgr.HasScopeMetadata(email) {
-		return true
+		// A token predating scope recording satisfies a default run, whose
+		// scope set it almost certainly already matches. It cannot satisfy a
+		// readonly run: reusing an unverifiable grant would treat "unknown" as
+		// "already narrow". decideAddAccountGrant refuses this case before it
+		// reaches here, so this is a guard rather than the primary check.
+		return !readonly
 	}
 	if readonly {
 		return mgr.HasScope(email, oauth.ScopeGmailReadonly)
@@ -559,6 +564,13 @@ type addAccountGrantDecision struct {
 // grant to widen. A brand-new account is the common case and a warning there
 // would be noise; an account holding only Calendar/Drive is likewise getting
 // its first Gmail grant, not losing a narrowed one.
+//
+// A token predating scope metadata is refused under readonly for the same
+// reason a known write grant is: msgvault cannot tell what it holds, and such
+// tokens were minted when read plus modify was the only scope set, so treating
+// "unknown" as "narrow enough" would report success over a still-write-capable
+// grant. Only readonly is affected; every other path keeps its existing
+// tolerance for legacy tokens.
 func decideAddAccountGrant(
 	email string,
 	hasToken bool,
@@ -567,12 +579,22 @@ func decideAddAccountGrant(
 	readonly bool,
 	force bool,
 ) addAccountGrantDecision {
-	if !hasToken || !hasScopeMetadata {
+	if !hasToken {
 		return addAccountGrantDecision{}
 	}
 	if readonly {
 		if force {
 			return addAccountGrantDecision{}
+		}
+		if !hasScopeMetadata {
+			return addAccountGrantDecision{Err: fmt.Errorf(
+				"%s has a token that predates scope recording, so its Gmail access cannot be verified\n"+
+					"Tokens this old were issued with read and modify access, which --readonly "+
+					"cannot take away on its own.\n"+
+					"To get an explicitly recorded read-only grant, delete the token and authorize again:\n"+
+					"  msgvault add-account %s --readonly --force",
+				email, email,
+			)}
 		}
 		if granted := oauth.GrantedGmailWriteScopes(grantedScopes); len(granted) > 0 {
 			return addAccountGrantDecision{Err: fmt.Errorf(

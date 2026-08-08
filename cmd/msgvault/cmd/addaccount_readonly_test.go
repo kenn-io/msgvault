@@ -199,10 +199,29 @@ func TestDecideAddAccountGrant(t *testing.T) {
 			readonly: true,
 		},
 		{
-			name:             "legacy token without scope metadata is left alone",
+			// A token predating scope recording holds an unverifiable grant,
+			// and tokens that old were minted with read + modify. Treating
+			// "unknown" as "already narrow" would report success over a still
+			// write-capable account.
+			name:             "legacy token without scope metadata is refused under readonly",
 			hasToken:         true,
 			hasScopeMetadata: false,
 			readonly:         true,
+			wantErr:          true,
+			wantErrContains:  "predates scope recording",
+		},
+		{
+			name:             "legacy token with force proceeds",
+			hasToken:         true,
+			hasScopeMetadata: false,
+			readonly:         true,
+			force:            true,
+		},
+		{
+			name:             "legacy token is left alone on a default run",
+			hasToken:         true,
+			hasScopeMetadata: false,
+			readonly:         false,
 		},
 		{
 			name:             "readonly over a modify grant is refused",
@@ -319,6 +338,19 @@ func TestAddAccountTokenHasGmailScopes_Readonly(t *testing.T) {
 			readonly:  true,
 			want:      true,
 		},
+		{
+			name:      "default run tolerates a legacy token with no recorded scopes",
+			tokenJSON: legacyTokenJSON,
+			readonly:  false,
+			want:      true,
+		},
+		{
+			// Never reuse an unverifiable grant as though it were narrow.
+			name:      "readonly run rejects a legacy token with no recorded scopes",
+			tokenJSON: legacyTokenJSON,
+			readonly:  true,
+			want:      false,
+		},
 	}
 
 	for _, tt := range tests {
@@ -375,6 +407,57 @@ func TestAddAccount_ReadonlyRefusesFullAccessAccount(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), oauth.ScopeGmailFull)
+}
+
+// TestAddAccount_ReadonlyRefusesLegacyTokenWithoutScopeMetadata is the
+// regression for a hole in the refusal contract: a token predating scope
+// recording has no scopes array, so the write-access check found nothing to
+// object to, the token was reused, and the command reported success over an
+// account that still held gmail.modify.
+//
+// Tokens that old were minted when read + modify was the only scope set, so
+// "no recorded scopes" must be treated as "possibly write-capable", not as
+// "already narrow".
+func TestAddAccount_ReadonlyRefusesLegacyTokenWithoutScopeMetadata(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	saveAddAccountFlags(t)
+	tokenPath, restore := seedTokenEnv(t, legacyTokenJSON)
+	defer restore()
+
+	before, err := os.ReadFile(tokenPath)
+	require.NoError(err)
+
+	out, err := runAddAccountForTest(t, scopeEscalationAccount, "--readonly", "--no-default-identity")
+
+	require.Error(err)
+	assert.Contains(err.Error(), "predates scope recording")
+	assert.Contains(err.Error(), "--readonly --force")
+	assert.NotContains(out, "already authorized")
+	assert.NotContains(out, "Starting browser authorization")
+
+	after, readErr := os.ReadFile(tokenPath)
+	require.NoError(readErr)
+	assert.Equal(before, after, "refusal must not touch the existing token")
+}
+
+// TestAddAccount_LegacyTokenStillReusableWithoutReadonly pins the other half:
+// only --readonly is affected. A default run keeps its existing tolerance for
+// tokens with no recorded scopes.
+func TestAddAccount_LegacyTokenStillReusableWithoutReadonly(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	saveAddAccountFlags(t)
+	_, restore := seedTokenEnv(t, legacyTokenJSON)
+	defer restore()
+
+	out, err := runAddAccountForTest(t, scopeEscalationAccount, "--no-default-identity")
+
+	require.NoError(err)
+	assert.Contains(out, "already authorized")
+	assert.NotContains(out, "Warning")
 }
 
 // TestAddAccount_ReadonlyReusesAlreadyNarrowToken covers requirement 6: no
