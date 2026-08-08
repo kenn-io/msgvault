@@ -174,6 +174,55 @@ func TestOpenHTTPStoreStartsLocalDaemonWhenNoRemoteConfigured(t *testing.T) {
 	assert.Equal("http://127.0.0.1:9911", info.URL)
 }
 
+func TestOpenHTTPStoreReportsFulfilledStartupCacheBuild(t *testing.T) {
+	dataDir := t.TempDir()
+	withStoreResolverConfig(t, lifecycleTestConfig(dataDir))
+	waitCh := make(chan error)
+	var gotIntent startupCacheBuildIntent
+	stubStartServeBackgroundProcess(t, func(
+		_ *config.Config,
+		opts backgroundServeStartOptions,
+	) (*backgroundServeProcess, error) {
+		gotIntent = opts.CacheBuildIntent
+		return &backgroundServeProcess{
+			PID:     4242,
+			LogPath: filepath.Join(dataDir, "serve.log"),
+			Wait:    waitCh,
+		}, nil
+	})
+	stubWaitForBackgroundServeReady(t, func(
+		context.Context,
+		string,
+		<-chan error,
+		time.Duration,
+	) (*DaemonRuntime, bool, error) {
+		return &DaemonRuntime{
+			Record: daemon.RuntimeRecord{PID: 4242, Metadata: map[string]string{
+				runtimeStartupCacheBuildOutcome: string(startupCacheBuildOutcomeFulfilled),
+			}},
+			Host: "127.0.0.1",
+			Port: 9911,
+			API:  daemonAPIVersion,
+		}, true, nil
+	})
+
+	var st *daemonclient.Client
+	var info HTTPStoreInfo
+	var err error
+	captureStderrDuring(t, func() {
+		st, info, err = openHTTPStoreWithStartupCacheIntent(
+			context.Background(), startupCacheBuildIntentDefault,
+		)
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = st.Close() })
+
+	assert.Equal(t, startupCacheBuildIntentDefault, gotIntent)
+	assert.True(t, info.StartedLocalDaemon)
+	assert.Equal(t, startupCacheBuildOutcomeFulfilled, info.StartupCacheBuildOutcome)
+	assert.Equal(t, filepath.Join(dataDir, "serve.log"), info.DaemonLogPath)
+}
+
 func TestOpenHTTPStoreReportsLocalDaemonStartupToStderr(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)

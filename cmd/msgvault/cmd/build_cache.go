@@ -308,11 +308,33 @@ func requestedBuildCacheMode(full, auto, derived bool) (buildCacheMode, error) {
 }
 
 func runBuildCacheHTTP(cmd *cobra.Command, fullRebuild bool) error {
-	st, _, err := OpenHTTPStore(cmd.Context())
+	intent := startupCacheBuildIntentDefault
+	if fullRebuild {
+		intent = startupCacheBuildIntentFull
+	}
+	st, info, err := openHTTPStoreWithStartupCacheIntent(cmd.Context(), intent)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = st.Close() }()
+	if info.StartedLocalDaemon {
+		switch info.StartupCacheBuildOutcome {
+		case startupCacheBuildOutcomeFulfilled:
+			_, writeErr := fmt.Fprintln(cmd.OutOrStdout(),
+				"Cache build complete. The daemon is running and using the analytics cache.")
+			if writeErr != nil {
+				return fmt.Errorf("write build-cache completion: %w", writeErr)
+			}
+			return nil
+		case startupCacheBuildOutcomeFailed:
+			return fmt.Errorf(
+				"analytics cache build failed during daemon startup; "+
+					"the daemon is running with live SQL\nLogs: %s",
+				info.DaemonLogPath,
+			)
+		case startupCacheBuildOutcomeNone, startupCacheBuildOutcomeUnconsumed:
+		}
+	}
 
 	return st.BuildCLICache(cmd.Context(), fullRebuild, func(stream, data string) error {
 		switch stream {

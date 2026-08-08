@@ -104,8 +104,11 @@ const (
 // HTTPStoreInfo carries the selected daemon endpoint alongside the client.
 // Commands use it for user-facing endpoint labels and local-daemon cwd policy.
 type HTTPStoreInfo struct {
-	Kind HTTPStoreKind
-	URL  string
+	Kind                     HTTPStoreKind
+	URL                      string
+	StartedLocalDaemon       bool
+	DaemonLogPath            string
+	StartupCacheBuildOutcome startupCacheBuildOutcome
 }
 
 // IsRemoteMode returns true when CLI requests should target the configured
@@ -126,6 +129,13 @@ func IsRemoteMode() bool {
 // daemon is discovered or started so SQLite remains owned by one long-lived
 // process.
 func OpenHTTPStore(ctx context.Context) (*daemonclient.Client, HTTPStoreInfo, error) {
+	return openHTTPStoreWithStartupCacheIntent(ctx, startupCacheBuildIntentNone)
+}
+
+func openHTTPStoreWithStartupCacheIntent(
+	ctx context.Context,
+	intent startupCacheBuildIntent,
+) (*daemonclient.Client, HTTPStoreInfo, error) {
 	if cfg == nil {
 		return nil, HTTPStoreInfo{}, errors.New("nil config")
 	}
@@ -140,7 +150,7 @@ func OpenHTTPStore(ctx context.Context) (*daemonclient.Client, HTTPStoreInfo, er
 		}, nil
 	}
 
-	rt, err := ensureLocalDaemonRuntime(ctx, cfg)
+	rt, startup, err := ensureLocalDaemonRuntimeWithStartupCacheIntent(ctx, cfg, intent)
 	if err != nil {
 		return nil, HTTPStoreInfo{}, err
 	}
@@ -155,8 +165,11 @@ func OpenHTTPStore(ctx context.Context) (*daemonclient.Client, HTTPStoreInfo, er
 	}
 	st.SetBusyNotifier(reportDaemonBusyWait)
 	return st, HTTPStoreInfo{
-		Kind: HTTPStoreLocalDaemon,
-		URL:  url,
+		Kind:                     HTTPStoreLocalDaemon,
+		URL:                      url,
+		StartedLocalDaemon:       startup.Started,
+		DaemonLogPath:            startup.LogPath,
+		StartupCacheBuildOutcome: startup.Outcome,
 	}, nil
 }
 
@@ -185,26 +198,36 @@ func openRemoteStore(ctx context.Context) (*daemonclient.Client, error) {
 	return st, nil
 }
 
-func ensureLocalDaemonRuntime(ctx context.Context, c *config.Config) (*DaemonRuntime, error) {
+type localDaemonStartupInfo struct {
+	Started bool
+	LogPath string
+	Outcome startupCacheBuildOutcome
+}
+
+func ensureLocalDaemonRuntimeWithStartupCacheIntent(
+	ctx context.Context,
+	c *config.Config,
+	intent startupCacheBuildIntent,
+) (*DaemonRuntime, localDaemonStartupInfo, error) {
 	if c == nil {
-		return nil, errors.New("nil config")
+		return nil, localDaemonStartupInfo{}, errors.New("nil config")
 	}
 	if err := os.MkdirAll(c.Data.DataDir, 0o700); err != nil {
-		return nil, fmt.Errorf("create data directory: %w", err)
+		return nil, localDaemonStartupInfo{}, fmt.Errorf("create data directory: %w", err)
 	}
 	if rt := findDaemonRuntime(c.Data.DataDir); rt != nil &&
 		!shouldUpgradeDaemonRuntimeWithPolicy(rt, Version, c.Server.DaemonAutoRestart) {
 		if err := probeLocalDaemonAuth(ctx, rt, c); err != nil {
-			return nil, err
+			return nil, localDaemonStartupInfo{}, err
 		}
-		return rt, nil
+		return rt, localDaemonStartupInfo{}, nil
 	}
 
 	// No usable daemon was found. If a direct CLI writer owns the archive,
 	// fail fast with a clear message instead of spawning a daemon that cannot
 	// claim the held write-owner lock.
 	if err := daemonAutostartPreflight(c); err != nil {
-		return nil, err
+		return nil, localDaemonStartupInfo{}, err
 	}
 
 	launchLock, ok := acquireBackgroundLaunchLock(c.Data.DataDir)
@@ -218,7 +241,7 @@ func ensureLocalDaemonRuntime(ctx context.Context, c *config.Config) (*DaemonRun
 		inProgress, err := daemonStartInProgress(ctx, c.Data.DataDir)
 		if err != nil {
 			_ = launchLock.Unlock()
-			return nil, err
+			return nil, localDaemonStartupInfo{}, err
 		}
 		if inProgress {
 			_ = launchLock.Unlock()
@@ -233,52 +256,66 @@ func ensureLocalDaemonRuntime(ctx context.Context, c *config.Config) (*DaemonRun
 			ctx, c.Data.DataDir, c.Server.DaemonAutoRestart, localDaemonAutoStartReadyTimeout,
 		)
 		if err != nil {
-			return nil, err
+			return nil, localDaemonStartupInfo{}, err
 		}
 		if rt != nil {
 			if err := probeLocalDaemonAuth(ctx, rt, c); err != nil {
-				return nil, err
+				return nil, localDaemonStartupInfo{}, err
 			}
-			return rt, nil
+			return rt, localDaemonStartupInfo{}, nil
 		}
 		if acquiredLock != nil {
 			launchLock = acquiredLock
 		} else {
-			return nil, errors.New("msgvault daemon start is already in progress")
+			return nil, localDaemonStartupInfo{},
+				errors.New("msgvault daemon start is already in progress")
 		}
 	}
 	defer func() { _ = launchLock.Unlock() }()
 
 	prep, err := prepareBackgroundDaemonStart(c, "run `msgvault daemon stop` or retry with --local")
 	if err != nil {
-		return nil, err
+		return nil, localDaemonStartupInfo{}, err
 	}
 	if rt := prep.Reusable; rt != nil {
 		if err := probeLocalDaemonAuth(ctx, rt, c); err != nil {
-			return nil, err
+			return nil, localDaemonStartupInfo{}, err
 		}
-		return rt, nil
+		return rt, localDaemonStartupInfo{}, nil
 	}
 
-	proc, err := startServeBackgroundProcessForRun(c, backgroundServeStartOptions{})
+	startedAt := time.Now()
+	proc, err := startServeBackgroundProcessForRun(c, backgroundServeStartOptions{
+		CacheBuildIntent: intent,
+	})
 	if err != nil {
-		return nil, fmt.Errorf("start background daemon: %w", err)
+		return nil, localDaemonStartupInfo{}, fmt.Errorf("start background daemon: %w", err)
 	}
 	stopProgress := reportLocalDaemonStartup(ctx, proc)
-	defer stopProgress()
+	defer func() { stopProgress() }()
 	rt, ready, err := waitForBackgroundServeReadyForRun(
 		ctx, c.Data.DataDir, proc.Wait, localDaemonAutoStartReadyTimeout,
 	)
 	if err != nil {
-		return nil, backgroundServeStartupError(err, proc)
+		return nil, localDaemonStartupInfo{}, backgroundServeStartupError(err, proc)
 	}
 	if !ready {
-		return nil, fmt.Errorf(
+		return nil, localDaemonStartupInfo{}, fmt.Errorf(
 			"msgvault daemon did not become ready within %s (pid %d)\nLogs: %s",
 			localDaemonAutoStartReadyTimeout, proc.PID, proc.LogPath,
 		)
 	}
-	return rt, nil
+	stopProgress()
+	stopProgress = func() {}
+	if intent != startupCacheBuildIntentNone {
+		_, _ = fmt.Fprintf(os.Stderr, "Daemon ready after %s.\n",
+			time.Since(startedAt).Round(time.Second))
+	}
+	return rt, localDaemonStartupInfo{
+		Started: true,
+		LogPath: proc.LogPath,
+		Outcome: startupCacheBuildOutcomeFromRuntime(rt),
+	}, nil
 }
 
 func backgroundServeStartupError(err error, proc *backgroundServeProcess) error {
