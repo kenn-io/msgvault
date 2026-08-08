@@ -284,6 +284,12 @@ func (imp *Importer) sweepRange(ctx context.Context, syncID int64, scope, floor 
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
+			// Charge a failed free-overlap attempt so the shared budget cannot
+			// repeat the same failing search once per lagging channel. A
+			// chargeable day already spent its unit before the request.
+			if !chargeDay && budget.limit > 0 {
+				budget.used++
+			}
 			// Discovery failure: nothing this day was processed;
 			// certification stays where the last complete day left it.
 			imp.recordItem(syncID, item, "sweep", store.SyncRunItemStatusError, "slack_search_error", err)

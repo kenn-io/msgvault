@@ -220,3 +220,37 @@ func TestSweepRangeExhaustedAtEntrySkipsFreeOverlapSearch(t *testing.T) {
 	require.Len(searches, 1, "an exhausted shared budget must not search another channel's free overlap day")
 	require.Contains(searches[0], "in:<#C01>")
 }
+
+func TestSweepRangeFailedFreeOverlapConsumesSharedBudget(t *testing.T) {
+	require := require.New(t)
+	f := newFakeSlack(t)
+	f.failSearch = true
+	imp, opts := testImporter(t, f)
+	src, err := imp.store.GetOrCreateSource(sourceTypeSlack, "T01:UME")
+	require.NoError(err)
+	syncID, err := imp.store.StartSync(src.ID, sourceTypeSlack)
+	require.NoError(err)
+	imp.opts = opts
+	imp.sourceID = src.ID
+
+	state := NewSyncState()
+	sum := &ImportSummary{SourceID: src.ID}
+	budget := &sweepBudget{limit: 1}
+	target := func(channelID string) map[string]sweepTarget {
+		return map[string]sweepTarget{channelID: {}}
+	}
+	floor := time.Date(2026, 8, 7, 0, 3, 0, 0, time.UTC)
+	end := floor.Add(time.Minute)
+
+	// The first channel's free overlap search fails. That attempted work must
+	// consume the shared budget so the next lagging channel cannot repeat it.
+	err = imp.sweepRange(context.Background(), syncID, "C01", tsFormat(floor), end, tsFormat(end),
+		target("C01"), time.UTC, budget, state, sum, func(string) {})
+	require.NoError(err)
+	err = imp.sweepRange(context.Background(), syncID, "C02", tsFormat(floor), end, tsFormat(end),
+		target("C02"), time.UTC, budget, state, sum, func(string) {})
+	require.NoError(err)
+
+	require.True(budget.exhausted(), "a failed free-overlap search must consume shared capacity")
+	require.Equal(1, sum.FetchErrors, "later gap ranges must not repeat a failed search after the budget is spent")
+}

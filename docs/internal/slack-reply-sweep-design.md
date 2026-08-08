@@ -301,8 +301,9 @@ for incremental sync. Consequences:
   gap and workspace ranges share one budget, a range that begins exhausted
   performs no unmarked-day search, including otherwise-free overlap days;
   this prevents the overlap exemption from multiplying work by the number of
-  lagging channels. Per-day commits are durable, so a standing `--limit`
-  schedule converges on reply discovery like every other path — a
+  lagging channels. A failed free-overlap search consumes one unit from the
+  shared budget for the same reason. Per-day commits are durable, so a standing
+  `--limit` schedule converges on reply discovery like every other path — a
   permanently-capped sync must never mean "no replies, ever". (A standing
   limit below the workspace's message rate falls progressively behind — a
   throughput ceiling, never a completeness loss.)
@@ -390,6 +391,7 @@ sweepRange(scope, floor, searchEnd, ceiling):
             q = `[in:<#scope>] threads:replies on:D -"<nonce>"`
             stop if echoed page ≠ requested page               // clamp tell
             collect hits: (channel_id, ts, permalink)
+        if free-overlap search failed: charge one shared-budget unit; stop
         hits ∩ sweep targets, above queryFloor
         group by permalink thread_ts (fallback: per hit)
         record each group as pending-thread debt on its conversation
