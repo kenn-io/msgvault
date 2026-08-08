@@ -236,6 +236,21 @@ func (s SetPersonAttributePath) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(s))
 }
 
+type GetPersonStructuredProfilePath struct {
+	// ID Durable person ID
+	ID int64 `json:"id"`
+}
+
+type PatchPersonStructuredProfilePath struct {
+	// ID Durable person ID
+	ID int64 `json:"id"`
+}
+
+type GetPersonProfileHistoryPath struct {
+	// ID Durable person ID
+	ID int64 `json:"id"`
+}
+
 type GetRelationshipTimelinePath struct {
 	// ID Any member participant ID of the counterpart's identity cluster
 	ID int64 `json:"id"`

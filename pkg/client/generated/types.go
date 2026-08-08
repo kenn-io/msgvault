@@ -1164,6 +1164,46 @@ func (c CliStatsResponse) Validate() error {
 	return errors
 }
 
+type CommunicationService struct {
+	Aliases              []string  `json:"aliases,omitempty" validate:"required"`
+	CreatedAt            time.Time `json:"created_at" validate:"required"`
+	DefaultScopeKind     *string   `json:"default_scope_kind,omitempty"`
+	DisplayLabel         string    `json:"display_label" validate:"required"`
+	ID                   int64     `json:"id"`
+	IsActive             bool      `json:"is_active"`
+	IsSystem             bool      `json:"is_system"`
+	Normalization        string    `json:"normalization" validate:"required"`
+	NormalizationVersion int64     `json:"normalization_version"`
+	ProfileURLTemplate   *string   `json:"profile_url_template,omitempty"`
+	ScopePolicy          string    `json:"scope_policy" validate:"required"`
+	Slug                 string    `json:"slug" validate:"required"`
+	UpdatedAt            time.Time `json:"updated_at" validate:"required"`
+	URIScheme            *string   `json:"uri_scheme,omitempty"`
+}
+
+func (c CommunicationService) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(c))
+}
+
+type CommunicationServicesResponse struct {
+	Services []CommunicationService `json:"services,omitempty" validate:"required"`
+}
+
+func (c CommunicationServicesResponse) Validate() error {
+	var errors runtime.ValidationErrors
+	for i, item := range c.Services {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Services[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
 type ConversationResponse struct {
 	AnchorID  int64           `json:"anchor_id"`
 	HasAfter  bool            `json:"has_after"`
@@ -1237,6 +1277,42 @@ func (c CreateAttributeDefinitionRequest) Validate() error {
 	}
 	if err := typesValidator.Var(c.ValueType, "required"); err != nil {
 		errors = errors.Append("ValueType", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type CreateCommunicationServiceRequest struct {
+	Aliases              []string                                       `json:"aliases,omitempty"`
+	DefaultScopeKind     *string                                        `json:"default_scope_kind,omitempty"`
+	DisplayLabel         string                                         `json:"display_label" validate:"required"`
+	Normalization        CreateCommunicationServiceRequestNormalization `json:"normalization" validate:"required"`
+	NormalizationVersion *int64                                         `json:"normalization_version,omitempty"`
+	ProfileURLTemplate   *string                                        `json:"profile_url_template,omitempty"`
+	ScopePolicy          CreateCommunicationServiceRequestScopePolicy   `json:"scope_policy" validate:"required"`
+	Slug                 string                                         `json:"slug" validate:"required"`
+	URIScheme            *string                                        `json:"uri_scheme,omitempty"`
+}
+
+func (c CreateCommunicationServiceRequest) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(c.DisplayLabel, "required"); err != nil {
+		errors = errors.Append("DisplayLabel", err)
+	}
+	if v, ok := any(c.Normalization).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Normalization", err)
+		}
+	}
+	if v, ok := any(c.ScopePolicy).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("ScopePolicy", err)
+		}
+	}
+	if err := typesValidator.Var(c.Slug, "required"); err != nil {
+		errors = errors.Append("Slug", err)
 	}
 	if len(errors) == 0 {
 		return nil
@@ -3174,6 +3250,53 @@ type OperationHealth struct {
 	StartedAt *time.Time `json:"started_at,omitempty"`
 }
 
+type PartialDate struct {
+	Day   *int64 `json:"day,omitempty"`
+	Month *int64 `json:"month,omitempty"`
+	Year  *int64 `json:"year,omitempty"`
+}
+
+type ParticipantContactObservation struct {
+	AddressKind          string        `json:"address_kind" validate:"required"`
+	Envelope             ValueEnvelope `json:"envelope"`
+	Normalization        string        `json:"normalization" validate:"required"`
+	NormalizationVersion int64         `json:"normalization_version"`
+	NormalizedValue      string        `json:"normalized_value" validate:"required"`
+	ObservedAt           *time.Time    `json:"observed_at,omitempty"`
+	OriginalValue        string        `json:"original_value" validate:"required"`
+	ParticipantID        int64         `json:"participant_id"`
+	ProviderUserID       *string       `json:"provider_user_id,omitempty"`
+	ScopeKind            *string       `json:"scope_kind,omitempty"`
+	ScopeValue           *string       `json:"scope_value,omitempty"`
+	ServiceSlug          *string       `json:"service_slug,omitempty"`
+	SourceID             *int64        `json:"source_id,omitempty"`
+}
+
+func (p ParticipantContactObservation) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(p.AddressKind, "required"); err != nil {
+		errors = errors.Append("AddressKind", err)
+	}
+	if v, ok := any(p.Envelope).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Envelope", err)
+		}
+	}
+	if err := typesValidator.Var(p.Normalization, "required"); err != nil {
+		errors = errors.Append("Normalization", err)
+	}
+	if err := typesValidator.Var(p.NormalizedValue, "required"); err != nil {
+		errors = errors.Append("NormalizedValue", err)
+	}
+	if err := typesValidator.Var(p.OriginalValue, "required"); err != nil {
+		errors = errors.Append("OriginalValue", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
 type PatchAttributeDefinitionRequest struct {
 	Description  *string `json:"description,omitempty"`
 	DisplayOrder *int64  `json:"display_order,omitempty"`
@@ -3223,6 +3346,105 @@ type Person struct {
 
 func (p Person) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(p))
+}
+
+type PersonAddress struct {
+	AddressKind        string        `json:"address_kind" validate:"required"`
+	CountryCode        *string       `json:"country_code,omitempty"`
+	CountryName        *string       `json:"country_name,omitempty"`
+	Envelope           ValueEnvelope `json:"envelope"`
+	ExtendedAddress    *string       `json:"extended_address,omitempty"`
+	ExtendedComponents *string       `json:"extended_components,omitempty"`
+	FreeText           *string       `json:"free_text,omitempty"`
+	GeoURI             *string       `json:"geo_uri,omitempty"`
+	Label              *string       `json:"label,omitempty"`
+	Locality           *string       `json:"locality,omitempty"`
+	OriginalValue      string        `json:"original_value" validate:"required"`
+	PersonID           int64         `json:"person_id"`
+	PlaceURI           *string       `json:"place_uri,omitempty"`
+	PostOfficeBox      *string       `json:"post_office_box,omitempty"`
+	PostalCode         *string       `json:"postal_code,omitempty"`
+	Region             *string       `json:"region,omitempty"`
+	StreetAddress      *string       `json:"street_address,omitempty"`
+	Timezone           *string       `json:"timezone,omitempty"`
+}
+
+func (p PersonAddress) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(p.AddressKind, "required"); err != nil {
+		errors = errors.Append("AddressKind", err)
+	}
+	if v, ok := any(p.Envelope).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Envelope", err)
+		}
+	}
+	if err := typesValidator.Var(p.OriginalValue, "required"); err != nil {
+		errors = errors.Append("OriginalValue", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type PersonAddressInput struct {
+	AddressKind        string        `json:"address_kind" validate:"required"`
+	CountryCode        *string       `json:"country_code,omitempty"`
+	CountryName        *string       `json:"country_name,omitempty"`
+	Envelope           ValueEnvelope `json:"envelope"`
+	ExtendedAddress    *string       `json:"extended_address,omitempty"`
+	ExtendedComponents *string       `json:"extended_components,omitempty"`
+	FreeText           *string       `json:"free_text,omitempty"`
+	GeoURI             *string       `json:"geo_uri,omitempty"`
+	Label              *string       `json:"label,omitempty"`
+	Locality           *string       `json:"locality,omitempty"`
+	OriginalValue      string        `json:"original_value" validate:"required"`
+	PlaceURI           *string       `json:"place_uri,omitempty"`
+	PostOfficeBox      *string       `json:"post_office_box,omitempty"`
+	PostalCode         *string       `json:"postal_code,omitempty"`
+	Region             *string       `json:"region,omitempty"`
+	StreetAddress      *string       `json:"street_address,omitempty"`
+	Timezone           *string       `json:"timezone,omitempty"`
+}
+
+func (p PersonAddressInput) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(p.AddressKind, "required"); err != nil {
+		errors = errors.Append("AddressKind", err)
+	}
+	if v, ok := any(p.Envelope).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Envelope", err)
+		}
+	}
+	if err := typesValidator.Var(p.OriginalValue, "required"); err != nil {
+		errors = errors.Append("OriginalValue", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type PersonAddressPatch struct {
+	Add       []PersonAddressInput `json:"add,omitempty"`
+	Supersede []int64              `json:"supersede,omitempty"`
+}
+
+func (p PersonAddressPatch) Validate() error {
+	var errors runtime.ValidationErrors
+	for i, item := range p.Add {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Add[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
 }
 
 type PersonAttributeGroup struct {
@@ -3348,6 +3570,73 @@ func (p PersonAttributesResponse) Validate() error {
 	return errors
 }
 
+type PersonCategory struct {
+	Envelope        ValueEnvelope `json:"envelope"`
+	NormalizedValue string        `json:"normalized_value" validate:"required"`
+	OriginalValue   string        `json:"original_value" validate:"required"`
+	PersonID        int64         `json:"person_id"`
+}
+
+func (p PersonCategory) Validate() error {
+	var errors runtime.ValidationErrors
+	if v, ok := any(p.Envelope).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Envelope", err)
+		}
+	}
+	if err := typesValidator.Var(p.NormalizedValue, "required"); err != nil {
+		errors = errors.Append("NormalizedValue", err)
+	}
+	if err := typesValidator.Var(p.OriginalValue, "required"); err != nil {
+		errors = errors.Append("OriginalValue", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type PersonCategoryInput struct {
+	Envelope      ValueEnvelope `json:"envelope"`
+	OriginalValue string        `json:"original_value" validate:"required"`
+}
+
+func (p PersonCategoryInput) Validate() error {
+	var errors runtime.ValidationErrors
+	if v, ok := any(p.Envelope).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Envelope", err)
+		}
+	}
+	if err := typesValidator.Var(p.OriginalValue, "required"); err != nil {
+		errors = errors.Append("OriginalValue", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type PersonCategoryPatch struct {
+	Add       []PersonCategoryInput `json:"add,omitempty"`
+	Supersede []int64               `json:"supersede,omitempty"`
+}
+
+func (p PersonCategoryPatch) Validate() error {
+	var errors runtime.ValidationErrors
+	for i, item := range p.Add {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Add[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
 type PersonCluster struct {
 	CanonicalID int64               `json:"canonical_id"`
 	Edges       []PersonClusterEdge `json:"edges,omitempty" validate:"required"`
@@ -3375,6 +3664,94 @@ func (p PersonCluster) Validate() error {
 type PersonClusterEdge struct {
 	ParticipantA int64 `json:"participant_a"`
 	ParticipantB int64 `json:"participant_b"`
+}
+
+type PersonContactPoint struct {
+	AddressKind          string        `json:"address_kind" validate:"required"`
+	Envelope             ValueEnvelope `json:"envelope"`
+	Normalization        string        `json:"normalization" validate:"required"`
+	NormalizationVersion int64         `json:"normalization_version"`
+	NormalizedValue      string        `json:"normalized_value" validate:"required"`
+	OriginalValue        string        `json:"original_value" validate:"required"`
+	PersonID             int64         `json:"person_id"`
+	ScopeKind            *string       `json:"scope_kind,omitempty"`
+	ScopeValue           *string       `json:"scope_value,omitempty"`
+	ServiceSlug          *string       `json:"service_slug,omitempty"`
+	URI                  *string       `json:"uri,omitempty"`
+}
+
+func (p PersonContactPoint) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(p.AddressKind, "required"); err != nil {
+		errors = errors.Append("AddressKind", err)
+	}
+	if v, ok := any(p.Envelope).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Envelope", err)
+		}
+	}
+	if err := typesValidator.Var(p.Normalization, "required"); err != nil {
+		errors = errors.Append("Normalization", err)
+	}
+	if err := typesValidator.Var(p.NormalizedValue, "required"); err != nil {
+		errors = errors.Append("NormalizedValue", err)
+	}
+	if err := typesValidator.Var(p.OriginalValue, "required"); err != nil {
+		errors = errors.Append("OriginalValue", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type PersonContactPointInput struct {
+	AddressKind   string        `json:"address_kind" validate:"required"`
+	Envelope      ValueEnvelope `json:"envelope"`
+	OriginalValue string        `json:"original_value" validate:"required"`
+	ScopeKind     *string       `json:"scope_kind,omitempty"`
+	ScopeValue    *string       `json:"scope_value,omitempty"`
+	ServiceSlug   *string       `json:"service_slug,omitempty"`
+	URI           *string       `json:"uri,omitempty"`
+}
+
+func (p PersonContactPointInput) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(p.AddressKind, "required"); err != nil {
+		errors = errors.Append("AddressKind", err)
+	}
+	if v, ok := any(p.Envelope).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Envelope", err)
+		}
+	}
+	if err := typesValidator.Var(p.OriginalValue, "required"); err != nil {
+		errors = errors.Append("OriginalValue", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type PersonContactPointPatch struct {
+	Add       []PersonContactPointInput `json:"add,omitempty"`
+	Supersede []int64                   `json:"supersede,omitempty"`
+}
+
+func (p PersonContactPointPatch) Validate() error {
+	var errors runtime.ValidationErrors
+	for i, item := range p.Add {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Add[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
 }
 
 type PersonContextSummaryHTTPResponse struct {
@@ -3405,6 +3782,95 @@ func (p PersonContextSummaryHTTPResponse) Validate() error {
 	return errors
 }
 
+type PersonDate struct {
+	CalendarScale *string       `json:"calendar_scale,omitempty"`
+	Date          PartialDate   `json:"date"`
+	DateKind      string        `json:"date_kind" validate:"required"`
+	DateText      *string       `json:"date_text,omitempty"`
+	Envelope      ValueEnvelope `json:"envelope"`
+	Label         *string       `json:"label,omitempty"`
+	OriginalValue string        `json:"original_value" validate:"required"`
+	PersonID      int64         `json:"person_id"`
+}
+
+func (p PersonDate) Validate() error {
+	var errors runtime.ValidationErrors
+	if v, ok := any(p.Date).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Date", err)
+		}
+	}
+	if err := typesValidator.Var(p.DateKind, "required"); err != nil {
+		errors = errors.Append("DateKind", err)
+	}
+	if v, ok := any(p.Envelope).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Envelope", err)
+		}
+	}
+	if err := typesValidator.Var(p.OriginalValue, "required"); err != nil {
+		errors = errors.Append("OriginalValue", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type PersonDateInput struct {
+	CalendarScale *string       `json:"calendar_scale,omitempty"`
+	Date          PartialDate   `json:"date"`
+	DateKind      string        `json:"date_kind" validate:"required"`
+	DateText      *string       `json:"date_text,omitempty"`
+	Envelope      ValueEnvelope `json:"envelope"`
+	Label         *string       `json:"label,omitempty"`
+	OriginalValue string        `json:"original_value" validate:"required"`
+}
+
+func (p PersonDateInput) Validate() error {
+	var errors runtime.ValidationErrors
+	if v, ok := any(p.Date).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Date", err)
+		}
+	}
+	if err := typesValidator.Var(p.DateKind, "required"); err != nil {
+		errors = errors.Append("DateKind", err)
+	}
+	if v, ok := any(p.Envelope).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Envelope", err)
+		}
+	}
+	if err := typesValidator.Var(p.OriginalValue, "required"); err != nil {
+		errors = errors.Append("OriginalValue", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type PersonDatePatch struct {
+	Add       []PersonDateInput `json:"add,omitempty"`
+	Supersede []int64           `json:"supersede,omitempty"`
+}
+
+func (p PersonDatePatch) Validate() error {
+	var errors runtime.ValidationErrors
+	for i, item := range p.Add {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Add[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
 type PersonIdentifier struct {
 	DisplayValue  *string `json:"display_value,omitempty"`
 	IsPrimary     bool    `json:"is_primary"`
@@ -3418,10 +3884,320 @@ func (p PersonIdentifier) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(p))
 }
 
+type PersonMedia struct {
+	ByteSize      *int64        `json:"byte_size,omitempty"`
+	ContentHash   *string       `json:"content_hash,omitempty"`
+	Envelope      ValueEnvelope `json:"envelope"`
+	HasData       bool          `json:"has_data"`
+	MediaKind     string        `json:"media_kind" validate:"required"`
+	MediaType     *string       `json:"media_type,omitempty"`
+	OriginalValue string        `json:"original_value" validate:"required"`
+	PersonID      int64         `json:"person_id"`
+	URI           *string       `json:"uri,omitempty"`
+}
+
+func (p PersonMedia) Validate() error {
+	var errors runtime.ValidationErrors
+	if v, ok := any(p.Envelope).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Envelope", err)
+		}
+	}
+	if err := typesValidator.Var(p.MediaKind, "required"); err != nil {
+		errors = errors.Append("MediaKind", err)
+	}
+	if err := typesValidator.Var(p.OriginalValue, "required"); err != nil {
+		errors = errors.Append("OriginalValue", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type PersonMediaInput struct {
+	Data          *string       `json:"data,omitempty"`
+	Envelope      ValueEnvelope `json:"envelope"`
+	MediaKind     string        `json:"media_kind" validate:"required"`
+	MediaType     *string       `json:"media_type,omitempty"`
+	OriginalValue string        `json:"original_value" validate:"required"`
+	URI           *string       `json:"uri,omitempty"`
+}
+
+func (p PersonMediaInput) Validate() error {
+	var errors runtime.ValidationErrors
+	if v, ok := any(p.Envelope).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Envelope", err)
+		}
+	}
+	if err := typesValidator.Var(p.MediaKind, "required"); err != nil {
+		errors = errors.Append("MediaKind", err)
+	}
+	if err := typesValidator.Var(p.OriginalValue, "required"); err != nil {
+		errors = errors.Append("OriginalValue", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type PersonMediaPatch struct {
+	Add       []PersonMediaInput `json:"add,omitempty"`
+	Supersede []int64            `json:"supersede,omitempty"`
+}
+
+func (p PersonMediaPatch) Validate() error {
+	var errors runtime.ValidationErrors
+	for i, item := range p.Add {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Add[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type PersonName struct {
+	AdditionalNames   *string       `json:"additional_names,omitempty"`
+	Envelope          ValueEnvelope `json:"envelope"`
+	FamilyName        *string       `json:"family_name,omitempty"`
+	Formatted         *string       `json:"formatted,omitempty"`
+	Generation        *string       `json:"generation,omitempty"`
+	GivenName         *string       `json:"given_name,omitempty"`
+	HonorificPrefixes *string       `json:"honorific_prefixes,omitempty"`
+	HonorificSuffixes *string       `json:"honorific_suffixes,omitempty"`
+	IsDerived         bool          `json:"is_derived"`
+	Language          *string       `json:"language,omitempty"`
+	NameKind          string        `json:"name_kind" validate:"required"`
+	OriginalValue     string        `json:"original_value" validate:"required"`
+	PersonID          int64         `json:"person_id"`
+	PhoneticScript    *string       `json:"phonetic_script,omitempty"`
+	PhoneticSystem    *string       `json:"phonetic_system,omitempty"`
+	Script            *string       `json:"script,omitempty"`
+	SecondarySurname  *string       `json:"secondary_surname,omitempty"`
+	SortAs            *string       `json:"sort_as,omitempty"`
+}
+
+func (p PersonName) Validate() error {
+	var errors runtime.ValidationErrors
+	if v, ok := any(p.Envelope).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Envelope", err)
+		}
+	}
+	if err := typesValidator.Var(p.NameKind, "required"); err != nil {
+		errors = errors.Append("NameKind", err)
+	}
+	if err := typesValidator.Var(p.OriginalValue, "required"); err != nil {
+		errors = errors.Append("OriginalValue", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type PersonNameInput struct {
+	AdditionalNames   *string       `json:"additional_names,omitempty"`
+	Envelope          ValueEnvelope `json:"envelope"`
+	FamilyName        *string       `json:"family_name,omitempty"`
+	Formatted         *string       `json:"formatted,omitempty"`
+	Generation        *string       `json:"generation,omitempty"`
+	GivenName         *string       `json:"given_name,omitempty"`
+	HonorificPrefixes *string       `json:"honorific_prefixes,omitempty"`
+	HonorificSuffixes *string       `json:"honorific_suffixes,omitempty"`
+	IsDerived         *bool         `json:"is_derived,omitempty"`
+	Language          *string       `json:"language,omitempty"`
+	NameKind          string        `json:"name_kind" validate:"required"`
+	OriginalValue     string        `json:"original_value" validate:"required"`
+	PhoneticScript    *string       `json:"phonetic_script,omitempty"`
+	PhoneticSystem    *string       `json:"phonetic_system,omitempty"`
+	Script            *string       `json:"script,omitempty"`
+	SecondarySurname  *string       `json:"secondary_surname,omitempty"`
+	SortAs            *string       `json:"sort_as,omitempty"`
+}
+
+func (p PersonNameInput) Validate() error {
+	var errors runtime.ValidationErrors
+	if v, ok := any(p.Envelope).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Envelope", err)
+		}
+	}
+	if err := typesValidator.Var(p.NameKind, "required"); err != nil {
+		errors = errors.Append("NameKind", err)
+	}
+	if err := typesValidator.Var(p.OriginalValue, "required"); err != nil {
+		errors = errors.Append("OriginalValue", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type PersonNamePatch struct {
+	Add       []PersonNameInput `json:"add,omitempty"`
+	Supersede []int64           `json:"supersede,omitempty"`
+}
+
+func (p PersonNamePatch) Validate() error {
+	var errors runtime.ValidationErrors
+	for i, item := range p.Add {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Add[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
 type PersonProfile struct {
 	DisplayName *string `json:"display_name,omitempty"`
 	ID          int64   `json:"id"`
 	Revision    int64   `json:"revision"`
+}
+
+type PersonProfileHistory struct {
+	Addresses     []PersonAddress                 `json:"addresses,omitempty" validate:"required"`
+	Categories    []PersonCategory                `json:"categories,omitempty" validate:"required"`
+	ContactPoints []PersonContactPoint            `json:"contact_points,omitempty" validate:"required"`
+	Dates         []PersonDate                    `json:"dates,omitempty" validate:"required"`
+	Media         []PersonMedia                   `json:"media,omitempty" validate:"required"`
+	Names         []PersonName                    `json:"names,omitempty" validate:"required"`
+	Observations  []ParticipantContactObservation `json:"observations,omitempty" validate:"required"`
+	Person        Person                          `json:"person"`
+}
+
+func (p PersonProfileHistory) Validate() error {
+	var errors runtime.ValidationErrors
+	for i, item := range p.Addresses {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Addresses[%d]", i), err)
+			}
+		}
+	}
+	for i, item := range p.Categories {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Categories[%d]", i), err)
+			}
+		}
+	}
+	for i, item := range p.ContactPoints {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("ContactPoints[%d]", i), err)
+			}
+		}
+	}
+	for i, item := range p.Dates {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Dates[%d]", i), err)
+			}
+		}
+	}
+	for i, item := range p.Media {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Media[%d]", i), err)
+			}
+		}
+	}
+	for i, item := range p.Names {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Names[%d]", i), err)
+			}
+		}
+	}
+	for i, item := range p.Observations {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Observations[%d]", i), err)
+			}
+		}
+	}
+	if v, ok := any(p.Person).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Person", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type PersonProfilePatch struct {
+	Addresses     *PersonAddressPatch      `json:"addresses,omitempty"`
+	Categories    *PersonCategoryPatch     `json:"categories,omitempty"`
+	ContactPoints *PersonContactPointPatch `json:"contact_points,omitempty"`
+	Dates         *PersonDatePatch         `json:"dates,omitempty"`
+	Media         *PersonMediaPatch        `json:"media,omitempty"`
+	Names         *PersonNamePatch         `json:"names,omitempty"`
+}
+
+func (p PersonProfilePatch) Validate() error {
+	var errors runtime.ValidationErrors
+	if p.Addresses != nil {
+		if v, ok := any(p.Addresses).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Addresses", err)
+			}
+		}
+	}
+	if p.Categories != nil {
+		if v, ok := any(p.Categories).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Categories", err)
+			}
+		}
+	}
+	if p.ContactPoints != nil {
+		if v, ok := any(p.ContactPoints).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("ContactPoints", err)
+			}
+		}
+	}
+	if p.Dates != nil {
+		if v, ok := any(p.Dates).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Dates", err)
+			}
+		}
+	}
+	if p.Media != nil {
+		if v, ok := any(p.Media).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Media", err)
+			}
+		}
+	}
+	if p.Names != nil {
+		if v, ok := any(p.Names).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Names", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
 }
 
 type PersonSearchHTTPResponse struct {
@@ -4604,6 +5380,71 @@ func (s StatusMessageResponse) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(s))
 }
 
+type StructuredPersonProfile struct {
+	Addresses     []PersonAddress      `json:"addresses,omitempty" validate:"required"`
+	Categories    []PersonCategory     `json:"categories,omitempty" validate:"required"`
+	ContactPoints []PersonContactPoint `json:"contact_points,omitempty" validate:"required"`
+	Dates         []PersonDate         `json:"dates,omitempty" validate:"required"`
+	Media         []PersonMedia        `json:"media,omitempty" validate:"required"`
+	Names         []PersonName         `json:"names,omitempty" validate:"required"`
+	Person        Person               `json:"person"`
+}
+
+func (s StructuredPersonProfile) Validate() error {
+	var errors runtime.ValidationErrors
+	for i, item := range s.Addresses {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Addresses[%d]", i), err)
+			}
+		}
+	}
+	for i, item := range s.Categories {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Categories[%d]", i), err)
+			}
+		}
+	}
+	for i, item := range s.ContactPoints {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("ContactPoints[%d]", i), err)
+			}
+		}
+	}
+	for i, item := range s.Dates {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Dates[%d]", i), err)
+			}
+		}
+	}
+	for i, item := range s.Media {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Media[%d]", i), err)
+			}
+		}
+	}
+	for i, item := range s.Names {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Names[%d]", i), err)
+			}
+		}
+	}
+	if v, ok := any(s.Person).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Person", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
 type Summary struct {
 	Accounts       []string      `json:"accounts,omitempty" validate:"required"`
 	DateRange      []string      `json:"date_range,omitempty" validate:"required"`
@@ -4989,6 +5830,53 @@ type UpdateResult struct {
 
 func (u UpdateResult) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(u))
+}
+
+type VCardIdentity struct {
+	Altid    *string  `json:"altid,omitempty"`
+	Group    *string  `json:"group,omitempty"`
+	Pid      []string `json:"pid,omitempty"`
+	PropID   *string  `json:"prop_id,omitempty"`
+	Property *string  `json:"property,omitempty"`
+}
+
+type ValueEnvelope struct {
+	ActiveFrom   *time.Time    `json:"active_from,omitempty"`
+	ActiveUntil  *time.Time    `json:"active_until,omitempty"`
+	Confidence   *float64      `json:"confidence,omitempty"`
+	CreatedAt    time.Time     `json:"created_at" validate:"required"`
+	ID           int64         `json:"id"`
+	Ordinal      int64         `json:"ordinal"`
+	Pref         *int64        `json:"pref,omitempty"`
+	Source       string        `json:"source" validate:"required"`
+	SourceRef    *string       `json:"source_ref,omitempty"`
+	SupersededAt *time.Time    `json:"superseded_at,omitempty"`
+	TypeLabel    *string       `json:"type_label,omitempty"`
+	TypeTokens   []string      `json:"type_tokens,omitempty"`
+	UpdatedAt    time.Time     `json:"updated_at" validate:"required"`
+	Vcard        VCardIdentity `json:"vcard"`
+}
+
+func (v ValueEnvelope) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(v.CreatedAt, "required"); err != nil {
+		errors = errors.Append("CreatedAt", err)
+	}
+	if err := typesValidator.Var(v.Source, "required"); err != nil {
+		errors = errors.Append("Source", err)
+	}
+	if err := typesValidator.Var(v.UpdatedAt, "required"); err != nil {
+		errors = errors.Append("UpdatedAt", err)
+	}
+	if v, ok := any(v.Vcard).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Vcard", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
 }
 
 type VectorHealth struct {

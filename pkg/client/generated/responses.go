@@ -347,6 +347,24 @@ type VerifyCLIResponse = []byte
 
 type VerifyCLIErrorResponse = ErrorResponse
 
+type ListCommunicationServicesResponse = CommunicationServicesResponse
+
+type ListCommunicationServicesErrorResponse = ErrorResponse
+
+type ListCommunicationServicesErrorResponseJSON = ErrorResponse
+
+type CreateCommunicationServiceResponse = CommunicationService
+
+type CreateCommunicationServiceResponseJSON = CommunicationService
+
+type CreateCommunicationServiceErrorResponse = ErrorResponse
+
+type CreateCommunicationServiceErrorResponseJSON = ErrorResponse
+
+type CreateCommunicationServiceErrorResponseJSON409 = ErrorResponse
+
+type CreateCommunicationServiceErrorResponseJSON503 = ErrorResponse
+
 type GetRemoteImageResponse = []byte
 
 type GetRemoteImageErrorResponse = ErrorResponse
@@ -1217,6 +1235,36 @@ type SetPersonAttributeErrorResponseJSON409 = ErrorResponse
 
 type SetPersonAttributeErrorResponseJSON503 = ErrorResponse
 
+type GetPersonStructuredProfileResponse = StructuredPersonProfile
+
+type GetPersonStructuredProfileErrorResponse = ErrorResponse
+
+type GetPersonStructuredProfileErrorResponseJSON = ErrorResponse
+
+type GetPersonStructuredProfileErrorResponseJSON503 = ErrorResponse
+
+type PatchPersonStructuredProfileResponse = StructuredPersonProfile
+
+type PatchPersonStructuredProfileErrorResponse = ErrorResponse
+
+type PatchPersonStructuredProfileErrorResponseJSON = ErrorResponse
+
+type PatchPersonStructuredProfileErrorResponseJSON409 = ErrorResponse
+
+type PatchPersonStructuredProfileErrorResponseJSON413 = ErrorResponse
+
+type PatchPersonStructuredProfileErrorResponseJSON428 = ErrorResponse
+
+type PatchPersonStructuredProfileErrorResponseJSON503 = ErrorResponse
+
+type GetPersonProfileHistoryResponse = PersonProfileHistory
+
+type GetPersonProfileHistoryErrorResponse = ErrorResponse
+
+type GetPersonProfileHistoryErrorResponseJSON = ErrorResponse
+
+type GetPersonProfileHistoryErrorResponseJSON503 = ErrorResponse
+
 type RunQueryResponse = QueryResult
 
 type RunQueryErrorResponse = ErrorResponse
@@ -1932,6 +1980,27 @@ type VerifyCLIResp struct {
 	StatusCode   int
 }
 
+type ListCommunicationServicesResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *ListCommunicationServicesResponse
+	JSON400      *ListCommunicationServicesErrorResponse
+	JSON503      *ListCommunicationServicesErrorResponseJSON
+}
+
+type CreateCommunicationServiceResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *CreateCommunicationServiceResponse
+	JSON201      *CreateCommunicationServiceResponseJSON
+	JSON400      *CreateCommunicationServiceErrorResponse
+	JSON404      *CreateCommunicationServiceErrorResponseJSON
+	JSON409      *CreateCommunicationServiceErrorResponseJSON409
+	JSON503      *CreateCommunicationServiceErrorResponseJSON503
+}
+
 type GetRemoteImageResp struct {
 	HTTPResponse *http.Response
 	Body         []byte
@@ -2384,6 +2453,49 @@ type SetPersonAttributeResp struct {
 	JSON404      *SetPersonAttributeErrorResponseJSON
 	JSON409      *SetPersonAttributeErrorResponseJSON409
 	JSON503      *SetPersonAttributeErrorResponseJSON503
+}
+
+type GetPersonStructuredProfileResp200Headers struct {
+	ETag string `header:"ETag"`
+}
+
+type GetPersonStructuredProfileResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *GetPersonStructuredProfileResponse
+	Headers200   *GetPersonStructuredProfileResp200Headers
+	JSON400      *GetPersonStructuredProfileErrorResponse
+	JSON404      *GetPersonStructuredProfileErrorResponseJSON
+	JSON503      *GetPersonStructuredProfileErrorResponseJSON503
+}
+
+type PatchPersonStructuredProfileResp200Headers struct {
+	ETag string `header:"ETag"`
+}
+
+type PatchPersonStructuredProfileResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *PatchPersonStructuredProfileResponse
+	Headers200   *PatchPersonStructuredProfileResp200Headers
+	JSON400      *PatchPersonStructuredProfileErrorResponse
+	JSON404      *PatchPersonStructuredProfileErrorResponseJSON
+	JSON409      *PatchPersonStructuredProfileErrorResponseJSON409
+	JSON413      *PatchPersonStructuredProfileErrorResponseJSON413
+	JSON428      *PatchPersonStructuredProfileErrorResponseJSON428
+	JSON503      *PatchPersonStructuredProfileErrorResponseJSON503
+}
+
+type GetPersonProfileHistoryResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *GetPersonProfileHistoryResponse
+	JSON400      *GetPersonProfileHistoryErrorResponse
+	JSON404      *GetPersonProfileHistoryErrorResponseJSON
+	JSON503      *GetPersonProfileHistoryErrorResponseJSON503
 }
 
 type RunQueryResp struct {

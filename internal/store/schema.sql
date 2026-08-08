@@ -6,6 +6,36 @@ CREATE TABLE IF NOT EXISTS archive_metadata (
     value TEXT NOT NULL
 );
 
+-- Open catalog of communication services. Seeded slugs are presentation and
+-- normalization metadata, NOT a database enum and not a compatibility
+-- ceiling: an unknown bridge type or a custom service is registered as a new
+-- row, never by a schema migration. Slugs are immutable machine identities;
+-- display labels remain mutable and are never overwritten by re-seeding.
+CREATE TABLE IF NOT EXISTS communication_services (
+    id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+    slug                  TEXT NOT NULL UNIQUE,
+    display_label         TEXT NOT NULL,
+    scope_policy          TEXT NOT NULL DEFAULT 'none',
+    default_scope_kind    TEXT,
+    normalization         TEXT NOT NULL DEFAULT 'none',
+    normalization_version INTEGER NOT NULL DEFAULT 1,
+    uri_scheme            TEXT,
+    profile_url_template  TEXT,
+    is_system             BOOLEAN NOT NULL DEFAULT FALSE,
+    is_active             BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at            DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at            DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Aliases resolve to one canonical service without changing captured source
+-- values. A primary key makes alias uniqueness a database constraint.
+CREATE TABLE IF NOT EXISTS communication_service_aliases (
+    alias      TEXT PRIMARY KEY,
+    service_id INTEGER NOT NULL REFERENCES communication_services(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_communication_service_aliases_service
+    ON communication_service_aliases(service_id);
+
 -- ============================================================================
 -- SOURCES & IDENTITY
 -- ============================================================================
@@ -58,9 +88,12 @@ CREATE TABLE IF NOT EXISTS participant_identifiers (
 
     is_primary BOOLEAN DEFAULT FALSE,
 
+    service_id INTEGER REFERENCES communication_services(id) ON DELETE SET NULL,
+    scope_kind TEXT,
+    scope_value TEXT,
+
     UNIQUE(identifier_type, identifier_value)
 );
-
 -- Durable, user-curated people. A person's vCard UID is generated once and
 -- never depends on mutable participant identifiers or link-graph topology.
 -- UID lifecycle contract: UIDs are random and never reused. Deleting a
@@ -775,6 +808,406 @@ CREATE INDEX IF NOT EXISTS idx_person_attribute_values_current_text
 CREATE INDEX IF NOT EXISTS idx_person_attribute_values_record_ref
     ON person_attribute_values(value_record_type, value_record_id)
     WHERE value_record_id IS NOT NULL;
+
+-- ============================================================================
+-- PEOPLE PROFILE PRIMITIVES
+-- ============================================================================
+
+-- Structured, ordered person-name forms with the shared provenance and
+-- two-axis history envelope.
+CREATE TABLE IF NOT EXISTS person_names (
+    id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+    person_id             INTEGER NOT NULL REFERENCES persons(id) ON DELETE CASCADE,
+    name_kind             TEXT NOT NULL,
+    formatted             TEXT,
+    family_name           TEXT,
+    given_name            TEXT,
+    additional_names      TEXT,
+    honorific_prefixes    TEXT,
+    honorific_suffixes    TEXT,
+    secondary_surname     TEXT,
+    generation            TEXT,
+    language              TEXT,
+    script                TEXT,
+    phonetic_system       TEXT,
+    phonetic_script       TEXT,
+    sort_as               TEXT,
+    is_derived            BOOLEAN NOT NULL DEFAULT FALSE,
+    original_value        TEXT NOT NULL,
+    pref                  INTEGER CHECK (pref IS NULL OR pref BETWEEN 1 AND 100),
+    ordinal               INTEGER NOT NULL DEFAULT 0,
+    type_label            TEXT,
+    type_tokens           TEXT,
+    vcard_property        TEXT,
+    vcard_group           TEXT,
+    vcard_prop_id         TEXT,
+    vcard_pid             TEXT,
+    vcard_altid           TEXT,
+    source                TEXT NOT NULL
+        CHECK (source IN ('user', 'carddav_import', 'vcard_import',
+                          'archive_observation', 'extraction', 'enrichment', 'system')),
+    source_ref            TEXT,
+    confidence            REAL
+        CHECK (confidence IS NULL
+               OR (confidence >= 0 AND confidence <= 1
+                   AND source NOT IN ('user', 'carddav_import', 'vcard_import'))),
+    active_from           DATETIME,
+    active_until          DATETIME,
+    created_at            DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at            DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    superseded_at         DATETIME
+);
+CREATE INDEX IF NOT EXISTS idx_person_names_current
+    ON person_names(person_id, name_kind, ordinal)
+    WHERE active_until IS NULL AND superseded_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_person_names_person
+    ON person_names(person_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_person_names_property_identity
+    ON person_names(person_id, source, source_ref, vcard_property, vcard_prop_id)
+    WHERE source_ref IS NOT NULL AND vcard_prop_id IS NOT NULL
+      AND superseded_at IS NULL;
+
+CREATE TABLE IF NOT EXISTS person_contact_points (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    person_id INTEGER NOT NULL REFERENCES persons(id) ON DELETE CASCADE,
+    address_kind TEXT NOT NULL,
+    service_id INTEGER REFERENCES communication_services(id) ON DELETE RESTRICT,
+    scope_kind TEXT,
+    scope_value TEXT,
+    original_value TEXT NOT NULL,
+    normalized_value TEXT NOT NULL,
+    normalization TEXT NOT NULL DEFAULT 'none',
+    normalization_version INTEGER NOT NULL DEFAULT 1,
+    uri TEXT,
+    pref INTEGER CHECK (pref IS NULL OR pref BETWEEN 1 AND 100),
+    ordinal INTEGER NOT NULL DEFAULT 0,
+    type_label TEXT,
+    type_tokens TEXT,
+    vcard_property TEXT,
+    vcard_group TEXT,
+    vcard_prop_id TEXT,
+    vcard_pid TEXT,
+    vcard_altid TEXT,
+    source TEXT NOT NULL
+        CHECK (source IN ('user', 'carddav_import', 'vcard_import',
+                          'archive_observation', 'extraction', 'enrichment', 'system')),
+    source_ref TEXT,
+    confidence REAL
+        CHECK (confidence IS NULL
+               OR (confidence >= 0 AND confidence <= 1
+                   AND source NOT IN ('user', 'carddav_import', 'vcard_import'))),
+    active_from DATETIME,
+    active_until DATETIME,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    superseded_at DATETIME
+);
+CREATE INDEX IF NOT EXISTS idx_person_contact_points_current_lookup
+    ON person_contact_points(address_kind, service_id, scope_kind, scope_value, normalized_value)
+    WHERE active_until IS NULL AND superseded_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_person_contact_points_person_current
+    ON person_contact_points(person_id, address_kind, pref, ordinal)
+    WHERE active_until IS NULL AND superseded_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_person_contact_points_person
+    ON person_contact_points(person_id);
+CREATE INDEX IF NOT EXISTS idx_person_contact_points_service
+    ON person_contact_points(service_id) WHERE service_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_person_contact_points_property_identity
+    ON person_contact_points(person_id, source, source_ref, vcard_property, vcard_prop_id)
+    WHERE source_ref IS NOT NULL AND vcard_prop_id IS NOT NULL
+      AND superseded_at IS NULL;
+
+CREATE TABLE IF NOT EXISTS person_addresses (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    person_id INTEGER NOT NULL REFERENCES persons(id) ON DELETE CASCADE,
+    address_kind TEXT NOT NULL DEFAULT 'postal',
+    post_office_box TEXT,
+    extended_address TEXT,
+    street_address TEXT,
+    locality TEXT,
+    region TEXT,
+    postal_code TEXT,
+    country_name TEXT,
+    extended_components TEXT,
+    free_text TEXT,
+    label TEXT,
+    geo_uri TEXT,
+    timezone TEXT,
+    country_code TEXT,
+    place_uri TEXT,
+    original_value TEXT NOT NULL,
+    pref INTEGER CHECK (pref IS NULL OR pref BETWEEN 1 AND 100),
+    ordinal INTEGER NOT NULL DEFAULT 0,
+    type_label TEXT,
+    type_tokens TEXT,
+    vcard_property TEXT,
+    vcard_group TEXT,
+    vcard_prop_id TEXT,
+    vcard_pid TEXT,
+    vcard_altid TEXT,
+    source TEXT NOT NULL CHECK (source IN (
+        'user', 'carddav_import', 'vcard_import', 'archive_observation',
+        'extraction', 'enrichment', 'system'
+    )),
+    source_ref TEXT,
+    confidence REAL CHECK (confidence IS NULL OR (
+        confidence >= 0 AND confidence <= 1
+        AND source NOT IN ('user', 'carddav_import', 'vcard_import')
+    )),
+    active_from DATETIME,
+    active_until DATETIME,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    superseded_at DATETIME
+);
+CREATE INDEX IF NOT EXISTS idx_person_addresses_current
+    ON person_addresses(person_id, address_kind, pref, ordinal)
+    WHERE active_until IS NULL AND superseded_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_person_addresses_person ON person_addresses(person_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_person_addresses_property_identity
+    ON person_addresses(person_id, source, source_ref, vcard_property, vcard_prop_id)
+    WHERE source_ref IS NOT NULL AND vcard_prop_id IS NOT NULL
+      AND superseded_at IS NULL;
+
+CREATE TABLE IF NOT EXISTS person_dates (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    person_id INTEGER NOT NULL REFERENCES persons(id) ON DELETE CASCADE,
+    date_kind TEXT NOT NULL,
+    label TEXT,
+    date_year INTEGER CHECK (date_year BETWEEN 1 AND 9999),
+    date_month INTEGER CHECK (date_month BETWEEN 1 AND 12),
+    date_day INTEGER CHECK (date_day BETWEEN 1 AND 31),
+    date_text TEXT,
+    calendar_scale TEXT,
+    original_value TEXT NOT NULL,
+    pref INTEGER CHECK (pref IS NULL OR pref BETWEEN 1 AND 100),
+    ordinal INTEGER NOT NULL DEFAULT 0,
+    type_label TEXT,
+    type_tokens TEXT,
+    vcard_property TEXT,
+    vcard_group TEXT,
+    vcard_prop_id TEXT,
+    vcard_pid TEXT,
+    vcard_altid TEXT,
+    source TEXT NOT NULL CHECK (source IN (
+        'user', 'carddav_import', 'vcard_import', 'archive_observation',
+        'extraction', 'enrichment', 'system'
+    )),
+    source_ref TEXT,
+    confidence REAL CHECK (confidence IS NULL OR (
+        confidence >= 0 AND confidence <= 1
+        AND source NOT IN ('user', 'carddav_import', 'vcard_import')
+    )),
+    active_from DATETIME,
+    active_until DATETIME,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    superseded_at DATETIME,
+    CHECK (date_day IS NULL OR date_month IS NOT NULL OR date_year IS NULL),
+    CHECK (date_month IS NULL OR date_year IS NOT NULL OR date_day IS NOT NULL)
+);
+CREATE INDEX IF NOT EXISTS idx_person_dates_current
+    ON person_dates(person_id, date_kind, ordinal)
+    WHERE active_until IS NULL AND superseded_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_person_dates_month_day
+    ON person_dates(date_month, date_day)
+    WHERE active_until IS NULL AND superseded_at IS NULL AND date_month IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_person_dates_person ON person_dates(person_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_person_dates_property_identity
+    ON person_dates(person_id, source, source_ref, vcard_property, vcard_prop_id)
+    WHERE source_ref IS NOT NULL AND vcard_prop_id IS NOT NULL
+      AND superseded_at IS NULL;
+
+CREATE TABLE IF NOT EXISTS person_categories (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    person_id INTEGER NOT NULL REFERENCES persons(id) ON DELETE CASCADE,
+    original_value TEXT NOT NULL,
+    normalized_value TEXT NOT NULL,
+    pref INTEGER CHECK (pref IS NULL OR pref BETWEEN 1 AND 100),
+    ordinal INTEGER NOT NULL DEFAULT 0,
+    type_label TEXT,
+    type_tokens TEXT,
+    vcard_property TEXT,
+    vcard_group TEXT,
+    vcard_prop_id TEXT,
+    vcard_pid TEXT,
+    vcard_altid TEXT,
+    source TEXT NOT NULL CHECK (source IN (
+        'user', 'carddav_import', 'vcard_import', 'archive_observation',
+        'extraction', 'enrichment', 'system'
+    )),
+    source_ref TEXT,
+    confidence REAL CHECK (confidence IS NULL OR (
+        confidence >= 0 AND confidence <= 1
+        AND source NOT IN ('user', 'carddav_import', 'vcard_import')
+    )),
+    active_from DATETIME,
+    active_until DATETIME,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    superseded_at DATETIME
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_person_categories_current_value
+    ON person_categories(person_id, normalized_value)
+    WHERE active_until IS NULL AND superseded_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_person_categories_value
+    ON person_categories(normalized_value)
+    WHERE active_until IS NULL AND superseded_at IS NULL;
+
+-- Person PHOTO, LOGO, SOUND, and KEY payloads are inline because the packed
+-- attachment CAS has no general write API and its liveness/GC authority is
+-- the attachments table. Hash and size metadata keep later CAS migration
+-- possible without changing row identity.
+CREATE TABLE IF NOT EXISTS person_media (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    person_id INTEGER NOT NULL REFERENCES persons(id) ON DELETE CASCADE,
+    media_kind TEXT NOT NULL,
+    media_type TEXT,
+    uri TEXT,
+    data BLOB,
+    byte_size BIGINT,
+    content_hash TEXT,
+    original_value TEXT NOT NULL,
+    pref INTEGER CHECK (pref IS NULL OR pref BETWEEN 1 AND 100),
+    ordinal INTEGER NOT NULL DEFAULT 0,
+    type_label TEXT,
+    type_tokens TEXT,
+    vcard_property TEXT,
+    vcard_group TEXT,
+    vcard_prop_id TEXT,
+    vcard_pid TEXT,
+    vcard_altid TEXT,
+    source TEXT NOT NULL CHECK (source IN (
+        'user', 'carddav_import', 'vcard_import', 'archive_observation',
+        'extraction', 'enrichment', 'system'
+    )),
+    source_ref TEXT,
+    confidence REAL CHECK (confidence IS NULL OR (
+        confidence >= 0 AND confidence <= 1
+        AND source NOT IN ('user', 'carddav_import', 'vcard_import')
+    )),
+    active_from DATETIME,
+    active_until DATETIME,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    superseded_at DATETIME
+);
+CREATE INDEX IF NOT EXISTS idx_person_media_current
+    ON person_media(person_id, media_kind, pref, ordinal)
+    WHERE active_until IS NULL AND superseded_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_person_media_person ON person_media(person_id);
+CREATE INDEX IF NOT EXISTS idx_person_media_content_hash
+    ON person_media(content_hash) WHERE content_hash IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_person_media_property_identity
+    ON person_media(person_id, source, source_ref, vcard_property, vcard_prop_id)
+    WHERE source_ref IS NOT NULL AND vcard_prop_id IS NOT NULL
+      AND superseded_at IS NULL;
+
+CREATE TABLE IF NOT EXISTS participant_contact_observations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    participant_id INTEGER NOT NULL REFERENCES participants(id) ON DELETE CASCADE,
+    source_id INTEGER REFERENCES sources(id) ON DELETE CASCADE,
+    address_kind TEXT NOT NULL,
+    service_id INTEGER REFERENCES communication_services(id) ON DELETE SET NULL,
+    scope_kind TEXT,
+    scope_value TEXT,
+    provider_user_id TEXT,
+    original_value TEXT NOT NULL,
+    normalized_value TEXT NOT NULL,
+    normalization TEXT NOT NULL DEFAULT 'none',
+    normalization_version INTEGER NOT NULL DEFAULT 1,
+    observed_at DATETIME,
+    pref INTEGER CHECK (pref IS NULL OR pref BETWEEN 1 AND 100),
+    ordinal INTEGER NOT NULL DEFAULT 0,
+    type_label TEXT,
+    type_tokens TEXT,
+    vcard_property TEXT,
+    vcard_group TEXT,
+    vcard_prop_id TEXT,
+    vcard_pid TEXT,
+    vcard_altid TEXT,
+    source TEXT NOT NULL CHECK (source IN (
+        'user', 'carddav_import', 'vcard_import', 'archive_observation',
+        'extraction', 'enrichment', 'system'
+    )),
+    source_ref TEXT,
+    confidence REAL CHECK (confidence IS NULL OR (
+        confidence >= 0 AND confidence <= 1
+        AND source NOT IN ('user', 'carddav_import', 'vcard_import')
+    )),
+    active_from DATETIME,
+    active_until DATETIME,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    superseded_at DATETIME
+);
+CREATE INDEX IF NOT EXISTS idx_participant_observations_current_lookup
+    ON participant_contact_observations(
+        address_kind, service_id, scope_kind, scope_value, normalized_value
+    ) WHERE active_until IS NULL AND superseded_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_participant_observations_participant
+    ON participant_contact_observations(participant_id);
+CREATE INDEX IF NOT EXISTS idx_participant_observations_source
+    ON participant_contact_observations(source_id) WHERE source_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_participant_observations_provider_user
+    ON participant_contact_observations(provider_user_id) WHERE provider_user_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_participant_observations_identity
+    ON participant_contact_observations(
+        participant_id, address_kind, service_id, scope_kind, scope_value, normalized_value
+    ) WHERE active_until IS NULL AND superseded_at IS NULL;
+
+CREATE TABLE IF NOT EXISTS identity_match_candidates (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    left_kind TEXT NOT NULL,
+    left_id INTEGER NOT NULL,
+    right_kind TEXT NOT NULL,
+    right_id INTEGER NOT NULL,
+    basis TEXT NOT NULL,
+    service_id INTEGER REFERENCES communication_services(id) ON DELETE SET NULL,
+    scope_kind TEXT,
+    scope_value TEXT,
+    normalized_value TEXT,
+    state TEXT NOT NULL DEFAULT 'candidate',
+    confidence REAL CHECK (confidence IS NULL OR (
+        confidence >= 0 AND confidence <= 1
+        AND source NOT IN ('user', 'carddav_import', 'vcard_import')
+    )),
+    source TEXT NOT NULL CHECK (source IN (
+        'user', 'carddav_import', 'vcard_import', 'archive_observation',
+        'extraction', 'enrichment', 'system'
+    )),
+    source_ref TEXT,
+    decided_by TEXT,
+    decided_at DATETIME,
+    notes TEXT,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_identity_match_candidates_edge
+    ON identity_match_candidates(
+        left_kind, left_id, right_kind, right_id, basis,
+        service_id, scope_kind, scope_value
+    );
+CREATE INDEX IF NOT EXISTS idx_identity_match_candidates_state
+    ON identity_match_candidates(state, id);
+CREATE INDEX IF NOT EXISTS idx_identity_match_candidates_value
+    ON identity_match_candidates(basis, normalized_value)
+    WHERE normalized_value IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS identity_match_evidence (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    candidate_id INTEGER NOT NULL REFERENCES identity_match_candidates(id) ON DELETE CASCADE,
+    evidence_kind TEXT NOT NULL,
+    evidence_ref TEXT,
+    detail TEXT,
+    source TEXT NOT NULL CHECK (source IN (
+        'user', 'carddav_import', 'vcard_import', 'archive_observation',
+        'extraction', 'enrichment', 'system'
+    )),
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_identity_match_evidence_candidate
+    ON identity_match_evidence(candidate_id, id);
 
 -- ============================================================================
 -- APPLIED MIGRATIONS

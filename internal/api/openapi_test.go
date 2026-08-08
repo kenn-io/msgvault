@@ -265,8 +265,8 @@ func TestOpenAPIPersonAttributeContract(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 
-	assert.Equal("1.36.0", APISchemaVersion,
-		"source-scoped identities are additive to the attribute schema release")
+	assert.Equal("1.37.0", APISchemaVersion,
+		"structured profiles are additive to the attribute schema release")
 
 	doc := OpenAPIDocument()
 	definitions := doc.Paths["/api/v1/attribute-definitions"]
@@ -293,8 +293,9 @@ func TestOpenAPIMeetingImportContract(t *testing.T) {
 	// Pinned so that anyone bumping the schema version has to come here and
 	// confirm the meeting-import contract below still holds. Meeting import
 	// shipped in 1.33.0; the feed added in 1.34.0, the attributes added in
-	// 1.35.0, and source-scoped identities added in 1.36.0 did not touch it.
-	assert.Equal("1.36.0", APISchemaVersion, "meeting import is an additive schema release")
+	// 1.35.0, source-scoped identities added in 1.36.0, and structured profiles
+	// added in 1.37.0 did not touch it.
+	assert.Equal("1.37.0", APISchemaVersion, "meeting import is an additive schema release")
 
 	doc := OpenAPIDocument()
 	path := doc.Paths["/api/v1/import/meeting"]
@@ -522,6 +523,32 @@ func TestOpenAPIDocumentsAllExplorationOperations(t *testing.T) {
 			requirements.NotNil(schema.Properties[property], "%s.%s", schemaName, property)
 			assertions.False(schema.Properties[property].Nullable, "%s.%s must not be nullable", schemaName, property)
 		}
+	}
+}
+
+func TestOpenAPIClientServiceEnumsPreserveExistingGoNames(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	schema := openAPIClientDocument().Components.Schemas.Map()["CreateCommunicationServiceRequest"]
+	requirements.NotNil(schema)
+
+	for property, want := range map[string][]any{
+		"normalization": {
+			"CreateCommunicationServiceRequestNormalizationNone",
+			"CreateCommunicationServiceRequestNormalizationLower",
+			"CreateCommunicationServiceRequestNormalizationEmail",
+			"CreateCommunicationServiceRequestNormalizationPhoneE164",
+			"CreateCommunicationServiceRequestNormalizationStripAtLower",
+			"CreateCommunicationServiceRequestNormalizationByAddressKind",
+		},
+		"scope_policy": {
+			"CreateCommunicationServiceRequestScopePolicyNone",
+			"CreateCommunicationServiceRequestScopePolicyOptional",
+			"CreateCommunicationServiceRequestScopePolicyRequired",
+		},
+	} {
+		requirements.NotNil(schema.Properties[property], property)
+		assertions.Equal(want, schema.Properties[property].Extensions["x-enum-names"], property)
 	}
 }
 

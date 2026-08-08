@@ -77,6 +77,45 @@ func (c CreateAttributeDefinitionRequestObjectType) Validate() error {
 	}
 }
 
+type CreateCommunicationServiceRequestNormalization string
+
+const (
+	CreateCommunicationServiceRequestNormalizationByAddressKind CreateCommunicationServiceRequestNormalization = "by_address_kind"
+	CreateCommunicationServiceRequestNormalizationEmail         CreateCommunicationServiceRequestNormalization = "email"
+	CreateCommunicationServiceRequestNormalizationLower         CreateCommunicationServiceRequestNormalization = "lower"
+	CreateCommunicationServiceRequestNormalizationNone          CreateCommunicationServiceRequestNormalization = "none"
+	CreateCommunicationServiceRequestNormalizationPhoneE164     CreateCommunicationServiceRequestNormalization = "phone_e164"
+	CreateCommunicationServiceRequestNormalizationStripAtLower  CreateCommunicationServiceRequestNormalization = "strip_at_lower"
+)
+
+// Validate checks if the CreateCommunicationServiceRequestNormalization value is valid
+func (c CreateCommunicationServiceRequestNormalization) Validate() error {
+	switch c {
+	case CreateCommunicationServiceRequestNormalizationByAddressKind, CreateCommunicationServiceRequestNormalizationEmail, CreateCommunicationServiceRequestNormalizationLower, CreateCommunicationServiceRequestNormalizationNone, CreateCommunicationServiceRequestNormalizationPhoneE164, CreateCommunicationServiceRequestNormalizationStripAtLower:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid CreateCommunicationServiceRequestNormalization value, got: %v", c))
+	}
+}
+
+type CreateCommunicationServiceRequestScopePolicy string
+
+const (
+	CreateCommunicationServiceRequestScopePolicyNone     CreateCommunicationServiceRequestScopePolicy = "none"
+	CreateCommunicationServiceRequestScopePolicyOptional CreateCommunicationServiceRequestScopePolicy = "optional"
+	CreateCommunicationServiceRequestScopePolicyRequired CreateCommunicationServiceRequestScopePolicy = "required"
+)
+
+// Validate checks if the CreateCommunicationServiceRequestScopePolicy value is valid
+func (c CreateCommunicationServiceRequestScopePolicy) Validate() error {
+	switch c {
+	case CreateCommunicationServiceRequestScopePolicyNone, CreateCommunicationServiceRequestScopePolicyOptional, CreateCommunicationServiceRequestScopePolicyRequired:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid CreateCommunicationServiceRequestScopePolicy value, got: %v", c))
+	}
+}
+
 type DiscoverEventType string
 
 const (
