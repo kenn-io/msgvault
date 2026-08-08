@@ -36,7 +36,7 @@ func TestHumanizeDaemonLogLine(t *testing.T) {
 		},
 		{
 			name: "open_archive_database step drops its database attr",
-			line: `time=2026-07-01T12:00:00Z level=INFO msg="daemon startup step" run_id=abc123 step=open_archive_database database=/home/user/.msgvault/msgvault.db`,
+			line: `time=2026-07-01T12:00:00Z level=INFO msg="daemon startup step" run_id=abc123 step=open_archive_database database=example.db`,
 			want: "opening the archive database",
 		},
 		{
