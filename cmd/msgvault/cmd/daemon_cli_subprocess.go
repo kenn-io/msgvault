@@ -20,6 +20,10 @@ func isDaemonCLISubprocess() bool {
 	return os.Getenv(daemonCLISubprocessEnv) == strconv.Itoa(os.Getppid())
 }
 
+func isDaemonConsoleSubprocess() bool {
+	return isDaemonCLISubprocess() || isDaemonBuildCacheChild()
+}
+
 func runDaemonCLISubprocessStream(
 	ctx context.Context,
 	args []string,

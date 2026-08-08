@@ -127,7 +127,7 @@ in a single binary.`,
 			stderrIsTerminal := isatty.IsTerminal(os.Stderr.Fd()) ||
 				isatty.IsCygwinTerminal(os.Stderr.Fd())
 			if consoleLevel := logging.ResolveConsoleLevel(
-				levelString, verbose, fileDisabled, stderrIsTerminal, isDaemonCLISubprocess(),
+				levelString, verbose, fileDisabled, stderrIsTerminal, isDaemonConsoleSubprocess(),
 			); consoleLevel != nil {
 				levelOverride = consoleLevel
 				humanConsole = true

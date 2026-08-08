@@ -355,7 +355,7 @@ func reportLocalDaemonStartup(ctx context.Context, proc *backgroundServeProcess)
 		timer := time.NewTimer(localDaemonStartupProgressDelay)
 		defer timer.Stop()
 		started := time.Now()
-		lastLine := ""
+		state := daemonStartupProgressState{}
 		announced := false
 		for {
 			select {
@@ -376,19 +376,14 @@ func reportLocalDaemonStartup(ctx context.Context, proc *backgroundServeProcess)
 			}
 
 			elapsed := time.Since(started).Round(time.Second)
-			line := latestDaemonLogLine(proc.LogPath)
-			switch {
-			case line != "" && line != lastLine:
-				_, _ = fmt.Fprintf(os.Stderr, "Daemon startup (%s): %s\n", elapsed, humanizeDaemonLogLine(line))
-				lastLine = line
-			case proc.LogPath != "":
+			message := state.Next(latestDaemonLogLine(proc.LogPath))
+			if message == "still waiting" && proc.LogPath != "" {
 				_, _ = fmt.Fprintf(os.Stderr,
 					"Daemon startup (%s): still waiting. Logs: %s\n",
 					elapsed, proc.LogPath)
-			default:
+			} else {
 				_, _ = fmt.Fprintf(os.Stderr,
-					"Daemon startup (%s): still waiting.\n",
-					elapsed)
+					"Daemon startup (%s): %s\n", elapsed, message)
 			}
 			timer.Reset(localDaemonStartupProgressInterval)
 		}
@@ -419,10 +414,36 @@ func compactDuration(d time.Duration) string {
 var daemonStartupStepLabels = map[string]string{
 	"open_archive_database": "opening the archive database",
 	"init_archive_schema":   "checking the database schema",
+	"build_analytics_cache": "building the analytics cache",
 	"init_analytics_engine": "starting the analytics engine",
 	"init_vector_backend":   "initializing vector search",
 	"skip_vector_backend":   "vector search disabled",
 	"start_api_server":      "starting the API server",
+}
+
+type daemonStartupProgressState struct {
+	lastLine   string
+	activeStep string
+}
+
+func (s *daemonStartupProgressState) Next(line string) string {
+	if line == s.lastLine {
+		if s.activeStep != "" {
+			return "still " + s.activeStep
+		}
+		return "still waiting"
+	}
+	s.lastLine = line
+	fields, ok := parseLogfmt(strings.TrimSpace(line))
+	if ok && fields["step"] != "" {
+		switch fields["msg"] {
+		case "daemon startup step":
+			s.activeStep = daemonStartupStepLabel(fields["step"])
+		case "daemon startup step complete":
+			s.activeStep = ""
+		}
+	}
+	return humanizeDaemonLogLine(line)
 }
 
 func daemonStartupStepLabel(step string) string {
@@ -483,7 +504,16 @@ func summarizeDaemonLogLine(line string) string {
 	// bind, enabled), which are detail — never a reason to fall back
 	// to the raw line, so they skip the unknown-key guard below.
 	case msg == "daemon startup step" && step != "":
-		sb.WriteString(daemonStartupStepLabel(step))
+		label := daemonStartupStepLabel(step)
+		sb.WriteString(label)
+		if step == "build_analytics_cache" && fields["reason"] != "" {
+			sb.WriteString(" (")
+			if fields["full_rebuild"] == "true" {
+				sb.WriteString("full rebuild: ")
+			}
+			sb.WriteString(fields["reason"])
+			sb.WriteString(")")
+		}
 	case msg == "daemon startup step complete" && step != "":
 		sb.WriteString(daemonStartupStepLabel(step))
 		sb.WriteString(" (done)")

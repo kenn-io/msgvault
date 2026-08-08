@@ -25,6 +25,11 @@ func TestHumanizeDaemonLogLine(t *testing.T) {
 			want: "build cache",
 		},
 		{
+			name: "cache build step explains a full rebuild",
+			line: `time=2026-07-01T12:00:00Z level=INFO msg="daemon startup step" step=build_analytics_cache reason="analytics cache schema is stale" full_rebuild=true`,
+			want: "building the analytics cache (full rebuild: analytics cache schema is stale)",
+		},
+		{
 			name: "startup step completion renders label (done)",
 			line: `time=2026-07-01T12:00:00Z level=INFO msg="daemon startup step complete" step=init_archive_schema`,
 			want: "checking the database schema (done)",
@@ -95,6 +100,24 @@ func TestHumanizeDaemonLogLine(t *testing.T) {
 			assert.Equal(t, tt.want, humanizeDaemonLogLine(tt.line))
 		})
 	}
+}
+
+func TestDaemonStartupProgressStateRepeatsActiveCacheBuild(t *testing.T) {
+	state := daemonStartupProgressState{}
+	buildLine := `time=2026-07-01T12:00:00Z level=INFO msg="daemon startup step" step=build_analytics_cache reason="analytics cache schema is stale" full_rebuild=true`
+	assert.Equal(t,
+		"building the analytics cache (full rebuild: analytics cache schema is stale)",
+		state.Next(buildLine),
+	)
+	assert.Equal(t, "still building the analytics cache", state.Next(buildLine))
+
+	warningLine := `time=2026-07-01T12:00:10Z level=WARN msg="builder memory pressure"`
+	assert.Equal(t, "builder memory pressure", state.Next(warningLine))
+	assert.Equal(t, "still building the analytics cache", state.Next(warningLine))
+
+	completeLine := `time=2026-07-01T12:01:00Z level=INFO msg="daemon startup step complete" step=build_analytics_cache full_rebuild=true`
+	assert.Equal(t, "building the analytics cache (done)", state.Next(completeLine))
+	assert.Equal(t, "still waiting", state.Next(completeLine))
 }
 
 // TestHumanizeDaemonLogLineTruncatesLongRawFallback locks in the length cap:

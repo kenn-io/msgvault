@@ -343,10 +343,10 @@ func BuildHandler(opts Options) (*Result, error) {
 // terminal) and whose startup lines are parsed by the autostart
 // progress reporter.
 //
-// daemonCLISubprocess quiets the same routine INFO noise for the
-// non-TTY CLI subprocess the daemon spawns to serve proxied CLI
-// commands: its stderr is a pipe streamed verbatim to the user's
-// console, so its structured startup/exit lines are noise even though
+// daemonCLISubprocess quiets the same routine INFO noise for non-TTY
+// CLI subprocesses the daemon spawns for proxied commands and analytics
+// cache builds: their stderr is streamed verbatim to the user's console
+// or daemon log, so structured startup/exit lines are noise even though
 // stderrIsTerminal is false.
 func ResolveConsoleLevel(
 	explicitLevel string, verbose, fileDisabled, stderrIsTerminal, daemonCLISubprocess bool,

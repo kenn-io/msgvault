@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -22,6 +23,12 @@ import (
 	"go.kenn.io/msgvault/internal/identityindex"
 	"go.kenn.io/msgvault/internal/query"
 )
+
+func TestDaemonBuildCacheChildUsesQuietConsolePolicy(t *testing.T) {
+	t.Setenv(daemonCLISubprocessEnv, "")
+	t.Setenv(buildCacheDaemonSubprocessEnv, strconv.Itoa(os.Getppid()))
+	assert.True(t, isDaemonConsoleSubprocess())
+}
 
 // setupTestSQLite creates a test SQLite database with realistic email data.
 func setupTestSQLite(t *testing.T) string {
