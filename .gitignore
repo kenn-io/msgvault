@@ -24,6 +24,7 @@ oauth_client*.json
 # Local development state
 .beads/
 .mcp.json
+.worktrees/
 
 # Python
 __pycache__/
