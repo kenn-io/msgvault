@@ -589,7 +589,10 @@ jobs:
       - name: Generate checksums
         run: |
           cd artifacts
-          sha256sum -- ./*.tar.gz ./*.zip > SHA256SUMS
+          for archive in *.tar.gz *.zip; do
+            [ -f "$archive" ] || continue
+            sha256sum -- "$archive"
+          done > SHA256SUMS
           cat SHA256SUMS
 
       - name: Get tag message
