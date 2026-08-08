@@ -3,11 +3,42 @@ package duckdbutil
 import (
 	"context"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestBuilderPolicyDefaults(t *testing.T) {
+	assertions := assert.New(t)
+	tempDir := filepath.Join(t.TempDir(), "spill")
+
+	policy := BuilderPolicy(tempDir)
+
+	assertions.Equal("2GB", policy.MemoryLimit)
+	assertions.Equal(min(runtime.GOMAXPROCS(0), 2), policy.Threads)
+	assertions.Equal(tempDir, policy.TempDirectory)
+	assertions.Equal("8GB", policy.MaxTempDirectorySize)
+}
+
+func TestBuilderPolicyWithOverrides(t *testing.T) {
+	assertions := assert.New(t)
+	tempDir := filepath.Join(t.TempDir(), "spill")
+	policy := BuilderPolicyWithOverrides(tempDir, BuilderOverrides{
+		MemoryLimit:          "1536mIb",
+		Threads:              3,
+		MaxTempDirectorySize: "12gB",
+	})
+
+	assertions.Equal("1536mIb", policy.MemoryLimit)
+	assertions.Equal(3, policy.Threads)
+	assertions.Equal(tempDir, policy.TempDirectory)
+	assertions.Equal("12gB", policy.MaxTempDirectorySize)
+
+	defaultThreads := BuilderPolicyWithOverrides(tempDir, BuilderOverrides{Threads: 0})
+	assertions.Equal(min(runtime.GOMAXPROCS(0), 2), defaultThreads.Threads)
+}
 
 func TestPolicyAppliesEffectiveSettings(t *testing.T) {
 	tempDir := filepath.Join(t.TempDir(), "spill")

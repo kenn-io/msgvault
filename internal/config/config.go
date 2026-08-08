@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/BurntSushi/toml"
+	"go.kenn.io/msgvault/internal/duckdbutil"
 	"go.kenn.io/msgvault/internal/fileutil"
 	"go.kenn.io/msgvault/internal/identityops"
 	"go.kenn.io/msgvault/internal/store"
@@ -42,8 +43,11 @@ type ChatConfig struct {
 
 // AnalyticsConfig controls daemon-side analytics engine selection.
 type AnalyticsConfig struct {
-	Engine         string `toml:"engine"`           // auto, sql, or duckdb
-	AutoBuildCache bool   `toml:"auto_build_cache"` // Build stale/missing Parquet cache before using DuckDB
+	Engine             string `toml:"engine"`               // auto, sql, or duckdb
+	AutoBuildCache     bool   `toml:"auto_build_cache"`     // Build stale/missing Parquet cache before using DuckDB
+	BuilderMemoryLimit string `toml:"builder_memory_limit"` // Optional DuckDB cache-builder memory limit
+	BuilderThreads     int    `toml:"builder_threads"`      // Optional DuckDB cache-builder threads; zero uses the default
+	BuilderTempLimit   string `toml:"builder_temp_limit"`   // Optional DuckDB cache-builder temp-directory limit
 }
 
 const (
@@ -140,7 +144,6 @@ func (a *AnalyticsConfig) ApplyDefaults() {
 func (a *AnalyticsConfig) Validate() error {
 	switch a.Engine {
 	case AnalyticsEngineAuto, AnalyticsEngineSQL, AnalyticsEngineDuckDB:
-		return nil
 	default:
 		return fmt.Errorf("invalid [analytics] engine %q (want %q, %q, or %q)",
 			a.Engine,
@@ -148,6 +151,22 @@ func (a *AnalyticsConfig) Validate() error {
 			AnalyticsEngineSQL,
 			AnalyticsEngineDuckDB)
 	}
+	for _, size := range []struct {
+		key   string
+		value string
+	}{
+		{key: "builder_memory_limit", value: a.BuilderMemoryLimit},
+		{key: "builder_temp_limit", value: a.BuilderTempLimit},
+	} {
+		if size.value != "" && !duckdbutil.ValidSize(size.value) {
+			return fmt.Errorf("invalid [analytics] %s %q: want a positive integer followed by B, KB, MB, GB, TB, KiB, MiB, GiB, or TiB",
+				size.key, size.value)
+		}
+	}
+	if a.BuilderThreads < 0 {
+		return fmt.Errorf("invalid [analytics] builder_threads %d: must be zero or positive", a.BuilderThreads)
+	}
+	return nil
 }
 
 // ServerConfig holds HTTP API server configuration.

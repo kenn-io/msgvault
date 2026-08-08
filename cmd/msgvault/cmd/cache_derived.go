@@ -27,6 +27,7 @@ func refreshDerivedDatasetsOnly(
 	ctx context.Context,
 	dbPath, analyticsDir string,
 	locking cachePublishLocking,
+	builderOverrides ...duckdbutil.BuilderOverrides,
 ) (*buildResult, error) {
 	readiness, err := query.InspectCacheReadiness(analyticsDir)
 	if err != nil {
@@ -93,7 +94,10 @@ func refreshDerivedDatasetsOnly(
 	}
 
 	spillDir := filepath.Join(staging.root, "duckdb-tmp")
-	duckDB, err := duckdbutil.Open(ctx, duckdbutil.BuilderPolicy(spillDir))
+	duckDB, err := duckdbutil.Open(ctx, duckdbutil.BuilderPolicyWithOverrides(
+		spillDir,
+		firstBuilderOverrides(builderOverrides),
+	))
 	if err != nil {
 		return nil, fmt.Errorf("open bounded DuckDB for derived refresh: %w", err)
 	}

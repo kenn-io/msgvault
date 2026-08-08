@@ -95,11 +95,7 @@ func Build(
 		}
 	}
 
-	if err := b.copyDataset(
-		ctx,
-		DatasetActivity,
-		buildRelationshipActivitySQL(b.base),
-	); err != nil {
+	if err := b.copyRelationshipActivity(ctx); err != nil {
 		return BuildResult{}, err
 	}
 	activity := b.activityRelation()
@@ -232,34 +228,88 @@ func (b builder) copyDataset(ctx context.Context, dataset, query string) error {
 	start := time.Now()
 	output := filepath.Join(b.opts.OutputRoot, dataset, "data.parquet")
 	options := "FORMAT PARQUET, COMPRESSION 'zstd'"
-	if dataset == DatasetActivity {
-		output = filepath.Join(b.opts.OutputRoot, dataset)
-		options += ", PARTITION_BY (occurred_year), WRITE_PARTITION_COLUMNS true, OVERWRITE_OR_IGNORE"
-	}
 	statement := "COPY (" + query + ") TO '" + quoteSQLString(output) +
 		"' (" + options + ")"
 	if _, err := b.db.ExecContext(ctx, statement); err != nil {
 		return fmt.Errorf("build %s: %w", dataset, err)
 	}
-	if dataset == DatasetActivity &&
-		!datasetContainsParquet(b.opts.OutputRoot, dataset) {
-		emptyOutput := filepath.Join(
-			b.opts.OutputRoot,
-			dataset,
-			"occurred_year=0",
-			"empty.parquet",
-		)
-		if err := os.MkdirAll(filepath.Dir(emptyOutput), 0o755); err != nil {
-			return fmt.Errorf("create empty %s partition: %w", dataset, err)
+	if b.opts.Progress != nil {
+		b.opts.Progress(dataset, time.Since(start))
+	}
+	return nil
+}
+
+func (b builder) copyRelationshipActivity(ctx context.Context) error {
+	start := time.Now()
+	years, err := b.relationshipActivityYears(ctx)
+	if err != nil {
+		return err
+	}
+
+	output := filepath.Join(b.opts.OutputRoot, DatasetActivity)
+	options := "FORMAT PARQUET, COMPRESSION 'zstd', PARTITION_BY (occurred_year), " +
+		"WRITE_PARTITION_COLUMNS true, OVERWRITE_OR_IGNORE"
+	for _, year := range years {
+		query := buildRelationshipActivitySQL(b.base, year)
+		statement := "COPY (" + query + ") TO '" + quoteSQLString(output) +
+			"' (" + options + ")"
+		if _, err := b.db.ExecContext(ctx, statement); err != nil {
+			return fmt.Errorf("build %s for year %d: %w", DatasetActivity, year, err)
 		}
-		emptyStatement := "COPY (SELECT * FROM (" + query + ") WHERE false) TO '" +
-			quoteSQLString(emptyOutput) + "' (FORMAT PARQUET, COMPRESSION 'zstd')"
-		if _, err := b.db.ExecContext(ctx, emptyStatement); err != nil {
-			return fmt.Errorf("build empty %s: %w", dataset, err)
+	}
+
+	if !datasetContainsParquet(b.opts.OutputRoot, DatasetActivity) {
+		if err := b.copyEmptyRelationshipActivity(ctx); err != nil {
+			return err
 		}
 	}
 	if b.opts.Progress != nil {
-		b.opts.Progress(dataset, time.Since(start))
+		b.opts.Progress(DatasetActivity, time.Since(start))
+	}
+	return nil
+}
+
+func (b builder) relationshipActivityYears(ctx context.Context) ([]int64, error) {
+	query := `
+		SELECT DISTINCT year(sent_at)::BIGINT AS occurred_year
+		FROM read_parquet('` + quoteSQLString(b.base("messages")) + `',
+		                  hive_partitioning=true, union_by_name=true)
+		ORDER BY occurred_year`
+	rows, err := b.db.QueryContext(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("list relationship activity years: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var years []int64
+	for rows.Next() {
+		var year int64
+		if err := rows.Scan(&year); err != nil {
+			return nil, fmt.Errorf("scan relationship activity year: %w", err)
+		}
+		years = append(years, year)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list relationship activity years: %w", err)
+	}
+	return years, nil
+}
+
+func (b builder) copyEmptyRelationshipActivity(ctx context.Context) error {
+	emptyOutput := filepath.Join(
+		b.opts.OutputRoot,
+		DatasetActivity,
+		"occurred_year=0",
+		"empty.parquet",
+	)
+	if err := os.MkdirAll(filepath.Dir(emptyOutput), 0o755); err != nil {
+		return fmt.Errorf("create empty %s partition: %w", DatasetActivity, err)
+	}
+	query := buildRelationshipActivitySQL(b.base, 0)
+	statement := "COPY (SELECT * FROM (" + query + ") WHERE false) TO '" +
+		quoteSQLString(emptyOutput) + "' (FORMAT PARQUET, COMPRESSION 'zstd')"
+	if _, err := b.db.ExecContext(ctx, statement); err != nil {
+		return fmt.Errorf("build empty %s: %w", DatasetActivity, err)
 	}
 	return nil
 }

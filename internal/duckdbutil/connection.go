@@ -25,6 +25,14 @@ type Policy struct {
 	MaxTempDirectorySize string
 }
 
+// BuilderOverrides contains optional cache-builder policy values. Empty size
+// values and zero threads retain BuilderPolicy defaults.
+type BuilderOverrides struct {
+	MemoryLimit          string
+	Threads              int
+	MaxTempDirectorySize string
+}
+
 // InteractivePolicy returns the bounded policy for daemon-side queries.
 func InteractivePolicy(tempDirectory string) Policy {
 	return Policy{
@@ -43,6 +51,21 @@ func BuilderPolicy(tempDirectory string) Policy {
 		TempDirectory:        tempDirectory,
 		MaxTempDirectorySize: "8GB",
 	}
+}
+
+// BuilderPolicyWithOverrides applies non-zero overrides to BuilderPolicy.
+func BuilderPolicyWithOverrides(tempDirectory string, overrides BuilderOverrides) Policy {
+	policy := BuilderPolicy(tempDirectory)
+	if overrides.MemoryLimit != "" {
+		policy.MemoryLimit = overrides.MemoryLimit
+	}
+	if overrides.Threads != 0 {
+		policy.Threads = overrides.Threads
+	}
+	if overrides.MaxTempDirectorySize != "" {
+		policy.MaxTempDirectorySize = overrides.MaxTempDirectorySize
+	}
+	return policy
 }
 
 // Open creates one in-memory DuckDB connection and applies policy before any
@@ -69,10 +92,10 @@ func Apply(ctx context.Context, db *sql.DB, policy Policy) error {
 	if policy.Threads <= 0 {
 		return errors.New("apply duckdb policy: threads must be positive")
 	}
-	if !validSize(policy.MemoryLimit) {
+	if !ValidSize(policy.MemoryLimit) {
 		return fmt.Errorf("apply duckdb policy: invalid memory limit %q", policy.MemoryLimit)
 	}
-	if !validSize(policy.MaxTempDirectorySize) {
+	if !ValidSize(policy.MaxTempDirectorySize) {
 		return fmt.Errorf("apply duckdb policy: invalid temp-directory limit %q", policy.MaxTempDirectorySize)
 	}
 	if policy.TempDirectory == "" || !filepath.IsAbs(policy.TempDirectory) {
@@ -101,6 +124,8 @@ func Apply(ctx context.Context, db *sql.DB, policy Policy) error {
 	return nil
 }
 
-func validSize(value string) bool {
+// ValidSize reports whether value is a positive integer followed by a
+// case-insensitive DuckDB byte-size unit.
+func ValidSize(value string) bool {
 	return duckDBSizePattern.MatchString(value)
 }

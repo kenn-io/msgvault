@@ -73,7 +73,12 @@ func runRepairEncodingLocal(cmd *cobra.Command) error {
 
 	dbPath := cfg.DatabaseDSN()
 	analyticsDir := cfg.AnalyticsDir()
-	if _, err := buildCache(dbPath, analyticsDir, true); err != nil {
+	if _, err := buildCache(
+		dbPath,
+		analyticsDir,
+		true,
+		analyticsBuilderOverrides(cfg.Analytics),
+	); err != nil {
 		return fmt.Errorf("encoding repair completed, but analytics cache refresh failed: %w", err)
 	}
 	fmt.Println("\nAnalytics cache rebuilt.")

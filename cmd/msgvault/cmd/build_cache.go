@@ -342,6 +342,7 @@ func runBuildCacheLocal(fullRebuild, auto bool) error {
 func runBuildCacheLocalMode(mode buildCacheMode) error {
 	dbPath := cfg.DatabaseDSN()
 	analyticsDir := cfg.AnalyticsDir()
+	builderOverrides := analyticsBuilderOverrides(cfg.Analytics)
 
 	// The Parquet cache is a SQLite -> DuckDB ETL; feeding a postgres:// DSN to
 	// the SQLite driver inside buildCache fails immediately with a confusing
@@ -371,13 +372,13 @@ func runBuildCacheLocalMode(mode buildCacheMode) error {
 	var result *buildResult
 	switch mode {
 	case buildCacheModeAuto:
-		result, err = buildCacheAuto(dbPath, analyticsDir)
+		result, err = buildCacheAuto(dbPath, analyticsDir, builderOverrides)
 	case buildCacheModeDerived:
-		result, err = buildCacheDerivedOnly(dbPath, analyticsDir)
+		result, err = buildCacheDerivedOnly(dbPath, analyticsDir, builderOverrides)
 	case buildCacheModeFull:
-		result, err = buildCache(dbPath, analyticsDir, true)
+		result, err = buildCache(dbPath, analyticsDir, true, builderOverrides)
 	case buildCacheModeDefault:
-		result, err = buildCache(dbPath, analyticsDir, false)
+		result, err = buildCache(dbPath, analyticsDir, false, builderOverrides)
 	default:
 		return fmt.Errorf("unknown build-cache mode %d", mode)
 	}
@@ -399,7 +400,25 @@ func runBuildCacheLocalMode(mode buildCacheMode) error {
 	return nil
 }
 
-func buildCacheDerivedOnly(dbPath, analyticsDir string) (*buildResult, error) {
+func analyticsBuilderOverrides(analytics config.AnalyticsConfig) duckdbutil.BuilderOverrides {
+	return duckdbutil.BuilderOverrides{
+		MemoryLimit:          analytics.BuilderMemoryLimit,
+		Threads:              analytics.BuilderThreads,
+		MaxTempDirectorySize: analytics.BuilderTempLimit,
+	}
+}
+
+func firstBuilderOverrides(overrides []duckdbutil.BuilderOverrides) duckdbutil.BuilderOverrides {
+	if len(overrides) == 0 {
+		return duckdbutil.BuilderOverrides{}
+	}
+	return overrides[0]
+}
+
+func buildCacheDerivedOnly(
+	dbPath, analyticsDir string,
+	builderOverrides ...duckdbutil.BuilderOverrides,
+) (*buildResult, error) {
 	buildCacheMu.Lock()
 	defer buildCacheMu.Unlock()
 
@@ -408,7 +427,13 @@ func buildCacheDerivedOnly(dbPath, analyticsDir string) (*buildResult, error) {
 		return nil, err
 	}
 	defer func() { _ = buildLock.Unlock() }()
-	return refreshDerivedDatasetsOnly(context.Background(), dbPath, analyticsDir, acquirePublishLock)
+	return refreshDerivedDatasetsOnly(
+		context.Background(),
+		dbPath,
+		analyticsDir,
+		acquirePublishLock,
+		builderOverrides...,
+	)
 }
 
 func acquireBuildCacheWriteLock(cfg *config.Config) (func(), error) {
@@ -433,8 +458,12 @@ type buildResult struct {
 // buildCache honors an explicit full rebuild unconditionally. Default builds
 // recheck staleness under the inter-process lock so retries cannot skip cache
 // repairs for deletions or other mutations that leave the ID boundary intact.
-func buildCache(dbPath, analyticsDir string, fullRebuild bool) (*buildResult, error) {
-	return buildCacheImpl(dbPath, analyticsDir, fullRebuild, !fullRebuild)
+func buildCache(
+	dbPath, analyticsDir string,
+	fullRebuild bool,
+	builderOverrides ...duckdbutil.BuilderOverrides,
+) (*buildResult, error) {
+	return buildCacheImpl(dbPath, analyticsDir, fullRebuild, !fullRebuild, builderOverrides...)
 }
 
 // buildCacheAuto builds the cache for automatic (staleness-derived) callers.
@@ -442,11 +471,18 @@ func buildCache(dbPath, analyticsDir string, fullRebuild bool) (*buildResult, er
 // re-evaluated once the lock is held: a build another process finished while
 // we waited can make the work unnecessary or downgrade a full rebuild to an
 // incremental one, instead of erasing a cache that was just completed.
-func buildCacheAuto(dbPath, analyticsDir string) (*buildResult, error) {
-	return buildCacheImpl(dbPath, analyticsDir, false, true)
+func buildCacheAuto(
+	dbPath, analyticsDir string,
+	builderOverrides ...duckdbutil.BuilderOverrides,
+) (*buildResult, error) {
+	return buildCacheImpl(dbPath, analyticsDir, false, true, builderOverrides...)
 }
 
-func buildCacheImpl(dbPath, analyticsDir string, fullRebuild, recheckStaleness bool) (*buildResult, error) {
+func buildCacheImpl(
+	dbPath, analyticsDir string,
+	fullRebuild, recheckStaleness bool,
+	builderOverrides ...duckdbutil.BuilderOverrides,
+) (*buildResult, error) {
 	buildCacheMu.Lock()
 	defer buildCacheMu.Unlock()
 
@@ -455,7 +491,14 @@ func buildCacheImpl(dbPath, analyticsDir string, fullRebuild, recheckStaleness b
 		return nil, err
 	}
 	defer func() { _ = buildLock.Unlock() }()
-	return buildCacheLocked(dbPath, analyticsDir, fullRebuild, recheckStaleness, acquirePublishLock)
+	return buildCacheLocked(
+		dbPath,
+		analyticsDir,
+		fullRebuild,
+		recheckStaleness,
+		acquirePublishLock,
+		builderOverrides...,
+	)
 }
 
 // acquireCacheBuildLock takes the exclusive builder lock that serializes
@@ -537,8 +580,15 @@ func derivedDriftOnly(staleness cacheStaleness) bool {
 func refreshIdentityDatasetsOnly(
 	dbPath, analyticsDir string,
 	locking cachePublishLocking,
+	builderOverrides ...duckdbutil.BuilderOverrides,
 ) (*buildResult, error) {
-	return refreshDerivedDatasetsOnly(context.Background(), dbPath, analyticsDir, locking)
+	return refreshDerivedDatasetsOnly(
+		context.Background(),
+		dbPath,
+		analyticsDir,
+		locking,
+		builderOverrides...,
+	)
 }
 
 // buildCacheLocked exports and publishes a cache while the caller holds the
@@ -548,6 +598,7 @@ func buildCacheLocked(
 	dbPath, analyticsDir string,
 	fullRebuild, recheckStaleness bool,
 	locking cachePublishLocking,
+	builderOverrides ...duckdbutil.BuilderOverrides,
 ) (*buildResult, error) {
 	if err := cleanupStaleCacheStaging(analyticsDir); err != nil {
 		return nil, err
@@ -558,7 +609,7 @@ func buildCacheLocked(
 			return &buildResult{Skipped: true, OutputDir: analyticsDir}, nil
 		}
 		if derivedDriftOnly(staleness) {
-			return refreshIdentityDatasetsOnly(dbPath, analyticsDir, locking)
+			return refreshIdentityDatasetsOnly(dbPath, analyticsDir, locking, builderOverrides...)
 		}
 		fullRebuild = staleness.FullRebuild
 	}
@@ -643,7 +694,10 @@ func buildCacheLocked(
 
 	db, err := duckdbutil.Open(
 		context.Background(),
-		duckdbutil.BuilderPolicy(filepath.Join(staging.root, "duckdb-tmp")),
+		duckdbutil.BuilderPolicyWithOverrides(
+			filepath.Join(staging.root, "duckdb-tmp"),
+			firstBuilderOverrides(builderOverrides),
+		),
 	)
 	if err != nil {
 		return nil, err
@@ -1813,7 +1867,7 @@ func rebuildCacheAfterWrite(dbPath string) error {
 	if !staleness.NeedsBuild {
 		return nil
 	}
-	result, err := buildCacheAuto(dbPath, analyticsDir)
+	result, err := buildCacheAuto(dbPath, analyticsDir, analyticsBuilderOverrides(cfg.Analytics))
 	if err != nil {
 		return fmt.Errorf("refresh analytics cache: %w", err)
 	}

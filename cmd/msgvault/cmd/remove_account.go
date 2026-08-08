@@ -233,7 +233,14 @@ func runRemoveAccountLocal(cmd *cobra.Command, args []string) error {
 			removeAccountAfterCascadeHook()
 		}
 		fmt.Println("\nRebuilding analytics cache...")
-		_, cacheRefreshErr = buildCacheLocked(cfg.DatabaseDSN(), cfg.AnalyticsDir(), true, false, publishLockHeld)
+		_, cacheRefreshErr = buildCacheLocked(
+			cfg.DatabaseDSN(),
+			cfg.AnalyticsDir(),
+			true,
+			false,
+			publishLockHeld,
+			analyticsBuilderOverrides(cfg.Analytics),
+		)
 		cacheRefreshErr = errors.Join(
 			cacheRefreshErr,
 			wrapError(unlockCache(), "release analytics cache lock"),

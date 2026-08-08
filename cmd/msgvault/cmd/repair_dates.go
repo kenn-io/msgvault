@@ -164,6 +164,7 @@ func runRepairDatesLocal(
 			true,
 			false,
 			publishLockHeld,
+			analyticsBuilderOverrides(cfg.Analytics),
 		); err != nil {
 			ledger.Status = "applied-cache-failed"
 			ledger.Error = err.Error()

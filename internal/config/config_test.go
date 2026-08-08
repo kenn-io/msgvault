@@ -27,10 +27,63 @@ func TestServerConfigDefaults(t *testing.T) {
 }
 
 func TestAnalyticsConfigDefaults(t *testing.T) {
+	assertions := assert.New(t)
 	cfg := NewDefaultConfig()
 
-	assert.Equal(t, AnalyticsEngineAuto, cfg.Analytics.Engine)
-	assert.True(t, cfg.Analytics.AutoBuildCache)
+	assertions.Equal(AnalyticsEngineAuto, cfg.Analytics.Engine)
+	assertions.True(cfg.Analytics.AutoBuildCache)
+	assertions.Empty(cfg.Analytics.BuilderMemoryLimit)
+	assertions.Zero(cfg.Analytics.BuilderThreads)
+	assertions.Empty(cfg.Analytics.BuilderTempLimit)
+}
+
+func TestLoadWithAnalyticsBuilderResourceLimits(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.toml")
+	requirements.NoError(os.WriteFile(configPath, []byte(`
+[analytics]
+builder_memory_limit = "1536mIb"
+builder_threads = 3
+builder_temp_limit = "12gB"
+`), 0o600))
+
+	cfg, err := Load(configPath, "")
+	requirements.NoError(err)
+	assertions.Equal("1536mIb", cfg.Analytics.BuilderMemoryLimit)
+	assertions.Equal(3, cfg.Analytics.BuilderThreads)
+	assertions.Equal("12gB", cfg.Analytics.BuilderTempLimit)
+}
+
+func TestLoadRejectsInvalidAnalyticsBuilderResourceLimits(t *testing.T) {
+	tests := []struct {
+		name  string
+		key   string
+		value string
+	}{
+		{name: "zero memory", key: "builder_memory_limit", value: `"0GB"`},
+		{name: "fractional memory", key: "builder_memory_limit", value: `"1.5GB"`},
+		{name: "missing memory unit", key: "builder_memory_limit", value: `"2"`},
+		{name: "whitespace in memory", key: "builder_memory_limit", value: `" 2GB"`},
+		{name: "zero temp", key: "builder_temp_limit", value: `"0GiB"`},
+		{name: "negative temp", key: "builder_temp_limit", value: `"-8GB"`},
+		{name: "missing temp number", key: "builder_temp_limit", value: `"GB"`},
+		{name: "negative threads", key: "builder_threads", value: "-1"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			configPath := filepath.Join(tmpDir, "config.toml")
+			content := "[analytics]\n" + tt.key + " = " + tt.value + "\n"
+			require.NoError(t, os.WriteFile(configPath, []byte(content), 0o600))
+
+			_, err := Load(configPath, "")
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "invalid [analytics] "+tt.key)
+		})
+	}
 }
 
 func TestDiscordConfigDefaults(t *testing.T) {

@@ -49,6 +49,42 @@ func TestDerivedOnlyRefusesStaleSchemaBeforeCreatingStaging(t *testing.T) {
 	assert.Empty(t, staging)
 }
 
+func TestProductionCacheBuilderOpenSitesUseConfiguredOverrides(t *testing.T) {
+	savedCfg := cfg
+	t.Cleanup(func() { cfg = savedCfg })
+
+	configure := func(dataDir, dbPath string) {
+		cfg = config.NewDefaultConfig()
+		cfg.Data.DataDir = dataDir
+		cfg.Data.DatabaseURL = dbPath
+		cfg.Analytics.BuilderMemoryLimit = "1B"
+	}
+
+	t.Run("full build", func(t *testing.T) {
+		tmp := setupTestSQLite(t)
+		configure(tmp, filepath.Join(tmp, "test.db"))
+
+		err := runBuildCacheLocalMode(buildCacheModeFull)
+
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "memory_limit")
+	})
+
+	t.Run("derived refresh", func(t *testing.T) {
+		tmp := setupTestSQLite(t)
+		dbPath := filepath.Join(tmp, "test.db")
+		analyticsDir := filepath.Join(tmp, "analytics")
+		_, err := buildCache(dbPath, analyticsDir, true)
+		require.NoError(t, err)
+		configure(tmp, dbPath)
+
+		err = runBuildCacheLocalMode(buildCacheModeDerived)
+
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "memory_limit")
+	})
+}
+
 func TestDerivedOnlyRefreshCarriesStatsAndRefreshesMembershipRollups(t *testing.T) {
 	requirementsForTest := require.New(t)
 	assertionsForTest := assert.New(t)

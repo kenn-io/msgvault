@@ -15,38 +15,13 @@ func logicalActivitySQL(activityPath, filterSQL string) string {
 	}
 	activity := activityRelation(activityPath, true)
 	return fmt.Sprintf(`
-WITH relationship_activity AS (
-	SELECT * FROM %s
-), filtered_facts AS (
+WITH filtered_facts AS (
 	SELECT f.message_id, f.conversation_id, f.source_id, f.source_type,
 	       f.occurred_at, f.message_type, f.conversation_type, f.entry_kind,
 	       f.is_chat, f.is_from_me, f.attachment_count, f.deleted_from_source
-	FROM relationship_activity f
-	WHERE %s
+	FROM %[1]s f
+	WHERE %[2]s
 	GROUP BY ALL
-), filtered_activity AS (
-	SELECT a.*
-	FROM relationship_activity a
-	JOIN filtered_facts f USING (message_id)
-), canonical_message_domain_edges AS (
-	SELECT message_id, canonical_id, participant_domain,
-	       bool_or(is_direct) AS is_direct,
-	       bool_or(is_conversation_member) AS is_conversation_member,
-	       bool_or(is_sender) AS is_sender,
-	       bool_or(is_author) AS is_author,
-	       bool_or(is_owner) AS is_owner
-	FROM filtered_activity
-	WHERE canonical_id IS NOT NULL
-	GROUP BY message_id, canonical_id, participant_domain
-), canonical_message_edges AS (
-	SELECT message_id, canonical_id,
-	       bool_or(is_direct) AS is_direct,
-	       bool_or(is_conversation_member) AS is_conversation_member,
-	       bool_or(is_sender) AS is_sender,
-	       bool_or(is_author) AS is_author,
-	       bool_or(is_owner) AS is_owner
-	FROM canonical_message_domain_edges
-	GROUP BY message_id, canonical_id
 ), nonchat_units AS (
 	SELECT ('message:' || f.message_id)::VARCHAR AS entry_key,
 	       f.message_id::BIGINT AS anchor_message_id,
@@ -83,21 +58,35 @@ WITH relationship_activity AS (
 	UNION ALL
 	SELECT * FROM chat_units
 ), logical_people_candidates AS (
-	SELECT u.entry_key, d.canonical_id, d.is_author, d.is_owner
+	SELECT u.entry_key, f.canonical_id, f.is_author, f.is_owner
 	FROM nonchat_units u
-	JOIN canonical_message_edges d ON d.message_id = u.anchor_message_id
-	WHERE d.is_direct
+	JOIN %[1]s f ON f.message_id = u.anchor_message_id
+	WHERE f.canonical_id IS NOT NULL
+	  AND f.is_direct
 
 	UNION ALL
 
-	SELECT u.entry_key, d.canonical_id,
-	       (d.message_id = u.anchor_message_id AND d.is_author) AS is_author,
-	       d.is_owner
+	SELECT u.entry_key, f.canonical_id,
+	       (f.message_id = u.anchor_message_id AND f.is_author) AS is_author,
+	       f.is_owner
 	FROM chat_units u
-	JOIN filtered_facts f
-	  ON f.source_id = u.source_id AND f.conversation_id = u.conversation_id
-	 AND f.is_chat
-	JOIN canonical_message_edges d ON d.message_id = f.message_id
+	JOIN %[1]s f ON f.message_id = u.anchor_message_id
+	WHERE f.canonical_id IS NOT NULL
+
+	UNION ALL
+
+	SELECT u.entry_key, f.canonical_id,
+	       (f.message_id = u.anchor_message_id AND f.is_author) AS is_author,
+	       f.is_owner
+	FROM chat_units u
+	JOIN filtered_facts selected
+	  ON selected.source_id = u.source_id
+	 AND selected.conversation_id = u.conversation_id
+	 AND selected.is_chat
+	JOIN %[1]s f ON f.message_id = selected.message_id
+	WHERE f.canonical_id IS NOT NULL
+	  AND f.is_direct
+	  AND f.message_id <> u.anchor_message_id
 ), logical_people_grouped AS (
 	SELECT entry_key, canonical_id,
 	       bool_or(is_author) AS is_author,
@@ -115,35 +104,59 @@ WITH relationship_activity AS (
 	JOIN logical_units u USING (entry_key)
 	LEFT JOIN logical_owner_presence op USING (entry_key)
 ), logical_person_domain_candidates AS (
-	SELECT u.entry_key, d.canonical_id, d.participant_domain AS domain
+	SELECT u.entry_key, f.canonical_id, f.participant_domain AS domain
 	FROM nonchat_units u
-	JOIN canonical_message_domain_edges d ON d.message_id = u.anchor_message_id
-	WHERE d.is_direct
+	JOIN %[1]s f ON f.message_id = u.anchor_message_id
+	WHERE f.canonical_id IS NOT NULL
+	  AND f.is_direct
 
 	UNION ALL
 
-	SELECT u.entry_key, d.canonical_id, d.participant_domain AS domain
+	SELECT u.entry_key, f.canonical_id, f.participant_domain AS domain
 	FROM chat_units u
-	JOIN filtered_facts f
-	  ON f.source_id = u.source_id AND f.conversation_id = u.conversation_id
-	 AND f.is_chat
-	JOIN canonical_message_domain_edges d ON d.message_id = f.message_id
+	JOIN %[1]s f ON f.message_id = u.anchor_message_id
+	WHERE f.canonical_id IS NOT NULL
+
+	UNION ALL
+
+	SELECT u.entry_key, f.canonical_id, f.participant_domain AS domain
+	FROM chat_units u
+	JOIN filtered_facts selected
+	  ON selected.source_id = u.source_id
+	 AND selected.conversation_id = u.conversation_id
+	 AND selected.is_chat
+	JOIN %[1]s f ON f.message_id = selected.message_id
+	WHERE f.canonical_id IS NOT NULL
+	  AND f.is_direct
+	  AND f.message_id <> u.anchor_message_id
 ), logical_person_domains AS (
 	SELECT DISTINCT entry_key, canonical_id, domain
 	FROM logical_person_domain_candidates
 ), logical_domain_candidates AS (
-	SELECT u.entry_key, d.participant_domain AS domain
+	SELECT u.entry_key, f.participant_domain AS domain
 	FROM nonchat_units u
-	JOIN canonical_message_domain_edges d ON d.message_id = u.anchor_message_id
+	JOIN %[1]s f ON f.message_id = u.anchor_message_id
+	WHERE f.canonical_id IS NOT NULL
 
 	UNION ALL
 
-	SELECT u.entry_key, d.participant_domain AS domain
+	SELECT u.entry_key, f.participant_domain AS domain
 	FROM chat_units u
-	JOIN filtered_facts f
-	  ON f.source_id = u.source_id AND f.conversation_id = u.conversation_id
-	 AND f.is_chat
-	JOIN canonical_message_domain_edges d ON d.message_id = f.message_id
+	JOIN %[1]s f ON f.message_id = u.anchor_message_id
+	WHERE f.canonical_id IS NOT NULL
+
+	UNION ALL
+
+	SELECT u.entry_key, f.participant_domain AS domain
+	FROM chat_units u
+	JOIN filtered_facts selected
+	  ON selected.source_id = u.source_id
+	 AND selected.conversation_id = u.conversation_id
+	 AND selected.is_chat
+	JOIN %[1]s f ON f.message_id = selected.message_id
+	WHERE f.canonical_id IS NOT NULL
+	  AND f.is_direct
+	  AND f.message_id <> u.anchor_message_id
 ), logical_domain_keys AS (
 	SELECT DISTINCT entry_key, domain
 	FROM logical_domain_candidates
@@ -165,7 +178,7 @@ WITH relationship_activity AS (
 	)
 }
 
-func buildRelationshipActivitySQL(path func(string) string) string {
+func buildRelationshipActivitySQL(path func(string) string, occurredYear int64) string {
 	return fmt.Sprintf(`
 WITH message_facts AS (
 	SELECT m.id::BIGINT AS message_id,
@@ -186,6 +199,11 @@ WITH message_facts AS (
 	FROM read_parquet('%s', hive_partitioning=true, union_by_name=true) m
 	JOIN read_parquet('%s') s ON s.id = m.source_id
 	LEFT JOIN read_parquet('%s') c ON c.id = m.conversation_id
+	WHERE year(m.sent_at) = %d
+), scoped_conversations AS (
+	SELECT DISTINCT conversation_id
+	FROM message_facts
+	WHERE conversation_id IS NOT NULL
 ), canon AS (
 	SELECT p.id::BIGINT AS participant_id,
 	       coalesce(c.canonical_id, p.id)::BIGINT AS canonical_id,
@@ -196,59 +214,127 @@ WITH message_facts AS (
 	SELECT DISTINCT c.canonical_id
 	FROM read_parquet('%s') o
 	JOIN canon c ON c.participant_id = o.participant_id
-), raw_edges AS (
+), direct_edges AS (
 	SELECT mr.message_id::BIGINT AS message_id,
 	       mr.participant_id::BIGINT AS participant_id,
 	       true AS is_direct,
-	       false AS is_conversation_member,
 	       false AS is_sender,
 	       (mr.recipient_type = 'from') AS is_author
 	FROM read_parquet('%s') mr
+	JOIN message_facts m ON m.message_id = mr.message_id
 
 	UNION ALL
 
-	SELECT m.message_id, m.sender_id, true, false, true, true
+	SELECT m.message_id, m.sender_id, true, true, true
 	FROM message_facts m
 	WHERE m.sender_id IS NOT NULL
-
-	UNION ALL
-
-	SELECT m.message_id, cp.participant_id::BIGINT,
-	       false, true, false, false
-	FROM message_facts m
-	JOIN read_parquet('%s') cp
-	  ON cp.conversation_id = m.conversation_id
+), direct_canon AS (
+	SELECT e.message_id, e.is_direct, e.is_sender, e.is_author,
+	       c.canonical_id, c.participant_domain
+	FROM direct_edges e
+	LEFT JOIN canon c USING (participant_id)
+), direct_agg AS (
+	SELECT message_id, canonical_id, participant_domain,
+	       bool_or(is_direct) AS is_direct,
+	       bool_or(is_sender) AS is_sender,
+	       bool_or(is_author) AS is_author
+	FROM direct_canon
+	WHERE canonical_id IS NOT NULL
+	GROUP BY message_id, canonical_id, participant_domain
+), conv_members AS (
+	SELECT cp.conversation_id::BIGINT AS conversation_id,
+	       c.canonical_id, c.participant_domain
+	FROM read_parquet('%s') cp
+	JOIN scoped_conversations sc ON sc.conversation_id = cp.conversation_id
+	LEFT JOIN canon c ON c.participant_id = cp.participant_id
+), conv_members_canon AS (
+	SELECT DISTINCT conversation_id, canonical_id, participant_domain
+	FROM conv_members
+	WHERE canonical_id IS NOT NULL
 )
 SELECT m.message_id, m.conversation_id, m.source_id, m.source_type,
        m.occurred_at, m.message_type, m.conversation_type, m.entry_kind,
        m.is_chat, m.is_from_me, m.attachment_count, m.has_attachments,
        m.deleted_from_source,
-       c.canonical_id, c.participant_domain,
-       coalesce(bool_or(e.is_direct)
-           FILTER (WHERE c.canonical_id IS NOT NULL), false) AS is_direct,
-       coalesce(bool_or(e.is_conversation_member)
-           FILTER (WHERE c.canonical_id IS NOT NULL), false)
-           AS is_conversation_member,
-       coalesce(bool_or(e.is_sender)
-           FILTER (WHERE c.canonical_id IS NOT NULL), false) AS is_sender,
-       coalesce(bool_or(e.is_author)
-           FILTER (WHERE c.canonical_id IS NOT NULL), false) AS is_author,
+       cm.canonical_id, cm.participant_domain,
+       coalesce(d.is_direct, false) AS is_direct,
+       true AS is_conversation_member,
+       coalesce(d.is_sender, false) AS is_sender,
+       coalesce(d.is_author, false) AS is_author,
        (o.canonical_id IS NOT NULL) AS is_owner,
        m.occurred_year
 FROM message_facts m
-LEFT JOIN raw_edges e USING (message_id)
-LEFT JOIN canon c USING (participant_id)
-LEFT JOIN owner_canon o USING (canonical_id)
-GROUP BY m.message_id, m.conversation_id, m.source_id, m.source_type,
-         m.occurred_at, m.message_type, m.conversation_type, m.entry_kind,
-         m.is_chat, m.is_from_me, m.attachment_count, m.has_attachments,
-         m.deleted_from_source,
-         c.canonical_id, c.participant_domain, o.canonical_id, m.occurred_year`,
+	JOIN conv_members_canon cm USING (conversation_id)
+	LEFT JOIN direct_agg d
+	  ON d.message_id = m.message_id
+	 AND d.canonical_id = cm.canonical_id
+	 AND d.participant_domain = cm.participant_domain
+	LEFT JOIN owner_canon o ON o.canonical_id = cm.canonical_id
+
+UNION ALL
+
+SELECT m.message_id, m.conversation_id, m.source_id, m.source_type,
+       m.occurred_at, m.message_type, m.conversation_type, m.entry_kind,
+       m.is_chat, m.is_from_me, m.attachment_count, m.has_attachments,
+       m.deleted_from_source,
+       d.canonical_id, d.participant_domain,
+       d.is_direct,
+       false AS is_conversation_member,
+       d.is_sender,
+       d.is_author,
+       (o.canonical_id IS NOT NULL) AS is_owner,
+       m.occurred_year
+FROM message_facts m
+	JOIN direct_agg d USING (message_id)
+	LEFT JOIN conv_members_canon cm
+	  ON cm.conversation_id = m.conversation_id
+	 AND cm.canonical_id = d.canonical_id
+	 AND cm.participant_domain = d.participant_domain
+	LEFT JOIN owner_canon o ON o.canonical_id = d.canonical_id
+WHERE cm.canonical_id IS NULL
+
+UNION ALL
+
+SELECT m.message_id, m.conversation_id, m.source_id, m.source_type,
+       m.occurred_at, m.message_type, m.conversation_type, m.entry_kind,
+       m.is_chat, m.is_from_me, m.attachment_count, m.has_attachments,
+       m.deleted_from_source,
+       NULL::BIGINT AS canonical_id,
+       NULL::VARCHAR AS participant_domain,
+       false AS is_direct,
+       false AS is_conversation_member,
+       false AS is_sender,
+       false AS is_author,
+       false AS is_owner,
+       m.occurred_year
+FROM message_facts m
+WHERE EXISTS (
+	SELECT 1
+	FROM direct_canon d
+	WHERE d.message_id = m.message_id AND d.canonical_id IS NULL
+)
+OR EXISTS (
+	SELECT 1
+	FROM conv_members cm
+	WHERE cm.conversation_id = m.conversation_id
+	  AND cm.canonical_id IS NULL
+)
+OR (
+	NOT EXISTS (
+		SELECT 1 FROM direct_agg d WHERE d.message_id = m.message_id
+	)
+	AND NOT EXISTS (
+		SELECT 1
+		FROM conv_members_canon cm
+		WHERE cm.conversation_id = m.conversation_id
+	)
+)`,
 		EntryKindSQL("m.message_type"),
 		IsChatSQL("m.message_type", "coalesce(c.conversation_type, '')"),
 		quoteSQLString(path("messages")),
 		quoteSQLString(path("sources")),
 		quoteSQLString(path("conversations")),
+		occurredYear,
 		quoteSQLString(path("participants")),
 		quoteSQLString(path("participant_clusters")),
 		quoteSQLString(path("owner_participants")),
