@@ -70,6 +70,14 @@ func claimServeOwnership(
 // the HTTP server is not answering pings yet (for example during a long
 // analytics cache rebuild). An empty phase marks startup as finished.
 func (o *serveOwnership) SetStartupPhase(phase string) error {
+	return o.setRuntimeMetadata(runtimeStartupPhase, phase)
+}
+
+func (o *serveOwnership) SetStartupCacheBuildOutcome(outcome startupCacheBuildOutcome) error {
+	return o.setRuntimeMetadata(runtimeStartupCacheBuildOutcome, string(outcome))
+}
+
+func (o *serveOwnership) setRuntimeMetadata(key, value string) error {
 	if o == nil {
 		return nil
 	}
@@ -83,14 +91,14 @@ func (o *serveOwnership) SetStartupPhase(phase string) error {
 	if metadata == nil {
 		metadata = map[string]string{}
 	}
-	if phase == "" {
-		delete(metadata, runtimeStartupPhase)
+	if value == "" {
+		delete(metadata, key)
 	} else {
-		metadata[runtimeStartupPhase] = phase
+		metadata[key] = value
 	}
 	rec.Metadata = metadata
 	if _, err := daemonRuntimeStore(o.dataDir).Write(rec); err != nil {
-		return fmt.Errorf("update daemon startup phase: %w", err)
+		return fmt.Errorf("update daemon runtime metadata %q: %w", key, err)
 	}
 	o.record = rec
 	return nil

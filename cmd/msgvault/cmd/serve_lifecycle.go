@@ -239,7 +239,8 @@ type backgroundDaemonStartPreparation struct {
 }
 
 type backgroundServeStartOptions struct {
-	ExecutablePath string
+	ExecutablePath   string
+	CacheBuildIntent startupCacheBuildIntent
 }
 
 func prepareBackgroundDaemonStart(
@@ -819,7 +820,10 @@ func startServeBackgroundProcess(c *config.Config, opts backgroundServeStartOpti
 
 	//nolint:gosec // exe is this binary and args are reconstructed from fixed global flags.
 	child := exec.Command(exe, serveBackgroundChildArgs()...)
-	child.Env = append(os.Environ(), "MSGVAULT_HOME="+c.HomeDir, serveBackgroundChildEnv+"=1")
+	child.Env = withStartupCacheBuildIntent(
+		append(os.Environ(), "MSGVAULT_HOME="+c.HomeDir, serveBackgroundChildEnv+"=1"),
+		opts.CacheBuildIntent,
+	)
 	child.Stdin = devNull
 	child.Stdout = logFile
 	child.Stderr = logFile

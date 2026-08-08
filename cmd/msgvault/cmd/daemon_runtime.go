@@ -22,18 +22,19 @@ import (
 )
 
 const (
-	daemonService           = "msgvault"
-	daemonAPIVersion        = 1
-	defaultDaemonBindAddr   = "127.0.0.1"
-	runtimeHost             = "host"
-	runtimePort             = "port"
-	runtimeAPIVersion       = "api_version"
-	runtimeAPISchemaVersion = "api_schema_version"
-	runtimeAuthFingerprint  = "auth_fingerprint"
-	runtimeCreateTime       = "create_time"
-	runtimeShutdownToken    = "shutdown_token"
-	runtimeStartupPhase     = "startup_phase"
-	daemonProbeTick         = 250 * time.Millisecond
+	daemonService                   = "msgvault"
+	daemonAPIVersion                = 1
+	defaultDaemonBindAddr           = "127.0.0.1"
+	runtimeHost                     = "host"
+	runtimePort                     = "port"
+	runtimeAPIVersion               = "api_version"
+	runtimeAPISchemaVersion         = "api_schema_version"
+	runtimeAuthFingerprint          = "auth_fingerprint"
+	runtimeCreateTime               = "create_time"
+	runtimeShutdownToken            = "shutdown_token"
+	runtimeStartupPhase             = "startup_phase"
+	runtimeStartupCacheBuildOutcome = "startup_cache_build_outcome"
+	daemonProbeTick                 = 250 * time.Millisecond
 )
 
 // daemonStartupPhaseInitial is published in the runtime record the moment the

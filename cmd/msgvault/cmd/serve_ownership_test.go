@@ -240,6 +240,35 @@ func TestServeOwnershipStartupPhaseUpdatesRuntimeRecord(t *testing.T) {
 	assert.NotContains(cleared.Metadata, runtimeStartupPhase, "phase cleared")
 }
 
+func TestServeOwnershipStartupCacheBuildOutcomeUpdatesRuntimeRecord(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	dataDir := t.TempDir()
+	cfg := &config.Config{Data: config.DataConfig{DataDir: dataDir}}
+	owner, err := claimServeOwnership(context.Background(), cfg, "127.0.0.1", 8123, "v-test")
+	require.NoError(err, "claimServeOwnership")
+	t.Cleanup(func() { require.NoError(owner.Close(), "close ownership") })
+
+	readRecord := func() daemon.RuntimeRecord {
+		records, err := daemonRuntimeStore(dataDir).List()
+		require.NoError(err, "list runtime records")
+		require.Len(records, 1, "runtime records")
+		return records[0]
+	}
+
+	initial := readRecord()
+	require.NoError(
+		owner.SetStartupCacheBuildOutcome(startupCacheBuildOutcomeFailed),
+		"set startup cache build outcome",
+	)
+	updated := readRecord()
+
+	assert.Equal("failed", updated.Metadata[runtimeStartupCacheBuildOutcome], "cache build outcome")
+	assert.Equal(initial.Metadata[runtimeShutdownToken], updated.Metadata[runtimeShutdownToken], "shutdown token preserved")
+	assert.Equal(initial.Metadata[runtimeStartupPhase], updated.Metadata[runtimeStartupPhase], "startup phase preserved")
+}
+
 func TestClaimServeOwnershipRejectsSecondOwner(t *testing.T) {
 	dataDir := t.TempDir()
 	cfg := &config.Config{Data: config.DataConfig{DataDir: dataDir}}
