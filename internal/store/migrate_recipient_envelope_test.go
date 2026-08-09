@@ -2,11 +2,14 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/sqliteutil"
 )
 
 // TestEnsureRecipientEnvelopeUniqueIndex_LegacyTableRebuild simulates an
@@ -147,6 +150,157 @@ func TestEnsureRecipientEnvelopeUniqueIndex_LegacyTableRebuild(t *testing.T) {
 		`SELECT COUNT(*) FROM message_recipients WHERE message_id = ?`, msgID,
 	).Scan(&rowCount), "count recipient rows")
 	assert.Equal(2, rowCount, "no-op rerun must not change row count")
+}
+
+func TestInitSchema_RepairsDanglingLegacyRecipients(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	dbPath := filepath.Join(t.TempDir(), "dangling_recipients.db")
+
+	seed, err := Open(dbPath)
+	require.NoError(err, "open seed archive")
+	require.NoError(seed.InitSchema(), "initialize seed archive")
+	source, err := seed.GetOrCreateSource("gmail", "owner@example.test")
+	require.NoError(err, "create source")
+	conversationID, err := seed.EnsureConversation(source.ID, "thread-dangling-recipients", "")
+	require.NoError(err, "create conversation")
+	messageID, err := seed.UpsertMessage(&Message{
+		ConversationID:  conversationID,
+		SourceID:        source.ID,
+		SourceMessageID: "msg-dangling-recipients",
+		MessageType:     "email",
+		SizeEstimate:    100,
+	})
+	require.NoError(err, "create message")
+	participantID, err := seed.EnsureParticipant(
+		"primary@example.test", "Primary", "example.test",
+	)
+	require.NoError(err, "create participant")
+
+	var validRecipientID int64
+	require.NoError(seed.db.QueryRow(`
+		INSERT INTO message_recipients
+			(message_id, participant_id, recipient_type, display_name, email_address)
+		VALUES (?, ?, 'to', 'Primary', 'primary@example.test')
+		RETURNING id
+	`, messageID, participantID).Scan(&validRecipientID), "create valid recipient")
+	require.NoError(seed.Close(), "close seed archive")
+
+	legacy, err := sql.Open(
+		sqliteutil.DriverName(), dbPath+"?_foreign_keys=OFF",
+	)
+	require.NoError(err, "open legacy archive with FK enforcement disabled")
+	for _, stmt := range []string{
+		`DELETE FROM applied_migrations
+		 WHERE name = 'message_recipients_envelope_unique_index'`,
+		`DROP INDEX IF EXISTS idx_message_recipients_envelope`,
+		`ALTER TABLE message_recipients RENAME TO message_recipients_current`,
+		`CREATE TABLE message_recipients (
+			id INTEGER PRIMARY KEY,
+			message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+			participant_id INTEGER NOT NULL REFERENCES participants(id) ON DELETE CASCADE,
+			recipient_type TEXT NOT NULL,
+			display_name TEXT,
+			email_address TEXT,
+			UNIQUE(message_id, participant_id, recipient_type)
+		)`,
+		`INSERT INTO message_recipients
+			(id, message_id, participant_id, recipient_type, display_name, email_address)
+		 SELECT id, message_id, participant_id, recipient_type, display_name, email_address
+		 FROM message_recipients_current`,
+		`DROP TABLE message_recipients_current`,
+	} {
+		_, err = legacy.Exec(stmt)
+		require.NoError(err, "restore legacy recipient schema: %q", stmt)
+	}
+
+	missingMessageID := messageID + 1000
+	missingParticipantID := participantID + 1000
+	for _, recipient := range []struct {
+		id            int64
+		messageID     int64
+		participantID int64
+	}{
+		{id: 9101, messageID: missingMessageID, participantID: participantID},
+		{id: 9102, messageID: messageID, participantID: missingParticipantID},
+		{id: 9103, messageID: missingMessageID + 1, participantID: missingParticipantID + 1},
+	} {
+		_, err = legacy.Exec(`
+			INSERT INTO message_recipients
+				(id, message_id, participant_id, recipient_type, display_name, email_address)
+			VALUES (?, ?, ?, 'to', 'Dangling', NULL)
+		`, recipient.id, recipient.messageID, recipient.participantID)
+		require.NoError(err, "create dangling recipient %d", recipient.id)
+	}
+	require.NoError(legacy.Close(), "close legacy archive")
+
+	logs := captureSlog(t)
+	upgraded, err := Open(dbPath)
+	require.NoError(err, "open legacy archive for upgrade")
+	t.Cleanup(func() { _ = upgraded.Close() })
+	require.NoError(upgraded.InitSchema(), "upgrade archive with dangling recipients")
+
+	var (
+		gotMessageID     int64
+		gotParticipantID int64
+		gotDisplayName   string
+		gotEmailAddress  string
+	)
+	require.NoError(upgraded.db.QueryRow(`
+		SELECT message_id, participant_id, display_name, email_address
+		FROM message_recipients
+		WHERE id = ?
+	`, validRecipientID).Scan(
+		&gotMessageID, &gotParticipantID, &gotDisplayName, &gotEmailAddress,
+	), "read preserved recipient")
+	assert.Equal(messageID, gotMessageID)
+	assert.Equal(participantID, gotParticipantID)
+	assert.Equal("Primary", gotDisplayName)
+	assert.Equal("primary@example.test", gotEmailAddress)
+
+	var danglingCount int
+	require.NoError(upgraded.db.QueryRow(`
+		SELECT COUNT(*) FROM message_recipients WHERE id IN (9101, 9102, 9103)
+	`).Scan(&danglingCount), "count dangling recipients")
+	assert.Zero(danglingCount)
+
+	var autoindexCount int
+	require.NoError(upgraded.db.QueryRow(`
+		SELECT COUNT(*) FROM sqlite_master
+		WHERE type = 'index'
+		  AND tbl_name = 'message_recipients'
+		  AND name LIKE 'sqlite_autoindex%'
+	`).Scan(&autoindexCount), "count legacy autoindexes")
+	assert.Zero(autoindexCount)
+	for _, index := range []string{
+		"idx_message_recipients_message",
+		"idx_message_recipients_participant",
+		"idx_message_recipients_envelope",
+	} {
+		var indexCount int
+		require.NoError(upgraded.db.QueryRow(`
+			SELECT COUNT(*) FROM sqlite_master
+			WHERE type = 'index' AND tbl_name = 'message_recipients' AND name = ?
+		`, index).Scan(&indexCount), "count index %s", index)
+		assert.Equal(1, indexCount, "index %s", index)
+	}
+
+	fkRows, err := upgraded.db.Query(`PRAGMA foreign_key_check`)
+	require.NoError(err, "check foreign keys")
+	require.False(fkRows.Next(), "upgraded archive must have no FK violations")
+	require.NoError(fkRows.Err(), "iterate FK violations")
+	require.NoError(fkRows.Close(), "close FK check")
+
+	logOutput := logs.String()
+	assert.Contains(logOutput, `"msg":"removed dangling message recipients during schema migration"`)
+	assert.Contains(logOutput, `"table":"message_recipients"`)
+	assert.Contains(logOutput, `"missing_message_rows":2`)
+	assert.Contains(logOutput, `"missing_participant_rows":1`)
+
+	require.NoError(upgraded.InitSchema(), "repeat schema initialization")
+	assert.Equal(1, strings.Count(
+		logs.String(), "removed dangling message recipients during schema migration",
+	), "cleanup warning must be emitted only for the repairing run")
 }
 
 // TestEnsureRecipientEnvelopeUniqueIndex_PGLegacyConstraintDrop simulates an

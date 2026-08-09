@@ -3,9 +3,19 @@ package store
 import (
 	"context"
 	"fmt"
+	"log/slog"
 )
 
 const migrationRecipientEnvelopeUnique = "message_recipients_envelope_unique_index"
+
+type recipientOrphanCleanup struct {
+	missingMessageRows     int64
+	missingParticipantRows int64
+}
+
+func (c recipientOrphanCleanup) total() int64 {
+	return c.missingMessageRows + c.missingParticipantRows
+}
 
 // ensureRecipientEnvelopeUniqueIndex relaxes message_recipients uniqueness
 // from (message_id, participant_id, recipient_type) to that triple plus the
@@ -39,13 +49,18 @@ func (s *Store) ensureRecipientEnvelopeUniqueIndex(ctx context.Context) error {
 	return s.runOnceMigration(
 		ctx, migrationRecipientEnvelopeUnique, false,
 		func(ctx context.Context) error {
-			return s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
+			var cleanup recipientOrphanCleanup
+			if err := s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
 				if s.IsPostgreSQL() {
 					if err := dropRecipientTableUniqueConstraintsPG(ctx, tx); err != nil {
 						return err
 					}
-				} else if err := rebuildRecipientTableWithoutUniqueSQLite(ctx, tx); err != nil {
-					return err
+				} else {
+					var err error
+					cleanup, err = rebuildRecipientTableWithoutUniqueSQLite(ctx, tx)
+					if err != nil {
+						return err
+					}
 				}
 				if _, err := tx.ExecContext(ctx, `
 					CREATE UNIQUE INDEX IF NOT EXISTS idx_message_recipients_envelope
@@ -55,7 +70,17 @@ func (s *Store) ensureRecipientEnvelopeUniqueIndex(ctx context.Context) error {
 					return fmt.Errorf("create idx_message_recipients_envelope: %w", err)
 				}
 				return nil
-			})
+			}); err != nil {
+				return err
+			}
+			if cleanup.total() > 0 {
+				slog.Warn("removed dangling message recipients during schema migration",
+					"table", "message_recipients",
+					"missing_message_rows", cleanup.missingMessageRows,
+					"missing_participant_rows", cleanup.missingParticipantRows,
+				)
+			}
+			return nil
 		},
 	)
 }
@@ -111,9 +136,15 @@ func dropRecipientTableUniqueConstraintsPG(ctx context.Context, tx *loggedTx) er
 // at it, so DROP TABLE plus RENAME inside the transaction is a complete
 // swap; only the two plain indexes the DROP took along need recreating (the
 // unique index is built by the caller for the rebuilt and fresh paths
-// alike). The whole-table copy writes the table once through the WAL — a
-// one-time upgrade cost on the order of the table's size.
-func rebuildRecipientTableWithoutUniqueSQLite(ctx context.Context, tx *loggedTx) error {
+// alike). Before the FK-checked copy, dangling legacy rows are removed. Rows
+// missing messages go first so a row missing both parents is counted once,
+// under the missing-message category. The whole-table copy writes the table
+// once through the WAL — a one-time upgrade cost on the order of the table's
+// size.
+func rebuildRecipientTableWithoutUniqueSQLite(
+	ctx context.Context,
+	tx *loggedTx,
+) (recipientOrphanCleanup, error) {
 	var hasTableUnique bool
 	if err := tx.QueryRowContext(ctx, `
 		SELECT EXISTS (
@@ -123,10 +154,43 @@ func rebuildRecipientTableWithoutUniqueSQLite(ctx context.Context, tx *loggedTx)
 			  AND name LIKE 'sqlite_autoindex%'
 		)
 	`).Scan(&hasTableUnique); err != nil {
-		return fmt.Errorf("check message_recipients table-level unique: %w", err)
+		return recipientOrphanCleanup{}, fmt.Errorf(
+			"check message_recipients table-level unique: %w", err,
+		)
 	}
 	if !hasTableUnique {
-		return nil
+		return recipientOrphanCleanup{}, nil
+	}
+
+	cleanup := recipientOrphanCleanup{}
+	result, err := tx.ExecContext(ctx, `
+		DELETE FROM message_recipients
+		WHERE NOT EXISTS (
+			SELECT 1 FROM messages
+			WHERE messages.id = message_recipients.message_id
+		)
+	`)
+	if err != nil {
+		return cleanup, fmt.Errorf("remove recipients missing messages: %w", err)
+	}
+	cleanup.missingMessageRows, err = result.RowsAffected()
+	if err != nil {
+		return cleanup, fmt.Errorf("count recipients missing messages: %w", err)
+	}
+
+	result, err = tx.ExecContext(ctx, `
+		DELETE FROM message_recipients
+		WHERE NOT EXISTS (
+			SELECT 1 FROM participants
+			WHERE participants.id = message_recipients.participant_id
+		)
+	`)
+	if err != nil {
+		return cleanup, fmt.Errorf("remove recipients missing participants: %w", err)
+	}
+	cleanup.missingParticipantRows, err = result.RowsAffected()
+	if err != nil {
+		return cleanup, fmt.Errorf("count recipients missing participants: %w", err)
 	}
 
 	for _, stmt := range []string{
@@ -151,8 +215,10 @@ func rebuildRecipientTableWithoutUniqueSQLite(ctx context.Context, tx *loggedTx)
 			ON message_recipients(participant_id, recipient_type)`,
 	} {
 		if _, err := tx.ExecContext(ctx, stmt); err != nil {
-			return fmt.Errorf("rebuild message_recipients without table-level unique: %w", err)
+			return cleanup, fmt.Errorf(
+				"rebuild message_recipients without table-level unique: %w", err,
+			)
 		}
 	}
-	return nil
+	return cleanup, nil
 }
