@@ -124,7 +124,7 @@ func TestBuildStreamsRelationshipActivityUnderLowMemory(t *testing.T) {
 		messageType:      "email",
 		conversationType: "email_thread",
 	})
-	requirements.NoError(setRelationshipTestMemoryLimit(db, "128MB"))
+	requirements.NoError(setRelationshipTestMemoryLimit(db, "96MB"))
 
 	path := func(dataset string) string {
 		return parquetDatasetGlob(root, dataset)
