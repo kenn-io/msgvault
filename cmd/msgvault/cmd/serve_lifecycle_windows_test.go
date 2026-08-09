@@ -4,6 +4,7 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -15,6 +16,38 @@ import (
 	"github.com/stretchr/testify/require"
 	"golang.org/x/sys/windows"
 )
+
+func TestWindowsBackgroundProcessDoesNotRunBeforeJobAttachment(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	pidPath := filepath.Join(t.TempDir(), "child.pid")
+	cmd := helperProcessCommand(context.Background(), "spawn-blocking-child")
+	cmd.Env = append(cmd.Env, "GO_HELPER_CHILD_PID_PATH="+pidPath)
+	commandConfig, err := configureServeBackgroundCommand(cmd)
+	require.NoError(err, "configure process tree")
+	tree := commandConfig.ProcessTree
+	require.NotNil(tree, "Windows background daemon must own a process tree")
+	require.NoError(cmd.Start(), "start suspended parent helper")
+	t.Cleanup(func() {
+		_ = tree.Terminate()
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+		_ = tree.Close()
+	})
+
+	assert.Never(func() bool {
+		_, statErr := os.Stat(pidPath)
+		return statErr == nil || !errors.Is(statErr, os.ErrNotExist)
+	}, 500*time.Millisecond, 10*time.Millisecond,
+		"daemon work must not begin before Job Object attachment")
+
+	require.NoError(tree.Attach(cmd.Process), "attach and resume parent helper")
+	require.Eventually(func() bool {
+		_, statErr := os.Stat(pidPath)
+		return statErr == nil
+	}, 10*time.Second, 25*time.Millisecond, "blocking child PID")
+}
 
 func TestStopBackgroundServeStartupTerminatesWindowsProcessTree(t *testing.T) {
 	assert := assert.New(t)
