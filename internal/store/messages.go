@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"math/rand"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -782,9 +783,11 @@ func upsertMessageSQL(now string) string {
 	WHERE TRUE
 	ON CONFLICT(source_id, source_message_id) DO UPDATE SET
 		embed_gen = CASE
-			WHEN COALESCE(messages.subject, '') <> COALESCE(excluded.subject, '') THEN NULL
+			WHEN COALESCE(messages.subject, '') <> COALESCE(excluded.subject, '')
+				OR COALESCE(messages.message_type, '') <> COALESCE(excluded.message_type, '') THEN NULL
 			ELSE messages.embed_gen
 		END,
+		message_type = excluded.message_type,
 		conversation_id = excluded.conversation_id,
 		rfc822_message_id = excluded.rfc822_message_id,
 		sent_at = excluded.sent_at,
@@ -803,10 +806,67 @@ func upsertMessageSQL(now string) string {
 
 // UpsertMessage inserts or updates a message.
 func (s *Store) UpsertMessage(msg *Message) (int64, error) {
-	return upsertMessageWith(s.db, s.dialect, msg)
+	if !isBodylessMessageJournalCandidate(msg) {
+		return upsertMessageWith(s.db, s.dialect, msg)
+	}
+	var id int64
+	err := s.withTx(func(tx *loggedTx) error {
+		if s.dialect.DriverName() != "pgx" {
+			// Acquire SQLite's writer slot before the prior-state read. This
+			// prevents a deferred read transaction from failing to upgrade when
+			// another writer commits between the read and the message upsert.
+			if _, err := tx.Exec(`UPDATE embedding_change_clock SET sequence = sequence WHERE singleton = 1`); err != nil {
+				return fmt.Errorf("lock bodyless message journal: %w", err)
+			}
+		}
+		var err error
+		id, err = upsertMessageWith(tx, s.dialect, msg)
+		return err
+	})
+	return id, err
+}
+
+func isBodylessMessageJournalCandidate(msg *Message) bool {
+	return !msg.DeletedAt.Valid
+}
+
+type bodylessMessageJournalState struct {
+	found          bool
+	id             int64
+	messageType    sql.NullString
+	conversationID sql.NullInt64
+	sentAt         sql.NullTime
+	receivedAt     sql.NullTime
+	internalDate   sql.NullTime
+	senderID       sql.NullInt64
+	subject        sql.NullString
+	journaled      bool
+	hasBody        bool
+	deleted        bool
 }
 
 func upsertMessageWith(q querier, d Dialect, msg *Message) (int64, error) {
+	journalCandidate := isBodylessMessageJournalCandidate(msg)
+	var prior bodylessMessageJournalState
+	if journalCandidate {
+		err := q.QueryRow(`
+			SELECT m.id, m.message_type, m.conversation_id, m.sent_at, m.received_at, m.internal_date,
+			       m.sender_id, m.subject,
+			       EXISTS (SELECT 1 FROM embedding_changes ec WHERE ec.message_id = m.id),
+			       EXISTS (SELECT 1 FROM message_bodies mb WHERE mb.message_id = m.id),
+			       (m.deleted_at IS NOT NULL OR m.deleted_from_source_at IS NOT NULL)
+			FROM messages m WHERE m.source_id = ? AND m.source_message_id = ?`,
+			msg.SourceID, msg.SourceMessageID).Scan(
+			&prior.id, &prior.messageType, &prior.conversationID, &prior.sentAt, &prior.receivedAt,
+			&prior.internalDate, &prior.senderID, &prior.subject, &prior.journaled, &prior.hasBody, &prior.deleted)
+		switch {
+		case err == nil:
+			prior.found = true
+		case errors.Is(err, sql.ErrNoRows):
+		default:
+			return 0, fmt.Errorf("read bodyless message journal state: %w", err)
+		}
+	}
 	sql := upsertMessageSQL(d.Now())
 	sourceIsFromMe := msg.IsFromMe && !msg.IdentityDerivedIsFromMe
 	identityIsFromMe := msg.IsFromMe && msg.IdentityDerivedIsFromMe
@@ -842,7 +902,99 @@ func upsertMessageWith(q querier, d Dialect, msg *Message) (int64, error) {
 			return 0, err
 		}
 	}
+	if journalCandidate && needsBodylessMessageJournal(prior, msg) {
+		if err := appendBodylessMessageChange(q, d, id, prior, msg); err != nil {
+			return 0, err
+		}
+		if err := coalesceLatestMessageChanges(q, d, id); err != nil {
+			return 0, err
+		}
+	}
 	return id, nil
+}
+
+func needsBodylessMessageJournal(prior bodylessMessageJournalState, msg *Message) bool {
+	newSubject := ""
+	if msg.Subject.Valid {
+		newSubject = strings.TrimSpace(msg.Subject.String)
+	}
+	if !prior.found {
+		return true
+	}
+	if prior.hasBody || prior.deleted {
+		return false
+	}
+	priorSubject := ""
+	if prior.subject.Valid {
+		priorSubject = strings.TrimSpace(prior.subject.String)
+	}
+	if newSubject == "" {
+		return priorSubject != ""
+	}
+	return !prior.journaled ||
+		prior.conversationID != nullInt64(msg.ConversationID) ||
+		!nullTimeEqual(prior.sentAt, msg.SentAt) ||
+		!nullTimeEqual(prior.receivedAt, msg.ReceivedAt) ||
+		!nullTimeEqual(prior.internalDate, msg.InternalDate) ||
+		prior.senderID != msg.SenderID || prior.subject != msg.Subject
+}
+
+func appendBodylessMessageChange(
+	q querier, dialect Dialect, messageID int64, prior bodylessMessageJournalState, msg *Message,
+) error {
+	kind := EmbeddingChangeMessageInsert
+	oldType := sql.NullString{}
+	oldConversation := sql.NullInt64{}
+	oldSentAt := sql.NullTime{}
+	if prior.found {
+		kind = EmbeddingChangeMessageUpdate
+		oldType = prior.messageType
+		oldConversation = prior.conversationID
+		oldSentAt = canonicalMessageTime(prior.sentAt, prior.receivedAt, prior.internalDate)
+	}
+	newType := sql.NullString{String: msg.MessageType, Valid: msg.MessageType != ""}
+	newConversation := nullInt64(msg.ConversationID)
+	newSentAt := canonicalMessageTime(msg.SentAt, msg.ReceivedAt, msg.InternalDate)
+	if dialect.DriverName() == "pgx" {
+		if _, err := q.Exec(`
+			SELECT pg_advisory_xact_lock_shared(hashtextextended('msgvault.embedding_change_clock', 0)),
+			       append_embedding_change(?, ?, ?, ?, ?, ?, ?, ?, NULL)`,
+			string(kind), messageID, oldType, newType, oldConversation, newConversation, oldSentAt, newSentAt); err != nil {
+			return fmt.Errorf("append PostgreSQL bodyless message journal: %w", err)
+		}
+		return nil
+	}
+	if _, err := q.Exec(`UPDATE embedding_change_clock SET sequence = sequence + 1 WHERE singleton = 1 AND enabled = TRUE`); err != nil {
+		return fmt.Errorf("advance bodyless message journal: %w", err)
+	}
+	if _, err := q.Exec(`
+		INSERT INTO embedding_changes (
+			sequence, kind, message_id, old_message_type, new_message_type, old_conversation_id,
+			new_conversation_id, old_sent_at, new_sent_at, participant_id
+		)
+		SELECT sequence, ?, ?, ?, ?, ?, ?, ?, ?, NULL
+		FROM embedding_change_clock WHERE singleton = 1 AND enabled = TRUE`,
+		string(kind), messageID, oldType, newType, oldConversation, newConversation, oldSentAt, newSentAt); err != nil {
+		return fmt.Errorf("append SQLite bodyless message journal: %w", err)
+	}
+	return nil
+}
+
+func nullInt64(value int64) sql.NullInt64 {
+	return sql.NullInt64{Int64: value, Valid: value != 0}
+}
+
+func canonicalMessageTime(values ...sql.NullTime) sql.NullTime {
+	for _, value := range values {
+		if value.Valid {
+			return value
+		}
+	}
+	return sql.NullTime{}
+}
+
+func nullTimeEqual(left, right sql.NullTime) bool {
+	return left.Valid == right.Valid && (!left.Valid || left.Time.Equal(right.Time))
 }
 
 // UpsertMessageBody stores the body text and HTML for a message in the separate message_bodies table.
@@ -882,8 +1034,10 @@ func upsertMessageBody(
 	if !embeddingChanged {
 		return nil
 	}
-	_, err = q.Exec(`UPDATE messages SET embed_gen = NULL WHERE id = ? AND embed_gen IS NOT NULL`, messageID)
-	return err
+	if _, err = q.Exec(`UPDATE messages SET embed_gen = NULL WHERE id = ? AND embed_gen IS NOT NULL`, messageID); err != nil {
+		return err
+	}
+	return coalesceLatestMessageChanges(q, dialect, messageID)
 }
 
 func messageBodyChanges(
@@ -1161,6 +1315,14 @@ func (s *Store) persistMessageWithParticipantsContext(
 ) (int64, error) {
 	var messageID int64
 	err := s.withTxContext(ctx, func(tx *loggedTx) error {
+		if s.dialect.DriverName() != "pgx" {
+			// Reserve SQLite's writer slot before any prior-state or related
+			// snapshot reads. Otherwise a concurrent commit can leave this
+			// deferred WAL transaction unable to upgrade to a writer.
+			if _, err := tx.Exec(`UPDATE embedding_change_clock SET sequence = sequence WHERE singleton = 1`); err != nil {
+				return fmt.Errorf("lock message persistence: %w", err)
+			}
+		}
 		if len(participants) > 1 {
 			if err := s.lockParticipantDirectoryMutationTxContext(ctx, tx); err != nil {
 				return err
@@ -1199,7 +1361,7 @@ func (s *Store) persistMessageWithParticipantsContext(
 			return err
 		}
 		data := build(participantIDs)
-		id, err := s.persistMessageWith(ctx, q, data)
+		id, err := s.persistMessageWith(ctx, tx, data)
 		if err != nil {
 			return err
 		}
@@ -1211,12 +1373,13 @@ func (s *Store) persistMessageWithParticipantsContext(
 
 func (s *Store) persistMessageWith(
 	ctx context.Context,
-	q querier,
+	tx *loggedTx,
 	data *MessagePersistData,
 ) (int64, error) {
 	if data == nil || data.Message == nil {
 		return 0, errors.New("persist message requires a message")
 	}
+	q := boundQuerier{ctx: ctx, q: tx}
 	message := data.Message
 	if data.Conversation != nil {
 		conversationID, err := ensureConversationWithType(
@@ -1229,7 +1392,7 @@ func (s *Store) persistMessageWith(
 			return 0, fmt.Errorf("ensure conversation: %w", err)
 		}
 		if err := replaceConversationParticipantsTx(
-			q, s.dialect, conversationID, data.Conversation.Participants,
+			ctx, tx, s.dialect, conversationID, data.Conversation.Participants,
 		); err != nil {
 			return 0, fmt.Errorf("replace conversation participants: %w", err)
 		}
@@ -3658,22 +3821,110 @@ type ConversationParticipantRef struct {
 // membership with a complete source snapshot.
 func (s *Store) ReplaceConversationParticipants(conversationID int64, participants []ConversationParticipantRef) error {
 	return s.withTx(func(tx *loggedTx) error {
-		return replaceConversationParticipantsTx(tx, s.dialect, conversationID, participants)
+		return replaceConversationParticipantsTx(
+			context.Background(), tx, s.dialect, conversationID, participants,
+		)
 	})
 }
 
-func replaceConversationParticipantsTx(tx querier, dialect Dialect, conversationID int64, participants []ConversationParticipantRef) error {
-	if _, err := tx.Exec(`DELETE FROM conversation_participants WHERE conversation_id = ?`, conversationID); err != nil {
-		return err
+func replaceConversationParticipantsTx(
+	ctx context.Context,
+	tx *loggedTx,
+	dialect Dialect,
+	conversationID int64,
+	participants []ConversationParticipantRef,
+) error {
+	q := boundQuerier{ctx: ctx, q: tx}
+	if dialect.DriverName() != "pgx" {
+		// Acquire SQLite's writer slot before taking the journal snapshot. A
+		// deferred transaction that reads first cannot upgrade its stale WAL
+		// snapshot if another writer commits before the membership DELETE.
+		if _, err := q.Exec(`UPDATE embedding_change_clock SET sequence = sequence WHERE singleton = 1`); err != nil {
+			return fmt.Errorf("lock conversation membership journal: %w", err)
+		}
 	}
+	var journalBefore int64
+	if err := q.QueryRow(`SELECT sequence FROM embedding_change_clock WHERE singleton = 1`).Scan(&journalBefore); err != nil {
+		return fmt.Errorf("read embedding change clock before membership snapshot: %w", err)
+	}
+	desired := make(map[int64]string, len(participants))
 	for _, participant := range participants {
 		if participant.ParticipantID == 0 {
 			continue
 		}
-		if _, err := tx.Exec(dialect.InsertOrIgnore(fmt.Sprintf(`INSERT OR IGNORE INTO conversation_participants (conversation_id, participant_id, role, joined_at)
-			VALUES (?, ?, ?, %s)`, dialect.Now())), conversationID, participant.ParticipantID, participant.Role); err != nil {
+		desired[participant.ParticipantID] = participant.Role
+	}
+	ids := make([]int64, 0, len(desired))
+	for participantID := range desired {
+		ids = append(ids, participantID)
+	}
+	slices.Sort(ids)
+	rows, err := tx.QueryContext(ctx, `
+		SELECT participant_id FROM conversation_participants
+		WHERE conversation_id = ? ORDER BY participant_id`, conversationID)
+	if err != nil {
+		return err
+	}
+	stale := make([]int64, 0)
+	for rows.Next() {
+		var participantID int64
+		if err := rows.Scan(&participantID); err != nil {
+			_ = rows.Close()
 			return err
 		}
+		if _, keep := desired[participantID]; !keep {
+			stale = append(stale, participantID)
+		}
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if err := execInChunksContext(ctx, tx, stale, []any{conversationID}, `
+		DELETE FROM conversation_participants
+		WHERE conversation_id = ? AND participant_id IN (%s)`); err != nil {
+		return err
+	}
+	for _, participantID := range ids {
+		if _, err := q.Exec(fmt.Sprintf(`
+			INSERT INTO conversation_participants (conversation_id, participant_id, role, joined_at)
+			VALUES (?, ?, ?, %s)
+			ON CONFLICT (conversation_id, participant_id) DO UPDATE SET role = excluded.role
+			WHERE conversation_participants.role IS DISTINCT FROM excluded.role`, dialect.Now()),
+			conversationID, participantID, desired[participantID]); err != nil {
+			return err
+		}
+	}
+	return consolidateConversationParticipantJournal(q, dialect, conversationID, journalBefore)
+}
+
+func consolidateConversationParticipantJournal(tx querier, dialect Dialect, conversationID, after int64) error {
+	var retained sql.NullInt64
+	err := tx.QueryRow(dialect.Rebind(`
+		SELECT MAX(sequence) FROM embedding_changes
+		WHERE sequence > ? AND kind = 'conversation_participant'
+		  AND (old_conversation_id = ? OR new_conversation_id = ?)`),
+		after, conversationID, conversationID).Scan(&retained)
+	if err != nil {
+		return fmt.Errorf("read membership journal snapshot: %w", err)
+	}
+	if !retained.Valid {
+		return nil
+	}
+	if _, err := tx.Exec(dialect.Rebind(`
+		DELETE FROM embedding_changes
+		WHERE sequence > ? AND sequence <> ? AND kind = 'conversation_participant'
+		  AND (old_conversation_id = ? OR new_conversation_id = ?)`),
+		after, retained.Int64, conversationID, conversationID); err != nil {
+		return fmt.Errorf("coalesce membership journal snapshot: %w", err)
+	}
+	if _, err := tx.Exec(dialect.Rebind(`
+		UPDATE embedding_changes
+		SET old_conversation_id = ?, new_conversation_id = ?, participant_id = NULL
+		WHERE sequence = ?`), conversationID, conversationID, retained.Int64); err != nil {
+		return fmt.Errorf("normalize membership journal snapshot: %w", err)
 	}
 	return nil
 }

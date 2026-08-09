@@ -28,6 +28,12 @@ func Migrate(ctx context.Context, db *sql.DB, defaultDim int) error {
 	if err := migrateEmbeddingsToChunked(ctx, db); err != nil {
 		return fmt.Errorf("migrate embeddings to chunked layout: %w", err)
 	}
+	if err := migrateEmbeddingSourceBasis(ctx, db); err != nil {
+		return fmt.Errorf("migrate embedding source basis: %w", err)
+	}
+	if err := migrateDocumentLedger(ctx, db); err != nil {
+		return fmt.Errorf("migrate document ledger: %w", err)
+	}
 	if _, err := db.ExecContext(ctx, schemaSQL); err != nil {
 		return fmt.Errorf("apply schema: %w", err)
 	}
@@ -39,6 +45,7 @@ func Migrate(ctx context.Context, db *sql.DB, defaultDim int) error {
 		desc string
 	}{
 		{`ALTER TABLE index_generations ADD COLUMN seeded_at INTEGER`, "seeded_at"},
+		{`ALTER TABLE embedding_document_progress ADD COLUMN journal_cursor TEXT NOT NULL DEFAULT ''`, "document journal cursor"},
 	} {
 		if _, err := db.ExecContext(ctx, m.sql); err != nil &&
 			!isDuplicateColumnErr(err) {
@@ -146,6 +153,7 @@ func migrateEmbeddingsToChunked(ctx context.Context, db *sql.DB) error {
 		source_char_len  INTEGER NOT NULL,
 		chunk_char_start INTEGER NOT NULL DEFAULT 0,
 		chunk_char_end   INTEGER NOT NULL DEFAULT 0,
+		source_basis     INTEGER NOT NULL DEFAULT 0,
 		truncated        INTEGER NOT NULL DEFAULT 0,
 		UNIQUE (generation_id, message_id, chunk_index)
 	)`); err != nil {
@@ -170,9 +178,9 @@ func migrateEmbeddingsToChunked(ctx context.Context, db *sql.DB) error {
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO embeddings
 			(generation_id, message_id, chunk_index,
-			 embedded_at, source_char_len, chunk_char_start, chunk_char_end, truncated)
+			 embedded_at, source_char_len, chunk_char_start, chunk_char_end, source_basis, truncated)
 		SELECT generation_id, message_id, 0,
-			   embedded_at, source_char_len, 0, source_char_len, truncated
+			   embedded_at, source_char_len, 0, source_char_len, 0, truncated
 		FROM embeddings_legacy`); err != nil {
 		return fmt.Errorf("copy legacy embeddings: %w", err)
 	}
@@ -185,6 +193,75 @@ func migrateEmbeddingsToChunked(ctx context.Context, db *sql.DB) error {
 	committed = true
 	log.Info("vector migration step complete", "step", "embeddings_to_chunked")
 	return nil
+}
+
+// migrateEmbeddingSourceBasis explicitly upgrades the prior chunked schema.
+// The baseline CREATE TABLE IF NOT EXISTS cannot add a column to an existing
+// embeddings table, so this probe-and-ALTER must run before schemaSQL.
+func migrateEmbeddingSourceBasis(ctx context.Context, db *sql.DB) error {
+	exists, err := tableExists(ctx, db, "embeddings")
+	if err != nil || !exists {
+		return err
+	}
+	hasBasis, err := columnExists(ctx, db, "embeddings", "source_basis")
+	if err != nil || hasBasis {
+		return err
+	}
+	if _, err := db.ExecContext(ctx,
+		`ALTER TABLE embeddings ADD COLUMN source_basis INTEGER NOT NULL DEFAULT 0`); err != nil {
+		return fmt.Errorf("add embeddings.source_basis: %w", err)
+	}
+	return nil
+}
+
+// migrateDocumentLedger is the explicit upgrade path for databases that
+// already have index_generations. Fresh databases get the same definitions
+// from schema.sql; existing databases cannot rely on the baseline alone.
+func migrateDocumentLedger(ctx context.Context, db *sql.DB) error {
+	exists, err := tableExists(ctx, db, "index_generations")
+	if err != nil || !exists {
+		return err
+	}
+	_, err = db.ExecContext(ctx, `
+		CREATE TABLE IF NOT EXISTS embedding_documents (
+			generation_id INTEGER NOT NULL REFERENCES index_generations(id) ON DELETE CASCADE,
+			document_key TEXT NOT NULL, kind TEXT NOT NULL, scope_key TEXT NOT NULL,
+			state TEXT NOT NULL CHECK (state IN ('current', 'tombstoned')),
+			published_revision TEXT NOT NULL, source_sequence INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL,
+			PRIMARY KEY (generation_id, document_key)
+		);
+		CREATE INDEX IF NOT EXISTS idx_embedding_documents_scope
+			ON embedding_documents(generation_id, scope_key, state, document_key);
+		CREATE TABLE IF NOT EXISTS embedding_document_scopes (
+			generation_id INTEGER NOT NULL REFERENCES index_generations(id) ON DELETE CASCADE,
+			scope_key TEXT NOT NULL, source_sequence INTEGER NOT NULL,
+			PRIMARY KEY (generation_id, scope_key)
+		);
+		CREATE TABLE IF NOT EXISTS embedding_document_members (
+			generation_id INTEGER NOT NULL, message_id INTEGER NOT NULL,
+			document_key TEXT NOT NULL, member_ordinal INTEGER NOT NULL,
+			PRIMARY KEY (generation_id, message_id),
+			UNIQUE (generation_id, document_key, member_ordinal),
+			FOREIGN KEY (generation_id, document_key)
+				REFERENCES embedding_documents(generation_id, document_key) ON DELETE CASCADE
+		);
+		CREATE INDEX IF NOT EXISTS idx_embedding_document_members_document
+			ON embedding_document_members(generation_id, document_key, member_ordinal);
+		CREATE TABLE IF NOT EXISTS embedding_document_progress (
+			generation_id INTEGER PRIMARY KEY REFERENCES index_generations(id) ON DELETE CASCADE,
+			change_sequence INTEGER NOT NULL DEFAULT 0,
+			reconcile_cursor TEXT NOT NULL DEFAULT '',
+			journal_cursor TEXT NOT NULL DEFAULT ''
+		);
+		INSERT INTO embedding_document_scopes (generation_id, scope_key, source_sequence)
+		SELECT generation_id, scope_key, MAX(source_sequence)
+		  FROM embedding_documents
+		 GROUP BY generation_id, scope_key
+		ON CONFLICT (generation_id, scope_key) DO UPDATE
+		SET source_sequence = MAX(embedding_document_scopes.source_sequence, excluded.source_sequence);
+	`)
+	return err
 }
 
 // migrateVecTablesToChunked rebuilds every existing vec0 table whose

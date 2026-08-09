@@ -17,6 +17,7 @@ import (
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/daemonclient"
+	"go.kenn.io/msgvault/internal/scheduler"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
 	"go.kenn.io/msgvault/internal/vector/pgvector"
@@ -341,13 +342,25 @@ func runEmbeddingsActivate(cmd *cobra.Command, args []string) error {
 	// friendly pre-flight error here (against the main-DB coverage) so the
 	// common case fails fast before opening a backend connection and before
 	// prompting — but the backend's gate is the authoritative guarantee.
+	var contextualSequence *int64
 	if !embeddingsActivateForce {
-		if err := fillCoverage(cmd.Context(), &row); err != nil {
-			return err
-		}
-		if row.MissingCount > 0 {
-			return fmt.Errorf("generation %d still has %d message(s) needing embedding; run `msgvault embeddings resume --backstop` to recover any below-watermark stragglers, or pass --force",
-				gen, row.MissingCount)
+		if cfg.Vector.Embeddings.EffectiveAPIFormat() == vector.APIFormatVoyageContextual {
+			state, err := configuredConvergenceState(cmd.Context(), gen)
+			if err != nil {
+				return err
+			}
+			if !state.Complete() {
+				return convergenceError(gen, state)
+			}
+			contextualSequence = &state.LatestJournalSequence
+		} else {
+			if err := fillCoverage(cmd.Context(), &row); err != nil {
+				return err
+			}
+			if row.MissingCount > 0 {
+				return fmt.Errorf("generation %d still has %d message(s) needing embedding; run `msgvault embeddings resume --backstop` to recover any below-watermark stragglers, or pass --force",
+					gen, row.MissingCount)
+			}
 		}
 	}
 
@@ -379,7 +392,16 @@ func runEmbeddingsActivate(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	defer closeBackend()
-	if err := backend.ActivateGeneration(cmd.Context(), gen, embeddingsActivateForce); err != nil {
+	if contextualSequence != nil {
+		activator, ok := backend.(vector.ConvergedGenerationActivator)
+		if !ok {
+			return errors.New("contextual backend lacks sequence-bound activation")
+		}
+		err = activator.ActivateGenerationIfConverged(cmd.Context(), gen, *contextualSequence)
+	} else {
+		err = backend.ActivateGeneration(cmd.Context(), gen, embeddingsActivateForce)
+	}
+	if err != nil {
 		return err
 	}
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Generation %d activated.\n", gen)
@@ -513,12 +535,18 @@ func planCLIEmbeddingsActivate(
 			gen, row.Fingerprint, expected)
 	}
 	if !force {
-		if err := fillCoverage(ctx, &row); err != nil {
-			return api.CLIEmbeddingsPlanResponse{}, err
-		}
-		if row.MissingCount > 0 {
-			return api.CLIEmbeddingsPlanResponse{}, fmt.Errorf("generation %d still has %d message(s) needing embedding; run `msgvault embeddings resume --backstop` to recover any below-watermark stragglers, or pass --force",
-				gen, row.MissingCount)
+		if cfg.Vector.Embeddings.EffectiveAPIFormat() == vector.APIFormatVoyageContextual {
+			if err := requireConfiguredConvergence(ctx, gen); err != nil {
+				return api.CLIEmbeddingsPlanResponse{}, err
+			}
+		} else {
+			if err := fillCoverage(ctx, &row); err != nil {
+				return api.CLIEmbeddingsPlanResponse{}, err
+			}
+			if row.MissingCount > 0 {
+				return api.CLIEmbeddingsPlanResponse{}, fmt.Errorf("generation %d still has %d message(s) needing embedding; run `msgvault embeddings resume --backstop` to recover any below-watermark stragglers, or pass --force",
+					gen, row.MissingCount)
+			}
 		}
 	}
 
@@ -535,6 +563,39 @@ func planCLIEmbeddingsActivate(
 		NeedsConfirmation: true,
 		Prompt:            prompt,
 	}, nil
+}
+
+func requireConfiguredConvergence(ctx context.Context, gen vector.GenerationID) error {
+	state, err := configuredConvergenceState(ctx, gen)
+	if err != nil {
+		return err
+	}
+	if !state.Complete() {
+		return convergenceError(gen, state)
+	}
+	return nil
+}
+
+func configuredConvergenceState(ctx context.Context, gen vector.GenerationID) (scheduler.ConvergenceResult, error) {
+	mainStore, err := store.Open(cfg.DatabaseDSN())
+	if err != nil {
+		return scheduler.ConvergenceResult{}, fmt.Errorf("open main db for convergence: %w", err)
+	}
+	defer func() { _ = mainStore.Close() }()
+	backend, closeBackend, err := openEmbeddingsBackend(ctx)
+	if err != nil {
+		return scheduler.ConvergenceResult{}, err
+	}
+	defer closeBackend()
+	checker, err := newConvergenceChecker(cfg.Vector, mainStore, backend)
+	if err != nil {
+		return scheduler.ConvergenceResult{}, err
+	}
+	state, err := checker.CheckConvergence(ctx, gen)
+	if err != nil {
+		return scheduler.ConvergenceResult{}, fmt.Errorf("check generation convergence: %w", err)
+	}
+	return state, nil
 }
 
 func remainingCoverageHint(gen vector.GenerationID, remaining int64) string {

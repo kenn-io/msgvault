@@ -48,6 +48,7 @@ CREATE TABLE IF NOT EXISTS embeddings (
     source_char_len  INTEGER NOT NULL,
     chunk_char_start INTEGER NOT NULL DEFAULT 0,
     chunk_char_end   INTEGER NOT NULL DEFAULT 0,
+    source_basis     INTEGER NOT NULL DEFAULT 0,
     truncated        INTEGER NOT NULL DEFAULT 0,
     UNIQUE (generation_id, message_id, chunk_index)
 );
@@ -79,4 +80,52 @@ CREATE TABLE IF NOT EXISTS embed_runs (
 CREATE TABLE IF NOT EXISTS embed_watermark (
     generation_id INTEGER PRIMARY KEY,
     watermark_id  INTEGER NOT NULL DEFAULT 0
+);
+
+-- Contextual document publication ledger. A document row is retained after
+-- tombstoning so replay and reconciliation can distinguish a published delete
+-- from a key that was never seen. Membership rows exist only for current
+-- documents; their primary key enforces one current owner per message.
+CREATE TABLE IF NOT EXISTS embedding_documents (
+    generation_id     INTEGER NOT NULL REFERENCES index_generations(id) ON DELETE CASCADE,
+    document_key      TEXT NOT NULL,
+    kind              TEXT NOT NULL,
+    scope_key         TEXT NOT NULL,
+    state             TEXT NOT NULL CHECK (state IN ('current', 'tombstoned')),
+    published_revision TEXT NOT NULL,
+    source_sequence   INTEGER NOT NULL,
+    updated_at        INTEGER NOT NULL,
+    PRIMARY KEY (generation_id, document_key)
+);
+CREATE INDEX IF NOT EXISTS idx_embedding_documents_scope
+    ON embedding_documents(generation_id, scope_key, state, document_key);
+
+-- The latest source snapshot applied to each scope. This row exists even when
+-- a scope publishes no documents, so a delayed older worker cannot resurrect
+-- content after a newer empty-scope publication.
+CREATE TABLE IF NOT EXISTS embedding_document_scopes (
+    generation_id  INTEGER NOT NULL REFERENCES index_generations(id) ON DELETE CASCADE,
+    scope_key      TEXT NOT NULL,
+    source_sequence INTEGER NOT NULL,
+    PRIMARY KEY (generation_id, scope_key)
+);
+
+CREATE TABLE IF NOT EXISTS embedding_document_members (
+    generation_id INTEGER NOT NULL,
+    message_id    INTEGER NOT NULL,
+    document_key  TEXT NOT NULL,
+    member_ordinal INTEGER NOT NULL,
+    PRIMARY KEY (generation_id, message_id),
+    UNIQUE (generation_id, document_key, member_ordinal),
+    FOREIGN KEY (generation_id, document_key)
+        REFERENCES embedding_documents(generation_id, document_key) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_embedding_document_members_document
+    ON embedding_document_members(generation_id, document_key, member_ordinal);
+
+CREATE TABLE IF NOT EXISTS embedding_document_progress (
+    generation_id   INTEGER PRIMARY KEY REFERENCES index_generations(id) ON DELETE CASCADE,
+    change_sequence INTEGER NOT NULL DEFAULT 0,
+    reconcile_cursor TEXT NOT NULL DEFAULT '',
+    journal_cursor TEXT NOT NULL DEFAULT ''
 );

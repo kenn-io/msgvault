@@ -11,6 +11,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strconv"
 	"strings"
 	"time"
@@ -24,6 +25,7 @@ import (
 var _ vector.Backend = (*Backend)(nil)
 var _ vector.ChunkScoringBackend = (*Backend)(nil)
 var _ vector.FilteredCoverageBackend = (*Backend)(nil)
+var _ vector.ConvergedGenerationActivator = (*Backend)(nil)
 
 // annOverFetchFactor multiplies k for the inner ANN scan so that after
 // GROUP BY dedup across multi-chunk messages, at least k distinct
@@ -292,6 +294,18 @@ func (b *Backend) missingForGenExistsClause(genArg string, firstScopeArg int) (s
 // generation-clean. This intentionally differs from sqlitevec, whose
 // vec0 PARTITION KEY isolates retired rows so it can retain them.
 func (b *Backend) ActivateGeneration(ctx context.Context, gen vector.GenerationID, force bool) error {
+	return b.activateGeneration(ctx, gen, force, nil)
+}
+
+func (b *Backend) ActivateGenerationIfConverged(
+	ctx context.Context, gen vector.GenerationID, expectedSequence int64,
+) error {
+	return b.activateGeneration(ctx, gen, false, &expectedSequence)
+}
+
+func (b *Backend) activateGeneration(
+	ctx context.Context, gen vector.GenerationID, force bool, expectedSequence *int64,
+) error {
 	now := time.Now().Unix()
 	tx, err := b.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -308,6 +322,39 @@ func (b *Backend) ActivateGeneration(ctx context.Context, gen vector.GenerationI
 	// the first statement in the tx to cover every subsequent DELETE.
 	if _, err := tx.ExecContext(ctx, "SET LOCAL statement_timeout = 0"); err != nil {
 		return fmt.Errorf("disable statement_timeout for activate: %w", err)
+	}
+	if expectedSequence != nil {
+		// Every source-mutation statement takes the shared form of this advisory
+		// lock before it can lock rows. The exclusive form makes the journal clock
+		// and source snapshot a stable activation boundary without serializing
+		// ordinary writers with each other.
+		if _, err := tx.ExecContext(ctx,
+			`SELECT pg_advisory_xact_lock(
+			     hashtextextended('msgvault.embedding_change_clock', 0))`); err != nil {
+			return fmt.Errorf("lock contextual source mutations for activation: %w", err)
+		}
+		var latest int64
+		if err := tx.QueryRowContext(ctx,
+			`SELECT sequence FROM embedding_change_clock WHERE singleton = 1 FOR UPDATE`).Scan(&latest); err != nil {
+			return fmt.Errorf("lock contextual journal clock for activation: %w", err)
+		}
+		var consumed int64
+		var reconcileCursor, journalCursor string
+		if err := tx.QueryRowContext(ctx, `
+			SELECT change_sequence, reconcile_cursor, journal_cursor
+			  FROM embedding_document_progress
+			 WHERE generation_id = $1
+			 FOR UPDATE`, int64(gen)).Scan(&consumed, &reconcileCursor, &journalCursor); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return fmt.Errorf("%w: generation %d has no contextual progress", vector.ErrGenerationNotConverged, gen)
+			}
+			return fmt.Errorf("read contextual progress for activation: %w", err)
+		}
+		if latest != *expectedSequence || consumed != *expectedSequence ||
+			!strings.HasPrefix(reconcileCursor, "done:") || journalCursor != "" {
+			return fmt.Errorf("%w: expected journal %d, latest %d, consumed %d, reconcile %q, journal cursor %q",
+				vector.ErrGenerationNotConverged, *expectedSequence, latest, consumed, reconcileCursor, journalCursor)
+		}
 	}
 
 	// Demote the current active generation and capture its id in a single
@@ -358,6 +405,7 @@ func (b *Backend) ActivateGeneration(ctx context.Context, gen vector.GenerationI
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit activate generation %d: %w", gen, err)
 	}
+	b.cleanupDocumentJournalAfterLifecycle(ctx, "activate generation")
 	return nil
 }
 
@@ -457,7 +505,19 @@ func (b *Backend) RetireGeneration(ctx context.Context, gen vector.GenerationID,
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit retire generation %d: %w", gen, err)
 	}
+	b.cleanupDocumentJournalAfterLifecycle(ctx, "retire generation")
 	return nil
+}
+
+// cleanupDocumentJournalAfterLifecycle runs after a lifecycle transaction has
+// committed. Cleanup is safe to retry through CleanupDocumentJournalIfUnused,
+// so a cleanup failure must not make callers believe the committed lifecycle
+// transition failed.
+func (b *Backend) cleanupDocumentJournalAfterLifecycle(ctx context.Context, operation string) {
+	if err := b.CleanupDocumentJournalIfUnused(ctx); err != nil {
+		slog.Warn("contextual journal cleanup deferred after committed lifecycle transition",
+			"operation", operation, "error", err)
+	}
 }
 
 // retireGateError re-reads gen inside the retire tx to explain why the gated
@@ -604,8 +664,8 @@ func (b *Backend) Upsert(ctx context.Context, gen vector.GenerationID, chunks []
 	stmt, err := tx.PrepareContext(ctx, `
 		INSERT INTO embeddings
 		  (generation_id, message_id, chunk_index, embedded_at, source_char_len,
-		   chunk_char_start, chunk_char_end, truncated, dimension, embedding)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::vector)`)
+		   chunk_char_start, chunk_char_end, truncated, dimension, embedding, source_basis)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::vector, $11)`)
 	if err != nil {
 		return fmt.Errorf("prepare embeddings insert: %w", err)
 	}
@@ -615,7 +675,7 @@ func (b *Backend) Upsert(ctx context.Context, gen vector.GenerationID, chunks []
 		if _, err := stmt.ExecContext(ctx,
 			int64(gen), c.MessageID, c.ChunkIndex, now, c.SourceCharLen,
 			c.ChunkCharStart, c.ChunkCharEnd, c.Truncated, dim,
-			vectorLiteral(c.Vector),
+			vectorLiteral(c.Vector), int(c.SourceBasis),
 		); err != nil {
 			return fmt.Errorf("insert embedding for msg %d chunk %d: %w", c.MessageID, c.ChunkIndex, err)
 		}
@@ -1317,7 +1377,7 @@ func (b *Backend) ScoreMessageChunks(ctx context.Context, gen vector.GenerationI
 	}
 
 	stmt := fmt.Sprintf(`
-		SELECT chunk_index, chunk_char_start, chunk_char_end,
+		SELECT chunk_index, chunk_char_start, chunk_char_end, source_basis,
 		       (embedding::vector(%d)) <=> $3::vector AS distance
 		  FROM embeddings
 		 WHERE generation_id = $1 AND message_id = $2
@@ -1332,14 +1392,16 @@ func (b *Backend) ScoreMessageChunks(ctx context.Context, gen vector.GenerationI
 	var hits []vector.ChunkHit
 	for rows.Next() {
 		var idx, start, end int
+		var basis vector.SourceBasis
 		var dist float64
-		if err := rows.Scan(&idx, &start, &end, &dist); err != nil {
+		if err := rows.Scan(&idx, &start, &end, &basis, &dist); err != nil {
 			return nil, fmt.Errorf("scan chunk row: %w", err)
 		}
 		hits = append(hits, vector.ChunkHit{
 			ChunkIndex:     idx,
 			ChunkCharStart: start,
 			ChunkCharEnd:   end,
+			SourceBasis:    basis,
 			Score:          1.0 - dist,
 		})
 	}

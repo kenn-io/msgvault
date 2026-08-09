@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,10 +15,254 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/scheduler"
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
 	"go.kenn.io/msgvault/internal/vector/embed"
 	"go.kenn.io/msgvault/internal/vector/sqlitevec"
 )
+
+type cliActivationBackend struct {
+	vector.Backend
+
+	activateErr   error
+	activateCalls []vector.GenerationID
+	sequences     []int64
+}
+
+func (b *cliActivationBackend) ActivateGenerationIfConverged(
+	_ context.Context, gen vector.GenerationID, expectedSequence int64,
+) error {
+	b.activateCalls = append(b.activateCalls, gen)
+	b.sequences = append(b.sequences, expectedSequence)
+	return b.activateErr
+}
+
+func (b *cliActivationBackend) ActivateGeneration(_ context.Context, gen vector.GenerationID, force bool) error {
+	if force {
+		panic("CLI build activation must never force")
+	}
+	b.activateCalls = append(b.activateCalls, gen)
+	return b.activateErr
+}
+
+type cliConvergenceChecker struct {
+	state scheduler.ConvergenceResult
+	err   error
+}
+
+type cliPassRunner struct {
+	results []embed.RunResult
+	calls   int
+}
+
+func (r *cliPassRunner) RunOnce(context.Context, vector.GenerationID) (embed.RunResult, error) {
+	result := r.results[min(r.calls, len(r.results)-1)]
+	r.calls++
+	return result, nil
+}
+
+func (r *cliPassRunner) RunBackstop(context.Context, vector.GenerationID) (embed.RunResult, error) {
+	return embed.RunResult{}, errors.New("unexpected backstop")
+}
+
+func (r *cliPassRunner) ReclaimStale(context.Context) (int, error) { return 0, nil }
+
+func TestRunEmbeddingPasses_ContextualCLIContinuesUntilConverged(t *testing.T) {
+	runner := &cliPassRunner{results: []embed.RunResult{
+		{Claimed: 2, Succeeded: 2, Contextual: &embed.ContextConvergence{Converged: false}},
+		{Claimed: 3, Succeeded: 3, Contextual: &embed.ContextConvergence{Converged: false}},
+		{Claimed: 1, Succeeded: 1, Contextual: &embed.ContextConvergence{Converged: true}},
+	}}
+
+	result, err := runEmbeddingPasses(t.Context(), runner, 7, false, vector.APIFormatVoyageContextual)
+	require.NoError(t, err)
+	assert.Equal(t, 3, runner.calls)
+	assert.Equal(t, 6, result.Claimed)
+	assert.Equal(t, 6, result.Succeeded)
+	require.NotNil(t, result.Contextual)
+	assert.True(t, result.Contextual.Converged)
+}
+
+func TestRunEmbeddingPasses_ContextualCLIRejectsNonProgress(t *testing.T) {
+	runner := &cliPassRunner{results: []embed.RunResult{{
+		Contextual: &embed.ContextConvergence{Converged: false},
+	}}}
+
+	_, err := runEmbeddingPasses(t.Context(), runner, 7, false, vector.APIFormatVoyageContextual)
+	require.ErrorContains(t, err, "made no progress")
+	assert.Equal(t, 1, runner.calls)
+}
+
+func (c cliConvergenceChecker) CheckConvergence(context.Context, vector.GenerationID) (scheduler.ConvergenceResult, error) {
+	return c.state, c.err
+}
+
+func TestActivateBuiltGeneration_ContextualBehavior(t *testing.T) {
+	complete := scheduler.ConvergenceResult{
+		MessageCoverageComplete: true,
+		LatestJournalSequence:   9,
+		ConsumedJournalSequence: 9,
+		ReconciliationComplete:  true,
+	}
+	tests := []struct {
+		name   string
+		mutate func(*scheduler.ConvergenceResult)
+		want   string
+	}{
+		{name: "message coverage incomplete", mutate: func(s *scheduler.ConvergenceResult) {
+			s.MessageCoverageComplete = false
+			s.MessageCoverageMissing = 2
+		}, want: "message_coverage_complete=false (missing=2)"},
+		{name: "journal incomplete", mutate: func(s *scheduler.ConvergenceResult) {
+			s.ConsumedJournalSequence = 8
+		}, want: "journal=8/9"},
+		{name: "reconciliation incomplete", mutate: func(s *scheduler.ConvergenceResult) {
+			s.ReconciliationComplete = false
+		}, want: "reconciliation_complete=false"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			state := complete
+			tt.mutate(&state)
+			backend := &cliActivationBackend{}
+			var stdout, stderr bytes.Buffer
+			activated, err := activateBuiltGeneration(t.Context(), backend,
+				cliConvergenceChecker{state: state}, 7, vector.APIFormatVoyageContextual,
+				&stdout, &stderr)
+			require.NoError(t, err)
+			assert.False(t, activated)
+			assert.Empty(t, backend.activateCalls)
+			assert.Empty(t, stdout.String())
+			assert.Contains(t, stderr.String(), tt.want)
+			assert.Contains(t, stderr.String(), "generation 7 has not converged")
+		})
+	}
+
+	backend := &cliActivationBackend{}
+	var stdout, stderr bytes.Buffer
+	activated, err := activateBuiltGeneration(t.Context(), backend,
+		cliConvergenceChecker{state: complete}, 7, vector.APIFormatVoyageContextual,
+		&stdout, &stderr)
+	require.NoError(t, err)
+	assert.True(t, activated)
+	assert.Equal(t, []vector.GenerationID{7}, backend.activateCalls)
+	assert.Equal(t, []int64{9}, backend.sequences)
+	assert.Equal(t, "Generation 7 activated.\n", stdout.String())
+	assert.Empty(t, stderr.String())
+}
+
+func TestActivateBuiltGeneration_OpenAILegacyHintUnchanged(t *testing.T) {
+	backend := &cliActivationBackend{}
+	state := scheduler.ConvergenceResult{
+		MessageCoverageComplete: false,
+		MessageCoverageMissing:  3,
+		ReconciliationComplete:  true,
+	}
+	var stdout, stderr bytes.Buffer
+	activated, err := activateBuiltGeneration(t.Context(), backend,
+		cliConvergenceChecker{state: state}, 7, vector.APIFormatOpenAI, &stdout, &stderr)
+	require.NoError(t, err)
+	assert.False(t, activated)
+	assert.Empty(t, backend.activateCalls)
+	assert.Equal(t, remainingCoverageHint(7, 3), stderr.String())
+}
+
+func TestActivateBuiltGeneration_OpenAICompleteUsesLegacyActivation(t *testing.T) {
+	backend := &cliActivationBackend{}
+	state := scheduler.ConvergenceResult{
+		MessageCoverageComplete: true,
+		ReconciliationComplete:  true,
+	}
+	var stdout, stderr bytes.Buffer
+	activated, err := activateBuiltGeneration(t.Context(), backend,
+		cliConvergenceChecker{state: state}, 7, vector.APIFormatOpenAI, &stdout, &stderr)
+	require.NoError(t, err)
+	assert.True(t, activated)
+	assert.Equal(t, []vector.GenerationID{7}, backend.activateCalls)
+	assert.Empty(t, backend.sequences, "legacy builds must not require contextual document progress")
+	assert.Equal(t, "Generation 7 activated.\n", stdout.String())
+	assert.Empty(t, stderr.String())
+}
+
+func TestActivateBuiltGeneration_ContextualLifecycleErrorsDoNotActivateAnotherGeneration(t *testing.T) {
+	complete := scheduler.ConvergenceResult{
+		MessageCoverageComplete: true,
+		ReconciliationComplete:  true,
+	}
+	t.Run("checker rejects retired generation", func(t *testing.T) {
+		backend := &cliActivationBackend{}
+		activated, err := activateBuiltGeneration(t.Context(), backend,
+			cliConvergenceChecker{err: vector.ErrGenerationRetired}, 7,
+			vector.APIFormatVoyageContextual, &bytes.Buffer{}, &bytes.Buffer{})
+		assert.False(t, activated)
+		require.ErrorIs(t, err, vector.ErrGenerationRetired)
+		assert.Empty(t, backend.activateCalls)
+	})
+	t.Run("backend rejects retired generation", func(t *testing.T) {
+		backend := &cliActivationBackend{activateErr: vector.ErrGenerationRetired}
+		activated, err := activateBuiltGeneration(t.Context(), backend,
+			cliConvergenceChecker{state: complete}, 7,
+			vector.APIFormatVoyageContextual, &bytes.Buffer{}, &bytes.Buffer{})
+		assert.False(t, activated)
+		require.ErrorIs(t, err, vector.ErrGenerationRetired)
+		assert.Equal(t, []vector.GenerationID{7}, backend.activateCalls)
+		assert.Equal(t, []int64{0}, backend.sequences)
+	})
+}
+
+func setupVectorFeaturesFixture(t *testing.T, apiFormat vector.EmbeddingAPIFormat, readOnly bool) *vectorFeatures {
+	t.Helper()
+	dir := t.TempDir()
+	mainPath := filepath.Join(dir, "msgvault.db")
+	c := config.NewDefaultConfig()
+	c.Data.DataDir = dir
+	c.Vector.Enabled = true
+	c.Vector.DBPath = filepath.Join(dir, "vectors.db")
+	c.Vector.Embeddings.Endpoint = "https://example.invalid/v1"
+	c.Vector.Embeddings.Model = "text-embedding-test"
+	c.Vector.Embeddings.Dimension = 4
+	c.Vector.Embeddings.APIFormat = apiFormat
+	if apiFormat == vector.APIFormatVoyageContextual {
+		c.Vector.Embeddings.Model = "voyage-context-4"
+	}
+	withTestConfig(t, c)
+
+	s, err := store.Open(mainPath)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = s.Close() })
+	require.NoError(t, s.InitSchema())
+
+	vf, err := setupVectorFeatures(t.Context(), s, mainPath, readOnly)
+	require.NoError(t, err)
+	require.NotNil(t, vf)
+	t.Cleanup(func() { _ = vf.Close() })
+	return vf
+}
+
+func TestSetupVectorFeatures_SelectsRunnerByAPIFormat(t *testing.T) {
+	t.Run("implicit OpenAI", func(t *testing.T) {
+		vf := setupVectorFeaturesFixture(t, "", false)
+		assert.IsType(t, &embed.Worker{}, vf.Runner)
+		assert.IsType(t, &legacyConvergenceChecker{}, vf.Convergence)
+	})
+	t.Run("explicit OpenAI", func(t *testing.T) {
+		vf := setupVectorFeaturesFixture(t, vector.APIFormatOpenAI, false)
+		assert.IsType(t, &embed.Worker{}, vf.Runner)
+		assert.IsType(t, &legacyConvergenceChecker{}, vf.Convergence)
+	})
+	t.Run("Voyage contextual", func(t *testing.T) {
+		vf := setupVectorFeaturesFixture(t, vector.APIFormatVoyageContextual, false)
+		assert.IsType(t, &embed.ContextWorker{}, vf.Runner)
+		assert.IsType(t, &contextualConvergenceChecker{}, vf.Convergence)
+	})
+}
+
+func TestSetupVectorFeatures_ReadOnlyContextualDoesNotStartRunnerWrites(t *testing.T) {
+	vf := setupVectorFeaturesFixture(t, vector.APIFormatVoyageContextual, true)
+	assert.IsType(t, &embed.ContextWorker{}, vf.Runner)
+}
 
 // openTestBackend opens a fresh in-memory-ish sqlitevec backend with a
 // single pre-seeded message so the scan-and-fill worker has a message to
@@ -110,7 +355,7 @@ func TestPickEmbedGeneration_NoGenerations_HintsFullRebuild(t *testing.T) {
 	// Intentional: we wrap the underlying error with a hint, but the
 	// underlying sentinel should still be errors.Is-reachable so
 	// upstream callers can branch on it.
-	assert.ErrorIs(t, err, vector.ErrNotEnabled, "err should wrap ErrNotEnabled")
+	require.ErrorIs(t, err, vector.ErrNotEnabled, "err should wrap ErrNotEnabled")
 }
 
 // TestPickEmbedGeneration_ResumeFingerprintMismatch rejects a resume
@@ -131,7 +376,7 @@ func TestPickEmbedGeneration_ResumeFingerprintMismatch(t *testing.T) {
 		Stderr:      openStderrSink(t),
 	})
 	require.Error(t, err, "expected fingerprint mismatch error")
-	assert.ErrorContains(t, err, "fingerprint", "error should mention fingerprint")
+	require.ErrorContains(t, err, "fingerprint", "error should mention fingerprint")
 }
 
 // TestPickEmbedGeneration_PrefersBuildingOverActive_MatchingFingerprint
@@ -192,7 +437,31 @@ func TestPickEmbedGeneration_RejectsBuildingWithMismatchedFingerprint(t *testing
 		Stderr:      openStderrSink(t),
 	})
 	require.Error(t, err, "expected error for mismatched-fingerprint building generation")
-	assert.ErrorContains(t, err, "fingerprint", "error should mention fingerprint")
+	require.ErrorContains(t, err, "fingerprint", "error should mention fingerprint")
+}
+
+func TestPickEmbedGeneration_ContextualRejectsWrongGenerationFingerprint(t *testing.T) {
+	ctx := context.Background()
+	backend := openTestBackend(t)
+	_, err := backend.CreateGeneration(ctx, "voyage-context-4", 4,
+		"voyage-context-4:4:p1-111111:c32768:e1:avoyage-contextual:v0")
+	require.NoError(t, err)
+
+	_, rebuild, err := pickEmbedGeneration(ctx, backend, embedGenerationOpts{
+		Model: "voyage-context-4", Dimension: 4,
+		Fingerprint: "voyage-context-4:4:p1-111111:c32768:e1:avoyage-contextual:v1",
+		Stderr:      openStderrSink(t),
+	})
+	require.Error(t, err)
+	assert.False(t, rebuild)
+	assert.Contains(t, err.Error(), "in-progress rebuild has fingerprint")
+	assert.Contains(t, err.Error(), "avoyage-contextual:v0")
+	assert.Contains(t, err.Error(), "avoyage-contextual:v1")
+
+	building, lookupErr := backend.BuildingGeneration(ctx)
+	require.NoError(t, lookupErr)
+	require.NotNil(t, building)
+	assert.Equal(t, vector.GenerationBuilding, building.State)
 }
 
 // TestPickEmbedGeneration_StaleActivePlusMatchingBuilding covers the
@@ -253,7 +522,7 @@ func TestPickEmbedGeneration_ActivePlusMismatchedBuildingRejected(t *testing.T) 
 		Stderr:      openStderrSink(t),
 	})
 	require.Error(err, "expected error when a mismatched building exists alongside matching active")
-	assert.ErrorContains(t, err, "fingerprint", "error should mention fingerprint")
+	require.ErrorContains(err, "fingerprint", "error should mention fingerprint")
 }
 
 // TestPickEmbedGeneration_FullRebuildAbortsWhenDeclined verifies the

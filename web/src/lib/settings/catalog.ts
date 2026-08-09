@@ -61,7 +61,13 @@ export const settingsCatalog: Record<string, CatalogEntry> = {
   }),
   'vector.db_path': entry('search', 'Vector database path', 'Optional vector database path override.'),
   'vector.skip_extension_create': entry('search', 'Skip extension creation', 'Use a vector extension installed by an administrator.'),
-  'vector.embeddings.endpoint': entry('search', 'Embedding endpoint', 'OpenAI-compatible embedding endpoint.', {
+  'vector.embeddings.api_format': entry(
+    'search',
+    'Embedding API format',
+    'Select the OpenAI-compatible or Voyage contextual API.',
+    { options: ['openai', 'voyage-contextual'] }
+  ),
+  'vector.embeddings.endpoint': entry('search', 'Embedding endpoint', 'OpenAI-compatible or Voyage API base URL.', {
     testable: true
   }),
   'vector.embeddings.api_key_env': entry('search', 'Embedding key environment variable', 'Environment variable containing the endpoint key.'),

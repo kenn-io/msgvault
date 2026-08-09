@@ -40,6 +40,47 @@ func decodeRequest(t *testing.T, r *http.Request) embeddingRequest {
 	return req
 }
 
+func newRecordingOpenAIClient(t *testing.T) (*Client, *[][]string) {
+	t.Helper()
+	calls := &[][]string{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		req := decodeRequest(t, r)
+		*calls = append(*calls, append([]string(nil), req.Input...))
+		vectors := make([][]float32, len(req.Input))
+		for i := range req.Input {
+			vectors[i] = []float32{float32(i + 1)}
+		}
+		writeEmbeddings(t, w, vectors)
+	}))
+	t.Cleanup(srv.Close)
+	return NewClient(Config{Endpoint: srv.URL, Model: "test-model", Dimension: 1}), calls
+}
+
+// TestClient_EmbedDocumentsFlattensWithoutChangingOrder catches adapters that
+// reorder chunks or lose document boundaries around a flat provider request.
+func TestClient_EmbedDocumentsFlattensWithoutChangingOrder(t *testing.T) {
+	client, calls := newRecordingOpenAIClient(t)
+	docs := []DocumentInput{{Chunks: []string{"a", "b"}}, {Chunks: []string{"c"}}}
+
+	got, err := client.EmbedDocuments(context.Background(), docs)
+
+	require.NoError(t, err)
+	assert.Equal(t, [][]string{{"a", "b", "c"}}, *calls)
+	assert.Equal(t, [][][]float32{{{1}, {2}}, {{3}}}, got)
+}
+
+// TestClient_EmbedQueryUsesSingleInput catches query adapters that batch or
+// discard the one vector returned by the flat provider request.
+func TestClient_EmbedQueryUsesSingleInput(t *testing.T) {
+	client, calls := newRecordingOpenAIClient(t)
+
+	got, err := client.EmbedQuery(context.Background(), "find this")
+
+	require.NoError(t, err)
+	assert.Equal(t, [][]string{{"find this"}}, *calls)
+	assert.Equal(t, []float32{1}, got)
+}
+
 func TestClient_Embed_Success(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -200,8 +241,26 @@ func TestClient_Embed_ContextCanceledDuringBackoff(t *testing.T) {
 
 func TestClient_Embed_MissingIndex(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Only index 0 returned for 2-input request.
-		writeEmbeddings(t, w, [][]float32{{0.1, 0.2, 0.3}})
+		// Two response items preserve the expected raw count, but both target
+		// index 0 so normalized index 1 remains missing.
+		type item struct {
+			Embedding []float32 `json:"embedding"`
+			Index     int       `json:"index"`
+		}
+		payload := struct {
+			Data  []item `json:"data"`
+			Model string `json:"model"`
+		}{
+			Data: []item{
+				{Embedding: []float32{0.1, 0.2, 0.3}, Index: 0},
+				{Embedding: []float32{0.4, 0.5, 0.6}, Index: 0},
+			},
+			Model: "m",
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if err := json.NewEncoder(w).Encode(payload); err != nil {
+			http.Error(w, "encode response", http.StatusInternalServerError)
+		}
 	}))
 	defer srv.Close()
 
@@ -442,4 +501,54 @@ func TestClient_Embed_InvalidIndex(t *testing.T) {
 	_, err := c.Embed(context.Background(), []string{"a"})
 	require.Error(t, err, "expected invalid index error")
 	assert.ErrorContains(t, err, "invalid index")
+}
+
+// TestClient_Embed_RejectsExtraOrDuplicateResponseItems catches provider
+// responses whose extra data items are hidden by normalized index slots.
+func TestClient_Embed_RejectsExtraOrDuplicateResponseItems(t *testing.T) {
+	type item struct {
+		Embedding []float32 `json:"embedding"`
+		Index     int       `json:"index"`
+	}
+	tests := []struct {
+		name string
+		data []item
+	}{
+		{
+			name: "duplicate index",
+			data: []item{
+				{Embedding: []float32{0.1, 0.2, 0.3}, Index: 0},
+				{Embedding: []float32{0.4, 0.5, 0.6}, Index: 0},
+			},
+		},
+		{
+			name: "extra index",
+			data: []item{
+				{Embedding: []float32{0.1, 0.2, 0.3}, Index: 0},
+				{Embedding: []float32{0.4, 0.5, 0.6}, Index: 1},
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				payload := struct {
+					Data  []item `json:"data"`
+					Model string `json:"model"`
+				}{Data: test.data, Model: "m"}
+				w.Header().Set("Content-Type", "application/json")
+				if err := json.NewEncoder(w).Encode(payload); err != nil {
+					http.Error(w, "encode response", http.StatusInternalServerError)
+				}
+			}))
+			t.Cleanup(srv.Close)
+
+			client := NewClient(Config{Endpoint: srv.URL, Model: "m", Dimension: 3})
+			_, err := client.Embed(context.Background(), []string{"a"})
+
+			require.Error(t, err)
+			assert.ErrorContains(t, err, "response count mismatch: got 2, expected 1")
+		})
+	}
 }

@@ -166,6 +166,8 @@ func NewWorker(d WorkerDeps) *Worker {
 // RunResult summarizes the outcome of RunOnce.
 type RunResult struct {
 	Claimed, Succeeded, Failed, Truncated int
+	// Contextual is set by ContextWorker. The ordinary Worker leaves it nil.
+	Contextual *ContextConvergence
 }
 
 // msgText is the per-message preprocessed input to the chunker, carried
@@ -335,6 +337,9 @@ func (w *Worker) run(ctx context.Context, gen vector.GenerationID, backstop bool
 			return res, fmt.Errorf("scan for embedding: %w", err)
 		}
 		if len(ids) == 0 {
+			if err := pruneEmbeddingJournal(ctx, w.deps.Backend, w.deps.Store); err != nil {
+				return res, err
+			}
 			return res, nil
 		}
 		res.Claimed += len(ids)
@@ -698,7 +703,7 @@ func (w *Worker) embedBatch(ctx context.Context, ids []int64) (embedBatchResult,
 		// gets its prose tail through the cap.
 		preprocessCfg := w.deps.Preprocess
 		if preprocessCfg.MaxBodyRunes == 0 && w.deps.MaxInputChars > 0 {
-			preprocessCfg.MaxBodyRunes = w.deps.MaxInputChars * maxSpansPerMessage * rawBodyMultiplier
+			preprocessCfg.MaxBodyRunes = EmbeddingChunkPolicy(w.deps.MaxInputChars).MaxBodyRunes
 		}
 		// Pass maxChars=0 so Preprocess does NOT truncate the final
 		// output by character count. Chunking (below) takes the full
@@ -740,13 +745,11 @@ func (w *Worker) embedBatch(ctx context.Context, ids []int64) (embedBatchResult,
 	// system error dumps, base64 blobs that survived sanitize): one
 	// such message could otherwise produce thousands of chunks and
 	// blow the batch past the embedder's request-time budget.
-	chunkWindow := w.deps.MaxInputChars
-	overlap := chunkOverlapFor(chunkWindow)
-	maxSpans := maxSpansPerMessage
+	chunkPolicy := EmbeddingChunkPolicy(w.deps.MaxInputChars)
 	var pieces []inputChunk
 	var inputs []string
 	for _, m := range msgs {
-		spans, chunkTail := ChunkText(m.Text, chunkWindow, overlap, maxSpans)
+		spans, chunkTail := chunkPolicy.Chunk(m.Text)
 		// A message is "truncated" if any of its content was dropped:
 		//   - body hit Preprocess's MaxBodyRunes cap, OR
 		//   - ChunkText dropped tail past maxSpans (regardless of
@@ -767,7 +770,7 @@ func (w *Worker) embedBatch(ctx context.Context, ids []int64) (embedBatchResult,
 				// (overlap exists to recover from this), or any
 				// chunk of a message that was truncated upstream.
 				Trunc: msgTrunc ||
-					(chunkWindow > 0 && (sp.CharEnd-sp.CharStart) == chunkWindow && j < len(spans)-1),
+					(chunkPolicy.MaxRunes > 0 && (sp.CharEnd-sp.CharStart) == chunkPolicy.MaxRunes && j < len(spans)-1),
 			}
 			pieces = append(pieces, ic)
 			inputs = append(inputs, sp.Text)
@@ -1281,6 +1284,28 @@ const rawBodyMultiplier = 16
 // addresses is universal across embedding backends, not a tuning
 // knob users are expected to touch.
 const maxSpansPerMessage = 64
+
+// ChunkPolicy is the production message chunking boundary shared by the
+// Worker and controlled evaluation adapters.
+type ChunkPolicy struct {
+	MaxRunes     int
+	OverlapRunes int
+	MaxSpans     int
+	MaxBodyRunes int
+}
+
+// EmbeddingChunkPolicy returns the current production message chunk policy.
+func EmbeddingChunkPolicy(maxRunes int) ChunkPolicy {
+	return ChunkPolicy{
+		MaxRunes: maxRunes, OverlapRunes: chunkOverlapFor(maxRunes), MaxSpans: maxSpansPerMessage,
+		MaxBodyRunes: maxRunes * maxSpansPerMessage * rawBodyMultiplier,
+	}
+}
+
+// Chunk applies the production message chunk policy.
+func (p ChunkPolicy) Chunk(text string) ([]ChunkSpan, bool) {
+	return ChunkText(text, p.MaxRunes, p.OverlapRunes, p.MaxSpans)
+}
 
 // chunkOverlapFor returns the rune count of overlap between consecutive
 // chunks. The overlap exists so a sentence or phrase that straddles a

@@ -1990,6 +1990,51 @@ func TestStore_PersistMessage_Upsert(t *testing.T) {
 	assert.Equal("updated body", bodyText.String, "body_text")
 }
 
+func TestStore_PersistMessageSerializesSQLiteWritersBeforePriorStateRead(t *testing.T) {
+	testutil.SkipIfPostgres(t, "exercises SQLite WAL snapshot upgrades")
+	require := require.New(t)
+	f := storetest.New(t)
+	f.Store.DB().SetMaxOpenConns(2)
+	f.Store.DB().SetMaxIdleConns(2)
+
+	base := storetest.NewMessage(f.Source.ID, f.ConvID).
+		WithSourceMessageID("persist-concurrent").
+		WithSubject("seed").
+		Build()
+	_, err := f.Store.PersistMessage(&store.MessagePersistData{
+		Message:  base,
+		BodyText: sql.NullString{String: "seed body", Valid: true},
+	})
+	require.NoError(err, "seed message")
+
+	for iteration := range 50 {
+		start := make(chan struct{})
+		errs := make(chan error, 2)
+		for writer := range 2 {
+			go func() {
+				<-start
+				message := *base
+				message.Subject = sql.NullString{
+					String: fmt.Sprintf("iteration-%d-writer-%d", iteration, writer),
+					Valid:  true,
+				}
+				_, persistErr := f.Store.PersistMessage(&store.MessagePersistData{
+					Message: &message,
+					BodyText: sql.NullString{
+						String: fmt.Sprintf("body-%d-%d", iteration, writer),
+						Valid:  true,
+					},
+				})
+				errs <- persistErr
+			}()
+		}
+		close(start)
+		for writer := range 2 {
+			require.NoError(<-errs, "iteration %d writer %d", iteration, writer)
+		}
+	}
+}
+
 func TestStore_PersistMessageClearsEmbedGenWhenEmbeddingInputsChange(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

@@ -12,6 +12,19 @@ import (
 	"time"
 )
 
+// EmbeddingAPIFormat selects the request and response contract used by the
+// configured embedding endpoint.
+type EmbeddingAPIFormat string
+
+const (
+	// APIFormatOpenAI uses the OpenAI-compatible embeddings contract.
+	APIFormatOpenAI EmbeddingAPIFormat = "openai"
+	// APIFormatVoyageContextual uses Voyage contextualized embeddings.
+	APIFormatVoyageContextual EmbeddingAPIFormat = "voyage-contextual"
+	// contextPolicyVersion identifies the contextual document assembly policy.
+	contextPolicyVersion = 2
+)
+
 // preprocessVersion identifies the embed/preprocess.go implementation
 // generation. Bump whenever a change to that file produces a different
 // Preprocess() output for the same PreprocessConfig flags — for
@@ -58,18 +71,28 @@ type Config struct {
 	SkipExtensionCreate bool `toml:"skip_extension_create"`
 }
 
-// EmbeddingsConfig configures the external OpenAI-compatible
-// embedding endpoint used to convert message text into vectors.
+// EmbeddingsConfig configures the external embedding endpoint used to convert
+// message text into vectors.
 type EmbeddingsConfig struct {
-	Endpoint      string        `toml:"endpoint"`
-	APIKeyEnv     string        `toml:"api_key_env"`
-	Model         string        `toml:"model"`
-	Dimension     int           `toml:"dimension"`
-	BatchSize     int           `toml:"batch_size"`
-	Timeout       time.Duration `toml:"timeout"`
-	MaxRetries    int           `toml:"max_retries"`
-	MaxInputChars int           `toml:"max_input_chars"`
-	ETAWindow     int           `toml:"eta_window"`
+	APIFormat     EmbeddingAPIFormat `toml:"api_format"`
+	Endpoint      string             `toml:"endpoint"`
+	APIKeyEnv     string             `toml:"api_key_env"`
+	Model         string             `toml:"model"`
+	Dimension     int                `toml:"dimension"`
+	BatchSize     int                `toml:"batch_size"`
+	Timeout       time.Duration      `toml:"timeout"`
+	MaxRetries    int                `toml:"max_retries"`
+	MaxInputChars int                `toml:"max_input_chars"`
+	ETAWindow     int                `toml:"eta_window"`
+}
+
+// EffectiveAPIFormat returns the configured API format, defaulting to the
+// legacy OpenAI-compatible contract when api_format is omitted.
+func (e EmbeddingsConfig) EffectiveAPIFormat() EmbeddingAPIFormat {
+	if e.APIFormat == "" {
+		return APIFormatOpenAI
+	}
+	return e.APIFormat
 }
 
 // PreprocessConfig controls message text preprocessing before embedding.
@@ -246,6 +269,8 @@ func (e EmbeddingsConfig) Fingerprint() string {
 // GenerationFingerprint returns the full identifier used to compare an
 // index generation against the configured policy. Format:
 // "<model>:<dimension>:<preprocess>:c<max_input_chars>:e<embed_policy>".
+// Contextual generations add
+// ":avoyage-contextual:v<context_policy_version>" before any scope segment.
 // Every segment is derived from the effective config (or a code-level
 // version constant), so changing the embedding model/dimension, any
 // preprocessing toggle, the truncation cap, or the embed-worker output
@@ -269,6 +294,9 @@ func (e EmbeddingsConfig) Fingerprint() string {
 func (c *Config) GenerationFingerprint() string {
 	fp := fmt.Sprintf("%s:%s:c%d:e%d",
 		c.Embeddings.Fingerprint(), c.Preprocess.Fingerprint(), c.Embeddings.MaxInputChars, embedPolicyVersion)
+	if c.Embeddings.EffectiveAPIFormat() == APIFormatVoyageContextual {
+		fp = fmt.Sprintf("%s:a%s:v%d", fp, APIFormatVoyageContextual, contextPolicyVersion)
+	}
 	if scopeFP := c.Embed.Scope.BuildScope().Fingerprint(); scopeFP != "" {
 		fp = fmt.Sprintf("%s:s%s", fp, scopeFP)
 	}
@@ -286,6 +314,17 @@ func (c *Config) Validate() error {
 	case "sqlite-vec", "pgvector":
 	default:
 		return fmt.Errorf("vector.backend: unknown backend %q (supported: \"sqlite-vec\", \"pgvector\")", c.Backend)
+	}
+	switch c.Embeddings.EffectiveAPIFormat() {
+	case APIFormatOpenAI, APIFormatVoyageContextual:
+	default:
+		return fmt.Errorf("vector.embeddings.api_format: unknown format %q (supported: %q, %q)",
+			c.Embeddings.APIFormat, APIFormatOpenAI, APIFormatVoyageContextual)
+	}
+	if c.Embeddings.EffectiveAPIFormat() == APIFormatVoyageContextual &&
+		c.Embeddings.Model != "voyage-context-4" {
+		return fmt.Errorf("vector.embeddings.model: api_format=%q requires %q, got %q",
+			APIFormatVoyageContextual, "voyage-context-4", c.Embeddings.Model)
 	}
 	if c.Embeddings.Endpoint == "" {
 		return errors.New("vector.embeddings.endpoint: required")

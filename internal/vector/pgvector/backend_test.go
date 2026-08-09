@@ -50,6 +50,38 @@ func TestBackend_CreateActivateRetire(t *testing.T) {
 	assert.Error(err, "ActiveGeneration should error after retire")
 }
 
+func TestBackend_ActivateGenerationIfConvergedRejectsStaleJournal(t *testing.T) {
+	b, ctx, db := newBackendForTest(t)
+	_, err := db.Exec(`
+		CREATE TABLE embedding_change_clock (
+			singleton BIGINT PRIMARY KEY,
+			sequence BIGINT NOT NULL
+		);
+		INSERT INTO embedding_change_clock (singleton, sequence) VALUES (1, 4)`)
+	require.NoError(t, err)
+	gen, err := b.CreateGeneration(ctx, "m", 768, "")
+	require.NoError(t, err)
+	_, err = db.Exec(`UPDATE messages SET embed_gen = $1 WHERE id = 1`, int64(gen))
+	require.NoError(t, err)
+	require.NoError(t, b.AdvanceDocumentChangeWatermark(ctx, gen, 4))
+	require.NoError(t, b.SetDocumentReconcileCursor(ctx, gen, "done:4"))
+
+	_, err = db.Exec(`UPDATE embedding_change_clock SET sequence = 5 WHERE singleton = 1`)
+	require.NoError(t, err)
+	err = b.ActivateGenerationIfConverged(ctx, gen, 4)
+	require.ErrorIs(t, err, vector.ErrGenerationNotConverged)
+	assert.Equal(t, string(vector.GenerationBuilding), genState(t, b, gen))
+
+	require.NoError(t, b.AdvanceDocumentChangeWatermark(ctx, gen, 5))
+	require.NoError(t, b.SetDocumentReconcileCursor(ctx, gen, "done:5"))
+	require.NoError(t, b.SetDocumentJournalCursor(ctx, gen, "5|chat:1:2026-08-08"))
+	err = b.ActivateGenerationIfConverged(ctx, gen, 5)
+	require.ErrorIs(t, err, vector.ErrGenerationNotConverged)
+	require.NoError(t, b.SetDocumentJournalCursor(ctx, gen, ""))
+	require.NoError(t, b.ActivateGenerationIfConverged(ctx, gen, 5))
+	assert.Equal(t, string(vector.GenerationActive), genState(t, b, gen))
+}
+
 // TestBackend_CreateGeneration_StampsSeededAt verifies CreateGeneration
 // stamps seeded_at so the activation gate's lifecycle check passes.
 func TestBackend_CreateGeneration_StampsSeededAt(t *testing.T) {

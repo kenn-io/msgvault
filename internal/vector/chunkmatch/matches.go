@@ -1,7 +1,7 @@
 // Package chunkmatch converts stored vector chunk offsets into API-safe match
-// excerpts. Stored offsets refer to preprocessed subject-plus-body text, so raw
-// body locations are exposed only when the complete chunk is found exactly and
-// unambiguously in the original body.
+// excerpts. Stored offsets refer to the preprocessed source identified by each
+// hit's SourceBasis. Raw body locations are exposed only when the complete
+// source span maps exactly to the original body.
 package chunkmatch
 
 import (
@@ -34,16 +34,38 @@ func Build(
 		return nil, false
 	}
 
-	preprocessed, _ := embed.Preprocess(subject, body, 0, preprocessConfig(cfg))
-	prefixRunes := subjectPrefixRuneCount(subject)
+	var ordinarySource string
+	ordinarySourceReady := false
+	ordinaryBodyStart := subjectPrefixRuneCount(subject)
+	var bodySource string
+	bodySourceReady := false
 	matches := make([]Match, 0, min(len(hits), maxMatches))
 	qualifying := 0
 	for _, hit := range hits {
 		if hit.Score < minScore {
 			continue
 		}
-		chunkText := runeSlice(preprocessed, hit.ChunkCharStart, hit.ChunkCharEnd)
-		if chunkText == "" {
+		var source string
+		bodyStartRune := 0
+		switch hit.SourceBasis {
+		case vector.SourceBasisSubjectBody:
+			if !ordinarySourceReady {
+				ordinarySource, _ = embed.Preprocess(subject, body, 0, preprocessConfig(cfg))
+				ordinarySourceReady = true
+			}
+			source = ordinarySource
+			bodyStartRune = ordinaryBodyStart
+		case vector.SourceBasisBody:
+			if !bodySourceReady {
+				bodySource, _ = embed.Preprocess("", body, 0, preprocessConfig(cfg))
+				bodySourceReady = true
+			}
+			source = bodySource
+		default:
+			continue
+		}
+		chunkText, ok := runeSliceExact(source, hit.ChunkCharStart, hit.ChunkCharEnd)
+		if !ok {
 			continue
 		}
 		qualifying++
@@ -55,8 +77,18 @@ func Build(
 			Snippet: bytePrefix(chunkText, snippetBytes),
 			Score:   hit.Score,
 		}
-		if hit.ChunkCharStart >= prefixRunes {
-			if offset, ok := uniqueBodyOffset(body, chunkText); ok {
+		if hit.ChunkCharStart >= bodyStartRune {
+			var offset int
+			var located bool
+			switch hit.SourceBasis {
+			case vector.SourceBasisSubjectBody:
+				offset, located = uniqueBodyOffset(body, chunkText)
+			case vector.SourceBasisBody:
+				if bodySource == body {
+					offset, located = positionalBodyOffset(body, hit.ChunkCharStart, chunkText)
+				}
+			}
+			if located {
 				line := strings.Count(body[:offset], "\n") + 1
 				match.CharOffset = &offset
 				match.Line = &line
@@ -85,30 +117,33 @@ func subjectPrefixRuneCount(subject string) int {
 	return utf8.RuneCountInString("Subject: " + subject + "\n\n")
 }
 
-func runeSlice(s string, startRune, endRune int) string {
-	if s == "" || startRune < 0 || endRune <= startRune {
-		return ""
+func runeSliceExact(s string, startRune, endRune int) (string, bool) {
+	startByte, endByte, ok := runeByteRange(s, startRune, endRune)
+	if !ok {
+		return "", false
 	}
-	startByte := runeOffsetToByte(s, startRune)
-	endByte := runeOffsetToByte(s, endRune)
-	if startByte >= len(s) {
-		return ""
-	}
-	return s[startByte:min(endByte, len(s))]
+	return s[startByte:endByte], true
 }
 
-func runeOffsetToByte(s string, offset int) int {
-	if offset <= 0 {
-		return 0
+func runeByteRange(s string, startRune, endRune int) (int, int, bool) {
+	if s == "" || startRune < 0 || endRune <= startRune {
+		return 0, 0, false
 	}
-	walked := 0
-	for i := range s {
-		if walked >= offset {
-			return i
+	startByte := -1
+	runeIndex := 0
+	for byteOffset := range s {
+		if runeIndex == startRune {
+			startByte = byteOffset
 		}
-		walked++
+		if runeIndex == endRune {
+			return startByte, byteOffset, startByte >= 0
+		}
+		runeIndex++
 	}
-	return len(s)
+	if runeIndex == endRune && startByte >= 0 {
+		return startByte, len(s), true
+	}
+	return 0, 0, false
 }
 
 func bytePrefix(s string, maxBytes int) string {
@@ -120,6 +155,15 @@ func bytePrefix(s string, maxBytes int) string {
 		end--
 	}
 	return s[:end]
+}
+
+func positionalBodyOffset(body string, startRune int, chunk string) (int, bool) {
+	endRune := startRune + utf8.RuneCountInString(chunk)
+	startByte, endByte, ok := runeByteRange(body, startRune, endRune)
+	if ok && body[startByte:endByte] == chunk {
+		return startByte, true
+	}
+	return 0, false
 }
 
 func uniqueBodyOffset(body, chunk string) (int, bool) {

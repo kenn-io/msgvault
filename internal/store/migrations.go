@@ -22,6 +22,7 @@ const (
 	migrationArchiveIdentity                  = "archive_identity_v1"
 	migrationMessagesContentChangedAtBackfill = "messages_content_changed_at_backfill"
 	migrationMessageWatermarkTriggers         = "message_watermark_triggers_v1"
+	migrationEmbeddingChangeJournalTriggers   = "embedding_change_journal_triggers_v7"
 )
 
 func backfillLegacyMessageAttributionProvenance(

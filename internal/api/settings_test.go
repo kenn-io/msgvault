@@ -39,6 +39,10 @@ func TestGetSettingsUsesAllowlistETagAndSecretStates(t *testing.T) {
 	assert.Equal(&SecretSettingState{Configured: true}, byKey["server.api_key"].Secret)
 	assert.Nil(byKey["server.api_key"].Value)
 	assert.Equal(&SecretSettingState{Configured: true}, byKey["integrations.tasks.api_key"].Secret)
+	require.NotNil(byKey["vector.embeddings.api_format"].Value)
+	require.NotNil(byKey["vector.embeddings.api_format"].Value.String)
+	assert.Equal("openai", *byKey["vector.embeddings.api_format"].Value.String)
+	assert.Equal([]string{"openai", "voyage-contextual"}, byKey["vector.embeddings.api_format"].Options)
 	require.NotNil(byKey["server.trusted_proxies"].Value)
 	assert.NotNil(byKey["server.trusted_proxies"].Value.Strings)
 	assert.NotContains(byKey, "unsupported.private_value")
@@ -49,6 +53,24 @@ func TestGetSettingsUsesAllowlistETagAndSecretStates(t *testing.T) {
 	assert.NotContains(resp.Body.String(), "test-api-key")
 	assert.NotContains(resp.Body.String(), "task-secret")
 	assert.NotContains(resp.Body.String(), "must-not-leak")
+}
+
+func TestPatchSettingsSelectsVoyageContextualEmbeddingFormat(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	srv, path := newSettingsTestServer(t, "[vector.embeddings]\n"+
+		"endpoint = \"https://api.voyageai.com/v1\"\n"+
+		"model = \"text-embedding-test\"\n"+
+		"dimension = 1024\n")
+
+	resp := patchSettings(t, srv,
+		`{"updates":[{"key":"vector.embeddings.api_format","value":{"string":"voyage-contextual"}},{"key":"vector.embeddings.model","value":{"string":"voyage-context-4"}}]}`)
+	require.Equal(http.StatusOK, resp.Code, resp.Body.String())
+
+	got, err := os.ReadFile(path)
+	require.NoError(err)
+	assert.Contains(string(got), `api_format = "voyage-contextual"`)
+	assert.Contains(string(got), `model = "voyage-context-4"`)
 }
 
 func TestPatchSettingsRequiresMatchingETag(t *testing.T) {

@@ -8,6 +8,111 @@ import (
 // GenerationID identifies one index generation.
 type GenerationID int64
 
+// SourceBasis identifies the source text used for chunk offsets.
+type SourceBasis uint8
+
+const (
+	// SourceBasisSubjectBody is the ordinary subject-prefix-plus-body source.
+	// It is zero so existing Chunk and ChunkHit values keep their meaning.
+	SourceBasisSubjectBody SourceBasis = iota
+	// SourceBasisBody is the body-only source used by contextual documents.
+	SourceBasisBody
+)
+
+// DocumentState describes whether a document key currently owns message
+// vectors or records a completed tombstone publication.
+type DocumentState string
+
+const (
+	DocumentCurrent    DocumentState = "current"
+	DocumentTombstoned DocumentState = "tombstoned"
+)
+
+// DocumentPublication is the complete desired state for one semantic
+// document. Members are ordered and must be unique within the whole scope
+// publication.
+type DocumentPublication struct {
+	Key            string
+	Kind           string
+	Revision       string
+	SourceSequence int64
+	Members        []int64
+	// PreserveVectors reuses the current persisted vectors only when the
+	// document key, kind, revision, scope, and ordered members still match.
+	PreserveVectors bool
+}
+
+// DocumentScopePublication is the complete desired state for one affected
+// scope inside a bounded publication batch.
+type DocumentScopePublication struct {
+	ScopeKey       string
+	SourceSequence int64
+	Documents      []DocumentPublication
+	Chunks         []Chunk
+	// FenceOnly advances the scope source-sequence fence only when the
+	// current document revisions and memberships still match Documents.
+	// It preserves vectors and returns ErrDocumentFenceChanged on a mismatch.
+	FenceOnly bool
+}
+
+// DocumentRecord is the durable publication ledger row plus its ordered
+// current membership. Tombstoned records have an empty Members slice.
+type DocumentRecord struct {
+	GenerationID      GenerationID
+	Key               string
+	Kind              string
+	ScopeKey          string
+	State             DocumentState
+	PublishedRevision string
+	SourceSequence    int64
+	Members           []int64
+}
+
+// DocumentProgress contains vector-side cursors used by contextual change
+// draining and resumable reconciliation.
+type DocumentProgress struct {
+	ChangeSequence  int64
+	ReconcileCursor string
+	JournalCursor   string
+}
+
+// DocumentPublisher atomically publishes every replacement document and
+// tombstone for one affected scope or one bounded scope batch. Implementations
+// enforce one current document owner for each (generation, message) pair.
+type DocumentPublisher interface {
+	PublishScope(ctx context.Context, gen GenerationID, scopeKey string, sourceSequence int64, docs []DocumentPublication, chunks []Chunk) error
+	PublishScopes(ctx context.Context, gen GenerationID, scopes []DocumentScopePublication) error
+	GetDocument(ctx context.Context, gen GenerationID, key string) (DocumentRecord, error)
+	ListDocumentsForScope(ctx context.Context, gen GenerationID, scopeKey string) ([]DocumentRecord, error)
+	ListDocumentsAfter(ctx context.Context, gen GenerationID, afterKey string, limit int) ([]DocumentRecord, error)
+	GetDocumentProgress(ctx context.Context, gen GenerationID) (DocumentProgress, error)
+	AdvanceDocumentChangeWatermark(ctx context.Context, gen GenerationID, sequence int64) error
+	SetDocumentReconcileCursor(ctx context.Context, gen GenerationID, cursor string) error
+	SetDocumentJournalCursor(ctx context.Context, gen GenerationID, cursor string) error
+	ResetDocumentReconcileCursor(ctx context.Context, gen GenerationID) error
+}
+
+// DocumentJournalRetention reports the oldest source-journal watermark still
+// needed by an active or building contextual generation. When tracked is
+// false, no live contextual generation has durable document progress.
+type DocumentJournalRetention interface {
+	MinimumDocumentChangeWatermark(ctx context.Context) (sequence int64, tracked bool, err error)
+}
+
+// DocumentJournalLifecycle atomically disables and prunes source mutation
+// capture when no active or building contextual generation still owns durable
+// document progress. Implementations recheck that predicate while holding the
+// source journal lock so a starting contextual worker cannot lose mutations.
+type DocumentJournalLifecycle interface {
+	CleanupDocumentJournalIfUnused(ctx context.Context) error
+}
+
+// ConvergedGenerationActivator promotes a contextual generation only while
+// the source journal still equals the sequence checked by the caller.
+type ConvergedGenerationActivator interface {
+	ActivateGenerationIfConverged(ctx context.Context, gen GenerationID, expectedSequence int64) error
+}
+
 // GenerationState is one of: building, active, retired.
 type GenerationState string
 
@@ -43,9 +148,9 @@ type Generation struct {
 // Backends key vectors by (GenerationID, MessageID, ChunkIndex). Search
 // returns at most one Hit per MessageID; if multiple chunks of the same
 // message match, the backend keeps the best-scoring chunk and discards
-// the rest. ChunkCharStart/ChunkCharEnd are 0-based offsets into the
-// preprocessed text and are stored for debugging only — search results
-// do not currently surface "which chunk matched".
+// the rest. ChunkCharStart/ChunkCharEnd are 0-based offsets into the source
+// text identified by SourceBasis and are stored for debugging only — search
+// results do not currently surface "which chunk matched".
 type Chunk struct {
 	MessageID      int64
 	ChunkIndex     int
@@ -53,6 +158,7 @@ type Chunk struct {
 	SourceCharLen  int
 	ChunkCharStart int
 	ChunkCharEnd   int
+	SourceBasis    SourceBasis
 	Truncated      bool
 }
 
@@ -124,12 +230,13 @@ type Hit struct {
 }
 
 // ChunkHit scores one embedded chunk against a query vector.
-// ChunkCharStart/ChunkCharEnd are rune offsets into the preprocessed
-// embed text (subject prefix + body), matching embeddings.chunk_char_*.
+// ChunkCharStart/ChunkCharEnd are rune offsets into the source text identified
+// by SourceBasis, matching embeddings.chunk_char_*.
 type ChunkHit struct {
 	ChunkIndex     int
 	ChunkCharStart int
 	ChunkCharEnd   int
+	SourceBasis    SourceBasis
 	Score          float64 // backend-native; higher is better (1 - distance)
 }
 

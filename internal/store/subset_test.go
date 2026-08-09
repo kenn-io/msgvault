@@ -2206,12 +2206,14 @@ func TestCopySubset_UpgradedAuxiliaryColumnOrder(t *testing.T) {
 
 		`DROP INDEX IF EXISTS idx_participants_phone`,
 		`DROP INDEX IF EXISTS idx_participants_canonical`,
+		`DROP TRIGGER IF EXISTS trg_embedding_changes_participant_display_name`,
 		`ALTER TABLE participants DROP COLUMN phone_number`,
 		`ALTER TABLE participants DROP COLUMN canonical_id`,
 		`ALTER TABLE participants ADD COLUMN phone_number TEXT`,
 		`ALTER TABLE participants ADD COLUMN canonical_id TEXT`,
 
 		`DROP INDEX IF EXISTS idx_conversations_type`,
+		`DROP TRIGGER IF EXISTS trg_embedding_changes_conversation_title`,
 		`ALTER TABLE conversations DROP COLUMN conversation_type`,
 		`ALTER TABLE conversations DROP COLUMN title`,
 		`ALTER TABLE conversations ADD COLUMN title TEXT`,

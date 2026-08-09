@@ -74,4 +74,12 @@ var (
 	// ErrCoverageBatchTooLarge rejects an analytical coverage intersection
 	// that would exceed the fixed backend parameter bound.
 	ErrCoverageBatchTooLarge = errors.New("filtered coverage batch too large")
+
+	// ErrGenerationNotConverged is returned when contextual source or cursor
+	// state changed after a caller's convergence read but before activation.
+	ErrGenerationNotConverged = errors.New("contextual generation no longer converged")
+
+	// ErrDocumentFenceChanged is returned when a fence-only publication finds
+	// that another publication changed the scope after source assembly.
+	ErrDocumentFenceChanged = errors.New("document scope changed before sequence fence")
 )

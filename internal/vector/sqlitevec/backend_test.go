@@ -56,6 +56,56 @@ func TestBackend_CreateActivateRetire(t *testing.T) {
 	require.Error(err, "ActiveGeneration should error after retire")
 }
 
+func TestBackend_ActivateGenerationIfConvergedRejectsStaleJournal(t *testing.T) {
+	dir := t.TempDir()
+	mainPath := filepath.Join(dir, "main.db")
+	mainDB, err := sql.Open("sqlite3", mainPath)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = mainDB.Close() })
+	_, err = mainDB.Exec(`
+		CREATE TABLE messages (
+			id INTEGER PRIMARY KEY,
+			deleted_at DATETIME,
+			deleted_from_source_at DATETIME,
+			embed_gen INTEGER
+		);
+		CREATE TABLE embedding_change_clock (
+			singleton INTEGER PRIMARY KEY,
+			sequence INTEGER NOT NULL
+		);
+		INSERT INTO embedding_change_clock (singleton, sequence) VALUES (1, 4);
+		INSERT INTO messages (id) VALUES (1);`)
+	require.NoError(t, err)
+
+	b, err := Open(t.Context(), Options{
+		Path: filepath.Join(dir, "vectors.db"), MainPath: mainPath,
+		Dimension: 4, MainDB: mainDB,
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = b.Close() })
+	gen, err := b.CreateGeneration(t.Context(), "m", 4, "")
+	require.NoError(t, err)
+	_, err = mainDB.Exec(`UPDATE messages SET embed_gen = ? WHERE id = 1`, int64(gen))
+	require.NoError(t, err)
+	require.NoError(t, b.AdvanceDocumentChangeWatermark(t.Context(), gen, 4))
+	require.NoError(t, b.SetDocumentReconcileCursor(t.Context(), gen, "done:4"))
+
+	_, err = mainDB.Exec(`UPDATE embedding_change_clock SET sequence = 5 WHERE singleton = 1`)
+	require.NoError(t, err)
+	err = b.ActivateGenerationIfConverged(t.Context(), gen, 4)
+	require.ErrorIs(t, err, vector.ErrGenerationNotConverged)
+	assert.Equal(t, vector.GenerationBuilding, genStateSV(t, b, gen))
+
+	require.NoError(t, b.AdvanceDocumentChangeWatermark(t.Context(), gen, 5))
+	require.NoError(t, b.SetDocumentReconcileCursor(t.Context(), gen, "done:5"))
+	require.NoError(t, b.SetDocumentJournalCursor(t.Context(), gen, "5|chat:1:2026-08-08"))
+	err = b.ActivateGenerationIfConverged(t.Context(), gen, 5)
+	require.ErrorIs(t, err, vector.ErrGenerationNotConverged)
+	require.NoError(t, b.SetDocumentJournalCursor(t.Context(), gen, ""))
+	require.NoError(t, b.ActivateGenerationIfConverged(t.Context(), gen, 5))
+	assert.Equal(t, vector.GenerationActive, genStateSV(t, b, gen))
+}
+
 // missingCountSV returns the number of live messages still needing
 // embedding for gen (embed_gen <> gen) in the backend's main DB. This is
 // the scan-and-fill coverage count that replaced pending_embeddings.

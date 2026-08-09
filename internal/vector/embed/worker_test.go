@@ -81,6 +81,20 @@ func newTestWorker(f *workerFixture, batchSize int) *Worker {
 	})
 }
 
+func TestEmbeddingChunkPolicy_IsCanonicalForWorkerCallers(t *testing.T) {
+	policy := EmbeddingChunkPolicy(32768)
+	assert.Equal(t, 32768, policy.MaxRunes)
+	assert.Positive(t, policy.OverlapRunes)
+	assert.Positive(t, policy.MaxSpans)
+	assert.Positive(t, policy.MaxBodyRunes)
+	text := strings.Repeat("x", policy.MaxRunes+100)
+	spans, dropped := policy.Chunk(text)
+	assert.False(t, dropped)
+	require.Len(t, spans, 2)
+	assert.Equal(t, policy.OverlapRunes,
+		utf8.RuneCountInString(spans[0].Text)+utf8.RuneCountInString(spans[1].Text)-utf8.RuneCountInString(text))
+}
+
 // TestWorker_DrainsToZeroEndToEnd is the happy-path: a fresh corpus is
 // scanned, embedded, and every message ends up stamped (embed_gen = gen)
 // so coverage reaches zero.

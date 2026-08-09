@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"math"
 	"sort"
 	"strings"
@@ -28,6 +29,7 @@ const sqliteDatetimeFormat = "2006-01-02 15:04:05"
 var _ vector.Backend = (*Backend)(nil)
 var _ vector.ChunkScoringBackend = (*Backend)(nil)
 var _ vector.FilteredCoverageBackend = (*Backend)(nil)
+var _ vector.ConvergedGenerationActivator = (*Backend)(nil)
 
 // Options configures how Open establishes a Backend.
 type Options struct {
@@ -377,7 +379,105 @@ func (b *Backend) ActivateGeneration(ctx context.Context, gen vector.GenerationI
 	if n == 0 {
 		return activateGateError(ctx, tx, gen)
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	b.cleanupDocumentJournalAfterLifecycle(ctx, "activate generation")
+	return nil
+}
+
+// ActivateGenerationIfConverged coordinates the source journal predicate and
+// vector lifecycle in one SQLite transaction by opening main.db with
+// vectors.db attached. The no-op clock update takes the source writer lock, so
+// a metadata mutation cannot advance the journal between the predicate and the
+// generation flip.
+func (b *Backend) ActivateGenerationIfConverged(
+	ctx context.Context, gen vector.GenerationID, expectedSequence int64,
+) error {
+	conn, err := b.openFusedConn(ctx)
+	if err != nil {
+		return fmt.Errorf("open coordinated contextual activation: %w", err)
+	}
+	defer func() { _ = conn.Close() }()
+	tx, err := conn.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin coordinated contextual activation: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var state vector.GenerationState
+	if err := tx.QueryRowContext(ctx,
+		`SELECT state FROM vec.index_generations WHERE id = ?`, int64(gen)).Scan(&state); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("%w: %d", vector.ErrUnknownGeneration, gen)
+		}
+		return fmt.Errorf("lookup generation %d: %w", gen, err)
+	}
+	if state != vector.GenerationBuilding {
+		return fmt.Errorf("generation %d not in 'building' state", gen)
+	}
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE embedding_change_clock SET sequence = sequence WHERE singleton = 1`); err != nil {
+		return fmt.Errorf("lock contextual journal clock for activation: %w", err)
+	}
+	var latest, consumed int64
+	var reconcileCursor, journalCursor string
+	if err := tx.QueryRowContext(ctx,
+		`SELECT sequence FROM embedding_change_clock WHERE singleton = 1`).Scan(&latest); err != nil {
+		return fmt.Errorf("read contextual journal clock for activation: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE vec.embedding_document_progress
+		   SET change_sequence = change_sequence
+		 WHERE generation_id = ?`, int64(gen)); err != nil {
+		return fmt.Errorf("lock contextual progress for activation: %w", err)
+	}
+	if err := tx.QueryRowContext(ctx, `
+		SELECT change_sequence, reconcile_cursor, journal_cursor
+		  FROM vec.embedding_document_progress
+		 WHERE generation_id = ?`, int64(gen)).Scan(&consumed, &reconcileCursor, &journalCursor); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("%w: generation %d has no contextual progress", vector.ErrGenerationNotConverged, gen)
+		}
+		return fmt.Errorf("read contextual progress for activation: %w", err)
+	}
+	if latest != expectedSequence || consumed != expectedSequence ||
+		!strings.HasPrefix(reconcileCursor, "done:") || journalCursor != "" {
+		return fmt.Errorf("%w: expected journal %d, latest %d, consumed %d, reconcile %q, journal cursor %q",
+			vector.ErrGenerationNotConverged, expectedSequence, latest, consumed, reconcileCursor, journalCursor)
+	}
+	where, args := b.missingCoverageWhere(int64(gen))
+	var missing int
+	if err := tx.QueryRowContext(ctx,
+		`SELECT EXISTS (SELECT 1 FROM messages WHERE `+where+`)`, args...).Scan(&missing); err != nil {
+		return fmt.Errorf("check contextual coverage for generation %d: %w", gen, err)
+	}
+	if missing != 0 {
+		return fmt.Errorf("%w: generation %d still has messages needing embedding", vector.ErrGenerationNotConverged, gen)
+	}
+
+	now := time.Now().Unix()
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE vec.index_generations
+		   SET state = 'retired', completed_at = COALESCE(completed_at, ?)
+		 WHERE state = 'active'`, now); err != nil {
+		return fmt.Errorf("retire previous active: %w", err)
+	}
+	res, err := tx.ExecContext(ctx, `
+		UPDATE vec.index_generations
+		   SET state = 'active', activated_at = ?, completed_at = COALESCE(completed_at, ?)
+		 WHERE id = ? AND state = 'building'`, now, now, int64(gen))
+	if err != nil {
+		return fmt.Errorf("activate: %w", err)
+	}
+	if affected, _ := res.RowsAffected(); affected == 0 {
+		return fmt.Errorf("generation %d not in 'building' state", gen)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit coordinated contextual activation: %w", err)
+	}
+	b.cleanupDocumentJournalAfterLifecycle(ctx, "activate converged generation")
+	return nil
 }
 
 // activateGateError re-reads gen inside the activation tx to return a
@@ -434,7 +534,19 @@ func (b *Backend) RetireGeneration(ctx context.Context, gen vector.GenerationID,
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit retire generation %d: %w", gen, err)
 	}
+	b.cleanupDocumentJournalAfterLifecycle(ctx, "retire generation")
 	return nil
+}
+
+// cleanupDocumentJournalAfterLifecycle runs after a lifecycle transaction has
+// committed. Cleanup is safe to retry through CleanupDocumentJournalIfUnused,
+// so a cleanup failure must not make callers believe the committed lifecycle
+// transition failed.
+func (b *Backend) cleanupDocumentJournalAfterLifecycle(ctx context.Context, operation string) {
+	if err := b.CleanupDocumentJournalIfUnused(ctx); err != nil {
+		slog.Warn("contextual journal cleanup deferred after committed lifecycle transition",
+			"operation", operation, "error", err)
+	}
 }
 
 // retireGateError re-reads gen inside the retire tx to explain why the gated
@@ -583,8 +695,8 @@ func (b *Backend) Upsert(ctx context.Context, gen vector.GenerationID, chunks []
 
 	embedInsertStmt, err := tx.PrepareContext(ctx, `INSERT INTO embeddings
 		(generation_id, message_id, chunk_index, embedded_at,
-		 source_char_len, chunk_char_start, chunk_char_end, truncated)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		 source_char_len, chunk_char_start, chunk_char_end, truncated, source_basis)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 		RETURNING embedding_id`)
 	if err != nil {
 		return fmt.Errorf("prepare embeddings insert: %w", err)
@@ -607,7 +719,7 @@ func (b *Backend) Upsert(ctx context.Context, gen vector.GenerationID, chunks []
 		var embeddingID int64
 		if err := embedInsertStmt.QueryRowContext(ctx,
 			int64(gen), c.MessageID, c.ChunkIndex, now,
-			c.SourceCharLen, c.ChunkCharStart, c.ChunkCharEnd, truncFlag,
+			c.SourceCharLen, c.ChunkCharStart, c.ChunkCharEnd, truncFlag, int(c.SourceBasis),
 		).Scan(&embeddingID); err != nil {
 			return fmt.Errorf("insert embedding (msg %d chunk %d): %w", c.MessageID, c.ChunkIndex, err)
 		}
@@ -1555,7 +1667,7 @@ func (b *Backend) ScoreMessageChunks(ctx context.Context, gen vector.GenerationI
 	vecTable := VectorTableName(dim)
 
 	q := fmt.Sprintf(`
-		SELECT e.chunk_index, e.chunk_char_start, e.chunk_char_end, v.embedding
+		SELECT e.chunk_index, e.chunk_char_start, e.chunk_char_end, e.source_basis, v.embedding
 		  FROM embeddings e
 		  JOIN %s v ON v.embedding_id = e.embedding_id
 		 WHERE v.generation_id = ?
@@ -1571,8 +1683,9 @@ func (b *Backend) ScoreMessageChunks(ctx context.Context, gen vector.GenerationI
 	var hits []vector.ChunkHit
 	for rows.Next() {
 		var idx, start, end int
+		var basis vector.SourceBasis
 		var blob []byte
-		if err := rows.Scan(&idx, &start, &end, &blob); err != nil {
+		if err := rows.Scan(&idx, &start, &end, &basis, &blob); err != nil {
 			return nil, fmt.Errorf("scan chunk row: %w", err)
 		}
 		vec, err := blobToFloat32(blob, dim)
@@ -1584,6 +1697,7 @@ func (b *Backend) ScoreMessageChunks(ctx context.Context, gen vector.GenerationI
 			ChunkIndex:     idx,
 			ChunkCharStart: start,
 			ChunkCharEnd:   end,
+			SourceBasis:    basis,
 			Score:          1.0 - dist,
 		})
 	}

@@ -36,6 +36,35 @@ CREATE TABLE IF NOT EXISTS communication_service_aliases (
 CREATE INDEX IF NOT EXISTS idx_communication_service_aliases_service
     ON communication_service_aliases(service_id);
 
+-- Commit-ordered discovery for context-coupled embedding documents. The
+-- singleton clock is advanced in the same source transaction as every event.
+-- It deliberately replaces an autoincrement/sequence allocator: SQLite's one
+-- writer and PostgreSQL's row lock then make sequence order equal commit order,
+-- and a rollback restores both the clock and the appended event.
+CREATE TABLE IF NOT EXISTS embedding_change_clock (
+    singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+    sequence INTEGER NOT NULL,
+    enabled BOOLEAN NOT NULL DEFAULT FALSE
+);
+
+INSERT OR IGNORE INTO embedding_change_clock (singleton, sequence) VALUES (1, 0);
+
+CREATE TABLE IF NOT EXISTS embedding_changes (
+    sequence INTEGER PRIMARY KEY,
+    kind TEXT NOT NULL,
+    message_id INTEGER,
+    old_message_type TEXT,
+    new_message_type TEXT,
+    old_conversation_id INTEGER,
+    new_conversation_id INTEGER,
+    old_sent_at DATETIME,
+    new_sent_at DATETIME,
+    participant_id INTEGER
+);
+
+CREATE INDEX IF NOT EXISTS idx_embedding_changes_message_id
+    ON embedding_changes(message_id);
+
 -- ============================================================================
 -- SOURCES & IDENTITY
 -- ============================================================================

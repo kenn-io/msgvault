@@ -50,7 +50,24 @@ type ResultMeta struct {
 // EmbeddingClient embeds free-text queries. The engine uses it once per
 // Search call.
 type EmbeddingClient interface {
+	EmbedQuery(ctx context.Context, text string) ([]float32, error)
+}
+
+type legacyEmbeddingClient interface {
 	Embed(ctx context.Context, inputs []string) ([][]float32, error)
+}
+
+type legacyQueryAdapter struct{ client legacyEmbeddingClient }
+
+func (a legacyQueryAdapter) EmbedQuery(ctx context.Context, text string) ([]float32, error) {
+	vectors, err := a.client.Embed(ctx, []string{text})
+	if err != nil {
+		return nil, err
+	}
+	if len(vectors) != 1 {
+		return nil, fmt.Errorf("embedder returned %d vectors, want 1", len(vectors))
+	}
+	return vectors[0], nil
 }
 
 // Config captures engine tuning knobs.
@@ -81,8 +98,14 @@ type Engine struct {
 
 // NewEngine wires a backend, main DB handle, embedding client, and
 // configuration into an Engine.
-func NewEngine(backend vector.Backend, mainDB *sql.DB, client EmbeddingClient, cfg Config) *Engine {
-	return &Engine{backend: backend, mainDB: mainDB, client: client, cfg: cfg}
+func NewEngine(backend vector.Backend, mainDB *sql.DB, client any, cfg Config) *Engine {
+	queryClient, ok := client.(EmbeddingClient)
+	if !ok {
+		if legacy, legacyOK := client.(legacyEmbeddingClient); legacyOK {
+			queryClient = legacyQueryAdapter{client: legacy}
+		}
+	}
+	return &Engine{backend: backend, mainDB: mainDB, client: queryClient, cfg: cfg}
 }
 
 // EmbedQuery embeds free text for within-message chunk scoring.
@@ -91,17 +114,14 @@ func (e *Engine) EmbedQuery(ctx context.Context, text string) ([]float32, error)
 	if text == "" {
 		return nil, errors.New("empty query")
 	}
-	vecs, err := e.client.Embed(ctx, []string{text})
+	vec, err := e.client.EmbedQuery(ctx, text)
 	if err != nil {
 		if errors.Is(err, context.DeadlineExceeded) {
 			return nil, fmt.Errorf("embed query: %w: %w", vector.ErrEmbeddingTimeout, err)
 		}
 		return nil, fmt.Errorf("embed query: %w", err)
 	}
-	if len(vecs) != 1 {
-		return nil, fmt.Errorf("embedder returned %d vectors, want 1", len(vecs))
-	}
-	return vecs[0], nil
+	return vec, nil
 }
 
 // BuildFilter resolves a parsed Gmail-syntax query into a vector.Filter
@@ -142,7 +162,7 @@ func (e *Engine) Search(ctx context.Context, req SearchRequest) ([]vector.FusedH
 		return nil, ResultMeta{}, errors.New("empty query")
 	}
 
-	vecs, err := e.client.Embed(ctx, []string{req.FreeText})
+	queryVec, err := e.client.EmbedQuery(ctx, req.FreeText)
 	if err != nil {
 		// Surface deadline-exceeded distinctly so HTTP/MCP can map it
 		// to a transient 503 instead of a generic 500. The handler
@@ -155,11 +175,6 @@ func (e *Engine) Search(ctx context.Context, req SearchRequest) ([]vector.FusedH
 		}
 		return nil, ResultMeta{}, fmt.Errorf("embed query: %w", err)
 	}
-	if len(vecs) != 1 {
-		return nil, ResultMeta{}, fmt.Errorf("embedder returned %d vectors, want 1", len(vecs))
-	}
-	queryVec := vecs[0]
-
 	if req.Mode == ModeVector {
 		hits, err := e.backend.Search(ctx, active.ID, queryVec, req.Limit, req.Filter)
 		if err != nil {

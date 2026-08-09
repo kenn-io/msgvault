@@ -37,8 +37,7 @@ VALUES (1, 1, 1, 'm1', 'email');
 	require.NoError(t, err, "seed message")
 	// Drop the backfill ledger row (none expected yet) and the embed_gen
 	// column so the DB looks like a pre-embed_gen upgrade.
-	_, err = s.DB().Exec(`ALTER TABLE messages DROP COLUMN embed_gen`)
-	require.NoError(t, err, "drop embed_gen to simulate pre-upgrade schema")
+	dropEmbedGenColumn(t, s.DB())
 	require.NoError(t, s.Close(), "close fixture store")
 }
 
@@ -49,7 +48,9 @@ VALUES (1, 1, 1, 'm1', 'email');
 // just before the embed_gen-touching reopen.
 func dropEmbedGenColumn(t *testing.T, db *sql.DB) {
 	t.Helper()
-	_, err := db.Exec(`ALTER TABLE messages DROP COLUMN embed_gen`)
+	_, err := db.Exec(`DROP TRIGGER IF EXISTS trg_embedding_changes_message_update`)
+	require.NoError(t, err, "drop post-upgrade journal trigger")
+	_, err = db.Exec(`ALTER TABLE messages DROP COLUMN embed_gen`)
 	require.NoError(t, err, "drop embed_gen to simulate pre-upgrade schema")
 }
 

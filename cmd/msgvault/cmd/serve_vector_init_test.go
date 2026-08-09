@@ -14,6 +14,7 @@ import (
 	"go.kenn.io/msgvault/internal/scheduler"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
+	"go.kenn.io/msgvault/internal/vector/embed"
 )
 
 // fakeCmdVectorBackend satisfies vector.Backend for the init tests. It only
@@ -239,4 +240,191 @@ func TestStartVectorInitAbortsQuietlyOnCancel(t *testing.T) {
 	status, _ := srv.VectorStatus()
 	assert.Equal(t, api.VectorStatusInitializing, status,
 		"shutdown-cancelled init must not flip status to error")
+}
+
+func TestNewSchedulerEmbedJobThreadsContextRunnerAndConvergenceChecker(t *testing.T) {
+	runner := &embed.ContextWorker{}
+	checker := &registeredConvergenceChecker{}
+	vf := &vectorFeatures{
+		Backend: &fakeCmdVectorBackend{}, Runner: runner, Convergence: checker,
+		Cfg: config.NewDefaultConfig().Vector,
+	}
+
+	job := newSchedulerEmbedJob(vf, nil)
+	assert.Same(t, runner, job.Worker)
+	assert.Same(t, checker, job.Convergence)
+}
+
+type registeredEmbedJobCapture struct {
+	job *scheduler.EmbedJob
+}
+
+func (c *registeredEmbedJobCapture) SetEmbedJob(job *scheduler.EmbedJob, _ string, _ bool) error {
+	c.job = job
+	return nil
+}
+
+type registeredContextRunner struct {
+	runs []vector.GenerationID
+}
+
+func (r *registeredContextRunner) ReclaimStale(context.Context) (int, error) { return 0, nil }
+
+func (r *registeredContextRunner) RunOnce(_ context.Context, gen vector.GenerationID) (embed.RunResult, error) {
+	r.runs = append(r.runs, gen)
+	return embed.RunResult{}, nil
+}
+
+func (r *registeredContextRunner) RunBackstop(context.Context, vector.GenerationID) (embed.RunResult, error) {
+	return embed.RunResult{}, nil
+}
+
+type registeredConvergenceChecker struct {
+	state scheduler.ConvergenceResult
+}
+
+func (c registeredConvergenceChecker) CheckConvergence(context.Context, vector.GenerationID) (scheduler.ConvergenceResult, error) {
+	return c.state, nil
+}
+
+type registeredActivationBackend struct {
+	vector.Backend
+
+	building       *vector.Generation
+	activateErr    error
+	activateCalls  []vector.GenerationID
+	activatedCalls []vector.GenerationID
+	sequences      []int64
+}
+
+func (b *registeredActivationBackend) ActivateGenerationIfConverged(
+	ctx context.Context, gen vector.GenerationID, expectedSequence int64,
+) error {
+	b.sequences = append(b.sequences, expectedSequence)
+	return b.ActivateGeneration(ctx, gen, false)
+}
+
+func (b *registeredActivationBackend) ActiveGeneration(context.Context) (vector.Generation, error) {
+	return vector.Generation{}, vector.ErrNoActiveGeneration
+}
+
+func (b *registeredActivationBackend) BuildingGeneration(context.Context) (*vector.Generation, error) {
+	return b.building, nil
+}
+
+func (b *registeredActivationBackend) ActivateGeneration(_ context.Context, gen vector.GenerationID, force bool) error {
+	if force {
+		panic("registered daemon activation must never force")
+	}
+	b.activateCalls = append(b.activateCalls, gen)
+	if b.activateErr != nil {
+		return b.activateErr
+	}
+	b.activatedCalls = append(b.activatedCalls, gen)
+	return nil
+}
+
+func contextualSchedulerConfig() vector.Config {
+	c := config.NewDefaultConfig().Vector
+	c.Embeddings.APIFormat = vector.APIFormatVoyageContextual
+	c.Embeddings.Model = "voyage-context-4"
+	c.Embeddings.Dimension = 4
+	c.Embed.BackstopInterval = -1
+	return c
+}
+
+func runRegisteredContextJob(
+	t *testing.T,
+	state scheduler.ConvergenceResult,
+	buildingFingerprint string,
+	activateErr error,
+) (*registeredActivationBackend, *registeredContextRunner) {
+	t.Helper()
+	vectorCfg := contextualSchedulerConfig()
+	testCfg := config.NewDefaultConfig()
+	testCfg.Vector = vectorCfg
+	withTestConfig(t, testCfg)
+	if buildingFingerprint == "" {
+		buildingFingerprint = vectorCfg.GenerationFingerprint()
+	}
+	backend := &registeredActivationBackend{
+		building:    &vector.Generation{ID: 13, State: vector.GenerationBuilding, Fingerprint: buildingFingerprint},
+		activateErr: activateErr,
+	}
+	runner := &registeredContextRunner{}
+	capture := &registeredEmbedJobCapture{}
+	vf := &vectorFeatures{
+		Backend: backend, Runner: runner,
+		Convergence: registeredConvergenceChecker{state: state}, Cfg: vectorCfg,
+	}
+	require.NoError(t, registerEmbedJob(capture, vf, nil))
+	require.NotNil(t, capture.job)
+	capture.job.Run(t.Context())
+	return backend, runner
+}
+
+func TestRegisterEmbedJob_ContextualActivationRequiresEveryConvergenceDimension(t *testing.T) {
+	rootAssert := assert.New(t)
+	complete := scheduler.ConvergenceResult{
+		MessageCoverageComplete: true,
+		LatestJournalSequence:   5,
+		ConsumedJournalSequence: 5,
+		ReconciliationComplete:  true,
+	}
+	tests := []struct {
+		name   string
+		mutate func(*scheduler.ConvergenceResult)
+	}{
+		{name: "message coverage incomplete", mutate: func(s *scheduler.ConvergenceResult) {
+			s.MessageCoverageComplete = false
+			s.MessageCoverageMissing = 1
+		}},
+		{name: "journal incomplete", mutate: func(s *scheduler.ConvergenceResult) {
+			s.ConsumedJournalSequence = 4
+		}},
+		{name: "reconciliation incomplete", mutate: func(s *scheduler.ConvergenceResult) {
+			s.ReconciliationComplete = false
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			check := assert.New(t)
+			state := complete
+			tt.mutate(&state)
+			backend, runner := runRegisteredContextJob(t, state, "", nil)
+			check.Equal([]vector.GenerationID{13}, runner.runs)
+			check.Empty(backend.activateCalls)
+			check.Empty(backend.activatedCalls)
+		})
+	}
+
+	backend, runner := runRegisteredContextJob(t, complete, "", nil)
+	rootAssert.Equal([]vector.GenerationID{13}, runner.runs)
+	rootAssert.Equal([]vector.GenerationID{13}, backend.activateCalls)
+	rootAssert.Equal([]vector.GenerationID{13}, backend.activatedCalls)
+	rootAssert.Equal([]int64{5}, backend.sequences)
+}
+
+func TestRegisterEmbedJob_ContextualLifecycleRefusalsNeverActivateAnotherGeneration(t *testing.T) {
+	complete := scheduler.ConvergenceResult{
+		MessageCoverageComplete: true,
+		LatestJournalSequence:   5,
+		ConsumedJournalSequence: 5,
+		ReconciliationComplete:  true,
+	}
+	t.Run("wrong fingerprint", func(t *testing.T) {
+		check := assert.New(t)
+		backend, runner := runRegisteredContextJob(t, complete, "wrong-contextual-generation", nil)
+		check.Empty(runner.runs)
+		check.Empty(backend.activateCalls)
+		check.Empty(backend.activatedCalls)
+	})
+	t.Run("retired during activation", func(t *testing.T) {
+		check := assert.New(t)
+		backend, runner := runRegisteredContextJob(t, complete, "", vector.ErrGenerationRetired)
+		check.Equal([]vector.GenerationID{13}, runner.runs)
+		check.Equal([]vector.GenerationID{13}, backend.activateCalls)
+		check.Equal([]int64{5}, backend.sequences)
+		check.Empty(backend.activatedCalls)
+	})
 }

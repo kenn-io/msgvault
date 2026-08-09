@@ -170,16 +170,12 @@ func checkVectorIndexFreshness(ctx context.Context, apiServer *api.Server, vf *v
 // registerEmbedJob wires the embed worker into the scheduler (cron-driven
 // plus optional post-sync hook). Extracted from runServe so the background
 // vector init can register it once the backend is ready.
-func registerEmbedJob(sched *scheduler.Scheduler, vf *vectorFeatures, s *store.Store) error {
-	embedJob := &scheduler.EmbedJob{
-		Worker:           vf.Worker,
-		Backend:          vf.Backend,
-		Store:            s,
-		Fingerprint:      vf.Cfg.GenerationFingerprint(),
-		BackstopInterval: vf.Cfg.Embed.BackstopInterval,
-		BuildScope:       vf.Cfg.Embed.Scope.BuildScope(),
-		Log:              logger,
-	}
+type embedJobRegistrar interface {
+	SetEmbedJob(job *scheduler.EmbedJob, schedule string, runAfterSync bool) error
+}
+
+func registerEmbedJob(sched embedJobRegistrar, vf *vectorFeatures, s *store.Store) error {
+	embedJob := newSchedulerEmbedJob(vf, s)
 	schedule := cfg.Vector.Embed.Schedule.Cron
 	if err := sched.SetEmbedJob(embedJob, schedule, cfg.Vector.Embed.Schedule.RunAfterSync); err != nil {
 		return fmt.Errorf("register embed job: %w", err)
@@ -189,4 +185,19 @@ func registerEmbedJob(sched *scheduler.Scheduler, vf *vectorFeatures, s *store.S
 		"run_after_sync", cfg.Vector.Embed.Schedule.RunAfterSync,
 	)
 	return nil
+}
+
+func newSchedulerEmbedJob(vf *vectorFeatures, s *store.Store) *scheduler.EmbedJob {
+	return &scheduler.EmbedJob{
+		Worker:      vf.Runner,
+		Backend:     vf.Backend,
+		Store:       s,
+		Convergence: vf.Convergence,
+		SequenceBoundActivation: vf.Cfg.Embeddings.EffectiveAPIFormat() ==
+			vector.APIFormatVoyageContextual,
+		Fingerprint:      vf.Cfg.GenerationFingerprint(),
+		BackstopInterval: vf.Cfg.Embed.BackstopInterval,
+		BuildScope:       vf.Cfg.Embed.Scope.BuildScope(),
+		Log:              logger,
+	}
 }

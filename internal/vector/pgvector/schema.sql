@@ -55,6 +55,7 @@ CREATE TABLE IF NOT EXISTS embeddings (
     source_char_len  INTEGER NOT NULL,
     chunk_char_start INTEGER NOT NULL DEFAULT 0,
     chunk_char_end   INTEGER NOT NULL DEFAULT 0,
+    source_basis     SMALLINT NOT NULL DEFAULT 0,
     truncated        BOOLEAN NOT NULL DEFAULT FALSE,
     dimension        INTEGER NOT NULL,
     embedding        vector NOT NULL,
@@ -85,4 +86,45 @@ CREATE TABLE IF NOT EXISTS embed_runs (
 CREATE TABLE IF NOT EXISTS embed_watermark (
     generation_id BIGINT PRIMARY KEY,
     watermark_id  BIGINT NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS embedding_documents (
+    generation_id      BIGINT NOT NULL REFERENCES index_generations(id) ON DELETE CASCADE,
+    document_key       TEXT NOT NULL,
+    kind               TEXT NOT NULL,
+    scope_key          TEXT NOT NULL,
+    state              TEXT NOT NULL CHECK (state IN ('current', 'tombstoned')),
+    published_revision TEXT NOT NULL,
+    source_sequence    BIGINT NOT NULL,
+    updated_at         BIGINT NOT NULL,
+    PRIMARY KEY (generation_id, document_key)
+);
+CREATE INDEX IF NOT EXISTS idx_embedding_documents_scope
+    ON embedding_documents(generation_id, scope_key, state, document_key);
+
+CREATE TABLE IF NOT EXISTS embedding_document_scopes (
+    generation_id   BIGINT NOT NULL REFERENCES index_generations(id) ON DELETE CASCADE,
+    scope_key       TEXT NOT NULL,
+    source_sequence BIGINT NOT NULL,
+    PRIMARY KEY (generation_id, scope_key)
+);
+
+CREATE TABLE IF NOT EXISTS embedding_document_members (
+    generation_id  BIGINT NOT NULL,
+    message_id     BIGINT NOT NULL,
+    document_key   TEXT NOT NULL,
+    member_ordinal INTEGER NOT NULL,
+    PRIMARY KEY (generation_id, message_id),
+    UNIQUE (generation_id, document_key, member_ordinal),
+    FOREIGN KEY (generation_id, document_key)
+        REFERENCES embedding_documents(generation_id, document_key) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_embedding_document_members_document
+    ON embedding_document_members(generation_id, document_key, member_ordinal);
+
+CREATE TABLE IF NOT EXISTS embedding_document_progress (
+    generation_id    BIGINT PRIMARY KEY REFERENCES index_generations(id) ON DELETE CASCADE,
+    change_sequence  BIGINT NOT NULL DEFAULT 0,
+    reconcile_cursor TEXT NOT NULL DEFAULT '',
+    journal_cursor   TEXT NOT NULL DEFAULT ''
 );

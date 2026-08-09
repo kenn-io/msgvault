@@ -12,6 +12,10 @@ describe('settings catalog', () => {
     expect(settingsCatalog['server.trusted_proxies'].group).toBe('server');
     expect(settingsCatalog['analytics.auto_build_cache'].group).toBe('archive');
     expect(settingsCatalog['vector.embeddings.endpoint'].testable).toBe(true);
+    expect(settingsCatalog['vector.embeddings.api_format'].options).toEqual([
+      'openai',
+      'voyage-contextual'
+    ]);
     expect(settingsCatalog['beeper.schedule'].group).toBe('sources');
     expect(settingsCatalog['integrations.tasks.api_key'].secret).toBe(true);
   });

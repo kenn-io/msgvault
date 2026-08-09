@@ -19,7 +19,7 @@ func TestChunkHitsToMatches_ordersByScoreAndMapsOffsets(t *testing.T) {
 
 	hits := []vector.ChunkHit{
 		{ChunkIndex: 0, ChunkCharStart: prefixRunes, ChunkCharEnd: prefixRunes + 28, Score: 0.9},
-		{ChunkIndex: 1, ChunkCharStart: prefixRunes + 30, ChunkCharEnd: prefixRunes + 50, Score: 0.7},
+		{ChunkIndex: 1, ChunkCharStart: prefixRunes + 30, ChunkCharEnd: prefixRunes + 49, Score: 0.7},
 	}
 
 	chunkMatches, truncated := chunkmatch.Build("Hello", body, vector.Config{}, hits, 0, 5, searchContextChars)

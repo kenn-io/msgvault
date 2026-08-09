@@ -36,6 +36,35 @@ CREATE TABLE IF NOT EXISTS communication_service_aliases (
 CREATE INDEX IF NOT EXISTS idx_communication_service_aliases_service
     ON communication_service_aliases(service_id);
 
+-- Commit-ordered discovery for context-coupled embedding documents. This is a
+-- locked singleton row, not BIGSERIAL/nextval: allocation and publication are
+-- one source transaction, so rollback restores both and later allocators cannot
+-- commit ahead of the transaction that holds the clock row.
+CREATE TABLE IF NOT EXISTS embedding_change_clock (
+    singleton SMALLINT PRIMARY KEY CHECK (singleton = 1),
+    sequence BIGINT NOT NULL,
+    enabled BOOLEAN NOT NULL DEFAULT FALSE
+);
+
+INSERT INTO embedding_change_clock (singleton, sequence) VALUES (1, 0)
+ON CONFLICT (singleton) DO NOTHING;
+
+CREATE TABLE IF NOT EXISTS embedding_changes (
+    sequence BIGINT PRIMARY KEY,
+    kind TEXT NOT NULL,
+    message_id BIGINT,
+    old_message_type TEXT,
+    new_message_type TEXT,
+    old_conversation_id BIGINT,
+    new_conversation_id BIGINT,
+    old_sent_at TIMESTAMPTZ,
+    new_sent_at TIMESTAMPTZ,
+    participant_id BIGINT
+);
+
+CREATE INDEX IF NOT EXISTS idx_embedding_changes_message_id
+    ON embedding_changes(message_id);
+
 -- ============================================================================
 -- SOURCES & IDENTITY
 -- ============================================================================

@@ -139,6 +139,44 @@ func (c *Client) Embed(ctx context.Context, inputs []string) ([][]float32, error
 	return nil, fmt.Errorf("embed: giving up after %d attempts: %w", c.cfg.MaxRetries, lastErr)
 }
 
+// EmbedQuery embeds one query and returns its single vector.
+func (c *Client) EmbedQuery(ctx context.Context, text string) ([]float32, error) {
+	vecs, err := c.Embed(ctx, []string{text})
+	if err != nil {
+		return nil, err
+	}
+	if len(vecs) != 1 {
+		return nil, fmt.Errorf("embed query: expected exactly one vector, got %d", len(vecs))
+	}
+	return vecs[0], nil
+}
+
+// EmbedDocuments flattens document chunks for the OpenAI-compatible request,
+// then restores the original document boundaries without changing chunk order.
+func (c *Client) EmbedDocuments(ctx context.Context, documents []DocumentInput) ([][][]float32, error) {
+	var inputs []string
+	for _, document := range documents {
+		inputs = append(inputs, document.Chunks...)
+	}
+
+	vecs, err := c.Embed(ctx, inputs)
+	if err != nil {
+		return nil, err
+	}
+	if len(vecs) != len(inputs) {
+		return nil, fmt.Errorf("embed documents: expected %d vectors, got %d", len(inputs), len(vecs))
+	}
+
+	documentVecs := make([][][]float32, len(documents))
+	offset := 0
+	for i, document := range documents {
+		next := offset + len(document.Chunks)
+		documentVecs[i] = vecs[offset:next]
+		offset = next
+	}
+	return documentVecs, nil
+}
+
 // doOnce performs a single HTTP request. A returned *retryError signals the
 // caller that the error is transient and the call should be retried.
 // The want parameter is the expected number of vectors (= number of inputs).
@@ -192,6 +230,9 @@ func (c *Client) doOnce(ctx context.Context, body []byte, want int) ([][]float32
 		// reading). Treat as transient so a healthy retry can
 		// succeed rather than failing the whole batch.
 		return nil, &retryError{err: fmt.Errorf("decode response: %w", err)}
+	}
+	if len(r.Data) != want {
+		return nil, fmt.Errorf("embed: response count mismatch: got %d, expected %d", len(r.Data), want)
 	}
 	vecs := make([][]float32, want)
 	for _, d := range r.Data {

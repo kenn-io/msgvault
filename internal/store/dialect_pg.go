@@ -608,6 +608,9 @@ func (d *PostgreSQLDialect) LegacyColumnMigrations() []ColumnMigration {
 		{`ALTER TABLE participant_identifiers ADD COLUMN IF NOT EXISTS scope_value TEXT`, "pi_scope_value"},
 		{`ALTER TABLE identity_match_candidates ADD COLUMN IF NOT EXISTS observation_conflict_origin TEXT CHECK (observation_conflict_origin IN ('generated', 'promoted'))`, "identity_match_candidates.observation_conflict_origin"},
 		{`ALTER TABLE identity_match_candidates ADD COLUMN IF NOT EXISTS pre_conflict_state TEXT CHECK (pre_conflict_state IN ('candidate', 'accepted', 'rejected'))`, "identity_match_candidates.pre_conflict_state"},
+		{`ALTER TABLE embedding_changes ADD COLUMN IF NOT EXISTS old_message_type TEXT`, "embedding_changes.old_message_type"},
+		{`ALTER TABLE embedding_changes ADD COLUMN IF NOT EXISTS new_message_type TEXT`, "embedding_changes.new_message_type"},
+		{`ALTER TABLE embedding_change_clock ADD COLUMN IF NOT EXISTS enabled BOOLEAN NOT NULL DEFAULT FALSE`, "embedding_change_clock.enabled"},
 		// FTS tsvector column for legacy PG databases created before FTS
 		// support. Inline in schema_pg.sql's CREATE TABLE (a no-op on a
 		// pre-existing table), so without this an upgraded DB never gets the
@@ -787,6 +790,332 @@ func (d *PostgreSQLDialect) EnsureTriggers(q querier) error {
 		     WHEN (OLD.body_text IS DISTINCT FROM NEW.body_text
 		           OR OLD.body_html IS DISTINCT FROM NEW.body_html)
 		     EXECUTE FUNCTION bump_message_content_changed_at()`,
+		// Source mutations share this transaction-level advisory lock. Contextual
+		// activation takes its exclusive form before reading the journal clock, so
+		// neither side can hold a source row while waiting for the other side.
+		`CREATE OR REPLACE FUNCTION lock_embedding_change_clock() RETURNS trigger AS $$
+		 BEGIN
+		     PERFORM pg_advisory_xact_lock_shared(
+		         hashtextextended('msgvault.embedding_change_clock', 0));
+		     RETURN NULL;
+		 END;
+		 $$ LANGUAGE plpgsql`,
+		`DROP TRIGGER IF EXISTS trg_embedding_clock_messages ON messages`,
+		`CREATE TRIGGER trg_embedding_clock_messages
+		     BEFORE INSERT OR UPDATE OR DELETE ON messages FOR EACH STATEMENT
+		     EXECUTE FUNCTION lock_embedding_change_clock()`,
+		`DROP TRIGGER IF EXISTS trg_embedding_clock_bodies ON message_bodies`,
+		`CREATE TRIGGER trg_embedding_clock_bodies
+		     BEFORE INSERT OR UPDATE OR DELETE ON message_bodies FOR EACH STATEMENT
+		     EXECUTE FUNCTION lock_embedding_change_clock()`,
+		`DROP TRIGGER IF EXISTS trg_embedding_clock_conversations ON conversations`,
+		`CREATE TRIGGER trg_embedding_clock_conversations
+		     BEFORE UPDATE OF title ON conversations FOR EACH STATEMENT
+		     EXECUTE FUNCTION lock_embedding_change_clock()`,
+		`DROP TRIGGER IF EXISTS trg_embedding_clock_membership ON conversation_participants`,
+		`CREATE TRIGGER trg_embedding_clock_membership
+		     BEFORE INSERT OR UPDATE OR DELETE ON conversation_participants FOR EACH STATEMENT
+		     EXECUTE FUNCTION lock_embedding_change_clock()`,
+		`DROP TRIGGER IF EXISTS trg_embedding_clock_participants ON participants`,
+		`CREATE TRIGGER trg_embedding_clock_participants
+		     BEFORE UPDATE OF display_name, email_address, phone_number ON participants FOR EACH STATEMENT
+		     EXECUTE FUNCTION lock_embedding_change_clock()`,
+		`DROP FUNCTION IF EXISTS append_embedding_change(TEXT, BIGINT, BIGINT, BIGINT, TIMESTAMPTZ, TIMESTAMPTZ, BIGINT)`,
+		`CREATE OR REPLACE FUNCTION append_embedding_change(
+		     p_kind TEXT,
+		     p_message_id BIGINT,
+		     p_old_message_type TEXT,
+		     p_new_message_type TEXT,
+		     p_old_conversation_id BIGINT,
+		     p_new_conversation_id BIGINT,
+		     p_old_sent_at TIMESTAMPTZ,
+		     p_new_sent_at TIMESTAMPTZ,
+		     p_participant_id BIGINT
+		 ) RETURNS VOID AS $$
+		 DECLARE
+		     next_sequence BIGINT;
+		 BEGIN
+		     UPDATE embedding_change_clock
+		        SET sequence = sequence + 1
+		      WHERE singleton = 1 AND enabled
+		      RETURNING sequence INTO next_sequence;
+		     IF next_sequence IS NULL THEN
+		         RETURN;
+		     END IF;
+		     INSERT INTO embedding_changes (
+		         sequence, kind, message_id, old_message_type, new_message_type, old_conversation_id,
+		         new_conversation_id, old_sent_at, new_sent_at, participant_id
+		     ) VALUES (
+		         next_sequence, p_kind, p_message_id,
+		         p_old_message_type, p_new_message_type,
+		         p_old_conversation_id, p_new_conversation_id,
+		         p_old_sent_at, p_new_sent_at, p_participant_id
+		     );
+		 END;
+		 $$ LANGUAGE plpgsql`,
+		`CREATE OR REPLACE FUNCTION journal_contextual_message_change() RETURNS trigger AS $$
+		 BEGIN
+		     IF TG_OP = 'DELETE' THEN
+		         IF OLD.deleted_at IS NULL
+		            AND OLD.deleted_from_source_at IS NULL
+		            AND (
+		                COALESCE(OLD.message_type, '') NOT IN ('beeper', 'meeting_transcript')
+		                OR EXISTS (SELECT 1 FROM message_bodies WHERE message_id = OLD.id)
+		            ) THEN
+		             PERFORM append_embedding_change(
+		                 'message_delete', OLD.id, OLD.message_type, NULL,
+		                 OLD.conversation_id, NULL,
+		                 COALESCE(OLD.sent_at, OLD.received_at, OLD.internal_date), NULL, NULL);
+		         END IF;
+		         RETURN OLD;
+		     END IF;
+
+		     IF (EXISTS (
+		         SELECT 1 FROM message_bodies WHERE message_id = NEW.id
+		     ) AND (
+		         (
+		             (
+		                 (OLD.message_type IN ('beeper', 'meeting_transcript') AND OLD.deleted_at IS NULL AND OLD.deleted_from_source_at IS NULL)
+		                 OR (NEW.message_type IN ('beeper', 'meeting_transcript') AND NEW.deleted_at IS NULL AND NEW.deleted_from_source_at IS NULL)
+		                 OR (
+		                     OLD.message_type IS DISTINCT FROM NEW.message_type
+		                     AND (
+		                         (OLD.deleted_at IS NULL AND OLD.deleted_from_source_at IS NULL)
+		                         OR (NEW.deleted_at IS NULL AND NEW.deleted_from_source_at IS NULL)
+		                     )
+		                 )
+		             ) AND (
+		                 OLD.message_type IS DISTINCT FROM NEW.message_type
+		                 OR OLD.conversation_id IS DISTINCT FROM NEW.conversation_id
+		                 OR OLD.sent_at IS DISTINCT FROM NEW.sent_at
+		                 OR OLD.received_at IS DISTINCT FROM NEW.received_at
+		                 OR OLD.internal_date IS DISTINCT FROM NEW.internal_date
+		                 OR OLD.sender_id IS DISTINCT FROM NEW.sender_id
+		                 OR OLD.deleted_at IS DISTINCT FROM NEW.deleted_at
+		                 OR OLD.deleted_from_source_at IS DISTINCT FROM NEW.deleted_from_source_at
+		             )
+		         ) OR (
+		             COALESCE(OLD.message_type, '') NOT IN ('beeper', 'meeting_transcript')
+		             AND COALESCE(NEW.message_type, '') NOT IN ('beeper', 'meeting_transcript')
+		             AND (
+		                 (OLD.deleted_at IS NULL AND OLD.deleted_from_source_at IS NULL)
+		                 OR (NEW.deleted_at IS NULL AND NEW.deleted_from_source_at IS NULL)
+		             ) AND (
+		                 OLD.message_type IS DISTINCT FROM NEW.message_type
+		                 OR OLD.conversation_id IS DISTINCT FROM NEW.conversation_id
+		                 OR OLD.subject IS DISTINCT FROM NEW.subject
+		                 OR OLD.deleted_at IS DISTINCT FROM NEW.deleted_at
+		                 OR OLD.deleted_from_source_at IS DISTINCT FROM NEW.deleted_from_source_at
+		             )
+		         )
+		     )) OR (
+		         OLD.message_type IS DISTINCT FROM NEW.message_type
+		         AND (
+		             (OLD.deleted_at IS NULL AND OLD.deleted_from_source_at IS NULL)
+		             OR (NEW.deleted_at IS NULL AND NEW.deleted_from_source_at IS NULL)
+		         )
+		     ) OR (
+		         COALESCE(OLD.message_type, '') NOT IN ('beeper', 'meeting_transcript')
+		         AND COALESCE(NEW.message_type, '') NOT IN ('beeper', 'meeting_transcript')
+		         AND (
+		             OLD.deleted_at IS DISTINCT FROM NEW.deleted_at
+		             OR OLD.deleted_from_source_at IS DISTINCT FROM NEW.deleted_from_source_at
+		         )
+		     ) OR (
+		         OLD.embed_gen IS NOT NULL
+		         AND NEW.embed_gen IS NULL
+		         AND COALESCE(NEW.message_type, '') NOT IN ('beeper', 'meeting_transcript')
+		         AND NEW.deleted_at IS NULL
+		         AND NEW.deleted_from_source_at IS NULL
+		         AND NOT EXISTS (SELECT 1 FROM message_bodies WHERE message_id = NEW.id)
+		     ) THEN
+		         PERFORM append_embedding_change(
+		             'message_update', NEW.id,
+		             CASE WHEN OLD.deleted_at IS NULL AND OLD.deleted_from_source_at IS NULL
+		                  THEN OLD.message_type END,
+		             CASE WHEN NEW.deleted_at IS NULL AND NEW.deleted_from_source_at IS NULL
+		                  THEN NEW.message_type END,
+		             CASE WHEN OLD.deleted_at IS NULL AND OLD.deleted_from_source_at IS NULL
+		                  THEN OLD.conversation_id END,
+		             CASE WHEN NEW.deleted_at IS NULL AND NEW.deleted_from_source_at IS NULL
+		                  THEN NEW.conversation_id END,
+		             CASE WHEN OLD.deleted_at IS NULL AND OLD.deleted_from_source_at IS NULL
+		                  THEN COALESCE(OLD.sent_at, OLD.received_at, OLD.internal_date) END,
+		             CASE WHEN NEW.deleted_at IS NULL AND NEW.deleted_from_source_at IS NULL
+		                  THEN COALESCE(NEW.sent_at, NEW.received_at, NEW.internal_date) END,
+		             NULL);
+		     END IF;
+		     RETURN NEW;
+		 END;
+		 $$ LANGUAGE plpgsql`,
+		`DROP TRIGGER IF EXISTS trg_embedding_changes_messages ON messages`,
+		`DROP TRIGGER IF EXISTS trg_embedding_changes_message_insert ON messages`,
+		`DROP TRIGGER IF EXISTS trg_embedding_changes_message_delete ON messages`,
+		`CREATE TRIGGER trg_embedding_changes_messages
+		     AFTER UPDATE ON messages FOR EACH ROW
+		     EXECUTE FUNCTION journal_contextual_message_change()`,
+		`CREATE TRIGGER trg_embedding_changes_message_delete
+		     BEFORE DELETE ON messages FOR EACH ROW
+		     EXECUTE FUNCTION journal_contextual_message_change()`,
+		`CREATE OR REPLACE FUNCTION journal_contextual_body_change() RETURNS trigger AS $$
+		 DECLARE
+		     change_message_id BIGINT;
+		     change_message_type TEXT;
+		     change_conversation_id BIGINT;
+		     change_sent_at TIMESTAMPTZ;
+		     body_message_id BIGINT;
+		 BEGIN
+		     IF TG_OP = 'DELETE' THEN
+		         body_message_id := OLD.message_id;
+		     ELSE
+		         body_message_id := NEW.message_id;
+		     END IF;
+		     IF TG_OP = 'UPDATE'
+		        AND OLD.body_text IS NOT DISTINCT FROM NEW.body_text
+		        AND OLD.body_html IS NOT DISTINCT FROM NEW.body_html THEN
+		         RETURN NEW;
+		     END IF;
+		     SELECT id, message_type, conversation_id, COALESCE(sent_at, received_at, internal_date)
+		       INTO change_message_id, change_message_type, change_conversation_id, change_sent_at
+		       FROM messages
+		      WHERE id = body_message_id
+		        AND deleted_at IS NULL
+		        AND deleted_from_source_at IS NULL;
+		     IF FOUND THEN
+		         IF TG_OP = 'INSERT' THEN
+		             PERFORM append_embedding_change(
+		                 'message_insert', change_message_id, NULL, change_message_type,
+		                 NULL, change_conversation_id,
+		                 NULL, change_sent_at, NULL);
+		         ELSIF TG_OP = 'DELETE' THEN
+		             PERFORM append_embedding_change(
+		                 'message_body', change_message_id, change_message_type, NULL,
+		                 change_conversation_id, NULL,
+		                 change_sent_at, NULL, NULL);
+		         ELSE
+		             PERFORM append_embedding_change(
+		                 'message_body', change_message_id, change_message_type, change_message_type,
+		                 change_conversation_id, change_conversation_id,
+		                 change_sent_at, change_sent_at, NULL);
+		         END IF;
+		     END IF;
+		     IF TG_OP = 'DELETE' THEN
+		         RETURN OLD;
+		     END IF;
+		     RETURN NEW;
+		 END;
+		 $$ LANGUAGE plpgsql`,
+		`DROP TRIGGER IF EXISTS trg_embedding_changes_bodies ON message_bodies`,
+		`CREATE TRIGGER trg_embedding_changes_bodies
+		     AFTER INSERT OR UPDATE OR DELETE ON message_bodies FOR EACH ROW
+		     EXECUTE FUNCTION journal_contextual_body_change()`,
+		`CREATE OR REPLACE FUNCTION journal_beeper_conversation_title() RETURNS trigger AS $$
+		 BEGIN
+		     IF OLD.title IS DISTINCT FROM NEW.title
+		        AND EXISTS (
+		            SELECT 1 FROM messages m
+		            JOIN message_bodies mb ON mb.message_id = m.id
+		             WHERE m.conversation_id = NEW.id
+		               AND m.message_type = 'beeper'
+		               AND m.deleted_at IS NULL
+		               AND m.deleted_from_source_at IS NULL
+		        ) THEN
+		         PERFORM append_embedding_change(
+		             'conversation_title', NULL, NULL, NULL,
+		             OLD.id, NEW.id, NULL, NULL, NULL);
+		     END IF;
+		     RETURN NEW;
+		 END;
+		 $$ LANGUAGE plpgsql`,
+		`DROP TRIGGER IF EXISTS trg_embedding_changes_conversation_title ON conversations`,
+		`CREATE TRIGGER trg_embedding_changes_conversation_title
+		     AFTER UPDATE OF title ON conversations FOR EACH ROW
+		     EXECUTE FUNCTION journal_beeper_conversation_title()`,
+		`CREATE OR REPLACE FUNCTION journal_beeper_membership_change() RETURNS trigger AS $$
+		 DECLARE
+		     old_conversation BIGINT;
+		     new_conversation BIGINT;
+		     change_participant BIGINT;
+		     affects_context BOOLEAN;
+		 BEGIN
+		     IF TG_OP = 'INSERT' THEN
+		         old_conversation := NEW.conversation_id;
+		         new_conversation := NEW.conversation_id;
+		         change_participant := NEW.participant_id;
+		     ELSIF TG_OP = 'DELETE' THEN
+		         old_conversation := OLD.conversation_id;
+		         new_conversation := OLD.conversation_id;
+		         change_participant := OLD.participant_id;
+		     ELSE
+		         IF OLD.conversation_id IS NOT DISTINCT FROM NEW.conversation_id
+		            AND OLD.participant_id IS NOT DISTINCT FROM NEW.participant_id
+		            AND OLD.role IS NOT DISTINCT FROM NEW.role
+		            AND OLD.joined_at IS NOT DISTINCT FROM NEW.joined_at
+		            AND OLD.left_at IS NOT DISTINCT FROM NEW.left_at THEN
+		             RETURN NEW;
+		         END IF;
+		         old_conversation := OLD.conversation_id;
+		         new_conversation := NEW.conversation_id;
+		         change_participant := NEW.participant_id;
+		     END IF;
+		     SELECT EXISTS (
+		         SELECT 1 FROM messages m
+		         JOIN message_bodies mb ON mb.message_id = m.id
+		          WHERE m.conversation_id IN (old_conversation, new_conversation)
+		            AND m.message_type = 'beeper'
+		            AND m.deleted_at IS NULL
+		     ) INTO affects_context;
+		     IF affects_context THEN
+		         PERFORM append_embedding_change(
+		             'conversation_participant', NULL, NULL, NULL,
+		             old_conversation, new_conversation,
+		             NULL, NULL, change_participant);
+		     END IF;
+		     IF TG_OP = 'DELETE' THEN
+		         RETURN OLD;
+		     END IF;
+		     RETURN NEW;
+		 END;
+		 $$ LANGUAGE plpgsql`,
+		`DROP TRIGGER IF EXISTS trg_embedding_changes_membership ON conversation_participants`,
+		`CREATE TRIGGER trg_embedding_changes_membership
+		     AFTER INSERT OR UPDATE OR DELETE ON conversation_participants FOR EACH ROW
+		     EXECUTE FUNCTION journal_beeper_membership_change()`,
+		`CREATE OR REPLACE FUNCTION journal_beeper_participant_display_name() RETURNS trigger AS $$
+		 BEGIN
+		     IF COALESCE(NULLIF(TRIM(OLD.display_name), ''),
+		                 NULLIF(OLD.email_address, ''), NULLIF(OLD.phone_number, ''), '')
+		        IS DISTINCT FROM COALESCE(NULLIF(TRIM(NEW.display_name), ''),
+		                                  NULLIF(NEW.email_address, ''), NULLIF(NEW.phone_number, ''), '')
+		        AND (
+		            EXISTS (
+		                SELECT 1
+		                  FROM conversation_participants cp
+		                  JOIN messages m ON m.conversation_id = cp.conversation_id
+		                  JOIN message_bodies mb ON mb.message_id = m.id
+		                 WHERE cp.participant_id = NEW.id
+		                   AND m.message_type = 'beeper'
+		                   AND m.deleted_at IS NULL
+		            ) OR EXISTS (
+		                SELECT 1
+		                  FROM messages m
+		                  JOIN message_bodies mb ON mb.message_id = m.id
+		                 WHERE m.sender_id = NEW.id
+		                   AND m.message_type = 'beeper'
+		                   AND m.deleted_at IS NULL
+		            )
+		        ) THEN
+		         PERFORM append_embedding_change(
+		             'participant_display_name', NULL, NULL, NULL,
+		             NULL, NULL, NULL, NULL, NEW.id);
+		     END IF;
+		     RETURN NEW;
+		 END;
+		 $$ LANGUAGE plpgsql`,
+		`DROP TRIGGER IF EXISTS trg_embedding_changes_participant_display_name ON participants`,
+		`CREATE TRIGGER trg_embedding_changes_participant_display_name
+		     AFTER UPDATE OF display_name, email_address, phone_number ON participants FOR EACH ROW
+		     EXECUTE FUNCTION journal_beeper_participant_display_name()`,
 	}
 	for _, stmt := range stmts {
 		if _, err := q.Exec(stmt); err != nil {

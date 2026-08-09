@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"go.kenn.io/msgvault/internal/scheduler"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
 	"go.kenn.io/msgvault/internal/vector/embed"
@@ -113,14 +114,6 @@ func runEmbed(cmd *cobra.Command) error {
 		return err
 	}
 
-	client := embed.NewClient(embed.Config{
-		Endpoint:   cfg.Vector.Embeddings.Endpoint,
-		APIKey:     cfg.Vector.Embeddings.APIKey(),
-		Model:      cfg.Vector.Embeddings.Model,
-		Dimension:  cfg.Vector.Embeddings.Dimension,
-		Timeout:    cfg.Vector.Embeddings.Timeout,
-		MaxRetries: cfg.Vector.Embeddings.MaxRetries,
-	})
 	// "Pending" is now the count of live messages still needing work for
 	// this generation (embed_gen <> gen), read from the main DB coverage
 	// rather than a queue table.
@@ -131,35 +124,18 @@ func runEmbed(cmd *cobra.Command) error {
 	}
 	totalPending := int(missing)
 
-	worker := embed.NewWorker(embed.WorkerDeps{
-		Backend:   backend,
-		VectorsDB: vectorsDB,
-		MainDB:    s.DB(),
-		Store:     s,
-		Client:    client,
-		Preprocess: embed.PreprocessConfig{
-			StripQuotes:        cfg.Vector.Preprocess.StripQuotesEnabled(),
-			StripSignatures:    cfg.Vector.Preprocess.StripSignaturesEnabled(),
-			StripHTML:          cfg.Vector.Preprocess.StripHTMLEnabled(),
-			StripBase64:        cfg.Vector.Preprocess.StripBase64Enabled(),
-			StripURLTracking:   cfg.Vector.Preprocess.StripURLTrackingEnabled(),
-			CollapseWhitespace: cfg.Vector.Preprocess.CollapseWhitespaceEnabled(),
-		},
-		MaxInputChars:    cfg.Vector.Embeddings.MaxInputChars,
-		BatchSize:        cfg.Vector.Embeddings.BatchSize,
-		BuildScope:       scope,
-		Rebind:           rebind,
-		LastModifiedExpr: lastModifiedExpr,
-		TotalPending:     totalPending,
-		Progress:         newProgressPrinter(errOut, totalPending, cfg.Vector.Embeddings.ETAWindow),
+	runtime, err := newEmbeddingRuntime(cfg.Vector, embeddingRuntimeDeps{
+		Backend: backend, VectorsDB: vectorsDB, MainDB: s.DB(), Store: s,
+		Rebind: rebind, LastModifiedExpr: lastModifiedExpr,
+		TotalPending: totalPending,
+		Progress:     newProgressPrinter(errOut, totalPending, cfg.Vector.Embeddings.ETAWindow),
 	})
-
-	var res embed.RunResult
-	if embedBackstop {
-		res, err = worker.RunBackstop(ctx, gen)
-	} else {
-		res, err = worker.RunOnce(ctx, gen)
+	if err != nil {
+		return fmt.Errorf("configure embedding runtime: %w", err)
 	}
+
+	res, err := runEmbeddingPasses(ctx, runtime.Runner, gen, embedBackstop,
+		cfg.Vector.Embeddings.EffectiveAPIFormat())
 	if err != nil {
 		return fmt.Errorf("embed run: %w", err)
 	}
@@ -171,22 +147,86 @@ func runEmbed(cmd *cobra.Command) error {
 	// worker later recovers from must not block activation, and an
 	// active generation must not be re-activated.
 	if rebuildInProgress {
-		_, _, _, remaining, err := s.CoverageCountsScoped(ctx, int64(gen), scope.MessageTypes)
-		if err != nil {
-			return fmt.Errorf("coverage counts: %w", err)
-		}
-		if remaining == 0 {
-			// force=false: we already gated on remaining==0 above, and the
-			// backend re-asserts the no-missing gate atomically.
-			if err := backend.ActivateGeneration(ctx, gen, false); err != nil {
-				return fmt.Errorf("activate generation: %w", err)
-			}
-			_, _ = fmt.Fprintf(out, "Generation %d activated.\n", gen)
-		} else {
-			_, _ = fmt.Fprint(errOut, remainingCoverageHint(gen, remaining))
+		if _, err := activateBuiltGeneration(ctx, backend, runtime.Convergence, gen,
+			cfg.Vector.Embeddings.EffectiveAPIFormat(), out, errOut); err != nil {
+			return err
 		}
 	}
 	return nil
+}
+
+func runEmbeddingPasses(
+	ctx context.Context,
+	runner scheduler.EmbedRunner,
+	gen vector.GenerationID,
+	backstop bool,
+	apiFormat vector.EmbeddingAPIFormat,
+) (embed.RunResult, error) {
+	var total embed.RunResult
+	first := true
+	for {
+		var pass embed.RunResult
+		var err error
+		if first && backstop {
+			pass, err = runner.RunBackstop(ctx, gen)
+		} else {
+			pass, err = runner.RunOnce(ctx, gen)
+		}
+		if err != nil {
+			return total, err
+		}
+		first = false
+		total.Claimed += pass.Claimed
+		total.Succeeded += pass.Succeeded
+		total.Failed += pass.Failed
+		total.Truncated += pass.Truncated
+		total.Contextual = pass.Contextual
+		if apiFormat != vector.APIFormatVoyageContextual || pass.Contextual == nil || pass.Contextual.Converged {
+			return total, nil
+		}
+		if pass.Claimed == 0 && pass.Succeeded == 0 && pass.Failed == 0 && pass.Truncated == 0 {
+			return total, errors.New("contextual embed run made no progress before convergence")
+		}
+	}
+}
+
+func activateBuiltGeneration(
+	ctx context.Context,
+	backend vector.Backend,
+	checker scheduler.ConvergenceChecker,
+	gen vector.GenerationID,
+	apiFormat vector.EmbeddingAPIFormat,
+	stdout io.Writer,
+	stderr io.Writer,
+) (bool, error) {
+	state, err := checker.CheckConvergence(ctx, gen)
+	if err != nil {
+		return false, fmt.Errorf("check generation convergence: %w", err)
+	}
+	if !state.Complete() {
+		if apiFormat == vector.APIFormatOpenAI {
+			_, _ = fmt.Fprint(stderr, remainingCoverageHint(gen, state.MessageCoverageMissing))
+		} else {
+			_, _ = fmt.Fprintln(stderr, convergenceError(gen, state))
+		}
+		return false, nil
+	}
+	if apiFormat == vector.APIFormatOpenAI {
+		if err := backend.ActivateGeneration(ctx, gen, false); err != nil {
+			return false, fmt.Errorf("activate generation: %w", err)
+		}
+		_, _ = fmt.Fprintf(stdout, "Generation %d activated.\n", gen)
+		return true, nil
+	}
+	activator, ok := backend.(vector.ConvergedGenerationActivator)
+	if !ok {
+		return false, errors.New("contextual backend lacks sequence-bound activation")
+	}
+	if err := activator.ActivateGenerationIfConverged(ctx, gen, state.LatestJournalSequence); err != nil {
+		return false, fmt.Errorf("activate generation: %w", err)
+	}
+	_, _ = fmt.Fprintf(stdout, "Generation %d activated.\n", gen)
+	return true, nil
 }
 
 // embedGenerationOpts bundles the inputs pickEmbedGeneration needs.

@@ -6,8 +6,18 @@ import (
 	"context"
 	"errors"
 
+	"go.kenn.io/msgvault/internal/scheduler"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/vector"
 )
+
+func newConvergenceChecker(vector.Config, *store.Store, vector.Backend) (scheduler.ConvergenceChecker, error) {
+	return nil, errVectorBuildUnsupported(cfg.DatabaseDSN())
+}
+
+func convergenceError(vector.GenerationID, scheduler.ConvergenceResult) error {
+	return errVectorBuildUnsupported(cfg.DatabaseDSN())
+}
 
 // errVectorBuildUnsupported reports that vector search is enabled in
 // config but this binary was built without the vector backend needed for

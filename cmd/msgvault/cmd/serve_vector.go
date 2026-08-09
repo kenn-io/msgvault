@@ -7,7 +7,10 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log/slog"
 	"path/filepath"
+	"strconv"
+	"strings"
 
 	"go.kenn.io/msgvault/internal/scheduler"
 	"go.kenn.io/msgvault/internal/store"
@@ -17,6 +20,162 @@ import (
 	"go.kenn.io/msgvault/internal/vector/pgvector"
 	"go.kenn.io/msgvault/internal/vector/sqlitevec"
 )
+
+const contextualDocumentUTF8Limit = 100_000
+
+type embeddingRuntime struct {
+	Runner      scheduler.EmbedRunner
+	QueryClient hybrid.EmbeddingClient
+	Convergence scheduler.ConvergenceChecker
+}
+
+type embeddingRuntimeDeps struct {
+	Backend          vector.Backend
+	VectorsDB        *sql.DB
+	MainDB           *sql.DB
+	Store            *store.Store
+	Rebind           func(string) string
+	LastModifiedExpr string
+	TotalPending     int
+	Progress         func(embed.ProgressReport)
+	Log              *slog.Logger
+}
+
+type legacyConvergenceChecker struct {
+	store *store.Store
+	scope vector.BuildScope
+}
+
+func (c *legacyConvergenceChecker) CheckConvergence(ctx context.Context, gen vector.GenerationID) (scheduler.ConvergenceResult, error) {
+	missing, err := c.store.MissingCountScoped(ctx, int64(gen), c.scope.MessageTypes)
+	if err != nil {
+		return scheduler.ConvergenceResult{}, fmt.Errorf("message coverage: %w", err)
+	}
+	return scheduler.ConvergenceResult{
+		MessageCoverageComplete: missing == 0,
+		MessageCoverageMissing:  missing,
+		ReconciliationComplete:  true,
+	}, nil
+}
+
+type contextualConvergenceChecker struct {
+	legacy    *legacyConvergenceChecker
+	publisher vector.DocumentPublisher
+}
+
+func (c *contextualConvergenceChecker) CheckConvergence(ctx context.Context, gen vector.GenerationID) (scheduler.ConvergenceResult, error) {
+	state, err := c.legacy.CheckConvergence(ctx, gen)
+	if err != nil {
+		return scheduler.ConvergenceResult{}, err
+	}
+	latest, err := c.legacy.store.LatestEmbeddingChangeSequence(ctx)
+	if err != nil {
+		return scheduler.ConvergenceResult{}, fmt.Errorf("latest embedding change sequence: %w", err)
+	}
+	progress, err := c.publisher.GetDocumentProgress(ctx, gen)
+	if err != nil {
+		return scheduler.ConvergenceResult{}, fmt.Errorf("contextual document progress: %w", err)
+	}
+	state.LatestJournalSequence = latest
+	state.ConsumedJournalSequence = progress.ChangeSequence
+	state.ReconciliationComplete = contextualReconciliationComplete(progress.ReconcileCursor) && progress.JournalCursor == ""
+	return state, nil
+}
+
+func contextualReconciliationComplete(cursor string) bool {
+	value, ok := strings.CutPrefix(cursor, "done:")
+	if !ok {
+		return false
+	}
+	sequence, err := strconv.ParseInt(value, 10, 64)
+	return err == nil && sequence >= 0
+}
+
+func convergenceError(gen vector.GenerationID, state scheduler.ConvergenceResult) error {
+	return fmt.Errorf("generation %d has not converged: message_coverage_complete=%t (missing=%d), journal=%d/%d, reconciliation_complete=%t",
+		gen, state.MessageCoverageComplete, state.MessageCoverageMissing, state.ConsumedJournalSequence,
+		state.LatestJournalSequence, state.ReconciliationComplete)
+}
+
+func embeddingPreprocessConfig(cfg vector.Config) embed.PreprocessConfig {
+	chunkPolicy := embed.EmbeddingChunkPolicy(cfg.Embeddings.MaxInputChars)
+	return embed.PreprocessConfig{
+		StripQuotes:        cfg.Preprocess.StripQuotesEnabled(),
+		StripSignatures:    cfg.Preprocess.StripSignaturesEnabled(),
+		StripHTML:          cfg.Preprocess.StripHTMLEnabled(),
+		StripBase64:        cfg.Preprocess.StripBase64Enabled(),
+		StripURLTracking:   cfg.Preprocess.StripURLTrackingEnabled(),
+		CollapseWhitespace: cfg.Preprocess.CollapseWhitespaceEnabled(),
+		MaxBodyRunes:       chunkPolicy.MaxBodyRunes,
+	}
+}
+
+func newEmbeddingRuntime(vectorCfg vector.Config, deps embeddingRuntimeDeps) (*embeddingRuntime, error) {
+	checker, err := newConvergenceChecker(vectorCfg, deps.Store, deps.Backend)
+	if err != nil {
+		return nil, err
+	}
+	switch vectorCfg.Embeddings.EffectiveAPIFormat() {
+	case vector.APIFormatOpenAI:
+		client := embed.NewClient(embed.Config{
+			Endpoint: vectorCfg.Embeddings.Endpoint, APIKey: vectorCfg.Embeddings.APIKey(),
+			Model: vectorCfg.Embeddings.Model, Dimension: vectorCfg.Embeddings.Dimension,
+			Timeout: vectorCfg.Embeddings.Timeout, MaxRetries: vectorCfg.Embeddings.MaxRetries,
+		})
+		worker := embed.NewWorker(embed.WorkerDeps{
+			Backend: deps.Backend, VectorsDB: deps.VectorsDB, MainDB: deps.MainDB,
+			Store: deps.Store, Client: client, Preprocess: embeddingPreprocessConfig(vectorCfg),
+			MaxInputChars: vectorCfg.Embeddings.MaxInputChars,
+			BatchSize:     vectorCfg.Embeddings.BatchSize, BuildScope: vectorCfg.Embed.Scope.BuildScope(),
+			Rebind: deps.Rebind, LastModifiedExpr: deps.LastModifiedExpr,
+			TotalPending: deps.TotalPending, Progress: deps.Progress, Log: deps.Log,
+		})
+		return &embeddingRuntime{Runner: worker, QueryClient: client, Convergence: checker}, nil
+	case vector.APIFormatVoyageContextual:
+		if vectorCfg.Embeddings.Model != "voyage-context-4" {
+			return nil, fmt.Errorf("vector.embeddings.model: api_format=%q requires %q, got %q",
+				vector.APIFormatVoyageContextual, "voyage-context-4", vectorCfg.Embeddings.Model)
+		}
+		publisher, ok := deps.Backend.(vector.DocumentPublisher)
+		if !ok {
+			return nil, errors.New("voyage contextual embeddings require a document publisher backend")
+		}
+		client := embed.NewVoyageClient(embed.VoyageConfig{
+			Endpoint: vectorCfg.Embeddings.Endpoint, APIKey: vectorCfg.Embeddings.APIKey(),
+			Model: vectorCfg.Embeddings.Model, Dimension: vectorCfg.Embeddings.Dimension,
+			Timeout: vectorCfg.Embeddings.Timeout, MaxRetries: vectorCfg.Embeddings.MaxRetries,
+			Limits: embed.RequestLimits{MaxDocuments: vectorCfg.Embeddings.BatchSize,
+				MaxChunks: 16_000, MaxUTF8Bytes: contextualDocumentUTF8Limit},
+		})
+		policy := embed.AssemblyPolicy{
+			MaxChunkRunes:        vectorCfg.Embeddings.MaxInputChars,
+			MaxDocumentUTF8Bytes: contextualDocumentUTF8Limit,
+			Preprocess:           embeddingPreprocessConfig(vectorCfg),
+		}
+		assembler := embed.CompositeAssembler{Policy: policy, Chat: embed.ChatWindowAssembler{Policy: policy}}
+		worker := embed.NewContextWorker(embed.ContextWorkerDeps{
+			Backend: deps.Backend, Publisher: publisher, Store: deps.Store,
+			Assembler: assembler, Client: client, BuildScope: vectorCfg.Embed.Scope.BuildScope(),
+			ChangeBatchSize:    vectorCfg.Embeddings.BatchSize,
+			ReconcileBatchSize: vectorCfg.Embeddings.BatchSize,
+		})
+		return &embeddingRuntime{Runner: worker, QueryClient: client, Convergence: checker}, nil
+	default:
+		return nil, fmt.Errorf("unsupported embedding api format %q", vectorCfg.Embeddings.APIFormat)
+	}
+}
+
+func newConvergenceChecker(vectorCfg vector.Config, mainStore *store.Store, backend vector.Backend) (scheduler.ConvergenceChecker, error) {
+	legacy := &legacyConvergenceChecker{store: mainStore, scope: vectorCfg.Embed.Scope.BuildScope()}
+	if vectorCfg.Embeddings.EffectiveAPIFormat() != vector.APIFormatVoyageContextual {
+		return legacy, nil
+	}
+	publisher, ok := backend.(vector.DocumentPublisher)
+	if !ok {
+		return nil, errors.New("voyage contextual embeddings require a document publisher backend")
+	}
+	return &contextualConvergenceChecker{legacy: legacy, publisher: publisher}, nil
+}
 
 // precheckVectorFeatures validates vector configuration cheaply so runServe
 // can fail fast on misconfiguration while deferring the expensive backend
@@ -159,40 +318,16 @@ func setupVectorFeatures(ctx context.Context, mainStore *store.Store, mainPath s
 		closeFn = sb.Close
 	}
 
-	client := embed.NewClient(embed.Config{
-		Endpoint:   cfg.Vector.Embeddings.Endpoint,
-		APIKey:     cfg.Vector.Embeddings.APIKey(),
-		Model:      cfg.Vector.Embeddings.Model,
-		Dimension:  cfg.Vector.Embeddings.Dimension,
-		Timeout:    cfg.Vector.Embeddings.Timeout,
-		MaxRetries: cfg.Vector.Embeddings.MaxRetries,
+	runtime, err := newEmbeddingRuntime(cfg.Vector, embeddingRuntimeDeps{
+		Backend: backend, VectorsDB: vectorsDB, MainDB: mainDB, Store: mainStore,
+		Rebind: dialect.Rebind, LastModifiedExpr: lastModifiedExpr, Log: logger,
 	})
+	if err != nil {
+		_ = closeFn()
+		return nil, fmt.Errorf("configure embedding runtime: %w", err)
+	}
 
-	worker := embed.NewWorker(embed.WorkerDeps{
-		Backend:   backend,
-		VectorsDB: vectorsDB,
-		MainDB:    mainDB,
-		Store:     mainStore,
-		Client:    client,
-		Preprocess: embed.PreprocessConfig{
-			StripQuotes:        cfg.Vector.Preprocess.StripQuotesEnabled(),
-			StripSignatures:    cfg.Vector.Preprocess.StripSignaturesEnabled(),
-			StripHTML:          cfg.Vector.Preprocess.StripHTMLEnabled(),
-			StripBase64:        cfg.Vector.Preprocess.StripBase64Enabled(),
-			StripURLTracking:   cfg.Vector.Preprocess.StripURLTrackingEnabled(),
-			CollapseWhitespace: cfg.Vector.Preprocess.CollapseWhitespaceEnabled(),
-		},
-		MaxInputChars: cfg.Vector.Embeddings.MaxInputChars,
-		BatchSize:     cfg.Vector.Embeddings.BatchSize,
-		BuildScope:    cfg.Vector.Embed.Scope.BuildScope(),
-		// Rebind makes the worker's body-fetch + watermark SQL run on pgx.
-		// SQLiteDialect.Rebind is identity, so the SQLite path is unchanged.
-		Rebind:           dialect.Rebind,
-		LastModifiedExpr: lastModifiedExpr,
-		Log:              logger,
-	})
-
-	engine := hybrid.NewEngine(backend, mainDB, client, hybrid.Config{
+	engine := hybrid.NewEngine(backend, mainDB, runtime.QueryClient, hybrid.Config{
 		ExpectedFingerprint: cfg.Vector.GenerationFingerprint(),
 		RRFK:                cfg.Vector.Search.RRFK,
 		KPerSignal:          cfg.Vector.Search.KPerSignal,
@@ -211,7 +346,9 @@ func setupVectorFeatures(ctx context.Context, mainStore *store.Store, mainPath s
 	return &vectorFeatures{
 		Backend:      backend,
 		HybridEngine: engine,
-		Worker:       worker,
+		Runner:       runtime.Runner,
+		Worker:       runtime.Runner,
+		Convergence:  runtime.Convergence,
 		Cfg:          cfg.Vector,
 		Close:        closeFn,
 	}, nil

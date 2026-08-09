@@ -2,7 +2,12 @@ package store
 
 import (
 	"context"
+	"crypto/sha256"
+	"database/sql"
+	"encoding/hex"
+	"errors"
 	"fmt"
+	"sort"
 	"strings"
 )
 
@@ -123,6 +128,208 @@ func (s *Store) SetEmbedGen(ctx context.Context, ids []int64, target int64) erro
 type EmbedGenStamp struct {
 	ID           int64
 	LastModified any
+}
+
+// EmbedGenMetadataVersion is the store-owned compare-and-set token for
+// conversation metadata used by a contextual document. It intentionally does
+// not depend on internal/vector/embed, which already imports store.
+//
+// Digest is the canonical SHA-256 digest of the conversation id and title,
+// followed by each participant in participant-id order with its role, rendered
+// display name, and driver-canonical updated_at text. The encoding is kept
+// byte-compatible with embed.conversationMetadataDigest.
+type EmbedGenMetadataVersion struct {
+	ConversationID int64
+	Digest         string
+}
+
+// SetEmbedGenGroupIfUnchanged atomically stamps every member of one published
+// document. It returns false without stamping any member when a source token,
+// live membership, conversation identity, or metadata digest no longer matches
+// the assembly snapshot.
+//
+// SQLite starts with BEGIN IMMEDIATE, so a writer cannot enter between verify
+// and stamp. PostgreSQL first takes the embedding-change clock's exclusive
+// transaction lock, then locks every message and every metadata row used by
+// the digest. Persistence takes the shared clock lock before its row locks, so
+// this ordering prevents a message/conversation lock inversion. Locking the
+// conversation row also serializes membership inserts via their foreign-key
+// check, closing the phantom-member race.
+//
+// The embed_gen update fires the row-level last_modified trigger. This group
+// path restores each verified token inside the same write transaction because
+// contextual document revisions include those tokens. Without the restore,
+// the worker's own coverage bookkeeping changes the revision and an initial
+// reconciliation pays to publish the same document again. The ordinary
+// per-message stamp keeps its established row-watermark behavior.
+func (s *Store) SetEmbedGenGroupIfUnchanged(
+	ctx context.Context,
+	versions []EmbedGenStamp,
+	metadataVersion EmbedGenMetadataVersion,
+	target int64,
+) (stamped bool, retErr error) {
+	if len(versions) == 0 {
+		return false, nil
+	}
+	seen := make(map[int64]struct{}, len(versions))
+	for _, version := range versions {
+		if version.ID == 0 {
+			return false, nil
+		}
+		if _, duplicate := seen[version.ID]; duplicate {
+			return false, nil
+		}
+		seen[version.ID] = struct{}{}
+	}
+	orderedVersions := append([]EmbedGenStamp(nil), versions...)
+	sort.Slice(orderedVersions, func(i, j int) bool {
+		return orderedVersions[i].ID < orderedVersions[j].ID
+	})
+
+	conn, err := s.db.Conn(ctx)
+	if err != nil {
+		return false, fmt.Errorf("acquire embed_gen group connection: %w", err)
+	}
+	defer func() { _ = conn.Close() }()
+	if _, err := conn.ExecContext(ctx, s.dialect.BeginWriteSQL()); err != nil {
+		return false, fmt.Errorf("begin embed_gen group transaction: %w", err)
+	}
+	committed := false
+	defer func() {
+		if committed {
+			return
+		}
+		rollbackCtx, cancel := context.WithTimeout(
+			context.WithoutCancel(ctx), manualTransactionCleanupTimeout)
+		defer cancel()
+		if _, rollbackErr := conn.ExecContext(rollbackCtx, "ROLLBACK"); rollbackErr != nil && retErr == nil {
+			retErr = fmt.Errorf("rollback embed_gen group transaction: %w", rollbackErr)
+		}
+	}()
+	if s.IsPostgreSQL() {
+		if _, err := conn.ExecContext(ctx, `SELECT pg_advisory_xact_lock(
+			hashtextextended('msgvault.embedding_change_clock', 0))`); err != nil {
+			return false, fmt.Errorf("lock embed_gen group journal boundary: %w", err)
+		}
+	}
+
+	lastModified := "last_modified"
+	if !s.IsPostgreSQL() {
+		lastModified = "CAST(last_modified AS TEXT)"
+	}
+	for _, version := range orderedVersions {
+		query := fmt.Sprintf(`SELECT id FROM messages
+			WHERE id = ? AND %s = ?
+			  AND deleted_at IS NULL AND deleted_from_source_at IS NULL`, lastModified)
+		args := []any{version.ID, version.LastModified}
+		if metadataVersion.ConversationID != 0 {
+			query += ` AND conversation_id = ?`
+			args = append(args, metadataVersion.ConversationID)
+		}
+		query += s.dialect.SelectForUpdate()
+		var id int64
+		err := conn.QueryRowContext(ctx, s.dialect.Rebind(query), args...).Scan(&id)
+		if errors.Is(err, sql.ErrNoRows) {
+			return false, nil
+		}
+		if err != nil {
+			return false, fmt.Errorf("lock embed_gen group member %d: %w", version.ID, err)
+		}
+	}
+
+	if metadataVersion.ConversationID != 0 {
+		digest, found, err := s.embedGenMetadataDigest(ctx, conn, metadataVersion.ConversationID)
+		if err != nil {
+			return false, err
+		}
+		if !found || digest != metadataVersion.Digest {
+			return false, nil
+		}
+	}
+
+	for _, version := range orderedVersions {
+		res, err := conn.ExecContext(ctx, s.dialect.Rebind(
+			`UPDATE messages SET embed_gen = ? WHERE id = ? AND last_modified = ?`),
+			target, version.ID, version.LastModified)
+		if err != nil {
+			return false, fmt.Errorf("stamp embed_gen group member %d: %w", version.ID, err)
+		}
+		matched, err := res.RowsAffected()
+		if err != nil {
+			return false, fmt.Errorf("rows affected for embed_gen group member %d: %w", version.ID, err)
+		}
+		if matched != 1 {
+			return false, nil
+		}
+		restored, err := conn.ExecContext(ctx, s.dialect.Rebind(
+			`UPDATE messages SET last_modified = ? WHERE id = ? AND embed_gen = ?`),
+			version.LastModified, version.ID, target)
+		if err != nil {
+			return false, fmt.Errorf("restore embed_gen group member %d revision token: %w", version.ID, err)
+		}
+		restoredRows, err := restored.RowsAffected()
+		if err != nil {
+			return false, fmt.Errorf("rows affected restoring embed_gen group member %d revision token: %w", version.ID, err)
+		}
+		if restoredRows != 1 {
+			return false, nil
+		}
+	}
+	if _, err := conn.ExecContext(ctx, "COMMIT"); err != nil {
+		return false, fmt.Errorf("commit embed_gen group transaction: %w", err)
+	}
+	committed = true
+	return true, nil
+}
+
+func (s *Store) embedGenMetadataDigest(
+	ctx context.Context, conn *sql.Conn, conversationID int64,
+) (string, bool, error) {
+	var id int64
+	var title string
+	err := conn.QueryRowContext(ctx, s.dialect.Rebind(
+		`SELECT id, COALESCE(title, '') FROM conversations WHERE id = ?`+
+			s.dialect.SelectForUpdate()), conversationID).Scan(&id, &title)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, fmt.Errorf("lock embedding conversation %d: %w", conversationID, err)
+	}
+
+	lockClause := s.dialect.SelectForUpdate()
+	if lockClause != "" {
+		lockClause = " FOR UPDATE OF cp, p"
+	}
+	rows, err := conn.QueryContext(ctx, s.dialect.Rebind(`
+		SELECT cp.participant_id, COALESCE(cp.role, ''),
+		       COALESCE(NULLIF(TRIM(p.display_name), ''),
+		                NULLIF(p.email_address, ''), NULLIF(p.phone_number, ''), ''),
+		       CAST(p.updated_at AS TEXT)
+		FROM conversation_participants cp
+		JOIN participants p ON p.id = cp.participant_id
+		WHERE cp.conversation_id = ?
+		ORDER BY cp.participant_id`+lockClause), conversationID)
+	if err != nil {
+		return "", false, fmt.Errorf("lock embedding conversation participants %d: %w", conversationID, err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	h := sha256.New()
+	_, _ = fmt.Fprintf(h, "%d\x00%s\x00", id, title)
+	for rows.Next() {
+		var participantID int64
+		var role, displayName, revision string
+		if err := rows.Scan(&participantID, &role, &displayName, &revision); err != nil {
+			return "", false, fmt.Errorf("scan embedding conversation participant %d: %w", conversationID, err)
+		}
+		_, _ = fmt.Fprintf(h, "%d\x00%s\x00%s\x00%v\x00",
+			participantID, role, displayName, revision)
+	}
+	if err := rows.Err(); err != nil {
+		return "", false, fmt.Errorf("iterate embedding conversation participants %d: %w", conversationID, err)
+	}
+	return hex.EncodeToString(h.Sum(nil)), true, nil
 }
 
 // SetEmbedGenIfUnchanged stamps embed_gen = target on each message, but
@@ -271,6 +478,54 @@ func (s *Store) CoverageCountsScoped(ctx context.Context, activeGen int64, messa
 	}
 	missing = max(live-stamped, 0)
 	return live, stamped, 0, missing, nil
+}
+
+// EmbeddingConvergenceCounts partitions message coverage for the contextual
+// worker without changing the historical CoverageCounts contract. Contextual
+// rows are exactly live Beeper and meeting-transcript messages. Every other
+// live message type is ordinary. The three total fields always equal the sum
+// of their contextual and ordinary counterparts.
+type EmbeddingConvergenceCounts struct {
+	Live    int64
+	Stamped int64
+	Missing int64
+
+	ContextualLive    int64
+	ContextualStamped int64
+	ContextualMissing int64
+
+	OrdinaryLive    int64
+	OrdinaryStamped int64
+	OrdinaryMissing int64
+}
+
+// ContextualConvergenceCounts reports the coverage partition used by
+// contextual-generation convergence checks. activeGen == 0 stamps no row, so
+// every live row is missing in both partitions.
+func (s *Store) ContextualConvergenceCounts(ctx context.Context, activeGen int64) (EmbeddingConvergenceCounts, error) {
+	liveWhere := LiveMessagesWhere("", true)
+	query := `SELECT
+		COUNT(*),
+		COALESCE(SUM(CASE WHEN ? <> 0 AND embed_gen = ? THEN 1 ELSE 0 END), 0),
+		COALESCE(SUM(CASE WHEN message_type IN ('beeper', 'meeting_transcript') THEN 1 ELSE 0 END), 0),
+		COALESCE(SUM(CASE WHEN message_type IN ('beeper', 'meeting_transcript')
+		                       AND ? <> 0 AND embed_gen = ? THEN 1 ELSE 0 END), 0)
+		FROM messages WHERE ` + liveWhere
+	var counts EmbeddingConvergenceCounts
+	err := s.db.QueryRowContext(ctx, s.dialect.Rebind(query),
+		activeGen, activeGen, activeGen, activeGen).Scan(
+		&counts.Live, &counts.Stamped,
+		&counts.ContextualLive, &counts.ContextualStamped,
+	)
+	if err != nil {
+		return EmbeddingConvergenceCounts{}, fmt.Errorf("count contextual embedding convergence: %w", err)
+	}
+	counts.Missing = max(counts.Live-counts.Stamped, 0)
+	counts.ContextualMissing = max(counts.ContextualLive-counts.ContextualStamped, 0)
+	counts.OrdinaryLive = max(counts.Live-counts.ContextualLive, 0)
+	counts.OrdinaryStamped = max(counts.Stamped-counts.ContextualStamped, 0)
+	counts.OrdinaryMissing = max(counts.OrdinaryLive-counts.OrdinaryStamped, 0)
+	return counts, nil
 }
 
 // MissingCount returns just the "missing" coverage figure for activeGen

@@ -636,6 +636,330 @@ func (d *SQLiteDialect) EnsureTriggers(q querier) error {
 		    BEGIN
 		        UPDATE messages SET last_modified = CURRENT_TIMESTAMP WHERE id = NEW.id;
 		    END`, lastModifiedCols),
+		`DROP TRIGGER IF EXISTS trg_embedding_changes_message_insert`,
+		`DROP TRIGGER IF EXISTS trg_embedding_changes_message_update`,
+		`CREATE TRIGGER trg_embedding_changes_message_update
+		    AFTER UPDATE OF message_type, conversation_id, subject, sent_at, received_at, internal_date, sender_id, deleted_at, deleted_from_source_at, embed_gen
+		    ON messages FOR EACH ROW
+		    WHEN (EXISTS (
+		        SELECT 1 FROM message_bodies WHERE message_id = NEW.id
+		    ) AND (
+		        (
+		            (
+		                (OLD.message_type IN ('beeper', 'meeting_transcript') AND OLD.deleted_at IS NULL AND OLD.deleted_from_source_at IS NULL)
+		                OR (NEW.message_type IN ('beeper', 'meeting_transcript') AND NEW.deleted_at IS NULL AND NEW.deleted_from_source_at IS NULL)
+		                OR (
+		                    OLD.message_type IS NOT NEW.message_type
+		                    AND (
+		                        (OLD.deleted_at IS NULL AND OLD.deleted_from_source_at IS NULL)
+		                        OR (NEW.deleted_at IS NULL AND NEW.deleted_from_source_at IS NULL)
+		                    )
+		                )
+		            ) AND (
+		                OLD.message_type IS NOT NEW.message_type
+		                OR OLD.conversation_id IS NOT NEW.conversation_id
+		                OR OLD.sent_at IS NOT NEW.sent_at
+		                OR OLD.received_at IS NOT NEW.received_at
+		                OR OLD.internal_date IS NOT NEW.internal_date
+		                OR OLD.sender_id IS NOT NEW.sender_id
+		                OR OLD.deleted_at IS NOT NEW.deleted_at
+		                OR OLD.deleted_from_source_at IS NOT NEW.deleted_from_source_at
+		            )
+		        ) OR (
+		            COALESCE(OLD.message_type, '') NOT IN ('beeper', 'meeting_transcript')
+		            AND COALESCE(NEW.message_type, '') NOT IN ('beeper', 'meeting_transcript')
+		            AND (
+		                (OLD.deleted_at IS NULL AND OLD.deleted_from_source_at IS NULL)
+		                OR (NEW.deleted_at IS NULL AND NEW.deleted_from_source_at IS NULL)
+		            ) AND (
+		                OLD.message_type IS NOT NEW.message_type
+		                OR OLD.conversation_id IS NOT NEW.conversation_id
+		                OR OLD.subject IS NOT NEW.subject
+		                OR OLD.deleted_at IS NOT NEW.deleted_at
+		                OR OLD.deleted_from_source_at IS NOT NEW.deleted_from_source_at
+		            )
+		        )
+		    )) OR (
+		        OLD.message_type IS NOT NEW.message_type
+		        AND (
+		            (OLD.deleted_at IS NULL AND OLD.deleted_from_source_at IS NULL)
+		            OR (NEW.deleted_at IS NULL AND NEW.deleted_from_source_at IS NULL)
+		        )
+		    ) OR (
+		        COALESCE(OLD.message_type, '') NOT IN ('beeper', 'meeting_transcript')
+		        AND COALESCE(NEW.message_type, '') NOT IN ('beeper', 'meeting_transcript')
+		        AND (
+		            OLD.deleted_at IS NOT NEW.deleted_at
+		            OR OLD.deleted_from_source_at IS NOT NEW.deleted_from_source_at
+		        )
+		    ) OR (
+		        OLD.embed_gen IS NOT NULL
+		        AND NEW.embed_gen IS NULL
+		        AND COALESCE(NEW.message_type, '') NOT IN ('beeper', 'meeting_transcript')
+		        AND NEW.deleted_at IS NULL
+		        AND NEW.deleted_from_source_at IS NULL
+		        AND NOT EXISTS (SELECT 1 FROM message_bodies WHERE message_id = NEW.id)
+		    )
+		    BEGIN
+		        UPDATE embedding_change_clock
+		           SET sequence = sequence + 1 WHERE singleton = 1 AND enabled = TRUE;
+		        INSERT INTO embedding_changes (
+		            sequence, kind, message_id, old_message_type, new_message_type, old_conversation_id,
+		            new_conversation_id, old_sent_at, new_sent_at, participant_id
+		        )
+		        SELECT sequence, 'message_update', NEW.id,
+		               CASE WHEN OLD.deleted_at IS NULL AND OLD.deleted_from_source_at IS NULL
+		                    THEN OLD.message_type END,
+		               CASE WHEN NEW.deleted_at IS NULL AND NEW.deleted_from_source_at IS NULL
+		                    THEN NEW.message_type END,
+		               CASE WHEN OLD.deleted_at IS NULL AND OLD.deleted_from_source_at IS NULL
+		                    THEN OLD.conversation_id END,
+		               CASE WHEN NEW.deleted_at IS NULL AND NEW.deleted_from_source_at IS NULL
+		                    THEN NEW.conversation_id END,
+		               CASE WHEN OLD.deleted_at IS NULL AND OLD.deleted_from_source_at IS NULL
+		                    THEN strftime('%Y-%m-%d %H:%M:%f', COALESCE(OLD.sent_at, OLD.received_at, OLD.internal_date)) END,
+		               CASE WHEN NEW.deleted_at IS NULL AND NEW.deleted_from_source_at IS NULL
+		                    THEN strftime('%Y-%m-%d %H:%M:%f', COALESCE(NEW.sent_at, NEW.received_at, NEW.internal_date)) END,
+		               NULL
+		          FROM embedding_change_clock WHERE singleton = 1 AND enabled = TRUE;
+		    END`,
+		`DROP TRIGGER IF EXISTS trg_embedding_changes_message_delete`,
+		`CREATE TRIGGER trg_embedding_changes_message_delete
+		    BEFORE DELETE ON messages FOR EACH ROW
+		    WHEN OLD.deleted_at IS NULL
+		         AND OLD.deleted_from_source_at IS NULL
+		         AND (
+		             COALESCE(OLD.message_type, '') NOT IN ('beeper', 'meeting_transcript')
+		             OR EXISTS (SELECT 1 FROM message_bodies WHERE message_id = OLD.id)
+		         )
+		    BEGIN
+		        UPDATE embedding_change_clock
+		           SET sequence = sequence + 1 WHERE singleton = 1 AND enabled = TRUE;
+		        INSERT INTO embedding_changes (
+		            sequence, kind, message_id, old_message_type, new_message_type, old_conversation_id,
+		            new_conversation_id, old_sent_at, new_sent_at, participant_id
+		        )
+		        SELECT sequence, 'message_delete', OLD.id,
+		               OLD.message_type, NULL,
+		               OLD.conversation_id, NULL,
+		               strftime('%Y-%m-%d %H:%M:%f', COALESCE(OLD.sent_at, OLD.received_at, OLD.internal_date)), NULL, NULL
+		          FROM embedding_change_clock WHERE singleton = 1 AND enabled = TRUE;
+		    END`,
+		`DROP TRIGGER IF EXISTS trg_embedding_changes_body_insert`,
+		`CREATE TRIGGER trg_embedding_changes_body_insert
+		    AFTER INSERT ON message_bodies FOR EACH ROW
+		    WHEN EXISTS (
+		        SELECT 1 FROM messages
+		         WHERE id = NEW.message_id
+		           AND deleted_at IS NULL
+		           AND deleted_from_source_at IS NULL
+		    )
+		    BEGIN
+		        UPDATE embedding_change_clock
+		           SET sequence = sequence + 1 WHERE singleton = 1 AND enabled = TRUE;
+		        INSERT INTO embedding_changes (
+		            sequence, kind, message_id, old_message_type, new_message_type, old_conversation_id,
+		            new_conversation_id, old_sent_at, new_sent_at, participant_id
+		        )
+		        SELECT c.sequence, 'message_insert', m.id,
+		               NULL, m.message_type,
+		               NULL, m.conversation_id,
+		               NULL,
+		               strftime('%Y-%m-%d %H:%M:%f', COALESCE(m.sent_at, m.received_at, m.internal_date)), NULL
+		          FROM embedding_change_clock c
+		          JOIN messages m ON m.id = NEW.message_id
+		         WHERE c.singleton = 1 AND c.enabled = TRUE;
+		    END`,
+		`DROP TRIGGER IF EXISTS trg_embedding_changes_body_update`,
+		`CREATE TRIGGER trg_embedding_changes_body_update
+		    AFTER UPDATE ON message_bodies FOR EACH ROW
+		    WHEN (OLD.body_text IS NOT NEW.body_text OR OLD.body_html IS NOT NEW.body_html)
+		         AND EXISTS (
+		             SELECT 1 FROM messages
+		              WHERE id = NEW.message_id
+		                AND deleted_at IS NULL
+		                AND deleted_from_source_at IS NULL
+		         )
+		    BEGIN
+		        UPDATE embedding_change_clock
+		           SET sequence = sequence + 1 WHERE singleton = 1 AND enabled = TRUE;
+		        INSERT INTO embedding_changes (
+		            sequence, kind, message_id, old_message_type, new_message_type, old_conversation_id,
+		            new_conversation_id, old_sent_at, new_sent_at, participant_id
+		        )
+		        SELECT c.sequence, 'message_body', m.id,
+		               m.message_type, m.message_type,
+		               m.conversation_id, m.conversation_id,
+		               strftime('%Y-%m-%d %H:%M:%f', COALESCE(m.sent_at, m.received_at, m.internal_date)),
+		               strftime('%Y-%m-%d %H:%M:%f', COALESCE(m.sent_at, m.received_at, m.internal_date)), NULL
+		          FROM embedding_change_clock c
+		          JOIN messages m ON m.id = NEW.message_id
+		         WHERE c.singleton = 1 AND c.enabled = TRUE;
+		    END`,
+		`DROP TRIGGER IF EXISTS trg_embedding_changes_body_delete`,
+		`CREATE TRIGGER trg_embedding_changes_body_delete
+		    AFTER DELETE ON message_bodies FOR EACH ROW
+		    WHEN EXISTS (
+		        SELECT 1 FROM messages
+		         WHERE id = OLD.message_id
+		           AND deleted_at IS NULL
+		           AND deleted_from_source_at IS NULL
+		    )
+		    BEGIN
+		        UPDATE embedding_change_clock
+		           SET sequence = sequence + 1 WHERE singleton = 1 AND enabled = TRUE;
+		        INSERT INTO embedding_changes (
+		            sequence, kind, message_id, old_message_type, new_message_type, old_conversation_id,
+		            new_conversation_id, old_sent_at, new_sent_at, participant_id
+		        )
+		        SELECT c.sequence, 'message_body', m.id,
+		               m.message_type, NULL,
+		               m.conversation_id, NULL,
+		               strftime('%Y-%m-%d %H:%M:%f', COALESCE(m.sent_at, m.received_at, m.internal_date)),
+		               NULL, NULL
+		          FROM embedding_change_clock c
+		          JOIN messages m ON m.id = OLD.message_id
+		         WHERE c.singleton = 1 AND c.enabled = TRUE;
+		    END`,
+		`DROP TRIGGER IF EXISTS trg_embedding_changes_conversation_title`,
+		`CREATE TRIGGER trg_embedding_changes_conversation_title
+		    AFTER UPDATE OF title ON conversations FOR EACH ROW
+		    WHEN OLD.title IS NOT NEW.title
+		         AND EXISTS (
+		             SELECT 1 FROM messages m
+		             JOIN message_bodies mb ON mb.message_id = m.id
+		              WHERE m.conversation_id = NEW.id
+		                AND m.message_type = 'beeper'
+		                AND m.deleted_at IS NULL
+		                AND m.deleted_from_source_at IS NULL
+		         )
+		    BEGIN
+		        UPDATE embedding_change_clock
+		           SET sequence = sequence + 1 WHERE singleton = 1 AND enabled = TRUE;
+		        INSERT INTO embedding_changes (
+		            sequence, kind, message_id, old_message_type, new_message_type, old_conversation_id,
+		            new_conversation_id, old_sent_at, new_sent_at, participant_id
+		        )
+		        SELECT sequence, 'conversation_title', NULL, NULL, NULL,
+		               OLD.id, NEW.id, NULL, NULL, NULL
+		          FROM embedding_change_clock WHERE singleton = 1 AND enabled = TRUE;
+		    END`,
+		`DROP TRIGGER IF EXISTS trg_embedding_changes_membership_insert`,
+		`CREATE TRIGGER trg_embedding_changes_membership_insert
+		    AFTER INSERT ON conversation_participants FOR EACH ROW
+		    WHEN EXISTS (
+		        SELECT 1 FROM messages m
+		        JOIN message_bodies mb ON mb.message_id = m.id
+		         WHERE m.conversation_id = NEW.conversation_id
+		           AND m.message_type = 'beeper'
+		           AND m.deleted_at IS NULL
+		    )
+		    BEGIN
+		        UPDATE embedding_change_clock
+		           SET sequence = sequence + 1 WHERE singleton = 1 AND enabled = TRUE;
+		        INSERT INTO embedding_changes (
+		            sequence, kind, message_id, old_message_type, new_message_type, old_conversation_id,
+		            new_conversation_id, old_sent_at, new_sent_at, participant_id
+		        )
+		        SELECT sequence, 'conversation_participant', NULL, NULL, NULL,
+		               NEW.conversation_id, NEW.conversation_id,
+		               NULL, NULL, NEW.participant_id
+		          FROM embedding_change_clock WHERE singleton = 1 AND enabled = TRUE;
+		    END`,
+		`DROP TRIGGER IF EXISTS trg_embedding_changes_membership_update`,
+		`CREATE TRIGGER trg_embedding_changes_membership_update
+		    AFTER UPDATE ON conversation_participants FOR EACH ROW
+		    WHEN (
+		        OLD.conversation_id IS NOT NEW.conversation_id
+		        OR OLD.participant_id IS NOT NEW.participant_id
+		        OR OLD.role IS NOT NEW.role
+		        OR OLD.joined_at IS NOT NEW.joined_at
+		        OR OLD.left_at IS NOT NEW.left_at
+		    ) AND (
+		        EXISTS (
+		            SELECT 1 FROM messages m
+		            JOIN message_bodies mb ON mb.message_id = m.id
+		             WHERE m.conversation_id = OLD.conversation_id
+		               AND m.message_type = 'beeper'
+		               AND m.deleted_at IS NULL
+		        ) OR EXISTS (
+		            SELECT 1 FROM messages m
+		            JOIN message_bodies mb ON mb.message_id = m.id
+		             WHERE m.conversation_id = NEW.conversation_id
+		               AND m.message_type = 'beeper'
+		               AND m.deleted_at IS NULL
+		        )
+		    )
+		    BEGIN
+		        UPDATE embedding_change_clock
+		           SET sequence = sequence + 1 WHERE singleton = 1 AND enabled = TRUE;
+		        INSERT INTO embedding_changes (
+		            sequence, kind, message_id, old_message_type, new_message_type, old_conversation_id,
+		            new_conversation_id, old_sent_at, new_sent_at, participant_id
+		        )
+		        SELECT sequence, 'conversation_participant', NULL, NULL, NULL,
+		               OLD.conversation_id, NEW.conversation_id,
+		               NULL, NULL, NEW.participant_id
+		          FROM embedding_change_clock WHERE singleton = 1 AND enabled = TRUE;
+		    END`,
+		`DROP TRIGGER IF EXISTS trg_embedding_changes_membership_delete`,
+		`CREATE TRIGGER trg_embedding_changes_membership_delete
+		    AFTER DELETE ON conversation_participants FOR EACH ROW
+		    WHEN EXISTS (
+		        SELECT 1 FROM messages m
+		        JOIN message_bodies mb ON mb.message_id = m.id
+		         WHERE m.conversation_id = OLD.conversation_id
+		           AND m.message_type = 'beeper'
+		           AND m.deleted_at IS NULL
+		    )
+		    BEGIN
+		        UPDATE embedding_change_clock
+		           SET sequence = sequence + 1 WHERE singleton = 1 AND enabled = TRUE;
+		        INSERT INTO embedding_changes (
+		            sequence, kind, message_id, old_message_type, new_message_type, old_conversation_id,
+		            new_conversation_id, old_sent_at, new_sent_at, participant_id
+		        )
+		        SELECT sequence, 'conversation_participant', NULL, NULL, NULL,
+		               OLD.conversation_id, OLD.conversation_id,
+		               NULL, NULL, OLD.participant_id
+		          FROM embedding_change_clock WHERE singleton = 1 AND enabled = TRUE;
+		    END`,
+		`DROP TRIGGER IF EXISTS trg_embedding_changes_participant_display_name`,
+		`CREATE TRIGGER trg_embedding_changes_participant_display_name
+		    AFTER UPDATE OF display_name, email_address, phone_number ON participants FOR EACH ROW
+		    WHEN COALESCE(NULLIF(TRIM(OLD.display_name), ''),
+		                  NULLIF(OLD.email_address, ''), NULLIF(OLD.phone_number, ''), '')
+		         IS NOT COALESCE(NULLIF(TRIM(NEW.display_name), ''),
+		                        NULLIF(NEW.email_address, ''), NULLIF(NEW.phone_number, ''), '')
+		         AND (
+		             EXISTS (
+		                 SELECT 1
+		                   FROM conversation_participants cp
+		                   JOIN messages m ON m.conversation_id = cp.conversation_id
+		                   JOIN message_bodies mb ON mb.message_id = m.id
+		                  WHERE cp.participant_id = NEW.id
+		                    AND m.message_type = 'beeper'
+		                    AND m.deleted_at IS NULL
+		             ) OR EXISTS (
+		                 SELECT 1
+		                   FROM messages m
+		                   JOIN message_bodies mb ON mb.message_id = m.id
+		                  WHERE m.sender_id = NEW.id
+		                    AND m.message_type = 'beeper'
+		                    AND m.deleted_at IS NULL
+		             )
+		         )
+		    BEGIN
+		        UPDATE embedding_change_clock
+		           SET sequence = sequence + 1 WHERE singleton = 1 AND enabled = TRUE;
+		        INSERT INTO embedding_changes (
+		            sequence, kind, message_id, old_message_type, new_message_type, old_conversation_id,
+		            new_conversation_id, old_sent_at, new_sent_at, participant_id
+		        )
+		        SELECT sequence, 'participant_display_name', NULL, NULL, NULL,
+		               NULL, NULL, NULL, NULL, NEW.id
+		          FROM embedding_change_clock WHERE singleton = 1 AND enabled = TRUE;
+		    END`,
 	)
 	for _, stmt := range stmts {
 		if _, err := q.Exec(stmt); err != nil {
@@ -782,6 +1106,9 @@ func (d *SQLiteDialect) LegacyColumnMigrations() []ColumnMigration {
 		{`ALTER TABLE participant_identifiers ADD COLUMN scope_value TEXT`, "pi_scope_value"},
 		{`ALTER TABLE identity_match_candidates ADD COLUMN observation_conflict_origin TEXT CHECK (observation_conflict_origin IN ('generated', 'promoted'))`, "identity_match_candidates.observation_conflict_origin"},
 		{`ALTER TABLE identity_match_candidates ADD COLUMN pre_conflict_state TEXT CHECK (pre_conflict_state IN ('candidate', 'accepted', 'rejected'))`, "identity_match_candidates.pre_conflict_state"},
+		{`ALTER TABLE embedding_changes ADD COLUMN old_message_type TEXT`, "embedding_changes.old_message_type"},
+		{`ALTER TABLE embedding_changes ADD COLUMN new_message_type TEXT`, "embedding_changes.new_message_type"},
+		{`ALTER TABLE embedding_change_clock ADD COLUMN enabled BOOLEAN NOT NULL DEFAULT FALSE`, "embedding_change_clock.enabled"},
 		// embed_gen: per-message vector-embedding watermark. NULL default
 		// means every legacy row reads as "needs embedding", which is
 		// correct — the scan-and-fill worker (and backstop) will embed and

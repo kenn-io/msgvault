@@ -1132,9 +1132,9 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 		return fmt.Errorf("classify participant identifier service scope: %w", err)
 	}
 
-	// Create the message watermark maintenance triggers. Must run after the
-	// migration loop above, which adds last_modified and content_changed_at on
-	// legacy DBs — the triggers reference both columns.
+	// Create the message watermark and contextual embedding journal triggers.
+	// This must run after the migration loop above, which adds last_modified and
+	// content_changed_at on legacy DBs — the triggers reference both columns.
 	//
 	// It runs HERE, immediately after the columns exist, rather than at the end
 	// of the upgrade: everything below is index builds and whole-table backfills
@@ -1179,6 +1179,11 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 	if err := s.dialect.ValidateMessageWatermarks(boundQuerier{ctx: ctx, q: s.db}); err != nil {
 		return fmt.Errorf("validate message watermarks: %w", err)
 	}
+	watermarkTriggersAlreadyApplied, err := s.IsMigrationAppliedContext(
+		ctx, migrationMessageWatermarkTriggers)
+	if err != nil {
+		return fmt.Errorf("check message watermark trigger migration: %w", err)
+	}
 	if err := s.runOnceMigration(
 		ctx, migrationMessageWatermarkTriggers, false,
 		func(ctx context.Context) error {
@@ -1188,6 +1193,23 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 		},
 	); err != nil {
 		return fmt.Errorf("ensure message watermark triggers: %w", err)
+	}
+	if err := s.runOnceMigration(
+		ctx, migrationEmbeddingChangeJournalTriggers, false,
+		func(ctx context.Context) error {
+			// A fresh archive (or a pre-watermark archive) just ran the current
+			// EnsureTriggers above, which already includes the journal definitions.
+			// Only an archive that entered this InitSchema with watermark v1 applied
+			// needs a second pass to upgrade its existing trigger set.
+			if !watermarkTriggersAlreadyApplied {
+				return nil
+			}
+			return s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
+				return s.dialect.EnsureTriggers(boundQuerier{ctx: ctx, q: tx})
+			})
+		},
+	); err != nil {
+		return fmt.Errorf("ensure embedding change journal triggers: %w", err)
 	}
 
 	// Initialize explicit attribution provenance for every legacy message once

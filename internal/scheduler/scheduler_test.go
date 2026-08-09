@@ -615,10 +615,11 @@ type fakeBackend struct {
 	yieldBuilding context.CancelCauseFunc
 	// activateErr is what ActivateGeneration returns. activateCalls
 	// records the gen IDs the EmbedJob asked to activate.
-	activateErr     error
-	yieldActivate   context.CancelCauseFunc
-	mu              sync.Mutex
-	activateCallIDs []vector.GenerationID
+	activateErr       error
+	yieldActivate     context.CancelCauseFunc
+	mu                sync.Mutex
+	activateCallIDs   []vector.GenerationID
+	activateSequences []int64
 
 	activeCalls   atomic.Int32
 	buildingCalls atomic.Int32
@@ -651,6 +652,12 @@ func (f *fakeBackend) ActivateGeneration(ctx context.Context, gen vector.Generat
 		f.yieldActivate(jobctx.ErrYieldedToWaiter)
 	}
 	return f.activateErr
+}
+func (f *fakeBackend) ActivateGenerationIfConverged(ctx context.Context, gen vector.GenerationID, expectedSequence int64) error {
+	f.mu.Lock()
+	f.activateSequences = append(f.activateSequences, expectedSequence)
+	f.mu.Unlock()
+	return f.ActivateGeneration(ctx, gen, false)
 }
 func (f *fakeBackend) activations() []vector.GenerationID {
 	f.mu.Lock()
@@ -1449,6 +1456,143 @@ type fakeCoverage struct {
 	missing     int64
 	calls       int
 	yieldCancel context.CancelCauseFunc
+}
+
+type fakeConvergenceChecker struct {
+	result ConvergenceResult
+	err    error
+	cancel context.CancelCauseFunc
+}
+
+func (c *fakeConvergenceChecker) CheckConvergence(context.Context, vector.GenerationID) (ConvergenceResult, error) {
+	if c.cancel != nil {
+		c.cancel(jobctx.ErrYieldedToWaiter)
+	}
+	return c.result, c.err
+}
+
+func TestEmbedJob_Run_YieldedConvergenceStopsWithoutWarning(t *testing.T) {
+	ctx, cancel := context.WithCancelCause(context.Background())
+	t.Cleanup(func() { cancel(nil) })
+	backend := &fakeBackend{building: &vector.Generation{ID: 7, Fingerprint: "m:768"}}
+	var logs bytes.Buffer
+	job := &EmbedJob{
+		Worker: &fakeRunner{}, Backend: backend, Fingerprint: "m:768",
+		Convergence:      &fakeConvergenceChecker{cancel: cancel, err: errors.New("canceled query")},
+		BackstopInterval: -1, Log: slog.New(slog.NewTextHandler(&logs, nil)),
+	}
+
+	job.Run(ctx)
+
+	assert.Empty(t, backend.activations())
+	assert.NotContains(t, logs.String(), "convergence check after run failed")
+}
+
+func TestEmbedJob_Run_ContextualActivationRequiresEveryConvergenceDimension(t *testing.T) {
+	complete := ConvergenceResult{
+		MessageCoverageComplete: true,
+		LatestJournalSequence:   12,
+		ConsumedJournalSequence: 12,
+		ReconciliationComplete:  true,
+	}
+	tests := []struct {
+		name   string
+		mutate func(*ConvergenceResult)
+		want   bool
+	}{
+		{name: "complete", want: true},
+		{name: "message coverage incomplete", mutate: func(r *ConvergenceResult) { r.MessageCoverageComplete = false }},
+		{name: "journal not consumed", mutate: func(r *ConvergenceResult) { r.ConsumedJournalSequence-- }},
+		{name: "reconciliation incomplete", mutate: func(r *ConvergenceResult) { r.ReconciliationComplete = false }},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := complete
+			if tt.mutate != nil {
+				tt.mutate(&result)
+			}
+			backend := &fakeBackend{building: &vector.Generation{ID: 7, Fingerprint: "m:768"}}
+			job := &EmbedJob{
+				Worker: &fakeRunner{}, Backend: backend, Fingerprint: "m:768",
+				Convergence: &fakeConvergenceChecker{result: result}, SequenceBoundActivation: true,
+				BackstopInterval: -1,
+			}
+			job.Run(t.Context())
+			if tt.want {
+				assert.Equal(t, []vector.GenerationID{7}, backend.activations())
+				assert.Equal(t, []int64{12}, backend.activateSequences)
+			} else {
+				assert.Empty(t, backend.activations())
+			}
+		})
+	}
+}
+
+func TestEmbedJob_Run_ContextualConvergedBuildActivatesBeforeBackstop(t *testing.T) {
+	backend := &fakeBackend{building: &vector.Generation{ID: 7, Fingerprint: "m:768"}}
+	runner := &fakeRunner{}
+	job := &EmbedJob{
+		Worker: runner, Backend: backend, Fingerprint: "m:768",
+		Convergence: &fakeConvergenceChecker{result: ConvergenceResult{
+			MessageCoverageComplete: true,
+			LatestJournalSequence:   12,
+			ConsumedJournalSequence: 12,
+			ReconciliationComplete:  true,
+		}},
+		SequenceBoundActivation: true,
+	}
+
+	job.Run(t.Context())
+
+	backstops, _ := runner.backstops()
+	assert.Zero(t, backstops,
+		"an already-converged contextual build must not restart reconciliation before activation")
+	assert.Equal(t, []vector.GenerationID{7}, backend.activations())
+	assert.Equal(t, []int64{12}, backend.activateSequences)
+}
+
+func TestEmbedJob_Run_ContextualIncompleteBuildUsesBackstopRecovery(t *testing.T) {
+	assert := assert.New(t)
+	backend := &fakeBackend{building: &vector.Generation{ID: 7, Fingerprint: "m:768"}}
+	checker := &fakeConvergenceChecker{result: ConvergenceResult{
+		MessageCoverageComplete: false,
+		LatestJournalSequence:   12,
+		ConsumedJournalSequence: 12,
+		ReconciliationComplete:  true,
+	}}
+	runner := &fakeRunner{onBackstop: func() {
+		checker.result.MessageCoverageComplete = true
+	}}
+	job := &EmbedJob{
+		Worker: runner, Backend: backend, Fingerprint: "m:768",
+		Convergence: checker, SequenceBoundActivation: true,
+	}
+
+	job.Run(t.Context())
+
+	backstops, backstopGen := runner.backstops()
+	assert.Equal(1, backstops)
+	assert.Equal(vector.GenerationID(7), backstopGen)
+	assert.Equal([]vector.GenerationID{7}, backend.activations())
+	assert.Equal([]int64{12}, backend.activateSequences)
+}
+
+func TestEmbedJob_Run_LegacyConvergenceUsesNormalActivation(t *testing.T) {
+	backend := &fakeBackend{building: &vector.Generation{ID: 7, Fingerprint: "m:768"}}
+	job := &EmbedJob{
+		Worker: &fakeRunner{}, Backend: backend, Fingerprint: "m:768",
+		Convergence: &fakeConvergenceChecker{result: ConvergenceResult{
+			MessageCoverageComplete: true,
+			ReconciliationComplete:  true,
+		}},
+		BackstopInterval: -1,
+	}
+
+	job.Run(t.Context())
+
+	assert.Equal(t, []vector.GenerationID{7}, backend.activations())
+	assert.Empty(t, backend.activateSequences,
+		"legacy scheduled builds must not require contextual document progress")
 }
 
 func (c *fakeCoverage) MissingCount(_ context.Context, _ int64) (int64, error) {

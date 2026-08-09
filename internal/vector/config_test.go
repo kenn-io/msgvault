@@ -67,6 +67,16 @@ func TestConfig_Validate(t *testing.T) {
 		{"Hostless", func(c *Config) { c.Embeddings.Endpoint = "http:///v1" }, "endpoint"},
 		{"HTTPS_OK", func(c *Config) { c.Embeddings.Endpoint = "https://host:8080/v1" }, ""},
 		{"PgvectorBackend_OK", func(c *Config) { c.Backend = "pgvector" }, ""},
+		{"OpenAIAPIFormat_OK", func(c *Config) { c.Embeddings.APIFormat = APIFormatOpenAI }, ""},
+		{"VoyageContextualAPIFormat_OK", func(c *Config) {
+			c.Embeddings.APIFormat = APIFormatVoyageContextual
+			c.Embeddings.Model = "voyage-context-4"
+		}, ""},
+		{"VoyageContextualModelMismatch", func(c *Config) {
+			c.Embeddings.APIFormat = APIFormatVoyageContextual
+			c.Embeddings.Model = "another-model"
+		}, "voyage-context-4"},
+		{"UnknownAPIFormat", func(c *Config) { c.Embeddings.APIFormat = "mystery" }, "api_format"},
 		{"ZeroDim", func(c *Config) { c.Embeddings.Dimension = 0 }, "dimension"},
 		{"NegativeDim", func(c *Config) { c.Embeddings.Dimension = -1 }, "dimension"},
 		{"UnknownBackend", func(c *Config) { c.Backend = "mystery" }, "backend"},
@@ -280,6 +290,33 @@ func TestEmbeddingsConfig_ETAWindowExplicit(t *testing.T) {
 	c.Embeddings.ETAWindow = 25
 	c.ApplyDefaults()
 	require.Equal(t, 25, c.Embeddings.ETAWindow, "ETAWindow explicit")
+}
+
+// TestEmbeddingsConfig_APIFormatDefaultsToOpenAI catches a zero-value
+// configuration selecting no usable embedding request contract.
+func TestEmbeddingsConfig_APIFormatDefaultsToOpenAI(t *testing.T) {
+	cfg := Config{}
+	cfg.ApplyDefaults()
+	assert.Equal(t, APIFormatOpenAI, cfg.Embeddings.EffectiveAPIFormat())
+}
+
+// TestGenerationFingerprint_ChangesForVoyageContextual catches contextual
+// vectors being mixed into an existing OpenAI-compatible generation.
+func TestGenerationFingerprint_ChangesForVoyageContextual(t *testing.T) {
+	openAI := validConfig()
+	contextual := openAI
+	contextual.Embeddings.APIFormat = APIFormatVoyageContextual
+	assert.NotEqual(t, openAI.GenerationFingerprint(), contextual.GenerationFingerprint())
+	assert.Contains(t, contextual.GenerationFingerprint(), fmt.Sprintf(":v%d", contextPolicyVersion))
+}
+
+// TestGenerationFingerprint_ExplicitOpenAIPreservesLegacyBytes catches an
+// explicit OpenAI mode unnecessarily staling an existing default generation.
+func TestGenerationFingerprint_ExplicitOpenAIPreservesLegacyBytes(t *testing.T) {
+	implicit := validConfig()
+	explicit := implicit
+	explicit.Embeddings.APIFormat = APIFormatOpenAI
+	assert.Equal(t, implicit.GenerationFingerprint(), explicit.GenerationFingerprint())
 }
 
 // TestSearchConfig_PointerSemantics_FromTOML rounds out the

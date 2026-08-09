@@ -28,17 +28,15 @@ type engineFixture struct {
 
 // fakeEmbedder returns a deterministic vector pointing along axis 0.
 type fakeEmbedder struct {
-	dim int
+	dim        int
+	queryCalls []string
 }
 
-func (f *fakeEmbedder) Embed(_ context.Context, inputs []string) ([][]float32, error) {
-	out := make([][]float32, len(inputs))
-	for i := range inputs {
-		v := make([]float32, f.dim)
-		v[0] = 1.0
-		out[i] = v
-	}
-	return out, nil
+func (f *fakeEmbedder) EmbedQuery(_ context.Context, text string) ([]float32, error) {
+	f.queryCalls = append(f.queryCalls, text)
+	v := make([]float32, f.dim)
+	v[0] = 1.0
+	return v, nil
 }
 
 func newEngineFixture(t *testing.T) *engineFixture {
@@ -163,6 +161,23 @@ func TestEngine_Hybrid_HappyPath(t *testing.T) {
 	assert.Equal(int64(1), results[0].MessageID, "top")
 	assert.Equal(f.GenID, meta.Generation.ID, "meta.Generation.ID")
 	assert.Equal(len(results), meta.ReturnedCount)
+}
+
+func TestEngine_SearchUsesEmbedQuery(t *testing.T) {
+	ctx := context.Background()
+	f := newEngineFixture(t)
+	client := &fakeEmbedder{dim: 4}
+	f.Engine.client = client
+
+	_, _, err := f.Engine.Search(ctx, SearchRequest{
+		Mode: ModeVector, FreeText: "find this", Limit: 5,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"find this"}, client.queryCalls)
+
+	_, err = f.Engine.EmbedQuery(ctx, "score this")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"find this", "score this"}, client.queryCalls)
 }
 
 func TestEngine_ScopedIndexRequiresMatchingMessageTypeFilter(t *testing.T) {
@@ -410,7 +425,7 @@ func TestEngine_EmbedTimeout_WrappedAsErrEmbeddingTimeout(t *testing.T) {
 // timeout fired.
 type timeoutEmbedder struct{}
 
-func (timeoutEmbedder) Embed(_ context.Context, _ []string) ([][]float32, error) {
+func (timeoutEmbedder) EmbedQuery(_ context.Context, _ string) ([]float32, error) {
 	return nil, context.DeadlineExceeded
 }
 
