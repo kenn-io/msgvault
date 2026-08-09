@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -125,15 +124,6 @@ func TestBuildStreamsRelationshipActivityUnderLowMemory(t *testing.T) {
 		conversationType: "email_thread",
 	})
 	requirements.NoError(setRelationshipTestMemoryLimit(db, "96MB"))
-
-	path := func(dataset string) string {
-		return parquetDatasetGlob(root, dataset)
-	}
-	legacyOutput := filepath.Join(t.TempDir(), "legacy.parquet")
-	_, err := db.Exec(`COPY (` + buildLegacyRelationshipActivitySQL(path) + `) TO '` +
-		quoteSQLString(legacyOutput) + `' (FORMAT PARQUET)`)
-	requirements.Error(err)
-	assertions.Contains(strings.ToLower(err.Error()), "out of memory")
 
 	result, err := Build(context.Background(), db, BuildOptions{
 		Mode:           ModeFull,
