@@ -142,6 +142,32 @@ func TestInitSchemaContext_MigrationLedgerStopsWhenTheContextIsCancelled(t *test
 	}
 }
 
+func TestInitSchemaContext_RelationshipSeedHonoursContext(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	st, err := Open(filepath.Join(t.TempDir(), "relationship-seed.db"))
+	require.NoError(err, "open store")
+	t.Cleanup(func() { _ = st.Close() })
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	trigger := cancelAtStatement{
+		stop:   "FROM relationship_types WHERE universal_id = ?",
+		cancel: cancel,
+	}
+	trigger.install(st.db)
+
+	err = st.InitSchemaContext(ctx)
+
+	require.True(trigger.fired, "the relationship seed query was never issued")
+	require.Error(err, "a cancelled relationship seed must stop schema initialisation")
+	require.ErrorIs(err, context.Canceled, "and report it as cancellation")
+	var count int
+	require.NoError(st.db.QueryRow(`SELECT COUNT(*) FROM relationship_types`).Scan(&count))
+	assert.Zero(count, "a cancelled relationship seed must roll back its transaction")
+}
+
 // TestInitSchemaContext_LegacyPhoneMergeStopsWhenTheContextIsCancelled covers
 // the link-graph rewrite inside the phone-unique migration's participant merge.
 //

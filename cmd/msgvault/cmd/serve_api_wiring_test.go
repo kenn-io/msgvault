@@ -72,3 +72,20 @@ func TestStoreAPIAdapterServesProfileAndCommunicationServiceRoutes(t *testing.T)
 		})
 	}
 }
+
+func TestStoreAPIAdapterServesPersonRelationshipRoutes(t *testing.T) {
+	requirements := require.New(t)
+	st := testutil.NewTestStore(t)
+
+	srv := api.NewServerWithOptions(api.ServerOptions{
+		Config: &config.Config{},
+		Store:  &storeAPIAdapter{store: st},
+		Logger: slog.New(slog.DiscardHandler),
+	})
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/relationship-types", nil)
+	response := httptest.NewRecorder()
+
+	srv.Router().ServeHTTP(response, request)
+
+	requirements.Equal(http.StatusOK, response.Code, response.Body.String())
+}

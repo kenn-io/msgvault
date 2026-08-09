@@ -1498,6 +1498,29 @@ components:
         - scope_policy
         - normalization
       type: object
+    CreatePersonRelationshipRequest:
+      additionalProperties: false
+      properties:
+        end_date:
+          type: string
+        notes:
+          nullable: true
+          type: string
+        relationship_type_slug:
+          type: string
+        source_person_id:
+          format: int64
+          type: integer
+        start_date:
+          type: string
+        target_person_id:
+          format: int64
+          type: integer
+      required:
+        - source_person_id
+        - target_person_id
+        - relationship_type_slug
+      type: object
     CreatePersonRequest:
       additionalProperties: false
       properties:
@@ -1506,6 +1529,34 @@ components:
           type: integer
       required:
         - participant_id
+      type: object
+    CreateRelationshipTypeRequest:
+      additionalProperties: false
+      properties:
+        color:
+          nullable: true
+          type: string
+        description:
+          nullable: true
+          type: string
+        forward_label:
+          type: string
+        icon:
+          nullable: true
+          type: string
+        is_symmetric:
+          type: boolean
+        reverse_label:
+          type: string
+        slug:
+          type: string
+        vcard_related_type:
+          nullable: true
+          type: string
+      required:
+        - slug
+        - forward_label
+        - reverse_label
       type: object
     CreateRequest:
       additionalProperties: false
@@ -3513,6 +3564,16 @@ components:
         label:
           type: string
       type: object
+    PatchPersonRelationshipRequest:
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        end_date:
+          type: string
+        notes:
+          nullable: true
+          type: string
+      type: object
     PatchPersonRequest:
       additionalProperties: false
       properties:
@@ -3524,6 +3585,23 @@ components:
           x-omitempty: false
       required:
         - display_name
+      type: object
+    PatchRelationshipTypeRequest:
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        color:
+          type: string
+        description:
+          type: string
+        forward_label:
+          type: string
+        icon:
+          type: string
+        reverse_label:
+          type: string
+        vcard_related_type:
+          type: string
       type: object
     PatchSavedViewRequest:
       additionalProperties: false
@@ -4256,6 +4334,108 @@ components:
         names:
           $ref: "#/components/schemas/PersonNamePatchRequest"
       type: object
+    PersonRelationship:
+      properties:
+        confidence:
+          format: double
+          type: number
+        created_at:
+          format: date-time
+          type: string
+        created_by:
+          type: string
+        end_date:
+          $ref: "#/components/schemas/PartialDate"
+        forward_label:
+          type: string
+        id:
+          format: int64
+          type: integer
+        is_symmetric:
+          type: boolean
+        notes:
+          type: string
+        relationship_type_id:
+          format: int64
+          type: integer
+        reverse_label:
+          type: string
+        revision:
+          format: int64
+          type: integer
+        source:
+          type: string
+        source_person_id:
+          format: int64
+          type: integer
+        source_ref:
+          type: string
+        start_date:
+          $ref: "#/components/schemas/PartialDate"
+        status:
+          type: string
+        target_person_id:
+          format: int64
+          type: integer
+        type_slug:
+          type: string
+        updated_at:
+          format: date-time
+          type: string
+        updated_by:
+          type: string
+        vcard_identity:
+          $ref: "#/components/schemas/VCardIdentity"
+      required:
+        - id
+        - source_person_id
+        - target_person_id
+        - relationship_type_id
+        - type_slug
+        - forward_label
+        - reverse_label
+        - is_symmetric
+        - status
+        - source
+        - vcard_identity
+        - created_by
+        - updated_by
+        - revision
+        - created_at
+        - updated_at
+      type: object
+    PersonRelationshipView:
+      properties:
+        counterpart_display_name:
+          type: string
+        counterpart_label:
+          type: string
+        counterpart_person_id:
+          format: int64
+          type: integer
+        counterpart_vcard_uid:
+          type: string
+        direction:
+          type: string
+        relationship:
+          $ref: "#/components/schemas/PersonRelationship"
+      required:
+        - relationship
+        - direction
+        - counterpart_person_id
+        - counterpart_label
+        - counterpart_vcard_uid
+      type: object
+    PersonRelationshipsResponse:
+      properties:
+        relationships:
+          items:
+            $ref: "#/components/schemas/PersonRelationshipView"
+          nullable: true
+          type: array
+      required:
+        - relationships
+      type: object
     PersonSearchHTTPResponse:
       properties:
         cache_revision:
@@ -4408,6 +4588,70 @@ components:
         - identifier
         - reason
       type: object
+    RelationshipReview:
+      properties:
+        accepted_relationship_id:
+          format: int64
+          type: integer
+        created_at:
+          format: date-time
+          type: string
+        created_by:
+          type: string
+        id:
+          format: int64
+          type: integer
+        matched_person_id:
+          format: int64
+          type: integer
+        person_id:
+          format: int64
+          type: integer
+        raw_related_type:
+          type: string
+        raw_related_value:
+          type: string
+        reviewed_at:
+          format: date-time
+          type: string
+        reviewed_by:
+          type: string
+        source:
+          type: string
+        source_ref:
+          type: string
+        status:
+          type: string
+        updated_at:
+          format: date-time
+          type: string
+        value_kind:
+          type: string
+        vcard_identity:
+          $ref: "#/components/schemas/VCardIdentity"
+      required:
+        - id
+        - person_id
+        - raw_related_value
+        - raw_related_type
+        - value_kind
+        - status
+        - source
+        - vcard_identity
+        - created_by
+        - created_at
+        - updated_at
+      type: object
+    RelationshipReviewsResponse:
+      properties:
+        reviews:
+          items:
+            $ref: "#/components/schemas/RelationshipReview"
+          nullable: true
+          type: array
+      required:
+        - reviews
+      type: object
     RelationshipRow:
       properties:
         canonical_id:
@@ -4513,6 +4757,71 @@ components:
         - total_count
         - cache_revision
         - identity_revision
+      type: object
+    RelationshipType:
+      properties:
+        color:
+          type: string
+        created_at:
+          format: date-time
+          type: string
+        description:
+          type: string
+        forward_label:
+          type: string
+        icon:
+          type: string
+        id:
+          format: int64
+          type: integer
+        inverse_type_id:
+          format: int64
+          type: integer
+        is_canonical:
+          type: boolean
+        is_deletable:
+          type: boolean
+        is_symmetric:
+          type: boolean
+        ownership:
+          type: string
+        reverse_label:
+          type: string
+        revision:
+          format: int64
+          type: integer
+        slug:
+          type: string
+        universal_id:
+          type: string
+        updated_at:
+          format: date-time
+          type: string
+        vcard_related_type:
+          type: string
+      required:
+        - id
+        - universal_id
+        - slug
+        - forward_label
+        - reverse_label
+        - is_symmetric
+        - is_canonical
+        - ownership
+        - is_deletable
+        - revision
+        - created_at
+        - updated_at
+      type: object
+    RelationshipTypesResponse:
+      properties:
+        relationship_types:
+          items:
+            $ref: "#/components/schemas/RelationshipType"
+          nullable: true
+          type: array
+      required:
+        - relationship_types
       type: object
     RelationshipsHTTPRequest:
       additionalProperties: false
@@ -5990,7 +6299,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 1.38.0
+  version: 1.39.0
 openapi: 3.0.3
 paths:
   /api/ping:
@@ -10081,6 +10390,294 @@ paths:
       summary: Get one person's canonical activity timeline
       tags:
         - Exploration
+  /api/v1/person-relationship-reviews:
+    get:
+      operationId: listPersonRelationshipReviews
+      parameters:
+        - in: query
+          name: status
+          schema:
+            enum:
+              - pending
+              - accepted
+              - rejected
+            type: string
+        - in: query
+          name: person_id
+          schema:
+            format: int64
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RelationshipReviewsResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: List imported RELATED values awaiting review
+      tags:
+        - API
+  /api/v1/person-relationships:
+    post:
+      operationId: createPersonRelationship
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreatePersonRelationshipRequest"
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PersonRelationship"
+          description: Created
+          headers:
+            ETag:
+              description: Strong person relationship revision tag for optimistic concurrency
+              schema:
+                type: string
+            Location:
+              description: Created person relationship
+              schema:
+                type: string
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Declare a relationship between two persons
+      tags:
+        - API
+  /api/v1/person-relationships/{id}:
+    delete:
+      operationId: deletePersonRelationship
+      parameters:
+        - description: Person relationship ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+        - description: Strong ETag returned by the latest person relationship read
+          in: header
+          name: If-Match
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: No Content
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "428":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Delete a person relationship
+      tags:
+        - API
+    get:
+      operationId: getPersonRelationship
+      parameters:
+        - description: Person relationship ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PersonRelationship"
+          description: OK
+          headers:
+            ETag:
+              description: Strong person relationship revision tag for optimistic concurrency
+              schema:
+                type: string
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Get one person relationship
+      tags:
+        - API
+    patch:
+      operationId: patchPersonRelationship
+      parameters:
+        - description: Person relationship ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+        - description: Strong ETag returned by the latest person relationship read
+          in: header
+          name: If-Match
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PatchPersonRelationshipRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PersonRelationship"
+          description: OK
+          headers:
+            ETag:
+              description: Strong person relationship revision tag for optimistic concurrency
+              schema:
+                type: string
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "428":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: End a relationship or replace its notes
+      tags:
+        - API
   /api/v1/persons:
     get:
       description: "Durable persons are curated profiles; /api/v1/people exposes derived analytics groupings. The listing is deliberately unpaginated: persons exist only through explicit promotion, so the set stays small."
@@ -10800,6 +11397,51 @@ paths:
       summary: Download stored inline content for one person profile media value
       tags:
         - API
+  /api/v1/persons/{id}/relationships:
+    get:
+      operationId: listPersonRelationships
+      parameters:
+        - description: Durable person ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+        - in: query
+          name: include_ended
+          schema:
+            type: boolean
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PersonRelationshipsResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: List one person's relationships
+      tags:
+        - API
   /api/v1/query:
     post:
       operationId: runQuery
@@ -10825,6 +11467,267 @@ paths:
       security:
         - apiKey: []
       summary: Run an aggregate query
+      tags:
+        - API
+  /api/v1/relationship-types:
+    get:
+      operationId: listRelationshipTypes
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RelationshipTypesResponse"
+          description: OK
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: List person relationship types
+      tags:
+        - API
+    post:
+      operationId: createRelationshipType
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateRelationshipTypeRequest"
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RelationshipType"
+          description: Created
+          headers:
+            ETag:
+              description: Strong relationship type revision tag for optimistic concurrency
+              schema:
+                type: string
+            Location:
+              description: Created relationship type
+              schema:
+                type: string
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Create a user-owned relationship type
+      tags:
+        - API
+  /api/v1/relationship-types/{id}:
+    delete:
+      operationId: deleteRelationshipType
+      parameters:
+        - description: Relationship type ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+        - description: Strong ETag returned by the latest relationship type read
+          in: header
+          name: If-Match
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: No Content
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "428":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Delete an unused relationship type
+      tags:
+        - API
+    get:
+      operationId: getRelationshipType
+      parameters:
+        - description: Relationship type ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RelationshipType"
+          description: OK
+          headers:
+            ETag:
+              description: Strong relationship type revision tag for optimistic concurrency
+              schema:
+                type: string
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Get a relationship type
+      tags:
+        - API
+    patch:
+      operationId: patchRelationshipType
+      parameters:
+        - description: Relationship type ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+        - description: Strong ETag returned by the latest relationship type read
+          in: header
+          name: If-Match
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PatchRelationshipTypeRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RelationshipType"
+          description: OK
+          headers:
+            ETag:
+              description: Strong relationship type revision tag for optimistic concurrency
+              schema:
+                type: string
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "428":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Update a relationship type
       tags:
         - API
   /api/v1/relationships:

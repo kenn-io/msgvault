@@ -1320,8 +1320,36 @@ func (c CreateCommunicationServiceRequest) Validate() error {
 	return errors
 }
 
+type CreatePersonRelationshipRequest struct {
+	EndDate              *string `json:"end_date,omitempty"`
+	Notes                *string `json:"notes,omitempty"`
+	RelationshipTypeSlug string  `json:"relationship_type_slug" validate:"required"`
+	SourcePersonID       int64   `json:"source_person_id"`
+	StartDate            *string `json:"start_date,omitempty"`
+	TargetPersonID       int64   `json:"target_person_id"`
+}
+
+func (c CreatePersonRelationshipRequest) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(c))
+}
+
 type CreatePersonRequest struct {
 	ParticipantID int64 `json:"participant_id"`
+}
+
+type CreateRelationshipTypeRequest struct {
+	Color            *string `json:"color,omitempty"`
+	Description      *string `json:"description,omitempty"`
+	ForwardLabel     string  `json:"forward_label" validate:"required"`
+	Icon             *string `json:"icon,omitempty"`
+	IsSymmetric      *bool   `json:"is_symmetric,omitempty"`
+	ReverseLabel     string  `json:"reverse_label" validate:"required"`
+	Slug             string  `json:"slug" validate:"required"`
+	VcardRelatedType *string `json:"vcard_related_type,omitempty"`
+}
+
+func (c CreateRelationshipTypeRequest) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(c))
 }
 
 type CreateRequest struct {
@@ -3304,12 +3332,26 @@ type PatchAttributeDefinitionRequest struct {
 	Label        *string `json:"label,omitempty"`
 }
 
+type PatchPersonRelationshipRequest struct {
+	EndDate *string `json:"end_date,omitempty"`
+	Notes   *string `json:"notes,omitempty"`
+}
+
 type PatchPersonRequest struct {
 	DisplayName *string `json:"display_name" validate:"omitempty"`
 }
 
 func (p PatchPersonRequest) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(p))
+}
+
+type PatchRelationshipTypeRequest struct {
+	Color            *string `json:"color,omitempty"`
+	Description      *string `json:"description,omitempty"`
+	ForwardLabel     *string `json:"forward_label,omitempty"`
+	Icon             *string `json:"icon,omitempty"`
+	ReverseLabel     *string `json:"reverse_label,omitempty"`
+	VcardRelatedType *string `json:"vcard_related_type,omitempty"`
 }
 
 type PatchSavedViewRequest struct {
@@ -4190,6 +4232,134 @@ func (p PersonProfilePatchRequest) Validate() error {
 	return errors
 }
 
+type PersonRelationship struct {
+	Confidence         *float64      `json:"confidence,omitempty"`
+	CreatedAt          time.Time     `json:"created_at" validate:"required"`
+	CreatedBy          string        `json:"created_by" validate:"required"`
+	EndDate            *PartialDate  `json:"end_date,omitempty"`
+	ForwardLabel       string        `json:"forward_label" validate:"required"`
+	ID                 int64         `json:"id"`
+	IsSymmetric        bool          `json:"is_symmetric"`
+	Notes              *string       `json:"notes,omitempty"`
+	RelationshipTypeID int64         `json:"relationship_type_id"`
+	ReverseLabel       string        `json:"reverse_label" validate:"required"`
+	Revision           int64         `json:"revision"`
+	Source             string        `json:"source" validate:"required"`
+	SourcePersonID     int64         `json:"source_person_id"`
+	SourceRef          *string       `json:"source_ref,omitempty"`
+	StartDate          *PartialDate  `json:"start_date,omitempty"`
+	Status             string        `json:"status" validate:"required"`
+	TargetPersonID     int64         `json:"target_person_id"`
+	TypeSlug           string        `json:"type_slug" validate:"required"`
+	UpdatedAt          time.Time     `json:"updated_at" validate:"required"`
+	UpdatedBy          string        `json:"updated_by" validate:"required"`
+	VcardIdentity      VCardIdentity `json:"vcard_identity"`
+}
+
+func (p PersonRelationship) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(p.CreatedAt, "required"); err != nil {
+		errors = errors.Append("CreatedAt", err)
+	}
+	if err := typesValidator.Var(p.CreatedBy, "required"); err != nil {
+		errors = errors.Append("CreatedBy", err)
+	}
+	if p.EndDate != nil {
+		if v, ok := any(p.EndDate).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("EndDate", err)
+			}
+		}
+	}
+	if err := typesValidator.Var(p.ForwardLabel, "required"); err != nil {
+		errors = errors.Append("ForwardLabel", err)
+	}
+	if err := typesValidator.Var(p.ReverseLabel, "required"); err != nil {
+		errors = errors.Append("ReverseLabel", err)
+	}
+	if err := typesValidator.Var(p.Source, "required"); err != nil {
+		errors = errors.Append("Source", err)
+	}
+	if p.StartDate != nil {
+		if v, ok := any(p.StartDate).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("StartDate", err)
+			}
+		}
+	}
+	if err := typesValidator.Var(p.Status, "required"); err != nil {
+		errors = errors.Append("Status", err)
+	}
+	if err := typesValidator.Var(p.TypeSlug, "required"); err != nil {
+		errors = errors.Append("TypeSlug", err)
+	}
+	if err := typesValidator.Var(p.UpdatedAt, "required"); err != nil {
+		errors = errors.Append("UpdatedAt", err)
+	}
+	if err := typesValidator.Var(p.UpdatedBy, "required"); err != nil {
+		errors = errors.Append("UpdatedBy", err)
+	}
+	if v, ok := any(p.VcardIdentity).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("VcardIdentity", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type PersonRelationshipView struct {
+	CounterpartDisplayName *string            `json:"counterpart_display_name,omitempty"`
+	CounterpartLabel       string             `json:"counterpart_label" validate:"required"`
+	CounterpartPersonID    int64              `json:"counterpart_person_id"`
+	CounterpartVcardUID    string             `json:"counterpart_vcard_uid" validate:"required"`
+	Direction              string             `json:"direction" validate:"required"`
+	Relationship           PersonRelationship `json:"relationship"`
+}
+
+func (p PersonRelationshipView) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(p.CounterpartLabel, "required"); err != nil {
+		errors = errors.Append("CounterpartLabel", err)
+	}
+	if err := typesValidator.Var(p.CounterpartVcardUID, "required"); err != nil {
+		errors = errors.Append("CounterpartVcardUID", err)
+	}
+	if err := typesValidator.Var(p.Direction, "required"); err != nil {
+		errors = errors.Append("Direction", err)
+	}
+	if v, ok := any(p.Relationship).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Relationship", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type PersonRelationshipsResponse struct {
+	Relationships []PersonRelationshipView `json:"relationships,omitempty" validate:"required"`
+}
+
+func (p PersonRelationshipsResponse) Validate() error {
+	var errors runtime.ValidationErrors
+	for i, item := range p.Relationships {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Relationships[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
 type PersonSearchHTTPResponse struct {
 	CacheRevision       string           `json:"cache_revision" validate:"required"`
 	CandidateSnapshotID *string          `json:"candidate_snapshot_id,omitempty"`
@@ -4344,6 +4514,81 @@ func (r RejectedCandidate) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(r))
 }
 
+type RelationshipReview struct {
+	AcceptedRelationshipID *int64        `json:"accepted_relationship_id,omitempty"`
+	CreatedAt              time.Time     `json:"created_at" validate:"required"`
+	CreatedBy              string        `json:"created_by" validate:"required"`
+	ID                     int64         `json:"id"`
+	MatchedPersonID        *int64        `json:"matched_person_id,omitempty"`
+	PersonID               int64         `json:"person_id"`
+	RawRelatedType         string        `json:"raw_related_type" validate:"required"`
+	RawRelatedValue        string        `json:"raw_related_value" validate:"required"`
+	ReviewedAt             *time.Time    `json:"reviewed_at,omitempty"`
+	ReviewedBy             *string       `json:"reviewed_by,omitempty"`
+	Source                 string        `json:"source" validate:"required"`
+	SourceRef              *string       `json:"source_ref,omitempty"`
+	Status                 string        `json:"status" validate:"required"`
+	UpdatedAt              time.Time     `json:"updated_at" validate:"required"`
+	ValueKind              string        `json:"value_kind" validate:"required"`
+	VcardIdentity          VCardIdentity `json:"vcard_identity"`
+}
+
+func (r RelationshipReview) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(r.CreatedAt, "required"); err != nil {
+		errors = errors.Append("CreatedAt", err)
+	}
+	if err := typesValidator.Var(r.CreatedBy, "required"); err != nil {
+		errors = errors.Append("CreatedBy", err)
+	}
+	if err := typesValidator.Var(r.RawRelatedType, "required"); err != nil {
+		errors = errors.Append("RawRelatedType", err)
+	}
+	if err := typesValidator.Var(r.RawRelatedValue, "required"); err != nil {
+		errors = errors.Append("RawRelatedValue", err)
+	}
+	if err := typesValidator.Var(r.Source, "required"); err != nil {
+		errors = errors.Append("Source", err)
+	}
+	if err := typesValidator.Var(r.Status, "required"); err != nil {
+		errors = errors.Append("Status", err)
+	}
+	if err := typesValidator.Var(r.UpdatedAt, "required"); err != nil {
+		errors = errors.Append("UpdatedAt", err)
+	}
+	if err := typesValidator.Var(r.ValueKind, "required"); err != nil {
+		errors = errors.Append("ValueKind", err)
+	}
+	if v, ok := any(r.VcardIdentity).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("VcardIdentity", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type RelationshipReviewsResponse struct {
+	Reviews []RelationshipReview `json:"reviews,omitempty" validate:"required"`
+}
+
+func (r RelationshipReviewsResponse) Validate() error {
+	var errors runtime.ValidationErrors
+	for i, item := range r.Reviews {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Reviews[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
 type RelationshipRow struct {
 	CanonicalID  int64               `json:"canonical_id"`
 	DisplayLabel string              `json:"display_label" validate:"required"`
@@ -4434,6 +4679,49 @@ func (r RelationshipTimelineHTTPResponse) Validate() error {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
 				errors = errors.Append(fmt.Sprintf("Rows[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type RelationshipType struct {
+	Color            *string   `json:"color,omitempty"`
+	CreatedAt        time.Time `json:"created_at" validate:"required"`
+	Description      *string   `json:"description,omitempty"`
+	ForwardLabel     string    `json:"forward_label" validate:"required"`
+	Icon             *string   `json:"icon,omitempty"`
+	ID               int64     `json:"id"`
+	InverseTypeID    *int64    `json:"inverse_type_id,omitempty"`
+	IsCanonical      bool      `json:"is_canonical"`
+	IsDeletable      bool      `json:"is_deletable"`
+	IsSymmetric      bool      `json:"is_symmetric"`
+	Ownership        string    `json:"ownership" validate:"required"`
+	ReverseLabel     string    `json:"reverse_label" validate:"required"`
+	Revision         int64     `json:"revision"`
+	Slug             string    `json:"slug" validate:"required"`
+	UniversalID      string    `json:"universal_id" validate:"required"`
+	UpdatedAt        time.Time `json:"updated_at" validate:"required"`
+	VcardRelatedType *string   `json:"vcard_related_type,omitempty"`
+}
+
+func (r RelationshipType) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(r))
+}
+
+type RelationshipTypesResponse struct {
+	RelationshipTypes []RelationshipType `json:"relationship_types,omitempty" validate:"required"`
+}
+
+func (r RelationshipTypesResponse) Validate() error {
+	var errors runtime.ValidationErrors
+	for i, item := range r.RelationshipTypes {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("RelationshipTypes[%d]", i), err)
 			}
 		}
 	}

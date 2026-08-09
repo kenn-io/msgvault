@@ -691,6 +691,197 @@ CREATE INDEX IF NOT EXISTS idx_participant_links_b
     ON participant_links(participant_b);
 
 -- ============================================================================
+-- PERSON RELATIONSHIPS
+-- ============================================================================
+
+-- Relationship type metadata. A type is presentation and interchange
+-- metadata, never a second copy of an edge: forward_label and reverse_label
+-- let ONE person_relationships row render correctly from both endpoints, so
+-- there is no mirrored row that can drift (the failure mode seen in personal
+-- CRMs that store both directions).
+--
+-- Label contract. A person_relationships row asserts exactly one sentence:
+--
+--     <source person> is the <forward_label> of <target person>.
+--
+-- The inverse sentence is implied by the same row:
+--
+--     <target person> is the <reverse_label> of <source person>.
+--
+-- Worked example. Type 'parent' has forward_label 'parent' and reverse_label
+-- 'child'. The row (source=alice, target=bob, type=parent) asserts "alice is
+-- the parent of bob". Alice's relationship list shows "bob - child"; Bob's
+-- shows "alice - parent". One row, two correct labels.
+--
+-- slug and universal_id are immutable machine identity; labels, colour, icon,
+-- and description are mutable presentation. universal_id is an OPAQUE UUID,
+-- hardcoded per seeded type so the same type has the same identity in every
+-- install (which keeps exports and API clients portable) and minted randomly
+-- for user-created types. It is deliberately not derived from the slug: a
+-- derived identifier would make the slug load-bearing for identity, so the
+-- slug would stop being independent and the two columns would collapse into
+-- one immutable string wearing two names.
+--
+-- is_symmetric types (friend, spouse, sibling) need no orientation: writes
+-- normalize the endpoints to (lower id, higher id) so the unordered pair has
+-- one representation and the active-edge unique index rejects the mirror.
+--
+-- is_canonical/inverse_type_id exist because the IANA RELATED registry
+-- contains one genuine inverse PAIR: 'parent' and 'child'. Both values must
+-- map for lossless vCard interchange, but they describe the same edge from
+-- opposite ends. 'child' is therefore marked non-canonical and points at
+-- 'parent'; a write using 'child' is stored as 'parent' with the endpoints
+-- swapped. Without this, (bob child-of alice) and (alice parent-of bob) would
+-- both be storable and the duplicate-active-edge rule would not hold.
+--
+-- vcard_related_type is mutable interchange metadata and UNIQUE (NULLs are
+-- distinct in both backends) so each registered RELATED TYPE value resolves
+-- to exactly one type on import. Startup seed reconciliation preserves a
+-- user's mapping choice instead of restoring the original seed value.
+--
+-- ownership is TEXT ('system' | 'user') rather than an is_system boolean, and
+-- carries no CHECK: the roadmap leaves room for a third ownership kind such as
+-- vendor or plugin, and widening a TEXT vocabulary needs no SQLite table
+-- rebuild whereas a boolean would need a new column. It is validated in Go so
+-- both backends reject the same values.
+CREATE TABLE IF NOT EXISTS relationship_types (
+    id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+    universal_id       TEXT NOT NULL UNIQUE,
+    slug               TEXT NOT NULL UNIQUE,
+    forward_label      TEXT NOT NULL,
+    reverse_label      TEXT NOT NULL,
+    is_symmetric       BOOLEAN NOT NULL DEFAULT FALSE,
+    is_canonical       BOOLEAN NOT NULL DEFAULT TRUE,
+    inverse_type_id    INTEGER REFERENCES relationship_types(id) ON DELETE SET NULL,
+    vcard_related_type TEXT UNIQUE,
+    color              TEXT,
+    icon               TEXT,
+    description        TEXT,
+    ownership          TEXT NOT NULL DEFAULT 'user',
+    is_deletable       BOOLEAN NOT NULL DEFAULT TRUE,
+    revision           INTEGER NOT NULL DEFAULT 1,
+    created_at         DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at         DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CHECK (is_symmetric = FALSE OR forward_label = reverse_label),
+    CHECK (is_canonical = TRUE OR inverse_type_id IS NOT NULL)
+);
+
+-- One canonical person-to-person relationship edge. The row asserts
+-- "source_person_id is the type's forward_label of target_person_id"; the
+-- reverse label renders the same row from the other endpoint. Non-canonical
+-- inverse types are rewritten by the writer and symmetric types order their
+-- endpoints, so there is never a second mirror row.
+--
+-- start_year/month/day and end_year/month/day store nullable partial-date
+-- components. A bound's precision degrades year -> month -> day, and every
+-- present relationship bound must include a year. The store validates calendar
+-- dates and compares bounds at shared precision; the CHECKs make the portable
+-- component shape and range true even for writers that bypass Go.
+--
+-- start_* / end_* are world time, while created_at / updated_at are transaction
+-- time. Ending fills end_* and retains history; the partial unique index allows
+-- a new row only after the earlier edge is no longer active.
+CREATE TABLE IF NOT EXISTS person_relationships (
+    id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+    source_person_id     INTEGER NOT NULL REFERENCES persons(id) ON DELETE CASCADE,
+    target_person_id     INTEGER NOT NULL REFERENCES persons(id) ON DELETE CASCADE,
+    relationship_type_id INTEGER NOT NULL REFERENCES relationship_types(id),
+    start_year           INTEGER,
+    start_month          INTEGER,
+    start_day            INTEGER,
+    end_year             INTEGER,
+    end_month            INTEGER,
+    end_day              INTEGER,
+    status               TEXT NOT NULL DEFAULT 'active',
+    notes                TEXT,
+    source               TEXT NOT NULL DEFAULT 'user',
+    source_ref           TEXT,
+    confidence           REAL,
+    vcard_property       TEXT,
+    vcard_group          TEXT,
+    vcard_prop_id        TEXT,
+    vcard_pid            TEXT,
+    vcard_altid          TEXT,
+    created_by           TEXT NOT NULL DEFAULT 'user',
+    updated_by           TEXT NOT NULL DEFAULT 'user',
+    revision             INTEGER NOT NULL DEFAULT 1,
+    created_at           DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at           DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CHECK (source_person_id <> target_person_id),
+    CHECK (start_year BETWEEN 1 AND 9999),
+    CHECK (start_month BETWEEN 1 AND 12),
+    CHECK (start_day BETWEEN 1 AND 31),
+    CHECK (end_year BETWEEN 1 AND 9999),
+    CHECK (end_month BETWEEN 1 AND 12),
+    CHECK (end_day BETWEEN 1 AND 31),
+    CHECK (start_day IS NULL OR start_month IS NOT NULL),
+    CHECK (end_day IS NULL OR end_month IS NOT NULL),
+    CHECK (start_month IS NULL OR start_year IS NOT NULL),
+    CHECK (end_month IS NULL OR end_year IS NOT NULL),
+    CHECK (source IN ('user', 'carddav_import', 'vcard_import',
+                      'archive_observation', 'extraction', 'enrichment',
+                      'system')),
+    CHECK (confidence IS NULL OR (confidence >= 0 AND confidence <= 1
+           AND source NOT IN ('user', 'carddav_import', 'vcard_import')))
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_person_relationships_active_unique
+    ON person_relationships(source_person_id, target_person_id, relationship_type_id)
+    WHERE end_year IS NULL;
+CREATE INDEX IF NOT EXISTS idx_person_relationships_source
+    ON person_relationships(source_person_id);
+CREATE INDEX IF NOT EXISTS idx_person_relationships_target
+    ON person_relationships(target_person_id);
+CREATE INDEX IF NOT EXISTS idx_person_relationships_target_active
+    ON person_relationships(target_person_id, relationship_type_id)
+    WHERE end_year IS NULL;
+CREATE INDEX IF NOT EXISTS idx_person_relationships_type
+    ON person_relationships(relationship_type_id);
+
+-- Imported vCard RELATED values that did not automatically resolve to a
+-- curated person relationship. Exact UID is the only automatic identity
+-- match; all other imported assertions stay here for a human decision.
+CREATE TABLE IF NOT EXISTS person_relationship_reviews (
+    id                       INTEGER PRIMARY KEY AUTOINCREMENT,
+    person_id                INTEGER NOT NULL REFERENCES persons(id) ON DELETE CASCADE,
+    raw_related_value        TEXT NOT NULL,
+    raw_related_type         TEXT NOT NULL DEFAULT '',
+    value_kind               TEXT NOT NULL,
+    matched_person_id        INTEGER REFERENCES persons(id) ON DELETE SET NULL,
+    accepted_relationship_id INTEGER REFERENCES person_relationships(id) ON DELETE SET NULL,
+    status                   TEXT NOT NULL DEFAULT 'pending',
+    source                   TEXT NOT NULL,
+    source_ref               TEXT,
+    vcard_property           TEXT,
+    vcard_group              TEXT,
+    vcard_prop_id            TEXT,
+    vcard_pid                TEXT,
+    vcard_altid              TEXT,
+    created_by               TEXT NOT NULL DEFAULT 'system',
+    reviewed_by              TEXT,
+    reviewed_at              DATETIME,
+    created_at               DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at               DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CHECK (matched_person_id IS NULL OR matched_person_id <> person_id),
+    CHECK (source IN ('user', 'carddav_import', 'vcard_import',
+                      'archive_observation', 'extraction', 'enrichment',
+                      'system'))
+);
+
+-- One review per parsed property occurrence. COALESCE makes the nullable
+-- provenance/property identity fields participate in uniqueness identically
+-- on SQLite and PostgreSQL while preserving exact re-import idempotency.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_person_relationship_reviews_occurrence_unique
+    ON person_relationship_reviews(
+        person_id, raw_related_type, raw_related_value, source,
+        COALESCE(source_ref, ''), COALESCE(vcard_property, ''),
+        COALESCE(vcard_group, ''), COALESCE(vcard_prop_id, ''),
+        COALESCE(vcard_pid, ''), COALESCE(vcard_altid, '')
+    );
+CREATE INDEX IF NOT EXISTS idx_person_relationship_reviews_status
+    ON person_relationship_reviews(status, person_id, id);
+
+-- ============================================================================
 -- PORTABLE FIELD METADATA AND TYPED ATTRIBUTES
 -- ============================================================================
 

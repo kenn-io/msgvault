@@ -672,3 +672,21 @@ func (t TaskIntegrationStatusResponseState) Validate() error {
 		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid TaskIntegrationStatusResponseState value, got: %v", t))
 	}
 }
+
+type ListPersonRelationshipReviewsQueryStatus string
+
+const (
+	Accepted ListPersonRelationshipReviewsQueryStatus = "accepted"
+	Pending  ListPersonRelationshipReviewsQueryStatus = "pending"
+	Rejected ListPersonRelationshipReviewsQueryStatus = "rejected"
+)
+
+// Validate checks if the ListPersonRelationshipReviewsQueryStatus value is valid
+func (l ListPersonRelationshipReviewsQueryStatus) Validate() error {
+	switch l {
+	case Accepted, Pending, Rejected:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid ListPersonRelationshipReviewsQueryStatus value, got: %v", l))
+	}
+}

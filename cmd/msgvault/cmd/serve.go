@@ -1100,6 +1100,7 @@ var _ api.PersonProfileValueStore = (*storeAPIAdapter)(nil)
 var _ api.CommunicationServiceStore = (*storeAPIAdapter)(nil)
 var _ api.AttributeDefinitionStore = (*storeAPIAdapter)(nil)
 var _ api.PersonAttributeStore = (*storeAPIAdapter)(nil)
+var _ api.PersonRelationshipStore = (*storeAPIAdapter)(nil)
 var _ api.IdentityCacheRefresher = (*storeAPIAdapter)(nil)
 var _ api.ClusterLookupStore = (*storeAPIAdapter)(nil)
 var _ api.ConversationWindowStore = (*storeAPIAdapter)(nil)
@@ -1987,6 +1988,72 @@ func (a *storeAPIAdapter) SupersedePersonAttributeValueContext(
 	ctx context.Context, input store.PersonAttributeSupersedeInput,
 ) (*store.PersonAttributeWrite, error) {
 	return a.store.SupersedePersonAttributeValueContext(ctx, input)
+}
+
+func (a *storeAPIAdapter) ListRelationshipTypesContext(
+	ctx context.Context,
+) ([]store.RelationshipType, error) {
+	return a.store.ListRelationshipTypesContext(ctx)
+}
+
+func (a *storeAPIAdapter) GetRelationshipTypeContext(
+	ctx context.Context, id int64,
+) (*store.RelationshipType, error) {
+	return a.store.GetRelationshipTypeContext(ctx, id)
+}
+
+func (a *storeAPIAdapter) CreateRelationshipTypeContext(
+	ctx context.Context, input store.RelationshipTypeInput,
+) (*store.RelationshipType, error) {
+	return a.store.CreateRelationshipTypeContext(ctx, input)
+}
+
+func (a *storeAPIAdapter) UpdateRelationshipTypeContext(
+	ctx context.Context, id, expectedRevision int64, update store.RelationshipTypeUpdate,
+) (*store.RelationshipType, error) {
+	return a.store.UpdateRelationshipTypeContext(ctx, id, expectedRevision, update)
+}
+
+func (a *storeAPIAdapter) DeleteRelationshipTypeContext(
+	ctx context.Context, id, expectedRevision int64,
+) error {
+	return a.store.DeleteRelationshipTypeContext(ctx, id, expectedRevision)
+}
+
+func (a *storeAPIAdapter) AddPersonRelationshipContext(
+	ctx context.Context, input store.PersonRelationshipInput,
+) (*store.PersonRelationship, error) {
+	return a.store.AddPersonRelationshipContext(ctx, input)
+}
+
+func (a *storeAPIAdapter) GetPersonRelationshipContext(
+	ctx context.Context, id int64,
+) (*store.PersonRelationship, error) {
+	return a.store.GetPersonRelationshipContext(ctx, id)
+}
+
+func (a *storeAPIAdapter) PatchPersonRelationshipContext(
+	ctx context.Context, id, expectedRevision int64, patch store.PersonRelationshipPatch, actor string,
+) (*store.PersonRelationship, error) {
+	return a.store.PatchPersonRelationshipContext(ctx, id, expectedRevision, patch, actor)
+}
+
+func (a *storeAPIAdapter) DeletePersonRelationshipContext(
+	ctx context.Context, id, expectedRevision int64,
+) error {
+	return a.store.DeletePersonRelationshipContext(ctx, id, expectedRevision)
+}
+
+func (a *storeAPIAdapter) ListPersonRelationshipsContext(
+	ctx context.Context, personID int64, opts store.PersonRelationshipListOptions,
+) ([]store.PersonRelationshipView, error) {
+	return a.store.ListPersonRelationshipsContext(ctx, personID, opts)
+}
+
+func (a *storeAPIAdapter) ListRelationshipReviewsContext(
+	ctx context.Context, opts store.RelationshipReviewListOptions,
+) ([]store.RelationshipReview, error) {
+	return a.store.ListRelationshipReviewsContext(ctx, opts)
 }
 
 func (a *storeAPIAdapter) ClusterMembers(id int64) ([]int64, error) {

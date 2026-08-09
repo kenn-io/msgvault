@@ -448,6 +448,26 @@ func (g GetMessageInlinePartQuery) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(g))
 }
 
+type ListPersonRelationshipReviewsQuery struct {
+	Status   *ListPersonRelationshipReviewsQueryStatus `json:"status,omitempty"`
+	PersonID *int64                                    `json:"person_id,omitempty"`
+}
+
+func (l ListPersonRelationshipReviewsQuery) Validate() error {
+	var errors runtime.ValidationErrors
+	if l.Status != nil {
+		if v, ok := any(l.Status).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Status", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
 type ListPersonAttributesQuery struct {
 	// History Include superseded values
 	History *bool `json:"history,omitempty"`
@@ -470,6 +490,10 @@ type ClearPersonAttributeQuery struct {
 type SetPersonAttributeQuery struct {
 	// DryRun Validate and preview without writing
 	DryRun *bool `json:"dry_run,omitempty"`
+}
+
+type ListPersonRelationshipsQuery struct {
+	IncludeEnded *bool `json:"include_ended,omitempty"`
 }
 
 type SearchMessagesQuery struct {

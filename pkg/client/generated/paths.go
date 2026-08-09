@@ -192,6 +192,21 @@ type GetPersonTimelinePath struct {
 	ID int64 `json:"id"`
 }
 
+type DeletePersonRelationshipPath struct {
+	// ID Person relationship ID
+	ID int64 `json:"id"`
+}
+
+type GetPersonRelationshipPath struct {
+	// ID Person relationship ID
+	ID int64 `json:"id"`
+}
+
+type PatchPersonRelationshipPath struct {
+	// ID Person relationship ID
+	ID int64 `json:"id"`
+}
+
 type DeletePersonPath struct {
 	// ID Durable person ID
 	ID int64 `json:"id"`
@@ -257,6 +272,26 @@ type GetPersonProfileMediaContentPath struct {
 
 	// MediaID Structured person profile media value ID
 	MediaID int64 `json:"media_id"`
+}
+
+type ListPersonRelationshipsPath struct {
+	// ID Durable person ID
+	ID int64 `json:"id"`
+}
+
+type DeleteRelationshipTypePath struct {
+	// ID Relationship type ID
+	ID int64 `json:"id"`
+}
+
+type GetRelationshipTypePath struct {
+	// ID Relationship type ID
+	ID int64 `json:"id"`
+}
+
+type PatchRelationshipTypePath struct {
+	// ID Relationship type ID
+	ID int64 `json:"id"`
 }
 
 type GetRelationshipTimelinePath struct {

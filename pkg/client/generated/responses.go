@@ -1165,6 +1165,50 @@ func (g *GetPersonTimelineErrorResponseJSON503) UnmarshalJSON(data []byte) error
 	return nil
 }
 
+type ListPersonRelationshipReviewsResponse = RelationshipReviewsResponse
+
+type ListPersonRelationshipReviewsErrorResponse = ErrorResponse
+
+type ListPersonRelationshipReviewsErrorResponseJSON = ErrorResponse
+
+type CreatePersonRelationshipResponse = PersonRelationship
+
+type CreatePersonRelationshipErrorResponse = ErrorResponse
+
+type CreatePersonRelationshipErrorResponseJSON = ErrorResponse
+
+type CreatePersonRelationshipErrorResponseJSON409 = ErrorResponse
+
+type CreatePersonRelationshipErrorResponseJSON503 = ErrorResponse
+
+type DeletePersonRelationshipErrorResponse = ErrorResponse
+
+type DeletePersonRelationshipErrorResponseJSON = ErrorResponse
+
+type DeletePersonRelationshipErrorResponseJSON409 = ErrorResponse
+
+type DeletePersonRelationshipErrorResponseJSON428 = ErrorResponse
+
+type DeletePersonRelationshipErrorResponseJSON503 = ErrorResponse
+
+type GetPersonRelationshipResponse = PersonRelationship
+
+type GetPersonRelationshipErrorResponse = ErrorResponse
+
+type GetPersonRelationshipErrorResponseJSON = ErrorResponse
+
+type PatchPersonRelationshipResponse = PersonRelationship
+
+type PatchPersonRelationshipErrorResponse = ErrorResponse
+
+type PatchPersonRelationshipErrorResponseJSON = ErrorResponse
+
+type PatchPersonRelationshipErrorResponseJSON409 = ErrorResponse
+
+type PatchPersonRelationshipErrorResponseJSON428 = ErrorResponse
+
+type PatchPersonRelationshipErrorResponseJSON503 = ErrorResponse
+
 type ListPersonsResponse = PersonsResponse
 
 type ListPersonsErrorResponse = ErrorResponse
@@ -1275,9 +1319,55 @@ type GetPersonProfileMediaContentErrorResponseJSON500 = ErrorResponse
 
 type GetPersonProfileMediaContentErrorResponseJSON503 = ErrorResponse
 
+type ListPersonRelationshipsResponse = PersonRelationshipsResponse
+
+type ListPersonRelationshipsErrorResponse = ErrorResponse
+
+type ListPersonRelationshipsErrorResponseJSON = ErrorResponse
+
 type RunQueryResponse = QueryResult
 
 type RunQueryErrorResponse = ErrorResponse
+
+type ListRelationshipTypesResponse = RelationshipTypesResponse
+
+type ListRelationshipTypesErrorResponse = ErrorResponse
+
+type CreateRelationshipTypeResponse = RelationshipType
+
+type CreateRelationshipTypeErrorResponse = ErrorResponse
+
+type CreateRelationshipTypeErrorResponseJSON = ErrorResponse
+
+type CreateRelationshipTypeErrorResponseJSON503 = ErrorResponse
+
+type DeleteRelationshipTypeErrorResponse = ErrorResponse
+
+type DeleteRelationshipTypeErrorResponseJSON = ErrorResponse
+
+type DeleteRelationshipTypeErrorResponseJSON409 = ErrorResponse
+
+type DeleteRelationshipTypeErrorResponseJSON428 = ErrorResponse
+
+type DeleteRelationshipTypeErrorResponseJSON503 = ErrorResponse
+
+type GetRelationshipTypeResponse = RelationshipType
+
+type GetRelationshipTypeErrorResponse = ErrorResponse
+
+type GetRelationshipTypeErrorResponseJSON = ErrorResponse
+
+type PatchRelationshipTypeResponse = RelationshipType
+
+type PatchRelationshipTypeErrorResponse = ErrorResponse
+
+type PatchRelationshipTypeErrorResponseJSON = ErrorResponse
+
+type PatchRelationshipTypeErrorResponseJSON409 = ErrorResponse
+
+type PatchRelationshipTypeErrorResponseJSON428 = ErrorResponse
+
+type PatchRelationshipTypeErrorResponseJSON503 = ErrorResponse
 
 type ListRelationshipsResponse = RelationshipsHTTPResponse
 
@@ -2362,6 +2452,74 @@ type GetPersonTimelineResp struct {
 	JSON503      *GetPersonTimelineErrorResponseJSON503
 }
 
+type ListPersonRelationshipReviewsResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *ListPersonRelationshipReviewsResponse
+	JSON400      *ListPersonRelationshipReviewsErrorResponse
+	JSON503      *ListPersonRelationshipReviewsErrorResponseJSON
+}
+
+type CreatePersonRelationshipResp201Headers struct {
+	ETag     string `header:"ETag"`
+	Location string `header:"Location"`
+}
+
+type CreatePersonRelationshipResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON201      *CreatePersonRelationshipResponse
+	Headers201   *CreatePersonRelationshipResp201Headers
+	JSON400      *CreatePersonRelationshipErrorResponse
+	JSON404      *CreatePersonRelationshipErrorResponseJSON
+	JSON409      *CreatePersonRelationshipErrorResponseJSON409
+	JSON503      *CreatePersonRelationshipErrorResponseJSON503
+}
+
+type DeletePersonRelationshipResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON400      *DeletePersonRelationshipErrorResponse
+	JSON404      *DeletePersonRelationshipErrorResponseJSON
+	JSON409      *DeletePersonRelationshipErrorResponseJSON409
+	JSON428      *DeletePersonRelationshipErrorResponseJSON428
+	JSON503      *DeletePersonRelationshipErrorResponseJSON503
+}
+
+type GetPersonRelationshipResp200Headers struct {
+	ETag string `header:"ETag"`
+}
+
+type GetPersonRelationshipResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *GetPersonRelationshipResponse
+	Headers200   *GetPersonRelationshipResp200Headers
+	JSON404      *GetPersonRelationshipErrorResponse
+	JSON503      *GetPersonRelationshipErrorResponseJSON
+}
+
+type PatchPersonRelationshipResp200Headers struct {
+	ETag string `header:"ETag"`
+}
+
+type PatchPersonRelationshipResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *PatchPersonRelationshipResponse
+	Headers200   *PatchPersonRelationshipResp200Headers
+	JSON400      *PatchPersonRelationshipErrorResponse
+	JSON404      *PatchPersonRelationshipErrorResponseJSON
+	JSON409      *PatchPersonRelationshipErrorResponseJSON409
+	JSON428      *PatchPersonRelationshipErrorResponseJSON428
+	JSON503      *PatchPersonRelationshipErrorResponseJSON503
+}
+
 type ListPersonsResp struct {
 	HTTPResponse *http.Response
 	Body         []byte
@@ -2518,11 +2676,86 @@ type GetPersonProfileMediaContentResp struct {
 	JSON503      *GetPersonProfileMediaContentErrorResponseJSON503
 }
 
+type ListPersonRelationshipsResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *ListPersonRelationshipsResponse
+	JSON400      *ListPersonRelationshipsErrorResponse
+	JSON503      *ListPersonRelationshipsErrorResponseJSON
+}
+
 type RunQueryResp struct {
 	HTTPResponse *http.Response
 	Body         []byte
 	StatusCode   int
 	JSON200      *RunQueryResponse
+}
+
+type ListRelationshipTypesResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *ListRelationshipTypesResponse
+	JSON503      *ListRelationshipTypesErrorResponse
+}
+
+type CreateRelationshipTypeResp201Headers struct {
+	ETag     string `header:"ETag"`
+	Location string `header:"Location"`
+}
+
+type CreateRelationshipTypeResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON201      *CreateRelationshipTypeResponse
+	Headers201   *CreateRelationshipTypeResp201Headers
+	JSON400      *CreateRelationshipTypeErrorResponse
+	JSON409      *CreateRelationshipTypeErrorResponseJSON
+	JSON503      *CreateRelationshipTypeErrorResponseJSON503
+}
+
+type DeleteRelationshipTypeResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON400      *DeleteRelationshipTypeErrorResponse
+	JSON404      *DeleteRelationshipTypeErrorResponseJSON
+	JSON409      *DeleteRelationshipTypeErrorResponseJSON409
+	JSON428      *DeleteRelationshipTypeErrorResponseJSON428
+	JSON503      *DeleteRelationshipTypeErrorResponseJSON503
+}
+
+type GetRelationshipTypeResp200Headers struct {
+	ETag string `header:"ETag"`
+}
+
+type GetRelationshipTypeResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *GetRelationshipTypeResponse
+	Headers200   *GetRelationshipTypeResp200Headers
+	JSON404      *GetRelationshipTypeErrorResponse
+	JSON503      *GetRelationshipTypeErrorResponseJSON
+}
+
+type PatchRelationshipTypeResp200Headers struct {
+	ETag string `header:"ETag"`
+}
+
+type PatchRelationshipTypeResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *PatchRelationshipTypeResponse
+	Headers200   *PatchRelationshipTypeResp200Headers
+	JSON400      *PatchRelationshipTypeErrorResponse
+	JSON404      *PatchRelationshipTypeErrorResponseJSON
+	JSON409      *PatchRelationshipTypeErrorResponseJSON409
+	JSON428      *PatchRelationshipTypeErrorResponseJSON428
+	JSON503      *PatchRelationshipTypeErrorResponseJSON503
 }
 
 type ListRelationshipsResp struct {

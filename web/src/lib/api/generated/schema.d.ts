@@ -1417,6 +1417,59 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/person-relationship-reviews": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List imported RELATED values awaiting review */
+        get: operations["listPersonRelationshipReviews"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/person-relationships": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Declare a relationship between two persons */
+        post: operations["createPersonRelationship"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/person-relationships/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get one person relationship */
+        get: operations["getPersonRelationship"];
+        put?: never;
+        post?: never;
+        /** Delete a person relationship */
+        delete: operations["deletePersonRelationship"];
+        options?: never;
+        head?: never;
+        /** End a relationship or replace its notes */
+        patch: operations["patchPersonRelationship"];
+        trace?: never;
+    };
     "/api/v1/persons": {
         parameters: {
             query?: never;
@@ -1562,6 +1615,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/persons/{id}/relationships": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List one person's relationships */
+        get: operations["listPersonRelationships"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/query": {
         parameters: {
             query?: never;
@@ -1577,6 +1647,43 @@ export interface paths {
         options?: never;
         head?: never;
         patch?: never;
+        trace?: never;
+    };
+    "/api/v1/relationship-types": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List person relationship types */
+        get: operations["listRelationshipTypes"];
+        put?: never;
+        /** Create a user-owned relationship type */
+        post: operations["createRelationshipType"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/relationship-types/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get a relationship type */
+        get: operations["getRelationshipType"];
+        put?: never;
+        post?: never;
+        /** Delete an unused relationship type */
+        delete: operations["deleteRelationshipType"];
+        options?: never;
+        head?: never;
+        /** Update a relationship type */
+        patch: operations["patchRelationshipType"];
         trace?: never;
     };
     "/api/v1/relationships": {
@@ -2707,9 +2814,29 @@ export interface components {
             slug: string;
             uri_scheme?: string;
         };
+        CreatePersonRelationshipRequest: {
+            end_date?: string;
+            notes?: string | null;
+            relationship_type_slug: string;
+            /** Format: int64 */
+            source_person_id: number;
+            start_date?: string;
+            /** Format: int64 */
+            target_person_id: number;
+        };
         CreatePersonRequest: {
             /** Format: int64 */
             participant_id: number;
+        };
+        CreateRelationshipTypeRequest: {
+            color?: string | null;
+            description?: string | null;
+            forward_label: string;
+            icon?: string | null;
+            is_symmetric?: boolean;
+            reverse_label: string;
+            slug: string;
+            vcard_related_type?: string | null;
         };
         CreateRequest: {
             accounts: string[] | null;
@@ -3560,8 +3687,20 @@ export interface components {
             is_active?: boolean;
             label?: string;
         };
+        PatchPersonRelationshipRequest: {
+            end_date?: string;
+            notes?: string | null;
+        };
         PatchPersonRequest: {
             display_name: string | null;
+        };
+        PatchRelationshipTypeRequest: {
+            color?: string;
+            description?: string;
+            forward_label?: string;
+            icon?: string;
+            reverse_label?: string;
+            vcard_related_type?: string;
         };
         PatchSavedViewRequest: {
             canonical_state?: components["schemas"]["SavedViewStateEnvelope"];
@@ -3889,6 +4028,55 @@ export interface components {
             media?: components["schemas"]["PersonMediaPatchRequest"];
             names?: components["schemas"]["PersonNamePatchRequest"];
         };
+        PersonRelationship: {
+            /** Format: double */
+            confidence?: number;
+            /** Format: date-time */
+            created_at: string;
+            created_by: string;
+            end_date?: components["schemas"]["PartialDate"];
+            forward_label: string;
+            /** Format: int64 */
+            id: number;
+            is_symmetric: boolean;
+            notes?: string;
+            /** Format: int64 */
+            relationship_type_id: number;
+            reverse_label: string;
+            /** Format: int64 */
+            revision: number;
+            source: string;
+            /** Format: int64 */
+            source_person_id: number;
+            source_ref?: string;
+            start_date?: components["schemas"]["PartialDate"];
+            status: string;
+            /** Format: int64 */
+            target_person_id: number;
+            type_slug: string;
+            /** Format: date-time */
+            updated_at: string;
+            updated_by: string;
+            vcard_identity: components["schemas"]["VCardIdentity"];
+        } & {
+            [key: string]: unknown;
+        };
+        PersonRelationshipView: {
+            counterpart_display_name?: string;
+            counterpart_label: string;
+            /** Format: int64 */
+            counterpart_person_id: number;
+            counterpart_vcard_uid: string;
+            direction: string;
+            relationship: components["schemas"]["PersonRelationship"];
+        } & {
+            [key: string]: unknown;
+        };
+        PersonRelationshipsResponse: {
+            relationships: components["schemas"]["PersonRelationshipView"][] | null;
+        } & {
+            [key: string]: unknown;
+        };
         PersonSearchHTTPResponse: {
             cache_revision: string;
             candidate_snapshot_id?: string;
@@ -3961,6 +4149,38 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        RelationshipReview: {
+            /** Format: int64 */
+            accepted_relationship_id?: number;
+            /** Format: date-time */
+            created_at: string;
+            created_by: string;
+            /** Format: int64 */
+            id: number;
+            /** Format: int64 */
+            matched_person_id?: number;
+            /** Format: int64 */
+            person_id: number;
+            raw_related_type: string;
+            raw_related_value: string;
+            /** Format: date-time */
+            reviewed_at?: string;
+            reviewed_by?: string;
+            source: string;
+            source_ref?: string;
+            status: string;
+            /** Format: date-time */
+            updated_at: string;
+            value_kind: string;
+            vcard_identity: components["schemas"]["VCardIdentity"];
+        } & {
+            [key: string]: unknown;
+        };
+        RelationshipReviewsResponse: {
+            reviews: components["schemas"]["RelationshipReview"][] | null;
+        } & {
+            [key: string]: unknown;
+        };
         RelationshipRow: {
             /** Format: int64 */
             canonical_id: number;
@@ -4009,6 +4229,37 @@ export interface components {
             rows: components["schemas"]["TimelineRow"][] | null;
             /** Format: int64 */
             total_count: number;
+        } & {
+            [key: string]: unknown;
+        };
+        RelationshipType: {
+            color?: string;
+            /** Format: date-time */
+            created_at: string;
+            description?: string;
+            forward_label: string;
+            icon?: string;
+            /** Format: int64 */
+            id: number;
+            /** Format: int64 */
+            inverse_type_id?: number;
+            is_canonical: boolean;
+            is_deletable: boolean;
+            is_symmetric: boolean;
+            ownership: string;
+            reverse_label: string;
+            /** Format: int64 */
+            revision: number;
+            slug: string;
+            universal_id: string;
+            /** Format: date-time */
+            updated_at: string;
+            vcard_related_type?: string;
+        } & {
+            [key: string]: unknown;
+        };
+        RelationshipTypesResponse: {
+            relationship_types: components["schemas"]["RelationshipType"][] | null;
         } & {
             [key: string]: unknown;
         };
@@ -9315,6 +9566,345 @@ export interface operations {
             };
         };
     };
+    listPersonRelationshipReviews: {
+        parameters: {
+            query?: {
+                status?: "pending" | "accepted" | "rejected";
+                person_id?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RelationshipReviewsResponse"];
+                };
+            };
+            /** @description Error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    createPersonRelationship: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreatePersonRelationshipRequest"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    /** @description Strong person relationship revision tag for optimistic concurrency */
+                    ETag?: string;
+                    /** @description Created person relationship */
+                    Location?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PersonRelationship"];
+                };
+            };
+            /** @description Error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    getPersonRelationship: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Person relationship ID */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    /** @description Strong person relationship revision tag for optimistic concurrency */
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PersonRelationship"];
+                };
+            };
+            /** @description Error */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    deletePersonRelationship: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Strong ETag returned by the latest person relationship read */
+                "If-Match": string;
+            };
+            path: {
+                /** @description Person relationship ID */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            428: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    patchPersonRelationship: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Strong ETag returned by the latest person relationship read */
+                "If-Match": string;
+            };
+            path: {
+                /** @description Person relationship ID */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PatchPersonRelationshipRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    /** @description Strong person relationship revision tag for optimistic concurrency */
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PersonRelationship"];
+                };
+            };
+            /** @description Error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            428: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     listPersons: {
         parameters: {
             query?: never;
@@ -10145,6 +10735,58 @@ export interface operations {
             };
         };
     };
+    listPersonRelationships: {
+        parameters: {
+            query?: {
+                include_ended?: boolean;
+            };
+            header?: never;
+            path: {
+                /** @description Durable person ID */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PersonRelationshipsResponse"];
+                };
+            };
+            /** @description Error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     runQuery: {
         parameters: {
             query?: never;
@@ -10165,6 +10807,324 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["QueryResult"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    listRelationshipTypes: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RelationshipTypesResponse"];
+                };
+            };
+            /** @description Error */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    createRelationshipType: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateRelationshipTypeRequest"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    /** @description Strong relationship type revision tag for optimistic concurrency */
+                    ETag?: string;
+                    /** @description Created relationship type */
+                    Location?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RelationshipType"];
+                };
+            };
+            /** @description Error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    getRelationshipType: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Relationship type ID */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    /** @description Strong relationship type revision tag for optimistic concurrency */
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RelationshipType"];
+                };
+            };
+            /** @description Error */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    deleteRelationshipType: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Strong ETag returned by the latest relationship type read */
+                "If-Match": string;
+            };
+            path: {
+                /** @description Relationship type ID */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            428: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    patchRelationshipType: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Strong ETag returned by the latest relationship type read */
+                "If-Match": string;
+            };
+            path: {
+                /** @description Relationship type ID */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PatchRelationshipTypeRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    /** @description Strong relationship type revision tag for optimistic concurrency */
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RelationshipType"];
+                };
+            };
+            /** @description Error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            428: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
             /** @description Error */

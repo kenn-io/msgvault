@@ -228,6 +228,7 @@ func (s *Server) registerHumaRoutes(api huma.API, apiV1 huma.API) {
 	s.registerPersonAttributeRoutes(apiV1)
 	s.registerPeopleRoutes(apiV1)
 	s.registerRelationshipRoutes(apiV1)
+	s.registerPersonRelationshipRoutes(apiV1)
 	s.registerIdentityLinkRoutes(apiV1)
 	s.registerTaskIntegrationRoutes(apiV1)
 	s.registerTaskLinkRoutes(apiV1)

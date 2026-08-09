@@ -1540,6 +1540,14 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 		return fmt.Errorf("ensure seeded attribute definitions: %w", err)
 	}
 
+	// Reconcile the system relationship type catalog on every open: insert
+	// missing seeds, repair structural drift, and leave user-owned labels,
+	// vCard mappings, colours, icons, and descriptions alone. See
+	// EnsureSeededRelationshipTypes for the two column classes.
+	if err := s.EnsureSeededRelationshipTypesContext(ctx); err != nil {
+		return err
+	}
+
 	// Ensure the default "All" collection exists and contains every source.
 	if err := s.EnsureDefaultCollectionContext(ctx); err != nil {
 		return fmt.Errorf("ensure default collection: %w", err)
