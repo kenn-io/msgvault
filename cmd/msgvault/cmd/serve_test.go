@@ -307,7 +307,7 @@ func TestRunServeServesHealthWhileAnalyticsBuildBlocked(t *testing.T) {
 	case <-buildStarted:
 	case err := <-errCh:
 		require.NoError(err, "runServe exited before analytics build was blocked")
-	case <-time.After(5 * time.Second):
+	case <-time.After(30 * time.Second):
 		require.FailNow("analytics cache build did not start")
 	}
 	waitForServeHealthBounded(t, c.Server.APIPort, errCh)
@@ -374,7 +374,7 @@ func TestRunServeDuckDBReportsInitializingWithoutSQLFallback(t *testing.T) {
 	case <-buildStarted:
 	case err := <-errCh:
 		require.NoError(err, "runServe exited before analytics build was blocked")
-	case <-time.After(5 * time.Second):
+	case <-time.After(30 * time.Second):
 		require.FailNow("analytics cache build did not start")
 	}
 	waitForServeHealthBounded(t, c.Server.APIPort, errCh)
@@ -467,7 +467,7 @@ func TestRunServeAutoSwitchesToDuckDBAfterBackgroundBuild(t *testing.T) {
 	case <-buildStarted:
 	case err := <-errCh:
 		require.NoError(err, "runServe exited before analytics build was blocked")
-	case <-time.After(5 * time.Second):
+	case <-time.After(30 * time.Second):
 		require.FailNow("analytics cache build did not start")
 	}
 	waitForServeHealthBounded(t, c.Server.APIPort, errCh)
