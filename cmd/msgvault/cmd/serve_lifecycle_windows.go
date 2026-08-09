@@ -55,7 +55,9 @@ func configureServeBackgroundCommand(cmd *exec.Cmd) (backgroundServeCommandConfi
 	if cmd.SysProcAttr == nil {
 		cmd.SysProcAttr = &syscall.SysProcAttr{}
 	}
-	cmd.SysProcAttr.CreationFlags |= syscall.CREATE_NEW_PROCESS_GROUP | windowsDetachedProcess
+	cmd.SysProcAttr.CreationFlags |= syscall.CREATE_NEW_PROCESS_GROUP |
+		windows.CREATE_SUSPENDED |
+		windowsDetachedProcess
 	// Keep one Job handle in the detached daemon. The launching CLI releases
 	// its copy after readiness, while the daemon's inherited copy keeps the Job
 	// alive until daemon exit; KILL_ON_JOB_CLOSE then removes any straggling
@@ -78,7 +80,46 @@ func (t *windowsBackgroundProcessTree) Attach(process *os.Process) error {
 	if assignErr != nil {
 		return fmt.Errorf("assign process to Job Object: %w", assignErr)
 	}
+	if err := resumeSuspendedProcess(uint32(process.Pid)); err != nil {
+		return fmt.Errorf("resume background process: %w", err)
+	}
 	return nil
+}
+
+func resumeSuspendedProcess(processID uint32) error {
+	snapshot, err := windows.CreateToolhelp32Snapshot(windows.TH32CS_SNAPTHREAD, 0)
+	if err != nil {
+		return fmt.Errorf("snapshot process threads: %w", err)
+	}
+	defer func() { _ = windows.CloseHandle(snapshot) }()
+
+	entry := windows.ThreadEntry32{Size: uint32(unsafe.Sizeof(windows.ThreadEntry32{}))}
+	if err := windows.Thread32First(snapshot, &entry); err != nil {
+		return fmt.Errorf("enumerate process threads: %w", err)
+	}
+	// CREATE_SUSPENDED prevents user code from creating more threads, so the
+	// process-owned thread in this snapshot is the primary thread to resume.
+	for {
+		if entry.OwnerProcessID == processID {
+			thread, err := windows.OpenThread(windows.THREAD_SUSPEND_RESUME, false, entry.ThreadID)
+			if err != nil {
+				return fmt.Errorf("open primary thread: %w", err)
+			}
+			defer func() { _ = windows.CloseHandle(thread) }()
+
+			previousSuspendCount, err := windows.ResumeThread(thread)
+			if err != nil {
+				return fmt.Errorf("resume primary thread: %w", err)
+			}
+			if previousSuspendCount != 1 {
+				return fmt.Errorf("resume primary thread: unexpected suspend count %d", previousSuspendCount)
+			}
+			return nil
+		}
+		if err := windows.Thread32Next(snapshot, &entry); err != nil {
+			return fmt.Errorf("find primary thread for process %d: %w", processID, err)
+		}
+	}
 }
 
 func (t *windowsBackgroundProcessTree) Terminate() error {
