@@ -686,12 +686,31 @@ func reconcileIdentityMatchCandidateMergeState(
 		}
 	}
 	for _, candidate := range group {
-		if candidate.State == state &&
-			(candidate.DecidedBy.Valid || candidate.DecidedAt.Valid || candidate.Notes.Valid) {
+		if candidate.State == state && hasMergeDecisionMetadata(candidate) {
+			return state, candidate.DecidedBy, candidate.DecidedAt, candidate.Notes
+		}
+	}
+	// A conflict outranks terminal decisions when states collapse, but the
+	// review that produced those decisions must survive the merge: without
+	// this, a later conflict cleanup would demote the row to an undecided
+	// candidate with no trace of who decided it.
+	for _, candidate := range group {
+		if (candidate.State == IdentityMatchStateAccepted ||
+			candidate.State == IdentityMatchStateRejected) &&
+			hasMergeDecisionMetadata(candidate) {
+			return state, candidate.DecidedBy, candidate.DecidedAt, candidate.Notes
+		}
+	}
+	for _, candidate := range group {
+		if hasMergeDecisionMetadata(candidate) {
 			return state, candidate.DecidedBy, candidate.DecidedAt, candidate.Notes
 		}
 	}
 	return state, sql.NullString{}, sql.NullTime{}, sql.NullString{}
+}
+
+func hasMergeDecisionMetadata(candidate identityMatchCandidateMergeRow) bool {
+	return candidate.DecidedBy.Valid || candidate.DecidedAt.Valid || candidate.Notes.Valid
 }
 
 func identityMatchCandidateMergeConfidenceProvenance(
