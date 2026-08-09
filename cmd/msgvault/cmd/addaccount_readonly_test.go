@@ -3,6 +3,7 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -518,4 +519,163 @@ func TestAddAccount_NoWarningForBrandNewAccount(t *testing.T) {
 	require.Error(t, err, "browser authorization cannot complete on a cancelled context")
 	assert.NotContains(t, out, "read-only Gmail access")
 	assert.NotContains(t, out, "Warning")
+}
+
+// TestAddAccount_HeadlessWarnsBeforeRewideningNarrowGrant covers the headless
+// half of the widening warning: without it, a plain --headless run against a
+// narrowed account prints instructions that silently restore write access
+// when followed on the browser machine.
+func TestAddAccount_HeadlessWarnsBeforeRewideningNarrowGrant(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	saveAddAccountFlags(t)
+	_, restore := seedTokenEnv(t, gmailReadonlyTokenJSON)
+	defer restore()
+
+	out, err := runAddAccountForTest(t, scopeEscalationAccount, "--headless", "--no-default-identity")
+
+	require.NoError(err, "headless run only prints instructions")
+	assert.Contains(out, "currently has read-only Gmail access")
+	assert.Contains(out, "Headless Server Setup",
+		"warning must not replace the instructions")
+}
+
+// TestAddAccount_HeadlessReadonlyRefusesWriteCapableAccount is the headless
+// half of the narrowing refusal: printing copy-a-token instructions for a
+// still-write-capable account would report a narrowing path that skips
+// revocation entirely.
+func TestAddAccount_HeadlessReadonlyRefusesWriteCapableAccount(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	saveAddAccountFlags(t)
+	_, restore := seedTokenEnv(t, gmailCalendarTokenJSON)
+	defer restore()
+
+	out, err := runAddAccountForTest(t, scopeEscalationAccount, "--headless", "--readonly", "--no-default-identity")
+
+	require.Error(err)
+	assert.Contains(err.Error(), "already has Gmail write access")
+	assert.NotContains(out, "Headless Server Setup",
+		"refusal must stop before instructions are printed")
+}
+
+// TestAddAccount_HeadlessFreshAccountPrintsReadonlyInstructions pins that the
+// grant decision stays quiet for an account with no token and that the
+// instructions echo --readonly.
+func TestAddAccount_HeadlessFreshAccountPrintsReadonlyInstructions(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	saveAddAccountFlags(t)
+	_, restore := seedTokenEnv(t, gmailReadonlyTokenJSON)
+	defer restore()
+
+	out, err := runAddAccountForTest(t, "fresh@example.com", "--headless", "--readonly", "--no-default-identity")
+
+	require.NoError(err)
+	assert.NotContains(out, "Warning")
+	assert.Contains(out, "msgvault add-account fresh@example.com --readonly")
+}
+
+// TestAddAccountAuthorizeError_PreservesReadonly pins that the re-add hint
+// for a consent-screen account mismatch carries the run's grant mode: a hint
+// without --readonly would have the operator silently request write access.
+func TestAddAccountAuthorizeError_PreservesReadonly(t *testing.T) {
+	mismatch := &oauth.TokenMismatchError{
+		Expected: "alias@example.com",
+		Actual:   "primary@example.com",
+	}
+
+	err := addAccountAuthorizeError(mismatch, false, true)
+	require.ErrorContains(t, err, "msgvault add-account primary@example.com --readonly")
+
+	err = addAccountAuthorizeError(mismatch, false, false)
+	require.ErrorContains(t, err, "msgvault add-account primary@example.com")
+	assert.NotContains(t, err.Error(), "--readonly")
+}
+
+// fakeTokenRemover records the order of revoke/delete calls so the tests can
+// pin the narrowing contract: revocation happens first and its failure stops
+// the deletion.
+type fakeTokenRemover struct {
+	hasToken  bool
+	revokeErr error
+	calls     []string
+}
+
+func (f *fakeTokenRemover) HasToken(string) bool { return f.hasToken }
+
+func (f *fakeTokenRemover) RevokeToken(context.Context, string) error {
+	f.calls = append(f.calls, "revoke")
+	return f.revokeErr
+}
+
+func (f *fakeTokenRemover) DeleteToken(string) error {
+	f.calls = append(f.calls, "delete")
+	return nil
+}
+
+// TestRemoveAddAccountTokenForReauth pins why narrowing must revoke at
+// Google and not merely delete the local file: the refresh token inside that
+// file stays valid server-side, so any copy of it keeps write access while
+// the command reports a successful narrowing.
+func TestRemoveAddAccountTokenForReauth(t *testing.T) {
+	tests := []struct {
+		name        string
+		remover     *fakeTokenRemover
+		readonly    bool
+		wantErr     string
+		wantCalls   []string
+		description string
+	}{
+		{
+			name:        "narrowing revokes the grant before deleting the token",
+			remover:     &fakeTokenRemover{hasToken: true},
+			readonly:    true,
+			wantCalls:   []string{"revoke", "delete"},
+			description: "revocation must precede deletion — a deleted file can no longer be revoked",
+		},
+		{
+			name:        "narrowing fails closed when revocation fails",
+			remover:     &fakeTokenRemover{hasToken: true, revokeErr: errors.New("endpoint unreachable")},
+			readonly:    true,
+			wantErr:     "cannot narrow",
+			wantCalls:   []string{"revoke"},
+			description: "the token must survive so the run can be retried",
+		},
+		{
+			name:        "default force run deletes without revoking",
+			remover:     &fakeTokenRemover{hasToken: true},
+			readonly:    false,
+			wantCalls:   []string{"delete"},
+			description: "plain --force keeps its existing delete-only behavior",
+		},
+		{
+			name:        "no token means nothing to revoke or delete",
+			remover:     &fakeTokenRemover{hasToken: false},
+			readonly:    true,
+			wantCalls:   nil,
+			description: "a fresh --readonly --force run proceeds straight to authorization",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+
+			err := removeAddAccountTokenForReauth(
+				context.Background(), tt.remover, "user@example.com", tt.readonly)
+
+			if tt.wantErr != "" {
+				require.Error(err)
+				assert.Contains(err.Error(), tt.wantErr)
+			} else {
+				require.NoError(err)
+			}
+			assert.Equal(tt.wantCalls, tt.remover.calls, tt.description)
+		})
+	}
 }

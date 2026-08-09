@@ -63,13 +63,13 @@ Restricting scopes on the **Data Access** page in the Google Cloud Console will 
 you@gmail.com already has Gmail write access (https://www.googleapis.com/auth/gmail.modify)
 ```
 
-`--readonly` cannot take away access an account already has. Re-authorization deliberately carries forward previously granted scopes — that is what keeps Calendar and Drive from being silently dropped — so a narrower request over an existing grant would not narrow anything. Delete the token and authorize again:
+`--readonly` cannot take away access an account already has. Re-authorization deliberately carries forward previously granted scopes — that is what keeps Calendar and Drive from being silently dropped — so a narrower request over an existing grant would not narrow anything. Revoke the grant and authorize again:
 
 ```bash
 msgvault add-account you@gmail.com --readonly --force
 ```
 
-Non-Gmail grants such as Calendar are preserved across this. Verify the result at [myaccount.google.com/permissions](https://myaccount.google.com/permissions).
+This first revokes the existing grant at Google, so previously issued refresh tokens — including copies of the token file — lose write access too, then re-authorizes with the narrower scopes. If revocation fails (for example, no network), the command stops without deleting anything; re-run it once the revocation endpoint is reachable. Non-Gmail grants such as Calendar are preserved across this. Verify the result at [myaccount.google.com/permissions](https://myaccount.google.com/permissions).
 
 The same refusal applies to an account holding the broad `https://mail.google.com/` scope, which msgvault grants when you escalate for permanent deletion.
 

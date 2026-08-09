@@ -113,9 +113,9 @@ msgvault add-account you@gmail.com --readonly
 
 Sync, search, and the TUI all work on a read-only grant. Deletion does not.
 
-It's not possible to remove permissions that have already been granted. You will need to delete the token and reauthorize through the use of the `--force` option. 
+It's not possible to remove permissions that have already been granted. You will need to revoke the grant and reauthorize through the use of the `--force` option. 
 
-`--force` deletes the stored token and authorizes from scratch, which is needed to narrow the permissions. Calendar and Drive grants are maintained. Confirm the result at [myaccount.google.com/permissions](https://myaccount.google.com/permissions).
+Combined with `--readonly`, `--force` first revokes the existing grant at Google — so previously issued refresh tokens, including copies of the token file on other machines or in backups, lose access too — then deletes the stored token and authorizes from scratch. If revocation fails (for example, the revocation endpoint is unreachable), the command stops without changing anything; re-run it once connectivity is restored. Calendar and Drive grants are re-requested during the new authorization. Confirm the result at [myaccount.google.com/permissions](https://myaccount.google.com/permissions).
 
 Running `--readonly` against an account that is already read-only does nothing and reuses the existing token. A plain `add-account` run against one warns before requesting write access again.
 

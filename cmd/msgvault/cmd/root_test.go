@@ -417,6 +417,19 @@ func (m *preservingMockReauthorizer) AuthorizeManualPreservingGrantedScopes(ctx 
 	return nil
 }
 
+// scopedMockReauthorizer adds stored-grant visibility to mockReauthorizer,
+// standing in for the real oauth.Manager in tests that need the recovery
+// guidance to see a narrowed (read-only) grant.
+type scopedMockReauthorizer struct {
+	*mockReauthorizer
+
+	grantedScopes []string
+}
+
+func (m *scopedMockReauthorizer) GrantedScopes(string) []string {
+	return m.grantedScopes
+}
+
 // fakeTokenSource implements extOAuth2.TokenSource for tests.
 type fakeTokenSource struct{}
 
@@ -600,6 +613,64 @@ func TestGetTokenSourceWithReauth(t *testing.T) {
 		_, err := getTokenSourceWithReauth(context.Background(), mock, "x@gmail.com", false, gmailReauthHint)
 		require.ErrorContains(t, err, "add-account x@gmail.com --force")
 		require.ErrorContains(t, err, "add-account x@gmail.com --headless")
+	})
+
+	// A narrowed (read-only) account must be pointed at --readonly --force:
+	// the plain --force remedy would request Gmail write access back, and the
+	// headless remedy would print widening instructions on the browser
+	// machine. Only the recorded grant mode makes the recovery faithful.
+	t.Run("non-interactive error preserves a narrowed grant", func(t *testing.T) {
+		mock := &scopedMockReauthorizer{
+			mockReauthorizer: &mockReauthorizer{
+				tokenSourceFn: func(_ context.Context, _ string) (extOAuth2.TokenSource, error) {
+					return nil, invalidGrant
+				},
+				hasTokenVal: true,
+			},
+			grantedScopes: []string{oauth.ScopeGmailReadonly},
+		}
+		_, err := getTokenSourceWithReauth(context.Background(), mock, "x@gmail.com", false, gmailReauthHint)
+		require.ErrorContains(t, err, "add-account x@gmail.com --readonly --force")
+		require.ErrorContains(t, err, "add-account x@gmail.com --headless --readonly")
+	})
+
+	// The same failure on a write-capable account keeps the plain remedies.
+	t.Run("non-interactive error leaves a write grant's remedies alone", func(t *testing.T) {
+		mock := &scopedMockReauthorizer{
+			mockReauthorizer: &mockReauthorizer{
+				tokenSourceFn: func(_ context.Context, _ string) (extOAuth2.TokenSource, error) {
+					return nil, invalidGrant
+				},
+				hasTokenVal: true,
+			},
+			grantedScopes: []string{oauth.ScopeGmailReadonly, oauth.ScopeGmailModify},
+		}
+		_, err := getTokenSourceWithReauth(context.Background(), mock, "x@gmail.com", false, gmailReauthHint)
+		require.ErrorContains(t, err, "add-account x@gmail.com --force")
+		require.NotContains(t, err.Error(), "--readonly")
+	})
+
+	// Mismatch remediation must also carry --readonly for a narrowed account,
+	// or following it re-adds the primary address with write access.
+	t.Run("mismatch recovery preserves a narrowed grant", func(t *testing.T) {
+		mismatch := &oauth.TokenMismatchError{
+			Expected: "user@example.com",
+			Actual:   "other@example.com",
+		}
+		mock := &scopedMockReauthorizer{
+			mockReauthorizer: &mockReauthorizer{
+				hasTokenVal: true,
+				tokenSourceFn: func(_ context.Context, _ string) (extOAuth2.TokenSource, error) {
+					return nil, invalidGrant
+				},
+				authorizeFn: func(_ context.Context, _ string) error {
+					return mismatch
+				},
+			},
+			grantedScopes: []string{oauth.ScopeGmailReadonly},
+		}
+		_, err := getTokenSourceWithReauth(context.Background(), mock, "user@example.com", true, gmailReauthHint)
+		require.ErrorContains(t, err, "add-account other@example.com --readonly")
 	})
 
 	// A Calendar caller must be pointed at add-calendar, not the Gmail

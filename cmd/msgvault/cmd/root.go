@@ -465,14 +465,41 @@ type scopePreservingReauthorizer interface {
 	AuthorizeManualPreservingGrantedScopes(ctx context.Context, email string) error
 }
 
+// grantedScopesReader exposes the stored grant to the reauth helper so its
+// recovery guidance can preserve a deliberately narrowed (read-only) Gmail
+// grant instead of steering the operator into re-widening it.
+type grantedScopesReader interface {
+	GrantedScopes(email string) []string
+}
+
+// reauthGrantNarrowed reports whether the stored grant for email is a
+// deliberately narrowed Gmail grant. Managers that cannot report scopes
+// (including legacy tokens with no recorded scopes) read as not narrowed,
+// which keeps the existing guidance for them.
+func reauthGrantNarrowed(mgr tokenReauthorizer, email string) bool {
+	reader, ok := mgr.(grantedScopesReader)
+	return ok && oauth.IsNarrowedGmailGrant(reader.GrantedScopes(email))
+}
+
 // reauthHint returns caller-specific, out-of-band re-authorization guidance for
 // an expired/revoked token in a non-interactive session. Gmail and Calendar use
 // different commands (add-account vs add-calendar), so the shared reauth helper
-// must be told which one to point the user at.
-type reauthHint func(email string) string
+// must be told which one to point the user at. narrowed reports whether the
+// stored grant is deliberately read-only, so the suggested command preserves
+// that instead of silently requesting write access back.
+type reauthHint func(email string, narrowed bool) string
 
 // gmailReauthHint points at add-account, the Gmail authorization command.
-func gmailReauthHint(email string) string {
+func gmailReauthHint(email string, narrowed bool) string {
+	if narrowed {
+		return fmt.Sprintf(
+			"re-authorize with 'msgvault add-account %s --readonly --force' (or "+
+				"'msgvault add-account %s --headless --readonly' on a server without "+
+				"a browser); this account holds a read-only Gmail grant, which "+
+				"--readonly keeps",
+			email, email,
+		)
+	}
 	return fmt.Sprintf(
 		"re-authorize with 'msgvault add-account %s --force' (or "+
 			"'msgvault add-account %s --headless' on a server without a browser)",
@@ -480,8 +507,10 @@ func gmailReauthHint(email string) string {
 	)
 }
 
-// calendarReauthHint points at add-calendar, the Calendar authorization command.
-func calendarReauthHint(email string) string {
+// calendarReauthHint points at add-calendar, the Calendar authorization
+// command. add-calendar always preserves the recorded grant (including a
+// narrowed Gmail grant), so the hint is the same either way.
+func calendarReauthHint(email string, _ bool) string {
 	return fmt.Sprintf(
 		"re-authorize with 'msgvault add-calendar %s' (or "+
 			"'msgvault add-calendar %s --headless' on a server without a browser)",
@@ -529,7 +558,7 @@ func getTokenSourceWithReauth(
 	if !interactive {
 		return nil, fmt.Errorf(
 			"token for %s is expired or revoked; %s",
-			email, recovery(email),
+			email, recovery(email, reauthGrantNarrowed(mgr, email)),
 		)
 	}
 
@@ -542,14 +571,21 @@ func getTokenSourceWithReauth(
 	if authErr := authorizeManualForReauth(ctx, mgr, email); authErr != nil {
 		var mismatch *oauth.TokenMismatchError
 		if errors.As(authErr, &mismatch) {
+			// Carry the narrowed grant into the re-add hint: without
+			// --readonly the suggested command would request write access
+			// the operator deliberately removed.
+			readdFlags := ""
+			if reauthGrantNarrowed(mgr, email) {
+				readdFlags = " --readonly"
+			}
 			return nil, fmt.Errorf(
 				"re-authorize %s: %w\n"+
 					"If this account uses an alias, remove "+
 					"and re-add with the primary address:\n"+
 					"  msgvault remove-account %s --type gmail\n"+
-					"  msgvault add-account %s",
+					"  msgvault add-account %s%s",
 				email, authErr,
-				mismatch.Expected, mismatch.Actual,
+				mismatch.Expected, mismatch.Actual, readdFlags,
 			)
 		}
 		return nil, fmt.Errorf("re-authorize %s: %w", email, authErr)

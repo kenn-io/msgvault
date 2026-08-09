@@ -147,6 +147,7 @@ var ScopesGmailCalendar = append(append([]string{}, Scopes...), ScopesCalendar..
 
 const defaultProfileURL = "https://gmail.googleapis.com/gmail/v1/users/me/profile"
 const defaultCalendarProfileURL = "https://www.googleapis.com/calendar/v3/users/me/calendarList/primary"
+const defaultRevokeURL = "https://oauth2.googleapis.com/revoke"
 
 // TokenMismatchError is returned when the authorized Google account
 // does not match the expected email. Callers can inspect Expected
@@ -169,6 +170,7 @@ type Manager struct {
 	tokensDir  string
 	logger     *slog.Logger
 	profileURL string // profile endpoint override for tests
+	revokeURL  string // revocation endpoint override for tests
 
 	// browserFlowFn overrides browserFlow in tests to avoid starting
 	// a real HTTP server and browser. When nil, the real browserFlow
@@ -1128,6 +1130,71 @@ func fetchTokenProfileEmailFromEndpoint(
 func ValidateTokenEmail(ctx context.Context, ts oauth2.TokenSource, email string) error {
 	_, err := fetchTokenProfileEmail(ctx, ts, defaultProfileURL, email, tokenProfileErrorServiceAccount)
 	return err
+}
+
+// revokeTimeout bounds the revocation request; revocation is a single POST
+// and should not hang a CLI command on a stalled connection.
+const revokeTimeout = 15 * time.Second
+
+// RevokeToken revokes the stored grant at Google's revocation endpoint.
+// Revoking the refresh token invalidates it server-side, so copies of the
+// token file (backups, other hosts, previously exposed credentials) lose
+// access too — deleting the local file alone would not achieve that.
+//
+// A response indicating the token is already invalid (HTTP 400
+// "invalid_token") counts as success: the credential is dead either way,
+// which is the state the caller is trying to reach. Every other failure is
+// returned so callers narrowing a grant can fail closed instead of reporting
+// a narrowing that did not happen.
+func (m *Manager) RevokeToken(ctx context.Context, email string) error {
+	tf, err := m.loadTokenFile(email)
+	if err != nil {
+		return fmt.Errorf("load token for %s: %w", email, err)
+	}
+	credential := tf.RefreshToken
+	if credential == "" {
+		credential = tf.AccessToken
+	}
+	if credential == "" {
+		return fmt.Errorf("token for %s holds no credential to revoke", email)
+	}
+
+	endpoint := m.revokeURL
+	if endpoint == "" {
+		endpoint = defaultRevokeURL
+	}
+
+	reqCtx, cancel := context.WithTimeout(ctx, revokeTimeout)
+	defer cancel()
+	form := url.Values{"token": {credential}}
+	req, err := http.NewRequestWithContext(
+		reqCtx, http.MethodPost, endpoint, strings.NewReader(form.Encode()))
+	if err != nil {
+		return fmt.Errorf("create revocation request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("revoke token for %s: %w", email, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode == http.StatusOK {
+		return nil
+	}
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode == http.StatusBadRequest {
+		var apiErr struct {
+			Error string `json:"error"`
+		}
+		if json.Unmarshal(body, &apiErr) == nil && apiErr.Error == "invalid_token" {
+			return nil // already expired or revoked — the goal state
+		}
+	}
+	return fmt.Errorf(
+		"revoke token for %s: revocation endpoint returned HTTP %d: %s",
+		email, resp.StatusCode, strings.TrimSpace(string(body)))
 }
 
 // DeleteToken removes the token file for the given email.

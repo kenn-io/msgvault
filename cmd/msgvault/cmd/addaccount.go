@@ -44,8 +44,9 @@ the existing token and start a fresh OAuth flow.
 
 By default msgvault requests Gmail read and modify access. Use --readonly to
 request read access only. An account that already holds write access cannot be
-narrowed in place; combine --readonly with --force to re-authorize it. Non-Gmail
-grants such as Calendar are preserved either way.
+narrowed in place; combine --readonly with --force to revoke the existing grant
+at Google and re-authorize with the narrower one. Non-Gmail grants such as
+Calendar are preserved either way.
 
 For Google Workspace orgs that require their own OAuth app, use --oauth-app to
 specify a named app from config.toml.
@@ -150,14 +151,19 @@ func addAccountTokenReusable(mgr *oauth.Manager, email string, binding addAccoun
 
 // addAccountAuthorizeError decorates an authorization failure with the
 // re-add hint when the consent screen authenticated a different address
-// than the one being added.
-func addAccountAuthorizeError(err error, sourceExists bool) error {
+// than the one being added. readonly carries the run's grant mode into the
+// hint: a re-add suggested without --readonly would silently request write
+// access the operator just asked not to have.
+func addAccountAuthorizeError(err error, sourceExists bool, readonly bool) error {
 	var mismatch *oauth.TokenMismatchError
 	if errors.As(err, &mismatch) && !sourceExists {
+		readd := "msgvault add-account " + mismatch.Actual
+		if readonly {
+			readd += " --readonly"
+		}
 		return fmt.Errorf(
-			"%w\nIf %s is the primary address, re-add with:\n"+
-				"  msgvault add-account %s",
-			err, mismatch.Actual, mismatch.Actual,
+			"%w\nIf %s is the primary address, re-add with:\n  %s",
+			err, mismatch.Actual, readd,
 		)
 	}
 	return fmt.Errorf("authorization failed: %w", err)
@@ -203,13 +209,8 @@ func preflightAddAccountAuthorize(cmd *cobra.Command, email string) error {
 		return err
 	}
 	if forceReauth {
-		if mgr.HasToken(email) {
-			fmt.Printf("Removing existing token for %s...\n", email)
-			if err := mgr.DeleteToken(email); err != nil {
-				return fmt.Errorf("delete existing token: %w", err)
-			}
-		} else {
-			fmt.Printf("No existing token found for %s, proceeding with authorization.\n", email)
+		if err := removeAddAccountTokenForReauth(cmd.Context(), mgr, email, readonlyGrant); err != nil {
+			return err
 		}
 	}
 	if addAccountTokenReusable(mgr, email, binding) {
@@ -222,7 +223,7 @@ func preflightAddAccountAuthorize(cmd *cobra.Command, email string) error {
 		fmt.Println("Starting browser authorization...")
 	}
 	if err := mgr.Authorize(cmd.Context(), email); err != nil {
-		return addAccountAuthorizeError(err, sourceExists)
+		return addAccountAuthorizeError(err, sourceExists, readonlyGrant)
 	}
 	// The subprocess must not force-delete the token minted above.
 	if forceReauth {
@@ -289,6 +290,20 @@ func runAddAccountLocal(cmd *cobra.Command, args []string) error {
 	if headless {
 		if saKeyPath != "" {
 			return usageErr(cmd, errors.New("service accounts do not use --headless; run add-account without --headless"))
+		}
+		// The early return below skips the grant decision the non-headless
+		// path applies, which would let a plain headless run against a
+		// narrowed account print widening instructions with no warning —
+		// followed on the browser machine, they silently restore write
+		// access. Best-effort: a host whose client secrets cannot be
+		// resolved keeps printing instructions exactly as before.
+		if csPath, csErr := cfg.OAuth.ClientSecretsFor(resolvedApp); csErr == nil {
+			mgr, mgrErr := newAddAccountOAuthManager(csPath, email)
+			if mgrErr == nil {
+				if err := applyAddAccountGrantDecision(cmd.OutOrStdout(), mgr, email); err != nil {
+					return err
+				}
+			}
 		}
 		oauth.PrintHeadlessInstructions(email, cfg.TokensDir(), resolvedApp, readonlyGrant)
 		return nil
@@ -386,13 +401,8 @@ func runAddAccountLocal(cmd *cobra.Command, args []string) error {
 
 	// If --force, delete existing token so we re-authorize
 	if forceReauth {
-		if oauthMgr.HasToken(email) {
-			fmt.Printf("Removing existing token for %s...\n", email)
-			if err := oauthMgr.DeleteToken(email); err != nil {
-				return fmt.Errorf("delete existing token: %w", err)
-			}
-		} else {
-			fmt.Printf("No existing token found for %s, proceeding with authorization.\n", email)
+		if err := removeAddAccountTokenForReauth(cmd.Context(), oauthMgr, email, readonlyGrant); err != nil {
+			return err
 		}
 	}
 
@@ -446,7 +456,7 @@ func runAddAccountLocal(cmd *cobra.Command, args []string) error {
 	}
 
 	if err := oauthMgr.Authorize(cmd.Context(), email); err != nil {
-		return addAccountAuthorizeError(err, existingSource != nil)
+		return addAccountAuthorizeError(err, existingSource != nil, readonlyGrant)
 	}
 
 	// Authorization succeeded — now persist the binding and source.
@@ -591,7 +601,7 @@ func decideAddAccountGrant(
 				"%s has a token that predates scope recording, so its Gmail access cannot be verified\n"+
 					"Tokens this old were issued with read and modify access, which --readonly "+
 					"cannot take away on its own.\n"+
-					"To get an explicitly recorded read-only grant, delete the token and authorize again:\n"+
+					"To get an explicitly recorded read-only grant, revoke the token and authorize again:\n"+
 					"  msgvault add-account %s --readonly --force",
 				email, email,
 			)}
@@ -602,7 +612,7 @@ func decideAddAccountGrant(
 					"Re-authorizing preserves scopes the account already holds, so --readonly "+
 					"alone cannot take write access away.\n"+
 					"Non-Gmail grants such as Calendar are preserved either way.\n"+
-					"To narrow it, delete the token and authorize again:\n"+
+					"To narrow it, revoke the current grant and authorize again:\n"+
 					"  msgvault add-account %s --readonly --force",
 				email, strings.Join(granted, ", "), email,
 			)}
@@ -654,6 +664,49 @@ func applyAddAccountGrantDecision(out io.Writer, mgr *oauth.Manager, email strin
 		if _, err := fmt.Fprintln(out, decision.Warning); err != nil {
 			return fmt.Errorf("write grant warning: %w", err)
 		}
+	}
+	return nil
+}
+
+// addAccountTokenRemover is the slice of oauth.Manager used by
+// removeAddAccountTokenForReauth, kept narrow so the revoke-then-delete
+// contract is testable without a live revocation endpoint.
+type addAccountTokenRemover interface {
+	HasToken(email string) bool
+	RevokeToken(ctx context.Context, email string) error
+	DeleteToken(email string) error
+}
+
+// removeAddAccountTokenForReauth clears the stored token ahead of a forced
+// re-authorization.
+//
+// When the run is narrowing to read-only, the Google-side grant is revoked
+// first and a revocation failure aborts the run: deleting only the local
+// file leaves the refresh token valid at Google, so any copy of it —
+// a backup, another host, a previously exposed credential — would keep
+// Gmail write access while the command reports a successful narrowing.
+// A default --force run keeps its delete-only behavior.
+func removeAddAccountTokenForReauth(
+	ctx context.Context, mgr addAccountTokenRemover, email string, readonly bool,
+) error {
+	if !mgr.HasToken(email) {
+		fmt.Printf("No existing token found for %s, proceeding with authorization.\n", email)
+		return nil
+	}
+	if readonly {
+		fmt.Printf("Revoking existing Google grant for %s...\n", email)
+		if err := mgr.RevokeToken(ctx, email); err != nil {
+			return fmt.Errorf(
+				"cannot narrow %s to read-only: %w\n"+
+					"Deleting only the local token would leave the write-capable "+
+					"grant valid at Google. Nothing was changed; re-run once the "+
+					"revocation endpoint is reachable",
+				email, err)
+		}
+	}
+	fmt.Printf("Removing existing token for %s...\n", email)
+	if err := mgr.DeleteToken(email); err != nil {
+		return fmt.Errorf("delete existing token: %w", err)
 	}
 	return nil
 }
