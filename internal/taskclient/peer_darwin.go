@@ -24,7 +24,7 @@ func verifyPeerCredentials(conn net.Conn, expectedOwner uint32) error {
 		return fmt.Errorf("%w: Unix peer credential handle unavailable", ErrInsecureEndpoint)
 	}
 	err = raw.Control(func(fd uintptr) {
-		credential, socketErr = unix.GetsockoptXucred(int(fd), unix.SOL_LOCAL, unix.LOCAL_PEERCRED) //nolint:gosec // Darwin's socket API uses an int descriptor
+		credential, socketErr = unix.GetsockoptXucred(int(fd), unix.SOL_LOCAL, unix.LOCAL_PEERCRED)
 	})
 	if err != nil || socketErr != nil || credential == nil || credential.Uid != expectedOwner {
 		return fmt.Errorf("%w: Unix peer credential mismatch", ErrInsecureEndpoint)
