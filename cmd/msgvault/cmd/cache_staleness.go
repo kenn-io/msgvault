@@ -36,9 +36,9 @@ type cacheStaleness struct {
 	// arrived, in which case the incremental append cannot rewrite the
 	// already-committed rows and a full rebuild is forced below.
 	HasConversationTypeDrift bool
-	// HasParticipantIdentifierDrift signals identifier mappings changed
-	// (SetParticipantIdentifier created or repointed rows) since the last
-	// build. Identifiers bake into the identity directory datasets
+	// HasParticipantIdentifierDrift signals identifier rows or their
+	// service/scope classification changed since the last build. Identifiers
+	// bake into the identity directory datasets
 	// (participant_identifiers, relationship_people search values) but not
 	// into per-row activity facts, so this drift is repaired by the
 	// index-only refresh and — unlike link or conversation drift — never

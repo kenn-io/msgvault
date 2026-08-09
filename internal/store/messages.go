@@ -2739,7 +2739,7 @@ func (s *Store) EnsureParticipantByPhone(phone, displayName, identifierType stri
 			return err
 		}
 		if !classificationColumns {
-			_, err = tx.Exec(`INSERT INTO participant_identifiers (
+			result, err := tx.Exec(`INSERT INTO participant_identifiers (
 					participant_id, identifier_type, identifier_value, is_primary
 				) VALUES (?, ?, ?, TRUE)
 				ON CONFLICT (identifier_type, identifier_value) DO NOTHING`,
@@ -2747,12 +2747,12 @@ func (s *Store) EnsureParticipantByPhone(phone, displayName, identifierType stri
 			if err != nil {
 				return fmt.Errorf("insert participant identifier: %w", err)
 			}
-			return nil
+			return s.bumpParticipantIdentifierRevisionIfChanged(tx, result)
 		}
 		serviceSlug, scopeKind, scopeValue := participantIdentifierClassificationValues(
 			identifierType, phone,
 		)
-		_, err = tx.Exec(`INSERT INTO participant_identifiers (
+		result, err := tx.Exec(`INSERT INTO participant_identifiers (
 				participant_id, identifier_type, identifier_value, is_primary,
 				service_id, scope_kind, scope_value
 			) VALUES (?, ?, ?, TRUE,
@@ -2762,12 +2762,26 @@ func (s *Store) EnsureParticipantByPhone(phone, displayName, identifierType stri
 				scope_kind = CASE WHEN excluded.service_id IS NOT NULL
 					THEN excluded.scope_kind ELSE participant_identifiers.scope_kind END,
 				scope_value = CASE WHEN excluded.service_id IS NOT NULL
-					THEN excluded.scope_value ELSE participant_identifiers.scope_value END`,
+					THEN excluded.scope_value ELSE participant_identifiers.scope_value END
+			WHERE excluded.service_id IS NOT NULL AND (
+				participant_identifiers.service_id IS NULL OR
+				participant_identifiers.service_id <> excluded.service_id OR
+				(participant_identifiers.scope_kind IS NULL AND
+					excluded.scope_kind IS NOT NULL) OR
+				(participant_identifiers.scope_kind IS NOT NULL AND
+					excluded.scope_kind IS NULL) OR
+				participant_identifiers.scope_kind <> excluded.scope_kind OR
+				(participant_identifiers.scope_value IS NULL AND
+					excluded.scope_value IS NOT NULL) OR
+				(participant_identifiers.scope_value IS NOT NULL AND
+					excluded.scope_value IS NULL) OR
+				participant_identifiers.scope_value <> excluded.scope_value
+			)`,
 			id, identifierType, phone, serviceSlug, scopeKind, scopeValue)
 		if err != nil {
 			return fmt.Errorf("insert participant identifier: %w", err)
 		}
-		return nil
+		return s.bumpParticipantIdentifierRevisionIfChanged(tx, result)
 	})
 	if err != nil {
 		return 0, err
@@ -3153,23 +3167,23 @@ func (s *Store) EnsureParticipantByIdentifier(identifierType, identifierValue, d
 			if err != nil {
 				return fmt.Errorf("insert participant identifier: %w", err)
 			}
-			return nil
+		} else {
+			serviceSlug, scopeKind, scopeValue := participantIdentifierClassificationValues(
+				identifierType, identifierValue,
+			)
+			_, err = tx.Exec(`
+				INSERT INTO participant_identifiers (
+					participant_id, identifier_type, identifier_value, display_value,
+					is_primary, service_id, scope_kind, scope_value
+				) VALUES (?, ?, ?, ?, TRUE,
+					(SELECT id FROM communication_services WHERE slug = ?), ?, ?)
+			`, participantID, identifierType, identifierValue, identifierValue,
+				serviceSlug, scopeKind, scopeValue)
+			if err != nil {
+				return fmt.Errorf("insert participant identifier: %w", err)
+			}
 		}
-		serviceSlug, scopeKind, scopeValue := participantIdentifierClassificationValues(
-			identifierType, identifierValue,
-		)
-		_, err = tx.Exec(`
-			INSERT INTO participant_identifiers (
-				participant_id, identifier_type, identifier_value, display_value,
-				is_primary, service_id, scope_kind, scope_value
-			) VALUES (?, ?, ?, ?, TRUE,
-				(SELECT id FROM communication_services WHERE slug = ?), ?, ?)
-		`, participantID, identifierType, identifierValue, identifierValue,
-			serviceSlug, scopeKind, scopeValue)
-		if err != nil {
-			return fmt.Errorf("insert participant identifier: %w", err)
-		}
-		return nil
+		return s.bumpParticipantIdentifierRevision(tx)
 	})
 	if err != nil {
 		return 0, err

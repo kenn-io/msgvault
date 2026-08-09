@@ -11,13 +11,13 @@ import (
 const participantIdentifierRevisionKey = "participant_identifier_revision"
 
 // ParticipantIdentifierRevision returns the current participant-identifier
-// revision (0 if never bumped). It increments whenever SetParticipantIdentifier
-// actually changes an identifier mapping. Identifiers bake into the identity
-// directory datasets (relationship_people search values and display labels,
-// the participant_identifiers Parquet export) but not into per-row activity
-// facts, so drift on this revision alone is repairable by the derived-dataset
-// refresh — unlike AccountIdentityRevision drift, it never demands a full
-// rebuild, and coinciding new messages stay incremental.
+// revision (0 if never bumped). It increments whenever an identifier row is
+// created, repointed, or given new service/scope classification. Identifiers
+// bake into the identity directory datasets (relationship_people search values
+// and display labels, the participant_identifiers Parquet export) but not into
+// per-row activity facts, so drift on this revision alone is repairable by the
+// derived-dataset refresh — unlike AccountIdentityRevision drift, it never
+// demands a full rebuild, and coinciding new messages stay incremental.
 func (s *Store) ParticipantIdentifierRevision() (int64, error) {
 	var value string
 	err := s.db.QueryRow(
@@ -53,4 +53,17 @@ func (s *Store) bumpParticipantIdentifierRevision(tx *loggedTx) error {
 		return fmt.Errorf("bump participant identifier revision: %w", err)
 	}
 	return nil
+}
+
+func (s *Store) bumpParticipantIdentifierRevisionIfChanged(
+	tx *loggedTx, result sql.Result,
+) error {
+	changed, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("check participant identifier change: %w", err)
+	}
+	if changed == 0 {
+		return nil
+	}
+	return s.bumpParticipantIdentifierRevision(tx)
 }

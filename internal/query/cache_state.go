@@ -45,12 +45,11 @@ type CacheSyncState struct {
 	// so this field must only advance on a full rebuild — see
 	// cacheops.RefreshIdentityDatasets.
 	AccountIdentityRevision int64 `json:"account_identity_revision,omitempty"`
-	// ParticipantIdentifierRevision tracks identifier-mapping changes
-	// (SetParticipantIdentifier creating or repointing rows). Identifiers
-	// bake into the identity directory datasets (participant_identifiers,
-	// relationship_people search values) but not into per-row activity
-	// facts, so drift here alone is repaired by the derived-dataset
-	// refresh and never forces a full rebuild.
+	// ParticipantIdentifierRevision tracks identifier row and classification
+	// changes. Identifiers bake into the identity directory datasets
+	// (participant_identifiers, relationship_people search values) but not
+	// into per-row activity facts, so drift here alone is repaired by the
+	// derived-dataset refresh and never forces a full rebuild.
 	ParticipantIdentifierRevision int64     `json:"participant_identifier_revision,omitempty"`
 	PublishedAt                   time.Time `json:"published_at"`
 	DatasetFingerprint            string    `json:"dataset_fingerprint"`
