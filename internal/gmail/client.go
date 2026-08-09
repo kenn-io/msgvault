@@ -191,7 +191,7 @@ func (c *Client) request(ctx context.Context, op Operation, method, path string,
 // Uses exponential backoff with full jitter.
 func (c *Client) calculateBackoff(attempt int) time.Duration {
 	// Exponential: 1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 600, 600...
-	base := float64(uint(1) << uint(attempt))
+	base := float64(uint(1) << uint(attempt)) //nolint:gosec // retry attempts are bounded before backoff calculation
 	if base > maxBackoff {
 		base = maxBackoff
 	}

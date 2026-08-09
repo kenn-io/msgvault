@@ -1952,7 +1952,7 @@ type TextMessagesResponse struct {
 // aggregateViewTypes are the accepted view_type values, surfaced in 400 messages.
 var aggregateViewTypes = []string{
 	"senders", "sender_names", "recipients", "recipient_names",
-	"domains", "labels", "time", //nolint:goconst // "labels" here names a view_type enum value, not the Parquet dataset test fixtures also spell "labels"; a shared constant would blur two unrelated concepts
+	"domains", "labels", "time",
 }
 
 // parseViewType parses a view type string into query.ViewType.
@@ -3142,7 +3142,7 @@ func openLooseAttachmentContent(attachmentsDir, contentHash, storagePath string)
 	if err != nil {
 		return nil, 0, err
 	}
-	f, err := os.Open(path)
+	f, err := os.Open(path) //nolint:gosec // path is constrained by the content hash or validated recorded attachment path
 	if err != nil {
 		return nil, 0, err
 	}

@@ -16,7 +16,7 @@ func publishNewConfig(candidatePath string, _ *os.File, before ConfigFile) (conf
 	if err != nil {
 		return configPublication{}, fmt.Errorf("pin publication directory: %w", err)
 	}
-	dir := os.NewFile(uintptr(dirfd), filepath.Dir(before.Path))
+	dir := os.NewFile(uintptr(dirfd), filepath.Dir(before.Path)) //nolint:gosec // successful Unix open returns a non-negative descriptor
 	dirInfo, err := dir.Stat()
 	if err != nil {
 		_ = dir.Close()

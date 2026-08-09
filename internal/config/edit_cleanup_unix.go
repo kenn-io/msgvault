@@ -95,7 +95,7 @@ func openConfigEntryAt(dirfd int, name, displayPath string) (*os.File, os.FileIn
 	if err != nil {
 		return nil, nil, fmt.Errorf("open config cleanup entry: %w", err)
 	}
-	file := os.NewFile(uintptr(fd), displayPath)
+	file := os.NewFile(uintptr(fd), displayPath) //nolint:gosec // successful Unix open returns a non-negative descriptor
 	info, err := file.Stat()
 	if err != nil {
 		_ = file.Close()
@@ -109,7 +109,7 @@ func retainConfigEntryAt(dirfd int, name, displayPath, expectedIdentity string) 
 	if err != nil {
 		return nil, fmt.Errorf("open retained config retirement entry: %w", err)
 	}
-	file := os.NewFile(uintptr(fd), displayPath)
+	file := os.NewFile(uintptr(fd), displayPath) //nolint:gosec // successful Unix open returns a non-negative descriptor
 	info, err := file.Stat()
 	if err != nil {
 		_ = file.Close()

@@ -1015,6 +1015,7 @@ func TestForceRefreshSavesRefreshedToken(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 		assert.NoError(r.ParseForm())
 		assert.Equal("refresh_token", r.FormValue("grant_type"))
 		assert.Equal("refresh-1", r.FormValue("refresh_token"))

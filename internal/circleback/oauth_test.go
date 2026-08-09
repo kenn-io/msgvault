@@ -74,9 +74,10 @@ func newFakeAS(t *testing.T) *fakeAS {
 		f.lastAuthorize = r.URL.Query()
 		redirect := r.URL.Query().Get("redirect_uri") +
 			"?code=authcode-1&state=" + url.QueryEscape(r.URL.Query().Get("state"))
-		http.Redirect(w, r, redirect, http.StatusFound) //nolint:gosec // fake AS echoes the test's own redirect_uri
+		http.Redirect(w, r, redirect, http.StatusFound)
 	})
 	mux.HandleFunc("/token", func(w http.ResponseWriter, r *http.Request) {
+		r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 		if err := r.ParseForm(); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return

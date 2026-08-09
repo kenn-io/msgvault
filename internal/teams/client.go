@@ -122,7 +122,7 @@ func retryAfter(header string, attempt int) time.Duration {
 			return time.Duration(secs) * time.Second
 		}
 	}
-	d := min(time.Duration(1<<uint(attempt))*time.Second, 60*time.Second)
+	d := min(time.Duration(1<<uint(attempt))*time.Second, 60*time.Second) //nolint:gosec // retry attempts are bounded by the caller
 	return d
 }
 

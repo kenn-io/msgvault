@@ -164,12 +164,12 @@ func readConfigFileSnapshotUnix(path string, retain bool) (ConfigFile, error) {
 			}
 			snapshot = ConfigFile{Path: displayPath, Content: content, ETag: configETag(content), Mode: mode, Exists: true, identity: identity}
 			if retain {
-				fd, duplicateErr := unix.Dup(int(file.Fd()))
+				fd, duplicateErr := unix.Dup(int(file.Fd())) //nolint:gosec // Unix file descriptors fit the int API used by x/sys/unix
 				if duplicateErr != nil {
 					return fmt.Errorf("retain config snapshot identity: %w", duplicateErr)
 				}
 				unix.CloseOnExec(fd)
-				snapshot.retained = os.NewFile(uintptr(fd), displayPath)
+				snapshot.retained = os.NewFile(uintptr(fd), displayPath) //nolint:gosec // successful Unix dup returns a non-negative descriptor
 			}
 			return nil
 		}, func(displayPath string, parent *os.File) error {

@@ -332,6 +332,7 @@ func (f *fakeSlack) handleUsersConversations(w http.ResponseWriter, r *http.Requ
 }
 
 func (f *fakeSlack) handleMembers(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	c := f.conv(r.FormValue("channel"))
@@ -376,6 +377,7 @@ func visibleHistory(c *fakeConv, oldest, latest string, inclusive bool) []fakeMs
 }
 
 func (f *fakeSlack) handleHistory(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.historyCalls++
@@ -413,6 +415,7 @@ func (f *fakeSlack) handleHistory(w http.ResponseWriter, r *http.Request) {
 }
 
 func (f *fakeSlack) handleReplies(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	c := f.conv(r.FormValue("channel"))
@@ -479,6 +482,7 @@ type searchHit struct {
 // timestamp sort, count/page pagination WITH the probed clamp behavior
 // (page numbers beyond 100 are silently served as page 1).
 func (f *fakeSlack) handleSearch(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.failSearch {

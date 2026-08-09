@@ -15,7 +15,7 @@ func openConfigNoFollow(path string) (*os.File, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open config without following final symlink: %w", err)
 	}
-	return os.NewFile(uintptr(fd), path), nil
+	return os.NewFile(uintptr(fd), path), nil //nolint:gosec // successful Unix open returns a non-negative descriptor
 }
 
 func openedFileIdentity(file *os.File, info fs.FileInfo) (string, bool) {

@@ -23,7 +23,6 @@ linters:
     - bidichk
     - bodyclose
     - canonicalheader
-    - clickhouselint
     - copyloopvar
     - decorder
     - dogsled
@@ -45,7 +44,7 @@ linters:
     - godot
     - goheader
     - gomoddirectives
-    - gomodguard_v2
+    - gomodguard
     - goprintffuncname
     - gosec
     - govet
@@ -99,7 +98,7 @@ linters:
   #   complexity (trust reviewer judgment): funlen, cyclop, gocognit, maintidx, gocyclo, nestif
   #   project misfit: depguard, mnd, gochecknoglobals, gochecknoinits, testpackage,
   #     paralleltest, tparallel, gosmopolitan, prealloc, err113, forbidigo
-  #   deprecated: gomodguard (use gomodguard_v2)
+  #   deprecated: none of the enabled linter names are deprecated
   #   pending dedicated passes: contextcheck, noctx (see follow-up PRs)
 
   settings:

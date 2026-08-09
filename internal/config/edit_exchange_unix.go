@@ -64,7 +64,7 @@ func readPhysicalConfigSnapshotAt(dir int, name, displayPath string) (ConfigFile
 	if err != nil {
 		return ConfigFile{}, fmt.Errorf("open pinned config entry: %w", err)
 	}
-	file := os.NewFile(uintptr(fd), displayPath)
+	file := os.NewFile(uintptr(fd), displayPath) //nolint:gosec // successful Unix open returns a non-negative descriptor
 	content, mode, identity, readErr := readVerifiedOpenedConfig(file)
 	closeErr := file.Close()
 	if readErr != nil || closeErr != nil {
