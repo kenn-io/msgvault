@@ -425,7 +425,8 @@ func (s *Store) DecideIdentityMatchCandidateContext(
 		}
 		if _, err := tx.ExecContext(ctx, `UPDATE identity_match_candidates SET
 			state = ?, decided_by = ?, decided_at = `+s.dialect.Now()+`,
-			notes = ?, updated_at = `+s.dialect.Now()+` WHERE id = ?`,
+			notes = ?, pre_conflict_state = NULL,
+			updated_at = `+s.dialect.Now()+` WHERE id = ?`,
 			state, decidedBy, stringValue(notes), candidateID,
 		); err != nil {
 			return fmt.Errorf("decide identity match candidate: %w", err)
@@ -452,6 +453,7 @@ type identityMatchCandidateMergeRow struct {
 	Source                    Provenance
 	SourceRef                 sql.NullString
 	ObservationConflictOrigin sql.NullString
+	PreConflictState          sql.NullString
 	DecidedBy                 sql.NullString
 	DecidedAt                 sql.NullTime
 	Notes                     sql.NullString
@@ -460,7 +462,7 @@ type identityMatchCandidateMergeRow struct {
 const identityMatchCandidateMergeSelect = `SELECT
 	id, left_kind, left_id, right_kind, right_id, basis, service_id,
 	scope_kind, scope_value, normalized_value, state, confidence, source, source_ref,
-	observation_conflict_origin, decided_by, decided_at, notes
+	observation_conflict_origin, pre_conflict_state, decided_by, decided_at, notes
 	FROM identity_match_candidates`
 
 func scanIdentityMatchCandidateMergeRow(row scanner) (identityMatchCandidateMergeRow, error) {
@@ -472,7 +474,7 @@ func scanIdentityMatchCandidateMergeRow(row scanner) (identityMatchCandidateMerg
 		&candidate.NormalizedValue, &candidate.State,
 		&candidate.Confidence, &candidate.Source,
 		&candidate.SourceRef, &candidate.ObservationConflictOrigin,
-		&candidate.DecidedBy,
+		&candidate.PreConflictState, &candidate.DecidedBy,
 		&candidate.DecidedAt, &candidate.Notes,
 	)
 	return candidate, err
@@ -594,6 +596,7 @@ func (s *Store) collapseIdentityMatchCandidateMergeGroupTx(
 	state, decidedBy, decidedAt, notes := reconcileIdentityMatchCandidateMergeState(group)
 	confidence, source, sourceRef := identityMatchCandidateMergeConfidenceProvenance(group)
 	observationOrigin := reconcileIdentityMatchCandidateMergeObservationOrigin(group, state)
+	preConflict := reconcileIdentityMatchCandidateMergePreConflictState(group, state)
 
 	for _, loser := range group[1:] {
 		if _, err := tx.ExecContext(ctx, `UPDATE identity_match_evidence
@@ -610,15 +613,49 @@ func (s *Store) collapseIdentityMatchCandidateMergeGroupTx(
 	if _, err := tx.ExecContext(ctx, `UPDATE identity_match_candidates SET
 		left_kind = ?, left_id = ?, right_kind = ?, right_id = ?, state = ?,
 		confidence = ?, source = ?, source_ref = ?,
-		observation_conflict_origin = ?, decided_by = ?, decided_at = ?, notes = ?,
+		observation_conflict_origin = ?, pre_conflict_state = ?,
+		decided_by = ?, decided_at = ?, notes = ?,
 		updated_at = `+s.dialect.Now()+` WHERE id = ?`,
 		winner.LeftKind, winner.LeftID, winner.RightKind, winner.RightID, state,
-		confidence, source, sourceRef, observationOrigin,
+		confidence, source, sourceRef, observationOrigin, preConflict,
 		decidedBy, decidedAt, notes, winner.ID,
 	); err != nil {
 		return fmt.Errorf("reconcile duplicate identity match candidate: %w", err)
 	}
 	return nil
+}
+
+// reconcileIdentityMatchCandidateMergePreConflictState records which state a
+// collapsed conflict should return to once its observation support is gone.
+// A terminal decision that lost to a conflict during the collapse (or a
+// pre-conflict state a group member already carried) is restorable; opposing
+// decisions cancel out and fall back to an undecided candidate.
+func reconcileIdentityMatchCandidateMergePreConflictState(
+	group []identityMatchCandidateMergeRow,
+	state IdentityMatchState,
+) sql.NullString {
+	if state != IdentityMatchStateConflict {
+		return sql.NullString{}
+	}
+	restorable := sql.NullString{}
+	for _, candidate := range group {
+		value := ""
+		switch {
+		case candidate.State == IdentityMatchStateAccepted ||
+			candidate.State == IdentityMatchStateRejected:
+			value = string(candidate.State)
+		case candidate.PreConflictState.Valid:
+			value = candidate.PreConflictState.String
+		}
+		if value == "" || value == string(IdentityMatchStateCandidate) {
+			continue
+		}
+		if restorable.Valid && restorable.String != value {
+			return sql.NullString{}
+		}
+		restorable = sql.NullString{String: value, Valid: true}
+	}
+	return restorable
 }
 
 func reconcileIdentityMatchCandidateMergeObservationOrigin(

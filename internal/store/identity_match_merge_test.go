@@ -297,6 +297,25 @@ func TestMergeParticipantsPreservesDecisionMetadataWhenConflictWins(t *testing.T
 	assert.Equal(accepted.DecidedAt, merged.DecidedAt)
 	require.NotNil(merged.Notes)
 	assert.Equal(note, *merged.Notes)
+
+	// Once the observation pair no longer conflicts, cleanup must restore
+	// the accepted decision rather than demote to an undecided candidate.
+	observations, err := st.ListParticipantObservationsContext(ctx, survivor, true)
+	require.NoError(err)
+	require.Len(observations, 1)
+	require.NoError(st.SupersedeParticipantObservationContext(
+		ctx, survivor, observations[0].Envelope.ID, nil,
+	))
+	candidates, err = st.ListIdentityMatchCandidatesContext(ctx, nil, 100, 0)
+	require.NoError(err)
+	require.Len(candidates, 1)
+	restored := candidates[0]
+	assert.Equal(store.IdentityMatchStateAccepted, restored.State,
+		"cleanup must restore the pre-conflict accepted decision")
+	require.NotNil(restored.DecidedBy)
+	assert.Equal("user", *restored.DecidedBy)
+	require.NotNil(restored.Notes)
+	assert.Equal(note, *restored.Notes)
 }
 
 func TestMergeParticipantsKeepsCandidatesForDistinctNormalizedValues(t *testing.T) {

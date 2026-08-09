@@ -414,6 +414,42 @@ func TestMergeParticipantsRemovesConflictAfterProviderIDConvergence(t *testing.T
 	assert.Empty(candidates)
 }
 
+func TestCrossKindObservationPairDoesNotSupportGeneratedConflict(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := storetest.New(t).Store
+	ctx := t.Context()
+	left, err := st.EnsureParticipantByIdentifier("example", "left-kind", "Left")
+	require.NoError(err)
+	right, err := st.EnsureParticipantByIdentifier("example", "right-kind", "Right")
+	require.NoError(err)
+	input := store.ParticipantContactObservationInput{
+		AddressKind: store.ContactAddressUsername, OriginalValue: "alice",
+		ProviderUserID: new("provider-left"),
+		Envelope:       store.ValueEnvelopeInput{Source: store.ProvenanceArchiveObservation},
+	}
+	_, err = st.RecordContactObservationContext(ctx, left, input)
+	require.NoError(err)
+	input.ProviderUserID = new("provider-right")
+	conflicting, err := st.RecordContactObservationContext(ctx, right, input)
+	require.NoError(err)
+	require.True(conflicting.Conflicting)
+
+	input.AddressKind = store.ContactAddressSocial
+	social, err := st.RecordContactObservationContext(ctx, right, input)
+	require.NoError(err)
+	require.False(social.Conflicting,
+		"generation must not pair a social handle with a username")
+
+	require.NoError(st.SupersedeParticipantObservationContext(
+		ctx, right, conflicting.Observation.Envelope.ID, nil,
+	))
+	candidates, err := st.ListIdentityMatchCandidatesContext(ctx, nil, 10, 0)
+	require.NoError(err)
+	assert.Empty(candidates,
+		"a username conflict must not stay supported by a cross-kind social pair")
+}
+
 func TestSameUsernameOnDifferentScopesIsNotAConflict(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

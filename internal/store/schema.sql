@@ -1180,6 +1180,9 @@ CREATE TABLE IF NOT EXISTS identity_match_candidates (
     observation_conflict_origin TEXT CHECK (
         observation_conflict_origin IN ('generated', 'promoted')
     ),
+    pre_conflict_state TEXT CHECK (
+        pre_conflict_state IN ('candidate', 'accepted', 'rejected')
+    ),
     decided_by TEXT,
     decided_at DATETIME,
     notes TEXT,

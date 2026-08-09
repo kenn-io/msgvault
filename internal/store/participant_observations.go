@@ -467,9 +467,10 @@ func (s *Store) SupersedeParticipantObservationContext(
 }
 
 // deleteUnsupportedObservationIdentityConflictsContext removes generated
-// conflicts and demotes promoted candidates after the observations that
-// support them change. A conflict remains reviewable while a matching current
-// observation pair exists whose stable provider IDs are absent or different.
+// conflicts and returns promoted candidates to their pre-conflict state after
+// the observations that support them change. A conflict remains reviewable
+// while a matching current observation pair exists whose stable provider IDs
+// are absent or different.
 func (s *Store) deleteUnsupportedObservationIdentityConflictsContext(
 	ctx context.Context, execer contextQuerier,
 ) error {
@@ -491,14 +492,15 @@ func (s *Store) deleteUnsupportedObservationIdentityConflictsContext(
 					SELECT 1 FROM participant_contact_observations current_right
 					WHERE current_right.participant_id = c.right_id
 					  AND `+identityCandidateObservationMatchSQL("current_right")+`
-					  AND `+identityCandidateObservationProviderConflictSQL(
+					  AND `+identityCandidateObservationPairSQL(
 		"current_left", "current_right",
 	)+`
 				  )
 			  )
 		)
 		UPDATE identity_match_candidates
-		SET state = 'candidate', observation_conflict_origin = NULL,
+		SET state = COALESCE(pre_conflict_state, 'candidate'),
+		    observation_conflict_origin = NULL, pre_conflict_state = NULL,
 		    updated_at = `+s.dialect.Now()+`
 		WHERE id IN (SELECT id FROM stale_conflicts)`)); err != nil {
 		return fmt.Errorf("demote unsupported observation conflicts: %w", err)
@@ -521,7 +523,7 @@ func (s *Store) deleteUnsupportedObservationIdentityConflictsContext(
 					SELECT 1 FROM participant_contact_observations current_right
 					WHERE current_right.participant_id = c.right_id
 					  AND `+identityCandidateObservationMatchSQL("current_right")+`
-					  AND `+identityCandidateObservationProviderConflictSQL(
+					  AND `+identityCandidateObservationPairSQL(
 		"current_left", "current_right",
 	)+`
 				  )
@@ -534,8 +536,13 @@ func (s *Store) deleteUnsupportedObservationIdentityConflictsContext(
 	return nil
 }
 
-func identityCandidateObservationProviderConflictSQL(leftAlias, rightAlias string) string {
-	return `(` + leftAlias + `.provider_user_id IS NULL
+// identityCandidateObservationPairSQL matches a supporting observation pair:
+// conflict generation only ever pairs observations of the same address kind,
+// so a cross-kind pair (say username vs social) must not keep a conflict
+// alive either.
+func identityCandidateObservationPairSQL(leftAlias, rightAlias string) string {
+	return leftAlias + `.address_kind = ` + rightAlias + `.address_kind
+		AND (` + leftAlias + `.provider_user_id IS NULL
 		OR ` + rightAlias + `.provider_user_id IS NULL
 		OR ` + leftAlias + `.provider_user_id != ` + rightAlias + `.provider_user_id)`
 }

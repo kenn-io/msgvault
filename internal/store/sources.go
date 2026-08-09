@@ -428,7 +428,7 @@ func (s *Store) deleteSourceObservationIdentityCandidatesContext(
 					WHERE kept_right.participant_id = c.right_id
 					  AND (kept_right.source_id IS NULL OR kept_right.source_id != ?)
 					  AND `+identityCandidateObservationMatchSQL("kept_right")+`
-					  AND `+identityCandidateObservationProviderConflictSQL(
+					  AND `+identityCandidateObservationPairSQL(
 		"kept_left", "kept_right",
 	)+`
 				  )

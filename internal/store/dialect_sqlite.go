@@ -779,6 +779,7 @@ func (d *SQLiteDialect) LegacyColumnMigrations() []ColumnMigration {
 		{`ALTER TABLE participant_identifiers ADD COLUMN scope_kind TEXT`, "pi_scope_kind"},
 		{`ALTER TABLE participant_identifiers ADD COLUMN scope_value TEXT`, "pi_scope_value"},
 		{`ALTER TABLE identity_match_candidates ADD COLUMN observation_conflict_origin TEXT CHECK (observation_conflict_origin IN ('generated', 'promoted'))`, "identity_match_candidates.observation_conflict_origin"},
+		{`ALTER TABLE identity_match_candidates ADD COLUMN pre_conflict_state TEXT CHECK (pre_conflict_state IN ('candidate', 'accepted', 'rejected'))`, "identity_match_candidates.pre_conflict_state"},
 		// embed_gen: per-message vector-embedding watermark. NULL default
 		// means every legacy row reads as "needs embedding", which is
 		// correct — the scan-and-fill worker (and backstop) will embed and
