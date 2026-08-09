@@ -41,10 +41,12 @@ var (
 )
 
 var (
-	startServeBackgroundProcessForRun = startServeBackgroundProcess
-	waitForBackgroundServeReadyForRun = waitForBackgroundServeReady
-	stopDaemonRuntimeForUpgrade       = stopDaemonRuntimeForUpgradeImpl
-	requestDaemonShutdownForRun       = requestDaemonShutdown
+	startServeBackgroundProcessForRun     = startServeBackgroundProcess
+	waitForBackgroundServeReadyForRun     = waitForBackgroundServeReady
+	stopDaemonRuntimeForUpgrade           = stopDaemonRuntimeForUpgradeImpl
+	requestDaemonShutdownForRun           = requestDaemonShutdown
+	newServeBackgroundCommandForRun       = exec.Command
+	configureServeBackgroundCommandForRun = configureServeBackgroundCommand
 )
 
 var errDaemonIdentityUnconfirmed = errors.New("daemon identity is unconfirmed")
@@ -846,8 +848,7 @@ func startServeBackgroundProcess(c *config.Config, opts backgroundServeStartOpti
 	}
 	defer func() { _ = devNull.Close() }()
 
-	//nolint:gosec // exe is this binary and args are reconstructed from fixed global flags.
-	child := exec.Command(exe, serveBackgroundChildArgs()...)
+	child := newServeBackgroundCommandForRun(exe, serveBackgroundChildArgs()...)
 	child.Env = withStartupCacheBuildIntent(
 		append(os.Environ(), "MSGVAULT_HOME="+c.HomeDir, serveBackgroundChildEnv+"=1"),
 		opts.CacheBuildIntent,
@@ -855,7 +856,7 @@ func startServeBackgroundProcess(c *config.Config, opts backgroundServeStartOpti
 	child.Stdin = devNull
 	child.Stdout = logFile
 	child.Stderr = logFile
-	commandConfig, err := configureServeBackgroundCommand(child)
+	commandConfig, err := configureServeBackgroundCommandForRun(child)
 	if err != nil {
 		return nil, fmt.Errorf("configure background process tree: %w", err)
 	}
@@ -876,6 +877,7 @@ func startServeBackgroundProcess(c *config.Config, opts backgroundServeStartOpti
 			return nil, fmt.Errorf("attach server process tree: %w", err)
 		}
 	}
+	closeProcessTree = false
 	closeLog = false
 	_ = logFile.Close()
 

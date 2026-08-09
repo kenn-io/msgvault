@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -1220,6 +1221,45 @@ func (t *recordingBackgroundProcessTree) Terminate() error {
 func (t *recordingBackgroundProcessTree) Close() error {
 	t.closeCalls.Add(1)
 	return nil
+}
+
+func TestStartServeBackgroundProcessTransfersProcessTreeOwnership(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	t.Setenv("GO_WANT_HELPER_PROCESS", "1")
+	t.Setenv("GO_HELPER_MODE", "block")
+	tree := &recordingBackgroundProcessTree{terminate: func() error { return nil }}
+	oldCommand := newServeBackgroundCommandForRun
+	oldConfigure := configureServeBackgroundCommandForRun
+	newServeBackgroundCommandForRun = func(string, ...string) *exec.Cmd {
+		return helperProcessCommand(context.Background(), "block")
+	}
+	configureServeBackgroundCommandForRun = func(*exec.Cmd) (backgroundServeCommandConfig, error) {
+		return backgroundServeCommandConfig{ProcessTree: tree}, nil
+	}
+	t.Cleanup(func() {
+		newServeBackgroundCommandForRun = oldCommand
+		configureServeBackgroundCommandForRun = oldConfigure
+	})
+
+	proc, err := startServeBackgroundProcess(
+		lifecycleTestConfig(t.TempDir()),
+		backgroundServeStartOptions{ExecutablePath: os.Args[0]},
+	)
+	require.NoError(err)
+	t.Cleanup(func() {
+		_ = proc.Process.Kill()
+		select {
+		case <-proc.Wait:
+		case <-time.After(2 * time.Second):
+		}
+		_ = proc.releaseProcessTree()
+	})
+
+	assert.Zero(tree.closeCalls.Load(), "successful startup must transfer process-tree ownership")
+	require.NoError(proc.releaseProcessTree())
+	assert.Equal(int32(1), tree.closeCalls.Load(), "owner releases process-tree handle")
 }
 
 func TestStopBackgroundServeStartupTerminatesProcessTree(t *testing.T) {
