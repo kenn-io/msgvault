@@ -5,7 +5,7 @@
   sqlite,
 }:
 let
-  version = "0.19.2";
+  version = "0.19.3";
 in
 buildGoModule {
   pname = "msgvault";
