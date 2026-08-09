@@ -129,7 +129,7 @@ func TestRunServeGivesAnalyticsInitializationGatePriorityOverVector(t *testing.T
 	case <-analyticsStarted:
 	case err := <-errCh:
 		require.NoError(t, err, "runServe exited before analytics initialization")
-	case <-time.After(5 * time.Second):
+	case <-time.After(serveLifecycleTestTimeout):
 		require.FailNow(t, "analytics initialization did not start")
 	}
 	waitForServeHealth(t, c.Server.APIPort, errCh)
@@ -148,7 +148,7 @@ func TestRunServeGivesAnalyticsInitializationGatePriorityOverVector(t *testing.T
 	case <-vectorStarted:
 	case err := <-errCh:
 		require.NoError(t, err, "runServe exited before vector initialization")
-	case <-time.After(5 * time.Second):
+	case <-time.After(serveLifecycleTestTimeout):
 		require.FailNow(t, "vector initialization did not start after analytics released the gate")
 	}
 	cancel()

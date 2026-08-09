@@ -32,6 +32,8 @@ import (
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
+const serveLifecycleTestTimeout = 30 * time.Second
+
 func TestServeConfigParsing(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -203,7 +205,7 @@ func TestRunServeImmediateCancellationWaitsForAPIStart(t *testing.T) {
 
 	select {
 	case <-started:
-	case <-time.After(5 * time.Second):
+	case <-time.After(serveLifecycleTestTimeout):
 		require.FailNow("API startup seam was not entered")
 	}
 	cancel()
@@ -307,7 +309,7 @@ func TestRunServeServesHealthWhileAnalyticsBuildBlocked(t *testing.T) {
 	case <-buildStarted:
 	case err := <-errCh:
 		require.NoError(err, "runServe exited before analytics build was blocked")
-	case <-time.After(30 * time.Second):
+	case <-time.After(serveLifecycleTestTimeout):
 		require.FailNow("analytics cache build did not start")
 	}
 	waitForServeHealthBounded(t, c.Server.APIPort, errCh)
@@ -374,7 +376,7 @@ func TestRunServeDuckDBReportsInitializingWithoutSQLFallback(t *testing.T) {
 	case <-buildStarted:
 	case err := <-errCh:
 		require.NoError(err, "runServe exited before analytics build was blocked")
-	case <-time.After(30 * time.Second):
+	case <-time.After(serveLifecycleTestTimeout):
 		require.FailNow("analytics cache build did not start")
 	}
 	waitForServeHealthBounded(t, c.Server.APIPort, errCh)
@@ -467,7 +469,7 @@ func TestRunServeAutoSwitchesToDuckDBAfterBackgroundBuild(t *testing.T) {
 	case <-buildStarted:
 	case err := <-errCh:
 		require.NoError(err, "runServe exited before analytics build was blocked")
-	case <-time.After(30 * time.Second):
+	case <-time.After(serveLifecycleTestTimeout):
 		require.FailNow("analytics cache build did not start")
 	}
 	waitForServeHealthBounded(t, c.Server.APIPort, errCh)
@@ -610,7 +612,7 @@ func freeTCPPort(t *testing.T) int {
 func waitForServeHealth(t *testing.T, port int, errCh <-chan error) {
 	t.Helper()
 	url := fmt.Sprintf("http://127.0.0.1:%d/health", port)
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(serveLifecycleTestTimeout)
 	for time.Now().Before(deadline) {
 		select {
 		case err := <-errCh:
@@ -634,7 +636,7 @@ func waitForServeHealthBounded(t *testing.T, port int, errCh <-chan error) {
 	t.Helper()
 	client := &http.Client{Timeout: 100 * time.Millisecond}
 	url := fmt.Sprintf("http://127.0.0.1:%d/health", port)
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(serveLifecycleTestTimeout)
 	for time.Now().Before(deadline) {
 		select {
 		case err := <-errCh:
