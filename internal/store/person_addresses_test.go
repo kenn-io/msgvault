@@ -73,6 +73,7 @@ func TestPersonAddressDerivesOriginalValueFromAlternateRepresentation(t *testing
 		name  string
 		value string
 		apply func(*store.PersonAddressInput, *string)
+		check func(*testing.T, *store.PersonAddress)
 	}{
 		{
 			name: "free text", value: "Exampleville, CA",
@@ -92,6 +93,30 @@ func TestPersonAddressDerivesOriginalValueFromAlternateRepresentation(t *testing
 				input.PlaceURI = value
 			},
 		},
+		{
+			name: "label", value: "Home address",
+			apply: func(input *store.PersonAddressInput, value *string) {
+				input.Label = value
+			},
+			check: func(t *testing.T, address *store.PersonAddress) {
+				t.Helper()
+				require.NotNil(t, address.Label)
+				assert.Equal(t, "Home address", *address.Label)
+				assert.Nil(t, address.CountryCode)
+			},
+		},
+		{
+			name: "country code", value: "US",
+			apply: func(input *store.PersonAddressInput, value *string) {
+				input.CountryCode = value
+			},
+			check: func(t *testing.T, address *store.PersonAddress) {
+				t.Helper()
+				require.NotNil(t, address.CountryCode)
+				assert.Equal(t, "US", *address.CountryCode)
+				assert.Nil(t, address.Label)
+			},
+		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			require := require.New(t)
@@ -102,11 +127,22 @@ func TestPersonAddressDerivesOriginalValueFromAlternateRepresentation(t *testing
 			}
 			test.apply(&input, &test.value)
 
+			personID := newTestPerson(t, st)
 			address, err := st.AddPersonAddressContext(
-				t.Context(), newTestPerson(t, st), input,
+				t.Context(), personID, input,
 			)
 			require.NoError(err)
 			require.Equal(test.value, address.OriginalValue)
+			if test.check != nil {
+				test.check(t, address)
+			}
+			stored, err := st.ListPersonAddressesContext(t.Context(), personID, true)
+			require.NoError(err)
+			require.Len(stored, 1)
+			require.Equal(test.value, stored[0].OriginalValue)
+			if test.check != nil {
+				test.check(t, &stored[0])
+			}
 		})
 	}
 }
@@ -127,6 +163,15 @@ func TestPersonAddressValidationAndSupersession(t *testing.T) {
 		Envelope:    store.ValueEnvelopeInput{Source: store.ProvenanceUser},
 	})
 	require.ErrorIs(err, store.ErrPersonAddressValueMissing)
+	for _, input := range []store.PersonAddressInput{
+		{AddressKind: store.PersonAddressPostal, Label: new(" \t\n "),
+			Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser}},
+		{AddressKind: store.PersonAddressPostal, CountryCode: new(" \t\n "),
+			Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser}},
+	} {
+		_, err = st.AddPersonAddressContext(ctx, personID, input)
+		require.ErrorIs(err, store.ErrPersonAddressValueMissing)
+	}
 	address, err := st.AddPersonAddressContext(ctx, personID, store.PersonAddressInput{
 		AddressKind: store.PersonAddressPostal, StreetAddress: new("123 Example St."),
 		Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser},

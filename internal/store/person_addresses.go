@@ -188,6 +188,7 @@ func personAddressOriginalValue(input PersonAddressInput) string {
 	}
 	for _, value := range []*string{
 		input.FreeText, input.GeoURI, input.PlaceURI, input.ExtendedComponents,
+		input.Label, input.CountryCode,
 	} {
 		if value != nil && strings.TrimSpace(*value) != "" {
 			return strings.TrimSpace(*value)
@@ -224,6 +225,7 @@ func personAddressHasValue(input PersonAddressInput) bool {
 		input.PostOfficeBox, input.ExtendedAddress, input.StreetAddress,
 		input.Locality, input.Region, input.PostalCode, input.CountryName,
 		input.ExtendedComponents, input.FreeText, input.PlaceURI, input.GeoURI,
+		input.Label, input.CountryCode,
 	} {
 		if value != nil && strings.TrimSpace(*value) != "" {
 			return true
