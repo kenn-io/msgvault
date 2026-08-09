@@ -74,7 +74,20 @@ func (o *serveOwnership) SetStartupPhase(phase string) error {
 }
 
 func (o *serveOwnership) SetStartupCacheBuildOutcome(outcome startupCacheBuildOutcome) error {
-	return o.setRuntimeMetadata(runtimeStartupCacheBuildOutcome, string(outcome))
+	if o == nil {
+		return nil
+	}
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if o.closed {
+		return nil
+	}
+	if outcome == startupCacheBuildOutcomeFatal {
+		if err := writeDurableStartupCacheBuildOutcome(o.dataDir, o.record, outcome); err != nil {
+			return err
+		}
+	}
+	return o.setRuntimeMetadataLocked(runtimeStartupCacheBuildOutcome, string(outcome))
 }
 
 func (o *serveOwnership) setRuntimeMetadata(key, value string) error {
@@ -86,6 +99,10 @@ func (o *serveOwnership) setRuntimeMetadata(key, value string) error {
 	if o.closed {
 		return nil
 	}
+	return o.setRuntimeMetadataLocked(key, value)
+}
+
+func (o *serveOwnership) setRuntimeMetadataLocked(key, value string) error {
 	rec := o.record
 	metadata := maps.Clone(rec.Metadata)
 	if metadata == nil {

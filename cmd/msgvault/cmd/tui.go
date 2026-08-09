@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -98,6 +99,16 @@ HTTP Mode:
 			AnalyticsNotice:  notice,
 		})
 		p := tea.NewProgram(model)
+		noticeCtx, stopNoticeRefresh := context.WithCancel(cmd.Context())
+		defer stopNoticeRefresh()
+		if notice != "" {
+			go refreshAnalyticsCacheNotice(
+				noticeCtx,
+				backend.client,
+				analyticsCacheNoticeRefreshInterval,
+				p.Send,
+			)
+		}
 
 		// Swap the slog default to a file-only logger for the
 		// duration of the TUI. Bubble Tea owns the terminal in
@@ -134,22 +145,69 @@ type tuiBackend struct {
 	cleanup func()
 }
 
-// analyticsCacheNotice asks the daemon which analytics engine it actually
-// selected at startup (GET /health, no cache scans or archive access) and
-// warns when aggregate views run live SQL only because no usable cache
-// existed then. Deliberate live SQL (engine = "sql", PostgreSQL) reports a
-// different mode and stays silent, as do daemons predating the field. The
-// mode is fixed for the daemon's lifetime, so the notice stays accurate —
-// and keeps firing — after a cache build until the daemon restarts.
-// Best-effort: errors return an empty notice rather than blocking launch.
+const (
+	analyticsCacheNoticeRefreshInterval = time.Second
+	analyticsCacheFallbackNotice        = "Aggregate views are using live SQL while the analytics cache initializes or because no usable cache is available; they may load slowly. If this continues, run 'msgvault build-cache', then restart the daemon."
+)
+
+// analyticsCacheNotice asks the daemon which analytics engine currently
+// serves requests (GET /health, no cache scans or archive access). Deliberate
+// live SQL (engine = "sql", PostgreSQL) reports a different mode and stays
+// silent, as do daemons predating the field. Best-effort: errors return an
+// empty notice rather than blocking launch.
 func analyticsCacheNotice(ctx context.Context, client *daemonclient.Client) string {
+	mode, err := currentAnalyticsMode(ctx, client)
+	if err != nil || mode != api.AnalyticsModeSQLFallback {
+		return ""
+	}
+	return analyticsCacheFallbackNotice
+}
+
+func currentAnalyticsMode(ctx context.Context, client *daemonclient.Client) (string, error) {
+	if client == nil {
+		return "", errors.New("daemon client unavailable")
+	}
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 	health, err := client.GetHealth(ctx)
-	if err != nil || health.AnalyticsEngine != api.AnalyticsModeSQLFallback {
-		return ""
+	if err != nil {
+		return "", err
 	}
-	return "Aggregate views are using live SQL because the daemon started without a usable analytics cache; they may load slowly. Run 'msgvault build-cache', then restart the daemon."
+	return health.AnalyticsEngine, nil
+}
+
+// refreshAnalyticsCacheNotice clears the launch notice when a background
+// cache initialization swaps the daemon to DuckDB. Health errors are
+// transient and leave the current notice unchanged.
+func refreshAnalyticsCacheNotice(
+	ctx context.Context,
+	client *daemonclient.Client,
+	interval time.Duration,
+	send func(tea.Msg),
+) {
+	if client == nil || send == nil {
+		return
+	}
+	if interval <= 0 {
+		interval = analyticsCacheNoticeRefreshInterval
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			mode, err := currentAnalyticsMode(ctx, client)
+			if err != nil {
+				continue
+			}
+			if mode == api.AnalyticsModeDuckDB {
+				send(tui.AnalyticsNoticeMsg{})
+				return
+			}
+		}
+	}
 }
 
 func openTUIBackend(ctx context.Context) (*tuiBackend, error) {

@@ -76,7 +76,7 @@ func (s *Server) handleSearchCoverage(w http.ResponseWriter, r *http.Request) {
 	}
 	_, backend, cfg := s.vectorComponents()
 	ctx = semanticCoverageContext(ctx, cfg.Embed.Scope.BuildScope())
-	explorer, ok := s.engine.(query.Explorer)
+	explorer, ok := s.queryEngineForContext(r.Context()).(query.Explorer)
 	if !ok {
 		writeExploreUnavailable(w, query.CacheAbsent)
 		return

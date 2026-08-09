@@ -68,6 +68,32 @@ func TestBuildCacheAutostartFailedReturnsErrorWithoutRetry(t *testing.T) {
 	assert.Zero(t, requests.Load())
 }
 
+func TestBuildCacheAutostartFatalDuckDBFailureDoesNotReportSQLFallback(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	t.Cleanup(server.Close)
+	logPath := filepath.Join(t.TempDir(), "serve.log")
+	stubBuildCacheDaemonAutostart(t, server, startupCacheBuildOutcomeFatal, &logPath)
+
+	cmd, _ := buildCacheHTTPTestCommand()
+	var err error
+	captureStderrDuring(t, func() {
+		err = runBuildCacheHTTP(cmd, false)
+	})
+
+	require.Error(err)
+	assert.Contains(err.Error(), "required DuckDB initialization")
+	assert.Contains(err.Error(), "daemon is shutting down")
+	assert.NotContains(err.Error(), "live SQL")
+	assert.Contains(err.Error(), logPath)
+	assert.Zero(requests.Load())
+}
+
 func TestBuildCacheAutostartUnconsumedUsesHTTPRequest(t *testing.T) {
 	var requests atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

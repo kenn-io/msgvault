@@ -2105,7 +2105,7 @@ func TestHandleCLISearchProbeRefusesMemoizeDuringRebuild(t *testing.T) {
 		},
 	}
 	srv := newCLIHandlerTestServer(st)
-	srv.engine = engine
+	srv.SetAnalyticsEngine(engine, srv.AnalyticsMode())
 
 	rebuildDone := make(chan *httptest.ResponseRecorder, 1)
 	go func() {
@@ -6645,6 +6645,38 @@ func TestHandleQuery_SQLiteEngine503(t *testing.T) {
 	var errResp ErrorResponse
 	require.NoError(t, json.NewDecoder(w.Body).Decode(&errResp), "failed to decode error response")
 	assert.Equal(t, "engine_unavailable", errResp.Error, "error")
+}
+
+func TestHandleQuery_DuckDBInitializing503(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	cfg := &config.Config{
+		Server: config.ServerConfig{APIPort: 8080},
+	}
+	runnerCalled := false
+	srv := NewServerWithOptions(ServerOptions{
+		Config:        cfg,
+		Engine:        &querytest.MockEngine{},
+		AnalyticsMode: AnalyticsModeInitializing,
+		SQLQueryRunner: func(context.Context, string) (*query.QueryResult, error) {
+			runnerCalled = true
+			return &query.QueryResult{}, nil
+		},
+		Logger: testLogger(),
+	})
+
+	body := `{"sql": "SELECT 1"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/query", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	srv.Router().ServeHTTP(w, req)
+
+	assert.Equal(http.StatusServiceUnavailable, w.Code, "status (body: %s)", w.Body.String())
+	var errResp ErrorResponse
+	require.NoError(json.NewDecoder(w.Body).Decode(&errResp), "failed to decode error response")
+	assert.Equal("engine_unavailable", errResp.Error, "error")
+	assert.False(runnerCalled, "initializing DuckDB must not fall through to the SQLite query runner")
 }
 
 // fakeVectorBackend is a test stub implementing vector.Backend. Tests

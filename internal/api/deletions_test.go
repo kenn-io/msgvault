@@ -287,7 +287,7 @@ func TestStageDeletionReplaysResolvedIdentityFilterOnceAfterPreflight(t *testing
 	assertions := assert.New(t)
 	fixture := newExploreIdentityAPIFixture(t)
 	st := &deletionIdentityStore{recordingMessageIdentityStore: fixture.store}
-	srv := newDeletionTestServer(t, st, fixture.server.engine)
+	srv := newDeletionTestServer(t, st, fixture.server.QueryEngine())
 	filters := `[
 		{"dimension":"source","values":["1"]},
 		{"dimension":"identity","values":["1","BOB@MEMBERS.EXAMPLE","recipient"]}

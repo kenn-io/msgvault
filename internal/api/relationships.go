@@ -79,7 +79,7 @@ func (s *Server) handleRelationships(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	analyzer, ok := s.engine.(query.RelationshipAnalyzer)
+	analyzer, ok := s.queryEngineForContext(r.Context()).(query.RelationshipAnalyzer)
 	if !ok {
 		writeExploreUnavailable(w, query.CacheAbsent)
 		return
@@ -197,7 +197,7 @@ func (s *Server) handleRelationshipTimeline(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	analyzer, ok := s.engine.(query.RelationshipAnalyzer)
+	analyzer, ok := s.queryEngineForContext(r.Context()).(query.RelationshipAnalyzer)
 	if !ok {
 		writeExploreUnavailable(w, query.CacheAbsent)
 		return

@@ -1684,7 +1684,7 @@ func (s *Server) cliDedupDeleteError(err error) *apiHTTPError {
 }
 
 func (s *Server) handleCLISearch(w http.ResponseWriter, r *http.Request) {
-	if s.store == nil || s.engine == nil {
+	if s.store == nil || s.queryEngineForContext(r.Context()) == nil {
 		writeError(w, http.StatusServiceUnavailable, "store_unavailable", "Database not available")
 		return
 	}
@@ -1751,7 +1751,7 @@ func (s *Server) handleCLISearch(w http.ResponseWriter, r *http.Request) {
 		IndexState: s.ensureCLISearchIndexAsync(cliStore),
 	}
 
-	results, err := s.engine.Search(r.Context(), parsed, limit, offset)
+	results, err := s.queryEngineForContext(r.Context()).Search(r.Context(), parsed, limit, offset)
 	if err != nil {
 		s.logger.Error("CLI search failed", "error", err)
 		writeError(w, http.StatusInternalServerError, "search_failed", err.Error())
@@ -2573,7 +2573,7 @@ func (s *Server) operationError(
 }
 
 func (s *Server) handleCLIMessage(w http.ResponseWriter, r *http.Request) {
-	if s.engine == nil {
+	if s.queryEngineForContext(r.Context()) == nil {
 		writeError(w, http.StatusServiceUnavailable, "engine_unavailable", "Query engine not available")
 		return
 	}
@@ -2597,7 +2597,7 @@ func (s *Server) handleCLIMessage(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleCLIMessageRaw(w http.ResponseWriter, r *http.Request) {
-	if s.engine == nil {
+	if s.queryEngineForContext(r.Context()) == nil {
 		writeError(w, http.StatusServiceUnavailable, "engine_unavailable", "Query engine not available")
 		return
 	}
@@ -2617,7 +2617,7 @@ func (s *Server) handleCLIMessageRaw(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	raw, err := s.engine.GetMessageRaw(r.Context(), msg.ID)
+	raw, err := s.queryEngineForContext(r.Context()).GetMessageRaw(r.Context(), msg.ID)
 	if err != nil {
 		s.logger.Error("failed to get CLI raw message", "id", msg.ID, "error", err)
 		writeError(w, http.StatusInternalServerError, "internal_error", "Failed to retrieve raw message")
@@ -2710,14 +2710,14 @@ func (s *Server) resolveCLIMessage(r *http.Request, idStr string) (*query.Messag
 		err error
 	)
 	if id, parseErr := strconv.ParseInt(idStr, 10, 64); parseErr == nil {
-		msg, err = s.engine.GetMessage(r.Context(), id)
+		msg, err = s.queryEngineForContext(r.Context()).GetMessage(r.Context(), id)
 		if err != nil {
 			s.logger.Error("failed to get CLI message by id", "id", id, "error", err)
 			return nil, err
 		}
 	}
 	if msg == nil {
-		msg, err = s.engine.GetMessageBySourceID(r.Context(), idStr)
+		msg, err = s.queryEngineForContext(r.Context()).GetMessageBySourceID(r.Context(), idStr)
 		if err != nil {
 			s.logger.Error("failed to get CLI message by source id", "id", idStr, "error", err)
 			return nil, err

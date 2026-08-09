@@ -103,7 +103,7 @@ func (s *Server) handleSearchPeople(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	analyzer, ok := s.engine.(query.PeopleAnalyzer)
+	analyzer, ok := s.queryEngineForContext(r.Context()).(query.PeopleAnalyzer)
 	if !ok {
 		writeExploreUnavailable(w, query.CacheAbsent)
 		return
@@ -136,7 +136,7 @@ func (s *Server) handleSearchDomains(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	analyzer, ok := s.engine.(query.PeopleAnalyzer)
+	analyzer, ok := s.queryEngineForContext(r.Context()).(query.PeopleAnalyzer)
 	if !ok {
 		writeExploreUnavailable(w, query.CacheAbsent)
 		return
@@ -232,7 +232,7 @@ func (s *Server) handleGetPerson(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	analyzer, ok := s.engine.(query.PeopleAnalyzer)
+	analyzer, ok := s.queryEngineForContext(r.Context()).(query.PeopleAnalyzer)
 	if !ok {
 		writeExploreUnavailable(w, query.CacheAbsent)
 		return
@@ -333,7 +333,7 @@ func (s *Server) handlePersonContextSummary(w http.ResponseWriter, r *http.Reque
 	if !ok {
 		return
 	}
-	analyzer, ok := s.engine.(query.PeopleAnalyzer)
+	analyzer, ok := s.queryEngineForContext(r.Context()).(query.PeopleAnalyzer)
 	if !ok {
 		writeExploreUnavailable(w, query.CacheAbsent)
 		return
@@ -359,7 +359,7 @@ func (s *Server) handleGetDomain(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	analyzer, ok := s.engine.(query.PeopleAnalyzer)
+	analyzer, ok := s.queryEngineForContext(r.Context()).(query.PeopleAnalyzer)
 	if !ok {
 		writeExploreUnavailable(w, query.CacheAbsent)
 		return
@@ -385,7 +385,7 @@ func (s *Server) handleDomainContextSummary(w http.ResponseWriter, r *http.Reque
 	if !ok {
 		return
 	}
-	analyzer, ok := s.engine.(query.PeopleAnalyzer)
+	analyzer, ok := s.queryEngineForContext(r.Context()).(query.PeopleAnalyzer)
 	if !ok {
 		writeExploreUnavailable(w, query.CacheAbsent)
 		return

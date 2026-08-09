@@ -111,6 +111,9 @@ var runDerivedCacheSubprocess = func(ctx context.Context, analyticsDir string) e
 var (
 	importDiscordSourceForScheduledRun  = importDiscordSource
 	rebuildCacheAfterScheduledSourceRun = rebuildCacheAfterScheduledSync
+	startServeAPIServer                 = func(server *api.Server, listener net.Listener) error {
+		return server.StartOnListener(listener)
+	}
 )
 
 type serveRuntimeAPIServer interface {
@@ -208,7 +211,18 @@ func runServe(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("open database: %w", err)
 	}
-	defer func() { _ = s.Close() }()
+	var analyticsInit *daemonAnalyticsInitHandle
+	var vectorInit *vectorInitHandle
+	resourceCleanupSafe := true
+	defer func() {
+		if !resourceCleanupSafe {
+			logger.Warn("archive database cleanup skipped", "error", "HTTP shutdown did not complete")
+			return
+		}
+		if err := closeDaemonStoreAfterInitializers(s, analyticsInit, vectorInit); err != nil {
+			logger.Warn("archive database cleanup skipped", "error", err)
+		}
+	}()
 	logger.Info("daemon startup step complete", "step", "open_archive_database")
 
 	setStartupPhase("migrating archive schema")
@@ -246,7 +260,11 @@ func runServe(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("open attachment maintenance: %w", err)
 	}
-	defer func() { _ = attachmentMaint.close() }()
+	defer func() {
+		if resourceCleanupSafe {
+			_ = attachmentMaint.close()
+		}
+	}()
 	blobStore := attachmentMaint.blob
 
 	// Vector misconfiguration still fails startup fast; the expensive
@@ -266,10 +284,10 @@ func runServe(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	engine, analyticsMode, cacheOutcome, engineErr := openDaemonAnalyticsEngine(
-		cmd.Context(), cfg, s, startupCacheIntent,
+	engine, analyticsMode, cacheOutcome, analyticsAsync, engineErr := prepareDaemonAnalyticsEngine(
+		ctx, cfg, s, startupCacheIntent,
 	)
-	if startupCacheIntent != startupCacheBuildIntentNone {
+	if startupCacheIntent != startupCacheBuildIntentNone && !analyticsAsync {
 		if outcomeErr := ownership.SetStartupCacheBuildOutcome(cacheOutcome); outcomeErr != nil {
 			if engine != nil {
 				_ = engine.Close()
@@ -278,10 +296,21 @@ func runServe(cmd *cobra.Command, args []string) error {
 		}
 	}
 	if engineErr != nil {
+		if engine != nil {
+			_ = engine.Close()
+		}
 		return engineErr
 	}
-	defer func() { _ = engine.Close() }()
-	logger.Info("daemon startup step complete", "step", "init_analytics_engine")
+	initialAnalyticsEngine := engine
+	analyticsServerStarted := false
+	defer func() {
+		if resourceCleanupSafe && !analyticsServerStarted && initialAnalyticsEngine != nil {
+			_ = initialAnalyticsEngine.Close()
+		}
+	}()
+	if !analyticsAsync {
+		logger.Info("daemon startup step complete", "step", "init_analytics_engine")
+	}
 
 	getOAuthMgr := oauthManagerCache()
 
@@ -495,13 +524,17 @@ func runServe(cmd *cobra.Command, args []string) error {
 	schedAdapter := &schedulerAdapter{scheduler: sched}
 
 	// Create and start API server
+	var apiServer *api.Server
 	apiOpts := api.ServerOptions{
 		Config:         cfg,
 		Store:          storeAdapter,
 		SavedViewStore: s,
 		Engine:         engine,
 		SQLQueryRunner: func(ctx context.Context, sql string) (*query.QueryResult, error) {
-			return runDaemonSQLQuery(ctx, cfg, s, engine, sql)
+			if apiServer == nil {
+				return nil, errors.New("daemon API server unavailable")
+			}
+			return runDaemonSQLQuery(ctx, cfg, s, apiServer.QueryEngineForRequest(ctx), sql)
 		},
 		ShutdownToken: ownership.shutdownToken,
 		ShutdownFunc:  cancel,
@@ -517,57 +550,98 @@ func runServe(cmd *cobra.Command, args []string) error {
 	if cfg.Vector.Enabled {
 		apiOpts.VectorStatus = api.VectorStatusInitializing
 	}
-	apiServer := api.NewServerWithOptions(apiOpts)
+	apiServer = api.NewServerWithOptions(apiOpts)
 
 	// Start API server in goroutine
 	apiAddr := apiListener.Addr().String()
 	setStartupPhase("")
 	logger.Info("daemon startup step", "step", "start_api_server", "bind", apiAddr)
 	serverErr := make(chan error, 1)
-	listenerReserved = false
 	go func() {
-		if err := apiServer.StartOnListener(apiListener); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		if err := startServeAPIServer(apiServer, apiListener); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			serverErr <- err
 		}
 	}()
-	if idleTracker != nil {
-		idleTracker.Touch()
-		go idleTracker.Run(ctx)
-		logger.Info("background daemon idle shutdown enabled", "timeout", cfg.Server.DaemonIdleTimeout)
-	}
-
-	vectorInit := startVectorInit(
-		ctx, s, dbPath,
-		combineWorkTrackers(idleTracker, labelWorkTracker(operationGate, "background embedding work")),
-		apiServer, sched,
-	)
-
-	fmt.Printf("msgvault daemon started\n")
-	fmt.Printf("  API server: http://%s\n", apiAddr)
-	fmt.Printf("  Scheduled accounts: %d\n", count)
-	fmt.Printf("  Data directory: %s\n", cfg.Data.DataDir)
-	fmt.Println()
-	fmt.Println("Press Ctrl+C to stop.")
-	fmt.Println()
-
-	// Print schedule info
-	for _, status := range sched.Status() {
-		fmt.Printf("  %s: next sync at %s\n", status.Email, status.NextRun.Local().Format("2006-01-02 15:04:05"))
-	}
-	fmt.Println()
-
-	// Wait for shutdown signal or server error
 	var serverStartupErr error
-	select {
-	case sig := <-sigChan:
-		logger.Info("received shutdown signal", "signal", sig)
-		fmt.Printf("\nReceived %s, shutting down...\n", sig)
-	case err := <-serverErr:
-		logger.Error("API server error", "error", err)
-		fmt.Printf("\nAPI server error: %v\n", err)
-		serverStartupErr = err
-	case <-ctx.Done():
-		logger.Info("context cancelled")
+	startErr := apiServer.WaitStarted(ctx)
+	if startErr != nil {
+		if ctx.Err() == nil {
+			serverStartupErr = startErr
+		}
+		// A cancelled context may win the readiness wait before the listener
+		// goroutine gets scheduled. Wait for its startup barrier to settle before
+		// shutdown or deferred cleanup can release resources used by startup.
+		if barrierErr := apiServer.WaitStarted(context.Background()); barrierErr != nil && serverStartupErr == nil {
+			serverStartupErr = barrierErr
+		} else if barrierErr == nil {
+			listenerReserved = false
+			resourceCleanupSafe = false
+		}
+		cancel()
+	} else {
+		listenerReserved = false
+		analyticsServerStarted = true
+		resourceCleanupSafe = false
+		if analyticsAsync {
+			analyticsInit = startDaemonAnalyticsInitializer(
+				ctx, cfg, s, startupCacheIntent, apiServer, ownership,
+				combineWorkTrackers(
+					idleTracker,
+					labelWorkTracker(operationGate, "analytics cache initialization"),
+				),
+			)
+		} else {
+			analyticsInit = completedDaemonAnalyticsInitHandle()
+		}
+		// Analytics must acquire the serial mutation gate before vector
+		// initialization can compete for it. This keeps an explicit cache
+		// request from waiting behind a long vector migration or backfill.
+		_ = analyticsInit.WaitStarted(ctx)
+		if idleTracker != nil {
+			idleTracker.Touch()
+			go idleTracker.Run(ctx)
+			logger.Info("background daemon idle shutdown enabled", "timeout", cfg.Server.DaemonIdleTimeout)
+		}
+
+		vectorInit = startVectorInit(
+			ctx, s, dbPath,
+			combineWorkTrackers(idleTracker, labelWorkTracker(operationGate, "background embedding work")),
+			apiServer, sched,
+		)
+
+		fmt.Printf("msgvault daemon started\n")
+		fmt.Printf("  API server: http://%s\n", apiAddr)
+		fmt.Printf("  Scheduled accounts: %d\n", count)
+		fmt.Printf("  Data directory: %s\n", cfg.Data.DataDir)
+		fmt.Println()
+		fmt.Println("Press Ctrl+C to stop.")
+		fmt.Println()
+
+		// Print schedule info
+		for _, status := range sched.Status() {
+			fmt.Printf("  %s: next sync at %s\n", status.Email, status.NextRun.Local().Format("2006-01-02 15:04:05"))
+		}
+		fmt.Println()
+
+		// Wait for shutdown signal or server error
+		select {
+		case sig := <-sigChan:
+			logger.Info("received shutdown signal", "signal", sig)
+			fmt.Printf("\nReceived %s, shutting down...\n", sig)
+		case err := <-serverErr:
+			logger.Error("API server error", "error", err)
+			fmt.Printf("\nAPI server error: %v\n", err)
+			serverStartupErr = err
+		case err := <-analyticsInit.Fatal():
+			if ctx.Err() == nil {
+				logger.Error("analytics initialization error", "error", err)
+				fmt.Printf("\nAnalytics initialization error: %v\n", err)
+				serverStartupErr = err
+				cancel()
+			}
+		case <-ctx.Done():
+			logger.Info("context cancelled")
+		}
 	}
 
 	// Stop background work first: vector init honors ctx, so cancelling
@@ -577,6 +651,9 @@ func runServe(cmd *cobra.Command, args []string) error {
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), serveOperationDrainTimeout)
 	defer shutdownCancel()
 	shutdownErr := shutdownServeRuntime(shutdownCtx, cmd.OutOrStdout(), apiServer, sched, operationGate)
+	if shutdownErr == nil {
+		resourceCleanupSafe = true
+	}
 	// Wait for the background vector init regardless of the shutdown
 	// outcome: the deferred s.Close() must not run under a still-running
 	// init goroutine, and vectors.db needs closing whenever init finished.
@@ -584,10 +661,24 @@ func runServe(cmd *cobra.Command, args []string) error {
 	// fresh full drain window — shutdownServeRuntime already consumed part
 	// of it, and `daemon stop` budgets only one drain window before it kills
 	// the daemon (serveStopGraceTimeout).
-	if vectorInit.WaitContext(shutdownCtx) {
-		vectorInit.CloseFeatures()
-	} else {
-		logger.Warn("vector init did not stop within the shutdown drain timeout; skipping vectors.db close")
+	if vectorInit != nil {
+		if vectorInit.WaitContext(shutdownCtx) {
+			if resourceCleanupSafe {
+				vectorInit.CloseFeatures()
+			}
+		} else {
+			logger.Warn("vector init did not stop within the shutdown drain timeout; skipping vectors.db close")
+		}
+	}
+	if analyticsInit != nil {
+		analyticsReady := analyticsInit.WaitContext(shutdownCtx)
+		if analyticsReady && resourceCleanupSafe {
+			if err := closeDaemonAnalyticsEngines(apiServer, initialAnalyticsEngine, analyticsInit); err != nil {
+				shutdownErr = errors.Join(shutdownErr, err)
+			}
+		} else if !analyticsReady {
+			logger.Warn("analytics initialization did not stop within the shutdown drain timeout; skipping analytics engine close")
+		}
 	}
 	if shutdownErr != nil {
 		logger.Error("daemon shutdown error", "error", shutdownErr)
@@ -717,6 +808,9 @@ func runDaemonSQLQuery(
 	if c == nil || s == nil {
 		return nil, errors.New("daemon query unavailable")
 	}
+	if engine == nil {
+		return nil, api.ErrSQLQueryEngineUnavailable
+	}
 	if s.IsPostgreSQL() {
 		if querier, ok := engine.(query.SQLQuerier); ok {
 			return querier.QuerySQL(ctx, sqlStr)
@@ -826,6 +920,9 @@ func openDaemonAnalyticsEngine(
 				"full_rebuild", fullBuild,
 				"error", buildErr)
 			if engineMode == config.AnalyticsEngineDuckDB {
+				if intent != startupCacheBuildIntentNone {
+					outcome = startupCacheBuildOutcomeFatal
+				}
 				return nil, "", outcome, fmt.Errorf("build analytics cache: %w", buildErr)
 			}
 			if intent != startupCacheBuildIntentNone {
@@ -847,6 +944,9 @@ func openDaemonAnalyticsEngine(
 				outcome = startupCacheBuildOutcomeFailed
 			}
 			if engineMode == config.AnalyticsEngineDuckDB {
+				if intent != startupCacheBuildIntentNone {
+					outcome = startupCacheBuildOutcomeFatal
+				}
 				return nil, "", outcome, err
 			}
 			logger.Warn("DuckDB engine failed, falling back to live SQL",
@@ -870,6 +970,9 @@ func openDaemonAnalyticsEngine(
 		outcome = startupCacheBuildOutcomeFailed
 	}
 	if engineMode == config.AnalyticsEngineDuckDB {
+		if intent != startupCacheBuildIntentNone {
+			outcome = startupCacheBuildOutcomeFatal
+		}
 		reason := staleness.Reason
 		if reason == "" {
 			reason = "analytics cache is missing or incomplete"

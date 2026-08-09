@@ -207,7 +207,7 @@ func (s *Server) handleGroupFiles(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, "search_revision_changed", "The resolved search index revision changed; restart pagination")
 		return
 	}
-	grouper, ok := s.engine.(query.FileGrouper)
+	grouper, ok := s.queryEngineForContext(r.Context()).(query.FileGrouper)
 	if !ok {
 		writeExploreUnavailable(w, query.CacheAbsent)
 		return
@@ -325,7 +325,7 @@ func (s *Server) handleSearchFilesWithScope(w http.ResponseWriter, r *http.Reque
 			return
 		}
 	}
-	searcher, ok := s.engine.(query.FileSearcher)
+	searcher, ok := s.queryEngineForContext(r.Context()).(query.FileSearcher)
 	if !ok {
 		writeExploreUnavailable(w, query.CacheAbsent)
 		return

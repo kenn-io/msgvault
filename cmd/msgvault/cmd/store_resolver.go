@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"os"
 	"slices"
@@ -294,6 +295,7 @@ func ensureLocalDaemonRuntimeWithStartupCacheIntent(
 	defer func() { _ = proc.releaseProcessTree() }()
 	stopProgress := reportLocalDaemonStartup(ctx, proc)
 	defer func() { stopProgress() }()
+	startupDeadline := time.Now().Add(localDaemonAutoStartReadyTimeout)
 	rt, ready, err := waitForBackgroundServeReadyForRun(
 		ctx, c.Data.DataDir, proc.Wait, localDaemonAutoStartReadyTimeout,
 	)
@@ -315,7 +317,24 @@ func ensureLocalDaemonRuntimeWithStartupCacheIntent(
 		)
 	}
 	if intent != startupCacheBuildIntentNone {
-		rt = refreshDaemonRuntimeRecord(c.Data.DataDir, rt)
+		outcomeTimeout := time.Until(startupDeadline)
+		if outcomeTimeout <= 0 {
+			outcomeTimeout = time.Nanosecond
+		}
+		rt, _, err = waitForStartupCacheBuildOutcome(
+			ctx, c.Data.DataDir, proc, rt, outcomeTimeout,
+		)
+		if err != nil {
+			startupErr := backgroundServeStartupError(err, proc)
+			if ctx.Err() != nil {
+				stopErr := stopBackgroundServeStartupForRun(proc)
+				if stopErr != nil {
+					startupErr = errors.Join(startupErr,
+						fmt.Errorf("stop canceled daemon startup: %w", stopErr))
+				}
+			}
+			return nil, localDaemonStartupInfo{}, startupErr
+		}
 	}
 	stopProgress()
 	stopProgress = func() {}
@@ -328,6 +347,91 @@ func ensureLocalDaemonRuntimeWithStartupCacheIntent(
 		LogPath: proc.LogPath,
 		Outcome: startupCacheBuildOutcomeFromRuntime(rt),
 	}, nil
+}
+
+// waitForStartupCacheBuildOutcome waits after HTTP readiness for a daemon
+// started with an explicit cache intent to publish its outcome. A non-empty
+// outcome means the background initializer has finished; unconsumed is
+// intentionally returned to the caller so it can issue the one HTTP build.
+func waitForStartupCacheBuildOutcome(
+	ctx context.Context,
+	dataDir string,
+	proc *backgroundServeProcess,
+	rt *DaemonRuntime,
+	timeout time.Duration,
+) (*DaemonRuntime, startupCacheBuildOutcome, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if timeout <= 0 {
+		timeout = localDaemonAutoStartReadyTimeout
+	}
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	ticker := time.NewTicker(daemonProbeTick)
+	defer ticker.Stop()
+
+	var waitCh <-chan error
+	if proc != nil {
+		waitCh = proc.Wait
+	}
+	for {
+		current := refreshDaemonRuntimeRecord(dataDir, rt)
+		current, outcome, outcomeErr := observeStartupCacheBuildOutcome(dataDir, current)
+		if outcomeErr != nil {
+			return nil, startupCacheBuildOutcomeNone, outcomeErr
+		}
+		if outcome != startupCacheBuildOutcomeNone {
+			return current, outcome, nil
+		}
+		select {
+		case err := <-waitCh:
+			current = refreshDaemonRuntimeRecord(dataDir, current)
+			current, outcome, outcomeErr = observeStartupCacheBuildOutcome(dataDir, current)
+			if outcomeErr != nil {
+				return nil, startupCacheBuildOutcomeNone, outcomeErr
+			}
+			if outcome != startupCacheBuildOutcomeNone {
+				return current, outcome, nil
+			}
+			if err == nil {
+				err = errors.New("server process exited before startup cache outcome")
+			}
+			return nil, startupCacheBuildOutcomeNone, err
+		case <-ctx.Done():
+			return nil, startupCacheBuildOutcomeNone, ctx.Err()
+		case <-ticker.C:
+		case <-timer.C:
+			return nil, startupCacheBuildOutcomeNone, fmt.Errorf(
+				"daemon did not publish startup cache outcome within %s", timeout)
+		}
+	}
+}
+
+func observeStartupCacheBuildOutcome(
+	dataDir string,
+	rt *DaemonRuntime,
+) (*DaemonRuntime, startupCacheBuildOutcome, error) {
+	if outcome := startupCacheBuildOutcomeFromRuntime(rt); outcome != startupCacheBuildOutcomeNone {
+		if outcome == startupCacheBuildOutcomeFatal && rt != nil {
+			_, _, _ = consumeDurableStartupCacheBuildOutcome(dataDir, rt.Record)
+		}
+		return rt, outcome, nil
+	}
+	if rt == nil {
+		return nil, startupCacheBuildOutcomeNone, nil
+	}
+	outcome, found, err := consumeDurableStartupCacheBuildOutcome(dataDir, rt.Record)
+	if err != nil || !found {
+		return rt, startupCacheBuildOutcomeNone, err
+	}
+	observed := *rt
+	observed.Record.Metadata = maps.Clone(rt.Record.Metadata)
+	if observed.Record.Metadata == nil {
+		observed.Record.Metadata = make(map[string]string)
+	}
+	observed.Record.Metadata[runtimeStartupCacheBuildOutcome] = string(outcome)
+	return &observed, outcome, nil
 }
 
 // refreshDaemonRuntimeRecord reloads the exact process record after readiness.

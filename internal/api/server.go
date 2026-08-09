@@ -215,12 +215,19 @@ type AttachmentBlobStore interface {
 
 type fastmailIdentityInventory = provideridentity.Inventory
 
+type analyticsEngineState struct {
+	engine query.Engine
+	mode   string
+}
+
+type analyticsEngineContextKey struct{}
+
 // Server represents the HTTP API server.
 type Server struct {
 	cfg            *config.Config
 	store          MessageStore
+	analyticsState atomic.Pointer[analyticsEngineState]
 	savedViewStore SavedViewStore
-	engine         query.Engine // Query engine for aggregates and TUI support
 	sqlQueryRunner SQLQueryRunner
 	shutdownToken  string
 	shutdownFunc   func()
@@ -239,17 +246,23 @@ type Server struct {
 	inProgressThreshold time.Duration
 	inProgressInterval  time.Duration
 	daemonVersion       string
-	analyticsMode       string
 	// lexicalCandidateCap overrides query.MaxExploreCandidateMessageIDs in
 	// resolveExploreSearch. Tests shrink it to exercise cap behavior without
 	// building 10k-row fixtures; zero means the production cap.
 	lexicalCandidateCap int
 	router              http.Handler
-	server              *http.Server
-	rateLimiter         *RateLimiter
-	changesRateLimiter  *RateLimiter
-	idleTracker         *IdleTracker
-	operationGate       OperationGate
+	// serverMu protects the HTTP server pointer and listener-start state. The
+	// daemon starts Serve in a goroutine while shutdown can begin from a
+	// cancelled root context, so Shutdown must not race the assignment below.
+	serverMu           sync.RWMutex
+	server             *http.Server
+	started            chan struct{}
+	startErr           error
+	startOnce          sync.Once
+	rateLimiter        *RateLimiter
+	changesRateLimiter *RateLimiter
+	idleTracker        *IdleTracker
+	operationGate      OperationGate
 	// ftsIndexComplete memoizes that the FTS index is fully populated so
 	// handleCLISearch stops probing on every request. NeedsFTSBackfill runs an
 	// anti-join that scans every message when the index is complete (the
@@ -414,10 +427,10 @@ type ServerOptions struct {
 	// DaemonVersion is returned by the unauthenticated kit-compatible
 	// /api/ping endpoint used for local daemon discovery. Empty is allowed.
 	DaemonVersion string
-	// AnalyticsMode is the analytics engine the daemon selected at startup
-	// (an AnalyticsMode constant), reported by /health so clients can tell
-	// whether aggregate views run on the cache or live SQL. Empty omits the
-	// field.
+	// AnalyticsMode is the analytics engine the daemon selected initially (an
+	// AnalyticsMode constant), reported by /health so clients can tell whether
+	// aggregate views run on the cache or live SQL. The daemon may replace the
+	// engine and mode at runtime. Empty omits the field.
 	AnalyticsMode string
 	// SPAHandler overrides the embedded browser application handler. Nil uses
 	// internal/web.Handler and is the production default. Tests may inject a
@@ -461,7 +474,6 @@ func NewServerWithOptions(opts ServerOptions) *Server {
 		cfg:                      opts.Config,
 		store:                    opts.Store,
 		savedViewStore:           opts.SavedViewStore,
-		engine:                   opts.Engine,
 		sqlQueryRunner:           opts.SQLQueryRunner,
 		shutdownToken:            opts.ShutdownToken,
 		shutdownFunc:             opts.ShutdownFunc,
@@ -476,7 +488,6 @@ func NewServerWithOptions(opts ServerOptions) *Server {
 		inProgressThreshold:      inProgressLogThreshold,
 		inProgressInterval:       inProgressLogInterval,
 		daemonVersion:            opts.DaemonVersion,
-		analyticsMode:            opts.AnalyticsMode,
 		idleTracker:              opts.IdleTracker,
 		operationGate:            opts.OperationGate,
 		blobStore:                opts.BlobStore,
@@ -492,7 +503,9 @@ func NewServerWithOptions(opts ServerOptions) *Server {
 		taskLinkOperations:       opts.TaskLinkOperations,
 		taskIdentityResolver:     opts.TaskIdentityResolver,
 		fastmailInventoryFactory: fastmailInventoryFactory,
+		started:                  make(chan struct{}),
 	}
+	s.analyticsState.Store(&analyticsEngineState{engine: opts.Engine, mode: opts.AnalyticsMode})
 	if s.taskIdentityResolver == nil {
 		s.taskIdentityResolver = s.resolveTaskMessageIdentity
 	}
@@ -556,6 +569,7 @@ func (s *Server) setupRouter() http.Handler {
 	// on or observe archive work. The gate still checks API auth itself so
 	// unauthenticated requests do not register as waiters.
 	var h http.Handler = mux
+	h = s.analyticsEngineMiddleware(h)
 	h = operationGateMiddleware(s.operationGate, s.apiRequestAuthorized)(h)
 	h = s.csrfMiddleware(h)
 	h = s.requestSecurityMiddleware(h)
@@ -608,9 +622,55 @@ func (s *Server) Start() error {
 	addr := net.JoinHostPort(bindAddr, strconv.Itoa(s.cfg.Server.APIPort))
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
-		return fmt.Errorf("listen %s: %w", addr, err)
+		listenErr := fmt.Errorf("listen %s: %w", addr, err)
+		s.signalStarted(listenErr)
+		return listenErr
 	}
 	return s.StartOnListener(ln)
+}
+
+// WaitStarted waits until StartOnListener has installed the HTTP server and
+// listener metadata, or until startup reports an error. A cancelled context
+// only cancels the wait; callers that close the reserved listener must wait
+// again without cancellation before releasing resources used by startup.
+func (s *Server) WaitStarted(ctx context.Context) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	s.serverMu.Lock()
+	started := s.started
+	if started == nil {
+		started = make(chan struct{})
+		s.started = started
+	}
+	s.serverMu.Unlock()
+
+	select {
+	case <-started:
+		s.serverMu.RLock()
+		err := s.startErr
+		s.serverMu.RUnlock()
+		return err
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (s *Server) signalStarted(err error) {
+	s.serverMu.Lock()
+	started := s.started
+	if started == nil {
+		started = make(chan struct{})
+		s.started = started
+	}
+	s.serverMu.Unlock()
+
+	s.startOnce.Do(func() {
+		s.serverMu.Lock()
+		s.startErr = err
+		s.serverMu.Unlock()
+		close(started)
+	})
 }
 
 // StartOnListener serves HTTP requests on an already-bound listener. The serve
@@ -618,10 +678,13 @@ func (s *Server) Start() error {
 // startup work begins.
 func (s *Server) StartOnListener(ln net.Listener) error {
 	if ln == nil {
-		return errors.New("nil listener")
+		err := errors.New("nil listener")
+		s.signalStarted(err)
+		return err
 	}
 	if err := s.cfg.Server.ValidateSecure(); err != nil {
 		_ = ln.Close()
+		s.signalStarted(err)
 		return err
 	}
 
@@ -629,27 +692,30 @@ func (s *Server) StartOnListener(ln net.Listener) error {
 		s.logger.Warn("API server running without authentication — set [server] api_key in config.toml")
 	}
 
-	if tcpAddr, ok := ln.Addr().(*net.TCPAddr); ok {
-		s.listenPort = tcpAddr.Port
-	}
-	s.listenerBound = true
-
 	// WriteTimeout must comfortably exceed the request-context timeout;
 	// otherwise a request whose context deadline equals the server
 	// WriteTimeout could lose the race and have its TCP connection torn down
 	// before the structured error response reaches the client.
 	writeBudget := max(s.requestTimeout, DaemonLongRequestTimeout)
 	writeTimeout := writeBudget + 5*time.Second
-	s.server = &http.Server{
+	server := &http.Server{
 		Addr:         ln.Addr().String(),
 		Handler:      s.router,
 		ReadTimeout:  s.readTimeout,
 		WriteTimeout: writeTimeout,
 		IdleTimeout:  120 * time.Second,
 	}
+	s.serverMu.Lock()
+	if tcpAddr, ok := ln.Addr().(*net.TCPAddr); ok {
+		s.listenPort = tcpAddr.Port
+	}
+	s.listenerBound = true
+	s.server = server
+	s.serverMu.Unlock()
+	s.signalStarted(nil)
 
 	s.logger.Info("starting API server", "addr", ln.Addr().String())
-	return s.server.Serve(ln)
+	return server.Serve(ln)
 }
 
 // Shutdown gracefully shuts down the server.
@@ -663,16 +729,113 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	if s.sessions != nil {
 		s.sessions.Close()
 	}
-	if s.server == nil {
+	s.serverMu.RLock()
+	server := s.server
+	s.serverMu.RUnlock()
+	if server == nil {
 		return nil
 	}
 	s.logger.Info("shutting down API server")
-	return s.server.Shutdown(ctx)
+	return server.Shutdown(ctx)
 }
 
 // Router returns the HTTP router for testing.
 func (s *Server) Router() http.Handler {
 	return s.router
+}
+
+// analyticsEngineMiddleware snapshots the immutable engine/mode pair into the
+// request context. A runtime swap is one atomic pointer store, so it never
+// waits for a request and each request keeps one consistent view.
+func (s *Server) analyticsEngineMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		state := s.analyticsState.Load()
+		ctx := context.WithValue(r.Context(), analyticsEngineContextKey{}, state)
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
+func (s *Server) analyticsStateForContext(ctx context.Context) *analyticsEngineState {
+	if ctx != nil {
+		if state, ok := ctx.Value(analyticsEngineContextKey{}).(*analyticsEngineState); ok && state != nil {
+			return state
+		}
+	}
+	return s.currentAnalyticsState()
+}
+
+func (s *Server) currentAnalyticsState() *analyticsEngineState {
+	return s.analyticsState.Load()
+}
+
+func (s *Server) queryEngineForContext(ctx context.Context) query.Engine {
+	state := s.analyticsStateForContext(ctx)
+	if state == nil {
+		return nil
+	}
+	return state.engine
+}
+
+func (s *Server) analyticsModeForContext(ctx context.Context) string {
+	state := s.analyticsStateForContext(ctx)
+	if state == nil {
+		return ""
+	}
+	return state.mode
+}
+
+func (s *Server) analyticsInitializingForContext(ctx context.Context) bool {
+	return s.analyticsModeForContext(ctx) == AnalyticsModeInitializing
+}
+
+// QueryEngine returns the analytics engine currently serving API queries.
+// The daemon uses it when a request must follow a runtime engine swap.
+func (s *Server) QueryEngine() query.Engine {
+	state := s.currentAnalyticsState()
+	if state == nil {
+		return nil
+	}
+	return state.engine
+}
+
+// QueryEngineForRequest returns the engine snapshot carried by a routed
+// request context. Callbacks invoked by handlers use it to stay on the same
+// engine even if background initialization installs a new state.
+func (s *Server) QueryEngineForRequest(ctx context.Context) query.Engine {
+	return s.queryEngineForContext(ctx)
+}
+
+// AnalyticsMode returns the analytics mode currently reported by health
+// endpoints. The engine and mode come from one immutable state snapshot.
+func (s *Server) AnalyticsMode() string {
+	state := s.currentAnalyticsState()
+	if state == nil {
+		return ""
+	}
+	return state.mode
+}
+
+// SetAnalyticsEngine installs an engine and its matching health mode as one
+// state transition. It deliberately does not close the previous engine:
+// daemon-owned engines remain live until HTTP shutdown and background workers
+// have stopped.
+func (s *Server) SetAnalyticsEngine(engine query.Engine, mode string) {
+	s.analyticsState.Store(&analyticsEngineState{engine: engine, mode: mode})
+}
+
+// CloseAnalyticsEngine closes and clears the current engine after the daemon
+// has shut down HTTP handling. If HTTP shutdown fails, the daemon skips this
+// call so a late request cannot use an engine while it is being closed.
+func (s *Server) CloseAnalyticsEngine() error {
+	state := s.analyticsState.Swap(&analyticsEngineState{})
+	var engine query.Engine
+	if state != nil {
+		engine = state.engine
+	}
+	if engine == nil {
+		return nil
+	}
+	return engine.Close()
 }
 
 func (s *Server) requestUsesCLITimeoutPolicy(r *http.Request) bool {
@@ -1047,7 +1210,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		Status:          "ok",
 		Vector:          s.vectorHealth(),
 		Operation:       s.operationBusyHealth(),
-		AnalyticsEngine: s.analyticsMode,
+		AnalyticsEngine: s.analyticsModeForContext(r.Context()),
 	})
 }
 
@@ -1059,7 +1222,7 @@ func (s *Server) handleAuthenticatedHealth(w http.ResponseWriter, r *http.Reques
 		Status:          "ok",
 		Vector:          s.vectorHealth(),
 		Operation:       s.operationHealth(),
-		AnalyticsEngine: s.analyticsMode,
+		AnalyticsEngine: s.analyticsModeForContext(r.Context()),
 	})
 }
 

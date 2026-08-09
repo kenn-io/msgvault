@@ -376,6 +376,13 @@ type updateCheckMsg struct {
 	isDevBuild bool
 }
 
+// AnalyticsNoticeMsg replaces the analytics notice shown while aggregate
+// data loads. The command layer sends an empty notice after a background
+// cache initialization switches the daemon from live SQL to DuckDB.
+type AnalyticsNoticeMsg struct {
+	Notice string
+}
+
 // loadData fetches aggregate data based on current view settings.
 func (m Model) loadData() tea.Cmd {
 	requestID := m.aggregateRequestID
@@ -993,6 +1000,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleAccountsLoaded(msg)
 	case updateCheckMsg:
 		return m.handleUpdateCheck(msg)
+	case AnalyticsNoticeMsg:
+		m.analyticsNotice = msg.Notice
+		return m, nil
 	case messagesLoadedMsg:
 		return m.handleMessagesLoaded(msg)
 	case messageDetailLoadedMsg:

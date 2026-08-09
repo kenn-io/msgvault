@@ -148,7 +148,7 @@ func TestRunServeStartsReadOnlyWithoutOAuthConfig(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	cmd := &cobra.Command{Use: "serve"}
+	cmd := &cobra.Command{Use: serveCmd.Use}
 	cmd.SetContext(ctx)
 	errCh := make(chan error, 1)
 	go func() {
@@ -166,6 +166,62 @@ func TestRunServeStartsReadOnlyWithoutOAuthConfig(t *testing.T) {
 	}
 }
 
+func TestRunServeImmediateCancellationWaitsForAPIStart(t *testing.T) {
+	require := require.New(t)
+	oldCfg := cfg
+	dataDir := t.TempDir()
+	c := lifecycleTestConfig(dataDir)
+	c.Server.APIPort = freeTCPPort(t)
+	c.Vector.Enabled = false
+	c.Analytics.Engine = config.AnalyticsEngineSQL
+	cfg = c
+	t.Cleanup(func() { cfg = oldCfg })
+
+	started := make(chan struct{})
+	release := make(chan struct{})
+	oldStart := startServeAPIServer
+	startServeAPIServer = func(server *api.Server, listener net.Listener) error {
+		close(started)
+		<-release
+		return server.StartOnListener(listener)
+	}
+	t.Cleanup(func() {
+		startServeAPIServer = oldStart
+		select {
+		case <-release:
+		default:
+			close(release)
+		}
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	cmd := &cobra.Command{Use: "serve"}
+	cmd.SetContext(ctx)
+	errCh := make(chan error, 1)
+	go func() { errCh <- runServe(cmd, nil) }()
+
+	select {
+	case <-started:
+	case <-time.After(5 * time.Second):
+		require.FailNow("API startup seam was not entered")
+	}
+	cancel()
+	select {
+	case err := <-errCh:
+		require.FailNow("runServe returned before listener-start barrier", "error: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	close(release)
+	select {
+	case err := <-errCh:
+		require.NoError(err, "runServe")
+	case <-time.After(10 * time.Second):
+		require.FailNow("runServe did not stop after listener startup was released")
+	}
+}
+
 func TestRunServeAutoSelectsAPIPortWhenUnconfigured(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
@@ -178,7 +234,7 @@ func TestRunServeAutoSelectsAPIPortWhenUnconfigured(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	cmd := &cobra.Command{Use: "serve"}
+	cmd := &cobra.Command{Use: serveCmd.Use}
 	cmd.SetContext(ctx)
 	errCh := make(chan error, 1)
 	serveDone := make(chan struct{})
@@ -213,6 +269,234 @@ func TestRunServeAutoSelectsAPIPortWhenUnconfigured(t *testing.T) {
 	case err := <-errCh:
 		require.NoError(err, "runServe")
 	case <-time.After(5 * time.Second):
+		require.FailNow("runServe did not stop after context cancellation")
+	}
+}
+
+func TestRunServeServesHealthWhileAnalyticsBuildBlocked(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	oldCfg := cfg
+	dataDir := t.TempDir()
+	c := lifecycleTestConfig(dataDir)
+	c.Server.APIPort = freeTCPPort(t)
+	c.Analytics.Engine = config.AnalyticsEngineAuto
+	c.Analytics.AutoBuildCache = true
+	c.Vector.Enabled = false
+	cfg = c
+	t.Cleanup(func() { cfg = oldCfg })
+
+	buildStarted := make(chan struct{})
+	stubBuildCacheSubprocess(t, func(ctx context.Context, _ bool) error {
+		close(buildStarted)
+		<-ctx.Done()
+		return ctx.Err()
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	t.Cleanup(cancel)
+	cmd := &cobra.Command{Use: "serve"}
+	cmd.SetContext(ctx)
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- runServe(cmd, nil)
+	}()
+
+	select {
+	case <-buildStarted:
+	case err := <-errCh:
+		require.NoError(err, "runServe exited before analytics build was blocked")
+	case <-time.After(5 * time.Second):
+		require.FailNow("analytics cache build did not start")
+	}
+	waitForServeHealthBounded(t, c.Server.APIPort, errCh)
+
+	healthClient := &http.Client{Timeout: time.Second}
+	resp, err := healthClient.Get(fmt.Sprintf("http://127.0.0.1:%d/health", c.Server.APIPort))
+	require.NoError(err, "GET /health")
+	defer func() { _ = resp.Body.Close() }()
+	assert.Equal(http.StatusOK, resp.StatusCode)
+	var health api.HealthResponse
+	require.NoError(json.NewDecoder(resp.Body).Decode(&health))
+	assert.Equal(api.AnalyticsModeSQLFallback, health.AnalyticsEngine,
+		"auto mode must report live-SQL fallback while cache initialization is blocked")
+
+	aggregateResp, err := healthClient.Get(fmt.Sprintf(
+		"http://127.0.0.1:%d/api/v1/aggregates?view_type=senders",
+		c.Server.APIPort,
+	))
+	require.NoError(err, "GET aggregate through SQL fallback")
+	defer func() { _ = aggregateResp.Body.Close() }()
+	assert.Equal(http.StatusOK, aggregateResp.StatusCode,
+		"read-only aggregate must bypass the cache-build mutation gate")
+	var aggregates api.AggregateResponse
+	require.NoError(json.NewDecoder(aggregateResp.Body).Decode(&aggregates))
+
+	cancel()
+	select {
+	case err := <-errCh:
+		require.NoError(err, "runServe")
+	case <-time.After(10 * time.Second):
+		require.FailNow("runServe did not stop after context cancellation")
+	}
+}
+
+func TestRunServeDuckDBReportsInitializingWithoutSQLFallback(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	oldCfg := cfg
+	dataDir := t.TempDir()
+	c := lifecycleTestConfig(dataDir)
+	c.Server.APIPort = freeTCPPort(t)
+	c.Analytics.Engine = config.AnalyticsEngineDuckDB
+	c.Analytics.AutoBuildCache = true
+	c.Vector.Enabled = false
+	cfg = c
+	t.Cleanup(func() { cfg = oldCfg })
+
+	buildStarted := make(chan struct{})
+	stubBuildCacheSubprocess(t, func(ctx context.Context, _ bool) error {
+		close(buildStarted)
+		<-ctx.Done()
+		return ctx.Err()
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	t.Cleanup(cancel)
+	cmd := &cobra.Command{Use: serveCmd.Use}
+	cmd.SetContext(ctx)
+	errCh := make(chan error, 1)
+	go func() { errCh <- runServe(cmd, nil) }()
+
+	select {
+	case <-buildStarted:
+	case err := <-errCh:
+		require.NoError(err, "runServe exited before analytics build was blocked")
+	case <-time.After(5 * time.Second):
+		require.FailNow("analytics cache build did not start")
+	}
+	waitForServeHealthBounded(t, c.Server.APIPort, errCh)
+
+	healthClient := &http.Client{Timeout: time.Second}
+	resp, err := healthClient.Get(fmt.Sprintf("http://127.0.0.1:%d/health", c.Server.APIPort))
+	require.NoError(err, "GET /health")
+	var health api.HealthResponse
+	require.NoError(json.NewDecoder(resp.Body).Decode(&health))
+	_ = resp.Body.Close()
+	assert.Equal(api.AnalyticsModeInitializing, health.AnalyticsEngine)
+
+	resp, err = healthClient.Get(fmt.Sprintf(
+		"http://127.0.0.1:%d/api/v1/messages/filter?limit=1",
+		c.Server.APIPort,
+	))
+	require.NoError(err, "GET general archive route")
+	assert.Equal(http.StatusOK, resp.StatusCode,
+		"SQLite-backed detail routes must remain available while DuckDB initializes")
+	_ = resp.Body.Close()
+
+	resp, err = healthClient.Get(fmt.Sprintf(
+		"http://127.0.0.1:%d/api/v1/text/conversations",
+		c.Server.APIPort,
+	))
+	require.NoError(err, "GET text conversations")
+	assert.Equal(http.StatusOK, resp.StatusCode,
+		"SQLite-backed text routes must remain available while DuckDB initializes")
+	_ = resp.Body.Close()
+
+	resp, err = healthClient.Get(fmt.Sprintf("http://127.0.0.1:%d/api/v1/aggregates?view_type=senders", c.Server.APIPort))
+	require.NoError(err, "GET analytics route")
+	assert.Equal(http.StatusServiceUnavailable, resp.StatusCode)
+	_ = resp.Body.Close()
+
+	resp, err = healthClient.Post(
+		fmt.Sprintf("http://127.0.0.1:%d/api/v1/query", c.Server.APIPort),
+		"application/json",
+		strings.NewReader(`{"sql":"SELECT 1"}`),
+	)
+	require.NoError(err, "POST SQL query")
+	assert.Equal(http.StatusServiceUnavailable, resp.StatusCode,
+		"initializing DuckDB must report SQL engine unavailable")
+	_ = resp.Body.Close()
+
+	cancel()
+	select {
+	case err := <-errCh:
+		require.NoError(err, "runServe")
+	case <-time.After(10 * time.Second):
+		require.FailNow("runServe did not stop after context cancellation")
+	}
+}
+
+func TestRunServeAutoSwitchesToDuckDBAfterBackgroundBuild(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	oldCfg := cfg
+	dataDir := t.TempDir()
+	c := lifecycleTestConfig(dataDir)
+	c.Server.APIPort = freeTCPPort(t)
+	c.Analytics.Engine = config.AnalyticsEngineAuto
+	c.Analytics.AutoBuildCache = true
+	c.Vector.Enabled = false
+	cfg = c
+	t.Cleanup(func() { cfg = oldCfg })
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	t.Cleanup(cancel)
+
+	buildStarted := make(chan struct{})
+	releaseBuild := make(chan struct{})
+	stubBuildCacheSubprocess(t, func(ctx context.Context, fullRebuild bool) error {
+		close(buildStarted)
+		select {
+		case <-releaseBuild:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+		_, err := buildCache(c.DatabaseDSN(), c.AnalyticsDir(), fullRebuild)
+		return err
+	})
+
+	cmd := &cobra.Command{Use: serveCmd.Use}
+	cmd.SetContext(ctx)
+	errCh := make(chan error, 1)
+	go func() { errCh <- runServe(cmd, nil) }()
+
+	select {
+	case <-buildStarted:
+	case err := <-errCh:
+		require.NoError(err, "runServe exited before analytics build was blocked")
+	case <-time.After(5 * time.Second):
+		require.FailNow("analytics cache build did not start")
+	}
+	waitForServeHealthBounded(t, c.Server.APIPort, errCh)
+
+	healthClient := &http.Client{Timeout: time.Second}
+	readAnalyticsMode := func() string {
+		resp, err := healthClient.Get(fmt.Sprintf("http://127.0.0.1:%d/health", c.Server.APIPort))
+		if err != nil {
+			return ""
+		}
+		defer func() { _ = resp.Body.Close() }()
+		var health api.HealthResponse
+		if resp.StatusCode != http.StatusOK || json.NewDecoder(resp.Body).Decode(&health) != nil {
+			return ""
+		}
+		return health.AnalyticsEngine
+	}
+	assert.Equal(api.AnalyticsModeSQLFallback, readAnalyticsMode())
+
+	close(releaseBuild)
+	assert.Eventually(func() bool {
+		return readAnalyticsMode() == api.AnalyticsModeDuckDB
+	}, 10*time.Second, 25*time.Millisecond, "auto mode should switch to DuckDB after cache build")
+
+	cancel()
+	select {
+	case err := <-errCh:
+		require.NoError(err, "runServe")
+	case <-time.After(10 * time.Second):
 		require.FailNow("runServe did not stop after context cancellation")
 	}
 }
@@ -335,6 +619,30 @@ func waitForServeHealth(t *testing.T, port int, errCh <-chan error) {
 		default:
 		}
 		resp, err := http.Get(url) //nolint:gosec // local test server
+		if err == nil {
+			_ = resp.Body.Close()
+			if resp.StatusCode == http.StatusOK {
+				return
+			}
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	require.FailNow(t, "serve health endpoint did not become ready")
+}
+
+func waitForServeHealthBounded(t *testing.T, port int, errCh <-chan error) {
+	t.Helper()
+	client := &http.Client{Timeout: 100 * time.Millisecond}
+	url := fmt.Sprintf("http://127.0.0.1:%d/health", port)
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		select {
+		case err := <-errCh:
+			require.NoError(t, err, "runServe exited before health was ready")
+			require.FailNow(t, "runServe exited before health was ready")
+		default:
+		}
+		resp, err := client.Get(url)
 		if err == nil {
 			_ = resp.Body.Close()
 			if resp.StatusCode == http.StatusOK {
@@ -756,7 +1064,7 @@ func TestOpenDaemonAnalyticsEngineExplicitDuckDBFailureIsFatal(t *testing.T) {
 	}
 
 	require.ErrorIs(t, err, sentinel)
-	assert.Equal(t, startupCacheBuildOutcomeFailed, outcome)
+	assert.Equal(t, startupCacheBuildOutcomeFatal, outcome)
 }
 
 func openTestDaemonAnalyticsStore(t *testing.T) (*config.Config, *store.Store) {

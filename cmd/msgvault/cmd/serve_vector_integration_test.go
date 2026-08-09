@@ -13,6 +13,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -80,6 +81,77 @@ func TestRunServeServesHealthWhileVectorInitBlocked(t *testing.T) {
 	// and confirm a clean exit.
 	cancel()
 
+	select {
+	case err := <-errCh:
+		require.NoError(t, err, "runServe")
+	case <-time.After(10 * time.Second):
+		require.FailNow(t, "runServe did not stop after context cancellation")
+	}
+}
+
+func TestRunServeGivesAnalyticsInitializationGatePriorityOverVector(t *testing.T) {
+	oldCfg := cfg
+	dataDir := t.TempDir()
+	c := lifecycleTestConfig(dataDir)
+	c.Server.APIPort = freeTCPPort(t)
+	c.Analytics.Engine = config.AnalyticsEngineAuto
+	c.Analytics.AutoBuildCache = true
+	c.Vector.ApplyDefaults()
+	c.Vector.Enabled = true
+	c.Vector.Embeddings.Endpoint = "http://localhost:11434/v1/embeddings"
+	c.Vector.Embeddings.Model = "test-model"
+	c.Vector.Embeddings.Dimension = 768
+	cfg = c
+	t.Cleanup(func() { cfg = oldCfg })
+
+	analyticsStarted := make(chan struct{})
+	releaseAnalytics := make(chan struct{})
+	stubBuildCacheSubprocess(t, func(context.Context, bool) error {
+		close(analyticsStarted)
+		<-releaseAnalytics
+		return nil
+	})
+	vectorStarted := make(chan struct{})
+	overrideSetupVectorFeatures(t, func(ctx context.Context, _ *store.Store, _ string, _ bool) (*vectorFeatures, error) {
+		close(vectorStarted)
+		<-ctx.Done()
+		return nil, ctx.Err()
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	cmd := &cobra.Command{Use: "serve"}
+	cmd.SetContext(ctx)
+	errCh := make(chan error, 1)
+	go func() { errCh <- runServe(cmd, nil) }()
+
+	select {
+	case <-analyticsStarted:
+	case err := <-errCh:
+		require.NoError(t, err, "runServe exited before analytics initialization")
+	case <-time.After(5 * time.Second):
+		require.FailNow(t, "analytics initialization did not start")
+	}
+	waitForServeHealth(t, c.Server.APIPort, errCh)
+	assert.Never(t, func() bool {
+		select {
+		case <-vectorStarted:
+			return true
+		default:
+			return false
+		}
+	}, 250*time.Millisecond, 10*time.Millisecond,
+		"vector initialization must wait while analytics holds the operation gate")
+
+	close(releaseAnalytics)
+	select {
+	case <-vectorStarted:
+	case err := <-errCh:
+		require.NoError(t, err, "runServe exited before vector initialization")
+	case <-time.After(5 * time.Second):
+		require.FailNow(t, "vector initialization did not start after analytics released the gate")
+	}
+	cancel()
 	select {
 	case err := <-errCh:
 		require.NoError(t, err, "runServe")

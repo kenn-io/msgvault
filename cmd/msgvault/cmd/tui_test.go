@@ -10,7 +10,9 @@ import (
 	"strconv"
 	"sync/atomic"
 	"testing"
+	"time"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/kit/daemon"
@@ -18,6 +20,7 @@ import (
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/query"
+	"go.kenn.io/msgvault/internal/tui"
 )
 
 func TestOpenTUIEngineUsesConfiguredRemoteHTTP(t *testing.T) {
@@ -203,5 +206,46 @@ func TestAnalyticsCacheNotice(t *testing.T) {
 				assert.Empty(t, notice)
 			}
 		})
+	}
+}
+
+func TestAnalyticsCacheNoticeClearsAfterBackgroundSwap(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	var requests atomic.Int32
+	mux := http.NewServeMux()
+	mux.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {
+		mode := api.AnalyticsModeSQLFallback
+		if requests.Add(1) > 1 {
+			mode = api.AnalyticsModeDuckDB
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"status":           "ok",
+			"analytics_engine": mode,
+		})
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	client, err := daemonclient.New(daemonclient.Config{URL: srv.URL, AllowInsecure: true})
+	require.NoError(err, "daemonclient.New")
+	assert.NotEmpty(analyticsCacheNotice(context.Background(), client),
+		"launch during initialization must show the live-SQL notice")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	messages := make(chan tea.Msg, 1)
+	go refreshAnalyticsCacheNotice(ctx, client, time.Millisecond, func(msg tea.Msg) {
+		messages <- msg
+	})
+
+	select {
+	case msg := <-messages:
+		update, ok := msg.(tui.AnalyticsNoticeMsg)
+		require.True(ok, "notice refresh message type")
+		assert.Empty(update.Notice, "DuckDB swap must clear the launch notice")
+	case <-time.After(time.Second):
+		require.FailNow("analytics notice did not clear after DuckDB swap")
 	}
 }

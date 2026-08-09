@@ -262,7 +262,7 @@ func TestSearchCoverageResolvesIdentityFilterOnce(t *testing.T) {
 	}
 	srv := NewServerWithOptions(ServerOptions{
 		Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}},
-		Store:  fixture.store, Engine: fixture.server.engine, Backend: backend,
+		Store:  fixture.store, Engine: fixture.server.QueryEngine(), Backend: backend,
 		VectorStatus: VectorStatusReady, Logger: testLogger(),
 	})
 

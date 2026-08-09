@@ -1,4 +1,5 @@
 ---
+last_edited: "2026-08-09"
 title: Interactive TUI
 description: Terminal interface for exploring email, text messages, and meeting transcripts.
 ---
@@ -12,15 +13,31 @@ msgvault tui
 
 The TUI always talks to a msgvault HTTP server. Without `[remote].url`, it starts or reuses the local background daemon. The daemon owns database access, analytics engine selection, and cache rebuilds.
 
-The daemon picks its analytics engine once at startup: with `auto_build_cache = true` (the default) it first builds a stale or missing Parquet cache — incremental builds take seconds — and then serves DuckDB over it. Opening aggregate views does not trigger a cache build — the daemon refreshes a stale cache after its scheduled syncs, and `msgvault build-cache` builds one on demand. When the daemon reports it fell back to live SQL (`auto_build_cache = false` over a stale cache, or a failed startup build), `msgvault tui` prints a notice and repeats it on the TUI's info line while views load; after `msgvault build-cache`, restart the daemon to switch it onto the cache. Configure engine selection in `config.toml`:
+The daemon starts its HTTP health endpoint and API routes before analytics cache
+maintenance. Clients can connect while startup work runs.
+
+With `engine = "auto"` (the default), aggregate views initially use live SQL
+(`sql-fallback`). When `auto_build_cache = true` and the cache is stale or
+missing, the daemon builds it in the background; after the cache is ready and
+DuckDB opens successfully, aggregate views switch to DuckDB. A failed build or
+open leaves auto mode on live SQL. With `engine = "duckdb"`, analytics remain
+unavailable until the required cache is ready; analytics routes return `503`
+during initialization. `engine = "sql"` always uses live SQL. Configure engine
+selection in `config.toml`:
 
 ```toml
 [analytics]
 engine = "auto"          # auto, sql, or duckdb
-auto_build_cache = true  # build a stale cache at daemon startup; scheduled-sync refreshes ignore it
+auto_build_cache = true  # build a stale/missing cache in the background at startup
 ```
 
-Deprecated in 0.17.0: the old `msgvault tui --force-sql`, `--no-cache-build`, and `--no-sqlite-scanner` flags are hidden because these choices are now daemon configuration. Use `engine = "sql"` for live SQL, `auto_build_cache = false` to skip the automatic startup cache build, or `msgvault build-cache` to prebuild cache files on the daemon host. See [Configuration: analytics](/configuration/#analytics).
+Opening aggregate views does not trigger a build mid-session. Scheduled syncs
+and ingest commands can refresh the cache, and `msgvault build-cache` builds or
+repairs it on demand. Set `auto_build_cache = false` to skip automatic startup
+maintenance; use `msgvault build-cache` for an explicit build. Deprecated in
+0.17.0: the old `msgvault tui --force-sql`, `--no-cache-build`, and
+`--no-sqlite-scanner` flags are hidden because these choices are now daemon
+configuration. See [Configuration: analytics](/configuration/#analytics).
 
 ### Local And Remote
 

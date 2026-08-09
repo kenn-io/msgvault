@@ -1,4 +1,5 @@
 ---
+last_edited: "2026-08-09"
 title: Configuration
 description: Configuration file reference, environment variables, and file locations.
 ---
@@ -84,9 +85,10 @@ daemon_auto_restart = "newer" # newer, never, or always
 
 [analytics]
 # Daemon-side analytics engine for Web UI, TUI, and aggregate HTTP views:
-# "auto" uses DuckDB/Parquet when usable, otherwise live SQL.
+# "auto" starts on live SQL and switches to DuckDB after cache maintenance.
 # "sql" always uses live SQL. "duckdb" requires a usable Parquet cache.
 engine = "auto"
+# Build a stale/missing cache in the background during daemon startup.
 auto_build_cache = true
 
 [backup]
@@ -351,10 +353,18 @@ Settings for daemon-side aggregate query behavior. The Web UI, TUI, MCP server, 
 
 | Key | Default | Description |
 |---|---|---|
-| `engine` | `auto` | Aggregate engine: `auto` uses DuckDB over Parquet when the cache is usable and falls back to live SQL; `sql` always uses live SQL; `duckdb` requires a usable Parquet cache |
-| `auto_build_cache` | `true` | Build a stale or missing Parquet cache before the daemon opens DuckDB for aggregate views |
+| `engine` | `auto` | Aggregate engine: `auto` starts with live SQL and switches to DuckDB after cache maintenance succeeds; `sql` always uses live SQL; `duckdb` requires a usable Parquet cache |
+| `auto_build_cache` | `true` | Build a stale or missing Parquet cache in the background during daemon startup; `false` skips automatic startup maintenance |
 
-Deprecated in 0.17.0: per-command analytics flags such as `msgvault tui --force-sql`, `msgvault mcp --force-sql`, `msgvault tui --no-cache-build`, and `--no-sqlite-scanner` were replaced by this daemon-level section. Use `engine = "sql"` for live SQL, `auto_build_cache = false` to skip automatic daemon cache builds, or `msgvault build-cache` to prebuild cache files on the daemon host. If `engine = "duckdb"` and the cache cannot be built or opened, `msgvault serve` fails instead of silently falling back.
+The daemon starts HTTP health and API routing before analytics cache
+maintenance. With `engine = "duckdb"`, analytics remain unavailable until a
+usable cache is ready; if the cache cannot be built or opened, `msgvault serve`
+fails instead of silently falling back. With `auto_build_cache = false`, use
+`msgvault build-cache` for explicit cache maintenance. Deprecated in 0.17.0:
+per-command analytics flags such as `msgvault tui --force-sql`,
+`msgvault mcp --force-sql`, `msgvault tui --no-cache-build`, and
+`--no-sqlite-scanner` were replaced by this daemon-level section. Use
+`engine = "sql"` to force live SQL.
 
 This setting governs the aggregate views (Senders/Domains/Labels/Time) and is ignored entirely when `[data].database_url` points at PostgreSQL — a PostgreSQL backend always uses live SQL for those views, and `build-cache` refuses to run against it. It does not affect the Web UI's Explore, Files, or People/domains workspaces, which require the SQLite + DuckDB/Parquet cache regardless of this setting and are unavailable on PostgreSQL; see [PostgreSQL Backend](/architecture/postgresql/) for the current scope.
 

@@ -149,7 +149,7 @@ type CancelDeletionResponse struct {
 }
 
 func (s *Server) handleStageDeletion(w http.ResponseWriter, r *http.Request) {
-	if s.engine == nil {
+	if s.queryEngineForContext(r.Context()) == nil {
 		writeError(w, http.StatusServiceUnavailable, "engine_unavailable", "Query engine not available")
 		return
 	}
@@ -351,7 +351,8 @@ func (s *Server) resolveAuthorizedDeletionSelection(
 		}
 		selectionRequest.IncludedKeys = selection.RowKeys
 	}
-	analyzer, ok := s.engine.(query.Explorer)
+	engine := s.queryEngineForContext(r.Context())
+	analyzer, ok := engine.(query.Explorer)
 	if !ok {
 		writeExploreUnavailable(w, query.CacheAbsent)
 		return nil, nil, false
@@ -389,7 +390,7 @@ func (s *Server) resolveAuthorizedDeletionSelection(
 			"The reviewed selection contains items that cannot be deleted from their source")
 		return nil, nil, false
 	}
-	resolver, ok := s.engine.(deletionMessageIDResolver)
+	resolver, ok := engine.(deletionMessageIDResolver)
 	if !ok {
 		writeError(w, http.StatusServiceUnavailable, "engine_unavailable",
 			"selection deletion staging is not supported by this query engine")
@@ -415,7 +416,7 @@ func (s *Server) resolveAuthorizedDeletionSelection(
 // single mailbox, so selections spanning multiple Gmail accounts must be
 // split into per-account requests (e.g. scoped with filter.source_id).
 func (s *Server) resolveStageDeletionAccount(ctx context.Context, gmailIDs []string) (string, *apiHTTPError) {
-	resolver, ok := s.engine.(deletionAccountResolver)
+	resolver, ok := s.queryEngineForContext(ctx).(deletionAccountResolver)
 	if !ok {
 		return "", newAPIHTTPError(http.StatusServiceUnavailable, "engine_unavailable",
 			"deletion staging is not supported by this query engine")
@@ -443,6 +444,7 @@ func (s *Server) resolveStageDeletionAccount(ctx context.Context, gmailIDs []str
 // resolveStageDeletionIDs unions filter-resolved and explicitly listed
 // message IDs into a deduplicated, order-preserving Gmail-ID list.
 func (s *Server) resolveStageDeletionIDs(ctx context.Context, req *StageDeletionRequest) ([]string, *apiHTTPError) {
+	engine := s.queryEngineForContext(ctx)
 	var out []string
 	seen := make(map[string]struct{})
 	appendIDs := func(ids []string) {
@@ -460,7 +462,7 @@ func (s *Server) resolveStageDeletionIDs(ctx context.Context, req *StageDeletion
 		if httpErr != nil {
 			return nil, httpErr
 		}
-		ids, err := s.engine.GetGmailIDsByFilter(ctx, mf)
+		ids, err := engine.GetGmailIDsByFilter(ctx, mf)
 		if err != nil {
 			s.logger.Error("stage deletion filter query failed", "error", err)
 			return nil, newAPIHTTPError(http.StatusInternalServerError, "internal_error", "Gmail ID query failed")
@@ -468,7 +470,7 @@ func (s *Server) resolveStageDeletionIDs(ctx context.Context, req *StageDeletion
 		appendIDs(ids)
 	}
 	if len(req.MessageIDs) > 0 {
-		resolver, ok := s.engine.(deletionMessageIDResolver)
+		resolver, ok := engine.(deletionMessageIDResolver)
 		if !ok {
 			return nil, newAPIHTTPError(http.StatusServiceUnavailable, "engine_unavailable",
 				"message_ids staging is not supported by this query engine")

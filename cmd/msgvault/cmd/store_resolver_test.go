@@ -236,6 +236,79 @@ func TestOpenHTTPStoreReportsFulfilledStartupCacheBuild(t *testing.T) {
 	assert.Equal(filepath.Join(dataDir, "serve.log"), info.DaemonLogPath)
 }
 
+func TestWaitForStartupCacheBuildOutcomeWaitsAfterHTTPReadiness(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	dataDir := t.TempDir()
+	record := daemon.RuntimeRecord{
+		PID:      os.Getpid(),
+		Network:  daemon.NetworkTCP,
+		Address:  "127.0.0.1:1",
+		Service:  daemonService,
+		Version:  Version,
+		Metadata: map[string]string{},
+	}
+	_, err := daemonRuntimeStore(dataDir).Write(record)
+	require.NoError(err)
+	rt := &DaemonRuntime{Record: record}
+
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		updated := record
+		updated.Metadata = map[string]string{
+			runtimeStartupCacheBuildOutcome: string(startupCacheBuildOutcomeFulfilled),
+		}
+		_, _ = daemonRuntimeStore(dataDir).Write(updated)
+	}()
+
+	gotRT, outcome, err := waitForStartupCacheBuildOutcome(
+		context.Background(), dataDir, &backgroundServeProcess{}, rt, time.Second,
+	)
+	require.NoError(err)
+	require.NotNil(gotRT)
+	assert.Equal(startupCacheBuildOutcomeFulfilled, outcome)
+}
+
+func TestWaitForStartupCacheBuildOutcomeReportsProcessExit(t *testing.T) {
+	waitCh := make(chan error, 1)
+	waitCh <- errors.New("server exited")
+	_, _, err := waitForStartupCacheBuildOutcome(
+		context.Background(), t.TempDir(), &backgroundServeProcess{Wait: waitCh},
+		&DaemonRuntime{}, time.Second,
+	)
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "server exited")
+}
+
+func TestWaitForStartupCacheBuildOutcomeConsumesFatalResultAfterDaemonExit(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	dataDir := t.TempDir()
+	c := lifecycleTestConfig(dataDir)
+	owner, err := claimServeOwnership(context.Background(), c, "127.0.0.1", 8123, "v-test")
+	require.NoError(err, "claim serve ownership")
+	record := owner.record
+	require.NoError(
+		owner.SetStartupCacheBuildOutcome(startupCacheBuildOutcomeFatal),
+		"publish fatal startup outcome",
+	)
+	require.NoError(owner.Close(), "close serve ownership")
+
+	waitCh := make(chan error, 1)
+	waitCh <- errors.New("server exited")
+	gotRT, outcome, err := waitForStartupCacheBuildOutcome(
+		context.Background(), dataDir, &backgroundServeProcess{Wait: waitCh},
+		&DaemonRuntime{Record: record}, time.Second,
+	)
+	require.NoError(err,
+		"durable fatal outcome must win over the process-exit notification")
+	require.NotNil(gotRT)
+	assert.Equal(startupCacheBuildOutcomeFatal, outcome)
+	assert.Equal(startupCacheBuildOutcomeFatal, startupCacheBuildOutcomeFromRuntime(gotRT))
+	_, statErr := os.Stat(durableStartupCacheBuildOutcomePath(dataDir, record))
+	assert.ErrorIs(statErr, os.ErrNotExist, "the parent must consume the one-shot result")
+}
+
 func TestOpenHTTPStoreReportsLocalDaemonStartupToStderr(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)

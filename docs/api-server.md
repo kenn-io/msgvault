@@ -1,4 +1,5 @@
 ---
+last_edited: "2026-08-09"
 title: Web UI & API Server
 description: Daemon-served analytical Web UI and REST API for your msgvault archive, with optional background sync scheduling.
 ---
@@ -17,6 +18,15 @@ The API is registered through Huma and exposes a generated OpenAPI document at `
 Go integrations can use the generated client in `pkg/client`. The wrapper
 handles msgvault-specific response details such as deletion staging dry-runs
 returning `200` while created manifests return `201`.
+
+The HTTP listener, health endpoint, and API routing start before analytics cache
+maintenance. With `engine = "auto"`, aggregate requests initially use live SQL
+while the cache is built or opened, then switch to DuckDB after success. A
+failed automatic build or open keeps the daemon on live SQL. With
+`engine = "duckdb"`, analytics remain unavailable until the required cache is
+ready, so analytics routes return `503` during initialization; the daemon does
+not fall back to SQL. Set `auto_build_cache = false` to skip automatic startup
+maintenance.
 
 ## Quick Start
 
@@ -73,8 +83,15 @@ Health check endpoint. Does not require authentication.
 **Response:**
 
 ```json
-{"status": "ok"}
+{"status": "ok", "analytics_engine": "sql-fallback"}
 ```
+
+`analytics_engine` reports the active mode: `sql-fallback` while `engine =
+"auto"` is waiting for or cannot use a cache, `duckdb` after a successful cache
+build/open, `sql` for deliberate live SQL, `postgres` for PostgreSQL, and
+`initializing` while required DuckDB analytics are being prepared. Health stays
+available during initialization; analytics routes return `503` until the
+required engine is ready.
 
 ---
 
@@ -1650,9 +1667,14 @@ All server settings go in the `[server]` section of `config.toml`. Account sched
 | Key | Default | Description |
 |---|---|---|
 | `engine` | `auto` | Aggregate engine for Web UI, TUI, and aggregate HTTP views: `auto`, `sql`, or `duckdb` |
-| `auto_build_cache` | `true` | Build stale or missing Parquet cache files before the daemon opens DuckDB |
+| `auto_build_cache` | `true` | Build stale or missing Parquet cache files in the background during daemon startup; `false` skips automatic startup maintenance |
 
-`engine = "sql"` forces live SQL for aggregate views. `engine = "duckdb"` requires a usable Parquet cache and fails daemon startup if the cache cannot be built or opened. `auto_build_cache = false` leaves cache rebuilds to explicit `msgvault build-cache` runs. These settings replace the TUI/MCP analytics flags deprecated in 0.17.0; see [Configuration: analytics](/configuration/#analytics).
+`engine = "sql"` forces live SQL for aggregate views. `engine = "duckdb"`
+requires a usable Parquet cache and keeps analytics unavailable until it is
+ready; a build or open failure is fatal rather than a silent SQL fallback.
+`auto_build_cache = false` leaves cache rebuilds to explicit
+`msgvault build-cache` runs. These settings replace the TUI/MCP analytics flags
+deprecated in 0.17.0; see [Configuration: analytics](/configuration/#analytics).
 
 ### `[[accounts]]`
 

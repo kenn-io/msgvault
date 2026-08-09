@@ -30,6 +30,16 @@ func TestModel_Init_SetsLoadingState(t *testing.T) {
 	assert.True(t, model.loading, "expected loading=true for fresh model")
 }
 
+func TestModelUpdateAnalyticsNotice(t *testing.T) {
+	model := NewBuilder().Build()
+	model.analyticsNotice = "analytics cache is initializing"
+
+	updated, cmd := model.Update(AnalyticsNoticeMsg{})
+
+	assert.Nil(t, cmd)
+	assert.Empty(t, asModel(t, updated).analyticsNotice)
+}
+
 // =============================================================================
 // New (Constructor) Tests
 // =============================================================================

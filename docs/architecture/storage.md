@@ -1,4 +1,5 @@
 ---
+last_edited: "2026-08-09"
 title: Data Storage
 description: Database schema, Parquet analytics cache, content-addressed attachments, and token storage.
 ---
@@ -156,10 +157,17 @@ this on the default SQLite backend with denormalized Parquet files queried by
 an embedded DuckDB engine, delivering aggregate queries hundreds of times
 faster than SQLite.
 
-The Parquet cache is disposable and can be rebuilt at any time. Aggregate views
-never trigger a build mid-session: with `auto_build_cache = true` (the default)
-the daemon builds a stale or missing cache synchronously at startup, then serves
-DuckDB over it and refreshes after scheduled syncs and ingest commands.
+The Parquet cache is disposable and can be rebuilt at any time. The daemon
+starts HTTP health and API routing before analytics cache maintenance, and
+aggregate views never trigger a build mid-session. With
+`auto_build_cache = true` (the default), a stale or missing cache is built in
+the background after HTTP is ready. In `engine = "auto"`, aggregate views use
+live SQL while that work runs and switch to DuckDB after the cache is ready and
+opens successfully; a failed build or open keeps live SQL. In
+`engine = "duckdb"`, analytics remain unavailable until the required cache is
+ready, with no SQL fallback. Set `auto_build_cache = false` to skip automatic
+startup maintenance; scheduled syncs, ingest commands, and
+`msgvault build-cache` can refresh or build the cache explicitly.
 
 Each build writes and verifies a same-filesystem staging tree before publishing
 under the exclusive cache lock. `_last_sync.json` is the commit marker: it is
@@ -175,8 +183,9 @@ Version 0.19.0 adds `relationship_activity`, `relationship_people`,
 `relationship_domains`, and `relationship_daily` datasets. These compact edges
 and rollups avoid expanding every message's participant list during people,
 domain, relationship, timeline, and file-group queries. Existing SQLite caches
-need one full rebuild after upgrading; automatic cache building performs it at
-daemon startup, or run `msgvault build-cache --full-rebuild` explicitly.
+need one full rebuild after upgrading; automatic cache building performs it in
+the background during daemon startup, or run `msgvault build-cache --full-rebuild`
+explicitly.
 
 ```bash
 # Manual build

@@ -1475,3 +1475,86 @@ func TestMarkedCLIProtectiveRouteCanReadBodyPastOrdinaryServerTimeout(t *testing
 		assert.Equal(t, http.StatusRequestTimeout, status)
 	})
 }
+
+type blockingAddrListener struct {
+	net.Listener
+
+	addrEntered chan struct{}
+	release     chan struct{}
+	addrOnce    sync.Once
+}
+
+func (l *blockingAddrListener) Addr() net.Addr {
+	l.addrOnce.Do(func() { close(l.addrEntered) })
+	<-l.release
+	return l.Listener.Addr()
+}
+
+func TestServerWaitStartedHonorsCancellationAndReportsReadiness(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	base, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(err, "listen")
+	listener := &blockingAddrListener{
+		Listener:    base,
+		addrEntered: make(chan struct{}),
+		release:     make(chan struct{}),
+	}
+	t.Cleanup(func() {
+		select {
+		case <-listener.release:
+		default:
+			close(listener.release)
+		}
+		_ = listener.Close()
+	})
+
+	srv := NewServerWithOptions(ServerOptions{
+		Config: config.NewDefaultConfig(),
+		Logger: testLogger(),
+	})
+	serveErr := make(chan error, 1)
+	go func() { serveErr <- srv.StartOnListener(listener) }()
+	select {
+	case <-listener.addrEntered:
+	case <-time.After(5 * time.Second):
+		require.FailNow("server did not reach listener-start setup")
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	require.ErrorIs(srv.WaitStarted(ctx), context.Canceled)
+
+	close(listener.release)
+	require.NoError(srv.WaitStarted(context.Background()), "listener startup")
+	srv.serverMu.RLock()
+	server := srv.server
+	bound := srv.listenerBound
+	srv.serverMu.RUnlock()
+	assert.NotNil(server)
+	assert.True(bound)
+
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), time.Second)
+	defer shutdownCancel()
+	require.NoError(srv.Shutdown(shutdownCtx), "shutdown")
+	require.ErrorIs(<-serveErr, http.ErrServerClosed, "serve result")
+}
+
+func TestServerWaitStartedReportsListenError(t *testing.T) {
+	require := require.New(t)
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(err, "reserve listener")
+	defer func() { _ = listener.Close() }()
+	addr, ok := listener.Addr().(*net.TCPAddr)
+	require.True(ok, "listener address must be TCP")
+
+	c := config.NewDefaultConfig()
+	c.Server.BindAddr = "127.0.0.1"
+	c.Server.APIPort = addr.Port
+	srv := NewServerWithOptions(ServerOptions{Config: c, Logger: testLogger()})
+	startErr := srv.Start()
+	require.Error(startErr)
+	waitErr := srv.WaitStarted(context.Background())
+	require.Error(waitErr)
+	assert.EqualError(t, waitErr, startErr.Error())
+}

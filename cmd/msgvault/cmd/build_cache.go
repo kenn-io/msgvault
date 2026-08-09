@@ -333,6 +333,12 @@ func runBuildCacheHTTP(cmd *cobra.Command, fullRebuild bool) error {
 					"the daemon is running with live SQL\nLogs: %s",
 				info.DaemonLogPath,
 			)
+		case startupCacheBuildOutcomeFatal:
+			return fmt.Errorf(
+				"analytics cache build failed during required DuckDB initialization; "+
+					"the daemon is shutting down\nLogs: %s",
+				info.DaemonLogPath,
+			)
 		case startupCacheBuildOutcomeNone, startupCacheBuildOutcomeUnconsumed:
 		}
 	}

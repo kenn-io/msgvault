@@ -298,7 +298,7 @@ func (s *Server) handleExploreWithScope(w http.ResponseWriter, r *http.Request, 
 	if semanticPage {
 		prepared.query.Page = query.PageSpec{Limit: exploreMaxLimit}
 	}
-	explorer, ok := s.engine.(query.Explorer)
+	explorer, ok := s.queryEngineForContext(r.Context()).(query.Explorer)
 	if !ok {
 		writeExploreUnavailable(w, query.CacheAbsent)
 		return
@@ -486,7 +486,7 @@ func (s *Server) handleExploreGroups(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, "search_revision_changed", "The resolved search index revision changed; restart pagination")
 		return
 	}
-	analyzer, ok := s.engine.(query.Explorer)
+	analyzer, ok := s.queryEngineForContext(r.Context()).(query.Explorer)
 	if !ok {
 		writeExploreUnavailable(w, query.CacheAbsent)
 		return
@@ -556,7 +556,8 @@ func (s *Server) handleExplorePreflight(w http.ResponseWriter, r *http.Request) 
 		}
 		selectionRequest.IncludedKeys = selection.RowKeys
 	}
-	analyzer, ok := s.engine.(query.Explorer)
+	engine := s.queryEngineForContext(r.Context())
+	analyzer, ok := engine.(query.Explorer)
 	if !ok {
 		writeExploreUnavailable(w, query.CacheAbsent)
 		return
@@ -603,7 +604,7 @@ func (s *Server) handleExplorePreflight(w http.ResponseWriter, r *http.Request) 
 		})
 	} else {
 		messageID := *stats.RawExportMessageID
-		raw, rawErr := s.engine.GetMessageRaw(r.Context(), messageID)
+		raw, rawErr := engine.GetMessageRaw(r.Context(), messageID)
 		if rawErr != nil {
 			s.logger.Warn("raw export preflight failed", "message_id", messageID, "error", rawErr)
 			unavailableActions = append(unavailableActions, ExploreUnavailableAction{
@@ -666,7 +667,7 @@ func (s *Server) handleExploreMatchCounts(w http.ResponseWriter, r *http.Request
 	predicate.query.Search = searchSpec
 	slices.Sort(request.RowKeys)
 	request.RowKeys = slices.Compact(request.RowKeys)
-	analyzer, ok := s.engine.(query.Explorer)
+	analyzer, ok := s.queryEngineForContext(r.Context()).(query.Explorer)
 	if !ok {
 		writeExploreUnavailable(w, query.CacheAbsent)
 		return
