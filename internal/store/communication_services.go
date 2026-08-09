@@ -368,9 +368,10 @@ func ValidateServiceScope(service *CommunicationService, scopeKind, scopeValue *
 	return nil
 }
 
-// normalizeScopeInput trims a scope kind or value and treats blank input as
-// absent, so blank-vs-NULL and padded variants cannot fragment identity keys.
-func normalizeScopeInput(value *string) *string {
+// trimmedOrNil trims an optional identity-key part (scope kind, scope value,
+// normalized value) and treats blank input as absent, so blank-vs-NULL and
+// padded variants cannot fragment identity keys.
+func trimmedOrNil(value *string) *string {
 	if value == nil {
 		return nil
 	}

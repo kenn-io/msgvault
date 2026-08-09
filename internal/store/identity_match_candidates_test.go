@@ -97,6 +97,58 @@ func TestStableProviderIDCandidateWithoutRecordedValueRequiresUserAcceptance(t *
 	assert.Equal(store.IdentityMatchStateAccepted, accepted.State)
 }
 
+func TestUpsertIdentityMatchCandidateEnforcesServiceScope(t *testing.T) {
+	require := require.New(t)
+	st := storetest.New(t).Store
+	ctx := context.Background()
+	left, err := st.EnsureParticipantByIdentifier("example", "scope-left", "Left")
+	require.NoError(err)
+	right, err := st.EnsureParticipantByIdentifier("example", "scope-right", "Right")
+	require.NoError(err)
+	input := store.IdentityMatchCandidateInput{
+		LeftKind: store.IdentityMatchParticipant, LeftID: left,
+		RightKind: store.IdentityMatchParticipant, RightID: right,
+		Basis: store.IdentityMatchServiceScopeUsername, ServiceSlug: new("slack"),
+		NormalizedValue: new("alice"), State: store.IdentityMatchStateCandidate,
+		Source: store.ProvenanceArchiveObservation,
+	}
+	_, _, err = st.UpsertIdentityMatchCandidateContext(ctx, input)
+	require.ErrorIs(err, store.ErrServiceScopeRequired,
+		"a required-scope service must not accept an unscoped candidate")
+
+	input.ServiceSlug = nil
+	input.ScopeKind = new("workspace")
+	_, _, err = st.UpsertIdentityMatchCandidateContext(ctx, input)
+	require.ErrorIs(err, store.ErrServiceScopeIncomplete,
+		"a scope kind without a value must not fragment candidate keys")
+}
+
+func TestBlankNormalizedValueDoesNotSatisfySystemAcceptance(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := storetest.New(t).Store
+	ctx := context.Background()
+	left, err := st.EnsureParticipantByIdentifier("beeper", "@alice:example.org", "Alice Example")
+	require.NoError(err)
+	right, err := st.EnsureParticipantByIdentifier("beeper", "@alice2:example.org", "Alice Example")
+	require.NoError(err)
+	candidate, _, err := st.UpsertIdentityMatchCandidateContext(ctx, store.IdentityMatchCandidateInput{
+		LeftKind: store.IdentityMatchParticipant, LeftID: left,
+		RightKind: store.IdentityMatchParticipant, RightID: right,
+		Basis: store.IdentityMatchStableProviderID, NormalizedValue: new("  "),
+		State:  store.IdentityMatchStateCandidate,
+		Source: store.ProvenanceArchiveObservation,
+	})
+	require.NoError(err)
+	assert.Nil(candidate.NormalizedValue,
+		"a blank normalized value must be stored as absent, not as an empty string")
+	_, err = st.DecideIdentityMatchCandidateContext(
+		ctx, candidate.ID, store.IdentityMatchStateAccepted, "system", nil,
+	)
+	require.ErrorIs(err, store.ErrIdentityMatchNotAcceptable,
+		"a blank stable ID must not satisfy the non-user acceptance guard")
+}
+
 func TestUpsertIdentityMatchCandidateRejectsDecisionStates(t *testing.T) {
 	require := require.New(t)
 	st := storetest.New(t).Store

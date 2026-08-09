@@ -169,10 +169,14 @@ func (s *Store) UpsertIdentityMatchCandidateContext(
 	if err != nil {
 		return nil, false, err
 	}
-	input.ScopeKind = normalizeScopeInput(input.ScopeKind)
-	input.ScopeValue = normalizeScopeInput(input.ScopeValue)
+	input.ScopeKind = trimmedOrNil(input.ScopeKind)
+	input.ScopeValue = trimmedOrNil(input.ScopeValue)
+	input.NormalizedValue = trimmedOrNil(input.NormalizedValue)
 	service, hasService, err := s.resolveOptionalCommunicationServiceContext(ctx, input.ServiceSlug)
 	if err != nil {
+		return nil, false, err
+	}
+	if err := ValidateServiceScope(service, input.ScopeKind, input.ScopeValue); err != nil {
 		return nil, false, err
 	}
 	var serviceID any
@@ -420,7 +424,8 @@ func (s *Store) DecideIdentityMatchCandidateContext(
 		// label alone is caller-supplied and proves nothing.
 		if state == IdentityMatchStateAccepted && decidedBy != "user" &&
 			(current.Basis != IdentityMatchStableProviderID ||
-				current.NormalizedValue == nil) {
+				current.NormalizedValue == nil ||
+				strings.TrimSpace(*current.NormalizedValue) == "") {
 			return ErrIdentityMatchNotAcceptable
 		}
 		if _, err := tx.ExecContext(ctx, `UPDATE identity_match_candidates SET
