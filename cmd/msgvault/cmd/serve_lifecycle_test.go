@@ -1202,6 +1202,48 @@ func TestStopBackgroundServeStartupTerminatesProcess(t *testing.T) {
 	require.NoError(t, err)
 }
 
+type recordingBackgroundProcessTree struct {
+	terminateCalls atomic.Int32
+	closeCalls     atomic.Int32
+	terminate      func() error
+}
+
+func (t *recordingBackgroundProcessTree) Attach(*os.Process) error {
+	return nil
+}
+
+func (t *recordingBackgroundProcessTree) Terminate() error {
+	t.terminateCalls.Add(1)
+	return t.terminate()
+}
+
+func (t *recordingBackgroundProcessTree) Close() error {
+	t.closeCalls.Add(1)
+	return nil
+}
+
+func TestStopBackgroundServeStartupTerminatesProcessTree(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	cmd := helperProcessCommand(context.Background(), "block")
+	require.NoError(cmd.Start(), "start blocking helper")
+	waitCh := make(chan error, 1)
+	go func() { waitCh <- cmd.Wait() }()
+	tree := &recordingBackgroundProcessTree{terminate: cmd.Process.Kill}
+	proc := &backgroundServeProcess{
+		PID:         cmd.Process.Pid,
+		Process:     cmd.Process,
+		ProcessTree: tree,
+		Wait:        waitCh,
+	}
+	t.Cleanup(func() { _ = cmd.Process.Kill() })
+
+	require.NoError(stopBackgroundServeStartup(proc, 2*time.Second))
+	assert.Equal(int32(1), tree.terminateCalls.Load(), "terminate process tree")
+	assert.Equal(int32(1), tree.closeCalls.Load(), "close process tree handle")
+}
+
 func TestServeStopGraceTimeoutCoversDaemonShutdownBudget(t *testing.T) {
 	assert.GreaterOrEqual(t,
 		serveStopGraceTimeout,

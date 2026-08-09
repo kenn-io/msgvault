@@ -8,11 +8,12 @@ import (
 	"syscall"
 )
 
-func configureServeBackgroundCommand(cmd *exec.Cmd) {
+func configureServeBackgroundCommand(cmd *exec.Cmd) (backgroundServeCommandConfig, error) {
 	if cmd.SysProcAttr == nil {
 		cmd.SysProcAttr = &syscall.SysProcAttr{}
 	}
 	cmd.SysProcAttr.Setsid = true
+	return backgroundServeCommandConfig{}, nil
 }
 
 func signalDaemonProcess(process *os.Process) error {

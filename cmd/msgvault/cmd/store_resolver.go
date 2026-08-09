@@ -291,6 +291,7 @@ func ensureLocalDaemonRuntimeWithStartupCacheIntent(
 	if err != nil {
 		return nil, localDaemonStartupInfo{}, fmt.Errorf("start background daemon: %w", err)
 	}
+	defer func() { _ = proc.releaseProcessTree() }()
 	stopProgress := reportLocalDaemonStartup(ctx, proc)
 	defer func() { stopProgress() }()
 	rt, ready, err := waitForBackgroundServeReadyForRun(

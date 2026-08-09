@@ -30,6 +30,18 @@ func TestHelperProcess(t *testing.T) {
 		os.Exit(0)
 	case "block":
 		select {}
+	case "spawn-blocking-child":
+		child := helperProcessCommand(context.Background(), "block")
+		if err := child.Start(); err != nil {
+			os.Exit(10)
+		}
+		pidPath := os.Getenv("GO_HELPER_CHILD_PID_PATH")
+		if err := os.WriteFile(pidPath, []byte(strconv.Itoa(child.Process.Pid)), 0o600); err != nil {
+			_ = child.Process.Kill()
+			os.Exit(11)
+		}
+		_ = child.Wait()
+		os.Exit(0)
 	default:
 		os.Exit(0)
 	}

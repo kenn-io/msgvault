@@ -341,6 +341,7 @@ func runServeStartWithOptions(cmd *cobra.Command, c *config.Config, opts backgro
 	if err != nil {
 		return fmt.Errorf("start background daemon: %w", err)
 	}
+	defer func() { _ = proc.releaseProcessTree() }()
 	rt, ready, err := waitForBackgroundServeReadyForRun(
 		cmd.Context(), c.Data.DataDir, proc.Wait, backgroundServeReadyTimeout,
 	)
@@ -780,10 +781,30 @@ func reportBackgroundLaunchInProgress(cmd *cobra.Command, dataDir string) {
 }
 
 type backgroundServeProcess struct {
-	PID     int
-	Process *os.Process
-	LogPath string
-	Wait    <-chan error
+	PID         int
+	Process     *os.Process
+	ProcessTree backgroundServeProcessTree
+	LogPath     string
+	Wait        <-chan error
+}
+
+type backgroundServeProcessTree interface {
+	Attach(process *os.Process) error
+	Terminate() error
+	Close() error
+}
+
+type backgroundServeCommandConfig struct {
+	ProcessTree backgroundServeProcessTree
+}
+
+func (p *backgroundServeProcess) releaseProcessTree() error {
+	if p == nil || p.ProcessTree == nil {
+		return nil
+	}
+	tree := p.ProcessTree
+	p.ProcessTree = nil
+	return tree.Close()
 }
 
 const backgroundServeStartupCancelGrace = 5 * time.Second
@@ -834,9 +855,26 @@ func startServeBackgroundProcess(c *config.Config, opts backgroundServeStartOpti
 	child.Stdin = devNull
 	child.Stdout = logFile
 	child.Stderr = logFile
-	configureServeBackgroundCommand(child)
+	commandConfig, err := configureServeBackgroundCommand(child)
+	if err != nil {
+		return nil, fmt.Errorf("configure background process tree: %w", err)
+	}
+	processTree := commandConfig.ProcessTree
+	closeProcessTree := true
+	defer func() {
+		if closeProcessTree && processTree != nil {
+			_ = processTree.Close()
+		}
+	}()
 	if err := child.Start(); err != nil {
 		return nil, fmt.Errorf("start server: %w", err)
+	}
+	if processTree != nil {
+		if err := processTree.Attach(child.Process); err != nil {
+			_ = child.Process.Kill()
+			_, _ = child.Process.Wait()
+			return nil, fmt.Errorf("attach server process tree: %w", err)
+		}
 	}
 	closeLog = false
 	_ = logFile.Close()
@@ -846,10 +884,11 @@ func startServeBackgroundProcess(c *config.Config, opts backgroundServeStartOpti
 		waitCh <- child.Wait()
 	}()
 	return &backgroundServeProcess{
-		PID:     child.Process.Pid,
-		Process: child.Process,
-		LogPath: logPath,
-		Wait:    waitCh,
+		PID:         child.Process.Pid,
+		Process:     child.Process,
+		ProcessTree: processTree,
+		LogPath:     logPath,
+		Wait:        waitCh,
 	}, nil
 }
 
@@ -857,6 +896,7 @@ func stopBackgroundServeStartup(proc *backgroundServeProcess, grace time.Duratio
 	if proc == nil {
 		return nil
 	}
+	defer func() { _ = proc.releaseProcessTree() }()
 	process := proc.Process
 	if process == nil {
 		var err error
@@ -865,11 +905,17 @@ func stopBackgroundServeStartup(proc *backgroundServeProcess, grace time.Duratio
 			return fmt.Errorf("find background daemon process: %w", err)
 		}
 	}
-	if err := signalDaemonProcess(process); err != nil {
-		if errors.Is(err, os.ErrProcessDone) {
+	var signalErr error
+	if proc.ProcessTree != nil {
+		signalErr = proc.ProcessTree.Terminate()
+	} else {
+		signalErr = signalDaemonProcess(process)
+	}
+	if signalErr != nil {
+		if errors.Is(signalErr, os.ErrProcessDone) {
 			return nil
 		}
-		return fmt.Errorf("signal canceled background daemon startup: %w", err)
+		return fmt.Errorf("signal canceled background daemon startup: %w", signalErr)
 	}
 	if grace <= 0 {
 		grace = backgroundServeStartupCancelGrace
