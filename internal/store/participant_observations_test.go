@@ -397,6 +397,63 @@ func TestProviderIDEnrichmentRemovesGeneratedConflict(t *testing.T) {
 	assert.Empty(candidates)
 }
 
+func TestProviderIDEnrichmentChecksOtherParticipantProviderIDs(t *testing.T) {
+	for _, tt := range []struct {
+		name             string
+		enrichedProvider string
+		wantConflict     bool
+		wantCandidate    bool
+	}{
+		{name: "matching provider", enrichedProvider: "provider-left"},
+		{name: "different provider", enrichedProvider: "provider-right", wantConflict: true, wantCandidate: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			st := storetest.New(t).Store
+			ctx := t.Context()
+			left, err := st.EnsureParticipantByIdentifier("example", "enrichment-left", "Left")
+			require.NoError(err)
+			right, err := st.EnsureParticipantByIdentifier("example", "enrichment-right", "Right")
+			require.NoError(err)
+
+			input := store.ParticipantContactObservationInput{
+				AddressKind: store.ContactAddressEmail, OriginalValue: "shared-enrichment@example.org",
+				ProviderUserID: new("provider-left"),
+				Envelope:       store.ValueEnvelopeInput{Source: store.ProvenanceArchiveObservation},
+			}
+			_, err = st.RecordContactObservationContext(ctx, left, input)
+			require.NoError(err)
+
+			input.ProviderUserID = nil
+			firstRight, err := st.RecordContactObservationContext(ctx, right, input)
+			require.NoError(err)
+			require.True(firstRight.Conflicting)
+			require.NotNil(firstRight.CandidateID)
+
+			input.ProviderUserID = new(tt.enrichedProvider)
+			enriched, err := st.RecordContactObservationContext(ctx, right, input)
+			require.NoError(err)
+			assert.Equal(tt.wantConflict, enriched.Conflicting)
+			if tt.wantCandidate {
+				if assert.NotNil(enriched.CandidateID) {
+					assert.Equal(*firstRight.CandidateID, *enriched.CandidateID)
+				}
+			} else {
+				assert.Nil(enriched.CandidateID)
+			}
+
+			candidates, err := st.ListIdentityMatchCandidatesContext(ctx, nil, 10, 0)
+			require.NoError(err)
+			if tt.wantCandidate {
+				assert.Len(candidates, 1)
+			} else {
+				assert.Empty(candidates)
+			}
+		})
+	}
+}
+
 func TestContradictoryProviderIDSupersedesCurrentObservation(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

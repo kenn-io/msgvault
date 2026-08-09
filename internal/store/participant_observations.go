@@ -228,6 +228,7 @@ func (s *Store) RecordContactObservationContext(
 			input.ScopeKind, input.ScopeValue, normalized,
 		)
 		providerContradicted := false
+		observationEnriched := false
 		if err == nil {
 			sameProvider := observation.ProviderUserID != nil &&
 				input.ProviderUserID != nil &&
@@ -257,62 +258,65 @@ func (s *Store) RecordContactObservationContext(
 					return err
 				}
 				result.Observation = observation
-				return nil
+				observationEnriched = true
+			} else {
+				// A different non-null provider ID contradicts the current row.
+				// Close it and record the new binding as a fresh observation so
+				// both facts survive in history.
+				if err := s.supersedeObservationRowTx(
+					ctx, tx, observation.Envelope.ID,
+				); err != nil {
+					return err
+				}
+				providerContradicted = true
 			}
-			// A different non-null provider ID contradicts the current row.
-			// Close it and record the new binding as a fresh observation so
-			// both facts survive in history.
-			if err := s.supersedeObservationRowTx(
-				ctx, tx, observation.Envelope.ID,
-			); err != nil {
-				return err
-			}
-			providerContradicted = true
 		} else if !errors.Is(err, ErrProfileValueNotFound) {
 			return err
 		}
-		env, err := resolveProfileEnvelopeForOwnerTx(
-			ctx, tx, "participant_contact_observations", "participant_id", "address_kind",
-			participantID, input.AddressKind, input.Envelope,
-		)
-		if err != nil {
-			return err
-		}
-		args := []any{
-			participantID, int64Value(input.SourceID), input.AddressKind, serviceID,
-			stringValue(input.ScopeKind), stringValue(input.ScopeValue),
-			stringValue(input.ProviderUserID), input.OriginalValue, normalized,
-			normalization, normalizationVersion, timeValue(input.ObservedAt),
-		}
-		args = append(args, profileEnvelopeArgs(env)...)
-		var id int64
-		if err := tx.QueryRowContext(ctx, `INSERT INTO participant_contact_observations (
-			participant_id, source_id, address_kind, service_id, scope_kind,
-			scope_value, provider_user_id, original_value, normalized_value,
-			normalization, normalization_version, observed_at, `+
-			profileEnvelopeWriteColumns+`, created_at, updated_at
-		) VALUES (
-			?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-			?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-			`+s.dialect.Now()+`, `+s.dialect.Now()+`
-		) RETURNING id`, args...).Scan(&id); err != nil {
-			return fmt.Errorf("record participant contact observation: %w", err)
-		}
-		result.Observation, err = getParticipantObservationTx(ctx, tx, participantID, id)
-		if err != nil {
-			return err
-		}
-		result.Created = true
-		if err := s.bumpParticipantIdentifierRevision(tx); err != nil {
-			return err
-		}
-		if providerContradicted {
-			// Conflicts generated against the superseded provider binding may
-			// no longer be supported by any current observation pair.
-			if err := s.deleteUnsupportedObservationIdentityConflictsContext(
-				ctx, tx,
-			); err != nil {
+		if !observationEnriched {
+			env, err := resolveProfileEnvelopeForOwnerTx(
+				ctx, tx, "participant_contact_observations", "participant_id", "address_kind",
+				participantID, input.AddressKind, input.Envelope,
+			)
+			if err != nil {
 				return err
+			}
+			args := []any{
+				participantID, int64Value(input.SourceID), input.AddressKind, serviceID,
+				stringValue(input.ScopeKind), stringValue(input.ScopeValue),
+				stringValue(input.ProviderUserID), input.OriginalValue, normalized,
+				normalization, normalizationVersion, timeValue(input.ObservedAt),
+			}
+			args = append(args, profileEnvelopeArgs(env)...)
+			var id int64
+			if err := tx.QueryRowContext(ctx, `INSERT INTO participant_contact_observations (
+				participant_id, source_id, address_kind, service_id, scope_kind,
+				scope_value, provider_user_id, original_value, normalized_value,
+				normalization, normalization_version, observed_at, `+
+				profileEnvelopeWriteColumns+`, created_at, updated_at
+			) VALUES (
+				?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+				?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+				`+s.dialect.Now()+`, `+s.dialect.Now()+`
+			) RETURNING id`, args...).Scan(&id); err != nil {
+				return fmt.Errorf("record participant contact observation: %w", err)
+			}
+			result.Observation, err = getParticipantObservationTx(ctx, tx, participantID, id)
+			if err != nil {
+				return err
+			}
+			result.Created = true
+			if err := s.bumpParticipantIdentifierRevision(tx); err != nil {
+				return err
+			}
+			if providerContradicted {
+				// Conflicts generated against the superseded provider binding may
+				// no longer be supported by any current observation pair.
+				if err := s.deleteUnsupportedObservationIdentityConflictsContext(
+					ctx, tx,
+				); err != nil {
+					return err
+				}
 			}
 		}
 
