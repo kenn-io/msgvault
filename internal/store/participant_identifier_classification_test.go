@@ -72,6 +72,8 @@ func TestParticipantIdentifierWritePathsClassifyServiceAndScope(t *testing.T) {
 		scopeValue      string
 	}{
 		{"matrix", "@alice:matrix.example:8448", "matrix", "server", "matrix.example:8448"},
+		{"matrix", "alice-without-server", "", "", ""},
+		{"slack", "user-without-workspace", "", "", ""},
 		{"synctech_sms", "22000", "sms", "", ""},
 		{"google_voice", "+15550100002", "google-voice", "", ""},
 		{"beeper", "@alice:beeper.local", "", "", ""},

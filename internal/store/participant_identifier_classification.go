@@ -24,6 +24,8 @@ func classifyParticipantIdentifier(
 		if separator := strings.Index(value, ":"); separator > 0 && separator+1 < len(value) {
 			classification.ScopeKind = new("server")
 			classification.ScopeValue = new(value[separator+1:])
+		} else {
+			return participantIdentifierClassification{}, false
 		}
 	case kind == "discord" || strings.HasPrefix(kind, "discord_"):
 		classification.ServiceSlug = "discord"
@@ -36,6 +38,8 @@ func classifyParticipantIdentifier(
 		if separator := strings.Index(value, ":"); separator > 0 {
 			classification.ScopeKind = new("workspace")
 			classification.ScopeValue = new(value[:separator])
+		} else {
+			return participantIdentifierClassification{}, false
 		}
 	default:
 		return participantIdentifierClassification{}, false
