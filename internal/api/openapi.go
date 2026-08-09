@@ -178,7 +178,13 @@ import (
 // timeline routes, and adds a typed terminal error variant to CLI identity
 // discovery NDJSON streams. Additive (minor bump): existing progress/result
 // events and relationship requests without identity filters are unchanged.
-const APISchemaVersion = "1.36.0"
+// 1.37.0 adds typed structured-person profile read, patch, and history routes,
+// plus an open communication-service catalog. Additive (minor bump): existing
+// person and source-identity routes keep their current contracts.
+// 1.38.0 adds authenticated raw access to inline person-profile media bytes.
+// Additive (minor bump): existing profile metadata and patch contracts are
+// unchanged, and URI-only media remains metadata-only.
+const APISchemaVersion = "1.38.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.
@@ -542,6 +548,21 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 		})
 	}
 	for schemaName, properties := range map[string]map[string][]any{
+		"CreateCommunicationServiceRequest": {
+			"normalization": {
+				"CreateCommunicationServiceRequestNormalizationNone",
+				"CreateCommunicationServiceRequestNormalizationLower",
+				"CreateCommunicationServiceRequestNormalizationEmail",
+				"CreateCommunicationServiceRequestNormalizationPhoneE164",
+				"CreateCommunicationServiceRequestNormalizationStripAtLower",
+				"CreateCommunicationServiceRequestNormalizationByAddressKind",
+			},
+			"scope_policy": {
+				"CreateCommunicationServiceRequestScopePolicyNone",
+				"CreateCommunicationServiceRequestScopePolicyOptional",
+				"CreateCommunicationServiceRequestScopePolicyRequired",
+			},
+		},
 		"ExploreCacheUnavailableResponse": {
 			"readiness": {"ExploreCacheUnavailableResponseReadinessAbsent", "ExploreCacheUnavailableResponseReadinessInterrupted", "ExploreCacheUnavailableResponseReadinessStaleSchema", "ExploreCacheUnavailableResponseReadinessDrifted"},
 		},

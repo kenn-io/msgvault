@@ -1096,6 +1096,8 @@ var _ api.CLIDedupDeleteStore = (*storeAPIAdapter)(nil)
 var _ api.ContextCLIDedupDeleteStore = (*storeAPIAdapter)(nil)
 var _ api.IdentityLinkStore = (*storeAPIAdapter)(nil)
 var _ api.PersonProfileStore = (*storeAPIAdapter)(nil)
+var _ api.PersonProfileValueStore = (*storeAPIAdapter)(nil)
+var _ api.CommunicationServiceStore = (*storeAPIAdapter)(nil)
 var _ api.AttributeDefinitionStore = (*storeAPIAdapter)(nil)
 var _ api.PersonAttributeStore = (*storeAPIAdapter)(nil)
 var _ api.IdentityCacheRefresher = (*storeAPIAdapter)(nil)
@@ -1893,6 +1895,44 @@ func (a *storeAPIAdapter) PersonForParticipantsContext(
 	ctx context.Context, participantIDs []int64,
 ) (*store.Person, error) {
 	return a.store.PersonForParticipantsContext(ctx, participantIDs)
+}
+
+func (a *storeAPIAdapter) GetPersonProfileContext(
+	ctx context.Context, personID int64,
+) (*store.PersonProfile, error) {
+	return a.store.GetPersonProfileContext(ctx, personID)
+}
+
+func (a *storeAPIAdapter) ApplyPersonProfilePatchContext(
+	ctx context.Context,
+	personID, expectedRevision int64,
+	patch store.PersonProfilePatch,
+) (*store.PersonProfile, error) {
+	return a.store.ApplyPersonProfilePatchContext(ctx, personID, expectedRevision, patch)
+}
+
+func (a *storeAPIAdapter) GetPersonProfileHistoryContext(
+	ctx context.Context, personID int64,
+) (*store.PersonProfileHistory, error) {
+	return a.store.GetPersonProfileHistoryContext(ctx, personID)
+}
+
+func (a *storeAPIAdapter) ReadPersonMediaDataContext(
+	ctx context.Context, personID, mediaID int64,
+) ([]byte, string, error) {
+	return a.store.ReadPersonMediaDataContext(ctx, personID, mediaID)
+}
+
+func (a *storeAPIAdapter) ListCommunicationServicesContext(
+	ctx context.Context, includeInactive bool,
+) ([]store.CommunicationService, error) {
+	return a.store.ListCommunicationServicesContext(ctx, includeInactive)
+}
+
+func (a *storeAPIAdapter) EnsureCommunicationServiceContext(
+	ctx context.Context, input store.CommunicationServiceInput,
+) (*store.CommunicationService, bool, error) {
+	return a.store.EnsureCommunicationServiceContext(ctx, input)
 }
 
 func (a *storeAPIAdapter) ListAttributeDefinitionsContext(

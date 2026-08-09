@@ -1,6 +1,10 @@
 package cmd
 
 import (
+	"fmt"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -33,4 +37,38 @@ func TestStoreAPIAdapterExposesFileMetadataCatalog(t *testing.T) {
 	files, err := adapter.GetFileMetadataBatch(t.Context(), nil)
 	requirements.NoError(err)
 	assertions.Empty(files)
+}
+
+func TestStoreAPIAdapterServesProfileAndCommunicationServiceRoutes(t *testing.T) {
+	requirements := require.New(t)
+	st := testutil.NewTestStore(t)
+	participantID, err := st.EnsureParticipantByIdentifier(
+		"email", "production-adapter@example.test", "Production Adapter",
+	)
+	requirements.NoError(err)
+	person, _, err := st.CreatePersonFromParticipant(participantID)
+	requirements.NoError(err)
+
+	srv := api.NewServerWithOptions(api.ServerOptions{
+		Config: &config.Config{},
+		Store:  &storeAPIAdapter{store: st},
+		Logger: slog.New(slog.DiscardHandler),
+	})
+
+	for _, test := range []struct {
+		name string
+		path string
+	}{
+		{"communication services", "/api/v1/communication-services"},
+		{"structured profile", fmt.Sprintf("/api/v1/persons/%d/profile", person.ID)},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodGet, test.path, nil)
+			response := httptest.NewRecorder()
+
+			srv.Router().ServeHTTP(response, request)
+
+			require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+		})
+	}
 }

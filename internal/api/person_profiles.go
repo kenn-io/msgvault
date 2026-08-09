@@ -249,7 +249,7 @@ func addPersonIDParameter(operation *huma.Operation) {
 
 func addPersonIfMatchParameter(operation *huma.Operation) {
 	operation.Parameters = append(operation.Parameters, &huma.Param{
-		Name: "If-Match", In: "header", Required: true,
+		Name: ifMatchHeaderName, In: "header", Required: true,
 		Description: "Strong ETag returned by the latest person profile read. " +
 			"Must be the exact single tag from that read; the RFC 7232 forms `*` " +
 			"and comma-separated tag lists are not supported.",
@@ -280,7 +280,7 @@ func personETag(person store.Person) string {
 }
 
 func personIfMatch(w http.ResponseWriter, r *http.Request, id int64) (int64, bool) {
-	values := r.Header.Values("If-Match")
+	values := r.Header.Values(ifMatchHeaderName)
 	if len(values) == 0 || (len(values) == 1 && strings.TrimSpace(values[0]) == "") {
 		writeError(w, http.StatusPreconditionRequired, "if_match_required", "If-Match is required")
 		return 0, false

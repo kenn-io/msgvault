@@ -141,6 +141,15 @@ func TestExclusiveLockTablesCoverCascade(t *testing.T) {
 	sort.Strings(missing)
 	assert.Empty(missing,
 		"every ON DELETE CASCADE-to-sources table must be in exclusiveLockTables; missing: %v", missing)
+
+	// Source removal explicitly deletes identity candidates whose polymorphic
+	// observation endpoints belong to the source. Evidence then cascades from
+	// those candidates. Both tables are part of the serialized delete's write
+	// set even though neither has a direct foreign key to sources.
+	assert.True(lockSet["identity_match_candidates"],
+		"identity_match_candidates must be locked for source observation cleanup")
+	assert.True(lockSet["identity_match_evidence"],
+		"identity_match_evidence must be locked for candidate cascade cleanup")
 }
 
 // TestMaintenanceTimeoutResetSQL pins the exact statement the PG dialect uses

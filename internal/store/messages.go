@@ -2730,10 +2730,25 @@ func (s *Store) EnsureParticipantByPhone(phone, displayName, identifierType stri
 		return 0, fmt.Errorf("upsert participant by phone: %w", err)
 	}
 
-	// Ensure a participant_identifiers row exists for this identifierType.
-	// INSERT OR IGNORE is idempotent: a second call with the same type is a no-op.
-	_, err = s.db.Exec(s.dialect.InsertOrIgnore(`INSERT OR IGNORE INTO participant_identifiers (participant_id, identifier_type, identifier_value, is_primary)
-		VALUES (?, ?, ?, TRUE)`), id, identifierType, phone)
+	// Ensure a participant_identifiers row exists for this identifierType and
+	// attach service/scope metadata whenever the importer namespace is
+	// unambiguous. A repeat call repairs metadata but does not repoint the
+	// identifier away from its existing participant.
+	serviceSlug, scopeKind, scopeValue := participantIdentifierClassificationValues(
+		identifierType, phone,
+	)
+	_, err = s.db.Exec(`INSERT INTO participant_identifiers (
+			participant_id, identifier_type, identifier_value, is_primary,
+			service_id, scope_kind, scope_value
+		) VALUES (?, ?, ?, TRUE,
+			(SELECT id FROM communication_services WHERE slug = ?), ?, ?)
+		ON CONFLICT (identifier_type, identifier_value) DO UPDATE SET
+			service_id = COALESCE(excluded.service_id, participant_identifiers.service_id),
+			scope_kind = CASE WHEN excluded.service_id IS NOT NULL
+				THEN excluded.scope_kind ELSE participant_identifiers.scope_kind END,
+			scope_value = CASE WHEN excluded.service_id IS NOT NULL
+				THEN excluded.scope_value ELSE participant_identifiers.scope_value END`,
+		id, identifierType, phone, serviceSlug, scopeKind, scopeValue)
 	if err != nil {
 		return 0, fmt.Errorf("insert participant identifier: %w", err)
 	}
@@ -2754,6 +2769,11 @@ func (s *Store) MergeParticipants(oldID, newID int64) error {
 		// Serialize the curated binding check with promotion and link/unlink
 		// mutations before this transaction repoints any archive references.
 		if err := s.lockIdentityMutationTx(tx); err != nil {
+			return err
+		}
+		if err := s.lockParticipantObservationMergeTx(
+			context.Background(), tx, oldID, newID,
+		); err != nil {
 			return err
 		}
 		if err := s.verifyParticipantsExistTx(tx, oldID, newID); err != nil {
@@ -2847,6 +2867,21 @@ func (s *Store) MergeParticipants(oldID, newID int64) error {
 		if _, err := tx.Exec(`UPDATE participant_identifiers SET participant_id = ? WHERE participant_id = ?`, newID, oldID); err != nil {
 			return err
 		}
+		if err := s.rewriteObservationsForMergeTx(
+			context.Background(), tx, oldID, newID,
+		); err != nil {
+			return err
+		}
+		if err := s.rewriteIdentityMatchCandidatesForMergeTx(
+			context.Background(), tx, oldID, newID,
+		); err != nil {
+			return err
+		}
+		if err := s.deleteUnsupportedObservationIdentityConflictsContext(
+			context.Background(), tx,
+		); err != nil {
+			return err
+		}
 		// Sender and identifier repoints can add or remove identity evidence.
 		// Repair the primary-store provenance before committing the merge.
 		if err := refreshParticipantMessageAttributionContext(
@@ -2872,6 +2907,9 @@ func (s *Store) MergeParticipants(oldID, newID int64) error {
 		// repaired above, but existing message Parquet shards still bake the
 		// pre-merge attribution and require a full rebuild.
 		if err := s.bumpAccountIdentityRevision(tx); err != nil {
+			return err
+		}
+		if err := s.bumpParticipantIdentifierRevision(tx); err != nil {
 			return err
 		}
 		_, err = tx.Exec(`DELETE FROM participants WHERE id = ?`, oldID)
@@ -2942,12 +2980,44 @@ func (s *Store) SetParticipantIdentifier(participantID int64, identifierType, id
 		if err != nil || (exists && existingParticipantID == participantID) {
 			return err
 		}
-		if _, err := tx.Exec(`
-			INSERT INTO participant_identifiers (participant_id, identifier_type, identifier_value, is_primary)
-			VALUES (?, ?, ?, FALSE)
-			ON CONFLICT (identifier_type, identifier_value) DO UPDATE SET participant_id = excluded.participant_id
-		`, participantID, identifierType, identifierValue); err != nil {
-			return fmt.Errorf("set participant identifier: %w", err)
+		serviceSlug, scopeKind, scopeValue := participantIdentifierClassificationValues(
+			identifierType, identifierValue,
+		)
+		classificationColumns, err := s.participantIdentifierClassificationColumnsTx(tx)
+		if err != nil {
+			return err
+		}
+		var setErr error
+		if classificationColumns {
+			_, setErr = tx.Exec(`
+				INSERT INTO participant_identifiers (
+					participant_id, identifier_type, identifier_value, is_primary,
+					service_id, scope_kind, scope_value
+				) VALUES (?, ?, ?, FALSE,
+					(SELECT id FROM communication_services WHERE slug = ?), ?, ?)
+				ON CONFLICT (identifier_type, identifier_value) DO UPDATE SET
+					participant_id = excluded.participant_id,
+					service_id = COALESCE(excluded.service_id, participant_identifiers.service_id),
+					scope_kind = CASE WHEN excluded.service_id IS NOT NULL
+						THEN excluded.scope_kind ELSE participant_identifiers.scope_kind END,
+					scope_value = CASE WHEN excluded.service_id IS NOT NULL
+						THEN excluded.scope_value ELSE participant_identifiers.scope_value END
+			`, participantID, identifierType, identifierValue,
+				serviceSlug, scopeKind, scopeValue)
+		} else {
+			// Cache inspection can open a legacy archive before InitSchema adds
+			// service metadata. Preserve that read/repair workflow; the v2
+			// migration classifies this row when the schema is initialized.
+			_, setErr = tx.Exec(`
+				INSERT INTO participant_identifiers (
+					participant_id, identifier_type, identifier_value, is_primary
+				) VALUES (?, ?, ?, FALSE)
+				ON CONFLICT (identifier_type, identifier_value) DO UPDATE SET
+					participant_id = excluded.participant_id
+			`, participantID, identifierType, identifierValue)
+		}
+		if setErr != nil {
+			return fmt.Errorf("set participant identifier: %w", setErr)
 		}
 		if err := s.bumpParticipantIdentifierRevision(tx); err != nil {
 			return err
@@ -2975,6 +3045,24 @@ func (s *Store) SetParticipantIdentifier(participantID int64, identifierType, id
 		}
 		return s.bumpAccountIdentityRevision(tx)
 	})
+}
+
+func (s *Store) participantIdentifierClassificationColumnsTx(
+	tx *loggedTx,
+) (bool, error) {
+	var count int
+	query := `SELECT COUNT(*) FROM pragma_table_info('participant_identifiers')
+		WHERE name IN ('service_id', 'scope_kind', 'scope_value')`
+	if s.IsPostgreSQL() {
+		query = `SELECT COUNT(*) FROM information_schema.columns
+			WHERE table_schema = current_schema()
+			  AND table_name = 'participant_identifiers'
+			  AND column_name IN ('service_id', 'scope_kind', 'scope_value')`
+	}
+	if err := tx.QueryRow(query).Scan(&count); err != nil {
+		return false, fmt.Errorf("inspect participant identifier classification schema: %w", err)
+	}
+	return count == 3, nil
 }
 
 // participantIdentifierTargetTx returns the participant currently owning an
@@ -3032,11 +3120,17 @@ func (s *Store) EnsureParticipantByIdentifier(identifierType, identifierValue, d
 	if err != nil {
 		return 0, fmt.Errorf("insert participant: %w", err)
 	}
+	serviceSlug, scopeKind, scopeValue := participantIdentifierClassificationValues(
+		identifierType, identifierValue,
+	)
 	_, err = s.db.Exec(`
 		INSERT INTO participant_identifiers (
-			participant_id, identifier_type, identifier_value, display_value, is_primary
-		) VALUES (?, ?, ?, ?, TRUE)
-	`, participantID, identifierType, identifierValue, identifierValue)
+			participant_id, identifier_type, identifier_value, display_value,
+			is_primary, service_id, scope_kind, scope_value
+		) VALUES (?, ?, ?, ?, TRUE,
+			(SELECT id FROM communication_services WHERE slug = ?), ?, ?)
+	`, participantID, identifierType, identifierValue, identifierValue,
+		serviceSlug, scopeKind, scopeValue)
 	if err != nil {
 		return 0, fmt.Errorf("insert participant identifier: %w", err)
 	}

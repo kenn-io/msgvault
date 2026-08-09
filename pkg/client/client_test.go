@@ -68,6 +68,46 @@ func TestGeneratedSourceIdentitiesPreserveRequiredEmptyArrays(t *testing.T) {
 	)
 }
 
+func TestCreateCommunicationServiceAcceptsIdempotentOKResponse(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(http.MethodPost, r.Method)
+		assert.Equal("/api/v1/communication-services", r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{
+			"id":42,
+			"slug":"example-chat",
+			"display_label":"Example Chat",
+			"aliases":[],
+			"scope_policy":"none",
+			"normalization":"lower",
+			"normalization_version":1,
+			"is_system":false,
+			"is_active":true,
+			"created_at":"2026-08-09T00:00:00Z",
+			"updated_at":"2026-08-09T00:00:00Z"
+		}`))
+	}))
+	t.Cleanup(server.Close)
+	c, err := New(server.URL)
+	require.NoError(err)
+
+	service, err := c.CreateCommunicationService(
+		context.Background(), &generated.CreateCommunicationServiceRequestOptions{
+			Body: &generated.CreateCommunicationServiceBody{
+				Slug: "example-chat", DisplayLabel: "Example Chat",
+				ScopePolicy:   generated.CreateCommunicationServiceRequestScopePolicyNone,
+				Normalization: generated.CreateCommunicationServiceRequestNormalizationLower,
+			},
+		},
+	)
+	require.NoError(err)
+	require.NotNil(service)
+	assert.Equal("example-chat", service.Slug)
+}
+
 func TestGeneratedEnumNamesPreserveSavedViewCompatibilityAndQualifyExploration(t *testing.T) {
 	assertions := assert.New(t)
 	assertions.Equal(generated.Asc, generated.SavedViewSortDirection("asc"))

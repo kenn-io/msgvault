@@ -189,6 +189,21 @@ func (s *Store) DeletePersonContext(ctx context.Context, id, expectedRevision in
 		if references > 0 {
 			return fmt.Errorf("delete person %d: %w", id, ErrPersonReferenced)
 		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM identity_match_candidates
+			WHERE (left_kind = ? AND left_id = ?)
+			   OR (right_kind = ? AND right_id = ?)
+			   OR (left_kind = ? AND left_id IN (
+				SELECT id FROM person_contact_points WHERE person_id = ?
+			   ))
+			   OR (right_kind = ? AND right_id IN (
+				SELECT id FROM person_contact_points WHERE person_id = ?
+			   ))`,
+			IdentityMatchPerson, id, IdentityMatchPerson, id,
+			IdentityMatchContactPoint, id,
+			IdentityMatchContactPoint, id,
+		); err != nil {
+			return fmt.Errorf("delete identity match candidates for person %d: %w", id, err)
+		}
 		var deletedID int64
 		err = tx.QueryRowContext(ctx,
 			`DELETE FROM persons WHERE id = ? AND revision = ? RETURNING id`,

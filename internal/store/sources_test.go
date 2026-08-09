@@ -3,6 +3,7 @@ package store_test
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -106,6 +107,287 @@ func TestStore_RemoveSource_NotFound(t *testing.T) {
 
 	err := st.RemoveSource(99999)
 	require.Error(t, err, "RemoveSource should error for nonexistent ID")
+}
+
+func TestStore_RemoveSourceRemovesObservationIdentityCandidates(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		remove func(context.Context, *store.Store, int64) error
+	}{
+		{
+			name: "maintenance",
+			remove: func(_ context.Context, st *store.Store, sourceID int64) error {
+				return st.RemoveSource(sourceID)
+			},
+		},
+		{
+			name: "serialized",
+			remove: func(ctx context.Context, st *store.Store, sourceID int64) error {
+				_, _, err := st.RemoveSourceSerialized(ctx, sourceID)
+				return err
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			f := storetest.New(t)
+			ctx := t.Context()
+
+			observed, err := f.Store.EnsureParticipantByIdentifier(
+				"example", "observed", "Observed",
+			)
+			require.NoError(err)
+			other, err := f.Store.EnsureParticipantByIdentifier(
+				"example", "other", "Other",
+			)
+			require.NoError(err)
+			observation, err := f.Store.RecordContactObservationContext(
+				ctx, observed, store.ParticipantContactObservationInput{
+					SourceID: &f.Source.ID, AddressKind: store.ContactAddressEmail,
+					OriginalValue: "observed@example.org",
+					Envelope: store.ValueEnvelopeInput{
+						Source: store.ProvenanceArchiveObservation,
+					},
+				},
+			)
+			require.NoError(err)
+			candidate, created, err := f.Store.UpsertIdentityMatchCandidateContext(
+				ctx, store.IdentityMatchCandidateInput{
+					LeftKind:  store.IdentityMatchObservation,
+					LeftID:    observation.Observation.Envelope.ID,
+					RightKind: store.IdentityMatchParticipant,
+					RightID:   other,
+					Basis:     store.IdentityMatchEmail,
+					State:     store.IdentityMatchStateCandidate,
+					Source:    store.ProvenanceArchiveObservation,
+				},
+			)
+			require.NoError(err)
+			require.True(created)
+			_, err = f.Store.AddIdentityMatchEvidenceContext(
+				ctx, candidate.ID, store.IdentityMatchEvidenceInput{
+					EvidenceKind: "display_name",
+					Source:       store.ProvenanceArchiveObservation,
+				},
+			)
+			require.NoError(err)
+
+			require.NoError(test.remove(ctx, f.Store, f.Source.ID))
+
+			for table, want := range map[string]int{
+				"participant_contact_observations": 0,
+				"identity_match_candidates":        0,
+				"identity_match_evidence":          0,
+			} {
+				var got int
+				err := f.Store.DB().QueryRow(
+					"SELECT COUNT(*) FROM " + table,
+				).Scan(&got)
+				require.NoError(err, "count %s", table)
+				assert.Equal(want, got, table)
+			}
+		})
+	}
+}
+
+func TestStore_RemoveSourceRecomputesGeneratedObservationConflicts(t *testing.T) {
+	for _, test := range []struct {
+		kind  store.ContactAddressKind
+		value string
+	}{
+		{kind: store.ContactAddressEmail, value: "shared@example.org"},
+		{kind: store.ContactAddressPhone, value: "+1 202 555 0147"},
+		{kind: store.ContactAddressUsername, value: "shared-user"},
+		{kind: store.ContactAddressIMPP, value: "im:shared"},
+		{kind: store.ContactAddressURL, value: "https://example.org/shared"},
+		{kind: store.ContactAddressSocial, value: "social:shared"},
+		{kind: store.ContactAddressCalendar, value: "calendar:shared"},
+		{kind: store.ContactAddressContactURI, value: "contact:shared"},
+		{kind: store.ContactAddressOrgDirectory, value: "directory:shared"},
+		{kind: store.ContactAddressLanguage, value: "EN"},
+	} {
+		t.Run(string(test.kind), func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			f := storetest.New(t)
+			ctx := t.Context()
+			left := f.EnsureParticipant("left@example.com", "Left", "example.com")
+			right := f.EnsureParticipant("right@example.com", "Right", "example.com")
+
+			for index, participantID := range []int64{left, right} {
+				result, err := f.Store.RecordContactObservationContext(
+					ctx, participantID, store.ParticipantContactObservationInput{
+						SourceID: &f.Source.ID, AddressKind: test.kind,
+						ProviderUserID: new(fmt.Sprintf("provider-%d", index)),
+						OriginalValue:  test.value,
+						Envelope: store.ValueEnvelopeInput{
+							Source: store.ProvenanceArchiveObservation,
+						},
+					},
+				)
+				require.NoError(err)
+				if participantID == right {
+					assert.True(result.Conflicting)
+					require.NotNil(result.CandidateID)
+				}
+			}
+
+			candidates, err := f.Store.ListIdentityMatchCandidatesContext(ctx, nil, 10, 0)
+			require.NoError(err)
+			require.Len(candidates, 1)
+			assert.Equal(store.IdentityMatchParticipant, candidates[0].LeftKind)
+			assert.Equal(store.IdentityMatchParticipant, candidates[0].RightKind)
+
+			require.NoError(f.Store.RemoveSource(f.Source.ID))
+			candidates, err = f.Store.ListIdentityMatchCandidatesContext(ctx, nil, 10, 0)
+			require.NoError(err)
+			assert.Empty(candidates)
+		})
+	}
+}
+
+func TestStore_RemoveSourceKeepsGeneratedConflictWithOtherSourceSupport(t *testing.T) {
+	require := require.New(t)
+	f := storetest.New(t)
+	ctx := t.Context()
+	left := f.EnsureParticipant("left@example.com", "Left", "example.com")
+	right := f.EnsureParticipant("right@example.com", "Right", "example.com")
+	otherSource, err := f.Store.GetOrCreateSource("gmail", "other@example.org")
+	require.NoError(err)
+
+	for _, sourceID := range []int64{f.Source.ID, otherSource.ID} {
+		for _, participantID := range []int64{left, right} {
+			_, err := f.Store.RecordContactObservationContext(
+				ctx, participantID, store.ParticipantContactObservationInput{
+					SourceID: &sourceID, AddressKind: store.ContactAddressEmail,
+					OriginalValue: "shared@example.org",
+					Envelope: store.ValueEnvelopeInput{
+						Source: store.ProvenanceArchiveObservation,
+					},
+				},
+			)
+			require.NoError(err)
+		}
+	}
+
+	require.NoError(f.Store.RemoveSource(f.Source.ID))
+	candidates, err := f.Store.ListIdentityMatchCandidatesContext(ctx, nil, 10, 0)
+	require.NoError(err)
+	require.Len(candidates, 1, "the second source still supports both endpoints")
+
+	require.NoError(f.Store.RemoveSource(otherSource.ID))
+	candidates, err = f.Store.ListIdentityMatchCandidatesContext(ctx, nil, 10, 0)
+	require.NoError(err)
+	require.Empty(candidates)
+}
+
+func TestStoreRemoveSourceDemotesPromotedObservationConflict(t *testing.T) {
+	for name, remove := range map[string]func(context.Context, *store.Store, int64) error{
+		"maintenance": func(_ context.Context, st *store.Store, sourceID int64) error {
+			return st.RemoveSource(sourceID)
+		},
+		"serialized": func(ctx context.Context, st *store.Store, sourceID int64) error {
+			_, _, err := st.RemoveSourceSerialized(ctx, sourceID)
+			return err
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			f := storetest.New(t)
+			ctx := t.Context()
+			left := f.EnsureParticipant("promoted-left@example.org", "Promoted Left", "example.org")
+			right := f.EnsureParticipant("promoted-right@example.org", "Promoted Right", "example.org")
+			normalized := "shared-promoted@example.org"
+			notes := "preserve source-removal review"
+			candidate, created, err := f.Store.UpsertIdentityMatchCandidateContext(
+				ctx, store.IdentityMatchCandidateInput{
+					LeftKind: store.IdentityMatchParticipant, LeftID: left,
+					RightKind: store.IdentityMatchParticipant, RightID: right,
+					Basis: store.IdentityMatchEmail, NormalizedValue: &normalized,
+					State: store.IdentityMatchStateCandidate, Source: store.ProvenanceSystem,
+					Notes: &notes,
+				},
+			)
+			require.NoError(err)
+			require.True(created)
+			_, err = f.Store.AddIdentityMatchEvidenceContext(ctx, candidate.ID, store.IdentityMatchEvidenceInput{
+				EvidenceKind: "system_review", Detail: new("preserve source-removal evidence"),
+				Source: store.ProvenanceSystem,
+			})
+			require.NoError(err)
+
+			for index, participantID := range []int64{left, right} {
+				_, err := f.Store.RecordContactObservationContext(
+					ctx, participantID, store.ParticipantContactObservationInput{
+						SourceID: &f.Source.ID, AddressKind: store.ContactAddressEmail,
+						ProviderUserID: new(fmt.Sprintf("promoted-provider-%d", index)),
+						OriginalValue:  normalized,
+						Envelope: store.ValueEnvelopeInput{
+							Source: store.ProvenanceArchiveObservation,
+						},
+					},
+				)
+				require.NoError(err)
+			}
+
+			require.NoError(remove(ctx, f.Store, f.Source.ID))
+			candidates, err := f.Store.ListIdentityMatchCandidatesContext(ctx, nil, 10, 0)
+			require.NoError(err)
+			require.Len(candidates, 1)
+			assert.Equal(candidate.ID, candidates[0].ID)
+			assert.Equal(store.IdentityMatchStateCandidate, candidates[0].State)
+			assert.Equal(store.ProvenanceSystem, candidates[0].Source)
+			assert.Equal(&notes, candidates[0].Notes)
+			require.Len(candidates[0].Evidence, 1)
+			assert.Equal("system_review", candidates[0].Evidence[0].EvidenceKind)
+		})
+	}
+}
+
+func TestStore_RemoveSourceKeepsConflictsBetweenOtherParticipants(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := storetest.New(t)
+	ctx := t.Context()
+	participants := []int64{
+		f.EnsureParticipant("first@example.com", "First", "example.com"),
+		f.EnsureParticipant("second@example.com", "Second", "example.com"),
+		f.EnsureParticipant("third@example.com", "Third", "example.com"),
+	}
+	sources := []int64{f.Source.ID}
+	for _, identifier := range []string{"second-source@example.org", "third-source@example.org"} {
+		source, err := f.Store.GetOrCreateSource("gmail", identifier)
+		require.NoError(err)
+		sources = append(sources, source.ID)
+	}
+
+	for index, participantID := range participants {
+		_, err := f.Store.RecordContactObservationContext(
+			ctx, participantID, store.ParticipantContactObservationInput{
+				SourceID: &sources[index], AddressKind: store.ContactAddressEmail,
+				ProviderUserID: new(fmt.Sprintf("provider-%d", index)),
+				OriginalValue:  "shared@example.org",
+				Envelope: store.ValueEnvelopeInput{
+					Source: store.ProvenanceArchiveObservation,
+				},
+			},
+		)
+		require.NoError(err)
+	}
+	candidates, err := f.Store.ListIdentityMatchCandidatesContext(ctx, nil, 10, 0)
+	require.NoError(err)
+	require.Len(candidates, 3, "three participants require a complete conflict graph")
+
+	require.NoError(f.Store.RemoveSource(sources[0]))
+	candidates, err = f.Store.ListIdentityMatchCandidatesContext(ctx, nil, 10, 0)
+	require.NoError(err)
+	require.Len(candidates, 1)
+	assert.ElementsMatch(
+		[]int64{participants[1], participants[2]},
+		[]int64{candidates[0].LeftID, candidates[0].RightID},
+	)
 }
 
 func TestStore_RemoveSource_CascadesConversations(t *testing.T) {

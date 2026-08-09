@@ -313,6 +313,275 @@ func TestCopySubset_PreservesPersonProfiles(t *testing.T) {
 	assert.Equal(person.ParticipantIDs, copied.ParticipantIDs)
 }
 
+func TestCopySubset_ExcludesStructuredProfilesByDefault(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	ctx := t.Context()
+	srcDB := createTestSourceDB(t, t.TempDir(), 5)
+	source, err := Open(srcDB)
+	require.NoError(err)
+	person, _, err := source.CreatePersonFromParticipant(2)
+	require.NoError(err)
+	_, err = source.AddPersonNameContext(ctx, person.ID, PersonNameInput{
+		NameKind:  PersonNameFormatted,
+		Formatted: new("Private Profile Name"),
+		Envelope:  ValueEnvelopeInput{Source: ProvenanceUser},
+	})
+	require.NoError(err)
+	require.NoError(source.Close())
+
+	dstDir := filepath.Join(t.TempDir(), "dst")
+	_, err = CopySubset(srcDB, dstDir, 5, false)
+	require.NoError(err)
+	destination, err := Open(filepath.Join(dstDir, "msgvault.db"))
+	require.NoError(err)
+	t.Cleanup(func() { _ = destination.Close() })
+
+	history, err := destination.GetPersonProfileHistoryContext(ctx, person.ID)
+	require.NoError(err)
+	assert.Empty(history.Names,
+		"a shared subset must not copy structured profile values without an explicit opt-in")
+}
+
+func TestCopySubset_LegacyParticipantIdentifiersCopyByColumnName(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	srcDB := createTestSourceDB(t, t.TempDir(), 1)
+
+	db, err := sql.Open("sqlite3", srcDB+"?_foreign_keys=OFF")
+	require.NoError(err)
+	_, err = db.Exec(`
+		DROP INDEX IF EXISTS idx_participant_identifiers_service_scope;
+		ALTER TABLE participant_identifiers RENAME TO participant_identifiers_current;
+		CREATE TABLE participant_identifiers (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			participant_id INTEGER NOT NULL REFERENCES participants(id) ON DELETE CASCADE,
+			identifier_type TEXT NOT NULL,
+			identifier_value TEXT NOT NULL,
+			display_value TEXT,
+			is_primary BOOLEAN NOT NULL DEFAULT FALSE,
+			UNIQUE(identifier_type, identifier_value)
+		);
+		INSERT INTO participant_identifiers (
+			id, participant_id, identifier_type, identifier_value,
+			display_value, is_primary
+		)
+		SELECT id, participant_id, identifier_type, identifier_value,
+			display_value, is_primary
+		FROM participant_identifiers_current;
+		DROP TABLE participant_identifiers_current;
+	`)
+	require.NoError(err, "rebuild legacy participant_identifiers")
+	require.NoError(db.Close())
+
+	dstDir := filepath.Join(t.TempDir(), "dst")
+	_, err = CopySubset(srcDB, dstDir, 1, false)
+	require.NoError(err, "copy legacy participant identifiers")
+	destination, err := sql.Open("sqlite3", filepath.Join(dstDir, "msgvault.db"))
+	require.NoError(err)
+	t.Cleanup(func() { _ = destination.Close() })
+
+	var participantID int64
+	var serviceID sql.NullInt64
+	require.NoError(destination.QueryRow(`SELECT participant_id, service_id
+		FROM participant_identifiers
+		WHERE identifier_type = 'email' AND identifier_value = 'bob@example.com'`).
+		Scan(&participantID, &serviceID))
+	assert.Equal(int64(2), participantID)
+	assert.False(serviceID.Valid, "missing legacy service metadata must use the destination default")
+}
+
+func TestCopySubsetRemapsParticipantIdentifierServicesWithoutProfiles(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	ctx := t.Context()
+	srcDB := createTestSourceDB(t, t.TempDir(), 1)
+	source, err := Open(srcDB)
+	require.NoError(err)
+
+	var sourceServiceID int64
+	require.NoError(source.db.QueryRow(
+		`SELECT id FROM communication_services WHERE slug = 'whatsapp'`,
+	).Scan(&sourceServiceID))
+	_, err = source.db.Exec(`UPDATE communication_services
+		SET slug = 'subset-custom-chat', display_label = 'Subset Custom Chat',
+		    is_system = FALSE
+		WHERE id = ?`, sourceServiceID)
+	require.NoError(err)
+	_, err = source.db.Exec(`UPDATE participant_identifiers
+		SET service_id = ?, scope_kind = 'account', scope_value = 'synthetic-account'
+		WHERE participant_id = 2`, sourceServiceID)
+	require.NoError(err)
+	require.NoError(source.Close())
+
+	dstDir := filepath.Join(t.TempDir(), "dst")
+	_, err = CopySubset(srcDB, dstDir, 1, false)
+	require.NoError(err)
+	destination, err := Open(filepath.Join(dstDir, "msgvault.db"))
+	require.NoError(err)
+	t.Cleanup(func() { _ = destination.Close() })
+
+	copiedService, err := destination.ResolveCommunicationServiceContext(
+		ctx, "subset-custom-chat",
+	)
+	require.NoError(err)
+	var identifierServiceID int64
+	require.NoError(destination.db.QueryRow(`SELECT service_id
+		FROM participant_identifiers WHERE participant_id = 2`).Scan(&identifierServiceID))
+	assert.Equal(copiedService.ID, identifierServiceID)
+	assert.NotEqual(sourceServiceID, identifierServiceID,
+		"the destination service ID must be resolved from its immutable slug")
+}
+
+func TestCopySubsetPreservesStructuredProfileHistoryAndDependencies(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	ctx := t.Context()
+	srcDB := createTestSourceDB(t, t.TempDir(), 5)
+	source, err := Open(srcDB)
+	require.NoError(err)
+	person, _, err := source.CreatePersonFromParticipant(2)
+	require.NoError(err)
+	_, _, err = source.EnsureCommunicationServiceContext(ctx, CommunicationServiceInput{
+		Slug: "source-only-offset", DisplayLabel: "Source Only Offset",
+		ScopePolicy: ScopePolicyNone, Normalization: NormalizationNone,
+		NormalizationVersion: 1,
+	})
+	require.NoError(err)
+	service, _, err := source.EnsureCommunicationServiceContext(ctx, CommunicationServiceInput{
+		Slug: "example-chat", DisplayLabel: "Example Chat", Aliases: []string{"example-im"},
+		ScopePolicy: ScopePolicyNone, Normalization: NormalizationLower,
+		NormalizationVersion: 1,
+	})
+	require.NoError(err)
+	profileSource, err := source.GetOrCreateSource("profile-fixture", "profile-only")
+	require.NoError(err)
+	_, err = source.DB().Exec(`INSERT INTO labels (
+		id, source_id, source_label_id, name, label_type
+	) VALUES (?, ?, ?, ?, ?)`,
+		9001, profileSource.ID, "profile-private", "Profile Private", "user",
+	)
+	require.NoError(err)
+
+	oldName, err := source.AddPersonNameContext(ctx, person.ID, PersonNameInput{
+		NameKind: PersonNameFormatted, Formatted: new("Robert Example"),
+		Envelope: ValueEnvelopeInput{Source: ProvenanceVCardImport},
+	})
+	require.NoError(err)
+	require.NoError(source.SupersedePersonNameContext(ctx, person.ID, oldName.Envelope.ID, nil))
+	_, err = source.AddPersonNameContext(ctx, person.ID, PersonNameInput{
+		NameKind: PersonNameFormatted, Formatted: new("Bob Example"),
+		Envelope: ValueEnvelopeInput{Source: ProvenanceUser},
+	})
+	require.NoError(err)
+	_, err = source.AddPersonContactPointContext(ctx, person.ID, PersonContactPointInput{
+		AddressKind: ContactAddressUsername, ServiceSlug: &service.Slug,
+		OriginalValue: "BobExample", Envelope: ValueEnvelopeInput{Source: ProvenanceUser},
+	})
+	require.NoError(err)
+	_, err = source.AddPersonAddressContext(ctx, person.ID, PersonAddressInput{
+		AddressKind: PersonAddressPostal, StreetAddress: new("123 Example St"),
+		Envelope: ValueEnvelopeInput{Source: ProvenanceUser},
+	})
+	require.NoError(err)
+	_, err = source.AddPersonDateContext(ctx, person.ID, PersonDateInput{
+		DateKind: PersonDateBirthday, Date: PartialDate{Year: new(1985), Month: new(4), Day: new(12)},
+		Envelope: ValueEnvelopeInput{Source: ProvenanceUser},
+	})
+	require.NoError(err)
+	_, err = source.AddPersonCategoryContext(ctx, person.ID, PersonCategoryInput{
+		OriginalValue: "Friends", Envelope: ValueEnvelopeInput{Source: ProvenanceUser},
+	})
+	require.NoError(err)
+	_, err = source.AddPersonMediaContext(ctx, person.ID, PersonMediaInput{
+		MediaKind: PersonMediaPhoto, URI: new("https://example.invalid/photo.jpg"),
+		Envelope: ValueEnvelopeInput{Source: ProvenanceUser},
+	})
+	require.NoError(err)
+	firstObservation, err := source.RecordContactObservationContext(ctx, 2, ParticipantContactObservationInput{
+		SourceID: &profileSource.ID, AddressKind: ContactAddressUsername,
+		ServiceSlug: &service.Slug, ProviderUserID: new("provider-bob"),
+		OriginalValue: "BobExample",
+		Envelope:      ValueEnvelopeInput{Source: ProvenanceArchiveObservation},
+	})
+	require.NoError(err)
+	require.False(firstObservation.Conflicting)
+	secondObservation, err := source.RecordContactObservationContext(
+		ctx, 3, ParticipantContactObservationInput{
+			SourceID: &profileSource.ID, AddressKind: ContactAddressUsername,
+			ServiceSlug: &service.Slug, ProviderUserID: new("provider-charlie"),
+			OriginalValue: "BobExample",
+			Envelope:      ValueEnvelopeInput{Source: ProvenanceArchiveObservation},
+		},
+	)
+	require.NoError(err)
+	require.True(secondObservation.Conflicting)
+	require.NotNil(secondObservation.CandidateID)
+	_, err = source.AddIdentityMatchEvidenceContext(
+		ctx, *secondObservation.CandidateID, IdentityMatchEvidenceInput{
+			EvidenceKind: "shared_username", EvidenceRef: new("fixture-evidence"),
+			Detail: new("reviewed source observation"), Source: ProvenanceSystem,
+		},
+	)
+	require.NoError(err)
+	decisionNote := "keep identities separate"
+	decidedCandidate, err := source.DecideIdentityMatchCandidateContext(
+		ctx, *secondObservation.CandidateID, IdentityMatchStateRejected,
+		"user", &decisionNote,
+	)
+	require.NoError(err)
+	require.NoError(source.Close())
+
+	dstDir := filepath.Join(t.TempDir(), "dst")
+	_, err = CopySubsetWithOptions(srcDB, dstDir, 1, CopySubsetOptions{
+		IncludeProfiles: true,
+	})
+	require.NoError(err)
+	destination, err := Open(filepath.Join(dstDir, "msgvault.db"))
+	require.NoError(err)
+	t.Cleanup(func() { _ = destination.Close() })
+
+	history, err := destination.GetPersonProfileHistoryContext(ctx, person.ID)
+	require.NoError(err)
+	assert.Len(history.Names, 2)
+	assert.Len(history.ContactPoints, 1)
+	assert.Len(history.Addresses, 1)
+	assert.Len(history.Dates, 1)
+	assert.Len(history.Categories, 1)
+	assert.Len(history.Media, 1)
+	assert.Len(history.Observations, 1)
+	copiedService, err := destination.ResolveCommunicationServiceContext(ctx, "example-im")
+	require.NoError(err)
+	assert.Equal("example-chat", copiedService.Slug)
+	assert.Equal("Example Chat", copiedService.DisplayLabel)
+	assert.NotEqual(service.ID, copiedService.ID,
+		"candidate service IDs must be remapped through the immutable slug")
+	copiedProfileSource, err := destination.GetSourceByID(profileSource.ID)
+	require.NoError(err)
+	assert.Equal("profile-only", copiedProfileSource.Identifier)
+	candidates, err := destination.ListIdentityMatchCandidatesContext(ctx, nil, 10, 0)
+	require.NoError(err)
+	require.Len(candidates, 1)
+	copiedCandidate := candidates[0]
+	assert.Equal(decidedCandidate.ID, copiedCandidate.ID)
+	assert.Equal(IdentityMatchStateRejected, copiedCandidate.State)
+	assert.Equal(decidedCandidate.DecidedBy, copiedCandidate.DecidedBy)
+	assert.Equal(decidedCandidate.DecidedAt, copiedCandidate.DecidedAt)
+	assert.Equal(decidedCandidate.Notes, copiedCandidate.Notes)
+	require.NotNil(copiedCandidate.ServiceSlug)
+	assert.Equal("example-chat", *copiedCandidate.ServiceSlug)
+	require.Len(copiedCandidate.Evidence, 1)
+	assert.Equal("shared_username", copiedCandidate.Evidence[0].EvidenceKind)
+	require.NotNil(copiedCandidate.Evidence[0].EvidenceRef)
+	assert.Equal("fixture-evidence", *copiedCandidate.Evidence[0].EvidenceRef)
+	var leakedProfileLabels int
+	require.NoError(destination.DB().QueryRow(
+		`SELECT COUNT(*) FROM labels WHERE source_id = ?`, profileSource.ID,
+	).Scan(&leakedProfileLabels))
+	assert.Zero(leakedProfileLabels,
+		"profile-only provenance must not broaden message label selection")
+}
+
 func TestCopySubset_AttributesRequireExplicitOptIn(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)

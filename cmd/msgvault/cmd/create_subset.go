@@ -30,6 +30,7 @@ var (
 	subsetRows              int
 	subsetIncludeIdentity   bool
 	subsetIncludeAttributes bool
+	subsetIncludeProfiles   bool
 )
 
 func init() {
@@ -43,13 +44,17 @@ func init() {
 	)
 	createSubsetCmd.Flags().BoolVar(
 		&subsetIncludeIdentity, "include-identity", false,
-		"copy full identity clusters and person profiles for included "+
-			"participants; exposes identifiers (emails, phone numbers) of "+
+		"copy full identity clusters for included participants; exposes "+
+			"identifiers (emails, phone numbers) of "+
 			"linked identities that have no messages in the subset",
 	)
 	createSubsetCmd.Flags().BoolVar(
 		&subsetIncludeAttributes, "include-attributes", false,
 		"copy person attribute definitions and all current/history values; may expose sensitive values and provenance metadata",
+	)
+	createSubsetCmd.Flags().BoolVar(
+		&subsetIncludeProfiles, "include-profiles", false,
+		"copy structured profile values, history, media, contact observations, and provenance; may expose sensitive personal data",
 	)
 	_ = createSubsetCmd.MarkFlagRequired("output")
 	_ = createSubsetCmd.MarkFlagRequired("rows")
@@ -98,11 +103,16 @@ func runCreateSubset(cmd *cobra.Command, args []string) error {
 		fmt.Fprintln(os.Stderr,
 			"WARNING: --include-attributes copies every included person's current and historical attribute values, including sensitive content, provenance references, and actor metadata.")
 	}
+	if subsetIncludeProfiles {
+		fmt.Fprintln(os.Stderr,
+			"WARNING: --include-profiles copies every included person's current and historical structured profile values, media, contact observations, and provenance metadata.")
+	}
 
 	result, err := store.CopySubsetWithOptions(srcDBPath, dstDir, subsetRows,
 		store.CopySubsetOptions{
 			IncludeIdentity:   subsetIncludeIdentity,
 			IncludeAttributes: subsetIncludeAttributes,
+			IncludeProfiles:   subsetIncludeProfiles,
 		})
 	if err != nil {
 		return fmt.Errorf("create subset: %w", err)

@@ -194,7 +194,7 @@ func (s *Store) GetSourcesByTypeAndAccountContext(
 // No-op timeout reset on SQLite.
 func (s *Store) RemoveSource(sourceID int64) error {
 	return s.runMaintenance(context.Background(), func(ctx context.Context, tx *loggedTx) error {
-		return s.removeSourceExec(tx, sourceID)
+		return s.removeSourceExec(ctx, tx, sourceID)
 	})
 }
 
@@ -270,6 +270,11 @@ func (s *Store) RemoveSourceSerialized(
 			return hadActiveSync, 0, fmt.Errorf("delete FTS rows: %w", err)
 		}
 	}
+	if err := s.deleteSourceObservationIdentityCandidatesContext(
+		ctx, conn, sourceID,
+	); err != nil {
+		return hadActiveSync, 0, err
+	}
 
 	res, err := conn.ExecContext(
 		ctx, s.dialect.Rebind(`DELETE FROM sources WHERE id = ?`), sourceID,
@@ -283,6 +288,9 @@ func (s *Store) RemoveSourceSerialized(
 	}
 	if deletedSources == 0 {
 		return hadActiveSync, 0, fmt.Errorf("source %d not found", sourceID)
+	}
+	if err := s.deleteUnsupportedObservationIdentityConflictsContext(ctx, conn); err != nil {
+		return hadActiveSync, 0, err
 	}
 
 	const deleteChunkSize = 500
@@ -337,13 +345,32 @@ const packedBlobHashesUniqueToSourceSQL = `
 	  )
 	ORDER BY sb.blob_hash`
 
-// removeSourceExec performs the FTS + sources DELETE on a generic executor
-// (either a *loggedTx or *sql.Conn under a manual transaction).
-func (s *Store) removeSourceExec(tx *loggedTx, sourceID int64) error {
+// removeSourceExec performs the identity cleanup, FTS cleanup, and source
+// deletion in one maintenance transaction.
+func (s *Store) removeSourceExec(
+	ctx context.Context, tx *loggedTx, sourceID int64,
+) error {
+	// Identity candidate writes take this lock before validating and writing
+	// their polymorphic endpoints. Taking the same lock before source cleanup
+	// prevents a candidate from being inserted after cleanup but before the
+	// source cascade removes its observation endpoint.
+	if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
+		return err
+	}
+	if err := s.lockProfileIdentityKeyTxContext(
+		ctx, tx, "source-contact-observation", sourceID,
+	); err != nil {
+		return err
+	}
 	if s.fts5Available {
 		if _, err := tx.Exec(s.dialect.FTSDeleteSQL(), sourceID); err != nil {
 			return fmt.Errorf("delete FTS rows: %w", err)
 		}
+	}
+	if err := s.deleteSourceObservationIdentityCandidatesContext(
+		ctx, tx, sourceID,
+	); err != nil {
+		return err
 	}
 	res, err := tx.Exec(`DELETE FROM sources WHERE id = ?`, sourceID)
 	if err != nil {
@@ -356,5 +383,85 @@ func (s *Store) removeSourceExec(tx *loggedTx, sourceID int64) error {
 	if rows == 0 {
 		return fmt.Errorf("source %d not found", sourceID)
 	}
+	if err := s.deleteUnsupportedObservationIdentityConflictsContext(ctx, tx); err != nil {
+		return err
+	}
 	return nil
+}
+
+// deleteSourceObservationIdentityCandidatesContext removes generated
+// participant conflicts and candidates with observation endpoints before the
+// source cascade removes those observations. Evidence for deleted candidates
+// follows its candidate foreign-key cascade. After the source deletion, the
+// shared cleanup demotes promoted participant candidates whose support is gone.
+func (s *Store) deleteSourceObservationIdentityCandidatesContext(
+	ctx context.Context, execer contextQuerier, sourceID int64,
+) error {
+	// Automatically generated conflicts use participant endpoints so they can
+	// be reviewed as person-link candidates. Recompute their backing contact
+	// observations while the source rows still exist: remove a conflict only
+	// when the deleted source participates in it and no genuinely conflicting
+	// current observation pair remains outside that source.
+	if _, err := execer.ExecContext(ctx, s.dialect.Rebind(`
+		WITH stale_conflicts AS (
+			SELECT c.id
+			FROM identity_match_candidates c
+			WHERE c.left_kind = 'participant'
+			  AND c.right_kind = 'participant'
+			  AND c.state = 'conflict'
+			  AND c.observation_conflict_origin = 'generated'
+			  AND c.normalized_value IS NOT NULL
+			  AND c.basis IN ('email', 'phone', 'service_scope_username')
+			  AND EXISTS (
+				SELECT 1 FROM participant_contact_observations removed
+				WHERE removed.source_id = ?
+				  AND removed.participant_id IN (c.left_id, c.right_id)
+				  AND `+identityCandidateObservationMatchSQL("removed")+`
+			  )
+			  AND NOT EXISTS (
+				SELECT 1 FROM participant_contact_observations kept_left
+				WHERE kept_left.participant_id = c.left_id
+				  AND (kept_left.source_id IS NULL OR kept_left.source_id != ?)
+				  AND `+identityCandidateObservationMatchSQL("kept_left")+`
+				  AND EXISTS (
+					SELECT 1 FROM participant_contact_observations kept_right
+					WHERE kept_right.participant_id = c.right_id
+					  AND (kept_right.source_id IS NULL OR kept_right.source_id != ?)
+					  AND `+identityCandidateObservationMatchSQL("kept_right")+`
+					  AND `+identityCandidateObservationProviderConflictSQL(
+		"kept_left", "kept_right",
+	)+`
+				  )
+			  )
+		)
+		DELETE FROM identity_match_candidates
+		WHERE id IN (SELECT id FROM stale_conflicts)`),
+		sourceID, sourceID, sourceID); err != nil {
+		return fmt.Errorf("delete stale source observation conflicts: %w", err)
+	}
+	if _, err := execer.ExecContext(ctx, s.dialect.Rebind(`
+		DELETE FROM identity_match_candidates
+		WHERE (left_kind = 'observation' AND left_id IN (
+			SELECT id FROM participant_contact_observations WHERE source_id = ?
+		)) OR (right_kind = 'observation' AND right_id IN (
+			SELECT id FROM participant_contact_observations WHERE source_id = ?
+		))`), sourceID, sourceID); err != nil {
+		return fmt.Errorf("delete source observation identity candidates: %w", err)
+	}
+	return nil
+}
+
+func identityCandidateObservationMatchSQL(observationAlias string) string {
+	return `(c.basis = 'email' AND ` + observationAlias + `.address_kind = 'email'
+		OR c.basis = 'phone' AND ` + observationAlias + `.address_kind = 'phone'
+		OR c.basis = 'service_scope_username' AND ` + observationAlias + `.address_kind NOT IN ('email', 'phone'))
+		AND (` + observationAlias + `.service_id = c.service_id OR
+			(` + observationAlias + `.service_id IS NULL AND c.service_id IS NULL))
+		AND (` + observationAlias + `.scope_kind = c.scope_kind OR
+			(` + observationAlias + `.scope_kind IS NULL AND c.scope_kind IS NULL))
+		AND (` + observationAlias + `.scope_value = c.scope_value OR
+			(` + observationAlias + `.scope_value IS NULL AND c.scope_value IS NULL))
+		AND ` + observationAlias + `.normalized_value = c.normalized_value
+		AND ` + observationAlias + `.active_until IS NULL
+		AND ` + observationAlias + `.superseded_at IS NULL`
 }

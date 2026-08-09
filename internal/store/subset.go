@@ -2,6 +2,7 @@ package store
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -26,6 +27,7 @@ type CopyResult struct {
 type CopySubsetOptions struct {
 	IncludeIdentity   bool
 	IncludeAttributes bool
+	IncludeProfiles   bool
 }
 
 // CopySubset copies rowCount most recent messages (and all referenced
@@ -40,11 +42,12 @@ type CopySubsetOptions struct {
 // inside the subset (a partial profile under its original revision would
 // misrepresent curated data). includeIdentity opts in to the full identity
 // closure instead: participants are expanded through participant_links and
-// shared person bindings until every included cluster and person profile
+// shared person bindings until every included cluster and person binding set
 // is complete, which exposes identifiers of linked identities that have no
-// messages in the subset. Person attribute definitions and values are not copied;
-// callers sharing attributes must explicitly use CopySubsetWithOptions with
-// IncludeAttributes. When attributes are included, person-valued references
+// messages in the subset. Structured profile values and their provenance
+// dependencies require the separate IncludeProfiles opt-in. Person attribute
+// definitions and values also require callers to explicitly use
+// CopySubsetWithOptions with IncludeAttributes. When attributes are included, person-valued references
 // follow the same boundary: references to excluded people are omitted by
 // default, while IncludeIdentity follows references from included people and
 // copies each target's complete identity profile.
@@ -62,6 +65,9 @@ func CopySubset(
 // CopySubsetWithOptions copies a subset with explicitly selected sensitive
 // metadata. IncludeAttributes copies current and historical attribute values,
 // including their value content, provenance references, and actor metadata.
+// IncludeProfiles copies current and historical structured profile values,
+// media, contact observations, identity-review candidates and evidence, and
+// their provenance dependencies.
 func CopySubsetWithOptions(
 	srcDBPath, dstDir string, rowCount int, options CopySubsetOptions,
 ) (*CopyResult, error) {
@@ -270,6 +276,11 @@ func copyData(tx *sql.Tx, rowCount int, options CopySubsetOptions) (*CopyResult,
 			DESC, id DESC LIMIT ?`, LiveMessagesWhere("", true)), rowCount); err != nil {
 		return nil, fmt.Errorf("select messages: %w", err)
 	}
+	if _, err := tx.Exec(`CREATE TEMP TABLE selected_message_sources AS
+		SELECT DISTINCT source_id FROM src.messages
+		WHERE id IN (SELECT id FROM selected_messages)`); err != nil {
+		return nil, fmt.Errorf("select message sources: %w", err)
+	}
 
 	// Try copying with oauth_app column first; fall back to NULL
 	// for source databases created before this column existed.
@@ -282,10 +293,7 @@ func copyData(tx *sql.Tx, rowCount int, options CopySubsetOptions) (*CopyResult,
 		       last_sync_at, sync_cursor, sync_config, oauth_app,
 		       created_at, updated_at
 		FROM src.sources
-		WHERE id IN (
-			SELECT DISTINCT source_id FROM src.messages
-			WHERE id IN (SELECT id FROM selected_messages)
-		)`)
+		WHERE id IN (SELECT source_id FROM selected_message_sources)`)
 	if err != nil && isSQLiteError(err, "no such column") {
 		res, err = tx.Exec(`
 			INSERT INTO sources
@@ -296,10 +304,7 @@ func copyData(tx *sql.Tx, rowCount int, options CopySubsetOptions) (*CopyResult,
 			       last_sync_at, sync_cursor, sync_config, NULL,
 			       created_at, updated_at
 			FROM src.sources
-			WHERE id IN (
-				SELECT DISTINCT source_id FROM src.messages
-				WHERE id IN (SELECT id FROM selected_messages)
-			)`)
+			WHERE id IN (SELECT source_id FROM selected_message_sources)`)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("copy sources: %w", err)
@@ -430,6 +435,17 @@ func copyData(tx *sql.Tx, rowCount int, options CopySubsetOptions) (*CopyResult,
 		  AND participant_id IN (SELECT id FROM participants)`); err != nil {
 		return nil, fmt.Errorf("copy person_participants: %w", err)
 	}
+	if err := reconcileSubsetCommunicationServices(tx, options.IncludeProfiles); err != nil {
+		return nil, err
+	}
+
+	if options.IncludeProfiles {
+		extraSources, err := copyStructuredProfiles(tx)
+		if err != nil {
+			return nil, err
+		}
+		result.Sources += extraSources
+	}
 
 	if options.IncludeAttributes {
 		// Definitions are portable by universal_id, not their database-local
@@ -519,10 +535,8 @@ func copyData(tx *sql.Tx, rowCount int, options CopySubsetOptions) (*CopyResult,
 		}
 	}
 
-	if _, err := tx.Exec(`
-		INSERT INTO participant_identifiers
-		SELECT * FROM src.participant_identifiers
-		WHERE participant_id IN (SELECT id FROM participants)`); err != nil {
+	if err := copyByNameWithCommunicationServiceMap(tx, "participant_identifiers",
+		`participant_id IN (SELECT id FROM participants)`); err != nil {
 		return nil, fmt.Errorf("copy participant_identifiers: %w", err)
 	}
 
@@ -624,7 +638,7 @@ func copyData(tx *sql.Tx, rowCount int, options CopySubsetOptions) (*CopyResult,
 		return nil, fmt.Errorf("copy attachments: %w", err)
 	}
 
-	res, err = copyByName(tx, "labels", `source_id IN (SELECT id FROM sources)
+	res, err = copyByName(tx, "labels", `source_id IN (SELECT source_id FROM selected_message_sources)
 		   OR id IN (
 			SELECT label_id FROM src.message_labels
 			WHERE message_id IN (SELECT id FROM selected_messages)
@@ -648,8 +662,234 @@ func copyData(tx *sql.Tx, rowCount int, options CopySubsetOptions) (*CopyResult,
 	); err != nil {
 		return nil, fmt.Errorf("drop temp table: %w", err)
 	}
+	if _, err := tx.Exec(
+		"DROP TABLE IF EXISTS selected_message_sources",
+	); err != nil {
+		return nil, fmt.Errorf("drop source temp table: %w", err)
+	}
 
 	return result, nil
+}
+
+type subsetServiceReference struct {
+	table string
+	where string
+}
+
+const subsetSourceIdentityMatchCandidateWhere = `(
+	(left_kind = 'participant' AND left_id IN (SELECT id FROM participants))
+	OR (left_kind = 'person' AND left_id IN (SELECT id FROM persons))
+	OR (left_kind = 'observation' AND left_id IN (
+		SELECT id FROM src.participant_contact_observations
+		WHERE participant_id IN (SELECT id FROM participants)
+	))
+	OR (left_kind = 'contact_point' AND left_id IN (
+		SELECT id FROM src.person_contact_points
+		WHERE person_id IN (SELECT id FROM persons)
+	))
+) AND (
+	(right_kind = 'participant' AND right_id IN (SELECT id FROM participants))
+	OR (right_kind = 'person' AND right_id IN (SELECT id FROM persons))
+	OR (right_kind = 'observation' AND right_id IN (
+		SELECT id FROM src.participant_contact_observations
+		WHERE participant_id IN (SELECT id FROM participants)
+	))
+	OR (right_kind = 'contact_point' AND right_id IN (
+		SELECT id FROM src.person_contact_points
+		WHERE person_id IN (SELECT id FROM persons)
+	))
+)`
+
+// reconcileSubsetCommunicationServices copies every service referenced by a
+// row that will cross the subset boundary. Service IDs are database-local, so
+// the destination resolves them through the immutable slug and records an
+// explicit source-to-destination map for the dependent row copies.
+func reconcileSubsetCommunicationServices(tx *sql.Tx, includeProfiles bool) error {
+	if _, err := tx.Exec(`CREATE TEMP TABLE selected_profile_services (
+		source_id INTEGER PRIMARY KEY
+	)`); err != nil {
+		return fmt.Errorf("create selected profile services: %w", err)
+	}
+	if _, err := tx.Exec(`CREATE TEMP TABLE selected_profile_service_map (
+		source_id INTEGER PRIMARY KEY,
+		destination_id INTEGER NOT NULL
+	)`); err != nil {
+		return fmt.Errorf("create profile service map: %w", err)
+	}
+
+	references := []subsetServiceReference{
+		{table: "participant_identifiers", where: `participant_id IN (SELECT id FROM participants)`},
+	}
+	if includeProfiles {
+		references = append(references,
+			subsetServiceReference{
+				table: "person_contact_points",
+				where: `person_id IN (SELECT id FROM persons)`,
+			},
+			subsetServiceReference{
+				table: "participant_contact_observations",
+				where: `participant_id IN (SELECT id FROM participants)`,
+			},
+			subsetServiceReference{
+				table: "identity_match_candidates",
+				where: subsetSourceIdentityMatchCandidateWhere,
+			},
+		)
+	}
+	for _, reference := range references {
+		hasServiceID, err := sourceColumnExists(tx, reference.table, "service_id")
+		if err != nil {
+			return fmt.Errorf("check %s service column: %w", reference.table, err)
+		}
+		if !hasServiceID {
+			continue
+		}
+		if _, err := tx.Exec(`INSERT OR IGNORE INTO selected_profile_services (source_id)
+			SELECT service_id FROM src.` + reference.table + `
+			WHERE ` + reference.where + ` AND service_id IS NOT NULL`); err != nil {
+			return fmt.Errorf("select %s services: %w", reference.table, err)
+		}
+	}
+
+	hasServices, err := sourceTableExists(tx, "communication_services")
+	if err != nil {
+		return fmt.Errorf("check communication service schema: %w", err)
+	}
+	if !hasServices {
+		var selected int
+		if err := tx.QueryRow(`SELECT COUNT(*) FROM selected_profile_services`).Scan(&selected); err != nil {
+			return fmt.Errorf("count referenced communication services: %w", err)
+		}
+		if selected != 0 {
+			return errors.New("copy communication services: source catalog is missing")
+		}
+		return nil
+	}
+	var missing int
+	if err := tx.QueryRow(`SELECT COUNT(*)
+		FROM selected_profile_services selected
+		LEFT JOIN src.communication_services service ON service.id = selected.source_id
+		WHERE service.id IS NULL`).Scan(&missing); err != nil {
+		return fmt.Errorf("check referenced communication services: %w", err)
+	}
+	if missing != 0 {
+		return fmt.Errorf("copy communication services: %d referenced services are missing", missing)
+	}
+
+	if _, err := tx.Exec(`INSERT INTO communication_services (
+			slug, display_label, scope_policy, default_scope_kind,
+			normalization, normalization_version, uri_scheme,
+			profile_url_template, is_system, is_active, created_at, updated_at
+		)
+		SELECT service.slug, service.display_label, service.scope_policy,
+			service.default_scope_kind, service.normalization,
+			service.normalization_version, service.uri_scheme,
+			service.profile_url_template, service.is_system, service.is_active,
+			service.created_at, service.updated_at
+		FROM src.communication_services service
+		JOIN selected_profile_services selected ON selected.source_id = service.id
+		ON CONFLICT(slug) DO UPDATE SET
+			display_label = excluded.display_label,
+			scope_policy = excluded.scope_policy,
+			default_scope_kind = excluded.default_scope_kind,
+			normalization = excluded.normalization,
+			normalization_version = excluded.normalization_version,
+			uri_scheme = excluded.uri_scheme,
+			profile_url_template = excluded.profile_url_template,
+			is_system = excluded.is_system,
+			is_active = excluded.is_active,
+			created_at = excluded.created_at,
+			updated_at = excluded.updated_at`); err != nil {
+		return fmt.Errorf("copy communication services: %w", err)
+	}
+	if _, err := tx.Exec(`INSERT INTO selected_profile_service_map (source_id, destination_id)
+		SELECT source.id, destination.id
+		FROM src.communication_services source
+		JOIN selected_profile_services selected ON selected.source_id = source.id
+		JOIN communication_services destination ON destination.slug = source.slug`); err != nil {
+		return fmt.Errorf("map communication services: %w", err)
+	}
+
+	hasAliases, err := sourceTableExists(tx, "communication_service_aliases")
+	if err != nil {
+		return fmt.Errorf("check communication service alias schema: %w", err)
+	}
+	if hasAliases {
+		if _, err := tx.Exec(`INSERT INTO communication_service_aliases (alias, service_id)
+			SELECT alias.alias, service_map.destination_id
+			FROM src.communication_service_aliases alias
+			JOIN selected_profile_service_map service_map
+			  ON service_map.source_id = alias.service_id
+			ON CONFLICT(alias) DO UPDATE SET service_id = excluded.service_id`); err != nil {
+			return fmt.Errorf("copy communication service aliases: %w", err)
+		}
+	}
+	return nil
+}
+
+func copyStructuredProfiles(tx *sql.Tx) (int64, error) {
+	hasProfiles, err := sourceTableExists(tx, "person_names")
+	if err != nil {
+		return 0, fmt.Errorf("check structured profile schema: %w", err)
+	}
+	if !hasProfiles {
+		return 0, nil
+	}
+
+	// Observations keep their source foreign key, even when that source had no
+	// selected message. A complete copied profile must retain that provenance.
+	sourceResult, err := copyByName(tx, "sources", `id IN (
+			SELECT DISTINCT source_id FROM src.participant_contact_observations
+			WHERE participant_id IN (SELECT id FROM participants)
+			  AND source_id IS NOT NULL
+		) AND id NOT IN (SELECT id FROM sources)`)
+	if err != nil {
+		return 0, fmt.Errorf("copy structured profile sources: %w", err)
+	}
+	extraSources, err := sourceResult.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("structured profile sources rows affected: %w", err)
+	}
+
+	for _, table := range []string{
+		"person_names", "person_addresses",
+		"person_dates", "person_categories", "person_media",
+	} {
+		if _, err := copyByName(tx, table, `person_id IN (SELECT id FROM persons)`); err != nil {
+			return 0, fmt.Errorf("copy %s: %w", table, err)
+		}
+	}
+	if err := copyByNameWithCommunicationServiceMap(
+		tx, "person_contact_points", `person_id IN (SELECT id FROM persons)`,
+	); err != nil {
+		return 0, fmt.Errorf("copy person_contact_points: %w", err)
+	}
+	if err := copyByNameWithCommunicationServiceMap(tx, "participant_contact_observations",
+		`participant_id IN (SELECT id FROM participants)`); err != nil {
+		return 0, fmt.Errorf("copy participant_contact_observations: %w", err)
+	}
+	hasCandidates, err := sourceTableExists(tx, "identity_match_candidates")
+	if err != nil {
+		return 0, fmt.Errorf("check identity match candidate schema: %w", err)
+	}
+	if hasCandidates {
+		if err := copyByNameWithCommunicationServiceMap(
+			tx, "identity_match_candidates", subsetSourceIdentityMatchCandidateWhere,
+		); err != nil {
+			return 0, fmt.Errorf("copy identity_match_candidates: %w", err)
+		}
+		hasEvidence, err := sourceTableExists(tx, "identity_match_evidence")
+		if err != nil {
+			return 0, fmt.Errorf("check identity match evidence schema: %w", err)
+		}
+		if hasEvidence {
+			if _, err := copyByName(tx, "identity_match_evidence",
+				`candidate_id IN (SELECT id FROM identity_match_candidates)`); err != nil {
+				return 0, fmt.Errorf("copy identity_match_evidence: %w", err)
+			}
+		}
+	}
+	return extraSources, nil
 }
 
 // copyMessages copies the selected messages, naming the columns the source and
@@ -692,6 +932,69 @@ func copyByName(tx *sql.Tx, table, where string, args ...any) (sql.Result, error
 		return nil, err
 	}
 	return res, nil
+}
+
+func copyByNameWithCommunicationServiceMap(
+	tx *sql.Tx, table, where string,
+) error {
+	cols, err := commonColumns(tx, table)
+	if err != nil {
+		return err
+	}
+	if len(cols) == 0 {
+		return fmt.Errorf(
+			"source and destination share no %s columns", table)
+	}
+	selectExpressions := make([]string, len(cols))
+	serviceColumn := quoteIdentifier("service_id")
+	hasServiceColumn := false
+	for index, column := range cols {
+		selectExpressions[index] = "source_row." + column
+		if column == serviceColumn {
+			hasServiceColumn = true
+			selectExpressions[index] = `CASE
+				WHEN source_row.` + serviceColumn + ` IS NULL THEN NULL
+				ELSE service_map.destination_id
+			END`
+		}
+	}
+	if !hasServiceColumn {
+		_, err := copyByName(tx, table, where)
+		return err
+	}
+	_, err = tx.Exec(fmt.Sprintf(`
+		INSERT INTO %s (%s)
+		SELECT %s FROM src.%s source_row
+		LEFT JOIN selected_profile_service_map service_map
+		  ON service_map.source_id = source_row.%s
+		WHERE %s`,
+		table, strings.Join(cols, ", "), strings.Join(selectExpressions, ", "),
+		table, serviceColumn, where,
+	))
+	return err
+}
+
+func sourceTableExists(tx *sql.Tx, table string) (bool, error) {
+	var count int
+	if err := tx.QueryRow(`SELECT COUNT(*) FROM src.sqlite_master
+		WHERE type = 'table' AND name = ?`, table).Scan(&count); err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}
+
+func sourceColumnExists(tx *sql.Tx, table, column string) (bool, error) {
+	columns, err := schemaColumns(tx, "src", table)
+	if err != nil {
+		return false, err
+	}
+	foldedColumn := foldIdentifier(column)
+	for _, candidate := range columns {
+		if foldIdentifier(candidate) == foldedColumn {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // commonColumns returns the quoted names of the columns `table` has in both the

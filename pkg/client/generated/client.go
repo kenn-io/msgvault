@@ -239,6 +239,14 @@ type ClientInterface interface {
 	VerifyCLI(ctx context.Context, options *VerifyCLIRequestOptions, reqEditors ...runtime.RequestEditorFn) (*VerifyCLIResponse, error)
 	VerifyCLIWithResponse(ctx context.Context, options *VerifyCLIRequestOptions, reqEditors ...runtime.RequestEditorFn) (*VerifyCLIResp, error)
 
+	// ListCommunicationServices List communication services
+	ListCommunicationServices(ctx context.Context, options *ListCommunicationServicesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListCommunicationServicesResponse, error)
+	ListCommunicationServicesWithResponse(ctx context.Context, options *ListCommunicationServicesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListCommunicationServicesResp, error)
+
+	// CreateCommunicationService Register a communication service
+	CreateCommunicationService(ctx context.Context, options *CreateCommunicationServiceRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CreateCommunicationServiceResponse, error)
+	CreateCommunicationServiceWithResponse(ctx context.Context, options *CreateCommunicationServiceRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CreateCommunicationServiceResp, error)
+
 	// GetRemoteImage Fetch a consented remote mail image through the SSRF-hardened daemon proxy
 	GetRemoteImage(ctx context.Context, options *GetRemoteImageRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetRemoteImageResponse, error)
 	GetRemoteImageWithResponse(ctx context.Context, options *GetRemoteImageRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetRemoteImageResp, error)
@@ -434,6 +442,22 @@ type ClientInterface interface {
 	// SetPersonAttribute Set a person's attribute value
 	SetPersonAttribute(ctx context.Context, options *SetPersonAttributeRequestOptions, reqEditors ...runtime.RequestEditorFn) (*SetPersonAttributeResponse, error)
 	SetPersonAttributeWithResponse(ctx context.Context, options *SetPersonAttributeRequestOptions, reqEditors ...runtime.RequestEditorFn) (*SetPersonAttributeResp, error)
+
+	// GetPersonStructuredProfile Get a person's current structured profile
+	GetPersonStructuredProfile(ctx context.Context, options *GetPersonStructuredProfileRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetPersonStructuredProfileResponse, error)
+	GetPersonStructuredProfileWithResponse(ctx context.Context, options *GetPersonStructuredProfileRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetPersonStructuredProfileResp, error)
+
+	// PatchPersonStructuredProfile Atomically patch a person's structured profile
+	PatchPersonStructuredProfile(ctx context.Context, options *PatchPersonStructuredProfileRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PatchPersonStructuredProfileResponse, error)
+	PatchPersonStructuredProfileWithResponse(ctx context.Context, options *PatchPersonStructuredProfileRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PatchPersonStructuredProfileResp, error)
+
+	// GetPersonProfileHistory Get a person's structured profile history
+	GetPersonProfileHistory(ctx context.Context, options *GetPersonProfileHistoryRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetPersonProfileHistoryResponse, error)
+	GetPersonProfileHistoryWithResponse(ctx context.Context, options *GetPersonProfileHistoryRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetPersonProfileHistoryResp, error)
+
+	// GetPersonProfileMediaContent Download stored inline content for one person profile media value
+	GetPersonProfileMediaContent(ctx context.Context, options *GetPersonProfileMediaContentRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetPersonProfileMediaContentResponse, error)
+	GetPersonProfileMediaContentWithResponse(ctx context.Context, options *GetPersonProfileMediaContentRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetPersonProfileMediaContentResp, error)
 
 	// RunQuery Run an aggregate query
 	RunQuery(ctx context.Context, options *RunQueryRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RunQueryResponse, error)
@@ -3677,6 +3701,133 @@ func (c *Client) VerifyCLI(ctx context.Context, options *VerifyCLIRequestOptions
 	return responseParser(ctx, resp)
 }
 
+// ListCommunicationServices List communication services
+func (c *Client) ListCommunicationServices(ctx context.Context, options *ListCommunicationServicesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListCommunicationServicesResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/communication-services",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*ListCommunicationServicesResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(ListCommunicationServicesErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "ListCommunicationServicesErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(ListCommunicationServicesResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "ListCommunicationServicesResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/communication-services")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// CreateCommunicationService Register a communication service
+func (c *Client) CreateCommunicationService(ctx context.Context, options *CreateCommunicationServiceRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CreateCommunicationServiceResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/communication-services",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*CreateCommunicationServiceResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(CreateCommunicationServiceErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "CreateCommunicationServiceErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(CreateCommunicationServiceResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "CreateCommunicationServiceResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/communication-services")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
 // GetRemoteImage Fetch a consented remote mail image through the SSRF-hardened daemon proxy
 func (c *Client) GetRemoteImage(ctx context.Context, options *GetRemoteImageRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetRemoteImageResponse, error) {
 	var err error
@@ -6735,6 +6886,245 @@ func (c *Client) SetPersonAttribute(ctx context.Context, options *SetPersonAttri
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/persons/{id}/attributes/{slug}")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// GetPersonStructuredProfile Get a person's current structured profile
+func (c *Client) GetPersonStructuredProfile(ctx context.Context, options *GetPersonStructuredProfileRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetPersonStructuredProfileResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/persons/{id}/profile",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*GetPersonStructuredProfileResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(GetPersonStructuredProfileErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "GetPersonStructuredProfileErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(GetPersonStructuredProfileResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "GetPersonStructuredProfileResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/persons/{id}/profile")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// PatchPersonStructuredProfile Atomically patch a person's structured profile
+func (c *Client) PatchPersonStructuredProfile(ctx context.Context, options *PatchPersonStructuredProfileRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PatchPersonStructuredProfileResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/persons/{id}/profile",
+		Method:      "PATCH",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*PatchPersonStructuredProfileResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(PatchPersonStructuredProfileErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "PatchPersonStructuredProfileErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(PatchPersonStructuredProfileResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "PatchPersonStructuredProfileResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/persons/{id}/profile")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// GetPersonProfileHistory Get a person's structured profile history
+func (c *Client) GetPersonProfileHistory(ctx context.Context, options *GetPersonProfileHistoryRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetPersonProfileHistoryResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/persons/{id}/profile/history",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*GetPersonProfileHistoryResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(GetPersonProfileHistoryErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "GetPersonProfileHistoryErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(GetPersonProfileHistoryResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "GetPersonProfileHistoryResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/persons/{id}/profile/history")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// GetPersonProfileMediaContent Download stored inline content for one person profile media value
+func (c *Client) GetPersonProfileMediaContent(ctx context.Context, options *GetPersonProfileMediaContentRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetPersonProfileMediaContentResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/persons/{id}/profile/media/{media_id}/content",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*GetPersonProfileMediaContentResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(GetPersonProfileMediaContentErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "GetPersonProfileMediaContentErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		result := GetPersonProfileMediaContentResponse(bodyBytes)
+		return &result, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/persons/{id}/profile/media/{media_id}/content")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}

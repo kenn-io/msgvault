@@ -48,7 +48,7 @@ func defaultCORSAllowedMethods() []string {
 // updates, X-Request-Id the idempotency key for task creation.
 func defaultCORSAllowedHeaders() []string {
 	return []string{
-		"Accept", "Authorization", "Content-Type", "If-Match",
+		"Accept", "Authorization", "Content-Type", ifMatchHeaderName,
 		"X-API-Key", "X-Request-Id", csrfHeaderName,
 	}
 }
@@ -56,7 +56,10 @@ func defaultCORSAllowedHeaders() []string {
 // corsExposedHeaders is the Access-Control-Expose-Headers value: ETag is the
 // only non-safelisted response header clients read (settings and saved-view
 // concurrency tokens).
-const corsExposedHeaders = "ETag"
+const (
+	corsExposedHeaders = "ETag"
+	ifMatchHeaderName  = "If-Match"
+)
 
 // CORSMiddleware returns a middleware that handles CORS headers.
 //

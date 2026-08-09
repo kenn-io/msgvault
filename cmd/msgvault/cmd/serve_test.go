@@ -255,7 +255,10 @@ func TestRunServeAutoSelectsAPIPortWhenUnconfigured(t *testing.T) {
 
 	// Discover the auto-selected port the same way clients do: through the
 	// daemon runtime record, not the configured port (which is 0).
-	rt, ready, err := waitForDaemonRuntime(ctx, dataDir, 15*time.Second, daemonRuntimeReady, errCh)
+	// A fresh Windows runner can need more than 15 seconds to initialize the
+	// full schema while the CLI package shards compete for CPU and disk I/O.
+	// This test checks port discovery, not startup performance.
+	rt, ready, err := waitForDaemonRuntime(ctx, dataDir, 45*time.Second, daemonRuntimeReady, errCh)
 	require.NoError(err, "wait for daemon runtime record")
 	require.True(ready, "daemon runtime record did not become ready")
 	assert.NotZero(rt.Port, "runtime record must record the bound ephemeral port")

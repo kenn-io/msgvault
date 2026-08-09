@@ -351,7 +351,7 @@ func addAttributeDefinitionIDParameter(operation *huma.Operation) {
 
 func addAttributeDefinitionIfMatchParameter(operation *huma.Operation) {
 	operation.Parameters = append(operation.Parameters, &huma.Param{
-		Name: "If-Match", In: "header", Required: true,
+		Name: ifMatchHeaderName, In: "header", Required: true,
 		Description: "Strong ETag returned by the latest definition read",
 		Schema:      &huma.Schema{Type: huma.TypeString},
 	})
@@ -379,7 +379,7 @@ func attributeDefinitionID(w http.ResponseWriter, r *http.Request) (int64, bool)
 func attributeDefinitionIfMatch(
 	w http.ResponseWriter, r *http.Request, id int64,
 ) (int64, bool) {
-	values := r.Header.Values("If-Match")
+	values := r.Header.Values(ifMatchHeaderName)
 	if len(values) == 0 || (len(values) == 1 && strings.TrimSpace(values[0]) == "") {
 		writeError(w, http.StatusPreconditionRequired, "if_match_required",
 			"If-Match is required")

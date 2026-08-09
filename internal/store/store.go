@@ -556,9 +556,28 @@ func (s *Store) withTx(fn func(tx *loggedTx) error) error {
 // connection acquisition and every context-aware statement in the
 // transaction.
 func (s *Store) withTxContext(ctx context.Context, fn func(tx *loggedTx) error) error {
+	return s.withTxOptionsContext(ctx, nil, fn)
+}
+
+// withReadSnapshotContext gives a multi-statement aggregate read one stable,
+// read-only database snapshot. PostgreSQL needs REPEATABLE READ because its
+// default READ COMMITTED isolation takes a new snapshot for each statement.
+// SQLite's driver maps these options to its existing transaction snapshot.
+func (s *Store) withReadSnapshotContext(
+	ctx context.Context, fn func(tx *loggedTx) error,
+) error {
+	return s.withTxOptionsContext(ctx, &sql.TxOptions{
+		Isolation: sql.LevelRepeatableRead,
+		ReadOnly:  true,
+	}, fn)
+}
+
+func (s *Store) withTxOptionsContext(
+	ctx context.Context, opts *sql.TxOptions, fn func(tx *loggedTx) error,
+) error {
 	start := time.Now()
 	slog.Debug("sql tx begin")
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.db.BeginTx(ctx, opts)
 	if err != nil {
 		slog.Warn("sql tx begin failed", "error", err.Error())
 		return fmt.Errorf("begin tx: %w", err)
@@ -1067,6 +1086,14 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 		return fmt.Errorf("ensure idx_participants_phone unique: %w", err)
 	}
 
+	// Seed the open communication-service catalog. The catalog is
+	// presentation and normalization metadata, not an enum: unknown bridges
+	// are registered as rows at runtime. The migration ledger prevents
+	// startup from fighting later user edits or deletions.
+	if err := s.seedCommunicationServices(ctx); err != nil {
+		return fmt.Errorf("seed communication services: %w", err)
+	}
+
 	// Migrations: add columns for databases created before these features.
 	// The dialect determines the list. Both backends return ADD COLUMN
 	// migrations for DBs created before later columns were introduced:
@@ -1094,6 +1121,15 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 		} else if m.Desc == "last_modified" && !s.IsPostgreSQL() {
 			lastModifiedColumnAdded = true
 		}
+	}
+	if err := s.ensureParticipantIdentifierServiceScopeIndex(ctx); err != nil {
+		return fmt.Errorf("create participant identifier service-scope index: %w", err)
+	}
+
+	// This one-shot backfill must run after LegacyColumnMigrations so upgraded
+	// databases have the nullable service/scope columns before they are read.
+	if err := s.ensureParticipantIdentifierServiceScope(ctx); err != nil {
+		return fmt.Errorf("classify participant identifier service scope: %w", err)
 	}
 
 	// Create the message watermark maintenance triggers. Must run after the

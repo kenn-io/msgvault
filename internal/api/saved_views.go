@@ -105,7 +105,7 @@ func addSavedViewIDParameter(operation *huma.Operation) {
 
 func addSavedViewIfMatchParameter(operation *huma.Operation) {
 	operation.Parameters = append(operation.Parameters, &huma.Param{
-		Name: "If-Match", In: "header", Required: true,
+		Name: ifMatchHeaderName, In: "header", Required: true,
 		Description: "Strong ETag returned by the latest Saved View read",
 		Schema:      &huma.Schema{Type: huma.TypeString},
 	})
@@ -375,7 +375,7 @@ func savedViewETag(view store.SavedView) string {
 }
 
 func savedViewIfMatch(w http.ResponseWriter, r *http.Request, id int64) (int64, bool) {
-	values := r.Header.Values("If-Match")
+	values := r.Header.Values(ifMatchHeaderName)
 	if len(values) == 0 || (len(values) == 1 && strings.TrimSpace(values[0]) == "") {
 		writeError(w, http.StatusPreconditionRequired, "if_match_required", "If-Match is required")
 		return 0, false
