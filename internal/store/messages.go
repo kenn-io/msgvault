@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"math/rand"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -1160,8 +1161,14 @@ func (s *Store) persistMessageWithParticipantsContext(
 ) (int64, error) {
 	var messageID int64
 	err := s.withTxContext(ctx, func(tx *loggedTx) error {
+		if len(participants) > 1 {
+			if err := s.lockParticipantDirectoryMutationTxContext(ctx, tx); err != nil {
+				return err
+			}
+		}
 		q := boundQuerier{ctx: ctx, q: tx}
 		participantIDs := make([]int64, len(participants))
+		participantInserted := false
 		for idx, participant := range participants {
 			if err := ctx.Err(); err != nil {
 				return err
@@ -1172,11 +1179,20 @@ func (s *Store) persistMessageWithParticipantsContext(
 				participant.EmailAddress,
 				participant.DisplayName,
 				participant.Domain,
+				func() error {
+					participantInserted = true
+					return nil
+				},
 			)
 			if err != nil {
 				return fmt.Errorf("ensure participant %d: %w", idx, err)
 			}
 			participantIDs[idx] = participantID
+		}
+		if participantInserted {
+			if err := s.bumpParticipantDisplayNameRevisionContext(ctx, tx); err != nil {
+				return err
+			}
 		}
 
 		if err := ctx.Err(); err != nil {
@@ -1289,12 +1305,12 @@ type Participant struct {
 }
 
 // EnsureParticipant gets or creates a participant by email. Atomic via
-// INSERT … ON CONFLICT … RETURNING id so two goroutines (or two
-// processes against PostgreSQL) cannot race between a SELECT-empty and
-// the follow-up INSERT and both succeed — one would otherwise lose to
-// the unique constraint on (email_address) with a 23505 error. Display
-// name and domain are left untouched on conflict to preserve any
-// hand-edited values.
+// INSERT … ON CONFLICT … DO NOTHING followed by an in-transaction lookup,
+// so two goroutines (or two processes against PostgreSQL) cannot race
+// between a SELECT-empty and the follow-up INSERT and both succeed — one
+// would otherwise lose to the unique constraint on (email_address) with a
+// 23505 error. Display name and domain are left untouched on conflict to
+// preserve any hand-edited values.
 func (s *Store) EnsureParticipant(email, displayName, domain string) (int64, error) {
 	return s.EnsureParticipantContext(context.Background(), email, displayName, domain)
 }
@@ -1306,13 +1322,25 @@ func (s *Store) EnsureParticipantContext(
 	displayName,
 	domain string,
 ) (int64, error) {
-	return ensureParticipantWith(
-		boundQuerier{ctx: ctx, q: s.db},
-		s.dialect,
-		email,
-		displayName,
-		domain,
-	)
+	var id int64
+	err := s.withTxContext(ctx, func(tx *loggedTx) error {
+		var err error
+		id, err = ensureParticipantWith(
+			boundQuerier{ctx: ctx, q: tx},
+			s.dialect,
+			email,
+			displayName,
+			domain,
+			func() error {
+				return s.bumpParticipantDisplayNameRevisionContext(ctx, tx)
+			},
+		)
+		return err
+	})
+	if err != nil {
+		return 0, err
+	}
+	return id, nil
 }
 
 func ensureParticipantWith(
@@ -1321,25 +1349,49 @@ func ensureParticipantWith(
 	email,
 	displayName,
 	domain string,
+	onInsert func() error,
 ) (int64, error) {
 	// ON CONFLICT must mirror the partial unique index on
 	// participants(email_address) WHERE email_address IS NOT NULL — both
 	// PG and SQLite require the WHERE clause on the conflict target to
-	// match the partial index exactly. DO UPDATE (no-op assignment on
-	// the same column) makes RETURNING fire for both INSERT and the
-	// existing-row case, giving us the id either way.
-	var id int64
-	err := q.QueryRow(fmt.Sprintf(`
-		INSERT INTO participants (email_address, display_name, domain, created_at, updated_at)
-		VALUES (?, ?, ?, %s, %s)
-		ON CONFLICT (email_address) WHERE email_address IS NOT NULL
-			DO UPDATE SET email_address = EXCLUDED.email_address
-		RETURNING id
-	`, dialect.Now(), dialect.Now()), email, displayName, domain).Scan(&id)
-	if err != nil {
-		return 0, err
+	// match the partial index exactly. INSERT ... DO NOTHING lets us use
+	// RowsAffected to distinguish an actual insert from an idempotent retry.
+	for range 3 {
+		result, err := q.Exec(fmt.Sprintf(`
+			INSERT INTO participants (email_address, display_name, domain, created_at, updated_at)
+			VALUES (?, ?, ?, %s, %s)
+			ON CONFLICT (email_address) WHERE email_address IS NOT NULL
+				DO NOTHING
+		`, dialect.Now(), dialect.Now()), email, displayName, domain)
+		if err != nil {
+			return 0, err
+		}
+		inserted, err := result.RowsAffected()
+		if err != nil {
+			return 0, fmt.Errorf("check participant insert: %w", err)
+		}
+		if inserted > 0 && onInsert != nil {
+			if err := onInsert(); err != nil {
+				return 0, err
+			}
+		}
+		var id int64
+		err = q.QueryRow(
+			`SELECT id FROM participants WHERE email_address = ?`+dialect.SelectForUpdate(),
+			email,
+		).Scan(&id)
+		if err == nil {
+			return id, nil
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			return 0, err
+		}
+		// PostgreSQL does not retain a row lock after ON CONFLICT DO NOTHING.
+		// A concurrent participant merge can therefore delete the conflicting
+		// row before the SELECT. Retry so the ensure recreates the row instead
+		// of leaking that transient gap to callers.
 	}
-	return id, nil
+	return 0, fmt.Errorf("ensure participant %q after concurrent deletion", email)
 }
 
 // EnsureParticipantsBatch gets or creates participants in batch.
@@ -1350,42 +1402,50 @@ func (s *Store) EnsureParticipantsBatch(addresses []mime.Address) (map[string]in
 	}
 
 	result := make(map[string]int64)
-
-	// First, try to insert all (ignoring conflicts)
-	insertSQL := s.dialect.InsertOrIgnore(fmt.Sprintf(`INSERT OR IGNORE INTO participants (email_address, display_name, domain, created_at, updated_at)
-			VALUES (?, ?, ?, %s, %s)`, s.dialect.Now(), s.dialect.Now()))
+	unique := make(map[string]mime.Address, len(addresses))
 	for _, addr := range addresses {
 		if addr.Email == "" {
 			continue
 		}
-		if _, err := s.db.Exec(insertSQL, addr.Email, addr.Name, addr.Domain); err != nil {
-			return nil, err
+		if _, exists := unique[addr.Email]; !exists {
+			unique[addr.Email] = addr
 		}
 	}
-
-	// Then fetch all IDs
-	emails := make([]string, 0, len(addresses))
-	for _, addr := range addresses {
-		if addr.Email != "" {
-			emails = append(emails, addr.Email)
-		}
-	}
-
-	if len(emails) == 0 {
+	if len(unique) == 0 {
 		return result, nil
 	}
+	emails := make([]string, 0, len(unique))
+	for email := range unique {
+		emails = append(emails, email)
+	}
+	sort.Strings(emails)
 
-	err := queryInChunks(s.db, emails, nil,
-		`SELECT email_address, id FROM participants WHERE email_address IN (%s)`,
-		func(rows *loggedRows) error {
-			var email string
-			var id int64
-			if err := rows.Scan(&email, &id); err != nil {
+	err := s.withTx(func(tx *loggedTx) error {
+		if err := s.lockParticipantDirectoryMutationTxContext(
+			context.Background(), tx,
+		); err != nil {
+			return err
+		}
+		inserted := false
+		for _, email := range emails {
+			addr := unique[email]
+			id, err := ensureParticipantWith(
+				tx, s.dialect, addr.Email, addr.Name, addr.Domain,
+				func() error {
+					inserted = true
+					return nil
+				},
+			)
+			if err != nil {
 				return err
 			}
 			result[email] = id
-			return nil
-		})
+		}
+		if inserted {
+			return s.bumpParticipantDisplayNameRevision(tx)
+		}
+		return nil
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -2704,30 +2764,62 @@ func (s *Store) EnsureParticipantByPhone(phone, displayName, identifierType stri
 		return 0, fmt.Errorf("phone number must be in E.164 format (starting with +), got %q", phone)
 	}
 
-	// Atomic upsert via ON CONFLICT — see EnsureParticipant for the
-	// SELECT-then-INSERT race this collapses. The conflict target
-	// mirrors the partial unique index on participants(phone_number)
-	// WHERE phone_number IS NOT NULL exactly, which is required by
-	// both PG and SQLite for partial-index ON CONFLICT to bind. The
-	// DO UPDATE backfills display_name when the existing row has none,
-	// preserving the prior best-effort behaviour without a second
-	// round-trip.
+	// The conflict target mirrors the partial unique index on
+	// participants(phone_number) WHERE phone_number IS NOT NULL exactly,
+	// which is required by both PG and SQLite for partial-index ON CONFLICT
+	// to bind. INSERT ... DO NOTHING lets the actual insert be distinguished
+	// from an existing participant; a guarded UPDATE then reports whether an
+	// existing blank display name was really filled.
 	var id int64
 	err := s.withTx(func(tx *loggedTx) error {
 		now := s.dialect.Now()
-		if err := tx.QueryRow(fmt.Sprintf(`
-			INSERT INTO participants (phone_number, display_name, created_at, updated_at)
-			VALUES (?, ?, %s, %s)
-			ON CONFLICT (phone_number) WHERE phone_number IS NOT NULL
-				DO UPDATE SET display_name = CASE
-					WHEN COALESCE(NULLIF(TRIM(participants.display_name), ''), '') = ''
-					     AND EXCLUDED.display_name != ''
-					THEN EXCLUDED.display_name
-					ELSE participants.display_name
-				END
-			RETURNING id
-		`, now, now), phone, displayName).Scan(&id); err != nil {
-			return fmt.Errorf("upsert participant by phone: %w", err)
+		for range 3 {
+			insertResult, err := tx.Exec(fmt.Sprintf(`
+				INSERT INTO participants (phone_number, display_name, created_at, updated_at)
+				VALUES (?, ?, %s, %s)
+				ON CONFLICT (phone_number) WHERE phone_number IS NOT NULL
+					DO NOTHING
+			`, now, now), phone, displayName)
+			if err != nil {
+				return fmt.Errorf("insert participant by phone: %w", err)
+			}
+			inserted, err := insertResult.RowsAffected()
+			if err != nil {
+				return fmt.Errorf("check participant by phone insert: %w", err)
+			}
+			if inserted > 0 {
+				if err := s.bumpParticipantDisplayNameRevision(tx); err != nil {
+					return err
+				}
+			}
+			if inserted == 0 && displayName != "" {
+				updateResult, err := tx.Exec(`
+					UPDATE participants SET display_name = ?
+					WHERE phone_number = ?
+					  AND COALESCE(NULLIF(TRIM(display_name), ''), '') = ''
+					  AND ? != ''
+					  AND (display_name IS NULL OR display_name <> ?)
+				`, displayName, phone, displayName, displayName)
+				if err != nil {
+					return fmt.Errorf("backfill participant by phone: %w", err)
+				}
+				if _, err := s.bumpParticipantDisplayNameRevisionIfChanged(tx, updateResult); err != nil {
+					return err
+				}
+			}
+			lookupErr := tx.QueryRow(
+				`SELECT id FROM participants WHERE phone_number = ?`+s.dialect.SelectForUpdate(),
+				phone,
+			).Scan(&id)
+			if lookupErr == nil {
+				break
+			}
+			if !errors.Is(lookupErr, sql.ErrNoRows) {
+				return fmt.Errorf("lookup participant by phone: %w", lookupErr)
+			}
+		}
+		if id == 0 {
+			return fmt.Errorf("ensure participant by phone %q after concurrent deletion", phone)
 		}
 
 		// Ensure a participant_identifiers row exists for this identifierType
@@ -2803,6 +2895,11 @@ func (s *Store) MergeParticipants(oldID, newID int64) error {
 		// Serialize the curated binding check with promotion and link/unlink
 		// mutations before this transaction repoints any archive references.
 		if err := s.lockIdentityMutationTx(tx); err != nil {
+			return err
+		}
+		if err := s.lockParticipantDirectoryMutationTxContext(
+			context.Background(), tx,
+		); err != nil {
 			return err
 		}
 		if err := s.lockParticipantObservationMergeTx(
@@ -3135,10 +3232,16 @@ func (s *Store) EnsureParticipantByIdentifier(identifierType, identifierValue, d
 		`, identifierType, identifierValue).Scan(&participantID)
 		if err == nil {
 			if displayName != "" {
-				_, _ = tx.Exec(`
+				result, err := tx.Exec(`
 					UPDATE participants SET display_name = ?
 					WHERE id = ? AND (display_name IS NULL OR display_name = '')
 				`, displayName, participantID)
+				if err != nil {
+					return fmt.Errorf("backfill participant display name: %w", err)
+				}
+				if _, err := s.bumpParticipantDisplayNameRevisionIfChanged(tx, result); err != nil {
+					return err
+				}
 			}
 			return nil
 		}
@@ -3153,6 +3256,9 @@ func (s *Store) EnsureParticipantByIdentifier(identifierType, identifierValue, d
 			RETURNING id
 		`, now, now), displayName).Scan(&participantID); err != nil {
 			return fmt.Errorf("insert participant: %w", err)
+		}
+		if err := s.bumpParticipantDisplayNameRevision(tx); err != nil {
+			return err
 		}
 		classificationColumns, err := s.participantIdentifierClassificationColumnsTx(tx)
 		if err != nil {
@@ -3200,19 +3306,22 @@ func (s *Store) UpdateParticipantDisplayNameByPhone(phone, displayName string) (
 		return false, nil
 	}
 
-	result, err := s.db.Exec(fmt.Sprintf(`
-		UPDATE participants SET display_name = ?, updated_at = %s
-		WHERE phone_number = ? AND (display_name IS NULL OR display_name = '')
-	`, s.dialect.Now()), displayName, phone)
+	var updated bool
+	err := s.withTx(func(tx *loggedTx) error {
+		result, err := tx.Exec(fmt.Sprintf(`
+			UPDATE participants SET display_name = ?, updated_at = %s
+			WHERE phone_number = ? AND (display_name IS NULL OR display_name = '')
+		`, s.dialect.Now()), displayName, phone)
+		if err != nil {
+			return err
+		}
+		updated, err = s.bumpParticipantDisplayNameRevisionIfChanged(tx, result)
+		return err
+	})
 	if err != nil {
 		return false, err
 	}
-
-	rows, err := result.RowsAffected()
-	if err != nil {
-		return false, err
-	}
-	return rows > 0, nil
+	return updated, nil
 }
 
 // UpdateImessageParticipantDisplayNameByPhone backfills display_name for
@@ -3230,25 +3339,29 @@ func (s *Store) UpdateImessageParticipantDisplayNameByPhone(phone, displayName s
 		return false, nil
 	}
 
-	result, err := s.db.Exec(fmt.Sprintf(`
-		UPDATE participants SET display_name = ?, updated_at = %s
-		WHERE phone_number = ?
-		  AND (display_name IS NULL OR display_name = '' OR display_name = phone_number)
-		  AND EXISTS (
-		      SELECT 1 FROM participant_identifiers pi
-		      WHERE pi.participant_id = participants.id
-		        AND pi.identifier_type = 'imessage'
-		  )
-	`, s.dialect.Now()), displayName, phone)
+	var updated bool
+	err := s.withTx(func(tx *loggedTx) error {
+		result, err := tx.Exec(fmt.Sprintf(`
+			UPDATE participants SET display_name = ?, updated_at = %s
+			WHERE phone_number = ?
+			  AND (display_name IS NULL OR display_name = '' OR display_name = phone_number)
+			  AND (display_name IS NULL OR display_name <> ?)
+			  AND EXISTS (
+			      SELECT 1 FROM participant_identifiers pi
+			      WHERE pi.participant_id = participants.id
+			        AND pi.identifier_type = 'imessage'
+			  )
+		`, s.dialect.Now()), displayName, phone, displayName)
+		if err != nil {
+			return err
+		}
+		updated, err = s.bumpParticipantDisplayNameRevisionIfChanged(tx, result)
+		return err
+	})
 	if err != nil {
 		return false, err
 	}
-
-	rows, err := result.RowsAffected()
-	if err != nil {
-		return false, err
-	}
-	return rows > 0, nil
+	return updated, nil
 }
 
 // RetitleImessageChats refreshes generated titles on apple_messages
@@ -3509,19 +3622,22 @@ func (s *Store) UpdateParticipantDisplayNameByEmail(email, displayName string) (
 		return false, nil
 	}
 
-	result, err := s.db.Exec(fmt.Sprintf(`
-		UPDATE participants SET display_name = ?, updated_at = %s
-		WHERE LOWER(email_address) = LOWER(?) AND (display_name IS NULL OR display_name = '')
-	`, s.dialect.Now()), displayName, email)
+	var updated bool
+	err := s.withTx(func(tx *loggedTx) error {
+		result, err := tx.Exec(fmt.Sprintf(`
+			UPDATE participants SET display_name = ?, updated_at = %s
+			WHERE LOWER(email_address) = LOWER(?) AND (display_name IS NULL OR display_name = '')
+		`, s.dialect.Now()), displayName, email)
+		if err != nil {
+			return err
+		}
+		updated, err = s.bumpParticipantDisplayNameRevisionIfChanged(tx, result)
+		return err
+	})
 	if err != nil {
 		return false, err
 	}
-
-	rows, err := result.RowsAffected()
-	if err != nil {
-		return false, err
-	}
-	return rows > 0, nil
+	return updated, nil
 }
 
 // EnsureConversationParticipant adds a participant to a conversation.

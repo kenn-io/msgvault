@@ -84,6 +84,11 @@ func refreshDerivedDatasetsOnly(
 		_ = st.Close()
 		return nil, fmt.Errorf("read participant identifier revision: %w", err)
 	}
+	participantDisplayNameRevision, err := st.ParticipantDisplayNameRevision()
+	if err != nil {
+		_ = st.Close()
+		return nil, fmt.Errorf("read participant display-name revision: %w", err)
+	}
 	clusters, err := st.ParticipantClusters()
 	if err != nil {
 		_ = st.Close()
@@ -139,6 +144,7 @@ func refreshDerivedDatasetsOnly(
 
 	if identityRevision == state.IdentityRevision &&
 		participantIdentifierRevision == state.ParticipantIdentifierRevision &&
+		participantDisplayNameRevision == state.ParticipantDisplayNameRevision &&
 		conversationFingerprint == state.ConversationParticipantsFingerprint &&
 		typesFingerprint == state.ConversationTypesFingerprint {
 		// Nothing the derived datasets read has changed (the account-identity
@@ -174,6 +180,16 @@ func refreshDerivedDatasetsOnly(
 		// values and label fallbacks), so a changed mapping must be re-staged
 		// and republished alongside the derived index.
 		if err := exportDerivedParticipantIdentifiers(ctx, exportDB, staging.root); err != nil {
+			return nil, err
+		}
+	}
+	displayNamesChanged :=
+		participantDisplayNameRevision != state.ParticipantDisplayNameRevision
+	if identifiersChanged || displayNamesChanged {
+		// Participant identifiers can create participant rows, and display-name
+		// mutations change the row already present in participants.parquet. Both
+		// changes must replace that base dataset before rebuilding the directory.
+		if err := exportDerivedParticipants(ctx, exportDB, staging.root); err != nil {
 			return nil, err
 		}
 	}
@@ -213,11 +229,17 @@ func refreshDerivedDatasetsOnly(
 
 	state.IdentityRevision = identityRevision
 	state.ParticipantIdentifierRevision = participantIdentifierRevision
+	state.ParticipantDisplayNameRevision = participantDisplayNameRevision
 	state.ConversationParticipantsFingerprint = conversationFingerprint
 	state.ConversationTypesFingerprint = typesFingerprint
 	// Stats describe the unchanged committed raw snapshot. Preserve them
 	// byte-for-byte instead of scanning Parquet again.
-	plan := derivedCachePublishPlan(conversationChanged, typesChanged, identifiersChanged)
+	plan := derivedCachePublishPlan(
+		conversationChanged,
+		typesChanged,
+		identifiersChanged,
+		identifiersChanged || displayNamesChanged,
+	)
 	if err := publishDerivedCache(staging, analyticsDir, plan, state, locking); err != nil {
 		return nil, err
 	}
@@ -254,10 +276,10 @@ func fingerprintConversationParticipantsFromSnapshot(
 
 // fingerprintConversationTypesFromSnapshot mirrors
 // sourceConversationTypesFingerprint over the export snapshot, so the stamp
-// written at publish time describes exactly the types the staged datasets
-// baked. The 'email_thread' normalization matches the staleness query (and
-// the CSV snapshot view, which pre-applies it), NOT the exported parquet
-// value — fingerprints only ever compare against each other.
+// written at publish time describes exactly the type/title metadata the staged
+// datasets baked. The normalizations match the staleness query (and the CSV
+// snapshot view), not the exported Parquet values; fingerprints only compare
+// against each other.
 func fingerprintConversationTypesFromSnapshot(
 	ctx context.Context,
 	db sqlRunner,
@@ -265,7 +287,8 @@ func fingerprintConversationTypesFromSnapshot(
 ) (string, error) {
 	rows, err := db.QueryContext(ctx, fmt.Sprintf(`
 		SELECT c.id::BIGINT,
-		       COALESCE(TRY_CAST(c.conversation_type AS VARCHAR), 'email_thread')
+		       COALESCE(TRY_CAST(c.conversation_type AS VARCHAR), 'email_thread'),
+		       COALESCE(TRY_CAST(c.title AS VARCHAR), '')
 		FROM sqlite_db.conversations c
 		WHERE EXISTS (
 			SELECT 1
@@ -277,12 +300,12 @@ func fingerprintConversationTypesFromSnapshot(
 		ORDER BY c.id
 	`, exportableMessageWhere("m")), lastMessageID)
 	if err != nil {
-		return "", fmt.Errorf("query conversation types from source snapshot: %w", err)
+		return "", fmt.Errorf("query conversation metadata from source snapshot: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
-	fingerprint, err := identityindex.FingerprintConversationTypes(rows)
+	fingerprint, err := identityindex.FingerprintConversationMetadata(rows)
 	if rowsErr := rows.Err(); rowsErr != nil && err == nil {
-		return "", fmt.Errorf("iterate source conversation types: %w", rowsErr)
+		return "", fmt.Errorf("iterate source conversation metadata: %w", rowsErr)
 	}
 	return fingerprint, err
 }
@@ -342,6 +365,30 @@ func exportDerivedOwnerParticipants(
 	`, quoteCacheSQL(path)))
 	if err != nil {
 		return fmt.Errorf("export derived owner participants: %w", err)
+	}
+	return nil
+}
+
+// exportDerivedParticipants re-stages the participants base dataset when an
+// identifier creates a participant or a display-name mutation changes an
+// existing row. The relationship directory reads this dataset directly.
+func exportDerivedParticipants(
+	ctx context.Context,
+	db sqlRunner,
+	stagingRoot string,
+) error {
+	dir := filepath.Join(stagingRoot, tableParticipants)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("create derived participants directory: %w", err)
+	}
+	path := filepath.Join(dir, "participants.parquet")
+	_, err := db.ExecContext(ctx, fmt.Sprintf(`
+		COPY (
+			%s
+		) TO '%s' (FORMAT PARQUET, COMPRESSION 'zstd')
+	`, participantsExportSelectSQL(), quoteCacheSQL(path)))
+	if err != nil {
+		return fmt.Errorf("export derived participants: %w", err)
 	}
 	return nil
 }
@@ -447,7 +494,8 @@ func quoteCacheSQL(value string) string {
 }
 
 func derivedCachePublishPlan(
-	includeConversationParticipants, includeConversations, includeParticipantIdentifiers bool,
+	includeConversationParticipants, includeConversations,
+	includeParticipantIdentifiers, includeParticipants bool,
 ) cachePublishPlan {
 	plan := cachePublishPlan{
 		Append:  make(map[string]bool),
@@ -471,6 +519,9 @@ func derivedCachePublishPlan(
 	}
 	if includeParticipantIdentifiers {
 		plan.Replace[tableParticipantIdentifiers] = true
+	}
+	if includeParticipants {
+		plan.Replace[tableParticipants] = true
 	}
 	return plan
 }

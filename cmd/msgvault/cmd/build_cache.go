@@ -481,7 +481,7 @@ type buildResult struct {
 	MaxMessageID  int64
 	OutputDir     string
 	Skipped       bool
-	IdentityOnly  bool // true when only owner_participants/participant_clusters were refreshed
+	IdentityOnly  bool // true when only derived cache datasets were refreshed
 }
 
 // buildCache honors an explicit full rebuild unconditionally. Default builds
@@ -583,12 +583,24 @@ func participantIdentifiersExportSelectSQL() string {
 		FROM sqlite_db.participant_identifiers`
 }
 
+// participantsExportSelectSQL renders the participants dataset export. The
+// full and derived-only builders share this query so participant rows and
+// display names cannot drift between cache publication paths.
+func participantsExportSelectSQL() string {
+	return `SELECT
+			id,
+			COALESCE(TRY_CAST(email_address AS VARCHAR), '') AS email_address,
+			COALESCE(TRY_CAST(domain AS VARCHAR), '') AS domain,
+			COALESCE(TRY_CAST(display_name AS VARCHAR), '') AS display_name,
+			COALESCE(TRY_CAST(phone_number AS VARCHAR), '') AS phone_number
+		FROM sqlite_db.participants`
+}
+
 // derivedDriftOnly reports whether participant-link, conversation-membership,
-// conversation-type, or participant-identifier drift is the only staleness
-// signal. The index-only refresh rebuilds the four relationship datasets from
-// committed base Parquet without re-exporting it (re-staging only the drifted
-// replaceable base dataset: conversation_participants, conversations, or
-// participant_identifiers).
+// conversation-type, participant-identifier, or participant display-name drift
+// is the only staleness signal. The index-only refresh rebuilds the four
+// relationship datasets from committed base Parquet while re-staging any
+// drifted replaceable base dataset.
 //
 // HasAccountIdentityDrift is excluded even though it also bumps
 // identity_revision (and therefore HasIdentityDrift): confirming or
@@ -598,7 +610,8 @@ func participantIdentifiersExportSelectSQL() string {
 // path.
 func derivedDriftOnly(staleness cacheStaleness) bool {
 	return (staleness.HasIdentityDrift || staleness.HasConversationParticipantDrift ||
-		staleness.HasConversationTypeDrift || staleness.HasParticipantIdentifierDrift) &&
+		staleness.HasConversationTypeDrift || staleness.HasParticipantIdentifierDrift ||
+		staleness.HasParticipantDisplayNameDrift) &&
 		!staleness.HasNew && !staleness.HasDeleted &&
 		!staleness.HasUpdated && !staleness.HasAccountIdentityDrift
 }
@@ -678,10 +691,11 @@ func buildCacheLocked(
 	// concurrent identity mutation therefore makes the stamped revision LAG
 	// the store, which HasIdentityDrift detects on the next staleness check —
 	// the cache self-heals. Never move this read after the export. The same
-	// invariant applies to the account-identity revision read alongside it:
-	// this full build derives is_from_me fresh from the current store state,
-	// so stamping a lagging account-identity revision here is likewise
-	// self-healing — HasAccountIdentityDrift catches it on the next check.
+	// invariant applies to the account-identity, participant-identifier, and
+	// participant display-name revisions read alongside it: this full build
+	// derives all of those datasets fresh from the current store state, so
+	// stamping a lagging revision here is likewise self-healing — the matching
+	// staleness check catches it on the next pass.
 	identityStore, err := store.Open(dbPath)
 	if err != nil {
 		return nil, fmt.Errorf("open store for identity export: %w", err)
@@ -700,6 +714,11 @@ func buildCacheLocked(
 	if err != nil {
 		_ = identityStore.Close()
 		return nil, fmt.Errorf("read participant identifier revision: %w", err)
+	}
+	participantDisplayNameRevision, err := identityStore.ParticipantDisplayNameRevision()
+	if err != nil {
+		_ = identityStore.Close()
+		return nil, fmt.Errorf("read participant display-name revision: %w", err)
 	}
 	participantClusters, err := identityStore.ParticipantClusters()
 	if err != nil {
@@ -984,18 +1003,12 @@ func buildCacheLocked(
 	escapedParticipantsDir := strings.ReplaceAll(participantsDir, "'", "''")
 	if err := runExport(tableParticipants, fmt.Sprintf(`
 	COPY (
-		SELECT
-			id,
-			COALESCE(TRY_CAST(email_address AS VARCHAR), '') as email_address,
-			COALESCE(TRY_CAST(domain AS VARCHAR), '') as domain,
-			COALESCE(TRY_CAST(display_name AS VARCHAR), '') as display_name,
-			COALESCE(TRY_CAST(phone_number AS VARCHAR), '') as phone_number
-		FROM sqlite_db.participants
+		%s
 	) TO '%s/participants.parquet' (
 		FORMAT PARQUET,
 		COMPRESSION 'zstd'
 	)
-	`, escapedParticipantsDir)); err != nil {
+	`, participantsExportSelectSQL(), escapedParticipantsDir)); err != nil {
 		return nil, fmt.Errorf("export participants: %w", err)
 	}
 
@@ -1364,6 +1377,7 @@ func buildCacheLocked(
 		IdentityRevision:                    identityRevision,
 		AccountIdentityRevision:             accountIdentityRevision,
 		ParticipantIdentifierRevision:       participantIdentifierRevision,
+		ParticipantDisplayNameRevision:      participantDisplayNameRevision,
 		ConversationParticipantsFingerprint: derived.ConversationParticipantsFingerprint,
 		ConversationTypesFingerprint:        typesFingerprint,
 		Stats:                               derived.Stats,

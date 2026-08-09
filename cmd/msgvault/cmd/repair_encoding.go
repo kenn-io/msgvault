@@ -4,6 +4,7 @@ import (
 	"compress/zlib"
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -45,7 +46,7 @@ charset detection issues in the MIME parser.`,
 	},
 }
 
-func runRepairEncodingLocal(cmd *cobra.Command) error {
+func runRepairEncodingLocal(cmd *cobra.Command) (runErr error) {
 	ctx := cmd.Context()
 
 	s, cleanup, err := openWritableStoreAndInit()
@@ -53,6 +54,28 @@ func runRepairEncodingLocal(cmd *cobra.Command) error {
 		return err
 	}
 	defer cleanup()
+
+	dbPath := cfg.DatabaseDSN()
+	analyticsDir := cfg.AnalyticsDir()
+	usesAnalyticsCache := dateRepairUsesAnalyticsCache(dbPath)
+	unlockCache := func() error { return nil }
+	if usesAnalyticsCache {
+		releaseCacheLocks, err := lockCacheAndInvalidateSyncState(analyticsDir)
+		if err != nil {
+			return fmt.Errorf("protect analytics cache for encoding repair: %w", err)
+		}
+		released := false
+		unlockCache = func() error {
+			if released {
+				return nil
+			}
+			released = true
+			return wrapError(releaseCacheLocks(), "release analytics cache lock")
+		}
+		defer func() {
+			runErr = errors.Join(runErr, unlockCache())
+		}()
+	}
 
 	reembedNeededIDs, err := repairEncoding(s)
 	if err != nil {
@@ -71,15 +94,26 @@ func runRepairEncodingLocal(cmd *cobra.Command) error {
 		}
 	}
 
-	dbPath := cfg.DatabaseDSN()
-	analyticsDir := cfg.AnalyticsDir()
-	if _, err := buildCache(
-		dbPath,
-		analyticsDir,
-		true,
-		analyticsBuilderOverrides(cfg.Analytics),
-	); err != nil {
-		return fmt.Errorf("encoding repair completed, but analytics cache refresh failed: %w", err)
+	var buildErr error
+	if usesAnalyticsCache {
+		_, buildErr = buildCacheLocked(
+			dbPath,
+			analyticsDir,
+			true,
+			false,
+			publishLockHeld,
+			analyticsBuilderOverrides(cfg.Analytics),
+		)
+	} else {
+		_, buildErr = buildCache(
+			dbPath,
+			analyticsDir,
+			true,
+			analyticsBuilderOverrides(cfg.Analytics),
+		)
+	}
+	if buildErr != nil {
+		return fmt.Errorf("encoding repair completed, but analytics cache refresh failed: %w", buildErr)
 	}
 	fmt.Println("\nAnalytics cache rebuilt.")
 	return nil
@@ -435,6 +469,8 @@ func repairMessageFields(s *store.Store, stats *repairStats) (reembedNeededIDs [
 	return reembedNeededIDs, nil
 }
 
+const participantDisplayNameRepairSQL = "UPDATE participants SET display_name = ? WHERE id = ?"
+
 func repairDisplayNames(s *store.Store, stats *repairStats) error {
 	// Repair display names in both message_recipients and participants tables
 	tables := []struct {
@@ -450,7 +486,7 @@ func repairDisplayNames(s *store.Store, stats *repairStats) error {
 		{
 			name:       tableParticipants,
 			query:      "SELECT id, display_name FROM participants WHERE display_name IS NOT NULL",
-			updateStmt: "UPDATE participants SET display_name = ? WHERE id = ?",
+			updateStmt: participantDisplayNameRepairSQL,
 		},
 	}
 
@@ -486,6 +522,16 @@ type stringRepair struct {
 // a single-connection store, beginning a transaction while a SELECT cursor is
 // still open deadlocks waiting for the connection the cursor holds.
 func applyStringRepairs(s *store.Store, updateStmt, tableName string, batch []stringRepair) error {
+	if updateStmt == participantDisplayNameRepairSQL {
+		repairs := make([]store.ParticipantDisplayNameRepair, 0, len(batch))
+		for _, repair := range batch {
+			repairs = append(repairs, store.ParticipantDisplayNameRepair{
+				ParticipantID: repair.id,
+				DisplayName:   repair.value,
+			})
+		}
+		return s.RepairParticipantDisplayNames(repairs)
+	}
 	tx, err := s.DB().Begin()
 	if err != nil {
 		return fmt.Errorf("begin transaction: %w", err)

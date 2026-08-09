@@ -72,3 +72,36 @@ func FingerprintConversationTypes(rows ConversationParticipantRows) (string, err
 	}
 	return fmt.Sprintf("sha256:%x", hash.Sum(nil)), nil
 }
+
+// FingerprintConversationMetadata hashes ordered
+// (conversation_id, type, title) rows. Length-prefixing both strings keeps the
+// variable-width values unambiguous, including when either contains a value
+// that could otherwise act as a separator.
+func FingerprintConversationMetadata(rows ConversationParticipantRows) (string, error) {
+	hash := sha256.New()
+	var encoded [16]byte
+	for rows.Next() {
+		var conversationID int64
+		var conversationType, title string
+		if err := rows.Scan(&conversationID, &conversationType, &title); err != nil {
+			return "", fmt.Errorf("scan conversation metadata fingerprint: %w", err)
+		}
+		if conversationID < 0 {
+			return "", fmt.Errorf(
+				"fingerprint conversation metadata: negative ID %d",
+				conversationID,
+			)
+		}
+		binary.BigEndian.PutUint64(encoded[:8], uint64(conversationID))
+		binary.BigEndian.PutUint64(encoded[8:], uint64(len(conversationType)))
+		_, _ = hash.Write(encoded[:])
+		_, _ = hash.Write([]byte(conversationType))
+		binary.BigEndian.PutUint64(encoded[:8], uint64(len(title)))
+		_, _ = hash.Write(encoded[:8])
+		_, _ = hash.Write([]byte(title))
+	}
+	if err := rows.Err(); err != nil {
+		return "", fmt.Errorf("iterate conversation metadata fingerprint: %w", err)
+	}
+	return fmt.Sprintf("sha256:%x", hash.Sum(nil)), nil
+}

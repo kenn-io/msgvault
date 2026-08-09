@@ -190,15 +190,17 @@ func TestInspectCacheReadinessPrefersStaleSchemaWhenNewDatasetIsMissing(t *testi
 func TestCacheRevisionUsesOnlyCommittedStateWatermarks(t *testing.T) {
 	assert := assert.New(t)
 	state := CacheSyncState{
-		SchemaVersion:          CacheSchemaVersion,
-		LastMessageID:          41,
-		LastCompletedSyncRunID: 5,
-		LastCacheAdditionCount: 37,
-		LastCacheUpdateCount:   3,
-		LastFailedSyncRunCount: 2,
-		LastFailedSyncRunIDSum: 19,
-		IdentityRevision:       7,
-		PublishedAt:            time.Date(2026, 7, 18, 12, 0, 0, 0, time.UTC),
+		SchemaVersion:                  CacheSchemaVersion,
+		LastMessageID:                  41,
+		LastCompletedSyncRunID:         5,
+		LastCacheAdditionCount:         37,
+		LastCacheUpdateCount:           3,
+		LastFailedSyncRunCount:         2,
+		LastFailedSyncRunIDSum:         19,
+		IdentityRevision:               7,
+		ParticipantIdentifierRevision:  11,
+		ParticipantDisplayNameRevision: 13,
+		PublishedAt:                    time.Date(2026, 7, 18, 12, 0, 0, 0, time.UTC),
 	}
 	revision := state.Revision()
 	require.NotEmpty(t, revision)
@@ -211,6 +213,12 @@ func TestCacheRevisionUsesOnlyCommittedStateWatermarks(t *testing.T) {
 	assert.NotEqual(revision, changed.Revision())
 	changed = state
 	changed.IdentityRevision++
+	assert.NotEqual(revision, changed.Revision())
+	changed = state
+	changed.ParticipantIdentifierRevision++
+	assert.NotEqual(revision, changed.Revision())
+	changed = state
+	changed.ParticipantDisplayNameRevision++
 	assert.NotEqual(revision, changed.Revision())
 	changed = state
 	changed.PublishedAt = changed.PublishedAt.Add(time.Second)

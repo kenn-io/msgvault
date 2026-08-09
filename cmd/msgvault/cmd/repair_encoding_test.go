@@ -3,11 +3,42 @@ package cmd
 import (
 	"fmt"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/testutil"
 )
+
+func TestRepairDisplayNamesBumpsParticipantRevisionWithTheRepair(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	testutil.SkipIfPostgres(t,
+		"inserts invalid UTF-8 bytes into a TEXT column; PostgreSQL rejects them")
+	st := testutil.NewTestStore(t)
+
+	_, err := st.DB().Exec(`
+		INSERT INTO participants (email_address, display_name)
+		VALUES (?, ?)
+	`, "repair-display@example.com", "Repair\xffName")
+	require.NoError(err)
+	before, err := st.ParticipantDisplayNameRevision()
+	require.NoError(err)
+
+	stats := &repairStats{}
+	require.NoError(repairDisplayNames(st, stats))
+	after, err := st.ParticipantDisplayNameRevision()
+	require.NoError(err)
+	assert.Equal(before+1, after,
+		"the participant repair and its cache revision must commit together")
+
+	var repaired string
+	require.NoError(st.DB().QueryRow(`
+		SELECT display_name FROM participants
+		WHERE email_address = ?
+	`, "repair-display@example.com").Scan(&repaired))
+	assert.True(utf8.ValidString(repaired))
+}
 
 // TestRepairOtherStrings_LogsScanErrors verifies that scan errors during
 // repairOtherStrings are counted in stats.skippedRows rather than silently

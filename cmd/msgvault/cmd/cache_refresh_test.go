@@ -366,6 +366,9 @@ func TestRepairEncodingReturnsCacheRefreshError(t *testing.T) {
 	savedCfg := cfg
 	t.Cleanup(func() { cfg = savedCfg })
 	cfg = &config.Config{HomeDir: tmpDir, Data: config.DataConfig{DataDir: tmpDir}}
+	stateFile := filepath.Join(cfg.AnalyticsDir(), "_last_sync.json")
+	require.NoError(os.MkdirAll(cfg.AnalyticsDir(), 0o755))
+	require.NoError(os.WriteFile(stateFile, []byte(`{"schema_version":18}`), 0o600))
 
 	sentinel := errors.New("repair cache sentinel")
 	buildCacheBeforeMessagesExportHook = func() error { return sentinel }
@@ -375,6 +378,8 @@ func TestRepairEncodingReturnsCacheRefreshError(t *testing.T) {
 	require.ErrorIs(err, sentinel)
 	require.ErrorContains(err, "encoding repair completed")
 	require.ErrorContains(err, "analytics cache refresh failed")
+	require.NoFileExists(stateFile,
+		"a failed post-repair rebuild must leave the old cache marked stale")
 }
 
 func TestScheduledCacheRefreshFailurePreservesCompletedSyncRun(t *testing.T) {
@@ -460,7 +465,7 @@ func TestConversationTypeDriftDetectedAndRepairedByDerivedRefresh(t *testing.T) 
 	assertions.False(staleness.FullRebuild,
 		"type drift without new messages must stay repairable by the derived refresh")
 	assertions.True(derivedDriftOnly(staleness))
-	assertions.Contains(staleness.Reason, "conversation types changed")
+	assertions.Contains(staleness.Reason, "conversation metadata changed")
 
 	result, err := buildCacheDerivedOnly(dbPath, analyticsDir)
 	requirements.NoError(err)
@@ -502,6 +507,49 @@ func TestConversationTypeDriftDetectedAndRepairedByDerivedRefresh(t *testing.T) 
 		"repaired cache must be clean (reason: %q)", repaired.Reason)
 }
 
+func TestConversationTitleDriftDetectedAndRepairedByDerivedRefresh(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	tmp := setupTestSQLite(t)
+	dbPath := filepath.Join(tmp, "test.db")
+	analyticsDir := filepath.Join(tmp, "analytics")
+	_, err := buildCache(dbPath, analyticsDir, true)
+	requirements.NoError(err)
+	messagesBefore := snapshotMessagesDatasetBytes(t, analyticsDir)
+
+	st, err := store.Open(dbPath)
+	requirements.NoError(err)
+	_, err = st.DB().Exec(
+		`UPDATE conversations SET title = 'Updated cache title' WHERE id = 102`)
+	requirements.NoError(err)
+	requirements.NoError(st.Close())
+
+	staleness := cacheNeedsBuild(dbPath, analyticsDir)
+	requirements.True(staleness.NeedsBuild)
+	assertions.True(staleness.HasConversationTypeDrift)
+	assertions.False(staleness.FullRebuild,
+		"title drift without new messages must stay repairable by the derived refresh")
+	assertions.Contains(staleness.Reason, "conversation metadata changed")
+
+	result, err := buildCacheDerivedOnly(dbPath, analyticsDir)
+	requirements.NoError(err)
+	assertions.True(result.IdentityOnly)
+	assertions.Equal(messagesBefore, snapshotMessagesDatasetBytes(t, analyticsDir),
+		"derived refresh must not rewrite message facts")
+
+	duckDB, err := duckdbutil.Open(
+		context.Background(),
+		duckdbutil.BuilderPolicy(filepath.Join(tmp, "title-duckdb-tmp")),
+	)
+	requirements.NoError(err)
+	defer func() { require.NoError(t, duckDB.Close()) }()
+	var title string
+	requirements.NoError(duckDB.QueryRow(`
+		SELECT title FROM read_parquet(?) WHERE id = 102
+	`, filepath.Join(analyticsDir, tableConversations, "*.parquet")).Scan(&title))
+	assertions.Equal("Updated cache title", title)
+}
+
 func TestFullBuildForcedWhenTypeDriftCoincidesWithNewMessages(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)
@@ -528,6 +576,94 @@ func TestFullBuildForcedWhenTypeDriftCoincidesWithNewMessages(t *testing.T) {
 	assertions.True(staleness.FullRebuild,
 		"incremental append cannot rewrite committed activity rows under a changed type")
 	assertions.False(derivedDriftOnly(staleness))
+}
+
+// TestParticipantDisplayNameDriftDetectedAndRepairedByDerivedRefresh pins
+// display-name changes to the derived-only cache path: participants.parquet
+// and relationship_people must be republished, while message facts remain
+// byte-identical and no full rebuild is required.
+func TestParticipantDisplayNameDriftDetectedAndRepairedByDerivedRefresh(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	tmp := setupTestSQLite(t)
+	dbPath := filepath.Join(tmp, "test.db")
+	analyticsDir := filepath.Join(tmp, "analytics")
+	_, err := buildCache(dbPath, analyticsDir, true)
+	requirements.NoError(err)
+	before, err := query.ReadCacheSyncState(analyticsDir)
+	requirements.NoError(err)
+	messagesBefore := snapshotMessagesDatasetBytes(t, analyticsDir)
+
+	clean := cacheNeedsBuild(dbPath, analyticsDir)
+	requirements.False(clean.NeedsBuild,
+		"fresh build must not report staleness (reason: %q)", clean.Reason)
+
+	st, err := store.Open(dbPath)
+	requirements.NoError(err)
+	// The identifier backfill API only fills an empty name. Clear the fixture
+	// value first so the mutation exercises the production write path that must
+	// advance ParticipantDisplayNameRevision without changing the identifier.
+	_, err = st.DB().Exec(`UPDATE participants SET display_name = NULL WHERE id = 1`)
+	requirements.NoError(err)
+	updatedID, err := st.EnsureParticipantByIdentifier(
+		"email", "alice@example.com", "Alice Updated",
+	)
+	requirements.NoError(err)
+	requirements.Equal(int64(1), updatedID)
+	requirements.NoError(st.Close())
+
+	staleness := cacheNeedsBuild(dbPath, analyticsDir)
+	requirements.True(staleness.NeedsBuild)
+	assertions.True(staleness.HasParticipantDisplayNameDrift)
+	assertions.False(staleness.FullRebuild,
+		"display-name drift must stay repairable by the derived refresh")
+	assertions.True(derivedDriftOnly(staleness))
+	assertions.Contains(staleness.Reason, "participant display names changed")
+
+	result, err := buildCacheDerivedOnly(dbPath, analyticsDir)
+	requirements.NoError(err)
+	assertions.True(result.IdentityOnly)
+	assertions.False(result.Skipped)
+
+	after, err := query.ReadCacheSyncState(analyticsDir)
+	requirements.NoError(err)
+	assertions.NotEqual(
+		before.ParticipantDisplayNameRevision,
+		after.ParticipantDisplayNameRevision,
+	)
+	assertions.Equal(messagesBefore, snapshotMessagesDatasetBytes(t, analyticsDir),
+		"derived refresh must not rewrite message facts")
+
+	duckDB, err := duckdbutil.Open(
+		context.Background(),
+		duckdbutil.BuilderPolicy(filepath.Join(tmp, "display-names-duckdb-tmp")),
+	)
+	requirements.NoError(err)
+	defer func() { require.NoError(t, duckDB.Close()) }()
+	var participantName string
+	requirements.NoError(duckDB.QueryRow(`
+		SELECT display_name FROM read_parquet(?) WHERE id = 1
+	`, filepath.Join(analyticsDir, tableParticipants, "*.parquet")).Scan(&participantName))
+	assertions.Equal("Alice Updated", participantName,
+		"republished participants dataset must carry the new display name")
+
+	var displayLabel string
+	requirements.NoError(duckDB.QueryRow(`
+		SELECT display_label FROM read_parquet(?) WHERE canonical_id = 1
+	`, filepath.Join(analyticsDir, identityindex.DatasetPeople, "*.parquet")).Scan(&displayLabel))
+	assertions.Equal("Alice Updated", displayLabel,
+		"relationship_people label must use the republished participant name")
+	var searchable bool
+	requirements.NoError(duckDB.QueryRow(`
+		SELECT list_contains(search_values, 'alice updated')
+		FROM read_parquet(?) WHERE canonical_id = 1
+	`, filepath.Join(analyticsDir, identityindex.DatasetPeople, "*.parquet")).Scan(&searchable))
+	assertions.True(searchable,
+		"relationship_people search values must include the new display name")
+
+	repaired := cacheNeedsBuild(dbPath, analyticsDir)
+	assertions.False(repaired.NeedsBuild,
+		"repaired cache must be clean (reason: %q)", repaired.Reason)
 }
 
 // TestParticipantIdentifierDriftDetectedAndRepairedByDerivedRefresh pins the
@@ -599,6 +735,77 @@ func TestParticipantIdentifierDriftDetectedAndRepairedByDerivedRefresh(t *testin
 	)).Scan(&searchable))
 	assertions.True(searchable,
 		"rebuilt relationship_people search values must include the new identifier")
+
+	repaired := cacheNeedsBuild(dbPath, analyticsDir)
+	assertions.False(repaired.NeedsBuild,
+		"repaired cache must be clean (reason: %q)", repaired.Reason)
+}
+
+// TestParticipantIdentifierDriftCreatingParticipantRestagesParticipants pins
+// the new-participant variant of identifier drift. Creating an identifier
+// without message activity still adds a participants row that the derived
+// refresh must publish; the message dataset must remain untouched.
+func TestParticipantIdentifierDriftCreatingParticipantRestagesParticipants(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	tmp := setupTestSQLite(t)
+	dbPath := filepath.Join(tmp, "test.db")
+	analyticsDir := filepath.Join(tmp, "analytics")
+	_, err := buildCache(dbPath, analyticsDir, true)
+	requirements.NoError(err)
+	before, err := query.ReadCacheSyncState(analyticsDir)
+	requirements.NoError(err)
+	messagesBefore := snapshotMessagesDatasetBytes(t, analyticsDir)
+
+	st, err := store.Open(dbPath)
+	requirements.NoError(err)
+	const newParticipantID int64 = 5
+	// This cache fixture intentionally uses the legacy participant schema, so
+	// seed the new row directly and let the production identifier write create
+	// the drift watermark. The refresh must publish the row even though it has
+	// no message activity yet.
+	_, err = st.DB().Exec(`
+		INSERT INTO participants (id, email_address, domain, display_name)
+		VALUES (?, ?, ?, ?)
+	`, newParticipantID, "new-cache-participant@example.test", "example.test", "New Cache Participant")
+	requirements.NoError(err)
+	err = st.SetParticipantIdentifier(
+		newParticipantID, "slack", "new-cache-participant",
+	)
+	requirements.NoError(err)
+	requirements.NoError(st.Close())
+
+	staleness := cacheNeedsBuild(dbPath, analyticsDir)
+	requirements.True(staleness.NeedsBuild)
+	assertions.True(staleness.HasParticipantIdentifierDrift)
+	assertions.False(staleness.FullRebuild,
+		"identifier drift that creates a participant must stay derived-only")
+	assertions.True(derivedDriftOnly(staleness))
+	assertions.Contains(staleness.Reason, "participant identifiers changed")
+
+	result, err := buildCacheDerivedOnly(dbPath, analyticsDir)
+	requirements.NoError(err)
+	assertions.True(result.IdentityOnly)
+	assertions.False(result.Skipped)
+
+	after, err := query.ReadCacheSyncState(analyticsDir)
+	requirements.NoError(err)
+	assertions.NotEqual(before.ParticipantIdentifierRevision, after.ParticipantIdentifierRevision)
+	assertions.Equal(messagesBefore, snapshotMessagesDatasetBytes(t, analyticsDir),
+		"derived refresh must not rewrite message facts")
+
+	duckDB, err := duckdbutil.Open(
+		context.Background(),
+		duckdbutil.BuilderPolicy(filepath.Join(tmp, "new-participant-duckdb-tmp")),
+	)
+	requirements.NoError(err)
+	defer func() { require.NoError(t, duckDB.Close()) }()
+	var participantName string
+	requirements.NoError(duckDB.QueryRow(`
+		SELECT display_name FROM read_parquet(?) WHERE id = ?
+	`, filepath.Join(analyticsDir, tableParticipants, "*.parquet"), newParticipantID).Scan(&participantName))
+	assertions.Equal("New Cache Participant", participantName,
+		"identifier drift that creates a participant must republish participants.parquet")
 
 	repaired := cacheNeedsBuild(dbPath, analyticsDir)
 	assertions.False(repaired.NeedsBuild,

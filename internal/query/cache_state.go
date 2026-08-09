@@ -18,10 +18,11 @@ import (
 // cache publisher and analytical readers. Version 15 adds the compact
 // relationship activity, people, domain, and daily read model; version 16
 // adds has_attachments to the relationship activity dataset; version 17 adds
-// the envelope address snapshot (email_address) to message_recipients. The
-// bump forces a full rebuild so committed caches never mix recipient shards
-// with and without the column.
-const CacheSchemaVersion = 17
+// the envelope address snapshot (email_address) to message_recipients; version
+// 18 adds participant-directory revision tracking so a pre-upgrade cache cannot
+// be mistaken for one that has observed later participant metadata changes.
+// Schema bumps force a full rebuild before readers use an older publication.
+const CacheSchemaVersion = 18
 
 // CacheSyncState is the commit marker written after a complete analytics
 // cache publication. SQLite remains authoritative; these watermarks only
@@ -50,17 +51,21 @@ type CacheSyncState struct {
 	// (participant_identifiers, relationship_people search values) but not
 	// into per-row activity facts, so drift here alone is repaired by the
 	// derived-dataset refresh and never forces a full rebuild.
-	ParticipantIdentifierRevision int64     `json:"participant_identifier_revision,omitempty"`
-	PublishedAt                   time.Time `json:"published_at"`
-	DatasetFingerprint            string    `json:"dataset_fingerprint"`
+	ParticipantIdentifierRevision int64 `json:"participant_identifier_revision,omitempty"`
+	// ParticipantDisplayNameRevision tracks participant display-name changes.
+	// Display names bake into participants.parquet and the relationship_people
+	// labels/search values, but not into message facts, so drift here is
+	// repaired by the derived-dataset refresh without rewriting message
+	// shards.
+	ParticipantDisplayNameRevision int64     `json:"participant_display_name_revision,omitempty"`
+	PublishedAt                    time.Time `json:"published_at"`
+	DatasetFingerprint             string    `json:"dataset_fingerprint"`
 
 	ConversationParticipantsFingerprint string `json:"conversation_participants_fingerprint,omitempty"`
-	// ConversationTypesFingerprint hashes (id, conversation_type) for every
-	// conversation inside the committed message watermark. conversation_type
-	// is mutable (EnsureConversationWithType upserts it) and is baked into
-	// committed relationship_activity rows, which incremental builds and
-	// index-only refreshes otherwise never revisit — this fingerprint is how
-	// that drift is detected.
+	// ConversationTypesFingerprint hashes (id, conversation_type, title) for
+	// every conversation inside the committed message watermark. Both metadata
+	// fields are mutable and bake into cache datasets that incremental builds
+	// otherwise never revisit; this fingerprint detects that drift.
 	ConversationTypesFingerprint string                          `json:"conversation_types_fingerprint,omitempty"`
 	Stats                        identityindex.CacheStatsSummary `json:"stats"`
 }
@@ -95,7 +100,7 @@ func (e *CacheUnavailableError) Unwrap() error { return ErrCacheUnavailable }
 // Revision identifies one committed cache publication. It intentionally uses
 // only commit-marker fields, never ambient filesystem state.
 func (s CacheSyncState) Revision() string {
-	payload := fmt.Sprintf("v=%d|message=%d|watermark=%s|run=%d|add=%d|update=%d|fail_count=%d|fail_sum=%d|identity=%d|account_identity=%d|participant_identifier=%d|published=%s",
+	payload := fmt.Sprintf("v=%d|message=%d|watermark=%s|run=%d|add=%d|update=%d|fail_count=%d|fail_sum=%d|identity=%d|account_identity=%d|participant_identifier=%d|participant_display_name=%d|published=%s",
 		s.SchemaVersion,
 		s.LastMessageID,
 		s.LastSyncAt.UTC().Format(time.RFC3339Nano),
@@ -107,6 +112,7 @@ func (s CacheSyncState) Revision() string {
 		s.IdentityRevision,
 		s.AccountIdentityRevision,
 		s.ParticipantIdentifierRevision,
+		s.ParticipantDisplayNameRevision,
 		s.PublishedAt.UTC().Format(time.RFC3339Nano),
 	)
 	return fmt.Sprintf("cache-%x", sha256.Sum256([]byte(payload)))
