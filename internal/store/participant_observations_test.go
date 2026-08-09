@@ -65,6 +65,54 @@ func TestRecordingTheSameObservationTwiceIsIdempotent(t *testing.T) {
 	assert.Equal(first.Observation.Envelope.ID, second.Observation.Envelope.ID)
 }
 
+func TestContactObservationOrdinalsPreserveExplicitAndAppendMissingValues(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := storetest.New(t).Store
+	participantID, err := st.EnsureParticipantByIdentifier(
+		"beeper", "@ordered:example.org", "Ordered Example",
+	)
+	require.NoError(err)
+	explicitOrdinal := 7
+	explicit, err := st.RecordContactObservationContext(
+		t.Context(), participantID, store.ParticipantContactObservationInput{
+			AddressKind:   store.ContactAddressEmail,
+			OriginalValue: "ordered@example.org",
+			Envelope: store.ValueEnvelopeInput{
+				Source: store.ProvenanceArchiveObservation, Ordinal: &explicitOrdinal,
+			},
+		},
+	)
+	require.NoError(err)
+	assert.Equal(explicitOrdinal, explicit.Observation.Envelope.Ordinal)
+
+	appendedEmail, err := st.RecordContactObservationContext(
+		t.Context(), participantID, store.ParticipantContactObservationInput{
+			AddressKind:   store.ContactAddressEmail,
+			OriginalValue: "ordered.next@example.org",
+			Envelope: store.ValueEnvelopeInput{
+				Source: store.ProvenanceArchiveObservation,
+			},
+		},
+	)
+	require.NoError(err)
+	assert.Equal(explicitOrdinal+1, appendedEmail.Observation.Envelope.Ordinal)
+
+	for index, phone := range []string{"+12025550101", "+12025550102"} {
+		result, err := st.RecordContactObservationContext(
+			t.Context(), participantID, store.ParticipantContactObservationInput{
+				AddressKind: store.ContactAddressPhone, ServiceSlug: new("whatsapp"),
+				OriginalValue: phone,
+				Envelope: store.ValueEnvelopeInput{
+					Source: store.ProvenanceArchiveObservation,
+				},
+			},
+		)
+		require.NoError(err)
+		assert.Equal(index, result.Observation.Envelope.Ordinal)
+	}
+}
+
 func TestRecordingTheSameObservationFromTwoSourcesKeepsBothProvenances(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

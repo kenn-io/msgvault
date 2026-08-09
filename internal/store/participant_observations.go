@@ -270,13 +270,20 @@ func (s *Store) RecordContactObservationContext(
 		} else if !errors.Is(err, ErrProfileValueNotFound) {
 			return err
 		}
+		env, err := resolveProfileEnvelopeForOwnerTx(
+			ctx, tx, "participant_contact_observations", "participant_id", "address_kind",
+			participantID, input.AddressKind, input.Envelope,
+		)
+		if err != nil {
+			return err
+		}
 		args := []any{
 			participantID, int64Value(input.SourceID), input.AddressKind, serviceID,
 			stringValue(input.ScopeKind), stringValue(input.ScopeValue),
 			stringValue(input.ProviderUserID), input.OriginalValue, normalized,
 			normalization, normalizationVersion, timeValue(input.ObservedAt),
 		}
-		args = append(args, profileEnvelopeArgs(input.Envelope.valueEnvelope(0))...)
+		args = append(args, profileEnvelopeArgs(env)...)
 		var id int64
 		if err := tx.QueryRowContext(ctx, `INSERT INTO participant_contact_observations (
 			participant_id, source_id, address_kind, service_id, scope_kind,

@@ -21,17 +21,17 @@ func ensureProfilePersonTx(ctx context.Context, tx *loggedTx, personID int64) er
 	return nil
 }
 
-func nextProfileOrdinalTx(
+func nextProfileOrdinalForOwnerTx(
 	ctx context.Context,
 	tx *loggedTx,
-	table, kindColumn string,
-	personID int64,
+	table, ownerColumn, kindColumn string,
+	ownerID int64,
 	kind any,
 ) (int, error) {
 	var ordinal int
 	query := fmt.Sprintf(`SELECT COALESCE(MAX(ordinal) + 1, 0)
-		FROM %s WHERE person_id = ?`, table)
-	args := []any{personID}
+		FROM %s WHERE %s = ?`, table, ownerColumn)
+	args := []any{ownerID}
 	if kindColumn != "" {
 		query += fmt.Sprintf(` AND %s = ?`, kindColumn)
 		args = append(args, kind)
@@ -43,11 +43,11 @@ func nextProfileOrdinalTx(
 	return ordinal, nil
 }
 
-func resolveProfileEnvelopeTx(
+func resolveProfileEnvelopeForOwnerTx(
 	ctx context.Context,
 	tx *loggedTx,
-	table, kindColumn string,
-	personID int64,
+	table, ownerColumn, kindColumn string,
+	ownerID int64,
 	kind any,
 	input ValueEnvelopeInput,
 ) (ValueEnvelope, error) {
@@ -57,11 +57,26 @@ func resolveProfileEnvelopeTx(
 	if input.Ordinal != nil {
 		return input.valueEnvelope(*input.Ordinal), nil
 	}
-	ordinal, err := nextProfileOrdinalTx(ctx, tx, table, kindColumn, personID, kind)
+	ordinal, err := nextProfileOrdinalForOwnerTx(
+		ctx, tx, table, ownerColumn, kindColumn, ownerID, kind,
+	)
 	if err != nil {
 		return ValueEnvelope{}, err
 	}
 	return input.valueEnvelope(ordinal), nil
+}
+
+func resolveProfileEnvelopeTx(
+	ctx context.Context,
+	tx *loggedTx,
+	table, kindColumn string,
+	personID int64,
+	kind any,
+	input ValueEnvelopeInput,
+) (ValueEnvelope, error) {
+	return resolveProfileEnvelopeForOwnerTx(
+		ctx, tx, table, "person_id", kindColumn, personID, kind, input,
+	)
 }
 
 func (s *Store) supersedeProfileValueTx(
