@@ -44,6 +44,8 @@ func TestBuildCacheAutostartFulfilledSkipsRedundantHTTPRequest(t *testing.T) {
 }
 
 func TestBuildCacheAutostartFailedReturnsErrorWithoutRetry(t *testing.T) {
+	require := require.New(t)
+
 	var requests atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		requests.Add(1)
@@ -59,10 +61,10 @@ func TestBuildCacheAutostartFailedReturnsErrorWithoutRetry(t *testing.T) {
 		err = runBuildCacheHTTP(cmd, false)
 	})
 
-	require.Error(t, err)
-	require.ErrorContains(t, err, "analytics cache build failed during daemon startup")
-	require.ErrorContains(t, err, "daemon is running with live SQL")
-	require.ErrorContains(t, err, logPath)
+	require.Error(err)
+	require.ErrorContains(err, "analytics cache build failed during daemon startup")
+	require.ErrorContains(err, "daemon is running with live SQL")
+	require.ErrorContains(err, logPath)
 	assert.Zero(t, requests.Load())
 }
 
@@ -159,6 +161,9 @@ func TestBuildCacheUsesConfiguredRemoteHTTPAndPreservesOutput(t *testing.T) {
 }
 
 func TestBuildCacheRunningLocalDaemonUsesSingleHTTPRequest(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
 	var requests atomic.Int32
 	mux := http.NewServeMux()
 	mux.Handle("/api/ping", daemon.NewPingHandler(daemon.PingHandlerOptions{
@@ -182,21 +187,21 @@ func TestBuildCacheRunningLocalDaemonUsesSingleHTTPRequest(t *testing.T) {
 	withStoreResolverConfig(t, lifecycleTestConfig(dataDir))
 	rt := daemonRuntimeForHTTPServer(t, server, daemonAPIKeyFingerprint(""))
 	_, err := daemonRuntimeStore(dataDir).Write(rt.Record)
-	require.NoError(t, err, "write running daemon record")
+	require.NoError(err, "write running daemon record")
 	stubStartServeBackgroundProcess(t, func(
 		*config.Config,
 		backgroundServeStartOptions,
 	) (*backgroundServeProcess, error) {
-		require.FailNow(t, "a running local daemon must not be restarted with cache intent")
+		require.FailNow("a running local daemon must not be restarted with cache intent")
 		return nil, errors.New("unreachable daemon restart")
 	})
 
 	cmd, stdout := buildCacheHTTPTestCommand()
 	err = runBuildCacheHTTP(cmd, false)
 
-	require.NoError(t, err)
-	assert.Equal(t, int32(1), requests.Load())
-	assert.Equal(t, "Built through running daemon.\n", stdout.String())
+	require.NoError(err)
+	assert.Equal(int32(1), requests.Load())
+	assert.Equal("Built through running daemon.\n", stdout.String())
 }
 
 func buildCacheHTTPTestCommand() (*cobra.Command, *bytes.Buffer) {

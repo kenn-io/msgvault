@@ -103,21 +103,23 @@ func TestHumanizeDaemonLogLine(t *testing.T) {
 }
 
 func TestDaemonStartupProgressStateRepeatsActiveCacheBuild(t *testing.T) {
+	assert := assert.New(t)
+
 	state := daemonStartupProgressState{}
 	buildLine := `time=2026-07-01T12:00:00Z level=INFO msg="daemon startup step" step=build_analytics_cache reason="analytics cache schema is stale" full_rebuild=true`
-	assert.Equal(t,
+	assert.Equal(
 		"building the analytics cache (full rebuild: analytics cache schema is stale)",
 		state.Next(buildLine),
 	)
-	assert.Equal(t, "still building the analytics cache", state.Next(buildLine))
+	assert.Equal("still building the analytics cache", state.Next(buildLine))
 
 	warningLine := `time=2026-07-01T12:00:10Z level=WARN msg="builder memory pressure"`
-	assert.Equal(t, "builder memory pressure", state.Next(warningLine))
-	assert.Equal(t, "still building the analytics cache", state.Next(warningLine))
+	assert.Equal("builder memory pressure", state.Next(warningLine))
+	assert.Equal("still building the analytics cache", state.Next(warningLine))
 
 	completeLine := `time=2026-07-01T12:01:00Z level=INFO msg="daemon startup step complete" step=build_analytics_cache full_rebuild=true`
-	assert.Equal(t, "building the analytics cache (done)", state.Next(completeLine))
-	assert.Equal(t, "still waiting", state.Next(completeLine))
+	assert.Equal("building the analytics cache (done)", state.Next(completeLine))
+	assert.Equal("still waiting", state.Next(completeLine))
 }
 
 func TestDaemonStartupProgressStateClearsFailedCacheBuild(t *testing.T) {

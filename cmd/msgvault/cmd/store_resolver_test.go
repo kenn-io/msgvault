@@ -175,6 +175,8 @@ func TestOpenHTTPStoreStartsLocalDaemonWhenNoRemoteConfigured(t *testing.T) {
 }
 
 func TestOpenHTTPStoreReportsFulfilledStartupCacheBuild(t *testing.T) {
+	assert := assert.New(t)
+
 	dataDir := t.TempDir()
 	withStoreResolverConfig(t, lifecycleTestConfig(dataDir))
 	waitCh := make(chan error)
@@ -228,10 +230,10 @@ func TestOpenHTTPStoreReportsFulfilledStartupCacheBuild(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = st.Close() })
 
-	assert.Equal(t, startupCacheBuildIntentDefault, gotIntent)
-	assert.True(t, info.StartedLocalDaemon)
-	assert.Equal(t, startupCacheBuildOutcomeFulfilled, info.StartupCacheBuildOutcome)
-	assert.Equal(t, filepath.Join(dataDir, "serve.log"), info.DaemonLogPath)
+	assert.Equal(startupCacheBuildIntentDefault, gotIntent)
+	assert.True(info.StartedLocalDaemon)
+	assert.Equal(startupCacheBuildOutcomeFulfilled, info.StartupCacheBuildOutcome)
+	assert.Equal(filepath.Join(dataDir, "serve.log"), info.DaemonLogPath)
 }
 
 func TestOpenHTTPStoreReportsLocalDaemonStartupToStderr(t *testing.T) {
