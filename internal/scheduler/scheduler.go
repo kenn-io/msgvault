@@ -12,6 +12,7 @@ import (
 
 	"github.com/robfig/cron/v3"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/jobctx"
 	"go.kenn.io/msgvault/internal/syncerr"
 )
 
@@ -34,7 +35,7 @@ type YieldChecker interface {
 
 // ErrYieldedToWaiter is the cancellation cause set when a scheduled job is
 // interrupted to let a waiting operation acquire the work gate.
-var ErrYieldedToWaiter = errors.New("yielded to a waiting operation")
+var ErrYieldedToWaiter = jobctx.ErrYieldedToWaiter
 
 // yieldPollInterval is how often a running scheduled job checks for waiters.
 // Variable only so tests can shorten it.
@@ -102,7 +103,7 @@ type Scheduler struct {
 
 // New creates a new Scheduler with the given sync callback.
 func New(syncFunc SyncFunc) *Scheduler {
-	ctx, cancel := context.WithCancel(context.Background()) //nolint:gosec // the scheduler stores cancel and invokes it in Stop
+	ctx, cancel := context.WithCancel(context.Background())
 	return &Scheduler{
 		cron: cron.New(cron.WithParser(cron.NewParser(
 			cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow,
@@ -586,7 +587,7 @@ func (s *Scheduler) jobContext() (context.Context, func()) {
 }
 
 func yieldedToWaiter(ctx context.Context) bool {
-	return errors.Is(context.Cause(ctx), ErrYieldedToWaiter)
+	return jobctx.YieldedToWaiter(ctx)
 }
 
 // Status returns the current status of all scheduled accounts.

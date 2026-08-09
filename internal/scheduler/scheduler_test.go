@@ -1,8 +1,10 @@
 package scheduler
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -12,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/jobctx"
 	"go.kenn.io/msgvault/internal/vector"
 	"go.kenn.io/msgvault/internal/vector/embed"
 )
@@ -604,13 +607,16 @@ func (t *fakeWorkTracker) active() int {
 // BuildingGeneration, and ActivateGeneration are meaningfully populated;
 // the rest panic to catch accidental usage.
 type fakeBackend struct {
-	active    vector.Generation
-	activeErr error
-	building  *vector.Generation
-	buildErr  error
+	active        vector.Generation
+	activeErr     error
+	building      *vector.Generation
+	buildErr      error
+	yieldActive   context.CancelCauseFunc
+	yieldBuilding context.CancelCauseFunc
 	// activateErr is what ActivateGeneration returns. activateCalls
 	// records the gen IDs the EmbedJob asked to activate.
 	activateErr     error
+	yieldActivate   context.CancelCauseFunc
 	mu              sync.Mutex
 	activateCallIDs []vector.GenerationID
 
@@ -620,11 +626,17 @@ type fakeBackend struct {
 
 func (f *fakeBackend) ActiveGeneration(ctx context.Context) (vector.Generation, error) {
 	f.activeCalls.Add(1)
+	if f.yieldActive != nil {
+		f.yieldActive(jobctx.ErrYieldedToWaiter)
+	}
 	return f.active, f.activeErr
 }
 
 func (f *fakeBackend) BuildingGeneration(ctx context.Context) (*vector.Generation, error) {
 	f.buildingCalls.Add(1)
+	if f.yieldBuilding != nil {
+		f.yieldBuilding(jobctx.ErrYieldedToWaiter)
+	}
 	return f.building, f.buildErr
 }
 
@@ -635,6 +647,9 @@ func (f *fakeBackend) ActivateGeneration(ctx context.Context, gen vector.Generat
 	f.mu.Lock()
 	f.activateCallIDs = append(f.activateCallIDs, gen)
 	f.mu.Unlock()
+	if f.yieldActivate != nil {
+		f.yieldActivate(jobctx.ErrYieldedToWaiter)
+	}
 	return f.activateErr
 }
 func (f *fakeBackend) activations() []vector.GenerationID {
@@ -683,6 +698,9 @@ type fakeRunner struct {
 	backstopResult embed.RunResult
 	runDoneOnce    sync.Once
 	runDone        chan struct{} // optional: closed after first RunOnce
+	yieldCancel    context.CancelCauseFunc
+	yieldBackstop  context.CancelCauseFunc
+	yieldReclaim   context.CancelCauseFunc
 	// onBackstop, if set, is invoked from RunBackstop (after recording the
 	// call) to let tests model a side effect of the backstop pass, e.g. a
 	// straggler becoming covered. Called while r.mu is held.
@@ -691,9 +709,14 @@ type fakeRunner struct {
 
 func (r *fakeRunner) ReclaimStale(ctx context.Context) (int, error) {
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	r.reclaimCalls++
-	return 0, r.reclaimErr
+	reclaimErr := r.reclaimErr
+	yieldCancel := r.yieldReclaim
+	r.mu.Unlock()
+	if yieldCancel != nil {
+		yieldCancel(jobctx.ErrYieldedToWaiter)
+	}
+	return 0, reclaimErr
 }
 
 func (r *fakeRunner) RunOnce(ctx context.Context, gen vector.GenerationID) (embed.RunResult, error) {
@@ -704,6 +727,9 @@ func (r *fakeRunner) RunOnce(ctx context.Context, gen vector.GenerationID) (embe
 	res := r.runOnceResult
 	err := r.runErr
 	r.mu.Unlock()
+	if r.yieldCancel != nil {
+		r.yieldCancel(jobctx.ErrYieldedToWaiter)
+	}
 	if ch != nil {
 		r.runDoneOnce.Do(func() { close(ch) })
 	}
@@ -712,13 +738,19 @@ func (r *fakeRunner) RunOnce(ctx context.Context, gen vector.GenerationID) (embe
 
 func (r *fakeRunner) RunBackstop(ctx context.Context, gen vector.GenerationID) (embed.RunResult, error) {
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	r.backstopCalls++
 	r.lastBackstop = gen
 	if r.onBackstop != nil && r.backstopErr == nil {
 		r.onBackstop()
 	}
-	return r.backstopResult, r.backstopErr
+	backstopErr := r.backstopErr
+	backstopResult := r.backstopResult
+	yieldCancel := r.yieldBackstop
+	r.mu.Unlock()
+	if yieldCancel != nil {
+		yieldCancel(jobctx.ErrYieldedToWaiter)
+	}
+	return backstopResult, backstopErr
 }
 
 func (r *fakeRunner) calls() (reclaim, run int, lastGen vector.GenerationID) {
@@ -734,6 +766,268 @@ func (r *fakeRunner) backstops() (n int, lastGen vector.GenerationID) {
 }
 
 // ---------- EmbedJob tests ----------
+
+func TestEmbedJob_Run_YieldedCleanRunStopsBeforeCompletionWork(t *testing.T) {
+	assert := assert.New(t)
+	building := &vector.Generation{ID: 77, State: vector.GenerationBuilding, Fingerprint: "m:768"}
+	backend := &fakeBackend{activeErr: vector.ErrNoActiveGeneration, building: building}
+	ctx, cancel := context.WithCancelCause(context.Background())
+	t.Cleanup(func() { cancel(nil) })
+	runner := &fakeRunner{yieldCancel: cancel}
+	coverage := &fakeCoverage{}
+	var logs bytes.Buffer
+	job := &EmbedJob{
+		Worker:      runner,
+		Backend:     backend,
+		Store:       coverage,
+		Fingerprint: "m:768",
+		Log:         slog.New(slog.NewTextHandler(&logs, nil)),
+	}
+
+	job.Run(ctx)
+
+	_, run, _ := runner.calls()
+	assert.Equal(1, run, "RunOnce calls")
+	n, _ := runner.backstops()
+	assert.Equal(0, n, "RunBackstop calls")
+	assert.Equal(0, coverage.calls, "coverage queries")
+	assert.Empty(backend.activations(), "activation calls")
+	assert.NotContains(logs.String(), "embed run complete", "yield must not log completion")
+}
+
+func TestEmbedJob_Run_YieldedReclaimStopsWithoutWarning(t *testing.T) {
+	assert := assert.New(t)
+	backend := &fakeBackend{active: vector.Generation{ID: 5, State: vector.GenerationActive}}
+	ctx, cancel := context.WithCancelCause(context.Background())
+	t.Cleanup(func() { cancel(nil) })
+	runner := &fakeRunner{
+		reclaimErr:   errors.New("reclaim operation failed"),
+		yieldReclaim: cancel,
+	}
+	var logs bytes.Buffer
+	job := &EmbedJob{
+		Worker:  runner,
+		Backend: backend,
+		Log:     slog.New(slog.NewTextHandler(&logs, nil)),
+	}
+
+	job.Run(ctx)
+
+	_, run, _ := runner.calls()
+	assert.Equal(0, run, "RunOnce calls after yielded reclaim")
+	assert.NotContains(logs.String(), "embed reclaim failed", "yield must not log a reclaim warning")
+}
+
+func TestEmbedJob_Run_YieldedBuildingLookupStopsWithoutWarning(t *testing.T) {
+	assert := assert.New(t)
+	ctx, cancel := context.WithCancelCause(context.Background())
+	t.Cleanup(func() { cancel(nil) })
+	runner := &fakeRunner{}
+	backend := &fakeBackend{
+		buildErr:      errors.New("building lookup failed"),
+		yieldBuilding: cancel,
+	}
+	var logs bytes.Buffer
+	job := &EmbedJob{
+		Worker:  runner,
+		Backend: backend,
+		Log:     slog.New(slog.NewTextHandler(&logs, nil)),
+	}
+
+	job.Run(ctx)
+
+	_, run, _ := runner.calls()
+	assert.Equal(0, run, "RunOnce calls after yielded building lookup")
+	assert.NotContains(logs.String(), "building generation lookup failed", "yield must not log a lookup warning")
+}
+
+func TestEmbedJob_Run_YieldedActiveLookupStopsWithoutWarning(t *testing.T) {
+	assert := assert.New(t)
+	ctx, cancel := context.WithCancelCause(context.Background())
+	t.Cleanup(func() { cancel(nil) })
+	runner := &fakeRunner{}
+	backend := &fakeBackend{
+		activeErr:   errors.New("active lookup failed"),
+		yieldActive: cancel,
+	}
+	var logs bytes.Buffer
+	job := &EmbedJob{
+		Worker:  runner,
+		Backend: backend,
+		Log:     slog.New(slog.NewTextHandler(&logs, nil)),
+	}
+
+	job.Run(ctx)
+
+	_, run, _ := runner.calls()
+	assert.Equal(0, run, "RunOnce calls after yielded active lookup")
+	assert.NotContains(logs.String(), "active generation lookup failed", "yield must not log a lookup warning")
+}
+
+func TestEmbedJob_Run_YieldedBackstopStopsBeforeActivationWork(t *testing.T) {
+	assert := assert.New(t)
+	building := &vector.Generation{ID: 77, State: vector.GenerationBuilding, Fingerprint: "m:768"}
+	backend := &fakeBackend{activeErr: vector.ErrNoActiveGeneration, building: building}
+	ctx, cancel := context.WithCancelCause(context.Background())
+	t.Cleanup(func() { cancel(nil) })
+	runner := &fakeRunner{yieldBackstop: cancel}
+	coverage := &fakeCoverage{}
+	var logs bytes.Buffer
+	job := &EmbedJob{
+		Worker:      runner,
+		Backend:     backend,
+		Store:       coverage,
+		Fingerprint: "m:768",
+		Log:         slog.New(slog.NewTextHandler(&logs, nil)),
+	}
+
+	job.Run(ctx)
+
+	_, run, _ := runner.calls()
+	assert.Equal(1, run, "RunOnce calls")
+	n, _ := runner.backstops()
+	assert.Equal(1, n, "RunBackstop calls")
+	assert.Equal(0, coverage.calls, "coverage queries after yielded backstop")
+	assert.Empty(backend.activations(), "activation calls after yielded backstop")
+	assert.Contains(logs.String(), "embed run complete", "RunOnce completion is logged before backstop")
+	assert.NotContains(logs.String(), "embed backstop failed", "yield is not a backstop failure")
+	assert.NotContains(logs.String(), "building generation activated", "yield must stop activation")
+}
+
+func TestEmbedJob_Run_YieldedCoverageStopsBeforeActivation(t *testing.T) {
+	assert := assert.New(t)
+	building := &vector.Generation{ID: 77, State: vector.GenerationBuilding, Fingerprint: "m:768"}
+	backend := &fakeBackend{activeErr: vector.ErrNoActiveGeneration, building: building}
+	ctx, cancel := context.WithCancelCause(context.Background())
+	t.Cleanup(func() { cancel(nil) })
+	coverage := &fakeCoverage{missing: 0, yieldCancel: cancel}
+	var logs bytes.Buffer
+	job := &EmbedJob{
+		Worker:      &fakeRunner{},
+		Backend:     backend,
+		Store:       coverage,
+		Fingerprint: "m:768",
+		Log:         slog.New(slog.NewTextHandler(&logs, nil)),
+	}
+
+	job.Run(ctx)
+
+	assert.Equal(1, coverage.calls, "coverage queries")
+	assert.Empty(backend.activations(), "activation calls after yielded coverage")
+	assert.NotContains(logs.String(), "embed: building generation activated", "yield must stop activation logging")
+}
+
+func TestEmbedJob_Run_YieldedActivationStopsWithoutWarningOrCompletion(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		activateErr error
+	}{
+		{name: "error", activateErr: errors.New("activation operation failed")},
+		{name: "success"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			assert := assert.New(t)
+			building := &vector.Generation{ID: 77, State: vector.GenerationBuilding, Fingerprint: "m:768"}
+			ctx, cancel := context.WithCancelCause(context.Background())
+			t.Cleanup(func() { cancel(nil) })
+			backend := &fakeBackend{
+				activeErr:     vector.ErrNoActiveGeneration,
+				building:      building,
+				activateErr:   test.activateErr,
+				yieldActivate: cancel,
+			}
+			coverage := &fakeCoverage{missing: 0}
+			var logs bytes.Buffer
+			job := &EmbedJob{
+				Worker:      &fakeRunner{},
+				Backend:     backend,
+				Store:       coverage,
+				Fingerprint: "m:768",
+				Log:         slog.New(slog.NewTextHandler(&logs, nil)),
+			}
+
+			job.Run(ctx)
+
+			assert.Equal([]vector.GenerationID{77}, backend.activations(), "activation calls")
+			assert.NotContains(logs.String(), "embed: activation failed", "yield must not log activation failure")
+			assert.NotContains(logs.String(), "embed: building generation activated", "yield must not log activation completion")
+		})
+	}
+}
+
+func TestEmbedJob_Run_YieldedRunErrorStopsWithoutFailureWork(t *testing.T) {
+	assert := assert.New(t)
+	building := &vector.Generation{ID: 77, State: vector.GenerationBuilding, Fingerprint: "m:768"}
+	backend := &fakeBackend{activeErr: vector.ErrNoActiveGeneration, building: building}
+	ctx, cancel := context.WithCancelCause(context.Background())
+	t.Cleanup(func() { cancel(nil) })
+	runner := &fakeRunner{
+		runErr:      errors.New("operation failed"),
+		yieldCancel: cancel,
+	}
+	coverage := &fakeCoverage{}
+	var logs bytes.Buffer
+	job := &EmbedJob{
+		Worker:      runner,
+		Backend:     backend,
+		Store:       coverage,
+		Fingerprint: "m:768",
+		Log:         slog.New(slog.NewTextHandler(&logs, nil)),
+	}
+
+	job.Run(ctx)
+
+	_, run, _ := runner.calls()
+	assert.Equal(1, run, "RunOnce calls")
+	n, _ := runner.backstops()
+	assert.Equal(0, n, "RunBackstop calls")
+	assert.Equal(0, coverage.calls, "coverage queries")
+	assert.Empty(backend.activations(), "activation calls")
+	assert.NotContains(logs.String(), "embed run failed", "yield must not log a failure")
+	assert.NotContains(logs.String(), "embed run complete", "yield must not log completion")
+}
+
+func TestEmbedJob_Run_ErrorWithoutYieldLogsFailure(t *testing.T) {
+	assert := assert.New(t)
+	backend := &fakeBackend{active: vector.Generation{ID: 5, State: vector.GenerationActive}}
+	runner := &fakeRunner{runErr: errors.New("operation failed")}
+	var logs bytes.Buffer
+	job := &EmbedJob{
+		Worker:  runner,
+		Backend: backend,
+		Log:     slog.New(slog.NewTextHandler(&logs, nil)),
+	}
+
+	job.Run(context.Background())
+
+	assert.Contains(logs.String(), "embed run failed", "ordinary errors must log a failure")
+	assert.NotContains(logs.String(), "embed run complete", "failed runs must not log completion")
+}
+
+func TestEmbedJob_MaybeRunBackstop_YieldedCleanRunDoesNotRecordCompletion(t *testing.T) {
+	assert := assert.New(t)
+	ctx, cancel := context.WithCancelCause(context.Background())
+	t.Cleanup(func() { cancel(nil) })
+	runner := &fakeRunner{yieldBackstop: cancel}
+	now := time.Now()
+	job := &EmbedJob{
+		Worker:           runner,
+		BackstopInterval: time.Hour,
+		Now:              func() time.Time { return now },
+	}
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logs, nil))
+	const gen = vector.GenerationID(5)
+
+	job.maybeRunBackstop(ctx, gen, logger)
+	job.maybeRunBackstop(ctx, gen, logger)
+
+	assert.NotContains(logs.String(), "embed backstop complete", "yield must not log completion")
+	n, _ := runner.backstops()
+	assert.Equal(2, n, "yield must not throttle a retry")
+	_, recorded := job.lastBackstop[gen]
+	assert.False(recorded, "yield must not record lastBackstop")
+}
 
 func TestEmbedJob_Run_ActiveGeneration(t *testing.T) {
 	assert := assert.New(t)
@@ -1152,10 +1446,16 @@ func (c *recoverOnBackstopCoverage) MissingCount(context.Context, int64) (int64,
 // fakeCoverage satisfies EmbedCoverage for the activation-gate tests:
 // it reports a fixed number of live messages still needing embedding.
 type fakeCoverage struct {
-	missing int64
+	missing     int64
+	calls       int
+	yieldCancel context.CancelCauseFunc
 }
 
 func (c *fakeCoverage) MissingCount(_ context.Context, _ int64) (int64, error) {
+	c.calls++
+	if c.yieldCancel != nil {
+		c.yieldCancel(jobctx.ErrYieldedToWaiter)
+	}
 	return c.missing, nil
 }
 

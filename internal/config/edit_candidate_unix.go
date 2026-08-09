@@ -33,7 +33,7 @@ func createConfigCandidate(dir string) (configCandidate, error) {
 			_ = unix.Close(dirfd)
 			return configCandidate{}, fmt.Errorf("create candidate relative to pinned directory: %w", openErr)
 		}
-		file := os.NewFile(uintptr(fd), filepath.Join(dir, name)) //nolint:gosec // successful Unix open returns a non-negative descriptor
+		file := os.NewFile(uintptr(fd), filepath.Join(dir, name))
 		info, statErr := file.Stat()
 		if statErr != nil {
 			_ = file.Close()
@@ -53,7 +53,7 @@ func createConfigCandidate(dir string) (configCandidate, error) {
 			return configCandidate{}, fmt.Errorf("retain config candidate identity: %w", duplicateErr)
 		}
 		unix.CloseOnExec(retainedFD)
-		retained := os.NewFile(uintptr(retainedFD), file.Name()) //nolint:gosec // successful Unix dup returns a non-negative descriptor
+		retained := os.NewFile(uintptr(retainedFD), file.Name())
 		return configCandidate{
 			file:     file,
 			retained: retained,

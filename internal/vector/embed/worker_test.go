@@ -4,8 +4,10 @@ package embed
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -13,8 +15,58 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"go.kenn.io/msgvault/internal/jobctx"
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
 )
+
+type yieldingBackend struct {
+	vector.Backend
+
+	cancel context.CancelCauseFunc
+}
+
+func (b *yieldingBackend) Upsert(context.Context, vector.GenerationID, []vector.Chunk) error {
+	b.cancel(jobctx.ErrYieldedToWaiter)
+	return errors.New("SQL logic error")
+}
+
+type yieldingEmbedClient struct {
+	EmbeddingClient
+
+	cancel context.CancelCauseFunc
+}
+
+func (c *yieldingEmbedClient) Embed(context.Context, []string) ([][]float32, error) {
+	c.cancel(jobctx.ErrYieldedToWaiter)
+	return nil, errors.New("embedding operation failed")
+}
+
+type yieldingStampStore struct {
+	WorkStore
+
+	cancel context.CancelCauseFunc
+}
+
+func (s *yieldingStampStore) SetEmbedGenIfUnchanged(context.Context, []store.EmbedGenStamp, int64) ([]int64, error) {
+	s.cancel(jobctx.ErrYieldedToWaiter)
+	return nil, errors.New("stamp operation failed")
+}
+
+type captureLogHandler struct {
+	records []slog.Record
+}
+
+func (h *captureLogHandler) Enabled(context.Context, slog.Level) bool { return true }
+
+func (h *captureLogHandler) Handle(_ context.Context, r slog.Record) error {
+	h.records = append(h.records, r.Clone())
+	return nil
+}
+
+func (h *captureLogHandler) WithAttrs([]slog.Attr) slog.Handler { return h }
+
+func (h *captureLogHandler) WithGroup(string) slog.Handler { return h }
 
 // newTestWorker builds a Worker over the fixture with the given batch
 // size and any extra deps overrides applied via the mutate callback.
@@ -99,6 +151,116 @@ func TestWorker_AbortsAfterConsecutiveFailures(t *testing.T) {
 	assert.Equal(0, res.Succeeded, "nothing should succeed")
 	assert. // All messages left unstamped (next scan re-finds them).
 		Equal(10, countMissing(t, f.MainDB, int64(f.BuildingGen)), "still missing")
+}
+
+func TestWorker_YieldCancellationDuringUpsertStopsCleanly(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newWorkerFixture(t, 1)
+	ctx, cancel := context.WithCancelCause(context.Background())
+	t.Cleanup(func() { cancel(nil) })
+	logs := &captureLogHandler{}
+	w := NewWorker(WorkerDeps{
+		Backend:                &yieldingBackend{Backend: f.Backend, cancel: cancel},
+		VectorsDB:              f.VectorsDB,
+		MainDB:                 f.MainDB,
+		Store:                  f.Store,
+		Client:                 f.FakeClient,
+		BatchSize:              1,
+		MaxConsecutiveFailures: 1,
+		Log:                    slog.New(logs),
+	})
+
+	res, err := w.RunOnce(ctx, f.BuildingGen)
+	require.NoError(err, "yield cancellation must stop cleanly")
+	assert.Equal(1, res.Claimed, "Claimed")
+	assert.Equal(0, res.Succeeded, "Succeeded")
+	assert.Equal(0, res.Failed, "Failed")
+	assert.Equal(1, countMissing(t, f.MainDB, int64(f.BuildingGen)), "row remains unstamped")
+	var embedGen sql.NullInt64
+	require.NoError(f.MainDB.QueryRow(`SELECT embed_gen FROM messages WHERE id = 1`).Scan(&embedGen))
+	assert.False(embedGen.Valid, "row remains unstamped")
+	assert.Equal(int64(0), readWatermark(t, f.VectorsDB, int64(f.BuildingGen)), "watermark does not advance")
+	for _, record := range logs.records {
+		assert.NotEqual(slog.LevelWarn, record.Level, "yield must not log a warning: %q", record.Message)
+		assert.NotEqual(slog.LevelError, record.Level, "yield must not log an error: %q", record.Message)
+	}
+
+	healthy := newTestWorker(f, 1)
+	res, err = healthy.RunOnce(context.Background(), f.BuildingGen)
+	require.NoError(err, "healthy worker retry")
+	assert.Equal(1, res.Succeeded, "healthy worker succeeds")
+	assert.Equal(0, countMissing(t, f.MainDB, int64(f.BuildingGen)), "row stamped after retry")
+}
+
+func TestWorker_YieldCancellationDuringEmbedStopsCleanly(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newWorkerFixture(t, 1)
+	ctx, cancel := context.WithCancelCause(context.Background())
+	t.Cleanup(func() { cancel(nil) })
+	logs := &captureLogHandler{}
+	w := NewWorker(WorkerDeps{
+		Backend:                f.Backend,
+		VectorsDB:              f.VectorsDB,
+		MainDB:                 f.MainDB,
+		Store:                  f.Store,
+		Client:                 &yieldingEmbedClient{EmbeddingClient: f.FakeClient, cancel: cancel},
+		BatchSize:              1,
+		MaxConsecutiveFailures: 1,
+		Log:                    slog.New(logs),
+	})
+
+	res, err := w.RunOnce(ctx, f.BuildingGen)
+	require.NoError(err, "yield cancellation during embed must stop cleanly")
+	assert.Equal(1, res.Claimed, "Claimed")
+	assert.Equal(0, res.Succeeded, "Succeeded")
+	assert.Equal(0, res.Failed, "Failed")
+	assert.Equal(1, countMissing(t, f.MainDB, int64(f.BuildingGen)), "row remains unstamped")
+	for _, record := range logs.records {
+		assert.NotEqual(slog.LevelWarn, record.Level, "yield must not log a warning: %q", record.Message)
+		assert.NotEqual(slog.LevelError, record.Level, "yield must not log an error: %q", record.Message)
+	}
+}
+
+func TestWorker_YieldCancellationDuringDownshiftStampLogsOnce(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newWorkerFixture(t, 2)
+	f.FakeClient.OnEmbed = func(inputs []string) ([][]float32, error) {
+		if len(inputs) > 1 {
+			return nil, fmt.Errorf("batch rejected: %w", ErrPermanent4xx)
+		}
+		return [][]float32{make([]float32, f.FakeClient.dim)}, nil
+	}
+	ctx, cancel := context.WithCancelCause(context.Background())
+	t.Cleanup(func() { cancel(nil) })
+	logs := &captureLogHandler{}
+	w := NewWorker(WorkerDeps{
+		Backend:                f.Backend,
+		VectorsDB:              f.VectorsDB,
+		MainDB:                 f.MainDB,
+		Store:                  &yieldingStampStore{WorkStore: f.Store, cancel: cancel},
+		Client:                 f.FakeClient,
+		BatchSize:              2,
+		MaxConsecutiveFailures: 1,
+		Log:                    slog.New(logs),
+	})
+
+	res, err := w.RunOnce(ctx, f.BuildingGen)
+	require.NoError(err, "yield cancellation during downshift stamp must stop cleanly")
+	assert.Equal(0, res.Failed, "Failed")
+	yieldInfo := 0
+	for _, record := range logs.records {
+		assert.NotEqual(slog.LevelWarn, record.Level, "yield must not log a warning: %q", record.Message)
+		assert.NotEqual(slog.LevelError, record.Level, "yield must not log an error: %q", record.Message)
+	}
+	for _, record := range logs.records {
+		if record.Level == slog.LevelInfo && record.Message == "embed run yielded to a waiting operation; stopping" {
+			yieldInfo++
+		}
+	}
+	assert.Equal(1, yieldInfo, "yield stop is logged once")
 }
 
 // TestWorker_FailureLeavesUnstampedThenRecovers: a transient failure on

@@ -41,7 +41,7 @@ func openSecureRegularFile(path string) (*os.File, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open secure file without following links: %w", err)
 	}
-	return os.NewFile(uintptr(fd), filepath.Base(path)), nil //nolint:gosec // successful Unix open returns a non-negative descriptor
+	return os.NewFile(uintptr(fd), filepath.Base(path)), nil
 }
 
 func validateSecureSocket(path string, expectedOwner uint32) error {

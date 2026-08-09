@@ -11,6 +11,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"go.kenn.io/msgvault/internal/jobctx"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
 )
@@ -201,6 +202,14 @@ type inputChunk struct {
 // and the next scan re-finds them. Always returns (0, nil).
 func (w *Worker) ReclaimStale(ctx context.Context) (int, error) { return 0, nil }
 
+func (w *Worker) stopIfYielded(ctx context.Context, gen vector.GenerationID) bool {
+	if !jobctx.YieldedToWaiter(ctx) {
+		return false
+	}
+	w.deps.Log.Info("embed run yielded to a waiting operation; stopping", "gen", gen)
+	return true
+}
+
 // startEmbedRun inserts an embed_runs row and returns the new row's id.
 // A failure is non-fatal — run tracking is observability, not correctness.
 func (w *Worker) startEmbedRun(ctx context.Context, gen vector.GenerationID, now int64) int64 {
@@ -212,6 +221,9 @@ func (w *Worker) startEmbedRun(ctx context.Context, gen vector.GenerationID, now
 		w.rebind(`INSERT INTO embed_runs (generation_id, started_at) VALUES (?, ?) RETURNING id`),
 		int64(gen), now).Scan(&id)
 	if err != nil {
+		if jobctx.YieldedToWaiter(ctx) {
+			return 0
+		}
 		w.deps.Log.Warn("embed_runs: start insert failed", "error", err)
 		return 0
 	}
@@ -294,6 +306,9 @@ func (w *Worker) run(ctx context.Context, gen vector.GenerationID, backstop bool
 	if !backstop {
 		wm, err := w.wm.GetWatermark(ctx, gen)
 		if err != nil {
+			if w.stopIfYielded(ctx, gen) {
+				return res, nil
+			}
 			// Non-fatal: a missing/unreadable watermark just restarts the
 			// scan from 0 (the scan predicate + idempotent upsert make this
 			// harmless). Log and continue.
@@ -306,11 +321,17 @@ func (w *Worker) run(ctx context.Context, gen vector.GenerationID, backstop bool
 
 	for {
 		if err := ctx.Err(); err != nil {
+			if w.stopIfYielded(ctx, gen) {
+				return res, nil
+			}
 			return res, fmt.Errorf("RunOnce: %w", err)
 		}
 		batchStart := time.Now()
 		ids, err := w.scanForEmbedding(ctx, int64(gen), afterID)
 		if err != nil {
+			if w.stopIfYielded(ctx, gen) {
+				return res, nil
+			}
 			return res, fmt.Errorf("scan for embedding: %w", err)
 		}
 		if len(ids) == 0 {
@@ -324,9 +345,11 @@ func (w *Worker) run(ctx context.Context, gen vector.GenerationID, backstop bool
 
 		eb, err := w.embedBatch(ctx, ids)
 		if err != nil {
+			if w.stopIfYielded(ctx, gen) {
+				return res, nil
+			}
 			consecutiveFailures++
 			lastErr = err
-			w.deps.Log.Warn("embed batch failed", "gen", gen, "ids", len(ids), "error", err)
 
 			if errors.Is(err, ErrPermanent4xx) {
 				// Walk the scanned ids one at a time. Drain decides per-ID
@@ -336,6 +359,10 @@ func (w *Worker) run(ctx context.Context, gen vector.GenerationID, backstop bool
 				w.deps.Log.Info("embed: downshifting to BatchSize=1 to drain failing batch",
 					"gen", gen, "batch_size", len(ids))
 				embedded, embeddedOK, stamped, safeAdvanceID, drainErr := w.downshiftDrain(ctx, gen, ids, &res, &completedRows)
+				if w.stopIfYielded(ctx, gen) {
+					return res, nil
+				}
+				w.deps.Log.Warn("embed batch failed", "gen", gen, "ids", len(ids), "error", err)
 				res.Succeeded += embedded
 				if drainErr != nil {
 					w.deps.Log.Info("embed: downshift drain returned error",
@@ -402,6 +429,7 @@ func (w *Worker) run(ctx context.Context, gen vector.GenerationID, backstop bool
 			// Non-4xx error: leave the batch unstamped (next scan re-finds
 			// it) and do not advance the cursor, so the failure cap can
 			// short-circuit the loop on a persistent fault.
+			w.deps.Log.Warn("embed batch failed", "gen", gen, "ids", len(ids), "error", err)
 			res.Failed += len(ids)
 			if consecutiveFailures >= w.deps.MaxConsecutiveFailures {
 				return res, fmt.Errorf("embed worker aborting after %d consecutive failures: %w",
@@ -428,6 +456,9 @@ func (w *Worker) run(ctx context.Context, gen vector.GenerationID, backstop bool
 				}
 				missed, serr := w.stampSkipped(ctx, gen, skipIDs, eb.lastModified)
 				if serr != nil {
+					if w.stopIfYielded(ctx, gen) {
+						return res, nil
+					}
 					res.Failed += len(skipIDs)
 					w.deps.Log.Error("stamp skip set failed", "error", serr, "gen", gen, "ids", len(skipIDs))
 					consecutiveFailures++
@@ -461,6 +492,9 @@ func (w *Worker) run(ctx context.Context, gen vector.GenerationID, backstop bool
 				w.deps.Log.Info("embed: generation retired mid-run; stopping", "gen", gen)
 				return res, nil
 			}
+			if w.stopIfYielded(ctx, gen) {
+				return res, nil
+			}
 			res.Failed += len(eb.embeddedIDs)
 			w.deps.Log.Error("upsert failed", "gen", gen, "ids", len(eb.embeddedIDs), "error", err)
 			consecutiveFailures++
@@ -482,6 +516,9 @@ func (w *Worker) run(ctx context.Context, gen vector.GenerationID, backstop bool
 			var err error
 			skipMissed, err = w.stampSkipped(ctx, gen, skipIDs, eb.lastModified)
 			if err != nil {
+				if w.stopIfYielded(ctx, gen) {
+					return res, nil
+				}
 				res.Failed += len(skipIDs)
 				w.deps.Log.Error("stamp skip set failed", "gen", gen, "ids", len(skipIDs), "error", err)
 				consecutiveFailures++
@@ -498,6 +535,9 @@ func (w *Worker) run(ctx context.Context, gen vector.GenerationID, backstop bool
 		// before this stamp just re-does the embedded rows next scan.
 		missed, serr := w.stampCovered(ctx, gen, eb.embeddedIDs, eb.lastModified)
 		if serr != nil {
+			if w.stopIfYielded(ctx, gen) {
+				return res, nil
+			}
 			res.Failed += len(eb.embeddedIDs)
 			w.deps.Log.Error("stamp embed_gen failed", "gen", gen, "ids", len(eb.embeddedIDs), "error", serr)
 			consecutiveFailures++
@@ -576,6 +616,9 @@ func (w *Worker) advanceWatermark(ctx context.Context, gen vector.GenerationID, 
 		return
 	}
 	if err := w.wm.SetWatermark(ctx, gen, id); err != nil {
+		if jobctx.YieldedToWaiter(ctx) {
+			return
+		}
 		w.deps.Log.Warn("embed: advance watermark failed (non-critical)",
 			"gen", gen, "id", id, "error", err)
 	}
@@ -884,6 +927,9 @@ func (w *Worker) downshiftDrain(
 		batchStart := time.Now()
 		eb, e := w.embedBatch(ctx, []int64{id})
 		if e != nil {
+			if jobctx.YieldedToWaiter(ctx) {
+				return embedded, embeddedOK, stamped, contiguousStampedID, e
+			}
 			if errors.Is(e, ErrPermanent4xx) {
 				maps.Copy(lm, eb.lastModified)
 				// Defer the drop decision. See function-level comment. A
@@ -913,6 +959,9 @@ func (w *Worker) downshiftDrain(
 			if len(skip) > 0 {
 				missed, serr := w.stampSkipped(ctx, gen, skip, eb.lastModified)
 				if serr != nil {
+					if jobctx.YieldedToWaiter(ctx) {
+						return embedded, embeddedOK, stamped, contiguousStampedID, serr
+					}
 					res.Failed += len(skip)
 					return embedded, embeddedOK, stamped, contiguousStampedID, fmt.Errorf("stamp skip: %w", serr)
 				}
@@ -961,6 +1010,9 @@ func (w *Worker) downshiftDrain(
 		embeddedOK++
 		missed, serr := w.stampCovered(ctx, gen, eb.embeddedIDs, eb.lastModified)
 		if serr != nil {
+			if jobctx.YieldedToWaiter(ctx) {
+				return embedded, embeddedOK, stamped, contiguousStampedID, serr
+			}
 			return embedded, embeddedOK, stamped, contiguousStampedID, fmt.Errorf("stamp embed_gen: %w", serr)
 		}
 		w.logCASMisses(gen, missed)
@@ -1008,6 +1060,9 @@ func (w *Worker) downshiftDrain(
 		// CAS-missed its stamp still proves the endpoint is healthy, and must
 		// not let a genuine 4xx sibling be misclassified as an all-drop.
 		// Stamp the deferred 4xxs so they drop out of future scans.
+		if jobctx.YieldedToWaiter(ctx) {
+			return embedded, embeddedOK, stamped, contiguousStampedID, nil
+		}
 		for _, id := range deferredDrops {
 			w.deps.Log.Warn("stamping (dropping) message after singleton 4xx",
 				"gen", gen, "id", id, "error", lastDeferredErr)
@@ -1018,6 +1073,9 @@ func (w *Worker) downshiftDrain(
 		// deletes stale vectors only for rows whose drop stamp actually landed.
 		missed, serr := w.stampSkipped(ctx, gen, deferredDrops, lm)
 		if serr != nil {
+			if jobctx.YieldedToWaiter(ctx) {
+				return embedded, embeddedOK, stamped, contiguousStampedID, serr
+			}
 			res.Failed += len(deferredDrops)
 			// Some deferred drops are now unstamped; do not advance past the
 			// contiguous-stamped prefix.

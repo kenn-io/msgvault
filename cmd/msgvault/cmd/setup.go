@@ -136,7 +136,7 @@ func setupOAuthSecrets(reader *bufio.Reader) (string, error) {
 	}
 
 	// Verify file exists
-	if _, err := os.Stat(path); os.IsNotExist(err) { //nolint:gosec // the user explicitly selected this local OAuth credential path
+	if _, err := os.Stat(path); os.IsNotExist(err) {
 		return "", fmt.Errorf("file not found: %s", path)
 	}
 

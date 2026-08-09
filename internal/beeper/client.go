@@ -147,7 +147,7 @@ func retryAfter(header string, attempt int) time.Duration {
 			return time.Duration(secs) * time.Second
 		}
 	}
-	return min(time.Duration(1<<uint(attempt))*time.Second, 60*time.Second) //nolint:gosec // retry attempts are bounded by the caller
+	return min(time.Duration(1<<uint(attempt))*time.Second, 60*time.Second)
 }
 
 // getJSON fetches path and unmarshals the JSON body into out.

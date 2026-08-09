@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"go.kenn.io/msgvault/internal/jobctx"
 	"go.kenn.io/msgvault/internal/vector"
 	"go.kenn.io/msgvault/internal/vector/embed"
 )
@@ -135,6 +136,9 @@ func (j *EmbedJob) Run(ctx context.Context) {
 	defer j.running.Unlock()
 
 	if _, err := j.Worker.ReclaimStale(ctx); err != nil {
+		if jobctx.YieldedToWaiter(ctx) {
+			return
+		}
 		log.Warn("embed reclaim failed", "error", err)
 	}
 
@@ -144,6 +148,12 @@ func (j *EmbedJob) Run(ctx context.Context) {
 	}
 
 	res, err := j.Worker.RunOnce(ctx, target)
+	// The scheduler yield cause takes precedence over an operation error:
+	// drivers can return unwrapped errors after cancellation, so the cause at
+	// this operation boundary is authoritative.
+	if jobctx.YieldedToWaiter(ctx) {
+		return
+	}
 	if err != nil {
 		log.Warn("embed run failed", "gen", target, "error", err)
 		return
@@ -167,6 +177,9 @@ func (j *EmbedJob) Run(ctx context.Context) {
 	// non-locking batches, and is idempotent (already-covered rows are
 	// skipped) so it never re-embeds stamped messages.
 	j.maybeRunBackstop(ctx, target, log)
+	if jobctx.YieldedToWaiter(ctx) {
+		return
+	}
 
 	if !isBuilding {
 		return
@@ -191,6 +204,9 @@ func (j *EmbedJob) Run(ctx context.Context) {
 		return
 	}
 	missing, err := j.missingCount(ctx, target)
+	if jobctx.YieldedToWaiter(ctx) {
+		return
+	}
 	if err != nil {
 		log.Warn("embed: coverage count after run failed", "gen", target, "error", err)
 		return
@@ -202,8 +218,17 @@ func (j *EmbedJob) Run(ctx context.Context) {
 	}
 	// force=false: the missing==0 check above is the scheduler's gate,
 	// and the backend re-asserts it inside ActivateGeneration.
+	if jobctx.YieldedToWaiter(ctx) {
+		return
+	}
 	if err := j.Backend.ActivateGeneration(ctx, target, false); err != nil {
+		if jobctx.YieldedToWaiter(ctx) {
+			return
+		}
 		log.Warn("embed: activation failed", "gen", target, "error", err)
+		return
+	}
+	if jobctx.YieldedToWaiter(ctx) {
 		return
 	}
 	log.Info("embed: building generation activated", "gen", target)
@@ -246,6 +271,9 @@ func (j *EmbedJob) maybeRunBackstop(ctx context.Context, gen vector.GenerationID
 		return
 	}
 	res, err := j.Worker.RunBackstop(ctx, gen)
+	if jobctx.YieldedToWaiter(ctx) {
+		return
+	}
 	if err != nil {
 		log.Warn("embed backstop failed", "gen", gen, "error", err)
 		// Do not advance lastBackstop on failure so the next tick retries.
@@ -285,6 +313,9 @@ func (j *EmbedJob) maybeRunBackstop(ctx context.Context, gen vector.GenerationID
 // occurred (already logged); the caller should return.
 func (j *EmbedJob) pickTarget(ctx context.Context, log *slog.Logger) (vector.GenerationID, bool, bool) {
 	bg, bgErr := j.Backend.BuildingGeneration(ctx)
+	if jobctx.YieldedToWaiter(ctx) {
+		return 0, false, false
+	}
 	if bgErr != nil {
 		log.Warn("embed: building generation lookup failed", "error", bgErr)
 		return 0, false, false
@@ -311,6 +342,9 @@ func (j *EmbedJob) pickTarget(ctx context.Context, log *slog.Logger) (vector.Gen
 	}
 
 	active, err := j.Backend.ActiveGeneration(ctx)
+	if jobctx.YieldedToWaiter(ctx) {
+		return 0, false, false
+	}
 	switch {
 	case err == nil:
 		if j.Fingerprint != "" && active.Fingerprint != j.Fingerprint {

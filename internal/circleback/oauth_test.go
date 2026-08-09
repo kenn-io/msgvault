@@ -74,7 +74,7 @@ func newFakeAS(t *testing.T) *fakeAS {
 		f.lastAuthorize = r.URL.Query()
 		redirect := r.URL.Query().Get("redirect_uri") +
 			"?code=authcode-1&state=" + url.QueryEscape(r.URL.Query().Get("state"))
-		http.Redirect(w, r, redirect, http.StatusFound)
+		http.Redirect(w, r, redirect, http.StatusFound) //nolint:gosec // the test fixture must follow the client-supplied OAuth callback.
 	})
 	mux.HandleFunc("/token", func(w http.ResponseWriter, r *http.Request) {
 		r.Body = http.MaxBytesReader(w, r.Body, 1<<20)

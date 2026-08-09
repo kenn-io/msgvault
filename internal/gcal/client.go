@@ -197,7 +197,7 @@ func (c *Client) request(ctx context.Context, op gmail.Operation, method, path s
 
 // calculateBackoff returns full-jitter exponential backoff for a retry attempt.
 func (c *Client) calculateBackoff(attempt int) time.Duration {
-	base := float64(uint(1) << uint(attempt)) //nolint:gosec // retry attempts are bounded before backoff calculation
+	base := float64(uint(1) << uint(attempt))
 	if base > maxBackoff {
 		base = maxBackoff
 	}

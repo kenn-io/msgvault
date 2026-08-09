@@ -1952,8 +1952,10 @@ type TextMessagesResponse struct {
 // aggregateViewTypes are the accepted view_type values, surfaced in 400 messages.
 var aggregateViewTypes = []string{
 	"senders", "sender_names", "recipients", "recipient_names",
-	"domains", "labels", "time",
+	"domains", aggregateViewLabels, "time",
 }
+
+const aggregateViewLabels = "labels"
 
 // parseViewType parses a view type string into query.ViewType.
 func parseViewType(s string) (query.ViewType, bool) {
@@ -1968,7 +1970,7 @@ func parseViewType(s string) (query.ViewType, bool) {
 		return query.ViewRecipientNames, true
 	case "domains":
 		return query.ViewDomains, true
-	case "labels":
+	case aggregateViewLabels:
 		return query.ViewLabels, true
 	case "time":
 		return query.ViewTime, true
@@ -1991,7 +1993,7 @@ func viewTypeString(v query.ViewType) string {
 	case query.ViewDomains:
 		return "domains"
 	case query.ViewLabels:
-		return "labels"
+		return aggregateViewLabels
 	case query.ViewTime:
 		return "time"
 	default:
@@ -2060,7 +2062,7 @@ func parseTextViewType(s string) (query.TextViewType, bool) {
 		return query.TextViewContactNames, true
 	case "sources":
 		return query.TextViewSources, true
-	case "labels":
+	case aggregateViewLabels:
 		return query.TextViewLabels, true
 	case "time":
 		return query.TextViewTime, true
@@ -2080,7 +2082,7 @@ func textViewTypeString(v query.TextViewType) string {
 	case query.TextViewSources:
 		return "sources"
 	case query.TextViewLabels:
-		return "labels"
+		return aggregateViewLabels
 	case query.TextViewTime:
 		return "time"
 	default:
@@ -3142,7 +3144,7 @@ func openLooseAttachmentContent(attachmentsDir, contentHash, storagePath string)
 	if err != nil {
 		return nil, 0, err
 	}
-	f, err := os.Open(path) //nolint:gosec // path is constrained by the content hash or validated recorded attachment path
+	f, err := os.Open(path)
 	if err != nil {
 		return nil, 0, err
 	}
