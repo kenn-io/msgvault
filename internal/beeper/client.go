@@ -8,16 +8,17 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"strconv"
 	"strings"
 	"syscall"
 	"time"
 
+	"go.kenn.io/msgvault/internal/httpretry"
 	"golang.org/x/time/rate"
 )
 
 const (
-	maxRetries = 8
+	maxRetries    = 8
+	maxRetryAfter = httpretry.DefaultMaxRetryAfter
 	// DefaultBaseURL is the Beeper Desktop API loopback address.
 	DefaultBaseURL = "http://localhost:23373"
 	// defaultQPS bounds request rate against the live Beeper Desktop app. The
@@ -40,10 +41,11 @@ type TokenFunc func(context.Context) (string, error)
 // Client is a read-only Beeper Desktop API client. It exposes only GET
 // endpoints by construction, so the archiver can never mutate Beeper state.
 type Client struct {
-	baseURL string
-	token   TokenFunc
-	http    *http.Client
-	limiter *rate.Limiter
+	baseURL       string
+	token         TokenFunc
+	http          *http.Client
+	limiter       *rate.Limiter
+	retryAfterMax time.Duration
 }
 
 // NewClient creates a Client. baseURL is injected so tests can point at
@@ -56,10 +58,11 @@ func NewClient(baseURL string, token TokenFunc, qps float64) *Client {
 		qps = defaultQPS
 	}
 	return &Client{
-		baseURL: strings.TrimRight(baseURL, "/"),
-		token:   token,
-		http:    &http.Client{Timeout: 60 * time.Second},
-		limiter: rate.NewLimiter(rate.Limit(qps), 1),
+		baseURL:       strings.TrimRight(baseURL, "/"),
+		token:         token,
+		http:          &http.Client{Timeout: 60 * time.Second},
+		limiter:       rate.NewLimiter(rate.Limit(qps), 1),
+		retryAfterMax: maxRetryAfter,
 	}
 }
 
@@ -123,7 +126,7 @@ func (c *Client) fetch(ctx context.Context, path string, maxBytes int64) ([]byte
 		case resp.StatusCode == http.StatusNotFound:
 			return nil, fmt.Errorf("beeper GET %s: %w", reqURL, ErrNotFound)
 		case resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500:
-			wait := retryAfter(resp.Header.Get("Retry-After"), attempt)
+			wait := httpretry.RetryAfter(resp.Header.Get("Retry-After"), attempt, c.retryAfterMax)
 			timer := time.NewTimer(wait)
 			select {
 			case <-ctx.Done():
@@ -137,17 +140,6 @@ func (c *Client) fetch(ctx context.Context, path string, maxBytes int64) ([]byte
 		}
 	}
 	return nil, fmt.Errorf("beeper GET %s: exhausted %d retries", reqURL, maxRetries)
-}
-
-// retryAfter parses a Retry-After header value (seconds) or falls back to
-// exponential back-off capped at 60 s.
-func retryAfter(header string, attempt int) time.Duration {
-	if header != "" {
-		if secs, err := strconv.Atoi(strings.TrimSpace(header)); err == nil {
-			return time.Duration(secs) * time.Second
-		}
-	}
-	return min(time.Duration(1<<uint(attempt))*time.Second, 60*time.Second)
 }
 
 // getJSON fetches path and unmarshals the JSON body into out.

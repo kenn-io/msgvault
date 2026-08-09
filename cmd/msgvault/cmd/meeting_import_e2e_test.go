@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -120,4 +121,50 @@ func TestMeetingImportAPIToStoreUpdatesCanonicalMessage(t *testing.T) {
 	assert.Contains(current.Body, "Replacement summary.")
 	assert.Contains(current.Body, "Speaker 2: replacement transcript")
 	assert.Empty(current.To)
+}
+
+func TestMeetingImportReturnsSuccessWhenCacheRefreshFails(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	st := testutil.NewTestStore(t)
+	cacheErr := errors.New("synthetic cache refresh failure")
+	adapter := &storeAPIAdapter{
+		store: st,
+		meetingImporter: meetingimport.NewImporter(st, meetingimport.Hooks{
+			AfterSourceSetup: func() error { return nil },
+			RefreshCache: func(context.Context, string) error {
+				return cacheErr
+			},
+		}),
+	}
+	srv := api.NewServer(
+		&config.Config{Server: config.ServerConfig{}},
+		adapter,
+		nil,
+		slog.New(slog.DiscardHandler),
+	)
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/import/meeting",
+		bytes.NewBufferString(meetingImportE2EBody),
+	)
+	req.Header.Set("Content-Type", "application/json")
+	resp := httptest.NewRecorder()
+	srv.Router().ServeHTTP(resp, req)
+
+	require.Equal(http.StatusCreated, resp.Code, "body: %s", resp.Body.String())
+	var created api.MeetingImportResponse
+	require.NoError(json.NewDecoder(resp.Body).Decode(&created))
+	assert.Equal(meetingimport.StatusCreated, created.Status)
+	assert.NotZero(created.MessageID)
+
+	var persisted int
+	require.NoError(st.DB().QueryRow(st.Rebind(`
+		SELECT COUNT(*)
+		FROM messages
+		WHERE id = ? AND source_message_id = ? AND message_type = ?
+	`), created.MessageID, "meeting:42", meetingimport.MessageType).Scan(&persisted))
+	assert.Equal(1, persisted)
 }

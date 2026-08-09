@@ -1,10 +1,12 @@
 package meetingimport
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"strings"
 	"testing"
 	"time"
@@ -601,7 +603,7 @@ func TestImporterPreconfirmedAccountEmailKeepsEarlierMeetingAttributionCurrent(t
 	assert.True(earlierIsFromMe)
 }
 
-func TestImporterMarksCacheFailureAndSafelyRetries(t *testing.T) {
+func TestImporterCompletesSyncAndSafelyRetriesAfterCacheFailure(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -618,7 +620,7 @@ func TestImporterMarksCacheFailureAndSafelyRetries(t *testing.T) {
 	})
 
 	_, err := importer.Import(context.Background(), validImportRequest(t))
-	require.ErrorIs(err, cacheErr)
+	require.NoError(err)
 
 	var messageID, sourceID int64
 	require.NoError(st.DB().QueryRow(`
@@ -626,11 +628,11 @@ func TestImporterMarksCacheFailureAndSafelyRetries(t *testing.T) {
 	`).Scan(&messageID, &sourceID))
 	assert.NotZero(messageID, "message remains durable after cache failure")
 
-	failed, err := st.GetLatestSync(sourceID)
+	completed, err := st.GetLatestSync(sourceID)
 	require.NoError(err)
-	assert.Equal(store.SyncStatusFailed, failed.Status)
-	assert.Equal(int64(1), failed.MessagesProcessed)
-	assert.Equal(int64(1), failed.MessagesAdded)
+	assert.Equal(store.SyncStatusCompleted, completed.Status)
+	assert.Equal(int64(1), completed.MessagesProcessed)
+	assert.Equal(int64(1), completed.MessagesAdded)
 
 	failCache = false
 	result, err := importer.Import(context.Background(), validImportRequest(t))
@@ -638,10 +640,22 @@ func TestImporterMarksCacheFailureAndSafelyRetries(t *testing.T) {
 	assert.Equal(StatusUpdated, result.Status)
 	assert.Equal(messageID, result.MessageID)
 
-	completed, err := st.GetLatestSync(sourceID)
+	completed, err = st.GetLatestSync(sourceID)
 	require.NoError(err)
 	assert.Equal(store.SyncStatusCompleted, completed.Status)
 	assert.Equal(int64(0), completed.MessagesUpdated)
+}
+
+func TestImporterRefreshCacheDoesNotLogShutdownCancellation(t *testing.T) {
+	var logs bytes.Buffer
+	importer := NewImporter(nil, Hooks{
+		RefreshCache: func(context.Context, string) error {
+			return context.Canceled
+		},
+	}).WithLogger(slog.New(slog.NewTextHandler(&logs, nil)))
+
+	importer.refreshCache(context.Background(), "meeting_import:local-meetings", 1, "meeting:42")
+	assert.Empty(t, logs.String())
 }
 
 func TestImporterSourceHookFailureStopsBeforeSync(t *testing.T) {

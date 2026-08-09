@@ -7,14 +7,17 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"strconv"
 	"strings"
 	"time"
 
+	"go.kenn.io/msgvault/internal/httpretry"
 	"golang.org/x/time/rate"
 )
 
-const maxRetries = 8
+const (
+	maxRetries    = 8
+	maxRetryAfter = httpretry.ProviderMaxRetryAfter
+)
 
 // TokenFunc returns a bearer token for a Graph API request.
 type TokenFunc func(context.Context) (string, error)
@@ -80,7 +83,7 @@ func (c *Client) get(ctx context.Context, rawURL string) ([]byte, error) {
 		case resp.StatusCode == http.StatusOK:
 			return body, nil
 		case resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500:
-			wait := retryAfter(resp.Header.Get("Retry-After"), attempt)
+			wait := httpretry.RetryAfter(resp.Header.Get("Retry-After"), attempt, maxRetryAfter)
 			timer := time.NewTimer(wait)
 			select {
 			case <-ctx.Done():
@@ -112,18 +115,6 @@ func (c *Client) resolveRequestURL(rawURL string) (string, error) {
 		return "", fmt.Errorf("graph GET %s: off-origin absolute URL", rawURL)
 	}
 	return u.String(), nil
-}
-
-// retryAfter parses a Retry-After header value (seconds) or falls back to
-// exponential back-off capped at 60 s.
-func retryAfter(header string, attempt int) time.Duration {
-	if header != "" {
-		if secs, err := strconv.Atoi(strings.TrimSpace(header)); err == nil {
-			return time.Duration(secs) * time.Second
-		}
-	}
-	d := min(time.Duration(1<<uint(attempt))*time.Second, 60*time.Second)
-	return d
 }
 
 // GetRaw fetches url and returns the raw response bytes. url should be a

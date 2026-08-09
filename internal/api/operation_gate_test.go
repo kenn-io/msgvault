@@ -304,6 +304,172 @@ func TestOperationGateMiddlewareStopsWaitingWhenRequestContextCancels(t *testing
 	assert.Equal(http.StatusServiceUnavailable, resp.Code, "status")
 }
 
+type parkedContext struct {
+	context.Context
+
+	parked chan struct{}
+	once   sync.Once
+}
+
+func (c *parkedContext) Done() <-chan struct{} {
+	c.once.Do(func() { close(c.parked) })
+	return c.Context.Done()
+}
+
+func waitForParkedContext(t *testing.T, parked <-chan struct{}, work string) {
+	t.Helper()
+	select {
+	case <-parked:
+	case <-time.After(time.Second):
+		require.FailNowf(t, "operation gate wait timed out", "%s did not park on the operation gate", work)
+	}
+}
+
+func TestServerBackgroundOperationGateStopsWhenContextCancelsBehindRequest(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	gate := NewSerialOperationGate()
+	srv := &Server{operationGate: gate}
+	activeRelease, ok := gate.BeginLabeledWorkContext(context.Background(), "active work")
+	require.True(ok, "hold gate")
+	requestCtx, requestCancel := context.WithCancel(context.Background())
+	requestParked := make(chan struct{})
+	requestResult := make(chan bool, 1)
+	go func() {
+		release, acquired := gate.BeginRequestWorkContext(&parkedContext{
+			Context: requestCtx,
+			parked:  requestParked,
+		}, "queued request")
+		if acquired {
+			release()
+		}
+		requestResult <- acquired
+	}()
+	waitForParkedContext(t, requestParked, "request")
+
+	backgroundCtx, backgroundCancel := context.WithCancel(context.Background())
+	backgroundParked := make(chan struct{})
+	backgroundResult := make(chan bool, 1)
+	go func() {
+		release, acquired := srv.beginBackgroundOperationGateWork(&parkedContext{
+			Context: backgroundCtx,
+			parked:  backgroundParked,
+		}, "background work")
+		if acquired {
+			release()
+		}
+		backgroundResult <- acquired
+	}()
+	waitForParkedContext(t, backgroundParked, "background work")
+
+	backgroundCancel()
+	select {
+	case acquired := <-backgroundResult:
+		assert.False(acquired, "parked background work must escape after context cancellation")
+	case <-time.After(time.Second):
+		require.FailNow("background acquisition did not return after context cancellation")
+	}
+
+	requestCancel()
+	select {
+	case acquired := <-requestResult:
+		assert.False(acquired, "request cleanup should release its waiter")
+	case <-time.After(time.Second):
+		require.FailNow("request waiter did not clean up")
+	}
+	activeRelease()
+	assert.False(gate.HasRequestWaiters(), "request waiter must be removed after cancellation")
+}
+
+func TestServerBackgroundOperationGateStopsWhenDrainStartsBehindRequest(t *testing.T) {
+	tests := []struct {
+		name       string
+		startDrain func(*SerialOperationGate) <-chan error
+	}{
+		{
+			name: "StartDrain",
+			startDrain: func(gate *SerialOperationGate) <-chan error {
+				gate.StartDrain()
+				return nil
+			},
+		},
+		{
+			name: "Drain",
+			startDrain: func(gate *SerialOperationGate) <-chan error {
+				done := make(chan error, 1)
+				go func() { done <- gate.Drain(context.Background()) }()
+				return done
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+
+			gate := NewSerialOperationGate()
+			srv := &Server{operationGate: gate}
+			activeRelease, ok := gate.BeginLabeledWorkContext(context.Background(), "active work")
+			require.True(ok, "hold gate")
+			requestCtx, requestCancel := context.WithCancel(context.Background())
+			requestParked := make(chan struct{})
+			requestResult := make(chan bool, 1)
+			go func() {
+				release, acquired := gate.BeginRequestWorkContext(&parkedContext{
+					Context: requestCtx,
+					parked:  requestParked,
+				}, "queued request")
+				if acquired {
+					release()
+				}
+				requestResult <- acquired
+			}()
+			waitForParkedContext(t, requestParked, "request")
+
+			backgroundCtx := context.Background()
+			backgroundParked := make(chan struct{})
+			backgroundResult := make(chan bool, 1)
+			go func() {
+				release, acquired := srv.beginBackgroundOperationGateWork(&parkedContext{
+					Context: backgroundCtx,
+					parked:  backgroundParked,
+				}, "background work")
+				if acquired {
+					release()
+				}
+				backgroundResult <- acquired
+			}()
+			waitForParkedContext(t, backgroundParked, "background work")
+
+			drainDone := tt.startDrain(gate)
+			select {
+			case acquired := <-backgroundResult:
+				assert.False(acquired, "parked background work must escape when drain starts")
+			case <-time.After(time.Second):
+				require.FailNow("background acquisition did not return after drain started")
+			}
+			select {
+			case acquired := <-requestResult:
+				assert.False(acquired, "queued request must be rejected during drain")
+			case <-time.After(time.Second):
+				require.FailNow("request waiter did not return after drain started")
+			}
+
+			requestCancel()
+			activeRelease()
+			if drainDone != nil {
+				select {
+				case err := <-drainDone:
+					require.NoError(err, "drain")
+				case <-time.After(time.Second):
+					require.FailNow("drain did not finish after active work released")
+				}
+			}
+		})
+	}
+}
+
 func TestSerialOperationGateDrainRejectsQueuedWorkAndWaitsForActive(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -770,6 +936,69 @@ func TestSerialOperationGateCountsRequestWaiters(t *testing.T) {
 		require.FailNow("waiter did not acquire gate")
 	}
 	assert.False(gate.HasRequestWaiters(), "waiter count returns to zero")
+}
+
+func TestSerialOperationGatePrioritizesQueuedRequestOverBackgroundWork(t *testing.T) {
+	require := require.New(t)
+
+	gate := NewSerialOperationGate()
+	releaseActive, ok := gate.BeginLabeledWorkContext(context.Background(), "first scheduled sync")
+	require.True(ok, "occupy gate")
+	t.Cleanup(releaseActive)
+
+	type acquisition struct {
+		release func()
+		ok      bool
+	}
+	requestAcquired := make(chan acquisition, 1)
+	go func() {
+		release, acquired := gate.BeginRequestWorkContext(context.Background(), "meeting import")
+		requestAcquired <- acquisition{release: release, ok: acquired}
+	}()
+	require.Eventually(gate.HasRequestWaiters, time.Second, time.Millisecond,
+		"request must register before the next background admission")
+
+	backgroundAcquired := make(chan acquisition, 1)
+	go func() {
+		release, acquired := gate.BeginLabeledWorkContext(context.Background(), "manual sync")
+		backgroundAcquired <- acquisition{release: release, ok: acquired}
+	}()
+
+	select {
+	case result := <-backgroundAcquired:
+		if result.ok {
+			result.release()
+		}
+		require.FailNow("background work returned while the gate was held", "ok=%v", result.ok)
+	case <-time.After(25 * time.Millisecond):
+	}
+
+	releaseActive()
+	var request acquisition
+	select {
+	case request = <-requestAcquired:
+		require.True(request.ok, "queued request must acquire after active work releases")
+	case <-time.After(time.Second):
+		require.FailNow("queued request did not acquire after active work released")
+	}
+	select {
+	case result := <-backgroundAcquired:
+		if result.ok {
+			result.release()
+		}
+		require.FailNow("background work acquired before the request released", "ok=%v", result.ok)
+	case <-time.After(25 * time.Millisecond):
+	}
+
+	request.release()
+	select {
+	case background := <-backgroundAcquired:
+		require.True(background.ok, "background work waits and then acquires")
+		background.release()
+	case <-time.After(time.Second):
+		require.FailNow("background work did not acquire after the request released")
+	}
+	require.False(gate.HasRequestWaiters(), "request waiter drains")
 }
 
 func TestBeginLabeledOperationGateWorkCountsAsRequestWaiter(t *testing.T) {

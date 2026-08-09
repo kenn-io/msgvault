@@ -332,6 +332,34 @@ func TestRebuildCacheAfterWriteReturnsError(t *testing.T) {
 	require.ErrorContains(err, "refresh analytics cache")
 }
 
+func TestScheduledCacheRefreshSkipsWhenAutoBuildCacheDisabled(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	tmpDir := t.TempDir()
+
+	savedCfg := cfg
+	t.Cleanup(func() { cfg = savedCfg })
+	cfg = &config.Config{
+		HomeDir: tmpDir,
+		Data:    config.DataConfig{DataDir: tmpDir},
+		Analytics: config.AnalyticsConfig{
+			AutoBuildCache: false,
+		},
+	}
+
+	builds := 0
+	oldRunBuild := runBuildCacheSubprocess
+	runBuildCacheSubprocess = func(context.Context, bool, bool) error {
+		builds++
+		return errors.New("unexpected scheduled cache build")
+	}
+	t.Cleanup(func() { runBuildCacheSubprocess = oldRunBuild })
+
+	err := rebuildCacheAfterScheduledSync(context.Background(), "disabled")
+	require.NoError(err)
+	assert.Zero(builds, "disabled auto_build_cache must not start a cache build")
+}
+
 func TestRepairEncodingReturnsCacheRefreshError(t *testing.T) {
 	require := require.New(t)
 	tmpDir := t.TempDir()
@@ -373,7 +401,13 @@ func TestScheduledCacheRefreshFailurePreservesCompletedSyncRun(t *testing.T) {
 
 	savedCfg := cfg
 	t.Cleanup(func() { cfg = savedCfg })
-	cfg = &config.Config{HomeDir: tmpDir, Data: config.DataConfig{DataDir: tmpDir}}
+	cfg = &config.Config{
+		HomeDir: tmpDir,
+		Data:    config.DataConfig{DataDir: tmpDir},
+		Analytics: config.AnalyticsConfig{
+			AutoBuildCache: true,
+		},
+	}
 
 	sentinel := errors.New("scheduled cache sentinel")
 	oldRunBuild := runBuildCacheSubprocess

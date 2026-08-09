@@ -2150,6 +2150,11 @@ func globalConfigFlagArgs() []string {
 // to keep DuckDB's bundled SQLite library out of a long-lived daemon's
 // address space (issue #379).
 func rebuildCacheAfterScheduledSync(ctx context.Context, identifier string) error {
+	if !cfg.Analytics.AutoBuildCache {
+		// AutoBuildCache opts out of automatic daemon rebuilds, even when startup
+		// selected a usable DuckDB cache; engine = "sql" is the live-data choice.
+		return nil
+	}
 	dbPath := cfg.DatabaseDSN()
 	if store.IsPostgresURL(dbPath) {
 		return nil

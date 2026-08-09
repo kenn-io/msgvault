@@ -421,6 +421,50 @@ func TestOpenDaemonAnalyticsEngineSkipsCacheBuildWhenDisabled(t *testing.T) {
 	assert.Equal(startupCacheBuildOutcomeNone, outcome, "no explicit intent has no outcome")
 }
 
+func TestOpenDaemonAnalyticsEngineWarnsWhenDuckDBRefreshDisabled(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	c, s := openTestDaemonAnalyticsStore(t)
+	c.Analytics.Engine = config.AnalyticsEngineAuto
+	c.Analytics.AutoBuildCache = false
+	_, err := buildCache(c.DatabaseDSN(), c.AnalyticsDir(), true)
+	require.NoError(err, "build ready analytics cache")
+	staleness := cacheNeedsBuild(c.DatabaseDSN(), c.AnalyticsDir())
+	require.False(staleness.NeedsBuild, "test cache must be ready: %+v", staleness)
+	var logs bytes.Buffer
+	oldLogger := logger
+	logger = slog.New(slog.NewTextHandler(&logs, nil))
+	t.Cleanup(func() { logger = oldLogger })
+
+	engine, mode, outcome, err := openDaemonAnalyticsEngine(
+		context.Background(), c, s, startupCacheBuildIntentNone,
+	)
+	require.NoError(err, "openDaemonAnalyticsEngine")
+	defer func() { _ = engine.Close() }()
+
+	assert.IsType(&query.DuckDBEngine{}, engine,
+		"auto mode must keep using a usable cache")
+	assert.Equal(api.AnalyticsModeDuckDB, mode,
+		"usable cache selects DuckDB even when automatic refresh is disabled")
+	assert.Equal(startupCacheBuildOutcomeNone, outcome, "no explicit intent has no outcome")
+	assert.Contains(logs.String(),
+		"automatic analytics cache refresh disabled",
+		"startup warning explains the live-SQL opt-out")
+	assert.Contains(logs.String(),
+		"auto_build_cache=false",
+		"startup warning records the disabled setting")
+}
+
+func TestDaemonCacheRefreshErrorReportsDaemonCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	subprocessErr := errors.New("signal: killed")
+
+	require.ErrorIs(t, daemonCacheRefreshError(ctx, subprocessErr), context.Canceled)
+	assert.Same(t, subprocessErr, daemonCacheRefreshError(context.Background(), subprocessErr))
+	assert.NoError(t, daemonCacheRefreshError(ctx, nil))
+}
+
 func TestOpenDaemonAnalyticsEngineAutoBuildsCacheAtStartup(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

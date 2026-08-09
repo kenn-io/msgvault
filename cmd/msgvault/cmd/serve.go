@@ -480,8 +480,12 @@ func runServe(cmd *cobra.Command, args []string) error {
 		AfterSourceSetup: func() error {
 			return runPostSourceCreateMigrations(s)
 		},
-		RefreshCache: rebuildCacheAfterScheduledSync,
-	})
+		RefreshCache: func(_ context.Context, label string) error {
+			// The import is already durable. Keep the refresh independent of the
+			// client, but let daemon shutdown stop it before the store closes.
+			return daemonCacheRefreshError(ctx, rebuildCacheAfterScheduledSync(ctx, label))
+		},
+	}).WithLogger(logger)
 	storeAdapter := &storeAPIAdapter{
 		store:                 s,
 		attachmentMaintenance: attachmentMaint,
@@ -594,6 +598,16 @@ func runServe(cmd *cobra.Command, args []string) error {
 	}
 
 	return nil
+}
+
+func daemonCacheRefreshError(ctx context.Context, err error) error {
+	if err == nil {
+		return nil
+	}
+	if ctx != nil && ctx.Err() != nil {
+		return ctx.Err()
+	}
+	return err
 }
 
 func applyServerRuntimeConfig(options *api.ServerOptions, cfg *config.Config) {
@@ -841,6 +855,13 @@ func openDaemonAnalyticsEngine(
 		}
 		if intent != startupCacheBuildIntentNone {
 			outcome = startupCacheBuildOutcomeFulfilled
+		}
+		if !c.Analytics.AutoBuildCache {
+			logger.Warn(
+				`automatic analytics cache refresh disabled; DuckDB analytics can become stale; engine = "sql" selects live aggregate data`,
+				"auto_build_cache", false,
+				"engine", engineMode,
+			)
 		}
 		return duckEngine, api.AnalyticsModeDuckDB, outcome, nil
 	}

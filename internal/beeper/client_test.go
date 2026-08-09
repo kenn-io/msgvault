@@ -35,6 +35,32 @@ func TestClientRetriesOn429(t *testing.T) {
 	assert.EqualValues(3, calls.Load())
 }
 
+func TestClientCapsOversizedRetryAfter(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if calls.Add(1) == 1 {
+			w.Header().Set("Retry-After", "86400")
+			w.WriteHeader(http.StatusTooManyRequests)
+			return
+		}
+		_, _ = w.Write([]byte(`[]`))
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL, testToken, 1000)
+	c.retryAfterMax = 10 * time.Millisecond
+	start := time.Now()
+	accounts, err := c.ListAccounts(context.Background())
+	require.NoError(err)
+	assert.Empty(accounts)
+	assert.EqualValues(2, calls.Load())
+	assert.Less(time.Since(start), time.Second,
+		"provider Retry-After must not park a sync for the requested day")
+}
+
 func TestClientUnauthorizedMessage(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
