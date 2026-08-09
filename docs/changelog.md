@@ -9,6 +9,33 @@ All notable changes to msgvault, grouped by release.
 
 ---
 
+## 0.19.3
+<small>2026-08-09</small>
+
+**Improvements**
+
+- Start the API immediately while the analytics cache builds in the background.
+- Respect provider rate limits during Circleback syncs.
+- Improve daemon job scheduling and meeting import reliability.
+
+**Bug fixes**
+
+- Repair dangling message recipients automatically during database upgrades.
+- Prevent keyed-object Circleback insights from blocking sync.
+- Treat cooperative embedding scheduler yields as normal instead of job failures.
+
+**Contributors**
+
+- Thanks to [Rusty Shackleford](https://github.com/salmonumbrella) for the
+  non-blocking API startup, daemon job and meeting import reliability work, and
+  cooperative embedding scheduler fix.
+- Thanks to [Matthew Sweeney](https://github.com/sweenzor) for the Circleback
+  insight decoding and provider rate-limit fixes.
+- Thanks to [Wes McKinney](https://github.com/wesm) for repairing dangling
+  message recipients during database upgrades.
+
+---
+
 ## 0.19.2
 <small>2026-08-08</small>
 
