@@ -57,7 +57,8 @@ func TestStableProviderIDCandidateMayBeAcceptedBySystem(t *testing.T) {
 	candidate, _, err := st.UpsertIdentityMatchCandidateContext(context.Background(), store.IdentityMatchCandidateInput{
 		LeftKind: store.IdentityMatchParticipant, LeftID: left,
 		RightKind: store.IdentityMatchParticipant, RightID: right,
-		Basis: store.IdentityMatchStableProviderID, State: store.IdentityMatchStateCandidate,
+		Basis: store.IdentityMatchStableProviderID, NormalizedValue: new("beeper-user-1"),
+		State:  store.IdentityMatchStateCandidate,
 		Source: store.ProvenanceArchiveObservation,
 	})
 	require.NoError(err)
@@ -66,6 +67,34 @@ func TestStableProviderIDCandidateMayBeAcceptedBySystem(t *testing.T) {
 	)
 	require.NoError(err)
 	assert.NotNil(accepted.DecidedAt)
+}
+
+func TestStableProviderIDCandidateWithoutRecordedValueRequiresUserAcceptance(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := storetest.New(t).Store
+	ctx := context.Background()
+	left, err := st.EnsureParticipantByIdentifier("beeper", "@alice:example.org", "Alice Example")
+	require.NoError(err)
+	right, err := st.EnsureParticipantByIdentifier("beeper", "@alice2:example.org", "Alice Example")
+	require.NoError(err)
+	candidate, _, err := st.UpsertIdentityMatchCandidateContext(ctx, store.IdentityMatchCandidateInput{
+		LeftKind: store.IdentityMatchParticipant, LeftID: left,
+		RightKind: store.IdentityMatchParticipant, RightID: right,
+		Basis: store.IdentityMatchStableProviderID, State: store.IdentityMatchStateCandidate,
+		Source: store.ProvenanceArchiveObservation,
+	})
+	require.NoError(err)
+	_, err = st.DecideIdentityMatchCandidateContext(
+		ctx, candidate.ID, store.IdentityMatchStateAccepted, "system", nil,
+	)
+	require.ErrorIs(err, store.ErrIdentityMatchNotAcceptable,
+		"a stable-provider-id basis without the matched value must not be system-accepted")
+	accepted, err := st.DecideIdentityMatchCandidateContext(
+		ctx, candidate.ID, store.IdentityMatchStateAccepted, "user", nil,
+	)
+	require.NoError(err)
+	assert.Equal(store.IdentityMatchStateAccepted, accepted.State)
 }
 
 func TestUpsertIdentityMatchCandidateRejectsDecisionStates(t *testing.T) {

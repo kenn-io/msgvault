@@ -302,6 +302,82 @@ func TestProviderIDEnrichmentRemovesGeneratedConflict(t *testing.T) {
 	assert.Empty(candidates)
 }
 
+func TestContradictoryProviderIDSupersedesCurrentObservation(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := storetest.New(t).Store
+	ctx := t.Context()
+	participantID, err := st.EnsureParticipantByIdentifier(
+		"beeper", "@alice:example.org", "Alice Example",
+	)
+	require.NoError(err)
+	input := store.ParticipantContactObservationInput{
+		AddressKind: store.ContactAddressUsername, ServiceSlug: new("x"),
+		ProviderUserID: new("x-old"), OriginalValue: "@alice",
+		Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceArchiveObservation},
+	}
+	first, err := st.RecordContactObservationContext(ctx, participantID, input)
+	require.NoError(err)
+	input.ProviderUserID = new("x-new")
+	second, err := st.RecordContactObservationContext(ctx, participantID, input)
+	require.NoError(err)
+	assert.True(second.Created, "a contradictory provider ID must record a new observation")
+	assert.NotEqual(first.Observation.Envelope.ID, second.Observation.Envelope.ID)
+
+	current, err := st.ListParticipantObservationsContext(ctx, participantID, true)
+	require.NoError(err)
+	require.Len(current, 1)
+	require.NotNil(current[0].ProviderUserID)
+	assert.Equal("x-new", *current[0].ProviderUserID)
+
+	all, err := st.ListParticipantObservationsContext(ctx, participantID, false)
+	require.NoError(err)
+	require.Len(all, 2, "the contradicted observation must be retained as history")
+	var historical *store.ParticipantContactObservation
+	for index := range all {
+		if all[index].Envelope.ID == first.Observation.Envelope.ID {
+			historical = &all[index]
+		}
+	}
+	require.NotNil(historical)
+	assert.NotNil(historical.Envelope.ActiveUntil)
+	assert.NotNil(historical.Envelope.SupersededAt)
+	require.NotNil(historical.ProviderUserID)
+	assert.Equal("x-old", *historical.ProviderUserID)
+}
+
+func TestProviderIDChangeRemovesStaleGeneratedConflict(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := storetest.New(t).Store
+	ctx := t.Context()
+	left, err := st.EnsureParticipantByIdentifier("example", "left-change", "Left")
+	require.NoError(err)
+	right, err := st.EnsureParticipantByIdentifier("example", "right-change", "Right")
+	require.NoError(err)
+	input := store.ParticipantContactObservationInput{
+		AddressKind: store.ContactAddressEmail, OriginalValue: "shared@example.org",
+		ProviderUserID: new("provider-left"),
+		Envelope:       store.ValueEnvelopeInput{Source: store.ProvenanceArchiveObservation},
+	}
+	_, err = st.RecordContactObservationContext(ctx, left, input)
+	require.NoError(err)
+	input.ProviderUserID = new("provider-right")
+	conflicting, err := st.RecordContactObservationContext(ctx, right, input)
+	require.NoError(err)
+	require.True(conflicting.Conflicting)
+
+	input.ProviderUserID = new("provider-left")
+	converged, err := st.RecordContactObservationContext(ctx, right, input)
+	require.NoError(err)
+	assert.False(converged.Conflicting)
+
+	candidates, err := st.ListIdentityMatchCandidatesContext(ctx, nil, 10, 0)
+	require.NoError(err)
+	assert.Empty(candidates,
+		"a generated conflict must not survive provider ID convergence")
+}
+
 func TestMergeParticipantsRemovesConflictAfterProviderIDConvergence(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

@@ -195,3 +195,58 @@ func TestValidateServiceScopeFollowsScopePolicy(t *testing.T) {
 		store.ErrServiceScopeForbidden,
 	)
 }
+
+func TestValidateServiceScopeRejectsHalfScopes(t *testing.T) {
+	require := require.New(t)
+	st := storetest.New(t).Store
+	ctx := context.Background()
+
+	googleChat, err := st.ResolveCommunicationServiceContext(ctx, "google-chat")
+	require.NoError(err)
+	require.Equal(store.ScopePolicyOptional, googleChat.ScopePolicy)
+	require.NoError(store.ValidateServiceScope(googleChat, nil, nil))
+	require.NoError(store.ValidateServiceScope(googleChat, new("account"), new("user@example.com")))
+	require.ErrorIs(
+		store.ValidateServiceScope(googleChat, new("account"), nil),
+		store.ErrServiceScopeIncomplete,
+	)
+	require.ErrorIs(
+		store.ValidateServiceScope(googleChat, nil, new("user@example.com")),
+		store.ErrServiceScopeIncomplete,
+	)
+	require.ErrorIs(
+		store.ValidateServiceScope(nil, new("workspace"), nil),
+		store.ErrServiceScopeIncomplete,
+	)
+	require.ErrorIs(
+		store.ValidateServiceScope(nil, nil, new("T0EXAMPLE")),
+		store.ErrServiceScopeIncomplete,
+	)
+}
+
+func TestBlankScopeStringsDoNotFragmentObservationIdentity(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := storetest.New(t).Store
+	ctx := context.Background()
+	participantID, err := st.EnsureParticipantByIdentifier(
+		"example", "blank-scope", "Blank Scope",
+	)
+	require.NoError(err)
+	input := store.ParticipantContactObservationInput{
+		AddressKind: store.ContactAddressEmail, OriginalValue: "scoped@example.org",
+		Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceArchiveObservation},
+	}
+	first, err := st.RecordContactObservationContext(ctx, participantID, input)
+	require.NoError(err)
+	require.True(first.Created)
+
+	input.ScopeKind, input.ScopeValue = new("  "), new("")
+	second, err := st.RecordContactObservationContext(ctx, participantID, input)
+	require.NoError(err)
+	assert.False(second.Created,
+		"blank scope strings must resolve to the existing unscoped observation")
+	assert.Equal(first.Observation.Envelope.ID, second.Observation.Envelope.ID)
+	assert.Nil(second.Observation.ScopeKind)
+	assert.Nil(second.Observation.ScopeValue)
+}

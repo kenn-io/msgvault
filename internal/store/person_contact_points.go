@@ -88,6 +88,8 @@ func (s *Store) FindPersonContactPointsContext(
 	if !query.AddressKind.Valid() {
 		return nil, ErrInvalidContactAddressKind
 	}
+	query.ScopeKind = normalizeScopeInput(query.ScopeKind)
+	query.ScopeValue = normalizeScopeInput(query.ScopeValue)
 	service, hasService, err := s.resolveOptionalCommunicationServiceContext(ctx, query.ServiceSlug)
 	if err != nil {
 		return nil, err
@@ -156,6 +158,8 @@ func (s *Store) addPersonContactPointTx(
 	if strings.TrimSpace(input.OriginalValue) == "" {
 		return nil, ErrContactPointValueMissing
 	}
+	input.ScopeKind = normalizeScopeInput(input.ScopeKind)
+	input.ScopeValue = normalizeScopeInput(input.ScopeValue)
 	service, hasService, err := resolveCommunicationServiceTx(ctx, tx, input.ServiceSlug)
 	if err != nil {
 		return nil, err

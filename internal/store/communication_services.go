@@ -31,15 +31,16 @@ const (
 )
 
 var (
-	ErrServiceNotFound       = errors.New("communication service not found")
-	ErrServiceSlugConflict   = errors.New("communication service slug already exists")
-	ErrServiceAliasConflict  = errors.New("communication service alias already maps to another service")
-	ErrInvalidServiceSlug    = errors.New("communication service slug must match [a-z0-9][a-z0-9-]*")
-	ErrInvalidScopePolicy    = errors.New("invalid communication service scope policy")
-	ErrInvalidNormalization  = errors.New("invalid communication service normalization strategy")
-	ErrServiceScopeRequired  = errors.New("communication service requires a scope value")
-	ErrServiceScopeForbidden = errors.New("communication service does not accept a scope value")
-	ErrNormalizationRejected = errors.New("value cannot be normalized for this service")
+	ErrServiceNotFound        = errors.New("communication service not found")
+	ErrServiceSlugConflict    = errors.New("communication service slug already exists")
+	ErrServiceAliasConflict   = errors.New("communication service alias already maps to another service")
+	ErrInvalidServiceSlug     = errors.New("communication service slug must match [a-z0-9][a-z0-9-]*")
+	ErrInvalidScopePolicy     = errors.New("invalid communication service scope policy")
+	ErrInvalidNormalization   = errors.New("invalid communication service normalization strategy")
+	ErrServiceScopeRequired   = errors.New("communication service requires a scope value")
+	ErrServiceScopeForbidden  = errors.New("communication service does not accept a scope value")
+	ErrServiceScopeIncomplete = errors.New("communication service scope requires both scope kind and scope value")
+	ErrNormalizationRejected  = errors.New("value cannot be normalized for this service")
 )
 
 type CommunicationService struct {
@@ -345,22 +346,39 @@ func NormalizeServiceValue(service *CommunicationService, addressKind ContactAdd
 }
 
 func ValidateServiceScope(service *CommunicationService, scopeKind, scopeValue *string) error {
-	if service == nil {
-		return nil
-	}
 	hasKind := scopeKind != nil && strings.TrimSpace(*scopeKind) != ""
 	hasValue := scopeValue != nil && strings.TrimSpace(*scopeValue) != ""
-	switch service.ScopePolicy {
-	case ScopePolicyRequired:
-		if !hasKind || !hasValue {
-			return ErrServiceScopeRequired
-		}
-	case ScopePolicyNone:
-		if hasKind || hasValue {
-			return ErrServiceScopeForbidden
+	if service != nil {
+		switch service.ScopePolicy {
+		case ScopePolicyRequired:
+			if !hasKind || !hasValue {
+				return ErrServiceScopeRequired
+			}
+		case ScopePolicyNone:
+			if hasKind || hasValue {
+				return ErrServiceScopeForbidden
+			}
 		}
 	}
+	// A scope kind without a value (or the reverse) would fragment identity
+	// keys: the same address would land under distinct half-scoped keys.
+	if hasKind != hasValue {
+		return ErrServiceScopeIncomplete
+	}
 	return nil
+}
+
+// normalizeScopeInput trims a scope kind or value and treats blank input as
+// absent, so blank-vs-NULL and padded variants cannot fragment identity keys.
+func normalizeScopeInput(value *string) *string {
+	if value == nil {
+		return nil
+	}
+	trimmed := strings.TrimSpace(*value)
+	if trimmed == "" {
+		return nil
+	}
+	return &trimmed
 }
 
 func (s *Store) seedCommunicationServices(ctx context.Context) error {

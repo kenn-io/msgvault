@@ -377,7 +377,8 @@ func isPersonProfileValidationError(err error) bool {
 		store.ErrPersonCategoryEmpty, store.ErrInvalidPersonMediaKind,
 		store.ErrPersonMediaEmpty, store.ErrPersonMediaTooLarge,
 		store.ErrServiceNotFound, store.ErrServiceScopeRequired,
-		store.ErrServiceScopeForbidden, store.ErrNormalizationRejected,
+		store.ErrServiceScopeForbidden, store.ErrServiceScopeIncomplete,
+		store.ErrNormalizationRejected,
 		store.ErrPersonProfilePatchEmpty, store.ErrProfileValueCloseBeforeActive,
 	} {
 		if errors.Is(err, target) {

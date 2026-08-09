@@ -155,6 +155,8 @@ func (s *Store) RecordContactObservationContext(
 	if strings.TrimSpace(input.OriginalValue) == "" {
 		return nil, ErrObservationValueMissing
 	}
+	input.ScopeKind = normalizeScopeInput(input.ScopeKind)
+	input.ScopeValue = normalizeScopeInput(input.ScopeValue)
 	service, hasService, err := s.resolveOptionalCommunicationServiceContext(ctx, input.ServiceSlug)
 	if err != nil {
 		return nil, err
@@ -224,8 +226,16 @@ func (s *Store) RecordContactObservationContext(
 			ctx, tx, participantID, input.SourceID, input.AddressKind, serviceID,
 			input.ScopeKind, input.ScopeValue, normalized,
 		)
+		providerContradicted := false
 		if err == nil {
-			if observation.ProviderUserID == nil && input.ProviderUserID != nil {
+			sameProvider := observation.ProviderUserID != nil &&
+				input.ProviderUserID != nil &&
+				*observation.ProviderUserID == *input.ProviderUserID
+			if input.ProviderUserID == nil || sameProvider {
+				result.Observation = observation
+				return nil
+			}
+			if observation.ProviderUserID == nil {
 				if _, err := tx.ExecContext(ctx,
 					`UPDATE participant_contact_observations
 					 SET provider_user_id = ?, updated_at = `+s.dialect.Now()+`
@@ -245,11 +255,19 @@ func (s *Store) RecordContactObservationContext(
 				); err != nil {
 					return err
 				}
+				result.Observation = observation
+				return nil
 			}
-			result.Observation = observation
-			return nil
-		}
-		if !errors.Is(err, ErrProfileValueNotFound) {
+			// A different non-null provider ID contradicts the current row.
+			// Close it and record the new binding as a fresh observation so
+			// both facts survive in history.
+			if err := s.supersedeObservationRowTx(
+				ctx, tx, observation.Envelope.ID,
+			); err != nil {
+				return err
+			}
+			providerContradicted = true
+		} else if !errors.Is(err, ErrProfileValueNotFound) {
 			return err
 		}
 		args := []any{
@@ -279,6 +297,15 @@ func (s *Store) RecordContactObservationContext(
 		result.Created = true
 		if err := s.bumpParticipantIdentifierRevision(tx); err != nil {
 			return err
+		}
+		if providerContradicted {
+			// Conflicts generated against the superseded provider binding may
+			// no longer be supported by any current observation pair.
+			if err := s.deleteUnsupportedObservationIdentityConflictsContext(
+				ctx, tx,
+			); err != nil {
+				return err
+			}
 		}
 
 		otherParticipantIDs, err := findConflictingObservationParticipantIDsTx(
@@ -322,6 +349,22 @@ func (s *Store) RecordContactObservationContext(
 	return result, err
 }
 
+// supersedeObservationRowTx closes one current observation row in place,
+// mirroring the close semantics used by merge deduplication.
+func (s *Store) supersedeObservationRowTx(
+	ctx context.Context, tx *loggedTx, observationID int64,
+) error {
+	now := s.dialect.Now()
+	if _, err := tx.ExecContext(ctx, `UPDATE participant_contact_observations
+		SET active_until = CASE WHEN active_from > `+now+`
+				THEN active_from ELSE `+now+` END,
+			superseded_at = `+now+`, updated_at = `+now+`
+		WHERE id = ?`, observationID); err != nil {
+		return fmt.Errorf("supersede contradicted participant observation: %w", err)
+	}
+	return nil
+}
+
 func (s *Store) ListParticipantObservationsContext(
 	ctx context.Context, participantID int64, currentOnly bool,
 ) ([]ParticipantContactObservation, error) {
@@ -351,6 +394,8 @@ func (s *Store) FindObservationsByAddressContext(
 	if !query.AddressKind.Valid() {
 		return nil, ErrInvalidContactAddressKind
 	}
+	query.ScopeKind = normalizeScopeInput(query.ScopeKind)
+	query.ScopeValue = normalizeScopeInput(query.ScopeValue)
 	service, hasService, err := s.resolveOptionalCommunicationServiceContext(ctx, query.ServiceSlug)
 	if err != nil {
 		return nil, err
