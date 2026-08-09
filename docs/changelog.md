@@ -9,6 +9,21 @@ All notable changes to msgvault, grouped by release.
 
 ---
 
+## 0.19.2
+<small>2026-08-08</small>
+
+**Improvements**
+
+- Shows cache-building progress during daemon startup.
+- Bounds relationship index builds to improve resource usage and reliability.
+
+**Bug fixes**
+
+- Preserves checksum compatibility for automatic updates.
+- Accepts Fastmail pod-scoped JMAP API URLs.
+
+---
+
 ## 0.19.1
 <small>2026-08-07</small>
 
