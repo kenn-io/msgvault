@@ -2712,45 +2712,65 @@ func (s *Store) EnsureParticipantByPhone(phone, displayName, identifierType stri
 	// DO UPDATE backfills display_name when the existing row has none,
 	// preserving the prior best-effort behaviour without a second
 	// round-trip.
-	now := s.dialect.Now()
 	var id int64
-	err := s.db.QueryRow(fmt.Sprintf(`
-		INSERT INTO participants (phone_number, display_name, created_at, updated_at)
-		VALUES (?, ?, %s, %s)
-		ON CONFLICT (phone_number) WHERE phone_number IS NOT NULL
-			DO UPDATE SET display_name = CASE
-				WHEN COALESCE(NULLIF(TRIM(participants.display_name), ''), '') = ''
-				     AND EXCLUDED.display_name != ''
-				THEN EXCLUDED.display_name
-				ELSE participants.display_name
-			END
-		RETURNING id
-	`, now, now), phone, displayName).Scan(&id)
-	if err != nil {
-		return 0, fmt.Errorf("upsert participant by phone: %w", err)
-	}
+	err := s.withTx(func(tx *loggedTx) error {
+		now := s.dialect.Now()
+		if err := tx.QueryRow(fmt.Sprintf(`
+			INSERT INTO participants (phone_number, display_name, created_at, updated_at)
+			VALUES (?, ?, %s, %s)
+			ON CONFLICT (phone_number) WHERE phone_number IS NOT NULL
+				DO UPDATE SET display_name = CASE
+					WHEN COALESCE(NULLIF(TRIM(participants.display_name), ''), '') = ''
+					     AND EXCLUDED.display_name != ''
+					THEN EXCLUDED.display_name
+					ELSE participants.display_name
+				END
+			RETURNING id
+		`, now, now), phone, displayName).Scan(&id); err != nil {
+			return fmt.Errorf("upsert participant by phone: %w", err)
+		}
 
-	// Ensure a participant_identifiers row exists for this identifierType and
-	// attach service/scope metadata whenever the importer namespace is
-	// unambiguous. A repeat call repairs metadata but does not repoint the
-	// identifier away from its existing participant.
-	serviceSlug, scopeKind, scopeValue := participantIdentifierClassificationValues(
-		identifierType, phone,
-	)
-	_, err = s.db.Exec(`INSERT INTO participant_identifiers (
-			participant_id, identifier_type, identifier_value, is_primary,
-			service_id, scope_kind, scope_value
-		) VALUES (?, ?, ?, TRUE,
-			(SELECT id FROM communication_services WHERE slug = ?), ?, ?)
-		ON CONFLICT (identifier_type, identifier_value) DO UPDATE SET
-			service_id = COALESCE(excluded.service_id, participant_identifiers.service_id),
-			scope_kind = CASE WHEN excluded.service_id IS NOT NULL
-				THEN excluded.scope_kind ELSE participant_identifiers.scope_kind END,
-			scope_value = CASE WHEN excluded.service_id IS NOT NULL
-				THEN excluded.scope_value ELSE participant_identifiers.scope_value END`,
-		id, identifierType, phone, serviceSlug, scopeKind, scopeValue)
+		// Ensure a participant_identifiers row exists for this identifierType
+		// and attach service/scope metadata whenever the importer namespace is
+		// unambiguous. A repeat call repairs metadata but does not repoint the
+		// identifier away from its existing participant.
+		classificationColumns, err := s.participantIdentifierClassificationColumnsTx(tx)
+		if err != nil {
+			return err
+		}
+		if !classificationColumns {
+			_, err = tx.Exec(`INSERT INTO participant_identifiers (
+					participant_id, identifier_type, identifier_value, is_primary
+				) VALUES (?, ?, ?, TRUE)
+				ON CONFLICT (identifier_type, identifier_value) DO NOTHING`,
+				id, identifierType, phone)
+			if err != nil {
+				return fmt.Errorf("insert participant identifier: %w", err)
+			}
+			return nil
+		}
+		serviceSlug, scopeKind, scopeValue := participantIdentifierClassificationValues(
+			identifierType, phone,
+		)
+		_, err = tx.Exec(`INSERT INTO participant_identifiers (
+				participant_id, identifier_type, identifier_value, is_primary,
+				service_id, scope_kind, scope_value
+			) VALUES (?, ?, ?, TRUE,
+				(SELECT id FROM communication_services WHERE slug = ?), ?, ?)
+			ON CONFLICT (identifier_type, identifier_value) DO UPDATE SET
+				service_id = COALESCE(excluded.service_id, participant_identifiers.service_id),
+				scope_kind = CASE WHEN excluded.service_id IS NOT NULL
+					THEN excluded.scope_kind ELSE participant_identifiers.scope_kind END,
+				scope_value = CASE WHEN excluded.service_id IS NOT NULL
+					THEN excluded.scope_value ELSE participant_identifiers.scope_value END`,
+			id, identifierType, phone, serviceSlug, scopeKind, scopeValue)
+		if err != nil {
+			return fmt.Errorf("insert participant identifier: %w", err)
+		}
+		return nil
+	})
 	if err != nil {
-		return 0, fmt.Errorf("insert participant identifier: %w", err)
+		return 0, err
 	}
 
 	return id, nil
@@ -3094,45 +3114,65 @@ func (s *Store) EnsureParticipantByIdentifier(identifierType, identifierValue, d
 	}
 
 	var participantID int64
-	err := s.db.QueryRow(`
-		SELECT participant_id FROM participant_identifiers
-		WHERE identifier_type = ? AND identifier_value = ?
-	`, identifierType, identifierValue).Scan(&participantID)
-	if err == nil {
-		if displayName != "" {
-			_, _ = s.db.Exec(`
-				UPDATE participants SET display_name = ?
-				WHERE id = ? AND (display_name IS NULL OR display_name = '')
-			`, displayName, participantID)
+	err := s.withTx(func(tx *loggedTx) error {
+		err := tx.QueryRow(`
+			SELECT participant_id FROM participant_identifiers
+			WHERE identifier_type = ? AND identifier_value = ?
+		`, identifierType, identifierValue).Scan(&participantID)
+		if err == nil {
+			if displayName != "" {
+				_, _ = tx.Exec(`
+					UPDATE participants SET display_name = ?
+					WHERE id = ? AND (display_name IS NULL OR display_name = '')
+				`, displayName, participantID)
+			}
+			return nil
 		}
-		return participantID, nil
-	}
-	if !errors.Is(err, sql.ErrNoRows) {
-		return 0, fmt.Errorf("lookup participant identifier: %w", err)
-	}
+		if !errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("lookup participant identifier: %w", err)
+		}
 
-	now := s.dialect.Now()
-	err = s.db.QueryRow(fmt.Sprintf(`
-		INSERT INTO participants (display_name, created_at, updated_at)
-		VALUES (?, %s, %s)
-		RETURNING id
-	`, now, now), displayName).Scan(&participantID)
+		now := s.dialect.Now()
+		if err := tx.QueryRow(fmt.Sprintf(`
+			INSERT INTO participants (display_name, created_at, updated_at)
+			VALUES (?, %s, %s)
+			RETURNING id
+		`, now, now), displayName).Scan(&participantID); err != nil {
+			return fmt.Errorf("insert participant: %w", err)
+		}
+		classificationColumns, err := s.participantIdentifierClassificationColumnsTx(tx)
+		if err != nil {
+			return err
+		}
+		if !classificationColumns {
+			_, err = tx.Exec(`
+				INSERT INTO participant_identifiers (
+					participant_id, identifier_type, identifier_value, display_value, is_primary
+				) VALUES (?, ?, ?, ?, TRUE)
+			`, participantID, identifierType, identifierValue, identifierValue)
+			if err != nil {
+				return fmt.Errorf("insert participant identifier: %w", err)
+			}
+			return nil
+		}
+		serviceSlug, scopeKind, scopeValue := participantIdentifierClassificationValues(
+			identifierType, identifierValue,
+		)
+		_, err = tx.Exec(`
+			INSERT INTO participant_identifiers (
+				participant_id, identifier_type, identifier_value, display_value,
+				is_primary, service_id, scope_kind, scope_value
+			) VALUES (?, ?, ?, ?, TRUE,
+				(SELECT id FROM communication_services WHERE slug = ?), ?, ?)
+		`, participantID, identifierType, identifierValue, identifierValue,
+			serviceSlug, scopeKind, scopeValue)
+		if err != nil {
+			return fmt.Errorf("insert participant identifier: %w", err)
+		}
+		return nil
+	})
 	if err != nil {
-		return 0, fmt.Errorf("insert participant: %w", err)
-	}
-	serviceSlug, scopeKind, scopeValue := participantIdentifierClassificationValues(
-		identifierType, identifierValue,
-	)
-	_, err = s.db.Exec(`
-		INSERT INTO participant_identifiers (
-			participant_id, identifier_type, identifier_value, display_value,
-			is_primary, service_id, scope_kind, scope_value
-		) VALUES (?, ?, ?, ?, TRUE,
-			(SELECT id FROM communication_services WHERE slug = ?), ?, ?)
-	`, participantID, identifierType, identifierValue, identifierValue,
-		serviceSlug, scopeKind, scopeValue)
-	if err != nil {
-		return 0, fmt.Errorf("insert participant identifier: %w", err)
+		return 0, err
 	}
 	return participantID, nil
 }
