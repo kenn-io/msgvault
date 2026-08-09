@@ -6,6 +6,9 @@ run:
   # backend is gated behind `pgvector`; without these tags golangci-lint
   # never compiles those files, so lint debt silently accumulates behind
   # //go:build constraints (it did — see reviews/codex-pr4-iter3.md).
+  # Wait for duplicate runners in this worktree instead of failing on the
+  # runner lock; Makefile targets scope that lock to the worktree as well.
+  allow-serial-runners: true
   build-tags:
     - fts5
     - sqlite_vec

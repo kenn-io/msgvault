@@ -47,6 +47,11 @@ DEFAULT_GOLANGCI_LINT_CACHE := $(shell git rev-parse --path-format=absolute --gi
 GOLANGCI_LINT_CACHE ?= $(DEFAULT_GOLANGCI_LINT_CACHE)
 export GOLANGCI_LINT_CACHE
 
+# golangci-lint's runner lock lives under os.TempDir(), independently of its
+# analysis cache. Keep that lock worktree-local too, so linked worktrees do not
+# serialize one another while duplicate runners in one worktree can wait.
+GOLANGCI_LINT_TMP ?= $(GOLANGCI_LINT_CACHE)/tmp
+
 .PHONY: build build-release install clean test test-v test-pg test-pg-shipped test-pg-both pg-shipped-only-check require-test-db fmt lint lint-ci testify-helper-check tidy openapi api-generate openapi-check api-check web-install web-generate web-check web-test web-test-browser web-e2e web-build web-embed web-assets-check smoke-web-release shootout run-shootout install-hooks bench vcard-registry-check vcard-registry-update docs-install docs-build docs-serve docs-check docs-fixture-test docs-fixture-check docs-fixture-smoke docs-web-screenshots docs-screenshots docs-assets-branch docs-generated-assets-branch docs-deploy-staging docs-deploy help
 
 # Build the binary (debug)
@@ -272,7 +277,8 @@ lint:
 		echo "golangci-lint not found. Install: https://golangci-lint.run/usage/install/" >&2; \
 		exit 1; \
 	fi
-	golangci-lint run --fix ./...
+	@mkdir -p "$(GOLANGCI_LINT_TMP)"
+	TMPDIR="$(GOLANGCI_LINT_TMP)" golangci-lint run --fix ./...
 
 # Run linter (CI, no auto-fix)
 lint-ci: testify-helper-check
@@ -280,7 +286,8 @@ lint-ci: testify-helper-check
 		echo "golangci-lint not found. Install: https://golangci-lint.run/usage/install/" >&2; \
 		exit 1; \
 	fi
-	golangci-lint run ./...
+	@mkdir -p "$(GOLANGCI_LINT_TMP)"
+	TMPDIR="$(GOLANGCI_LINT_TMP)" golangci-lint run ./...
 
 # Enforce testify helper usage in assertion-heavy tests
 testify-helper-check:
