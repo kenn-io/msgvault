@@ -1949,8 +1949,6 @@ type TextMessagesResponse struct {
 	Messages []query.MessageSummary `json:"messages"`
 }
 
-const labelsViewType = "labels"
-
 // aggregateViewTypes are the accepted view_type values, surfaced in 400 messages.
 var aggregateViewTypes = []string{
 	"senders", "sender_names", "recipients", "recipient_names",
