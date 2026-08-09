@@ -318,6 +318,56 @@ func TestMergeParticipantsPreservesDecisionMetadataWhenConflictWins(t *testing.T
 	assert.Equal(note, *restored.Notes)
 }
 
+func TestMergeParticipantsPreservesManualConflictAfterObservationCleanup(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := storetest.New(t)
+	st := f.Store
+	ctx := t.Context()
+	absorbed := f.EnsureParticipant("manual-absorbed@example.org", "Manual Absorbed", "example.org")
+	survivor := f.EnsureParticipant("generated-survivor@example.org", "Generated Survivor", "example.org")
+	third := f.EnsureParticipant("manual-third@example.org", "Manual Third", "example.org")
+	normalized := "manual-shared@example.org"
+	note := "manual conflict must remain reviewable"
+
+	manual, created, err := st.UpsertIdentityMatchCandidateContext(
+		ctx, store.IdentityMatchCandidateInput{
+			LeftKind: store.IdentityMatchParticipant, LeftID: absorbed,
+			RightKind: store.IdentityMatchParticipant, RightID: third,
+			Basis: store.IdentityMatchEmail, NormalizedValue: &normalized,
+			State: store.IdentityMatchStateConflict, Source: store.ProvenanceUser,
+			Notes: &note,
+		},
+	)
+	require.NoError(err)
+	require.True(created)
+
+	input := store.ParticipantContactObservationInput{
+		SourceID: &f.Source.ID, AddressKind: store.ContactAddressEmail,
+		OriginalValue: normalized,
+		Envelope: store.ValueEnvelopeInput{
+			Source: store.ProvenanceArchiveObservation,
+		},
+	}
+	input.ProviderUserID = new("generated-survivor-provider")
+	_, err = st.RecordContactObservationContext(ctx, survivor, input)
+	require.NoError(err)
+	input.ProviderUserID = new("generated-third-provider")
+	result, err := st.RecordContactObservationContext(ctx, third, input)
+	require.NoError(err)
+	require.True(result.Conflicting)
+
+	require.NoError(st.MergeParticipants(absorbed, survivor))
+	require.NoError(st.RemoveSource(f.Source.ID))
+	candidates, err := st.ListIdentityMatchCandidatesContext(ctx, nil, 100, 0)
+	require.NoError(err)
+	require.Len(candidates, 1)
+	assert.Equal(manual.ID, candidates[0].ID)
+	assert.Equal(store.IdentityMatchStateConflict, candidates[0].State)
+	assert.Equal(store.ProvenanceUser, candidates[0].Source)
+	assert.Equal(&note, candidates[0].Notes)
+}
+
 func TestMergeParticipantsKeepsCandidatesForDistinctNormalizedValues(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

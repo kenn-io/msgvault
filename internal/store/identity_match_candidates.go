@@ -673,8 +673,10 @@ func reconcileIdentityMatchCandidateMergeObservationOrigin(
 	hasObservationConflict := false
 	allGenerated := true
 	for _, candidate := range group {
-		if candidate.State == IdentityMatchStateConflict &&
-			candidate.ObservationConflictOrigin.Valid {
+		if candidate.State == IdentityMatchStateConflict {
+			if !candidate.ObservationConflictOrigin.Valid {
+				return sql.NullString{}
+			}
 			hasObservationConflict = true
 			if candidate.ObservationConflictOrigin.String != observationConflictOriginGenerated {
 				allGenerated = false
