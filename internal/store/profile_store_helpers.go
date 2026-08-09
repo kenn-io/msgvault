@@ -36,7 +36,8 @@ func nextProfileOrdinalForOwnerTx(
 		query += fmt.Sprintf(` AND %s = ?`, kindColumn)
 		args = append(args, kind)
 	}
-	query += ` AND active_until IS NULL AND superseded_at IS NULL`
+	// Scan historical rows too: reusing a superseded slot's ordinal would
+	// splice an unrelated value into that slot's supersession lineage.
 	if err := tx.QueryRowContext(ctx, query, args...).Scan(&ordinal); err != nil {
 		return 0, fmt.Errorf("choose %s ordinal: %w", table, err)
 	}

@@ -97,6 +97,22 @@ func TestContactObservationOrdinalsPreserveExplicitAndAppendMissingValues(t *tes
 	)
 	require.NoError(err)
 	assert.Equal(explicitOrdinal+1, appendedEmail.Observation.Envelope.Ordinal)
+	require.NoError(st.SupersedeParticipantObservationContext(
+		t.Context(), participantID, appendedEmail.Observation.Envelope.ID, nil,
+	))
+
+	afterHistory, err := st.RecordContactObservationContext(
+		t.Context(), participantID, store.ParticipantContactObservationInput{
+			AddressKind:   store.ContactAddressEmail,
+			OriginalValue: "ordered.after-history@example.org",
+			Envelope: store.ValueEnvelopeInput{
+				Source: store.ProvenanceArchiveObservation,
+			},
+		},
+	)
+	require.NoError(err)
+	assert.Equal(explicitOrdinal+2, afterHistory.Observation.Envelope.Ordinal,
+		"append must not adopt a superseded observation's history slot")
 
 	for index, phone := range []string{"+12025550101", "+12025550102"} {
 		result, err := st.RecordContactObservationContext(
