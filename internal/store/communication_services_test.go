@@ -105,6 +105,72 @@ func TestServiceSeedIsIdempotentAndPreservesUserEdits(t *testing.T) {
 	assert.Equal(service.ID, after.ID)
 }
 
+func TestReferencedServiceNormalizationIsImmutable(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := storetest.New(t).Store
+	ctx := t.Context()
+
+	service, created, err := st.EnsureCommunicationServiceContext(
+		ctx, store.CommunicationServiceInput{
+			Slug: "immutable-normalization", DisplayLabel: "Immutable Normalization",
+			ScopePolicy: store.ScopePolicyNone, Normalization: store.NormalizationLower,
+			NormalizationVersion: 1,
+		},
+	)
+	require.NoError(err)
+	require.True(created)
+	personID := newTestPerson(t, st)
+	_, err = st.AddPersonContactPointContext(ctx, personID, store.PersonContactPointInput{
+		AddressKind: store.ContactAddressUsername, ServiceSlug: new(service.Slug),
+		OriginalValue: "@Alice",
+		Envelope:      store.ValueEnvelopeInput{Source: store.ProvenanceUser},
+	})
+	require.NoError(err)
+	participantID, err := st.EnsureParticipantByIdentifier(
+		"example", "normalization-observation", "Observed",
+	)
+	require.NoError(err)
+	_, err = st.RecordContactObservationContext(
+		ctx, participantID, store.ParticipantContactObservationInput{
+			AddressKind: store.ContactAddressUsername, ServiceSlug: new(service.Slug),
+			OriginalValue: "@Bob",
+			Envelope:      store.ValueEnvelopeInput{Source: store.ProvenanceArchiveObservation},
+		},
+	)
+	require.NoError(err)
+
+	_, err = st.UpdateCommunicationServiceContext(
+		ctx, service.ID, store.CommunicationServiceInput{
+			Slug: service.Slug, DisplayLabel: service.DisplayLabel,
+			ScopePolicy: service.ScopePolicy, Normalization: store.NormalizationStripAtLower,
+			NormalizationVersion: 1,
+		},
+	)
+	require.ErrorIs(err, store.ErrServiceNormalizationImmutable)
+	_, err = st.UpdateCommunicationServiceContext(
+		ctx, service.ID, store.CommunicationServiceInput{
+			Slug: service.Slug, DisplayLabel: service.DisplayLabel,
+			ScopePolicy: service.ScopePolicy, Normalization: service.Normalization,
+			NormalizationVersion: 2,
+		},
+	)
+	require.ErrorIs(err, store.ErrServiceNormalizationImmutable)
+
+	unchanged, err := st.GetCommunicationServiceContext(ctx, service.ID)
+	require.NoError(err)
+	assert.Equal(store.NormalizationLower, unchanged.Normalization)
+	assert.Equal(1, unchanged.NormalizationVersion)
+	profile, err := st.GetPersonProfileContext(ctx, personID)
+	require.NoError(err)
+	require.Len(profile.ContactPoints, 1)
+	assert.Equal("@alice", profile.ContactPoints[0].NormalizedValue)
+	observations, err := st.ListParticipantObservationsContext(ctx, participantID, true)
+	require.NoError(err)
+	require.Len(observations, 1)
+	assert.Equal("@bob", observations[0].NormalizedValue)
+}
+
 func TestServiceAliasCannotBeStolenFromAnotherService(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

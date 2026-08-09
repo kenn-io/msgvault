@@ -431,8 +431,11 @@ func (s *Store) DecideIdentityMatchCandidateContext(
 		if _, err := tx.ExecContext(ctx, `UPDATE identity_match_candidates SET
 			state = ?, decided_by = ?, decided_at = `+s.dialect.Now()+`,
 			notes = ?, pre_conflict_state = NULL,
+			observation_conflict_origin = CASE WHEN ?
+				THEN NULL ELSE observation_conflict_origin END,
 			updated_at = `+s.dialect.Now()+` WHERE id = ?`,
-			state, decidedBy, stringValue(notes), candidateID,
+			state, decidedBy, stringValue(notes),
+			state == IdentityMatchStateConflict && decidedBy == "user", candidateID,
 		); err != nil {
 			return fmt.Errorf("decide identity match candidate: %w", err)
 		}

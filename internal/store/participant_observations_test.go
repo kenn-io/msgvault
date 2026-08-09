@@ -65,6 +65,37 @@ func TestRecordingTheSameObservationTwiceIsIdempotent(t *testing.T) {
 	assert.Equal(first.Observation.Envelope.ID, second.Observation.Envelope.ID)
 }
 
+func TestBlankProviderIDsAreAbsentAndDoNotSuppressConflicts(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := storetest.New(t).Store
+	ctx := t.Context()
+	left, err := st.EnsureParticipantByIdentifier("example", "blank-provider-left", "Left")
+	require.NoError(err)
+	right, err := st.EnsureParticipantByIdentifier("example", "blank-provider-right", "Right")
+	require.NoError(err)
+
+	input := store.ParticipantContactObservationInput{
+		AddressKind: store.ContactAddressEmail, OriginalValue: "shared@example.org",
+		ProviderUserID: new("  "),
+		Envelope:       store.ValueEnvelopeInput{Source: store.ProvenanceArchiveObservation},
+	}
+	leftResult, err := st.RecordContactObservationContext(ctx, left, input)
+	require.NoError(err)
+	assert.Nil(leftResult.Observation.ProviderUserID)
+
+	input.ProviderUserID = new("\t")
+	rightResult, err := st.RecordContactObservationContext(ctx, right, input)
+	require.NoError(err)
+	assert.Nil(rightResult.Observation.ProviderUserID)
+	assert.True(rightResult.Created)
+	assert.True(rightResult.Conflicting)
+
+	candidates, err := st.ListIdentityMatchCandidatesContext(ctx, nil, 10, 0)
+	require.NoError(err)
+	require.Len(candidates, 1)
+}
+
 func TestContactObservationOrdinalsPreserveExplicitAndAppendMissingValues(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -633,6 +664,76 @@ func TestSupersedeParticipantObservationRecomputesGeneratedConflicts(t *testing.
 		require.NoError(err)
 		require.Len(candidates, 1)
 	})
+}
+
+func TestUserConfirmedObservationConflictSurvivesSupportCleanup(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		preexisting bool
+	}{
+		{name: "generated"},
+		{name: "promoted", preexisting: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			st := storetest.New(t).Store
+			ctx := t.Context()
+			left, err := st.EnsureParticipantByIdentifier(
+				"example", "confirmed-conflict-left", "Left",
+			)
+			require.NoError(err)
+			right, err := st.EnsureParticipantByIdentifier(
+				"example", "confirmed-conflict-right", "Right",
+			)
+			require.NoError(err)
+			normalized := "confirmed@example.org"
+			if test.preexisting {
+				_, created, upsertErr := st.UpsertIdentityMatchCandidateContext(
+					ctx, store.IdentityMatchCandidateInput{
+						LeftKind: store.IdentityMatchParticipant, LeftID: left,
+						RightKind: store.IdentityMatchParticipant, RightID: right,
+						Basis: store.IdentityMatchEmail, NormalizedValue: &normalized,
+						State: store.IdentityMatchStateCandidate, Source: store.ProvenanceUser,
+					},
+				)
+				require.NoError(upsertErr)
+				require.True(created)
+			}
+
+			input := store.ParticipantContactObservationInput{
+				AddressKind: store.ContactAddressEmail, OriginalValue: normalized,
+				ProviderUserID: new("provider-left"),
+				Envelope:       store.ValueEnvelopeInput{Source: store.ProvenanceArchiveObservation},
+			}
+			leftResult, err := st.RecordContactObservationContext(ctx, left, input)
+			require.NoError(err)
+			input.ProviderUserID = new("provider-right")
+			rightResult, err := st.RecordContactObservationContext(ctx, right, input)
+			require.NoError(err)
+			require.True(rightResult.Conflicting)
+			require.NotNil(rightResult.CandidateID)
+
+			note := "keep this conflict after review"
+			decided, err := st.DecideIdentityMatchCandidateContext(
+				ctx, *rightResult.CandidateID, store.IdentityMatchStateConflict, "user", &note,
+			)
+			require.NoError(err)
+			assert.Equal(store.IdentityMatchStateConflict, decided.State)
+			assert.Equal(&note, decided.Notes)
+
+			require.NoError(st.SupersedeParticipantObservationContext(
+				ctx, left, leftResult.Observation.Envelope.ID, nil,
+			))
+			candidates, err := st.ListIdentityMatchCandidatesContext(ctx, nil, 10, 0)
+			require.NoError(err)
+			require.Len(candidates, 1)
+			assert.Equal(decided.ID, candidates[0].ID)
+			assert.Equal(store.IdentityMatchStateConflict, candidates[0].State)
+			assert.Equal(new("user"), candidates[0].DecidedBy)
+			assert.Equal(&note, candidates[0].Notes)
+		})
+	}
 }
 
 func TestSupersedeParticipantObservationDemotesPromotedCandidate(t *testing.T) {

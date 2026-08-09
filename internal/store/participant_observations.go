@@ -157,6 +157,7 @@ func (s *Store) RecordContactObservationContext(
 	}
 	input.ScopeKind = trimmedOrNil(input.ScopeKind)
 	input.ScopeValue = trimmedOrNil(input.ScopeValue)
+	input.ProviderUserID = trimmedOrNil(input.ProviderUserID)
 	service, hasService, err := s.resolveOptionalCommunicationServiceContext(ctx, input.ServiceSlug)
 	if err != nil {
 		return nil, err

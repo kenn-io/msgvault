@@ -31,16 +31,17 @@ const (
 )
 
 var (
-	ErrServiceNotFound        = errors.New("communication service not found")
-	ErrServiceSlugConflict    = errors.New("communication service slug already exists")
-	ErrServiceAliasConflict   = errors.New("communication service alias already maps to another service")
-	ErrInvalidServiceSlug     = errors.New("communication service slug must match [a-z0-9][a-z0-9-]*")
-	ErrInvalidScopePolicy     = errors.New("invalid communication service scope policy")
-	ErrInvalidNormalization   = errors.New("invalid communication service normalization strategy")
-	ErrServiceScopeRequired   = errors.New("communication service requires a scope value")
-	ErrServiceScopeForbidden  = errors.New("communication service does not accept a scope value")
-	ErrServiceScopeIncomplete = errors.New("communication service scope requires both scope kind and scope value")
-	ErrNormalizationRejected  = errors.New("value cannot be normalized for this service")
+	ErrServiceNotFound               = errors.New("communication service not found")
+	ErrServiceSlugConflict           = errors.New("communication service slug already exists")
+	ErrServiceAliasConflict          = errors.New("communication service alias already maps to another service")
+	ErrServiceNormalizationImmutable = errors.New("communication service normalization settings are immutable")
+	ErrInvalidServiceSlug            = errors.New("communication service slug must match [a-z0-9][a-z0-9-]*")
+	ErrInvalidScopePolicy            = errors.New("invalid communication service scope policy")
+	ErrInvalidNormalization          = errors.New("invalid communication service normalization strategy")
+	ErrServiceScopeRequired          = errors.New("communication service requires a scope value")
+	ErrServiceScopeForbidden         = errors.New("communication service does not accept a scope value")
+	ErrServiceScopeIncomplete        = errors.New("communication service scope requires both scope kind and scope value")
+	ErrNormalizationRejected         = errors.New("value cannot be normalized for this service")
 )
 
 type CommunicationService struct {
@@ -257,6 +258,10 @@ func (s *Store) UpdateCommunicationServiceContext(ctx context.Context, id int64,
 		if existing.Slug != input.Slug {
 			return ErrServiceSlugConflict
 		}
+		if existing.Normalization != input.Normalization ||
+			existing.NormalizationVersion != input.NormalizationVersion {
+			return ErrServiceNormalizationImmutable
+		}
 		if err := ensureAliasesAvailableTx(ctx, tx, id, input.Aliases); err != nil {
 			return err
 		}
@@ -369,8 +374,8 @@ func ValidateServiceScope(service *CommunicationService, scopeKind, scopeValue *
 }
 
 // trimmedOrNil trims an optional identity-key part (scope kind, scope value,
-// normalized value) and treats blank input as absent, so blank-vs-NULL and
-// padded variants cannot fragment identity keys.
+// normalized value, or provider user ID) and treats blank input as absent, so
+// blank-vs-NULL and padded variants cannot fragment identity keys.
 func trimmedOrNil(value *string) *string {
 	if value == nil {
 		return nil
