@@ -948,13 +948,13 @@ CREATE TABLE IF NOT EXISTS identity_match_candidates (
     scope_value TEXT,
     normalized_value TEXT,
     state TEXT NOT NULL DEFAULT 'candidate',
-    confidence DOUBLE PRECISION CHECK (confidence IS NULL OR (
-        confidence >= 0 AND confidence <= 1
-        AND source NOT IN ('user', 'carddav_import', 'vcard_import')
-    )),
     source TEXT NOT NULL CHECK (source IN (
         'user', 'carddav_import', 'vcard_import', 'archive_observation',
         'extraction', 'enrichment', 'system'
+    )),
+    confidence DOUBLE PRECISION CHECK (confidence IS NULL OR (
+        confidence >= 0 AND confidence <= 1
+        AND source NOT IN ('user', 'carddav_import', 'vcard_import')
     )),
     source_ref TEXT,
     observation_conflict_origin TEXT CHECK (
