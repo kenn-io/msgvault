@@ -613,7 +613,8 @@ func derivedDriftOnly(staleness cacheStaleness) bool {
 		staleness.HasConversationTypeDrift || staleness.HasParticipantIdentifierDrift ||
 		staleness.HasParticipantDisplayNameDrift) &&
 		!staleness.HasNew && !staleness.HasDeleted &&
-		!staleness.HasUpdated && !staleness.HasAccountIdentityDrift
+		!staleness.HasUpdated && !staleness.HasAccountIdentityDrift &&
+		!staleness.HasDerivedDataDrift
 }
 
 // refreshIdentityDatasetsOnly rebuilds every identity-derived dataset while
@@ -691,11 +692,11 @@ func buildCacheLocked(
 	// concurrent identity mutation therefore makes the stamped revision LAG
 	// the store, which HasIdentityDrift detects on the next staleness check —
 	// the cache self-heals. Never move this read after the export. The same
-	// invariant applies to the account-identity, participant-identifier, and
-	// participant display-name revisions read alongside it: this full build
-	// derives all of those datasets fresh from the current store state, so
-	// stamping a lagging revision here is likewise self-healing — the matching
-	// staleness check catches it on the next pass.
+	// invariant applies to the derived-data, account-identity,
+	// participant-identifier, and participant display-name revisions read
+	// alongside it: this full build exports those facts from the current store
+	// state, so stamping a lagging revision here is likewise self-healing — the
+	// matching staleness check catches it on the next pass.
 	identityStore, err := store.Open(dbPath)
 	if err != nil {
 		return nil, fmt.Errorf("open store for identity export: %w", err)
@@ -704,6 +705,11 @@ func buildCacheLocked(
 	if err != nil {
 		_ = identityStore.Close()
 		return nil, fmt.Errorf("read identity revision: %w", err)
+	}
+	derivedDataRevision, err := identityStore.DerivedDataRevision()
+	if err != nil {
+		_ = identityStore.Close()
+		return nil, fmt.Errorf("read derived-data revision: %w", err)
 	}
 	accountIdentityRevision, err := identityStore.AccountIdentityRevision()
 	if err != nil {
@@ -837,6 +843,13 @@ func buildCacheLocked(
 		return nil, fmt.Errorf("inspect attachment MIME schema: %w", err)
 	}
 	sourceSnapshot.hasAttachmentMIME = attachmentMIMEColumnCount > 0
+	var attachmentMetadataColumnCount int
+	if err := sourceSnapshot.QueryRow(`
+		SELECT COUNT(*) FROM pragma_table_info('attachments') WHERE name = 'attachment_metadata'
+	`).Scan(&attachmentMetadataColumnCount); err != nil {
+		return nil, fmt.Errorf("inspect attachment metadata schema: %w", err)
+	}
+	sourceSnapshot.hasAttachmentMetadata = attachmentMetadataColumnCount > 0
 	var messageSourceAttributionColumnCount int
 	if err := sourceSnapshot.QueryRow(`
 		SELECT COUNT(*) FROM pragma_table_info('messages')
@@ -981,6 +994,10 @@ func buildCacheLocked(
 	if sourceSnapshot.hasAttachmentMIME {
 		attachmentMIMEExpression = "COALESCE(TRY_CAST(mime_type AS VARCHAR), '') AS mime_type"
 	}
+	attachmentMetadataExpression := "NULL::VARCHAR AS attachment_metadata"
+	if sourceSnapshot.hasAttachmentMetadata {
+		attachmentMetadataExpression = "TRY_CAST(attachment_metadata AS VARCHAR) AS attachment_metadata"
+	}
 	if err := runExport(tableAttachments, fmt.Sprintf(`
 	COPY (
 		SELECT
@@ -988,13 +1005,15 @@ func buildCacheLocked(
 			message_id,
 			size,
 			COALESCE(TRY_CAST(filename AS VARCHAR), '') as filename,
+			%s,
 			%s
 		FROM sqlite_db.attachments%s
 	) TO '%s/%s' (
 		FORMAT PARQUET,
 		COMPRESSION 'zstd'
 	)
-	`, attachmentMIMEExpression, attachmentsFilter, escapedAttachmentsDir, junctionFile)); err != nil {
+	`, attachmentMIMEExpression, attachmentMetadataExpression,
+		attachmentsFilter, escapedAttachmentsDir, junctionFile)); err != nil {
 		return nil, fmt.Errorf("export attachments: %w", err)
 	}
 
@@ -1375,6 +1394,7 @@ func buildCacheLocked(
 		LastFailedSyncRunCount:              syncCounters.failedRunCount,
 		LastFailedSyncRunIDSum:              syncCounters.failedRunIDSum,
 		IdentityRevision:                    identityRevision,
+		DerivedDataRevision:                 derivedDataRevision,
 		AccountIdentityRevision:             accountIdentityRevision,
 		ParticipantIdentifierRevision:       participantIdentifierRevision,
 		ParticipantDisplayNameRevision:      participantDisplayNameRevision,
@@ -1599,6 +1619,7 @@ type cacheSourceSnapshot struct {
 	sqliteTx                    *sql.Tx
 	tmpDir                      string
 	hasAttachmentMIME           bool
+	hasAttachmentMetadata       bool
 	hasMessageSourceAttribution bool
 	hasRecipientEnvelope        bool
 }
@@ -1717,10 +1738,16 @@ func (s *cacheSourceSnapshot) PrepareDatasets(names ...string) error {
 }
 
 func (s *cacheSourceSnapshot) tables() []cacheSnapshotTable {
-	attachmentQuery := "SELECT id, message_id, size, filename, '' AS mime_type FROM attachments"
+	attachmentMIMEColumn := "'' AS mime_type"
 	if s.hasAttachmentMIME {
-		attachmentQuery = "SELECT id, message_id, size, filename, mime_type FROM attachments"
+		attachmentMIMEColumn = "mime_type"
 	}
+	attachmentMetadataColumn := "NULL AS attachment_metadata"
+	if s.hasAttachmentMetadata {
+		attachmentMetadataColumn = "attachment_metadata"
+	}
+	attachmentQuery := "SELECT id, message_id, size, filename, " + attachmentMIMEColumn +
+		", " + attachmentMetadataColumn + " FROM attachments"
 	recipientEnvelopeColumn := "'' AS email_address"
 	if s.hasRecipientEnvelope {
 		recipientEnvelopeColumn = "email_address"
@@ -1748,7 +1775,7 @@ func (s *cacheSourceSnapshot) tables() []cacheSnapshotTable {
 		{"message_labels", "SELECT message_id, label_id FROM message_labels",
 			"types={'message_id': 'BIGINT', 'label_id': 'BIGINT'}"},
 		{tableAttachments, attachmentQuery,
-			"types={'id': 'BIGINT', 'message_id': 'BIGINT', 'size': 'BIGINT', 'filename': 'VARCHAR', 'mime_type': 'VARCHAR'}"},
+			"types={'id': 'BIGINT', 'message_id': 'BIGINT', 'size': 'BIGINT', 'filename': 'VARCHAR', 'mime_type': 'VARCHAR', 'attachment_metadata': 'VARCHAR'}"},
 		{tableParticipants, "SELECT id, email_address, domain, display_name, phone_number FROM participants",
 			"types={'id': 'BIGINT', 'email_address': 'VARCHAR', 'domain': 'VARCHAR', 'display_name': 'VARCHAR', 'phone_number': 'VARCHAR'}"},
 		{"account_identities", "SELECT source_id, address FROM account_identities",

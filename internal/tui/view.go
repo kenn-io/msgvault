@@ -729,9 +729,7 @@ func (m Model) buildDetailLines() []string {
 	if body == "" {
 		body = "(No text content)"
 	}
-	// Strip carriage returns (CRLF -> LF) to prevent display issues
-	body = strings.ReplaceAll(body, "\r\n", "\n")
-	body = strings.ReplaceAll(body, "\r", "")
+	body = textutil.SanitizeTerminalMultiline(body)
 	bodyLines := wrapText(body, m.width-2)
 	lines = append(lines, bodyLines...)
 

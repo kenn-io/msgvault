@@ -304,6 +304,8 @@ func (d *SQLiteDialect) BoolTrueExpr(col string) string { return col + " = 1" }
 // JSONBindExpr is "?" on SQLite — JSON columns are plain TEXT.
 func (d *SQLiteDialect) JSONBindExpr() string { return "?" }
 
+func (d *SQLiteDialect) JSONIsDistinctExpr(col string) string { return col + " IS NOT ?" }
+
 // BuildFTSArg formats search terms as an FTS5 MATCH argument: each
 // term double-quote-escaped, suffixed with "*" for prefix match, and
 // space-joined (FTS5 treats space as implicit AND). Embedded "*" is

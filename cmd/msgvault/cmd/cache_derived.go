@@ -69,6 +69,16 @@ func refreshDerivedDatasetsOnly(
 		_ = st.Close()
 		return nil, fmt.Errorf("read identity revision: %w", err)
 	}
+	derivedDataRevision, err := st.DerivedDataRevision()
+	if err != nil {
+		_ = st.Close()
+		return nil, fmt.Errorf("read derived-data revision: %w", err)
+	}
+	if derivedDataRevision != state.DerivedDataRevision {
+		_ = st.Close()
+		return nil, fmt.Errorf("%w: derived-data revision changed",
+			ErrDerivedRefreshRequiresFullBuild)
+	}
 	accountIdentityRevision, err := st.AccountIdentityRevision()
 	if err != nil {
 		_ = st.Close()

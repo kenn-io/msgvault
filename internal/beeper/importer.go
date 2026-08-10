@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"time"
 
+	"go.kenn.io/msgvault/internal/rederive"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -33,7 +34,19 @@ const (
 	reconcileWindow = 24 * time.Hour
 	// maxReconcilePages caps the reconciliation walk for pathologically busy chats.
 	maxReconcilePages = 50
+	// maxTailProbePages bounds scans through runs of non-content events. Hitting
+	// the bound conservatively reopens the chat so backfill can keep progressing.
+	maxTailProbePages = 20
 )
+
+// tailScanInterval throttles the completed-chat tail probe (see tailScanDue).
+// Beeper Desktop backfills a network's older history over hours-to-weeks after
+// it is linked; those messages arrive with old timestamps, so they neither
+// advance a chat's lastActivity nor fall in the reconcile window, and a chat
+// already marked done would never see them. Probing costs one request per
+// completed chat, so it runs at most daily.
+// A variable so tests can disable the throttle.
+var tailScanInterval = 24 * time.Hour
 
 // chatScope carries per-chat state through the persist call chain: the chat
 // and store IDs, the run options, and the chat's cursor state (whose
@@ -48,6 +61,18 @@ type chatScope struct {
 	cs                 *ChatState
 	membershipComplete bool
 	budgetUsed         int
+	// tailScan asks a completed chat to re-probe the oldest end of its history
+	// before settling into the incremental path (see tailScanInterval).
+	tailScan bool
+}
+
+// chatVisit records why a chat was enumerated. tailOnly means the chat would
+// have been excluded by the normal activity filter and is present solely for
+// the completed-history probe.
+type chatVisit struct {
+	Chat
+
+	tailOnly bool
 }
 
 func (cc *chatScope) limitReached() bool {
@@ -117,6 +142,19 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (*ImportSum
 		state.Anchors = anchors
 	}
 
+	// Heal rows derived by an older build before syncing new ones, so an
+	// upgraded archive converges without the user knowing to run a repair.
+	// Ledger-gated, so this costs one indexed lookup on every later run.
+	rsum, ran, rerr := rederive.RunIfStale(ctx, imp.store, sourceTypeBeeper, opts.AccountID, src.ID, opts.Progress)
+	if rerr != nil {
+		return nil, rerr
+	}
+	if ran && rsum != nil {
+		sum.BodiesRepaired = rsum.BodiesRewritten
+		sum.AttachmentsRetagged = rsum.AttachmentsTagged
+		sum.Errors += rsum.Errors
+	}
+
 	syncID, err := imp.store.StartSync(src.ID, sourceTypeBeeper)
 	if err != nil {
 		return nil, err
@@ -141,8 +179,13 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (*ImportSum
 		return sum, err
 	}
 
+	// A tail scan must see every chat, not just recently-active ones: a chat
+	// gains backfilled history without its lastActivity moving, so the usual
+	// enumeration filter would skip exactly the chats worth probing.
+	tailScan := opts.Full || tailScanDue(state.LastTailScan, start)
+
 	reconcileCutoff := start.Add(-reconcileWindow)
-	chats, err := imp.enumerateChats(ctx, syncID, opts, state, reconcileCutoff, sum)
+	chats, err := imp.enumerateChats(ctx, syncID, opts, state, reconcileCutoff, tailScan, sum)
 	if err != nil {
 		return sum, err
 	}
@@ -153,7 +196,8 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (*ImportSum
 	maxActivity := parseWatermark(state.ListWatermark)
 	total := len(chats)
 	for idx := range chats {
-		ch := &chats[idx]
+		visit := &chats[idx]
+		ch := &visit.Chat
 		if err = ctx.Err(); err != nil {
 			return sum, err
 		}
@@ -161,7 +205,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (*ImportSum
 			maxActivity = ch.LastActivity
 		}
 		var convCount int64
-		convCount, err = imp.syncChat(ctx, syncID, src.ID, ch, opts, state, reconcileCutoff, sum)
+		convCount, err = imp.syncChat(ctx, syncID, src.ID, ch, opts, state, reconcileCutoff, tailScan, visit.tailOnly, sum)
 		if err != nil {
 			return sum, err
 		}
@@ -172,11 +216,20 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (*ImportSum
 		// Flush checkpoint so an interrupted run can resume from this point.
 		imp.checkpoint(syncID, state, sum)
 	}
+	if err = ctx.Err(); err != nil {
+		return sum, err
+	}
 	// Advance the discovery watermark only for fetch-clean runs: a fetch error
 	// means some chat's messages are still missing, so it must stay
 	// discoverable by the next run's lastActivityAfter filter.
 	if sum.FetchErrors == 0 && !maxActivity.IsZero() {
 		state.ListWatermark = formatWatermark(maxActivity)
+	}
+	// Record the scan only on a fetch-clean run: a run that failed partway
+	// through may not have probed every chat, and re-probing costs one request
+	// per chat rather than any lost data.
+	if tailScan && sum.FetchErrors == 0 {
+		state.LastTailScan = formatWatermark(start)
 	}
 
 	// Never complete a run under-anchored: incremental-only runs skip the
@@ -210,25 +263,22 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (*ImportSum
 // enumerateChats lists the chats this run must visit: every chat active in
 // the discovery overlap or reconciliation window (all chats on first/full
 // runs), plus any chat whose backfill is unfinished even without new activity.
-func (imp *Importer) enumerateChats(ctx context.Context, syncID int64, opts ImportOptions, state *SyncState, reconcileCutoff time.Time, sum *ImportSummary) ([]Chat, error) {
+func (imp *Importer) enumerateChats(ctx context.Context, syncID int64, opts ImportOptions, state *SyncState, reconcileCutoff time.Time, tailScan bool, sum *ImportSummary) ([]chatVisit, error) {
 	params := SearchChatsParams{AccountID: opts.AccountID}
-	if !opts.Full && state.ListWatermark != "" {
-		if wm := parseWatermark(state.ListWatermark); !wm.IsZero() {
-			// Overlap by an hour so clock skew or a mid-listing crash cannot
-			// permanently hide a chat from enumeration. Also include every chat
-			// inside the reconciliation window so in-place changes are revisited
-			// even when their LastActivity did not advance.
-			params.LastActivityAfter = wm.Add(-time.Hour)
-			if reconcileCutoff.Before(params.LastActivityAfter) {
-				params.LastActivityAfter = reconcileCutoff
-			}
-		}
+	activityCutoff := chatActivityCutoff(opts, state, reconcileCutoff)
+	if !tailScan {
+		params.LastActivityAfter = activityCutoff
 	}
-	var chats []Chat
+	var chats []chatVisit
 	seen := map[string]bool{}
 	err := imp.client.AllChats(ctx, params, func(ch Chat) error {
 		seen[ch.ID] = true
-		chats = append(chats, ch)
+		tailOnly := tailScan && !activityCutoff.IsZero() && !ch.LastActivity.After(activityCutoff)
+		if cs := state.Chats[ch.ID]; cs != nil && !cs.Done {
+			// Unfinished backfills are included independently of activity.
+			tailOnly = false
+		}
+		chats = append(chats, chatVisit{Chat: ch, tailOnly: tailOnly})
 		return nil
 	})
 	if err != nil {
@@ -256,15 +306,36 @@ func (imp *Importer) enumerateChats(ctx context.Context, syncID int64, opts Impo
 			sum.Errors++
 			continue
 		}
-		chats = append(chats, *detail)
+		chats = append(chats, chatVisit{Chat: *detail})
 	}
 	return chats, nil
+}
+
+// chatActivityCutoff returns the filter a normal incremental run would send
+// to chat discovery. Tail scans omit the API filter but retain this value to
+// distinguish active work from chats enumerated solely for probing.
+func chatActivityCutoff(opts ImportOptions, state *SyncState, reconcileCutoff time.Time) time.Time {
+	if opts.Full {
+		return time.Time{}
+	}
+	wm := parseWatermark(state.ListWatermark)
+	if wm.IsZero() {
+		return time.Time{}
+	}
+	// Overlap by an hour so clock skew or a mid-listing crash cannot hide a
+	// chat, and include the reconciliation window for in-place changes whose
+	// LastActivity did not advance.
+	cutoff := wm.Add(-time.Hour)
+	if reconcileCutoff.Before(cutoff) {
+		cutoff = reconcileCutoff
+	}
+	return cutoff
 }
 
 // syncChat ensures the conversation and its participants, then backfills or
 // incrementally extends the chat's messages. Returns the number of messages
 // processed for this chat.
-func (imp *Importer) syncChat(ctx context.Context, syncID, sourceID int64, ch *Chat, opts ImportOptions, state *SyncState, reconcileCutoff time.Time, sum *ImportSummary) (int64, error) {
+func (imp *Importer) syncChat(ctx context.Context, syncID, sourceID int64, ch *Chat, opts ImportOptions, state *SyncState, reconcileCutoff time.Time, tailScan, tailOnly bool, sum *ImportSummary) (int64, error) {
 	convID, membershipComplete, err := imp.ensureConversation(ctx, syncID, sourceID, ch, sum)
 	if err != nil {
 		return 0, err
@@ -274,8 +345,26 @@ func (imp *Importer) syncChat(ctx context.Context, syncID, sourceID int64, ch *C
 	cc := &chatScope{
 		chatID: ch.ID, convID: convID, sourceID: sourceID, syncID: syncID,
 		opts: opts, cs: cs, membershipComplete: membershipComplete,
+		tailScan: tailScan,
 	}
 	before := sum.MessagesProcessed
+
+	// Re-open a completed chat whose oldest end has grown since it was walked;
+	// clearing Done routes it back through the backfill path below.
+	if cs.Done && tailScan {
+		var reopened bool
+		reopened, err = imp.probeChatTail(ctx, cc, sum)
+		if err != nil {
+			return sum.MessagesProcessed - before, err
+		}
+		if tailOnly && !reopened && cs.Newest != "" {
+			// This quiet chat was enumerated only for the probe. With no new
+			// history, its incremental and reconciliation paths have no work.
+			// Cursorless chats still need the empty-chat recovery below.
+			imp.flushReplies(cc, sum)
+			return sum.MessagesProcessed - before, nil
+		}
+	}
 
 	// A chat that was empty when backfilled has Done set but no incremental
 	// cursor; re-walk it from scratch (cheap) so its first messages are seen.
@@ -352,6 +441,87 @@ func (imp *Importer) ensureConversation(ctx context.Context, syncID, sourceID in
 		}
 	}
 	return convID, membershipComplete, nil
+}
+
+// probeChatTail searches past a completed chat's oldest cursor and clears Done
+// when it finds messages the archive has never seen, so the backfill resumes
+// into history Beeper added after the chat was first walked.
+//
+// The archive is consulted rather than just trusting a non-empty page: near the
+// beginning of history the API re-serves the tail it already returned (the same
+// misbehaviour backfillChat's recentIDWindow defends against), so a page of
+// familiar messages must leave the chat done or every scan would re-walk it.
+//
+// Best-effort except for context cancellation, which must abort the run so the
+// scan remains due. Other probe failures leave the chat completed and are not
+// counted as fetch errors: the messages they would find are ones the archive
+// has never had, so deferring them to the next scan loses nothing captured.
+func (imp *Importer) probeChatTail(ctx context.Context, cc *chatScope, sum *ImportSummary) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	cursor := cc.cs.Oldest
+	if cursor == "" {
+		return false, nil
+	}
+	recent := newRecentIDWindow(recentIDWindowPages)
+	for range maxTailProbePages {
+		page, err := imp.client.ListMessagesPage(ctx, cc.chatID, cursor, "before")
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return false, ctxErr
+		}
+		if err != nil || len(page.Items) == 0 {
+			return false, nil //nolint:nilerr // non-cancellation probe failures are deferred to the next scan
+		}
+		ids := make([]string, 0, len(page.Items))
+		pageIDs := make([]string, 0, len(page.Items))
+		newItems := 0
+		for i := range page.Items {
+			m := &page.Items[i]
+			pageIDs = append(pageIDs, m.ID)
+			if recent.contains(m.ID) {
+				continue
+			}
+			newItems++
+			if persistsMessageRow(m) {
+				ids = append(ids, m.ID)
+			}
+		}
+		if newItems == 0 {
+			return false, nil
+		}
+		recent.add(pageIDs)
+
+		if len(ids) > 0 {
+			archived, err := imp.store.ArchivedSourceMessageIDs(cc.sourceID, ids)
+			if err != nil {
+				sum.Errors++
+				return false, nil //nolint:nilerr // a later scan retries this best-effort archive lookup
+			}
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return false, ctxErr
+			}
+			for _, id := range ids {
+				if _, ok := archived[id]; !ok {
+					cc.cs.Done = false
+					sum.ChatsReopened++
+					return true, nil
+				}
+			}
+			return false, nil
+		}
+
+		if !page.HasMore || page.OldestCursor == "" || page.OldestCursor == cursor {
+			return false, nil
+		}
+		cursor = page.OldestCursor
+	}
+
+	// A very long event-only run is unusual. Route it through normal backfill
+	// rather than letting the probe bound hide content on every future scan.
+	cc.cs.Done = false
+	sum.ChatsReopened++
+	return true, nil
 }
 
 // recentIDWindow remembers the message IDs of the last few pages of a
@@ -599,7 +769,7 @@ func (imp *Importer) processMessage(ctx context.Context, cc *chatScope, m *Messa
 		sum.MessagesProcessed++
 		return nil
 	}
-	if m.IsHidden {
+	if !persistsMessageRow(m) {
 		return nil
 	}
 	err := imp.persistMessage(ctx, cc, m, sum)
@@ -607,6 +777,13 @@ func (imp *Importer) processMessage(ctx context.Context, cc *chatScope, m *Messa
 		sum.MessagesProcessed++
 	}
 	return err
+}
+
+// persistsMessageRow reports whether processMessage archives a message row.
+// Reactions update their target, deletions tombstone an existing row, and
+// hidden events are intentionally omitted.
+func persistsMessageRow(m *Message) bool {
+	return m.Type != "REACTION" && !m.IsDeleted && !m.IsHidden
 }
 
 // refreshReactionTarget re-fetches and re-persists the message a REACTION
@@ -825,6 +1002,17 @@ func (imp *Importer) recordItem(syncID int64, sourceMessageID, phase, status, ki
 		ErrorKind:       kind,
 		ErrorMessage:    msg,
 	})
+}
+
+// tailScanDue reports whether completed chats should be re-probed this run.
+// An unset or unparseable timestamp counts as due, so archives written before
+// tail scanning existed pick it up on their next sync.
+func tailScanDue(last string, now time.Time) bool {
+	t := parseWatermark(last)
+	if t.IsZero() {
+		return true
+	}
+	return now.Sub(t) >= tailScanInterval
 }
 
 func parseWatermark(s string) time.Time {

@@ -19,10 +19,10 @@ import (
 // relationship activity, people, domain, and daily read model; version 16
 // adds has_attachments to the relationship activity dataset; version 17 adds
 // the envelope address snapshot (email_address) to message_recipients; version
-// 18 adds participant-directory revision tracking so a pre-upgrade cache cannot
-// be mistaken for one that has observed later participant metadata changes.
-// Schema bumps force a full rebuild before readers use an older publication.
-const CacheSchemaVersion = 18
+// 18 adds participant-directory revision tracking; version 19 exports
+// attachment_metadata for raw attachment queries. Schema bumps force a full
+// rebuild before readers use an older publication.
+const CacheSchemaVersion = 19
 
 // CacheSyncState is the commit marker written after a complete analytics
 // cache publication. SQLite remains authoritative; these watermarks only
@@ -37,6 +37,11 @@ type CacheSyncState struct {
 	LastFailedSyncRunCount int64     `json:"last_failed_sync_run_count,omitempty"`
 	LastFailedSyncRunIDSum int64     `json:"last_failed_sync_run_id_sum,omitempty"`
 	IdentityRevision       int64     `json:"identity_revision,omitempty"`
+	// DerivedDataRevision tracks offline repairs that rewrite existing
+	// message, snippet, search, or attachment facts. Those rows are already
+	// inside the committed message ID boundary, so drift requires a full cache
+	// rebuild rather than an incremental append.
+	DerivedDataRevision int64 `json:"derived_data_revision,omitempty"`
 	// AccountIdentityRevision tracks identity mutations that invalidate
 	// baked message data — confirming or removing a "me" address, and
 	// participant merges (which repoint messages.sender_id) — separately
@@ -100,7 +105,7 @@ func (e *CacheUnavailableError) Unwrap() error { return ErrCacheUnavailable }
 // Revision identifies one committed cache publication. It intentionally uses
 // only commit-marker fields, never ambient filesystem state.
 func (s CacheSyncState) Revision() string {
-	payload := fmt.Sprintf("v=%d|message=%d|watermark=%s|run=%d|add=%d|update=%d|fail_count=%d|fail_sum=%d|identity=%d|account_identity=%d|participant_identifier=%d|participant_display_name=%d|published=%s",
+	payload := fmt.Sprintf("v=%d|message=%d|watermark=%s|run=%d|add=%d|update=%d|fail_count=%d|fail_sum=%d|identity=%d|derived_data=%d|account_identity=%d|participant_identifier=%d|participant_display_name=%d|published=%s",
 		s.SchemaVersion,
 		s.LastMessageID,
 		s.LastSyncAt.UTC().Format(time.RFC3339Nano),
@@ -110,6 +115,7 @@ func (s CacheSyncState) Revision() string {
 		s.LastFailedSyncRunCount,
 		s.LastFailedSyncRunIDSum,
 		s.IdentityRevision,
+		s.DerivedDataRevision,
 		s.AccountIdentityRevision,
 		s.ParticipantIdentifierRevision,
 		s.ParticipantDisplayNameRevision,

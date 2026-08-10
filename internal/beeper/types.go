@@ -181,6 +181,14 @@ type ImportSummary struct {
 	// new rows.
 	MessagesAdded      int64
 	ReactionsRefreshed int64
+	// ChatsReopened counts completed chats whose backfill was resumed because
+	// Beeper had since added older history behind them (see tailScanInterval).
+	ChatsReopened int64
+	// BodiesRepaired and AttachmentsRetagged report the one-time re-derivation
+	// of rows written by an older build, run before this sync (see
+	// rederive.RunIfStale). Both are zero once an archive has caught up.
+	BodiesRepaired      int64
+	AttachmentsRetagged int64
 	// AttachmentsDownloaded counts media stored this run;
 	// AttachmentsPending counts failed/deferred downloads that left a
 	// retry marker (see backfill-beeper-media).

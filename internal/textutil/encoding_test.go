@@ -494,3 +494,24 @@ func TestSanitizeTerminal(t *testing.T) {
 		})
 	}
 }
+
+func TestSanitizeTerminalMultiline(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{"preserves newlines", "line1\nline2", "line1\nline2"},
+		{"normalizes CRLF", "line1\r\nline2", "line1\nline2"},
+		{"strips carriage returns", "over\rwrite", "overwrite"},
+		{"strips OSC while preserving surrounding lines", "before\n\x1b]52;c;evil\x07after", "before\nafter"},
+		{"strips CSI and C1 controls", "\x1b[31mred\x1b[0m\nleft\u009bright", "red\nleftright"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := SanitizeTerminalMultiline(tt.input)
+			assert.Equalf(t, tt.want, got, "SanitizeTerminalMultiline(%q)", tt.input)
+		})
+	}
+}

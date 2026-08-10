@@ -43,6 +43,10 @@ type SyncState struct {
 	// ListWatermark is the max chat lastActivity observed (RFC3339); the next
 	// incremental run enumerates only chats active after it.
 	ListWatermark string `json:"list_watermark,omitempty"`
+	// LastTailScan is when this source last re-probed completed chats for
+	// history Beeper backfilled after they were marked done (RFC3339). See
+	// tailScanInterval.
+	LastTailScan string `json:"last_tail_scan,omitempty"`
 }
 
 func NewSyncState() *SyncState {
@@ -108,5 +112,8 @@ func (s *SyncState) Merge(other *SyncState) {
 	}
 	if other.ListWatermark > s.ListWatermark {
 		s.ListWatermark = other.ListWatermark
+	}
+	if other.LastTailScan > s.LastTailScan {
+		s.LastTailScan = other.LastTailScan
 	}
 }

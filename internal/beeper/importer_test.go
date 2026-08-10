@@ -3,6 +3,7 @@ package beeper
 import (
 	"context"
 	"database/sql"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -712,6 +713,356 @@ func TestImportEmptyChatPicksUpLaterMessages(t *testing.T) {
 	require.NoError(err)
 	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages WHERE message_type='beeper'`).Scan(&total))
 	assert.Equal(1, total, "a chat that was empty at backfill must still pick up later messages")
+}
+
+// TestImportPicksUpHistoryBackfilledAfterChatCompleted covers Beeper Desktop
+// filling in a network's older history after msgvault already walked a chat to
+// the end. The new messages carry old timestamps, so they neither advance the
+// chat's lastActivity nor land in the reconcile window — without the tail scan
+// the chat stays done and that history is never archived.
+func TestImportPicksUpHistoryBackfilledAfterChatCompleted(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	base := time.Now().Add(-60 * 24 * time.Hour).UTC().Truncate(time.Second)
+	f := newFakeBeeper(t)
+	f.addChat(&fakeChat{
+		ID: "!grow:beeper.local", AccountID: "signal", Network: "Signal", Title: "Grow", Type: "single",
+		LastActivity: base.Add(2 * time.Minute),
+		Participants: []map[string]any{{"id": "@me:beeper.local", "isSelf": true}},
+		Msgs: []fakeMsg{
+			{ID: "n1", SortKey: 100, Timestamp: base, Text: "recent one", SenderID: "@signal_ann:beeper.local", SenderName: "Ann"},
+			{ID: "n2", SortKey: 101, Timestamp: base.Add(time.Minute), Text: "recent two", SenderID: "@signal_ann:beeper.local", SenderName: "Ann"},
+		},
+	})
+	imp, st, done := newTestImporter(t, f)
+	defer done()
+
+	_, err := imp.Import(context.Background(), ImportOptions{AccountID: "signal"})
+	require.NoError(err)
+
+	var total int
+	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages WHERE message_type='beeper'`).Scan(&total))
+	require.Equal(2, total, "first run archives the locally-available history")
+
+	// The scan is daily in production; the second run below stands in for the
+	// next day's sync.
+	defer func(d time.Duration) { tailScanInterval = d }(tailScanInterval)
+	tailScanInterval = 0
+
+	// Beeper finishes its own backfill: older messages appear behind the ones
+	// already archived, without the chat's lastActivity changing.
+	f.prependMsgs("!grow:beeper.local",
+		fakeMsg{ID: "o1", SortKey: 1, Timestamp: base.Add(-48 * time.Hour), Text: "ancient one", SenderID: "@signal_ann:beeper.local", SenderName: "Ann"},
+		fakeMsg{ID: "o2", SortKey: 2, Timestamp: base.Add(-47 * time.Hour), Text: "ancient two", SenderID: "@signal_ann:beeper.local", SenderName: "Ann"},
+	)
+
+	sum, err := imp.Import(context.Background(), ImportOptions{AccountID: "signal"})
+	require.NoError(err)
+	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages WHERE message_type='beeper'`).Scan(&total))
+	assert.Equal(4, total, "history Beeper backfilled after the chat completed must be archived")
+	assert.Equal(int64(1), sum.ChatsReopened)
+
+	var text string
+	require.NoError(st.DB().QueryRow(
+		`SELECT b.body_text FROM messages m JOIN message_bodies b ON b.message_id = m.id
+		 WHERE m.source_message_id = 'o1'`).Scan(&text))
+	assert.Equal("ancient one", text)
+}
+
+func TestImportTailOnlyCursorlessChatStillChecksForBackfill(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	base := time.Now().Add(-60 * 24 * time.Hour).UTC().Truncate(time.Second)
+	recent := time.Now().Add(-time.Hour).UTC().Truncate(time.Second)
+	f := newFakeBeeper(t)
+	f.addChat(&fakeChat{
+		ID: "!empty-tail:beeper.local", AccountID: "signal", Network: "Signal", Title: "Empty", Type: "single",
+		LastActivity: base,
+		Participants: []map[string]any{{"id": "@me:beeper.local", "isSelf": true}},
+	})
+	f.addChat(&fakeChat{
+		ID: "!active-empty-tail:beeper.local", AccountID: "signal", Network: "Signal", Title: "Active", Type: "single",
+		LastActivity: recent,
+		Participants: []map[string]any{{"id": "@me:beeper.local", "isSelf": true}},
+		Msgs: []fakeMsg{
+			{ID: "a1", SortKey: 1, Timestamp: recent, Text: "active", SenderID: "@signal_ann:beeper.local", SenderName: "Ann"},
+		},
+	})
+	imp, st, done := newTestImporter(t, f)
+	defer done()
+
+	_, err := imp.Import(context.Background(), ImportOptions{AccountID: "signal"})
+	require.NoError(err)
+
+	oldInterval := tailScanInterval
+	tailScanInterval = 0
+	t.Cleanup(func() { tailScanInterval = oldInterval })
+
+	// Beeper later fills an initially empty chat without advancing its listed
+	// activity. The newer chat makes this one eligible only through tail scan.
+	f.prependMsgs("!empty-tail:beeper.local", fakeMsg{
+		ID: "late-old", SortKey: 1, Timestamp: base.Add(-time.Hour), Text: "arrived later",
+		SenderID: "@signal_ann:beeper.local", SenderName: "Ann",
+	})
+
+	_, err = imp.Import(context.Background(), ImportOptions{AccountID: "signal"})
+	require.NoError(err)
+
+	var total int
+	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages WHERE message_type='beeper'`).Scan(&total))
+	assert.Equal(2, total, "a cursorless tail-only chat must still run its empty-chat recovery")
+}
+
+func TestImportTailProbeSkipsEventOnlyPagesToFindOlderContent(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	base := time.Now().Add(-60 * 24 * time.Hour).UTC().Truncate(time.Second)
+	recent := time.Now().Add(-time.Hour).UTC().Truncate(time.Second)
+	f := newFakeBeeper(t)
+	f.pageSize = 2
+	f.addChat(&fakeChat{
+		ID: "!event-page:beeper.local", AccountID: "signal", Network: "Signal", Title: "Events", Type: "single",
+		LastActivity: base,
+		Participants: []map[string]any{{"id": "@me:beeper.local", "isSelf": true}},
+		Msgs: []fakeMsg{
+			{ID: "q1", SortKey: 100, Timestamp: base, Text: "known", SenderID: "@signal_ann:beeper.local", SenderName: "Ann"},
+		},
+	})
+	f.addChat(&fakeChat{
+		ID: "!active-event-page:beeper.local", AccountID: "signal", Network: "Signal", Title: "Active", Type: "single",
+		LastActivity: recent,
+		Participants: []map[string]any{{"id": "@me:beeper.local", "isSelf": true}},
+		Msgs: []fakeMsg{
+			{ID: "a1", SortKey: 100, Timestamp: recent, Text: "active", SenderID: "@signal_ann:beeper.local", SenderName: "Ann"},
+		},
+	})
+	imp, st, done := newTestImporter(t, f)
+	defer done()
+
+	_, err := imp.Import(context.Background(), ImportOptions{AccountID: "signal"})
+	require.NoError(err)
+
+	oldInterval := tailScanInterval
+	tailScanInterval = 0
+	t.Cleanup(func() { tailScanInterval = oldInterval })
+
+	// The first page behind the stored cursor contains no row-producing
+	// messages; the older content is visible only after following its cursor.
+	f.prependMsgs("!event-page:beeper.local",
+		fakeMsg{ID: "older-content", SortKey: 1, Timestamp: base.Add(-3 * time.Hour), Text: "older content", SenderID: "@signal_ann:beeper.local", SenderName: "Ann"},
+		fakeMsg{ID: "hidden-between", SortKey: 2, Timestamp: base.Add(-2 * time.Hour), IsHidden: true},
+		fakeMsg{ID: "reaction-between", SortKey: 3, Timestamp: base.Add(-time.Hour), Type: "REACTION", IsHidden: true, LinkedMessageID: "q1"},
+	)
+
+	sum, err := imp.Import(context.Background(), ImportOptions{AccountID: "signal"})
+	require.NoError(err)
+	assert.Equal(int64(1), sum.ChatsReopened)
+
+	var text string
+	require.NoError(st.DB().QueryRow(
+		`SELECT b.body_text FROM messages m JOIN message_bodies b ON b.message_id = m.id
+		 WHERE m.source_message_id = 'older-content'`).Scan(&text))
+	assert.Equal("older content", text)
+}
+
+func TestImportTailScanIgnoresUnarchivedNonContentEvents(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	base := time.Now().Add(-60 * 24 * time.Hour).UTC().Truncate(time.Second)
+	recent := time.Now().Add(-time.Hour).UTC().Truncate(time.Second)
+	f := newFakeBeeper(t)
+	f.addChat(&fakeChat{
+		ID: "!quiet-events:beeper.local", AccountID: "signal", Network: "Signal", Title: "Quiet", Type: "single",
+		LastActivity: base, TailCountdown: true,
+		Participants: []map[string]any{{"id": "@me:beeper.local", "isSelf": true}},
+		Msgs: []fakeMsg{
+			{ID: "q1", SortKey: 100, Timestamp: base, Text: "hello", SenderID: "@signal_ann:beeper.local", SenderName: "Ann"},
+		},
+	})
+	f.addChat(&fakeChat{
+		ID: "!active-events:beeper.local", AccountID: "signal", Network: "Signal", Title: "Active", Type: "single",
+		LastActivity: recent,
+		Participants: []map[string]any{{"id": "@me:beeper.local", "isSelf": true}},
+		Msgs: []fakeMsg{
+			{ID: "a1", SortKey: 100, Timestamp: recent, Text: "active", SenderID: "@signal_ann:beeper.local", SenderName: "Ann"},
+		},
+	})
+	imp, st, done := newTestImporter(t, f)
+	defer done()
+
+	_, err := imp.Import(context.Background(), ImportOptions{AccountID: "signal"})
+	require.NoError(err)
+
+	oldInterval := tailScanInterval
+	tailScanInterval = 0
+	t.Cleanup(func() { tailScanInterval = oldInterval })
+
+	// These events sit behind the completed cursor but deliberately create no
+	// message rows. A degenerate tail page will keep re-serving them, so treating
+	// their absent IDs as archive gaps would reopen the chat on every scan.
+	f.prependMsgs("!quiet-events:beeper.local",
+		fakeMsg{ID: "reaction-old", SortKey: 1, Timestamp: base.Add(-3 * time.Hour), Type: "REACTION", IsHidden: true, LinkedMessageID: "q1"},
+		fakeMsg{ID: "hidden-old", SortKey: 2, Timestamp: base.Add(-2 * time.Hour), Text: "hidden", IsHidden: true},
+		fakeMsg{ID: "deleted-old", SortKey: 3, Timestamp: base.Add(-time.Hour), IsDeleted: true},
+	)
+
+	for range 2 {
+		sum, ierr := imp.Import(context.Background(), ImportOptions{AccountID: "signal"})
+		require.NoError(ierr)
+		assert.Zero(sum.ChatsReopened, "non-content events must not reopen a completed chat")
+	}
+
+	var total int
+	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages WHERE message_type='beeper'`).Scan(&total))
+	assert.Equal(2, total, "non-content events must remain excluded from the archive")
+}
+
+func TestImportTailOnlyUnchangedChatSkipsIncrementalAndReconcile(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	base := time.Now().Add(-60 * 24 * time.Hour).UTC().Truncate(time.Second)
+	recent := time.Now().Add(-time.Hour).UTC().Truncate(time.Second)
+	f := newFakeBeeper(t)
+	f.addChat(&fakeChat{
+		ID: "!quiet-probe:beeper.local", AccountID: "signal", Network: "Signal", Title: "Quiet", Type: "single",
+		LastActivity: base,
+		Participants: []map[string]any{{"id": "@me:beeper.local", "isSelf": true}},
+		Msgs: []fakeMsg{
+			{ID: "q1", SortKey: 1, Timestamp: base, Text: "quiet", SenderID: "@signal_ann:beeper.local", SenderName: "Ann"},
+		},
+	})
+	f.addChat(&fakeChat{
+		ID: "!active-probe:beeper.local", AccountID: "signal", Network: "Signal", Title: "Active", Type: "single",
+		LastActivity: recent,
+		Participants: []map[string]any{{"id": "@me:beeper.local", "isSelf": true}},
+		Msgs: []fakeMsg{
+			{ID: "a1", SortKey: 1, Timestamp: recent, Text: "active", SenderID: "@signal_ann:beeper.local", SenderName: "Ann"},
+		},
+	})
+	imp, _, done := newTestImporter(t, f)
+	defer done()
+
+	_, err := imp.Import(context.Background(), ImportOptions{AccountID: "signal"})
+	require.NoError(err)
+
+	oldInterval := tailScanInterval
+	tailScanInterval = 0
+	t.Cleanup(func() { tailScanInterval = oldInterval })
+	f.resetRequests()
+
+	sum, err := imp.Import(context.Background(), ImportOptions{AccountID: "signal"})
+	require.NoError(err)
+	assert.Zero(sum.ChatsReopened)
+
+	var quietRequests []string
+	for _, req := range f.requests() {
+		if strings.Contains(req, "/v1/chats/!quiet-probe:beeper.local/messages") &&
+			!strings.Contains(req, "/messages/") {
+			quietRequests = append(quietRequests, req)
+		}
+	}
+	require.Len(quietRequests, 1, "an unchanged tail-only chat needs only its tail probe")
+	assert.Contains(quietRequests[0], "direction=before")
+}
+
+func TestImportTailProbeCancellationLeavesScanDue(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	base := time.Now().Add(-60 * 24 * time.Hour).UTC().Truncate(time.Second)
+	recent := time.Now().Add(-time.Hour).UTC().Truncate(time.Second)
+	f := newFakeBeeper(t)
+	f.addChat(&fakeChat{
+		ID: "!active-cancel-probe:beeper.local", AccountID: "signal", Network: "Signal", Title: "Active", Type: "single",
+		LastActivity: recent,
+		Participants: []map[string]any{{"id": "@me:beeper.local", "isSelf": true}},
+		Msgs: []fakeMsg{
+			{ID: "active-cancel", SortKey: 1, Timestamp: recent, Text: "active", SenderID: "@signal_ann:beeper.local", SenderName: "Ann"},
+		},
+	})
+	f.addChat(&fakeChat{
+		ID: "!quiet-cancel-probe:beeper.local", AccountID: "signal", Network: "Signal", Title: "Quiet", Type: "single",
+		LastActivity: base,
+		Participants: []map[string]any{{"id": "@me:beeper.local", "isSelf": true}},
+		Msgs: []fakeMsg{
+			{ID: "quiet-cancel", SortKey: 1, Timestamp: base, Text: "quiet", SenderID: "@signal_ann:beeper.local", SenderName: "Ann"},
+		},
+	})
+	imp, st, done := newTestImporter(t, f)
+	defer done()
+
+	_, err := imp.Import(context.Background(), ImportOptions{AccountID: "signal"})
+	require.NoError(err)
+
+	src, err := st.GetOrCreateSource("beeper", "signal")
+	require.NoError(err)
+	run, err := st.GetLastSuccessfulSync(src.ID)
+	require.NoError(err)
+	require.True(run.CursorAfter.Valid)
+	state, err := LoadSyncState(run.CursorAfter.String)
+	require.NoError(err)
+	state.LastTailScan = formatWatermark(time.Now().Add(-25 * time.Hour))
+	blob, err := state.Marshal()
+	require.NoError(err)
+	_, err = st.DB().Exec(st.Rebind(`UPDATE sync_runs SET cursor_after = ? WHERE id = ?`), blob, run.ID)
+	require.NoError(err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	f.cancelMessageListFor("!quiet-cancel-probe:beeper.local", cancel)
+	_, err = imp.Import(ctx, ImportOptions{AccountID: "signal"})
+	require.ErrorIs(err, context.Canceled)
+
+	// The interrupted probe must leave the old stamp in the failed checkpoint,
+	// so an immediate retry still visits the otherwise-inactive quiet chat.
+	f.resetRequests()
+	_, err = imp.Import(context.Background(), ImportOptions{AccountID: "signal"})
+	require.NoError(err)
+	assert.True(slices.ContainsFunc(f.requests(), func(req string) bool {
+		return strings.Contains(req, "/v1/chats/!quiet-cancel-probe:beeper.local/messages") &&
+			strings.Contains(req, "direction=before")
+	}), "an interrupted tail scan must remain due for immediate retry")
+}
+
+// TestImportTailScanThrottled covers the probe not running on every sync: it
+// costs one request per completed chat, so a run soon after a clean scan must
+// leave completed chats alone.
+func TestImportTailScanThrottled(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	base := time.Now().Add(-60 * 24 * time.Hour).UTC().Truncate(time.Second)
+	f := newFakeBeeper(t)
+	f.addChat(&fakeChat{
+		ID: "!quiet:beeper.local", AccountID: "signal", Network: "Signal", Title: "Quiet", Type: "single",
+		LastActivity: base,
+		Participants: []map[string]any{{"id": "@me:beeper.local", "isSelf": true}},
+		Msgs: []fakeMsg{
+			{ID: "q1", SortKey: 1, Timestamp: base, Text: "hello", SenderID: "@signal_ann:beeper.local", SenderName: "Ann"},
+		},
+	})
+	imp, _, done := newTestImporter(t, f)
+	defer done()
+
+	_, err := imp.Import(context.Background(), ImportOptions{AccountID: "signal"})
+	require.NoError(err)
+
+	sum, err := imp.Import(context.Background(), ImportOptions{AccountID: "signal"})
+	require.NoError(err)
+	assert.Zero(sum.ChatsReopened, "a scan within the interval must not re-probe completed chats")
+}
+
+func TestTailScanDue(t *testing.T) {
+	assert := assert.New(t)
+	now := time.Date(2026, 8, 8, 12, 0, 0, 0, time.UTC)
+	assert.True(tailScanDue("", now), "an archive predating tail scanning is due")
+	assert.True(tailScanDue("not-a-timestamp", now), "an unparseable stamp is due")
+	assert.True(tailScanDue(formatWatermark(now.Add(-25*time.Hour)), now))
+	assert.False(tailScanDue(formatWatermark(now.Add(-time.Hour)), now))
 }
 
 func TestImportDegenerateTailPagination(t *testing.T) {

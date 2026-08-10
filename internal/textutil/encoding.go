@@ -158,6 +158,18 @@ func FirstLine(s string) string {
 // the raw leading byte, so that UTF-8 encoded C1 chars (e.g., U+009B CSI
 // encoded as 0xC2 0x9B) are correctly stripped.
 func SanitizeTerminal(s string) string {
+	return sanitizeTerminal(s, false)
+}
+
+// SanitizeTerminalMultiline strips ANSI escape sequences and C0/C1 control
+// characters while preserving line feeds. Carriage returns are discarded so
+// untrusted text cannot overwrite terminal output, and CRLF is normalized to
+// LF. Use SanitizeTerminal for single-line terminal output.
+func SanitizeTerminalMultiline(s string) string {
+	return sanitizeTerminal(s, true)
+}
+
+func sanitizeTerminal(s string, multiline bool) string {
 	var b strings.Builder
 	b.Grow(len(s))
 	i := 0
@@ -205,17 +217,27 @@ func SanitizeTerminal(s string) string {
 			continue
 		}
 
-		// Allow tab; strip newline and carriage return (all callers use this
-		// in single-line contexts such as TUI rows and progress output where
-		// \r can overwrite lines and \n can break layout).
+		// Allow tab. Multiline output keeps LF but always discards CR so an
+		// untrusted value cannot return the cursor to the start of a line.
 		if r == '\t' {
 			b.WriteRune(r)
 			i += size
 			continue
 		}
-		if r == '\n' || r == '\r' {
-			// Replace with space to preserve word boundaries.
-			b.WriteByte(' ')
+		if r == '\n' {
+			if multiline {
+				b.WriteByte('\n')
+			} else {
+				b.WriteByte(' ')
+			}
+			i += size
+			continue
+		}
+		if r == '\r' {
+			if !multiline {
+				// Replace with space to preserve word boundaries.
+				b.WriteByte(' ')
+			}
 			i += size
 			continue
 		}

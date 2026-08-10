@@ -97,7 +97,7 @@ func (imp *Importer) verifyArchivedSample(ctx context.Context, sourceID int64) e
 // from prior runs when this run enumerated none (quiet account) — the guard
 // must not stay weakened just because nothing happened lately. Best-effort; a
 // failure leaves the remaining slots for the next run to fill.
-func (imp *Importer) rearmAnchors(ctx context.Context, chats []Chat, state *SyncState) {
+func (imp *Importer) rearmAnchors(ctx context.Context, chats []chatVisit, state *SyncState) {
 	if len(state.Anchors) >= maxAnchors {
 		return
 	}
@@ -157,7 +157,7 @@ func anchorFrom(chatID string, items []Message) *AnchorProbe {
 	var best *Message
 	for i := range items {
 		m := &items[i]
-		if m.Type == "REACTION" || m.IsDeleted || m.IsHidden {
+		if !persistsMessageRow(m) {
 			continue
 		}
 		if best == nil || m.Timestamp.After(best.Timestamp) {

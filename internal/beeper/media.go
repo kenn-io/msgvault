@@ -2,6 +2,7 @@ package beeper
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -61,6 +62,25 @@ func declaredSize(att *Attachment) int {
 	return int(int64(att.FileSize))
 }
 
+// shareMetadata renders the attachment_metadata JSON marking media that came
+// in as a link preview rather than as something the sender composed, recording
+// the URL it previews. Returns "" for ordinary media, which stores NULL.
+func shareMetadata(m *Message) string {
+	link := sharedLink(m)
+	if link == "" {
+		return ""
+	}
+	// Marshal rather than concatenate: the URL is untrusted remote input and
+	// must not be able to break out of the JSON value.
+	b, err := json.Marshal(struct {
+		SharedURL string `json:"shared_url"`
+	}{SharedURL: link})
+	if err != nil {
+		return ""
+	}
+	return string(b)
+}
+
 // persistAttachments downloads a message's media into content-addressed
 // storage and replaces the message's Beeper attachment rows. Media already
 // downloaded for this message (matched by source_attachment_id) is kept
@@ -84,6 +104,7 @@ func (imp *Importer) persistAttachments(ctx context.Context, syncID, messageID i
 	if maxBytes <= 0 {
 		maxBytes = defaultMaxMediaBytes
 	}
+	shareMeta := shareMetadata(m)
 	refs := make([]store.AttachmentRef, 0, len(m.Attachments))
 	for i := range m.Attachments {
 		att := &m.Attachments[i]
@@ -93,6 +114,10 @@ func (imp *Importer) persistAttachments(ctx context.Context, syncID, messageID i
 		}
 		sourceAttID := beeperAttachmentID(ref)
 		if prev, ok := existing[sourceAttID]; ok && prev.ContentHash != "" {
+			// Re-persisting already-downloaded media: keep the blob as-is but
+			// refresh the share marker, so re-running over an existing archive
+			// classifies rows stored before this was recorded.
+			prev.Metadata = shareMeta
 			refs = append(refs, prev)
 			continue
 		}
@@ -102,6 +127,7 @@ func (imp *Importer) persistAttachments(ctx context.Context, syncID, messageID i
 			StoragePath:        ref,
 			Size:               declaredSize(att),
 			SourceAttachmentID: sourceAttID,
+			Metadata:           shareMeta,
 		}
 		// Every failure leaves the marker as a pending row (BackfillMedia
 		// retries it); only unexpected failures also count as errors.
@@ -147,6 +173,7 @@ func (imp *Importer) persistAttachments(ctx context.Context, syncID, messageID i
 			SourceAttachmentID: sourceAttID,
 			MediaType:          mediaTypeOf(att),
 			DurationMS:         int64(att.Duration * 1000),
+			Metadata:           shareMeta,
 		}
 		if att.Size != nil {
 			stored.Width = int64(att.Size.Width)

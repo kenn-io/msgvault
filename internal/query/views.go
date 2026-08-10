@@ -287,11 +287,18 @@ func createBaseViews(db *sql.DB, analyticsDir string, optCols map[string]map[str
 					"CAST(size AS BIGINT) AS size",
 					"CAST(filename AS VARCHAR) AS filename",
 				},
-				optionalCols: []optionalCol{{
-					name:        "mime_type",
-					replaceExpr: "COALESCE(CAST(mime_type AS VARCHAR), '') AS mime_type",
-					defaultExpr: "'' AS mime_type",
-				}},
+				optionalCols: []optionalCol{
+					{
+						name:        "mime_type",
+						replaceExpr: "COALESCE(CAST(mime_type AS VARCHAR), '') AS mime_type",
+						defaultExpr: "'' AS mime_type",
+					},
+					{
+						name:        "attachment_metadata",
+						replaceExpr: "TRY_CAST(attachment_metadata AS VARCHAR) AS attachment_metadata",
+						defaultExpr: "NULL::VARCHAR AS attachment_metadata",
+					},
+				},
 			},
 			probe: colsFor("attachments"),
 		},

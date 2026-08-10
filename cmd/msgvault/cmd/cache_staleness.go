@@ -23,6 +23,11 @@ type cacheStaleness struct {
 	// index-only refresh applies must check HasAccountIdentityDrift too —
 	// see derivedDriftOnly in build_cache.go.
 	HasIdentityDrift bool
+	// HasDerivedDataDrift signals an offline repair rewrote existing message
+	// or attachment facts already inside the committed cache watermark. These
+	// facts require a full rebuild; neither incremental append nor the
+	// identity-only refresh can replace them.
+	HasDerivedDataDrift bool
 	// HasConversationParticipantDrift signals conversation membership changed
 	// for a conversation already represented by the committed message
 	// watermark. The index-only refresh can rebuild relationship_activity and
@@ -292,6 +297,19 @@ func cacheNeedsBuildLocked(dbPath, analyticsDir string) cacheStaleness {
 					state.LastCacheAdditionCount, counters.additions, state.LastMessageID))
 			}
 		}
+	}
+
+	derivedDataRevision, err := db.DerivedDataRevision()
+	if err != nil {
+		return cacheStaleness{
+			NeedsBuild: true, FullRebuild: true,
+			Reason: "cannot verify derived-data revision",
+		}
+	}
+	if derivedDataRevision != state.DerivedDataRevision {
+		result.HasDerivedDataDrift = true
+		result.FullRebuild = true
+		reasons = append(reasons, "derived message data changed")
 	}
 
 	// Account-identity drift covers identity mutations that invalidate baked

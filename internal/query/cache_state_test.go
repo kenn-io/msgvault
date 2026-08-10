@@ -215,6 +215,9 @@ func TestCacheRevisionUsesOnlyCommittedStateWatermarks(t *testing.T) {
 	changed.IdentityRevision++
 	assert.NotEqual(revision, changed.Revision())
 	changed = state
+	changed.DerivedDataRevision++
+	assert.NotEqual(revision, changed.Revision())
+	changed = state
 	changed.ParticipantIdentifierRevision++
 	assert.NotEqual(revision, changed.Revision())
 	changed = state

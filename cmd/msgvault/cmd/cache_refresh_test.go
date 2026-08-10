@@ -2,8 +2,10 @@ package cmd
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -19,6 +21,7 @@ import (
 	"go.kenn.io/msgvault/internal/identityindex"
 	"go.kenn.io/msgvault/internal/oauth"
 	"go.kenn.io/msgvault/internal/query"
+	"go.kenn.io/msgvault/internal/rederive"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -330,6 +333,119 @@ func TestRebuildCacheAfterWriteReturnsError(t *testing.T) {
 	err = rebuildCacheAfterWrite(dbPath)
 	require.ErrorIs(err, sentinel)
 	require.ErrorContains(err, "refresh analytics cache")
+}
+
+func TestRebuildCacheAfterDerivedRepairRefreshesCurrentCache(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "msgvault.db")
+
+	savedCfg := cfg
+	t.Cleanup(func() { cfg = savedCfg })
+	cfg = &config.Config{HomeDir: tmpDir, Data: config.DataConfig{DataDir: tmpDir}}
+	analyticsDir := cfg.AnalyticsDir()
+
+	st, err := store.Open(dbPath)
+	require.NoError(err)
+	require.NoError(st.InitSchema())
+	source, err := st.GetOrCreateSource("beeper", "signal")
+	require.NoError(err)
+	conversationID, err := st.EnsureConversationWithType(
+		source.ID, "!cache-repair:example.org", "direct_chat", "Cache repair",
+	)
+	require.NoError(err)
+	sentAt := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
+	messageID, err := st.UpsertMessage(&store.Message{
+		ConversationID:  conversationID,
+		SourceID:        source.ID,
+		SourceMessageID: "repair-cache-1",
+		MessageType:     "beeper",
+		SentAt:          sql.NullTime{Time: sentAt, Valid: true},
+		ReceivedAt:      sql.NullTime{Time: sentAt, Valid: true},
+		Snippet:         sql.NullString{String: "stale snippet", Valid: true},
+		HasAttachments:  true,
+		AttachmentCount: 1,
+	})
+	require.NoError(err)
+	require.NoError(st.UpsertMessageBody(
+		messageID,
+		sql.NullString{String: "stale body", Valid: true},
+		sql.NullString{},
+	))
+	raw, err := json.Marshal(map[string]any{
+		"id":         "repair-cache-1",
+		"chatID":     "!cache-repair:example.org",
+		"accountID":  "signal",
+		"senderID":   "@user-a:example.org",
+		"senderName": "User A",
+		"timestamp":  sentAt,
+		"type":       "IMAGE",
+		"text":       "https://example.com/post",
+		"attachments": []map[string]any{{
+			"id": "mxc://example.org/share", "type": "img", "mimeType": "image/jpeg",
+		}},
+	})
+	require.NoError(err)
+	require.NoError(st.UpsertMessageRawWithFormat(messageID, raw, "beeper_json"))
+	require.NoError(st.ReplaceMessageBeeperAttachments(messageID, []store.AttachmentRef{{
+		MimeType:           "image/jpeg",
+		StoragePath:        "mxc://example.org/share",
+		SourceAttachmentID: "beeper:mxc://example.org/share",
+		MediaType:          "image",
+	}}))
+	require.NoError(st.Close())
+
+	_, err = buildCache(dbPath, analyticsDir, true)
+	require.NoError(err, "build current-schema cache before repair")
+	initialState, err := query.ReadCacheSyncState(analyticsDir)
+	require.NoError(err)
+	assert.Equal(query.CacheSchemaVersion, initialState.SchemaVersion)
+	assert.Zero(initialState.DerivedDataRevision)
+
+	readCached := func() (string, any) {
+		t.Helper()
+		engine, openErr := query.NewDuckDBEngine(analyticsDir, "", nil)
+		require.NoError(openErr)
+		result, queryErr := engine.QuerySQL(context.Background(), `
+			SELECT m.snippet, a.attachment_metadata
+			FROM messages m
+			JOIN attachments a ON a.message_id = m.id
+			WHERE m.source_message_id = 'repair-cache-1'`)
+		closeErr := engine.Close()
+		require.NoError(queryErr)
+		require.NoError(closeErr)
+		require.Len(result.Rows, 1)
+		return fmt.Sprint(result.Rows[0][0]), result.Rows[0][1]
+	}
+
+	beforeSnippet, beforeMetadata := readCached()
+	assert.Equal("stale snippet", beforeSnippet)
+	assert.Nil(beforeMetadata)
+
+	st, err = store.Open(dbPath)
+	require.NoError(err)
+	sum, err := rederive.Run(
+		context.Background(), st, "beeper", source.Identifier, source.ID, nil,
+	)
+	require.NoError(err)
+	require.Zero(sum.Errors)
+	require.NoError(st.Close())
+
+	staleness := cacheNeedsBuild(dbPath, analyticsDir)
+	require.True(staleness.NeedsBuild)
+	assert.True(staleness.HasDerivedDataDrift)
+	assert.True(staleness.FullRebuild,
+		"an incremental append cannot replace already-cached repaired rows")
+
+	require.NoError(rebuildCacheAfterWrite(dbPath))
+	repairedState, err := query.ReadCacheSyncState(analyticsDir)
+	require.NoError(err)
+	assert.Equal(int64(1), repairedState.DerivedDataRevision)
+	afterSnippet, afterMetadata := readCached()
+	assert.Equal("https://example.com/post", afterSnippet)
+	require.NotNil(afterMetadata)
+	assert.JSONEq(`{"shared_url":"https://example.com/post"}`, fmt.Sprint(afterMetadata))
 }
 
 func TestScheduledCacheRefreshSkipsWhenAutoBuildCacheDisabled(t *testing.T) {

@@ -32,7 +32,8 @@ func (s *Store) replaceMessageProviderAttachments(messageID int64, providerPrefi
 func (s *Store) messageProviderAttachments(messageID int64, providerPrefix string) (map[string]AttachmentRef, error) {
 	rows, err := s.db.Query(`
 		SELECT COALESCE(filename, ''), COALESCE(mime_type, ''), storage_path, COALESCE(content_hash, ''), size, source_attachment_id,
-		       COALESCE(media_type, ''), COALESCE(width, 0), COALESCE(height, 0), COALESCE(duration_ms, 0)
+		       COALESCE(media_type, ''), COALESCE(width, 0), COALESCE(height, 0), COALESCE(duration_ms, 0),
+		       COALESCE(CAST(attachment_metadata AS TEXT), '')
 		FROM attachments
 		WHERE message_id = ? AND source_attachment_id LIKE ?
 	`, messageID, providerPrefix+"%")
@@ -48,7 +49,7 @@ func (s *Store) messageProviderAttachments(messageID int64, providerPrefix strin
 		if err := rows.Scan(
 			&ref.Filename, &ref.MimeType, &ref.StoragePath, &ref.ContentHash,
 			&size, &ref.SourceAttachmentID, &ref.MediaType, &ref.Width,
-			&ref.Height, &ref.DurationMS,
+			&ref.Height, &ref.DurationMS, &ref.Metadata,
 		); err != nil {
 			return nil, err
 		}

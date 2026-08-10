@@ -2111,6 +2111,63 @@ func TestBuildCache_UTF8Handling(t *testing.T) {
 	assert.Equal("Test émoji 🎉 and unicode", subject, "unicode should be preserved")
 }
 
+func TestBuildCacheExportsAttachmentMetadataForRawQuery(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		forceCSV bool
+	}{
+		{name: "sqlite scanner"},
+		{name: "CSV fallback", forceCSV: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			if tc.forceCSV {
+				t.Setenv("MSGVAULT_FORCE_CSV_SNAPSHOT", "1")
+			} else {
+				t.Setenv("MSGVAULT_FORCE_CSV_SNAPSHOT", "")
+			}
+
+			tmpDir := setupTestSQLite(t)
+			dbPath := filepath.Join(tmpDir, "test.db")
+			analyticsDir := filepath.Join(tmpDir, "analytics")
+			db, err := sql.Open("sqlite3", dbPath)
+			require.NoError(err, "open SQLite fixture")
+			_, err = db.Exec(`ALTER TABLE attachments ADD COLUMN attachment_metadata JSON`)
+			require.NoError(err, "add attachment metadata column")
+			_, err = db.Exec(`UPDATE attachments SET attachment_metadata = '{"shared_url":"https://example.com/post"}' WHERE id = 1`)
+			require.NoError(err, "set link-preview metadata")
+			_, err = db.Exec(`UPDATE messages SET message_type = 'beeper' WHERE id = 2`)
+			require.NoError(err, "mark fixture message as Beeper")
+			require.NoError(db.Close(), "close SQLite fixture")
+
+			_, err = buildCache(dbPath, analyticsDir, true)
+			require.NoError(err, "build analytics cache")
+			engine, err := query.NewDuckDBEngine(analyticsDir, "", nil)
+			require.NoError(err, "open analytics query engine")
+			defer func() { _ = engine.Close() }()
+
+			result, err := engine.QuerySQL(context.Background(), `
+				SELECT COALESCE(a.attachment_metadata IS NOT NULL, 0) AS is_share,
+				       COUNT(*), SUM(a.size)
+				FROM attachments a
+				JOIN messages m ON m.id = a.message_id
+				WHERE m.message_type = 'beeper'
+				GROUP BY is_share
+				ORDER BY is_share`)
+			require.NoError(err, "run documented link-preview query")
+			assert.Equal([]string{"is_share", "count_star()", "sum(a.size)"}, result.Columns)
+			require.Len(result.Rows, 2)
+			assert.Equal("0", fmt.Sprint(result.Rows[0][0]))
+			assert.Equal("1", fmt.Sprint(result.Rows[0][1]))
+			assert.Equal("5000", fmt.Sprint(result.Rows[0][2]))
+			assert.Equal("1", fmt.Sprint(result.Rows[1][0]))
+			assert.Equal("1", fmt.Sprint(result.Rows[1][1]))
+			assert.Equal("10000", fmt.Sprint(result.Rows[1][2]))
+		})
+	}
+}
+
 // TestBuildCache_EmptyDatabase tests handling of empty database.
 func TestBuildCache_EmptyDatabase(t *testing.T) {
 	require := require.New(t)
@@ -3302,8 +3359,7 @@ func TestCacheNeedsBuild_IgnoresAlreadyProcessedUpdatedSyncRun(t *testing.T) {
 // schema version other than the current one now forces a full rebuild.
 func TestCacheNeedsBuild_SchemaVersionMismatch(t *testing.T) {
 	require := require.New(t)
-	require.Equal(18, cacheSchemaVersion,
-		"participant directory revisions require a one-time cache rebuild at v18")
+	require.Equal(19, cacheSchemaVersion, "attachment metadata requires cache v19")
 	tmpDir := setupTestSQLiteEmpty(t)
 
 	dbPath := filepath.Join(tmpDir, "test.db")
@@ -3338,7 +3394,7 @@ func TestCacheNeedsBuild_SchemaVersionMismatch(t *testing.T) {
 	require.False(result.Skipped, "schema mismatch must execute a full rebuild")
 	upgraded, err := query.ReadCacheSyncState(analyticsDir)
 	require.NoError(err, "read upgraded cache state")
-	require.Equal(18, upgraded.SchemaVersion)
+	require.Equal(19, upgraded.SchemaVersion)
 	require.NoFileExists(filepath.Join(analyticsDir, tableParticipantIdentifiers, "data.parquet"),
 		"full rebuild must replace rather than extend the v11 identifier dataset")
 	identifierParquet := filepath.Join(analyticsDir, tableParticipantIdentifiers, "participant_identifiers.parquet")

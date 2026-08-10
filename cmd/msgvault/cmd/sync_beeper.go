@@ -114,6 +114,9 @@ func printBeeperSummary(cmd *cobra.Command, accountID string, sum *beeper.Import
 	if sum.ReactionsRefreshed > 0 {
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), ", %d reactions refreshed", sum.ReactionsRefreshed)
 	}
+	if sum.ChatsReopened > 0 {
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), ", %d chats reopened for backfilled history", sum.ChatsReopened)
+	}
 	if sum.AttachmentsDownloaded > 0 {
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), ", %d attachments", sum.AttachmentsDownloaded)
 	}

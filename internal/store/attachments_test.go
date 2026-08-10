@@ -351,6 +351,7 @@ func TestReplaceAndListMessageDiscordAttachments(t *testing.T) {
 			MediaType:          "image",
 			Width:              640,
 			Height:             480,
+			Metadata:           `{"source_url":"https://example.com/post/1"}`,
 		},
 		"discord:attachment-2": {
 			Filename:           "later.bin",
@@ -367,6 +368,10 @@ func TestReplaceAndListMessageDiscordAttachments(t *testing.T) {
 
 	got, err := st.MessageDiscordAttachments(messageID)
 	require.NoError(err)
+	assert.JSONEq(want["discord:attachment-1"].Metadata, got["discord:attachment-1"].Metadata)
+	wantMetadata := want["discord:attachment-1"]
+	wantMetadata.Metadata = got["discord:attachment-1"].Metadata
+	want["discord:attachment-1"] = wantMetadata
 	assert.Equal(want, got)
 
 	keep := want["discord:attachment-2"]

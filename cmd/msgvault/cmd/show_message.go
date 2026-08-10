@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/textutil"
 )
 
 var (
@@ -144,9 +145,9 @@ func outputMessageText(msg *query.MessageDetail) error {
 	// Body
 	fmt.Println("\n═══════════════════════════════════════════════════════════════════════════════")
 	if msg.BodyText != "" {
-		fmt.Println(msg.BodyText)
+		fmt.Println(textutil.SanitizeTerminalMultiline(msg.BodyText))
 	} else if msg.Snippet != "" {
-		fmt.Printf("[No body text available. Snippet: %s]\n", msg.Snippet)
+		fmt.Printf("[No body text available. Snippet: %s]\n", textutil.SanitizeTerminal(msg.Snippet))
 	} else {
 		fmt.Println("[No body content available]")
 	}

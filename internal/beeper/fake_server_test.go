@@ -94,7 +94,10 @@ type fakeBeeper struct {
 	cancelAfterPages int
 	cancelFn         func()
 	pagesServed      int
-	reqs             []string // "PATH?QUERY" per request, in order
+	// cancelOnMessageListChatID invokes cancelFn once after serving a
+	// message-list response for the named chat.
+	cancelOnMessageListChatID string
+	reqs                      []string // "PATH?QUERY" per request, in order
 }
 
 func newFakeBeeper(t *testing.T) *fakeBeeper {
@@ -185,6 +188,22 @@ func (f *fakeBeeper) appendMsg(chatID string, m fakeMsg) {
 	require.Failf(f.t, "appendMsg failed", "unknown chat %s", chatID)
 }
 
+// prependMsgs adds messages behind a chat's existing oldest message, as Beeper
+// Desktop does when it finishes backfilling a network's older history. The
+// chat's lastActivity deliberately does not move: that is what makes the new
+// history invisible to activity-filtered enumeration and head reconciliation.
+func (f *fakeBeeper) prependMsgs(chatID string, msgs ...fakeMsg) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, ch := range f.chats {
+		if ch.ID == chatID {
+			ch.Msgs = append(append([]fakeMsg{}, msgs...), ch.Msgs...)
+			return
+		}
+	}
+	require.Failf(f.t, "prependMsgs failed", "unknown chat %s", chatID)
+}
+
 // requests returns the request log ("PATH?QUERY" entries).
 func (f *fakeBeeper) requests() []string {
 	f.mu.Lock()
@@ -196,6 +215,13 @@ func (f *fakeBeeper) resetRequests() {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.reqs = nil
+}
+
+func (f *fakeBeeper) cancelMessageListFor(chatID string, cancelFn func()) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.cancelOnMessageListChatID = chatID
+	f.cancelFn = cancelFn
 }
 
 func (f *fakeBeeper) server() *httptest.Server {
@@ -365,6 +391,10 @@ func (f *fakeBeeper) writeMessages(w http.ResponseWriter, r *http.Request, chatI
 	f.pagesServed++
 	if f.cancelAfterPages > 0 && f.pagesServed == f.cancelAfterPages && f.cancelFn != nil {
 		defer f.cancelFn() // after the response is written
+	}
+	if f.cancelOnMessageListChatID == chatID && f.cancelFn != nil {
+		defer f.cancelFn() // after the response is written
+		f.cancelOnMessageListChatID = ""
 	}
 	var ch *fakeChat
 	for _, c := range f.chats {

@@ -372,6 +372,12 @@ type Dialect interface {
 	// "column is of type jsonb but expression is of type text".
 	JSONBindExpr() string
 
+	// JSONIsDistinctExpr returns a null-safe comparison between a JSON column
+	// and one bound JSON value. PostgreSQL compares parsed JSONB values rather
+	// than their differently formatted text renderings; SQLite compares its
+	// stored JSON text directly.
+	JSONIsDistinctExpr(col string) string
+
 	// BeginExclusive opens a transaction on conn that blocks concurrent
 	// writers to the tables sync code touches (sync_runs in particular,
 	// so StartSync's INSERT cannot run until COMMIT/ROLLBACK). Readers

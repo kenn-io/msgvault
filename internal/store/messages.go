@@ -3846,6 +3846,10 @@ type AttachmentRef struct {
 	Width      int64
 	Height     int64
 	DurationMS int64
+	// Metadata is importer-supplied JSON stored in attachments.attachment_metadata
+	// (e.g. the source URL a link-preview attachment was forwarded from). Empty
+	// stores NULL; callers own the shape and must supply valid JSON.
+	Metadata string
 }
 
 // replaceMessageAttachmentsWhere atomically deletes a message's attachment
@@ -3865,11 +3869,12 @@ func (s *Store) replaceMessageAttachmentsWhere(
 			}
 			if _, err := tx.Exec(fmt.Sprintf(`
 				INSERT INTO attachments (message_id, filename, mime_type, storage_path, content_hash, size, source_attachment_id,
-					media_type, width, height, duration_ms, created_at)
-				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, %s)
+					media_type, width, height, duration_ms, attachment_metadata, created_at)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, %s, %s)
 				ON CONFLICT (message_id, content_hash) WHERE content_hash IS NOT NULL AND content_hash != '' DO NOTHING
-			`, s.dialect.Now()), messageID, ref.Filename, ref.MimeType, ref.StoragePath, ref.ContentHash, int64(ref.Size), ref.SourceAttachmentID,
-				nullIfEmpty(ref.MediaType), nullIfZero(ref.Width), nullIfZero(ref.Height), nullIfZero(ref.DurationMS)); err != nil {
+			`, s.dialect.JSONBindExpr(), s.dialect.Now()), messageID, ref.Filename, ref.MimeType, ref.StoragePath, ref.ContentHash, int64(ref.Size), ref.SourceAttachmentID,
+				nullIfEmpty(ref.MediaType), nullIfZero(ref.Width), nullIfZero(ref.Height), nullIfZero(ref.DurationMS),
+				nullIfEmpty(ref.Metadata)); err != nil {
 				return err
 			}
 		}
@@ -3918,6 +3923,137 @@ func (s *Store) ReplaceMessageBeeperAttachments(messageID int64, refs []Attachme
 // can keep already-downloaded media without re-fetching it.
 func (s *Store) MessageBeeperAttachments(messageID int64) (map[string]AttachmentRef, error) {
 	return s.messageProviderAttachments(messageID, "beeper:")
+}
+
+// ArchivedRawMessage is one archived message paired with the verbatim provider
+// payload stored for it, decompressed.
+type ArchivedRawMessage struct {
+	MessageID      int64
+	ConversationID int64
+	RawData        []byte
+	// BodyText is the currently stored plain-text body, so a caller
+	// re-deriving it can skip rows that would not change.
+	BodyText string
+}
+
+// ScanArchivedRawMessages returns up to limit archived messages for a source
+// whose raw payload is in the given format, ordered by message ID and starting
+// after afterID. Paging by ID keeps a full-archive walk bounded in memory;
+// callers loop until an empty batch comes back.
+func (s *Store) ScanArchivedRawMessages(sourceID int64, format string, afterID int64, limit int) ([]ArchivedRawMessage, error) {
+	rows, err := s.db.Query(s.Rebind(`
+		SELECT m.id, m.conversation_id, r.raw_data, r.compression, COALESCE(b.body_text, '')
+		FROM messages m
+		JOIN message_raw r ON r.message_id = m.id
+		LEFT JOIN message_bodies b ON b.message_id = m.id
+		WHERE m.source_id = ? AND r.raw_format = ? AND m.id > ?
+		ORDER BY m.id
+		LIMIT ?
+	`), sourceID, format, afterID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("scan archived raw messages: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var out []ArchivedRawMessage
+	for rows.Next() {
+		var item ArchivedRawMessage
+		var raw []byte
+		var compression sql.NullString
+		if err := rows.Scan(&item.MessageID, &item.ConversationID, &raw, &compression, &item.BodyText); err != nil {
+			return nil, err
+		}
+		if compression.Valid && compression.String == "zlib" {
+			r, zerr := zlib.NewReader(bytes.NewReader(raw))
+			if zerr != nil {
+				return nil, fmt.Errorf("zlib reader for message %d: %w", item.MessageID, zerr)
+			}
+			raw, err = io.ReadAll(r)
+			_ = r.Close()
+			if err != nil {
+				return nil, fmt.Errorf("decompress message %d: %w", item.MessageID, err)
+			}
+		}
+		item.RawData = raw
+		out = append(out, item)
+	}
+	return out, rows.Err()
+}
+
+// SetBeeperAttachmentMetadata replaces attachment_metadata on a message's
+// Beeper-managed attachment rows, returning how many rows changed. Empty
+// metadata clears the column. Rows already holding the value are left alone so
+// a repeated call reports no change; updating in place (rather than replacing
+// rows) leaves the stored blobs untouched.
+func (s *Store) SetBeeperAttachmentMetadata(messageID int64, metadata string) (int64, error) {
+	res, err := s.db.Exec(s.Rebind(fmt.Sprintf(`
+		UPDATE attachments SET attachment_metadata = %s
+		WHERE message_id = ? AND source_attachment_id LIKE 'beeper:%%'
+		  AND %s
+	`, s.dialect.JSONBindExpr(), s.dialect.JSONIsDistinctExpr("attachment_metadata"))),
+		nullIfEmpty(metadata), messageID, nullIfEmpty(metadata))
+	if err != nil {
+		return 0, fmt.Errorf("set beeper attachment metadata: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("set beeper attachment metadata: rows affected: %w", err)
+	}
+	return n, nil
+}
+
+// UpdateMessageDerivedText atomically updates the text fields derived from one
+// provider payload. A body, snippet, or FTS failure rolls the whole update
+// back, so callers can safely retry every derived field together.
+func (s *Store) UpdateMessageDerivedText(
+	messageID int64, bodyText, bodyHTML, snippet sql.NullString, fts FTSDoc,
+) error {
+	fts.MessageID = messageID
+	return s.withTx(func(tx *loggedTx) error {
+		if err := upsertMessageBody(tx, s.dialect, s.fts5Available, messageID, bodyText, bodyHTML); err != nil {
+			return fmt.Errorf("update derived message body: %w", err)
+		}
+		if _, err := tx.Exec(`UPDATE messages SET snippet = ? WHERE id = ?`, snippet, messageID); err != nil {
+			return fmt.Errorf("update derived message snippet: %w", err)
+		}
+		if s.fts5Available {
+			if err := s.dialect.FTSUpsert(tx, fts); err != nil {
+				return fmt.Errorf("update derived message FTS: %w", err)
+			}
+		}
+		return nil
+	})
+}
+
+// ArchivedSourceMessageIDs returns the subset of sourceMessageIDs already
+// archived for a source. Used to decide whether a page fetched from the
+// provider contains anything new without re-persisting it first.
+func (s *Store) ArchivedSourceMessageIDs(sourceID int64, sourceMessageIDs []string) (map[string]struct{}, error) {
+	out := make(map[string]struct{})
+	if len(sourceMessageIDs) == 0 {
+		return out, nil
+	}
+	placeholders := make([]string, len(sourceMessageIDs))
+	args := make([]any, 0, len(sourceMessageIDs)+1)
+	args = append(args, sourceID)
+	for i, id := range sourceMessageIDs {
+		placeholders[i] = "?"
+		args = append(args, id)
+	}
+	query := s.Rebind(`SELECT source_message_id FROM messages WHERE source_id = ? AND source_message_id IN (` +
+		strings.Join(placeholders, ",") + `)`)
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("look up archived source message IDs: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out[id] = struct{}{}
+	}
+	return out, rows.Err()
 }
 
 // SourceMessageRef locates an archived message at its source: the source

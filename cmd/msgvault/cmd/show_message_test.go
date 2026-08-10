@@ -5,13 +5,33 @@ import (
 	"net/http/httptest"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/kit/daemon"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/query"
 )
+
+func TestOutputMessageTextSanitizesMultilineBody(t *testing.T) {
+	assert := assert.New(t)
+	done := captureStdout(t)
+	err := outputMessageText(&query.MessageDetail{
+		ID:              42,
+		SourceMessageID: "remote-42",
+		SentAt:          time.Date(2024, time.January, 2, 3, 4, 5, 0, time.UTC),
+		BodyText:        "first line\n\x1b]52;c;evil\x07second line\u009b",
+	})
+	out := done()
+
+	require.NoError(t, err)
+	assert.Contains(out, "first line\nsecond line")
+	assert.NotContains(out, "\x1b")
+	assert.NotContains(out, "\x07")
+	assert.NotContains(out, "\u009b")
+}
 
 func TestShowMessageUsesLocalDaemonHTTPAndPreservesTextOutput(t *testing.T) {
 	require := require.New(t)

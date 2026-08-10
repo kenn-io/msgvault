@@ -799,6 +799,20 @@ func TestLayoutFitsTerminalHeight(t *testing.T) {
 	}
 }
 
+func TestBuildDetailLinesSanitizesMultilineBody(t *testing.T) {
+	assert := assert.New(t)
+	model := NewBuilder().WithSize(80, 24).Build()
+	model.messageDetail = &query.MessageDetail{
+		BodyText: "first line\n\x1b]52;c;evil\x07second line\u009b",
+	}
+
+	output := strings.Join(model.buildDetailLines(), "\n")
+	assert.Contains(output, "first line\nsecond line")
+	assert.NotContains(output, "\x1b")
+	assert.NotContains(output, "\x07")
+	assert.NotContains(output, "\u009b")
+}
+
 // TestScrollClampingAfterResize verifies detailScroll is clamped when max changes.
 
 // TestModalCompositingPreservesANSI verifies that modal overlay doesn't corrupt ANSI sequences.

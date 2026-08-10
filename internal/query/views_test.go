@@ -62,6 +62,7 @@ func TestRegisterViews_BaseViews(t *testing.T) {
 	})
 	builder.AddFrom(msgID, partID, "Bob")
 	builder.AddMessageLabel(msgID, lblID)
+	builder.AddAttachment(msgID, 500, "preview.jpg")
 
 	dir, cleanup := builder.Build()
 	defer cleanup()
@@ -94,6 +95,14 @@ func TestRegisterViews_BaseViews(t *testing.T) {
 	).Scan(&id, &subject, &attachmentCount, &messageType)
 	require.NoError(err, "scan messages")
 	assert.Equal("Hello", subject)
+
+	var attachmentMetadata sql.NullString
+	err = engine.db.QueryRowContext(
+		context.Background(),
+		"SELECT attachment_metadata FROM attachments LIMIT 1",
+	).Scan(&attachmentMetadata)
+	require.NoError(err, "legacy attachment cache must expose attachment_metadata")
+	assert.False(attachmentMetadata.Valid, "legacy attachment rows default to unclassified")
 }
 
 func TestRegisterViews_ConvenienceViews(t *testing.T) {

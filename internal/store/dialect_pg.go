@@ -287,6 +287,10 @@ func (d *PostgreSQLDialect) BoolTrueExpr(col string) string { return col }
 // mismatch on the sources.sync_config write path.
 func (d *PostgreSQLDialect) JSONBindExpr() string { return "?::JSONB" }
 
+func (d *PostgreSQLDialect) JSONIsDistinctExpr(col string) string {
+	return col + " IS DISTINCT FROM ?::JSONB"
+}
+
 // BuildFTSArg formats search terms for to_tsquery: each term is split
 // into letter/digit-only lexemes via sqldialect.EscapeTSQueryTerm so
 // punctuation like `-`, `.`, `@` (which would otherwise produce
