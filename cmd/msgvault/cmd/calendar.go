@@ -553,6 +553,13 @@ func calendarRegisteredIDs(sources []*store.Source) map[string]struct{} {
 func calendarEscalationScopes(existingScopes []string, preserveGmail bool) []string {
 	scopes := append([]string(nil), existingScopes...)
 	required := calendarAddOAuthScopes(preserveGmail)
+	// Preserving Gmail must not mean re-widening it. calendarAddOAuthScopes
+	// returns the full Gmail bundle, so an account narrowed to read-only via
+	// `add-account --readonly` would silently regain write access just by
+	// adding Calendar. Keep the Gmail access it actually has.
+	if oauth.IsNarrowedGmailGrant(existingScopes) {
+		required = oauth.WithoutGmailWriteScopes(required)
+	}
 	for _, scope := range required {
 		scopes = appendScopeIfMissing(scopes, scope)
 	}

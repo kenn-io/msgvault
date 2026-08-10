@@ -10,53 +10,63 @@ msgvault requires OAuth credentials to access the Gmail API. This section walks 
 ### Step 1: Create a Google Cloud Project
 
 1. Go to [Google Cloud Console](https://console.cloud.google.com/)
-2. Create a new project or select an existing one
-3. Note your project ID
+2. If it's your first time using Google Cloud Console, select your country and agree to the Terms of Service
+3. Click **Select a Project** and click **New project** (recommended) or select an existing one
+4. Name your project `msgvault`. Parent resource can be left as the default of "No organization"
+5. Click **Create**
+6. The Notifications will spin for a few seconds and then allow you to click Select Project for the new `msgvault` project
 
 ### Step 2: Enable Google APIs
 
-1. Navigate to **APIs & Services > Library**
-2. Search for "Gmail API"
+1. On the left bar/under the hamburger menu, navigate to **APIs & Services > Library**
+2. In the search bar, search for "Gmail API" and click the **Gmail API** box
 3. Click **Enable**
-4. If you will sync Google Calendar too, also search for "Google Calendar API" and click **Enable**
+4. If you wish to sync Google Calendar too, click **Library**, search for "Google Calendar API", click the **Google Calendar API** box and click **Enable**
 
 ### Step 3: Configure OAuth Consent Screen
 
 1. Go to **APIs & Services > OAuth consent screen** (Google may call this **Google Auth Platform**)
-2. Choose **External** user type (or **Internal** for Google Workspace)
-3. Fill in required fields:
+2. Click **Get started**
+3. Fill in required fields as you click through:
    - App name: `msgvault`
    - User support email: your email
-   - Developer contact email: your email
-4. Click **Save and Continue**
-5. On the **Data Access** page, click **Add or Remove Scopes**
-6. Add the scope: `https://www.googleapis.com/auth/gmail.modify`
-7. If you will sync Google Calendar too, add `https://www.googleapis.com/auth/calendar.readonly`
-8. Save and continue through the remaining screens
-9. Under **Test users**, add all Gmail addresses you want to sync
+   - Audience: **External** for regular Gmail, **Internal** for Google Workspace
+   - Contact Information: your email
+   - Agree to the "Google API Services: User Data Policy" checkbox
+4. Click **Create**
+5. Click **Data Access** on the left bar and click **Add or Remove Scopes**
+6. At the bottom of the page under "Manually add scopes", enter the scopes you intend to use, one per line, then click **Add to table**:
+    - `https://www.googleapis.com/auth/gmail.readonly` — always
+    - `https://www.googleapis.com/auth/gmail.modify` — unless you will only ever run read-only (see below)
+    - `https://www.googleapis.com/auth/calendar.readonly` — if you will sync Google Calendar
+7. Click **Update** then **Save**
+8. Go to **Audience** on the left bar and in the **Test users** section, click the **Add users** button and add your Gmail email address
+
+!!! warning "This page does not restrict what gets granted"
+    The scopes listed here are a declaration used for Google's verification review. They do not limit what the authorization server grants at request time, that is determined solely by what msgvault requests. Removing `gmail.modify` here will **not** give you a read-only setup; use `--readonly` when adding the account instead.
 
 !!! note
-    The `gmail.modify` scope enables deletion features while sync operations remain read-only. When you first run `delete-staged`, msgvault will prompt you to upgrade to full `mail.google.com` access for batch deletion.
+    By default msgvault requests `gmail.readonly` and `gmail.modify`. Sync itself only ever reads, `gmail.modify` is what later enables trash-based deletion. When you first run `delete-staged --permanent`, msgvault prompts you to upgrade to full `mail.google.com` access for batch deletion.
+
+    If you never intend to delete mail from Gmail, add the account with `--readonly` (see [Read-Only Access](#read-only-access)) and you can leave `gmail.modify` off this page entirely.
 
 ### Step 4: Create OAuth Client Credentials
 
-1. Go to **APIs & Services > Credentials**
+1. Through the hamburger menu, go to **APIs & Services > Credentials**
 2. Click **Create Credentials > OAuth client ID**
-3. Choose **Desktop app** as the application type
+3. Choose **Desktop app** as the application type. Not "TVs and Limited Input devices" — Google's device-code flow does not support Gmail scopes
 4. Name it `msgvault` (or similar)
 5. Click **Create**
-6. Download the JSON file
+6. Click **Download JSON** to download the JSON file
 7. Save it as `client_secret.json` in a secure location
+8. Click OK
 
 !!! warning
     Never commit `client_secret.json` to version control.
 
-!!! warning "Desktop App Only"
-    You must choose **Desktop app** as the client type. Do not use "TVs and Limited Input devices" as Google's device code flow does not support Gmail scopes.
-
 ### Step 5: Configure msgvault
 
-Create `config.toml` in your msgvault data directory:
+Create a file called `config.toml` in your msgvault directory.
 
 - **macOS / Linux:** `~/.msgvault/config.toml`
 - **Windows:** `C:\Users\<you>\.msgvault\config.toml`
@@ -75,6 +85,16 @@ On Windows, use forward slashes or escaped backslashes for the path:
 client_secrets = "C:/Users/you/Downloads/client_secret.json"
 ```
 
+!!! tip
+    These commands will do what's needed on macOS/Linux/WSL assuming you're putting the client_secret.json file in ~/.msgvault/:
+    ```
+    mkdir -m 700 -p ~/.msgvault
+    printf '[oauth]\nclient_secrets = "~/.msgvault/client_secret.json"\n' > ~/.msgvault/config.toml
+    echo client_secret.json >> ~/.msgvault/.gitignore
+    ```
+
+Copy your `client_secret.json` file to `~/.msgvault/` or wherever you've referenced it in the configuration file and set permissions to limit access (`chmod 600 ~/.msgvault/client_secret.json` on macOS/Linux).
+
 ### Step 6: Add Your Account
 
 ```bash
@@ -82,6 +102,48 @@ msgvault add-account you@gmail.com
 ```
 
 This opens your browser to Google's OAuth consent page. Sign in, grant access, and tokens are stored locally in `~/.msgvault/tokens/`.
+
+#### Read-Only Access
+
+By default `add-account` requests read and modify access. To request read access only:
+
+```bash
+msgvault add-account you@gmail.com --readonly
+```
+
+Sync, search, and the TUI all work on a read-only grant. Deletion does not.
+
+Running `--readonly` against an account that is already read-only does nothing and reuses the existing token. A plain `add-account` run against one warns before requesting write access again.
+
+**Access already granted cannot be narrowed.** Re-authorizing with `--readonly` does not revoke what Google has on record, and a refresh token issued earlier keeps working with its original write scopes — so an account that once had write access still has it, whatever token msgvault happens to hold. `add-account --readonly` therefore refuses such an account rather than appearing to narrow it. `--force` does not change this and is refused too.
+
+To make an existing account read-only, remove its access and grant it again:
+
+1. Revoke msgvault at [myaccount.google.com/permissions](https://myaccount.google.com/permissions)
+2. `rm ~/.msgvault/tokens/you@gmail.com.json`
+3. `msgvault add-account you@gmail.com --readonly`
+
+Revoking clears every Google scope for that account, so re-run whichever commands granted them — `msgvault add-calendar` for Calendar, `msgvault add-synctech-sms-drive` for Drive. Your archived mail is untouched: this replaces credentials, not data.
+
+Confirm the result by reading the token's scopes:
+
+```bash
+python3 -c "import json,os;print(*json.load(open(os.path.expanduser('~/.msgvault/tokens/you@gmail.com.json')))['scopes'],sep='\n')"
+```
+
+#### Headless Authorization
+
+```
+Starting browser authorization...
+Opening browser for authorization...
+If browser doesn't open, visit:
+https://accounts.google.com/o/oauth2/auth?access_type=offline&LONG_STRING_HERE
+```
+
+msgvault will be unable to open a browser but will give a URL `https://accounts.google.com/o/oauth2/auth?access_type=offline&LONG_STRING_HERE`. Copy this to your browser
+- Click **Continue** at the "Google hasn't verified this app" prompt
+- Confirm the Gmail and Calendar access if chosen by clicking the **Select all** checkbox and then **Continue**
+- The browser will try open a connection to localhost:8089 with the authorization code. Copy this URL from your browser and on the headless host run: `curl -s 'http://localhost:8089/callback?DIFFERENT_LONG_STRING'` with the full URL from your browser. (Another option is to forward the port from the computer running the browser to the headless host with `ssh -L 8089:localhost:8089 user@headlessserver`)
 
 ### Multiple Accounts
 
@@ -149,6 +211,11 @@ Workspace admins can avoid per-user browser OAuth by using a Google service acco
    - `https://mail.google.com/` if you will run `delete-staged --permanent`
 4. Store the key with owner-only permissions, for example `chmod 600 /path/to/workspace-service-account.json`.
 
+Both `gmail.readonly` and `gmail.modify` are required. The Gmail service-account paths request that pair when minting a delegated token, so a delegation grant limited to `gmail.readonly` fails the token exchange and `add-account`, `sync`, `serve`, and `verify` all stop working for that account.
+
+!!! note
+    `--readonly` does not apply to service accounts, and is rejected with an error if passed. Scope is set by the delegation grant in the Admin Console rather than by msgvault flags. Narrowing what the Gmail service-account paths request, so that a read-only delegation grant becomes usable, is a possible future change.
+
 Configure the key as the default Google credential:
 
 ```toml
@@ -170,7 +237,7 @@ msgvault add-account you@acme.com
 msgvault add-account teammate@acme.com --oauth-app acme
 ```
 
-Service account mode validates the delegated Gmail profile and registers the source, but it does not create per-user token files. Do not combine service-account accounts with `--headless` or `--force`; delegated tokens are minted on demand.
+Service account mode validates the delegated Gmail profile and registers the source, but it does not create per-user token files. Do not combine service-account accounts with `--headless`, `--force` or `--readonly`; delegated tokens are minted on demand.
 
 For Google Calendar with a service account, enable the Google Calendar API and authorize the `calendar.readonly` scope above. Then configure a `[[gcal]]` source and run `msgvault sync-calendar user@domain.com --oauth-app acme` (or let `msgvault serve` run the schedule). No browser token is created.
 
@@ -208,6 +275,11 @@ Step 3: On the headless server, register the account:
 
 The token will be detected and the account registered. No browser needed.
 ```
+
+!!! note "Read-only on a headless server"
+    `--readonly` is echoed into the commands printed above, so `msgvault add-account you@gmail.com --headless --readonly` shows the read-only variant to run on the machine with a browser.
+
+    The revoke-and-re-add procedure above works unchanged on a headless host. Step 3 prints an authorization URL you can open from any browser, then waits for the callback exactly as described here.
 
 #### Step-by-Step
 

@@ -61,10 +61,11 @@ msgvault add-account <email> --oauth-app <name>
 | `--headless` | Show instructions for headless server setup |
 | `--oauth-app` | Use a named OAuth app from `[oauth.apps.<name>]` in config |
 | `--force` | Delete existing token and re-authorize |
+| `--readonly` | Request Gmail read-only access instead of read + write. Refused if the account already holds write access — see [OAuth Setup](/guides/oauth-setup/#read-only-access) |
 | `--display-name` | Set a display name for the account |
 | `--no-default-identity` | Do not auto-confirm the email address as this account's "me" identity |
 
-If `[oauth].service_account_key` or `[oauth.apps.<name>].service_account_key` is configured, `add-account` authorizes via Google service account domain-wide delegation instead of browser OAuth. Service-account accounts do not use `--headless` or `--force`.
+If `[oauth].service_account_key` or `[oauth.apps.<name>].service_account_key` is configured, `add-account` authorizes via Google service account domain-wide delegation instead of browser OAuth. Service-account accounts do not use `--headless`, `--force`, or `--readonly`; their scope comes from the domain-wide delegation grant in the Admin Console.
 
 ---
 
