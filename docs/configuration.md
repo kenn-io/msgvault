@@ -646,6 +646,20 @@ a scoped index must include a compatible `message_type` filter, such as
 unscoped vector/hybrid query returns `index_scope_mismatch` instead of using the
 partial index as if it covered the full archive.
 
+| Key | Default | Description |
+|---|---|---|
+| `message_types` | `[]` (all types) | Embed only messages of these types. |
+| `accounts` | `[]` (all accounts) | Embed only these accounts' messages, by identifier or display name. Resolved to source IDs at startup; an unknown identifier fails vector initialization (or the CLI command). The daemon's scheduled embeds honor this scope, so it also acts as a privacy boundary: unlisted accounts' text is never sent to the embedding endpoint. |
+
+`accounts` and `message_types` compose (both filters apply). The CLI flags
+`--account`/`--collection` on `msgvault embeddings build`/`resume` override
+`accounts` for a single run. Either scope dimension is part of the generation
+fingerprint: changing it requires `msgvault embeddings build --full-rebuild`,
+and because the fingerprint records archive-local source IDs, re-adding an
+account under a new source ID also requires a rebuild. Account-scoped indexes
+do not gate search the way message-type scopes do: out-of-scope accounts
+simply have no vector matches and rank on BM25 alone in hybrid mode.
+
 #### `[vector.embed.schedule]`
 
 Optional background scheduling for the embed worker inside `msgvault serve`. Empty config disables scheduled embedding; you can still run `msgvault embeddings build` by hand.

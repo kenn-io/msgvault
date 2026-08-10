@@ -2,7 +2,7 @@
 
 - **Slug:** `msgvault_embed_account_scope`
 - **Created:** 2026-08-10 22:25
-- **Status:** pending
+- **Status:** implemented
 - **Area:** `internal/vector`, `internal/store`, `cmd/msgvault/cmd` (embeddings), daemon embed job, API/MCP coverage
 
 ## Task

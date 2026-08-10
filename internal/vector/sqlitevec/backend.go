@@ -81,7 +81,7 @@ func Open(ctx context.Context, opts Options) (*Backend, error) {
 		path:     opts.Path,
 		mainPath: opts.MainPath,
 		dim:      opts.Dimension,
-		scope:    vector.NewBuildScope(opts.BuildScope.MessageTypes),
+		scope:    vector.NewBuildScope(opts.BuildScope.MessageTypes, opts.BuildScope.SourceIDs),
 		readOnly: opts.ReadOnly,
 	}
 	// Orphaned-stamp reset (vectors.db-recreate safety): clear embed_gen for
@@ -292,13 +292,21 @@ func (b *Backend) hasMissingForGen(ctx context.Context, gen vector.GenerationID)
 func (b *Backend) missingCoverageWhere(gen int64) (string, []any) {
 	where := "(embed_gen IS NULL OR embed_gen <> ?) AND " + store.LiveMessagesWhere("", true)
 	args := []any{gen}
-	if !b.scope.IsEmpty() {
+	if len(b.scope.MessageTypes) > 0 {
 		placeholders := make([]string, len(b.scope.MessageTypes))
 		for i, typ := range b.scope.MessageTypes {
 			placeholders[i] = "?"
 			args = append(args, typ)
 		}
 		where += fmt.Sprintf(" AND message_type IN (%s)", strings.Join(placeholders, ","))
+	}
+	if len(b.scope.SourceIDs) > 0 {
+		placeholders := make([]string, len(b.scope.SourceIDs))
+		for i, id := range b.scope.SourceIDs {
+			placeholders[i] = "?"
+			args = append(args, id)
+		}
+		where += fmt.Sprintf(" AND source_id IN (%s)", strings.Join(placeholders, ","))
 	}
 	return where, args
 }
@@ -1459,13 +1467,21 @@ func (b *Backend) EmbeddedMessageCount(ctx context.Context, gen vector.Generatio
 		    AND embed_gen = ?
 		    AND ` + store.LiveMessagesWhere("", true)
 	args := []any{string(blob), int64(gen)}
-	if !b.scope.IsEmpty() {
+	if len(b.scope.MessageTypes) > 0 {
 		placeholders := make([]string, len(b.scope.MessageTypes))
 		for i, typ := range b.scope.MessageTypes {
 			placeholders[i] = "?"
 			args = append(args, typ)
 		}
 		where += fmt.Sprintf(" AND message_type IN (%s)", strings.Join(placeholders, ","))
+	}
+	if len(b.scope.SourceIDs) > 0 {
+		placeholders := make([]string, len(b.scope.SourceIDs))
+		for i, id := range b.scope.SourceIDs {
+			placeholders[i] = "?"
+			args = append(args, id)
+		}
+		where += fmt.Sprintf(" AND source_id IN (%s)", strings.Join(placeholders, ","))
 	}
 	var n int64
 	if err := b.mainDB.QueryRowContext(ctx,

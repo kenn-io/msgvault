@@ -322,23 +322,40 @@ func semanticCoverageContext(ctx query.Context, scope vector.BuildScope) query.C
 		return ctx
 	}
 	ctx.Deletion = query.DeletionActive
-	if scope.IsEmpty() {
-		return ctx
-	}
-	if len(ctx.MessageTypes) == 0 {
-		ctx.MessageTypes = slices.Clone(scope.MessageTypes)
-		return ctx
-	}
-	eligible := make([]string, 0, len(ctx.MessageTypes))
-	for _, messageType := range ctx.MessageTypes {
-		if scope.ContainsMessageType(strings.ToLower(messageType)) {
-			eligible = append(eligible, messageType)
+	if len(scope.MessageTypes) > 0 {
+		if len(ctx.MessageTypes) == 0 {
+			ctx.MessageTypes = slices.Clone(scope.MessageTypes)
+		} else {
+			eligible := make([]string, 0, len(ctx.MessageTypes))
+			for _, messageType := range ctx.MessageTypes {
+				if scope.ContainsMessageType(strings.ToLower(messageType)) {
+					eligible = append(eligible, messageType)
+				}
+			}
+			if len(eligible) == 0 {
+				eligible = []string{"\x00no-semantic-eligible-message-type"}
+			}
+			ctx.MessageTypes = eligible
 		}
 	}
-	if len(eligible) == 0 {
-		eligible = []string{"\x00no-semantic-eligible-message-type"}
+	if len(scope.SourceIDs) > 0 {
+		if len(ctx.SourceIDs) == 0 {
+			ctx.SourceIDs = slices.Clone(scope.SourceIDs)
+		} else {
+			eligible := make([]int64, 0, len(ctx.SourceIDs))
+			for _, id := range ctx.SourceIDs {
+				if scope.ContainsSource(id) {
+					eligible = append(eligible, id)
+				}
+			}
+			if len(eligible) == 0 {
+				// Source IDs are positive, so the sentinel keeps the
+				// eligible set empty instead of widening to all sources.
+				eligible = []int64{-1}
+			}
+			ctx.SourceIDs = eligible
+		}
 	}
-	ctx.MessageTypes = eligible
 	return ctx
 }
 

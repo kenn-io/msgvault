@@ -93,7 +93,7 @@ func Open(ctx context.Context, opts Options) (*Backend, error) {
 	}
 	b := &Backend{
 		db:    opts.DB,
-		scope: vector.NewBuildScope(opts.BuildScope.MessageTypes),
+		scope: vector.NewBuildScope(opts.BuildScope.MessageTypes, opts.BuildScope.SourceIDs),
 	}
 	if !opts.SkipMigrate {
 		// serve / build / search: full migrate incl. CREATE EXTENSION (the
@@ -263,14 +263,25 @@ func isUniqueViolation(err error) bool {
 // of the generation id is supplied by the caller.
 func (b *Backend) missingForGenExistsClause(genArg string, firstScopeArg int) (string, []any) {
 	where := store.LiveMessagesWhere("", true)
-	args := make([]any, 0, len(b.scope.MessageTypes))
-	if !b.scope.IsEmpty() {
+	args := make([]any, 0, len(b.scope.MessageTypes)+len(b.scope.SourceIDs))
+	nextArg := firstScopeArg
+	if len(b.scope.MessageTypes) > 0 {
 		placeholders := make([]string, len(b.scope.MessageTypes))
 		for i, typ := range b.scope.MessageTypes {
-			placeholders[i] = "$" + strconv.Itoa(firstScopeArg+i)
+			placeholders[i] = "$" + strconv.Itoa(nextArg)
+			nextArg++
 			args = append(args, typ)
 		}
 		where += fmt.Sprintf(" AND message_type IN (%s)", strings.Join(placeholders, ","))
+	}
+	if len(b.scope.SourceIDs) > 0 {
+		placeholders := make([]string, len(b.scope.SourceIDs))
+		for i, id := range b.scope.SourceIDs {
+			placeholders[i] = "$" + strconv.Itoa(nextArg)
+			nextArg++
+			args = append(args, id)
+		}
+		where += fmt.Sprintf(" AND source_id IN (%s)", strings.Join(placeholders, ","))
 	}
 	return fmt.Sprintf(`EXISTS (
 		SELECT 1 FROM messages
@@ -1253,13 +1264,24 @@ func (b *Backend) EmbeddedMessageCount(ctx context.Context, gen vector.Generatio
 		    AND m.embed_gen = $1
 		    AND ` + store.LiveMessagesWhere("m", true)
 	args := []any{int64(gen)}
-	if !b.scope.IsEmpty() {
+	nextArg := 2
+	if len(b.scope.MessageTypes) > 0 {
 		placeholders := make([]string, len(b.scope.MessageTypes))
 		for i, typ := range b.scope.MessageTypes {
-			placeholders[i] = "$" + strconv.Itoa(2+i)
+			placeholders[i] = "$" + strconv.Itoa(nextArg)
+			nextArg++
 			args = append(args, typ)
 		}
 		where += fmt.Sprintf(" AND m.message_type IN (%s)", strings.Join(placeholders, ","))
+	}
+	if len(b.scope.SourceIDs) > 0 {
+		placeholders := make([]string, len(b.scope.SourceIDs))
+		for i, id := range b.scope.SourceIDs {
+			placeholders[i] = "$" + strconv.Itoa(nextArg)
+			nextArg++
+			args = append(args, id)
+		}
+		where += fmt.Sprintf(" AND m.source_id IN (%s)", strings.Join(placeholders, ","))
 	}
 	var n int64
 	if err := b.db.QueryRowContext(ctx,

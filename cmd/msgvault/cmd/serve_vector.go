@@ -84,6 +84,14 @@ func setupVectorFeatures(ctx context.Context, mainStore *store.Store, mainPath s
 	if err := cfg.Vector.Validate(); err != nil {
 		return nil, fmt.Errorf("vector config: %w", err)
 	}
+	// Resolve [vector.embed.scope] accounts to source IDs before any
+	// consumer derives a build scope or generation fingerprint from the
+	// config (backend coverage gates, the embed worker/job, the hybrid
+	// engine's expected fingerprint). Unknown accounts fail vector init
+	// loudly rather than silently embedding the full corpus.
+	if err := resolveEmbedScopeSourceIDs(mainStore); err != nil {
+		return nil, fmt.Errorf("vector embed scope: %w", err)
+	}
 	mainDB := mainStore.DB()
 
 	// Resolve the dialect once from the main DSN. The worker is

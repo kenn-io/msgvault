@@ -44,6 +44,15 @@ func runEmbed(cmd *cobra.Command) error {
 		return fmt.Errorf("init schema: %w", err)
 	}
 
+	// Resolve the account dimension of the build scope before anything
+	// derives a fingerprint or coverage predicate from the config: the
+	// --account/--collection flags (or [vector.embed.scope] accounts)
+	// become source IDs here, and unknown identifiers fail the run loudly
+	// rather than silently widening the embedded corpus.
+	if err := resolveEmbedScopeSourceIDs(s); err != nil {
+		return err
+	}
+
 	var (
 		backend   vector.Backend
 		vectorsDB *sql.DB
@@ -125,9 +134,15 @@ func runEmbed(cmd *cobra.Command) error {
 	// this generation (embed_gen <> gen), read from the main DB coverage
 	// rather than a queue table.
 	scope := cfg.Vector.Embed.Scope.BuildScope()
-	missing, err := s.MissingCountScoped(ctx, int64(gen), scope.MessageTypes)
+	if !scope.IsEmpty() {
+		_, _ = fmt.Fprintf(errOut, "Embedding scope: %s\n", scope.Fingerprint())
+	}
+	live, _, _, missing, err := s.CoverageCountsScoped(ctx, int64(gen), scope.MessageTypes, scope.SourceIDs)
 	if err != nil {
 		return fmt.Errorf("coverage counts: %w", err)
+	}
+	if len(scope.SourceIDs) > 0 && live == 0 {
+		_, _ = fmt.Fprintln(errOut, "Embedding scope matched 0 live messages.")
 	}
 	totalPending := int(missing)
 
@@ -171,7 +186,7 @@ func runEmbed(cmd *cobra.Command) error {
 	// worker later recovers from must not block activation, and an
 	// active generation must not be re-activated.
 	if rebuildInProgress {
-		_, _, _, remaining, err := s.CoverageCountsScoped(ctx, int64(gen), scope.MessageTypes)
+		_, _, _, remaining, err := s.CoverageCountsScoped(ctx, int64(gen), scope.MessageTypes, scope.SourceIDs)
 		if err != nil {
 			return fmt.Errorf("coverage counts: %w", err)
 		}
@@ -271,7 +286,7 @@ func pickEmbedGeneration(ctx context.Context, backend vector.Backend, opts embed
 				building.ID, building.Fingerprint)
 			return building.ID, true, nil
 		}
-		return 0, false, fmt.Errorf("in-progress rebuild has fingerprint=%q, config has %q — activate or retire it before running with a different model",
+		return 0, false, fmt.Errorf("in-progress rebuild has fingerprint=%q, config has %q — activate or retire it before running with a different model or embed scope (the fingerprint folds in [vector.embed.scope] message_types/accounts and any --account/--collection flags)",
 			building.Fingerprint, opts.Fingerprint)
 	}
 

@@ -593,17 +593,17 @@ func (w *Worker) run(ctx context.Context, gen vector.GenerationID, backstop bool
 }
 
 func (w *Worker) scanForEmbedding(ctx context.Context, gen int64, afterID int64) ([]int64, error) {
-	scope := vector.NewBuildScope(w.deps.BuildScope.MessageTypes)
+	scope := vector.NewBuildScope(w.deps.BuildScope.MessageTypes, w.deps.BuildScope.SourceIDs)
 	if scope.IsEmpty() {
 		return w.deps.Store.ScanForEmbedding(ctx, gen, afterID, w.deps.BatchSize)
 	}
 	scoped, ok := w.deps.Store.(interface {
-		ScanForEmbeddingScoped(ctx context.Context, target int64, afterID int64, limit int, messageTypes []string) ([]int64, error)
+		ScanForEmbeddingScoped(ctx context.Context, target int64, afterID int64, limit int, messageTypes []string, sourceIDs []int64) ([]int64, error)
 	})
 	if !ok {
 		return nil, errors.New("work store does not support scoped embedding scans")
 	}
-	return scoped.ScanForEmbeddingScoped(ctx, gen, afterID, w.deps.BatchSize, scope.MessageTypes)
+	return scoped.ScanForEmbeddingScoped(ctx, gen, afterID, w.deps.BatchSize, scope.MessageTypes, scope.SourceIDs)
 }
 
 // advanceWatermark persists the per-gen forward-scan cursor to id after a

@@ -33,16 +33,17 @@ var embedGenStampChunkRows = 500
 // the embeddings upsert — the worker orders the steps (upsert, then
 // stamp) and relies on idempotency, see internal/vector/embed/worker.go.
 func (s *Store) ScanForEmbedding(ctx context.Context, target int64, afterID int64, limit int) ([]int64, error) {
-	return s.ScanForEmbeddingScoped(ctx, target, afterID, limit, nil)
+	return s.ScanForEmbeddingScoped(ctx, target, afterID, limit, nil, nil)
 }
 
 // ScanForEmbeddingScoped is ScanForEmbedding limited to the supplied message
-// types. An empty messageTypes slice means the full live corpus.
-func (s *Store) ScanForEmbeddingScoped(ctx context.Context, target int64, afterID int64, limit int, messageTypes []string) ([]int64, error) {
+// types and source IDs. Empty messageTypes and sourceIDs slices mean the
+// full live corpus.
+func (s *Store) ScanForEmbeddingScoped(ctx context.Context, target int64, afterID int64, limit int, messageTypes []string, sourceIDs []int64) ([]int64, error) {
 	if limit <= 0 {
 		return nil, nil
 	}
-	liveWhere, liveArgs := liveMessagesWhereWithMessageTypes(messageTypes)
+	liveWhere, liveArgs := liveMessagesWhereScoped(messageTypes, sourceIDs)
 	q := `SELECT id FROM messages
 	       WHERE (embed_gen IS NULL OR embed_gen <> ?)
 	         AND ` + liveWhere + `
@@ -250,18 +251,19 @@ func (s *Store) ResetEmbedGen(ctx context.Context, ids []int64) error {
 // activeGen == 0 means "no active/target generation"; then everything
 // live is missing and stamped is 0.
 func (s *Store) CoverageCounts(ctx context.Context, activeGen int64) (live, stamped, blank, missing int64, err error) {
-	return s.CoverageCountsScoped(ctx, activeGen, nil)
+	return s.CoverageCountsScoped(ctx, activeGen, nil, nil)
 }
 
-// CoverageCountsScoped is CoverageCounts limited to the supplied message types.
-// An empty messageTypes slice means the full live corpus.
-func (s *Store) CoverageCountsScoped(ctx context.Context, activeGen int64, messageTypes []string) (live, stamped, blank, missing int64, err error) {
-	live, err = s.countLiveMessagesScoped(ctx, messageTypes)
+// CoverageCountsScoped is CoverageCounts limited to the supplied message
+// types and source IDs. Empty messageTypes and sourceIDs slices mean the
+// full live corpus.
+func (s *Store) CoverageCountsScoped(ctx context.Context, activeGen int64, messageTypes []string, sourceIDs []int64) (live, stamped, blank, missing int64, err error) {
+	live, err = s.countLiveMessagesScoped(ctx, messageTypes, sourceIDs)
 	if err != nil {
 		return 0, 0, 0, 0, err
 	}
 	if activeGen != 0 {
-		liveWhere, liveArgs := liveMessagesWhereWithMessageTypes(messageTypes)
+		liveWhere, liveArgs := liveMessagesWhereScoped(messageTypes, sourceIDs)
 		q := `SELECT COUNT(*) FROM messages
 		       WHERE embed_gen = ? AND ` + liveWhere
 		args := append([]any{activeGen}, liveArgs...)
@@ -278,13 +280,14 @@ func (s *Store) CoverageCountsScoped(ctx context.Context, activeGen int64, messa
 // activeGen). It is a thin accessor for the scheduler/CLI activation
 // gates, which only consult the missing count; missing = live - stamped.
 func (s *Store) MissingCount(ctx context.Context, activeGen int64) (int64, error) {
-	return s.MissingCountScoped(ctx, activeGen, nil)
+	return s.MissingCountScoped(ctx, activeGen, nil, nil)
 }
 
-// MissingCountScoped is MissingCount limited to the supplied message types.
-// An empty messageTypes slice means the full live corpus.
-func (s *Store) MissingCountScoped(ctx context.Context, activeGen int64, messageTypes []string) (int64, error) {
-	live, err := s.countLiveMessagesScoped(ctx, messageTypes)
+// MissingCountScoped is MissingCount limited to the supplied message types
+// and source IDs. Empty messageTypes and sourceIDs slices mean the full
+// live corpus.
+func (s *Store) MissingCountScoped(ctx context.Context, activeGen int64, messageTypes []string, sourceIDs []int64) (int64, error) {
+	live, err := s.countLiveMessagesScoped(ctx, messageTypes, sourceIDs)
 	if err != nil {
 		return 0, err
 	}
@@ -292,7 +295,7 @@ func (s *Store) MissingCountScoped(ctx context.Context, activeGen int64, message
 		return live, nil
 	}
 	var stamped int64
-	liveWhere, liveArgs := liveMessagesWhereWithMessageTypes(messageTypes)
+	liveWhere, liveArgs := liveMessagesWhereScoped(messageTypes, sourceIDs)
 	q := `SELECT COUNT(*) FROM messages
 	       WHERE embed_gen = ? AND ` + liveWhere
 	args := append([]any{activeGen}, liveArgs...)
@@ -304,9 +307,9 @@ func (s *Store) MissingCountScoped(ctx context.Context, activeGen int64, message
 
 // countLiveMessages returns the total live-message count. Shared by
 // CoverageCounts; kept separate so the live-predicate stays in one place.
-func (s *Store) countLiveMessagesScoped(ctx context.Context, messageTypes []string) (int64, error) {
+func (s *Store) countLiveMessagesScoped(ctx context.Context, messageTypes []string, sourceIDs []int64) (int64, error) {
 	var n int64
-	liveWhere, args := liveMessagesWhereWithMessageTypes(messageTypes)
+	liveWhere, args := liveMessagesWhereScoped(messageTypes, sourceIDs)
 	q := `SELECT COUNT(*) FROM messages WHERE ` + liveWhere
 	if err := s.db.QueryRowContext(ctx, q, args...).Scan(&n); err != nil {
 		return 0, fmt.Errorf("count live messages: %w", err)
@@ -314,19 +317,30 @@ func (s *Store) countLiveMessagesScoped(ctx context.Context, messageTypes []stri
 	return n, nil
 }
 
-func liveMessagesWhereWithMessageTypes(messageTypes []string) (string, []any) {
+// liveMessagesWhereScoped builds the live-messages predicate narrowed by the
+// embed build scope: message_type IN (...) and/or source_id IN (...). Empty
+// slices leave that dimension unrestricted.
+func liveMessagesWhereScoped(messageTypes []string, sourceIDs []int64) (string, []any) {
 	where := LiveMessagesWhere("", true)
+	var args []any
 	types := normalizeMessageTypes(messageTypes)
-	if len(types) == 0 {
-		return where, nil
+	if len(types) > 0 {
+		placeholders := make([]string, len(types))
+		for i, typ := range types {
+			placeholders[i] = "?"
+			args = append(args, typ)
+		}
+		where += " AND message_type IN (" + strings.Join(placeholders, ",") + ")"
 	}
-	placeholders := make([]string, len(types))
-	args := make([]any, len(types))
-	for i, typ := range types {
-		placeholders[i] = "?"
-		args[i] = typ
+	ids := normalizeScopeSourceIDs(sourceIDs)
+	if len(ids) > 0 {
+		placeholders := make([]string, len(ids))
+		for i, id := range ids {
+			placeholders[i] = "?"
+			args = append(args, id)
+		}
+		where += " AND source_id IN (" + strings.Join(placeholders, ",") + ")"
 	}
-	where += " AND message_type IN (" + strings.Join(placeholders, ",") + ")"
 	return where, args
 }
 
@@ -346,6 +360,27 @@ func normalizeMessageTypes(messageTypes []string) []string {
 		}
 		seen[typ] = struct{}{}
 		out = append(out, typ)
+	}
+	return out
+}
+
+// normalizeScopeSourceIDs de-duplicates scope source IDs and drops
+// non-positive values so the IN clause binds a minimal, valid set.
+func normalizeScopeSourceIDs(sourceIDs []int64) []int64 {
+	if len(sourceIDs) == 0 {
+		return nil
+	}
+	seen := make(map[int64]struct{}, len(sourceIDs))
+	out := make([]int64, 0, len(sourceIDs))
+	for _, id := range sourceIDs {
+		if id <= 0 {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		out = append(out, id)
 	}
 	return out
 }

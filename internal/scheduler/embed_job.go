@@ -36,7 +36,7 @@ type EmbedCoverage interface {
 }
 
 type ScopedEmbedCoverage interface {
-	MissingCountScoped(ctx context.Context, activeGen int64, messageTypes []string) (int64, error)
+	MissingCountScoped(ctx context.Context, activeGen int64, messageTypes []string, sourceIDs []int64) (int64, error)
 }
 
 // Compile-time check that the production worker satisfies EmbedRunner.
@@ -235,12 +235,12 @@ func (j *EmbedJob) Run(ctx context.Context) {
 }
 
 func (j *EmbedJob) missingCount(ctx context.Context, target vector.GenerationID) (int64, error) {
-	scope := vector.NewBuildScope(j.BuildScope.MessageTypes)
+	scope := vector.NewBuildScope(j.BuildScope.MessageTypes, j.BuildScope.SourceIDs)
 	if scope.IsEmpty() {
 		return j.Store.MissingCount(ctx, int64(target))
 	}
 	if scoped, ok := j.Store.(ScopedEmbedCoverage); ok {
-		return scoped.MissingCountScoped(ctx, int64(target), scope.MessageTypes)
+		return scoped.MissingCountScoped(ctx, int64(target), scope.MessageTypes, scope.SourceIDs)
 	}
 	return 0, errors.New("embed coverage store does not support scoped missing counts")
 }

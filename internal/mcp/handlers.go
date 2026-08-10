@@ -1040,7 +1040,7 @@ func (h *handlers) filterFromFindSimilarArgs(ctx context.Context, args map[strin
 		f.SourceIDs = []int64{*srcID}
 	}
 	if messageType, _ := args["message_type"].(string); messageType != "" {
-		f.MessageTypes = vector.NewBuildScope([]string{messageType}).MessageTypes
+		f.MessageTypes = vector.NewBuildScope([]string{messageType}, nil).MessageTypes
 	}
 
 	if v, ok := args["has_attachment"].(bool); ok && v {

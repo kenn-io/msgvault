@@ -100,7 +100,7 @@ func TestCoverageSplit_ScopedEmbeddedHoldsInvariant(t *testing.T) {
 	b, err := Open(ctx, Options{
 		DB:         db,
 		Dimension:  8,
-		BuildScope: vector.NewBuildScope([]string{"sms"}),
+		BuildScope: vector.NewBuildScope([]string{"sms"}, nil),
 	})
 	require.NoError(err, "Open backend")
 	t.Cleanup(func() { _ = b.Close() })

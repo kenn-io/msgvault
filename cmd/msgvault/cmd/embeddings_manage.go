@@ -72,7 +72,7 @@ func fillCoverage(ctx context.Context, row *embeddingGenerationRow) error {
 	}
 	defer func() { _ = s.Close() }()
 	scope := cfg.Vector.Embed.Scope.BuildScope()
-	live, _, _, missing, err := s.CoverageCountsScoped(ctx, int64(row.ID), scope.MessageTypes)
+	live, _, _, missing, err := s.CoverageCountsScoped(ctx, int64(row.ID), scope.MessageTypes, scope.SourceIDs)
 	if err != nil {
 		return err
 	}
@@ -96,7 +96,7 @@ func fillFullCoverage(ctx context.Context, backend vector.Backend, row *embeddin
 	}
 	defer func() { _ = s.Close() }()
 	scope := cfg.Vector.Embed.Scope.BuildScope()
-	live, stamped, _, missing, err := s.CoverageCountsScoped(ctx, int64(row.ID), scope.MessageTypes)
+	live, stamped, _, missing, err := s.CoverageCountsScoped(ctx, int64(row.ID), scope.MessageTypes, scope.SourceIDs)
 	if err != nil {
 		return err
 	}
@@ -137,6 +137,9 @@ func runEmbeddingsList(cmd *cobra.Command, _ []string) error {
 	defer release()
 
 	if err := ensureMainSchema(); err != nil {
+		return err
+	}
+	if err := ensureEmbedScopeResolved(); err != nil {
 		return err
 	}
 	db, rebind, closeDB, err := openEmbeddingsMetadataDB(cmd.Context())
@@ -317,6 +320,9 @@ func runEmbeddingsActivate(cmd *cobra.Command, args []string) error {
 	if err := ensureMainSchema(); err != nil {
 		return err
 	}
+	if err := ensureEmbedScopeResolved(); err != nil {
+		return err
+	}
 
 	db, rebind, closeDB, err := openEmbeddingsMetadataDB(cmd.Context())
 	if err != nil {
@@ -492,6 +498,9 @@ func planCLIEmbeddingsActivate(
 	force bool,
 ) (api.CLIEmbeddingsPlanResponse, error) {
 	if err := ensureMainSchema(); err != nil {
+		return api.CLIEmbeddingsPlanResponse{}, err
+	}
+	if err := ensureEmbedScopeResolved(); err != nil {
 		return api.CLIEmbeddingsPlanResponse{}, err
 	}
 	db, rebind, closeDB, err := openEmbeddingsMetadataDB(ctx)

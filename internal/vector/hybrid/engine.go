@@ -228,7 +228,11 @@ func (e *Engine) validateBuildScope(filter vector.Filter) error {
 // embedding index. A non-empty build scope only covers those message types, so
 // callers must make the query scope explicit and compatible before running ANN.
 func ValidateBuildScope(buildScope vector.BuildScope, filter vector.Filter) error {
-	scope := vector.NewBuildScope(buildScope.MessageTypes)
+	// Only the message-type dimension is validated. A source-scoped index
+	// simply has no vectors for out-of-scope accounts and hybrid search
+	// degrades to the BM25 signal for them — rejecting those queries would
+	// break ordinary unfiltered search against a partially-embedded corpus.
+	scope := vector.NewBuildScope(buildScope.MessageTypes, nil)
 	if scope.IsEmpty() {
 		return nil
 	}
@@ -240,7 +244,7 @@ func ValidateBuildScope(buildScope vector.BuildScope, filter vector.Filter) erro
 		return fmt.Errorf("%w: index is scoped to message_type=%s, query requested message_type=%s",
 			vector.ErrIndexScopeMismatch,
 			strings.Join(scope.MessageTypes, ","),
-			strings.Join(vector.NewBuildScope(filter.MessageTypes).MessageTypes, ","))
+			strings.Join(vector.NewBuildScope(filter.MessageTypes, nil).MessageTypes, ","))
 	}
 	return nil
 }

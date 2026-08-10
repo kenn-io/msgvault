@@ -25,6 +25,8 @@ const testMainSchema = `
 CREATE TABLE messages (
     id INTEGER PRIMARY KEY,
     subject TEXT,
+    source_id INTEGER,
+    message_type TEXT,
     deleted_at DATETIME,
     deleted_from_source_at DATETIME,
     embed_gen INTEGER,
@@ -67,6 +69,48 @@ func (s *testWorkStore) ScanForEmbedding(ctx context.Context, target int64, afte
 		    AND deleted_at IS NULL AND deleted_from_source_at IS NULL
 		    AND id > ?
 		  ORDER BY id LIMIT ?`, target, afterID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var out []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
+// ScanForEmbeddingScoped mirrors store.Store.ScanForEmbeddingScoped: the
+// same needs-work and liveness predicates as ScanForEmbedding, narrowed by
+// message_type and/or source_id when those scope dimensions are non-empty.
+func (s *testWorkStore) ScanForEmbeddingScoped(ctx context.Context, target int64, afterID int64, limit int, messageTypes []string, sourceIDs []int64) ([]int64, error) {
+	where := `(embed_gen IS NULL OR embed_gen <> ?)
+	    AND deleted_at IS NULL AND deleted_from_source_at IS NULL
+	    AND id > ?`
+	args := []any{target, afterID}
+	if len(messageTypes) > 0 {
+		ph := make([]string, len(messageTypes))
+		for i, typ := range messageTypes {
+			ph[i] = "?"
+			args = append(args, typ)
+		}
+		where += ` AND message_type IN (` + strings.Join(ph, ",") + `)`
+	}
+	if len(sourceIDs) > 0 {
+		ph := make([]string, len(sourceIDs))
+		for i, id := range sourceIDs {
+			ph[i] = "?"
+			args = append(args, id)
+		}
+		where += ` AND source_id IN (` + strings.Join(ph, ",") + `)`
+	}
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id FROM messages WHERE `+where+` ORDER BY id LIMIT ?`,
+		append(args, limit)...)
 	if err != nil {
 		return nil, err
 	}

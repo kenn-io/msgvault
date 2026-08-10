@@ -15,6 +15,45 @@ import (
 	"go.kenn.io/msgvault/internal/vector"
 )
 
+func TestSemanticCoverageContextNarrowsSources(t *testing.T) {
+	scope := vector.NewBuildScope(nil, []int64{3, 7})
+
+	t.Run("unfiltered context adopts the scope sources", func(t *testing.T) {
+		got := semanticCoverageContext(query.Context{}, scope)
+		assert.Equal(t, []int64{3, 7}, got.SourceIDs)
+	})
+
+	t.Run("account filter intersects the scope", func(t *testing.T) {
+		got := semanticCoverageContext(query.Context{SourceIDs: []int64{3, 9}}, scope)
+		assert.Equal(t, []int64{3}, got.SourceIDs)
+	})
+
+	t.Run("disjoint account filter keeps zero eligibility", func(t *testing.T) {
+		got := semanticCoverageContext(query.Context{SourceIDs: []int64{9}}, scope)
+		assert.Equal(t, []int64{-1}, got.SourceIDs,
+			"sentinel keeps the eligible set empty instead of widening to all sources")
+	})
+
+	t.Run("unscoped generation leaves sources alone", func(t *testing.T) {
+		got := semanticCoverageContext(query.Context{SourceIDs: []int64{9}}, vector.BuildScope{})
+		assert.Equal(t, []int64{9}, got.SourceIDs)
+	})
+
+	t.Run("sources-only scope leaves message types alone", func(t *testing.T) {
+		got := semanticCoverageContext(query.Context{MessageTypes: []string{"email"}}, scope)
+		assert.Equal(t, []string{"email"}, got.MessageTypes)
+	})
+
+	t.Run("message types and sources narrow together", func(t *testing.T) {
+		combined := vector.NewBuildScope([]string{"sms"}, []int64{3})
+		got := semanticCoverageContext(
+			query.Context{MessageTypes: []string{"email", "sms"}, SourceIDs: []int64{3, 9}},
+			combined)
+		assert.Equal(t, []string{"sms"}, got.MessageTypes)
+		assert.Equal(t, []int64{3}, got.SourceIDs)
+	})
+}
+
 type filteredCoverageBackend struct {
 	vector.Backend
 

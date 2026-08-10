@@ -168,7 +168,7 @@ func TestEngine_Hybrid_HappyPath(t *testing.T) {
 func TestEngine_ScopedIndexRequiresMatchingMessageTypeFilter(t *testing.T) {
 	ctx := context.Background()
 	f := newEngineFixture(t)
-	f.Engine.cfg.BuildScope = vector.NewBuildScope([]string{"sms", "mms"})
+	f.Engine.cfg.BuildScope = vector.NewBuildScope([]string{"sms", "mms"}, nil)
 
 	_, _, err := f.Engine.Search(ctx, SearchRequest{
 		Mode:     ModeVector,

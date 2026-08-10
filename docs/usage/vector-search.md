@@ -340,6 +340,40 @@ or preprocessing policy. Scoped generations are useful when you want semantic
 search for a newer corpus such as Teams or SMS without embedding decades of
 email immediately.
 
+Generations can also be scoped to selected accounts, either durably in config
+(so the daemon's scheduled embeds obey it too):
+
+```toml
+[vector.embed.scope]
+accounts = ["you@gmail.com"]
+```
+
+or per run from the CLI (overriding the configured accounts for that run):
+
+```bash
+msgvault embeddings build --full-rebuild --account you@gmail.com
+msgvault embeddings build --account you@gmail.com --account you@work.com
+msgvault embeddings build --collection family   # every account in the collection
+```
+
+Account identifiers use the same syntax as `--account` elsewhere (identifier
+or display name), and unknown identifiers fail the run instead of silently
+embedding more than requested. Account scoping keeps the named accounts'
+message text from ever being sent to the embedding endpoint, and is the
+cheapest way to pilot semantic search on one mailbox before paying to embed
+the whole archive.
+
+Two account-scope caveats:
+
+- The fingerprint records the scope as source IDs, which are archive-local.
+  Removing and re-adding an account (or restoring a backup) can renumber its
+  source ID, producing a new fingerprint and requiring a full rebuild.
+- Unlike a message-type scope, an account scope does NOT gate search:
+  unfiltered vector/hybrid queries keep working, and accounts outside the
+  scope simply have no vector matches (hybrid search ranks them on the BM25
+  signal alone). The web UI's semantic-coverage readout counts only in-scope
+  accounts as eligible.
+
 A scoped index is intentionally partial, so vector and hybrid search require an
 explicit compatible message-type filter:
 
