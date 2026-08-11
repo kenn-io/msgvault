@@ -46,3 +46,20 @@ func TestEmbedJobMissingCountForwardsScope(t *testing.T) {
 	assert.Equal([]string{"sms"}, cov.messageTypes, "message types normalized")
 	assert.Equal([]int64{3, 7}, cov.sourceIDs, "source IDs normalized and forwarded")
 }
+
+func TestEmbedJobScopeChangeFailsClosedBeforeWorkerRuns(t *testing.T) {
+	assert := assert.New(t)
+	runner := &fakeRunner{}
+	job := &EmbedJob{
+		Worker:     runner,
+		Backend:    &fakeBackend{},
+		BuildScope: vector.NewBuildScope(nil, []int64{7}),
+		ResolveBuildScope: func() (vector.BuildScope, error) {
+			return vector.NewBuildScope(nil, []int64{9}), nil
+		},
+	}
+
+	job.Run(context.Background())
+	assert.Equal(0, runner.runCalls, "changed source mapping must stop before embedding")
+	assert.Equal(0, runner.reclaimCalls, "changed source mapping must stop before any worker write")
+}

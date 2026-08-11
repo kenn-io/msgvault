@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -113,4 +114,30 @@ func TestResolveEmbedScopeSourceIDs_CollectionFlagExpands(t *testing.T) {
 	require.NoError(resolveEmbedScopeSourceIDs(f.Store))
 	assert.ElementsMatch(t, []int64{f.Source.ID, other.ID}, cfg.Vector.Embed.Scope.SourceIDs,
 		"--collection expands to the union of member sources")
+}
+
+func TestResolveEmbedScopeSourceIDs_EmptyCollectionFailsClosed(t *testing.T) {
+	require := require.New(t)
+	f, _, _ := setupScopeFixture(t)
+	withEmbedScopeGlobals(t, nil)
+
+	_, err := f.Store.CreateCollection("empty", "", []int64{f.Source.ID})
+	require.NoError(err, "CreateCollection")
+	require.NoError(f.Store.RemoveSourcesFromCollection("empty", []int64{f.Source.ID}), "empty collection")
+	embedCollections = []string{"empty"}
+
+	err = resolveEmbedScopeSourceIDs(f.Store)
+	require.Error(err, "an explicit empty collection must not widen to the full archive")
+	assert.Contains(t, err.Error(), "has no accounts")
+	assert.Nil(t, cfg.Vector.Embed.Scope.SourceIDs)
+}
+
+func TestResolveEmbedScopeSourceIDs_ConfiguredNumericIDFails(t *testing.T) {
+	require := require.New(t)
+	f, _, _ := setupScopeFixture(t)
+	withEmbedScopeGlobals(t, []string{fmt.Sprintf("%d", f.Source.ID)})
+
+	err := resolveEmbedScopeSourceIDs(f.Store)
+	require.Error(err, "durable account configuration must not accept source IDs")
+	assert.Nil(t, cfg.Vector.Embed.Scope.SourceIDs)
 }

@@ -262,6 +262,18 @@ func isUniqueViolation(err error) bool {
 // ActivateGeneration (in-tx, single-DB on PG) and Stats. The $N ordinal
 // of the generation id is supplied by the caller.
 func (b *Backend) missingForGenExistsClause(genArg string, firstScopeArg int) (string, []any) {
+	where, args := b.missingForGenWhere(genArg, firstScopeArg)
+	return fmt.Sprintf(`EXISTS (
+		SELECT 1 FROM messages
+		 WHERE %s
+	)`, where), args
+}
+
+// missingForGenWhere is the scope-aware predicate for messages that still
+// need embedding for a generation. Keep Stats and ActivateGeneration on this
+// shared predicate so source-scoped generations never report the full corpus
+// as pending.
+func (b *Backend) missingForGenWhere(genArg string, firstScopeArg int) (string, []any) {
 	where := store.LiveMessagesWhere("", true)
 	args := make([]any, 0, len(b.scope.MessageTypes)+len(b.scope.SourceIDs))
 	nextArg := firstScopeArg
@@ -283,11 +295,7 @@ func (b *Backend) missingForGenExistsClause(genArg string, firstScopeArg int) (s
 		}
 		where += fmt.Sprintf(" AND source_id IN (%s)", strings.Join(placeholders, ","))
 	}
-	return fmt.Sprintf(`EXISTS (
-		SELECT 1 FROM messages
-		 WHERE (embed_gen IS NULL OR embed_gen <> %s)
-		   AND %s
-	)`, genArg, where), args
+	return fmt.Sprintf("(embed_gen IS NULL OR embed_gen <> %s) AND %s", genArg, where), args
 }
 
 // ActivateGeneration atomically retires the current active generation
@@ -1219,11 +1227,11 @@ func (b *Backend) Stats(ctx context.Context, gen vector.GenerationID) (vector.St
 	// generation, so it reports 0 — the StatsView consumer sums per-gen
 	// pending across the active/building generations anyway.
 	if gen != 0 {
+		pendingWhere, pendingArgs := b.missingForGenWhere("$1", 2)
+		pendingArgs = append([]any{int64(gen)}, pendingArgs...)
 		if err := b.db.QueryRowContext(ctx,
-			`SELECT COUNT(*) FROM messages
-			  WHERE (embed_gen IS NULL OR embed_gen <> $1)
-			    AND `+store.LiveMessagesWhere("", true),
-			int64(gen)).Scan(&s.PendingCount); err != nil {
+			`SELECT COUNT(*) FROM messages WHERE `+pendingWhere,
+			pendingArgs...).Scan(&s.PendingCount); err != nil {
 			return s, fmt.Errorf("count missing: %w", err)
 		}
 	}

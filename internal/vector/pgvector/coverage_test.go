@@ -154,6 +154,41 @@ func TestCoverageSplit_ScopedEmbeddedHoldsInvariant(t *testing.T) {
 		"invariant: live == embedded + blank + missing")
 }
 
+func TestStats_SourceScopeExcludesOutOfScopePendingMessages(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	ctx := context.Background()
+	db := openPGTestDB(t)
+	b, err := Open(ctx, Options{
+		DB:         db,
+		Dimension:  8,
+		BuildScope: vector.NewBuildScope(nil, []int64{1}),
+	})
+	require.NoError(err, "Open backend")
+	t.Cleanup(func() { _ = b.Close() })
+
+	_, err = db.ExecContext(ctx, `
+		INSERT INTO messages (id, source_id, embed_gen) VALUES
+			(1, 1, NULL),
+			(2, 2, NULL)
+		ON CONFLICT (id) DO UPDATE SET
+			source_id = EXCLUDED.source_id,
+			embed_gen = NULL,
+			deleted_at = NULL,
+			deleted_from_source_at = NULL`)
+	require.NoError(err, "seed in-scope and out-of-scope messages")
+
+	gen, err := b.CreateGeneration(ctx, "test-model", 8, "fp")
+	require.NoError(err, "CreateGeneration")
+	_, err = db.ExecContext(ctx, `UPDATE messages SET embed_gen = $1 WHERE id = 1`, int64(gen))
+	require.NoError(err, "stamp in-scope message")
+
+	stats, err := b.Stats(ctx, gen)
+	require.NoError(err, "Stats")
+	assert.Equal(int64(0), stats.PendingCount,
+		"an unstamped out-of-scope message must not make a source-scoped generation pending")
+}
+
 func TestFilteredCoverageRequiresLiveGenerationStampAndVector(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

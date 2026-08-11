@@ -178,7 +178,10 @@ func registerEmbedJob(sched *scheduler.Scheduler, vf *vectorFeatures, s *store.S
 		Fingerprint:      vf.Cfg.GenerationFingerprint(),
 		BackstopInterval: vf.Cfg.Embed.BackstopInterval,
 		BuildScope:       vf.Cfg.Embed.Scope.BuildScope(),
-		Log:              logger,
+		ResolveBuildScope: func() (vector.BuildScope, error) {
+			return configuredEmbedBuildScope(s)
+		},
+		Log: logger,
 	}
 	schedule := cfg.Vector.Embed.Schedule.Cron
 	if err := sched.SetEmbedJob(embedJob, schedule, cfg.Vector.Embed.Schedule.RunAfterSync); err != nil {

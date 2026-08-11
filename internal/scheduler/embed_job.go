@@ -91,6 +91,14 @@ type EmbedJob struct {
 	// worker scans for this generation. Empty means the full live corpus.
 	BuildScope vector.BuildScope
 
+	// ResolveBuildScope re-resolves the durable embedding scope immediately
+	// before each scheduled run. If it differs from BuildScope, Run fails
+	// closed: the worker and backend were initialized with the old scope and
+	// must be reinitialized before any embedding can resume. This prevents a
+	// reused database source ID from being treated as the formerly configured
+	// account.
+	ResolveBuildScope func() (vector.BuildScope, error)
+
 	// Now returns the current time; overridable in tests to drive the
 	// backstop interval deterministically. nil uses time.Now.
 	Now func() time.Time
@@ -134,6 +142,21 @@ func (j *EmbedJob) Run(ctx context.Context) {
 		return
 	}
 	defer j.running.Unlock()
+
+	if j.ResolveBuildScope != nil {
+		resolved, err := j.ResolveBuildScope()
+		if err != nil {
+			log.Error("embed run skipped: configured scope could not be resolved", "error", err)
+			return
+		}
+		configured := vector.NewBuildScope(j.BuildScope.MessageTypes, j.BuildScope.SourceIDs)
+		if resolved.Fingerprint() != configured.Fingerprint() {
+			log.Error("embed run skipped: configured scope changed; reinitialize vector features and rebuild before embedding",
+				"configured_scope", resolved.Fingerprint(),
+				"initialized_scope", configured.Fingerprint())
+			return
+		}
+	}
 
 	if _, err := j.Worker.ReclaimStale(ctx); err != nil {
 		if jobctx.YieldedToWaiter(ctx) {
