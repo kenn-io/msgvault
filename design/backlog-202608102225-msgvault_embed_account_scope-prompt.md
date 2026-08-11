@@ -248,4 +248,3 @@ Audit every `BuildScope()` call site listed in the map above.
 - Coverage reporting (`embeddings list`, API/MCP coverage) reflects the scope.
 - `make test` and `make lint` pass; commit the change at the end of the turn
   (repo convention: commit without asking).
-
