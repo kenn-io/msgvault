@@ -4,6 +4,7 @@
   bun2nix,
   fetchFromGitHub,
   gitignoreSource,
+  nodejs,
   sqlite,
 }:
 let
@@ -40,7 +41,10 @@ buildGoModule {
   dontUseBunCheck = true;
   dontUseBunInstall = true;
 
-  nativeBuildInputs = [ bun2nix.hook ];
+  nativeBuildInputs = [
+    bun2nix.hook
+    nodejs
+  ];
   overrideModAttrs = _: previous: {
     nativeBuildInputs = builtins.filter (
       input: (input.name or "") != "bun2nix-hook"

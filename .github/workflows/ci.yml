@@ -486,7 +486,7 @@ jobs:
       - uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
 
       - name: Build
-        run: nix build
+        run: nix build --option download-attempts 10
 
   # PostgreSQL backend lane: runs the full Go test suite against a live
   # PostgreSQL service. Tests that use testutil.NewTestStore read
