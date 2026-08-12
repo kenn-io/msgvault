@@ -347,7 +347,6 @@ func setupVectorFeatures(ctx context.Context, mainStore *store.Store, mainPath s
 		Backend:      backend,
 		HybridEngine: engine,
 		Runner:       runtime.Runner,
-		Worker:       runtime.Runner,
 		Convergence:  runtime.Convergence,
 		Cfg:          cfg.Vector,
 		Close:        closeFn,

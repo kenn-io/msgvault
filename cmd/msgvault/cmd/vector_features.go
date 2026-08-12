@@ -19,11 +19,8 @@ type vectorFeatures struct {
 	Backend      vector.Backend
 	HybridEngine *hybrid.Engine
 	Runner       scheduler.EmbedRunner
-	// Worker is the compatibility name used by older setup callers. It holds
-	// the same interface value as Runner and is never a concrete type.
-	Worker      scheduler.EmbedRunner
-	Convergence scheduler.ConvergenceChecker
-	Cfg         vector.Config
+	Convergence  scheduler.ConvergenceChecker
+	Cfg          vector.Config
 	// Close releases the backend's resources: on SQLite it closes the
 	// vectors.db handle (so WAL checkpoints complete); on PostgreSQL it is
 	// a no-op because the pgvector backend shares the main store's handle,

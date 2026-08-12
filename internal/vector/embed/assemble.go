@@ -376,7 +376,10 @@ func (s SourceSnapshot) Conversation(ctx context.Context, id int64) (AssemblyCon
 	if err != nil {
 		return AssemblyConversation{}, false, fmt.Errorf("read embedding conversation %d: %w", id, err)
 	}
-	participantRevision := "CAST(p.updated_at AS TEXT)"
+	participantRevision := store.ParticipantRevisionSQLite
+	if s.state.postgres {
+		participantRevision = store.ParticipantRevisionPostgres
+	}
 	query := s.state.rebind(fmt.Sprintf(`
 		SELECT cp.participant_id, COALESCE(cp.role, ''),
 		       COALESCE(NULLIF(TRIM(p.display_name), ''),
@@ -432,17 +435,20 @@ func (s *sourceSnapshotState) messageSelectSQL(predicate string) string {
 func (s *sourceSnapshotState) chatMessageSelectSQL(predicate string) string {
 	bodyText := fmt.Sprintf(`SUBSTR(COALESCE(mb.body_text, ''), 1, %d)`, chatMessageBodyMaxChars)
 	bodyHTMLValue := fmt.Sprintf(`SUBSTR(COALESCE(mb.body_html, ''), 1, %d)`, chatMessageBodyMaxChars)
+	// Plain TRIM strips only spaces; trim the full ASCII whitespace set so a
+	// tab/newline-padded body_text still falls back to body_html. The Go-side
+	// predicate in scanChatAssemblyMessage must match this set exactly.
+	blankText := `NULLIF(TRIM(COALESCE(mb.body_text, ''), char(32,9,10,13)), '') IS NULL`
 	if s.postgres {
 		bodyText = fmt.Sprintf(`LEFT(COALESCE(mb.body_text, ''), %d)`, chatMessageBodyMaxChars)
 		bodyHTMLValue = fmt.Sprintf(`LEFT(COALESCE(mb.body_html, ''), %d)`, chatMessageBodyMaxChars)
+		blankText = `NULLIF(BTRIM(COALESCE(mb.body_text, ''), E' \t\n\r'), '') IS NULL`
 	}
-	bodyHTML := `CASE WHEN NULLIF(TRIM(COALESCE(mb.body_text, '')), '') IS NULL THEN ` +
-		bodyHTMLValue + ` ELSE '' END`
+	bodyHTML := `CASE WHEN ` + blankText + ` THEN ` + bodyHTMLValue + ` ELSE '' END`
 	bodyTruncated := fmt.Sprintf(`CASE
-		WHEN NULLIF(TRIM(COALESCE(mb.body_text, '')), '') IS NOT NULL
-			THEN LENGTH(COALESCE(mb.body_text, '')) > %d
-		ELSE LENGTH(COALESCE(mb.body_html, '')) > %d
-	END`, chatMessageBodyMaxChars, chatMessageBodyMaxChars)
+		WHEN %s THEN LENGTH(COALESCE(mb.body_html, '')) > %d
+		ELSE LENGTH(COALESCE(mb.body_text, '')) > %d
+	END`, blankText, chatMessageBodyMaxChars, chatMessageBodyMaxChars)
 	return fmt.Sprintf(`
 		SELECT m.id, m.conversation_id, COALESCE(m.message_type, ''),
 		       COALESCE(m.subject, ''), %s, %s,
@@ -494,6 +500,13 @@ func scanChatAssemblyMessage(scanner rowScanner, sequence int64) (AssemblyMessag
 	)
 	if err != nil {
 		return AssemblyMessage{}, err
+	}
+	// chatMessageSelectSQL ships body_html only when body_text is blank after
+	// trimming ASCII whitespace; mirror that exact predicate here so a
+	// whitespace-only body_text row uses the HTML it was shipped instead of
+	// silently owning no document.
+	if strings.Trim(bodyText, " \t\n\r") == "" {
+		bodyText = ""
 	}
 	row.Body = BodyTextForEmbedding(bodyText, bodyHTML)
 	if senderID.Valid {

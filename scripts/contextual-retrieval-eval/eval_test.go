@@ -1072,6 +1072,9 @@ func TestMeasuredChild_ReportsIsolatedMaxRSSAndPartialFailure(t *testing.T) {
 }
 
 func TestBuiltExecutable_UsesProductionChildrenFTSExactUsageAndReplay(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping go-build integration test in -short mode")
+	}
 	dir := t.TempDir()
 	binaryName := "contextual-retrieval-eval"
 	if runtime.GOOS == "windows" {

@@ -223,6 +223,26 @@ func TestSourceSnapshot_ChatMessagesBoundsBodyBeforeAssembly(t *testing.T) {
 	assert.True(rows[0].BodyTruncated)
 }
 
+func TestSourceSnapshot_ChatMessagesUseHTMLWhenBodyTextIsWhitespace(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := newChatAssemblyFixture(t, AssemblyPolicy{ChatGap: 30 * time.Minute, MaxChunkRunes: 100})
+	day := time.Date(2026, 8, 8, 9, 0, 0, 0, time.UTC)
+	id := f.seed("whitespace-text", day.Format(time.RFC3339), "Alice", "placeholder")
+	require.NoError(f.store.UpsertMessageBody(id,
+		sql.NullString{String: " \n\t", Valid: true},
+		sql.NullString{String: "<p>Tuesday works</p>", Valid: true}))
+	scope := chatMessageContextScope(f.conversationID, day, id)
+	snapshot, err := BeginSourceSnapshot(t.Context(), f.store)
+	require.NoError(err)
+	rows, err := snapshot.ChatMessages(t.Context(), scope.selector)
+	require.NoError(err)
+	require.NoError(snapshot.Close())
+	require.Len(rows, 1)
+	assert.Equal("Tuesday works", strings.TrimSpace(rows[0].Body),
+		"whitespace-only body_text must fall back to the HTML body the SQL shipped")
+}
+
 func TestChatWindowAssembler_OldScopesDoNotResolveChangedMessageLive(t *testing.T) {
 	t.Run("delete", func(t *testing.T) {
 		f := newChatAssemblyFixture(t, AssemblyPolicy{ChatGap: 30 * time.Minute, MaxChunkRunes: 100})

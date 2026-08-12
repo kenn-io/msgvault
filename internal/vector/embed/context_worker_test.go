@@ -2016,6 +2016,39 @@ func TestContextWorker_DocumentTooLargeLeavesOnlyItsScopeUncovered(t *testing.T)
 	assert.Equal(t, vector.DocumentCurrent, bad.State)
 }
 
+func TestContextWorker_TokenDenseDocumentTruncatesInsteadOfBlockingActivation(t *testing.T) {
+	f := newContextWorkerFixture(t, func(deps *ContextWorkerDeps) {
+		policy := AssemblyPolicy{MaxChunkRunes: 16384, ChatGap: 30 * time.Minute}
+		deps.Assembler = CompositeAssembler{Policy: policy, Chat: ChatWindowAssembler{Policy: policy}}
+	})
+	conversationID, err := f.store.EnsureConversation(f.sourceID, "ordinary", "Ordinary")
+	require.NoError(t, err)
+	// The provider rejects on a marker in the document tail; a byte-truncated
+	// retry no longer contains it, standing in for a token-dense document that
+	// passes local byte packing but exceeds the provider token limit.
+	body := strings.Repeat("filler words for a token dense document ", 200) + "reject-huge-document"
+	id := f.seed("email", conversationID, time.Now().UTC(), body)
+	f.client.rejectText = "reject-huge-document"
+
+	result, err := f.run()
+	require.NoError(t, err)
+	require.NotNil(t, result.Contextual)
+	assert.True(t, result.Contextual.Converged,
+		"a truncated document must converge instead of blocking activation")
+	assert.Zero(t, result.Failed)
+	assert.Equal(t, 1, result.Truncated)
+	assert.Zero(t, f.missing())
+	doc, err := f.backend.GetDocument(context.Background(), f.gen, fmt.Sprintf("message:%d", id))
+	require.NoError(t, err)
+	assert.Equal(t, vector.DocumentCurrent, doc.State)
+
+	beforeIdle := f.client.Calls()
+	_, err = f.run()
+	require.NoError(t, err)
+	assert.Equal(t, beforeIdle, f.client.Calls(),
+		"a truncated document must not re-embed once its revision is published")
+}
+
 func TestContextWorker_DocumentTooLargeClearsStaleCoverageAfterMetadataChange(t *testing.T) {
 	f := newContextWorkerFixture(t, nil)
 	day := time.Date(2026, 8, 8, 9, 0, 0, 0, time.UTC)

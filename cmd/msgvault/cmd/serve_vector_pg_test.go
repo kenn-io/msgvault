@@ -107,7 +107,7 @@ func TestSetupVectorFeatures_SucceedsOnPostgres(t *testing.T) {
 	})
 	assert.NotNil(vf.Backend, "Backend wired")
 	assert.NotNil(vf.HybridEngine, "HybridEngine wired")
-	assert.NotNil(vf.Worker, "Worker wired")
+	assert.NotNil(vf.Runner, "Runner wired")
 
 	// The pgvector schema was migrated into the isolated schema. Smoke-test
 	// that the embedding tables exist.

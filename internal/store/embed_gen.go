@@ -282,6 +282,18 @@ func (s *Store) SetEmbedGenGroupIfUnchanged(
 	return true, nil
 }
 
+// ParticipantRevisionSQLite and ParticipantRevisionPostgres render
+// participants.updated_at (aliased p) for the embedding metadata digest. The
+// coverage CAS here and the assembler's snapshot read must produce
+// byte-identical revisions, so both use these exact expressions. The
+// PostgreSQL form is pinned with to_char because CAST(timestamptz AS TEXT)
+// renders per-session TimeZone/DateStyle — a divergence would make the CAS
+// miss on every scope and republish forever.
+const (
+	ParticipantRevisionSQLite   = "CAST(p.updated_at AS TEXT)"
+	ParticipantRevisionPostgres = "to_char(p.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS.US')"
+)
+
 func (s *Store) embedGenMetadataDigest(
 	ctx context.Context, conn *sql.Conn, conversationID int64,
 ) (string, bool, error) {
@@ -298,18 +310,20 @@ func (s *Store) embedGenMetadataDigest(
 	}
 
 	lockClause := s.dialect.SelectForUpdate()
+	participantRevision := ParticipantRevisionSQLite
 	if lockClause != "" {
 		lockClause = " FOR UPDATE OF cp, p"
+		participantRevision = ParticipantRevisionPostgres
 	}
-	rows, err := conn.QueryContext(ctx, s.dialect.Rebind(`
+	rows, err := conn.QueryContext(ctx, s.dialect.Rebind(fmt.Sprintf(`
 		SELECT cp.participant_id, COALESCE(cp.role, ''),
 		       COALESCE(NULLIF(TRIM(p.display_name), ''),
 		                NULLIF(p.email_address, ''), NULLIF(p.phone_number, ''), ''),
-		       CAST(p.updated_at AS TEXT)
+		       %s
 		FROM conversation_participants cp
 		JOIN participants p ON p.id = cp.participant_id
 		WHERE cp.conversation_id = ?
-		ORDER BY cp.participant_id`+lockClause), conversationID)
+		ORDER BY cp.participant_id`+lockClause, participantRevision)), conversationID)
 	if err != nil {
 		return "", false, fmt.Errorf("lock embedding conversation participants %d: %w", conversationID, err)
 	}

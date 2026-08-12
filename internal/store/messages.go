@@ -815,6 +815,9 @@ func (s *Store) UpsertMessage(msg *Message) (int64, error) {
 			// Acquire SQLite's writer slot before the prior-state read. This
 			// prevents a deferred read transaction from failing to upgrade when
 			// another writer commits between the read and the message upsert.
+			// The no-op UPDATE dirties the clock page even when the journal is
+			// disabled — an accepted per-persist cost so the transaction can
+			// never fail its writer upgrade mid-persist.
 			if _, err := tx.Exec(`UPDATE embedding_change_clock SET sequence = sequence WHERE singleton = 1`); err != nil {
 				return fmt.Errorf("lock bodyless message journal: %w", err)
 			}

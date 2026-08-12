@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
@@ -742,6 +743,9 @@ func (w *ContextWorker) publishPreparedScopes(ctx context.Context, gen vector.Ge
 			plans[target.scopeIndex].failedDocs[target.docIndex] = true
 			continue
 		}
+		if results[i].truncated {
+			res.Truncated++
+		}
 		plans[target.scopeIndex].vectors[target.docIndex] = results[i].vectors
 	}
 	completePlans := len(plans)
@@ -989,9 +993,15 @@ func documentInputUTF8Bytes(input DocumentInput) int {
 }
 
 type contextualDocumentEmbedding struct {
-	vectors  [][]float32
-	tooLarge bool
+	vectors   [][]float32
+	tooLarge  bool
+	truncated bool
 }
+
+// truncatedContextualDocumentFloorUTF8Bytes is the smallest chunk-text budget
+// the singleton truncation fallback will try before declaring a document
+// permanently too large. Any real document embeds well before this floor.
+const truncatedContextualDocumentFloorUTF8Bytes = 1024
 
 func (w *ContextWorker) embedDocuments(ctx context.Context, inputs []DocumentInput) ([]contextualDocumentEmbedding, error) {
 	if len(inputs) == 0 {
@@ -1017,7 +1027,7 @@ func (w *ContextWorker) embedDocuments(ctx context.Context, inputs []DocumentInp
 		return slices.Concat(out, tail), tailErr
 	}
 	if len(inputs) == 1 {
-		return []contextualDocumentEmbedding{{tooLarge: true}}, nil
+		return w.embedTruncatedDocument(ctx, inputs[0])
 	}
 	middle := len(inputs) / 2
 	left, err := w.embedDocuments(ctx, inputs[:middle])
@@ -1029,6 +1039,59 @@ func (w *ContextWorker) embedDocuments(ctx context.Context, inputs []DocumentInp
 		return nil, err
 	}
 	return append(left, right...), nil
+}
+
+// embedTruncatedDocument retries one size-rejected document with progressively
+// halved chunk text. The provider limit is token-based while local packing is
+// byte-based, so a token-dense document can pass packing yet still be rejected;
+// without this fallback its members would stay uncovered and block activation
+// forever. Truncation preserves the chunk count, so vectors still align with
+// the assembled chunk rows and the published revision (derived from source
+// content) converges normally.
+func (w *ContextWorker) embedTruncatedDocument(ctx context.Context, input DocumentInput) ([]contextualDocumentEmbedding, error) {
+	budget := 0
+	for _, chunk := range input.Chunks {
+		budget += len(chunk)
+	}
+	for budget/2 >= truncatedContextualDocumentFloorUTF8Bytes {
+		budget /= 2
+		vectors, err := w.deps.Client.EmbedDocuments(ctx, []DocumentInput{truncateDocumentInput(input, budget)})
+		if err == nil {
+			if len(vectors) != 1 || len(vectors[0]) != len(input.Chunks) {
+				return nil, fmt.Errorf("contextual truncated document chunk count mismatch: got %d, expected %d",
+					len(vectors), len(input.Chunks))
+			}
+			return []contextualDocumentEmbedding{{vectors: vectors[0], truncated: true}}, nil
+		}
+		var sizeErr *voyageSizeError
+		if !errors.Is(err, ErrDocumentTooLarge) && !errors.As(err, &sizeErr) {
+			return nil, fmt.Errorf("embed truncated contextual document: %w", err)
+		}
+	}
+	return []contextualDocumentEmbedding{{tooLarge: true}}, nil
+}
+
+// truncateDocumentInput trims each chunk's text to its proportional share of
+// budget bytes, rune-safe, keeping every non-empty chunk non-empty so the
+// provider never sees an empty chunk.
+func truncateDocumentInput(input DocumentInput, budget int) DocumentInput {
+	total := 0
+	for _, chunk := range input.Chunks {
+		total += len(chunk)
+	}
+	out := DocumentInput{Chunks: make([]string, len(input.Chunks))}
+	for i, chunk := range input.Chunks {
+		text := chunk
+		if total > 0 {
+			text = utf8Prefix(chunk, len(chunk)*budget/total)
+		}
+		if text == "" && chunk != "" {
+			_, size := utf8.DecodeRuneInString(chunk)
+			text = chunk[:size]
+		}
+		out.Chunks[i] = text
+	}
+	return out
 }
 
 func sameDocumentRevisions(existing []vector.DocumentRecord, desired []Document) bool {

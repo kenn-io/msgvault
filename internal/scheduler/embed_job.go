@@ -202,21 +202,24 @@ func (j *EmbedJob) Run(ctx context.Context) {
 		"truncated", res.Truncated,
 	)
 	// A contextual RunOnce can finish the durable journal, reconciliation,
-	// and coverage gates. Activate that completed build before the periodic
-	// backstop can reset its reconciliation cursor and start another archive
-	// scan. Incomplete builds still use the backstop recovery path below.
-	if isBuilding && j.SequenceBoundActivation && j.Convergence != nil {
+	// and coverage gates. Check convergence once here: a completed build
+	// activates before the periodic backstop can reset its reconciliation
+	// cursor and start another archive scan. A transient check failure falls
+	// through so it cannot delay the backstop's straggler recovery.
+	var contextualState *ConvergenceResult
+	if isBuilding && j.Convergence != nil {
 		state, err := j.Convergence.CheckConvergence(ctx, target)
 		if jobctx.YieldedToWaiter(ctx) {
 			return
 		}
 		if err != nil {
 			log.Warn("embed: convergence check after run failed", "gen", target, "error", err)
-			return
-		}
-		if state.Complete() {
-			j.activateBuilding(ctx, target, &state, log)
-			return
+		} else {
+			contextualState = &state
+			if state.Complete() {
+				j.activateBuilding(ctx, target, &state, log)
+				return
+			}
 		}
 	}
 
@@ -229,7 +232,7 @@ func (j *EmbedJob) Run(ctx context.Context) {
 	// scan/embed/stamp path with the cursor pinned at 0, in modest
 	// non-locking batches, and is idempotent (already-covered rows are
 	// skipped) so it never re-embeds stamped messages.
-	j.maybeRunBackstop(ctx, target, log)
+	backstopRan := j.maybeRunBackstop(ctx, target, log)
 	if jobctx.YieldedToWaiter(ctx) {
 		return
 	}
@@ -243,18 +246,23 @@ func (j *EmbedJob) Run(ctx context.Context) {
 	// not block activation, but an incompletely-covered generation must
 	// not auto-activate either (it would expose an incomplete index).
 	//
-	var contextualState *ConvergenceResult
 	if j.Convergence != nil {
-		state, err := j.Convergence.CheckConvergence(ctx, target)
-		if jobctx.YieldedToWaiter(ctx) {
-			return
+		// The archive-wide convergence check is not free; re-run it only when
+		// the backstop may have changed durable state or the pre-backstop
+		// check did not produce a result.
+		if backstopRan || contextualState == nil {
+			state, err := j.Convergence.CheckConvergence(ctx, target)
+			if jobctx.YieldedToWaiter(ctx) {
+				return
+			}
+			if err != nil {
+				log.Warn("embed: convergence check after run failed", "gen", target, "error", err)
+				return
+			}
+			contextualState = &state
 		}
-		contextualState = &state
-		if err != nil {
-			log.Warn("embed: convergence check after run failed", "gen", target, "error", err)
-			return
-		}
-		if !state.Complete() {
+		if !contextualState.Complete() {
+			state := *contextualState
 			log.Info("embed: building generation has not converged; will retry next tick",
 				"gen", target,
 				"message_coverage_complete", state.MessageCoverageComplete,
@@ -338,10 +346,12 @@ func (j *EmbedJob) missingCount(ctx context.Context, target vector.GenerationID)
 // with the running lock held (from Run), so lastBackstop needs no separate
 // guard. A negative BackstopInterval disables it; zero defaults to 24h. A
 // backstop failure is logged, not fatal — the next interval retries.
-func (j *EmbedJob) maybeRunBackstop(ctx context.Context, gen vector.GenerationID, log *slog.Logger) {
+// maybeRunBackstop reports whether it invoked RunBackstop, so the caller
+// knows durable state may have changed since any earlier convergence check.
+func (j *EmbedJob) maybeRunBackstop(ctx context.Context, gen vector.GenerationID, log *slog.Logger) bool {
 	interval := j.BackstopInterval
 	if interval < 0 {
-		return // explicitly disabled
+		return false // explicitly disabled
 	}
 	if interval == 0 {
 		interval = defaultBackstopInterval
@@ -354,16 +364,16 @@ func (j *EmbedJob) maybeRunBackstop(ctx context.Context, gen vector.GenerationID
 	// First run for this generation (no recorded time) always runs a backstop;
 	// thereafter gate by the interval against this generation's own last run.
 	if last, ok := j.lastBackstop[gen]; ok && t.Sub(last) < interval {
-		return
+		return false
 	}
 	res, err := j.Worker.RunBackstop(ctx, gen)
 	if jobctx.YieldedToWaiter(ctx) {
-		return
+		return true
 	}
 	if err != nil {
 		log.Warn("embed backstop failed", "gen", gen, "error", err)
 		// Do not advance lastBackstop on failure so the next tick retries.
-		return
+		return true
 	}
 	if j.lastBackstop == nil {
 		j.lastBackstop = make(map[vector.GenerationID]time.Time)
@@ -376,6 +386,7 @@ func (j *EmbedJob) maybeRunBackstop(ctx context.Context, gen vector.GenerationID
 		"failed", res.Failed,
 		"truncated", res.Truncated,
 	)
+	return true
 }
 
 // pickTarget returns the generation to drain plus an isBuilding flag
