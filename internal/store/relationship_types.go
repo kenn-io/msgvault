@@ -367,7 +367,14 @@ func (s *Store) UpdateRelationshipTypeContext(
 				return err
 			}
 		}
-		if current.IsSymmetric && forward != reverse {
+		// The stored flag backs the database CHECK; the seed-defined flag is
+		// what reconciliation restores on the next InitSchema. Either one
+		// makes unequal labels unacceptable.
+		symmetric := current.IsSymmetric
+		if seedSymmetric, seeded := seededRelationshipTypeSymmetry(current.UniversalID); seeded {
+			symmetric = symmetric || seedSymmetric
+		}
+		if symmetric && forward != reverse {
 			return fmt.Errorf("%w: %q != %q", ErrRelationshipTypeSymmetricLabels, forward, reverse)
 		}
 

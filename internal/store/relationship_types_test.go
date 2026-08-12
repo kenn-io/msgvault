@@ -531,3 +531,36 @@ func TestDeleteRelationshipTypeProtectsSystemTypesAndTypesInUse(t *testing.T) {
 	_, err = f.Store.GetRelationshipTypeContext(ctx, unused.ID)
 	require.ErrorIs(err, store.ErrRelationshipTypeNotFound)
 }
+
+func TestSeededSymmetryDriftRepairsLabelsInsteadOfBreakingInitSchema(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := storetest.New(t)
+	ctx := context.Background()
+
+	// A writer that bypasses Go flips a symmetric seed's flag. The update
+	// API must still refuse unequal labels, because the next reconciliation
+	// restores seed-defined symmetry regardless of the stored flag.
+	_, err := f.Store.DB().Exec(f.Store.Rebind(
+		`UPDATE relationship_types SET is_symmetric = FALSE WHERE slug = 'friend'`))
+	require.NoError(err)
+	friend, err := f.Store.GetRelationshipTypeBySlugContext(ctx, "friend")
+	require.NoError(err)
+	mate, buddy := "mate", "buddy"
+	_, err = f.Store.UpdateRelationshipTypeContext(ctx, friend.ID, friend.Revision,
+		store.RelationshipTypeUpdate{ForwardLabel: &mate, ReverseLabel: &buddy})
+	require.ErrorIs(err, store.ErrRelationshipTypeSymmetricLabels)
+
+	// The same out-of-band writer also pulls the labels apart. Restoring
+	// is_symmetric must repair the labels too, not fail InitSchema on the
+	// symmetric-label CHECK.
+	_, err = f.Store.DB().Exec(f.Store.Rebind(
+		`UPDATE relationship_types SET forward_label = 'mate', reverse_label = 'buddy' WHERE slug = 'friend'`))
+	require.NoError(err)
+	require.NoError(f.Store.EnsureSeededRelationshipTypesContext(ctx))
+	repaired, err := f.Store.GetRelationshipTypeBySlugContext(ctx, "friend")
+	require.NoError(err)
+	assert.True(repaired.IsSymmetric)
+	assert.Equal("friend", repaired.ForwardLabel)
+	assert.Equal("friend", repaired.ReverseLabel)
+}

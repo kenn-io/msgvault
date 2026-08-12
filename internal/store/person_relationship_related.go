@@ -160,8 +160,12 @@ func (s *Store) ResolveRelatedValueContext(ctx context.Context, in RelatedImport
 		return nil, err
 	}
 	if personMatched && typeMatched {
+		// RELATED's TYPE describes the related person's role toward the card
+		// subject (RFC 6350 section 6.6.6): TYPE=parent naming bob on alice's
+		// card asserts that bob is alice's parent. The matched person is
+		// therefore the typed source and the card subject the target.
 		edge, err := s.AddPersonRelationshipContext(ctx, PersonRelationshipInput{
-			SourcePersonID: in.PersonID, TargetPersonID: matchedPersonID,
+			SourcePersonID: matchedPersonID, TargetPersonID: in.PersonID,
 			TypeSlug: relationshipType.Slug, Source: in.Source, SourceRef: in.SourceRef,
 			VCardIdentity: in.VCardIdentity, Actor: actor,
 		})
@@ -171,7 +175,7 @@ func (s *Store) ResolveRelatedValueContext(ctx context.Context, in RelatedImport
 		if !errors.Is(err, ErrPersonRelationshipDuplicate) {
 			return nil, err
 		}
-		existing, findErr := s.activePersonRelationshipContext(ctx, in.PersonID, matchedPersonID, relationshipType.Slug)
+		existing, findErr := s.activePersonRelationshipContext(ctx, matchedPersonID, in.PersonID, relationshipType.Slug)
 		if findErr != nil {
 			return nil, findErr
 		}
@@ -324,13 +328,18 @@ func (s *Store) ListRelationshipReviewsContext(ctx context.Context, opts Relatio
 // AcceptRelationshipReviewContext claims the pending row, writes its edge,
 // and records that edge ID in one transaction. Any edge failure rolls the
 // conditional claim back, so review and edge can never diverge.
-func (s *Store) AcceptRelationshipReviewContext(ctx context.Context, id int64, typeSlug string, targetPersonID int64, actor string) (*PersonRelationship, error) {
+//
+// relatedPersonID is the person the reviewer resolved the RELATED value to.
+// Like automatic resolution, acceptance materializes the card subject's
+// assertion "this person is my <type>", so the related person is the typed
+// source and the review's subject the target.
+func (s *Store) AcceptRelationshipReviewContext(ctx context.Context, id int64, typeSlug string, relatedPersonID int64, actor string) (*PersonRelationship, error) {
 	trimmedActor, err := validateRelationshipActor(actor)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrRelationshipReviewInvalid, err)
 	}
-	if targetPersonID <= 0 {
-		return nil, fmt.Errorf("%w: target person ID must be positive", ErrRelationshipReviewInvalid)
+	if relatedPersonID <= 0 {
+		return nil, fmt.Errorf("%w: related person ID must be positive", ErrRelationshipReviewInvalid)
 	}
 	var edge *PersonRelationship
 	err = s.withTxContext(ctx, func(tx *loggedTx) error {
@@ -338,7 +347,7 @@ func (s *Store) AcceptRelationshipReviewContext(ctx context.Context, id int64, t
 		if txErr != nil {
 			return txErr
 		}
-		input := PersonRelationshipInput{SourcePersonID: review.PersonID, TargetPersonID: targetPersonID, TypeSlug: typeSlug, Source: review.Source, SourceRef: review.SourceRef, VCardIdentity: review.VCardIdentity, Actor: trimmedActor}
+		input := PersonRelationshipInput{SourcePersonID: relatedPersonID, TargetPersonID: review.PersonID, TypeSlug: typeSlug, Source: review.Source, SourceRef: review.SourceRef, VCardIdentity: review.VCardIdentity, Actor: trimmedActor}
 		validatedActor, notes, txErr := validatePersonRelationshipInput(input)
 		if txErr != nil {
 			return txErr

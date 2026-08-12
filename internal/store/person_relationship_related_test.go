@@ -47,13 +47,13 @@ func TestResolveRelatedValueLinksExactUIDAndReturnsExactCanonicalDuplicate(t *te
 	require.NoError(err)
 	require.NotNil(first.Relationship)
 	assert.Equal("agent", first.Relationship.TypeSlug)
-	assert.Equal(aliceID, first.Relationship.SourcePersonID)
-	assert.Equal(bobID, first.Relationship.TargetPersonID)
+	assert.Equal(bobID, first.Relationship.SourcePersonID, "TYPE=agent on alice's card makes bob the agent")
+	assert.Equal(aliceID, first.Relationship.TargetPersonID)
 
 	// agent is asymmetric, so its reciprocal edge is distinct. Re-importing
 	// alice's assertion must find the first exact canonical triple, not search
-	// both orientations and accidentally return Bob's reciprocal assertion.
-	_, err = f.Store.AddPersonRelationshipContext(ctx, store.PersonRelationshipInput{SourcePersonID: bobID, TargetPersonID: aliceID, TypeSlug: "agent", Source: store.ProvenanceUser, Actor: "user"})
+	// both orientations and accidentally return the reciprocal edge.
+	_, err = f.Store.AddPersonRelationshipContext(ctx, store.PersonRelationshipInput{SourcePersonID: aliceID, TargetPersonID: bobID, TypeSlug: "agent", Source: store.ProvenanceUser, Actor: "user"})
 	require.NoError(err)
 	again, err := f.Store.ResolveRelatedValueContext(ctx, in)
 	require.NoError(err)
@@ -368,4 +368,50 @@ func TestRelationshipReviewDatabaseConstraintsAndColumns(t *testing.T) {
 	require.NoError(err)
 	require.NoError(rows.Err())
 	assert.ElementsMatch([]string{"id", "person_id", "raw_related_value", "raw_related_type", "value_kind", "matched_person_id", "status", "accepted_relationship_id", "source", "source_ref", "vcard_property", "vcard_group", "vcard_prop_id", "vcard_pid", "vcard_altid", "created_by", "reviewed_by", "reviewed_at", "created_at", "updated_at"}, columns)
+}
+
+func TestResolveRelatedValueOrientsAsymmetricTypeFromTheRelatedPerson(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := storetest.New(t)
+	ctx := context.Background()
+	aliceID, bobID := mustTwoPersons(t, f)
+	bob, err := f.Store.GetPerson(bobID)
+	require.NoError(err)
+
+	// RELATED;TYPE=parent on alice's card naming bob asserts that bob is
+	// alice's parent: the TYPE value describes the related person's role
+	// toward the card subject (RFC 6350 section 6.6.6).
+	resolution, err := f.Store.ResolveRelatedValueContext(ctx, store.RelatedImport{
+		PersonID: aliceID, RawValue: bob.VCardUID, RawType: "parent",
+		ValueKind: store.RelatedValueKindText, Source: store.ProvenanceVCardImport, Actor: "system",
+	})
+	require.NoError(err)
+	require.NotNil(resolution.Relationship)
+	assert.Equal("parent", resolution.Relationship.TypeSlug)
+	assert.Equal(bobID, resolution.Relationship.SourcePersonID)
+	assert.Equal(aliceID, resolution.Relationship.TargetPersonID)
+}
+
+func TestAcceptRelationshipReviewOrientsEdgeFromTheRelatedPerson(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := storetest.New(t)
+	ctx := context.Background()
+	aliceID, bobID := mustTwoPersons(t, f)
+
+	staged, err := f.Store.ResolveRelatedValueContext(ctx, store.RelatedImport{
+		PersonID: aliceID, RawValue: "Bob from the gym", RawType: "agent",
+		ValueKind: store.RelatedValueKindText, Source: store.ProvenanceVCardImport, Actor: "system",
+	})
+	require.NoError(err)
+	require.NotNil(staged.Review)
+
+	// Accepting resolves the card subject's assertion "this person is my
+	// agent", so bob is the typed source and alice the target.
+	edge, err := f.Store.AcceptRelationshipReviewContext(ctx, staged.Review.ID, "agent", bobID, "user")
+	require.NoError(err)
+	assert.Equal("agent", edge.TypeSlug)
+	assert.Equal(bobID, edge.SourcePersonID)
+	assert.Equal(aliceID, edge.TargetPersonID)
 }

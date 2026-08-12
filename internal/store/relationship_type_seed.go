@@ -99,7 +99,11 @@ var systemRelationshipTypes = []systemRelationshipTypeSeed{
 //
 // forward_label and reverse_label are user-owned because relabelling is the
 // point of having a mutable label; a user who renames "friend" to "mate" keeps
-// that name across every future upgrade.
+// that name across every future upgrade. The one exception: restoring
+// is_symmetric on a drifted symmetric seed whose labels were pulled apart by a
+// writer that bypassed Go also restores the seed labels, because unequal
+// labels would fail the symmetric-label CHECK and take InitSchema down with
+// them.
 //
 // vcard_related_type is also user-owned. A user may clear a seeded mapping and
 // assign that registered RELATED TYPE to another type. Re-seeding must preserve
@@ -189,6 +193,14 @@ func (s *Store) reconcileSeededRelationshipTypeTx(
 	if !seededRelationshipTypeDiffers(current, seed) {
 		return false, nil
 	}
+	forward, reverse := current.ForwardLabel, current.ReverseLabel
+	if seed.IsSymmetric && forward != reverse {
+		// Labels are user-owned and normally never rewritten, but a symmetric
+		// type cannot keep unequal labels: writing is_symmetric back below
+		// would fail the symmetric-label CHECK and abort InitSchema. The seed
+		// labels are the only deterministic repair.
+		forward, reverse = seed.ForwardLabel, seed.ReverseLabel
+	}
 	if !seed.IsCanonical {
 		var inverseTypeID int64
 		if err := tx.QueryRowContext(ctx,
@@ -200,11 +212,13 @@ func (s *Store) reconcileSeededRelationshipTypeTx(
 		if _, err := tx.ExecContext(ctx, fmt.Sprintf(`
 			UPDATE relationship_types
 			SET is_symmetric = ?, is_canonical = ?, inverse_type_id = ?,
+			    forward_label = ?, reverse_label = ?,
 			    ownership = ?, is_deletable = FALSE,
 			    revision = revision + 1, updated_at = %s
 			WHERE universal_id = ?
 		`, s.dialect.Now()),
 			seed.IsSymmetric, seed.IsCanonical, inverseTypeID,
+			forward, reverse,
 			string(RelationshipTypeOwnershipSystem), seed.UniversalID,
 		); err != nil {
 			return false, fmt.Errorf("repair seeded relationship type %q: %w", seed.Slug, err)
@@ -214,11 +228,13 @@ func (s *Store) reconcileSeededRelationshipTypeTx(
 	if _, err := tx.ExecContext(ctx, fmt.Sprintf(`
 		UPDATE relationship_types
 		SET is_symmetric = ?, is_canonical = ?,
+		    forward_label = ?, reverse_label = ?,
 		    ownership = ?, is_deletable = FALSE,
 		    revision = revision + 1, updated_at = %s
 		WHERE universal_id = ?
 	`, s.dialect.Now()),
 		seed.IsSymmetric, seed.IsCanonical,
+		forward, reverse,
 		string(RelationshipTypeOwnershipSystem), seed.UniversalID,
 	); err != nil {
 		return false, fmt.Errorf("repair seeded relationship type %q: %w", seed.Slug, err)
@@ -260,9 +276,24 @@ func (s *Store) reconcileSeededInverseTypeTx(
 	return err
 }
 
+// seededRelationshipTypeSymmetry returns the seed-defined symmetry for the
+// seeded type with this universal ID, and whether the ID belongs to a seed at
+// all. Label validation consults it so a stored is_symmetric flag that drifted
+// out-of-band cannot let in labels that the next reconciliation would have to
+// clobber.
+func seededRelationshipTypeSymmetry(universalID string) (isSymmetric, isSeeded bool) {
+	for _, seed := range systemRelationshipTypes {
+		if seed.UniversalID == universalID {
+			return seed.IsSymmetric, true
+		}
+	}
+	return false, false
+}
+
 // seededRelationshipTypeDiffers reports whether any reconciled column has
 // drifted from the seed. It deliberately ignores slug, labels, vCard mapping,
-// colour, icon, and description, which the seed never rewrites.
+// colour, icon, and description, which reconciliation leaves alone except for
+// the symmetric-label repair in reconcileSeededRelationshipTypeTx.
 func seededRelationshipTypeDiffers(
 	current *RelationshipType, seed systemRelationshipTypeSeed,
 ) bool {
