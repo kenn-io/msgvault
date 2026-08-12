@@ -1,6 +1,8 @@
 {
   lib,
   buildGoModule,
+  bun2nix,
+  fetchFromGitHub,
   gitignoreSource,
   sqlite,
 }:
@@ -15,6 +17,45 @@ buildGoModule {
 
   vendorHash = "sha256-jnmrZBb8rZChl/UvwMeMDjcIBj6Oyi7lmk9+jg8NnjY=";
   proxyVendor = true;
+
+  bunDeps = bun2nix.fetchBunDeps {
+    bunNix = ../web/bun.nix;
+    overrides = {
+      "@kenn-io/kit-ui@github:kenn-io/kit-ui#1e9dc7d" =
+        _:
+        fetchFromGitHub {
+          owner = "kenn-io";
+          repo = "kit-ui";
+          rev = "1e9dc7d45525a471040b72b894432c4956542c38";
+          hash = "sha256-XV7CuqMC+jlhaWQyXzcDukqnF73Lycy2Kueb7rMhxz8=";
+        };
+    };
+  };
+  bunRoot = "web";
+  bunInstallFlags = [
+    "--linker=hoisted"
+    "--backend=copyfile"
+  ];
+  dontUseBunBuild = true;
+  dontUseBunCheck = true;
+  dontUseBunInstall = true;
+
+  nativeBuildInputs = [ bun2nix.hook ];
+  overrideModAttrs = _: previous: {
+    nativeBuildInputs = builtins.filter (
+      input: (input.name or "") != "bun2nix-hook"
+    ) previous.nativeBuildInputs;
+    preBuild = "";
+  };
+
+  preBuild = ''
+    bun run --cwd web generate
+    bun run --cwd web build
+    mkdir -p internal/web/dist
+    find internal/web/dist -mindepth 1 -maxdepth 1 ! -name stub.html -exec rm -rf {} +
+    cp -R web/dist/. internal/web/dist/
+    bun scripts/check-web-assets.mjs
+  '';
 
   subPackages = [ "cmd/msgvault" ];
 
