@@ -15,7 +15,7 @@ The contribution must use a personal fork. The working clone's `origin` must be 
 Update `conda-forge/msgvault-feedstock` to compile and embed the browser application before building the Go binary:
 
 1. Increment the recipe build number so Conda-Forge republishes v0.19.3.
-2. Add Bun and Make as build dependencies. Bun is published for all four platforms in the feedstock matrix: `linux-64`, `linux-aarch64`, `osx-64`, and `osx-arm64`.
+2. Add Bun, Node.js, and Make as build dependencies. Bun is published for all four platforms in the feedstock matrix: `linux-64`, `linux-aarch64`, `osx-64`, and `osx-arm64`. Node.js is explicit because upstream's generation and asset-validation scripts invoke `node` directly.
 3. Run upstream's canonical `make web-install web-embed` targets from the source root. This uses `bun install --frozen-lockfile`, generates the web API client, builds the Vite application, stages it under `internal/web/dist`, and validates the staged asset graph.
 4. Build the Go binary with the feedstock's existing tags and link settings.
 5. Run upstream's binary-level asset validator against the installed executable. This catches the original regression by requiring release asset bytes such as `.vite/manifest.json` to be embedded in the binary.

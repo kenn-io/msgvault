@@ -51,7 +51,7 @@ Expected: failure stating that the binary does not embed release asset bytes, in
 In `recipe/recipe.yaml`:
 
 - change `build.number` from `0` to `1`;
-- add `make` and `bun >=1.3,<2` to `requirements.build`;
+- add `make`, `bun >=1.3,<2`, and `nodejs >=20.19,<25` to `requirements.build` because the upstream generation and validation scripts invoke `node` directly;
 - change the build script to enter the source root, run `make web-install web-embed`, then retain the existing license collection, Go compilation, and shell-completion generation;
 - run `node scripts/check-web-assets.mjs --binary "$PREFIX/bin/msgvault"` immediately after the Go build.
 
