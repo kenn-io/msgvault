@@ -230,10 +230,14 @@ func newContextWorkerFixture(t *testing.T, mutate func(*ContextWorkerDeps)) *con
 }
 
 func (f *contextWorkerFixture) seed(kind string, conversationID int64, at time.Time, body string) int64 {
+	return f.seedForSource(f.sourceID, kind, conversationID, at, body)
+}
+
+func (f *contextWorkerFixture) seedForSource(sourceID int64, kind string, conversationID int64, at time.Time, body string) int64 {
 	f.t.Helper()
 	f.sequence++
 	id, err := f.store.UpsertMessage(&store.Message{
-		ConversationID: conversationID, SourceID: f.sourceID,
+		ConversationID: conversationID, SourceID: sourceID,
 		SourceMessageID: fmt.Sprintf("%s-%d", kind, f.sequence), MessageType: kind,
 		SentAt:   sql.NullTime{Time: at, Valid: !at.IsZero()},
 		SenderID: sql.NullInt64{Int64: f.personID, Valid: true},
@@ -355,6 +359,58 @@ func TestContextWorker_BuildScopeNeverSubmitsExcludedBody(t *testing.T) {
 	assert.Equal(1, f.client.Documents(), "only the in-scope chat document reaches the client")
 	_, err = f.backend.GetDocument(context.Background(), f.gen, fmt.Sprintf("message:%d", excludedID))
 	assert.Error(err)
+}
+
+// TestContextWorker_SourceScopeNeverSubmitsExcludedAccountBody pins the
+// account dimension of the contextual privacy boundary: with a source-only
+// build scope, an excluded account's message text must never reach the
+// embedding client (the fake errors if it does) and must publish no
+// document, while the in-scope account still converges. This also proves a
+// source-only scope is not rejected wholesale — each scope dimension is
+// enforced independently, and ContainsMessageType on an empty type list
+// would otherwise veto everything.
+func TestContextWorker_SourceScopeNeverSubmitsExcludedAccountBody(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	var included int64
+	f := newContextWorkerFixture(t, nil)
+	other, err := f.store.GetOrCreateSource("test", fmt.Sprintf("excluded-%d", time.Now().UnixNano()))
+	require.NoError(err)
+	otherChat, err := f.store.EnsureConversationWithType(other.ID, "chat-excluded", "beeper", "Excluded Team")
+	require.NoError(err)
+	f.deps.BuildScope = vector.NewBuildScope(nil, []int64{f.sourceID})
+	f.restartWorker()
+
+	included = f.seed("beeper", f.chatID, time.Now().UTC(), "included chat body")
+	excludedChat := f.seedForSource(other.ID, "beeper", otherChat, time.Now().UTC(), "excluded-account-chat-body")
+	excludedMail := f.seedForSource(other.ID, "email", otherChat, time.Now().UTC(), "excluded-account-mail-body")
+	f.client.rejectText = "excluded-account"
+
+	result, err := f.run()
+	require.NoError(err, "excluded-account text reaching the client fails the run")
+	assert.True(result.Contextual.Converged, "a source-only scope must converge, not reject everything")
+	assert.Equal(1, f.client.Documents(), "only the in-scope chat document reaches the client")
+	_, err = f.backend.GetDocument(context.Background(), f.gen,
+		fmt.Sprintf("message:%d", excludedMail))
+	assert.Error(err, "excluded ordinary message must publish no document")
+	_ = excludedChat
+	_ = included
+
+	// Phase two exercises the JOURNAL path: post-convergence mutations reach
+	// scopes through scopesForChanges, whose enumeration is deliberately
+	// unfiltered by source (moved-out scopes must tombstone), so only the
+	// selectorInBuildScope gate stands between an excluded account's text
+	// and the embedding client.
+	journalMail := f.seedForSource(other.ID, "email", otherChat, time.Now().UTC(), "excluded-account-journal-mail")
+	journalChat := f.seedForSource(other.ID, "beeper", otherChat, time.Now().UTC(), "excluded-account-journal-chat")
+	result, err = f.run()
+	require.NoError(err, "journal-delivered excluded-account text must not reach the client")
+	assert.True(result.Contextual.Converged)
+	assert.Equal(1, f.client.Documents(), "journal drain must add no excluded documents")
+	_, err = f.backend.GetDocument(context.Background(), f.gen,
+		fmt.Sprintf("message:%d", journalMail))
+	assert.Error(err, "journal-delivered excluded message must publish no document")
+	_ = journalChat
 }
 
 func TestContextWorker_BuildScopeTombstonesOrdinaryMoveOutWithoutSubmitting(t *testing.T) {

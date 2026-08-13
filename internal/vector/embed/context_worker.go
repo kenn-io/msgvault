@@ -649,20 +649,53 @@ func (w *ContextWorker) prepareScopes(ctx context.Context, snapshot SourceSnapsh
 	return out, nil
 }
 
+// messageTypeInScope enforces only the message-type dimension of a build
+// scope. Each dimension must be checked independently: ContainsMessageType
+// on a source-only scope (empty MessageTypes) returns false for every type
+// and would wrongly reject the whole archive.
+func messageTypeInScope(scope vector.BuildScope, messageType string) bool {
+	return len(scope.MessageTypes) == 0 || scope.ContainsMessageType(messageType)
+}
+
+// selectorInBuildScope is the authoritative scope gate: every publication
+// path funnels its selectors through prepareScopes, which uses this to
+// decide whether a scope's text may be assembled and sent to the embedding
+// provider (a disallowed scope is still published as a tombstone so
+// moved-out content is removed). Both scope dimensions are enforced —
+// message type from the selector or row, and the account dimension from
+// the message's or conversation's source.
 func (w *ContextWorker) selectorInBuildScope(
 	ctx context.Context, snapshot SourceSnapshot, selector AffectedScope,
 ) (bool, error) {
-	if w.deps.BuildScope.IsEmpty() {
+	scope := w.deps.BuildScope
+	if scope.IsEmpty() {
 		return true, nil
 	}
-	if selector.MessageID == 0 {
-		return w.deps.BuildScope.ContainsMessageType(selector.Kind), nil
+	if selector.MessageID != 0 {
+		row, found, err := snapshot.MessageMeta(ctx, selector.MessageID)
+		if err != nil {
+			return false, err
+		}
+		return found && messageTypeInScope(scope, row.MessageType) &&
+			(len(scope.SourceIDs) == 0 || scope.ContainsSource(row.SourceID)), nil
 	}
-	row, found, err := snapshot.Message(ctx, selector.MessageID)
+	if !messageTypeInScope(scope, selector.Kind) {
+		return false, nil
+	}
+	if len(scope.SourceIDs) == 0 {
+		return true, nil
+	}
+	if selector.ConversationID == 0 {
+		// No source identity to prove membership against an account-scoped
+		// build; fail closed so unattributable text cannot leak to the
+		// embedding provider.
+		return false, nil
+	}
+	sourceID, found, err := snapshot.ConversationSourceID(ctx, selector.ConversationID)
 	if err != nil {
 		return false, err
 	}
-	return found && w.deps.BuildScope.ContainsMessageType(row.MessageType), nil
+	return found && scope.ContainsSource(sourceID), nil
 }
 
 func (w *ContextWorker) publishPreparedScopes(ctx context.Context, gen vector.GenerationID, scopes []preparedScope, res *RunResult) (int, error) {
@@ -1445,7 +1478,7 @@ func (s SourceSnapshot) scopesForChanges(
 			if err != nil {
 				return nil, err
 			}
-			if buildScope.IsEmpty() || (change.OldMessageType.Valid && buildScope.ContainsMessageType(change.OldMessageType.String)) {
+			if buildScope.IsEmpty() || (change.OldMessageType.Valid && messageTypeInScope(buildScope, change.OldMessageType.String)) {
 				oldScope, ok, err := persistedMessageScope(
 					id, change.OldMessageType, change.OldConversationID, change.OldSentAt, true,
 				)
@@ -1459,7 +1492,7 @@ func (s SourceSnapshot) scopesForChanges(
 					}
 				}
 			}
-			if buildScope.IsEmpty() || (change.NewMessageType.Valid && buildScope.ContainsMessageType(change.NewMessageType.String)) {
+			if buildScope.IsEmpty() || (change.NewMessageType.Valid && messageTypeInScope(buildScope, change.NewMessageType.String)) {
 				newScope, ok, err := persistedMessageScope(
 					id, change.NewMessageType, change.NewConversationID, change.NewSentAt, true,
 				)
@@ -1473,12 +1506,12 @@ func (s SourceSnapshot) scopesForChanges(
 					}
 				}
 			}
-			if found && (buildScope.IsEmpty() || buildScope.ContainsMessageType(row.MessageType)) {
+			if found && messageTypeInScope(buildScope, row.MessageType) {
 				add(liveMessageScope(row))
 			} else if !change.OldMessageType.Valid && !change.NewMessageType.Valid {
 				return nil, fmt.Errorf("embedding change %d for missing message %d has no persisted message type", change.Sequence, id)
 			}
-			if (buildScope.IsEmpty() || buildScope.ContainsMessageType(contextualChatMessageType)) &&
+			if messageTypeInScope(buildScope, contextualChatMessageType) &&
 				(oldChat != newChat || oldChatKey != newChatKey) {
 				for _, conversation := range []sql.NullInt64{change.OldConversationID, change.NewConversationID} {
 					if conversation.Valid {
@@ -1650,7 +1683,7 @@ func (s SourceSnapshot) metadataScopesAfter(
 	afterKey string,
 	limit int,
 ) ([]contextScope, bool, error) {
-	if !buildScope.IsEmpty() && !buildScope.ContainsMessageType(contextualChatMessageType) {
+	if !messageTypeInScope(buildScope, contextualChatMessageType) {
 		return nil, false, nil
 	}
 	if limit <= 0 {
@@ -1666,6 +1699,19 @@ func (s SourceSnapshot) metadataScopesAfter(
 		`m.message_type = 'beeper'`,
 		`m.deleted_at IS NULL`,
 		`m.deleted_from_source_at IS NULL`,
+	}
+	args := make([]any, 0)
+	// Narrow metadata fan-out by the account dimension up front: an
+	// out-of-scope conversation would only be tombstoned downstream, and a
+	// title change on a large excluded archive must not enumerate (and
+	// fence) every one of its chat blocks.
+	if len(buildScope.SourceIDs) > 0 {
+		placeholders := make([]string, len(buildScope.SourceIDs))
+		for i, sourceID := range buildScope.SourceIDs {
+			placeholders[i] = "?"
+			args = append(args, sourceID)
+		}
+		where = append(where, `m.source_id IN (`+strings.Join(placeholders, ",")+`)`)
 	}
 	// Mutable remote titles and participant metadata must not invalidate an
 	// entire chat archive. Limit metadata-only fanout to the newest stable
@@ -1683,7 +1729,6 @@ func (s SourceSnapshot) metadataScopesAfter(
 	) - 1) / ` + strconv.Itoa(chatScopeMaxMessages) + `) * ` +
 		strconv.Itoa(chatScopeMaxMessages) + ` + 1)`
 	where = append(where, `m.id >= `+latestBlockStartExpr)
-	args := make([]any, 0)
 	switch change.Kind {
 	case store.EmbeddingChangeConversationTitle, store.EmbeddingChangeConversationParticipant:
 		seen := make(map[int64]struct{})
@@ -1884,13 +1929,23 @@ func (s SourceSnapshot) sourceScopesAfter(
 ) ([]contextScope, int64, bool, int, error) {
 	query := `SELECT m.id,COALESCE(m.message_type,''),m.conversation_id,COALESCE(m.sent_at,m.received_at,m.internal_date) FROM messages m WHERE m.deleted_at IS NULL AND m.deleted_from_source_at IS NULL AND m.id > ?`
 	args := []any{after}
-	if !buildScope.IsEmpty() {
+	// Each scope dimension narrows independently: gating the type filter on
+	// IsEmpty would render `IN ()` for a source-only scope, and vice versa.
+	if len(buildScope.MessageTypes) > 0 {
 		placeholders := make([]string, len(buildScope.MessageTypes))
 		for i, messageType := range buildScope.MessageTypes {
 			placeholders[i] = "?"
 			args = append(args, messageType)
 		}
 		query += ` AND m.message_type IN (` + strings.Join(placeholders, ",") + `)`
+	}
+	if len(buildScope.SourceIDs) > 0 {
+		placeholders := make([]string, len(buildScope.SourceIDs))
+		for i, sourceID := range buildScope.SourceIDs {
+			placeholders[i] = "?"
+			args = append(args, sourceID)
+		}
+		query += ` AND m.source_id IN (` + strings.Join(placeholders, ",") + `)`
 	}
 	query += ` ORDER BY m.id LIMIT ?`
 	args = append(args, limit)

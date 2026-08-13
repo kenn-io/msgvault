@@ -2,6 +2,12 @@ module go.kenn.io/msgvault
 
 go 1.26.5
 
+// Pinned past 1.26.5 for the stdlib fixes govulncheck enforces in CI
+// (GO-2026-6218 net/url, GO-2026-6091 html/template, and siblings). The
+// `go` directive stays at 1.26.5 so the Nix build, whose nixpkgs Go is
+// 1.26.5, keeps building; setup-go prefers this toolchain directive.
+toolchain go1.26.6
+
 require (
 	charm.land/bubbles/v2 v2.1.1
 	charm.land/bubbletea/v2 v2.0.8

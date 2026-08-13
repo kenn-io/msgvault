@@ -350,7 +350,7 @@ func runEmbeddingsActivate(cmd *cobra.Command, args []string) error {
 	var contextualSequence *int64
 	if !embeddingsActivateForce {
 		if cfg.Vector.Embeddings.EffectiveAPIFormat() == vector.APIFormatVoyageContextual {
-			state, err := configuredConvergenceState(cmd.Context(), gen)
+			state, err := configuredConvergenceState(cmd.Context(), cfg.Vector, gen)
 			if err != nil {
 				return err
 			}
@@ -548,7 +548,7 @@ func planCLIEmbeddingsActivate(
 	}
 	if !force {
 		if cfg.Vector.Embeddings.EffectiveAPIFormat() == vector.APIFormatVoyageContextual {
-			if err := requireConfiguredConvergence(ctx, gen); err != nil {
+			if err := requireConfiguredConvergence(ctx, vecCfg, gen); err != nil {
 				return api.CLIEmbeddingsPlanResponse{}, err
 			}
 		} else {
@@ -577,8 +577,14 @@ func planCLIEmbeddingsActivate(
 	}, nil
 }
 
-func requireConfiguredConvergence(ctx context.Context, gen vector.GenerationID) error {
-	state, err := configuredConvergenceState(ctx, gen)
+// requireConfiguredConvergence and configuredConvergenceState take the
+// vector config explicitly so daemon HTTP handlers can pass their
+// per-request resolved copy (with [vector.embed.scope] accounts folded into
+// SourceIDs): the checker's missing count is scope-aware, and building it
+// from the unresolved global would count out-of-scope messages as missing
+// and refuse to activate a completed account-scoped generation.
+func requireConfiguredConvergence(ctx context.Context, vecCfg vector.Config, gen vector.GenerationID) error {
+	state, err := configuredConvergenceState(ctx, vecCfg, gen)
 	if err != nil {
 		return err
 	}
@@ -588,7 +594,7 @@ func requireConfiguredConvergence(ctx context.Context, gen vector.GenerationID) 
 	return nil
 }
 
-func configuredConvergenceState(ctx context.Context, gen vector.GenerationID) (scheduler.ConvergenceResult, error) {
+func configuredConvergenceState(ctx context.Context, vecCfg vector.Config, gen vector.GenerationID) (scheduler.ConvergenceResult, error) {
 	mainStore, err := store.Open(cfg.DatabaseDSN())
 	if err != nil {
 		return scheduler.ConvergenceResult{}, fmt.Errorf("open main db for convergence: %w", err)
@@ -599,7 +605,7 @@ func configuredConvergenceState(ctx context.Context, gen vector.GenerationID) (s
 		return scheduler.ConvergenceResult{}, err
 	}
 	defer closeBackend()
-	checker, err := newConvergenceChecker(cfg.Vector, mainStore, backend)
+	checker, err := newConvergenceChecker(vecCfg, mainStore, backend)
 	if err != nil {
 		return scheduler.ConvergenceResult{}, err
 	}

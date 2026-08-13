@@ -503,6 +503,23 @@ func (b *Backend) ActivateGenerationIfConverged(
 	if missing != 0 {
 		return fmt.Errorf("%w: generation %d still has messages needing embedding", vector.ErrGenerationNotConverged, gen)
 	}
+	// Empty-scope guard, mirroring ActivateGeneration: a source scope
+	// matching no live messages trivially satisfies both the convergence
+	// and the no-missing gates, and activating would demote the serving
+	// generation in favor of an empty index. The fused connection sees the
+	// main schema, so the same live-scope predicate runs inside this
+	// transaction, before the demote.
+	if len(b.scope.SourceIDs) > 0 {
+		liveWhere, liveArgs := b.liveScopeWhere()
+		var live int
+		if err := tx.QueryRowContext(ctx,
+			`SELECT EXISTS (SELECT 1 FROM messages WHERE `+liveWhere+`)`, liveArgs...).Scan(&live); err != nil {
+			return fmt.Errorf("check live messages in build scope for generation %d: %w", gen, err)
+		}
+		if live == 0 {
+			return fmt.Errorf("generation %d: %w; sync the scoped account(s) or fix [vector.embed.scope], or pass --force", gen, vector.ErrRefuseActivateEmptyScope)
+		}
+	}
 
 	now := time.Now().Unix()
 	if _, err := tx.ExecContext(ctx, `
