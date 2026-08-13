@@ -7,6 +7,7 @@
   nodejs,
   runCommand,
   sqlite,
+  writeText,
 }:
 let
   version = "0.19.3";
@@ -18,6 +19,46 @@ let
     hash = "sha256-XV7CuqMC+jlhaWQyXzcDukqnF73Lycy2Kueb7rMhxz8=";
   };
 
+  # bun's bin linking has proven unreliable inside the nix sandbox on
+  # GitHub-hosted runners (install succeeds but node_modules/.bin ends up
+  # missing entries). Recreate any missing shims from package.json bin
+  # fields so the web build does not depend on bun's linker.
+  relinkBunBins = writeText "relink-bun-bins.js" ''
+    const fs = require('fs');
+    const path = require('path');
+    const nm = path.resolve('web/node_modules');
+    const binDir = path.join(nm, '.bin');
+    fs.mkdirSync(binDir, { recursive: true });
+    const pkgDirs = [];
+    for (const entry of fs.readdirSync(nm)) {
+      if (entry === '.bin') continue;
+      if (entry.startsWith('@')) {
+        for (const scoped of fs.readdirSync(path.join(nm, entry))) {
+          pkgDirs.push(path.join(nm, entry, scoped));
+        }
+      } else {
+        pkgDirs.push(path.join(nm, entry));
+      }
+    }
+    let created = 0;
+    for (const dir of pkgDirs) {
+      let pkg;
+      try { pkg = JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf8')); }
+      catch { continue; }
+      let bins = pkg.bin;
+      if (!bins) continue;
+      if (typeof bins === 'string') bins = { [pkg.name.split('/').pop()]: bins };
+      for (const [name, rel] of Object.entries(bins)) {
+        const shim = path.join(binDir, name);
+        const target = path.join(dir, rel);
+        if (fs.existsSync(shim) || !fs.existsSync(target)) continue;
+        fs.chmodSync(target, 0o755);
+        fs.symlinkSync(path.relative(binDir, target), shim);
+        created++;
+      }
+    }
+    console.log("relink-bun-bins: created " + created + " missing bin shims");
+  '';
 in
 buildGoModule {
   pname = "msgvault";
@@ -82,6 +123,15 @@ buildGoModule {
   };
 
   preBuild = ''
+    echo "=== nix-bin-shims diagnostics ==="
+    echo "node_modules entries: $(ls web/node_modules | wc -l)"
+    echo ".bin listing:"; ls -la web/node_modules/.bin/ 2>&1 | head -30 || true
+    echo "kit-ui theme.css:"; ls -la web/node_modules/@kenn-io/kit-ui/src/lib/theme.css 2>&1 || true
+    echo "openapi-typescript pkg:"; ls -d web/node_modules/openapi-typescript 2>&1 || true
+    echo "=== end diagnostics ==="
+
+    node ${relinkBunBins}
+
     bun run --cwd web generate
     bun run --cwd web build
     mkdir -p internal/web/dist
