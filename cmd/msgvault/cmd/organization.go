@@ -341,6 +341,12 @@ var organizationAttributeSetCmd = &cobra.Command{Use: "set <id>", Short: "Set a 
 	typedSource := generated.SetOrganizationAttributeBodySource(source)
 	value := generated.AttributeValue{Type: "text", Text: &organizationTextValue}
 	body := generated.SetOrganizationAttributeBody{DefinitionSlug: organizationDefinitionSlugValue, Source: typedSource, Value: value}
+	if cmd.Flags().Changed("ordinal") {
+		if organizationAttributeOrdinal < 0 {
+			return usageErr(cmd, errors.New("--ordinal must be a non-negative integer"))
+		}
+		body.Ordinal = &organizationAttributeOrdinal
+	}
 	if cmd.Flags().Changed("expected-value-id") {
 		if organizationExpectedValueID <= 0 {
 			return usageErr(cmd, errors.New("--expected-value-id must be a positive integer"))
@@ -538,6 +544,9 @@ func init() {
 		&organizationExpectedValueID, "expected-value-id", 0,
 		"Expected current value ID for compare-and-swap")
 	organizationAttributeSetCmd.Flags().BoolVar(&organizationDryRun, "dry-run", false, "Validate without writing")
+	organizationAttributeSetCmd.Flags().Int64Var(
+		&organizationAttributeOrdinal, "ordinal", 0,
+		"Ordinal for a multi-valued definition")
 	organizationAttributeClearCmd.Flags().Int64Var(&organizationAttributeOrdinal, "ordinal", 0, "Ordinal for a multi-valued definition")
 	organizationAttributeClearCmd.Flags().Int64Var(
 		&organizationExpectedValueID, "expected-value-id", 0,

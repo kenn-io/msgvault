@@ -222,10 +222,12 @@ func TestOrganizationAttributeSetTransmitsOptionalExpectedValueID(t *testing.T) 
 
 	output := runOrganizationCommand(t, organizationAttributeSetCmd, []string{
 		"4", "--definition", "industry_focus", "--text", "information retrieval",
-		"--expected-value-id", "7",
+		"--expected-value-id", "7", "--ordinal", "2",
 	})
 	require.NoError(decodeErr)
 	assert.Equal(json.Number("7"), body["expected_value_id"])
+	assert.Equal(json.Number("2"), body["ordinal"],
+		"a multi-valued attribute update must target its ordinal")
 	assert.Contains(output, "Set industry_focus: information retrieval")
 }
 

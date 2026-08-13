@@ -189,6 +189,8 @@ type SetOrganizationAttributeBody struct {
 	DefinitionSlug  string               `json:"definition_slug"`
 	Ordinal         *int64               `json:"ordinal,omitempty" nullable:"true"`
 	Value           store.AttributeValue `json:"value"`
+	ActiveFrom      *time.Time           `json:"active_from,omitempty" nullable:"true"`
+	ActiveUntil     *time.Time           `json:"active_until,omitempty" nullable:"true"`
 	Source          string               `json:"source" enum:"user,carddav_import,vcard_import,archive_observation,extraction,enrichment,system"`
 	SourceRef       *string              `json:"source_ref,omitempty" nullable:"true"`
 	Confidence      *float64             `json:"confidence,omitempty" nullable:"true"`
@@ -622,7 +624,7 @@ func (s *Server) handleSetOrganizationAttribute(w http.ResponseWriter, r *http.R
 	if !decodeEntityRequest(w, r, &body, "organization") {
 		return
 	}
-	result, err := organizations.SetOrganizationAttributeValueContext(r.Context(), store.OrganizationAttributeValueInput{OrganizationID: id, DefinitionSlug: body.DefinitionSlug, Ordinal: body.Ordinal, Value: body.Value, Source: store.Provenance(body.Source), SourceRef: body.SourceRef, Confidence: body.Confidence, Actor: body.Actor, ExpectedValueID: body.ExpectedValueID, DryRun: body.DryRun})
+	result, err := organizations.SetOrganizationAttributeValueContext(r.Context(), store.OrganizationAttributeValueInput{OrganizationID: id, DefinitionSlug: body.DefinitionSlug, Ordinal: body.Ordinal, Value: body.Value, ActiveFrom: body.ActiveFrom, ActiveUntil: body.ActiveUntil, Source: store.Provenance(body.Source), SourceRef: body.SourceRef, Confidence: body.Confidence, Actor: body.Actor, ExpectedValueID: body.ExpectedValueID, DryRun: body.DryRun})
 	if err != nil {
 		s.writeOrganizationError(w, err)
 		return

@@ -5119,6 +5119,10 @@ export interface components {
             [key: string]: unknown;
         };
         SetOrganizationAttributeBody: {
+            /** Format: date-time */
+            active_from?: string | null;
+            /** Format: date-time */
+            active_until?: string | null;
             actor?: string | null;
             /** Format: double */
             confidence?: number | null;

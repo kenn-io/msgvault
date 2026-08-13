@@ -6311,6 +6311,14 @@ components:
     SetOrganizationAttributeBody:
       additionalProperties: false
       properties:
+        active_from:
+          format: date-time
+          nullable: true
+          type: string
+        active_until:
+          format: date-time
+          nullable: true
+          type: string
         actor:
           nullable: true
           type: string

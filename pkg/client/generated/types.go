@@ -6089,6 +6089,8 @@ func (s SessionStatus) Validate() error {
 }
 
 type SetOrganizationAttributeBody struct {
+	ActiveFrom      *time.Time                         `json:"active_from,omitempty"`
+	ActiveUntil     *time.Time                         `json:"active_until,omitempty"`
 	Actor           *string                            `json:"actor,omitempty"`
 	Confidence      *float64                           `json:"confidence,omitempty"`
 	DefinitionSlug  string                             `json:"definition_slug" validate:"required"`

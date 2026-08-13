@@ -811,6 +811,51 @@ func TestOrganizationHTTPProfilePutRetainsInlineOnlyMediaWithoutURI(t *testing.T
 	assert.Equal(logo, content.Body.Bytes())
 }
 
+func TestOrganizationHTTPAttributeSetForwardsTemporalFields(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	srv, st := newOrganizationTestServerWithStore(t)
+	createdResponse := organizationRequest(t, srv, http.MethodPost, organizationsPath,
+		[]byte(`{"name":"Example Org","kind":"company"}`), "")
+	require.Equal(http.StatusCreated, createdResponse.Code)
+	var created store.Organization
+	require.NoError(json.Unmarshal(createdResponse.Body.Bytes(), &created))
+	mustAPIOrganizationAttributeDefinition(t, st, "temporal_note")
+	mustAPIOrganizationAttributeDefinition(t, st, "historical_note")
+	attributesPath := fmt.Sprintf("%s/%d/attributes", organizationsPath, created.ID)
+
+	backdated := organizationRequest(t, srv, http.MethodPost, attributesPath,
+		[]byte(`{"definition_slug":"temporal_note","source":"user",
+			"value":{"type":"text","text":"backdated"},
+			"active_from":"2024-03-01T00:00:00Z"}`), "")
+	require.Equal(http.StatusCreated, backdated.Code, backdated.Body.String())
+	var backdatedWrite store.OrganizationAttributeWrite
+	require.NoError(json.Unmarshal(backdated.Body.Bytes(), &backdatedWrite))
+	require.NotNil(backdatedWrite.Value)
+	assert.True(backdatedWrite.Value.ActiveFrom.Equal(
+		time.Date(2024, 3, 1, 0, 0, 0, 0, time.UTC)),
+		"active_from must reach the store, not default to the write time")
+
+	historical := organizationRequest(t, srv, http.MethodPost, attributesPath,
+		[]byte(`{"definition_slug":"historical_note","source":"user",
+			"value":{"type":"text","text":"former"},
+			"active_from":"2020-01-01T00:00:00Z","active_until":"2021-01-01T00:00:00Z"}`), "")
+	require.Equal(http.StatusCreated, historical.Code, historical.Body.String())
+
+	current, err := st.ListOrganizationAttributeValuesContext(context.Background(),
+		created.ID, store.OrganizationAttributeQuery{DefinitionSlug: "historical_note"})
+	require.NoError(err)
+	assert.Empty(current, "a fully historical write must not become the current value")
+	history, err := st.ListOrganizationAttributeValuesContext(context.Background(),
+		created.ID, store.OrganizationAttributeQuery{
+			DefinitionSlug: "historical_note", IncludeHistory: true,
+		})
+	require.NoError(err)
+	require.Len(history, 1)
+	require.NotNil(history[0].ActiveUntil)
+	assert.True(history[0].ActiveUntil.Equal(time.Date(2021, 1, 1, 0, 0, 0, 0, time.UTC)))
+}
+
 func newOrganizationTestServer(t *testing.T) *Server {
 	t.Helper()
 	srv, _ := newOrganizationTestServerWithStore(t)
