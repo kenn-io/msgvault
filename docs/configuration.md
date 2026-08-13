@@ -88,8 +88,10 @@ daemon_auto_restart = "newer" # newer, never, or always
 # "auto" starts on live SQL and switches to DuckDB after cache maintenance.
 # "sql" always uses live SQL. "duckdb" requires a usable Parquet cache.
 engine = "auto"
-# Build a stale/missing cache in the background during daemon startup.
+# Build a stale/missing cache during daemon startup and after scheduled syncs.
 auto_build_cache = true
+# Minimum age of a usable cache before a scheduled sync may rebuild it again.
+# min_rebuild_interval = "6h"
 
 [backup]
 # Default repository for `msgvault backup`.
@@ -354,7 +356,8 @@ Settings for daemon-side aggregate query behavior. The Web UI, TUI, MCP server, 
 | Key | Default | Description |
 |---|---|---|
 | `engine` | `auto` | Aggregate engine: `auto` starts with live SQL and switches to DuckDB after cache maintenance succeeds; `sql` always uses live SQL; `duckdb` requires a usable Parquet cache |
-| `auto_build_cache` | `true` | Build a stale or missing Parquet cache in the background during daemon startup; `false` skips automatic startup maintenance |
+| `auto_build_cache` | `true` | Build a stale or missing Parquet cache during daemon startup and after scheduled syncs; `false` skips both automatic paths |
+| `min_rebuild_interval` | `0s` | Minimum age of a usable cache before a scheduled sync may rebuild it; zero preserves rebuilding after each sync |
 
 The daemon starts HTTP health and API routing before analytics cache
 maintenance. With `engine = "duckdb"`, analytics remain unavailable until a
@@ -365,6 +368,15 @@ per-command analytics flags such as `msgvault tui --force-sql`,
 `msgvault mcp --force-sql`, `msgvault tui --no-cache-build`, and
 `--no-sqlite-scanner` were replaced by this daemon-level section. Use
 `engine = "sql"` to force live SQL.
+
+`min_rebuild_interval` limits only automatic post-sync rebuilds. A busy archive
+can therefore serve Parquet analytics that lag SQLite by approximately the
+configured interval plus cache build time. Explicit `msgvault build-cache`
+requests, startup maintenance, query-required builds, and recovery of an
+absent, interrupted, incompatible, or otherwise unusable cache are not delayed.
+Cache build memory and temporary disk usage scale with archive size, so a
+minimum interval can prevent repeated archive-scale work when sources sync
+frequently. Changes under `[analytics]` take effect after the daemon restarts.
 
 This setting governs the aggregate views (Senders/Domains/Labels/Time) and is ignored entirely when `[data].database_url` points at PostgreSQL — a PostgreSQL backend always uses live SQL for those views, and `build-cache` refuses to run against it. It does not affect the Web UI's Explore, Files, or People/domains workspaces, which require the SQLite + DuckDB/Parquet cache regardless of this setting and are unavailable on PostgreSQL; see [PostgreSQL Backend](/architecture/postgresql/) for the current scope.
 

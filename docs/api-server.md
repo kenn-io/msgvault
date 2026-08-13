@@ -1667,7 +1667,8 @@ All server settings go in the `[server]` section of `config.toml`. Account sched
 | Key | Default | Description |
 |---|---|---|
 | `engine` | `auto` | Aggregate engine for Web UI, TUI, and aggregate HTTP views: `auto`, `sql`, or `duckdb` |
-| `auto_build_cache` | `true` | Build stale or missing Parquet cache files in the background during daemon startup; `false` skips automatic startup maintenance |
+| `auto_build_cache` | `true` | Build stale or missing Parquet cache files during daemon startup and after scheduled syncs; `false` skips both automatic paths |
+| `min_rebuild_interval` | `0s` | Minimum age of a usable cache before a scheduled sync may rebuild it; zero preserves rebuilding after each sync |
 
 `engine = "sql"` forces live SQL for aggregate views. `engine = "duckdb"`
 requires a usable Parquet cache and keeps analytics unavailable until it is
@@ -1675,6 +1676,14 @@ ready; a build or open failure is fatal rather than a silent SQL fallback.
 `auto_build_cache = false` leaves cache rebuilds to explicit
 `msgvault build-cache` runs. These settings replace the TUI/MCP analytics flags
 deprecated in 0.17.0; see [Configuration: analytics](/configuration/#analytics).
+
+`min_rebuild_interval` limits only automatic post-sync rebuilds. Explicit
+builds, startup maintenance, query-required builds, and unusable-cache recovery
+remain immediate. On a continuously changing archive, Parquet analytics can lag
+SQLite by approximately the interval plus cache build time. Cache builder memory
+and temporary disk usage scale with archive size, so the interval can prevent
+repeated archive-scale work on frequently synced archives. Changes under
+`[analytics]` take effect after the daemon restarts.
 
 ### `[[accounts]]`
 
