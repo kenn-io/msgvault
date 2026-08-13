@@ -123,14 +123,14 @@ buildGoModule {
   };
 
   preBuild = ''
-    echo "=== nix-bin-shims diagnostics ==="
-    echo "node_modules entries: $(ls web/node_modules | wc -l)"
-    echo ".bin listing:"; ls -la web/node_modules/.bin/ 2>&1 | head -30 || true
-    echo "kit-ui theme.css:"; ls -la web/node_modules/@kenn-io/kit-ui/src/lib/theme.css 2>&1 || true
-    echo "openapi-typescript pkg:"; ls -d web/node_modules/openapi-typescript 2>&1 || true
-    echo "=== end diagnostics ==="
-
     node ${relinkBunBins}
+    echo "=== diagnostics ==="
+    echo "nm entries: $(ls web/node_modules | wc -l), .bin entries: $(ls web/node_modules/.bin 2>/dev/null | wc -l)"
+    echo "openapi-typescript contents:"; find web/node_modules/openapi-typescript -mindepth 1 -maxdepth 2 2>&1 | head -8 || true
+    echo "cache entry contents:"; find "$bunDeps/share/bun-cache/openapi-typescript@7.13.0@@@1/" -mindepth 1 -maxdepth 2 2>&1 | head -8 || true
+    echo "kit-ui theme.css:"; ls web/node_modules/@kenn-io/kit-ui/src/lib/theme.css 2>&1 || true
+    echo "vite pkg present:"; ls web/node_modules/vite/package.json 2>&1 || true
+    echo "=== end diagnostics ==="
 
     bun run --cwd web generate
     bun run --cwd web build
