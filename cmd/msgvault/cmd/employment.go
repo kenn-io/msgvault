@@ -21,6 +21,7 @@ var (
 	employmentTitle, employmentRole, employmentDepartment, employmentLocation, employmentDescription string
 	employmentStartDate, employmentEndDate, employmentSource                                         string
 	employmentPrimary, employmentNoPrimary, employmentNotCurrent, employmentCurrentOnly              bool
+	employmentMarkCurrent, employmentClearStart, employmentClearEnd                                  bool
 )
 
 var employmentCmd = &cobra.Command{Use: "employment", Short: "Manage temporal employment records between people and organizations"}
@@ -348,22 +349,51 @@ func employmentSetBody(cmd *cobra.Command, current *generated.Employment) (gener
 	if cmd.Flags().Changed("description") {
 		body.Description = &employmentDescription
 	}
-	if cmd.Flags().Changed("start") {
+	switch {
+	case employmentClearStart:
+		if cmd.Flags().Changed("start") {
+			return body, usageErr(cmd, errors.New("--start and --clear-start are mutually exclusive"))
+		}
+	case cmd.Flags().Changed("start"):
+		if strings.TrimSpace(employmentStartDate) == "" {
+			return body, usageErr(cmd, errors.New("--start must not be empty; use --clear-start to remove the start date"))
+		}
 		body.StartDate = &employmentStartDate
-	} else if date, ok := cliPartialDateString(current.StartDate); ok {
-		body.StartDate = &date
+	default:
+		if date, ok := cliPartialDateString(current.StartDate); ok {
+			body.StartDate = &date
+		}
 	}
-	if cmd.Flags().Changed("end") {
+	switch {
+	case employmentClearEnd:
+		if cmd.Flags().Changed("end") {
+			return body, usageErr(cmd, errors.New("--end and --clear-end are mutually exclusive"))
+		}
+	case cmd.Flags().Changed("end"):
+		if strings.TrimSpace(employmentEndDate) == "" {
+			return body, usageErr(cmd, errors.New("--end must not be empty; use --clear-end to remove the end date"))
+		}
 		body.EndDate = &employmentEndDate
-	} else if date, ok := cliPartialDateString(current.EndDate); ok {
-		body.EndDate = &date
+	default:
+		if date, ok := cliPartialDateString(current.EndDate); ok {
+			body.EndDate = &date
+		}
+	}
+	if employmentMarkCurrent && employmentNotCurrent {
+		return body, usageErr(cmd, errors.New("--current and --not-current are mutually exclusive"))
 	}
 	isCurrent := current.IsCurrent
 	if employmentNotCurrent {
 		isCurrent = false
 	}
-	if cmd.Flags().Changed("end") && strings.TrimSpace(employmentEndDate) != "" {
+	if cmd.Flags().Changed("end") {
 		isCurrent = false
+	}
+	if employmentMarkCurrent {
+		if body.EndDate != nil {
+			return body, usageErr(cmd, errors.New("--current requires the employment to have no end date; combine it with --clear-end"))
+		}
+		isCurrent = true
 	}
 	body.IsCurrent = &isCurrent
 	isPrimary := current.IsPrimary
@@ -450,6 +480,9 @@ func init() {
 	for _, command := range []*cobra.Command{employmentAddCmd, employmentShowCmd, employmentSetCmd, employmentEndCmd, employmentSetPrimaryCmd, employmentListCmd} {
 		command.Flags().BoolVar(&employmentJSON, flagJSON, false, "Output as JSON")
 	}
+	employmentSetCmd.Flags().BoolVar(&employmentMarkCurrent, "current", false, "Mark the employment current again")
+	employmentSetCmd.Flags().BoolVar(&employmentClearStart, "clear-start", false, "Remove the start date")
+	employmentSetCmd.Flags().BoolVar(&employmentClearEnd, "clear-end", false, "Remove the end date")
 	for _, command := range []*cobra.Command{employmentAddCmd, employmentSetCmd} {
 		command.Flags().Int64Var(&employmentPersonID, "person", 0, "Person ID")
 		command.Flags().Int64Var(&employmentOrganizationID, "organization", 0, "Organization ID")

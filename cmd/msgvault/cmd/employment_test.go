@@ -203,6 +203,71 @@ func TestEmploymentListPrintsHistoryAndProjection(t *testing.T) {
 	require.NotContains(output, "<nil>")
 }
 
+func TestEmploymentSetReactivatesEndedEmploymentWithClearEnd(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	var body map[string]any
+	var decodeErr error
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.Method {
+		case http.MethodGet:
+			_, err := w.Write([]byte(`{"id":9,"person_id":3,"organization_id":4,"title":"Staff Engineer","start_date":{"year":2019,"month":4},"end_date":{"year":2024,"month":6},"is_current":false,"is_primary":false,"source":"user","revision":2,"created_at":"2026-07-30T12:00:00Z","updated_at":"2026-07-30T12:00:00Z"}`))
+			assert.NoError(err)
+		case http.MethodPatch:
+			decodeErr = json.NewDecoder(r.Body).Decode(&body)
+			_, err := w.Write([]byte(`{"id":9,"person_id":3,"organization_id":4,"title":"Staff Engineer","start_date":{"year":2019,"month":4},"is_current":true,"is_primary":false,"source":"user","revision":3,"created_at":"2026-07-30T12:00:00Z","updated_at":"2026-07-30T12:00:00Z"}`))
+			assert.NoError(err)
+		default:
+			w.WriteHeader(http.StatusMethodNotAllowed)
+		}
+	}))
+	t.Cleanup(server.Close)
+	withStoreResolverConfig(t, &config.Config{Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true}})
+	runEmploymentCommand(t, employmentSetCmd, []string{"9", "--current", "--clear-end"})
+	require.NoError(decodeErr)
+	assert.Equal(true, body["is_current"],
+		"an ended employment must be reactivatable")
+	_, hasEnd := body["end_date"]
+	assert.False(hasEnd, "--clear-end must drop the stored end date")
+	assert.Equal("2019-04", body["start_date"], "unrelated dates stay preserved")
+}
+
+func TestEmploymentSetRejectsEmptyAndConflictingStateFlags(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, err := w.Write([]byte(`{"id":9,"person_id":3,"organization_id":4,"title":"Staff Engineer","end_date":{"year":2024,"month":6},"is_current":false,"is_primary":false,"source":"user","revision":2,"created_at":"2026-07-30T12:00:00Z","updated_at":"2026-07-30T12:00:00Z"}`))
+		assert.NoError(t, err)
+	}))
+	t.Cleanup(server.Close)
+	withStoreResolverConfig(t, &config.Config{Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true}})
+	for _, test := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{name: "empty start", args: []string{"9", "--start", ""},
+			want: "use --clear-start"},
+		{name: "empty end", args: []string{"9", "--end", ""},
+			want: "use --clear-end"},
+		{name: "current with not-current", args: []string{"9", "--current", "--not-current"},
+			want: "--current and --not-current are mutually exclusive"},
+		{name: "current with retained end date", args: []string{"9", "--current"},
+			want: "combine it with --clear-end"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			command := cloneEmploymentCommand(employmentSetCmd)
+			var output bytes.Buffer
+			command.SetOut(&output)
+			command.SetErr(&output)
+			command.SetArgs(test.args)
+			err := command.Execute()
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), test.want)
+		})
+	}
+}
+
 func TestEmploymentListByOrganizationShowsPersonColumn(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
