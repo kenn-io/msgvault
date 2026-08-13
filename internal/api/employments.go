@@ -474,7 +474,7 @@ func (s *Server) writeEmploymentError(w http.ResponseWriter, err error) {
 }
 
 func writeEmployment(w http.ResponseWriter, status int, employment *store.Employment) {
-	w.Header().Set("ETag", employmentETag(*employment))
+	w.Header().Set(etagHeaderName, employmentETag(*employment))
 	w.Header().Set("Cache-Control", "no-store")
 	if status == http.StatusCreated {
 		w.Header().Set("Location", employmentsPath+"/"+strconv.FormatInt(employment.ID, 10))
@@ -499,7 +499,7 @@ func addEmploymentIfMatchParameter(operation *huma.Operation) {
 }
 
 func addEmploymentETagHeader(response *huma.Response) {
-	response.Headers = map[string]*huma.Param{"ETag": {Description: "Strong employment revision tag for optimistic concurrency", Schema: &huma.Schema{Type: huma.TypeString}}}
+	response.Headers = map[string]*huma.Param{etagHeaderName: {Description: "Strong employment revision tag for optimistic concurrency", Schema: &huma.Schema{Type: huma.TypeString}}}
 }
 
 func addEmploymentLocationHeader(response *huma.Response) {

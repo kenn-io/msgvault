@@ -392,7 +392,7 @@ func hardenSettingsSchemas(doc *huma.OpenAPI) {
 		value.AdditionalProperties = nil
 		value.OneOf = []*huma.Schema{
 			settingsValueArm("string", &huma.Schema{Type: huma.TypeString}),
-			settingsValueArm("integer", &huma.Schema{Type: huma.TypeInteger, Format: "int64"}),
+			settingsValueArm("integer", &huma.Schema{Type: huma.TypeInteger, Format: formatInt64}),
 			settingsValueArm("number", &huma.Schema{Type: huma.TypeNumber, Format: "double"}),
 			settingsValueArm("boolean", &huma.Schema{Type: huma.TypeBoolean}),
 			settingsValueArm("strings", &huma.Schema{

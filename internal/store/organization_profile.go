@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -295,11 +296,12 @@ func (s *Store) prepareOrganizationProfileContext(
 			return nil, err
 		}
 		key := organizationAddressFingerprint(*row)
-		if previous, exists := addressSeen[key]; exists {
+		seenKey := key + "\x1f" + organizationValueDiscriminator(row.Envelope)
+		if previous, exists := addressSeen[seenKey]; exists {
 			return nil, fmt.Errorf("%w: addresses[%d] duplicates addresses[%d]",
 				ErrOrganizationInvalid, i, previous)
 		}
-		addressSeen[key] = i
+		addressSeen[seenKey] = i
 		prepared.addressKeys = append(prepared.addressKeys, key)
 	}
 	contactSeen := map[string]int{}
@@ -338,11 +340,12 @@ func (s *Store) prepareOrganizationProfileContext(
 		}
 		key := organizationContactKey(
 			row.AddressKind, contact.serviceID, row.ScopeKind, row.ScopeValue, normalized)
-		if previous, exists := contactSeen[key]; exists {
+		seenKey := key + "\x1f" + organizationValueDiscriminator(row.Envelope)
+		if previous, exists := contactSeen[seenKey]; exists {
 			return nil, fmt.Errorf("%w: contact_points[%d] duplicates contact_points[%d]",
 				ErrOrganizationInvalid, i, previous)
 		}
-		contactSeen[key] = i
+		contactSeen[seenKey] = i
 		prepared.contacts = append(prepared.contacts, contact)
 		prepared.contactKeys = append(prepared.contactKeys, key)
 	}
@@ -371,11 +374,12 @@ func (s *Store) prepareOrganizationProfileContext(
 			return nil, err
 		}
 		key := organizationMediaFingerprint(*row)
-		if previous, exists := mediaSeen[key]; exists {
+		seenKey := key + "\x1f" + organizationValueDiscriminator(row.Envelope)
+		if previous, exists := mediaSeen[seenKey]; exists {
 			return nil, fmt.Errorf("%w: media[%d] duplicates media[%d]",
 				ErrOrganizationInvalid, i, previous)
 		}
-		mediaSeen[key] = i
+		mediaSeen[seenKey] = i
 		prepared.mediaKeys = append(prepared.mediaKeys, key)
 	}
 	categorySeen := map[string]int{}
@@ -601,12 +605,13 @@ func reconcileOrganizationCollection[C any, D any](
 	insert func(D) (int64, error), now time.Time,
 ) error {
 	existingByID := make(map[int64]C, len(current))
-	existingByBusinessKey := make(map[string]int64, len(current))
+	existingByBusinessKey := make(map[string][]int64, len(current))
 	existingByIdentity := make(map[string]int64, len(current))
 	for _, row := range current {
 		id := currentID(row)
 		existingByID[id] = row
-		existingByBusinessKey[currentKey(row)] = id
+		key := currentKey(row)
+		existingByBusinessKey[key] = append(existingByBusinessKey[key], id)
 		if identity := currentIdentity(row); identity != "" {
 			existingByIdentity[identity] = id
 		}
@@ -634,9 +639,24 @@ func reconcileOrganizationCollection[C any, D any](
 			found = false
 		}
 		if !found {
-			id, found = existingByBusinessKey[desiredKey(row, i)]
-			if found && matched[id] {
-				found = false
+			// Several current rows can legitimately share a business value
+			// (distinct PROP-IDs, TYPE labels, or ordinals). Prefer an
+			// unclaimed row whose full envelope matches, so each desired row
+			// keeps its own counterpart; otherwise claim any unclaimed row.
+			candidates := existingByBusinessKey[desiredKey(row, i)]
+			for _, candidate := range candidates {
+				if !matched[candidate] && matches(existingByID[candidate], row) {
+					id, found = candidate, true
+					break
+				}
+			}
+			if !found {
+				for _, candidate := range candidates {
+					if !matched[candidate] {
+						id, found = candidate, true
+						break
+					}
+				}
 			}
 		}
 		if found {
@@ -663,6 +683,24 @@ func reconcileOrganizationCollection[C any, D any](
 		kept = append(kept, id)
 	}
 	return nil
+}
+
+// organizationValueDiscriminator distinguishes input rows that share a
+// business value: an imported profile can carry identical values under
+// different PROP-IDs, TYPE labels, or ordinals, and each must survive a
+// profile replacement instead of being rejected as a duplicate.
+func organizationValueDiscriminator(env ValueEnvelopeInput) string {
+	identity := organizationVCardIdentityKey(ValueEnvelope{
+		VCard: env.VCard, Source: env.Source, SourceRef: env.SourceRef,
+	})
+	ordinal := ""
+	if env.Ordinal != nil {
+		ordinal = strconv.Itoa(*env.Ordinal)
+	}
+	return strings.Join([]string{
+		identity, ordinal, derefString(env.TypeLabel),
+		strings.Join(env.TypeTokens, ","),
+	}, "\x1f")
 }
 
 // organizationVCardIdentityKey returns the identity that a source can keep

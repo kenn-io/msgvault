@@ -59,7 +59,20 @@ func (s *Store) MergeOrganizationsContext(
 		return nil, fmt.Errorf("%w: cannot merge an organization into itself",
 			ErrOrganizationInvalid)
 	}
+	// The merge reads both roots before its first write, so on SQLite a
+	// concurrent commit can fail the snapshot upgrade with SQLITE_BUSY. Each
+	// retry re-reads both rows in a fresh transaction; if the contender
+	// changed either organization, the caller's revisions miss and the retry
+	// surfaces a typed revision conflict instead of a raw busy error.
+	return retryContendedWrite(s, "merge organizations", func() (*Organization, error) {
+		return s.mergeOrganizationsOnce(
+			ctx, survivorID, survivorRevision, losingID, losingRevision)
+	})
+}
 
+func (s *Store) mergeOrganizationsOnce(
+	ctx context.Context, survivorID, survivorRevision, losingID, losingRevision int64,
+) (*Organization, error) {
 	var survivor *Organization
 	err := s.withTxContext(ctx, func(tx *loggedTx) error {
 		firstID, secondID := survivorID, losingID

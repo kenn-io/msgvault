@@ -152,7 +152,7 @@ func (s *Server) registerSettingsRoutes(api huma.API) {
 
 func addSettingsETagHeader(response *huma.Response) {
 	response.Headers = map[string]*huma.Param{
-		"ETag": {
+		etagHeaderName: {
 			Description: "Strong content hash for optimistic concurrency",
 			Schema:      &huma.Schema{Type: huma.TypeString},
 		},
@@ -209,7 +209,7 @@ func (s *Server) handleGetSettings(w http.ResponseWriter, _ *http.Request) {
 		writeError(w, http.StatusInternalServerError, "settings_read_failed", err.Error())
 		return
 	}
-	w.Header().Set("ETag", snapshot.ETag)
+	w.Header().Set(etagHeaderName, snapshot.ETag)
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusOK, buildSettingsResponse(cfg, s.settingsPendingRestart.Load()))
 }
@@ -284,7 +284,7 @@ func (s *Server) handlePatchSettings(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "settings_read_failed", err.Error())
 		return
 	}
-	w.Header().Set("ETag", snapshot.ETag)
+	w.Header().Set(etagHeaderName, snapshot.ETag)
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusOK, buildSettingsResponse(loaded, true))
 }

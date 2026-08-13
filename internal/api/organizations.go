@@ -848,7 +848,7 @@ func isOrganizationProfileValidationError(err error) bool {
 }
 
 func writeOrganization(w http.ResponseWriter, status int, organization *store.Organization) {
-	w.Header().Set("ETag", organizationETag(*organization))
+	w.Header().Set(etagHeaderName, organizationETag(*organization))
 	w.Header().Set("Cache-Control", "no-store")
 	if status == http.StatusCreated {
 		w.Header().Set("Location", organizationsPath+"/"+strconv.FormatInt(organization.ID, 10))
@@ -857,19 +857,19 @@ func writeOrganization(w http.ResponseWriter, status int, organization *store.Or
 }
 
 func writeOrganizationProfile(w http.ResponseWriter, profile *store.OrganizationProfile) {
-	w.Header().Set("ETag", organizationETag(profile.Organization))
+	w.Header().Set(etagHeaderName, organizationETag(profile.Organization))
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusOK, profile)
 }
 
 func addOrganizationIDParameter(operation *huma.Operation) {
-	operation.Parameters = append(operation.Parameters, &huma.Param{Name: "id", In: "path", Required: true, Description: "Organization ID", Schema: &huma.Schema{Type: huma.TypeInteger, Format: "int64"}})
+	operation.Parameters = append(operation.Parameters, &huma.Param{Name: "id", In: "path", Required: true, Description: "Organization ID", Schema: &huma.Schema{Type: huma.TypeInteger, Format: formatInt64}})
 }
 func addOrganizationIfMatchParameter(operation *huma.Operation) {
 	operation.Parameters = append(operation.Parameters, &huma.Param{Name: ifMatchHeaderName, In: "header", Required: true, Description: "Strong ETag returned by the latest organization read", Schema: &huma.Schema{Type: huma.TypeString}})
 }
 func addOrganizationETagHeader(response *huma.Response) {
-	response.Headers = map[string]*huma.Param{"ETag": {Description: "Strong organization revision tag for optimistic concurrency", Schema: &huma.Schema{Type: huma.TypeString}}}
+	response.Headers = map[string]*huma.Param{etagHeaderName: {Description: "Strong organization revision tag for optimistic concurrency", Schema: &huma.Schema{Type: huma.TypeString}}}
 }
 
 func addOrganizationLocationHeader(response *huma.Response) {

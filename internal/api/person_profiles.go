@@ -232,7 +232,7 @@ func (s *Server) writePersonError(w http.ResponseWriter, err error) {
 }
 
 func writePerson(w http.ResponseWriter, status int, person *store.Person) {
-	w.Header().Set("ETag", personETag(*person))
+	w.Header().Set(etagHeaderName, personETag(*person))
 	w.Header().Set("Cache-Control", "no-store")
 	if status == http.StatusCreated {
 		w.Header().Set("Location", personsPath+"/"+strconv.FormatInt(person.ID, 10))
@@ -243,7 +243,7 @@ func writePerson(w http.ResponseWriter, status int, person *store.Person) {
 func addPersonIDParameter(operation *huma.Operation) {
 	operation.Parameters = append(operation.Parameters, &huma.Param{
 		Name: "id", In: "path", Required: true, Description: "Durable person ID",
-		Schema: &huma.Schema{Type: huma.TypeInteger, Format: "int64"},
+		Schema: &huma.Schema{Type: huma.TypeInteger, Format: formatInt64},
 	})
 }
 
@@ -259,7 +259,7 @@ func addPersonIfMatchParameter(operation *huma.Operation) {
 
 func addPersonETagHeader(response *huma.Response) {
 	response.Headers = map[string]*huma.Param{
-		"ETag": {
+		etagHeaderName: {
 			Description: "Strong person profile revision tag for optimistic concurrency",
 			Schema:      &huma.Schema{Type: huma.TypeString},
 		},

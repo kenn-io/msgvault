@@ -892,7 +892,7 @@ func pathIntegerParam(doc string) *huma.Param {
 
 func pathNamedIntegerParam(name, doc string) *huma.Param {
 	p := param(name, "path", huma.TypeInteger, doc, true)
-	p.Schema.Format = "int64"
+	p.Schema.Format = formatInt64
 	return p
 }
 
@@ -902,13 +902,13 @@ func queryStringParam(name, doc string, required bool) *huma.Param {
 
 func queryIntegerParam(name, doc string) *huma.Param {
 	p := param(name, "query", huma.TypeInteger, doc, false)
-	p.Schema.Format = "int64"
+	p.Schema.Format = formatInt64
 	return p
 }
 
 func queryIntegerArrayParam(name, doc string) *huma.Param {
 	p := param(name, "query", huma.TypeArray, doc, false)
-	p.Schema.Items = &huma.Schema{Type: huma.TypeInteger, Format: "int64"}
+	p.Schema.Items = &huma.Schema{Type: huma.TypeInteger, Format: formatInt64}
 	return p
 }
 

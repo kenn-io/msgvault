@@ -322,3 +322,61 @@ func (h *organizationProfileBarrierHandler) WithGroup(string) slog.Handler {
 }
 
 var _ slog.Handler = (*organizationProfileBarrierHandler)(nil)
+
+func TestOrganizationProfileKeepsValueDuplicatesWithDistinctIdentity(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	ctx := context.Background()
+	st := testutil.NewTestStore(t)
+	organization, err := st.CreateOrganizationContext(ctx, store.OrganizationInput{
+		Name: "Duplicate Value Org", Kind: store.OrganizationKindCompany,
+	})
+	require.NoError(err)
+
+	identity := func(propID string) store.ValueEnvelopeInput {
+		return store.ValueEnvelopeInput{
+			Source: store.ProvenanceVCardImport, SourceRef: new("vcard:duplicate-org"),
+			VCard: store.VCardIdentity{Property: "ADR", PropID: &propID},
+		}
+	}
+	input := store.OrganizationProfileInput{
+		Addresses: []store.OrganizationAddressInput{
+			{
+				AddressKind: store.PersonAddressPostal, StreetAddress: new("1 Example St"),
+				OriginalValue: "1 Example St", Envelope: identity("adr-1"),
+			},
+			{
+				AddressKind: store.PersonAddressPostal, StreetAddress: new("1 Example St"),
+				OriginalValue: "1 Example St", Envelope: identity("adr-2"),
+			},
+		},
+		Media: []store.OrganizationMediaInput{
+			{
+				MediaKind: store.PersonMediaLogo, Data: []byte("shared-logo-bytes"),
+				Envelope: store.ValueEnvelopeInput{Ordinal: new(0), Source: store.ProvenanceUser},
+			},
+			{
+				MediaKind: store.PersonMediaLogo, Data: []byte("shared-logo-bytes"),
+				Envelope: store.ValueEnvelopeInput{Ordinal: new(1), Source: store.ProvenanceUser},
+			},
+		},
+	}
+	first, err := st.ReplaceOrganizationProfileContext(
+		ctx, organization.ID, organization.Revision, input)
+	require.NoError(err,
+		"rows sharing a value under distinct PROP-IDs or ordinals are not duplicates")
+	require.Len(first.Addresses, 2)
+	require.Len(first.Media, 2)
+
+	firstIDs := []int64{first.Addresses[0].Envelope.ID, first.Addresses[1].Envelope.ID,
+		first.Media[0].Envelope.ID, first.Media[1].Envelope.ID}
+	second, err := st.ReplaceOrganizationProfileContext(
+		ctx, organization.ID, first.Organization.Revision, input)
+	require.NoError(err)
+	require.Len(second.Addresses, 2)
+	require.Len(second.Media, 2)
+	secondIDs := []int64{second.Addresses[0].Envelope.ID, second.Addresses[1].Envelope.ID,
+		second.Media[0].Envelope.ID, second.Media[1].Envelope.ID}
+	assert.ElementsMatch(firstIDs, secondIDs,
+		"an identical replacement must retain every row rather than rewriting them")
+}
