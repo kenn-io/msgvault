@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"go.kenn.io/msgvault/internal/vector"
 )
@@ -19,8 +20,11 @@ const (
 	// Stable global-ID blocks make updates, deletes, and moves repairable from
 	// the durable journal without retaining an unbounded chat day.
 	chatScopeMaxMessages = 32
-	// At four bytes per UTF-8 rune, one scope transfers at most 2 MiB of the
-	// selected body representation before preprocessing and chunking.
+	// Bounds one chat message's body: body_text is truncated to this many
+	// characters in SQL (prefix-stable), and the preprocessed canonical text
+	// is capped to this many runes in chatMembers — which is what actually
+	// bounds the HTML path, since body_html must ship whole to keep
+	// HTML-to-text canonicalization identical to search-time hydration.
 	chatMessageBodyMaxChars = 16 * 1024
 )
 
@@ -113,9 +117,13 @@ func (a ChatWindowAssembler) members(rows []AssemblyMessage) []chatMember {
 		if strings.TrimSpace(body) == "" {
 			continue
 		}
+		// Cap the canonical text, not the raw input: the capped body stays an
+		// exact rune-prefix of what search-time hydration recomputes from the
+		// full source, so stored offsets keep slicing identical excerpt text.
+		body, capCut := canonicalRunePrefix(body, chatMessageBodyMaxChars)
 		spans, tailCut := ChunkText(body, a.Policy.MaxChunkRunes, 0, maxSpansPerMessage)
 		members = append(members, chatMember{
-			row: row, chunks: spans, cut: row.BodyTruncated || bodyCut || tailCut,
+			row: row, chunks: spans, cut: row.BodyTruncated || bodyCut || capCut || tailCut,
 		})
 	}
 	return members
@@ -123,6 +131,14 @@ func (a ChatWindowAssembler) members(rows []AssemblyMessage) []chatMember {
 
 func (a ChatWindowAssembler) shouldSkip(row AssemblyMessage) bool {
 	return a.Policy.SkipMessage != nil && a.Policy.SkipMessage(row)
+}
+
+// canonicalRunePrefix caps s at maxRunes runes, cutting on a rune boundary.
+func canonicalRunePrefix(s string, maxRunes int) (string, bool) {
+	if utf8.RuneCountInString(s) <= maxRunes {
+		return s, false
+	}
+	return string([]rune(s)[:maxRunes]), true
 }
 
 func (a ChatWindowAssembler) sessionize(

@@ -433,22 +433,26 @@ func (s *sourceSnapshotState) messageSelectSQL(predicate string) string {
 }
 
 func (s *sourceSnapshotState) chatMessageSelectSQL(predicate string) string {
+	// body_text is truncated in SQL: plain-text truncation is prefix-stable,
+	// so stored offsets still reconstruct identical excerpts against the full
+	// text. body_html ships whole — HTML stripping is NOT prefix-stable, so a
+	// raw-HTML cut could leak markup into embeddings and desynchronize stored
+	// offsets from search-time canonicalization. The canonical-text cap for
+	// the HTML path is applied after Preprocess in chatMembers.
 	bodyText := fmt.Sprintf(`SUBSTR(COALESCE(mb.body_text, ''), 1, %d)`, chatMessageBodyMaxChars)
-	bodyHTMLValue := fmt.Sprintf(`SUBSTR(COALESCE(mb.body_html, ''), 1, %d)`, chatMessageBodyMaxChars)
 	// Plain TRIM strips only spaces; trim the full ASCII whitespace set so a
 	// tab/newline-padded body_text still falls back to body_html. The Go-side
-	// predicate in scanChatAssemblyMessage must match this set exactly.
+	// predicate in ContextualBodyText must match this set exactly.
 	blankText := `NULLIF(TRIM(COALESCE(mb.body_text, ''), char(32,9,10,13)), '') IS NULL`
 	if s.postgres {
 		bodyText = fmt.Sprintf(`LEFT(COALESCE(mb.body_text, ''), %d)`, chatMessageBodyMaxChars)
-		bodyHTMLValue = fmt.Sprintf(`LEFT(COALESCE(mb.body_html, ''), %d)`, chatMessageBodyMaxChars)
 		blankText = `NULLIF(BTRIM(COALESCE(mb.body_text, ''), E' \t\n\r'), '') IS NULL`
 	}
-	bodyHTML := `CASE WHEN ` + blankText + ` THEN ` + bodyHTMLValue + ` ELSE '' END`
+	bodyHTML := `CASE WHEN ` + blankText + ` THEN COALESCE(mb.body_html, '') ELSE '' END`
 	bodyTruncated := fmt.Sprintf(`CASE
-		WHEN %s THEN LENGTH(COALESCE(mb.body_html, '')) > %d
+		WHEN %s THEN 1 = 0
 		ELSE LENGTH(COALESCE(mb.body_text, '')) > %d
-	END`, blankText, chatMessageBodyMaxChars, chatMessageBodyMaxChars)
+	END`, blankText, chatMessageBodyMaxChars)
 	return fmt.Sprintf(`
 		SELECT m.id, m.conversation_id, COALESCE(m.message_type, ''),
 		       COALESCE(m.subject, ''), %s, %s,
@@ -502,13 +506,10 @@ func scanChatAssemblyMessage(scanner rowScanner, sequence int64) (AssemblyMessag
 		return AssemblyMessage{}, err
 	}
 	// chatMessageSelectSQL ships body_html only when body_text is blank after
-	// trimming ASCII whitespace; mirror that exact predicate here so a
-	// whitespace-only body_text row uses the HTML it was shipped instead of
-	// silently owning no document.
-	if strings.Trim(bodyText, " \t\n\r") == "" {
-		bodyText = ""
-	}
-	row.Body = BodyTextForEmbedding(bodyText, bodyHTML)
+	// trimming ASCII whitespace; ContextualBodyText applies the identical
+	// predicate so a whitespace-only body_text row uses the HTML it was
+	// shipped instead of silently owning no document.
+	row.Body = ContextualBodyText(bodyText, bodyHTML)
 	if senderID.Valid {
 		row.SenderID = senderID.Int64
 	}

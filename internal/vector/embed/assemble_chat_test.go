@@ -223,6 +223,37 @@ func TestSourceSnapshot_ChatMessagesBoundsBodyBeforeAssembly(t *testing.T) {
 	assert.True(rows[0].BodyTruncated)
 }
 
+func TestSourceSnapshot_ChatHTMLCanonicalizesBeforeTruncation(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := newChatAssemblyFixture(t, AssemblyPolicy{ChatGap: 30 * time.Minute, MaxChunkRunes: 200})
+	day := time.Date(2026, 8, 8, 9, 0, 0, 0, time.UTC)
+	// The script element straddles the chatMessageBodyMaxChars raw-HTML
+	// boundary. A raw prefix cut would leave an unterminated <script> that
+	// StripHTML cannot remove, leaking markup into the embedded text and
+	// desynchronizing stored offsets from search-time canonicalization.
+	filler := strings.Repeat("a", chatMessageBodyMaxChars-10)
+	html := "<p>" + filler + "</p><script>window.SECRETMARKER()</script><p>visible tail</p>"
+	id := f.seed("html-boundary", day.Format(time.RFC3339), "Alice", "placeholder")
+	require.NoError(f.store.UpsertMessageBody(id,
+		sql.NullString{String: " ", Valid: true},
+		sql.NullString{String: html, Valid: true}))
+	scope := chatMessageContextScope(f.conversationID, day, id)
+	snapshot, err := BeginSourceSnapshot(t.Context(), f.store)
+	require.NoError(err)
+	rows, err := snapshot.ChatMessages(t.Context(), scope.selector)
+	require.NoError(err)
+	require.NoError(snapshot.Close())
+	require.Len(rows, 1)
+	assert.NotContains(rows[0].Body, "SECRETMARKER",
+		"script content must never leak into the embedded text")
+	assert.NotContains(rows[0].Body, "<",
+		"markup must never leak into the embedded text")
+	assert.Contains(rows[0].Body, "visible tail")
+	assert.Equal(ContextualBodyText(" ", html), rows[0].Body,
+		"assembly must canonicalize the same full source search-time hydration uses")
+}
+
 func TestSourceSnapshot_ChatMessagesUseHTMLWhenBodyTextIsWhitespace(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)

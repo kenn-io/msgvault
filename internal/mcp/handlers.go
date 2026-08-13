@@ -1296,7 +1296,7 @@ func (h *handlers) attachVectorChunkMatches(
 			return newInternalError("score semantic match chunks", err)
 		}
 		matches, truncated := chunkmatch.Build(
-			msg.Subject, embed.BodyTextForEmbedding(msg.BodyText, msg.BodyHTML), h.vectorCfg, chunkHits,
+			msg.Subject, embed.ContextualBodyText(msg.BodyText, msg.BodyHTML), h.vectorCfg, chunkHits,
 			minScore, maxContextSnippets, searchContextChars,
 		)
 		items[i].Matches = messageMatchesFromChunks(matches)
@@ -1348,7 +1348,7 @@ func (h *handlers) vectorMatchesInMessage(
 	}
 
 	chunkMatches, _ := chunkmatch.Build(
-		msg.Subject, embed.BodyTextForEmbedding(msg.BodyText, msg.BodyHTML), h.vectorCfg, chunkHits,
+		msg.Subject, embed.ContextualBodyText(msg.BodyText, msg.BodyHTML), h.vectorCfg, chunkHits,
 		minScore, len(chunkHits), searchContextChars,
 	)
 	allMatches := messageMatchesFromChunks(chunkMatches)
