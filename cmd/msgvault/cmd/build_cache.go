@@ -33,6 +33,7 @@ import (
 var fullRebuild bool
 var buildCacheAutoFlag bool
 var buildCacheDerivedOnlyFlag bool
+var buildCacheScheduledAutoFlag bool
 var scheduledCacheBuildNow = time.Now
 
 const buildCacheDaemonSubprocessEnv = "MSGVAULT_DAEMON_BUILD_CACHE_PARENT_PID"
@@ -44,6 +45,7 @@ const (
 	buildCacheModeFull
 	buildCacheModeAuto
 	buildCacheModeDerived
+	buildCacheModeScheduledAuto
 )
 
 // buildCacheMu serializes concurrent buildCache calls. The scheduler may
@@ -273,6 +275,7 @@ By default, this performs an incremental update (only adding new messages).
 			fullRebuild,
 			buildCacheAutoFlag,
 			buildCacheDerivedOnlyFlag,
+			buildCacheScheduledAutoFlag,
 		)
 		if err != nil {
 			return err
@@ -280,22 +283,22 @@ By default, this performs an incremental update (only adding new messages).
 		if isDaemonBuildCacheChild() {
 			return runBuildCacheLocalMode(mode)
 		}
-		if mode == buildCacheModeDerived || mode == buildCacheModeAuto {
-			return errors.New("--auto and --derived-only are internal daemon-child modes")
+		if mode == buildCacheModeDerived || mode == buildCacheModeAuto || mode == buildCacheModeScheduledAuto {
+			return errors.New("--auto, --scheduled-auto, and --derived-only are internal daemon-child modes")
 		}
 		return runBuildCacheHTTP(cmd, fullRebuild)
 	},
 }
 
-func requestedBuildCacheMode(full, auto, derived bool) (buildCacheMode, error) {
+func requestedBuildCacheMode(full, auto, derived, scheduledAuto bool) (buildCacheMode, error) {
 	selected := 0
-	for _, enabled := range []bool{full, auto, derived} {
+	for _, enabled := range []bool{full, auto, derived, scheduledAuto} {
 		if enabled {
 			selected++
 		}
 	}
 	if selected > 1 {
-		return 0, errors.New("--full-rebuild, --auto, and --derived-only are mutually exclusive")
+		return 0, errors.New("--full-rebuild, --auto, --scheduled-auto, and --derived-only are mutually exclusive")
 	}
 	switch {
 	case full:
@@ -304,6 +307,8 @@ func requestedBuildCacheMode(full, auto, derived bool) (buildCacheMode, error) {
 		return buildCacheModeAuto, nil
 	case derived:
 		return buildCacheModeDerived, nil
+	case scheduledAuto:
+		return buildCacheModeScheduledAuto, nil
 	default:
 		return buildCacheModeDefault, nil
 	}
@@ -362,7 +367,7 @@ func runBuildCacheHTTP(cmd *cobra.Command, fullRebuild bool) error {
 }
 
 func runBuildCacheLocal(fullRebuild, auto bool) error {
-	mode, err := requestedBuildCacheMode(fullRebuild, auto, false)
+	mode, err := requestedBuildCacheMode(fullRebuild, auto, false, false)
 	if err != nil {
 		return err
 	}
@@ -405,6 +410,14 @@ func runBuildCacheLocalMode(mode buildCacheMode) error {
 		result, err = buildCacheAuto(dbPath, analyticsDir, builderOverrides)
 	case buildCacheModeDerived:
 		result, err = buildCacheDerivedOnly(dbPath, analyticsDir, builderOverrides)
+	case buildCacheModeScheduledAuto:
+		result, err = buildCacheScheduled(
+			dbPath,
+			analyticsDir,
+			cfg.Analytics.MinRebuildInterval,
+			scheduledCacheBuildNow,
+			builderOverrides,
+		)
 	case buildCacheModeFull:
 		result, err = buildCache(dbPath, analyticsDir, true, builderOverrides)
 	case buildCacheModeDefault:
@@ -506,6 +519,50 @@ func buildCacheAuto(
 	builderOverrides ...duckdbutil.BuilderOverrides,
 ) (*buildResult, error) {
 	return buildCacheImpl(dbPath, analyticsDir, false, true, builderOverrides...)
+}
+
+// buildCacheScheduled rechecks both staleness and the configured minimum
+// interval while holding the cross-process builder lock. A post-sync request
+// may have waited for another publication after its daemon-side decision, so
+// the lock-held check is the authoritative throttle boundary.
+func buildCacheScheduled(
+	dbPath, analyticsDir string,
+	minRebuildInterval time.Duration,
+	now func() time.Time,
+	builderOverrides ...duckdbutil.BuilderOverrides,
+) (*buildResult, error) {
+	buildCacheMu.Lock()
+	defer buildCacheMu.Unlock()
+
+	buildLock, err := acquireCacheBuildLock(analyticsDir)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = buildLock.Unlock() }()
+
+	staleness := cacheNeedsBuildLocked(dbPath, analyticsDir)
+	if !staleness.NeedsBuild {
+		return &buildResult{Skipped: true, OutputDir: analyticsDir}, nil
+	}
+	if _, throttle := scheduledCacheBuildDelay(staleness, minRebuildInterval, now()); throttle {
+		return &buildResult{Skipped: true, OutputDir: analyticsDir}, nil
+	}
+	if derivedDriftOnly(staleness) {
+		return refreshIdentityDatasetsOnly(
+			dbPath,
+			analyticsDir,
+			acquirePublishLock,
+			builderOverrides...,
+		)
+	}
+	return buildCacheLocked(
+		dbPath,
+		analyticsDir,
+		staleness.FullRebuild,
+		false,
+		acquirePublishLock,
+		builderOverrides...,
+	)
 }
 
 func buildCacheImpl(
@@ -2018,6 +2075,9 @@ func runBuildCacheSubprocessCommand(cmd *exec.Cmd, stderrWriter io.Writer) error
 }
 
 var runBuildCacheSubprocess = buildCacheSubprocess
+var runScheduledBuildCacheSubprocess = func(ctx context.Context) error {
+	return buildCacheSubprocessMode(ctx, buildCacheModeScheduledAuto)
+}
 
 func buildCacheSubprocessStream(
 	ctx context.Context,
@@ -2099,6 +2159,8 @@ func newBuildCacheSubprocessCommand(ctx context.Context, mode buildCacheMode) (*
 		args = append(args, "--auto")
 	case buildCacheModeDerived:
 		args = append(args, "--derived-only")
+	case buildCacheModeScheduledAuto:
+		args = append(args, "--scheduled-auto")
 	default:
 		return nil, fmt.Errorf("construct build-cache subprocess: unknown mode %d", mode)
 	}
@@ -2227,7 +2289,7 @@ func rebuildCacheAfterScheduledSync(ctx context.Context, identifier string) erro
 	logger.Info("rebuilding cache after sync",
 		"identifier", identifier, "reason", staleness.Reason,
 		"full_rebuild", staleness.FullRebuild)
-	if err := runBuildCacheSubprocess(ctx, staleness.FullRebuild, true); err != nil {
+	if err := runScheduledBuildCacheSubprocess(ctx); err != nil {
 		logger.Error("cache build failed", "error", err)
 		return fmt.Errorf("refresh analytics cache: %w", err)
 	}
@@ -2269,4 +2331,11 @@ func init() {
 		"Internal: refresh version-15 derived identity datasets",
 	)
 	_ = buildCacheCmd.Flags().MarkHidden("derived-only")
+	buildCacheCmd.Flags().BoolVar(
+		&buildCacheScheduledAutoFlag,
+		"scheduled-auto",
+		false,
+		"Internal: scheduled staleness-derived build with lock-held interval recheck",
+	)
+	_ = buildCacheCmd.Flags().MarkHidden("scheduled-auto")
 }

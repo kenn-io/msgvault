@@ -795,6 +795,54 @@ func TestBuildCacheAutoReevaluatesUnderLock(t *testing.T) {
 	assert.False(explicit.Skipped, "explicit --full-rebuild must stay unconditional")
 }
 
+func TestBuildCacheScheduledReevaluatesIntervalUnderLock(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	tmpDir := setupTestSQLite(t)
+	dbPath := filepath.Join(tmpDir, "test.db")
+	analyticsDir := filepath.Join(tmpDir, "analytics")
+
+	first, err := buildCache(dbPath, analyticsDir, true)
+	requirements.NoError(err)
+	requirements.False(first.Skipped)
+	state, err := query.ReadCacheSyncState(analyticsDir)
+	requirements.NoError(err)
+
+	db, err := sql.Open("sqlite3", dbPath)
+	requirements.NoError(err)
+	_, err = db.Exec(`
+		INSERT INTO messages (
+			id, source_id, source_message_id, sent_at, subject, snippet
+		) VALUES (6, 1, 'msg6', ?, 'New subject', 'New snippet')
+	`, state.PublishedAt.Add(time.Minute))
+	requirements.NoError(err)
+	requirements.NoError(db.Close())
+
+	result, err := buildCacheScheduled(
+		dbPath,
+		analyticsDir,
+		6*time.Hour,
+		func() time.Time { return state.PublishedAt.Add(time.Hour) },
+	)
+	requirements.NoError(err)
+	assertions.True(result.Skipped,
+		"a scheduled waiter must recheck the interval after acquiring the build lock")
+
+	after, err := query.ReadCacheSyncState(analyticsDir)
+	requirements.NoError(err)
+	assertions.Equal(state.PublishedAt, after.PublishedAt)
+
+	result, err = buildCacheScheduled(
+		dbPath,
+		analyticsDir,
+		6*time.Hour,
+		func() time.Time { return state.PublishedAt.Add(7 * time.Hour) },
+	)
+	requirements.NoError(err)
+	assertions.False(result.Skipped,
+		"the lock-held recheck must build after the interval elapses")
+}
+
 // TestBuildCache_WaitsForCrossProcessBuildLock verifies buildCache blocks on
 // the inter-process build lock: buildCacheMu only serializes one process,
 // while daemon-owned CLI children rebuild the cache in their own processes.

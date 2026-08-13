@@ -278,10 +278,19 @@ func TestDerivedChildDoesNotEscalateWhenCacheAbsent(t *testing.T) {
 }
 
 func TestBuildCacheInternalModesAreMutuallyExclusive(t *testing.T) {
-	_, err := requestedBuildCacheMode(true, true, false)
-	require.ErrorContains(t, err, "mutually exclusive")
-	_, err = requestedBuildCacheMode(false, true, true)
-	require.ErrorContains(t, err, "mutually exclusive")
+	requirements := require.New(t)
+	assertions := assert.New(t)
+
+	_, err := requestedBuildCacheMode(true, true, false, false)
+	requirements.ErrorContains(err, "mutually exclusive")
+	_, err = requestedBuildCacheMode(false, true, true, false)
+	requirements.ErrorContains(err, "mutually exclusive")
+	_, err = requestedBuildCacheMode(false, true, false, true)
+	requirements.ErrorContains(err, "mutually exclusive")
+
+	mode, err := requestedBuildCacheMode(false, false, false, true)
+	requirements.NoError(err)
+	assertions.Equal(buildCacheModeScheduledAuto, mode)
 }
 
 func snapshotCacheBytes(t *testing.T, root string) map[string]string {
@@ -464,12 +473,12 @@ func TestScheduledCacheRefreshSkipsWhenAutoBuildCacheDisabled(t *testing.T) {
 	}
 
 	builds := 0
-	oldRunBuild := runBuildCacheSubprocess
-	runBuildCacheSubprocess = func(context.Context, bool, bool) error {
+	oldRunBuild := runScheduledBuildCacheSubprocess
+	runScheduledBuildCacheSubprocess = func(context.Context) error {
 		builds++
 		return errors.New("unexpected scheduled cache build")
 	}
-	t.Cleanup(func() { runBuildCacheSubprocess = oldRunBuild })
+	t.Cleanup(func() { runScheduledBuildCacheSubprocess = oldRunBuild })
 
 	err := rebuildCacheAfterScheduledSync(context.Background(), "disabled")
 	require.NoError(err)
@@ -632,12 +641,12 @@ func TestScheduledCacheRefreshMinimumInterval(t *testing.T) {
 			t.Cleanup(func() { scheduledCacheBuildNow = oldNow })
 
 			builds := 0
-			oldRunBuild := runBuildCacheSubprocess
-			runBuildCacheSubprocess = func(context.Context, bool, bool) error {
+			oldRunBuild := runScheduledBuildCacheSubprocess
+			runScheduledBuildCacheSubprocess = func(context.Context) error {
 				builds++
 				return tt.buildErr
 			}
-			t.Cleanup(func() { runBuildCacheSubprocess = oldRunBuild })
+			t.Cleanup(func() { runScheduledBuildCacheSubprocess = oldRunBuild })
 
 			err = rebuildCacheAfterScheduledSync(context.Background(), "test-source")
 			if tt.buildErr != nil {
@@ -709,9 +718,9 @@ func TestScheduledCacheRefreshFailurePreservesCompletedSyncRun(t *testing.T) {
 	}
 
 	sentinel := errors.New("scheduled cache sentinel")
-	oldRunBuild := runBuildCacheSubprocess
-	runBuildCacheSubprocess = func(context.Context, bool, bool) error { return sentinel }
-	t.Cleanup(func() { runBuildCacheSubprocess = oldRunBuild })
+	oldRunBuild := runScheduledBuildCacheSubprocess
+	runScheduledBuildCacheSubprocess = func(context.Context) error { return sentinel }
+	t.Cleanup(func() { runScheduledBuildCacheSubprocess = oldRunBuild })
 
 	getOAuthMgr := func(string) (*oauth.Manager, error) {
 		return nil, errors.New("unexpected Gmail OAuth path")
