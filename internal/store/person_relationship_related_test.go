@@ -415,3 +415,94 @@ func TestAcceptRelationshipReviewOrientsEdgeFromTheRelatedPerson(t *testing.T) {
 	assert.Equal(bobID, edge.SourcePersonID)
 	assert.Equal(aliceID, edge.TargetPersonID)
 }
+
+func TestResolveRelatedValuePreservesRejectionWhenOccurrenceBecomesResolvable(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := storetest.New(t)
+	ctx := context.Background()
+	aliceID, bobID := mustTwoPersons(t, f)
+	bob, err := f.Store.GetPerson(bobID)
+	require.NoError(err)
+
+	// "me" is registered but unseeded, so the occurrence stages a review.
+	in := store.RelatedImport{PersonID: aliceID, RawValue: bob.VCardUID, RawType: "me",
+		ValueKind: store.RelatedValueKindText, Source: store.ProvenanceVCardImport, Actor: "system"}
+	staged, err := f.Store.ResolveRelatedValueContext(ctx, in)
+	require.NoError(err)
+	require.NotNil(staged.Review)
+	_, err = f.Store.RejectRelationshipReviewContext(ctx, staged.Review.ID, "user")
+	require.NoError(err)
+
+	// The mapping appears later; the human's rejection must still stand.
+	me := "me"
+	_, err = f.Store.CreateRelationshipTypeContext(ctx, store.RelationshipTypeInput{
+		Slug: "same-person", ForwardLabel: "same person", ReverseLabel: "same person",
+		IsSymmetric: true, VCardRelatedType: &me,
+	})
+	require.NoError(err)
+	again, err := f.Store.ResolveRelatedValueContext(ctx, in)
+	require.NoError(err)
+	assert.Nil(again.Relationship)
+	require.NotNil(again.Review)
+	assert.Equal(staged.Review.ID, again.Review.ID)
+	assert.Equal(store.RelationshipReviewRejected, again.Review.Status)
+	views, err := f.Store.ListPersonRelationshipsContext(ctx, aliceID, store.PersonRelationshipListOptions{})
+	require.NoError(err)
+	assert.Empty(views, "a rejected occurrence must never auto-link")
+}
+
+func TestResolveRelatedValueAcceptsPendingReviewWhenOccurrenceBecomesResolvable(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := storetest.New(t)
+	ctx := context.Background()
+	aliceID, bobID := mustTwoPersons(t, f)
+	bob, err := f.Store.GetPerson(bobID)
+	require.NoError(err)
+
+	in := store.RelatedImport{PersonID: aliceID, RawValue: bob.VCardUID, RawType: "me",
+		ValueKind: store.RelatedValueKindText, Source: store.ProvenanceVCardImport, Actor: "system"}
+	staged, err := f.Store.ResolveRelatedValueContext(ctx, in)
+	require.NoError(err)
+	require.NotNil(staged.Review)
+
+	me := "me"
+	_, err = f.Store.CreateRelationshipTypeContext(ctx, store.RelationshipTypeInput{
+		Slug: "same-person", ForwardLabel: "same person", ReverseLabel: "same person",
+		IsSymmetric: true, VCardRelatedType: &me,
+	})
+	require.NoError(err)
+
+	// Re-import links the edge and settles the pending review in one step.
+	resolved, err := f.Store.ResolveRelatedValueContext(ctx, in)
+	require.NoError(err)
+	require.NotNil(resolved.Relationship)
+	require.NotNil(resolved.Review)
+	assert.Equal(store.RelationshipReviewAccepted, resolved.Review.Status)
+	require.NotNil(resolved.Review.AcceptedRelationshipID)
+	assert.Equal(resolved.Relationship.ID, *resolved.Review.AcceptedRelationshipID)
+	require.NotNil(resolved.Review.ReviewedBy)
+	assert.Equal("system", *resolved.Review.ReviewedBy)
+
+	// A further re-import is idempotent: same edge, decision untouched.
+	repeated, err := f.Store.ResolveRelatedValueContext(ctx, in)
+	require.NoError(err)
+	require.NotNil(repeated.Relationship)
+	assert.Equal(resolved.Relationship.ID, repeated.Relationship.ID)
+	assert.Equal(store.RelationshipReviewAccepted, repeated.Status())
+
+	// Deleting the accepted edge is a decision too; re-import must not
+	// resurrect it (accepted_relationship_id is ON DELETE SET NULL).
+	edge, err := f.Store.GetPersonRelationshipContext(ctx, resolved.Relationship.ID)
+	require.NoError(err)
+	require.NoError(f.Store.DeletePersonRelationshipContext(ctx, edge.ID, edge.Revision))
+	afterDelete, err := f.Store.ResolveRelatedValueContext(ctx, in)
+	require.NoError(err)
+	assert.Nil(afterDelete.Relationship)
+	require.NotNil(afterDelete.Review)
+	assert.Nil(afterDelete.Review.AcceptedRelationshipID)
+	views, err := f.Store.ListPersonRelationshipsContext(ctx, aliceID, store.PersonRelationshipListOptions{})
+	require.NoError(err)
+	assert.Empty(views)
+}

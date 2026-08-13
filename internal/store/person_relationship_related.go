@@ -123,6 +123,11 @@ func (s *Store) ResolvePersonByVCardUIDContext(ctx context.Context, uid string) 
 
 // ResolveRelatedValueContext automatically links only an exact UID plus a
 // recognized relationship type. All other inputs remain durable reviews.
+//
+// An occurrence that was already reviewed keeps its decision: a rejection
+// never links on re-import, a pending review is accepted together with the
+// new edge, and an accepted review whose edge was deleted since is not
+// resurrected.
 func (s *Store) ResolveRelatedValueContext(ctx context.Context, in RelatedImport) (*RelatedResolution, error) {
 	source, err := ParseProvenance(string(in.Source))
 	if err != nil {
@@ -160,26 +165,7 @@ func (s *Store) ResolveRelatedValueContext(ctx context.Context, in RelatedImport
 		return nil, err
 	}
 	if personMatched && typeMatched {
-		// RELATED's TYPE describes the related person's role toward the card
-		// subject (RFC 6350 section 6.6.6): TYPE=parent naming bob on alice's
-		// card asserts that bob is alice's parent. The matched person is
-		// therefore the typed source and the card subject the target.
-		edge, err := s.AddPersonRelationshipContext(ctx, PersonRelationshipInput{
-			SourcePersonID: matchedPersonID, TargetPersonID: in.PersonID,
-			TypeSlug: relationshipType.Slug, Source: in.Source, SourceRef: in.SourceRef,
-			VCardIdentity: in.VCardIdentity, Actor: actor,
-		})
-		if err == nil {
-			return &RelatedResolution{Relationship: edge}, nil
-		}
-		if !errors.Is(err, ErrPersonRelationshipDuplicate) {
-			return nil, err
-		}
-		existing, findErr := s.activePersonRelationshipContext(ctx, matchedPersonID, in.PersonID, relationshipType.Slug)
-		if findErr != nil {
-			return nil, findErr
-		}
-		return &RelatedResolution{Relationship: existing}, nil
+		return s.resolveMatchedRelatedValue(ctx, in, matchedPersonID, relationshipType, actor)
 	}
 
 	review, err := s.stageRelationshipReview(ctx, in, matchedPersonID, personMatched, actor)
@@ -228,31 +214,99 @@ func (s *Store) relationshipTypeForRelatedType(ctx context.Context, rawType stri
 	return *relationshipType, true, nil
 }
 
-// activePersonRelationshipContext looks up exactly the canonical triple that
-// AddPersonRelationshipContext would write. It never searches both endpoint
-// orientations, because reciprocal asymmetric edges may coexist.
-func (s *Store) activePersonRelationshipContext(ctx context.Context, sourceID, targetID int64, typeSlug string) (*PersonRelationship, error) {
-	var edge *PersonRelationship
+// resolveMatchedRelatedValue links an exactly matched occurrence in one
+// transaction, honoring any earlier review of the same occurrence: a settled
+// decision stands, and a pending review is accepted alongside the edge that
+// satisfies it.
+func (s *Store) resolveMatchedRelatedValue(
+	ctx context.Context, in RelatedImport, matchedPersonID int64,
+	relationshipType RelationshipType, actor string,
+) (*RelatedResolution, error) {
+	var resolution *RelatedResolution
 	err := s.withTxContext(ctx, func(tx *loggedTx) error {
-		relationshipType, canonicalSource, canonicalTarget, err := s.canonicalRelationshipEndpointsTx(ctx, tx, sourceID, targetID, typeSlug)
+		review, err := s.relationshipReviewByOccurrenceTx(ctx, tx, in)
+		if err != nil && !errors.Is(err, ErrRelationshipReviewNotFound) {
+			return err
+		}
+		if review != nil && review.Status != RelationshipReviewPending {
+			resolution, err = s.settledRelatedDecisionTx(ctx, tx, review)
+			return err
+		}
+		// RELATED's TYPE describes the related person's role toward the card
+		// subject (RFC 6350 section 6.6.6): TYPE=parent naming bob on alice's
+		// card asserts that bob is alice's parent. The matched person is
+		// therefore the typed source and the card subject the target.
+		input := PersonRelationshipInput{
+			SourcePersonID: matchedPersonID, TargetPersonID: in.PersonID,
+			TypeSlug: relationshipType.Slug, Source: in.Source, SourceRef: in.SourceRef,
+			VCardIdentity: in.VCardIdentity, Actor: actor,
+		}
+		validatedActor, notes, err := validatePersonRelationshipInput(input)
 		if err != nil {
 			return err
 		}
-		edge, err = scanPersonRelationship(tx.QueryRowContext(ctx,
-			`SELECT `+personRelationshipColumns+personRelationshipFrom+`
-			 WHERE r.source_person_id = ? AND r.target_person_id = ?
-			   AND r.relationship_type_id = ? AND r.end_year IS NULL`,
-			canonicalSource, canonicalTarget, relationshipType.ID))
-		if errors.Is(err, sql.ErrNoRows) {
-			return ErrPersonRelationshipNotFound
+		edge, err := s.addPersonRelationshipTx(ctx, tx, input, validatedActor, notes)
+		if errors.Is(err, ErrPersonRelationshipDuplicate) {
+			edge, err = s.activePersonRelationshipTx(ctx, tx, matchedPersonID, in.PersonID, relationshipType.Slug)
 		}
 		if err != nil {
-			return fmt.Errorf("find active relationship: %w", err)
+			return err
 		}
-		return nil
+		resolution = &RelatedResolution{Relationship: edge}
+		if review == nil {
+			return nil
+		}
+		if _, err := s.claimRelationshipReviewTx(ctx, tx, review.ID, RelationshipReviewAccepted, validatedActor); err != nil {
+			return err
+		}
+		if err := s.recordAcceptedRelationshipTx(ctx, tx, review.ID, edge.ID); err != nil {
+			return err
+		}
+		resolution.Review, err = s.relationshipReviewTx(ctx, tx, review.ID)
+		return err
 	})
 	if err != nil {
 		return nil, err
+	}
+	return resolution, nil
+}
+
+// settledRelatedDecisionTx returns the standing decision for an occurrence
+// that was already reviewed. A rejected occurrence never links, and an
+// accepted one returns its recorded edge; when that edge was deleted since
+// (accepted_relationship_id is ON DELETE SET NULL), re-import must not
+// resurrect it.
+func (s *Store) settledRelatedDecisionTx(
+	ctx context.Context, tx *loggedTx, review *RelationshipReview,
+) (*RelatedResolution, error) {
+	if review.Status == RelationshipReviewAccepted && review.AcceptedRelationshipID != nil {
+		edge, err := s.personRelationshipTx(ctx, tx, *review.AcceptedRelationshipID)
+		if err != nil {
+			return nil, err
+		}
+		return &RelatedResolution{Relationship: edge, Review: review}, nil
+	}
+	return &RelatedResolution{Review: review}, nil
+}
+
+// activePersonRelationshipTx looks up exactly the canonical triple that
+// addPersonRelationshipTx would write. It never searches both endpoint
+// orientations, because reciprocal asymmetric edges may coexist.
+func (s *Store) activePersonRelationshipTx(ctx context.Context, tx *loggedTx, sourceID, targetID int64, typeSlug string) (*PersonRelationship, error) {
+	relationshipType, canonicalSource, canonicalTarget, err := s.canonicalRelationshipEndpointsTx(ctx, tx, sourceID, targetID, typeSlug)
+	if err != nil {
+		return nil, err
+	}
+	edge, err := scanPersonRelationship(tx.QueryRowContext(ctx,
+		`SELECT `+personRelationshipColumns+personRelationshipFrom+`
+		 WHERE r.source_person_id = ? AND r.target_person_id = ?
+		   AND r.relationship_type_id = ? AND r.end_year IS NULL`,
+		canonicalSource, canonicalTarget, relationshipType.ID))
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrPersonRelationshipNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("find active relationship: %w", err)
 	}
 	return edge, nil
 }
@@ -356,14 +410,7 @@ func (s *Store) AcceptRelationshipReviewContext(ctx context.Context, id int64, t
 		if txErr != nil {
 			return txErr
 		}
-		_, txErr = tx.ExecContext(ctx, fmt.Sprintf(`
-			UPDATE person_relationship_reviews
-			SET accepted_relationship_id = ?, updated_at = %s
-			WHERE id = ?`, s.dialect.Now()), edge.ID, id)
-		if txErr != nil {
-			return fmt.Errorf("record accepted relationship for review %d: %w", id, txErr)
-		}
-		return nil
+		return s.recordAcceptedRelationshipTx(ctx, tx, id, edge.ID)
 	})
 	if err != nil {
 		return nil, err
@@ -387,6 +434,18 @@ func (s *Store) RejectRelationshipReviewContext(ctx context.Context, id int64, a
 		return nil, err
 	}
 	return rejected, nil
+}
+
+// recordAcceptedRelationshipTx points an accepted review at the edge that
+// satisfied it.
+func (s *Store) recordAcceptedRelationshipTx(ctx context.Context, tx *loggedTx, reviewID, edgeID int64) error {
+	if _, err := tx.ExecContext(ctx, fmt.Sprintf(`
+		UPDATE person_relationship_reviews
+		SET accepted_relationship_id = ?, updated_at = %s
+		WHERE id = ?`, s.dialect.Now()), edgeID, reviewID); err != nil {
+		return fmt.Errorf("record accepted relationship for review %d: %w", reviewID, err)
+	}
+	return nil
 }
 
 func (s *Store) claimRelationshipReviewTx(ctx context.Context, tx *loggedTx, id int64, status RelationshipReviewStatus, actor string) (*RelationshipReview, error) {
