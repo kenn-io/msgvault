@@ -206,15 +206,20 @@ func TestEmploymentListPrintsHistoryAndProjection(t *testing.T) {
 func TestEmploymentListByOrganizationShowsPersonColumn(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
+	var rawQuery string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal("/api/v1/organizations/4/employments", r.URL.Path)
+		rawQuery = r.URL.RawQuery
 		w.Header().Set("Content-Type", "application/json")
 		_, err := w.Write([]byte(`{"employments":[{"id":9,"person_id":3,"organization_id":4,"title":"Staff Engineer","is_current":true,"is_primary":true,"source":"user","revision":1,"created_at":"2026-07-30T12:00:00Z","updated_at":"2026-07-30T12:00:00Z"},{"id":8,"person_id":7,"organization_id":4,"title":"Advisor","is_current":true,"is_primary":false,"source":"user","revision":1,"created_at":"2026-07-30T12:00:00Z","updated_at":"2026-07-30T12:00:00Z"}]}`))
 		assert.NoError(err)
 	}))
 	t.Cleanup(server.Close)
 	withStoreResolverConfig(t, &config.Config{Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true}})
-	output := runEmploymentCommand(t, employmentListCmd, []string{"--organization", "4"})
+	output := runEmploymentCommand(t, employmentListCmd,
+		[]string{"--organization", "4", "--limit", "25", "--offset", "50"})
+	assert.Contains(rawQuery, "limit=25", "pagination must reach the server")
+	assert.Contains(rawQuery, "offset=50")
 	require.Contains(output, "PERSON",
 		"an organization-scoped listing must identify employees, not repeat the organization")
 	assert.NotContains(output, "ORGANIZATION")

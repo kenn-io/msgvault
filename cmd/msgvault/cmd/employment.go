@@ -17,6 +17,7 @@ import (
 var (
 	employmentJSON                                                                                   bool
 	employmentPersonID, employmentOrganizationID                                                     int64
+	employmentLimit, employmentOffset                                                                int64
 	employmentTitle, employmentRole, employmentDepartment, employmentLocation, employmentDescription string
 	employmentStartDate, employmentEndDate, employmentSource                                         string
 	employmentPrimary, employmentNoPrimary, employmentNotCurrent, employmentCurrentOnly              bool
@@ -203,9 +204,16 @@ var employmentListCmd = &cobra.Command{Use: cmdUseList, Short: "List employment 
 	}
 	defer func() { _ = client.Close() }()
 	currentOnly := employmentCurrentOnly
+	var limit, offset *int64
+	if cmd.Flags().Changed("limit") {
+		limit = &employmentLimit
+	}
+	if cmd.Flags().Changed("offset") {
+		offset = &employmentOffset
+	}
 	if personSet {
 		resp, getErr := daemonclient.APIResponse(client, func(api *apiclient.Client) (*generated.ListPersonEmploymentsResp, error) {
-			return api.ListPersonEmploymentsWithResponse(cmd.Context(), &generated.ListPersonEmploymentsRequestOptions{PathParams: &generated.ListPersonEmploymentsPath{ID: id}, Query: &generated.ListPersonEmploymentsQuery{CurrentOnly: &currentOnly}})
+			return api.ListPersonEmploymentsWithResponse(cmd.Context(), &generated.ListPersonEmploymentsRequestOptions{PathParams: &generated.ListPersonEmploymentsPath{ID: id}, Query: &generated.ListPersonEmploymentsQuery{CurrentOnly: &currentOnly, Limit: limit, Offset: offset}})
 		})
 		if getErr != nil {
 			return getErr
@@ -216,7 +224,7 @@ var employmentListCmd = &cobra.Command{Use: cmdUseList, Short: "List employment 
 		return writeCLIEmploymentList(cmd, resp.JSON200, true, employmentJSON)
 	}
 	resp, getErr := daemonclient.APIResponse(client, func(api *apiclient.Client) (*generated.ListOrganizationEmploymentsResp, error) {
-		return api.ListOrganizationEmploymentsWithResponse(cmd.Context(), &generated.ListOrganizationEmploymentsRequestOptions{PathParams: &generated.ListOrganizationEmploymentsPath{ID: id}, Query: &generated.ListOrganizationEmploymentsQuery{CurrentOnly: &currentOnly}})
+		return api.ListOrganizationEmploymentsWithResponse(cmd.Context(), &generated.ListOrganizationEmploymentsRequestOptions{PathParams: &generated.ListOrganizationEmploymentsPath{ID: id}, Query: &generated.ListOrganizationEmploymentsQuery{CurrentOnly: &currentOnly, Limit: limit, Offset: offset}})
 	})
 	if getErr != nil {
 		return getErr
@@ -461,4 +469,6 @@ func init() {
 	employmentListCmd.Flags().Int64Var(&employmentPersonID, "person", 0, "Person ID")
 	employmentListCmd.Flags().Int64Var(&employmentOrganizationID, "organization", 0, "Organization ID")
 	employmentListCmd.Flags().BoolVar(&employmentCurrentOnly, "current-only", false, "Only current employments")
+	employmentListCmd.Flags().Int64Var(&employmentLimit, "limit", 0, "Maximum results")
+	employmentListCmd.Flags().Int64Var(&employmentOffset, "offset", 0, "Results to skip")
 }
