@@ -714,6 +714,44 @@ func TestBlindWorkflow_RoundTripsReturnedGradesThroughPrivateMap(t *testing.T) {
 	assert.Contains(t, lower, "provenance")
 }
 
+func TestDocumentVectorChunks_KeepSourceSpansDespiteContextHeaders(t *testing.T) {
+	document := ArmDocument{Key: "window-1", Chunks: []EvalChunk{
+		{MessageID: 11, ChunkIndex: 0, Text: "Alice (09:00): early words", SourceStart: 0, SourceEnd: 11,
+			SourceBasis: vector.SourceBasisBody},
+		{MessageID: 11, ChunkIndex: 1, Text: "Alice (09:01): later words", SourceStart: 11, SourceEnd: 22,
+			SourceBasis: vector.SourceBasisBody},
+		{MessageID: 12, ChunkIndex: 0, Text: "Bob (09:02): reply", SourceStart: 0, SourceEnd: 5,
+			SourceBasis: vector.SourceBasisBody},
+	}}
+	vectors := [][]float32{{1}, {2}, {3}}
+	chunks := documentVectorChunks(document, vectors)
+	require.Len(t, chunks, 3)
+	for i, chunk := range chunks {
+		assert.Equal(t, document.Chunks[i].SourceStart, chunk.ChunkCharStart)
+		assert.Equal(t, document.Chunks[i].SourceEnd, chunk.ChunkCharEnd,
+			"context headers in the embedded text must not inflate the stored source span")
+	}
+	assert.Equal(t, 22, chunks[0].SourceCharLen, "message source length is its maximum span end")
+	assert.Equal(t, 22, chunks[1].SourceCharLen)
+	assert.Equal(t, 5, chunks[2].SourceCharLen)
+}
+
+func TestBuildPoolSources_ExcerptsIsolateSiblingMessages(t *testing.T) {
+	sources := []SourceDocument{
+		{ID: "chat-001-doc-a", MessageID: 11, DocumentID: "window-1", Family: familyChat,
+			StructuredChunks: []string{"Alice: the amber answer"}, StructuredChunkIDs: []string{"chunk-a"}},
+		{ID: "chat-001-doc-b", MessageID: 12, DocumentID: "window-1", Family: familyChat,
+			StructuredChunks: []string{"Bob: unrelated filler"}, StructuredChunkIDs: []string{"chunk-b"}},
+	}
+	pool := buildPoolSources(sources)
+	require.Len(t, pool, 2)
+	assert.Contains(t, pool["chat-001-doc-a"].Excerpt, "amber answer")
+	assert.NotContains(t, pool["chat-001-doc-a"].Excerpt, "unrelated filler",
+		"a candidate's excerpt must not leak sibling messages' text and misattribute blind grades")
+	assert.NotContains(t, pool["chat-001-doc-b"].Excerpt, "amber answer")
+	assert.Equal(t, "chunk-a", pool["chat-001-doc-a"].ChunkID)
+}
+
 func TestBlindWorkflow_BindsHashesProvenanceAndANNHybridUnion(t *testing.T) {
 	run := evaluationRun{
 		Report:         EvaluationReport{CorpusHash: "corpus-a", QueryHash: "query-a"},

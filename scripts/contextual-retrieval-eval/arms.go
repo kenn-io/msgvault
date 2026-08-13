@@ -650,8 +650,11 @@ func buildArmDocuments(arm string, sources []SourceDocument) []ArmDocument {
 	case ArmOldProduction, ArmOldContext4Singleton:
 		for _, source := range sources {
 			for i, text := range source.OldChunks {
+				// Legacy chunk text is the embedded source itself, so its span
+				// covers the whole text (subject-body basis, zero start).
 				documents = append(documents, ArmDocument{Key: source.ID + ":old:" + strconv.Itoa(i), Chunks: []EvalChunk{{
 					ExternalID: source.ID, SourceID: source.ID, MessageID: source.MessageID, ChunkIndex: i, Text: text,
+					SourceEnd: len([]rune(text)),
 				}}})
 			}
 		}
@@ -1278,11 +1281,7 @@ func streamEmbedArmDocuments(ctx context.Context, generation vector.GenerationID
 			if len(vectors[i]) != len(document.Chunks) {
 				return latencies, fmt.Errorf("vector chunk count mismatch for %s", document.Key)
 			}
-			for j, owner := range document.Chunks {
-				chunks = append(chunks, vector.Chunk{MessageID: owner.MessageID, ChunkIndex: owner.ChunkIndex,
-					Vector: vectors[i][j], SourceCharLen: max(owner.SourceEnd, len([]rune(owner.Text))),
-					ChunkCharStart: owner.SourceStart, ChunkCharEnd: max(owner.SourceEnd, len([]rune(owner.Text))), SourceBasis: owner.SourceBasis})
-			}
+			chunks = append(chunks, documentVectorChunks(document, vectors[i])...)
 		}
 		if err := backend.Upsert(ctx, generation, chunks); err != nil {
 			return latencies, err
@@ -1290,6 +1289,24 @@ func streamEmbedArmDocuments(ctx context.Context, generation vector.GenerationID
 		start = end
 	}
 	return latencies, nil
+}
+
+// documentVectorChunks mirrors production span semantics: ChunkCharStart/End
+// are the chunk's raw source span — contextual headers in the embedded text
+// must never inflate them into false evidence overlaps — and SourceCharLen is
+// the message's maximum source span end within the document.
+func documentVectorChunks(document ArmDocument, vectors [][]float32) []vector.Chunk {
+	sourceLengths := make(map[int64]int)
+	for _, owner := range document.Chunks {
+		sourceLengths[owner.MessageID] = max(sourceLengths[owner.MessageID], owner.SourceEnd)
+	}
+	chunks := make([]vector.Chunk, 0, len(document.Chunks))
+	for j, owner := range document.Chunks {
+		chunks = append(chunks, vector.Chunk{MessageID: owner.MessageID, ChunkIndex: owner.ChunkIndex,
+			Vector: vectors[j], SourceCharLen: sourceLengths[owner.MessageID],
+			ChunkCharStart: owner.SourceStart, ChunkCharEnd: owner.SourceEnd, SourceBasis: owner.SourceBasis})
+	}
+	return chunks
 }
 
 func documentBatchEnd(documents []ArmDocument, start, batchSize int) int {

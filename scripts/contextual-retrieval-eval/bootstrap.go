@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"go.kenn.io/msgvault/internal/vector/embed"
 )
@@ -252,26 +253,34 @@ func executeEvaluation(ctx context.Context, cfg runConfig) (evaluationRun, error
 	for _, scenario := range corpus.Scenarios {
 		queries[scenario.ID] = scenario.Query
 	}
-	byDocument := make(map[string][]string)
-	for _, source := range sources {
-		byDocument[source.DocumentID] = append(byDocument[source.DocumentID], source.StructuredChunks...)
-	}
+	poolSources := buildPoolSources(sources)
+	return evaluationRun{Report: report, Rankings: rankings, HybridRankings: hybridRankings,
+		Queries: queries, Sources: poolSources, WinningProvenance: winningProvenance}, nil
+}
+
+// buildPoolSources gives each blind candidate an excerpt built only from its
+// own chunks. Sharing the combined document text would leak sibling messages'
+// answer text into another candidate's excerpt and misattribute blind grades.
+func buildPoolSources(sources []SourceDocument) map[string]poolSource {
 	poolSources := make(map[string]poolSource, len(sources))
 	for _, source := range sources {
-		excerpt := strings.Join(byDocument[source.DocumentID], "\n")
+		excerpt := strings.Join(source.StructuredChunks, "\n")
 		if len(excerpt) > 4096 {
-			excerpt = excerpt[:4096]
+			cut := 4096
+			for cut > 0 && !utf8.RuneStart(excerpt[cut]) {
+				cut--
+			}
+			excerpt = excerpt[:cut]
 		}
 		chunkID := source.ID
 		if len(source.StructuredChunkIDs) > 0 {
 			chunkID = source.StructuredChunkIDs[0]
 		}
 		poolSources[source.ID] = poolSource{Excerpt: excerpt,
-			Provenance: chunkProvenance{Family: source.Family, Chunk: "document window"},
+			Provenance: chunkProvenance{Family: source.Family, Chunk: "source chunks"},
 			MessageID:  source.MessageID, ChunkID: chunkID, DocumentID: source.DocumentID}
 	}
-	return evaluationRun{Report: report, Rankings: rankings, HybridRankings: hybridRankings,
-		Queries: queries, Sources: poolSources, WinningProvenance: winningProvenance}, nil
+	return poolSources
 }
 
 func observedArmReport(arm string) ArmReport {

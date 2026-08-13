@@ -71,3 +71,4 @@ docs/assets/generated/
 docs/screenshots/demo-data/
 .docs-fixture-staging/
 .kata.local.toml
+/contextual-retrieval-eval
