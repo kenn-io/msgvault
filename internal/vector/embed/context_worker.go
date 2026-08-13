@@ -21,7 +21,7 @@ import (
 type ContextWorkStore interface {
 	ScanEmbeddingChanges(ctx context.Context, after int64, limit int) ([]store.EmbeddingChange, error)
 	LatestEmbeddingChangeSequence(ctx context.Context) (int64, error)
-	ScanForEmbeddingScoped(ctx context.Context, target, afterID int64, limit int, messageTypes []string) ([]int64, error)
+	ScanForEmbeddingScoped(ctx context.Context, target, afterID int64, limit int, messageTypes []string, sourceIDs []int64) ([]int64, error)
 	SetEmbedGenGroupIfUnchanged(ctx context.Context, stamps []store.EmbedGenStamp, metadata store.EmbedGenMetadataVersion, target int64) (bool, error)
 	ResetEmbedGen(ctx context.Context, ids []int64) error
 }
@@ -89,7 +89,7 @@ func NewContextWorker(d ContextWorkerDeps) *ContextWorker {
 	if d.MaxRunUTF8Bytes <= 0 {
 		d.MaxRunUTF8Bytes = defaultContextRunUTF8Bytes
 	}
-	d.BuildScope = vector.NewBuildScope(d.BuildScope.MessageTypes)
+	d.BuildScope = vector.NewBuildScope(d.BuildScope.MessageTypes, d.BuildScope.SourceIDs)
 	source, _ := d.Store.(*store.Store)
 	return &ContextWorker{deps: d, source: source}
 }
@@ -518,7 +518,8 @@ func (w *ContextWorker) drainOrdinaryDiscovery(ctx context.Context, gen vector.G
 	for {
 		pageAfter := after
 		ids, err := w.deps.Store.ScanForEmbeddingScoped(
-			ctx, int64(gen), after, w.deps.ChangeBatchSize, w.deps.BuildScope.MessageTypes,
+			ctx, int64(gen), after, w.deps.ChangeBatchSize,
+			w.deps.BuildScope.MessageTypes, w.deps.BuildScope.SourceIDs,
 		)
 		if err != nil {
 			return fmt.Errorf("scan contextual ordinary discovery: %w", err)

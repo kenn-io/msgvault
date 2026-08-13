@@ -218,8 +218,11 @@ func registerEmbedJob(sched embedJobRegistrar, vf *vectorFeatures, s *store.Stor
 	// Scope drift also has to reach searchers, not just the log: the
 	// installed components still match the active generation's
 	// fingerprint, so without this latch the API keeps reporting
-	// "ready" while serving the wrongly-scoped index.
-	embedJob.OnScopeDrift = apiServer.SetVectorScopeDrift
+	// "ready" while serving the wrongly-scoped index. Tests may register
+	// without an API server.
+	if apiServer != nil {
+		embedJob.OnScopeDrift = apiServer.SetVectorScopeDrift
+	}
 	schedule := cfg.Vector.Embed.Schedule.Cron
 	if err := sched.SetEmbedJob(embedJob, schedule, cfg.Vector.Embed.Schedule.RunAfterSync); err != nil {
 		return fmt.Errorf("register embed job: %w", err)

@@ -341,7 +341,7 @@ func TestContextWorker_BuildScopeNeverSubmitsExcludedBody(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	f := newContextWorkerFixture(t, func(deps *ContextWorkerDeps) {
-		deps.BuildScope = vector.NewBuildScope([]string{"beeper"})
+		deps.BuildScope = vector.NewBuildScope([]string{"beeper"}, nil)
 	})
 	conversationID, err := f.store.EnsureConversation(f.sourceID, "excluded-mail", "Excluded")
 	require.NoError(err)
@@ -361,7 +361,7 @@ func TestContextWorker_BuildScopeTombstonesOrdinaryMoveOutWithoutSubmitting(t *t
 	assert := assert.New(t)
 	require := require.New(t)
 	f := newContextWorkerFixture(t, func(deps *ContextWorkerDeps) {
-		deps.BuildScope = vector.NewBuildScope([]string{"sms"})
+		deps.BuildScope = vector.NewBuildScope([]string{"sms"}, nil)
 	})
 	conversationID, err := f.store.EnsureConversation(f.sourceID, "scoped-text", "Scoped")
 	require.NoError(err)
