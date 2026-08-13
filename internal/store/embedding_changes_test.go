@@ -1338,6 +1338,75 @@ func TestEmbeddingChangeJournal_InitSchemaUpgradesPreKindCoordinateTable(t *test
 		sql.NullString{String: "beeper", Valid: true})
 }
 
+func TestEmbeddingChangeJournal_PostgresEnableFencesInFlightSourceTx(t *testing.T) {
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	if !st.IsPostgreSQL() {
+		t.Skip("PostgreSQL-only advisory-lock fence test")
+	}
+	source, err := st.GetOrCreateSource("beeper", "fence-account")
+	require.NoError(err)
+	conversationID, err := st.EnsureConversationWithType(
+		source.ID, "chat-fence", "group_chat", "Before title")
+	require.NoError(err)
+	// Title changes journal only for conversations with live beeper content.
+	messageID, err := st.UpsertMessage(&store.Message{
+		ConversationID: conversationID, SourceID: source.ID,
+		SourceMessageID: "fence-message", MessageType: "beeper",
+		SentAt: sql.NullTime{Time: time.Date(2026, 8, 8, 9, 0, 0, 0, time.UTC), Valid: true},
+	})
+	require.NoError(err)
+	require.NoError(st.UpsertMessageBody(messageID,
+		sql.NullString{String: "fence body", Valid: true}, sql.NullString{}))
+
+	// A source transaction mutates chat metadata while capture is disabled
+	// (no journal row) and stays open. Enabling capture must wait for it:
+	// otherwise it could commit after the reconciliation snapshot without a
+	// journal entry and a generation would activate with stale metadata.
+	tx, err := st.DB().BeginTx(context.Background(), nil)
+	require.NoError(err)
+	open := true
+	t.Cleanup(func() {
+		if open {
+			_ = tx.Rollback()
+		}
+	})
+	_, err = tx.Exec(st.Rebind(
+		`UPDATE conversations SET title = ? WHERE id = ?`), "Stale title", conversationID)
+	require.NoError(err)
+
+	enabled := make(chan error, 1)
+	go func() { enabled <- st.EnableEmbeddingChangeJournal(context.Background()) }()
+	require.Eventually(func() bool {
+		var waiting bool
+		queryErr := st.DB().QueryRow(`
+			SELECT EXISTS (
+				SELECT 1 FROM pg_locks
+				WHERE locktype = 'advisory' AND NOT granted
+				  AND database = (SELECT oid FROM pg_database WHERE datname = current_database())
+			)`).Scan(&waiting)
+		return queryErr == nil && waiting
+	}, 3*time.Second, 10*time.Millisecond,
+		"enabling capture must wait on the in-flight source transaction's shared clock lock")
+	select {
+	case enableErr := <-enabled:
+		t.Fatalf("journal enable completed before the source transaction finished: %v", enableErr)
+	default:
+	}
+
+	require.NoError(tx.Commit())
+	open = false
+	require.NoError(<-enabled)
+
+	before := latestEmbeddingChangeSequence(t, st)
+	_, err = st.DB().Exec(st.Rebind(
+		`UPDATE conversations SET title = ? WHERE id = ?`), "After title", conversationID)
+	require.NoError(err)
+	changes, err := st.ScanEmbeddingChanges(t.Context(), before, 10)
+	require.NoError(err)
+	require.NotEmpty(changes, "mutations after the fenced enable must produce journal rows")
+}
+
 func TestEmbeddingChangeJournal_PostgresClockSerializesCommitOrder(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)

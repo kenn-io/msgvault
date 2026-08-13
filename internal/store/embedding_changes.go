@@ -102,9 +102,34 @@ func (s *Store) LatestEmbeddingChangeSequence(ctx context.Context) (int64, error
 // EnableEmbeddingChangeJournal starts commit-ordered mutation capture. A new
 // contextual generation reconciles the complete current snapshot, so changes
 // made before this point do not need historical journal rows.
+//
+// On PostgreSQL the enable must fence in-flight source transactions: every
+// source mutation statement holds the shared clock advisory lock until its
+// transaction ends, and a transaction whose statements ran while capture was
+// disabled produced no journal rows. Taking the exclusive form first waits
+// for those transactions to finish, so each source transaction either commits
+// before capture starts (visible to the reconciliation snapshot) or journals.
+// SQLite needs no fence: its single-writer lock means no source transaction
+// can be in flight while the enable statement runs.
 func (s *Store) EnableEmbeddingChangeJournal(ctx context.Context) error {
-	if _, err := s.db.ExecContext(ctx,
-		`UPDATE embedding_change_clock SET enabled = TRUE WHERE singleton = 1`); err != nil {
+	const enable = `UPDATE embedding_change_clock SET enabled = TRUE WHERE singleton = 1`
+	if s.dialect.DriverName() != "pgx" {
+		if _, err := s.db.ExecContext(ctx, enable); err != nil {
+			return fmt.Errorf("enable embedding change journal: %w", err)
+		}
+		return nil
+	}
+	err := s.withTxContext(ctx, func(tx *loggedTx) error {
+		if _, err := tx.Exec(
+			`SELECT pg_advisory_xact_lock(hashtextextended('msgvault.embedding_change_clock', 0))`); err != nil {
+			return fmt.Errorf("fence in-flight source transactions: %w", err)
+		}
+		if _, err := tx.Exec(enable); err != nil {
+			return err
+		}
+		return nil
+	})
+	if err != nil {
 		return fmt.Errorf("enable embedding change journal: %w", err)
 	}
 	return nil
